@@ -221,6 +221,22 @@ job_start :: proc(desc:Desc) -> ^Job {
         }
         return job_fail(job,.Write_Failed)
     }
+    // A check and a build of tests read the code of the project with its tests, and so its test worlds.
+    if desc.action!=.Build {
+        folders:=make([dynamic]string,context.temp_allocator)
+        names:=project.FOLDER_NAMES
+        append(&folders,project.path(p.root,names[.Game],allocator=context.temp_allocator),project.path(p.root,names[.Editor],allocator=context.temp_allocator))
+        for plugin in p.plugins {
+            if plugin.origin==.Engine {continue}
+            for part in project.PART_NAMES {append(&folders,project.path(plugin.folder,part,allocator=context.temp_allocator))}
+        }
+        if desc.test_package!="" {append(&folders,desc.test_package)}
+        if errors:=test_worlds_write(p.engine_root,p.root,folders[:],context.temp_allocator);len(errors)>0 {
+            job.result.text=strings.join(errors,"
+",a)
+            return job_fail(job,.Generate)
+        }
+    }
     job.published=target_output(p,desc.target,desc.output,a,desc.server)
     if desc.target==.Game && project.path_same(job.published[:strings.last_index_byte(job.published,'/')],p.root) {return job_fail(job,.Output_Invalid)}
     job.staged=project.path(job.work,strings.concatenate({job.prefix,desc.target==.Game?project.EXECUTABLE_SUFFIX:project.LIBRARY_SUFFIX},context.temp_allocator),allocator=a)

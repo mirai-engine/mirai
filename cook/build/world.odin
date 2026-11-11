@@ -5,6 +5,7 @@ import "core:odin/ast"
 import "core:odin/parser"
 import "core:odin/tokenizer"
 import "core:os"
+import "core:reflect"
 import "core:slice"
 import "core:strconv"
 import "core:strings"
@@ -32,7 +33,7 @@ import "mirai:std/serial"
 // and the game/ of the project go into World and Shared; the editor and the
 // editor/ of plugins and of the project into Editor_World.
 
-CUSTOM_ATTRIBUTES :: "component,storage,step,loops,stage,after,before,server,shared,locks,host,by_world,copy,copy_kept,swap,free,replicated,setting,description,queue,keep,persist,single,far,reset,net_message,from,reliable,params,names,name_bits,name,name_requires,presentation,record,actions,draw,mind,act"
+CUSTOM_ATTRIBUTES :: "component,storage,step,loops,stage,after,before,server,shared,locks,host,by_world,copy,copy_kept,swap,free,replicated,setting,description,queue,keep,persist,single,far,reset,net_message,from,reliable,params,names,name_bits,name,name_requires,presentation,record,actions,draw,mind,act,test_world,editor"
 
 PHASES :: [7]string{"input","fixed","frame","late","ui","render","release"}
 UI_PHASE :: 4 // where the interfaces are built: the engine and the editor draw in it, a game shows .ui documents
@@ -73,6 +74,7 @@ Type :: struct {
     logs:[dynamic]string,  // a storage: its fields that are a core.Events
     field:string,
     lock_id:int,
+    default,for_device,procs:string, // the procedures the world being written calls for it: type_procs_write
     file:^ast.File,   // where it is declared
     value:^ast.Expr,  // its struct
     where_:string,    // its file and line, for an error
@@ -493,7 +495,7 @@ sources_read :: proc(folder:string,errors:^[dynamic]string,allocator:=context.al
     }
     sorted:=make([dynamic]^ast.File,0,len(collected.files),allocator)
     for path,file in collected.files {
-        if tests || !strings.has_suffix(path,"_test.odin") {append(&sorted,file)}
+        if (tests || !strings.has_suffix(path,"_test.odin")) && !strings.has_suffix(path,TEST_WORLDS_FILE) {append(&sorted,file)}
     }
     slice.sort_by(sorted[:],proc(a,b:^ast.File) -> bool {return a.fullpath<b.fullpath})
     p:=parser.default_parser()
@@ -522,18 +524,25 @@ sources_read :: proc(folder:string,errors:^[dynamic]string,allocator:=context.al
 }
 
 @(private="file")
-package_read :: proc(g:^Generator,pkg:^Package) {
-    name,files,ok:=sources_read(pkg.folder,&g.errors)
-    if !ok {return}
-    pkg.name=name
-    pkg.files=files
+package_sources :: proc(g:^Generator,pkg:^Package,tests:bool) -> (ok:bool) {
+    pkg.name,pkg.files=sources_read(pkg.folder,&g.errors,tests=tests) or_return
     pkg.names=make(map[string]bool)
+    for file in pkg.files {
+        for stmt in file.decls {
+            if decl,is_value:=stmt.derived.(^ast.Value_Decl);is_value && len(decl.names)==1 && len(decl.values)==1 {pkg.names[ident_name(decl.names[0])]=true}
+        }
+    }
+    return true
+}
+
+@(private="file")
+package_read :: proc(g:^Generator,pkg:^Package) {
+    if !package_sources(g,pkg,false) {return}
     for file in pkg.files {
         for stmt in file.decls {
             decl,is_value:=stmt.derived.(^ast.Value_Decl)
             if !is_value || len(decl.names)!=1 || len(decl.values)!=1 {continue}
             name:=ident_name(decl.names[0])
-            pkg.names[name]=true
             options:=attributes_read(decl.attributes[:])
             _,is_names:=options["names"]
             _,is_bits:=options["name_bits"]
@@ -563,77 +572,8 @@ package_read :: proc(g:^Generator,pkg:^Package) {
                 continue
             }
             if !is_component && !is_storage {continue}
-            t:=new(Type)
-            t.name,t.pkg=name,pkg
-            t.file,t.value=file,decl.values[0]
-            t.where_=fmt.aprintf("%s(%d)",file.fullpath,decl.pos.line)
-            t.key=fmt.aprintf("%s.%s",pkg.path,name)
-            t.kind=is_component?.Component:.Storage
-            switch core.declared_read(&t.declared,options,pkg.editor) {
-            case "replicated":
-                append(&g.errors,fmt.aprintf("%s: %s has replicated=%q: write @(component,replicated) for every end that has the entity, replicated=\"owner\" for its owner, replicated=\"others\" for the rest or replicated=\"object\" for every end of an entity it replicates by itself",t.where_,name,options["replicated"]))
-                continue
-            case "setting":
-                append(&g.errors,fmt.aprintf("%s: %s has setting=%q, which is not a kind of setting: write @(storage,setting) for a setting of the project or @(storage,setting=\"machine\") for a preference of whoever uses the engine on this machine",t.where_,name,options["setting"]))
-                continue
-            }
-            if t.replication!=.None && !is_component {
-                append(&g.errors,fmt.aprintf("%s: %s is a storage and says replicated: the network replicates components of entities; make it a @(component,replicated), or send it as a @(net_message)",t.where_,name))
-                continue
-            }
-            if _,scene:=options["scene"];scene {
-                append(&g.errors,fmt.aprintf("%s: %s says scene: a setting of the scene is a component on an entity of the root scene, which saves, replicates and changes while the game runs; make it a @(component), with single if the world uses one at a time",t.where_,name))
-                continue
-            }
-            if t.single && !is_component {
-                append(&g.errors,fmt.aprintf("%s: %s says single, which is of a component the world uses one of at a time: write @(component,single)",t.where_,name))
-                continue
-            }
-            if t.far && !is_component {
-                append(&g.errors,fmt.aprintf("%s: %s says far, which is of a component whose entity draws a far form of its own and stays when its section unloads: write @(component,far)",t.where_,name))
-                continue
-            }
-            if _,old:=options["events"];old {
-                append(&g.errors,fmt.aprintf("%s: %s says events, which is no option: what a library reports is a field core.Events(T) of a @(storage), which its owner pushes to and never clears; take events out and make its core.Queue(T) a core.Events(T)",t.where_,name))
-                continue
-            }
-            if record,is_struct:=decl.values[0].derived.(^ast.Struct_Type);is_struct && is_storage {
-                for field in record.fields.list {
-                    call,is_call:=field.type.derived.(^ast.Call_Expr)
-                    if !is_call || type_key(g,file,pkg,call.expr)!="mirai:core.Events" {continue}
-                    for n in field.names {append(&t.logs,ident_name(n))}
-                }
-            }
-            if t.queue && (t.kind!=.Storage || len(t.logs)>0) {
-                append(&g.errors,fmt.aprintf("%s: %s says queue: a storage of requests is @(storage,queue), and it holds no core.Events, which are what a library reports",t.where_,name))
-                continue
-            }
-            if t.kind==.Component {field_comments(&t.fields,decl.values[0])}
-            for lock in strings.fields(t.lock_names) {append(&t.locks,qualified(g,file,pkg,lock))}
-            if t.setting!=.None && (t.kind!=.Storage || t.place==.Editor) {
-                append(&g.errors,fmt.aprintf("%s: %s is a setting: mark it @(storage,setting) or @(storage,setting=\"machine\") in a library",t.where_,name))
-                continue
-            }
-            if t.by_world && (t.kind!=.Storage || t.place!=.Shared || t.setting!=.None) {
-                append(&g.errors,fmt.aprintf("%s: %s is by_world: a storage of the application with a value for each World is @(storage,host,by_world) in a library, and is not a setting",t.where_,name))
-                continue
-            }
-            if t.persist && (t.kind!=.Storage || t.place!=.World || t.queue || len(t.logs)>0 || t.setting!=.None || t.copy=="false" || t.reset!="") {
-                append(&g.errors,fmt.aprintf("%s: %s says persist: the progress of the player is a plain @(storage,persist) of a library; not a component, a storage of the application, a queue, events, a setting, nor one that resets or is not copied",t.where_,name))
-                continue
-            }
-            if t.copy_kept!="" && (t.kind!=.Storage || t.place!=.World || t.copy=="false") {
-                append(&g.errors,fmt.aprintf("%s: %s says copy_kept, the copy of a storage of the World that a history keeps: write it on a @(storage) of a library that is copied",t.where_,name))
-                continue
-            }
-            if (t.keep || t.reset!="") && (t.kind!=.Storage || t.place!=.World) {
-                append(&g.errors,fmt.aprintf("%s: %s says keep or reset, which are of a storage of the World: clearing a World resets its storages, and the others have no World to follow",t.where_,name))
-                continue
-            }
-            if (t.keep || t.reset!="") && (t.setting!=.None || t.copy=="false") || t.keep && t.reset!="" {
-                append(&g.errors,fmt.aprintf("%s: %s says keep or reset and survives clearing the World already as a setting or with copy=false, or says both: a storage that the World resets says reset=\"proc\" when it needs more than its default, one that survives says keep",t.where_,name))
-                continue
-            }
+            t:=type_read(g,file,pkg,decl,name,options,pkg.editor)
+            if t==nil {continue}
             if t.key in g.by_key {
                 append(&g.errors,fmt.aprintf("%s: %s is declared twice",t.where_,name))
                 continue
@@ -643,6 +583,87 @@ package_read :: proc(g:^Generator,pkg:^Package) {
             pkg.used=true
         }
     }
+}
+
+// What the attributes of a declaration @(component) or @(storage) say of its
+// type, checked: nil, with the error said, for what no world holds. editor:
+// the type is of the editor.
+@(private="file")
+type_read :: proc(g:^Generator,file:^ast.File,pkg:^Package,decl:^ast.Value_Decl,name:string,options:map[string]string,editor:bool) -> ^Type {
+    _,is_component:=options["component"]
+    _,is_storage:=options["storage"]
+    t:=new(Type)
+    t.name,t.pkg=name,pkg
+    t.file,t.value=file,decl.values[0]
+    t.where_=fmt.aprintf("%s(%d)",file.fullpath,decl.pos.line)
+    t.key=fmt.aprintf("%s.%s",pkg.path,name)
+    t.kind=is_component?.Component:.Storage
+    switch core.declared_read(&t.declared,options,editor) {
+    case "replicated":
+        append(&g.errors,fmt.aprintf("%s: %s has replicated=%q: write @(component,replicated) for every end that has the entity, replicated=\"owner\" for its owner, replicated=\"others\" for the rest or replicated=\"object\" for every end of an entity it replicates by itself",t.where_,name,options["replicated"]))
+        return nil
+    case "setting":
+        append(&g.errors,fmt.aprintf("%s: %s has setting=%q, which is not a kind of setting: write @(storage,setting) for a setting of the project or @(storage,setting=\"machine\") for a preference of whoever uses the engine on this machine",t.where_,name,options["setting"]))
+        return nil
+    }
+    if t.replication!=.None && !is_component {
+        append(&g.errors,fmt.aprintf("%s: %s is a storage and says replicated: the network replicates components of entities; make it a @(component,replicated), or send it as a @(net_message)",t.where_,name))
+        return nil
+    }
+    if _,scene:=options["scene"];scene {
+        append(&g.errors,fmt.aprintf("%s: %s says scene: a setting of the scene is a component on an entity of the root scene, which saves, replicates and changes while the game runs; make it a @(component), with single if the world uses one at a time",t.where_,name))
+        return nil
+    }
+    if t.single && !is_component {
+        append(&g.errors,fmt.aprintf("%s: %s says single, which is of a component the world uses one of at a time: write @(component,single)",t.where_,name))
+        return nil
+    }
+    if t.far && !is_component {
+        append(&g.errors,fmt.aprintf("%s: %s says far, which is of a component whose entity draws a far form of its own and stays when its section unloads: write @(component,far)",t.where_,name))
+        return nil
+    }
+    if _,old:=options["events"];old {
+        append(&g.errors,fmt.aprintf("%s: %s says events, which is no option: what a library reports is a field core.Events(T) of a @(storage), which its owner pushes to and never clears; take events out and make its core.Queue(T) a core.Events(T)",t.where_,name))
+        return nil
+    }
+    if record,is_struct:=decl.values[0].derived.(^ast.Struct_Type);is_struct && is_storage {
+        for field in record.fields.list {
+            call,is_call:=field.type.derived.(^ast.Call_Expr)
+            if !is_call || type_key(g,file,pkg,call.expr)!="mirai:core.Events" {continue}
+            for n in field.names {append(&t.logs,ident_name(n))}
+        }
+    }
+    if t.queue && (t.kind!=.Storage || len(t.logs)>0) {
+        append(&g.errors,fmt.aprintf("%s: %s says queue: a storage of requests is @(storage,queue), and it holds no core.Events, which are what a library reports",t.where_,name))
+        return nil
+    }
+    if t.kind==.Component {field_comments(&t.fields,decl.values[0])}
+    for lock in strings.fields(t.lock_names) {append(&t.locks,qualified(g,file,pkg,lock))}
+    if t.setting!=.None && (t.kind!=.Storage || t.place==.Editor) {
+        append(&g.errors,fmt.aprintf("%s: %s is a setting: mark it @(storage,setting) or @(storage,setting=\"machine\") in a library",t.where_,name))
+        return nil
+    }
+    if t.by_world && (t.kind!=.Storage || t.place!=.Shared || t.setting!=.None) {
+        append(&g.errors,fmt.aprintf("%s: %s is by_world: a storage of the application with a value for each World is @(storage,host,by_world) in a library, and is not a setting",t.where_,name))
+        return nil
+    }
+    if t.persist && (t.kind!=.Storage || t.place!=.World || t.queue || len(t.logs)>0 || t.setting!=.None || t.copy=="false" || t.reset!="") {
+        append(&g.errors,fmt.aprintf("%s: %s says persist: the progress of the player is a plain @(storage,persist) of a library; not a component, a storage of the application, a queue, events, a setting, nor one that resets or is not copied",t.where_,name))
+        return nil
+    }
+    if t.copy_kept!="" && (t.kind!=.Storage || t.place!=.World || t.copy=="false") {
+        append(&g.errors,fmt.aprintf("%s: %s says copy_kept, the copy of a storage of the World that a history keeps: write it on a @(storage) of a library that is copied",t.where_,name))
+        return nil
+    }
+    if (t.keep || t.reset!="") && (t.kind!=.Storage || t.place!=.World) {
+        append(&g.errors,fmt.aprintf("%s: %s says keep or reset, which are of a storage of the World: clearing a World resets its storages, and the others have no World to follow",t.where_,name))
+        return nil
+    }
+    if (t.keep || t.reset!="") && (t.setting!=.None || t.copy=="false") || t.keep && t.reset!="" {
+        append(&g.errors,fmt.aprintf("%s: %s says keep or reset and survives clearing the World already as a setting or with copy=false, or says both: a storage that the World resets says reset=\"proc\" when it needs more than its default, one that survives says keep",t.where_,name))
+        return nil
+    }
+    return t
 }
 
 @(private="file")
@@ -2211,51 +2232,8 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
     }
     if aged {fmt.sbprint(w,"}\n\n")}
 
-    // Defaults are also metadata for storage providers and project settings.
-    defaults:=make(map[^Type]string,context.temp_allocator)
     for t in g.types {
-        if !included(t,editor) {continue}
-        value:=default_value(t) or_continue
-        name:=fmt.aprintf("default_%s",t.field)
-        fmt.sbprintf(w,"%s :: proc(dst:rawptr) {{(cast(^%s.%s)dst)^=%s}}\n",name,t.pkg.alias,t.name,value)
-        defaults[t]=name
-    }
-    for_device:=make(map[^Type]string,context.temp_allocator)
-    for t in g.types {
-        if t.kind!=.Storage || !included(t,editor) {continue}
-        maker:=for_device_value(t)
-        if maker=="" {continue}
-        name:=fmt.aprintf("for_device_%s",t.field)
-        fmt.sbprintf(w,"%s :: proc(dst:rawptr,device:rawptr) {{(cast(^%s.%s)dst)^=%s((cast(^gen_rhi.Device_Info)device)^)}}\n",name,t.pkg.alias,t.name,maker)
-        for_device[t]=name
-    }
-    // The procedures the attributes of a storage name, as core calls them.
-    procs:=make(map[^Type]string,context.temp_allocator)
-    for t in g.types {
-        if t.kind!=.Storage || !included(t,editor) {continue}
-        Named :: struct {option,name:string,pair,result:bool}
-        named:=[5]Named{{"copy",t.copy=="false"?"":t.copy,true,true},{"copy_kept",t.copy_kept,true,true},{"swap",t.swap,true,false},{"free",t.free,false,false},{"reset",t.reset,false,false}}
-        list:=strings.builder_make(context.temp_allocator)
-        for n in named {
-            if n.name=="" {continue}
-            type:=fmt.tprintf("%s.%s",t.pkg.alias,t.name)
-            if n.pair {
-                fmt.sbprintf(w,"%s_%s :: proc(a,b:rawptr)%s {{%s%s.%s(cast(^%s)a,cast(^%s)b)}}\n",n.option,t.field,n.result?" -> bool":"",n.result?"return ":"",t.pkg.alias,n.name,type,type)
-            } else {
-                fmt.sbprintf(w,"%s_%s :: proc(value:rawptr) {{%s.%s(cast(^%s)value)}}\n",n.option,t.field,t.pkg.alias,n.name,type)
-            }
-            fmt.sbprintf(&list,"%s%s=%s_%s",strings.builder_len(list)>0?",":"",n.option,n.option,t.field)
-        }
-        procs[t]=strings.to_string(list)
-    }
-    fmt.sbprint(w,"\n")
-
-    // The descriptions of the fields of the components, read only.
-    for t in g.types {
-        if t.kind!=.Component || !included(t,editor) || len(t.fields)==0 {continue}
-        fmt.sbprintf(w,"@(rodata) fields_%s:=[%d]%s.Field_Description{{",t.field,len(t.fields),core_alias)
-        for field,k in t.fields {fmt.sbprintf(w,"%s{{%q,%q}}",k>0?",":"",field.name,field.text)}
-        fmt.sbprint(w,"}\n")
+        if included(t,editor) {type_procs_write(w,t,fmt.tprintf("%s.",core_alias))}
     }
     fmt.sbprint(w,"\n")
 
@@ -2292,8 +2270,6 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
     i:=0
     for t in g.types {
         if t.kind!=.Component || !included(t,editor) {continue}
-        fields:=len(t.fields)>0?fmt.tprintf("fields_%s[:]",t.field):"nil"
-        game:=strings.has_prefix(t.pkg.path,"project:") && !strings.has_prefix(t.pkg.path,"project:plugins/")
         // The last of each, flat, is found by core.world_info_index.
         locks:="nil"
         if len(t.locks)>0 {
@@ -2301,10 +2277,10 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
             fmt.sbprintf(w,"    %s:=make([]%s.Lock,%d)\n",locks,core_alias,len(t.locks))
             for lock,li in t.locks {
                 target:=g.by_key[lock]
-                fmt.sbprintf(w,"    %s[%d]={{int(offset_of(%s,%s))-int(offset_of(%s,%s)),%d,LOCK_NAMES[:],\"%s\"}}\n",locks,li,struct_names[int(t.place)],target.field,struct_names[int(t.place)],t.field,t.lock_id,target.name)
+                fmt.sbprintf(w,"    %s[%d]=%s\n",locks,li,lock_text(struct_names[int(t.place)],target.field,t.field,t.lock_id,"LOCK_NAMES",target.name))
             }
         }
-        fmt.sbprintf(w,"    tables[%d]={{\"%s\",\"%s\",typeid_of(%s.%s),type_info_of(%s.%s),offset_of(%s,%s),.%v,%v,.%v,%v,%s,%q,%s,%v,%v,%v,%s,false}}\n",i,t.name,t.pkg.name,t.pkg.alias,t.name,t.pkg.alias,t.name,struct_names[int(t.place)],t.field,t.place,t.shared,t.replication,game,defaults[t] or_else "nil",t.description,fields,t.single,t.far,t.pkg.path=="mirai:core",locks)
+        table_row(w,i,t,t.name,fmt.tprintf("offset_of(%s,%s)",struct_names[int(t.place)],t.field),t.place,false,locks)
         i+=1
     }
     fmt.sbprintf(w,"    storages:=make([]%s.Storage_Info,%d)\n",core_alias,len(storage_index)+int(cursors[1]>0))
@@ -2312,7 +2288,7 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
     i=0
     for t in g.types {
         if t.kind!=.Storage || !included(t,editor) {continue}
-        fmt.sbprintf(w,"    storages[%d]={{\"%s\",\"%s\",typeid_of(%s.%s),type_info_of(%s.%s),offset_of(%s,%s),.%v,.%v,%s,%v,%s,%v,%v,%q,%v,%v,{{%s}},false}}\n",i,t.name,t.pkg.name,t.pkg.alias,t.name,t.pkg.alias,t.name,struct_names[int(t.place)],t.field,t.place,t.setting,defaults[t] or_else "nil",t.by_world,for_device[t] or_else "nil",t.persist,t.keep,project.import_plugin(t.pkg.path),strings.has_prefix(t.pkg.path,"project:") && !strings.has_prefix(t.pkg.path,"project:plugins/"),t.copy=="false",procs[t])
+        storage_row(w,i,t,t.name,fmt.tprintf("offset_of(%s,%s)",struct_names[int(t.place)],t.field),t.place,false)
         i+=1
     }
     fmt.sbprintf(w,"    messages:=make([]%s.Message_Info,%d)\n",core_alias,len(g.messages))
@@ -2401,6 +2377,537 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
     return strings.to_string(b)
 }
 
+// A name of a package as the file being written says it: bare in the package
+// the file is of, whose alias is "".
+@(private="file")
+ref :: proc(pkg:^Package,name:string) -> string {
+    return pkg.alias==""?name:fmt.aprintf("%s.%s",pkg.alias,name)
+}
+
+// The type of a table or a storage as the file being written says it; one of
+// a test world that no declaration names is said through its field (key).
+@(private="file")
+type_text :: proc(t:^Type) -> string {return t.pkg==nil?t.key:ref(t.pkg,t.name)}
+
+// Writes the procedures the World_Info being written calls for a type, as
+// core calls them, and keeps their names in it: what gives its default, its
+// default on a GPU and what its attributes name. Of a component, the
+// descriptions of its fields too. c: how the file says core, with its dot.
+@(private="file")
+type_procs_write :: proc(w:^strings.Builder,t:^Type,c:string) {
+    type:=type_text(t)
+    t.default,t.for_device,t.procs="nil","nil",""
+    if value,found:=default_value(t);found {
+        t.default=fmt.aprintf("default_%s",t.field)
+        fmt.sbprintf(w,"%s :: proc(dst:rawptr) {{(cast(^%s)dst)^=%s}}\n",t.default,type,value)
+    }
+    if t.kind==.Component {
+        if len(t.fields)==0 {return}
+        fmt.sbprintf(w,"@(rodata) fields_%s:=[%d]%sField_Description{{",t.field,len(t.fields),c)
+        for field,k in t.fields {fmt.sbprintf(w,"%s{{%q,%q}}",k>0?",":"",field.name,field.text)}
+        fmt.sbprint(w,"}\n")
+        return
+    }
+    if maker:=for_device_value(t);maker!="" {
+        t.for_device=fmt.aprintf("for_device_%s",t.field)
+        fmt.sbprintf(w,"%s :: proc(dst:rawptr,device:rawptr) {{(cast(^%s)dst)^=%s((cast(^gen_rhi.Device_Info)device)^)}}\n",t.for_device,type,maker)
+    }
+    Named :: struct {option,name:string,pair,result:bool}
+    named:=[5]Named{{"copy",t.copy=="false"?"":t.copy,true,true},{"copy_kept",t.copy_kept,true,true},{"swap",t.swap,true,false},{"free",t.free,false,false},{"reset",t.reset,false,false}}
+    list:=strings.builder_make()
+    for n in named {
+        if n.name=="" {continue}
+        if n.pair {
+            fmt.sbprintf(w,"%s_%s :: proc(a,b:rawptr)%s {{%s%s(cast(^%s)a,cast(^%s)b)}}\n",n.option,t.field,n.result?" -> bool":"",n.result?"return ":"",ref(t.pkg,n.name),type,type)
+        } else {
+            fmt.sbprintf(w,"%s_%s :: proc(value:rawptr) {{%s(cast(^%s)value)}}\n",n.option,t.field,ref(t.pkg,n.name),type)
+        }
+        fmt.sbprintf(&list,"%s%s=%s_%s",strings.builder_len(list)>0?",":"",n.option,n.option,t.field)
+    }
+    t.procs=strings.to_string(list)
+}
+
+// Whether the game of a project declares a type, not the engine or a plugin.
+@(private="file")
+of_game :: proc(t:^Type) -> bool {
+    return t.pkg!=nil && strings.has_prefix(t.pkg.path,"project:") && !strings.has_prefix(t.pkg.path,"project:plugins/")
+}
+
+// The row of info.tables of a table of a type, after type_procs_write: name,
+// what the scene file and the API call it; offset, where it is in the struct
+// of its place.
+@(private="file")
+table_row :: proc(w:^strings.Builder,index:int,t:^Type,name,offset:string,place:core.Place,game:bool,locks:string) {
+    type:=type_text(t)
+    fields:=len(t.fields)>0?fmt.tprintf("fields_%s[:]",t.field):"nil"
+    base:=t.pkg!=nil && t.pkg.path=="mirai:core" && t.file!=nil && !strings.has_suffix(t.file.fullpath,"_test.odin")
+    fmt.sbprintf(w,"    tables[%d]={{%q,%q,typeid_of(%s),type_info_of(%s),%s,.%v,%v,.%v,%v,%s,%q,%s,%v,%v,%v,%s,false}}\n",index,name,t.pkg!=nil?t.pkg.name:"",type,type,offset,place,t.shared,t.replication,game || of_game(t),t.default,t.description,fields,t.single,t.far,base,locks)
+}
+
+// The row of info.storages of a storage of a type, as table_row.
+@(private="file")
+storage_row :: proc(w:^strings.Builder,index:int,t:^Type,name,offset:string,place:core.Place,game:bool) {
+    type:=type_text(t)
+    fmt.sbprintf(w,"    storages[%d]={{%q,%q,typeid_of(%s),type_info_of(%s),%s,.%v,.%v,%s,%v,%s,%v,%v,%q,%v,%v,{{%s}},false}}\n",index,name,t.pkg!=nil?t.pkg.name:"",type,type,offset,place,t.setting,t.default,t.by_world,t.for_device,t.persist,t.keep,t.pkg!=nil?project.import_plugin(t.pkg.path):"",game || of_game(t),t.copy=="false",t.procs)
+}
+
+// A core.Lock: a row of the table at field own of a struct owns that of the
+// table at field target, which the World_Info names target_name.
+@(private="file")
+lock_text :: proc(struct_name,target,own:string,id:int,names,target_name:string) -> string {
+    return fmt.tprintf("{{int(offset_of(%s,%s))-int(offset_of(%s,%s)),%d,%s[:],%q}}",struct_name,target,struct_name,own,id,names,target_name)
+}
+
+// The file mirai writes in the folder of a package whose tests declare a
+// @(test_world): their World_Info and what makes a world of them.
+TEST_WORLDS_FILE :: "worlds_gen_test.odin"
+
+// A table or a storage a test world holds.
+@(private="file")
+Test_Field :: struct {
+    type:^Type,
+    name:string,   // of its table or storage in the World_Info
+    field:string,  // of the struct of its place, through its groups
+    offset:string, // in that struct
+    place:core.Place,
+    game:bool,
+}
+
+// A struct @(test_world) of a test file: the World of a test, declared by
+// hand, whose World_Info the generator writes as it writes that of a game.
+// It starts with `using world:Test_World` and each other field is a table,
+// core.Table(T), an array of them or a storage, a value; a field with using
+// is a group, the tables and storages a library gives the test worlds of
+// others together. host and editor name the structs of what the application
+// and the editor hold, where a by_world storage is a core.By_World(T). The
+// tag of a field takes `mirai:"game"`, the game of a project declares it, and
+// `mirai:"name=Spin"`, the name its table or storage goes by.
+@(private="file")
+Test_World :: struct {
+    name:string,
+    structs:[core.Place]string,
+    fields:[dynamic]Test_Field, // tables first, then storages, each as its struct declares them
+    tables:int,
+    headed:bool,
+}
+
+// Writes TEST_WORLDS_FILE in the folder of each package a build of tests
+// reads with its tests and whose tests declare a @(test_world), when its text
+// changed, and removes one left where none is declared now. starts: the
+// folders the build is given; the packages they import follow, those of the
+// engine and its plugins for a package of the engine (project_root ""),
+// those of the project for one of a project, whose engine libraries bring no
+// test. errors: what no World_Info can be written of, with how to fix it.
+test_worlds_write :: proc(engine_root,project_root:string,starts:[]string,allocator:=context.allocator) -> (errors:[]string) {
+    context.allocator=allocator
+    g:Generator
+    g.by_key=make(map[string]^Type)
+    g.engine_root,g.root=slashes(engine_root,allocator),slashes(project_root,allocator)
+    core_package:=test_package(&g,"mirai:core")
+    if core_package==nil {return g.errors[:]}
+    queue:=make([dynamic]^Package)
+    for start in starts {
+        folder:=slashes(project.path_absolute(start,context.temp_allocator),allocator)
+        path:string
+        for c in ([3][2]string{{"project",g.root},{"plugins",project.path(g.engine_root,"plugins",allocator=context.temp_allocator)},{"mirai",g.engine_root}}) {
+            root:=c[1]
+            if root=="" || len(folder)<=len(root) || folder[len(root)]!='/' || !project.path_same(folder[:len(root)],root) {continue}
+            path=fmt.aprintf("%s:%s",c[0],folder[len(root)+1:])
+            break
+        }
+        if pkg:=test_package(&g,path);pkg!=nil && !slice.contains(queue[:],pkg) {append(&queue,pkg)}
+    }
+    for at:=0;at<len(queue);at+=1 {
+        pkg:=queue[at]
+        for file in pkg.files {
+            for imp in file.imports {
+                path:=strings.trim(imp.relpath.text,"\"`")
+                if g.root!=""?!strings.has_prefix(path,"project:"):!strings.has_prefix(path,"mirai:") && !strings.has_prefix(path,"plugins:") {continue}
+                if next:=test_package(&g,path);next!=nil && !slice.contains(queue[:],next) {append(&queue,next)}
+            }
+        }
+    }
+    for pkg in queue {
+        file:=project.path(pkg.folder,TEST_WORLDS_FILE,allocator=context.temp_allocator)
+        worlds:=test_worlds_read(&g,pkg)
+        if len(worlds)==0 {
+            if os.is_file(file) {_=os.remove(file)}
+            continue
+        }
+        if len(g.errors)>0 {continue}
+        text:=test_worlds_text(&g,pkg,core_package,worlds)
+        if current,error:=os.read_entire_file(file,context.temp_allocator);error==nil && string(current)==text {continue}
+        if os.write_entire_file(file,text)!=nil {append(&g.errors,fmt.aprintf("%s: could not be written",file))}
+    }
+    return g.errors[:]
+}
+
+// The package at an import path of the engine, its plugins or the project,
+// read once with its tests; nil for another, or when it does not parse.
+@(private="file")
+test_package :: proc(g:^Generator,path:string) -> ^Package {
+    for pkg in g.packages {
+        if pkg.path==path {return len(pkg.files)>0?pkg:nil}
+    }
+    folder:string
+    switch {
+    case strings.has_prefix(path,"mirai:"):                 folder=project.path(g.engine_root,path[len("mirai:"):])
+    case strings.has_prefix(path,"plugins:"):               folder=project.path(g.engine_root,"plugins",path[len("plugins:"):])
+    case strings.has_prefix(path,"project:") && g.root!="": folder=project.path(g.root,path[len("project:"):])
+    case: return nil
+    }
+    pkg:=new(Package)
+    pkg.path,pkg.folder=path,folder
+    append(&g.packages,pkg)
+    if !os.is_dir(folder) || !package_sources(g,pkg,true) {return nil}
+    same:=0
+    for other in g.packages {
+        if other!=pkg && other.name==pkg.name {same+=1}
+    }
+    pkg.alias=same>0?fmt.aprintf("p_%s%d",pkg.name,same):fmt.aprintf("p_%s",pkg.name)
+    return pkg
+}
+
+// The declaration of a name at the top of the files of a package.
+@(private="file")
+decl_find :: proc(pkg:^Package,name:string) -> (file:^ast.File,decl:^ast.Value_Decl,found:bool) {
+    if pkg==nil {return}
+    for f in pkg.files {
+        for stmt in f.decls {
+            d,is_value:=stmt.derived.(^ast.Value_Decl)
+            if is_value && !d.is_mutable && len(d.names)==1 && len(d.values)==1 && ident_name(d.names[0])==name {return f,d,true}
+        }
+    }
+    return
+}
+
+// The structs @(test_world) the test files of a package declare, each with
+// its tables and storages.
+@(private="file")
+test_worlds_read :: proc(g:^Generator,pkg:^Package) -> []^Test_World {
+    worlds:=make([dynamic]^Test_World)
+    for file in pkg.files {
+        for stmt in file.decls {
+            decl,is_value:=stmt.derived.(^ast.Value_Decl)
+            if !is_value || len(decl.names)!=1 || len(decl.values)!=1 {continue}
+            options:=attributes_read(decl.attributes[:])
+            if "test_world" not_in options {continue}
+            tw:=new(Test_World)
+            tw.name=ident_name(decl.names[0])
+            where_:=fmt.aprintf("%s(%d): %s",file.fullpath,decl.pos.line,tw.name)
+            if !strings.has_suffix(file.fullpath,"_test.odin") {
+                append(&g.errors,fmt.aprintf("%s is a @(test_world) outside a test: declare it in a file _test.odin",where_))
+                continue
+            }
+            tw.structs={.World=tw.name,.Shared=options["host"] or_else "",.Editor=options["editor"] or_else ""}
+            storages:=make([dynamic]Test_Field)
+            for place in core.Place {
+                if tw.structs[place]=="" {continue}
+                record:^ast.Struct_Type
+                if _,held,found:=decl_find(pkg,tw.structs[place]);found {record,_=held.values[0].derived.(^ast.Struct_Type)}
+                if record==nil {
+                    append(&g.errors,fmt.aprintf("%s: %s is not a struct at the top of a file of its package: a test world, and what it names with host and editor, are structs of tables and storages a test file declares outside its procedures",where_,tw.structs[place]))
+                    continue
+                }
+                test_fields_read(g,tw,&storages,place,pkg,pkg,file,record)
+            }
+            if !tw.headed {append(&g.errors,fmt.aprintf("%s has no `using world:Test_World`: the entities and the revisions of the storages of a test world are in the header its package is given, which goes first",where_))}
+            tw.tables=len(tw.fields)
+            append(&tw.fields,..storages[:])
+            for f,i in tw.fields {
+                for other in tw.fields[:i] {
+                    if other.type.key==f.type.key && other.place==f.place && other.name==f.name {append(&g.errors,fmt.aprintf("%s holds %s twice: a World has one table of a component and one value of a storage; a second of one type takes another name with the tag `mirai:\"name=Other\"`",where_,f.name))}
+                }
+            }
+            append(&worlds,tw)
+        }
+    }
+    return worlds[:]
+}
+
+// The fields of a struct of a place of a test world, or of a group of it.
+// owner: the package of the world; pkg, file: where the struct is declared.
+@(private="file")
+test_fields_read :: proc(g:^Generator,tw:^Test_World,storages:^[dynamic]Test_Field,place:core.Place,owner,pkg:^Package,file:^ast.File,record:^ast.Struct_Type) {
+    for field in record.fields.list {
+        for n in field.names {
+            name:=ident_name(n)
+            if name=="_" {continue}
+            where_:=fmt.aprintf("%s(%d): %s of %s",file.fullpath,field.pos.line,name,tw.name)
+            if .Using in field.flags {
+                key:=type_key(g,file,pkg,field.type)
+                if key==fmt.tprintf("%s.Test_World",owner.path) && place==.World {
+                    tw.headed=true
+                    continue
+                }
+                dot:=max(strings.last_index_byte(key,'.'),0)
+                from:=test_package(g,key[:dot])
+                group_file,group,found:=decl_find(from,key[min(dot+1,len(key)):])
+                group_record:^ast.Struct_Type
+                if found {group_record,_=group.values[0].derived.(^ast.Struct_Type)}
+                if group_record==nil {
+                    append(&g.errors,fmt.aprintf("%s: a field with using is the header, `using world:Test_World` of its own package, or a group, a struct of tables and storages declared at the top of a file; %s is neither",where_,expr_text(file,field.type)))
+                    continue
+                }
+                test_fields_read(g,tw,storages,place,owner,from,group_file,group_record)
+                continue
+            }
+            tag:=reflect.Struct_Tag(strings.trim(field.tag.text,"`\""))
+            f:=Test_Field{field=name,place=place,offset=fmt.aprintf("offset_of(%s,%s)",tw.structs[place],name)}
+            _,f.game=core.field_option(tag,"game")
+            held,kind,by_world,count:=field.type,Kind.Storage,false,-1
+            if array,is_array:=held.derived.(^ast.Array_Type);is_array && array.len!=nil {
+                if call,is_call:=array.elem.derived.(^ast.Call_Expr);is_call && type_key(g,file,pkg,call.expr)=="mirai:core.Table" {
+                    lit,is_lit:=array.len.derived.(^ast.Basic_Lit)
+                    parsed:=false
+                    if is_lit {count,parsed=strconv.parse_int(lit.tok.text)}
+                    if !parsed || count<=0 {
+                        append(&g.errors,fmt.aprintf("%s: an array of tables says how many as a number, as in [3]core.Table(T): each is a table of its own, named after its type and its index",where_))
+                        continue
+                    }
+                    held=array.elem
+                }
+            }
+            if call,is_call:=held.derived.(^ast.Call_Expr);is_call && len(call.args)>0 {
+                switch type_key(g,file,pkg,call.expr) {
+                case "mirai:core.Table":    held,kind=call.args[0],.Component
+                case "mirai:core.By_World": held,by_world=call.args[0],true
+                }
+            }
+            if kind==.Component && place==.Shared || by_world && place!=.Shared {
+                append(&g.errors,fmt.aprintf("%s: a table goes in the World or in the struct editor names, and a core.By_World in the struct host names",where_))
+                continue
+            }
+            f.type=test_type_read(g,file,pkg,held,kind,where_)
+            if f.type==nil {continue}
+            t:=f.type
+            if t.pkg==nil {
+                t.name=name
+                t.key=fmt.aprintf("type_of(%s{{}}.%s%s%s)",tw.structs[place],name,count>0?"[0]":"",kind==.Component?".values[0]":"")
+            } else if t.file!=nil {
+                switch {
+                case t.kind!=kind:
+                    append(&g.errors,fmt.aprintf("%s: %s is a %s: a test world holds it as %s",where_,t.name,t.kind==.Component?"@(component)":"@(storage)",t.kind==.Component?fmt.tprintf("core.Table(%s)",t.name):"a value"))
+                    continue
+                case kind==.Storage && t.by_world!=by_world:
+                    append(&g.errors,fmt.aprintf("%s: %s is %sby_world: the struct host names holds it as %s",where_,t.name,t.by_world?"":"not ",t.by_world?fmt.tprintf("core.By_World(%s)",t.name):"a value"))
+                    continue
+                case kind==.Storage && t.host!=(place==.Shared):
+                    append(&g.errors,fmt.aprintf("%s: %s is %s: it goes in %s",where_,t.name,t.host?"@(storage,host)":"not @(storage,host)",t.host?"the struct the world names with host":"the World, or in the struct it names with editor"))
+                    continue
+                }
+            }
+            f.name=t.name
+            if renamed,has:=core.field_option(tag,"name");has {f.name=renamed}
+            if kind==.Storage {
+                append(storages,f)
+                continue
+            }
+            for k in 0..<max(count,1) {
+                if count>0 {
+                    f.name=fmt.aprintf("%s_%d",t.name,k)
+                    f.offset=fmt.aprintf("offset_of(%s,%s)+%d*size_of(%s{{}}.%s[0])",tw.structs[place],name,k,tw.structs[place],name)
+                }
+                append(&tw.fields,f)
+            }
+        }
+    }
+}
+
+// The type a field of a test world holds a table or a value of: a @(component)
+// or a @(storage) of the package that declares it, read as the generator
+// reads those of a game; a type a test file declares without attributes, a
+// plain component or storage; or a type no declaration at the top of a file
+// names (u32, [dynamic]u32), which has no package. nil, with the error said,
+// for another.
+@(private="file")
+test_type_read :: proc(g:^Generator,file:^ast.File,pkg:^Package,expr:^ast.Expr,kind:Kind,where_:string) -> ^Type {
+    key:=type_key(g,file,pkg,expr)
+    if t,read:=g.by_key[key];read {return t}
+    dot:=max(strings.last_index_byte(key,'.'),0)
+    name:=key[min(dot+1,len(key)):]
+    from:=test_package(g,key[:dot])
+    declared_file,decl,found:=decl_find(from,name)
+    if !found {
+        if _,is_selector:=expr.derived.(^ast.Selector_Expr);is_selector {
+            append(&g.errors,fmt.aprintf("%s: %s is not declared at the top of a file of a package of the engine, its plugins or the project",where_,expr_text(file,expr)))
+            return nil
+        }
+        t:=new(Type)
+        t.kind,t.default,t.for_device=kind,"nil","nil"
+        return t
+    }
+    options:=attributes_read(decl.attributes[:])
+    _,is_component:=options["component"]
+    _,is_storage:=options["storage"]
+    t:^Type
+    switch {
+    case is_component || is_storage:
+        t=type_read(g,declared_file,from,decl,name,options,false)
+        if t==nil {return nil}
+    case strings.has_suffix(declared_file.fullpath,"_test.odin"):
+        t=new(Type)
+        t.name,t.pkg,t.key,t.kind=name,from,key,kind
+    case:
+        append(&g.errors,fmt.aprintf("%s: %s is not a @(component) or a @(storage): a test world holds what a generated one would, or a type a test file declares",where_,expr_text(file,expr)))
+        return nil
+    }
+    g.by_key[key]=t
+    return t
+}
+
+// The text of TEST_WORLDS_FILE of a package: the header of its test worlds,
+// the World_Info of each and the procedures that make a world of one.
+@(private="file")
+test_worlds_text :: proc(g:^Generator,pkg,core_package:^Package,worlds:[]^Test_World) -> string {
+    b:=strings.builder_make()
+    w:=&b
+    alias:=pkg.alias
+    pkg.alias=""
+    defer pkg.alias=alias
+    c:=core_package==pkg?"":fmt.tprintf("%s.",core_package.alias)
+    types:=make([dynamic]^Type,context.temp_allocator)
+    imported:=make([dynamic]^Package,context.temp_allocator)
+    if core_package!=pkg {append(&imported,core_package)}
+    device,revisions:=false,0
+    for tw in worlds {
+        revisions=max(revisions,len(tw.fields)-tw.tables)
+        for f in tw.fields {
+            t:=f.type
+            if t.pkg==nil || slice.contains(types[:],t) {continue}
+            append(&types,t)
+            t.field=fmt.aprintf("test_world_%s%s%s",t.pkg.alias,t.pkg.alias!=""?"_":"",snake(t.name))
+            device||=t.kind==.Storage && for_device_value(t)!=""
+            if t.pkg!=pkg && !slice.contains(imported[:],t.pkg) {append(&imported,t.pkg)}
+        }
+    }
+    fmt.sbprintf(w,"// Generated by mirai. Do not edit.\npackage %s\n\nimport \"core:testing\"\n",pkg.name)
+    for other in imported {fmt.sbprintf(w,"import %s \"%s\"\n",other.alias,other.path)}
+    if device {fmt.sbprint(w,"import gen_rhi \"mirai:rhi\"\n")}
+    template,_:=strings.replace_all(TEST_WORLDS_TEMPLATE,"C.",c,context.temp_allocator)
+    template,_=strings.replace_all(template,"[N]",fmt.tprintf("[%d]",revisions),context.temp_allocator)
+    strings.write_string(w,template)
+    for t in types {type_procs_write(w,t,c)}
+    for tw in worlds {
+        id:=snake(tw.name)
+        holders:=make([dynamic]int,context.temp_allocator)
+        for f,i in tw.fields[:tw.tables] {
+            if f.place==.World && len(f.type.locks)>0 {append(&holders,i)}
+        }
+        if len(holders)>0 {
+            fmt.sbprintf(w,"@(rodata) test_world_lock_names_%s:=[?]string{{\"\"",id)
+            for i in holders {fmt.sbprintf(w,",\"%s.%s\"",tw.fields[i].type.pkg.name,tw.fields[i].name)}
+            fmt.sbprint(w,"}\n")
+        }
+        fmt.sbprintf(w,"@(private=\"file\")\ntest_info_%s :: proc(allocator:=context.allocator) -> (info:%sWorld_Info,ok:bool) {{\n    context.allocator=allocator\n",id,c)
+        fmt.sbprintf(w,"    tables,tables_error:=make([]%sTable_Info,%d)\n    storages,storages_error:=make([]%sStorage_Info,%d)\n",c,tw.tables,c,len(tw.fields)-tw.tables)
+        fmt.sbprint(w,"    if tables_error!=nil || storages_error!=nil {\n        delete(tables);delete(storages)\n        return\n    }\n")
+        for f,i in tw.fields {
+            if i>=tw.tables {
+                storage_row(w,i-tw.tables,f.type,f.name,f.offset,f.place,f.game)
+                continue
+            }
+            locks:="nil"
+            if holder,holds:=slice.linear_search(holders[:],i);holds {
+                // A test world holds some of the tables of a game: a lock on one it lacks owns nothing.
+                targets:=make([dynamic]Test_Field,context.temp_allocator)
+                for key in f.type.locks {
+                    for other in tw.fields[:tw.tables] {
+                        if other.place==.World && other.type.key==key {append(&targets,other)}
+                    }
+                }
+                locks=fmt.tprintf("locks_%d",i)
+                fmt.sbprintf(w,"    %s:=make([]%sLock,%d)\n",locks,c,len(targets))
+                for target,li in targets {
+                    fmt.sbprintf(w,"    %s[%d]={{int(%s)-int(%s),%d,test_world_lock_names_%s[:],%q}}\n",locks,li,target.offset,f.offset,holder+1,id,target.name)
+                }
+            }
+            table_row(w,i,f.type,f.name,f.offset,f.place,f.game,locks)
+        }
+        fmt.sbprint(w,"    info.sizes,info.aligns={.World=")
+        for place in core.Place {
+            name:=tw.structs[place]
+            if place!=.World {fmt.sbprintf(w,",.%v=",place)}
+            fmt.sbprint(w,name!=""?fmt.tprintf("size_of(%s)",name):"1")
+        }
+        fmt.sbprint(w,"},{.World=")
+        for place in core.Place {
+            name:=tw.structs[place]
+            if place!=.World {fmt.sbprintf(w,",.%v=",place)}
+            fmt.sbprint(w,name!=""?fmt.tprintf("align_of(%s)",name):"1")
+        }
+        fmt.sbprintf(w,"}}\n    info.entities,info.revisions=offset_of(%s,entities),offset_of(%s,storage_revisions)\n",tw.name,tw.name)
+        fmt.sbprintf(w,"    info.tables,info.storages=tables,storages\n    %sworld_info_index(&info)\n    return info,true\n}}\n\n",c)
+    }
+    fmt.sbprintf(w,"// The World_Info of a @(test_world) of this package, which says of its tables\n// and storages what that of a game says: test_info_destroy frees it.\ntest_info :: proc(t:^testing.T,$W:typeid,allocator:=context.allocator,loc:=#caller_location) -> (info:%sWorld_Info,ok:bool) {{\n",c)
+    for tw,i in worlds {fmt.sbprintf(w,"    %swhen W==%s {{info,ok=test_info_%s(allocator)}}\n",i>0?"else ":"",tw.name,snake(tw.name))}
+    fmt.sbprintf(w,"    else {{#panic(\"test_info: W is not a @(test_world) of the tests of %s; mark its struct, at the top of a test file of this package, with @(test_world)\")}}\n",pkg.name)
+    fmt.sbprint(w,"    testing.expect(t,ok,\"no memory for the World_Info of a test world\",loc=loc)\n    return\n}\n")
+    return strings.to_string(b)
+}
+
+// What TEST_WORLDS_FILE gives the tests of a package besides the World_Info
+// of each world; C. is core, and N the storages of the world with the most.
+@(private="file")
+TEST_WORLDS_TEMPLATE :: `
+// What a @(test_world) starts with: its entities, the revisions of its
+// storages and, in a world test_world_init made, its World_Info.
+Test_World :: struct {
+    entities:C.Entities,
+    storage_revisions:[N]u64,
+    info:C.World_Info,
+}
+
+// Indexes a World_Info again after the test gave it names, records or name
+// bits, which its schema holds.
+test_info_index :: proc(info:^C.World_Info,allocator:=context.allocator) {
+    C.world_schema_destroy(info.schema)
+    delete(info.tables_by_type);delete(info.storages_by_type)
+    info.schema,info.tables_by_type,info.storages_by_type=nil,nil,nil
+    C.world_info_index(info,allocator)
+}
+
+test_info_destroy :: proc(info:^C.World_Info,allocator:=context.allocator) {
+    C.world_schema_destroy(info.schema)
+    delete(info.tables_by_type);delete(info.storages_by_type)
+    for table in info.tables {delete(table.locks,allocator)}
+    delete(info.tables,allocator);delete(info.storages,allocator)
+    info^={}
+}
+
+// Makes a world that holds its own World_Info, for a test that needs no
+// application: test_world_destroy frees both. False, with the test failed,
+// without memory.
+test_world_init :: proc(t:^testing.T,w:^$W,allocator:=context.allocator,loc:=#caller_location) -> bool {
+    w.info=test_info(t,W,allocator,loc) or_return
+    if C.world_init(&w.info,.World,w,allocator) {return true}
+    test_world_destroy(w,allocator)
+    return testing.expect(t,false,"no memory for a test world",loc=loc)
+}
+
+test_world_destroy :: proc(w:^$W,allocator:=context.allocator) {
+    if w.info.sizes[.World]==0 {return}
+    C.world_destroy(&w.info,.World,w)
+    test_info_destroy(&w.info,allocator)
+}
+
+test_world_info :: proc(w:^$W) -> ^C.World_Info {return &w.info}
+
+test_world_ref :: proc(w:^$W) -> C.World_Ref {return {w,&w.info,.World}}
+
+// The settle of a world test_world_init made: how many tables it came to.
+test_world_settle :: proc(w:^$W) -> int {return C.settle(&w.info,w,nil)}
+
+test_world_copy :: proc(dst,src:^$W) -> bool {return C.world_copy(&src.info,dst,src)}
+
+test_world_copy_changed :: proc(dst,src:^$W,marks:[]C.Copy_Mark) -> bool {return C.world_copy_changed(&src.info,dst,src,marks)}
+
+test_world_swap :: proc(a,b:^$W) {C.world_swap(&a.info,a,b)}
+
+test_world_clear :: proc(w:^$W) -> bool {return C.world_clear(&w.info,w)}
+
+`
+
 // The type of an arg of a step as the generated world writes it; "" for a
 // part of the application, which a mind does not receive.
 @(private="file")
@@ -2456,8 +2963,8 @@ default_value :: proc(t:^Type) -> (value:string,found:bool) {
     buffer:[512]u8
     constant,maker,_:=core.default_names(t.name,buffer[:])
     switch {
-    case t.pkg.names[constant]: return fmt.aprintf("%s.%s",t.pkg.alias,constant),true
-    case t.pkg.names[maker]:    return fmt.aprintf("%s.%s()",t.pkg.alias,maker),true
+    case t.pkg.names[constant]: return ref(t.pkg,constant),true
+    case t.pkg.names[maker]:    return fmt.aprintf("%s()",ref(t.pkg,maker)),true
     }
     return "",false
 }
@@ -2487,7 +2994,7 @@ actions_defaults_value :: proc(a:^Action_Enum) -> (value:string,found:bool) {
 for_device_value :: proc(t:^Type) -> string {
     buffer:[512]u8
     _,_,maker:=core.default_names(t.name,buffer[:])
-    return t.pkg.names[maker]?fmt.aprintf("%s.%s",t.pkg.alias,maker):""
+    return t.pkg.names[maker]?ref(t.pkg,maker):""
 }
 
 // The options of the attributes of a declaration: name, or name="value", or name=number.

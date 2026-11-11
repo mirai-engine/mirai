@@ -115,6 +115,8 @@ cmd_test :: proc(root:string,args:[]string) -> int {
             continue
         }
         builds[i]=build.test_build_plan(root,compiler,p.folder,test_executable(root,p),package_flags)
+        // What it compiles reads the test worlds of the package and of those it imports.
+        if len(builds[i].command)>0 && !test_worlds(root,p.folder) {builds[i].failure=.Generate}
     }
     test_builds_run(root,packages[:],builds,&times)
     times.build+=time.tick_since(prepared)
