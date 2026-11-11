@@ -825,15 +825,20 @@ a_blended_sample_plays_its_clips_together_at_its_weights_in_phase :: proc(t:^tes
     foot:=f.state.local[bone_resolve(f.state,bone_ref("foot_l"))].position
     testing.expectf(t,linalg.length(foot-mm.Vec3{.1,(stride.y-.95)/2,stride.z/2})<.01,"the foot is at %v, halfway to the stride %v",foot,stride)
 
-    // A blend of clips that last different times says which and how to fix it.
+    // Clips of different durations blend over the mean of their durations by weight: walk (1 s)
+    // and vault (2 s), half and half, last 1.5 s, and each plays at the same share of its own.
     g:Match_Fixture;defer match_fixture_free(&g)
     if !testing.expect(t,match_fixture(t,&g)) {return}
     base.text_set(g.graphs.contents[0].set.match.clips[1].blend[0][:],"vault")
     long:=make([]Match_Sample,1);long[0]={source=1,weights={0=.5,1=.5}}
     g.graphs.contents[0].set.match.samples=long
-    _=match_step(&g,dt,GROUND)
-    problem:=core.problem_find(&g.problems,g.rig,"animation.match_blend")
-    testing.expect(t,problem!=nil && strings.contains(core.problem_text(problem),"walk (1.000 s) with vault (2.000 s)"),"a blend of a clip of 1 s and one of 2 s is reported")
+    for _ in 0..<30 {testing.expect(t,match_step(&g,dt,GROUND,velocity={0,0,-.75},desired={0,0,-.75}))}
+    testing.expect(t,core.problem_find(&g.problems,g.rig,"animation.match_blend")==nil && g.graphs.contents[0].databases[0].database.ranges[1].count==46,"the blend has the rows of 1.5 s")
+    mixed:=g.state.program.output.groups[0]
+    if !testing.expectf(t,mixed.count==2,"the blend of walk and vault plays, not %d clips",mixed.count) {return}
+    walked,vaulted:=g.state.program.players[mixed.leaves[0].player].player,g.state.program.players[mixed.leaves[1].player].player
+    shares:=[2]f32{lib.player_time(&g.content.lib,walked),lib.player_time(&g.content.lib,vaulted)/2}
+    testing.expectf(t,abs(shares[0]-shares[1])<1e-3,"in phase: %v of each clip",shares)
 }
 
 // A source with rates of its own follows the body between them, past those of the .character: the walk

@@ -55,10 +55,10 @@ MATCH_SAMPLES :: 128
 // one of them, searched from its start when the body enters the mode.
 // speed, when positive, is the m/s the clip travels at instead of the one measured from its feet.
 // With blend (the names of up to MATCH_BLEND-1 other clips of its library, the first empty one
-// ends them), the source is a blend: its clip and those loop, last the same within a row and are
-// in phase (the same share of each is the same moment of the step), and each Match_Sample of it is
-// searched as a clip of its own, measured from their pose blended at its weights, and played as
-// those clips together at its weights. A blend loops, is no entry and takes its speeds per sample.
+// ends them), the source is a blend: its clip and those loop and are in phase (the same share of
+// each is the same moment of the step), and each Match_Sample of it is searched as a clip of its
+// own, measured from their pose blended at its weights over the mean of their durations by
+// weight, and played as those clips together at its weights. A blend loops, is no entry and takes its speeds per sample.
 // min_rate and max_rate, when positive, replace those of the .character for it and its samples: a set
 // authored slower than the body moves in it (a crouch), or a jog kept from beating a sprint.
 Match_Source :: struct {clip:[64]u8 `mirai:"text"`,animation:base.Asset_Id,modes:u32,loop,entry:bool,speed:f32 `mirai:"unit=m/s"`,blend:[MATCH_BLEND-1][64]u8 `mirai:"text"`,min_rate,max_rate:f32}
@@ -110,10 +110,9 @@ match_check :: proc(profile:Match_Profile) -> bool {
     }
     return true
 }
-// What makes a blended source unplayable with a library: a clip it does not have, or two clips
-// of a source (member 0 and member) that last more than a row of the database apart.
+// What makes a blended source unplayable with a library: a clip (its member) it does not have.
 @(private)
-Match_Blend_Fault :: struct {kind:enum u8 {None,Missing,Duration},source,member:i32,durations:[2]f32}
+Match_Blend_Fault :: struct {kind:enum u8 {None,Missing},source,member:i32}
 // What the body does and is asked to do in this tick, for a rig that plays the locomotion of a .character: mode is its
 // locomotion mode; velocity, where it goes; desired, the velocity its walk heads to at
 // acceleration (braking toward zero); facing, where it turns to at turn_rate rad/s (0: at once);
@@ -264,11 +263,6 @@ match_database :: proc(content:^Character_Content,library:^host.Content_Animatio
                 break
             }
             handles[k]=handle+lib.Clip(library.clip_count if clip.loop else 0)
-            duration:=lib.clip_duration(&library.lib,handle)
-            if k>0 && abs(duration-lib.clip_duration(&library.lib,handles[0]))>1/info.rate {
-                found=false;built.fault={kind=.Duration,source=i32(i),member=i32(k),durations={lib.clip_duration(&library.lib,handles[0]),duration}}
-                break
-            }
         }
         if !found {break}
         rates:=[2]f32{clip.min_rate,clip.max_rate}
@@ -330,7 +324,6 @@ match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Co
         case .Invalid:
             switch fault.kind {
             case .Missing: core.report(problems,state.entity,"animation.match_blend","%s blends %s with %s, a clip its library does not have; name in blend clips of its library (animation.inspect lists them)",path,names[0],names[fault.member])
-            case .Duration: core.report(problems,state.entity,"animation.match_blend","%s blends %s (%.3f s) with %s (%.3f s), but the clips of a blend last the same within a row of its rate (%.3f s); blend clips of one duration, or retime one with animation.clip.edit",path,names[0],fault.durations[0],names[fault.member],fault.durations[1],1/info.rate)
             case .None: core.report(problems,state.entity,"animation.match_database","%s cannot match on this rig: its left_foot, right_foot or hips is not a bone of this skeleton, or a clip of it is missing, lasts a single pose or does not move the skeleton; name bones of the skeleton (animation.asset.inspect lists them), and give it clips of the library that move",path)
             }
         }
@@ -389,7 +382,10 @@ match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Co
         if has_goal && mode!=m.mode && playing>=0 && db.ranges[playing].modes&bit==0 && lib.match_event_ahead(db,playing,0)>=0 && ahead<=dt*m.rate+.5/db.rate {m.phase,m.mode=.Landed,mode}
         entering:=has_goal && mode!=m.mode && m.clip!=0 && lib.match_serves(db,bit,true)
         current:=playing if playing>=0 && (db.ranges[playing].modes&bit!=0 || m.phase==.Landed) else -1
-        row:=lib.match_row(db,current,state.time) if current>=0 else -1
+        // A blended sample is at the share of its clips its leaves are at.
+        time:=state.time
+        if current>=0 && db.ranges[current].weights!={0=1} && state.duration>0 {time*=f32(db.ranges[current].count-1)/(db.rate*state.duration)}
+        row:=lib.match_row(db,current,time) if current>=0 else -1
         // A clip that does not loop is left once it ends or nears its end, before the trajectory runs
         // past it: its own pose would win every search from there, frozen. One toward its landing
         // marker, or on from it, is left when it ends.
@@ -519,9 +515,11 @@ match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Co
     if db!=nil && m.range>=0 && int(m.range)<len(db.ranges) && db.ranges[m.range].weights!={0=1} {
         r:=db.ranges[m.range]
         group.count,group.mode=0,.Weighted
+        // Each clip starts at the share of its own duration the row is at.
+        share:=max(start,0)*db.rate/f32(r.count-1)
         for clip,k in r.clips {
             if r.weights[k]<=0 {continue}
-            group.leaves[group.count]={clip=lib.clip_data(&library.lib,clip).name,key=u32(k)+1,weight=r.weights[k],speed=m.rate,loop=true,sync=true,start=max(start,0)}
+            group.leaves[group.count]={clip=lib.clip_data(&library.lib,clip).name,key=u32(k)+1,weight=r.weights[k],speed=m.rate,loop=true,sync=true,start=share*lib.clip_duration(&library.lib,clip)}
             group.count+=1
         }
     }

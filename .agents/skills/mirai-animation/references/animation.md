@@ -139,13 +139,13 @@ The match of the set (`Match_Profile`):
   a mode (jump, landing), the `entry` mark. An entry clip does not loop. `speed`, when positive, is
   the one the clip travels at instead of the one measured from its feet.
 - A source with `blend` is a blend (the motion matching form of a sampled blend space): its clip and
-  up to three more loop, last the same within a row and are in phase. Each `Match_Sample` of it
+  those of `blend` loop and are in phase, whatever their durations. Each `Match_Sample` of it
   (weights per clip, as shares of their sum, and an optional `speed`) is a range of rows of its own,
-  measured from the pose the program blends of those clips at its weights; when the search picks
-  one, the program plays those clips together, synchronized in a `Weighted` group at its weights
-  and the rate of matching. Jumps between samples or clips are ordinary transitions. A blend that
-  names a clip the library lacks, or clips of different durations, is the problem
-  `animation.match_blend` with the clips and their durations.
+  measured from the pose the program blends of those clips at its weights over the mean of their
+  durations by weight; when the search picks one, the program plays those clips together,
+  synchronized in a `Weighted` group at its weights and the rate of matching, each at the same
+  share of its own duration. Jumps between samples or clips are ordinary transitions. A blend that
+  names a clip the library lacks is the problem `animation.match_blend` with the clip.
 - The feature database (`std/anim/matching.odin`: feet, hips, the velocity of the body, where it was
   1/3 s before and the trajectory at 1/3, 2/3 and 1 s in the frame of the character, normalized per
   type) is built at load, the first time a rig of that skeleton asks for it, per library and

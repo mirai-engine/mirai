@@ -76,8 +76,8 @@ MATCH_BLEND :: 8
 
 // A clip in the database, or a sample of a blend: clips[0] alone (no weights, or only weights[0]),
 // or the clips with a weight above zero mixed in phase at their share of the sum of the weights,
-// as the program mixes the leaves of a group. The clips of a blend loop and last the same within a
-// row; each frame of the sample is the blended pose at that share of the duration of each clip.
+// as the program mixes the leaves of a group. The clips of a blend loop; the sample lasts the mean
+// of their durations by weight, and each frame of it is the blended pose at the same share of each.
 // modes is the set of locomotion modes it serves, bit m for mode m; an entry clip starts one of
 // them (a jump, a landing): it is searched only from its start, when the body enters the mode.
 // speed, when positive, is the m/s it travels at instead of the one measured: an in-place clip
@@ -138,7 +138,7 @@ match_database_bytes :: proc "contextless" (rows,ranges:int,events:=false) -> in
 // of each marker of an event (a landing; each clip names it with one of its own; empty: none):
 // when a clip that is not a blend has one, each row keeps the
 // seconds to the next one of its clip. A clip that does not move the skeleton or lasts a single
-// pose, a blend match_clip_duration refuses, or a rig without feet and hips gives Invalid; db is
+// pose, a blend whose clips do not loop, or a rig without feet and hips gives Invalid; db is
 // empty after an error.
 match_database_build :: proc(db:^Match_Database,lib:^Library,rig:Match_Rig,clips:[]Match_Clip,rate:f32,weights:=MATCH_WEIGHTS_DEFAULT,limit:=0,event:[]u32={},allocator:=context.allocator) -> (error:Match_Build_Error) {
     match_database_free(db)
@@ -152,7 +152,7 @@ match_database_build :: proc(db:^Match_Database,lib:^Library,rig:Match_Rig,clips
     events,blended_any:=false,false
     for c in clips {
         if !anim_finite(c.speed) || c.speed<0 || !match_rates_valid(c.rates) {return}
-        duration,blended,valid:=match_clip_duration(lib,c,rate)
+        duration,blended,valid:=match_clip_duration(lib,c)
         if !valid {return}
         count,_:=frames_layout(duration,rate,MAX_FRAMES)
         if count<2 {return}
@@ -188,7 +188,7 @@ match_database_build :: proc(db:^Match_Database,lib:^Library,rig:Match_Rig,clips
     body_rig:=Body_Rig{parents=skeleton.parents,rest=rest,body=rig.body,root=-1}
     row:=0
     for c,i in clips {
-        duration,blended,_:=match_clip_duration(lib,c,rate)
+        duration,blended,_:=match_clip_duration(lib,c)
         count,exact:=frames_layout(duration,rate,MAX_FRAMES)
         first:=0
         for w,k in c.weights {if w>0 {first=k;break}}
@@ -727,24 +727,25 @@ match_trajectory :: proc "contextless" (velocity,desired:math.Vec3,acceleration,
     return
 }
 
-// How long a clip or a blended sample lasts (that of its first clip with a weight) and whether it
-// blends. False for a clip that is not valid, a weight that is not finite in 0..1, or a blend
-// whose clips do not all loop or last more than a row of rate apart.
-match_clip_duration :: proc "contextless" (lib:^Library,c:Match_Clip,rate:f32) -> (duration:f32,blended,ok:bool) {
+// How long a clip or a blended sample lasts and whether it blends: a blend lasts the mean of the
+// durations of its clips by their weights, as the program plays them in a Weighted group. False
+// for a clip that is not valid, a weight that is not finite in 0..1, or a blend whose clips do not
+// all loop.
+match_clip_duration :: proc "contextless" (lib:^Library,c:Match_Clip) -> (duration:f32,blended,ok:bool) {
     members,first:=0,-1
+    sum:f32
     for w,k in c.weights {
         if !anim_finite(w) || w<0 || w>1 {return}
-        if w>0 {members+=1;if first<0 {first=k}}
+        if w>0 {members+=1;sum+=w;if first<0 {first=k}}
     }
     if first<=0 && members<=1 {
         if !clip_valid(lib,c.clips[0]) {return}
         return clip_duration(lib,c.clips[0]),false,true
     }
-    if !anim_finite(rate) || rate<=0 || !clip_valid(lib,c.clips[first]) {return}
-    duration=clip_duration(lib,c.clips[first])
     for clip,k in c.clips {
         if c.weights[k]<=0 {continue}
-        if !clip_valid(lib,clip) || clip_data(lib,clip).loop!=.Loop || abs(clip_duration(lib,clip)-duration)>1/rate {return}
+        if !clip_valid(lib,clip) || clip_data(lib,clip).loop!=.Loop {return}
+        duration+=clip_duration(lib,clip)*c.weights[k]/sum
     }
     return duration,true,true
 }

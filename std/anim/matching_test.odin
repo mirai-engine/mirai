@@ -136,11 +136,8 @@ match_database_finds_each_frame_by_its_features_and_the_clip_a_trajectory_asks_f
     names:=rig.skeleton.names
     half_left:=[4]Keyframe{{time=0,value={.1,-.95,-.1875,0}},{time=.5,value={.1,-.95,.1875,0}},{time=.75,value={.1,-.875,0,0}},{time=1,value={.1,-.95,-.1875,0}}}
     half_right:=[4]Keyframe{{time=0,value={-.1,-.95,.1875,0}},{time=.25,value={-.1,-.875,0,0}},{time=.5,value={-.1,-.95,-.1875,0}},{time=1,value={-.1,-.95,.1875,0}}}
-    still:=[2]Keyframe{{time=0,value={.1,-.95,0,0}},{time=.5,value={.1,-.95,0,0}}}
-    other:=[2]Keyframe{{time=0,value={-.1,-.95,0,0}},{time=.5,value={-.1,-.95,0,0}}}
     halfway,e0:=clip_add(&library,{name=base.name_hash("halfway"),loop=.Loop,tracks={{target=names[2],property=.Position,keys=half_left[:]},{target=names[3],property=.Position,keys=half_right[:]}}})
-    short,e1:=clip_add(&library,{name=base.name_hash("short"),loop=.Loop,tracks={{target=names[2],property=.Position,keys=still[:]},{target=names[3],property=.Position,keys=other[:]}}})
-    if !testing.expect(t,e0==.None && e1==.None) {return}
+    if !testing.expect(t,e0==.None) {return}
     blend:=Match_Clip{clips={0=clips[0].clips[0],1=clips[1].clips[0]},weights={0=.25,1=.25},modes=1<<1}
     measured:=[5]Match_Clip{clips[0],clips[1],clips[2],blend,{clips={0=halfway},modes=1<<1}}
     if testing.expect(t,match_database_build(&db,&library,rig,measured[:],30,weights)==.None) {
@@ -153,13 +150,32 @@ match_database_finds_each_frame_by_its_features_and_the_clip_a_trajectory_asks_f
             testing.expectf(t,largest<1e-3,"row %d of the blend is that of the blended pose, off by %v",k,largest)
         }
     }
-    // A blend whose clips last different times, one that does not loop, or a weight out of 0..1.
-    unequal:=blend;unequal.clips[1]=short
+    // The walk retimed to 1.1 s and to 0.8 s, blended half and half, lasts 0.95 s with its feet in
+    // phase: its rows are those of the walk retimed to 0.95 s.
+    paced:[3]Clip
+    for duration,i in ([3]f32{1.1,.8,.95}) {
+        l:=[4]Keyframe{{time=0,value={.1,-.95,-.375,0}},{time=.5*duration,value={.1,-.95,.375,0}},{time=.75*duration,value={.1,-.8,0,0}},{time=duration,value={.1,-.95,-.375,0}}}
+        r:=[4]Keyframe{{time=0,value={-.1,-.95,.375,0}},{time=.25*duration,value={-.1,-.8,0,0}},{time=.5*duration,value={-.1,-.95,-.375,0}},{time=duration,value={-.1,-.95,.375,0}}}
+        error:Clip_Error
+        paced[i],error=clip_add(&library,{name=base.name_hash("paced")+u64(i),loop=.Loop,tracks={{target=names[2],property=.Position,keys=l[:]},{target=names[3],property=.Position,keys=r[:]}}})
+        if !testing.expect(t,error==.None) {return}
+    }
+    mixed:=[3]Match_Clip{clips[0],{clips={0=paced[0],1=paced[1]},weights={0=.5,1=.5},modes=1<<1},{clips={0=paced[2]},modes=1<<1}}
+    if testing.expect(t,match_database_build(&db,&library,rig,mixed[:],30,weights)==.None) {
+        a,b:=db.ranges[1],db.ranges[2]
+        largest:f32
+        for k in 0..<int(min(a.count,b.count)) {
+            difference:=match_features(&db,int(a.first)+k)-match_features(&db,int(b.first)+k)
+            for lane in difference {for v in simd.to_array(lane) {largest=max(largest,abs(v))}}
+        }
+        testing.expectf(t,a.count==b.count && largest<1e-3,"a blend of 1.1 s and 0.8 s has the %d rows of 0.95 s, not %d, off by %v",b.count,a.count,largest)
+    }
+    // A blend of a clip that does not loop, or a weight out of 0..1.
     once:=blend;once.clips[1]=clips[1].clips[0];data:=&library.clips[clips[1].clips[0]-1];data.loop=.Once
-    for refused,i in ([3]Match_Clip{unequal,once,{clips=blend.clips,weights={0=1.5,1=.5},modes=1<<1}}) {
+    for refused,i in ([2]Match_Clip{once,{clips=blend.clips,weights={0=1.5,1=.5},modes=1<<1}}) {
         attempt:=[2]Match_Clip{clips[0],refused}
         testing.expectf(t,match_database_build(&db,&library,rig,attempt[:],30,weights)==.Invalid,"blend %d is refused",i)
-        if i==1 {data.loop=.Loop}
+        if i==0 {data.loop=.Loop}
     }
 }
 
