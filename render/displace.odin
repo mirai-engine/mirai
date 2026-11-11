@@ -258,7 +258,7 @@ displaced_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
 			if next == max(u32) {break}
 			last = next
 			program := program_of_id(r, next)
-			pipeline := program_compute(r, &r.vertex_stages, program^, "surface_vertices", "surface vertices")
+			pipeline := program_compute(r, &r.vertex_stages, program^, "surface_vertices")
 			if pipeline == 0 {written = false; continue}
 			if !begun {
 				begun = true

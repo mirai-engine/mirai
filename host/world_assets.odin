@@ -12,14 +12,12 @@ import "mirai:std/serial"
 // found by the type of each field, so the components of plugins and of the
 // game count like those of the engine: in structs, arrays, enumerated arrays,
 // slices and dynamic arrays; not behind pointers nor in maps. With shared and
-// the id of the World, also its values of the by_world storages. With owned,
-// only those of fields tagged `mirai:"owned"` (or inside one): assets the
-// scene makes and saves with it, as the .navmesh of its navigation.
-world_asset_ids :: proc(w:core.World_Ref,ids:^[dynamic]base.Asset_Id,owned:=false,shared:rawptr=nil,id:=core.World_Id{}) {
+// the id of the World, also its values of the by_world storages.
+world_asset_ids :: proc(w:core.World_Ref,ids:^[dynamic]base.Asset_Id,shared:rawptr=nil,id:=core.World_Id{}) {
     seen:=make(map[base.Asset_Id]bool,context.temp_allocator)
     for &t in w.info.tables {
         if t.place!=w.place {continue}
-        plan,_:=ids_plan(t.info,owned,context.temp_allocator)
+        plan,_:=ids_plan(t.info,context.temp_allocator)
         if ids_plan_empty(&plan) {continue}
         table:=core.world_table_at(w,&t)
         for row in 0..<core.raw_count(table) {ids_take(&plan,core.raw_value(table,t.info,row),&seen,ids)}
@@ -27,8 +25,49 @@ world_asset_ids :: proc(w:core.World_Ref,ids:^[dynamic]base.Asset_Id,owned:=fals
     for &s in w.info.storages {
         value:=storage_value(w,&s,shared,id)
         if value==nil {continue}
-        plan,_:=ids_plan(s.info,owned,context.temp_allocator)
+        plan,_:=ids_plan(s.info,context.temp_allocator)
         if !ids_plan_empty(&plan) {ids_take(&plan,value,&seen,ids)}
+    }
+}
+
+// The asset ids a world owns, each once: those of fields tagged
+// `mirai:"owned"` (or inside one) in its tables and saved storages, assets
+// the scene makes and saves with it, as the .navmesh of its navigation.
+world_owned_asset_ids :: proc(w:core.World_Ref,ids:^[dynamic]base.Asset_Id) {
+    ws:=w.info.schema
+    if ws==nil {return}
+    seen:=make(map[base.Asset_Id]bool,context.temp_allocator)
+    plan:Ids_Plan
+    plan.offsets.allocator=context.temp_allocator
+    for &t,i in w.info.tables {
+        if t.place!=w.place {continue}
+        clear(&plan.offsets)
+        owned_offsets(&ws.schema,ws.tables[i].type,0,false,&plan.offsets)
+        if len(plan.offsets)==0 {continue}
+        table:=core.world_table_at(w,&t)
+        for row in 0..<core.raw_count(table) {ids_take(&plan,core.raw_value(table,t.info,row),&seen,ids)}
+    }
+    for &s,i in w.info.storages {
+        if s.place!=w.place || s.by_world {continue}
+        clear(&plan.offsets)
+        owned_offsets(&ws.schema,ws.storages[i].type,0,false,&plan.offsets)
+        if len(plan.offsets)>0 {ids_take(&plan,rawptr(uintptr(w.data)+s.offset),&seen,ids)}
+    }
+}
+
+// The offsets of the asset ids of a value under a field tagged owned.
+@(private="file")
+owned_offsets :: proc(s:^serial.Schema,type:serial.Type_Index,at:uintptr,owned:bool,out:^[dynamic]uintptr) {
+    if !serial.type_valid(s,type) {return}
+    t:=s.types[type]
+    #partial switch t.kind {
+    case .Asset:
+        if owned {append(out,at)}
+    case .Array:
+        if k:=s.types[t.elem].kind;k!=.Asset && k!=.Struct && k!=.Array {return}
+        for i in 0..<uintptr(t.count) {owned_offsets(s,t.elem,at+i*uintptr(s.types[t.elem].size),owned,out)}
+    case .Struct:
+        for field in serial.schema_fields(s,type) {owned_offsets(s,field.type,at+uintptr(field.offset),owned || .Owned in field.hints,out)}
     }
 }
 
@@ -37,7 +76,7 @@ entity_asset_ids :: proc(w:core.World_Ref,e:core.Entity,ids:^[dynamic]base.Asset
     seen:=make(map[base.Asset_Id]bool,context.temp_allocator)
     for &t in w.info.tables {
         if t.place!=w.place {continue}
-        plan,_:=ids_plan(t.info,false,context.temp_allocator)
+        plan,_:=ids_plan(t.info,context.temp_allocator)
         if ids_plan_empty(&plan) {continue}
         if value:=core.raw_find(core.world_table_at(w,&t),t.info,e);value!=nil {ids_take(&plan,value,&seen,ids)}
     }
@@ -71,8 +110,8 @@ Ids_List :: struct {
 }
 
 @(private="file")
-ids_plan :: proc(info:^runtime.Type_Info,owned:bool,allocator:mem.Allocator) -> (plan:Ids_Plan,ok:bool) {
-    ok=ids_plan_add(&plan,info,0,owned,false,0,allocator)
+ids_plan :: proc(info:^runtime.Type_Info,allocator:mem.Allocator) -> (plan:Ids_Plan,ok:bool) {
+    ok=ids_plan_add(&plan,info,0,0,allocator)
     return
 }
 
@@ -90,39 +129,37 @@ ids_plan_free :: proc(plan:^Ids_Plan) {
 }
 
 @(private="file")
-ids_plan_add :: proc(plan:^Ids_Plan,info:^runtime.Type_Info,at:uintptr,owned,inside:bool,depth:int,allocator:mem.Allocator) -> bool {
+ids_plan_add :: proc(plan:^Ids_Plan,info:^runtime.Type_Info,at:uintptr,depth:int,allocator:mem.Allocator) -> bool {
     if depth>16 {return true}
     if info.id==base.Asset_Id {
-        if !owned || inside {
-            if plan.offsets.allocator.procedure==nil {plan.offsets.allocator=allocator}
-            if _,error:=append(&plan.offsets,at);error!=nil {return false}
-        }
-        return true
+        if plan.offsets.allocator.procedure==nil {plan.offsets.allocator=allocator}
+        _,error:=append(&plan.offsets,at)
+        return error==nil
     }
     #partial switch v in runtime.type_info_base(info).variant {
     case runtime.Type_Info_Struct:
-        for i in 0..<int(v.field_count) {ids_plan_add(plan,v.types[i],at+v.offsets[i],owned,inside || owned && v.tags!=nil && field_owned(v.tags[i]),depth+1,allocator) or_return}
+        for i in 0..<int(v.field_count) {ids_plan_add(plan,v.types[i],at+v.offsets[i],depth+1,allocator) or_return}
     case runtime.Type_Info_Array:
         if !ids_hold(v.elem,depth+1) {return true}
-        for i in 0..<v.count {ids_plan_add(plan,v.elem,at+uintptr(i*v.elem_size),owned,inside,depth+1,allocator) or_return}
+        for i in 0..<v.count {ids_plan_add(plan,v.elem,at+uintptr(i*v.elem_size),depth+1,allocator) or_return}
     case runtime.Type_Info_Enumerated_Array:
         if !ids_hold(v.elem,depth+1) {return true}
-        for i in 0..<v.count {ids_plan_add(plan,v.elem,at+uintptr(i*v.elem_size),owned,inside,depth+1,allocator) or_return}
+        for i in 0..<v.count {ids_plan_add(plan,v.elem,at+uintptr(i*v.elem_size),depth+1,allocator) or_return}
     case runtime.Type_Info_Slice:
-        return ids_plan_list(plan,v.elem,at,owned,inside,depth+1,allocator)
+        return ids_plan_list(plan,v.elem,at,depth+1,allocator)
     case runtime.Type_Info_Dynamic_Array:
-        return ids_plan_list(plan,v.elem,at,owned,inside,depth+1,allocator)
+        return ids_plan_list(plan,v.elem,at,depth+1,allocator)
     }
     return true
 }
 
 // A slice or a dynamic array at at whose elements hold asset ids.
 @(private="file")
-ids_plan_list :: proc(plan:^Ids_Plan,elem:^runtime.Type_Info,at:uintptr,owned,inside:bool,depth:int,allocator:mem.Allocator) -> bool {
+ids_plan_list :: proc(plan:^Ids_Plan,elem:^runtime.Type_Info,at:uintptr,depth:int,allocator:mem.Allocator) -> bool {
     if !ids_hold(elem,depth) {return true}
     nested,error:=new(Ids_Plan,allocator)
     if error!=nil {return false}
-    made:=ids_plan_add(nested,elem,0,owned,inside,depth,allocator)
+    made:=ids_plan_add(nested,elem,0,depth,allocator)
     if made && ids_plan_empty(nested) {
         free(nested,allocator)
         return true
@@ -169,13 +206,6 @@ ids_take :: proc(plan:^Ids_Plan,value:rawptr,seen:^map[base.Asset_Id]bool,ids:^[
         if raw.data==nil || raw.len<=0 {continue}
         for i in 0..<raw.len {ids_take(list.plan,rawptr(uintptr(raw.data)+uintptr(i*list.size)),seen,ids)}
     }
-}
-
-@(private="file")
-field_owned :: proc(tag:string) -> bool {
-    owned_tagged,_:=serial.field_tag(tag)
-    owned:=.Owned in owned_tagged.hints
-    return owned
 }
 
 // What loaded assets the Worlds of the application use, marked between
@@ -321,12 +351,12 @@ marks_plans_make :: proc(m:^Assets_Marks,info:^core.World_Info,allocator:mem.All
     ok:=true
     for &t,at in info.tables {
         made:bool
-        m.tables[at],made=ids_plan(t.info,false,allocator)
+        m.tables[at],made=ids_plan(t.info,allocator)
         ok&&=made
     }
     for &s,at in info.storages {
         made:bool
-        m.storages[at],made=ids_plan(s.info,false,allocator)
+        m.storages[at],made=ids_plan(s.info,allocator)
         ok&&=made
     }
     if !ok {

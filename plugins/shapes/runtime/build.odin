@@ -145,7 +145,7 @@ shape_key :: proc(s:^Shape,brushes:[]Brush,body:bool) -> u64 {
     points,loops:=shape_counts(s)
     bevel_points:=min(int(s.bevel_point_count),BEVEL_POINTS)
     head:=struct {
-        body:bool,loops:u8,points:u16,depth,uv_scale:f32,material:base.Asset_Id,
+        body:bool,loops:u8,points:u16,depth:f32,uv_scale:[2]f32,material:base.Asset_Id,
         bevel:f32,profile:Bevel_Profile,segments,bevel_points:u8,
     } {
         body,u8(loops),u16(points),s.depth,s.uv_scale,s.material,
@@ -193,9 +193,9 @@ outline_loops :: proc(s:^Shape) -> (points:[]geom.Vec2,sizes:[]int,error:Shape_E
 }
 
 @(private)
-uv_scale_of :: proc "contextless" (s:^Shape) -> (scale:f32,ok:bool) {
-    if s.uv_scale==0 {return 1,true}
-    return s.uv_scale,s.uv_scale>0 && s.uv_scale<max(f32)
+uv_scale_of :: proc "contextless" (s:^Shape) -> (scale:[2]f32,ok:bool) {
+    for v,i in s.uv_scale {scale[i]=v if v!=0 else 1}
+    return scale,scale.x>0 && scale.y>0 && scale.x<max(f32) && scale.y<max(f32)
 }
 
 @(private)
@@ -230,10 +230,10 @@ outline_build :: proc(s:^Shape,g:^Shape_Geometry) -> Shape_Error {
     if len(rings)>0 && outline_bevel_build(s,points,sizes,rings,k,g) {return .None}
     m:=&g.mesh
     for p in points {
-        append(&m.positions,geom.Vec3{p.x,p.y,h});append(&m.normals,geom.Vec3{0,0,1});append(&m.uvs,geom.Vec2{p.x*k,-p.y*k})
+        append(&m.positions,geom.Vec3{p.x,p.y,h});append(&m.normals,geom.Vec3{0,0,1});append(&m.uvs,geom.Vec2{p.x,-p.y}*k)
     }
     for p in points {
-        append(&m.positions,geom.Vec3{p.x,p.y,-h});append(&m.normals,geom.Vec3{0,0,-1});append(&m.uvs,geom.Vec2{-p.x*k,-p.y*k})
+        append(&m.positions,geom.Vec3{p.x,p.y,-h});append(&m.normals,geom.Vec3{0,0,-1});append(&m.uvs,geom.Vec2{-p.x,-p.y}*k)
     }
     for i:=0;i<len(triangles);i+=3 {
         a,b,d:=triangles[i],triangles[i+1],triangles[i+2]
@@ -249,11 +249,11 @@ outline_build :: proc(s:^Shape,g:^Shape_Geometry) -> Shape_Error {
             a,b:=loop[i],loop[j]
             start:=side_normal(side[(i+size-1)%size],side[i])
             end:=side_normal(side[j],side[i])
-            u:=side_u(a,b)*k
+            u:=side_u(a,b)*k.x
             base:=u32(len(m.positions))
             append(&m.positions,geom.Vec3{a.x,a.y,-h},geom.Vec3{a.x,a.y,h},geom.Vec3{b.x,b.y,-h},geom.Vec3{b.x,b.y,h})
             append(&m.normals,geom.Vec3{start.x,start.y,0},geom.Vec3{start.x,start.y,0},geom.Vec3{end.x,end.y,0},geom.Vec3{end.x,end.y,0})
-            append(&m.uvs,geom.Vec2{u[0],2*h*k},geom.Vec2{u[0],0},geom.Vec2{u[1],2*h*k},geom.Vec2{u[1],0})
+            append(&m.uvs,geom.Vec2{u[0],2*h*k.y},geom.Vec2{u[0],0},geom.Vec2{u[1],2*h*k.y},geom.Vec2{u[1],0})
             append(&m.indices,base,base+2,base+3,base,base+3,base+1)
         }
         first+=size

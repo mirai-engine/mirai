@@ -3,10 +3,12 @@ package editor
 import "core:encoding/json"
 import "core:fmt"
 import "core:os"
+import "core:strings"
 import "core:testing"
 import "mirai:core"
 import "mirai:editor/api"
 import "mirai:editor/history"
+import "mirai:host"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
@@ -14,6 +16,64 @@ import "mirai:std/serial"
 @(private)
 @(test_world,editor="Api_Test_Editor")
 Reload_Test_World :: struct {using world:Test_World}
+
+@(private) Reload_Gone :: struct {hits:u32}
+@(private) Reload_Kept :: struct {value:u32}
+
+@(private)
+@(test_world)
+Reload_Before :: struct {
+    using world:Test_World,
+    gone:core.Table(Reload_Gone),
+    kept:core.Table(Reload_Kept),
+}
+
+@(private)
+@(test_world)
+Reload_After :: struct {
+    using world:Test_World,
+    kept:core.Table(Reload_Kept),
+}
+
+@(private)
+@(test_world)
+Reload_Renamed :: struct {
+    using world:Test_World,
+    hits:core.Table(Reload_Gone) `mirai:"name=Reload_Hits"`,
+    kept:core.Table(Reload_Kept),
+}
+
+// A build that leaves out a component the open documents hold rows of is not taken, and says
+// which one and how many rows; one renamed with @(component,was=) is the same table.
+@(test)
+a_build_that_drops_rows_of_a_document_is_not_taken :: proc(t:^testing.T) {
+    world:Reload_Before
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    after,described:=test_info(t,Reload_After)
+    if !described {return}
+    defer test_info_destroy(&after)
+    e:=core.create(&world.entities)
+    core.add(&world.gone,e,Reload_Gone{3})
+    test_world_settle(&world)
+    build:Build_State
+    build.play.pending=true
+    s:=Session{info=test_world_info(&world),edit_world=&world,build=&build}
+    library:=host.Project_Library{info=after}
+    testing.expect_value(t,library_migrate(&s,&library),Library_Reload.Refused)
+    error:=base.text_get(build.play_error[:])
+    testing.expectf(t,strings.contains(error,"Reload_Gone") && strings.contains(error,"(1 rows in 1 documents)"),"%s",error)
+    renamed,renamed_described:=test_info(t,Reload_Renamed)
+    if !renamed_described {return}
+    defer test_info_destroy(&renamed)
+    for &table in renamed.tables {
+        if table.name=="Reload_Hits" {table.was="Reload_Gone"}
+    }
+    m:core.World_Migration
+    defer core.world_migration_destroy(&m)
+    testing.expect(t,core.world_migration_make(&m,s.info,&renamed))
+    testing.expect_value(t,library_rows_dropped(&s,&m),"")
+}
 
 // A gesture queued in the frame a build swaps the library, and a call that arrives before the
 // methods are registered again, never run the handler of the code the swap replaced; a call of a

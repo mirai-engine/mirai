@@ -291,6 +291,7 @@ Scene_State :: struct {
 	materials:            [dynamic]Gpu_Material_Row, // the material table; row 0 is the default
 	program_rows:         [POINTS_PROGRAM_CAPACITY]u32, // rows of the table of each Surface program, by id
 	programs_used:        u32, // ids with rows there
+	programs_arrived:     bool, // a program got its first row: the next frame asks for its pipelines (programs_ask)
 	programmed_rows:      u32, // rows with a Surface program
 	programmed_glass:     u32, // and of them, blended ones
 	materials_dirty:      bool,                      // the whole table goes to the GPU
@@ -611,6 +612,7 @@ program_rows_count :: proc(s: ^Scene_State, row: Gpu_Material_Row, added: bool) 
 	if added {s.program_rows[program] += 1} else {s.program_rows[program] -= 1}
 	if s.program_rows[program] == (1 if added else 0) {
 		if added {s.programs_used += 1} else {s.programs_used -= 1}
+		s.programs_arrived ||= added
 	}
 }
 

@@ -89,6 +89,8 @@ Gpu_Sheet :: struct {
     eye:[2]f32,     // x and z of the camera from the middle of the grid
     cell:f32,
     half_cells:f32,
+    loop:u32,       // points of the loop of a lake; 0 for a plane
+    _:[3]u32,
 }
 
 // The grid of a plane drawn through a deformable copy of it, which the stage
@@ -107,6 +109,8 @@ Sheet :: struct {
     seen:u64,
     write:bool,     // written in this frame
     valid:bool,
+    loop:[phys.FLUID_PATH_POINTS][2]f32, // x and z of the points of the loop of a lake in the world
+    loop_count:int,
 }
 
 // The floor and the top of a dry box of the frame, from its row of height.
@@ -136,24 +140,27 @@ crosses_water :: proc "contextless" (state:^Water_Gpu,dry:int) -> bool {
 }
 
 // The grid of the plane `body` of the frame around the camera: as it is generated while the plane is still
-// and no dry box crosses it, else through its sheet. That of a lake, whose walls are `walls`, only through
-// its sheet, which ends at them.
+// and no dry box crosses it, else through its sheet. That of a lake (a prism of the physics) only through
+// its sheet, which ends at its loop.
 @(private)
-sheet_place :: proc(state:^Water_Gpu,assets:^host.Assets,renderer:^render.Renderer,extras:^host.Frame_Extras,view:core.View,body:int,e:core.Entity,material:u32,walls:Maybe(mm.Aabb)=nil) {
+sheet_place :: proc(state:^Water_Gpu,assets:^host.Assets,renderer:^render.Renderer,extras:^host.Frame_Extras,view:core.View,body:int,e:core.Entity,material:u32,physics:core.Ref(phys.Physics_State)={},lake:^phys.Fluid_Info=nil) {
     top:=state.bodies[body].surface.x
     middle:=[3]f32{math.round(view.position.x/SURFACE_STEP)*SURFACE_STEP,top,math.round(view.position.z/SURFACE_STEP)*SURFACE_STEP}
     instance,usable:=render.mesh_instance(assets,{mesh=state.surface},mm.transform_matrix({middle,1,1}))
     if !usable {return}
     instance.material=render.Material_Handle(material)
     instance.object_id,instance.copy_owner=u64(e),base.name_hash("water")
-    lake,bounded:=walls.?
+    bounded:=lake!=nil
+    points:[phys.FLUID_PATH_POINTS]mm.Path_Point
+    loop:=points[:bounded?phys.fluid_path(physics,lake.fluid,&points):0]
+    if bounded && len(loop)<3 {return}
     drawn:=!bounded
     defer if drawn {render.instance_add(extras,instance)}
     moving:=state.waves[body].count>0
     lowest:=f32(0)
     cut:=bounded
     key:=base.hash64(mem.ptr_to_bytes(&middle))
-    if bounded {key=base.hash64(mem.ptr_to_bytes(&lake),key)}
+    if bounded {key=base.hash64(mem.slice_to_bytes(loop),key)}
     for j in 0..<state.count {
         if !dry_crosses(state,j,body) {continue}
         cut=true
@@ -189,11 +196,17 @@ sheet_place :: proc(state:^Water_Gpu,assets:^host.Assets,renderer:^render.Render
         bounds_min:=[3]f32{rest_min.x-reach,min(lowest,-reach),rest_min.z-reach}
         bounds_max:=[3]f32{rest_max.x+reach,reach,rest_max.z+reach}
         if bounded {
-            // Within its walls.
-            bounds_min.xz=linalg.max(bounds_min.xz,lake.min.xz-middle.xz)
-            bounds_max.xz=linalg.min(bounds_max.xz,lake.max.xz-middle.xz)
+            // Within its loop.
+            low,high:=[2]f32{max(f32),max(f32)},[2]f32{-max(f32),-max(f32)}
+            for p,i in loop {
+                sheet.loop[i]=p.position.xz
+                low,high=linalg.min(low,p.position.xz),linalg.max(high,p.position.xz)
+            }
+            sheet.loop_count=len(loop)
+            bounds_min.xz=linalg.max(bounds_min.xz,low-middle.xz)
+            bounds_max.xz=linalg.min(bounds_max.xz,high-middle.xz)
             if !(bounds_min.x<=bounds_max.x && bounds_min.z<=bounds_max.z) {return}
-        }
+        } else {sheet.loop_count=0}
         if !render.deformable_update(renderer,sheet.mesh,bounds_min,bounds_max) {return}
         sheet.key,sheet.made,sheet.middle,sheet.body,sheet.write=key,made,middle,body,true
         sheet.eye={view.position.x-middle.x,view.position.z-middle.z}
@@ -238,9 +251,13 @@ sheet_record :: proc(pass:^render.Pass,user:rawptr) {
             bodies[n]=relative[j]
             n+=1
         }
-        params:=Gpu_Sheet{rest=rest,written=written,count=count,bodies=u32(n),eye=sheet.eye,cell=SURFACE_CELL,half_cells=SURFACE_HALF}
-        if render.pass_params(pass,&params,size_of(params)) && render.pass_upload(pass,4,&bodies,n*size_of(Gpu_Body)) {
+        params:=Gpu_Sheet{rest=rest,written=written,count=count,bodies=u32(n),eye=sheet.eye,cell=SURFACE_CELL,half_cells=SURFACE_HALF,loop=u32(sheet.loop_count)}
+        // The loop relative to the middle of the grid; one point for a plane, which reads none.
+        loop:[phys.FLUID_PATH_POINTS][2]f32
+        for p,i in sheet.loop[:sheet.loop_count] {loop[i]=p-sheet.middle.xz}
+        if render.pass_params(pass,&params,size_of(params)) && render.pass_upload(pass,4,&bodies,n*size_of(Gpu_Body)) && render.pass_upload(pass,5,&loop,max(sheet.loop_count,1)*size_of([2]f32)) {
             render.pass_dispatch(pass,(count+63)/64)
         }
+
     }
 }

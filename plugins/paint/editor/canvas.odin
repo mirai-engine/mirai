@@ -3,18 +3,21 @@ package paint_editor
 import "base:runtime"
 import "core:math"
 import "core:math/linalg"
+import "core:slice"
 import "mirai:asset"
 import erender "mirai:engine/render"
 import "mirai:host"
 import paint "plugins:paint/runtime"
 import "mirai:std/base"
 import "mirai:std/geom"
+import "mirai:std/spatial"
 
 // The vertices of the mesh an entity shows as the renderer numbers them, by
 // index in the mesh (those of its clusters, every level of detail), with the
 // colors the entity shows now.
 Canvas :: struct {
     allocator:runtime.Allocator,
+    mesh:u64,           // content_hash of the file of the mesh; 0: a shape
     positions:[][3]f32, // in the space of the mesh
     colors:[]u32,
 }
@@ -25,8 +28,8 @@ canvas_destroy :: proc(c:^Canvas) {
 }
 
 // Reads the mesh or primitive a Mesh_Renderer shows, and the colors of
-// painted when they are of as many vertices. False, with the canvas empty,
-// when it is not a mesh that can be drawn.
+// painted fit to it (canvas_fit). False, with the canvas empty, when it is
+// not a mesh that can be drawn.
 canvas_load :: proc(c:^Canvas,a:^host.Assets,shown:erender.Mesh_Renderer,painted:base.Asset_Id,allocator:=context.allocator) -> bool {
     c.allocator=allocator
     if shown.mesh!={} {
@@ -35,6 +38,7 @@ canvas_load :: proc(c:^Canvas,a:^host.Assets,shown:erender.Mesh_Renderer,painted
         defer asset.asset_close(&file)
         view,error:=asset.mesh_view(&file,&a.types)
         if error!=.None || !canvas_take(c,view.geometry) {return false}
+        c.mesh=file.blob.header.content_hash
     } else {
         // A primitive is drawn as its mesh is made at run time (host.assets_shape).
         buffer:geom.Mesh_Buffer
@@ -52,8 +56,50 @@ canvas_load :: proc(c:^Canvas,a:^host.Assets,shown:erender.Mesh_Renderer,painted
     file:asset.Asset
     if host.assets_file(a,painted,paint.PAINT_KIND,&file)!=.None {return true}
     defer asset.asset_close(&file)
-    if colors,error:=paint.colors_view(&file,&a.types);error==.None && len(colors)==len(c.colors) {copy(c.colors,colors)}
+    if view,error:=paint.paint_view(&file,&a.types);error==.None {canvas_fit(c,view)}
     return true
+}
+
+// The colors of a .paint on the vertices of the canvas: by index while its
+// vertices are where they were painted; else each vertex takes the color of
+// the nearest painted one, as when its mesh was imported again.
+@(private)
+canvas_fit :: proc(c:^Canvas,painted:paint.Paint_View) {
+    if slice.equal(painted.positions,c.positions) {
+        copy(c.colors,painted.colors)
+        return
+    }
+    bounds:=spatial.Aabb{painted.positions[0],painted.positions[0]}
+    for p in painted.positions {bounds.min,bounds.max=linalg.min(bounds.min,p),linalg.max(bounds.max,p)}
+    extent:=bounds.max-bounds.min
+    cell:=max(max(extent.x,extent.y,extent.z)/math.cbrt(f32(len(painted.positions))),1e-4)
+    grid:spatial.Grid
+    if !spatial.grid_init(&grid,{cell_size=cell,bounds=bounds,item_capacity=len(painted.positions),allocator=context.temp_allocator}) {return}
+    defer spatial.grid_destroy(&grid)
+    for p,at in painted.positions {spatial.grid_insert(&grid,{p,p},u64(at))}
+    for p,at in c.positions {
+        nearest,best:=-1,max(f32)
+        for reach:=cell;reach<max(f32);reach*=2 { // a position that is not a number finds none
+            query:=spatial.grid_query(&grid,{p-reach,p+reach})
+            for {
+                _,user,ok:=spatial.grid_query_next(&query)
+                if !ok {break}
+                if d:=linalg.length2(painted.positions[user]-p);d<best {nearest,best=int(user),d}
+            }
+            if nearest>=0 && best<=reach*reach {break}
+        }
+        if nearest>=0 {c.colors[at]=painted.colors[nearest]}
+    }
+}
+
+// The .paint of the colors of the canvas, named id.
+canvas_bytes :: proc(c:^Canvas,a:^host.Assets,id:base.Asset_Id,allocator:runtime.Allocator) -> (bytes:[]u8,ok:bool) {
+    document:asset.Document
+    if paint.paint_document(&document,&a.types,id,{info={mesh=c.mesh},positions=c.positions,colors=c.colors},allocator)!=.None {return}
+    defer asset.document_destroy(&document)
+    error:asset.Error
+    bytes,error=asset.document_bytes(&document,allocator)
+    return bytes,error==.None
 }
 
 @(private)

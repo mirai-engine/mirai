@@ -440,14 +440,14 @@ replica_place :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,r:^Rep
                 loaded=reference.loaded!={}
             }
             if loaded {
-                core.world_destroy_tree(w,r.entity)
+                core.destroy(core.world_entities(w),r.entity)
                 s.stats.despawned+=1
             } else {
                 replica_unlink(w,r.entity)
             }
         } else {
             if near && (!home || replica_adoptable(s,w,r)==core.NONE) {return false}
-            core.world_destroy_tree(w,r.entity)
+            core.destroy(core.world_entities(w),r.entity)
             s.stats.despawned+=1
         }
     }
@@ -805,7 +805,7 @@ replica_destroy :: proc(s:^Net_Session,w:core.World_Ref,object:Object,end:End) {
     es:=core.world_entities(w)
     if (end==.End || end==.Leave && !r.adopted) && core.alive(es,r.entity) {
         // The parts the prefab of the replica brought go with it.
-        core.world_destroy_tree(w,r.entity)
+        core.destroy(es,r.entity)
         s.stats.despawned+=1
     } else if core.alive(es,r.entity) {
         replica_unlink(w,r.entity)
@@ -1588,12 +1588,16 @@ sync_hashes :: proc(s:^Net_Session,w:core.World_Ref,out:[]u64) {
 }
 
 // A tick ran again different: the table, or the simulation, and after the last
-// tick the entity, which the world the first time left tells.
+// tick the entity, or where the simulation differs, which the world the first
+// time left tells.
 @(private)
 sync_problem :: proc(s:^Net_Session,w:core.World_Ref,tick:u32,table:int,last:bool) {
     WHY :: "a fixed function reads something besides the World and the Input, or keeps what it needs outside the World; keep it in a component or a storage of the World"
     if table>=len(w.info.tables) {
-        core.report(s.problems,core.NONE,"net.sync_test","tick %d leaves what simulates outside the tables (the bodies of physics) different when it runs again from the same world and input (Net_Settings.sync_test): %s",tick,WHY)
+        buf:[512]byte
+        storage,where_:="the bodies of physics",""
+        if last {if name,text:=core.world_diff(w.info,s.client.sync_world,w.data,buf[:]);text!="" {storage,where_=name,text}}
+        core.report(s.problems,core.NONE,"net.sync_test","tick %d leaves what simulates outside the tables (%s%s%s) different when it runs again from the same world and input (Net_Settings.sync_test): %s",tick,storage,where_==""?"":": ",where_,WHY)
         return
     }
     info:=&w.info.tables[table]
@@ -1659,7 +1663,7 @@ replica_adopt :: proc(s:^Net_Session,w:core.World_Ref,id:base.Entity_Id,e:core.E
     for &r in s.client.replicas[:s.client.replica_high] {
         if r.object==0 || r.waits || r.pose.id!=id {continue}
         if r.entity==e {return &r}
-        if core.alive(es,r.entity) {core.world_destroy_tree(w,r.entity)}
+        if core.alive(es,r.entity) {core.destroy(es,r.entity)}
         r.entity,r.adopted=e,true
         replicate:=REPLICATE_DEFAULT
         replicate.simulation=r.simulation
@@ -1728,7 +1732,7 @@ spawns_settle :: proc(s:^Net_Session,w:core.World_Ref,time:^core.Time) {
             spawn_taken(w,r,e,spawn)
             replica_classify(s,w,r)
         } else if !time.resimulating && time.tick>spawn.tick+u64(s.client.history) {
-            if spawn.kept {core.remove(spawns,e)} else {core.world_destroy_tree(w,e)}
+            if spawn.kept {core.remove(spawns,e)} else {core.destroy(core.world_entities(w),e)}
         }
     }
 }

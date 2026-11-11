@@ -76,7 +76,10 @@ a_body_floats_on_the_waves_and_repeats_from_a_snapshot :: proc(t:^testing.T) {
     waves.count,waves.steepness=1,0.5
     sea:=fluid_create(&w,{shape=.Plane,density=1000,waves=waves})
     testing.expect(t,sea!={})
-    testing.expect_value(t,fluid_create(&w,{shape=.Box,half_extents={1,1,1},density=1000,waves=waves}),Fluid_Handle{})
+    dry:=box_loop({},{1,1,1})
+    testing.expect_value(t,fluid_create(&w,{shape=.Prism,depth=2,waves=waves},dry[:]),Fluid_Handle{}) // a dry prism holds no waves
+    lake:=box_loop({100,0,100},{10,1,10})
+    testing.expect(t,fluid_create(&w,{shape=.Prism,position={100,0,100},depth=2,density=1000,waves=waves},lake[:])!={},"a lake takes waves")
     desc:=BODY_DESC_DEFAULT
     body:=body_create(&w,desc)
     shape:=SHAPE_DESC_DEFAULT

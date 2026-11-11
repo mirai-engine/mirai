@@ -210,6 +210,7 @@ piece_zip :: proc(s:^Source,mesh:^Chunk_Mesh,p:Piece,lines:^Piece_Lines,outer,in
 piece_build :: proc(s:^Source,p:Piece,mesh:^Chunk_Mesh) -> bool {
     width,depth:=(p.high.x-p.low.x)<<p.detail,(p.high.y-p.low.y)<<p.detail
     if width<1 || depth<1 {return false}
+    mesh.grid=true
     cells:=int(s.chunk_cells)<<p.detail
     lines:=&mesh.lines
     lines.level=p.level

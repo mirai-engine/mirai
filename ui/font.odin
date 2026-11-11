@@ -775,63 +775,6 @@ text_leading :: proc "contextless" (size,height:f32) -> f32 {
     return (height-size*TEXT_LINE)*0.5
 }
 
-// The next line of text no wider than width: broken at a newline, or with
-// Words where the layout breaks a text (Flow). A line keeps the spaces before
-// its newline and none of those it wraps at.
-text_line :: proc "contextless" (font:^Font,text:string,size,width:f32,wrap:Text_Wrap,f:int=0) -> (line,rest:string,line_width:f32) {
-    spans:=[1]Layout_Span{{text=text,look={font=u8(f),size=size}}}
-    flow:=Flow{spans=spans[:],width=width if wrap==.Words else max(f32)}
-    walk:=Layout_Walk{font=font,text=text,size=size,face=f,space=text_width(font," ",size,f)}
-    wrapped:bool
-    for {
-        w,_,more:=layout_walk(&walk)
-        if !more {break}
-        if w.length==0 {rest=text[w.start:];break}
-        p:=Flow_Piece{text=text[w.start:][:w.length],width=w.width}
-        // A word cut where the line ends goes on in the next.
-        if !flow_put(&flow,font,&p) {rest,wrapped=text[uintptr(raw_data(p.text))-uintptr(raw_data(text)):],true;break}
-    }
-    end:int
-    for p in flow.pieces[:flow.count] {end+=len(p.text)}
-    line_width=flow.used
-    if wrapped {for end>0 && text[end-1]==' ' {end-=1;line_width-=walk.space}}
-    return text[:end],rest,line_width
-}
-
-// Walks the lines of a wrapped text in order without storing them: each call
-// to text_lines_next gives the byte range of the next one. A text that ends
-// with a newline has one more, empty, line.
-Text_Lines :: struct {
-    font:^Font,
-    rest:string,
-    size,width:f32,
-    wrap:Text_Wrap,
-    f,offset:int,
-    row:int,  // of the line text_lines_next gave last
-    tail,done:bool,
-}
-text_lines :: proc "contextless" (font:^Font,text:string,size,width:f32,wrap:Text_Wrap,f:int=0) -> Text_Lines {
-    return {font=font,rest=text,size=size,width=width,wrap=wrap,f=f,row=-1}
-}
-text_lines_next :: proc "contextless" (it:^Text_Lines) -> (start,end:int,ok:bool) {
-    if it.done {return}
-    it.row+=1
-    if it.tail {
-        it.tail,it.done=false,true
-        return it.offset,it.offset,true
-    }
-    line,next,_:=text_line(it.font,it.rest,it.size,it.width,it.wrap,it.f)
-    start,end=it.offset,it.offset+len(line)
-    consumed:=len(it.rest)-len(next)
-    broke:=consumed>len(line) && it.rest[consumed-1]=='\n'
-    it.offset+=consumed
-    it.rest=next
-    if next=="" {
-        if broke {it.tail=true} else {it.done=true}
-    }
-    return start,end,true
-}
-
 ELLIPSIS :: "…"
 
 // The longest prefix of one line of text that leaves room for the ellipsis

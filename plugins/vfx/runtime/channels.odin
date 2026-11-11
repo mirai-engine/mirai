@@ -98,18 +98,6 @@ channel_preview :: proc(clocks:^Particle_Clocks,listener:Particle_Channel,positi
     if ring:=channel_ring(clocks,channel_key(listener));ring!=nil {ring_record(ring,{position=position,count=CHANNEL_PREVIEW_COUNT},-1)}
 }
 
-// The channels the resources of kind channel of a program read: those of the
-// names the program gives them (`//! resource displacers channel` reads the
-// channel "displacers").
-@(private)
-channel_needs :: proc(a:^host.Assets,program:^Program,needs:^Program_Needs) {
-    found:=erender.program_find(a,base.text_get(program.name[:]),.Vfx) if a!=nil && program.id!=0 else nil
-    if found==nil {return}
-    for resource,at in found.resources[:min(len(found.resources),RESOURCES)] {
-        if needs.resources[at].kind==.Channel {needs.resources[at].channel=core.birth_channel(resource.name)}
-    }
-}
-
 channel_ring :: proc(clocks:^Particle_Clocks,name:core.Birth_Channel) -> ^Channel_Ring {
     for &ring in clocks.channels {if ring.name==name {return &ring}}
     return nil

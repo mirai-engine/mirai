@@ -41,7 +41,8 @@ settles :: #force_inline proc "contextless" (info:^World_Info) -> Settle_Info {
 }
 
 // Applies what the functions and the editor added, removed, turned and
-// destroyed in a World: Disabled and Parent first, then the Hierarchy and
+// destroyed in a World: Parent first, with what hangs from the entities
+// destroyed, which goes with them, and Disabled, then the Hierarchy and
 // what is off, which follow them, then the other tables, which move the rows
 // of the entities turned, and last the indices of the entities destroyed are
 // free again. It comes only to the tables that say they have changes pending
@@ -54,10 +55,24 @@ settle :: proc(info:^World_Info,world,editor:rawptr) -> (settled:int) {
     marks:=es.pending[:]
     // Checking writes, every table settles: a row written late shows at the next settle of the World.
     linked:=!CHECK_WRITES && len(marks)>0 && len(marks)>=len(info.tables)
+    // What a row that goes takes is free for an add of any table, whatever their order.
+    for &t,at in info.tables {
+        if len(t.locks)>0 && t.place==.World && (!linked || marks[at]) {locks_release_pending(cast(^Raw_Table)(uintptr(world)+t.offset))}
+    }
+    parented:=s.parent>=0 && (!linked || marks[s.parent])
+    if parented {
+        settle_table(info,world,s.parent,es,marks)
+        settled+=1
+    }
+    doomed:=s.parent>=0 && s.hierarchy>=0 && hierarchy_doom(cast(^Hierarchy)(uintptr(world)+info.storages[s.hierarchy].offset),cast(^Table(Parent))(uintptr(world)+info.tables[s.parent].offset),es)
     if linked {settle_mark(info,world,marks,es.doomed[:],false)}
-    for at in ([2]int{s.disabled,s.parent}) {
-        if at<0 || linked && !marks[at] {continue}
-        settle_table(info,world,at,es,marks)
+    // Parent drops the rows of what was destroyed after it settled.
+    if s.parent>=0 && (linked && marks[s.parent] || !linked && doomed) {
+        settle_table(info,world,s.parent,es,marks)
+        if !parented {settled+=1}
+    }
+    if s.disabled>=0 && (!linked || marks[s.disabled]) {
+        settle_table(info,world,s.disabled,es,marks)
         settled+=1
     }
     if s.disabled>=0 && s.parent>=0 && s.hierarchy>=0 {
@@ -65,7 +80,7 @@ settle :: proc(info:^World_Info,world,editor:rawptr) -> (settled:int) {
         seen,version,rows,cut:=h.seen,h.version,len(h.parent),len(h.cut)
         _=hierarchy_settle(h,cast(^Table(Parent))(uintptr(world)+info.tables[s.parent].offset),es)
         // The settle is the writer of the Hierarchy: a copy of what changed takes it when it moved.
-        if info.revisions!=0 && (h.seen!=seen || h.version!=version || len(h.parent)!=rows || len(h.cut)!=cut) {
+        if h.seen!=seen || h.version!=version || len(h.parent)!=rows || len(h.cut)!=cut {
             ([^]u64)(uintptr(world)+info.revisions)[s.hierarchy]+=1
         }
         _=entities_activity(es,cast(^Table(Disabled))(uintptr(world)+info.tables[s.disabled].offset),ref(h))

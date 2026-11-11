@@ -2,6 +2,7 @@ package multiplayer
 
 import inp "mirai:engine/input"
 import "base:runtime"
+import "core:fmt"
 import "core:mem"
 import "core:slice"
 import "core:strings"
@@ -326,6 +327,33 @@ sync_test_names_what_a_fixed_function_reading_outside_the_world_changes :: proc(
     testing.expect(t,!clean_moved)
     testing.expect_value(t,clean.count,0)
     testing.expect_value(t,clean_skipped,u64(0))
+}
+
+// After the last tick, a simulation that ran differently says where, through
+// the diff of its storage: the body, the field and both values.
+@(test)
+sync_test_names_the_body_and_the_field_the_simulation_differs_in :: proc(t:^testing.T) {
+    info,described:=net_test_info(t)
+    if !described {return}
+    defer test_info_destroy(&info)
+    world,first:Net_Test_World
+    testing.expect(t,net_test_init(&world,&info) && core.world_init(&info,.World,&first,context.allocator))
+    defer {core.world_destroy(&info,.World,&world);core.world_destroy(&info,.World,&first)}
+    body:=net_test_body(&world,&info,1)
+    shared:=Net_Test_Shared{info=&info};defer phys.collider_meshes_destroy(&shared.colliders)
+    app:=host.App{info=&info,allocator=context.allocator,tick_dt=1.0/60,shared=&shared}
+    defer {host.app_world_scratch_free(&app);delete(app.worlds)}
+    net_test_physics(&world,&shared,&app)
+    if !testing.expect(t,core.world_copy(&info,&first,&world)) {return}
+    slot:=u32(phys.body_of(core.ref(&world.state),body))
+    world.state.world.bodies[slot].linear_velocity.y+=5
+    problems:core.Problems
+    session:=Net_Session{problems=&problems}
+    session.client.sync_world=&first
+    sync_problem(&session,core.world_ref(&world,&info),8,len(info.tables),true)
+    found:=core.problem_find(&problems,core.NONE,"net.sync_test")
+    if !testing.expect(t,found!=nil) {return}
+    testing.expectf(t,strings.contains(core.problem_text(found),fmt.tprintf("Physics_State: Body %d.linear_velocity[1]",slot)),"%s",core.problem_text(found))
 }
 
 // A state of the server that arrives after a tick ran changes what the

@@ -58,7 +58,7 @@ game_seats :: proc(
     if core.count(demos)==0 {return}
     for row in 0..<core.count(follows) {
         if core.alive(es.entities,core.at(follows,row).leader) {continue}
-        core.destroy_tree(es.entities,hierarchy,core.entity_at(follows,row))
+        core.destroy(es,core.entity_at(follows,row))
     }
     for row in 0..<core.count(seats) {
         seat:=core.entity_at(seats,row)

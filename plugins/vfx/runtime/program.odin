@@ -1,6 +1,7 @@
 package vfx
 
 import "core:fmt"
+import "mirai:core"
 import erender "mirai:engine/render"
 import "mirai:host"
 import "mirai:std/base"
@@ -9,7 +10,8 @@ import "plugins:vfx/runtime/effect"
 // The Vfx program of info with the parameters stored, those of the effect or
 // of a file the editor did not write yet, and those an instance gives over
 // them: the values of override that are not fields of the effect; needs: the
-// resources and stages it declares.
+// resources and stages it declares; a channel resource reads the channel of
+// its name (`//! resource displacers channel` reads "displacers").
 particle_program_check :: proc(a:^host.Assets,info:^effect.Particle_Info,stored:[]effect.Particle_Parameter,override:^Particle_Override,program:^Program,needs:^Program_Needs=nil) -> (problem:string) {
     program^={}
     if needs!=nil {needs^={}}
@@ -30,11 +32,10 @@ particle_program_check :: proc(a:^host.Assets,info:^effect.Particle_Info,stored:
     if found==nil {return fmt.tprintf("The shaders have no Vfx program %q: add a source with `//! mirai vfx %s` to the shaders of the project",name,name)}
     program.id=found.id
     program.attributes,program.moves,program.births,program.prepare=u32(found.attributes),found.moves,found.births,found.prepare
-    base.text_set(program.name[:],name)
     if needs!=nil {
         for resource,at in found.resources[:min(len(found.resources),RESOURCES)] {
             kinds:=[erender.Program_Resource_Kind]Resource_Kind{.Surface=.Surface,.Channel=.Channel,.Grid=.Grid,.Emitter=.Emitter,.Data=.Data}
-            needs.resources[at]={name=base.name_hash(resource.name),kind=kinds[resource.kind],words=resource.words}
+            needs.resources[at]={name=base.name_hash(resource.name),kind=kinds[resource.kind],words=resource.words,channel=core.birth_channel(resource.name)}
             if resource.cleared {needs.cleared|=1<<u32(at)}
         }
         for stage,at in found.stages[:min(len(found.stages),erender.PROGRAM_STAGES)] {

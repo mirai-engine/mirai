@@ -394,11 +394,13 @@ inside a function is seen after it.
 - **Cycles.** A `Parent` that would put its entity under itself is left out of the tree: the entity
   is a root until a link changes, and it is retried every time (a log warning names it). A `Parent`
   to an entity that is not alive also leaves it a root.
+- Destroying an entity destroys, at the settle, what hangs from it, also what a `Parent` of the
+  same function hangs from it; a child to keep is taken out first.
 
 ### Queries
 
 Downward, over the `Hierarchy` and without allocating (`first_child`, `next_sibling`,
-`subtree_next`, `destroy_tree`); upward, over `Parent`, which is always up to date
+`subtree_next`); upward, over `Parent`, which is always up to date
 (`ancestor_with`, `is_under`). Nobody builds their own child index or walks `Parent` by hand.
 
 - `subtree_next` gives parents before children:

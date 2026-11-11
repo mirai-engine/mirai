@@ -417,8 +417,8 @@ ai_review_reconcile :: proc(s:^Session,m:^Ai,task:^Ai_Task) {
             last[key]=&row
         }
     }
-    holds :: proc(info:^runtime.Type_Info,has,off:bool,canonical:[]u8,present,expected_off:bool,value:[]u8) -> bool {
-        return has==present && (!has || off==expected_off && history.change_equal(info,raw_data(canonical),raw_data(value)))
+    holds :: proc(world:^core.World_Info,info:^runtime.Type_Info,has,off:bool,canonical:[]u8,present,expected_off:bool,value:[]u8) -> bool {
+        return has==present && (!has || off==expected_off && history.change_equal(world,info,raw_data(canonical),raw_data(value)))
     }
     before,after:=true,true
     for key,oldest in first {
@@ -433,8 +433,8 @@ ai_review_reconcile :: proc(s:^Session,m:^Ai,task:^Ai_Task) {
         canonical:[]u8
         if current!=nil {canonical=history.change_canonical(w,nil,descriptor.info,current,context.temp_allocator)}
         newest:=last[key]
-        before&&=holds(descriptor.info,current!=nil,off,canonical,oldest.before_present,oldest.before_off,oldest.before)
-        after&&=holds(descriptor.info,current!=nil,off,canonical,newest.after_present,newest.after_off,newest.after)
+        before&&=holds(w.info,descriptor.info,current!=nil,off,canonical,oldest.before_present,oldest.before_off,oldest.before)
+        after&&=holds(w.info,descriptor.info,current!=nil,off,canonical,newest.after_present,newest.after_off,newest.after)
     }
     for path in task.review.changed_files {
         span,_:=ai_review_file_span(&task.review,path)
@@ -581,7 +581,7 @@ ai_review_field_revert :: proc(s:^Session,m:^Ai,w:core.World_Ref,t:^core.Table_I
             row:=&transaction.rows[i]
             if row.id!=id || row.table!=table {continue}
             copy(row.after[offset:][:size],row.before[offset:][:size])
-            if row.before_off==row.after_off && history.change_equal(t.info,raw_data(row.before),raw_data(row.after)) {ai_review_row_remove(review,&transaction,i)}
+            if row.before_off==row.after_off && history.change_equal(w.info,t.info,raw_data(row.before),raw_data(row.after)) {ai_review_row_remove(review,&transaction,i)}
         }
     }
     ai_review_settle(s,m,task)

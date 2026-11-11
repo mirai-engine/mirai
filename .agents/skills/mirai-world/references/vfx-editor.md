@@ -6,10 +6,10 @@ and a project without `vfx` builds and opens its editor. It provides this throug
 extension points ([extensions](../../mirai-editor/references/extensions.md)), each one an Editor
 storage whose only field is the provider, with its default:
 
-- `Vfx_Kinds` (`editor.Asset_Kind_Provider`): `.particle` is **Particle**, with the `Particles`
-  icon and the color of a particle system. It is a family of its own in the content browser
-  filters; an `Asset_Id` field whose name has `particle` (`sub_particle`) takes effects; git merges
-  its files field by field; `asset.list` calls it `particle`.
+- The manifest (`plugin.mirai`) declares `.particle` as **Particle**, with its icon and color: a
+  family of its own in the content browser filters; an `Asset_Id` field whose name has `particle`
+  (`sub_particle`) takes effects; git merges its files field by field.
+- `Vfx_Clicks` (`editor.Asset_Click_Provider`): a click on an effect assigns it.
 - `Vfx_Documents` (`editor.Asset_Document_Provider` with `between`): the
   [document](#particle-document), which also makes the content browser list the type.
 - `Vfx_Thumbnails` (`editor.Thumbnail_Provider` with `image`): the [thumbnails](#thumbnails).
@@ -24,24 +24,25 @@ storage whose only field is the provider, with its default:
 
 Content browser gestures:
 
-- **Click on an effect** (`effect_clicked`, `Asset_Kind_Provider.clicked`): assigns it to the
-  selected emitters, in one step.
+- **Click on an effect** (`effect_clicked`): assigns it to the selected emitters, in one step.
 - **Dropping it on an entity with an emitter** (`vfx_drop`, with `editor.asset_drop_take`): the
   emitter shows it.
 - **Double click**: opens its document.
 
-An effect's file is written with `particle_write` (`effect_file.odin`): with `editor.file_write`,
-in memory and unsaved, as a history step where it is written
-([files in the history](../../mirai-editor/references/document.md#edits-and-undo)).
+An effect's file is one shape in the editor, `Particle_File` (`effect_file.odin`): its tables in
+room of its own, copied, compared and merged as a value by the document, the section and the API,
+and sliced into the `effect.Particle_Desc` that the file is read as and written from. It is written
+with `particle_write`: with `editor.file_write`, in memory and unsaved, as a history step where it
+is written ([files in the history](../../mirai-editor/references/document.md#edits-and-undo)).
 
 ## Particle_Emitter section
 
 Code: `instance.odin`.
 
-- At the top go the component's fields: Active, Loop, Preview and Destroy when done; the `particle`
-  field is taken by a box after them (`editor.asset_box`) with the preview and the name of the
-  effect, which opens the list of effects with their previews (`editor.asset_list_open`); Default
-  is the default effect. An effect dropped on the box is assigned.
+- At the top go the component's fields; the `particle` field is taken by a box after them
+  (`editor.asset_box`) with the preview and the name of the effect, which opens the list of effects
+  with their previews (`editor.asset_list_open`); Default is the default effect. An effect dropped
+  on the box is assigned.
 - With an entity, an arrow unfolds the **effect values**, folded by default: those of
   `Particle_Info` that the effect does not hide, with the common Details rows
   (`editor.held_field_row` with `write`). A drag or a session of the color picker is one step.
@@ -101,8 +102,9 @@ the left and **Effect** with the rows on the right, in the editor's document col
   the editor (`Particle_Emitter.preview`). It opens playing.
 - **Rows**: those of Details (`editor.held_field_row`) over the document's values, with the arrow
   that returns each field to the value it had when the document read the effect
-  (`Effect_Document.base`). The `Particle_Info` fields go in foldable groups: Spawn, Shape,
-  Motion, Look, Collision and events and Program. Curves are key tables
+  (`Effect_Document.base`). The `Particle_Info` fields go in foldable groups, each the one its
+  `group` tag names, or that of the field before it: there is no other list of the fields.
+  Curves are key tables
   ([rows by reflection](../../mirai-editor/references/inspector.md#rows-by-reflection)).
 - **Hidden**: each field's eye toggles whether the instances show it (`hidden` list).
 - **Program parameters**: those that the named Vfx program declares according to the renderer's

@@ -74,9 +74,7 @@ ground_update :: proc(resident:^Terrain_Resident,data:^Terrain_Data,terrains:^co
             to_local,inverted:=mm.transform_inverse_matrix(world.transform)
             if !inverted {continue}
             s:=&entry.source
-            low:=source_origin(s)
-            high:=low+[3]f32{f32(s.samples.x-1),f32(s.samples.y-1),f32(s.samples.z-1)}*s.cell
-            if s.kind==.Heightfield {low.y,high.y=-HEIGHT_LIMIT,HEIGHT_LIMIT}
+            low,high:=source_box(s,{},s.field.size-1)
             append(&views,Ground_View{e,id,s,world.transform,to_local,mm.transform_matrix(world.transform),low,high,entry.change})
             spacing:=s.cell*max(abs(world.transform.scale.x),abs(world.transform.scale.z))
             if g.spacing==0 || spacing<g.spacing {g.spacing=spacing}

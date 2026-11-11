@@ -72,8 +72,11 @@ roads and paths along a `volume.Spline`
   mesh. `shape_pieces_build` computes them.
 - A `physics.Collider` the game puts on the shape entity gives every field of the derived collider
   but `kind`, `size` and `center` (a preview shape that must not collide is a sensor that meets
-  nothing). It must be of kind `External`, so physics makes no shape of its own from it; any other
-  kind is reported.
+  nothing) when it is of kind `External`. Of any other kind it collides in place of the shape (a
+  blockout box is a Solid of one box brush with a box `Collider`), and the child only draws.
+- The child shows the `Material_Values` of its source, so a tint on the shape tints what it draws.
+- `uv_scale` is the repeats per metre along u and along v: a material whose maps scale u and v
+  apart still shows square.
 
 ## Splines
 
@@ -157,7 +160,10 @@ it back.
   away whole is deleted.
 - **Corners** (2): one tool over the corners of an entity (`Corners`): the polygon of its `Shape`,
   else the points of its `Spline` (in its local XZ, open, at their height; a point inserted takes
-  the width and height in proportion and the path keeps two). The selected entity shows its loops
+  the width and height in proportion and the path keeps two). With a `Volume` `Outline` they are a
+  loop at its top, edited as the loop of a `Shape` is: its closing edge takes a corner, a move that
+  makes edges cross does not apply, and it keeps three. The selected entity shows its loops
+
   or path and corners. A drag moves a corner on its plane, a double click on an edge inserts
   one, Ctrl+click or Delete removes the one under the pointer; a click elsewhere selects the shape
   under it. An edit the shape refuses does not apply. The width and height of each point of a

@@ -2,6 +2,7 @@ package vfx_editor
 
 import "base:runtime"
 import "core:hash"
+import "core:reflect"
 import "core:mem"
 import "core:slice"
 import "mirai:asset"
@@ -10,6 +11,7 @@ import "mirai:editor"
 import erender "mirai:engine/render"
 import "mirai:host"
 import "mirai:std/base"
+import "mirai:std/serial"
 import "mirai:editor/kit"
 import "mirai:ui"
 import vfx "plugins:vfx/runtime"
@@ -24,37 +26,16 @@ import "plugins:vfx/runtime/effect"
 // in memory and unsaved, once the UI lets go of it (a drag, a typed value, a
 // popup): a step of the history of the document each time.
 
-PARTICLE_FIELDS :: 64 // of Particle_Info that its hidden fields can name
 PARTICLE_SIDE :: 512  // pixels of a side of its image
 EYE_WIDTH :: 20       // the column of the eyes, with its gap
 EFFECT_WIDTH :: f32(320)
 DOCUMENT_SCOPE :: ui.Id(0x70617274)
 KEY_EFFECT :: u64(0x7061727469636c65) // of its values among those the rows of Details hold
 
-// What the panel holds of an effect, as its file has it: the hidden fields
-// by their index in Particle_Info.
-Effect_Values :: struct {
-    info:effect.Particle_Info,
-    parameters:[effect.PARTICLE_MAX_PARAMETERS]effect.Particle_Parameter,
-    parameter_count:int,
-    hidden:bit_set[0..<PARTICLE_FIELDS;u64],
-}
-
+// The groups of the rows: a field of Particle_Info is in the group its tag
+// names (`mirai:"section=Look"`), or in that of the field before it.
 Particle_Group :: enum u8 {Spawn,Shape,Motion,Look,Collision,Program}
 PARTICLE_GROUP_TITLES :: [Particle_Group]string{.Spawn="SPAWN",.Shape="SHAPE",.Motion="MOTION",.Look="LOOK",.Collision="COLLISION AND EVENTS",.Program="PROGRAM"}
-
-// A field of Particle_Info in the group the panel shows it in, in order.
-Particle_Row :: struct {group:Particle_Group,field:string}
-PARTICLE_ROWS :: [?]Particle_Row{
-    {.Spawn,"duration"},{.Spawn,"prewarm"},{.Spawn,"max_particles"},{.Spawn,"rate"},{.Spawn,"rate_over_distance"},{.Spawn,"bursts"},
-    {.Shape,"shape"},{.Shape,"shape_size"},{.Shape,"shape_angle"},{.Shape,"shell"},
-    {.Motion,"lifetime"},{.Motion,"speed"},{.Motion,"velocity"},{.Motion,"inherit_velocity"},{.Motion,"local_space"},{.Motion,"gravity"},
-    {.Motion,"acceleration"},{.Motion,"drag"},{.Motion,"noise"},{.Motion,"noise_frequency"},{.Motion,"noise_speed"},{.Motion,"attractor"},{.Motion,"attractor_strength"},
-    {.Look,"size"},{.Look,"rotation"},{.Look,"spin"},{.Look,"colors"},{.Look,"intensity"},{.Look,"emission_mode"},{.Look,"size_over_life"},{.Look,"color_over_life"},
-    {.Look,"render"},{.Look,"blend"},{.Look,"lit"},{.Look,"lights"},{.Look,"light_shadows"},{.Look,"light_intensity"},{.Look,"light_range"},{.Look,"light_radius"},{.Look,"sort"},{.Look,"material"},{.Look,"mesh"},{.Look,"stretch"},{.Look,"soft"},{.Look,"flipbook"},{.Look,"flipbook_speed"},
-    {.Collision,"collision"},{.Collision,"bounce"},{.Collision,"friction"},{.Collision,"collision_life"},{.Collision,"trigger"},{.Collision,"sub_particle"},{.Collision,"sub_count"},{.Collision,"report"},
-    {.Program,"program"},
-}
 
 // A texture parameter as a row of Details shows it.
 Particle_Texture :: struct {texture:base.Asset_Id}
@@ -65,9 +46,9 @@ Effect_Document :: struct {
     id:base.Asset_Id,     // the .particle of the document in front
     read:bool,            // file holds what the file of id holds
     revision:u64,         // of the assets when it was read
-    file:Effect_Values,
-    held:Effect_Values,   // file with the edits of the rows, until they are written
-    base:Effect_Values,   // what the file held when the document read it: the arrows of the rows give it back
+    file:Particle_File,
+    held:Particle_File,   // file with the edits of the rows, until they are written
+    base:Particle_File,   // what the file held when the document read it: the arrows of the rows give it back
     open:[Particle_Group]bool,
     scroll:[2]f32,
     preview:Effect_Preview,
@@ -81,165 +62,91 @@ particle_span :: proc(info:^effect.Particle_Info) -> (cycle,shown:f32) {
     return cycle,cycle+max(info.lifetime[0],info.lifetime[1])
 }
 
-// The index of a field of Particle_Info; -1 for a name it does not have.
-particle_field_index :: proc(name:string) -> int {
-    fields:=runtime.type_info_base(type_info_of(effect.Particle_Info)).variant.(runtime.Type_Info_Struct)
-    for i in 0..<min(int(fields.field_count),PARTICLE_FIELDS) {
-        if fields.names[i]==name {return i}
-    }
-    return -1
-}
-
-// What the file of an effect holds; false when it cannot be read.
-effect_values_read :: proc(a:^host.Assets,id:base.Asset_Id) -> (values:Effect_Values,ok:bool) {
-    if a==nil || id=={} {return}
-    view:=vfx.effect_view(a,id) or_return
-    return effect_values_of(view),true
-}
-
-effect_values_of :: proc(view:effect.Particle_View) -> (values:Effect_Values) {
-    if view.info!=nil {values.info=view.info^}
-    values.parameter_count=min(len(view.parameters),len(values.parameters))
-    copy(values.parameters[:],view.parameters[:values.parameter_count])
-    for &field in view.hidden {
-        if index:=particle_field_index(base.text_get(field.name[:]));index>=0 {values.hidden+={index}}
-    }
-    return
-}
-
-// The file that holds the values, in temporary memory.
-effect_file :: proc(values:^Effect_Values) -> (file:Particle_File) {
-    file.info=values.info
-    file.parameters=make([dynamic]effect.Particle_Parameter,0,values.parameter_count,context.temp_allocator)
-    append(&file.parameters,..values.parameters[:values.parameter_count])
-    file.hidden=make([dynamic]effect.Particle_Field,context.temp_allocator)
-    fields:=runtime.type_info_base(type_info_of(effect.Particle_Info)).variant.(runtime.Type_Info_Struct)
-    for i in 0..<min(int(fields.field_count),PARTICLE_FIELDS) {
-        if i not_in values.hidden {continue}
-        entry:effect.Particle_Field
-        base.text_set(entry.name[:],fields.names[i])
-        append(&file.hidden,entry)
-    }
-    return
-}
-
-@(private)
-parameter_same :: proc(a,b:^effect.Particle_Parameter) -> bool {
-    return a.name==b.name && a.kind==b.kind && a.components==b.components && a.value==b.value && a.texture==b.texture
-}
-
-@(private)
-parameters_same :: proc(a,b:^Effect_Values) -> bool {
-    if a.parameter_count!=b.parameter_count {return false}
-    for i in 0..<a.parameter_count {
-        if !parameter_same(&a.parameters[i],&b.parameters[i]) {return false}
-    }
-    return true
-}
-
-@(private)
-Span_Visitor :: #type proc(offset:uintptr,size:int,user:rawptr)
-
-// The values of Particle_Info, and its program, as spans of its bytes.
-@(private)
-info_spans :: proc(visit:Span_Visitor,user:rawptr) {
-    Spans :: struct {visit:Span_Visitor,user:rawptr}
-    spans:=Spans{visit,user}
-    each :: proc(value:effect.Particle_Value,user:rawptr) -> bool {
-        s:=cast(^Spans)user
-        s.visit(value.offset,value.size,s.user)
-        return true
-    }
-    effect.particle_values_visit(each,&spans)
-    // The program is text, which is no value of an instance.
-    visit(offset_of(effect.Particle_Info,program),size_of(effect.Particle_Info{}.program),user)
-}
-
 @(private)
 span_of :: proc(info:^effect.Particle_Info,offset:uintptr,size:int) -> []u8 {
     return mem.byte_slice(rawptr(uintptr(info)+offset),size)
 }
 
-// Whether the panel holds values the file does not have.
-effect_edited :: proc(held,file:^Effect_Values) -> bool {
-    if held.hidden!=file.hidden || !parameters_same(held,file) {return true}
-    Compare :: struct {held,file:^effect.Particle_Info,differ:bool}
-    compare:=Compare{&held.info,&file.info,false}
-    visit :: proc(offset:uintptr,size:int,user:rawptr) {
-        c:=cast(^Compare)user
-        if mem.compare(span_of(c.held,offset,size),span_of(c.file,offset,size))!=0 {c.differ=true}
-    }
-    info_spans(visit,&compare)
-    return compare.differ
-}
+// Whether the panel holds values the file does not have. The room past the
+// parameters and the hidden fields of a Particle_File is empty.
+effect_edited :: proc(held,file:^Particle_File) -> bool {return held^!=file^}
 
 // What a file read again brings: each value the panel did not change takes
-// the one of the file now. The parameters and the hidden fields go whole.
-effect_merge :: proc(held,before,now:^Effect_Values) {
+// the one of the file now. The program, the parameters and the hidden fields
+// go whole.
+effect_merge :: proc(held,before,now:^Particle_File) {
     Merge :: struct {held,before,now:^effect.Particle_Info}
     merge:=Merge{&held.info,&before.info,&now.info}
-    visit :: proc(offset:uintptr,size:int,user:rawptr) {
+    visit :: proc(value:effect.Particle_Value,user:rawptr) -> bool {
         m:=cast(^Merge)user
-        kept:=span_of(m.held,offset,size)
-        if mem.compare(kept,span_of(m.before,offset,size))==0 {copy(kept,span_of(m.now,offset,size))}
+        kept:=span_of(m.held,value.offset,value.size)
+        if mem.compare(kept,span_of(m.before,value.offset,value.size))==0 {copy(kept,span_of(m.now,value.offset,value.size))}
+        return true
     }
-    info_spans(visit,&merge)
-    if parameters_same(held,before) {held.parameters,held.parameter_count=now.parameters,now.parameter_count}
-    if held.hidden==before.hidden {held.hidden=now.hidden}
+    effect.particle_values_visit(visit,&merge)
+    if held.info.program==before.info.program {held.info.program=now.info.program}
+    if held.parameter_count==before.parameter_count && held.parameters==before.parameters {held.parameters,held.parameter_count=now.parameters,now.parameter_count}
+    if held.hidden_count==before.hidden_count && held.hidden==before.hidden {held.hidden,held.hidden_count=now.hidden,now.hidden_count}
 }
 
 // The value stored for a parameter of the program; nil without one.
-effect_parameter :: proc(values:^Effect_Values,name:string) -> ^effect.Particle_Parameter {
-    return effect.particle_parameter_find(values.parameters[:values.parameter_count],name)
+effect_parameter :: proc(file:^Particle_File,name:string) -> ^effect.Particle_Parameter {
+    return effect.particle_parameter_find(file.parameters[:file.parameter_count],name)
+}
+
+// Stores a parameter in place of the one of its name; false without room.
+effect_parameter_store :: proc(file:^Particle_File,parameter:effect.Particle_Parameter) -> bool {
+    parameter:=parameter
+    stored:=effect_parameter(file,base.text_get(parameter.name[:]))
+    if stored==nil {
+        if file.parameter_count>=len(file.parameters) {return false}
+        stored=&file.parameters[file.parameter_count]
+        file.parameter_count+=1
+    }
+    stored^=parameter
+    return true
 }
 
 // Stores a value for a parameter the program declares; false without room.
-effect_parameter_put :: proc(values:^Effect_Values,declared:^erender.Program_Parameter,value:[4]f64,texture:base.Asset_Id) -> bool {
-    stored:=effect_parameter(values,declared.name)
-    if stored==nil {
-        if values.parameter_count>=len(values.parameters) {return false}
-        stored=&values.parameters[values.parameter_count]
-        values.parameter_count+=1
-    }
-    stored^={kind=asset.Parameter_Kind(declared.kind),components=declared.components}
+effect_parameter_put :: proc(file:^Particle_File,declared:^erender.Program_Parameter,value:[4]f64,texture:base.Asset_Id) -> bool {
+    stored:=effect.Particle_Parameter{kind=asset.Parameter_Kind(declared.kind),components=declared.components}
     base.text_set(stored.name[:],declared.name)
     if declared.kind==.Texture {
         stored.texture=texture
     } else {
         for axis in 0..<clamp(int(declared.components),1,4) {stored.value[axis]=value[axis]}
     }
-    return true
+    return effect_parameter_store(file,stored)
 }
 
-effect_parameter_remove :: proc(values:^Effect_Values,name:string) {
-    for i in 0..<values.parameter_count {
-        if base.text_get(values.parameters[i].name[:])!=name {continue}
-        copy(values.parameters[i:values.parameter_count-1],values.parameters[i+1:values.parameter_count])
-        values.parameter_count-=1
-        values.parameters[values.parameter_count]={}
+effect_parameter_remove :: proc(file:^Particle_File,name:string) {
+    for i in 0..<file.parameter_count {
+        if base.text_get(file.parameters[i].name[:])!=name {continue}
+        copy(file.parameters[i:file.parameter_count-1],file.parameters[i+1:file.parameter_count])
+        file.parameter_count-=1
+        file.parameters[file.parameter_count]={}
         return
     }
 }
 
 // Gives a parameter back what the file stores for it, or nothing.
-effect_parameter_revert :: proc(held,file:^Effect_Values,name:string) {
-    stored:=effect_parameter(file,name)
-    if stored==nil {
-        effect_parameter_remove(held,name)
-        return
-    }
-    if kept:=effect_parameter(held,name);kept!=nil {
-        kept^=stored^
-    } else if held.parameter_count<len(held.parameters) {
-        held.parameters[held.parameter_count]=stored^
-        held.parameter_count+=1
-    }
+effect_parameter_revert :: proc(held,file:^Particle_File,name:string) {
+    if stored:=effect_parameter(file,name);stored!=nil {effect_parameter_store(held,stored^)} else {effect_parameter_remove(held,name)}
 }
 
-effect_hidden_toggle :: proc(values:^Effect_Values,field:string) {
-    index:=particle_field_index(field)
-    if index<0 {return}
-    if index in values.hidden {values.hidden-={index}} else {values.hidden+={index}}
+// Hides a field from the instances, or shows it again.
+effect_hidden_toggle :: proc(file:^Particle_File,field:string) {
+    for i in 0..<file.hidden_count {
+        if base.text_get(file.hidden[i].name[:])!=field {continue}
+        copy(file.hidden[i:file.hidden_count-1],file.hidden[i+1:file.hidden_count])
+        file.hidden_count-=1
+        file.hidden[file.hidden_count]={}
+        return
+    }
+    if file.hidden_count<len(file.hidden) {
+        base.text_set(file.hidden[file.hidden_count].name[:],field)
+        file.hidden_count+=1
+    }
 }
 
 // ---------------------------------------------------------------- the subject
@@ -262,9 +169,10 @@ effect_sync :: proc(a:^host.Assets,p:^Effect_Document) {
         return
     }
     if p.read && p.revision==a.revision {return}
-    now,ok:=effect_values_read(a,p.id)
+    view,ok:=vfx.effect_view(a,p.id)
     p.revision=a.revision
     if !ok {return}
+    now:=particle_file_of(view)
     if p.read {effect_merge(&p.held,&p.file,&now)} else {
         p.held=now
         p.base=now
@@ -279,16 +187,15 @@ effect_sync :: proc(a:^host.Assets,p:^Effect_Document) {
 // values go back to the file.
 @(private)
 effect_commit :: proc(s:^editor.Session,assets:^host.Assets,p:^Effect_Document) -> bool {
-    file:=effect_file(&p.held)
-    if name:=base.text_get(file.info.program[:]);name!="" && erender.program_find(assets,name,.Vfx)!=nil {
+    if name:=base.text_get(p.held.info.program[:]);name!="" && erender.program_find(assets,name,.Vfx)!=nil {
         program:vfx.Program
-        if problem:=vfx.particle_program_check(assets,&file.info,file.parameters[:],nil,&program);problem!="" {
+        if problem:=vfx.particle_program_check(assets,&p.held.info,p.held.parameters[:p.held.parameter_count],nil,&program);problem!="" {
             editor.notify(s,problem)
             p.held=p.file
             return false
         }
     }
-    if !particle_write(s,p.id,&file) {
+    if !particle_write(s,p.id,&p.held) {
         p.held=p.file
         return false
     }
@@ -341,25 +248,32 @@ effect_document :: proc(s:^editor.Session,p:^Effect_Document,assets:^host.Assets
 effect_rows :: proc(s:^editor.Session,p:^Effect_Document,assets:^host.Assets) {
     ctx:=s.gui.ctx
     titles:=PARTICLE_GROUP_TITLES
-    rows:=PARTICLE_ROWS
     values:=editor.Held_Values{key=KEY_EFFECT,info=type_info_of(effect.Particle_Info),value=&p.held.info,defaults=&p.base.info}
-    group,open:=Particle_Group(len(Particle_Group)),false
-    for row in rows {
-        if row.group!=group {
-            group=row.group
-            open=kit.collapsible(ctx,ui.id(ctx,"group",int(group)+1),titles[group],&p.open[group]).open
-        }
-        if !open {continue}
-        index:=particle_field_index(row.field)
-        hidden:=index>=0 && index in p.held.hidden
-        if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=2,align_y=.Start}) {
-            if ui.button(ctx,ui.id(ctx,"hidden",index+1),{icon=hidden?.Eye_Off:.Eye,icon_size=13,icon_color=hidden?ui.tone(ctx,"text_faint"):ui.tone(ctx,"text_muted"),variant="ghost",width=EYE_WIDTH-2,height=ui.metric(ctx,"row")}).clicked {
-                effect_hidden_toggle(&p.held,row.field)
+    fields:=runtime.type_info_base(type_info_of(effect.Particle_Info)).variant.(runtime.Type_Info_Struct)
+    for group in Particle_Group {
+        if !kit.collapsible(ctx,ui.id(ctx,"group",int(group)+1),titles[group],&p.open[group]).open {continue}
+        of:Particle_Group
+        for index in 0..<int(fields.field_count) {
+            of=particle_group(fields.tags[index],of)
+            if of!=group {continue}
+            field:=fields.names[index]
+            hidden:=effect.particle_hidden(p.held.hidden[:p.held.hidden_count],field)
+            if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=2,align_y=.Start}) {
+                if ui.button(ctx,ui.id(ctx,"hidden",index+1),{icon=hidden?.Eye_Off:.Eye,icon_size=13,icon_color=hidden?ui.tone(ctx,"text_faint"):ui.tone(ctx,"text_muted"),variant="ghost",width=EYE_WIDTH-2,height=ui.metric(ctx,"row")}).clicked {
+                    effect_hidden_toggle(&p.held,field)
+                }
+                if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=3}) {editor.held_field_row(s,values,field)}
             }
-            if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=3}) {editor.held_field_row(s,values,row.field)}
+            if field=="program" {parameter_rows(s,p,assets)}
         }
-        if row.field=="program" {parameter_rows(s,p,assets)}
     }
+}
+
+// The group a field of Particle_Info with this tag is in, after a field of group before.
+particle_group :: proc(tag:string,before:Particle_Group) -> Particle_Group {
+    tagged,_:=serial.field_tag(tag)
+    group,named:=reflect.enum_from_name(Particle_Group,tagged.section)
+    return group if named else before
 }
 
 // The parameters the Vfx program of the effect declares, with what the

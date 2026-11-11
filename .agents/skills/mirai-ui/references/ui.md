@@ -218,7 +218,7 @@ With `backdrop_blur` the layer takes a filtered copy of its parent's background.
   the font; FreeType allocates with its allocator during a rebuild or while an on-demand font
   lives. The application font and its contexts:
   [host](../../mirai-core/references/host.md#bridge-with-ui).
-- The text measures (`text_width`, `text_line`, `text_lines`, `text_index_at`…) are in layout units
+- The text measures (`text_width`, `text_prefix`, `text_index_at`…) are in layout units
   with the kerning and do not depend on the density. A text has no line limit.
 - **One word breaker.** Every text that wraps at words walks them with `layout_walk` and breaks
   with one `Flow`, whatever its spans. A word ends at a space or after a mark (`text_mark`: a
@@ -226,8 +226,8 @@ With `backdrop_blur` the layer takes a filtered copy of its parent's background.
   A word goes to the next line unless it fits with the space after it; one wider than the line
   starts one and breaks after its last glyph that fits; a line gives up the space it breaks or
   ends at, and a soft hyphen it breaks at is drawn as a hyphen, which must fit; what no space or
-  mark parts stays on one line. `text_line` is that break for the text a field edits, which keeps
-  the spaces of its last line.
+  mark parts stays on one line. A field moves its caret by the lines its text leaf breaks into
+  (`text_edit_lines`), and draws its selection as a span with a back and its caret as a box.
 - **A glyph a font lacks** is measured and drawn from `FONT_REGULAR` (Inter in the fonts of the
   application), at the same size; `?` only when that one lacks it too (`font_glyph`).
 - **Lines like CSS.** `TEXT_LINE` (Inter's ascent plus descent) is the `normal` line height and the

@@ -292,9 +292,9 @@ collab_tables_build :: proc(s:^Session,st:^Collab_State) {
     for &t,i in s.info.tables {
         if t.place!=.World || i>=len(s.edits.saved) || !s.edits.saved[i] {continue}
         size:=t.info.size
-        ranges:=history.transient_ranges(t.info,context.allocator)
+        ranges:=history.transient_ranges(s.info,t.info,context.allocator)
         offsets:=entity_offsets(t.info,context.allocator)
-        st.tables[i]={used=true,size=size,hash=base.name_hash(t.name),fields=history.saved_fields(t.info,context.allocator),transient=ranges,entities=offsets}
+        st.tables[i]={used=true,size=size,hash=base.name_hash(t.name),fields=history.saved_fields(s.info,t.info,context.allocator),transient=ranges,entities=offsets}
         st.by_hash[st.tables[i].hash]=i
     }
 }

@@ -20,6 +20,8 @@ Text_Span :: struct {
     radius:f32,   // of the corners of back
     pad:f32,      // a chip: room beside its text, half on each side, which does not break at spaces
     height:f32,   // of a chip
+    icon:Icon,    // of a chip: before its text, as large as it and 6 units from it
+    edge:Color,   // of a chip: its outline
     solid:bool,   // its text breaks at no space, only where each line ends (code)
 }
 
@@ -146,7 +148,11 @@ text_end :: proc(ctx:^Context,layout:Layout={},id:Id=0,reveal:f32=1,fade:=false)
         revealed=i32(math.round(f32(total)*max(reveal,0)))+1
     }
     paint:=paint_add(ctx,{kind=.None,style=o.style,fade=fade,revealed=revealed})
-    if paint!=nil && text.spans_len==1 {paint.text=t.spans[text.spans_first].text}
+    if paint!=nil {
+        words:=0
+        for &s in t.spans[text.spans_first:][:text.spans_len] {if !s.box && s.text!="" {words+=1;paint.text=s.text}}
+        if words!=1 {paint.text=""}
+    }
     widget_add(ctx,id,{.Passive})
     text.hits=o.hits
     if paint==nil || !layout_text_end(t,&ctx.font,{id=id,layout=layout,custom=paint}) {
@@ -295,14 +301,22 @@ text_draw_line :: proc(ctx:^Context,n:^Layout_Node,index:i32) {
             }
             continue
         }
-        if s.back[3]>0 {
-            high:=s.height if s.height>0 else line.height
-            draw_rounded(ctx,{px,line.y+(line.height-high)*0.5,piece.width,high},s.radius,s.back)
-        }
+        high:=s.height if s.height>0 else line.height
+        chip:=Rect{px,line.y+(line.height-high)*0.5,piece.width,high}
+        if s.back[3]>0 {draw_rounded(ctx,chip,s.radius,s.back)}
+        if s.edge[3]>0 {draw_shape(ctx,chip,{stroke=s.edge,stroke_width=1.5,radii={s.radius,s.radius,s.radius,s.radius}})}
+        // A chip wider than its line shows what fits in it.
+        narrowed:=s.pad>0 && piece.width<s.width-LAYOUT_EPSILON
+        if narrowed {clip_push(ctx,chip)}
+        defer if narrowed {clip_pop(ctx)}
         end:=px+cut_width
         if s.pad>0 {
             px+=s.pad*0.5
             py+=text_leading(style.size,s.height if s.height>0 else style.size*TEXT_LINE)
+        }
+        if s.icon!=.None {
+            draw_icon(ctx,s.icon,{px,line.y+(line.height-style.size)*0.5,style.size,style.size},style.color)
+            px+=style.size+6
         }
         shown:=s.text[piece.start:][:piece.length]
         whole:=true

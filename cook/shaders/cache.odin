@@ -8,6 +8,8 @@ import "core:strings"
 import "core:sync"
 import "core:time"
 import "core:unicode/utf8"
+import "mirai:render/abi"
+import "mirai:std/serial"
 
 // What a generation read of the file system, each path once: the bytes of a
 // source with the line endings of the repository, the paths an include was
@@ -342,22 +344,9 @@ fingerprint :: proc(source:string,include_dirs:[]string,bases:[]Base,configurati
 
 // What one compiled stage is: an entry of the manifest of a generation and of
 // the shared cache.
-Stage :: enum u8 {Vertex,Fragment,Compute}
-Binding :: struct {slot:int,kind:string}
-Shader :: struct {
-    id,name:    string,
-    stage:      Stage,
-    spv,msl:    string, // file names in the folder of the generation
-    entry:      string, // the entry point SPIRV-Cross gave the Metal source
-    bindings:   []Binding,
-    constants:  []string, // the names of its constants, by id
-    group:      [3]int,
-    fingerprint,spv_hash,msl_hash:string,
-    staged:     bool, // its files are in the staging folder, to be published
-}
-
-@(private)
-STAGE_NAMES :: [Stage]string{.Vertex="Vertex",.Fragment="Fragment",.Compute="Compute"}
+Stage :: abi.Shader_Stage
+Binding :: abi.Shader_Binding
+Shader :: abi.Shader_Entry
 
 @(private)
 json_text :: proc(value:json.Value) -> string {return value.(json.String) or_else ""}
@@ -379,72 +368,22 @@ read_json :: proc(path:string,allocator:=context.allocator) -> (json.Object,bool
     return object,parse_error==.None && is_object
 }
 
+// An entry read from text is a stage: named, with names for its constants.
 @(private)
-shader_from_json :: proc(object:json.Object,allocator:=context.allocator) -> (shader:Shader,ok:bool) {
-    shader.id=strings.clone(json_text(object["id"]),allocator)
-    shader.name=strings.clone(json_text(object["name"]),allocator)
-    shader.spv=strings.clone(json_text(object["spv"]),allocator)
-    shader.msl=strings.clone(json_text(object["msl"]),allocator)
-    shader.entry=strings.clone(json_text(object["entry"]),allocator)
-    shader.fingerprint=strings.clone(json_text(object["fingerprint"]),allocator)
-    shader.spv_hash=strings.clone(json_text(object["spv_hash"]),allocator)
-    shader.msl_hash=strings.clone(json_text(object["msl_hash"]),allocator)
-    stage_found:=false
-    for name,stage in STAGE_NAMES {if name==json_text(object["stage"]) {shader.stage=stage;stage_found=true}}
-    bindings,_:=object["bindings"].(json.Array)
-    shader.bindings=make([]Binding,len(bindings),allocator)
-    for value,i in bindings {
-        binding,is_object:=value.(json.Object)
-        if !is_object {return}
-        slot,valid:=json_int(binding["slot"])
-        if !valid {return}
-        shader.bindings[i]={slot,strings.clone(json_text(binding["kind"]),allocator)}
+shader_valid :: proc(shader:Shader) -> bool {
+    if shader.name=="" || shader.id=="" {return false}
+    for constant in shader.constants {
+        if constant=="" {return false}
     }
-    constants,_:=object["constants"].(json.Array)
-    shader.constants=make([]string,len(constants),allocator)
-    for value,i in constants {
-        name,is_name:=value.(json.String)
-        if !is_name || name=="" {return}
-        shader.constants[i]=strings.clone(name,allocator)
-    }
-    group,_:=object["group"].(json.Array)
-    if len(group)!=3 {return}
-    for value,i in group {
-        size,valid:=json_int(value)
-        if !valid {return}
-        shader.group[i]=size
-    }
-    return shader,stage_found && shader.name!="" && shader.id!=""
+    return true
 }
 
+// The entry a file holds, in allocator; false when it holds none.
 @(private)
-shader_to_json :: proc(writer:^Json_Writer,shader:Shader) {
-    stages:=STAGE_NAMES
-    json_object_begin(writer)
-    json_key(writer,"id");json_string(writer,shader.id)
-    json_key(writer,"name");json_string(writer,shader.name)
-    json_key(writer,"stage");json_string(writer,stages[shader.stage])
-    json_key(writer,"spv");json_string(writer,shader.spv)
-    json_key(writer,"msl");json_string(writer,shader.msl)
-    json_key(writer,"entry");json_string(writer,shader.entry)
-    json_key(writer,"bindings");json_array_begin(writer)
-    for binding in shader.bindings {
-        json_object_begin(writer)
-        json_key(writer,"slot");json_integer(writer,i64(binding.slot))
-        json_key(writer,"kind");json_string(writer,binding.kind)
-        json_object_end(writer)
-    }
-    json_array_end(writer)
-    json_key(writer,"group");json_array_begin(writer)
-    for size in shader.group {json_integer(writer,i64(size))}
-    json_array_end(writer)
-    json_key(writer,"constants");json_array_begin(writer)
-    for constant in shader.constants {json_string(writer,constant)}
-    json_array_end(writer)
-    json_key(writer,"fingerprint");json_string(writer,shader.fingerprint)
-    json_key(writer,"spv_hash");json_string(writer,shader.spv_hash)
-    json_key(writer,"msl_hash");json_string(writer,shader.msl_hash)
-    json_object_end(writer)
+shader_read :: proc(path:string,allocator:=context.allocator) -> (shader:Shader,ok:bool) {
+    data,error:=os.read_entire_file(path,context.temp_allocator)
+    if error!=nil || serial.text_decode(string(data),&shader,allocator)!="" {return}
+    return shader,shader_valid(shader)
 }
 
 // The code of an entry a generation of these backends has: the rest is not named.
@@ -513,9 +452,7 @@ CODE_EXTENSIONS :: [Backend]string{.Vulkan=".spv",.Metal=".metal"}
 cache_stage_read :: proc(shared,digest:string,backends:Backends,allocator:=context.allocator) -> (entry:Shader,files:[Backend][]u8,ok:bool) {
     folder:=path_join(shared,CACHE_STAGES,allocator=context.temp_allocator)
     path:=path_join(folder,strings.concatenate({digest,".json"},context.temp_allocator),allocator=context.temp_allocator)
-    object,readable:=read_json(path,context.temp_allocator)
-    if !readable {return}
-    stored,valid:=shader_from_json(object,allocator)
+    stored,valid:=shader_read(path,allocator)
     if !valid {return}
     code,found:=artifacts_read(stored,digest,folder,backends)
     if !found {return}
@@ -534,11 +471,9 @@ cache_stage_write :: proc(shared:string,shader:Shader,files:[Backend][]u8,backen
     folder:=path_join(shared,CACHE_STAGES,allocator=context.temp_allocator)
     path:=path_join(folder,strings.concatenate({shader.fingerprint,".json"},context.temp_allocator),allocator=context.temp_allocator)
     entry:=shader_trim(shader,backends)
-    if object,readable:=read_json(path,context.temp_allocator);readable {
-        if previous,valid:=shader_from_json(object,context.temp_allocator);valid && previous.fingerprint==shader.fingerprint {
-            if .Vulkan not_in backends {entry.spv,entry.spv_hash=previous.spv,previous.spv_hash}
-            if .Metal not_in backends {entry.msl,entry.msl_hash,entry.entry=previous.msl,previous.msl_hash,previous.entry}
-        }
+    if previous,valid:=shader_read(path,context.temp_allocator);valid && previous.fingerprint==shader.fingerprint {
+        if .Vulkan not_in backends {entry.spv,entry.spv_hash=previous.spv,previous.spv_hash}
+        if .Metal not_in backends {entry.msl,entry.msl_hash,entry.entry=previous.msl,previous.msl_hash,previous.entry}
     }
     extensions:=CODE_EXTENSIONS
     for backend in backends {
@@ -546,9 +481,8 @@ cache_stage_write :: proc(shared:string,shader:Shader,files:[Backend][]u8,backen
         if !write_file_atomic(path_join(folder,name,allocator=context.temp_allocator),files[backend]) {return false}
         if backend==.Vulkan {entry.spv=name} else {entry.msl=name}
     }
-    writer:=json_writer(context.temp_allocator)
-    shader_to_json(&writer,entry)
-    return write_file_atomic(path,json_finish(&writer))
+    text,encoded:=serial.text_encode(entry,.Pretty,context.temp_allocator)
+    return encoded && write_file_atomic(path,text)
 }
 
 // Marks an entry of the shared cache as used now.

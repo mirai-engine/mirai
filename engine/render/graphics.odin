@@ -140,7 +140,6 @@ graphics_render_settings :: proc(settings:gpu.Settings,quality:Graphics_Settings
     s.sun_shadows=quality.sun_shadows
     s.direct_samples=clamp(quality.light_samples,1,GRAPHICS_LIGHT_SAMPLES_MAX)
     s.direct_half_resolution=quality.light_half_resolution
-    s.shadow_maps=true
     s.reflection_light_budget=min(s.light_budget,GRAPHICS_REFLECTION_LIGHTS)
     s.colored_shadows=quality.glass_shadows
     s.glass_layers=clamp(quality.glass_layers,1,gpu.GLASS_LAYERS_MAX)

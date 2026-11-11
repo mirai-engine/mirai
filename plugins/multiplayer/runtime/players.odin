@@ -27,7 +27,7 @@ net_seats :: proc(
     es:core.Commands,seats:^core.Table(input.Seat),absents:^core.Table(Seat_Absent),disabled:^core.Table(core.Disabled),
     objects:^core.Table(Replicate),transforms:^core.Table(core.Transform),keeps:^core.Table(core.Keep),links:^core.Table(Net_Link,.Read),remotes:^core.Table(core.Remote,.Read),
     bindings:core.Ref(input.Input_Map),connections:core.Ref(Remote_Inputs),network:core.Ref(core.Network),
-    hierarchy:core.Ref(core.Hierarchy),settings:core.Ref(Net_Settings),time:core.Time,
+    settings:core.Ref(Net_Settings),time:core.Time,
 ) {
     serving:=network.role==.Server
     if network.role==.Client {client_seats(es,seats,links,remotes)}
@@ -88,11 +88,11 @@ net_seats :: proc(
             absent(absents,disabled,seat,time.tick+u64(max(waits,1)))
             continue
         }
-        core.destroy_tree(es.entities,hierarchy,seat)
+        core.destroy(es,seat)
     }
     if serving {
         for at in 0..<len(absents.entities) {
-            if until:=absents.values[at].until;until!=0 && time.tick>=until {core.destroy_tree(es.entities,hierarchy,absents.entities[at])}
+            if until:=absents.values[at].until;until!=0 && time.tick>=until {core.destroy(es,absents.entities[at])}
         }
     }
 }

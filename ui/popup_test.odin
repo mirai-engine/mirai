@@ -86,20 +86,20 @@ a_menu_opens_under_its_title_and_an_item_closes_it :: proc(t:^testing.T) {
     testing.expectf(t,test_rect_near(item,first),"%v",item)
     testing.expect(t,test_rect_near(test_rect(t,&ctx,id(&ctx,"open")),{first.x,first.y+metric(&ctx,"control"),first.w,metric(&ctx,"control")}))
     testing.expect(t,test_near(test_rect(t,&ctx,id(&ctx,"quit")).y,first.y+2*metric(&ctx,"control")+9))
-    title:=test_paint(&ctx,"File")
+    title:=test_holder(&ctx,"File")
     testing.expect_value(t,title.fill,tone(&ctx,"field_active"))
-    testing.expect_value(t,test_paint(&ctx,"New scene").text_color,tone(&ctx,"text"))
+    testing.expect_value(t,test_paint(&ctx,"New scene").style.color,tone(&ctx,"text"))
     shortcut:=test_paint(&ctx,"Ctrl+N")
-    testing.expect(t,shortcut!=nil && shortcut.text_color==tone(&ctx,"text_muted"))
+    testing.expect(t,shortcut!=nil && shortcut.style.color==tone(&ctx,"text_muted"))
     testing.expect(t,test_menu_hovered(&ctx)==0,"Nothing is under the pointer")
     // A disabled item is drawn at 40 % of its opacity.
-    testing.expect_value(t,test_paint(&ctx,"Quit").text_color,color_faded(tone(&ctx,"text")))
-    testing.expect_value(t,test_paint(&ctx,"Ctrl+Q").text_color,color_faded(tone(&ctx,"text_muted")))
+    testing.expect_value(t,test_paint(&ctx,"Quit").style.color,color_faded(tone(&ctx,"text")))
+    testing.expect_value(t,test_paint(&ctx,"Ctrl+Q").style.color,color_faded(tone(&ctx,"text_muted")))
     // Under the pointer an item takes the tint of a hovered row.
     test_point(&input,item)
     frame:=test_menus_frame(&ctx,&input,&s)
     testing.expect_value(t,test_menu_hovered(&ctx),1)
-    testing.expect_value(t,test_paint(&ctx,"New scene").text_color,tone(&ctx,"text"))
+    testing.expect_value(t,test_paint(&ctx,"New scene").style.color,tone(&ctx,"text"))
     testing.expect(t,frame.pointer_consumed && frame.keyboard_consumed)
     test_press(&input)
     test_menus_frame(&ctx,&input,&s)
@@ -204,12 +204,11 @@ a_dropdown_lists_its_options_under_its_button :: proc(t:^testing.T) {
     popup_rect:=test_rect(t,&ctx,list)
     // 4 under the button, at least 180 wide, three rows and 4 of padding.
     testing.expectf(t,test_rect_near(popup_rect,{max(button_rect.x,metric(&ctx,"margin")),button_rect.y+button_rect.h+4,180,3*metric(&ctx,"row")+8}),"Popup %v from button %v",popup_rect,button_rect)
-    current:^Paint
-    for &p in ctx.paints[:ctx.paint_count] {if p.text=="Spot" && p.icon==.Check {current=&p}}
+    current:=test_element_paint(&ctx,id_derive(&ctx,list,"row",2))
     testing.expect(t,current!=nil && current.fill==tone(&ctx,"accent_soft"),"The chosen option has the check and the row of the keyboard")
-    point:^Paint
-    for &p in ctx.paints[:ctx.paint_count] {if p.text=="Point" && p.padding==28 {point=&p}}
+    point:=test_element_paint(&ctx,id_derive(&ctx,list,"row",1))
     testing.expect(t,point!=nil && point.fill==Color{})
+    testing.expect(t,test_near(test_text_rect(&ctx,"Point").x-test_rect(t,&ctx,id_derive(&ctx,list,"row",1)).x,28),"Rows without a check leave its room")
     // The keyboard moves the row and Enter takes it.
     test_key(&input,.Down)
     test_menus_frame(&ctx,&input,&s)
@@ -226,8 +225,7 @@ a_dropdown_lists_its_options_under_its_button :: proc(t:^testing.T) {
     test_point(&input,test_rect(t,&ctx,row_id))
     test_menus_frame(&ctx,&input,&s)
     test_menus_frame(&ctx,&input,&s)
-    highlighted:^Paint
-    for &p in ctx.paints[:ctx.paint_count] {if p.text=="Point" && p.padding==28 {highlighted=&p}}
+    highlighted:=test_element_paint(&ctx,row_id)
     testing.expect(t,highlighted!=nil && highlighted.fill==tone(&ctx,"accent_soft"),"The row under a pointer that moves becomes the row of the keyboard")
     test_press(&input)
     test_menus_frame(&ctx,&input,&s)
@@ -544,7 +542,7 @@ headers_title_the_groups_of_a_menu_and_rule_off_all_but_the_first :: proc(t:^tes
     test_frame(&ctx,&input,test_submenus_build,&s)
     test_click(&ctx,&input,test_submenus_build,&s,id(&ctx,"open"))
     shading,lighting:=test_paint(&ctx,"Shading"),test_paint(&ctx,"Lighting")
-    testing.expect(t,shading!=nil && lighting!=nil && shading.text_color==tone(&ctx,"text_faint") && shading.size==10)
+    testing.expect(t,shading!=nil && lighting!=nil && shading.style.color==tone(&ctx,"text_faint") && shading.size==10)
     rules:=0
     for &p in ctx.paints[:ctx.paint_count] {if p.kind==.Rect && p.fill==tone(&ctx,"border") {rules+=1}}
     testing.expect_value(t,rules,1)
@@ -622,8 +620,8 @@ a_disabled_button_shows_no_fill_of_its_own_and_a_faded_glyph :: proc(t:^testing.
         case .Play: testing.expect(t,p.fill==Color{} && p.stroke==Color{} && p.icon_color==color_faded(tone(&ctx,"text")),"A ghost shows its glyph alone, without the border of the pointer")
         case .Stop: testing.expect(t,p.fill==Color{} && p.icon_color==color_faded(tone(&ctx,"accent")),"A segment keeps the color of its glyph, faded")
         }
-        if p.text=="Field" {testing.expect(t,p.fill==color_faded(tone(&ctx,"field")) && p.text_color==color_faded(tone(&ctx,"text")))}
-        if p.text=="Accent" {testing.expect(t,p.fill==color_faded(tone(&ctx,"accent")) && p.text_color==color_faded(tone(&ctx,"on_accent")))}
+        if p.text=="Field" {testing.expect(t,p.fill==color_faded(tone(&ctx,"field")) && p.style.color==color_faded(tone(&ctx,"text")))}
+        if p.text=="Accent" {testing.expect(t,p.fill==color_faded(tone(&ctx,"accent")) && p.style.color==color_faded(tone(&ctx,"on_accent")))}
     }
 }
 

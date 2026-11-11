@@ -21,8 +21,9 @@ rules of [the plugin system](../mirai-plugins/SKILL.md). Layout, manifests and b
 
 ## Map
 
-- `vfx` (particles: `.particle` format, emitters and clocks, GPU pools and passes, Vfx programs
-  with surfaces, bones, channels and grids, stages, volumes, events to the game):
+- `vfx` (particles: `.particle` format, emitters and clocks, GPU pools and passes, surfaces and
+  bones of a shape, Vfx programs with surfaces, channels and grids, stages, volumes, events to the
+  game):
   [format](references/vfx.md#format), [game](references/vfx.md#game),
   [surfaces, bones and resources](references/vfx.md#surfaces-bones-and-resources),
   [grids and stages](references/vfx.md#grids-and-stages),
@@ -162,5 +163,3 @@ rules of [the plugin system](../mirai-plugins/SKILL.md). Layout, manifests and b
   `engine.describe`. Discovery, order or validation of manifests:
   [project verification](../mirai-projects/SKILL.md#verification). Editor tools:
   [mirai-editor](../mirai-editor/SKILL.md#verification).
-- Direct gestures (clicks on surfaces, drags, brushes) are tested by the user; the rest, by API and
-  captures.

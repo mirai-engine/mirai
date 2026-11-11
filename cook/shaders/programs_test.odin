@@ -484,11 +484,11 @@ vfx_programs_load_their_attributes_and_dispatch_three_entries :: proc(t:^testing
     include,_=os.read_entire_file(path_join(f.output,"include",VFX_FOLDER,"Drift",VFX_INCLUDE,allocator=context.temp_allocator),context.temp_allocator)
     testing.expect(t,strings.contains(string(include),"Drift::push(ctx,mirai_load_Drift(packed),value,a)"))
     testing.expect(t,strings.contains(string(include),"case 1: Drift::relax(cell,mirai_load_Drift(packed));return true;"))
-    // A stage over what is not a grid, no iterations, neighbors and a name of the contract are refused.
+    // A stage over what is not a grid, no iterations, an unknown word and a name of the contract are refused.
     refused:=[4][2]string{
         {"//! stage relax over hits","a stage goes over particles or over a grid"},
         {"//! stage push over particles iterations 0","iterations is a number"},
-        {"//! stage push over particles neighbors 1","declare a grid resource"},
+        {"//! stage push over particles neighbors 1","a stage takes iterations or writes, not neighbors"},
         {"//! stage update over particles","initialize, update and render are not stages"},
     }
     for case_ in refused {

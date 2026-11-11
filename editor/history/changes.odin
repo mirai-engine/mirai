@@ -87,7 +87,7 @@ change_canonical :: proc(w:core.World_Ref,step:^Edit_Step,info:^runtime.Type_Inf
         if id==0 {for &previous in history {if candidate:=change_step_id(w,&previous,reference);candidate!=0 {id=candidate;break}}}
         mem.copy(rawptr(uintptr(raw_data(bytes))+at),&id,size_of(id))
     }
-    for range in transient_ranges(info) {mem.zero(rawptr(uintptr(raw_data(bytes))+uintptr(range[0])),range[1])}
+    for range in transient_ranges(w.info,info) {mem.zero(rawptr(uintptr(raw_data(bytes))+uintptr(range[0])),range[1])}
     return bytes
 }
 
@@ -106,9 +106,9 @@ change_materialize :: proc(w:core.World_Ref,info:^runtime.Type_Info,bytes:[]u8) 
 
 // The Entity fields of a type a scene saves: what is not transient.
 @(private)
-saved_entity_offsets :: proc(info:^runtime.Type_Info) -> []uintptr {
+saved_entity_offsets :: proc(world:^core.World_Info,info:^runtime.Type_Info) -> []uintptr {
     offsets:=author.entity_offsets(info)
-    transient:=transient_ranges(info)
+    transient:=transient_ranges(world,info)
     kept:=0
     each: for at in offsets {
         for range in transient {if int(at)>=range[0] && int(at)<range[0]+range[1] {continue each}}
@@ -193,39 +193,29 @@ change_set_take :: proc(w:core.World_Ref,project_root:string,set:^Change_Set,ste
     return
 }
 
-// Whether two values of a type agree in what a scene saves.
-change_equal :: proc(info:^runtime.Type_Info,a,b:rawptr) -> bool {
-    fields,is_struct:=runtime.type_info_base(info).variant.(runtime.Type_Info_Struct)
-    if is_struct && fields.field_count>0 {
-        for i in 0..<int(fields.field_count) {
-            if tagged,_:=serial.field_tag(fields.tags[i]);.Transient in tagged.flags {continue}
-            if !change_equal(fields.types[i],rawptr(uintptr(a)+fields.offsets[i]),rawptr(uintptr(b)+fields.offsets[i])) {return false}
-        }
-        return true
+// Whether two values of a type of a world agree in what a scene saves.
+change_equal :: proc(world:^core.World_Info,info:^runtime.Type_Info,a,b:rawptr) -> bool {
+    for field in saved_fields(world,info) {
+        if mem.compare_ptrs(rawptr(uintptr(a)+uintptr(field[0])),rawptr(uintptr(b)+uintptr(field[0])),field[1])!=0 {return false}
     }
-    return info.size==0 || mem.compare_ptrs(a,b,info.size)==0
+    return true
 }
 
 // Writes into current, field by field, what before has where current holds
 // what after has; a field that holds another value stays and counts as kept.
 // Whether any field changed.
 @(private)
-change_restore_fields :: proc(info:^runtime.Type_Info,current,before,after:rawptr,kept:^int) -> bool {
-    fields,is_struct:=runtime.type_info_base(info).variant.(runtime.Type_Info_Struct)
+change_restore_fields :: proc(world:^core.World_Info,info:^runtime.Type_Info,current,before,after:rawptr,kept:^int) -> bool {
     changed:=false
-    if is_struct && fields.field_count>0 {
-        for i in 0..<int(fields.field_count) {
-            if tagged,_:=serial.field_tag(fields.tags[i]);.Transient in tagged.flags {continue}
-            offset:=fields.offsets[i]
-            if change_restore_fields(fields.types[i],rawptr(uintptr(current)+offset),rawptr(uintptr(before)+offset),rawptr(uintptr(after)+offset),kept) {changed=true}
-        }
-        return changed
+    for field in saved_fields(world,info) {
+        at,size:=uintptr(field[0]),field[1]
+        now,was,will:=rawptr(uintptr(current)+at),rawptr(uintptr(before)+at),rawptr(uintptr(after)+at)
+        if mem.compare_ptrs(was,will,size)==0 || mem.compare_ptrs(now,was,size)==0 {continue}
+        if mem.compare_ptrs(now,will,size)!=0 {kept^+=1;continue}
+        mem.copy(now,was,size)
+        changed=true
     }
-    if change_equal(info,before,after) {return false}
-    if change_equal(info,current,before) {return false}
-    if !change_equal(info,current,after) {kept^+=1;return false}
-    if info.size>0 {mem.copy(current,before,info.size)}
-    return true
+    return changed
 }
 
 // Whether all of an entity is still as one side of a change set left it: the
@@ -247,7 +237,7 @@ change_entity_clean :: proc(w:core.World_Ref,set:^Change_Set,id:base.Entity_Id,e
         if !present {return false}
         if _,off,_:=core.raw_state(table,e);off!=(forward?expected.before_off:expected.after_off) {return false}
         canonical:=change_canonical(w,nil,descriptor.info,current,context.temp_allocator)
-        if !change_equal(descriptor.info,raw_data(canonical),raw_data(forward?expected.before:expected.after)) {return false}
+        if !change_equal(w.info,descriptor.info,raw_data(canonical),raw_data(forward?expected.before:expected.after)) {return false}
     }
     return true
 }
@@ -268,9 +258,9 @@ change_row_put :: proc(w:core.World_Ref,row:^Change_Row,e:core.Entity,forward:bo
     switch {
     case has && had && current!=nil:
         canonical:=change_canonical(w,nil,info,current,context.temp_allocator)
-        if change_restore_fields(info,raw_data(canonical),raw_data(to),raw_data(from),kept) {
+        if change_restore_fields(w.info,info,raw_data(canonical),raw_data(to),raw_data(from),kept) {
             restored:=change_materialize(w,info,canonical)
-            saved_copy(core.raw_author(table,info,e),raw_data(restored),info.size,transient_ranges(info))
+            saved_copy(core.raw_author(table,info,e),raw_data(restored),info.size,transient_ranges(w.info,info))
         }
         if from_off!=to_off && off!=to_off {
             if to_off {core.raw_disable(table,e)} else {core.raw_enable(table,e)}
@@ -278,7 +268,7 @@ change_row_put :: proc(w:core.World_Ref,row:^Change_Row,e:core.Entity,forward:bo
     case has && !had:
         if current!=nil {
             canonical:=change_canonical(w,nil,info,current,context.temp_allocator)
-            if off!=to_off || !change_equal(info,raw_data(canonical),raw_data(to)) {kept^+=1}
+            if off!=to_off || !change_equal(w.info,info,raw_data(canonical),raw_data(to)) {kept^+=1}
             return
         }
         restored:=change_materialize(w,info,to)
@@ -286,7 +276,7 @@ change_row_put :: proc(w:core.World_Ref,row:^Change_Row,e:core.Entity,forward:bo
         if to_off {core.raw_disable(table,e)}
     case !has && had && current!=nil:
         canonical:=change_canonical(w,nil,info,current,context.temp_allocator)
-        if off==from_off && change_equal(info,raw_data(canonical),raw_data(from)) {core.raw_remove(table,e)} else {kept^+=1}
+        if off==from_off && change_equal(w.info,info,raw_data(canonical),raw_data(from)) {core.raw_remove(table,e)} else {kept^+=1}
     case has && had:
         kept^+=1
     }
@@ -309,7 +299,7 @@ entities_named_keep :: proc(w:core.World_Ref,marks:[]u8,step:^Edit_Step=nil) -> 
         changed:=false
         for &descriptor,index in w.info.tables {
             if descriptor.place!=w.place || descriptor.derived {continue}
-            offsets:=saved_entity_offsets(descriptor.info)
+            offsets:=saved_entity_offsets(w.info,descriptor.info)
             if len(offsets)==0 {continue}
             table:=core.world_table_at(w,&descriptor)
             written:map[core.Entity]bool

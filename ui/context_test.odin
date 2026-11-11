@@ -67,13 +67,43 @@ test_text_pieces :: proc(ctx:^Context) -> []Paint {
                 if s.box {continue}
                 style,decoration:=text_piece_style(own,s)
                 p:=own^
-                p.kind,p.text,p.style,p.size,p.text_color,p.decoration=.Box if s.pad>0 else .None,s.text[piece.start:][:piece.length],style,style.size,style.color,decoration
+                p.kind,p.text,p.style,p.size,p.decoration,p.icon,p.stroke=.Box if s.pad>0 else .None,s.text[piece.start:][:piece.length],style,style.size,decoration,s.icon,s.edge
                 p.fill=s.back
                 append(&out,p)
             }
         }
     }
     return out[:]
+}
+// The paint of the element that holds the text that says text: the box of a
+// button, a row or a field.
+test_holder :: proc(ctx:^Context,text:string) -> ^Paint {
+    t:=&ctx.layout
+    for &n,leaf in t.nodes[:t.node_count] {
+        p:=cast(^Paint)n.custom
+        if n.text<0 || p==nil || p.text!=text {continue}
+        for &holder in t.nodes[:t.node_count] {
+            for kid in t.kids[holder.kids_first:][:holder.kids_len] {if int(kid)==leaf {return cast(^Paint)holder.custom}}
+        }
+    }
+    return nil
+}
+// The paint of the element id.
+test_element_paint :: proc(ctx:^Context,id:Id) -> ^Paint {
+    index:=layout_index(&ctx.layout,id)
+    return cast(^Paint)ctx.layout.nodes[index].custom if index>0 else nil
+}
+// Where the text that says text was laid out.
+test_text_rect :: proc(ctx:^Context,text:string) -> Rect {
+    for &n in ctx.layout.nodes[:ctx.layout.node_count] {
+        if p:=cast(^Paint)n.custom;n.text>=0 && p!=nil && p.text==text {return n.box}
+    }
+    return {}
+}
+// The caret of the text being edited, while it shows.
+test_caret :: proc(ctx:^Context) -> ^Paint {
+    for &p in ctx.paints[:ctx.paint_count] {if p.kind==.Caret {return &p}}
+    return nil
 }
 // Whether a paint is that of a text.
 test_paint_is_text :: proc(p:Paint) -> bool {return p.kind==.None && p.style.size>0}

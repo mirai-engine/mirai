@@ -6,6 +6,7 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:rhi"
+import "mirai:std/serial"
 
 @(private="file")
 float_string :: proc(value:f64) -> string {
@@ -59,11 +60,10 @@ json_is_written_one_member_per_line_with_two_spaces :: proc(t:^testing.T) {
 shader_entry_survives_the_manifest :: proc(t:^testing.T) {
     bindings:=[]Binding{{0,"Uniform_Buffer"},{2,"Sampler"},{35,"Texture_Table"}}
     shader:=Shader{id="Gbuffer_Plain_Frag",name="gbuffer_plain.frag",stage=.Fragment,spv="gbuffer_plain.frag.spv",msl="gbuffer_plain.frag.metal",entry="main0",bindings=bindings,constants={"nested","other"},fingerprint="f",spv_hash="s",msl_hash="m",staged=true}
-    writer:=json_writer(context.temp_allocator)
-    shader_to_json(&writer,shader)
-    parsed,_:=json.parse(json_finish(&writer),parse_integers=true,allocator=context.temp_allocator)
-    read,ok:=shader_from_json(parsed.(json.Object),context.temp_allocator)
-    testing.expect(t,ok)
+    text,_:=serial.text_encode(shader,.Pretty,context.temp_allocator)
+    read:Shader
+    testing.expect_value(t,serial.text_decode(string(text),&read,context.temp_allocator),"")
+    testing.expect(t,shader_valid(read))
     testing.expect_value(t,read.id,shader.id)
     testing.expect_value(t,read.name,shader.name)
     testing.expect_value(t,read.stage,Stage.Fragment)
@@ -73,13 +73,12 @@ shader_entry_survives_the_manifest :: proc(t:^testing.T) {
     testing.expect(t,len(read.constants)==2 && read.constants[0]=="nested" && read.constants[1]=="other","its constants keep their ids")
     testing.expect(t,!read.staged)
     // An entry that is not a shader is no entry.
-    broken,_:=json.parse_string("{\"id\":\"A\",\"name\":\"a\",\"stage\":\"Geometry\",\"bindings\":[],\"group\":[0,0,0]}",parse_integers=true,allocator=context.temp_allocator)
-    _,valid:=shader_from_json(broken.(json.Object),context.temp_allocator)
-    testing.expect(t,!valid)
+    broken:Shader
+    testing.expect(t,serial.text_decode("{\"id\":\"A\",\"name\":\"a\",\"stage\":\"Geometry\",\"bindings\":[],\"group\":[0,0,0]}",&broken,context.temp_allocator)!="")
     for constants in ([]string{"[7]","[\"\"]","[\"a\",null]"}) {
-        unnamed,_:=json.parse_string(fmt.tprintf("{{\"id\":\"A\",\"name\":\"a\",\"stage\":\"Compute\",\"bindings\":[],\"constants\":%s,\"group\":[0,0,0]}}",constants),parse_integers=true,allocator=context.temp_allocator)
-        _,named:=shader_from_json(unnamed.(json.Object),context.temp_allocator)
-        testing.expectf(t,!named,"constants %s",constants)
+        unnamed:Shader
+        read_error:=serial.text_decode(fmt.tprintf("{{\"id\":\"A\",\"name\":\"a\",\"stage\":\"Compute\",\"bindings\":[],\"constants\":%s,\"group\":[0,0,0]}}",constants),&unnamed,context.temp_allocator)
+        testing.expectf(t,read_error!="" || !shader_valid(unnamed),"constants %s",constants)
     }
 }
 

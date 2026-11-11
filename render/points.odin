@@ -120,25 +120,28 @@ program_computes_publish :: proc(r: ^Renderer, table: ^Program_Computes, next: [
 }
 
 // The stage <stem>__<program>.comp of a Surface program; 0 until it is made
-// (pipeline_thread.odin), or when the shaders have none.
+// (pipeline_thread.odin), or when the shaders have none. early: as
+// program_graphics.
 @(private)
-program_compute :: proc(r: ^Renderer, table: ^Program_Computes, program: Program, stem, label: string) -> rhi.Pipeline {
+program_compute :: proc(r: ^Renderer, table: ^Program_Computes, program: Program, stem: string, early := false) -> rhi.Pipeline {
 	if program.id >= POINTS_PROGRAM_CAPACITY {return 0}
 	if !table.asked[program.id] {
 		table.asked[program.id] = true
 		name: [192]u8
 		if code := program_shader(r, fmt.bprintf(name[:], "%s__%s.comp", stem, program.name)); code != nil {
 			table.codes[program.id] = code
-			table.asked[program.id] = pipeline_make(r, &table.pipelines[program.id], compute = {shader = code, name = label})
+			table.asked[program.id] = pipeline_make(r, &table.pipelines[program.id], compute = {shader = code, name = code.name}, early = early)
 		}
+	} else if table.pipelines[program.id] == 0 && table.codes[program.id] != nil && !early {
+		pipeline_urgent(r, &table.pipelines[program.id])
 	}
 	return table.pipelines[program.id]
 }
 
 // The stage of a Surface program over its points.
 @(private)
-points_pipeline :: proc(r: ^Renderer, program: Program) -> rhi.Pipeline {
-	return program_compute(r, &r.points.stages, program, "surface_points", "surface points")
+points_pipeline :: proc(r: ^Renderer, program: Program, early := false) -> rhi.Pipeline {
+	return program_compute(r, &r.points.stages, program, "surface_points", early)
 }
 
 // Whether the passes of the frame need batches: a material of the scene has a program.

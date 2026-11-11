@@ -368,9 +368,9 @@ volumes_mark_their_area_and_a_blocked_volume_removes_the_surface :: proc(t:^test
     defer test_mesh_destroy(&m)
     test_plane(&m,-4,-4,12,12,0)
     volumes:=[3]Nav_Area_Volume{
-        {points={{1,1},{3,1},{3,3},{1,3},{},{},{},{}},count=4,area=5,min_y=-1,max_y=1},
-        {points={{5,5},{7,5},{7,7},{5,7},{},{},{},{}},count=4,area=NAV_AREA_BLOCKED,min_y=-1,max_y=1},
-        {points={{1,5},{3,5},{3,7},{1,7},{},{},{},{}},count=4,area=7,min_y=1,max_y=2},
+        {points={0={1,1},1={3,1},2={3,3},3={1,3}},count=4,area=5,min_y=-1,max_y=1},
+        {points={0={5,5},1={7,5},2={7,7},3={5,7}},count=4,area=NAV_AREA_BLOCKED,min_y=-1,max_y=1},
+        {points={0={1,5},1={3,5},2={3,7},3={1,7}},count=4,area=7,min_y=1,max_y=2},
     }
     data,status:=test_build(t,&m,volumes=volumes[:])
     defer nav_tile_data_free(&data)
@@ -466,7 +466,7 @@ the_same_input_builds_the_same_bytes :: proc(t:^testing.T) {
     m:Test_Mesh
     defer test_mesh_destroy(&m)
     test_scene(&m)
-    volumes:=[1]Nav_Area_Volume{{points={{3,3},{4,3},{4,4},{3,4},{},{},{},{}},count=4,area=9,min_y=-1,max_y=1}}
+    volumes:=[1]Nav_Area_Volume{{points={0={3,3},1={4,3},2={4,4},3={3,4}},count=4,area=9,min_y=-1,max_y=1}}
     first,status_first:=test_build(t,&m,volumes=volumes[:])
     defer nav_tile_data_free(&first)
     testing.expect_value(t,status_first,Nav_Build_Status.Built)
@@ -679,7 +679,7 @@ a_tile_built_again_from_its_field_is_the_one_its_triangles_give :: proc(t:^testi
     defer {nav_tile_data_free(&first);nav_tile_field_free(&field)}
     testing.expect(t,len(field.spans)>0 && field.side>config.tile_size)
     box :: proc(x0,z0,x1,z1:f32,area:u8,min_y:f32=-1,max_y:f32=1) -> Nav_Area_Volume {
-        return {points={{x0,z0},{x1,z0},{x1,z1},{x0,z1},{},{},{},{}},count=4,area=area,min_y=min_y,max_y=max_y}
+        return {points={0={x0,z0},1={x1,z0},2={x1,z1},3={x0,z1}},count=4,area=area,min_y=min_y,max_y=max_y}
     }
     sets:=[?][]Nav_Area_Volume{
         {},

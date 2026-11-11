@@ -129,8 +129,9 @@ the_first_click_on_a_field_selects_all_and_the_next_places_the_caret :: proc(t:^
     lo,hi:=text_edit_selection(e)
     testing.expect(t,lo==0 && hi==11)
     testing.expect_value(t,ctx.focus,id(&ctx,"name"))
-    field:=test_paint(&ctx,"hello world")
-    testing.expect(t,field.kind==.Field && field.caret==11 && field.selection==[2]int{0,11} && field.fill==tone(&ctx,"well") && field.stroke==tone(&ctx,"accent"),"The selection shows over the fill of the field")
+    field:^Paint
+    for &p in ctx.paints[:ctx.paint_count] {if p.kind==.Field && p.stroke==tone(&ctx,"accent") {field=&p}}
+    testing.expect(t,field!=nil && field.fill==tone(&ctx,"well") && test_paint(&ctx,"hello world").fill==tone(&ctx,"text_select"),"The selection shows over the fill of the field")
     test_release(&input)
     test_text_frame(&ctx,&input,&s)
     // A second click places the caret at the nearest boundary.
@@ -240,7 +241,7 @@ the_keyboard_edits_the_field_and_enter_applies_it :: proc(t:^testing.T) {
     testing.expect_value(t,string(s.name[:s.name_length]),"New name")
     testing.expect_value(t,ctx.edit.id,Id(0))
     test_text_frame(&ctx,&input,&s)
-    testing.expect(t,!s.result.committed && test_paint(&ctx,"New name").caret==-1)
+    testing.expect(t,!s.result.committed && test_caret(&ctx)==nil)
 }
 
 @(test)
@@ -301,9 +302,8 @@ a_live_field_follows_every_key_and_shows_its_placeholder :: proc(t:^testing.T) {
     ctx:Context;s:Test_Text;input:Input
     test_text_init(t,&ctx,&s,&input)
     defer context_destroy(&ctx)
-    placeholder:^Paint
-    for &p in ctx.paints[:ctx.paint_count] {if p.placeholder=="Find" {placeholder=&p}}
-    testing.expect(t,placeholder!=nil && placeholder.text=="")
+    placeholder:=test_paint(&ctx,"Find")
+    testing.expect(t,placeholder!=nil && placeholder.style.color==tone(&ctx,"text_faint"))
     s.filter_length=copy(s.filter[:],"cr")
     test_text_point(&ctx,&input,id(&ctx,"filter"),0)
     test_text_frame(&ctx,&input,&s)
@@ -421,8 +421,6 @@ long_text_scrolls_to_keep_the_caret_in_sight :: proc(t:^testing.T) {
     test_key(&input,.End)
     test_text_frame(&ctx,&input,&s)
     testing.expect_value(t,e.scroll,f32(46))
-    paint:=test_paint(&ctx,"abcdefghijklmnopqrstuvwxyz0123")
-    testing.expect_value(t,paint.scroll,f32(46))
     // A click lands on the character that is drawn there.
     test_text_point(&ctx,&input,id(&ctx,"name"),2)
     test_text_frame(&ctx,&input,&s)

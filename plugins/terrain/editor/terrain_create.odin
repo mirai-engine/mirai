@@ -24,28 +24,26 @@ import "base:runtime"
 @(private) HEIGHTMAP_DIALOG :: u32(0x74657268)
 
 @(private)
-terrain_kind_name :: proc(kind:terrain.Source_Kind) -> string {
-    switch kind {case .Heightfield:return "Heightfield Terrain";case .Volume:return "Volumetric Terrain"}
-    return "Terrain"
-}
+terrain_kind_name :: proc(kind:terrain.Source_Kind) -> string {return KIND_NAMES[int(kind)]}
+@(private,rodata) KIND_NAMES := [len(terrain.Source_Kind)]string{"Heightfield Terrain","Volumetric Terrain"}
 
 @(private)
 terrain_creation_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,app:^host.App) {
     ctx:=s.gui.ctx
     kind:=int(tool.create_kind)
-    if ui.dropdown(ctx,ui.id(ctx,"source_kind"),{list={"Heightfield Terrain","Volumetric Terrain"}},&kind,{width=-1,height=ui.metric(ctx,"row")}) {tool.create_kind=terrain.Source_Kind(kind)}
+    if ui.dropdown(ctx,ui.id(ctx,"source_kind"),{list=KIND_NAMES[:]},&kind,{width=-1,height=ui.metric(ctx,"row")}) {tool.create_kind,tool.create_source=terrain.Source_Kind(kind),.Plane}
     if tool.create_kind!=.Volume {
         source:=int(tool.create_source)
         if kit.tabs(ctx,ui.id(ctx,"create_source"),{"Plane","Heightmap"},&source) {tool.create_source=Create_Source(source)}
     }
-    heightmap:=tool.create_kind!=.Volume && tool.create_source==.Heightmap
+    heightmap:=tool.create_source==.Heightmap
     samples,depth,cell,chunk:=f64(tool.samples),f64(tool.depth),f64(tool.cell),f64(tool.chunk_cells)
-    maximum:=tool.create_kind==.Volume?f64(terrain.VOLUME_SAMPLES_MAX):f64(terrain.HEIGHT_SAMPLES_MAX)
+    maximum:=f64(terrain.SAMPLES_MAX)
     tool.samples=min(tool.samples,int(maximum));samples=f64(tool.samples)
     if !heightmap {
         if kit.property(ctx,"Samples X/Z") {if ui.number_field(ctx,ui.id(ctx,"samples"),&samples,{min=3,max=maximum,has_min=true,has_max=true,speed=1}).changed {tool.samples=int(samples)}}
     }
-    if tool.create_kind==.Volume {if kit.property(ctx,"Samples Y") {if ui.number_field(ctx,ui.id(ctx,"depth"),&depth,{min=3,max=terrain.VOLUME_SAMPLES_MAX,has_min=true,has_max=true,speed=1}).changed {tool.depth=int(depth)}}}
+    if tool.create_kind==.Volume {if kit.property(ctx,"Samples Y") {if ui.number_field(ctx,ui.id(ctx,"depth"),&depth,{min=3,max=terrain.SAMPLES_MAX,has_min=true,has_max=true,speed=1}).changed {tool.depth=int(depth)}}}
     if heightmap {
         result:=platform.dialog_result(app.platform)
         if result.tag==HEIGHTMAP_DIALOG && result.state==.Accepted {tool.heightmap_length=copy(tool.heightmap_path[:],transmute([]u8)result.path)}
@@ -76,15 +74,14 @@ terrain_create :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
     defer terrain.source_destroy(&source)
     over:Ground_Placement
     if ground!=core.NONE {
-        if tool.create_kind!=.Volume {editor.notify(s,"Only a Volume joins a Heightfield");return}
         ok:bool
         if over,ok=volume_over_ground(s,world,assets,allocator,ground,at,placed,tool,&source);!ok {return}
-    } else if tool.create_kind!=.Volume && tool.create_source==.Heightmap {
+    } else if tool.create_source==.Heightmap {
         path:=string(tool.heightmap_path[:tool.heightmap_length])
         bytes,error:=serial.file_read(path,allocator,limit=64*1024*1024)
         if error!=.None {editor.notify(s,fmt.tprintf("The heightmap %s could not be read: %v",path,error));return}
         defer delete(bytes,allocator)
-        heightmap,decode:=textures.heightmap_decode(bytes,terrain.HEIGHT_SAMPLES_MAX,allocator)
+        heightmap,decode:=textures.heightmap_decode(bytes,terrain.SAMPLES_MAX,allocator)
         if decode!=.None {editor.notify(s,fmt.tprintf("Heightmap: %v",decode));return}
         defer textures.heightmap_destroy(&heightmap)
         if !terrain.source_make(&source,.Heightfield,{heightmap.width,1,heightmap.height},tool.cell,tool.chunk_cells,allocator) {editor.notify(s,"The heightmap dimensions exceed their budget");return}
@@ -96,7 +93,7 @@ terrain_create :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
         }
     } else {
         samples:=[3]int{tool.samples,tool.create_kind==.Volume?tool.depth:1,tool.samples}
-        if !terrain.source_make(&source,tool.create_kind==.Volume?.Volume:.Heightfield,samples,tool.cell,tool.chunk_cells,allocator) {editor.notify(s,"The terrain dimensions exceed their budget");return}
+        if !terrain.source_make(&source,tool.create_kind,samples,tool.cell,tool.chunk_cells,allocator) {editor.notify(s,"The terrain dimensions exceed their budget");return}
     }
     if !terrain_budget(s,world,&source) {return}
     label,path:=editor.asset_new_file(s,fmt.tprintf("%s/terrain",a.registry.root),name!=""?name:terrain_kind_name(source.kind),terrain.TERRAIN_EXTENSION,name!="")
@@ -229,7 +226,7 @@ terrain_operand :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Re
 // target of the view, on its ground.
 @(private)
 create_outline_draw :: proc(s:^editor.Session,tool:^Terrain_Tool) {
-    if tool.create_kind!=.Volume && tool.create_source!=.Plane {return}
+    if tool.create_source!=.Plane {return}
     half:=f32(max(tool.samples,2)-1)*tool.cell*0.5
     at:=s.viewport.orbit.target
     corners:=[4][3]f32{{at.x-half,0,at.z-half},{at.x+half,0,at.z-half},{at.x+half,0,at.z+half},{at.x-half,0,at.z+half}}

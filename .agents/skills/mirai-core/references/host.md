@@ -106,9 +106,9 @@ its `exit_code` and `script_hold`.
 A GPU that stops working ([device
 loss](../../mirai-rendering/references/rhi.md#device-loss)) does not end the
 application by itself: frames keep going without drawing or waiting for the GPU and the worlds keep
-ticking. `app_gpu_failure` gives the failure and its text, which names the call that saw it and the
-probable cause: the project shaders if they were replaced recently (`GPU_FAILURE_SHADER_FRAMES`), a
-shader that does not finish if it was `Hung`. The first time it is reported in the log and as the
+ticking. `app_gpu_failure` gives the failure and its text, which names the call that saw it, where
+the GPU stopped, and the project shaders if they were replaced recently
+(`GPU_FAILURE_SHADER_FRAMES`). The first time it is reported in the log and as the
 problem `gpu.failure` of the player's world.
 
 - The player prints the text and exits with `PLAYER_GPU_LOST`.
@@ -458,7 +458,8 @@ row.
 - **Scope and unloading.** `Assets_Scope` is whoever uses what is loaded (up to 16).
   `world_asset_ids` finds by type every `base.Asset_Id` of the tables and storages of a world (with
   `shared` and its id, also of its `by_world` storages), in structs, arrays, enumerated arrays,
-  slices and dynamic arrays, not behind pointers or in maps; `assets_collect` unloads what no scope
+  slices and dynamic arrays, not behind pointers or in maps; `world_owned_asset_ids`, by the world's
+  schema, those under a field tagged `owned`; `assets_collect` unloads what no scope
   reaches. `app_assets_mark` (at the start of each frame) maintains a scope with what all worlds
   mark and unloads when it changed: changing scene or unloading a section releases what nobody
   uses. An asset that the game uses must be named by a world (a component, a setting); the editor

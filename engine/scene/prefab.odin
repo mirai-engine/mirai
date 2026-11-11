@@ -132,7 +132,7 @@ spawns_fill :: proc(w:core.World_Ref,app:^host.App,warms:^Prefab_Warms,problems:
         if error!=.None {
             name:[base.ASSET_ID_TEXT]u8
             core.report(problems,core.NONE,"scene.spawn","scene %s did not spawn: %s; open it in the editor and save it again, or spawn another",host.assets_name(a,prefab,&name),error_text(error))
-            core.world_destroy_tree(w,root)
+            core.destroy(core.world_entities(w),root)
             continue
         }
         core.remove(pendings,root)

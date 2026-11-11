@@ -3,6 +3,7 @@ package editor
 import "core:fmt"
 import "core:log"
 import "core:os"
+import "core:path/filepath"
 import "core:slice"
 import "core:strconv"
 import "core:strings"
@@ -432,7 +433,8 @@ recovery_update :: proc(s:^Session) {
 // puts back in memory the unsaved assets, before the documents that may show
 // them. What this editor did meanwhile is kept: a tab with changes stays and
 // a document opens beside it. What could not be put back or removed stays
-// offered and reason says why; resolved: something of it was.
+// offered and reason says why, or what was recovered but not as it was;
+// resolved: something of it was.
 recovery_resolve :: proc(s:^Session,discard:bool) -> (resolved:bool,reason:string) {
     r:=&s.recovery
     if !r.pending {return}
@@ -500,7 +502,9 @@ recovery_resolve :: proc(s:^Session,discard:bool) -> (resolved:bool,reason:strin
                     document_activate(s,tab)
                 }
                 if why=="" {
-                    if why=recovery_found_restore(s,&found);why!="" && beside {document_tab_drop_last(s,previous)}
+                    note:string
+                    if why,note=recovery_found_restore(s,&found);why!="" && beside {document_tab_drop_last(s,previous)}
+                    if note!="" {reason=note}
                 }
                 if why!="" {
                     r.found[kept]=found
@@ -538,23 +542,32 @@ recovery_assets_conflict :: proc(s:^Session) -> string {
 
 // Puts a document back in the tab in front, with its copy or the saved file
 // its log follows and the steps of its log, and goes on with its chain until
-// a copy holds what it put back. "" or why it stays offered.
+// a copy holds what it put back. why: "" or why it stays offered; note: what
+// of it could not be put back as it was.
 @(private)
-recovery_found_restore :: proc(s:^Session,found:^Recovery_Found) -> string {
+recovery_found_restore :: proc(s:^Session,found:^Recovery_Found) -> (why,note:string) {
     r:=&s.recovery
     file,source:=recovery_file(s,found.slot),base.text_get(found.info.source[:])
     if !found.scene {file,source=base.text_get(found.source[:]),base.text_get(found.source[:])}
+    chain:[]Recovery_Log_File
+    if found.records>0 {chain,_=recovery_log_chain(s,found.slot,found.scene?found.info.log:0)}
+    // The saved file changed since the log began over it: its steps go over it in a copy.
+    if len(chain)>0 && chain[0].base==.Source && recovery_source_stamp(file)!=chain[0].stamp {
+        source=project.path(project.folder_path(s.project_root,.Generated,context.temp_allocator),"tmp",fmt.tprintf("recovered-%s",filepath.base(file)),allocator=context.temp_allocator)
+        note=fmt.tprintf("%s changed since the editor ended, so its recovered changes were put back over it as it is now in a copy, %s: compare them and Save what you keep; the file stays as it is",file,source)
+    }
     if error:=document_restore(s,file,source,true);error!=.None {
-        return fmt.tprintf("%s could not be opened and is kept: %s",file,document_error_text(error))
+        return fmt.tprintf("%s could not be opened and is kept: %s",file,document_error_text(error)),""
     }
     if s.document.previous!=nil {
         if table,has:=asset.document_table(&s.document.previous.doc,RECOVERY_TABLE);has {
             asset.document_table_remove(&s.document.previous.doc,table)
         }
     }
-    if found.records>0 {
-        chain,_:=recovery_log_chain(s,found.slot,found.scene?found.info.log:0)
-        recovery_log_replay(s,chain)
+    if len(chain)>0 {
+        if _,lost,names:=recovery_log_replay(s,chain);lost>0 {
+            note=fmt.tprintf("%s%s%d recovered changes of %s were not put back: the code built since has no such component (a renamed one names its old name with @(component,was=)), or one that is not plain data in another layout",note,note!=""?". ":"",lost,names)
+        }
     }
     // The chain the tab had followed a document that is gone.
     if r.slot!=0 && r.slot!=found.slot {
@@ -564,7 +577,7 @@ recovery_found_restore :: proc(s:^Session,found:^Recovery_Found) -> string {
     r.slot,r.owned=found.slot,found.scene
     r.log.keep,r.log.following=true,false
     r.saved,r.deadline=history.edits_scene_state(s.edits),platform.clock_ns()
-    return ""
+    return
 }
 
 @(private)
@@ -574,7 +587,7 @@ Api_Recovery_Result :: struct {
     dirty:bool `mirai:"label=Whether that document has unsaved changes"`,
     resolved:bool `mirai:"label=Whether this call recovered or discarded something; false when nothing was offered"`,
     pending:bool `mirai:"label=Whether some of it stays offered: reason says why"`,
-    reason:[512]u8 `mirai:"text,optional,label=Why what stays offered could not be recovered or removed"`,
+    reason:[512]u8 `mirai:"text,optional,label=Why what stays offered could not be recovered or removed, or what was recovered but not as it was"`,
 }
 
 @(private)

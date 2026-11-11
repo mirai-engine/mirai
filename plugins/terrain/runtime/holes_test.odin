@@ -149,7 +149,7 @@ a_heightfield_chunk_prepares_its_render_geometry_where_it_is_built :: proc(t:^te
     testing.expect(t,source_make(&source,.Heightfield,{17,1,17},1,8))
     mesh:Chunk_Mesh;chunk_mesh_init(&mesh);defer chunk_mesh_destroy(&mesh)
     testing.expect(t,chunk_build(&source,{1,0,0},&mesh))
-    testing.expect(t,chunk_render_prepare(.Heightfield,&mesh,{}))
+    testing.expect(t,chunk_render_prepare(&mesh,{}))
     m:=&mesh.geometry
     vertices:=make([dynamic]asset.Vertex,context.temp_allocator)
     indices:=make([dynamic]u32,context.temp_allocator)
