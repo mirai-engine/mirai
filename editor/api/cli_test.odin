@@ -54,7 +54,7 @@ run_tool :: proc(tool:Tool,stdin:string,args:..string) -> (code:int,stdout,stder
 }
 
 Session :: struct {
-    process:os.Process,
+    process:subprocess.Process,
     stdin,stdout,stderr:^os.File,
     pending:[dynamic]u8,
 }
@@ -104,8 +104,7 @@ session_read :: proc(s:^Session,wait:=10*time.Second) -> string {
 }
 
 session_stop :: proc(s:^Session) {
-    _=os.process_kill(s.process)
-    _,_=os.process_wait(s.process)
+    subprocess.release(&s.process)
     os.close(s.stdin);os.close(s.stdout);os.close(s.stderr)
 }
 

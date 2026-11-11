@@ -83,6 +83,7 @@ edits_prepare :: proc(edits:^Edits,w:core.World_Ref,selection:^Selection,externa
         rows:=Step_Rows{table=index}
         adds:=0
         d:=journal_diff(current,image,size,edits.ranges[index].ranges,authors,only_authors && index!=id)
+        if !journal_diff_once(&d) {return edits_prepare_failed(&prepared,.Memory)}
         for r in journal_diff_next(&d) {
             if r.image_row<0 {adds+=1}
             value:=r.image_row>=0?journal_value(image,size,r.image_row):nil

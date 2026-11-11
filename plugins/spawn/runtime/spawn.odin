@@ -35,7 +35,7 @@ Spawn_Point :: struct {
 
 // A body that appeared for a seat: it goes when its seat goes (a player who
 // left the game).
-@(component,description="A body the spawn library gave to a seat: it is destroyed when that seat goes away.")
+@(component,derived,description="A body the spawn library gave to a seat: it is destroyed when that seat goes away.")
 Seat_Body :: struct {
     seat:core.Entity `mirai:"transient,readonly"`,
 }

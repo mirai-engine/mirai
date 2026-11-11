@@ -157,7 +157,7 @@ Character_Drive :: sim.Character_Move
 
 // What drives a Character from the next step on: the locomotion plugin or a
 // game writes it, and the step hands it to the simulation.
-@(component,shared,description="How the Character is driven: toward a velocity on the ground and another in the air, with a launch and the yaw it faces.")
+@(component,derived,shared,description="How the Character is driven: toward a velocity on the ground and another in the air, with a launch and the yaw it faces.")
 Character_Move :: struct {
     value:Character_Drive `mirai:"transient,readonly"`,
     // m of the capsule from the feet to the top of the head it asks for: crouching. The step makes it
@@ -171,7 +171,7 @@ Character_Move :: struct {
 // simulation writes it. The body faces the yaw of its Character_Move: whoever
 // writes it adds ground_turn to it on every step, so the body, its walk and
 // the camera turn together on ground that turns.
-@(component,description="Whether the character stands, the ground physics found under it and how deep in a fluid it is.")
+@(component,derived,description="Whether the character stands, the ground physics found under it and how deep in a fluid it is.")
 Character_State :: struct {
     standing:bool `mirai:"transient,readonly"`,
     walkable:bool `mirai:"transient,readonly,hidden"`,      // the ground under it, standing or not

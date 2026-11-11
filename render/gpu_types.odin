@@ -350,7 +350,7 @@ Gpu_Bvh_Node :: struct {
 Gpu_Bvh_Triangle :: struct {
 	v0:        Vec3,
 	primitive: u32, // index within the mesh
-	e1, e2:    Vec4,
+	v1, v2:    Vec4, // corners whole, so that one two triangles share is the same in both; w unused
 }
 
 Gpu_Probe :: struct {

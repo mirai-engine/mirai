@@ -46,6 +46,7 @@ Declare_Desc :: struct {
     names:bool,        // each package writes DECLARED_NAMES
     slots:bool,        // the exports call through the table of their package (project.LIBRARY_SLOTS)
     definition:string, // Windows: the module definition it writes, with the library and what it exports, which its import library is made from before it compiles. "": none
+    defines:[]string,  // NAME=value, what the library is compiled with: the declarations write the value each #config takes
 }
 
 // What the call wrote: of each folder, whether any file was written, or
@@ -241,7 +242,7 @@ names_line :: proc(scope:^File_Scope,out:^Output,names:[]string,text:string,node
     carried:=make(map[string]bool,context.temp_allocator)
     found:=Names{file=&carried,all=&carried,imports=&scope.imports}
     for condition in scope.conditions {
-        hash=base.hash_combine(hash,xxhash.XXH3_64_default(transmute([]u8)node_text(scope,condition)))
+        hash=base.hash_combine(hash,xxhash.XXH3_64_default(transmute([]u8)rewritten_text(scope,condition)))
         names_add(&found,condition)
     }
     for node in nodes {names_add(&found,node)}
@@ -300,7 +301,7 @@ decls_write :: proc(d:^Declare,scope:^File_Scope,out:^Output,stmts:[]^ast.Stmt,i
 
 @(private="file")
 when_write :: proc(d:^Declare,scope:^File_Scope,out:^Output,s:^ast.When_Stmt,indent:string,chained:bool) {
-    cond:=node_text(scope,s.cond)
+    cond:=rewritten_text(scope,s.cond)
     opening:=chained?fmt.tprintf(" else when %s {{\n",cond):fmt.tprintf("%swhen %s {{\n",indent,cond)
     strings.write_string(&out.decl,opening)
     strings.write_string(&out.exports,opening)
@@ -851,8 +852,10 @@ rewritten_text :: proc(scope:^File_Scope,node:^ast.Node) -> string {
 }
 
 // The text between two offsets with the paths of #load and its kin made
-// relative to the folder of the declarations: the shared cache of the engine
-// copies them into other checkouts.
+// relative to the folder of the declarations, which the shared cache of the
+// engine copies into other checkouts, and each #config as the value it took
+// in the library: what compiles against the declarations, with whatever
+// defines, lays out what the library does.
 @(private="file")
 rewrite_range :: proc(scope:^File_Scope,start,end:int) -> string {
     text:=scope.src[start:end]
@@ -864,6 +867,41 @@ rewrite_range :: proc(scope:^File_Scope,start,end:int) -> string {
         strings.write_string(&b,rest[:at.start])
         strings.write_string(&b,declared_path(scope,rest[at.start:at.end]))
         rest=rest[at.end:]
+    }
+    strings.write_string(&b,rest)
+    return configs_resolved(strings.to_string(b),scope.desc.defines)
+}
+
+// A text with each #config(NAME,default) as the value defines (NAME=value)
+// give NAME, or its default.
+@(private="file")
+configs_resolved :: proc(text:string,defines:[]string) -> string {
+    b:=strings.builder_make(context.temp_allocator)
+    rest:=text
+    for {
+        at:=strings.index(rest,"#config(")
+        if at<0 {break}
+        strings.write_string(&b,rest[:at])
+        rest=rest[at+len("#config("):]
+        comma,close,depth:=-1,len(rest),0
+        scan: for c,i in transmute([]u8)rest {
+            switch c {
+            case '(','[','{': depth+=1
+            case ']','}': depth-=1
+            case ',': if depth==0 && comma<0 {comma=i}
+            case ')':
+                if depth==0 {close=i;break scan}
+                depth-=1
+            }
+        }
+        value:=strings.trim_space(rest[comma+1:close] if comma>=0 else "")
+        name:=strings.trim_space(rest[:comma] if comma>=0 else rest[:close])
+        for define in defines {
+            if define_name(define)!=name {continue}
+            value=define[min(len(name)+1,len(define)):]
+        }
+        strings.write_string(&b,value)
+        rest=rest[min(close+1,len(rest)):]
     }
     strings.write_string(&b,rest)
     return strings.to_string(b)

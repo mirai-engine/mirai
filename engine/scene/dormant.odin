@@ -21,7 +21,7 @@ import "mirai:std/serial"
 // own. The memory follows what changed, and being entities, a saved game
 // keeps them and Play and rollback copy them.
 
-@(component,description="An entity of a section that is not loaded and that changed since its scene: it waits, off, for the section to load again.")
+@(component,derived,description="An entity of a section that is not loaded and that changed since its scene: it waits, off, for the section to load again.")
 Dormant :: struct {}
 
 // Whoever moves an entity by itself (an agent with somewhere to go) marks it
@@ -42,7 +42,7 @@ Tombstone :: struct {
 // draws it keeps of it what its far form needs, as far as the sources are.
 // The section that loads again takes it back in place of the entity of its
 // scene with its Id, where that one hangs.
-@(component,description="Draws the far form of a section that is not loaded: it stays on, and the section takes it back when it loads.")
+@(component,derived,description="Draws the far form of a section that is not loaded: it stays on, and the section takes it back when it loads.")
 Far_Kept :: struct {}
 
 // The tables of the components that draw a far form of their own.

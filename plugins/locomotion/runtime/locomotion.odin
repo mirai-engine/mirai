@@ -119,7 +119,7 @@ SWIM_DEFAULT :: Swim{speed=2,acceleration=4,depth=1.2,surface_offset=0.25}
 // mode, its layered moves, the gravity it was asked for and the state of each
 // of its moves. Only locomotion_step writes it and adds it, when the Character
 // first moves by a mode; a scene never holds one.
-@(component,replicated,description="The mode a locomotion is in and what it carries between ticks.")
+@(component,derived,replicated,description="The mode a locomotion is in and what it carries between ticks.")
 Locomotion_State :: struct {
     mode:Locomotion_Mode `mirai:"transient,readonly"`,
     gravity:f32 `mirai:"transient,readonly,hidden"`,           // times the gravity_scale of its Character, set_gravity_scale asked; 0: 1
