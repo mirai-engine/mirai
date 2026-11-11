@@ -62,13 +62,6 @@ component_default :: proc(type:typeid,out:[]u8) {
     }
 }
 
-// Whether the rows of a component of the World are data a save, a copy and
-// the undo keep, by their presence when no field is saved: all but the place
-// the propagation derives and the outline of the editor's selection.
-component_saved :: proc(type:typeid) -> bool {
-    return type!=core.World_Transform && type!=erender.Highlight
-}
-
 // Whether a component is what links an entity to its prefab: a document says
 // it with prefab, and declares it as no component.
 component_links :: proc(name:string) -> bool {
@@ -81,7 +74,7 @@ COMPONENT_LINKS_TEXT :: "%s: %s is what links an entity to its prefab, which a d
 // besides the identity, the place and the links of an entity, which have keys
 // of their own or are kept by the engine. One with no field to show is {}.
 component_listed :: proc(t:^core.Table_Info) -> bool {
-    if !component_saved(t.type) {return false}
+    if !escene.component_saved(t.type) {return false}
     switch t.type {
     case core.Transform,core.Name,core.Id,core.Parent,core.Disabled,erender.Hidden,erender.Material_Override,
          escene.Prefab_Instance,escene.Prefab_Member,escene.Section_Member: return false

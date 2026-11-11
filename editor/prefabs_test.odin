@@ -25,6 +25,7 @@ Prefab_Test_World :: struct {
     instances:core.Table(scene.Prefab_Instance),
     members:core.Table(scene.Prefab_Member),
     marks:core.Table(Prefab_Test_Mark),
+    highlights:core.Table(erender.Highlight),
 }
 
 // A marker: saved, copied and undone by its presence, with no field a scene saves.
@@ -764,9 +765,17 @@ a_scene_opened_after_its_prefab_changed_follows_it_and_keeps_what_its_instances_
     copy:=prefab_test_named(f,api_entity(w,placed),"Lamp")
     lamp_set(f,copy,9)
     lamp_id,copy_id:=api_entity_id(w,lamp),api_entity_id(w,copy)
+    // The outline of the selection, which the viewport gives the World, is no part of the save.
+    history.selection_set(&f.selection,{crate})
+    core.add(&f.world.highlights,crate,erender.Highlight{1})
+    core.world_settle(w)
     testing.expect_value(t,scene_save(s,"level.scene"),Document_Error.None)
     _,saved:=assets_save_all(s)
     testing.expect(t,saved)
+    level:asset.Scene
+    if !testing.expect_value(t,asset.scene_load(&level,&f.assets.types,scene_file(s,"level.scene"),context.temp_allocator),asset.Error.None) {return}
+    _,outlined:=asset.scene_component(&level,"Highlight")
+    testing.expect(t,!outlined,"a save keeps no Highlight of the selection")
 
     if !lamp_file_set(t,f,scene_file(s,"crate.scene"),lamp_id,5,8) {return}
     stale:=0

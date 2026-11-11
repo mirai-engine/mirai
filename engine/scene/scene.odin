@@ -8,6 +8,7 @@ import "core:slice"
 import "core:strings"
 import "mirai:asset"
 import "mirai:core"
+import erender "mirai:engine/render"
 import volume "mirai:engine/volume"
 import "mirai:host"
 import "mirai:std/base"
@@ -388,6 +389,13 @@ key_find :: proc(keys:[]Key,id:base.Entity_Id) -> (row:u32,found:bool) {
     return NONE_ROW,false
 }
 
+// Whether the rows of a component are data a save, a copy of the editor and
+// its undo keep, by their presence when no field is saved: all but the place
+// the propagation derives and the outline of the editor's selection.
+component_saved :: proc(type:typeid) -> bool {
+    return type!=core.World_Transform && type!=erender.Highlight
+}
+
 // The tables instantiating writes itself, and World_Transform, which only the
 // propagation writes.
 @(private)
@@ -589,7 +597,7 @@ capture :: proc(w:core.World_Ref,scene:^asset.Scene,asset_types:^asset.Types,des
     pending:=unresolved_map(core.world_storage_of(w,Unresolved_References))
     for &info,at in w.info.tables {
         value_type:=&types.tables[at]
-        if info.place!=w.place || is_structural(info.type) || value_type.type==serial.TYPE_NONE {continue}
+        if info.place!=w.place || is_structural(info.type) || !component_saved(info.type) || value_type.type==serial.TYPE_NONE {continue}
         if info.type==Section_Member && !desc.sections {continue}
         linked:=info.type==Prefab_Instance?core.world_table_of(w,Prefab_Member):nil // a spawned copy has none: no document holds it
         if slice.contains(desc.excluded,info.type) {continue}
