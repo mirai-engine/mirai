@@ -260,10 +260,10 @@ locomotion_step :: proc(
         }
         ground,_:=core.get(found,e)
         motion,_:=core.get(motions,e)
-        // Placed at rest (a respawn), it starts over where it is put: falling, at rest, facing there.
+        // Placed at rest (a respawn), it starts over where it is put: at rest, facing there, falling if it walks.
         for placed in places.queue.items {
             if placed.entity!=e || !placed.at_rest {continue}
-            c^={mode=start_mode(e,walks,flights,swims) or_else c.mode,ready=true,yaw=phys.look_yaw_of(frame,placed.rotation)}
+            c^={mode=MODE_FALLING if core.has(walks,e) else c.mode,ready=true,yaw=phys.look_yaw_of(frame,placed.rotation)}
             if move_input!=nil && core.owned(remotes,e) {move_input.look_yaw=c.yaw}
             ground,motion={},{}
         }
@@ -340,22 +340,15 @@ locomotion_state_of :: proc(states:^core.Table(Locomotion_State),characters:^cor
     if c:=core.staged(states,e);c!=nil {return c}
     if !core.has(characters,e) {return nil}
     mode,given:=start.?
-    if !given {mode,given=start_mode(e,walks,flights,swims)}
-    if !given {return nil}
+    switch {
+    case given:
+    case core.has(walks,e):   mode=MODE_FALLING
+    case core.has(swims,e):   mode=MODE_SWIMMING
+    case core.has(flights,e): mode=MODE_FLYING
+    case: return nil
+    }
     core.add(states,e,Locomotion_State{mode=mode})
     return core.staged(states,e)
-}
-
-// The mode a character starts in by its components: falling (walking once it stands) with a Walk, else
-// swimming with a Swim, else flying with a Fly.
-@(private)
-start_mode :: proc(e:core.Entity,walks:^core.Table(Walk,$A),flights:^core.Table(Fly,$B),swims:^core.Table(Swim,$C)) -> (Locomotion_Mode,bool) {
-    switch {
-    case core.has(walks,e):   return MODE_FALLING,true
-    case core.has(swims,e):   return MODE_SWIMMING,true
-    case core.has(flights,e): return MODE_FLYING,true
-    }
-    return {},false
 }
 
 // What set_gravity_scale asked to scale the gravity of a character by.

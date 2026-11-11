@@ -67,8 +67,6 @@ CHORD_CAPACITY :: si.CHORD_CAPACITY
 // How a player looks around (Axis2: x right, y up, in points of mouse
 // movement): it turns the look of the body its seat drives, or a camera that
 // orbits it. The sensitivity of a player is the scale of its bindings.
-// The mouse moves it by a displacement; a stick or keys bound with it turn it
-// at a rate (actions_update), so a stick held turns as far at any frame rate.
 @(actions)
 Look_Action :: enum u8 {Look}
 
