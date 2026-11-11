@@ -79,7 +79,7 @@ canvas_fit :: proc(c:^Canvas,painted:paint.Paint_View) {
     for p,at in painted.positions {spatial.grid_insert(&grid,{p,p},u64(at))}
     for p,at in c.positions {
         nearest,best:=-1,max(f32)
-        for reach:=cell;;reach*=2 {
+        for reach:=cell;reach<max(f32);reach*=2 { // a position that is not a number finds none
             query:=spatial.grid_query(&grid,{p-reach,p+reach})
             for {
                 _,user,ok:=spatial.grid_query_next(&query)
@@ -88,7 +88,7 @@ canvas_fit :: proc(c:^Canvas,painted:paint.Paint_View) {
             }
             if nearest>=0 && best<=reach*reach {break}
         }
-        c.colors[at]=painted.colors[nearest]
+        if nearest>=0 {c.colors[at]=painted.colors[nearest]}
     }
 }
 
