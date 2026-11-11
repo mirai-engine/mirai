@@ -522,6 +522,10 @@ they light everything within their reach, without shadow rays or a place in thos
   ones that cast shadows and the ones that do not (`erender.lights_ask`, up to `LIGHTS_ASKED_MAX` of
   each class), and `pool_prepare` gives each emitter its share of that of its class, in the order
   of its slots (`light_share`, `Gpu_Emitter.lights`).
+- Those that cast shadows are asked for with a box (`lights_box`): around each emitter, as far as
+  its particles may go in their life at their fastest start or the fastest wind with the strongest
+  pull on them; anywhere when they are born on a surface, on bones, in a channel or at the events
+  of another emitter, or a program moves them.
 - **lights** (`Simulate`, after **finish**): one group per share writes all its room
   (`erender.pass_lights`). An emitter with fewer alive than its share lights with all of them; with
   more, with those of even slots of its range, which keep their light while they live.

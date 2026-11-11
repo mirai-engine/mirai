@@ -3,14 +3,18 @@
 // Poses a skinned mesh: a group a cluster of the levels it poses, a thread a
 // vertex of it. A vertex at rest is that of its cluster (geometry.slang) with
 // what the morph targets add at their weights; the palette takes it where it
-// is now and where it was in the frame before, as Posed_Vertex.
+// is now and where it was in the frame before, as Posed_Vertex. Then the box
+// of the cluster as posed now and the cone of the normals of its triangles
+// (posed_bounds), for the passes that leave clusters out.
 #define MIRAI_GROUP_X 64
 #define MIRAI_GROUP_Y 1
 #define MIRAI_GROUP_Z 1
 struct Skin_Joint { float4 current[3]; float4 previous[3]; };
-// clusters: those it poses, from its first; output, previous: where the vertices go, words of the vertex pool.
-// morph_step: of the positions of the morph deltas.
-struct Params_Block { uint mesh; uint clusters; uint output; uint previous; uint morph_count; float morph_step; uint pad0; uint pad1; };
+// clusters: those it poses, from its first; output, previous: where the vertices go, words of the vertex
+// pool; morph_step: of the positions of the morph deltas; bounds: where the box and the cone of each
+// cluster go (POSED_BOUNDS_WORDS each), INVALID for none; reach: how far programs move the vertices
+// after the skin, in the space of the mesh: the boxes grow by it and keep no cone.
+struct Params_Block { uint mesh; uint clusters; uint output; uint previous; uint morph_count; float morph_step; uint bounds; float reach; };
 struct Morph_Range { uint first; uint count; };
 [[vk::binding(SLOT_PARAMS,0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b,SLOT_PARAMS),space0);
 // The influences of each vertex of the mesh (asset.Skin_Vertex): eight joints in four words, eight weights of 255ths in two.
@@ -27,6 +31,9 @@ struct Morph_Range { uint first; uint count; };
 [[vk::binding(SLOT_INDICES,0)]] StructuredBuffer<uint> indices : register(MIRAI_REGISTER(t,SLOT_INDICES),space0);
 #define MIRAI_POSED_STORE
 #include "geometry.slang"
+
+// The vertices of the cluster of the group as posed now.
+groupshared float3 skin_positions[256];
 
 [shader("compute")]
 [numthreads(MIRAI_GROUP_X,MIRAI_GROUP_Y,MIRAI_GROUP_Z)]
@@ -90,5 +97,41 @@ void main(uint3 group:SV_GroupID,uint3 lane:SV_GroupThreadID) {
         before.position=transform_point(old_rows,old_position);before.normal=packed_normal;before.tangent=packed_tangent;
         posed_store(params.output,index,now);
         posed_store(params.previous,index,before);
+        skin_positions[local]=now.position;
     }
+    if (params.bounds==INVALID) return;
+    GroupMemoryBarrierWithGroupSync();
+    if (lane.x!=0u) return;
+    float3 low=float3(FLT_MAX),high=float3(-FLT_MAX);
+    for (uint v=0;v<cluster_vertex_count(c);++v) {low=min(low,skin_positions[v]);high=max(high,skin_positions[v]);}
+    low-=params.reach;high+=params.reach;
+    // The cone as the import makes it (asset.cluster_cone): the axis the sum
+    // of the normals of the triangles, stored in snorm8, and the sine of how
+    // far they spread from the stored axis, rounded up.
+    float3 sum=float3(0);
+    for (uint t=0;t<cluster_triangle_count(c);++t) {
+        uint3 corners=cluster_triangle(mesh,c,t);
+        float3 face=cross(skin_positions[corners.y]-skin_positions[corners.x],skin_positions[corners.z]-skin_positions[corners.x]);
+        if (dot(face,face)>1e-40) sum+=normalize(face);
+    }
+    uint flags=1u;
+    uint packed_axis=0u;
+    if (params.reach==0.0 && dot(sum,sum)>1e-12) {
+        int2 packed=int2(round(clamp(oct_encode(normalize(sum)),-1.0,1.0)*127.0));
+        float3 stored=oct_decode(max(float2(packed)/127.0,float2(-1.0)));
+        float least=1.0;
+        for (uint t=0;t<cluster_triangle_count(c);++t) {
+            uint3 corners=cluster_triangle(mesh,c,t);
+            float3 face=cross(skin_positions[corners.y]-skin_positions[corners.x],skin_positions[corners.z]-skin_positions[corners.x]);
+            if (dot(face,face)>1e-40) least=min(least,dot(stored,normalize(face)));
+        }
+        float cutoff=ceil(sqrt(max(1.0-least*least,0.0))*127.0);
+        if (least>0.0 && cutoff<127.0) {
+            flags|=2u|(uint(int(cutoff))&255u)<<8u;
+            packed_axis=(uint(packed.x)&255u)|((uint(packed.y)&255u)<<8u);
+        }
+    }
+    uint at=params.bounds+group.x*POSED_BOUNDS_WORDS;
+    vertex_words[at]=asuint(low.x);vertex_words[at+1u]=asuint(low.y);vertex_words[at+2u]=asuint(low.z);vertex_words[at+3u]=flags;
+    vertex_words[at+4u]=asuint(high.x);vertex_words[at+5u]=asuint(high.y);vertex_words[at+6u]=asuint(high.z);vertex_words[at+7u]=packed_axis;
 }

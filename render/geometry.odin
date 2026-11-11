@@ -42,6 +42,7 @@ Mesh_Record :: struct {
 	slot_word, slot_count:           u32,
 	posed_word, previous_word:       u32, // GPU_NONE: as its clusters
 	part_word, rest_word:            u32, // posed with its part collapsed, and the rest an extension deforms from; GPU_NONE: none
+	bounds_word:                     u32, // of a pose: the box and the cone of each cluster it poses (Gpu_Mesh.bounds_word); GPU_NONE: none
 	flags:                           u32, // MESH_FLAG_*
 	position_step, uv_step, uv1_step, lod_reach: f32,
 	bounds_min, bounds_max:          Vec3,
@@ -480,7 +481,7 @@ mesh_register :: proc(r: ^Renderer, g: asset.Mesh_Geometry, given_words: []u32, 
 			return 0, false
 		}
 	}
-	record.posed_word, record.previous_word, record.part_word, record.rest_word = GPU_NONE, GPU_NONE, GPU_NONE, GPU_NONE
+	record.posed_word, record.previous_word, record.part_word, record.rest_word, record.bounds_word = GPU_NONE, GPU_NONE, GPU_NONE, GPU_NONE, GPU_NONE
 	record.cluster_count, record.page_count, record.level_count, record.slot_count = u32(len(g.clusters)), u32(len(g.pages)), u32(len(g.levels)), u32(len(slot_words))
 	record.triangle_count = g.levels[0].triangle_count
 	record.lod_reach = ahead.lod_reach if checked else lod_reach(g)
@@ -713,7 +714,7 @@ gpu_mesh :: proc(m: Mesh_Record) -> Gpu_Mesh {
 	row := Gpu_Mesh{
 		cluster_word = m.cluster_word, cluster_count = m.cluster_count, level_word = m.level_word, level_count = m.level_count,
 		page_word = m.page_word, page_count = m.page_count, vertex_count = m.vertex_count, slot_word = m.slot_word,
-		posed_word = m.posed_word, previous_word = m.previous_word,
+		posed_word = m.posed_word, previous_word = m.previous_word, bounds_word = m.bounds_word,
 		part_word = m.part_word, part_layers = m.skin.part_layers if m.skin != nil else 0, flags = m.flags, slab_axes = m.slab_axes,
 		position_step = m.position_step, uv_step = m.uv_step, uv1_step = m.uv1_step, lod_reach = m.lod_reach,
 		bounds_min = {m.bounds_min.x, m.bounds_min.y, m.bounds_min.z, 0}, bounds_max = {m.bounds_max.x, m.bounds_max.y, m.bounds_max.z, 0},
@@ -735,7 +736,7 @@ mesh_store :: proc(r: ^Renderer, record: Mesh_Record, vertex_start, index_start:
 	record.index_span = u32(len(s.indices)) - index_start
 	record.vertex_word = pool_store(&s.vertices, &s.pool_free[.Vertex], &s.pool_dirty[.Vertex], vertex_start)
 	record.index_word = pool_store(&s.indices, &s.pool_free[.Index], &s.pool_dirty[.Index], index_start)
-	for word in ([]^u32{&record.posed_word, &record.previous_word, &record.part_word, &record.rest_word}) {
+	for word in ([]^u32{&record.posed_word, &record.previous_word, &record.part_word, &record.rest_word, &record.bounds_word}) {
 		if word^ != GPU_NONE {word^ += record.vertex_word}
 	}
 	for word in ([]^u32{&record.cluster_word, &record.page_word, &record.level_word, &record.slot_word}) {word^ += record.index_word}

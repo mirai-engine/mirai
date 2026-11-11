@@ -88,4 +88,29 @@ float3 glass_light(Material m, Glass g, Shading s, float3 reflection, float trac
     return color + g.emission * lerp(g.alpha, 1.0, m.transmission);
 }
 
+// What a solid with a scatter color sends towards the eye from `path` of it
+// along direction from origin, on top of what it lets through of what lies
+// behind: the light around that reaches it inside, dimmed by the way through
+// the solid down from its top, times the share it scatters of what it stops
+// on that path. The light is taken at one point, half way along the path or
+// along the distance its attenuation is given for, whichever is nearer. The
+// sun in it, with the shadows of what stands in its way, is the shafts of fog.
+// top: the height of the top over the point when the caller knows it, as a
+// flat top it entered through or found over the camera; below SOLID_TOP_UNKNOWN,
+// the top of the box of the solid.
+#define SOLID_TOP_UNKNOWN -1e29
+float3 solid_scatter(Material m, uint instance, float3 origin, float3 direction, float path, float top) {
+    float3 scatter = materials[m.row].volume.scatter;
+    if (!any(scatter > 0.0) || !(path > 0.0)) return float3(0.0);
+    float3 at = origin + direction * (0.5 * min(path, max(m.attenuation_distance, 1.0)));
+    float under;
+    if (top > SOLID_TOP_UNKNOWN) {
+        under = max(top - at.y, 0.0);
+    } else {
+        under = max(instances[instance].bounds_max.y - at.y, 0.0);
+    }
+    float3 light = 0.5 * sky_irradiance(float3(0.0, 1.0, 0.0)) * material_absorption(m, under);
+    return scatter * light * (1.0 - material_absorption(m, path));
+}
+
 #endif
