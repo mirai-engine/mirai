@@ -175,13 +175,13 @@ what it perceives; `think` only reads and proposes, and the actions write.
 
 - `behavior.minds` (names, actions and agents of each one), `behavior.inspect` (the action and
   step they run, their stage and since when, the commit, the best proposals of the last decision
-  with their scores, the latest exits with their tick, the cause and what interrupted them, and
-  what it has reserved), `behavior.perception`, `behavior.offers` (the offers of a smart object,
-  their uses and who holds them), `behavior.influence` (the influence of each team and the cover
-  at a point) and `behavior.query` (runs a query at once).
+  with their scores, the latest exits with the seconds since each, the cause and what interrupted
+  them, and what it has reserved), `behavior.perception`, `behavior.offers` (the offers of a
+  smart object, their uses and who holds them), `behavior.influence` (the influence of each team
+  and the cover at a point) and `behavior.query` (runs a query at once).
 - Why, on request and never recorded: `behavior.perception` with `subject` says why it sees that
   one or not at this tick (`sight_why`, over the same `sight_reach` its turns use: range, cone or
-  `aware`, team, the entity a ray hits first); `behavior.query` with `explain` gives every
+  `aware`, team, the entity a ray hits first, no rays); `behavior.query` with `explain` gives every
   candidate with each test's input and response, its fate and the vetoing test, the first that
   scored 0 (`place_run` fills a `Place_Explain` only when given one). What was decided at an
   earlier tick is asked after `play.seek`.

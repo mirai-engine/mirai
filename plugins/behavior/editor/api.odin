@@ -92,7 +92,6 @@ Exit_Result :: struct {
     action,cause:string,
     interrupted_by:string `mirai:"optional"`,
     step:bool,
-    tick:u64 `mirai:"label=The tick it exited at"`,
     seconds:f32 `mirai:"unit=s,label=Since it exited"`,
 }
 
@@ -101,7 +100,7 @@ Perception_Result :: struct {
     subject:Subject_Result `mirai:"optional,label=Why it sees the subject or not, with subject"`,
 }
 Subject_Result :: struct {
-    sight:string `mirai:"label=Seen (in its cone), Aware (outside its cone, within aware), Out_Of_Range, Out_Of_Cone, Team (one it does not notice), Blocked or Unseeable (not a placed Perceivable, or itself)"`,
+    sight:string `mirai:"label=Seen (in its cone), Aware (outside its cone, within aware), Out_Of_Range, Out_Of_Cone, Team (one it does not notice), Blocked, No_Rays (Behavior_Settings.rays is 0) or Unseeable (not a placed Perceivable, or itself)"`,
     blocker:base.Entity_Id `mirai:"optional,label=What the ray from its eyes hits first, when Blocked"`,
     distance:f32 `mirai:"unit=m,label=From its eyes to the point of the subject"`,
     angle:f32 `mirai:"unit=rad,label=Between where it faces and the way to the subject"`,
@@ -276,7 +275,7 @@ inspect :: proc(s:^editor.Session,call:^api.Call) {
     for back in 0..<ai.MIND_TRACE {
         exit,found:=ai.mind_exit_trace(m,back)
         if !found {break}
-        append(&exits,Exit_Result{action_name(entry,exit.action),fmt.tprintf("%v",exit.cause),exit.by!=ai.MIND_NONE?action_name(entry,exit.by):"",exit.step,exit.tick,core.elapsed(now,exit.tick)})
+        append(&exits,Exit_Result{action_name(entry,exit.action),fmt.tprintf("%v",exit.cause),exit.by!=ai.MIND_NONE?action_name(entry,exit.by):"",exit.step,core.elapsed(now,exit.tick)})
     }
     r.proposals,r.exits=proposals[:],exits[:]
 }
@@ -312,7 +311,7 @@ perception :: proc(s:^editor.Session,call:^api.Call) {
     empty_fars:core.Table(nav.Nav_Far)
     worlds:=core.world_table_of(world,core.World_Transform)
     empty_worlds:core.Table(core.World_Transform)
-    why:=behavior.sight_why(perceivers,perceptions,perceivables if perceivables!=nil else &empty_perceivables,worlds if worlds!=nil else &empty_worlds,fars if fars!=nil else &empty_fars,core.ref(core.world_storage_of(world,phys.Physics_State)),e,subject)
+    why:=behavior.sight_why(perceivers,perceptions,perceivables if perceivables!=nil else &empty_perceivables,worlds if worlds!=nil else &empty_worlds,fars if fars!=nil else &empty_fars,core.ref(core.world_storage_of(world,behavior.Behavior_Settings)),core.ref(core.world_storage_of(world,phys.Physics_State)),e,subject)
     r.subject={sight=fmt.tprintf("%v",why.reason),distance=why.distance,angle=why.angle}
     if why.blocker!=core.NONE {r.subject.blocker=id_of(world,why.blocker)}
     if o:=ai.memory_find(&mine.memory,u64(subject));o!=nil {r.subject.remembered,r.subject.senses=true,fmt.tprintf("%v",o.senses)}

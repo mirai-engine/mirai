@@ -164,7 +164,7 @@ perception_update :: proc(
         if maker,ok:=core.get(perceivables,n.maker);ok {n.team=maker.team}
     }
     count:=core.count(perceivers)
-    rays:=int(settings.rays) if settings.ptr!=nil else 256
+    rays:=sight_rays(settings)
     far:=nav.nav_far_decide(time) && fars!=nil && len(perceivers.entities)>count
     // Without rays nobody looks, and all remember as time goes.
     sighted:=rays>0
@@ -222,6 +222,12 @@ perception_update :: proc(
         if turn {forget(&mine.memory,e,p,events,entities.ptr,time)}
         remembering_count(turns,remembered,mine.memory.count>0)
     }
+}
+
+// The rays of sight of a tick: with none, the perceivers near the players do not look.
+@(private)
+sight_rays :: #force_inline proc "contextless" (settings:core.Ref(Behavior_Settings)) -> int {
+    return int(settings.rays if settings.ptr!=nil else BEHAVIOR_SETTINGS_DEFAULT.rays)
 }
 
 @(private)
@@ -331,6 +337,7 @@ Sight_Reason :: enum u8 {
     Out_Of_Cone,  // within its sight, outside its cone and beyond `aware`
     Team,         // of a team it does not notice
     Blocked,      // a ray from its eyes hits another entity first
+    No_Rays,      // Behavior_Settings.rays is 0: a perceiver near the players does not look
     Unseeable,    // not a placed Perceivable, or the perceiver itself
 }
 
@@ -354,7 +361,7 @@ Sight_Why :: struct {
 // Why a perceiver sees a subject or not at this tick: what its next turn
 // finds, a ray included (none for a far perceiver, as for its turns). On
 // request, never from the tick.
-sight_why :: proc(perceivers:^core.Table(Perceiver,$A),perceptions:^core.Table(Perception,$B),perceivables:^core.Table(Perceivable,$C),worlds:^core.Table(core.World_Transform,$D),fars:^core.Table(nav.Nav_Far,$E),physics:core.Ref(phys.Physics_State),perceiver,subject:core.Entity) -> (why:Sight_Why) {
+sight_why :: proc(perceivers:^core.Table(Perceiver,$A),perceptions:^core.Table(Perception,$B),perceivables:^core.Table(Perceivable,$C),worlds:^core.Table(core.World_Transform,$D),fars:^core.Table(nav.Nav_Far,$E),settings:core.Ref(Behavior_Settings),physics:core.Ref(phys.Physics_State),perceiver,subject:core.Entity) -> (why:Sight_Why) {
     why.reason=.Unseeable
     p,is_perceiver:=core.get(perceivers,perceiver)
     pose,placed:=core.get(worlds,perceiver)
@@ -369,11 +376,13 @@ sight_why :: proc(perceivers:^core.Table(Perceiver,$A),perceptions:^core.Table(P
     if why.distance>1e-4 && linalg.length(forward)>1e-6 {
         why.angle=math.acos(clamp(linalg.dot(to/why.distance,linalg.normalize(forward)),-1,1))
     }
+    far:=far_of(fars,perceiver)
+    if !far && sight_rays(settings)<=0 {why.reason=.No_Rays;return}
     if !noticed(p,seen.team) {why.reason=.Team;return}
     memory:ai.Perception_Memory
     if mine,found:=core.get(perceptions,perceiver);found {memory=mine.memory}
     why.reason=sight_reach(&memory,subject,p,eye,forward,point)
-    if why.reason!=.Seen && why.reason!=.Aware || far_of(fars,perceiver) || !(why.distance>1e-4) {return}
+    if why.reason!=.Seen && why.reason!=.Aware || far || !(why.distance>1e-4) {return}
     if hit,blocked:=phys.raycast(physics,eye,to/why.distance,why.distance,perceiver);blocked && hit.entity!=subject {
         why.reason,why.blocker=.Blocked,hit.entity
     }

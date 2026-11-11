@@ -434,49 +434,55 @@ a_perceiver_sees_all_around_within_aware :: proc(t:^testing.T) {
 }
 
 // Asked about one subject, a perceiver says why it sees it or not: out of
-// range, out of its cone or within `aware`, a team it does not notice, or the
-// entity a ray from its eyes hits first.
+// range, out of its cone or within `aware`, a team it does not notice, the
+// entity a ray from its eyes hits first, or no rays to look with.
 @(test)
 sight_why_names_what_hides_a_subject :: proc(t:^testing.T) {
-    f:Sight_World
-    if !test_world_init(t,&f.behavior) {return}
-    defer sight_world_destroy(&f)
-    if !testing.expect(t,phys.test_state_make(&f.physics)) {return}
-    guard:=placed(&f,{})
-    watch:=PERCEIVER_DEFAULT
-    watch.notices=Teams(1<<1)
-    watch.aware=2
-    core.add(&f.perceivers,guard,watch)
-    wall:=core.create(&f.entities)
-    body,_:=phys.owned_body_create(&f.physics,{1,wall,0},{2,1.5,-4},1)
-    collision:=phys.COLLISION_SETTINGS_DEFAULT
-    phys.owned_shape_create(&f.physics,&collision,body,{collider=phys.collider_box({1,2,0.1}),rotation=1})
     Case :: struct {at:mm.Vec3,team:Team,reason:Sight_Reason,blocker:core.Entity}
-    cases:=[]Case{
-        {{0,0,-5},1,.Seen,core.NONE},
-        {{0,0,1},1,.Aware,core.NONE},
-        {{0,0,5},1,.Out_Of_Cone,core.NONE},
-        {{0,0,-30},1,.Out_Of_Range,core.NONE},
-        {{1,0,-5},2,.Team,core.NONE},
-        {{4,0,-8},1,.Blocked,wall},
-    }
-    subjects:[6]core.Entity
-    for c,i in cases {
-        subjects[i]=placed(&f,c.at)
-        core.add(&f.perceivables,subjects[i],Perceivable{team=c.team,point=1})
-    }
-    test_world_settle(&f)
-    for c,i in cases {
-        why:=sight_why(core.read(&f.perceivers),core.read(&f.perceptions),core.read(&f.perceivables),core.read(&f.worlds),core.read(&f.fars),core.ref(&f.physics),guard,subjects[i])
-        testing.expectf(t,why.reason==c.reason && why.blocker==c.blocker,"%v: %v by %v, %v by %v expected",c.at,why.reason,why.blocker,c.reason,c.blocker)
-    }
-    // What it says is what its turn does: it remembers those it sees, not the hidden one.
-    sight_tick(&f,0)
-    sight_tick(&f,0.1)
-    mine:=core.edit(&f.perceptions,guard)
-    for c,i in cases {
-        found:=mine!=nil && ai.memory_find(&mine.memory,u64(subjects[i]))!=nil
-        testing.expectf(t,found==(c.reason==.Seen || c.reason==.Aware),"%v: remembered %v",c.at,found)
+    for rays in ([]i32{BEHAVIOR_SETTINGS_DEFAULT.rays,0}) {
+        f:Sight_World
+        if !test_world_init(t,&f.behavior) {return}
+        defer sight_world_destroy(&f)
+        if !testing.expect(t,phys.test_state_make(&f.physics)) {return}
+        f.settings.rays=rays
+        guard:=placed(&f,{})
+        watch:=PERCEIVER_DEFAULT
+        watch.notices=Teams(1<<1)
+        watch.aware=2
+        core.add(&f.perceivers,guard,watch)
+        wall:=core.create(&f.entities)
+        body,_:=phys.owned_body_create(&f.physics,{1,wall,0},{2,1.5,-4},1)
+        collision:=phys.COLLISION_SETTINGS_DEFAULT
+        phys.owned_shape_create(&f.physics,&collision,body,{collider=phys.collider_box({1,2,0.1}),rotation=1})
+        cases:=[]Case{
+            {{0,0,-5},1,.Seen,core.NONE},
+            {{0,0,1},1,.Aware,core.NONE},
+            {{0,0,5},1,.Out_Of_Cone,core.NONE},
+            {{0,0,-30},1,.Out_Of_Range,core.NONE},
+            {{1,0,-5},2,.Team,core.NONE},
+            {{4,0,-8},1,.Blocked,wall},
+        }
+        if rays==0 {
+            for &c in cases {c.reason,c.blocker=.No_Rays,core.NONE}
+        }
+        subjects:[6]core.Entity
+        for c,i in cases {
+            subjects[i]=placed(&f,c.at)
+            core.add(&f.perceivables,subjects[i],Perceivable{team=c.team,point=1})
+        }
+        test_world_settle(&f)
+        for c,i in cases {
+            why:=sight_why(core.read(&f.perceivers),core.read(&f.perceptions),core.read(&f.perceivables),core.read(&f.worlds),core.read(&f.fars),core.ref(&f.settings),core.ref(&f.physics),guard,subjects[i])
+            testing.expectf(t,why.reason==c.reason && why.blocker==c.blocker,"rays %v, %v: %v by %v, %v by %v expected",rays,c.at,why.reason,why.blocker,c.reason,c.blocker)
+        }
+        // What it says is what its turn does: it remembers those it sees, not the hidden ones.
+        sight_tick(&f,0)
+        sight_tick(&f,0.1)
+        mine:=core.edit(&f.perceptions,guard)
+        for c,i in cases {
+            found:=mine!=nil && ai.memory_find(&mine.memory,u64(subjects[i]))!=nil
+            testing.expectf(t,found==(c.reason==.Seen || c.reason==.Aware),"rays %v, %v: remembered %v",rays,c.at,found)
+        }
     }
 }
 
