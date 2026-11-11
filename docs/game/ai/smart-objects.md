@@ -3,8 +3,8 @@
 Every mind reads the smart objects already: the helpers below take only the `think` or the action
 of [a mind](mind.md). What else an action uses it receives as a parameter:
 `uses:^behavior.Smart_Uses`, `places:^behavior.Place_Requests`,
-`results:core.Read(behavior.Place_Result)`, `links:core.Read(nav.Nav_Link)`, `placer:core.Placer`
-to move the agent.
+`results:^core.Table(behavior.Place_Result,.Read)`, `links:^core.Table(nav.Nav_Link,.Read)`,
+`placer:core.Placer` to move the agent.
 
 ## An object that offers a use
 
@@ -53,7 +53,8 @@ if p, ok := behavior.agent_path(t); ok && p.state == .Crossing && p.manual && p.
     ai.propose(t, .Vault, 1)
 }
 @(act="Vault")
-vault :: proc(a:^ai.Act(Act), links:core.Read(nav.Nav_Link), placer:core.Placer) -> ai.Status {
+vault :: proc(a:^ai.Act(Act),links:^core.Table(nav.Nav_Link,.Read),placer:core.Placer)
+              -> ai.Status {
     if ai.entering(a) {ai.commit(a, 1)} // one agent at a time
     user := behavior.Smart_User{entity=behavior.agent(a), team=TEAM_ENEMY}
     return behavior.cross_act(a, links, placer, USE_VAULT, user, 0.6)

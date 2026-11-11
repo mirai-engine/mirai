@@ -154,7 +154,7 @@ Section_Boxes :: struct {
 
 // Makes the boxes of the references that have one, where worlds puts them.
 // False without memory: it holds none then.
-section_boxes_build :: proc(b:^Section_Boxes,references:core.Read(Scene_Reference),worlds:core.Read(core.World_Transform)) -> bool {
+section_boxes_build :: proc(b:^Section_Boxes,references:^core.Table(Scene_Reference,$A),worlds:^core.Table(core.World_Transform,$B)) -> bool {
     clear(&b.boxes);clear(&b.nodes);clear(&b.order)
     bounds:=make([dynamic]mm.Aabb,context.temp_allocator)
     for row in 0..<core.count(references) {

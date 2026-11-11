@@ -98,8 +98,8 @@ Apply :: struct {
     commands:core.Commands,
     assets:^host.Assets,
     bodies:^core.Table(Seat_Body),
-    seats:core.Read(input.Seat),
-    points:core.Read(Spawn_Point),
+    seats:^core.Table(input.Seat,.Read),
+    points:^core.Table(Spawn_Point,.Read),
     placer:core.Placer,
     driving:^input.Seat_Requests,
     spawning:^Spawning,
@@ -113,7 +113,7 @@ Apply :: struct {
 
 // The bodies whose seat went away go with it, before input_drive lets go of them.
 @(step="fixed",stage="input",before="input_drive")
-spawn_seat_bodies :: proc(es:core.Commands,hierarchy:core.Ref(core.Hierarchy),bodies:core.Read(Seat_Body)) {
+spawn_seat_bodies :: proc(es:core.Commands,hierarchy:core.Ref(core.Hierarchy),bodies:^core.Table(Seat_Body,.Read)) {
     for row in 0..<core.count(bodies) {
         if seat:=core.at(bodies,row).seat;!core.alive(es.entities,seat) {core.destroy_tree(es.entities,hierarchy,core.entity_at(bodies,row))}
     }
@@ -124,7 +124,7 @@ spawn_seat_bodies :: proc(es:core.Commands,hierarchy:core.Ref(core.Hierarchy),bo
 @(step="fixed",stage="input",after="input_seats")
 spawn_step :: proc(
     commands:core.Commands,assets:^host.Assets,free:core.Ref(cam.Free_Camera),bodies:^core.Table(Seat_Body),
-    seats:core.Read(input.Seat),points:core.Read(Spawn_Point),placer:core.Placer,driving:^input.Seat_Requests,requests:^Spawn_Requests,spawning:^Spawning,
+    seats:^core.Table(input.Seat,.Read),points:^core.Table(Spawn_Point,.Read),placer:core.Placer,driving:^input.Seat_Requests,requests:^Spawn_Requests,spawning:^Spawning,
     settings:core.Ref(Spawn_Settings),network:core.Ref(core.Network),time:core.Time,origin:core.Ref(scene.Play_Origin),at_origin:^Spawned_At_Origin,problems:^core.Problems,
 ) {
     a:=Apply{commands=commands,assets=assets,bodies=bodies,seats=seats,points=points,placer=placer,driving=driving,spawning=spawning,at_origin=at_origin,problems=problems}
@@ -161,7 +161,7 @@ spawn_step :: proc(
 @(private)
 prefab_found :: proc(a:^Apply) -> bool {
     if a.settings.prefab!={} {return true}
-    for point in a.points.table.values[:core.count(a.points)] {
+    for point in a.points.values[:core.count(a.points)] {
         if point.players && point.prefab!={} {return true}
     }
     return false
@@ -182,7 +182,7 @@ spawn_pick :: proc(a:^Apply,subject,asked:core.Entity,players,needs_prefab:bool)
     next:=&a.spawning.next[int(players)]
     for i in 0..<count {
         row:=int((next^+u32(i))%u32(count))
-        candidate:=a.points.table.values[row]
+        candidate:=a.points.values[row]
         if candidate.players!=players || needs_prefab && candidate.prefab=={} {continue}
         next^=u32(row+1)
         return core.entity_at(a.points,row),true
@@ -204,7 +204,7 @@ spawn_pick :: proc(a:^Apply,subject,asked:core.Entity,players,needs_prefab:bool)
 // loaded in this frame has no world transform yet.
 @(private)
 spawn_place :: proc(a:^Apply,point:core.Entity) -> (placed:mm.Transform,ok:bool) {
-    placed,ok=core.world_of(core.read(a.placer.transforms),a.placer.parents,point)
+    placed,ok=core.world_of(a.placer.transforms,a.placer.parents,point)
     if !ok {core.report(a.problems,point,"spawn.spawn_point_place","this Spawn_Point or a parent of it has no Transform, so bodies have no place to appear at; give them one")}
     return
 }
@@ -276,7 +276,7 @@ spawn_where :: proc(a:^Apply,r:Spawn_Request) -> (point:core.Entity,asked,ok:boo
 
 // Player 1 of this machine.
 @(private)
-seat_first :: proc(seats:core.Read(input.Seat),seat:core.Entity) -> bool {
+seat_first :: proc(seats:^core.Table(input.Seat,$A),seat:core.Entity) -> bool {
     s,ok:=core.get(seats,seat)
     return ok && input.seat_local(s) && s.slot==0
 }

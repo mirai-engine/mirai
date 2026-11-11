@@ -60,7 +60,7 @@ joint_a :: proc(s:^Sync,e:core.Entity,joint:Joint) -> core.Entity {
 @(private)
 joint_frame_from :: proc(s:^Sync,from:core.Entity,frame:mm.Transform) -> sim.Transform {
     if from==core.NONE {return {frame.position,frame.rotation}}
-    there,_:=core.world_of(s.locals,s.parents,from)
+    there,_:=core.world_of(s.transforms,s.parents,from)
     inverse:=mm.quat_inverse(there.rotation)
     return {mm.quat_rotate(inverse,frame.position-there.position),linalg.normalize(inverse*frame.rotation)}
 }
@@ -94,7 +94,7 @@ joint_tuned_same :: proc "contextless" (a,b:Joint) -> bool {
 }
 
 @(private)
-joints_sync :: proc(s:^Sync,joints:core.Read(Joint),states:^core.Table(Joint_State)) {
+joints_sync :: proc(s:^Sync,joints:^core.Table(Joint,$A),states:^core.Table(Joint_State)) {
     state:=s.state
     #reverse for &l,at in state.joints.values {
         if core.has(joints,state.joints.entities[at]) {continue}
@@ -126,7 +126,7 @@ joint_reconcile :: proc(s:^Sync,states:^core.Table(Joint_State),e:core.Entity,jo
     wanted:=!st.broken && st.error==.None
     // Its frame on a moves with its own Transform, unless it is on the entity of a, whose frame it is.
     local:core.Transform
-    if a!=e {local,_=core.get(s.locals,e)}
+    if a!=e {local,_=core.get(s.transforms,e)}
     valid:=sim.joint_valid(w,l.joint)
     same:=joint_frames_same(l.applied,joint) && l.frames==joint_frames(joint,held) && l.a==body_a && l.b==body_b && l.local==local
     if valid && (!wanted || !same) {
@@ -141,7 +141,7 @@ joint_reconcile :: proc(s:^Sync,states:^core.Table(Joint_State),e:core.Entity,jo
         return
     }
     if !valid {
-        here,_:=core.world_of(s.locals,s.parents,e)
+        here,_:=core.world_of(s.transforms,s.parents,e)
         frame_b:=sim.Transform{joint.b_anchor,joint_quat(joint.b_rotation)}
         if !joint.b_frame {
             if !st.taken {

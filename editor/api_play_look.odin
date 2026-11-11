@@ -93,8 +93,8 @@ api_look_steer :: proc(s:^Session,r:^Run,look:^Api_Look) -> string {
         up:=mm.QUAT_IDENTITY
         if verticals:=core.world_table_of(w,core.Vertical);verticals!=nil {
             seats:=core.world_table_of(w,input.Seat)
-            target:=ecamera.follow_target(seen.camera,follow.target,core.read(core.world_table_of(w,core.Parent)),core.read(seats),seat)
-            up=core.vertical_of(core.read(verticals),target)
+            target:=ecamera.follow_target(seen.camera,follow.target,core.world_table_of(w,core.Parent),seats,seat)
+            up=core.vertical_of(verticals,target)
         }
         // Not started yet: it has no pivot to look from until its first frame.
         ecamera.camera_look_toward(core.world_storage_of(w,ecamera.Camera_Input),seen.camera,follow,point,up)

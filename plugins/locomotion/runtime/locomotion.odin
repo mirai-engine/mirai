@@ -202,11 +202,11 @@ set_gravity_scale :: proc(requests:^Locomotion_Requests,e:core.Entity,scale:f32)
 
 @(step="fixed",stage="simulate",before="physics_prepare")
 locomotion_step :: proc(
-    characters:core.Read(phys.Character),states:^core.Table(Locomotion_State),moves:^core.Table(phys.Character_Move),inputs:^core.Table(input.Move_Input),
-    walks:core.Read(Walk),flights:core.Read(Fly),swims:core.Read(Swim),slides:core.Read(Slide),mantles:core.Read(Mantle),tacticals:core.Read(Tactical_Sprint),ledges:core.Read(Ledge_Jump),
-    found:core.Read(phys.Character_State),motions:core.Read(core.Motion),
-    locals:core.Read(core.Transform),parents:core.Read(core.Parent),remotes:core.Read(core.Remote),physics:core.Ref(phys.Physics_State),
-    paces:core.Read(core.Own_Pace),walk_actions:input.Input_Of(Walk_Action),requests:^Locomotion_Requests,time:core.Time,clock:core.Clock,problems:^core.Problems,
+    characters:^core.Table(phys.Character,.Read),states:^core.Table(Locomotion_State),moves:^core.Table(phys.Character_Move),inputs:^core.Table(input.Move_Input),
+    walks:^core.Table(Walk,.Read),flights:^core.Table(Fly,.Read),swims:^core.Table(Swim,.Read),slides:^core.Table(Slide,.Read),mantles:^core.Table(Mantle,.Read),tacticals:^core.Table(Tactical_Sprint,.Read),ledges:^core.Table(Ledge_Jump,.Read),
+    found:^core.Table(phys.Character_State,.Read),motions:^core.Table(core.Motion,.Read),
+    locals:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),remotes:^core.Table(core.Remote,.Read),physics:core.Ref(phys.Physics_State),
+    paces:^core.Table(core.Own_Pace,.Read),walk_actions:input.Input_Of(Walk_Action),requests:^Locomotion_Requests,time:core.Time,clock:core.Clock,problems:^core.Problems,
 ) {
     for asked in core.take(&requests.queue) {
         start:Maybe(Locomotion_Mode)
@@ -257,7 +257,7 @@ locomotion_step :: proc(
             if placed,ok:=core.world_of(locals,parents,e);ok {c.yaw=phys.look_yaw_of(frame,placed.rotation)}
             if move_input==nil {
                 core.add(inputs,e,input.Move_Input{look_yaw=c.yaw})
-                move_input=core.added(inputs,e)
+                move_input=core.staged(inputs,e)
             } else if core.owned(remotes,e) {move_input.look_yaw=c.yaw}
             c.ready=true
         }
@@ -322,7 +322,7 @@ locomotion_step :: proc(
         if walking,ok:=walk.?;ok && c.crouched {next.height=walking.crouch_height}
         if row:=core.row_of(moves,e);row<0 {
             core.add(moves,e,next)
-        } else if moves.values[row]!=next {core.edit_at(moves,row)^=next}
+        } else {core.edit_at(moves,row)^=next}
     }
 }
 
@@ -331,7 +331,7 @@ locomotion_step :: proc(
 // flying with a Fly. nil for an entity without a Character, for a Character without those components
 // and no start, and without memory.
 @(private)
-locomotion_state_of :: proc(states:^core.Table(Locomotion_State),characters:core.Read(phys.Character),walks:core.Read(Walk),flights:core.Read(Fly),swims:core.Read(Swim),e:core.Entity,start:Maybe(Locomotion_Mode)=nil) -> ^Locomotion_State {
+locomotion_state_of :: proc(states:^core.Table(Locomotion_State),characters:^core.Table(phys.Character,$A),walks:^core.Table(Walk,$B),flights:^core.Table(Fly,$C),swims:^core.Table(Swim,$D),e:core.Entity,start:Maybe(Locomotion_Mode)=nil) -> ^Locomotion_State {
     if c:=core.staged(states,e);c!=nil {return c}
     if !core.has(characters,e) {return nil}
     mode,given:=start.?
@@ -343,7 +343,7 @@ locomotion_state_of :: proc(states:^core.Table(Locomotion_State),characters:core
     case: return nil
     }
     core.add(states,e,Locomotion_State{mode=mode})
-    return core.added(states,e)
+    return core.staged(states,e)
 }
 
 // What set_gravity_scale asked to scale the gravity of a character by.
@@ -716,7 +716,7 @@ water_depth :: proc "contextless" (body:phys.Character,ground:phys.Character_Sta
 
 // The component a mode of the engine needs that the entity lacks; "" when it has it or the mode is of a game.
 @(private)
-mode_missing :: proc(mode:Locomotion_Mode,e:core.Entity,walks:core.Read(Walk),flights:core.Read(Fly),swims:core.Read(Swim),slides:core.Read(Slide),mantles:core.Read(Mantle)) -> string {
+mode_missing :: proc(mode:Locomotion_Mode,e:core.Entity,walks:^core.Table(Walk,$A),flights:^core.Table(Fly,$B),swims:^core.Table(Swim,$C),slides:^core.Table(Slide,$D),mantles:^core.Table(Mantle,$E)) -> string {
     switch mode {
     case MODE_FALLING,MODE_WALKING,MODE_CROUCHING: if !core.has(walks,e) {return "Walk"}
     case MODE_FLYING:               if !core.has(flights,e) {return "Fly"}

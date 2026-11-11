@@ -77,7 +77,7 @@ ragdoll_bind :: proc(world:core.World_Ref,rig:core.Entity,bodies:[]core.Entity,b
 
 // The Joint of a body of a ragdoll: the one on a child of it, joined to the body of its parent bone.
 @(private)
-bone_joint :: proc(joint_rows:core.Read(phys.Joint),parents:core.Read(core.Parent),body:core.Entity) -> (e:core.Entity,joint:phys.Joint,found:bool) {
+bone_joint :: proc(joint_rows:^core.Table(phys.Joint,$A),parents:^core.Table(core.Parent,$B),body:core.Entity) -> (e:core.Entity,joint:phys.Joint,found:bool) {
     for row in 0..<core.count(joint_rows) {
         candidate:=core.entity_at(joint_rows,row)
         if parent,ok:=core.get(parents,candidate);ok && parent.entity==body {return candidate,core.at(joint_rows,row),true}
@@ -86,7 +86,7 @@ bone_joint :: proc(joint_rows:core.Read(phys.Joint),parents:core.Read(core.Paren
 }
 
 @(private)
-ragdoll_release :: proc(state:^Ragdoll_State,entity:core.Entity,bodies:^phys.Body_Requests,joints:^phys.Joint_Requests,joint_rows:core.Read(phys.Joint),parents:core.Read(core.Parent)) {
+ragdoll_release :: proc(state:^Ragdoll_State,entity:core.Entity,bodies:^phys.Body_Requests,joints:^phys.Joint_Requests,joint_rows:^core.Table(phys.Joint,.Read),parents:^core.Table(core.Parent,.Read)) {
     if state.active && state.mode==.Animated {phys.manipulation_end(bodies,entity)}
     if state.active && state.mode==.Driven {
         if joint,_,found:=bone_joint(joint_rows,parents,entity);found {phys.set_joint_drive_enabled(joints,joint,false)}
@@ -95,7 +95,7 @@ ragdoll_release :: proc(state:^Ragdoll_State,entity:core.Entity,bodies:^phys.Bod
 }
 
 @(step="fixed",loops="game editor",stage="simulate",before="physics_prepare")
-ragdoll_prepare :: proc(configs:core.Read(Ragdoll),bones:core.Read(Ragdoll_Bone),states:^core.Table(Ragdoll_State),rigids:core.Read(phys.Rigid_Body),joint_rows:core.Read(phys.Joint),transforms:core.Read(core.Transform),parents:core.Read(core.Parent),playback:core.Ref(anim.Playback),runtime:^Ragdoll_Runtime,settings:core.Ref(Ragdoll_Settings),bodies:^phys.Body_Requests,joints:^phys.Joint_Requests,time:core.Time,poses:^anim.Animation_Requests,problems:^core.Problems) {
+ragdoll_prepare :: proc(configs:^core.Table(Ragdoll,.Read),bones:^core.Table(Ragdoll_Bone,.Read),states:^core.Table(Ragdoll_State),rigids:^core.Table(phys.Rigid_Body,.Read),joint_rows:^core.Table(phys.Joint,.Read),transforms:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),playback:core.Ref(anim.Playback),runtime:^Ragdoll_Runtime,settings:core.Ref(Ragdoll_Settings),bodies:^phys.Body_Requests,joints:^phys.Joint_Requests,time:core.Time,poses:^anim.Animation_Requests,problems:^core.Problems) {
     for row in 0..<core.count(states) {
         entity:=core.entity_at(states,row)
         state:=core.edit_at(states,row)
@@ -195,7 +195,7 @@ ragdoll_prepare :: proc(configs:core.Read(Ragdoll),bones:core.Read(Ragdoll_Bone)
 }
 
 @(step="fixed",loops="game editor",stage="react")
-ragdoll_pose :: proc(configs:core.Read(Ragdoll),bones:core.Read(Ragdoll_Bone),states:core.Read(Ragdoll_State),transforms:core.Read(core.Transform),parents:core.Read(core.Parent),requests:^anim.Animation_Requests,time:core.Time,problems:^core.Problems) {
+ragdoll_pose :: proc(configs:^core.Table(Ragdoll,.Read),bones:^core.Table(Ragdoll_Bone,.Read),states:^core.Table(Ragdoll_State,.Read),transforms:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),requests:^anim.Animation_Requests,time:core.Time,problems:^core.Problems) {
     if time.dt<=0 || !time.playing {return}
     ragdolls:=core.join(bones,states)
     for entity,bone,state in core.each_joined(&ragdolls) {

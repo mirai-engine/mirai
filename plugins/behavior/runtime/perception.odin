@@ -128,9 +128,9 @@ sight_free :: proc(s:^Sight) {
 
 @(step="fixed",stage="input",server)
 perception_update :: proc(
-    perceivers:core.Read(Perceiver),perceptions:^core.Table(Perception),perceivables:core.Read(Perceivable),
-    worlds:core.Read(core.World_Transform),settings:core.Ref(Behavior_Settings),turns:^Perceiving,sight:^Sight,
-    noises:^Noises,events:^Perception_Events,physics:core.Ref(phys.Physics_State),fars:core.Read(nav.Nav_Far),entities:core.Ref(core.Entities),time:core.Time,problems:^core.Problems,
+    perceivers:^core.Table(Perceiver,.Read),perceptions:^core.Table(Perception),perceivables:^core.Table(Perceivable,.Read),
+    worlds:^core.Table(core.World_Transform,.Read),settings:core.Ref(Behavior_Settings),turns:^Perceiving,sight:^Sight,
+    noises:^Noises,events:^Perception_Events,physics:core.Ref(phys.Physics_State),fars:^core.Table(nav.Nav_Far,.Read),entities:core.Ref(core.Entities),time:core.Time,problems:^core.Problems,
 ) {
     if core.reshaped(perceivers,&turns.shapes[0]) | core.reshaped(perceptions,&turns.shapes[1]) {
         for row in 0..<core.count(perceivers) {
@@ -145,14 +145,14 @@ perception_update :: proc(
     heard:=core.take(&noises.queue)
     if !time.playing || time.dt<=0 {return}
     // With nobody to look at or to hear, and nothing remembered, nobody perceives or forgets.
-    if len(perceivers.table.entities)==0 || len(perceivables.table.entities)==0 && len(heard)==0 && turns.remembering==0 {return}
+    if len(perceivers.entities)==0 || len(perceivables.entities)==0 && len(heard)==0 && turns.remembering==0 {return}
     count:=core.count(perceivers)
     rays:=int(settings.rays) if settings.ptr!=nil else 256
-    far:=nav.nav_far_decide(time) && fars.table!=nil && len(perceivers.table.entities)>count
+    far:=nav.nav_far_decide(time) && fars!=nil && len(perceivers.entities)>count
     // Without rays nobody looks, and all remember as time goes.
     sighted:=rays>0
     if (far || sighted && count>0) && !sight_gather(sight,perceivables,worlds,fars,far) {
-        core.report(problems,core.NONE,"behavior.memory","No memory to look for the %d Perceivables around each perceiver: nobody sees in this tick; free memory",len(perceivables.table.entities))
+        core.report(problems,core.NONE,"behavior.memory","No memory to look for the %d Perceivables around each perceiver: nobody sees in this tick; free memory",len(perceivables.entities))
         sighted,rays,far=false,0,false
     }
     if far {perceive_far(perceivers,perceptions,perceivables,worlds,fars,sight,heard,events,turns,entities.ptr,time)}
@@ -161,7 +161,7 @@ perception_update :: proc(
     for k in 0..<count {
         row:=(first+k)%count
         e:=core.entity_at(perceivers,row)
-        p:=perceivers.table.values[row]
+        p:=perceivers.values[row]
         mine:=core.edit(perceptions,e)
         pose,placed:=core.get(worlds,e)
         if mine==nil || !placed {continue}
@@ -175,7 +175,7 @@ perception_update :: proc(
                 if rays<=0 {break}
                 subject:=core.entity_at(perceivables,int(target))
                 if subject==e {continue}
-                seen:=perceivables.table.values[target]
+                seen:=perceivables.values[target]
                 if u32(p.notices)&(1<<u32(seen.team))==0 {continue}
                 at,ok:=core.get(worlds,subject)
                 if !ok {continue}
@@ -209,9 +209,9 @@ remembering_count :: #force_inline proc "contextless" (turns:^Perceiving,before,
 // (nav.Nav_Far) too, in the grid by where they stand, each with its row.
 // False without memory for them.
 @(private)
-sight_gather :: proc(s:^Sight,perceivables:core.Read(Perceivable),worlds:core.Read(core.World_Transform),fars:core.Read(nav.Nav_Far),far:bool) -> bool {
+sight_gather :: proc(s:^Sight,perceivables:^core.Table(Perceivable,$A),worlds:^core.Table(core.World_Transform,$B),fars:^core.Table(nav.Nav_Far,$C),far:bool) -> bool {
     on:=core.count(perceivables)
-    rows:=len(perceivables.table.entities) if far else on
+    rows:=len(perceivables.entities) if far else on
     if rows>len(s.grid.items) {
         capacity:=64
         for capacity<rows {capacity*=2}
@@ -220,7 +220,7 @@ sight_gather :: proc(s:^Sight,perceivables:core.Read(Perceivable),worlds:core.Re
     }
     spatial.grid_clear(&s.grid)
     for row in 0..<rows {
-        e:=perceivables.table.entities[row]
+        e:=perceivables.entities[row]
         if row>=on && !far_of(fars,e) {continue}
         at,ok:=core.get(worlds,e)
         if !ok {continue}
@@ -252,28 +252,28 @@ sight_around :: proc(s:^Sight,eye:mm.Vec3,reach:f32,limit:int) -> []u32 {
 }
 
 @(private)
-far_of :: proc(fars:core.Read(nav.Nav_Far),e:core.Entity) -> bool {return core.raw_find(core.raw(fars.table),type_info_of(nav.Nav_Far),e)!=nil}
+far_of :: proc(fars:^core.Table(nav.Nav_Far,$A),e:core.Entity) -> bool {return core.raw_find(core.raw(fars),type_info_of(nav.Nav_Far),e)!=nil}
 
 // What the perceivers far from the players perceive, at the ticks their
 // brains decide in: what they notice in their cone and range, on or far
 // itself, as if nothing hid it (the collision there is not loaded), and the
 // noises of the tick; then they forget.
 @(private)
-perceive_far :: proc(perceivers:core.Read(Perceiver),perceptions:^core.Table(Perception),perceivables:core.Read(Perceivable),worlds:core.Read(core.World_Transform),fars:core.Read(nav.Nav_Far),sight:^Sight,heard:[]Noise,events:^Perception_Events,turns:^Perceiving,entities:^core.Entities,time:core.Time) {
-    for row in core.count(perceivers)..<len(perceivers.table.entities) {
-        e:=perceivers.table.entities[row]
+perceive_far :: proc(perceivers:^core.Table(Perceiver,$A),perceptions:^core.Table(Perception),perceivables:^core.Table(Perceivable,$B),worlds:^core.Table(core.World_Transform,$C),fars:^core.Table(nav.Nav_Far,$D),sight:^Sight,heard:[]Noise,events:^Perception_Events,turns:^Perceiving,entities:^core.Entities,time:core.Time) {
+    for row in core.count(perceivers)..<len(perceivers.entities) {
+        e:=perceivers.entities[row]
         if !far_of(fars,e) {continue}
-        p:=perceivers.table.values[row]
+        p:=perceivers.values[row]
         mine:=cast(^Perception)core.raw_edit(core.raw(perceptions),type_info_of(Perception),e)
         pose,placed:=core.get(worlds,e)
         if mine==nil || !placed {continue}
         remembered:=mine.memory.count>0
         eye:=pose.position+mm.Vec3{0,p.eyes,0}
         forward:=mm.quat_forward(pose.rotation)
-        for target in sight_around(sight,eye,p.sight,len(perceivables.table.entities)) {
-            subject:=perceivables.table.entities[target]
+        for target in sight_around(sight,eye,p.sight,len(perceivables.entities)) {
+            subject:=perceivables.entities[target]
             if subject==e {continue}
-            seen:=perceivables.table.values[target]
+            seen:=perceivables.values[target]
             if u32(p.notices)&(1<<u32(seen.team))==0 {continue}
             at,ok:=core.get(worlds,subject)
             if !ok || !ai.sight_in_cone(eye,forward,at.position+mm.Vec3{0,seen.point,0},p.sight,p.angle) {continue}

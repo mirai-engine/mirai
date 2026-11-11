@@ -233,7 +233,9 @@ value and is not checked; a zero value on purpose is a declaration (`none:Audio_
 
 Each parameter is bound by its type; the order in the signature is free.
 
-- `^core.Table(C)` writes the table of `C`; `core.Read(C)` reads it.
+- `^core.Table(C)` writes the table of `C`; `^core.Table(C,.Read)` reads it, and the compiler
+  refuses a write through it. Every read takes either; a helper that reads takes
+  `^core.Table(C,$A)`.
 - `^S` writes the storage `S`; `core.Ref(S)` reads it without copying; `S`, a copy, for the small
   ones (`Time`, `Input`, `View`).
 - `core.Stamp(S)`: the stamp of the storage `S` of the World, for `core.touched(stamp, &seen)`: a
@@ -266,10 +268,12 @@ of three or four loose tables:
 
 ```odin
 @(params)
-Placer :: struct {transforms:^Table(Transform),parents:Read(Parent),places:^Places,jumps:^Jumps}
+Placer :: struct {
+    transforms:^Table(Transform),parents:^Table(Parent,.Read),places:^Places,jumps:^Jumps,
+}
 
 @(step="fixed")
-doors_open :: proc(doors:core.Read(Door),placer:core.Placer,time:core.Time) {...}
+doors_open :: proc(doors:^core.Table(Door,.Read),placer:core.Placer,time:core.Time) {...}
 ```
 
 - The generator expands it field by field: each field is bound as that loose parameter, and the call
@@ -394,7 +398,8 @@ parameters by hand.
 - With `core.CHECK_WRITES` it wraps each function that receives tables with `^` in
   `write_check_begin`/`write_check_end`.
 
-The generated code does not touch `version`: each row requested for writing bumps it
+The generated code does not touch `version`: each row requested for writing bumps it, and the
+settle after the function keeps the stamp of a row that ends with the bytes it had
 ([stamps](core.md#tables)). Receiving a table with `^` and not writing it does not move it. A
 storage has no rows to stamp: receiving a `World` storage with `^S` moves its revision before the
 function runs, written or not, and `copy_changed` takes it again
@@ -426,7 +431,7 @@ cameras before `camera_follow`. A function of several phases has the same stage 
   right before it. A function waits for:
   - the ones that push to a `queue` of its library that it receives: a request reaches its owner
     in the tick it is pushed;
-  - the ones that write a table or a storage that it reads (`core.Read`, `core.Ref`, by value): a
+  - the ones that write a table or a storage that it reads (`.Read`, `core.Ref`, by value): a
     reader sees the values and the events of the tick;
   - its `after` ones and those that name it in `before`.
 - **A name wins over a request, and a request over a read.** A function that pushes a request to
@@ -455,8 +460,8 @@ it, which [orders it inside its stage](#order), and each form has its reader:
 - `^core.Table(C)`: the function is the writer of `C` (one per table that is not `shared`), its
   rows are checked with `CHECK_WRITES`, and the table settles after it. Writing `Disabled` or
   `Parent` settles the whole World.
-- `core.Read(C)`, `core.Ref(S)` and `S`: read-only access, which settles nothing and moves no
-  revision.
+- `^core.Table(C,.Read)`, `core.Ref(S)` and `S`: read-only access, which settles nothing and moves
+  no revision.
 - `^S`: the function's library owns the storage (or pushes to a `queue`, or it is `shared`), and
   the revision of a `World` storage moves before it runs, so the copy a rollback keeps takes it
   again ([reflection](core.md#world-reflection)).

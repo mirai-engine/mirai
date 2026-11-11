@@ -126,7 +126,7 @@ APP_PARTS :: [?]App_Part{
 }
 
 @(private="file")
-PARAM_FORMS :: "^core.Table(T), core.Read(T), ^S, core.Ref(S), S, core.Stamp(S), core.Inbox(M) of a @(net_message), core.Ref(core.Entities), core.Commands, core.World_Ref, a part of the application (^host.Assets, ^host.Frame_Extras, ^render.Renderer, ^audio.Mixer, ^jobs.Job_System, runtime.Allocator, ^core.Texts) or ^host.App"
+PARAM_FORMS :: "^core.Table(T), ^core.Table(T,.Read), ^S, core.Ref(S), S, core.Stamp(S), core.Inbox(M) of a @(net_message), core.Ref(core.Entities), core.Commands, core.World_Ref, a part of the application (^host.Assets, ^host.Frame_Extras, ^render.Renderer, ^audio.Mixer, ^jobs.Job_System, runtime.Allocator, ^core.Texts) or ^host.App"
 
 @(private="file")
 Param :: struct {
@@ -1419,6 +1419,13 @@ param_read :: proc(g:^Generator,file:^ast.File,pkg:^Package,expr:^ast.Expr) -> (
         pointer=true
         e=p.elem
     }
+    if call,is_call:=e.derived.(^ast.Call_Expr);is_call && len(call.args)==2 {
+        // ^core.Table(T,.Read): the one wrapper with an access.
+        access,is_access:=call.args[1].derived.(^ast.Implicit_Selector_Expr)
+        inner,found:=g.by_key[type_key(g,file,pkg,call.args[0])]
+        if !is_access || access.field.name!="Read" || type_key(g,file,pkg,call.expr)!="mirai:core.Table" || !found || inner.kind!=.Component {return}
+        return {kind=.Table_Read,type=inner},pointer
+    }
     if call,is_call:=e.derived.(^ast.Call_Expr);is_call && len(call.args)==1 {
         wrapper:=type_key(g,file,pkg,call.expr)
         inner_key:=type_key(g,file,pkg,call.args[0])
@@ -1438,7 +1445,6 @@ param_read :: proc(g:^Generator,file:^ast.File,pkg:^Package,expr:^ast.Expr) -> (
         if !found {return}
         switch {
         case wrapper=="mirai:core.Table" && pointer && inner.kind==.Component: return {kind=.Table_Write,type=inner},true
-        case wrapper=="mirai:core.Read" && !pointer && inner.kind==.Component: return {kind=.Table_Read,type=inner},true
         case wrapper=="mirai:core.Ref" && !pointer && inner.kind==.Storage: return {kind=.Storage_Ref,type=inner},true
         case wrapper=="mirai:core.Stamp" && !pointer && inner.kind==.Storage && inner.place==.World: return {kind=.Storage_Stamp,type=inner},true
         }
@@ -2405,7 +2411,7 @@ param_type :: proc(g:^Generator,param:Param,core_alias:string) -> string {
     }
     #partial switch param.kind {
     case .Table_Write: return fmt.tprintf("^%s.Table(%s.%s)",core_alias,param.type.pkg.alias,param.type.name)
-    case .Table_Read: return fmt.tprintf("%s.Read(%s.%s)",core_alias,param.type.pkg.alias,param.type.name)
+    case .Table_Read: return fmt.tprintf("^%s.Table(%s.%s,.Read)",core_alias,param.type.pkg.alias,param.type.name)
     case .Storage_Write: return fmt.tprintf("^%s.%s",param.type.pkg.alias,param.type.name)
     case .Storage_Ref: return fmt.tprintf("%s.Ref(%s.%s)",core_alias,param.type.pkg.alias,param.type.name)
     case .Storage_Value: return fmt.tprintf("%s.%s",param.type.pkg.alias,param.type.name)
