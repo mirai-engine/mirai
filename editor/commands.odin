@@ -125,8 +125,9 @@ Commands :: struct {
 
 // Gives a method, or a procedure of the interface, an entry. The texts stay
 // where they are: constants of the editor or of a library, which stays
-// loaded. False when it does not fit, its name is taken or its method is not
-// registered yet.
+// loaded. False, with why among the refusals of the API, when it does not
+// fit, its name is taken, its method is not registered yet or its key is of
+// another entry that can be on at the same time.
 command_bind :: proc(s:^Session,b:Binding) -> bool {
     st:=api_state(s)
     if st==nil {return false}
@@ -136,15 +137,41 @@ command_bind :: proc(s:^Session,b:Binding) -> bool {
     case entry.tool!="":       entry.method="editor.tool"
     case entry.preference!="": entry.method="preferences.set"
     }
-    if (entry.method=="")==(entry.view==nil) {return false}
     if entry.name=="" {entry.name=entry.method}
-    if entry.method!="" {
-        if entry.call=api.method_find(&st.server,entry.method);entry.call==nil {return false}
+    refuse :: proc(st:^Api_State,format:string,args:..any) -> bool {
+        api_refuse(st,fmt.tprintf(format,..args))
+        return false
     }
-    if c.count>=len(c.bindings) || binding_find(c,entry.name)!=nil {return false}
+    if (entry.method=="")==(entry.view==nil) {return refuse(st,"the entry %s needs a method or a procedure of the interface, one of them",entry.name)}
+    if entry.method!="" {
+        if entry.call=api.method_find(&st.server,entry.method);entry.call==nil {return refuse(st,"the entry %s calls %s, which is not registered: register the method before its entry",entry.name,entry.method)}
+    }
+    if c.count>=len(c.bindings) {return refuse(st,"the entry %s does not fit: raise BINDING_CAPACITY in editor/commands.odin",entry.name)}
+    if binding_find(c,entry.name)!=nil {return refuse(st,"the name of the entry %s is taken: give it another",entry.name)}
+    for &other in c.bindings[:c.count] {
+        for key in ([2]Shortcut{entry.shortcut,entry.alternate}) {
+            if !key.set || key!=other.shortcut && key!=other.alternate || !bindings_meet(&entry,&other) {continue}
+            return refuse(st,"the shortcut %s of the entry %s is taken by the entry %s, which can be on at the same time: give one of them another key",shortcut_text(key),entry.name,other.name)
+        }
+    }
     c.bindings[c.count]=entry
     c.count+=1
     return true
+}
+
+// Whether two entries can be on at the same time, which one key cannot run
+// both of: their modes meet and so does what they work on. An entry of the
+// card of the browser takes its keys from the others while a card has the
+// keyboard; one of the scene is off while an asset document covers it. Two
+// that each say by their state when they are off share a key (Play and Stop
+// on F5): what that state says is not known when they are bound.
+@(private)
+bindings_meet :: proc(a,b:^Binding) -> bool {
+    if a.state!=nil && b.state!=nil {return false}
+    if a.modes!={} && b.modes!={} && a.modes&b.modes=={} {return false}
+    if a.card || b.card {return a.card && b.card}
+    if a.document!=0 && b.document!=0 {return a.document==b.document}
+    return !(a.scene && b.document!=0 || b.scene && a.document!=0)
 }
 
 // The entry of a tool of a plugin in the Tools menu, by the name it turns on
@@ -605,9 +632,7 @@ commands_register :: proc(s:^Session,st:^Api_State) {
         {name="asset_rename",view=proc(s:^Session) {content_rename_begin(s,card_focused(s))},label="Rename",icon=.Edit,shortcut=key(.F2),modes=edit,card=true},
         {name="asset_duplicate",method="asset.move",params=`{"asset":"$card","copy":true}`,label="Duplicate",icon=user(.Copy),shortcut=key(.D,{.Primary}),modes=edit,card=true},
     }
-    for entry in entries {
-        if !command_bind(s,entry) {api_refuse(st,fmt.tprintf("the entry %s did not fit, or its method is not registered before it: raise BINDING_CAPACITY in editor/commands.odin",entry.name))}
-    }
+    for entry in entries {command_bind(s,entry)}
     if s.has_project {tool_entry(s,AI_ANNOTATE_TOOL,"Annotate",ai_annotate_icon())}
 }
 

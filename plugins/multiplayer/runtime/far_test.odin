@@ -86,7 +86,7 @@ an_entity_off_on_the_server_stays_off_on_the_clients_and_comes_back_where_it_got
             testing.expect(t,found)
             core.add(&server.disabled,agent,core.Disabled{})
             core.add(&server.disabled,held,core.Disabled{})
-            core.add(&server.held,held,scene.Section_Held{})
+            core.add(&server.section_held,held,scene.Section_Held{})
         case 60:
             published=sessions[0].stats.fragments_published
         case 70, 80:

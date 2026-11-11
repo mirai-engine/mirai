@@ -87,7 +87,7 @@ mode_set :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,asset
     kind:=stroke.source.kind
     switch mode {
     case 0: tool.brush,tool.level,tool.shaping=sculpt_brushes(kind)[0].kind,false,false
-    case 1: tool.brush,tool.shaping=kind==.Heightfield?.Hole:.Add,kind!=.Heightfield
+    case 1: tool.shaping=kind==.Volume;tool.brush=tool.shaping?.Add:.Hole
     case 2: tool.brush,tool.shaping=.Paint,false
     }
     tool.picking=false
@@ -148,12 +148,12 @@ terrain_sculpt_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.Wor
             pending_buttons(s,tool,world,app.assets)
         }
     }
-    if kind==.Heightfield && brush!=.Ramp {
-        axis:=int(tool.axis)
-        if kit.property(ctx,"Axis") {if kit.tabs(ctx,ui.id(ctx,"axis"),{"Free","X","Z"},&axis) {tool.axis=Stroke_Axis(axis)}}
-    }
-    if kind==.Heightfield {slope_fields(s,tool)}
     if kind==.Heightfield {
+        if brush!=.Ramp {
+            axis:=int(tool.axis)
+            if kit.property(ctx,"Axis") {if kit.tabs(ctx,ui.id(ctx,"axis"),{"Free","X","Z"},&axis) {tool.axis=Stroke_Axis(axis)}}
+        }
+        slope_fields(s,tool)
         kit.section(ctx,"Heightmap","",80)
         heightmap_fields(s,tool)
         if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=4}) {
@@ -162,8 +162,7 @@ terrain_sculpt_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.Wor
         }
         kit.section(ctx,"Size",fmt.tprintf("%.0f × %.0f m",f32(stroke.source.samples.x-1)*stroke.source.cell,f32(stroke.source.samples.z-1)*stroke.source.cell),140)
         resize_fields(s,tool,world,app.assets)
-    }
-    if kind==.Volume {
+    } else {
         kit.section(ctx,"Mesh","",80)
         if ui.button(ctx,ui.id(ctx,"export_mesh"),{label="Save surface as mesh",variant="field",width=-1,center=true}).clicked {terrain_surface_mesh(s,tool,app.assets,app.allocator)}
     }

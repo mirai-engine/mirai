@@ -32,7 +32,7 @@ particle_effects_keep_their_values_parameters_hidden_fields_and_assets :: proc(t
     defer asset.asset_close(&a)
     view,error:=particle_view(&a,&types)
     testing.expect_value(t,error,asset.Error.None)
-    testing.expect(t,view.info^==info)
+    testing.expect(t,view.info==info)
     testing.expect(t,len(view.hidden)==2 && serial.text_field(view.hidden[1].name[:])=="bursts")
     testing.expect(t,particle_hidden(view.hidden,"noise") && !particle_hidden(view.hidden,"rate"))
     testing.expect(t,len(view.parameters)==2 && view.parameters[0]==parameters[0])
@@ -116,21 +116,21 @@ invalid_effects_say_which_field_and_how_to_correct_it :: proc(t:^testing.T) {
     for c in cases {
         info:=PARTICLE_DEFAULTS
         c.change(&info)
-        problem:=particle_validate({info=&info})
+        problem:=particle_validate({info=info})
         testing.expect_value(t,problem.field,c.field)
         testing.expect(t,problem.message!="")
     }
     info:=PARTICLE_DEFAULTS
-    testing.expect_value(t,particle_validate({info=&info}).message,"")
+    testing.expect_value(t,particle_validate({info=info}).message,"")
 
     parameters:[2]Particle_Parameter
     base.text_set(parameters[0].name[:],"count")
     parameters[0].kind,parameters[0].components,parameters[0].value=.Uint,1,{-1,0,0,0}
-    testing.expect_value(t,particle_validate({info=&info,parameters=parameters[:1]}).field,"parameters")
+    testing.expect_value(t,particle_validate({info=info,parameters=parameters[:1]}).field,"parameters")
     parameters[0].value={3,0,0,0}
     parameters[1]=parameters[0]
-    testing.expect_value(t,particle_validate({info=&info,parameters=parameters[:1]}).message,"")
-    testing.expect_value(t,particle_validate({info=&info,parameters=parameters[:]}).field,"parameters")
+    testing.expect_value(t,particle_validate({info=info,parameters=parameters[:1]}).message,"")
+    testing.expect_value(t,particle_validate({info=info,parameters=parameters[:]}).field,"parameters")
 }
 
 @(test)

@@ -51,8 +51,8 @@ emitter_within :: proc(type:typeid) -> bool {return type==vfx.Particle_Override}
 
 // The effect of a live emitter has a box of its own after the fields (emitter_section).
 @(private)
-emitter_field :: proc(c:editor.Inspector_Context,info:^runtime.Type_Info,offset:uintptr,label:string) -> bool {
-    return c.table!=nil && c.table.type==vfx.Particle_Emitter && len(c.entities)>0 && offset==offset_of(vfx.Particle_Emitter,particle) && info.id==base.Asset_Id
+emitter_field :: proc(c:editor.Inspector_Context,type:typeid,offset:uintptr,label:string) -> bool {
+    return c.table!=nil && c.table.type==vfx.Particle_Emitter && len(c.entities)>0 && offset==offset_of(vfx.Particle_Emitter,particle) && type==base.Asset_Id
 }
 
 // The sections of the vfx plugin in Details.
@@ -108,7 +108,7 @@ emitter_section :: proc(c:editor.Inspector_Context) -> bool {
     for e in c.entities {
         if other,ok:=editor.entity_get(c.world,e,vfx.Particle_Emitter);ok && other.particle!=particle {same=false}
     }
-    editor.inspector_fields(c,c.table.info)
+    editor.inspector_fields(c)
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(editor.MATERIAL_ROW),gap=4,align_y=.Center}) {
         ui.label(ctx,"Particle",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_label"),ui.metric(ctx,"label_width"))
         local:=single && f.override.count>0
@@ -207,7 +207,7 @@ particle_apply :: proc(s:^editor.Session,e:core.Entity) -> bool {
     f:=effect_read(s,w,e) or_return
     file:=particle_file(s,f.particle)
     file.info=f.shown
-    instance_parameters(s,&file.info,&f.override,&file.parameters)
+    instance_parameters(s,&f.override,&file)
     opened,edit_ready:=editor.edit_open(s,"Apply to particle")
     if !edit_ready {return false}
     defer editor.edit_close(s,opened)

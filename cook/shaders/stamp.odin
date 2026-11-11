@@ -1,10 +1,10 @@
 package shaders
 
-import "core:encoding/json"
 import "core:os"
 import "core:slice"
 import "core:strings"
 import "core:time"
+import "mirai:std/serial"
 
 // What the last generation of a cache was made from and what it published:
 // the request, the tools, every source it read or looked for, the folders it
@@ -13,10 +13,25 @@ import "core:time"
 // compiler and leaves the output alone.
 STAMP_FILE :: "generation.json"
 @(private)
-STAMP_VERSION :: 3
+STAMP_VERSION :: 4
 
 @(private)
 Stamp_File :: struct {path:string,size,time:i64}
+
+// The file of a stamp: what it says and what it checks.
+@(private)
+Stamp_Record :: struct {
+    version:int,
+    request:string,
+    stamp:Stamp,
+    tools,outputs:[]Stamp_File,
+    listings:[]Stamp_Listing,
+    files:[]Stamp_Source,
+}
+@(private)
+Stamp_Listing :: struct {path:string,recursive:bool,hash:string}
+@(private)
+Stamp_Source :: struct {path,hash:string} // hash empty: no such file
 
 @(private)
 Stamp :: struct {
@@ -63,52 +78,31 @@ request_digest :: proc(g:^Generation,sources:[]Source,odin:bool,allocator:=conte
 // the engine accepts and everything it names is as it says.
 @(private)
 stamp_current :: proc(g:^Generation,request:string,allocator:=context.allocator) -> (stamp:Stamp,ok:bool) {
-    data,readable:=read_json(path_join(g.cache,STAMP_FILE,allocator=context.temp_allocator),context.temp_allocator)
-    if !readable {return}
-    if version,_:=json_int(data["version"]);version!=STAMP_VERSION || json_text(data["request"])!=request {return}
-    same_file :: proc(value:json.Value,path:string="") -> bool {
-        object,is_object:=value.(json.Object)
-        if !is_object {return false}
-        size,has_size:=json_int(object["size"])
-        modified,has_time:=json_int(object["time"])
-        if !has_size || !has_time || (path!="" && json_text(object["path"])!=path) {return false}
-        state:=file_state(json_text(object["path"]))
-        return state.size==i64(size) && state.size>=0 && state.time==i64(modified)
+    data,unread:=os.read_entire_file(path_join(g.cache,STAMP_FILE,allocator=context.temp_allocator),context.temp_allocator)
+    record:Stamp_Record
+    if unread!=nil || serial.text_decode(string(data),&record,context.temp_allocator)!="" || record.version!=STAMP_VERSION || record.request!=request {return}
+    same :: proc(file:Stamp_File) -> bool {
+        state:=file_state(file.path)
+        return state.size>=0 && state.size==file.size && state.time==file.time
     }
-    tools,_:=data["tools"].(json.Array)
-    if len(tools)!=len(Tool) {return}
+    if len(record.tools)!=len(Tool) || len(record.outputs)==0 {return}
     for path,tool in g.tools {
-        if !same_file(tools[int(tool)],path) {return}
+        if record.tools[int(tool)].path!=path || !same(record.tools[int(tool)]) {return}
     }
-    outputs,_:=data["outputs"].(json.Array)
-    if len(outputs)==0 {return}
-    for value in outputs {
-        if !same_file(value) {return}
+    for file in record.outputs {
+        if !same(file) {return}
     }
-    listings,_:=data["listings"].(json.Array)
-    for value in listings {
-        object,is_object:=value.(json.Object)
-        if !is_object {return}
-        recursive,_:=object["recursive"].(json.Boolean)
-        if listing_read(json_text(object["path"]),recursive,context.temp_allocator,g.sources.overlay).hash!=json_text(object["hash"]) {return}
+    for listing in record.listings {
+        if listing_read(listing.path,listing.recursive,context.temp_allocator,g.sources.overlay).hash!=listing.hash {return}
     }
-    files,_:=data["files"].(json.Array)
-    for value in files {
-        object,is_object:=value.(json.Object)
-        if !is_object {return}
-        bytes,found:=source_read(g.sources.overlay,json_text(object["path"]),context.temp_allocator)
-        wanted:=json_text(object["hash"])
-        if found!=(wanted!="") || (found && sha_of(bytes,context.temp_allocator)!=wanted) {return}
+    for file in record.files {
+        bytes,found:=source_read(g.sources.overlay,file.path,context.temp_allocator)
+        if found!=(file.hash!="") || (found && sha_of(bytes,context.temp_allocator)!=file.hash) {return}
     }
-    stamp.slang=strings.clone(json_text(data["slang"]),allocator)
-    stamp.metal_tools=strings.clone(json_text(data["metal_tools"]),allocator)
-    stamp.engine=strings.clone(json_text(data["engine"]),allocator)
-    stamp.shipped=data["shipped"].(json.Boolean) or_else false
-    counts:=[3]^int{&stamp.shaders,&stamp.tests,&stamp.programs}
-    for key,i in ([3]string{"shaders","tests","programs"}) {
-        valid:bool
-        if counts[i]^,valid=json_int(data[key]);!valid {return}
-    }
+    stamp=record.stamp
+    stamp.slang=strings.clone(stamp.slang,allocator)
+    stamp.metal_tools=strings.clone(stamp.metal_tools,allocator)
+    stamp.engine=strings.clone(stamp.engine,allocator)
     return stamp,stamp.engine!="" && stamp.shaders>0 && slang_version_at_least(stamp.slang,SLANG_VERSION)
 }
 
@@ -116,60 +110,27 @@ stamp_current :: proc(g:^Generation,request:string,allocator:=context.allocator)
 // folder, whose files are made from the others. outputs: what was published.
 @(private)
 stamp_write :: proc(g:^Generation,request,excluded:string,outputs:[]string,stamp:Stamp) -> bool {
-    writer:=json_writer(context.temp_allocator)
-    file_to_json :: proc(writer:^Json_Writer,state:Stamp_File) {
-        json_object_begin(writer)
-        json_key(writer,"path");json_string(writer,state.path)
-        json_key(writer,"size");json_integer(writer,state.size)
-        json_key(writer,"time");json_integer(writer,state.time)
-        json_object_end(writer)
-    }
-    json_object_begin(&writer)
-    json_key(&writer,"version");json_integer(&writer,STAMP_VERSION)
-    json_key(&writer,"request");json_string(&writer,request)
-    json_key(&writer,"slang");json_string(&writer,stamp.slang)
-    json_key(&writer,"metal_tools");json_string(&writer,stamp.metal_tools)
-    json_key(&writer,"engine");json_string(&writer,stamp.engine)
-    json_key(&writer,"shaders");json_integer(&writer,i64(stamp.shaders))
-    json_key(&writer,"tests");json_integer(&writer,i64(stamp.tests))
-    json_key(&writer,"programs");json_integer(&writer,i64(stamp.programs))
-    json_key(&writer,"shipped");json_bool(&writer,stamp.shipped)
-    json_key(&writer,"tools");json_array_begin(&writer)
-    for path in g.tools {file_to_json(&writer,file_state(path))}
-    json_array_end(&writer)
-    json_key(&writer,"outputs");json_array_begin(&writer)
+    record:=Stamp_Record{version=STAMP_VERSION,request=request,stamp=stamp}
+    tools:=make([dynamic]Stamp_File,context.temp_allocator)
+    for path in g.tools {append(&tools,file_state(path))}
+    published:=make([dynamic]Stamp_File,context.temp_allocator)
     for path in outputs {
         state:=file_state(path)
         if state.size<0 {return false}
-        file_to_json(&writer,state)
+        append(&published,state)
     }
-    json_array_end(&writer)
-    paths:=make([dynamic]string,context.temp_allocator)
-    for path in g.sources.listings {append(&paths,path)}
-    slice.sort(paths[:])
-    json_key(&writer,"listings");json_array_begin(&writer)
-    for key in paths {
-        listing:=g.sources.listings[key]
+    listings:=make([dynamic]Stamp_Listing,context.temp_allocator)
+    for _,listing in g.sources.listings {
         if path_inside(listing.directory,excluded) || listing.directory==excluded {continue}
-        json_object_begin(&writer)
-        json_key(&writer,"path");json_string(&writer,listing.directory)
-        json_key(&writer,"recursive");json_bool(&writer,listing.recursive)
-        json_key(&writer,"hash");json_string(&writer,listing.hash)
-        json_object_end(&writer)
+        append(&listings,Stamp_Listing{listing.directory,listing.recursive,listing.hash})
     }
-    json_array_end(&writer)
-    clear(&paths)
-    for path in g.sources.files {append(&paths,path)}
-    slice.sort(paths[:])
-    json_key(&writer,"files");json_array_begin(&writer)
-    for path in paths {
-        if path_inside(path,excluded) {continue}
-        json_object_begin(&writer)
-        json_key(&writer,"path");json_string(&writer,path)
-        json_key(&writer,"hash");json_string(&writer,g.sources.files[path].hash)
-        json_object_end(&writer)
+    files:=make([dynamic]Stamp_Source,context.temp_allocator)
+    for path,file in g.sources.files {
+        if !path_inside(path,excluded) {append(&files,Stamp_Source{path,file.hash})}
     }
-    json_array_end(&writer)
-    json_object_end(&writer)
-    return write_file_atomic(path_join(g.cache,STAMP_FILE,allocator=context.temp_allocator),json_finish(&writer))
+    slice.sort_by(listings[:],proc(a,b:Stamp_Listing) -> bool {return a.path<b.path})
+    slice.sort_by(files[:],proc(a,b:Stamp_Source) -> bool {return a.path<b.path})
+    record.tools,record.outputs,record.listings,record.files=tools[:],published[:],listings[:],files[:]
+    text,encoded:=serial.text_encode(record,.Pretty,context.temp_allocator)
+    return encoded && write_file_atomic(path_join(g.cache,STAMP_FILE,allocator=context.temp_allocator),text)
 }

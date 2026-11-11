@@ -127,6 +127,10 @@ receives the place of its origin: a type or a function of an editor package neve
 - `swap="proc"`: a procedure of the package `(a, b: ^S)` that replaces the default swap (the bytes),
   without allocating: for the storage that tells its readers that its content changed worlds (the
   epochs of physics and terrain).
+- `diff="proc"`: a `World` storage that is copied; a procedure of the package
+  `(a, b: ^S, buf: []byte) -> string` that says where two copies differ, written into `buf`, and
+  empty when they do not. `core.world_diff` asks the storages that have one, only after a
+  divergence was found (the SyncTest of multiplayer): never in a tick.
 - `free="proc"`: a procedure of the package `(^S)` that releases what the storage contains; by
   default `core.value_free`.
 - **Class of a `World` storage.** Clearing a world (`core.world_clear`: loading a scene or a save,

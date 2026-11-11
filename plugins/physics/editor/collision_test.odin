@@ -31,7 +31,7 @@ collision_inspector_frame :: proc(t:^testing.T,s:^editor.Session,input:ui.Input,
     c:=editor.inspect_component(s,editor.edited_world(s),type,s.selection.entities[:])
     defaults:[size_of(phys.Collider)]u8
     c.defaults=raw_data(defaults[:])
-    if ui.box(ctx,{width=ui.fixed(264),height=ui.FIT,direction=.Column}) {editor.fields_rows(&c,c.t.info,0,0,"")}
+    if ui.box(ctx,{width=ui.fixed(264),height=ui.FIT,direction=.Column}) {editor.fields_rows(&c,c.of,0,0,"")}
     output:=ui.frame_end(ctx)
     testing.expect(t,!output.overflow)
     testing.expect_value(t,ctx.stats.layout_errors,u32(0))
@@ -180,9 +180,10 @@ collision_settings_show_declared_values_and_remove_undeclared_entries :: proc(t:
     world.settings.presets[7]={preset=phys.Collision_Preset(9),belongs=1}
     defaults:=phys.COLLISION_SETTINGS_DEFAULT
     c:=editor.Inspect{s=&f.session,w=editor.edited_world(&f.session),storage=1,index=editor.SETTING_INDEX,type=phys.Collision_Settings,value=cast([^]u8)&world.settings,defaults=cast([^]u8)&defaults,size=size_of(phys.Collision_Settings)}
+    if !testing.expect(t,editor.inspect_schema(&c,type_info_of(phys.Collision_Settings))) {return}
     frame :: proc(t:^testing.T,f:^Collision_Inspector,c:^editor.Inspect,input:ui.Input) {
         ui.frame_begin(&f.ctx,input)
-        if ui.box(&f.ctx,{width=ui.fixed(440),height=ui.FIT,direction=.Column}) {editor.fields_rows(c,type_info_of(phys.Collision_Settings),0,0,"")}
+        if ui.box(&f.ctx,{width=ui.fixed(440),height=ui.FIT,direction=.Column}) {editor.fields_rows(c,c.of,0,0,"")}
         output:=ui.frame_end(&f.ctx)
         testing.expect(t,!output.overflow && f.ctx.stats.layout_errors==0)
     }

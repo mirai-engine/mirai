@@ -2,9 +2,9 @@ package editor
 
 import "base:runtime"
 import "core:mem"
-import "core:reflect"
 import "mirai:asset"
 import "mirai:std/base"
+import "mirai:std/serial"
 import "mirai:ui"
 
 // Values a panel holds and edits with the rows of Details: a value of a
@@ -60,13 +60,12 @@ held_take :: proc(c:^Inspect) {
 held_field_row :: proc(s:^Session,h:Held_Values,name:string,label:string="",description:string="") -> (changed:bool) {
     info:=h.info
     if info==nil || h.key==0 || h.value==nil || h.defaults==nil {return false}
-    fields,is_struct:=runtime.type_info_base(info).variant.(runtime.Type_Info_Struct)
-    if !is_struct || h.key==0 || h.value==nil || h.defaults==nil {return false}
     c:=Inspect{s=s,w=shown_world(s),index=HELD_INDEX,held=h.key,write=h.write,user=h.user,name=h.name,type=info.id,value=cast([^]u8)h.value,defaults=cast([^]u8)h.defaults,size=info.size,width=h.width}
+    if !inspect_schema(&c,info) {return false}
     held_take(&c)
-    for i in 0..<int(fields.field_count) {
-        if fields.names[i]!=name {continue}
-        field_row(&c,fields.types[i],reflect.Struct_Tag(fields.tags[i]),name,label!=""?label:readable(name),fields.offsets[i],0,description)
+    for field in serial.schema_fields(c.schema,c.of) {
+        if field.name!=name {continue}
+        field_row(&c,field,label!=""?label:readable(name),uintptr(field.offset),0,description)
         break
     }
     return c.changed

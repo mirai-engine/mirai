@@ -631,7 +631,7 @@ ai_review_deleted_details :: proc(s:^Session,w:core.World_Ref,task:^Ai_Task,id:b
                 if row==nil || t.place!=.World || !inspector_visible(s,&t) || inspector_primary(&t)!=(pass==0) {continue}
                 value:=history.change_materialize(w,t.info,row.before)
                 c:=Inspect{s=s,w=w,t=&t,index=index,table=core.world_table_at(w,&t),name=t.name,type=t.type,value=raw_data(value),size=t.info.size}
-                component_section(&c,width)
+                if inspect_schema(&c,t.info) {component_section(&c,width)}
             }
         }
     }

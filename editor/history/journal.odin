@@ -314,7 +314,7 @@ journal_ranges :: proc(edits:^Edits,w:core.World_Ref) -> bool {
         cached:=&edits.ranges[index]
         if index>=len(edits.saved) || !edits.saved[index] || cached.info==table.info {continue}
         error:runtime.Allocator_Error
-        ranges:=transient_ranges(table.info,context.allocator,&error)
+        ranges:=transient_ranges(w.info,table.info,context.allocator,&error)
         if error!=nil {delete(ranges);return false}
         delete(cached.ranges)
         cached.info,cached.ranges=table.info,ranges

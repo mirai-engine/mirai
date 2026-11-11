@@ -78,7 +78,6 @@ Program :: struct {
     moves:bool,
     births:bool, // it gives how many particles its emitter starts each frame, on the GPU
     prepare:bool, // it prepares each frame what its emitter keeps (STATE_BYTES of it)
-    name:[effect.PARTICLE_NAME_BYTES]u8, // its stages are compiled for it alone: particle_<stage>__<name>
 }
 
 // The slots the live emitters of a program hold: [first, end) of the pool and
@@ -106,66 +105,28 @@ MESH_PROGRAMS :: 8 // Surface programs of the materials of the mesh of an emitte
 // of its range from them, its capacity times those of its program.
 ATTRIBUTE_SHARE :: 32
 
-// An emitter of a frame. Ranges are [min, max]; the shape faces +Y of the
-// transform, where a cone opens.
+// An emitter of a frame: the effect it shows and what its frame resolves.
 Emitter_Desc :: struct {
+    info:effect.Particle_Info, // the effect with the values of its entity over it
     id:u64,              // stable while the emitter lives
     generation:u32,      // another one starts its range empty
     capacity:u32,        // particles alive at once
     transform:matrix[4,4]f32, // where the emitter is this frame
     previous:matrix[4,4]f32,  // and was the last one: births spread between both
     spawns:[SPAWNS]Particle_Spawn, // since the last list, in the order of their births
-    seed:u32,
     paused:bool,         // its particles stay as they are
-    local:bool,          // particles move with the emitter
-    lit:bool,            // sun, lights and probes light them; else they show their color
-    lights:u32,          // of its particles that light the scene, at most
-    light:[3]f32,        // their intensity (cd), range (m) and radius (m; 0: half their size)
-    shadows:bool,        // they cast shadows; else they light all in their range, with no rays
-    relative:bool,       // unlit: the color is what the exposed image shows, not nits
-    sort:bool,           // drawn back to front (SORT_MAX particles at most)
-    shape:effect.Particle_Shape,
-    shape_size:[3]f32,   // radius in x, or half extents of a box, or half length of a line
-    shape_angle:f32,     // half-angle of a cone, radians
-    shell:f32,           // 0: from the volume of the shape, 1: from its surface
-    lifetime,speed,size,rotation,spin:[2]f32, // seconds, m/s, m, radians, radians/s
-    velocity:[2][3]f32,  // m/s in the space of the emitter, between both, besides speed
-    color:[2][4]f32,     // linear rgba; each particle takes a mix
-    inherit:f32,         // share of the velocity of the emitter a particle starts with
-    acceleration:[3]f32, // its own, m/s²: the gravity and the wind of where each particle is come on the GPU (fields.odin)
-    gravity:f32,         // share of the gravity of where each particle is
-    drag:f32,            // 1/s
-    noise_strength,noise_frequency,noise_speed:f32, // curl noise: m/s², 1/m, 1/s
-    attractor:[3]f32,    // a point of the emitter that pulls with attractor_strength (m/s²)
-    attractor_strength:f32,
-    collision:effect.Particle_Collision,
-    // Share of the normal speed kept per hit, tangent speed lost per normal speed
-    // stopped, share of the life lost per hit.
-    bounce,friction,collision_life:f32,
-    render:effect.Particle_Render,
-    blend:effect.Particle_Blend,
-    material:erender.Material_Handle, // its Surface program, or its base color (its texture is the flipbook), opacity and emission
+    material:erender.Material_Handle, // of info.material
     mesh:[3]u32,              // of Mesh particles: the vertices of a draw of its clusters (erender.mesh_draw_range) and the mesh of the scene
     blended:bool,             // of Mesh particles: its material blends (alpha mode Blend), so they are drawn over the lit scene with the sprites
-    stretch:f32,              // Velocity: seconds of motion the sprite spans
-    soft:f32,                 // metres over which a sprite fades into the surface behind it
-    intensity:f32,            // multiplies the color
-    flipbook:[2]u32,          // columns and rows of the texture
-    flipbook_speed:f32,       // frames per second; 0: the whole flipbook over the life
-    size_curve:effect.Particle_Curve,
-    color_curve:effect.Particle_Gradient,
     view:erender.Texture_Handle, // drawn only into the effect view of this texture (gui.UI_Effects); 0: in the views of the world
-    event:effect.Particle_Event, // what starts particles of event_target
-    event_target:u64,         // id of another emitter
-    event_count:u32,          // particles it starts per event
-    program:Program,          // a Vfx program and its parameters; id 0: none
+    event_target:u64,         // id of the emitter info.trigger starts info.sub_count particles in; 0: none
+    program:Program,          // the Vfx program of info.program and its parameters; id 0: none
     resources:u32,                          // its RESOURCE_ROWS rows in Particle_Sync.resources from this one, + 1: the surface or bones of its shape, then the resources of its program; 0: it reads none
     stages:u32,                             // its PROGRAM_STAGES rows in Particle_Sync.stage_rows from this one, + 1; 0: none
     births:[2]u32,                          // of its channel: the first among those of the frame, and how many
     age:f32,                                // seconds since it started, at the end of the frame
     born:u32,                               // particles it started before this frame
-    report:effect.Particle_Event,           // what of its particles the game hears of
-    owner:core.Entity,                      // whose reports they are
+    owner:core.Entity,                      // its entity, whose reports and problems they are; NONE for an effect of the UI
     revision:u64,                           // of what is not given each frame (all but transform, previous, spawns, paused, resources, stages, births, age and born): another builds its row again; 0: every frame
 }
 
@@ -387,7 +348,7 @@ pool_emitters :: proc(pool:^Pool,emitters:[]Emitter_Desc,dt:f32,capacity:u32,max
     for desc in emitters {
         slot_at:=pool_slot_find(pool,desc.id)
         capacity:=desc.capacity
-        if desc.sort || desc.render==.Ribbon {capacity=min(capacity,SORT_MAX)}
+        if desc.info.sort || desc.info.render==.Ribbon {capacity=min(capacity,SORT_MAX)}
         stride:=(desc.program.attributes+15)&~u32(15)
         if slot_at>=0 && (pool.slots[slot_at].capacity!=capacity || pool.slots[slot_at].stride!=stride || pool.slots[slot_at].generation!=desc.generation) {
             pool_slot_release(pool,slot_at)
@@ -400,7 +361,7 @@ pool_emitters :: proc(pool:^Pool,emitters:[]Emitter_Desc,dt:f32,capacity:u32,max
         slot:=&pool.slots[slot_at]
         slot.seen=pool.frame
         if slot.desc.program!=desc.program || slot.fresh {slot.program_dirty=desc.program.id!=0}
-        if slot.desc.program.id!=desc.program.id || slot.desc.event!=desc.event || slot.desc.event_target!=desc.event_target {pool.regroup=true}
+        if slot.desc.program.id!=desc.program.id || slot.desc.info.trigger!=desc.info.trigger || slot.desc.event_target!=desc.event_target {pool.regroup=true}
         if desc.revision==0 || desc.revision!=slot.desc.revision {pool.dirty[slot_at/64]|=u64(1)<<(uint(slot_at)%64)}
         if slot.pending {
             spawns:=slot.desc.spawns
@@ -598,12 +559,12 @@ pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool 
         d:=&s.desc
         flags:=u32(FLAG_ACTIVE)
         if s.fresh {flags|=FLAG_RESET;pool.reset_max=max(pool.reset_max,s.capacity)}
-        if d.local {flags|=FLAG_LOCAL}
-        if d.lit {flags|=FLAG_LIT}
-        if d.sort || d.render==.Ribbon {flags|=FLAG_SORT}
+        if d.info.local_space {flags|=FLAG_LOCAL}
+        if d.info.lit {flags|=FLAG_LIT}
+        if d.info.sort || d.info.render==.Ribbon {flags|=FLAG_SORT}
         if d.paused {flags|=FLAG_PAUSED}
-        if d.blend==.Additive {flags|=FLAG_ADDITIVE}
-        if d.relative {flags|=FLAG_RELATIVE}
+        if d.info.blend==.Additive {flags|=FLAG_ADDITIVE}
+        if d.info.emission_mode==.Relative {flags|=FLAG_RELATIVE}
         // The places of an emitter of an effect view are of that view.
         origin:=pass.origin
         if d.view!=0 {flags|=FLAG_VIEW;origin={}}
@@ -623,10 +584,10 @@ pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool 
         spawn=min(spawn,s.capacity*4)
         pool.spawn_max=max(pool.spawn_max,spawn)
         target:=u32(0)
-        if d.event!=.None {
+        if d.event_target!=0 {
             if t:=pool_slot_find(pool,d.event_target);t>=0 {target=u32(t)+1}
         }
-        if d.render==.Mesh && !d.blended {pool.meshes=true} else {pool.sprites=true}
+        if d.info.render==.Mesh && !d.blended {pool.meshes=true} else {pool.sprites=true}
         if bit:=u64(1)<<(uint(at)%64);s.fresh || pool.dirty[at/64]&bit!=0 {
             emitter_row(&g,s,pool.capacity)
             pool.dirty[at/64]&~=bit
@@ -635,10 +596,10 @@ pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool 
         g.previous=rows_of(d.previous,origin)
         g.range={s.offset,s.capacity,spawn,flags}
         g.random.y,g.random.w=target,groups
-        g.program.w=reports_at if d.report!=.None else max(u32)
+        g.program.w=reports_at if d.info.report!=.None else max(u32)
         g.step={pool.dt,step_dt,f32(pool.steps),pass.time}
         g.frame={max(u32),0,0,0}
-        g.lights=light_share(d.lights,d.shadows,&lights_taken,pool.lights)
+        g.lights=light_share(d.info.lights,d.info.light_shadows,&lights_taken,pool.lights)
         g.data.z,g.data.w=transmute(u32)d.age,d.born
         if d.resources>0 && int(d.resources-1)+RESOURCE_ROWS<=len(sync.resources) {
             g.frame.x=u32(len(pool.frame_bytes))
@@ -727,33 +688,34 @@ pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool 
 // its emitter is told changes (Emitter_Desc.revision) or its range starts.
 @(private)
 emitter_row :: proc(g:^Gpu_Emitter,s:^Pool_Slot,capacity:u32) {
-    d:=&s.desc
+    d,m:=&s.desc,&s.desc.info
     vertex_count,mesh:=u32(6),u32(0)
-    if d.render==.Mesh {vertex_count,mesh=d.mesh[0],d.mesh[1]}
-    g.random.x,g.random.z=d.seed,min(d.event_count,EVENT_SPAWN_MAX)
-    g.program.xyz={d.program.id,capacity,u32(d.report)}
-    g.shape={d.shape_size.x,d.shape_size.y,d.shape_size.z,d.shape_angle}
-    g.kinds={u32(d.shape),u32(d.render),u32(d.collision),u32(d.event)}
-    g.lifetime_speed={max(d.lifetime[0],0.001),max(d.lifetime[1],0.001),d.speed[0],d.speed[1]}
-    g.size_rotation={d.size[0],d.size[1],d.rotation[0],d.rotation[1]}
-    g.spin={d.spin[0],d.spin[1],clamp(d.shell,0,1),d.inherit}
-    g.color_a,g.color_b=d.color[0],d.color[1]
-    g.velocity_a={d.velocity[0].x,d.velocity[0].y,d.velocity[0].z,0}
-    g.velocity_b={d.velocity[1].x,d.velocity[1].y,d.velocity[1].z,0}
-    g.acceleration={d.acceleration.x,d.acceleration.y,d.acceleration.z,max(d.drag,0)}
-    g.noise={d.noise_strength,max(d.noise_frequency,0),d.noise_speed,d.gravity}
+    if m.render==.Mesh {vertex_count,mesh=d.mesh[0],d.mesh[1]}
+    event:=m.trigger if d.event_target!=0 else .None
+    g.random.x,g.random.z=u32(base.hash_combine(d.id,0x7061727469636c65)),min(m.sub_count,EVENT_SPAWN_MAX)
+    g.program.xyz={d.program.id,capacity,u32(m.report)}
+    g.shape={m.shape_size.x,m.shape_size.y,m.shape_size.z,m.shape_angle}
+    g.kinds={u32(m.shape),u32(m.render),u32(m.collision),u32(event)}
+    g.lifetime_speed={max(m.lifetime[0],0.001),max(m.lifetime[1],0.001),m.speed[0],m.speed[1]}
+    g.size_rotation={m.size[0],m.size[1],m.rotation[0],m.rotation[1]}
+    g.spin={m.spin[0],m.spin[1],clamp(m.shell,0,1),m.inherit_velocity}
+    g.color_a,g.color_b=m.colors[0],m.colors[1]
+    g.velocity_a={m.velocity[0].x,m.velocity[0].y,m.velocity[0].z,0}
+    g.velocity_b={m.velocity[1].x,m.velocity[1].y,m.velocity[1].z,0}
+    g.acceleration={m.acceleration.x,m.acceleration.y,m.acceleration.z,max(m.drag,0)}
+    g.noise={m.noise,max(m.noise_frequency,0),m.noise_speed,m.gravity}
     // The particles of an effect view are of no place: they fall with GRAVITY.
-    if d.view!=0 {g.acceleration.xyz+=GRAVITY*d.gravity;g.noise.w=0}
-    g.collide={clamp(d.bounce,0,1),clamp(d.friction,0,1),clamp(d.collision_life,0,1),0}
-    g.look={max(d.stretch,0),max(d.soft,0),d.intensity,max(d.flipbook_speed,0)}
-    g.attractor={d.attractor.x,d.attractor.y,d.attractor.z,d.attractor_strength}
+    if d.view!=0 {g.acceleration.xyz+=GRAVITY*m.gravity;g.noise.w=0}
+    g.collide={clamp(m.bounce,0,1),clamp(m.friction,0,1),clamp(m.collision_life,0,1),0}
+    g.look={max(m.stretch,0),max(m.soft,0),m.intensity,max(m.flipbook_speed,0)}
+    g.attractor={m.attractor.x,m.attractor.y,m.attractor.z,m.attractor_strength}
     g.mesh={vertex_count,mesh,0,u32(d.material)}
-    g.flipbook={max(d.flipbook[0],1),max(d.flipbook[1],1),0,0}
-    g.size_curve=transmute([2][4]f32)d.size_curve.values
-    g.size_times=transmute([2][4]f32)d.size_curve.times
-    g.gradient=d.color_curve.colors
-    g.gradient_times=transmute([2][4]f32)d.color_curve.times
-    g.light={d.light.x,d.light.y,d.light.z,0}
+    g.flipbook={max(m.flipbook[0],1),max(m.flipbook[1],1),0,0}
+    g.size_curve=transmute([2][4]f32)m.size_over_life.values
+    g.size_times=transmute([2][4]f32)m.size_over_life.times
+    g.gradient=m.color_over_life.colors
+    g.gradient_times=transmute([2][4]f32)m.color_over_life.times
+    g.light={m.light_intensity,m.light_range,m.light_radius,0}
     g.data.xy={ATTRIBUTES_AT+s.attributes,s.stride}
 }
 
@@ -820,7 +782,7 @@ programs_find :: proc(sync:^Particle_Sync,renderer:^erender.Renderer) {
         if !left_out || !freed {break}
     }
     for &s in pool.slots[:pool.slot_end] {
-        if !s.live || s.desc.event==.None {continue}
+        if !s.live || s.desc.event_target==0 {continue}
         target:=pool_slot_find(pool,s.desc.event_target)
         if target<0 {continue}
         if id:=pool.slots[target].desc.program.id;id==0 {p.none.events=true} else if each:=program_pipelines(p,id);each!=nil {each.events=true}
@@ -840,7 +802,7 @@ programs_span :: proc(sync:^Particle_Sync,renderer:^erender.Renderer) -> (left_o
             each:=program_pipelines(p,id)
             if each==nil {
                 if p.program_count==PROGRAMS_IN_USE {left_out=true;continue}
-                name:=base.text_get(s.desc.program.name[:])
+                name:=base.text_get(s.desc.info.program[:])
                 each=&p.programs[p.program_count]
                 p.program_count+=1
                 each^={id=id}
@@ -869,7 +831,7 @@ particles_frame :: proc(sync:^Particle_Sync,app:^host.App) -> bool {
     pool:=&sync.pool
     // The data channels the programs asked for, and that of the reports while a live emitter reports.
     for s in pool.slots[:pool.slot_end] {
-        if s.live && s.desc.report!=.None {data_need(&sync.data,REPORTS_CHANNEL,REPORT_WORDS,nil,core.NONE);break}
+        if s.live && s.desc.info.report!=.None {data_need(&sync.data,REPORTS_CHANNEL,REPORT_WORDS,nil,core.NONE);break}
     }
     data_place(&sync.data)
     if pool.slot_end==0 {return true}
@@ -917,7 +879,7 @@ particles_frame :: proc(sync:^Particle_Sync,app:^host.App) -> bool {
     // What Mesh particles reflect and their layers reach the G-buffer of every
     // view, and their meshes stay whole: they draw every cluster of level 0.
     for &s in pool.slots[:pool.slot_end] {
-        if !s.live || s.desc.render!=.Mesh {continue}
+        if !s.live || s.desc.info.render!=.Mesh {continue}
         if !s.desc.blended {erender.frame_gbuffer_mesh(app.renderer,erender.Mesh_Handle(s.desc.mesh[1]),s.desc.material)}
         erender.frame_mesh_whole(app.renderer,erender.Mesh_Handle(s.desc.mesh[1]))
     }
@@ -1097,7 +1059,7 @@ particles_lights :: proc(sync:^Particle_Sync,pass:^erender.Pass) {
 @(private)
 lights_asked :: proc(slots:[]Pool_Slot) -> (asked:[2]u32) {
     for &s in slots {
-        if s.live {asked[0 if s.desc.shadows else 1]+=s.desc.lights}
+        if s.live {asked[0 if s.desc.info.light_shadows else 1]+=s.desc.info.lights}
     }
     return {min(asked[0],erender.LIGHTS_ASKED_MAX),min(asked[1],erender.LIGHTS_ASKED_MAX)}
 }
@@ -1116,25 +1078,25 @@ lights_box :: proc(slots:[]Pool_Slot,fields:Gpu_Fields,dt:f32) -> (box:[2][3]f32
     gravity,wind:=fields_most(fields)
     for &s in slots {
         d:=&s.desc
-        if !s.live || !d.shadows || d.lights==0 {continue}
-        reach=max(reach,d.light[1])
-        if d.shape==.Surface || d.shape==.Bones || d.program.id!=0 || d.births[1]>0 {anywhere=true}
+        if !s.live || !d.info.light_shadows || d.info.lights==0 {continue}
+        reach=max(reach,d.info.light_range)
+        if d.info.shape==.Surface || d.info.shape==.Bones || d.program.id!=0 || d.births[1]>0 {anywhere=true}
         for &o in slots {
-            if o.live && o.desc.event!=.None && o.desc.event_target==s.id {anywhere=true}
+            if o.live && o.desc.info.trigger!=.None && o.desc.event_target==s.id {anywhere=true}
         }
         if anywhere {continue}
         here:=[3]f32{d.transform[0,3],d.transform[1,3],d.transform[2,3]}
         before:=[3]f32{d.previous[0,3],d.previous[1,3],d.previous[2,3]}
         scale:=max(linalg.length(d.transform[0].xyz),linalg.length(d.transform[1].xyz),linalg.length(d.transform[2].xyz))
         extent:=f32(0)
-        #partial switch d.shape {
-        case .Box: extent=linalg.length(d.shape_size)
+        #partial switch d.info.shape {
+        case .Box: extent=linalg.length(d.info.shape_size)
         case .Point:
-        case: extent=abs(d.shape_size.x)
+        case: extent=abs(d.info.shape_size.x)
         }
-        life:=max(d.lifetime[0],d.lifetime[1],0)
-        start:=max(abs(d.speed[0]),abs(d.speed[1]))+scale*max(linalg.length(d.velocity[0]),linalg.length(d.velocity[1]))+abs(d.inherit)*linalg.length(here-before)/max(dt,1e-3)
-        pull:=linalg.length(d.acceleration)+abs(d.gravity)*gravity+abs(d.noise_strength)+abs(d.attractor_strength)
+        life:=max(d.info.lifetime[0],d.info.lifetime[1],0)
+        start:=max(abs(d.info.speed[0]),abs(d.info.speed[1]))+scale*max(linalg.length(d.info.velocity[0]),linalg.length(d.info.velocity[1]))+abs(d.info.inherit_velocity)*linalg.length(here-before)/max(dt,1e-3)
+        pull:=linalg.length(d.info.acceleration)+abs(d.info.gravity)*gravity+abs(d.info.noise)+abs(d.info.attractor_strength)
         far:=extent*scale+max(start,wind)*life+0.5*pull*life*life
         if !(far<max(f32)) {
             anywhere=true
@@ -1172,7 +1134,7 @@ groups :: proc "contextless" (size,group:u32) -> u32 {return (size+group-1)/grou
 draw_list :: proc(pool:^Pool,eye:[4]f32,origin:[3]f32,meshes:bool,view:erender.Texture_Handle=0) -> []Pool_Draw {
     count:=0
     for &s,at in pool.slots[:pool.slot_end] {
-        if !s.live || (s.desc.render==.Mesh && !s.desc.blended)!=meshes || s.desc.view!=view {continue}
+        if !s.live || (s.desc.info.render==.Mesh && !s.desc.blended)!=meshes || s.desc.view!=view {continue}
         place:=erender.origin_point({s.desc.transform[0,3],s.desc.transform[1,3],s.desc.transform[2,3]},origin)
         pool.draws[count]={u32(at),linalg.length(place-eye.xyz) if eye.w>0.5 else linalg.dot(place,eye.xyz)}
         count+=1
@@ -1245,8 +1207,8 @@ particles_sprites :: proc(pass:^erender.Pass,user:rawptr) {
     for draw in draws {
         // The stage of its program, with the fragment of the Surface program of its material.
         desc:=&pool.slots[draw.slot].desc
-        additive:=desc.blend==.Additive
-        mesh:=desc.render==.Mesh
+        additive:=desc.info.blend==.Additive
+        mesh:=desc.info.render==.Mesh
         stage:=erender.Stage_Pipeline_Desc{stage=.Blend,shader="particle_sprite",blend=.Additive if additive else .Premultiplied,name="particles additive" if additive else "particles blended"}
         if mesh {stage.shader,stage.fragment="particle_mesh_blend","particle_sprite"}
         if own:=program_pipelines(&sync.pipelines,desc.program.id);own!=nil {stage.shader,stage.fragment=base.text_get(own.mesh_blend[:] if mesh else own.sprite[:]),"particle_sprite"}

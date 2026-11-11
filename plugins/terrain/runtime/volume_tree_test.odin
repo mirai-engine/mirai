@@ -78,7 +78,7 @@ a_volume_node_is_the_surface_of_its_chunks_and_keeps_the_sides_it_shares_through
     }
     testing.expect_value(t,shared,on_face)
     // Its levels keep every locked vertex where it is: the coarsest still meets its neighbor.
-    if !testing.expect(t,chunk_render_prepare(.Volume,&node,{},true)) {return}
+    if !testing.expect(t,chunk_render_prepare(&node,{},true)) {return}
     g:=node.render.geometry
     if !testing.expect(t,len(g.levels)>1,"a node has levels for the renderer to choose from") {return}
     vertices:=make([dynamic]asset.Vertex);defer delete(vertices)

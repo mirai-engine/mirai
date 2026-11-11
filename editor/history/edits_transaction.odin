@@ -179,13 +179,24 @@ edits_publish_prepared :: proc(edits:^Edits,w:core.World_Ref,prepared:^Edit_Prep
     prepared.step={}
     edits.cursor=len(edits.steps)
     edits.stats.steps+=1
+    // The oldest step of the author with the most goes: the steps of one never evict those of another.
     for len(edits.steps)>1 && (len(edits.steps)>EDITS_STEP_CAPACITY || edits.bytes>EDITS_BYTE_CAPACITY) {
-        first:=edits.steps[0]
-        edits.initial=first.state
-        edits.bytes-=first.bytes
-        step_free(&first)
-        ordered_remove(&edits.steps,0)
-        edits.cursor-=1
+        counts:=make(map[Edit_Author]int,8,context.temp_allocator)
+        most:=0
+        for step in edits.steps {
+            counts[step.author]+=1
+            most=max(most,counts[step.author])
+        }
+        at:=0
+        for step,i in edits.steps {
+            if counts[step.author]==most {at=i;break}
+        }
+        evicted:=edits.steps[at]
+        if at==0 {edits.initial=evicted.state}
+        edits.bytes-=evicted.bytes
+        step_free(&evicted)
+        ordered_remove(&edits.steps,at)
+        if at<edits.cursor {edits.cursor-=1}
         edits.stats.discarded+=1
     }
     edits.error=.None

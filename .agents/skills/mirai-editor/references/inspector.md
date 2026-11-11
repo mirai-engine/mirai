@@ -85,8 +85,9 @@ While an AI turn awaits review ([review](ai-review.md#finish-revert-and-retry)):
 
 ## Rows by reflection
 
-Rows come from the reflection of the component's type (`fields_rows`, `field_row`); the type and
-the tag choose the row:
+Rows come from the schema of the type (`inspect_schema`, `fields_rows`, `field_row`): the world's
+for components, settings it saves and records, one made for the frame for another value; the kind
+of the field's type and what its tag says (`serial.Field`) choose the row:
 
 - A number with minimum and maximum is a slider with an editable number. An `enum` is a segmented
   control if there are few short names (`ENUM_SEGMENTS`) and otherwise a searchable list. A

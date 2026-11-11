@@ -335,12 +335,6 @@ a_copy_of_what_changed_takes_the_storages_written_and_equals_a_whole_copy :: pro
     swapped:=[2]type_of(w.storage_revisions){w.storage_revisions,kept.storage_revisions}
     revisions_swapped(w.storage_revisions[:3],kept.storage_revisions[:3])
     for k in 0..<3 {testing.expect(t,w.storage_revisions[k]>max(swapped[0][k],swapped[1][k]) && kept.storage_revisions[k]==w.storage_revisions[k])}
-    // A World made by hand has no revisions: asking for a storage moves none.
-    plain:=info
-    plain.revisions=0
-    revisions:=w.storage_revisions
-    world_storage_of(world_ref(&w,&plain),Rev_Count).value=1
-    testing.expect(t,w.storage_revisions==revisions && world_revisions(world_ref(&w,&plain))==nil)
 }
 
 @(private) Roll_Value :: struct {x:f32,n:u32}

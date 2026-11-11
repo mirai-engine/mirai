@@ -58,37 +58,16 @@ ui_effects_sync :: proc(p:^UI_Particles,requests:[]gui.UI_Effect,assets:^host.As
         shown,clock:=&effect.shown,&effect.clock
         key:=base.hash_combine(base.hash_combine(base.hash_combine(effect.effect[0],effect.effect[1]),a.revision),shaders)|1
         if shown.resolved!=key {
-            shown.info=particle_resolve(a,effect.effect,nil)
-            problem:=particle_program(a,effect.effect,&shown.info,nil,&shown.program)
-            shown.sub,shown.has_sub,shown.sub_program={},false,{}
-            if shown.info.trigger!=.None && shown.info.sub_particle!={} {
-                shown.sub=particle_resolve(a,shown.info.sub_particle,nil)
-                shown.has_sub=true
-                sub_problem:=particle_program(a,shown.info.sub_particle,&shown.sub,nil,&shown.sub_program)
-                if problem=="" {problem=sub_problem}
-            }
-            base.text_set(shown.problem[:],problem)
-            desc,ready:=emitter_desc(&shown.info,assets,renderer,base.hash_combine(effect.key,0x75695f7061727469))
-            shown.desc=desc
-            shown.desc.program,shown.desc.view=shown.program,effect.view
-            shown.sub_desc={}
-            if shown.has_sub {
-                sub_desc,sub_ready:=emitter_desc(&shown.sub,assets,renderer,base.hash_combine(effect.key,0x75695f7375625f70))
-                ready&&=sub_ready
-                shown.sub_desc=sub_desc
-                sub:=&shown.sub_desc
-                sub.program,sub.view=shown.sub_program,effect.view
-                sub.capacity+=min(shown.desc.capacity*shown.info.sub_count,1<<16)
-                shown.desc.event,shown.desc.event_target,shown.desc.event_count=shown.info.trigger,sub.id,shown.info.sub_count
-                alone(sub)
-            }
-            alone(&shown.desc)
+            ready:=shown_resolve(shown,a,renderer,effect.effect,nil,{base.hash_combine(effect.key,0x75695f7061727469),base.hash_combine(effect.key,0x75695f7375625f70)},nil)
             shown.resolved=ready?key:0
-            shown.sub_desc.revision=shown.resolved
-            shown.desc.revision=shown.resolved
+            // Alone in its texture: nothing to collide with, fade into, light or be lit by.
+            for d in ([2]^Emitter_Desc{&shown.desc,&shown.sub_desc}) {
+                d.view,d.revision=effect.view,shown.resolved
+                d.info.lit,d.info.emission_mode,d.info.collision,d.info.soft,d.info.lights=false,.Relative,.None,0,0
+            }
         }
         if clock.resolved!=key {
-            clock.emission=emission_of(a,&shown.info)
+            clock.emission=emission_of(a,&shown.desc.info)
             clock.resolved=key
         }
         emission_step(clock,&clock.emission,true,true,{},dt)
@@ -96,7 +75,7 @@ ui_effects_sync :: proc(p:^UI_Particles,requests:[]gui.UI_Effect,assets:^host.As
             shown.generation=clock.generation
             shown.started=max(shown.started,clock.first)
         }
-        if shown.has_sub {
+        if shown.sub_desc.id!=0 {
             sub:=shown.sub_desc
             sub.transform,sub.previous=mm.Mat4(1),mm.Mat4(1)
             sub.generation=shown.generation
@@ -108,6 +87,4 @@ ui_effects_sync :: proc(p:^UI_Particles,requests:[]gui.UI_Effect,assets:^host.As
         desc.generation=shown.generation
         append(descs,desc)
     }
-    // Alone in its texture: nothing to collide with, fade into, light or be lit by.
-    alone :: proc(desc:^Emitter_Desc) {desc.lit,desc.relative,desc.collision,desc.soft,desc.lights=false,true,.None,0,0}
 }

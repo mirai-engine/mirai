@@ -1,6 +1,5 @@
 package main
 
-import "core:encoding/json"
 import "core:fmt"
 import "core:os"
 import "core:strconv"
@@ -10,6 +9,7 @@ import "mirai:cook/shaders"
 import "mirai:cook/workspace"
 import "mirai:editor/api"
 import "mirai:project"
+import "mirai:std/serial"
 
 SHADERS_EDITOR_MS :: 610_000 // the 600 s build.start waits by default, and the answer
 
@@ -88,7 +88,7 @@ shaders_publish_editor :: proc(folder:string,port:int) -> int {
         return 1
     }
     reply:struct {seconds:f64,publishing:bool}
-    _=json.unmarshal_string(result,&reply)
+    serial.text_decode(result,&reply,context.temp_allocator,skip_unknown=true)
     fmt.printfln("shaders: the editor of %s draws with them after %.1f s%s",folder,reply.seconds,reply.publishing?"; the stages it does not run go on compiling there":"")
     return 0
 }
