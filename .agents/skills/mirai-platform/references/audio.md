@@ -188,7 +188,11 @@ binaural and panning effects.
 - With `delay` a spatial voice starts later by its distance at start over the speed of sound; it
   is not a delay line, so a source that moves afterwards only shifts its pitch by Doppler.
 - Doppler takes the velocities along the source-listener line and multiplies the pitch.
-- A stereo sound with a position is heard as one source (average of its channels).
+- A stereo sound with a position keeps its width by its `spread`, meters across it: on speakers
+  each channel pans from its own azimuth, half the angle the spread subtends to either side, so it
+  is wide up close and a point far away; on headphones each ear hears the mid and that share of
+  the side, Steam Audio's partial downmix of a stereo input, through the HRTF of its direction.
+  Mixed apart, it carries its mid and side through the EQ; 0 is one source, its channels averaged.
 - The direct path and the pitch of a positional voice are recomputed on the audio thread when its
   place, its occlusion or the listener change; the HRTF only when its direction changed.
 

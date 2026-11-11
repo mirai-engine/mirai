@@ -1,6 +1,7 @@
 #+private
 package mirai_audio
 
+import "core:math"
 import "core:sync"
 
 // The audio thread side of a voice: everything here runs inside mixer_render.
@@ -55,10 +56,11 @@ Mix_Voice :: struct {
     // from in the listener's space, and what the last chunk ended with.
     direct_gain:f32,
     eq_target,eq_gains:[BANDS]f32,
-    eq:[2][BANDS]Biquad,eq_state:[2][BANDS]Biquad_State,eq_current:u8,
+    eq:[2][BANDS]Biquad,eq_state:[2][2][BANDS]Biquad_State,eq_current:u8, // state per cascade and channel
     eq_on:bool,
     direction:[3]f32,
     blend:f32, // share of its direction, below 1 within its near radius
+    spread:f32, // of a stereo voice: the angle from it to each of its channels, radians
     binaural_live,binaural_direction_valid:bool,
     binaural_clock:u64, // the chunk its next block continues from
     binaural_direction:[3]f32, // that of its HRTF
@@ -227,7 +229,7 @@ voice_mix_chunk :: proc "contextless" (m:^Mixer,index:u32,n:int,clock:u64) {
     if v.pausing || v.stopping {target={}}
     if !v.base_valid {v.base=target;v.base_valid=true}
     mixed:=target
-    pans:[2][2]f32
+    pans:[2][4]f32
     placed:=false
     if v.spatial {pans,placed=spatial_apart(m,v,&v.base,&mixed)}
     silent:=placed && mixed=={} && v.base=={}
@@ -251,14 +253,21 @@ voice_mix_chunk :: proc "contextless" (m:^Mixer,index:u32,n:int,clock:u64) {
     }
     v.base=target
     if placed && spatial_post(m,v,out,offset,n,pans,silent) {
-        // Binaural: sent as one source, then added to the sums of its bus; a
-        // silent one adds nothing once its last block is complete.
-        if sent {voice_post(m,v,out,nil,offset,n)}
-        if !silent || v.binaural_live && v.binaural_clock==clock {
-            x:=m.binaural_input[:n]
-            #no_bounds_check for i in 0..<n {x[i]=out[i*2] if i>=offset else 0}
-            binaural_add(m,v,index,x,v.direction,clock)
+        // Binaural: its mid sent as one source, then added to the sums of its
+        // bus; a silent one adds nothing once its last block is complete. A
+        // stereo voice gives each ear the mid and its share of the side, the
+        // sine of the angle to each channel, as BinauralEffect blends the two
+        // channels of its input.
+        ears:=[2][]f32{m.binaural_input[:n],m.binaural_input[CHUNK_FRAMES:][:n]}
+        width:=v.blend*math.sin(v.spread)
+        #no_bounds_check for i in 0..<n {
+            mid,side:=out[i*2],out[i*2+1]
+            if i<offset {mid,side=0,0}
+            ears[0][i],ears[1][i]=mid+width*side,mid-width*side
+            out[i*2+1]=0
         }
+        if sent {voice_post(m,v,out,nil,offset,n)}
+        if !silent || v.binaural_live && v.binaural_clock==clock {binaural_add(m,v,index,ears[:v.source.channels],v.direction,clock)}
     } else if apart {
         voice_post(m,v,out,bus,offset,n)
     }
@@ -277,9 +286,9 @@ voice_mix_chunk :: proc "contextless" (m:^Mixer,index:u32,n:int,clock:u64) {
 // Adds the silent block of a voice that went silent, which completes its last one.
 voice_tail :: proc "contextless" (m:^Mixer,index:u32,n:int,clock:u64) {
     v:=&m.voices[index]
-    silence:=m.binaural_input[:n]
-    for &x in silence {x=0}
-    binaural_add(m,v,index,silence,v.binaural_direction,clock)
+    silence:=[2][]f32{m.binaural_input[:n],m.binaural_input[CHUNK_FRAMES:][:n]}
+    for &x in m.binaural_input {x=0}
+    binaural_add(m,v,index,silence[:v.source.channels],v.binaural_direction,clock)
     v.tail=false
     if !v.tail_pause {voice_end(m,index);return}
     v.tail_pause=false
