@@ -111,7 +111,7 @@ view_mode_menu_groups_its_modes_under_headers_and_families_in_submenus :: proc(t
     if !core.test_world_init(t,&world) {return}
     defer core.test_world_destroy(&world)
     ctx:ui.Context
-    if !testing.expect(t,ui.context_init(&ctx,{})) {return}
+    if !testing.expect(t,test_ui_init(&ctx,{})) {return}
     defer ui.context_destroy(&ctx)
     g:=Editor_Ui{ctx=&ctx}
     modes:View_Modes

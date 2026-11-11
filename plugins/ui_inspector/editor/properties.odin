@@ -9,6 +9,7 @@ import "mirai:host"
 import erender "mirai:engine/render"
 import "mirai:std/base"
 import "mirai:std/serial"
+import "mirai:editor/kit"
 import "mirai:ui"
 
 // The properties of the node chosen, in cards of the sections a node of its
@@ -101,7 +102,6 @@ Style_Edit :: struct {
 @(private)
 properties :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,width:f32) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     ux_sync(u)
     // As Details: the rows of a card, short of its padding and that of the scroll.
     p:=Pane{s=s,u=u,needle=string(u.search[:u.search_length]),width=width-28}
@@ -117,22 +117,22 @@ properties :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,width:f32) {
             properties_node(&p,a)
             u.records=records
             u.selected,u.pending,u.change,u.label=selected,pending,change,label
-            if !p.found {ui.label(ctx,"No property has that name",th.font_small,th.text_muted)}
+            if !p.found {ui.label(ctx,"No property has that name",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))}
             return
         }
         x.peek.instance=-1
     }
     // What the document binds that the game does not have, or why it does not load, until it is fixed.
     for &problem,i in u.problem[:u.problem_count] {
-        if ui.box(ctx,{width=ui.GROW,height=ui.FIT,padding={8,6,8,6},gap=6,align_y=.Center,fill=ui.color_alpha(th.danger,36),stroke=ui.color_alpha(th.danger,120),radius=4}) {
-            ui.text(ctx,author.bind_problem_text(author.assets_of(a),&problem),ui.prose(ctx,th.font_small,th.text))
+        if ui.box(ctx,{width=ui.GROW,height=ui.FIT,padding={8,6,8,6},gap=6,align_y=.Center,fill=ui.color_alpha(ui.tone(ctx,"danger"),36),stroke=ui.color_alpha(ui.tone(ctx,"danger"),120),radius=4}) {
+            ui.text(ctx,author.bind_problem_text(author.assets_of(a),&problem),ui.prose(ctx,ui.metric(ctx,"font_small"),ui.tone(ctx,"text")))
             if problem.row>=0 && problem.row!=u.selected {
-                if ui.button(ctx,ui.id(ctx,"problem_node",i+1),{label="Show",style=.Ghost,height=th.row,size=th.font_small}).clicked {choose_rows(u,{problem.row})}
+                if ui.button(ctx,ui.id(ctx,"problem_node",i+1),{label="Show",variant="ghost",height=ui.metric(ctx,"row"),size=ui.metric(ctx,"font_small")}).clicked {choose_rows(u,{problem.row})}
             }
         }
     }
     if selected_node(u)==nil {
-        ui.label(ctx,"Choose a node",th.font_small,th.text_muted)
+        ui.label(ctx,"Choose a node",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
     } else {properties_node(&p,a)}
     n:=selected_node(u)
     if section(&p,.Animations,"Animations of the file",.Play,whole=true) {section_animations(&p,n)}
@@ -140,7 +140,7 @@ properties :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,width:f32) {
     if section(&p,.Styles,"Styles of the file",.Palette,whole=true) {section_styles(&p,n)}
     section_end(&p)
     section_fonts(&p,a)
-    if !p.found {ui.label(ctx,"No property has that name",th.font_small,th.text_muted)}
+    if !p.found {ui.label(ctx,"No property has that name",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))}
 }
 
 // The cards of the node chosen.
@@ -190,30 +190,29 @@ properties_node :: proc(p:^Pane,a:^host.Assets) {
 @(private)
 properties_head :: proc(s:^editor.Session,u:^Ui_Inspector) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     n:=selected_node(u)
     x:=&u.ux
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(editor.INSPECTOR_HEAD),padding={11,0,7,0},gap=6,align_y=.Center}) {
         if n==nil {
-            ui.label(ctx,"Properties",th.font_heading,th.text,0,font=ui.FONT_SEMIBOLD)
+            ui.label(ctx,"Properties",ui.metric(ctx,"font_heading"),ui.tone(ctx,"text"),0,font=ui.FONT_SEMIBOLD)
             return
         }
         if x.peek.instance==u.selected && x.peek.instance>=0 {
             if w:=widget_records(u,s.app.assets,x.peek.widget);w!=nil && x.peek.row<len(w.nodes) {
                 peeked:=&w.nodes[x.peek.row]
-                ui.icon(ctx,node_icon(peeked),th.text_muted,15)
+                ui.icon(ctx,node_icon(peeked),ui.tone(ctx,"text_muted"),15)
                 labels:=KIND_LABELS
                 name:=serial.text_field(peeked.name[:])
-                ui.label(ctx,name if name!="" else labels[peeked.kind],th.font_heading,th.text,0,font=ui.FONT_SEMIBOLD)
+                ui.label(ctx,name if name!="" else labels[peeked.kind],ui.metric(ctx,"font_heading"),ui.tone(ctx,"text"),0,font=ui.FONT_SEMIBOLD)
                 ui.spacer(ctx)
-                ui.label(ctx,editor.asset_name_of(s.app.assets,x.peek.widget,"missing"),th.font_small,th.text_faint,0)
+                ui.label(ctx,editor.asset_name_of(s.app.assets,x.peek.widget,"missing"),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"),0)
                 return
             }
         }
-        ui.icon(ctx,node_icon(n),th.text_muted,15)
+        ui.icon(ctx,node_icon(n),ui.tone(ctx,"text_muted"),15)
         length:=len(serial.text_field(n.name[:]))
         from:=n.name
-        if ui.text_field(ctx,ui.id(ctx,"node_name"),n.name[:len(n.name)-1],&length,{height=th.control,size=th.font_heading,inline=true,font=ui.FONT_SEMIBOLD}).changed {
+        if ui.text_field(ctx,ui.id(ctx,"node_name"),n.name[:len(n.name)-1],&length,{height=ui.metric(ctx,"control"),size=ui.metric(ctx,"font_heading"),inline=true,font=ui.FONT_SEMIBOLD}).changed {
             for &b in n.name[length:] {b=0}
             node_renamed(u,serial.text_field(from[:]))
         }
@@ -297,7 +296,7 @@ band_open :: proc(p:^Pane,title:string) {
     ctx:=p.s.gui.ctx
     editor.fold_band_begin(p.s)
     p.banded=true
-    if p.needle!="" {ui.label(ctx,title,ctx.theme.font_small,ctx.theme.text_muted)}
+    if p.needle!="" {ui.label(ctx,title,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))}
 }
 @(private)
 band_close :: proc(p:^Pane) {
@@ -680,7 +679,6 @@ style_head :: proc(p:^Pane,n:^ui.Tree_Node) {
     s:=p.s
     u:=p.u
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     r:=&u.records
     base:=author.records_style_base(r,int(n.style))
     current:=base if base>=0 else int(n.style)
@@ -702,7 +700,7 @@ style_head :: proc(p:^Pane,n:^ui.Tree_Node) {
     }
     if selected>0 && base>=0 {names[selected]=fmt.tprintf("%s *",names[selected])}
     icon :: proc(ctx:^ui.Context,name:string,icon:ui.Icon,tip:string,disabled:=false) -> bool {
-        return ui.button(ctx,ui.id(ctx,name),{icon=icon,icon_size=14,icon_color=ctx.theme.text_muted,tip=tip,style=.Ghost,width=ctx.theme.row,height=ctx.theme.row,disabled=disabled}).clicked
+        return ui.button(ctx,ui.id(ctx,name),{icon=icon,icon_size=14,icon_color=ui.tone(ctx,"text_muted"),tip=tip,variant="ghost",width=ui.metric(ctx,"row"),height=ui.metric(ctx,"row"),disabled=disabled}).clicked
     }
     p.flush=true
     if row(p,"Style","The look it shares with the nodes of that style; None: a look of its own. A * after its name: this node changes the style, which only it shows until Apply to style writes the changes there") {
@@ -761,11 +759,11 @@ style_head :: proc(p:^Pane,n:^ui.Tree_Node) {
         p.flush=true
         lent:=r.style_infos[base].from!=0
         if row(p,"Changes",fmt.tprintf("What this node changes of %s, marked *: Apply to style writes it into the style, for every node that has it; Revert leaves the style as it is and the node with it. A style another file lends is changed in that file",author.records_style_name(r,base))) {
-            if ui.button(ctx,ui.id(ctx,"style_apply"),{label="Apply to style",style=.Field,width=-1,height=th.row,size=th.font_small,disabled=lent}).clicked {
+            if ui.button(ctx,ui.id(ctx,"style_apply"),{label="Apply to style",variant="field",width=-1,height=ui.metric(ctx,"row"),size=ui.metric(ctx,"font_small"),disabled=lent}).clicked {
                 n.style=u16(author.records_style_save(r,int(n.style)))
                 changed(u,"Apply to style")
             }
-            if ui.button(ctx,ui.id(ctx,"style_revert"),{label="Revert",icon=.Revert,icon_size=12,icon_color=th.text_muted,style=.Field,width=-1,height=th.row,size=th.font_small}).clicked {
+            if ui.button(ctx,ui.id(ctx,"style_revert"),{label="Revert",icon=.Revert,icon_size=12,icon_color=ui.tone(ctx,"text_muted"),variant="field",width=-1,height=ui.metric(ctx,"row"),size=ui.metric(ctx,"font_small")}).clicked {
                 old:=int(n.style)
                 n.style=u16(base)
                 n.style=u16(author.records_style_remove(r,old,base))
@@ -794,8 +792,8 @@ style_names_rows :: proc(p:^Pane,n:^ui.Tree_Node) {
     info:=&r.style_infos[row]
     ctx:=p.s.gui.ctx
     if p.needle=="" {
-        if ext:=serial.text_field(info.extends[:]);ext!="" {ui.label(ctx,fmt.tprintf("Extends %s",ext),ctx.theme.font_small,ctx.theme.text_muted)}
-        if info.from!=0 {ui.label(ctx,"From another file: change it there",ctx.theme.font_small,ctx.theme.text_muted)}
+        if ext:=serial.text_field(info.extends[:]);ext!="" {ui.label(ctx,fmt.tprintf("Extends %s",ext),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))}
+        if info.from!=0 {ui.label(ctx,"From another file: change it there",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))}
     }
     if info.from!=0 || p.readonly {return}
     open:=p.u.ux.style_layout_open
@@ -812,11 +810,10 @@ section_style :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
     s:=p.s
     u:=p.u
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     r:=&u.records
     style_head(p,n)
     if p.style.row>=len(r.styles) {return}
-    if users:=author.records_style_users(r,int(n.style));users>1 && p.needle=="" && author.records_style_named(r,int(n.style)) {ui.label(ctx,fmt.tprintf("Shared by %d nodes",users),th.font_small,th.text_muted)}
+    if users:=author.records_style_users(r,int(n.style));users>1 && p.needle=="" && author.records_style_named(r,int(n.style)) {ui.label(ctx,fmt.tprintf("Shared by %d nodes",users),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))}
     style_names_rows(p,n)
     // What lays the text out is the style's in every variant and state: first.
     fixed_rows(p,n)
@@ -993,8 +990,7 @@ layer_rows :: proc(p:^Pane,u:^Ui_Inspector,layer:^ui.Layer_Style,d:ui.Layer_Styl
 @(private)
 add_button :: proc(p:^Pane,name,label:string,disabled:=false) -> bool {
     ctx:=p.s.gui.ctx
-    th:=&ctx.theme
-    return ui.button(ctx,ui.id(ctx,name),{label=label,icon=.Plus,icon_size=11,icon_color=th.text_label,style=.Ghost,height=th.row,size=th.font_small,disabled=disabled}).clicked
+    return ui.button(ctx,ui.id(ctx,name),{label=label,icon=.Plus,icon_size=11,icon_color=ui.tone(ctx,"text_label"),variant="ghost",height=ui.metric(ctx,"row"),size=ui.metric(ctx,"font_small"),disabled=disabled}).clicked
 }
 
 // ---------------------------------------------------------------- styles of the file
@@ -1005,7 +1001,6 @@ add_button :: proc(p:^Pane,name,label:string,disabled:=false) -> bool {
 section_styles :: proc(p:^Pane,n:^ui.Tree_Node) {
     u:=p.u
     ctx:=p.s.gui.ctx
-    th:=&ctx.theme
     r:=&u.records
     removed:=-1
     for i in 0..<len(r.styles) {
@@ -1018,9 +1013,9 @@ section_styles :: proc(p:^Pane,n:^ui.Tree_Node) {
         ui.id_push(ctx,ui.id(ctx,"style",i+1))
         p.flush=true
         if row(p,name) {
-            ui.label(ctx,fmt.tprintf("%d nodes",users) if users!=1 else "1 node",th.font_small,th.text_muted)
+            ui.label(ctx,fmt.tprintf("%d nodes",users) if users!=1 else "1 node",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
             ui.spacer(ctx)
-            if ui.button(ctx,ui.id(ctx,"remove"),{icon=ui.icon_user(u8(editor.User_Icon.Trash)),icon_size=13,icon_color=th.text_muted,tip="Delete",style=.Ghost,width=th.row,height=th.row,disabled=users>0 || i==0 || p.readonly}).clicked {removed=i}
+            if ui.button(ctx,ui.id(ctx,"remove"),{icon=ui.icon_user(u8(editor.User_Icon.Trash)),icon_size=13,icon_color=ui.tone(ctx,"text_muted"),tip="Delete",variant="ghost",width=ui.metric(ctx,"row"),height=ui.metric(ctx,"row"),disabled=users>0 || i==0 || p.readonly}).clicked {removed=i}
         }
         ui.id_pop(ctx)
     }
@@ -1039,7 +1034,6 @@ section_image :: proc(p:^Pane,n:^ui.Tree_Node) {
     s:=p.s
     u:=p.u
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     r:=&u.records
     about:="The texture it shows; bound, an asset id of the game"
     if n.image==0 || int(n.image)>len(r.images) {
@@ -1071,7 +1065,7 @@ section_image :: proc(p:^Pane,n:^ui.Tree_Node) {
     edit(u,"Image",value_row(p,"Borders",Sides_Value,&image.border,[4]f32{},"Nine slice: how wide its edges are drawn, which do not stretch with it"))
     edit(u,"Image",value_row(p,"Border UV",Border_Uv_Value,&image.border_uv,[4]f32{},"Nine slice: how much of the texture each edge is, from 0 to 0.5"))
     edit(u,"Image",value_row(p,"Name",Name_Value,&image.name,[ui.TREE_NAME_CAPACITY]u8{},"What a rich text shows it by: <img=name>"))
-    if ui.button(ctx,ui.id(ctx,"image_remove"),{label="No image",icon=.Cross,icon_size=11,icon_color=th.text_label,style=.Ghost,height=th.row,size=th.font_small}).clicked {
+    if ui.button(ctx,ui.id(ctx,"image_remove"),{label="No image",icon=.Cross,icon_size=11,icon_color=ui.tone(ctx,"text_label"),variant="ghost",height=ui.metric(ctx,"row"),size=ui.metric(ctx,"font_small")}).clicked {
         n.image=0
         changed(u,"Image")
     }
@@ -1084,7 +1078,6 @@ section_fonts :: proc(p:^Pane,a:^host.Assets) {
     s:=p.s
     u:=p.u
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     r:=&u.records
     defer section_end(p)
     if !section(p,.Fonts,"Fonts of the file",.Text,whole=true) {return}
@@ -1100,7 +1093,7 @@ section_fonts :: proc(p:^Pane,a:^host.Assets) {
                     changed(u,"Font")
                 }
             }
-            if ui.button(ctx,ui.id(ctx,"remove"),{icon=.Cross,tip="Remove font",style=.Ghost,width=th.row,height=th.row}).clicked {removed=i}
+            if ui.button(ctx,ui.id(ctx,"remove"),{icon=.Cross,tip="Remove font",variant="ghost",width=ui.metric(ctx,"row"),height=ui.metric(ctx,"row")}).clicked {removed=i}
         }
         ui.id_pop(ctx)
     }
@@ -1189,8 +1182,8 @@ row :: proc(p:^Pane,label:string,about:="") -> bool {
     if !shown(p,label) {p.flush=false;return false}
     ctx:=p.s.gui.ctx
     id:=ui.id(ctx,"row",int(ui.id(ctx,label)&0x7fffffff))
-    ui.box_begin(ctx,{id=id,width=ui.GROW,height=ui.fixed(ctx.theme.row),gap=4,align_y=.Center,track=about!=""})
-    ui.column_label(ctx,label)
+    ui.box_begin(ctx,{id=id,width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=4,align_y=.Center,track=about!=""})
+    kit.column_label(ctx,label)
     editor.row_description(p.s,id,about)
     return true
 }
@@ -1210,7 +1203,7 @@ revert_arrow :: proc(ctx:^ui.Context,name:string,changed:bool) -> bool {
         ui.spacer(ctx,editor.REVERT_SIDE,1)
         return false
     }
-    return ui.button(ctx,ui.id(ctx,name),{icon=.Revert,icon_size=12,icon_color=ctx.theme.text_muted,style=.Ghost,width=editor.REVERT_SIDE,height=editor.REVERT_SIDE}).clicked
+    return ui.button(ctx,ui.id(ctx,name),{icon=.Revert,icon_size=12,icon_color=ui.tone(ctx,"text_muted"),variant="ghost",width=editor.REVERT_SIDE,height=editor.REVERT_SIDE}).clicked
 }
 
 // An input action of the game, by its name (a member of an enum @(actions)

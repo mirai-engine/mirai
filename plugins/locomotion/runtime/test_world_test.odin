@@ -34,7 +34,6 @@ Loco_Test :: struct {
 
 // The actions of a test world: input.Look_Action from 0, and Walk_Action after it.
 @(private) TEST_WALK_BASE :: input.Action(len(input.Look_Action))
-@(private) TEST_MOVE :: TEST_WALK_BASE+input.Action(Walk_Action.Move)
 @(private) TEST_JUMP :: TEST_WALK_BASE+input.Action(Walk_Action.Jump)
 @(private) TEST_SPRINT :: TEST_WALK_BASE+input.Action(Walk_Action.Sprint)
 @(private) TEST_CROUCH :: TEST_WALK_BASE+input.Action(Walk_Action.Crouch)
@@ -66,7 +65,10 @@ loco_test_walker :: proc(f:^Loco_Test,position:[3]f32,rotation:=mm.QUAT_IDENTITY
     e:=core.create(&f.entities)
     core.add(&f.transforms,e,core.Transform{position,rotation,{1,1,1}})
     core.add(&f.colliders,e,phys.collider_character())
-    core.add(&f.characters,e,phys.character_default())
+    // It faces the look it is asked at once: what a test asks of its move is in the axes of that look.
+    body:=phys.character_default()
+    body.turn_speed=0
+    core.add(&f.characters,e,body)
     if walks {core.add(&f.walks,e,WALK_DEFAULT)}
     return e
 }
@@ -83,14 +85,18 @@ loco_test_box :: proc(f:^Loco_Test,half,position:[3]f32,rotation:=mm.QUAT_IDENTI
     return e
 }
 
-// Ticks of the loop in which the game writes the same Move_Input to every walker that has one; locomotion
-// adds it to a walker on its first tick.
+// Ticks of the loop in which the game writes the same Move_Input to every walker that has one, move in
+// the axes of the look yaw in the frame of its vertical; locomotion adds it to a walker on its first tick.
 @(private)
 loco_test_tick :: proc(f:^Loco_Test,move:[3]f32,ticks:=1,buttons:=input.Action_Mask(0),yaw:f32=0,pitch:f32=0,clock:=core.CLOCK_DEFAULT) {
     dt:=f32(1.0/60)
     for _ in 0..<ticks {
         core.test_world_settle(&f.w)
-        for row in 0..<core.count(&f.inputs) {core.edit_at(&f.inputs,row)^=input.Move_Input{move=move,look_yaw=yaw,look_pitch=pitch,buttons=buttons}}
+        for row in 0..<core.count(&f.inputs) {
+            frame:=mm.QUAT_IDENTITY
+            if capsule,made:=phys.character_capsule(core.ref(&f.state),core.entity_at(&f.inputs,row));made {frame=capsule.up_frame}
+            core.edit_at(&f.inputs,row)^=input.Move_Input{move=mm.quat_rotate(frame*mm.quat_axis_angle({0,1,0},yaw),move),look_yaw=yaw,look_pitch=pitch,buttons=buttons}
+        }
         locomotion_step(
             core.read(&f.characters),&f.loco_states,&f.moves,&f.inputs,core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.slides),
             core.read(&f.mantles),core.read(&f.tacticals),core.read(&f.ledges),core.read(&f.character_states),core.read(&f.bodies),core.read(&f.transforms),

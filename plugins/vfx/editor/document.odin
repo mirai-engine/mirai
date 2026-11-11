@@ -10,6 +10,7 @@ import "mirai:editor"
 import erender "mirai:engine/render"
 import "mirai:host"
 import "mirai:std/base"
+import "mirai:editor/kit"
 import "mirai:ui"
 import vfx "plugins:vfx/runtime"
 import "plugins:vfx/runtime/effect"
@@ -344,7 +345,6 @@ effect_document :: proc(s:^editor.Session,p:^Effect_Document,assets:^host.Assets
 @(private)
 effect_rows :: proc(s:^editor.Session,p:^Effect_Document,assets:^host.Assets) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     titles:=PARTICLE_GROUP_TITLES
     rows:=PARTICLE_ROWS
     values:=editor.Held_Values{key=KEY_EFFECT,info=type_info_of(effect.Particle_Info),value=&p.held.info,defaults=&p.base.info}
@@ -352,13 +352,13 @@ effect_rows :: proc(s:^editor.Session,p:^Effect_Document,assets:^host.Assets) {
     for row in rows {
         if row.group!=group {
             group=row.group
-            open=ui.collapsible(ctx,ui.id(ctx,"group",int(group)+1),titles[group],&p.open[group]).open
+            open=kit.collapsible(ctx,ui.id(ctx,"group",int(group)+1),titles[group],&p.open[group]).open
         }
         if !open {continue}
         index:=particle_field_index(row.field)
         hidden:=index>=0 && index in p.held.hidden
         if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=2,align_y=.Start}) {
-            if ui.button(ctx,ui.id(ctx,"hidden",index+1),{icon=hidden?.Eye_Off:.Eye,icon_size=13,icon_color=hidden?th.text_faint:th.text_muted,style=.Ghost,width=EYE_WIDTH-2,height=th.row}).clicked {
+            if ui.button(ctx,ui.id(ctx,"hidden",index+1),{icon=hidden?.Eye_Off:.Eye,icon_size=13,icon_color=hidden?ui.tone(ctx,"text_faint"):ui.tone(ctx,"text_muted"),variant="ghost",width=EYE_WIDTH-2,height=ui.metric(ctx,"row")}).clicked {
                 effect_hidden_toggle(&p.held,row.field)
             }
             if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=3}) {editor.held_field_row(s,values,row.field)}
@@ -373,7 +373,6 @@ effect_rows :: proc(s:^editor.Session,p:^Effect_Document,assets:^host.Assets) {
 @(private)
 parameter_rows :: proc(s:^editor.Session,p:^Effect_Document,assets:^host.Assets) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     program:^erender.Program
     if name:=base.text_get(p.held.info.program[:]);name!="" {program=erender.program_find(assets,name,.Vfx)}
     if program!=nil {
@@ -387,11 +386,11 @@ parameter_rows :: proc(s:^editor.Session,p:^Effect_Document,assets:^host.Assets)
     for i in 0..<p.held.parameter_count {
         name:=base.text_get(p.held.parameters[i].name[:])
         if program!=nil && erender.program_parameter(program,name)!=nil {continue}
-        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=4,align_y=.Center}) {
+        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=4,align_y=.Center}) {
             ui.spacer(ctx,EYE_WIDTH-4,1)
-            ui.label(ctx,editor.readable(name),th.font_small,th.text_faint,0)
+            ui.label(ctx,editor.readable(name),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"),0)
             ui.spacer(ctx)
-            if ui.button(ctx,ui.id(ctx,"stale",i+1),{icon=.Cross,style=.Ghost,width=th.row,height=th.row}).clicked {removed=i}
+            if ui.button(ctx,ui.id(ctx,"stale",i+1),{icon=.Cross,variant="ghost",width=ui.metric(ctx,"row"),height=ui.metric(ctx,"row")}).clicked {removed=i}
         }
     }
     if removed>=0 {effect_parameter_remove(&p.held,base.text_get(p.held.parameters[removed].name[:]))}
@@ -402,7 +401,6 @@ parameter_rows :: proc(s:^editor.Session,p:^Effect_Document,assets:^host.Assets)
 @(private)
 parameter_row :: proc(s:^editor.Session,p:^Effect_Document,declared:^erender.Program_Parameter) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     label:=editor.readable(declared.name)
     stored,reference:=effect_parameter(&p.held,declared.name),effect_parameter(&p.base,declared.name)
     value:=declared.defaults
@@ -424,22 +422,22 @@ parameter_row :: proc(s:^editor.Session,p:^Effect_Document,declared:^erender.Pro
         return
     }
     count:=clamp(int(declared.components),1,4)
-    fits:=ui.text_width(&ctx.font,label,th.font_small)<=th.label_width
+    fits:=ui.text_width(&ctx.font,label,ui.metric(ctx,"font_small"))<=ui.metric(ctx,"label_width")
     if count>1 && !fits {
-        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=4,align_y=.Center}) {
+        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=4,align_y=.Center}) {
             ui.spacer(ctx,EYE_WIDTH-4,1)
-            ui.label(ctx,label,th.font_small,th.text_muted)
+            ui.label(ctx,label,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
         }
     }
     changed,reverted:=false,false
-    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=4,align_y=.Center}) {
+    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=4,align_y=.Center}) {
         ui.spacer(ctx,EYE_WIDTH-4,1)
-        if count==1 || fits {ui.label(ctx,label,th.font_small,th.text_label,fits?th.label_width:0)}
+        if count==1 || fits {ui.label(ctx,label,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_label"),fits?ui.metric(ctx,"label_width"):0)}
         switch {
         case declared.kind==.Bool:
             for axis in 0..<count {
                 on:=value[axis]!=0
-                if ui.toggle(ctx,ui.id(ctx,"toggle",axis+1),on?"On":"Off",&on,width=-1) {
+                if kit.toggle(ctx,ui.id(ctx,"toggle",axis+1),on?"On":"Off",&on,width=-1) {
                     value[axis]=on?1:0
                     changed=true
                 }
@@ -447,7 +445,7 @@ parameter_row :: proc(s:^editor.Session,p:^Effect_Document,declared:^erender.Pro
         case declared.color && count>=3:
             linear:=[3]f32{f32(value[0]),f32(value[1]),f32(value[2])}
             shown:=ui.display_color({clamp(linear.r,0,1),clamp(linear.g,0,1),clamp(linear.b,0,1)})
-            if result,_:=ui.color_field(ctx,ui.id(ctx,"color"),&shown);result.changed {
+            if result,_:=kit.color_field(ctx,ui.id(ctx,"color"),&shown);result.changed {
                 linear=ui.linear_color(shown)
                 value[0],value[1],value[2]=f64(linear.r),f64(linear.g),f64(linear.b)
                 changed=true
@@ -460,9 +458,9 @@ parameter_row :: proc(s:^editor.Session,p:^Effect_Document,declared:^erender.Pro
                 if !field.integer {field.speed=max((declared.max-declared.min)/200,1e-4)}
             }
             if count==1 {
-                changed=ui.slider_field(ctx,ui.id(ctx,"number"),&value[0],field).changed
+                changed=kit.slider_field(ctx,ui.id(ctx,"number"),&value[0],field).changed
             } else {
-                result,_:=ui.vector_field(ctx,ui.id(ctx,"numbers"),value[:count],{number=field})
+                result,_:=kit.vector_field(ctx,ui.id(ctx,"numbers"),value[:count],{number=field})
                 changed=result.changed
             }
         }
@@ -470,7 +468,7 @@ parameter_row :: proc(s:^editor.Session,p:^Effect_Document,declared:^erender.Pro
         before:=reference!=nil?reference.value:declared.defaults
         differs:=(stored==nil)!=(reference==nil) || !slice.equal(value[:count],before[:count])
         if differs {
-            reverted=ui.button(ctx,ui.id(ctx,"revert"),{icon=.Revert,style=.Ghost,width=22,height=22}).clicked
+            reverted=ui.button(ctx,ui.id(ctx,"revert"),{icon=.Revert,variant="ghost",width=22,height=22}).clicked
         } else {
             ui.spacer(ctx,22,1)
         }

@@ -320,7 +320,6 @@ player_processes_view_build :: proc(s:^Session) {
     p:=s.processes
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     region:=player_region(s)
     tiles:=player_tile_count(p)
     for k in 0..<p.count {
@@ -331,12 +330,12 @@ player_processes_view_build :: proc(s:^Session) {
             if image:=gpu.ui_image(s.app.renderer,process.images[process.shown-1]);image!=0 {quad=ui.quad_whole(.Image,image&~gpu.UI_MATERIAL_IMAGE_BIT)}
         }
         focused:=p.focus==k+1 && p.captured
-        if ui.box(ctx,{width=ui.fixed(r.w),height=ui.fixed(r.h),float={to=.Surface,offset={r.x,r.y}},image=quad,fill=quad=={}?th.panel:{},
-            stroke=focused?th.accent:th.border,stroke_width=focused?2:1,padding={10,10,10,10},align_x=.End,align_y=.End}) {
+        if ui.box(ctx,{width=ui.fixed(r.w),height=ui.fixed(r.h),float={to=.Surface,offset={r.x,r.y}},image=quad,fill=quad=={}?ui.tone(ctx,"panel"):{},
+            stroke=focused?ui.tone(ctx,"accent"):ui.tone(ctx,"border"),stroke_width=focused?2:1,padding={10,10,10,10},align_x=.End,align_y=.End}) {
             label:=tiles>1?fmt.tprintf("P%d",p.first+k+1):""
             if process.shown==0 {label=tiles>1?fmt.tprintf("P%d  Connecting...",p.first+k+1):"Connecting..."}
             if label!="" {
-                if ui.box(ctx,{width=ui.FIT,height=ui.fixed(20),padding={6,0,6,0},align_y=.Center,fill=ui.color_alpha(th.popup,220),radius=4}) {ui.label(ctx,label,th.font_small,focused?th.text:th.text_muted)}
+                if ui.box(ctx,{width=ui.FIT,height=ui.fixed(20),padding={6,0,6,0},align_y=.Center,fill=ui.color_alpha(ui.tone(ctx,"popup"),220),radius=4}) {ui.label(ctx,label,ui.metric(ctx,"font_small"),focused?ui.tone(ctx,"text"):ui.tone(ctx,"text_muted"))}
             }
         }
     }

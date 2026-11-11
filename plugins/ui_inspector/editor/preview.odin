@@ -16,6 +16,7 @@ import "mirai:project"
 import "mirai:host"
 import "mirai:std/base"
 import "mirai:std/serial"
+import "mirai:editor/kit"
 import "mirai:ui"
 
 // The interface as the game builds it: the same tree, laid out at the size
@@ -537,7 +538,6 @@ preview_game :: proc(u:^Ui_Inspector,app:^host.App,settings:^gui.UI_Settings,sta
 @(private)
 preview_column :: proc(s:^editor.Session,u:^Ui_Inspector,app:^host.App) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     a:=app.assets
     ux_sync(u)
     preview_update(u,app,u.allocator)
@@ -557,7 +557,7 @@ preview_column :: proc(s:^editor.Session,u:^Ui_Inspector,app:^host.App) {
     ui.box_begin(ctx,area_box)
     defer ui.box_end(ctx,area_box)
     if !p.valid {
-        ui.label(ctx,"The interface does not load",th.font_small,th.text_muted)
+        ui.label(ctx,"The interface does not load",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
         return
     }
     reference:=stage_reference(&u.stage)
@@ -771,7 +771,6 @@ snap_targets :: proc(ctx:^ui.Context,p:^Preview,node:int,axis:int) -> []f32 {
 @(private)
 preview_edit :: proc(s:^editor.Session,u:^Ui_Inspector,stage:ui.Id,size:[2]f32) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     p:=&u.preview
     g:=&u.ux.gesture
     layer:=ctx.layer+4
@@ -789,7 +788,7 @@ preview_edit :: proc(s:^editor.Session,u:^Ui_Inspector,stage:ui.Id,size:[2]f32) 
     r,shown:=ui.widget_rect(ctx,ui.tree_node_element(ctx,&p.tree,node))
     if !shown {g.handle=.None;return}
     drawn:=preview_drawn(p,r)
-    if ui.box(ctx,{width=ui.fixed(drawn.w+4),height=ui.fixed(drawn.h+4),float={to=.Surface,offset={drawn.x-2,drawn.y-2},layer=layer},stroke=th.accent,stroke_width=2,radius=3}) {}
+    if ui.box(ctx,{width=ui.fixed(drawn.w+4),height=ui.fixed(drawn.h+4),float={to=.Surface,offset={drawn.x-2,drawn.y-2},layer=layer},stroke=ui.tone(ctx,"accent"),stroke_width=2,radius=3}) {}
     inline_field(s,u,drawn,layer+2)
     if u.editing.open || u.texts.open {g.handle=.None;return}
     // What the node lets the pointer change: where it floats, and what it has fixed.
@@ -816,7 +815,7 @@ preview_edit :: proc(s:^editor.Session,u:^Ui_Inspector,stage:ui.Id,size:[2]f32) 
         held:=ui.interact(ctx,id,{})
         on:=held.hot || g.handle==handle
         if ui.box(ctx,{id=id,width=ui.fixed(HANDLE_SIDE),height=ui.fixed(HANDLE_SIDE),float={to=.Surface,offset=at-HANDLE_SIDE*0.5,layer=layer+2},
-            fill=th.accent if on else th.panel,stroke=th.accent,stroke_width=1,radius=2}) {}
+            fill=ui.tone(ctx,"accent") if on else ui.tone(ctx,"panel"),stroke=ui.tone(ctx,"accent"),stroke_width=1,radius=2}) {}
         if held.pressed {gesture_begin(ctx,u,handle,r,false)}
     }
     gesture_update(s,u,node)
@@ -825,8 +824,8 @@ preview_edit :: proc(s:^editor.Session,u:^Ui_Inspector,stage:ui.Id,size:[2]f32) 
         if g.handle==.None || !g.guided[axis] {continue}
         stage_rect,_:=ui.widget_rect(ctx,stage)
         at:=preview_drawn(p,{g.guides[0],g.guides[1],0,0})
-        line:=ui.Box{width=ui.fixed(1),height=ui.fixed(stage_rect.h),float={to=.Surface,offset={at.x,stage_rect.y},layer=layer+1},fill=th.accent}
-        if axis==1 {line=ui.Box{width=ui.fixed(stage_rect.w),height=ui.fixed(1),float={to=.Surface,offset={stage_rect.x,at.y},layer=layer+1},fill=th.accent}}
+        line:=ui.Box{width=ui.fixed(1),height=ui.fixed(stage_rect.h),float={to=.Surface,offset={at.x,stage_rect.y},layer=layer+1},fill=ui.tone(ctx,"accent")}
+        if axis==1 {line=ui.Box{width=ui.fixed(stage_rect.w),height=ui.fixed(1),float={to=.Surface,offset={stage_rect.x,at.y},layer=layer+1},fill=ui.tone(ctx,"accent")}}
         if ui.box(ctx,line) {}
     }
 }
@@ -926,7 +925,7 @@ inline_field :: proc(s:^editor.Session,u:^Ui_Inspector,drawn:ui.Rect,layer:i16) 
     ctx:=s.gui.ctx
     field:=ui.id(ctx,"inline")
     if ctx.edit.id!=field {ui.edit_request(ctx,field)}
-    if ui.box(ctx,{width=ui.fixed(max(drawn.w,120)),height=ui.fixed(ctx.theme.row),float={to=.Surface,offset={drawn.x,drawn.y},layer=layer}}) {
+    if ui.box(ctx,{width=ui.fixed(max(drawn.w,120)),height=ui.fixed(ui.metric(ctx,"row")),float={to=.Surface,offset={drawn.x,drawn.y},layer=layer}}) {
         result:=ui.text_field(ctx,field,e.buffer[:len(e.buffer)-1],&e.length,{width=ui.GROW})
         if result.committed || result.cancelled {
             if result.committed {
@@ -941,7 +940,6 @@ inline_field :: proc(s:^editor.Session,u:^Ui_Inspector,drawn:ui.Rect,layer:i16) 
 @(private)
 preview_navigation :: proc(s:^editor.Session,u:^Ui_Inspector,stage:ui.Id) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     p:=&u.preview
     stage_rect,found:=ui.widget_rect(ctx,stage)
     focus,has:=ui.widget_rect(ctx,ctx.focus)
@@ -957,9 +955,9 @@ preview_navigation :: proc(s:^editor.Session,u:^Ui_Inspector,stage:ui.Id) {
         r,shown:=ui.widget_rect(ctx,next)
         if !shown {continue}
         drawn:=preview_drawn(p,r)
-        if ui.box(ctx,{width=ui.fixed(drawn.w+4),height=ui.fixed(drawn.h+4),float={to=.Surface,offset={drawn.x-2,drawn.y-2},layer=layer},stroke=th.accent,stroke_width=1,radius=3}) {}
-        if ui.box(ctx,{width=ui.fixed(16),height=ui.fixed(16),float={to=.Surface,offset={drawn.x+drawn.w-8,drawn.y-8},layer=layer},fill=th.accent,radius=8,align_x=.Center,align_y=.Center}) {
-            ui.label(ctx,arrows[i],11,th.on_accent)
+        if ui.box(ctx,{width=ui.fixed(drawn.w+4),height=ui.fixed(drawn.h+4),float={to=.Surface,offset={drawn.x-2,drawn.y-2},layer=layer},stroke=ui.tone(ctx,"accent"),stroke_width=1,radius=3}) {}
+        if ui.box(ctx,{width=ui.fixed(16),height=ui.fixed(16),float={to=.Surface,offset={drawn.x+drawn.w-8,drawn.y-8},layer=layer},fill=ui.tone(ctx,"accent"),radius=8,align_x=.Center,align_y=.Center}) {
+            ui.label(ctx,arrows[i],11,ui.tone(ctx,"on_accent"))
         }
     }
 }
@@ -970,7 +968,6 @@ preview_navigation :: proc(s:^editor.Session,u:^Ui_Inspector,stage:ui.Id) {
 stage_toolbar :: proc(s:^editor.Session,u:^Ui_Inspector) {
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     rect,found:=editor.asset_toolbar(g)
     if !found || rect.w<=0 || !u.read {return}
     bar:=ui.Box{width=ui.fixed(rect.w),height=ui.fixed(rect.h),padding={12,0,0,0},gap=8,align_y=.Center,float={to=.Surface,offset={rect.x,rect.y},layer=ui.LAYER_BAR}}
@@ -978,19 +975,19 @@ stage_toolbar :: proc(s:^editor.Session,u:^Ui_Inspector) {
     defer ui.box_end(ctx,bar)
     ui.id_push(ctx,ui.id_derive(ctx,SCOPE,"stage"))
     defer ui.id_pop(ctx)
-    if ui.box(ctx,{width=ui.fixed(1),height=ui.fixed(18),fill=th.border}) {}
-    if ui.segments(ctx,ui.FIT,th.control) {
-        if ui.button(ctx,ui.id(ctx,"edit"),{label="Edit",style=.Tab,active=!u.stage.trying,height=th.control-4}).clicked {u.stage.trying=false}
-        if ui.button(ctx,ui.id(ctx,"try"),{label="Try",style=.Tab,active=u.stage.trying,height=th.control-4}).clicked {u.stage.trying=true;u.editing.open=false}
+    if ui.box(ctx,{width=ui.fixed(1),height=ui.fixed(18),fill=ui.tone(ctx,"border")}) {}
+    if kit.segments(ctx,ui.FIT,ui.metric(ctx,"control")) {
+        if ui.button(ctx,ui.id(ctx,"edit"),{label="Edit",variant="tab",active=!u.stage.trying,height=ui.metric(ctx,"control")-4}).clicked {u.stage.trying=false}
+        if ui.button(ctx,ui.id(ctx,"try"),{label="Try",variant="tab",active=u.stage.trying,height=ui.metric(ctx,"control")-4}).clicked {u.stage.trying=true;u.editing.open=false}
     }
-    if ui.button(ctx,ui.id(ctx,"play"),{icon=.Play,icon_size=13,icon_color=th.text_muted,tip="Play",style=.Ghost,width=th.control,height=th.control,disabled=preview_node_of(&u.preview,u.selected)<0}).clicked {preview_play(u)}
+    if ui.button(ctx,ui.id(ctx,"play"),{icon=.Play,icon_size=13,icon_color=ui.tone(ctx,"text_muted"),tip="Play",variant="ghost",width=ui.metric(ctx,"control"),height=ui.metric(ctx,"control"),disabled=preview_node_of(&u.preview,u.selected)<0}).clicked {preview_play(u)}
     backgrounds:=BACKGROUND_NAMES
     background:=int(u.stage.background)
     if ui.dropdown(ctx,ui.id(ctx,"background"),{list=backgrounds[:]},&background,{width=84}) {u.stage.background=Background(background)}
     if u.stage.background==.Color {
         rgb:=[3]f32{f32(u.stage.color.r)/255,f32(u.stage.color.g)/255,f32(u.stage.color.b)/255}
-        if ui.box(ctx,{width=ui.fixed(210),height=ui.fixed(th.row),align_y=.Center}) {
-            if r,_:=ui.color_field(ctx,ui.id(ctx,"color"),&rgb);r.changed {u.stage.color=ui.rgb_color(rgb,255)}
+        if ui.box(ctx,{width=ui.fixed(210),height=ui.fixed(ui.metric(ctx,"row")),align_y=.Center}) {
+            if r,_:=kit.color_field(ctx,ui.id(ctx,"color"),&rgb);r.changed {u.stage.color=ui.rgb_color(rgb,255)}
         }
     }
     if u.stage.background==.Texture {
@@ -1013,16 +1010,16 @@ stage_toolbar :: proc(s:^editor.Session,u:^Ui_Inspector) {
     if u.stage.reference>=len(REFERENCES) {
         for axis in 0..<2 {
             value:=f64(u.stage.custom[axis])
-            if ui.number_field(ctx,ui.id(ctx,"custom",axis+1),&value,{width=ui.fixed(64),height=th.control,label="W" if axis==0 else "H",integer=true,speed=1,min=f64(REFERENCE_LEAST),max=8192,has_min=true,has_max=true}).changed {
+            if ui.number_field(ctx,ui.id(ctx,"custom",axis+1),&value,{width=ui.fixed(64),height=ui.metric(ctx,"control"),label="W" if axis==0 else "H",integer=true,speed=1,min=f64(REFERENCE_LEAST),max=8192,has_min=true,has_max=true}).changed {
                 u.stage.custom[axis]=f32(value)
             }
         }
     }
     if u.stage.trying {
         ui.checkbox(ctx,ui.id(ctx,"navigation"),&u.stage.navigation)
-        ui.label(ctx,"Navigation",th.font_small,th.text_muted)
+        ui.label(ctx,"Navigation",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
     }
-    if note:=stage_note(u);note!="" {ui.label(ctx,note,th.font_label,th.text_muted)}
+    if note:=stage_note(u);note!="" {ui.label(ctx,note,ui.metric(ctx,"font_label"),ui.tone(ctx,"text_muted"))}
 }
 
 // The language the localized texts show in: one of the game, the one they
@@ -1040,7 +1037,7 @@ stage_language :: proc(ctx:^ui.Context,u:^Ui_Inspector,settings:^gui.UI_Settings
         append(&names,language_name(language))
         append(&values,language)
     }
-    ui.label(ctx,"Language",ctx.theme.font_small,ctx.theme.text_muted)
+    ui.label(ctx,"Language",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
     if ui.dropdown(ctx,ui.id(ctx,"language"),{list=names[:]},&chosen,{width=110}) {u.stage.language,u.stage.chosen=values[chosen],true}
 }
 

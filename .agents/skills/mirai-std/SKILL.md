@@ -22,6 +22,7 @@ description: Mirai standard library for games, with the packages `std/base`, `st
 - Work-stealing scheduler and `parallel_for` (a loop function spreads its work with
   them): [workers](references/jobs.md#workers),
   [tasks and counters](references/jobs.md#tasks-and-counters),
+  [frame and background classes](references/jobs.md#classes),
   [parallel_for](references/jobs.md#parallel_for),
   [temporary memory](references/jobs.md#temporary-memory) and
   [without threads](references/jobs.md#without-threads).
@@ -153,6 +154,9 @@ description: Mirai standard library for games, with the packages `std/base`, `st
     `Action_State`) is plain, without pointers or slices, and is copied for snapshots.
 - Containers and allocators are not safe across threads, except `Spsc_Queue` (one producer and one
   consumer) and the profile zones (one ring per thread).
+- A job that a frame does not wait for (loads, bakes, builds, disk writes) is `.Background`; a
+  thread waiting for frame work never runs one, so it never becomes a frame hitch
+  ([classes](references/jobs.md#classes)).
 - `Handle(0)` is null. A released handle never becomes valid again, not even after
   `handle_pool_clear`.
 - The `std/math` package is declared `mirai_math` because Odin requires unique package names and

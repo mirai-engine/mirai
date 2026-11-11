@@ -16,8 +16,8 @@ import "mirai:std/math"
 
 // Input actions. A game reads actions (JUMP, MOVE) instead of keys; the
 // Input_Map says which keys, mouse buttons, mouse movement and gamepad
-// controls drive each one. Actions is computed once per fixed tick from the
-// core.Input of the tick and from its own state of the tick before, so a tick
+// controls drive each one. The Actions of a seat are computed once per fixed
+// tick from the core.Input of the tick and from its own state of the tick before, so a tick
 // simulated again gives the same.
 //
 // Each library declares its actions as an enum @(actions), and beside it the
@@ -65,10 +65,18 @@ CONTEXT_CAPACITY :: 16
 CHORD_CAPACITY :: si.CHORD_CAPACITY
 
 // How a player looks around (Axis2: x right, y up, in points of mouse
-// movement): the locomotion turns a body with it, and a camera that orbits
-// turns with it. The sensitivity of a player is the scale of its bindings.
+// movement): it turns the look of the body its seat drives, or a camera that
+// orbits it. The sensitivity of a player is the scale of its bindings.
 @(actions)
 Look_Action :: enum u8 {Look}
+
+// Where a player moves the body its seat drives (Axis2: x right, y forward).
+@(actions)
+Move_Action :: enum u8 {Move}
+
+move_action_defaults :: proc "contextless" () -> [Move_Action]Action_Bindings {
+    return {.Move=action_default(.Axis2,binding_keys(.A,.D,.S,.W),binding_gamepad_stick(.Left))}
+}
 
 // Radians the look turns per unit of the look action: a point of mouse movement.
 LOOK_SPEED :: f32(0.12*math.RAD_PER_DEG)
@@ -206,32 +214,35 @@ Input_Map :: struct {
 }
 
 // What every action of the map is doing this tick, by value of Action.
-@(storage,keep)
 Actions :: struct {
     states:[ACTION_CAPACITY]Action_State,
     count:u32, // the values below it are updated
 }
 
-// Presentation actions: edges and deltas last one frame, not one fixed tick.
+// Presentation actions of each local slot: edges and deltas last one frame,
+// not one fixed tick.
 @(storage,keep)
-Frame_Actions :: struct {actions:Actions}
+Frame_Actions :: struct {slots:[LOCAL_CAPACITY]Actions}
 
 // What a step reads of the actions of an enum @(actions) E: those of the
-// machine for the tick, and those of each seat. A step receives it as
-// Input_Of(E), and the generator gives it the base of E: pressed(input,.Jump),
-// pressed(input,body,.Jump), seat_pressed(input,seat,.Jump).
+// focused local seat for the tick, and those of each seat. A step receives it
+// as Input_Of(E), and the generator gives it the base of E:
+// pressed(input,.Jump), pressed(input,body,.Jump), seat_pressed(input,seat,.Jump).
 @(params)
 Input_Of :: struct($E:typeid) where intrinsics.type_is_enum(E) {
-    actions:core.Ref(Actions),
+    state:core.Ref(Seats),
     seats:core.Read(Seat),
-    drivables:core.Read(Drivable),
     base:Action,
 }
 
-// The actions of an enum @(actions) E of the machine for the frame, for presentation.
+// The actions of an enum @(actions) E of the local slots for the frame, for
+// presentation: those of the focused slot, or of a slot. Released while a
+// block takes them from the seat of the slot.
 @(params)
 Frame_Input_Of :: struct($E:typeid) where intrinsics.type_is_enum(E) {
     actions:core.Ref(Frame_Actions),
+    state:core.Ref(Seats),
+    seats:core.Read(Seat),
     base:Action,
 }
 
@@ -250,23 +261,29 @@ holding :: proc{input_holding,frame_holding,body_holding}
 value :: proc{input_value,frame_value,body_value}
 vector :: proc{input_vector,frame_vector,body_vector}
 
-input_state :: proc "contextless" (input:Input_Of($E),a:E) -> Action_State {return action(input.actions.ptr,action_of(input,a))}
-frame_state :: proc "contextless" (input:Frame_Input_Of($E),a:E) -> Action_State {return action(&input.actions.ptr.actions,action_of(input,a))}
-body_state :: proc(input:Input_Of($E),body:core.Entity,a:E) -> Action_State {return body_action({input.seats,input.drivables},body,action_of(input,a))}
-input_down :: proc "contextless" (input:Input_Of($E),a:E) -> bool {return input_state(input,a).down}
-input_pressed :: proc "contextless" (input:Input_Of($E),a:E) -> bool {return input_state(input,a).pressed}
-input_released :: proc "contextless" (input:Input_Of($E),a:E) -> bool {return input_state(input,a).released}
-input_tapped :: proc "contextless" (input:Input_Of($E),a:E) -> bool {return input_state(input,a).tapped}
-input_holding :: proc "contextless" (input:Input_Of($E),a:E) -> bool {return input_state(input,a).holding}
-input_value :: proc "contextless" (input:Input_Of($E),a:E) -> f32 {return input_state(input,a).value}
-input_vector :: proc "contextless" (input:Input_Of($E),a:E) -> math.Vec2 {return input_state(input,a).vector}
-frame_down :: proc "contextless" (input:Frame_Input_Of($E),a:E) -> bool {return frame_state(input,a).down}
-frame_pressed :: proc "contextless" (input:Frame_Input_Of($E),a:E) -> bool {return frame_state(input,a).pressed}
-frame_released :: proc "contextless" (input:Frame_Input_Of($E),a:E) -> bool {return frame_state(input,a).released}
-frame_tapped :: proc "contextless" (input:Frame_Input_Of($E),a:E) -> bool {return frame_state(input,a).tapped}
-frame_holding :: proc "contextless" (input:Frame_Input_Of($E),a:E) -> bool {return frame_state(input,a).holding}
-frame_value :: proc "contextless" (input:Frame_Input_Of($E),a:E) -> f32 {return frame_state(input,a).value}
-frame_vector :: proc "contextless" (input:Frame_Input_Of($E),a:E) -> math.Vec2 {return frame_state(input,a).vector}
+input_state :: proc(input:Input_Of($E),a:E) -> Action_State {return seat_action(input.seats,focused(input.state.ptr,input.seats),action_of(input,a))}
+frame_state :: proc(input:Frame_Input_Of($E),a:E) -> Action_State {return slot_frame_state(input,input.state.focus,a)}
+body_state :: proc(input:Input_Of($E),body:core.Entity,a:E) -> Action_State {return body_action(input.seats,body,action_of(input,a))}
+// The state of an action of a local slot this frame.
+slot_frame_state :: proc(input:Frame_Input_Of($E),slot:int,a:E) -> Action_State {
+    if slot<0 || slot>=LOCAL_CAPACITY {return {}}
+    if seat,ok:=core.get(input.seats,local_seat(input.seats,slot));ok && seat.blocked&action_bit(action_of(input,a))!=0 {return {}}
+    return action(&input.actions.ptr.slots[slot],action_of(input,a))
+}
+input_down :: proc(input:Input_Of($E),a:E) -> bool {return input_state(input,a).down}
+input_pressed :: proc(input:Input_Of($E),a:E) -> bool {return input_state(input,a).pressed}
+input_released :: proc(input:Input_Of($E),a:E) -> bool {return input_state(input,a).released}
+input_tapped :: proc(input:Input_Of($E),a:E) -> bool {return input_state(input,a).tapped}
+input_holding :: proc(input:Input_Of($E),a:E) -> bool {return input_state(input,a).holding}
+input_value :: proc(input:Input_Of($E),a:E) -> f32 {return input_state(input,a).value}
+input_vector :: proc(input:Input_Of($E),a:E) -> math.Vec2 {return input_state(input,a).vector}
+frame_down :: proc(input:Frame_Input_Of($E),a:E) -> bool {return frame_state(input,a).down}
+frame_pressed :: proc(input:Frame_Input_Of($E),a:E) -> bool {return frame_state(input,a).pressed}
+frame_released :: proc(input:Frame_Input_Of($E),a:E) -> bool {return frame_state(input,a).released}
+frame_tapped :: proc(input:Frame_Input_Of($E),a:E) -> bool {return frame_state(input,a).tapped}
+frame_holding :: proc(input:Frame_Input_Of($E),a:E) -> bool {return frame_state(input,a).holding}
+frame_value :: proc(input:Frame_Input_Of($E),a:E) -> f32 {return frame_state(input,a).value}
+frame_vector :: proc(input:Frame_Input_Of($E),a:E) -> math.Vec2 {return frame_state(input,a).vector}
 body_down :: proc(input:Input_Of($E),body:core.Entity,a:E) -> bool {return body_state(input,body,a).down}
 body_pressed :: proc(input:Input_Of($E),body:core.Entity,a:E) -> bool {return body_state(input,body,a).pressed}
 body_released :: proc(input:Input_Of($E),body:core.Entity,a:E) -> bool {return body_state(input,body,a).released}
@@ -304,17 +321,20 @@ input_map_build :: proc(bindings:^Input_Map,settings:core.Ref(Input_Settings),wr
     }
 }
 
-// The actions of the machine, in the contexts of the focused seat.
-@(step="fixed",stage="input")
-input_actions_update :: proc(bindings:^Input_Map,actions:^Actions,input:core.Input,state:core.Ref(Seats),seats:core.Read(Seat),time:core.Time) {
-    input:=input
-    actions_update(actions,bindings,&input,time.dt,focused_contexts(state.ptr,seats))
-}
-
+// The actions of each local slot for the frame, in the contexts of its seat.
 @(step="input",stage="end")
 input_frame_actions_update :: proc(bindings:core.Ref(Input_Map),actions:^Frame_Actions,input:core.Frame_Input,state:core.Ref(Seats),seats:core.Read(Seat),frame:core.Frame_Time) {
-    input:=input.input
-    actions_update(&actions.actions,bindings.ptr,&input,frame.dt,focused_contexts(state.ptr,seats))
+    count:=state.local_count
+    for slot in 0..<LOCAL_CAPACITY {
+        if slot>=count {
+            if actions.slots[slot].count!=0 {actions.slots[slot]={}}
+            continue
+        }
+        own:=slot_input(input.input,slot,count,state.focus)
+        contexts:^Context_Stack
+        if row:=core.row_of(seats,local_seat(seats,slot));row>=0 {contexts=&seats.table.values[row].contexts}
+        actions_update(&actions.slots[slot],bindings.ptr,&own,frame.dt,contexts)
+    }
 }
 
 binding_key :: proc "contextless" (key:core.Key) -> Input_Binding {

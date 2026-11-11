@@ -73,7 +73,7 @@ an_end_of_the_range_set_at_a_frame_keeps_the_other_before_or_after_it :: proc(t:
 @(test)
 the_ruler_asks_for_its_menu_at_a_frame_and_the_agent_button_needs_a_range :: proc(t:^testing.T) {
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{draw_user=draw_user}));defer ui.context_destroy(&ctx)
+    testing.expect(t,test_ui_init(&ctx,{draw_user=draw_user}));defer ui.context_destroy(&ctx)
     g:=Editor_Ui{ctx=&ctx}
     s:=Session{gui=&g}
     strip:Timeline

@@ -13,6 +13,7 @@ import "mirai:host"
 import gpu "mirai:render"
 import "mirai:std/base"
 import mm "mirai:std/math"
+import "mirai:editor/kit"
 import "mirai:ui"
 
 // The material of a Mesh_Renderer in the inspector: a box with its preview and
@@ -73,7 +74,7 @@ Material_Color :: struct {
     emission:bool,
     alpha:f32,     // a fourth channel of a parameter is kept
     intensity:f64,
-    state:ui.Color_Picker,
+    state:kit.Color_Picker,
 }
 
 @(storage,free="materials_free")
@@ -366,7 +367,7 @@ appearance_swatch :: proc(s:^Session,label:string,index:int,linear:[3]f32,p:Mate
     ctx:=s.gui.ctx
     row_begin(ctx,label)
     id:=ui.id(ctx,"color",index)
-    if ui.color_swatch(ctx,id,swatch_color(linear),s.materials.color.key==p.key).clicked && s.materials.color.key!=p.key {
+    if kit.color_swatch(ctx,id,swatch_color(linear),s.materials.color.key==p.key).clicked && s.materials.color.key!=p.key {
         rect,_:=ui.widget_rect(ctx,id)
         material_picker_open(s,p,linear,rect)
     }
@@ -383,7 +384,7 @@ override_number_row :: proc(s:^Session,a:^Appearance,label:string,value:Material
     number:=f64(shown)*scale
     field:=ui.Number_Field{decimals=3,speed=0.005,has_min=true,has_max=true,min=low*scale,max=high*scale,height=24}
     if degrees {field.decimals,field.speed=1,0.2}
-    r:=ui.slider_field(ctx,ui.id(ctx,"value",int(value)+1),&number,field)
+    r:=kit.slider_field(ctx,ui.id(ctx,"value",int(value)+1),&number,field)
     key:=value_key(a.entity,a.slot,name)
     gesture_follow(s,key,r,"Material")
     if r.changed {override_store(s,a.entity,a.slot,name,{f32(number/scale),0,0,0})}
@@ -397,11 +398,10 @@ override_number_row :: proc(s:^Session,a:^Appearance,label:string,value:Material
 @(private)
 choice_row :: proc(s:^Session,a:^Appearance,label:string,value:Material_Value,names:[]string,current:int) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     name:=material_value_name(value)
     row_begin(ctx,label)
     for choice,i in names {
-        if ui.button(ctx,ui.id(ctx,label,i+1),{label=choice,size=th.font_small,style=.Tab,width=-1,center=true,active=current==i}).clicked && current!=i {
+        if ui.button(ctx,ui.id(ctx,label,i+1),{label=choice,size=ui.metric(ctx,"font_small"),variant="tab",width=-1,center=true,active=current==i}).clicked && current!=i {
             override_store(s,a.entity,a.slot,name,{f32(i),0,0,0})
         }
     }
@@ -423,7 +423,6 @@ alpha_row :: proc(s:^Session,a:^Appearance) {
 texture_row :: proc(c:^Inspect,a:^Appearance,label:string,index:int,name:u64,material_texture:base.Asset_Id) {
     s:=c.s
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     texture:=material_texture
     if own,found:=erender.material_override_texture(&a.override,a.slot,name);found {texture=own}
     reference,inherited:=texture_reference(s,a.entity,a.slot,name,material_texture)
@@ -432,10 +431,10 @@ texture_row :: proc(c:^Inspect,a:^Appearance,label:string,index:int,name:u64,mat
         if path:=asset_path(s,texture);path!="" {shown=texture_label(path)} else {shown="Missing"}
     }
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(MATERIAL_ROW),gap=4,align_y=.Center}) {
-        ui.column_label(ctx,label)
+        kit.column_label(ctx,label)
         l:=&s.materials.list
         open:=l.kind==.Texture && l.entity==a.entity && l.slot==a.slot && l.offset==index
-        button:=ui.Button{label=shown,style=.Field,width=-1,height=MATERIAL_ROW,size=th.font_small,active=open}
+        button:=ui.Button{label=shown,variant="field",width=-1,height=MATERIAL_ROW,size=ui.metric(ctx,"font_small"),active=open}
         button.quad=texture_quad(s,texture)
         if button.quad.kind==.Solid {button.icon=.Texture}
         id:=ui.id(ctx,"texture",index)
@@ -443,7 +442,7 @@ texture_row :: proc(c:^Inspect,a:^Appearance,label:string,index:int,name:u64,mat
             anchor,_:=ui.widget_rect(ctx,id)
             material_list_open(s,{kind=.Texture,owner=a.material,offset=index,entity=a.entity,slot=a.slot,name=name},anchor)
         }
-        if texture!=reference && ui.button(ctx,ui.id(ctx,"texture_reset",index),{icon=.Revert,style=.Ghost,width=22,height=22}).clicked {
+        if texture!=reference && ui.button(ctx,ui.id(ctx,"texture_reset",index),{icon=.Revert,variant="ghost",width=22,height=22}).clicked {
             texture_override_store(s,a.entity,a.slot,name,reference,inherited)
         }
     }
@@ -455,10 +454,9 @@ texture_row :: proc(c:^Inspect,a:^Appearance,label:string,index:int,name:u64,mat
 program_rows :: proc(c:^Inspect,a:^Appearance) {
     s:=c.s
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     program:=a.program
     if len(program.parameters)==0 {return}
-    ui.section(ctx,strings.to_upper(program.name,context.temp_allocator))
+    kit.section(ctx,strings.to_upper(program.name,context.temp_allocator))
     stored:[]asset.Material_Parameter
     if material:=host.assets_material(s.app.assets,a.material);material!=nil {stored=host.assets_material_parameters(s.app.assets,material)}
     for &parameter,index in program.parameters {
@@ -483,7 +481,7 @@ program_rows :: proc(c:^Inspect,a:^Appearance) {
                 on:=numbers[axis]!=0
                 text:=on?"On":"Off"
                 if count>1 {text=fmt.tprintf("%s %s",letters[axis],text)}
-                if ui.button(ctx,ui.id(ctx,"toggle",index*4+axis+1),{label=text,style=.Tab,size=th.font_small,width=-1,center=true,active=on}).clicked {
+                if ui.button(ctx,ui.id(ctx,"toggle",index*4+axis+1),{label=text,variant="tab",size=ui.metric(ctx,"font_small"),width=-1,center=true,active=on}).clicked {
                     next:=current
                     next[axis]=on?0:1
                     override_store(s,a.entity,a.slot,name,next)
@@ -503,7 +501,7 @@ program_rows :: proc(c:^Inspect,a:^Appearance) {
             results:[4]ui.Number_Result
             axes:=[4]f64{numbers[0],numbers[1],numbers[2],numbers[3]}
             if count==1 {
-                results[0]=ui.slider_field(ctx,ui.id(ctx,"parameter",index+1),&axes[0],field)
+                results[0]=kit.slider_field(ctx,ui.id(ctx,"parameter",index+1),&axes[0],field)
             } else {
                 results=number_fields(ctx,ui.id(ctx,"parameter",index+1),axes[:count],{number=field})
             }
@@ -524,20 +522,19 @@ program_rows :: proc(c:^Inspect,a:^Appearance) {
     }
 }
 
-// One number field per value, as ui.vector_field builds them, keeping what
+// One number field per value, as kit.vector_field builds them, keeping what
 // every axis did: Tab ends the edit of one and begins that of the next in the
 // same frame, and both have to be heard.
 @(private)
-number_fields :: proc(ctx:^ui.Context,id:ui.Id,values:[]f64,field:ui.Vector_Field={}) -> (results:[4]ui.Number_Result) {
-    th:=&ctx.theme
-    names:=field.channels?ui.CHANNEL_NAMES:ui.AXIS_NAMES
+number_fields :: proc(ctx:^ui.Context,id:ui.Id,values:[]f64,field:kit.Vector_Field={}) -> (results:[4]ui.Number_Result) {
+    names:=field.channels?kit.CHANNEL_NAMES:kit.AXIS_NAMES
     count:=min(len(values),4)
     ui.id_push(ctx,id)
     defer ui.id_pop(ctx)
     for i in 0..<count {
         one:=field.number
         one.label=names[i]
-        one.strip=field.channels?th.channel[i]:th.axis[i]
+        one.strip=field.channels?ui.tone(ctx,kit.CHANNEL_TOKENS[i]):ui.tone(ctx,kit.AXIS_TOKENS[i])
         one.mixed=field.mixed_axes[i] || field.number.mixed
         results[i]=ui.number_field(ctx,ui.id(ctx,"axis",i+1),&values[i],one)
         if results[i].tab>0 && i+1<count {ui.edit_request(ctx,ui.id(ctx,"axis",i+2))}
@@ -643,19 +640,18 @@ map_row :: proc(c:^Inspect,a:^Appearance,info:^asset.Material_Info,kind:asset.Ma
 // dropped: an asset of its kind let go on it.
 asset_box :: proc(s:^Session,name:string,index:int,label:string,quad:ui.Quad,open:bool,revert:^bool=nil,kind:=asset.KIND_MATERIAL,value:=base.Asset_Id{}) -> (clicked:bool,anchor:ui.Rect,dropped:base.Asset_Id) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     box:=ui.id(ctx,name,index)
     asset_field_thumbnail(s,ui.id_derive(ctx,box,"thumb"),kind,value,MATERIAL_ROW,quad if value=={} else {})
     hot:=ctx.hot==ui.id_derive(ctx,box,"pick") || ctx.hot==ui.id_derive(ctx,box,"arrow")
     fill,stroke,faded:=asset_field_drop_look(s,box,{0=kind})
-    if fill[3]==0 {fill=th.well}
-    if stroke[3]==0 {stroke=th.accent if open else (th.well_stroke_hover if hot else th.well_stroke)}
-    appearance:=ui.Node_Style{radius=th.radius_control,text={size=th.font_small,color=th.text}}
-    if ui.box(ctx,{id=box,width=ui.GROW,height=ui.fixed(MATERIAL_ROW),align_y=.Center,fill=fill,stroke=stroke,radius=th.radius_control,track=true,layer={enabled=faded,opacity=0.45}}) {
+    if fill[3]==0 {fill=ui.tone(ctx,"well")}
+    if stroke[3]==0 {stroke=ui.tone(ctx,"accent") if open else (ui.tone(ctx,"well_stroke_hover") if hot else ui.tone(ctx,"well_stroke"))}
+    appearance:=ui.Node_Style{radius=ui.metric(ctx,"radius_control"),text={size=ui.metric(ctx,"font_small"),color=ui.tone(ctx,"text")}}
+    if ui.box(ctx,{id=box,width=ui.GROW,height=ui.fixed(MATERIAL_ROW),align_y=.Center,fill=fill,stroke=stroke,radius=ui.metric(ctx,"radius_control"),track=true,layer={enabled=faded,opacity=0.45}}) {
         ui.id_push(ctx,box)
-        clicked=ui.button(ctx,ui.id(ctx,"pick"),{label=label,width=-1,height=MATERIAL_ROW,size=th.font_small,padding=7,active=open,look=&appearance}).clicked
-        clicked|=ui.button(ctx,ui.id(ctx,"arrow"),{icon=.Chevron_Down,icon_size=13,icon_color=th.text_muted,width=18,height=MATERIAL_ROW,active=open,look=&appearance}).clicked
-        if revert!=nil {revert^=ui.button(ctx,ui.id(ctx,"revert"),{icon=.Revert,style=.Ghost,width=22,height=22}).clicked}
+        clicked=ui.button(ctx,ui.id(ctx,"pick"),{label=label,width=-1,height=MATERIAL_ROW,size=ui.metric(ctx,"font_small"),padding=7,active=open,look=&appearance}).clicked
+        clicked|=ui.button(ctx,ui.id(ctx,"arrow"),{icon=.Chevron_Down,icon_size=13,icon_color=ui.tone(ctx,"text_muted"),width=18,height=MATERIAL_ROW,active=open,look=&appearance}).clicked
+        if revert!=nil {revert^=ui.button(ctx,ui.id(ctx,"revert"),{icon=.Revert,variant="ghost",width=22,height=22}).clicked}
         ui.id_pop(ctx)
     }
     asset_field_find(s,ui.id_derive(ctx,box,"find"),value)
@@ -683,7 +679,6 @@ material_common :: proc(c:^Inspect,offset:int) -> (material:base.Asset_Id,same:b
 material_rows :: proc(c:^Inspect) {
     s:=c.s
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     ins:=s.inspector
     single:=len(c.entities)==1 && len(s.selection.entities)==1
     active:=single?c.entities[0]:core.NONE
@@ -712,7 +707,7 @@ material_rows :: proc(c:^Inspect) {
             if single {
                 if fold_label(s,ui.id(ctx,"parameters",slot),name,unfolded) {inspector_section_toggle(ins,key)}
             } else {
-                ui.label(ctx,name,th.font_small,th.text_label,th.label_width)
+                ui.label(ctx,name,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_label"),ui.metric(ctx,"label_width"))
             }
             l:=&s.materials.list
             open:=l.kind==.Material && l.table==c.index && l.offset==offset
@@ -729,10 +724,10 @@ material_rows :: proc(c:^Inspect) {
             material_parameters(c,&shown_slot)
             if given,_:=override_split(&shown_slot.override,slot);!erender.material_override_empty(&given) {
                 if ui.box(ctx,{width=ui.GROW,height=ui.fixed(24),gap=4,align_y=.Center}) {
-                    if ui.button(ctx,ui.id(ctx,"material_apply"),{label="Apply to material",icon=.Check,icon_size=13,style=.Ghost,width=-1,height=24,size=th.font_small}).clicked {
+                    if ui.button(ctx,ui.id(ctx,"material_apply"),{label="Apply to material",icon=.Check,icon_size=13,variant="ghost",width=-1,height=24,size=ui.metric(ctx,"font_small")}).clicked {
                         if _,message:=material_apply(s,active,slot);message!="" {notify(s,message)}
                     }
-                    if ui.button(ctx,ui.id(ctx,"material_revert"),{label="Revert material changes",icon=.Revert,icon_size=13,style=.Ghost,width=-1,height=24,size=th.font_small}).clicked {material_revert(s,active,slot)}
+                    if ui.button(ctx,ui.id(ctx,"material_revert"),{label="Revert material changes",icon=.Revert,icon_size=13,variant="ghost",width=-1,height=24,size=ui.metric(ctx,"font_small")}).clicked {material_revert(s,active,slot)}
                 }
             }
         }
@@ -1060,18 +1055,17 @@ overlay_key :: proc "contextless" (material:base.Asset_Id,layer:u32) -> u64 {
 overlay_rows :: proc(c:^Inspect,a:^Appearance) {
     s:=c.s
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     ins:=s.inspector
     l:=&s.materials.list
     layers,count,_,editable:=overlays_of(s,a.entity)
     given:=material_inherited(s,c.w,a.entity)
     failed:=false
-    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=4,align_y=.Center}) {
-        ui.label(ctx,"Overlays",th.font_small,th.text_label,th.label_width)
+    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=4,align_y=.Center}) {
+        ui.label(ctx,"Overlays",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_label"),ui.metric(ctx,"label_width"))
         if editable && count<len(layers) {
             add:=ui.id(ctx,"overlay_add")
             open:=l.kind==.Overlay && l.entity==a.entity && l.offset==0
-            if ui.button(ctx,add,{icon=.Plus,icon_size=12,icon_color=th.text_label,style=.Well,width=HIERARCHY_TILE,height=th.row,active=open}).clicked && !open {
+            if ui.button(ctx,add,{icon=.Plus,icon_size=12,icon_color=ui.tone(ctx,"text_label"),variant="well",width=HIERARCHY_TILE,height=ui.metric(ctx,"row"),active=open}).clicked && !open {
                 anchor,_:=ui.widget_rect(ctx,add)
                 material_list_open(s,{kind=.Overlay,owner=a.material,entity=a.entity},anchor)
             }
@@ -1079,7 +1073,7 @@ overlay_rows :: proc(c:^Inspect,a:^Appearance) {
         // Back to the layers of the prefab, or of the material.
         own:=a.override.own_overlays
         if own!=given.own_overlays || own && (a.override.overlay_count!=given.overlay_count || a.override.overlays!=given.overlays) {
-            if ui.button(ctx,ui.id(ctx,"overlays_reset"),{icon=.Revert,style=.Ghost,width=22,height=22}).clicked {
+            if ui.button(ctx,ui.id(ctx,"overlays_reset"),{icon=.Revert,variant="ghost",width=22,height=22}).clicked {
                 failed|=!overlays_store(s,a.entity,given.overlays[:min(int(given.overlay_count),len(given.overlays))],given.own_overlays)
             }
         }
@@ -1090,20 +1084,20 @@ overlay_rows :: proc(c:^Inspect,a:^Appearance) {
         unfolded:=!inspector_section_open(ins,key)
         index:=int(layer.id)
         if ui.box(ctx,{width=ui.GROW,height=ui.fixed(MATERIAL_ROW),gap=4,align_y=.Center}) {
-            if ui.button(ctx,ui.id(ctx,"overlay_fold",index),{icon=unfolded?.Chevron_Down:.Chevron_Right,style=.Ghost,width=24,height=MATERIAL_ROW}).clicked {inspector_section_toggle(ins,key)}
+            if ui.button(ctx,ui.id(ctx,"overlay_fold",index),{icon=unfolded?.Chevron_Down:.Chevron_Right,variant="ghost",width=24,height=MATERIAL_ROW}).clicked {inspector_section_toggle(ins,key)}
             open:=l.kind==.Overlay && l.entity==a.entity && l.offset==index
             if clicked,anchor,_:=asset_box(s,"overlay",index,asset_label_of(s,layer.material,"Default"),material_quad(s,layer.material),open,value=layer.material);clicked {
                 material_list_open(s,{kind=.Overlay,owner=a.material,offset=index,entity=a.entity},anchor)
             }
-            if ui.button(ctx,ui.id(ctx,"overlay_remove",index),{icon=.Cross,style=.Ghost,width=22,height=22}).clicked {
+            if ui.button(ctx,ui.id(ctx,"overlay_remove",index),{icon=.Cross,variant="ghost",width=22,height=22}).clicked {
                 failed|=!overlay_remove(s,a.entity,layer.id)
             }
         }
         if !unfolded {continue}
-        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=4,align_y=.Center}) {
-            ui.label(ctx,"Blend",th.font_small,th.text_label,th.label_width)
+        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=4,align_y=.Center}) {
+            ui.label(ctx,"Blend",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_label"),ui.metric(ctx,"label_width"))
             for blend in asset.Overlay_Blend {
-                if ui.button(ctx,ui.id(ctx,"overlay_blend",index*4+int(blend)),{label=names[blend],size=th.font_small,style=.Tab,width=-1,center=true,active=layer.blend==blend}).clicked {
+                if ui.button(ctx,ui.id(ctx,"overlay_blend",index*4+int(blend)),{label=names[blend],size=ui.metric(ctx,"font_small"),variant="tab",width=-1,center=true,active=layer.blend==blend}).clicked {
                     if layer.blend!=blend {failed|=!overlay_blend(s,a.entity,layer.id,blend)}
                 }
             }
@@ -1162,7 +1156,7 @@ material_picker_open :: proc(s:^Session,p:Material_Color,linear:[3]f32,anchor:ui
         m.color.intensity=f64(peak)
         shown/=peak
     }
-    ui.color_picker_set(&m.color.state,ui.display_color({clamp(shown.x,0,1),clamp(shown.y,0,1),clamp(shown.z,0,1)}))
+    kit.color_picker_set(&m.color.state,ui.display_color({clamp(shown.x,0,1),clamp(shown.y,0,1),clamp(shown.z,0,1)}))
     ui.popup_open(s.gui.ctx,material_color_popup(s.gui),anchor)
 }
 
@@ -1180,7 +1174,6 @@ material_picker_build :: proc(s:^Session,w:core.World_Ref) {
     if p.key==0 {return}
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     popup:=material_color_popup(g)
     if !ui.popup_is_open(ctx,popup) {
         gesture_end(s,p.key)
@@ -1191,17 +1184,17 @@ material_picker_build :: proc(s:^Session,w:core.World_Ref) {
     changed:=false
     emission:=p.emission
     if ui.popup(ctx,popup,{width=240,padding=12}) {
-        changed=ui.color_picker(ctx,ui.id_derive(ctx,popup,"picker"),&p.state).changed
+        changed=kit.color_picker(ctx,ui.id_derive(ctx,popup,"picker"),&p.state).changed
         if emission {
-            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=4,align_y=.Center}) {
-                ui.label(ctx,"Intensity",th.font_small,th.text_label,th.label_width)
+            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=4,align_y=.Center}) {
+                ui.label(ctx,"Intensity",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_label"),ui.metric(ctx,"label_width"))
                 changed|=ui.number_field(ctx,ui.id_derive(ctx,popup,"intensity"),&p.intensity,{decimals=2,speed=0.02,has_min=true,has_max=true,max=1e5}).changed
             }
         }
     }
     if !changed || !entity_alive(w,p.entity) {return}
     if ins.gesture!=p.key && !gesture_begin(s,p.key,"Material") {return}
-    linear:=ui.linear_color(ui.color_picker_rgb(&p.state))*f32(p.intensity)
+    linear:=ui.linear_color(kit.color_picker_rgb(&p.state))*f32(p.intensity)
     switch {
     case p.tint:     tint_store(s,p.entity,p.emission,linear)
     case p.standard: material_color_store(s,p.entity,p.slot,p.emission,linear)
