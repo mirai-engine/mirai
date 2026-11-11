@@ -3,6 +3,7 @@
 #define FOG_SLANG
 #include "scene.slang"
 #include "volume.slang"
+#include "media_grid.slang"
 
 // fog.Gpu_Params.
 struct Fog_Params {
@@ -11,7 +12,7 @@ struct Fog_Params {
     float distance; // metres along the view the grid reaches
     float scale;    // metres: about where slices start growing with the distance
     float history;  // the weight of what the frames before found
-    uint hidden;    // a cell behind everything its column sees is lit one frame in this many; 0: never
+    uint hidden;    // a cell behind everything its column sees is lit one frame in this many
     uint dry;       // some volume is a dry box
     uint shade;     // some volume takes the light of the sun
     uint far;       // slices past the grid
@@ -42,32 +43,19 @@ struct Fog_Volume {
 #define FOG_CARVE_SUN_ONLY 4u
 bool fog_carve(Fog_Volume v, uint bit) { return (uint(v.carve.y) & bit) != 0u; }
 
-// The depth along the view where slice coordinate s of the grid lies: slices
-// of about scale / slices metres near the eye, which grow with the distance
-// further on.
-float fog_slice_depth(float s) {
-    return fog.scale * (pow(1.0 + fog.distance / fog.scale, s / float(fog.grid.z)) - 1.0);
+// The grid of the view: the media of the view it integrates (media_grid.slang).
+Media_Grid fog_grid() {
+    Media_Grid g;
+    g.cells = uint4(fog.grid.xyz, fog.far);
+    g.distance = fog.distance;
+    g.scale = fog.scale;
+    g.reach = fog.reach;
+    g.valid = 1u;
+    return g;
 }
-float fog_depth_slice(float depth) {
-    return float(fog.grid.z) * log2(1.0 + max(depth, 0.0) / fog.scale) / log2(1.0 + fog.distance / fog.scale);
-}
-
-// Past the grid, the depth of the far side of slice j of those beyond it,
-// each further than the one before by the same ratio up to fog.reach; the
-// last goes on without end.
-float fog_far_depth(uint j) {
-    return fog.distance * pow(fog.reach / fog.distance, float(j + 1u) / float(fog.far - 1u));
-}
-
-// Where along the slices of the grid and those past it the light that
-// reaches the eye from a depth is: the far side of slice i is at i + 1.
-// empty: nothing was drawn there, and what lies along the view without end
-// reaches it.
-float fog_seen_slice(float depth, bool empty) {
-    if (empty) return float(fog.grid.z + fog.far);
-    if (depth <= fog.distance) return fog_depth_slice(depth);
-    return min(float(fog.grid.z) + float(fog.far - 1u) * log2(depth / fog.distance) / log2(fog.reach / fog.distance), float(fog.grid.z + fog.far - 1u));
-}
+float fog_slice_depth(float s) { return media_slice_depth(fog_grid(), s); }
+float fog_depth_slice(float depth) { return media_depth_slice(fog_grid(), depth); }
+float fog_far_depth(uint j) { return media_far_depth(fog_grid(), j); }
 
 // fog.WISP_SIZES; what each layer adds to the wisps, which sum to 1.
 static const float FOG_WISP_SIZES[FOG_WISP_OCTAVES] = { 1.0, 0.47, 0.22 };

@@ -4,7 +4,7 @@
 // its program updates it and the forces of its effect move it (a program
 // that moves its particles ages and moves them alone): acceleration, the
 // gravity and the wind of where it is, curl noise, an attractor and drag,
-// then collision against the depth of the frame or the traced scene. It
+// then collision against the traced scene. It
 // dies into the free list of its emitter, with an event for the emitter that
 // follows it. In the last step of the frame it goes on the list that is
 // drawn, and a lit one keeps the light it receives: the sun with its shadow
@@ -137,26 +137,7 @@ void main(uint3 id : SV_DispatchThreadID) {
         bool hit = false;
         float3 normal = float3(0.0, 1.0, 0.0);
         uint collision = particle_emitters[slot].kinds.z;
-        if (collision == PARTICLE_COLLISION_SCREEN) {
-            float4 clip = view_clip_unjittered(next);
-            if (clip.w > 0.0 && view_depth(next) > frame.camera_position.w) {
-                float2 uv = clip.xy / clip.w * float2(0.5, -0.5) + 0.5;
-                if (all(uv > float2(0.0)) && all(uv < float2(1.0))) {
-                    int2 pixel = int2(uv * frame.resolution);
-                    float surface = g_depth.Load(int3(pixel, 0)).r;
-                    float depth = dot(next - frame.camera_position.xyz, frame.camera_forward.xyz);
-                    float thickness = max(0.25, length(velocity) * h * 2.0) + radius;
-                    // The pixels of a nested view show another place: nothing there to collide with.
-                    if (surface > 0.0 && depth + radius > surface && depth - radius < surface + thickness) {
-                        normal = normalize(gbuffer_normal(pixel));
-                        if (dot(velocity, normal) < 0.0) {
-                            hit = true;
-                            next = position_from_depth(uv, surface) + normal * radius;
-                        }
-                    }
-                }
-            }
-        } else if (collision == PARTICLE_COLLISION_WORLD) {
+        if (collision == PARTICLE_COLLISION_WORLD) {
             float3 travel = next - v.position;
             float distance = length(travel);
             if (distance > 1e-5) {

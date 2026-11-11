@@ -343,8 +343,10 @@ jobs of that function.
 
 ## Births
 
-`core/births.odin`: births of effects by named channel (`Birth_Channel`, `CHANNEL_` constants
-below `CHANNEL_GAME` for the engine and its plugins) in the `Births` queue. Whoever pushes (terrain
+`core/births.odin`: births of effects by channel in the `Births` queue. A channel is a name
+(`birth_channel` hashes it with `base.name_hash`, as the data channels of `vfx` are keyed): the code
+that pushes and the component that listens say the same text, and no library hands out ids.
+Whoever pushes (terrain
 dust, imprint stamps, water splashes, a game's impacts) does not know who draws them; `vfx` takes
 them in `fixed` ([channels](../../mirai-world/references/vfx.md#channels)), and without it they are
 let go.

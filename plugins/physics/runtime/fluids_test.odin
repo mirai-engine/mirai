@@ -59,6 +59,19 @@ fluids_follow_their_rows_their_volumes_and_their_entities :: proc(t:^testing.T) 
     core.remove(&f.fluids,room)
     physics_test_step(&f,0)
     testing.expect_value(t,f.state.world.fluid_count,1)
+    // A Spline makes its Fluid water along it, as deep as its height, with the current in its frame.
+    river:=core.create(&f.entities)
+    core.add(&f.fluids,river,Fluid{density=1000,current={0,0,-1.5}})
+    core.add(&f.splines,river,volume.Spline{count=2,points={0={{100,4,0},3,1},1={{88,3,0},3,1}}})
+    physics_test_step(&f,0)
+    sample,entity,ok=fluid_at({&f.state},{94,4,0})
+    testing.expect(t,ok && entity==river && abs(sample.height-4.5)<0.05 && sample.density==1000)
+    testing.expectf(t,sample.current.x< -1.4,"it flows down its path: %v",sample.current)
+    _,entity,_=fluid_at({&f.state},{94,4,3})
+    testing.expect(t,entity!=river,"past its banks")
+    core.edit(&f.splines,river).points[1].width=0
+    physics_test_step(&f,0)
+    testing.expect(t,core.problem_find(&f.problems,river,"physics.fluid_path")!=nil && f.state.world.fluid_count==1,"a sample without width is a problem")
 }
 
 // A fluid fills a plane or a box: without a Volume, in one of another shape, dry in a plane or in a box
