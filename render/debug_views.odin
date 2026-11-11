@@ -49,7 +49,7 @@ debug_view_status :: proc(r: ^Renderer, plan: ^Render_Plan, mode: Debug_View) ->
 	s := &r.settings
 	#partial switch mode {
 	case .Shadows:
-		if plan.direct != .Blocks || s.reference_lights {return false, "The direct light of this pipeline has no blocks of shadows to show"}
+		if plan.direct != .Blocks {return false, "The direct light of this pipeline has no blocks of shadows to show"}
 	case .Reflections, .Reflections_Raw:
 		if .Reflections not_in plan.stages {return false, "This pipeline has no traced reflections"}
 		if s.reflections == .Off {return false, "Traced reflections are off in the settings"}

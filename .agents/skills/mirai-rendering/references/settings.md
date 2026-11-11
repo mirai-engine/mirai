@@ -13,8 +13,6 @@
   used and `Renderer.hardware_rt_note` why not. Changing it makes the pipelines and builds the
   structures of the other ([tracer in use](gi.md#bvh-and-acceleration-structures)); if the
   software pipelines are not made, `renderer_apply_settings` returns `false` and changes nothing.
-- `reference_lights` and `reference_gi` replace the direct and indirect light with their
-  references ([shadows](lights.md#shadows), [indirect](gi.md#indirect-reference)).
 - A change starts again only what was made with the fields that changed, in every view; the rest,
   histories, exposure and probes, stays, so a slider drag keeps them:
   - the main targets with `resolution` (several window views remake theirs in their next frame;
@@ -23,10 +21,9 @@
   - the probe volume with its shape, `colored_shadows` or `sun_shadows`; its probes gather again
     everywhere, keeping the volume, with `gi_strength`, `light_budget` or `sun_radius`. With
     either, the worlds not shown lose the light they kept;
-  - the histories that hold what the change alters: shadows with `reference_lights` and
-    `sun_shadows`; reflections, glass, TAA and the indirect reference with `colored_shadows`,
-    `sun_shadows`, `reflection_light_budget` and `reflection_detail_roughness`; the reference
-    also with `reference_gi` and `sun_radius`;
+  - the histories that hold what the change alters: shadows with `sun_shadows`; reflections,
+    glass and TAA with `colored_shadows`, `sun_shadows`, `reflection_light_budget` and
+    `reflections`;
   - the texture levels with `texture_max_size` and `texture_pool_megabytes`.
 - `page_pool_bytes` recreates nothing: the
   [pages](scene.md#scene-and-instances) region is reserved once, with the first mesh that uses
@@ -38,23 +35,21 @@
 
 ## Scene resolution
 
-- `Settings.resolution` is one of two: a `Render_Scale` of the points of the window views (on
-  Retina, 1 is half the pixels of the drawable per axis), or `Render_Lines`, a fraction of the
-  lines the window views span together, never above one pixel per point nor below the least
-  scale. With lines the cost per pixel does not grow with the output, and in split screen all take
-  the same scale. TAA brings the image to the drawable resolution. A texture view draws it at the
-  size of the texture.
+- `Settings.resolution` is a target of lines: the window views draw that fraction of the lines
+  they span together, never above one pixel per point (on Retina, half the pixels of the drawable
+  per axis) nor below `RENDER_SCALE_MIN`. The cost per pixel does not grow with the output, and in
+  split screen all take the same scale. TAA brings the image to the drawable resolution. A
+  texture view draws it at the size of the texture.
 - The UI, panels, lines and outline are drawn after TAA at the drawable resolution: a budget does
   not blur them. Textures are read with a mip bias of `log2` of the scale, which keeps their
   detail.
 - Changing the size, the number of views or the target recreates their targets.
-- `Graphics_Settings.render_scale` is the only control a game sets: above 0 it is used as it is;
-  0 follows `preset_height`, the target of the last preset. No setting stores the preset: what
-  names one (a control, `graphics_preset` of `settings.set`, the code of a game) writes its fields
-  with `graphics_preset_apply`, before the fields that go on top; `graphics_quality_of` computes
-  the one the fields are at, and `graphics_apply` only reads. At the window of the render check,
-  presets from Medium up stay at one pixel per point, so a check compares the same image with the
-  same cost.
+- `Graphics_Settings.resolution` is that target; each preset writes its own. No setting stores
+  the preset: what names one (a control, `graphics_preset` of `settings.set`, the code of a game)
+  writes its fields with `graphics_preset_apply`, before the fields that go on top;
+  `graphics_quality_of` computes the one the fields are at, and `graphics_apply` only reads. At
+  the window of the render check, presets from Medium up stay at one pixel per point, so a check
+  compares the same image with the same cost.
 
 ## Inspection modes
 

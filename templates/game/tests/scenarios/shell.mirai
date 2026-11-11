@@ -32,22 +32,22 @@
      "params": {"segments": [{"for": 2, "keys": ["Down"]}, {"for": 4}, {"for": 2, "keys": ["Enter"]}, {"for": 10}]}},
     {"name": "on the settings", "method": "play.check", "params": {"conditions": [
       {"storage": "Shell", "field": "page", "compare": "Equal", "text": "Settings"}]}},
-    {"name": "render scale changed by hand", "method": "play.step",
+    {"name": "resolution changed by hand", "method": "play.step",
      "params": {"segments": [{"for": 2, "keys": ["Down"]}, {"for": 4}, {"for": 2, "keys": ["Left"]}, {"for": 6}]}},
     {"name": "the preset says Custom", "method": "play.check", "params": {"conditions": [
       {"storage": "Shell", "field": "quality", "compare": "Equal", "text": "Custom"}]}},
     {"name": "back to a preset, left of Custom is Ultra", "method": "play.step",
      "params": {"segments": [{"for": 2, "keys": ["Up"]}, {"for": 4}, {"for": 2, "keys": ["Left"]}, {"for": 6}]}},
-    {"name": "Ultra follows the target of the preset", "method": "play.check", "params": {"conditions": [
+    {"name": "Ultra takes the lines of the preset", "method": "play.check", "params": {"conditions": [
       {"storage": "Shell", "field": "quality", "compare": "Equal", "text": "Ultra"},
-      {"storage": "Graphics_Settings", "field": "render_scale", "compare": "Equal", "number": 0},
+      {"storage": "Graphics_Settings", "field": "resolution", "compare": "Equal", "number": 1440},
       {"storage": "Graphics_Settings", "field": "sun_shadows", "compare": "Equal", "number": 1},
       {"storage": "Graphics_Settings", "field": "reflections", "compare": "Equal", "text": "Off"}]}},
     {"name": "two presets down", "method": "play.step",
      "params": {"segments": [{"for": 2, "keys": ["Left"]}, {"for": 6}, {"for": 2, "keys": ["Left"]}, {"for": 6}]}},
     {"name": "Medium reached the engine", "method": "play.check", "params": {"conditions": [
       {"storage": "Shell", "field": "quality", "compare": "Equal", "text": "Medium"},
-      {"storage": "Graphics_Settings", "field": "render_scale", "compare": "Equal", "number": 0},
+      {"storage": "Graphics_Settings", "field": "resolution", "compare": "Equal", "number": 900},
       {"storage": "Graphics_Settings", "field": "reflections", "compare": "Equal", "text": "Off"}]}},
     {"name": "and High again", "method": "play.step",
      "params": {"segments": [{"for": 2, "keys": ["Right"]}, {"for": 6}]}},

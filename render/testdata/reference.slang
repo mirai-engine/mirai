@@ -1,5 +1,5 @@
-// What the lighting approximates, for tests and comparisons: the light of
-// the sun and of every local light through rays of their own.
+// What the lighting approximates, which the tests compare it with: the light
+// of the sun and of every local light through rays of their own.
 #ifndef MIRAI_REFERENCE_SLANG
 #define MIRAI_REFERENCE_SLANG
 
