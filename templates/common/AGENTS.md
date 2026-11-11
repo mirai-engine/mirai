@@ -24,7 +24,7 @@ This is a Mirai game project.
   point), never a bot script around `mirai rpc`.
 - Few turns: every turn pays for the whole context. Plan the change, make it in one edit, run
   `mirai rpc batch --file` for several calls, and verify once.
-- While looking at state, read only what you need with `play.get` and `--select`.
+- While looking at state, read only what you need with `play.check` and `--select`.
 - Give `capture` a `path`: it answers only where the image is.
 
 ## Commands

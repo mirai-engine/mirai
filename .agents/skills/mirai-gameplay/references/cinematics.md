@@ -93,7 +93,10 @@ the editor has no other.
 - Shot view puts the viewport's view on the shot at the head with its blend from the shot before,
   without roll; turning it off or leaving the tool restores the previous view.
 - `cinematics.control` in Edit moves the head of the Tracks tool on the timeline (turns the tool
-  on) and in Play queues the command with `anim.animation_command`. `add` requires Edit.
+  on) and in Play queues the command with `anim.animation_command`.
+- A timeline is the recipe `cinematic` (`scene.write` with `preset`, Create, the tool's New
+  timeline): an entity with a `Cinematic` and the `Animation` that plays its clip. No method makes
+  one or an actor: they are components `scene.write` writes.
 
 ## Verification
 

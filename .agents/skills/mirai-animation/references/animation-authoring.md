@@ -182,8 +182,8 @@ an actor), whose marks a drag moves and the right button deletes.
   matching, modifiers, actions with the parameters of the set, motion and morphs; `diagnostics`
   adds solver and fades). A part that does not apply answers `{available:false, code, reason}`
   without failing the call; a set that does not evaluate gives `Program_Error`. `entity`
-  also takes, in Play or Simulate, the handle `play.inspect` gives, the only name of an entity
-  the game made.
+  also takes, in Play or Simulate, the handle `scene.inspect` of the game gives, the only name of
+  an entity the game made.
 - `animation.inspect` part `Match` lists the clips of the database and the candidates of its last
   forced search with their costs per feature, then the best row of each clip it left out with its
   `reason`: why a jump or a start chose its clip, or never picks one, is read there. The tick keeps

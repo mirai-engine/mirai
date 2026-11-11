@@ -204,14 +204,11 @@ projects; `names.create` declares a new one. Categories, sensors, presets and gr
 
 - A mask is a list of names; `["*"]`, all of them. `Collision_Settings` is written with
   `settings.set`, by name.
-- `physics.collision.get` reads the shown world (the document in Edit, the copy in Play or
-  Simulate) and gives what rules: from the preset or its own.
-- Without `component`, get and set take the only collision component of the entity; with several
-  or none, the error lists them.
-- `physics.collision.set`: on the document, in a single undo; keeps `group` and the other fields.
-  `preset` makes it follow that preset and `custom` saves as its own what rules; `sensor`,
-  `belongs` and `collides` make the collider custom starting from what rules. An unknown name or an
-  incompatible combination fail with their cause without changing the document.
+- The collision of an entity is fields of its components, which `scene.inspect` reads and
+  `scene.write` writes by those names: `Collider.preset`, or with `preset` `custom` its own
+  `sensor`, `belongs` and `collides`; a `Query_Filter` inside a component, `filter.block` (the
+  categories it hits). A collider that follows a preset ignores its own three fields. An unknown
+  name fails naming those there are.
 - `prefix` picks the collision inside the component. Without it, the root (`preset`, `sensor`,
   `belongs`, `collides` with their types) or its nested `filter` of type `Query_Filter`; with it, a
   struct path (`region.filter`); `""` is the root. The fields must have the collision types, not
@@ -226,8 +223,9 @@ with `animation.analyze` and `animation.capture` before touching keys.
 
 ## Cinematics
 
-The `cinematics.*` methods of the `cinematics` plugin build and play timelines without `scene.write`
-on their components; the keys and markers of a timeline (its shots and actions are markers on its
+The `cinematics.*` methods of the `cinematics` plugin read and play timelines; `scene.write` makes
+one (`preset` `cinematic`, with its clip as `Animation.asset`) and its actors (an `Animation_Target`
+that names it). The keys and markers of a timeline (its shots and actions are markers on its
 cameras and actors) are those of its clip, which the `animation.*` methods write. In Edit,
 `cinematics.control` moves the head of the Tracks tool on the timeline (`animation.tracks.show` for
 any clip): the document does not change and the image shows in the next frame (`capture`); in Play
@@ -379,9 +377,11 @@ An entity is named as [the API names it](api.md#method-conventions). Each edit i
     instance gives `prefab:{asset,root}`, and `components:[]` gives only the shape of the tree.
     No filters nor page: a subtree of more than `limit` entities fails. Entities
     without an `Id` and what a section holds are left out.
-- `play.inspect` (`read_only`): the same over the world of the caller's Play, with the params and
-  the default `limit` of `scene.inspect` plus `player`, which picks the run of that player in a
-  networked game of a turn. Its entities may have no id (those of a spawned prefab) and are named
+- `scene.inspect` with `world:"Game"`: the same over the world of the caller's Play, with
+  `player`, which picks the run of that player in a networked game of a turn, and `tick`. One
+  value alone is `entity`, `components` with its component and `_select`
+  (`entities[0].components.Motion.linear`). Its entities may have no id (those of a spawned prefab)
+  and are named
   by `entity` (the handle in hexadecimal); their `parent` and the `Entity` fields of their
   components also give the handle. Without a game of the caller, `playing:false` and nothing else,
   as every method that only reads a game; what must advance or change one fails asking for
@@ -487,7 +487,7 @@ member of another instance) fails with a message that says so
 ## Spatial queries
 
 `scene.raycast`, `scene.bounds` and `scene.ground` work on the document whatever plays; the game
-world is read with `play.inspect`. They count the
+world is read with `scene.inspect` and `world:"Game"`. They count the
 meshes the viewport picking chooses (`Mesh_Renderer`, without physics or batch instances such as
 foliage) at the place the locals give them, with the edits of the same frame.
 
@@ -566,19 +566,19 @@ result of `play.status`, `paused`, `simulating` and `input_released` are the use
   - Edges are against what the previous tick held, so a press is a segment with the key and a
     release the next one without it. A tap (`tap_keys`, `tap_buttons`, a gamepad's `tapped`) is
     pressed and released inside one tick and never down, like a press shorter than a tick.
-  - `trace`: up to 4 entities (selected as in `play.inspect`), a storage or `view`, and the values
-    as [`play.get`](#play) names them (or paths inside the storage or the view). Its rows are read
+  - `trace`: up to 4 entities (selected as in `scene.inspect`), a storage or `view`, and the values
+    as `play.check` names them (or paths inside the storage or the view). Its rows are read
     between ticks, before the first, every `every` and after the last, so the rows of a long step
     need a larger `every`. In the first row a path that is not there fails, unless it names a
     component the entity does not have yet; later, what is gone is `null`. With `view` the
     entities named are its `points`.
 - A duration is one param, `for`, in every method: a number is ticks, exact, and a text ending in
   `s` is seconds (`{"for": 120}`, `{"for": "1.5s"}`); a place of the past takes the same form.
-- One syntax names a value in Play, for `play.get`, `play.check`, `until` and `trace`:
+- One syntax names a value in Play, for `play.check`, `until` and `trace`:
   `Component.field.0.field` (`a[0].b` reads as `a.0.b`), or a key of the document of the entity
   (`world_position.2`).
 - `play.check` (`read_only`): each condition reads a value (`field`) of an `entity`, of a storage
-  or of the `view`, as `play.inspect` or `play.view` write them, and compares it with `number` or
+  or of the `view`, as `scene.inspect` or `play.view` write them, and compares it with `number` or
   `text`; without `field`, the entity gives its `world_position`. With `view` the entity named is
   `points.0`.
   `Exists` and `Gone` say whether the entity, the component or the field is there: what is not
@@ -591,15 +591,15 @@ result of `play.status`, `paused`, `simulating` and `input_released` are the use
   the top left of the view and in its pixels, `in_front`, `on_screen`). An entity projects its
   middle (the center of mass of a body, or the middle of what hangs from it), not its feet. The
   view is that of the last frame the run drew or stepped.
-- `play.set`, `play.spawn`, `play.destroy` and `play.push` change the caller's run between two
-  ticks, as the game would, without the document or the history; a turn does not touch the user's
-  Play.
-  - `play.set`: component values on top of the current ones, with `Entity` fields as handles;
-    `null` removes one. `position` and `rotation_deg` are world values and teleport with
-    `core.place`: a free `Transform` changes now and one owned by a library (a physics body) jumps
-    on the next tick. It reads everything before changing anything.
-  - `play.spawn`: the prefab appears now (`scene.spawn`), with `Prefab_Instance` on its root, which
-    it returns as a handle.
+- `scene.write` with `world:"Game"` and `play.push` change the caller's run between two ticks, as
+  the game would, without the document or the history; a turn does not touch the user's Play.
+  - `scene.write`: the document of a scene on the game. Component values go on top of the current
+    ones, with `Entity` fields as handles, and `null` removes one; an `id` may be a handle.
+    `position` and `rotation_deg`, local to the parent, teleport with `core.place`: a free
+    `Transform` changes now and one owned by a library (a physics body) jumps on the next tick. A
+    new entity with `prefab` is spawned now (`scene.spawn`), one with `preset` or `copy` is made,
+    and `delete` destroys with what hangs from it; no lock of a prefab or of a section applies.
+    It takes no `replace` and no `kind`, and a write that fails puts the game back as it was.
   - `play.push`: requests to a storage with a `core.Queue` (`Seat_Requests`, `Spawns`, `Places` or
     one of the game), with the schema of the type of its elements; the functions of the next tick
     read them.
@@ -639,7 +639,7 @@ result of `play.status`, `paused`, `simulating` and `input_released` are the use
     gives a row per kept frame that reached `every` ticks past the previous row (a frame that ran
     several ticks shows the last); past `API_TRACE_ROWS` rows, `next` is the `from` that goes on.
   - `verify` replays each span between keyframes and compares the transforms hash of every frame
-    and, at the next keyframe, every entity and storage as `play.inspect` writes them, stopping at
+    and, at the next keyframe, every entity and storage as `scene.inspect` writes them, stopping at
     the first span that differs. A keyframe made from an edit while paused is not compared.
 - `play.observe`, `play.qa.*` and `play.explore` belong to the `playtest` plugin.
 - `play.observe`: one small answer for one decision; the rounded numbers are what a model reads.
@@ -680,8 +680,8 @@ Runs the whole scene with the editor's camera and controls, without player input
 
 - `play.start {simulate:true}` starts the copy; fails if a Play or Simulate already exists (and
   keeps that run), from a turn (a turn simulates with its own run and `play.step` without keys) and
-  with `players` or `online`. `play.stop`, `play.pause`, `play.status` and `play.inspect` act on
-  it; `play.step` rejects non-empty player input.
+  with `players` or `online`. `play.stop`, `play.pause`, `play.status` and `scene.inspect` of the
+  game act on it; `play.step` rejects non-empty player input.
 - `simulation.move`: the movement pushes dynamic bodies and a large one can take several ticks;
   `release` leaves zero velocity on arrival. Rejects characters and children of a compound body:
   the entity that owns the body is moved.
@@ -716,7 +716,7 @@ The slots of the project's saves folder, the same as the shipped game's on that 
   - the user's running Play advances frames until the slot is written with its thumbnail;
   - a paused one or the run of a turn advances one tick (like `play.step` without new keys) and
     writes without a thumbnail.
-- `save.load` replaces the world of the run: the handles of `play.inspect` change.
+- `save.load` replaces the world of the run: the handles `scene.inspect` gives change.
 
 ## Build
 

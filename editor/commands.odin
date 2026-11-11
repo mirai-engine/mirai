@@ -396,8 +396,6 @@ commands_register :: proc(s:^Session,st:^Api_State) {
         {name="paste",method="scene.write",params=`{"entities":[{"copy":"$copied"}]}`,label="Paste",shortcut=key(.V,{.Primary}),state=state_paste,scene=true},
         {name="duplicate",method="scene.write",params=`{"entities":[{"copy":"$roots"}]}`,label="Duplicate",icon=user(.Copy),shortcut=key(.D,{.Primary}),state=state_scene_edit,scene=true},
         {name="delete",method="scene.write",params=`{"root":"$roots","entities":[{"delete":true}]}`,label="Delete",icon=user(.Trash),shortcut=key(.Delete),alternate=key(.Backspace),state=state_scene_edit,scene=true},
-        // Of a game the editor shows: its entities are not those of the document.
-        {name="delete_in_game",method="play.destroy",params=`{"entity":"$roots"}`,label="Delete",icon=user(.Trash),shortcut=key(.Delete),alternate=key(.Backspace),state=state_game_edit,scene=true},
         {name="rename",method="editor.view",params=`{"part":"Rename"}`,label="Rename",icon=.Edit,shortcut=key(.F2),state=state_rename,scene=true},
         {name="select_all",method="editor.select",params=`{"entities":["$all"]}`,label="Select all",shortcut=key(.A,{.Primary}),state=state_select_all,scene=true},
         {name="deselect",method="editor.select",label="Deselect",shortcut=key(.Escape),state=state_selected,scene=true},

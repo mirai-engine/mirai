@@ -399,7 +399,7 @@ when the server opens; code reload rebuilds methods and schemas without closing 
 - **Hexadecimal ids.** An entity (`core.Id`) is taken as a string of up to 16 digits
   (`"00a1b2c3d4e5f607"`, also with `0x`) and answered with `0x` and all its digits; an asset, 32
   digits without it. A live `core.Entity` handle has the form of an id and appears as `entity`
-  (`play.inspect`, `play.player`).
+  (`scene.inspect` of a game, `play.player`).
 - **Transforms local to the parent**: `rotation_deg` in Euler degrees, position in meters and
   scale in factors. `world_position` is read-only.
 - **`Call.raw` is the text of the params as their types say them**: a handler that reads a

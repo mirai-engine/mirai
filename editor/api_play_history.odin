@@ -238,7 +238,7 @@ api_history_trace :: proc(s:^Session,call:^api.Call,r:^Run,p:^Api_Play_Trace,raw
 // Plays again the frames from each keyframe to the next that reach from to
 // to, as Jolt's state recorder validates a replay: after each frame the hash
 // of the transforms against the one it kept, and at the next keyframe every
-// entity and storage, as play.inspect writes them, against that copy. The
+// entity and storage, as scene.inspect writes them, against that copy. The
 // copy of the World the frames leave is made as keyframes are, so that what
 // a copy leaves out does not differ. Stops at the first span that differs.
 @(private)

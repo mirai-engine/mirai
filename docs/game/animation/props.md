@@ -72,7 +72,9 @@ its name there (`anim.play`) until a span ends, or the clip for a moment.
 (`Animation` + `Cinematic`), the cameras `Cam` and `C` and the character `Hero` as actors, and one
 clip: Position and Rotation keys of `Cam` from A at 0 to B at 3, a marker `Shot` on `Cam` at 0, a
 marker `Shot` on `C` at 3 and a marker `Wave` on `Hero` at 3 lasting 2. The editor API builds it:
-`cinematics.add` (parts `Timeline`, `Actor`), `animation.key.set` and `animation.marker.set`.
+`scene.write` (the timeline is `preset` `cinematic` with the clip as `Animation.asset`; an actor
+is an entity with an `Animation_Target` whose `animation` is the id of the timeline),
+`animation.key.set` and `animation.marker.set`.
 
 ```odin
 anim.animation_command(requests,intro,.Play)             // as any clip

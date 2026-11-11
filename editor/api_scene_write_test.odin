@@ -43,9 +43,10 @@ write_scene :: proc(f:^Prefab_Fixture,raw:string) -> (result:Write_Answer,failur
 // A write with what its result names as made: "name id" of each, in order.
 @(private="file")
 write_scene_made :: proc(f:^Prefab_Fixture,raw:string) -> (result:Write_Answer,created:[]string,failure:string,ok:bool) {
-    method:=api.Method{result_id=Api_Write_Result}
+    method:=api.Method{params_id=Api_Scene_Write_Params,result_id=Api_Write_Result}
+    params:Api_Scene_Write_Params
     written:Api_Write_Result
-    call:=api.Call{method=&method,raw=raw,result=&written,allocator=context.temp_allocator}
+    call:=api.Call{method=&method,raw=raw,params=&params,result=&written,allocator=context.temp_allocator}
     api_scene_write(&f.s,&call)
     if call.failed {return {},nil,call.error.message,false}
     result={written.id,written.made,written.removed,written.disabled}

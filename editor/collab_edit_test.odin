@@ -165,9 +165,10 @@ what_another_editor_selected_is_edited_and_stays_outlined :: proc(t:^testing.T) 
             done=field_write(s,component_table(s,"Transform"),{e},int(offset_of(core.Transform,scale)),mem.ptr_to_bytes(&scale))
         case .Rename: done=entity_rename(s,e,"Crate")
         case .Write:
-            method:=api.Method{result_id=Api_Write_Result}
+            method:=api.Method{params_id=Api_Scene_Write_Params,result_id=Api_Write_Result}
+            params:Api_Scene_Write_Params
             result:Api_Write_Result
-            call:=api.Call{method=&method,result=&result,raw=fmt.tprintf(`{{"root":"0x%016x","replace":true,"entities":[{{"name":"Crate","position":[0,9,0]}}]}}`,u64(id)),allocator=context.temp_allocator}
+            call:=api.Call{method=&method,params=&params,result=&result,raw=fmt.tprintf(`{{"root":"0x%016x","replace":true,"entities":[{{"name":"Crate","position":[0,9,0]}}]}}`,u64(id)),allocator=context.temp_allocator}
             api_scene_write(s,&call)
             done=!call.failed
             testing.expect(t,done,call.error.message)

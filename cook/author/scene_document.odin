@@ -149,7 +149,7 @@ Scene_Target :: struct {
     into:base.Asset_Id,        // the scene: a prefab that holds it is not placed in it
     fresh:bool,                // it is being made: its entities take the ids the document gives
     find:     proc(user:rawptr,id:base.Entity_Id) -> (node:Node,problem:string), // 0 without a problem: no entity has it
-    named:    proc(user:rawptr,text,what:string,allocator:runtime.Allocator) -> (nodes:[]Node,problem:string), // the entities root or copy name: at least one
+    named:    proc(user:rawptr,text,what:string,allocator:runtime.Allocator) -> (node:Node,problem:string), // the entity root or copy names
     children: proc(user:rawptr,parent:Node,allocator:runtime.Allocator) -> []Node, // in their order, those a document declares
     entity:   proc(user:rawptr,node:Node) -> Node_Info,
     has:      proc(user:rawptr,node:Node,t:^core.Table_Info) -> (has,off:bool),
@@ -157,7 +157,7 @@ Scene_Target :: struct {
     preset:   proc(user:rawptr,name:string,allocator:runtime.Allocator) -> (preset:Scene_Preset,problem:string),
     create:   proc(user:rawptr,parent:Node,name:string,preset:Scene_Preset,id:base.Entity_Id) -> (node:Node,problem:string),
     place:    proc(user:rawptr,prefab:^asset.Scene,id:base.Asset_Id,parent:Node) -> (root:Node,made:int,problem:string),
-    copy:     proc(user:rawptr,sources:[]Node,allocator:runtime.Allocator) -> (copies:[]Node,made:int,problem:string), // beside their sources
+    copy:     proc(user:rawptr,sources:[]Node,allocator:runtime.Allocator) -> (copies:[]Node,made:int,problem:string), // one of each, beside its source: what a copy names of another source is its copy
     reparent: proc(user:rawptr,node,parent:Node) -> string,
     rename:   proc(user:rawptr,node:Node,name:string) -> string,
     move:     proc(user:rawptr,node:Node,local:core.Transform) -> string,
@@ -295,9 +295,10 @@ Scene_Apply :: struct {
 }
 
 // Makes a scene say what a document declares. replace: what a document that
-// does not say it does. False after failing the reading: whoever owns the
-// target undoes what was applied until then.
-scene_apply :: proc(target:^Scene_Target,reading:^Reading,text:string,replace:=false) -> (applied:Scene_Applied,ok:bool) {
+// does not say it does; also: keys beside those of the document, which are of
+// whoever gives it. False after failing the reading: whoever owns the target
+// undoes what was applied until then.
+scene_apply :: proc(target:^Scene_Target,reading:^Reading,text:string,replace:=false,also:[]string=nil) -> (applied:Scene_Applied,ok:bool) {
     keys,values:=tree_object(reading,text,"document") or_return
     a:=Scene_Apply{target=target,reading=reading,replace=replace}
     root,entities,kind:="","",""
@@ -315,6 +316,7 @@ scene_apply :: proc(target:^Scene_Target,reading:^Reading,text:string,replace:=f
             if a.replace,known=doc_bool(values[i]);!known {reading_fail(reading,"replace must be true or false");return}
         case "entities": entities=values[i]
         case:
+            if slice.contains(also,key) {break}
             reading_failf(reading,"document has no '%s'; it has root, replace, kind and entities: the entities at the top of the scene, or root alone, nesting what hangs from them by children. What it leaves out stays, unless replace is true",key)
             return
         }
@@ -330,17 +332,14 @@ scene_apply :: proc(target:^Scene_Target,reading:^Reading,text:string,replace:=f
     }
     a.created=make([dynamic]Node,reading.allocator)
     a.presets=make(map[string]Scene_Preset,reading.allocator)
-    roots:=[]Node{0}
+    node:Node
     if root!="" {
         if len(read)==0 || read[0].end!=len(read) {reading_fail(reading,"entities declares one entity with root: root itself, with what hangs from it as its children");return}
         problem:string
-        if roots,problem=a.named(a.user,root,"root",reading.allocator);problem!="" {reading_fail(reading,problem);return}
+        if node,problem=a.named(a.user,root,"root",reading.allocator);problem!="" {reading_fail(reading,problem);return}
     }
-    // A gesture of a person names several roots: each takes the document.
-    for node in roots {
-        a.decls=slice.clone(read[:],reading.allocator)
-        scene_apply_at(&a,node) or_return
-    }
+    a.decls=read[:]
+    scene_apply_at(&a,node) or_return
     if kind!="" {
         changed,problem:=a.target.kind(a.user,kind=="Prefab")
         if scene_refused(&a,"kind",problem) {return}
@@ -460,6 +459,23 @@ scene_apply_at :: proc(a:^Scene_Apply,root:Node) -> bool {
             return false
         }
     }
+    // What the document copies is copied together.
+    sources:=make([dynamic]Node,reading.allocator)
+    for &d in decls {
+        if d.copy=="" {continue}
+        source,unknown:=a.named(a.user,d.copy,fmt.tprintf("%s.copy",d.path),reading.allocator)
+        if unknown!="" {reading_fail(reading,unknown);return false}
+        append(&sources,source)
+    }
+    if len(sources)>0 {
+        copies,made,problem:=a.copy(a.user,sources[:],reading.allocator)
+        if scene_refused(a,"copy",problem) {return false}
+        a.made+=made
+        at:=0
+        for &d in decls {
+            if d.copy!="" {d.node=copies[at];at+=1}
+        }
+    }
     // What the document adds, and what it moves, in the order it gives.
     for &d,i in decls {
         if d.delete {continue}
@@ -476,25 +492,17 @@ scene_apply_at :: proc(a:^Scene_Apply,root:Node) -> bool {
             return true
         }
         switch {
+        case d.copy!="":
+            append(&a.created,d.node)
+            a.taken[d.node],a.closed[d.node]=true,true
+            // A copy stays beside what it copies unless the document nests it.
+            if d.parent>=0 && scene_refused(a,d.path,a.reparent(a.user,d.node,parent)) {return false}
+            inside(a,i) or_return
         case d.node!=0:
             // The root stays where it is, and so does what a document that keeps the rest names at its top.
             if d.parent<0 && (root!=0 || !a.replace) || a.entity(a.user,d.node).parent==parent {continue}
             if scene_refused(a,d.path,a.reparent(a.user,d.node,parent)) {return false}
             scene_changed(a,d.path,"its parent")
-        case d.copy!="":
-            sources,unknown:=a.named(a.user,d.copy,fmt.tprintf("%s.copy",d.path),reading.allocator)
-            if unknown!="" {reading_fail(reading,unknown);return false}
-            copies,made,problem:=a.copy(a.user,sources,reading.allocator)
-            if scene_refused(a,fmt.tprintf("%s.copy",d.path),problem) {return false}
-            d.node=copies[0]
-            a.made+=made
-            for copy in copies {
-                append(&a.created,copy)
-                a.taken[copy],a.closed[copy]=true,true
-                // A copy stays beside what it copies unless the document nests it.
-                if d.parent>=0 && scene_refused(a,d.path,a.reparent(a.user,copy,parent)) {return false}
-            }
-            inside(a,i) or_return
         case d.prefab!="":
             prefab:asset.Scene
             scene_prefab_open(reading,a.assets,d.given,d.path,a.into,&prefab) or_return

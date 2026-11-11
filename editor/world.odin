@@ -274,13 +274,17 @@ entities_delete :: proc(s:^Session,entities:[]core.Entity) {
 // what a scene saves of each, with references inside a copy pointing to the
 // copy. Returns the copies of the entities given, in their order.
 entities_duplicate :: proc(s:^Session,entities:[]core.Entity,label:="Duplicate",allocator:=context.temp_allocator) -> []core.Entity {
-    if watching(s) || section_refused(s,..entities) {return nil}
-    w:=editing_world(s)
-    es:=core.world_entities(w)
-    if len(entities)==0 {return nil}
+    if watching(s) || section_refused(s,..entities) || len(entities)==0 {return nil}
     opened,edit_ready:=edit_open(s,label)
     if !edit_ready {return nil}
     defer edit_close(s,opened)
+    return entities_copy(s,editing_world(s),entities,allocator)
+}
+
+// entities_duplicate in a world, without a step of undo.
+@(private)
+entities_copy :: proc(s:^Session,w:core.World_Ref,entities:[]core.Entity,allocator:=context.temp_allocator) -> []core.Entity {
+    es:=core.world_entities(w)
     sources:=make([dynamic]core.Entity,context.temp_allocator)
     roots:=make([dynamic]int,context.temp_allocator)
     gather :: proc(w:core.World_Ref,e:core.Entity,out:^[dynamic]core.Entity) {
@@ -378,12 +382,22 @@ entity_reparent :: proc(s:^Session,e,parent:core.Entity) -> bool {
     if parents==nil || !entity_alive(w,e) || parent!=core.NONE && (!entity_alive(w,parent) || entity_under(w,parent,e)) {return false}
     if entity_parent(w,e)==parent {return true}
     if section_refused(s,e) || section_target_refused(s,parent) || prefab_member_locked(s,w,e) {return false}
-    local:=mm.TRANSFORM_IDENTITY
-    if transforms!=nil {local=core.local_under(transforms,parents,parent,entity_world(w,e)) or_return}
+    if transforms!=nil {
+        if _,holds:=core.local_under(transforms,parents,parent,entity_world(w,e));!holds {return false}
+    }
     opened,edit_ready:=edit_open(s,"Parent")
     if !edit_ready {return false}
     defer edit_close(s,opened)
-    if transforms!=nil {
+    return entity_hang(w,e,parent)
+}
+
+// Hangs an entity of a world from another, NONE for the root, where it is in the world. False
+// when a parent without size on an axis cannot hold it there.
+@(private)
+entity_hang :: proc(w:core.World_Ref,e,parent:core.Entity) -> bool {
+    parents:=core.world_table_of(w,core.Parent)
+    if transforms:=core.world_table_of(w,core.Transform);transforms!=nil {
+        local:=core.local_under(transforms,parents,parent,entity_world(w,e)) or_return
         if row:=core.edit(transforms,e);row!=nil {row^=core.from_math(local)}
     }
     if parent==core.NONE {core.remove(parents,e)} else {core.add(parents,e,core.Parent{parent,order_next(w,parent)})}

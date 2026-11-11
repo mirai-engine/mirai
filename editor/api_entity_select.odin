@@ -82,7 +82,7 @@ api_entity_find :: proc(w:core.World_Ref,text:string,allocator:=context.temp_all
 // The entity a text names; problem says what is wrong for whoever gave it.
 @(private="file")
 api_entity_named :: proc(w:core.World_Ref,text:string,game:bool,allocator:=context.temp_allocator) -> (e:core.Entity,problem:string) {
-    lister:=game?"play.inspect":"scene.inspect"
+    lister:=game?"scene.inspect with world Game":"scene.inspect"
     if text=="" {return core.NONE,fmt.aprintf("it must be the name of an entity, a path Parent/Child, an id or a handle; %s lists them",lister,allocator=allocator)}
     several:string
     if e,several=api_entity_find(w,text,allocator);e!=core.NONE {return e,""}

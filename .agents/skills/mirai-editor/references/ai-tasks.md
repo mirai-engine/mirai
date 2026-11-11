@@ -505,7 +505,7 @@ The turns' runs are in [Play](editor.md#play).
 - The turn carries a snapshot of the live world: local seat, the body it drives, camera, transforms
   and clock. `play.player` shares that function; its live handles allow inspecting entities created
   in the game without `Id`. The instructions ask for read-only observations with `play.player`,
-  `play.status` and `play.inspect` with `include_runtime:true`.
+  `play.status` and `scene.inspect` of the game with `include_runtime:true`.
 - Scene editing by API writes to the document even if Play runs
   ([API](../../mirai-agent-api/references/methods.md#play)).
 

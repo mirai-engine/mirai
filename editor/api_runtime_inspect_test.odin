@@ -244,11 +244,11 @@ inspect_filters_by_name_and_component_and_summarizes_without_values :: proc(t:^t
 
     session.mode=.Play
     session.runs[0]={world=&running}
-    _,result,text=inspect(state,&out,"play.inspect",`{}`)
+    _,result,text=inspect(state,&out,"scene.inspect",`{"world":"Game"}`)
     testing.expect_value(t,[3]int{number(result["shown"]),number(result["matched"]),number(result["omitted"])},[3]int{API_INSPECT_BRIEF,300,300-API_INSPECT_BRIEF})
     testing.expectf(t,len(text)<256*API_INSPECT_BRIEF,"with no filter it stays small: %d bytes",len(text))
     testing.expectf(t,strings.contains(result["left_out"].(string),"more entities"),"it says what it left out: %s",text)
-    _,result,_=inspect(state,&out,"play.inspect",`{"name":"Body*"}`)
+    _,result,_=inspect(state,&out,"scene.inspect",`{"world":"Game","name":"Body*"}`)
     testing.expect_value(t,number(result["shown"]),API_INSPECT_DEFAULT)
     _,result,text=inspect(state,&out,"component.list",`{}`)
     testing.expectf(t,strings.contains(text,`"name": "Camera"`) && !strings.contains(text,`"fields"`) && strings.contains(text,`"left_out"`),"the index of the components: %s",text)
@@ -256,7 +256,7 @@ inspect_filters_by_name_and_component_and_summarizes_without_values :: proc(t:^t
     testing.expectf(t,strings.contains(text,`"default"`) && strings.contains(text,`"fields"`) && !strings.contains(text,`"left_out"`),"one whole: %s",text)
     _,result,text=inspect(state,&out,"component.list",`{"names":["Camera","Transform"]}`)
     testing.expectf(t,strings.count(text,`"fields"`)==2,"several in one call: %s",text)
-    _,result,_=inspect(state,&out,"play.inspect",`{"name":"Body 29*"}`)
+    _,result,_=inspect(state,&out,"scene.inspect",`{"world":"Game","name":"Body 29*"}`)
     testing.expect_value(t,number(result["matched"]),11)
     testing.expect_value(t,result["entities"].(json.Array)[0].(json.Object)["name"].(string),"Body 29")
 }
@@ -271,7 +271,7 @@ Spawned_World :: struct {
     links:core.Table(Inspect_Link),
 }
 
-// A prefab spawned while playing has no Ids: play.inspect names its parent
+// A prefab spawned while playing has no Ids: an inspect of the game names its parent
 // and the entities its fields hold by handle, as it names the entity, and
 // scene.inspect keeps the Ids of an edited world.
 @(test)
@@ -311,13 +311,14 @@ play_inspection_names_the_references_of_spawned_entities_by_handle :: proc(t:^te
     testing.expectf(t,strings.contains(text,`"camera": "0x0000000000000006"`),"an edited world shows Ids: %s",text)
 }
 
-// The answer of scene.inspect, or with play of play.inspect, as the API writes it.
+// The answer of scene.inspect, with play of the game, as the API writes it.
 @(private)
 api_inspect_text :: proc(s:^Session,call:^api.Call,play:bool) -> string {
     result:Api_Inspect_Result
     call.result=&result
     defer call.result=nil
-    if play {api_play_inspect(s,call)} else {api_scene_inspect(s,call)}
+    (^Api_Inspect_Params)(call.params).world=.Game if play else .Scene
+    api_scene_inspect(s,call)
     text,_:=serial.text_encode(result,.Line,context.temp_allocator,sparse=true)
     return string(text)
 }

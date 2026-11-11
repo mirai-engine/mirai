@@ -1,6 +1,5 @@
 package cinematics_editor
 
-import "core:fmt"
 import "core:strings"
 import "mirai:core"
 import "mirai:editor"
@@ -8,7 +7,6 @@ import "mirai:editor/api"
 import erender "mirai:engine/render"
 import lib "mirai:std/anim"
 import "mirai:std/base"
-import "mirai:std/serial"
 import aed "plugins:animation/editor"
 import anim "plugins:animation/runtime"
 import cine "plugins:cinematics/runtime"
@@ -66,23 +64,12 @@ Control_Result :: struct {
     queued:bool `mirai:"label=Play: the command runs at the next tick of the world"`,
 }
 
-Add_Params :: struct {
-    part:Part,
-    timeline:editor.Api_Entity_Text `mirai:"text,entity,optional,label=Actor: the timeline it is of"`,
-    target:editor.Api_Entity_Text `mirai:"text,entity,optional,label=Actor: the entity the clip moves, a camera of its shots or an actor of its actions"`,
-    clip:base.Asset_Id `mirai:"optional,label=Timeline: the .anim its Animation plays (animation.clip.create makes one)"`,
-    playing:bool `mirai:"optional,label=Timeline: it starts by itself when its scene does"`,
-    name:[64]u8 `mirai:"text,optional,label=Actor: what the tracks and markers of the clip call it; empty: the name of its entity"`,
-}
-Add_Result :: struct {id:base.Entity_Id}
-
 @(private)
 register :: proc(s:^editor.Session) {
     editor.tool_entry(s,TOOL,"Cinematics",.Play)
     inspect_defaults:=Inspect_Params{time=-1}
     editor.api_method_register(s,{params=type_info_of(Inspect_Params),result=type_info_of(Inspect_Result),name="cinematics.inspect",summary="A timeline: the clip of its Animation and where it is, its shots and actions (the markers of the clip on its cameras and actors), the actors its clip moves, what its seat sees at a time, and the preview of the editor. animation.asset.inspect reads the keys and markers of the clip.",defaults=&inspect_defaults,flags={.Read_Only},run=api_inspect})
     editor.api_method_register(s,{params=type_info_of(Control_Params),result=type_info_of(Control_Result),name="cinematics.control",summary="Plays, pauses, resumes, stops or seeks the clip of a timeline: in Edit the head of the Tracks tool in the Cinematics tool, which shows the scene there without changing the document (animation.tracks.show for any clip); in Play the running world, as anim.animation_command does.",run=api_control})
-    editor.api_method_register(s,{params=type_info_of(Add_Params),result=type_info_of(Add_Result),name="cinematics.add",summary="Adds a timeline (an entity with a Cinematic and the Animation that plays its clip) or an actor: an entity anywhere that the clip moves and puts markers on by a name. Shots and actions are markers of the clip on its actors: animation.marker.set with their target. One step of undo.",run=api_add})
 }
 
 @(private)
@@ -96,7 +83,7 @@ timeline_find :: proc(call:^api.Call,w:core.World_Ref,named:[]u8,field:string) -
     e,found:=editor.api_call_entity(call,w,named,field)
     if !found {return core.NONE}
     timeline:=timeline_of(w,e)
-    if !editor.entity_has(w,timeline,cine.Cinematic) {api.call_failf(call,api.INVALID_PARAMS,"%s %s is no timeline nor an actor of one: give the entity with Cinematic, or add one with cinematics.add part Timeline",field,base.text_get(named));return core.NONE}
+    if !editor.entity_has(w,timeline,cine.Cinematic) {api.call_failf(call,api.INVALID_PARAMS,"%s %s is no timeline nor an actor of one: give the entity with Cinematic, or make one: scene.write with preset cinematic",field,base.text_get(named));return core.NONE}
     return timeline
 }
 
@@ -149,7 +136,7 @@ api_control :: proc(s:^editor.Session,call:^api.Call) {
     w:=editor.shown_world(s)
     timeline:=timeline_find(call,w,p.entity[:],"entity")
     if timeline==core.NONE {return}
-    if !editor.entity_has(w,timeline,anim.Animation) {api.call_fail(call,api.INVALID_PARAMS,"the timeline has no Animation, so it has no clip to control: add one to its entity whose asset is the .anim of its clip (scene.write, or cinematics.add part Timeline with clip)");return}
+    if !editor.entity_has(w,timeline,anim.Animation) {api.call_fail(call,api.INVALID_PARAMS,"the timeline has no Animation, so it has no clip to control: add one to its entity whose asset is the .anim of its clip (scene.write with components Animation asset)");return}
     value,_:=editor.entity_get(w,timeline,cine.Cinematic)
     out:=api.call_result(call,Control_Result)
     _,out.duration,_,_=anim.animation_progress(core.world_storage_of(w,anim.Playback),timeline)
@@ -177,24 +164,4 @@ api_control :: proc(s:^editor.Session,call:^api.Call) {
     copy(out.mode[:],"Edit")
     out.time=head
     out.status=.Stopped if p.command==.Stop else (.Playing if playing else .Paused)
-}
-
-@(private)
-api_add :: proc(s:^editor.Session,call:^api.Call) {
-    p:=api.call_params(call,Add_Params)
-    w:=editor.edited_world(s)
-    desc:=Part_Desc{part=p.part,clip=p.clip,playing=p.playing,name=serial.text_field(p.name[:])}
-    if p.part!=.Timeline {
-        desc.timeline=timeline_find(call,w,p.timeline[:],"timeline")
-        if desc.timeline==core.NONE {return}
-        found:bool
-        if desc.target,found=editor.api_call_entity(call,w,p.target[:],"target");!found {return}
-    }
-    if !editor.api_edit_begin(s,call,fmt.tprintf("Add %v",p.part)) {return}
-    e,problem:=part_add(s,w,desc)
-    if problem!="" {api.call_failf(call,api.INVALID_PARAMS,"the %v was not added: %s",p.part,problem)}
-    if !editor.api_edit_end(s,call,e!=core.NONE) {return}
-    // A new actor takes its place at the head.
-    if p.part==.Actor {aed.tracks_command(s,desc.timeline,.Seek,0,false,0)}
-    api.call_result(call,Add_Result).id=editor.api_entity_id(w,e)
 }

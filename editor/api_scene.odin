@@ -25,6 +25,7 @@ API_INSPECT_DEFAULT :: 256 // entities an inspect gives when a filter narrows it
 API_INSPECT_BRIEF :: 24     // and when none does
 
 Api_Inspect_Params :: struct {
+    world:Api_World `mirai:"optional,label=Game: the game of the caller that plays (that of its turn, or the Play of the user outside a turn) in place of the document; its entities are named by their handle too"`,
     root:[API_ENTITY_TEXT]u8 `mirai:"optional,text,entity,label=By its name or a path Parent/Child or its id: this entity and what hangs from it nested by children; the document scene.write takes"`,
     entity:[API_ENTITY_TEXT]u8 `mirai:"optional,text,entity,label=By its name or a path Parent/Child or its id or handle: only this entity"`,
     name:[128]u8 `mirai:"optional,text,label=Only the entities with this name; * stands for any run of characters"`,
@@ -33,8 +34,8 @@ Api_Inspect_Params :: struct {
     include_runtime:bool `mirai:"optional,label=Include hidden fields and transient component state for inspection"`,
     offset:int `mirai:"optional,min=0"`,
     limit:int `mirai:"optional,min=0,max=4096,clamp,label=Entities it gives at most; 0 or omitted: a few when no entity or name or component narrows them"`,
-    player:int `mirai:"optional,min=0,max=3,label=play.inspect: the run of that player of a game a turn plays on the network"`,
-    storages:bool `mirai:"optional,label=Include the storages of the world by name with their values: in play.inspect the score or the state of a match"`,
+    player:int `mirai:"optional,min=0,max=3,label=world Game: the run of that player of a game a turn plays on the network"`,
+    storages:bool `mirai:"optional,label=Include the storages of the world by name with their values: of a game the score or the state of a match"`,
     storage:[64]u8 `mirai:"optional,text,label=Only the storages with this name (* stands for any run of characters); implies storages; without entity or name or component it answers no entities"`,
 }
 
@@ -55,8 +56,9 @@ Api_File_Result :: struct {
 Api_Inspect_Result :: struct {
     path:[DOCUMENT_PATH_BYTES]u8 `mirai:"text,label=The file of the document; empty before it has one"`,
     dirty:bool `mirai:"label=Whether the document has unsaved changes"`,
-    playing:bool `mirai:"label=scene.inspect: whether the editor is out of Edit mode; play.inspect: true"`,
+    playing:bool `mirai:"label=Whether the editor is out of Edit mode; with world Game: true"`,
     total:int `mirai:"label=Entities alive in the world"`,
+    tick:u64 `mirai:"optional,label=With world Game: the tick of the game it was read at"`,
     offset:int,
     entities:[]Api_Inspect_Entity `mirai:"label=Parents before their children and siblings in their order"`,
     shown:int,
@@ -68,9 +70,9 @@ Api_Inspect_Result :: struct {
 }
 Api_Inspect_Entity :: struct {
     id:base.Entity_Id `mirai:"optional,label=The id; omitted for an entity of a game that has none"`,
-    entity:core.Entity `mirai:"optional,label=play.inspect: the handle of the entity in the game"`,
+    entity:core.Entity `mirai:"optional,label=With world Game: the handle of the entity in the game"`,
     name:[64]u8 `mirai:"text"`,
-    parent:serial.Json `mirai:"label=The id of the parent (in play.inspect its handle); null for a root"`,
+    parent:serial.Json `mirai:"label=The id of the parent (of a game its handle); null for a root"`,
     position:[3]f32 `mirai:"label=Local to the parent"`,
     rotation_deg:[3]f32 `mirai:"label=Local to the parent in degrees"`,
     scale:[3]f32,
@@ -79,8 +81,8 @@ Api_Inspect_Entity :: struct {
     enabled:bool,
     active:bool `mirai:"label=Whether it runs: false when it or a parent is disabled"`,
     off:[][64]u8 `mirai:"text,optional,label=The components turned off by themselves"`,
-    prefab:Api_Inspect_Prefab `mirai:"optional,label=scene.inspect: the link of a member of an instance of a prefab"`,
-    components:serial.Json `mirai:"label=By name the value of each component as component.list describes it with Entity fields holding ids (in play.inspect handles); without components in the params the list of their names"`,
+    prefab:Api_Inspect_Prefab `mirai:"optional,label=Of the document: the link of a member of an instance of a prefab"`,
+    components:serial.Json `mirai:"label=By name the value of each component as component.list describes it with Entity fields holding ids (of a game handles); without components in the params the list of their names"`,
 }
 Api_Inspect_Prefab :: struct {
     instance:base.Entity_Id `mirai:"label=The instance placed in the document as prefab.list lists it"`,
@@ -91,9 +93,8 @@ Api_Inspect_Prefab :: struct {
 
 @(private)
 api_scene_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="scene.inspect",summary="The entities of the document in save order with their place and the names of their components; with components, their transforms, prefab links and values; with root, that entity and what hangs from it as the nested document scene.write takes.",params=type_info_of(Api_Inspect_Params),result=type_info_of(Api_Inspect_Result),flags={.Core,.Read_Only},run=api_scene_inspect})
-    api_register(s,st,{name="play.inspect",summary="As scene.inspect, on the world of the game that plays, whose entities are named by their handle; with storages, also its storages: the score or the state of a match.",params=type_info_of(Api_Inspect_Params),result=type_info_of(Api_Inspect_Result),flags={.Core,.Read_Only},run=api_play_inspect})
-    api_register(s,st,{name="play.player",summary="The focused local seat of the game that plays, the body it drives and the camera that shows it. play.inspect with include_runtime reads the rest.",params=type_info_of(Api_Play_Player_Params),result=type_info_of(Api_Play_Player_Result),flags={.Read_Only},run=api_play_player})
+    api_register(s,st,{name="scene.inspect",summary="The entities of the document in save order with their place and the names of their components; with components, their transforms, prefab links and values; with root, that entity and what hangs from it as the nested document scene.write takes; with world Game, those of the game that plays, and with storages its storages: the score or the state of a match. One value alone: entity, components with the one component and _select.",params=type_info_of(Api_Inspect_Params),result=type_info_of(Api_Inspect_Result),flags={.Core,.Read_Only},run=api_scene_inspect})
+    api_register(s,st,{name="play.player",summary="The focused local seat of the game that plays, the body it drives and the camera that shows it. scene.inspect with world Game and include_runtime reads the rest.",params=type_info_of(Api_Play_Player_Params),result=type_info_of(Api_Play_Player_Result),flags={.Read_Only},run=api_play_player})
     api_scene_write_register(s,st)
     api_register(s,st,{name="scene.save",flags={.Core},summary="Writes the document to its file or to another, which becomes its file.",params=type_info_of(Api_Path_Params),result=type_info_of(Api_File_Result),run=api_scene_save})
     api_register(s,st,{name="scene.open",summary="Opens a scene or a prefab file as the document, with an empty history.",params=type_info_of(Api_Path_Params),result=type_info_of(Api_File_Result),flags={.Destructive},run=api_scene_open})
@@ -228,13 +229,15 @@ api_entities_ordered :: proc(w:core.World_Ref,allocator:=context.temp_allocator)
 }
 
 @(private)
-api_inspect_run :: proc(s:^Session,call:^api.Call,w:core.World_Ref,play:bool) {
+api_scene_inspect :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Inspect_Params)
+    a:Api_Write
+    if !api_write_world(s,call,&a,params.world,params.player,false) {return}
+    w,play:=a.w,a.run!=nil
     narrowed:=base.text_get(params.entity[:])!="" || base.text_get(params.name[:])!="" || base.text_get(params.component[:])!=""
     if params.limit==0 {params.limit=narrowed || base.text_get(params.root[:])!=""?API_INSPECT_DEFAULT:API_INSPECT_BRIEF}
     if base.text_get(params.root[:])!="" {
-        if play {api.call_fail(call,api.INVALID_PARAMS,"root is of scene.inspect: the document scene.write takes");return}
-        api_inspect_tree(s,call,w,params)
+        api_inspect_tree(&a,params)
         return
     }
     st:=api_state(s)
@@ -270,6 +273,7 @@ api_inspect_run :: proc(s:^Session,call:^api.Call,w:core.World_Ref,play:bool) {
     r:=api.call_result(call,Api_Inspect_Result)
     base.text_set(r.path[:],document_path(s.document))
     r.dirty,r.playing,r.total,r.offset=document_dirty(s),play || s.mode!=.Edit,entities.alive,offset
+    if t:=core.world_storage_of(w,core.Time);play && t!=nil {r.tick=t.tick}
     only_storages:=storages!="" && !narrowed
     candidates:=[]core.Entity{only} if only!=core.NONE else api_entities_ordered(w)
     if only_storages {candidates=nil}
@@ -344,16 +348,6 @@ api_name_match :: proc "contextless" (pattern,name:string) -> bool {
     return p==len(pattern)
 }
 
-@(private)
-api_scene_inspect :: proc(s:^Session,call:^api.Call) {api_inspect_run(s,call,edited_world(s),false)}
-
-@(private)
-api_play_inspect :: proc(s:^Session,call:^api.Call) {
-    r,_:=api_play_run(s,call,api.call_params(call,Api_Inspect_Params).player)
-    if r==nil {api_no_game(call);return}
-    api_inspect_run(s,call,core.world_ref(r.world,s.info),true)
-}
-
 // ---------------------------------------------------------------- values
 
 // The path of the first read-only field whose bytes the reader changed; "" when none did.
@@ -375,18 +369,19 @@ component_start :: proc(t:^core.Table_Info,bytes:[]u8) {
 // names. from, a value as the API shows it, is where it starts instead,
 // keeping of the current value only what the API neither shows nor changes:
 // hidden, transient and read-only fields. An Entity field holds the id it
-// names, which must be an entity of the scene of w. path names the value in
+// names, which must be an entity of the scene of w; with handles, of a game
+// that plays, it holds the handle of a live entity. path names the value in
 // the messages.
-component_value_read :: proc(w:core.World_Ref,t:^core.Table_Info,current:rawptr,schema:^serial.Schema,type:serial.Type_Index,r:^serial.Text_Reader,bytes:[]u8,path:string,allocator:runtime.Allocator,read_only_kept:=false,from:[]u8=nil) -> (message:string,ok:bool) {
+component_value_read :: proc(w:core.World_Ref,t:^core.Table_Info,current:rawptr,schema:^serial.Schema,type:serial.Type_Index,r:^serial.Text_Reader,bytes:[]u8,path:string,allocator:runtime.Allocator,read_only_kept:=false,from:[]u8=nil,handles:=false) -> (message:string,ok:bool) {
     if from!=nil {
         copy(bytes,from)
         if current!=nil {
             kept:=make([]u8,len(bytes),allocator)
-            api_value_out(w,t.info,current,kept)
+            api_value_out(w,t.info,current,kept,handles)
             author.fields_kept(schema,type,bytes,kept)
         }
     } else if current!=nil {
-        api_value_out(w,t.info,current,bytes)
+        api_value_out(w,t.info,current,bytes,handles)
     } else {
         component_start(t,bytes)
     }
@@ -403,6 +398,10 @@ component_value_read :: proc(w:core.World_Ref,t:^core.Table_Info,current:rawptr,
         field:=cast(^u64)&bytes[offset]
         named:=field^
         if named==0 {continue}
+        if handles {
+            if !core.alive(core.world_entities(w),core.Entity(named)) {return fmt.aprintf("%s names 0x%016x, which is not alive in the game: Entity fields of a game hold handles as scene.inspect with world Game gives them",path,named,allocator=allocator),false}
+            continue
+        }
         target:=api_entity(w,base.Entity_Id(named))
         if target==core.NONE {return fmt.aprintf("%s names 0x%016x, which is not an entity of the scene",path,named,allocator=allocator),false}
         field^=u64(target)

@@ -222,7 +222,7 @@ scene_target :: proc(f:^Scene_File) -> Scene_Target {
             _,found:=asset.scene_entity_find(&(^Scene_File)(user).scene,id)
             return Node(id) if found else 0,""
         },
-        named=proc(user:rawptr,text,what:string,allocator:runtime.Allocator) -> ([]Node,string) {
+        named=proc(user:rawptr,text,what:string,allocator:runtime.Allocator) -> (Node,string) {
             f:=(^Scene_File)(user)
             at:=base.Entity_Id(0)
             if id,is_id:=serial.text_parse_hex(text);is_id && (len(text)==16 || strings.has_prefix(text,"0x")) {
@@ -237,8 +237,8 @@ scene_target :: proc(f:^Scene_File) -> Scene_Target {
                     if at=next;at==0 {break}
                 }
             }
-            if at==0 {return nil,fmt.aprintf("%s: %q names no entity of the file; give its id, or its path of names from the top",what,text,allocator=allocator)}
-            return slice.clone([]Node{Node(at)},allocator),""
+            if at==0 {return 0,fmt.aprintf("%s: %q names no entity of the file; give its id, or its path of names from the top",what,text,allocator=allocator)}
+            return Node(at),""
         },
         children=proc(user:rawptr,parent:Node,allocator:runtime.Allocator) -> []Node {
             f:=(^Scene_File)(user)

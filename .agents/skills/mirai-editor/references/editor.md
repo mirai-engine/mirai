@@ -264,7 +264,7 @@ Screen and input of the processes:
 
 A turn plays with online players inside the editor (`Play_Provider.turn`): the plugin creates a
 run per player (`Run.player` from 1), without compiling or opening processes; `play.step` advances
-them together and gives the input to that of `player`, which `play.inspect`, `play.player` and
+them together and gives the input to that of `player`, which `scene.inspect`, `play.player` and
 `capture` read.
 
 In a shared session, the host's presence carries what its plugin offers of the game it serves
