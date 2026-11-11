@@ -53,8 +53,17 @@ Shadow_Map shadow_map_at(StructuredBuffer<uint4> data, uint rows, uint map) {
     return shadow_map_from(data[at], data[at + 1u], data[at + 2u], data[at + 3u], data[at + 4u], data[at + 5u]);
 }
 
-uint shadow_light_word(StructuredBuffer<uint4> data, uint light) {
-    return data[light >> 2u][light & 3u];
+// The word of a light from its slot (render/abi); 0 for a light without maps.
+uint shadow_light_word(StructuredBuffer<uint4> data, uint rows, uint light) {
+    uint slots = rows * 2u;
+    for (uint k = 0u; k < slots; k++) {
+        uint at = (((light * SHADOW_LIGHT_HASH) >> 16u) + k) & (slots - 1u);
+        uint4 row = data[at >> 1u];
+        uint2 slot = (at & 1u) != 0u ? row.zw : row.xy;
+        if (slot.x == light + 1u) return slot.y;
+        if (slot.x == 0u) return 0u;
+    }
+    return 0u;
 }
 
 bool shadow_map_orthographic(Shadow_Map m) { return m.kind == SHADOW_MAP_ORTHOGRAPHIC; }
@@ -185,7 +194,7 @@ uint shadow_face_of(float3 v) {
 }
 
 #ifdef SHADOW_DATA_SLOT
-// The buffer of the maps of the view (render.pass_shadow_data): the words of
+// The buffer of the maps of the view (render.pass_shadow_data): the slots of
 // the lights, then the rows of the maps from Frame.sun_maps.y. With
 // SUN_SHADOW_SLOT.
 [[vk::binding(SHADOW_DATA_SLOT, 0)]] StructuredBuffer<uint4> view_shadow_data : register(MIRAI_REGISTER(t, SHADOW_DATA_SLOT), space0);
@@ -196,7 +205,7 @@ uint shadow_face_of(float3 v) {
 bool light_map_of(uint light, float3 position, out Shadow_Map m) {
     m = (Shadow_Map)0;
     if (frame.sun_maps.z == 0u) return false;
-    uint word = shadow_light_word(view_shadow_data, light);
+    uint word = shadow_light_word(view_shadow_data, frame.sun_maps.y, light);
     if (word == 0u) return false;
     uint faces = word >> SHADOW_LIGHT_FACES;
     if ((faces & (1u << SHADOW_SPOT_FACE)) != 0u) {
