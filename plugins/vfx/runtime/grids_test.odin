@@ -129,14 +129,3 @@ emitters_read_the_grids_they_bind_or_their_own :: proc(t:^testing.T) {
     base.text_set(bound.sources[0].grid[:],"lake")
     testing.expect_value(t,read(&sync,&shown,&bound,river)[0],-1)
 }
-
-// A bake given up is no longer pending, and a later one can be asked.
-@(test)
-a_grid_bake_given_up_is_no_longer_pending :: proc(t:^testing.T) {
-    sync:=new(Particle_Sync);defer free(sync)
-    defer delete(sync.grids.entries)
-    append(&sync.grids.entries,Grid_Entry{entity=core.Entity(7),name=1,cells={2,1,1},layers=1})
-    testing.expect(t,grid_bake_ask(sync,core.Entity(7)) && grid_bake_pending(sync))
-    grid_bake_cancel(sync)
-    testing.expect(t,!grid_bake_pending(sync))
-}

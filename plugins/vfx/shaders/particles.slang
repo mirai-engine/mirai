@@ -106,11 +106,6 @@ struct Particle_Event {
 #define PARTICLE_EVENT_CAPACITY 16384u
 #define PARTICLE_EVENTS_AT 64u // words of particle_queue before the events: their counts and dispatches
 #define PARTICLE_EVENT_WORDS 8u
-// After the events: how many reports the frame wrote and the origin of their places
-// (vfx.Reports_Head), then the reports (vfx.Gpu_Report).
-#define PARTICLE_REPORTS_AT (PARTICLE_EVENTS_AT + 2u * PARTICLE_EVENT_CAPACITY * PARTICLE_EVENT_WORDS)
-#define PARTICLE_REPORT_CAPACITY 1024u
-#define PARTICLE_REPORT_WORDS 12u
 
 // The resources of an emitter in particle_frame: the surface of its shape,
 // then those of its program, in the order it declares them.
@@ -124,7 +119,7 @@ struct Particle_Event {
 #define PARTICLE_RESOURCE_EMITTER 5u
 #define PARTICLE_RESOURCE_DATA 6u
 #define PARTICLE_DATA_ENTRIES 4096u      // vfx.DATA_ENTRIES
-#define PARTICLE_DATA_GAME_ENTRIES 256u  // vfx.DATA_GAME_ENTRIES
+#define PARTICLE_REPORT_WORDS 11u        // vfx.REPORT_WORDS
 #define PARTICLE_SEGMENT_BYTES 64u
 // The stages of an emitter after its resources (vfx.Gpu_Stage).
 #define PARTICLE_STAGES 32u
@@ -320,10 +315,10 @@ Particle_Volume_Row particle_volume_at(uint at) {
 }
 
 // A stage of an emitter (vfx.Gpu_Stage): its kind, the resource row of its grid, its
-// iterations, the radius of its neighbors, the grid resources it writes besides its
-// own and those of them that start the stage at zero, a bit each.
+// iterations, the grid resources it writes besides its own and those of them that
+// start the stage at zero, a bit each.
 struct Particle_Stage {
-    uint kind; uint row; uint iterations; float neighbors;
+    uint kind; uint row; uint iterations;
     uint writes; uint clears;
 };
 
@@ -333,9 +328,8 @@ Particle_Stage particle_stage_of(uint slot, uint k) {
     if (frame_at == INVALID || k >= PARTICLE_STAGES) return s;
     uint at = frame_at + PARTICLE_RESOURCES * PARTICLE_RESOURCE_BYTES + k * PARTICLE_STAGE_BYTES;
     uint4 w = particle_frame.Load4(at);
-    uint2 x = particle_frame.Load2(at + 16u);
-    s.kind = w.x; s.row = w.y; s.iterations = w.z; s.neighbors = asfloat(w.w);
-    s.writes = x.x; s.clears = x.y;
+    s.kind = w.x; s.row = w.y; s.iterations = w.z; s.writes = w.w;
+    s.clears = particle_frame.Load(at + 16u);
     return s;
 }
 
@@ -364,21 +358,6 @@ Particle_Event particle_event_load(uint half, uint at) {
     ev.velocity = asfloat(uint3(particle_queue[base + 4u], particle_queue[base + 5u], particle_queue[base + 6u]));
     ev.color = particle_queue[base + 7u];
     return ev;
-}
-
-// Tells the game of a particle whose emitter's reports name what happened to it.
-void particle_report(uint slot, uint kind, float3 position, float3 velocity, float3 normal) {
-    if (particle_emitters[slot].program.z != kind) return;
-    uint at;
-    InterlockedAdd(particle_queue[PARTICLE_REPORTS_AT], 1u, at);
-    if (at >= PARTICLE_REPORT_CAPACITY) return;
-    uint base = PARTICLE_REPORTS_AT + 4u + at * PARTICLE_REPORT_WORDS;
-    particle_queue[base] = asuint(position.x); particle_queue[base + 1u] = asuint(position.y); particle_queue[base + 2u] = asuint(position.z);
-    particle_queue[base + 3u] = slot;
-    particle_queue[base + 4u] = asuint(velocity.x); particle_queue[base + 5u] = asuint(velocity.y); particle_queue[base + 6u] = asuint(velocity.z);
-    particle_queue[base + 7u] = kind;
-    particle_queue[base + 8u] = asuint(normal.x); particle_queue[base + 9u] = asuint(normal.y); particle_queue[base + 10u] = asuint(normal.z);
-    particle_queue[base + 11u] = 0u;
 }
 
 void particle_event_store(uint half, uint at, Particle_Event ev) {

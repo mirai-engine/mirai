@@ -71,10 +71,19 @@ Mirai_Vfx_Surface mirai_vfx_surface_at(Mirai_Vfx_Context ctx, uint resource, uin
     return particle_surface_at(particle_resource(ctx.emitter, 1u + resource), triangle, barycentric, particle_emitters[ctx.emitter].step.x);
 }
 
+// A point of a bone of the Bones shape: where it is in the world, the way the
+// bone goes (from the joint of its parent to its own) and how fast it moves.
+struct Particle_Bone {
+    float3 position;
+    float3 axis;
+    float3 velocity;   // m/s
+    bool valid;
+};
+
 // The point of a bone at along (0: the joint of its parent, 1: its own), as
 // it is this frame, and how fast it moves since the frame before over dt.
-Mirai_Vfx_Bone particle_bone_at(Particle_Resource r, uint bone, float along, float dt) {
-    Mirai_Vfx_Bone b = (Mirai_Vfx_Bone)0;
+Particle_Bone particle_bone_at(Particle_Resource r, uint bone, float along, float dt) {
+    Particle_Bone b = (Particle_Bone)0;
     if (r.kind != PARTICLE_RESOURCE_BONES || bone >= r.count) return b;
     Particle_Segment s = particle_segment_at(r.first + bone * PARTICLE_SEGMENT_BYTES);
     b.position = transform_point(r.world, lerp(s.start, s.end, along));
@@ -82,16 +91,14 @@ Mirai_Vfx_Bone particle_bone_at(Particle_Resource r, uint bone, float along, flo
     b.velocity = dt > 0.0 ? (b.position - before) / dt : float3(0.0);
     float3 axis = transform_vector(r.world, s.end - s.start);
     b.axis = dot(axis, axis) > 1e-12 ? normalize(axis) : float3(0.0, 1.0, 0.0);
-    b.bone = bone;
-    b.along = along;
     b.valid = true;
     return b;
 }
 
 // A point of the bones chosen by length: the bone whose running length
 // passes a random share of the whole, and a point of it chosen evenly.
-Mirai_Vfx_Bone particle_bone_sample(Particle_Resource r, inout uint seed, float dt) {
-    if (r.kind != PARTICLE_RESOURCE_BONES || r.count == 0u) return (Mirai_Vfx_Bone)0;
+Particle_Bone particle_bone_sample(Particle_Resource r, inout uint seed, float dt) {
+    if (r.kind != PARTICLE_RESOURCE_BONES || r.count == 0u) return (Particle_Bone)0;
     float wanted = random01(seed) * particle_segment_at(r.first + (r.count - 1u) * PARTICLE_SEGMENT_BYTES).length;
     uint low = 0u, high = r.count - 1u;
     while (low < high) {
@@ -99,14 +106,6 @@ Mirai_Vfx_Bone particle_bone_sample(Particle_Resource r, inout uint seed, float 
         if (particle_segment_at(r.first + middle * PARTICLE_SEGMENT_BYTES).length <= wanted) low = middle + 1u; else high = middle;
     }
     return particle_bone_at(r, low, random01(seed), dt);
-}
-
-Mirai_Vfx_Bone mirai_vfx_bone_sample(Mirai_Vfx_Context ctx, uint resource, inout uint seed) {
-    return particle_bone_sample(particle_resource(ctx.emitter, 1u + resource), seed, particle_emitters[ctx.emitter].step.x);
-}
-
-Mirai_Vfx_Bone mirai_vfx_bone_at(Mirai_Vfx_Context ctx, uint resource, uint bone, float along) {
-    return particle_bone_at(particle_resource(ctx.emitter, 1u + resource), bone, along, particle_emitters[ctx.emitter].step.x);
 }
 
 // The grid of a resource of an emitter; false without one.
@@ -272,22 +271,6 @@ void mirai_vfx_grid_splat(Mirai_Vfx_Context ctx, uint resource, float3 position,
 #endif
 }
 
-#ifdef PARTICLE_STAGE_PASS
-// The hash of the neighbors (vfx.neighbors_buffer): the count of each bucket, where each
-// starts among the entries, the sums of the blocks of buckets, then the entries.
-[[vk::binding(SLOT_PASS7, 0)]] RWStructuredBuffer<uint> particle_neighbors : register(MIRAI_REGISTER(u, SLOT_PASS7), space0);
-#define PARTICLE_NEIGHBOR_BUCKETS 65536u
-#define PARTICLE_NEIGHBOR_BLOCK 256u
-#define PARTICLE_NEIGHBOR_STARTS PARTICLE_NEIGHBOR_BUCKETS
-#define PARTICLE_NEIGHBOR_SUMS (2u * PARTICLE_NEIGHBOR_BUCKETS)
-#define PARTICLE_NEIGHBOR_ITEMS (2u * PARTICLE_NEIGHBOR_BUCKETS + PARTICLE_NEIGHBOR_BUCKETS / PARTICLE_NEIGHBOR_BLOCK)
-
-uint particle_neighbor_bucket(int3 cell, uint emitter) {
-    uint h = uint(cell.x) * 73856093u ^ uint(cell.y) * 19349663u ^ uint(cell.z) * 83492791u ^ emitter * 2654435761u;
-    return hash_u32(h) & (PARTICLE_NEIGHBOR_BUCKETS - 1u);
-}
-#endif
-
 // Where the Attributes of the particle at index of the pool are.
 uint particle_attributes(uint slot, uint index) {
     uint2 data = particle_emitters[slot].data.xy;
@@ -329,27 +312,6 @@ uint mirai_vfx_emitter_capacity(Mirai_Vfx_Context ctx, uint resource) {
     return particle_emitter_resource(ctx, resource, other) ? particle_emitters[other].range.y : 0u;
 }
 
-// The particles an emitter drew last frame: those on its drawn list.
-uint particle_states_alive(uint slot) {
-#ifdef PARTICLES_WRITABLE
-    return particle_states[slot].instance_count;
-#else
-    return 0u;
-#endif
-}
-
-uint mirai_vfx_emitter_alive(Mirai_Vfx_Context ctx, uint resource) {
-    uint other;
-    if (!particle_emitter_resource(ctx, resource, other)) return 0u;
-    return min(particle_states_alive(other), particle_emitters[other].range.y);
-}
-
-uint mirai_vfx_emitter_drawn(Mirai_Vfx_Context ctx, uint resource, uint i) {
-    uint other;
-    if (!particle_emitter_resource(ctx, resource, other) || i >= particle_emitters[other].range.y) return INVALID;
-    return particle_drawn(other, i) - particle_emitters[other].range.x;
-}
-
 bool mirai_vfx_emitter_particle(Mirai_Vfx_Context ctx, uint resource, uint slot, out Mirai_Vfx_Particle value) {
     uint other;
     value = (Mirai_Vfx_Particle)0;
@@ -389,16 +351,16 @@ int mirai_vfx_emitter_birth(Mirai_Vfx_Context ctx, uint resource, uint birth, ou
 }
 
 // A data channel (vfx/runtime/data.odin): its bytes in the world buffer, the
-// words of an entry, what games pushed and the copy the frame writes.
-struct Particle_Data_Channel { uint at; uint words; uint game; uint parity; };
+// words of an entry and the copy the frame writes.
+struct Particle_Data_Channel { uint at; uint words; uint parity; };
 
 bool particle_data_of(Mirai_Vfx_Context ctx, uint resource, out Particle_Data_Channel d) {
     Particle_Resource r = particle_resource(ctx.emitter, 1u + resource);
-    d.at = r.mesh; d.words = r.first; d.game = r.count & 0x7FFFFFFFu; d.parity = r.count >> 31;
+    d.at = r.mesh; d.words = r.first; d.parity = r.count;
     return r.kind == PARTICLE_RESOURCE_DATA && d.words > 0u;
 }
 
-// Where a copy is: its counter, padding, then its entries; after both, what games pushed.
+// Where a copy is: its counter, padding, then its entries.
 uint particle_data_copy(Particle_Data_Channel d, uint parity) { return d.at + parity * (16u + PARTICLE_DATA_ENTRIES * d.words * 4u); }
 
 uint particle_data_written(Particle_Data_Channel d) {
@@ -408,17 +370,14 @@ uint particle_data_written(Particle_Data_Channel d) {
 uint mirai_vfx_data_count(Mirai_Vfx_Context ctx, uint resource) {
     Particle_Data_Channel d;
     if (!particle_data_of(ctx, resource, d)) return 0u;
-    return particle_data_written(d) + d.game;
+    return particle_data_written(d);
 }
 
 uint mirai_vfx_data_word(Mirai_Vfx_Context ctx, uint resource, uint entry, uint word) {
     Particle_Data_Channel d;
     if (!particle_data_of(ctx, resource, d) || word >= d.words) return 0u;
-    uint written = particle_data_written(d);
-    if (entry < written) return particle_world_bytes.Load(particle_data_copy(d, 1u - d.parity) + 16u + (entry * d.words + word) * 4u);
-    entry -= written;
-    if (entry >= d.game) return 0u;
-    return particle_world_bytes.Load(particle_data_copy(d, 2u) + (entry * d.words + word) * 4u);
+    if (entry >= particle_data_written(d)) return 0u;
+    return particle_world_bytes.Load(particle_data_copy(d, 1u - d.parity) + 16u + (entry * d.words + word) * 4u);
 }
 
 // Updates and stages append to data channels in the last step of the frame
@@ -496,32 +455,6 @@ uint mirai_vfx_grid_word_add(Mirai_Vfx_Context ctx, uint resource, int3 index, u
     return before;
 }
 
-int mirai_vfx_grid_word_min(Mirai_Vfx_Context ctx, uint resource, int3 index, uint word, int value) {
-    int before = 0;
-#ifdef PARTICLES_WRITABLE
-    uint address;
-    uint seen = 0u;
-    if (particle_grid_word(ctx, resource, index, word, true, address)) {
-        particle_world_bytes.InterlockedMin(address, value, seen);
-        before = asint(seen);
-    }
-#endif
-    return before;
-}
-
-int mirai_vfx_grid_word_max(Mirai_Vfx_Context ctx, uint resource, int3 index, uint word, int value) {
-    int before = 0;
-#ifdef PARTICLES_WRITABLE
-    uint address;
-    uint seen = 0u;
-    if (particle_grid_word(ctx, resource, index, word, true, address)) {
-        particle_world_bytes.InterlockedMax(address, value, seen);
-        before = asint(seen);
-    }
-#endif
-    return before;
-}
-
 Mirai_Vfx_View mirai_vfx_view() {
     Mirai_Vfx_View v;
     v.position = frame.camera_position.xyz;
@@ -564,50 +497,6 @@ float mirai_vfx_scene_roughness(float2 uv) {
 #else
     return 1.0;
 #endif
-}
-
-Mirai_Vfx_Neighbors mirai_vfx_neighbors(Mirai_Vfx_Context ctx, float3 position) {
-    Mirai_Vfx_Neighbors walk = (Mirai_Vfx_Neighbors)0;
-    walk.position = position;
-    walk.emitter = ctx.emitter;
-    walk.particle = ctx.particle;
-    walk.radius = asfloat(particle_emitters[ctx.emitter].program.w);
-    walk.around = walk.radius > 0.0 ? 0u : 27u;
-    walk.cell = int3(floor(position / max(walk.radius, 1e-6)));
-    return walk;
-}
-
-bool mirai_vfx_neighbor_next(inout Mirai_Vfx_Neighbors walk, out Mirai_Vfx_Neighbor neighbor) {
-    neighbor = (Mirai_Vfx_Neighbor)0;
-#ifdef PARTICLE_STAGE_PASS
-    [loop]
-    while (true) {
-        while (walk.at < walk.end) {
-            uint index = particle_neighbors[PARTICLE_NEIGHBOR_ITEMS + walk.at];
-            walk.at++;
-            if (index == walk.particle) continue;
-            Particle p = particles[index];
-            if (p.lifetime <= 0.0 || particle_emitter_of(p) != walk.emitter) continue;
-            float3 at = particle_world(walk.emitter, p.position);
-            // Its own cell: another one of the same bucket is not around.
-            int3 offset = int3(int(walk.around - 1u) % 3 - 1, int((walk.around - 1u) / 3u) % 3 - 1, int((walk.around - 1u) / 9u) - 1);
-            if (any(int3(floor(at / walk.radius)) != walk.cell + offset)) continue;
-            float distance = length(at - walk.position);
-            if (distance > walk.radius) continue;
-            neighbor.position = at; neighbor.distance = distance;
-            neighbor.velocity = particle_world_vector(walk.emitter, p.velocity); neighbor.particle = index;
-            neighbor.values = particle_emitters[walk.emitter].data.y >= 16u ? asfloat(particle_data.Load4(particle_attributes(walk.emitter, index))) : float4(0.0);
-            return true;
-        }
-        if (walk.around >= 27u) return false;
-        int3 offset = int3(int(walk.around % 3u) - 1, int((walk.around / 3u) % 3u) - 1, int(walk.around / 9u) - 1);
-        walk.around++;
-        uint bucket = particle_neighbor_bucket(walk.cell + offset, walk.emitter);
-        walk.at = particle_neighbors[PARTICLE_NEIGHBOR_STARTS + bucket];
-        walk.end = walk.at + particle_neighbors[bucket];
-    }
-#endif
-    return false;
 }
 
 // The scene, for the shaders that trace it (trace.slang before this file): the

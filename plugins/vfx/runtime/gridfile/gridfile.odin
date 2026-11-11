@@ -3,7 +3,7 @@ package gridfile
 import "mirai:asset"
 import "mirai:std/base"
 
-// .grid, a state of a grid of the vfx plugin baked to a file: what the
+// .grid, a state of a grid of the vfx plugin in a file: what the
 // cells of its region held, which a Particle_Grid that names it starts from.
 //
 //   grid   Grid_Info, one row
@@ -22,7 +22,7 @@ Grid_Desc :: struct {
     id:base.Asset_Id,
     info:Grid_Info,
     cells:[]f32,
-    source:^asset.Import_Info, // of a state an import wrote; nil for one baked here
+    source:^asset.Import_Info, // of a state an import wrote; nil for one written by code
 }
 
 // The floats a grid of info holds: four for each layer of each cell.

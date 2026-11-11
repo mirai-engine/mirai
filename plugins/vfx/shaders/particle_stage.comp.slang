@@ -6,15 +6,12 @@
 // (y, from params.emitter_first): the stage reads what the one before left and leaves
 // the layers of its cell in the other copy, which takes the rest of them as
 // they were. 2: the grids of each emitter that its stage k went over in this
-// iteration or wrote take the copy it left; 11: those its stage k over the
-// particles wrote. 10: a thread per cell of each
+// iteration or wrote take the copy it left; 5: those its stage k over the
+// particles wrote. 4: a thread per cell of each
 // emitter (y): the grids its stage k writes besides its own start the stage
 // as they are, or at zero those declared cleared. 3: the cells that came into the region of
 // each grid (y; their rows from params.stage on) since its cells were cleared
-// start at zero. 4 to 9: the hash
-// of the neighbors, from where the particles of the emitters that read them
-// are: buckets to zero, a count by bucket, where each bucket starts (by block,
-// then the blocks), then each particle in its place.
+// start at zero.
 //! variant hw MIRAI_HW_RT=1
 //! per vfx program
 #define PARTICLES_WRITABLE
@@ -27,8 +24,6 @@
 
 struct Params_Block { uint mode; uint emitters; uint count; uint parity; uint step; uint last; uint stage; uint iteration; uint program; uint first; uint emitter_first; uint pad0; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
-
-groupshared uint sums[MIRAI_GROUP_X];
 
 // The emitter of a living particle at a slot of the pool in use; false for a free slot or
 // one of a range that went.
@@ -44,22 +39,9 @@ bool stage_particle(uint index, out Particle p, out uint slot, out Particle_Emit
 // The time of the step for the context of a stage.
 float stage_time(Particle_Emitter e) { return e.step.w - e.step.x + float(params.step + 1u) * e.step.y; }
 
-// The bucket of the cell of a particle of an emitter that reads neighbors; false otherwise.
-bool stage_bucket(uint index, out uint bucket) {
-    Particle p;
-    uint slot;
-    Particle_Emitter e;
-    bucket = 0u;
-    if (!stage_particle(index, p, slot, e)) return false;
-    float radius = asfloat(e.program.w);
-    if (!(radius > 0.0)) return false;
-    bucket = particle_neighbor_bucket(int3(floor(particle_world(slot, p.position) / radius)), slot);
-    return true;
-}
-
 [shader("compute")]
 [numthreads(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z)]
-void main(uint3 id : SV_DispatchThreadID, uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID) {
+void main(uint3 id : SV_DispatchThreadID) {
     particle_step_last = params.last != 0u;
     switch (params.mode) {
     case 0u: {
@@ -113,7 +95,7 @@ void main(uint3 id : SV_DispatchThreadID, uint3 group : SV_GroupID, uint3 local 
         return;
     }
     case 2u:
-    case 11u: {
+    case 5u: {
         uint slot = id.x;
         if (slot >= params.emitters) return;
         Particle_Emitter e = particle_emitters[slot];
@@ -130,7 +112,7 @@ void main(uint3 id : SV_DispatchThreadID, uint3 group : SV_GroupID, uint3 local 
         }
         return;
     }
-    case 10u: {
+    case 4u: {
         uint slot = id.y;
         if (slot >= params.emitters) return;
         Particle_Emitter e = particle_emitters[slot];
@@ -167,73 +149,6 @@ void main(uint3 id : SV_DispatchThreadID, uint3 group : SV_GroupID, uint3 local 
             particle_world_bytes.Store4(particle_grid_address(g, 0u, at, layer), uint4(0u));
             particle_world_bytes.Store4(particle_grid_address(g, 1u, at, layer), uint4(0u));
         }
-        return;
-    }
-    case 4u:
-        if (id.x < PARTICLE_NEIGHBOR_BUCKETS) particle_neighbors[id.x] = 0u;
-        return;
-    case 5u: {
-        uint bucket;
-        if (id.x < params.count && stage_bucket(id.x, bucket)) InterlockedAdd(particle_neighbors[bucket], 1u);
-        return;
-    }
-    case 6u: {
-        // A block of buckets: each thread adds up a run of them, then the group its runs.
-        uint per = PARTICLE_NEIGHBOR_BLOCK / MIRAI_GROUP_X;
-        uint first = group.x * PARTICLE_NEIGHBOR_BLOCK + local.x * per;
-        uint run = 0u;
-        for (uint i = 0u; i < per; i++) {
-            particle_neighbors[PARTICLE_NEIGHBOR_STARTS + first + i] = run;
-            run += particle_neighbors[first + i];
-        }
-        sums[local.x] = run;
-        GroupMemoryBarrierWithGroupSync();
-        for (uint d = 1u; d < MIRAI_GROUP_X; d <<= 1u) {
-            uint before = local.x >= d ? sums[local.x - d] : 0u;
-            GroupMemoryBarrierWithGroupSync();
-            sums[local.x] += before;
-            GroupMemoryBarrierWithGroupSync();
-        }
-        uint before = local.x > 0u ? sums[local.x - 1u] : 0u;
-        for (uint i = 0u; i < per; i++) particle_neighbors[PARTICLE_NEIGHBOR_STARTS + first + i] += before;
-        if (local.x == MIRAI_GROUP_X - 1u) particle_neighbors[PARTICLE_NEIGHBOR_SUMS + group.x] = sums[local.x];
-        return;
-    }
-    case 7u: {
-        // The blocks: where each starts, after those before it.
-        uint blocks = PARTICLE_NEIGHBOR_BUCKETS / PARTICLE_NEIGHBOR_BLOCK;
-        uint per = blocks / MIRAI_GROUP_X;
-        uint first = local.x * per;
-        uint run = 0u;
-        for (uint i = 0u; i < per; i++) {
-            uint count = particle_neighbors[PARTICLE_NEIGHBOR_SUMS + first + i];
-            particle_neighbors[PARTICLE_NEIGHBOR_SUMS + first + i] = run;
-            run += count;
-        }
-        sums[local.x] = run;
-        GroupMemoryBarrierWithGroupSync();
-        for (uint d = 1u; d < MIRAI_GROUP_X; d <<= 1u) {
-            uint before = local.x >= d ? sums[local.x - d] : 0u;
-            GroupMemoryBarrierWithGroupSync();
-            sums[local.x] += before;
-            GroupMemoryBarrierWithGroupSync();
-        }
-        uint before = local.x > 0u ? sums[local.x - 1u] : 0u;
-        for (uint i = 0u; i < per; i++) particle_neighbors[PARTICLE_NEIGHBOR_SUMS + first + i] += before;
-        return;
-    }
-    case 8u:
-        if (id.x < PARTICLE_NEIGHBOR_BUCKETS) {
-            particle_neighbors[PARTICLE_NEIGHBOR_STARTS + id.x] += particle_neighbors[PARTICLE_NEIGHBOR_SUMS + id.x / PARTICLE_NEIGHBOR_BLOCK];
-            particle_neighbors[id.x] = 0u;
-        }
-        return;
-    case 9u: {
-        uint bucket;
-        if (id.x >= params.count || !stage_bucket(id.x, bucket)) return;
-        uint at;
-        InterlockedAdd(particle_neighbors[bucket], 1u, at);
-        particle_neighbors[PARTICLE_NEIGHBOR_ITEMS + particle_neighbors[PARTICLE_NEIGHBOR_STARTS + bucket] + at] = id.x;
         return;
     }
     default:
