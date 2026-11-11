@@ -27,6 +27,24 @@ a_memory_forgets_what_it_stops_perceiving :: proc(t:^testing.T) {
     }
 }
 
+// A report of a past tick leaves the memory as much sooner, and one older
+// than what is known of its subject changes nothing.
+@(test)
+an_older_report_leaves_sooner_and_never_replaces_a_fresher_one :: proc(t:^testing.T) {
+    dt:=f32(1.0/60)
+    m:Perception_Memory
+    gone:[4]u64
+    testing.expect_value(t,memory_perceive(&m,1,{1,0,0},.Sight,1,100),Memory_Change.New)
+    testing.expect_value(t,memory_perceive(&m,2,{2,0,0},.Hearing,1,100-60),Memory_Change.New)
+    testing.expect_value(t,memory_perceive(&m,1,{9,0,0},.Hearing,1,99),Memory_Change.None)
+    o:=memory_find(&m,1)
+    testing.expect(t,o!=nil && o.position=={1,0,0} && o.senses=={.Sight} && o.last==100)
+    testing.expect_value(t,memory_forget(&m,100+60,dt,2,gone[:]),1)
+    testing.expect(t,gone[0]==2 && memory_find(&m,1)!=nil)
+    testing.expect_value(t,memory_forget(&m,100+120,dt,2,gone[:]),1)
+    testing.expect(t,gone[0]==1 && m.count==0)
+}
+
 @(test)
 a_full_memory_gives_the_least_sure_place_to_a_surer_subject :: proc(t:^testing.T) {
     m:Perception_Memory

@@ -387,8 +387,8 @@ perceivers_see_the_teams_they_notice_in_their_cone_hear_noises_and_forget :: pro
     testing.expect(t,mine!=nil && mine.memory.count==1 && ai.memory_find(&mine.memory,u64(ahead))!=nil)
     testing.expect(t,len(f.events.queue.items)==1 && f.events.queue.items[0].kind==.Noticed && f.events.queue.items[0].subject==ahead)
     // A noise behind it is heard; out of hearing, not.
-    noise(&f.noises,{0,0,4},10,behind)
-    noise(&f.noises,{0,0,40},10,friend)
+    noise(&f.noises,{position={0,0,4},loudness=10,maker=behind,team=1})
+    noise(&f.noises,{position={0,0,40},loudness=10,maker=friend,team=1})
     sight_tick(&f,0.2)
     mine=core.edit(&f.perceptions,guard)
     heard:=ai.memory_find(&mine.memory,u64(behind))
@@ -412,6 +412,55 @@ perceivers_see_the_teams_they_notice_in_their_cone_hear_noises_and_forget :: pro
     testing.expect(t,forgot)
 }
 
+// Within `aware` of its eyes a perceiver sees all around, not only in its cone.
+@(test)
+a_perceiver_sees_all_around_within_aware :: proc(t:^testing.T) {
+    for c in ([]struct{aware:f32,seen:bool}{{0,false},{2,true},{0.5,false}}) {
+        f:Sight_World
+        if !test_world_init(t,&f.behavior) {return}
+        defer sight_world_destroy(&f)
+        guard:=placed(&f,{})
+        watch:=PERCEIVER_DEFAULT
+        watch.aware=c.aware
+        core.add(&f.perceivers,guard,watch)
+        behind:=placed(&f,{0,0,1})
+        core.add(&f.perceivables,behind,Perceivable{point=1})
+        sight_tick(&f,0)
+        sight_tick(&f,0.1)
+        mine:=core.edit(&f.perceptions,guard)
+        testing.expectf(t,mine!=nil && (ai.memory_find(&mine.memory,u64(behind))!=nil)==c.seen,"aware %v",c.aware)
+    }
+}
+
+// A noise reaches the perceivers that notice the team of its maker: by ear
+// within their hearing, or only its listener wherever it is (a hit), without
+// a ray; one of long ago is remembered as of then.
+@(test)
+a_noise_reaches_those_that_notice_its_team_or_only_its_listener :: proc(t:^testing.T) {
+    f:Sight_World
+    if !test_world_init(t,&f.behavior) {return}
+    defer sight_world_destroy(&f)
+    f.settings.rays=0
+    watch:=PERCEIVER_DEFAULT
+    watch.notices=Teams(1<<1)
+    guard,near:=placed(&f,{}),placed(&f,{0,0,40})
+    core.add(&f.perceivers,guard,watch)
+    core.add(&f.perceivers,near,watch)
+    mate,enemy,hitter:=core.create(&f.entities),core.create(&f.entities),core.create(&f.entities)
+    sight_tick(&f,0)
+    noise(&f.noises,{position={0,0,4},loudness=10,maker=mate,team=2})
+    noise(&f.noises,{position={0,0,-4},loudness=10,maker=enemy,team=1})
+    noise(&f.noises,{position={0,0,39},maker=hitter,team=1,listener=guard,age=30})
+    noise(&f.noises,{position={0,0,39},maker=mate,team=2,listener=guard})
+    sight_tick(&f,1)
+    mine,other:=core.edit(&f.perceptions,guard),core.edit(&f.perceptions,near)
+    testing.expect(t,ai.memory_find(&mine.memory,u64(mate))==nil,"a noise of a team it does not notice is not heard")
+    testing.expect(t,ai.memory_find(&mine.memory,u64(enemy))!=nil)
+    hit:=ai.memory_find(&mine.memory,u64(hitter))
+    testing.expect(t,hit!=nil && hit.first==30 && hit.position=={0,0,39},"its listener perceives it, as long ago as its age")
+    testing.expect(t,ai.memory_find(&other.memory,u64(hitter))==nil,"another perceiver beside it does not")
+}
+
 // A subject remembered and then destroyed is forgotten at once, with its
 // event; its handle is not taken for the entity that reuses its slot, and a
 // noise remembered without a maker stays.
@@ -427,7 +476,7 @@ a_remembered_subject_that_is_destroyed_is_forgotten_at_once :: proc(t:^testing.T
     seen:=placed(&f,{0,0,-5})
     core.add(&f.perceivables,seen,Perceivable{point=1})
     sight_tick(&f,0)
-    noise(&f.noises,{3,0,0},10)
+    noise(&f.noises,{position={3,0,0},loudness=10})
     sight_tick(&f,0.1)
     mine:=core.edit(&f.perceptions,guard)
     testing.expect(t,mine!=nil && ai.memory_find(&mine.memory,u64(seen))!=nil && ai.memory_find(&mine.memory,0)!=nil)
@@ -1015,7 +1064,7 @@ a_tick_with_nothing_to_do_goes_through_no_row :: proc(t:^testing.T) {
     testing.expect_value(t,f.turns.remembering,1)
     sight_tick(&f,70)
     testing.expect(t,core.edit(&f.perceptions,guard).memory.count==0 && f.turns.remembering==0)
-    noise(&f.noises,{0,0,2},10)
+    noise(&f.noises,{position={0,0,2},loudness=10})
     sight_tick(&f,71)
     testing.expect_value(t,f.turns.remembering,1)
 

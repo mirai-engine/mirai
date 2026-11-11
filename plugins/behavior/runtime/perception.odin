@@ -10,8 +10,9 @@ import nav "plugins:navigation/runtime"
 import phys "plugins:physics/runtime"
 
 // What agents perceive. A Perceiver sees the Perceivables of the teams it
-// notices that are in its cone and that a ray of the physics reaches, and
-// hears the noises the game makes within its hearing; it remembers each in
+// notices that are in its cone, or within `aware` of its eyes, and that a ray
+// of the physics reaches, and hears the noises the game makes of those teams
+// within its hearing, or meant for it alone; it remembers each in
 // its Perception, surer the more recently it perceived it, and forgets it
 // `forget` seconds after it last did, or at once when it is destroyed. Each
 // looks only at those around it, found in a grid over the ground made every
@@ -33,13 +34,14 @@ TEAM_NEUTRAL :: Team(0)
 @(name_bits="Team")
 Teams :: distinct u32
 
-@(component,description="Sees, hears and remembers: the Perceivables of the teams it notices in its cone of sight that nothing hides, and the noises within its hearing.")
+@(component,description="Sees, hears and remembers: the Perceivables of the teams it notices in its cone of sight, or close around it, that nothing hides, and the noises of those teams within its hearing.")
 Perceiver :: struct {
     sight:f32 `mirai:"min=0,unit=m"`,          // how far it sees
     angle:f32 `mirai:"angle,min=0"`,           // half of the cone it sees, from where its body faces
     eyes:f32 `mirai:"unit=m"`,                 // above its origin
     hearing:f32 `mirai:"min=0"`,               // times the loudness of a noise, in metres, that it hears
     forget:f32 `mirai:"min=0,unit=s"`,         // after it stops perceiving something
+    aware:f32 `mirai:"min=0,unit=m"`,          // of its eyes, within which it sees all around; 0: only its cone
     notices:Teams,
 }
 PERCEIVER_DEFAULT :: Perceiver{sight=20,angle=1.0472,eyes=1.6,hearing=1,forget=8,notices=Teams(0xffffffff)}
@@ -77,11 +79,16 @@ BEHAVIOR_SETTINGS_DEFAULT :: Behavior_Settings{
     influence_cell=2,influence_size=128,influence_cells=8192,influence_rays=90,influence_falloff=0.15,influence_blend=0.6,
 }
 
-// A noise the game makes: whoever hears within loudness times its hearing perceives its maker there.
+// A noise the game makes: whoever notices `team` and hears it within loudness
+// times its hearing, or only `listener` wherever it is (a hit, a touch),
+// perceives its maker there as of `age` ticks ago.
 Noise :: struct {
     position:[3]f32,
-    loudness:f32,      // m it carries for a hearing of 1
-    maker:core.Entity, // whom it reveals; none: only the place
+    loudness:f32,         // m it carries for a hearing of 1; unused with a listener
+    maker:core.Entity,    // whom it reveals; none: only the place
+    team:Team,            // of the maker
+    listener:core.Entity, // the only perceiver it reaches; none: those that hear it
+    age:u32,              // ticks since the maker was there
 }
 
 @(storage,queue)
@@ -89,9 +96,7 @@ Noises :: struct {
     using queue:core.Queue(Noise),
 }
 
-noise :: proc(noises:^Noises,position:[3]f32,loudness:f32,maker:=core.NONE) {
-    core.push(&noises.queue,Noise{position=position,loudness=loudness,maker=maker})
-}
+noise :: proc(noises:^Noises,n:Noise) {core.push(&noises.queue,n)}
 
 Perception_Event_Kind :: enum u8 {Noticed,Forgot}
 
@@ -189,7 +194,7 @@ perception_update :: proc(
                 subject:=core.entity_at(perceivables,int(target))
                 if subject==e {continue}
                 seen:=perceivables.values[target]
-                if u32(p.notices)&(1<<u32(seen.team))==0 {continue}
+                if !noticed(p,seen.team) {continue}
                 at,ok:=core.get(worlds,subject)
                 if !ok {continue}
                 point:=at.position+mm.Vec3{0,seen.point,0}
@@ -289,7 +294,7 @@ perceive_far :: proc(perceivers:^core.Table(Perceiver,$A),perceptions:^core.Tabl
             subject:=perceivables.entities[target]
             if subject==e {continue}
             seen:=perceivables.values[target]
-            if u32(p.notices)&(1<<u32(seen.team))==0 {continue}
+            if !noticed(p,seen.team) {continue}
             at,ok:=core.get(worlds,subject)
             if !ok || !sees(&mine.memory,subject,p,eye,forward,at.position+mm.Vec3{0,seen.point,0}) {continue}
             if ai.memory_perceive(&mine.memory,u64(subject),at.position,.Sight,1,time.tick)==.New {
@@ -302,19 +307,27 @@ perceive_far :: proc(perceivers:^core.Table(Perceiver,$A),perceptions:^core.Tabl
     }
 }
 
-// Whether a point is in the cone of a perceiver: wider and farther for a subject it saw last.
+@(private)
+noticed :: #force_inline proc "contextless" (p:Perceiver,team:Team) -> bool {return u32(p.notices)&(1<<u32(team))!=0}
+
+// Whether a point is in the cone of a perceiver, wider and farther for a
+// subject it saw last, or within its `aware` all around.
 @(private)
 sees :: proc(memory:^ai.Perception_Memory,subject:core.Entity,p:Perceiver,eye,forward,point:mm.Vec3) -> bool {
     keep:=f32(1)
     if o:=ai.memory_find(memory,u64(subject));o!=nil && .Sight in o.senses {keep=SIGHT_KEEP}
+    if p.aware>0 && ai.sight_in_cone(eye,forward,point,min(p.aware,p.sight*keep),mm.PI) {return true}
     return ai.sight_in_cone(eye,forward,point,p.sight*keep,p.angle*keep)
 }
 
 @(private)
 hear :: proc(memory:^ai.Perception_Memory,e:core.Entity,p:Perceiver,position:mm.Vec3,heard:[]Noise,events:^Perception_Events,time:core.Time) {
     for n in heard {
-        if !(n.loudness>0) || linalg.length(mm.Vec3(n.position)-position)>n.loudness*p.hearing {continue}
-        if ai.memory_perceive(memory,u64(n.maker),n.position,.Hearing,0.75,time.tick)==.New {
+        if n.listener!=core.NONE {
+            if n.listener!=e {continue}
+        } else if !(n.loudness>0) || linalg.length(mm.Vec3(n.position)-position)>n.loudness*p.hearing {continue}
+        if !noticed(p,n.team) {continue}
+        if ai.memory_perceive(memory,u64(n.maker),n.position,.Hearing,0.75,time.tick-min(u64(n.age),time.tick))==.New {
             core.push(&events.queue,Perception_Event{kind=.Noticed,perceiver=e,subject=n.maker,sense=.Hearing,position=n.position})
         }
     }

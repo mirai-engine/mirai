@@ -408,7 +408,8 @@ What those models gave, with a mind:
 ## Perception and places (`perception.odin`, `places.odin`)
 
 - `Perception_Memory` stores observations of fixed capacity: subject (a handle of the caller),
-  position, senses of the last instant, confidence and instants. `memory_perceive` raises it;
+  position, senses of the last instant, confidence and instants. `memory_perceive` raises it as of
+  a tick, which may be past: a report older than the last of its subject changes nothing;
   `memory_forget` lowers it to zero `forget` seconds after the last time and removes what was
   forgotten; `memory_remove` removes a subject immediately (one that no longer exists). When full, a
   new subject replaces the least certain one if it is more so. It is plain: it is copied with the

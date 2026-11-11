@@ -422,7 +422,8 @@ soldier_alarm :: proc(a:^ai.Act(Soldier_Act),w:Arena,noises:^behavior.Noises,use
     if a.phase==.Enter {ai.commit(a,SOLDIER_ERRAND)}
     if a.phase==.Exit || status!=.Success {return status}
     subject,position,_:=arena_seen(w,e)
-    behavior.noise(noises,position,60,subject)
+    enemy,_:=core.get(w.perceivables,subject)
+    behavior.noise(noises,{position=position,loudness=60,maker=subject,team=enemy.team})
     behavior.smart_used(uses,found)
     return .Success
 }
@@ -808,12 +809,12 @@ horde_waves :: proc(
 
 // A zombie, or a drone with the mind of the zombies: it wanders, chases what it sees or hears, bites what it reaches.
 @(private)
-arena_zombie :: proc(c:core.Commands,e:core.Entity,sight:f32,hearing:f32=1,forget:f32=8) {
+arena_zombie :: proc(c:core.Commands,e:core.Entity,sight:f32,hearing:f32=1,forget:f32=8,notices:=behavior.Teams(1<<u32(TEAM_RUNNER))) {
     core.commands_add(c,e,Zombie{})
     core.commands_add(c,e,behavior.Mind_Agent{mind=behavior.mind_name("zombie")})
     arena_animated(c,e)
     perceiver:=behavior.PERCEIVER_DEFAULT
-    perceiver.notices=behavior.Teams(1<<u32(TEAM_RUNNER))
+    perceiver.notices=notices
     perceiver.sight,perceiver.hearing,perceiver.forget=sight,hearing,forget
     core.commands_add(c,e,perceiver)
 }
@@ -882,9 +883,11 @@ arena_agents :: proc(c:core.Commands,arena:core.Entity,kind:Arena_Kind,origin:mm
             core.commands_add(c,bell,render.Mesh_Renderer{shape=.Sphere})
             core.commands_add(c,bell,render.Material_Values{color={1,0.85,0.2,1}})
         }
+        // The bells are of no side: the listeners notice it too.
+        heard:=behavior.Teams(1<<u32(TEAM_RUNNER) | 1<<u32(behavior.TEAM_NEUTRAL))
         for i in 0..<max(count,1) {
             s,co:=mm.sincos_det(f32(i)/f32(max(count,1))*2*math.PI)
-            arena_zombie(c,arena_body(c,origin+{co*3,0.05,s*3},{0.6,0.4,0.85,1},3),4,hearing=2.5,forget=5)
+            arena_zombie(c,arena_body(c,origin+{co*3,0.05,s*3},{0.6,0.4,0.85,1},3),4,hearing=2.5,forget=5,notices=heard)
         }
     }
 }
@@ -925,7 +928,7 @@ arena_carts :: proc(carts:^core.Table(Arena_Cart,.Read),bodies:^phys.Body_Reques
         slot:=u64(time.seconds/f64(bell.period))
         if slot%u64(bell.count)!=u64(bell.turn) {continue}
         e:=core.entity_at(bells,row)
-        if pose,ok:=core.get(worlds,e);ok {behavior.noise(noises,pose.position,bell.loudness,e)}
+        if pose,ok:=core.get(worlds,e);ok {behavior.noise(noises,{position=pose.position,loudness=bell.loudness,maker=e})}
     }
 }
 

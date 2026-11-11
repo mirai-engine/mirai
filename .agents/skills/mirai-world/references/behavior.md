@@ -116,8 +116,9 @@ what it perceives; `think` only reads and proposes, and the actions write.
 
 ## Perception
 
-- `Perceiver`: range and half angle of sight, eye height, hearing (meters per volume) and
-  forgetting time, and the teams (`Team`, named id) that it notices. `Perceivable`: its team and
+- `Perceiver`: range and half angle of sight, eye height, hearing (meters per volume),
+  forgetting time, the radius within which it sees all around (`aware`) and the teams (`Team`,
+  named id) that it notices, for sight and for noises alike. `Perceivable`: its team and
   the height of the point that is looked at.
 - `perception_update` (`fixed`, `input`, `server`) adds `Perception` to each `Perceiver` and is
   its sole writer. Sight sees what is in its cone, around the perceiver's -Z (its front), if a
@@ -126,7 +127,9 @@ what it perceives; `think` only reads and proposes, and the actions write.
   goes first in the next tick, on from where it stopped: every subject in sight is looked at again
   within as many ticks as there are candidates per ray. What it saw last stays in sight up to
   `SIGHT_KEEP` times its range and angle, so that at the edge it is not noticed and forgotten in
-  turn. Hearing takes the noises of `Noises` (`noise`) within its range by volume.
+  turn. Hearing takes the noises of `Noises` (`noise`) of a team it notices, within its range by
+  volume, or the ones whose `listener` it is wherever they are; a noise with an `age` is
+  remembered as of that many ticks ago.
   Memory lowers confidence until forgetting, only on the perceiver's turn: what it could not look
   at it does not forget before looking at it again. A destroyed subject is forgotten at once.
 - Each perceiver looks only at the `Perceivable`s around it: those of the tick are put in a
