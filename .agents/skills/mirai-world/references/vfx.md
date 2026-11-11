@@ -151,9 +151,10 @@ one cell is flat), the size of a cell and its layers of four floats.
   the previous frame, whatever the order of the rows; a new grid enters as an entry of its own,
   without what another entity's stored.
 
-A program declares stages (`//! stage name over particles|grid [iterations N]`): on each step, after the births and before `update`, stage k of each emitter that has it,
-k in order, `iterations` times in separate dispatches: each iteration sees what the previous one
-left (a constraint solver reads the other particles already moved).
+A program declares stages (`//! stage name over particles|grid [iterations N]`): on each step,
+after the births and before `update`, stage k of each emitter that has it, k in order,
+`iterations` times in separate dispatches: each iteration sees what the previous one left (a
+constraint solver reads the other particles already moved).
 
 - Over particles: once per live particle, like `update`. Neighbours go through a grid: one stage
   adds each particle to the words of its cell (`mirai_vfx_grid_word_add`) and a later one reads
