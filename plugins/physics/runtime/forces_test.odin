@@ -142,20 +142,21 @@ area_requests_push_by_the_weight_of_their_volume_its_range_and_its_noise :: proc
     testing.expect_value(t,speeds(w,bodies),[2]f32{})
 }
 
+@(private) @(test_world) Field_World :: struct {
+    using world:Test_World,
+    fields:core.Table(Force_Field),
+    volumes:core.Table(volume.Volume),
+    worlds:core.Table(core.World_Transform),
+    requests:Body_Requests,
+}
+
 // A Force_Field asks, each tick, for the area of the Volume of its entity where the entity is: its
 // direction turns with the entity, and one that is off or without force asks for nothing.
 @(test)
 a_force_field_pushes_in_the_volume_of_its_entity :: proc(t:^testing.T) {
-    Field_World :: struct {
-        using world:core.Test_World,
-        fields:core.Table(Force_Field),
-        volumes:core.Table(volume.Volume),
-        worlds:core.Table(core.World_Transform),
-        requests:Body_Requests,
-    }
     w:Field_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     turn:=mm.quat_axis_angle({0,1,0},0.5*mm.PI)
     lift,idle:=core.create(&w.entities),core.create(&w.entities)
     config:=FORCE_FIELD_DEFAULT
@@ -164,7 +165,7 @@ a_force_field_pushes_in_the_volume_of_its_entity :: proc(t:^testing.T) {
     core.add(&w.volumes,lift,volume.box({1,2,3}))
     core.add(&w.worlds,lift,core.World_Transform{transform={{3,4,5},turn,{2,1,0.5}}})
     core.add(&w.fields,idle,FORCE_FIELD_DEFAULT)
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     step :: proc(w:^Field_World,time:core.Time) {
         force_fields_step(core.read(&w.fields),core.read(&w.volumes),core.read(&w.worlds),{},{},&w.requests,time)
     }
@@ -180,7 +181,7 @@ a_force_field_pushes_in_the_volume_of_its_entity :: proc(t:^testing.T) {
     step(&w,{playing=false,dt=0.25})
     testing.expect_value(t,len(w.requests.queue.items),0)
     core.disable(&w.fields,lift)
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     step(&w,{playing=true,dt=0.25})
     testing.expect_value(t,len(w.requests.queue.items),0)
 }

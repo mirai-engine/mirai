@@ -7,16 +7,12 @@ import "mirai:core"
 import "mirai:project"
 import "mirai:std/base"
 
-@(private="file") @(storage,setting="machine")
+@(private) @(storage,setting="machine")
 Layered :: struct {code,engine,both:i32}
-@(private="file") @(storage,setting)
+@(private) LAYERED_DEFAULT :: Layered{code=1,engine=1,both=1}
+@(private) @(storage,setting)
 Rule :: struct {value:i32}
-@(private="file") Layered_World :: struct {using world:core.Test_World,layered:Layered,rule:Rule}
-
-@(private="file")
-layered_types :: proc(types:^[dynamic]core.Test_Type) {
-    append(types,core.test_type(Layered,default=proc(dst:^Layered) {dst^={code=1,engine=1,both=1}}))
-}
+@(test_world) @(private) Layered_World :: struct {using world:Test_World,layered:Layered,rule:Rule}
 
 // A world takes the values of the code, the settings of the machine in the
 // file of the engine the application runs with over them, and those of the
@@ -29,9 +25,9 @@ a_world_reads_the_settings_of_the_engine_under_those_of_the_project :: proc(t:^t
     testing.expect(t,os.make_directory_all(root)==nil && os.make_directory_all(project.path(engine,".mirai",allocator=context.temp_allocator))==nil)
     testing.expect(t,os.write_entire_file(project.settings_file(.Engine,root,engine,context.temp_allocator),`{"version": 3, "Layered": {"engine": 2, "both": 2}, "Rule": {"value": 5}}`)==nil)
     testing.expect(t,os.write_entire_file(project.settings_file(.Project,root,engine,context.temp_allocator),`{"Layered": {"both": 3}}`)==nil)
-    info,described:=core.test_info(t,Layered_World,layered_types)
+    info,described:=test_info(t,Layered_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Layered_World
     app:=App{info=&info,root=root,engine_root=engine}
     app_settings_load(&app,&world,.World)
@@ -56,9 +52,9 @@ the_options_of_the_player_are_the_layer_on_top :: proc(t:^testing.T) {
     testing.expect(t,os.write_entire_file(project.settings_file(.Project,root,engine,context.temp_allocator),`{"Layered": {"both": 3}, "Rule": {"value": 5}}`)==nil)
     options:=project.settings_file(.Player,root,engine,context.temp_allocator,player)
     testing.expect(t,os.write_entire_file(options,`{"version": 3, "Layered": {"code": 7}, "Rule": {"value": 9}}`)==nil)
-    info,described:=core.test_info(t,Layered_World,layered_types)
+    info,described:=test_info(t,Layered_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Layered_World
     app:=App{info=&info,root=root,engine_root=engine,options=player}
     app_settings_load(&app,&world,.World)
@@ -77,16 +73,16 @@ the_options_of_the_player_are_the_layer_on_top :: proc(t:^testing.T) {
     testing.expect(t,!app_options_save(&app,&world))
 }
 
-@(private="file") Simulation_World :: struct {using world:core.Test_World}
-@(private="file") Simulation_Shared :: struct {simulation:core.Simulation_Settings}
+@(test_world,host="Simulation_Shared") @(private) Simulation_World :: struct {using world:Test_World}
+@(private) Simulation_Shared :: struct {simulation:core.Simulation_Settings}
 
 // A World is made with the tick rate the settings of the application have
 // then; a rate of zero leaves the step as it was.
 @(test)
 a_world_is_made_with_the_tick_rate_of_the_settings :: proc(t:^testing.T) {
-    info,described:=core.test_info(t,Simulation_World,Simulation_Shared,core.Test_None)
+    info,described:=test_info(t,Simulation_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     shared:Simulation_Shared
     if !testing.expect(t,core.world_init(&info,.Shared,&shared,context.allocator)) {return}
     defer core.world_destroy(&info,.Shared,&shared)

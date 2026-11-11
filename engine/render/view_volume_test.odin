@@ -13,8 +13,8 @@ import "mirai:std/base"
 @(test)
 a_view_takes_the_look_of_the_volume_it_is_in :: proc(t:^testing.T) {
     w:Render_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     level:=VIEW_VOLUME_DEFAULT
     level.exposure.compensation=-1
     tunnel:=VIEW_VOLUME_DEFAULT
@@ -27,7 +27,7 @@ a_view_takes_the_look_of_the_volume_it_is_in :: proc(t:^testing.T) {
     core.add(&w.view_volumes,b,tunnel)
     core.add(&w.volumes,b,volume.box({4,4,4}))
     core.add(&w.worlds,b,core.World_Transform{transform={rotation=1,scale=1}})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     at :: proc(w:^Render_World,x:f32) -> View_Volume {
         return view_volume_at(core.read(&w.view_volumes),{volumes=core.read(&w.volumes),worlds=core.read(&w.worlds)},{x,0,0})
     }

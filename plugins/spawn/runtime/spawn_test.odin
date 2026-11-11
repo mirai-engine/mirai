@@ -5,9 +5,10 @@ import "mirai:core"
 import input "mirai:engine/input"
 import scene "mirai:engine/scene"
 
-@(private="file")
+@(private)
+@(test_world)
 Spawn_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     bodies:core.Table(Seat_Body),
     points:core.Table(Spawn_Point),
     seats:core.Table(input.Seat),
@@ -21,20 +22,20 @@ Spawn_World :: struct {
 @(test)
 a_body_given_to_a_seat_goes_when_the_seat_goes :: proc(t:^testing.T) {
     w:Spawn_World
-    if !core.test_world_init(t,&w,input.test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     es,bodies,hierarchy:=&w.entities,&w.bodies,&w.hierarchy
     seat,given,other:=core.create(es),core.create(es),core.create(es)
     core.add(bodies,given,Seat_Body{seat})
     core.add(&w.seats,seat,input.Seat{body=other})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     spawn_seat_bodies({entities=es},core.ref(hierarchy),core.read(bodies))
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     testing.expect(t,core.alive(es,given),"a body stays while its seat is there")
     core.destroy(es,seat)
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     spawn_seat_bodies({entities=es},core.ref(hierarchy),core.read(bodies))
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     testing.expect(t,!core.alive(es,given),"the body spawn gave goes with its seat")
     testing.expect(t,core.alive(es,other),"a body nobody gave is left to the game")
 }
@@ -48,8 +49,8 @@ a_body_given_to_a_seat_goes_when_the_seat_goes :: proc(t:^testing.T) {
 @(test)
 spawn_points_are_taken_in_turn_by_their_kind_or_as_asked :: proc(t:^testing.T) {
     w:Spawn_World
-    if !core.test_world_init(t,&w,input.test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     es,points:=&w.entities,&w.points
     bare,first,enemy,second,crate:=core.create(es),core.create(es),core.create(es),core.create(es),core.create(es)
     core.add(points,bare,Spawn_Point{players=true})
@@ -57,7 +58,7 @@ spawn_points_are_taken_in_turn_by_their_kind_or_as_asked :: proc(t:^testing.T) {
     core.add(points,enemy,Spawn_Point{prefab={1,3}})
     core.add(points,second,Spawn_Point{prefab={1,2},players=true})
     core.add(points,crate,Spawn_Point{})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     spawning:Spawning
     problems:core.Problems
     a:=Apply{points=core.read(points),spawning=&spawning,origin=scene.Play_Origin{set=true},problems=&problems}
@@ -79,7 +80,7 @@ spawn_points_are_taken_in_turn_by_their_kind_or_as_asked :: proc(t:^testing.T) {
     _,ok:=spawn_pick(&a,core.NONE,core.create(es),true,true)
     testing.expect(t,!ok && core.problem_find(&problems,core.NONE,"spawn.not_a_point")!=nil)
     core.destroy(es,enemy)
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     _,ok=spawn_pick(&a,core.NONE,core.NONE,false,true)
     testing.expect(t,!ok && core.problem_find(&problems,core.NONE,"spawn.no_spawn_point")!=nil,"a spawn of the game without a point of its kind is a problem, also in the Play of the editor")
     testing.expect_value(t,problems.count,2)
@@ -88,7 +89,7 @@ spawn_points_are_taken_in_turn_by_their_kind_or_as_asked :: proc(t:^testing.T) {
     core.remove(points,first)
     core.remove(points,second)
     core.add(points,core.create(es),Spawn_Point{prefab={1,4}})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     testing.expect(t,!prefab_found(&a),"no point of the players names a body; the game's is not for them")
     a.settings.prefab={1,9}
     testing.expect(t,prefab_found(&a),"the project names one")
@@ -100,8 +101,8 @@ spawn_points_are_taken_in_turn_by_their_kind_or_as_asked :: proc(t:^testing.T) {
 @(test)
 the_place_the_editor_asks_comes_before_the_points_for_player_1_once :: proc(t:^testing.T) {
     w:Spawn_World
-    if !core.test_world_init(t,&w,input.test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     es,points,seats:=&w.entities,&w.points,&w.seats
     point,enemy,first,second,remote:=core.create(es),core.create(es),core.create(es),core.create(es),core.create(es)
     core.add(points,point,Spawn_Point{prefab={1,1},players=true})
@@ -109,7 +110,7 @@ the_place_the_editor_asks_comes_before_the_points_for_player_1_once :: proc(t:^t
     core.add(seats,first,input.Seat{slot=0})
     core.add(seats,second,input.Seat{slot=1})
     core.add(seats,remote,input.Seat{slot=0,peer=7})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     spawning:Spawning
     problems:core.Problems
     a:=Apply{seats=core.read(seats),points=core.read(points),spawning=&spawning,origin=scene.Play_Origin{set=true,asked=true},problems=&problems}
@@ -143,14 +144,14 @@ the_place_the_editor_asks_comes_before_the_points_for_player_1_once :: proc(t:^t
 @(test)
 a_respawned_body_is_placed_at_rest_at_its_point :: proc(t:^testing.T) {
     w:Spawn_World
-    if !core.test_world_init(t,&w,input.test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     es:=&w.entities
     point,body:=core.create(es),core.create(es)
     core.add(&w.points,point,Spawn_Point{})
     core.add(&w.transforms,point,core.Transform{position={1,2,3},rotation=1,scale=1})
     core.add(&w.transforms,body,core.Transform{position={0,-40,0},rotation=1,scale=1})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     resize(&w.transforms.owners,core.entity_index(body)+1)
     w.transforms.owners[core.entity_index(body)]=core.Row_Owner{generation=core.entity_generation(body),id=1}
     spawning:Spawning

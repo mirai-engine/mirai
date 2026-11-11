@@ -7,7 +7,8 @@ import math "mirai:std/math"
 // start to where the agent is (nav_corridor_move), asks for the next corners
 // (nav_corridor_corners) and, when it reaches a link, crosses it
 // (nav_corridor_cross). A path longer than the corridor keeps its first part,
-// with the target on its last polygon; whoever follows plans again near it.
+// with the target on its last polygon, and is `cut`: whoever follows plans
+// again before its end.
 
 NAV_CORRIDOR_CAPACITY :: 64
 
@@ -16,6 +17,7 @@ Nav_Corridor :: struct {
     count:i32,
     position:math.Vec3, // of the agent, on the surface
     target:math.Vec3,   // on the last polygon of the path
+    cut:bool,           // the path goes on past the last polygon
 }
 
 // A corridor of one polygon where the agent is.
@@ -36,7 +38,8 @@ nav_corridor_set :: proc(c:^Nav_Corridor,mesh:^Nav_Mesh,filter:^Nav_Filter,targe
     copy(c.path[:count],path[:count])
     c.count=i32(count)
     c.target=target
-    if count<len(path) || nav_ref_is_link(path[count-1]) {
+    c.cut=count<len(path)
+    if c.cut || nav_ref_is_link(path[count-1]) {
         c.target,_=nav_closest_point_on_poly(mesh,c.path[count-1],target)
     }
     c.count=i32(nav_path_straighten(mesh,filter,c.position,c.target,c.path[:],count))
@@ -73,36 +76,44 @@ nav_corridor_corners :: proc(c:^Nav_Corridor,mesh:^Nav_Mesh,out:[]Nav_Corner,rea
 // Moves the start of the corridor to where the agent is, over the surface
 // from the first polygon: the polygons it walked over join the front of the
 // path. The agent's position becomes the reachable one nearest to `position`.
-// False when the first polygon is no longer valid.
+// What no longer fits is cut from the end, with the target on the new last
+// polygon. False when the first polygon is no longer valid.
 nav_corridor_move :: proc(c:^Nav_Corridor,mesh:^Nav_Mesh,filter:^Nav_Filter,position:math.Vec3) -> bool {
     first:=nav_corridor_first(c)
     if !nav_ref_valid(mesh,first) || nav_ref_is_link(first) {return false}
     visited:[NAV_MOVE_NODES]Nav_Ref
     result,count:=nav_move_along_surface(mesh,first,c.position,position,filter,visited[:])
     if count==0 {return false}
-    c.count=i32(nav_merge_start_moved(c.path[:],len(nav_corridor_slice(c)),visited[:count]))
+    kept,cut:=nav_merge_start_moved(c.path[:],len(nav_corridor_slice(c)),visited[:count])
+    c.count=i32(kept)
     c.position=result
+    if cut {
+        for c.count>1 && nav_ref_is_link(c.path[c.count-1]) {c.count-=1}
+        c.cut=true
+        c.target,_=nav_closest_point_on_poly(mesh,c.path[c.count-1],c.target)
+    }
     return true
 }
 
 // Joins the polygons walked from the start (in order) to the front of a path:
-// from the last of them back to the furthest polygon the path shares.
+// from the last of them back to the furthest polygon the path shares. Cut when
+// the end of the path no longer fits.
 @(private)
-nav_merge_start_moved :: proc "contextless" (path:[]Nav_Ref,count:int,visited:[]Nav_Ref) -> int {
+nav_merge_start_moved :: proc "contextless" (path:[]Nav_Ref,count:int,visited:[]Nav_Ref) -> (kept:int,cut:bool) {
     furthest_path,furthest_visited:=-1,-1
     search: for i:=count-1;i>=0;i-=1 {
         for j:=len(visited)-1;j>=0;j-=1 {
             if path[i]==visited[j] {furthest_path,furthest_visited=i,j;break search}
         }
     }
-    if furthest_path<0 {return count}
+    if furthest_path<0 {return count,false}
     need:=len(visited)-furthest_visited
     from:=min(furthest_path+1,count)
     size:=max(0,count-from)
-    if need+size>len(path) {size=len(path)-need}
+    if need+size>len(path) {size,cut=len(path)-need,true}
     if size>0 {copy(path[need:need+size],path[from:from+size])}
     for i in 0..<need {path[i]=visited[len(visited)-1-i]}
-    return need+size
+    return need+size,cut
 }
 
 // Crosses the link at the front of the corridor: the path goes on from the

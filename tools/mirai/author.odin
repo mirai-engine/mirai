@@ -84,6 +84,10 @@ author_run :: proc(root,kind,usage:string,args:[]string) -> int {
         fmt.eprintfln("Usage: mirai %s",usage)
         return 2
     }
+    for at:=0;at<len(rest);at+=1 {
+        if rest[at]=="--out" && kind!="texts" {at+=1;continue}
+        if !positional(rest[at]) {return argument_unknown(kind,rest[at])}
+    }
     owner:=project_of(folder)
     if owner=="" {
         fmt.eprintfln("mirai %s: %s is not inside a project (no folder above has %s); pass --project <folder>",kind,folder,project.PROJECT_FILE)

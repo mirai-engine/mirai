@@ -205,9 +205,10 @@ an_animation_compresses_in_a_job_and_keeps_what_it_had_until_it_ends :: proc(t:^
     testing.expect_value(t,f.tracking.total_allocation_count,allocations)
 }
 
-@(private="file")
+@(private)
+@(test_world)
 Content_Frame_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     time:core.Time,
     frame_time:core.Frame_Time,
     ready:bool, // the fixed tick found the .anim
@@ -230,9 +231,9 @@ a_frame_played_again_finds_the_content_it_found_when_it_played :: proc(t:^testin
     if !testing.expect_value(t,error,platform.Error.None) {return}
     defer platform.destroy(p)
     w:Content_Frame_World
-    if !core.test_world_init(t,&w) {return}
-    defer core.test_world_destroy(&w)
-    info:=core.test_world_info(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    info:=test_world_info(&w)
     info.loops[.Game][.Fixed]=content_frame_fixed
     app:=&f.app
     app.info,app.platform,app.tick_dt,app.max_ticks=info,p,1.0/60,4

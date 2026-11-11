@@ -17,8 +17,9 @@ import "mirai:std/base"
 import mm "mirai:std/math"
 import anim "plugins:animation/runtime"
 
+@(test_world,host="Pose_Bake_Test_Shared")
 Pose_Bake_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     ids:core.Table(core.Id),transforms:core.Table(core.Transform),parents:core.Table(core.Parent),worlds:core.Table(core.World_Transform),disabled:core.Table(core.Disabled),
     names:core.Table(core.Name),targets:core.Table(anim.Animation_Target),animations:core.Table(anim.Animation),
     meshes:core.Table(erender.Mesh_Renderer),morph_weights:core.Table(anim.Morph_Weights),sources:core.Table(anim.Pose_Source),
@@ -69,7 +70,7 @@ pose_bake_test_propagate :: proc(data,shared,editor,app_data:rawptr) {
 pose_bake_test_init :: proc(f:^Pose_Bake_Test,t:^testing.T,name:string) -> bool {
     if !authoring_test_init(&f.authoring,t,name) {return false}
     described:bool
-    f.info,described=core.test_info(t,Pose_Bake_Test_World,Pose_Bake_Test_Shared,core.Test_None,anim.test_types)
+    f.info,described=test_info(t,Pose_Bake_Test_World)
     if !described || !testing.expect(t,core.world_init(&f.info,.Shared,&f.shared,context.allocator) && core.world_init(&f.info,.World,&f.world,context.allocator)) {
         pose_bake_test_destroy(f)
         return false
@@ -106,7 +107,7 @@ pose_bake_test_destroy :: proc(f:^Pose_Bake_Test) {
     }
     delete(f.authoring.app.worlds)
     authoring_test_destroy(&f.authoring)
-    core.test_info_destroy(&f.info)
+    test_info_destroy(&f.info)
 }
 
 @(test)

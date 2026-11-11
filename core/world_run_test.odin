@@ -2,7 +2,8 @@ package core
 
 import "core:testing"
 
-@(private="file")
+@(private)
+@(test_world)
 Run_World :: struct {
     using world:Test_World,
     time:Time,
@@ -50,10 +51,11 @@ world_run_calls_the_functions_of_the_libraries_asked_in_the_order_of_the_loop ::
 }
 
 @(private="file") Run_Seen :: struct {camera:Entity,seen:[dynamic]Entity,pairs:[2]struct {at:Entity,weight:f32},count:i32}
-@(private="file") @(storage,keep) Run_Kept :: distinct Run_Seen
-@(private="file") @(storage) Run_Derived :: distinct Run_Seen
+@(private) @(storage,keep) Run_Kept :: distinct Run_Seen
+@(private) @(storage) Run_Derived :: distinct Run_Seen
 
-@(private="file")
+@(private)
+@(test_world)
 Run_Kept_World :: struct {
     using world:Test_World,
     kept:Run_Kept,

@@ -33,9 +33,9 @@ a_closed_mesh_joins_or_carves_a_volume_as_samples_and_undo_brings_its_entity_bac
     defer host.assets_destroy(&assets)
     for brush in ([2]terrain.Brush_Kind{.Add,.Carve}) {
         world:Create_Test_World
-        if !core.test_world_init(t,&world,test_types) {return}
-        defer core.test_world_destroy(&world)
-        ref:=core.test_world_ref(&world)
+        if !test_world_init(t,&world) {return}
+        defer test_world_destroy(&world)
+        ref:=test_world_ref(&world)
         source:terrain.Source;defer terrain.source_destroy(&source)
         // Solid below the middle of its box, air above it.
         if !testing.expect(t,terrain.source_make(&source,.Volume,{33,33,33},1,16)) {return}
@@ -143,9 +143,9 @@ the_surface_of_a_volume_is_saved_as_a_mesh_asset :: proc(t:^testing.T) {
     if !testing.expect(t,host.assets_init(&assets,{root=root,capacity=16})) {return}
     defer host.assets_destroy(&assets)
     world:Create_Test_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
-    ref:=core.test_world_ref(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    ref:=test_world_ref(&world)
     source:terrain.Source;defer terrain.source_destroy(&source)
     if !testing.expect(t,terrain.source_make(&source,.Volume,{17,17,17},1,8)) {return}
     id:=base.Asset_Id{51,52}

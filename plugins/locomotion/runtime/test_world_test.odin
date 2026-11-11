@@ -8,8 +8,9 @@ import phys "plugins:physics/runtime"
 
 // A world with physics and locomotion, stepped as the loop steps them: locomotion_step, then physics.
 @(private)
+@(test_world)
 Loco_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     using physics:phys.Test_Physics,
     loco_states:core.Table(Locomotion_State),
     inputs:core.Table(input.Move_Input),
@@ -46,7 +47,7 @@ Loco_Test :: struct {
 // world.
 @(private)
 loco_test_init :: proc(t:^testing.T,f:^Loco_Test,position:[3]f32,ground:=true) -> bool {
-    if !core.test_world_init(t,&f.w,test_types) {return false}
+    if !test_world_init(t,&f.w) {return false}
     f.settings={bodies=32,shapes=32,contacts=256,joints=4,characters=4}
     f.gravity={0,-9.81,0}
     if ground {loco_test_box(f,{50,1,50},{0,-1,0})}
@@ -57,7 +58,7 @@ loco_test_init :: proc(t:^testing.T,f:^Loco_Test,position:[3]f32,ground:=true) -
 @(private)
 loco_test_destroy :: proc(f:^Loco_Test) {
     phys.test_host_destroy(&f.host)
-    core.test_world_destroy(&f.w)
+    test_world_destroy(&f.w)
 }
 
 // A Character at position, with a Walk unless walks is false.
@@ -92,7 +93,7 @@ loco_test_box :: proc(f:^Loco_Test,half,position:[3]f32,rotation:=mm.QUAT_IDENTI
 loco_test_tick :: proc(f:^Loco_Test,move:[3]f32,ticks:=1,buttons:=input.Action_Mask(0),yaw:f32=0,pitch:f32=0,clock:=core.CLOCK_DEFAULT) {
     dt:=f32(1.0/60)
     for _ in 0..<ticks {
-        core.test_world_settle(&f.w)
+        test_world_settle(&f.w)
         for row in 0..<core.count(&f.inputs) {
             frame:=mm.QUAT_IDENTITY
             if capsule,made:=phys.character_capsule(core.ref(&f.state),core.entity_at(&f.inputs,row));made {frame=capsule.up_frame}
@@ -105,12 +106,12 @@ loco_test_tick :: proc(f:^Loco_Test,move:[3]f32,ticks:=1,buttons:=input.Action_M
         )
         phys.physics_places(&f.places,&f.requests,core.ref(&f.state),core.read(&f.rigids),core.read(&f.characters))
         clear(&f.places.queue.items)
-        core.test_world_settle(&f.w)
+        test_world_settle(&f.w)
         // The logs of a tick, as their readers are handed them.
         e:=&f.events
         clear(&e.contact_begin.items);clear(&e.contact_end.items);clear(&e.overlap_begin.items);clear(&e.overlap_end.items);clear(&e.sleep.items);clear(&e.wake.items);clear(&e.joint_break.items)
         phys.test_step(&f.physics,&f.host,dt)
-        core.test_world_settle(&f.w)
+        test_world_settle(&f.w)
     }
 }
 

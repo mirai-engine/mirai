@@ -35,14 +35,15 @@ a_request_queue_takes_what_comes_before_its_owner_reserves_room :: proc(t:^testi
     testing.expect_value(t,q.dropped,0)
 }
 
+@(private) @(test_world) Later_World :: struct {using world:Test_World,time:Time,requests:Clock_Requests}
+
 // A request pushed for later is taken at its tick, after what was pushed
 // before it, by the owner that takes with take_due. It is plain data of the
 // World: a rollback to a copy taken before brings it back, with the clock. An
 // owner that takes with take refuses it instead of keeping it for ever.
 @(test)
 a_request_pushed_for_later_is_taken_at_its_tick_and_rolls_back :: proc(t:^testing.T) {
-    World :: struct {using world:Test_World,time:Time,requests:Clock_Requests}
-    w,kept:World
+    w,kept:Later_World
     if !test_world_init(t,&w) || !test_world_init(t,&kept) {return}
     defer test_world_destroy(&w)
     defer test_world_destroy(&kept)

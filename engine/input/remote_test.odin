@@ -36,12 +36,12 @@ same_state :: proc(a,b:Action_State) -> bool {
 @(test)
 a_seat_takes_the_actions_another_end_sent_as_they_were_there :: proc(t:^testing.T) {
     w:Test_Seats
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     m:=remote_bindings()
     local:=core.create(&w.entities)
     core.add(&w.seats,local,Seat{})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     there:Seat
     menu:=Context_Stack{layers={0=TEST_MENU},count=1,modal=1}
     Tick :: struct {device:core.Input,menu:bool}

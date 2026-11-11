@@ -26,9 +26,9 @@ pick_device_open :: proc(t:^testing.T,d:^Pick_Device) -> bool {
 @(test)
 derived_geometry_selects_its_author_and_keeps_internal_nodes_out_of_the_tree :: proc(t:^testing.T) {
     world:Pick_Test_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
-    ref:=core.test_world_ref(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    ref:=test_world_ref(&world)
     owner,child,empty,orphan:=core.create(&world.entities),core.create(&world.entities),core.create(&world.entities),core.create(&world.entities)
     core.add(&world.ids,owner,core.Id{value=1})
     for e in ([3]core.Entity{owner,child,empty}) {core.add(&world.transforms,e,core.TRANSFORM_IDENTITY)}
@@ -37,7 +37,7 @@ derived_geometry_selects_its_author_and_keeps_internal_nodes_out_of_the_tree :: 
     core.add(&world.parents,empty,core.Parent{entity=owner})
     core.add(&world.meshes,owner,{})
     core.add(&world.meshes,child,{shape=.Cube})
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     testing.expect_value(t,entity_author(ref,child),owner)
     testing.expect_value(t,entity_author(ref,empty),owner)
     testing.expect_value(t,entity_author(ref,orphan),orphan)
@@ -68,21 +68,22 @@ derived_geometry_selects_its_author_and_keeps_internal_nodes_out_of_the_tree :: 
     testing.expect_value(t,indicators,0)
 }
 
+@(private) @(test_world) Ghost_Test_World :: struct {
+    using world:Test_World,
+    disabled:core.Table(core.Disabled),
+    transforms:core.Table(core.Transform),
+    parents:core.Table(core.Parent),
+    meshes:core.Table(erender.Mesh_Renderer),
+    hidden:core.Table(erender.Hidden),
+    hierarchy:core.Hierarchy,
+}
+
 @(test)
 hidden_and_turned_off_meshes_are_picked_as_ghosts_while_the_scene_is_edited :: proc(t:^testing.T) {
-    Ghost_Test_World :: struct {
-        using world:core.Test_World,
-        disabled:core.Table(core.Disabled),
-        transforms:core.Table(core.Transform),
-        parents:core.Table(core.Parent),
-        meshes:core.Table(erender.Mesh_Renderer),
-        hidden:core.Table(erender.Hidden),
-        hierarchy:core.Hierarchy,
-    }
     world:Ghost_Test_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
-    ref:=core.test_world_ref(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    ref:=test_world_ref(&world)
     hidden,off,turned:=core.create(&world.entities),core.create(&world.entities),core.create(&world.entities)
     places:=[3][3]f32{{-2,0,0},{2,0,0},{0,2,0}}
     for e,i in ([3]core.Entity{hidden,off,turned}) {
@@ -92,7 +93,7 @@ hidden_and_turned_off_meshes_are_picked_as_ghosts_while_the_scene_is_edited :: p
     core.add(&world.hidden,hidden,{})
     core.add(&world.disabled,off,{})
     core.disable(&world.meshes,turned)
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     viewport:=Viewport{size={800,600}}
     defer viewport_free(&viewport)
     viewport.view_matrix=mm.look_at({0,0,10},{},{0,1,0})
@@ -120,27 +121,28 @@ hidden_and_turned_off_meshes_are_picked_as_ghosts_while_the_scene_is_edited :: p
     testing.expect_value(t,len(selection.entities),0)
 }
 
+@(private) @(test_world) Through_Test_World :: struct {
+    using world:Test_World,
+    transforms:core.Table(core.Transform),
+    parents:core.Table(core.Parent),
+    meshes:core.Table(erender.Mesh_Renderer),
+}
+
 // The ray of the menu of a right click goes through every body on its way,
 // nearest first, and keeps the nearest when they do not fit.
 @(test)
 a_ray_through_the_scene_lists_what_it_crosses_nearest_first :: proc(t:^testing.T) {
-    Through_Test_World :: struct {
-        using world:core.Test_World,
-        transforms:core.Table(core.Transform),
-        parents:core.Table(core.Parent),
-        meshes:core.Table(erender.Mesh_Renderer),
-    }
     world:Through_Test_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
-    ref:=core.test_world_ref(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    ref:=test_world_ref(&world)
     far,near,middle,aside:=core.create(&world.entities),core.create(&world.entities),core.create(&world.entities),core.create(&world.entities)
     places:=[4][3]f32{{0,0,-6},{0,0,0},{0,0,-3},{4,0,0}}
     for e,i in ([4]core.Entity{far,near,middle,aside}) {
         core.add(&world.transforms,e,core.Transform{position=places[i],rotation=1,scale={1,1,1}})
         core.add(&world.meshes,e,{shape=.Cube})
     }
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     viewport:=Viewport{size={800,600}}
     defer viewport_free(&viewport)
     viewport.view_matrix=mm.look_at({0,0,10},{},{0,1,0})

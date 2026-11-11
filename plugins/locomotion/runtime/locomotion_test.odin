@@ -136,7 +136,7 @@ the_body_turns_toward_its_look_at_its_turn_speed :: proc(t:^testing.T) {
     core.edit(&f.characters,f.e).turn_speed=cmath.PI
     dt:=f32(1.0/60)
     core.edit(&f.inputs,f.e)^=input.Move_Input{move={1,0,0},look_yaw=-0.5*cmath.PI}
-    core.test_world_settle(&f.w)
+    test_world_settle(&f.w)
     locomotion_step(
         core.read(&f.characters),&f.loco_states,&f.moves,&f.inputs,core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.slides),
         core.read(&f.mantles),core.read(&f.tacticals),core.read(&f.ledges),core.read(&f.character_states),core.read(&f.bodies),core.read(&f.transforms),
@@ -556,10 +556,10 @@ a_character_locked_along_z_stays_in_its_plane_in_every_motion :: proc(t:^testing
             f:Loco_Test
             if !loco_test_init(t,&f,{0,0,0},false) {return}
             defer loco_test_destroy(&f)
-            core.test_world_settle(&f.w)
+            test_world_settle(&f.w)
             if locked {core.edit(&f.characters,f.e).locks={.Linear_Z}}
             c.setup(&f)
-            core.test_world_settle(&f.w)
+            test_world_settle(&f.w)
             start,_:=core.get(&f.transforms,f.e)
             off:f32
             for tick in 0..<150 {

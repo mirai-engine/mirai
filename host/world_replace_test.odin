@@ -5,13 +5,13 @@ import "core:testing"
 import "mirai:core"
 
 @(private) @(storage,copy=false) Replace_Local :: struct {mark:u32}
-@(private) Replace_World :: struct {using world:core.Test_World,values:core.Table(u32),state:[dynamic]u32,local:Replace_Local}
+@(test_world) @(private) Replace_World :: struct {using world:Test_World,values:core.Table(u32),state:[dynamic]u32,local:Replace_Local}
 
 @(test)
 world_replacement_out_of_memory_keeps_the_destination_and_a_warm_one_does_not_allocate :: proc(t:^testing.T) {
-    info,described:=core.test_info(t,Replace_World)
+    info,described:=test_info(t,Replace_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     source:Replace_World
     if !testing.expect(t,core.world_init(&info,.World,&source,context.allocator)) {return}
     defer core.world_destroy(&info,.World,&source)
@@ -73,7 +73,7 @@ world_replacement_out_of_memory_keeps_the_destination_and_a_warm_one_does_not_al
 }
 
 @(private) Restore_Count :: struct {value:u32}
-@(private) Restore_World :: struct {using world:core.Test_World,changed,still:core.Table(u32),list:[dynamic]u32,count:Restore_Count}
+@(test_world) @(private) Restore_World :: struct {using world:Test_World,changed,still:core.Table(u32),list:[dynamic]u32,count:Restore_Count}
 
 // A replacement with the marks of the copy it goes back to brings back only
 // what the World changed since that copy: the rest stays where it is and its
@@ -81,9 +81,9 @@ world_replacement_out_of_memory_keeps_the_destination_and_a_warm_one_does_not_al
 // memory the World stays as it was.
 @(test)
 a_replacement_with_marks_brings_back_only_what_changed :: proc(t:^testing.T) {
-    info,described:=core.test_info(t,Restore_World)
+    info,described:=test_info(t,Restore_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     succeeded,failed:=false,false
     for budget in 0..<48 {
         tracking:mem.Tracking_Allocator;mem.tracking_allocator_init(&tracking,context.allocator)

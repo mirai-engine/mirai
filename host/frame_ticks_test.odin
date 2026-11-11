@@ -7,9 +7,10 @@ import "core:testing"
 import "mirai:core"
 import "mirai:platform"
 
-@(private="file")
+@(private)
+@(test_world)
 Ticks_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     time:core.Time,
     frame_time:core.Frame_Time,
     clock:core.Clock,
@@ -45,9 +46,9 @@ a_frame_runs_the_ticks_its_time_completes_up_to_its_limit_and_a_record_runs_them
     if p==nil {return}
     defer platform.destroy(p)
     w:Ticks_Test_World
-    if !core.test_world_init(t,&w) {return}
-    defer core.test_world_destroy(&w)
-    info:=core.test_world_info(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    info:=test_world_info(&w)
     info.loops[.Game][.Fixed]=ticks_test_fixed
     app:=App{info=info,platform=p,tick_dt=1.0/60,max_ticks=4}
     defer delete(app.worlds)
@@ -110,9 +111,9 @@ frames_whose_time_jitters_run_a_steady_count_of_ticks_that_keeps_up_with_the_clo
     // repeat: frames in which the ticks repeat; ticks: how many run in them.
     for c in ([3]struct{fps,repeat,ticks:int}{{60,1,1},{144,12,5},{30,1,2}}) {
         w:Ticks_Test_World
-        if !core.test_world_init(t,&w) {return}
-        defer core.test_world_destroy(&w)
-        info:=core.test_world_info(&w)
+        if !test_world_init(t,&w) {return}
+        defer test_world_destroy(&w)
+        info:=test_world_info(&w)
         info.loops[.Game][.Fixed]=ticks_test_fixed
         app:=App{info=info,platform=p,tick_dt=1.0/60,max_ticks=4}
         defer delete(app.worlds)
@@ -146,9 +147,10 @@ frames_whose_time_jitters_run_a_steady_count_of_ticks_that_keeps_up_with_the_clo
     }
 }
 
-@(private="file")
+@(private)
+@(test_world)
 Loops_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     time:core.Time,
     frame_time:core.Frame_Time,
     shared,own:int,
@@ -168,9 +170,9 @@ the_editor_loop_does_not_call_again_what_the_game_loop_ran_on_a_world_in_the_fra
     steps:=[2]core.Step_Info{{name="both",phases={.Frame},loops={.Game,.Editor},call=shared_step},{name="own",phases={.Frame},loops={.Editor},call=own_step}}
     game_order,editor_order:=[1]i32{0},[2]i32{0,1}
     w:Loops_Test_World
-    if !core.test_world_init(t,&w) {return}
-    defer core.test_world_destroy(&w)
-    info:=core.test_world_info(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    info:=test_world_info(&w)
     info.steps=steps[:]
     info.order[.Game][.Frame],info.order[.Editor][.Frame]=game_order[:],editor_order[:]
     info.loops[.Game][.Frame]=proc(world,shared,editor,app:rawptr) {shared_step(world,shared,editor,app)}

@@ -170,6 +170,12 @@ Automatic navmesh and agents that walk on it, and volumes they fly through
   still far from the level of its corridor (more than its `climb` and half a meter: pushed,
   fallen, placed elsewhere) searches again from where it is, instead of walking against the wall
   toward a corner above.
+- **Planning on the way.** While its path is searched (`Waiting`), one that walks goes on along
+  the corridor it has, from whose first polygon the search starts. It plans again when a step
+  ahead stops being valid or the end of a cut corridor is near: `Arrived` only at the goal.
+- **Blocked.** One that walks in place within its radius (asking for a quarter of its speed or
+  more, so not one that ORCA holds back) plans once more after `NAV_BLOCKED` and fails after
+  twice that, with `navigation.blocked`.
 - **Searching in the air.** A request cuts the crossing in progress and searches in the same tick.
   If the body is not standing on the ground (it falls, or jumps between roofs) and there is no
   navmesh within its reach, the search waits for it to be standing instead of failing with

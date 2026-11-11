@@ -150,9 +150,10 @@ truncated_cache_files_are_rejected_without_leaking :: proc(t:^testing.T) {
     }
 }
 
-@(private="file")
+@(private)
+@(test_world)
 Player_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     players:core.Table(Geometry_Playback),
     requests:Geometry_Requests,
 }
@@ -180,12 +181,12 @@ cache_content_reloads_releases_old_geometry_and_obeys_public_player_requests :: 
     library:Cache_Library
     defer cache_library_free(&library)
     w:Player_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     players,requests:=&w.players,&w.requests
     e:=core.create(&w.entities)
     core.add(players,e,Geometry_Playback{source=id,rate=1,playing=true})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     physics_cache_update(players,requests,&library,{dt=.5},app.assets,app.allocator)
     state,_:=core.get(players,e)
     testing.expect_value(t,state.time,f32(.5))
