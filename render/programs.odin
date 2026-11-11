@@ -32,7 +32,6 @@ Program_Stage :: struct {
     name:string,
     over:u8,         // the resource of the grid; PROGRAM_STAGE_PARTICLES: the particles
     iterations:u8,   // each after the one before
-    neighbors:f32,   // of a stage over particles: the radius in metres of the neighbors it reads; 0: none
     writes:u32,      // the grid resources it writes besides the one it goes over, one bit each
 }
 
@@ -232,9 +231,8 @@ catalog_read :: proc(catalog:^Program_Catalog,bytes:[]u8) -> (ok:bool) {
                 stage:=&program.stages[at]
                 stage.name=catalog_text(source["name"],allocator) or_return
                 iterations:=catalog_number(source["iterations"]) or_return
-                neighbors:=catalog_number(source["neighbors"]) or_return
-                if iterations<1 || iterations>255 || !(neighbors>=0) {return}
-                stage.iterations,stage.neighbors=u8(iterations),f32(neighbors)
+                if iterations<1 || iterations>255 {return}
+                stage.iterations=u8(iterations)
                 over:=source["over"].(json.String) or_return
                 stage.over=PROGRAM_STAGE_PARTICLES
                 if over!="particles" {

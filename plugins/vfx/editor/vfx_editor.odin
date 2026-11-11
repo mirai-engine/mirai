@@ -26,6 +26,8 @@ Vfx_Editor :: struct {
     ready:bool,
     document:Effect_Document,
     thumbnail:Effect_Preview, // where the thumbnails of effects are drawn
+    watch:u64,                // the emitter of the edited world particle.instance.inspect looks at; 0: none
+    watched:^vfx.Particle_Sync, // of the edited world, in the frame it copies that emitter back
 }
 
 vfx_editor_free :: proc(v:^Vfx_Editor) {
@@ -106,6 +108,7 @@ effect_clicked :: proc(s:^editor.Session,w:core.World_Ref,file:^asset.Registry_F
 @(step="ui",after="editor_panels")
 vfx_document :: proc(s:^editor.Session,v:^Vfx_Editor,assets:^host.Assets,frame:core.Frame_Time) {
     if v.thumbnail.world!=nil && s.frame>v.thumbnail.used+PREVIEW_IDLE {preview_free(&v.thumbnail)}
+    watch_ask(s,v)
     g:=s.gui
     d:=editor.asset_document_active(s)
     if d==nil || d.kind!=effect.PARTICLE_KIND || editor.playing(s) {
