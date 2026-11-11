@@ -672,13 +672,16 @@ compound_relative :: proc(s:^Sync,e,owner:core.Entity) -> (relative:mm.Transform
 }
 
 // Whether a scale under a rotation is still a scale along the turned axes: R^T S R is diagonal (Jolt's
-// ScaleHelpers::CanScaleBeRotated).
+// ScaleHelpers::CanScaleBeRotated), up to SHEAR_TOLERANCE of the largest scale, so that the noise of a
+// rotation the simulation wrote is no shear.
+@(private) SHEAR_TOLERANCE :: 1e-4 // of the size: a shear below it moves no point of a shape 0.1 mm per meter
 @(private)
 scale_turns :: proc "contextless" (rotation:mm.Quat,scale:[3]f32) -> bool {
     r:=linalg.matrix3_from_quaternion(rotation)
+    tolerance:=SHEAR_TOLERANCE*max(abs(scale.x),abs(scale.y),abs(scale.z))
     for i in 0..<3 {
         for j in i+1..<3 {
-            if !(abs(r[0,i]*scale.x*r[0,j]+r[1,i]*scale.y*r[1,j]+r[2,i]*scale.z*r[2,j])<1e-6) {return false}
+            if !(abs(r[0,i]*scale.x*r[0,j]+r[1,i]*scale.y*r[1,j]+r[2,i]*scale.z*r[2,j])<=tolerance) {return false}
         }
     }
     return true
