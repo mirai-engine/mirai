@@ -30,9 +30,10 @@ nothing of the session), what the operations need of the session (`editor/git.od
 - **Initialize** writes `.gitignore` (`.mirai/`) if missing and the `.gitattributes` with the
   kinds of the engine and of the project's plugins (`build.git_attributes`, with LFS when ticked);
   then `git init -b main`, the drivers in the local configuration (`build.git_settings`),
-  `git lfs install --local` and the `origin` remote. A project created on the
+  `git lfs install --local` and the `origin` remote; last it keeps everything the project holds,
+  which is the base from then on: nothing of a new repository is pending. A project created on the
   [projects](panels.md#projects) screen runs it when the first read finishes (`git_init_later`),
-  and `mirai new` makes its project a repository when it is in none.
+  and `mirai new` makes its project a repository the same way when it is in none.
 - Each state read sets in the local configuration the drivers that are missing or are not this
   engine's (a clone, an engine that moved).
 - **Commit** first writes what the editor holds (`files_flush`) and takes what is kept; with

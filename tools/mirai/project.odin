@@ -79,7 +79,9 @@ cmd_new :: proc(root:string,args:[]string) -> int {
             fmt.eprintfln("mirai new: git did not make %s a repository, which the editor needs: install git, run `git init` there and `mirai setup git %s`",absolute,folder)
             return 1
         }
-        return setup_git(root,{absolute})
+        if code:=setup_git(root,{absolute});code!=0 {return code}
+        // What the template gave is the base: nothing of it is pending.
+        return run(root,{"git","-C",absolute,"add","-A"})
     }
     return 0
 }

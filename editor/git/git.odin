@@ -191,6 +191,8 @@ command :: proc(r:^Repository,roots:Roots,operation:Operation,step:int) -> []str
         case INIT_LFS+1:
             remote:=strings.trim_space(string(r.remote_field[:r.remote_length]))
             if remote!="" {return list("remote","add","origin",strings.clone(remote,a))}
+        // What the project holds is the base: nothing of it is pending.
+        case INIT_LFS+2: return list("add","-A","--",".")
         }
     case .Commit,.Commit_Push:
         switch step {

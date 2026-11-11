@@ -20,6 +20,7 @@ Api_Documents_Result :: struct {
 }
 Api_Document_Tab :: struct {
     path:string `mirai:"label=Its file; empty before it has one"`,
+    pending:bool `mirai:"label=Whether its file has what is not kept (git.keep keeps it; git.discard puts back what is kept)"`,
     kind:Document_Kind `mirai:"label=A scene, shown in its own light, or a prefab, shown in the studio light"`,
     preview_sun:bool `mirai:"label=Whether a prefab shows with the preview sun"`,
 }
@@ -42,7 +43,7 @@ api_documents :: proc(s:^Session,call:^api.Call) {
     for &tab,index in s.documents {
         d:=index==s.active_document?s.document:&tab.document
         v:=index==s.active_document?s.viewport:&tab.viewport
-        r.documents[index]={document_path(d),.Prefab if d.prefab else .Scene,v.preview_sun}
+        r.documents[index]={document_path(d),git_pending(s,document_file(d)),.Prefab if d.prefab else .Scene,v.preview_sun}
     }
     r.asset=api_asset_document_front(s)
     r.assets=make([]Api_Asset_Document_Tab,len(s.asset_documents),call.allocator)

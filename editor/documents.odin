@@ -225,6 +225,10 @@ documents_quit :: proc(s:^Session,agents_asked:=false,pending_asked:=false) {
     if projects_next_start(s) {s.quit=true}
 }
 
+// The dot of a tab whose file has what is not kept.
+PENDING_DOT :: 5
+PENDING_COLOR :: ui.Color{201,181,239,255}
+
 // A tab of the strip: those of the scenes first, then those of the assets.
 @(private)
 Strip_Tab :: struct {
@@ -264,7 +268,7 @@ strip_tab :: proc(s:^Session,index:int) -> (tab:Strip_Tab) {
 @(private)
 document_tab_width :: proc(s:^Session,tab:Strip_Tab,room:f32) -> f32 {
     width:=ui.text_width(&s.gui.ctx.font,tab.label,ui.metric(s.gui.ctx,"font"))+54
-    if tab.pending {width+=ui.text_width(&s.gui.ctx.font," •",ui.metric(s.gui.ctx,"font"))}
+    if tab.pending {width+=PENDING_DOT+18}
     return clamp(width,90,max(room,90))
 }
 
@@ -316,7 +320,6 @@ documents_build :: proc(s:^Session) {
                 tab:=strip_tab(s,index)
                 active:=tab.active
                 label:=tab.label
-                if tab.pending {label=ui.text_commit(ctx,fmt.bprintf(ui.text_reserve(ctx,len(label)+4),"%s •",label))}
                 width:=document_tab_width(s,tab,room)
                 tab_id:=shell_id(g,"document_tab",index+1)
                 close_id:=shell_id(g,"document_close",index+1)
@@ -342,6 +345,10 @@ documents_build :: proc(s:^Session) {
                             case tab.asset>=0: asset_document_request(s,tab.asset)
                             case:              s.document_request=index;s.requests+={.Document_Switch}
                             }
+                        }
+                        if tab.pending {
+                            if ui.box(ctx,{width=ui.fixed(PENDING_DOT),height=ui.fixed(PENDING_DOT),fill=PENDING_COLOR,radius=PENDING_DOT*0.5}) {}
+                            ui.spacer(ctx,5,1)
                         }
                         close:=ui.Node_Style{fill=ctx.hot==close_id?ui.color_alpha(ui.tone(ctx,"text"),65):ui.Color{},radius=12,text={color=text_color}}
                         if ui.button(ctx,close_id,{icon=.Cross,width=19,height=19,icon_size=10,icon_color=text_color,look=&close}).clicked {
