@@ -26,8 +26,6 @@ import "mirai:std/serial"
 // paths an instance can change, each a value of at most PARTICLE_VALUE_BYTES;
 // text fields (the program) are of the effect alone.
 
-KIND :: asset.Fourcc(u32('P')|u32('A')<<8|u32('R')<<16|u32('T')<<24)
-EXTENSION :: ".particle"
 VERSION :: 3
 PARTICLE_BURSTS :: 4
 PARTICLE_CURVE_KEYS :: 8
@@ -38,7 +36,7 @@ PARTICLE_MAX_PARAMETERS :: 32
 Particle_Shape :: enum u32 {Point,Sphere,Hemisphere,Cone,Box,Circle,Line,Surface,Bones}
 Particle_Render :: enum u32 {Billboard,Velocity,Horizontal,Ribbon,Mesh}
 Particle_Blend :: enum u32 {Additive,Alpha}
-Particle_Collision :: enum u32 {None,Screen,World}
+Particle_Collision :: enum u32 {None,World}
 Particle_Event :: enum u32 {None,Death,Collision}
 
 // What a Mesh particle turns its mesh about. Random: an axis of each particle
@@ -108,7 +106,7 @@ Particle_Info :: struct {
     noise_speed:f32 `mirai:"unit=1/s"`,
     attractor:[3]f32 `mirai:"unit=m"`,        // a point of the entity that pulls the particles
     attractor_strength:f32 `mirai:"unit=m/s²"`,
-    collision:Particle_Collision,             // Screen: against what the camera sees; World: against the traced scene
+    collision:Particle_Collision,             // World: against the traced scene
     bounce:f32 `mirai:"min=0,max=1"`,
     friction:f32 `mirai:"min=0,max=1"`,
     collision_life:f32 `mirai:"min=0,max=1"`, // share of its life a particle loses per hit
@@ -192,7 +190,7 @@ Particle_View :: struct {
 particle_document :: proc(doc:^asset.Document,types:^asset.Types,desc:Particle_Desc,allocator:=context.allocator) -> asset.Error {
     info:=desc.info
     if !particle_check({info=&info,parameters=desc.parameters,hidden=desc.hidden,resources=desc.resources}) {return .Invalid}
-    asset.document_init(doc,KIND,desc.id,allocator)
+    asset.document_init(doc,PARTICLE_KIND,desc.id,allocator)
     doc.kind_version=VERSION
     error:=particle_tables(doc,types,&info,desc)
     if error!=.None {asset.document_destroy(doc)}
@@ -225,7 +223,7 @@ particle_bytes :: proc(types:^asset.Types,desc:Particle_Desc,allocator:=context.
 }
 
 particle_view :: proc(a:^asset.Asset,types:^asset.Types) -> (view:Particle_View,error:asset.Error) {
-    asset.kind_check(a,KIND,VERSION) or_return
+    asset.kind_check(a,PARTICLE_KIND,VERSION) or_return
     view.info=asset.asset_row(a,types,"particle",Particle_Info,whole=true) or_return
     view.parameters=table_rows(a,types,"parameters",Particle_Parameter) or_return
     view.hidden=table_rows(a,types,"hidden",Particle_Field) or_return
@@ -251,7 +249,7 @@ particle_validate :: proc(view:Particle_View) -> Particle_Problem {
     if p.render>max(Particle_Render) {return {"render","Use Billboard, Velocity, Horizontal, Ribbon or Mesh"}}
     if p.facing>max(Particle_Facing) {return {"facing","Use Random, Entity, Camera_Position or Camera_Plane"}}
     if p.blend>max(Particle_Blend) {return {"blend","Use Additive or Alpha"}}
-    if p.collision>max(Particle_Collision) {return {"collision","Use None, Screen or World"}}
+    if p.collision>max(Particle_Collision) {return {"collision","Use None or World"}}
     if p.trigger>max(Particle_Event) {return {"trigger","Use None, Death or Collision"}}
     if p.report>max(Particle_Event) {return {"report","Use None, Death or Collision"}}
     if p.emission_mode>max(asset.Emission_Mode) {return {"emission_mode","Use Physical or Relative"}}

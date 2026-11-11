@@ -72,7 +72,7 @@ a_closed_mesh_joins_or_carves_a_volume_as_samples_and_undo_brings_its_entity_bac
         tool:Terrain_Tool;tool_ready(&tool);defer terrain_tool_free(&tool)
         tool.brush,tool.shaping,tool.shape,tool.blend=brush,true,.Selected,0
         terrain_sync(&session,&tool,core.read(&world.terrains),app.assets)
-        if !testing.expect(t,stroke_prepare(&tool,app.assets,app.allocator,core.read(&world.terrains),core.read(&world.worlds),editor.Pick{entity=owner})) {return}
+        if !testing.expect(t,stroke_prepare(&tool,app.assets,app.allocator,&world.terrains,&world.worlds,editor.Pick{entity=owner})) {return}
         // Without its terrain selected nothing changes.
         history.selection_set(&selection,{operand})
         terrain_operand(&session,&tool,ref,app.assets,app.allocator)
@@ -167,7 +167,7 @@ the_surface_of_a_volume_is_saved_as_a_mesh_asset :: proc(t:^testing.T) {
     session:=editor.Session{app=&app,info=ref.info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits,document=&document}
     tool:Terrain_Tool;tool_ready(&tool);defer terrain_tool_free(&tool)
     terrain_sync(&session,&tool,core.read(&world.terrains),app.assets)
-    if !testing.expect(t,stroke_prepare(&tool,app.assets,app.allocator,core.read(&world.terrains),core.read(&world.worlds),editor.Pick{entity=owner})) {return}
+    if !testing.expect(t,stroke_prepare(&tool,app.assets,app.allocator,&world.terrains,&world.worlds,editor.Pick{entity=owner})) {return}
     terrain_surface_mesh(&session,&tool,app.assets,app.allocator)
     _,found:=asset.registry_memory_find(&assets.registry,"dug.mesh")
     if !testing.expectf(t,found,"no mesh was written: %s",string(session.toast[:session.toast_length])) {return}

@@ -29,8 +29,9 @@ World_State :: struct {
     cut_count:i32,
     twins:[TWIN_CAPACITY]Twin,
     cuts:[CUT_CAPACITY]Cut,
+    awake_head,moved_head:i32, // the lists of the awake bodies and of the moved shapes
 }
-#assert(size_of(World_State)==2672)
+#assert(size_of(World_State)==2680)
 
 @(private) Hull_Slot :: struct {hull:Hull,generation:u32,refs:i32,revision:u32} // revision: rebuilds under its handle
 @(private) Mesh_Slot :: struct {mesh:Mesh,generation:u32,refs:i32}
@@ -142,7 +143,7 @@ world_init :: proc(w:^World,desc:World_Desc) -> bool {
     w.allocator=d.allocator
     w.gravity=d.gravity
     w.body_free,w.shape_free,w.contact_free,w.joint_free,w.block_free,w.character_free=-1,-1,-1,-1,-1,-1
-    w.island_free,w.fluid_free=-1,-1
+    w.island_free,w.fluid_free,w.awake_head,w.moved_head=-1,-1,-1,-1
     w.breakable_free,w.piece_free,w.bond_free=-1,-1,-1
     a:=d.allocator
     ok:=true
@@ -198,7 +199,7 @@ world_destroy :: proc(w:^World) {
         if slot.generation&1!=0 {hull_free(&slot.hull,a)}
     }
     for &slot in w.meshes {
-        if slot.generation&1!=0 {mesh_free(&slot.mesh,a)}
+        if slot.generation&1!=0 {mesh_release(&slot.mesh,a)}
     }
     for &slot in w.heightfields {
         if slot.generation&1!=0 {heightfield_free(&slot.field,a)}
@@ -220,7 +221,11 @@ world_destroy :: proc(w:^World) {
 }
 
 world_gravity :: proc(w:^World) -> Vec3 {return w.gravity}
-world_set_gravity :: proc(w:^World,gravity:Vec3) {w.gravity=gravity}
+world_set_gravity :: proc(w:^World,gravity:Vec3) -> bool {
+    if !finite(gravity) {return false}
+    w.gravity=gravity
+    return true
+}
 
 // Replaces the push rules of the world. False, changing nothing, for more than PUSH_RULE_CAPACITY rules,
 // a rule without layers on a side or a force that is not positive and finite.

@@ -36,19 +36,17 @@ remote_follows_what_a_client_holds_on_a_server_and_a_new_role_clears_it :: proc(
     s.host_ready=true
     authority_follow(&s,ref)
     core.settle(&info,&world,nil)
-    testing.expect(t,core.owned(core.read(&world.remotes),e),"what a connection owns and predicts is decided here")
+    testing.expect(t,core.owned(&world.remotes,e),"what a connection owns and predicts is decided here")
 
     s.server.objects[1]={object=Object(1),entity=e}
-    events:Net_Events
-    defer core.value_free(&events,type_info_of(Net_Events))
     held:=[]wire.Command{{kind=.Authority_Changed,object=Object(1),connection=3}}
     server_commands(&s,ref,nil,held,&world.remote)
     core.settle(&info,&world,nil)
-    testing.expect(t,!core.owned(core.read(&world.remotes),e),"what a client holds is decided there")
+    testing.expect(t,!core.owned(&world.remotes,e),"what a client holds is decided there")
     back:=[]wire.Command{{kind=.Authority_Changed,object=Object(1),connection=0}}
     server_commands(&s,ref,nil,back,&world.remote)
     core.settle(&info,&world,nil)
-    testing.expect(t,core.owned(core.read(&world.remotes),e),"and here again when it gives it back")
+    testing.expect(t,core.owned(&world.remotes,e),"and here again when it gives it back")
 
     server_commands(&s,ref,nil,held,&world.remote)
     core.settle(&info,&world,nil)
@@ -83,19 +81,19 @@ remote_follows_the_replicas_a_client_neither_predicts_nor_holds :: proc(t:^testi
     defer session_destroy(&s)
     ref:=core.world_ref(&world,&info)
     r:=net_test_replica(&s,ref,e,.Shown,.Lent)
-    testing.expect(t,!core.owned(core.read(&world.remotes),e),"someone else's replica is decided by the server")
+    testing.expect(t,!core.owned(&world.remotes,e),"someone else's replica is decided by the server")
     r.role=.Held
     replica_classify(&s,ref,r)
     core.settle(&info,&world,nil)
-    testing.expect(t,core.owned(core.read(&world.remotes),e),"what it holds is decided here")
+    testing.expect(t,core.owned(&world.remotes,e),"what it holds is decided here")
     r.role=.Predicted
     replica_classify(&s,ref,r)
     core.settle(&info,&world,nil)
-    testing.expect(t,core.owned(core.read(&world.remotes),e),"and what it predicts")
+    testing.expect(t,core.owned(&world.remotes,e),"and what it predicts")
     r.role=.Shown
     replica_classify(&s,ref,r)
     core.settle(&info,&world,nil)
-    testing.expect(t,!core.owned(core.read(&world.remotes),e))
+    testing.expect(t,!core.owned(&world.remotes,e))
 }
 
 @(private="file")
@@ -108,21 +106,36 @@ Names_World :: struct {
     names:core.Table(Net_Test_Names),
 }
 
+// An array of bytes travels as one field, so its bytes must fit one part of a state.
+@(private="file")
+@(component,replicated)
+Net_Test_Wide :: struct {bytes:[1024]u8}
+
+@(private="file")
+Wide_World :: struct {
+    using world:core.Test_World,
+    wide:core.Table(Net_Test_Wide),
+}
+
 // A replicated component the protocol cannot carry opens no network: the
 // problem and the reason of the session name the component and why.
 @(test)
 a_replicated_component_that_does_not_fit_the_protocol_is_refused_with_its_fix :: proc(t:^testing.T) {
-    info,described:=core.test_info(t,Names_World)
-    if !described {return}
-    defer core.test_info_destroy(&info)
-    problems:core.Problems
-    s:=Net_Session{allocator=context.allocator,problems=&problems}
-    testing.expect(t,!protocol_build(&s,core.world_ref(nil,&info)))
-    session_destroy(&s)
-    refusal:=base.text_get(s.refusal[:])
-    testing.expectf(t,strings.contains(refusal,"Net_Test_Names does not fit the protocol") && strings.contains(refusal,"not plain data"),"%s",refusal)
-    testing.expect_value(t,problems.count,1)
-    testing.expect_value(t,base.text_get(problems.entries[0].code[:]),"net.protocol")
+    refused :: proc(t:^testing.T,$W:typeid,name,why:string) {
+        info,described:=core.test_info(t,W)
+        if !described {return}
+        defer core.test_info_destroy(&info)
+        problems:core.Problems
+        s:=Net_Session{allocator=context.allocator,problems=&problems}
+        testing.expect(t,!protocol_build(&s,core.world_ref(nil,&info)))
+        session_destroy(&s)
+        refusal:=base.text_get(s.refusal[:])
+        testing.expectf(t,strings.contains(refusal,name) && strings.contains(refusal,"does not fit the protocol") && strings.contains(refusal,why),"%s",refusal)
+        testing.expect_value(t,problems.count,1)
+        testing.expect_value(t,base.text_get(problems.entries[0].code[:]),"net.protocol")
+    }
+    refused(t,Names_World,"Net_Test_Names","not plain data")
+    refused(t,Wide_World,"Net_Test_Wide","one of its fields encodes in more than")
 }
 
 @(private="file")

@@ -462,7 +462,7 @@ tree_text_fields :: proc(node:^Tree_Node) -> (fields:[TREE_TEXT_FIELDS]Node_Fiel
 
 @(private)
 tree_style_finite :: proc "contextless" (s:Node_Style) -> bool {
-    return tree_finite(s.radius[0],s.radius[1],s.radius[2],s.radius[3],s.transition,s.stroke_width,s.shadow_blur,s.shadow_offset.x,s.shadow_offset.y,s.text.size,s.text.line_height,s.text.outline,s.text.shadow.x,s.text.shadow.y,s.move.x,s.move.y,s.scale,
+    return tree_finite(s.radius[0],s.radius[1],s.radius[2],s.radius[3],s.transition,s.layout_transition,s.stroke_width,s.shadow_blur,s.shadow_offset.x,s.shadow_offset.y,s.text.size,s.text.line_height,s.text.outline,s.text.shadow.x,s.text.shadow.y,s.move.x,s.move.y,s.scale,
         s.program_values[0],s.program_values[1],s.program_values[2],s.program_values[3])
 }
 @(private)

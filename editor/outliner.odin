@@ -38,7 +38,10 @@ Outliner :: struct {
     rows:[dynamic]Outliner_Row,
     node_of:[dynamic]i32,    // by entity index: node+1
     expanded:[dynamic]core.Entity,
-    key:[5]u64,
+    world:rawptr,            // the world the tree was made from; nil: to make again
+    shapes:[3]core.Shape,    // of the transforms, the names and the ids then
+    parents:core.Seen,
+    tree_serial:u64,         // grows each time the tree is made again
     rows_key:[3]u64,
     expanded_serial:u64,
     scroll:f32,
@@ -56,7 +59,7 @@ Outliner :: struct {
 outliner_reset :: proc(o:^Outliner) {
     clear(&o.expanded)
     o.expanded_serial+=1
-    o.key={}
+    o.world=nil
     o.rename,o.menu,o.reveal,o.scope=core.NONE,core.NONE,core.NONE,core.NONE
     o.scroll=0
 }
@@ -110,9 +113,10 @@ outliner_sync :: proc(o:^Outliner,w:core.World_Ref) {
     names:=core.world_table_of(w,core.Name)
     parents:=core.world_table_of(w,core.Parent)
     ids:=core.world_table_of(w,core.Id)
-    key:=[5]u64{u64(uintptr(w.data)),transforms!=nil?transforms.layout:0,names!=nil?names.layout:0,parents!=nil?parents.layout+parents.version:0,ids!=nil?ids.layout:0}
-    if key==o.key {return}
-    o.key=key
+    moved:=core.reshaped(transforms,&o.shapes[0]) | core.reshaped(names,&o.shapes[1]) | core.reshaped(ids,&o.shapes[2]) | core.touched(parents,&o.parents)
+    if !moved && w.data==o.world {return}
+    o.world=w.data
+    o.tree_serial+=1
     es:=core.world_entities(w)
     clear(&o.nodes)
     resize(&o.node_of,core.entities_capacity(es))
@@ -161,19 +165,18 @@ OUTLINER_SCOPE :: f32(28) // the bar of the document shown alone
 @(private)
 outliner_scope_bar :: proc(s:^Session,o:^Outliner,w:core.World_Ref) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(OUTLINER_SCOPE),gap=6,align_y=.Center}) {
-        if ui.button(ctx,ui.id(ctx,"outliner_scope_back"),{icon=ui.icon_user(u8(User_Icon.Back)),icon_color=th.text_muted,icon_size=13,style=.Ghost,width=22,height=22}).clicked {o.scope=core.NONE}
+        if ui.button(ctx,ui.id(ctx,"outliner_scope_back"),{icon=ui.icon_user(u8(User_Icon.Back)),icon_color=ui.tone(ctx,"text_muted"),icon_size=13,variant="ghost",width=22,height=22}).clicked {o.scope=core.NONE}
         kind:=container_kind(w,o.scope)
         icon,text:=container_color(s,kind)
         if ui.box(ctx,{width=ui.FIT,height=ui.fixed(20),padding={8,0,8,0},gap=5,align_y=.Center,fill=ui.color_alpha(icon,36),stroke=icon,radius=10}) {
             ui.icon(ctx,kind==.Section?ui.icon_user(u8(User_Icon.Scene)):.Prefab,icon,12)
-            ui.label(ctx,container_document(s,w,o.scope),th.font_label,text,0,font=ui.FONT_SEMIBOLD)
+            ui.label(ctx,container_document(s,w,o.scope),ui.metric(ctx,"font_label"),text,0,font=ui.FONT_SEMIBOLD)
         }
         path:=make([dynamic]string,context.temp_allocator)
         for at:=container_of(w,o.scope);at!=core.NONE;at=container_of(w,at) {append(&path,entity_label(w,at))}
         append(&path,document_label(s))
-        ui.label(ctx,fmt.tprintf("in %s",strings.join(path[:]," › ",context.temp_allocator)),th.font_label,th.text_faint)
+        ui.label(ctx,fmt.tprintf("in %s",strings.join(path[:]," › ",context.temp_allocator)),ui.metric(ctx,"font_label"),ui.tone(ctx,"text_faint"))
     }
 }
 
@@ -181,7 +184,7 @@ outliner_scope_bar :: proc(s:^Session,o:^Outliner,w:core.World_Ref) {
 @(private)
 outliner_rows :: proc(o:^Outliner,w:core.World_Ref) {
     filter:=string(o.filter[:o.filter_length])
-    key:=[3]u64{o.key[0]~o.key[1]~o.key[2]~o.key[3]~u64(o.scope),o.expanded_serial,base.hash64(transmute([]u8)filter)}
+    key:=[3]u64{o.tree_serial~u64(o.scope)<<32,o.expanded_serial,base.hash64(transmute([]u8)filter)}
     if filter!="" {key[1]=0}
     if key==o.rows_key {return}
     o.rows_key=key
@@ -216,7 +219,6 @@ outliner_build :: proc(s:^Session,w:core.World_Ref,width,height:f32) {
     o:=s.outliner
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     v:=s.viewport
     outliner_sync(o,w)
     if search_field(s,ui.id(ctx,"outliner_filter"),o.filter[:],&o.filter_length,"Search entities") {o.scroll=0}
@@ -224,9 +226,9 @@ outliner_build :: proc(s:^Session,w:core.World_Ref,width,height:f32) {
     if o.scope!=core.NONE {outliner_scope_bar(s,o,w)}
     outliner_rows(o,w)
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(16),align_y=.Center}) {
-        ui.label(ctx,fmt.tprintf("%d entities",len(o.nodes)),th.font_label,th.text_faint)
+        ui.label(ctx,fmt.tprintf("%d entities",len(o.nodes)),ui.metric(ctx,"font_label"),ui.tone(ctx,"text_faint"))
         ui.spacer(ctx)
-        if n:=len(s.selection.entities);n>0 {ui.label(ctx,fmt.tprintf("%d selected",n),th.font_label,th.accent)}
+        if n:=len(s.selection.entities);n>0 {ui.label(ctx,fmt.tprintf("%d selected",n),ui.metric(ctx,"font_label"),ui.tone(ctx,"accent"))}
     }
     room:=max(height-28-16-2*10-(o.scope!=core.NONE?OUTLINER_SCOPE+4:0),OUTLINER_ROW*2)
     if o.reveal!=core.NONE {
@@ -280,7 +282,7 @@ outliner_build :: proc(s:^Session,w:core.World_Ref,width,height:f32) {
             }
             if node.count>0 && o.filter_length==0 {
                 open:=outliner_expanded(o,e)
-                if ui.button(ctx,ui.id(ctx,"outliner_open",index+1),{icon=open?.Chevron_Down:.Chevron_Right,icon_color=th.text_muted,icon_size=10,style=.Ghost,width=16,height=OUTLINER_ROW}).clicked {outliner_toggle(o,e)}
+                if ui.button(ctx,ui.id(ctx,"outliner_open",index+1),{icon=open?.Chevron_Down:.Chevron_Right,icon_color=ui.tone(ctx,"text_muted"),icon_size=10,variant="ghost",width=16,height=OUTLINER_ROW}).clicked {outliner_toggle(o,e)}
             } else if arrows {
                 ui.spacer(ctx,16,1)
             }
@@ -293,7 +295,7 @@ outliner_build :: proc(s:^Session,w:core.World_Ref,width,height:f32) {
             // While a section is edited in its world, the rest reads only and fades.
             if section_editing(s)!=core.NONE && section_locked(s,w,e) {
                 color=ui.color_alpha(color,110)
-                text_color=ui.color_alpha(text_color!={}?text_color:th.text,120)
+                text_color=ui.color_alpha(text_color!={}?text_color:ui.tone(ctx,"text"),120)
             }
             if o.rename==e {
                 field:=ui.id(ctx,"outliner_name")
@@ -342,12 +344,12 @@ outliner_build :: proc(s:^Session,w:core.World_Ref,width,height:f32) {
             if history.selection_has(s.selection,e) || ui.rect_contains(line_rect,ctx.pointer) {
                 up:=container_of(w,e)
                 tree:=kind!=.None?e:up
-                if up!=core.NONE && ui.button(ctx,ui.id(ctx,"outliner_root",index+1),{icon=ui.icon_user(u8(User_Icon.Up)),icon_color=th.text_muted,icon_size=13,style=.Ghost,width=20,height=OUTLINER_ROW}).clicked {
+                if up!=core.NONE && ui.button(ctx,ui.id(ctx,"outliner_root",index+1),{icon=ui.icon_user(u8(User_Icon.Up)),icon_color=ui.tone(ctx,"text_muted"),icon_size=13,variant="ghost",width=20,height=OUTLINER_ROW}).clicked {
                     history.selection_set(s.selection,{up})
                     if o.scope!=core.NONE && !entity_within(w,up,o.scope) {o.scope=core.NONE}
                     outliner_reveal(o,w,up)
                 }
-                if tree!=core.NONE && tree!=o.scope && ui.button(ctx,ui.id(ctx,"outliner_tree",index+1),{icon=ui.icon_user(u8(User_Icon.Tree)),icon_color=th.text_muted,icon_size=13,style=.Ghost,width=20,height=OUTLINER_ROW}).clicked {
+                if tree!=core.NONE && tree!=o.scope && ui.button(ctx,ui.id(ctx,"outliner_tree",index+1),{icon=ui.icon_user(u8(User_Icon.Tree)),icon_color=ui.tone(ctx,"text_muted"),icon_size=13,variant="ghost",width=20,height=OUTLINER_ROW}).clicked {
                     o.scope,o.scroll=tree,0
                     if !outliner_expanded(o,tree) {append(&o.expanded,tree);o.expanded_serial+=1}
                     outliner_reveal(o,w,e)
@@ -355,7 +357,7 @@ outliner_build :: proc(s:^Session,w:core.World_Ref,width,height:f32) {
             }
             eye:=ui.id(ctx,"outliner_eye",index+1)
             own_hidden:=entity_has(w,e,erender.Hidden)
-            if ui.button(ctx,eye,{icon=own_hidden?.Eye_Off:.Eye,icon_color=own_hidden?th.text_muted:th.text_faint,icon_size=14,style=.Ghost,width=22,height=OUTLINER_ROW}).clicked {
+            if ui.button(ctx,eye,{icon=own_hidden?.Eye_Off:.Eye,icon_color=own_hidden?ui.tone(ctx,"text_muted"):ui.tone(ctx,"text_faint"),icon_size=14,variant="ghost",width=22,height=OUTLINER_ROW}).clicked {
                 tool_preview_cancel(s)
                 entity_hidden_set(s,e,!own_hidden)
             }
@@ -411,7 +413,7 @@ outliner_menu :: proc(s:^Session,w:core.World_Ref) {
         if ui.menu_item(ctx,ui.id(ctx,"menu_child"),"Add child",{disabled=playing}) {
             tool_preview_cancel(s)
             if !entity_alive(w,e) {return}
-            child:=entity_create(s,{preset=.Empty,parent=e})
+            child:=entity_create(s,{name="Group",parent=e})
             history.selection_set(s.selection,{child})
             outliner_reveal(o,w,child)
         }
@@ -440,38 +442,28 @@ Create_Group :: struct {
     count:int,
 }
 
-// The sections of the editor with its presets in their order; the cards of
-// plugins go after them in the section they name, or in one of their own.
+// The sections of Create in the order their first cards come in; a card
+// with no group goes in Logic.
 @(private)
 create_groups :: proc(s:^Session,groups:^[CARD_GROUP_CAPACITY]Create_Group) -> (count:int) {
-    all:=cards(s)
-    presets:=[?]struct{title:string,presets:[]Preset}{
-        {"Logic",{.Empty,.Point_Light,.Sun,.Spot_Light,.Rect_Light,.Sound,.Reverb_Zone}},
-        {"Shapes",{.Cube,.Sphere,.Cylinder,.Cone,.Prism,.Pyramid}},
-        {"Cameras",{.Camera,.Third_Person_Camera,.Aim_Camera,.First_Person_Camera,.Isometric_Camera,.Top_Down_Camera,.Side_Camera}},
-    }
-    for group,index in presets {
-        groups[index].title=group.title
-        for preset in group.presets {groups[index].cards[groups[index].count]=int(preset);groups[index].count+=1}
-    }
-    count=len(presets)
-    for card,at in all[len(Preset):] {
-        found:=0 if card.group=="" else -1
-        for group,index in groups[:count] {if group.title==card.group {found=index}}
+    for card,at in cards(s) {
+        title:=card.group if card.group!="" else "Logic"
+        found:=-1
+        for group,index in groups[:count] {if group.title==title {found=index}}
         if found<0 {
             if count>=len(groups) {continue}
-            groups[count].title=card.group
+            groups[count].title=title
             found=count
             count+=1
         }
         g:=&groups[found]
-        g.cards[g.count]=len(Preset)+at
+        g.cards[g.count]=at
         g.count+=1
     }
     return
 }
 
-// The Create tab: the presets as the content browser shows assets, under the
+// The Create tab: the cards as the content browser shows assets, under the
 // headers of their groups and at the zoom and in the mode of its cells;
 // dragged onto the scene or clicked to place one where the camera looks.
 @(private)
@@ -518,39 +510,37 @@ create_build :: proc(s:^Session,w:core.World_Ref,height:f32,width:f32=CONTENT_WI
 @(private)
 create_header :: proc(s:^Session,id:ui.Id,name:string,open:bool,width:f32) -> ui.Interaction {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     it:=ui.interact(ctx,id,{.Focusable})
     height:=CONTENT_HEADER+2
     if ui.box(ctx,{width=ui.fixed(width),height=ui.fixed(height),direction=.Column}) {
-        if ui.box(ctx,{id=id,width=ui.GROW,height=ui.fixed(height-1 if open else height),padding={CONTENT_INSET,0,8,0},gap=7,align_y=.Center,fill=th.field if it.hot else th.panel,radius=3}) {
-            ui.icon(ctx,.Chevron_Down if open else .Chevron_Right,th.text_faint,10)
-            ui.icon(ctx,ui.icon_user(u8(User_Icon.Folder)),th.text_faint,14)
-            ui.label(ctx,name,th.font,th.text if open else th.text_muted,0,font=ui.FONT_MEDIUM)
+        if ui.box(ctx,{id=id,width=ui.GROW,height=ui.fixed(height-1 if open else height),padding={CONTENT_INSET,0,8,0},gap=7,align_y=.Center,fill=ui.tone(ctx,"field") if it.hot else ui.tone(ctx,"panel"),radius=3}) {
+            ui.icon(ctx,.Chevron_Down if open else .Chevron_Right,ui.tone(ctx,"text_faint"),10)
+            ui.icon(ctx,ui.icon_user(u8(User_Icon.Folder)),ui.tone(ctx,"text_faint"),14)
+            ui.label(ctx,name,ui.metric(ctx,"font"),ui.tone(ctx,"text") if open else ui.tone(ctx,"text_muted"),0,font=ui.FONT_MEDIUM)
         }
         if open {
-            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=th.divider}) {}
+            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=ui.tone(ctx,"divider")}) {}
         }
     }
     return it
 }
 
-// A preset as the browser shows an asset: a row of its list, or its icon on a
+// A card as the browser shows an asset: a row of its list, or its icon on a
 // thumbnail with the line of the color of its group and its name under it.
 @(private)
 create_card :: proc(s:^Session,id:ui.Id,card:Card,carried:bool,view:Content_View,cell:f32) -> (it:ui.Interaction) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     it=ui.interact(ctx,id,{.Focusable})
     keyboard:=content_keyboard(ctx,it)
     if view.mode==.List {
         if ui.box(ctx,asset_row_box(ctx,id,CONTENT_INSET,carried,it.hot,keyboard)) {
             asset_frame(s,20,card.color,CONTENT_FRAME_EDGE,1,{},card.icon,card.color,0)
-            ui.label(ctx,card.label,th.font,th.text,0,font=ui.FONT_MEDIUM if carried else 0)
+            ui.label(ctx,card.label,ui.metric(ctx,"font"),ui.tone(ctx,"text"),0,font=ui.FONT_MEDIUM if carried else 0)
         }
         return
     }
     if ui.box(ctx,asset_card_box(ctx,id,view,cell,carried,keyboard)) {
-        edge,stroke:=asset_frame_edge(th,it.hot,carried)
+        edge,stroke:=asset_frame_edge(ctx,it.hot,carried)
         asset_frame(s,cell,card.color,edge,stroke,{},card.icon,card.color,0)
         names:=content_shows_names(view)
         if names {content_name(ctx,card.label,carried,cell)}

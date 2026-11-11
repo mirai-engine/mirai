@@ -24,7 +24,7 @@ program_test_content :: proc(t:^testing.T,content:^host.Content_Animation) -> Pl
     content.lib.clips[2].first_marker,content.lib.clips[2].marker_count=1,1
     content.lib.clips[3]=content.lib.clips[0];content.lib.clips[3].loop=.Loop
     content.lib.clips[5]=content.lib.clips[2];content.lib.clips[5].loop=.Loop
-    content.markers=make([]u64,1);content.markers[0]=base.name_hash("step")
+    content.markers=make([]host.Content_Marker,1);content.markers[0].name=base.name_hash("step")
     return state
 }
 
@@ -37,7 +37,7 @@ program_test_sync_markers :: proc(content:^host.Content_Animation) {
     markers:=[4]lib.Marker{{time=.2,id=0},{time=1.2,id=1},{time=.1,id=0},{time=.4,id=1}};copy(content.lib.markers,markers[:])
     for index in ([2]int{0,3}) {content.lib.clips[index].first_marker,content.lib.clips[index].marker_count=0,2}
     for index in ([2]int{2,5}) {content.lib.clips[index].first_marker,content.lib.clips[index].marker_count=2,2}
-    delete(content.markers);content.markers=make([]u64,2);content.markers[0],content.markers[1]=base.name_hash("step"),base.name_hash("lift")
+    delete(content.markers);content.markers=make([]host.Content_Marker,2);content.markers[0].name,content.markers[1].name=base.name_hash("step"),base.name_hash("lift")
 }
 
 // The program of one group of clips, as the search of the locomotion of a .character leaves it.
@@ -70,7 +70,7 @@ a_program_blends_its_clips_with_curves_and_root_motion_under_the_layers_without_
     pose :: proc(playback:^Playback,state:^Playing,content:^host.Content_Animation,animation:Animation,output:^Program_Output,events:^Animation_Events,dt:f32,problems:^core.Problems) -> bool {
         if !program_buffers(state,content) || !program_players(state,output,content,animation,events,playback,dt,-1,problems) || !program_pose(playback,state,content,animation,output) {return false}
         layers_advance(playback,state,content,animation,events,0,problems)
-        pose_layers(playback,state,&content.lib,animation)
+        pose_layers(playback,state,content,animation)
         return true
     }
     if !testing.expect(t,pose(&playback,state,&content,animation,output,&events,.5,&problems)) {return}
@@ -85,7 +85,7 @@ a_program_blends_its_clips_with_curves_and_root_motion_under_the_layers_without_
     transforms:core.Table(core.Transform);defer core.table_destroy(&transforms)
     constraints:Animation_Constraints;defer constraints_free(&constraints)
     state.program.root.in_place=true
-    constraints_apply(state,&playback,{},&constraints,&transforms,{},0)
+    if bone,reference,pinned:=animation_root_reference(state,state.program.root,state.local[:],(^core.Table(core.Transform))(nil));pinned {state.local[bone]=reference}
     testing.expect_value(t,state.local[1].position,mm.Vec3{})
     copy(state.local[:],state.rest[:]);state.program.root.in_place=false
     resize(&state.program.from,len(state.local));copy(state.program.from[:],state.local[:])
@@ -267,7 +267,7 @@ a_layer_over_a_program_keeps_its_scalar_curves :: proc(t:^testing.T) {
     testing.expect(t,program_buffers(state,&content) && program_players(state,output,&content,animation,&events,&playback,0,-1,nil))
     testing.expect(t,program_pose(&playback,state,&content,animation,output))
     layers_advance(&playback,state,&content,animation,&events,0,nil)
-    pose_layers(&playback,state,&content.lib,animation)
+    pose_layers(&playback,state,&content,animation)
     sample_layer_curves(state,&content,animation)
     got:=animation_curve(&playback,state.entity,"pulse",default_value=2)
     testing.expect_value(t,state.local[2].position.y,f32(1))

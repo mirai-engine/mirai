@@ -48,8 +48,7 @@ Profile_Conditions :: struct {
     window:[2]int,       // pixels of the drawable
     render:[2]int,       // pixels the scene is rendered at
     preset:string,
-    render_scale:f32,
-    preset_height:u32,
+    resolution:u32,
     vsync:bool,
     frame_limit:u32,
     refresh_hz:f32,      // of the display the window is on; 0 when unknown
@@ -193,7 +192,7 @@ profile_conditions :: proc(s:^Session) -> (c:Profile_Conditions) {
     }
     if g:=graphics_settings(s);g!=nil {
         c.preset=strings.clone(graphics_quality_label(erender.graphics_quality_of(g^)))
-        c.render_scale,c.preset_height,c.vsync,c.frame_limit=g.render_scale,g.preset_height,g.vsync,g.frame_limit
+        c.resolution,c.vsync,c.frame_limit=g.resolution,g.vsync,g.frame_limit
     }
     current:=status(s)
     c.document,c.entities=strings.clone(current.document),current.entities

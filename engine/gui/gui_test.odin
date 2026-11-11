@@ -46,101 +46,112 @@ the_rect_of_a_node_of_a_screen_is_in_window_points :: proc(t:^testing.T) {
 the_events_of_a_frame_wait_for_a_tick_that_does_not_run_again :: proc(t:^testing.T) {
     gui:Gui
     events:UI_Events
-    defer {delete(gui.pending);delete(gui.arrived.items);delete(events.items)}
+    defer {delete(gui.pending);delete(events.items)}
+    seen:u64
     append(&gui.pending,UI_Event{entity=core.entity_make(1,1),name=7,kind=.Clicked})
     gui_events_deliver(&events,&gui,core.Time{tick=3,resimulating=true})
-    testing.expect(t,len(events.items)==0 && len(gui.pending)==1)
+    got,_:=core.log_since(events.log,&seen)
+    testing.expect(t,len(got)==0 && len(gui.pending)==1)
     gui_events_deliver(&events,&gui,core.Time{tick=5})
-    testing.expect(t,len(events.items)==1 && len(gui.pending)==0 && events.items[0].name==7)
+    got,_=core.log_since(events.log,&seen)
+    testing.expect(t,len(got)==1 && len(gui.pending)==0 && got[0].name==7)
 }
 
 @(test)
 a_name_asked_is_kept_once_for_the_screen_it_was_asked_of :: proc(t:^testing.T) {
     gui_:Gui
     a,b:=core.entity_make(1,1),core.entity_make(2,1)
-    events:=events_this_frame(&gui_)
-    clicked(events,a,"play")
-    clicked(events,a,"play")
-    clicked(events,b,"play")
-    clicked(events,a,"")
-    asked_merge(&gui_,events)
-    testing.expect_value(t,events.asked_count,0)
-    testing.expect_value(t,gui_.names_asked_count,2)
-    testing.expect(t,gui_.names_asked[0].name==base.name_hash("play") && gui_.names_asked[0].entity==a,"what was asked, each once")
+    events:UI_Events
+    clicked(&events,a,"play")
+    testing.expect_value(t,gui_.names_asked.count,0)
+    events_follow(&events,&gui_)
+    clicked(&events,a,"play")
+    clicked(&events,a,"play")
+    clicked(&events,b,"play")
+    clicked(&events,a,"")
+    testing.expect_value(t,gui_.names_asked.count,2)
+    testing.expect(t,gui_.names_asked.names[0].name==base.name_hash("play") && gui_.names_asked.names[0].entity==a,"what was asked, each once")
 }
 
 @(test)
-the_helpers_read_the_events_of_a_frame :: proc(t:^testing.T) {
+the_helpers_read_the_events :: proc(t:^testing.T) {
     entity:=core.entity_make(1,1)
-    gui_:Gui
-    defer delete(gui_.arrived.items)
-    append(&gui_.arrived.items,
+    events:UI_Events
+    defer delete(events.items)
+    append(&events.items,
         UI_Event{entity=entity,name=base.name_hash("play"),kind=.Clicked},
         UI_Event{entity=entity,name=base.name_hash("volume"),kind=.Changed,value=0.5},
         UI_Event{entity=entity,kind=.Back},
         UI_Event{kind=.Menu},
     )
-    events:=events_this_frame(&gui_)
-    testing.expect(t,menu_pressed(events))
-    testing.expect(t,clicked(events,entity,"play") && !clicked(events,entity,"quit"))
-    value,ok:=changed_value(events,entity,"volume")
+    testing.expect(t,menu_pressed(&events))
+    testing.expect(t,clicked(&events,entity,"play") && !clicked(&events,entity,"quit"))
+    value,ok:=changed_value(&events,entity,"volume")
     testing.expect(t,ok && value==0.5)
-    testing.expect(t,back(events,entity))
-    testing.expect(t,!clicked(events_this_frame(nil),entity,"play") && !menu_pressed(nil),"without a Gui there are no events")
+    testing.expect(t,back(&events,entity))
+    testing.expect(t,!clicked(nil,entity,"play") && !menu_pressed(nil),"without a Gui there are no events")
 }
 
-// A frame step reads an event once, in frames with several ticks and with none.
+// An event reaches a step of the tick and one of the frame once each, in
+// frames with several ticks and with none (the clock stopped), and goes
+// through the frame phase only while no tick runs.
 @(test)
-events_this_frame_gives_each_event_once_whatever_ticks_ran :: proc(t:^testing.T) {
+an_event_reaches_each_reader_once_whatever_ticks_ran :: proc(t:^testing.T) {
     gui:Gui
     events:UI_Events
-    defer {delete(gui.pending);delete(gui.arrived.items);delete(events.items)}
-    event:=UI_Event{entity=core.entity_make(1,1),name=7,kind=.Clicked}
-    read :: proc(t:^testing.T,gui:^Gui,want:int,loc:=#caller_location) {
-        testing.expect_value(t,len(events_this_frame(gui).items),want,loc=loc)
+    defer {delete(gui.pending);delete(events.items)}
+    ticked,framed:u64
+    read :: proc(t:^testing.T,events:^UI_Events,cursor:^u64,want:int,loc:=#caller_location) {
+        got,_:=core.log_since(events.log,cursor)
+        testing.expect_value(t,len(got),want,loc=loc)
     }
-    // Two ticks: the second leaves UI_Events empty, this frame still has it, the next one does not.
-    append(&gui.pending,event)
+    // Two ticks in a frame: the first has it, and the frame phase too.
+    append(&gui.pending,UI_Event{name=7,kind=.Clicked})
     gui_events_deliver(&events,&gui,core.Time{tick=1})
+    read(t,&events,&ticked,1)
     gui_events_deliver(&events,&gui,core.Time{tick=2})
-    testing.expect_value(t,len(events.items),0)
-    gui_events_frame(&events,&gui,core.Time{tick=2})
-    read(t,&gui,1)
+    read(t,&events,&ticked,0)
+    gui_events_frame(&events,&gui)
+    read(t,&events,&framed,1)
+    testing.expect_value(t,gui.deliveries,u64(1))
+    // Stopped: no tick runs, and it comes through the frame phase, once, and to the next tick.
+    append(&gui.pending,UI_Event{name=8,kind=.Clicked})
+    gui_events_frame(&events,&gui)
+    read(t,&events,&framed,1)
+    testing.expect(t,len(gui.pending)==0 && gui.deliveries==2)
+    gui_events_frame(&events,&gui)
+    read(t,&events,&framed,0)
     gui_events_deliver(&events,&gui,core.Time{tick=3})
-    gui_events_frame(&events,&gui,core.Time{tick=3})
-    read(t,&gui,0)
-    // Stopped: no tick runs, and it comes through the frame phase, once.
-    append(&gui.pending,event)
-    gui_events_frame(&events,&gui,core.Time{tick=3})
-    read(t,&gui,1)
-    gui_events_frame(&events,&gui,core.Time{tick=3})
-    read(t,&gui,0)
-    // A tick that runs again gave them already.
-    append(&gui.pending,event)
-    gui_events_deliver(&events,&gui,core.Time{tick=4})
-    gui_events_frame(&events,&gui,core.Time{tick=4})
-    gui_events_deliver(&events,&gui,core.Time{tick=4,resimulating=true})
-    gui_events_frame(&events,&gui,core.Time{tick=4})
-    read(t,&gui,0)
+    read(t,&events,&ticked,1)
+    // A tick that runs again does not get what the frame phase gave.
+    gui_events_deliver(&events,&gui,core.Time{tick=3,resimulating=true})
+    read(t,&events,&ticked,0)
 }
 
 @(test)
 a_tick_that_runs_again_gets_the_events_it_got :: proc(t:^testing.T) {
     gui:Gui
     events:UI_Events
-    defer {delete(gui.pending);delete(gui.arrived.items);delete(events.items)}
+    defer {delete(gui.pending);delete(events.items)}
+    seen:u64
+    got:=proc(events:^UI_Events,seen:^u64) -> []UI_Event {
+        items,_:=core.log_since(events.log,seen)
+        return items
+    }
     append(&gui.pending,UI_Event{entity=core.entity_make(1,1),name=7,kind=.Clicked})
     gui_events_deliver(&events,&gui,core.Time{tick=5})
+    testing.expect_value(t,len(got(&events,&seen)),1)
     gui_events_deliver(&events,&gui,core.Time{tick=6})
-    testing.expect_value(t,len(events.items),0)
+    testing.expect_value(t,len(got(&events,&seen)),0)
     gui_events_deliver(&events,&gui,core.Time{tick=5,resimulating=true})
-    testing.expect(t,len(events.items)==1 && events.items[0].name==7)
+    again:=got(&events,&seen)
+    testing.expect(t,len(again)==1 && again[0].name==7)
     gui_events_deliver(&events,&gui,core.Time{tick=6,resimulating=true})
-    testing.expect_value(t,len(events.items),0)
+    testing.expect_value(t,len(got(&events,&seen)),0)
     // A save took the clock back: tick 5 of the new run did not get them.
     gui_events_deliver(&events,&gui,core.Time{tick=2})
     gui_events_deliver(&events,&gui,core.Time{tick=5,resimulating=true})
-    testing.expect_value(t,len(events.items),0)
+    testing.expect_value(t,len(got(&events,&seen)),0)
 }
 
 @(test)
@@ -324,11 +335,11 @@ prompts_follow_the_bindings_of_the_family :: proc(t:^testing.T) {
     inp.input_map_action(&m,JUMP,.Button)
     inp.input_map_bind(&m,JUMP,inp.binding_key(.Space))
     inp.input_map_bind(&m,JUMP,inp.binding_gamepad_button(.South))
-    inp.input_map_bind(&m,JUMP,inp.binding_gamepad_button(.North,gamepad=2))
+    inp.input_map_bind(&m,JUMP,inp.binding_gamepad_button(.North,gamepad=3))
     inp.input_map_action(&m,MOVE,.Axis2)
     inp.input_map_bind(&m,MOVE,inp.binding_keys(.A,.D,.S,.W))
     inp.input_map_bind(&m,MOVE,inp.binding_gamepad_stick(.Left))
-    inp.input_map_bind(&m,MOVE,{count=4,gamepad=inp.GAMEPAD_ANY,codes={{.Gamepad_Button,u8(core.Gamepad_Button.Dpad_Left)},{.Gamepad_Button,u8(core.Gamepad_Button.Dpad_Right)},{.Gamepad_Button,u8(core.Gamepad_Button.Dpad_Down)},{.Gamepad_Button,u8(core.Gamepad_Button.Dpad_Up)}}})
+    inp.input_map_bind(&m,MOVE,{inputs={.Dpad_Left,.Dpad_Right,.Dpad_Down,.Dpad_Up}})
     inp.input_map_action(&m,LOOK,.Axis2)
     inp.input_map_bind(&m,LOOK,inp.binding_mouse_delta())
     out:[ui.PROMPT_CAPACITY]ui.Prompt
@@ -455,12 +466,12 @@ a_modal_on_top_blocks_the_seats_it_covers_until_it_leaves :: proc(t:^testing.T) 
     // Applied by input, the blocks are not asked again.
     state.blocks[0]={owner=menu,seat=second,mask=inp.ALL_ACTIONS,active=true}
     state.blocks[1]={owner=pause,mask=inp.ALL_ACTIONS,active=true}
-    testing.expect(t,modal_apply(&gui,{&state},core.read(&w.seats),&requests,{&contexts},&context_requests) && len(requests.items)==0)
+    testing.expect(t,modal_apply(&gui,{&state},&w.seats,&requests,{&contexts},&context_requests) && len(requests.items)==0)
     // Off the top, or gone, they give the seats back.
     gui.instances[0].modal,gui.instances[0].taking=false,false
     pop(&gui.instances)
     append(&gui.unblock,pause)
-    testing.expect(t,!modal_apply(&gui,{&state},core.read(&w.seats),&requests,{&contexts},&context_requests))
+    testing.expect(t,!modal_apply(&gui,{&state},&w.seats,&requests,{&contexts},&context_requests))
     testing.expect_value(t,len(requests.items),2)
     testing.expect(t,requests.items[0].kind==.Block_Remove && requests.items[1].kind==.Block_Remove)
     testing.expect(t,!gui.instances[0].blocking)
@@ -498,7 +509,7 @@ the_buttons_of_a_modal_get_the_actions_it_takes_from_the_game :: proc(t:^testing
     src:=Source{gui=&gui,app=app,player=1,seat=seat,seat_state=&state,seats=core.read(&w.seats),building=&instance}
     down,pressed:=source_action(&src,base.name_hash("drop_item"))
     testing.expect(t,down && pressed)
-    testing.expect(t,!inp.seat_action(core.read(&w.seats),seat,DROP).down,"the game does not get it")
+    testing.expect(t,!inp.seat_action(&w.seats,seat,DROP).down,"the game does not get it")
     instance.entity=cinematic
     down,pressed=source_action(&src,base.name_hash("drop_item"))
     testing.expect(t,!down && !pressed,"another interface does not read past the block of the Modal")
@@ -522,7 +533,7 @@ a_screen_with_an_input_context_puts_the_seats_it_covers_in_it :: proc(t:^testing
     gui:Gui
     defer {delete(gui.instances);delete(gui.unblock)}
     append(&gui.instances,Instance{entity=inventory,modal=true,taking=true,input_context=MENU})
-    testing.expect(t,modal_apply(&gui,{&state},core.read(&w.seats),&requests,{&contexts},&context_requests))
+    testing.expect(t,modal_apply(&gui,{&state},&w.seats,&requests,{&contexts},&context_requests))
     testing.expect_value(t,len(requests.items),0)
     if testing.expect_value(t,len(context_requests.items),1) {
         r:=context_requests.items[0]
@@ -531,9 +542,9 @@ a_screen_with_an_input_context_puts_the_seats_it_covers_in_it :: proc(t:^testing
     clear(&context_requests.items)
     // Applied by input, it is not asked again.
     contexts.entries[0]={owner=inventory,input_context=MENU,modal=true,active=true}
-    testing.expect(t,modal_apply(&gui,{&state},core.read(&w.seats),&requests,{&contexts},&context_requests) && len(context_requests.items)==0)
+    testing.expect(t,modal_apply(&gui,{&state},&w.seats,&requests,{&contexts},&context_requests) && len(context_requests.items)==0)
     gui.instances[0].modal,gui.instances[0].taking=false,false
-    testing.expect(t,!modal_apply(&gui,{&state},core.read(&w.seats),&requests,{&contexts},&context_requests))
+    testing.expect(t,!modal_apply(&gui,{&state},&w.seats,&requests,{&contexts},&context_requests))
     testing.expect(t,len(context_requests.items)==1 && context_requests.items[0].leave && !gui.instances[0].entered)
 }
 
@@ -551,27 +562,6 @@ a_screen_kept_from_its_last_frame_is_built_again_for_another_device_or_language 
     testing.expect(t,pad!=first,"the prompts of another device")
     ctx.game.language=7
     testing.expect(t,screen_key(app.assets,&ctx,&instance,&entry,0,rect)!=pad,"the texts of another language")
-}
-
-@(test)
-events_go_to_the_frame_phase_while_no_tick_runs :: proc(t:^testing.T) {
-    gui:Gui
-    events:UI_Events
-    defer {delete(gui.pending);delete(gui.arrived.items);delete(events.items)}
-    // A tick ran in the frame: the frame phase leaves it its events.
-    append(&gui.pending,UI_Event{name=7,kind=.Clicked})
-    gui_events_deliver(&events,&gui,core.Time{tick=4})
-    gui_events_frame(&events,&gui,core.Time{tick=5})
-    testing.expect(t,len(events.items)==1 && events.items[0].name==7 && gui.deliveries==1)
-    // The time stopped: what the next frame drew goes to its frame phase, once.
-    append(&gui.pending,UI_Event{name=8,kind=.Clicked})
-    gui_events_frame(&events,&gui,core.Time{tick=5})
-    testing.expect(t,len(events.items)==1 && events.items[0].name==8 && len(gui.pending)==0 && gui.deliveries==2)
-    gui_events_frame(&events,&gui,core.Time{tick=5})
-    testing.expect_value(t,len(events.items),0)
-    // A tick that runs again later does not get them.
-    gui_events_deliver(&events,&gui,core.Time{tick=5,resimulating=true})
-    testing.expect_value(t,len(events.items),0)
 }
 
 @(test)

@@ -22,9 +22,9 @@ reads `game/` and the active plugins; `mirai generate` lists its errors.
 
 ```text
 project.mirai   manifest: name, start_scene, plugins, window, build
-settings.mirai  project settings, only what differs; input.mirai: rebinds, never by hand
+settings.mirai  project settings and rebinds (Input_Settings), only what differs
 cook.mirai      roots only code names (assets)
-assets/ source/ binary assets; art sources, never shipped    game/  the game package
+assets/         assets and the art sources beside them      game/  the game package
 plugins/<n>/    your plugins (plugins)   tools/content/  writes generated assets (assets)
 tests/scenarios/  mirai play test .           .mirai/  generated, never edited (.mirai/gen)
 ```
@@ -49,20 +49,20 @@ HEALTH_DEFAULT :: Health{hp=100}       // NAME_DEFAULT: new rows and literals st
 
 ```odin
 @(step="fixed")
-game_fall :: proc(vels:^core.Table(Vel),masses:core.Read(Mass),airs:core.Read(Air),time:core.Time) {
-    j:=core.join(vels,masses,airs) // the entities with all three on, over the rows of vels
-    for _,_,m,_ in core.each_joined(&j) {core.edit_at(vels,j.row).y-=m.gravity*time.dt}
+game_fall :: proc(vels:^core.Table(Vel),masses:^core.Table(Mass,.Read),time:core.Time) {
+    j:=core.join(vels,masses) // the entities with both on, over the rows of vels
+    for _,_,m in core.each_joined(&j) {core.edit_at(vels,j.row).y-=m.gravity*time.dt}
 }
 ```
 
-- Parameters say what it touches: `^core.Table(C)` writes, `core.Read(C)` reads, `^S` writes a
-  storage, `core.Ref(S)` reads one, `core.Time`, `core.Input`, `core.Commands`,
+- Parameters say what it touches: `^core.Table(C)` writes, `^core.Table(C,.Read)` reads, `^S`
+  writes a storage, `core.Ref(S)` reads one, `core.Time`, `core.Input`, `core.Commands`,
   `core.Placer`; of the application, its part (`^host.Assets`, `^render.Renderer`, `^audio.Mixer`,
   `runtime.Allocator`) or `^host.App`. No result or defaults. Names are unique in the whole world.
-- `core.get` and `core.at` read any table. `^core.Table` writes: `core.edit`, `core.edit_at`,
-  `core.writable` mark the row, `core.set` only a new value. `core.add` waits (`core.staged_has`).
-- One function writes each table; the others push a request ([wiring.md](core/wiring.md)).
-  `core.free(table, e)` is the row, or `nil` when a library owns it (`Transform` of a body).
+- Every read takes either table; a helper that reads takes `^core.Table(C,$A)`. `core.edit` gives
+  the row to write, written if it ends different; `core.free` gives `nil` when a library owns the
+  row (`Transform` of a body). One library writes each table; others push a request
+  ([wiring](core/wiring.md)).
 
 ## Phases
 
@@ -76,5 +76,5 @@ game_fall :: proc(vels:^core.Table(Vel),masses:core.Read(Mass),airs:core.Read(Ai
 ## Pitfalls that fail silently
 
 - Writing the `Transform` of a body is refused: `core.place` or a request. A request pushed
-  in a later stage than its owner's waits for the next tick; events live one tick.
+  in a later stage than its owner's waits for the next tick.
 - A `fixed` function that reads `core.Frame_Input` differs when a tick is replayed: use actions.

@@ -73,10 +73,11 @@ Key_Set_Params :: struct {
 Marker_Set_Params :: struct {
     asset:base.Asset_Id,
     clip:[64]u8 `mirai:"text"`,
-    name:[aa.ANIMATION_NAME_CAPACITY]u8 `mirai:"text,label=The marker by its name"`,
+    name:[aa.ANIMATION_NAME_CAPACITY]u8 `mirai:"text,label=The marker by its name; on an actor of a cinematic, the action it plays there"`,
+    target:[aa.NODE_PATH_CAPACITY]u8 `mirai:"text,optional,label=The entity it is on, named as a track target: on a camera of a cinematic it is a shot from its time on, blended in over its duration; on another actor it plays the action of its name until a span ends. Empty: a marker of the clip"`,
     time:f32 `mirai:"optional,min=0,unit=s,label=Where it goes; needed unless it is removed"`,
-    duration:f32 `mirai:"optional,min=0,unit=s,label=Makes it a span of that length: a section or a window of an action, a warp window"`,
-    at:f32 `mirai:"optional,min=0,unit=s,label=Of a name several markers have: the time of the one to change or remove"`,
+    duration:f32 `mirai:"optional,min=0,unit=s,label=Makes it a span of that length: a section or a window of an action, a warp window, the blend into a shot"`,
+    at:f32 `mirai:"optional,min=0,unit=s,label=Of a name several markers of the target have: the time of the one to change or remove"`,
     add:bool `mirai:"optional,label=Adds one more of that name at time instead of changing the one it has"`,
     remove:bool `mirai:"optional"`,
     dry_run:bool `mirai:"optional,label=Validates and answers without writing"`,
@@ -281,7 +282,7 @@ authoring_marker_set :: proc(s:^editor.Session,call:^api.Call) {
     view,ok:=authoring_clip_open(s,call,p.asset,&file);if !ok {return}
     index,found:=authoring_clip_index(call,view,base.text_get(p.clip[:]));if !found {return}
     clips,prepared:=authoring_clip_descs(view,call);if !prepared {return}
-    name:=base.text_get(p.name[:])
+    name,target:=base.text_get(p.name[:]),base.text_get(p.target[:])
     rows:=clips[index].markers
     if !p.remove && !authoring_field_present(call,"time") {authoring_failure(call,"time","Required","where the marker goes, unless it is removed","missing","Supply time, or remove");return}
     at:=len(rows)
@@ -290,16 +291,16 @@ authoring_marker_set :: proc(s:^editor.Session,call:^api.Call) {
         same:=0
         times:=strings.builder_make(call.allocator)
         for &row,i in rows {
-            if row.name!=name {continue}
+            if row.name!=name || row.target!=target {continue}
             fmt.sbprintf(&times,"%s%f",same>0?", ":"",row.time)
             same+=1
             if !given_at || abs(row.time-p.at)<=AUTHORING_TIME_EPSILON {at=i}
         }
-        if given_at && at==len(rows) {authoring_failure(call,"at","Missing_Marker","the time of a marker of that name",strings.to_string(times),"The clip has no marker of that name at that time",fix="animation.asset.inspect of the clip lists its markers");return}
+        if given_at && at==len(rows) {authoring_failure(call,"at","Missing_Marker","the time of a marker of that name",strings.to_string(times),"The clip has no marker of that name and target at that time",fix="animation.asset.inspect of the clip lists its markers");return}
         if !given_at && same>1 {authoring_failure(call,"name","Ambiguous_Marker","the time of one of them in at, or add true for one more",strings.to_string(times),fmt.tprintf("%d markers are named %s",same,name));return}
     }
-    if p.remove && at==len(rows) {authoring_failure(call,"name","Missing_Marker","the name of a marker of the clip",name,"The clip has no marker of that name",fix="animation.asset.inspect of the clip lists its markers");return}
-    markers,replaced:=authoring_replace_row(rows,at,aa.Animation_Marker_Desc{p.time,name,p.duration},p.remove,aa.ANIMATION_MAX_MARKERS,call.allocator)
+    if p.remove && at==len(rows) {authoring_failure(call,"name","Missing_Marker","the name of a marker of the clip",name,"The clip has no marker of that name and target",fix="animation.asset.inspect of the clip lists its markers");return}
+    markers,replaced:=authoring_replace_row(rows,at,aa.Animation_Marker_Desc{p.time,name,p.duration,target},p.remove,aa.ANIMATION_MAX_MARKERS,call.allocator)
     if !replaced {authoring_failure(call,"name","Invalid_Edit","a clip with room for the marker",fmt.tprintf("%d markers; remove=%t",len(rows),p.remove),"The marker edit cannot be prepared within capacity");return}
     clips[index].markers=markers
     authoring_clip_save(s,call,file,p.asset,view,clips)

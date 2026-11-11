@@ -940,6 +940,7 @@ prefab_create_in :: proc(s:^Session,roots:[]core.Entity,file,label:string) -> (i
     id=asset_id_new(s)
     if _,failed:=scene.capture(w,&sub,&a.types,{root=root,id=id});failed!=.None {return {},.Capture_Failed}
     defer asset.scene_destroy(&sub)
+    sub.doc.flags+={.Prefab}
     // The root stands at the origin, upright, with its scale.
     if placed,has:=asset.scene_get(&sub,root_id,"Transform",core.Transform);has {
         placed.position,placed.rotation=0,1
@@ -979,6 +980,7 @@ prefab_variant_create :: proc(s:^Session,base_id:base.Asset_Id,path:string) -> (
     id=asset_id_new(s)
     if asset.scene_init(&variant,&a.types,id)!=.None {return {},.Out_Of_Memory}
     defer asset.scene_destroy(&variant)
+    variant.doc.flags+={.Prefab}
     root,placed:=asset.scene_instantiate(&variant,loaded,base_id,0)
     if placed!=.None {return {},prefab_place_error(placed)}
     if local,has:=asset.scene_get(&variant,root,asset.INSTANCE_PLACEMENT,core.Transform);has {

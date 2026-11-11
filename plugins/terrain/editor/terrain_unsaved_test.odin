@@ -24,7 +24,7 @@ unsaved_test_sculpt :: proc(t:^testing.T,s:^editor.Session,tool:^Terrain_Tool,re
 @(private)
 unsaved_test_stroke :: proc(t:^testing.T,s:^editor.Session,tool:^Terrain_Tool,ref:core.World_Ref,world:^Create_Test_World,owner:core.Entity,brush:terrain.Brush) {
     terrain_sync(s,tool,core.read(&world.terrains),s.app.assets)
-    if !testing.expect(t,stroke_prepare(tool,s.app.assets,s.app.allocator,core.read(&world.terrains),core.read(&world.worlds),editor.Pick{entity=owner})) {return}
+    if !testing.expect(t,stroke_prepare(tool,s.app.assets,s.app.allocator,&world.terrains,&world.worlds,editor.Pick{entity=owner})) {return}
     if !testing.expect(t,stroke_baseline(tool)) {return}
     tool.stroke.active=true
     change:=terrain.source_edit(&tool.stroke.source,brush)
@@ -96,7 +96,7 @@ terrain_history_follows_a_save_and_a_discard_of_its_file :: proc(t:^testing.T) {
     head:=editor.revision_head(&tool.history,id,3)
     if !testing.expect(t,head!=nil) {return}
     testing.expect_value(t,terrain.source_value(head,middle),f32(2))
-    testing.expect(t,stroke_prepare(&tool,app.assets,app.allocator,core.read(&world.terrains),core.read(&world.worlds),editor.Pick{entity=owner}))
+    testing.expect(t,stroke_prepare(&tool,app.assets,app.allocator,&world.terrains,&world.worlds,editor.Pick{entity=owner}))
     testing.expect_value(t,terrain.source_value(&tool.stroke.source,middle),f32(2))
     testing.expect(t,history.undo(&edits,ref,&selection))
     terrain_sync(&s,&tool,core.read(&world.terrains),app.assets)
@@ -192,15 +192,15 @@ volume_strokes_are_steps_of_undo_that_keep_only_their_blocks :: proc(t:^testing.
     // step only the blocks its stroke changed.
     head:=editor.revision_head(&tool.history,id,3)
     if !testing.expect(t,head!=nil) {return}
-    testing.expect(t,terrain.grid_dense(&head.distances)<97*97*97,"the head holds no values for the blocks all air or all solid")
-    block,_:=terrain.grid_page_at(&head.distances,deep)
+    testing.expect(t,terrain.grid_dense(&head.field)<97*97*97,"the head holds no values for the blocks all air or all solid")
+    block,_:=terrain.grid_page_at(&head.field,deep)
     steps,carved_air:=0,false
     for &step in tool.steps {
         if step.source!=id {continue}
         steps+=1
-        testing.expect(t,!step.whole && !step.distances.whole && len(step.distances.pages)<head.distances.counts.x*head.distances.counts.y*head.distances.counts.z,"a step keeps the blocks its stroke changed")
+        testing.expect(t,!step.whole && !step.field.whole && len(step.field.pages)<head.field.counts.x*head.field.counts.y*head.field.counts.z,"a step keeps the blocks its stroke changed")
         // The step to the filling keeps the carved revision, its block all air.
-        if step.to==3 {for entry in step.distances.pages {if entry.index==block {carved_air=entry.page.values==nil}}}
+        if step.to==3 {for entry in step.field.pages {if entry.index==block {carved_air=entry.page.values==nil}}}
     }
     testing.expect_value(t,steps,2)
     testing.expect(t,carved_air,"the carved block is all air in the step that fills it")

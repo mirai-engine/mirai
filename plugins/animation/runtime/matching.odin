@@ -123,12 +123,6 @@ Match_Blend_Fault :: struct {kind:enum u8 {None,Missing,Duration},source,member:
 // -Z of its transform.
 Match_Goal :: struct {rig:core.Entity,mode:u16,velocity,desired,facing,wall:mm.Vec3,acceleration,braking,turn_rate,time_to_land:f32}
 
-// The whole-body action that plays on a rig instead of the search in this tick: clip, its name in
-// the library the .character plays; starting, it begins in this tick; fade_in and fade_out, the
-// seconds of the inertial blends into it and back to the search; root, its root motion policy.
-@(private)
-Match_Inject :: struct {active,starting:bool,clip:u64,fade_in,fade_out:f32,root:Root_Motion_Policy}
-
 // Tells the matching of a rig what its body does in this tick.
 match_goal :: proc(requests:^Animation_Requests,goal:Match_Goal) {
     if requests==nil {return}
@@ -140,7 +134,7 @@ match_goal :: proc(requests:^Animation_Requests,goal:Match_Goal) {
 }
 // What the matching of a rig plays. clip is base.name_hash of its name; speed, m/s the pose
 // walks forward at (that of the clip by its rate); mode, the locomotion mode of that clip; forced,
-// a whole-body action plays instead of the search; velocity, the one of the root of the pose that matching follows
+// a whole-body action covers the pose; velocity, the one of the root of the pose that matching follows
 // (that of the body with the lag of its spring), and lag, where that root is from the body. World
 // axes. landing_modes: bit m for each mode m whose clips play toward the landing marker, which
 // match_goal.time_to_land times.
@@ -161,24 +155,21 @@ animation_match :: proc(playback:^Playback,entity:core.Entity) -> (value:Animati
     state:=constraint_playing(playback,entity) if playback!=nil else nil
     if state==nil || !state.program.matched || !state.program.ready {return}
     m:=state.program.match
-    return {clip=m.clip,time=state.time,rate=m.rate,speed=m.speed*m.rate,cost=m.cost,mode=m.mode,forced=m.phase==.Play,searches=m.searches,jumps=m.jumps,velocity=m.body+m.lag_velocity,lag=m.lag,travel=m.travel,landing_modes=m.landing_modes},true
+    return {clip=m.clip,time=state.time,rate=m.rate,speed=m.speed*m.rate,cost=m.cost,mode=m.mode,forced=state.stack>0 && state.layers[0].weight>0,searches=m.searches,jumps=m.jumps,velocity=m.body+m.lag_velocity,lag=m.lag,travel=m.travel,landing_modes=m.landing_modes},true
 }
 
-// What the clip of a rig plays for: matching; a whole-body action (Play); one toward its landing
-// marker, at the rate that reaches it when the body lands; or one that reached it as the body
-// landed and plays on in the mode it landed in, until it ends or a search leaves it.
-Match_Phase :: enum u8 {Matching,Play,Landing,Landed}
+// What the clip of a rig plays for: matching; one toward its landing marker, at the rate that
+// reaches it when the body lands; or one that reached it as the body landed and plays on in the
+// mode it landed in, until it ends or a search leaves it.
+Match_Phase :: enum u8 {Matching,Landing,Landed}
 
 // The matching of a rig between ticks.
 Match_Playing :: struct {
-    range:i32,     // of the database its clip is; -1: one an action plays, or none
+    range:i32,     // of the database its clip is; -1: none
     clip:u64,      // name in the library of the clip it plays; 0: none yet
     loop:bool,
     phase:Match_Phase,
     mode:u16,      // the one its clip serves
-    driven_from,driven_to:f32, // phase Play: the times of its clip its action goes between in this tick
-    release_fade:f32,          // phase Play: seconds of the blend back to the search
-    root:Root_Motion_Policy,   // phase Play: of the action
     timer:f32,     // seconds to the next search
     since:f32,     // seconds since the last jump
     rate,speed,cost:f32,
@@ -298,7 +289,7 @@ match_database :: proc(content:^Character_Content,library:^host.Content_Animatio
             event:=make([dynamic]u32,context.temp_allocator)
             if landing:=base.text_get(info.landing_marker[:]);landing!="" {
                 name:=base.name_hash(landing)
-                for marker,k in library.markers {if marker==name {append(&event,u32(k))}}
+                for marker,k in library.markers {if marker.name==name {append(&event,u32(k))}}
             }
             built.error=lib.match_database_build(&built.database,&library.lib,rig,clips,info.rate,weights,int(info.memory)*1024,event[:],allocator)
         }
@@ -322,7 +313,7 @@ match_lag_apply :: proc(state:^Playing,placed:mm.Transform) {
 // Chooses the clip and time the rig plays in this tick and writes them as a program of one clip.
 // facing is the -Z of the rig in the world.
 @(private)
-match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Content,library:^host.Content_Animation,source:base.Asset_Id,dt:f32,goals:[]Match_Goal,inject:Match_Inject,facing:mm.Vec3,assets:^host.Assets,allocator:runtime.Allocator,problems:^core.Problems) -> bool {
+match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Content,library:^host.Content_Animation,source:base.Asset_Id,dt:f32,goals:[]Match_Goal,facing:mm.Vec3,assets:^host.Assets,allocator:runtime.Allocator,problems:^core.Problems) -> bool {
     runtime:=&state.program;m:=&runtime.match;info:=content.set.match.info
     goal:Match_Goal;has_goal:=false
     for value in goals {if value.rig==state.entity {goal,has_goal=value,true}}
@@ -346,16 +337,6 @@ match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Co
     }
     previous:=m.clip
     start:=f32(-1);fade:=info.blend
-    // A whole-body action takes the rig from the search through an inertial blend; its clock is the
-    // action's (program_players takes it from driven_from and driven_to).
-    injected:=inject.active && library!=nil && lib.clip_find(&library.lib,inject.clip)!=0
-    if injected {
-        if inject.starting || m.phase!=.Play || m.clip!=inject.clip {
-            m.phase,m.clip,m.range,m.loop=.Play,inject.clip,-1,false
-            start,fade=0,inject.fade_in
-        }
-        m.release_fade,m.root=inject.fade_out,inject.root
-    }
     // The root of the pose follows the body by a spring: a change of velocity the body makes at
     // once the root takes in over the half-life, never farther from the body than lag nor into
     // what blocks it. It closes on the body only while the pose walks, by at most MATCH_LAG_CLOSE
@@ -389,14 +370,8 @@ match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Co
     }
     lib.match_recent_advance(&m.recent,dt,info.reselect)
     if m.since<info.hold {m.since+=dt}
-    released:=false
-    // The action ended or was stopped: the search takes the rig back from its pose.
-    if !injected && m.phase==.Play {
-        m.phase=.Matching;released=true
-        if m.release_fade>0 {fade=m.release_fade}
-    }
     if db!=nil {m.landing_modes=db.event_modes}
-    if start<0 && m.phase!=.Play && db!=nil {
+    if db!=nil {
         m.timer-=dt
         bit:=u32(1)<<mode
         // A body in the air whose landing physics predicts plays toward the landing marker of a
@@ -440,7 +415,7 @@ match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Co
         // loop that does not move as the body does would hold its legs still, or walk in place. A
         // clip that plays once goes on until it ends or a search leaves it.
         incompatible:=filter_stationary && current>=0 && db.ranges[current].loop && (db.ranges[current].speed>lib.MATCH_STILL)!=moving
-        forced:=current<0 || released || entering || ending || incompatible || left
+        forced:=current<0 || entering || ending || incompatible || left
         if forced || m.timer<=0 && m.since>=info.hold {
             m.timer=info.interval
             request:=lib.Match_Request{query=lib.match_features(db,row) if row>=0 else {},modes=bit,min_rate=info.min_rate,max_rate=info.max_rate,rate=m.rate,entry=entering}
@@ -491,7 +466,8 @@ match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Co
                 m.range,m.mode,m.loop=i32(range),mode,db.ranges[range].loop
                 m.clip=lib.clip_data(&library.lib,db.ranges[range].clips[0]).name
                 m.speed=db.ranges[range].speed
-                m.travel_from,m.travel_to,m.travel_age=m.travel,linalg.normalize0(db.ranges[range].travel),0
+                // A clip that stands travels nowhere: what its feet drift is no direction to turn from.
+                m.travel_from,m.travel_to,m.travel_age=m.travel,linalg.normalize0(db.ranges[range].travel) if m.speed>lib.MATCH_STILL else {},0
                 start=f32(best-int(db.ranges[range].first))/db.rate
                 m.jumps+=1;m.since=0
             }
@@ -499,7 +475,7 @@ match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Co
     }
     // After a swap of library with nothing of its mode to search, the clip it played may not be in
     // the new one: it starts over from the first.
-    if m.range<0 && m.phase!=.Play && m.clip!=0 && lib.clip_find(&library.lib,m.clip)==0 {m.clip=0}
+    if m.range<0 && m.clip!=0 && lib.clip_find(&library.lib,m.clip)==0 {m.clip=0}
     if m.clip==0 {
         if len(content.set.match.clips)==0 {return false}
         first:=content.set.match.clips[0]
@@ -509,7 +485,7 @@ match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Co
     m.rate=1
     // A loop follows the speed of the root of the pose; a clip that plays once (a jump, a landing)
     // keeps its own rate, or a body standing still would hold it, frozen, at min_rate.
-    if m.phase!=.Play && m.range>=0 && m.loop && m.speed>lib.MATCH_STILL && has_goal && db!=nil && int(m.range)<len(db.ranges) {
+    if m.range>=0 && m.loop && m.speed>lib.MATCH_STILL && has_goal && db!=nil && int(m.range)<len(db.ranges) {
         least,most:=lib.match_range_rates(db.ranges[m.range],info.min_rate,info.max_rate)
         m.rate=clamp(linalg.length(velocity)/m.speed,least,most)
     }
@@ -519,7 +495,7 @@ match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Co
             m.rate=clamp(ahead/goal.time_to_land,info.landing_rates[0],info.landing_rates[1])
         }
     }
-    if m.phase==.Play || m.range<0 {
+    if m.range<0 {
         m.speed,m.travel,m.travel_from,m.travel_to=0,{},{},{}
     } else {
         m.travel=travel_turn(m.travel_from,m.travel_to,lib.inertial_remaining(m.travel_age,info.blend))
@@ -528,9 +504,9 @@ match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Co
     output^={asset=source,count=1}
     group:=&output.groups[0]
     group.weight,group.root_weight,group.mode,group.key=1,1,.Independent,1
-    group.count=1;group.leaves[0]={clip=m.clip,weight=1,speed=m.rate,loop=m.loop,start=max(start,0),driven=m.phase==.Play,root=m.root}
+    group.count=1;group.leaves[0]={clip=m.clip,weight=1,speed=m.rate,loop=m.loop,start=max(start,0)}
     // A blended sample plays its clips together at its weights, in phase.
-    if m.phase!=.Play && db!=nil && m.range>=0 && int(m.range)<len(db.ranges) && db.ranges[m.range].weights!={0=1} {
+    if db!=nil && m.range>=0 && int(m.range)<len(db.ranges) && db.ranges[m.range].weights!={0=1} {
         r:=db.ranges[m.range]
         group.count,group.mode=0,.Weighted
         for clip,k in r.clips {

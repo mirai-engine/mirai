@@ -5,6 +5,7 @@ import "core:mem"
 import "mirai:core"
 import input "mirai:engine/input"
 import wire "mirai:net"
+import "mirai:std/base"
 
 // What both ends do with the world: read and write the replicated components
 // by reflection, move a replica, send events.
@@ -116,7 +117,7 @@ pose_follow :: proc(s:^Net_Session,w:core.World_Ref,e:core.Entity,t:^Net_Type,po
     }
     replicas:=core.world_table_of(w,core.Pose_Target)
     held:=core.staged(replicas,e)
-    local,has:=core.get(core.read(core.world_table_of(w,core.Transform)),e)
+    local,has:=core.get(core.world_table_of(w,core.Transform),e)
     if held!=nil && has && linalg.length2(local.position-pose.position)<=REPLICA_JUMP*REPLICA_JUMP {
         value.placed=held.placed
     } else {
@@ -166,12 +167,63 @@ driver_read :: proc(w:core.World_Ref,e:core.Entity) -> (value:Driver_State) {
     return
 }
 
-// Sends the messages the games queued.
+// The messages that arrived since the last tick, by type, where the
+// core.Inbox(T) of each type reads them, in the order they arrived. The
+// buffers trade places: those of the tick before wait for the next messages.
+@(private)
+messages_fill :: proc(s:^Net_Session,m:^core.Net_Messages) {
+    if len(m.types)<len(s.received) && resize(&m.types,len(s.received))!=nil {
+        core.report(s.problems,core.NONE,"net.memory","the messages that arrived were dropped: out of memory to hand them to the tick; free memory")
+        for &pending in s.received {pending.count=0}
+        return
+    }
+    for &pending,event in s.received {
+        m.types[event],pending=pending,m.types[event]
+        pending.count=0
+    }
+    parts_clear(&s.parts)
+    s.parts,s.parts_next=s.parts_next,s.parts
+}
+
+@(private)
+parts_clear :: proc(parts:^[dynamic]Journal_Arrived) {
+    for part in parts {delete(part.bytes)}
+    clear(parts)
+}
+
+// Streams the parts the journals handed. One does not start before the one
+// before it to its connection is in the host whole; one the host has no room
+// for waits for the next tick without holding up those to other connections.
+@(private)
+parts_send :: proc(s:^Net_Session,outbox:^Net_Outbox) {
+    kept:=0
+    for i in 0..<len(outbox.parts) {
+        part:=outbox.parts[i]
+        waits:=false
+        for before in outbox.parts[:kept] {waits ||= before.to==part.to}
+        // Invalid: its connection is gone.
+        if !waits && (wire.message_send(&s.host,part.to,JOURNAL_CHANNEL,part.bytes,&part.sent)==.Invalid || part.sent==len(part.bytes)) {
+            delete(part.bytes)
+            continue
+        }
+        outbox.parts[kept]=part
+        kept+=1
+    }
+    base.truncate(&outbox.parts,kept)
+}
+
+// Sends the messages the games queued, and the parts.
 @(private)
 events_send :: proc(s:^Net_Session,outbox:^Net_Outbox) {
+    parts_send(s,outbox)
     h:=&s.host
-    items:=core.take(&outbox.queue)
-    for &item,k in items {
+    items:=outbox.queue.items[:]
+    sent:=len(items)
+    defer {
+        remove_range(&outbox.queue.items,0,sent)
+        if len(outbox.queue.items)==0 {clear(&outbox.bytes)}
+    }
+    for item,k in items {
         event:=-1
         for record,i in s.events {
             if record.type==item.type {event=i;break}
@@ -188,13 +240,16 @@ events_send :: proc(s:^Net_Session,outbox:^Net_Outbox) {
                 continue
             }
         }
-        error:=wire.event_send(h,wire.Event_Id(event),object,raw_data(item.data[:]),item.to)
+        // Where its fields are aligned.
+        payload:=s.scratch[:s.events[event].size]
+        copy(payload,outbox.bytes[item.at:])
+        error:=wire.event_send(h,wire.Event_Id(event),object,raw_data(payload),item.to)
         if error==.None {
             s.stats.events_sent+=1
         } else if error==.Full && s.events[event].reliable {
             // The queue of a connection has no room: it waits for the next
             // frame with what was asked after it, in order.
-            for kept in items[k:] {core.push(&outbox.queue,kept)}
+            sent=k
             return
         } else {
             core.report(s.problems,item.about,"net.event_send","a message of type %v was not sent: the host refused it (%v): its queue is full, or it does not fit in a packet; send fewer or smaller messages",item.type,error)

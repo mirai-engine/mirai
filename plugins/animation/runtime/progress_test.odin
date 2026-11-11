@@ -23,7 +23,7 @@ a_loaded_clip_seeks_the_progress_its_entity_kept :: proc(t:^testing.T) {
     core.add(&w.animations,e,ANIMATION_DEFAULT);core.test_world_settle(&w)
     state:=state_get(&w.playback,e)
     state.clip,state.time=0,1.5
-    progress_write(&w.progress,core.read(&w.animations),&w.playback)
+    progress_write(&w.progress,&w.animations,&w.playback)
     core.test_world_settle(&w)
     kept,found:=core.get(&w.progress,e)
     testing.expect(t,found && kept.time==1.5)
@@ -32,15 +32,16 @@ a_loaded_clip_seeks_the_progress_its_entity_kept :: proc(t:^testing.T) {
     testing.expect_value(t,len(w.requests.timeline.items),0)
     playback_free(&w.playback);w.playback={}
     progress_resume(&w.progress,&w.playback,&w.requests)
-    testing.expect(t,len(w.requests.timeline.items)==1 && w.requests.timeline.items[0]==Animation_Command{e,1.5,.Seek})
-    // What a command left the clip doing comes back with it.
+    items:=w.requests.timeline.items[:]
+    testing.expect(t,len(items)==2 && items[0]==Animation_Command{e,0,1,.Pause} && items[1]==Animation_Command{e,1.5,1,.Seek})
+    // Whether it played, and at what speed, comes back with it.
     clear(&w.requests.timeline.items)
-    core.edit(&w.progress,e).transport=.Pause
+    progress:=core.edit(&w.progress,e);progress.playing,progress.speed=true,-1
     progress_resume(&w.progress,&w.playback,&w.requests)
-    testing.expect(t,len(w.requests.timeline.items)==2 && w.requests.timeline.items[0]==Animation_Command{e,0,.Pause})
+    testing.expect(t,len(w.requests.timeline.items)==2 && w.requests.timeline.items[0]==Animation_Command{e,0,-1,.Resume})
 
     core.remove(&w.animations,e);core.test_world_settle(&w)
-    progress_write(&w.progress,core.read(&w.animations),&w.playback)
+    progress_write(&w.progress,&w.animations,&w.playback)
     core.test_world_settle(&w)
     testing.expect(t,!core.has(&w.progress,e))
 }

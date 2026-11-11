@@ -176,7 +176,7 @@ program_modifier_count :: proc(profile:anim.Pose_Profile,kind:anim.Modifier_Kind
     switch kind {
     case .IK: return len(profile.ik)
     case .Look: return len(profile.look)
-    case .Grounding: return len(profile.grounding)
+    case .Grounding: return 1 if profile.grounding.count>0 else 0
     case .Limit: return len(profile.limits)
     case .Chain_IK: return len(profile.chain_ik)
     case .Twist: return len(profile.twist)
@@ -198,7 +198,7 @@ program_modifier_definition :: proc(profile:anim.Pose_Profile,kind:anim.Modifier
     switch kind {
     case .IK:name=anim.modifier_operation_name(&profile.ik[slot]);result.weight,result.enabled=profile.ik[slot].weight,profile.ik[slot].enabled
     case .Look:name=anim.modifier_operation_name(&profile.look[slot]);result.weight,result.enabled=profile.look[slot].weight,profile.look[slot].enabled
-    case .Grounding:name=anim.modifier_operation_name(&profile.grounding[slot]);result.weight,result.enabled=profile.grounding[slot].weight,profile.grounding[slot].enabled
+    case .Grounding:grounding:=profile.grounding;name=anim.modifier_operation_name(&grounding);result.weight,result.enabled=grounding.weight,grounding.enabled
     case .Limit:name=anim.modifier_operation_name(&profile.limits[slot]);result.weight,result.enabled=profile.limits[slot].weight,profile.limits[slot].enabled
     case .Chain_IK:name=anim.modifier_operation_name(&profile.chain_ik[slot]);result.weight,result.enabled=profile.chain_ik[slot].weight,profile.chain_ik[slot].enabled
     case .Twist:name=anim.modifier_operation_name(&profile.twist[slot]);result.weight,result.enabled=profile.twist[slot].weight,profile.twist[slot].enabled
@@ -250,7 +250,7 @@ program_grounding_diagnostic :: proc(world:core.World_Ref,entity:core.Entity,slo
     for &value in playback.states {if value.entity==entity {state=&value;break}}
     if record==nil || !record.initialized || record.count<1 || record.count>anim.GROUNDING_LEGS || state==nil || !state.pose_ready {return}
     ground:=core.world_query(world,core.ref(core.world_storage_of(world,core.World_Queries)))
-    ignore:=anim.ground_ignore(ground,core.read(core.world_table_of(world,core.Parent)),entity)
+    ignore:=anim.ground_ignore(ground,core.world_table_of(world,core.Parent),entity)
     result.blocked_legs=record.blocked
     for i in 0..<int(record.count) {
         if record.targets[i].weight<=0 {continue}
@@ -292,7 +292,7 @@ program_modifier_inspect :: proc(s:^editor.Session,call:^api.Call,world:core.Wor
                 row.alpha,row.target_alpha,row.requested_enabled,row.fade_remaining=alpha,target,requested,remaining
                 diagnostic,_:=anim.animation_rig_diagnostic(runtime,entity,kind,u16(slot),core.world_storage_of(world,anim.Animation_Constraints))
                 row.diagnostic={valid=diagnostic.valid,reached=diagnostic.reached,residual=diagnostic.residual,angular_error=diagnostic.angular_error,iterations=diagnostic.iterations}
-                if kind==.Grounding {row.diagnostic=program_grounding_diagnostic(world,entity,u16(slot),profile.grounding[slot])}
+                if kind==.Grounding {row.diagnostic=program_grounding_diagnostic(world,entity,u16(slot),profile.grounding)}
             }
             if kind==.Multi_IK {
                 multi:=&profile.multi_ik[slot]

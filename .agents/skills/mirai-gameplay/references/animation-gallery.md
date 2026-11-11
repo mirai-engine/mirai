@@ -1,9 +1,10 @@
 # Animation gallery
 
 `demo/assets/animation_gallery/animation.scene` is the only animation scene of the demo: a hall that
-the player walks with Mirai (`source/models/mirai/mirai.glb`), with one numbered station per feature
-on each side of the walkway. The scene is authored; `tools/demo_content --animation-only` writes
-its clips, `.character` sets, rigs and meshes ([generated content](demo.md#generated-content)).
+the player walks with Mirai (`assets/characters/mirai/mirai.glb`), with one numbered station per
+feature on each side of the walkway. The scene is authored; `tools/demo_content --animation-only`
+writes its clips, `.character` sets, rigs and meshes
+([generated content](demo.md#generated-content)).
 Each station's actor plays its own `.character` (`Animation.asset`) over the gallery's clips: the
 sets of the stations show one feature each.
 
@@ -90,7 +91,7 @@ schemas and `scene.inspect` for the ids of the stations, which are named after w
 
 `Animation_Motor` is a gameplay capability of the demo, shared by the characters with root motion.
 
-- `Move_Input` is `shared`: `locomotion_seat` (or the AI, or the network) writes the tick's
+- `Move_Input` is `shared`: `camera_drive` (or the AI, or the network) writes the tick's
   request, and `animation_motor_drive`, after `animation_sample` and before `physics_step`,
   replaces it in the characters with a motor turned on by the horizontal delta and the yaw of their
   root motion, relative to the `max_speed` of their `Walk`. It writes only the rows that change.

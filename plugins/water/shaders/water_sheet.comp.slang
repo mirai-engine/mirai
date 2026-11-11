@@ -35,6 +35,13 @@ void main(uint3 id : SV_DispatchThreadID) {
     Posed_Vertex rest = posed_load(params.rest, id.x);
     float3 p = rest.position;
     Water_Body plane = bodies[0];
+    if (plane.surface.y < 0.5) {
+        // A lake ends at its walls: the vertices past them go onto them.
+        float3 l = transform_point(plane.to_box, p);
+        float sx = length(plane.to_box[0].xyz), sz = length(plane.to_box[2].xyz);
+        float2 to = clamp(l.xz, -0.5, 0.5);
+        p += plane.to_box[0].xyz * ((to.x - l.x) / (sx * sx)) + plane.to_box[2].xyz * ((to.y - l.z) / (sz * sz));
+    }
     // A wave shows on cells of a quarter of its length; the cells double in each ring out from the camera.
     float far = max(abs(p.x - params.eye.x), abs(p.z - params.eye.y));
     float coarse = params.cell * max(1.0, 2.0 * far / (params.cell * params.half_cells));

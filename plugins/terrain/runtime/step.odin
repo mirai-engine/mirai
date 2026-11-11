@@ -20,9 +20,9 @@ import mm "mirai:std/math"
 Chunk_Tables :: struct {
     commands:core.Commands,
     chunks:^core.Table(Terrain_Chunk),
-    locals:core.Read(core.Transform),
-    parents:core.Read(core.Parent),
-    ids:core.Read(core.Id),
+    locals:^core.Table(core.Transform,.Read),
+    parents:^core.Table(core.Parent,.Read),
+    ids:^core.Table(core.Id,.Read),
     colliders:^core.Table(phys.Collider),
     meshes:^core.Table(render.Mesh_Renderer),
     tints:^core.Table(render.Tint),
@@ -35,9 +35,10 @@ Chunk_Tables :: struct {
 Collider_Room :: struct {
     pass:u32,       // of the call they were counted in
     counted:bool,
-    meshes,heightfields,shapes:int, // left; before they are counted, what the call gave back
+    slots:[2]int,   // of heightfields and meshes (collider_slot), left; before they are counted, what the call gave back
+    shapes:int,
     starved:bool,   // a chunk waits for room
-    seen:u64,       // the version of Collider when it began to wait
+    seen:core.Seen, // Collider when it began to wait
 }
 
 // A chunk shows nothing yet and a viewer is within this share of its
@@ -56,9 +57,8 @@ chunk_entity_matches :: proc(c:^Chunk_Tables,e,owner:core.Entity,coord:[3]i32,de
 // when it ran: then the owners show every chunk again.
 @(private)
 terrain_chunks_prune :: proc(c:^Chunk_Tables,terrains:^core.Table(Terrain),resident:^Terrain_Resident) -> bool {
-    stamps:=[6]u64{core.layout(c.locals),core.layout(c.parents),core.version(c.parents),c.chunks.layout,core.layout(c.ids),terrains.layout}
-    if resident.gc_stamps==stamps {return false}
-    resident.gc_stamps=stamps
+    shapes:=&resident.gc_shapes
+    if !(core.reshaped(c.locals,&shapes[0]) | core.touched(c.parents,&resident.gc_parents) | core.reshaped(c.chunks,&shapes[1]) | core.reshaped(c.ids,&shapes[2]) | core.reshaped(terrains,&shapes[3])) {return false}
     entities:=c.commands.entities
     for chunk,row in c.chunks.values[:core.count(c.chunks)] {
         e:=c.chunks.entities[row]
@@ -69,8 +69,28 @@ terrain_chunks_prune :: proc(c:^Chunk_Tables,terrains:^core.Table(Terrain),resid
     return true
 }
 
+// Whether Terrain, Tint or Material_Override changed since shown, which it moves to now.
+@(private)
+shown_touched :: proc "contextless" (terrains:^core.Table(Terrain),c:^Chunk_Tables,shown:^[3]core.Seen) -> bool {
+    return core.touched(terrains,&shown[0]) | core.touched(c.tints,&shown[1]) | core.touched(c.overrides,&shown[2])
+}
+
 @(private)
 collider_kind :: #force_inline proc "contextless" (kind:Source_Kind) -> phys.Collider_Kind {return kind==.Heightfield?.Heightfield:.Mesh}
+
+// The slots of Physics_Settings the colliders of a source take: 0 for heightfields, 1 for meshes.
+@(private)
+collider_slot :: #force_inline proc "contextless" (kind:Source_Kind) -> int {return collider_room_slot(collider_kind(kind))}
+
+// Which slots of Physics_Settings a collider takes: 0 for heightfields, 1 for meshes, -1 for neither.
+@(private)
+collider_room_slot :: #force_inline proc "contextless" (kind:phys.Collider_Kind) -> int {
+    #partial switch kind {
+    case .Heightfield: return 0
+    case .Mesh: return 1
+    }
+    return -1
+}
 
 @(private)
 room_take :: proc(resident:^Terrain_Resident,c:^Chunk_Tables,physics:phys.Physics_Settings,kind:phys.Collider_Kind,count:int) -> bool {
@@ -78,19 +98,16 @@ room_take :: proc(resident:^Terrain_Resident,c:^Chunk_Tables,physics:phys.Physic
     if room.pass!=resident.pass {room^={pass=resident.pass,starved=room.starved,seen=room.seen}}
     if !room.counted {
         made:=phys.settings_capacities(physics)
-        heightfields,meshes,shapes:=int(made.heightfields),int(made.meshes),int(made.shapes)
+        room.slots+={int(made.heightfields),int(made.meshes)}
         for collider in c.colliders.values[:core.count(c.colliders)] {
-            #partial switch collider.kind {
-            case .Heightfield: heightfields-=1
-            case .Mesh: meshes-=1
-            }
+            if slot:=collider_room_slot(collider.kind);slot>=0 {room.slots[slot]-=1}
         }
-        room.heightfields+=heightfields;room.meshes+=meshes;room.shapes+=shapes-core.count(c.colliders)
+        room.shapes+=int(made.shapes)-core.count(c.colliders)
         room.counted=true
     }
-    slots:=kind==.Heightfield?&room.heightfields:&room.meshes
-    if slots^<count || room.shapes<count {return false}
-    slots^-=count;room.shapes-=count
+    slot:=collider_room_slot(kind)
+    if slot<0 || room.slots[slot]<count || room.shapes<count {return false}
+    room.slots[slot]-=count;room.shapes-=count
     return true
 }
 
@@ -98,18 +115,17 @@ room_take :: proc(resident:^Terrain_Resident,c:^Chunk_Tables,physics:phys.Physic
 room_give :: proc(resident:^Terrain_Resident,kind:phys.Collider_Kind,count:=1) {
     room:=&resident.room
     if room.pass!=resident.pass {room^={pass=resident.pass,starved=room.starved,seen=room.seen}}
-    #partial switch kind {
-    case .Heightfield: room.heightfields+=count
-    case .Mesh: room.meshes+=count
-    case: return
-    }
+    slot:=collider_room_slot(kind)
+    if slot<0 {return}
+    room.slots[slot]+=count
     room.shapes+=count
 }
 
 @(private)
 starved_report :: proc(problems:^core.Problems,e:core.Entity,a:^host.Assets,id:base.Asset_Id,coord:[3]i32,kind:phys.Collider_Kind,physics:phys.Physics_Settings) {
     name:[base.ASSET_ID_TEXT]u8
-    field:=kind==.Heightfield?"heightfields":"meshes"
+    names:=[2]string{"heightfields","meshes"}
+    field:=names[max(collider_room_slot(kind),0)]
     core.report(problems,e,"terrain.collider_budget","chunk (%d, %d, %d) of terrain source %s shows its ground without collider: it needs a slot of Physics_Settings.%s or .shapes and none is left; raise them, or set Terrain_Settings.collision_distance",coord.x,coord.y,coord.z,host.assets_name(a,id,&name),field)
 }
 
@@ -131,12 +147,13 @@ resident_owner_remove :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,index:i
     resident_owner_free(owner)
     unordered_remove(&resident.owners,index)
     resident.cut=true
+    resident.marks+=1
 }
 
 // Publishes what a job built for a chunk or a node. Its owners show it with
 // their colliders as they show it (owner_chunk_show).
 @(private)
-chunk_take :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,entry:^Data_Source,source:^Resident_Source,slot:^Work_Slot,physics:phys.Physics_Settings,problems:^core.Problems,terrains:core.Read(Terrain)) {
+chunk_take :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,entry:^Data_Source,source:^Resident_Source,slot:^Work_Slot,physics:phys.Physics_Settings,problems:^core.Problems,terrains:^core.Table(Terrain,$A)) {
     index:=slot.index
     chunk:=&source.chunks[index]
     s:=&entry.source
@@ -174,7 +191,7 @@ piece_take_empty :: proc(resident:^Terrain_Resident,entry:^Data_Source,source:^R
 @(private)
 chunk_evict :: proc(resident:^Terrain_Resident,source:^Resident_Source,index:int) {
     chunk:=&source.chunks[index]
-    if chunk.mesh!={} {host.assets_mesh_release(resident.assets,chunk.mesh);resident.stats.released+=1;resident.stats.meshes-=1}
+    if chunk.mesh!={} {host.assets_mesh_release(resident.assets,chunk.mesh);resident.stats.released+=1;resident.stats.meshes-=1} else if chunk.shown {resident.marks+=1}
     chunk.mesh,chunk.revision,chunk.built,chunk.shown={},0,{},false
     append(&source.changed,u32(index))
     source.leave=true
@@ -185,7 +202,7 @@ chunk_evict :: proc(resident:^Terrain_Resident,source:^Resident_Source,index:int
 // Takes what a slot holds: a chunk it built, or a page it read, if what it
 // read did not change meanwhile.
 @(private)
-work_take :: proc(c:^Chunk_Tables,data:^Terrain_Data,resident:^Terrain_Resident,slot:^Work_Slot,physics:phys.Physics_Settings,problems:^core.Problems,terrains:core.Read(Terrain)) {
+work_take :: proc(c:^Chunk_Tables,data:^Terrain_Data,resident:^Terrain_Resident,slot:^Work_Slot,physics:phys.Physics_Settings,problems:^core.Problems,terrains:^core.Table(Terrain,$A)) {
     defer work_release(slot)
     entry:=data_find(data,slot.id)
     fresh:=slot.epoch==data.epoch && entry!=nil && &entry.source==slot.source
@@ -220,28 +237,22 @@ work_take :: proc(c:^Chunk_Tables,data:^Terrain_Data,resident:^Terrain_Resident,
             core.report(problems,source_owner(terrains,entry.id),"terrain.page_unread","a page of terrain source %s could not be read from its file: it changed or is damaged; it is read again when the file is, or save the source again from the editor",host.assets_name(resident.assets,entry.id,&name))
             return
         }
-        first,last:[3]int
-        switch slot.grid {
-        case .Heights,.Distances:
-            g:=source_samples_grid(s)
+        install :: proc(g:^Grid($T),slot:^Work_Slot,data:^Terrain_Data) -> (first,last:[3]int,ok:bool) {
             if !grid_absent(g,slot.index) || grid_block(g,slot.index).hash!=slot.block.hash {return}
             _,count:=grid_page_extent(g,slot.index)
-            grid_page_install(g,slot.index,transmute([]f32)slot.page[:count])
+            grid_page_install(g,slot.index,slice.reinterpret([]T,slot.page)[:count])
             data.samples+=u32(count)
             first,last=grid_page_region(g,slot.index)
-        case .Weights:
-            if !grid_absent(&s.weights,slot.index) || grid_block(&s.weights,slot.index).hash!=slot.block.hash {return}
-            _,count:=grid_page_extent(&s.weights,slot.index)
-            grid_page_install(&s.weights,slot.index,transmute([]Weights)slot.page[:count])
-            // The weights of a Volume count against the budget as its distances (source_cost).
-            if s.kind==.Volume {data.samples+=u32(count)}
-            first,last=grid_page_region(&s.weights,slot.index)
-        case .Holes:
-            if !grid_absent(&s.holes,slot.index) || grid_block(&s.holes,slot.index).hash!=slot.block.hash {return}
-            _,count:=grid_page_extent(&s.holes,slot.index)
-            grid_page_install(&s.holes,slot.index,slot.page[:count])
-            first,last=grid_page_region(&s.holes,slot.index)
+            return first,last,true
         }
+        first,last:[3]int
+        installed:bool
+        switch slot.grid {
+        case .Field:   first,last,installed=install(&s.field,slot,data)
+        case .Weights: first,last,installed=install(&s.weights,slot,data)
+        case .Holes:   first,last,installed=install(&s.holes,slot,data)
+        }
+        if !installed {return}
         slot.page=nil
         data.stats.pages_read+=1
         data_pages_arrived(entry,first,last)
@@ -260,7 +271,7 @@ pages_start :: proc(data:^Terrain_Data,entry:^Data_Source,low,high:[3]int,phase:
         for pz in from.z..=to.z {for py in from.y..=to.y {for px in from.x..=to.x {
             i:=grid_page_id(g,{px,py,pz})
             if !grid_absent(g,i) || work_reading(data,&entry.source,grid,i) {continue}
-            if (grid==.Heights || grid==.Distances) && int(data.samples)+PAGE_VALUES>int(data.settings.samples) {
+            if int(data.samples)+PAGE_VALUES>int(data.settings.samples) {
                 name:[base.ASSET_ID_TEXT]u8
                 core.report(problems,e,"terrain.budget","the pages of terrain source %s near its viewers need more samples than the %d of Terrain_Settings.samples; raise it, or lower Terrain_Settings.resident_distance",host.assets_name(a,entry.id,&name),data.settings.samples)
                 return false
@@ -270,19 +281,13 @@ pages_start :: proc(data:^Terrain_Data,entry:^Data_Source,low,high:[3]int,phase:
         }}}
         return true
     }
-    if s.kind==.Volume {
-        if start(data,entry,&s.distances,.Distances,low,high,phase,problems,e,a) {start(data,entry,&s.weights,.Weights,low,high,phase,problems,e,a)}
-        return
-    }
-    if !start(data,entry,&s.heights,.Heights,low,high,phase,problems,e,a) {return}
-    if !start(data,entry,&s.weights,.Weights,low,high,phase,problems,e,a) {return}
-    start(data,entry,&s.holes,.Holes,low,high,phase,problems,e,a)
+    _=start(data,entry,&s.field,.Field,low,high,phase,problems,e,a) && start(data,entry,&s.weights,.Weights,low,high,phase,problems,e,a) && start(data,entry,&s.holes,.Holes,low,high,phase,problems,e,a)
 }
 
 // Whether the pages of a region of samples are in memory: if not, a build
 // that can wait starts reading them in jobs, and one that cannot reads them now.
 @(private)
-pages_ready :: proc(data:^Terrain_Data,resident:^Terrain_Resident,entry:^Data_Source,low,high:[3]int,urgent:bool,phase:core.Phase,problems:^core.Problems,terrains:core.Read(Terrain)) -> bool {
+pages_ready :: proc(data:^Terrain_Data,resident:^Terrain_Resident,entry:^Data_Source,low,high:[3]int,urgent:bool,phase:core.Phase,problems:^core.Problems,terrains:^core.Table(Terrain,$A)) -> bool {
     s:=&entry.source
     if source_region_held(s,low,high) {return true}
     if !urgent {
@@ -302,7 +307,7 @@ pages_ready :: proc(data:^Terrain_Data,resident:^Terrain_Resident,entry:^Data_So
 // Whether the samples a node of a Heightfield reads along the segments of
 // its border below COARSE_LEVEL are in memory, as pages_ready.
 @(private)
-node_border_ready :: proc(data:^Terrain_Data,resident:^Terrain_Resident,entry:^Data_Source,index:int,border:^Piece_Border,urgent:bool,phase:core.Phase,problems:^core.Problems,terrains:core.Read(Terrain)) -> bool {
+node_border_ready :: proc(data:^Terrain_Data,resident:^Terrain_Resident,entry:^Data_Source,index:int,border:^Piece_Border,urgent:bool,phase:core.Phase,problems:^core.Problems,terrains:^core.Table(Terrain,$A)) -> bool {
     s:=&entry.source
     if !source_paged(s) {return true}
     low,high:=quad_region(s,&entry.quad,index)
@@ -331,7 +336,7 @@ node_border_ready :: proc(data:^Terrain_Data,resident:^Terrain_Resident,entry:^D
 // of the pages it needs first; lets go of the pieces no owner wants or shows.
 // urgent_left is set when a piece that cannot wait found no slot.
 @(private)
-terrain_schedule :: proc(data:^Terrain_Data,resident:^Terrain_Resident,entry:^Data_Source,source:^Resident_Source,phase:core.Phase,stream:bool,problems:^core.Problems,terrains:core.Read(Terrain),urgent_left:^bool) {
+terrain_schedule :: proc(data:^Terrain_Data,resident:^Terrain_Resident,entry:^Data_Source,source:^Resident_Source,phase:core.Phase,stream:bool,problems:^core.Problems,terrains:^core.Table(Terrain,$A),urgent_left:^bool) {
     s:=&entry.source
     q:=&source.quad
     chunks:=q.first[1]
@@ -538,21 +543,25 @@ owner_chunk_show :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,owner:^Resid
     core.add(c.meshes,e,render.Mesh_Renderer{mesh=chunk.mesh,materials=owner.materials})
     core.add(c.tints,e,owner.tint)
     if !render.material_override_empty(&owner.override) {core.add(c.overrides,e,owner.override)} else if core.has(c.overrides,e) {core.remove(c.overrides,e)}
-    if wants {core.add(c.colliders,e,s.kind==.Heightfield?phys.collider_heightfield():phys.collider_mesh())} else if has {core.remove(c.colliders,e);room_give(resident,collider.kind)}
+    if wants {
+        made:=phys.COLLIDER_DEFAULT
+        made.kind=collider_kind(s.kind)
+        core.add(c.colliders,e,made)
+    } else if has {core.remove(c.colliders,e);room_give(resident,collider.kind)}
 }
 
 // The loaded source of the terrain a request names; without it the request is a problem of that entity.
 // The terrain a request edits and its brush as its source reads it: what an
 // edit keys on from here on, also on the network.
 @(private)
-edit_resolve :: proc(request:Edit_Request,data:^Terrain_Data,terrains:core.Read(Terrain),worlds:core.Read(core.World_Transform)) -> (resolved:Edit_Request,ok:bool) {
+edit_resolve :: proc(request:Edit_Request,data:^Terrain_Data,terrains:^core.Table(Terrain,$A),worlds:^core.Table(core.World_Transform,$B)) -> (resolved:Edit_Request,ok:bool) {
     owner:=request.owner
     if owner==core.NONE {owner=dig_owner(request.brush,data,terrains,worlds) or_return}
     return {owner,brush_local(request.brush,edit_place(worlds,owner))},true
 }
 
 @(private)
-edit_place :: proc(worlds:core.Read(core.World_Transform),owner:core.Entity) -> mm.Transform {
+edit_place :: proc(worlds:^core.Table(core.World_Transform,$A),owner:core.Entity) -> mm.Transform {
     if world,found:=core.get(worlds,owner);found {return world.transform}
     return mm.TRANSFORM_IDENTITY
 }
@@ -561,9 +570,9 @@ edit_place :: proc(worlds:core.Read(core.World_Transform),owner:core.Entity) -> 
 // center, then the one of the smallest footprint (a Volume over the ground it
 // joins). A Heightfield reaches any height.
 @(private)
-dig_owner :: proc(brush:Brush,data:^Terrain_Data,terrains:core.Read(Terrain),worlds:core.Read(core.World_Transform)) -> (owner:core.Entity,ok:bool) {
+dig_owner :: proc(brush:Brush,data:^Terrain_Data,terrains:^core.Table(Terrain,$A),worlds:^core.Table(core.World_Transform,$B)) -> (owner:core.Entity,ok:bool) {
     best,smallest:=max(f32),max(f32)
-    for marker,row in terrains.table.values[:core.count(terrains)] {
+    for marker,row in terrains.values[:core.count(terrains)] {
         entry:=data_find(data,marker.source)
         if entry==nil {continue}
         e:=core.entity_at(terrains,row)
@@ -583,7 +592,7 @@ dig_owner :: proc(brush:Brush,data:^Terrain_Data,terrains:core.Read(Terrain),wor
 }
 
 @(private)
-request_source :: proc(data:^Terrain_Data,terrains:core.Read(Terrain),owner:core.Entity,request:string,problems:^core.Problems,a:^host.Assets) -> (entry:^Data_Source,ok:bool) {
+request_source :: proc(data:^Terrain_Data,terrains:^core.Table(Terrain,$A),owner:core.Entity,request:string,problems:^core.Problems,a:^host.Assets) -> (entry:^Data_Source,ok:bool) {
     marker,known:=core.get(terrains,owner)
     if !known {
         core.report(problems,owner,"terrain.request_owner","%s of a terrain named this entity, which has no Terrain; name the entity of the terrain",request)
@@ -671,10 +680,10 @@ brush_pages_read :: proc(entry:^Data_Source,brush:Brush) -> bool {
 @(step="fixed frame",loops="game editor",stage="simulate",before="physics_prepare")
 terrain_update :: proc(
     commands:core.Commands,terrains:^core.Table(Terrain),chunks:^core.Table(Terrain_Chunk),
-    locals:core.Read(core.Transform),parents:core.Read(core.Parent),ids:core.Read(core.Id),colliders:^core.Table(phys.Collider),
+    locals:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),ids:^core.Table(core.Id,.Read),colliders:^core.Table(phys.Collider),
     meshes:^core.Table(render.Mesh_Renderer),tints:^core.Table(render.Tint),overrides:^core.Table(render.Material_Override),
     data:^Terrain_Data,resident:^Terrain_Resident,requests:^Terrain_Requests,digs:^Terrain_Digs,settings:Terrain_Settings,app:^host.App,time:core.Time,frame:core.Frame_Time,
-    view:core.View,worlds:core.Read(core.World_Transform),sources:core.Ref(scene.Streaming_Sources),kept:core.Read(scene.Far_Kept),physics:phys.Physics_Settings,
+    view:core.View,worlds:^core.Table(core.World_Transform,.Read),sources:core.Ref(scene.Streaming_Sources),kept:^core.Table(scene.Far_Kept,.Read),physics:phys.Physics_Settings,
     loads:core.Ref(scene.Section_Loads),waits:^scene.Load_Waits,problems:^core.Problems,focus:Terrain_Focus,queries:^core.Ground_Queries,
 ) {
     c:=Chunk_Tables{commands,chunks,locals,parents,ids,colliders,meshes,tints,overrides}
@@ -702,7 +711,7 @@ terrain_update :: proc(
     resident.pass+=1
     resident.picking=!time.playing
     // What the jobs of the calls before made shows before the sources change again.
-    for &slot in data.work {if work_due(data,&slot,frame.phase) {work_take(&c,data,resident,&slot,physics,problems,core.read(terrains))}}
+    for &slot in data.work {if work_due(data,&slot,frame.phase) {work_take(&c,data,resident,&slot,physics,problems,terrains)}}
     // A source is read again when its file changes, on disk or in the memory
     // of the registry; the revision of an owner is the key of the history of
     // its editor.
@@ -712,7 +721,7 @@ terrain_update :: proc(
         for &entry in data.entries {
             if terrain_stamp(app.assets,entry.id)==entry.stamp {continue}
             work_wait(data,&entry.source)
-            data_reload(data,&entry,app.assets,problems,core.read(terrains))
+            data_reload(data,&entry,app.assets,problems,terrains)
         }
     }
     // What the jobs read joins the sources; what the loads of sections name is
@@ -726,7 +735,7 @@ terrain_update :: proc(
     for id in named {
         if data_find(data,id)!=nil || slice.contains(data.unread[:],id) {continue}
         record,found:=asset.registry_find(&app.assets.registry,id)
-        if !found || record.kind!=KIND {continue}
+        if !found || record.kind!=TERRAIN_KIND {continue}
         if data_load_begin(data,app.assets,id)!=nil {scene.load_wait(waits,id)} else {data_load(data,app.assets,id,problems,core.NONE)}
     }
     for marker,row in terrains.values[:core.count(terrains)] {
@@ -756,8 +765,8 @@ terrain_update :: proc(
     }
     if !time.playing || frame.phase==.Fixed {
         for asked_edit in core.take(&requests.edits) {
-            request:=edit_resolve(asked_edit,data,core.read(terrains),worlds) or_continue
-            entry:=request_source(data,core.read(terrains),request.owner,"an edit",problems,app.assets) or_continue
+            request:=edit_resolve(asked_edit,data,terrains,worlds) or_continue
+            entry:=request_source(data,terrains,request.owner,"an edit",problems,app.assets) or_continue
             change:=data_edit(data,entry,request.brush)
             if change.error!=.None {
                 edit_report(problems,request.owner,app.assets,entry,request.brush,change.error)
@@ -769,7 +778,7 @@ terrain_update :: proc(
             for value,row in terrains.values[:core.count(terrains)] {if value.source==entry.id {core.edit_at(terrains,row).revision=entry.source.revision}}
         }
         for request in core.take(&requests.layers) {
-            entry:=request_source(data,core.read(terrains),request.owner,"a layer change",problems,app.assets) or_continue
+            entry:=request_source(data,terrains,request.owner,"a layer change",problems,app.assets) or_continue
             applied,error:=data_layer(data,entry,request.change)
             layer_report(problems,request.owner,app.assets,entry,request.change,error)
             if !applied {continue}
@@ -779,7 +788,7 @@ terrain_update :: proc(
     }
     full:=terrain_chunks_prune(&c,terrains,resident)
     // Chunks shown without their collider try again once the colliders change.
-    if resident.room.starved && core.version(c.colliders)!=resident.room.seen {
+    if resident.room.starved && core.touched(c.colliders,&resident.room.seen) {
         resident.room.starved=false
         full=true
     }
@@ -806,16 +815,16 @@ terrain_update :: proc(
         for &entry in data.entries {changed||=len(entry.pending)>0}
         data_pending_spread(data,resident)
         // What stands for a section that is not loaded collides with nothing.
-        for &owner in resident.owners {owner.far=kept.table!=nil && core.has(kept,owner.entity)}
-        resident_joins(resident,data,core.read(terrains),ids,worlds,locals,problems)
-        resident_lod(resident,data,worlds,view,sources,settings,core.read(terrains),&c,physics,problems,changed || first,focus)
+        for &owner in resident.owners {owner.far=kept!=nil && core.has(kept,owner.entity)}
+        resident_joins(resident,data,terrains,ids,worlds,locals,problems)
+        resident_lod(resident,data,worlds,view,sources,settings,terrains,&c,physics,problems,changed || first,focus)
         resident_cut(resident,data)
         stream:=settings.resident_distance>0
         // A piece that is wanted where nothing shows is built in this call.
         for round:=0;;round+=1 {
             urgent_left:=false
             data_pending_spread(data,resident)
-            for &source in resident.sources {if entry:=data_find(data,source.id);entry!=nil {terrain_schedule(data,resident,entry,&source,frame.phase,stream,problems,core.read(terrains),&urgent_left)}}
+            for &source in resident.sources {if entry:=data_find(data,source.id);entry!=nil {terrain_schedule(data,resident,entry,&source,frame.phase,stream,problems,terrains,&urgent_left)}}
             took:=false
             for &slot in data.work {
                 if slot.kind==.None {continue}
@@ -825,7 +834,7 @@ terrain_update :: proc(
                     if source==nil || slot.index>=len(source.chunks) || !source.chunks[slot.index].urgent {continue}
                 }
                 if jobs.pending(&slot.counter) {jobs.wait(data.jobs,jobs.OWNER,&slot.counter)}
-                work_take(&c,data,resident,&slot,physics,problems,core.read(terrains))
+                work_take(&c,data,resident,&slot,physics,problems,terrains)
                 took=true
             }
             resident_cut(resident,data)
@@ -833,7 +842,7 @@ terrain_update :: proc(
             if !took || round>QUAD_DEPTH_MAX {break}
         }
         for &entry in data.entries {pages_leave(data,resident,&entry)}
-        seen:=[3]u64{core.version(terrains),core.version(c.tints),core.version(c.overrides)}==resident.shown
+        seen:=!shown_touched(terrains,&c,&resident.shown)
         for marker,row in terrains.values[:core.count(terrains)] {
             entry:=data_find(data,marker.source)
             if entry==nil {continue}
@@ -852,7 +861,7 @@ terrain_update :: proc(
         }
     }
     for &request in core.take(&requests.saves) {
-        entry:=request_source(data,core.read(terrains),request.owner,"a save",problems,app.assets) or_continue
+        entry:=request_source(data,terrains,request.owner,"a save",problems,app.assets) or_continue
         work_wait(data,&entry.source)
         path:=base.text_get(request.path[:])
         own,_:=terrain_file(app.assets,entry.id)
@@ -877,7 +886,7 @@ terrain_update :: proc(
         last:=&data.entries[len(data.entries)-1].source
         for &slot in data.work {
             if slot.kind==.None {continue}
-            if slot.source==&entry.source {work_release(&slot)} else if slot.source==last {work_take(&c,data,resident,&slot,physics,problems,core.read(terrains))}
+            if slot.source==&entry.source {work_release(&slot)} else if slot.source==last {work_take(&c,data,resident,&slot,physics,problems,terrains)}
         }
         for j:=len(resident.sources)-1;j>=0;j-=1 {
             if resident.sources[j].id!=entry.id {continue}
@@ -888,9 +897,10 @@ terrain_update :: proc(
         data_entry_free(entry)
         unordered_remove(&data.entries,i)
     }
-    resident.shown={core.version(terrains),core.version(c.tints),core.version(c.overrides)}
-    if resident.room.starved {resident.room.seen=core.version(c.colliders)}
-    ground_update(resident,data,core.read(terrains),colliders,worlds,focus)
+    // What the owners wrote as they showed is not a change for the next call.
+    _=shown_touched(terrains,&c,&resident.shown)
+    if resident.room.starved {_=core.touched(c.colliders,&resident.room.seen)}
+    ground_update(resident,data,terrains,colliders,worlds,focus,queries)
     host.assets_commit(app.assets)
 }
 
@@ -914,5 +924,6 @@ resident_owner :: proc(resident:^Terrain_Resident,e:core.Entity,entry:^Data_Sour
         return nil
     }
     resident.cut=true
+    resident.marks+=1
     return &resident.owners[len(resident.owners)-1]
 }

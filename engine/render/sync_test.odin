@@ -7,11 +7,11 @@ import "mirai:core"
 import "mirai:host"
 import gpu "mirai:render"
 
-// What render_sync looks at is what changed: no row in a frame where nothing
-// did, a row for each entity that moved, and of the lights only the one that
-// moved, which goes to the renderer alone.
+// What render_sync gives the renderer is what changed: nothing in a frame
+// where nothing did, the instances that moved, and of the lights only the one
+// that moved.
 @(test)
-the_sync_looks_only_at_the_rows_that_changed :: proc(t:^testing.T) {
+the_sync_gives_the_renderer_only_what_changed :: proc(t:^testing.T) {
     f:=new(Sync_Fixture);defer free(f)
     if !sync_fixture_init(t,f) {return}
     defer sync_fixture_destroy(f)
@@ -26,9 +26,8 @@ the_sync_looks_only_at_the_rows_that_changed :: proc(t:^testing.T) {
     sync_frame(f)
     s:=&f.renderer.scene
     testing.expect(t,f.sync.synced && len(s.instances)==len(cubes) && len(s.lights)==len(lights))
-    stats:=f.sync.stats
-    testing.expect_value(t,sync_frame(f),u64(0))
-    testing.expect_value(t,f.sync.stats,stats)
+    testing.expect_value(t,sync_frame(f),0)
+    testing.expect(t,!s.lights_changed && s.changes.count==0 && !s.changes.all,"a frame where nothing changed gives nothing")
 
     moved:=[10]int{3,17,18,40,41,42,99,150,151,199}
     for at in moved {
@@ -36,34 +35,21 @@ the_sync_looks_only_at_the_rows_that_changed :: proc(t:^testing.T) {
         world.transform.position.y=2
         world.previous=world.transform
     }
-    testing.expect_value(t,sync_frame(f),u64(len(moved)))
-    testing.expect(t,f.sync.stats.moves==stats.moves+1 && f.sync.stats.instance_updates==stats.instance_updates && f.sync.stats.lights==stats.lights)
+    testing.expect_value(t,sync_frame(f),len(moved))
+    testing.expect(t,!s.lights_changed,"no light moved")
     for cube,i in cubes {testing.expect_value(t,s.instances[i].world[1][3],f32(i==3 || i==17 || i==18 || i>=40 && i<=42 || i==99 || i==150 || i==151 || i==199?2:0))}
-    testing.expect_value(t,sync_frame(f),u64(0))
+    testing.expect_value(t,sync_frame(f),0)
 
-    // Between two ticks an entity is placed again in every frame until it rests.
-    core.edit(&f.world.worlds,cubes[5]).transform.position.y=4
-    testing.expect_value(t,sync_frame(f),u64(2))
-    testing.expect_value(t,sync_frame(f),u64(1))
-    rested:=core.edit(&f.world.worlds,cubes[5])
-    rested.previous=rested.transform
-    testing.expect_value(t,sync_frame(f),u64(2))
-    testing.expect_value(t,sync_frame(f),u64(0))
-
-    // A light moved alone: its row and the light, and one light of the renderer's.
-    s.lights_dirty=false
-    clear(&s.light_ranges)
-    before:=f.sync.stats
+    // A light moved alone: the renderer changes the light around it and where it was, and no instance.
     core.edit(&f.world.worlds,lights[5]).transform.position.z=1
-    testing.expect_value(t,sync_frame(f),u64(2))
-    testing.expect(t,f.sync.stats.lights==before.lights+1 && f.sync.stats.light_sets==before.light_sets+1 && f.sync.stats.moves==before.moves)
-    testing.expect(t,len(s.light_ranges)==1 && s.light_ranges[0].count==1,"the light that moved goes to the GPU alone")
-    for light,i in f.sync.lights {testing.expect_value(t,light.position.z,f32(f.sync.light_owners[i].entity==lights[5]?1:0))}
+    testing.expect_value(t,sync_frame(f),0)
+    testing.expect(t,s.lights_changed && s.changes.count==2,"the light that moved goes to the renderer alone")
+    for light,i in s.lights {testing.expect_value(t,light.position_range.z,f32(f.sync.light_owners[i].entity==lights[5]?1:0))}
     // One that goes gives its place to the last, and one hidden with what it hangs from is no light.
     core.add(&f.world.hidden,lights[0],Hidden{})
     core.remove(&f.world.points,lights[2])
     sync_frame(f)
-    testing.expect(t,len(f.sync.lights)==6 && len(s.lights)==6)
+    testing.expect(t,len(f.sync.light_owners)==6 && len(s.lights)==6)
     for owner,i in f.sync.light_owners {
         testing.expect(t,owner.entity!=lights[0] && owner.entity!=lights[2] && core.entity_map_get(&f.sync.lit[.Point],owner.entity)^==u32(i))
     }
@@ -220,28 +206,22 @@ a_posed_mesh_is_the_instance_of_its_entity_and_a_visual_one_hides_it :: proc(t:^
     a,b:=sync_cube(f,0),sync_cube(f,2)
     posed:Posed_Meshes
     defer core.value_free(&posed,type_info_of(Posed_Meshes))
-    frame :: proc(f:^Sync_Fixture,posed:^Posed_Meshes) {
-        core.test_world_settle(&f.world)
-        world_sync(&f.world,&f.sync,&f.app,hierarchy=core.ref(&f.world.hierarchy),posed=posed)
-        clear(&f.app.extras.instances)
-    }
+    frame :: proc(f:^Sync_Fixture,posed:^Posed_Meshes) -> int {return sync_frame(f,posed=posed)}
     frame(f,&posed)
     s:=&f.renderer.scene
     cube,sphere:=host.assets_shape(&f.assets,.Cube).handle,host.assets_shape(&f.assets,.Sphere).handle
     mesh_of :: proc(s:^gpu.Scene_State,at:int) -> gpu.Mesh_Handle {return gpu.Mesh_Handle(s.instances[at].meta.x&gpu.INSTANCE_MESH_MASK)}
     testing.expect(t,mesh_of(s,0)==cube && mesh_of(s,1)==cube)
-    updates:=f.sync.stats.instance_updates
     testing.expect(t,posed_set(&posed,b,{mesh=sphere}))
-    frame(f,&posed)
+    testing.expect_value(t,frame(f,&posed),1)
     testing.expect(t,mesh_of(s,0)==cube && mesh_of(s,1)==sphere && len(s.instances)==2,"the pose is drawn as the instance of its entity")
-    testing.expect_value(t,f.sync.stats.instance_updates,updates+1)
     // And where its entity is: with the offset of what it hangs from, as any mesh.
     root:=core.create(&f.world.entities)
     core.add(&f.world.worlds,root,core.World_Transform{transform={rotation=1,scale=1},previous={rotation=1,scale=1}})
     core.add(&f.world.offsets,root,Draw_Offset{offset={0,2,0}})
     core.add(&f.world.parents,b,core.Parent{entity=root})
     core.test_world_settle(&f.world)
-    core.hierarchy_settle(&f.world.hierarchy,core.read(&f.world.parents),&f.world.entities)
+    core.hierarchy_settle(&f.world.hierarchy,&f.world.parents,&f.world.entities)
     frame(f,&posed)
     testing.expect(t,mesh_of(s,1)==sphere && s.instances[1].world[1][3]==2 && s.instances[0].world[1][3]==0,"a posed mesh is drawn with the offset of what it hangs from")
     // Given again as it is, nothing is made; one the renderer does not have shows the mesh of the entity.
@@ -265,11 +245,10 @@ a_posed_mesh_is_the_instance_of_its_entity_and_a_visual_one_hides_it :: proc(t:^
             lost.mesh=gpu.Mesh_Handle(9999)
             testing.expect(t,usable && host.extras_instance_add(&f.app.extras,extra) && host.extras_instance_add(&f.app.extras,lost))
         }
-        rows:=f.sync.stats.rows
-        frame(f,&posed)
+        touched:=frame(f,&posed)
         testing.expectf(t,len(s.instances)==(shown?3:2) && hidden(s,0)==shown && !hidden(s,1),"pass %d: %d instances, the mesh hidden %v",pass,len(s.instances),hidden(s,0))
-        // While it keeps coming, or keeps away, nothing of the world is looked at.
-        if pass==2 {testing.expect_value(t,f.sync.stats.rows,rows)}
+        // While it keeps coming, or keeps away, nothing is given again.
+        if pass==2 || pass==3 {testing.expect_value(t,touched,pass==2?0:1)}
         testing.expect_value(t,f.assets.stats.derived,shown?1:0)
     }
     // One that replaces nothing leaves the world as it is, and still gives back its row.
@@ -278,9 +257,8 @@ a_posed_mesh_is_the_instance_of_its_entity_and_a_visual_one_hides_it :: proc(t:^
             ghost,usable:=mesh_instance(&f.assets,{shape=.Cone},1,Tint{color={1,0,0,0.25}})
             testing.expect(t,usable && host.extras_instance_add(&f.app.extras,ghost))
         }
-        updates=f.sync.stats.instance_updates
-        frame(f,&posed)
-        testing.expect(t,f.assets.stats.derived==(pass==0?1:0) && f.sync.stats.instance_updates==updates && len(s.instances)==(pass==0?3:2))
+        touched:=frame(f,&posed)
+        testing.expect(t,f.assets.stats.derived==(pass==0?1:0) && touched==(pass==0?1:0) && len(s.instances)==(pass==0?3:2))
     }
 }
 

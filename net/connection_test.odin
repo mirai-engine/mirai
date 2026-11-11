@@ -7,7 +7,7 @@ import "mirai:std/serial"
 import "mirai:std/base"
 
 @(private="file")
-CHANNELS :: []Channel_Desc{{kind=.Reliable,max_message_bytes=20000,queue_bytes=64<<10},{kind=.Unreliable},{kind=.Sequenced}}
+CHANNELS :: []Channel_Desc{{kind=.Reliable,queue_bytes=64<<10},{kind=.Unreliable},{kind=.Sequenced}}
 
 @(test)
 client_connects_through_the_challenge_and_both_ends_report_it :: proc(t:^testing.T) {
@@ -27,49 +27,61 @@ client_connects_through_the_challenge_and_both_ends_report_it :: proc(t:^testing
     testing.expect(t,!stale)
 }
 
-// The client reaches the server at another address, as through the router it
-// is behind: what it sends there arrives at the server, which answers from
-// its own address on the network.
-@(private="file")
-Test_Router :: struct {inner:Transport,public,server:Address}
-
+// An invitation carries the host's address on its network and the one its
+// router mapped: the client asks both at once and goes on with the one that
+// accepts. The other may be nobody, or another machine of the client's own
+// network at that address, whose answers do not end the attempt while the
+// host may still answer.
 @(test)
-a_client_goes_on_with_the_address_a_server_behind_its_router_answers_from :: proc(t:^testing.T) {
-    w:Test_World;test_world_init(&w,3);defer test_world_destroy(&w)
-    server:=test_host(&w,{mode=.Server,channels=CHANNELS,invite=0x5a5a})
-    router:=Test_Router{inner=sim_endpoint_transport(&w.sim,1),public=address_memory(2),server=address_memory(0)}
-    client:=new(Host)
-    desc:=Host_Desc{mode=.Client,channels=CHANNELS,seed=1001,protocol_id=77,invite=0x5a5a}
-    desc.transport={&router,proc(data:rawptr,to:Address,bytes:[]u8) -> bool {
-        r:=(^Test_Router)(data)
-        return r.inner.send(r.inner.data,to==r.public?r.server:to,bytes)
-    },proc(data:rawptr,buffer:[]u8) -> (size:int,from:Address,ok:bool) {
-        r:=(^Test_Router)(data)
-        return r.inner.receive(r.inner.data,buffer)
-    }}
-    if !testing.expect_value(t,host_init(client,desc),Error.None) {free(client);return}
-    w.hosts[w.count]=client
-    w.count+=1
-    testing.expect_value(t,host_connect(client,router.public),Error.None)
-    on_server,on_client:Connection
-    for _ in 0..<600 {
-        test_step(&w)
-        for command in host_poll(server) {if command.kind==.Connected {on_server=command.connection}}
-        for command in host_poll(client) {if command.kind==.Connected {on_client=command.connection}}
-        if on_server!=0 && on_client!=0 {break}
+a_client_goes_on_with_the_candidate_that_accepts :: proc(t:^testing.T) {
+    Case :: struct {lan,public:Address,decoy:Host_Desc,want:Disconnect_Reason}
+    other_version:=Host_Desc{mode=.Server,channels=CHANNELS,invite=0x5a5a,version=3}
+    other_invite:=Host_Desc{mode=.Server,channels=CHANNELS,invite=0x6b6b,version=2}
+    for c in ([]Case{
+        {address_memory(0),address_memory(5),other_version,.None},
+        {address_memory(5),address_memory(0),other_version,.None},
+        {address_memory(1),address_memory(0),other_version,.None},
+        {address_memory(1),address_memory(0),other_invite,.None},
+        {address_memory(1),address_memory(5),other_version,.Denied_Version},
+    }) {
+        w:Test_World;test_world_init(&w,3)
+        defer test_world_destroy(&w)
+        server:=test_host(&w,{mode=.Server,channels=CHANNELS,invite=0x5a5a,version=2})
+        test_host(&w,c.decoy)
+        client:=test_host(&w,{mode=.Client,channels=CHANNELS,invite=0x5a5a,version=2,connect_timeout=1})
+        testing.expect_value(t,host_connect(client,c.lan,c.public),Error.None)
+        on_server,on_client:Connection
+        reason:Disconnect_Reason
+        for _ in 0..<120 {
+            test_step(&w)
+            for command in host_poll(server) {if command.kind==.Connected {on_server=command.connection}}
+            for command in host_poll(client) {
+                if command.kind==.Connected {on_client=command.connection}
+                if command.kind==.Disconnected {reason=command.reason}
+            }
+            if on_server!=0 && on_client!=0 || reason!=.None {break}
+        }
+        if c.want!=.None {
+            testing.expectf(t,on_client==0 && reason==c.want,"%v: %v",c,reason)
+            continue
+        }
+        testing.expectf(t,on_server!=0 && on_client!=0 && client.back.peers[0].address==address_memory(0),"%v: %v",c,reason)
+        message:=[3]u8{1,2,3}
+        testing.expect_value(t,message_send(client,on_client,0,message[:]),Error.None)
+        arrived:=false
+        for _ in 0..<60 {
+            test_step(&w)
+            for command in host_poll(server) {arrived||=command.kind==.Message && len(command.data)==3}
+            host_poll(client)
+            if arrived {break}
+        }
+        testing.expectf(t,arrived,"%v: the connection carries messages",c)
     }
-    testing.expect(t,on_server!=0 && on_client!=0,"the client connects although the server answers from another address")
-    testing.expect_value(t,host_stats(client).readdressed,u64(1))
-    message:=[3]u8{1,2,3}
-    testing.expect_value(t,message_send(client,on_client,0,message[:]),Error.None)
-    arrived:=false
-    for _ in 0..<60 {
-        test_step(&w)
-        for command in host_poll(server) {arrived||=command.kind==.Message && len(command.data)==3}
-        host_poll(client)
-        if arrived {break}
-    }
-    testing.expect(t,arrived,"the connection carries messages from the new address on")
+    w:Test_World;test_world_init(&w,1);defer test_world_destroy(&w)
+    client:=test_host(&w,{mode=.Client})
+    testing.expect_value(t,host_connect(client),Error.Invalid)
+    testing.expect_value(t,host_connect(client,{}),Error.Invalid)
+    testing.expect_value(t,host_connect(client,address_memory(1),address_memory(2),address_memory(3)),Error.Invalid)
 }
 
 @(test)
@@ -351,7 +363,7 @@ unreliable_messages_arrive_at_most_once_and_sequenced_ones_keep_only_the_latest 
 @(test)
 a_full_reliable_queue_refuses_messages_instead_of_closing_the_connection :: proc(t:^testing.T) {
     w:Test_World;test_world_init(&w,2);defer test_world_destroy(&w)
-    channels:=[]Channel_Desc{{kind=.Reliable,queue_bytes=256<<10,max_message_bytes=16<<10}}
+    channels:=[]Channel_Desc{{kind=.Reliable,queue_bytes=256<<10}}
     server:=test_host(&w,{mode=.Server,channels=channels})
     client:=test_host(&w,{mode=.Client,channels=channels})
     on_server,_:=test_connect(&w,server,client)
@@ -390,10 +402,54 @@ a_full_reliable_queue_refuses_messages_instead_of_closing_the_connection :: proc
     testing.expect_value(t,stats.messages_dropped,0)
 }
 
+// A reliable message larger than its queue streams in as the window drains
+// it, under loss, and arrives whole and in order in pieces; the channel takes
+// no other message until it is in.
+@(test)
+a_reliable_message_larger_than_its_queue_streams_and_arrives_in_pieces :: proc(t:^testing.T) {
+    w:Test_World;test_world_init(&w,2);defer test_world_destroy(&w)
+    channels:=[]Channel_Desc{{kind=.Reliable,queue_bytes=8<<10}}
+    server:=test_host(&w,{mode=.Server,channels=channels})
+    client:=test_host(&w,{mode=.Client,channels=channels})
+    on_server,_:=test_connect(&w,server,client)
+    sim_endpoint_conditions(&w.sim,1,{loss=0.2})
+    blob:=make([]u8,300000);defer delete(blob)
+    for &b,i in blob {b=u8(i*7+i/251)}
+    tail:=[3]u8{9,8,7}
+    sent,got,pieces:=0,0,0
+    whole,after:=false,false
+    for step in 0..<6000 {
+        if sent<len(blob) {
+            message_send(server,on_server,0,blob,&sent)
+            if sent<len(blob) {testing.expect_value(t,message_send(server,on_server,0,tail[:]),Error.Full)}
+        } else if !after {
+            after=message_send(server,on_server,0,tail[:])==.None
+        }
+        test_step(&w)
+        host_poll(server)
+        for command in host_poll(client) {
+            if command.kind!=.Message {testing.expect(t,false,"the client keeps the connection");return}
+            if whole {
+                testing.expect(t,string(command.data)==string(tail[:]),"the next message follows the streamed one")
+                return
+            }
+            pieces+=1
+            testing.expect(t,len(command.data)<=PIECE_BYTES)
+            for b,k in command.data {
+                if b!=blob[got+k] {testing.expect(t,false,"the pieces are the message, in order");return}
+            }
+            got+=len(command.data)
+            whole=!command.more
+        }
+        _=step
+    }
+    testing.expect(t,false,"the message and the one after it arrive")
+}
+
 @(test)
 send_rate_limits_the_bytes_a_connection_puts_on_the_wire :: proc(t:^testing.T) {
     w:Test_World;test_world_init(&w,2);defer test_world_destroy(&w)
-    channels:=[]Channel_Desc{{kind=.Reliable,queue_bytes=1<<20,max_message_bytes=1<<19}}
+    channels:=[]Channel_Desc{{kind=.Reliable,queue_bytes=1<<20}}
     server:=test_host(&w,{mode=.Server,channels=channels,command_bytes=4<<20})
     client:=test_host(&w,{mode=.Client,channels=channels,send_rate=20000,command_bytes=4<<20,frame_bytes=1<<20})
     _,on_client:=test_connect(&w,server,client)
@@ -404,18 +460,126 @@ send_rate_limits_the_bytes_a_connection_puts_on_the_wire :: proc(t:^testing.T) {
     host_poll(client);host_poll(server)
     before,_:=connection_stats(client,on_client)
     arrived:=false
-    steps:=0
+    steps,got:=0,0
     for !arrived && steps<1200 {
         test_step(&w)
         steps+=1
         host_poll(client)
-        for command in host_poll(server) {arrived=command.kind==.Message && len(command.data)==len(blob) && command.data[777]==u8(777&0xff)}
+        for command in host_poll(server) {
+            if command.kind!=.Message {continue}
+            got+=len(command.data)
+            arrived=!command.more && got==len(blob)
+        }
     }
     testing.expect(t,arrived)
     after,_:=connection_stats(client,on_client)
     rate:=f64(after.bytes_sent-before.bytes_sent)/(f64(steps)*TEST_STEP)
     testing.expect(t,rate<22000 && rate>15000)
     testing.expect(t,after.send_rate>10000 && after.send_rate<24000)
+}
+
+// A transport that keeps the last datagram of a connection its host sent.
+@(private="file")
+Capture :: struct {inner:Transport,last:[PACKET_BYTES]u8,size:int}
+@(private="file")
+capture_transport :: proc(c:^Capture) -> Transport {
+    return {c,proc(data:rawptr,to:Address,bytes:[]u8) -> bool {
+        c:=(^Capture)(data)
+        if test_packet_data(bytes) {c.size=copy(c.last[:],bytes)}
+        return c.inner.send(c.inner.data,to,bytes)
+    },proc(data:rawptr,buffer:[]u8) -> (size:int,from:Address,ok:bool) {
+        c:=(^Capture)(data)
+        return c.inner.receive(c.inner.data,buffer)
+    }}
+}
+// A message each way, stepped until both arrive. False when an end lost the connection or they did not.
+@(private="file")
+both_ways :: proc(server,client:^Host,on_server,on_client:Connection,step:proc(data:rawptr),data:rawptr) -> bool {
+    message_send(server,on_server,0,{1})
+    message_send(client,on_client,0,{2})
+    server_got,client_got:=false,false
+    for _ in 0..<300 {
+        step(data)
+        for command in host_poll(server) {
+            if command.kind==.Disconnected {return false}
+            if command.kind==.Message && command.connection==on_server {server_got=true}
+        }
+        for command in host_poll(client) {
+            if command.kind==.Disconnected {return false}
+            if command.kind==.Message {client_got=true}
+        }
+        if server_got && client_got {return true}
+    }
+    return false
+}
+
+// A router that changes the port of a client mid-session: the connection
+// follows it on its first datagram from there, which opens under its key, and
+// keeps its handle. That datagram, or any other, replayed by someone else from
+// another address moves nothing. Over the in-memory network and real UDP.
+@(test)
+a_connection_follows_its_client_to_a_new_port_and_a_replay_moves_nothing :: proc(t:^testing.T) {
+    {
+        w:Test_World;test_world_init(&w,4,seed=5);defer test_world_destroy(&w)
+        server:=test_host(&w,{mode=.Server,channels=CHANNELS})
+        client:=test_host(&w,{mode=.Client,channels=CHANNELS})
+        capture:=Capture{inner=client.desc.transport}
+        client.desc.transport=capture_transport(&capture)
+        on_server,on_client:=test_connect(&w,server,client)
+        sim_step :: proc(data:rawptr) {test_step((^Test_World)(data))}
+        testing.expect(t,on_server!=0 && both_ways(server,client,on_server,on_client,sim_step,&w))
+        capture.inner=sim_endpoint_transport(&w.sim,2)
+        testing.expect(t,both_ways(server,client,on_server,on_client,sim_step,&w),"the connection goes on from the new port")
+        p:=peer_from(server,on_server)
+        testing.expect(t,p!=nil && p.address==address_memory(2))
+        forger:=sim_endpoint_transport(&w.sim,3)
+        forger.send(forger.data,address_memory(0),capture.last[:capture.size])
+        testing.expect(t,both_ways(server,client,on_server,on_client,sim_step,&w))
+        testing.expect(t,p.address==address_memory(2),"a replay moved the connection")
+        testing.expect_value(t,host_stats(server).connections,1)
+    }
+    Pair :: struct {server,client:^Host}
+    sockets:[4]Udp
+    if !udp_open(&sockets[0],address_loopback(0)) {testing.expect(t,false,"cannot bind a UDP socket on 127.0.0.1");return}
+    for &socket in sockets[1:] {
+        if !udp_open(&socket,address_loopback(0)) {testing.expect(t,false,"cannot bind a UDP socket on 127.0.0.1");return}
+    }
+    defer for &socket in sockets {udp_close(&socket)}
+    pair:Pair={new(Host),new(Host)}
+    defer {free(pair.server);free(pair.client)}
+    capture:=Capture{inner=udp_transport(&sockets[1])}
+    if !testing.expect_value(t,host_init(pair.server,{mode=.Server,transport=udp_transport(&sockets[0]),channels=CHANNELS,protocol_id=93}),Error.None) {return}
+    defer host_destroy(pair.server)
+    if !testing.expect_value(t,host_init(pair.client,{mode=.Client,transport=capture_transport(&capture),channels=CHANNELS,protocol_id=93}),Error.None) {return}
+    defer host_destroy(pair.client)
+    udp_step :: proc(data:rawptr) {
+        pair:=(^Pair)(data)
+        now:=host_time(pair.server)
+        host_update(pair.client,now);host_update(pair.server,now)
+        time.sleep(time.Millisecond)
+    }
+    host_connect(pair.client,address_loopback(int(sockets[0].address.port)))
+    on_server,on_client:Connection
+    for _ in 0..<3000 {
+        udp_step(&pair)
+        for command in host_poll(pair.server) {
+            if command.kind==.Connected {on_server=command.connection}
+        }
+        for command in host_poll(pair.client) {
+            if command.kind==.Connected {on_client=command.connection}
+        }
+        if on_server!=0 && on_client!=0 {break}
+    }
+    testing.expect(t,on_server!=0 && both_ways(pair.server,pair.client,on_server,on_client,udp_step,&pair))
+    capture.inner=udp_transport(&sockets[2])
+    testing.expect(t,both_ways(pair.server,pair.client,on_server,on_client,udp_step,&pair),"the connection goes on from the new port")
+    moved:=address_loopback(int(sockets[2].address.port))
+    p:=peer_from(pair.server,on_server)
+    testing.expect(t,p!=nil && p.address==moved)
+    forger:=udp_transport(&sockets[3])
+    forger.send(forger.data,address_loopback(int(sockets[0].address.port)),capture.last[:capture.size])
+    testing.expect(t,both_ways(pair.server,pair.client,on_server,on_client,udp_step,&pair))
+    testing.expect(t,p.address==moved,"a replay moved the connection")
 }
 
 @(test)
@@ -446,7 +610,8 @@ hostile_datagrams_never_crash_a_host_nor_reach_the_game_as_data :: proc(t:^testi
     for size in ([]int{0,1,DATA_HEADER,DATA_HEADER+CHECKSUM_BYTES,DATA_HEADER+TAG_BYTES,HANDSHAKE_BYTES-1,HANDSHAKE_BYTES,PACKET_BYTES,PACKET_BYTES+1,len(big)}) {
         for type in Packet_Type {
             for &b in big[1:] {b=u8(base.splitmix_next(&state))}
-            big[0]=u8(type)
+            // A datagram of a connection names its slot: the live one or a free one, which a stranger cannot move.
+            big[0],big[3],big[4]=u8(type),u8(size&1),0
             if size>=DATA_HEADER+1+CHECKSUM_BYTES && size<=PACKET_BYTES && type!=.Data && type!=.Disconnect {checksum_write(big[:size],server.back.key)}
             for from in ([2]Address{address_memory(2),address_memory(1)}) {
                 buffer:=big

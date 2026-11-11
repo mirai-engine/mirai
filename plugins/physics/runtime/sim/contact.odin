@@ -180,9 +180,9 @@ pairs_task :: proc(data:rawptr,first,last,worker:int) #no_bounds_check {
 pairs_update :: proc(w:^World) {
     st:=&w.step
     moved:=0
-    for i in 0..<w.shape_high {
-        shape:=&w.shapes[i]
-        if shape.generation&1!=0 && .Moved in shape.flags {st.moved[moved]=i;moved+=1}
+    for i:=w.moved_head;i>=0;i=w.shapes[i].moved_next {
+        st.moved[moved]=i
+        moved+=1
     }
     if moved==0 {return}
     st.pair_count=0
@@ -202,6 +202,7 @@ pairs_update :: proc(w:^World) {
     // Pairs that did not fit are searched again at the next step.
     if !overflow {
         for i in st.moved[:moved] {stamp(w,.Shapes,i);w.shapes[i].flags-={.Moved}}
+        w.moved_head=-1
     }
 }
 
@@ -431,21 +432,24 @@ contact_stopped :: proc(w:^World,contact:^Contact) {
     if .Overlap not_in contact.flags {island_unlink(w,contact.body_a,contact.body_b)}
 }
 
-// Narrow phase of the step: updates every contact with an awake body, then applies in order the
-// consequences that touch shared state: events, wake-ups and the removal of separated pairs.
+// Narrow phase of the step: updates every contact with an awake body, in the order of the awake bodies, then
+// applies in order the consequences that touch shared state: events, wake-ups and the removal of separated pairs.
 @(private)
 contacts_update :: proc(w:^World) #no_bounds_check {
     st:=&w.step
     count:=0
-    for i in 0..<w.contact_high {
-        contact:=&w.contacts[i]
-        if contact.shape_b<0 {continue}
-        // Flags of one step: a contact that no longer steps keeps them cleared, unwritten.
-        if contact.flags&{.Visited,.Continuous}!={} {stamp(w,contact);contact.flags-={.Visited,.Continuous}}
-        if .Awake in (w.bodies[contact.body_a].flags+w.bodies[contact.body_b].flags) {
-            st.active[count]=i
-            count+=1
-            contact.flags+={.Visited}
+    // One of two awake bodies comes from the lower slot.
+    for index:=w.awake_head;index>=0;index=w.bodies[index].awake_next {
+        for key:=w.bodies[index].contact_list;key>=0; {
+            contact:=&w.contacts[key>>1]
+            other:=key&1==0?contact.body_b:contact.body_a
+            if .Awake not_in w.bodies[other].flags || other>index {
+                st.active[count]=key>>1
+                count+=1
+                stamp(w,contact)
+                contact.flags+={.Visited}
+            }
+            key=contact.edges[key&1].next
         }
     }
     world_parallel(w,count,32,w,narrow_task)
@@ -485,10 +489,13 @@ contacts_update :: proc(w:^World) #no_bounds_check {
             contact:=&w.contacts[contact_index]
             key=contact.edges[key&1].next
             if .Visited in contact.flags {continue}
-            contact.flags+={.Visited}
             contact_update(w,contact_index)
             if .Stopped in contact.flags {contact_stopped(w,contact)}
-            if .Disjoint in contact.flags {continue}
+            if .Disjoint in contact.flags {
+                contact_destroy(w,contact_index,false)
+                continue
+            }
+            contact.flags+={.Visited}
             st.active[kept]=contact_index
             kept+=1
         }

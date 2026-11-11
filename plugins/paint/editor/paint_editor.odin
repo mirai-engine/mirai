@@ -13,6 +13,7 @@ import "mirai:platform"
 import paint "plugins:paint/runtime"
 import "mirai:std/base"
 import mm "mirai:std/math"
+import "mirai:editor/kit"
 import "mirai:ui"
 
 // The paint tool of the paint plugin: a brush that paints the colors of the
@@ -100,7 +101,7 @@ paint_pointer :: proc(s:^editor.Session,tool:^Paint_Tool,input:core.Input) {
 
 @(step="frame")
 paint_brush :: proc(
-    s:^editor.Session,tool:^Paint_Tool,world:core.World_Ref,meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),
+    s:^editor.Session,tool:^Paint_Tool,world:core.World_Ref,meshes:^core.Table(erender.Mesh_Renderer,.Read),worlds:^core.Table(core.World_Transform,.Read),
     assets:^host.Assets,extras:^host.Frame_Extras,allocator:runtime.Allocator,input:core.Input,frame:core.Frame_Time,
 ) {
     erender.debug_lines_clear(&tool.lines)
@@ -154,8 +155,8 @@ ring :: proc(tool:^Paint_Tool,position,normal:[3]f32) {
 // first stamp. Nothing is held when the entity has no mesh that can be painted.
 @(private)
 stroke_begin :: proc(
-    s:^editor.Session,tool:^Paint_Tool,world:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator,meshes:core.Read(erender.Mesh_Renderer),
-    worlds:core.Read(core.World_Transform),hit:editor.Pick,
+    s:^editor.Session,tool:^Paint_Tool,world:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator,meshes:^core.Table(erender.Mesh_Renderer,$A),
+    worlds:^core.Table(core.World_Transform,$B),hit:editor.Pick,
 ) {
     a:=assets
     source,has_mesh:=core.get(meshes,hit.entity)
@@ -288,9 +289,9 @@ paint_restore :: proc(world:core.World_Ref,entities:[]core.Entity) -> (restored:
     meshes:=core.world_table_of(world,erender.Mesh_Renderer)
     if painted==nil || meshes==nil {return}
     for e in entities {
-        record:=core.edit(painted,e)
-        row:=core.edit(meshes,e)
-        if record==nil || row==nil {continue}
+        record,found:=core.get(painted,e)
+        row:=core.edit(meshes,e) if found else nil
+        if row==nil {continue}
         row.mesh,row.shape=record.source,record.shape
         core.remove(painted,e)
         restored+=1
@@ -321,15 +322,15 @@ paint_panel :: proc(s:^editor.Session,tool:^Paint_Tool,world:core.World_Ref,inpu
     if ui.panel(ctx,id,editor.tool_panel(g,id)) {
         ui.id_push(ctx,id)
         defer ui.id_pop(ctx)
-        ui.section(ctx,"Paint")
+        kit.section(ctx,"Paint")
         radius,strength:=f64(tool.radius),f64(tool.strength)
-        if ui.property(ctx,"Radius") {
+        if kit.property(ctx,"Radius") {
             if ui.number_field(ctx,ui.id(ctx,"radius"),&radius,{min=f64(RADIUS_MIN),max=f64(RADIUS_MAX),has_min=true,has_max=true,speed=0.01}).changed {tool.radius=f32(radius)}
         }
-        if ui.property(ctx,"Strength") {
+        if kit.property(ctx,"Strength") {
             if ui.number_field(ctx,ui.id(ctx,"strength"),&strength,{min=0,max=1,has_min=true,has_max=true,speed=0.005}).changed {tool.strength=f32(strength)}
         }
-        if ui.property(ctx,"Color") {ui.color_field(ctx,ui.id(ctx,"color"),&tool.color)}
-        if ui.button(ctx,ui.id(ctx,"clear"),{label="Clear paint",style=.Field,width=-1,center=true,disabled=!clear_enabled(s,world)}).clicked {paint_clear(s,world)}
+        if kit.property(ctx,"Color") {kit.color_field(ctx,ui.id(ctx,"color"),&tool.color)}
+        if ui.button(ctx,ui.id(ctx,"clear"),{label="Clear paint",variant="field",width=-1,center=true,disabled=!clear_enabled(s,world)}).clicked {paint_clear(s,world)}
     }
 }

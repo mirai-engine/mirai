@@ -37,7 +37,7 @@ a_jump_carries_where_an_entity_and_what_hangs_from_it_were :: proc(t:^testing.T)
     table_settle(&parents,&es)
     tick:=Frame_Time{phase=.Fixed}
     propagate :: proc(locals:^Table(Transform),parents:^Table(Parent),worlds:^Table(World_Transform),hierarchy:^Hierarchy,propagation:^Propagation,jumps:^Jumps,es:^Entities,tick:Frame_Time) {
-        hierarchy_settle(hierarchy,read(parents),es)
+        hierarchy_settle(hierarchy,parents,es)
         transforms_propagate(read(locals),ref(hierarchy),worlds,propagation,jumps,tick)
         table_settle(worlds,es)
     }
@@ -138,11 +138,11 @@ a_chain_of_parents_that_goes_round_ends_and_a_deep_one_composes_whole :: proc(t:
     edit(&f.locals,a).position={2,0,0}
     fixture_propagate(&f,.Late)
 
-    world,placed:=world_of(read(&f.locals),read(&f.parents),deepest)
+    world,placed:=world_of(&f.locals,&f.parents,deepest)
     testing.expect(t,placed && abs(world.position.x-201)<1e-3,"world_of composes every parent of a chain within HIERARCHY_DEPTH")
     propagated,_:=get(&f.worlds,deepest)
     testing.expect(t,abs(propagated.position.x-201)<1e-3)
-    _,placed=world_of(read(&f.locals),read(&f.parents),c)
+    _,placed=world_of(&f.locals,&f.parents,c)
     testing.expect(t,placed)
 
     // The Parent of b closed the cycle, so b is the root of the tree above a.
@@ -172,7 +172,7 @@ propagating_what_changed_equals_propagating_all_on_random_hierarchies :: proc(t:
     }
     pass :: proc(w:^World,tick:bool,whole:bool) {
         table_settle(&w.parents,&w.es)
-        hierarchy_settle(&w.hierarchy,read(&w.parents),&w.es)
+        hierarchy_settle(&w.hierarchy,&w.parents,&w.es)
         table_settle(&w.locals,&w.es);table_settle(&w.worlds,&w.es)
         entities_settle(&w.es)
         // The pass of the other World has seen nothing: it computes every row.
@@ -230,18 +230,18 @@ propagating_what_changed_equals_propagating_all_on_random_hierarchies :: proc(t:
         // A reader that reads after every settle is told each link, however many moved before;
         // one that read none of more than the log holds is told to read the tree whole.
         seen,behind:u64
-        _,_=hierarchy_moved(ref(&a.hierarchy),&seen)
-        _,_=hierarchy_moved(ref(&a.hierarchy),&behind)
+        _,_=log_since(a.hierarchy.moved,&seen)
+        _,_=log_since(a.hierarchy.moved,&behind)
         homes:=[2]Entity{create(&a.es),create(&a.es)}
         child:=create(&a.es)
         for k in 0..<3*HIERARCHY_MOVED {
             add(&a.parents,child,Parent{homes[k%2],0})
             table_settle(&a.parents,&a.es)
-            hierarchy_settle(&a.hierarchy,read(&a.parents),&a.es)
-            moved,whole:=hierarchy_moved(ref(&a.hierarchy),&seen)
+            hierarchy_settle(&a.hierarchy,&a.parents,&a.es)
+            moved,whole:=log_since(a.hierarchy.moved,&seen)
             if !testing.expect(t,!whole && len(moved)==1 && moved[0]==child) {break}
         }
-        _,whole:=hierarchy_moved(ref(&a.hierarchy),&behind)
+        _,whole:=log_since(a.hierarchy.moved,&behind)
         testing.expect(t,whole)
     }
 }

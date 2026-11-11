@@ -45,23 +45,18 @@ gallery_manual :: proc(manual:bool,entity:core.Entity,commands:[]Gallery_Command
     return result
 }
 
-gallery_playback_commands :: proc(commands:[]Gallery_Command,animations:^core.Table(anim.Animation),requests:^anim.Animation_Requests,modifiers:^anim.Modifier_Requests) {
+gallery_playback_commands :: proc(commands:[]Gallery_Command,animations:^core.Table(anim.Animation),requests:^anim.Animation_Requests,playback:^anim.Playback) {
     for &command in commands {
+        e:=command.entity
         #partial switch command.kind {
-        case .Modifier:
-            anim.modifier_control(modifiers,{rig=command.entity,kind=command.modifier,slot=command.slot,weight=command.value,enabled=command.enabled,fade=.2})
-            continue
-        case .Action: anim.play(requests,command.entity,base.text_get(command.name[:]));continue
-        case .Speed,.Value,.Warp: continue
-        }
-        animation:=core.edit(animations,command.entity);if animation==nil {continue}
-        #partial switch command.kind {
-        case .Automatic: if command.enabled {animation.playing=true}
-        case .Playing: animation.playing=command.enabled
-        case .Restart: animation.playing=true;anim.animation_seek(requests,command.entity,0)
-        case .Seek: anim.animation_seek(requests,command.entity,command.value)
-        case .Rate: animation.speed=command.value
-        case .Clip: anim.animation_clip(animation,base.text_get(command.name[:]),speed=animation.speed)
+        case .Modifier: anim.modifier_control(requests,{rig=e,kind=command.modifier,slot=command.slot,weight=command.value,enabled=command.enabled,fade=.2})
+        case .Action: anim.play(requests,e,base.text_get(command.name[:]))
+        case .Automatic: if command.enabled {anim.animation_command(requests,e,.Resume)}
+        case .Playing: anim.animation_command(requests,e,.Resume if command.enabled else .Pause)
+        case .Restart: anim.animation_command(requests,e,.Play)
+        case .Seek: anim.animation_seek(requests,e,command.value)
+        case .Rate: if anim.animation_playing(playback,e) {anim.animation_command(requests,e,.Resume,speed=command.value)}
+        case .Clip: anim.animation_clip(core.edit(animations,e),base.text_get(command.name[:]))
         }
     }
 }
@@ -128,7 +123,7 @@ gallery_controls :: proc(kind:Gallery_Kind) -> (rows:[GALLERY_PANEL_ROWS]Gallery
 // What a slider or a button of a panel asked becomes a command of its station; Play / pause asks
 // for the other of what its clip does.
 @(step="fixed")
-gallery_panel_input :: proc(panels:core.Read(Gallery_Panel),gallery:core.Read(Animation_Gallery),ui_events:core.Ref(gui.UI_Events),playback:core.Ref(anim.Playback),panel:^Gallery_UI) {
+gallery_panel_input :: proc(panels:^core.Table(Gallery_Panel,.Read),gallery:^core.Table(Animation_Gallery,.Read),ui_events:core.Ref(gui.UI_Events),playback:core.Ref(anim.Playback),panel:^Gallery_UI) {
     for event in ui_events.items {
         value,found:=core.get(panels,event.entity)
         if !found || event.item<0 {continue}
@@ -150,19 +145,19 @@ gallery_panel_input :: proc(panels:core.Read(Gallery_Panel),gallery:core.Read(An
 
 // Fills each panel with the rows and buttons of its station and what the station does now.
 @(step="fixed",stage="react")
-gallery_panels :: proc(panels:^core.Table(Gallery_Panel),gallery:core.Read(Animation_Gallery),animations:core.Read(anim.Animation),playback:core.Ref(anim.Playback),modifiers:core.Ref(anim.Modifier_Runtime)) {
+gallery_panels :: proc(panels:^core.Table(Gallery_Panel),gallery:^core.Table(Animation_Gallery,.Read),progresses:^core.Table(anim.Animation_Progress,.Read),playback:core.Ref(anim.Playback),modifiers:core.Ref(anim.Modifier_Runtime)) {
     for row in 0..<core.count(panels) {
         current:=core.at(panels,row)
         item,exists:=core.get(gallery,current.station)
         if !exists {continue}
-        animation,_:=core.get(animations,current.station)
+        progress,_:=core.get(progresses,current.station)
         rows,row_count,buttons,button_count:=gallery_controls(item.kind)
         next:=current
         next.row_count,next.button_count=i32(row_count),i32(button_count)
         for control,i in rows[:row_count] {
             value,high:f32=0,control.max
             #partial switch control.command {
-            case .Rate: value=animation.speed
+            case .Rate: value=progress.speed
             case .Seek: clock,duration,_,valid:=anim.animation_progress(playback.ptr,current.station);if valid {value,high=clock,duration}
             case .Speed: value=item.speed
             case .Value: value=item.values[control.slot]
@@ -177,7 +172,7 @@ gallery_panels :: proc(panels:^core.Table(Gallery_Panel),gallery:core.Read(Anima
         }
         for button,i in buttons[:button_count] {base.text_set(next.buttons[i].label[:],button.label)}
         hint:="manual    E: back" if item.manual else "automatic    E: back"
-        if item.kind==.Sequence {hint="playing    E: back" if animation.playing else "paused    E: back"}
+        if item.kind==.Sequence {hint="playing    E: back" if progress.playing else "paused    E: back"}
         base.text_set(next.hint[:],hint)
         if next!=current {core.edit_at(panels,row)^=next}
     }

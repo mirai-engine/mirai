@@ -14,7 +14,7 @@ bench_modifier_controls_idle_and_sparse_fades :: proc(t:^testing.T) {
         for active in ([?]int{0,4}) {
             modifiers:Modifier_Runtime;defer modifier_runtime_free(&modifiers)
             previous:Modifier_Runtime
-            requests:Modifier_Requests;defer delete(requests.controls.items)
+            requests:Animation_Requests;defer delete(requests.controls.items)
             for i in 0..<count {
                 entity:=core.entity_make(i+1,1)
                 if !testing.expect(t,modifier_append(&modifiers.ik,entity,IK_Constraint{rig=entity,weight=1,enabled=true})) {return}

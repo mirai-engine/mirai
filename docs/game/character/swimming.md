@@ -23,10 +23,11 @@ Add `Swim` to the character prefab beside `Walk`; it starts from `phys.SWIM_DEFA
 
 ## What it is in now
 
-`core.Read(phys.Character_State)` of the character: `submersion` (0 to 1 of the body under the
-surface), `head_depth` (m of the top of the head under the surface, negative above it), `depth`
-(m of fluid over the feet), `fluid` (flags `In_Fluid`, `Underwater`) and `fluid_velocity`. Ending a
-run when it falls in: [the rules of a game](../third-person/rules-test.md#the-rules).
+`^core.Table(phys.Character_State,.Read)` of the character: `submersion` (0 to 1 of the body
+under the surface), `head_depth` (m of the top of the head under the surface, negative above it),
+`depth` (m of fluid over the feet), `fluid` (flags `In_Fluid`, `Underwater`) and
+`fluid_velocity`. Ending a run when it falls in:
+[the rules of a game](../third-person/rules-test.md#the-rules).
 
 ## The surface at a point
 

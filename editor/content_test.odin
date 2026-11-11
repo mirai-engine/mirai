@@ -5,6 +5,7 @@ import "core:os"
 import "core:slice"
 import "core:testing"
 import "mirai:asset"
+import "mirai:cook/author"
 import "mirai:core"
 import "mirai:editor/history"
 import "mirai:host"
@@ -25,7 +26,7 @@ content_test_registry :: proc() -> asset.Registry {
         asset.Registry_File{path="Materials/red.mat",state=.Asset,kind=asset.KIND_MATERIAL,id={1,2}},
         asset.Registry_File{path="Meshes/box.mesh",state=.Asset,kind=asset.KIND_MESH,id={1,3}},
         asset.Registry_File{path="Meshes/nested/sphere.mesh",state=.Asset,kind=asset.KIND_MESH,id={1,4}},
-        asset.Registry_File{path="Prefabs/robot.scene",state=.Asset,kind=asset.KIND_SCENE,flags={.One_Root},id={1,5}},
+        asset.Registry_File{path="Prefabs/robot.scene",state=.Asset,kind=asset.KIND_SCENE,flags={.Prefab},id={1,5}},
         asset.Registry_File{path="Sounds/hit.sound",state=.Asset,kind=asset.KIND_SOUND,id={1,6}},
         asset.Registry_File{path="Textures/color.tex",state=.Asset,kind=asset.KIND_TEXTURE,id={1,7}},
         asset.Registry_File{path="UI/hud.ui",state=.Asset,kind=asset.KIND_UI,id={1,8}},
@@ -492,7 +493,7 @@ content_test_still :: proc(s:^Session,content_view:bool=true) {_=content_test_fr
 @(test)
 content_browser_enters_folders_selects_drags_stars_filters_and_searches_from_the_keyboard :: proc(t:^testing.T) {
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{}))
+    testing.expect(t,test_ui_init(&ctx,{}))
     defer ui.context_destroy(&ctx)
     assets:=host.Assets{registry=content_test_registry(),indexed=true}
     defer content_test_registry_free(&assets.registry)
@@ -629,7 +630,7 @@ content_browser_enters_folders_selects_drags_stars_filters_and_searches_from_the
 @(test)
 content_navigation_gestures_of_the_browser :: proc(t:^testing.T) {
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{}))
+    testing.expect(t,test_ui_init(&ctx,{}))
     defer ui.context_destroy(&ctx)
     assets:=host.Assets{registry=content_test_wall_registry(),indexed=true}
     defer content_test_registry_free(&assets.registry)
@@ -740,7 +741,7 @@ the_zoom_of_the_browser_walks_columns_and_names_follow_it :: proc(t:^testing.T) 
 
     // In the browser Ctrl+wheel zooms and the slider walks every step.
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{}))
+    testing.expect(t,test_ui_init(&ctx,{}))
     defer ui.context_destroy(&ctx)
     assets:=host.Assets{registry=content_test_registry(),indexed=true}
     defer content_test_registry_free(&assets.registry)
@@ -796,21 +797,23 @@ ctrl_and_the_wheel_over_create_resize_its_cards_with_those_of_the_browser :: pro
     testing.expect(t,view.mode==.Grid && content_level(view)==1,"Up from the list Create and the browser are the grid of the most columns")
 
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{}))
+    testing.expect(t,test_ui_init(&ctx,{}))
     defer ui.context_destroy(&ctx)
     app:host.App
     g:=Editor_Ui{ctx=&ctx}
     c:=CONTENT_DEFAULT
     defer core.value_free(&c,type_info_of(Content))
     selection:history.Selection
-    session:=Session{app=&app,gui=&g,content=&c,selection=&selection,headless=true}
+    engine,_:=os.lookup_env("MIRAI_ROOT",context.temp_allocator)
+    session:=Session{app=&app,gui=&g,content=&c,selection=&selection,headless=true,engine_root=engine}
+    defer author.recipes_free(session.recipes)
     frame :: proc(s:^Session,input:ui.Input) {
         ui.frame_begin(s.gui.ctx,input)
         if ui.box(s.gui.ctx,{width=ui.fixed(284),height=ui.fixed(440),direction=.Column}) {create_build(s,core.World_Ref{},440,284)}
         _=ui.frame_end(s.gui.ctx)
     }
     for _ in 0..<2 {frame(&session,{size={800,600},pointer_absent=true})}
-    card,found:=ui.widget_rect(&ctx,ui.id(&ctx,"card",int(Preset.Cube)+1))
+    card,found:=ui.widget_rect(&ctx,ui.id(&ctx,"card",CONTENT_TEST_CUBE+1))
     testing.expect(t,found && abs(card.w-cell)<0.01,"A card of Create is a cell of the browser at its width")
     over:=ui.Input{size={800,600},pointer=ui.rect_center(card)}
     frame(&session,over)
@@ -819,10 +822,14 @@ ctrl_and_the_wheel_over_create_resize_its_cards_with_those_of_the_browser :: pro
     frame(&session,zoom)
     testing.expect(t,c.view.mode==.Grid && c.view.columns==3 && g.create_scroll==0,"The cells of the browser go a step and Create does not scroll")
     frame(&session,over)
-    card,_=ui.widget_rect(&ctx,ui.id(&ctx,"card",int(Preset.Cube)+1))
+    card,_=ui.widget_rect(&ctx,ui.id(&ctx,"card",CONTENT_TEST_CUBE+1))
     testing.expect(t,card.w>cell)
     testing.expect_value(t,ctx.stats.layout_errors,u32(0))
 }
+
+// The place of the cube among the cards of the editor.
+@(private)
+CONTENT_TEST_CUBE :: 7
 
 @(private)
 CONTENT_TEST_ROBOT :: base.Asset_Id{2,1}
@@ -839,8 +846,8 @@ content_test_parts_registry :: proc() -> asset.Registry {
         asset.Registry_File{path="Robot/SKM_Robot.mesh",state=.Asset,kind=asset.KIND_MESH,id={2,4},owner=CONTENT_TEST_ROBOT},
         asset.Registry_File{path="Robot/SK_Robot.skeleton",state=.Asset,kind=asset.KIND_SKELETON,id={2,5},owner=CONTENT_TEST_ROBOT},
         asset.Registry_File{path="Robot/T_Robot_01_D.tex",state=.Asset,kind=asset.KIND_TEXTURE,id={2,6},owner=CONTENT_TEST_ROBOT},
-        asset.Registry_File{path="Robot/robot.scene",state=.Asset,kind=asset.KIND_SCENE,flags={.One_Root},id=CONTENT_TEST_ROBOT},
-        asset.Registry_File{path="Spider/spider.scene",state=.Asset,kind=asset.KIND_SCENE,flags={.One_Root},id={3,1}},
+        asset.Registry_File{path="Robot/robot.scene",state=.Asset,kind=asset.KIND_SCENE,flags={.Prefab},id=CONTENT_TEST_ROBOT},
+        asset.Registry_File{path="Spider/spider.scene",state=.Asset,kind=asset.KIND_SCENE,flags={.Prefab},id={3,1}},
         asset.Registry_File{path="Stray/orphan.mesh",state=.Asset,kind=asset.KIND_MESH,id={4,1},owner={9,9}},
     )
     registry:=asset.Registry{files=files,allocator=context.allocator}
@@ -904,7 +911,7 @@ content_gear_shows_the_parts_and_details_lists_them_after_the_rest :: proc(t:^te
     f:=new(struct{ctx:ui.Context,assets:host.Assets,app:host.App,g:Editor_Ui,ins:Inspector,selection:history.Selection,info:core.World_Info,session:Session})
     defer free(f)
     ctx,assets,g,session:=&f.ctx,&f.assets,&f.g,&f.session
-    testing.expect(t,ui.context_init(ctx,{}))
+    testing.expect(t,test_ui_init(ctx,{}))
     defer ui.context_destroy(ctx)
     assets.registry,assets.indexed=content_test_parts_registry(),true
     defer content_test_registry_free(&assets.registry)
@@ -1014,7 +1021,7 @@ a_right_click_on_a_folder_creates_an_asset_named_in_place :: proc(t:^testing.T) 
     if root=="" {return}
     if !testing.expect_value(t,os.make_directory_all(fmt.tprintf("%s/Materials",root)),os.Error(nil)) {return}
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{}))
+    testing.expect(t,test_ui_init(&ctx,{}))
     defer ui.context_destroy(&ctx)
     assets:host.Assets
     if !testing.expect(t,host.assets_init(&assets,{root=root,capacity=8})) {return}
@@ -1035,7 +1042,7 @@ a_right_click_on_a_folder_creates_an_asset_named_in_place :: proc(t:^testing.T) 
     popup:=content_create_id(&g)
     testing.expect(t,ui.popup_is_open(&ctx,popup) && string(c.create_into[:c.create_into_length])=="Materials")
     content_test_still(&session)
-    content_test_click(t,&session,ui.id_derive(&ctx,popup,"create",3))
+    content_test_click(t,&session,ui.id_derive(&ctx,popup,"create",4))
     testing.expect(t,c.creating && c.create_kind==asset.KIND_MATERIAL && string(c.create_name[:c.create_name_length])=="New Material")
     content_test_still(&session)
     testing.expect_value(t,ctx.edit.id,ui.id_derive(&ctx,100,"content_create_name"))
@@ -1051,17 +1058,16 @@ a_right_click_on_a_folder_creates_an_asset_named_in_place :: proc(t:^testing.T) 
 @(test)
 a_selection_fills_its_row_or_cell_and_the_keyboard_has_a_ring_of_its_own :: proc(t:^testing.T) {
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{}))
+    testing.expect(t,test_ui_init(&ctx,{}))
     defer ui.context_destroy(&ctx)
-    th:=&ctx.theme
     row:=asset_row_box(&ctx,1,4,true,false,false)
-    testing.expect(t,row.fill==th.accent_soft && row.stroke=={},"A selected row fills, as the rows of the outliner")
+    testing.expect(t,row.fill==ui.tone(&ctx,"accent_soft") && row.stroke=={},"A selected row fills, as the rows of the outliner")
     row=asset_row_box(&ctx,1,4,false,false,true)
-    testing.expect(t,row.fill=={} && row.stroke==th.text,"Only the keyboard has the light ring")
+    testing.expect(t,row.fill=={} && row.stroke==ui.tone(&ctx,"text"),"Only the keyboard has the light ring")
     card:=asset_card_box(&ctx,1,CONTENT_VIEW_DEFAULT,60,true,false)
-    testing.expect(t,card.fill==th.accent_soft && card.stroke=={} && card.padding=={},"A cell has no padding")
-    edge,width:=asset_frame_edge(th,false,true)
-    testing.expect(t,edge==th.toggle_on_stroke && width==1,"Its thumbnail has a violet border, no light ring")
+    testing.expect(t,card.fill==ui.tone(&ctx,"accent_soft") && card.stroke=={} && card.padding=={},"A cell has no padding")
+    edge,width:=asset_frame_edge(&ctx,false,true)
+    testing.expect(t,edge==ui.tone(&ctx,"toggle_on_stroke") && width==1,"Its thumbnail has a violet border, no light ring")
     columns,_:=content_cells(CONTENT_VIEW_DEFAULT,CONTENT_TEST_WIDTH)
     testing.expect_value(t,columns,4)
 }
@@ -1071,7 +1077,7 @@ a_selection_fills_its_row_or_cell_and_the_keyboard_has_a_ring_of_its_own :: proc
 @(test)
 a_click_on_the_background_of_the_browser_clears_its_selection :: proc(t:^testing.T) {
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{}))
+    testing.expect(t,test_ui_init(&ctx,{}))
     defer ui.context_destroy(&ctx)
     assets:=host.Assets{registry=content_test_wall_registry(),indexed=true}
     defer content_test_registry_free(&assets.registry)

@@ -71,7 +71,7 @@ import "mirai:core"
 @(step="fixed",stage="react",before="core_react") game_react :: proc(clock:core.Ref(core.Clock)) {}
 @(step="fixed",stage="react") game_late :: proc(clock:core.Ref(core.Clock)) {}
 @(step="fixed",stage="apply") game_apply :: proc(clock:core.Ref(core.Clock)) {}
-@(step="fixed",stage="apply") game_count :: proc(things:core.Read(core.Thing)) {}
+@(step="fixed",stage="apply") game_count :: proc(things:^core.Table(core.Thing,.Read)) {}
 @(step="fixed",stage="apply",before="game_count") game_spawn :: proc(commands:core.Commands) {}
 `
     p,ok:=stages_project(t,folder,core_source,game_source)
@@ -165,13 +165,13 @@ the_data_of_a_stage_orders_its_steps :: proc(t:^testing.T) {
     game_source:=`package game
 import "mirai:core"
 @(component) Mark :: struct {{value:f32}}
-@(step="fixed"%s) game_show :: proc(scores:core.Read(core.Score),news:core.Ref(core.News),board:core.Ref(core.Board)) {{}}
-@(step="fixed") game_count :: proc(scores:^core.Table(core.Score),marks:core.Read(Mark)) {{}}
+@(step="fixed"%s) game_show :: proc(scores:^core.Table(core.Score,.Read),news:core.Ref(core.News),board:core.Ref(core.Board)) {{}}
+@(step="fixed") game_count :: proc(scores:^core.Table(core.Score),marks:^core.Table(Mark,.Read)) {{}}
 @(step="fixed") game_mark :: proc(marks:^core.Table(Mark),orders:^core.Orders) {{}}
-@(step="fixed") game_look :: proc(places:core.Read(core.Place)) {{}}
+@(step="fixed") game_look :: proc(places:^core.Table(core.Place,.Read)) {{}}
 @(step="fixed") game_move :: proc(places:^core.Table(core.Place)) {{}}
 @(step="fixed") game_ask :: proc(board:core.Ref(core.Board),orders:^core.Orders) {{}}
-@(step="fixed",before="game_count") game_peek :: proc(scores:core.Read(core.Score)) {{}}
+@(step="fixed",before="game_count") game_peek :: proc(scores:^core.Table(core.Score,.Read)) {{}}
 `
     want:=[]string{"game_mark","game_ask","core_serve","game_peek","game_count","game_show","game_look","game_move"}
     worlds:[2]string
@@ -205,10 +205,10 @@ a_cycle_of_the_data_is_an_error_one_name_settles :: proc(t:^testing.T) {
 `
     game_source:=`package game
 import "mirai:core"
-@(step="fixed"%s) game_stock :: proc(stock:^core.Table(core.Stock),prices:core.Read(core.Price)) {{}}
-@(step="fixed") game_price :: proc(prices:^core.Table(core.Price),stock:core.Read(core.Stock)) {{}}
-@(step="late"%s) game_buy :: proc(orders:^core.Orders,shelf:core.Read(Shelf)) {{}}
-@(step="late") game_sold :: proc(shelf:^core.Table(Shelf),sales:core.Read(core.Sale)) {{}}
+@(step="fixed"%s) game_stock :: proc(stock:^core.Table(core.Stock),prices:^core.Table(core.Price,.Read)) {{}}
+@(step="fixed") game_price :: proc(prices:^core.Table(core.Price),stock:^core.Table(core.Stock,.Read)) {{}}
+@(step="late"%s) game_buy :: proc(orders:^core.Orders,shelf:^core.Table(Shelf,.Read)) {{}}
+@(step="late") game_sold :: proc(shelf:^core.Table(Shelf),sales:^core.Table(core.Sale,.Read)) {{}}
 @(component) Shelf :: struct {{value:f32}}
 `
     cases:=[]struct{stock,buy:string,errors:[]string,fixed,late:[]string}{
@@ -250,7 +250,7 @@ a_seat_camera_is_settled_with_its_driving_before_its_move :: proc(t:^testing.T) 
     output:=world_generate(&p)
     if !testing.expectf(t,len(output.errors)==0,"%v",output.errors) {return}
     calls:=calls_of(output.game_world,"game_fixed")
-    order:=[]string{"input_drive","camera_select","locomotion_seat"}
+    order:=[]string{"input_drive","camera_select","camera_drive"}
     at:=make([]int,len(order))
     for name,i in order {
         at[i]=-1

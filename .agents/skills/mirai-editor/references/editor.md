@@ -136,10 +136,10 @@ Agent runs:
 History and recording:
 
 - Each run without network keeps its past (`Run_History`, `editor/play_history.odin`): for each
-  frame, what it gave the world (`host.Frame_Record`: its dt, the clock accumulator, the input and
-  the content it found loaded) and a hash of the `Transform`s it left; and every so often a copy of
-  the world, a keyframe, made with `copy_changed` (storages with `copy_kept`, like physics, keep
-  only what they use). The
+  frame, what it gave the world (`host.Frame_Record`: its dt, the clock accumulator, the ticks it
+  ran, the input and the content it found loaded) and a hash of the `Transform`s it left; and
+  every so often a copy of the world, a keyframe, made with `copy_changed` (storages with
+  `copy_kept`, like physics, keep only what they use). The
   frames cover `Play_History.seconds`; the keyframes fit in `megabytes`, counting what their copies
   occupy, spaced to cover those seconds.
 - Going to a tick (`play.seek`, or the strip of the past under the scene while the user's Play is
@@ -297,6 +297,14 @@ physics; `physics` adds dragging bodies with the gizmo through its `Simulation_P
   distinct ids and finite poses and computes local transforms under the original hierarchy.
   Without changes it adds no undo; it does not keep entities created at run time, components,
   velocities or other state.
+- **Limited to some entities**: from Edit, a copy of the document advances only its simulation,
+  at the project's tick rate, with those entities moving and every other body still, until they
+  rest or the ticks run out; their poses are applied as Apply transforms does, and nothing else of
+  the copy is kept. It is how objects are dropped onto the scene and onto each other: inside one
+  call with `simulate_until_rest` (`physics.settle` and its **Drop to rest** entry on the
+  selection), or a few ticks a frame with `settle_begin`, `settle_add`, `settle_tick` and
+  `settle_write`, which show the poses inside a gesture's
+  [cancelable preview](extensions.md#cancelable-previews) (the Drop tool of `physics`).
 
 Public API for tools in [extensions](extensions.md#simulation-and-pose-confirmation); methods in
 [API](../../mirai-agent-api/references/methods.md#simulation).
@@ -307,9 +315,9 @@ Public API for tools in [extensions](extensions.md#simulation-and-pose-confirmat
 action on the selection, run the scene like Simulate, without the players' input, with the view
 from that camera (one that follows, one that brings an action or one of a cinematic).
 
-- The focused view comes from `ecamera.Camera_Preview`, which the editor writes in the copy,
-  whichever camera its seat has. The viewport draws no grid, disks, gizmo or outlines and receives
-  no gestures.
+- The focused seat of the copy sees through that camera by a camera override whose owner is the
+  seat (`camera_preview_frame`), whichever camera its body has. The viewport draws no grid,
+  disks, gizmo or outlines and receives no gestures.
 - A bar at the bottom offers the document's cameras; choosing one shows it with the transition of
   its activation, or that of the one it leaves, and selects it.
 - Details edits the shown camera on the copy: it is seen immediately and is not an undo step. Keep

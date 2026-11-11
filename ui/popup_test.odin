@@ -13,8 +13,6 @@ Test_Menus :: struct {
     modal:bool,
     modal_choice:int,
     escaped:int,
-    picker:Color_Picker,
-    picker_result:Color_Picker_Result,
 }
 test_menus_build :: proc(ctx:^Context,user:rawptr) {
     s:=cast(^Test_Menus)user
@@ -30,18 +28,18 @@ test_menus_build :: proc(ctx:^Context,user:rawptr) {
         }
     }
     if panel(ctx,id(ctx,"panel"),{width=fixed(300),height=FIT,padding=padding_all(10),gap=10,offset={0,38}}) {
-        if button(ctx,id(ctx,"under"),{label="Under",style=.Field,width=-1}).clicked {s.under+=1}
+        if button(ctx,id(ctx,"under"),{label="Under",variant="field",width=-1}).clicked {s.under+=1}
         if dropdown(ctx,id(ctx,"kind"),{list={"Point","Spot","Sun"}},&s.selected,{width=96}) {s.changed+=1}
         spacer(ctx,-1,200)
-        if button(ctx,id(ctx,"below"),{label="Below",style=.Field,width=-1}).clicked {s.under+=1}
+        if button(ctx,id(ctx,"below"),{label="Below",variant="field",width=-1}).clicked {s.under+=1}
     }
     if s.modal {
         if modal(ctx,id(ctx,"modal"),{width=400}) {
             label(ctx,"Save changes?",16)
             if box(ctx,{width=GROW,height=fixed(30),gap=8,align_y=.Center}) {
                 spacer(ctx)
-                if button(ctx,id(ctx,"cancel"),{label="Cancel",style=.Field,height=30}).clicked {s.modal_choice=2;s.modal=false}
-                if button(ctx,id(ctx,"save"),{label="Save",style=.Accent,height=30}).clicked {s.modal_choice=1;s.modal=false}
+                if button(ctx,id(ctx,"cancel"),{label="Cancel",variant="field",height=30}).clicked {s.modal_choice=2;s.modal=false}
+                if button(ctx,id(ctx,"save"),{label="Save",variant="accent",height=30}).clicked {s.modal_choice=1;s.modal=false}
             }
         }
     }
@@ -50,7 +48,7 @@ test_menus_build :: proc(ctx:^Context,user:rawptr) {
 test_menus_frame :: proc(ctx:^Context,input:^Input,s:^Test_Menus) -> Frame {return test_frame(ctx,input,test_menus_build,s)}
 // The items of a menu with the tint of the pointer.
 test_menu_hovered :: proc(ctx:^Context) -> (count:int) {
-    hover:=color_hover(&ctx.theme)
+    hover:=color_hover(ctx)
     for &p in ctx.paints[:ctx.paint_count] {if p.kind==.Rect && p.fill==hover {count+=1}}
     return
 }
@@ -71,38 +69,37 @@ test_click :: proc(ctx:^Context,input:^Input,build:Test_Build,user:rawptr,target
 @(test)
 a_menu_opens_under_its_title_and_an_item_closes_it :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:Test_Menus
     input:=test_input(800,600)
     test_menus_frame(&ctx,&input,&s)
-    th:=&ctx.theme
     file:=test_rect(t,&ctx,id(&ctx,"file"))
-    testing.expect(t,test_near(file.x,10) && test_near(file.y,(th.bar_height-26)*0.5) && test_near(file.h,26))
+    testing.expect(t,test_near(file.x,10) && test_near(file.y,(metric(&ctx,"bar_height")-26)*0.5) && test_near(file.h,26))
     testing.expect(t,test_paint(&ctx,"New scene")==nil)
     test_click(&ctx,&input,test_menus_build,&s,id(&ctx,"file"))
     testing.expect(t,menu_is_open(&ctx,id(&ctx,"file")))
     item:=test_rect(t,&ctx,id(&ctx,"new"))
     // Two units under the bar and inside the margin of the surface, as wide
-    // as a menu at least, its items th.control tall inside 4 of padding.
-    first:=Rect{th.margin+4,th.bar_height+2+4,MENU_WIDTH-8,th.control}
+    // as a menu at least, its items metric(&ctx,"control") tall inside 4 of padding.
+    first:=Rect{metric(&ctx,"margin")+4,metric(&ctx,"bar_height")+2+4,MENU_WIDTH-8,metric(&ctx,"control")}
     testing.expectf(t,test_rect_near(item,first),"%v",item)
-    testing.expect(t,test_rect_near(test_rect(t,&ctx,id(&ctx,"open")),{first.x,first.y+th.control,first.w,th.control}))
-    testing.expect(t,test_near(test_rect(t,&ctx,id(&ctx,"quit")).y,first.y+2*th.control+9))
+    testing.expect(t,test_rect_near(test_rect(t,&ctx,id(&ctx,"open")),{first.x,first.y+metric(&ctx,"control"),first.w,metric(&ctx,"control")}))
+    testing.expect(t,test_near(test_rect(t,&ctx,id(&ctx,"quit")).y,first.y+2*metric(&ctx,"control")+9))
     title:=test_paint(&ctx,"File")
-    testing.expect_value(t,title.fill,THEME_EDITOR.field_active)
-    testing.expect_value(t,test_paint(&ctx,"New scene").text_color,THEME_EDITOR.text)
+    testing.expect_value(t,title.fill,tone(&ctx,"field_active"))
+    testing.expect_value(t,test_paint(&ctx,"New scene").text_color,tone(&ctx,"text"))
     shortcut:=test_paint(&ctx,"Ctrl+N")
-    testing.expect(t,shortcut!=nil && shortcut.text_color==THEME_EDITOR.text_muted)
+    testing.expect(t,shortcut!=nil && shortcut.text_color==tone(&ctx,"text_muted"))
     testing.expect(t,test_menu_hovered(&ctx)==0,"Nothing is under the pointer")
     // A disabled item is drawn at 40 % of its opacity.
-    testing.expect_value(t,test_paint(&ctx,"Quit").text_color,color_faded(THEME_EDITOR.text))
-    testing.expect_value(t,test_paint(&ctx,"Ctrl+Q").text_color,color_faded(THEME_EDITOR.text_muted))
+    testing.expect_value(t,test_paint(&ctx,"Quit").text_color,color_faded(tone(&ctx,"text")))
+    testing.expect_value(t,test_paint(&ctx,"Ctrl+Q").text_color,color_faded(tone(&ctx,"text_muted")))
     // Under the pointer an item takes the tint of a hovered row.
     test_point(&input,item)
     frame:=test_menus_frame(&ctx,&input,&s)
     testing.expect_value(t,test_menu_hovered(&ctx),1)
-    testing.expect_value(t,test_paint(&ctx,"New scene").text_color,THEME_EDITOR.text)
+    testing.expect_value(t,test_paint(&ctx,"New scene").text_color,tone(&ctx,"text"))
     testing.expect(t,frame.pointer_consumed && frame.keyboard_consumed)
     test_press(&input)
     test_menus_frame(&ctx,&input,&s)
@@ -122,7 +119,7 @@ a_menu_opens_under_its_title_and_an_item_closes_it :: proc(t:^testing.T) {
 @(test)
 pointing_at_another_title_switches_menus_and_a_checked_item_shows_its_check :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:=Test_Menus{snap=true}
     input:=test_input(800,600)
@@ -139,7 +136,7 @@ pointing_at_another_title_switches_menus_and_a_checked_item_shows_its_check :: p
     testing.expect(t,menu_is_open(&ctx,id(&ctx,"edit")) && !menu_is_open(&ctx,id(&ctx,"file")))
     testing.expect(t,test_paint(&ctx,"Snap to grid")!=nil)
     check:=test_icon_paint(&ctx,.Check)
-    testing.expect(t,check!=nil && check.icon_color==THEME_EDITOR.accent_hover && check.icon_size==13,"A checked item ends in its check")
+    testing.expect(t,check!=nil && check.icon_color==tone(&ctx,"accent_hover") && check.icon_size==13,"A checked item ends in its check")
     edit:=test_rect(t,&ctx,id(&ctx,"edit"))
     testing.expect(t,test_near(test_rect(t,&ctx,id(&ctx,"snap")).x,edit.x+4),"The menu hangs under its own title")
     // The title of the open menu closes it.
@@ -153,7 +150,7 @@ pointing_at_another_title_switches_menus_and_a_checked_item_shows_its_check :: p
 @(test)
 a_press_outside_a_popup_closes_it_and_does_nothing_else :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:Test_Menus
     input:=test_input(800,600)
@@ -194,7 +191,7 @@ a_press_outside_a_popup_closes_it_and_does_nothing_else :: proc(t:^testing.T) {
 @(test)
 a_dropdown_lists_its_options_under_its_button :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:=Test_Menus{selected=1}
     input:=test_input(800,600)
@@ -206,10 +203,10 @@ a_dropdown_lists_its_options_under_its_button :: proc(t:^testing.T) {
     testing.expect(t,popup_is_open(&ctx,list))
     popup_rect:=test_rect(t,&ctx,list)
     // 4 under the button, at least 180 wide, three rows and 4 of padding.
-    testing.expectf(t,test_rect_near(popup_rect,{max(button_rect.x,ctx.theme.margin),button_rect.y+button_rect.h+4,180,3*ctx.theme.row+8}),"Popup %v from button %v",popup_rect,button_rect)
+    testing.expectf(t,test_rect_near(popup_rect,{max(button_rect.x,metric(&ctx,"margin")),button_rect.y+button_rect.h+4,180,3*metric(&ctx,"row")+8}),"Popup %v from button %v",popup_rect,button_rect)
     current:^Paint
     for &p in ctx.paints[:ctx.paint_count] {if p.text=="Spot" && p.icon==.Check {current=&p}}
-    testing.expect(t,current!=nil && current.fill==THEME_EDITOR.accent_soft,"The chosen option has the check and the row of the keyboard")
+    testing.expect(t,current!=nil && current.fill==tone(&ctx,"accent_soft"),"The chosen option has the check and the row of the keyboard")
     point:^Paint
     for &p in ctx.paints[:ctx.paint_count] {if p.text=="Point" && p.padding==28 {point=&p}}
     testing.expect(t,point!=nil && point.fill==Color{})
@@ -231,7 +228,7 @@ a_dropdown_lists_its_options_under_its_button :: proc(t:^testing.T) {
     test_menus_frame(&ctx,&input,&s)
     highlighted:^Paint
     for &p in ctx.paints[:ctx.paint_count] {if p.text=="Point" && p.padding==28 {highlighted=&p}}
-    testing.expect(t,highlighted!=nil && highlighted.fill==THEME_EDITOR.accent_soft,"The row under a pointer that moves becomes the row of the keyboard")
+    testing.expect(t,highlighted!=nil && highlighted.fill==tone(&ctx,"accent_soft"),"The row under a pointer that moves becomes the row of the keyboard")
     test_press(&input)
     test_menus_frame(&ctx,&input,&s)
     testing.expect(t,s.selected==0 && s.changed==2 && !popup_is_open(&ctx,list))
@@ -263,9 +260,9 @@ a_dropdown_moves_one_current_row_the_same_with_any_look :: proc(t:^testing.T) {
         desc:=TEST_SMALL
         desc.navigation=true
         desc.allocator=test_counter(&owned,context.allocator)
-        testing.expect(t,context_init(&ctx,desc))
+        testing.expect(t,test_context_init(&ctx,desc))
         defer context_destroy(&ctx)
-        ctx.theme.activate_on_press=false
+        ctx.release_activates=true
         s:=c
         s.selected=20
         input:=test_input()
@@ -331,21 +328,20 @@ a_dropdown_moves_one_current_row_the_same_with_any_look :: proc(t:^testing.T) {
 @(test)
 a_popup_that_does_not_fit_below_opens_above_and_stays_inside :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     input:=test_input(800,600)
-    th:=&ctx.theme
     // A popup of 180 by 86 hung from each anchor: where the layout puts it in the frame that opens it.
     Case :: struct {anchor:Rect,desc:Popup,origin:[2]f32}
     Placed :: struct {using c:Case,open:bool}
     cases:=[]Case{
         {{100,100,96,26},{},{100,130}},
-        {{100,100,96,26},{align_right=true},{th.margin,130}},
+        {{100,100,96,26},{align_right=true},{metric(&ctx,"margin"),130}},
         {{100,540,96,26},{},{100,450}},
-        {{700,100,96,26},{},{800-180-th.margin,130}},
+        {{700,100,96,26},{},{800-180-metric(&ctx,"margin"),130}},
         {{100,300,96,26},{side=.Above},{100,300-86-4}},
         // Nor over the bar of the surface.
-        {{0,0,96,10},{},{th.margin,th.bar_height+2}},
+        {{0,0,96,10},{},{metric(&ctx,"margin"),metric(&ctx,"bar_height")+2}},
         {{100,100,96,26},{within={300,0,200,0}},{300,130}},
     }
     build :: proc(ctx:^Context,user:rawptr) {
@@ -390,7 +386,7 @@ a_popup_that_does_not_fit_below_opens_above_and_stays_inside :: proc(t:^testing.
 @(test)
 a_modal_takes_every_press_and_its_buttons_answer :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:=Test_Menus{modal=true}
     input:=test_input(800,600)
@@ -420,77 +416,6 @@ a_modal_takes_every_press_and_its_buttons_answer :: proc(t:^testing.T) {
     testing.expect_value(t,ctx.stats.layout_errors,u32(0))
 }
 
-@(test)
-the_color_picker_keeps_its_square_its_bar_its_code_and_its_channels_on_one_color :: proc(t:^testing.T) {
-    ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
-    defer context_destroy(&ctx)
-    s:Test_Menus
-    color_picker_set(&s.picker,{1,0,0})
-    build :: proc(ctx:^Context,user:rawptr) {
-        s:=cast(^Test_Menus)user
-        if panel(ctx,id(ctx,"picker"),{width=fixed(236),height=FIT,padding=padding_all(10),gap=8,popup=true}) {
-            s.picker_result=color_picker(ctx,id(ctx,"color"),&s.picker)
-        }
-    }
-    input:=test_input()
-    test_frame(&ctx,&input,build,&s)
-    picker:=id(&ctx,"color")
-    sv:=test_rect(t,&ctx,id_derive(&ctx,picker,"sv"))
-    hue:=test_rect(t,&ctx,id_derive(&ctx,picker,"hue"))
-    testing.expect(t,test_rect_near(sv,{10,10,216,150}) && test_rect_near(hue,{10,168,216,14}))
-    testing.expect(t,test_rect_near(test_rect(t,&ctx,id(&ctx,"picker")),{0,0,236,10+150+8+14+8+ctx.theme.row+8+ctx.theme.row+10}))
-    testing.expect(t,test_paint(&ctx,"#FF0000")!=nil && test_paint(&ctx,"255")!=nil)
-    // Dragging in the square sets saturation and value; the pointer may leave it.
-    input.pointer={sv.x+sv.w*0.5,sv.y+sv.h*0.25}
-    test_frame(&ctx,&input,build,&s)
-    test_press(&input)
-    test_frame(&ctx,&input,build,&s)
-    testing.expect(t,s.picker_result.began && s.picker_result.changed)
-    testing.expect(t,test_near(s.picker.hsv[1],0.5) && test_near(s.picker.hsv[2],0.75))
-    input.pointer={sv.x+sv.w+500,sv.y-100}
-    test_frame(&ctx,&input,build,&s)
-    testing.expect_value(t,s.picker.hsv,[3]f32{0,1,1})
-    test_release(&input)
-    test_frame(&ctx,&input,build,&s)
-    testing.expect(t,s.picker_result.ended)
-    // The bar sets the hue.
-    input.pointer={hue.x+hue.w/3,hue.y+5}
-    test_frame(&ctx,&input,build,&s)
-    test_press(&input);test_release(&input)
-    test_frame(&ctx,&input,build,&s)
-    testing.expect(t,test_near(s.picker.hsv[0],1.0/3,0.001))
-    test_frame(&ctx,&input,build,&s)
-    testing.expect(t,test_paint(&ctx,"#00FF00")!=nil)
-    // Typing a channel keeps the other two.
-    red:=id_derive(&ctx,id_derive(&ctx,picker,"channels"),"axis",1)
-    test_click(&ctx,&input,build,&s,red)
-    testing.expect_value(t,ctx.edit.id,red)
-    test_type(&input,"128")
-    test_frame(&ctx,&input,build,&s)
-    test_key(&input,.Enter)
-    test_frame(&ctx,&input,build,&s)
-    testing.expect_value(t,rgb_color(color_picker_rgb(&s.picker)),Color{128,255,0,255})
-    // The code sets them all; a text that is not a code changes nothing.
-    hex:=id_derive(&ctx,picker,"hex")
-    test_click(&ctx,&input,build,&s,hex)
-    test_type(&input,"#102030")
-    test_frame(&ctx,&input,build,&s)
-    test_key(&input,.Enter)
-    test_frame(&ctx,&input,build,&s)
-    testing.expect_value(t,rgb_color(color_picker_rgb(&s.picker)),Color{16,32,48,255})
-    test_click(&ctx,&input,build,&s,hex)
-    test_type(&input,"#12")
-    test_frame(&ctx,&input,build,&s)
-    test_key(&input,.Enter)
-    test_frame(&ctx,&input,build,&s)
-    testing.expect_value(t,rgb_color(color_picker_rgb(&s.picker)),Color{16,32,48,255})
-    rgb,ok:=hex_color("a0B1c2")
-    testing.expect(t,ok && rgb==[3]u8{0xa0,0xb1,0xc2})
-    _,ok=hex_color("#12345g")
-    testing.expect(t,!ok)
-    testing.expect_value(t,ctx.stats.layout_errors,u32(0))
-}
 
 Test_Submenus :: struct {
     chosen:int,
@@ -499,7 +424,7 @@ Test_Submenus :: struct {
 test_submenus_build :: proc(ctx:^Context,user:rawptr) {
     s:=cast(^Test_Submenus)user
     if box(ctx,{width=fixed(surface_size(ctx).x),height=fixed(40),align_x=.End if s.right else .Start,float={to=.Surface,offset={0,40}}}) {
-        if button(ctx,id(ctx,"open"),{label="Modes",style=.Field,width=120}).clicked {
+        if button(ctx,id(ctx,"open"),{label="Modes",variant="field",width=120}).clicked {
             anchor,_:=widget_rect(ctx,id(ctx,"open"))
             popup_open(ctx,id(ctx,"modes"),anchor)
         }
@@ -524,7 +449,7 @@ test_submenus_build :: proc(ctx:^Context,user:rawptr) {
 @(test)
 a_submenu_that_is_a_choice_is_chosen_by_a_click_and_opened_by_pointing :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:Test_Submenus
     input:=test_input(800,600)
@@ -551,7 +476,7 @@ a_submenu_that_is_a_choice_is_chosen_by_a_click_and_opened_by_pointing :: proc(t
 @(test)
 a_submenu_opens_beside_its_item_and_another_item_closes_it :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:Test_Submenus
     input:=test_input(800,600)
@@ -594,7 +519,7 @@ a_submenu_opens_beside_its_item_and_another_item_closes_it :: proc(t:^testing.T)
 @(test)
 a_submenu_at_the_right_edge_opens_on_the_left_of_its_menu :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:=Test_Submenus{right=true}
     input:=test_input(800,600)
@@ -606,28 +531,28 @@ a_submenu_at_the_right_edge_opens_on_the_left_of_its_menu :: proc(t:^testing.T) 
     test_frame(&ctx,&input,test_submenus_build,&s)
     test_frame(&ctx,&input,test_submenus_build,&s)
     list:=test_rect(t,&ctx,id_derive(&ctx,id(&ctx,"gi"),"submenu"))
-    testing.expectf(t,list.x+list.w<=gi.x && list.x>=ctx.theme.margin,"%v left of %v",list,gi)
+    testing.expectf(t,list.x+list.w<=gi.x && list.x>=metric(&ctx,"margin"),"%v left of %v",list,gi)
 }
 
 @(test)
 headers_title_the_groups_of_a_menu_and_rule_off_all_but_the_first :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:Test_Submenus
     input:=test_input(800,600)
     test_frame(&ctx,&input,test_submenus_build,&s)
     test_click(&ctx,&input,test_submenus_build,&s,id(&ctx,"open"))
     shading,lighting:=test_paint(&ctx,"Shading"),test_paint(&ctx,"Lighting")
-    testing.expect(t,shading!=nil && lighting!=nil && shading.text_color==THEME_EDITOR.text_faint && shading.size==10)
+    testing.expect(t,shading!=nil && lighting!=nil && shading.text_color==tone(&ctx,"text_faint") && shading.size==10)
     rules:=0
-    for &p in ctx.paints[:ctx.paint_count] {if p.kind==.Rect && p.fill==THEME_EDITOR.border {rules+=1}}
+    for &p in ctx.paints[:ctx.paint_count] {if p.kind==.Rect && p.fill==tone(&ctx,"border") {rules+=1}}
     testing.expect_value(t,rules,1)
     modes:=test_rect(t,&ctx,id(&ctx,"modes"))
     lit:=test_rect(t,&ctx,id(&ctx,"lit"))
     gi:=test_rect(t,&ctx,id(&ctx,"gi"))
     // 4 of padding, the first header, its item, the rule and the second header.
-    testing.expectf(t,test_near(lit.y,modes.y+4+24) && test_near(gi.y,lit.y+ctx.theme.control+1+24),"%v %v %v",modes,lit,gi)
+    testing.expectf(t,test_near(lit.y,modes.y+4+24) && test_near(gi.y,lit.y+metric(&ctx,"control")+1+24),"%v %v %v",modes,lit,gi)
     testing.expect(t,test_icon_paint(&ctx,.Light)!=nil && test_icon_paint(&ctx,.Chevron_Right)!=nil)
     testing.expect_value(t,ctx.stats.layout_errors,u32(0))
 }
@@ -650,7 +575,7 @@ test_zoom_build :: proc(ctx:^Context,user:rawptr) {
 @(test)
 ctrl_and_the_wheel_zoom_an_area_without_scrolling_it :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:Test_Zoom
     input:=test_input()
@@ -674,32 +599,31 @@ ctrl_and_the_wheel_zoom_an_area_without_scrolling_it :: proc(t:^testing.T) {
 
 test_disabled_build :: proc(ctx:^Context,user:rawptr) {
     if box(ctx,{width=FIT,height=FIT,gap=4}) {
-        button(ctx,id(ctx,"ghost"),{icon=.Play,style=.Ghost,width=26,height=26,disabled=true})
-        button(ctx,id(ctx,"tab"),{icon=.Stop,style=.Tab,icon_color=ctx.theme.accent,width=26,height=26,disabled=true})
-        button(ctx,id(ctx,"field"),{label="Field",style=.Field,disabled=true})
-        button(ctx,id(ctx,"accent"),{label="Accent",style=.Accent,disabled=true})
+        button(ctx,id(ctx,"ghost"),{icon=.Play,variant="ghost",width=26,height=26,disabled=true})
+        button(ctx,id(ctx,"tab"),{icon=.Stop,variant="tab",icon_color=tone(ctx,"accent"),width=26,height=26,disabled=true})
+        button(ctx,id(ctx,"field"),{label="Field",variant="field",disabled=true})
+        button(ctx,id(ctx,"accent"),{label="Accent",variant="accent",disabled=true})
     }
 }
 
 @(test)
 a_disabled_button_shows_no_fill_of_its_own_and_a_faded_glyph :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     input:=test_input()
     test_frame(&ctx,&input,test_disabled_build)
     // The pointer on it does not light it either.
     test_point(&input,test_rect(t,&ctx,id(&ctx,"ghost")))
     test_frame(&ctx,&input,test_disabled_build)
-    th:=&ctx.theme
     for &p in ctx.paints[:ctx.paint_count] {
         if p.kind!=.Box {continue}
         #partial switch p.icon {
-        case .Play: testing.expect(t,p.fill==Color{} && p.stroke==Color{} && p.icon_color==color_faded(th.text),"A ghost shows its glyph alone, without the border of the pointer")
-        case .Stop: testing.expect(t,p.fill==Color{} && p.icon_color==color_faded(th.accent),"A segment keeps the color of its glyph, faded")
+        case .Play: testing.expect(t,p.fill==Color{} && p.stroke==Color{} && p.icon_color==color_faded(tone(&ctx,"text")),"A ghost shows its glyph alone, without the border of the pointer")
+        case .Stop: testing.expect(t,p.fill==Color{} && p.icon_color==color_faded(tone(&ctx,"accent")),"A segment keeps the color of its glyph, faded")
         }
-        if p.text=="Field" {testing.expect(t,p.fill==color_faded(th.field) && p.text_color==color_faded(th.text))}
-        if p.text=="Accent" {testing.expect(t,p.fill==color_faded(th.accent) && p.text_color==color_faded(th.on_accent))}
+        if p.text=="Field" {testing.expect(t,p.fill==color_faded(tone(&ctx,"field")) && p.text_color==color_faded(tone(&ctx,"text")))}
+        if p.text=="Accent" {testing.expect(t,p.fill==color_faded(tone(&ctx,"accent")) && p.text_color==color_faded(tone(&ctx,"on_accent")))}
     }
 }
 
@@ -713,7 +637,7 @@ test_closable_build :: proc(ctx:^Context,user:rawptr) {
     closed:=false
     if modal(ctx,id(ctx,"dialog"),{width=300,close=&closed}) {
         label(ctx,"Settings",16)
-        if button(ctx,id(ctx,"inside"),{label="Inside",style=.Field,width=-1}).clicked {s.presses+=1}
+        if button(ctx,id(ctx,"inside"),{label="Inside",variant="field",width=-1}).clicked {s.presses+=1}
     }
     if closed {s.open=false}
 }
@@ -723,7 +647,7 @@ test_closable_build :: proc(ctx:^Context,user:rawptr) {
 @(test)
 a_closable_dialog_closes_by_its_cross_and_by_a_press_outside :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:=Test_Closable{open=true}
     input:=test_input(800,600)
@@ -749,7 +673,7 @@ test_own_cross_build :: proc(ctx:^Context,user:rawptr) {
     closed:=false
     dialog:=id(ctx,"dialog")
     if modal(ctx,dialog,{width=300,close=&closed,own_cross=true}) {
-        if button(ctx,id_derive(ctx,dialog,"close"),{icon=.Cross,style=.Ghost,width=24,height=24}).clicked {s.open=false}
+        if button(ctx,id_derive(ctx,dialog,"close"),{icon=.Cross,variant="ghost",width=24,height=24}).clicked {s.open=false}
     }
     if closed {s.open=false}
 }
@@ -759,7 +683,7 @@ test_own_cross_build :: proc(ctx:^Context,user:rawptr) {
 @(test)
 a_dialog_with_its_own_cross_has_one_and_closes_by_a_press_outside :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:=Test_Closable{open=true}
     input:=test_input(800,600)
@@ -778,7 +702,7 @@ a_dialog_with_its_own_cross_has_one_and_closes_by_a_press_outside :: proc(t:^tes
 @(test)
 a_menu_keeps_the_column_of_icons_only_when_an_item_has_an_icon :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,{}));defer context_destroy(&ctx)
+    testing.expect(t,test_context_init(&ctx,{}));defer context_destroy(&ctx)
     input:=test_input()
     build :: proc(ctx:^Context,user:rawptr) {
         iconed:=(cast(^bool)user)^
@@ -817,7 +741,7 @@ test_rows_build :: proc(ctx:^Context,user:rawptr) {
 @(test)
 rows_a_popup_draws_itself_move_with_the_keys_of_its_search_as_items_do :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:Test_Rows
     input:=test_input(800,600)

@@ -38,13 +38,13 @@ Skin_World :: struct {
 // entity where it is drawn (erender.instance_place, with the Draw_Offset of
 // what it hangs from), with its pose.
 @(private)
-skin_shown :: proc(app:^host.App,posed:^erender.Posed_Meshes,meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),offsets:core.Read(erender.Draw_Offset),parents:core.Read(core.Parent),frame:core.Frame_Time) {
+skin_shown :: proc(app:^host.App,posed:^erender.Posed_Meshes,meshes:^core.Table(erender.Mesh_Renderer,$A),worlds:^core.Table(core.World_Transform,$B),offsets:^core.Table(erender.Draw_Offset,$C),parents:^core.Table(core.Parent,$D),frame:core.Frame_Time) {
     clear(&app.extras.instances)
     for pose,i in posed.poses.values {
         e:=posed.poses.entities[i]
         static,_:=core.get(meshes,e)
         world,_:=core.get(worlds,e)
-        anchor,transform:=erender.instance_place(world,frame,offsets,parents,worlds,{},{},e)
+        anchor,transform:=erender.instance_place(world,frame,offsets,parents,worlds,nil,nil,e)
         instance,_:=erender.mesh_instance(app.assets,static,transform,override=pose.materialed?pose.override:{})
         instance.mesh,instance.object_id,instance.anchor=pose.mesh,u64(e),anchor
         host.extras_instance_add(&app.extras,instance)
@@ -79,7 +79,7 @@ skeletal_instances_use_independent_dense_poses_and_eighth_influence :: proc(t:^t
     device:=shared_device.take_or_skip(t,hardware_rt=false)
     if device==nil {return}
     renderer:=new(gpu.Renderer);defer free(renderer)
-    settings:=gpu.DEFAULT_SETTINGS;settings.gi_enabled,settings.reflections,settings.taa=false,false,false
+    settings:=gpu.DEFAULT_SETTINGS;settings.gi_enabled,settings.taa=false,false
     if !testing.expect(t,gpu.renderer_init(renderer,{device=device,width=96,height=64,settings=settings}),renderer.error) {return}
     defer gpu.renderer_destroy(renderer)
     assets:host.Assets
@@ -128,7 +128,8 @@ skeletal_instances_use_independent_dense_poses_and_eighth_influence :: proc(t:^t
     testing.expect_value(t,len(cache.rigs),1)
     testing.expect_value(t,problems.count,0)
     for instance in state.instances.values {testing.expect_value(t,len(instance.palette),1)}
-    gpu.scene_set(renderer,host.extras_instances(&app.extras),nil,{},gpu.Environment{sky={1,1,1}})
+    gpu.scene_set_environment(renderer,{},gpu.Environment{sky={1,1,1}})
+    gpu.scene_update(renderer,0,host.extras_instances(&app.extras),true)
     if !testing.expect(t,gpu.renderer_frame(renderer,{camera={position={1,2,8},forward={0,-1,-8},up={0,1,0},fov_y=50,near=0.1,far=100}}),renderer.error) {return}
     for instance,i in state.instances.values {
         record:=renderer.scene.meshes[instance.mesh]
@@ -152,7 +153,8 @@ skeletal_instances_use_independent_dense_poses_and_eighth_influence :: proc(t:^t
     }
     for alpha in ([4]f32{0,0.25,0.75,1}) {
         tick(&app,&cache,&state,&w,&problems,&posed,{playing=true},{alpha=alpha})
-        gpu.scene_set(renderer,host.extras_instances(&app.extras),nil,{},gpu.Environment{sky={1,1,1}})
+        gpu.scene_set_environment(renderer,{},gpu.Environment{sky={1,1,1}})
+        gpu.scene_update(renderer,0,host.extras_instances(&app.extras),true)
         if !testing.expect(t,gpu.renderer_frame(renderer,{camera={position={1,2,8},forward={0,-1,-8},up={0,1,0},fov_y=50,near=0.1,far=100}}),renderer.error) {return}
         for instance,i in state.instances.values {
             record:=renderer.scene.meshes[instance.mesh]
@@ -183,7 +185,8 @@ skeletal_instances_use_independent_dense_poses_and_eighth_influence :: proc(t:^t
         tick(&app,&cache,&state,&w,&problems,&posed,{playing=true},{alpha=alpha})
         instance:=core.entity_map_get(&state.instances,draws[0])
         if !testing.expect(t,instance!=nil && instance.copied) {return}
-        gpu.scene_set(renderer,host.extras_instances(&app.extras),nil,{},gpu.Environment{sky={1,1,1}})
+        gpu.scene_set_environment(renderer,{},gpu.Environment{sky={1,1,1}})
+        gpu.scene_update(renderer,0,host.extras_instances(&app.extras),true)
         if !testing.expect(t,gpu.renderer_frame(renderer,{camera={position={1,2,8},forward={0,-1,-8},up={0,1,0},fov_y=50,near=0.1,far=100}}),renderer.error) {return}
         result:[3]gpu.Gpu_Posed_Vertex
         testing.expect(t,rhi.buffer_read_slice(device,renderer.scene.vertex_buffer,u64(renderer.scene.meshes[instance.mesh].posed_word)*4,result[:]))
@@ -228,7 +231,7 @@ a_skin_part_collapses_the_vertices_of_its_bone_into_it :: proc(t:^testing.T) {
     device:=shared_device.take_or_skip(t,hardware_rt=false)
     if device==nil {return}
     renderer:=new(gpu.Renderer);defer free(renderer)
-    settings:=gpu.DEFAULT_SETTINGS;settings.gi_enabled,settings.reflections,settings.taa=false,false,false
+    settings:=gpu.DEFAULT_SETTINGS;settings.gi_enabled,settings.taa=false,false
     if !testing.expect(t,gpu.renderer_init(renderer,{device=device,width=96,height=64,settings=settings}),renderer.error) {return}
     defer gpu.renderer_destroy(renderer)
     assets:host.Assets
@@ -264,7 +267,8 @@ a_skin_part_collapses_the_vertices_of_its_bone_into_it :: proc(t:^testing.T) {
     if !testing.expect_value(t,len(state.instances.values),1) {return}
     instance:=state.instances.values[0]
     testing.expect(t,instance.part==3 && instance.copied,"the copy is made with the part of bone head")
-    gpu.scene_set(renderer,host.extras_instances(&app.extras),nil,{},gpu.Environment{sky={1,1,1}})
+    gpu.scene_set_environment(renderer,{},gpu.Environment{sky={1,1,1}})
+    gpu.scene_update(renderer,0,host.extras_instances(&app.extras),true)
     if !testing.expect(t,gpu.renderer_frame(renderer,{camera={position={0,1,8},forward={0,0,-8},up={0,1,0},fov_y=50,near=0.1,far=100}}),renderer.error) {return}
     record:=renderer.scene.meshes[instance.mesh]
     whole,collapsed:[3]gpu.Gpu_Posed_Vertex

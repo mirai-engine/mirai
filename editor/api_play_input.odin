@@ -64,7 +64,7 @@ play_seat :: proc(s:^Session,call:^api.Call,w:core.World_Ref,slot:int,on_client:
         api.call_failf(call,api.INVALID_PARAMS,"slot %d is not a local seat: the game has %d, slots 0 to %d; play.start with players gives it more",slot,state.local_count,state.local_count-1)
         return
     }
-    seat=input.local_seat(core.read(seats),at)
+    seat=input.local_seat(seats,at)
     if seat==core.NONE {
         api.call_failf(call,api.INVALID_PARAMS,"The local seat of slot %d is made on the first tick: play.step one tick first",at)
         return
@@ -94,9 +94,9 @@ api_play_hold_of :: proc(s:^Session,m:^input.Input_Map,entry:^Api_Play_Input_Act
     }
     action=input.Action(found)
     if m.declared&input.action_bit(action)==0 {
-        return 0,{},fmt.tprintf("actions.%d: %q has no kind in the input map of the game: give it a default in code or a kind with input.set",at,name)
+        return 0,{},fmt.tprintf("actions.%d: %q has no kind in the input map of the game: give it a default in code, or bind it in Input_Settings with settings.set",at,name)
     }
-    kind:=m.kinds[action]
+    kind:=m.actions[action].kind
     if entry.release {return action,{},""}
     if !rpc_finite(entry.value) || !rpc_finite(entry.vector.x) || !rpc_finite(entry.vector.y) {
         return 0,{},fmt.tprintf("actions.%d: %q takes finite numbers",at,name)

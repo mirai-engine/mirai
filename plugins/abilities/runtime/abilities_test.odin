@@ -10,6 +10,7 @@ import inp "mirai:engine/input"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import anim "plugins:animation/runtime"
+import locomotion "plugins:locomotion/runtime"
 import phys "plugins:physics/runtime"
 
 // A blade with Mirai's own numbers, in the shape of a melee weapon with techniques, branches,
@@ -51,14 +52,14 @@ Abilities_World :: struct {
     using world:core.Test_World,
     users:core.Table(Ability_User),
     seats:core.Table(inp.Seat),
-    drivables:core.Table(inp.Drivable),
     characters:core.Table(phys.Character),
+    locomotions:core.Table(locomotion.Locomotion_State),
     worlds:core.Table(core.World_Transform),
     remotes:core.Table(core.Remote),
     paces:core.Table(core.Own_Pace),
     requests:Ability_Requests,
     events:Ability_Events,
-    moves:phys.Locomotion_Requests,
+    moves:locomotion.Locomotion_Requests,
     animations:anim.Animation_Requests,
     time:core.Time,
 }
@@ -129,8 +130,7 @@ fixture_make :: proc(t:^testing.T,f:^Fixture) -> bool {
     dummy.attributes[0]={attribute=HEALTH,base=100,max=100}
     core.add(&f.users,f.player,player)
     core.add(&f.users,f.dummy,dummy)
-    core.add(&f.seats,f.seat,inp.Seat{})
-    core.add(&f.drivables,f.player,inp.Drivable{seat=f.seat})
+    core.add(&f.seats,f.seat,inp.Seat{body=f.player})
     core.add(&f.characters,f.player,phys.character_default())
     core.add(&f.characters,f.dummy,phys.character_default())
     // The player faces +X: its -Z is the world +X.
@@ -170,7 +170,7 @@ test_overlap :: proc(w:^Ability_World,hitbox:Ability_Hitbox,pose:mm.Transform,re
 
 @(private="file")
 world_of :: proc(f:^Fixture) -> Ability_World {
-    return {time=f.time,seats=core.read(&f.seats),drivables=core.read(&f.drivables),characters=core.read(&f.characters),worlds=core.read(&f.worlds),remotes=core.read(&f.remotes),paces=core.read(&f.paces),clock=core.CLOCK_DEFAULT,moves=&f.moves,animations=&f.animations,problems=&f.problems}
+    return {time=f.time,seats=core.read(&f.seats),characters=core.read(&f.characters),locomotions=core.read(&f.locomotions),worlds=core.read(&f.worlds),remotes=core.read(&f.remotes),paces=core.read(&f.paces),clock=core.CLOCK_DEFAULT,moves=&f.moves,animations=&f.animations,problems=&f.problems}
 }
 
 @(private="file")

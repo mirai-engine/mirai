@@ -125,12 +125,12 @@ asked_of :: proc "contextless" (asked:[]Asked,screen:Screen) -> int {
 // level its screens ask for, and the screens drawn with the image of theirs.
 @(step="render",loops="game editor",before="render_sync")
 monitors_render :: proc(
-    state:^Monitors,screens:core.Read(Screen),cameras:core.Read(erender.Camera),exposures:core.Read(erender.Exposure),
-    meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),parents:core.Read(core.Parent),
-    tints:core.Read(erender.Tint),overrides:core.Read(erender.Material_Override),hidden:core.Read(erender.Hidden),
-    highlights:core.Read(erender.Highlight),outlines:core.Read(erender.Outline),offsets:core.Read(erender.Draw_Offset),layers:core.Read(erender.Layers),
-    view:core.View,app:^host.App,frame:core.Frame_Time,view_volumes:core.Read(erender.View_Volume),volumes:core.Read(volume.Volume),
-    locals:core.Read(core.Transform),
+    state:^Monitors,screens:^core.Table(Screen,.Read),cameras:^core.Table(erender.Camera,.Read),exposures:^core.Table(erender.Exposure,.Read),
+    meshes:^core.Table(erender.Mesh_Renderer,.Read),worlds:^core.Table(core.World_Transform,.Read),parents:^core.Table(core.Parent,.Read),
+    tints:^core.Table(erender.Tint,.Read),overrides:^core.Table(erender.Material_Override,.Read),hidden:^core.Table(erender.Hidden,.Read),
+    highlights:^core.Table(erender.Highlight,.Read),outlines:^core.Table(erender.Outline,.Read),offsets:^core.Table(erender.Draw_Offset,.Read),layers:^core.Table(erender.Layers,.Read),
+    view:core.View,app:^host.App,frame:core.Frame_Time,view_volumes:^core.Table(erender.View_Volume,.Read),volumes:^core.Table(volume.Volume,.Read),
+    locals:^core.Table(core.Transform,.Read),
 ) {
     if app.renderer==nil || app.assets==nil {return}
     state.frame+=1

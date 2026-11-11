@@ -7,6 +7,7 @@ import "mirai:core"
 import "mirai:std/ai"
 import mm "mirai:std/math"
 import nav "plugins:navigation/runtime"
+import locomotion "plugins:locomotion/runtime"
 import phys "plugins:physics/runtime"
 
 // Counts what is asked of it and gives nothing: a tick that must not allocate runs with it.
@@ -41,7 +42,6 @@ serving_allocator :: proc(served:^int,owner:runtime.Allocator) -> runtime.Alloca
 Behavior_World :: struct {
     using world:core.Test_World,
     mind_agents:core.Table(Mind_Agent),
-    presentations:core.Table(Mind_Presentation),
     perceivers:core.Table(Perceiver),
     perceptions:core.Table(Perception),
     perceivables:core.Table(Perceivable),
@@ -52,8 +52,8 @@ Behavior_World :: struct {
     paths:core.Table(nav.Nav_Path),
     fars:core.Table(nav.Nav_Far),
     agents:core.Table(nav.Nav_Agent),
-    walks:core.Table(phys.Walk),
-    swims:core.Table(phys.Swim),
+    walks:core.Table(locomotion.Walk),
+    swims:core.Table(locomotion.Swim),
     turns:Perceiving,
     noises:Noises,
     events:Perception_Events,
@@ -93,16 +93,14 @@ Counting :: struct {
 @(private="file")
 counting_think :: proc(t:^ai.Think(Count_Act)) {ai.propose(t,.Count,1)}
 
-// Counts its entries, near and far (what it claims lasts longer), asks to
-// look and for an animation, and ends on its first Update.
+// Counts its entries, near and far (what it claims lasts longer), and ends on
+// its first Update.
 @(private="file")
 counting_act :: proc(a:^ai.Act(Count_Act)) -> ai.Status {
     c:=(^Counting)(a.user)
     if a.phase!=.Enter {return .Success}
     c.entered+=1
     if a.lease>1 {c.far+=1} else {c.near+=1}
-    present_look(a,core.NONE,{1,2,3})
-    present_animation(a,9)
     return .Running
 }
 
@@ -134,11 +132,10 @@ minds_register_by_name_and_tick_their_agents :: proc(t:^testing.T) {
     testing.expect(t,core.problem_find(&problems,lost,"behavior.mind")!=nil && core.problem_find(&problems,a,"behavior.mind")==nil)
 }
 
-// What a mind does shows in the Mind_Presentation of its agent, which it
-// gets before its first tick and whose row is written only when it changes;
-// a world that does not play, or a tick that runs again, decides nothing.
+// A mind decides in a world that plays; a world that does not play, or a tick
+// that runs again, decides nothing.
 @(test)
-the_mind_of_an_agent_presents_what_it_does_and_does_not_tick_again_in_a_resimulation :: proc(t:^testing.T) {
+the_mind_of_an_agent_does_not_tick_again_in_a_resimulation :: proc(t:^testing.T) {
     minds:=new(Minds)
     defer free(minds)
     world:Behavior_World
@@ -147,33 +144,20 @@ the_mind_of_an_agent_presents_what_it_does_and_does_not_tick_again_in_a_resimula
     e:=core.create(&world.entities)
     core.add(&world.mind_agents,e,Mind_Agent{mind=mind_name("hunter")})
     core.test_world_settle(&world)
-    c:=Counting{world={minds=minds,agents=&world.mind_agents,presentations=&world.presentations,time={tick=1,dt=1.0/60,playing=true}}}
+    c:=Counting{world={minds=minds,agents=&world.mind_agents,time={tick=1,dt=1.0/60,playing=true}}}
     minds_tick(&c.world,"hunter",&COUNTING_ACTS,counting_think)
-    core.test_world_settle(&world)
-    shown,found:=core.get(&world.presentations,e)
-    testing.expect(t,found && c.entered==1)
-    testing.expect(t,shown.action==u16(Count_Act.Count) && shown.step==ai.MIND_NONE)
-    testing.expect(t,shown.look==core.NONE && shown.look_point=={1,2,3} && shown.animation==9 && shown.animations==1)
-    // It ends and enters again: the same action, a new animation asked.
+    testing.expect(t,c.entered==1)
+    // It ends and enters again.
     c.world.time.tick=2
     minds_tick(&c.world,"hunter",&COUNTING_ACTS,counting_think)
-    core.test_world_settle(&world)
-    shown,_=core.get(&world.presentations,e)
-    testing.expect(t,c.entered==2 && shown.animations==2)
-    version:=core.version(&world.presentations)
+    testing.expect_value(t,c.entered,2)
     ticks:=world.mind_agents.values[0].state.ticks
     for time in ([]core.Time{{tick=3,dt=1.0/60,playing=true,resimulating=true},{tick=3,dt=1.0/60}}) {
         c.world.time=time
         minds_tick(&c.world,"hunter",&COUNTING_ACTS,counting_think)
         testing.expect_value(t,world.mind_agents.values[0].state.ticks,ticks)
-        testing.expect_value(t,core.version(&world.presentations),version)
+        testing.expect_value(t,c.entered,2)
     }
-    ctx:=ai.Mind_Context{user=&c.world,holder=u64(e)}
-    a:=ai.Act(Count_Act){ctx=&ctx}
-    present_look(&a,e)
-    core.test_world_settle(&world)
-    shown,_=core.get(&world.presentations,e)
-    testing.expect(t,shown.look==e && shown.look_point=={})
 }
 
 // An agent far from the players is off with its rows, and its mind decides
@@ -520,9 +504,9 @@ the_path_of_places_walks_only_what_the_querier_walks :: proc(t:^testing.T) {
     walker,swimmer:=core.create(&world.entities),core.create(&world.entities)
     for e in ([]core.Entity{walker,swimmer}) {
         core.add(&world.agents,e,nav.NAV_AGENT_DEFAULT)
-        core.add(&world.walks,e,phys.Walk{max_speed=4,jump_height=1})
+        core.add(&world.walks,e,locomotion.Walk{max_speed=4,jump_height=1})
     }
-    core.add(&world.swims,swimmer,phys.SWIM_DEFAULT)
+    core.add(&world.swims,swimmer,locomotion.SWIM_DEFAULT)
     core.test_world_settle(&world)
     places:Places
     defer places_free(&places)
@@ -883,17 +867,18 @@ a_tick_with_nothing_to_do_goes_through_no_row :: proc(t:^testing.T) {
     testing.expect(t,core.has(&f.states,box))
     smart_update(core.read(&f.objects),&f.states,&f.uses,{seconds=1})
     core.test_world_settle(&f.behavior)
-    testing.expect(t,f.uses.layouts==[2]u64{core.layout(&f.objects),core.layout(&f.states)})
+    shapes:=f.uses.shapes
+    testing.expect(t,!core.reshaped(&f.objects,&shapes[0]) && !core.reshaped(&f.states,&shapes[1]))
     // One without its state is not looked for while the tables say nothing changed.
     other:=placed(&f,{})
     core.add(&f.objects,other,Smart_Object{})
     core.test_world_settle(&f.behavior)
-    changed:=f.uses.layouts
-    f.uses.layouts={core.layout(&f.objects),core.layout(&f.states)}
+    changed:=f.uses.shapes
+    _=core.reshaped(&f.objects,&f.uses.shapes[0]) | core.reshaped(&f.states,&f.uses.shapes[1])
     smart_update(core.read(&f.objects),&f.states,&f.uses,{seconds=2})
     core.test_world_settle(&f.behavior)
     testing.expect(t,!core.has(&f.states,other))
-    f.uses.layouts=changed
+    f.uses.shapes=changed
     smart_update(core.read(&f.objects),&f.states,&f.uses,{seconds=3})
     core.test_world_settle(&f.behavior)
     testing.expect(t,core.has(&f.states,other))

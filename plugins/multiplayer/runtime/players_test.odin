@@ -9,7 +9,7 @@ import input "mirai:engine/input"
 Seated :: struct {
     using world:core.Test_World,
     seats:core.Table(input.Seat),
-    drivables:core.Table(input.Drivable),
+    moves:core.Table(input.Move_Input),
     absents:core.Table(Seat_Absent),
     disabled:core.Table(core.Disabled),
     parents:core.Table(core.Parent),
@@ -44,7 +44,7 @@ seated_connect :: proc(w:^Seated,connection:Connection,player:u64) {
 
 @(private="file")
 seated_tick :: proc(w:^Seated,settings:^Net_Settings) {
-    net_seats({entities=&w.entities},&w.seats,&w.absents,&w.disabled,&w.objects,&w.transforms,&w.keeps,core.read(&w.links),
+    net_seats({entities=&w.entities},&w.seats,&w.absents,&w.disabled,&w.objects,&w.transforms,&w.keeps,core.read(&w.links),core.read(&w.remotes),
         core.ref(&w.bindings),core.ref(&w.connections),core.ref(&w.network),core.ref(&w.hierarchy),core.ref(settings),w.time)
     core.test_world_settle(w)
     w.time.tick+=1
@@ -75,7 +75,7 @@ a_seat_waits_for_its_player_and_is_given_back_when_it_connects_again :: proc(t:^
     replicate,replicated:=core.get(&w.objects,seat)
     testing.expect(t,replicated && replicate.audience==.Always && core.has(&w.transforms,seat) && core.has(&w.keeps,seat))
     body:=core.create(&w.entities)
-    core.add(&w.drivables,body,input.Drivable{seat=seat})
+    core.edit(&w.seats,seat).body=body
     core.test_world_settle(&w)
 
     clear(&w.connections.entries)
@@ -145,7 +145,7 @@ a_client_keeps_the_seats_of_the_server :: proc(t:^testing.T) {
     core.test_world_settle(&w)
     seated_tick(&w,&settings)
     testing.expect(t,core.alive(&w.entities,replica))
-    testing.expect_value(t,input.local_seat(core.read(&w.seats),0),core.NONE)
+    testing.expect_value(t,input.local_seat(&w.seats,0),core.NONE)
 }
 
 // On a server, a replicated body is owned by the connection of the seat that
@@ -161,12 +161,10 @@ a_server_owns_each_body_to_the_connection_of_its_seat :: proc(t:^testing.T) {
     connection:=Connection(u64(3)<<32|7)
     body,free:=net_test_body(&world,&info,1),net_test_body(&world,&info,2)
     net_test_own(&world,body,connection)
-    core.add(&world.drivables,free,input.Drivable{})
     core.settle(&info,&world,nil)
     ref:=core.world_ref(&world,&info)
     testing.expect_value(t,owner_of(ref,body),connection)
-    driven,_:=core.get(&world.drivables,body)
-    testing.expect_value(t,owner_of(ref,driven.seat),connection)
+    testing.expect_value(t,owner_of(ref,input.seat_of(core.read(&world.seats),body)),connection)
     testing.expect_value(t,owner_of(ref,free),Connection(0))
 }
 
@@ -180,22 +178,49 @@ a_client_drives_what_it_predicts :: proc(t:^testing.T) {
     requests:input.Seat_Requests
     defer delete(requests.queue.items)
     w.network={role=.Client}
-    local:=core.create(&w.entities)
-    core.add(&w.seats,local,input.Seat{slot=0})
-    predicted,shown:=core.create(&w.entities),core.create(&w.entities)
+    local,predicted,shown:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
+    core.add(&w.seats,local,input.Seat{slot=0,body=shown})
     core.add(&w.links,predicted,Net_Link{object=1})
     core.add(&w.replicas,predicted,core.Pose_Target{})
-    core.add(&w.drivables,predicted,input.Drivable{})
+    core.add(&w.moves,predicted,input.Move_Input{})
     core.add(&w.links,shown,Net_Link{object=2})
     core.add(&w.replicas,shown,core.Pose_Target{follow=true})
     core.add(&w.remotes,shown,core.Remote{})
-    core.add(&w.drivables,shown,input.Drivable{seat=local})
+    core.add(&w.moves,shown,input.Move_Input{})
     core.test_world_settle(&w)
-    net_driving(core.read(&w.links),core.read(&w.replicas),core.read(&w.remotes),core.read(&w.drivables),core.read(&w.seats),&requests,core.ref(&w.network))
+    net_driving(core.read(&w.links),core.read(&w.replicas),core.read(&w.remotes),core.read(&w.moves),core.read(&w.seats),&requests,core.ref(&w.network))
     asked:=core.take(&requests.queue)
     if !testing.expect_value(t,len(asked),2) {return}
     testing.expect_value(t,asked[0],input.Seat_Request{kind=.Release,seat=local})
     testing.expect_value(t,asked[1],input.Seat_Request{kind=.Drive,seat=local,entity=predicted})
+}
+
+// On a client, the replica of the seat of its player is its local seat 0: it
+// takes what the seat made before it arrived held, and that one goes; the
+// replicas of the other players are of another end.
+@(test)
+a_client_plays_through_the_replica_of_its_own_seat :: proc(t:^testing.T) {
+    w:Seated
+    if !seated_init(t,&w) {return}
+    defer core.test_world_destroy(&w)
+    w.network={role=.Client}
+    made,own,other,body:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
+    core.add(&w.seats,made,input.Seat{slot=0,held=input.action_bit(2),body=body})
+    core.add(&w.seats,own,input.Seat{})
+    core.add(&w.links,own,Net_Link{object=1})
+    core.add(&w.seats,other,input.Seat{})
+    core.add(&w.links,other,Net_Link{object=2})
+    core.add(&w.remotes,other,core.Remote{})
+    core.test_world_settle(&w)
+    seated_tick(&w,&Net_Settings{})
+    seats:=core.read(&w.seats)
+    testing.expect(t,!core.alive(&w.entities,made),"the seat made before the replica goes")
+    testing.expect_value(t,input.local_seat(seats,0),own)
+    mine,_:=core.get(seats,own)
+    testing.expect(t,mine.held==input.action_bit(2) && mine.body==body,"the replica takes what it held and drove")
+    theirs,_:=core.get(seats,other)
+    testing.expect(t,!input.seat_local(theirs),"the seat of another player is of another end")
+    testing.expect_value(t,core.count(&w.seats),2)
 }
 
 // A seat the game turned off stays off when its player comes back: the network

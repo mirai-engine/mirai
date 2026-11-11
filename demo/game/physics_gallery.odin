@@ -38,7 +38,7 @@ PHYSICS_GALLERY_VIEW_DEFAULT :: Physics_Gallery_View{station=-1}
 Physics_Gallery_Motion :: struct {origin:mm.Vec3,axis:mm.Vec3,amplitude,frequency:f32}
 
 @(step="input")
-physics_gallery_reset :: proc(views:core.Read(Physics_Gallery_View),actions:inp.Frame_Input_Of(Action),scenes:^scene.Scene_Requests) {
+physics_gallery_reset :: proc(views:^core.Table(Physics_Gallery_View,.Read),actions:inp.Frame_Input_Of(Action),scenes:^scene.Scene_Requests) {
     if core.count(views)>0 && inp.pressed(actions,.Physics_Reset) {scene.request_restart(scenes)}
 }
 
@@ -109,13 +109,11 @@ physics_gallery_piece_center :: proc(view:destruct.Destruct_View,e:core.Entity,f
 }
 
 @(step="fixed")
-physics_gallery_motion :: proc(motions:core.Read(Physics_Gallery_Motion),transforms:^core.Table(core.Transform),time:core.Time) {
+physics_gallery_motion :: proc(motions:^core.Table(Physics_Gallery_Motion,.Read),bodies:^phys.Body_Requests,time:core.Time) {
     if !time.playing {return}
     for row in 0..<core.count(motions) {
         motion:=core.at(motions,row)
-        if local:=core.free(transforms,core.entity_at(motions,row));local!=nil {
-            local.position=motion.origin+motion.axis*(motion.amplitude*math.sin(f32(time.tick)*time.dt*motion.frequency))
-        }
+        phys.move_kinematic(bodies,core.entity_at(motions,row),motion.origin+motion.axis*(motion.amplitude*math.sin(f32(time.tick)*time.dt*motion.frequency)))
     }
 }
 
@@ -123,7 +121,7 @@ physics_gallery_motion :: proc(motions:core.Read(Physics_Gallery_Motion),transfo
 physics_gallery_burst_at :: proc(point:mm.Vec3) -> mm.Vec3 {return point+mm.Vec3{0,.5,.8}}
 
 @(step="fixed",stage="react")
-physics_gallery_events :: proc(stations:core.Read(Physics_Gallery),counts:^Physics_Gallery_Events,events:core.Ref(destruct.Destruct_Events),spawner:scene.Spawner,bodies:^phys.Body_Requests) {
+physics_gallery_events :: proc(stations:^core.Table(Physics_Gallery,.Read),counts:^Physics_Gallery_Events,events:core.Ref(destruct.Destruct_Events),spawner:scene.Spawner,bodies:^phys.Body_Requests) {
     current,_:=core.first(stations)
     if current!=counts.scene {counts^=Physics_Gallery_Events{scene=current}}
     for event in events.fractured.items {
@@ -144,7 +142,7 @@ physics_gallery_events :: proc(stations:core.Read(Physics_Gallery),counts:^Physi
 }
 
 @(step="fixed")
-physics_gallery_fade :: proc(stations:core.Read(Physics_Gallery),view:destruct.Destruct_View,tints:^core.Table(render.Tint),time:core.Time) {
+physics_gallery_fade :: proc(stations:^core.Table(Physics_Gallery,.Read),view:destruct.Destruct_View,tints:^core.Table(render.Tint),time:core.Time) {
     if !(time.dt>0) {return}
     for row in 0..<core.count(stations) {
         station:=core.at(stations,row)
@@ -164,7 +162,7 @@ physics_gallery_fade :: proc(stations:core.Read(Physics_Gallery),view:destruct.D
 }
 
 @(step="late")
-physics_gallery_camera :: proc(views:core.Read(Physics_Gallery_View),stations:core.Read(Physics_Gallery),transforms:^core.Table(core.Transform)) {
+physics_gallery_camera :: proc(views:^core.Table(Physics_Gallery_View,.Read),stations:^core.Table(Physics_Gallery,.Read),transforms:^core.Table(core.Transform)) {
     for row in 0..<core.count(views) {
         config:=core.at(views,row)
         position,target:=mm.Vec3{0,29,28},mm.Vec3{0,0,-18}
@@ -207,10 +205,9 @@ PHYSICS_CACHE_STATION :: 17
 PHYSICS_RAGDOLL_STATION :: 18
 
 @(step="frame")
-physics_gallery_hud :: proc(huds:^core.Table(Physics_Gallery_Hud),views:core.Read(Physics_Gallery_View),stations:core.Read(Physics_Gallery),counts:core.Ref(Physics_Gallery_Events),view:destruct.Destruct_View,players:core.Read(cache.Geometry_Playback),ragdolls:core.Read(rag.Ragdoll)) {
-    shown:=core.read(huds)
-    for row in 0..<core.count(shown) {
-        looked,has_view:=core.get(views,core.entity_at(shown,row))
+physics_gallery_hud :: proc(huds:^core.Table(Physics_Gallery_Hud),views:^core.Table(Physics_Gallery_View,.Read),stations:^core.Table(Physics_Gallery,.Read),counts:core.Ref(Physics_Gallery_Events),view:destruct.Destruct_View,players:^core.Table(cache.Geometry_Playback,.Read),ragdolls:^core.Table(rag.Ragdoll,.Read)) {
+    for row in 0..<core.count(huds) {
+        looked,has_view:=core.get(views,core.entity_at(huds,row))
         if !has_view {continue}
         next:=Physics_Gallery_Hud{overview=true,count=PHYSICS_GALLERY_STATIONS}
         for at in 0..<core.count(stations) {
@@ -226,13 +223,13 @@ physics_gallery_hud :: proc(huds:^core.Table(Physics_Gallery_Hud),views:core.Rea
                 if ready && state.broken {next.note=.Released} else if item.activations>0 {next.note=.Strained}
             case PHYSICS_CACHE_STATION:
                 if player,ready:=core.get(players,item.target);ready {
-                    next.line,next.playing,next.forward,next.seconds=.Playback,player.playing,player.rate>=0,math.round(player.time*100)/100
+                    next.line,next.playing,next.forward,next.seconds=.Playback,player.playing,player.rate>=0,player.time
                 }
             case PHYSICS_RAGDOLL_STATION:
                 if config,ready:=core.get(ragdolls,item.target);ready {next.line,next.ragdoll=.Ragdoll,config.mode}
             }
             break
         }
-        if core.at(shown,row)!=next {core.edit_at(huds,row)^=next}
+        core.edit_at(huds,row)^=next
     }
 }

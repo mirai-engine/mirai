@@ -2,14 +2,14 @@
 
 A scene is a file of `assets/`, the source of the game, as a `.ui` is: an agent writes it through
 the API, a person in the editor, and nothing writes over what either saved. A prefab is a scene
-with one root.
+whose kind is Prefab, with one root.
 Terrain, foliage and sea go in one `--batch` file of JSON lines, one line per call, each finding
 what it needs by name ([terrain-foliage](../world/terrain-foliage.md)). The file is sent as the
 calls of one `batch`, which runs them in order and stops at the first that fails:
 
 ```json
 {"method":"scene.open","params":{"path":"arena/main.scene"}}
-{"method":"terrain.create","params":{"name":"Island","samples":257,"spacing":1,"at":[0,0,0],"heightmap":"source/island.png","height_scale":40}}
+{"method":"terrain.create","params":{"name":"Island","samples":257,"spacing":1,"at":[0,0,0],"heightmap":"assets/island/island.png","height_scale":40}}
 {"method":"terrain.layer","params":{"entity":"Island","material":"island/sand.mat","tiling":6}}
 {"method":"terrain.layer","params":{"entity":"Island","material":"island/grass.mat","automatic":true,"height":[2.6,40],"slope":[0,42],"softness":[6,1.2]}}
 {"method":"foliage.create","params":{"name":"Plants"}}
@@ -45,7 +45,7 @@ mirai rpc --project . --batch island.jsonl
 ## As a file of text
 
 `mirai scene` reads and writes a scene as one nested document, with no editor running,
-against the components of the game as it was built (`mirai build editor . --dev` first):
+against the components of the game as it was built (`mirai build editor .` first):
 
 ```sh
 mirai scene read arena/main.scene --out main.json

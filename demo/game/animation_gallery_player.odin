@@ -6,7 +6,7 @@ import "mirai:core"
 import cam "mirai:engine/camera"
 import gui "mirai:engine/gui"
 import inp "mirai:engine/input"
-import phys "plugins:physics/runtime"
+import locomotion "plugins:locomotion/runtime"
 import mm "mirai:std/math"
 
 // The seat of the animation gallery. It walks Mirai through the hall; E at a station with a panel
@@ -20,62 +20,36 @@ Gallery_Player :: struct {
 
 MIRAI_WALK_SPEED :: 2.9154 // m/s the walk clip covers
 
-// deg/s the bodies of the gallery turn toward where they walk.
-GALLERY_TURN_SPEED :: 500
-
 // m from a station's origin within which its body stands at it.
 GALLERY_REACH_DISTANCE :: 3.4
 
 GALLERY_FOCUS_BLEND :: cam.Camera_Blend{seconds=.6,ease=.Cubic_In_Out}
 
-gallery_move :: proc(input:^inp.Move_Input,rotation:mm.Quat,wish:mm.Vec3,dt:f32) {
-    input.look_yaw=yaw_of(rotation)
+// A body of the gallery walks along wish, in the world, and faces where it walks.
+gallery_move :: proc(input:^inp.Move_Input,wish:mm.Vec3) {
     input.move={}
     if amount:=linalg.length(wish);amount>.001 {
-        desired:=mm.yaw_of_direction(wish)
-        input.look_yaw=mm.angle_wrap(mm.angle_approach(input.look_yaw,desired,GALLERY_TURN_SPEED*mm.RAD_PER_DEG*dt))
-        input.move=mm.quat_rotate(mm.quat_axis_angle({0,1,0},-input.look_yaw),wish/max(amount,1))
+        input.look_yaw=mm.yaw_of_direction(wish)
+        input.move=wish/max(amount,1)
     }
 }
 
-gallery_player_input :: proc(input:^inp.Move_Input,rotation:mm.Quat,dt:f32,owner:inp.Drivable,walk_actions:inp.Input_Of(phys.Walk_Action),look_actions:inp.Input_Of(inp.Look_Action),follows:core.Read(cam.Camera_Follow)) {
-    look:=inp.seat_vector(look_actions,owner.seat,.Look)
-    move:=inp.seat_vector(walk_actions,owner.seat,.Move)
-    follow,_:=core.get(follows,owner.camera)
-    yaw:=follow.looking.x if follow.state.ready else follow.yaw
-    yaw-=look.x*LOOK_SPEED
-    wish:=mm.quat_rotate(mm.quat_axis_angle({0,1,0},yaw),mm.Vec3{move.x,0,-move.y})
-    gallery_move(input,rotation,wish,dt)
-    if inp.seat_down(walk_actions,owner.seat,.Jump) {input.buttons|=inp.action_bit(inp.action_of(walk_actions,.Jump))}
-}
-
-// The body a gallery seat drives walks along the view of its camera; while it adjusts a panel it
-// stands still. A body that fell goes back to where the gallery starts.
+// A body of the gallery player that fell goes back to where the gallery starts.
 @(step="fixed")
-gallery_player_move :: proc(players:core.Read(Gallery_Player),inputs:^core.Table(inp.Move_Input),worlds:core.Read(core.World_Transform),placer:core.Placer,seats:inp.Players,walk_actions:inp.Input_Of(phys.Walk_Action),look_actions:inp.Input_Of(inp.Look_Action),follows:core.Read(cam.Camera_Follow),time:core.Time) {
-    for row in 0..<core.count(players) {
-        player:=core.at(players,row)
-        body:=inp.body_of(seats.drivables,core.entity_at(players,row))
-        if player.focus!=core.NONE {body=player.mirai} // it let go of it to free the mouse
-        owner,driven:=core.get(seats.drivables,body)
-        input:=core.edit(inputs,body)
-        placed,exists:=core.get(worlds,body)
-        if !driven || input==nil || !exists {continue}
-        input.move,input.buttons={},{}
-        if player.focus!=core.NONE {input.look_yaw=yaw_of(placed.rotation);continue}
-        gallery_player_input(input,placed.rotation,time.dt,owner,walk_actions,look_actions,follows)
-        if placed.position.y< -3 {core.place(placer,body,GALLERY_START,at_rest=true)}
+gallery_player_fall :: proc(players:^core.Table(Gallery_Player,.Read),worlds:^core.Table(core.World_Transform,.Read),placer:core.Placer) {
+    for player in players.values[:core.count(players)] {
+        if placed,exists:=core.get(worlds,player.mirai);exists && placed.position.y< -3 {core.place(placer,player.mirai,GALLERY_START,at_rest=true)}
     }
 }
 
 // E at a station: frame its panel, or drive the spider; E again, or at the spider, gives the
 // walk back to Mirai.
 @(step="fixed")
-gallery_interact :: proc(players:^core.Table(Gallery_Player),gallery:core.Read(Animation_Gallery),panels:core.Read(Gallery_Panel),worlds:core.Read(core.World_Transform),seats:inp.Players,actions:inp.Input_Of(Action),requests:^inp.Seat_Requests,cameras:^cam.Camera_Requests) {
+gallery_interact :: proc(players:^core.Table(Gallery_Player),gallery:^core.Table(Animation_Gallery,.Read),panels:^core.Table(Gallery_Panel,.Read),worlds:^core.Table(core.World_Transform,.Read),seats:^core.Table(inp.Seat,.Read),actions:inp.Input_Of(Action),requests:^inp.Seat_Requests,cameras:^cam.Camera_Requests) {
     for row in 0..<core.count(players) {
         player:=core.at(players,row)
         seat:=core.entity_at(players,row)
-        body:=inp.body_of(seats.drivables,seat)
+        body:=inp.body_of(seats,seat)
         near:=core.NONE
         if placed,exists:=core.get(worlds,body);exists && body==player.mirai {
             closest:=f32(GALLERY_REACH_DISTANCE)
@@ -116,11 +90,11 @@ GALLERY_PLAQUE_DISTANCE :: 10 // m from the body of the player within which the 
 // The plaques show near the body of the player and a panel only while its player adjusts it: a
 // widget without size is not drawn.
 @(step="fixed")
-gallery_widgets :: proc(players:core.Read(Gallery_Player),labels:core.Read(Gallery_Label),panels:core.Read(Gallery_Panel),widgets:^core.Table(gui.World_Widget),worlds:core.Read(core.World_Transform),drivables:core.Read(inp.Drivable)) {
+gallery_widgets :: proc(players:^core.Table(Gallery_Player,.Read),labels:^core.Table(Gallery_Label,.Read),panels:^core.Table(Gallery_Panel,.Read),widgets:^core.Table(gui.World_Widget),worlds:^core.Table(core.World_Transform,.Read),seats:^core.Table(inp.Seat,.Read)) {
     player,found:=core.first(players)
     if !found {return}
     focus:=core.at(players,0).focus
-    body,_:=core.get(worlds,inp.body_of(drivables,player) if focus==core.NONE else core.at(players,0).mirai)
+    body,_:=core.get(worlds,inp.body_of(seats,player) if focus==core.NONE else core.at(players,0).mirai)
     for row in 0..<core.count(labels) {
         e:=core.entity_at(labels,row)
         placed,exists:=core.get(worlds,e)

@@ -163,7 +163,7 @@ capture_without_ui_draws_the_world_alone_at_the_size_asked_for :: proc(t:^testin
     if !core.test_world_init(t,&shown) {return}
     defer core.test_world_destroy(&shown)
     settings:=gpu.DEFAULT_SETTINGS
-    settings.gi_enabled,settings.reflections,settings.taa=false,false,false
+    settings.gi_enabled,settings.taa=false,false
     app,error:=host.app_create({gpu=true,gpu_validation=true,assets_root="assets",window_desc={size={128,96}},threads=1,render_settings=settings})
     if !testing.expect_value(t,error,host.App_Error.None) || app==nil {return}
     defer host.app_destroy(app)
@@ -173,7 +173,8 @@ capture_without_ui_draws_the_world_alone_at_the_size_asked_for :: proc(t:^testin
     if !testing.expect(t,made) {return}
     cube.uniform_color,cube.highlight=true,HIGHLIGHT_SELECTED
     host.assets_commit(app.assets)
-    gpu.scene_set(app.renderer,{cube},nil,{},{background={0.02,0.02,0.1},use_background=true})
+    gpu.scene_set_environment(app.renderer,{},{background={0.02,0.02,0.1},use_background=true})
+    gpu.scene_update(app.renderer,0,{cube},true)
     // A fixed exposure: metered, the dark backdrop would be made middle gray.
     host.app_camera_set(app,{position={0,1.2,4},forward={0,-0.7,-4},up={0,1,0},fov_y=40,near=0.05,far=100,exposure=gpu.UNIT_EXPOSURE},true)
     red:=[4]f32{1,0,0,1}

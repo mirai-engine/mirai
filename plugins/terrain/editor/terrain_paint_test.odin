@@ -42,7 +42,7 @@ terrain_layers_paint_and_holes_are_steps_of_undo_kept_unsaved :: proc(t:^testing
     core.test_world_settle(&world)
     prepare :: proc(t:^testing.T,s:^editor.Session,tool:^Terrain_Tool,world:^Create_Test_World,owner:core.Entity) -> bool {
         terrain_sync(s,tool,core.read(&world.terrains),s.app.assets)
-        return testing.expect(t,stroke_prepare(tool,s.app.assets,s.app.allocator,core.read(&world.terrains),core.read(&world.worlds),editor.Pick{entity=owner}))
+        return testing.expect(t,stroke_prepare(tool,s.app.assets,s.app.allocator,&world.terrains,&world.worlds,editor.Pick{entity=owner}))
     }
     disk:=registry_source(t,&assets,id)
     defer terrain.source_destroy(&disk)

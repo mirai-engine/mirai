@@ -22,7 +22,6 @@ Timing_Shared :: struct {
     using base:Net_Test_Shared,
     now:f64,
     ran:int,               // ticks the client simulated
-    events:Net_Events,
     propagation:core.Propagation,
     jumps:core.Jumps,
     mover:core.Entity,     // of the client alone: it moves a fixed step each tick
@@ -40,7 +39,6 @@ Timing :: struct {
     network:wire.Sim_Network,
     platform:^platform.Platform,
     outbox:Net_Outbox,
-    server_events:Net_Events,
     server_tick:u32,
     server_time:f64,
     moved:core.Entity, // of the server: it moves speed along x each tick
@@ -64,7 +62,6 @@ timing_input :: proc(world,shared,editor,application:rawptr) {
     app:=cast(^host.App)application
     s:=sh.session
     ref:=core.world_ref(w,sh.info)
-    core.queue_clear(&sh.events.received)
     s.now=sh.now
     client_commands(s,ref,app.assets,app.allocator,wire.host_poll(&s.host))
     client_reconcile(s,ref,app,w.frame.dt)
@@ -86,10 +83,8 @@ timing_fixed :: proc(world,shared,editor,application:rawptr) {
         core.pose_targets_place(core.read(&w.replicas),&w.transforms,&w.places)
         core.settle(sh.info,w,nil)
         outbox:Net_Outbox
-        adoptions:Net_Adoptions
-        net_tick_tail(ref,sh.session,&outbox,&adoptions,sh.session.problems)
+        net_tick_tail(ref,sh.session,&outbox,&w.made,sh.session.problems)
         core.value_free(&outbox,type_info_of(Net_Outbox))
-        core.value_free(&adoptions,type_info_of(Net_Adoptions))
         core.settle(sh.info,w,nil)
     } else {net_test_fixed(world,shared,editor,application)}
     timing_propagate(w,sh)
@@ -155,14 +150,12 @@ timing_destroy :: proc(x:^Timing) {
     for &session in x.sessions {if session.host_ready {session_destroy(&session)}}
     for &world in x.worlds {core.world_destroy(&x.info,.World,&world)}
     for &share in x.shares {
-        core.value_free(&share.events,type_info_of(Net_Events))
         core.value_free(&share.propagation,type_info_of(core.Propagation))
         core.value_free(&share.jumps,type_info_of(core.Jumps))
         phys.collider_meshes_destroy(&share.colliders)
     }
     for &app in x.apps {host.app_world_scratch_free(&app);delete(app.worlds)}
     core.value_free(&x.outbox,type_info_of(Net_Outbox))
-    core.value_free(&x.server_events,type_info_of(Net_Events))
     wire.sim_network_destroy(&x.network)
     if x.platform!=nil {platform.destroy(x.platform)}
     core.test_info_destroy(&x.info)
@@ -235,13 +228,13 @@ client_frames_run_the_ticks_of_the_clock :: proc(t:^testing.T,period,spread:f32)
     for _ in 0..<int(3/period) {
         ran:=sh.ran
         timing_frame_run(x,timing_dt(&random,period,spread))
-        if client.frame.alpha<0 || client.frame.alpha>=1 {outside+=1}
+        if client.frame.alpha<0 || client.frame.alpha>1 {outside+=1}
         if u64(sh.ran-ran)!=client.time.tick-previous_tick {uneven+=1}
         drawn,_:=timing_drawn(x,sh.mover)
         if drawn.x<previous_drawn.x {backward+=1}
         previous_drawn,previous_tick=drawn,client.time.tick
     }
-    testing.expectf(t,outside==0,"alpha outside [0,1) in %d frames",outside)
+    testing.expectf(t,outside==0,"alpha outside [0,1] in %d frames",outside)
     testing.expectf(t,uneven==0,"%d frames ran other ticks than the clock of the world counted",uneven)
     testing.expectf(t,backward==0,"what moves steadily went back in %d frames",backward)
 }

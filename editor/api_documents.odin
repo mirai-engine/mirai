@@ -22,6 +22,7 @@ Api_Documents_Result :: struct {
 Api_Document_Tab :: struct {
     path:string `mirai:"label=Its file; empty before it has one"`,
     dirty:bool `mirai:"label=Whether it has unsaved changes"`,
+    kind:Document_Kind `mirai:"label=A scene, shown in its own light, or a prefab, shown in the studio light"`,
     preview_sun:bool `mirai:"label=Whether a prefab shows with the preview sun"`,
 }
 Api_Asset_Document_Tab :: struct {
@@ -45,7 +46,7 @@ api_documents :: proc(s:^Session,call:^api.Call) {
         d:=index==s.active_document?s.document:&tab.document
         e:=index==s.active_document?s.edits:&tab.edits
         v:=index==s.active_document?s.viewport:&tab.viewport
-        r.documents[index]={document_path(d),d.unsaved || history.edits_scene_state(e)!=d.saved,v.preview_sun}
+        r.documents[index]={document_path(d),d.unsaved || history.edits_scene_state(e)!=d.saved,.Prefab if d.prefab else .Scene,v.preview_sun}
     }
     r.asset=api_asset_document_front(s)
     r.assets=make([]Api_Asset_Document_Tab,len(s.asset_documents),call.allocator)
@@ -111,7 +112,7 @@ api_document :: proc(s:^Session,call:^api.Call) {
         document_close_active(s)
     case .Preview_Sun:
         d:=index==s.active_document?s.document:&s.documents[index].document
-        if d.previous==nil || .One_Root not_in d.previous.doc.flags {api.call_fail(call,api.INVALID_PARAMS,"The document is not a prefab");return}
+        if !d.prefab {api.call_fail(call,api.INVALID_PARAMS,"The document is not a prefab");return}
         document_activate(s,index)
         s.viewport.preview_sun=p.enabled
         s.view_cut=true

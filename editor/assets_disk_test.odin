@@ -37,8 +37,8 @@ a_call_finds_what_changed_on_disk_and_unsaved_changes_stay :: proc(t:^testing.T)
     defer host.assets_destroy(&assets)
     app:=host.App{assets=&assets,platform=p}
     f.s.app=&app
-    host.app_assets_watch_reset(&app)
-    defer {app.assets_watch={}}
+    app.assets_watch.watch,_=platform.watch_create(p,{path=root,recursive=true})
+    defer platform.watch_destroy(p,app.assets_watch.watch)
     blade:=project.path(root,"blade.scene",allocator=context.temp_allocator)
     disk_test_prefab(t,&assets.types,blade,"Blade")
     host.assets_scan(&assets)

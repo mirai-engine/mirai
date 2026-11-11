@@ -42,6 +42,7 @@ Scene_Test :: struct {
 @(private="file")
 lamp_write :: proc(t:^testing.T,types:^asset.Types,path:string,range:f32) -> (lamp:asset.Scene) {
     asset.scene_init(&lamp,types,TEST_LAMP)
+    lamp.doc.flags+={.Prefab}
     asset.scene_entity_add(&lamp,1,0,"Lamp")
     asset.scene_entity_add(&lamp,2,1,"Bulb")
     light:=Scene_Test_Lamp{range,1}
@@ -86,7 +87,7 @@ scene_test_project_close :: proc(p:^Scene_Test_Project) {
 // The ranges of the lamps of the world, in the order of its table.
 @(private="file")
 scene_test_ranges :: proc(f:^Scene_Test) -> []f32 {
-    lamps:=core.read(&f.lamps)
+    lamps:=&f.lamps
     ranges:=make([]f32,core.count(lamps),context.temp_allocator)
     for &range,row in ranges {range=core.at(lamps,row).range}
     return ranges
@@ -154,7 +155,7 @@ a_scene_saved_with_another_layout_of_a_component_loads_it_by_field_names :: proc
     testing.expect(t,gone.component=="Scene_Test_Gone" && gone.unknown)
     text,warning:=stored_text(lamp,"old.scene")
     testing.expect(t,warning && strings.contains(text,"old.scene") && strings.contains(text,"Scene_Test_Lamp") && strings.contains(text,"flicker"),text)
-    lamps:=core.read(&p.world.lamps)
+    lamps:=&p.world.lamps
     if !testing.expect_value(t,core.count(lamps),1) {return}
     testing.expect_value(t,core.at(lamps,0),Scene_Test_Lamp{range=0,intensity=4})
 }
@@ -195,7 +196,7 @@ a_referenced_scene_hangs_from_each_reference_with_its_own_ids :: proc(t:^testing
     testing.expect_value(t,report.sections,2)
     testing.expect_value(t,report.missing,1)
     testing.expect(t,slice.equal(scene_test_ranges(p.world),[]f32{3,3}),"the room under each reference")
-    links:=core.read(&p.world.links)
+    links:=&p.world.links
     for row in 0..<core.count(links) {
         e:=core.entity_at(links,row)
         id,_:=core.get(&p.world.ids,e)
@@ -208,7 +209,7 @@ a_referenced_scene_hangs_from_each_reference_with_its_own_ids :: proc(t:^testing
             testing.expect_value(t,unresolved_target(&p.world.unresolved,e,base.name_hash("Scene_Test_Link"),0),id_in(30,1))
         }
     }
-    ids:=core.read(&p.world.ids)
+    ids:=&p.world.ids
     seen:[dynamic]base.Entity_Id;defer delete(seen)
     for row in 0..<core.count(ids) {
         id:=core.at(ids,row).value
@@ -216,8 +217,8 @@ a_referenced_scene_hangs_from_each_reference_with_its_own_ids :: proc(t:^testing
         append(&seen,id)
     }
     testing.expect(t,slice.contains(seen[:],id_in(10,1)) && slice.contains(seen[:],id_in(20,1)))
-    lamps:=core.read(&p.world.lamps)
-    parents:=core.read(&p.world.parents)
+    lamps:=&p.world.lamps
+    parents:=&p.world.parents
     for row in 0..<core.count(lamps) {
         parent,_:=core.get(parents,core.entity_at(lamps,row))
         reference,_:=core.get(ids,parent.entity)
@@ -351,8 +352,8 @@ a_load_that_fails_halfway_leaves_the_world_as_it_was :: proc(t:^testing.T) {
     testing.expect(t,len(ranges)==64 && ranges[0]==4 && ranges[63]==4)
 }
 
-// The shape of input.Drivable: Entity fields of a component.
-@(private="file") Scene_Test_Drivable :: struct {seat,camera:core.Entity}
+// Entity fields of a component: one to outside the prefab, one inside it.
+@(private="file") Scene_Test_Rig :: struct {seat,camera:core.Entity}
 
 @(private="file")
 Scene_Test_World :: struct {
@@ -362,7 +363,7 @@ Scene_Test_World :: struct {
     transforms:core.Table(core.Transform),
     parents:core.Table(core.Parent),
     worlds:core.Table(core.World_Transform),
-    drivables:core.Table(Scene_Test_Drivable) `mirai:"name=Drivable"`,
+    rigs:core.Table(Scene_Test_Rig) `mirai:"name=Rig"`,
     references:core.Table(Scene_Reference),
     members:core.Table(Section_Member),
     dormants:core.Table(Dormant),
@@ -560,19 +561,21 @@ spawned_prefabs_keep_their_entity_references_inside :: proc(t:^testing.T) {
     outside,root,camera:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
     core.add(&w.ids,outside,core.Id{7});core.add(&w.ids,root,core.Id{1});core.add(&w.ids,camera,core.Id{2})
     core.add(&w.parents,camera,core.Parent{entity=root})
-    core.add(&w.drivables,root,Scene_Test_Drivable{seat=outside,camera=camera})
+    core.add(&w.rigs,root,Scene_Test_Rig{seat=outside,camera=camera})
     core.test_world_settle(w)
     document:asset.Scene
     captured,capture_error:=capture(ref,&document,&types,{root=root,id={3,4}})
     if !testing.expect_value(t,capture_error,Error.None) {return}
     testing.expect_value(t,captured.dangling,1)
     defer asset.scene_destroy(&document)
+    document.doc.flags+={.Prefab}
     out:serial.Writer;serial.writer_init(&out,0,context.allocator);defer serial.writer_destroy(&out)
     if !testing.expect(t,asset.scene_write(&document,&out)==.None) {return}
     file:asset.Asset
     if !testing.expect(t,asset.asset_open(&file,serial.writer_bytes(&out),context.allocator)==.None) {return}
     defer asset.asset_close(&file)
-    testing.expect(t,asset.asset_prefab(&file),"what is under one entity is a scene with one root: a prefab")
+    _,rooted:=asset.prefab_root(&document)
+    testing.expect(t,rooted && asset.asset_prefab(&file),"what is under one entity is a scene with one root, written as a prefab")
 
     core.test_world_clear(w)
     made:[2][2]core.Entity
@@ -584,10 +587,10 @@ spawned_prefabs_keep_their_entity_references_inside :: proc(t:^testing.T) {
     }
     core.test_world_settle(w)
     for copy in made {
-        drivable,found:=core.get(&w.drivables,copy[0])
+        link,found:=core.get(&w.rigs,copy[0])
         testing.expect(t,found)
-        testing.expect_value(t,drivable.camera,copy[1])
-        testing.expect_value(t,drivable.seat,core.NONE)
+        testing.expect_value(t,link.camera,copy[1])
+        testing.expect_value(t,link.seat,core.NONE)
     }
 }
 
@@ -715,7 +718,7 @@ an_untrusted_level_loads_only_what_its_rules_allow :: proc(t:^testing.T) {
     if !testing.expect_value(t,error,Error.None) {return}
     testing.expect_value(t,report.entities,2)
     first:=core.entity_of(&p.world.entities,base.Entity_Id(1))
-    blocks:=core.read(&p.world.blocks)
+    blocks:=&p.world.blocks
     if !testing.expect_value(t,core.count(blocks),1) {return}
     lamp,_:=core.get(&p.world.ids,core.at(blocks,0).link)
     testing.expect_value(t,lamp.value,base.Entity_Id(2))
@@ -768,7 +771,7 @@ an_untrusted_level_loads_only_what_its_rules_allow :: proc(t:^testing.T) {
         testing.expectf(t,base.text_get(report.refused.field[:])==c.field,"%s: field %q",c.name,base.text_get(report.refused.field[:]))
         testing.expectf(t,report.refused.fault==c.fault,"%s: fault %v",c.name,report.refused.fault)
         testing.expectf(t,p.world.entities.alive==2 && core.entity_of(&p.world.entities,base.Entity_Id(1))==first,"%s: the world is as it was",c.name)
-        blocks=core.read(&p.world.blocks)
+        blocks=&p.world.blocks
         testing.expectf(t,core.count(blocks)==1 && core.at(blocks,0).size==UNTRUSTED_BLOCK.size,"%s: the block is as it was",c.name)
     }
 }

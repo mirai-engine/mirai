@@ -7,20 +7,28 @@ import mm "mirai:std/math"
 // looks down -Z and has +X at its right.
 
 Attenuation_Model :: enum u8 {
-    None,        // the same level at any distance
+    None,        // the same level until it fades out before max_distance
     Inverse,     // min/(min+rolloff*(d-min)): halves at twice the minimum distance with rolloff 1
     Linear,      // 1-rolloff*(d-min)/(max-min): silent at the maximum distance with rolloff 1
     Exponential, // (d/min)^-rolloff
 }
-// The distance is clamped to [min_distance,max_distance] before the model
-// is applied: nearer than the minimum the gain is 1, beyond the maximum it
-// stops falling.
+// Nearer than min_distance the gain is 1; over the last ATTENUATION_FADE of
+// the way to max_distance the gain of the model fades to 0, and beyond it the
+// voice is not heard.
 Attenuation :: struct {
     model:Attenuation_Model,
     min_distance,max_distance:f32,
     rolloff:f32,
+    // Nearer than this a voice is heard less and less from its direction and
+    // at the listener from no side, so passing through it does not jump between
+    // ears: the share of its direction rises as a smootherstep from 0 at the
+    // listener to 1 here, flat at both ends. 0: always from its direction.
+    near_radius:f32,
+    delay:bool, // starts later by its distance over the speed of sound, as thunder after its flash
 }
-ATTENUATION_DEFAULT :: Attenuation{model=.Inverse,min_distance=1,max_distance=100,rolloff=1}
+// The HRTF is measured 1 m from the head: nearer, it no longer tells where a source is.
+ATTENUATION_DEFAULT :: Attenuation{model=.Inverse,min_distance=1,max_distance=100,rolloff=1,near_radius=1}
+ATTENUATION_FADE :: f32(0.25)
 
 // What the output plays on. Speakers pan each spatial voice between them;
 // headphones hear it through the HRTF of its direction, which tells ahead from
@@ -36,16 +44,17 @@ Listener :: struct {
 attenuation_gain :: proc "contextless" (a:Attenuation,distance:f32) -> f32 {
     low:=max(a.min_distance,1e-4)
     high:=max(a.max_distance,low)
-    d:=clamp(distance,low,high)
+    if !(distance<high) {return 0}
+    if high<=low {return 1}
+    d:=max(distance,low)
+    gain:=f32(1)
     switch a.model {
-    case .None:return 1
-    case .Inverse:return low/(low+a.rolloff*(d-low))
-    case .Linear:
-        if high<=low {return 1}
-        return clamp(1-a.rolloff*(d-low)/(high-low),0,1)
-    case .Exponential:return math.pow(d/low,-a.rolloff)
+    case .None:
+    case .Inverse:gain=low/(low+a.rolloff*(d-low))
+    case .Linear:gain=clamp(1-a.rolloff*(d-low)/(high-low),0,1)
+    case .Exponential:gain=math.pow(d/low,-a.rolloff)
     }
-    return 1
+    return gain*min((high-d)/(ATTENUATION_FADE*(high-low)),1)
 }
 
 // Constant power: the two gains always add up to the same energy, so a sound
@@ -90,6 +99,7 @@ doppler_pitch :: proc "contextless" (listener_position,listener_velocity,source_
 // its volume by the gain of its direct path, between the speakers on Speakers
 // (PanningEffect::stereoPanningWeight: the side once brought to the horizontal
 // plane, so ahead and behind both sit in the middle) and centered otherwise.
+// Within its near radius the pan goes toward the middle by its blend.
 @(private)
 spatial_gains :: proc "contextless" (m:^Mixer,v:^Mix_Voice) -> [4]f32 {
     if v.spatial_dirty || v.listener_serial!=m.listener_serial {
@@ -98,11 +108,13 @@ spatial_gains :: proc "contextless" (m:^Mixer,v:^Mix_Voice) -> [4]f32 {
         directivity:=directivity_gain(v.directivity,v.position,v.rotation,l.position)
         v.direct_gain,v.eq_target=direct_gain_eq(attenuation_gain(v.attenuation,distance),directivity,air_absorption(distance),v.occlusion,v.transmission)
         v.direction=direction
+        v.blend=1
+        if r:=v.attenuation.near_radius;distance<r {s:=distance/r;v.blend=s*s*s*(s*(6*s-15)+10)}
         v.spatial_pitch=doppler_pitch(l.position,l.velocity,v.position,v.velocity,v.doppler,m.speed_of_sound)
         v.spatial_dirty=false;v.listener_serial=m.listener_serial
     }
     pan:=f32(0)
-    if horizontal:=math.sqrt(v.direction.x*v.direction.x+v.direction.z*v.direction.z);m.output_now==.Speakers && m.channels==2 && horizontal>1e-6 {pan=v.direction.x/horizontal}
+    if horizontal:=math.sqrt(v.direction.x*v.direction.x+v.direction.z*v.direction.z);m.output_now==.Speakers && m.channels==2 && horizontal>1e-6 {pan=v.blend*v.direction.x/horizontal}
     sides:=pan_gains(pan)*(v.volume*v.direct_gain)
     // A stereo sound that has a place in the world is heard as one source.
     if v.source.channels==2 {return {sides[0]*0.5,sides[1]*0.5,sides[0]*0.5,sides[1]*0.5}}
@@ -195,9 +207,11 @@ listener_set :: proc(m:^Mixer,position:[3]f32,rotation:quaternion128,velocity:[3
 }
 
 // What the output plays on: the HRTF for headphones or the pan for speakers.
+// False for headphones without memory for the HRTF.
 mixer_set_output :: proc(m:^Mixer,kind:Output_Kind) -> bool {
     if kind!=.Headphones && kind!=.Speakers {return false}
     if kind==m.output {return true}
+    if kind==.Headphones && binaural_init(m)!=.None {return false}
     if !command_push(m,{kind=.Output,index=u32(kind)}) {return false}
     m.output=kind
     return true

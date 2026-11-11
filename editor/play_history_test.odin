@@ -27,7 +27,7 @@ history_step :: proc(f:^Play_Test,r:^Run,held:bool) {
 // Read, not written: a write between frames is an edit.
 @(private="file")
 history_x :: proc(f:^Play_Test,r:^Run) -> f32 {
-    transform,_:=core.get(core.read(&(cast(^Play_Test_World)r.world).transforms),f.original)
+    transform,_:=core.get(&(cast(^Play_Test_World)r.world).transforms,f.original)
     return transform.position.x
 }
 
@@ -319,7 +319,7 @@ space_plays_and_stops_the_strip_of_the_past_unless_a_text_field_takes_it :: proc
     settings:=PLAY_HISTORY_DEFAULT
     s.play_history=&settings
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{draw_user=draw_user}))
+    testing.expect(t,test_ui_init(&ctx,{draw_user=draw_user}))
     defer ui.context_destroy(&ctx)
     f.gui.ctx=&ctx
     defer f.gui.ctx=nil

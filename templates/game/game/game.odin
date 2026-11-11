@@ -1,6 +1,7 @@
 package game
 
 import "mirai:core"
+import cam "mirai:engine/camera"
 import destruct "plugins:destruct/runtime"
 import inp "mirai:engine/input"
 import phys "plugins:physics/runtime"
@@ -11,12 +12,12 @@ import "mirai:std/base"
 // The player is a physics character driven by the input actions move, look,
 // jump, hit (breaks the wall in front of it), save and load (the slot
 // "quick"), bound in code. assets/arena/main.scene holds a floor, a
-// spawn point with the prefab of the player, a destructible wall, a speaker
-// that plays a sound, a HUD (UI_Screen) with a pulsing badge and a sign above
-// the speaker (World_Widget); both interfaces show the Status component of
-// their entity. settings.mirai has the spawn library give each player a body
-// at that point: the player of this machine, and on a server each
-// connection. Its camera is at its eyes (Camera_Follow Eyes). It runs
+// spawn point, a destructible wall, a speaker that plays a sound, a HUD
+// (UI_Screen) with a pulsing badge and a sign above the speaker
+// (World_Widget); both interfaces show the Status component of their entity.
+// settings.mirai names the prefab of the player (Spawn_Settings.prefab): the
+// spawn library gives each player a body of it at that point, the player of
+// this machine and, on a server, each connection. Its camera is at its eyes (Camera_Follow Eyes). It runs
 // alone, as a server (--server) or as a client (--connect): the server breaks
 // the wall; every client predicts its own player. The scene and the prefab of
 // the player are files of assets/, edited through the API or the editor;
@@ -39,14 +40,14 @@ Status :: struct {
     hits:i32,
 }
 
-// The actions of the game; move and jump are of physics (phys.Walk_Action) and look of the engine
-// (inp.Look_Action).
+// The actions of the game; move and look are of the engine (inp.Move_Action, inp.Look_Action) and
+// jump of the locomotion plugin (Walk_Action).
 @(actions)
 Action :: enum u8 {Hit,Save,Load}
 
-// Their bindings. The editor (Project Settings > Input), input.set and the player write in an
-// input.mirai only what they change of these.
-action_defaults :: proc "contextless" () -> [Action]inp.Action_Default {
+// Their bindings. The editor (Project Settings > Input), settings.set and the
+// player keep in Input_Settings of settings.mirai only what they change of these.
+action_defaults :: proc "contextless" () -> [Action]inp.Action_Bindings {
     return {
         .Hit=inp.action_default(.Button,inp.binding_mouse_button(.Left),inp.binding_gamepad_axis(.Right_Trigger)),
         .Save=inp.action_default(.Button,inp.binding_key(.F5),inp.binding_gamepad_button(.Dpad_Up)),
@@ -66,12 +67,12 @@ status_show :: proc(statuses:^core.Table(Status),message:string,hit:=false) {
 // wall or a piece of it. The server decides it, and a session alone.
 @(step="fixed",server)
 game_hit :: proc(
-    players:core.Read(Player),drivables:core.Read(inp.Drivable),worlds:core.Read(core.World_Transform),
+    players:^core.Table(Player,.Read),sight:cam.Sight,
     actions:inp.Input_Of(Action),physics:core.Ref(phys.Physics_State),damage:^destruct.Destruct_Requests,
 ) {
     for row in 0..<core.count(players) {
         e:=core.entity_at(players,row)
-        eye,ahead,aimed:=inp.aim(drivables,worlds,e)
+        eye,ahead,aimed:=cam.aim(sight,e)
         if !aimed || !inp.pressed(actions,e,.Hit) {continue}
         if hit,found:=phys.raycast(physics,eye,ahead,HIT_REACH,e);found {destruct.damage(damage,hit.entity,hit.point,HIT_RADIUS,ahead*HIT_IMPULSE)}
     }

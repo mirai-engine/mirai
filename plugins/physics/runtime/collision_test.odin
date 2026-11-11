@@ -183,7 +183,7 @@ a_setting_or_a_collider_of_an_undeclared_value_is_a_problem :: proc(t:^testing.T
         if base.text_get(p.code[:])=="physics.collision" {collider_problem=p.entity==e && strings.contains(text,"preset 12")}
     }
     testing.expect(t,settings_problem && collider_problem)
-    testing.expect_value(t,link_find(&f.state,e).filter,Collision_Filter{layers=1,block=COLLISION_LAYERS_ALL})
+    testing.expect_value(t,sim.shape_filter(&f.state.world,link_find(&f.state,e).shape),Collision_Filter{layers=1,block=COLLISION_LAYERS_ALL})
 }
 
 @(test)
@@ -262,8 +262,7 @@ a_character_takes_its_capsule_and_its_collision_from_its_collider :: proc(t:^tes
     testing.expect(t,desc.mass>100 && desc.mass<1000)
     created:=f.state.stats.characters_created
     core.edit(&f.colliders,e).collides=COLLISION_LAYERS_ALL
-    // The locomotion writes the rest of the row every tick; that does not make it again.
-    core.edit(&f.characters,e).coyote=0.05
+    // A change of its collision filters it again, without making it again.
     physics_test_step(&f,0)
     testing.expect_value(t,f.state.stats.characters_created,created)
     current,_:=core.get(&f.colliders,e)

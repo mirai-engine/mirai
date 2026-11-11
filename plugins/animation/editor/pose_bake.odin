@@ -53,11 +53,8 @@ pose_bake_state :: proc(world:core.World_Ref,entity:core.Entity) -> ^anim.Playin
 // first sample (Preserve) or the pinned reference (In_Place), with what modifiers changed.
 @(private)
 pose_bake_root :: proc(call:^api.Call,world:core.World_Ref,state:^anim.Playing,root:^Pose_Bake_Root_State,origin:[]mm.Transform,mode:Pose_Bake_Root) -> (mm.Transform,bool) {
-    transforms:=core.read(core.world_table_of(world,core.Transform))
-    active:=state.base_root;has_root:=state.has_base_root
-    // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
-    if state.has_action_root {active=state.action_root;has_root=true}
-    if state.has_action_in_place {active=state.action_in_place_root;has_root=true}
+    transforms:=core.world_table_of(world,core.Transform)
+    active:=state.root;has_root:=active.translation || active.rotation
     if has_root && (active.translation || active.rotation) {
         bone,_,ok:=anim.animation_root_reference(state,active,state.sampled[:],transforms)
         if !ok || bone>=len(origin) {authoring_failure(call,"root_motion","Missing_Bone","a resolved root bone","unbound root","The effective root could not be baked");return {},false}
@@ -90,7 +87,7 @@ pose_bake_morph_tracks :: proc(call:^api.Call,world:core.World_Ref,app:^host.App
     playback:=core.world_storage_of(world,anim.Morph_Playback)
     if playback==nil {return true}
     skin:=core.world_storage_of(core.world_ref(app.shared,world.info,.Shared),anim.Skin_Runtime);if skin==nil {return true}
-    configs:=core.read(core.world_table_of(world,anim.Morph_Weights));targets:=core.read(core.world_table_of(world,anim.Animation_Target))
+    configs:=core.world_table_of(world,anim.Morph_Weights);targets:=core.world_table_of(world,anim.Animation_Target)
     for &state in playback.states {
         if state.source!=rig && state.entity!=rig && (state.source!=core.NONE || !within(world,state.entity,rig)) {continue}
         if state.error!=.None && state.error!=.Unknown_Target || int(state.rig)>=len(skin.rigs) || len(state.current)!=len(skin.rigs[state.rig].morphs) {authoring_failure(call,"morphs","Evaluation_Failed","resolved morph targets and finite final weights",fmt.tprintf("%v",state.error),"A morph instance could not be baked");return false}
@@ -127,7 +124,7 @@ pose_bake_sample :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,e
     for binding,b in state.bindings {
         path:=""
         if skeleton!=nil {if b==0 {if binding.driven=={} {continue}} else {if b>len(skeleton.bones) {return false};path=base.text_get(skeleton.bones[b-1].path[:])}} else if binding.entity!=entity {
-            if target,found:=editor.entity_get(world,binding.entity,anim.Animation_Target);found {path=base.text_get(target.path[:])} else {path=core.name_get(core.read(core.world_table_of(world,core.Name)),binding.entity)}
+            if target,found:=editor.entity_get(world,binding.entity,anim.Animation_Target);found {path=base.text_get(target.path[:])} else {path=core.name_get(core.world_table_of(world,core.Name),binding.entity)}
             if path=="" || base.name_hash(path)!=binding.target {authoring_failure(call,"bones","Missing_Path","Animation_Target paths for all rigid nodes",path,"Assign a path before baking this node");return false}
         }
         for property in 0..<3 {if !pose_bake_track(call,&tracks,path,lib.Property(property),0,frames,bone=b) {return false}}
@@ -173,7 +170,7 @@ pose_bake_sample :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,e
             for track in tracks {if track.bone==root.bone {base.text_set(root_metadata.bone[:],track.desc.target);break}}
             root_metadata.translation,root_metadata.rotation=root.root.translation,root.root.rotation
         }
-        if events:=core.world_storage_of(world,anim.Animation_Events);events!=nil {crossed:=core.events_since(events.queue,&cursor);if frame>0 {for event in crossed {
+        if events:=core.world_storage_of(world,anim.Animation_Events);events!=nil {crossed,_:=core.log_since(events.queue.log,&cursor);if frame>0 {for event in crossed {
             if event.entity!=entity || event.kind!=.Marker {continue}
             name:=preview_marker_name(preview_trace_source_view(&trace,event.animation),event.name)
             if name[0]==0 {authoring_failure(call,"markers","Missing_Name","a source name for every crossed marker",fmt.tprintf("%x",event.name),"A marker name could not be resolved");return false}

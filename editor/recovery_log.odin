@@ -34,7 +34,7 @@ RECOVERY_LOG_SYNC :: u64(100_000_000)        // ns
 RECOVERY_COPY_INTERVAL :: u64(60_000_000_000) // ns: a copy follows a change it lacks after this
 RECOVERY_LOG_BYTES :: 16<<20                 // a log of the copy this long asks for a copy at once
 @(private) RECOVERY_LOG_MAGIC :: u32(0x4c52494d)
-@(private) RECOVERY_LOG_VERSION :: u32(1)
+@(private) RECOVERY_LOG_VERSION :: u32(2)
 
 // What a generation follows: a copy of recovery that names it, or the saved file of the document.
 Recovery_Base :: enum u8 {Copy,Source}
@@ -252,12 +252,11 @@ recovery_log_write :: proc(s:^Session) {
     if ops.count==0 {return}
     out:serial.Writer
     serial.writer_init(&out,0,context.temp_allocator)
-    for message in collab_ops_pack(&ops,.Edit,0) {
-        serial.write_scalar(&out,u32(len(message)))
-        serial.write_scalar(&out,hash.crc32(message))
-        serial.write_bytes(&out,message)
-        l.records+=1
-    }
+    message:=collab_ops_pack(&ops,.Edit,0)
+    serial.write_scalar(&out,u32(len(message)))
+    serial.write_scalar(&out,hash.crc32(message))
+    serial.write_bytes(&out,message)
+    l.records+=1
     bytes:=serial.writer_bytes(&out)
     if _,error:=os.write(l.file,bytes);error!=nil {recovery_log_failed(s);return}
     l.bytes+=len(bytes)
@@ -278,7 +277,7 @@ recovery_log_update :: proc(s:^Session) {
     if l.sync_due!=0 && platform.clock_ns()>=l.sync_due && !l.sync.busy && l.file!=nil {
         l.sync_due=0
         l.sync={busy=true,file=l.file}
-        jobs.run(&s.app.jobs,jobs.OWNER,recovery_log_sync_run,&l.sync,&l.sync.counter)
+        jobs.run(&s.app.jobs,jobs.OWNER,.Background,recovery_log_sync_run,&l.sync,&l.sync.counter)
         if jobs.worker_count(&s.app.jobs)==1 {recovery_log_sync_collect(s,true)}
     }
 }

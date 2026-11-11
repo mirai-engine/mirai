@@ -134,11 +134,16 @@ spreads its work with `std/jobs`, as their owner (`jobs.OWNER`).
 **Game loop.**
 
 - It adds the `dt` of the frame times `1 + Frame_Time.dilation` and times the `core.Clock` of the
-  world (zero when paused) to `Frame_Time.accumulator` and simulates
-  `due = accumulator / tick_dt` ticks, at most `max_ticks_per_frame`; the rest is discarded and
-  counted in `ticks_dropped`. A world without `core.Time` or without `core.Frame_Time` does not run
-  the game loop. After each tick it subtracts `tick_dt` and advances the clock with
-  `core.time_advance`.
+  world (zero when paused) to `Frame_Time.accumulator` and simulates the ticks it completes, at
+  most `max_ticks_per_frame`; the rest is discarded and counted in `ticks_dropped`. A world
+  without `core.Time` or without `core.Frame_Time` does not run the game loop. After each tick it
+  subtracts `tick_dt` and advances the clock with `core.time_advance`.
+- The count of ticks per frame is kept steady (`ticks_steady`, after Godot's `MainTimerSync`):
+  while the last frames ran a typical count and the clock is within half a tick of it, a tick runs
+  that much early or late instead of frames alternating 0 and 2 ticks under timer jitter. Time is
+  never lost: the accumulator keeps the truth and `Frame_Time.lag` shifts the shown time so
+  `alpha` advances evenly between the last two ticks. Every world runs it, a server's too: what a
+  tick computes never depends on when it runs, and a recorded frame replays its count of ticks.
 - With `step=true`, `app_game_frame` runs one tick however long the frame lasts and without
   dilation: a world that advances only when asked (the steps of the editor and of agents).
 - The input of the ticks (`input_from_platform` plus that of the script) goes to `core.Input`: the
@@ -354,7 +359,7 @@ of pieces) is not a fixed cap, and a frame that does not load does not allocate.
   - A texture of more than `LOAD_FRAME_BYTES` that a load takes over several frames
     (`assets_take(..., over_frames=true)`) costs in its frame only its levels of side
     `TEXTURE_TAIL` (`assets_prepared_cost`); the others go up with the renderer's uploads
-    ([residency](../../mirai-rendering/references/materials.md#residency-by-distance)) and the
+    ([residency](../../mirai-rendering/references/materials.md#residency-by-sampling)) and the
     load ends when they have gone up (`app_assets_uploading`). Without room in that queue, it waits
     a frame. Whoever needs the result right away takes it whole.
   - A mesh that gives the pools more than `LOAD_FRAME_BYTES` right away (with skeleton, morphs,
@@ -470,8 +475,8 @@ row.
 - BC textures on a device that does not sample them are decoded to RGBA8, and BC6H to RGBA16F. An
   array or a cube is loaded whole; where a 2D image is sampled (material, program parameter, UI,
   decal, sky) it is `Unsupported` (`assets_texture_image`). The levels of a single-layer texture
-  follow its distance
-  ([residency](../../mirai-rendering/references/materials.md#residency-by-distance)):
+  follow what the GPU samples of it
+  ([residency](../../mirai-rendering/references/materials.md#residency-by-sampling)):
   `app_textures_stream` reads them from its file in jobs between frames and shares with the loads
   their part of each frame.
 

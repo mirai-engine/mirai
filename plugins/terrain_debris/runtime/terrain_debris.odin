@@ -28,9 +28,9 @@ Terrain_Debris :: struct {
 }
 
 Debris_Layer :: struct {
-    piece:base.Asset_Id `mirai:"kind=prefab"`, // a prefab with a Rigid_Body; none: no pieces
+    piece:base.Asset_Id `mirai:"kind=.scene"`, // a prefab with a Rigid_Body; none: no pieces
     piece_volume:f32 `mirai:"min=0,unit=m3"`, // cubic metres taken for each piece
-    drop:base.Asset_Id `mirai:"kind=prefab"`,  // a prefab to pick up; none: no drops
+    drop:base.Asset_Id `mirai:"kind=.scene"`,  // a prefab to pick up; none: no drops
     drop_volume:f32 `mirai:"min=0,unit=m3"`,  // cubic metres taken for each drop
 }
 
@@ -55,7 +55,7 @@ Owed :: struct {
 
 @(step="fixed",loops="game",stage="react")
 terrain_debris :: proc(
-    commands:core.Commands,assets:^host.Assets,digs:core.Ref(terrain.Terrain_Digs),debris:core.Read(Terrain_Debris),
+    commands:core.Commands,assets:^host.Assets,digs:core.Ref(terrain.Terrain_Digs),debris:^core.Table(Terrain_Debris,.Read),
     owed:^Debris_Owed,bodies:^phys.Body_Requests,network:core.Network,time:core.Time,problems:^core.Problems,
 ) {
     if network.role==.Client || len(digs.digs.items)==0 {return}
@@ -108,7 +108,7 @@ debris_count :: proc "contextless" (owed:^f32,taken,volume:f32,room:^u32) -> (co
 // The slot of the owed cubic metres of a terrain; one of a terrain that lost
 // its Terrain_Debris is taken back. -1 when all are taken.
 @(private)
-owed_of :: proc(owed:^Debris_Owed,owner:core.Entity,debris:core.Read(Terrain_Debris)) -> int {
+owed_of :: proc(owed:^Debris_Owed,owner:core.Entity,debris:^core.Table(Terrain_Debris,$A)) -> int {
     for i in 0..<owed.count {if owed.terrains[i].owner==owner {return i}}
     for i in 0..<owed.count {
         if !core.has(debris,owed.terrains[i].owner) {owed.terrains[i]={owner=owner};return i}

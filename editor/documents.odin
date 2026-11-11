@@ -180,14 +180,14 @@ document_holds_file :: proc(s:^Session,path:string) -> bool {
 document_scene_tab :: proc(s:^Session) -> int {
     for &tab,index in s.documents {
         d:=index==s.active_document?s.document:&tab.document
-        if d.previous==nil || .One_Root not_in d.previous.doc.flags {return index}
+        if !d.prefab {return index}
     }
     return -1
 }
 
-// Whether the file a path names is a prefab, as the registry has it; a path that names no file yet is none.
+// Whether the file a path names is a prefab, as its header says; a path that names no file yet is none.
 path_is_prefab :: proc(s:^Session,path:string) -> bool {
-    if s.app.assets==nil {return false}
+    if s.app==nil || s.app.assets==nil {return false}
     file,found:=asset.registry_find_path(&s.app.assets.registry,scene_path(s,scene_file(s,path)))
     return found && asset.registry_prefab(file)
 }
@@ -322,7 +322,7 @@ strip_tab :: proc(s:^Session,index:int) -> (tab:Strip_Tab) {
     d,e:=s.document,s.edits
     if index!=s.active_document && index<len(s.documents) {d,e=&s.documents[index].document,&s.documents[index].edits}
     tab.label=document_title(d)
-    tab.icon=d.previous!=nil && .One_Root in d.previous.doc.flags?.Prefab:.Scene
+    tab.icon=d.prefab?.Prefab:.Scene
     tab.dirty=d.unsaved || history.edits_scene_state(e)!=d.saved || document_uses_unsaved(s,index)
     tab.active=index==s.active_document && !scene_covered(s)
     return
@@ -330,8 +330,8 @@ strip_tab :: proc(s:^Session,index:int) -> (tab:Strip_Tab) {
 
 @(private)
 document_tab_width :: proc(s:^Session,tab:Strip_Tab,room:f32) -> f32 {
-    width:=ui.text_width(&s.gui.ctx.font,tab.label,s.gui.ctx.theme.font)+54
-    if tab.dirty {width+=ui.text_width(&s.gui.ctx.font," •",s.gui.ctx.theme.font)}
+    width:=ui.text_width(&s.gui.ctx.font,tab.label,ui.metric(s.gui.ctx,"font"))+54
+    if tab.dirty {width+=ui.text_width(&s.gui.ctx.font," •",ui.metric(s.gui.ctx,"font"))}
     return clamp(width,90,max(room,90))
 }
 
@@ -365,14 +365,14 @@ documents_build :: proc(s:^Session) {
     g.documents_width=available
     if ctx.wheel_target==strip_id {
         delta:=ctx.input.wheel.x!=0?ctx.input.wheel.x:ctx.input.wheel.y
-        g.documents_scroll-=delta*ctx.theme.wheel_step
+        g.documents_scroll-=delta*ui.WHEEL_STEP
     }
     g.documents_scroll=clamp(g.documents_scroll,0,limit)
     if ui.box(ctx,{id=id,width=ui.GROW,height=ui.GROW,gap=3,align_y=.End,track=true}) {
         if overflow {
             previous:=shell_id(g,"documents_previous")
             named_add(g,previous)
-            if ui.button(ctx,previous,{label="←",tip="Previous documents",style=.Ghost,width=22,height=28,size=ctx.theme.font,disabled=g.documents_scroll<=0}).clicked {
+            if ui.button(ctx,previous,{label="←",tip="Previous documents",variant="ghost",width=22,height=28,size=ui.metric(ctx,"font"),disabled=g.documents_scroll<=0}).clicked {
                 g.documents_scroll=max(g.documents_scroll-max(strip_width*0.6,90),0)
             }
         }
@@ -394,23 +394,23 @@ documents_build :: proc(s:^Session) {
                 }
                 surface:=ui.interact(ctx,surface_id,{.Focusable})
                 hot:=surface.hot || ctx.hot==tab_id || ctx.hot==close_id
-                fill:=active?ctx.theme.panel:ctx.theme.bar_bottom
-                if hot {fill=active?ui.color_shade(fill,1.15):ctx.theme.field_hover}
-                text_color:=active || hot?ctx.theme.text:ctx.theme.text_muted
-                appearance:=ui.Node_Style{text={size=ctx.theme.font,color=text_color}}
+                fill:=active?ui.tone(ctx,"panel"):ui.tone(ctx,"bar_bottom")
+                if hot {fill=active?ui.color_shade(fill,1.15):ui.tone(ctx,"field_hover")}
+                text_color:=active || hot?ui.tone(ctx,"text"):ui.tone(ctx,"text_muted")
+                appearance:=ui.Node_Style{text={size=ui.metric(ctx,"font"),color=text_color}}
                 // The whole height of the bar takes its clicks, up to the edge of the window.
-                if ui.box(ctx,{id=surface_id,width=ui.fixed(width),height=ui.fixed(ctx.theme.bar_height),align_y=.Center}) {
-                    if ui.box(ctx,{id=shell_id(g,"document_look",index+1),track=true,width=ui.fixed(width),height=ui.fixed(active?ctx.theme.bar_height:ctx.theme.control),gap=1,padding={2,0,2,0},align_y=.Center,fill=fill,radius=4}) {
+                if ui.box(ctx,{id=surface_id,width=ui.fixed(width),height=ui.fixed(ui.metric(ctx,"bar_height")),align_y=.Center}) {
+                    if ui.box(ctx,{id=shell_id(g,"document_look",index+1),track=true,width=ui.fixed(width),height=ui.fixed(active?ui.metric(ctx,"bar_height"):ui.metric(ctx,"control")),gap=1,padding={2,0,2,0},align_y=.Center,fill=fill,radius=4}) {
                         if active {
                             if ui.box(ctx,{width=ui.fixed(width),height=ui.fixed(4),fill=fill,float={to=.Parent,anchor=.Bottom_Left,pivot=.Bottom_Left,layer=ui.LAYER_BAR}}) {}
                         }
-                        if ui.button(ctx,tab_id,{label=label,icon=tab.icon,width=-1,height=ctx.theme.control,size=ctx.theme.font,icon_size=12,look=&appearance}).clicked || surface.clicked {
+                        if ui.button(ctx,tab_id,{label=label,icon=tab.icon,width=-1,height=ui.metric(ctx,"control"),size=ui.metric(ctx,"font"),icon_size=12,look=&appearance}).clicked || surface.clicked {
                             switch {
                             case tab.asset>=0: asset_document_request(s,tab.asset)
                             case:              s.document_request=index;s.requests+={.Document_Switch}
                             }
                         }
-                        close:=ui.Node_Style{fill=ctx.hot==close_id?ui.color_alpha(ctx.theme.text,65):ui.Color{},radius=12,text={color=text_color}}
+                        close:=ui.Node_Style{fill=ctx.hot==close_id?ui.color_alpha(ui.tone(ctx,"text"),65):ui.Color{},radius=12,text={color=text_color}}
                         if ui.button(ctx,close_id,{icon=.Cross,width=19,height=19,icon_size=10,icon_color=text_color,look=&close}).clicked {
                             switch {
                             case tab.asset>=0: s.asset_request=tab.asset;s.requests+={.Asset_Close}
@@ -425,7 +425,7 @@ documents_build :: proc(s:^Session) {
         if overflow {
             next:=shell_id(g,"documents_next")
             named_add(g,next)
-            if ui.button(ctx,next,{label="→",tip="Next documents",style=.Ghost,width=22,height=28,size=ctx.theme.font,disabled=g.documents_scroll>=limit}).clicked {
+            if ui.button(ctx,next,{label="→",tip="Next documents",variant="ghost",width=22,height=28,size=ui.metric(ctx,"font"),disabled=g.documents_scroll>=limit}).clicked {
                 g.documents_scroll=min(g.documents_scroll+max(strip_width*0.6,90),limit)
             }
         }
@@ -433,7 +433,7 @@ documents_build :: proc(s:^Session) {
 }
 
 document_is_prefab :: proc(s:^Session) -> bool {
-    return s.document!=nil && s.document.previous!=nil && .One_Root in s.document.previous.doc.flags
+    return s.document!=nil && s.document.prefab
 }
 
 // Who loses what they do when the scene changes, for the question that asks

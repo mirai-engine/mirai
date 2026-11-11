@@ -41,7 +41,7 @@ commands_test_open :: proc(t:^testing.T,f:^Commands_Test) -> bool {
     core.add(&f.world.names,f.entity,core.name_make("Object"))
     core.add(&f.world.transforms,f.entity,core.TRANSFORM_IDENTITY)
     core.test_world_settle(&f.world)
-    testing.expect(t,ui.context_init(&f.ctx,{}))
+    testing.expect(t,test_ui_init(&f.ctx,{}))
     f.g={ctx=&f.ctx,layout={left_open=true,right_open=true}}
     viewport_init(&f.viewport)
     f.s=Session{info=core.test_world_info(&f.world),edit_world=&f.world,headless=true,app=&f.app,gui=&f.g,viewport=&f.viewport,selection=&f.selection,inspector=&f.inspector,edits=&f.edits,document=&f.document,build=&f.build,ai=&f.ai,finder=&f.finder,graphics=&f.graphics,materials=&f.materials,content=&f.content}

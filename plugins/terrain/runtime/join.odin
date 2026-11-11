@@ -80,10 +80,10 @@ join_band_chunk :: proc "contextless" (s:^Source,index:int,level:u8) -> bool {
 // grid while the page is in its block.
 join_height :: proc "contextless" (g:^Source,x,z:int) -> f32 {
     x,z:=clamp(x,0,int(g.samples.x)-1),clamp(z,0,int(g.samples.z)-1)
-    if grid_absent(&g.heights,x/PAGE+g.heights.counts.x*(z/PAGE)) {
+    if grid_absent(&g.field,x/PAGE+g.field.counts.x*(z/PAGE)) {
         if !grid_none(&g.coarse.heights) {return coarse_height(g,x,z)}
     }
-    return grid_get(&g.heights,x,z)
+    return grid_get(&g.field,x,z)
 }
 
 // The distance of a sample of a Volume to the ground of the Heightfield it
@@ -128,10 +128,10 @@ source_volume_ground :: proc(s:^Source,join:Chunk_Join) -> bool {
     }
     ground:=Ground{s,join}
     next:Grid(f32)
-    if !grid_init(&next,s.distances.size,s.cell*SDF_BAND_CELLS,s.allocator) {return false}
+    if !grid_init(&next,s.field.size,s.cell*SDF_BAND_CELLS,s.allocator) {return false}
     if !grid_generate(&next,&ground,page,s.allocator) {grid_destroy(&next,s.allocator);return false}
-    grid_destroy(&s.distances,s.allocator)
-    s.distances=next
+    grid_destroy(&s.field,s.allocator)
+    s.field=next
     return true
 }
 
@@ -139,9 +139,9 @@ source_volume_ground :: proc(s:^Source,join:Chunk_Join) -> bool {
 // each joined Volume stands on and the cuts of the pieces of that
 // Heightfield. A join that changes marks the levels to be chosen again.
 @(private)
-resident_joins :: proc(resident:^Terrain_Resident,data:^Terrain_Data,terrains:core.Read(Terrain),ids:core.Read(core.Id),worlds:core.Read(core.World_Transform),locals:core.Read(core.Transform),problems:^core.Problems) {
+resident_joins :: proc(resident:^Terrain_Resident,data:^Terrain_Data,terrains:^core.Table(Terrain,$A),ids:^core.Table(core.Id,$B),worlds:^core.Table(core.World_Transform,$C),locals:^core.Table(core.Transform,$D),problems:^core.Problems) {
     // An entity without a World_Transform is a root: its Transform is where it is.
-    place :: proc(worlds:core.Read(core.World_Transform),locals:core.Read(core.Transform),e:core.Entity) -> (mm.Transform,bool) {
+    place :: proc(worlds:^core.Table(core.World_Transform,$A),locals:^core.Table(core.Transform,$B),e:core.Entity) -> (mm.Transform,bool) {
         if world,found:=core.get(worlds,e);found {return world.transform,true}
         local,found:=core.get(locals,e)
         return mm.Transform(local),found

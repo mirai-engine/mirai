@@ -52,7 +52,7 @@ morph_entity_id :: proc(w:core.World_Ref,e:core.Entity) -> base.Entity_Id {value
 morph_instance_source :: proc(w:core.World_Ref,e:core.Entity,config:anim.Morph_Weights) -> (core.Entity,Morph_Source_Kind) {
     animations,sources,parents:=core.world_table_of(w,anim.Animation),core.world_table_of(w,anim.Pose_Source),core.world_table_of(w,core.Parent)
     if animations==nil || sources==nil || parents==nil {return core.NONE,.None}
-    source:=anim.morph_source(e,config,core.read(animations),core.read(sources),core.read(parents),core.world_storage_of(w,anim.Playback))
+    source:=anim.morph_source(e,config,animations,sources,parents,core.world_storage_of(w,anim.Playback))
     if source==core.NONE {return source,.None}
     if config.source!=core.NONE {return source,.Explicit}
     if source==e {return source,.Own}

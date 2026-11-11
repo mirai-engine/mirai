@@ -22,8 +22,8 @@ Pose_Bake_Test_World :: struct {
     meshes:core.Table(erender.Mesh_Renderer),morph_weights:core.Table(anim.Morph_Weights),sources:core.Table(anim.Pose_Source),
     attachments:core.Table(anim.Bone_Attachment),
     playback:anim.Playback,requests:anim.Animation_Requests,events:anim.Animation_Events,constraints:anim.Animation_Constraints,
-    modifier_runtime:anim.Modifier_Runtime,modifier_requests:anim.Modifier_Requests,grounding:anim.Grounding_Runtime,morphs:anim.Morph_Playback,
-    actions:anim.Action_Runtime,motion_requests:anim.Motion_Requests,
+    modifier_runtime:anim.Modifier_Runtime,grounding:anim.Grounding_Runtime,morphs:anim.Morph_Playback,
+    actions:anim.Action_Runtime,motion:anim.Motion_Runtime,played:core.Table(anim.Animation_Played),remotes:core.Table(core.Remote),
     hierarchy:core.Hierarchy,propagation:core.Propagation,jumps:core.Jumps,
     progress:core.Table(anim.Animation_Progress),time:core.Time,frame:core.Frame_Time,world_id:core.World_Id,
 }
@@ -42,13 +42,13 @@ pose_bake_failing_copy_allocator :: proc(data:rawptr,mode:runtime.Allocator_Mode
 @(private)
 pose_bake_test_sample :: proc(data,shared,editor,app_data:rawptr) {
     w,s,app:=(^Pose_Bake_Test_World)(data),(^Pose_Bake_Test_Shared)(shared),(^host.App)(app_data)
-    anim.animation_sample(core.read(&w.animations),&w.progress,core.read(&w.attachments),&w.transforms,core.read(&w.parents),core.ref(&w.hierarchy),core.read(&w.names),core.read(&w.targets),core.read(&w.meshes),core.read(&w.sources),&w.requests,&w.events,&w.modifier_requests,&w.modifier_runtime,&w.playback,&s.characters,&s.skeletons,app,w.time,w.frame,host.app_world_storage(app,data,core.Problems),&w.actions,nil,&w.motion_requests,&s.sources,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
+    anim.animation_sample(core.read(&w.animations),&w.progress,&w.played,core.read(&w.attachments),&w.transforms,core.read(&w.parents),core.ref(&w.hierarchy),core.read(&w.names),core.read(&w.targets),core.read(&w.meshes),core.read(&w.sources),core.read(&w.remotes),&w.requests,&w.events,&w.modifier_runtime,&w.playback,&s.characters,&s.skeletons,app,w.time,w.frame,host.app_world_storage(app,data,core.Problems),&w.actions,&w.motion,&s.sources,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
     core.settle(app.info,data,editor)
 }
 @(private)
 pose_bake_test_advance :: proc(data,shared,editor,app_data:rawptr) {
     w,s,app:=(^Pose_Bake_Test_World)(data),(^Pose_Bake_Test_Shared)(shared),(^host.App)(app_data)
-    anim.animation_advance(&w.transforms,core.read(&w.parents),core.read(&w.worlds),&w.modifier_requests,&w.modifier_runtime,&w.playback,&w.constraints,&w.grounding,{},{},w.time,&w.requests,core.ref(&s.skeletons),host.app_world_storage(app,data,core.Problems),nil,&s.characters,{},{},core.CLOCK_DEFAULT,nil)
+    anim.animation_advance(&w.transforms,core.read(&w.parents),core.read(&w.worlds),&w.requests,&w.modifier_runtime,&w.playback,&w.constraints,&w.grounding,{},{},w.time,core.ref(&s.skeletons),host.app_world_storage(app,data,core.Problems),&w.motion,&s.characters,{},{},core.CLOCK_DEFAULT,nil)
     core.settle(app.info,data,editor)
 }
 @(private)
@@ -157,7 +157,7 @@ pose_bake_samples_final_constraints_curves_markers_root_and_exact_partial_endpoi
     before:=f.world.transforms.values[1]
     result=authoring_test_execute(a,"bake",`{"entity":"0000000000000011","path":"final.anim","clip":"Baked","start":0.2,"end":0.57,"rate":10,"goals":[{"kind":"IK","name":"joint4","target":{"position":[1,1,0]}}]}`)
     if !testing.expect(t,result.code==0,result.message) {return}
-    testing.expect(t,f.world.transforms.values[1]==before && len(f.world.playback.states)==0 && len(f.world.modifier_requests.queue.items)==0)
+    testing.expect(t,f.world.transforms.values[1]==before && len(f.world.playback.states)==0 && len(f.world.requests.goals.items)==0)
     file:asset.Asset;testing.expect_value(t,authoring_test_load(a,"final.anim",&file),asset.Error.None);defer asset.asset_close(&file)
     output,error:=asset.animation_view(&file,&a.assets.types);if !testing.expect_value(t,error,asset.Error.None) {return}
     testing.expect(t,len(output.clips)==1 && output.clips[0].root==root && len(file.dependencies)==0)

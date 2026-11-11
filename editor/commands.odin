@@ -162,6 +162,7 @@ command_state :: proc(s:^Session,name:string) -> Command_State {
 }
 
 binding_state :: proc(s:^Session,b:^Binding) -> (state:Command_State) {
+    if st:=api_state(s);st.library_generation!=s.library_generation {return {disabled=true}}
     if s.gui!=nil && s.gui.modal==.Recovery && b.name!="quit" {return {disabled=true}}
     // An asset document in front: what acts on the scene waits for it, but
     // what its plugin takes in its place.
@@ -376,11 +377,14 @@ commands_register :: proc(s:^Session,st:^Api_State) {
     reset:=ORBIT_DEFAULT
     entries:=[?]Binding{
         {name="new",method="scene.new",label="New scene",icon=user(.Scene),shortcut=key(.N,{.Primary}),menu=.File,group=0,state=state_editing},
+        {name="new_prefab",method="scene.new",params=`{"kind":"Prefab"}`,label="New prefab",icon=.Prefab,menu=.File,group=0,state=state_editing},
         {name="open",method="editor.document",params=`{"action":"Open","path":"$ask"}`,label="Open...",icon=user(.Scene),shortcut=key(.O,{.Primary}),menu=.File,group=0,state=state_editing},
         {name="projects",method="editor.view",params=`{"part":"Projects"}`,label="Open project...",icon=user(.Folder),menu=.File,group=0,state=state_projects},
         {name="save",method="scene.save",label="Save",icon=user(.Save),shortcut=key(.S,{.Primary}),menu=.File,group=1,state=state_save},
         {name="save_all",method="editor.save_all",label="Save all",icon=user(.Save),shortcut=key(.S,{.Primary,.Shift}),menu=.File,group=1,state=state_editing},
         {name="save_as",method="scene.save",params=`{"path":"$ask"}`,label="Save as...",icon=user(.Save),shortcut=key(.S,{.Primary,.Alt}),menu=.File,group=1,state=state_editing,scene=true},
+        {name="make_prefab",method="scene.write",params=`{"merge":true,"kind":"Prefab","entities":[]}`,label="Make prefab",icon=.Prefab,menu=.File,group=1,state=state_kind,scene=true},
+        {name="make_scene",method="scene.write",params=`{"merge":true,"kind":"Scene","entities":[]}`,label="Make scene",icon=user(.Scene),menu=.File,group=1,state=state_kind,scene=true},
         {name="import",method="asset.import",params=`{"path":"$ask"}`,label="Import...",icon=.Import,menu=.File,group=2,state=state_import},
         {name="build",method="build.start",label="Build",icon=user(.Hammer),shortcut=key(.B,{.Primary}),menu=.File,group=3,state=state_build},
         {name="settings",method="editor.view",params=`{"part":"Settings"}`,label="Project settings",icon=user(.Gear),menu=.File,group=3,state=state_settings},
@@ -452,6 +456,7 @@ commands_register :: proc(s:^Session,st:^Api_State) {
 // ---------------------------------------------------------------- what the entries show
 
 @(private="file") state_editing :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=s.mode!=.Edit}}
+@(private="file") state_kind :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=s.mode!=.Edit || document_is_prefab(s)==(b.name=="make_prefab")}}
 @(private="file") state_selected :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=len(s.selection.entities)==0}}
 
 @(private="file")
@@ -560,6 +565,7 @@ state_graphics :: proc(s:^Session,b:^Binding) -> Command_State {
 
 Api_Scene_New_Params :: struct {
     discard:bool `mirai:"optional,label=Drops the unsaved changes of the scene it takes the place of; without it they make it fail"`,
+    kind:Document_Kind `mirai:"optional,label=Scene: with a sky and a sun, shown in its own light; Prefab: one root, shown in the studio light and placed as instances"`,
 }
 
 Api_Group_Params :: struct {
@@ -614,7 +620,7 @@ Api_Camera_Preview_Result :: struct {
 commands_methods_register :: proc(s:^Session,st:^Api_State) {
     on:=Api_View_Params{on=true}
     tool_on_default:=Api_Tool_Params{on=true}
-    api_register(s,st,{name="scene.new",summary="An empty scene in place of the document, with an empty history. Fails with unsaved changes unless discard.",params=type_info_of(Api_Scene_New_Params),result=type_info_of(Api_File_Result),flags={.Destructive},run=api_scene_new})
+    api_register(s,st,{name="scene.new",summary="An empty scene or prefab in place of the document, with an empty history. Fails with unsaved changes unless discard.",params=type_info_of(Api_Scene_New_Params),result=type_info_of(Api_File_Result),flags={.Destructive},run=api_scene_new})
     api_register(s,st,{name="scene.group",summary="Puts entities under a new empty entity at their center, as one undo step. Returns the group.",params=type_info_of(Api_Group_Params),result=type_info_of(Api_Edit_Result),run=api_scene_group})
     api_register(s,st,{name="scene.thumbnail",summary="Takes the view of the viewport as the thumbnail of the scene of the document, which the content browser and the projects screen show.",result=type_info_of(Api_Thumbnail_Result),run=api_scene_thumbnail})
     api_register(s,st,{name="editor.copy",summary="Keeps entities for Paste of the editor (Ctrl+V), which duplicates them; scene.write with copy copies one at once.",params=type_info_of(Api_Copy_Params),result=type_info_of(Api_Copy_Result),flags={.Idempotent},run=api_editor_copy})
@@ -629,11 +635,11 @@ commands_methods_register :: proc(s:^Session,st:^Api_State) {
 api_scene_new :: proc(s:^Session,call:^api.Call) {
     if api_turn_refused(s,call,"replace the document and its history") {return}
     // A person is asked about what the scene would lose.
+    params:=api.call_params(call,Api_Scene_New_Params)
     if api_person(s) {
-        file_new(s)
+        file_new(s,params.kind==.Prefab)
         return
     }
-    params:=api.call_params(call,Api_Scene_New_Params)
     if !collab_can_open(s) {
         api.call_fail(call,api.SERVER_ERROR,"Leave the session before replacing the scene (collab.leave)")
         return
@@ -645,7 +651,7 @@ api_scene_new :: proc(s:^Session,call:^api.Call) {
     tool_preview_cancel(s)
     runs_stop(s)
     asset_document_activate(s,-1)
-    scene_new(s)
+    scene_new(s,params.kind==.Prefab)
     api_file_result(s,call)
 }
 
@@ -662,7 +668,7 @@ entities_group :: proc(s:^Session,w:core.World_Ref,entities:[]core.Entity) -> co
     for e in entities[1:] {
         if entity_parent(w,e)!=parent {parent=core.NONE;break}
     }
-    group:=entity_create(s,{preset=.Empty,parent=parent,transform={position=center,rotation=1,scale={1,1,1}}})
+    group:=entity_create(s,{name="Group",parent=parent,transform={position=center,rotation=1,scale={1,1,1}}})
     if group==core.NONE {return core.NONE}
     // The group exists once settled: its children are placed relative to where it will be.
     core.world_settle(w)

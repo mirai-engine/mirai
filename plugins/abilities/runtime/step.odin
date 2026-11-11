@@ -6,21 +6,22 @@ import "mirai:core"
 import inp "mirai:engine/input"
 import mm "mirai:std/math"
 import anim "plugins:animation/runtime"
+import locomotion "plugins:locomotion/runtime"
 import phys "plugins:physics/runtime"
 
 // What abilities_step reads of the rest of the world and asks of it.
 @(params)
 Ability_World :: struct {
     time:core.Time,
-    seats:core.Read(inp.Seat),
-    drivables:core.Read(inp.Drivable),
-    characters:core.Read(phys.Character),
-    worlds:core.Read(core.World_Transform),
-    remotes:core.Read(core.Remote),
-    paces:core.Read(core.Own_Pace), // the windows on the Own clock count the user's own time
+    seats:^core.Table(inp.Seat,.Read),
+    characters:^core.Table(phys.Character,.Read),
+    locomotions:^core.Table(locomotion.Locomotion_State,.Read), // the modes the characters are in
+    worlds:^core.Table(core.World_Transform,.Read),
+    remotes:^core.Table(core.Remote,.Read),
+    paces:^core.Table(core.Own_Pace,.Read), // the windows on the Own clock count the user's own time
     clock:core.Clock,
     physics:core.Ref(phys.Physics_State),
-    moves:^phys.Locomotion_Requests,
+    moves:^locomotion.Locomotion_Requests,
     animations:^anim.Animation_Requests,
     problems:^core.Problems,
 }
@@ -159,7 +160,7 @@ effect_apply :: proc(t:^Tick,target,source:core.Entity,effect:Ability_Effect) {
     if effect.knockback!={} && core.has(t.w.characters,target) {
         velocity:=effect.knockback
         if pose,found:=core.get(t.w.worlds,source);found && source!=core.NONE {velocity=mm.quat_rotate(pose.rotation,velocity)}
-        phys.add_move(t.w.moves,target,{velocity=velocity,ticks=u32(max(ticks_of(effect.knockback_seconds,t.dt),1)),mix=.Override,id=KNOCKBACK_ID})
+        locomotion.add_move(t.w.moves,target,{velocity=velocity,ticks=u32(max(ticks_of(effect.knockback_seconds,t.dt),1)),mix=.Override,id=KNOCKBACK_ID})
     }
 }
 
@@ -367,7 +368,7 @@ sheet_valid :: proc(t:^Tick,e:core.Entity,ref:core.Record(Ability)) -> ^Ability 
 
 @(private)
 input_state :: proc(t:^Tick,e:core.Entity,input:Ability_Input) -> inp.Action_State {
-    return inp.body_action({t.w.seats,t.w.drivables},e,input.action)
+    return inp.body_action(t.w.seats,e,input.action)
 }
 
 @(private)
@@ -413,8 +414,8 @@ start_block :: proc(w:^Ability_World,tick:u64,dt:f32,e:core.Entity,u:^Ability_Us
     if u.statuses&a.requires!=a.requires {return .Status_Missing}
     if u.statuses&a.blocked_by!=0 {return .Status_Blocked}
     if a.modes!=0 {
-        if w.characters.table==nil {return .Mode}
-        c,found:=core.get(w.characters,e)
+        if w.locomotions==nil {return .Mode}
+        c,found:=core.get(w.locomotions,e)
         if !found || u32(c.mode)>=32 || a.modes&Ability_Modes(u32(1)<<u32(c.mode))==0 {return .Mode}
     }
     for c in a.conditions {
@@ -473,7 +474,7 @@ ability_end :: proc(t:^Tick,e:core.Entity,u:^Ability_User,a:^Ability,at:Ability_
         for &w,i in a.windows {
             if !ability_window_open(w,t.dt,at) {continue}
             event_push(t,{kind=.Window_End,entity=e,ability=ref,window=i8(i),cue=w.cue})
-            if w.move.velocity!={} {phys.remove_moves(t.w.moves,e,MOVE_ID+u32(i))}
+            if w.move.velocity!={} {locomotion.remove_moves(t.w.moves,e,MOVE_ID+u32(i))}
         }
         if kind!=.Completed || a.hold {
             if name:=ability_name_text(&a.action);name!="" && (next==nil || ability_name_text(&next.action)!=name) {anim.stop(t.w.animations,e,name)}
@@ -512,12 +513,12 @@ windows_advance :: proc(t:^Tick,e:core.Entity,u:^Ability_User,a:^Ability,before,
                 ticks:=u32(to-from)
                 // On the Own clock it lasts until the window closes, which removes it.
                 if w.clock==.Own {ticks=u32(math.ceil(f32(to-from)/max(pace_tick(t,e),1.0/64)))}
-                phys.add_move(t.w.moves,e,{velocity=velocity,ticks=ticks,mix=w.move.mix,id=MOVE_ID+u32(i)})
+                locomotion.add_move(t.w.moves,e,{velocity=velocity,ticks=ticks,mix=w.move.mix,id=MOVE_ID+u32(i)})
             }
         }
         if was && !is {
             event_push(t,{kind=.Window_End,entity=e,ability=u.ability,window=i8(i),cue=w.cue})
-            if w.clock==.Own && w.move.velocity!={} {phys.remove_moves(t.w.moves,e,MOVE_ID+u32(i))}
+            if w.clock==.Own && w.move.velocity!={} {locomotion.remove_moves(t.w.moves,e,MOVE_ID+u32(i))}
         }
     }
 }

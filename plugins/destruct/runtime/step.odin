@@ -10,16 +10,15 @@ import "mirai:std/jobs"
 import "mirai:std/base"
 import mm "mirai:std/math"
 
-// Keeps the destructibles of the simulation equal to the Destructible rows,
-// applies the damage the game asks for, and keeps what draws them equal to
-// what the simulation says became of their pieces. A destructible is a
-// breakable body of the simulation of physics, so its pieces collide with
-// everything else and break in the step that hits them, and its bodies name
-// the entity of the destructible. What decides the groups is the state of the
-// simulation, never the event that changed it: the revision of the
-// destructible says when to look again, so a world that went back in time is
-// mirrored like any other.
-// The server of a network session is the one that damages; net.odin replicates it.
+// A destructible is a breakable body of the simulation of physics, so its
+// pieces collide with everything else and break in the step that hits them,
+// and its bodies name the entity of the destructible. This library makes the
+// breakable again when what it is made from changes, applies the damage the
+// game asks for, and keeps what draws it equal to what the simulation says
+// became of its pieces: the revision of the breakable says when to look again,
+// so a world that went back in time is drawn like any other. Physics writes
+// the Transform of the destructible and of its groups, proxies of its bodies.
+// The server of a network session is the one that damages.
 
 @(private)
 Ctx :: struct {
@@ -33,13 +32,13 @@ Ctx :: struct {
     es:^core.Entities,
     commands:core.Commands,
     authority:core.Network_Role, // in a network session the server damages, and a client only applies what it is told
-    destructibles:core.Read(Destructible),
-    colliders:core.Read(physics.Collider),
+    destructibles:^core.Table(Destructible,.Read),
+    colliders:^core.Table(physics.Collider,.Read),
+    rigids:^core.Table(physics.Rigid_Body,.Read),
     collision:^physics.Collision_Settings,
     meshes:^core.Table(render.Mesh_Renderer),
     tints:^core.Table(render.Tint),
-    parents:core.Read(core.Parent),
-    locals:core.Read(core.Transform),
+    parents:^core.Table(core.Parent,.Read),
     states:^core.Table(Destructible_State),
     groups:^core.Table(Destructible_Group),
     elsewhere:^core.Table(render.Drawn_Elsewhere),
@@ -56,10 +55,10 @@ Ctx :: struct {
 destruct_step :: proc(
     state:^physics.Physics_State,cache:^Destruct_Cache,requests:^Destruct_Requests,events:^Destruct_Events,
     authority:core.Ref(core.Network),assets:^host.Assets,job_system:^jobs.Job_System,time:core.Time,commands:core.Commands,
-    destructibles:core.Read(Destructible),meshes:^core.Table(render.Mesh_Renderer),tints:^core.Table(render.Tint),parents:core.Read(core.Parent),
+    destructibles:^core.Table(Destructible,.Read),meshes:^core.Table(render.Mesh_Renderer),tints:^core.Table(render.Tint),parents:^core.Table(core.Parent,.Read),
     states:^core.Table(Destructible_State),groups:^core.Table(Destructible_Group),
     elsewhere:^core.Table(render.Drawn_Elsewhere),transforms:^core.Table(core.Transform),ids:^core.Table(core.Id),
-    colliders:core.Read(physics.Collider),collision:core.Ref(physics.Collision_Settings),problems:^core.Problems,
+    colliders:^core.Table(physics.Collider,.Read),rigids:^core.Table(physics.Rigid_Body,.Read),collision:core.Ref(physics.Collision_Settings),problems:^core.Problems,
 ) {
     if cache==nil || !state.ready || !time.playing || time.dt<=0 {return}
     room:=physics.breakable_room(core.ref(state))
@@ -71,128 +70,152 @@ destruct_step :: proc(
     waiting:=core.take(&requests.waiting)
     replays:=core.take(&requests.replays)
     states_asked:=core.take(&requests.states)
-    if physics.simulation_replaced(state,&cache.epoch) {cache_reset(assets,job_system,cache)}
+    // A simulation that replaced the one the cache was made for holds the destructibles as they were there.
+    replaced:=physics.simulation_replaced(state,&cache.epoch)
+    if replaced {cache_reset(assets,job_system,cache)}
     cache.pass+=1
     c:=Ctx{
         state=state,view=core.ref(state),cache=cache,events=events,assets=assets,job_system=job_system,time=time,es=commands.entities,commands=commands,
         authority=authority.role,
-        destructibles=destructibles,colliders=colliders,collision=collision.ptr,meshes=meshes,tints=tints,parents=parents,locals=core.read(transforms),
+        destructibles=destructibles,colliders=colliders,rigids=rigids,collision=collision.ptr,meshes=meshes,tints=tints,parents=parents,
         states=states,groups=groups,elsewhere=elsewhere,transforms=transforms,ids=ids,problems=problems,
     }
-    gone,at:=core.changes(destructibles,&cache.seen),0
+    if left:=core.changes(groups,&cache.seen[.Groups]);!left.all && len(left.gone)>0 {
+        for e in left.gone {physics.proxy_remove(state,e)}
+        meshes_sweep(&c)
+    }
+    gone,at:=core.changes(destructibles,&cache.seen[.Destructible]),0
     entry:Entry
     for e in core.entity_map_left(&cache.entries,destructibles,gone,&at,&entry) {
-        entity_end(&c,e,&entry)
-        entry_release(assets,job_system,cache,&entry)
+        entity_end(&c,e)
+        entry_release(job_system,&entry)
     }
-    for row in 0..<core.count(destructibles) {reconcile(&c,core.entity_at(destructibles,row),core.at(destructibles,row))}
+    // A change of what it is made of makes it again; one of its Collider or Mesh_Renderer, when it changed what its pieces are.
+    for row in core.each_changed(destructibles,&gone) {reconcile(&c,core.entity_at(destructibles,row),!replaced)}
+    rigid:=core.changes(rigids,&cache.seen[.Rigid_Body])
+    for row in core.each_changed(rigids,&rigid) {reconcile(&c,core.entity_at(rigids,row),!replaced)}
+    collider:=core.changes(colliders,&cache.seen[.Collider])
+    for row in core.each_changed(colliders,&collider) {reconcile(&c,core.entity_at(colliders,row),false)}
+    mesh:=core.changes(meshes,&cache.seen[.Mesh_Renderer])
+    for row in core.each_changed(meshes,&mesh) {reconcile(&c,core.entity_at(meshes,row),false)}
+    if cache.role!=c.authority {
+        cache.role=c.authority
+        for row in 0..<core.count(states) {
+            if states.values[row].passive!=(c.authority==.Client) {reconcile(&c,states.entities[row],true)}
+        }
+    }
+    // Those whose pieces are being cut, and those a replayed state ended.
+    for row in 0..<core.count(states) {
+        st:=states.values[row]
+        if st.waiting || !st.failed && !physics.breakable_valid(c.view,st.handle) {reconcile(&c,states.entities[row],false)}
+    }
     events_apply(&c,waiting,pending,&requests.waiting)
-    for row in 0..<core.count(c.states) {shortfall_report(&c,c.states.entities[row],c.states.values[row].handle)}
     replays_apply(&c,states_asked,replays)
-    for row in 0..<core.count(destructibles) {follow(&c,core.entity_at(destructibles,row))}
-    groups_prune(&c)
+    for row in 0..<core.count(states) {
+        e:=states.entities[row]
+        st:=states.values[row]
+        shortfall_report(&c,e,st.handle)
+        entry:=entry_find(cache,e)
+        if entry==nil || entry.prepared==nil || prepared_pending(entry.prepared) || entry.prepared.error!=.None || !physics.breakable_valid(c.view,st.handle) {continue}
+        if revision:=physics.breakable_revision(c.view,st.handle);revision!=st.revision || !entry.mirrored {mirror(&c,e,core.edit_at(states,row),entry,revision)}
+    }
 }
 
 // Ends what exists for a destructible: its simulation destructible, its entities and the marks on its own.
 @(private)
-entity_end :: proc(c:^Ctx,e:core.Entity,entry:^Entry) {
+entity_end :: proc(c:^Ctx,e:core.Entity) {
     physics.proxy_remove(c.state,e)
-    if st:=core.edit(c.states,e);st!=nil {
-        if physics.breakable_valid(c.view,st.handle) {
-            physics.breakable_destroy(c.state,st.handle)
-            c.cache.stats.destroyed+=1
-        }
-        core.remove(c.states,e)
-    } else if handle:=physics.breakable_of(c.view,e);handle!=0 {
-        physics.breakable_destroy(c.state,handle)
-        c.cache.stats.destroyed+=1
-    }
-    groups_end(c,entry)
+    if handle:=physics.breakable_of(c.view,e);handle!=0 {physics.breakable_destroy(c.state,handle)}
+    if core.has(c.states,e) {core.remove(c.states,e)}
+    groups_end(c,e)
     if core.has(c.elsewhere,e) {core.remove(c.elsewhere,e)}
 }
 
+// Ends the entities of the groups of a destructible and their meshes.
 @(private)
-groups_end :: proc(c:^Ctx,entry:^Entry) {
-    for &group in entry.groups {
-        physics.proxy_remove(c.state,group.entity)
-        if core.alive(c.es,group.entity) {core.destroy(c.es,group.entity)}
+groups_end :: proc(c:^Ctx,owner:core.Entity) {
+    for row in 0..<core.count(c.groups) {
+        if group:=c.groups.values[row];group.owner==owner && core.alive(c.es,c.groups.entities[row]) {group_drop(c,c.groups.entities[row],group.mesh)}
     }
-    groups_release(c.assets,c.cache,entry)
 }
 
-// The simulation destructible of one entity made match its row: made, made
-// again when what it is made from changed, or left as it is.
 @(private)
-reconcile :: proc(c:^Ctx,e:core.Entity,d:Destructible) {
+group_drop :: proc(c:^Ctx,e:core.Entity,mesh:base.Asset_Id) {
+    physics.proxy_remove(c.state,e)
+    core.destroy(c.es,e)
+    mesh_release(c.assets,c.cache,mesh)
+}
+
+// The meshes of groups whose entity went without this library ending it.
+@(private)
+meshes_sweep :: proc(c:^Ctx) {
+    #reverse for mesh in c.cache.meshes {
+        used:=false
+        for group in c.groups.values[:core.count(c.groups)] {used||=group.mesh==mesh}
+        if !used {mesh_release(c.assets,c.cache,mesh)}
+    }
+}
+
+// The simulation destructible of one entity made match what it is made of:
+// made, made again when that changed (always with remake), its pieces given
+// another collision, or left as it is.
+@(private)
+reconcile :: proc(c:^Ctx,e:core.Entity,remake:bool) {
     cache:=c.cache
-    held:Destructible_State
-    has:bool
-    held,has=core.get(c.states,e)
-    st:=held
-    static,has_mesh:=core.get(c.meshes,e)
-    world,placed:=core.world_of(c.locals,c.parents,e)
-    scale:=linalg.abs(world.scale)
+    d,configured:=core.get(c.destructibles,e)
+    if !configured {return}
     entry:=entry_take(cache,e)
     if entry==nil {
         core.report(c.problems,e,"destruct.memory","out of memory for the Destructible of this entity; it waits for the next tick: free memory")
         return
     }
-    valid:=physics.breakable_valid(c.view,st.handle)
+    if entry.pass==cache.pass {return}
+    entry.pass=cache.pass
+    held,has:=core.get(c.states,e)
+    st:=held
+    static,has_mesh:=core.get(c.meshes,e)
+    world,placed:=core.world_of(c.transforms,c.parents,e)
+    scale:=linalg.abs(world.scale)
     collider,has_collider:=core.get(c.colliders,e)
-    if !has_collider || collider.kind!=.External {collider={}}
-    surface:=[3]f32{collider.density,collider.friction,collider.restitution}
+    if !has_collider {collider=physics.COLLIDER_DEFAULT}
+    rigid,has_rigid:=core.get(c.rigids,e)
+    if !has_rigid {rigid=physics.RIGID_BODY_DYNAMIC}
     filter:=physics.collision_filter(c.collision,collider)
-    same:=st.configured && st.applied==d && st.applied_surface==surface && st.applied_mesh==static.mesh && st.applied_shape==static.shape && st.applied_scale==scale && st.passive==(c.authority==.Client)
-    if same && (valid || st.failed) {
-        if valid && st.applied_filter!=filter {
-            physics.breakable_set_filter(c.state,st.handle,filter)
-            st.applied_filter=filter
-            core.add(c.states,e,st)
+    _,interior,generated:=slots_of(c.assets,d,static.mesh)
+    key:=Prepared_Key{pieces=d.pieces,seed=d.seed,pattern=d.pattern,mesh=static.mesh,fracture=d.fracture,shape=static.shape,scale=scale,interior=interior}
+    same:=!remake && (entry.prepared==nil || entry.prepared.key==key)
+    if density,friction,restitution,made_filter,valid:=physics.breakable_surface(c.view,st.handle);valid {
+        if same && density==collider.density && friction==collider.friction && restitution==collider.restitution {
+            if made_filter!=filter {physics.breakable_set_filter(c.state,st.handle,filter)}
+            if entry.prepared==nil || st.waiting {cache_recover(c,e,d,static,scale,entry)}
+            return
         }
-        if valid {
-            if local,has_local:=core.get(c.locals,e);has_local {physics.proxy_set(c.state,e,st.body,local.position,local.rotation)}
-            if len(entry.visuals)==0 {cache_recover(c,e,d,static,scale,entry)}
-        }
-        return
     }
     if !(st.waiting && same) {
-        if valid {
-            physics.breakable_destroy(c.state,st.handle)
-            cache.stats.destroyed+=1
-        }
-        groups_end(c,entry)
+        if physics.breakable_valid(c.view,st.handle) {physics.breakable_destroy(c.state,st.handle)}
+        groups_end(c,e)
         visuals_release(entry)
+        entry.mirrored=false
         if core.has(c.elsewhere,e) {core.remove(c.elsewhere,e)}
         st=Destructible_State{}
     }
-    st.configured,st.applied,st.applied_mesh,st.applied_shape,st.applied_scale=true,d,static.mesh,static.shape,scale
-    st.applied_surface,st.applied_filter=surface,filter
     st.passive=c.authority==.Client
     st.failed,st.waiting=true,false
-    defer {
-        if st!=held || !has {core.add(c.states,e,st)}
-        entry.pass=cache.pass
-    }
+    defer if st!=held || !has {core.add(c.states,e,st)}
     if !has_mesh || !placed || scale.x==0 || scale.y==0 || scale.z==0 {
         why:=!has_mesh?"it has no Mesh_Renderer":!placed?"it has no Transform":"its scale has a zero axis"
         core.report(c.problems,e,"destruct.mesh","its Destructible has nothing to fracture: %s; give it a Mesh_Renderer with a closed mesh and a scale without zero axes",why)
-        return
-    }
-    if collider.kind!=.External {
-        core.report(c.problems,e,"destruct.collider","its Destructible needs a Collider of kind External, whose surface and collision its pieces take; give it collider_fracture()")
         return
     }
     if d.fracture=={} && (d.pieces==0 || u64(d.pieces)>u64(len(cache.infos))) {
         core.report(c.problems,e,"destruct.pieces","its Destructible asks for %d pieces, and the simulation holds %d (Physics_Settings.pieces); ask for 1 to %d, or raise pieces",d.pieces,len(cache.infos),len(cache.infos))
         return
     }
-    _,interior,generated:=slots_of(c.assets,d,static.mesh)
     // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
     entry.slots=interior+1
     entry.generated=generated
     entry.materials=static.materials
     if interior<render.MATERIAL_SLOTS && d.interior=={} {entry.materials[interior]=static.materials[0]}
-    key:=Prepared_Key{pieces=d.pieces,seed=d.seed,pattern=d.pattern,mesh=static.mesh,fracture=d.fracture,shape=static.shape,scale=scale,interior=interior}
     if entry.prepared==nil || entry.prepared.key!=key {
         if !prepare_start(c.assets,c.job_system,entry,d,static,scale,interior) {
             name:[base.ASSET_ID_TEXT]u8
@@ -215,14 +238,13 @@ reconcile :: proc(c:^Ctx,e:core.Entity,d:Destructible) {
         core.report(c.problems,e,"destruct.fracture","mesh %s of its Destructible cannot be fractured (%v): a mesh breaks only when it is closed; close it in the modelling tool, or give Destructible.fracture a .fracture asset",host.assets_name(c.assets,static.mesh,&name),p.error)
         return
     }
-    cache.stats.prepared+=1
     lo,hi:=p.desc.lo,p.desc.hi
     desc:=physics.BREAKABLE_DESC_DEFAULT
     desc.fracture=&p.fracture
     desc.position,desc.rotation=world.position,world.rotation
-    desc.density,desc.friction,desc.restitution,desc.gravity_scale,desc.strength=collider.density,collider.friction,collider.restitution,d.gravity_scale,d.strength
+    desc.density,desc.friction,desc.restitution,desc.strength=collider.density,collider.friction,collider.restitution,d.strength
+    desc.gravity_scale,desc.kinematic=rigid.gravity_scale,rigid.type!=.Dynamic
     desc.filter=filter
-    desc.kinematic=d.kinematic || d.follow_parent
     desc.hull_vertices=int(d.hull_vertices)
     desc.piece_anchors,desc.piece_clusters,desc.clusters,desc.bond_strength=p.anchors[:],p.piece_clusters[:],p.clusters[:],p.connection_strength[:]
     desc.cluster_points=p.cluster_points[:]
@@ -247,15 +269,10 @@ reconcile :: proc(c:^Ctx,e:core.Entity,d:Destructible) {
         destructible_problem(c,e,error)
         return
     }
-    st.failed,st.handle,st.body=false,handle,physics.breakable_body(c.view,handle)
-    cache.stats.created+=1
-    if local,ok:=core.get(c.transforms,e);ok {
-        st.written_position,st.written_rotation,st.initial=local.position,local.rotation,local
-        physics.proxy_set(c.state,e,st.body,local.position,local.rotation)
-    }
+    st.failed,st.handle=false,handle
+    if core.has(c.transforms,e) {physics.proxy_set(c.state,e,physics.breakable_body(c.view,handle))}
     count:=min(physics.breakable_pieces(c.view,handle,cache.infos),len(cache.infos))
     visuals_source(c.problems,e,entry,cache.infos[:count])
-
 }
 
 @(private)
@@ -292,6 +309,8 @@ shortfall_report :: proc(c:^Ctx,e:core.Entity,handle:physics.Breakable_Handle) {
     core.report(c.problems,e,"destruct.capacity","the simulation had no room for a fracture or a cut of its Destructible, which left those pieces as they were: raise %s; a destructible keeps every piece it cut, removed or let expire until it is destroyed, and a cut takes two pieces and two hulls",strings.to_string(b))
 }
 
+// The geometry of the pieces of a destructible the simulation kept while this cache did not: a world
+// that went back in time, or a copy. Its groups draw again once it is cut.
 @(private)
 cache_recover :: proc(c:^Ctx,e:core.Entity,d:Destructible,static:render.Mesh_Renderer,scale:[3]f32,entry:^Entry) {
     st:=core.edit(c.states,e)
@@ -308,57 +327,6 @@ cache_recover :: proc(c:^Ctx,e:core.Entity,d:Destructible,static:render.Mesh_Ren
     if st.waiting || entry.prepared.error!=.None {return}
     count:=min(physics.breakable_pieces(c.view,st.handle,c.cache.infos),len(c.cache.infos))
     visuals_source(c.problems,e,entry,c.cache.infos[:count])
-    for row in 0..<core.count(c.groups) {
-        group:=c.groups.values[row]
-        if group.owner!=e {continue}
-        entity:=c.groups.entities[row]
-        append(&entry.groups,Group_Record{group=group.group,entity=entity,body=physics.body_of(core.ref(c.state),entity)})
-    }
-    st.revision=max(u32)
-}
-
-// What a destructible does in a tick after the step: its body gives its Transform, and its groups follow what became of its pieces.
-@(private)
-follow :: proc(c:^Ctx,e:core.Entity) {
-    cache:=c.cache
-    st,has:=core.get(core.read(c.states),e)
-    entry:=entry_find(cache,e)
-    if !has || entry==nil || entry.pass==cache.pass || entry.prepared==nil || prepared_pending(entry.prepared) || entry.prepared.error!=.None || !physics.breakable_valid(c.view,st.handle) {return}
-    written_position,written_rotation:=st.written_position,st.written_rotation
-    local,has_local:=core.get(c.locals,e)
-    if position,rotation,ok:=physics.proxy_pose(c.state,e);ok {written_position,written_rotation=position,rotation}
-    if has_local && (local.position!=written_position || local.rotation!=written_rotation) {
-        core.fail("Entity %v has a Destructible, which owns its Transform, but another function wrote its position or rotation: place a destructible in the scene; it cannot be moved while playing",e)
-        written_position,written_rotation=local.position,local.rotation
-    }
-    if pose,valid:=physics.body_pose(c.view,st.body);has_local && valid {
-        if position,rotation,ok:=physics.local_of(c.locals,c.parents,e,pose);ok {
-            if local.position!=position || local.rotation!=rotation {if output:=core.edit(c.transforms,e);output!=nil {output.position,output.rotation=position,rotation}}
-            written_position,written_rotation=position,rotation
-            physics.proxy_written(c.state,e,position,rotation)
-        }
-    }
-    if written_position!=st.written_position || written_rotation!=st.written_rotation {
-        if output:=core.edit(c.states,e);output!=nil {output.written_position,output.written_rotation=written_position,written_rotation}
-    }
-    if revision:=physics.breakable_revision(c.view,st.handle);revision!=st.revision {mirror(c,e,core.edit(c.states,e),entry,revision)}
-    for &group in entry.groups {
-        pose,valid:=physics.body_pose(c.view,group.body)
-        if !valid {continue}
-        row,has_row:=core.get(core.read(c.groups),group.entity)
-        moved,has_moved:=core.get(c.locals,group.entity)
-        if !has_row || !has_moved {continue}
-        written_position,written_rotation:=row.written_position,row.written_rotation
-        if position,rotation,ok:=physics.proxy_pose(c.state,group.entity);ok {written_position,written_rotation=position,rotation}
-        if moved.position!=written_position || moved.rotation!=written_rotation {
-            core.fail("Entity %v is a body of a broken destructible, which owns its Transform: do not write it",group.entity)
-        }
-        if position,rotation,ok:=physics.local_of(c.locals,c.parents,group.entity,pose);ok {
-            if moved.position!=position || moved.rotation!=rotation {if output:=core.edit(c.transforms,group.entity);output!=nil {output.position,output.rotation=position,rotation}}
-            if row.written_position!=position || row.written_rotation!=rotation {if output:=core.edit(c.groups,group.entity);output!=nil {output.written_position,output.written_rotation=position,rotation}}
-            physics.proxy_written(c.state,group.entity,position,rotation)
-        }
-    }
 }
 
 // Makes the groups what the pieces of a destructible are now: one entity per body, with one mesh of the pieces on it.
@@ -404,19 +372,22 @@ mirror :: proc(c:^Ctx,e:core.Entity,st:^Destructible_State,entry:^Entry,revision
         group.count+=1
     }
 
-    // The entities of bodies that are gone.
-    #reverse for &record,at in entry.groups {
-        wanted:=false
-        for group in cache.groups {wanted||=group.group==record.group}
-        if wanted && revision!=0 {continue}
-        physics.proxy_remove(c.state,record.entity)
-        if core.alive(c.es,record.entity) {core.destroy(c.es,record.entity)}
-        if record.mesh!={} && c.assets!=nil && host.assets_mesh_release(c.assets,record.mesh) {cache.stats.meshes-=1}
-        delete(record.members)
-        ordered_remove(&entry.groups,at)
+    // The entities of bodies that are gone end; those of the others are kept.
+    for row in 0..<core.count(c.groups) {
+        group:=c.groups.values[row]
+        if group.owner!=e || !core.alive(c.es,c.groups.entities[row]) {continue}
+        kept:=false
+        if revision!=0 {
+            for &wanted in cache.groups {
+                if wanted.group!=group.group {continue}
+                wanted.entity,kept=c.groups.entities[row],true
+                break
+            }
+        }
+        if !kept {group_drop(c,c.groups.entities[row],group.mesh)}
     }
     if revision!=0 {
-        for group in cache.groups {group_sync(c,e,entry,group)}
+        for &group in cache.groups {group_sync(c,e,entry,&group)}
         if !core.has(c.elsewhere,e) {core.add(c.elsewhere,e,render.Drawn_Elsewhere{})}
     } else if core.has(c.elsewhere,e) {
         core.remove(c.elsewhere,e)
@@ -425,80 +396,62 @@ mirror :: proc(c:^Ctx,e:core.Entity,st:^Destructible_State,entry:^Entry,revision
         core.push(&c.events.fractured,Fracture{entity=e,kind=entry.event.kind,point=entry.event.point,impulse=entry.event.vector,pieces=detached-st.detached})
     }
     st.revision,st.broken,st.detached=revision,revision!=0,detached
+    entry.mirrored=true
 }
 
 // The entity and the mesh of one body of a broken destructible.
 @(private)
-group_sync :: proc(c:^Ctx,owner:core.Entity,entry:^Entry,group:Scratch_Group) {
+group_sync :: proc(c:^Ctx,owner:core.Entity,entry:^Entry,group:^Scratch_Group) {
     cache:=c.cache
     members:=cache.flat[group.first:][:group.count]
-    at:=-1
-    for record,i in entry.groups {
-        if record.group==group.group {at=i}
+    hash:=u64(len(members))
+    for member in members {hash=base.hash_combine(hash,u64(member))}
+    created:=group.entity==core.NONE || !core.alive(c.es,group.entity)
+    row:Destructible_Group
+    if created {
+        group.entity=core.create(c.es)
+        row={owner=owner,group=group.group,debris=group.debris}
+    } else {
+        row,_=core.get(c.groups,group.entity)
     }
-    created:=at<0 || !core.alive(c.es,entry.groups[at].entity)
-    if at<0 {
-        append(&entry.groups,Group_Record{group=group.group})
-        at=len(entry.groups)-1
-    }
-    record:=&entry.groups[at]
-    changed:=created || len(record.members)!=len(members)
-    if !changed {
-        for member,i in record.members {changed||=member!=members[i]}
-    }
-    record.body=group.body
-    if created {record.entity=core.create(c.es)}
-    physics.breakable_body_name(c.state,group.body,group.group==0?owner:record.entity)
-    if changed {
-        if record.mesh!={} && c.assets!=nil && host.assets_mesh_release(c.assets,record.mesh) {cache.stats.meshes-=1}
+    physics.breakable_body_name(c.state,group.body,group.group==0?owner:group.entity)
+    if created || !entry.mirrored || row.members!=hash {
+        mesh_release(c.assets,cache,row.mesh)
         made:bool
-        record.mesh,made=group_mesh_make(c.assets,cache,entry,members)
+        row.mesh,made=group_mesh_make(c.assets,cache,entry,members)
         if !made && c.assets!=nil {
             core.report(c.problems,owner,"destruct.group_mesh","the mesh of a broken part of its Destructible was not made: its pieces have no geometry, or the generated meshes are full; that part collides and is not drawn: free memory, or use fewer pieces")
         }
-        clear(&record.members)
-        append(&record.members,..members)
-        if record.mesh!={} {core.add(c.meshes,record.entity,render.Mesh_Renderer{mesh=record.mesh,materials=entry.materials})}
+        row.members=hash
+        if row.mesh!={} {
+            core.add(c.meshes,group.entity,render.Mesh_Renderer{mesh=row.mesh,materials=entry.materials})
+        } else if core.has(c.meshes,group.entity) {
+            core.remove(c.meshes,group.entity)
+        }
+        if !created {core.add(c.groups,group.entity,row)}
     }
     if !created {
-        if moved,ok:=core.get(c.transforms,record.entity);ok {physics.proxy_set(c.state,record.entity,group.body,moved.position,moved.rotation)}
+        if core.has(c.transforms,group.entity) {physics.proxy_set(c.state,group.entity,group.body)}
         return
     }
     pose:=core.TRANSFORM_IDENTITY
-    row:=Destructible_Group{owner=owner,group=group.group,debris=group.debris}
     if group.group==0 {
         // The pieces are at their size already: the entity undoes the scale of the one it hangs from.
-        if above,ok:=core.world_of(c.locals,c.parents,owner);ok {
+        if above,ok:=core.world_of(c.transforms,c.parents,owner);ok {
             for axis in 0..<3 {
                 if above.scale[axis]!=0 {pose.scale[axis]=1/abs(above.scale[axis])}
             }
         }
-        core.commands_add(c.commands,record.entity,core.Parent{entity=owner})
+        core.commands_add(c.commands,group.entity,core.Parent{entity=owner})
     } else {
         body,_:=physics.body_pose(c.view,group.body)
         pose.position,pose.rotation=body.p,body.q
     }
-    row.written_position,row.written_rotation=pose.position,pose.rotation
-    core.add(c.transforms,record.entity,pose)
-    core.add(c.groups,record.entity,row)
-    physics.proxy_set(c.state,record.entity,group.body,pose.position,pose.rotation)
-    if group.group!=0 {group_identify(c,owner,record.entity,group)}
-    if tint,has:=core.get(c.tints,owner);has {core.add(c.tints,record.entity,tint)}
-}
-
-// Destroys the entities of a group that no destructible of this world accounts for: what a world that went back in time left.
-@(private)
-groups_prune :: proc(c:^Ctx) {
-    for row in 0..<core.count(c.groups) {
-        group:=c.groups.values[row]
-        e:=c.groups.entities[row]
-        entry:=entry_find(c.cache,group.owner)
-        known:=false
-        if entry!=nil {
-            for record in entry.groups {known||=record.entity==e}
-        }
-        if !known {physics.proxy_remove(c.state,e);core.destroy(c.es,e)}
-    }
+    core.add(c.transforms,group.entity,pose)
+    core.add(c.groups,group.entity,row)
+    physics.proxy_set(c.state,group.entity,group.body)
+    if group.group!=0 {group_identify(c,owner,group.entity,group^)}
+    if tint,has:=core.get(c.tints,owner);has {core.add(c.tints,group.entity,tint)}
 }
 
 // What damaged the destructibles in this tick: the contacts of the step and what the game asked for.
@@ -563,6 +516,4 @@ event_applied :: proc(c:^Ctx,e:core.Entity,entry:^Entry,event:physics.Break_Even
     if entry.event_tick!=c.time.tick || linalg.length2(event.vector)>linalg.length2(entry.event.vector) || event.kind==.Slice {
         entry.event,entry.event_tick=event,c.time.tick
     }
-    c.cache.stats.events+=1
 }
-

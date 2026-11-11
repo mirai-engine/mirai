@@ -15,7 +15,7 @@ import "mirai:rhi/shared_device"
 
 // -define:GI_BENCHMARK=true, with --release and without validation: the GI
 // scenes, each a sequence of frames 1/60 s apart, measured
-// against the reference of their diffuse indirect light (Settings.reference_gi),
+// against the reference of their diffuse indirect light (reference_test.odin),
 // both in nits.
 // MIRAI_RT=software measures the software tracer. MIRAI_GI_REFERENCE=<folder>
 // keeps the references there and takes them from it in the next run,
@@ -33,12 +33,12 @@ GI_BENCHMARK :: #config(GI_BENCHMARK, false)
 gi_reference_gives_the_light_of_a_white_furnace :: proc(t: ^testing.T) {
 	for mode in ([2]Trace_Mode{.Software, .Hardware}) {
 		settings := DEFAULT_SETTINGS
-		settings.reflections, settings.taa, settings.reference_gi, settings.trace_mode = false, false, true, mode
+		settings.taa, settings.trace_mode = false, mode
 		f: Fixture
-		if !fixture_init(t, &f, 48, 48, settings, programs = true) {return}
+		if !fixture_init(t, &f, 48, 48, settings, reference = {.Gi}) {return}
 		defer fixture_destroy(&f)
 		r, device := f.renderer, f.device
-		if mode == .Hardware && !r.hardware_rt {continue}
+		if mode == .Hardware && !r.hardware_rt || mode == .Software && !SOFTWARE_TRACER {continue}
 		cube, added := gi_cube(r)
 		if !testing.expect(t, added) {return}
 		grid := program_find(r, "Grid", .Surface)
@@ -55,18 +55,21 @@ gi_reference_gives_the_light_of_a_white_furnace :: proc(t: ^testing.T) {
 		testing.expect(t, program_parameter_set(&programmed.custom_params, program_parameter(grid, "roughness"), {0.7, 0, 0, 0}))
 		materials_set(r, {metal, plain, programmed})
 		camera := Camera{position = {0, 1.5, 1.5}, forward = {0.3, -0.3, -3.5}, up = {0, 1, 0}, fov_y = 70, near = 0.05, far = 50}
-		furnace :: proc(t: ^testing.T, r: ^Renderer, device: ^rhi.Device, cube: Mesh_Handle, camera: Camera, material: Material_Handle) -> (mean, shown_mean, worst: f32, ok: bool) {
+		furnace :: proc(t: ^testing.T, f: ^Fixture, cube: Mesh_Handle, camera: Camera, material: Material_Handle) -> (mean, shown_mean, worst: f32, ok: bool) {
+			r, device := f.renderer, f.device
+			// Another scene: the paths start again.
+			f.gi = {}
 			instances: [6]Instance_Desc
 			walls := gi_room_walls({-2, 0, -2}, {2, 3, 2}, 0.2)
 			for wall, i in walls {
 				instances[i] = {object_id = u64(i + 1), mesh = cube, transform = wall, tint = {1, 1, 1}, emission = {1, 1, 1}, material = material}
 			}
-			scene_set(r, instances[:], nil, {}, {})
-			for _ in 0 ..< 48 {testing.expect(t, renderer_frame(r, {camera = camera, inspection = {mode = .Indirect}}), r.error)}
+			scene_given(r, instances[:], nil, {}, {})
+			for _ in 0 ..< 48 {testing.expect(t, fixture_frame(f, {camera = camera, inspection = {mode = .Indirect}}), r.error)}
 			targets := &r.main.targets
 			size := int(targets.width * targets.height)
 			reference := make([]f32, size * 4, context.temp_allocator)
-			if !testing.expect(t, golden_read_texture(device, targets.gi_reference, slice.to_bytes(reference))) {return}
+			if !testing.expect(t, golden_read_texture(device, targets.gi_given, slice.to_bytes(reference))) {return}
 			shown := make([]f16, size * 4, context.temp_allocator)
 			if !testing.expect(t, golden_read_texture(device, targets.display, slice.to_bytes(shown))) {return}
 			for i in 0 ..< size {
@@ -86,13 +89,13 @@ gi_reference_gives_the_light_of_a_white_furnace :: proc(t: ^testing.T) {
 			}
 			return mean, shown_mean, worst, true
 		}
-		mean, shown_mean, worst, ok := furnace(t, r, device, cube, camera, 1)
+		mean, shown_mean, worst, ok := furnace(t, &f, cube, camera, 1)
 		if !ok {return}
 		testing.expectf(t, abs(mean - 2) < 0.03, "%v: the reference gives %.4f on average, not 2", mode, mean)
 		testing.expectf(t, worst < 0.12, "%v: a block of 4x4 pixels of the reference is %.4f from its mean", mode, worst)
 		testing.expectf(t, abs(shown_mean - 2) < 0.03, "%v: the debug view of the indirect light shows %.4f on average, not 2", mode, shown_mean)
-		row, _, _, row_ok := furnace(t, r, device, cube, camera, 2)
-		program, _, _, program_ok := furnace(t, r, device, cube, camera, 3)
+		row, _, _, row_ok := furnace(t, &f, cube, camera, 2)
+		program, _, _, program_ok := furnace(t, &f, cube, camera, 3)
 		testing.expectf(t, row_ok && program_ok && abs(program - row) < 0.03, "%v: walls of the program give %.4f, the row %.4f", mode, program, row)
 		testing.expectf(t, rhi.device_validation_errors(device) == 0, "validation reported %d errors; last: %s", rhi.device_validation_errors(device), rhi.device_validation_message(device))
 	}
@@ -150,7 +153,7 @@ a_new_light_scale_keeps_the_indirect_light :: proc(t: ^testing.T) {
 		before := gi_mean_after(t, &f, 240)
 		scale := r.scene.light_scale
 		append(&f.lights, Light_Desc{position = {1000, 1000, 1000}, color = {1, 1, 1}, intensity = 9425 * times, range = 0.5, radius = 0.05})
-		scene_set_lights(r, f.lights[:], f.sun, f.environment)
+		scene_lights_given(r, f.lights[:], f.sun, f.environment)
 		after := gi_mean_after(t, &f, 1)
 		later := gi_mean_after(t, &f, 120)
 		testing.expectf(t, r.scene.light_scale != scale, "a light %v times the strongest leaves the light scale at %v", times, scale)
@@ -328,7 +331,7 @@ Gi_Case :: struct {
 	keyframes: [3]f32, // frames compared with their reference; the one in `still` stands for the window
 	focus:     [2]Vec3, // the box of the world whose mean light shows the changes settling; zero: the whole view
 	pan:       f32, // Pan: pixels the view turns each frame, at the size of GI_PAN_SIZE and whatever the frame rate; gi_timed gives its times
-	direct:    bool, // it measures the direct light with its shadows (Debug_View.Direct) against Settings.reference_lights in the same pose, not the indirect
+	direct:    bool, // it measures the direct light with its shadows (Debug_View.Direct) against the reference of the lights in the same pose, not the indirect
 }
 
 // A pan: still for PAN_BEFORE seconds, turning PAN_SWEEP radians at the pixels
@@ -470,8 +473,11 @@ gi_fixture_init :: proc(t: ^testing.T, f: ^Gi_Fixture, width, height: u32, valid
 		testing.expect(t, false, message)
 		return false
 	}
+	// TEST_GENERATION, with the stages of the references.
+	assets, problem := shader_assets_load(TEST_GENERATION)
+	if !testing.expectf(t, problem == "", "%s in %s: `mirai test render` generates it", problem, TEST_GENERATION) {return false}
 	f.r = new(Renderer)
-	if !testing.expect(t, renderer_init(f.r, {device = f.device, width = width, height = height}), f.r.error) {return false}
+	if !testing.expect(t, renderer_init(f.r, {device = f.device, width = width, height = height, shaders = &assets}), f.r.error) {return false}
 	f.hz = 60
 	f.camera_fov = 60
 	if text, found := os.lookup_env("MIRAI_GI_HZ", context.temp_allocator); found {
@@ -705,7 +711,7 @@ gi_setup :: proc(f: ^Gi_Fixture, kind: Gi_Kind) {
 	copy(f.instances[:], f.base[:])
 	resize(&f.lights, len(f.base_lights))
 	copy(f.lights[:], f.base_lights[:])
-	scene_set(f.r, f.instances[:], f.lights[:], f.sun, f.environment)
+	scene_given(f.r, f.instances[:], f.lights[:], f.sun, f.environment)
 	skin_update(f.r, f.body, f.palette[:], true)
 }
 
@@ -790,7 +796,7 @@ gi_pose :: proc(f: ^Gi_Fixture, kind: Gi_Kind, at: f32) {
 		resize(&f.lights, len(lights))
 		copy(f.lights[:], lights[:])
 		started := time.tick_now()
-		scene_set_lights(f.r, f.lights[:], f.sun, f.environment)
+		scene_lights_given(f.r, f.lights[:], f.sun, f.environment)
 		f.light_ms += time.duration_milliseconds(time.tick_since(started))
 		f.light_sets += 1
 	}
@@ -849,11 +855,10 @@ gi_reference :: proc(t: ^testing.T, f: ^Gi_Fixture, c: Gi_Case, at: f32, frames:
 	r := f.r
 	before := r.settings
 	settings := before
-	if c.direct {
-		settings.reference_lights, settings.taa = true, false
-	} else {
-		settings.reference_gi, settings.taa, settings.gi_enabled = true, false, true
-	}
+	settings.taa = false
+	if !c.direct {settings.gi_enabled = true}
+	which := Reference_Set{.Lights} if c.direct else {.Gi}
+	gi: Reference_Gi
 	if !testing.expect(t, renderer_apply_settings(r, settings)) {return false}
 	gi_restart(r)
 	gi_setup(f, c.kind)
@@ -867,7 +872,7 @@ gi_reference :: proc(t: ^testing.T, f: ^Gi_Fixture, c: Gi_Case, at: f32, frames:
 	defer gi_image_delete(frame)
 	for &v in out.rgb {v = {}}
 	for i in 0 ..< frames {
-		if !renderer_frame(r, {camera = f.camera, camera_cut = i == 0, time = at, inspection = {mode = .Direct if c.direct else .Indirect}}) {
+		if !reference_frame(r, {camera = f.camera, camera_cut = i == 0, time = at, inspection = {mode = .Direct if c.direct else .Indirect}}, which, &gi) {
 			failure, text := rhi.device_failure(f.device)
 			testing.expectf(t, false, "the reference of %s at %.2f s stops at frame %d of %d: %s %v %s", c.name, at, i, frames, r.error, failure, text)
 			return false
@@ -880,7 +885,7 @@ gi_reference :: proc(t: ^testing.T, f: ^Gi_Fixture, c: Gi_Case, at: f32, frames:
 	if !c.direct {
 		gathered := make([]f32, len(out.rgb) * 4)
 		defer delete(gathered)
-		if !testing.expect(t, rhi.texture_read(f.device, r.main.targets.gi_reference, slice.to_bytes(gathered))) {return false}
+		if !testing.expect(t, rhi.texture_read(f.device, r.main.targets.gi_given, slice.to_bytes(gathered))) {return false}
 		nits := gi_nits(r)
 		for &v, i in out.rgb {v = Vec3{gathered[i * 4], gathered[i * 4 + 1], gathered[i * 4 + 2]} * nits}
 	}
@@ -1720,11 +1725,11 @@ gi_benchmark_reports_noise_error_settling_and_cost :: proc(t: ^testing.T) {
 			lights := make([]Light_Desc, count)
 			defer delete(lights)
 			for &light, i in lights {light = {position = {f32(i % 64) - 32, 1, f32(i / 64) - 32}, color = {1, 1, 1}, intensity = 100, range = 4, radius = 0.05}}
-			scene_set_lights(f.r, lights, {}, {})
+			scene_lights_given(f.r, lights, {}, {})
 			started := time.tick_now()
 			for _ in 0 ..< 20 {
 				lights[0].position.x += 0.01
-				scene_set_lights(f.r, lights, {}, {})
+				scene_lights_given(f.r, lights, {}, {})
 			}
 			fmt.printfln("| %d | %.3f |", count, time.duration_milliseconds(time.tick_since(started)) / 20)
 		}

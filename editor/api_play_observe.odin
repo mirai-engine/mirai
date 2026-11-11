@@ -407,18 +407,26 @@ play_ui_names_of :: proc(records:ui.Tree_Data,imports:[]ui.Tree_Data,tree:^ui.Wi
 
 @(private)
 play_audio :: proc(s:^Session,voices:^eaudio.Voices,w:core.World_Ref,m:^mixer.Mixer,allocator:=context.temp_allocator) -> (r:Api_Play_Audio) {
+    // What a voice was given is its source by what its set drew.
+    sources:^core.Table(eaudio.Audio_Source)
+    states:^core.Table(eaudio.Audio_Source_State)
+    if w.data!=nil {sources,states=core.world_table_of(w,eaudio.Audio_Source),core.world_table_of(w,eaudio.Audio_Source_State)}
     if voices!=nil {
         r.stats={voices.stats.started,voices.stats.ended}
         r.voices=make([]Api_Play_Audio_Voice,len(voices.entries.values),allocator)
         for &row,at in r.voices {
             entry:=voices.entries.values[at]
             e:=voices.entries.entities[at]
+            source:eaudio.Audio_Source
+            state:eaudio.Audio_Source_State
+            if sources!=nil {source,_=core.get(sources,e)}
+            if states!=nil {state,_=core.get(states,e)}
+            kind:=entry.kind
             bus:string
-            if s.info!=nil {bus,_=core.name_of(s.info,eaudio.Audio_Bus,i64(entry.bus))}
-            volume,pitch:=eaudio.voice_entry_given(entry)
-            row={entity=e,id=play_entity_id(w,e),name=entity_name(w,e) if w.data!=nil && w.info!=nil else "",sound=entry.sound,path=asset_path(s,entry.sound),bus=bus if bus!="" else fmt.tprintf("%d",int(entry.bus)),
-                volume=volume,pitch=pitch,loop=entry.loop,playing=m!=nil && mixer.voice_valid(m,entry.voice),spatial=entry.spatial,reverb=entry.reverb}
-            if entry.spatial {row.position,row.occlusion=entry.position,entry.occlusion} else {row.pan=entry.pan}
+            if s.info!=nil {bus,_=core.name_of(s.info,eaudio.Audio_Bus,i64(kind.bus))}
+            row={entity=e,id=play_entity_id(w,e),name=entity_name(w,e) if w.data!=nil && w.info!=nil else "",sound=kind.sound,path=asset_path(s,kind.sound),bus=bus if bus!="" else fmt.tprintf("%d",int(kind.bus)),
+                volume=source.volume*entry.pick[0],pitch=(source.pitch>0?source.pitch:1)*entry.pick[1],loop=source.loop,playing=m!=nil && mixer.voice_valid(m,entry.voice),spatial=kind.spatial,reverb=source.reverb}
+            if kind.spatial {row.position,row.occlusion=entry.position,state.occlusion} else {row.pan=source.pan}
         }
     }
     if m!=nil {

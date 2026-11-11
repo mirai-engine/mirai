@@ -1,6 +1,7 @@
 package anim
 
 import "core:fmt"
+import "mirai:core"
 import "core:testing"
 import "mirai:asset"
 import "mirai:host"
@@ -73,4 +74,16 @@ test_registry_free :: proc(assets:^host.Assets) {delete(assets.registry.by_id);d
 test_character_seed :: proc(cache:^Character_Assets,id:base.Asset_Id,set:Character_Set) {
     if cache.allocator.procedure==nil {cache.allocator=context.allocator}
     append(&cache.contents,Character_Content{id=id,checked=1,revision=1,set=set,valid=true})
+}
+
+// What a tick of a test needs beside its tables: the storages it does not give are those of extra.
+@(private)
+Test_Storages :: struct {characters:Character_Assets,actions:Action_Runtime,motion:Motion_Runtime,sources:Source_Assets,played:core.Table(Animation_Played),remotes:core.Table(core.Remote)}
+@(private)
+test_storages_free :: proc(s:^Test_Storages) {character_assets_free(&s.characters);actions_runtime_free(&s.actions);motion_runtime_free(&s.motion);source_assets_free(&s.sources);core.table_destroy(&s.played);core.table_destroy(&s.remotes)}
+@(private)
+test_tick :: proc(animations:^core.Table(Animation,.Read),transforms:^core.Table(core.Transform),parents:^core.Table(core.Parent,.Read),hierarchy:core.Ref(core.Hierarchy),names:^core.Table(core.Name,.Read),requests:^Animation_Requests,events:^Animation_Events,targets:^core.Table(Animation_Target,.Read),playback:^Playback,app:^host.App,time:core.Time,frame:core.Frame_Time,skeletons:^Skeleton_Assets,problems:^core.Problems,extra:^Test_Storages,characters:^Character_Assets=nil,actions:^Action_Runtime=nil,motion:^Motion_Runtime=nil,sources:^Source_Assets=nil,remotes:^core.Table(core.Remote,.Read)={},played:^core.Table(Animation_Played)=nil) {
+    animation_tick(animations,transforms,parents,hierarchy,names,requests,events,targets,playback,app,time,frame,skeletons,problems,
+        characters if characters!=nil else &extra.characters,actions if actions!=nil else &extra.actions,motion if motion!=nil else &extra.motion,sources if sources!=nil else &extra.sources,
+        remotes if remotes!=nil else core.read(&extra.remotes),played if played!=nil else &extra.played,{},core.CLOCK_DEFAULT,ANIMATION_BUDGET_CONFIG_DEFAULT)
 }

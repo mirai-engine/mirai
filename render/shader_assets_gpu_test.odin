@@ -8,7 +8,7 @@ import "mirai:rhi"
 @(test)
 render_draws_the_same_image_with_a_generation_loaded_from_disk :: proc(t:^testing.T) {
     settings:=DEFAULT_SETTINGS
-    settings.trace_mode=.Software
+    settings.trace_mode=.Software if SOFTWARE_TRACER else .Auto
     settings.probe_budget,settings.probe_rays,settings.probe_grid,settings.probe_cascades=64,32,4,2
     // Six frames of one triangle under the sun, from a renderer just made.
     capture :: proc(t:^testing.T,r:^Renderer) -> []u8 {
@@ -17,7 +17,7 @@ render_draws_the_same_image_with_a_generation_loaded_from_disk :: proc(t:^testin
         }
         mesh,added:=mesh_add(r,vertices[:],[]u32{0,2,1})
         testing.expect(t,added)
-        scene_set(r,{{object_id=1,mesh=mesh,transform=Mat4(1),tint={1,1,1}}},nil,{direction={0.2,1,0.1},color={1,1,1},illuminance=1 * math.PI,enabled=true},{sky={0.3,0.4,0.6}})
+        scene_given(r,{{object_id=1,mesh=mesh,transform=Mat4(1),tint={1,1,1}}},nil,{direction={0.2,1,0.1},color={1,1,1},illuminance=1 * math.PI,enabled=true},{sky={0.3,0.4,0.6}})
         camera:=Camera{position={0,3,2},forward={0,-3,-2},up={0,1,0},fov_y=60,near=0.05,far=50,exposure=UNIT_EXPOSURE}
         for _ in 0..<6 {testing.expect(t,renderer_frame(r, {camera = camera}),r.error)}
         rhi.device_wait_idle(r.device)

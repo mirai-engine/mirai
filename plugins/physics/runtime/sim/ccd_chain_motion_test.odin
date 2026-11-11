@@ -13,7 +13,7 @@ ccd_finds_an_angular_impact_after_starting_inside_the_outer_clearance :: proc(t:
     outer:=time_of_impact(a,b,sa,sb)
     testing.expect_value(t,outer.state,Toi_State.Hit)
     testing.expect_value(t,outer.fraction,f32(0))
-    actual:=continuous_toi(a,b,sa,sb,1)
+    actual:=continuous_toi(a,b,sa,sb,1,0,0)
     testing.expect_value(t,actual.state,Toi_State.Hit)
     testing.expectf(t,actual.fraction>0 && actual.fraction<.05,"angular impact fraction %v",actual.fraction)
 }
@@ -43,7 +43,7 @@ an_anchored_ccd_chain_on_the_floor_moves_after_successive_impulses :: proc(t:^te
         for activation in 0..<3 {
             before:[7]Vec3
             for body,index in links {before[index]=body_position(&w,body)}
-            blast:=Test_Ball{{0,.4,0},4}
+            blast:=Test_Ball{{0,.4,0},6}
             count,ok:=world_apply_area(&w,test_ball_area(&blast),{35,0,0},radial=true,impulse=true,velocity_change=true)
             testing.expect(t,ok && count==7)
             maximum_move:f32

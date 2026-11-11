@@ -20,12 +20,12 @@ have.
 Procedures:
 
 - `scene_open(s, path)`: replaces the edited world with a scene, by file or by path under
-  `assets/`; one whose file has a single root is a
+  `assets/`; one whose header says Prefab is a
   [prefab document](prefabs.md#prefab-document). Stops a Play, starts a new history and
   deselects. It loads with `scene.replace`, like the game: if reading, instantiating or copying
   fails, memory included, the world stays as it was.
-- `scene_new(s)`: a scene without a file with two entities, `Sky` (with `SKY_DEFAULT`) and `Sun`
-  (the sun preset), without changes or history.
+- `scene_new(s, prefab)`: a scene without a file with two entities, `Sky` (with `SKY_DEFAULT`) and
+  `Sun` (the sun recipe), or a prefab with one empty root, without changes or history.
 - `scene_save(s, path="")`: writes to the document's file or to `path`, adding `.scene` when it
   has no extension; a new file is another asset with its own id. With neither, it opens the save
   dialog.
@@ -464,10 +464,9 @@ ends without a step.
 In `world.odin`. They operate on the shown world (during a Play, the Play's); each is an undo step
 except inside a gesture. What their signatures do not say:
 
-- `entity_create(s, Create_Desc)` gives `Id`, `Name` and `Transform`; `preset`, or `card` for the
-  [card of a plugin](extensions.md#create-cards), puts the components and scale of the
-  recipe. A repeated name takes the first free number (`name_free`, from the name's final number,
-  in linear time).
+- `entity_create(s, Create_Desc)` gives `Id`, `Name` and `Transform`; `recipe` puts the
+  components, rotation and scale of [that recipe](#recipes). A repeated name takes the first free
+  number (`name_free`, from the name's final number, in linear time).
 - `entities_delete` also destroys what hangs from it and does not touch members of a prefab
   instance.
 - `entities_duplicate` copies with the authoring children, with internal references pointing to the
@@ -489,25 +488,30 @@ except inside a gesture. What their signatures do not say:
   use. `entity_world` includes what moved this frame, `entity_hidden` also looks at ancestors and
   `entity_get` sees a turned-off component.
 
-`Preset` are creation recipes, not types: `Empty` (group), `Cube`, `Sphere`, `Cylinder`, `Cone`,
-`Capsule`, `Plane`, `Prism`, `Pyramid`, `Point_Light`, `Spot_Light`, `Rect_Light`, `Sun`, `Camera`,
-`Sound` (a spatial looping `Audio_Source` that sends to the room, without sound, and an
-`Audio_Occlusion`), `Reverb_Zone` and the cameras that follow the player in a mode
-(`Isometric_Camera`, `Top_Down_Camera`, `Side_Camera`, `First_Person_Camera`, `Third_Person_Camera`
-and `Aim_Camera`, which also carries a `Camera_Activation` without action: the `Camera_Follow` and
-lens of its `engine/camera` preset, in the Cameras section); the lights put `<COMPONENT>_DEFAULT`
-of `engine/render`. Without a given rotation, the sun looks from `SUN_DIRECTION` and the spot
-downward (`preset_rotation`): every light shines toward its -Z. An entity without a body is seen
-and picked as a disk in the viewport only if its icon says what it is (a light, a camera, a sound,
-a plugin's card; `entity_marked`). A group, or an entity whose components show themselves (a
-terrain, a foliage, a volume), carries no disk, like an empty object in other editors, and is
-picked in the outliner. Plugins add recipes as cards (Particles, of `vfx`). The sky is not a
-recipe: a new scene is born with a `Sky` entity and a `Sun` (`scene_new`).
-
 **Identity.** `core.Id` is the stable id of a scene entity (hexadecimal in API and files);
 `core.Entity`, index and generation, is valid only inside a world. The selection keeps handles and
 is valid between editing and playing because the Play's copy preserves them. The `core.Entity` of
 components travel as `Id` in scenes, collaboration and API (`entity_offsets`).
+
+## Recipes
+
+A recipe is what Create, a `preset` of `scene.write` and `entity_create` make an entity of: a
+`.scene` of one entity in `recipes/` of the engine or of an active plugin that declares the
+`Recipes` part (`project.recipe_folders`, read by `author.recipes_read`). The name of its file is
+the name a document gives; its entity's name is the label of its card and the name of what it
+makes. What is placed is a copy of that entity, not a link: its components
+(`author.recipe_parts`, the entity placed and taken away in the same world), its rotation unless
+one is given, and its scale times the one given. Its height is how far above the surface Create
+puts something with no body; the placed position is always the one given. Recipes are data: they
+are written with `mirai scene write` and their files are moved into `recipes/`; a value computed
+in code is not one, so the cameras hold the lens and follow of their `engine/camera` mode and the
+sun the rotation from `SUN_DIRECTION` as numbers. Lights shine toward their -Z.
+
+An entity without a body is seen and picked as a disk in the viewport only if its icon says what
+it is (a light, a camera, a sound, a plugin's card; `entity_marked`). A group, or an entity whose
+components show themselves (a terrain, a foliage, a volume), carries no disk, like an empty object
+in other editors, and is picked in the outliner. The sky is not a recipe: a new scene is born with
+a `Sky` entity and a `Sun` (`scene_new`).
 
 ## Selection
 

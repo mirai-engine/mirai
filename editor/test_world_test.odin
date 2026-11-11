@@ -3,9 +3,11 @@ package editor
 import "core:testing"
 import "mirai:core"
 import "mirai:editor/history"
+import "mirai:editor/kit"
 import ecamera "mirai:engine/camera"
 import egui "mirai:engine/gui"
 import escene "mirai:engine/scene"
+import "mirai:ui"
 
 // What the declarations of the editor and of the libraries it uses name: core.Test_Types.
 test_types :: proc(types:^[dynamic]core.Test_Type) {
@@ -28,6 +30,13 @@ test_types :: proc(types:^[dynamic]core.Test_Type) {
         core.test_type(Viewport,free=viewport_free),
         core.test_type(View_Modes,free=view_modes_free),
     )
+}
+
+// A context of the interface with the theme of the editor, as gui_init makes it.
+test_ui_init :: proc(ctx:^ui.Context,desc:ui.Context_Desc={}) -> bool {
+    if !ui.context_init(ctx,desc) {return false}
+    if !kit.theme_set(ctx) {ui.context_destroy(ctx);return false}
+    return true
 }
 
 // The tables and the storage every entity of a scene has rows in. The test

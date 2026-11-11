@@ -459,10 +459,7 @@ Surface_Source :: enum u8 {Linear_Depth, Motion, Albedo, Normal, Emission, Insta
 // draws of pass_draw_indexed_indirect. Ends with pass_end.
 pass_gbuffer_begin :: proc(s: ^Stage_Pass, name := "extension surfaces") {
 	p := s.pass
-	sc := &p.r.scene
 	rhi.cmd_timestamp(p.cmd, name)
-	for b in ([]rhi.Buffer{sc.vertex_buffer, sc.material_buffer}) {if b != 0 {rhi.cmd_barrier_buffer(p.cmd, b, .Shader_Read)}}
-	if sc.index_buffer != 0 {rhi.cmd_barrier_buffer(p.cmd, sc.index_buffer, .Shader_Read)}
 	targets, count := gbuffer_targets(p)
 	pass := rhi.Render_Pass_Desc{color_count = count, name = name}
 	for target, i in targets[:count] {pass.colors[i] = {texture = target, load = .Load, store = .Store}}
@@ -535,16 +532,12 @@ pass_gbuffer_pipeline :: proc(s: ^Stage_Pass, shader: string, name := "", fragme
 // Begins the pass in which an extension blends into the lit image of the
 // view, in the Blend stage: in render units before exposure, with the
 // coverage TAA reads (the share of each pixel drawn over, which keeps less of
-// its history) and the depth buffer of the view to test against. What the
-// pass reads of the view (pass_surface_read) and of its buffers
-// (pass_buffer_ready) is made readable before it. Ends with pass_end.
+// its history) and the depth buffer of the view to test against. Ends with
+// pass_end.
 pass_blend_begin :: proc(s: ^Stage_Pass, name := "blended") {
 	p := s.pass
 	t := p.t
 	rhi.cmd_timestamp(p.cmd, name)
-	rhi.cmd_barrier_texture(p.cmd, t.linear_depth, .Shader_Read)
-	if s.glass != .All && t.glass[0].depth != 0 {rhi.cmd_barrier_texture(p.cmd, t.glass[0].depth, .Shader_Read)}
-	if p.r.scene.material_buffer != 0 {rhi.cmd_barrier_buffer(p.cmd, p.r.scene.material_buffer, .Shader_Read)}
 	target := rhi.Render_Pass_Desc{color_count = 2, name = name}
 	target.colors[0] = {texture = t.display, load = .Load, store = .Store}
 	target.colors[1] = {texture = t.reactive, load = .Load if p.blended else .Clear, store = .Store}
@@ -562,12 +555,9 @@ pass_surface_begin :: proc(s: ^Stage_Pass, targets: Surface_Targets, name := "su
 	t := p.t
 	textures := [Surface_Target]rhi.Texture{.Albedo = t.albedo, .Normal = t.normal, .Emission = t.emission}
 	rhi.cmd_timestamp(p.cmd, name)
-	rhi.cmd_barrier_texture(p.cmd, t.linear_depth, .Shader_Read)
-	rhi.cmd_barrier_texture(p.cmd, t.motion, .Shader_Read)
-	if t.instance != 0 {rhi.cmd_barrier_texture(p.cmd, t.instance, .Shader_Read)}
 	pass := rhi.Render_Pass_Desc{name = name}
 	for texture, target in textures {
-		if target not_in targets {rhi.cmd_barrier_texture(p.cmd, texture, .Shader_Read); continue}
+		if target not_in targets {continue}
 		pass.colors[pass.color_count] = {texture = texture, load = .Load, store = .Store}
 		pass.color_count += 1
 	}
@@ -596,9 +586,6 @@ pass_vertices_begin :: proc(s: ^Stage_Pass, name := "vertices") -> bool {
 	scene := &s.pass.r.scene
 	if s.stage != .Geometry || scene.vertex_buffer == 0 || scene.index_buffer == 0 || scene.mesh_buffer == 0 {return false}
 	rhi.cmd_timestamp(s.pass.cmd, name)
-	rhi.cmd_barrier_buffer(s.pass.cmd, scene.vertex_buffer, .Shader_Write)
-	rhi.cmd_barrier_buffer(s.pass.cmd, scene.index_buffer, .Shader_Read)
-	rhi.cmd_barrier_buffer(s.pass.cmd, scene.mesh_buffer, .Shader_Read)
 	return true
 }
 
@@ -756,10 +743,20 @@ pass_texture_sample :: proc(s: ^Stage_Pass, slot: u32, desc: Pass_Texture_Desc, 
 	for &entry in view.extension_textures {
 		if entry.key != key || entry.asked != view.frames {continue}
 		texture := entry.textures[(p.previous if previous else p.current) if entry.history else 0]
-		rhi.cmd_barrier_texture(p.cmd, texture, .Shader_Read)
 		rhi.cmd_bind_texture(p.cmd, SLOT_PASS0 + slot, texture)
 		return true
 	}
+	return false
+}
+
+// Binds at SLOT_PASS0 + slot, before a pass begins, the volume the passes of
+// the view asked for this frame by that name, as pass_texture_sample does;
+// in a view without it, a volume of the renderer that stands for it and holds
+// nothing meant to be read. False then.
+pass_volume_sample :: proc(s: ^Stage_Pass, slot: u32, name: string) -> bool {
+	if slot > SLOT_PASS9 - SLOT_PASS0 {return false}
+	if pass_texture_sample(s, slot, {name = name}) {return true}
+	rhi.cmd_bind_texture(s.pass.cmd, SLOT_PASS0 + slot, s.pass.r.display_lut)
 	return false
 }
 

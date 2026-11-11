@@ -36,7 +36,7 @@ terrain sends over the network, editor thumbnails, the shaders the executables e
 - **Packs.** A write says how hard it compresses (`Pack`): `PACK_EDIT` for what the editor,
   imports and the game save. A cook hands the packs of `cook/compressor/lz`: `SHIP` for the
   cooking of a shipped game, which writes every asset again with `document_repack` (its chunks
-  and the pages of a mesh), and `QUICK` for the cook of a `--dev` game, a few times faster and a
+  and the pages of a mesh), and `QUICK` for the cook of a dev game, a few times faster and a
   little larger. All decode the same way.
 - **Pieces.** A chunk over `PACK_PIECE` is a run of LZ streams of that many raw bytes, each
   decoding without the others (the library's `seekChunkReset`): a scene load decodes them at once
@@ -142,7 +142,7 @@ validated by their plugin without adding them to the core:
 - **`.mat`** (`MAT `): `material` (`Material_Info`), `imported` (`Material_Info`, of an imported
   material: what the source gave), `parameters`, `overlays`, `hidden`.
 - **`.scene`** (`SCEN`): `entities`, a table per component (those of prefab instances among
-  them), `scene`, `overrides` and `off` (turned-off components). With one root it is a
+  them), `scene`, `overrides` and `off` (turned-off components). `Header_Flag.Prefab` makes it a
   [prefab](scenes.md#prefab).
 - **`.anim`** (`ANIM`): `clips` (`Animation_Clip`), `tracks` (`Animation_Track`), `keys`
   (`anim.Keyframe`), `markers` (`Animation_Marker`, a moment or, with a duration, a span) and the
@@ -218,19 +218,21 @@ scan opens every file and writes it again.
   the program closed. Whoever keeps something per asset (the
   [previews](../../mirai-editor/references/panels.md#previews)) reads them and empties it.
 - `Registry_File.flags` are those of the header: `registry_prefab` reads from them whether a scene
-  has one root ([prefab](scenes.md#prefab)).
+  is a prefab ([prefab](scenes.md#prefab)).
 - `registry_dependents` comes from an inverse index built with each change: how many use an asset is
   its length, without walking the files (`asset.list` reports it as `used_by`).
 - **Imported folders.** An assets folder may have an imported folder with it (that of the root
   and of each mount: `.mirai/imported/` of the project or the plugin): what the
   [imports](../../mirai-imports/references/imports.md#identity-and-reimport) of its sources build
   that nobody edits, never versioned, each file named by its id and the key of what it was built
-  from. The registry lists them like any asset (`Registry_File.imported` is that key,
-  `asset/registry_imported.odin`) at a path it derives from where the sidecar that lists each is
-  now: beside its source for the root of an import, in a folder named after the source file for
-  the rest; one whose source is gone is not listed, and one that moved is listed there at the
-  next scan. `registry_file_path` gives the
-  file of either folder. A cooked folder has none: the cook writes every asset at its path.
+  from. A scan reads the sidecars it walks (`asset/sidecar.odin`, the one reader of the format)
+  and lists each output of the cache like any asset (`Registry_File.imported` is that key) at
+  `<folder of the sidecar>/<folder it names>/<name><extension>`; two outputs of one kind and
+  name are told apart by their index, and a path another file or output has takes the name of
+  the source: never the order of a scan. One whose source is gone is not listed, and one that
+  moved is listed there at the next scan, which a refresh of a sidecar or of its source runs.
+  `registry_file_path` gives the file of either folder. A cooked folder has none: the cook
+  writes every asset at its path.
 - **Mounts.** `registry_mount` adds a folder under a prefix (a plugin's assets, in
   `plugins/<name>`). A prefix that starts with a dot belongs to the program's assets (the editor's,
   in `.editor`): they are found by id and by path, but a project's lists omit them

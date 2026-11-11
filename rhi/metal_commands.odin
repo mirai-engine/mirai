@@ -204,14 +204,14 @@ mtl_accel_encoder :: proc(c: ^Command_List) -> ^MTL.AccelerationStructureCommand
 // ---------------------------------------------------------------- hazards
 
 // Every resource uses MTLHazardTrackingModeTracked, so Metal inserts the
-// required waits itself. The barriers only keep the Vulkan usage rules.
+// waits a pass needs itself, as Vulkan derives them from what the pass binds;
+// the barriers only keep the Vulkan usage rules.
 cmd_barrier_buffer :: proc(c: ^Command_List, buffer: Buffer, access: Access) {
 	if pool_get(&c.device.buffers, base.Handle(buffer)) == nil {return}
 	assert(!c.in_render_pass, "rhi: buffer barriers must be recorded outside render passes")
 }
 
 cmd_barrier_texture :: proc(c: ^Command_List, texture: Texture, access: Access) {}
-cmd_barrier_accel :: proc(c: ^Command_List, accel: Accel) {}
 
 // ---------------------------------------------------------------- render passes
 
@@ -458,7 +458,7 @@ mtl_flush_bindings :: proc(c: ^Command_List, compute: bool) -> bool {
 			}
 		case .Sampled_Texture, .Storage_Texture:
 			t := pool_get(&d.textures, base.Handle(s.texture))
-			if t == nil {set_error(d, "pipeline %s: slot %d texture was destroyed", p.name, i); return false}
+			if t == nil {set_error(d, "pipeline %s: slot %d holds no texture: it was destroyed or a buffer is bound there", p.name, i); return false}
 			view := mtl_texture_view(t, s.mip)
 			if view == nil {set_error(d, "pipeline %s: slot %d texture has no mip %d or no drawable", p.name, i, s.mip); return false}
 			if compute {
@@ -649,18 +649,18 @@ cmd_copy_texture_to_buffer :: proc(c: ^Command_List, src: Texture, dst: Buffer, 
 	)
 }
 
-// Copies mip 0 of a texture into mip 0 of another, every layer, with its
-// bytes as they are: nothing converts between the sRGB encodings of the two.
-// What it copies between: texture_copy_problem; neither is the image of the
-// swapchain.
-cmd_copy_texture :: proc(c: ^Command_List, src: Texture, dst: Texture) {
+// Copies `mips` mips of a texture from src_mip into those of another from
+// dst_mip, every layer, with its bytes as they are: nothing converts between
+// the sRGB encodings of the two. What it copies between: texture_copy_problem;
+// neither is the image of the swapchain.
+cmd_copy_texture :: proc(c: ^Command_List, src: Texture, dst: Texture, src_mip: u32 = 0, dst_mip: u32 = 0, mips: u32 = 1) {
 	assert(!c.in_render_pass)
 	d := c.device
 	s := pool_get(&d.textures, base.Handle(src))
 	t := pool_get(&d.textures, base.Handle(dst))
 	if s == nil || t == nil || s.handle == nil || t.handle == nil {return}
 	if src == dst || s.swapchain || t.swapchain {set_error(d, "cmd_copy_texture: it copies between two textures of the device, not the image of the swapchain"); return}
-	if problem := texture_copy_problem(s.desc, t.desc); problem != "" {set_error(d, "cmd_copy_texture: %s", problem); return}
+	if problem := texture_copy_problem(s.desc, t.desc, src_mip, dst_mip, mips); problem != "" {set_error(d, "cmd_copy_texture: %s", problem); return}
 	source := s.handle
 	if s.format != t.format {
 		// A blit takes two textures of one pixel format. A view that changes
@@ -670,9 +670,12 @@ cmd_copy_texture :: proc(c: ^Command_List, src: Texture, dst: Texture) {
 		source = s.encoded
 	}
 	encoder := mtl_blit_encoder(c)
-	size := MTL.Size{NS.UInteger(s.desc.width), NS.UInteger(s.desc.height), 1}
-	for slice in 0 ..< NS.UInteger(max(s.desc.layers, 1)) {
-		MTL.BlitCommandEncoder_copyFromTexture(encoder, source, slice, 0, MTL.Origin{0, 0, 0}, size, t.handle, slice, 0, MTL.Origin{0, 0, 0})
+	for k in 0 ..< mips {
+		from, to := src_mip + k, dst_mip + k
+		size := MTL.Size{NS.UInteger(max(s.desc.width >> from, 1)), NS.UInteger(max(s.desc.height >> from, 1)), 1}
+		for slice in 0 ..< NS.UInteger(max(s.desc.layers, 1)) {
+			MTL.BlitCommandEncoder_copyFromTexture(encoder, source, slice, NS.UInteger(from), MTL.Origin{0, 0, 0}, size, t.handle, slice, NS.UInteger(to), MTL.Origin{0, 0, 0})
+		}
 	}
 }
 

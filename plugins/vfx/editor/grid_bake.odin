@@ -58,7 +58,7 @@ api_grid_bake :: proc(s:^editor.Session,call:^api.Call) {
         api.call_fail(call,api.INVALID_PARAMS,"path is required")
         return
     }
-    path:=named if strings.has_suffix(named,gridfile.EXTENSION) else fmt.tprintf("%s%s",named,gridfile.EXTENSION)
+    path:=named if strings.has_suffix(named,gridfile.GRID_EXTENSION) else fmt.tprintf("%s%s",named,gridfile.GRID_EXTENSION)
     target:=editor.scene_file(s,path)
     if target=="" {
         api.call_failf(call,api.INVALID_PARAMS,"%s: %s",path,editor.document_error_text(.Bad_Path))
@@ -75,7 +75,7 @@ api_grid_bake :: proc(s:^editor.Session,call:^api.Call) {
         return
     }
     id:=editor.asset_id_new(s)
-    if file,found:=asset.registry_find_path(&a.registry,path);found && file.kind==gridfile.KIND {id=file.id}
+    if file,found:=asset.registry_find_path(&a.registry,path);found && file.kind==gridfile.GRID_KIND {id=file.id}
     wait:=Grid_Bake_Wait{id=id}
     base.text_set(wait.file[:],target)
     answer:[editor.API_PATH_BYTES]u8

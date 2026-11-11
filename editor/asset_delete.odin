@@ -46,7 +46,7 @@ asset_delete_files :: proc(r:^asset.Registry,id:base.Asset_Id) -> []u32 {
 
 // As asset_delete_files, with what goes when the asset is the root of an
 // import: what that import keeps in the imported folder, which nothing builds
-// once its sidecar is gone.
+// once its source and its sidecar are gone.
 @(private)
 asset_delete_all :: proc(s:^Session,r:^asset.Registry,id:base.Asset_Id) -> (files:[]u32,sidecar:string) {
     listed:=make([dynamic]u32,context.temp_allocator)
@@ -117,7 +117,10 @@ asset_delete :: proc(s:^Session,id:base.Asset_Id) -> (moved:[]string,message:str
         append(&done,path)
     }
     // The import is given up with its root: its source stays, and importing it again is a new import.
-    if message=="" && sidecar!="" {_=platform.trash(sidecar)}
+    if message=="" && sidecar!="" {
+        _=platform.trash(sidecar)
+        _=platform.trash(strings.trim_suffix(sidecar,asset.SIDECAR_EXTENSION))
+    }
     if len(done)>0 {
         host.assets_refresh(s.app.assets,done[:])
         host.content_refresh(s.app)
@@ -136,7 +139,6 @@ asset_delete :: proc(s:^Session,id:base.Asset_Id) -> (moved:[]string,message:str
 asset_delete_modal :: proc(s:^Session) {
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     r:=files_registry(s)
     file:^asset.Registry_File
     found:=false
@@ -151,44 +153,44 @@ asset_delete_modal :: proc(s:^Session) {
         files,_:=asset_delete_all(s,r,file.id)
         users:=asset_delete_users(r,files)
         refusal:=asset_delete_refusal(s,r,file)
-        ui.label(ctx,"Delete asset",th.font_heading,th.text,font=ui.FONT_SEMIBOLD)
+        ui.label(ctx,"Delete asset",ui.metric(ctx,"font_heading"),ui.tone(ctx,"text"),font=ui.FONT_SEMIBOLD)
         if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=12,align_y=.Center}) {
             asset_thumbnail(s,file,ASSET_DELETE_THUMB)
             if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=4}) {
-                ui.label(ctx,filepath.base(file.path),th.font+1,th.text,0,font=ui.FONT_SEMIBOLD)
-                ui.label(ctx,file.path,th.font_small,th.text_faint,0)
+                ui.label(ctx,filepath.base(file.path),ui.metric(ctx,"font")+1,ui.tone(ctx,"text"),0,font=ui.FONT_SEMIBOLD)
+                ui.label(ctx,file.path,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"),0)
             }
         }
         if len(files)>1 {
             if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=2}) {
-                ui.label(ctx,len(files)==2?"With its part":fmt.tprintf("With its %d parts",len(files)-1),th.font_small,th.text_muted)
+                ui.label(ctx,len(files)==2?"With its part":fmt.tprintf("With its %d parts",len(files)-1),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
                 for at in files[1:] {modal_asset_row(s,ctx,&r.files[at])}
             }
         }
         if len(users)>0 {
             if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=2,padding={0,8,0,4},fill=ASSET_DELETE_USED_FILL,stroke=ASSET_DELETE_USED_RULE,stroke_width=1,radius=6}) {
                 if ui.box(ctx,{width=ui.GROW,height=ui.FIT,padding={8,0,8,4}}) {
-                    ui.label(ctx,fmt.tprintf("Used by %d",len(users)),th.font,th.danger,font=ui.FONT_SEMIBOLD)
+                    ui.label(ctx,fmt.tprintf("Used by %d",len(users)),ui.metric(ctx,"font"),ui.tone(ctx,"danger"),font=ui.FONT_SEMIBOLD)
                 }
                 for at in users[:min(len(users),ASSET_DELETE_USERS)] {
                     user:=&r.files[at]
-                    icon,_:=asset_icon(s,shown_kind(user))
+                    icon,_:=asset_file_icon(s,user)
                     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(24),gap=8,padding={8,0,8,0},align_y=.Center}) {
-                        ui.icon(ctx,icon,th.text_muted,14)
-                        ui.label(ctx,filepath.base(user.path),th.font,th.text,0)
+                        ui.icon(ctx,icon,ui.tone(ctx,"text_muted"),14)
+                        ui.label(ctx,filepath.base(user.path),ui.metric(ctx,"font"),ui.tone(ctx,"text"),0)
                     }
                 }
                 if len(users)>ASSET_DELETE_USERS {
                     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(24),padding={8,0,8,0},align_y=.Center}) {
-                        ui.label(ctx,fmt.tprintf("and %d more",len(users)-ASSET_DELETE_USERS),th.font_small,th.text_muted)
+                        ui.label(ctx,fmt.tprintf("and %d more",len(users)-ASSET_DELETE_USERS),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
                     }
                 }
             }
         }
-        if refusal!="" {ui.label(ctx,refusal,th.font_small,th.danger_soft)}
-        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.control),gap=8,align_x=.End,align_y=.Center}) {
-            if ui.button(ctx,shell_id(g,"delete_asset_cancel"),{label="Cancel",style=.Field,width=90,height=th.control,center=true}).clicked {closed=true}
-            if ui.button(ctx,shell_id(g,"delete_asset_confirm"),{label="Delete",style=.Danger,width=90,height=th.control,center=true,disabled=refusal!=""}).clicked {
+        if refusal!="" {ui.label(ctx,refusal,ui.metric(ctx,"font_small"),ui.tone(ctx,"danger_soft"))}
+        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"control")),gap=8,align_x=.End,align_y=.Center}) {
+            if ui.button(ctx,shell_id(g,"delete_asset_cancel"),{label="Cancel",variant="field",width=90,height=ui.metric(ctx,"control"),center=true}).clicked {closed=true}
+            if ui.button(ctx,shell_id(g,"delete_asset_confirm"),{label="Delete",variant="danger",width=90,height=ui.metric(ctx,"control"),center=true,disabled=refusal!=""}).clicked {
                 id:=g.delete_asset
                 g.modal,g.delete_asset=.None,{}
                 moved,message:=asset_delete(s,id)

@@ -66,7 +66,7 @@ prompt_images_field :: proc(c:^editor.Inspect,info:^runtime.Type_Info,name,label
             for image,i in settings.prompt_images {if image.texture=={} {slot=i;break}}
         }
         if slot<0 {
-            ui.label(s.gui.ctx,fmt.tprintf("%s: the %d images are taken",prompt_row_label(row),gui.UI_PROMPT_IMAGES),s.gui.ctx.theme.font_small,s.gui.ctx.theme.text_muted)
+            ui.label(s.gui.ctx,fmt.tprintf("%s: the %d images are taken",prompt_row_label(row),gui.UI_PROMPT_IMAGES),ui.metric(s.gui.ctx,"font_small"),ui.tone(s.gui.ctx,"text_muted"))
             continue
         }
         start:=int(offset)+slot*size_of(gui.UI_Prompt_Image)
@@ -93,7 +93,7 @@ prompt_row_label :: proc(row:Prompt_Row) -> string {
     return editor.readable(reflect.enum_string(row.input))
 }
 
-// The inputs the actions of the game bind in input.mirai, each family in
+// The inputs the actions of the game bind, each family in
 // turn, and those the settings give an image without a binding.
 @(private)
 prompt_rows :: proc(app:^host.App,settings:^gui.UI_Settings) -> []Prompt_Row {
@@ -104,13 +104,8 @@ prompt_rows :: proc(app:^host.App,settings:^gui.UI_Settings) -> []Prompt_Row {
     }
     m:=new(inp.Input_Map,context.temp_allocator)
     if app.info!=nil {
-        file,text:string
-        if app.root!="" {
-            path:=project.path(app.root,project.INPUT_FILE,allocator=context.temp_allocator)
-            if data,error:=os.read_entire_file(path,context.temp_allocator);error==nil {file,text=path,string(data)}
-        }
         problems:=new(core.Problems,context.temp_allocator)
-        inp.input_map_make(m,app.info,file,text,problems)
+        inp.input_map_make(m,app.info,app_input_settings(app),problems)
     }
     for family in ([]ui.Prompt_Family{.Keyboard,.Xbox,.PlayStation}) {
         if app.info!=nil {

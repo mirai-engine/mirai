@@ -73,7 +73,7 @@ instance_slot :: proc "contextless" (is_world:bool,player:int) -> int {return is
 // The screens in order, the lowest left out past SCREEN_CAPACITY; a hidden
 // one only while it still shows something of its last build.
 @(private)
-plan_screens :: proc(gui:^Gui,app:^host.App,world:core.World_Ref,screens:core.Read(UI_Screen),hidden:core.Read(render.Hidden),parents:core.Read(core.Parent),seats:core.Read(inp.Seat),drivables:core.Read(inp.Drivable),time:core.Time,local_count:int,problems:^core.Problems) {
+plan_screens :: proc(gui:^Gui,app:^host.App,world:core.World_Ref,screens:^core.Table(UI_Screen,.Read),hidden:^core.Table(render.Hidden,.Read),parents:^core.Table(core.Parent,.Read),seats:^core.Table(inp.Seat,.Read),moves:^core.Table(inp.Move_Input,.Read),time:core.Time,local_count:int,problems:^core.Problems) {
     Candidate :: struct {entity:core.Entity,screen:UI_Screen,hiding:bool}
     ordered:[SCREEN_CAPACITY]Candidate
     count:=0
@@ -86,7 +86,7 @@ plan_screens :: proc(gui:^Gui,app:^host.App,world:core.World_Ref,screens:core.Re
         // its part while the window is split, and not on this machine when
         // that player is at another end or nobody drives the body.
         if screen.player==0 {
-            if slot,owned,local:=screen_owner(seats,drivables,parents,e);owned {
+            if slot,owned,local:=screen_owner(seats,moves,parents,e);owned {
                 if !local || slot>=players {continue}
                 if local_count>1 {screen.player=u8(slot+1)}
             }
@@ -137,14 +137,13 @@ OWNER_DEPTH :: 8 // entities over one that are asked whose it is
 // Whose an entity is: the seat it is, the seat that drives it, or that of
 // the nearest entity over it that is one of those. owned: it is of a player,
 // or a body nobody drives; local: of the player of this machine in slot.
-screen_owner :: proc(seats:core.Read(inp.Seat),drivables:core.Read(inp.Drivable),parents:core.Read(core.Parent),e:core.Entity) -> (slot:int,owned,local:bool) {
+screen_owner :: proc(seats:^core.Table(inp.Seat,.Read),moves:^core.Table(inp.Move_Input,.Read),parents:^core.Table(core.Parent,.Read),e:core.Entity) -> (slot:int,owned,local:bool) {
     at:=e
     for _ in 0..<OWNER_DEPTH {
         seat:=at
-        if body,driven:=core.get(drivables,at);driven {
-            if body.seat==core.NONE {return 0,true,false}
-            seat=body.seat
-        }
+        if driver:=inp.seat_of(seats,at);driver!=core.NONE {
+            seat=driver
+        } else if core.has(moves,at) {return 0,true,false}
         if value,is_seat:=core.get(seats,seat);is_seat {return int(value.slot),true,inp.seat_local(value)}
         parent,has:=core.get(parents,at)
         if !has || parent.entity==core.NONE {return}
@@ -170,7 +169,7 @@ Widget_Candidate :: struct {
 // out of sight keeps its instance, and one on a mesh its texture, without
 // being built.
 @(private)
-plan_widgets :: proc(gui:^Gui,app:^host.App,world:core.World_Ref,widgets:core.Read(World_Widget),worlds:core.Read(core.World_Transform),meshes_of:core.Read(render.Mesh_Renderer),hidden:core.Read(render.Hidden),parents:core.Read(core.Parent),time:core.Time,players:int,problems:^core.Problems,preview:=false) {
+plan_widgets :: proc(gui:^Gui,app:^host.App,world:core.World_Ref,widgets:^core.Table(World_Widget,$A),worlds:^core.Table(core.World_Transform,$B),meshes_of:^core.Table(render.Mesh_Renderer,$C),hidden:^core.Table(render.Hidden,$D),parents:^core.Table(core.Parent,$E),time:core.Time,players:int,problems:^core.Problems,preview:=false) {
     clear(&gui.candidates)
     split:=players>1 && gui.views[1].known
     for row in 0..<core.count(widgets) {
@@ -322,7 +321,7 @@ screen_node_rect :: proc(ctx:^ui.Context,tree:^ui.Widget_Tree,e:core.Entity,inde
 // the screen, and what it does have.
 @(private)
 asked_check :: proc(gui:^Gui,app:^host.App,problems:^core.Problems) {
-    for &asked in gui.names_asked[:gui.names_asked_count] {
+    for &asked in gui.names_asked.names[:gui.names_asked.count] {
         if asked.checked {continue}
         found:=false
         slots:=core.entity_map_get(&gui.index,asked.entity)
@@ -433,7 +432,7 @@ instance_get :: proc(gui:^Gui,app:^host.App,world:core.World_Ref,e:core.Entity,s
             if missing>0 {
                 file:[base.ASSET_ID_TEXT]u8
                 more:=fmt.tprintf(" and %d more",missing-1) if missing>1 else ""
-                core.report(problems,e,"gui.action","interface %s of its %s names the input action '%s'%s, which the game does not declare: its buttons do not take it and its prompts show nothing; declare it as an inp.Action constant and bind it in input.mirai, or choose another action in the .ui",host.assets_name(app.assets,asset,&file),kind,first,more)
+                core.report(problems,e,"gui.action","interface %s of its %s names the input action '%s'%s, which the game does not declare: its buttons do not take it and its prompts show nothing; declare it as a member of an enum @(actions) with its default bindings, or choose another action in the .ui",host.assets_name(app.assets,asset,&file),kind,first,more)
             }
         }
         // A Draw whose procedure the game does not declare keeps its place and shows nothing.
@@ -537,8 +536,8 @@ bind_rows :: proc(user:rawptr,name:u64) -> (data:rawptr,count,stride:int,stamp:u
     if source==nil || source.storage {return}
     table,_:=core.world_table(b.world,source.type)
     if table==nil || table.on<=0 {return}
-    // Both only grow: a write raises the version, rows that come or go the layout.
-    return core.raw_value(table,source.info,0),table.on,source.info.size,table.version+table.layout
+    // The version only grows, with every write and every row that comes, goes or moves.
+    return core.raw_value(table,source.info,0),table.on,source.info.size,table.version
 }
 
 // Brings the copy an interface is built with up to date: what its paths
@@ -714,7 +713,7 @@ instances_sweep :: proc(gui:^Gui) {
 // Modal is on top.
 @(private)
 modal_apply :: proc(
-    gui:^Gui,seat_state:core.Ref(inp.Seats),seats:core.Read(inp.Seat),requests:^inp.Seat_Requests,
+    gui:^Gui,seat_state:core.Ref(inp.Seats),seats:^core.Table(inp.Seat,$A),requests:^inp.Seat_Requests,
     contexts:core.Ref(inp.Input_Contexts),context_requests:^inp.Context_Requests,
 ) -> (on_top:bool) {
     for e in gui.unblock {

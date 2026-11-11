@@ -56,7 +56,7 @@ App_Desc :: struct {
     audio:Audio_Output,
     audio_driver:string,
 
-    root:string,                 // the project: its manifest, its input bindings, its settings
+    root:string,                 // the project: its manifest and its settings
     engine_root:string,          // the engine whose general settings lie under those of the project; empty: only the project's, as in a shipped game
     options:string,              // folder of the options the player chose (settings of the machine and input bindings) over those of the project; "": none, as in the editor
     assets_root:string,          // folder of cooked assets; its changes are reloaded
@@ -73,7 +73,7 @@ App_Desc :: struct {
 // is an argument the player does not understand.
 Launch :: struct {
     scene:string,
-    players:int,        // local players asked for, splitting the screen; 0: what the scene says
+    players:int,        // --players: the local players of the run (input.Run_Players); 0: not asked
     arguments:[]string, // what the player does not read itself
     taken:[]bool,       // by argument: a library read it
 }

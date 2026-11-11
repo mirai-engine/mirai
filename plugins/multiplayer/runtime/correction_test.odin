@@ -56,16 +56,14 @@ correction_fixed :: proc(world,shared,editor,application:rawptr) {
         sent,_:=remote_input(core.ref(&w.remote),sh.connection)
         push=net_test_axis(sent,NET_TEST_PUSH)
     } else {
-        push=inp.seat_action(core.read(&w.seats),inp.local_seat(core.read(&w.seats),0),NET_TEST_PUSH).value
+        push=inp.seat_action(core.read(&w.seats),inp.local_seat(&w.seats,0),NET_TEST_PUSH).value
     }
     if push!=0 {phys.apply_force(&w.requests,sh.player,{push*CORRECTION_PUSH,0,0})}
     net_test_physics(w,sh,app)
     if sh.session!=nil {
         outbox:Net_Outbox
-        adoptions:Net_Adoptions
-        net_tick_tail(ref,sh.session,&outbox,&adoptions,sh.session.problems)
+        net_tick_tail(ref,sh.session,&outbox,&w.made,sh.session.problems)
         core.value_free(&outbox,type_info_of(Net_Outbox))
-        core.value_free(&adoptions,type_info_of(Net_Adoptions))
     }
 }
 
@@ -167,7 +165,6 @@ correction_run :: proc(t:^testing.T,settings:Net_Settings,link:Correction_Link,s
         now=f64(tick)/60
         wire.sim_network_advance(&network,now)
         for &session in sessions {wire.host_update(&session.host,now)}
-        server_events,client_events:Net_Events
         server_commands(&sessions[0],core.world_ref(&worlds[0],&info),nil,wire.host_poll(&sessions[0].host),&worlds[0].remote)
         for event in net_test_arrived(&sessions[0]) {
             if event.kind!=.Connected {continue}
@@ -181,8 +178,6 @@ correction_run :: proc(t:^testing.T,settings:Net_Settings,link:Correction_Link,s
         before:=sessions[1].stats.resimulated
         client_reconcile(&sessions[1],core.world_ref(&worlds[1],&info),&apps[1],1.0/60)
         result.frame_resimulated=max(result.frame_resimulated,int(sessions[1].stats.resimulated-before))
-        core.value_free(&server_events,type_info_of(Net_Events))
-        core.value_free(&client_events,type_info_of(Net_Events))
         core.edit(&worlds[0].values,bodies[0][CORRECTION_BODIES-1]).force=correction_force(tick)
         client_tick:=tick+lead
         worlds[1].input.keys_down=correction_keys(client_tick)
@@ -192,15 +187,15 @@ correction_run :: proc(t:^testing.T,settings:Net_Settings,link:Correction_Link,s
             net_test_fixed_with(&world,&shares[index],&apps[index])
         }
         for e,k in bodies[1] {
-            local,_:=core.get(core.read(&worlds[1].transforms),e)
+            local,_:=core.get(&worlds[1].transforms,e)
             // What it shows in the past (the interpolated) is not where the server has it at the same tick.
-            link,_:=core.get(core.read(&worlds[1].links),e)
+            link,_:=core.get(&worlds[1].links,e)
             r:=replica_of(&sessions[1],link.object)
             shown[client_tick%len(shown)][k]=r!=nil && r.mode==.Predicted?local.position:{max(f32),0,0}
         }
         if tick>lead+120 && sessions[1].status==.Connected {
             for e,k in bodies[0] {
-                local,_:=core.get(core.read(&worlds[0].transforms),e)
+                local,_:=core.get(&worlds[0].transforms,e)
                 if was:=shown[tick%len(shown)][k];was.x!=max(f32) {append(&errors,linalg.length(local.position-was))}
             }
         }

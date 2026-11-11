@@ -73,6 +73,7 @@ Body_Flag :: enum u32 {
     Lock_Linear_X,Lock_Linear_Y,Lock_Linear_Z,
     Lock_Angular_X,Lock_Angular_Y,Lock_Angular_Z,
     Mass_Override, // the mass was set by the caller and shapes do not change it
+    Mass_Given,    // body.mass was given (body_set_mass): the shapes give its center and inertia only
     Own_Gravity,   // it falls with its gravity, not with that of the world
     Enlarged,      // a shape left its fat box during the last step
     Character,     // capsule of a character: its contacts and boxes look ahead by its speed
@@ -122,8 +123,9 @@ Body :: struct {
     type:Body_Type,
     flags:Body_Flags,
     gravity:Vec3, // m/s2, with Own_Gravity
+    awake_prev,awake_next:i32, // neighbors in the list of the awake bodies, while Awake
 }
-#assert(size_of(Body)==280)
+#assert(size_of(Body)==288)
 
 // Dynamic bodies that touching contacts and joints connect, directly or not, fall asleep and wake together as
 // an island. A kinematic body is an island of its own; a static body has none.
@@ -166,7 +168,7 @@ Push_Rule :: struct {
 PUSH_RULE_CAPACITY :: 16
 
 Shape_Flag :: enum u32 {
-    Moved,   // needs new pairs at the next step
+    Moved,   // needs new pairs at the next step: it is in the list of the moved shapes
     One_Way, // blocks only what comes from the side its local +Y faces
     Hits,    // its contacts raise hit events
     Twin,    // a copy that the twin of its body carries elsewhere (twin.odin)
@@ -214,8 +216,9 @@ Shape :: struct {
     radius:f32, // convex radius of a box, hull or cylinder: it collides as its core, smaller by this, inflated by it
     drag:f32,   // Cd in a fluid
     source:i32, // a copy of a twin: the shape it copies
+    moved_prev,moved_next:i32, // neighbors in the list of the moved shapes, while Moved
 }
-#assert(size_of(Shape)==200)
+#assert(size_of(Shape)==208)
 
 Contact_Flag :: enum u32 {
     Touching,
@@ -223,8 +226,7 @@ Contact_Flag :: enum u32 {
     Started,  // touching began in the last step
     Stopped,
     Disjoint, // the fat boxes stopped overlapping
-    Visited,
-    Continuous,
+    Visited,  // in the active contacts of the step being taken
     Pass,     // met a one-way shape from its back: goes through it until the shapes stop touching
 }
 Contact_Flags :: bit_set[Contact_Flag;u32]
@@ -280,7 +282,7 @@ Contact_Begin_Event :: struct {
     users:Event_Users,
 }
 Contact_End_Event :: struct {shape_a,shape_b:Shape_Handle,body_a,body_b:Body_Handle,users:Event_Users}
-// One for each shape of a pair that overlaps, as `shape`. `crossed`: a bullet went through the other
+// One for each shape of a pair that overlaps, as `shape`. `crossed`: a swept body went through the other
 // shape within the step, so the pair begins and ends in the same step. In users, A is `shape` and its body.
 Overlap_Event :: struct {shape,other:Shape_Handle,body,other_body:Body_Handle,crossed:bool,users:Event_Users}
 Joint_Break_Event :: struct {joint:Joint_Handle,body_a,body_b:Body_Handle,force,torque:f32}
@@ -314,7 +316,7 @@ Stats :: struct {
     character_capacity_exhausted,fluid_capacity_exhausted:int,
     // Breakables, breaks and cuts refused because a capacity of theirs or of the world ran out.
     breakable_capacity_exhausted:int,
-    // Shapes a bullet went through in a step beyond the CCD_OVERLAP_CAPACITY it keeps, without their overlap
+    // Shapes a swept body went through in a step beyond the CCD_OVERLAP_CAPACITY it keeps, without their overlap
     // events, since the world was created.
     ccd_overlaps_dropped:int,
 }

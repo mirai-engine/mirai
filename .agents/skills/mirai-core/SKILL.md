@@ -19,7 +19,7 @@ A game is a struct in memory and a list of functions that transform it
 - Finding an entity by `Id` and giving new `Id`s:
   [identity](references/core.md#persistent-identity).
 - Queues, requests and events: [queues](references/core.md#queues-and-references).
-- Waiting some seconds, cooldowns and requests for later (`deadline`, `due`, `later`):
+- Waiting some seconds and cooldowns (`deadline`, `due`):
   [waiting](references/core.md#waiting).
 - `Time`, `Frame_Time`, `Input`, `View`, `Jumps`, pause and slow motion (`Clock`) and an entity
   that keeps its pace in it (`Own_Pace`, bullet time):
@@ -30,7 +30,7 @@ A game is a struct in memory and a list of functions that transform it
   [requested places](references/core.md#requested-places).
 - Rays and spheres against the world regardless of physics (`World_Queries`, `world_query`):
   [world queries](references/core.md#world-queries); the ground regardless of terrain
-  (`Ground_Queries`, `ground_query`, unloaded and changed boxes):
+  (`Ground_Queries`, `ground_query`, the boxes where it changed or is not loaded):
   [ground](references/core.md#ground); births of effects regardless of vfx (`Births`,
   `Birth_Channel`): [births](references/core.md#births).
 - Transforms and hierarchy: [transform](references/core.md#transform-and-hierarchy); children,
@@ -100,8 +100,8 @@ A game is a struct in memory and a list of functions that transform it
    functions from what they read, write, push and take; `after="a b"` or `before="c"` say only
    what the parameters do not ([order](references/generator.md#order)). Function names are unique
    across the whole world. What only a lone game or a server decides carries `server`.
-8. What waits keeps the tick it waits for: `core.deadline` and `core.due`
-   ([waiting](references/core.md#waiting)).
+8. What waits keeps the tick it waits for: `core.deadline` and `core.due`, or a request pushed
+   with `core.later` ([waiting](references/core.md#waiting)).
 9. `mirai generate` lists the generator errors; the generated code is read in
    `<project>/.mirai/gen/` and is never edited.
 
@@ -130,10 +130,10 @@ A game is a struct in memory and a list of functions that transform it
   it, and whoever writes a table or a storage before whoever reads it. `after` and `before` name
   functions of the engine or of the plugins a library depends on, only for what its parameters do
   not say; a cycle is a generator error that one name settles.
-- **A wait is a tick.** What waits keeps the tick it is due at (`core.deadline`, `core.due`),
-  plain data in a component that a rollback and a save keep, the same seconds at any tick rate.
-  No delayed request, no countdown written every tick, no count of ticks in code, no coroutines
-  ([waiting](references/core.md#waiting)).
+- **A wait is a tick.** What waits keeps the tick it is due at (`core.deadline`, `core.due`), or
+  is a request that carries it (`core.later`, `core.take_due`): plain data that a rollback keeps,
+  the same seconds at any tick rate. No countdown written every tick, no count of ticks in code,
+  no coroutines ([waiting](references/core.md#waiting)).
 - **A function touches only what it receives.** Its parameters say what it reads and writes:
   from them come the settle after it, the revisions of the storages a rollback copies again and
   the single writer of each datum ([parameters](references/generator.md#parameters)).
@@ -148,7 +148,7 @@ A game is a struct in memory and a list of functions that transform it
   asks in the body ([attributes](references/generator.md#attributes)).
 - **Structural changes are applied when the function ends.** `core.add`, `core.remove` and
   `core.destroy` wait in `pending`: no walk or pointer is invalidated inside a function, and what
-  waits is written with `core.added`/`core.staged`. Between functions `core.Entity` is stored,
+  waits is written with `core.staged`. Between functions `core.Entity` is stored,
   never pointers.
 - **What is disabled does not exist for the loop.** A disabled component (`core.disable`) or one of
   an entity with `Disabled` keeps its row and its values, but `count`, `get`, `has` and `row_of`
@@ -166,13 +166,15 @@ A game is a struct in memory and a list of functions that transform it
   new one comes from `core.id_new`** (in a document, `asset.scene_new_id`), never by walking the
   `Id` table or with another generator. An `Id` added before the settle that settles the `Id` table
   is not found yet ([identity](references/core.md#persistent-identity)).
-- **Reading never stamps; writing is requesting the row.** `get` and `at` give the value, on a
-  `Read` and on a `^core.Table` alike. A write asks for the row with `edit`, `edit_at`, `free` or
-  `writable`, or gives its value with `set`, which writes only a value that differs; by reflection,
-  `raw_edit` or `raw_touch`. The row takes a stamp and its readers process it
-  ([stamps](references/core.md#tables)). A direct write into `values` is seen by nobody, and a row
-  asked for with `edit` is stamped whether or not it is written: what may leave the row as it is
-  reads first, or uses `set`.
+- **One handle per table; the access is in the declaration.** A function writes with
+  `^core.Table(C)` and reads with `^core.Table(C,.Read)`; every read procedure takes either, once,
+  and a helper that reads takes `^core.Table(C,$A)`. There is no read wrapper and no read twin.
+- **Reading never stamps; writing is requesting the row.** `get` and `at` give the value. A write
+  asks for the row with `edit`, `edit_at` or `free`, which is written only if its bytes differ when
+  the function ends, or with `writable`, every row; by reflection, `raw_edit` or `raw_touch`. The
+  row takes a stamp and its readers process it ([stamps](references/core.md#tables)). A direct
+  write into `values` is seen by nobody; there is no compare-and-set: what may leave the row as it
+  is asks for it all the same.
 - **A `@(params)` is only a way of writing the signature.** It counts as its loose fields: it gives
   the same write rights, with one writer per datum, and what the function writes reaches it only
   once among its parameters and groups.
@@ -266,7 +268,7 @@ A game is a struct in memory and a list of functions that transform it
 - `Id` index or new `Id`s: also `mirai test engine/save` (borrowed `Id`s),
   `plugins/multiplayer/runtime` (rollback and adoption), `plugins/destruct/runtime` (groups) and
   `editor` (API and collaboration).
-- Deadlines and requests for later: `mirai test core` (`deadline_test.odin`, `queue_test.odin`) and
+- Deadlines: `mirai test core` (`deadline_test.odin`) and
   `engine/save` (a checkpoint brings the clock back).
 - Authority and requested places: `mirai test core` (`place_test.odin`) and
   `plugins/multiplayer/runtime` (`authority_test.odin`).

@@ -15,8 +15,8 @@ import "mirai:ui"
 // engine on the machine (project.machine_folder), never versioned: a section
 // per area, named by its type and written like the settings, with only the
 // fields that differ from the code. Each area keeps its struct in its own
-// storage; this file only reads and writes them, once the UI rests and
-// they changed, and when the editor closes or restarts: never per frame. A
+// storage; this file only reads and writes them, once the UI rests after
+// they changed (project.Rest), and when the editor closes or restarts. A
 // --headless editor neither reads nor writes them, unless --preferences.
 // What a user marks in the browser of a project (Content_Marks) and where
 // they left it (Content_Navigation) are kept the same way, in MARKS_FILE in
@@ -24,15 +24,12 @@ import "mirai:ui"
 
 PREFERENCES_FILE :: "editor.mirai"
 MARKS_FILE :: "content.mirai"
-PREFERENCES_REST :: f32(0.5) // seconds without a gesture before a change is written
 
 @(storage)
 Preferences :: struct {
-    file:string,  // "": this editor keeps none
-    written:u64,  // what the file has, as preferences_hash
-    marks_file:string,  // "": no project
-    marks_written:u64,
-    rest:f32,     // seconds the UI has rested
+    file:string,       // "": this editor keeps none
+    marks_file:string, // "": no project
+    kept,marks:project.Rest, // of preferences_hash
 }
 
 // The structs of the areas as the file names them, with their values of the code.
@@ -89,58 +86,46 @@ preferences_open :: proc(s:^Session,options:Options) {
     p.file=project.path(folder,PREFERENCES_FILE)
     list:=preferences_list(s)
     if error:=project.settings_read(p.file,list);error.code!=.None {notify(s,settings_file_error_text(p.file,error))}
-    p.written=preferences_hash(list)
+    project.rest_init(&p.kept,preferences_hash(list))
     if s.project_root!="" && s.content!=nil {
         p.marks_file=project.path(project.folder_path(s.project_root,.Generated,context.temp_allocator),MARKS_FILE)
         navigation:=content_navigation(s.content)
         marks:=marks_list(s,&navigation)
         if error:=project.settings_read(p.marks_file,marks);error.code!=.None {notify(s,settings_file_error_text(p.marks_file,error))}
         content_navigation_set(s.content,&navigation)
-        p.marks_written=preferences_hash(marks)
+        project.rest_init(&p.marks,preferences_hash(marks))
     }
 }
 
-// Writes the preferences that changed since the file was written. While a
-// Play runs the layout is that of the Play: the one of editing waits for Stop.
-preferences_save :: proc(s:^Session) {
+// Writes the preferences that changed since the file was written; resting:
+// only those that rest (project.rest_due), else all. While a Play runs the
+// layout is that of the Play: the one of editing waits for Stop.
+preferences_save :: proc(s:^Session,resting:=false) {
     p:=s.preferences
     if p==nil || s.mode!=.Edit {return}
+    write :: proc(s:^Session,file:string,list:[]project.Setting,r:^project.Rest,resting:bool) {
+        h:=preferences_hash(list)
+        if !(resting?project.rest_due(r,h):project.rest_flush(r,h)) {return}
+        below:=project.settings_clone(list,context.temp_allocator)
+        if len(below)!=len(list) {return}
+        project.settings_default(below)
+        if error:=project.settings_write(file,list,below);error.code!=.None {notify(s,settings_file_error_text(file,error))}
+    }
     if p.marks_file!="" {
         navigation:=content_navigation(s.content)
-        marks:=marks_list(s,&navigation)
-        if h:=preferences_hash(marks);h!=p.marks_written {
-            below:=project.settings_clone(marks,context.temp_allocator)
-            project.settings_default(below)
-            if error:=project.settings_write(p.marks_file,marks,below);error.code!=.None {notify(s,settings_file_error_text(p.marks_file,error))}
-            p.marks_written=h
-        }
+        write(s,p.marks_file,marks_list(s,&navigation),&p.marks,resting)
     }
-    if p.file=="" {return}
-    list:=preferences_list(s)
-    h:=preferences_hash(list)
-    if h==p.written {return}
-    below:=project.settings_clone(list,context.temp_allocator)
-    if len(below)!=len(list) {return}
-    project.settings_default(below)
-    if error:=project.settings_write(p.file,list,below);error.code!=.None {notify(s,settings_file_error_text(p.file,error))}
-    p.written=h
+    if p.file!="" {write(s,p.file,preferences_list(s),&p.kept,resting)}
 }
 
-// Once a frame: a change is written when the UI has rested PREFERENCES_REST
-// seconds since the last gesture, and checked again every as many seconds.
+// Once a frame: what changed is written once the UI rests after the last gesture.
 @(private)
 preferences_update :: proc(s:^Session,ctx:^ui.Context,dt:f32) {
     p:=s.preferences
     if p==nil || p.file=="" && p.marks_file=="" {return}
     in_:=&ctx.input
-    if ctx.active!=0 || ctx.edit.id!=0 || in_.down!={} || in_.pressed!={} || in_.wheel!={} || s.gui.splitter!=.None || s.inspector!=nil && s.inspector.gesture!=0 {
-        p.rest=0
-        return
-    }
-    p.rest+=dt
-    if p.rest<PREFERENCES_REST {return}
-    p.rest=0
-    preferences_save(s)
+    busy:=ctx.active!=0 || ctx.edit.id!=0 || in_.down!={} || in_.pressed!={} || in_.wheel!={} || s.gui.splitter!=.None || s.inspector!=nil && s.inspector.gesture!=0
+    if project.rest_look(&p.kept,dt,busy) {preferences_save(s,resting=true)}
 }
 
 @(private)

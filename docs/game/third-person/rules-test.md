@@ -16,7 +16,7 @@ Run :: struct {deaths:i32}
 
 @(step="fixed",stage="react",server)
 game_fall :: proc(runs:^core.Table(Run),players:^core.Table(Player),
-                  worlds:core.Read(core.World_Transform),states:core.Read(phys.Character_State),
+                  worlds:^core.Table(core.World_Transform,.Read),states:^core.Table(phys.Character_State,.Read),
                   placer:core.Placer,commands:core.Commands) {
     if core.count(runs)==0 {
         root:=core.commands_create(commands)

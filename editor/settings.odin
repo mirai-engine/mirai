@@ -7,11 +7,14 @@ import "core:reflect"
 import "core:strings"
 import "mirai:core"
 import "mirai:editor/api"
+import input "mirai:engine/input"
+import erender "mirai:engine/render"
 import "mirai:host"
 import "mirai:project"
 import "mirai:rhi"
 import "mirai:std/base"
 import "mirai:std/serial"
+import "mirai:editor/kit"
 import "mirai:ui"
 
 // The settings: a section per @(storage,setting) of the engine, the active
@@ -260,7 +263,7 @@ Settings_Dialog :: struct {
     search:[64]u8,
     search_length:int,
     scroll,nav_scroll:[2]f32,
-    input:Input_Settings, // the category Input (input_settings.odin)
+    input:Input_Dialog,   // the category Input (input_settings.odin)
 }
 
 // Where unfolded keeps a category: a storage at its index +1, Input at the last.
@@ -309,7 +312,8 @@ settings_categories :: proc(s:^Session) -> []Settings_Category {
     for pass in 0..<3 {
         first:=len(list)
         for &info,index in s.info.storages {
-            if info.setting==.None || s.settings_layer==.Engine && info.setting!=.Machine {continue}
+            // The category Input shows Input_Settings.
+            if info.setting==.None || s.settings_layer==.Engine && info.setting!=.Machine || info.type==input.Input_Settings {continue}
             group:=settings_group(s,&info)
             if pass==0 && group!="Engine" || pass==1 && (group=="Engine" || group=="Game") || pass==2 && group!="Game" {continue}
             owner:=settings_owner(&info)
@@ -447,7 +451,6 @@ settings_section_fields :: proc(info:^runtime.Type_Info,title,needle:string) -> 
 @(private)
 settings_plugins_rows :: proc(s:^Session,needle:string) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     list:=&s.settings_plugins
     ui.id_push(ctx,ui.id(ctx,"plugins"))
     defer ui.id_pop(ctx)
@@ -468,16 +471,16 @@ settings_plugins_rows :: proc(s:^Session,needle:string) {
             if !open {break}
             needed:=base.text_get(list.needed_by[i][:])
             on:=list.named[i] || needed!=""
-            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=6,align_y=.Center}) {
+            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=6,align_y=.Center}) {
                 plugin_icon_draw(s,&list.icons[i],base.text_get(list.icon_file[i][:]))
-                ui.label(ctx,name,th.font_small,th.text_label)
+                ui.label(ctx,name,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_label"))
                 if list.development[i] {
-                    if ui.box(ctx,{width=ui.FIT,height=ui.fixed(18),padding={6,0,6,0},align_y=.Center,fill={242,184,75,20},stroke={242,184,75,85},radius=th.radius_control}) {ui.label(ctx,"dev",th.font_caption,{242,184,75,255})}
+                    if ui.box(ctx,{width=ui.FIT,height=ui.fixed(18),padding={6,0,6,0},align_y=.Center,fill={242,184,75,20},stroke={242,184,75,85},radius=ui.metric(ctx,"radius_control")}) {ui.label(ctx,"dev",ui.metric(ctx,"font_caption"),{242,184,75,255})}
                 }
-                if needed!="" {ui.label(ctx,fmt.tprintf("needed by %s",needed),th.font_label,th.text_faint)}
+                if needed!="" {ui.label(ctx,fmt.tprintf("needed by %s",needed),ui.metric(ctx,"font_label"),ui.tone(ctx,"text_faint"))}
                 ui.spacer(ctx)
                 if group==.Git && !list.companion[i] {plugins_git_row_actions(s,i)}
-                if ui.toggle_switch(ctx,ui.id(ctx,name),&on,disabled=needed!="" || s.build.phase==.Running || plugins_git_busy(s)) {settings_plugin_set(s,list.names[i],on)}
+                if kit.toggle_switch(ctx,ui.id(ctx,name),&on,disabled=needed!="" || s.build.phase==.Running || plugins_git_busy(s)) {settings_plugin_set(s,list.names[i],on)}
             }
         }
     }
@@ -489,26 +492,26 @@ settings_plugins_rows :: proc(s:^Session,needle:string) {
 // document draws its own right side.
 @(private)
 settings_panels_card :: proc(s:^Session) {
-    ctx:=s.gui.ctx;th:=&ctx.theme;l:=&s.gui.layout
+    ctx:=s.gui.ctx;l:=&s.gui.layout
     modes:=[]string{"Floating","Docked"}
     choices:=[]string{"Global","Floating","Docked"}
     column:=f32(190)
     ui.id_push(ctx,ui.id(ctx,"panels"))
     defer ui.id_pop(ctx)
-    if ui.property(ctx,"Right panel") {
+    if kit.property(ctx,"Right panel") {
         value:=int(l.right_mode)
-        if ui.tabs(ctx,ui.id(ctx,"right"),modes,&value,ui.fixed(column),th.control) {l.right_mode=Panel_Mode(value)}
+        if kit.tabs(ctx,ui.id(ctx,"right"),modes,&value,ui.fixed(column),ui.metric(ctx,"control")) {l.right_mode=Panel_Mode(value)}
     }
-    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=4,align_y=.End}) {
-        if ui.box(ctx,{width=ui.fixed(th.label_width),height=ui.FIT}) {ui.label(ctx,"BY DOCUMENT",th.font_caption,th.text_caption,font=ui.FONT_SEMIBOLD)}
-        ui.label(ctx,"Right",th.font_caption,th.text_faint,column)
+    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=4,align_y=.End}) {
+        if ui.box(ctx,{width=ui.fixed(ui.metric(ctx,"label_width")),height=ui.FIT}) {ui.label(ctx,"BY DOCUMENT",ui.metric(ctx,"font_caption"),ui.tone(ctx,"text_caption"),font=ui.FONT_SEMIBOLD)}
+        ui.label(ctx,"Right",ui.metric(ctx,"font_caption"),ui.tone(ctx,"text_faint"),column)
     }
     names:=#partial [Document_Type]string{.Scene="Scene",.Prefab="Prefab"}
     for type in Document_Type {
         if type==.Asset {continue}
-        if ui.property(ctx,names[type]) {
+        if kit.property(ctx,names[type]) {
             right:=int(l.right_modes[type])
-            if ui.tabs(ctx,ui.id(ctx,"right_of",int(type)+1),choices,&right,ui.fixed(column),th.control) {l.right_modes[type]=Panel_Choice(right)}
+            if kit.tabs(ctx,ui.id(ctx,"right_of",int(type)+1),choices,&right,ui.fixed(column),ui.metric(ctx,"control")) {l.right_modes[type]=Panel_Choice(right)}
         }
     }
 }
@@ -550,14 +553,13 @@ settings_reset :: proc(s:^Session) {
 settings_modal :: proc(s:^Session) {
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     d:=&s.settings_dialog
     if s.settings_engine==nil {settings_engine_load(s)}
     // The dialog edits the project; the settings of the machine are the Graphics popup's and the preferences'.
     if s.settings_layer==.Engine {settings_layer_set(s,.Project)}
     closed:=false
     defer if closed {g.modal,d.input.listen=.None,{}}
-    size:=[2]f32{min(SETTINGS_SIZE.x,ctx.size.x-2*th.margin),min(SETTINGS_SIZE.y,ctx.size.y-2*th.margin)}
+    size:=[2]f32{min(SETTINGS_SIZE.x,ctx.size.x-2*ui.metric(ctx,"margin")),min(SETTINGS_SIZE.y,ctx.size.y-2*ui.metric(ctx,"margin"))}
     needle:=strings.trim_space(string(d.search[:d.search_length]))
     categories:=settings_categories(s)
     shown:=-1
@@ -569,25 +571,25 @@ settings_modal :: proc(s:^Session) {
         d.current,d.section,d.scroll=categories[0].storage,0,0
     }
     if d.input.listen.active {input_listen_poll(s)}
-    if ui.modal(ctx,shell_id(g,"settings"),{width=size.x,padding=-1,close=&closed,own_cross=true,fill=th.panel}) {
+    if ui.modal(ctx,shell_id(g,"settings"),{width=size.x,padding=-1,close=&closed,own_cross=true,fill=ui.tone(ctx,"panel")}) {
         if ui.box(ctx,{width=ui.GROW,height=ui.fixed(size.y)}) {
             settings_nav(s,categories,shown,needle,size.y)
-            if ui.box(ctx,{width=ui.fixed(1),height=ui.GROW,fill=th.border}) {}
+            if ui.box(ctx,{width=ui.fixed(1),height=ui.GROW,fill=ui.tone(ctx,"border")}) {}
             if ui.box(ctx,{width=ui.GROW,height=ui.GROW,direction=.Column}) {
                 if ui.box(ctx,{width=ui.GROW,height=ui.fixed(57),padding={20,0,14,0},gap=10,align_y=.Center}) {
-                    ui.label(ctx,shown>=0?categories[shown].name:"No results",th.font_heading,th.text,0,font=ui.FONT_SEMIBOLD)
+                    ui.label(ctx,shown>=0?categories[shown].name:"No results",ui.metric(ctx,"font_heading"),ui.tone(ctx,"text"),0,font=ui.FONT_SEMIBOLD)
                     search:=shell_id(g,"settings_search")
-                    if ui.box(ctx,{width=ui.fixed(220),height=ui.fixed(th.control),padding={9,0,4,0},gap=6,align_y=.Center,fill=th.well,stroke=ctx.edit.id==search?th.accent:th.well_stroke,radius=th.radius_control}) {
-                        ui.icon(ctx,ui.icon_user(u8(User_Icon.Search)),th.text_muted,13)
-                        if ui.text_field(ctx,search,d.search[:],&d.search_length,{placeholder="Search settings",live=true,keep_caret=true,height=ctx.theme.control,size=th.font,bare=true}).changed {d.scroll=0}
-                        if d.search_length>0 && ui.button(ctx,shell_id(g,"settings_search_clear"),{icon=.Cross,icon_size=10,icon_color=th.text_muted,style=.Ghost,width=20,height=20}).clicked {d.search_length,d.scroll=0,0}
+                    if ui.box(ctx,{width=ui.fixed(220),height=ui.fixed(ui.metric(ctx,"control")),padding={9,0,4,0},gap=6,align_y=.Center,fill=ui.tone(ctx,"well"),stroke=ctx.edit.id==search?ui.tone(ctx,"accent"):ui.tone(ctx,"well_stroke"),radius=ui.metric(ctx,"radius_control")}) {
+                        ui.icon(ctx,ui.icon_user(u8(User_Icon.Search)),ui.tone(ctx,"text_muted"),13)
+                        if ui.text_field(ctx,search,d.search[:],&d.search_length,{placeholder="Search settings",live=true,keep_caret=true,height=ui.metric(ctx,"control"),size=ui.metric(ctx,"font"),bare=true}).changed {d.scroll=0}
+                        if d.search_length>0 && ui.button(ctx,shell_id(g,"settings_search_clear"),{icon=.Cross,icon_size=10,icon_color=ui.tone(ctx,"text_muted"),variant="ghost",width=20,height=20}).clicked {d.search_length,d.scroll=0,0}
                     }
-                    if ui.button(ctx,shell_id(g,"settings_close"),{icon=.Cross,icon_size=12,icon_color=th.text_muted,style=.Ghost,width=25,height=ctx.theme.control}).clicked {closed=true}
+                    if ui.button(ctx,shell_id(g,"settings_close"),{icon=.Cross,icon_size=12,icon_color=ui.tone(ctx,"text_muted"),variant="ghost",width=25,height=ui.metric(ctx,"control")}).clicked {closed=true}
                 }
-                if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=th.border}) {}
+                if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=ui.tone(ctx,"border")}) {}
                 if shown<0 {
                     if ui.box(ctx,{width=ui.GROW,height=ui.GROW,padding={18,54,18,0},align_x=.Center}) {
-                        ui.label(ctx,fmt.tprintf("No setting matches \"%s\".",needle),th.font,th.text_muted)
+                        ui.label(ctx,fmt.tprintf("No setting matches \"%s\".",needle),ui.metric(ctx,"font"),ui.tone(ctx,"text_muted"))
                     }
                 } else {
                     settings_cards(s,categories[shown],needle,size.y-58)
@@ -603,7 +605,6 @@ settings_modal :: proc(s:^Session) {
 settings_nav :: proc(s:^Session,categories:[]Settings_Category,shown:int,needle:string,height:f32) {
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     d:=&s.settings_dialog
     unfolded :: proc(d:^Settings_Dialog,c:Settings_Category,needle:string) -> bool {
         slot:=settings_fold_slot(c.storage)
@@ -616,28 +617,28 @@ settings_nav :: proc(s:^Session,categories:[]Settings_Category,shown:int,needle:
         any_open|=unfolded(d,c,needle)
     }
     if ui.box(ctx,{width=ui.fixed(SETTINGS_NAV),height=ui.GROW,direction=.Column,padding={10,14,10,11},gap=4}) {
-        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.control+4),padding={5,0,0,0},gap=8,align_y=.Center}) {
-            if ui.box(ctx,{width=ui.fixed(28),height=ui.fixed(28),fill=th.accent,radius=th.radius_popup,align_x=.Center,align_y=.Center}) {ui.icon(ctx,ui.icon_user(u8(User_Icon.Gear)),th.on_accent,15)}
+        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"control")+4),padding={5,0,0,0},gap=8,align_y=.Center}) {
+            if ui.box(ctx,{width=ui.fixed(28),height=ui.fixed(28),fill=ui.tone(ctx,"accent"),radius=ui.metric(ctx,"radius_popup"),align_x=.Center,align_y=.Center}) {ui.icon(ctx,ui.icon_user(u8(User_Icon.Gear)),ui.tone(ctx,"on_accent"),15)}
             if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column}) {
-                ui.label(ctx,"Project settings",th.font,th.text,0,font=ui.FONT_SEMIBOLD)
-                ui.label(ctx,project_name(s),th.font_small,th.text_muted,0)
+                ui.label(ctx,"Project settings",ui.metric(ctx,"font"),ui.tone(ctx,"text"),0,font=ui.FONT_SEMIBOLD)
+                ui.label(ctx,project_name(s),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"),0)
             }
-            if ui.button(ctx,shell_id(g,"settings_unfold"),{icon=any_open?ui.icon_user(u8(User_Icon.Collapse)):.Plus,icon_size=13,icon_color=th.text_muted,style=.Ghost,width=25,height=ctx.theme.control,disabled=!foldable || needle!=""}).clicked {
+            if ui.button(ctx,shell_id(g,"settings_unfold"),{icon=any_open?ui.icon_user(u8(User_Icon.Collapse)):.Plus,icon_size=13,icon_color=ui.tone(ctx,"text_muted"),variant="ghost",width=25,height=ui.metric(ctx,"control"),disabled=!foldable || needle!=""}).clicked {
                 for c in categories {
                     if slot:=settings_fold_slot(c.storage);slot>=0 && slot<len(d.unfolded) {d.unfolded[slot]=!any_open}
                 }
             }
         }
         // The bar of the scroll goes in its own gutter at the right, over no item.
-        if ui.scroll_area(ctx,shell_id(g,"settings_nav"),&d.nav_scroll,{height=ui.GROW,padding={0,6,10,0},gap=2,fade=th.panel}) {
+        if ui.scroll_area(ctx,shell_id(g,"settings_nav"),&d.nav_scroll,{height=ui.GROW,padding={0,6,10,0},gap=2,fade=ui.tone(ctx,"panel")}) {
             group:=""
             for c,i in categories {
                 if c.group!=group {
                     group=c.group
                     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(i==0?20:30),padding={9,0,0,4},gap=7,align_y=.End}) {
-                        ui.label(ctx,strings.to_upper(group,context.temp_allocator),th.font_caption,th.text_caption,font=ui.FONT_SEMIBOLD)
+                        ui.label(ctx,strings.to_upper(group,context.temp_allocator),ui.metric(ctx,"font_caption"),ui.tone(ctx,"text_caption"),font=ui.FONT_SEMIBOLD)
                         if ui.box(ctx,{width=ui.GROW,height=ui.fixed(5),padding={0,0,0,4},direction=.Column}) {
-                            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=th.border}) {}
+                            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=ui.tone(ctx,"border")}) {}
                         }
                     }
                 }
@@ -645,9 +646,9 @@ settings_nav :: proc(s:^Session,categories:[]Settings_Category,shown:int,needle:
                 current:=i==shown
                 id:=shell_id(g,"settings_category",i+1)
                 it:=ui.interact(ctx,id,{.Focusable})
-                if ui.box(ctx,{id=id,width=ui.GROW,height=ui.fixed(th.control),padding={9,0,9,0},align_y=.Center,fill=current?th.accent_soft:it.hot?th.field_hover:ui.Color{},radius=th.radius_control}) {
-                    ui.label(ctx,c.name,th.font,current?th.text:th.text_muted,0,font=current?ui.FONT_SEMIBOLD:ui.FONT_REGULAR)
-                    if len(c.sections)>1 {ui.icon(ctx,open?.Chevron_Down:.Chevron_Right,th.text_faint,11)}
+                if ui.box(ctx,{id=id,width=ui.GROW,height=ui.fixed(ui.metric(ctx,"control")),padding={9,0,9,0},align_y=.Center,fill=current?ui.tone(ctx,"accent_soft"):it.hot?ui.tone(ctx,"field_hover"):ui.Color{},radius=ui.metric(ctx,"radius_control")}) {
+                    ui.label(ctx,c.name,ui.metric(ctx,"font"),current?ui.tone(ctx,"text"):ui.tone(ctx,"text_muted"),0,font=current?ui.FONT_SEMIBOLD:ui.FONT_REGULAR)
+                    if len(c.sections)>1 {ui.icon(ctx,open?.Chevron_Down:.Chevron_Right,ui.tone(ctx,"text_faint"),11)}
                 }
                 if it.clicked {
                     if d.current!=c.storage {d.current,d.section,d.scroll=c.storage,0,0}
@@ -656,12 +657,12 @@ settings_nav :: proc(s:^Session,categories:[]Settings_Category,shown:int,needle:
                 if !open {continue}
                 // The sections hang from their category: indented, after a rule.
                 ui.box_begin(ctx,{width=ui.GROW,height=ui.FIT,padding={SETTINGS_SECTION_INDENT,2,0,2},gap=6})
-                if ui.box(ctx,{width=ui.fixed(1),height=ui.GROW,fill=th.border}) {}
+                if ui.box(ctx,{width=ui.fixed(1),height=ui.GROW,fill=ui.tone(ctx,"border")}) {}
                 ui.box_begin(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column})
                 for title,k in c.sections {
                     sub:=shell_id(g,"settings_section",(i+1)*64+k)
                     on:=current && d.section==k
-                    if ui.button(ctx,sub,{label=settings_section_title(s,c,k),style=.Ghost,active=on,width=-1,height=th.row,size=th.font_small,padding=7}).clicked {
+                    if ui.button(ctx,sub,{label=settings_section_title(s,c,k),variant="ghost",active=on,width=-1,height=ui.metric(ctx,"row"),size=ui.metric(ctx,"font_small"),padding=7}).clicked {
                         if d.current!=c.storage {d.current,d.scroll=c.storage,0}
                         d.section,d.jump=k,k
                     }
@@ -670,22 +671,22 @@ settings_nav :: proc(s:^Session,categories:[]Settings_Category,shown:int,needle:
                 ui.box_end(ctx,{})
             }
         }
-        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=th.border}) {}
-        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.control),padding={6,0,0,0},align_y=.Center}) {
+        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=ui.tone(ctx,"border")}) {}
+        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"control")),padding={6,0,0,0},align_y=.Center}) {
             changed:=settings_changed(s)
-            appearance:=ui.Node_Style{text={size=th.font_label,color=changed?th.accent_hover:th.text_faint}}
+            appearance:=ui.Node_Style{text={size=ui.metric(ctx,"font_label"),color=changed?ui.tone(ctx,"accent_hover"):ui.tone(ctx,"text_faint")}}
             reset,confirm:=shell_id(g,"settings_reset"),shell_id(g,"settings_reset_confirm")
-            if ui.button(ctx,reset,{label="Reset to default",width=0,height=th.row,size=th.font_label,padding=0,disabled=!changed,look=&appearance}).clicked {
+            if ui.button(ctx,reset,{label="Reset to default",width=0,height=ui.metric(ctx,"row"),size=ui.metric(ctx,"font_label"),padding=0,disabled=!changed,look=&appearance}).clicked {
                 anchor,_:=ui.widget_rect(ctx,reset)
                 ui.popup_open(ctx,confirm,anchor)
             }
             // What it undoes cannot be got back: it asks first.
             if ui.popup(ctx,confirm,{width=280,padding=12,gap=8}) {
-                ui.label(ctx,"Reset to default?",th.font,th.text,font=ui.FONT_SEMIBOLD)
-                ui.text(ctx,"Every setting of the project goes back to those of the engine and the code.",ui.prose(ctx,th.font_small,th.text_muted))
-                if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.control),gap=8,align_x=.End,align_y=.Center}) {
-                    if ui.button(ctx,shell_id(g,"settings_reset_cancel"),{label="Cancel",style=.Field,width=84,height=th.control,center=true}).clicked {ui.popup_close(ctx,confirm)}
-                    if ui.button(ctx,shell_id(g,"settings_reset_yes"),{label="Reset",style=.Accent,width=84,height=th.control,center=true}).clicked {
+                ui.label(ctx,"Reset to default?",ui.metric(ctx,"font"),ui.tone(ctx,"text"),font=ui.FONT_SEMIBOLD)
+                ui.text(ctx,"Every setting of the project goes back to those of the engine and the code.",ui.prose(ctx,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted")))
+                if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"control")),gap=8,align_x=.End,align_y=.Center}) {
+                    if ui.button(ctx,shell_id(g,"settings_reset_cancel"),{label="Cancel",variant="field",width=84,height=ui.metric(ctx,"control"),center=true}).clicked {ui.popup_close(ctx,confirm)}
+                    if ui.button(ctx,shell_id(g,"settings_reset_yes"),{label="Reset",variant="accent",width=84,height=ui.metric(ctx,"control"),center=true}).clicked {
                         settings_reset(s)
                         ui.popup_close(ctx,confirm)
                     }
@@ -707,7 +708,6 @@ settings_card_id :: proc(s:^Session,category,k:int) -> ui.Id {
 settings_cards :: proc(s:^Session,category:Settings_Category,needle:string,height:f32) {
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     d:=&s.settings_dialog
     area:=shell_id(g,"settings_cards")
     // The card asked for comes to the top; the one at the top is the one the list lights.
@@ -721,13 +721,12 @@ settings_cards :: proc(s:^Session,category:Settings_Category,needle:string,heigh
     }
     d.jump=-1
     // The bands of the sections reach both edges; their rows are set in.
-    if ui.scroll_area(ctx,area,&d.scroll,{height=ui.fixed(height),padding={0,14,0,18},gap=10,fade=th.panel}) {
+    if ui.scroll_area(ctx,area,&d.scroll,{height=ui.fixed(height),padding={0,14,0,18},gap=10,fade=ui.tone(ctx,"panel")}) {
         // The fields read at the size of the rest of the dialog, with the room
         // it has for the column of labels.
-        theme:=ctx.theme
-        ctx.theme.font_small=theme.font
-        ctx.theme.label_width=(SETTINGS_SIZE.x-SETTINGS_NAV-60)*0.3
-        defer ctx.theme=theme
+        small:=ui.metric_set(ctx,"font_small",ui.metric(ctx,"font"))
+        labels:=ui.metric_set(ctx,"label_width",(SETTINGS_SIZE.x-SETTINGS_NAV-60)*0.3)
+        defer {ui.metric_set(ctx,"font_small",small);ui.metric_set(ctx,"label_width",labels)}
         if category.storage==SETTINGS_CATEGORY_EDITOR {
             if section_card(s,settings_card_id(s,category.storage,0),"Panels") {settings_panels_card(s)}
             return
@@ -765,7 +764,7 @@ settings_cards :: proc(s:^Session,category:Settings_Category,needle:string,heigh
                 // The fields tagged advanced go last, under a fold that starts closed.
                 if plain,advanced:=settings_section_fields(info.info,title,c.needle);advanced {
                     if plain {
-                        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=th.row_rule}) {}
+                        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=ui.tone(ctx,"row_rule")}) {}
                     }
                     key:=base.hash_combine(base.hash_combine(u64(c.index),base.hash64(transmute([]u8)title)),0x616476616e636564)
                     if fold_section(s,ui.id(ctx,"settings_advanced",k+1),key,ADVANCED_SECTION,folded=true,searching=needle!="") {

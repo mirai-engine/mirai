@@ -32,6 +32,11 @@ A clip that many props share goes on a parent placed in the world and moves its 
 The transform of an entity is driven by transform tracks, not by field tracks: the pose is written
 after the fields.
 
+A marker with a target is on the entity that target binds, as the tracks of that target are
+(`animation_markers`, `animation_bound`). The library only reports it as a marker; a
+[cinematic](../../mirai-gameplay/references/cinematics.md#shots-and-actions) makes one on a camera
+a shot and one on another actor an action.
+
 ## When it writes
 
 - A clip writes what it drives on the ticks it moves: while it plays, when it is sought, when its
@@ -48,14 +53,16 @@ after the fields.
 
 ## Commands
 
-`Animation_Requests.timeline` is the one queue that plays, pauses, resumes, stops and seeks a clip:
-`animation_command(requests, entity, command, time)` and `animation_seek`. `animation_sample` takes
-them. `Play` starts from the start (the end, backwards); `Stop` returns there and waits; `Seek`
-jumps without firing the markers it skips.
+`Animation_Requests.timeline` is the one queue that plays, pauses, resumes, stops, reverses and
+seeks a clip: `animation_command(requests, entity, command, time, speed)` and `animation_seek`.
+`animation_sample` takes them. `Play` starts from the start (the end, backwards) at `speed`;
+`Resume` goes on at `speed` from where it is; `Stop` returns to the start and waits; `Seek` jumps
+without firing the markers it skips.
 
-- `Animation` is the game's, its one writer: what a command asks is kept in the playback of the
-  entity, in place of `Animation.playing`, until the game changes that field.
-  `animation_playing` says what the clip does, and `Animation_Progress` keeps it for a saved game.
+- `Animation.playing` and `speed` say only how the clip starts when its entity starts to play;
+  from then on its playback keeps whether it plays and at what speed, and only commands change
+  them. `animation_playing` says what the clip does, and `Animation_Progress` keeps time, speed and
+  whether it plays for a saved game, which `progress_resume` asks back with commands.
 - The editor, which does not play, takes only `Seek`: its previews seek.
 - A command for an entity that plays nothing is the problem `animation.command`.
 
@@ -66,4 +73,5 @@ jumps without firing the markers it skips.
 - `plugins/animation/runtime`:
   `a_clip_drives_the_transforms_and_the_fields_it_is_bound_to_while_it_moves`,
   `a_field_target_names_its_entity_component_and_field`.
-- `plugins/cinematics/runtime`: `a_viewer_shows_the_shots_of_a_clip_while_it_plays`.
+- `plugins/cinematics/runtime`:
+  `the_markers_of_a_clip_cut_between_cameras_and_play_actions_while_it_plays`.

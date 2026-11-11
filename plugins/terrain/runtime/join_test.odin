@@ -40,7 +40,7 @@ a_joined_volume_meets_the_ground_on_the_sides_of_its_box_without_a_seam :: proc(
             // Along the side the Volume runs on the edge of the ground between its samples.
             z0:=clamp(int(z),0,15)
             t0:=z-f32(z0)
-            h:=grid_get(&ground.heights,24,24+z0)*(1-t0)+grid_get(&ground.heights,24,24+z0+1)*t0
+            h:=grid_get(&ground.field,24,24+z0)*(1-t0)+grid_get(&ground.field,24,24+z0+1)*t0
             testing.expectf(t,abs(at.y-h)<1e-4,"a vertex on the side at z %v stands at %v, the ground at %v",z,at.y,h)
             if abs(z-math.round(z))<1e-5 {found[int(math.round(z))]=true}
         }
@@ -96,7 +96,7 @@ a_volume_that_joins_a_heightfield_takes_its_cells_and_digs_under_them :: proc(t:
     testing.expect(t,cut!=nil && len(cut.join.cuts)==1 && cut.join.cuts[0]==Join_Cut{{24,24},{40,40}})
     // The ground inside the box is the Volume's: at its middle, the bottom of its pit.
     hit,found:=phys.raycast({&w.state},{0,10,0},{0,-1,0})
-    surface:=grid_get(&ground.heights,32,32)
+    surface:=grid_get(&ground.field,32,32)
     testing.expectf(t,found && hit.point.y<surface-1.5,"the ray stops at %v, the ground at %v",hit.point,surface)
     // Within the band, the ground.
     hit,found=phys.raycast({&w.state},{-7.5,10,-2.5},{0,-1,0})

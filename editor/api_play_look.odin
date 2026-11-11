@@ -71,7 +71,7 @@ api_look_problem :: proc(s:^Session,w:core.World_Ref,look:^Api_Look) -> string {
     actions:=core.actions_of(s.info,input.Look_Action)
     if m==nil || requests==nil || actions==nil {return "look_at turns the look of a seat through its look action, and this game has none"}
     look.action=input.Action(actions.base)+input.Action(input.Look_Action.Look)
-    if m.declared&input.action_bit(look.action)==0 {return "look_at turns the look of a seat through its look action, and this game binds none: bind Look in input.mirai"}
+    if m.declared&input.action_bit(look.action)==0 {return "look_at turns the look of a seat through its look action, and this game binds none: bind look in Input_Settings with settings.set"}
     return ""
 }
 
@@ -92,9 +92,9 @@ api_look_steer :: proc(s:^Session,r:^Run,look:^Api_Look) -> string {
     if follow.mode==.Orbit && !follow.aim {
         up:=mm.QUAT_IDENTITY
         if verticals:=core.world_table_of(w,core.Vertical);verticals!=nil {
-            target:=follow.target
-            if drivables:=core.world_table_of(w,input.Drivable);drivables!=nil {target=ecamera.follow_target(seen.camera,follow.target,core.read(drivables),seat)}
-            up=core.vertical_of(core.read(verticals),target)
+            seats:=core.world_table_of(w,input.Seat)
+            target:=ecamera.follow_target(seen.camera,follow.target,core.world_table_of(w,core.Parent),seats,seat)
+            up=core.vertical_of(verticals,target)
         }
         // Not started yet: it has no pivot to look from until its first frame.
         ecamera.camera_look_toward(core.world_storage_of(w,ecamera.Camera_Input),seen.camera,follow,point,up)

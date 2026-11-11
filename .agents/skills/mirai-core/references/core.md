@@ -61,15 +61,19 @@ table holds no memory: a table costs what its rows cost, not what the entities o
 The enabled rows come first: walking a component is walking `0..<count(t)`. Removing a row moves
 another into its place, with its stamp, without mixing the two sections.
 
+- **One handle, two accesses.** A function writes with `^Table(T)` and only reads with
+  `^Table(T,.Read)`, the same table cast by the generated call: the access is part of the type, so
+  a write through a read is a compile error, and every read procedure takes `^Table(T,$A)`.
 - **Reading stamps nothing.** `get` (value and whether it was found) and `at` (the value of a row)
-  answer the same on a `Read` and on a `^Table`, as `row_of` and `has` do. None of them sees a
-  disabled row. `join` of two or three tables, either access, and `each_joined` walk the rows of
-  the first whose entity has the others on and give the entity and the values; the join's `row`
-  is the row of the first, for `edit_at`.
-- **Writing is requesting the row.** `edit`, `edit_at` and `writable` on `^Table`, and `free` on a
-  `shared` table, give `^T` and stamp the row with a new `version`, written or not. `set` and
-  `set_at` take the value and stamp only when its bytes differ from those of the row: what a
-  function computes every tick and seldom changes goes through them.
+  answer on either access, as `row_of` and `has` do. None of them sees a disabled row. `join` of
+  two or three tables and `each_joined` walk the rows of the first whose entity has the others on
+  and give the entity and the values; the join's `row` is the row of the first, for `edit_at`.
+- **Writing is requesting the row.** `edit` and `edit_at`, and `free` on a `shared` table, give
+  `^T`, stamp the row with a new `version` at once and keep a copy of the bytes it had at the first
+  ask of the function. The settle after the function gives back its stamp to a row whose bytes did
+  not change, and the version too when no row changed and nothing else wrote: what a function
+  computes every tick and seldom changes is asked for and written as it is. `writable` stamps every
+  row for good.
 - **Stamps come in pages.** `page_stamps` keeps, for each `STAMP_PAGE` rows, the newest stamp
   written in them: a reader of what changed skips the pages written before it looked.
 - **Structural changes wait.** `add` (adds or replaces), `remove`, `disable` and `enable` wait in
@@ -77,12 +81,13 @@ another into its place, with its stamp, without mixing the two sections.
   are not alive. It reserves room for all the additions first: without memory it applies none and
   they wait for the next settle. There are never two rows per index: the new generation replaces
   the old one.
-- **What waits is finished in the function.** `added(t, e)` gives the value of the last pending
-  `add` to write (valid until the next `add` to the table) and `staged`, that or the enabled row: a
-  function finishes what it created without settling the world. `staged_has` says whether the entity
+- **What waits is finished in the function.** `staged(t, e)` gives the value of the last pending
+  `add` to write (valid until the next `add` to the table), or else the enabled row: a function
+  finishes what it created without settling the world. `staged_has` says whether the entity
   will have the row on, with what waits counted.
-- `version` and `layout` only grow, also after `table_copy` and `table_swap`: a reader never sees a
-  repeated stamp.
+- `version` and `layout` only grow, also after `table_copy` and `table_swap`, except that the edits
+  of a function that wrote nothing take `version` back where they found it; the next write goes
+  above every version handed out, so a reader never sees a repeated stamp.
 - The `base` tables (the components of `core`) follow their entity even when it is disabled;
   `disable` on them is a `core.fail`.
 - **Copying what changed.** `table_copy_changed(dst, src, &mark)` is for a `dst` that is kept as a
@@ -93,12 +98,13 @@ another into its place, with its stamp, without mixing the two sections.
   valid. Going back to such a copy with its marks brings back only what the world changed since
   ([replace](host.md#the-application)): a table says it changed with its `version` and its
   `layout`, which also move when who owns its rows does, and a storage with the stamp of its row.
-- **New rows.** `added(t, row)` says the row has its value from an `add` and was not written
-  since: the writer of a table asks it before it asks for the row, to set up what the row starts
-  with in its first tick. It is the parity of the stamp of the row, so a copy and a rollback keep
-  it, and a row turned off and on stays added. A stateful object keeps the phase it is in and the
-  tick it entered it, and derives the rest from `core.Time`; it has no field that says it was set
-  up.
+- **New rows.** `added(t, row)` says the row has its value from an `add` and no function of its
+  writer asked for it yet: the writer asks it, before or after it asks for the row, to set up what
+  the row starts with in its first tick; the row is no longer added when that function settles,
+  even with the bytes it had. It is the parity of the stamp of the row, so a copy and a rollback
+  keep it, and a row turned off and on stays added. A stateful object keeps the phase it is in and
+  the tick it entered it, and derives the rest from `core.Time`; it has no field that says it was
+  set up.
 - **Owners.** `@(component,locks="core.Transform")` makes each row the owner of the `Transform` row
   of its entity; the others write with `free`, which gives `nil` on an owned row. The lock names the
   locked table by its distance within the world, not by a pointer, because the world is copied in
@@ -170,10 +176,15 @@ write: a prefab, a piece of terrain, a piece of something broken.
   happened and never clears. Each reader gets what came since it last looked, whatever its
   cadence: a function that receives the storage to read finds exactly that in `items` (the
   generated call keeps its cursor), and code outside the loops keeps a cursor and asks
-  `events_since`. Whoever runs a World ages its logs at the end of a frame (`host`, with
+  `log_since`. Whoever runs a World ages its logs at the end of a frame (`host`, with
   `World_Info.events_age`; `world_events_age` after a `world_run` of a World no loop runs), those
   a `fixed` function reads only when the frame ran a tick. A test that calls the owner by hand
   reads the log it holds: it clears it between ticks, or keeps a cursor.
+- **One log read by cursor.** `core.Log(T)` is the append-only log behind `Events`, the `gone` of a
+  table and the `moved` of the `Hierarchy`; each owner keeps only its trim rule (the age of
+  `Events`, a room whose older half goes when full for the other two). `log_since` gives what came
+  since a cursor, or says `whole` to a reader that fell behind the trim or holds the cursor of
+  another log, which reads the state whole (for `Events`, what the log holds).
 - There are two ways to learn that something happened and no more: state, read by change
   (`changes`, `touched`, `added`), and occurrences, read by cursor.
 - `Ref(S)` is a read-only pointer to a storage: writing through it is a bug that the generator does
@@ -191,8 +202,10 @@ back with the world, and a save keeps it with the clock.
 - The row is written when the wait starts and when it ends: nothing counts down tick by tick.
 - An entity with an `Own_Pace` waits on `own_time(time, clock, paces, e)`, the clock at the pace it
   has now. What must follow a pace that changes during the wait adds its own time up every tick.
-- A request is never delayed: a queue is taken in the tick it was pushed in. What must happen
-  later keeps its deadline in a component.
+- A request may wait in its queue: `later(&q, time, seconds, item)` carries its due tick, and the
+  owner takes with `take_due(&q, time)` what was pushed and what is due. An owner that takes with
+  `take` refuses what was pushed for later, and its `queue_serve` reports it. A queue is not
+  saved: a wait that a save must keep is a deadline in a component.
 - There is no coroutine and no `await`: what waits and then acts is a component with its tick.
 
 ## Core storages
@@ -214,7 +227,8 @@ are `copy=false`: they are neither copied nor cleared. `Jumps` and `Hierarchy` a
     What stays in the `World` (a prefab, a counter, the clock of a particle emitter) is repeated the
     same as the first time.
 - `Frame_Time` (`copy=false`): the frame the world runs, not its simulation. `accumulator` (seconds
-  of frames that the ticks have not simulated yet), `dt` (of the frame), `alpha` (fraction of the
+  of frames that the ticks have not simulated yet, up to half a tick past either end while the
+  [ticks are kept steady](host.md)), `dt` (of the frame), `alpha` (fraction of the
   frame between the last two ticks; 1 in the editor loop and when creating the world), `phase` (the
   one that is running) and `dilation` (how much faster or slower than the frames the ticks run; -1
   stops them). A Play and a rollback neither copy nor swap it: it stays as the frame has it. `host`
@@ -321,22 +335,25 @@ with its `World_Ref`.
 ## Ground
 
 `core/ground.odin`: the same shape for the ground. The library that makes it sets
-`Ground_Queries.open` once (terrain, in `terrain_update`); the storage is not `shared`, so its one
-writer runs before the readers of its stage. `ground_query` gives a `Ground_Query` or, without one,
-one without a probe, and whoever reads it keeps its own default (foliage the plane of its entity).
+`Ground_Queries.open` once and pushes where the ground changed to its logs (terrain, in
+`terrain_update`); the storage is not `shared`, so its one writer runs before the readers of its
+stage. `ground_query` gives a `Ground_Query` or, without one, one without a probe, and whoever
+reads it keeps its own default (foliage the plane of its entity).
 The probe answers the highest ground along a line: `Ground` with the point, normal and layer
 weights, `None` where no ground covers it, `Empty` where ground covers it without a surface, and
 `Unloaded` where it is not in memory, far from every viewer, which a change announces when it loads;
-`coarse` asks for the cheaper answer from what stays in memory. A reader keeps the revision it last
-read and takes the boxes of `changes` after it, or everything when the oldest kept is newer than the
-next one (a ring that overflowed, or a revision that started anew with another world). `unloaded`
-names where the collision of the ground is not loaded, for navigation. The query is valid during the
-function that opens it, and its probe may run from the jobs of that function.
+`coarse` asks for the cheaper answer from what stays in memory. Where the ground changed is two
+`core.Events` of boxes of the world, read as any other: `changed` (its surface, for foliage) and
+`unloaded` (whether its collision is loaded, which `Ground_Query.unloaded` names, for
+navigation). The query is valid during the function that opens it, and its probe may run from the
+jobs of that function.
 
 ## Births
 
-`core/births.odin`: births of effects by named channel (`Birth_Channel`, `CHANNEL_` constants
-below `CHANNEL_GAME` for the engine and its plugins) in the `Births` queue. Whoever pushes (terrain
+`core/births.odin`: births of effects by channel in the `Births` queue. A channel is a name
+(`birth_channel` hashes it with `base.name_hash`, as the data channels of `vfx` are keyed): the code
+that pushes and the component that listens say the same text, and no library hands out ids.
+Whoever pushes (terrain
 dust, imprint stamps, water splashes, a game's impacts) does not know who draws them; `vfx` takes
 them in `fixed` ([channels](../../mirai-world/references/vfx.md#channels)), and without it they are
 let go.
@@ -399,8 +416,8 @@ Downward, over the `Hierarchy` and without allocating (`first_child`, `next_sibl
 hierarchy is not a spatial structure: culling, physics and queries use their own.
 
 - It composes what changed and what hangs from it, higher entities first: the `Transform` rows
-  stamped, the entities whose link moved (`hierarchy_moved`, a log of the `Hierarchy` read by
-  cursor as the `gone` of a table) and the children of one that lost its `Transform`. It composes
+  stamped, the entities whose link moved (`Hierarchy.moved`, a `core.Log` read by cursor as the
+  `gone` of a table) and the children of one that lost its `Transform`. It composes
   everything only when it had not seen the rows or the tree there are (a World copied over, more
   links moved than the log holds), and only stamps a `World_Transform` whose value changed.
 - A jump (`Jumps`) carries by `by` also the `previous` of the entity and of what hangs from it: who

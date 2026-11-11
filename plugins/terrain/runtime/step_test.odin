@@ -27,7 +27,7 @@ shared_terrain_chunks_remain_visible_after_duplicate_copy_and_preview_retirement
     id:=base.Asset_Id{93,94}
     testing.expect_value(t,source_save(&source,fmt.tprintf("%s/source.terrain",root),id,&types),asset.Error.None)
     settings:=gpu.DEFAULT_SETTINGS
-    settings.gi_enabled,settings.reflections,settings.taa=false,false,false
+    settings.gi_enabled,settings.taa=false,false
     app,error:=host.app_create({gpu=true,gpu_validation=true,assets_root=root,window_desc={size={160,120}},threads=1,render_settings=settings})
     if !testing.expect_value(t,error,host.App_Error.None) || app==nil {return}
     defer host.app_destroy(app)
@@ -75,7 +75,7 @@ shared_terrain_chunks_remain_visible_after_duplicate_copy_and_preview_retirement
         }
         core.test_world_settle(&w.w)
         terrain_test_update(w,&resident,app)
-        core.hierarchy_settle(&hierarchies[current],core.read(&w.parents),&w.entities)
+        core.hierarchy_settle(&hierarchies[current],&w.parents,&w.entities)
         core.transforms_propagate(core.read(&w.transforms),core.ref(&hierarchies[current]),&poses[current],&propagations[current],&jumps,{})
         core.table_settle(&poses[current],&w.entities)
         testing.expect_value(t,len(w.chunks.values),pass==0?4:8)
@@ -105,7 +105,7 @@ shared_terrain_chunks_remain_visible_after_duplicate_copy_and_preview_retirement
             host.app_camera_set(app,host.camera_from_view(view),view.cut,view.carried)
             outlines:core.Table(render.Outline);defer core.table_destroy(&outlines)
             outline_styles:=render.OUTLINE_STYLES_DEFAULT
-            render.render_sync(&sync,app,{},core.FRAME_TIME_DEFAULT,{},core.read(&poses[current]),core.read(&w.statics),core.read(&w.tints),core.read(&hidden),core.read(&elsewhere),core.read(&w.parents),{},core.read(&suns),core.read(&points),core.read(&spots),core.read(&rects),core.read(&emissions),core.read(&skies),core.read(&posts),{},core.read(&w.overrides),core.read(&highlights),core.read(&outlines),{&outline_styles},core.read(&offsets),core.read(&layers),{},{},{},{},nil)
+            render.render_sync(&sync,app,{},core.FRAME_TIME_DEFAULT,{},&poses[current],&w.statics,&w.tints,&hidden,&elsewhere,&w.parents,{},&suns,&points,&spots,&rects,&emissions,&skies,&posts,{},&w.overrides,&highlights,&outlines,{&outline_styles},&offsets,&layers,{},{},{},{},nil)
             host.app_frame_end(app)
         }
         if pass==4 {continue}
@@ -414,7 +414,7 @@ terrain_test_tick :: proc(w:^Terrain_Test_World,resident:^Terrain_Resident,app:^
 terrain_test_physics :: proc(w:^Terrain_Test_World,app:^host.App,time:core.Time={}) {
     phys.physics_step(&w.state,core.ref(&w.settings),&w.requests,&w.events,&w.collision_meshes,app,time,
         core.read(&w.rigids),core.read(&w.colliders),core.read(&w.characters),core.read(&w.moves),&w.joints,
-        core.read(&w.statics),core.read(&w.parents),core.read(&w.names),&w.transforms,&w.bodies,core.read(&w.replicas),&w.character_states,&w.joint_states,{},nil,{},{},nil,nil,&w.problems,{},{},{},{},{},{})
+        core.read(&w.statics),core.read(&w.parents),core.read(&w.names),&w.transforms,&w.bodies,core.read(&w.replicas),&w.character_states,&w.joint_states,{},nil,{},{},nil,nil,&w.problems,{},{},{},{},{},{},{},{},{})
 }
 
 @(test)

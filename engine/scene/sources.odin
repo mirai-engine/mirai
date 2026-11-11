@@ -13,8 +13,7 @@ import mm "mirai:std/math"
 // each also where its motion takes it in SOURCE_PREFETCH seconds (the view,
 // where it went since the frame before, unless it jumped: View.cut). What
 // comes within reach of a source is resident, and goes once every source is
-// RESIDENT_KEEP times its reach away; past a budget, the nearest stay. The
-// levels of textures follow them too (render.texture_sources).
+// RESIDENT_KEEP times its reach away; past a budget, the nearest stay.
 
 SOURCES_MAX :: 64
 SOURCE_PREFETCH :: 1 // s
@@ -42,12 +41,12 @@ Streaming_Sources :: struct {
 
 @(step="frame",loops="game editor",before="scene_sections")
 scene_sources :: proc(
-    sources:^Streaming_Sources,view:core.View,frame:core.Frame_Time,seats:core.Read(input.Seat),drivables:core.Read(input.Drivable),
-    marks:core.Read(Streaming_Source),worlds:core.Read(core.World_Transform),motions:core.Read(core.Motion),problems:^core.Problems,
+    sources:^Streaming_Sources,view:core.View,frame:core.Frame_Time,seats:^core.Table(input.Seat,.Read),
+    marks:^core.Table(Streaming_Source,.Read),worlds:^core.Table(core.World_Transform,.Read),motions:^core.Table(core.Motion,.Read),problems:^core.Problems,
 ) {
     list:[SOURCES_MAX]Source
     count,wanted:=0,0
-    add :: proc(list:^[SOURCES_MAX]Source,count,wanted:^int,worlds:core.Read(core.World_Transform),motions:core.Read(core.Motion),e:core.Entity,distance:f32) {
+    add :: proc(list:^[SOURCES_MAX]Source,count,wanted:^int,worlds:^core.Table(core.World_Transform,$A),motions:^core.Table(core.Motion,$B),e:core.Entity,distance:f32) {
         at,placed:=core.get(worlds,e)
         if !placed {return}
         wanted^+=1
@@ -63,7 +62,7 @@ scene_sources :: proc(
         count,wanted=1,1
     }
     sources.view,sources.viewed=view.position,view.size.x>0 && view.size.y>0
-    for row in 0..<core.count(seats) {add(&list,&count,&wanted,worlds,motions,input.body_of(drivables,core.entity_at(seats,row)),0)}
+    for row in 0..<core.count(seats) {add(&list,&count,&wanted,worlds,motions,core.at(seats,row).body,0)}
     for row in 0..<core.count(marks) {add(&list,&count,&wanted,worlds,motions,core.entity_at(marks,row),core.at(marks,row).distance)}
     if wanted>SOURCES_MAX {
         core.report(problems,core.NONE,"scene.sources","%d streaming sources and SOURCES_MAX is %d: those past it load nothing around them; take Streaming_Source from the entities that do not need it",wanted,SOURCES_MAX)

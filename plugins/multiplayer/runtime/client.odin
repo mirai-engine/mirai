@@ -383,6 +383,8 @@ client_commands :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,allo
             }
         case .Event:
             event_deliver(s,w,&command,nil)
+        case .Message:
+            part_arrive(s,&command)
         }
     }
     core.world_settle(w)
@@ -467,7 +469,7 @@ replica_adoptable :: proc(s:^Net_Session,w:core.World_Ref,r:^Replica) -> core.En
     e:=entity_of_id(s,w,r.pose.id)
     if e==core.NONE {return core.NONE}
     section:=section_of(core.ref(core.world_storage_of(w,core.Hierarchy)),core.world_table_of(w,scene.Scene_Reference),e)
-    if core.id_of(core.read(core.world_table_of(w,core.Id)),section)!=home {return core.NONE}
+    if core.id_of(core.world_table_of(w,core.Id),section)!=home {return core.NONE}
     return e
 }
 
@@ -515,11 +517,7 @@ replica_spawn :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,r:^Rep
     transforms:=core.world_table_of(w,core.Transform)
     e:=replica_adoptable(s,w,r)
     r.adopted=e!=core.NONE
-    // One this client made ahead of the server (predict_spawn) is the replica's own: it goes with it.
-    if spawn,predicted:=core.get(core.read(core.world_table_of(w,Predicted_Spawn)),e);predicted {
-        r.adopted,r.spawned,r.spawned_set=false,u32(spawn.tick),true
-        core.remove(core.world_table_of(w,Predicted_Spawn),e)
-    }
+    if spawn,predicted:=core.get(core.world_table_of(w,Predicted_Spawn),e);predicted {spawn_taken(w,r,e,spawn)}
     if e==core.NONE {
         local:=core.Transform{r.pose.position,r.pose.rotation,r.pose.scale}
         // Where its section is not loaded, a copy of it from the scene of that section.
@@ -653,7 +651,7 @@ replica_classify :: proc(s:^Net_Session,w:core.World_Ref,r:^Replica) {
         switch mode {
         case .Here:
             // What the client holds starts from where it was being shown.
-            if local,has:=core.get(core.read(core.world_table_of(w,core.Transform)),r.entity);has {
+            if local,has:=core.get(core.world_table_of(w,core.Transform),r.entity);has {
                 r.pose.position,r.pose.rotation,r.pose.scale=local.position,local.rotation,local.scale
             }
         case .Interpolated:
@@ -691,7 +689,7 @@ replica_components :: proc(s:^Net_Session,w:core.World_Ref,r:^Replica,mode:Mode)
         }
     }
     offsets:=core.world_table_of(w,render.Draw_Offset)
-    if mode==.Predicted && !core.has(offsets,e) && core.added(offsets,e)==nil {core.add(offsets,e,render.Draw_Offset{rotation=1})}
+    if mode==.Predicted && !core.staged_has(offsets,e) {core.add(offsets,e,render.Draw_Offset{rotation=1})}
     if replica_turns(r) {replica_turn(w,r)}
 }
 
@@ -1032,7 +1030,7 @@ client_frame :: proc(s:^Net_Session,w:core.World_Ref,dt:f32) {
     for &r in c.replicas[:c.replica_high] {
         if r.object==0 || r.mode==.Here || !core.alive(es,r.entity) {continue}
         wire.smoothing_update(&r.smoothing,dt)
-        drawn,has:=core.get(core.read(offsets),r.entity)
+        drawn,has:=core.get(offsets,r.entity)
         if !has || drawn.offset==r.smoothing.offset && drawn.rotation==r.smoothing.rotation {continue}
         shown:=core.edit(offsets,r.entity)
         shown.offset,shown.rotation=r.smoothing.offset,r.smoothing.rotation
@@ -1199,7 +1197,7 @@ record_differs :: proc(d:^Net_Settings,body:bool,record:^Record,pose:^Pose,motio
 
 @(private)
 replica_now :: proc(s:^Net_Session,w:core.World_Ref,x:^Replica) -> (now:Present,ok:bool) {
-    local,has_pose:=core.get(core.read(core.world_table_of(w,core.Transform)),x.entity)
+    local,has_pose:=core.get(core.world_table_of(w,core.Transform),x.entity)
     if !has_pose {return}
     // A place the simulation takes with the next tick is where the replica is for the network already.
     if asked:=core.staged(core.world_table_of(w,core.Pose_Target),x.entity);asked!=nil && i32(asked.placed-s.taken)>0 {
@@ -1211,7 +1209,7 @@ replica_now :: proc(s:^Net_Session,w:core.World_Ref,x:^Replica) -> (now:Present,
 
 @(private)
 replica_put :: proc(s:^Net_Session,w:core.World_Ref,x:^Replica,to:^Present) {
-    local,has_pose:=core.get(core.read(core.world_table_of(w,core.Transform)),x.entity)
+    local,has_pose:=core.get(core.world_table_of(w,core.Transform),x.entity)
     if !has_pose {return}
     pose:=Pose{position=to.position,rotation=to.rotation,scale=to.scale}
     motion:=x.motion
@@ -1638,22 +1636,50 @@ replica_adopt :: proc(s:^Net_Session,w:core.World_Ref,id:base.Entity_Id,e:core.E
     return nil
 }
 
-// Client, after a tick: an entity this client made ahead of the server
-// (Predicted_Spawn) takes the place of the entity of the replica the server
-// sent for it; one no replica took within the history was not made by the
-// server, and goes.
+// The spawns of the tick get the Id both ends draw (one of a seat: from its
+// connection, the tick and how many that seat made before it in the tick),
+// and a client marks what it made for the replica of the server's to take.
+@(private)
+spawns_take :: proc(s:^Net_Session,w:core.World_Ref,made:[]Spawn,tick:u64) {
+    if len(made)==0 {return}
+    for item,i in made {
+        if !core.alive(core.world_entities(w),item.entity) {continue}
+        if !item.kept {
+            sequence:u32
+            for before in made[:i] {sequence+=u32(!before.kept && before.peer==item.peer)}
+            connection:=item.peer!=0?Connection(item.peer):own_connection(core.ref(s))
+            core.add(core.world_table_of(w,core.Id),item.entity,core.Id{spawn_id(connection,tick,sequence)})
+        }
+        if s.mode==.Client {core.add(core.world_table_of(w,Predicted_Spawn),item.entity,Predicted_Spawn{tick=tick,kept=item.kept})}
+    }
+    core.world_settle(w)
+}
+
+// What a replica that took an entity this client made keeps of it: one the
+// replica owns goes with it and is predicted from the tick it was made in;
+// one a library keeps stays when the replica goes.
+@(private)
+spawn_taken :: proc(w:core.World_Ref,r:^Replica,e:core.Entity,spawn:Predicted_Spawn) {
+    r.adopted=spawn.kept
+    if !spawn.kept {r.spawned,r.spawned_set=u32(spawn.tick),true}
+    core.remove(core.world_table_of(w,Predicted_Spawn),e)
+}
+
+// Client, after a tick: an entity this client made (Predicted_Spawn) takes
+// the place of the entity of the replica the server sent for it. One no
+// replica took within the history was not made by the server: it goes, or,
+// kept by its library, loses its mark.
 @(private)
 spawns_settle :: proc(s:^Net_Session,w:core.World_Ref,time:^core.Time) {
     spawns:=core.world_table_of(w,Predicted_Spawn)
     if spawns==nil {return}
     for row in 0..<core.count(spawns) {
         e,spawn:=core.entity_at(spawns,row),spawns.values[row]
-        if r:=replica_adopt(s,w,core.id_of(core.read(core.world_table_of(w,core.Id)),e),e);r!=nil {
-            r.adopted,r.spawned,r.spawned_set=false,u32(spawn.tick),true
-            core.remove(spawns,e)
+        if r:=replica_adopt(s,w,core.id_of(core.world_table_of(w,core.Id),e),e);r!=nil {
+            spawn_taken(w,r,e,spawn)
             replica_classify(s,w,r)
         } else if !time.resimulating && time.tick>spawn.tick+u64(s.client.history) {
-            core.world_destroy_tree(w,e)
+            if spawn.kept {core.remove(spawns,e)} else {core.world_destroy_tree(w,e)}
         }
     }
 }
@@ -1663,18 +1689,10 @@ spawns_settle :: proc(s:^Net_Session,w:core.World_Ref,time:^core.Time) {
 @(private)
 driven_look :: proc(w:core.World_Ref) -> (look:[2]f32,ok:bool) {
     seats:=core.world_table_of(w,input.Seat)
-    drivables:=core.world_table_of(w,input.Drivable)
     moves:=core.world_table_of(w,input.Move_Input)
-    if seats==nil || drivables==nil || moves==nil {return}
-    seat:=input.local_seat(core.read(seats),0)
-    if seat==core.NONE {return}
-    for row in 0..<core.count(drivables) {
-        if drivables.values[row].seat!=seat {continue}
-        move,has:=core.get(moves,core.entity_at(drivables,row))
-        if !has {return}
-        return {move.look_yaw,move.look_pitch},true
-    }
-    return
+    if seats==nil || moves==nil {return}
+    move:=core.get(moves,input.body_of(core.read(seats),input.local_seat(core.read(seats),0))) or_return
+    return {move.look_yaw,move.look_pitch},true
 }
 
 // The actions of the first local seat, the one that drives what the server
@@ -1685,7 +1703,7 @@ driven_actions :: proc(s:^Net_Session,w:core.World_Ref) -> (sent:input.Remote_Ac
     bindings:=core.world_storage_of(w,input.Input_Map)
     if seats==nil || bindings==nil {return}
     ok:bool
-    sent,ok=input.seat_remote(core.read(seats),input.local_seat(core.read(seats),0),bindings)
+    sent,ok=input.seat_remote(seats,input.local_seat(seats,0),bindings)
     if !ok {core.report(s.problems,core.NONE,"net.input_axes","more than %d axis actions of the seat that drives were away from zero in one tick, and the server got only the first %d; give the actions that move together fewer axes, or make some of them buttons",input.REMOTE_AXES,input.REMOTE_AXES)}
     return
 }

@@ -24,11 +24,12 @@ Motion :: struct {
 @(component,description="The up of this entity and the frame its look turns in, as its simulation turns them.")
 Vertical :: struct {
     frame:mm.Quat `mirai:"transient,readonly"`,
+    turn:f32 `mirai:"transient,readonly"`, // radians the ground turned it about its up in the last step: whoever writes where it looks (input.Move_Input) adds it
 }
 
 // The frame of the vertical of e: the identity without one.
-vertical_of :: proc(verticals:Read(Vertical),e:Entity) -> mm.Quat {
-    if verticals.table!=nil {
+vertical_of :: proc(verticals:^Table(Vertical,$A),e:Entity) -> mm.Quat {
+    if verticals!=nil {
         if vertical,ok:=get(verticals,e);ok && vertical.frame!=0 {return vertical.frame}
     }
     return mm.QUAT_IDENTITY
@@ -59,7 +60,7 @@ Pose_Target_Places :: struct {seen:Seen}
 // The pose a target asks of a Transform no component owns, at the start of
 // the tick.
 @(step="fixed",loops="game",stage="begin")
-pose_targets_place :: proc(targets:Read(Pose_Target),transforms:^Table(Transform),places:^Pose_Target_Places) {
+pose_targets_place :: proc(targets:^Table(Pose_Target,.Read),transforms:^Table(Transform),places:^Pose_Target_Places) {
     c:=changes(targets,&places.seen)
     for row in each_changed(targets,&c) {
         local:=free(transforms,entity_at(targets,row))

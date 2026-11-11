@@ -43,6 +43,6 @@ cmd_worktree :: proc(root:string,args:[]string) -> int {
     if !engine_shaders(folder) {fmt.eprintfln("mirai worktree: generate them with MIRAI_ROOT=%s and this tool's `shaders` before building",folder)}
     slashed,_:=strings.replace_all(folder,"\\","/",context.temp_allocator)
     fmt.printfln("Worktree %s on the branch %s.",slashed,branch)
-    fmt.printfln("  cd \"%s\"; ./mirai build engine --dev",slashed)
+    fmt.printfln("  cd \"%s\"; ./mirai build engine",slashed)
     return 0
 }

@@ -98,7 +98,7 @@ instances_taken_out_are_one_entity_for_each_cell_that_the_cell_leaves_out :: pro
     foliage_remove(&r.requests,{wood,{5,5},MANUAL|u64(manual)})
     foliage_remove(&r.requests,{bare,coord,MANUAL|u64(manual)})
     removal_step(&r)
-    removed:=core.read(&r.w.removed)
+    removed:=&r.w.removed
     testing.expect_value(t,core.count(removed),2)
     for row in 0..<core.count(removed) {
         e:=core.entity_at(removed,row)
@@ -109,10 +109,11 @@ instances_taken_out_are_one_entity_for_each_cell_that_the_cell_leaves_out :: pro
     }
     testing.expect(t,r.problems.count>0,"a Foliage without an Id says why it cannot")
     // The same again writes nothing.
-    version:=core.version(&r.w.removed)
+    seen:core.Seen
+    _=core.touched(&r.w.removed,&seen)
     foliage_remove(&r.requests,{wood,coord,MANUAL|u64(manual)})
     removal_step(&r)
-    testing.expect_value(t,core.version(&r.w.removed),version)
+    testing.expect(t,!core.touched(&r.w.removed,&seen))
     // Another of the generated cell goes to its entity, and the other cell keeps its hash.
     gone:=removed_owner(&r.removals,wood)
     _,manual_hash:=removed_cell(gone,coord)
@@ -149,7 +150,7 @@ instances_taken_out_are_one_entity_for_each_cell_that_the_cell_leaves_out :: pro
         testing.expect(t,found && hit.foliage==wood && hit.coord==cell.coord && hit.instance!=generated && hit.instance!=other)
     }
     // Taking the entity of a cell away puts its instances back.
-    removed=core.read(&r.w.removed)
+    removed=&r.w.removed
     for row in 0..<core.count(removed) {
         if core.at(removed,row).coord==coord {core.destroy(&r.w.entities,core.entity_at(removed,row));break}
     }
@@ -206,9 +207,10 @@ thousands_of_instances_taken_out_of_a_few_cells_are_a_few_entities :: proc(t:^te
     testing.expect_value(t,core.count(&r.w.removed),entities)
     testing.expect(t,entities<=len(all)/100,"a few entities for thousands of instances")
     // A tick without requests writes nothing.
-    version:=core.version(&r.w.removed)
+    seen:core.Seen
+    _=core.touched(&r.w.removed,&seen)
     removal_step(&r)
-    testing.expect_value(t,core.version(&r.w.removed),version)
+    testing.expect(t,!core.touched(&r.w.removed,&seen))
 }
 
 // A saved game names a manual instance by its id, so it is the same one

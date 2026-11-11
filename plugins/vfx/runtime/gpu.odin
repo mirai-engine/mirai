@@ -1124,7 +1124,7 @@ particles_shift :: proc(pass:^erender.Pass,user:rawptr) {
     pool:=&sync.pool
     if pass.world!=sync.world || !pool.made || pool.slot_end==0 || pool.origin==pass.origin {return}
     for b in ([]Pool_Buffer{.Particles,.Lists,.State,.Events}) {
-        if !erender.pass_buffer_ready(pass,pool_buffer(pool,b)) {return}
+        if !erender.pass_buffer_held(pass,pool_buffer(pool,b)) {return}
     }
     if !pool_prepare(sync,pass,false) {return}
     erender.pass_buffer(pass,0,pool_buffer(pool,.Particles))
@@ -1216,9 +1216,9 @@ pool_drawable :: proc(pass:^erender.Pass,sync:^Particle_Sync) -> bool {
     pool:=&sync.pool
     if !pool.made || pool.slot_end==0 {return false}
     for b in ([]Pool_Buffer{.Particles,.Lists,.Data}) {
-        if !erender.pass_buffer_ready(pass,pool_buffer(pool,b)) {return false}
+        if !erender.pass_buffer_held(pass,pool_buffer(pool,b)) {return false}
     }
-    return erender.pass_buffer_ready(pass,world_buffer(sync)) && erender.pass_buffer_ready(pass,pool_buffer(pool,.State),indirect=true) && pool_prepare(sync,pass,false)
+    return erender.pass_buffer_held(pass,world_buffer(sync)) && erender.pass_buffer_held(pass,pool_buffer(pool,.State)) && pool_prepare(sync,pass,false)
 }
 
 // Binds the rows of the frame and the world buffer at the slots the passes
@@ -1237,9 +1237,12 @@ pool_bind_frame :: proc(pass:^erender.Pass,sync:^Particle_Sync) {
 // slot first of the pool and emitter_first of the table of emitters. fields: Pool.fields_at.
 Simulate_Params :: struct {mode,emitters,count,parity,step,last,stage,iteration,program,first,emitter_first,fields:u32}
 
+// The slot of the media of the view (render.pass_media) in the blended passes.
+@(private) MEDIA_SLOT :: 5
+
 // Sprites, ribbons and the mesh particles whose material blends over the lit
-// scene, on the side of glass of the pass; at the Effect stage, those of the
-// effect view of the pass over nothing.
+// scene, on the side of glass of the pass, behind the media of the view; at
+// the Effect stage, those of the effect view of the pass over nothing.
 @(private)
 particles_sprites :: proc(pass:^erender.Pass,user:rawptr) {
     sync:=cast(^Particle_Sync)user
@@ -1248,6 +1251,7 @@ particles_sprites :: proc(pass:^erender.Pass,user:rawptr) {
     view:=pass.texture if pass.stage==.Effect else 0
     draws:=draw_list(pool,pass.eye,pass.origin,false,view)
     if len(draws)==0 {return}
+    media:=erender.pass_media(pass,MEDIA_SLOT)
     erender.pass_blend_begin(pass,"particle sprites")
     erender.pass_indices(pass,.Quad)
     erender.pass_buffer(pass,0,pool_buffer(pool,.Particles))
@@ -1257,7 +1261,7 @@ particles_sprites :: proc(pass:^erender.Pass,user:rawptr) {
     erender.pass_surface_read(pass,7,.Linear_Depth)
     erender.pass_surface_read(pass,8,.Glass_Depth)
     state:=pool_buffer(pool,.State)
-    Params :: struct {emitter,pass,pad0,pad1:u32}
+    Params :: struct {emitter,pass,pad0,pad1:u32,media:erender.Media_Grid}
     for draw in draws {
         // The stage of its program, with the fragment of the Surface program of its material.
         desc:=&pool.slots[draw.slot].desc
@@ -1270,7 +1274,7 @@ particles_sprites :: proc(pass:^erender.Pass,user:rawptr) {
         pipeline:=erender.pass_stage_pipeline(pass,stage)
         if pipeline==0 {continue}
         erender.pass_pipeline(pass,pipeline)
-        params:=Params{emitter=draw.slot,pass=u32(pass.glass)}
+        params:=Params{emitter=draw.slot,pass=u32(pass.glass),media=media}
         erender.pass_params(pass,&params,size_of(params))
         // A mesh draws its clusters without indices, as in the G-buffer.
         at:=u64(draw.slot)*size_of(Gpu_State)+u64(offset_of(Gpu_State,draw))

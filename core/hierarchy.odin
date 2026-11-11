@@ -2,7 +2,6 @@ package core
 
 import "core:log"
 import "core:slice"
-import "mirai:std/base"
 import mm "mirai:std/math"
 
 // The tree the Parent rows make, as they were at the last settle: by entity
@@ -21,48 +20,20 @@ Hierarchy :: struct {
     cut:[dynamic]Entity, // with a Parent left out for a cycle: tried again when a link changes
     seen:Seen,           // of Parent
     version:u64,         // grows when a link changes
-    moved:[dynamic]Entity, // the entities whose link changed, oldest first, as the gone of a table: hierarchy_moved
-    moved_first:u64,       // how many moved before moved[0]
+    // The entities whose link changed: each hangs from another entity, or
+    // from none, or among its siblings in another order. A reader that reads
+    // it whole (log_since) goes through all of the tree. Valid until the next
+    // settle.
+    moved:Log(Entity),
 }
 
-// The links moved holds: full, it drops its older half, and a reader that had not read those reads the tree whole.
-HIERARCHY_MOVED :: 1024
+HIERARCHY_MOVED :: 1024 // the links moved holds
 
 hierarchy_clear :: proc(h:^Hierarchy) {
     clear(&h.parent);clear(&h.first_child);clear(&h.last_child);clear(&h.next_sibling);clear(&h.previous_sibling);clear(&h.cut)
     h.seen={}
     h.version+=1
-    moved_reset(h)
-}
-
-// No reader has seen the tree there is now.
-@(private)
-moved_reset :: proc "contextless" (h:^Hierarchy) {
-    h.moved_first+=u64(len(h.moved))+1
-    clear(&h.moved)
-}
-
-@(private)
-moved_push :: proc(h:^Hierarchy,e:Entity) {
-    if len(h.moved)>=HIERARCHY_MOVED {
-        half:=len(h.moved)/2
-        copy(h.moved[:],h.moved[half:])
-        base.truncate(&h.moved,len(h.moved)-half)
-        h.moved_first+=u64(half)
-    }
-    if _,error:=append(&h.moved,e);error!=nil {moved_reset(h)}
-}
-
-// The entities whose link in the tree changed since seen, which it moves to
-// now: each hangs from another entity, or from none, or among its siblings in
-// another order. whole: the reader had not seen the tree there is, and goes
-// through all of it. Valid until the next settle.
-hierarchy_moved :: proc "contextless" (h:Ref(Hierarchy),seen:^u64) -> (moved:[]Entity,whole:bool) {
-    if h.ptr==nil {return nil,false}
-    end:=h.moved_first+u64(len(h.moved))
-    if seen^<h.moved_first || seen^>end {whole=true} else {moved=h.moved[seen^-h.moved_first:]}
-    seen^=end
-    return
+    log_reset(&h.moved)
 }
 
 // Makes the tree follow what Parent settled since it last looked: the
@@ -70,7 +41,7 @@ hierarchy_moved :: proc "contextless" (h:Ref(Hierarchy),seen:^u64) -> (moved:[]E
 // destroyed are still doomed. It goes through every row only when the table
 // was copied, swapped or cleared. False without memory: the tree is built
 // whole on the next settle.
-hierarchy_settle :: proc(h:^Hierarchy,parents:Read(Parent),es:^Entities) -> bool {
+hierarchy_settle :: proc(h:^Hierarchy,parents:^Table(Parent,$A),es:^Entities) -> bool {
     n:=entities_capacity(es)
     if len(h.parent)<n {
         if resize(&h.parent,n)!=nil || resize(&h.first_child,n)!=nil || resize(&h.last_child,n)!=nil ||
@@ -86,14 +57,14 @@ hierarchy_settle :: proc(h:^Hierarchy,parents:Read(Parent),es:^Entities) -> bool
         slice.zero(h.next_sibling[:]);slice.zero(h.previous_sibling[:])
         clear(&h.cut)
         for row in 0..<count(parents) {hierarchy_place(h,parents,es,entity_at(parents,row))}
-        moved_reset(h)
+        log_reset(&h.moved)
         moved=true
     } else {
         for e in es.doomed {moved=hierarchy_orphan(h,e) || moved}
         for e in c.gone {
             cut_drop(h,e)
             if hierarchy_unlink(h,e) {
-                moved_push(h,e)
+                log_push(&h.moved,e,HIERARCHY_MOVED)
                 moved=true
             }
         }
@@ -103,7 +74,7 @@ hierarchy_settle :: proc(h:^Hierarchy,parents:Read(Parent),es:^Entities) -> bool
             cut_drop(h,e)
             hierarchy_unlink(h,e)
             hierarchy_place(h,parents,es,e)
-            moved_push(h,e)
+            log_push(&h.moved,e,HIERARCHY_MOVED)
             moved=true
         }
     }
@@ -114,7 +85,7 @@ hierarchy_settle :: proc(h:^Hierarchy,parents:Read(Parent),es:^Entities) -> bool
             e:=h.cut[0]
             ordered_remove(&h.cut,0)
             if !alive(es,e) || !has(parents,e) {continue}
-            if hierarchy_link(h,parents,es,e) {moved_push(h,e)} else if _,error:=append(&h.cut,e);error!=nil {h.seen={}}
+            if hierarchy_link(h,parents,es,e) {log_push(&h.moved,e,HIERARCHY_MOVED)} else if _,error:=append(&h.cut,e);error!=nil {h.seen={}}
         }
         if len(h.cut)==tried {break}
     }
@@ -124,7 +95,7 @@ hierarchy_settle :: proc(h:^Hierarchy,parents:Read(Parent),es:^Entities) -> bool
 
 // Links e under the entity its Parent names, or leaves it out for a cycle and says so.
 @(private)
-hierarchy_place :: proc(h:^Hierarchy,parents:Read(Parent),es:^Entities,e:Entity) {
+hierarchy_place :: proc(h:^Hierarchy,parents:^Table(Parent,$A),es:^Entities,e:Entity) {
     if hierarchy_link(h,parents,es,e) {return}
     if _,error:=append(&h.cut,e);error!=nil {h.seen={}}
     log.warnf("core: the Parent of entity %d puts it under itself; it stays a root of the hierarchy until that changes",entity_index(e))
@@ -132,7 +103,7 @@ hierarchy_place :: proc(h:^Hierarchy,parents:Read(Parent),es:^Entities,e:Entity)
 
 // Whether e hangs where its Parent says, among its siblings in their order.
 @(private)
-hierarchy_placed :: proc(h:^Hierarchy,parents:Read(Parent),e:Entity) -> bool {
+hierarchy_placed :: proc(h:^Hierarchy,parents:^Table(Parent,$A),e:Entity) -> bool {
     value,_:=get(parents,e)
     i:=entity_index(e)
     if h.parent[i]!=value.entity {return false}
@@ -146,7 +117,7 @@ hierarchy_placed :: proc(h:^Hierarchy,parents:Read(Parent),e:Entity) -> bool {
 // is not above its own; a root when that one is not alive. False when e is
 // above it: the link would close a cycle.
 @(private)
-hierarchy_link :: proc(h:^Hierarchy,parents:Read(Parent),es:^Entities,e:Entity) -> bool {
+hierarchy_link :: proc(h:^Hierarchy,parents:^Table(Parent,$A),es:^Entities,e:Entity) -> bool {
     value,_:=get(parents,e)
     p:=value.entity
     if p==NONE || !alive(es,p) {return true}
@@ -184,7 +155,7 @@ hierarchy_orphan :: proc(h:^Hierarchy,e:Entity) -> bool {
     if child==NONE {return false}
     for child!=NONE {
         ci:=entity_index(child)
-        moved_push(h,child)
+        log_push(&h.moved,child,HIERARCHY_MOVED)
         child,h.parent[ci],h.previous_sibling[ci],h.next_sibling[ci]=h.next_sibling[ci],NONE,NONE,NONE
     }
     h.first_child[i],h.last_child[i]=NONE,NONE
@@ -199,7 +170,7 @@ cut_drop :: proc(h:^Hierarchy,e:Entity) {
 }
 
 @(private)
-order_of :: #force_inline proc(parents:Read(Parent),e:Entity) -> i32 {
+order_of :: #force_inline proc(parents:^Table(Parent,$A),e:Entity) -> i32 {
     value,_:=get(parents,e)
     return value.order
 }
@@ -252,7 +223,7 @@ destroy_tree :: proc(es:^Entities,h:Ref(Hierarchy),e:Entity) {
 }
 
 // e, or the nearest entity above it, with the component on; NONE without one.
-ancestor_with :: proc(parents:Read(Parent),table:Read($T),e:Entity) -> Entity {
+ancestor_with :: proc(parents:^Table(Parent,$A),table:^Table($T,$B),e:Entity) -> Entity {
     at:=e
     for _ in 0..=HIERARCHY_DEPTH {
         if at==NONE || has(table,at) {return at}
@@ -264,7 +235,7 @@ ancestor_with :: proc(parents:Read(Parent),table:Read($T),e:Entity) -> Entity {
 }
 
 // Whether ancestor is e or something e hangs under.
-is_under :: proc(parents:Read(Parent),e,ancestor:Entity) -> bool {
+is_under :: proc(parents:^Table(Parent,$A),e,ancestor:Entity) -> bool {
     if ancestor==NONE {return false}
     at:=e
     for _ in 0..=HIERARCHY_DEPTH {
@@ -277,7 +248,7 @@ is_under :: proc(parents:Read(Parent),e,ancestor:Entity) -> bool {
 }
 
 // How many entities e hangs under, HIERARCHY_DEPTH at most.
-depth_of :: proc(parents:Read(Parent),e:Entity) -> int {
+depth_of :: proc(parents:^Table(Parent,$A),e:Entity) -> int {
     at:=e
     for depth in 0..<HIERARCHY_DEPTH {
         parent,ok:=get(parents,at)
@@ -291,7 +262,7 @@ depth_of :: proc(parents:Read(Parent),e:Entity) -> int {
 // entity that hangs from parent has to be to be there. A parent without
 // Transform holds it as the root does. False when a parent without size on
 // an axis cannot hold it there.
-local_under :: proc(locals:Read(Transform),parents:Read(Parent),parent:Entity,world:mm.Transform) -> (local:mm.Transform,ok:bool) {
+local_under :: proc(locals:^Table(Transform,$A),parents:^Table(Parent,$B),parent:Entity,world:mm.Transform) -> (local:mm.Transform,ok:bool) {
     if parent==NONE {return world,true}
     above,placed:=world_of(locals,parents,parent)
     if !placed {return world,true}
@@ -301,7 +272,7 @@ local_under :: proc(locals:Read(Transform),parents:Read(Parent),parent:Entity,wo
 // Writes the Transform row of e so that it is at a position and rotation of
 // the world under its parent; its scale stays. What a library that moves an
 // entity writes.
-world_set :: proc(row:^Transform,locals:Read(Transform),parents:Read(Parent),e:Entity,position:[3]f32,rotation:mm.Quat) -> bool {
+world_set :: proc(row:^Transform,locals:^Table(Transform,$A),parents:^Table(Parent,$B),e:Entity,position:[3]f32,rotation:mm.Quat) -> bool {
     parent,_:=get(parents,e)
     local:=local_under(locals,parents,parent.entity,{position,rotation,{1,1,1}}) or_return
     row.position,row.rotation=local.position,local.rotation

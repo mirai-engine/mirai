@@ -26,7 +26,7 @@ event_note :: proc(c:^Ctx,e:core.Entity,event:physics.Break_Event) {
     inverse:=conj(frame.q)
     st.sequence+=1
     core.push(&c.events.applied,Applied{e,{
-        sequence=st.sequence,tick=u32(c.time.tick),piece=place,kind=event.kind,
+        piece=place,kind=event.kind,
         point=mm.quat_rotate(inverse,event.point-frame.p),vector=mm.quat_rotate(inverse,event.vector),radius=event.radius,strain=event.strain,
         half_extents=event.half_extents,rotation=inverse*(event.rotation==0?mm.QUAT_IDENTITY:event.rotation),blend=event.blend,
     }})
@@ -44,7 +44,7 @@ replays_apply :: proc(c:^Ctx,states:[]State_Replay,replays:[]Replay) {
             done,failed=state_apply(c,asked.entity,st,asked)
             if done {check=physics.breakable_check(c.view,st.handle)}
         }
-        core.push(&c.events.replayed,Replayed{entity=asked.entity,sequence=asked.sequence,state=true,done=done,failed=failed,check=check})
+        core.push(&c.events.replayed,Replayed{entity=asked.entity,tag=asked.tag,state=true,done=done,failed=failed,check=check})
     }
     for asked in replays {
         if replay_stopped(c,asked.entity,from) {continue}
@@ -54,12 +54,12 @@ replays_apply :: proc(c:^Ctx,states:[]State_Replay,replays:[]Replay) {
         check:u32
         if st!=nil && entry!=nil && physics.breakable_valid(c.view,st.handle) {
             done=event_replay(c,asked.entity,st,entry,asked.record)
-            st.sequence=asked.record.sequence
+            st.sequence+=1
             check=physics.breakable_check(c.view,st.handle)
             // The check is of the last event of a tick of the other end.
             if asked.check!=0 && asked.check!=check {done=false}
         }
-        core.push(&c.events.replayed,Replayed{entity=asked.entity,sequence=asked.record.sequence,done=done,check=check})
+        core.push(&c.events.replayed,Replayed{entity=asked.entity,tag=asked.tag,done=done,check=check})
     }
 }
 
@@ -103,7 +103,6 @@ event_replay :: proc(c:^Ctx,e:core.Entity,st:^Destructible_State,entry:^Entry,re
 state_apply :: proc(c:^Ctx,e:core.Entity,st:^Destructible_State,asked:State_Replay) -> (done,failed:bool) {
     remake :: proc(c:^Ctx,e:core.Entity,st:^Destructible_State) {
         physics.breakable_destroy(c.state,st.handle)
-        c.cache.stats.destroyed+=1
         core.add(c.states,e,Destructible_State{})
     }
     if physics.breakable_revision(c.view,st.handle)!=0 || st.sequence!=0 {
@@ -116,7 +115,7 @@ state_apply :: proc(c:^Ctx,e:core.Entity,st:^Destructible_State,asked:State_Repl
         remake(c,e,st)
         return false,true
     }
-    st.sequence=asked.sequence
+    st.sequence=len(asked.data)>0?1:0
     return true,false
 }
 
@@ -125,7 +124,7 @@ state_apply :: proc(c:^Ctx,e:core.Entity,st:^Destructible_State,asked:State_Repl
 @(private)
 group_identify :: proc(c:^Ctx,owner,e:core.Entity,group:Scratch_Group) {
     if c.authority==.Standalone {return}
-    destructible:=core.id_of(core.read(c.ids),owner)
+    destructible:=core.id_of(c.ids,owner)
     if destructible==0 {return}
     state:=base.hash_combine(u64(destructible),u64(group.group)+1)
     id:=core.id_new(c.es,&state)

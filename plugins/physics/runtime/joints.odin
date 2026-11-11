@@ -6,9 +6,9 @@ import sim "plugins:physics/runtime/sim"
 import mm "mirai:std/math"
 
 // Keeps the joints of the simulation equal to the Joint rows, while playing.
-// The body of the entity is body B of the joint and the one of the target is
-// body A, so the angle or translation of the joint is that of the entity
-// relative to its target.
+// Body a of a Joint is body A of the simulation, whose frame is the Transform
+// of the entity of the joint, so the angle or translation of the joint is
+// that of b relative to it.
 
 // The link of the joint of an entity; the joint of another generation of its
 // index goes first. nil without memory.
@@ -36,8 +36,7 @@ joint_body :: proc(s:^Sync,e:core.Entity) -> sim.Body_Handle {
 }
 
 @(private)
-joint_world_body :: proc(s:^Sync) -> sim.Body_Handle {
-    state:=s.state
+joint_world_body :: proc(state:^Physics_State) -> sim.Body_Handle {
     if !sim.body_valid(&state.world,state.world_body) {
         desc:=sim.BODY_DESC_DEFAULT
         desc.type=.Static
@@ -49,23 +48,32 @@ joint_world_body :: proc(s:^Sync) -> sim.Body_Handle {
 @(private)
 joint_quat :: proc "contextless" (q:mm.Quat) -> mm.Quat {return q==0?1:linalg.normalize(q)}
 
+// Entity a of a joint: the parent of its entity unless it names one.
 @(private)
-joint_scale :: proc(s:^Sync,e:core.Entity) -> [3]f32 {
-    world,ok:=core.world_of(s.locals,s.parents,e)
-    return ok?linalg.abs(world.scale):{1,1,1}
+joint_a :: proc(s:^Sync,e:core.Entity,joint:Joint) -> core.Entity {
+    if joint.a!=core.NONE {return joint.a}
+    parent,_:=core.get(s.parents,e)
+    return parent.entity
+}
+
+// Where a frame in the world is seen from an entity, NONE being the world.
+@(private)
+joint_frame_from :: proc(s:^Sync,from:core.Entity,frame:mm.Transform) -> sim.Transform {
+    if from==core.NONE {return {frame.position,frame.rotation}}
+    there,_:=core.world_of(s.transforms,s.parents,from)
+    inverse:=mm.quat_inverse(there.rotation)
+    return {mm.quat_rotate(inverse,frame.position-there.position),linalg.normalize(inverse*frame.rotation)}
 }
 
 // What the joint is made from: it is made again when it changes.
 joint_frames_same :: proc "contextless" (a,b:Joint) -> bool {
-    return a.kind==b.kind && a.target==b.target && a.collide==b.collide && a.auto_target==b.auto_target && a.anchor==b.anchor &&
-        a.target_anchor==b.target_anchor && a.rotation==b.rotation && a.target_rotation==b.target_rotation && a.cone==b.cone
+    return a.a==b.a && a.b==b.b && a.collide==b.collide && a.b_frame==b.b_frame && a.b_anchor==b.b_anchor && a.b_rotation==b.b_rotation
 }
 
 // What of a Joint_State the joint is made from.
 @(private)
 joint_frames :: proc "contextless" (joint:Joint,st:Joint_State) -> (frames:Joint_Frames) {
-    if joint.auto_target {frames.taken,frames.target_anchor,frames.target_rotation=st.taken,st.target_anchor,st.target_rotation}
-    if joint.kind==.Distance && joint.length<=0 {frames.length=st.length}
+    if !joint.b_frame {frames.taken,frames.b_anchor,frames.b_rotation=st.taken,st.b_anchor,st.b_rotation}
     return
 }
 
@@ -82,14 +90,11 @@ joint_state_read :: proc(states:^core.Table(Joint_State),e:core.Entity) -> (valu
 // What the setters of the joint change.
 @(private)
 joint_tuned_same :: proc "contextless" (a,b:Joint) -> bool {
-    return a.limit==b.limit && a.lower==b.lower && a.upper==b.upper && a.motor==b.motor && a.motor_speed==b.motor_speed &&
-        a.max_motor==b.max_motor && a.spring==b.spring && a.hertz==b.hertz && a.damping_ratio==b.damping_ratio &&
-        a.spring_target==b.spring_target && a.length==b.length && a.break_force==b.break_force && a.break_torque==b.break_torque &&
-        a.linear==b.linear && a.angular==b.angular
+    return a.break_force==b.break_force && a.break_torque==b.break_torque && a.linear==b.linear && a.angular==b.angular
 }
 
 @(private)
-joints_sync :: proc(s:^Sync,joints:core.Read(Joint),states:^core.Table(Joint_State)) {
+joints_sync :: proc(s:^Sync,joints:^core.Table(Joint,$A),states:^core.Table(Joint_State)) {
     state:=s.state
     #reverse for &l,at in state.joints.values {
         if core.has(joints,state.joints.entities[at]) {continue}
@@ -114,19 +119,21 @@ joint_reconcile :: proc(s:^Sync,states:^core.Table(Joint_State),e:core.Entity,jo
     held,has_state:=joint_state_read(states,e)
     st:=held
     st.error=joint_configuration_error(joint)
-    body:=joint_body(s,e)
-    target:=joint.target==core.NONE?joint_world_body(s):joint_body(s,joint.target)
-    if st.error==.None && (body=={} || target=={} || body==target) {st.error=.Invalid_Bodies}
-    wanted:=!st.broken && st.error==.None && body!={} && target!={} && body!=target
-    scale:=joint_scale(s,e)
-    target_scale:=joint.target!=core.NONE?joint_scale(s,joint.target):[3]f32{1,1,1}
+    a:=joint_a(s,e,joint)
+    body_a:=a==core.NONE?sim.Body_Handle{}:joint_body(s,a)
+    body_b:=joint.b==core.NONE?joint_world_body(s.state):joint_body(s,joint.b)
+    if st.error==.None && (body_a=={} || body_b=={} || body_a==body_b) {st.error=.Invalid_Bodies}
+    wanted:=!st.broken && st.error==.None
+    // Its frame on a moves with its own Transform, unless it is on the entity of a, whose frame it is.
+    local:core.Transform
+    if a!=e {local,_=core.get(s.transforms,e)}
     valid:=sim.joint_valid(w,l.joint)
-    same:=joint_frames_same(l.applied,joint) && l.frames==joint_frames(joint,held) && l.body==body && l.target==target && l.scale==scale && l.target_scale==target_scale
+    same:=joint_frames_same(l.applied,joint) && l.frames==joint_frames(joint,held) && l.a==body_a && l.b==body_b && l.local==local
     if valid && (!wanted || !same) {
         sim.joint_destroy(w,l.joint)
         l.joint,valid={},false
-        // The frames of a body another owner places are those that owner took.
-        if joint.auto_target && !core.has(s.targets,e) {st.taken=false}
+        // The frame on b of a body another owner places is the one that owner took.
+        if !joint.b_frame && !core.has(s.targets,e) {st.taken=false}
     }
     if !wanted || l.refused && same {
         if l.refused && same && st.error==.None {st.error=.Capacity}
@@ -134,43 +141,28 @@ joint_reconcile :: proc(s:^Sync,states:^core.Table(Joint_State),e:core.Entity,jo
         return
     }
     if !valid {
-        frame:=sim.Transform{joint.anchor*scale,joint_quat(joint.rotation)}
-        frame_a:=sim.Transform{joint.target_anchor*target_scale,joint_quat(joint.target_rotation)}
-        if joint.auto_target {
+        here,_:=core.world_of(s.transforms,s.parents,e)
+        frame_b:=sim.Transform{joint.b_anchor,joint_quat(joint.b_rotation)}
+        if !joint.b_frame {
             if !st.taken {
-                // Where the frame of the entity is now, seen from the target.
-                here,there:=sim.body_transform(w,body),sim.body_transform(w,target)
-                anchor:=mm.quat_rotate(mm.quat_inverse(there.q),here.p+mm.quat_rotate(here.q,frame.p)-there.p)
-                st.target_anchor=anchor/linalg.max(target_scale,[3]f32{1e-6,1e-6,1e-6})
-                st.target_rotation=linalg.normalize(mm.quat_inverse(there.q)*here.q*frame.q)
-                st.taken=true
+                taken:=joint_frame_from(s,joint.b,here)
+                st.b_anchor,st.b_rotation,st.taken=taken.p,taken.q,true
             }
-            frame_a={st.target_anchor*target_scale,joint_quat(st.target_rotation)}
+            frame_b={st.b_anchor,joint_quat(st.b_rotation)}
         }
-        length:=joint.length>0?joint.length:st.length
         desc:=sim.Joint_Desc{
-            type=sim.Joint_Type(joint.kind),body_a=target,body_b=body,frame_a=frame_a,frame_b=frame,collide_connected=joint.collide,
-            enable_limit=joint.limit,lower=joint.lower,upper=joint.upper,cone=joint.cone,
-            enable_motor=joint.motor,motor_speed=joint.motor_speed,max_motor=joint.max_motor,
-            enable_spring=joint.spring,hertz=joint.hertz,damping_ratio=joint.damping_ratio,target=joint.spring_target,
-            length=length,break_force=joint.break_force,break_torque=joint.break_torque,user_data=u64(e),
-            linear=joint.linear,angular=joint.angular,
+            body_a=body_a,body_b=body_b,frame_a=joint_frame_from(s,a,here),frame_b=frame_b,collide_connected=joint.collide,
+            break_force=joint.break_force,break_torque=joint.break_torque,user_data=u64(e),linear=joint.linear,angular=joint.angular,
         }
         l.joint=sim.joint_create(w,desc)
-        l.applied,l.body,l.target,l.scale,l.target_scale=joint,body,target,scale,target_scale
+        l.applied,l.a,l.b,l.local=joint,body_a,body_b,local
         l.refused=l.joint=={}
         if l.refused {
             core.report(s.problems,e,"physics.joints","its Joint was refused by the simulation: the %d joints of Physics_Settings.joints are in use; raise joints, or remove joints (Joint_State.error is Capacity)",w.desc.joint_capacity)
             st.error=.Capacity
-        } else if joint.kind==.Distance && joint.length<=0 && st.length<=0 {
-            st.length=sim.joint_distance(w,l.joint)
         }
         l.frames=joint_frames(joint,st)
     } else if !joint_tuned_same(l.applied,joint) {
-        sim.joint_set_limit(w,l.joint,joint.limit,joint.lower,joint.upper)
-        sim.joint_set_motor(w,l.joint,joint.motor,joint.motor_speed,joint.max_motor)
-        sim.joint_set_spring(w,l.joint,joint.spring,joint.hertz,joint.damping_ratio,joint.spring_target)
-        if joint.kind==.Distance && joint.length>0 {sim.joint_set_length(w,l.joint,joint.length)}
         sim.joint_set_break(w,l.joint,joint.break_force,joint.break_torque)
         st.error=sim.joint_set_axes(w,l.joint,joint.linear,joint.angular)
         l.applied=joint
@@ -182,23 +174,14 @@ joint_reconcile :: proc(s:^Sync,states:^core.Table(Joint_State),e:core.Entity,jo
 @(private)
 joints_events :: proc(s:^Sync,events:^Physics_Events,states:^core.Table(Joint_State)) {
     state:=s.state
-    w:=&state.world
-    for event in sim.world_events(w).joint_break {
-        e:=core.Entity(sim.body_user_data(w,event.body_b))
-        l:=core.entity_map_get(&state.joints,e)
-        if l==nil || l.joint!=event.joint {
-            l=nil
-            for &candidate,at in state.joints.values {
-                if candidate.joint==event.joint {
-                    l,e=&candidate,state.joints.entities[at]
-                    break
-                }
-            }
-            if l==nil {continue}
+    for event in sim.world_events(&state.world).joint_break {
+        for &l,at in state.joints.values {
+            if l.joint!=event.joint {continue}
+            e:=state.joints.entities[at]
+            l.joint,l.refused,l.applied={},false,{}
+            if row:=core.edit(states,e);row!=nil {row.broken=true}
+            core.push(&events.joint_break,Joint_Break{entity=e,force=event.force,torque=event.torque})
+            break
         }
-        target:=l.applied.target
-        l.joint,l.refused,l.applied={},false,{}
-        if row:=core.edit(states,e);row!=nil {row.broken=true}
-        core.push(&events.joint_break,Joint_Break{entity=e,target=target,force=event.force,torque=event.torque})
     }
 }

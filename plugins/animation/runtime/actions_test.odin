@@ -1,10 +1,12 @@
 package anim
 
 import "base:runtime"
+import "core:fmt"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
+import erender "mirai:engine/render"
 import "mirai:host"
 import "mirai:std/base"
 import lib "mirai:std/anim"
@@ -31,13 +33,24 @@ action_test_spans :: proc(content:^host.Content_Animation) {
     content.lib.markers[0],content.lib.markers[1],content.lib.markers[2]={time=0,id=0,duration=.25},{time=.1,id=0},{time=.1,id=1,duration=.1}
     content.lib.markers[3],content.lib.markers[4]={time=1,id=2,duration=.5},{time=1.1,id=2}
     content.lib.clips[0].marker_count=5;content.lib.clips[3].marker_count=5
-    content.markers=make([]u64,3);content.markers[0],content.markers[1],content.markers[2]=base.name_hash("windup"),base.name_hash("contact"),base.name_hash("recover")
+    content.markers=make([]host.Content_Marker,3);content.markers[0].name,content.markers[1].name,content.markers[2].name=base.name_hash("windup"),base.name_hash("contact"),base.name_hash("recover")
 }
 @(private)
 action_test_spans_free :: proc(content:^host.Content_Animation) {delete(content.markers);content.markers=nil}
 // The .character {3,4} of the actions of profile over the clips {1,2} of layer_fixture.
 @(private)
 action_test_set :: proc(profile:Action_Profile) -> Character_Set {return {info={animation={1,2}},match={info=MATCH_INFO_DEFAULT},actions=profile,motion={warp=POSE_WARP_PROFILE_DEFAULT}}}
+
+// A tick of the actions and the layers of state over content, as animation_tick runs them, over a
+// base whose root motion is base: stack_root blends the layers over it.
+@(private="file")
+stack_step :: proc(actions:^Action_Runtime,state:^Playing,description:Animation,content:^host.Content_Animation,playback:^Playback,events:^Animation_Events,dt:f32,problems:^core.Problems=nil,base:=ROOT_DELTA_DEFAULT,distance:^Animation_Distance_Request=nil) {
+    stack_asks(actions,state,description,content)
+    actions_sample(actions,state,description,dt,problems,content,playback,events,distance,1)
+    layers_advance(playback,state,content,description,events,dt,problems)
+    actions_layer_finish(actions,state)
+    state.motion,state.body_motion=base,{}
+}
 
 @(private)
 action_test_add_state :: proc(runtime:^Action_Runtime,value:Action_State) {
@@ -57,9 +70,11 @@ action_test_layered :: proc(profile:^Action_Profile,action:int) {
 }
 // actions_prepare over the events of a tick of its own, as animation_tick clears them.
 @(private="file")
-prepare :: proc(actions:^Action_Runtime,requests:^Animation_Requests,cache:^Character_Assets,descriptions:^core.Table(Animation),playback:^Playback,events:^Animation_Events,app:^host.App,problems:^core.Problems) -> bool {
+prepare :: proc(actions:^Action_Runtime,requests:^Animation_Requests,cache:^Character_Assets,descriptions:^core.Table(Animation),playback:^Playback,events:^Animation_Events,app:^host.App,problems:^core.Problems,remotes:^core.Table(core.Remote,.Read)={},played:^core.Table(Animation_Played)=nil,tick:u64=1) -> bool {
     clear(&events.items)
-    return actions_prepare(actions,requests,cache,core.read(descriptions),playback,events,app,problems)
+    unheard:core.Table(Animation_Played);defer core.table_destroy(&unheard)
+    local:core.Table(core.Remote);defer core.table_destroy(&local)
+    return actions_prepare(actions,requests,cache,core.read(descriptions),playback,events,app,remotes if remotes!=nil else core.read(&local),played if played!=nil else &unheard,{tick=tick,dt=.1,playing=true},problems)
 }
 // How many events of a kind the tick left.
 @(private="file")
@@ -123,6 +138,58 @@ Actions_World :: struct {
     using world:core.Test_World,
     descriptions:core.Table(Animation),
     transforms:core.Table(core.Transform),
+    played:core.Table(Animation_Played),
+    remotes:core.Table(core.Remote),
+}
+
+// What the end that decides an entity plays reaches the others in its Animation_Played: there it
+// plays once, as far into it as that end is, and a copy of the world from before it played (a
+// rollback) plays it the same, not again from its start.
+@(test)
+an_action_another_end_started_plays_once_as_far_into_it_as_that_end_is :: proc(t:^testing.T) {
+    w:Actions_World
+    if !core.test_world_init(t,&w,test_types) {return}
+    defer core.test_world_destroy(&w)
+    entity:=core.create(&w.entities)
+    description:=ANIMATION_DEFAULT;description.asset={3,4};core.add(&w.descriptions,entity,description);core.test_world_settle(&w)
+    profile:=action_test_profile();defer action_profile_free(&profile)
+    cache:Character_Assets;defer character_assets_free(&cache)
+    test_character_seed(&cache,description.asset,action_test_set(profile))
+    host_assets:host.Assets;app:=host.App{assets=&host_assets,allocator=context.allocator}
+    test_character_register(&host_assets,description.asset);defer test_registry_free(&host_assets)
+    content:host.Content_Animation;state:=layer_fixture(t,&content);defer lib.library_destroy(&content.lib);defer playing_free(&state);state.entity=entity;state.asset=content.id
+    action_test_spans(&content);defer action_test_spans_free(&content)
+    playback:Playback;defer playback_free(&playback);events:Animation_Events;defer delete(events.items)
+    requests:Animation_Requests;defer delete(requests.plays.items)
+    server,client:Action_Runtime;defer {actions_runtime_free(&server);actions_runtime_free(&client)}
+    // The end that decides it tells the tick it asked for it.
+    play(&requests,entity,"attack")
+    testing.expect(t,prepare(&server,&requests,&cache,&w.descriptions,&playback,&events,&app,nil,core.read(&w.remotes),&w.played,tick=10))
+    core.test_world_settle(&w)
+    record,told:=core.get(&w.played,entity)
+    testing.expect(t,told && record.slots[0]==Action_Started{action=base.name_hash("attack"),tick=10})
+    // Another end, which does not decide it, plays it once from there.
+    testing.expect(t,prepare(&client,&requests,&cache,&w.descriptions,&playback,&events,&app,nil,core.read(&w.remotes),&w.played,tick=10))
+    core.add(&w.remotes,entity,core.Remote{});core.test_world_settle(&w)
+    before:Action_Runtime;defer actions_runtime_free(&before)
+    core.value_copy(&before,&client,type_info_of(Action_Runtime));layers:=state.layers
+    // Two ticks: it starts as far in as the server is, once, and plays on.
+    run :: proc(actions:^Action_Runtime,state:^Playing,description:Animation,content:^host.Content_Animation,playback:^Playback,events:^Animation_Events,w:^Actions_World,requests:^Animation_Requests,cache:^Character_Assets,app:^host.App) -> (time:f32,started:int,ok:bool) {
+        for tick in u64(11)..=12 {
+            if !prepare(actions,requests,cache,&w.descriptions,playback,events,app,nil,core.read(&w.remotes),&w.played,tick=tick) {return}
+            stack_asks(actions,state,description,content);actions_sample(actions,state,description,.1,nil,content,playback,events,nil,1)
+            started+=count(events,.Started)
+            if tick==11 {time=actions.states[0].slots[0].time}
+        }
+        return time,started,true
+    }
+    time,started,ok:=run(&client,&state,description,&content,&playback,&events,&w,&requests,&cache,&app)
+    testing.expectf(t,ok && abs(time-.2)<1e-5 && started==1 && client.states[0].slots[0].active,"a tick late it starts a tick in, once: %v %v",time,started)
+    // A rollback to before it was heard plays it the same, and does not start it twice.
+    after:=client.states[0].slots[0]
+    actions_runtime_free(&client);core.value_copy(&client,&before,type_info_of(Action_Runtime));state.layers=layers
+    time,started,ok=run(&client,&state,description,&content,&playback,&events,&w,&requests,&cache,&app)
+    testing.expect(t,ok && abs(time-.2)<1e-5 && started==1 && client.states[0].slots[0]==after)
 }
 
 // An action whose body_move is not None gives its body the share of the root delta of the tick it
@@ -150,11 +217,10 @@ an_action_that_moves_its_body_gives_it_its_share_of_the_root_delta :: proc(t:^te
     events:Animation_Events;defer delete(events.items)
     play(&requests,entity,"attack")
     if !testing.expect(t,prepare(&actions,&requests,&cache,&w.descriptions,&playback,&events,&app,nil)) {return}
-    stack_asks(&actions,state,description,&content);actions_sample(&actions,state,description,.2,nil,&content);layers_advance(&playback,state,&content,description,&events,.2,nil);actions_layer_finish(&actions,state)
-    state.motion={translation={.1,0,0},rotation=1};actions_apply_root(&actions,state,description)
+    stack_step(&actions,state,description,&content,&playback,&events,.2,base={translation={.1,0,0},rotation=1});stack_root(state,&content,description,.2)
     body,moving:=animation_body_motion(&playback,entity)
     testing.expectf(t,moving && body.move==.Additive && !body.vertical && abs(body.translation.x-.15)<1e-5 && abs(state.motion.translation.x-.175)<1e-5,"the action has .75 of .2 and the base the rest of .1: %v %v",body,state.motion)
-    actions.states[0].slots[0].body=.None;state.motion={translation={.1,0,0},rotation=1};actions_apply_root(&actions,state,description)
+    state.layers[0].body=.None;state.motion={translation={.1,0,0},rotation=1};stack_root(state,&content,description,.2)
     _,moving=animation_body_motion(&playback,entity)
     testing.expect(t,!moving && abs(state.motion.translation.x-.175)<1e-5)
 }
@@ -184,7 +250,7 @@ actions_segment_sections_and_windows_copy_state_and_obey_cancellation_without_st
     testing.expect(t,prepare(&actions,&requests,&cache,&w.descriptions,&playback,&events,&app,nil))
     // It tells it started when it plays, in the sample of the tick.
     testing.expect(t,len(requests.plays.items)==0 && actions.states[0].slots[0].active && len(events.items)==0)
-    stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.4,nil,&content,&playback,&events)
+    stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.4,nil,&content,&playback,&events,nil,1)
     layers_advance(&playback,&state,&content,description,&events,.4,nil);actions_layer_finish(&actions,&state)
     testing.expect(t,abs(state.layers[0].fader.current.time-1.15)<1e-5)
     // One queue, in the order it happened: the markers of its clip between what the action tells.
@@ -204,7 +270,7 @@ actions_segment_sections_and_windows_copy_state_and_obey_cancellation_without_st
     testing.expect(t,actions.states[0].slots[0].cancel_pending && !actions.states[0].slots[0].finishing && len(events.items)==0,"a stop of Finish_Section waits for the end of the section")
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator();app.allocator=context.allocator
     okay:=prepare(&actions,&requests,&cache,&w.descriptions,&playback,&events,&app,nil)
-    stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.5,nil,&content,&playback,&events);layers_advance(&playback,&state,&content,description,&events,.5,nil);actions_layer_finish(&actions,&state)
+    stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.5,nil,&content,&playback,&events,nil,1);layers_advance(&playback,&state,&content,description,&events,.5,nil);actions_layer_finish(&actions,&state)
     context=saved;cache.allocator=saved.allocator;actions.allocator=saved.allocator
     testing.expect(t,okay && actions.states[0].slots[0].finishing && count(&events,.Interrupted)==1 && count(&events,.Ended)==0)
     play(nil,entity,"attack");play(&requests,core.NONE,"attack");stop(&requests,entity,"")
@@ -231,20 +297,21 @@ action_root_motion_uses_section_segments_fade_weight_and_exposes_a_continuous_wa
     actions.states[0].slots[0]={active=true,starting=true,seeking=true,action=0,section=0}
     description:=ANIMATION_DEFAULT;description.asset=state.asset
     playback:Playback;defer playback_free(&playback);events:Animation_Events;defer delete(events.items)
-    stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.2,nil,&content);layers_advance(&playback,&state,&content,description,&events,.2,nil);actions_layer_finish(&actions,&state)
-    state.motion={translation={.1,0,0},rotation=1};actions_apply_root(&actions,&state,description)
-    testing.expect(t,abs(state.motion.translation.x-.175)<1e-5 && state.has_action_root && state.action_root.in_place)
-    clock:=action_clock(&actions,state.entity);testing.expect(t,clock.active && clock.from==0 && abs(clock.to-.2)<1e-5 && clock.weight==.75)
-    actions.states[0].slots[0].finishing=true;clock=action_clock(&actions,state.entity);testing.expect(t,!clock.active && clock.player.clip!=0);actions.states[0].slots[0].finishing=false
-    stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.2,nil,&content);layers_advance(&playback,&state,&content,description,&events,.2,nil);actions_layer_finish(&actions,&state);actions_apply_root(&actions,&state,description)
-    testing.expect(t,!action_clock(&actions,state.entity).active && abs(actions.states[0].slots[0].delta.translation.x-.2)<1e-5)
+    stack_step(&actions,&state,description,&content,&playback,&events,.2,base={translation={.1,0,0},rotation=1})
+    leading,share:=stack_root(&state,&content,description,.2)
+    testing.expect(t,abs(state.motion.translation.x-.175)<1e-5 && state.root.translation && state.root.in_place && leading==0)
+    clock:=action_clock(&actions,&state,&content,leading,share);testing.expect(t,clock.active && clock.from==0 && abs(clock.to-.2)<1e-5 && clock.weight==.75)
+    actions.states[0].slots[0].finishing=true;clock=action_clock(&actions,&state,&content,leading,share);testing.expect(t,!clock.active && clock.player.clip!=0);actions.states[0].slots[0].finishing=false
+    // A jump from windup to recover keeps the root motion before it.
+    stack_step(&actions,&state,description,&content,&playback,&events,.2);leading,share=stack_root(&state,&content,description,.2)
+    testing.expect(t,!action_clock(&actions,&state,&content,leading,share).active && abs(state.motion.translation.x-.2*.75)<1e-5)
     profile.actions[0].fade_in=1
-    actions.states[0].slots[0]={active=true,starting=true,seeking=true,action=0,section=0};state.layers[0]={};state.motion=ROOT_DELTA_DEFAULT
-    stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.1,nil,&content);layers_advance(&playback,&state,&content,description,&events,.1,nil);actions_layer_finish(&actions,&state);actions_apply_root(&actions,&state,description)
+    actions.states[0].slots[0]={active=true,starting=true,seeking=true,action=0,section=0};state.layers[0]={}
+    stack_step(&actions,&state,description,&content,&playback,&events,.1);stack_root(&state,&content,description,.1)
     testing.expect(t,abs(state.motion.translation.x-.01)<1e-5)
     base.text_set(profile.actions[0].clip[:],"missing")
     problems:core.Problems
-    stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.1,&problems,&content)
+    stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.1,&problems,&content,&playback,&events,nil,1)
     testing.expect(t,core.problem_find(&problems,state.entity,"animation.action_clip")!=nil && actions.states[0].slots[0].finishing && state.asked[0].clip==0 && state.asked[0].weight==0)
 }
 
@@ -258,20 +325,20 @@ action_distance_requests_advance_only_the_selected_clip_and_reject_discontinuous
     description:=ANIMATION_DEFAULT;description.asset=state.asset
     request:=Animation_Distance_Request{entity=state.entity,clip=base.name_hash("walk"),time=.15}
     playback:Playback;defer playback_free(&playback);events:Animation_Events;defer delete(events.items)
-    stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.01,nil,&content,&playback,&events,distance=&request)
+    stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.01,nil,&content,&playback,&events,&request,1)
     testing.expect(t,abs(state.layers[0].fader.current.time-.15)<1e-5 && count(&events,.Span_Begin)==1)
     player,selected:=action_player(&actions,state.entity,request.clip)
     testing.expect(t,selected && player.clip!=0 && player.time==.15 && actions.plans[0].profile.actions[0].root_motion==.None)
     _,selected=action_player(&actions,state.entity,base.name_hash("run"));testing.expect(t,!selected)
     problems:core.Problems
-    before:=len(events.items);request.time=1.1;stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.01,&problems,&content,&playback,&events,distance=&request)
+    before:=len(events.items);request.time=1.1;stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.01,&problems,&content,&playback,&events,&request,1)
     testing.expect(t,core.problem_find(&problems,state.entity,"animation.action_distance")!=nil && state.layers[0].fader.current.time==.15 && len(events.items)==before)
-    request.time=.1;request.seek=true;stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.01,nil,&content,&playback,&events,distance=&request)
-    testing.expect(t,state.layers[0].fader.current.time==.1 && !actions.states[0].slots[0].continuous && actions.states[0].slots[0].delta==ROOT_DELTA_DEFAULT && len(events.items)==before)
-    request.clip=base.name_hash("run");request.seek=false;request.time=1;stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.02,nil,&content,distance=&request)
+    request.time=.1;request.seek=true;stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.01,nil,&content,&playback,&events,&request,1)
+    testing.expect(t,state.layers[0].fader.current.time==.1 && !actions.states[0].slots[0].continuous && state.layers[0].from==.1 && len(events.items)==before)
+    request.clip=base.name_hash("run");request.seek=false;request.time=1;stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.02,nil,&content,&playback,&events,&request,1)
     testing.expect(t,abs(state.layers[0].fader.current.time-.12)<1e-5)
     content.lib.markers[3].time=.25
-    request.clip=base.name_hash("walk");request.time=.4;stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.01,nil,&content,distance=&request)
+    request.clip=base.name_hash("walk");request.time=.4;stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.01,nil,&content,&playback,&events,&request,1)
     testing.expect(t,abs(state.layers[0].fader.current.time-.4)<1e-5 && actions.states[0].slots[0].section==1 && actions.states[0].slots[0].continuous)
 }
 
@@ -288,8 +355,9 @@ root_actions_can_start_over_an_idle_clip_without_root_channels :: proc(t:^testin
     actions.states[0].slots[0]={active=true,starting=true,seeking=true,action=0,section=-1}
     description:=ANIMATION_DEFAULT;description.asset=state.asset;description.root_motion=.In_Place
     problems:core.Problems
-    stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.1,&problems,&content)
-    testing.expect(t,problems.count==0 && actions.states[0].slots[0].has_root && !actions.states[0].slots[0].finishing)
+    playback:Playback;defer playback_free(&playback);events:Animation_Events;defer delete(events.items)
+    stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.1,&problems,&content,&playback,&events,nil,1)
+    testing.expect(t,problems.count==0 && state.layers[0].root_motion==.In_Place && !actions.states[0].slots[0].finishing)
 }
 
 @(test)
@@ -305,25 +373,28 @@ action_root_projection_preserves_each_base_and_action_contribution_and_validates
     if !core.test_world_init(t,&w,test_types) {return}
     defer core.test_world_destroy(&w)
     cache:Animation_Constraints;defer constraints_free(&cache)
+    // An action kept in place blends the reference of the root bone by its weight, one that extracts
+    // its clip: over a base kept in place, the base is at the reference.
     for policy in ([?]Root_Motion_Policy{.In_Place,.Extract}) {
-        actions.plans[0].profile.actions[0].root_motion=policy;actions.states[0].slots[0]={active=true,starting=true,seeking=true,action=0,section=-1};state.layers={};state.has_action_in_place=false
-        description:=ANIMATION_DEFAULT;description.asset=state.asset
-        description.root_motion=.In_Place if policy==.Extract else .None;state.clip=0
-        state.base_root={bone=bone_ref("hip"),translation=true,in_place=policy==.Extract};state.has_base_root=policy==.Extract
-        stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.25,nil,&content);layers_advance(&playback,&state,&content,description,&events,.25,nil);actions_layer_finish(&actions,&state)
-        copy(state.local[:],state.rest[:]);state.local[1].position.x=1
-        pose_layers(&playback,&state,&content.lib,description);constraints_apply(&state,&playback,{},&cache,&w.transforms,{},.25)
+        actions.plans[0].profile.actions[0].root_motion=policy;actions.states[0].slots[0]={active=true,starting=true,seeking=true,action=0,section=-1};state.layers={}
+        description:=ANIMATION_DEFAULT;description.asset=state.asset;state.clip=0
+        state.root={bone=bone_ref("hip"),translation=true,in_place=true} if policy==.Extract else {}
+        stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.25,nil,&content,&playback,&events,nil,1);layers_advance(&playback,&state,&content,description,&events,.25,nil);actions_layer_finish(&actions,&state)
+        copy(state.local[:],state.rest[:]);state.local[1].position.x=1 if policy==.In_Place else 0
+        pose_layers(&playback,&state,&content,description)
         expected:f32=.5 if policy==.In_Place else .125
-        testing.expect(t,state.action_root_mask==1 && state.has_action_in_place && abs(state.local[1].position.x-expected)<1e-5)
+        testing.expectf(t,state.layers[0].root_motion==policy && abs(state.local[1].position.x-expected)<1e-5,"%v: %v",policy,state.local[1].position)
         actions.states[0].slots[0].finishing=true
-        description=ANIMATION_DEFAULT;description.asset=state.asset;stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.01,nil,&content)
-        testing.expect(t,state.action_root_mask==1 && actions.states[0].slots[0].has_root)
+        description=ANIMATION_DEFAULT;description.asset=state.asset;stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.01,nil,&content,&playback,&events,nil,1)
+        testing.expect(t,state.layers[0].root_motion==policy,"a finishing action keeps its policy")
     }
-    state.has_base_root=false;state.layers={};actions.states[0].slots={};actions.states[0].slots[0]={active=true,starting=true,seeking=true,action=0,section=-1};actions.states[0].slots[1]={active=true,starting=true,seeking=true,action=1,section=-1}
-    content.roots[2]=content.roots[0];content.roots[2].translation=false;content.roots[2].rotation=true
+    // The stack has one root bone: an action whose clip moves another than the base is stopped.
+    state.layers={};actions.states[0].slots={};actions.states[0].slots[0]={active=true,starting=true,seeking=true,action=0,section=-1};actions.states[0].slots[1]={active=true,starting=true,seeking=true,action=1,section=-1}
+    content.roots[2]=content.roots[0];base.text_set(content.roots[2].bone[:],"spine")
+    state.root={bone=bone_ref("hip"),translation=true}
     problems:core.Problems
-    description:=ANIMATION_DEFAULT;description.asset=state.asset;stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.1,&problems,&content)
-    testing.expect(t,problems.count==1 && core.problem_find(&problems,state.entity,"animation.action_clip")!=nil && state.action_root_mask==1 && actions.states[0].slots[1].finishing && !actions.states[0].slots[1].has_root)
+    description:=ANIMATION_DEFAULT;description.asset=state.asset;stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.1,&problems,&content,&playback,&events,nil,1)
+    testing.expect(t,problems.count==1 && core.problem_find(&problems,state.entity,"animation.action_clip")!=nil && !actions.states[0].slots[0].finishing && actions.states[0].slots[1].finishing)
 }
 
 @(test)
@@ -378,9 +449,9 @@ a_new_actions_asset_or_revision_interrupts_the_playing_action_and_fades_its_laye
         requests:Animation_Requests;defer delete(requests.plays.items);actions:Action_Runtime;defer actions_runtime_free(&actions)
         tick :: proc(actions:^Action_Runtime,requests:^Animation_Requests,cache:^Character_Assets,descriptions:^core.Table(Animation),playback:^Playback,app:^host.App,content:^host.Content_Animation,events:^Animation_Events,dt:f32) -> bool {
             if !prepare(actions,requests,cache,descriptions,playback,events,app,nil) {return false}
-            state:=&playback.states[0];sampled,_:=core.get(core.read(descriptions),state.entity)
+            state:=&playback.states[0];sampled,_:=core.get(descriptions,state.entity)
             stack_asks(actions,state,sampled,content)
-            actions_sample(actions,state,sampled,dt,nil,content,playback,events);layers_advance(playback,state,content,sampled,events,dt,nil);actions_finish(actions,playback,dt)
+            actions_sample(actions,state,sampled,dt,nil,content,playback,events,nil,1);layers_advance(playback,state,content,sampled,events,dt,nil);actions_finish(actions,playback,dt)
             return true
         }
         play(&requests,entity,"attack")
@@ -463,7 +534,7 @@ actions_retry_a_first_fire_when_profile_preparation_has_no_memory :: proc(t:^tes
     actions:Action_Runtime;defer actions_runtime_free(&actions);requests:Animation_Requests;defer delete(requests.plays.items)
     events:Animation_Events;defer delete(events.items)
     reserve(&events.items,EVENT_BATCH)
-    testing.expect(t,actions_discover(&actions,core.read(&w.descriptions),&playback,&events,&host_assets,nil))
+    testing.expect(t,actions_discover(&actions,&w.descriptions,&playback,&events,&host_assets,nil))
     play(&requests,entity,"attack")
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=context.allocator;app.allocator=context.allocator
     prepared:=prepare(&actions,&requests,&cache,&w.descriptions,&playback,&events,&app,nil)
@@ -488,7 +559,7 @@ action_playing_answers_while_an_action_plays_and_a_section_asked_of_it_moves_it_
     content:host.Content_Animation;state:=layer_fixture(t,&content);defer lib.library_destroy(&content.lib);defer playing_free(&state);state.entity,state.asset=entity,content.id
     action_test_spans(&content);defer action_test_spans_free(&content)
     // What plays tells what it does and where it is in the sample of the tick.
-    sample :: proc(actions:^Action_Runtime,state:^Playing,description:Animation,content:^host.Content_Animation,playback:^Playback,events:^Animation_Events) {stack_asks(actions,state,description,content);actions_sample(actions,state,description,0,nil,content,playback,events)}
+    sample :: proc(actions:^Action_Runtime,state:^Playing,description:Animation,content:^host.Content_Animation,playback:^Playback,events:^Animation_Events) {stack_asks(actions,state,description,content);actions_sample(actions,state,description,0,nil,content,playback,events,nil,1)}
     problems:core.Problems
     _,_,playing:=action_playing({&actions},entity,"attack");testing.expect(t,!playing)
     play(&requests,entity,"attack")
@@ -532,10 +603,91 @@ a_world_action_plays_at_its_speed_while_its_entity_is_slowed :: proc(t:^testing.
         play(&requests,entity,"attack")
         testing.expect(t,prepare(&actions,&requests,&cache,&w.descriptions,&playback,&events,&app,nil))
         // A tick of 0.2 s of the world while the entity runs at half pace: 0.1 s of its own time.
-        stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.1,nil,&content,&playback,&events,pace=.5)
+        stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.1,nil,&content,&playback,&events,nil,.5)
         want:=f32(.2) if clock==.World else .1
         testing.expectf(t,abs(actions.states[0].slots[0].time-want)<1e-5,"%v: the action is at %v s of its clip, want %v",clock,actions.states[0].slots[0].time,want)
         layers_advance(&playback,&state,&content,description,&events,.1,nil);actions_layer_finish(&actions,&state)
         testing.expectf(t,abs(state.layers[0].fader.current.time-want)<1e-5,"%v: the pose is at %v s of its clip, want %v",clock,state.layers[0].fader.current.time,want)
     }
+}
+
+// What a whole tick of the animation of a rig reads and writes, for a test that plays its actions
+// and looks as a game asks for them.
+@(private="file")
+Played_World :: struct {
+    using world:core.Test_World,
+    transforms:core.Table(core.Transform),parents:core.Table(core.Parent),names:core.Table(core.Name),
+    meshes:core.Table(erender.Mesh_Renderer),sources:core.Table(Pose_Source),animations:core.Table(Animation),targets:core.Table(Animation_Target),
+    progress:core.Table(Animation_Progress),attachments:core.Table(Bone_Attachment),worlds:core.Table(core.World_Transform),
+    played:core.Table(Animation_Played),remotes:core.Table(core.Remote),
+    requests:Animation_Requests,events:Animation_Events,playback:Playback,constraints:Animation_Constraints,grounding:Grounding_Runtime,
+    modifiers:Modifier_Runtime,actions:Action_Runtime,motion:Motion_Runtime,
+}
+
+// A body that stands in its idle leans by an action and turns by its look: each fades in and out
+// over its own time, the look turns to a new target over its fade too, the pose turns no faster
+// than twice what the action alone turns it, and once both let go the body is back at rest.
+@(test)
+an_action_and_a_look_over_an_idle_body_fade_in_and_back_to_rest :: proc(t:^testing.T) {
+    directory:=base.test_folder(t,"played_fades")
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    library,id:=base.Asset_Id{0x11,0xa1},base.Asset_Id{0x11,0xa2}
+    side:=mm.Vec3{1,0,0}
+    keys:=[]lib.Keyframe{{time=0,value=lib.quat_vec4(1),ease=.Sine_In_Out},{time=.2,value=lib.quat_vec4(mm.quat_axis_angle(side,-.6)),ease=.Sine_In_Out},{time=.5,value=lib.quat_vec4(mm.quat_axis_angle(side,-.6))}}
+    rest:=[]lib.Keyframe{{time=0,value=lib.quat_vec4(1)}}
+    clips:=[]asset.Animation_Clip_Desc{{name="idle",tracks={{target="Body",property=.Rotation,keys=rest}}},{name="lean",tracks={{target="Body",property=.Rotation,keys=keys}}}}
+    if !testing.expect_value(t,asset.animation_save(fmt.tprintf("%s/lean.anim",directory),&types,{id=library,clips=clips}),asset.Error.None) {return}
+    actions:=[]Action_Definition{ACTION_DEFINITION_DEFAULT}
+    base.text_set(actions[0].name[:],"Lean");base.text_set(actions[0].clip[:],"lean");actions[0].fade_in,actions[0].fade_out=.2,.2
+    aim:=LOOK_CONSTRAINT_DEFAULT;aim.bone=bone_ref("Body");aim.enabled=false
+    set:=character_set_make(library);set.actions.actions=actions;set.pose.look={aim}
+    if !testing.expect_value(t,character_save(fmt.tprintf("%s/lean.character",directory),&types,id,set),asset.Error.None) {return}
+    assets:host.Assets
+    if !testing.expect(t,host.assets_init(&assets,{root=directory})) {return}
+    defer host.assets_destroy(&assets)
+    app:=host.App{assets=&assets,allocator=context.allocator};defer host.app_content_destroy(&app)
+    w:Played_World;problems:core.Problems
+    if !core.test_world_init(t,&w,test_types) {return}
+    defer core.test_world_destroy(&w)
+    characters:Character_Assets;skeletons:Skeleton_Assets;sources:Source_Assets
+    defer {character_assets_free(&characters);skeleton_assets_free(&skeletons);source_assets_free(&sources)}
+    rig,body:=core.create(&w.entities),core.create(&w.entities)
+    core.add(&w.transforms,rig,core.TRANSFORM_IDENTITY);core.add(&w.transforms,body,core.TRANSFORM_IDENTITY)
+    target:=Animation_Target{animation=rig};base.text_set(target.path[:],"Body");core.add(&w.targets,body,target)
+    animation:=ANIMATION_DEFAULT;animation.asset=id;core.add(&w.animations,rig,animation)
+    core.test_world_settle(&w)
+    DT :: f32(1.0/60)
+    // The turn of the body in the tick, in radians per second.
+    tick :: proc(w:^Played_World,problems:^core.Problems,app:^host.App,characters:^Character_Assets,skeletons:^Skeleton_Assets,sources:^Source_Assets,body:core.Entity) -> f32 {
+        before,_:=core.get(core.read(&w.transforms),body)
+        time:=core.Time{dt=DT,playing=true}
+        animation_sample(core.read(&w.animations),&w.progress,&w.played,core.read(&w.attachments),&w.transforms,core.read(&w.parents),{},core.read(&w.names),core.read(&w.targets),core.read(&w.meshes),core.read(&w.sources),core.read(&w.remotes),&w.requests,&w.events,&w.modifiers,&w.playback,characters,skeletons,app,time,{},problems,&w.actions,&w.motion,sources,{},core.CLOCK_DEFAULT,ANIMATION_BUDGET_CONFIG_DEFAULT)
+        core.test_world_settle(w)
+        animation_advance(&w.transforms,core.read(&w.parents),core.read(&w.worlds),&w.requests,&w.modifiers,&w.playback,&w.constraints,&w.grounding,{},{},time,core.ref(skeletons),problems,&w.motion,characters,{},{},core.CLOCK_DEFAULT,nil)
+        core.test_world_settle(w)
+        after,_:=core.get(core.read(&w.transforms),body)
+        return mm.quat_angle(before.rotation,after.rotation)/DT
+    }
+    for _ in 0..<4 {tick(&w,&problems,&app,&characters,&skeletons,&sources,body)}
+    if host.content_animation_pending(&app,library) {host.content_animation_wait(&app,library)}
+    for _ in 0..<4 {tick(&w,&problems,&app,&characters,&skeletons,&sources,body)}
+    // The action alone: its own turn, its fades included.
+    play(&w.requests,rig,"Lean")
+    alone:f32
+    for _ in 0..<60 {alone=max(alone,tick(&w,&problems,&app,&characters,&skeletons,&sources,body))}
+    rested,_:=core.get(core.read(&w.transforms),body)
+    // With a look, which turns to another target while it plays and lets go after the action ends.
+    look(&w.requests,rig,spatial_point({.6,-.2,-1}))
+    play(&w.requests,rig,"Lean")
+    both:f32
+    for i in 0..<110 {
+        if i==20 {look(&w.requests,rig,spatial_point({-.6,-.2,-1}))}
+        if i==70 {look(&w.requests,rig,spatial_point({}),0)}
+        both=max(both,tick(&w,&problems,&app,&characters,&skeletons,&sources,body))
+    }
+    last,_:=core.get(core.read(&w.transforms),body)
+    testing.expectf(t,alone>1,"the action turns the body (%.2f rad/s)",alone)
+    testing.expectf(t,mm.quat_angle(rested.rotation,1)<1e-3 && mm.quat_angle(last.rotation,1)<1e-3,"the body is back at rest: %v %v",rested.rotation,last.rotation)
+    testing.expectf(t,both<=2*alone,"with the look the body turns at most twice as fast as the action alone turns it: %.2f against %.2f rad/s",both,alone)
+    testing.expect_value(t,problems.count,0)
 }

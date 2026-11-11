@@ -16,9 +16,9 @@ directly with -show-more-timings and keep its phases.
 Steps (--steps, comma separated; all of them by default):
   shaders_cold        the engine's shaders without output, stamp or caches
   shaders_cached      the same with the caches a new checkout gets
-  engine_fast_force   mirai build engine --dev --force
+  engine_fast_force   mirai build engine --force
   engine_speed_force  mirai build engine --release --force
-  editor_fast         a comment appended to editor/editor.odin, then mirai build engine --dev
+  editor_fast         a comment appended to editor/editor.odin, then mirai build engine
   editor_speed        the same with --release
   demo_shaders_cold   the first shader generation of the demo
   demo_speed          the library of the demo at -o:speed, its stamp removed
@@ -306,7 +306,7 @@ def main() -> int:
     checkouts = bench.checkouts
     for side, checkout in checkouts.items():
         print(f"preparing {side}: {checkout}", flush=True)
-        for arguments in (("help",), ("deps",), ("build", "engine", "--dev"), ("build", "engine", "--release"),
+        for arguments in (("help",), ("deps",), ("build", "engine"), ("build", "engine", "--release"),
                           ("build", "editor", "demo", "--release")):
             bench.mirai(checkout, *arguments)
     for step in steps:

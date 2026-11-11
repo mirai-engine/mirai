@@ -28,7 +28,7 @@ morph_accessor :: proc(out:^Morph_Gltf,bytes:[]u8,count,components:int,component
 
 @(private)
 morph_jelly_source :: proc(o:^Out) -> string {
-    folder :: "source/models/morph-playground"
+    folder :: "assets/characters/jelly"
     os.make_directory_all(path(o,folder))
     sphere:geom.Mesh_Buffer;geom.mesh_buffer_init(&sphere,context.temp_allocator);geom.sphere_build(&sphere,1,24,12)
     positions,normals:=make([dynamic]mm.Vec3,context.temp_allocator),make([dynamic]mm.Vec3,context.temp_allocator)
@@ -102,16 +102,15 @@ morph_jelly_source :: proc(o:^Out) -> string {
     accessors:=strings.to_string(gltf.accessors)
     json:=fmt.tprintf(`{{"asset":{{"version":"2.0","generator":"Mirai Odin morph playground"}},"buffers":[{{"uri":"jelly.bin","byteLength":%d}}],"bufferViews":[%s],"accessors":[%s],"materials":[{{"name":"Candy","pbrMetallicRoughness":{{"metallicFactor":0,"roughnessFactor":0.42}}}}],"meshes":[{{"name":"Party Jelly","weights":[0,0,0,0],"extras":{{"targetNames":["Squash","Smile","Blink","Wobble"]}},"primitives":[{{"attributes":{{"POSITION":%d,"NORMAL":%d,"COLOR_0":%d,"JOINTS_0":%d,"WEIGHTS_0":%d}},"indices":%d,"material":0,"targets":[%s]}}]}}],"nodes":[{{"name":"Jelly","mesh":0}},{{"name":"JellySkinned","mesh":0,"skin":0}},{{"name":"Root","children":[3]}},{{"name":"Top","translation":[0,1.2,0]}}],"skins":[{{"name":"Jelly bones","joints":[2,3],"inverseBindMatrices":%d}}],"scenes":[{{"nodes":[0,1,2]}}],"scene":0,"animations":[%s]}}`,len(gltf.bytes),strings.to_string(gltf.views),accessors,p,n,color,joint,weight,index,strings.to_string(targets),ibm,strings.to_string(animations))
     if os.write_entire_file(path(o,folder+"/jelly.bin"),gltf.bytes[:])!=nil || os.write_entire_file(path(o,folder+"/jelly.gltf"),json)!=nil {o.content.failed=true}
-    return "morph-playground/jelly.gltf"
+    return folder+"/jelly.gltf"
 }
 
-// The jelly of morph targets of the gallery, a source written here and imported, and its moods: a
+// The jelly of morph targets of the gallery, a source written here that a build imports, and its moods: a
 // layer that mixes its clips of shapes and an additive layer over it.
 @(private)
 gallery_morphs :: proc(o:^Out) {
-    source:=morph_jelly_source(o);if o.content.failed {return};import_model(o,source);if o.content.failed {return}
-    logical:=fmt.tprintf("source/models/%s",source)
-    animation:=imported_id(o,logical,asset.KIND_ANIMATION,"jelly")
+    source:=morph_jelly_source(o);if o.content.failed {return}
+    animation:=imported_id(o,source,asset.KIND_ANIMATION,"jelly")
     // Its moods over the dance: how sleepy it is, and how much the rubber adds, by the weights the game sets.
     layers:=[2]anim.Stack_Layer{anim.STACK_LAYER_DEFAULT,anim.STACK_LAYER_DEFAULT}
     base.text_set(layers[0].name[:],"Mood");base.text_set(layers[0].clip[:],"Sleepy");layers[0].sync,layers[0].weight,layers[0].fade=true,0,0

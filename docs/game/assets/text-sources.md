@@ -7,7 +7,7 @@ agent writes the text with its own tools. The asset is the source; the text is k
 ## The loop
 
 ```sh
-mirai build editor . --dev                        # once, and again after the code changes
+mirai build editor .                              # once, and again after the code changes
 mirai scene read arena/main.scene --out main.json # the document of the scene
 mirai scene write arena/main.scene main.json      # the scene says the document
 mirai ui write hud/score.ui score.json            # an asset that does not exist is made
@@ -19,7 +19,7 @@ mirai play test .                                 # the scenarios of tests/scena
   the game has there; the asset stays as it was. `mirai ui check` and `mirai scene check` say what
   would fail without writing.
 - Documents are checked against the game as it was built: a component or a field the code just
-  declared is unknown until `mirai build editor . --dev`, and a write says so when the library
+  declared is unknown until `mirai build editor .`, and a write says so when the library
   is missing or older than the code.
 - An asset that already says its document is left alone.
 

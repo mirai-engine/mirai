@@ -20,8 +20,8 @@ Group_Info :: struct {
 @(params)
 Destruct_View :: struct {
     physics:core.Ref(phys.Physics_State),
-    states:core.Read(Destructible_State),
-    groups:core.Read(Destructible_Group),
+    states:^core.Table(Destructible_State,.Read),
+    groups:^core.Table(Destructible_Group,.Read),
 }
 
 // The destructible e is part of: itself, or the one a body that broke off it
@@ -52,7 +52,7 @@ groups :: proc(v:Destruct_View,e:core.Entity,out:[]Group_Info) -> int {
         }
         return true
     }
-    count:=int(fill(v,state.handle,e,0,state.body,false,out,0))
+    count:=int(fill(v,state.handle,e,0,phys.breakable_body(v.physics,state.handle),false,out,0))
     for row in 0..<core.count(v.groups) {
         group:=core.at(v.groups,row)
         if group.owner!=e || group.group==0 {continue}

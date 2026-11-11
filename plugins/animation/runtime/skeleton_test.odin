@@ -40,8 +40,10 @@ Rig_World :: struct {
     constraints:Animation_Constraints,
     grounding:Grounding_Runtime,
     modifiers:Modifier_Runtime,
-    modifier_requests:Modifier_Requests,
     actions:Action_Runtime,
+    motion:Motion_Runtime,
+    played:core.Table(Animation_Played),
+    remotes:core.Table(core.Remote),
 }
 
 // A Rig_World with what the application holds for it. The World goes first:
@@ -51,6 +53,7 @@ Rig_Test :: struct {
     using w:Rig_World,
     cache:Skeleton_Assets,
     characters:Character_Assets,
+    sources:Source_Assets,
     problems:core.Problems,
 }
 
@@ -60,7 +63,7 @@ rig_test_init :: proc(t:^testing.T,f:^Rig_Test) -> bool {return core.test_world_
 @(private="file")
 rig_test_destroy :: proc(f:^Rig_Test) {
     core.test_world_destroy(&f.w)
-    skeleton_assets_free(&f.cache);character_assets_free(&f.characters)
+    skeleton_assets_free(&f.cache);character_assets_free(&f.characters);source_assets_free(&f.sources)
 }
 
 @(private="file")
@@ -72,11 +75,11 @@ rig_test_settle :: proc(f:^Rig_Test) {
 @(private="file")
 rig_test_advance :: proc(f:^Rig_Test,app:^host.App,time:core.Time,frame:core.Frame_Time={}) {
     if app.assets!=nil {rigs_update(&f.playback,core.read(&f.meshes),core.read(&f.skins),app.assets)}
-    animation_tick(core.read(&f.animations),&f.transforms,core.read(&f.parents),{},core.read(&f.labels),&f.requests,&f.events,core.read(&f.targets),{},&f.playback,app,time,frame,&f.cache,&f.problems,characters=&f.characters,actions=&f.actions)
+    animation_tick(core.read(&f.animations),&f.transforms,core.read(&f.parents),{},core.read(&f.labels),&f.requests,&f.events,core.read(&f.targets),&f.playback,app,time,frame,&f.cache,&f.problems,&f.characters,&f.actions,&f.motion,&f.sources,core.read(&f.remotes),&f.played,{},core.CLOCK_DEFAULT,ANIMATION_BUDGET_CONFIG_DEFAULT)
     m:=&f.modifiers
-    inputs:=Constraint_Inputs{core.read(&m.ik),core.read(&m.look),core.read(&m.limits),core.read(&m.sockets),{},core.read(&f.worlds),0,&f.cache,&f.problems}
+    inputs:=Constraint_Inputs{core.read(&m.ik),core.read(&m.look),core.read(&m.limits),core.read(&m.sockets),core.read(&f.worlds),0,&f.cache,&f.problems}
     ground_inputs:=Grounding_Inputs{core.read(&m.grounding),{},core.read(&f.transforms),core.read(&f.parents),0,&f.problems,{}}
-    animation_finish(&f.playback,inputs,&f.constraints,&f.transforms,core.read(&f.parents),time.dt,&f.grounding,ground_inputs,final_poses=core.take(&f.requests.final_poses))
+    animation_finish(&f.playback,inputs,&f.constraints,&f.transforms,&f.parents,time.dt,&f.grounding,ground_inputs,final_poses=core.take(&f.requests.final_poses))
 }
 
 // A skeleton of three bones in a column, a mesh bound to it and a clip that turns the upper bone a quarter.
@@ -147,10 +150,10 @@ skeleton_discovery_preserves_logical_rigs_on_unrelated_changes_and_retries_alloc
     core.add(&w.meshes,third,{mesh=mesh_id});rig_test_settle(&w)
     inputs:=w.playback.rigs_seen
     context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
-    testing.expect(t,!rigs_update(&w.playback,core.read(&w.meshes),core.read(&w.skins),app.assets))
+    testing.expect(t,!rigs_update(&w.playback,&w.meshes,&w.skins,app.assets))
     context=saved_context
     testing.expect(t,w.playback.rigs_seen==inputs && w.playback.rigs_stamp==stamp && raw_data(w.playback.rigs)==pointer && len(w.playback.rigs)==2)
-    testing.expect(t,rigs_update(&w.playback,core.read(&w.meshes),core.read(&w.skins),app.assets))
+    testing.expect(t,rigs_update(&w.playback,&w.meshes,&w.skins,app.assets))
     testing.expect(t,w.playback.rigs_stamp==stamp+1 && len(w.playback.rigs)==3 && rig_find(&w.playback,third)>=0)
     testing.expect(t,rig_find(&w.playback,core.entity_make(core.entity_index(first),core.entity_generation(first)+1))<0)
 }
@@ -353,11 +356,11 @@ shared_profiles_accept_multiple_goals_at_the_origin_and_evaluate_without_stable_
     player:=ANIMATION_DEFAULT;player.asset=id;core.add(&w.animations,rig,player);rig_test_settle(&w)
     cache:=&w.characters
     step :: proc(w:^Rig_Test,app:^host.App,cache:^Character_Assets) {
-        animation_sample(core.read(&w.animations),&w.progress,core.read(&w.attachments),&w.transforms,core.read(&w.parents),{},core.read(&w.labels),core.read(&w.targets),core.read(&w.meshes),core.read(&w.skins),&w.requests,&w.events,&w.modifier_requests,&w.modifiers,&w.playback,cache,&w.cache,app,{dt=1.0/60,playing=true},{},&w.problems,nil,nil,nil,nil,{},core.CLOCK_DEFAULT,ANIMATION_BUDGET_CONFIG_DEFAULT)
-        animation_advance(&w.transforms,core.read(&w.parents),core.read(&w.worlds),&w.modifier_requests,&w.modifiers,&w.playback,&w.constraints,&w.grounding,{},{},{dt=1.0/60,playing=true},&w.requests,{},&w.problems,nil,cache,{},{},core.CLOCK_DEFAULT,nil)
+        animation_sample(core.read(&w.animations),&w.progress,&w.played,core.read(&w.attachments),&w.transforms,core.read(&w.parents),{},core.read(&w.labels),core.read(&w.targets),core.read(&w.meshes),core.read(&w.skins),core.read(&w.remotes),&w.requests,&w.events,&w.modifiers,&w.playback,cache,&w.cache,app,{dt=1.0/60,playing=true},{},&w.problems,&w.actions,&w.motion,&w.sources,{},core.CLOCK_DEFAULT,ANIMATION_BUDGET_CONFIG_DEFAULT)
+        animation_advance(&w.transforms,core.read(&w.parents),core.read(&w.worlds),&w.requests,&w.modifiers,&w.playback,&w.constraints,&w.grounding,{},{},{dt=1.0/60,playing=true},{},&w.problems,&w.motion,cache,{},{},core.CLOCK_DEFAULT,nil)
     }
-    modifier_goal(&w.modifier_requests,{rig=rig,kind=.Look,target=spatial_point({}),weight=1,enabled=true})
-    modifier_goal(&w.modifier_requests,{rig=rig,kind=.IK,slot=1,target=spatial_point({.75,.2,0}),weight=1,enabled=true})
+    modifier_goal(&w.requests,{rig=rig,kind=.Look,target=spatial_point({}),weight=1,enabled=true})
+    modifier_goal(&w.requests,{rig=rig,kind=.IK,slot=1,target=spatial_point({.75,.2,0}),weight=1,enabled=true})
     step(&w,&app,cache)
     testing.expect_value(t,len(w.modifiers.ik.values),2)
     testing.expect_value(t,len(w.playback.states[0].local),4)
@@ -369,7 +372,7 @@ shared_profiles_accept_multiple_goals_at_the_origin_and_evaluate_without_stable_
     before:=w.playback.binding_revision
     geometry:=w.constraints.revision
     version:=w.modifiers.ik.version
-    modifier_goal(&w.modifier_requests,{rig=rig,kind=.IK,slot=1,target=spatial_point({.6,.2,0}),weight=1,enabled=true})
+    modifier_goal(&w.requests,{rig=rig,kind=.IK,slot=1,target=spatial_point({.6,.2,0}),weight=1,enabled=true})
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     step(&w,&app,cache)
     context=saved
@@ -377,8 +380,8 @@ shared_profiles_accept_multiple_goals_at_the_origin_and_evaluate_without_stable_
     testing.expect_value(t,w.modifiers.ik.values[1].target.position,mm.Vec3{.6,.2,0})
     testing.expect(t,w.modifiers.ik.version>version)
     testing.expect_value(t,w.constraints.revision,geometry)
-    modifier_control(&w.modifier_requests,{rig=rig,kind=.Look,weight=.25,enabled=true,fade=.1})
-    modifier_control(&w.modifier_requests,{rig=rig,kind=.IK,slot=1,weight=1,enabled=false,fade=.1})
+    modifier_control(&w.requests,{rig=rig,kind=.Look,weight=.25,enabled=true,fade=.1})
+    modifier_control(&w.requests,{rig=rig,kind=.IK,slot=1,weight=1,enabled=false,fade=.1})
     saved=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     for _ in 0..<8 {step(&w,&app,cache)}
     context=saved
@@ -715,21 +718,21 @@ rig_poses_do_not_depend_on_how_their_jobs_are_split :: proc(t:^testing.T) {
             core.add(&w.transforms,rig,core.TRANSFORM_IDENTITY)
             core.add(&w.meshes,rig,{mesh=mesh_id})
             animation:=ANIMATION_DEFAULT;animation.asset=moves;animation.weight=1-f32(i%4)*.2
-            animation_clip(&animation,names[i%3],fade=.1,speed=.5+f32(i)*.2)
+            animation_clip(&animation,names[i%3],fade=.1);animation.speed=.5+f32(i)*.2
             if i%2==0 && i%5!=0 {animation.asset=sets[2]} else if i%2==0 {animation.asset=sets[0]} else if i%5!=0 {animation.asset=sets[1]}
             core.add(&w.animations,rig,animation)
         }
         rig_test_settle(&w)
     }
     step :: proc(w:^Rig_Test,app:^host.App,budget:Animation_Budget_Config) {
-        animation_sample(core.read(&w.animations),&w.progress,core.read(&w.attachments),&w.transforms,core.read(&w.parents),{},core.read(&w.labels),core.read(&w.targets),core.read(&w.meshes),core.read(&w.skins),&w.requests,&w.events,&w.modifier_requests,&w.modifiers,&w.playback,&w.characters,&w.cache,app,{dt=1.0/60,playing=true},{},&w.problems,&w.actions,nil,nil,nil,{},core.CLOCK_DEFAULT,budget)
-        animation_advance(&w.transforms,core.read(&w.parents),core.read(&w.worlds),&w.modifier_requests,&w.modifiers,&w.playback,&w.constraints,&w.grounding,{},{},{dt=1.0/60,playing=true},&w.requests,{},&w.problems,nil,&w.characters,{},{},core.CLOCK_DEFAULT,nil)
+        animation_sample(core.read(&w.animations),&w.progress,&w.played,core.read(&w.attachments),&w.transforms,core.read(&w.parents),{},core.read(&w.labels),core.read(&w.targets),core.read(&w.meshes),core.read(&w.skins),core.read(&w.remotes),&w.requests,&w.events,&w.modifiers,&w.playback,&w.characters,&w.cache,app,{dt=1.0/60,playing=true},{},&w.problems,&w.actions,&w.motion,&w.sources,{},core.CLOCK_DEFAULT,budget)
+        animation_advance(&w.transforms,core.read(&w.parents),core.read(&w.worlds),&w.requests,&w.modifiers,&w.playback,&w.constraints,&w.grounding,{},{},{dt=1.0/60,playing=true},{},&w.problems,&w.motion,&w.characters,{},{},core.CLOCK_DEFAULT,nil)
     }
     same,moved:=true,false
     for tick in 0..<10 {
         saved:=context
         // The clip of some changes at the fourth tick, so they cross-fade; the last ticks are stable.
-        if tick==4 {for &w in worlds {for rig,i in rigs {if i%4==1 {animation_clip(core.edit(&w.animations,rig),names[(i+1)%3],fade=.1,speed=1)}}}}
+        if tick==4 {for &w in worlds {for rig,i in rigs {if i%4==1 {animation_clip(core.edit(&w.animations,rig),names[(i+1)%3],fade=.1)}}}}
         if tick>=8 {context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()}
         for &w,k in worlds {step(&w,&app,budgets[k])}
         context=saved

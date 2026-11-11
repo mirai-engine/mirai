@@ -39,6 +39,9 @@ test_place :: proc(f:^Camera_Test,e:core.Entity,position:[3]f32,rotation:=mm.Qua
 }
 
 @(private="file")
+first_of :: proc(camera:core.Entity,_:Camera_Blend) -> core.Entity {return camera}
+
+@(private="file")
 close :: proc(a,b:f32,epsilon:f32=1e-3) -> bool {return abs(a-b)<=epsilon}
 
 @(private="file")
@@ -105,7 +108,7 @@ a_mode_is_taken_once_keeps_the_target_and_counts_for_the_views :: proc(t:^testin
     testing.expect(t,follow.state.changes==1 && follow.state.blend.seconds==0.5)
     testing.expect(t,follow.state.handing && close(follow.state.handoff.x,1) && close(follow.state.handoff.y,0.2),"a free Orbit goes on from where the camera looked")
     lens,_:=core.get(&f.cameras,camera)
-    testing.expect(t,lens_of(lens)==third.lens)
+    testing.expect(t,lens_on(lens,third.lens)==lens)
 
     mode_take(&f.follows,&f.cameras,core.read(&f.worlds),{camera,third,{0.5,.Linear}},&f.problems)
     testing.expect(t,follow.state.changes==1,"the mode it has does nothing")
@@ -296,26 +299,27 @@ a_camera_with_an_activation_is_seen_while_its_player_holds_the_action :: proc(t:
     core.add(&f.follows,aim,Camera_Follow{mode=.Orbit,target=body})
     core.add(&f.activations,aim,Camera_Activation{action=AIM,blend={0.25,.Cubic_Out}})
     core.add(&f.activations,stray,CAMERA_ACTIVATION_DEFAULT)
-    core.add(&f.drivables,body,input.Drivable{seat=seat,camera=base})
-    core.add(&f.seats,seat,input.Seat{actions={count=input.ACTION_CAPACITY}})
+    core.add(&f.parents,base,core.Parent{entity=body})
+    core.add(&f.seats,seat,input.Seat{body=body,actions={count=input.ACTION_CAPACITY}})
     core.test_world_settle(&f.w)
+    core.hierarchy_settle(&f.hierarchy,core.read(&f.parents),&f.entities)
     select:=proc(f:^Camera_Test) {
-        camera_select(core.ref(&f.entities),core.read(&f.cameras),&f.selected,&f.requests,core.read(&f.activations),core.read(&f.follows),core.read(&f.drivables),core.read(&f.seats),core.ref(&f.seat_state),&f.problems)
+        camera_select(core.ref(&f.entities),core.read(&f.cameras),&f.selected,&f.requests,core.read(&f.activations),core.read(&f.follows),core.read(&f.parents),core.read(&f.seats),core.ref(&f.seat_state),&f.problems)
     }
 
     select(f)
-    testing.expect(t,camera_selected(&f.selected,core.read(&f.drivables),core.read(&f.cameras),seat)==base,"without the action, the camera of the body")
+    testing.expect(t,first_of(camera_selected(&f.selected,core.read(&f.seats),core.read(&f.cameras),core.ref(&f.hierarchy),seat))==base,"without the action, the camera of the body")
     testing.expect(t,has_problem(&f.problems,"camera.activation"),"an activation without an action says so")
 
     held:=core.edit(&f.seats,seat)
     held.actions.states[AIM].down=true
     select(f)
-    chosen,blend:=seat_camera(&f.selected,core.read(&f.drivables),core.read(&f.cameras),seat)
+    chosen,blend:=camera_selected(&f.selected,core.read(&f.seats),core.read(&f.cameras),core.ref(&f.hierarchy),seat)
     testing.expect(t,chosen==aim && blend.seconds==0.25,"while it is held, the camera it brings, with its blend")
 
     held.actions.states[AIM].down=false
     select(f)
-    testing.expect(t,camera_selected(&f.selected,core.read(&f.drivables),core.read(&f.cameras),seat)==base,"and back once it is let go")
+    testing.expect(t,first_of(camera_selected(&f.selected,core.read(&f.seats),core.read(&f.cameras),core.ref(&f.hierarchy),seat))==base,"and back once it is let go")
 }
 
 // On the side of a planet, where the up of a character is +X, the eyes sit
@@ -366,19 +370,24 @@ look_offset_follows_the_pitch :: proc(t:^testing.T) {
     }
 }
 
-// The keys of a channel join by cubic Hermite with their slopes, and hold their first and last
-// values outside them.
+// The keys of a shake are std/anim keys: cubic ones with their slopes give the samples of a cubic
+// Hermite through them, and outside them it holds their first and last values.
 @(test)
-a_shake_channel_joins_its_keys_by_their_slopes :: proc(t:^testing.T) {
-    c:Shake_Channel
-    c.keys[0],c.keys[1],c.keys[2]={time=0.5,value=0,slope=0},{time=1.5,value=2,slope=0},{time=2.5,value=0,slope=-4}
-    c.count=3
-    testing.expect(t,shake_channel_at(c,0)==0 && shake_channel_at(c,3)==0,"before and after its keys, their values")
-    testing.expectf(t,abs(shake_channel_at(c,1)-1)<1e-5,"flat at both ends, halfway is half: %v",shake_channel_at(c,1))
-    testing.expect(t,abs(shake_channel_at(c,1.5)-2)<1e-6)
-    // From 2, flat, to 0 arriving with slope -4: it stays above the flat curve, which would be 1.
-    testing.expectf(t,abs(shake_channel_at(c,2)-1.5)<1e-5,"the slope of the last key bends the way in: %v",shake_channel_at(c,2))
-    testing.expect(t,shake_channel_at({},1)==0,"a channel without keys adds nothing")
+a_shake_joins_its_keys_by_their_slopes :: proc(t:^testing.T) {
+    s:=Shake_Sequence{length=10,scale=1,count=3}
+    s.keys[0]={time=0.5,interpolation=.Cubic,tangents=true}
+    s.keys[1]={time=1.5,value={2,0,0,0},interpolation=.Cubic,tangents=true}
+    s.keys[2]={time=2.5,interpolation=.Cubic,tangents=true,in_slope={-4,0,0,0},out_slope={-4,0,0,0}}
+    pitch :: proc(s:Shake_Sequence,time:f32) -> f32 {
+        s:=s
+        turn,_:=shake_sequence_at(&s,time)
+        return 2*math.asin(clamp(imag(turn),-1,1))
+    }
+    // The samples of the cubic Hermite of the same keys, flat at the first two.
+    cases:=[]struct{time,pitch:f32}{{0,0},{1,1},{1.5,2},{2,1.5},{3,0}}
+    for c in cases {testing.expectf(t,abs(pitch(s,c.time)-c.pitch)<1e-4,"at %v s: %v",c.time,pitch(s,c.time))}
+    s.count=0
+    testing.expect(t,pitch(s,1)==0,"a shake without keys adds nothing")
 }
 
 // A camera turns its view and widens its perspective lens by the shakes asked of it, at their rate
@@ -397,8 +406,8 @@ a_camera_plays_sequence_shakes_over_its_view_until_they_end :: proc(t:^testing.T
     core.test_world_settle(&f.w)
     problems:core.Problems
     nod:Shake_Sequence
-    nod.pitch.keys[0]={value=0.1}
-    nod.pitch.count=1
+    nod.keys[0]={value={0.1,0,0,0}}
+    nod.count=1
     nod.length,nod.rate,nod.scale,nod.blend_in,nod.blend_out=1,2,0.5,0.1,0.1
     camera_shake(&f.shakes,camera,nod)
     shakes_take(&f.follows,&f.shakes,&problems)
@@ -443,8 +452,8 @@ a_camera_plays_sequence_shakes_over_its_view_until_they_end :: proc(t:^testing.T
     testing.expect(t,core.problem_find(&problems,body,"camera.shake")!=nil,"and one asked of what does not follow")
 
     zoom:Shake_Sequence
-    zoom.fov.keys[0]={value=0.2}
-    zoom.fov.count=1
+    zoom.keys[0]={value={0,0,0,0.2}}
+    zoom.count=1
     zoom.length,zoom.scale=1,0.5
     camera_shake(&f.shakes,camera,zoom)
     shakes_take(&f.follows,&f.shakes,&problems)
@@ -458,7 +467,7 @@ a_camera_plays_sequence_shakes_over_its_view_until_they_end :: proc(t:^testing.T
     testing.expect(t,lens.fov==1.2,"an orthographic lens keeps its own")
     lens.projection=.Perspective
     for &p in following.state.shakes {
-        if p.sequence.fov.count>0 {p.sequence.scale=100}
+        if p.sequence.keys[0].value.w>0 {p.sequence.scale=100}
     }
     shake_test_look(f,camera,body,0.1)
     testing.expect(t,lens.fov==SHAKE_FOV_MAX,"and a perspective one stays below pi")

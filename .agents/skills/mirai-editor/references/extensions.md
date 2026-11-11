@@ -220,21 +220,21 @@ A plugin opens asset types in tabs next to the scenes
 
 ## Asset types of a plugin
 
-An Editor storage whose only field is `editor.Asset_Kind_Provider` declares in its default the
-plugin's asset types that the content browser lists (`kinds`, up to `ASSET_KINDS_OF_PROVIDER`, and
-`count`), like the editor's types:
+The plugin's asset types are its `asset_kinds` in `plugin.mirai`
+([manifests](../../mirai-projects/references/projects.md#manifests)), the one declaration: the
+content browser lists the ones with a `label`, like the editor's types, and the build generates
+the constants the code names (`kinds_gen.odin`):
 
-- `label`: the type as a row says it and the name of its filter. `color` and `icon`: those of its
-  cards, fields, rows and tabs (`editor.asset_kind_color`, `asset_icon` and `asset_kind_label` read
-  them with the session).
+- `label`: the type as a row says it and the name of its filter. `color` and `icon` (a `ui.Icon`
+  or a `User_Icon` by name): those of its cards, fields, rows and tabs (`editor.asset_kind_color`,
+  `asset_icon` and `asset_kind_label` read them with the session).
 - `extension`: that of its files; `asset.list` names the type with it without the dot, and the
   `kind=` tag of a field, with it whole ([inspector](inspector.md#rows-by-reflection)).
 - `field`: a word; an `Asset_Id` field whose name has it takes the type.
-- The `asset_kinds` of the plugin's `plugin.mirai` list exactly these extensions
-  ([manifests](../../mirai-projects/references/projects.md#manifests)); a test of the editor part
-  holds it with `editor.asset_kinds_differ`.
-- `clicked` (of the provider): what a click on one's card does, outside Play and with the scene in
-  front (assigning it to the selection).
+
+An Editor storage whose only field is `editor.Asset_Click_Provider` says what a click on the card
+of one of its `kind` does, outside Play and with the scene in front (assigning it to the
+selection).
 
 One whose only field is `editor.Asset_Menu_Provider` adds, with `menu(s, file)`, its entries
 (`ui.menu_item`) to an asset card's menu. To show an asset of the type in a component like a
@@ -280,38 +280,32 @@ or without names): `editor.asset_cards(s, width)` gives the columns and the side
 
 ## Create cards
 
-An Editor storage whose only field is `editor.Card_Provider` adds cards to Create: its default
-fills `cards` and `count`, up to `CARD_PROVIDER_CAPACITY` = 8 per provider and `CARD_CAPACITY` = 64
-with the presets. `decals`, `monitors`, `portals` and `vfx` add Decal, Screen, Portal and Mirror,
-and Particles this way.
+A card shows a [recipe](document.md#recipes) in Create. An Editor storage whose only field is
+`editor.Card_Provider` adds a plugin's cards: its default fills `cards` and `count`, up to
+`CARD_PROVIDER_CAPACITY` = 8 per provider and `CARD_CAPACITY` = 64 with those of the editor
+(`EDITOR_CARDS`). `decals`, `monitors`, `portals` (Portal and Mirror), `fog`, `spawn`,
+`ui_inspector` and `vfx` add theirs this way, each over a scene in the `recipes/` of the plugin
+(`Recipes` part).
 
 Fields of `Card`:
 
-- `label`: name of the card and of the entity. `scene.write` accepts it in `preset`,
-  case-insensitive and with `_` for space.
-- `group`: Create section: `"Logic"`, `"Shapes"` or one of its own, which goes after those of the
-  editor (`CARD_GROUP_CAPACITY` = 8 sections). Empty: `Logic`.
+- `recipe`: the name of the recipe it places; a card whose recipe is not there is left out.
+  `label` is not given: `cards(s)` fills it with the name of the recipe's entity.
+- `group`: Create section: `"Logic"`, `"Shapes"` or one of its own, in the order the first card of
+  each comes in (`CARD_GROUP_CAPACITY` = 8 sections). Empty: `Logic`.
 - `icon`, `drawing`, `color`: an existing `ui.Icon` or, with empty `icon`, a drawing of its own
   ([icons as data](../../mirai-ui/references/ui.md#widgets)).
-- `body`: primitive of the preview on placing (`None`: a mark). `scale`: the entity's scale. `lift`:
-  meters above the support for what has no body.
-- `make`: `proc(s, w, e)` that adds the components; the entity already has `Id`, `Name`, `Transform`
-  and parent. It runs inside the undo step of the creation.
 - `component`: the component of which the card is the icon; the entity that has it shows it in
   outliner, Find, slots and its viewport disk, and the component's section in its header.
+- `chosen` and `facing`, what a card computes that a scene cannot hold: an empty `Asset_Id` field
+  of what it places whose `kind=` names the asset chosen in the content browser takes it (the
+  `.ui` of Interface, Panel and Billboard), and the placed entity turns to the camera (Panel).
 
 Rules:
 
-- `label` is the name of the card and of the entity; `scene.write` accepts it in `preset`,
-  case-insensitive and with `_` for space. A `group` of its own goes after the editor's sections;
-  empty, in Logic.
-- `make` runs inside the creation's undo step, on an entity that already has `Id`, `Name`,
-  `Transform` and parent.
-- The entity that has the card's `component` carries its icon in outliner, Find, slots and its
-  disk, and the component's section in its header.
-- `cards(s)` returns the presets first (a preset's index is its value) and then the cards.
-  Dragging, the placement click, Edit > Create and `scene.write` create the same:
-  `entity_create` with `Create_Desc.card`.
+- `cards(s)` returns those of the editor first and then those of the plugins. Dragging, the
+  placement click, Edit > Create and `scene.write` create the same: `entity_create` with
+  `Create_Desc.recipe`. The preview of a placement is the recipe's scene, as for a prefab.
 - What a selected entity shows besides the icon (a decal's box, a portal's opening and the path to
   its exit) is drawn by a `frame` `after="editor_tools"` step of the plugin with
   `host.extras_debug_lines_add`, outside a Play.
@@ -357,8 +351,7 @@ A plugin adds modes to the [mode menu](panels.md#inspection-mode) and to
   `host.assets_file`.
 - A tool that confirms through its [cancelable preview](#cancelable-previews) does not
   use that pair: after `editor.api_guard_edit` it opens the gesture, advances it and confirms or
-  cancels it inside the call, without leaving it open, and turns the tool that was on back on
-  (`placement.drop`).
+  cancels it inside the call, without leaving it open, and turns the tool that was on back on.
 - The elements of a params array that the call does not give keep their default;
   `api.params_array_count` says how many it gave.
 - An operation on the Play copy declares it in its contract. Evaluation stays in runtime: the
@@ -377,9 +370,10 @@ with an `Api_Step_Input` drives a run, and `editor.play_ui_screen` says what its
 
 What steers or watches a body in those runs asks the plugin that moves it, never a component by
 its name: an Editor storage whose only field is `editor.Body_Provider` answers for the bodies of
-its plugin (`physics`, for its characters), and `editor.play_stance` and `editor.play_body_measure`
-read it. A body no provider answers for is `Unknown`, which each reader handles and is not taken as
-standing, and is measured as `BODY_PERSON`.
+its plugin (`physics`, whether a character stands; `locomotion`, how a walker measures), and
+`editor.play_stance` and `editor.play_body_measure` read it. A body no provider answers for is
+`Unknown`, which each reader handles and is not taken as standing, and is measured as
+`BODY_PERSON`.
 
 A bot of a plugin walks a body with the drive of `play.step`, not with steering of its own:
 `editor.play_drive_to` makes one to a place, `editor.play_drive_steer` runs before each
@@ -396,10 +390,12 @@ and joins them with the engine's.
   those of `sources.FORMATS`, with the same reading, writing, cache and identity
   ([plugin formats](../../mirai-imports/references/imports.md#plugin-formats)); its
   `Format.folder` chooses the folder of the import. Its extensions enter the dialog's Models
-  filter and what the editor recognizes on dropping a file. With `prepare(s, allocator)`, the
-  editor asks it in its thread, before importing a model, for the format's options for that import
-  (`Format.data`, for example what other providers give), and `release(data, allocator)` releases
-  them on finishing.
+  filter and what the editor recognizes on dropping a file. With `prepare(assets, info,
+  allocator)` it gives, before a model is imported, the format's options for that import
+  (`Format.data`) from the registry of the project and the library of its plugins (for example
+  what other providers give), with no session: the import program of the engine prepares it the
+  same way when a build syncs the project (`import_library`). `release(data, allocator)`
+  releases them on finishing.
 - `editor.Import_Source_Provider{source}` gives a `Source_Importer`, a source the plugin imports
   whole and that is not a model, without a folder. Its fields are `name` (the dialog's filter and
   the messages), `extensions`, `claims(path, head)` (claims the file by its extension and its first
@@ -449,8 +445,9 @@ and joins them with the engine's.
 ## Simulation and pose confirmation
 
 - `Simulation_Provider` (given by `physics`): the body an entity is part of, taking it to a pose
-  while held, releasing it and settling what was written without simulating time. Without it,
-  Simulate runs the same and the gizmo does not drag bodies. The editor keeps the inspector's
+  while held, releasing it, advancing its simulation alone (by 0: settling what was written) and
+  readying a copy where only some entities move. Without it, Simulate runs the same, the gizmo
+  does not drag bodies and nothing settles. The editor keeps the inspector's
   providers in its cache and does not call their defaults per field.
 - The editor reads `core.Network` ([network](../../mirai-core/references/core.md#network)): a data
   contract that serves any network plugin.
@@ -467,10 +464,10 @@ and joins them with the engine's.
   the simulation. `simulation_apply_poses(s, poses)`, only in Edit, receives world poses
   (`Simulation_Pose`, normalized quaternion), validates everything before changing, respects
   selected parents and records a single undo; it creates no entities nor applies components.
-- To create and arrange entities in one gesture, a tool combines the
-  [cancelable previews](#cancelable-previews) with the primitives of
-  [physics](../../mirai-physics/SKILL.md): it computes the poses in a copy of its own and confirms
-  through the document's gesture.
+- `simulate_until_rest(s, moving, ticks, rested)` is the
+  [Simulate limited](editor.md#simulate) to some entities, and `settle_begin` to `settle_write`
+  the same run a few ticks a frame: a tool that arranges entities by letting them fall uses them
+  instead of keeping a world of its own.
 
 ## A plugin's game and player processes
 

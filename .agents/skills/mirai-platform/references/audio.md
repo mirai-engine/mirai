@@ -24,6 +24,9 @@ that decodes [feeds](#feeds):
 - What it reports (finished voices, released sounds and feeds, clock, underruns) comes back
   through atomics. `mixer_update`, once per frame on the game thread, frees what finished and,
   without a decoder thread, decodes the feeds ahead.
+- `mixer_render` and the decoder thread count subnormal floats as zero (FTZ and DAZ on x86, FZ
+  on ARM64; `mixer_render` restores the caller's mode): a tail that rings down to silence never
+  computes with them, so no filter or delay line carries a guard of its own.
 - As long as parameters do not change, one call or chunks of any size give the same samples.
 - `mixer_destroy` requires that the audio thread is no longer rendering.
 
@@ -98,14 +101,15 @@ invalid one return false.
   yet is stopped at once.
 - **Aligned start.** With `start_frame` (mixer clock) the first sample comes out exactly on that
   frame, even if it falls in the middle of a render.
-- **Filter and send.** A spatial voice, or one with a low-pass or a reverb send, is mixed apart: a
-  spatial one goes through its [direct effect and its output](#positional-audio), then any voice
-  through its one-pole filter, which changes cutoff without clicks, and its send; a binaural voice
-  is filtered and sent as one source, before its HRTF. Any other goes straight to its bus, at no
-  extra cost.
+- **Send.** A spatial voice, or one with a reverb send, is mixed apart: a spatial one goes through
+  its [direct effect and its output](#positional-audio), then any voice through its send, ramped
+  without clicks; a binaural voice is sent as one source, before its HRTF. Any other goes straight
+  to its bus, at no extra cost.
 - **Stealing.** Without free voices, `voice_play` takes the one with the lowest priority and,
   among equals, the oldest, if its priority does not exceed the new one's; if not, it returns 0.
   The stolen handle stops being valid at once and its sound drops to silence within a chunk.
+  Stealing is the last resort: `engine/audio` hands the voices to the sources heard most and only
+  starts one on a voice that is free (`voices_free`).
 
 ## Buses
 
@@ -144,8 +148,9 @@ Right-handed, Y up, meters: a listener without rotation looks toward -Z with +X 
 `spatial.odin`, `direct.odin`, `hrtf.odin` and `binaural.odin` translate Steam Audio's direct,
 binaural and panning effects.
 
-- Attenuation clamps the distance to [`min_distance`, `max_distance`]: closer than the minimum the
-  gain is 1 and farther than the maximum it stops dropping.
+- Attenuation: closer than `min_distance` the gain is 1; over the last `ATTENUATION_FADE` of the
+  way to `max_distance` the gain of every model fades to 0, and beyond it the voice is silent, so a
+  far source is not heard rather than heard faintly everywhere.
 - **Direct effect.** Per spatial voice, one gain (attenuation, directivity) and a three-band EQ
   (low shelf, peak, high shelf at 800 Hz and 8 kHz): air absorption over the distance, and
   `occlusion` blending each band toward `transmission`. The EQ is normalized to a peak of 1 with a
@@ -161,12 +166,19 @@ binaural and panning effects.
   late whatever size the render has. A source that turned less than a quarter of the finest spacing
   of the measurements keeps its filters. On speakers the direction, brought to the horizontal plane,
   pans with constant power; a mono output plays it centered.
-- The HRTF is the one Steam Audio ships (`audio/hrtf/cipic_124.hrtf`, CIPIC database), so the mixer
-  only runs at the rates it was measured at. It is loaded and transformed when the mixer is
-  created; the binaural state of every voice slot is reserved then.
-- A source at the listener comes from above. A place, velocity, rotation or occlusion that is not
-  a number is refused by `voice_play`, `voice_set_position`, `voice_set_occlusion` and
-  `listener_set`.
+- The HRTF is the one Steam Audio ships (`audio/hrtf/cipic_124.hrtf`, CIPIC database), at
+  `MIXER_RATE`, the one rate the mixer renders at; the device stream converts it to the rate of
+  the output, so headphones work on any. It is loaded and transformed, and the binaural state of
+  every voice slot reserved, the first time the output is headphones; speakers never pay for it.
+- **Near the listener.** Within `near_radius` a voice keeps less and less of its direction, Steam
+  Audio's spatial blend: on speakers its pan goes toward the middle and on headphones its HRTF
+  toward a flat filter with no phase, so a source through the listener crosses between ears
+  without a jump. Beyond the radius nothing changes. The default is the distance the HRTF was
+  measured at; a source at the listener (heard from above) has no direction left.
+- A place, velocity, rotation, near radius or occlusion that is not a number is refused by
+  `voice_play`, `voice_set_position`, `voice_set_occlusion` and `listener_set`.
+- With `delay` a spatial voice starts later by its distance at start over the speed of sound; it
+  is not a delay line, so a source that moves afterwards only shifts its pitch by Doppler.
 - Doppler takes the velocities along the source-listener line and multiplies the pitch.
 - A stereo sound with a position is heard as one source (average of its channels).
 - The direct path and the pitch of a positional voice are recomputed on the audio thread when its
@@ -175,6 +187,5 @@ binaural and panning effects.
 ## What it does not do
 
 Resampling better than linear, more than one room reverb, reflections, pathing, baked or
-convolution reverb from geometry (a later plugin), ambisonics, a 2D/3D blend of a spatial voice,
-propagation delay, other HRTFs than the one shipped, sounds or output of more than two channels,
-and seeking or querying the position of a playing voice.
+convolution reverb from geometry (a later plugin), ambisonics, other HRTFs than the one shipped,
+sounds or output of more than two channels, and seeking or querying the position of a playing voice.

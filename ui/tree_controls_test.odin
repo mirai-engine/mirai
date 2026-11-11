@@ -56,8 +56,8 @@ test_shop_events :: proc(s:^Test_Shop,kind:Tree_Event_Kind,name:string) -> (foun
 test_shop_context :: proc(t:^testing.T,ctx:^Context,font:=false) {
     desc:=TEST_FONT if font else TEST_SMALL
     desc.navigation=true
-    testing.expect(t,context_init(ctx,desc))
-    ctx.theme.activate_on_press=false
+    testing.expect(t,test_context_init(ctx,desc))
+    ctx.release_activates=true
 }
 
 @(test)
@@ -296,8 +296,90 @@ a_transition_carries_the_colors_of_a_node_between_its_states :: proc(t:^testing.
     testing.expect(t,back[0]<200 && back[0]>150)
 }
 
+// The layout transition of a style carries the rectangle of its node to a new layout: from where
+// it was drawn, through rectangles between both, to exactly where the layout puts it; a layout
+// that changes on the way starts again from where it is. A new size too, which the layout around
+// it follows. A node shown again, a style whose transition is only of its colors and what code
+// builds without a style, as the editor, go there at once. The context keeps as many rectangles
+// as its description says.
 @(test)
-animations_size_value_frame_and_reveal_their_node :: proc(t:^testing.T) {
+a_layout_transition_carries_the_rectangle_of_a_node_to_a_new_layout :: proc(t:^testing.T) {
+    s:Test_Shop
+    test_shop_init(t,&s)
+    defer test_shop_destroy(&s)
+    tree_style(&s.tree,{}) // what a node without a style takes
+    style,_:=tree_style(&s.tree,{layout_transition=0.25})
+    root:=tree_node(&s.tree,-1,{kind=.Box,name="row"})
+    lead:=tree_node(&s.tree,root,{kind=.Box,name="lead",layout={width=fixed(20),height=fixed(10)}})
+    mover:=tree_node(&s.tree,root,{kind=.Box,name="mover",style=style,layout={width=fixed(30),height=fixed(10)}})
+    tree_node(&s.tree,root,{kind=.Box,name="after",layout={width=fixed(10),height=fixed(10)}})
+    testing.expect(t,test_shop_instance(&s))
+    ctx:Context
+    test_shop_context(t,&ctx)
+    defer context_destroy(&ctx)
+    input:=test_input()
+    rect :: proc(t:^testing.T,ctx:^Context,name:string) -> Rect {return test_rect(t,ctx,tree_element_id(ctx,name))}
+    // Every container keeps its rectangle.
+    tracked :: proc(ctx:^Context,user:rawptr) {
+        s:=cast(^Test_Shop)user
+        s.result=tree_build(ctx,&s.tree,&s.instance,{events=s.events[:],changed=true,track=true})
+    }
+    frame:=test_frame(&ctx,&input,tracked,&s)
+    testing.expect(t,rect(t,&ctx,"mover")==Rect{20,0,30,10} && !frame.transitioning,"the first time it is where the layout puts it")
+    s.tree.nodes[lead].layout.width=fixed(100)
+    last:=f32(20)
+    for _ in 0..<5 {
+        frame=test_frame(&ctx,&input,tracked,&s)
+        x:=rect(t,&ctx,"mover").x
+        testing.expectf(t,x>last && x<100 && frame.transitioning,"on its way: %v after %v",x,last)
+        last=x
+    }
+    s.tree.nodes[lead].layout.width=fixed(0)
+    frame=test_frame(&ctx,&input,tracked,&s)
+    turned:=rect(t,&ctx,"mover").x
+    testing.expectf(t,turned<last && turned>0,"a new layout on the way starts from where it is: %v after %v",turned,last)
+    for _ in 0..<20 {frame=test_frame(&ctx,&input,tracked,&s)}
+    testing.expect(t,rect(t,&ctx,"mover")==Rect{0,0,30,10} && !frame.transitioning,"it ends exactly where the layout puts it")
+    s.tree.nodes[mover].layout.width=fixed(60)
+    test_frame(&ctx,&input,tracked,&s)
+    grown,after:=rect(t,&ctx,"mover"),rect(t,&ctx,"after")
+    testing.expectf(t,grown.w>30 && grown.w<60 && after.x==grown.w,"its size on the way, which the layout around it follows: %v %v",grown,after)
+    for _ in 0..<20 {test_frame(&ctx,&input,tracked,&s)}
+    testing.expect(t,rect(t,&ctx,"mover").w==60 && rect(t,&ctx,"after").x==60)
+    elsewhere :: proc(ctx:^Context,user:rawptr) {if box(ctx,{id=id(ctx,"elsewhere"),width=fixed(10),height=fixed(10)}) {}}
+    test_frame(&ctx,&input,elsewhere,nil)
+    s.tree.nodes[lead].layout.width=fixed(50)
+    frame=test_frame(&ctx,&input,tracked,&s)
+    testing.expect(t,rect(t,&ctx,"mover").x==50 && !frame.transitioning,"shown again elsewhere, it does not slide from where it was")
+    s.tree.styles[style]={transition=0.25}
+    s.tree.nodes[lead].layout.width=fixed(5)
+    frame=test_frame(&ctx,&input,tracked,&s)
+    testing.expect(t,rect(t,&ctx,"mover").x==5 && !frame.transitioning,"a transition of colors does not move the layout")
+    s.tree.styles[style]={layout_transition=0.25}
+    small:Context
+    desc:=TEST_SMALL
+    desc.max_transitions=1
+    testing.expect(t,context_init(&small,desc))
+    defer context_destroy(&small)
+    s.tree.nodes[lead].style=style
+    test_frame(&small,&input,tracked,&s)
+    testing.expect_value(t,small.stats.dropped_transitions,u32(1))
+
+    lead_width:=f32(20)
+    built :: proc(ctx:^Context,user:rawptr) {
+        if box(ctx,{id=id(ctx,"code_row")}) {
+            spacer(ctx,(cast(^f32)user)^,10)
+            if box(ctx,{id=id(ctx,"code_box"),width=fixed(30),height=fixed(10),track=true}) {}
+        }
+    }
+    test_frame(&ctx,&input,built,&lead_width)
+    lead_width=100
+    frame=test_frame(&ctx,&input,built,&lead_width)
+    testing.expect(t,test_rect(t,&ctx,id(&ctx,"code_box")).x==100 && !frame.transitioning,"a widget of code goes to its new place at once")
+}
+
+@(test)
+animations_value_frame_and_reveal_their_node :: proc(t:^testing.T) {
     s:Test_Shop
     test_shop_init(t,&s)
     defer test_shop_destroy(&s)
@@ -305,15 +387,12 @@ animations_size_value_frame_and_reveal_their_node :: proc(t:^testing.T) {
     constant :: proc(lib:^Anim_Library,property:Anim_Property,x:f32) -> Anim {
         return anim_clip(lib,{{property,{{time=0,value={x,0,0,0}}}}})
     }
-    wide,_:=tree_anim_set(&s.tree,{shown=constant(lib,.Width,80)})
     filled,_:=tree_anim_set(&s.tree,{shown=constant(lib,.Value,0.25)})
     framed,_:=tree_anim_set(&s.tree,{shown=constant(lib,.Frame,1)})
     typed,_:=tree_anim_set(&s.tree,{shown=constant(lib,.Reveal,0.5)})
     sheet,_:=tree_image(&s.tree,{quad={.Image,3,{0,0,1,1}},frames={2,1},size={64,32}})
     style,_:=tree_style(&s.tree,{fill={255,255,255,255},text={size=12,color={255,255,255,255}}})
     root:=tree_node(&s.tree,-1,{kind=.Box,name="row"})
-    tree_node(&s.tree,root,{kind=.Box,name="wide",anims=wide,layout={width=fixed(20),height=fixed(10)}})
-    tree_node(&s.tree,root,{kind=.Box,name="after",layout={width=fixed(10),height=fixed(10)},flags={.Wrap_X}})
     tree_node(&s.tree,root,{kind=.Progress,name="bar",style=style,anims=filled,bind_value="Test.amount",layout={width=fixed(40),height=fixed(6)}})
     tree_node(&s.tree,root,{kind=.Image,name="sprite",style=style,image=sheet,anims=framed,layout={width=fixed(16),height=fixed(16)}})
     tree_node(&s.tree,root,{kind=.Text,name="line",style=style,anims=typed,text="abcd"})
@@ -325,8 +404,6 @@ animations_size_value_frame_and_reveal_their_node :: proc(t:^testing.T) {
     input:=test_input()
     test_frame(&ctx,&input,test_shop_build,&s)
     test_frame(&ctx,&input,test_shop_build,&s)
-    testing.expect_value(t,test_rect(t,&ctx,tree_element_id(&ctx,"wide")).w,f32(80))
-    testing.expect_value(t,test_rect(t,&ctx,tree_element_id(&ctx,"after")).x,f32(80))
     bar,sprite:^Paint
     for &p in ctx.paints[:ctx.paint_count] {
         if p.kind==.Progress {bar=&p}
@@ -440,9 +517,9 @@ rich_text_takes_italics_rules_links_and_images :: proc(t:^testing.T) {
     testing.expect(t,spans[0].decoration=={.Bold} && spans[0].style.font==FONT_SEMIBOLD,"A font without a heavier face of its own draws a synthetic bold")
     Test_Rich :: struct {clicked:u64,text:string}
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_FONT))
+    testing.expect(t,test_context_init(&ctx,TEST_FONT))
     defer context_destroy(&ctx)
-    ctx.theme.activate_on_press=false
+    ctx.release_activates=true
     input:=test_input()
     build :: proc(ctx:^Context,user:rawptr) {
         r:=cast(^Test_Rich)user

@@ -1,6 +1,7 @@
 package main
 
 import "core:fmt"
+import "core:odin/ast"
 import "core:os"
 import "core:strings"
 import "core:time"
@@ -48,7 +49,7 @@ COMMANDS :: [?]Command{
     {"ui",UI_USAGE,"Reads, writes and checks the interfaces of a project as the documents ui.inspect gives and ui.write takes, with no editor",cmd_ui},
     {"scene",SCENE_USAGE,"Reads, writes and checks the scenes of a project as the documents scene.inspect gives with root and scene.write takes, with no editor",cmd_scene},
     {"content",CONTENT_USAGE,"Runs the content tool of a project, which writes the assets it makes from code",cmd_content},
-    {"import","import <file> --out <folder> [--max-texture N]","Imports a model, an image, a sound, a font, CSV texts or a prompts manifest as .mesh, .mat, .tex, .sound, .font, .strings and .prompts assets",cmd_import},
+    {"import","import <file> [--max-texture N]","Imports a model, an image, a sound, a font, CSV texts or a prompts manifest in the assets of a project or a plugin as .mesh, .mat, .tex, .sound, .font, .strings and .prompts assets",cmd_import},
 }
 
 main :: proc() {
@@ -84,7 +85,7 @@ installed_runs :: proc(args:[]string) -> bool {
 
 usage :: proc() {
     fmt.eprintln("Usage: mirai <command> [arguments]")
-    fmt.eprintln("A command that builds or picks engine binaries is --dev unless --release is given; package is always --release, and the game to ship is build game --release.")
+    fmt.eprintln("A command that builds or picks engine binaries is dev unless --release is given; package is always --release, and the game to ship is build game --release.")
     for command in COMMANDS {fmt.eprintfln("  %-52s %s",command.usage,command.summary)}
 }
 
@@ -243,18 +244,38 @@ cmd_check :: proc(root:string,args:[]string) -> int {
     command:=odin_command(root,"check",folder!=""?folder:args[0])
     // A check is no test build: the tests that run generated shaders are asked for (rhi.TEST_SHADERS).
     append(&command,"-no-entry-point","-define:MIRAI_TEST_SHADERS=true","-ignore-unused-defineables")
+    // Its sources, its tests included, are parsed once: for the collections and for the lints.
+    files:=package_parse(folder) if folder!="" else nil
     if folder!="" {
-        collections,ok:=package_collections(root,folder,args[1:])
+        collections,ok:=package_collections(root,folder,files,args[1:])
         if !ok {return 1}
         append(&command,..collections)
     }
     append(&command,..args[1:])
     code:=run(root,command[:])
-    if code==0 && folder!="" && alloc_lint_applies(root,folder) && !alloc_lint_package(folder) {return 1}
-    if code==0 && folder!="" && plugin_api_lint_applies(folder) && !plugin_api_lint_folder(folder) {return 1}
-    if code==0 && folder!="" && solver_lint_applies(root,folder) && !solver_lint_package(folder) {return 1}
-    if code==0 && folder!="" && !row_copy_lint_package(folder) {return 1}
-    return code
+    if code!=0 || folder=="" {return code}
+    if plugin_api_lint_applies(folder) && !plugin_api_lint_folder(folder) {return 1}
+    return 0 if lints_run(files,alloc_lint_applies(root,folder),solver_lint_applies(root,folder)) else 1
+}
+
+// The sources of a package folder, its tests included, parsed; what does not parse is left out,
+// for the compiler to say.
+package_parse :: proc(folder:string) -> []^ast.File {
+    errors:=make([dynamic]string,context.temp_allocator)
+    _,files,ok:=build.sources_read(folder,&errors,tests=true)
+    return files if ok else nil
+}
+
+// The lints of mirai check on the parsed sources of a package: the allocations whose error is
+// dropped in what is no test (alloc) and the imports of the solver of physics (solver). False
+// after printing what one finds.
+lints_run :: proc(files:[]^ast.File,alloc,solver:bool) -> bool {
+    clean:=true
+    for file in files {
+        if alloc && !strings.has_suffix(file.fullpath,"_test.odin") && !alloc_lint_print(file) {clean=false}
+        if solver && !solver_lint_print(file) {clean=false}
+    }
+    return clean
 }
 
 // The code of a project, as build.check checks it: the world generated from
@@ -264,14 +285,13 @@ check_project :: proc(root,folder:string) -> int {
     opened,error:=project.open(folder,root,context.temp_allocator)
     if error.code!=.None {fmt.eprintfln("mirai check: could not open the project %s",folder);return 1}
     clean:=plugin_api_lint_project(&opened)
-    // Against the declarations an agent builds with: a check comes before a --dev build.
+    // Against the declarations an agent builds with: a check comes before a dev build.
     job:=build.job_run({project=&opened,target=.Editor,action=.Check,engine=.Dev})
     defer build.job_destroy(job)
     for d in job.result.diagnostics {fmt.eprintfln("%s(%d:%d) %v: %s",d.file,d.line,d.column,d.severity,d.message)}
     if job.result.status==.Built {
         game:=join(folder,project.FOLDER_NAMES[.Game])
-        if !solver_lint_package(game) || !row_copy_lint_package(game) {return 1}
-        return 1 if alloc_lint_applies(root,game) && !alloc_lint_package(game) || !clean else 0
+        return 0 if lints_run(package_parse(game),alloc_lint_applies(root,game),true) && clean else 1
     }
     if len(job.result.diagnostics)==0 {fmt.eprintln(job.result.text)}
     return 1

@@ -8,7 +8,7 @@ import "core:strings"
 import "mirai:cook/image"
 import "mirai:project"
 
-CAPTURE_USAGE :: "capture [project] [--out x.png] [--scene S] [--camera-entity NAME | --position x,y,z --target x,y,z] [--fov F] [--size WxH] [--frames N] [--view MODE] [--reference ref.png] [--threshold SSIM] [--repeat] [--dev|--release]\n       capture [project] --plan [--views a,b] [--references DIR] [--write] [--repeat] [--dev|--release]"
+CAPTURE_USAGE :: "capture [project] [--out x.png] [--scene S] [--camera-entity NAME | --position x,y,z --target x,y,z] [--fov F] [--size WxH] [--frames N] [--view MODE] [--reference ref.png] [--threshold SSIM] [--repeat] [--release]\n       capture [project] --plan [--views a,b] [--references DIR] [--write] [--repeat] [--release]"
 
 // mirai capture: one image of the world of a project as the editor draws it,
 // without its UI, from a camera of the scene or a pose, with the validation
@@ -48,7 +48,7 @@ Capture_View :: struct {
     threshold:f64,         // SSIM against the reference under which the view fails: under what two captures of it give
 }
 cmd_capture :: proc(root:string,args:[]string) -> int {
-    mode,args,modes_valid:=build_mode_take(args)
+    mode,args:=build_mode_take(args)
     folder,out,scene,entity,view,reference:=".","","","","",""
     position,target:string
     fov,threshold:f64=0,-1
@@ -56,7 +56,6 @@ cmd_capture :: proc(root:string,args:[]string) -> int {
     repeat,plan,write:=false,false,false
     views,references:string
     usage :: proc() -> int {fmt.eprintfln("Usage: mirai %s",CAPTURE_USAGE);return 2}
-    if !modes_valid {fmt.eprintln("mirai capture: --dev and --release do not go together; pass one of them");return usage()}
     for i:=0;i<len(args);i+=1 {
         ok:=true
         switch args[i] {

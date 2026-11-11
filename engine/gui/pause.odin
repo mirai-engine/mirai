@@ -15,8 +15,8 @@ import "mirai:platform"
 @(actions)
 Menu_Action :: enum u8 {Menu}
 
-// The bindings of the menu action when input.mirai of the project does not name it.
-menu_action_defaults :: proc "contextless" () -> [Menu_Action]inp.Action_Default {
+// The bindings of the menu action when Input_Settings does not name it.
+menu_action_defaults :: proc "contextless" () -> [Menu_Action]inp.Action_Bindings {
     return {.Menu=inp.action_default_in(inp.CONTEXT_ALWAYS,.Button,inp.binding_key(.Escape),inp.binding_gamepad_button(.Start))}
 }
 
@@ -46,23 +46,24 @@ clock_apply :: proc(gui:^Gui,paused:bool,requests:^core.Clock_Requests,role:core
 }
 
 // Whether the game should hold the mouse.
-mouse_wanted :: proc(seats:core.Read(inp.Seat),drivables:core.Read(inp.Drivable),state:^inp.Seats,bindings:^inp.Input_Map,look:inp.Action,modal:bool) -> bool {
+mouse_wanted :: proc(seats:^core.Table(inp.Seat,.Read),state:^inp.Seats,bindings:^inp.Input_Map,look:inp.Action,modal:bool) -> bool {
     if modal || !inp.action_reads_mouse(bindings,look) {return false}
-    return inp.body_of(drivables,inp.focused(state,seats))!=core.NONE
+    return inp.body_of(seats,inp.focused(state,seats))!=core.NONE
 }
 
 // After the screens have ended: what they ask of the game and the window.
 // The mouse waits while the editor has it, or for a world the window does not see.
 @(step="ui",stage="end",after="gui_frame_end")
 gui_window_apply :: proc(
-    gui:^Gui,app:^host.App,menu:inp.Frame_Input_Of(Menu_Action),look:inp.Frame_Input_Of(inp.Look_Action),seats:core.Read(inp.Seat),drivables:core.Read(inp.Drivable),state:core.Ref(inp.Seats),bindings:core.Ref(inp.Input_Map),
+    gui:^Gui,app:^host.App,menu:inp.Frame_Input_Of(Menu_Action),look:inp.Frame_Input_Of(inp.Look_Action),seats:^core.Table(inp.Seat,.Read),state:core.Ref(inp.Seats),bindings:core.Ref(inp.Input_Map),
     clock:core.Ref(core.Clock),clock_requests:^core.Clock_Requests,network:core.Ref(core.Network),
 ) {
     if gui==nil {return}
-    menu_report(gui,inp.pressed(menu,.Menu))
+    // The menu of the focused slot past the blocks: those of its own screens take it from the game.
+    menu_report(gui,inp.action(&menu.actions.ptr.slots[clamp(state.focus,0,inp.LOCAL_CAPACITY-1)],inp.action_of(menu,.Menu)).pressed)
     clock_apply(gui,clock.paused,clock_requests,network.role)
     if app.platform==nil || app.renderer==nil || app.game_input_blocked || app.game_mouse_off {return}
-    if wanted:=mouse_wanted(seats,drivables,state.ptr,bindings.ptr,inp.action_of(look,.Look),gui.modal_up);wanted!=platform.window_relative_mouse(app.platform) {
+    if wanted:=mouse_wanted(seats,state.ptr,bindings.ptr,inp.action_of(look,.Look),gui.modal_up);wanted!=platform.window_relative_mouse(app.platform) {
         platform.window_set_relative_mouse(app.platform,wanted)
     }
 }

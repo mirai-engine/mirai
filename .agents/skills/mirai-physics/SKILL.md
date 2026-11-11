@@ -2,8 +2,9 @@
 name: mirai-physics
 description: Modify, use and verify Mirai physics - the `physics` plugin (the
   `plugins/physics/runtime/sim` solver with bodies, joints, queries, character, breakable bodies and
-  snapshots, the `plugins/physics/runtime` integration with character locomotion, and its editor
-  part) and the `destruct` plugin, which makes a `Destructible` a breakable body. Use when changing
+  snapshots, the `plugins/physics/runtime` integration, and its editor part), the `locomotion`
+  plugin that walks, flies and swims characters on top of it, and the `destruct` plugin, which
+  makes a `Destructible` a breakable body. Use when changing
   the solver, breaking things, writing gameplay with bodies and characters (walk, jump, fly, swim,
   `Character`, `Walk`, `Swim`), working with buoyancy and drag of `Fluid`s, with `Force_Field`s,
   `Strain_Field`s and area forces (the drawn water
@@ -15,9 +16,9 @@ description: Modify, use and verify Mirai physics - the `physics` plugin (the
 Physics is a first-party plugin that a project activates. Its solver
 (`plugins/physics/runtime/sim`, package `mirai_physics`, imports only `std/*`) is the model and
 does not know what an entity is. The integration (`plugins/physics/runtime`) uses it on the world
-tables and is the only package that imports it. The game and the other plugins, `destruct` among
-them, use the public API of the integration, never the solver. It shares `core` tables with
-networking ([networking](../mirai-networking/SKILL.md)).
+tables and is the only package that imports it. The game and the other plugins, `destruct` and
+`locomotion` among them, use the public API of the integration, never the solver. It shares
+`core` tables with networking ([networking](../mirai-networking/SKILL.md)).
 
 ## Map
 
@@ -36,7 +37,8 @@ networking ([networking](../mirai-networking/SKILL.md)).
   [the body](references/character.md#the-body) and [step](references/character.md#step);
   its own vertical (walking around a planet, `core.Vertical`) →
   [character.md#the-vertical](references/character.md#the-vertical)
-- Walk, jump, fly, swim, layered movements, seat control, game modes →
+- Walk, jump, fly, swim, layered movements, turning toward the look, game modes (the `locomotion`
+  plugin) →
   [engine.md#locomotion](references/engine.md#locomotion); at normal speed in slow motion
   (`core.Own_Pace`) → [engine.md#own-pace](references/engine.md#own-pace)
 - Breakable bodies of the solver (pieces, bonds, clusters, damage, cut, state, copy) and their
@@ -45,7 +47,8 @@ networking ([networking](../mirai-networking/SKILL.md)).
   [damage and fields](references/destruction.md#damage-and-fields),
   [removal](references/destruction.md#removal), [cut](references/destruction.md#cut) and
   [reading and replay](references/destruction.md#reading-and-replay)
-- `Rigid_Body`, `Collider`, `Character`, `Joint`, requests, queries, pose targets, proxies →
+- `Rigid_Body`, `Collider`, `Character`, `Joint`, requests, queries (`character_capsule`,
+  `character_landing` among them), pose targets, proxies →
   [components](references/engine.md#components),
   [collider fields](references/engine.md#collider-fields),
   [binding and world step](references/engine.md#binding-and-world-step),
@@ -68,8 +71,9 @@ networking ([networking](../mirai-networking/SKILL.md)).
   of the simulation, who may import the solver → [owned bodies](references/engine.md#owned-bodies)
 - `core.place` on a body → [engine.md#requests](references/engine.md#requests);
   `core.World_Queries` (cameras, feet) → [engine.md#queries](references/engine.md#queries)
-- Editor part (collider preset, collision settings, `physics.collision.*` API, Simulate, Collision
-  view modes) → [engine.md#editor-part](references/engine.md#editor-part)
+- Editor part (collider preset, collision settings, `physics.collision.*` API, Simulate, dropping
+  objects to rest with `physics.settle` and the Drop tool, Collision view modes) →
+  [engine.md#editor-part](references/engine.md#editor-part)
 
 ## Workflow
 
@@ -150,6 +154,22 @@ networking ([networking](../mirai-networking/SKILL.md)).
 - A Character's body and its look both face -Z.
 - A character moves only through its `Character_Move`: locomotion writes it and, in a game mode,
   the step of that mode writes it first, to which locomotion only adds the layered movements.
+- Locomotion is a plugin on top of physics: it drives characters only through the facade, and
+  `physics` imports nothing of it. A walker is `Character` + `Walk`; the mode it starts in follows
+  from its mode components; whoever drives it writes its `input.Move_Input` (a seat through
+  `engine/camera`), and locomotion is the one that turns it.
+- `Character` and the mode components are authored and never written while playing; what changes
+  is in `Locomotion_State`, all `transient`, so a scene saved after play holds no run-time field.
+- A joint is an entity of its own: `a` (by default its parent) and `b`, its frame its Transform, and
+  one six-axis record as its only description; the solver chooses its kernel from the axes.
+- The step walks the lists of the awake bodies and of the moved shapes, which are state; no stage
+  of a step walks every slot of a pool.
+- A link holds only the handles of what was made; the sync learns what changed from row stamps and
+  calls a setter only where the simulation differs, so taking a restored row again changes nothing.
+  Holds live in `Physics_State.held`, which the step walks instead of the links.
+- A manipulation keeps a dynamic body dynamic and pulls it with a spring of bounded force; only a
+  pose by design (a following pose target, `follow` of the animated ragdoll) holds a body as
+  kinematic.
 - A tool that moves bodies uses `manipulation_target`/`manipulation_end`; a preview that only needs
   physics uses `step_world`
   ([requests](references/engine.md#requests),
@@ -159,17 +179,19 @@ networking ([networking](../mirai-networking/SKILL.md)).
   `physics_step` writes `Joint` and `Joint_State`. The world rotation is converted to the frames
   after reconciling them.
 - Proxies accept the same forces, manipulation and constraints; whoever owns the body removes it
-  before destroying it.
+  before destroying it. A proxy stands for the entity's own `Collider` and `Rigid_Body`: physics
+  ends the body it made of them and makes none while the proxy lasts.
 - Everything that influences a future step is in a table (`core.Motion`, `Character_State`,
-  `Character_Move`, `Character`, `Joint_State`, `Destructible_State`) or in the snapshot of
-  `Physics_State`: this allows copying the world for rollback and saves. The reflection of
-  destruction always comes from the simulation state, never from the event that changed it.
+  `Character_Move`, `Character`, `Locomotion_State`, `Joint_State`, `Destructible_State`) or in
+  the snapshot of `Physics_State`: this allows copying the world for rollback and saves. The
+  reflection of destruction always comes from the simulation state, never from the event that
+  changed it.
 - `physics_step` and `destruct_step` are simulation: they run in `fixed` and repeat in a network
   correction.
 - What the simulation rejects (a body, a shape, a joint, a destructible, a request) is a
   [problem](../mirai-core/references/core.md#problems) of the entity with the cause and the field
-  of `Physics_Settings` that fixes it; `Physics_State.stats` and `Destruct_Cache.stats` count only
-  what was created and removed.
+  of `Physics_Settings` that fixes it; `Physics_State.stats` counts only what was created and
+  removed.
 - Collision belongs to the `Collider`: `Character` and `Destructible` do not repeat shape, surface
   or filter. Categories and presets are named ids declared in code; `Collision_Settings` says per
   preset only what differs from the defaults, and the solver only sees a bit `Filter`. A collision
@@ -180,7 +202,8 @@ networking ([networking](../mirai-networking/SKILL.md)).
 ## Verification
 
 - Packages: `plugins/physics/runtime/sim` (the solver), `std/spatial`, `plugins/physics/runtime`,
-  `plugins/physics/editor`, `plugins/destruct/runtime` and `plugins/destruct_multiplayer/runtime`.
+  `plugins/physics/editor`, `plugins/locomotion/runtime`, `plugins/locomotion/editor`,
+  `plugins/destruct/runtime` and `plugins/destruct_multiplayer/runtime`.
   Run only the `*_test.odin` of the touched topic.
   - Solver: `ccd*`, `contact_rules`, `joint`, `six_dof`, `radial`, `character`,
     `mesh`, `query`, `static` (triangles and change log of static collision),
@@ -191,13 +214,15 @@ networking ([networking](../mirai-networking/SKILL.md)).
     snapshot and a copy do with what breaks).
   - Integration: `collision`, `forces`, `geometry`, `joints`, `manipulation`, `reload`,
     `static`, `teleport`, `fluids`, `sync` (sealed rows against the full reconciliation),
-    `breakables` (the facade, its copies and `strain_area`);
-    locomotion: `locomotion` (walk, jump, coyote, layers, flight, swimming, modes),
-    `locomotion_moves` (crouch, slide, mantle, tactical sprint, ledge jump), `planet` (own
-    vertical: walking, jumping and rollback on a planet, crossing fields) and `locomotion_seat`
-    (seat control, relative forward). Editor: `collision`, `api_collision`, `colliders`,
-    `view_mode`. `destruct`: `integration`. `geometry_test` does not need a GPU. Grounding with real
-    bodies: `demo/game/grounding_physics_test.odin`.
+    `breakables` (the facade, its copies and `strain_area`), `characters` (the character queries
+    of the facade: `character_capsule`, `character_landing`), `planet` (a character on a planet).
+    Editor: `collision`, `api_collision`, `colliders`, `view_mode`, `bodies`, `settle`.
+  - Locomotion, on the world through the facade (`test_world_test.odin`): `locomotion` (walk, jump,
+    coyote, layers, flight, swimming, start mode, locks), `moves` (crouch, slide, mantle, tactical
+    sprint, ledge jump), `planet` (own vertical: walking, jumping and a world copy on a planet,
+    crossing fields), `pace`; editor: `bodies`.
+  - `destruct`: `integration`. `geometry_test` does not need a GPU. Grounding with real bodies:
+    `demo/game/grounding_physics_test.odin`.
 - Twins and cuts: the tests of `plugins/portals/runtime` (half crossed, walls of any collider, the
   twin that leaves, snapshot).
 - A change in step, contacts, solver, CCD, joints or characters keeps determinism:

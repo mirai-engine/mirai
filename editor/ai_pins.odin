@@ -120,18 +120,18 @@ ai_pin_in_message :: proc(s:^Session,row:^Ai_Pin_Row) -> bool {
 
 @(private)
 ai_chip_width :: proc(ctx:^ui.Context,label:string,width:f32) -> f32 {
-    return min(width,math.ceil(ui.text_width(&ctx.font,label,ctx.theme.font_small))+AI_CHIP_ROOM+AI_CHIP_PIN_ROOM)
+    return min(width,math.ceil(ui.text_width(&ctx.font,label,ui.metric(ctx,"font_small")))+AI_CHIP_ROOM+AI_CHIP_PIN_ROOM)
 }
 
 // The toggle of a chip: lit while it is pinned.
 @(private)
 ai_chip_pin :: proc(s:^Session,id:ui.Id,kind,ref,label:string) {
     if ref=="" {return}
-    ctx:=s.gui.ctx;th:=&ctx.theme
+    ctx:=s.gui.ctx
     if message:=ai_pins_sync(s.ai);message!="" {notify(s,message)}
     pinned:=ai_pin_at(s.ai,kind,ref)>=0
     icon:=pinned?User_Icon.Pin_Filled:User_Icon.Pin
-    if ui.button(ctx,id,{icon=ui.icon_user(u8(icon)),icon_color=pinned?th.accent:th.text_faint,icon_size=10,padding=-1,style=.Ghost,width=12,height=12}).clicked {
+    if ui.button(ctx,id,{icon=ui.icon_user(u8(icon)),icon_color=pinned?ui.tone(ctx,"accent"):ui.tone(ctx,"text_faint"),icon_size=10,padding=-1,variant="ghost",width=12,height=12}).clicked {
         if message:=ai_pin_toggle(s.ai,kind,ref,label);message!="" {notify(s,message)}
     }
 }
@@ -144,7 +144,7 @@ ai_pin_rows :: proc(s:^Session,width:f32) -> int {
     ctx:=s.gui.ctx
     used:=f32(0);rows:=1
     for index in listed[:count] {
-        size:=min(width,math.ceil(ui.text_width(&ctx.font,base.text_get(s.ai.pins[index].label[:]),ctx.theme.font_small))+AI_CHIP_ROOM)
+        size:=min(width,math.ceil(ui.text_width(&ctx.font,base.text_get(s.ai.pins[index].label[:]),ui.metric(ctx,"font_small")))+AI_CHIP_ROOM)
         if used>0 && used+size>width {rows+=1;used=0}
         used+=size+5
     }
@@ -154,13 +154,13 @@ ai_pin_rows :: proc(s:^Session,width:f32) -> int {
 // The icon of a pinned chip and its color, by what it refers to.
 @(private)
 ai_pin_look :: proc(s:^Session,row:^Ai_Pin_Row) -> (icon:ui.Icon,color:ui.Color,agent:^Ai_Task) {
-    m:=s.ai;th:=&s.gui.ctx.theme
+    m:=s.ai
     ref:=base.text_get(row.ref[:])
-    icon,color=.Scene,th.text_muted
+    icon,color=.Scene,ui.tone(s.gui.ctx,"text_muted")
     switch base.text_get(row.kind[:]) {
     case AI_PIN_ASSET:
         if s.app!=nil && s.app.assets!=nil {
-            if file,found:=asset.registry_find_path(&s.app.assets.registry,ref);found {icon,color=asset_icon(s,shown_kind(file))}
+            if file,found:=asset.registry_find_path(&s.app.assets.registry,ref);found {icon,color=asset_file_icon(s,file)}
         }
     case AI_PIN_IMAGE:
         icon=.Texture
@@ -181,21 +181,21 @@ ai_pin_look :: proc(s:^Session,row:^Ai_Pin_Row) -> (icon:ui.Icon,color:ui.Color,
 @(private)
 ai_pins_build :: proc(s:^Session,width:f32,rows:int) {
     if rows<=0 {return}
-    m:=s.ai;ctx:=s.gui.ctx;th:=&ctx.theme
+    m:=s.ai;ctx:=s.gui.ctx
     listed:[AI_PINS]int
     count:=ai_pins_listed(s,listed[:])
     used:=f32(0);row:=0
     for index in listed[:count] {
         pin:=&m.pins[index]
         label:=base.text_get(pin.label[:])
-        size:=min(width,math.ceil(ui.text_width(&ctx.font,label,th.font_small))+AI_CHIP_ROOM)
+        size:=min(width,math.ceil(ui.text_width(&ctx.font,label,ui.metric(ctx,"font_small")))+AI_CHIP_ROOM)
         if used>0 && used+size>width {ui.box_end(ctx,{});row+=1;used=0}
         if row>=rows {break}
         if used==0 {ui.box_begin(ctx,{width=ui.GROW,height=ui.fixed(AI_CHIP_HEIGHT),gap=5,align_y=.Center})}
-        if ui.box(ctx,{width=ui.fixed(size),height=ui.fixed(AI_CHIP_HEIGHT),padding={5,0,5,0},gap=4,align_y=.Center,fill=th.field,radius=th.radius_control}) {
+        if ui.box(ctx,{width=ui.fixed(size),height=ui.fixed(AI_CHIP_HEIGHT),padding={5,0,5,0},gap=4,align_y=.Center,fill=ui.tone(ctx,"field"),radius=ui.metric(ctx,"radius_control")}) {
             icon,color,agent:=ai_pin_look(s,pin)
             if agent!=nil {pulse_dot(ctx,ai_agent_color(agent),false)} else {ui.icon(ctx,icon,color,12)}
-            ui.label(ctx,ai_chat_menu_label(ctx,label,max(size-AI_CHIP_ROOM,1),th.font_small),th.font_small,th.text_muted,size-40)
+            ui.label(ctx,ai_chat_menu_label(ctx,label,max(size-AI_CHIP_ROOM,1),ui.metric(ctx,"font_small")),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"),size-40)
             ai_chip_pin(s,ui.id(ctx,"pinned",index+1),base.text_get(pin.kind[:]),base.text_get(pin.ref[:]),label)
         }
         used+=size+5

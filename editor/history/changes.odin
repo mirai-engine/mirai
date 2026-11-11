@@ -49,7 +49,7 @@ change_entity :: proc(w:core.World_Ref,id:base.Entity_Id) -> core.Entity {
 // The id of an entity: in the World, or in the rows of Id of a step, on either side.
 @(private)
 change_step_id :: proc(w:core.World_Ref,step:^Edit_Step,e:core.Entity) -> base.Entity_Id {
-    if id:=core.id_of(core.read(core.world_table_of(w,core.Id)),e);id!=0 {return id}
+    if id:=core.id_of(core.world_table_of(w,core.Id),e);id!=0 {return id}
     if step==nil {return 0}
     for &rows in step.tables {
         if rows.table<0 || rows.table>=len(w.info.tables) || w.info.tables[rows.table].type!=core.Id {continue}
@@ -270,7 +270,7 @@ change_row_put :: proc(w:core.World_Ref,row:^Change_Row,e:core.Entity,forward:bo
         canonical:=change_canonical(w,nil,info,current,context.temp_allocator)
         if change_restore_fields(info,raw_data(canonical),raw_data(to),raw_data(from),kept) {
             restored:=change_materialize(w,info,canonical)
-            saved_copy(core.raw_edit(table,info,e),raw_data(restored),info.size,transient_ranges(info))
+            saved_copy(core.raw_author(table,info,e),raw_data(restored),info.size,transient_ranges(info))
         }
         if from_off!=to_off && off!=to_off {
             if to_off {core.raw_disable(table,e)} else {core.raw_enable(table,e)}

@@ -12,10 +12,10 @@ To look at something, `anim.look` is enough ([four calls](../animation.md#four-c
 other operations take a goal:
 
 ```odin
-// goals:^anim.Modifier_Requests
-anim.modifier_goal(goals,{rig=e,kind=.IK,target=anim.spatial_bone(other,"hand_r"),weight=1,
+// requests:^anim.Animation_Requests
+anim.modifier_goal(requests,{rig=e,kind=.IK,target=anim.spatial_bone(other,"hand_r"),weight=1,
     enabled=true})
-anim.modifier_control(goals,{rig=e,kind=.IK,weight=0,enabled=false,fade=.2})  // fade out
+anim.modifier_control(requests,{rig=e,kind=.IK,weight=0,enabled=false,fade=.2})  // fade out
 ```
 
 - `target` builders: `spatial_point(p)`, `spatial_entity(entity)`, `spatial_bone(rig,"bone")`,
@@ -24,8 +24,9 @@ anim.modifier_control(goals,{rig=e,kind=.IK,weight=0,enabled=false,fade=.2})  //
 - `kind` is one of `Modifier_Kind` (`IK`, `Look`, `Grounding`, `Chain_IK`, `Spline_IK`, `Spring`,
   `Follow`, ...). `slot` indexes the operations of that kind (0 is the first); `name` picks
   one instead (`base.text_set(goal.name[:],"left_hand")`); `effector` picks one of a `Multi_IK`.
-- `modifier_goal` sets where; `modifier_control` sets an independent weight and fade. Both persist
-  per operation until replaced.
+- `modifier_goal` sets where and the weight, reached over its `fade` from the weight that applies
+  (a goal that lets go keeps its target while it fades out); `modifier_control` sets an
+  independent weight and fade. Both persist per operation until replaced.
 - `animation.inspect` part `Modifiers` lists the operations and the last request that failed.
 
 ## Feet on the ground
@@ -34,7 +35,7 @@ Grounding adapts the pose to the ground that physics queries; it needs the `phys
 set with a grounding row. Turn it off in the air:
 
 ```odin
-anim.modifier_goal(goals,{rig=e,kind=.Grounding,weight=1 if state.standing else 0,enabled=true})
+anim.modifier_goal(requests,{rig=e,kind=.Grounding,weight=1 if state.standing else 0,enabled=true})
 // state:phys.Character_State of the entity
 ```
 
@@ -45,8 +46,7 @@ A warp window of the set warps the root motion over the span of its name on the 
 there, by stretching the stride and the root delta:
 
 ```odin
-// motion:^anim.Motion_Requests
-anim.motion_target(motion,e,"Reach",anim.spatial_point(spot))  // a warp window of the set
+anim.motion_target(requests,e,"Reach",anim.spatial_point(spot))  // a warp window of the set
 anim.animation_clip(a,"stride",.2,loop=false)
 ```
 

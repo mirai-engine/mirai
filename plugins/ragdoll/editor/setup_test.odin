@@ -33,6 +33,7 @@ Setup_Test_World :: struct {
     joints:core.Table(phys.Joint),
     configs:core.Table(rag.Ragdoll),
     bones:core.Table(rag.Ragdoll_Bone),
+    hierarchy:core.Hierarchy, // a body goes with the entity of its joint
 }
 Setup_Test :: struct {
     root:string,
@@ -138,6 +139,7 @@ setup_test_destroy :: proc(f:^Setup_Test) {
 setup_test_call :: proc(f:^Setup_Test,params:string) -> (api.Error,string) {
     base.arena_reset(&f.server.scratch);serial.writer_reset(&f.out)
     error,_:=api.method_execute(&f.server,api.method_find(&f.server,"ragdoll.setup"),params,&f.out)
+    core.hierarchy_settle(&f.world.hierarchy,core.read(&f.world.parents),&f.world.entities)
     return error,string(serial.writer_bytes(&f.out))
 }
 
@@ -151,6 +153,16 @@ setup_test_bodies :: proc(f:^Setup_Test,rig:core.Entity) -> map[string]core.Enti
         found[path[strings.last_index_byte(path,'/')+1:]]=f.world.bones.entities[row]
     }
     return found
+}
+
+// The Joint of a body: on a child of it.
+@(private)
+setup_test_joint :: proc(w:^Setup_Test_World,body:core.Entity) -> (e:core.Entity,joint:phys.Joint,found:bool) {
+    for row in 0..<len(w.joints.values) {
+        e=w.joints.entities[row]
+        if parent,ok:=core.get(&w.parents,e);ok && parent.entity==body {return e,w.joints.values[row],true}
+    }
+    return core.NONE,{},false
 }
 
 @(test)
@@ -174,19 +186,22 @@ ragdoll_setup_builds_a_body_and_limited_joint_per_part_of_a_humanoid_in_one_step
     // Spine and chest split the chain; the neck, the clavicles and the toes have no body.
     for name in ([]string{"pelvis","spine_01","spine_02","head","upperarm_l","lowerarm_l","hand_l","thigh_r","calf_r","foot_r"}) {testing.expectf(t,name in bodies,"no body on %s",name)}
     for name in ([]string{"neck_01","spine_03","clavicle_l","ball_l","root","ik_hand_root"}) {testing.expectf(t,!(name in bodies),"a body on %s",name)}
-    testing.expect(t,!core.has(&w.joints,bodies["pelvis"]))
+    _,_,pelvis_joint:=setup_test_joint(w,bodies["pelvis"])
+    testing.expect(t,!pelvis_joint)
     testing.expect_value(t,core.at(&w.colliders,core.row_of(&w.colliders,bodies["pelvis"])).kind,phys.Collider_Kind.Box)
     testing.expect_value(t,core.at(&w.colliders,core.row_of(&w.colliders,bodies["head"])).kind,phys.Collider_Kind.Sphere)
     testing.expect_value(t,core.at(&w.colliders,core.row_of(&w.colliders,bodies["calf_l"])).kind,phys.Collider_Kind.Capsule)
-    elbow:=core.at(&w.joints,core.row_of(&w.joints,bodies["lowerarm_l"]))
-    testing.expect(t,elbow.kind==.SixDOF && elbow.target==bodies["upperarm_l"] && elbow.angular[0].motion==.Locked && elbow.angular[2].motion==.Locked)
+    _,elbow,_:=setup_test_joint(w,bodies["lowerarm_l"])
+    testing.expect(t,elbow.b==bodies["upperarm_l"] && elbow.angular[0].motion==.Locked && elbow.angular[2].motion==.Locked)
     testing.expect(t,elbow.angular[1].motion==.Limited && elbow.angular[1].upper>2 && elbow.angular[1].lower<=0)
-    shoulder:=core.at(&w.joints,core.row_of(&w.joints,bodies["upperarm_r"]))
-    testing.expect(t,shoulder.target==bodies["spine_02"] && shoulder.angular[0].motion==.Limited && shoulder.angular[2].motion==.Limited)
-    testing.expect_value(t,core.at(&w.joints,core.row_of(&w.joints,bodies["thigh_l"])).target,bodies["pelvis"])
-    testing.expect_value(t,core.at(&w.joints,core.row_of(&w.joints,bodies["head"])).target,bodies["spine_02"])
+    _,shoulder,_:=setup_test_joint(w,bodies["upperarm_r"])
+    testing.expect(t,shoulder.b==bodies["spine_02"] && shoulder.angular[0].motion==.Limited && shoulder.angular[2].motion==.Limited)
+    _,thigh,_:=setup_test_joint(w,bodies["thigh_l"])
+    testing.expect_value(t,thigh.b,bodies["pelvis"])
+    _,head,_:=setup_test_joint(w,bodies["head"])
+    testing.expect_value(t,head.b,bodies["spine_02"])
 
-    // Each joint meets its target where they touch and with the same frame, and each body sits where its bone and offset put it.
+    // Each joint meets the body of its parent part where they touch and with the same frame, and each body sits where its bone and offset put it.
     rig:=core.to_math(core.at(&w.transforms,core.row_of(&w.transforms,f.figure)))
     bones:=setup_test_bones()
     parents:=make([]i32,len(bones),context.temp_allocator);rest:=make([]mm.Transform,len(bones),context.temp_allocator);world:=make([]mm.Transform,len(bones),context.temp_allocator)
@@ -204,14 +219,14 @@ ragdoll_setup_builds_a_body_and_limited_joint_per_part_of_a_humanoid_in_one_step
             placed:=mm.transform_compose(world[i],binding.offset)
             testing.expectf(t,linalg.length(placed.position-pose.position)<1e-4 && abs(linalg.dot(placed.rotation,pose.rotation))>.9999,"%s: the bone puts its body at %v, it is at %v",base.text_get(bone.name[:]),placed.position,pose.position)
         }
-        joint,jointed:=core.get(&w.joints,e)
+        joint_entity,joint,jointed:=setup_test_joint(w,e)
         if !jointed {continue}
         testing.expect_value(t,phys.joint_configuration_error(joint),phys.Joint_Error.None)
-        target:=core.to_math(core.at(&w.transforms,core.row_of(&w.transforms,joint.target)))
-        here:=pose.position+mm.quat_rotate(pose.rotation,pose.scale*joint.anchor)
-        there:=target.position+mm.quat_rotate(target.rotation,target.scale*joint.target_anchor)
-        testing.expectf(t,linalg.length(here-there)<1e-4,"anchors apart: %v %v",here,there)
-        testing.expect(t,abs(linalg.dot(pose.rotation*joint.rotation,target.rotation*joint.target_rotation))>.9999)
+        frame:=mm.transform_compose(pose,core.to_math(core.at(&w.transforms,core.row_of(&w.transforms,joint_entity))))
+        target:=core.to_math(core.at(&w.transforms,core.row_of(&w.transforms,joint.b)))
+        there:=target.position+mm.quat_rotate(target.rotation,joint.b_anchor)
+        testing.expectf(t,linalg.length(frame.position-there)<1e-4,"anchors apart: %v %v",frame.position,there)
+        testing.expect(t,abs(linalg.dot(frame.rotation,target.rotation*joint.b_rotation))>.9999)
     }
     testing.expect(t,abs(mass-70)<.01)
 
@@ -254,7 +269,7 @@ ragdoll_setup_replaces_the_ragdoll_of_a_rig_in_one_step_of_undo :: proc(t:^testi
     if !testing.expectf(t,result.code==0,"%s %s",result.message,result.data) {return}
     testing.expectf(t,strings.contains(strings.join(strings.fields(text,context.temp_allocator),"",context.temp_allocator),`"removed":16`),"%s",text)
     for _,e in first {testing.expect(t,!core.alive(&w.entities,e))}
-    testing.expect(t,len(w.bones.values)==16 && len(w.rigids.values)==16 && len(w.joints.values)==15)
+    testing.expectf(t,len(w.bones.values)==16 && len(w.rigids.values)==16 && len(w.joints.values)==15,"%v %v %v",len(w.bones.values),len(w.rigids.values),len(w.joints.values))
     testing.expect(t,core.at(&w.configs,core.row_of(&w.configs,f.figure)).mode==.Driven && f.edits.cursor==2)
     testing.expect(t,history.undo(&f.edits,core.test_world_ref(&f.world),&f.selection))
     testing.expect(t,len(w.bones.values)==16 && core.at(&w.configs,core.row_of(&w.configs,f.figure)).mode==.Simulated)

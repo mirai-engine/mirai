@@ -6,7 +6,7 @@ import "core:math/linalg"
 import "mirai:core"
 import mm "mirai:std/math"
 import anim "plugins:animation/runtime"
-import phys "plugins:physics/runtime"
+import locomotion "plugins:locomotion/runtime"
 
 @(component,description="Converts horizontal animation root motion into physical character movement and facing. Collision and the character speed limit can prevent reaching a warp target.")
 Animation_Motor :: struct {enabled:bool}
@@ -17,14 +17,14 @@ animation_motor_input :: proc "contextless" (delta:anim.Root_Delta,actor:mm.Tran
     if dt<=0 || max_speed<=0 || abs(dt)>max(f32) || abs(max_speed)>max(f32) {return}
     velocity:=mm.quat_rotate(actor.rotation,delta.translation*actor.scale)/(dt*max_speed);velocity.y=0
     if length:=linalg.length(velocity);length>1 {velocity/=length}
-    input.move=mm.quat_rotate(mm.quat_inverse(mm.quat_axis_angle({0,1,0},input.look_yaw)),velocity)
+    input.move=velocity
     return
 }
 
 // After the animation is sampled, a character with a motor moves by its root
 // motion instead of what its seat or its AI asked.
 @(step="fixed",stage="apply")
-animation_motor_drive :: proc(motors:core.Read(Animation_Motor),inputs:^core.Table(inp.Move_Input),walks:core.Read(phys.Walk),worlds:core.Read(core.World_Transform),playback:core.Ref(anim.Playback),time:core.Time) {
+animation_motor_drive :: proc(motors:^core.Table(Animation_Motor,.Read),inputs:^core.Table(inp.Move_Input),walks:^core.Table(locomotion.Walk,.Read),worlds:^core.Table(core.World_Transform,.Read),playback:core.Ref(anim.Playback),time:core.Time) {
     if !time.playing {return}
     for row in 0..<core.count(motors) {
         entity:=core.entity_at(motors,row)

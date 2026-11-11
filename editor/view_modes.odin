@@ -6,6 +6,8 @@ import "mirai:editor/api"
 import "mirai:host"
 import gpu "mirai:render"
 import "mirai:std/base"
+import "mirai:std/serial"
+import "mirai:editor/kit"
 import "mirai:ui"
 
 // The modes of inspection of the viewport: what it shows instead of its lit
@@ -125,11 +127,11 @@ view_modes_begin :: proc(modes: ^View_Modes) {modes.count = 0}
 
 // What the viewport shows in this frame: the mode of the renderer (black
 // where it cannot show it) or of a plugin that can show it, which the frame
-// names. Nothing in a Play or a prefab, whose views are lit; a mode no longer
+// names. Nothing in a Play; a mode no longer
 // declared goes back to Lit.
 @(step="render",after="render_sync")
 view_mode_render :: proc(s: ^Session, v: ^Viewport, modes: ^View_Modes, app: ^host.App) {
-	if s.mode == .Play || document_is_prefab(s) {return}
+	if s.mode == .Play {return}
 	w := shown_world(s)
 	entry, found := view_mode_resolve(app.renderer, modes, w, view_mode_current(v))
 	if !found {
@@ -238,7 +240,7 @@ view_mode_build :: proc(s: ^Session) {
 		label = entry.title if entry.title != "" else entry.label
 	}
 	id, popup := shell_id(g, "view_mode"), shell_id(g, "view_mode_popup")
-	if ui.button(ctx, id, {label = label, icon = .Chevron_Down, icon_after = true, style = .Ghost, height = 26, size = ctx.theme.font_small, active = ui.popup_is_open(ctx, popup)}).clicked {
+	if ui.button(ctx, id, {label = label, icon = .Chevron_Down, icon_after = true, variant = "ghost", height = 26, size = ui.metric(ctx,"font_small"), active = ui.popup_is_open(ctx, popup)}).clicked {
 		anchor, _ := ui.widget_rect(ctx, id)
 		ui.popup_open(ctx, popup, {anchor.x, anchor.y + anchor.h, anchor.w, 0})
 	}
@@ -280,10 +282,10 @@ viewport_exposure_build :: proc(s: ^Session) {
 	if ui.menu_item(ctx, ui.id(ctx, "exposure_scene"), "Scene", {checked = v.exposure_source == .Scene}) {v.exposure_source = .Scene}
 	if ui.menu_item(ctx, ui.id(ctx, "exposure_camera"), "Camera", {checked = v.exposure_source == .Camera, disabled = !v.exposure.own}) {v.exposure_source = .Camera}
 	if ui.menu_item(ctx, ui.id(ctx, "exposure_manual"), "Manual", {checked = v.exposure_source == .Manual}) {v.exposure_source = .Manual}
-	if ui.box(ctx, {width = ui.GROW, height = ui.fixed(ctx.theme.control), padding = {6, 0, 6, 0}, gap = 7, align_y = .Center}) {
-		ui.label(ctx, "EV100", ctx.theme.font_small, ctx.theme.text, 40)
+	if ui.box(ctx, {width = ui.GROW, height = ui.fixed(ui.metric(ctx,"control")), padding = {6, 0, 6, 0}, gap = 7, align_y = .Center}) {
+		ui.label(ctx, "EV100", ui.metric(ctx,"font_small"), ui.tone(ctx,"text"), 40)
 		ev100 := f64(v.ev100)
-		if ui.slider_field(ctx, ui.id(ctx, "exposure_ev100"), &ev100, {min = -10, max = 24, has_min = true, has_max = true, decimals = 1, speed = 0.05, height = 22}).changed {
+		if kit.slider_field(ctx, ui.id(ctx, "exposure_ev100"), &ev100, {min = -10, max = 24, has_min = true, has_max = true, decimals = 1, speed = 0.05, height = 22}).changed {
 			v.ev100 = f32(ev100)
 			v.exposure_source = .Manual
 		}
@@ -379,7 +381,6 @@ api_view_mode :: proc(s: ^Session, call: ^api.Call) {
 	r := s.app.renderer
 	if r == nil {api.call_fail(call, api.SERVER_ERROR, "The editor has no renderer: it runs without a GPU"); return}
 	name := base.text_get(api.call_params(call, Api_View_Mode_Params).mode[:])
-	if document_is_prefab(s) {api.call_fail(call, api.INVALID_PARAMS, "The view of a prefab shows its lit image: open a scene to inspect it"); return}
 	entry, found := view_mode_resolve(r, s.view_modes, shown_world(s), name)
 	if !found {api.call_failf(call, api.INVALID_PARAMS, "%q is not a view mode; editor.view_mode.list lists them", name); return}
 	if !entry.available {api.call_failf(call, api.INVALID_PARAMS, "%s cannot be shown now: %s", entry.name, entry.reason); return}

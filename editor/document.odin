@@ -38,6 +38,7 @@ Document_Error :: enum u8 {
     Capture_Failed,
     Bad_Path,    // rooted without a drive on Windows: it names no folder
     Importing,   // an import writes assets now
+    Not_One_Root, // a prefab with no root or several
 }
 
 @(storage)
@@ -50,9 +51,12 @@ Document :: struct {
     previous:^asset.Scene,        // the document of the file; nil for a new scene
     saved:u64,                    // the state of the history when it was saved or opened
     unsaved:bool,                 // changes from before a restart, or a section Save could not write
+    prefab:bool,                  // its kind: a prefab, shown in the studio light and placed by its one root; chosen when it is made, changed by scene.write kind
     source_stamp:[2]i64,
     sections:Document_Sections,
 }
+
+Document_Kind :: enum u8 {Scene,Prefab}
 
 document_path :: proc(d:^Document) -> string {return string(d.path[:d.path_length])}
 document_file :: proc(d:^Document) -> string {return string(d.file[:d.file_length])}
@@ -91,6 +95,7 @@ document_error_text :: proc(error:Document_Error) -> string {
     case .Capture_Failed: return "the scene could not be copied out of the World: engine.diagnostics says why; the file was not changed"
     case .Bad_Path:     return "the path has a root and no drive, so it names no folder; write it with its drive, as C:/..."
     case .Importing:    return "an import writes assets now; save when it ends (asset.import_status)"
+    case .Not_One_Root: return "a prefab has exactly one root: put its entities under one (Group), or make it a scene (File > Make scene)"
     }
     return ""
 }
@@ -138,6 +143,7 @@ scene_open :: proc(s:^Session,path:string) -> Document_Error {
     document_previous_free(d)
     d.previous=loaded
     d.id=loaded.doc.id
+    d.prefab=.Prefab in loaded.doc.flags
     document_name(d,scene_path(s,file),file)
     document_opened(s)
     if !document_is_prefab(s) {thumbnail_scene_opened(s,d.id)}
@@ -145,8 +151,8 @@ scene_open :: proc(s:^Session,path:string) -> Document_Error {
     return .None
 }
 
-// A scene never saved, with a sky and a sun.
-scene_new :: proc(s:^Session) {
+// A document never saved: a scene with a sky and a sun, or a prefab with its one root.
+scene_new :: proc(s:^Session,prefab:=false) {
     runs_stop(s)
     tools_release(s)
     w:=edited_world(s)
@@ -155,11 +161,16 @@ scene_new :: proc(s:^Session) {
         return
     }
     ai_document_closed(s,s.edit_world)
-    sky:=entity_make(s,w,{preset=.Empty,name="Sky",named=true})
-    if t:=core.world_table_of(w,erender.Sky);t!=nil && sky!=core.NONE {core.add(t,sky,erender.SKY_DEFAULT)}
-    entity_make(s,w,{preset=.Sun,name="Sun",named=true})
+    if prefab {
+        entity_make(s,w,{name="Prefab",named=true})
+    } else {
+        sky:=entity_make(s,w,{name="Sky",named=true})
+        if t:=core.world_table_of(w,erender.Sky);t!=nil && sky!=core.NONE {core.add(t,sky,erender.SKY_DEFAULT)}
+        entity_make(s,w,{recipe="sun",name="Sun",named=true})
+    }
     core.world_settle(w)
     document_reset(s)
+    s.document.prefab=prefab
     document_opened(s)
 }
 
@@ -208,6 +219,8 @@ document_capture :: proc(s:^Session,captured:^asset.Scene,id:base.Asset_Id,recov
         log.errorf("the scene could not be captured: %s",scene.error_text(error))
         return error==.Out_Of_Memory?.Out_Of_Memory:.Capture_Failed
     }
+    captured.doc.flags-={.Prefab}
+    if s.document.prefab {captured.doc.flags+={.Prefab}}
     kept:[]asset.Override
     if previous:=s.document.previous;previous!=nil {kept=previous.overrides[:]}
     if error:=prefab_overrides_put(s,captured,kept);error!=.None {
@@ -235,6 +248,7 @@ document_write :: proc(s:^Session,file:string,as_document:bool) -> Document_Erro
     captured:asset.Scene
     document_capture(s,&captured,id) or_return
     defer asset.scene_destroy(&captured)
+    if as_document && d.prefab && asset.prefab_refused(&captured)!="" {return .Not_One_Root}
     if asset.scene_save(&captured,file)!=.None {return .Write_Failed}
     if !as_document {return .None}
     // What was written is what the next save carries from.
@@ -262,6 +276,7 @@ document_restore :: proc(s:^Session,file,path:string,unsaved:bool) -> Document_E
     document_previous_free(d)
     d.previous=loaded
     d.id=loaded.doc.id
+    d.prefab=.Prefab in loaded.doc.flags
     if path!="" {document_name(d,path,scene_file(s,path))} else {document_name(d,"","")}
     document_opened(s)
     d.unsaved=unsaved
@@ -281,6 +296,7 @@ document_reset :: proc(s:^Session) {
     document_previous_free(d)
     d.id={}
     d.unsaved=false
+    d.prefab=false
     d.saved=history.edits_scene_state(s.edits)
     document_name(d,"","")
 }
@@ -300,8 +316,9 @@ pending_plugin :: proc(pending:Pending) -> bool {return pending==.Play_Plugin}
 
 Choice :: enum u8 {Save,Discard,Cancel}
 
-file_new :: proc(s:^Session) {
+file_new :: proc(s:^Session,prefab:=false) {
     tool_preview_cancel(s)
+    s.new_prefab=prefab
     assets:=document_closing_assets(s)
     if document_dirty(s) || len(assets)>0 || scene_switch_interrupts(s) {confirm_open(s,.New,assets);return}
     s.requests+={.New}

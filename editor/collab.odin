@@ -34,18 +34,18 @@ import "mirai:ui"
 // draw as avatars and outlines: selecting holds nothing.
 //
 // A guest joins with the code of the invitation of the host (net/invite.odin):
-// its address on the router, or on its network, and the token of the session.
+// its address on its network and on its router, and the token of the session.
 
 COLLAB_PORT :: 7950
-COLLAB_VERSION :: 5 // of the messages: an editor of another one has another version of the project
+COLLAB_VERSION :: 6 // of the messages: an editor of another one has another version of the project
 COLLAB_PEERS :: 8 // the host and seven guests
 COLLAB_NAME_BYTES :: 32
 COLLAB_SELECTION :: 16
 COLLAB_PRESENCE_INTERVAL :: 1.0/12
 COLLAB_EDIT_INTERVAL :: 1.0/30
 COLLAB_PRESENCE_SEEN :: 3.0 // seconds
-COLLAB_CHUNK :: 8<<10
-COLLAB_MESSAGE :: 10<<10
+COLLAB_MESSAGE_BYTES :: 1<<30 // what one message may hold: a peer that sends more is cut off
+COLLAB_CHANNELS :: []wire.Channel_Desc{{kind=.Reliable,queue_bytes=256<<10,window=512},{kind=.Unreliable}}
 COLLAB_HELLO_TIMEOUT :: 10.0
 COLLAB_WORKER_INTERVAL :: 2*time.Millisecond // between updates of the network half
 COLLAB_PLAYING :: u8(1) // presence: inside a Play or a Simulate of its own
@@ -72,7 +72,7 @@ collab_error_text :: proc(error:Collab_Error) -> string {
     case .None:      return ""
     case .Busy:      return "a session is open; leave it first"
     case .Playing:   return "a game is playing; stop it first"
-    case .Invite:    return "not the code of an invitation: like K7Q2-9XMA-PL3F-0B2C"
+    case .Invite:    return "not the code of an invitation: like R2M0-253B-DK5G-0W87-M0MA-3CP3-TKJZ-C1RR-EJT; copy it again"
     case .Transport: return "the port could not be opened"
     case .No_Assets: return "the project has no assets folder"
     case .Dirty:     return "the scene has unsaved changes; save it or discard them"
@@ -87,7 +87,7 @@ Collab_Message :: enum u8 {
     Play_Mark,Play_Scene_Request,Play_Scene,           // the scene of a game of the host on the network (collab_play.odin)
     Agents,                                            // the agents of an editor (collab_agents.odin)
     Ping,                                              // a point of the scene an editor pinged (collab_ping.odin)
-    File,                                              // an asset file an editor changed, in chunks (collab_files.odin)
+    File,                                              // an asset file an editor changed (collab_files.odin)
     File_Unsent,                                       // an asset file an editor changed that is too large to travel
 }
 
@@ -115,10 +115,10 @@ Collab_Peer :: struct {
     selection:[COLLAB_SELECTION]base.Entity_Id,
     selection_count:int,
     agents:Collab_Agents,
-    file_bytes:[dynamic]u8, // a file it sends, as it arrives
-    file_total:int,
+    incoming:[dynamic]u8, // a message it sends, as its pieces arrive (wire.Command.more)
     out:[dynamic][]u8,   // reliable messages not sent yet
     head:int,
+    sent:int,            // bytes of out[head] the channel took
     connected_at:f64,
 }
 
@@ -163,8 +163,8 @@ Collab_State :: struct {
     mapping:wire.Port_Mapping,
     mapping_on:bool,
     port:int,
-    invite:u32,           // the token of the session
-    target:wire.Address,  // a guest: the host
+    invite:u64,           // the token of the session
+    invitation:wire.Invitation, // a guest: of the host
     self:u8,
     peers:[COLLAB_PEERS]Collab_Peer,
     layout:u32,
@@ -174,8 +174,6 @@ Collab_State :: struct {
     told_values:[dynamic]u8,
     crossed:map[Collab_Key]struct{},    // a guest: the rows other ends wrote while edits of its own were on their way to the host
     by_hash:map[u64]int,
-    snapshot:[dynamic]u8, // a guest assembling the scene
-    snapshot_total:int,
     epoch:u64,            // of the history of the document being shared
     presence_at,edit_at:f64,
     code:[48]u8,          // the host: its invitation, as others reach it
@@ -186,8 +184,6 @@ Collab_State :: struct {
     echoed_edits:u64,     // a guest: its Edit messages the host sent back
     play_serial:u32,      // a guest: the last game of the host it saw the mark of
     play_copied:bool,     // and its copy of the scene of that game is written
-    play_bytes:[dynamic]u8,
-    play_total:int,
     figures:[COLLAB_PEERS]Presence, // of the others, by their place in peers
     agent_figures:[COLLAB_PEERS][COLLAB_AGENTS]Presence, // of their agents
     agents_key:u64,  // of the agents of this end as last sent
@@ -326,7 +322,7 @@ collab_name_set :: proc(c:^Collab,name:string) {
 }
 
 @(private)
-collab_start :: proc(s:^Session,role:Collab_Role,port:int,name:string,invite:u32,target:wire.Address={}) -> (st:^Collab_State,error:Collab_Error) {
+collab_start :: proc(s:^Session,role:Collab_Role,port:int,name:string,invitation:wire.Invitation) -> (st:^Collab_State,error:Collab_Error) {
     c:=collab_of(s)
     if c.state!=nil && c.state.role!=.None && c.state.phase!=.Ended {return nil,.Busy}
     if s.app.assets==nil {return nil,.No_Assets}
@@ -336,19 +332,15 @@ collab_start :: proc(s:^Session,role:Collab_Role,port:int,name:string,invite:u32
     st=new(Collab_State)
     st.role=role
     st.layout=collab_layout_hash(s.info)
-    channels:=[2]wire.Channel_Desc{
-        {kind=.Reliable,max_message_bytes=COLLAB_MESSAGE,queue_bytes=256<<10},
-        {kind=.Unreliable},
-    }
-    // A guest of an IPv4 host binds IPv4, which can also look for it by broadcast on its network.
-    bind:=role==.Guest && target.kind==.IP4?wire.address_ip4(0,0,0,0,0):wire.address_any6(role==.Host?port:0)
+    // The addresses of an invitation are IPv4.
+    bind:=role==.Guest?wire.address_ip4(0,0,0,0,0):wire.address_any6(port)
     if !wire.udp_open(&st.udp,bind) {
         free(st)
         return nil,.Transport
     }
     desc:=wire.Host_Desc{
-        mode=role==.Host?.Server:.Client,transport=wire.udp_transport(&st.udp),protocol_id=0x4d495241,version=st.layout,invite=invite,
-        max_connections=COLLAB_PEERS-1,channels=channels[:],
+        mode=role==.Host?.Server:.Client,transport=wire.udp_transport(&st.udp),protocol_id=0x4d495241,version=st.layout,invite=invitation.token,
+        max_connections=COLLAB_PEERS-1,channels=COLLAB_CHANNELS,
     }
     // Its network half runs on a thread of its own: an editor busy for a while
     // (generating the world of a game) keeps answering, and the session lives.
@@ -361,7 +353,7 @@ collab_start :: proc(s:^Session,role:Collab_Role,port:int,name:string,invite:u32
     collab_tables_build(s,st)
     st.epoch=s.edits.epoch
     st.port=int(st.udp.address.port)
-    st.invite=invite
+    st.invite=invitation.token
     c.state=st
     return st,.None
 }
@@ -370,7 +362,7 @@ collab_start :: proc(s:^Session,role:Collab_Role,port:int,name:string,invite:u32
 collab_host :: proc(s:^Session,port:int,name:string) -> Collab_Error {
     invite,made:=wire.invite_token()
     if !made {return .No_Random}
-    st,error:=collab_start(s,.Host,port>0?port:COLLAB_PORT,name,invite)
+    st,error:=collab_start(s,.Host,port>0?port:COLLAB_PORT,name,{token=invite})
     if error!=.None {return error}
     st.phase=.Joined
     st.self=0
@@ -386,19 +378,18 @@ collab_host :: proc(s:^Session,port:int,name:string) -> Collab_Error {
 
 // Enters the session of another editor with the code of its invitation: the scene is replaced by the one of the host.
 collab_join :: proc(s:^Session,code,name:string,discard:bool) -> Collab_Error {
-    target,invite,valid:=wire.invite_decode(code)
+    invitation,valid:=wire.invite_decode(code)
     if !valid {return .Invite}
     if document_dirty(s) && !discard {return .Dirty}
-    st,error:=collab_start(s,.Guest,0,name,invite,target)
+    st,error:=collab_start(s,.Guest,0,name,invitation)
     if error!=.None {return error}
-    // Also on this machine and its network: the address of the code may be a router that does not loop back.
-    if wire.host_connect(&st.host,target,nearby=true)!=.None {
+    if wire.host_connect(&st.host,invitation.lan,invitation.public)!=.None {
         collab_destroy(s)
         return .Transport
     }
     st.phase=.Connecting
     st.self=0xff
-    st.target=target
+    st.invitation=invitation
     st.peers[0].connected_at=wire.host_time(&st.host)
     return .None
 }
@@ -423,18 +414,12 @@ collab_destroy :: proc(s:^Session) {
     c:=collab_of(s)
     st:=c.state
     if st==nil {return}
-    delete(st.play_bytes)
     if st.mapping_on {wire.mapping_close(&st.mapping)}
     wire.host_destroy(&st.host)
     wire.udp_close(&st.udp)
-    for &peer in st.peers {
-        for message in peer.out[peer.head:] {delete(message)}
-        delete(peer.out)
-        delete(peer.file_bytes)
-    }
+    for &peer in st.peers {collab_peer_free(&peer)}
     for path in st.files_out {delete(path)}
     delete(st.files_out)
-    delete(st.snapshot)
     collab_tables_free(st)
     history.journal_reading(s.edits,false)
     for &tab in s.documents {history.journal_reading(&tab.edits,false)}
@@ -455,12 +440,12 @@ collab_close :: proc(s:^Session) {
     collab_destroy(s)
 }
 
-// The code others join with, from anywhere: by the address the router mapped, or the one of the
-// adapter. None until the router answered: the code is of the address it opens.
+// The code others join with, from anywhere: with the address of the adapter and the one the
+// router mapped. None until the router answered, so the code has the address it opens.
 @(private)
 collab_codes_update :: proc(st:^Collab_State) {
     if st.mapping_on && wire.mapping_poll(&st.mapping).phase==.Pending {return}
-    code:=wire.invite_encode(wire.address_reachable(&st.mapping,st.mapping_on,st.port),st.invite,context.temp_allocator)
+    code:=wire.invite_encode(wire.invite_make(st.invite,st.port,st.mapping_on?&st.mapping:nil),context.temp_allocator)
     if code!=string(st.code[:st.code_length]) {log.infof("invitation to the session: %s",code)}
     st.code_length=copy(st.code[:],code)
 }
@@ -482,12 +467,22 @@ collab_queue :: proc(peer:^Collab_Peer,bytes:[]u8) {
 }
 
 @(private)
+collab_peer_free :: proc(peer:^Collab_Peer) {
+    for message in peer.out[peer.head:] {delete(message)}
+    delete(peer.out)
+    delete(peer.incoming)
+    peer^={}
+}
+
+// The channel streams each message as its queue drains.
+@(private)
 collab_flush :: proc(st:^Collab_State,peer:^Collab_Peer) {
     for peer.head<len(peer.out) {
         message:=peer.out[peer.head]
-        if wire.message_send(&st.host,peer.connection,0,message)==.Full {break}
+        if wire.message_send(&st.host,peer.connection,0,message,&peer.sent)!=.None || peer.sent<len(message) {break}
         delete(message)
         peer.head+=1
+        peer.sent=0
     }
     if peer.head>0 && peer.head==len(peer.out) {
         clear(&peer.out)
@@ -508,75 +503,17 @@ collab_broadcast :: proc(st:^Collab_State,bytes:[]u8,except:int=-1) {
     }
 }
 
-// The operations as messages of a kind, each within the size of a message:
-// the kind, the author, the count and the operations.
+// The operations as a message of a kind: the kind, the author, the count and the operations.
 @(private)
-collab_ops_pack :: proc(ops:^Collab_Ops,kind:Collab_Message,author:u8) -> [][]u8 {
-    messages:=make([dynamic][]u8,context.temp_allocator)
-    if ops.count==0 {return messages[:]}
-    all:=make([dynamic]u8,context.temp_allocator)
-    append(&all,..serial.writer_bytes(&ops.head))
-    append(&all,..serial.writer_bytes(&ops.body))
-    append(&all,..serial.writer_bytes(&ops.tail))
-    at:=0
-    for at<len(all) {
-        m:serial.Writer
-        collab_begin(&m,kind,COLLAB_MESSAGE)
-        serial.write_scalar(&m,author)
-        count_at:=m.count
-        serial.write_scalar(&m,u16(0))
-        count:=0
-        for at<len(all) {
-            size:=int(intrinsic_u16(all[at+17:]))
-            length:=19+size
-            if count>0 && m.count+length>COLLAB_MESSAGE {break}
-            serial.write_bytes(&m,all[at:][:length])
-            at+=length
-            count+=1
-        }
-        patched:=u16(count)
-        serial.writer_patch(&m,count_at,mem.ptr_to_bytes(&patched))
-        append(&messages,serial.writer_bytes(&m))
-    }
-    return messages[:]
-}
-
-// Bytes too long for one message, in chunks of a kind: the tag, the total,
-// the offset and the chunk.
-@(private)
-collab_chunks_queue :: proc(peer:^Collab_Peer,kind:Collab_Message,data:[]u8,tag:u32=0) {
-    offset:=0
-    for {
-        size:=min(COLLAB_CHUNK,len(data)-offset)
-        m:serial.Writer
-        collab_begin(&m,kind,size+16)
-        serial.write_scalar(&m,tag)
-        serial.write_scalar(&m,u32(len(data)))
-        serial.write_scalar(&m,u32(offset))
-        serial.write_bytes(&m,data[offset:][:size])
-        collab_queue(peer,serial.writer_bytes(&m))
-        offset+=size
-        if offset>=len(data) {break}
-    }
-}
-
-// Adds a chunk to what is being assembled; true when the last one arrived.
-@(private)
-collab_chunk_take :: proc(r:^serial.Reader,into:^[dynamic]u8,total:^int) -> (tag:u32,complete:bool) {
-    tag=serial.read_u32(r)
-    whole:=int(serial.read_u32(r))
-    offset:=int(serial.read_u32(r))
-    chunk:=serial.read_bytes(r,serial.reader_remaining(r))
-    if r.failed || whole<=0 || whole>1<<30 {return}
-    if offset==0 {
-        clear(into)
-        total^=whole
-    }
-    if offset!=len(into) || whole!=total^ {return}
-    append(into,..chunk)
-    if len(into)<total^ {return}
-    total^=0
-    return tag,true
+collab_ops_pack :: proc(ops:^Collab_Ops,kind:Collab_Message,author:u8) -> []u8 {
+    m:serial.Writer
+    collab_begin(&m,kind,16+ops.head.count+ops.body.count+ops.tail.count)
+    serial.write_scalar(&m,author)
+    serial.write_scalar(&m,u32(ops.count))
+    serial.write_bytes(&m,serial.writer_bytes(&ops.head))
+    serial.write_bytes(&m,serial.writer_bytes(&ops.body))
+    serial.write_bytes(&m,serial.writer_bytes(&ops.tail))
+    return serial.writer_bytes(&m)
 }
 
 // The name an editor of the session gave.
@@ -633,7 +570,10 @@ collab_update :: proc(s:^Session) {
 }
 
 @(private)
-collab_snapshot_loading :: proc(st:^Collab_State) -> bool {return st.snapshot_total>0}
+collab_snapshot_loading :: proc(st:^Collab_State) -> bool {
+    incoming:=st.peers[0].incoming[:]
+    return st.role==.Guest && len(incoming)>0 && incoming[0]==u8(Collab_Message.Snapshot)
+}
 
 @(private)
 collab_command :: proc(s:^Session,st:^Collab_State,command:wire.Command,now:f64) {
@@ -676,10 +616,7 @@ collab_command :: proc(s:^Session,st:^Collab_State,command:wire.Command,now:f64)
         }
         for &peer,i in st.peers {
             if i>0 && peer.used && peer.connection==command.connection {
-                for message in peer.out[peer.head:] {delete(message)}
-                delete(peer.out)
-                delete(peer.file_bytes)
-                peer={}
+                collab_peer_free(&peer)
                 collab_roster_send(st)
             }
         }
@@ -691,9 +628,30 @@ collab_command :: proc(s:^Session,st:^Collab_State,command:wire.Command,now:f64)
             }
             if from<0 {return}
         }
-        collab_receive(s,st,from,command.data,now)
+        sender:=&st.peers[max(from,0)]
+        message,whole:=collab_incoming(st,sender,command)
+        if !whole {return}
+        collab_receive(s,st,from,message,now)
+        if st.phase!=.Ended {clear(&sender.incoming)}
     case .Object_Created,.Object_Updated,.Object_Destroyed,.Role_Changed,.Event,.Input,.Authority_Requested,.Authority_Changed:
     }
+}
+
+// A message of a peer, whole: at once, or with its last piece; what it
+// assembled stays in incoming until the caller clears it. A peer that sends
+// more than COLLAB_MESSAGE_BYTES in one message is cut off.
+@(private)
+collab_incoming :: proc(st:^Collab_State,sender:^Collab_Peer,command:wire.Command) -> (message:[]u8,whole:bool) {
+    if len(sender.incoming)==0 && !command.more {return command.data,true}
+    if len(sender.incoming)+len(command.data)>COLLAB_MESSAGE_BYTES {
+        if st.role==.Guest {collab_end(st,"the host sent a message larger than a session carries");return}
+        wire.host_disconnect(&st.host,command.connection,.Protocol_Error)
+        collab_peer_free(sender)
+        collab_roster_send(st)
+        return
+    }
+    append(&sender.incoming,..command.data)
+    return sender.incoming[:],!command.more
 }
 
 @(private)
@@ -718,9 +676,7 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
         for &other,i in st.peers {
             if i==0 || i==from || !other.used || other.client!=client || client==0 {continue}
             wire.host_disconnect(&st.host,other.connection,.Replaced)
-            for message in other.out[other.head:] {delete(message)}
-            delete(other.out)
-            delete(other.file_bytes)
+            collab_peer_free(&other)
             other=st.peers[from]
             st.peers[from]={}
             from=i
@@ -741,17 +697,13 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
         if !r.failed {st.self=id}
     case .Snapshot:
         if st.role!=.Guest {return}
-        if _,complete:=collab_chunk_take(&r,&st.snapshot,&st.snapshot_total);complete {
-            loaded:=collab_snapshot_load(s,st,st.snapshot[:])
-            clear(&st.snapshot)
-            if !loaded {
-                collab_end(st,"the scene of the host could not be opened")
-                return
-            }
-            st.phase=.Joined
-            ready:=[1]u8{u8(Collab_Message.Ready)}
-            collab_queue(&st.peers[0],ready[:])
+        if !collab_snapshot_load(s,st,data[1:]) {
+            collab_end(st,"the scene of the host could not be opened")
+            return
         }
+        st.phase=.Joined
+        ready:=[1]u8{u8(Collab_Message.Ready)}
+        collab_queue(&st.peers[0],ready[:])
     case .Ready:
         if st.role!=.Host || from<0 {return}
         st.peers[from].joined=true
@@ -829,10 +781,7 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
         if from>0 && st.peers[from].used {
             peer:=&st.peers[from]
             wire.host_disconnect(&st.host,peer.connection,.Closed)
-            for message in peer.out[peer.head:] {delete(message)}
-            delete(peer.out)
-            delete(peer.file_bytes)
-            peer^={}
+            collab_peer_free(peer)
             collab_roster_send(st)
         }
     case .Play_Mark:
@@ -850,7 +799,7 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
     case .Ping:
         if st.phase==.Joined && (st.role==.Guest || from>=0 && st.peers[from].joined) {collab_ping_receive(s,st,from,data)}
     case .File:
-        if st.phase==.Joined && (st.role==.Guest || from>=0 && st.peers[from].joined) {collab_file_receive(s,st,from,&r)}
+        if st.phase==.Joined && (st.role==.Guest || from>=0 && st.peers[from].joined) {collab_file_receive(s,st,from,data,&r)}
     case .File_Unsent:
         if st.phase==.Joined && (st.role==.Guest || from>=0 && st.peers[from].joined) {collab_unsent_receive(s,st,from,&r)}
     }
@@ -888,10 +837,12 @@ collab_snapshot_send :: proc(s:^Session,st:^Collab_State,peer:^Collab_Peer) {
     cap:asset.Scene
     if _,error:=scene.capture(w,&cap,&a.types,{previous=d.previous,id=d.id});error!=.None {return}
     defer asset.scene_destroy(&cap)
+    cap.doc.flags-={.Prefab}
+    if d.prefab {cap.doc.flags+={.Prefab}}
     out:serial.Writer
-    serial.writer_init(&out,0,context.temp_allocator)
+    collab_begin(&out,.Snapshot,0)
     if asset.scene_write(&cap,&out)!=.None {return}
-    collab_chunks_queue(peer,.Snapshot,serial.writer_bytes(&out))
+    collab_queue(peer,serial.writer_bytes(&out))
 }
 
 // Replaces the World by the scene of the host, all of it or nothing.
@@ -914,6 +865,7 @@ collab_snapshot_load :: proc(s:^Session,st:^Collab_State,data:[]u8) -> bool {
     document_previous_free(d)
     if asset.scene_read(records,&a.types,own)==.None {d.previous=records} else {free(records)}
     d.id={}
+    d.prefab=asset.asset_prefab(&source)
     document_name(d,"","")
     document_opened(s)
     st.epoch=s.edits.epoch
@@ -1094,10 +1046,8 @@ collab_edits_send :: proc(s:^Session,st:^Collab_State) {
     history.journal_read_done(edits,st.cursor)
     if ops.count==0 {return}
     if st.role==.Host {s.document.unsaved=true}
-    for message in collab_ops_pack(&ops,.Edit,st.self) {
-        collab_broadcast(st,message)
-        st.sent_edits+=1
-    }
+    collab_broadcast(st,collab_ops_pack(&ops,.Edit,st.self))
+    st.sent_edits+=1
     st.sent_ops+=u64(ops.count)
 }
 
@@ -1170,7 +1120,7 @@ collab_edit_apply :: proc(s:^Session,st:^Collab_State,data:[]u8,own:=false) {
     r:=serial.reader_init(data)
     serial.read_u8(&r)
     serial.read_u8(&r)
-    count:=int(serial.read_u16(&r))
+    count:=int(serial.read_u32(&r))
     w:=edited_world(s)
     es:=core.world_entities(w)
     touched:=make([dynamic]Collab_Touch,context.temp_allocator)

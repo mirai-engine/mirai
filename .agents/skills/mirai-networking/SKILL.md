@@ -20,7 +20,9 @@ neither the data world nor physics. A replicated object is an opaque game id plu
   `import wire "mirai:net"`. It stays in the engine: editor collaboration uses it.
 - Game networking is the `multiplayer` plugin (`plugins/multiplayer/runtime`). It does not know
   physics: the two share [`core` tables](references/multiplayer.md#what-another-library-simulates).
-  Fractures are replicated by the automatic `destruct_multiplayer` bridge. The player does not know
+  What a library changes by operations goes as an
+  [operation journal](references/multiplayer.md#operation-journal): fractures
+  (`destruct_multiplayer`) and terrain edits (`terrain_multiplayer`). The player does not know
   the network: the plugin takes its own arguments from `host.Launch`.
 - A granted port mapping is only a candidate endpoint; the application handshake confirms the
   real reach.
@@ -53,6 +55,8 @@ neither the data world nor physics. A replicated object is an opaque game id plu
   do → [problems](references/multiplayer.md#problems)
 - Lag compensation (`Rewind`, `rewind_tick`, `rewind_pose`, `rewind_tolerance`) and the absolute
   look in the input → [lag compensation](references/multiplayer.md#lag-compensation)
+- Networking a library's operations (numbering, order, predictions, parts, what a correction
+  replays) → [operation journal](references/multiplayer.md#operation-journal)
 - Replicated bodies, `core.Pose_Target` and `core.Motion` →
   [what another library simulates](references/multiplayer.md#what-another-library-simulates)
 - Role of this end, replicated seats, player identity and owners per seat →
@@ -93,8 +97,9 @@ neither the data world nor physics. A replicated object is an opaque game id plu
 
 In `plugins/multiplayer/runtime`:
 
-- `types.odin`: what a game declares (`Replicate`, `Net_Link`, `Net_Settings`, `Net_Events`,
-  `Net_Outbox`, `Remote_Inputs`, `send`, `event_read`), `DEFAULT_PORT` and `PLAYER_NET`.
+- `types.odin`: what a game declares (`Replicate`, `Net_Link`, `Net_Settings`, `Net_Outbox`,
+  `Net_Spawns`, `Remote_Inputs`, `send`, `predict_spawn`), `DEFAULT_PORT` and `PLAYER_NET`. The
+  messages that arrived are `core.Net_Messages`, read through `core.Inbox(T)`.
 - `session.odin`, `loop.odin`: `Net_Session`, the generator catalog protocol, composite types
   (`net_type`), opening and closing, the player arguments (`launch_read`), frame functions, what
   the player prints, helpers (`is_server`, `is_client`).
@@ -111,6 +116,7 @@ In `plugins/multiplayer/runtime`:
   component records.
 - `rewind.odin`: lag compensation; the server remembers the poses of what has `Rewind` and gives
   the tick each client saw (`rewind_tick`, `rewind_pose`).
+- `journal.odin`: the replicated operation journal (`Journal`, `Net_Journal_*`).
 
 `plugins/destruct_multiplayer/runtime/fracture.odin` replicates fractures and
 `plugins/terrain_multiplayer/runtime/terrain_multiplayer.odin`, terrain edits.
@@ -137,6 +143,12 @@ In `plugins/multiplayer/runtime`:
   allocate.
 - **Every connection is sealed, and nothing answers an unproven sender:** before a returned cookie
   only the challenge, and nothing to a proof that does not open. There is no unsealed mode.
+- **A connection changes address only on a datagram that opens under its key** and is newer than
+  any it accepted ([roaming](references/networking.md#connections)). A wrong proof costs its
+  address, never everyone: guessers do not shut out who brings the invitation.
+- **Two ways in, nothing else:** by address (a server without an invitation admits anyone who
+  reaches it) and by invitation code (only its holders). The code carries the host's real
+  addresses, on its network and on its router; a client asks only those, never guesses others.
 - **Every byte from the network is hostile.** It is read with `Bit_Reader`, which never leaves the
   buffer; every index, type, mask and length is validated before use. A datagram that cannot be
   interpreted closes the connection with `Protocol_Error`; it is never half-applied over another
@@ -160,8 +172,8 @@ In `plugins/multiplayer/runtime`:
   `testing.expect` and `return`.
 - **A correction restores the world: everything the network writes into it must be repeatable.**
   What comes back is the copy of the `World` that the client stores at every tick; state outside it
-  (`host` storages, one per world: the session, `Destruct_Net`) does not come back, and keeps what
-  it needs to reapply (the destruction journal with its `sequence`, the last received state).
+  (`host` storages, one per world: the session, the `Journal` of a library) does not come back, and
+  keeps what it needs to reapply (each entry of a journal with the tick it was first applied at).
 - **The network does not call the library that simulates nor write its state.** It writes
   `core.Pose_Target`, `core.Remote`, `core.Network`, the `core.Disabled` of replicas
   ([switched off](references/multiplayer.md#what-the-game-declares)) and the replicated
@@ -185,7 +197,7 @@ In `plugins/multiplayer/runtime`:
   until it says it is in it.
 - **What the game sends belongs to a world.** A held connection hears only `Held` events, and each
   end discards game messages from another world that is not its own; what a library keeps outside
-  the `World` (`Destruct_Net`) is forgotten on scene change.
+  the `World` (its `Journal`) is forgotten on scene change.
 - **A player is the hash of their secret.** The server never takes as a player something the
   client presents as is nor derives it from a name; a connection presents only one.
 - **The network does not write `core.Clock`:** a client requests the server's pause and scale
@@ -209,9 +221,14 @@ In `plugins/multiplayer/runtime`:
     on its own.
 - **The type of an object is what its entity has now.** A replicated component that comes or goes
   re-types the object in place (`object_retype`); it is never destroyed and made again for it.
-- **A spawn both ends make in a tick is one entity** (`predict_spawn`): the replica takes the
-  client's by the Id both draw, also when a correction runs the tick of the spawn again
-  (`replicas_relink`, `spawns_settle`).
+- **A spawn both ends make in a tick is one entity** (`predict_spawn`): the plugin numbers the
+  spawns of each seat in the tick, never the game, and the replica takes the client's by the Id
+  both draw, also when a correction runs the tick of the spawn again (`replicas_relink`,
+  `spawns_settle`). What a library makes for a replica (`predict_kept`) goes the same one way.
+- **Messages arrive typed:** a step receives `core.Inbox(T)` of its `@(net_message)` type; the
+  plugin holds no fixed size for a message, and a reliable one larger than a datagram streams.
+- **The server reads visibility by change:** objects again only when `Visibility` changes,
+  connections also when a seat comes, goes or turns; an idle tick reads none.
 - **The client tick never goes backwards** once synchronized: the clock corrects with a bounded
   dilation and only jumps forward; the display time of remote objects does not either
   ([time](references/networking.md#time-and-inputs)).
@@ -219,9 +236,9 @@ In `plugins/multiplayer/runtime`:
   copy and the repeated ticks (`host.app_tick_replay`) advance it to the present;
   `core.Frame_Time` is not copied, so rollback neither stores nor restores anything of the clock.
   A repeated tick sees the content it saw the first time (the generation the ring keeps), and the
-  connection events and messages it had (`Net_Connections`, `Net_Events`, filled at the start of
-  each tick). `send` does not queue (`Net_Outbox.replaying`), `Net_Outbox` is not copied with the
-  world (what it holds is not lost) and
+  messages it had (`core.Net_Messages`, filled at the start of each tick); `Net_Connections` is
+  not pushed again. `send` does not queue (`Net_Outbox.replaying`), `Net_Outbox` is not copied
+  with the world (what it holds is not lost) and
   `net_tick_tail` neither publishes nor sends: messages are not repeated unless the game asks; the
   rest follows the rule of [`Time`](../mirai-core/references/core.md#core-storages)
   ([correction](references/multiplayer.md#the-tick)).
@@ -232,7 +249,8 @@ In `plugins/multiplayer/runtime`:
 
 - `mirai test net [test...]`, `mirai test std/serial` (bitstream) and
   `mirai test plugins/multiplayer/runtime`. Run the `*_test.odin` of the touched area: `address`,
-  `connection`, `secure`, `invite`, `congestion`, `conditioner`, `replication`,
+  `connection`, `secure`, `invite`, `congestion`, `flow` (reliable window, a streamed part),
+  `conditioner`, `replication`,
   `descriptor_boundary`, `large_state`, `collection`, `references`, `convergence`, `grid`, `scope`,
   `authority`, `interpolation`, `clock`, `worker`, `baseline` (pools and shared baselines),
   `replication` (re-typing:

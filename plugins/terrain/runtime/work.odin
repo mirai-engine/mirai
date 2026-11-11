@@ -113,7 +113,8 @@ work_slot :: proc(data:^Terrain_Data,urgent:bool) -> ^Work_Slot {
 @(private)
 work_start :: proc(data:^Terrain_Data,slot:^Work_Slot) {
     if data.jobs==nil {work_run(slot,jobs.OWNER);return}
-    jobs.run(data.jobs,jobs.OWNER,work_run,slot,&slot.counter)
+    // A patient slot is taken once it ended; the others are waited for by the next call of their phase.
+    jobs.run(data.jobs,jobs.OWNER,.Background if slot.patient && !slot.urgent else .Frame,work_run,slot,&slot.counter)
 }
 
 // The build of a chunk or a node, from its source as it is now; a node of a
@@ -151,14 +152,13 @@ work_page :: proc(data:^Terrain_Data,slot:^Work_Slot,entry:^Data_Source,grid:Gri
     block:Page_Block
     size,count:=4,0
     switch grid {
-    case .Heights: block=grid_block(&s.heights,index);_,count=grid_page_extent(&s.heights,index)
+    case .Field:   block=grid_block(&s.field,index);_,count=grid_page_extent(&s.field,index)
     case .Weights: block=grid_block(&s.weights,index);_,count=grid_page_extent(&s.weights,index)
-    case .Holes: block,size=grid_block(&s.holes,index),1;_,count=grid_page_extent(&s.holes,index)
-    case .Distances: block=grid_block(&s.distances,index);_,count=grid_page_extent(&s.distances,index)
+    case .Holes:   block,size=grid_block(&s.holes,index),1;_,count=grid_page_extent(&s.holes,index)
     }
     made:bool
     if slot.page,made=shared_make(u8,count*size,s.allocator);!made {return false}
-    slot.band=s.cell*SDF_BAND_CELLS
+    slot.band=field_limit(s.info)
     slot.kind,slot.urgent,slot.patient,slot.reads,slot.phase,slot.epoch=.Page,false,false,true,phase,data.epoch
     slot.source,slot.id,slot.index,slot.grid,slot.block,slot.file,slot.ok=s,entry.id,index,grid,block,s.file,false
     work_start(data,slot)
@@ -190,10 +190,9 @@ work_run :: proc(slot:^Work_Slot,worker:int) {
         slot.ok=page_load(slot.block,slot.file,&slot.read,slot.page)
         if !slot.ok {break}
         switch slot.grid {
-        case .Heights: slot.ok=page_valid(slice.reinterpret([]f32,slot.page),height_valid)
+        case .Field:   slot.ok=values_within(slice.reinterpret([]f32,slot.page),slot.band)
         case .Weights: slot.ok=page_valid(slice.reinterpret([]Weights,slot.page),weights_full)
-        case .Holes: slot.ok=page_valid(slot.page,hole_valid)
-        case .Distances: slot.ok=distances_within(slice.reinterpret([]f32,slot.page),slot.band)
+        case .Holes:   slot.ok=page_valid(slot.page,hole_valid)
         }
     }
 }

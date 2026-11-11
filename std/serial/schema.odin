@@ -72,6 +72,7 @@ Field_Flags :: bit_set[Field_Flag;u8]
 // What the tag of a field says besides its flags. Not in the binary schema.
 Field_Hint :: enum u8 {
     Trim,     // a fixed array the text writes up to its last element with a byte set
+    Keyed,    // a fixed array of structs whose first field, a text, names each entry (empty: none): a layer of settings replaces the entries it names
     Entity,   // a text that names an entity: the API says so in its schema
     Optional, // a param a caller may leave out, or a part of a result that is not always there
     Clamp,    // an integer param that only bounds how much a method answers: past its max it takes the max
@@ -101,18 +102,18 @@ Field :: struct {
     description:string, // what the comment on the line of the field says
     asset_kinds:string, // the extensions an Asset_Id field holds, separated by spaces (kind=)
     section:string,     // the title the inspector opens over the field and those after it
-    with:string,        // the component an entity must have to go in an Entity field
     icons:string,       // the icons of the members of an enum, in their order, separated by spaces
     axes:string,        // the letters of the cells of a vector, one each
     graphics:string,    // the label of the field in the graphics popup of the viewport
     choices:string,     // what the graphics popup offers: labels separated by |, each label:value or a label that is its value
     was:string,         // the names the field had before, separated by spaces (was=): a migration reads a stored field by any of them
+    mode:string,        // the values of the field mode of its struct the inspector shows it with, separated by |
 }
 
 // The texts a field owns in its schema.
 @(private)
 field_texts :: #force_inline proc "contextless" (field:^Field) -> [11]^string {
-    return {&field.name,&field.label,&field.unit,&field.description,&field.asset_kinds,&field.section,&field.with,&field.icons,&field.axes,&field.graphics,&field.was}
+    return {&field.name,&field.label,&field.unit,&field.description,&field.asset_kinds,&field.section,&field.icons,&field.axes,&field.graphics,&field.was,&field.mode}
 }
 
 Choice :: struct {name:string,value:i64}
@@ -583,7 +584,7 @@ schema_add_floats :: proc(s:^Schema,info:^runtime.Type_Info,type:Type,count:int,
 }
 
 // The options a tag takes, as an error names them.
-FIELD_TAGS :: "transient, local, readonly, hidden, color, angle, text, trim, entity, inline, optional, clamp, advanced, owned, game, hex, data, min=, max=, step=, precision=, bits=, unit=, name=, kind=, requires=, was=, section=, with=, icons=, axes=, graphics=, choices= and, last, label="
+FIELD_TAGS :: "transient, local, readonly, hidden, color, angle, text, trim, keyed, entity, inline, optional, clamp, advanced, owned, game, hex, data, min=, max=, step=, precision=, bits=, unit=, name=, kind=, requires=, was=, section=, icons=, axes=, graphics=, choices=, mode= and, last, label="
 
 // What the tag of a field says: the only reader of `mirai:"..."`, for the
 // schema and for whoever walks the type information of a struct itself. The
@@ -620,6 +621,7 @@ field_tag :: proc(tag:string) -> (field:Field,problem:string) {
         case "angle":     field.flags+={.Angle}
         case "text":      field.flags+={.Text}
         case "trim":      field.hints+={.Trim}
+        case "keyed":     field.hints+={.Keyed}
         case "entity":    field.hints+={.Entity}
         case "inline":    field.hints+={.Inline}
         case "optional":  field.hints+={.Optional}
@@ -657,12 +659,12 @@ field_tag :: proc(tag:string) -> (field:Field,problem:string) {
         case "name":     field.name=value
         case "kind":     field.asset_kinds=value
         case "section":  field.section=value
-        case "with":     field.with=value
         case "icons":    field.icons=value
         case "axes":     field.axes=value
         case "graphics": field.graphics=value
         case "choices":  field.choices=value
         case "was":      field.was=value
+        case "mode":     field.mode=value
         case "requires": field.required_component=value!=""?base.name_hash(value):0
         case:
             return field,fmt.tprintf("%q is not a tag of a field: the tags are %s",key,FIELD_TAGS)

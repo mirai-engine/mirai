@@ -153,7 +153,6 @@ popup_leave :: proc(ctx:^Context,entry:^Popup_Entry) {
 popup_begin :: proc(ctx:^Context,id:Id,desc:Popup={}) -> bool {
     entry:=popup_find(ctx,id)
     if entry==nil || ctx.popup.depth>=POPUP_DEPTH {return false}
-    th:=&ctx.theme
     padding:=desc.padding if desc.padding>0 || desc.flush else 4
     popup_enter(ctx,entry)
     // It hangs from what opened it, and the layout keeps it inside its
@@ -171,9 +170,9 @@ popup_begin :: proc(ctx:^Context,id:Id,desc:Popup={}) -> bool {
             float.anchor,float.pivot,float.offset=.Bottom_Right if right else .Bottom_Left,.Top_Right if right else .Top_Left,{0,4}
         }
     }
-    top:=th.bar_height+2 if ctx.surface==0 else 0
+    top:=metric(ctx,"bar_height")+2 if ctx.surface==0 else 0
     b:=Box{id=id,width=fixed(desc.width) if desc.width>0 else fit(desc.min_width),height=FIT,direction=.Column,padding=padding_all(padding),gap=desc.gap,
-        float=float,from=from,contain=true,inset={th.margin,top,th.margin,th.margin},fill=th.popup,stroke=th.border,radius=th.radius_popup,shadow=true,block=true}
+        float=float,from=from,contain=true,inset={metric(ctx,"margin"),top,metric(ctx,"margin"),metric(ctx,"margin")},fill=tone(ctx,"popup"),stroke=tone(ctx,"border"),radius=metric(ctx,"radius_popup"),shadow=true,block=true}
     if s:=desc.style;s!=nil {
         b.fill,b.stroke,b.stroke_width,b.radius,b.corners=s.fill,s.stroke,s.stroke_width,0,s.radius
         b.shadow,b.shadow_color,b.shadow_blur,b.shadow_offset=s.shadow,s.shadow_color,s.shadow_blur,s.shadow_offset
@@ -198,7 +197,7 @@ popup_begin :: proc(ctx:^Context,id:Id,desc:Popup={}) -> bool {
                 entry.take=.Enter in in_.keys_pressed
             }
         }
-        if text_field(ctx,search,entry.filter[:],&entry.filter_length,{placeholder=desc.search,live=true,height=th.row}).changed {
+        if text_field(ctx,search,entry.filter[:],&entry.filter_length,{placeholder=desc.search,live=true,height=metric(ctx,"row")}).changed {
             entry.scroll,entry.cursor,entry.filter_changed=0,0 if entry.keys else -1,true
         }
         spacer(ctx,-1,POPUP_SEARCH_GAP)
@@ -244,10 +243,10 @@ menu :: proc(ctx:^Context,id:Id,title:string,height:f32=26,look:Button={}) -> bo
     list:=id_derive(ctx,id,"menu")
     open:=popup_is_open(ctx,list)
     title_button:=look
-    title_button.label,title_button.style,title_button.active,title_button.height=title,.Ghost,open,height
+    title_button.label,title_button.variant,title_button.active,title_button.height=title,"",open,height
     it:=button(ctx,id,title_button)
     anchor,_:=widget_rect(ctx,id)
-    anchor={anchor.x,ctx.theme.bar_height-4 if ctx.surface==0 && anchor.y<ctx.theme.bar_height else anchor.y+anchor.h-4,anchor.w,0}
+    anchor={anchor.x,metric(ctx,"bar_height")-4 if ctx.surface==0 && anchor.y<metric(ctx,"bar_height") else anchor.y+anchor.h-4,anchor.w,0}
     if it.clicked && !open {
         popup_open(ctx,list,anchor)
         p.stack[p.count-1].menu=true
@@ -276,10 +275,9 @@ Menu_Button :: struct {
 // one value is one of these with menu items, the chosen one checked.
 @(deferred_in_out=menu_button_scope_end)
 menu_button :: proc(ctx:^Context,id:Id,text:string,b:Menu_Button={}) -> bool {
-    th:=&ctx.theme
     list:=id_derive(ctx,id,"menu")
     open:=popup_is_open(ctx,list)
-    if button(ctx,id,{label=text,icon=.Chevron_Down,icon_after=true,icon_size=11,icon_color=th.text_muted,style=.Ghost,width=b.width,height=b.height if b.height>0 else th.row,size=b.size if b.size>0 else th.font_small,active=open,disabled=b.disabled,padding=6}).clicked && !open {
+    if button(ctx,id,{label=text,icon=.Chevron_Down,icon_after=true,icon_size=11,icon_color=tone(ctx,"text_muted"),variant="ghost",width=b.width,height=b.height if b.height>0 else metric(ctx,"row"),size=b.size if b.size>0 else metric(ctx,"font_small"),active=open,disabled=b.disabled,padding=6}).clicked && !open {
         anchor,_:=widget_rect(ctx,id)
         popup_open(ctx,list,anchor)
     }
@@ -350,15 +348,14 @@ submenu_scope_end :: proc(ctx:^Context,id:Id,text:string,item:Menu_Item,open:boo
 
 // The title of a group of items, over a rule unless it opens the menu.
 menu_header :: proc(ctx:^Context,text:string) {
-    th:=&ctx.theme
     p:=&ctx.popup
     first:=p.depth==0 || p.rows[p.depth-1]==0
     if box(ctx,{width=GROW,height=FIT,direction=.Column}) {
         if !first {
-            if box(ctx,{width=GROW,height=fixed(1),fill=th.border}) {}
+            if box(ctx,{width=GROW,height=fixed(1),fill=tone(ctx,"border")}) {}
         }
         if box(ctx,{width=GROW,height=FIT,padding={6,6,6,2}}) {
-            label(ctx,text,MENU_HEADER_FONT,th.text_faint,0)
+            label(ctx,text,MENU_HEADER_FONT,tone(ctx,"text_faint"),0)
         }
     }
     menu_row_count(ctx)
@@ -375,21 +372,19 @@ MENU_HEADER_FONT :: f32(10)
 // shortcut and, at the right end, the check or the arrow of a submenu.
 @(private)
 menu_row :: proc(ctx:^Context,id:Id,text:string,item:Menu_Item,open,arrow:bool) -> (it:Interaction) {
-    th:=&ctx.theme
     disabled:=item.disabled || ctx.disabled_depth>0
     it=interact(ctx,id,{.Focusable} if !disabled else {.Passive})
     if disabled {it={}} else {popup_row_keys(ctx,id,&it)}
     // Pointing at an item closes the submenu another item of this menu opened.
     if it.hot && !arrow {menu_submenus_close(ctx)}
-    text_color,muted:=th.danger_soft if item.danger else th.text,th.text_muted
-    icon_color:=item.icon_color if item.icon_color[3]>0 else th.text_muted
-    check:=th.accent_hover
+    text_color,muted:=tone(ctx,"danger_soft") if item.danger else tone(ctx,"text"),tone(ctx,"text_muted")
+    icon_color:=item.icon_color if item.icon_color[3]>0 else tone(ctx,"text_muted")
+    check:=tone(ctx,"accent_hover")
     if disabled {
         text_color,muted,icon_color,check=color_faded(text_color),color_faded(muted),color_faded(icon_color),color_faded(check)
     }
-    fill:=color_hover(th) if it.hot || open else Color{}
-    // The items of a menu are text of the size of the theme.
-    size:=th.font
+    fill:=color_hover(ctx) if it.hot || open else Color{}
+    size:=metric(ctx,"font")
     shortcut:=f32(0)
     if item.shortcut!="" {shortcut=text_width(&ctx.font,item.shortcut,MENU_HEADER_FONT)+1}
     // The column of icons is there when an item of the menu has one: the text of all of them lines up.
@@ -399,7 +394,7 @@ menu_row :: proc(ctx:^Context,id:Id,text:string,item:Menu_Item,open,arrow:bool) 
         column||=entry.icons
         if item.icon!=.None {entry.icons_next=true}
     }
-    if box(ctx,{id=id,width=grow((MENU_ICON+7 if column else 0)+text_width(&ctx.font,text,size)+shortcut+57),height=fixed(th.control),padding={6,0,6,0},gap=7,align_y=.Center,fill=fill,radius=th.radius_control}) {
+    if box(ctx,{id=id,width=grow((MENU_ICON+7 if column else 0)+text_width(&ctx.font,text,size)+shortcut+57),height=fixed(metric(ctx,"control")),padding={6,0,6,0},gap=7,align_y=.Center,fill=fill,radius=metric(ctx,"radius_control")}) {
         if column {element_leaf(ctx,{layout={width=fixed(MENU_ICON),height=fixed(MENU_ICON)},custom=paint_add(ctx,{kind=.Icon,icon=item.icon,icon_color=icon_color,icon_size=MENU_ICON}) if item.icon!=.None else nil})}
         label(ctx,text,size,text_color,0)
         if item.shortcut!="" {label(ctx,item.shortcut,MENU_HEADER_FONT,muted,shortcut)}
@@ -478,16 +473,15 @@ Dropdown :: struct {
 // searched when no option is it, and created takes it (in the temp
 // allocator) when that row is clicked.
 dropdown :: proc(ctx:^Context,id:Id,options:Options,selected:^int,d:Dropdown={},created:^string=nil) -> (changed:bool) {
-    th:=&ctx.theme
     look:=d.look
     list:=id_derive(ctx,id,"list")
     open:=popup_is_open(ctx,list)
     chosen:=option(options,selected^) if selected^>=0 && selected^<options_count(options) else d.empty
-    row_height:=d.row_height if d.row_height>0 else th.row
+    row_height:=d.row_height if d.row_height>0 else metric(ctx,"row")
     padding,pad:=f32(4),f32(0) // of the list, and of the text of a row of a look
     clicked:bool
     if look==nil {
-        clicked=button(ctx,id,{label=chosen,style=.Well,width=d.width,height=d.height,size=d.size if d.size>0 else th.font_small,active=open,disabled=d.disabled,icon=.Chevron_Down,icon_size=13,icon_after=true,icon_color=th.text_muted,padding=7}).clicked
+        clicked=button(ctx,id,{label=chosen,variant="well",width=d.width,height=d.height,size=d.size if d.size>0 else metric(ctx,"font_small"),active=open,disabled=d.disabled,icon=.Chevron_Down,icon_size=13,icon_after=true,icon_color=tone(ctx,"text_muted"),padding=7}).clicked
     } else {
         line:f32
         clicked,line=dropdown_button(ctx,id,chosen,d)
@@ -503,8 +497,8 @@ dropdown :: proc(ctx:^Context,id:Id,options:Options,selected:^int,d:Dropdown={},
     entry:=popup_find(ctx,list)
     if entry==nil {return}
     size:=surface_size(ctx)
-    search_height:=th.row+POPUP_SEARCH_GAP if d.searchable else f32(0)
-    capacity:=clamp(int((size.y-th.bar_height-2*th.margin-2*padding-search_height)/row_height),1,d.rows if d.rows>0 else 10)
+    search_height:=metric(ctx,"row")+POPUP_SEARCH_GAP if d.searchable else f32(0)
+    capacity:=clamp(int((size.y-metric(ctx,"bar_height")-2*metric(ctx,"margin")-2*padding-search_height)/row_height),1,d.rows if d.rows>0 else 10)
     filter:=string(entry.filter[:entry.filter_length])
     scan:=dropdown_scan(options,filter,entry.cursor)
     // A list that can create what it does not find keeps no empty row for it.
@@ -540,7 +534,7 @@ dropdown :: proc(ctx:^Context,id:Id,options:Options,selected:^int,d:Dropdown={},
             least=created!=nil && filter!=""?0:1
             height=f32(clamp(scan.matches,least,capacity))*row_height
         }
-        first,last:=list_begin(ctx,ui_id(ctx,"rows"),&entry.scroll,scan.matches,row_height,height,row_height*1.5)
+        first,last:=list_begin(ctx,id_derive(ctx,list,"rows"),&entry.scroll,scan.matches,row_height,height,row_height*1.5)
         visible:=0
         walk:=options_walk(options)
         for text,index in option_next(&walk) {
@@ -548,21 +542,21 @@ dropdown :: proc(ctx:^Context,id:Id,options:Options,selected:^int,d:Dropdown={},
             if !dropdown_matches(text,filter) {continue}
             visible+=1
             if visible<=first {continue}
-            row_id:=ui_id(ctx,"row",index+1)
+            row_id:=id_derive(ctx,list,"row",index+1)
             if ctx.hot==row_id && ctx.pointer_moved {entry.cursor=index}
             if dropdown_row(ctx,row_id,text,entry.cursor==index,index==selected^,true,row_height,look,pad) {choice=index}
         }
         if scan.matches==0 && created==nil {
-            if look==nil {label(ctx,"No results",th.font_small,th.text_faint)} else {text(ctx,"No results",look.text)}
+            if look==nil {label(ctx,"No results",metric(ctx,"font_small"),tone(ctx,"text_faint"))} else {text(ctx,"No results",look.text)}
         }
-        list_end(ctx,ui_id(ctx,"rows"),scan.matches,last,row_height)
+        list_end(ctx,id_derive(ctx,list,"rows"),scan.matches,last,row_height)
         if created!=nil && d.searchable && filter!="" {
             exact:=false
             walk=options_walk(options)
             for text in option_next(&walk) {
                 if strings.equal_fold(text,filter) {exact=true;break}
             }
-            if !exact && dropdown_row(ctx,ui_id(ctx,"create"),fmt.tprintf("Create \"%s\"",filter),false,false,false,row_height,look,pad) {
+            if !exact && dropdown_row(ctx,id_derive(ctx,list,"create"),fmt.tprintf("Create \"%s\"",filter),false,false,false,row_height,look,pad) {
                 created^=strings.clone(filter,context.temp_allocator)
                 if ctx.edit.id==search {ctx.edit={}}
                 popup_close(ctx,list)
@@ -676,17 +670,16 @@ Panel_Float :: struct {
 // A floating panel of the surface that takes the pointer.
 @(deferred_in=panel_end)
 panel :: proc(ctx:^Context,id:Id,p:Panel_Float) -> bool {
-    th:=&ctx.theme
     layer:=p.layer if p.layer!=0 else LAYER_PANEL
     if p.backdrop {layer=0}
     b:=Box{id=id,layout=p.layout,float={to=.Safe if p.safe else .Surface,anchor=p.anchor,pivot=p.pivot,offset=p.offset,layer=layer},block=true}
     b.direction=.Row if p.row else .Column
     switch {
     case p.bare:
-    case p.docked: b.fill,b.corners=th.panel,p.corners
+    case p.docked: b.fill,b.corners=tone(ctx,"panel"),p.corners
     case:
-        b.fill=th.popup if p.popup else th.panel;b.stroke=p.stroke if p.stroke[3]>0 else th.border
-        b.radius=th.radius_popup if p.popup else th.radius_panel;b.shadow=true
+        b.fill=tone(ctx,"popup") if p.popup else tone(ctx,"panel");b.stroke=p.stroke if p.stroke[3]>0 else tone(ctx,"border")
+        b.radius=metric(ctx,"radius_popup") if p.popup else metric(ctx,"radius_panel");b.shadow=true
     }
     box_begin(ctx,b)
     return true
@@ -707,23 +700,22 @@ Modal :: struct {
 // A dialog over a backdrop that takes every press: `if modal(ctx,id,{...}) {content}`.
 @(deferred_in=modal_end)
 modal :: proc(ctx:^Context,id:Id,m:Modal={}) -> bool {
-    th:=&ctx.theme
     size:=surface_size(ctx)
     backdrop:=id_derive(ctx,id,"backdrop")
     content:=id_derive(ctx,id,"content")
-    box_begin(ctx,{id=backdrop,width=fixed(size.x),height=fixed(size.y),float={to=.Surface,layer=LAYER_MODAL},fill=th.backdrop,block=true})
+    box_begin(ctx,{id=backdrop,width=fixed(size.x),height=fixed(size.y),float={to=.Surface,layer=LAYER_MODAL},fill=tone(ctx,"backdrop"),block=true})
     box_end(ctx,{id=backdrop,float={to=.Surface}})
-    w:=min(size.x-2*th.margin,m.width if m.width>0 else 400)
+    w:=min(size.x-2*metric(ctx,"margin"),m.width if m.width>0 else 400)
     offset:=f32(0)
     if m.scroll!=nil {
         view,found:=widget_rect(ctx,id)
         inner,_:=widget_rect(ctx,content)
-        if ctx.wheel_target==id && ctx.input.wheel.y!=0 {m.scroll^-=ctx.input.wheel.y*th.wheel_step}
+        if ctx.wheel_target==id && ctx.input.wheel.y!=0 {m.scroll^-=ctx.input.wheel.y*WHEEL_STEP}
         if found {m.scroll^=clamp(m.scroll^,0,max(inner.h-view.h,0))}
         offset=m.scroll^
     }
-    box_begin(ctx,{id=id,width=fixed(w),height=fit(0,size.y-2*th.margin),direction=.Column,clip_y=true,scroll={0,offset},
-        float={to=.Surface,anchor=.Center,pivot=.Center,layer=LAYER_MODAL+1},fill=m.fill if m.fill[3]>0 else th.popup,stroke=th.border,radius=th.radius_panel,shadow=true,block=true})
+    box_begin(ctx,{id=id,width=fixed(w),height=fit(0,size.y-2*metric(ctx,"margin")),direction=.Column,clip_y=true,scroll={0,offset},
+        float={to=.Surface,anchor=.Center,pivot=.Center,layer=LAYER_MODAL+1},fill=m.fill if m.fill[3]>0 else tone(ctx,"popup"),stroke=tone(ctx,"border"),radius=metric(ctx,"radius_panel"),shadow=true,block=true})
     widget_add(ctx,id,{.Passive,.Scroll})
     if m.close!=nil {
         // A press outside the dialog closes it, unless a popup of the dialog takes it.
@@ -734,7 +726,7 @@ modal :: proc(ctx:^Context,id:Id,m:Modal={}) -> bool {
         if !m.own_cross {
             corner:=id_derive(ctx,id,"corner")
             box_begin(ctx,{id=corner,width=FIT,height=FIT,float={to=.Parent,anchor=.Top_Right,pivot=.Top_Right,offset={-4,4},layer=LAYER_MODAL+2}})
-            if button(ctx,id_derive(ctx,id,"close"),{icon=.Cross,icon_size=12,style=.Ghost,width=18,height=18,padding=-1,center=true}).clicked {m.close^=true}
+            if button(ctx,id_derive(ctx,id,"close"),{icon=.Cross,icon_size=12,variant="ghost",width=18,height=18,padding=-1,center=true}).clicked {m.close^=true}
             box_end(ctx,{id=corner,float={to=.Parent}})
         }
     }
@@ -751,9 +743,8 @@ modal_end :: proc(ctx:^Context,id:Id,m:Modal) {
 // The bar across the top of the surface: put menus and tools inside.
 @(deferred_in=menu_bar_end)
 menu_bar :: proc(ctx:^Context,id:Id) -> bool {
-    th:=&ctx.theme
-    box_begin(ctx,{id=id,width=fixed(surface_size(ctx).x),height=fixed(th.bar_height),padding={10,0,10,0},gap=2,align_y=.Center,
-        float={to=.Surface,layer=LAYER_BAR},fill=th.bar_top,fill2=th.bar_bottom,stroke=th.border,block=true})
+    box_begin(ctx,{id=id,width=fixed(surface_size(ctx).x),height=fixed(metric(ctx,"bar_height")),padding={10,0,10,0},gap=2,align_y=.Center,
+        float={to=.Surface,layer=LAYER_BAR},fill=tone(ctx,"bar_top"),fill2=tone(ctx,"bar_bottom"),stroke=tone(ctx,"border"),block=true})
     return true
 }
 @(private)

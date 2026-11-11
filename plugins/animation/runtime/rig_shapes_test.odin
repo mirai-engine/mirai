@@ -181,18 +181,18 @@ spatial_bone_and_socket_targets_read_the_sampled_pose_and_keep_their_binding :: 
     append(&skeletons.contents,Skeleton_Content{id=state.skeleton,sockets=sockets})
     target:=spatial_bone(source,"joint3")
     binding:Spatial_Target_Binding;defer delete(binding.path)
-    result,ok:=spatial_target_sample(target,&binding,&playback,&skeletons,{},{},core.read(&worlds))
+    result,ok:=spatial_target_sample(target,&binding,&playback,&skeletons,(^core.Table(core.Transform))(nil),nil,core.read(&worlds))
     testing.expect(t,ok && linalg.length(result.position-mm.Vec3{20,1,0})<1e-5,"the root of a skeleton is its entity, the others its sampled pose")
     target=spatial_socket(source,"grip",{{0,0,.5},1,{1,1,1}})
-    result,ok=spatial_target_sample(target,&binding,&playback,&skeletons,{},{},core.read(&worlds))
+    result,ok=spatial_target_sample(target,&binding,&playback,&skeletons,(^core.Table(core.Transform))(nil),nil,core.read(&worlds))
     testing.expect(t,ok && linalg.length(result.position-mm.Vec3{20,1.2,.5})<1e-5)
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     stable:=true
-    for _ in 0..<32 {value,valid:=spatial_target_sample(target,&binding,&playback,&skeletons,{},{},core.read(&worlds));stable &&=valid && value==result}
+    for _ in 0..<32 {value,valid:=spatial_target_sample(target,&binding,&playback,&skeletons,(^core.Table(core.Transform))(nil),nil,&worlds);stable &&=valid && value==result}
     context=saved
     testing.expect(t,stable)
     state.bound+=1;state.targets[3]=base.name_hash("missing");state.aliases[3]=state.targets[3]
-    _,ok=spatial_target_sample(target,&binding,&playback,&skeletons,{},{},core.read(&worlds))
+    _,ok=spatial_target_sample(target,&binding,&playback,&skeletons,(^core.Table(core.Transform))(nil),nil,&worlds)
     testing.expect(t,!ok,"a rebound rig without the bone of the socket")
     testing.expect(t,!spatial_target_valid(spatial_entity(core.NONE)) && spatial_target_valid(spatial_entity(core.NONE),false),"a profile names the kind; the goal, the entity")
 }
@@ -274,7 +274,7 @@ Rig_Shapes_World :: struct {
     attachments:core.Table(Bone_Attachment),
     playback:Playback,
     modifiers:Modifier_Runtime,
-    requests:Modifier_Requests,
+    requests:Animation_Requests,
 }
 
 @(test)
@@ -301,13 +301,13 @@ named_modifier_goals_follow_their_operation_through_a_reordered_profile :: proc(
     profiles:Character_Assets;defer character_assets_free(&profiles)
     skeletons:Skeleton_Assets;defer skeleton_assets_free(&skeletons)
     prepare :: proc(w:^Rig_Shapes_World,profiles:^Character_Assets,skeletons:^Skeleton_Assets,app:^host.App) -> bool {
-        return modifier_prepare(&w.modifiers,core.read(&w.animations),core.read(&w.attachments),profiles,skeletons,&w.playback,app.assets,app.allocator,nil)
+        return modifier_prepare(&w.modifiers,&w.animations,&w.attachments,profiles,skeletons,&w.playback,app.assets,app.allocator,nil)
     }
     if !testing.expect(t,prepare(&w,&profiles,&skeletons,&app)) {return}
     modifier_goal(&w.requests,{rig=rig,kind=.Look,target=spatial_point({1,2,3}),weight=1,enabled=true})
     modifier_control(&w.requests,{rig=rig,kind=.Look,weight=.25,enabled=true})
     modifier_goal(&w.requests,{rig=rig,kind=.Multi_IK,target=spatial_point({7,8,9}),weight=1,enabled=true})
-    modifier_take(&w.modifiers,&w.requests,&problems)
+    modifier_take(&w.modifiers,&w.requests,&problems,0)
     testing.expect(t,len(w.modifiers.goals)==2 && w.modifiers.look.values[0].weight==.25)
     modifier_goal_named(&w.requests,&w.modifiers,{rig=rig,kind=.Look,target=spatial_point({3,4,5}),weight=1,enabled=true},"head")
     modifier_control_named(&w.requests,&w.modifiers,{rig=rig,kind=.Look,weight=.6,enabled=true},"head")
@@ -321,18 +321,18 @@ named_modifier_goals_follow_their_operation_through_a_reordered_profile :: proc(
     if !testing.expect(t,prepare(&w,&profiles,&skeletons,&app)) {return}
     testing.expect(t,len(w.modifiers.goals)==0 && w.modifiers.look.values[0].weight==1 && w.modifiers.look.values[1].weight==1)
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
-    modifier_take(&w.modifiers,&w.requests,&problems)
+    modifier_take(&w.modifiers,&w.requests,&problems,0)
     context=saved
     testing.expect(t,w.modifiers.look.values[0].target.position=={} && w.modifiers.look.values[1].target.position==mm.Vec3{3,4,5} && w.modifiers.look.values[1].weight==.6)
     testing.expect(t,w.modifiers.multi_ik.values[0].effectors[1].target.position==mm.Vec3{9,8,7} && w.modifiers.multi_ik.values[0].effectors[0].target.position=={} && problems.count==0)
-    controls:Modifier_Requests;defer delete(controls.controls.items)
+    controls:Animation_Requests;defer delete(controls.controls.items)
     modifier_goal_named(&w.requests,&w.modifiers,{rig=rig,kind=.Multi_IK,effector=1,target=spatial_point({}),weight=1,enabled=true},"hands")
     modifier_control_named(&controls,&w.modifiers,{rig=rig,kind=.Look,weight=0},"head")
     hands.effector_count=1
     test_character_save(t,directory,"rig",&types,id,{pose={look={eyes},multi_ik={hands}}})
     record.time+=1;assets.revision+=1
     if !testing.expect(t,prepare(&w,&profiles,&skeletons,&app)) {return}
-    modifier_take(&w.modifiers,&w.requests,&problems)
+    modifier_take(&w.modifiers,&w.requests,&problems,0)
     testing.expect(t,problems.count==1 && core.problem_find(&problems,rig,"animation.modifier_effector")!=nil && modifier_request_error(&w.modifiers,rig)==.Missing_Effector)
     modifier_controls_take(&w.modifiers,&controls,&problems,0)
     testing.expect(t,problems.count==2 && core.problem_find(&problems,rig,"animation.modifier_name")!=nil && modifier_request_error(&w.modifiers,rig)==.Missing_Operation && w.modifiers.look.values[0].weight==1)

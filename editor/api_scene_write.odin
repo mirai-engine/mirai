@@ -1,6 +1,7 @@
 package editor
 
 import "base:runtime"
+import "core:fmt"
 import "core:mem"
 import "core:strings"
 import "mirai:asset"
@@ -36,13 +37,14 @@ Api_Write_Made :: struct {
 Api_Scene_Write_Params :: struct {
     root:string `mirai:"entity,optional,label=by its name, a path Parent/Child or its id, the entity the document declares with what hangs from it: entities holds that one entity. Left out: entities are those at the top of the scene"`,
     merge:bool `mirai:"optional,label=true: what the document leaves out stays as it is (entities, components, fields, places): it names only what it changes or adds. Left out: the document declares all there is under root, or in the scene without root, and what it leaves out goes"`,
+    kind:Document_Kind `mirai:"optional,label=what the document is from now on, which Save writes: a scene, shown in its own light, or a prefab, with exactly one root, shown in the studio light and placed as instances. Left out: it stays what it is"`,
     entities:[]Api_Scene_Write_Entity `mirai:"label=the entities, nesting what hangs from each by children; matched by id, else by name among siblings, else (not in a merge) by place, and the others are made"`,
 }
 Api_Scene_Write_Entity :: struct {
     id:string `mirai:"optional,label=matches the entity with this id, which goes under the entity the document nests it in; in a merge, one at the top of the document stays under the parent it has"`,
     name:string `mirai:"optional,label=without id, matches the entity of this name among those of its parent; none: it is made"`,
     preset:string `mirai:"optional,label=a preset or the card of a plugin (cube, sphere, plane, point_light, sun, camera, spawn...): it gives a new entity its components, whose fields components changes, and the rotation and scale it has when those are left out"`,
-    prefab:serial.Json `mirai:"optional,label=on a new entity, the path or the id of a .scene with one root: it is placed as a linked instance, and what the entity and those under it leave out stays as the prefab gives it, also in a later write that names it the same way; on an entity that is there, {asset, root} as scene.inspect gives it declares all it has; a write changes no link of an entity that is there"`,
+    prefab:serial.Json `mirai:"optional,label=on a new entity, the path or the id of a prefab: it is placed as a linked instance, and what the entity and those under it leave out stays as the prefab gives it, also in a later write that names it the same way; on an entity that is there, {asset, root} as scene.inspect gives it declares all it has; a write changes no link of an entity that is there"`,
     copy:string `mirai:"optional,label=on a new entity, the entity it is a copy of, by its name, a path Parent/Child or its id: copied with what hangs from it and new ids, beside that entity unless the document nests it under another; what the entity and those under it say changes the copy"`,
     delete:bool `mirai:"optional,label=true takes the entity away with what hangs from it; it declares nothing else. A member of an instance of a prefab is turned off instead"`,
     position:[3]f32 `mirai:"optional,label=local to the parent; [0,0,0] when left out"`,
@@ -149,22 +151,6 @@ api_write_component :: proc(a:^Api_Write,reading:^author.Reading,e:core.Entity,t
     return true,true
 }
 
-// The components a card gives, as the API shows them: made on an entity of
-// its own that goes at once, inside the open edit.
-@(private="file")
-api_card_parts :: proc(s:^Session,w:core.World_Ref,card:int,allocator:runtime.Allocator) -> []author.Part {
-    e:=core.create(core.world_entities(w))
-    if made:=cards(s)[card].make;made!=nil {made(s,w,e)} else {preset_components(w,e,Preset(card))}
-    core.world_settle(w)
-    parts:=make([dynamic]author.Part,allocator)
-    for part in author.entity_parts(w,e,allocator) {
-        if api_component_listed(s,part.t) {append(&parts,part)}
-    }
-    core.world_destroy_tree(w,e)
-    core.world_settle(w)
-    return parts[:]
-}
-
 // The world the editor edits as what a document is read from and written to.
 // False after failing the call.
 @(private)
@@ -232,21 +218,23 @@ api_write_target :: proc(s:^Session,call:^api.Call,a:^Api_Write) -> (target:auth
             component_start(t,start)
             serial.text_write_changed(out,&st.schema,st.types[api_table_index(a.s,t)],value,start,omit_fields={.Transient,.Hidden})
         },
+        // A recipe is placed on an entity of its own that goes at once, inside the open edit.
         preset=proc(user:rawptr,name:string,allocator:runtime.Allocator) -> (preset:author.Scene_Preset,problem:string) {
             a:=(^Api_Write)(user)
-            card,found:=card_named(a.s,name)
-            if !found {return {},cards_problem(a.s,name)}
-            preset={name=name,rotation=1,scale={1,1,1},parts=api_card_parts(a.s,a.w,card,allocator)}
-            if card<len(Preset) {preset.rotation=preset_rotation(Preset(card))}
-            if c:=cards(a.s)[card];c.scale!={} {preset.scale=c.scale}
-            return
+            recipe,found:=recipe_of(a.s,name)
+            if !found {return {},recipes_problem(a.s,name)}
+            all:[]author.Part
+            if all,problem=author.recipe_parts(a.w,&a.s.app.assets.types,recipe,allocator);problem!="" {return}
+            parts:=make([dynamic]author.Part,allocator)
+            for part in all {
+                if api_component_listed(a.s,part.t) {append(&parts,part)}
+            }
+            return {recipe=recipe,parts=parts[:]},""
         },
         create=proc(user:rawptr,parent:author.Node,name:string,preset:author.Scene_Preset,id:base.Entity_Id) -> (author.Node,string) {
             a:=(^Api_Write)(user)
             if reason:=api_write_refused(a,parent);reason!="" {return 0,reason}
-            card:=-1
-            if preset.name!="" {card,_=card_named(a.s,preset.name)}
-            e:=entity_create(a.s,{card=card,parent=core.Entity(parent),name=name,named=name!=""})
+            e:=entity_create(a.s,{recipe=preset.name,parent=core.Entity(parent),name=name,named=name!=""})
             core.world_settle(a.w)
             return author.Node(e),"the entity cannot be made there: its parent has no size in some axis" if e==core.NONE else ""
         },
@@ -318,6 +306,20 @@ api_write_target :: proc(s:^Session,call:^api.Call,a:^Api_Write) -> (target:auth
             entities_delete(a.s,transmute([]core.Entity)nodes)
             core.world_settle(a.w)
             return before-core.world_entities(a.w).alive,""
+        },
+        // The kind of the document, which Save writes.
+        kind=proc(user:rawptr,prefab:bool) -> (bool,string) {
+            a:=(^Api_Write)(user)
+            d:=a.s.document
+            if d.prefab==prefab {return false,""}
+            if prefab {
+                roots:=0
+                for e in core.world_table_of(a.w,core.Id).entities {roots+=int(entity_parent(a.w,e)==core.NONE)}
+                if roots!=1 {return false,fmt.tprintf("a prefab has exactly one root, and this scene has %d: put its entities under one (scene.group), then make it a prefab",roots)}
+            }
+            d.prefab,d.unsaved=prefab,true
+            a.s.view_cut=true
+            return true,""
         },
     },true
 }

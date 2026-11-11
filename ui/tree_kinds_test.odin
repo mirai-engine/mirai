@@ -37,7 +37,7 @@ test_kinds_build :: proc(ctx:^Context,user:rawptr) {
 @(test)
 a_grid_puts_its_children_in_rows_of_cells_of_one_width :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     build :: proc(ctx:^Context,user:rawptr) {
         if box(ctx,{id=id(ctx,"grid"),width=fixed(320),height=FIT,direction=.Grid,columns=3,gap=10,padding=padding_all(5),align_x=.Center,track=true}) {
@@ -68,9 +68,9 @@ a_grid_puts_its_children_in_rows_of_cells_of_one_width :: proc(t:^testing.T) {
 @(test)
 a_list_builds_its_node_for_each_element_and_a_switcher_one_child :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_FONT))
+    testing.expect(t,test_context_init(&ctx,TEST_FONT))
     defer context_destroy(&ctx)
-    ctx.theme.activate_on_press=false
+    ctx.release_activates=true
     s:Test_Kinds
     serial.schema_init(&s.schema)
     defer serial.schema_destroy(&s.schema)
@@ -117,7 +117,7 @@ a_list_builds_its_node_for_each_element_and_a_switcher_one_child :: proc(t:^test
 @(test)
 a_switcher_bound_to_an_enum_or_a_text_builds_the_child_of_that_name :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_FONT))
+    testing.expect(t,test_context_init(&ctx,TEST_FONT))
     defer context_destroy(&ctx)
     s:Test_Kinds
     serial.schema_init(&s.schema)
@@ -161,9 +161,9 @@ a_switcher_bound_to_an_enum_or_a_text_builds_the_child_of_that_name :: proc(t:^t
 @(test)
 the_buttons_of_a_list_report_their_element :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
-    ctx.theme.activate_on_press=false
+    ctx.release_activates=true
     s:Test_Kinds
     serial.schema_init(&s.schema)
     defer serial.schema_destroy(&s.schema)
@@ -197,7 +197,7 @@ the_buttons_of_a_list_report_their_element :: proc(t:^testing.T) {
 @(test)
 a_scroll_node_moves_what_does_not_fit_with_the_wheel :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:Test_Kinds
     testing.expect(t,tree_init(&s.tree))
@@ -274,7 +274,7 @@ a_widget_of_another_file_joins_the_tree_with_its_styles_and_overrides :: proc(t:
 @(test)
 what_floats_on_the_surface_of_a_tree_floats_on_its_area :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:Test_Kinds
     testing.expect(t,tree_init(&s.tree))
@@ -466,7 +466,7 @@ Draw_Seen :: struct {calls:int,last:Draw_Node,slots:[6]i32,items:[6]i32,used:i32
 @(test)
 a_draw_node_hands_the_game_its_rectangle_its_style_and_the_bytes_it_binds :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_FONT))
+    testing.expect(t,test_context_init(&ctx,TEST_FONT))
     defer context_destroy(&ctx)
     s:Test_Kinds
     serial.schema_init(&s.schema)
@@ -489,8 +489,8 @@ a_draw_node_hands_the_game_its_rectangle_its_style_and_the_bytes_it_binds :: pro
     for &slot,i in s.values.slots {slot.count=i32(10+i)}
     s.values.used=4
     seen:Draw_Seen
-    ctx.game.user=&seen
-    ctx.game.draw=proc(user:rawptr,ctx:^Context,node:Draw_Node) {
+    ctx.draw_user_data=&seen
+    ctx.draw_user=proc(user:rawptr,ctx:^Context,node:Draw_Node) {
         seen:=(^Draw_Seen)(user)
         seen.calls+=1
         switch node.name {
@@ -529,7 +529,7 @@ a_draw_node_hands_the_game_its_rectangle_its_style_and_the_bytes_it_binds :: pro
     test_frame(&ctx,&input,test_kinds_build,&s)
     testing.expect_value(t,seen.used,i32(9))
     // Without a procedure the node keeps its place and draws nothing.
-    ctx.game.draw=nil
+    ctx.draw_user=nil
     calls:=seen.calls
     test_frame(&ctx,&input,test_kinds_build,&s)
     testing.expect_value(t,seen.calls,calls)
@@ -543,9 +543,9 @@ a_draw_node_hands_the_game_its_rectangle_its_style_and_the_bytes_it_binds :: pro
 @(test)
 a_button_that_binds_a_value_writes_its_choice_when_clicked :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_FONT))
+    testing.expect(t,test_context_init(&ctx,TEST_FONT))
     defer context_destroy(&ctx)
-    ctx.theme.activate_on_press=false
+    ctx.release_activates=true
     s:Test_Kinds
     serial.schema_init(&s.schema)
     defer serial.schema_destroy(&s.schema)

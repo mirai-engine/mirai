@@ -125,13 +125,12 @@ play_view :: proc(w:core.World_Ref,targets:[]Play_View_Target,allocator:=context
         if follow,found:=core.get(follows,camera);found {
             v.mode=fmt.aprint(follow.mode,allocator=allocator)
             if lenses:=core.world_table_of(w,erender.Camera);lenses!=nil {
-                if preset,is:=ecamera.camera_preset_of(core.read(follows),core.read(lenses),camera);is {v.preset=fmt.aprint(preset,allocator=allocator)}
+                if preset,is:=ecamera.camera_preset_of(follows,lenses,camera);is {v.preset=fmt.aprint(preset,allocator=allocator)}
             }
             player:=core.NONE
             state,seats:=core.world_storage_of(w,input.Seats),core.world_table_of(w,input.Seat)
-            if state!=nil && seats!=nil {player=input.focused(state,core.read(seats))}
-            target:=follow.target
-            if drivables:=core.world_table_of(w,input.Drivable);drivables!=nil {target=ecamera.follow_target(camera,follow.target,core.read(drivables),player)}
+            if state!=nil && seats!=nil {player=input.focused(state,seats)}
+            target:=ecamera.follow_target(camera,follow.target,core.world_table_of(w,core.Parent),seats,player)
             if core.alive(entities,target) {
                 v.follow.entity,v.follow.name=handle_text(target,allocator),entity_name(w,target)
                 v.follow.distance=linalg.length(entity_world(w,target).position-seen.position)

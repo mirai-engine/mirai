@@ -36,7 +36,7 @@ VFX_GALLERY_VIEW_DEFAULT :: Vfx_Gallery_View{station=-1}
 // its station.
 @(component)
 Vfx_Impacts :: struct {
-    channel:core.Birth_Channel,
+    channel:[core.CHANNEL_NAME_BYTES]u8 `mirai:"text"`,
     size:[2]f32 `mirai:"min=0,unit=m"`,
     interval:f32 `mirai:"min=0,unit=s"`,
     speed:f32 `mirai:"unit=m/s"`,
@@ -49,7 +49,7 @@ Vfx_Impacts :: struct {
 }
 
 @(step="input")
-vfx_gallery_reset :: proc(views:core.Read(Vfx_Gallery_View),actions:inp.Frame_Input_Of(Action),scenes:^scene.Scene_Requests) {
+vfx_gallery_reset :: proc(views:^core.Table(Vfx_Gallery_View,.Read),actions:inp.Frame_Input_Of(Action),scenes:^scene.Scene_Requests) {
     if core.count(views)>0 && inp.pressed(actions,.Physics_Reset) {scene.request_restart(scenes)}
 }
 
@@ -68,7 +68,7 @@ vfx_gallery_actions :: proc(views:^core.Table(Vfx_Gallery_View),actions:inp.Inpu
 }
 
 @(step="fixed")
-vfx_gallery_impacts :: proc(impacts:^core.Table(Vfx_Impacts),views:core.Read(Vfx_Gallery_View),worlds:core.Read(core.World_Transform),births:^core.Births,time:core.Time) {
+vfx_gallery_impacts :: proc(impacts:^core.Table(Vfx_Impacts),views:^core.Table(Vfx_Gallery_View,.Read),worlds:^core.Table(core.World_Transform,.Read),births:^core.Births,time:core.Time) {
     if !time.playing || !(time.dt>0) {return}
     view:=core.at(views,0) if core.count(views)>0 else VFX_GALLERY_VIEW_DEFAULT
     for row in 0..<core.count(impacts) {
@@ -88,7 +88,7 @@ vfx_gallery_impacts :: proc(impacts:^core.Table(Vfx_Impacts),views:core.Read(Vfx
             wall.hits+=1
             u,v:=vfx_gallery_random(wall.hits,1),vfx_gallery_random(wall.hits,2)
             at:=mm.transform_point(world.transform,{(u-0.5)*wall.size.x,(v-0.5)*wall.size.y,0})
-            core.push(&births.queue,core.Birth{channel=wall.channel,position=at,velocity=out*wall.speed,count=wall.count})
+            core.push(&births.queue,core.Birth{channel=core.birth_channel(base.text_get(wall.channel[:])),position=at,velocity=out*wall.speed,count=wall.count})
         }
     }
 }
@@ -100,7 +100,7 @@ vfx_gallery_random :: proc(n,use:u32) -> f32 {
 }
 
 @(step="late")
-vfx_gallery_camera :: proc(views:core.Read(Vfx_Gallery_View),stations:core.Read(Vfx_Gallery),transforms:^core.Table(core.Transform)) {
+vfx_gallery_camera :: proc(views:^core.Table(Vfx_Gallery_View,.Read),stations:^core.Table(Vfx_Gallery,.Read),transforms:^core.Table(core.Transform)) {
     for row in 0..<core.count(views) {
         config:=core.at(views,row)
         position,target:=mm.Vec3{42,34,42},mm.Vec3{42,0,-2}
@@ -131,10 +131,9 @@ Vfx_Gallery_Hud :: struct {
 }
 
 @(step="frame")
-vfx_gallery_hud :: proc(huds:^core.Table(Vfx_Gallery_Hud),views:core.Read(Vfx_Gallery_View),stations:core.Read(Vfx_Gallery)) {
-    shown:=core.read(huds)
-    for row in 0..<core.count(shown) {
-        view,has_view:=core.get(views,core.entity_at(shown,row))
+vfx_gallery_hud :: proc(huds:^core.Table(Vfx_Gallery_Hud),views:^core.Table(Vfx_Gallery_View,.Read),stations:^core.Table(Vfx_Gallery,.Read)) {
+    for row in 0..<core.count(huds) {
+        view,has_view:=core.get(views,core.entity_at(huds,row))
         if !has_view {continue}
         next:=Vfx_Gallery_Hud{overview=true,count=VFX_GALLERY_STATIONS}
         for at in 0..<core.count(stations) {
@@ -144,6 +143,6 @@ vfx_gallery_hud :: proc(huds:^core.Table(Vfx_Gallery_Hud),views:core.Read(Vfx_Ga
             next.title,next.detail=item.title,item.detail
             break
         }
-        if core.at(shown,row)!=next {core.edit_at(huds,row)^=next}
+        core.edit_at(huds,row)^=next
     }
 }

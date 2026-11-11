@@ -3,6 +3,7 @@ package jobs
 import "base:intrinsics"
 import "base:runtime"
 import "core:mem"
+import "core:sync"
 import "core:testing"
 import "core:time"
 import "mirai:std/base"
@@ -52,7 +53,7 @@ jobs_run_on_the_workers_and_the_counter_waits_for_them :: proc(t:^testing.T) {
     testing.expect_value(t,worker_count(&js),TEST_THREADS+1)
     tally:=Tally{js=&js}
     counter:Counter
-    for _ in 0..<5000 {run(&js,OWNER,add_one,&tally,&counter)}
+    for _ in 0..<5000 {run(&js,OWNER,.Frame,add_one,&tally,&counter)}
     wait(&js,OWNER,&counter)
     testing.expect_value(t,tally.sum,i64(5000))
     testing.expect_value(t,counter.pending,i32(0))
@@ -68,10 +69,10 @@ system_without_threads_runs_everything_on_the_owner :: proc(t:^testing.T) {
     defer system_destroy(&js)
     testing.expect_value(t,worker_count(&js),1)
     tally:=Tally{js=&js}
-    run(&js,OWNER,add_one,&tally)
+    run(&js,OWNER,.Frame,add_one,&tally)
     testing.expect_value(t,tally.sum,i64(1))
     counter:Counter
-    for _ in 0..<100 {run(&js,OWNER,add_one,&tally,&counter)}
+    for i in 0..<100 {run(&js,OWNER,Class(i%2),add_one,&tally,&counter)}
     testing.expect_value(t,tally.sum,i64(1))
     wait(&js,OWNER,&counter)
     testing.expect_value(t,tally.sum,i64(101))
@@ -169,7 +170,7 @@ nested_parallel_for_completes_under_stress :: proc(t:^testing.T) {
 }
 
 @(private="file")
-Tree :: struct {tally:^Tally,depth:int}
+Tree :: struct {tally:^Tally,depth:int,class:Class}
 
 @(private="file")
 tree_job :: proc(tree:^Tree,worker:int) {
@@ -178,31 +179,106 @@ tree_job :: proc(tree:^Tree,worker:int) {
     defer tally_leave(tally,worker)
     intrinsics.atomic_add(&tally.sum,1)
     if tree.depth==0 {return}
-    children:=[3]Tree{{tally,tree.depth-1},{tally,tree.depth-1},{tally,tree.depth-1}}
+    children:=[3]Tree{{tally,tree.depth-1,tree.class},{tally,tree.depth-1,tree.class},{tally,tree.depth-1,tree.class}}
     counter:Counter
-    for &child in children {run(tally.js,worker,tree_job,&child,&counter)}
+    for &child in children {run(tally.js,worker,tree.class,tree_job,&child,&counter)}
     tally_leave(tally,worker)
     wait(tally.js,worker,&counter)
     tally_enter(tally,worker)
 }
 
+// A job that waits for jobs of its own class runs them itself when no other
+// thread may: background places are fewer than the trees that wait.
 @(test)
-jobs_that_queue_and_wait_for_jobs_complete_under_stress :: proc(t:^testing.T) {
+jobs_that_queue_and_wait_for_jobs_of_their_class_complete_under_stress :: proc(t:^testing.T) {
     testing.set_fail_timeout(t,120*time.Second)
-    for threads in ([]int{0,1,TEST_THREADS}) {
-        js:Job_System
-        testing.expect(t,system_init(&js,{threads=threads,queue_capacity=16}))
-        for round in 0..<10 {
-            tally:=Tally{js=&js}
-            root:=Tree{&tally,7}
-            counter:Counter
-            run(&js,OWNER,tree_job,&root,&counter)
-            wait(&js,OWNER,&counter)
-            testing.expectf(t,tally.sum==(2187*3-1)/2,"threads %d round %d: %d",threads,round,tally.sum)
-            testing.expect_value(t,tally.overlaps,i32(0))
+    for class in Class {
+        for threads in ([]int{0,1,2,TEST_THREADS}) {
+            js:Job_System
+            testing.expect(t,system_init(&js,{threads=threads,queue_capacity=16}))
+            for round in 0..<10 {
+                tally:=Tally{js=&js}
+                roots:=[4]Tree{{&tally,6,class},{&tally,6,class},{&tally,6,class},{&tally,6,class}}
+                counter:Counter
+                for &root in roots {run(&js,OWNER,class,tree_job,&root,&counter)}
+                wait(&js,OWNER,&counter)
+                testing.expectf(t,tally.sum==4*(729*3-1)/2,"%v threads %d round %d: %d",class,threads,round,tally.sum)
+                testing.expect_value(t,tally.overlaps,i32(0))
+            }
+            system_destroy(&js)
         }
-        system_destroy(&js)
     }
+}
+
+@(private="file")
+Blocker :: struct {owner:int,release,started,on_owner:i32}
+
+// Holds its thread until released, as a navmesh build or a disk write would.
+@(private="file")
+blocker :: proc(b:^Blocker,worker:int) {
+    if sync.current_thread_id()==b.owner {intrinsics.atomic_add(&b.on_owner,1)}
+    intrinsics.atomic_add(&b.started,1)
+    start:=time.tick_now()
+    for intrinsics.atomic_load(&b.release)==0 && time.tick_since(start)<30*time.Second {intrinsics.cpu_relax()}
+}
+
+// The owner waits for frame work again and again while background jobs that
+// do not end fill every place: it never takes one, one thread stays free for
+// frames, and the jobs left queued start only when a place frees.
+@(test)
+waiting_for_frame_work_never_runs_a_background_job :: proc(t:^testing.T) {
+    testing.set_fail_timeout(t,120*time.Second)
+    js:Job_System
+    testing.expect(t,system_init(&js,{threads=TEST_THREADS}))
+    defer system_destroy(&js)
+    b:=Blocker{owner=sync.current_thread_id()}
+    background:Counter
+    for _ in 0..<2*TEST_THREADS {run(&js,OWNER,.Background,blocker,&b,&background)}
+    tally:=Tally{js=&js,hits=make([]i32,256)}
+    defer delete(tally.hits)
+    for _ in 0..<2000 {
+        parallel_for(&js,OWNER,len(tally.hits),1,mark_range,&tally)
+        counter:Counter
+        for _ in 0..<8 {run(&js,OWNER,.Frame,add_one,&tally,&counter)}
+        wait(&js,OWNER,&counter)
+    }
+    testing.expect_value(t,intrinsics.atomic_load(&b.on_owner),i32(0))
+    testing.expect_value(t,intrinsics.atomic_load(&b.started),i32(TEST_THREADS-1))
+    for hit in tally.hits {testing.expect_value(t,hit,i32(2000))}
+    testing.expect_value(t,tally.sum,i64(2000*8))
+    intrinsics.atomic_store(&b.release,1)
+    wait(&js,OWNER,&background)
+    testing.expect_value(t,intrinsics.atomic_load(&b.started),i32(2*TEST_THREADS))
+}
+
+@(private="file")
+Bake :: struct {done:i32}
+
+@(private="file")
+bake_step :: proc(bake:^Bake,worker:int) {
+    start:=time.tick_now()
+    for time.tick_since(start)<time.Millisecond {intrinsics.cpu_relax()}
+    intrinsics.atomic_add(&bake.done,1)
+}
+
+// Frames that follow each other with no gap do not starve background work.
+@(test)
+background_jobs_finish_while_frames_run_back_to_back :: proc(t:^testing.T) {
+    testing.set_fail_timeout(t,120*time.Second)
+    js:Job_System
+    testing.expect(t,system_init(&js,{threads=TEST_THREADS}))
+    defer system_destroy(&js)
+    bake:Bake
+    background:Counter
+    for _ in 0..<64 {run(&js,OWNER,.Background,bake_step,&bake,&background)}
+    tally:=Tally{js=&js,hits=make([]i32,4096)}
+    defer delete(tally.hits)
+    start:=time.tick_now()
+    for pending(&background) && time.tick_since(start)<30*time.Second {
+        parallel_for(&js,OWNER,len(tally.hits),1,mark_range,&tally)
+    }
+    testing.expect(t,!pending(&background),"the background jobs finished while the frames ran")
+    testing.expect_value(t,intrinsics.atomic_load(&bake.done),i32(64))
 }
 
 @(test)
@@ -212,7 +288,7 @@ job_whose_queue_is_full_runs_in_its_caller :: proc(t:^testing.T) {
     defer system_destroy(&js)
     tally:=Tally{js=&js}
     counter:Counter
-    for _ in 0..<10 {run(&js,OWNER,add_one,&tally,&counter)}
+    for _ in 0..<10 {run(&js,OWNER,.Frame,add_one,&tally,&counter)}
     testing.expect_value(t,tally.sum,i64(6))
     testing.expect_value(t,system_stats(&js).queue_full,u64(6))
     wait(&js,OWNER,&counter)
@@ -261,7 +337,7 @@ destroying_the_system_runs_what_is_still_queued :: proc(t:^testing.T) {
     js:Job_System
     testing.expect(t,system_init(&js,{threads=TEST_THREADS}))
     tally:=Tally{js=&js}
-    for _ in 0..<1000 {run(&js,OWNER,add_one,&tally)}
+    for _ in 0..<1000 {run(&js,OWNER,.Frame,add_one,&tally)}
     system_destroy(&js)
     testing.expect_value(t,tally.sum,i64(1000))
 }
@@ -294,8 +370,8 @@ sleeping_workers_wake_for_new_jobs :: proc(t:^testing.T) {
         // The owner runs one of the two jobs; the other needs a worker that was asleep.
         meeting:Meeting
         counter:Counter
-        run(&js,OWNER,meet,&meeting,&counter)
-        run(&js,OWNER,meet,&meeting,&counter)
+        run(&js,OWNER,.Frame,meet,&meeting,&counter)
+        run(&js,OWNER,.Frame,meet,&meeting,&counter)
         wait(&js,OWNER,&counter)
         testing.expectf(t,meeting.met==2,"round %d: no worker woke up",round)
     }
@@ -315,7 +391,7 @@ jobs_and_ranges_allocate_nothing_once_the_system_exists :: proc(t:^testing.T) {
     allocations:=track.total_allocation_count
     for _ in 0..<50 {
         counter:Counter
-        for _ in 0..<200 {run(&js,OWNER,add_one,&tally,&counter)}
+        for _ in 0..<200 {run(&js,OWNER,.Frame,add_one,&tally,&counter)}
         wait(&js,OWNER,&counter)
         parallel_for(&js,OWNER,len(tally.hits),64,mark_range,&tally)
     }
@@ -341,11 +417,11 @@ jobs_and_ranges_record_a_zone_on_the_ring_of_their_worker_while_a_profile_is_set
     counter:Counter
 
     system_profile_set(&js,&p)
-    for _ in 0..<200 {run(&js,OWNER,add_one,&tally,&counter)}
+    for _ in 0..<200 {run(&js,OWNER,.Frame,add_one,&tally,&counter)}
     wait(&js,OWNER,&counter)
     parallel_for(&js,OWNER,1000,10,mark_range,&tally)
     system_profile_set(&js,nil)
-    for _ in 0..<50 {run(&js,OWNER,add_one,&tally,&counter)}
+    for _ in 0..<50 {run(&js,OWNER,.Frame,add_one,&tally,&counter)}
     wait(&js,OWNER,&counter)
 
     out:=make([]base.Profile_Zone,4096)

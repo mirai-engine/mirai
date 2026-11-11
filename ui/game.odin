@@ -57,12 +57,12 @@ image :: proc(ctx:^Context,i:Image) {
     element_leaf(ctx,{id=i.id,layout={width=i.width,height=i.height},custom=paint_add(ctx,image_paint(i))})
 }
 
-// An area its owner draws with Context_Desc.draw_user (kind, data): the layout
-// places it, the container that clips it cuts what it draws, and the pointer
-// on it is its interaction.
-canvas :: proc(ctx:^Context,id:Id,width,height:Size,kind:u32,data:u64,flags:Widget_Flags={}) -> Interaction {
+// An area Context.draw_user draws as node says: the layout places it, the
+// container that clips it cuts what it draws, and the pointer on it is its
+// interaction.
+canvas :: proc(ctx:^Context,id:Id,width,height:Size,node:Draw_Node,flags:Widget_Flags={}) -> Interaction {
     it:=interact(ctx,id,flags)
-    element_leaf(ctx,{id=id,layout={width=width,height=height},custom=paint_add(ctx,{kind=.User,user_kind=kind,user_data=data})})
+    element_leaf(ctx,{id=id,layout={width=width,height=height},custom=paint_add(ctx,{kind=.Draw,draw=node})})
     return it
 }
 
@@ -160,14 +160,16 @@ GAME_ARROW :: f32(0.75) // the arrows of a selector, a number and a dropdown, in
 // Without a size, a control is a line of its text tall with GAME_PAD of
 // room above and below; a checkbox and a radio, a line of text square.
 Game_Control :: struct {
-    style:^Node_Style, // resolved for the state of the control; nil: nothing but its text, in the size of the theme
+    style:^Node_Style, // resolved for the state of the control; nil: nothing but its text, CONTROL_EM in size
     width,height:Size,
     disabled:bool,
 }
 
+CONTROL_EM :: f32(13) // the size of the text of a control whose look gives none
+
 @(private)
 control_em :: proc(ctx:^Context,style:^Node_Style) -> f32 {
-    return style.text.size if style.text.size>0 else ctx.theme.font
+    return style.text.size if style.text.size>0 else CONTROL_EM
 }
 // What the layout says, or sizes sizes of its text wide by a line with its room.
 @(private)

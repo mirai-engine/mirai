@@ -147,12 +147,17 @@ Viewport :: struct {
     dt:f32,
     gizmo:Gizmo_State,
     indicators:[dynamic]core.Entity, // the entities without a body, as last found
-    indicators_key:[6]u64,
+    indicators_key:[2]u64,           // the world and the hierarchy the indicators were found in, and whether ghosts counted
+    indicators_seen:[3]core.Seen,    // the meshes, the parents and Disabled then
+    indicators_shapes:[3]core.Shape, // the transforms, Hidden and the ids then
     levels:[dynamic]u8,              // highlight by entity index, as last written
     levels_key:Highlight_Key,
+    levels_seen:[6]core.Seen,        // the parents, the ids, and in a box the transforms, the poses, Hidden and the meshes
+    levels_shape:core.Shape,         // the meshes
     levels_serial:u64,               // grows each time levels are written again
     ghosts:[dynamic]gpu.Instance_Desc, // of what is hidden or turned off, as last made
-    ghosts_key:[8]u64,
+    ghosts_key:[4]u64,
+    ghosts_seen:[5]core.Seen,        // the poses, the meshes, Hidden, the parents and Disabled the ghosts were made from
     lines_storage:[dynamic]gpu.Debug_Vertex,
     lines:gpu.Debug_Lines,
     pick:Entity_Pick,               // a field of the inspector waiting for an entity
@@ -182,7 +187,7 @@ viewport_exposure :: proc(v:^Viewport) -> core.View_Exposure {
 
 @(private)
 Highlight_Key :: struct {
-    sources:[14]u64,
+    sources:[6]u64,
     marquee,add,indicators,play,isolated:bool,
     rect:ui.Rect,
     view_projection:mm.Mat4,
@@ -731,23 +736,21 @@ placement_commit :: proc(s:^Session,w:core.World_Ref,d:Drag,hit:Pick,select:bool
     }
     point:=placement_point(s,d,hit)
     if d.kind==.Asset {content_used(s,d.asset_id)}
-    if d.kind==.Asset && d.asset_kind==SHOWN_PREFAB {
-        root:=prefab_place_linked(s,d.asset_id,point)
-        if select && root!=core.NONE {history.selection_set(s.selection,{root})}
-        return
-    }
     if d.kind==.Asset && d.asset_kind==asset.KIND_SCENE {
-        root:=section_place(s,d.asset_id,point,asset_label(&d))
+        file,found:=asset.registry_find(&s.app.assets.registry,d.asset_id)
+        root:=prefab_place_linked(s,d.asset_id,point) if found && asset.registry_prefab(file) else section_place(s,d.asset_id,point,asset_label(&d))
         if select && root!=core.NONE {history.selection_set(s.selection,{root})}
         return
     }
-    card:=d.kind==.Preset?d.card:int(Preset.Empty)
-    opened,edit_ready:=edit_open(s,d.kind==.Preset?fmt.tprintf("Add %s",cards(s)[card].label):fmt.tprintf("Add %s",asset_label(&d)))
+    recipe:=cards(s)[d.card].recipe if d.kind==.Preset else "sound" if placement_sound(d) else ""
+    opened,edit_ready:=edit_open(s,d.kind==.Preset?fmt.tprintf("Add %s",cards(s)[d.card].label):fmt.tprintf("Add %s",asset_label(&d)))
     if !edit_ready {return}
     defer edit_close(s,opened)
-    e:=entity_create(s,{card=card,name=d.kind==.Asset?asset_label(&d):"",transform={position=point,rotation=1,scale={1,1,1}}})
+    e:=entity_create(s,{recipe=recipe,name=d.kind==.Asset?asset_label(&d):"",transform={position=point,rotation=1,scale={1,1,1}}})
     if placement_sound(d) {
-        sound_components(w,e,d.asset_id)
+        if t:=core.world_table_of(w,eaudio.Audio_Source);t!=nil {
+            if source:=core.raw_added(core.raw(t),type_info_of(eaudio.Audio_Source),e);source!=nil {(^eaudio.Audio_Source)(source).sound=d.asset_id}
+        }
     } else if d.kind==.Asset {
         if t:=core.world_table_of(w,erender.Mesh_Renderer);t!=nil {core.add(t,e,erender.Mesh_Renderer{mesh=d.asset_id})}
     }
@@ -803,7 +806,6 @@ overlays_draw :: proc(s:^Session,w:core.World_Ref) {
     v:=s.viewport
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     if v.show_indicators {
         reach_draw(s,w)
         indicators_draw(s,w)
@@ -811,7 +813,7 @@ overlays_draw :: proc(s:^Session,w:core.World_Ref) {
     if !tool_holding(v) {gizmo_draw(s,w)}
     if v.capture==.Select && v.moved {
         rect:=rect_from_points(v.press,v.pointer)
-        ui.draw_rect_lines(ctx,rect,1,ui.color_alpha(th.accent,220))
+        ui.draw_rect_lines(ctx,rect,1,ui.color_alpha(ui.tone(ctx,"accent"),220))
     }
 }
 
@@ -826,7 +828,6 @@ level_color :: proc "contextless" (level:u8) -> ui.Color {
 indicators_draw :: proc(s:^Session,w:core.World_Ref) {
     v:=s.viewport
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     indicators_sync(s,w,ghosts_shown(s))
     margin:=INDICATOR_RADIUS+8
     spots:=core.world_table_of(w,erender.Spot_Light)
@@ -850,10 +851,10 @@ indicators_draw :: proc(s:^Session,w:core.World_Ref) {
         if level!=0 {
             color:=level_color(level)
             ui.draw_circle(ctx,p,radius+6,ui.color_alpha(color,45))
-            ui.draw_circle(ctx,p,radius,ui.color_alpha(th.panel,200))
+            ui.draw_circle(ctx,p,radius,ui.color_alpha(ui.tone(ctx,"panel"),200))
             ui.draw_ring(ctx,p,radius,2.2,color)
         } else {
-            ui.draw_circle(ctx,p,radius,ui.color_alpha(th.panel,hidden?110:165))
+            ui.draw_circle(ctx,p,radius,ui.color_alpha(ui.tone(ctx,"panel"),hidden?110:165))
             ui.draw_ring(ctx,p,radius,1.4,ui.color_alpha(base_color,hidden?110:210))
         }
         ui.draw_icon(ctx,icon,{p.x-7,p.y-7,14,14},glyph)
@@ -873,8 +874,11 @@ indicators_sync :: proc(s:^Session,w:core.World_Ref,ghosts:bool) {
         clear(&v.indicators)
         return
     }
-    key:=[6]u64{u64(uintptr(w.data)),transforms.layout,meshes!=nil?meshes.layout+meshes.version:0,(hidden!=nil?hidden.layout:0)+(parents!=nil?parents.layout+parents.version:0),ids!=nil?ids.layout:0,(core.world_entities(w).activity.version+core.world_entities(w).activity_tree)<<1|u64(ghosts)}
-    if key==v.indicators_key {return}
+    seen,shapes:=&v.indicators_seen,&v.indicators_shapes
+    moved:=core.touched(meshes,&seen[0]) | core.touched(parents,&seen[1]) | core.touched(core.world_table_of(w,core.Disabled),&seen[2])
+    moved|=core.reshaped(transforms,&shapes[0]) | core.reshaped(hidden,&shapes[1]) | core.reshaped(ids,&shapes[2])
+    key:=[2]u64{u64(uintptr(w.data)),core.world_entities(w).activity_tree<<1|u64(ghosts)}
+    if !moved && key==v.indicators_key {return}
     v.indicators_key=key
     clear(&v.indicators)
     items:=scene_items(s,w,ghosts)
@@ -901,24 +905,20 @@ highlight_sync :: proc(s:^Session,w:core.World_Ref) {
     play:=play_viewed(s) || camera_previewing(s)
     marquee:=v.capture==.Select && v.moved && !play
     ids:=core.world_table_of(w,core.Id)
-    key:=Highlight_Key{sources={s.selection.serial,u64(uintptr(w.data)),parents!=nil?parents.layout+parents.version:0,meshes!=nil?meshes.layout:0,u64(len(es.generation)),0,0,0,0,0,0,ai_scene_serial(s.ai),ids!=nil?ids.layout+ids.version:0,collab_highlights_key(s)},marquee=marquee,play=play,isolated=play_shown(s)}
+    seen:=&v.levels_seen
+    moved:=core.touched(parents,&seen[0]) | core.touched(ids,&seen[1]) | core.reshaped(meshes,&v.levels_shape)
+    key:=Highlight_Key{sources={s.selection.serial,u64(uintptr(w.data)),u64(len(es.generation)),ai_scene_serial(s.ai),collab_highlights_key(s),0},marquee=marquee,play=play,isolated=play_shown(s)}
     if marquee {
-        transforms:=core.world_table_of(w,core.Transform)
-        worlds:=core.world_table_of(w,core.World_Transform)
-        hidden:=core.world_table_of(w,erender.Hidden)
-        key.sources[5]=transforms!=nil?transforms.layout+transforms.version:0
-        key.sources[6]=worlds!=nil?worlds.layout+worlds.version:0
-        key.sources[7]=ids!=nil?ids.layout:0
-        key.sources[8]=hidden!=nil?hidden.layout+hidden.version:0
-        key.sources[9]=meshes!=nil?meshes.version:0
-        key.sources[10]=s.app.assets!=nil?s.app.assets.revision+s.app.assets.structure:0
+        moved|=core.touched(core.world_table_of(w,core.Transform),&seen[2]) | core.touched(core.world_table_of(w,core.World_Transform),&seen[3])
+        moved|=core.touched(core.world_table_of(w,erender.Hidden),&seen[4]) | core.touched(meshes,&seen[5])
+        key.sources[5]=s.app.assets!=nil?s.app.assets.revision+s.app.assets.structure:0
         key.add=v.add || v.toggle
         key.indicators=v.show_indicators
         key.rect=rect_from_points(v.press,v.pointer)
         key.view_projection=v.view_projection
         key.size=v.size
     }
-    if key==v.levels_key {return}
+    if !moved && key==v.levels_key {return}
     v.levels_key=key
     v.levels_serial+=1
     resize(&v.levels,len(es.generation))
@@ -1032,7 +1032,8 @@ stroke_box :: proc(ctx:^ui.Context,v:^Viewport,pose:mm.Transform,extents:[3]f32,
 
 // How far what is selected reaches, as strokes over the scene, as wide as
 // the discs draw theirs: the range of a light, its cone or its square, the
-// distances of a sound, the box or the sphere of a volume.
+// distances of a sound, the box or the sphere of a volume, the points of a
+// spline.
 @(private)
 reach_draw :: proc(s:^Session,w:core.World_Ref) {
     v:=s.viewport
@@ -1058,6 +1059,10 @@ reach_draw :: proc(s:^Session,w:core.World_Ref) {
             flat:=mm.Transform{world.position,world.rotation,{1,1,1}}
             stroke_box(ctx,v,flat,{REACH_PLANE,0,REACH_PLANE},REACH_VOLUME)
             stroke_line(ctx,v,world.position,world.position-mm.quat_rotate(world.rotation,[3]f32{0,REACH_PLANE*0.5,0}),REACH_VOLUME)
+        }
+        // A path nothing may draw: a river, a patrol.
+        if path,ok:=entity_get(w,e,evolume.Spline);ok {
+            for i in 1..<min(int(path.count),evolume.SPLINE_POINTS) {stroke_line(ctx,v,mm.transform_point(world,path.points[i-1].position),mm.transform_point(world,path.points[i].position),REACH_VOLUME)}
         }
         if entity_has(w,e,erender.Mesh_Renderer) {continue}
         if point,ok:=entity_get(w,e,erender.Point_Light);ok && point.range>0 {stroke_sphere(ctx,v,world.position,point.range,REACH_LIGHT)}

@@ -3,7 +3,7 @@ package input
 import "mirai:core"
 
 // Input contexts. Every action is in one context (the base one unless its
-// default or input.mirai name another), and a seat takes the actions of a
+// default or Input_Settings name another), and a seat takes the actions of a
 // context only while it is in it. Every seat is always in the base context;
 // something (a menu, a vehicle) puts seats in others until its owner takes
 // them out, and the one entered last is on top. A context on top takes from
@@ -65,13 +65,6 @@ in_context :: proc "contextless" (state:^Input_Contexts,owner:core.Entity) -> bo
         if entry.active && entry.owner==owner {return true}
     }
     return false
-}
-
-// The contexts of the local seat with the keyboard and the mouse; nil without one.
-focused_contexts :: proc(state:^Seats,seats:core.Read(Seat)) -> ^Context_Stack {
-    if state==nil || state.local_count==0 {return nil}
-    row:=core.row_of(seats,local_seat(seats,state.focus))
-    return row>=0?&seats.table.values[row].contexts:nil
 }
 
 // The contexts as they were asked, without what refers to what no longer

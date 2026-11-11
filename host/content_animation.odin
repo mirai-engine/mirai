@@ -146,7 +146,7 @@ content_animation_start :: proc(app:^App,entry:^Content_Animation) -> bool {
     load.read_ns=time.duration_nanoseconds(time.tick_since(started))
     entry.load=load
     if load.compress && jobs.worker_count(&app.jobs)>1 {
-        jobs.run(&app.jobs,jobs.OWNER,content_animation_build,load,&load.counter)
+        jobs.run(&app.jobs,jobs.OWNER,.Background,content_animation_build,load,&load.counter)
         return true
     }
     content_animation_build(load,jobs.OWNER)
@@ -311,7 +311,7 @@ content_animation_build :: proc(load:^Content_Animation_Load,worker:int) {
     if !anim.library_init(&built.lib,desc) {return}
     count:=len(view.clips)
     e1,e2,e3:runtime.Allocator_Error
-    built.markers,e1=make([]u64,len(view.markers),load.allocator)
+    built.markers,e1=make([]Content_Marker,len(view.markers),load.allocator)
     built.names,e2=make([][asset.ANIMATION_NAME_CAPACITY]u8,count,load.allocator)
     built.roots,e3=make([]asset.Animation_Root,count,load.allocator)
     morphing:bool
@@ -322,7 +322,11 @@ content_animation_build :: proc(load:^Content_Animation_Load,worker:int) {
     if count>0 && asset.animation_clips_add(view,&built.lib,.Once)==0 {return}
     content_animation_loops(&built.lib,count)
     built.clip_count=count
-    for &marker,i in view.markers {built.markers[i]=base.name_hash(base.text_get(marker.name[:]))}
+    for &marker,i in view.markers {
+        target:=base.text_get(marker.target[:])
+        built.markers[i]={name=base.name_hash(base.text_get(marker.name[:]))}
+        if target!="" {built.markers[i].target,built.markers[i].text=base.name_hash(target),marker.name}
+    }
     for clip,i in view.clips {built.names[i]=clip.name;built.roots[i]=clip.root}
     if !load.compress {
         built.lib.prepared=true

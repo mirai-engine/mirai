@@ -56,6 +56,16 @@ physics_test_box :: proc(f:^Physics_Test,position,half:[3]f32,rigid:Maybe(Rigid_
     return e
 }
 
+// A Joint on an entity of its own under a, at a place relative to it.
+@(private)
+physics_test_joint :: proc(f:^Physics_Test,a:core.Entity,at:[3]f32,joint:Joint,rotation:=mm.Quat(1)) -> core.Entity {
+    e:=core.create(&f.entities)
+    core.add(&f.transforms,e,core.Transform{at,rotation,{1,1,1}})
+    core.add(&f.parents,e,core.Parent{entity=a})
+    core.add(&f.joints,e,joint)
+    return e
+}
+
 @(private)
 physics_test_pose :: proc(f:^Physics_Test,e:core.Entity) -> core.Transform {
     pose,_:=core.get(&f.transforms,e)
@@ -93,7 +103,7 @@ moving_a_collider_only_wall_pushes_bodies_then_restores_static_motion :: proc(t:
 }
 
 @(test)
-held_dynamic_bodies_restore_mass_gravity_and_copy_their_manipulation_state :: proc(t:^testing.T) {
+followed_dynamic_bodies_restore_mass_gravity_and_copy_their_manipulation_state :: proc(t:^testing.T) {
     f:Physics_Test
     if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
@@ -103,26 +113,98 @@ held_dynamic_bodies_restore_mass_gravity_and_copy_their_manipulation_state :: pr
     box:=physics_test_box(&f,{0,3,0},{0.5,0.5,0.5},rigid)
     physics_test_step(&f,0)
     body:=body_of(core.ref(&f.state),box)
-    manipulation_target(&f.requests,box,{1,3,0})
+    manipulation_target(&f.requests,box,{1,3,0},follow=true)
     physics_test_step(&f)
     copied:Physics_State
     state_copy(&copied,&f.state)
     defer state_destroy(&copied)
-    testing.expect(t,.Manipulation in link_find(&copied,box).hold.by)
+    held:=held_of(&copied,box)
+    testing.expect(t,held!=nil && .Manipulation in held.by && held.pull=={})
     testing.expect_value(t,sim.body_type(&copied.world,body),Body_Type.Kinematic)
     for _ in 0..<10 {physics_test_step(&f)}
     testing.expect(t,abs(physics_test_pose(&f,box).position.y-3)<0.001)
-    manipulation_target(&f.requests,box,{2,3,0})
+    manipulation_target(&f.requests,box,{1,3,0},follow=true)
     manipulation_end(&f.requests,box)
     physics_test_step(&f)
     actual_rigid,_:=core.get(&f.rigids,box)
     testing.expect_value(t,actual_rigid,rigid)
     testing.expect_value(t,sim.body_type(&f.state.world,body),Body_Type.Dynamic)
     testing.expect_value(t,sim.body_mass(&f.state.world,body),f32(5))
-    testing.expect_value(t,sim.body_linear_velocity(&f.state.world,body),[3]f32{})
-    testing.expect(t,abs(physics_test_pose(&f,box).position.x-2)<0.001)
+    testing.expect(t,abs(physics_test_pose(&f,box).position.x-1)<0.001)
     for _ in 0..<10 {physics_test_step(&f)}
     testing.expect(t,physics_test_pose(&f,box).position.y<2.9)
+}
+
+// A manipulation drags a dynamic body at 20 m/s into what blocks it. The body stays dynamic and a spring of at
+// most PULL_WEIGHTS times its weight pulls it: a static wall stops it, and a stack of boxes a hundred times its
+// mass is barely pushed. A copy of the world keeps the spring.
+@(test)
+a_dragged_dynamic_body_collides_and_pushes_with_a_bounded_force :: proc(t:^testing.T) {
+    cases:=[]struct{name:string,mass:f32}{{"a static wall",0},{"a stack of 100 kg boxes",100}}
+    for c in cases {
+        f:Physics_Test
+        if !physics_test_init(t,&f) {return}
+        defer physics_test_destroy(&f)
+        f.gravity={0,-9.81,0}
+        physics_test_box(&f,{0,-0.5,0},{20,0.5,20})
+        light:=RIGID_BODY_DYNAMIC
+        light.mass=1
+        box:=physics_test_box(&f,{0,0.25,0},{0.25,0.25,0.25},light)
+        far:=core.NONE
+        if c.mass==0 {
+            physics_test_box(&f,{2.5,1,0},{0.25,1,2})
+        } else {
+            heavy:=RIGID_BODY_DYNAMIC
+            heavy.mass=c.mass
+            for i in 0..<3 {far=physics_test_box(&f,{2.5+f32(i)*0.5,0.25,0},{0.25,0.25,0.25},heavy)}
+        }
+        for _ in 0..<30 {physics_test_step(&f)}
+        start:=physics_test_pose(&f,far).position.x
+        body:=body_of(core.ref(&f.state),box)
+        for tick in 1..=60 {
+            manipulation_target(&f.requests,box,{min(f32(tick)/3,10),0.25,0})
+            physics_test_step(&f)
+        }
+        x:=physics_test_pose(&f,box).position.x
+        testing.expectf(t,x<2.05,"%s: the dragged box went to x=%v",c.name,x)
+        testing.expectf(t,sim.body_type(&f.state.world,body)==.Dynamic,"%s: the dragged box is not dynamic",c.name)
+        if far!=core.NONE {
+            moved:=physics_test_pose(&f,far).position.x-start
+            testing.expectf(t,moved<0.05,"%s: the far box was pushed %v m",c.name,moved)
+        }
+        copied:Physics_State
+        state_copy(&copied,&f.state)
+        defer state_destroy(&copied)
+        held:=held_of(&copied,box)
+        testing.expectf(t,held!=nil && sim.joint_valid(&copied.world,held.pull),"%s: the copy lost the spring",c.name)
+        testing.expect_value(t,f.problems.count,0)
+    }
+}
+
+// Let go while it moves, a dragged body keeps its velocity, pulled or held as kinematic (an animated ragdoll
+// that goes limp), and nothing is held any more.
+@(test)
+a_released_body_keeps_its_velocity_and_nothing_is_held :: proc(t:^testing.T) {
+    for follow in ([2]bool{false,true}) {
+        f:Physics_Test
+        if !physics_test_init(t,&f) {return}
+        defer physics_test_destroy(&f)
+        e:=physics_test_box(&f,{},{0.2,0.2,0.2},RIGID_BODY_DYNAMIC)
+        physics_test_step(&f,0)
+        for tick in 1..=30 {
+            manipulation_target(&f.requests,e,{f32(tick)*0.05,0,0},follow=follow)
+            physics_test_step(&f)
+        }
+        body:=body_of(core.ref(&f.state),e)
+        before:=sim.body_linear_velocity(&f.state.world,body)
+        testing.expectf(t,before.x>2.5,"follow %v: it went at %v m/s",follow,before.x)
+        manipulation_end(&f.requests,e)
+        physics_test_step(&f)
+        testing.expect_value(t,sim.body_type(&f.state.world,body),sim.Body_Type.Dynamic)
+        testing.expectf(t,abs(sim.body_linear_velocity(&f.state.world,body).x-before.x)<0.01,"follow %v: velocity was lost",follow)
+        physics_test_step(&f)
+        testing.expectf(t,len(f.state.held)==0 && f.state.world.joint_count==0,"follow %v: %d held and %d joints are left",follow,len(f.state.held),f.state.world.joint_count)
+    }
 }
 
 @(test)
@@ -141,7 +223,7 @@ manipulation_resolves_compounds_and_world_rotation_under_a_scaled_parent :: proc
     target:=mm.quat_axis_angle({0,0,1},0.3)
     manipulation_target(&f.requests,root,{11,4,2},target)
     physics_test_step(&f,0)
-    pose,ok:=core.world_of(core.read(&f.transforms),core.read(&f.parents),root)
+    pose,ok:=core.world_of(&f.transforms,&f.parents,root)
     testing.expect(t,ok)
     wanted:=[3]f32{11,4,2}
     for i in 0..<3 {testing.expect(t,abs(pose.position[i]-wanted[i])<0.001)}

@@ -45,13 +45,10 @@ postprocess_active :: proc(p:^Pass,after:bool)->bool {
 // stage of extensions (pass_image_write) first uses them.
 @(private="file")
 postprocess_target :: proc(r:^Renderer,t:^Targets,after:bool,index:int)->rhi.Texture {
-    target:=&t.post_ldr[index] if after else &t.post_hdr[index]
-    if target^==0 {
-        usage:=rhi.Texture_Usage{.Color_Target,.Sampled} if after else {.Color_Target,.Sampled,.Storage}
-        target^=rhi.texture_create(r.device,{width=t.output_width,height=t.output_height,format=.RGBA8_Unorm if after else .RGBA16_Float,usage=usage,name="post LDR" if after else "post HDR"})
-        if target^==0 {set_error(r,"postprocess target: %s",rhi.device_error(r.device))}
-    }
-    return target^
+    texture:=&t.post_ldr[index] if after else &t.post_hdr[index]
+    usage:=rhi.Texture_Usage{.Color_Target,.Sampled} if after else {.Color_Target,.Sampled,.Storage}
+    target(r,nil,texture,t.output_width,t.output_height,.RGBA8_Unorm if after else .RGBA16_Float,usage,(index==0?"post LDR":"post LDR 2") if after else (index==0?"post HDR":"post HDR 2"),shared=true)
+    return texture^
 }
 // The target an effect over current writes: the one of the two that is not it.
 @(private)
@@ -84,11 +81,6 @@ postprocess_passes :: proc(p:^Pass,source:rhi.Texture,after:bool)->rhi.Texture {
         if target==0 {break}
         name:[32]u8
         rhi.cmd_timestamp(cmd,fmt.bprintf(name[:],"postprocess %s %d","display" if after else "hdr",index+1))
-        rhi.cmd_barrier_texture(cmd,current,.Shader_Read)
-        rhi.cmd_barrier_texture(cmd,depth,.Shader_Read)
-        rhi.cmd_barrier_texture(cmd,normal,.Shader_Read)
-        rhi.cmd_barrier_texture(cmd,mask,.Shader_Read)
-        rhi.cmd_barrier_buffer(cmd,p.view.exposure,.Shader_Read)
         pass:=rhi.Render_Pass_Desc{color_count=1,name="postprocess"}
         pass.colors[0]={texture=target,load=.Dont_Care,store=.Store}
         rhi.cmd_begin_render_pass(cmd,&pass)

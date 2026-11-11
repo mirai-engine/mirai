@@ -57,12 +57,11 @@ update :: proc(w:core.World_Ref,a:^asset.Asset,asset_types:^asset.Types,desc:Upd
         if e:=core.entity_of(es,id);e!=core.NONE {going[e]=true}
     }
     if len(going)>0 {
-        above:=core.read(parent_table)
         for e,row in entities {
             if created[row] {continue}
             at:=e
             for _ in 0..=core.HIERARCHY_DEPTH {
-                parent,has:=core.get(above,at)
+                parent,has:=core.get(parent_table,at)
                 if !has {break}
                 at=parent.entity
                 if at in going {return {},.Invalid}
@@ -95,7 +94,6 @@ update :: proc(w:core.World_Ref,a:^asset.Asset,asset_types:^asset.Types,desc:Upd
         if info.place!=w.place || is_structural(info.type) || info.type==Section_Member || value_type.type==serial.TYPE_NONE {continue}
         size:=info.info.size
         layout:=&value_type.layout
-        if size>0 && len(layout.runs)==0 {continue}
         table:=core.world_table_at(w,&info)
         hash:=base.name_hash(info.name)
         slice.fill(given,false)
@@ -168,7 +166,6 @@ update :: proc(w:core.World_Ref,a:^asset.Asset,asset_types:^asset.Types,desc:Upd
     for order,row in view.orders {places[row]={order,u32(row)}}
     slice.sort_by(places,proc(a,b:Place) -> bool {return a.order<b.order || a.order==b.order && a.row<b.row})
     siblings:=make(map[u32]i32,context.temp_allocator)
-    above:=core.read(parent_table)
     for place in places {
         parent_row:=parents[place.row]
         if parent_row==NONE_ROW {
@@ -178,7 +175,7 @@ update :: proc(w:core.World_Ref,a:^asset.Asset,asset_types:^asset.Types,desc:Upd
         order:=siblings[parent_row]
         siblings[parent_row]=order+1
         wanted:=core.Parent{entities[parent_row],order}
-        if held,has:=core.get(above,entities[place.row]);created[place.row] || !has || held!=wanted {core.add(parent_table,entities[place.row],wanted)}
+        if held,has:=core.get(parent_table,entities[place.row]);created[place.row] || !has || held!=wanted {core.add(parent_table,entities[place.row],wanted)}
     }
     report.entities=count
     return report,.None

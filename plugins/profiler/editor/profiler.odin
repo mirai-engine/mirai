@@ -101,10 +101,9 @@ profiler_panel :: proc(s:^editor.Session,p:^Profiler_Panel,app:^host.App) {
 	if p.capture!=nil && p.capture.id!=p.shown {profiler_show(p,p.capture)}
 	if p.capture==nil {p.shown=0}
 
-	th:=&ctx.theme
 	id:=ui.id_derive(ctx,PANEL_SCOPE,"panel")
 	width:=clamp(ctx.size.x*0.62,520,1120)
-	bottom:=th.margin
+	bottom:=ui.metric(ctx,"margin")
 	if r:=g.rects.bottom;r.h>0 {bottom+=ctx.size.y-r.y}
 	if ui.panel(ctx,id,{width=ui.fixed(width),height=ui.FIT,padding=ui.padding_all(12),gap=8,anchor=.Bottom_Center,pivot=.Bottom_Center,offset={0,-bottom}}) {
 		ui.id_push(ctx,id)
@@ -112,14 +111,14 @@ profiler_panel :: proc(s:^editor.Session,p:^Profiler_Panel,app:^host.App) {
 		profiler_header(s,p,app)
 		if p.capture==nil {return}
 		c:=p.capture
-		ui.label(ctx,profiler_summary(p,c),th.font_small,th.text_muted)
+		ui.label(ctx,profiler_summary(p,c),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
 		graph:=editor.drawing(g,ui.id(ctx,"frames"),ui.GROW,ui.fixed(GRAPH),frames_draw,p)
 		if graph.pressed || graph.active {
 			if r,found:=ui.widget_rect(ctx,ui.id(ctx,"frames"));found && len(c.frames)>0 {
 				p.frame=clamp(int((ctx.pointer.x-r.x)/r.w*f32(len(c.frames))),0,len(c.frames)-1)
 			}
 		}
-		ui.label(ctx,profiler_frame_text(p,c),th.font_small,th.text)
+		ui.label(ctx,profiler_frame_text(p,c),ui.metric(ctx,"font_small"),ui.tone(ctx,"text"))
 		rows:=f32(p.depth+p.thread_count+1)
 		editor.drawing(g,ui.id(ctx,"timeline"),ui.GROW,ui.fixed(rows*(ROW+2)+ROW),timeline_draw,p)
 		editor.drawing(g,ui.id(ctx,"zones"),ui.GROW,ui.fixed(f32(p.top_count)*ROW+ROW),zones_draw,p)
@@ -129,18 +128,17 @@ profiler_panel :: proc(s:^editor.Session,p:^Profiler_Panel,app:^host.App) {
 @(private="file")
 profiler_header :: proc(s:^editor.Session,p:^Profiler_Panel,app:^host.App) {
 	ctx:=s.gui.ctx
-	th:=&ctx.theme
-	if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=8,align_y=.Center}) {
-		ui.label(ctx,"Profiler",th.font,th.text,font=ui.FONT_SEMIBOLD)
+	if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=8,align_y=.Center}) {
+		ui.label(ctx,"Profiler",ui.metric(ctx,"font"),ui.tone(ctx,"text"),font=ui.FONT_SEMIBOLD)
 		ui.spacer(ctx)
 		recording:=s.profiles.recording!=0
 		if recording {
-			ui.label(ctx,fmt.tprintf("Recording %d/%d",len(host.profile_recording(app).frames),int(p.frames)),th.font_small,th.accent)
+			ui.label(ctx,fmt.tprintf("Recording %d/%d",len(host.profile_recording(app).frames),int(p.frames)),ui.metric(ctx,"font_small"),ui.tone(ctx,"accent"))
 		} else if p.error_length>0 {
-			ui.label(ctx,string(p.error[:p.error_length]),th.font_small,th.danger)
+			ui.label(ctx,string(p.error[:p.error_length]),ui.metric(ctx,"font_small"),ui.tone(ctx,"danger"))
 		}
 		ui.number_field(ctx,ui.id(ctx,"frames_asked"),&p.frames,{width=ui.fixed(72),decimals=0,speed=1,has_min=true,min=2,has_max=true,max=f64(host.PROFILE_FRAMES_MAX),disabled=recording})
-		if ui.button(ctx,ui.id(ctx,"record"),{label="Record",style=.Accent,size=th.font_small,disabled=recording}).clicked {
+		if ui.button(ctx,ui.id(ctx,"record"),{label="Record",variant="accent",size=ui.metric(ctx,"font_small"),disabled=recording}).clicked {
 			p.error_length=0
 			if _,error:=editor.profile_begin(s,int(p.frames),"profiler panel");error!="" {p.error_length=copy(p.error[:],error)}
 		}
@@ -224,31 +222,30 @@ zone_color :: proc(name:string) -> ui.Color {
 frames_draw :: proc(ctx:^ui.Context,rect:ui.Rect,user:rawptr) {
 	p:=(^Profiler_Panel)(user)
 	c:=p.capture
-	th:=&ctx.theme
-	ui.draw_rounded(ctx,rect,th.radius_control,th.field)
+	ui.draw_rounded(ctx,rect,ui.metric(ctx,"radius_control"),ui.tone(ctx,"field"))
 	if c==nil || len(c.frames)==0 {return}
 	top:=p.graph_ms
 	step:=rect.w/f32(len(c.frames))
 	for f,i in c.frames {
 		ms:=editor.profile_frame_ms(f)
 		h:=f32(min(ms/top,1))*(rect.h-4)
-		color:=th.accent
+		color:=ui.tone(ctx,"accent")
 		switch editor.profile_frame_bound(f) {
 		case .Gpu:   color=ui.Color{214,150,74,255}
-		case .Paced: color=th.text_faint
+		case .Paced: color=ui.tone(ctx,"text_faint")
 		case .Cpu:
 		}
 		x:=rect.x+f32(i)*step
 		ui.draw_rect(ctx,{x+step*0.12,rect.y+rect.h-2-h,max(step*0.76,1),h},color)
-		if ms>top {ui.draw_rect(ctx,{x,rect.y+2,step,3},th.danger)}
+		if ms>top {ui.draw_rect(ctx,{x,rect.y+2,step,3},ui.tone(ctx,"danger"))}
 		gpu:=f32(min(f64(f.gpu_ms)/top,1))*(rect.h-4)
-		ui.draw_rect(ctx,{x,rect.y+rect.h-2-gpu,step,1.5},th.text)
+		ui.draw_rect(ctx,{x,rect.y+rect.h-2-gpu,step,1.5},ui.tone(ctx,"text"))
 	}
 	if p.frame<len(c.frames) {
-		ui.draw_rect_lines(ctx,{rect.x+f32(p.frame)*step,rect.y+1,max(step,2),rect.h-2},1,th.text)
+		ui.draw_rect_lines(ctx,{rect.x+f32(p.frame)*step,rect.y+1,max(step,2),rect.h-2},1,ui.tone(ctx,"text"))
 	}
 	text:=fmt.tprintf("%.1f ms",top)
-	ui.draw_text(ctx,text,rect.x+rect.w-ui.text_width(&ctx.font,text,th.font_small)-6,rect.y+6,th.font_small,th.text_muted)
+	ui.draw_text(ctx,text,rect.x+rect.w-ui.text_width(&ctx.font,text,ui.metric(ctx,"font_small"))-6,rect.y+6,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
 }
 
 // The frame chosen: the zones of the main thread by depth, those of the
@@ -257,7 +254,6 @@ frames_draw :: proc(ctx:^ui.Context,rect:ui.Rect,user:rawptr) {
 timeline_draw :: proc(ctx:^ui.Context,rect:ui.Rect,user:rawptr) {
 	p:=(^Profiler_Panel)(user)
 	c:=p.capture
-	th:=&ctx.theme
 	if c==nil || p.frame>=len(c.frames) {return}
 	f:=c.frames[p.frame]
 	gpu_ns:=i64(f64(f.gpu_ms)*1e6)
@@ -266,30 +262,29 @@ timeline_draw :: proc(ctx:^ui.Context,rect:ui.Rect,user:rawptr) {
 	x0:=rect.x+label
 	w:=rect.w-label
 	scale:=w/f32(span)
-	ui.draw_rounded(ctx,{x0,rect.y,w,rect.h},th.radius_control,th.field)
+	ui.draw_rounded(ctx,{x0,rect.y,w,rect.h},ui.metric(ctx,"radius_control"),ui.tone(ctx,"field"))
 	bar :: proc(ctx:^ui.Context,x,y,w:f32,name:string,ms:f64) {
-		th:=&ctx.theme
 		r:=ui.Rect{x,y,max(w,1),ROW}
 		ui.draw_rect(ctx,r,zone_color(name))
 		text:=w>90?fmt.tprintf("%s %.2f",name,ms):name
-		if ui.text_width(&ctx.font,text,th.font_small)+6<w {ui.draw_text(ctx,text,x+3,y+2,th.font_small,ui.Color{20,22,26,255})}
+		if ui.text_width(&ctx.font,text,ui.metric(ctx,"font_small"))+6<w {ui.draw_text(ctx,text,x+3,y+2,ui.metric(ctx,"font_small"),ui.Color{20,22,26,255})}
 	}
 	row_y:=rect.y+2
-	ui.draw_text(ctx,"main",rect.x,row_y+2,th.font_small,th.text_muted)
+	ui.draw_text(ctx,"main",rect.x,row_y+2,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
 	for zone in c.zones[f.zone_first:][:f.zone_count] {
 		y:=row_y+f32(zone.depth-1)*(ROW+2)
 		bar(ctx,x0+f32(zone.start_ns-f.start_ns)*scale,y,f32(zone.ns)*scale,c.names[zone.name],f64(zone.ns)/1e6)
 	}
 	row_y+=f32(p.depth)*(ROW+2)
 	for thread in p.threads[:p.thread_count] {
-		ui.draw_text(ctx,fmt.tprintf("worker %d",thread),rect.x,row_y+2,th.font_small,th.text_muted)
+		ui.draw_text(ctx,fmt.tprintf("worker %d",thread),rect.x,row_y+2,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
 		for zone in c.zones[p.workers:] {
 			if zone.frame!=p.frame || zone.thread!=int(thread) || zone.depth!=0 {continue}
 			bar(ctx,x0+f32(zone.start_ns-f.start_ns)*scale,row_y,f32(zone.ns)*scale,c.names[zone.name],f64(zone.ns)/1e6)
 		}
 		row_y+=ROW+2
 	}
-	ui.draw_text(ctx,"GPU",rect.x,row_y+2,th.font_small,th.text_muted)
+	ui.draw_text(ctx,"GPU",rect.x,row_y+2,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
 	at:=f32(0)
 	for pass in c.passes[f.pass_first:][:f.pass_count] {
 		width:=f32(f64(pass.ms)*1e6)*scale
@@ -299,8 +294,8 @@ timeline_draw :: proc(ctx:^ui.Context,rect:ui.Rect,user:rawptr) {
 	ruler:=row_y+ROW+4
 	for i in 0..=4 {
 		x:=x0+w*f32(i)/4
-		ui.draw_rect(ctx,{x,rect.y,1,ruler-rect.y},ui.color_alpha(th.text_faint,60))
-		ui.draw_text(ctx,fmt.tprintf("%.1f ms",f64(span)*f64(i)/4/1e6),min(x+3,rect.x+rect.w-48),ruler,th.font_small,th.text_muted)
+		ui.draw_rect(ctx,{x,rect.y,1,ruler-rect.y},ui.color_alpha(ui.tone(ctx,"text_faint"),60))
+		ui.draw_text(ctx,fmt.tprintf("%.1f ms",f64(span)*f64(i)/4/1e6),min(x+3,rect.x+rect.w-48),ruler,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
 	}
 }
 
@@ -309,18 +304,17 @@ timeline_draw :: proc(ctx:^ui.Context,rect:ui.Rect,user:rawptr) {
 zones_draw :: proc(ctx:^ui.Context,rect:ui.Rect,user:rawptr) {
 	p:=(^Profiler_Panel)(user)
 	c:=p.capture
-	th:=&ctx.theme
 	if c==nil || p.top_count==0 {return}
-	ui.draw_text(ctx,"Zone",rect.x,rect.y,th.font_small,th.text_muted)
-	ui.draw_text(ctx,"ms / frame",rect.x+rect.w*0.55,rect.y,th.font_small,th.text_muted)
-	ui.draw_text(ctx,"calls / frame",rect.x+rect.w*0.78,rect.y,th.font_small,th.text_muted)
+	ui.draw_text(ctx,"Zone",rect.x,rect.y,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
+	ui.draw_text(ctx,"ms / frame",rect.x+rect.w*0.55,rect.y,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
+	ui.draw_text(ctx,"calls / frame",rect.x+rect.w*0.78,rect.y,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
 	most:=max(p.top[0].ms,0.001)
 	for top,i in p.top[:p.top_count] {
 		y:=rect.y+ROW*f32(i+1)
 		name:=c.names[top.name]
 		ui.draw_rect(ctx,{rect.x,y+3,rect.w*0.5*f32(top.ms/most),ROW-6},ui.color_alpha(zone_color(name),110))
-		ui.draw_text(ctx,top.worker?fmt.tprintf("%s (worker)",name):name,rect.x+4,y+1,th.font_small,th.text)
-		ui.draw_text(ctx,fmt.tprintf("%.3f",top.ms),rect.x+rect.w*0.55,y+1,th.font_small,th.text)
-		ui.draw_text(ctx,fmt.tprintf("%.1f",top.calls),rect.x+rect.w*0.78,y+1,th.font_small,th.text)
+		ui.draw_text(ctx,top.worker?fmt.tprintf("%s (worker)",name):name,rect.x+4,y+1,ui.metric(ctx,"font_small"),ui.tone(ctx,"text"))
+		ui.draw_text(ctx,fmt.tprintf("%.3f",top.ms),rect.x+rect.w*0.55,y+1,ui.metric(ctx,"font_small"),ui.tone(ctx,"text"))
+		ui.draw_text(ctx,fmt.tprintf("%.1f",top.calls),rect.x+rect.w*0.78,y+1,ui.metric(ctx,"font_small"),ui.tone(ctx,"text"))
 	}
 }

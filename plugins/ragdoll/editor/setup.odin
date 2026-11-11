@@ -26,7 +26,7 @@ RAGDOLL_API_DEFAULT :: Ragdoll_Api{provider={register=register}}
 // The bodies of a humanoid ragdoll. Spine and Chest split the chain between
 // the pelvis and the neck; neck, clavicles and toes have none.
 Ragdoll_Part :: enum u8 {Pelvis,Spine,Chest,Head,Upper_Arm_L,Forearm_L,Hand_L,Upper_Arm_R,Forearm_R,Hand_R,Thigh_L,Shin_L,Foot_L,Thigh_R,Shin_R,Foot_R}
-// How a body turns from its parent, as limits of a SixDOF Joint, the kind a Driven ragdoll moves.
+// How a body turns from its parent, as limits of the turns of its Joint.
 Ragdoll_Joint_Kind :: enum u8 {None,Hinge,Swing_Twist}
 
 Ragdoll_Setup_Params :: struct {
@@ -42,7 +42,7 @@ Ragdoll_Setup_Body :: struct {
     size:mm.Vec3 `mirai:"unit=m,label=Collider.size in the space of the body: half extents of a box, radius in x of a sphere, radius in x and half height in y of a capsule"`,
     mass:f32 `mirai:"unit=kg"`,
     joint:Ragdoll_Joint_Kind `mirai:"label=None for the root"`,
-    parent:base.Entity_Id `mirai:"label=The body its Joint targets; 0 for the root"`,
+    parent:base.Entity_Id `mirai:"label=The body its Joint joins it to; 0 for the root"`,
 }
 Ragdoll_Setup_Result :: struct {
     id:base.Entity_Id `mirai:"label=The rig"`,
@@ -53,7 +53,7 @@ Ragdoll_Setup_Result :: struct {
 @(private)
 register :: proc(s:^editor.Session) {
     defaults:=Ragdoll_Setup_Params{mode=rag.RAGDOLL_DEFAULT.mode}
-    editor.api_method_register(s,{params=type_info_of(Ragdoll_Setup_Params),result=type_info_of(Ragdoll_Setup_Result),name="ragdoll.setup",summary="Builds the ragdoll of a rig from the body of its skeleton, the one it stores or one found in memory for the call: a dynamic body with collider, Ragdoll_Bone and limited Joint per part, and the Ragdoll of the rig, in one step of undo that also takes away the ragdoll the rig had.",defaults=&defaults,run=setup})
+    editor.api_method_register(s,{params=type_info_of(Ragdoll_Setup_Params),result=type_info_of(Ragdoll_Setup_Result),name="ragdoll.setup",summary="Builds the ragdoll of a rig from the body of its skeleton, the one it stores or one found in memory for the call: a dynamic body with collider and Ragdoll_Bone per part, with a child holding its limited Joint to the body of its parent part, and the Ragdoll of the rig, in one step of undo that also takes away the ragdoll the rig had.",defaults=&defaults,run=setup})
 }
 
 // What a part takes from the body: its parent part, its joint with limits in
@@ -91,6 +91,7 @@ Plan_Body :: struct {
     offset:mm.Transform,
     collider:phys.Collider,
     joint:phys.Joint,
+    joint_at:mm.Transform, // where the entity of the joint is under the body: the frame of the joint
     volume,mass:f32,
 }
 @(private)
@@ -166,7 +167,7 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
     if len(previous)>0 {editor.entities_delete(s,previous[:])}
     for body in previous {
         if editor.entity_alive(w,body) {
-            failure(call,{"entity","Locked_Body","bodies the scene can remove",fmt.tprintf("%x",core.id_of(core.read(ids),body)),"A body of the previous ragdoll could not be removed","Unlock it: it is a member of a prefab instance or of a section that is not edited"})
+            failure(call,{"entity","Locked_Body","bodies the scene can remove",fmt.tprintf("%x",core.id_of(ids,body)),"A body of the previous ragdoll could not be removed","Unlock it: it is a member of a prefab instance or of a section that is not edited"})
             editor.api_edit_end(s,call,false)
             return
         }
@@ -174,7 +175,7 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
     made:[Ragdoll_Part]core.Entity
     for &body,part in bodies {
         if !body.present {continue}
-        e:=editor.entity_create(s,{preset=.Empty,name=fmt.tprintf("%s %s",stem,strings.to_lower(fmt.tprintf("%v",part),call.allocator)),transform=core.from_math(body.pose)})
+        e:=editor.entity_create(s,{name=fmt.tprintf("%s %s",stem,strings.to_lower(fmt.tprintf("%v",part),call.allocator)),transform=core.from_math(body.pose)})
         if e==core.NONE {
             failure(call,{"entity","Edit_Refused","a scene that takes new entities","refused","The bodies could not be made in the edited scene","Edit the section the rig is in, or save and reopen the scene"})
             editor.api_edit_end(s,call,false)
@@ -185,21 +186,28 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
         collider:=body.collider;collider.group=rig
         core.add(rigids,e,rigid);core.add(colliders,e,collider)
         core.add(bindings,e,rag.Ragdoll_Bone{rig=rig,bone=bone_named(view.bones,int(body.bone)),offset=body.offset})
-        if part!=.Pelvis {joint:=body.joint;joint.target=made[body.parent];core.add(joints,e,joint)}
+        if part==.Pelvis {continue}
+        joined:=editor.entity_create(s,{name=fmt.tprintf("%s %s joint",stem,strings.to_lower(fmt.tprintf("%v",part),call.allocator)),parent=e,transform=core.from_math(body.joint_at)})
+        if joined==core.NONE {
+            failure(call,{"entity","Edit_Refused","a scene that takes new entities","refused","The joints could not be made in the edited scene","Edit the section the rig is in, or save and reopen the scene"})
+            editor.api_edit_end(s,call,false)
+            return
+        }
+        joint:=body.joint;joint.b=made[body.parent];core.add(joints,joined,joint)
     }
     core.add(configs,rig,config)
     core.world_settle(w)
     if !editor.api_edit_end(s,call,true) {return}
     out:=api.call_result(call,Ragdoll_Setup_Result)
-    out.id,out.removed=core.id_of(core.read(ids),rig),u32(len(previous))
+    out.id,out.removed=core.id_of(ids,rig),u32(len(previous))
     rules:=PART_RULES
     count:=0
     for &body,part in bodies {
         if !body.present {continue}
         row:=&out.bodies[count];count+=1
-        row.id,row.part,row.shape,row.size,row.mass,row.joint=core.id_of(core.read(ids),made[part]),part,body.collider.kind,body.collider.size,body.mass,rules[part].joint
+        row.id,row.part,row.shape,row.size,row.mass,row.joint=core.id_of(ids,made[part]),part,body.collider.kind,body.collider.size,body.mass,rules[part].joint
         named:=bone_named(view.bones,int(body.bone));base.text_set(row.bone[:],base.text_get(named.path[:]))
-        if part!=.Pelvis {row.parent=core.id_of(core.read(ids),made[body.parent])}
+        if part!=.Pelvis {row.parent=core.id_of(ids,made[body.parent])}
     }
 }
 
@@ -347,12 +355,11 @@ plan :: proc(bones:[]aa.Skeleton_Bone,body_map:lib.Body_Map,rig:mm.Transform,tot
         y:=linalg.normalize(linalg.cross(x,bend)) if rule.joint==.Hinge && linalg.length(linalg.cross(x,bend))>1e-3 else across(x,left,forward)
         frame:=basis(x,y,linalg.cross(x,y))
         target:=bodies[parent].pose
-        joint:=phys.joint_sixdof(core.NONE)
-        joint.auto_target=false
-        joint.anchor=mm.quat_rotate(mm.quat_inverse(rotation),start-center)/k
-        joint.rotation=linalg.normalize(mm.quat_inverse(rotation)*frame)
-        joint.target_anchor=mm.quat_rotate(mm.quat_inverse(target.rotation),start-target.position)/target.scale.x
-        joint.target_rotation=linalg.normalize(mm.quat_inverse(target.rotation)*frame)
+        body.joint_at={mm.quat_rotate(mm.quat_inverse(rotation),start-center)/k,linalg.normalize(mm.quat_inverse(rotation)*frame),{1,1,1}}
+        joint:=phys.joint_fixed(core.NONE)
+        joint.b_frame=true
+        joint.b_anchor=mm.quat_rotate(mm.quat_inverse(target.rotation),start-target.position)
+        joint.b_rotation=linalg.normalize(mm.quat_inverse(target.rotation)*frame)
         joint.angular[1]={motion=.Limited,lower=rule.lower,upper=rule.upper}
         if rule.joint==.Swing_Twist {
             joint.angular[0]={motion=.Limited,lower=-rule.twist,upper=rule.twist}

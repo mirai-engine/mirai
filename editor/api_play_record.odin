@@ -267,7 +267,7 @@ api_play_record :: proc(s:^Session,call:^api.Call) {
         append(&shown,shot)
         append(&spans,[2]int{holds_from,len(held)})
         w.sheet,w.tile,w.tick=&sheet,shot.tile,shot.tick
-        jobs.run(&s.app.jobs,jobs.OWNER,record_write,w,&w.counter)
+        jobs.run(&s.app.jobs,jobs.OWNER,.Background,record_write,w,&w.counter)
         done+=1
     }
     for &w in writes {
@@ -326,11 +326,10 @@ record_holds :: proc(s:^Session,w:core.World_Ref,out:^[dynamic]Record_Manifest_I
     tick:u64
     if t:=core.world_storage_of(w,core.Time);t!=nil {tick=t.tick}
     requests:=core.world_storage_of(w,input.Hold_Requests)
-    read:=core.read(seats)
-    for row in 0..<core.count(read) {
-        seat:=core.at(read,row)
+    for row in 0..<core.count(seats) {
+        seat:=core.at(seats,row)
         if !input.seat_local(seat) {continue}
-        holds,count:=input.holds_at(seat,core.entity_at(read,row),requests,tick)
+        holds,count:=input.holds_at(seat,core.entity_at(seats,row),requests,tick)
         for h in holds[:count] {
             name,_:=core.name_of(s.info,input.Action,i64(h.action))
             append(out,Record_Manifest_Input{slot=int(seat.slot),action=name,value=h.value,until=h.until})

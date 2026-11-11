@@ -13,7 +13,7 @@ import "mirai:std/base"
 // what the source names name.
 @(private)
 imported_id :: proc(o:^Out,source:string,kind:asset.Fourcc,name:string) -> base.Asset_Id {
-    if id,found:=importer.output_id(path(o,source),kind,name,fmt.tprintf("%s/demo",o.root));found {return id}
+    if id,found:=importer.output_id(path(o,source),kind,name);found {return id}
     known,_:=asset.kind_info(kind)
     fmt.eprintfln("demo_content: the import of %s wrote no %s named %s",source,known.name,name)
     o.content.failed=true

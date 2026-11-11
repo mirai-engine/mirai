@@ -12,6 +12,7 @@ import "mirai:project"
 import gpu "mirai:render"
 import "mirai:rhi"
 import "mirai:std/base"
+import "mirai:editor/kit"
 import "mirai:ui"
 
 // The Graphics popup of the bar: the Graphics_Settings of the project, which
@@ -102,7 +103,6 @@ graphics_build :: proc(s:^Session) {
     gs:=s.graphics
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     popup:=graphics_popup(g)
     current:=graphics_settings(s)
     if !ui.popup_is_open(ctx,popup) || current==nil {return}
@@ -113,18 +113,18 @@ graphics_build :: proc(s:^Session) {
     preset_labels:=GRAPHICS_QUALITY_LABELS
     shown:=erender.graphics_quality_of(current^)
     row:=ui.Box{width=ui.GROW,height=ui.fixed(GRAPHICS_ROW),gap=7,align_y=.Center}
-    segment:=ui.Button{style=.Tab,width=-1,height=th.row-4,size=th.font_small,center=true,padding=2}
+    segment:=ui.Button{variant="tab",width=-1,height=ui.metric(ctx,"row")-4,size=ui.metric(ctx,"font_small"),center=true,padding=2}
     if ui.popup(ctx,popup,{width=GRAPHICS_WIDTH,align_right=true,flush=true}) {
         ui.id_push(ctx,popup)
         if ui.box(ctx,{width=ui.GROW,height=ui.fixed(40),padding={BAND_INSET,0,BAND_INSET,0},gap=12,align_y=.Center}) {
-            ui.label(ctx,"Graphics",13,th.text,font=ui.FONT_SEMIBOLD)
+            ui.label(ctx,"Graphics",13,ui.tone(ctx,"text"),font=ui.FONT_SEMIBOLD)
             ui.spacer(ctx)
-            ui.label(ctx,fmt.tprintf("%.0f fps",s.app.stats.fps),th.font_small,th.text,font=ui.FONT_MEDIUM)
+            ui.label(ctx,fmt.tprintf("%.0f fps",s.app.stats.fps),ui.metric(ctx,"font_small"),ui.tone(ctx,"text"),font=ui.FONT_MEDIUM)
             gpu_ms:=f32(0)
             if s.app.renderer!=nil {gpu_ms=gpu.renderer_stats(s.app.renderer).gpu_ms}
-            ui.label(ctx,fmt.tprintf("GPU %.1f ms",gpu_ms),th.font_small,th.text_muted)
+            ui.label(ctx,fmt.tprintf("GPU %.1f ms",gpu_ms),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
         }
-        if ui.scroll_area(ctx,ui.id(ctx,"rows"),&gs.scroll,{height=ui.FIT,max_height=max(ctx.size.y-th.bar_height-GRAPHICS_ROW-80,GRAPHICS_ROW),gap=0,fade=th.popup}) {
+        if ui.scroll_area(ctx,ui.id(ctx,"rows"),&gs.scroll,{height=ui.FIT,max_height=max(ctx.size.y-ui.metric(ctx,"bar_height")-GRAPHICS_ROW-80,GRAPHICS_ROW),gap=0,fade=ui.tone(ctx,"popup")}) {
             // Two sections, each under its band that folds it: what the presets set,
             // and the frame rate. A section_card ends with the if that opens it.
             for rate in ([]bool{false,true}) {
@@ -132,8 +132,8 @@ graphics_build :: proc(s:^Session) {
                     if !rate {
                         ui.box_begin(ctx,row)
                         defer ui.box_end(ctx,{})
-                        ui.label(ctx,"Preset",th.font_small,th.text_label,GRAPHICS_LABEL_WIDTH)
-                        if ui.segments(ctx,ui.GROW,th.row) {
+                        ui.label(ctx,"Preset",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_label"),GRAPHICS_LABEL_WIDTH)
+                        if kit.segments(ctx,ui.GROW,ui.metric(ctx,"row")) {
                             for candidate in erender.Graphics_Quality {
                                 if candidate==.Custom {continue}
                                 button:=segment
@@ -311,7 +311,6 @@ graphics_row_commit :: proc(s:^Session,row:^Graphics_Row,choice:int) -> bool {
 @(private="file")
 graphics_row :: proc(s:^Session,row:^Graphics_Row,r:int,box:ui.Box,segment:ui.Button) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     info:=&s.info.storages[row.storage]
     current:=graphics_row_choice(row,graphics_setting_of(s,info))
     defaults:[INSPECTOR_COMPONENT_BYTES]u8
@@ -320,8 +319,8 @@ graphics_row :: proc(s:^Session,row:^Graphics_Row,r:int,box:ui.Box,segment:ui.Bu
     }
     base_choice:=graphics_row_choice(row,&defaults[0])
     if ui.box(ctx,box) {
-        ui.label(ctx,row.label,th.font_small,th.text_label,GRAPHICS_LABEL_WIDTH)
-        if ui.segments(ctx,ui.GROW,th.row) {
+        ui.label(ctx,row.label,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_label"),GRAPHICS_LABEL_WIDTH)
+        if kit.segments(ctx,ui.GROW,ui.metric(ctx,"row")) {
             for label,choice in row.choices {
                 button:=segment
                 button.label,button.active=label,current==choice
@@ -329,7 +328,7 @@ graphics_row :: proc(s:^Session,row:^Graphics_Row,r:int,box:ui.Box,segment:ui.Bu
             }
         }
         if current!=base_choice && base_choice>=0 {
-            if ui.button(ctx,ui.id(ctx,"graphics_reset",r+1),{icon=.Revert,icon_size=12,icon_color=th.text_muted,style=.Ghost,width=REVERT_SIDE,height=REVERT_SIDE}).clicked {graphics_row_commit(s,row,base_choice)}
+            if ui.button(ctx,ui.id(ctx,"graphics_reset",r+1),{icon=.Revert,icon_size=12,icon_color=ui.tone(ctx,"text_muted"),variant="ghost",width=REVERT_SIDE,height=REVERT_SIDE}).clicked {graphics_row_commit(s,row,base_choice)}
         } else {ui.spacer(ctx,REVERT_SIDE,1)}
     }
 }

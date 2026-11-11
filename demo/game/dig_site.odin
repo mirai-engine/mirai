@@ -3,6 +3,7 @@ package game
 import "core:math"
 import "core:math/linalg"
 import "mirai:core"
+import cam "mirai:engine/camera"
 import inp "mirai:engine/input"
 import "mirai:host"
 import "mirai:std/base"
@@ -48,8 +49,8 @@ Dig_Inventory :: struct {
 
 @(step="fixed",stage="react")
 dig_site :: proc(
-    commands:core.Commands,sites:^core.Table(Dig_Site),pickups:core.Read(Dig_Pickup),players:core.Read(Player),
-    drivables:core.Read(inp.Drivable),actions:inp.Input_Of(Action),worlds:core.Read(core.World_Transform),
+    commands:core.Commands,sites:^core.Table(Dig_Site),pickups:^core.Table(Dig_Pickup,.Read),players:^core.Table(Player,.Read),
+    sight:cam.Sight,actions:inp.Input_Of(Action),worlds:^core.Table(core.World_Transform,.Read),
     requests:^terrain.Terrain_Requests,digs:core.Ref(terrain.Terrain_Digs),inventories:^core.Table(Dig_Inventory),network:core.Network,time:core.Time,
 ) {
     site_entity,found:=core.sole(sites)
@@ -73,7 +74,7 @@ dig_site :: proc(
     }
     for row in 0..<core.count(players) {
         e:=core.entity_at(players,row)
-        origin,ahead,aimed:=inp.aim(drivables,worlds,e)
+        origin,ahead,aimed:=cam.aim(sight,e)
         if !aimed || !inp.pressed(actions,e,.Use) {continue}
         terrain.dig(requests,{kind=.Carve,center=origin+ahead*DIG_REACH,radius=site.radius*0.8,amount=1,blend=0.2})
     }
@@ -121,9 +122,8 @@ Dig_Hud :: struct {
 }
 
 @(step="frame")
-dig_hud :: proc(huds:^core.Table(Dig_Hud),inventories:core.Read(Dig_Inventory),assets:^host.Assets) {
-    shown:=core.read(huds)
-    if core.count(shown)==0 {return}
+dig_hud :: proc(huds:^core.Table(Dig_Hud),inventories:^core.Table(Dig_Inventory,.Read),assets:^host.Assets) {
+    if core.count(huds)==0 {return}
     // The inventory is on the Keep root the first tick of a dig makes: none before it.
     inventory:Dig_Inventory
     if core.count(inventories)>0 {inventory=core.at(inventories,0)}
@@ -132,11 +132,10 @@ dig_hud :: proc(huds:^core.Table(Dig_Hud),inventories:core.Read(Dig_Inventory),a
         row:=&next.rows[i]
         name:[base.ASSET_ID_TEXT]u8
         base.text_set(row.name[:],assets!=nil?host.assets_name(assets,inventory.materials[i],&name):"Material")
-        // Hundredths of a cubic metre, as the HUD writes them.
-        row.cubic_metres=math.round(inventory.cubic_metres[i]*100)/100
+        row.cubic_metres=inventory.cubic_metres[i]
         row.drops,row.picked=i32(inventory.drops[i]),inventory.drops[i]>0
     }
-    for row in 0..<core.count(shown) {
-        if core.at(shown,row)!=next {core.edit_at(huds,row)^=next}
+    for row in 0..<core.count(huds) {
+        core.edit_at(huds,row)^=next
     }
 }

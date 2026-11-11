@@ -2,8 +2,11 @@ package ui_inspector_editor
 
 import "base:runtime"
 import "core:fmt"
+import "core:reflect"
+import "core:slice"
 import "core:strings"
 import "core:testing"
+import "mirai:cook/author"
 import "mirai:editor/api"
 import "mirai:std/serial"
 
@@ -34,4 +37,14 @@ every_result_of_the_ui_methods_registers_with_its_schema :: proc(t:^testing.T) {
         text:=string(serial.writer_bytes(&w))
         testing.expectf(t,strings.contains(text,r.part),"%v lacks %s in %s",r.info.id,r.part,text)
     }
+}
+
+// What ui.write says of its document names every key the reader of the
+// document takes of a node.
+@(test)
+the_document_ui_write_describes_names_the_keys_the_reader_takes :: proc(t:^testing.T) {
+    keys:=author.DOCUMENT_NODE_KEYS
+    field:=reflect.struct_field_by_name(Ui_Write_Params,"document")
+    words:=strings.fields_proc(string(field.tag),proc(r:rune) -> bool {return !(r>='a' && r<='z' || r=='_')},context.temp_allocator)
+    for key in keys {testing.expectf(t,slice.contains(words,key),"ui.write does not name the key %s of a node",key)}
 }

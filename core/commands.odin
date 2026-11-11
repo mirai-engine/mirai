@@ -61,5 +61,5 @@ commands_remove :: proc(c:Commands,e:Entity,$T:typeid) {
 // The row of T an add of this function waits to give the entity; nil without one.
 commands_added :: proc(c:Commands,e:Entity,$T:typeid) -> ^T {
     t:=world_table_of(World_Ref{c.data,c.info,.World},T)
-    return t!=nil?added(t,e):nil
+    return t!=nil?cast(^T)raw_added(raw(t),type_info_of(T),e):nil
 }

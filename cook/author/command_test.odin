@@ -42,6 +42,7 @@ template_copy :: proc(t:^testing.T,name:string) -> (root,engine:string,ok:bool) 
 }
 
 @(private="file") Game_Status :: struct {health:f32,hits:i32,message:[32]u8 `mirai:"text"`}
+@(private="file") Game_Mark :: struct {seen:i32 `mirai:"transient"`}
 
 // The world of the game of the tests: where a recipe is run.
 @(private="file")
@@ -54,6 +55,7 @@ Game_World :: struct {
     tints:core.Table(erender.Tint),
     point_lights:core.Table(erender.Point_Light),
     statuses:core.Table(Game_Status) `mirai:"game,name=Status"`,
+    marks:core.Table(Game_Mark) `mirai:"game,name=Mark"`,
     names:core.Table(core.Name),
     ids:core.Table(core.Id),
     parents:core.Table(core.Parent),
@@ -149,7 +151,7 @@ the_commands_read_write_and_check_the_document_of_an_asset :: proc(t:^testing.T)
     before:=file_bytes_at(root,"assets/hud/hud.ui")
     for args in ([][]string{{"ui","write","hud/hud.ui",hud},{"ui","check"},{"scene","read","arena/main.scene"},{"scene","write","arena/main.scene",hud},{"scene","check"}}) {
         refused:=run(base_args,..args)
-        testing.expectf(t,refused.code==1 && refused.out=="" && strings.contains(refused.err,"mirai build editor <project> --dev"),"%v: %d %s%s",args,refused.code,refused.out,refused.err)
+        testing.expectf(t,refused.code==1 && refused.out=="" && strings.contains(refused.err,"mirai build editor <project> builds it"),"%v: %d %s%s",args,refused.code,refused.out,refused.err)
     }
     testing.expect(t,slice.equal(file_bytes_at(root,"assets/hud/hud.ui"),before))
 
@@ -254,15 +256,32 @@ the_document_of_a_scene_writes_it_back_and_declares_what_its_file_has :: proc(t:
     if problem:=project_open(&p,root,engine,false);!testing.expect(t,problem=="",problem) {return}
     defer project_close(&p)
     p.info=&info
+    // Its own document writes a file back as it is, unless the file stores a component of the
+    // game with another layout (the Status of the template): then it is written as the game reads it.
+    arena:=slice.clone(file_bytes(&p,"arena/main.scene"),context.temp_allocator)
     for path in ([]string{"arena/main.scene","player/Player.scene"}) {
         before:=slice.clone(file_bytes(&p,path),context.temp_allocator)
         out:serial.Writer
         serial.writer_init(&out,0,context.temp_allocator)
         if problem:=scene_read(&p,path,&out);!testing.expectf(t,problem=="","%s: %s",path,problem) {continue}
         written,problem:=scene_write(&p,path,string(serial.writer_bytes(&out)))
-        testing.expectf(t,problem=="" && written.same,"%s: %s",path,problem)
-        testing.expectf(t,slice.equal(file_bytes(&p,path),before),"%s: its own document changes its bytes",path)
+        relaid:=len(written.stored)>0
+        testing.expectf(t,problem=="" && written.same!=relaid && relaid==(path=="arena/main.scene"),"%s: %s %v",path,problem,written.stored)
+        testing.expectf(t,relaid || slice.equal(file_bytes(&p,path),before),"%s: its own document changes its bytes",path)
+        for entry in scene_stored(&p,path) {testing.expectf(t,entry.unknown,"%s: %s is still stored with another layout",path,entry.component)}
         testing.expectf(t,scene_verify(&p,path)=="","%s: %s",path,scene_verify(&p,path))
+    }
+    // The first write keeps a value of a field the layout of the file lacks.
+    {
+        testing.expect(t,os.write_entire_file(project.path(p.assets_root,"arena/main.scene",allocator=context.temp_allocator),arena)==nil)
+        out:serial.Writer
+        serial.writer_init(&out,0,context.temp_allocator)
+        if problem:=scene_read(&p,"arena/main.scene",&out);!testing.expect(t,problem=="",problem) {return}
+        document,replaced:=strings.replace(string(serial.writer_bytes(&out)),`"Status":{`,`"Status":{"health":5,`,1,context.temp_allocator)
+        if !testing.expect(t,replaced,"the arena has a Status") {return}
+        _,problem:=scene_write(&p,"arena/main.scene",document)
+        serial.writer_init(&out,0,context.temp_allocator)
+        testing.expect(t,problem=="" && scene_read(&p,"arena/main.scene",&out)=="" && strings.contains(string(serial.writer_bytes(&out)),`"health": 5`),problem)
     }
     // The floor grows, a lamp with a bulb is made, and what the document leaves out goes;
     // the components this game does not know stay with the entities it kept.
@@ -271,7 +290,7 @@ the_document_of_a_scene_writes_it_back_and_declares_what_its_file_has :: proc(t:
     if !testing.expect_value(t,asset.scene_load(&kept,&p.types,file,context.temp_allocator),asset.Error.None) {return}
     floor:=asset.scene_ids(&kept)[2]
     count:=asset.scene_entity_count(&kept)
-    document:=fmt.tprintf(`{{"entities":[{{"id":"0x%016x","name":"Ground","scale":[30,0.1,30],"components":{{"Mesh_Renderer":{{}},"Tint":{{"color":[1,0,0,1]}}}}}},{{"name":"Lamp","position":[2,3,0],"components":{{"Point_Light":{{"intensity":7}}}},"off":["Point_Light"],"children":[{{"name":"Bulb","visible":false}}]}}]}}`,u64(floor))
+    document:=fmt.tprintf(`{{"entities":[{{"id":"0x%016x","name":"Ground","scale":[30,0.1,30],"components":{{"Mesh_Renderer":{{}},"Tint":{{"color":[1,0,0,1]}}}}}},{{"name":"Lamp","position":[2,3,0],"components":{{"Point_Light":{{"intensity":7}},"Mark":{{}}}},"off":["Point_Light"],"children":[{{"name":"Bulb","visible":false}}]}}]}}`,u64(floor))
     written,problem:=scene_write(&p,"arena/main.scene",document)
     if !testing.expect(t,problem=="",problem) {return}
     testing.expect(t,written.made==2 && written.removed==count-1 && !written.same,fmt.tprintf("%v",written))
@@ -285,11 +304,18 @@ the_document_of_a_scene_writes_it_back_and_declares_what_its_file_has :: proc(t:
     collider,has_table:=asset.scene_component(&after,"Collider")
     _,has_collider:=asset.scene_component_get(&after,collider,floor)
     testing.expect(t,has_table && has_collider,"a component the game of this build does not know stays")
+    taken,taken_why:=scene_write(&p,"arena/main.scene",fmt.tprintf(`{{"merge":true,"entities":[{{"id":"0x%016x","components":{{"Collider":null}}}}]}}`,u64(floor)))
+    testing.expect(t,taken_why=="" && !taken.same,taken_why)
+    stripped:asset.Scene
+    if !testing.expect_value(t,asset.scene_load(&stripped,&p.types,file,context.temp_allocator),asset.Error.None) {return}
+    gone,_:=asset.scene_component(&stripped,"Collider")
+    _,still:=asset.scene_component_get(&stripped,gone,floor)
+    testing.expect(t,!still,"a merge document takes it off by name")
     out:serial.Writer
     serial.writer_init(&out,0,context.temp_allocator)
     testing.expect_value(t,scene_read(&p,"arena/main.scene",&out),"")
     text:=string(serial.writer_bytes(&out))
-    for part in ([]string{`"name":"Ground"`,`"Point_Light":{"intensity": 7}`,`"off":["Point_Light"]`,`"name":"Bulb","visible":false`}) {
+    for part in ([]string{`"name":"Ground"`,`"Point_Light":{"intensity": 7}`,`"Mark":{}`,`"off":["Point_Light"]`,`"name":"Bulb","visible":false`}) {
         testing.expectf(t,strings.contains(text,part),"the document has %s: %s",part,text)
     }
     // What a document cannot declare says where and what does.
@@ -322,10 +348,11 @@ the_document_of_a_scene_writes_it_back_and_declares_what_its_file_has :: proc(t:
     testing.expect(t,has_root && asset.scene_entity_count(&annex)==2)
 }
 
-// A preset and the card of a plugin stand for the components their recipes
-// give, and a new entity with prefab is a linked instance of that prefab.
+// A preset stands for the components of the recipe it names, one of the
+// engine or another, and a new entity with prefab is a linked instance of
+// that prefab.
 @(test)
-a_scene_document_makes_entities_from_presets_cards_and_prefabs :: proc(t:^testing.T) {
+a_scene_document_makes_entities_from_recipes_and_prefabs :: proc(t:^testing.T) {
     root,engine,copied:=template_copy(t,"recipes")
     if !copied {return}
     info,described:=core.test_info(t,Game_World,erender.test_types)
@@ -335,11 +362,16 @@ a_scene_document_makes_entities_from_presets_cards_and_prefabs :: proc(t:^testin
     if problem:=project_open(&p,root,engine,false);!testing.expect(t,problem=="",problem) {return}
     defer project_close(&p)
     p.info=&info
-    labels:=[]string{"Scoreboard"}
-    scales:=[][3]f32{{2,2,2}}
-    p.plugins={labels=labels,scales=scales,make=proc(user:rawptr,index:int,w:core.World_Ref,e:core.Entity) {
-        if statuses:=core.world_table_of(w,Game_Status);statuses!=nil {core.add(statuses,e,Game_Status{hits=3})}
-    }}
+    // A recipe besides those of the engine, as a plugin has them.
+    _,recipe_why:=scene_write(&p,"recipes/scoreboard.scene",`{"kind":"Prefab","entities":[{"name":"Scoreboard","scale":[2,2,2],"components":{"Status":{"hits":3}}}]}`)
+    if !testing.expect(t,recipe_why=="",recipe_why) {return}
+    own:=recipes_read({project.path(p.assets_root,"recipes",allocator=context.temp_allocator)})
+    all:=make([]Recipe,len(p.recipes)+len(own))
+    copy(all,p.recipes)
+    copy(all[len(p.recipes):],own)
+    delete(p.recipes)
+    delete(own)
+    p.recipes=all
     written,problem:=scene_write(&p,"arena/yard.scene",`{"entities":[
         {"name":"Lamp","preset":"point_light","position":[0,3,0],"components":{"Point_Light":{"intensity":7}}},
         {"name":"Box","preset":"cube","scale":[1,2,1]},
@@ -361,7 +393,7 @@ a_scene_document_makes_entities_from_presets_cards_and_prefabs :: proc(t:^testin
     testing.expect(t,has_mesh && mesh.shape==.Cube)
     status,has_status:=asset.scene_get(&yard,board,"Status",Game_Status)
     placed,_:=asset.scene_get(&yard,board,"Transform",core.Transform)
-    testing.expect(t,has_status && status.hits==3 && placed.scale==[3]f32{2,2,2},"the card of a plugin gives its components and its scale")
+    testing.expect(t,has_status && status.hits==3 && placed.scale==[3]f32{2,2,2},"a recipe gives its components and its scale")
     // The instance: its root where the document says, linked to its prefab, with the members the prefab has.
     prefab:asset.Scene
     if !testing.expect_value(t,asset.scene_load(&prefab,&p.types,project.path(p.assets_root,"player/Player.scene",allocator=context.temp_allocator),context.temp_allocator),asset.Error.None) {return}
@@ -398,7 +430,7 @@ a_scene_document_makes_entities_from_presets_cards_and_prefabs :: proc(t:^testin
     testing.expect(t,len(asset.scene_instance_roots(&after))==1 && len(after_members)==len(members))
 
     // What the document says of a member, however deep, by its name, the instance holds on its own.
-    _,gate_why:=scene_write(&p,"arena/Gate.scene",`{"entities":[{"name":"Gate","children":[{"name":"Frame","children":[{"name":"Lamp","preset":"point_light"}]}]}]}`)
+    _,gate_why:=scene_write(&p,"arena/Gate.scene",`{"kind":"Prefab","entities":[{"name":"Gate","children":[{"name":"Frame","children":[{"name":"Lamp","preset":"point_light"}]}]}]}`)
     if !testing.expect(t,gate_why=="",gate_why) {return}
     court:=`{"entities":[{"name":"North","prefab":"arena/Gate.scene","children":[{"name":"Frame","children":[{"name":"Lamp","position":[0,2,0],"components":{"Point_Light":{"intensity":9}}}]}]}]}`
     north,north_why:=scene_write(&p,"arena/court.scene",court)
@@ -413,7 +445,7 @@ a_scene_document_makes_entities_from_presets_cards_and_prefabs :: proc(t:^testin
     testing.expect(t,why=="" && again.same,fmt.tprintf("%s %v",why,again))
 
     // A prefab is not placed in a file it holds, itself or through the prefabs it places.
-    _,wall_why:=scene_write(&p,"arena/Wall.scene",`{"entities":[{"name":"Wall","children":[{"name":"Door","prefab":"arena/Gate.scene"}]}]}`)
+    _,wall_why:=scene_write(&p,"arena/Wall.scene",`{"kind":"Prefab","entities":[{"name":"Wall","children":[{"name":"Door","prefab":"arena/Gate.scene"}]}]}`)
     testing.expect(t,wall_why=="",wall_why)
     gate:=slice.clone(file_bytes(&p,"arena/Gate.scene"),context.temp_allocator)
     for inner in ([]string{"arena/Gate.scene","arena/Wall.scene"}) {
@@ -421,29 +453,33 @@ a_scene_document_makes_entities_from_presets_cards_and_prefabs :: proc(t:^testin
         testing.expectf(t,strings.contains(refused,"entities[0].children[0].prefab: ") && strings.contains(refused,"holds the scene it would be placed in"),"%s gave '%s'",inner,refused)
     }
     testing.expect(t,slice.equal(file_bytes(&p,"arena/Gate.scene"),gate),"a refused document leaves the file as it was")
+
+    // A prefab has exactly one root: a scene with several is not made one, and a prefab keeps one.
+    _,many:=scene_write(&p,"arena/yard.scene",`{"merge":true,"kind":"Prefab","entities":[]}`)
+    testing.expectf(t,strings.contains(many,"exactly one root"),"gave '%s'",many)
+    _,second:=scene_write(&p,"arena/Gate.scene",`{"merge":true,"entities":[{"name":"Second"}]}`)
+    testing.expectf(t,strings.contains(second,"exactly one root"),"gave '%s'",second)
 }
 
 
-// The bytes a document read from the .ui id and written back gives; ok false
-// when it does not read or write.
+// The bytes the document mirai ui read gives of the .ui path, written back as
+// mirai ui write writes it, and the .strings that write would touch. The
+// bindings are not checked: the test world is not the game of the project.
 @(private="file")
-ui_round_trip :: proc(p:^Project,id:base.Asset_Id) -> (bytes:[]u8,why:string,ok:bool) {
-    r:Records
-    if !records_read(p.assets,id,&r,context.temp_allocator) {return nil,"it does not read",false}
-    reading:=Reading{allocator=context.temp_allocator,assets=registry_assets(&p.registry)}
-    args:=Tree_Args{reading=&reading,types=&p.types,registry=&p.registry,assets=p.assets,asset=id}
-    libs:=doc_libs(&args,&r)
+ui_round_trip :: proc(p:^Project,path:string,id:base.Asset_Id) -> (bytes:[]u8,texts:[]Texts_Written,why:string) {
+    info:=p.info
+    p.info=nil
+    defer p.info=info
     out:serial.Writer
     serial.writer_init(&out,0,context.temp_allocator)
-    document_write(&out,&p.types,&r,-1,libs[:],p.assets)
-    text:=string(serial.writer_bytes(&out))
-    reading.raw=text
-    again:Records
-    if !records_read(p.assets,id,&again,context.temp_allocator) {return nil,"it does not read",false}
-    if _,_,applied:=document_apply(&args,&again,-1,text);!applied {return nil,reading.problem,false}
-    written,_,loads:=document_bytes(&args,id,&again)
-    if !loads {return nil,reading.problem,false}
-    return written,"",true
+    if why=ui_read(p,path,&out);why!="" {return}
+    r:Records
+    if !records_read(p.assets,id,&r,context.temp_allocator) {return nil,nil,"it does not read"}
+    keys:=texts_read(p.assets,p.languages[0])
+    written:Written
+    if bytes,_,why=ui_apply(p,id,&r,string(serial.writer_bytes(&out)),&keys,&written);why!="" {return}
+    texts,why=texts_written(&keys,&p.types,{})
+    return
 }
 
 // Every interface, scene and prefab the engine tracks, in the game template
@@ -471,9 +507,10 @@ the_documents_of_the_tracked_assets_write_back_the_files_they_were_read_from :: 
             switch file.kind {
             case asset.KIND_UI:
                 files+=1
-                written,why,ok:=ui_round_trip(&p,file.id)
-                if !testing.expectf(t,ok,"%s/%s: %s",folder,path,why) {continue}
+                written,texts,why:=ui_round_trip(&p,path,file.id)
+                if !testing.expectf(t,why=="","%s/%s: %s",folder,path,why) {continue}
                 testing.expectf(t,slice.equal(written,file_bytes(&p,path)),"%s/%s: its document writes other bytes: mirai ui write saves it again",folder,path)
+                for touched in texts {testing.expectf(t,slice.equal(touched.bytes,file_bytes(&p,touched.path)),"%s/%s: its document writes other texts in %s",folder,path,touched.path)}
             case asset.KIND_SCENE:
                 files+=1
                 problem:=scene_verify(&p,path)

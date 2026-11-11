@@ -12,9 +12,9 @@ The optional `ragdoll` plugin depends on `animation` and `physics`. Its Runtime
   or `Disabled` (releases control). Zero frequency or torque disables the drives without removing
   limits or anchors.
 - Each dynamic body has `Ragdoll_Bone{rig,bone,offset}`, with a rigid scale-one `offset` in the
-  bone's space; colliders and masses use the normal components. A child uses `Joint.target`
-  toward another body of the same ragdoll; the constraints stay active in free simulation and the
-  root moves freely.
+  bone's space; colliders and masses use the normal components. The `Joint` of a child body is on
+  an entity under it whose `b` is the body of its parent bone; the constraints stay active in free
+  simulation and the root moves freely.
 - The definitions are stored as a scene or prefab. `ragdoll_bind` binds existing bodies as a
   transaction: it validates all entries before adding components.
 
@@ -47,12 +47,12 @@ is detected in memory for the call and the `.skeleton` does not change.
   limbs, or sphere if the segment is shorter than its diameter. The measurements are proportions
   of the bones' height along the body's up. `group` is the rig: the bodies do not collide with
   each other or with the rig's colliders.
-- `mass` is distributed by volume; without it each body weighs like water. Each joint is `SixDOF`
-  because `Driven` only moves `SixDOF` and `Spherical`: hinge (elbows and knees) limits only the
-  flexion axis and locks the other two; swing-twist (shoulders, hips, neck, spine, wrists, ankles)
-  limits all three. The frame's X axis goes along the child body and Y is the flexion one (elbows
-  forward, knees backward); both frames are given explicitly (`auto_target` off), so they do not
-  depend on where the bodies are when the joint is created.
+- `mass` is distributed by volume; without it each body weighs like water. Each joint locks its
+  moves: hinge (elbows and knees) limits only the flexion turn and locks the other two; swing-twist
+  (shoulders, hips, neck, spine, wrists, ankles) limits the twist and gives the swings a cone. The
+  frame's X axis goes along the child body and Y is the flexion one (elbows forward, knees
+  backward); the entity of the joint gives the frame on the child and `b_frame` the one on the
+  parent, so they do not depend on where the bodies are when the joint is made.
 - A rig with `Ragdoll` or with bound bodies fails unless `replace`, which removes in the same step
   the bodies whose `Ragdoll_Bone.rig` is the rig, with what hangs from them. A body that contains
   the rig, or that the scene does not let be removed (member of a prefab, another section), fails

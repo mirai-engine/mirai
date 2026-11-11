@@ -62,28 +62,36 @@ destruct_test_step :: proc(f:^Destruct_Test,resimulating:=false) {
     core.test_world_settle(&f.w)
 }
 
+// A Mesh_Renderer and a Destructible, with a Rigid_Body for another gravity.
 @(private="file")
-destruct_test_entity :: proc(f:^Destruct_Test,config:Destructible,pose:=core.TRANSFORM_IDENTITY) -> core.Entity {
+destruct_test_entity :: proc(f:^Destruct_Test,config:Destructible,pose:=core.TRANSFORM_IDENTITY,gravity_scale:f32=1) -> core.Entity {
     e:=core.create(&f.entities)
-    core.add(&f.configs,e,config);core.add(&f.colliders,e,collider_fracture());core.add(&f.transforms,e,pose);core.add(&f.meshes,e,render.Mesh_Renderer{shape=.Cube})
+    core.add(&f.configs,e,config);core.add(&f.transforms,e,pose);core.add(&f.meshes,e,render.Mesh_Renderer{shape=.Cube})
+    if gravity_scale!=1 {
+        rigid:=phys.RIGID_BODY_DYNAMIC;rigid.gravity_scale=gravity_scale
+        core.add(&f.rigids,e,rigid)
+    }
     return e
 }
 
 @(test)
-pieces_take_the_surface_and_collision_of_the_fracture_collider_and_a_new_preset_keeps_them :: proc(t:^testing.T) {
+pieces_replace_a_collider_of_any_kind_with_its_surface_and_a_new_preset_keeps_them :: proc(t:^testing.T) {
     f:Destruct_Test
     if !testing.expect(t,destruct_test_init(t,&f,base.test_folder(t,"destruct-collision"))) {return}
     defer destruct_test_destroy(&f)
     config:=destructible();config.fracture={1,2}
     e:=destruct_test_entity(&f,config)
+    core.add(&f.colliders,e,phys.collider_box({0.5,0.5,0.5}))
     destruct_test_step(&f);destruct_test_step(&f)
+    made:=core.at(&f.states,core.row_of(&f.states,e)).handle
     surface:=core.edit(&f.colliders,e)
     surface.friction,surface.restitution=0.2,0.4
     destruct_test_step(&f)
     handle:=core.at(&f.states,core.row_of(&f.states,e)).handle
+    testing.expect(t,handle!=made,"a new surface makes it again")
     infos:[2]Piece_Info
     if !testing.expect_value(t,pieces(Destruct_View{core.ref(&f.physics),core.read(&f.states),core.read(&f.groups)},e,infos[:]),2) {return}
-    solid:=phys.collision_filter(nil,collider_fracture())
+    solid:=phys.collision_filter(nil,phys.COLLIDER_DEFAULT)
     for piece in infos {
         shape:=&f.physics.world.shapes[base.handle_index(base.Handle(piece.shape))]
         testing.expect(t,shape.friction==0.2 && shape.restitution==0.4 && shape.filter==solid)
@@ -92,7 +100,8 @@ pieces_take_the_surface_and_collision_of_the_fracture_collider_and_a_new_preset_
     destruct_test_step(&f)
     trigger:=phys.collision_filter(nil,{preset=phys.PRESET_TRIGGER})
     testing.expect_value(t,core.at(&f.states,core.row_of(&f.states,e)).handle,handle)
-    testing.expect_value(t,core.at(&f.states,core.row_of(&f.states,e)).applied_filter,trigger)
+    _,_,_,filter,_:=phys.breakable_surface(core.ref(&f.physics),handle)
+    testing.expect_value(t,filter,trigger)
     for piece in infos {testing.expect_value(t,f.physics.world.shapes[base.handle_index(base.Handle(piece.shape))].filter,trigger)}
     testing.expect_value(t,f.problems.count,0)
 }
@@ -102,18 +111,24 @@ a_destructible_that_cannot_be_made_names_its_entity_and_the_fix :: proc(t:^testi
     f:Destruct_Test
     if !testing.expect(t,destruct_test_init(t,&f,base.test_folder(t,"destruct-problems"))) {return}
     defer destruct_test_destroy(&f)
+    cases:=[2]struct{problem,text:string}{{"destruct.pieces","raise pieces"},{"destruct.mesh","it has no Mesh_Renderer"}}
+    voronoi:=destructible(pieces=1000)
+    many:=destruct_test_entity(&f,voronoi)
     config:=destructible();config.fracture={1,2}
-    boxed:=destruct_test_entity(&f,config)
-    core.add(&f.colliders,boxed,phys.collider_box({0.5,0.5,0.5}))
     bare:=destruct_test_entity(&f,config)
     core.remove(&f.meshes,bare)
     destruct_test_step(&f);destruct_test_step(&f)
-    collider:=core.problem_find(&f.problems,boxed,"destruct.collider")
-    mesh:=core.problem_find(&f.problems,bare,"destruct.mesh")
-    if !testing.expect(t,collider!=nil && mesh!=nil,"each entity has the problem of its own cause") {return}
-    testing.expect(t,strings.contains(core.problem_text(collider),"collider_fracture()"),core.problem_text(collider))
-    testing.expect(t,strings.contains(core.problem_text(mesh),"it has no Mesh_Renderer"),core.problem_text(mesh))
-    testing.expect(t,!core.has(&f.states,boxed) || !phys.breakable_valid(core.ref(&f.physics),core.at(&f.states,core.row_of(&f.states,boxed)).handle))
+    for c,i in cases {
+        e:=i==0?many:bare
+        problem:=core.problem_find(&f.problems,e,c.problem)
+        if !testing.expectf(t,problem!=nil,"%s is a problem of its own entity",c.problem) {continue}
+        testing.expect(t,strings.contains(core.problem_text(problem),c.text),core.problem_text(problem))
+        testing.expect(t,core.at(&f.states,core.row_of(&f.states,e)).failed)
+    }
+    // Given what it lacked, it is made.
+    core.add(&f.meshes,bare,render.Mesh_Renderer{shape=.Cube})
+    destruct_test_step(&f);destruct_test_step(&f)
+    testing.expect(t,phys.breakable_valid(core.ref(&f.physics),core.at(&f.states,core.row_of(&f.states,bare)).handle))
 }
 
 @(test)
@@ -121,8 +136,8 @@ a_strain_asked_of_physics_in_a_volume_breaks_a_destructible_and_is_applied_as_it
     f:Destruct_Test
     if !testing.expect(t,destruct_test_init(t,&f,base.test_folder(t,"destruct-strain-area"),pieces=4)) {return}
     defer destruct_test_destroy(&f)
-    config:=destructible();config.fracture={1,2};config.debris_volume=0;config.gravity_scale=0
-    e:=destruct_test_entity(&f,config)
+    config:=destructible();config.fracture={1,2};config.debris_volume=0
+    e:=destruct_test_entity(&f,config,gravity_scale=0)
     destruct_test_step(&f);destruct_test_step(&f)
     bodies:phys.Body_Requests;defer delete(bodies.queue.items)
     out:[4]Group_Info
@@ -149,10 +164,10 @@ impact_damage_configuration_keeps_passive_clients_intact_and_explicit_server_str
         f:Destruct_Test
         if !testing.expect(t,destruct_test_init(t,&f,base.test_folder(t,"destruct-impact-policy"))) {return}
         defer destruct_test_destroy(&f)
-        config:=destructible();config.fracture={1,2};config.gravity_scale=0;config.debris_volume=0;config.damage_threshold=0
+        config:=destructible();config.fracture={1,2};config.debris_volume=0;config.damage_threshold=0
         testing.expect(t,config.impact_damage)
         f.authority.role=.Client if client else .Server
-        e:=destruct_test_entity(&f,config)
+        e:=destruct_test_entity(&f,config,gravity_scale=0)
         destruct_test_step(&f);destruct_test_step(&f)
         ball:=phys.test_ball(&f.physics,{-.51,0,3},{0,0,-30})
         impacts:=0
@@ -185,8 +200,8 @@ fragment_removal_validates_the_group_and_retires_its_physics_proxy :: proc(t:^te
     f:Destruct_Test
     if !testing.expect(t,destruct_test_init(t,&f,base.test_folder(t,"destruct-remove"))) {return}
     defer destruct_test_destroy(&f)
-    config:=destructible();config.fracture={1,2};config.debris_volume=0;config.gravity_scale=0;config.removal_lifetime=1
-    e:=destruct_test_entity(&f,config)
+    config:=destructible();config.fracture={1,2};config.debris_volume=0;config.removal_lifetime=1
+    e:=destruct_test_entity(&f,config,gravity_scale=0)
     destruct_test_step(&f);destruct_test_step(&f)
     testing.expect_value(t,remove(&f.requests,core.read(&f.groups),e),Remove_Error.Missing_Group)
     testing.expect_value(t,len(f.requests.queue.items),0)
@@ -223,8 +238,8 @@ the_fractures_one_end_applies_replay_alike_on_another_and_passive_ends_keep_dead
     defer destruct_test_destroy(&a)
     if !testing.expect(t,destruct_test_init(t,&b,base.test_folder(t,"destruct-remove-client"))) {return}
     defer destruct_test_destroy(&b)
-    config:=destructible();config.fracture={1,2};config.debris_volume=0;config.gravity_scale=0;config.removal_lifetime=1
-    first:=destruct_test_entity(&a,config);second:=destruct_test_entity(&b,config)
+    config:=destructible();config.fracture={1,2};config.debris_volume=0;config.removal_lifetime=1
+    first:=destruct_test_entity(&a,config,gravity_scale=0);second:=destruct_test_entity(&b,config,gravity_scale=0)
     core.add(&a.ids,first,core.Id{42});core.add(&b.ids,second,core.Id{42})
     a.authority.role=.Server
     b.authority.role=.Client
@@ -266,8 +281,8 @@ cosmetic_fragments_can_be_removed_locally_on_a_passive_client :: proc(t:^testing
     f:Destruct_Test
     if !testing.expect(t,destruct_test_init(t,&f,base.test_folder(t,"destruct-remove-cosmetic"))) {return}
     defer destruct_test_destroy(&f)
-    config:=destructible();config.fracture={1,2};config.debris_volume=2;config.gravity_scale=0
-    e:=destruct_test_entity(&f,config)
+    config:=destructible();config.fracture={1,2};config.debris_volume=2;
+    e:=destruct_test_entity(&f,config,gravity_scale=0)
     f.authority.role=.Client
     destruct_test_step(&f);destruct_test_step(&f)
     state,_:=core.get(&f.states,e)
@@ -291,8 +306,8 @@ authored_destruction_proxies_geometry_and_groups_survive_cache_recovery_offline 
     f:Destruct_Test
     if !testing.expect(t,destruct_test_init(t,&f,base.test_folder(t,"destruct-recover"))) {return}
     defer destruct_test_destroy(&f)
-    config:=destructible();config.fracture={1,2};config.debris_volume=0;config.gravity_scale=0
-    e:=destruct_test_entity(&f,config,core.Transform{{0,2,0},1,{1,1,1}})
+    config:=destructible();config.fracture={1,2};config.debris_volume=0
+    e:=destruct_test_entity(&f,config,core.Transform{{0,2,0},1,{1,1,1}},gravity_scale=0)
     destruct_test_step(&f);destruct_test_step(&f)
     initial:=core.at(&f.states,core.row_of(&f.states,e)).handle
     testing.expect(t,phys.body_of(core.ref(&f.physics),e)!=0)
@@ -316,33 +331,31 @@ authored_destruction_proxies_geometry_and_groups_survive_cache_recovery_offline 
     info:[4]Piece_Info;testing.expect_value(t,pieces(Destruct_View{core.ref(&f.physics),core.read(&f.states),core.read(&f.groups)},e,info[:]),2)
     testing.expect(t,piece_geometry(core.ref(&f.cache),e,info[0].id,&cut_geometry))
     testing.expect_value(t,len(cut_geometry.indices),36)
-    transforms_version:=core.version(&f.transforms)
+    transforms:core.Seen
+    _=core.touched(&f.transforms,&transforms)
     destruct_test_step(&f)
-    testing.expect_value(t,core.version(&f.transforms),transforms_version)
+    testing.expect(t,!core.touched(&f.transforms,&transforms))
     core.remove(&f.configs,e);core.remove(&f.states,e);destruct_test_step(&f)
     testing.expect_value(t,phys.body_of(core.ref(&f.physics),e),phys.Body_Handle(0))
-    testing.expect_value(t,core.count(core.read(&f.groups)),0)
+    testing.expect_value(t,core.count(&f.groups),0)
     testing.expect_value(t,f.physics.world.body_count,i32(0))
 }
 
 @(test)
-moving_destructible_anchors_follow_the_author_parent_with_public_kinematic_requests :: proc(t:^testing.T) {
-    f:Destruct_Test;if !testing.expect(t,destruct_test_init(t,&f,base.test_folder(t,"destruct-parent"))) {return};defer destruct_test_destroy(&f)
-    parent:=core.create(&f.entities);parent_pose:=core.Transform{{3,1,2},mm.quat_axis_angle({0,1,0},.4),{2,1,.5}}
-    core.add(&f.transforms,parent,parent_pose)
-    config:=destructible();config.fracture={1,2};config.follow_parent=true
-    local:=core.Transform{{1,.5,0},1,{1,1,1}}
-    e:=destruct_test_entity(&f,config,local);core.add(&f.parents,e,core.Parent{entity=parent})
+a_destructible_moves_as_its_rigid_body_says_and_a_new_one_makes_it_again :: proc(t:^testing.T) {
+    f:Destruct_Test;if !testing.expect(t,destruct_test_init(t,&f,base.test_folder(t,"destruct-rigid"),anchor_first=false)) {return};defer destruct_test_destroy(&f)
+    config:=destructible();config.fracture={1,2}
+    e:=destruct_test_entity(&f,config)
     destruct_test_step(&f);destruct_test_step(&f)
+    made:=core.at(&f.states,core.row_of(&f.states,e)).handle
     held,_:=phys.body_info(core.ref(&f.physics),phys.body_of(core.ref(&f.physics),e))
+    testing.expect_value(t,held.type,phys.Body_Type.Dynamic)
+    core.add(&f.rigids,e,phys.RIGID_BODY_KINEMATIC)
+    destruct_test_step(&f)
+    handle:=core.at(&f.states,core.row_of(&f.states,e)).handle
+    testing.expect(t,handle!=made && phys.breakable_valid(core.ref(&f.physics),handle))
+    held,_=phys.body_info(core.ref(&f.physics),phys.body_of(core.ref(&f.physics),e))
     testing.expect_value(t,held.type,phys.Body_Type.Kinematic)
-    parent_pose.position.x+=2;core.edit(&f.transforms,parent)^=parent_pose
-    requests:phys.Body_Requests;defer delete(requests.queue.items)
-    destruct_parent_motion(core.ref(&f.physics),core.read(&f.configs),core.read(&f.states),core.read(&f.transforms),core.read(&f.parents),&requests,{playing=true,dt=1.0/60})
-    testing.expect_value(t,len(requests.queue.items),1)
-    request:=requests.queue.items[0];wanted:=mm.transform_compose({parent_pose.position,parent_pose.rotation,parent_pose.scale},{local.position,local.rotation,local.scale})
-    testing.expect_value(t,request.entity,e);testing.expect_value(t,request.kind,phys.Body_Request_Kind.Kinematic)
-    testing.expect_value(t,request.position,wanted.position);testing.expect_value(t,request.rotation,wanted.rotation)
 }
 
 @(test)
@@ -353,7 +366,7 @@ rejected_authored_destruction_does_not_leave_root_or_fragment_proxies :: proc(t:
     destruct_test_step(&f)
     testing.expect(t,core.at(&f.states,core.row_of(&f.states,e)).failed)
     testing.expect_value(t,phys.body_of(core.ref(&f.physics),e),phys.Body_Handle(0))
-    testing.expect_value(t,core.count(core.read(&f.groups)),0)
+    testing.expect_value(t,core.count(&f.groups),0)
     testing.expect_value(t,f.physics.world.body_count,i32(0))
     testing.expect_value(t,f.physics.world.shape_count,i32(0))
 }
@@ -361,8 +374,8 @@ rejected_authored_destruction_does_not_leave_root_or_fragment_proxies :: proc(t:
 @(test)
 damage_requested_before_the_first_tick_waits_for_an_authored_body_then_applies_once :: proc(t:^testing.T) {
     f:Destruct_Test;if !testing.expect(t,destruct_test_init(t,&f,base.test_folder(t,"destruct-initial-intent"))) {return};defer destruct_test_destroy(&f)
-    config:=destructible();config.fracture={1,2};config.gravity_scale=0;config.debris_volume=0
-    e:=destruct_test_entity(&f,config)
+    config:=destructible();config.fracture={1,2};config.debris_volume=0
+    e:=destruct_test_entity(&f,config,gravity_scale=0)
     strain(&f.requests,e,{},4,1000)
     destruct_test_step(&f)
     testing.expect_value(t,len(f.requests.waiting.items),1)
@@ -380,8 +393,8 @@ successive_cuts_keep_detached_proxies_and_all_live_fragment_meshes :: proc(t:^te
     f:Destruct_Test
     if !testing.expect(t,destruct_test_init(t,&f,base.test_folder(t,"destruct-repeated-cuts"))) {return}
     defer destruct_test_destroy(&f)
-    config:=destructible();config.fracture={1,2};config.gravity_scale=0;config.debris_volume=0
-    e:=destruct_test_entity(&f,config)
+    config:=destructible();config.fracture={1,2};config.debris_volume=0
+    e:=destruct_test_entity(&f,config,gravity_scale=0)
     destruct_test_step(&f);destruct_test_step(&f)
     strain(&f.requests,e,{},4,1000);destruct_test_step(&f)
     poses:[16]Group_Info
@@ -413,7 +426,7 @@ successive_cuts_keep_detached_proxies_and_all_live_fragment_meshes :: proc(t:^te
         testing.expect(t,core.alive(&f.entities,target.entity))
         testing.expect_value(t,phys.body_of(core.ref(&f.physics),target.entity),target.body)
         testing.expect_value(t,groups(Destruct_View{core.ref(&f.physics),core.read(&f.states),core.read(&f.groups)},e,poses[:]),3+pass)
-        testing.expect_value(t,core.count(core.read(&f.groups)),3+pass)
+        testing.expect_value(t,core.count(&f.groups),3+pass)
         testing.expect_value(t,f.assets.stats.generated,3+pass)
         root,_:=core.get(&f.meshes,root_entity)
         testing.expect_value(t,root.mesh,root_mesh)
@@ -430,8 +443,8 @@ root_slice_requests_preserve_previous_groups_meshes_and_volume_across_ticks :: p
     f:Destruct_Test
     if !testing.expect(t,destruct_test_init(t,&f,base.test_folder(t,"destruct-root-repeated-cuts"),hulls=32,anchor_first=false)) {return}
     defer destruct_test_destroy(&f)
-    config:=destructible();config.fracture={1,2};config.gravity_scale=0;config.debris_volume=0
-    e:=destruct_test_entity(&f,config)
+    config:=destructible();config.fracture={1,2};config.debris_volume=0
+    e:=destruct_test_entity(&f,config,gravity_scale=0)
     destruct_test_step(&f);destruct_test_step(&f)
     handle:=core.at(&f.states,core.row_of(&f.states,e)).handle
     live_volume :: proc(f:^Destruct_Test,e:core.Entity) -> (volume:f32) {
@@ -479,8 +492,8 @@ a_cut_the_simulation_has_no_room_for_names_the_capacity_to_raise :: proc(t:^test
     f:Destruct_Test
     if !testing.expect(t,destruct_test_init(t,&f,base.test_folder(t,"destruct-cut-capacity"),hulls=3)) {return}
     defer destruct_test_destroy(&f)
-    config:=destructible();config.fracture={1,2};config.gravity_scale=0
-    e:=destruct_test_entity(&f,config)
+    config:=destructible();config.fracture={1,2};
+    e:=destruct_test_entity(&f,config,gravity_scale=0)
     destruct_test_step(&f);destruct_test_step(&f)
     slice(&f.requests,e,{-.51,0,0},{1,0,0})
     destruct_test_step(&f)
@@ -500,8 +513,7 @@ impacts_lost_for_lack_of_events_name_the_setting_to_raise :: proc(t:^testing.T) 
     walls:[2]core.Entity
     for &wall,i in walls {
         pose:=core.TRANSFORM_IDENTITY;pose.position={0,f32(i)*1.5,0}
-        config.gravity_scale=f32(i)
-        wall=destruct_test_entity(&f,config,pose)
+        wall=destruct_test_entity(&f,config,pose,gravity_scale=f32(i))
     }
     destruct_test_step(&f);destruct_test_step(&f)
     for _ in 0..<40 {

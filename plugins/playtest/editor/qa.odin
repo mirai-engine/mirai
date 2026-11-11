@@ -620,7 +620,9 @@ repro_holds :: proc(w:^Repro_Writer,entries:[]Qa_Entry) {
             if e.hold.value=={} {
                 api.write_bool(out,"release",true)
             } else {
-                #partial switch m!=nil?m.kinds[e.hold.action]:input.Action_Kind.Button {
+                kind:=input.Action_Kind.Button
+                if m!=nil && int(e.hold.action)<input.ACTION_CAPACITY {kind=m.actions[e.hold.action].kind}
+                #partial switch kind {
                 case .Axis:  api.write_key(out,"value");api.write_number(out,e.hold.value.x)
                 case .Axis2: repro_pair(out,"vector",e.hold.value)
                 }

@@ -170,9 +170,7 @@ render_options_parse_reads_the_flags_and_refuses_what_cannot_go_together :: proc
     testing.expect(t,problem=="" && o.folder=="." && o.base=="main" && o.wait==RENDER_WAIT && !o.quality && !o.release)
     o,problem=render_options_parse({"--release"})
     testing.expect(t,problem=="" && o.release)
-    o,problem=render_options_parse({"--release","--dev"})
-    testing.expect(t,problem=="" && !o.release)
-    for args in ([][]string{{"--wait","soon"},{"--wait","-1"},{"--rerun","r.json","--views","night"},{"--views"},{"--optimized"},{"demo","other"}}) {
+    for args in ([][]string{{"--wait","soon"},{"--wait","-1"},{"--rerun","r.json","--views","night"},{"--views"},{"--optimized"},{"--dev"},{"demo","other"}}) {
         _,problem=render_options_parse(args)
         testing.expectf(t,problem!="","%v was accepted",args)
     }
@@ -207,7 +205,7 @@ render_base_key_names_what_a_measure_depends_on :: proc(t:^testing.T) {
     testing.expect(t,render_base_key("demo","RTX 3070",plan,moved,{1440,900})!=key)
     testing.expect(t,render_base_key("demo","RTX 3070",plan,view,{3072,1728})!=key)
     testing.expect(t,render_base_key("demo","RTX 3070",longer,view,{1440,900})!=key)
-    testing.expect(t,render_base_key("demo","RTX 3070",plan,view,{1440,900},true)!=key,"a build --dev does not serve one --release")
+    testing.expect(t,render_base_key("demo","RTX 3070",plan,view,{1440,900},true)!=key,"a dev build does not serve a --release one")
 }
 
 // The quality of a saved base serves any check; its cost, only a check that

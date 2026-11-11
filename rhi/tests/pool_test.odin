@@ -182,24 +182,50 @@ rhi_destroying_more_than_a_frame_slot_holds_between_frames_releases_them :: proc
     testing.expect_value(t,rhi.device_validation_errors(d),0)
 }
 
+// An upload past the room of the frame ring reaches the GPU whole in the frame
+// that asks for it; one that fits comes from the ring as always; a size no
+// buffer holds is refused and counted.
 @(test)
-rhi_frame_ring_without_room_returns_no_memory_and_counts_it :: proc(t:^testing.T) {
-    d:=small_device(t,{},upload=4096)
+rhi_frame_upload_past_the_ring_arrives_whole_in_its_frame :: proc(t:^testing.T) {
+    RING::4096
+    d:=small_device(t,{},upload=RING)
     if d==nil {return}
     defer rhi.device_destroy(d)
+    target:=rhi.buffer_create(d,{size=RING*5/2,usage={.Storage},name="target"})
+    if !testing.expect(t,target!=0,rhi.device_error(d)) {return}
+    defer rhi.buffer_destroy(d,target)
+    bytes:=make([]u8,RING*5/2,context.temp_allocator)
+    for &b,i in bytes {b=u8(i*7+i/251)}
     cmd,ok:=rhi.frame_begin(d)
     testing.expect(t,ok,rhi.device_error(d));if !ok {return}
     fits:=rhi.frame_alloc(d,1024)
+    ring:=fits.buffer
     testing.expect(t,fits.ptr!=nil && fits.size==1024,rhi.device_error(d))
-    refused:=rhi.frame_alloc(d,8192)
-    testing.expect(t,refused.ptr==nil && refused.buffer==0)
-    testing.expect_value(t,rhi.device_stats(d).exhausted,1)
+    large:=rhi.frame_alloc(d,u64(len(bytes)))
+    if !testing.expect(t,large.ptr!=nil && large.size==u64(len(bytes)) && large.buffer!=ring,rhi.device_error(d)) {return}
+    copy(([^]u8)(large.ptr)[:len(bytes)],bytes)
+    rhi.cmd_copy_buffer(cmd,large.buffer,large.offset,target,0,large.size)
+    testing.expect(t,rhi.frame_alloc(d,1024).buffer==ring,"what fits after it still comes from the ring")
+    info:=rhi.device_info(d)
+    for size in ([]u64{max(u64),max(u64)-64,info.max_storage_range+1}) {
+        refused:=rhi.frame_alloc(d,size)
+        testing.expectf(t,refused.ptr==nil && refused.buffer==0,"%d bytes are refused",size)
+    }
+    stats:=rhi.device_stats(d)
+    testing.expect_value(t,stats.exhausted,3)
+    testing.expect_value(t,stats.oversized,1)
     testing.expect(t,rhi.frame_end(d,cmd),rhi.device_error(d))
+    rhi.device_wait_idle(d)
+    back:=make([]u8,len(bytes),context.temp_allocator)
+    testing.expect(t,rhi.buffer_read(d,target,0,back),rhi.device_error(d))
+    testing.expect(t,string(back)==string(bytes),"the bytes read back are those written")
+    testing.expect_value(t,rhi.device_stats(d).buffers,1)
     // The ring of the next frame slot starts empty.
     cmd,ok=rhi.frame_begin(d)
     testing.expect(t,ok,rhi.device_error(d));if !ok {return}
-    testing.expect(t,rhi.frame_alloc(d,2048).ptr!=nil,rhi.device_error(d))
+    testing.expect(t,rhi.frame_alloc(d,RING/2).ptr!=nil,rhi.device_error(d))
     testing.expect(t,rhi.frame_end(d,cmd),rhi.device_error(d))
+    testing.expect_value(t,rhi.device_stats(d).oversized,1)
     testing.expect_value(t,rhi.device_validation_errors(d),0)
 }
 

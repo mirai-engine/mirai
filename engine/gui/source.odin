@@ -29,12 +29,12 @@ Source :: struct {
     bindings:^inp.Input_Map,
     actions:^inp.Actions, // of the frame, for the window
     seat_state:^inp.Seats, // whose blocks the interface being built reads its actions past
-    seats:core.Read(inp.Seat),
-    cameras:core.Read(render.Camera),
-    exposures:core.Read(render.Exposure),
-    view_volumes:core.Read(render.View_Volume),
-    volumes:core.Read(volume.Volume),
-    worlds:core.Read(core.World_Transform),
+    seats:^core.Table(inp.Seat,.Read),
+    cameras:^core.Table(render.Camera,.Read),
+    exposures:^core.Table(render.Exposure,.Read),
+    view_volumes:^core.Table(render.View_Volume,.Read),
+    volumes:^core.Table(volume.Volume,.Read),
+    worlds:^core.Table(core.World_Transform,.Read),
     pixels:f32,        // device pixels per layout unit
     pack:^host.Content_Prompts,  // of UI_Settings.prompts; nil: the prompts are drawn
 }
@@ -62,21 +62,22 @@ Particle_Texture :: struct {
 
 @(private)
 source_bind :: proc(
-    s:^Surface,gui:^Gui,app:^host.App,p:int,seat_state:core.Ref(inp.Seats),seats:core.Read(inp.Seat),bindings:core.Ref(inp.Input_Map),
-    actions:core.Ref(inp.Frame_Actions),cameras:core.Read(render.Camera),exposures:core.Read(render.Exposure),
-    view_volumes:core.Read(render.View_Volume),volumes:core.Read(volume.Volume),worlds:core.Read(core.World_Transform),settings:UI_Settings,preferences:UI_Preferences,gamepad:int,effects:^UI_Effects,sounds:^audio.Sound_Requests,
+    s:^Surface,gui:^Gui,app:^host.App,p:int,seat_state:core.Ref(inp.Seats),seats:^core.Table(inp.Seat,$A),bindings:core.Ref(inp.Input_Map),
+    actions:core.Ref(inp.Frame_Actions),cameras:^core.Table(render.Camera,$B),exposures:^core.Table(render.Exposure,$C),
+    view_volumes:^core.Table(render.View_Volume,$D),volumes:^core.Table(volume.Volume,$E),worlds:^core.Table(core.World_Transform,$F),settings:UI_Settings,preferences:UI_Preferences,gamepad:int,effects:^UI_Effects,sounds:^audio.Sound_Requests,
 ) {
     seat:=p>0?inp.local_seat(seats,p-1):core.NONE
     settings,preferences:=settings,preferences
     s.source={
-        gui=gui,app=app,surface=s,effects=effects,sounds=sounds,player=p,seat=seat,gamepad=gamepad,bindings=bindings.ptr,actions=&actions.ptr.actions,seat_state=seat_state.ptr,seats=seats,
+        gui=gui,app=app,surface=s,effects=effects,sounds=sounds,player=p,seat=seat,gamepad=gamepad,bindings=bindings.ptr,actions=&actions.ptr.slots[clamp(seat_state.focus,0,inp.LOCAL_CAPACITY-1)],seat_state=seat_state.ptr,seats=seats,
         cameras=cameras,exposures=exposures,view_volumes=view_volumes,volumes=volumes,worlds=worlds,pixels=s.key.scale*max(app.density,0.01),
         pack=host.content_prompts(app,settings.prompts),
     }
     s.ctx.game={
         user=&s.source,family=s.family,prompts=source_prompts,action=source_action,texts=host.app_texts(app),language=ui_language(&settings,&preferences),
-        texture=source_texture,view=source_view,particles=source_particles,sound=source_sound,draw=source_draw,
+        texture=source_texture,view=source_view,particles=source_particles,sound=source_sound,
     }
+    s.ctx.draw_user,s.ctx.draw_user_data=source_draw,&s.source
 }
 
 // The procedure @(draw) of the game a Draw node names; nil: the game declares none of that name.
@@ -148,14 +149,14 @@ prompts_of :: proc(m:^inp.Input_Map,action:inp.Action,family:ui.Prompt_Family,ga
         if count^<len(out) {out[count^]=prompt;count^+=1}
     }
     keyboard:=family==.Keyboard
-    for &binding in m.bindings[:m.binding_count] {
-        if binding.action!=action {continue}
-        codes:=binding.codes[:binding.count]
+    if int(action)>=inp.ACTION_CAPACITY {return}
+    for &binding in inp.action_bindings(&m.actions[action]) {
+        codes:=inp.binding_inputs(&binding)
         if !keyboard {
-            if binding.gamepad!=inp.GAMEPAD_ANY && gamepad>=0 && int(binding.gamepad)!=gamepad {continue}
+            if binding.gamepad!=0 && gamepad>=0 && int(binding.gamepad)-1!=gamepad {continue}
         }
         // A binding with a chord shows when the family shows all it holds and some of the rest.
-        if chord:=binding.chord[:binding.chord_count];len(chord)>0 {
+        if chord:=inp.chord_inputs(&binding);len(chord)>0 {
             shown:=false
             for code in codes {_,on:=prompt_input(code,keyboard);shown||=on}
             for code in chord {_,on:=prompt_input(code,keyboard);shown&&=on}
@@ -163,14 +164,14 @@ prompts_of :: proc(m:^inp.Input_Map,action:inp.Action,family:ui.Prompt_Family,ga
             for code in chord {
                 input,_:=prompt_input(code,keyboard)
                 prompt:=ui.Prompt{family=family,input=input}
-                if input==.Key {prompt.text=reflect.enum_string(core.Key(code.code))}
+                if input==.Key {prompt.text=reflect.enum_string(code)}
                 add(out,&count,prompt)
                 add(out,&count,{family=family,input=.Plus})
             }
         }
         if !keyboard {
             dpad:=len(codes)==4
-            for code in codes {dpad&&=code.device==.Gamepad_Button && core.Gamepad_Button(code.code)>=.Dpad_Up}
+            for code in codes {dpad&&=code>=.Dpad_Up && code<=.Dpad_Right}
             if dpad {
                 add(out,&count,{family=family,input=.Dpad})
                 continue
@@ -180,7 +181,7 @@ prompts_of :: proc(m:^inp.Input_Map,action:inp.Action,family:ui.Prompt_Family,ga
             input,shown:=prompt_input(code,keyboard)
             if !shown {continue}
             prompt:=ui.Prompt{family=family,input=input}
-            if input==.Key {prompt.text=reflect.enum_string(core.Key(code.code))}
+            if input==.Key {prompt.text=reflect.enum_string(code)}
             add(out,&count,prompt)
         }
     }
@@ -189,17 +190,18 @@ prompts_of :: proc(m:^inp.Input_Map,action:inp.Action,family:ui.Prompt_Family,ga
 
 // The prompt of one input of a binding, when the family shows it.
 prompt_input :: proc "contextless" (code:inp.Input_Code,keyboard:bool) -> (input:ui.Prompt_Input,shown:bool) {
-    #partial switch code.device {
+    device,index:=inp.code_device(code)
+    #partial switch device {
     case .Key:
         return .Key,keyboard
     case .Mouse_Button:
-        #partial switch core.Mouse_Button(code.code) {
+        #partial switch core.Mouse_Button(index) {
         case .Left:   return .Mouse_Left,keyboard
         case .Right:  return .Mouse_Right,keyboard
         case .Middle: return .Mouse_Middle,keyboard
         }
     case .Mouse_Axis:
-        axis:=inp.Mouse_Axis(code.code)
+        axis:=inp.Mouse_Axis(index)
         return axis==.X || axis==.Y?.Mouse_Move:.Mouse_Wheel,keyboard
     case .Gamepad_Button:
         BUTTONS :: #partial [core.Gamepad_Button]ui.Prompt_Input{
@@ -207,7 +209,7 @@ prompt_input :: proc "contextless" (code:inp.Input_Code,keyboard:bool) -> (input
             .Left_Stick=.Stick_Left_Press,.Right_Stick=.Stick_Right_Press,.Left_Shoulder=.Shoulder_Left,.Right_Shoulder=.Shoulder_Right,
             .Dpad_Up=.Dpad_Up,.Dpad_Down=.Dpad_Down,.Dpad_Left=.Dpad_Left,.Dpad_Right=.Dpad_Right,
         }
-        button:=core.Gamepad_Button(code.code)
+        button:=core.Gamepad_Button(index)
         if button==.Guide {return}
         buttons:=BUTTONS
         return buttons[button],!keyboard
@@ -216,12 +218,12 @@ prompt_input :: proc "contextless" (code:inp.Input_Code,keyboard:bool) -> (input
             .Left_X=.Stick_Left,.Left_Y=.Stick_Left,.Right_X=.Stick_Right,.Right_Y=.Stick_Right,.Left_Trigger=.Trigger_Left,.Right_Trigger=.Trigger_Right,
         }
         axes:=AXES
-        return axes[core.Gamepad_Axis(code.code)],!keyboard
+        return axes[core.Gamepad_Axis(index)],!keyboard
     }
     return
 }
 
-// Whether an action is held and was pressed: of the frame for the window, of
+// Whether an action is held and was pressed: of the frame of the focused slot for the window, of
 // the tick of its seat for a local player, past the block of the Modal screen
 // being built: what a Modal takes from the game its own buttons still get.
 @(private)

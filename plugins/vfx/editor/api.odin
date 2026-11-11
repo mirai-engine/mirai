@@ -329,7 +329,7 @@ api_particle_write :: proc(s:^editor.Session,call:^api.Call,id:base.Asset_Id) {
 @(private)
 api_particle_inspect :: proc(s:^editor.Session,call:^api.Call) {
     p:=particle_params(call)
-    id,found:=editor.asset_named(s,call,p.named,effect.KIND,effect.EXTENSION,"a particle effect")
+    id,found:=editor.asset_named(s,call,p.named,effect.PARTICLE_KIND,effect.PARTICLE_EXTENSION,"a particle effect")
     if !found {return}
     api_particle_write(s,call,id)
 }
@@ -413,7 +413,7 @@ particle_resources_read :: proc(s:^editor.Session,call:^api.Call,text:string,inf
 @(private)
 api_particle_set :: proc(s:^editor.Session,call:^api.Call) {
     p:=particle_params(call)
-    t,found:=editor.asset_target(s,call,p.named,p.path,"particle",effect.KIND,effect.EXTENSION,"a particle effect")
+    t,found:=editor.asset_target(s,call,p.named,p.path,"particle",effect.PARTICLE_KIND,effect.PARTICLE_EXTENSION,"a particle effect")
     if !found {return}
     file:=particle_file(s,t.created?base.Asset_Id{}:t.id)
     if !particle_params_apply(s,call,&p,&file) {return}

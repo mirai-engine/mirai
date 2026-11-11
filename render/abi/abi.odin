@@ -30,7 +30,7 @@ SLOT_TLAS_NODES       :: 13
 SLOT_TLAS_REFS        :: 14
 SLOT_MATERIAL_SAMPLER :: 15
 SLOT_PROBES           :: 16
-SLOT_IRRADIANCE       :: 17
+TEXTURE_FEEDBACK_SLOT :: 17
 SLOT_POINTS           :: 18
 SLOT_PASS0            :: 19
 SLOT_PASS1            :: 20
@@ -47,7 +47,21 @@ SLOT_SURFACE          :: 30
 SLOT_VIEWS            :: 31
 SLOT_LAYERS           :: 32
 SLOT_DISTANCE         :: 33
+SLOT_IRRADIANCE       :: 34
 SLOT_DRAW             :: SLOT_PASS9
+
+// The finest level the passes that shade surfaces sample of each texture
+// (render/texture_residency.odin): words before the first texture (the first
+// says how many textures the passes may write), and the code of a level:
+// steps of 1/TEXTURE_FEEDBACK_STEPS from TEXTURE_FEEDBACK_LOW, below
+// TEXTURE_FEEDBACK_CODES. Its buffer has a slot of its own, not a SLOT_PASS
+// one: the material points bind it between the dispatches of any pass.
+TEXTURE_FEEDBACK_FIRST :: 1
+TEXTURE_FEEDBACK_LOW   :: -32
+TEXTURE_FEEDBACK_STEPS :: 16
+TEXTURE_FEEDBACK_CODES :: 64 * TEXTURE_FEEDBACK_STEPS
+// Of the material sampler: the samples anisotropic filtering spreads along the longer axis of a footprint.
+MATERIAL_ANISOTROPY    :: 8
 
 // The texture table: its first entries hold the tables of the renderer.
 TEXTURE_RESERVED          :: 4
@@ -70,7 +84,7 @@ ORIGIN_STEP          :: f32(1024)
 
 // Gpu_Frame.flags.
 FRAME_FLAG_GI           :: 1
-FRAME_FLAG_GI_REFERENCE :: 2   // Settings.reference_gi: the composite takes the reference of the indirect light
+FRAME_FLAG_GI_GIVEN     :: 2   // a custom pass of the pipeline wrote Gi: the composite takes it as the diffuse indirect light
 FRAME_FLAG_HW_RT        :: 4
 FRAME_FLAG_STUDIO       :: 8   // a preview lit by the analytic studio
 FRAME_FLAG_GRID         :: 16

@@ -165,7 +165,7 @@ clip_sample :: proc(call:^api.Call,animation:aa.Animation_View,index:int,skeleto
     sampled.frames={rate=exact,bones=n,curves=len(curves),local=make([]mm.Transform,count*n,allocator),values=make([]mm.Vec4,count*len(curves),allocator)}
     if !lib.frames_sample_clip(&library,handle,bindings,sampled.rig.rest,curves[:],sampled.frames) {authoring_failure(call,"clip","Invalid_Clip","finite keys","sampling failed","The clip could not be sampled");return}
     sampled.markers=make([dynamic]aa.Animation_Marker_Desc,allocator)
-    for &marker in animation.markers[clip.first_marker:][:clip.marker_count] {append(&sampled.markers,aa.Animation_Marker_Desc{marker.time,base.text_get(marker.name[:]),marker.duration})}
+    for &marker in animation.markers[clip.first_marker:][:clip.marker_count] {append(&sampled.markers,aa.Animation_Marker_Desc{marker.time,base.text_get(marker.name[:]),marker.duration,base.text_get(marker.target[:])})}
     switch loop {
     case .Loop: sampled.frames.loop=true
     case .Once: sampled.frames.loop=false
@@ -336,7 +336,7 @@ clip_edit :: proc(s:^editor.Session,call:^api.Call) {
         for marker in markers {
             times:[64]f32
             count:=lib.clip_edit_times(edit,frames,marker.time,times[:])
-            for time in times[:min(count,len(times))] {append(&moved,aa.Animation_Marker_Desc{time,marker.name,marker.duration})}
+            for time in times[:min(count,len(times))] {append(&moved,aa.Animation_Marker_Desc{time,marker.name,marker.duration,marker.target})}
         }
         frames,markers=output,moved
     }
@@ -451,6 +451,6 @@ clip_desc :: proc(sampled:Clip_Sampled,frames:lib.Frames,name:string,markers:[]a
         append(&tracks,aa.Animation_Track_Desc{target=base.text_get(curve.target[:]),property=curve.property,slot=curve.slot,keys=keys})
     }
     kept:=make([dynamic]aa.Animation_Marker_Desc,allocator)
-    for marker in markers {if marker.time<=duration+1e-4 {append(&kept,aa.Animation_Marker_Desc{min(marker.time,duration),marker.name,min(marker.duration,duration-min(marker.time,duration))})}}
+    for marker in markers {if marker.time<=duration+1e-4 {append(&kept,aa.Animation_Marker_Desc{min(marker.time,duration),marker.name,min(marker.duration,duration-min(marker.time,duration)),marker.target})}}
     return {name=name,tracks=tracks[:],markers=kept[:],root=sampled.root}
 }

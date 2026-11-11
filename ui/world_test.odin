@@ -29,7 +29,7 @@ test_world_build :: proc(ctx:^Context,user:rawptr) {
     s:=cast(^Test_World)user
     s.reached=world_panel_reached(ctx)
     if s.opened[0]=world_panel_begin(ctx,id(ctx,"panel"),s.panel);s.opened[0] {
-        if button(ctx,id(ctx,"use"),{label="Use",style=.Accent,width=80,height=30}).clicked {s.clicks[0]+=1}
+        if button(ctx,id(ctx,"use"),{label="Use",variant="accent",width=80,height=30}).clicked {s.clicks[0]+=1}
         s.result=number_field(ctx,id(ctx,"amount"),&s.value,{width=fixed(80),speed=1})
         if scroll_area(ctx,id(ctx,"list"),&s.scroll,{width=fixed(80),height=fixed(20)}) {
             for i in 0..<4 {
@@ -40,7 +40,7 @@ test_world_build :: proc(ctx:^Context,user:rawptr) {
     }
     if s.two {
         if world_panel(ctx,id(ctx,"second"),s.second) {
-            if button(ctx,id(ctx,"other"),{label="Other",style=.Accent,width=-1,height=100}).clicked {s.clicks[1]+=1}
+            if button(ctx,id(ctx,"other"),{label="Other",variant="accent",width=-1,height=100}).clicked {s.clicks[1]+=1}
         }
     }
     if s.screen_button {
@@ -62,7 +62,7 @@ test_world_default :: proc() -> (Test_World,Input) {
 @(test)
 a_world_panel_is_placed_by_its_position_rotation_and_pivot :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s,input:=test_world_default()
     frame:=test_frame(&ctx,&input,test_world_build,&s)
@@ -98,7 +98,7 @@ a_world_panel_is_placed_by_its_position_rotation_and_pivot :: proc(t:^testing.T)
 @(test)
 billboards_face_the_camera :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s,input:=test_world_default()
     // A camera at +X that looks back at the origin, tilted down.
@@ -126,7 +126,7 @@ billboards_face_the_camera :: proc(t:^testing.T) {
 @(test)
 a_screen_sized_panel_keeps_its_size_on_screen_at_any_distance :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s,input:=test_world_default()
     s.panel.sizing=.Screen;s.panel.unit=1;s.panel.facing=.Billboard
@@ -152,7 +152,7 @@ a_screen_sized_panel_keeps_its_size_on_screen_at_any_distance :: proc(t:^testing
 @(test)
 a_world_panel_draws_into_commands_of_its_own_surface :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s,input:=test_world_default()
     s.screen_button=true
@@ -168,7 +168,7 @@ a_world_panel_draws_into_commands_of_its_own_surface :: proc(t:^testing.T) {
     for v in vertices {testing.expect_value(t,v.position.z,f32(0))}
     // Its widgets are laid out inside it.
     testing.expect(t,test_rect_near(test_rect(t,&ctx,id(&ctx,"use")),{10,10,80,30}))
-    row:=ctx.theme.row
+    row:=metric(&ctx,"row")
     testing.expect(t,test_rect_near(test_rect(t,&ctx,id(&ctx,"amount")),{10,44,80,row}))
     list:=test_rect(t,&ctx,id(&ctx,"list"))
     testing.expect(t,test_rect_near(list,{10,44+row+4,80,20}))
@@ -203,7 +203,7 @@ a_world_panel_draws_into_commands_of_its_own_surface :: proc(t:^testing.T) {
 @(test)
 a_ray_points_at_the_widgets_of_a_world_panel :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s,input:=test_world_default()
     test_frame(&ctx,&input,test_world_build,&s)
@@ -249,7 +249,7 @@ a_ray_points_at_the_widgets_of_a_world_panel :: proc(t:^testing.T) {
 @(test)
 the_scene_in_front_of_a_panel_hides_it_from_the_ray :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s,input:=test_world_default()
     s.panel.depth_test=true
@@ -275,7 +275,7 @@ the_scene_in_front_of_a_panel_hides_it_from_the_ray :: proc(t:^testing.T) {
 @(test)
 a_panel_drawn_on_a_surface_takes_the_ray_where_the_host_aims :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s,input:=test_world_default()
     s.panel.offscreen=true
@@ -299,7 +299,7 @@ a_panel_drawn_on_a_surface_takes_the_ray_where_the_host_aims :: proc(t:^testing.
 @(test)
 dragging_with_the_ray_scrubs_a_number_of_a_world_panel :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s,input:=test_world_default()
     s.value=10
@@ -325,7 +325,7 @@ dragging_with_the_ray_scrubs_a_number_of_a_world_panel :: proc(t:^testing.T) {
 @(test)
 the_nearest_panel_and_the_screen_come_first :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s,input:=test_world_default()
     s.two=true
@@ -358,7 +358,7 @@ world_panels_beyond_the_capacity_are_refused_and_counted :: proc(t:^testing.T) {
     ctx:Context
     desc:=TEST_SMALL
     desc.max_panels=1
-    testing.expect(t,context_init(&ctx,desc))
+    testing.expect(t,test_context_init(&ctx,desc))
     defer context_destroy(&ctx)
     s,input:=test_world_default()
     s.two=true
@@ -375,7 +375,7 @@ world_panels_beyond_the_capacity_are_refused_and_counted :: proc(t:^testing.T) {
 @(test)
 a_popup_opened_in_a_world_panel_belongs_to_its_surface :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     State :: struct {selected:int}
     s:State
@@ -398,12 +398,11 @@ a_popup_opened_in_a_world_panel_belongs_to_its_surface :: proc(t:^testing.T) {
     list:=id_derive(&ctx,id(&ctx,"kind"),"list")
     testing.expect(t,popup_is_open(&ctx,list))
     // Under its button and inside the margin of the panel, three rows tall inside 4 of padding.
-    th:=&ctx.theme
-    testing.expect(t,test_rect_near(test_rect(t,&ctx,list),{th.margin,10+th.row+4,180,3*th.row+8}),"It hangs under its button, inside the panel")
+    testing.expect(t,test_rect_near(test_rect(t,&ctx,list),{metric(&ctx,"margin"),10+metric(&ctx,"row")+4,180,3*metric(&ctx,"row")+8}),"It hangs under its button, inside the panel")
     for command in frame.commands {testing.expect_value(t,command.surface,u32(1))}
     testing.expect_value(t,ctx.stats.layout_errors,u32(0))
     // The third row, through the ray.
-    input.ray.origin={-0.5,2.8-(10+th.row+8+2.5*th.row)/100,5}
+    input.ray.origin={-0.5,2.8-(10+metric(&ctx,"row")+8+2.5*metric(&ctx,"row"))/100,5}
     test_frame(&ctx,&input,build,&s)
     test_press(&input);test_release(&input)
     test_frame(&ctx,&input,build,&s)

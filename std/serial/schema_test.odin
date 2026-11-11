@@ -89,7 +89,7 @@ a_tag_is_read_option_by_option :: proc(t:^testing.T) {
         {`mirai:"precision=0.01,bits=12"`,{},{},proc(f:Field) -> bool {return f.precision==0.01 && f.bits==12}},
         {`mirai:"unit=m/s,name=where,kind=.anim .match"`,{},{},proc(f:Field) -> bool {return f.unit=="m/s" && f.name=="where" && f.asset_kinds==".anim .match"}},
         {`mirai:"requires=Camera"`,{},{},proc(f:Field) -> bool {return f.required_component==base.name_hash("Camera")}},
-        {`mirai:"section=Exposure,with=Drivable,icons=Play Stop,axes=LTRB,graphics=Fog"`,{},{},proc(f:Field) -> bool {return f.section=="Exposure" && f.with=="Drivable" && f.icons=="Play Stop" && f.axes=="LTRB" && f.graphics=="Fog"}},
+        {`mirai:"section=Exposure,mode=Follow|Orbit,icons=Play Stop,axes=LTRB,graphics=Fog"`,{},{},proc(f:Field) -> bool {return f.section=="Exposure" && f.mode=="Follow|Orbit" && f.icons=="Play Stop" && f.axes=="LTRB" && f.graphics=="Fog"}},
         // label is the last option and takes the rest of the tag, commas and equals included.
         {`mirai:"text, optional , label=Around it; omitted: the querier, or point=x"`,{.Text},{.Optional},proc(f:Field) -> bool {return f.label=="Around it; omitted: the querier, or point=x"}},
         {`mirai:"label="`,{},{},proc(f:Field) -> bool {return f.label==""}},

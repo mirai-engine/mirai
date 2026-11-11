@@ -61,7 +61,6 @@ Port_File :: struct {
 SESSION_FILE :: "session.json"
 Session_Record :: struct {
     pid:int,
-    mode:string, // "dev" or "release"
     args:[]string,
 }
 

@@ -24,6 +24,8 @@ Spawn_Test_World :: struct {
     links:core.Table(Spawn_Test_Link),
     instances:core.Table(Prefab_Instance),
     members:core.Table(Prefab_Member),
+    pendings:core.Table(Prefab_Pending),
+    disabled:core.Table(core.Disabled),
     forms:Prefab_Forms,
 }
 
@@ -71,6 +73,7 @@ spawn_test_close :: proc(p:^Spawn_Test) {
 @(private="file")
 spawn_test_bulb :: proc(bulb:^asset.Scene,types:^asset.Types,range:f32) {
     asset.scene_init(bulb,types,SPAWN_BULB)
+    bulb.doc.flags+={.Prefab}
     asset.scene_entity_add(bulb,1,0,"Bulb")
     asset.scene_entity_add(bulb,2,1,"Glass")
     light:=Spawn_Test_Light{range,1}
@@ -83,6 +86,7 @@ spawn_test_bulb :: proc(bulb:^asset.Scene,types:^asset.Types,range:f32) {
 @(private="file")
 spawn_test_lamp :: proc(t:^testing.T,lamp:^asset.Scene,types:^asset.Types,bulb:^asset.Scene) {
     asset.scene_init(lamp,types,SPAWN_LAMP)
+    lamp.doc.flags+={.Prefab}
     asset.scene_entity_add(lamp,1,0,"Lamp")
     inner,placed:=asset.scene_instantiate(lamp,bulb,SPAWN_BULB,1)
     testing.expect_value(t,placed,asset.Error.None)
@@ -157,6 +161,8 @@ a_prefab_spawned_again_is_placed_as_read_anew_from_the_form_its_world_keeps :: p
     asset.scene_destroy(&bulb)
     asset.scene_destroy(&lamp)
     testing.expect(t,host.assets_scan(&p.assets))
+    // Loaded, as a scene that names them loads them: a spawn places them in the call.
+    testing.expect(t,host.assets_scene(&p.assets,SPAWN_BULB)!=nil && host.assets_scene(&p.assets,SPAWN_LAMP)!=nil)
 
     counted:=Spawn_Test_Count{backing=context.allocator}
     counted_temp:=Spawn_Test_Count{backing=context.temp_allocator}
@@ -241,11 +247,13 @@ the_forms_a_world_keeps_are_bounded_and_the_one_spawned_longest_ago_goes :: proc
     for at in 0..=PREFAB_FORMS {
         crate:asset.Scene
         asset.scene_init(&crate,&p.types,{0x5c,u64(at)+1})
+        crate.doc.flags+={.Prefab}
         asset.scene_entity_add(&crate,1,0,"Crate")
         testing.expect_value(t,asset.scene_save(&crate,fmt.tprintf("%s/crate%d.scene",p.folder,at)),asset.Error.None)
         asset.scene_destroy(&crate)
     }
     testing.expect(t,host.assets_scan(&p.assets))
+    for at in 0..=PREFAB_FORMS {testing.expect(t,host.assets_scene(&p.assets,{0x5c,u64(at)+1})!=nil)}
     c:=core.commands_of(host.app_world_ref(&p.app,p.kept))
     forms:=&p.kept.forms
     for at in 0..=PREFAB_FORMS {

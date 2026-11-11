@@ -43,20 +43,12 @@ Camera_Views :: struct {
     slots:[input.LOCAL_CAPACITY]Camera_View,
 }
 
-// The camera the focused view is drawn from, whatever its seat sees, while
-// the editor previews it: it comes into it with blend. none: as the seat sees.
-@(storage)
-Camera_Preview :: struct {
-    camera:core.Entity,
-    blend:Camera_Blend,
-}
-
 // The view of every local slot; the focused one's is the view of the game.
 @(step="late",stage="end")
 camera_blend :: proc(
-    views:^Camera_Views,shown:core.Ref(Cameras),seat_state:core.Ref(input.Seats),seats:core.Read(input.Seat),drivables:core.Read(input.Drivable),
-    cameras:core.Read(render.Camera),follows:core.Read(Camera_Follow),worlds:core.Read(core.World_Transform),chosen:^render.View_Camera,
-    bodies:^render.View_Bodies,preview:core.Ref(Camera_Preview),frame:core.Frame_Time,
+    views:^Camera_Views,shown:core.Ref(Cameras),seat_state:core.Ref(input.Seats),seats:^core.Table(input.Seat,.Read),
+    parents:^core.Table(core.Parent,.Read),hierarchy:core.Ref(core.Hierarchy),cameras:^core.Table(render.Camera,.Read),follows:^core.Table(Camera_Follow,.Read),worlds:^core.Table(core.World_Transform,.Read),chosen:^render.View_Camera,
+    bodies:^render.View_Bodies,frame:core.Frame_Time,
 ) {
     player:=input.focused(seat_state.ptr,seats)
     n:=clamp(seat_state.local_count,1,input.LOCAL_CAPACITY)
@@ -69,15 +61,14 @@ camera_blend :: proc(
             continue
         }
         seat:=seat_state.local_count>0?input.local_seat(seats,slot):core.NONE
-        camera,through:=seat_camera(shown.ptr,drivables,cameras,seat)
-        if slot==focus_slot && preview.camera!=core.NONE && camera_valid(cameras,preview.camera) {camera,through=preview.camera,preview.blend}
-        body:=input.body_of(drivables,seat)
+        camera,through:=camera_selected(shown.ptr,seats,cameras,hierarchy,seat)
+        body:=input.body_of(seats,seat)
         view_update(v,camera,through,body,cameras,follows,worlds,frame)
         // The own body of the view is the body of its player, or else the one its
         // camera follows. Nearer to it than twice what it allows, the view fades it out.
         v.fade=0
         if follow,ok:=core.get(follows,v.camera);ok && follow.state.ready {
-            target:=follow_target(v.camera,follow.target,drivables,player)
+            target:=follow_target(v.camera,follow.target,parents,seats,player)
             if body==core.NONE {body=target}
             if follow.hide_within>0 && target==body {
                 v.fade=clamp(2-linalg.length(v.pose.position-follow.state.pivot.position)/follow.hide_within,0,1)
@@ -95,7 +86,7 @@ camera_blend :: proc(
 @(private)
 view_update :: proc(
     v:^Camera_View,camera:core.Entity,through:Camera_Blend,body:core.Entity,
-    cameras:core.Read(render.Camera),follows:core.Read(Camera_Follow),worlds:core.Read(core.World_Transform),frame:core.Frame_Time,
+    cameras:^core.Table(render.Camera,$A),follows:^core.Table(Camera_Follow,$B),worlds:^core.Table(core.World_Transform,$C),frame:core.Frame_Time,
 ) {
     c,has_camera:=core.get(cameras,camera)
     world,placed:=core.get(worlds,camera)
@@ -153,7 +144,7 @@ view_update :: proc(
 
 // Where a body is in this frame, between its last two ticks.
 @(private)
-anchor_at :: proc(worlds:core.Read(core.World_Transform),body:core.Entity,frame:core.Frame_Time) -> ([3]f32,bool) {
+anchor_at :: proc(worlds:^core.Table(core.World_Transform,$A),body:core.Entity,frame:core.Frame_Time) -> ([3]f32,bool) {
     placed,ok:=core.get(worlds,body)
     if !ok {return {},false}
     if frame.alpha<1 {return mm.lerp(placed.previous.position,placed.position,frame.alpha),true}
@@ -253,8 +244,8 @@ Local_Views :: struct {
 @(step="render",loops="game editor",after="render_sync")
 camera_local_views :: proc(
     views:^Local_Views,seat_state:core.Ref(input.Seats),slots:core.Ref(Camera_Views),
-    cameras:core.Read(render.Camera),exposures:core.Read(render.Exposure),worlds:core.Read(core.World_Transform),app:^host.App,
-    view_volumes:core.Read(render.View_Volume),volumes:core.Read(volume.Volume),
+    cameras:^core.Table(render.Camera,.Read),exposures:^core.Table(render.Exposure,.Read),worlds:^core.Table(core.World_Transform,.Read),app:^host.App,
+    view_volumes:^core.Table(render.View_Volume,.Read),volumes:^core.Table(volume.Volume,.Read),
 ) {
     n:=seat_state.local_count
     if n<2 {return}

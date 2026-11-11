@@ -83,7 +83,7 @@ instance_pose :: proc(call:^api.Call,w:core.World_Ref,e:core.Entity,query:^Pose_
         authoring_failure(call,"entity","Not_Posed","a rig animated in the last tick","not animated","The entity has not posed a skeleton yet",fix="Run the world (play.start, play.step) or animation.preview so a tick poses it; a mesh that shares the pose of a rig of its skeleton through Pose_Source is asked on that rig")
         return
     }
-    actor,placed:=core.world_of(core.read(core.world_table_of(w,core.Transform)),core.read(core.world_table_of(w,core.Parent)),e)
+    actor,placed:=core.world_of(core.world_table_of(w,core.Transform),core.world_table_of(w,core.Parent),e)
     if !placed {authoring_failure(call,"entity","Not_Placed","an entity with a transform","none","The entity has no transform",api.SERVER_ERROR);return}
     pose,posed:=anim.pose_space(playback,e,call.allocator)
     r.skeleton=query.skeleton

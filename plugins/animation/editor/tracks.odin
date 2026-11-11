@@ -11,6 +11,7 @@ import lib "mirai:std/anim"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import "mirai:std/serial"
+import "mirai:editor/kit"
 import "mirai:ui"
 import anim "plugins:animation/runtime"
 
@@ -50,7 +51,7 @@ Tracks :: struct {
     hash:u64,
 }
 TRACKS_DEFAULT :: Tracks{speed=1,shown=-1,track=-1,key=-1,field=-1}
-Tracks_Menu :: struct {track:int,time:f32,on_key:bool}
+Tracks_Menu :: struct {track:int,time:f32,on_key:bool,marker:int} // marker: the row in the view of the one it deletes; -1: none
 
 @(storage)
 Tracks_Api :: struct {provider:editor.Api_Provider}
@@ -204,7 +205,7 @@ tracks_frame :: proc(s:^editor.Session,t:^Tracks,frame:core.Frame_Time) {
 
     g:=s.gui
     if !g.begun || s.viewport.pick.active {return}
-    ctx:=g.ctx;th:=&ctx.theme
+    ctx:=g.ctx
     if own {
         id:=ui.id_derive(ctx,TRACKS_SCOPE,"panel")
         if ui.panel(ctx,id,editor.tool_panel(g,id)) {
@@ -213,10 +214,10 @@ tracks_frame :: proc(s:^editor.Session,t:^Tracks,frame:core.Frame_Time) {
         }
     }
     if !ok {return}
-    left,right:=th.margin,ctx.size.x-th.margin
-    if r:=g.rects.left;r.w>0 {left=r.x+r.w+th.margin}
-    if r:=g.rects.right;r.w>0 {right=r.x-th.margin}
-    bottom:=th.margin
+    left,right:=ui.metric(ctx,"margin"),ctx.size.x-ui.metric(ctx,"margin")
+    if r:=g.rects.left;r.w>0 {left=r.x+r.w+ui.metric(ctx,"margin")}
+    if r:=g.rects.right;r.w>0 {right=r.x-ui.metric(ctx,"margin")}
+    bottom:=ui.metric(ctx,"margin")
     if r:=g.rects.bottom;r.h>0 {bottom+=ctx.size.y-r.y}
     strip:=ui.id_derive(ctx,TRACKS_SCOPE,"strip")
     if ui.panel(ctx,strip,{width=ui.fixed(max(right-left,320)),height=ui.FIT,padding={0,4,0,4},anchor=.Bottom_Left,pivot=.Bottom_Left,offset={left,-bottom}}) {
@@ -242,38 +243,62 @@ tracks_key_moved :: proc(s:^editor.Session,t:^Tracks,w:core.World_Ref,view:aa.An
     }
 }
 
-// The ruler of the clip with a lane of keys for each track in view: a press chooses a key, a drag
-// moves it, the button of a lane adds one at the head with the value the track has there, and the
-// right button adds or deletes one.
+// A lane of the strip: a track of the clip, or the markers of the clip on one target (the shots
+// of a camera, the actions of an actor) after the tracks.
+@(private)
+Tracks_Lane :: struct {track:int,target:string,markers:[]int} // track -1: markers, by their row in the view
+
+// The ruler of the clip with a lane of keys for each track in view and one of markers for each
+// target they are on: a press chooses a key, a drag moves a key or a marker, the button of a track
+// adds a key at the head with the value the track has there, and the right button adds or deletes
+// a key or deletes a marker.
 @(private)
 tracks_strip :: proc(s:^editor.Session,t:^Tracks,w:core.World_Ref,view:aa.Animation_View,clip:int,duration,span:f32) {
-    ctx:=s.gui.ctx;th:=&ctx.theme
+    ctx:=s.gui.ctx
     rate:=tracks_rate(s)
     animation,_:=editor.entity_get(w,t.entity,anim.Animation)
     c:=view.clips[clip]
     name:=base.text_get(c.name[:])
     tracks:=view.tracks[c.first_track:][:c.track_count]
-    count:=len(tracks)
-    if t.track>=count {t.track,t.key=-1,-1}
+    rows:=make([dynamic]Tracks_Lane,context.temp_allocator)
+    for _,i in tracks {append(&rows,Tracks_Lane{track=i})}
+    for &marker,i in view.markers[c.first_marker:][:c.marker_count] {
+        target:=base.text_get(marker.target[:])
+        lane:=-1
+        for row,j in rows {if row.track<0 && row.target==target {lane=j}}
+        if lane<0 {append(&rows,Tracks_Lane{track=-1,target=target});lane=len(rows)-1}
+        indices:=make([dynamic]int,context.temp_allocator)
+        append(&indices,..rows[lane].markers);append(&indices,int(c.first_marker)+i)
+        rows[lane].markers=indices[:]
+    }
+    count:=len(rows)
+    if t.track>=len(tracks) {t.track,t.key=-1,-1}
     if t.track>=0 {
         if t.track<t.first {t.first=t.track} else if t.track>=t.first+TRACKS_LANES {t.first=t.track-TRACKS_LANES+1}
     }
     t.first=clamp(t.first,0,max(count-TRACKS_LANES,0))
-    shown:=tracks[t.first:][:min(TRACKS_LANES,count-t.first)]
+    shown:=rows[t.first:][:min(TRACKS_LANES,count-t.first)]
     lanes:=make([]editor.Timeline_Lane,len(shown),context.temp_allocator)
     t.strip.mark={}
-    for &track,i in shown {
+    for row,i in shown {
+        if row.track<0 {
+            marks:=make([]editor.Timeline_Mark,len(row.markers),context.temp_allocator)
+            for at,j in row.markers {marks[j]={frame=view.markers[at].time*rate,name=base.text_get(view.markers[at].name[:])}}
+            lanes[i]={name=row.target!=""?row.target:"Markers",marks=marks}
+            continue
+        }
+        track:=&tracks[row.track]
         keys:=view.keys[track.first_key:][:track.key_count]
         marks:=make([]editor.Timeline_Mark,len(keys),context.temp_allocator)
         for key,j in keys {
             marks[j].frame=key.time*rate
-            if t.first+i==t.track && t.key>=0 && abs(key.time-t.key)<=AUTHORING_TIME_EPSILON {t.strip.mark={i,j+1}}
+            if row.track==t.track && t.key>=0 && abs(key.time-t.key)<=AUTHORING_TIME_EPSILON {t.strip.mark={i,j+1}}
         }
-        lanes[i]={name=track_label(&track),marks=marks,add=true}
+        lanes[i]={name=track_label(track),marks=marks,add=true}
     }
-    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),padding={12,0,12,0},gap=8,align_y=.Center}) {
-        ui.label(ctx,editor.entity_label(w,t.entity),th.font_small,th.text,font=ui.FONT_SEMIBOLD)
-        ui.label(ctx,name,th.font_small,th.text_muted)
+    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),padding={12,0,12,0},gap=8,align_y=.Center}) {
+        ui.label(ctx,editor.entity_label(w,t.entity),ui.metric(ctx,"font_small"),ui.tone(ctx,"text"),font=ui.FONT_SEMIBOLD)
+        ui.label(ctx,name,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
     }
     clock:=editor.Timeline_Clock{frame=t.head*rate,frames=span*rate,rate=rate,playing=t.playing,loop=t.loop,speed=t.speed,ask=editor.timeline_can_ask(s)}
     r:=editor.timeline_strip(s,&t.strip,clock,lanes,ui.id(ctx,"timeline"))
@@ -291,26 +316,36 @@ tracks_strip :: proc(s:^editor.Session,t:^Tracks,w:core.World_Ref,view:aa.Animat
         t.playing=!t.playing
         if t.playing && t.head>=duration {t.head=0}
     }
-    if picked:=t.strip.mark;picked[1]>0 && picked[0]<len(shown) {
-        track:=shown[picked[0]]
-        t.track,t.key=t.first+picked[0],view.keys[track.first_key+u32(picked[1]-1)].time
+    if picked:=t.strip.mark;picked[1]>0 && picked[0]<len(shown) && shown[picked[0]].track>=0 {
+        track:=tracks[shown[picked[0]].track]
+        t.track,t.key=shown[picked[0]].track,view.keys[track.first_key+u32(picked[1]-1)].time
     } else {t.key=-1}
+    lane:=Tracks_Lane{track=-2}
+    if r.lane>=0 && r.lane<len(shown) {lane=shown[r.lane]}
     switch {
-    case r.moved && r.lane<len(shown):
-        track:=shown[r.lane]
+    case r.moved && lane.track==-1 && r.index>=0 && r.index<len(lane.markers):
+        marker:=view.markers[lane.markers[r.index]]
+        editor.command_call(s,"animation.marker.set",tracks_marker_params(animation.asset,name,marker,fmt.tprintf(`"time":%v,"duration":%v`,max(r.to,0)/rate,marker.duration)))
+    case r.moved && lane.track>=0:
+        track:=tracks[lane.track]
         from,to:=view.keys[track.first_key+u32(r.index)].time,max(r.to,0)/rate
         params:=tracks_params(animation.asset,name,base.text_get(track.target[:]),track.property,track.slot)
         editor.command_call(s,"animation.key.set",fmt.tprintf(`{{%s,"time":%v,"to":%v}}`,params,from,to))
-        t.track,t.key=t.first+r.lane,to
-    case r.add && r.lane<len(shown):
-        tracks_key_add(s,animation.asset,name,view,&shown[r.lane],t.head)
-    case r.menu && r.lane<len(shown):
-        track:=shown[r.lane]
-        t.menu={t.first+r.lane,view.keys[track.first_key+u32(r.index)].time if r.index>=0 else max(r.to,0)/rate,r.index>=0}
+        t.track,t.key=lane.track,to
+    case r.add && lane.track>=0:
+        tracks_key_add(s,animation.asset,name,view,&tracks[lane.track],t.head)
+    case r.menu && lane.track>=0:
+        track:=tracks[lane.track]
+        t.menu={lane.track,view.keys[track.first_key+u32(r.index)].time if r.index>=0 else max(r.to,0)/rate,r.index>=0,-1}
+        ui.popup_open(ctx,ui.id(ctx,"menu"),r.anchor)
+    case r.menu && lane.track==-1 && r.index>=0 && r.index<len(lane.markers):
+        t.menu={-1,0,false,lane.markers[r.index]}
         ui.popup_open(ctx,ui.id(ctx,"menu"),r.anchor)
     }
     if ui.popup(ctx,ui.id(ctx,"menu"),{min_width=ui.MENU_CHOICE_WIDTH}) {
-        if t.menu.track<count {
+        if t.menu.marker>=0 && t.menu.marker<len(view.markers) {
+            if ui.menu_item(ctx,ui.id(ctx,"menu_marker"),"Delete marker",{icon=.Cross,danger=true}) {editor.command_call(s,"animation.marker.set",tracks_marker_params(animation.asset,name,view.markers[t.menu.marker],`"remove":true`))}
+        } else if t.menu.track>=0 && t.menu.track<len(tracks) {
             track:=&tracks[t.menu.track]
             if !t.menu.on_key {
                 if ui.menu_item(ctx,ui.id(ctx,"menu_add"),"Add key",{icon=.Plus}) {tracks_key_add(s,animation.asset,name,view,track,t.menu.time)}
@@ -320,6 +355,15 @@ tracks_strip :: proc(s:^editor.Session,t:^Tracks,w:core.World_Ref,view:aa.Animat
             }
         }
     }
+}
+
+// The params of animation.marker.set that change a marker of the clip shown, found by its name,
+// target and time, with what is asked of it.
+@(private)
+tracks_marker_params :: proc(asset:base.Asset_Id,clip:string,marker:aa.Animation_Marker,asked:string) -> string {
+    marker:=marker
+    text:[base.ASSET_ID_TEXT]u8
+    return fmt.tprintf(`{{"asset":"%s","clip":%q,"name":%q,"target":%q,"at":%v,%s}}`,base.asset_id_format(asset,text[:]),clip,base.text_get(marker.name[:]),base.text_get(marker.target[:]),marker.time,asked)
 }
 
 // Adds a key at a time with the value the track has there.
@@ -336,16 +380,16 @@ tracks_key_add :: proc(s:^editor.Session,asset:base.Asset_Id,clip:string,view:aa
 tracks_rows :: proc(s:^editor.Session) {
     t:=tracks_tool_state(s)
     if t==nil {return}
-    ctx:=s.gui.ctx;th:=&ctx.theme
+    ctx:=s.gui.ctx
     w:=editor.edited_world(s)
-    ui.section(ctx,"Tracks")
+    kit.section(ctx,"Tracks")
     view,clip,ok:=tracks_clip(s,t,w)
     if !ok {return}
     animation,_:=editor.entity_get(w,t.entity,anim.Animation)
     c:=view.clips[clip]
     name:=base.text_get(c.name[:])
     tracks:=view.tracks[c.first_track:][:c.track_count]
-    if ui.scroll_area(ctx,ui.id(ctx,"tracks"),&t.scroll,{width=ui.GROW,height=ui.FIT,direction=.Column,max_height=8*th.row}) {
+    if ui.scroll_area(ctx,ui.id(ctx,"tracks"),&t.scroll,{width=ui.GROW,height=ui.FIT,direction=.Column,max_height=8*ui.metric(ctx,"row")}) {
         for &track,i in tracks {
             if ui.row(ctx,ui.id(ctx,"track",i+1),{label=track_label(&track),detail=fmt.tprintf("%d",track.key_count),selected=t.track==i}).clicked {
                 if t.track!=i {t.track,t.key=i,-1}
@@ -357,8 +401,8 @@ tracks_rows :: proc(s:^editor.Session) {
         keys:=view.keys[track.first_key:][:track.key_count]
         params:=tracks_params(animation.asset,name,base.text_get(track.target[:]),track.property,track.slot)
         if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=4}) {
-            if ui.button(ctx,ui.id(ctx,"key_add"),{label="Add key",icon=.Plus,style=.Field,width=-1,center=true}).clicked {tracks_key_add(s,animation.asset,name,view,track,t.head)}
-            if ui.button(ctx,ui.id(ctx,"track_remove"),{label="Remove track",icon=.Cross,style=.Field,width=-1,center=true}).clicked {
+            if ui.button(ctx,ui.id(ctx,"key_add"),{label="Add key",icon=.Plus,variant="field",width=-1,center=true}).clicked {tracks_key_add(s,animation.asset,name,view,track,t.head)}
+            if ui.button(ctx,ui.id(ctx,"track_remove"),{label="Remove track",icon=.Cross,variant="field",width=-1,center=true}).clicked {
                 editor.command_call(s,"animation.track.set",fmt.tprintf(`{{%s,"remove":true}}`,params))
                 t.track,t.key=-1,-1
             }
@@ -367,19 +411,19 @@ tracks_rows :: proc(s:^editor.Session) {
         if t.key>=0 {at,exists=authoring_key_at(keys,t.key)}
         if exists {
             key:=keys[at]
-            ui.section(ctx,"Key")
+            kit.section(ctx,"Key")
             interpolation,ease:=int(key.interpolation),int(key.ease)
-            if ui.property(ctx,"Interpolation") {
+            if kit.property(ctx,"Interpolation") {
                 if ui.dropdown(ctx,ui.id(ctx,"interpolation"),{list=reflect.enum_field_names(lib.Interpolation)},&interpolation,{width=-1}) {
                     editor.command_call(s,"animation.key.set",fmt.tprintf(`{{%s,"time":%v,"key":{{"interpolation":"%v"}}}}`,params,key.time,lib.Interpolation(interpolation)))
                 }
             }
-            if ui.property(ctx,"Ease") {
+            if kit.property(ctx,"Ease") {
                 if ui.dropdown(ctx,ui.id(ctx,"ease"),{list=reflect.enum_field_names(mm.Ease)},&ease,{width=-1,searchable=true}) {
                     editor.command_call(s,"animation.key.set",fmt.tprintf(`{{%s,"time":%v,"key":{{"ease":"%v"}}}}`,params,key.time,mm.Ease(ease)))
                 }
             }
-            if ui.button(ctx,ui.id(ctx,"key_delete"),{label="Delete key",icon=.Cross,style=.Field,width=-1,center=true}).clicked {
+            if ui.button(ctx,ui.id(ctx,"key_delete"),{label="Delete key",icon=.Cross,variant="field",width=-1,center=true}).clicked {
                 editor.command_call(s,"animation.key.set",fmt.tprintf(`{{%s,"time":%v,"remove":true}}`,params,key.time))
             }
         }
@@ -395,11 +439,11 @@ tracks_rows :: proc(s:^editor.Session) {
     if t.field>=0 {
         for &track in tracks {if base.text_get(track.target[:])==fields[t.field].target && track.property==fields[t.field].property {taken=true}}
     }
-    ui.section(ctx,"New track")
-    if ui.property(ctx,"Value") {
+    kit.section(ctx,"New track")
+    if kit.property(ctx,"Value") {
         ui.dropdown(ctx,ui.id(ctx,"field"),{list=labels},&t.field,{width=-1,empty="None",disabled=len(fields)==0,searchable=true})
     }
-    if ui.button(ctx,ui.id(ctx,"track_add"),{label="Add track",icon=.Plus,style=.Field,width=-1,center=true,disabled=t.field<0 || taken}).clicked {
+    if ui.button(ctx,ui.id(ctx,"track_add"),{label="Add track",icon=.Plus,variant="field",width=-1,center=true,disabled=t.field<0 || taken}).clicked {
         field:=fields[t.field]
         _,component,path:=track_parts(field.target)
         schema:serial.Schema

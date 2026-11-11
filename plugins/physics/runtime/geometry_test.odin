@@ -586,6 +586,47 @@ cylinder_colliders_and_convex_radii_reach_the_simulation_at_the_scale_of_the_ent
     if refused!=nil {testing.expect(t,strings.contains(core.problem_text(refused),"convex_radius"),core.problem_text(refused))}
 }
 
+// A mesh mirrored by a negative scale collides where it is drawn, from the side it faces there. A collider
+// turned under a scale that is not uniform across the turn is sheared: a problem of its entity.
+@(test)
+a_mirrored_mesh_collides_where_it_is_drawn :: proc(t:^testing.T) {
+    g:Geometry_Test
+    if !geometry_test_init(t,&g) {return}
+    defer geometry_test_destroy(&g)
+    // A ledge at y 1 from x 0.5 to 2.5, facing up, drawn mirrored from x -2.5 to -0.5.
+    corners:=[4]geom.Vec3{{0.5,1,-1},{2.5,1,-1},{0.5,1,1},{2.5,1,1}}
+    order:=[6]u32{0,2,1, 1,2,3}
+    mesh,made:=host.assets_mesh_generate(&g.assets,{positions=corners[:],indices=order[:]},options={no_lods=true,collision=true})
+    if !testing.expect(t,made) {return}
+    ledge:=core.create(&g.entities)
+    core.add(&g.transforms,ledge,core.Transform{{},1,{-1,1,1}})
+    core.add(&g.colliders,ledge,collider_mesh())
+    core.add(&g.statics,ledge,render.Mesh_Renderer{mesh=mesh})
+    ball:=core.create(&g.entities)
+    core.add(&g.transforms,ball,core.Transform{{-1.5,2,0},1,{1,1,1}})
+    core.add(&g.colliders,ball,collider_sphere(0.25))
+    core.add(&g.rigids,ball,RIGID_BODY_DYNAMIC)
+    parent:=core.create(&g.entities)
+    core.add(&g.transforms,parent,core.Transform{{0,0,-6},1,{2,1,1}})
+    turns:=[2]f32{0.25*linalg.PI,0.5*linalg.PI}
+    turned:[2]core.Entity
+    for &e,at in turned {
+        e=core.create(&g.entities)
+        core.add(&g.transforms,e,core.Transform{{f32(at)*3,0,0},mm.quat_axis_angle({0,1,0},turns[at]),{1,1,1}})
+        core.add(&g.parents,e,core.Parent{entity=parent})
+        core.add(&g.colliders,e,collider_box({0.5,0.5,0.5}))
+    }
+    for _ in 0..<90 {physics_test_step(&g.f)}
+    rest:=physics_test_pose(&g.f,ball).position
+    testing.expectf(t,abs(rest.y-1.25)<0.02 && abs(rest.x+1.5)<0.02,"the ball rests on the mirrored ledge: %v",rest)
+    hit,hit_ok:=raycast({&g.state},{-1,4,0.6},{0,-1,0})
+    testing.expectf(t,hit_ok && hit.entity==ledge && abs(hit.point.y-1)<1e-3,"a ray down on the mirrored ledge: %v",hit)
+    _,beside:=raycast({&g.state},{1.5,4,0.6},{0,-1,0})
+    testing.expect(t,!beside,"nothing is where the ledge would be unmirrored")
+    testing.expect(t,core.problem_find(&g.problems,turned[0],"physics.collider_sheared")!=nil,"an eighth turn under a scale of (2,1,1) shears")
+    testing.expect(t,core.problem_find(&g.problems,turned[1],"physics.collider_sheared")==nil,"a quarter turn does not")
+}
+
 @(private="file")
 expect_close :: proc(t:^testing.T,value,expected:f32,loc:=#caller_location) {
     testing.expectf(t,abs(value-expected)<=1e-3,"got %v, expected %v",value,expected,loc=loc)

@@ -15,7 +15,6 @@ import "mirai:std/serial"
 View_World :: struct {
     using world:core.Test_World,
     using scene_tables:Test_Scene,
-    bodies:core.Table(input.Drivable),
     seats:core.Table(input.Seat),
     lenses:core.Table(erender.Camera),
     follows:core.Table(ecamera.Camera_Follow),
@@ -56,8 +55,7 @@ play_view_says_what_the_player_sees_and_where_things_show_on_the_screen :: proc(
     core.add(&w.names,camera,core.name_make("Hero camera"))
     core.add(&w.transforms,body,core.Transform{position={0,2,-4},rotation=1,scale={1,1,1}})
     core.add(&w.transforms,camera,core.Transform{position={0,2,6},rotation=1,scale={1,1,1}})
-    core.add(&w.bodies,body,input.Drivable{seat,camera})
-    core.add(&w.seats,seat,input.Seat{})
+    core.add(&w.seats,seat,input.Seat{body=body})
     core.add(&w.lenses,camera,erender.Camera{fov=60*math.RAD_PER_DEG})
     follow:=ecamera.CAMERA_FOLLOW_DEFAULT
     follow.state.ready,follow.state.pivot.position=true,{0,2,-1}

@@ -20,11 +20,6 @@ RING_SEGMENTS :: 64
 SCROLL_GUTTER :: ui.SCROLL_BAR+4 // the bar of the scroll area floats over the right edge of its content
 PREVIEW_OWNER :: u64(0x7465727261696e)
 
-// A .terrain in the browser and in the field of a Terrain.
-@(storage)
-Terrain_Kinds :: struct {provider:editor.Asset_Kind_Provider}
-TERRAIN_KINDS_DEFAULT :: Terrain_Kinds{provider={kinds={0={kind=terrain.KIND,label="Terrain",color={168,124,72,255},icon=ui.Icon(u8(ui.Icon.User)+u8(editor.User_Icon.Terrain)),extension=terrain.EXTENSION,scene_data=true}},count=1}}
-
 @(storage,free="terrain_tool_free")
 Terrain_Tool :: struct {
     active,begin,over,ready:bool,
@@ -77,7 +72,7 @@ Stroke :: struct {
     builds:[dynamic]Preview_Build,
     previews:[dynamic]Preview,
     preview_at:[dynamic]i32, // the preview of each chunk of the grid, by preview_slot; -1: none
-    levels_seen:u64,         // the version of the chunks when the levels of the previews were last chosen
+    levels_seen:core.Seen,   // the chunks when the levels of the previews were last chosen
     to_local,to_world:mm.Mat4,
     scale,target:f32,
     normal:[3]f32,
@@ -161,7 +156,7 @@ terrain_write :: proc(s:^editor.Session,a:^host.Assets,id:base.Asset_Id,source:^
     return editor.file_set(s,path,bytes)
 }
 @(step="frame",stage="begin",after="editor_tools")
-terrain_sync :: proc(s:^editor.Session,tool:^Terrain_Tool,terrains:core.Read(terrain.Terrain),assets:^host.Assets) {
+terrain_sync :: proc(s:^editor.Session,tool:^Terrain_Tool,terrains:^core.Table(terrain.Terrain,.Read),assets:^host.Assets) {
     a:=assets
     if a==nil || tool.stroke.active || editor.playing(s) {return}
     // The source the tool edits follows its head without reading the file again.
@@ -176,7 +171,7 @@ terrain_sync :: proc(s:^editor.Session,tool:^Terrain_Tool,terrains:core.Read(ter
     editor.revision_sync(s,&tool.history,terrains,a,REVISIONS,tool,follow)
 }
 @(step="frame")
-terrain_sculpt :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,terrains:core.Read(terrain.Terrain),chunks:core.Read(terrain.Terrain_Chunk),worlds:core.Read(core.World_Transform),assets:^host.Assets,extras:^host.Frame_Extras,job_system:^jobs.Job_System,allocator:runtime.Allocator,input:core.Input,view:core.View,frame:core.Frame_Time) {
+terrain_sculpt :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,terrains:^core.Table(terrain.Terrain,.Read),chunks:^core.Table(terrain.Terrain_Chunk,.Read),worlds:^core.Table(core.World_Transform,.Read),assets:^host.Assets,extras:^host.Frame_Extras,job_system:^jobs.Job_System,allocator:runtime.Allocator,input:core.Input,view:core.View,frame:core.Frame_Time) {
     stroke:=&tool.stroke
     defer terrain_focus(s,tool,world,input)
     if !tool.active || editor.playing(s) {if stroke.id!={} {stroke_free(tool)};tool.adjust={};return}
@@ -241,7 +236,7 @@ terrain_sculpt :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
     cursor_draw(s,tool,input,view)
 }
 @(private)
-stroke_prepare :: proc(tool:^Terrain_Tool,assets:^host.Assets,allocator:runtime.Allocator,terrains:core.Read(terrain.Terrain),worlds:core.Read(core.World_Transform),hit:editor.Pick) -> bool {
+stroke_prepare :: proc(tool:^Terrain_Tool,assets:^host.Assets,allocator:runtime.Allocator,terrains:^core.Table(terrain.Terrain,$A),worlds:^core.Table(core.World_Transform,$B),hit:editor.Pick) -> bool {
     a:=assets
     marker,has_marker:=core.get(terrains,hit.entity)
     placed,has_placed:=core.get(worlds,hit.entity)
@@ -327,11 +322,10 @@ preview_find :: proc(stroke:^Stroke,coord:[3]i32) -> int {
 // the border it shows, lowered only where a hole takes a chunk to level 0;
 // the nodes of the quadtree are not previewed. A Volume has no levels.
 @(private)
-preview_levels :: proc(stroke:^Stroke,terrains:core.Read(terrain.Terrain),chunks:core.Read(terrain.Terrain_Chunk)) {
+preview_levels :: proc(stroke:^Stroke,terrains:^core.Table(terrain.Terrain,$A),chunks:^core.Table(terrain.Terrain_Chunk,$B)) {
     dirty:=false
     for preview in stroke.previews {dirty||=preview.dirty}
-    if !dirty && core.version(chunks)==stroke.levels_seen {return}
-    stroke.levels_seen=core.version(chunks)
+    if !core.touched(chunks,&stroke.levels_seen) && !dirty {return}
     s:=&stroke.source
     if s.kind!=.Heightfield {return}
     counts:=terrain.chunk_counts(s)
@@ -377,7 +371,7 @@ preview_levels :: proc(stroke:^Stroke,terrains:core.Read(terrain.Terrain),chunks
     }
 }
 @(private)
-stroke_preview :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,terrains:core.Read(terrain.Terrain),chunks:core.Read(terrain.Terrain_Chunk),worlds:core.Read(core.World_Transform),assets:^host.Assets,extras:^host.Frame_Extras,job_system:^jobs.Job_System) {
+stroke_preview :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,terrains:^core.Table(terrain.Terrain,$A),chunks:^core.Table(terrain.Terrain_Chunk,$B),worlds:^core.Table(core.World_Transform,$C),assets:^host.Assets,extras:^host.Frame_Extras,job_system:^jobs.Job_System) {
     stroke:=&tool.stroke
     a:=assets
     if a==nil || a.renderer==nil {return}
@@ -395,7 +389,7 @@ stroke_preview :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
             build.source,build.coord,build.preview,build.ok=&stroke.source,preview.coord,next,false
             build.lod=preview.lod
             build.limits=host.assets_limits(a)
-            if parallel {jobs.run(job_system,jobs.OWNER,preview_build,build,&build.counter)} else {preview_build(build,jobs.OWNER)}
+            if parallel {jobs.run(job_system,jobs.OWNER,.Frame,preview_build,build,&build.counter)} else {preview_build(build,jobs.OWNER)}
             count+=1
         }
         for &build in stroke.builds[:count] {

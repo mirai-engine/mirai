@@ -1,6 +1,7 @@
 package game
 
 import "mirai:core"
+import cam "mirai:engine/camera"
 import inp "mirai:engine/input"
 import render "mirai:engine/render"
 import mm "mirai:std/math"
@@ -50,8 +51,8 @@ FLASHLIGHT_OFFSET :: [3]f32{0.25,-0.15,0}
 // Use within reach of a switch turns it; the flashlight action turns every flashlight.
 @(step="fixed")
 horror_switches :: proc(
-    players:core.Read(Player),switches:^core.Table(Light_Switch),flashlights:^core.Table(Flashlight),
-    actions:inp.Input_Of(Action),worlds:core.Read(core.World_Transform),
+    players:^core.Table(Player,.Read),switches:^core.Table(Light_Switch),flashlights:^core.Table(Flashlight),
+    actions:inp.Input_Of(Action),worlds:^core.Table(core.World_Transform,.Read),
 ) {
     for row in 0..<core.count(players) {
         e:=core.entity_at(players,row)
@@ -73,13 +74,13 @@ horror_switches :: proc(
 // the flashlights follow the eyes of the first player.
 @(step="fixed",stage="react")
 horror_lights :: proc(
-    lamps:^core.Table(House_Lamp),switches:core.Read(Light_Switch),points:^core.Table(render.Point_Light),
-    flashlights:core.Read(Flashlight),spots:^core.Table(render.Spot_Light),transforms:^core.Table(core.Transform),
-    players:core.Read(Player),moves:core.Read(inp.Move_Input),drivables:core.Read(inp.Drivable),worlds:core.Read(core.World_Transform),time:core.Time,
+    lamps:^core.Table(House_Lamp),switches:^core.Table(Light_Switch,.Read),points:^core.Table(render.Point_Light),
+    flashlights:^core.Table(Flashlight,.Read),spots:^core.Table(render.Spot_Light),transforms:^core.Table(core.Transform),
+    players:^core.Table(Player,.Read),moves:^core.Table(inp.Move_Input,.Read),sight:cam.Sight,time:core.Time,
 ) {
     seconds:=f32(time.seconds)
     for row in 0..<core.count(lamps) {
-        lamp:=core.at(lamps,row)
+        lamp:=core.edit_at(lamps,row)
         on:=true
         if s,has:=core.get(switches,lamp.light_switch);has {on=s.on}
         if on && lamp.flicker>0 {
@@ -88,16 +89,11 @@ horror_lights :: proc(
             on=flicker_hash(slice)>0.3
         }
         lamp.lit=on
-        core.set_at(lamps,row,lamp)
-        e:=core.entity_at(lamps,row)
-        if light,lights:=core.get(points,e);lights {
-            light.intensity=on?lamp.intensity:0
-            core.set(points,e,light)
-        }
+        if light:=core.edit(points,core.entity_at(lamps,row));light!=nil {light.intensity=on?lamp.intensity:0}
     }
     player,found:=core.first(players)
     if !found {return}
-    origin,_,aimed:=inp.aim(drivables,worlds,player)
+    origin,_,aimed:=cam.aim(sight,player)
     move,has_move:=core.get(moves,player)
     if !aimed || !has_move {return}
     turn:=mm.quat_from_euler({move.look_pitch,move.look_yaw,0})
@@ -106,15 +102,8 @@ horror_lights :: proc(
         e:=core.entity_at(flashlights,row)
         flashlight:=core.at(flashlights,row)
         // A write marks the light as moved, and a moved light restarts the indirect light around it.
-        if row:=core.row_of(transforms,e);row>=0 {
-            if placed:=core.at(transforms,row);placed.position!=eye || placed.rotation!=turn {
-                if local:=core.free(transforms,e);local!=nil {local.position,local.rotation=eye,turn}
-            }
-        }
-        if spot,lights:=core.get(spots,e);lights {
-            spot.intensity=flashlight.on?flashlight.intensity:0
-            core.set(spots,e,spot)
-        }
+        if local:=core.free(transforms,e);local!=nil {local.position,local.rotation=eye,turn}
+        if spot:=core.edit(spots,e);spot!=nil {spot.intensity=flashlight.on?flashlight.intensity:0}
     }
 }
 
@@ -128,12 +117,9 @@ flicker_hash :: proc "contextless" (v:u32) -> f32 {
 
 // The globe of each lamp glows while it is lit.
 @(step="fixed")
-horror_glow :: proc(tints:^core.Table(render.Tint),lamps:core.Read(House_Lamp)) {
+horror_glow :: proc(tints:^core.Table(render.Tint),lamps:^core.Table(House_Lamp,.Read)) {
     for row in 0..<core.count(lamps) {
         lamp:=core.at(lamps,row)
-        if tint,found:=core.get(tints,lamp.globe);found {
-            tint.emission=lamp.lit?lamp.glow:[3]f32{}
-            core.set(tints,lamp.globe,tint)
-        }
+        if tint:=core.edit(tints,lamp.globe);tint!=nil {tint.emission=lamp.lit?lamp.glow:[3]f32{}}
     }
 }

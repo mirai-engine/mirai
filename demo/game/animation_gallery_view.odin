@@ -27,13 +27,12 @@ Gallery_Hud :: struct {
 }
 
 @(step="frame")
-gallery_hud :: proc(huds:^core.Table(Gallery_Hud),players:core.Read(Gallery_Player),gallery:core.Read(Animation_Gallery),panels:core.Read(Gallery_Panel),drivables:core.Read(inp.Drivable)) {
-    shown:=core.read(huds)
-    for row in 0..<core.count(shown) {
-        seat:=core.entity_at(shown,row)
+gallery_hud :: proc(huds:^core.Table(Gallery_Hud),players:^core.Table(Gallery_Player,.Read),gallery:^core.Table(Animation_Gallery,.Read),panels:^core.Table(Gallery_Panel,.Read),seats:^core.Table(inp.Seat,.Read)) {
+    for row in 0..<core.count(huds) {
+        seat:=core.entity_at(huds,row)
         player,found:=core.get(players,seat)
         if !found {continue}
-        body:=inp.body_of(drivables,seat)
+        body:=inp.body_of(seats,seat)
         next:Gallery_Hud
         if body==player.spider && body!=core.NONE {
             next.place=.Spider
@@ -44,6 +43,6 @@ gallery_hud :: proc(huds:^core.Table(Gallery_Hud),players:core.Read(Gallery_Play
             for at in 0..<core.count(panels) {if core.at(panels,at).station==player.near {next.use=.Adjust}}
             if next.use==.Nothing && item.kind==.Spider {next.use=.Drive}
         }
-        if core.at(shown,row)!=next {core.edit_at(huds,row)^=next}
+        core.edit_at(huds,row)^=next
     }
 }

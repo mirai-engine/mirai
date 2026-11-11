@@ -1,34 +1,30 @@
 package terrain
 
 import "core:math/linalg"
+import "core:slice"
 import "mirai:core"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import phys "plugins:physics/runtime"
 
 // The ground of the terrains of a world, for core.Ground_Queries: the probe
-// reads the terrains as they are placed, and terrain_update announces where
-// each terrain comes, goes, moves, shows another source, its chunks change
-// (an edit, a page that comes) or a stroke of the editor is held. Far from
-// every viewer, where the pages of a source are not in memory, a Heightfield
-// answers from its coarse grid and a Volume answers Unloaded until the page
-// that comes announces its chunks. The revision starts anew with each epoch
-// of Terrain_Data (a copy of the world, a swap, a scene loaded): whoever saw
-// another takes everything as changed.
-
-GROUND_CHANGES :: 64 // changes kept: whoever looks less often takes everything as changed
+// reads the terrains as they are placed, and terrain_update pushes where each
+// terrain comes, goes, moves, shows another source, its chunks change (an
+// edit, a page that comes) or a stroke of the editor is held, and where its
+// collision loads or goes. Far from every viewer, where the pages of a
+// source are not in memory, a Heightfield answers from its coarse grid and a
+// Volume answers Unloaded until the page that comes announces its chunks.
+// Another epoch of Terrain_Data (a copy of the world, a swap, a scene loaded)
+// starts Terrain_Resident anew, and with it every terrain is announced.
 
 Ground :: struct {
     views:[dynamic]Ground_View,
-    changes:[GROUND_CHANGES]core.Ground_Change,
-    count:int,
-    revision:u64,  // the epoch of Terrain_Data, then the changes in it
     spacing:f32,
-    stamps:[3]u64, // the versions of Terrain and World_Transform and the change of the data the views were made from
+    seen:[3]core.Seen,    // of Terrain, World_Transform and Collider
+    data:u64,             // terrain_data_change when it last looked
+    marks:u64,            // Terrain_Resident.marks when the unloaded boxes were last made
     stroke:Terrain_Focus, // the stroke held, its center and radius left out; zero: none
     unloaded:[dynamic]mm.Aabb,
-    unloaded_revision:u64,
-    unloaded_stamps:[5]u64,
 }
 
 // A terrain as the probe reads it.
@@ -47,20 +43,26 @@ ground_open :: proc(w:core.World_Ref) -> (core.Ground_Query,bool) {
     resident:=core.world_storage_of(w,Terrain_Resident)
     if resident==nil {return {},false}
     g:=&resident.ground
-    return {user=g,probe=ground_probe,spacing=g.spacing,revision=g.revision,changes=g.changes[:g.count],unloaded=g.unloaded[:],unloaded_revision=g.unloaded_revision},true
+    return {user=g,probe=ground_probe,spacing=g.spacing,unloaded=g.unloaded[:]},true
 }
 
-// What the ground of the world is now, at the end of terrain_update.
+// What the ground of the world is now, at the end of terrain_update, and
+// where it changed.
 @(private)
-ground_update :: proc(resident:^Terrain_Resident,data:^Terrain_Data,terrains:core.Read(Terrain),colliders:^core.Table(phys.Collider),worlds:core.Read(core.World_Transform),focus:Terrain_Focus) {
+ground_update :: proc(resident:^Terrain_Resident,data:^Terrain_Data,terrains:^core.Table(Terrain,$A),colliders:^core.Table(phys.Collider),worlds:^core.Table(core.World_Transform,.Read),focus:Terrain_Focus,queries:^core.Ground_Queries) {
     g:=&resident.ground
-    if g.revision>>32!=u64(data.epoch) {
-        g.revision,g.count,g.stamps=u64(data.epoch)<<32,0,{}
-        clear(&g.views)
+    // A terrain that came, went or moved: the transforms of the rest do not count.
+    placed:=core.touched(terrains,&g.seen[0])
+    moved:=core.changes(worlds,&g.seen[1])
+    for e in moved.gone {placed||=core.has(terrains,e)}
+    for row:=0;!placed && moved.written && row<core.count(terrains);row+=1 {
+        at:=core.row_of(worlds,core.entity_at(terrains,row))
+        placed=at>=0 && core.changed(worlds,moved,at)
     }
-    stamps:=[3]u64{core.version(terrains),core.version(worlds),terrain_data_change({data})}
-    if stamps!=g.stamps {
-        g.stamps=stamps
+    change:=terrain_data_change({data})
+    edited:=change!=g.data
+    g.data=change
+    if placed || edited {
         views:=make([dynamic]Ground_View,0,len(g.views),context.temp_allocator)
         g.spacing=0
         for row in 0..<core.count(terrains) {
@@ -84,15 +86,15 @@ ground_update :: proc(resident:^Terrain_Resident,data:^Terrain_Data,terrains:cor
         for &old in g.views {
             kept:=false
             for now in views {kept||=same(old,now)}
-            if !kept {ground_change(g,&old,old.low,old.high)}
+            if !kept {ground_change(&queries.changed,&old,old.low,old.high)}
         }
         for &now in views {
             old:^Ground_View
             for &seen in g.views {if same(seen,now) {old=&seen;break}}
-            if old==nil {ground_change(g,&now,now.low,now.high);continue}
+            if old==nil {ground_change(&queries.changed,&now,now.low,now.high);continue}
             if old.change==now.change {continue}
             // The cells around the chunks that changed: the normals of the samples next to them change too.
-            if low,high,changed:=terrain_changed({data},now.id,old.change);changed {ground_change(g,&now,low-now.source.cell,high+now.source.cell)}
+            if low,high,changed:=terrain_changed({data},now.id,old.change);changed {ground_change(&queries.changed,&now,low-now.source.cell,high+now.source.cell)}
         }
         clear(&g.views)
         append(&g.views,..views[:])
@@ -102,24 +104,21 @@ ground_update :: proc(resident:^Terrain_Resident,data:^Terrain_Data,terrains:cor
     if stroke!=g.stroke {
         for &view in g.views {
             for held in ([2]Terrain_Focus{g.stroke,stroke}) {
-                if held.stroke && held.source==view.id {ground_change(g,&view,{held.low.x,-HEIGHT_LIMIT,held.low.y},{held.high.x,HEIGHT_LIMIT,held.high.y})}
+                if held.stroke && held.source==view.id {ground_change(&queries.changed,&view,{held.low.x,-HEIGHT_LIMIT,held.low.y},{held.high.x,HEIGHT_LIMIT,held.high.y})}
             }
         }
         g.stroke=stroke
     }
-    ground_unloaded(resident,data,terrains,colliders,worlds)
+    if placed | edited | core.touched(colliders,&g.seen[2]) | (resident.marks!=g.marks) {
+        g.marks=resident.marks
+        ground_unloaded(resident,data,colliders,worlds,&queries.unloaded)
+    }
 }
 
 // A box of the space of a view that changed.
 @(private)
-ground_change :: proc(g:^Ground,view:^Ground_View,low,high:[3]f32) {
-    if g.count==GROUND_CHANGES {
-        copy(g.changes[:],g.changes[1:])
-        g.count-=1
-    }
-    g.revision+=1
-    g.changes[g.count]={mm.aabb_transform({low,high},view.to_world),g.revision}
-    g.count+=1
+ground_change :: proc(changed:^core.Events(mm.Aabb),view:^Ground_View,low,high:[3]f32) {
+    core.push(changed,mm.aabb_transform({low,high},view.to_world))
 }
 
 @(private)
@@ -177,7 +176,7 @@ view_probe :: proc(g:^Ground,view:^Ground_View,origin,down:[3]f32,coarse:bool) -
         ok:bool
         local,normal,ok=source_ray(s,o+d*(near-s.cell),d)
         if !ok {
-            held:=s.kind==.Heightfield?cell_held(s,c,r):volume_held(s,{c,0,r},{c+1,int(s.samples.y)-1,r+1})
+            held:=source_region_held(s,{c,0,r},{c+1,int(s.samples.y)-1,r+1})
             return {},held?.Empty:.Unloaded
         }
         normal=linalg.normalize0(normal)
@@ -219,17 +218,14 @@ shown_weights :: proc "contextless" (s:^Source,local,normal:[3]f32) -> Weights {
 // chunks of each solid terrain shown by an owner that have no collider now
 // (not resident, beyond Terrain_Settings.collision_distance, waiting for a
 // slot or for their first build), in runs along x, as boxes of the world. A
-// chunk shown empty has nothing to load. Made again when the chunks, the
-// colliders, the terrains, their places or their sources change.
+// chunk shown empty has nothing to load. Made again when the colliders, the
+// terrains, their places or their sources change, or an owner or a chunk
+// comes, goes or turns empty or not (Terrain_Resident.marks); where it
+// changed is pushed.
 @(private)
-ground_unloaded :: proc(resident:^Terrain_Resident,data:^Terrain_Data,terrains:core.Read(Terrain),colliders:^core.Table(phys.Collider),worlds:core.Read(core.World_Transform)) {
+ground_unloaded :: proc(resident:^Terrain_Resident,data:^Terrain_Data,colliders:^core.Table(phys.Collider),worlds:^core.Table(core.World_Transform,.Read),unloaded:^core.Events(mm.Aabb)) {
     g:=&resident.ground
-    stamps:=[5]u64{core.version(colliders),core.version(terrains),core.version(worlds),terrain_data_change({data}),u64(len(resident.owners))}
-    for &source in resident.sources {for chunk in source.chunks {stamps[4]=stamps[4]*31+u64(chunk.shown)}}
-    if stamps==g.unloaded_stamps {return}
-    g.unloaded_stamps=stamps
-    before:=len(g.unloaded)
-    hash:=base.hash64(transmute([]u8)g.unloaded[:],0) if before>0 else 0
+    before:=slice.clone(g.unloaded[:],context.temp_allocator)
     clear(&g.unloaded)
     for &owner in resident.owners {
         if !owner.solid {continue}
@@ -239,7 +235,10 @@ ground_unloaded :: proc(resident:^Terrain_Resident,data:^Terrain_Data,terrains:c
         if entry==nil || shown==nil || !placed || len(owner.chunks)!=len(shown.chunks) {continue}
         unloaded_runs(&g.unloaded,&entry.source,shown,&owner,colliders,world.transform)
     }
-    if len(g.unloaded)!=before || before>0 && base.hash64(transmute([]u8)g.unloaded[:],0)!=hash {g.unloaded_revision+=1}
+    if slice.equal(before,g.unloaded[:]) {return}
+    box:=mm.AABB_EMPTY
+    for boxes in ([2][]mm.Aabb{before,g.unloaded[:]}) {for b in boxes {box=mm.aabb_merge(box,b)}}
+    core.push(unloaded,box)
 }
 
 // The runs along x of the chunks of an owner whose collision is not loaded.

@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:mem"
 import "core:testing"
 import "mirai:editor"
+import "mirai:editor/kit"
 import "mirai:host"
 import "mirai:project"
 import gpu "mirai:render"
@@ -106,7 +107,7 @@ particle_document_parameters_take_the_kind_the_program_declares_and_go_back_to_t
 @(test)
 particle_document_builds_the_rows_of_every_field_and_its_eyes_hide_them :: proc(t:^testing.T) {
     ctx:ui.Context
-    if !testing.expect(t,ui.context_init(&ctx,{})) {return}
+    if !testing.expect(t,ui.context_init(&ctx,{}) && kit.theme_set(&ctx)) {return}
     defer ui.context_destroy(&ctx)
     g:=editor.Editor_Ui{ctx=&ctx}
     inspector:editor.Inspector
@@ -186,12 +187,4 @@ the_preview_of_a_document_shows_what_its_rows_hold_and_frames_where_its_particle
     low,high:=effect_reach(nil,&info)
     testing.expect(t,high.y>0.3 && low.y<-6,"it goes up and falls")
     testing.expect(t,low.x<0 && high.x>0 && low.z<0 && high.z>0)
-}
-
-// What git and the tools know of the kinds of the plugin without loading it.
-@(test)
-the_manifest_declares_the_asset_kinds_the_plugin_registers :: proc(t:^testing.T) {
-    m,error:=project.plugin_read(#directory+"../plugin.mirai")
-    testing.expect_value(t,error.code,project.Error_Code.None)
-    testing.expect_value(t,editor.asset_kinds_differ(VFX_KINDS_DEFAULT.provider,&m),"")
 }

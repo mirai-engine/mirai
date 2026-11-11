@@ -2,6 +2,7 @@ package editor
 
 import "mirai:core"
 import "mirai:editor/api"
+import ecamera "mirai:engine/camera"
 import render "mirai:engine/render"
 import input "mirai:engine/input"
 import "mirai:std/base"
@@ -46,17 +47,15 @@ play_player_snapshot :: proc(w:core.World_Ref) -> (value:Api_Play_Player_Result)
     players:=core.world_storage_of(w,input.Seats)
     seats:=core.world_table_of(w,input.Seat)
     if players==nil || seats==nil {return}
-    player:=input.focused(players,core.read(seats))
+    player:=input.focused(players,seats)
     if !core.alive(core.world_entities(w),player) {return}
     value.available=true
     value.seat=play_player_entity(w,player)
     if shown:=core.world_storage_of(w,render.View_Camera);shown!=nil {value.camera=play_player_entity(w,shown.entity)}
-    if bodies:=core.world_table_of(w,input.Drivable);bodies!=nil {
-        body:=input.body_of(core.read(bodies),player)
-        value.body=play_player_entity(w,body)
-        if value.camera.entity==core.NONE {
-            if owned,found:=core.get(bodies,body);found {value.camera=play_player_entity(w,owned.camera)}
-        }
+    body:=input.body_of(seats,player)
+    value.body=play_player_entity(w,body)
+    if cameras:=core.world_table_of(w,render.Camera);value.camera.entity==core.NONE && cameras!=nil {
+        value.camera=play_player_entity(w,ecamera.body_camera(core.Ref(core.Hierarchy){core.world_storage_of(w,core.Hierarchy)},cameras,body))
     }
     return
 }

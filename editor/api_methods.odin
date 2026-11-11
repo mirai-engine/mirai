@@ -131,8 +131,8 @@ Api_Visible_Kinds :: struct {
 Api_Textures :: struct {
     bytes:u64 `mirai:"label=GPU memory of the textures of the renderer"`,
     view_bytes:u64 `mirai:"label=GPU memory of the targets of the views drawn into textures, which the pool of the textures gives up"`,
-    pending:int `mirai:"label=Textures whose levels are not yet those their distance asks for"`,
-    reduced:int `mirai:"label=Textures held coarser than their distance asks for to fit the pool"`,
+    pending:int `mirai:"label=Textures whose levels are not yet those the frames sample"`,
+    reduced:int `mirai:"label=Textures held coarser than the frames sample to fit the pool"`,
     streamed:int `mirai:"label=Ranges of levels given to textures since the assets loaded"`,
 }
 
@@ -381,7 +381,6 @@ Api_Build_Test_Result_Failed :: struct {
 }
 Api_Build_Test_Result :: struct {
     probe:Api_Build_Check_Result `mirai:"inline"`,
-    running:bool `mirai:"label=it still builds or runs: build.test.status says when it ends"`,
     compiled:bool `mirai:"label=false: the package did not build; diagnostics say why"`,
     total,passed:int,
     failed:[]Api_Build_Test_Result_Failed,
@@ -419,8 +418,7 @@ api_methods_register :: proc(s:^Session,st:^Api_State) {
     check_defaults:=Api_Build_Check_Params{seconds=300}
     api_register(s,st,{name="build.check",summary="Checks the types of the code of the project, its game, editor and plugins, without building or loading anything; answers when it ends, with each error and its file and line.",params=type_info_of(Api_Build_Check_Params),defaults=&check_defaults,result=type_info_of(Api_Build_Check_Result),flags={.Core,.Read_Only},run=api_build_check})
     test_defaults:=Api_Build_Test_Params{seconds=600}
-    api_register(s,st,{name="build.test",summary="Starts building and running the @(test) procedures of a package of the project against the engine it uses, without loading anything, and answers at once: poll build.test.status until running is false, for each failed test and what it logged.",params=type_info_of(Api_Build_Test_Params),defaults=&test_defaults,result=type_info_of(Api_Build_Test_Result),flags={.Read_Only},run=api_build_test})
-    api_register(s,st,{name="build.test.status",summary="The last run of the tests build.test started: how long it has run while it runs, then each failed test and what it logged.",result=type_info_of(Api_Build_Test_Result),flags={.Read_Only},run=api_build_test_status})
+    api_register(s,st,{name="build.test",summary="Builds and runs the @(test) procedures of a package of the project against the engine it uses, without loading anything; answers when they end, with each failed test and what it logged.",params=type_info_of(Api_Build_Test_Params),defaults=&test_defaults,result=type_info_of(Api_Build_Test_Result),flags={.Read_Only},run=api_build_test})
     api_play_record_register(s,st)
     api_play_history_register(s,st)
     api_register(s,st,{name="batch",flags={.Core},params=type_info_of(api.Batch_Params),summary=api.BATCH_SUMMARY,result=type_info_of(api.Batch_Result),run=proc(s:^Session,call:^api.Call) {api.batch(call)}})
@@ -1505,8 +1503,8 @@ api_build_start :: proc(s:^Session,call:^api.Call) {
         api.call_fail(call,api.INVALID_PARAMS,"out cannot be the folder of the project: name another one, or leave it empty for .mirai/game")
         return
     }
-    if s.build.phase==.Running {
-        api.call_fail(call,api.SERVER_ERROR,"Another build is running: build.status says when it ends")
+    if build_busy(s.build) {
+        api.call_fail(call,api.SERVER_ERROR,"Another build, check or run of the tests is running: build.status says when a build ends")
         return
     }
     if !s.has_project || s.engine_root=="" {
@@ -1565,21 +1563,12 @@ Api_Build_Test_Params :: struct {
 @(private)
 api_build_check :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Build_Check_Params)
-    if error:=code_probe_start(s,.Check,"",nil,f64(params.seconds));error!="" {api.call_fail(call,api.SERVER_ERROR,error);return}
-    // An odin check compiles nothing: it answers when it ends, saying how long it has run meanwhile.
-    checking :: proc(s:^Session,user:rawptr) -> bool {return probe_running(s.build)}
-    api_wait(s,f64(params.seconds)+5,nil,checking,"checking")
-    probe_poll(s)
-    if probe_running(s.build) {
-        api.call_fail(call,api.SERVER_ERROR,"The check did not end in its seconds")
-        return
-    }
-    api.call_result(call,Api_Build_Check_Result)^=api_probe_of(probe_result(s.build),call.allocator)
+    if error:=build_run_start(s,.Check,.Editor,"","",nil,f64(params.seconds));error!="" {api.call_fail(call,api.SERVER_ERROR,error);return}
+    if !api_run_wait(s,call,f64(params.seconds),"checking") {return}
+    api.call_result(call,Api_Build_Check_Result)^=api_probe_of(api_run_result(s.build),call.allocator)
 }
 
-// Starts building and running the tests and answers at once, as
-// build.test.status answers while they run: the editor answers other calls
-// meanwhile.
+// Builds and runs the tests and answers when they end.
 @(private)
 api_build_test :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Build_Test_Params)
@@ -1596,41 +1585,35 @@ api_build_test :: proc(s:^Session,call:^api.Call) {
     for name in strings.split_iterator(&rest,",") {
         if trimmed:=strings.trim_space(name);trimmed!="" {append(&names,trimmed)}
     }
-    if error:=code_probe_start(s,.Test,path,names[:],f64(params.seconds));error!="" {api.call_fail(call,api.SERVER_ERROR,error);return}
-    api.call_result(call,Api_Build_Test_Result)^=api_test_of(s.build,call.allocator)
-}
-
-@(private)
-api_build_test_status :: proc(s:^Session,call:^api.Call) {
-    probe_poll(s)
-    if s.build.probe==nil || s.build.probe.action!=.Test {
-        api.call_fail(call,api.SERVER_ERROR,"No run of the tests since the editor opened: build.test starts one")
-        return
-    }
-    api.call_result(call,Api_Build_Test_Result)^=api_test_of(s.build,call.allocator)
-}
-
-// A run of the tests: while it runs, how long it has run; once it ended,
-// what it ended with.
-@(private)
-api_test_of :: proc(b:^Build_State,allocator:runtime.Allocator) -> (r:Api_Build_Test_Result) {
-    running:=probe_running(b)
-    // While it runs, seconds is how long it has run.
-    shown:=probe_result(b)^
-    if running {shown.seconds=time.duration_seconds(time.tick_since(b.probe.started))}
-    report:=&shown.tests
-    r={probe=api_probe_of(&shown,allocator),running=running,compiled=report.compiled,total=report.total,passed=report.passed,failed=make([]Api_Build_Test_Result_Failed,len(report.failed),allocator)}
+    if error:=build_run_start(s,.Test,.Editor,"",path,names[:],f64(params.seconds));error!="" {api.call_fail(call,api.SERVER_ERROR,error);return}
+    if !api_run_wait(s,call,f64(params.seconds),"testing") {return}
+    result:=api_run_result(s.build)
+    report:=&result.tests
+    r:=api.call_result(call,Api_Build_Test_Result)
+    r^={probe=api_probe_of(result,call.allocator),compiled=report.compiled,total=report.total,passed=report.passed,failed=make([]Api_Build_Test_Result_Failed,len(report.failed),call.allocator)}
     for failure,i in report.failed {r.failed[i]={failure.package_name,failure.name,failure.messages[:]}}
-    return
 }
 
-// What the last probe ended with; while it runs, or when its project could
-// not be opened, a result that says so.
-@(private)
-probe_result :: proc(b:^Build_State) -> ^build.Result {
-    if job:=probe_job(b);job!=nil {return &job.result}
+// Waits for the check or the run of the tests just started, which answers
+// within its seconds. False, with the call failed, when it did not end.
+@(private="file")
+api_run_wait :: proc(s:^Session,call:^api.Call,seconds:f64,doing:string) -> bool {
+    busy :: proc(s:^Session,user:rawptr) -> bool {return build_busy(s.build)}
+    api_wait(s,seconds+5,nil,busy,doing)
+    build_poll(s)
+    if build_busy(s.build) {
+        api.call_failf(call,api.SERVER_ERROR,"It did not end in its %.0f seconds",seconds)
+        return false
+    }
+    return true
+}
+
+// What the last check or run of the tests ended with; one that says so when its project could not be opened.
+@(private="file")
+api_run_result :: proc(b:^Build_State) -> ^build.Result {
+    if job:=build_run_job(b);job!=nil {return &job.result}
     result:=new(build.Result,context.temp_allocator)
-    if b.probe!=nil && b.probe.thread==nil {result.status,result.text=.Failed,"The project could not be opened"}
+    result.status,result.text=.Failed,"The project could not be opened"
     return result
 }
 

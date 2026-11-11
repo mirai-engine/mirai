@@ -92,6 +92,7 @@ Stats :: struct {
     dropped_tree:u32,  // what the nodes of a tree could not hold: spans of a rich text, buttons and letters of an Action_Bar
     dropped_tracks:u32, // rows of grid tracks the frame had no room for
     dropped_nesting:u32, // id scopes, floats and layers nested deeper than their stacks hold, which were not applied
+    dropped_transitions:u32, // elements that asked to transition when Context_Desc.max_transitions of them already had this frame or the last
 }
 
 rect_intersect :: proc "contextless" (a,b:Rect) -> Rect {

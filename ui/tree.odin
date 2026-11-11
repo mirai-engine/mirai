@@ -63,6 +63,7 @@ Node_Style :: struct {
     program_values:[4]f32,                         // the first parameters of that program
     sounds:[Sound_Cue]base.Asset_Id,
     transition:f32, // seconds its colors, its shadow and how it moves take to go from one state to the next
+    layout_transition:f32, // seconds its rectangle takes to go to a new place or size the layout gives it
     move:[2]f32,    // drawn this far from where the layout put it; the layout and the pointer stay
     scale:f32,      // drawn this size around its center, as move; 0: 1
 }
@@ -450,6 +451,7 @@ tree_instance_init :: proc(instance:^Tree_Instance,tree:^Widget_Tree,host:^Bind_
         o[.Items]=true
         b.text,o[.Text]=tree_bind_field(instance,scope,name(tree,&node,.Text),.Shown)
         b.value,o[.Value]=tree_bind_field(instance,scope,name(tree,&node,.Value),tree_value_want(node.kind))
+        if node.kind==.Progress && b.value.kind==.Float && b.value.size==4 && instance.host!=nil {instance.ranges[len(instance.ranges)-1].step=-1}
         if b.value.text && node.kind!=.Switcher && strings.index_byte(string(tree.strings[node.text_offset:][:node.text_length]),'=')<0 {o[.Value]=false}
         b.visible,o[.Visible]=tree_bind_field(instance,scope,name(tree,&node,.Visible),.Number)
         b.selected,o[.Selected]=tree_bind_field(instance,scope,name(tree,&node,.Selected),.Number)
@@ -795,14 +797,6 @@ tree_build_node :: proc(ctx:^Context,b:^Tree_Build,index:int,values:rawptr,copy:
         }
     } else if !playing && !visible && !room {return next}
     defer if animated {animated_end(ctx)}
-    // Width and Height take the place of its size: the layout around it follows.
-    sized:Node
-    if playing && value.set&{.Width,.Height}!={} {
-        sized=node^
-        if .Width in value.set {sized.layout.width=fixed(max(value.width,0))}
-        if .Height in value.set {sized.layout.height=fixed(max(value.height,0))}
-        node=&sized
-    }
     unseen:=room && !animated
     if unseen {ctx.invisible+=1}
     defer if unseen {ctx.invisible-=1}
@@ -844,12 +838,13 @@ tree_build_node :: proc(ctx:^Context,b:^Tree_Build,index:int,values:rawptr,copy:
     if rules:=tree_style_rules(tree,node.style);len(rules)>0 {
         plain:=Slot_Plain{variant=variant,rules=u32(len(rules)),states=states,seen=true}
         if state.plain!=plain {
-            held,_:=style_rules_apply(&ctx.theme,&resolved,rules,node.style,variant,states)
+            held,_:=style_rules_apply(&resolved,rules,node.style,variant,states)
             state.plain=plain if !held else {}
         }
     }
     if bound.tint.bound {resolved.fill=bound_color(values,bound.tint)}
     if base_style.transition>0 && style_transition(&state.look,&resolved,base_style.transition,ctx.input.dt) {b.animating=true}
+    if base_style.layout_transition>0 && !layout_transition_ask(&ctx.layout,node_id,base_style.layout_transition,ctx.stats.frame) {ctx.stats.dropped_transitions+=1}
     style:=&resolved
     // A style moves what its node draws, not where the layout or the pointer find it.
     moved:=false
@@ -1185,7 +1180,7 @@ tree_build_tabs :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,next,slot:in
             if label=="" {label=tree_node_text(ctx,b,c,child,int(instance.slots[child])+copy,values)}
             if label=="" {label=string(tree.strings[c.tab.offset:][:c.tab.length])}
             if label=="" {label=number_text(ctx,f64(at+1),0)}
-            look:=style_resolve(&ctx.theme,base_style,tree_style_rules(tree,node.style),node.style,variant,widget_states(ctx,tab,at==chosen))
+            look:=style_resolve(base_style,tree_style_rules(tree,node.style),node.style,variant,widget_states(ctx,tab,at==chosen))
             if button(ctx,tab,{label=label,look=&look,layout=&Layout{padding=TREE_TAB_PADDING},block=true}).clicked {picked=at}
             if ctx.focus==tab && ctx.focus_moved {picked=at}
             child+=int(c.subtree)+1
@@ -1334,7 +1329,7 @@ tree_build_modal :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,next:int,no
     backdrop:=id_derive(ctx,node_id,"backdrop")
     // Nothing it was built in clips it.
     clips_suspend(ctx)
-    box_begin(ctx,{id=backdrop,width=fixed(size.x),height=fixed(size.y),float={to=.Surface,layer=LAYER_MODAL},fill=ctx.theme.backdrop,block=true})
+    box_begin(ctx,{id=backdrop,width=fixed(size.x),height=fixed(size.y),float={to=.Surface,layer=LAYER_MODAL},fill=tone(ctx,"backdrop"),block=true})
     box_end(ctx,{id=backdrop,float={to=.Surface}})
     box.float={to=.Surface,anchor=.Center,pivot=.Center,offset=node.float.offset,layer=LAYER_MODAL+1}
     box.block=true

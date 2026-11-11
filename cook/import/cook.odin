@@ -12,9 +12,8 @@ import "mirai:std/jobs"
 // levels, clusters and colliders of each mesh and the levels of each
 // texture. model_cook builds them ahead, in parallel on the job system of the
 // import, and the writer takes them; what was not built ahead, the writer
-// builds when it gets to it. Either way they are the same bytes. A mesh or a
-// texture that an earlier import wrote from the same source and settings
-// (Known) is not built ahead: the writer keeps its file.
+// builds when it gets to it. Either way they are the same bytes. An import
+// whose files of the cache are current builds nothing (writer_current).
 //
 // The meshes built are kept by what they are made from in the mesh cache of
 // the project (Import_Options.mesh_cache, cook/cache), as textures are in the
@@ -54,33 +53,6 @@ Cooked_Texture :: struct {
     built:textures.Built,
     error:textures.Error,
     arena:mem.Dynamic_Arena,
-}
-
-// What earlier imports wrote that an import keeps instead of building: each
-// mesh by its Import_Info, at the version of .mesh this build writes, and
-// each texture by the size, hash and settings of its image. Jobs read it at
-// once; nothing changes it while they do.
-Known :: struct {
-    meshes:map[asset.Import_Info]struct{},
-    textures:map[[3]u64]struct{},
-}
-
-known_make :: proc(earlier:[]Earlier,allocator:=context.allocator) -> (known:Known) {
-    known.meshes.allocator,known.textures.allocator=allocator,allocator
-    for e in earlier {
-        if !e.imported {continue}
-        switch e.kind {
-        case asset.KIND_MESH: if e.version==asset.MESH_VERSION {known.meshes[e.info]={}}
-        case asset.KIND_TEXTURE: if e.version==asset.TEXTURE_VERSION {known.textures[{e.info.source_size,e.info.source_hash,e.info.settings_hash}]={}}
-        }
-    }
-    return
-}
-
-known_destroy :: proc(known:^Known) {
-    delete(known.meshes)
-    delete(known.textures)
-    known^={}
 }
 
 // The settings a model is written with: those kept with its source, unless
@@ -231,31 +203,25 @@ image_bytes :: proc(image:Imported_Image) -> (bytes:[]u8,made:textures.Source,ok
     return image.data,{},true
 }
 
-// Builds ahead the meshes and textures of a model that known does not keep
-// and that were not built for the same settings, each a job of the job
+// Builds ahead the meshes and textures of a model that were not built for
+// the same settings, each a job of the job
 // system of options.worker (or one after the other without one). Their
 // arenas take their memory from that system, which any thread can call, or
 // from the allocator of the model.
-model_cook :: proc(model:^Imported_Model,options:Import_Options,known:^Known) {
+model_cook :: proc(model:^Imported_Model,options:Import_Options) {
     settings:=model_settings(model,options)
     mesh_settings:=mesh_settings_hash(settings)
-    source:=source_path(options,model.source)
     Item :: struct {mesh,image:int}
     items:=make([dynamic]Item,context.temp_allocator)
     for &mesh,i in model.meshes {
         if mesh.cooked!=nil && mesh.cooked.settings==mesh_settings {continue}
-        if !options.rebuild {
-            info:=import_info(source,mesh.name,i,model.source_size,model.source_hash,mesh_settings,model.version)
-            if info in known.meshes {continue}
-        }
         append(&items,Item{i,-1})
     }
     for &image,i in model.images {
         build:=image_build_options(image,settings)
         if image.cooked!=nil && (image.cooked.settings==textures.settings_hash(build) || options.fast_textures && image.cooked.settings==fast_settings(build)) {continue}
         // An image file that cannot be read is the writer's to tell.
-        bytes,_,ok:=image_bytes(image)
-        if !ok || !options.rebuild && ([3]u64{u64(len(bytes)),base.hash64(bytes),textures.settings_hash(build)} in known.textures) {continue}
+        if _,_,ok:=image_bytes(image);!ok {continue}
         append(&items,Item{-1,i})
     }
     if len(items)==0 {return}
