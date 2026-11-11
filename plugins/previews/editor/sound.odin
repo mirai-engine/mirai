@@ -278,4 +278,6 @@ sound_set_rows :: proc(s:^editor.Session,p:^Sound) {
     ui.spacer(ctx,1,6)
     values:=editor.Held_Values{key=KEY_SOUND_SET,info=type_info_of(asset.Sound_Set_Info),value=&p.held,defaults=&p.base}
     for field in ([5]string{"volume_min","volume_max","pitch_min","pitch_max","no_repeat"}) {editor.held_field_row(s,values,field)}
+    hearing:=editor.Held_Values{key=KEY_SOUND_SET+asset.SOUND_SET_CAPACITY+1,info=type_info_of(asset.Sound_Hearing),value=&p.held.hearing,defaults=&p.base.hearing}
+    for field in ([6]string{"attenuation","min_distance","max_distance","rolloff","reverb","priority"}) {editor.held_field_row(s,hearing,field)}
 }

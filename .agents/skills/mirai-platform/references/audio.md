@@ -105,6 +105,8 @@ invalid one return false.
 - **Stealing.** Without free voices, `voice_play` takes the one with the lowest priority and,
   among equals, the oldest, if its priority does not exceed the new one's; if not, it returns 0.
   The stolen handle stops being valid at once and its sound drops to silence within a chunk.
+  Stealing is the last resort: `engine/audio` hands the voices to the sources heard most and only
+  starts one on a voice that is free (`voices_free`).
 
 ## Buses
 
@@ -143,8 +145,9 @@ Right-handed, Y up, meters: a listener without rotation looks toward -Z with +X 
 `spatial.odin`, `direct.odin`, `hrtf.odin` and `binaural.odin` translate Steam Audio's direct,
 binaural and panning effects.
 
-- Attenuation clamps the distance to [`min_distance`, `max_distance`]: closer than the minimum the
-  gain is 1 and farther than the maximum it stops dropping.
+- Attenuation: closer than `min_distance` the gain is 1; over the last `ATTENUATION_FADE` of the
+  way to `max_distance` the gain of every model fades to 0, and beyond it the voice is silent, so a
+  far source is not heard rather than heard faintly everywhere.
 - **Direct effect.** Per spatial voice, one gain (attenuation, directivity) and a three-band EQ
   (low shelf, peak, high shelf at 800 Hz and 8 kHz): air absorption over the distance, and
   `occlusion` blending each band toward `transmission`. The EQ is normalized to a peak of 1 with a

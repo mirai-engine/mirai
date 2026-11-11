@@ -67,8 +67,8 @@ err:=asset.sound_set_save("assets/player/steps.sound_set",&c.types,
     {id=asset.content_id(PROJECT,"sound_set","steps"),info=info})
 ```
 
-`Sound_Set_Info` also has `volume_min`, `volume_max`, `pitch_min`, `pitch_max`, `no_repeat`
-and a `weight` per sound. A set that is invalid returns `.Invalid`.
+`Sound_Set_Info` also has the volume and pitch ranges, `no_repeat`, a `weight` per sound and
+`hearing`, how `audio.play` hears it. A set that is invalid returns `.Invalid`.
 
 ## Import
 

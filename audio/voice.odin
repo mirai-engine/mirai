@@ -141,6 +141,9 @@ voice_play :: proc(m:^Mixer,sound:Sound,desc:Voice_Desc=VOICE_DEFAULT) -> Voice 
     return handle
 }
 
+// Voices voice_play can start without stealing one.
+voices_free :: proc(m:^Mixer) -> int {return m.free_count}
+
 // The voice has not ended, as far as the last mixer_update knows.
 voice_valid :: proc(m:^Mixer,voice:Voice) -> bool {
     _,shadow:=voice_shadow(m,voice)

@@ -28,6 +28,8 @@ source.volume, source.max_distance = 0.7, 25
   `directivity` (0 to 1, `directivity_power` narrower) aims it toward -Z of the entity.
 - The listener is the entity with `Audio_Listener` (the player's eyes), else the view. Game code
   writes `playing`, `plays`, `volume`, `pitch`, `pan`, `loop` (`core.writable` on its table).
+- Silent at `max_distance`. With more sources than voices, higher `priority` and then the loudest
+  play; the rest keep their time and come back where they would be.
 
 ## One-shots from code
 Push to `Sound_Requests`, from any step:
@@ -39,14 +41,14 @@ crash_sound :: proc(sounds:^audio.Sound_Requests, broken:core.Ref(destruct.Destr
 }
 ```
 
-- A path or an id; `at` places it, else it is not placed. `bus` (default
-  `BUS_EFFECTS`), `volume`, `pitch`; the rest as `AUDIO_SOURCE_DEFAULT`. It plays once, even when a
-  rollback runs the tick again; no handle: what stops, loops or follows is an `Audio_Source`.
+- A path or an id; `at` places it, else it is not placed. `bus` (default `BUS_EFFECTS`), `volume`,
+  `pitch`; heard as its set's `hearing` (range, reverb, priority): beyond the range it does not
+  start. It plays once, even when a rollback runs the tick again; no handle: what stops, loops or
+  follows is an `Audio_Source`.
 
 ## Sets
-A `.sound_set` picks one sound (weights, volume and pitch ranges) each time it starts; use its
-path or id where a sound goes. `sound_set.set` makes one (`path`, `values`, `.sound` ids from
-`asset.list`); `sound_set.inspect` reads it.
+A `.sound_set` picks one sound (weights, volume, pitch) each time it starts; it goes where a sound
+goes. `hearing` is how a one-shot hears it. `sound_set.set` makes one, `sound_set.inspect` reads it.
 
 ## Buses
 `BUS_MASTER`, `BUS_MUSIC`, `BUS_EFFECTS` (default), `BUS_VOICE`, `BUS_UI` (interface sounds). Add
@@ -55,9 +57,8 @@ your own as constants below `AUDIO_BUS_CAPACITY`: `BUS_AMBIENCE :: audio.Audio_B
 `Audio_Settings` (project setting) mixes a bus: `gain` in dB (0 as it comes; `volume` fields are
 linear), `lowpass`, `reverb`, ducking (`duck_by`, `duck_amount`, `duck_threshold`) and `send`, the
 bus it plays into (the master, or one of a lower number: ambience into effects). A limiter on the
-master keeps a loud moment under full scale. Edit it in
-Project Settings, with `settings.set` (`settings.get` shows the shape) or
-`audio.audio_bus_setting_set`.
+master keeps a loud moment under full scale. Edit it in Project Settings, with `settings.set`
+(`settings.get` shows the shape) or `audio.audio_bus_setting_set`.
 
 `Audio_Volumes` is the player's choice per bus, 0 to 1 (`more[]` for added buses), kept with their
 options: a slider bound to `Audio_Volumes.music` writes it itself; the game writes nothing. So is
@@ -73,8 +74,7 @@ options: a slider bound to `Audio_Volumes.music` writes it itself; the game writ
 
 ## Pitfalls
 - An ended one-shot stays `ended`; `plays += 1` plays it again (also while it sounds). `sound`,
-  `bus` or the curve restart the voice; the other fields tune it live. Zero
-  `pitch` means 1.
+  `bus` or the curve restart the voice; the other fields tune it live. Zero `pitch` means 1.
 - A source that cannot sound is a problem of its entity, a request one of no entity: see
   `engine.diagnostics` (`audio.*`). Headless, nothing plays and nothing is said.
 - Hear it in an open editor session: `audio.play`; `audio.status` shows the buses.
