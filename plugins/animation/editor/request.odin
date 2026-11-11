@@ -113,7 +113,7 @@ request :: proc(s:^editor.Session,call:^api.Call) {
     }
     w,e,ok:=subject(s,call,p.entity[:]);if !ok {return}
     if s.mode==.Edit && authoring_field_present(call,"seek") {
-        if !editor.tool_on(s,TRACKS_TOOL) || !editor.entity_has(w,e,anim.Animation) {
+        if s.viewport==nil || !editor.tool_on(s,TRACKS_TOOL) || !editor.entity_has(w,e,anim.Animation) {
             authoring_failure(call,"seek","Tracks_Required","an entity with an Animation, and the Tracks tool on","Edit","In Edit seek moves the head of the Tracks tool",fix="Turn the tool on with editor.tool tool tracks, and name the entity whose Animation plays the clip")
             return
         }

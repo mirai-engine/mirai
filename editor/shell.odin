@@ -1021,19 +1021,22 @@ divider_vertical :: proc(ctx:^ui.Context) {
 command_button :: proc(s:^Session,name:string,b:ui.Button,index:int=0) -> bool {
     g:=s.gui
     entry:=command_binding(s,name)
-    if entry==nil {return false}
-    state:=binding_state(s,entry)
+    // Without its entry the button is there and off.
+    state:=Command_State{disabled=true}
     id:=command_widget(g,name,index)
     named_add(g,id)
     button:=b
+    if entry!=nil {
+        state=binding_state(s,entry)
+        if button.icon==.None && button.label=="" {
+            if entry.icon!=.None {button.icon=entry.icon} else {button.label=entry.label}
+        }
+        if button.tip=="" && button.label=="" {
+            button.tip=entry.label
+            if entry.shortcut.set {button.tip=fmt.tprintf("%s (%s)",entry.label,shortcut_text(entry.shortcut))}
+        }
+    }
     button.disabled=button.disabled || state.disabled
-    if button.icon==.None && button.label=="" {
-        if entry.icon!=.None {button.icon=entry.icon} else {button.label=entry.label}
-    }
-    if button.tip=="" && button.label=="" {
-        button.tip=entry.label
-        if entry.shortcut.set {button.tip=fmt.tprintf("%s (%s)",entry.label,shortcut_text(entry.shortcut))}
-    }
     if button.label!="" && state.label!="" {button.label=state.label}
     if button.variant=="tab" || button.variant=="ghost" || button.variant=="" {button.active=button.active || state.checked}
     if ui.button(g.ctx,id,button).clicked {return command_run(s,name)}

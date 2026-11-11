@@ -242,6 +242,8 @@ the_tracks_tool_is_turned_on_by_its_entry_and_keys_what_the_gizmo_moves :: proc(
     entry:=editor.command_binding(s,TRACKS_TOOL)
     if !testing.expect(t,entry!=nil && entry.method=="editor.tool" && entry.menu==.Tools) {return}
     st:=editor.api_state(s)
+    // The head of the tool is moved by animation.request, which the authoring of the plugin registers.
+    if api.method_find(&st.server,"animation.request")==nil {request_register(s)}
     testing.expect(t,api.method_find(&st.server,"animation.tracks.show")==nil && api.method_find(&st.server,"animation.key.capture")!=nil)
     testing.expect(t,tracks_test_call(f,"animation.request",`{"entity":"0000000000000001","seek":0.5}`).code!=0,"the head is that of the tool, which is off")
     testing.expect(t,editor.command_run(s,TRACKS_TOOL))
