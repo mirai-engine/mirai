@@ -10,6 +10,7 @@ import "mirai:cook/install"
 import "mirai:cook/workspace"
 import "mirai:project"
 import "mirai:std/base"
+import "mirai:std/subprocess"
 
 NEW_USAGE :: "new <folder> [--name N] [--template T] | new --list"
 BUILD_USAGE :: "build tools [--debug]"
@@ -78,7 +79,22 @@ cmd_new :: proc(root:string,args:[]string) -> int {
 cmd_build_project :: proc(root:string,args:[]string) -> int {
     mode,rest:=build_mode_take(args[1:])
     code,_,shaders_failed:=build_project(root,args[0]=="editor"?.Editor:.Game,rest,mode,server=args[0]=="server")
+    if code==0 && args[0]=="editor" {scenes_stale_report(root,len(rest)>0 && positional(rest[0])?rest[0]:".",mode)}
     return code!=0?code:shaders_failed?1:0
+}
+
+// One line after the editor of a project builds when its scenes store what its
+// game no longer reads (a component it lost, a field under no name), with the
+// command that names them. Nothing is changed: a scene is fixed by writing it.
+@(private="file")
+scenes_stale_report :: proc(root,folder:string,mode:Build_Mode) {
+    owner:=project_of(folder)
+    command:=author_command(project_engine_paths(root,folder,build.engine_mode_resolve(root,mode)).author_program,root,owner,"scene",{"check"})
+    state,_,errors,error:=subprocess.exec({command=command[:]},context.temp_allocator)
+    if error!=nil || state.exit_code==0 {return}
+    summary:=string(errors)
+    if at:=strings.last_index(summary,"check: ");at>=0 {summary=summary[at+len("check: "):]}
+    fmt.printfln("%s: the scenes store data the game no longer reads (%s): mirai scene check --project \"%s\" names them",owner,strings.trim_space(summary),owner)
 }
 
 // mirai build engine [--release] [--force]: the binaries of the engine,
