@@ -10,12 +10,13 @@ import "mirai:core"
 import "mirai:host"
 import "mirai:std/base"
 
-@(private="file") Spawn_Test_Light :: struct {range,intensity:f32}
-@(private="file") Spawn_Test_Link :: struct {target:core.Entity}
+@(private) Spawn_Test_Light :: struct {range,intensity:f32}
+@(private) Spawn_Test_Link :: struct {target:core.Entity}
 
-@(private="file")
+@(private)
+@(test_world)
 Spawn_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     ids:core.Table(core.Id),
     names:core.Table(core.Name),
     transforms:core.Table(core.Transform),
@@ -51,7 +52,7 @@ spawn_test_open :: proc(t:^testing.T,p:^Spawn_Test,name:string) -> bool {
     p.folder=base.test_folder(t,fmt.tprintf("spawn-%s",name))
     if p.folder=="" {return false}
     asset.types_init(&p.types)
-    p.info=core.test_info(t,Spawn_Test_World,test_types) or_return
+    p.info=test_info(t,Spawn_Test_World) or_return
     if !testing.expect(t,host.assets_init(&p.assets,{root=p.folder,capacity=2*PREFAB_FORMS})) {return false}
     p.app={info=&p.info,assets=&p.assets,allocator=context.allocator}
     p.kept=cast(^Spawn_Test_World)host.app_world_create(&p.app)
@@ -66,7 +67,7 @@ spawn_test_close :: proc(p:^Spawn_Test) {
     delete(p.app.worlds)
     host.assets_destroy(&p.assets)
     asset.types_destroy(&p.types)
-    core.test_info_destroy(&p.info)
+    test_info_destroy(&p.info)
 }
 
 // A bulb whose glass names it.

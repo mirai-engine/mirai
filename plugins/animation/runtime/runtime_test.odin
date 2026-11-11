@@ -286,9 +286,10 @@ runtime_failure_allocator :: proc(data:rawptr,mode:runtime.Allocator_Mode,size,a
     return state.owner.procedure(state.owner.data,mode,size,alignment,old_memory,old_size,loc)
 }
 
-@(private="file")
+@(private)
+@(test_world)
 Bind_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     transforms:core.Table(core.Transform),
     parents:core.Table(core.Parent),
     names:core.Table(core.Name),
@@ -301,14 +302,14 @@ Bind_World :: struct {
 @(test)
 animation_bind_is_transactional_when_allocations_fail_and_stops_at_nested_players :: proc(t:^testing.T) {
     w:Bind_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     root,bone,nested,nested_bone:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
     for e in ([4]core.Entity{root,bone,nested,nested_bone}) {core.add(&w.transforms,e,core.TRANSFORM_IDENTITY);core.add(&w.names,e,{})}
     core.add(&w.parents,bone,{entity=root});core.add(&w.parents,nested,{entity=root});core.add(&w.parents,nested_bone,{entity=nested})
     target:=Animation_Target{};base.text_set(target.path[:],"10");core.add(&w.targets,bone,target);core.add(&w.targets,nested_bone,target)
     core.add(&w.animations,root,ANIMATION_DEFAULT);core.add(&w.animations,nested,ANIMATION_DEFAULT)
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     content:host.Content_Animation
     testing.expect(t,lib.library_init(&content.lib,{max_keys=2,max_tracks=1,max_clips=1,max_markers=0}))
     defer lib.library_destroy(&content.lib)
@@ -340,7 +341,7 @@ animation_bind_is_transactional_when_allocations_fail_and_stops_at_nested_player
     }
     testing.expect(t,succeeded)
     testing.expect_value(t,state.rest[1],old_rest)
-    core.remove(&w.animations,nested);core.test_world_settle(&w)
+    core.remove(&w.animations,nested);test_world_settle(&w)
     append(&w.playback.rigs,Rig{entity=nested,skeleton={1,2}})
     testing.expect(t,bind(&w.playback,&state,&content,core.ref(&w.hierarchy),&w.transforms,&w.names,&w.targets,&w.animations,nil))
     testing.expect_value(t,len(state.bindings),2)

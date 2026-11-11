@@ -5,9 +5,10 @@ import "core:testing"
 import "mirai:core"
 import mm "mirai:std/math"
 
-@(private="file")
+@(private)
+@(test_world)
 Grounding_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     transforms:core.Table(core.Transform),
     parents:core.Table(core.Parent),
     verticals:core.Table(core.Vertical),
@@ -19,8 +20,8 @@ Grounding_World :: struct {
 @(test)
 the_feet_stand_along_the_vertical_of_the_character :: proc(t:^testing.T) {
     w:Grounding_World
-    if !core.test_world_init(t,&w) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     character,rig,statue:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
     side:=mm.quat_between({0,1,0},{1,0,0})
     core.add(&w.transforms,character,core.Transform{position={20,0,0},rotation=side,scale=1})
@@ -28,7 +29,7 @@ the_feet_stand_along_the_vertical_of_the_character :: proc(t:^testing.T) {
     core.add(&w.transforms,statue,core.Transform{rotation=side,scale=1})
     core.add(&w.parents,rig,core.Parent{entity=character})
     core.add(&w.verticals,character,core.Vertical{frame=side})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     inputs:=Grounding_Inputs{transforms=core.read(&w.transforms),parents=core.read(&w.parents),verticals=core.read(&w.verticals)}
     basis,_:=core.world_of(&w.transforms,&w.parents,character)
     up:=grounding_up(inputs,rig,basis,{0,1,0})

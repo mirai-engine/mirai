@@ -15,7 +15,7 @@ import "mirai:std/serial"
 an_input_delay_acts_on_what_the_devices_gave_that_many_ticks_ago :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     w:Net_Test_World
     net_test_init(&w,&info)
     defer core.world_destroy(&info,.World,&w)
@@ -52,7 +52,7 @@ a_look_of_some_ticks_ago_corrects_the_look_of_the_server_once :: proc(t:^testing
     for behind in ([2]u8{0,3}) {
         info,described:=net_test_info(t)
         if !described {return}
-        defer core.test_info_destroy(&info)
+        defer test_info_destroy(&info)
         w:Net_Test_World
         net_test_init(&w,&info)
         defer core.world_destroy(&info,.World,&w)

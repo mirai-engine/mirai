@@ -13,8 +13,9 @@ import paint "plugins:paint/runtime"
 import "mirai:std/base"
 
 @(private)
+@(test_world)
 Paint_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     ids:core.Table(core.Id),
     meshes:core.Table(erender.Mesh_Renderer),
     painted:core.Table(paint.Painted),
@@ -41,18 +42,18 @@ paint_test_open :: proc(t:^testing.T,f:^Paint_Test,name:string) -> bool {
     f.root=base.test_folder(t,name)
     if f.root=="" || !testing.expect(t,host.assets_init(&f.assets,{root=f.root,capacity=16})) {return false}
     w:=&f.world
-    if !core.test_world_init(t,w) {
+    if !test_world_init(t,w) {
         host.assets_destroy(&f.assets)
         return false
     }
-    f.ref=core.test_world_ref(w)
+    f.ref=test_world_ref(w)
     f.cube=core.create(&w.entities)
     core.add(&w.ids,f.cube,core.Id{value=7})
     core.add(&w.meshes,f.cube,erender.Mesh_Renderer{shape=.Cube})
     core.world_settle(f.ref)
     f.app={allocator=context.allocator,assets=&f.assets}
     history.edits_reset(&f.edits,f.ref)
-    f.session={app=&f.app,info=core.test_world_info(w),edit_world=&f.world,assets_root=f.root,headless=true,selection=&f.selection,edits=&f.edits,viewport=&f.viewport,gui=&f.gui}
+    f.session={app=&f.app,info=test_world_info(w),edit_world=&f.world,assets_root=f.root,headless=true,selection=&f.selection,edits=&f.edits,viewport=&f.viewport,gui=&f.gui}
     return true
 }
 
@@ -60,7 +61,7 @@ paint_test_open :: proc(t:^testing.T,f:^Paint_Test,name:string) -> bool {
 paint_test_close :: proc(f:^Paint_Test) {
     history.edits_free(&f.edits)
     delete(f.selection.entities)
-    core.test_world_destroy(&f.world)
+    test_world_destroy(&f.world)
     host.assets_destroy(&f.assets)
 }
 

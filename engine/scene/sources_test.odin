@@ -5,9 +5,10 @@ import "mirai:core"
 import input "mirai:engine/input"
 import mm "mirai:std/math"
 
-@(private="file")
+@(private)
+@(test_world)
 Sources_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     seats:core.Table(input.Seat),
     marks:core.Table(Streaming_Source),
     worlds:core.Table(core.World_Transform),
@@ -19,8 +20,8 @@ Sources_World :: struct {
 @(test)
 sources_that_do_not_fit_are_a_problem_and_only_a_move_is_looked_at_again :: proc(t:^testing.T) {
     w:Sources_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     problems:=new(core.Problems);defer free(problems)
     first:core.Entity
     for i in 0..<SOURCES_MAX+6 {
@@ -29,7 +30,7 @@ sources_that_do_not_fit_are_a_problem_and_only_a_move_is_looked_at_again :: proc
         core.add(&w.marks,e,Streaming_Source{})
         core.add(&w.worlds,e,core.World_Transform{transform={position={f32(i),0,0},rotation=1,scale=1}})
     }
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     sources:Streaming_Sources
     run :: proc(sources:^Streaming_Sources,seats:^core.Table(input.Seat),marks:^core.Table(Streaming_Source),worlds:^core.Table(core.World_Transform),motions:^core.Table(core.Motion),problems:^core.Problems) {
         scene_sources(sources,{},{},core.read(seats),core.read(marks),core.read(worlds),core.read(motions),problems)
@@ -75,8 +76,8 @@ a_box_is_resident_near_a_source_and_goes_only_well_past_its_reach :: proc(t:^tes
 @(test)
 the_view_streams_ahead_of_where_it_moves_unless_it_jumped :: proc(t:^testing.T) {
     w:Sources_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     problems:=new(core.Problems);defer free(problems)
     sources:Streaming_Sources
     run :: proc(sources:^Streaming_Sources,view:core.View,dt:f32,seats:^core.Table(input.Seat),marks:^core.Table(Streaming_Source),worlds:^core.Table(core.World_Transform),motions:^core.Table(core.Motion),problems:^core.Problems) {

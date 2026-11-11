@@ -9,9 +9,10 @@ import scene "mirai:engine/scene"
 import mm "mirai:std/math"
 
 // What the seats read to drive their bodies and turn their cameras.
-@(private="file")
+@(private)
+@(test_world)
 Drive_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     seats:core.Table(input.Seat),
     moves:core.Table(input.Move_Input),
     follows:core.Table(Camera_Follow),
@@ -42,7 +43,7 @@ Drive_World :: struct {
 
 @(private="file")
 drive_init :: proc(t:^testing.T,w:^Drive_World) -> bool {
-    core.test_world_init(t,w,test_types) or_return
+    test_world_init(t,w) or_return
     input.input_map_action(&w.bindings,DRIVE_LOOK,.Axis2)
     input.input_map_action(&w.bindings,DRIVE_MOVE,.Axis2)
     return true
@@ -71,7 +72,7 @@ drive_body :: proc(w:^Drive_World,camera_rotation:mm.Quat,follow:Maybe(Camera_Fo
 
 @(private="file")
 drive_settle :: proc(w:^Drive_World) {
-    core.test_world_settle(w)
+    test_world_settle(w)
     core.hierarchy_settle(&w.hierarchy,core.read(&w.parents),&w.entities)
 }
 
@@ -94,7 +95,7 @@ a_seat_drives_toward_the_forward_of_the_camera_it_sees :: proc(t:^testing.T) {
     w:=new(Drive_World)
     defer free(w)
     if !drive_init(t,w) {return}
-    defer core.test_world_destroy(w)
+    defer test_world_destroy(w)
     turned:=f32(0.5)-10*input.LOOK_SPEED
     quarter:=mm.quat_axis_angle({0,1,0},-math.PI/2) // looks along +X
     Case :: struct {name:string,follow:Maybe(Camera_Follow),camera:bool,yaw:f32,remote:bool,turn:f32}
@@ -141,7 +142,7 @@ each_orbit_turns_with_the_look_of_its_own_seat :: proc(t:^testing.T) {
     w:=new(Drive_World)
     defer free(w)
     if !drive_init(t,w) {return}
-    defer core.test_world_destroy(w)
+    defer test_world_destroy(w)
     w.seat_state.local_count=2
     eyes:[2]core.Entity
     for slot in 0..<2 {
@@ -162,7 +163,7 @@ each_orbit_turns_with_the_look_of_its_own_seat :: proc(t:^testing.T) {
     drive_settle(w)
     problems:core.Problems
     camera_follow(
-        core.test_world_ref(w),&w.follows,&w.cameras,&w.transforms,core.read(&w.worlds),core.read(&w.parents),core.read(&w.seats),core.read(&w.moves),core.ref(&w.shown),
+        test_world_ref(w),&w.follows,&w.cameras,&w.transforms,core.read(&w.worlds),core.read(&w.parents),core.read(&w.seats),core.read(&w.moves),core.ref(&w.shown),
         core.ref(&w.seat_state),{actions=core.ref(&w.frame),state=core.ref(&w.seat_state),seats=core.read(&w.seats),base=DRIVE_LOOK},core.ref(&w.queries),&w.look_input,&w.changes,
         core.read(&w.verticals),{dt=1.0/60,alpha=1},{dt=1.0/60},&problems,&w.shakes,
     )
@@ -179,7 +180,7 @@ aim_is_the_ray_of_the_camera_the_player_sees :: proc(t:^testing.T) {
     w:=new(Drive_World)
     defer free(w)
     if !drive_init(t,w) {return}
-    defer core.test_world_destroy(w)
+    defer test_world_destroy(w)
     turn:=mm.quat_axis_angle({0,1,0},mm.PI/2)
     seat,body,eye:=drive_body(w,turn,nil)
     drive_settle(w)
@@ -207,15 +208,15 @@ player_1_without_a_body_flies_a_free_camera_in_play :: proc(t:^testing.T) {
     w:=new(Drive_World)
     defer free(w)
     if !drive_init(t,w) {return}
-    defer core.test_world_destroy(w)
+    defer test_world_destroy(w)
     w.seat_state.local_count=1
     seat:=core.create(&w.entities)
     core.add(&w.seats,seat,input.Seat{})
-    core.test_world_settle(w)
-    commands:=core.commands(w,core.test_world_info(w))
+    test_world_settle(w)
+    commands:=core.commands(w,test_world_info(w))
     run :: proc(w:^Drive_World,commands:core.Commands) {
         camera_free(commands,&w.free,core.read(&w.seats),core.ref(&w.seat_state),&w.seat_requests,&w.cameras,&w.transforms,core.read(&w.moves),core.ref(&w.origin),core.ref(&w.network),core.ref(&w.hierarchy),{dt=0.5})
-        core.test_world_settle(w)
+        test_world_settle(w)
     }
     run(w,commands)
     testing.expect(t,w.free.entity==core.NONE,"a game without the Play of the editor has none")
@@ -228,17 +229,17 @@ player_1_without_a_body_flies_a_free_camera_in_play :: proc(t:^testing.T) {
     testing.expect(t,len(asked)==1 && asked[0]==input.Seat_Request{kind=.Drive,seat=seat,entity=flown})
     core.edit(&w.seats,seat).body=flown
     core.add(&w.moves,flown,input.Move_Input{move={0,0,-1}})
-    core.test_world_settle(w)
+    test_world_settle(w)
     run(w,commands)
     placed,_=core.get(&w.transforms,flown)
     testing.expectf(t,abs(placed.position.z-(3-FREE_CAMERA_SPEED*0.5))<1e-4,"its move flies it: %v",placed.position)
     body:=core.create(&w.entities)
     core.edit(&w.seats,seat).body=body
-    core.test_world_settle(w)
+    test_world_settle(w)
     run(w,commands)
     testing.expect(t,!core.alive(&w.entities,flown) && w.free.entity==core.NONE,"driving a body of the game, it goes")
     core.edit(&w.seats,seat).body=core.NONE
-    core.test_world_settle(w)
+    test_world_settle(w)
     run(w,commands)
     testing.expect(t,w.free.entity==core.NONE,"once it had a body, it gets no other free camera")
 }

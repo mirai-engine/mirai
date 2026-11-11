@@ -124,7 +124,7 @@ correction_force :: proc(tick:int) -> f32 {
 correction_run :: proc(t:^testing.T,settings:Net_Settings,link:Correction_Link,seed:u64) -> (result:Correction_Result) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     info.loops[.Game][.Fixed]=correction_fixed
     worlds:[2]Net_Test_World
     shares:[2]Correction_Shared
@@ -318,7 +318,7 @@ correction_fixture_destroy :: proc(f:^Correction_Fixture) {
     phys.collider_meshes_destroy(&f.shared.colliders)
     if f.info.sizes[.World]<=0 {return}
     core.world_destroy(&f.info,.World,&f.world)
-    core.test_info_destroy(&f.info)
+    test_info_destroy(&f.info)
 }
 
 // What the server had after tick: what was predicted for it, offset meters away.
@@ -371,7 +371,7 @@ a_correction_holds_its_window_at_every_tick_rate :: proc(t:^testing.T) {
 a_client_keeps_the_history_of_its_server :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     worlds:[2]Net_Test_World
     apps:[2]host.App
     sessions:[2]Net_Session

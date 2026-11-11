@@ -15,8 +15,9 @@ import mm "mirai:std/math"
 import "mirai:std/serial"
 
 @(private)
+@(test_world,editor="Spatial_Editor")
 Spatial_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     using scene_tables:Test_Scene,
     meshes:core.Table(erender.Mesh_Renderer),
 }
@@ -41,7 +42,7 @@ Spatial_Fixture :: struct {
 @(private)
 spatial_open :: proc(t:^testing.T,f:^Spatial_Fixture) -> bool {
     w:=&f.w
-    f.info=core.test_info(t,Spatial_World,core.Test_None,Spatial_Editor,test_types) or_return
+    f.info=test_info(t,Spatial_World) or_return
     if !testing.expect(t,core.world_init(&f.info,.World,w,context.allocator)) {return false}
     entity :: proc(w:^Spatial_World,id:u64,name:string,place:core.Transform,cube:bool,parent:=core.NONE) -> core.Entity {
         e:=core.create(&w.entities)
@@ -80,7 +81,7 @@ spatial_close :: proc(f:^Spatial_Fixture) {
     if f.device.open {pick_device_close(&f.device)} else {host.assets_destroy(&f.assets)}
     viewport_free(&f.viewport)
     core.world_destroy(&f.info,.World,&f.w)
-    core.test_info_destroy(&f.info)
+    test_info_destroy(&f.info)
 }
 
 @(private)

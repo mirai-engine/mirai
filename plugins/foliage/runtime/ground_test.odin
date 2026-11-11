@@ -8,9 +8,10 @@ import mm "mirai:std/math"
 // A ground that is the plane y = height over x and z from -32 to 32 m, with
 // no surface over x and z from 4 to 8 m, as a provider of core.Ground_Queries
 // gives it.
-@(private="file")
+@(private)
+@(test_world)
 Ground_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     foliages:core.Table(Foliage),
     worlds:core.Table(core.World_Transform),
     data:Foliage_Data,
@@ -59,12 +60,12 @@ tile_revision :: proc(owner:^Ground_Owner,coord:[2]i32) -> u32 {
 @(test)
 the_ground_of_foliage_is_read_where_the_ground_changed :: proc(t:^testing.T) {
     f:Ground_Test
-    if !core.test_world_init(t,&f.w,test_types) {return}
-    defer core.test_world_destroy(&f.w)
+    if !test_world_init(t,&f.w) {return}
+    defer test_world_destroy(&f.w)
     f.plant=core.create(&f.entities)
     core.add(&f.foliages,f.plant,Foliage{source={4,4}})
     core.add(&f.worlds,f.plant,core.World_Transform{transform={rotation=1,scale={1,1,1}}})
-    core.test_world_settle(&f.w)
+    test_world_settle(&f.w)
     plants:Source
     source_cell(&plants,{0,0},true).generate=true
     source_cell(&plants,{-1,-1},true).generate=true
@@ -114,7 +115,7 @@ the_ground_of_foliage_is_read_where_the_ground_changed :: proc(t:^testing.T) {
     testing.expect_value(t,ground_tile_samples(owner,{0,0}),owner.samples)
     // The Foliage moves off the ground: its tiles go.
     core.edit(&f.worlds,f.plant).transform.position={1000,0,0}
-    core.test_world_settle(&f.w)
+    test_world_settle(&f.w)
     for _ in 0..<2 {ground_test_step(&f)}
     testing.expect_value(t,len(owner.tiles),0)
 }

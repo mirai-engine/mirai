@@ -53,10 +53,12 @@ a_deadline_of_seconds_that_cannot_be_waited_is_due_or_never :: proc(t:^testing.T
     testing.expect_value(t,elapsed(time,NEVER),f32(0))
 }
 
+@(private) @(test_world) Paced_World :: struct {using world:Test_World,paces:Table(Own_Pace)}
+
 // An entity with a pace of its own waits its own seconds: twice as fast, half the ticks.
 @(test)
 a_deadline_on_the_own_time_of_an_entity_counts_its_pace :: proc(t:^testing.T) {
-    w:struct {using world:Test_World,paces:Table(Own_Pace)}
+    w:Paced_World
     if !test_world_init(t,&w) {return}
     defer test_world_destroy(&w)
     fast,plain:=create(&w.entities),create(&w.entities)

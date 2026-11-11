@@ -30,7 +30,7 @@ a_replica_of_a_spawned_copy_is_filled_when_its_prefab_arrives :: proc(t:^testing
 
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     worlds:[2]Net_Test_World
     shares:[2]Net_Test_Shared
     assets:[2]host.Assets

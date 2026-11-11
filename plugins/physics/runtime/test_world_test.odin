@@ -10,8 +10,7 @@ import sim "plugins:physics/runtime/sim"
 
 // The tables and the storages of a World that physics steps on. The test
 // world of a library that uses physics holds them after its header with
-// `using physics:physics.Test_Physics`, gives physics.test_types to
-// core.test_world_init or core.test_info, and steps with physics.test_step.
+// `using physics:physics.Test_Physics` and steps with physics.test_step.
 Test_Physics :: struct {
     rigids:core.Table(Rigid_Body),
     colliders:core.Table(Collider),
@@ -55,23 +54,6 @@ Test_Physics_Host :: struct {
     gravity:[3]f32, // of its world: none unless a test gives it, or fields does
     fields:bool,    // the gravity of the world is that of its Gravity rows
     whole:bool,     // physics_step gets no hierarchy: every sync goes through every body
-}
-
-// What the declarations of physics and of the libraries it uses name: core.Test_Types.
-test_types :: proc(types:^[dynamic]core.Test_Type) {
-    cam.test_types(types)
-    volume.test_types(types)
-    append(types,
-        core.test_type(Physics_State,copy=state_copy,copy_kept=state_copy_kept,swap=state_swap,free=state_destroy,reset=state_reset),
-        core.test_type(Collider_Meshes,free=collider_meshes_destroy),
-        core.test_type(Collision_Settings,default=proc(dst:^Collision_Settings) {dst^=COLLISION_SETTINGS_DEFAULT}),
-        core.test_type(Rigid_Body,default=proc(dst:^Rigid_Body) {dst^=RIGID_BODY_DEFAULT}),
-        core.test_type(Collider,default=proc(dst:^Collider) {dst^=COLLIDER_DEFAULT}),
-        core.test_type(Character,default=proc(dst:^Character) {dst^=character_default()}),
-        core.test_type(Fluid,default=proc(dst:^Fluid) {dst^=FLUID_DEFAULT}),
-        core.test_type(Force_Field,default=proc(dst:^Force_Field) {dst^=FORCE_FIELD_DEFAULT}),
-        core.test_type(Fluid_Waves,default=proc(dst:^Fluid_Waves) {dst^=FLUID_WAVES_DEFAULT}),
-    )
 }
 
 // A simulation alone, with the capacities of settings: where the test of a library that makes its bodies itself

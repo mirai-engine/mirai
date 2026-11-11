@@ -72,8 +72,9 @@ Net_Test_Tables :: struct {
 }
 
 @(private)
+@(test_world)
 Net_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     using net:Net_Test_Tables,
 }
 
@@ -90,18 +91,12 @@ Net_Test_Shared :: struct {
     outbox:^Net_Outbox, // what the server sends from, when the test sends messages
 }
 
-@(private)
-net_test_types :: proc(types:^[dynamic]core.Test_Type) {
-    test_types(types)
-    phys.test_types(types)
-}
-
 // The World_Info of Net_Test_World, with the fixed loop of these tests.
 // follows: the messages of the session are in the protocol, as in a world
 // the generator makes; the test deletes them.
 @(private)
 net_test_info :: proc(t:^testing.T,follows:=false,loc:=#caller_location) -> (info:core.World_Info,ok:bool) {
-    info=core.test_info(t,Net_Test_World,net_test_types,context.allocator,loc) or_return
+    info=test_info(t,Net_Test_World,context.allocator,loc) or_return
     if follows {
         info.messages=slice.clone([]core.Message_Info{
             {name="Net_World",library="multiplayer",type=Net_World,info=type_info_of(Net_World),from=.Server,reliable=true},
@@ -348,7 +343,7 @@ net_test_command :: proc(s:^Net_Session,w:^Net_Test_World,r:^Replica,tick:u32,fo
 authoritative_components_replay_at_their_ticks_with_real_physics :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info)
     defer core.world_destroy(&info,.World,&world)
@@ -429,7 +424,7 @@ predicted_transforms_compare_rotation_scale_and_quantized_components :: proc(t:^
 component_references_resolve_after_binding_and_clear_after_destruction :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info)
     defer core.world_destroy(&info,.World,&world)
@@ -482,7 +477,7 @@ component_references_resolve_after_binding_and_clear_after_destruction :: proc(t
 server_publishes_only_changed_rows_at_the_objects_frequency :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info)
     defer core.world_destroy(&info,.World,&world)
@@ -550,7 +545,7 @@ net_test_physical_objects :: proc(w:^Net_Test_World,info:^core.World_Info,entiti
 net_test_physical_convergence :: proc(t:^testing.T,udp:bool) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     worlds:[2]Net_Test_World
     shares:[2]Net_Test_Shared
     apps:[2]host.App
@@ -699,7 +694,7 @@ net_test_physical_convergence :: proc(t:^testing.T,udp:bool) {
 remote_character_intent_is_replayed_from_its_authoritative_tick :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info)
     defer core.world_destroy(&info,.World,&world)
@@ -757,7 +752,7 @@ replicas_joined_to_any_of_many_driven_bodies_are_critical :: proc(t:^testing.T) 
     PAIRS :: 24
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info)
     defer core.world_destroy(&info,.World,&world)
@@ -824,7 +819,7 @@ replicas_joined_to_any_of_many_driven_bodies_are_critical :: proc(t:^testing.T) 
 object_scope_controls_relevance_radius_and_follows_the_replicated_ancestor :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     worlds:[2]Net_Test_World
     apps:[2]host.App
     sessions:[2]Net_Session
@@ -926,7 +921,7 @@ object_scope_controls_relevance_radius_and_follows_the_replicated_ancestor :: pr
 replicated_joint_waits_for_its_target_and_preserves_authoritative_frames_on_retarget :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Net_Test_World;net_test_init(&world,&info);defer core.world_destroy(&info,.World,&world)
     source:=net_test_body(&world,&info,1)
     initial:=net_test_body(&world,&info,2,{1,0,0})
