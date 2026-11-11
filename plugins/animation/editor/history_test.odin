@@ -189,6 +189,7 @@ history_reads_the_jump_of_matching_at_its_tick_with_its_candidates_and_says_what
     rows:=history_test_rows(t,text)
     if !testing.expectf(t,len(rows)>20,"rows in %s",text) {return}
     found:=false
+    played_on:=0
     for value in rows {
         row:=value.(json.Object)
         tick:=u64(row["tick"].(json.Float))
@@ -196,6 +197,10 @@ history_reads_the_jump_of_matching_at_its_tick_with_its_candidates_and_says_what
         jumped,_:=row["jumped"].(json.Boolean)
         searched,_:=row["searched"].(json.Boolean)
         if tick<jumped_at && tick>1 {testing.expectf(t,clip=="Idle","tick %d stands in Idle, not %s",tick,clip)}
+        // Each search keeps what it asked, also one no change forced that played on (interval).
+        listed,_:=row["candidates"].(json.Array)
+        if searched {testing.expectf(t,len(listed)>0,"a search at tick %d lists its candidates: %v",tick,row)}
+        if searched && !jumped && len(listed)>0 {played_on+=1}
         if tick!=jumped_at {continue}
         found=true
         testing.expectf(t,jumped && searched && clip=="Walk","the jump is at tick %d: %v",tick,row)
@@ -211,6 +216,17 @@ history_reads_the_jump_of_matching_at_its_tick_with_its_candidates_and_says_what
         testing.expectf(t,abs(sum-cost)<=1e-3*max(1,abs(cost)),"its feature costs %f sum its cost %f",sum,cost)
     }
     testing.expectf(t,found,"no row at tick %d in %s",jumped_at,text)
+    testing.expectf(t,played_on>0,"a search that played on lists its candidates: %s",text)
+    // Every five ticks, searched and jumped tell what happened since the row before.
+    text,error=history_test_call(f,"animation.history",`{"entity":"Figure","from":2,"every":5}`)
+    if !testing.expectf(t,error.code==0,"%s %s",error.message,error.data) {return}
+    rows=history_test_rows(t,text)
+    for i in 1..<len(rows) {
+        before,row:=rows[i-1].(json.Object),rows[i].(json.Object)
+        searched,_:=row["searched"].(json.Boolean)
+        jumped,_:=row["jumped"].(json.Boolean)
+        testing.expectf(t,searched==(row["searches"].(json.Float)>before["searches"].(json.Float)) && jumped==(row["jumps"].(json.Float)>before["jumps"].(json.Float)),"since the row before: %v after %v",row,before)
+    }
     // Hostile input: a pose no tick keeps, a name of no entity, a rig gone at some ticks.
     _,error=history_test_call(f,"animation.history",`{"entity":"Figure","names":["@hand_r"],"stage":"Rigs"}`)
     testing.expectf(t,error.code==api.INVALID_PARAMS && strings.contains(error.message,"stage"),"unknown stage: %s %s",error.message,error.data)

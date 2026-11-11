@@ -34,7 +34,7 @@ History_Row :: struct {
     using match:Preview_Match_Result `mirai:"inline"`,
     searched:bool `mirai:"optional,label=It searched since the row before; in the first row, in its tick when the history keeps the tick before"`,
     jumped:bool `mirai:"optional,label=It jumped to another row of the database since the row before, read as searched"`,
-    candidates:[]Instance_Match_Candidate `mirai:"optional,label=Where it searched: those of its last search, least cost first; the first is the row the search gave"`,
+    candidates:[]Instance_Match_Candidate `mirai:"optional,label=Where it searched: those of its last search since the row before, least cost first; the first is the row the search gave"`,
     pose:Instance_Pose `mirai:"optional,label=With names: where they are at stage"`,
 }
 
@@ -57,6 +57,7 @@ History_Look :: struct {
     looked:bool,   // a tick was looked at before this one
     found:bool,    // some tick has the rig
     searches,jumps:u32, // of the rig at the tick looked at before; 0 without it there
+    searched,jumped:bool, // since the row before, from the ticks looked at since
     failure:api.Error,  // what failed the call inside a look
 }
 
@@ -86,6 +87,7 @@ history_look :: proc(s:^editor.Session,w:core.World_Ref,row:bool,data:rawptr) ->
     l.looked=true
     searches,jumps:=l.searches,l.jumps
     l.searches,l.jumps=0,0
+    defer if row {l.searched,l.jumped=false,false}
     e,problem:=editor.api_entity_select(w,base.text_get(p.entity[:]),"entity",true,call.allocator)
     alive:=problem==""
     if alive {l.found=true}
@@ -94,7 +96,13 @@ history_look :: proc(s:^editor.Session,w:core.World_Ref,row:bool,data:rawptr) ->
     if alive {m,matching=match_open(s,call,w,e)}
     failed:=Instance_Missing{}
     if alive && !matching {failed=history_missing(call)}
-    if matching {l.searches,l.jumps=m.result.searches,m.result.jumps}
+    if matching {
+        l.searches,l.jumps=m.result.searches,m.result.jumps
+        // A rig made again since the tick before counts its searches from 0.
+        if m.result.searches<searches {searches,jumps=0,0}
+        l.searched||=looked && m.result.searches>searches
+        l.jumped||=looked && m.result.jumps>jumps
+    }
     if !row {return ""}
     out:History_Row
     if t:=core.world_storage_of(w,core.Time);t!=nil {out.tick=t.tick}
@@ -107,10 +115,7 @@ history_look :: proc(s:^editor.Session,w:core.World_Ref,row:bool,data:rawptr) ->
     if !matching {out.missing=failed}
     if matching {
         out.match=m.result
-        // A rig made again since the tick before counts its searches from 0.
-        if m.result.searches<searches {searches,jumps=0,0}
-        out.searched=looked && m.result.searches>searches
-        out.jumped=looked && m.result.jumps>jumps
+        out.searched,out.jumped=l.searched,l.jumped
         if out.searched && p.candidates>0 && m.state!=nil && m.state.program.match.searched.search==m.result.searches {
             out.candidates=match_candidates(call,&m,p.candidates)
         }
