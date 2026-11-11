@@ -23,7 +23,7 @@ import "base:runtime"
 Shapes_Cache :: struct {
     entries:core.Entity_Map(Shape_Entry), // by shape or spline entity
     brushes:core.Entity_Map(Brush_Entry), // by brush entity
-    shapes_seen,splines_seen,bodies_seen,colliders_seen,brushes_seen,places_seen,parents_seen:core.Seen,
+    shapes_seen,splines_seen,bodies_seen,colliders_seen,tints_seen,brushes_seen,places_seen,parents_seen:core.Seen,
     dirty:[dynamic]core.Entity,
     gathered:[dynamic]Brush,     // the brushes of the solid being looked at, in order
     builds:[dynamic]Shape_Build, // slots kept between passes
@@ -61,6 +61,7 @@ Shape_Build :: struct {
     cut_first:bool, // a brush that cuts comes before the first that adds
     key:u64,
     collider:physics.Collider,
+    collides:bool,  // the child collides: the shape has no Collider of its own kind
     limits:host.Assets_Limits,
     error:Shape_Error,
     geometry:Shape_Geometry,
@@ -95,8 +96,9 @@ shapes_release :: proc(cache:^Shapes_Cache,assets:^host.Assets) {
 }
 
 // Keeps the child of every shape showing and colliding, and of every spline
-// with a material showing its ribbon, as its source says: only the shapes
-// whose Shape, Rigid_Body or Collider changed, or one of whose brushes changed,
+// with a material showing its ribbon, as its source says, with the
+// Material_Values of its source: only the shapes whose Shape, Rigid_Body,
+// Collider or Material_Values changed, or one of whose brushes changed,
 // came, went or moved among them, and the splines that changed, moved or whose
 // ground changed, are built again, all of them in parallel, and their meshes
 // are generated here.
@@ -104,7 +106,7 @@ shapes_release :: proc(cache:^Shapes_Cache,assets:^host.Assets) {
 shapes_update :: proc(
     cache:^Shapes_Cache,assets:^host.Assets,job_system:^jobs.Job_System,allocator:runtime.Allocator,commands:core.Commands,
     shapes:^core.Table(Shape,.Read),brushes:^core.Table(Shape_Brush,.Read),parts:^core.Table(Shape_Part,.Read),rigids:^core.Table(physics.Rigid_Body,.Read),
-    colliders:^core.Table(physics.Collider),meshes:^core.Table(render.Mesh_Renderer),
+    colliders:^core.Table(physics.Collider),meshes:^core.Table(render.Mesh_Renderer),tints:^core.Table(render.Material_Values),
     transforms:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),hierarchy:core.Ref(core.Hierarchy),problems:^core.Problems,
     splines:^core.Table(volume.Spline,.Read),ground:core.Ref(core.Ground_Queries),world:core.World_Ref,
 ) {
@@ -113,6 +115,7 @@ shapes_update :: proc(
     cp:=core.changes(splines,&cache.splines_seen)
     cb:=core.changes(rigids,&cache.bodies_seen)
     cc:=core.changes(colliders,&cache.colliders_seen)
+    ct:=core.changes(tints,&cache.tints_seen)
     cr:=core.changes(brushes,&cache.brushes_seen)
     all:=cs.all || cp.all
     // While there are brushes they are compared every tick: what moves one is
@@ -124,9 +127,9 @@ shapes_update :: proc(
     placed:=lying && (core.touched(transforms,&cache.places_seen) | core.touched(parents,&cache.parents_seen))
     under:=lying && ground.ptr!=nil?ground.changed.items[:]:nil
     grounded:=len(under)>0
-    if !all && !following && !placed && !grounded && quiet(cs) && quiet(cp) && quiet(cb) && quiet(cc) {return}
+    if !all && !following && !placed && !grounded && quiet(cs) && quiet(cp) && quiet(cb) && quiet(cc) && quiet(ct) {return}
     context.allocator=allocator
-    u:=Update{cache=cache,assets=assets,commands=commands,shapes=shapes,brushes=brushes,parts=parts,rigids=rigids,colliders=colliders,meshes=meshes,transforms=transforms,parents=parents,hierarchy=hierarchy,problems=problems,splines=splines}
+    u:=Update{cache=cache,assets=assets,commands=commands,shapes=shapes,brushes=brushes,parts=parts,rigids=rigids,colliders=colliders,meshes=meshes,tints=tints,transforms=transforms,parents=parents,hierarchy=hierarchy,problems=problems,splines=splines}
 
     // The shapes and splines that went take their child and their mesh with them.
     if all || len(cs.gone)>0 || len(cp.gone)>0 {
@@ -155,6 +158,8 @@ shapes_update :: proc(
         for e in cb.gone {mark(&u,e)}
         for row in core.each_changed(colliders,&cc) {mark(&u,core.entity_at(colliders,row))}
         for e in cc.gone {mark(&u,e)}
+        for row in core.each_changed(tints,&ct) {mark(&u,core.entity_at(tints,row))}
+        for e in ct.gone {mark(&u,e)}
     }
     if placed || grounded {
         for &entry,i in cache.entries.values {
@@ -182,7 +187,7 @@ shapes_update :: proc(
         entry.spline=row<0
         key:u64
         material:base.Asset_Id
-        body,cut_first:=false,false
+        body,cut_first,collides:=false,false,false
         collider:=physics.COLLIDER_DEFAULT
         if row>=0 {
             if has_spline && spline.material!={} {
@@ -196,7 +201,10 @@ shapes_update :: proc(
                 core.report(problems,e,"shapes.memory","no memory to gather the brushes of the shape: it keeps its previous mesh; free memory or remove brushes")
                 continue
             }
-            key,material=shape_key(shape,cache.gathered[:],body),shape.material
+            own:=core.row_of(colliders,e)
+            collides=own<0 || colliders.values[own].kind==.External
+            // What collides is part of the mesh.
+            key,material=base.hash_mix(shape_key(shape,cache.gathered[:],body),u64(collides)),shape.material
             // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
             collider=collider_of(&u,e,body)
         } else {
@@ -214,7 +222,8 @@ shapes_update :: proc(
         }
         entry.child=child_find(&u,e,entry.child)
         if entry.mesh!={} && entry.key==key && entry.child!=core.NONE && child_shows(&u,entry.child,entry.mesh) {
-            collider_write(&u,entry.child,collider,entry.spline)
+            collider_write(&u,entry.child,collider,!collides)
+            tint_write(&u,e,entry.child)
             continue
         }
         if used==len(cache.builds) {
@@ -230,7 +239,7 @@ shapes_update :: proc(
         b:=&cache.builds[used]
         clear(&b.brushes)
         b.entity,b.body,b.spline,b.material,b.cut_first,b.key,b.limits=e,body,entry.spline,material,cut_first,key,limits
-        b.collider=collider
+        b.collider,b.collides=collider,collides
         if entry.spline {
             ribbon_lay(q,&spline,entry.place,&b.geometry)
         } else if append(&b.brushes,..cache.gathered[:])!=len(cache.gathered) {
@@ -263,6 +272,7 @@ Update :: struct {
     rigids:^core.Table(physics.Rigid_Body,.Read),
     colliders:^core.Table(physics.Collider),
     meshes:^core.Table(render.Mesh_Renderer),
+    tints:^core.Table(render.Material_Values),
     transforms:^core.Table(core.Transform,.Read),
     parents:^core.Table(core.Parent,.Read),
     hierarchy:core.Ref(core.Hierarchy),
@@ -404,22 +414,17 @@ child_shows :: proc(u:^Update,child:core.Entity,mesh:base.Asset_Id) -> bool {
 @(private)
 collider_of :: proc(u:^Update,e:core.Entity,body:bool) -> physics.Collider {
     c:=physics.COLLIDER_DEFAULT
-    if row:=core.row_of(u.colliders,e);row>=0 {
-        c=u.colliders.values[row]
-        if c.kind!=.External {
-            core.report(u.problems,e,"shapes.collider","the Collider of a shape gives the surface and filtering of its derived collider, and physics makes a %v of its own: make it kind External",c.kind)
-        }
-    }
+    if row:=core.row_of(u.colliders,e);row>=0 {c=u.colliders.values[row]}
     c.kind=body?.Hull:.Mesh
     c.size,c.center={},{}
     return c
 }
 
-// The child of a spline collides with nothing.
+// The child of a spline, or of a shape that collides itself, collides with nothing.
 @(private)
-collider_write :: proc(u:^Update,child:core.Entity,collider:physics.Collider,spline:bool) {
+collider_write :: proc(u:^Update,child:core.Entity,collider:physics.Collider,none:bool) {
     row:=core.row_of(u.colliders,child)
-    if spline {
+    if none {
         if row>=0 {core.remove(u.colliders,child)}
     } else if row<0 {
         core.commands_add(u.commands,child,collider)
@@ -453,9 +458,8 @@ install :: proc(u:^Update,b:^Shape_Build) {
     if b.cut_first {
         core.report(u.problems,b.entity,"shapes.first_brush","a brush of the Solid that cuts or intersects comes before the first one that adds and has nothing to work on, so it is left out: order the children so a brush that adds comes first, or give the Solid a polygon")
     }
-    spline:=b.spline
-    options:=host.Mesh_Generate_Options{no_lods=true,collision=!spline}
-    if spline {
+    options:=host.Mesh_Generate_Options{no_lods=true,collision=b.collides}
+    if !b.collides {
     } else if b.body {
         options.hull_points,options.hull_sizes=b.geometry.pieces.points[:],b.geometry.pieces.sizes[:]
     } else {
@@ -477,12 +481,26 @@ install :: proc(u:^Update,b:^Shape_Build) {
         core.commands_add(u.commands,child,core.TRANSFORM_IDENTITY)
         core.commands_add(u.commands,child,Shape_Part{})
         core.commands_add(u.commands,child,shown)
-        if !spline {core.commands_add(u.commands,child,b.collider)}
+        if b.collides {core.commands_add(u.commands,child,b.collider)}
+        if tint,has:=core.get(u.tints,b.entity);has {core.commands_add(u.commands,child,tint)}
         entry.child=child
         return
     }
     if row:=core.edit(u.meshes,entry.child);row!=nil {row^=shown} else {core.commands_add(u.commands,entry.child,shown)}
-    collider_write(u,entry.child,b.collider,spline)
+    collider_write(u,entry.child,b.collider,!b.collides)
+    tint_write(u,b.entity,entry.child)
+}
+
+// The child shows the Material_Values of its source.
+@(private)
+tint_write :: proc(u:^Update,source,child:core.Entity) {
+    row:=core.row_of(u.tints,child)
+    tint,has:=core.get(u.tints,source)
+    switch {
+    case !has: if row>=0 {core.remove(u.tints,child)}
+    case row<0: core.commands_add(u.commands,child,tint)
+    case u.tints.values[row]!=tint: core.edit(u.tints,child)^=tint
+    }
 }
 
 @(private)

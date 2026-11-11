@@ -279,7 +279,7 @@ a_brush_placed_on_a_surface_is_one_step_and_a_child_with_an_id :: proc(t:^testin
     if !shapes_test_open(t,f) {return}
     defer shapes_test_close(f)
     s,w:=&f.session,&f.world
-    solid:=shapes_test_shape(f,shapes.Shape{uv_scale=1})
+    solid:=shapes_test_shape(f,shapes.Shape{uv_scale={1,1}})
 
     // On the top of the solid, its Y up the normal: an added box rests on the surface.
     place:=brush_place_at(.Union,{0,0,0.5},{0,0,1},0.25,0)
