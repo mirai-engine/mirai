@@ -190,8 +190,8 @@ Adapt the source's data to these features instead of rebuilding its runtime:
   space.
 - **Two authored kinds.** A character animates from `.anim` clips and one `.character` set, shared
   by every character of its body. Limbs and pelvis are named once, in the `.skeleton` body; a table
-  names a bone only to override it. A timed span of a clip (a section, a window, a warp window) is
-  a marker with a duration on the clip, which the set names.
+  names a bone only to override it. A timed span of a clip (a section, a window, a warp window, a
+  rule of the matching) is a marker with a duration on the clip, which the set names.
 - **One stack, one play, one queue.** What plays over the base is the one stack of layers of the
   set; a moment of the body is one `play` request with one priority rule, in a layer or
   over the whole body; what happens arrives in one `Animation_Events` queue. A game walks, aims,

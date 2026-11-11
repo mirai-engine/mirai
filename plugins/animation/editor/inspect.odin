@@ -71,6 +71,7 @@ Asset_Inspect_Result :: struct {
     match:anim.Match_Info `mirai:"optional,label=.character: its locomotion: the rate of its database, the interval of its searches, the blend of a jump, its memory and weights"`,
     match_clips_total:u32 `mirai:"optional,label=.character"`,
     match_clips:[]Asset_Match_Clip `mirai:"optional,label=.character: a page of its locomotion clips with the Locomotion_Mode each serves"`,
+    match_spans:[]anim.Match_Span `mirai:"optional,label=.character: the rules over the rows of its locomotion clips inside the spans of each name"`,
     databases:[]Asset_Match_Database `mirai:"optional,label=.character: the database built for each skeleton a rig played it on"`,
     layers_total,actions_total,sections_total:u32 `mirai:"optional,label=.character"`,
     layers:[]Authoring_Page(anim.Stack_Layer) `mirai:"optional,label=.character: its stack over the base, in order"`,
@@ -168,7 +169,7 @@ Instance_Match_Candidate :: struct {
     rate:f32 `mirai:"label=It plays at to follow the trajectory, or to reach its landing marker"`,
     cost:f32,
     costs:Instance_Match_Costs,
-    reason:lib.Match_Reject `mirai:"label=None: the one it chose; Cost: it cost more; Mode, Entry, Stationary, Reselect, Event (no landing marker ahead) and Window (its marker is not reached at a landing rate, or its rows go back in the arc in the air): why it was left out"`,
+    reason:lib.Match_Reject `mirai:"label=None: the one it chose; Cost: it cost more; Mode, Entry, Stationary, Reselect, Event (no landing marker ahead), Window (its marker is not reached at a landing rate, or its rows go back in the arc in the air) and Span (spans of the set exclude or block its rows): why it was left out"`,
 }
 Instance_Match_Costs :: struct {foot_position,foot_velocity,hip_velocity,body_velocity,trajectory_position,trajectory_direction:f32}
 Instance_Pose :: struct {
@@ -349,7 +350,7 @@ instance_match :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,ent
     r.ranges=make([]Instance_Match_Range,len(db.ranges),call.allocator)
     for &row,i in r.ranges {
         range:=&db.ranges[i]
-        row={clip=anim.source_clip_label(library,range.clips[0]),modes=match_modes(call,modes,range.modes),loop=range.loop,entry=range.entry,speed=range.speed,travel=range.travel,duration=f32(max(range.count-1,0))/db.rate}
+        row={clip=anim.source_clip_label(library,range.clips[0]),modes=match_modes(call,modes,range.modes),loop=range.loop,entry=range.entry,speed=range.speed,travel=range.travel,duration=f32(max(range.count-1,0))/range.rate}
         if range.weights=={0=1} {continue}
         members:=make([dynamic]Instance_Match_Member,call.allocator)
         for clip,k in range.clips {if range.weights[k]>0 {append(&members,Instance_Match_Member{clip=anim.source_clip_label(library,clip),weight=range.weights[k]})}}
@@ -368,7 +369,7 @@ instance_match :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,ent
         index:=lib.match_range_of(db,int(candidate.row));if index<0 {continue}
         range:=db.ranges[index];c:=candidate.costs
         append(&candidates,Instance_Match_Candidate{
-            range=u32(index),clip=anim.source_clip_label(library,range.clips[0]),time=f32(int(candidate.row)-int(range.first))/db.rate,rate=candidate.rate,cost=candidate.cost,reason=candidate.reason,
+            range=u32(index),clip=anim.source_clip_label(library,range.clips[0]),time=f32(int(candidate.row)-int(range.first))/range.rate,rate=candidate.rate,cost=candidate.cost,reason=candidate.reason,
             costs={c[.Foot_Position],c[.Foot_Velocity],c[.Hip_Velocity],c[.Body_Velocity],c[.Trajectory_Position],c[.Trajectory_Direction]},
         })
     }

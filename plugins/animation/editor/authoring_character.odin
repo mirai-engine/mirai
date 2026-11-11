@@ -98,7 +98,7 @@ character_inspect :: proc(s:^editor.Session,call:^api.Call,p:^Asset_Inspect_Para
 @(private)
 character_match :: proc(s:^editor.Session,call:^api.Call,id:base.Asset_Id,profile:anim.Match_Profile,offset,limit:u32,r:^Asset_Inspect_Result) {
     modes:=locomotion_modes(s.info)
-    r.match,r.match_clips_total=profile.info,u32(len(profile.clips))
+    r.match,r.match_clips_total,r.match_spans=profile.info,u32(len(profile.clips)),profile.spans
     start:=min(int(offset),len(profile.clips));end:=min(start+int(limit),len(profile.clips))
     r.match_clips=make([]Asset_Match_Clip,end-start,call.allocator)
     for &row,i in r.match_clips {
