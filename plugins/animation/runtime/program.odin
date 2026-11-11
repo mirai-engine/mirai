@@ -22,7 +22,8 @@ Sync_Mode :: enum u8 {Independent,Markers,Weighted,Fixed}
 // start: seconds a new player of it starts at.
 Program_Leaf :: struct {clip:u64,key:u32,weight,speed:f32,loop,sync:bool,player:u16,start:f32}
 Program_Group :: struct {leaves:[PROGRAM_LEAVES]Program_Leaf,count:u8,weight,root_weight:f32,mode:Sync_Mode,duration:f32,key:u64}
-Program_Output :: struct {asset:base.Asset_Id,groups:[PROGRAM_GROUPS]Program_Group,count:u8,primary:u8}
+// mirror: its pose and root motion play reflected across the plane of the rig, left and right swapped.
+Program_Output :: struct {asset:base.Asset_Id,groups:[PROGRAM_GROUPS]Program_Group,count:u8,primary:u8,mirror:bool}
 Program_Player :: struct {key:u32,player:lib.Player,seen,advanced:u64,from,to:f32,was_done,active_last:bool}
 // Pending: a source still loads (host.content_animation_pending); nothing plays until it is ready.
 Program_Error :: enum u8 {None,Invalid_Asset,Invalid_Parameter,Missing_Clip,Incompatible_Root,Out_Of_Memory,Capacity,Pending}
@@ -357,6 +358,7 @@ program_players :: proc(state:^Playing,output:^Program_Output,content:^host.Cont
         runtime.leaders[clock]=lead.key
         if g==int(output.primary) {current:=runtime.players[group.leaves[representative].player].player;state.time=lib.player_time(&content.lib,current);state.duration=lib.clip_duration(&content.lib,current.clip);state.ended=current.done;state.clip=int(current.clip-1)%content.clip_count;state.fader.current=current;runtime.current_phase,_=lib.sync_phase(&content.lib,current);if group.mode==.Weighted || group.mode==.Fixed {runtime.current_phase.markers=false}}
     }
+    if output.mirror {state.motion=root_delta_mirror(state.mirror_plane,state.motion)}
     for key,i in runtime.leader_keys {if key==0 {continue};used:=false;for group in output.groups[:output.count] {if group.key==key || group.key==0 && key==1 {used=true;break}};if !used {runtime.leader_keys[i]=0;runtime.leaders[i]=0}}
     state.was_playing=animation.playing;runtime.elapsed+=dt if animation.playing else 0
     return true
@@ -393,6 +395,7 @@ program_sample :: proc(playback:^Playback,state:^Playing,content:^host.Content_A
     }
     tracks_twins(shared,bones)
     for binding,b in state.bindings {runtime.sampled[b],_,_=lib.bone_transform(bones[b],binding.rest)}
+    if output.mirror && !playing_mirror(state,runtime.sampled[:]) {runtime.error=.Invalid_Parameter;return false}
     for curve,k in state.curves {
         value:=curve;value.value,value.weight={},0
         for group in output.groups[:output.count] {

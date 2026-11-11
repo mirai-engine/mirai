@@ -187,7 +187,7 @@ sound_round_trips_lossless_and_as_a_file :: proc(t:^testing.T) {
     testing.expect(t,a.blob.header.kind==KIND_SOUND && .Cooked in a.blob.header.flags)
     view,error:=sound_view(&a,&types)
     testing.expect_value(t,error,Error.None)
-    testing.expect(t,view.info^==Sound_Info{2,48000,480,.Lossless,{}} && len(view.file)==0 && view.source!=nil)
+    testing.expect(t,view.info^==Sound_Info{2,48000,480,0,.Lossless,{}} && len(view.file)==0 && view.source!=nil)
     testing.expect(t,mem.compare(view.lossless,lossless)==0)
     // Stored without LZ, the coded samples are read from the file without a copy.
     testing.expect(t,uintptr(raw_data(view.lossless))>=uintptr(raw_data(a.file)) && uintptr(raw_data(view.lossless))%SOUND_BULK_ALIGNMENT==uintptr(raw_data(a.file))%SOUND_BULK_ALIGNMENT)

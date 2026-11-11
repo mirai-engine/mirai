@@ -14,9 +14,10 @@ import "mirai:std/base"
 import mm "mirai:std/math"
 
 // What animation_skin reads of the World, with the poses it draws.
-@(private="file")
+@(private)
+@(test_world)
 Skin_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     meshes:core.Table(erender.Mesh_Renderer),
     skins:core.Table(Pose_Source),
     transforms:core.Table(core.Transform),
@@ -92,8 +93,8 @@ skeletal_instances_use_independent_dense_poses_and_eighth_influence :: proc(t:^t
     posed:erender.Posed_Meshes;defer core.value_free(&posed,type_info_of(erender.Posed_Meshes))
     skeleton_assets:Skeleton_Assets;defer skeleton_assets_free(&skeleton_assets)
     w:Skin_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     roots,draws:[2]core.Entity
     for i in 0..<2 {
         roots[i]=core.create(&w.entities);draws[i]=core.create(&w.entities)
@@ -106,7 +107,7 @@ skeletal_instances_use_independent_dense_poses_and_eighth_influence :: proc(t:^t
         core.add(&w.worlds,draws[i],{transform=transform,previous=transform})
     }
     core.add(&w.offsets,roots[0],{offset={0,2,0}})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     definition:=skeleton_content(&skeleton_assets,app.assets,app.allocator,skeleton_id)
     if !testing.expect(t,definition!=nil) {return}
     for rig,i in roots {
@@ -176,11 +177,11 @@ skeletal_instances_use_independent_dense_poses_and_eighth_influence :: proc(t:^t
     testing.expect_value(t,problems.count,0)
     // Shown again in a tick whose pose changed, it is drawn with that pose even at alpha 0: the one
     // before is of a tick it was w.hidden in, as the rest pose of a weapon whose action starts as it shows.
-    core.add(&w.hidden,draws[0],{});core.test_world_settle(&w)
+    core.add(&w.hidden,draws[0],{});test_world_settle(&w)
     tick(&app,&cache,&state,&w,&problems,&posed,{playing=true},{alpha=0.5})
     testing.expect(t,core.entity_map_get(&state.instances,draws[0])==nil)
     shown:=constraint_playing(&w.playback,roots[0]);shown.previous[2]=shown.local[2];shown.local[2].position.y+=1;shown.changed=w.playback.frame
-    core.remove(&w.hidden,draws[0]);core.test_world_settle(&w)
+    core.remove(&w.hidden,draws[0]);test_world_settle(&w)
     for alpha in ([2]f32{0,0.5}) {
         tick(&app,&cache,&state,&w,&problems,&posed,{playing=true},{alpha=alpha})
         instance:=core.entity_map_get(&state.instances,draws[0])
@@ -193,7 +194,7 @@ skeletal_instances_use_independent_dense_poses_and_eighth_influence :: proc(t:^t
         for vertex,j in vertices {testing.expectf(t,linalg.length(result[j].position-(vertex.position+[3]f32{0,2.5,0}))<1e-5,"alpha %v: %v",alpha,result[j].position)}
     }
     testing.expect_value(t,problems.count,0)
-    core.remove(&w.meshes,draws[0]);core.test_world_settle(&w)
+    core.remove(&w.meshes,draws[0]);test_world_settle(&w)
     tick(&app,&cache,&state,&w,&problems,&posed)
     testing.expect_value(t,len(host.extras_instances(&app.extras)),1)
     testing.expect(t,len(state.instances.values)==1 && core.entity_map_get(&state.instances,draws[0])==nil && core.entity_map_get(&state.instances,draws[1]).valid)
@@ -244,8 +245,8 @@ a_skin_part_collapses_the_vertices_of_its_bone_into_it :: proc(t:^testing.T) {
     posed:erender.Posed_Meshes;defer core.value_free(&posed,type_info_of(erender.Posed_Meshes))
     skeleton_assets:Skeleton_Assets;defer skeleton_assets_free(&skeleton_assets)
     w:Skin_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     rig,draw:=core.create(&w.entities),core.create(&w.entities)
     core.add(&w.parents,draw,{entity=rig})
     core.add(&w.skins,draw,{rig=rig})
@@ -254,7 +255,7 @@ a_skin_part_collapses_the_vertices_of_its_bone_into_it :: proc(t:^testing.T) {
     core.add(&w.transforms,rig,core.Transform(mm.TRANSFORM_IDENTITY))
     core.add(&w.worlds,rig,{transform=mm.TRANSFORM_IDENTITY,previous=mm.TRANSFORM_IDENTITY})
     core.add(&w.worlds,draw,{transform=mm.TRANSFORM_IDENTITY,previous=mm.TRANSFORM_IDENTITY})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     definition:=skeleton_content(&skeleton_assets,app.assets,app.allocator,skeleton_id)
     if !testing.expect(t,definition!=nil) {return}
     pose:=state_get(&w.playback,rig)

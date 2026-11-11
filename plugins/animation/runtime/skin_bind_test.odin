@@ -14,9 +14,10 @@ import "mirai:std/base"
 import mm "mirai:std/math"
 
 // What animation_skin reads of the World, with the poses it draws.
-@(private="file")
+@(private)
+@(test_world)
 Bind_Pose_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     meshes:core.Table(erender.Mesh_Renderer),
     skins:core.Table(Pose_Source),
     transforms:core.Table(core.Transform),
@@ -84,8 +85,8 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
     posed:erender.Posed_Meshes;defer core.value_free(&posed,type_info_of(erender.Posed_Meshes))
     skeleton_assets:Skeleton_Assets;defer skeleton_assets_free(&skeleton_assets)
     w:Bind_Pose_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     roots,draws:[RIGS]core.Entity
     for i in 0..<RIGS {
         roots[i]=core.create(&w.entities);draws[i]=core.create(&w.entities)
@@ -97,7 +98,7 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
         core.add(&w.worlds,roots[i],{transform=transform,previous=transform})
         core.add(&w.worlds,draws[i],{transform=transform,previous=transform})
     }
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     definition:=skeleton_content(&skeleton_assets,app.assets,app.allocator,skeleton_id)
     if !testing.expect(t,definition!=nil) {return}
     for rig in roots {

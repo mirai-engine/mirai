@@ -12,9 +12,10 @@ import "mirai:std/base"
 import mm "mirai:std/math"
 import eanim "plugins:animation/runtime"
 
-@(private="file")
+@(private)
+@(test_world)
 Skin_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     skins:core.Table(eanim.Pose_Source),
 }
 
@@ -33,8 +34,8 @@ preview_samples_compact_bones_and_frames_the_clip_without_changing_authored_pose
     target:=base.name_hash("root/foot")
     clip,_:=anim.clip_add(&p.lib,{tracks={{target=target,property=.Position,keys={{time=0,value={0,1,0,0}},{time=1,value={0,2,0,0}}}}}})
     w:Skin_World
-    if !core.test_world_init(t,&w,eanim.test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     root,body:=core.create(&w.entities),core.create(&w.entities)
     sub:=&p.subject
     sub.part_count=2
@@ -70,7 +71,7 @@ preview_samples_compact_bones_and_frames_the_clip_without_changing_authored_pose
     testing.expect(t,subject_skins_place(&p))
     testing.expect(t,linalg.length(sub.posed[1].position-[3]f32{2,1,0})<0.0001)
     core.add(&w.skins,body,{rig=root})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     testing.expect_value(t,animation_subject({skins=&w.skins},body),root)
     testing.expect_value(t,animation_subject({},root),root)
     testing.expectf(t,rhi.device_validation_errors(device)==0,"validation: %s",rhi.device_validation_message(device))

@@ -252,10 +252,21 @@ cmd_check :: proc(root:string,args:[]string) -> int {
         append(&command,..collections)
     }
     append(&command,..args[1:])
+    if folder!="" && !test_worlds(root,folder) {return 1}
     code:=run(root,command[:])
     if code!=0 || folder=="" {return code}
     if plugin_api_lint_applies(folder) && !plugin_api_lint_folder(folder) {return 1}
     return 0 if lints_run(files,alloc_lint_applies(root,folder),solver_lint_applies(root,folder)) else 1
+}
+
+// Writes the World_Info of the test worlds a package and those it imports declare
+// (build.test_worlds_write), which a check and a build of tests from the sources of the engine
+// read. False after saying what is wrong in one.
+test_worlds :: proc(root,folder:string) -> bool {
+    stamp:=fmt.tprintf("%s.worlds",build.test_executable(join(root,"bin","tests"),root,folder,context.temp_allocator))
+    errors:=build.test_worlds_write(root,project_of(folder),{folder},true,stamp,context.temp_allocator)
+    for e in errors {fmt.eprintfln("mirai: %s",e)}
+    return len(errors)==0
 }
 
 // The sources of a package folder, its tests included, parsed; what does not parse is left out,

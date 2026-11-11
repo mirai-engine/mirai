@@ -19,7 +19,7 @@ Voice_Desc :: struct {
     paused:bool,  // created paused; voice_set_paused starts it
     priority:u8,  // when no voice is free, the one of lowest priority is stolen, the oldest among equals; never one of higher priority
     fade_in:f32,  // seconds
-    offset:f32,   // seconds into the sound where it starts; a loop starts over from the beginning
+    offset:f32,   // seconds into the sound where it starts; a loop goes back to the loop start of the sound
     // Mixer clock (mixer_clock) of the frame in which the first sample
     // plays. 0, or a frame already rendered, starts as soon as possible.
     start_frame:u64,
@@ -105,7 +105,7 @@ voice_play :: proc(m:^Mixer,sound:Sound,desc:Voice_Desc=VOICE_DEFAULT) -> Voice 
     start:=Voice_Start{
         generation=generation,
         sound=sound_index,
-        source={samples=raw_data(slot.samples),frames=slot.frames,channels=slot.channels,rate=slot.rate,feed=feed},
+        source={samples=raw_data(slot.samples),frames=slot.frames,loop_start=slot.loop_start,channels=slot.channels,rate=slot.rate,feed=feed},
         bus=u16(desc.bus),
         volume=max(desc.volume,0),pitch=desc.pitch,pan=desc.pan,
         loop=desc.loop,paused=desc.paused,spatial=desc.spatial,
@@ -119,7 +119,7 @@ voice_play :: proc(m:^Mixer,sound:Sound,desc:Voice_Desc=VOICE_DEFAULT) -> Voice 
     frames:=slot.frames
     offset:=frames>0?u32(min(max(f64(desc.offset),0)*rate,f64(frames-1))):0
     start.offset=offset
-    if feed>=0 {feed_prepare(m,&m.feeds[feed],slot.source,sound_index,int(offset),desc.loop)}
+    if feed>=0 {feed_prepare(m,&m.feeds[feed],slot.source,sound_index,int(offset),int(slot.loop_start),desc.loop)}
     if !command_push(m,{kind=.Voice_Play,index=index,start=start}) {
         if !stolen {m.free_voices[m.free_count]=index;m.free_count+=1}
         return 0
@@ -213,7 +213,7 @@ transmission_clamp :: proc "contextless" (t:[BANDS]f32) -> [BANDS]f32 {
 @(private)
 voice_desc_finite :: proc "contextless" (d:Voice_Desc) -> bool {
     a:=d.attenuation
-    numbers:=[?]f32{d.doppler,d.occlusion,a.min_distance,a.max_distance,a.rolloff,a.near_radius,d.directivity.weight,d.directivity.power,
+    numbers:=[?]f32{d.doppler,d.occlusion,a.min_distance,a.max_distance,a.rolloff,a.near_radius,a.spread,d.directivity.weight,d.directivity.power,
         real(d.rotation),imag(d.rotation),jmag(d.rotation),kmag(d.rotation)}
     for x in numbers {
         if !finite(x) {return false}

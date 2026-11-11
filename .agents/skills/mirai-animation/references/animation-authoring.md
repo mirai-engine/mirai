@@ -94,12 +94,11 @@ detected unsaved one) and a clip library (by default, the one it plays). With `s
   ([metrics](../../mirai-std/references/anim-body.md#metrics-metricsodin)); `speeds` sets that of a
   locomotion clip by hand and the set keeps it.
 - `blends` puts [blends](animation.md#locomotion-by-motion-matching) in the match of the set: 2 to
-  `MATCH_BLEND` looping locomotion clips of one mode and one duration (within a row), as the eight
+  `MATCH_BLEND` looping locomotion clips of one mode in phase, of any durations, as the eight
   directions of a set, and samples, each with `MATCH_BLEND` `weights` (one per clip in order, 0
   past them, a positive sum) and an optional `speed`. Its clips leave the match as clips of their
   own, and the result lists each blend with its mode and samples. A clip that is not locomotion, a
-  size, sum or weight out of place, no samples or clips of different durations fail with their
-  path and a `fix`.
+  size, sum or weight out of place or no samples fail with their path and a `fix`.
 - `min_rate`, `max_rate` and `trajectory_direction`, when given, replace those defaults of the
   set: the rates a clip plays at to follow the body, and the weight of where the trajectory
   faces (0 for a body that never turns, as one that walks sideways). `rates` (per clip) and the

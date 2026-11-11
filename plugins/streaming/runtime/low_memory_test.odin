@@ -24,8 +24,8 @@ memory_limit_proc :: proc(data:rawptr,mode:runtime.Allocator_Mode,size,alignment
 @(test)
 what_moves_without_memory_to_follow_it_stays_where_it_hangs_with_a_problem :: proc(t:^testing.T) {
     w:Streaming_World
-    if !core.test_world_init(t,&w) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     movers:[2]core.Entity
     for &mover,at in movers {
         // The second has a far index: other entities come before it.
@@ -35,14 +35,14 @@ what_moves_without_memory_to_follow_it_stays_where_it_hangs_with_a_problem :: pr
         core.add(&w.transforms,mover,core.Transform{{f32(at),0,0},1,{1,1,1}})
         core.add(&w.worlds,mover,core.World_Transform{transform={position={f32(at),0,0},rotation=1,scale=1}})
     }
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     owner:=context.allocator
     limit:=Memory_Limit{owner=owner}
     for mover,at in movers {
         crossings:Streaming_Crossings
         // Only this one moves.
         for other in movers {core.free(&w.motions,other).awake=other==mover}
-        core.test_world_settle(&w)
+        test_world_settle(&w)
         index:=int(core.entity_index(mover))
         followed,refused:=false,false
         for served in 0..<4 {

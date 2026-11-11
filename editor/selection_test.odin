@@ -9,12 +9,12 @@ import "mirai:host"
 @(test)
 copy_and_paste_duplicate_the_copied_roots_as_one_step :: proc(t:^testing.T) {
     world:Simulation_Test_World
-    if !core.test_world_init(t,&world) {return}
-    defer core.test_world_destroy(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
     original:=core.create(&world.entities)
     core.add(&world.ids,original,core.Id{1})
     core.add(&world.transforms,original,core.Transform{{1,0,0},1,{1,1,1}})
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     edits:history.Edits
     selection:history.Selection
     previous:asset.Scene
@@ -22,7 +22,7 @@ copy_and_paste_duplicate_the_copied_roots_as_one_step :: proc(t:^testing.T) {
     app:host.App
     viewport:Viewport
     gui:Editor_Ui
-    s:=Session{info=core.test_world_info(&world),edit_world=&world,edits=&edits,selection=&selection,document=&document,app=&app,viewport=&viewport,gui=&gui}
+    s:=Session{info=test_world_info(&world),edit_world=&world,edits=&edits,selection=&selection,document=&document,app=&app,viewport=&viewport,gui=&gui}
     w:=edited_world(&s)
     history.edits_reset(&edits,w)
     defer history.edits_free(&edits)

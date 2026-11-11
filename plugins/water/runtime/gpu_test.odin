@@ -26,9 +26,10 @@ WIDTH :: 160
 HEIGHT :: 120
 
 // The fluids, as physics makes them from the rows of a world.
-@(private = "file")
+@(private)
+@(test_world)
 Water_World :: struct {
-	using world:   core.Test_World,
+	using world:   Test_World,
 	using physics: phys.Test_Physics,
 	waters:        core.Table(Water),
 }
@@ -68,7 +69,7 @@ gpu_fixture_init :: proc(t: ^testing.T, f: ^Gpu_Fixture) -> bool {
 	if !testing.expect(t, cube != nil) {return false}
 	f.cube = cube.handle
 	gpu.scene_world(&f.renderer, 1)
-	if !core.test_world_init(t, &f.world, test_types) {return false}
+	if !test_world_init(t,&f.world) {return false}
 	f.world.settings = {bodies = 8, shapes = 8, contacts = 16, fluids = 4}
 	return true
 }
@@ -81,7 +82,7 @@ gpu_fixture_destroy :: proc(f: ^Gpu_Fixture) {
 	ribbons_release(&f.state, &f.assets)
 	sheets_release(&f.state, &f.renderer)
 	phys.test_host_destroy(&f.host)
-	core.test_world_destroy(&f.world)
+	test_world_destroy(&f.world)
 	delete(f.media.queue.items)
 	delete(f.app.extras.instances)
 	host.assets_destroy(&f.assets)
@@ -96,7 +97,7 @@ water_frame :: proc(t: ^testing.T, f: ^Gpu_Fixture) -> (pixels: []u8, ok: bool) 
 	for _ in 0 ..< 4 {
 		clear(&f.app.extras.instances)
 		core.queue_clear(&f.media.queue)
-		core.test_world_settle(&f.world)
+		test_world_settle(&f.world)
 		phys.test_step(&f.world.physics, &f.host, 0)
 		water_render(&f.state, &f.media, core.read(&f.world.waters), {&f.world.state}, {}, view, &f.app, {}, {})
 		instances := make([dynamic]gpu.Instance_Desc, context.temp_allocator)

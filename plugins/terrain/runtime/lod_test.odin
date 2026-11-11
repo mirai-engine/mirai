@@ -111,7 +111,7 @@ far_chunks_show_coarser_levels_while_colliders_keep_every_sample :: proc(t:^test
     owner:=core.create(&w.entities)
     core.add(&w.transforms,owner,core.TRANSFORM_IDENTITY)
     core.add(&w.terrains,owner,Terrain{source=id,solid=true})
-    core.test_world_settle(&w.w)
+    test_world_settle(&w.w)
     view:=core.VIEW_DEFAULT
     view.position={-60,5,-60}
     settings:=Terrain_Settings{lod_distance=16}

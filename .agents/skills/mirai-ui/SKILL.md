@@ -107,8 +107,9 @@ description: Create and modify Mirai interfaces with the `ui` package (layout, f
   and its end takes nothing off. An end without its begin does nothing, and `frame_end` closes what
   a frame left open and counts it in `layout_errors`.
 - **Editable text is US-keyboard ASCII**, one line, without shaping or IME. Displayed text is UTF-8
-  within the glyphs of `FONT_RANGES` (Latin, Greek, Cyrillic and `FONT_EXTRA`); the rest is shown
-  as `?`. GPOS kerning moves the pen; nothing substitutes glyphs.
+  within the glyphs of `FONT_RANGES` (Latin, Greek, Cyrillic and `FONT_EXTRA`); a glyph a font
+  lacks comes from `FONT_REGULAR`, and the rest is shown as `?`. GPOS kerning moves the pen;
+  nothing substitutes glyphs. No CJK line breaking or shaping.
 - **Sizes are em** (CSS pixels) and the box of a line measures `TEXT_LINE` em: a
   row centers the text with `text_leading`, not with the size.
 - **The application font has a single writer:** its owner. The contexts that borrow it read it and

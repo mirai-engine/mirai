@@ -221,7 +221,12 @@ world_step :: proc(w:^World,dt:f32) {
     joints_break(w)
     islands_sleep(w)
     step_hits(w)
-    for i in st.active[:st.active_count] {stamp(w,.Contacts,i);w.contacts[i].flags-={.Visited}}
+    w.stats.carried_contacts=0
+    for i in st.active[:st.active_count] {
+        stamp(w,.Contacts,i)
+        w.contacts[i].flags-={.Visited}
+        w.stats.carried_contacts+=int(.Carried in w.contacts[i].flags)
+    }
     w.stats.awake_bodies=st.awake_count
     w.stats.active_contacts=st.active_count
     w.stats.constraints=st.ref_count
@@ -567,7 +572,10 @@ finalize_task :: proc(data:rawptr,first,last,worker:int) #no_bounds_check {
         body.rotation=q_normalize(solved.dq*body.rotation)
         body.position=body.center-q_rotate(body.rotation,body.local_center)
         body.force,body.torque={},{}
-        speed:=max(length(solved.v),length(solved.w)*body.max_extent)
+        // The relaxation takes the speed of a push out of an overlap away but not the move: half of it counts,
+        // so that a body still being pushed out does not fall asleep inside the other.
+        turn:=2*length(Vec3{solved.dq.x,solved.dq.y,solved.dq.z})*body.max_extent
+        speed:=max(length(solved.v),length(solved.w)*body.max_extent,0.5*st.inv_dt*(length(solved.dp)+turn))
         if !sleep_allowed || .Sleep_Disabled in body.flags || speed>body.sleep_threshold || st.fluid_active && st.wet[i].restless {
             body.sleep_time=0
         } else {

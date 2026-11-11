@@ -11,14 +11,15 @@ import sim "plugins:physics/runtime/sim"
 import "mirai:std/base"
 import "mirai:std/geom"
 
-@(private="file")
+@(private)
+@(test_world,editor="Collider_Editor")
 Collider_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     using physics:phys.Test_Physics,
     ids:core.Table(core.Id),
 }
 
-@(private="file")
+@(private)
 Collider_Editor :: struct {preview:Collider_Preview}
 
 // A physics world, what the application holds for its step and the session that draws its colliders.
@@ -34,7 +35,7 @@ Collider_Test :: struct {
 
 @(private="file")
 collider_test_init :: proc(t:^testing.T,f:^Collider_Test) -> bool {
-    f.info=core.test_info(t,Collider_World,core.Test_None,Collider_Editor,test_types) or_return
+    f.info=test_info(t,Collider_World) or_return
     if !testing.expect(t,core.world_init(&f.info,.World,&f.w,context.allocator)) {
         collider_test_destroy(f)
         return false
@@ -52,7 +53,7 @@ collider_test_destroy :: proc(f:^Collider_Test) {
     free(f.tools)
     phys.test_host_destroy(&f.application)
     core.world_destroy(&f.info,.World,&f.w)
-    core.test_info_destroy(&f.info)
+    test_info_destroy(&f.info)
 }
 
 @(private="file")

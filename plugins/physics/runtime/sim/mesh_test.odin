@@ -266,6 +266,34 @@ shapes_rest_on_a_triangle_mesh :: proc(t:^testing.T) {
     testing.expect(t,body_position(&w,under).y<-2)
 }
 
+// A contact that barely moved since its last narrow phase carries its manifolds instead of walking the
+// triangles again; what rests on a mesh, and on what rests on it, comes to rest where it does when every step
+// collides.
+@(test)
+resting_contacts_carry_their_manifolds_and_rest_as_when_every_step_collides :: proc(t:^testing.T) {
+    rests:[2][3]Vec3
+    for collide,k in ([2]bool{false,true}) {
+        w:World
+        testing.expect(t,test_world(&w))
+        defer world_destroy(&w)
+        mesh,_:=test_grid_mesh(&w,8,16)
+        test_static_shape(&w,mesh)
+        bodies:=[3]Body_Handle{test_body(&w,Box{{0.5,0.5,0.5}},{3,0.7,0.4}),test_body(&w,Sphere{0.5},{0.3,1,0.2}),test_body(&w,Box{{0.4,0.4,0.4}},{3,1.8,0.4})}
+        carried:=0
+        for _ in 0..<300 {
+            if collide {for &contact in w.contacts {contact.relative.q={}}}
+            world_step(&w,1.0/60)
+            carried=max(carried,world_stats(&w).carried_contacts)
+        }
+        for body,i in bodies {
+            testing.expect(t,!body_is_awake(&w,body))
+            rests[k][i]=body_position(&w,body)
+        }
+        testing.expectf(t,collide==(carried==0),"%v contacts carried their manifolds in a step, colliding every step %v",carried,collide)
+    }
+    for i in 0..<3 {expect_near3(t,rests[0][i],rests[1][i],0.002)}
+}
+
 @(test)
 sliding_over_inner_edges_of_a_flat_mesh_does_not_bump :: proc(t:^testing.T) {
     w:World

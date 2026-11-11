@@ -133,9 +133,10 @@ action_sets_roundtrip_and_reject_invalid_layers_section_links_and_root_policies 
     testing.expect(t,again && moved.actions[0]==profile.actions[0])
 }
 
-@(private="file")
+@(private)
+@(test_world)
 Actions_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     descriptions:core.Table(Animation),
     transforms:core.Table(core.Transform),
     played:core.Table(Animation_Played),
@@ -148,10 +149,10 @@ Actions_World :: struct {
 @(test)
 an_action_another_end_started_plays_once_as_far_into_it_as_that_end_is :: proc(t:^testing.T) {
     w:Actions_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     entity:=core.create(&w.entities)
-    description:=ANIMATION_DEFAULT;description.asset={3,4};core.add(&w.descriptions,entity,description);core.test_world_settle(&w)
+    description:=ANIMATION_DEFAULT;description.asset={3,4};core.add(&w.descriptions,entity,description);test_world_settle(&w)
     profile:=action_test_profile();defer action_profile_free(&profile)
     cache:Character_Assets;defer character_assets_free(&cache)
     test_character_seed(&cache,description.asset,action_test_set(profile))
@@ -165,12 +166,12 @@ an_action_another_end_started_plays_once_as_far_into_it_as_that_end_is :: proc(t
     // The end that decides it tells the tick it asked for it.
     play(&requests,entity,"attack")
     testing.expect(t,prepare(&server,&requests,&cache,&w.descriptions,&playback,&events,&app,nil,core.read(&w.remotes),&w.played,tick=10))
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     record,told:=core.get(&w.played,entity)
     testing.expect(t,told && record.slots[0]==Action_Started{action=base.name_hash("attack"),tick=10})
     // Another end, which does not decide it, plays it once from there.
     testing.expect(t,prepare(&client,&requests,&cache,&w.descriptions,&playback,&events,&app,nil,core.read(&w.remotes),&w.played,tick=10))
-    core.add(&w.remotes,entity,core.Remote{});core.test_world_settle(&w)
+    core.add(&w.remotes,entity,core.Remote{});test_world_settle(&w)
     before:Action_Runtime;defer actions_runtime_free(&before)
     core.value_copy(&before,&client,type_info_of(Action_Runtime));layers:=state.layers
     // Two ticks: it starts as far in as the server is, once, and plays on.
@@ -197,10 +198,10 @@ an_action_another_end_started_plays_once_as_far_into_it_as_that_end_is :: proc(t
 @(test)
 an_action_that_moves_its_body_gives_it_its_share_of_the_root_delta :: proc(t:^testing.T) {
     w:Actions_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     entity:=core.create(&w.entities)
-    description:=ANIMATION_DEFAULT;description.asset={3,4};core.add(&w.descriptions,entity,description);core.test_world_settle(&w)
+    description:=ANIMATION_DEFAULT;description.asset={3,4};core.add(&w.descriptions,entity,description);test_world_settle(&w)
     profile:=action_test_profile();profile.actions[0].weight=.75
     for &action in profile.actions {action.root_motion=.In_Place;action.body_move=.Additive}
     cache:Character_Assets;defer character_assets_free(&cache);defer action_profile_free(&profile)
@@ -228,10 +229,10 @@ an_action_that_moves_its_body_gives_it_its_share_of_the_root_delta :: proc(t:^te
 @(test)
 actions_segment_sections_and_windows_copy_state_and_obey_cancellation_without_stable_allocations :: proc(t:^testing.T) {
     w:Actions_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     entity:=core.create(&w.entities)
-    description:=ANIMATION_DEFAULT;description.asset={3,4};description.loop=false;core.add(&w.descriptions,entity,description);core.test_world_settle(&w)
+    description:=ANIMATION_DEFAULT;description.asset={3,4};description.loop=false;core.add(&w.descriptions,entity,description);test_world_settle(&w)
     content:host.Content_Animation;state:=layer_fixture(t,&content);defer lib.library_destroy(&content.lib);defer playing_free(&state);state.entity=entity;state.asset=content.id
     action_test_spans(&content);defer action_test_spans_free(&content)
     profile:=action_test_profile();defer action_profile_free(&profile)
@@ -370,8 +371,8 @@ action_root_projection_preserves_each_base_and_action_contribution_and_validates
     action_test_plan(&actions,Action_Plan{profile=profile});action_test_add_state(&actions,Action_State{entity=state.entity,plan=0})
     playback:Playback;defer playback_free(&playback);testing.expect(t,tracks_bind(&playback,&state,&content));events:Animation_Events;defer delete(events.items)
     w:Actions_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     cache:Animation_Constraints;defer constraints_free(&cache)
     // An action kept in place blends the reference of the root bone by its weight, one that extracts
     // its clip: over a base kept in place, the base is at the reference.
@@ -400,10 +401,10 @@ action_root_projection_preserves_each_base_and_action_contribution_and_validates
 @(test)
 actions_preserve_the_previous_asset_state_when_appending_a_replacement_plan_fails_and_retry :: proc(t:^testing.T) {
     w:Actions_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     entity:=core.create(&w.entities)
-    description:=ANIMATION_DEFAULT;description.asset={3,4};core.add(&w.descriptions,entity,description);core.test_world_settle(&w)
+    description:=ANIMATION_DEFAULT;description.asset={3,4};core.add(&w.descriptions,entity,description);test_world_settle(&w)
     cache:Character_Assets;defer character_assets_free(&cache)
     profiles:=[2]Action_Profile{action_test_profile(),action_test_profile()};defer for &value in profiles {action_profile_free(&value)}
     test_character_seed(&cache,{3,4},action_test_set(profiles[0]));test_character_seed(&cache,{5,6},action_test_set(profiles[1]))
@@ -431,10 +432,10 @@ actions_preserve_the_previous_asset_state_when_appending_a_replacement_plan_fail
 a_new_actions_asset_or_revision_interrupts_the_playing_action_and_fades_its_layer_out :: proc(t:^testing.T) {
     for change in ([2]string{"another asset","a new revision"}) {
         w:Actions_World
-        if !core.test_world_init(t,&w,test_types) {return}
-        defer core.test_world_destroy(&w)
+        if !test_world_init(t,&w) {return}
+        defer test_world_destroy(&w)
         entity:=core.create(&w.entities)
-        description:=ANIMATION_DEFAULT;description.asset={3,4};core.add(&w.descriptions,entity,description);core.test_world_settle(&w)
+        description:=ANIMATION_DEFAULT;description.asset={3,4};core.add(&w.descriptions,entity,description);test_world_settle(&w)
         cache:Character_Assets;defer character_assets_free(&cache)
         profiles:=[2]Action_Profile{action_test_profile(),action_test_profile()};defer for &value in profiles {action_profile_free(&value)}
         test_character_seed(&cache,{3,4},action_test_set(profiles[0]));test_character_seed(&cache,{5,6},action_test_set(profiles[1]))
@@ -474,11 +475,11 @@ a_new_actions_asset_or_revision_interrupts_the_playing_action_and_fades_its_laye
 @(test)
 actions_discover_changed_components_retry_requests_and_compact_generational_rows_through_world_copies :: proc(t:^testing.T) {
     w:Actions_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     first,second,plain:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
     for entity in ([3]core.Entity{first,second,plain}) {core.add(&w.descriptions,entity,ANIMATION_DEFAULT)}
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     cache:Character_Assets;defer character_assets_free(&cache)
     profiles:=[2]Action_Profile{action_test_profile(),action_test_profile()};defer for &value in profiles {action_profile_free(&value)}
     test_character_seed(&cache,{3,4},action_test_set(profiles[0]));test_character_seed(&cache,{5,6},action_test_set(profiles[1]))
@@ -509,11 +510,11 @@ actions_discover_changed_components_retry_requests_and_compact_generational_rows
     prepared=prepare(&actions,&requests,&cache,&w.descriptions,&playback,&events,&app,nil)
     context=saved;app.allocator=saved.allocator;actions.allocator=saved.allocator;cache.allocator=saved.allocator
     testing.expect(t,prepared && actions.plans[action_state(&actions,first).plan].asset==base.Asset_Id{5,6} && len(actions.states)==2)
-    core.remove(&w.descriptions,first);core.test_world_settle(&w)
+    core.remove(&w.descriptions,first);test_world_settle(&w)
     testing.expect(t,prepare(&actions,&requests,&cache,&w.descriptions,&playback,&events,&app,nil) && action_state(&actions,first)==nil && action_state(&actions,second)!=nil && len(actions.states)==1)
     old:=second;index:=core.entity_index(second)
-    core.destroy(&w.entities,second);core.test_world_settle(&w)
-    second=core.create(&w.entities);core.add(&w.descriptions,second,Animation{asset={3,4}});core.test_world_settle(&w)
+    core.destroy(&w.entities,second);test_world_settle(&w)
+    second=core.create(&w.entities);core.add(&w.descriptions,second,Animation{asset={3,4}});test_world_settle(&w)
     context.allocator=runtime.nil_allocator();context.temp_allocator=context.allocator;app.allocator=context.allocator
     prepared=prepare(&actions,&requests,&cache,&w.descriptions,&playback,&events,&app,nil)
     context=saved;app.allocator=saved.allocator;actions.allocator=saved.allocator;cache.allocator=saved.allocator
@@ -523,10 +524,10 @@ actions_discover_changed_components_retry_requests_and_compact_generational_rows
 @(test)
 actions_retry_a_first_fire_when_profile_preparation_has_no_memory :: proc(t:^testing.T) {
     w:Actions_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     entity:=core.create(&w.entities)
-    description:=ANIMATION_DEFAULT;description.asset={3,4};core.add(&w.descriptions,entity,description);core.test_world_settle(&w)
+    description:=ANIMATION_DEFAULT;description.asset={3,4};core.add(&w.descriptions,entity,description);test_world_settle(&w)
     profile:=action_test_profile();defer action_profile_free(&profile)
     cache:Character_Assets;defer character_assets_free(&cache);test_character_seed(&cache,{3,4},action_test_set(profile))
     host_assets:host.Assets;app:=host.App{assets=&host_assets,allocator=context.allocator};playback:Playback;defer playback_free(&playback)
@@ -546,10 +547,10 @@ actions_retry_a_first_fire_when_profile_preparation_has_no_memory :: proc(t:^tes
 @(test)
 action_playing_answers_while_an_action_plays_and_a_section_asked_of_it_moves_it_there :: proc(t:^testing.T) {
     w:Actions_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     entity:=core.create(&w.entities)
-    description:=ANIMATION_DEFAULT;description.asset={3,4};core.add(&w.descriptions,entity,description);core.test_world_settle(&w)
+    description:=ANIMATION_DEFAULT;description.asset={3,4};core.add(&w.descriptions,entity,description);test_world_settle(&w)
     profile:=action_test_profile();defer action_profile_free(&profile)
     cache:Character_Assets;defer character_assets_free(&cache);test_character_seed(&cache,{3,4},action_test_set(profile))
     host_assets:host.Assets;app:=host.App{assets=&host_assets,allocator=context.allocator};playback:Playback;defer playback_free(&playback)
@@ -587,10 +588,10 @@ action_playing_answers_while_an_action_plays_and_a_section_asked_of_it_moves_it_
 a_world_action_plays_at_its_speed_while_its_entity_is_slowed :: proc(t:^testing.T) {
     for clock in Action_Clock {
         w:Actions_World
-        if !core.test_world_init(t,&w,test_types) {return}
-        defer core.test_world_destroy(&w)
+        if !test_world_init(t,&w) {return}
+        defer test_world_destroy(&w)
         entity:=core.create(&w.entities)
-        description:=ANIMATION_DEFAULT;description.asset={3,4};description.loop=false;core.add(&w.descriptions,entity,description);core.test_world_settle(&w)
+        description:=ANIMATION_DEFAULT;description.asset={3,4};description.loop=false;core.add(&w.descriptions,entity,description);test_world_settle(&w)
         content:host.Content_Animation;state:=layer_fixture(t,&content);defer lib.library_destroy(&content.lib);defer playing_free(&state);state.entity=entity;state.asset=content.id
         action_test_spans(&content);defer action_test_spans_free(&content)
         profile:=action_test_profile();defer action_profile_free(&profile);profile.actions[0].clock=clock
@@ -613,9 +614,10 @@ a_world_action_plays_at_its_speed_while_its_entity_is_slowed :: proc(t:^testing.
 
 // What a whole tick of the animation of a rig reads and writes, for a test that plays its actions
 // and looks as a game asks for them.
-@(private="file")
+@(private)
+@(test_world)
 Played_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     transforms:core.Table(core.Transform),parents:core.Table(core.Parent),names:core.Table(core.Name),
     meshes:core.Table(erender.Mesh_Renderer),sources:core.Table(Pose_Source),animations:core.Table(Animation),targets:core.Table(Animation_Target),
     progress:core.Table(Animation_Progress),attachments:core.Table(Bone_Attachment),worlds:core.Table(core.World_Transform),
@@ -647,24 +649,24 @@ an_action_and_a_look_over_an_idle_body_fade_in_and_back_to_rest :: proc(t:^testi
     defer host.assets_destroy(&assets)
     app:=host.App{assets=&assets,allocator=context.allocator};defer host.app_content_destroy(&app)
     w:Played_World;problems:core.Problems
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     characters:Character_Assets;skeletons:Skeleton_Assets;sources:Source_Assets
     defer {character_assets_free(&characters);skeleton_assets_free(&skeletons);source_assets_free(&sources)}
     rig,body:=core.create(&w.entities),core.create(&w.entities)
     core.add(&w.transforms,rig,core.TRANSFORM_IDENTITY);core.add(&w.transforms,body,core.TRANSFORM_IDENTITY)
     target:=Animation_Target{animation=rig};base.text_set(target.path[:],"Body");core.add(&w.targets,body,target)
     animation:=ANIMATION_DEFAULT;animation.asset=id;core.add(&w.animations,rig,animation)
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     DT :: f32(1.0/60)
     // The turn of the body in the tick, in radians per second.
     tick :: proc(w:^Played_World,problems:^core.Problems,app:^host.App,characters:^Character_Assets,skeletons:^Skeleton_Assets,sources:^Source_Assets,body:core.Entity) -> f32 {
         before,_:=core.get(core.read(&w.transforms),body)
         time:=core.Time{dt=DT,playing=true}
         animation_sample(core.read(&w.animations),&w.progress,&w.played,core.read(&w.attachments),&w.transforms,core.read(&w.parents),{},core.read(&w.names),core.read(&w.targets),core.read(&w.meshes),core.read(&w.sources),core.read(&w.remotes),&w.requests,&w.events,&w.modifiers,&w.playback,characters,skeletons,app,time,{},problems,&w.actions,&w.motion,sources,{},core.CLOCK_DEFAULT,ANIMATION_BUDGET_CONFIG_DEFAULT)
-        core.test_world_settle(w)
+        test_world_settle(w)
         animation_advance(&w.transforms,core.read(&w.parents),core.read(&w.worlds),&w.requests,&w.modifiers,&w.playback,&w.constraints,&w.grounding,{},{},time,core.ref(skeletons),problems,&w.motion,characters,{},{},core.CLOCK_DEFAULT,nil)
-        core.test_world_settle(w)
+        test_world_settle(w)
         after,_:=core.get(core.read(&w.transforms),body)
         return mm.quat_angle(before.rotation,after.rotation)/DT
     }

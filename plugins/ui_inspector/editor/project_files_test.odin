@@ -335,13 +335,14 @@ what_make_widget_declares_and_what_a_person_changes :: proc(t:^testing.T) {
 
 // ---------------------------------------------------------------- the paths a write binds
 
-@(private="file") Game_Slot :: struct {label:[16]u8,count:i32}
-@(private="file") Game_Status :: struct {health:f32,hits:i32,message:[32]u8,slots:[3]Game_Slot}
-@(private="file") Game_Hotbar :: struct {slots:[3]Game_Slot,chosen:i32}
-@(private="file") Game_Enemy :: struct {label:[16]u8,health:f32}
-@(private="file")
+@(private) Game_Slot :: struct {label:[16]u8,count:i32}
+@(private) Game_Status :: struct {health:f32,hits:i32,message:[32]u8,slots:[3]Game_Slot}
+@(private) Game_Hotbar :: struct {slots:[3]Game_Slot,chosen:i32}
+@(private) Game_Enemy :: struct {label:[16]u8,health:f32}
+@(private)
+@(test_world)
 Game_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     status:core.Table(Game_Status) `mirai:"game,name=Status"`,
     enemies:core.Table(Game_Enemy) `mirai:"game,name=Enemy"`,
     hotbar:Game_Hotbar `mirai:"game,name=Hotbar"`,
@@ -373,9 +374,9 @@ a_write_refuses_the_paths_the_game_lacks_and_changes_nothing :: proc(t:^testing.
     p:Project
     if !project_init(t,&p,"paths") {return}
     defer project_destroy(&p)
-    info,described:=core.test_info(t,Game_World)
+    info,described:=test_info(t,Game_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     app:=host.App{allocator=context.allocator,assets=&p.assets,info=&info}
     s:=editor.Session{app=&app,assets_root=p.root,headless=true}
     write :: proc(s:^editor.Session,file,node,document:string) -> (message:string,ok:bool) {

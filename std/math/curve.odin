@@ -63,8 +63,7 @@ Path_Point :: struct {
 path_at :: proc "contextless" (points:[]Path_Point,segment:int,t:f32) -> (p:Path_Point,tangent:Vec3) #no_bounds_check {
     if segment<0 || segment>=len(points)-1 {return}
     a,b:=points[segment],points[segment+1]
-    before:=segment>0?points[segment-1].position:2*a.position-b.position
-    after:=segment+2<len(points)?points[segment+2].position:2*b.position-a.position
+    before,_,_,after:=path_span(points,segment)
     // The slope of y at a point between two rises, zero where it turns or
     // stops, and at most three times the lesser rise, which keeps it monotone.
     slope :: proc "contextless" (y0,y1,y2:f32) -> f32 {
@@ -79,6 +78,16 @@ path_at :: proc "contextless" (points:[]Path_Point,segment:int,t:f32) -> (p:Path
     p.position.y=a.position.y+(b.position.y-a.position.y)*(3*t*t-2*t*t*t)+m0*(t*t*t-2*t*t+t)+m1*(t*t*t-t*t)
     tangent=catmull_rom_tangent(before,a.position,b.position,after,t)
     tangent.y=(a.position.y-b.position.y)*(6*t*t-6*t)+m0*(3*t*t-4*t+1)+m1*(3*t*t-2*t)
+    return
+}
+
+// The four points of the Catmull-Rom span of a path from points[segment] to the
+// next, the ends going on straight. Zero for a segment the points do not have.
+path_span :: proc "contextless" (points:[]Path_Point,segment:int) -> (before,a,b,after:Vec3) #no_bounds_check {
+    if segment<0 || segment>=len(points)-1 {return}
+    a,b=points[segment].position,points[segment+1].position
+    before=segment>0?points[segment-1].position:2*a-b
+    after=segment+2<len(points)?points[segment+2].position:2*b-a
     return
 }
 
@@ -113,9 +122,7 @@ path_sample :: proc "contextless" (points:[]Path_Point,piece:f32,out:[]Path_Poin
 // heights. Zero for a segment the points do not have.
 path_segment_box :: proc "contextless" (points:[]Path_Point,segment:int) -> Aabb #no_bounds_check {
     if segment<0 || segment>=len(points)-1 {return {}}
-    a,b:=points[segment].position,points[segment+1].position
-    before:=segment>0?points[segment-1].position:2*a-b
-    after:=segment+2<len(points)?points[segment+2].position:2*b-a
+    before,a,b,after:=path_span(points,segment)
     inner:=[2]Vec3{a+(b-before)/6,b-(after-a)/6}
     box:=Aabb{vec3_min(vec3_min(a,b),vec3_min(inner[0],inner[1])),vec3_max(vec3_max(a,b),vec3_max(inner[0],inner[1]))}
     box.min.y,box.max.y=min(a.y,b.y),max(a.y,b.y)

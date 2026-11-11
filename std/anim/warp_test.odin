@@ -127,6 +127,41 @@ pose_stride_warp_scales_each_foot_from_its_hip_and_preserves_the_source_knee_sid
     testing.expect(t,lengths,"segment lengths preserved")
 }
 
+// A long stride of legs nearly straight in the clip lowers the pelvis so that every foot reaches
+// where the stride puts it, with no leg more extended than the clip has it.
+@(test)
+pose_stride_warp_lowers_the_pelvis_so_every_foot_reaches_its_target :: proc(t:^testing.T) {
+    parents:=[7]i32{-1,0,1,2,0,4,5};names:=[7]u64{1,2,3,4,5,6,7}
+    rest:[7]math.Transform
+    for &bone in rest {bone=math.TRANSFORM_IDENTITY}
+    rest[0].position={0,1,0}
+    rest[1].position={.1,0,0};rest[2].position={0,-.42,.12};rest[3].position={0,-.42,.08}
+    rest[4].position={-.1,0,0};rest[5].position={0,-.42,-.05};rest[6].position={0,-.42,-.15}
+    skeleton:=Skeleton{parents[:],names[:],rest[:]}
+    legs:=[2]Pose_Warp_Limb{{hip=1,knee=2,foot=3},{hip=4,knee=5,foot=6}}
+    source:[7]math.Transform
+    testing.expect(t,pose_world(parents[:],rest[:],source[:]))
+    Case :: struct {stride:f32,lowered:bool}
+    for c in ([]Case{{stride=2,lowered=true},{stride=1.5,lowered=true},{stride=.6,lowered=false}}) {
+        local:=rest;world:[7]math.Transform
+        settings:=Pose_Warp{pelvis=0,legs=legs[:],up={0,1,0},direction={0,0,1},stride=c.stride,weight=1}
+        valid:=pose_warp(skeleton,local[:],world[:],settings)
+        worst,extension:f32
+        for leg in legs {
+            hip,foot:=source[leg.hip].position,source[leg.foot].position
+            target:=foot+math.Vec3{0,0,1}*linalg.dot(foot-hip,math.Vec3{0,0,1})*(c.stride-1)
+            worst=max(worst,linalg.length(world[leg.foot].position-target))
+            extension=max(extension,linalg.length(world[leg.foot].position-world[leg.hip].position)-linalg.length(foot-hip))
+        }
+        lowered:=world[0].position.y<source[0].position.y-1e-3
+        testing.expectf(t,valid && worst<1e-3 && extension<1e-4 && lowered==c.lowered,"stride %.1f: a foot misses by %.4f m, a leg extends %.4f m more, the pelvis at %.3f m",c.stride,worst,extension,world[0].position.y)
+    }
+    nan:=f32(0h7fc00000)
+    local:=rest;world:[7]math.Transform
+    testing.expect(t,!pose_warp(skeleton,local[:],world[:],{pelvis=0,legs=legs[:],up={0,1,0},direction={0,0,1},stride=nan,weight=1}),"a NaN stride")
+    testing.expect(t,!pose_warp(skeleton,local[:],world[:],{pelvis=0,legs=legs[:],up={0,1,0},direction={nan,0,1},stride=2,weight=1}),"a NaN direction")
+}
+
 @(test)
 pose_stride_warp_keeps_nearly_straight_knees_on_the_source_side_when_shortening_the_step :: proc(t:^testing.T) {
     parents:=[4]i32{-1,0,1,2};names:=[4]u64{1,2,3,4}

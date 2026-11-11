@@ -73,9 +73,10 @@ Mirai_Metrics :: struct {
     searches,jumps:u32,
 }
 
-@(private="file")
+@(private)
+@(test_world)
 Match_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     transforms:core.Table(core.Transform),
     animations:core.Table(Animation),
 }
@@ -87,9 +88,9 @@ Match_World :: struct {
 @(private="file")
 mirai_avatar_walk :: proc(t:^testing.T,app:^host.App,skeletons:^Skeleton_Assets,graphs:^Character_Assets,id,skeleton:base.Asset_Id) -> (metrics:Mirai_Metrics,ok:bool) {
     w:Match_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
-    entity:=core.create(&w.entities);core.add(&w.transforms,entity,core.TRANSFORM_IDENTITY);core.test_world_settle(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    entity:=core.create(&w.entities);core.add(&w.transforms,entity,core.TRANSFORM_IDENTITY);test_world_settle(&w)
     animation:=ANIMATION_DEFAULT;animation.asset=id
     state:=Playing{entity=entity,clip=-1};defer playing_free(&state)
     playback:Playback;defer playback_free(&playback)
@@ -209,6 +210,7 @@ matching_walks_mirai_avatar_with_its_feet_planted_without_pose_jumps_and_follows
 Match_Fixture :: struct {
     using w:Match_World,
     bones:[4]asset.Skeleton_Bone,
+    pairs:[4]i32, // the bone on the other side of each
     definition:Skeleton_Content,
     content:host.Content_Animation,
     assets:host.Assets,
@@ -228,17 +230,18 @@ Match_Fixture :: struct {
 
 @(private="file")
 match_fixture :: proc(t:^testing.T,f:^Match_Fixture,memory:u32=MATCH_INFO_DEFAULT.memory,leap:=false) -> bool {
-    if !core.test_world_init(t,&f.w,test_types) {return false}
+    if !test_world_init(t,&f.w) {return false}
     f.rig=core.create(&f.entities)
     f.animation=ANIMATION_DEFAULT;f.animation.asset=MATCH_TEST_ID
-    core.add(&f.transforms,f.rig,core.TRANSFORM_IDENTITY);core.add(&f.animations,f.rig,f.animation);core.test_world_settle(&f.w)
+    core.add(&f.transforms,f.rig,core.TRANSFORM_IDENTITY);core.add(&f.animations,f.rig,f.animation);test_world_settle(&f.w)
     Bone :: struct {name,path:string,at:mm.Vec3}
     for bone,i in ([4]Bone{{"hips","hips",{0,1,0}},{"foot_l","hips/foot_l",{.1,-.95,0}},{"foot_r","hips/foot_r",{-.1,-.95,0}},{"head","hips/head",{0,.7,0}}}) {
         f.bones[i]={parent=-1 if i==0 else 0,translation=bone.at,rotation=1,scale={1,1,1},target=base.name_hash(bone.path)}
         base.text_set(f.bones[i].name[:],bone.name);base.text_set(f.bones[i].path[:],bone.path)
     }
     // Its feet and hips, which matching measures, are those of its body.
-    f.definition={id={0x3a7c,2},revision=1,bones=f.bones[:],body=lib.body_map_empty()}
+    f.pairs={0,2,1,3}
+    f.definition={id={0x3a7c,2},revision=1,bones=f.bones[:],body=lib.body_map_empty(),mirror=f.pairs[:]}
     f.definition.body.bones[.Pelvis],f.definition.body.bones[.Foot_L],f.definition.body.bones[.Foot_R],f.definition.body.bones[.Head]=0,1,2,3;f.definition.body.up={0,1,0}
     hips,left,right,head:=f.bones[0].target,f.bones[1].target,f.bones[2].target,f.bones[3].target
     still:=[2]lib.Keyframe{{time=0,value={.1,-.95,0,0}},{time=1,value={.1,-.95,0,0}}}
@@ -338,7 +341,7 @@ match_fixture_free :: proc(f:^Match_Fixture) {
     character_assets_free(&f.graphs);actions_runtime_free(&f.actions);core.table_destroy(&f.played);core.table_destroy(&f.remotes)
     delete(f.assets.registry.by_id);delete(f.assets.registry.files)
     delete(f.events.items);delete(f.requests.plays.items);delete(f.requests.values.items)
-    core.test_world_destroy(&f.w)
+    test_world_destroy(&f.w)
 }
 // A tick of the rig with the body in mode: standing, or going at velocity, asked for desired,
 // against a wall of that normal, landing in time_to_land seconds. It serves what play, stop and set
@@ -825,15 +828,37 @@ a_blended_sample_plays_its_clips_together_at_its_weights_in_phase :: proc(t:^tes
     foot:=f.state.local[bone_resolve(f.state,bone_ref("foot_l"))].position
     testing.expectf(t,linalg.length(foot-mm.Vec3{.1,(stride.y-.95)/2,stride.z/2})<.01,"the foot is at %v, halfway to the stride %v",foot,stride)
 
-    // A blend of clips that last different times says which and how to fix it.
+    // Clips of different durations blend over the mean of their durations by weight: walk (1 s)
+    // and vault (2 s), half and half, last 1.5 s, and each plays at the same share of its own.
     g:Match_Fixture;defer match_fixture_free(&g)
     if !testing.expect(t,match_fixture(t,&g)) {return}
     base.text_set(g.graphs.contents[0].set.match.clips[1].blend[0][:],"vault")
     long:=make([]Match_Sample,1);long[0]={source=1,weights={0=.5,1=.5}}
     g.graphs.contents[0].set.match.samples=long
-    _=match_step(&g,dt,GROUND)
-    problem:=core.problem_find(&g.problems,g.rig,"animation.match_blend")
-    testing.expect(t,problem!=nil && strings.contains(core.problem_text(problem),"walk (1.000 s) with vault (2.000 s)"),"a blend of a clip of 1 s and one of 2 s is reported")
+    for _ in 0..<30 {testing.expect(t,match_step(&g,dt,GROUND,velocity={0,0,-.75},desired={0,0,-.75}))}
+    testing.expect(t,core.problem_find(&g.problems,g.rig,"animation.match_blend")==nil && g.graphs.contents[0].databases[0].database.ranges[1].count==46,"the blend has the rows of 1.5 s")
+    mixed:=g.state.program.output.groups[0]
+    if !testing.expectf(t,mixed.count==2,"the blend of walk and vault plays, not %d clips",mixed.count) {return}
+    walked,vaulted:=g.state.program.players[mixed.leaves[0].player].player,g.state.program.players[mixed.leaves[1].player].player
+    shares:=[2]f32{lib.player_time(&g.content.lib,walked),lib.player_time(&g.content.lib,vaulted)/2}
+    testing.expectf(t,abs(shares[0]-shares[1])<1e-3,"in phase: %v of each clip",shares)
+}
+
+// A source mirrored Only plays its clip reflected: the left foot steps where the clip puts the
+// right one, across the plane between them; the root motion and the clock of warping follow.
+@(test)
+a_mirrored_source_plays_its_clip_with_left_and_right_swapped :: proc(t:^testing.T) {
+    f:Match_Fixture;defer match_fixture_free(&f)
+    if !testing.expect(t,match_fixture(t,&f)) {return}
+    content:=&f.graphs.contents[0]
+    content.set.match.clips[1].mirror=.Only
+    if !testing.expect(t,match_check(content.set.match)) {return}
+    for _ in 0..<30 {testing.expect(t,match_step(&f,1.0/60,GROUND,velocity={0,0,-1.5},desired={0,0,-1.5}))}
+    value,_:=animation_match(&f.playback,f.rig)
+    player:=f.state.program.players[f.state.program.output.groups[0].leaves[0].player].player
+    right:=lib.clip_evaluate(&f.content.lib,lib.clip_tracks(&f.content.lib,lib.clip_find(&f.content.lib,base.name_hash("walk")))[1],lib.player_time(&f.content.lib,player))
+    foot:=f.state.local[bone_resolve(f.state,bone_ref("foot_l"))].position
+    testing.expectf(t,value.clip==base.name_hash("walk") && f.state.program.output.mirror && linalg.length(foot-mm.Vec3{-right.x,right.y,right.z})<.01,"the left foot is at %v, the right one of the clip at %v",foot,right.xyz)
 }
 
 // A source with rates of its own follows the body between them, past those of the .character: the walk
@@ -999,6 +1024,8 @@ match_library_swap_enters_the_new_clips_through_an_inertial_transition :: proc(t
     dt:=f32(1)/30;walking:=mm.Vec3{0,0,-1.5}
     for _ in 0..<20 {testing.expect(t,match_step_with(&f,&f.content,dt,GROUND,walking))}
     before:=[2]mm.Vec3{f.state.local[1].position,f.state.local[2].position}
+    foot_l:=bone_resolve(f.state,bone_ref("foot_l"))
+    planted:=f.state.local[foot_l].position
     walked,_:=animation_match(&f.playback,f.rig)
     testing.expect(t,walked.clip==base.name_hash("walk"),"it walks before the swap")
 
@@ -1010,6 +1037,11 @@ match_library_swap_enters_the_new_clips_through_an_inertial_transition :: proc(t
     testing.expect(t,f.state.program.library==MATCH_TEST_LIBRARY && swapped.clip==base.name_hash("walk"),"the rig plays the walk of the new library")
     testing.expect(t,f.state.program.inertia.active,"the swap enters the new clip through an inertial transition")
     testing.expectf(t,jump<.1,"a foot jumps %.3f m in the tick of the swap",jump)
+    // Nothing of the new library plays yet: the search asks for the feet the rig has, not for the
+    // mean of the database, and enters the new walk where its left foot is where the rig has it.
+    walk_new:=lib.clip_find(&weapon.lib,base.name_hash("walk"))
+    entered:=lib.clip_evaluate(&weapon.lib,lib.clip_tracks(&weapon.lib,walk_new)[0],f.state.program.output.groups[0].leaves[0].start)
+    testing.expectf(t,linalg.length(entered.xyz-planted)<.03,"the new walk starts with the left foot at %v, the rig had it at %v",entered.xyz,planted)
     // Past the blend, the feet are those of the new walk.
     for _ in 0..<15 {testing.expect(t,match_step_with(&f,&weapon,dt,GROUND,walking))}
     testing.expect(t,!f.state.program.inertia.active,"the transition ends within its blend")

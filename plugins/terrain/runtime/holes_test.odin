@@ -91,7 +91,7 @@ bodies_fall_through_holes_cut_at_run_time_and_far_holed_chunks_stay_exact :: pro
     owner:=core.create(&w.entities)
     core.add(&w.transforms,owner,core.TRANSFORM_IDENTITY)
     core.add(&w.terrains,owner,Terrain{source=id,solid=true})
-    core.test_world_settle(&w.w)
+    test_world_settle(&w.w)
     view:=core.VIEW_DEFAULT
     view.position={-30,2,-30}
     settings:=Terrain_Settings{lod_distance=8}
