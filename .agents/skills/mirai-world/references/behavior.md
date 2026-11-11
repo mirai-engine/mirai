@@ -144,15 +144,22 @@ what it perceives; `think` only reads and proposes, and the actions write.
 ## Places
 
 - `place_query` asks for places for an agent: candidates around it, around another entity or
-  around a point (in rings, in a grid or the points of its navmesh joined to that center,
-  `ai.places_mesh`), entities (those of the request, or the `Perceivable`s of some teams near the
-  center) or the open offers of a use of the smart objects, brought to its navmesh, measured by
-  its tests (distance, angle, visibility from someone with a ray, path length over what the agent
-  walks and crosses, influence of some teams and cover) and scored with utility; the best ones
-  come back in its `Place_Result`, with the request number, the entity of each one that came from
-  one and the offer. The path length of all the candidates comes from a single search from the
-  one measuring (`ai.nav_costs`), with the filter with which navigation moves the agent
+  around a point (in rings, all around or in an arc centered on where the center faces, in a grid
+  or the points of its navmesh joined to that center, `ai.places_mesh`), entities (those of the
+  request, the `Perceivable`s of some teams near the center, or with `Remembered` those of the
+  agent's `Perception` memory, where it last perceived them: an unseen enemy is no candidate) or
+  the open offers of a use of the smart objects, brought to its navmesh, measured by its tests
+  (distance, angle, visibility from someone with a ray, path length over what the agent walks and
+  crosses, influence of some teams and cover) and scored with utility; the best ones come back in
+  its `Place_Result`, with the request number, the entity of each one that came from one and the
+  offer. The path length of all the candidates comes from a single search from the one measuring
+  (`ai.nav_costs`), with the filter with which navigation moves the agent
   (`nav.agent_filter`).
+- Measures run by cost: those that read numbers on every candidate, then the search over the mesh,
+  then rays (`Visible`) and searches through a volume one candidate at a time, from the highest
+  score the measured tests allow down. The score is a product, so a candidate a measure vetoes
+  takes no more of them, and one whose bound stays below the kept ones is not measured; the places
+  found are exactly those of measuring everything.
 - A query whose center or one of whose tests measures from an entity that no longer exists finds
   no places (`Empty`), and that of one who was destroyed while waiting is not answered. Of
   several queries of an agent that wait, only the last is answered.
@@ -179,7 +186,8 @@ what it perceives; `think` only reads and proposes, and the actions write.
   forgetting, a remembered subject that is
   destroyed, ray turns, random crowds that remember by the grid whom they would among every
   perceivable, a tick with nothing to do that goes through no row, places by budget, from the
-  navmesh, from entities and from offers, a place
+  navmesh, from entities, from memory and from offers, rays only where they change the answer, a
+  place
   target that is destroyed, the offers by team, ability, capacity, uses and cooldown, and the
   influence maps without allocating.
   `mirai test plugins/multiplayer/runtime

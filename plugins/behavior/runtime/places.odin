@@ -17,6 +17,8 @@ import phys "plugins:physics/runtime"
 // tests and scores them with their considerations; the best come
 // back in the Place_Result of the querier, with the request it answers.
 // Queries run in order of arrival, Behavior_Settings.queries of them a tick.
+// The score is a product, so a ray or a search is spent only on a candidate
+// the cheaper measures left above zero that can still be among the kept.
 
 PLACE_TESTS :: 8
 PLACE_CANDIDATES :: 128
@@ -29,6 +31,7 @@ Place_Layout :: enum u8 {
     Mesh,         // points of the mesh of the querier joined to the center, spacing apart, from inner to outer; a grid in a volume
     Entities,     // the entities of the query
     Perceivables, // the Perceivables of the teams of the query within outer of the center
+    Remembered,   // where the querier last perceived those of the teams of the query, within outer of the center
     Offers,       // where the users of the offers of `use` stand, within outer of the center, those the querier can take now
 }
 
@@ -64,10 +67,11 @@ Place_Query :: struct {
     layout:Place_Layout,
     inner,outer:f32,      // m
     rings,per_ring:u8,
+    arc:f32,              // radians of the rings, centered on where the center faces; 0: all around
     spacing:f32,          // m, of a grid or of the points of the mesh
     entities:[PLACE_ENTITIES]core.Entity, // of the layout Entities
     entity_count:u8,
-    teams:Teams,          // of the layout Perceivables
+    teams:Teams,          // of the layouts Perceivables and Remembered
     use:Smart_Use,        // of the layout Offers
     tests:[PLACE_TESTS]Place_Test,
     test_count:u8,
@@ -125,7 +129,7 @@ places_free :: proc(p:^Places) {
 @(step="fixed",stage="react",server)
 places_run :: proc(
     requests:^Place_Requests,places:^Places,results:^core.Table(Place_Result),settings:core.Ref(Behavior_Settings),
-    worlds:^core.Table(core.World_Transform,.Read),perceivers:^core.Table(Perceiver,.Read),perceivables:^core.Table(Perceivable,.Read),paths:^core.Table(nav.Nav_Path,.Read),
+    worlds:^core.Table(core.World_Transform,.Read),perceivers:^core.Table(Perceiver,.Read),perceptions:^core.Table(Perception,.Read),perceivables:^core.Table(Perceivable,.Read),paths:^core.Table(nav.Nav_Path,.Read),
     agents:^core.Table(nav.Nav_Agent,.Read),characters:^core.Table(phys.Character,.Read),walks:^core.Table(locomotion.Walk,.Read),swims:^core.Table(locomotion.Swim,.Read),
     navigation:core.Ref(nav.Navigation),physics:core.Ref(phys.Physics_State),
     smart:Smart_View,influence:core.Ref(Influence),problems:^core.Problems,
@@ -150,7 +154,7 @@ places_run :: proc(
         budget-=1
         result:Place_Result
         filter:=place_filter(navigation,query.querier,paths,agents,characters,walks,swims,physics)
-        if !place_run(places,query,&result,worlds,perceivers,perceivables,paths,navigation,physics,&filter,smart,agents,influence.ptr) {
+        if _,memory:=place_run(places,query,&result,worlds,perceivers,perceptions,perceivables,paths,navigation,physics,&filter,smart,agents,influence.ptr);!memory {
             core.report(problems,query.querier,"behavior.memory","no memory for the path search of a place query: its Path tests find no path to any place; free memory")
         }
         if row!=nil {row^=result}
@@ -176,8 +180,19 @@ place_filter :: proc(navigation:core.Ref(nav.Navigation),querier:core.Entity,pat
     return nav.agent_filter(navigation.ptr,class,agent,walk,core.has(swims,querier),nav.agent_gravity(physics,querier,character))
 }
 
-// Runs one query into a result.
-place_run :: proc(places:^Places,query:Place_Query,result:^Place_Result,worlds:^core.Table(core.World_Transform,$A),perceivers:^core.Table(Perceiver,$B),perceivables:^core.Table(Perceivable,$C),paths:^core.Table(nav.Nav_Path,$D),navigation:core.Ref(nav.Navigation),physics:core.Ref(phys.Physics_State),filter:^ai.Nav_Filter,smart:Smart_View,agents:^core.Table(nav.Nav_Agent,$E),influence:^Influence) -> (memory:bool) {
+// The candidates of a query, laid one after another.
+@(private)
+Place_Candidates :: struct {
+    points:[PLACE_CANDIDATES]mm.Vec3,
+    refs:[PLACE_CANDIDATES]ai.Nav_Ref,
+    sources:[PLACE_CANDIDATES]core.Entity, // the entity a candidate was laid out from
+    offers:[PLACE_CANDIDATES]i8,           // and its offer
+    inputs:[PLACE_CANDIDATES*PLACE_TESTS]f32, // the measures of each, stride apart
+    count,stride:int,
+}
+
+// Runs one query into a result; evals counts the rays and searches it took.
+place_run :: proc(places:^Places,query:Place_Query,result:^Place_Result,worlds:^core.Table(core.World_Transform,$A),perceivers:^core.Table(Perceiver,$B),perceptions:^core.Table(Perception,$F),perceivables:^core.Table(Perceivable,$C),paths:^core.Table(nav.Nav_Path,$D),navigation:core.Ref(nav.Navigation),physics:core.Ref(phys.Physics_State),filter:^ai.Nav_Filter,smart:Smart_View,agents:^core.Table(nav.Nav_Agent,$E),influence:^Influence) -> (evals:int,memory:bool) {
     query:=query
     memory=true
     result^={request=query.request,status=.Empty,offers=-1}
@@ -189,8 +204,11 @@ place_run :: proc(places:^Places,query:Place_Query,result:^Place_Result,worlds:^
         }
         return
     }
-    center,ok:=at_context(worlds,query.querier,query.center,query.target,query.point)
-    if !ok {return}
+    center:=at_context(worlds,query.querier,query.center,query.target,query.point) or_return
+    tests:=query.tests[:min(int(query.test_count),PLACE_TESTS)]
+    // A test measured from an entity that is gone has nothing to measure: no place is good.
+    froms:[PLACE_TESTS]mm.Transform
+    for test,k in tests {froms[k]=at_context(worlds,query.querier,test.from,test.target,test.point) or_return}
     mesh:^ai.Nav_Mesh
     volume:^ai.Nav_Volume
     class:=0
@@ -198,37 +216,46 @@ place_run :: proc(places:^Places,query:Place_Query,result:^Place_Result,worlds:^
     if navigation.ptr!=nil && navigation.ready && class<navigation.count {
         if nav.class_in_volume(navigation.ptr,class) {volume=&navigation.ptr.classes[class].volume} else {mesh=&navigation.ptr.classes[class].mesh}
     }
-    candidates:[PLACE_CANDIDATES]mm.Vec3
-    sources:[PLACE_CANDIDATES]core.Entity // the entity a candidate was laid out from
-    offers:[PLACE_CANDIDATES]i8           // and its offer
-    for &o in offers {o=-1}
-    count:int
+    c:Place_Candidates
+    c.stride=max(len(tests),1)
+    for &o in c.offers {o=-1}
+    add :: proc(c:^Place_Candidates,at:mm.Vec3,source:core.Entity,offer:i8=-1) {
+        if c.count>=PLACE_CANDIDATES {return}
+        c.points[c.count],c.sources[c.count],c.offers[c.count]=at,source,offer
+        c.count+=1
+    }
     switch query.layout {
-    case .Rings: count=ai.places_rings(center.position,query.inner,query.outer,int(query.rings),int(query.per_ring),candidates[:])
-    case .Grid: count=ai.places_grid(center.position,query.outer,query.spacing,candidates[:])
+    case .Rings: c.count=ai.places_rings(center.position,query.inner,query.outer,int(query.rings),int(query.per_ring),c.points[:],mm.quat_forward(center.rotation),query.arc)
+    case .Grid: c.count=ai.places_grid(center.position,query.outer,query.spacing,c.points[:])
     case .Mesh:
         if mesh==nil {
-            count=ai.places_grid(center.position,query.outer,query.spacing,candidates[:])
+            c.count=ai.places_grid(center.position,query.outer,query.spacing,c.points[:])
             break
         }
         from,_,on:=ai.nav_find_nearest_any(mesh,center.position,{0.5,2,0.5})
         if !on || len(places.query.points)==0 && !ai.nav_query_init(&places.query,4096) {break}
-        count=ai.places_mesh(&places.query,mesh,from,center.position,query.inner,query.outer,query.spacing,filter,candidates[:])
+        c.count=ai.places_mesh(&places.query,mesh,from,center.position,query.inner,query.outer,query.spacing,filter,c.points[:])
     case .Entities:
         for e in query.entities[:min(int(query.entity_count),PLACE_ENTITIES)] {
-            if pose,found:=core.get(worlds,e);found && count<PLACE_CANDIDATES {
-                candidates[count],sources[count]=pose.position,e
-                count+=1
-            }
+            if pose,found:=core.get(worlds,e);found {add(&c,pose.position,e)}
         }
     case .Perceivables:
         for row in 0..<core.count(perceivables) {
             e:=core.entity_at(perceivables,row)
-            if e==query.querier || u32(query.teams)&(1<<u32(perceivables.values[row].team))==0 || count>=PLACE_CANDIDATES {continue}
+            if e==query.querier || u32(query.teams)&(1<<u32(perceivables.values[row].team))==0 {continue}
             pose,found:=core.get(worlds,e)
             if !found || linalg.length(pose.position-center.position)>query.outer {continue}
-            candidates[count],sources[count]=pose.position,e
-            count+=1
+            add(&c,pose.position,e)
+        }
+    case .Remembered:
+        perception,found:=core.get(perceptions,query.querier)
+        if !found {break}
+        for o in perception.memory.items[:clamp(perception.memory.count,0,ai.PERCEPTION_CAPACITY)] {
+            e:=core.Entity(o.subject)
+            p,perceivable:=core.get(perceivables,e)
+            if e==query.querier || !perceivable || u32(query.teams)&(1<<u32(p.team))==0 {continue}
+            if !(linalg.length(o.position-center.position)<=query.outer) {continue}
+            add(&c,o.position,e)
         }
     case .Offers:
         user:=Smart_User{entity=query.querier}
@@ -238,69 +265,130 @@ place_run :: proc(places:^Places,query:Place_Query,result:^Place_Result,worlds:^
             e:=core.entity_at(smart.objects,row)
             object:=smart.objects.values[row]
             for offer,i in object.offers {
-                if offer.use!=query.use || count>=PLACE_CANDIDATES {continue}
+                if offer.use!=query.use {continue}
                 state,_:=core.get(smart.states,e)
                 pose,found:=core.get(worlds,e)
                 if !found || !smart_open(smart,e,i,offer,state,user) {continue}
                 at:=mm.transform_point(pose.transform,offer.at)
                 if linalg.length(at-center.position)>query.outer {continue}
-                candidates[count],sources[count],offers[count]=at,e,i8(i)
-                count+=1
+                add(&c,at,e,i8(i))
             }
         }
     }
     // Onto the mesh of the querier's class, or into its volume when it flies; those off it go.
-    if volume!=nil {
-        kept:=0
-        for i in 0..<count {
-            _,inside,found:=ai.nav_volume_find_nearest(volume,candidates[i],{0.5,1,0.5})
-            if !found {continue}
-            candidates[kept],sources[kept],offers[kept]=inside,sources[i],offers[i]
-            kept+=1
+    keep:[PLACE_CANDIDATES]bool
+    if volume!=nil || mesh!=nil {
+        for i in 0..<c.count {
+            if volume!=nil {_,c.points[i],keep[i]=ai.nav_volume_find_nearest(volume,c.points[i],{0.5,1,0.5})}
+            if mesh!=nil {c.refs[i],c.points[i],keep[i]=ai.nav_find_nearest_any(mesh,c.points[i],{0.5,2,0.5})}
         }
-        count=kept
+        place_sift(&c,keep[:])
     }
-    refs:[PLACE_CANDIDATES]ai.Nav_Ref
-    if mesh!=nil {
-        kept:=0
-        for i in 0..<count {
-            ref,on,found:=ai.nav_find_nearest_any(mesh,candidates[i],{0.5,2,0.5})
-            if !found {continue}
-            candidates[kept],refs[kept],sources[kept],offers[kept]=on,ref,sources[i],offers[i]
-            kept+=1
-        }
-        count=kept
-    }
-    tests:=query.tests[:min(int(query.test_count),PLACE_TESTS)]
     considerations:[PLACE_TESTS]ai.Consideration
     for test,i in tests {considerations[i]={input=u16(i),min=test.min,max=test.max,response=test.response}}
-    inputs:[PLACE_CANDIDATES*PLACE_TESTS]f32
-    stride:=max(len(tests),1)
-    // A test measured from an entity that is gone has nothing to measure: no place is good.
-    for test in tests {
-        if _,has:=at_context(worlds,query.querier,test.from,test.target,test.point);!has {return}
-    }
+    rule:=considerations[:len(tests)]
+    // A ray, or a search through a volume, is one for each candidate; the
+    // other measures read numbers, and the search over a mesh serves all.
+    costly,measured:[PLACE_TESTS]bool
+    expensive:=false
     for test,k in tests {
-        from,_:=at_context(worlds,query.querier,test.from,test.target,test.point)
-        if test.measure==.Path {
-            if !place_paths(places,from.position,candidates[:count],refs[:count],mesh,volume,filter,inputs[k:],stride) {memory=false}
-            continue
+        costly[k]=test.measure==.Visible || test.measure==.Path && volume!=nil
+        if costly[k] {expensive=true}
+    }
+    // First what reads numbers, then the search over the mesh: a candidate one
+    // of them vetoes is not kept, whatever the rest measure.
+    for search in ([]bool{false,true}) {
+        for test,k in tests {
+            if costly[k] || (test.measure==.Path)!=search || c.count==0 {continue}
+            measured[k]=true
+            if test.measure!=.Path {
+                for i in 0..<c.count {c.inputs[i*c.stride+k]=place_measure(test,froms[k],c.points[i],query.querier,perceivers,physics,influence)}
+                continue
+            }
+            if mesh!=nil {evals+=1}
+            if !place_paths(places,froms[k].position,c.points[:c.count],c.refs[:c.count],mesh,nil,filter,c.inputs[k:],c.stride) {memory=false}
         }
-        for i in 0..<count {inputs[i*stride+k]=place_measure(test,from,candidates[i],query.querier,perceivers,physics,influence)}
+        for i in 0..<c.count {keep[i]=place_bound(rule,measured[:],c.inputs[i*c.stride:][:c.stride])>0}
+        place_sift(&c,keep[:])
+    }
+    // Then the costly ones, candidate by candidate from the highest score the
+    // others allow down, until no candidate left can be among the kept.
+    wanted:=clamp(int(query.keep),1,PLACE_KEPT)
+    if expensive && c.count>0 {
+        bounds:[PLACE_CANDIDATES]f32
+        order:[PLACE_CANDIDATES]u8
+        for i in 0..<c.count {
+            bounds[i]=place_bound(rule,measured[:],c.inputs[i*c.stride:][:c.stride])
+            at:=i
+            for at>0 && bounds[order[at-1]]<bounds[i] {order[at]=order[at-1];at-=1}
+            order[at]=u8(i)
+        }
+        keep={}
+        top:[PLACE_KEPT]f32
+        tops:=0
+        candidates: for o in order[:c.count] {
+            i:=int(o)
+            if tops==wanted && place_below(bounds[i],top[wanted-1]) {break}
+            row:=c.inputs[i*c.stride:][:c.stride]
+            for measure in ([]Place_Measure{.Visible,.Path}) {
+                for test,k in tests {
+                    if !costly[k] || test.measure!=measure {continue}
+                    evals+=1
+                    if measure==.Path {
+                        if !place_paths(places,froms[k].position,c.points[i:][:1],c.refs[i:][:1],nil,volume,filter,row[k:],c.stride) {memory=false}
+                    } else {row[k]=place_measure(test,froms[k],c.points[i],query.querier,perceivers,physics,influence)}
+                    if !(ai.consideration_score(rule[k],row)>0) {continue candidates}
+                }
+            }
+            keep[i]=true
+            score:=ai.score_considerations(rule,1,row)
+            if tops<wanted {tops+=1} else if !(score>top[wanted-1]) {continue}
+            at:=tops-1
+            for at>0 && top[at-1]<score {top[at]=top[at-1];at-=1}
+            top[at]=score
+        }
+        place_sift(&c,keep[:])
     }
     best:[PLACE_KEPT]ai.Place_Score
-    keep:=clamp(int(query.keep),1,PLACE_KEPT)
-    kept:=ai.places_best(considerations[:len(tests)],inputs[:count*stride],stride,best[:keep])
+    kept:=ai.places_best(rule,c.inputs[:c.count*c.stride],c.stride,best[:wanted])
     for score,i in best[:kept] {
-        result.points[i]=candidates[score.index]
+        result.points[i]=c.points[score.index]
         result.scores[i]=score.score
-        result.entities[i]=sources[score.index]
-        result.offers[i]=offers[score.index]
+        result.entities[i]=c.sources[score.index]
+        result.offers[i]=c.offers[score.index]
     }
     result.count=u8(kept)
     result.status=.Found if kept>0 else .Empty
     return
 }
+
+// Keeps the candidates of keep, in their order.
+@(private)
+place_sift :: proc(c:^Place_Candidates,keep:[]bool) {
+    kept:=0
+    for i in 0..<c.count {
+        if !keep[i] {continue}
+        c.points[kept],c.refs[kept],c.sources[kept],c.offers[kept]=c.points[i],c.refs[i],c.sources[i],c.offers[i]
+        copy(c.inputs[kept*c.stride:][:c.stride],c.inputs[i*c.stride:][:c.stride])
+        kept+=1
+    }
+    c.count=kept
+}
+
+// The highest score a candidate can reach once the tests not yet measured
+// are: theirs taken as 1, since each multiplies it by at most that.
+@(private)
+place_bound :: proc(rule:[]ai.Consideration,measured:[]bool,row:[]f32) -> f32 {
+    product:f32=1
+    for c,k in rule {if measured[k] {product*=ai.consideration_score(c,row)}}
+    return ai.score_product(product,len(rule),1)
+}
+
+// Whether a score from a product no greater than that of bound stays below
+// top: the f32 rounding of the compensation can lift a lower product by a few
+// ulps, relative to the score or, near zero, absolute.
+@(private)
+place_below :: proc "contextless" (bound,top:f32) -> bool {return bound+bound*1e-5+1e-37<top}
 
 @(private)
 place_measure :: proc(test:Place_Test,from:mm.Transform,candidate:mm.Vec3,querier:core.Entity,perceivers:^core.Table(Perceiver,$A),physics:core.Ref(phys.Physics_State),influence:^Influence) -> f32 {

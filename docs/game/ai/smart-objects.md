@@ -65,7 +65,10 @@ vault :: proc(a:^ai.Act(Act),links:^core.Table(nav.Nav_Link,.Read),placer:core.P
 ## Choosing a place (cover, flank)
 
 A query is asked on `Enter`; the answer arrives in the agent's `Place_Result` a tick or more
-later. Candidate layouts, tests and responses: the params of `behavior.query`.
+later. Candidate layouts, tests and responses: the params of `behavior.query`. Layout
+`Remembered` takes the enemies the agent remembers, where it last perceived them, so it does not
+flank someone it never saw; `arc` (radians) keeps `Rings` to a span around where the center faces.
+Order the tests freely: rays and path searches are spent only where they can change the answer.
 
 ```odin
 case .Enter:

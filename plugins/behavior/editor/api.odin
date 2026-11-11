@@ -30,9 +30,10 @@ Query_Params :: struct {
     outer:f32 `mirai:"optional,min=0,unit=m"`,
     rings:u8 `mirai:"optional,min=1,max=16"`,
     per_ring:u8 `mirai:"optional,min=1,max=64"`,
+    arc:f32 `mirai:"optional,min=0,unit=rad,label=Of the rings, centered on where the center faces; 0: all around"`,
     spacing:f32 `mirai:"optional,min=0.1,unit=m"`,
     entities:[behavior.PLACE_ENTITIES]editor.Api_Entity_Text `mirai:"text,entity,optional,label=The candidates of the layout Entities"`,
-    teams:behavior.Teams `mirai:"optional,label=The teams whose Perceivables are the candidates of the layout Perceivables"`,
+    teams:behavior.Teams `mirai:"optional,label=The teams whose Perceivables are the candidates of the layouts Perceivables and Remembered"`,
     use:behavior.Smart_Use `mirai:"optional,label=The use whose offers of smart objects are the candidates of the layout Offers"`,
     from:editor.Api_Entity_Text `mirai:"text,entity,optional,label=Whom the tests measure from; omitted: the querier"`,
     nearer:bool `mirai:"optional,label=Prefer places nearer to the querier"`,
@@ -117,6 +118,7 @@ Influence_Result :: struct {
 Query_Result :: struct {
     status:string,
     places:[]Place_Result,
+    evals:int `mirai:"label=The rays and path searches it took"`,
 }
 Place_Result :: struct {
     position:[3]f32,
@@ -133,7 +135,7 @@ register :: proc(s:^editor.Session) {
     editor.api_method_register(s,{name="behavior.perception",summary="What a Perceiver remembers: each subject it saw or heard, where, by which senses this tick, how sure it still is, and the seconds since it first and last perceived it.",params=type_info_of(Entity_Params),flags={.Read_Only},result=type_info_of(Perception_Result),run=perception})
     editor.api_method_register(s,{name="behavior.offers",summary="The offers of a Smart_Object: each use, where its user stands, who may take it, how many at once, how many times and how often, how many times it was used, when it is offered again and who holds it now.",params=type_info_of(Entity_Params),flags={.Read_Only},result=type_info_of(Offers_Result),run=offers})
     editor.api_method_register(s,{name="behavior.influence",summary="The influence maps at a point of the shown world: the influence of each team there (threat or allies, as an agent reads it) and how covered the point is from 'from'.",params=type_info_of(Influence_Params),flags={.Read_Only},result=type_info_of(Influence_Result),run=influence})
-    editor.api_method_register(s,{name="behavior.query",summary="Runs a query of places now, for an agent of the shown world: candidates on rings, a grid or the points of its navigation mesh joined to it (around it, another entity or a point), entities (those given, or the Perceivables of some teams) or the offers of a use of smart objects, kept on its navigation mesh and scored by what is asked (nearer, hidden from, seen by or covered from 'from', reachable, low threat, many allies); returns the best with their scores. What a game asks with behavior.place_query.",params=type_info_of(Query_Params),defaults=&query_defaults,flags={.Read_Only},result=type_info_of(Query_Result),run=query})
+    editor.api_method_register(s,{name="behavior.query",summary="Runs a query of places now, for an agent of the shown world: candidates on rings, a grid or the points of its navigation mesh joined to it (around it, another entity or a point), entities (those given, the Perceivables of some teams, or where it last perceived them) or the offers of a use of smart objects, kept on its navigation mesh and scored by what is asked (nearer, hidden from, seen by or covered from 'from', reachable, low threat, many allies); returns the best with their scores. What a game asks with behavior.place_query.",params=type_info_of(Query_Params),defaults=&query_defaults,flags={.Read_Only},result=type_info_of(Query_Result),run=query})
 }
 
 // The Minds of the application: a storage of Shared, which the world reflection does not give.
@@ -308,7 +310,7 @@ query :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Query_Params)
     world,e,_,ok:=entity_of(s,call,p.entity[:],core.World_Transform,"place in the world")
     if !ok {return}
-    q:=behavior.Place_Query{querier=e,layout=p.layout,inner=p.inner,outer=max(p.outer,p.inner),rings=p.rings,per_ring=p.per_ring,spacing=p.spacing,teams=p.teams,use=p.use,keep=p.keep}
+    q:=behavior.Place_Query{querier=e,layout=p.layout,inner=p.inner,outer=max(p.outer,p.inner),rings=p.rings,per_ring=p.per_ring,arc=p.arc,spacing=p.spacing,teams=p.teams,use=p.use,keep=p.keep}
     for &text,i in p.entities {
         if text[0]==0 {continue}
         candidate,named:=editor.api_call_entity(call,world,text[:],fmt.tprintf("entities[%d]",i),s.mode!=.Edit)
@@ -351,6 +353,8 @@ query :: proc(s:^editor.Session,call:^api.Call) {
     navigation:=core.world_storage_of(world,nav.Navigation)
     physics:=core.world_storage_of(world,phys.Physics_State)
     empty_perceivers:core.Table(behavior.Perceiver)
+    perceptions:=core.world_table_of(world,behavior.Perception)
+    empty_perceptions:core.Table(behavior.Perception)
     perceivables:=core.world_table_of(world,behavior.Perceivable)
     empty_perceivables:core.Table(behavior.Perceivable)
     empty_paths:core.Table(nav.Nav_Path)
@@ -375,11 +379,12 @@ query :: proc(s:^editor.Session,call:^api.Call) {
     characters:=core.world_table_of(world,phys.Character)
     empty_characters:core.Table(phys.Character)
     filter:=behavior.place_filter(core.ref(navigation),e,paths_read,agents_read,characters if characters!=nil else &empty_characters,walks if walks!=nil else &empty_walks,swims if swims!=nil else &empty_swims,core.ref(physics))
-    if !behavior.place_run(&places,q,&result,worlds,perceivers if perceivers!=nil else &empty_perceivers,perceivables if perceivables!=nil else &empty_perceivables,paths_read,core.ref(navigation),core.ref(physics),&filter,smart,agents_read,influence_of(s,world)) {api.call_fail(call,api.SERVER_ERROR,"no memory for the path search of the query: free memory and ask again");return}
+    evals,memory:=behavior.place_run(&places,q,&result,worlds,perceivers if perceivers!=nil else &empty_perceivers,perceptions if perceptions!=nil else &empty_perceptions,perceivables if perceivables!=nil else &empty_perceivables,paths_read,core.ref(navigation),core.ref(physics),&filter,smart,agents_read,influence_of(s,world))
+    if !memory {api.call_fail(call,api.SERVER_ERROR,"no memory for the path search of the query: free memory and ask again");return}
     found:=make([]Place_Result,int(result.count),call.allocator)
     for &place,i in found {
         place={position=result.points[i],score=result.scores[i],offer=int(result.offers[i])}
         if result.entities[i]!=core.NONE {place.entity=id_of(world,result.entities[i])}
     }
-    api.call_result(call,Query_Result)^={fmt.tprintf("%v",result.status),found}
+    api.call_result(call,Query_Result)^={fmt.tprintf("%v",result.status),found,evals}
 }
