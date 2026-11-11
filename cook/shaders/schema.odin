@@ -196,8 +196,6 @@ shared_constants :: proc(allocator:=context.temp_allocator) -> string {
     u(&b,"SHADOW_SPOT_FACE",abi.SHADOW_SPOT_FACE)
     u(&b,"SHADOW_MAP_ORTHOGRAPHIC",abi.SHADOW_MAP_ORTHOGRAPHIC)
     i(&b,"SUN_MAP_ROWS",abi.SUN_MAP_ROWS)
-    u(&b,"SHADOW_ENTRIES",abi.SHADOW_ENTRIES)
-    u(&b,"SHADOW_TESTED_ENTRIES",abi.SHADOW_TESTED_ENTRIES)
     u(&b,"CONTACT_RAYS",abi.CONTACT_RAYS)
     f(&b,"SHARED_RAY_ROUGHNESS",abi.REFLECTION_SHARED_ROUGHNESS)
     i(&b,"DISTANCE_TILE",abi.DISTANCE_TILE)
