@@ -151,7 +151,7 @@ test_emitter :: proc(id: u64, position: [3]f32) -> Emitter_Desc {
 		id = id, capacity = 64, transform = trs(position, {1, 1, 1}), previous = trs(position, {1, 1, 1}),
 		shape = .Point, lifetime = {0.5, 0.5}, speed = {0, 0}, size = {0.6, 0.6}, color = {{1, 1, 1, 1}, {1, 1, 1, 1}},
 		render = .Billboard, blend = .Additive, intensity = 4, flipbook = {1, 1},
-		size_curve = {values = {1, 1, 1, 1, 1, 1, 1, 1}, times = {0, 1, 1, 1, 1, 1, 1, 1}}, color_curve = GRADIENT_WHITE,
+		size_curve = effect.PARTICLE_CURVE_ONE, color_curve = GRADIENT_WHITE,
 	}
 }
 
@@ -624,10 +624,10 @@ particle_programs_move_and_keep_their_particles :: proc(t: ^testing.T) {
 	info := effect.PARTICLE_DEFAULTS
 	base.text_set(info.program[:], "Orbit")
 	override: Particle_Override
-	testing.expect_value(t, value_set(&override, "heat", f32(1)), Error.None)
+	testing.expect_value(t, value_set(&override, "parameters.heat", f32(1)), Error.None)
 	testing.expect(t, particle_program_check(&f.assets, &info, nil, &override, &ring.program) != "")
-	value_remove(&override, "heat")
-	testing.expect_value(t, value_set(&override, "speed", f32(3)), Error.None)
+	value_remove(&override, "parameters.heat")
+	testing.expect_value(t, value_set(&override, "parameters.speed", f32(3)), Error.None)
 	testing.expect_value(t, particle_program_check(&f.assets, &info, nil, &override, &ring.program), "")
 	speed := erender.program_parameter(program, "speed")
 	testing.expect(t, speed != nil && ring.program.parameters[speed.offset / 16][(speed.offset % 16) / 4] == 3)

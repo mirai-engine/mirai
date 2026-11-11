@@ -60,6 +60,19 @@ emission_of :: proc(a:^host.Assets,info:^effect.Particle_Info) -> (e:Emission) {
     return
 }
 
+// Piecewise linear between keys at ascending times; past the ends, the end
+// keys. As particle_curve and particle_gradient of particles.slang, edges
+// included: keys closer than 1e-5 ramp over 1e-5.
+keys_at :: proc "contextless" (times:[]f32,values:[]$T,x:f32) -> T {
+    previous_time,previous:=times[0],values[0]
+    if x<=previous_time {return previous}
+    for i in 1..<len(times) {
+        if x<=times[i] {return previous+(values[i]-previous)*math.saturate((x-previous_time)/max(times[i]-previous_time,1e-5))}
+        previous_time,previous=times[i],values[i]
+    }
+    return previous
+}
+
 // Starts the clock again: another generation, which the renderer starts empty.
 clock_restart :: proc(clock:^Emitter_Clock) {
     clock.generation+=1

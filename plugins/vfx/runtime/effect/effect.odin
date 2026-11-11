@@ -123,6 +123,8 @@ Particle_Info :: struct {
     program:[PARTICLE_NAME_BYTES]u8 `mirai:"text"`, // a Vfx program of the shaders; "" for none
 }
 
+PARTICLE_CURVE_ONE :: Particle_Curve{values={1,1,1,1,1,1,1,1},times={0,1,1,1,1,1,1,1}}
+
 PARTICLE_DEFAULTS :: Particle_Info{
     duration=2,rate=20,
     shape=.Cone,shape_size={0.1,0.1,0.1},shape_angle=0.35,

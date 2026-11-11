@@ -181,7 +181,7 @@ the_preview_of_a_document_shows_what_its_rows_hold_and_frames_where_its_particle
     tint:=gpu.Program_Parameter{name="tint",kind=.Float,components=1,max=1}
     effect_parameter_put(&held,&tint,{0.5,0,0,0},{})
     override=preview_values(&held,&file)
-    testing.expect(t,override.count==2 && override.names[1]==base.name_hash("tint"))
+    testing.expect(t,override.count==2 && override.names[1]==vfx.parameter_hash("tint"))
     // Up from a cone, then down where gravity pulls: the box holds both.
     info.speed,info.gravity={2,2},1
     low,high:=effect_reach(nil,&info)

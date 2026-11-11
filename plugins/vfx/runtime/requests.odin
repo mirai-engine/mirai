@@ -58,6 +58,8 @@ requests_apply :: proc(
     requests:^Particle_Requests,emitters:^core.Table(Particle_Emitter),overrides:^core.Table(Particle_Override),
     clocks:^Particle_Clocks,problems:^core.Problems,
 ) {
+    // The rows this step adds, which the table shows only after it.
+    added:=make(map[core.Entity]Particle_Override,context.temp_allocator)
     for &request in core.take(&requests.queue) {
         error:=Error.None
         if !core.has(emitters,request.entity) {error=.Invalid_Entity}
@@ -81,15 +83,20 @@ requests_apply :: proc(
                     clock.done=false
                 }
             case .Value,.Value_Remove,.Values_Clear:
-                override:Particle_Override
-                if current,found:=core.get(overrides,request.entity);found {override=current}
+                override,adding:=added[request.entity]
+                if current,found:=core.get(overrides,request.entity);found && !adding {override=current}
                 #partial switch request.command {
                 case .Value: error=value_put(&override,request.name,request.value[:])
                 case .Value_Remove: value_drop(&override,request.name)
                 case .Values_Clear: override={}
                 }
                 if error==.None {
-                    if row:=core.edit(overrides,request.entity);row!=nil {row^=override} else {core.add(overrides,request.entity,override)}
+                    if row:=core.edit(overrides,request.entity);row!=nil {
+                        row^=override
+                    } else {
+                        core.add(overrides,request.entity,override)
+                        added[request.entity]=override
+                    }
                 }
             }
         }

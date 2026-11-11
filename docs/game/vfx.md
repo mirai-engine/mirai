@@ -44,13 +44,13 @@ vfx.burst(requests, e, 30)
 ```odin
 err:=vfx.request_value(requests, e, "colors.1", [4]f32{1, 0.2, 0, 1})
 if err!=.None {core.report(problems, e, "game.vfx", "%s", vfx.error_message(err))}
-vfx.request_value(requests, e, "heat", f32(0.8)) // a parameter of the effect's program
+vfx.request_value(requests, e, "parameters.heat", f32(0.8)) // a parameter of its program
 ```
 
-A name is a field path of the effect (`rate`, `bursts.0.count`) or a parameter of its program,
-checked when asked; with a parameter its program does not declare, the emitter runs without the
-program and `particle.instance.inspect` says why. Also
-`request_value_remove` and `request_values_clear`. Assets belong to the effect.
+A name is a field path of the effect (`rate`, `bursts.0.count`) or `parameters.` and a parameter
+of its program, checked when asked; with a parameter its program does not declare, the emitter
+runs without the program and `particle.instance.inspect` says why. Also `request_value_remove`
+and `request_values_clear`. Assets belong to the effect.
 
 ## Author an effect
 

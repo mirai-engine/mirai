@@ -572,7 +572,7 @@ api_particle_instance_set :: proc(s:^editor.Session,call:^api.Call) {
     if !particle_parameters_read(s,call,parameters,&file.info,&list) {return}
     for &parameter in list {
         value:=vfx.parameter_value(&parameter)
-        if error:=vfx.value_put(&next,base.name_hash(base.text_get(parameter.name[:])),value[:]);error!=.None {
+        if error:=vfx.value_put(&next,vfx.parameter_hash(base.text_get(parameter.name[:])),value[:]);error!=.None {
             api.call_failf(call,api.INVALID_PARAMS,"parameters: %s",vfx.error_message(error))
             return
         }

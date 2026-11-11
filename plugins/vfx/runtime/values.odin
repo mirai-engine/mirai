@@ -4,6 +4,7 @@ import "base:intrinsics"
 import "base:runtime"
 import "core:fmt"
 import "core:mem"
+import "core:strings"
 import "mirai:asset"
 import erender "mirai:engine/render"
 import "mirai:host"
@@ -11,12 +12,14 @@ import "mirai:std/base"
 import "plugins:vfx/runtime/effect"
 
 PARTICLE_OVERRIDE_CAPACITY :: 16
+PARTICLE_PARAMETER_PATH :: "parameters." // a parameter of the program of an effect, by its name after it, as the file's table names it
 
 // Values of this entity alone for its effect, as erender.Material_Override
 // keeps those of a material: names are base.name_hash of a path of
 // effect.Particle_Info (effect.particle_fields) or of a parameter of the Vfx
-// program of the effect; values, the bytes of the field, or of a parameter
-// its numbers as [4]f32 or the base.Asset_Id of its texture (parameter_value).
+// program of the effect (parameter_hash: "parameters.heat"); values, the
+// bytes of the field, or of a parameter its numbers as [4]f32 or the
+// base.Asset_Id of its texture (parameter_value).
 // Assets an effect names belong to the effect: an instance does not change them.
 @(component)
 Particle_Override :: struct {
@@ -42,7 +45,7 @@ Error :: enum u8 {
 error_message :: proc(error:Error) -> string {
     switch error {
     case .None: return ""
-    case .Unknown_Field: return "Name a value of the effect by its path, as effect.particle_fields lists them (rate, colors.1, bursts.0.count), or a parameter of its Vfx program in fewer than 64 bytes"
+    case .Unknown_Field: return "Name a value of the effect by its path, as effect.particle_fields lists them (rate, colors.1, bursts.0.count), or a parameter of its Vfx program as parameters. and its name in fewer than 64 bytes (parameters.heat)"
     case .Type_Mismatch: return "Give a field a value of its type (f32, [N]f32, u32, bool or its enum), and a parameter one to four numbers or bools, or the base.Asset_Id of a texture"
     case .Invalid_Value: return "Give a finite value inside the range of its field; curve key times go up from 0 to 1"
     case .Effect_Field: return "The assets and the program of an effect are the effect's: change them in the .particle (particle.set), not in an instance"
@@ -56,24 +59,29 @@ error_message :: proc(error:Error) -> string {
 
 // Gives an instance the value of a field of its effect, by its path, of its
 // type and inside its range; or of a parameter of the program of its effect,
-// by its name: one to four numbers or bools, or the base.Asset_Id of a
-// texture. Whether the program has that parameter is told when the emitter
-// resolves it (particle_program).
+// by "parameters." and its name: one to four numbers or bools, or the
+// base.Asset_Id of a texture. Whether the program has that parameter is told
+// when the emitter resolves it (particle_program).
 value_set :: proc(override:^Particle_Override,name:string,value:$T) -> Error {
     bytes:[effect.PARTICLE_VALUE_BYTES]u8
-    if field,found:=effect.particle_value_at(name);found {
+    if strings.has_prefix(name,PARTICLE_PARAMETER_PATH) {
+        parameter:effect.Particle_Parameter
+        if error:=parameter_of(name[len(PARTICLE_PARAMETER_PATH):],value,&parameter);error!=.None {return error}
+        if effect.particle_parameter_validate(&parameter).message!="" {return .Invalid_Value}
+        bytes=parameter_value(&parameter)
+    } else {
+        field,found:=effect.particle_value_at(name)
+        if !found {return .Unknown_Field}
         if field.kind==.Asset {return .Effect_Field}
         if size_of(T)!=field.size || !types_match(type_info_of(T),field.info) {return .Type_Mismatch}
         stored:=value
         mem.copy(&bytes,&stored,size_of(T))
-    } else {
-        parameter:effect.Particle_Parameter
-        if error:=parameter_of(name,value,&parameter);error!=.None {return error}
-        if effect.particle_parameter_validate(&parameter).message!="" {return .Invalid_Value}
-        bytes=parameter_value(&parameter)
     }
     return value_put(override,base.name_hash(name),bytes[:])
 }
+
+// The name of a parameter of the program of an effect in a Particle_Override.
+parameter_hash :: proc(name:string) -> u64 {return base.name_hash(fmt.tprintf("%s%s",PARTICLE_PARAMETER_PATH,name))}
 
 @(private)
 types_match :: proc(a,b:^runtime.Type_Info) -> bool {
@@ -179,7 +187,7 @@ parameter_value :: proc(parameter:^effect.Particle_Parameter) -> (value:[effect.
 // declares it; false for a name the program does not declare.
 value_parameter :: proc(program:^erender.Program,name:u64,value:[effect.PARTICLE_VALUE_BYTES]u8) -> (parameter:effect.Particle_Parameter,ok:bool) {
     for &declared in program.parameters {
-        if base.name_hash(declared.name)!=name {continue}
+        if parameter_hash(declared.name)!=name {continue}
         base.text_set(parameter.name[:],declared.name)
         parameter.kind,parameter.components=asset.Parameter_Kind(declared.kind),declared.components
         if declared.kind==.Texture {

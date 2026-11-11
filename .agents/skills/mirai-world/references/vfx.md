@@ -69,11 +69,12 @@ Values of an instance:
 
 - `Particle_Override`: the entity's own values, shaped like `erender.Material_Override`: one
   table of `base.name_hash` names and 16-byte values, where a name is a field path of the effect
-  (`effect.particle_fields`, its bytes) or a parameter of its Vfx program (its numbers as
-  `[4]f32` or its texture's `Asset_Id`, `parameter_value`). A field path wins over a parameter
-  of the same name. `value_set(&o, "colors.1", [4]f32{...})` validates a field's type and range,
-  or a parameter's numbers, and returns an `Error`; `error_message` says how to fix it;
-  `value_remove` takes one away. The effect's assets and program belong to the effect
+  (`effect.particle_fields`, its bytes) or `parameters.` and a parameter of its Vfx program (its
+  numbers as `[4]f32` or its texture's `Asset_Id`, `parameter_value`, `parameter_hash`): the
+  prefix, the name of the file's table, keeps a parameter such as `speed` apart from the field.
+  `value_set(&o, "colors.1", [4]f32{...})` validates a field's type and range, or a parameter's
+  numbers, and returns an `Error`; `error_message` says how to fix it; `value_remove` takes one
+  away. The effect's assets and program belong to the effect
   (`Effect_Field`). Whether the program declares a parameter is told when the emitter resolves
   it (`particle_program_check`, `value_parameter`).
 - `particle_resolve(assets, particle, override)` gives what an entity shows;
