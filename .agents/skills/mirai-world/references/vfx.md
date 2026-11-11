@@ -238,15 +238,11 @@ with what velocity, color, size, how many and values that its programs read
 particles of its effect at each one, besides its own; a program reads them through a `channel`
 resource.
 
-- A channel is a named id (`core.Birth_Channel`,
-  [named ids](../../mirai-core/references/core.md#named-ids)): whoever pushes declares it in
-  code, the engine and plugins below `CHANNEL_GAME` (`fluids` `brushes` and `displacers`,
-  `water` `splashes`, `terrain` `dust`) and a game from there (`impacts` of the demo); the
-  inspector offers them in a list.
-  A program's `channel` resource reads the channel whose name is its own (`channel_needs`);
-  without a constant of that name the emitter reports the problem.
-- The data channels remain text: their names are given by the programs' text and the imported
-  assets, not by code, and no scene data stores them.
+- A channel is a name ([births](../../mirai-core/references/core.md#births)), keyed as a
+  [data channel](#data-channels) is: whoever pushes and whoever listens say it as text
+  (`fluids` `brushes` and `displacers`, `water` `splashes`, `terrain` `dust`, the demo's
+  `impacts`). A program's `channel` resource reads the channel whose name is its own
+  (`channel_needs`).
 
 - A silent `Particle_Channel` (`silent`) starts no particles: its program reads the births alone,
   through a `channel` resource of the same name (the brushes of the `fluids` plugin).
@@ -562,8 +558,8 @@ they light everything within their reach, without shadow rays or a place in thos
   (`puff.slang`), particle lights with shadow that light the floor within their reach and not
   behind a cube, and without shadow, also behind it, a floor whose Surface program reads a grid's
   world texture (`count_ground.slang`), channel births and their rollback (`testdata/gather.slang`),
-  reports, all the modes around glass without validation errors and stable frames without
-  allocating.
+  reports, sprites behind a `fog` box dimmed by it and one in front of it not, all the modes
+  around glass without validation errors and stable frames without allocating.
 - `mirai test plugins/vfx/editor` (with `-collection:plugins=<root>/plugins`): the effects document
   (`document_test.odin`).
 - In the demo editor, without a window and with validation: the physics gallery launches

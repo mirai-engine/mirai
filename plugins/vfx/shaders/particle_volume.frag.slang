@@ -11,10 +11,12 @@
 #include "depth.slang"
 #define VOLUME_STEPS 256u
 
-struct Params_Block { uint volumes; uint count; uint pass; uint pad; };
+#include "media_grid.slang"
+struct Params_Block { uint volumes; uint count; uint pass; uint pad; Media_Grid media; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 [[vk::binding(SLOT_PASS7, 0)]] Texture2D<float4> g_depth : register(MIRAI_REGISTER(t, SLOT_PASS7), space0);
 [[vk::binding(SLOT_PASS8, 0)]] Texture2D<float4> glass_depth : register(MIRAI_REGISTER(t, SLOT_PASS8), space0);
+[[vk::binding(SLOT_PASS5, 0)]] Texture3D<float4> media : register(MIRAI_REGISTER(t, SLOT_PASS5), space0);
 
 struct Stage_Output {
     [[vk::location(0)]] float4 out_color : SV_Target0;
@@ -42,6 +44,8 @@ Stage_Output main(float4 pixel_position : SV_Position) {
     float jitter = float(hash_u32(uint(pixel.x) * 73856093u ^ uint(pixel.y) * 19349663u ^ frame.frame_index * 83492791u) >> 8) / 16777216.0;
     float3 radiance = float3(0.0);
     float through = 1.0;
+    // Where along the ray the light it sends starts: the media of the view lie between there and the eye.
+    float first = -1.0;
     for (uint i = 0u; i < params.count && through > 0.01; i++) {
         Particle_Volume_Row v = particle_volume_at(params.volumes + i * PARTICLE_VOLUME_ROW_BYTES);
         Particle_Grid_Row g = particle_grid_row_at(v.grid);
@@ -67,13 +71,15 @@ Stage_Output main(float4 pixel_position : SV_Position) {
             float4 light = particle_volume_light(v, corners);
             float3 sun = frame.sun_direction.w >= 0.5 ? sun_light(at) * light.a * sun_phase : float3(0.0);
             float3 source = v.albedo * density * (light.rgb + sun) + emission_render_units(v.emission * glow, false);
+            if (first < 0.0) first = t0 + (float(s) + jitter) * step;
             float kept = exp(-density * ds);
             radiance += through * (density > 0.0 ? source * (1.0 - kept) / density : source * ds);
             through *= kept;
         }
     }
     if (through >= 0.9999) discard;
-    output.out_color = float4(finite_or_zero(radiance), 1.0 - through);
+    float4 medium = first >= 0.0 ? media_over(media, params.media, origin + ray * first) : float4(0.0, 0.0, 0.0, 1.0);
+    output.out_color = float4(finite_or_zero(radiance * medium.a + medium.rgb * (1.0 - through)), 1.0 - through);
     output.out_coverage = float4(1.0 - through, 0.0, 0.0, 0.0);
     return output;
 }

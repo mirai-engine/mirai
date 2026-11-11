@@ -1,0 +1,9 @@
+{
+  "version": 3,
+  "settings": {
+    "image": "Normal"
+  },
+  "outputs": [
+    {"kind": "TEX", "name": "planks_normal", "index": 0, "id": "0558bb6aa0ec012cac33f59d343e99ed"}
+  ]
+}

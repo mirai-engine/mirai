@@ -229,6 +229,37 @@ curves_pass_through_their_points :: proc(t:^testing.T) {
     testing.expect(t,test_close3(b_spline(a,b,c,d,1),b_spline(b,c,d,e,0)))
 }
 
+// A path sampled by length goes through its points, its samples about a piece
+// apart, and fits what holds them, whatever the points are.
+@(test)
+a_sampled_path_goes_through_its_points_and_fits :: proc(t:^testing.T) {
+    points:=[]Path_Point{{{0,0,0},2,1},{{0,0,-10},4,1},{{10,0,-10},4,3}}
+    out:[64]Path_Point
+    count:=path_sample(points,1,out[:])
+    testing.expect(t,count>=21 && count<=23,"about a piece apart")
+    testing.expect(t,out[0]==points[0] && out[count-1]==points[2])
+    through:=false
+    for p in out[:count] {through||=p==points[1]}
+    testing.expect(t,through,"through every point")
+    for i in 1..<count {
+        gap:=linalg.length(out[i].position-out[i-1].position)
+        testing.expectf(t,gap>0.5 && gap<1.3,"a gap of %v",gap)
+    }
+    testing.expect(t,abs(out[5].width-3)<1e-5 && out[5].height==1,"width and height in proportion")
+    // Too few samples for a piece: they spread out, and the ends stay.
+    short:[8]Path_Point
+    count=path_sample(points,1,short[:])
+    testing.expect(t,count>=3 && count<=8 && short[count-1]==points[2])
+    nan:=math.nan_f32()
+    for c in ([]struct{points:[]Path_Point,piece:f32,room:int}{
+        {points[:1],1,64},{points,0,64},{points,nan,64},{points,1,3},
+        {{{{nan,0,0},1,1},{{0,0,1},1,1}},1,64},{{{{0,0,0},1,1},{{1e38,0,0},1,1}},1,64},{{{{0,0,0},1,1},{{0,0,0},1,1}},1,64},
+    }) {
+        written:=path_sample(c.points,c.piece,out[:c.room])
+        testing.expect(t,written==0 || written>=len(c.points) && written<=c.room)
+    }
+}
+
 @(test)
 arc_table_gives_constant_speed :: proc(t:^testing.T) {
     SAMPLES :: 65

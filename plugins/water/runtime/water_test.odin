@@ -95,7 +95,7 @@ the_waves_go_to_the_shaders_from_the_origin_and_dry_boxes_cut_the_planes_they_cr
     testing.expect_value(t,got[0].surface.x,f32(2-1024))
     floor,top:=dry_span(state.bodies[1])
     testing.expect(t,abs(floor+0.5)<1e-4 && abs(top-3.5)<1e-4)
-    testing.expect(t,dry_crosses(&state,1,0) && crosses_plane(&state,1))
+    testing.expect(t,dry_crosses(&state,1,0) && crosses_water(&state,1))
     testing.expect(t,!dry_crosses(&state,2,0),"a dry box deep under the waves")
     testing.expect(t,!dry_crosses(&state,0,1),"a plane is not a dry box")
 }
