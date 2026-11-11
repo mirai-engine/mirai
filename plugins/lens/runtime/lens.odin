@@ -111,16 +111,16 @@ Gpu_Params :: struct {
 @(step="render",loops="game editor")
 lens_render :: proc(
     state:^Lens_Gpu,lenses:^core.Table(Lens,.Read),zones:^core.Table(Lens_Volume,.Read),places:^core.Table(volume.Volume,.Read),worlds:^core.Table(core.World_Transform,.Read),
-    parents:^core.Table(core.Parent,.Read),sections:^core.Table(scene.Scene_Reference,.Read),exposures:^core.Table(render.Exposure,.Read),view_volumes:^core.Table(render.View_Volume,.Read),view:core.View,locals:core.Ref(camera.Local_Views),renderer:^render.Renderer,
+    parents:^core.Table(core.Parent,.Read),sections:^core.Table(scene.Scene_Reference,.Read),splines:^core.Table(volume.Spline,.Read),exposures:^core.Table(render.Exposure,.Read),view_volumes:^core.Table(render.View_Volume,.Read),view:core.View,locals:core.Ref(camera.Local_Views),renderer:^render.Renderer,
 ) {
     state.views={}
     if renderer==nil || core.count(lenses)==0 && core.count(zones)==0 {return}
     used:=false
-    state.views[0]=view_lens(lenses,zones,{places,worlds,parents,sections},exposures,view_volumes,view)
+    state.views[0]=view_lens(lenses,zones,{places,worlds,parents,sections,splines},exposures,view_volumes,view)
     used||=state.views[0].used
     for local,slot in locals.items {
         if int(local.slot)!=slot+1 {continue}
-        state.views[slot+1]=view_lens(lenses,zones,{places,worlds,parents,sections},exposures,view_volumes,local)
+        state.views[slot+1]=view_lens(lenses,zones,{places,worlds,parents,sections,splines},exposures,view_volumes,local)
         used||=state.views[slot+1].used
     }
     if !used {return}

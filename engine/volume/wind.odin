@@ -40,6 +40,7 @@ Gpu_Wind :: struct {
     count:[4]u32,
     volumes:[WIND_VOLUMES]Gpu_Volume,
     values:[WIND_VOLUMES][4]f32, // as wind_value
+    outlines:Gpu_Outlines,
 }
 
 gpu_wind :: proc(winds:^core.Table(Wind,$A),at:Where) -> (g:Gpu_Wind) {
@@ -48,10 +49,10 @@ gpu_wind :: proc(winds:^core.Table(Wind,$A),at:Where) -> (g:Gpu_Wind) {
     for i in 0..<n {
         e:=core.entity_at(winds,int(rows[i]))
         wind:=core.at(winds,int(rows[i]))
-        v,shape,_:=placed(at,e)
+        v,shape,outline,_:=placed(at,e)
         pose,found:=core.get(at.worlds,e)
         if !found {pose.transform=mm.TRANSFORM_IDENTITY}
-        g.volumes[i]=gpu_volume(v,shape,wind.zone)
+        g.volumes[i]=gpu_volume(v,shape,wind.zone,outline,&g.outlines)
         g.values[i]=wind_value(wind,pose.transform)
     }
     g.count.x=u32(n)

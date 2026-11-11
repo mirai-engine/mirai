@@ -30,9 +30,9 @@ and `Rigid_Body` set to `phys.RIGID_BODY_KINEMATIC`. A conveyor belt needs no co
 
 ## Trigger zones
 
-A zone is an entity with a box or sphere `Volume` and no `Collider`: the physics makes it a sensor
-that blocks nothing and reports what goes in and out of it. `Heal_Zone` is a component of the game,
-`@(component) Heal_Zone :: struct {amount:f32}`.
+A zone is an entity with a box, sphere or outline `Volume` and no `Collider`: the physics makes it a
+sensor that blocks nothing and reports what goes in and out of it. `Heal_Zone` is a component of
+the game, `@(component) Heal_Zone :: struct {amount:f32}`.
 
 ```json
 {"method":"scene.write","params":{"entities":[{"name":"Heal zone",
