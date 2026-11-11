@@ -30,7 +30,7 @@ foliage_view_modes :: proc(s:^editor.Session,view:^Foliage_View) {
 foliage_view_lit :: proc(pass:^erender.Pass,user:rawptr) {}
 
 @(step="frame")
-foliage_cells_view :: proc(s:^editor.Session,view:^Foliage_View,foliages:core.Read(foliage.Foliage),worlds:core.Read(core.World_Transform),grounds:core.Ref(foliage.Foliage_Ground),data:core.Ref(foliage.Foliage_Data),input:core.Input) {
+foliage_cells_view :: proc(s:^editor.Session,view:^Foliage_View,foliages:^core.Table(foliage.Foliage,.Read),worlds:^core.Table(core.World_Transform,.Read),grounds:core.Ref(foliage.Foliage_Ground),data:core.Ref(foliage.Foliage_Data),input:core.Input) {
     if !view.cells || !s.gui.begun || editor.playing(s) || data.ptr==nil {return}
     eye:=s.viewport.orbit.target
     for row in 0..<core.count(foliages) {

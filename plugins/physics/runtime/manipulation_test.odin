@@ -223,7 +223,7 @@ manipulation_resolves_compounds_and_world_rotation_under_a_scaled_parent :: proc
     target:=mm.quat_axis_angle({0,0,1},0.3)
     manipulation_target(&f.requests,root,{11,4,2},target)
     physics_test_step(&f,0)
-    pose,ok:=core.world_of(core.read(&f.transforms),core.read(&f.parents),root)
+    pose,ok:=core.world_of(&f.transforms,&f.parents,root)
     testing.expect(t,ok)
     wanted:=[3]f32{11,4,2}
     for i in 0..<3 {testing.expect(t,abs(pose.position[i]-wanted[i])<0.001)}

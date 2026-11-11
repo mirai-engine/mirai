@@ -50,7 +50,7 @@ Pose_Row :: struct {
 }
 
 @(private)
-Pose_Batch :: struct {playback:^Playback,transforms:core.Read(core.Transform)}
+Pose_Batch :: struct {playback:^Playback,transforms:^core.Table(core.Transform,.Read)}
 
 @(private)
 track_map_free :: proc(shared:^Track_Map) {
@@ -166,7 +166,7 @@ pose_job_allocator_proc :: proc(data:rawptr,mode:runtime.Allocator_Mode,size,ali
 // The pose of one entity from the clocks its row left: it writes only its own state and the
 // scratch of its job.
 @(private)
-pose_row :: proc(playback:^Playback,row:^Pose_Row,transforms:core.Read(core.Transform),worker:int) {
+pose_row :: proc(playback:^Playback,row:^Pose_Row,transforms:^core.Table(core.Transform,$A),worker:int) {
     if row.content==0 {return}
     state:=&playback.states[row.state]
     content:=&playback.work_contents[row.content-1]
@@ -191,10 +191,10 @@ pose_rows :: proc(batch:^Pose_Batch,first,last:int,worker:int) {
 // The poses of the rows of a tick, in jobs when they are more than a range holds: each row is
 // independent, so the result does not depend on how they are split.
 @(private)
-pose_rows_run :: proc(playback:^Playback,transforms:core.Read(core.Transform),system:^jobs.Job_System,grain:int) {
+pose_rows_run :: proc(playback:^Playback,transforms:^core.Table(core.Transform,$A),system:^jobs.Job_System,grain:int) {
     count:=len(playback.work)
     if count==0 {return}
-    batch:=Pose_Batch{playback,transforms}
+    batch:=Pose_Batch{playback,core.read(transforms)}
     if system!=nil && grain>0 && count>grain && jobs.worker_count(system)>1 && pose_scratch_prepare(playback,jobs.worker_count(system),0) {
         jobs.parallel_for(system,jobs.OWNER,count,grain,pose_rows,&batch)
     } else {pose_rows(&batch,0,count,jobs.OWNER)}

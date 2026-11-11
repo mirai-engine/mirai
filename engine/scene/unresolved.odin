@@ -111,7 +111,7 @@ references_resolve :: proc(w:core.World_Ref) {
 // as they are; one whose target has no Id names none.
 references_release :: proc(w:core.World_Ref,inside,gone:[]bool) {
     es:=core.world_entities(w)
-    ids:=core.read(core.world_table_of(w,core.Id))
+    ids:=core.world_table_of(w,core.Id)
     u:=core.world_storage_of(w,Unresolved_References)
     types:=schema_of(w)
     if types==nil {return}
@@ -150,7 +150,7 @@ references_release :: proc(w:core.World_Ref,inside,gone:[]bool) {
 // The fields that wait for a section resolve once the entities of the world
 // change: a section that loads brings their targets.
 @(step="frame",loops="game editor")
-scene_references :: proc(world:core.World_Ref,unresolved:^Unresolved_References,ids:core.Read(core.Id)) {
+scene_references :: proc(world:core.World_Ref,unresolved:^Unresolved_References,ids:^core.Table(core.Id,.Read)) {
     seen:=unresolved.ids
     if len(unresolved.items)==0 || !core.touched(ids,&seen) {return}
     references_resolve(world)

@@ -44,7 +44,7 @@ a_mind_becomes_a_step_that_binds_what_its_procedures_receive :: proc(t:^testing.
 import "mirai:core"
 import "mirai:std/ai"
 @(component) Hunger :: struct {value:f32}
-@(params) Senses :: struct {spots:core.Read(core.Spot),time:core.Time}
+@(params) Senses :: struct {spots:^core.Table(core.Spot,.Read),time:core.Time}
 Zombie_Act :: enum u8 {Wander,Chase,Circle}
 @(mind="zombie") zombie_think :: proc(t:^ai.Think(Zombie_Act),senses:Senses) {}
 @(act="Wander") zombie_wander :: proc(a:^ai.Act(Zombie_Act)) -> ai.Status {return .Success}

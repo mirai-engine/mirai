@@ -46,8 +46,8 @@ Camera_Views :: struct {
 // The view of every local slot; the focused one's is the view of the game.
 @(step="late",stage="end")
 camera_blend :: proc(
-    views:^Camera_Views,shown:core.Ref(Cameras),seat_state:core.Ref(input.Seats),seats:core.Read(input.Seat),
-    parents:core.Read(core.Parent),hierarchy:core.Ref(core.Hierarchy),cameras:core.Read(render.Camera),follows:core.Read(Camera_Follow),worlds:core.Read(core.World_Transform),chosen:^render.View_Camera,
+    views:^Camera_Views,shown:core.Ref(Cameras),seat_state:core.Ref(input.Seats),seats:^core.Table(input.Seat,.Read),
+    parents:^core.Table(core.Parent,.Read),hierarchy:core.Ref(core.Hierarchy),cameras:^core.Table(render.Camera,.Read),follows:^core.Table(Camera_Follow,.Read),worlds:^core.Table(core.World_Transform,.Read),chosen:^render.View_Camera,
     bodies:^render.View_Bodies,frame:core.Frame_Time,
 ) {
     player:=input.focused(seat_state.ptr,seats)
@@ -86,7 +86,7 @@ camera_blend :: proc(
 @(private)
 view_update :: proc(
     v:^Camera_View,camera:core.Entity,through:Camera_Blend,body:core.Entity,
-    cameras:core.Read(render.Camera),follows:core.Read(Camera_Follow),worlds:core.Read(core.World_Transform),frame:core.Frame_Time,
+    cameras:^core.Table(render.Camera,$A),follows:^core.Table(Camera_Follow,$B),worlds:^core.Table(core.World_Transform,$C),frame:core.Frame_Time,
 ) {
     c,has_camera:=core.get(cameras,camera)
     world,placed:=core.get(worlds,camera)
@@ -144,7 +144,7 @@ view_update :: proc(
 
 // Where a body is in this frame, between its last two ticks.
 @(private)
-anchor_at :: proc(worlds:core.Read(core.World_Transform),body:core.Entity,frame:core.Frame_Time) -> ([3]f32,bool) {
+anchor_at :: proc(worlds:^core.Table(core.World_Transform,$A),body:core.Entity,frame:core.Frame_Time) -> ([3]f32,bool) {
     placed,ok:=core.get(worlds,body)
     if !ok {return {},false}
     if frame.alpha<1 {return mm.lerp(placed.previous.position,placed.position,frame.alpha),true}
@@ -244,8 +244,8 @@ Local_Views :: struct {
 @(step="render",loops="game editor",after="render_sync")
 camera_local_views :: proc(
     views:^Local_Views,seat_state:core.Ref(input.Seats),slots:core.Ref(Camera_Views),
-    cameras:core.Read(render.Camera),exposures:core.Read(render.Exposure),worlds:core.Read(core.World_Transform),app:^host.App,
-    view_volumes:core.Read(render.View_Volume),volumes:core.Read(volume.Volume),
+    cameras:^core.Table(render.Camera,.Read),exposures:^core.Table(render.Exposure,.Read),worlds:^core.Table(core.World_Transform,.Read),app:^host.App,
+    view_volumes:^core.Table(render.View_Volume,.Read),volumes:^core.Table(volume.Volume,.Read),
 ) {
     n:=seat_state.local_count
     if n<2 {return}

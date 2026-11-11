@@ -41,12 +41,12 @@ Streaming_Sources :: struct {
 
 @(step="frame",loops="game editor",before="scene_sections")
 scene_sources :: proc(
-    sources:^Streaming_Sources,view:core.View,frame:core.Frame_Time,seats:core.Read(input.Seat),
-    marks:core.Read(Streaming_Source),worlds:core.Read(core.World_Transform),motions:core.Read(core.Motion),problems:^core.Problems,
+    sources:^Streaming_Sources,view:core.View,frame:core.Frame_Time,seats:^core.Table(input.Seat,.Read),
+    marks:^core.Table(Streaming_Source,.Read),worlds:^core.Table(core.World_Transform,.Read),motions:^core.Table(core.Motion,.Read),problems:^core.Problems,
 ) {
     list:[SOURCES_MAX]Source
     count,wanted:=0,0
-    add :: proc(list:^[SOURCES_MAX]Source,count,wanted:^int,worlds:core.Read(core.World_Transform),motions:core.Read(core.Motion),e:core.Entity,distance:f32) {
+    add :: proc(list:^[SOURCES_MAX]Source,count,wanted:^int,worlds:^core.Table(core.World_Transform,$A),motions:^core.Table(core.Motion,$B),e:core.Entity,distance:f32) {
         at,placed:=core.get(worlds,e)
         if !placed {return}
         wanted^+=1

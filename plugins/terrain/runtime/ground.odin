@@ -49,7 +49,7 @@ ground_open :: proc(w:core.World_Ref) -> (core.Ground_Query,bool) {
 // What the ground of the world is now, at the end of terrain_update, and
 // where it changed.
 @(private)
-ground_update :: proc(resident:^Terrain_Resident,data:^Terrain_Data,terrains:core.Read(Terrain),colliders:^core.Table(phys.Collider),worlds:core.Read(core.World_Transform),focus:Terrain_Focus,queries:^core.Ground_Queries) {
+ground_update :: proc(resident:^Terrain_Resident,data:^Terrain_Data,terrains:^core.Table(Terrain,$A),colliders:^core.Table(phys.Collider),worlds:^core.Table(core.World_Transform,.Read),focus:Terrain_Focus,queries:^core.Ground_Queries) {
     g:=&resident.ground
     // A terrain that came, went or moved: the transforms of the rest do not count.
     placed:=core.touched(terrains,&g.seen[0])
@@ -223,7 +223,7 @@ shown_weights :: proc "contextless" (s:^Source,local,normal:[3]f32) -> Weights {
 // comes, goes or turns empty or not (Terrain_Resident.marks); where it
 // changed is pushed.
 @(private)
-ground_unloaded :: proc(resident:^Terrain_Resident,data:^Terrain_Data,colliders:^core.Table(phys.Collider),worlds:core.Read(core.World_Transform),unloaded:^core.Events(mm.Aabb)) {
+ground_unloaded :: proc(resident:^Terrain_Resident,data:^Terrain_Data,colliders:^core.Table(phys.Collider),worlds:^core.Table(core.World_Transform,.Read),unloaded:^core.Events(mm.Aabb)) {
     g:=&resident.ground
     before:=slice.clone(g.unloaded[:],context.temp_allocator)
     clear(&g.unloaded)
