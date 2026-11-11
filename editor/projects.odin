@@ -19,6 +19,7 @@ import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
 import "mirai:std/subprocess"
+import "mirai:editor/kit"
 import "mirai:ui"
 
 // The projects of this machine (project.Recent_Projects) on a screen that
@@ -557,13 +558,12 @@ projects_build :: proc(s:^Session) {
     p:=s.projects
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     projects_dialogs_answer(s)
-    if ui.box(ctx,{width=ui.fixed(ctx.size.x),height=ui.fixed(ctx.size.y),fill=th.panel,float={to=.Surface},block=true}) {
+    if ui.box(ctx,{width=ui.fixed(ctx.size.x),height=ui.fixed(ctx.size.y),fill=ui.tone(ctx,"panel"),float={to=.Surface},block=true}) {
         projects_body(s,false)
     }
     if !s.headless && platform.WINDOW_CONTROLS==.Right {
-        if ui.box(ctx,{width=ui.FIT,height=ui.fixed(th.bar_height),float={to=.Surface,anchor=.Top_Right,pivot=.Top_Right,layer=ui.LAYER_BAR}}) {window_controls(s)}
+        if ui.box(ctx,{width=ui.FIT,height=ui.fixed(ui.metric(ctx,"bar_height")),float={to=.Surface,anchor=.Top_Right,pivot=.Top_Right,layer=ui.LAYER_BAR}}) {window_controls(s)}
     }
     // A project of the list shows its opening in its row; a folder chosen or created, in a dialog.
     if projects_opening(p) && projects_opening_row(p)<0 {projects_loading_build(s)}
@@ -577,7 +577,6 @@ projects_popup_build :: proc(s:^Session) {
     p:=s.projects
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     projects_dialogs_answer(s)
     if projects_opening(p) {
         projects_loading_build(s)
@@ -585,8 +584,8 @@ projects_popup_build :: proc(s:^Session) {
     }
     closed:=false
     defer if closed {projects_hide(s)}
-    if ui.modal(ctx,shell_id(g,"projects"),{width=f32(PROJECTS_WINDOW.x),padding=-1,close=&closed,own_cross=true,fill=th.panel}) {
-        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(min(f32(PROJECTS_WINDOW.y),ctx.size.y-2*th.margin))}) {
+    if ui.modal(ctx,shell_id(g,"projects"),{width=f32(PROJECTS_WINDOW.x),padding=-1,close=&closed,own_cross=true,fill=ui.tone(ctx,"panel")}) {
+        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(min(f32(PROJECTS_WINDOW.y),ctx.size.y-2*ui.metric(ctx,"margin")))}) {
             projects_body(s,true)
         }
     }
@@ -598,36 +597,35 @@ projects_body :: proc(s:^Session,popup:bool) {
     p:=s.projects
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     busy:=projects_opening(p) || p.next
     // Under the buttons of the window at the left of the launcher, or flush with the dialog.
-    top:=f32(24) if popup else th.bar_height+12
-    corners:=[4]f32{th.radius_panel,0,0,th.radius_panel} if popup else {}
-    if ui.box(ctx,{width=ui.fixed(PROJECTS_SIDEBAR),height=ui.GROW,direction=.Column,padding={18,top,18,20},fill=th.bar_top,corners=corners}) {
+    top:=f32(24) if popup else ui.metric(ctx,"bar_height")+12
+    corners:=[4]f32{ui.metric(ctx,"radius_panel"),0,0,ui.metric(ctx,"radius_panel")} if popup else {}
+    if ui.box(ctx,{width=ui.fixed(PROJECTS_SIDEBAR),height=ui.GROW,direction=.Column,padding={18,top,18,20},fill=ui.tone(ctx,"bar_top"),corners=corners}) {
         if ui.box(ctx,{width=ui.FIT,height=ui.FIT,gap=8,align_y=.Center}) {
             ui.icon(ctx,ui.icon_user(u8(User_Icon.Mirai)),MARK_ARM,44)
             ui.canvas(ctx,ui.id(ctx,"projects_wordmark"),ui.fixed(WORDMARK_SIZE.x*0.6),ui.fixed(WORDMARK_SIZE.y*0.6),{name=u64(User_Icon.Wordmark)})
         }
         if branch:=base.text_get(p.engine_branch[:]);branch!="" {
             ui.spacer(ctx,0,10)
-            ui.label(ctx,fmt.tprintf("Engine on %s",branch),th.font_small,th.text_faint,0,fade=true)
+            ui.label(ctx,fmt.tprintf("Engine on %s",branch),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"),0,fade=true)
         }
         ui.spacer(ctx,0,28)
-        new:=ui.button(ctx,ui.id(ctx,"projects_new"),{label="New project",icon=.Plus,style=.Toggle if p.creating else .Accent,active=p.creating,width=-1,height=34,disabled=busy || p.template_count==0})
+        new:=ui.button(ctx,ui.id(ctx,"projects_new"),{label="New project",icon=.Plus,variant="toggle" if p.creating else "accent",active=p.creating,width=-1,height=34,disabled=busy || p.template_count==0})
         if new.clicked && !p.creating {projects_new_start(s,-1)}
         ui.spacer(ctx,0,8)
-        if ui.button(ctx,ui.id(ctx,"projects_folder"),{label="Open folder",icon=ui.icon_user(u8(User_Icon.Folder)),style=.Field,width=-1,height=34,disabled=busy}).clicked {
+        if ui.button(ctx,ui.id(ctx,"projects_folder"),{label="Open folder",icon=ui.icon_user(u8(User_Icon.Folder)),variant="field",width=-1,height=34,disabled=busy}).clicked {
             if !platform.dialog_show(s.app.platform,{kind=.Open_Folder,tag=DIALOG_PROJECT_FOLDER}) {notify(s,"A file dialog is already open")}
         }
         ui.spacer(ctx)
         if ui.box(ctx,{width=ui.GROW,height=ui.fixed(20),gap=8,align_y=.Center}) {
             if ui.checkbox(ctx,ui.id(ctx,"projects_open_last"),&p.recent.open_last) {projects_recent_save(s)}
-            ui.label(ctx,"Open the last project at startup",th.font_small,th.text_muted,0,fade=true)
+            ui.label(ctx,"Open the last project at startup",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"),0,fade=true)
         }
     }
-    if ui.box(ctx,{width=ui.fixed(1),height=ui.GROW,fill=th.divider}) {}
+    if ui.box(ctx,{width=ui.fixed(1),height=ui.GROW,fill=ui.tone(ctx,"divider")}) {}
     // Below the buttons of the window at the right of the launcher.
-    head:=th.bar_height if !popup && !s.headless && platform.WINDOW_CONTROLS==.Right else 18
+    head:=ui.metric(ctx,"bar_height") if !popup && !s.headless && platform.WINDOW_CONTROLS==.Right else 18
     if ui.box(ctx,{width=ui.GROW,height=ui.GROW,direction=.Column,gap=14,padding={20,head,20,20}}) {
         if p.creating {projects_new_build(s)} else {projects_content(s,popup)}
     }
@@ -666,14 +664,13 @@ projects_path_shown :: proc(p:^Projects,folder:string) -> string {
 // name on the fill its name chooses.
 @(private)
 projects_tile :: proc(ctx:^ui.Context,name:string,side:f32,missing:bool,image:ui.Quad={}) {
-    th:=&ctx.theme
     if image.kind!=.Solid && !missing {
         if ui.box(ctx,{width=ui.fixed(side),height=ui.fixed(side),image=image,layer={enabled=true,opacity=1,radius=side*0.22}}) {}
         return
     }
     tiles:=PROJECTS_TILES
     tile:=tiles[hash.fnv32a(transmute([]u8)name)%len(tiles)]
-    if missing {tile={th.raised,th.text_faint}}
+    if missing {tile={ui.tone(ctx,"raised"),ui.tone(ctx,"text_faint")}}
     if ui.box(ctx,{width=ui.fixed(side),height=ui.fixed(side),align_x=.Center,align_y=.Center,fill=tile[0],radius=side*0.22}) {
         if missing || name=="" {
             ui.icon(ctx,ui.icon_user(u8(User_Icon.Folder)),tile[1],side*0.45)
@@ -690,25 +687,24 @@ projects_content :: proc(s:^Session,popup:bool) {
     p:=s.projects
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     busy:=projects_opening(p) || p.next
     count:=project.recent_count(&p.recent)
     typing:=ctx.edit.id!=0
     open:=false
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(32),gap=10,align_y=.Center}) {
-        ui.label(ctx,"Recent projects",th.font_heading,th.text,font=ui.FONT_SEMIBOLD)
+        ui.label(ctx,"Recent projects",ui.metric(ctx,"font_heading"),ui.tone(ctx,"text"),font=ui.FONT_SEMIBOLD)
         if count>0 {
-            if ui.box(ctx,{width=ui.FIT,height=ui.fixed(20),padding={7,0,7,0},align_y=.Center,fill=th.card,radius=10}) {
-                ui.label(ctx,fmt.tprintf("%d",count),th.font_small,th.text_muted)
+            if ui.box(ctx,{width=ui.FIT,height=ui.fixed(20),padding={7,0,7,0},align_y=.Center,fill=ui.tone(ctx,"card"),radius=10}) {
+                ui.label(ctx,fmt.tprintf("%d",count),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
             }
         }
         ui.spacer(ctx)
         search:=ui.id(ctx,"projects_search")
         named_add(g,search)
         if ui.box(ctx,{width=ui.fixed(220),height=ui.fixed(30)}) {
-            ui.text_field(ctx,search,p.search[:],&p.search_length,{placeholder="Search",icon=ui.icon_user(u8(User_Icon.Search)),live=true,height=30,size=th.font})
+            ui.text_field(ctx,search,p.search[:],&p.search_length,{placeholder="Search",icon=ui.icon_user(u8(User_Icon.Search)),live=true,height=30,size=ui.metric(ctx,"font")})
         }
-        if ui.button(ctx,ui.id(ctx,"projects_open"),{label="Open",style=.Accent,width=72,height=30,center=true,disabled=busy || projects_chosen(p)<0}).clicked {open=true}
+        if ui.button(ctx,ui.id(ctx,"projects_open"),{label="Open",variant="accent",width=72,height=30,center=true,disabled=busy || projects_chosen(p)<0}).clicked {open=true}
         if popup && ui.icon_button(ctx,ui.id(ctx,"projects_close"),.Cross,28).clicked {projects_hide(s)}
     }
     if ui.scroll_area(ctx,ui.id(ctx,"projects_list"),&p.scroll,{width=ui.GROW,height=ui.GROW,direction=.Column,gap=2}) {
@@ -733,7 +729,7 @@ projects_content :: proc(s:^Session,popup:bool) {
         }
         if count==0 {
             if ui.box(ctx,{width=ui.GROW,height=ui.fixed(PROJECTS_ROW),align_x=.Center,align_y=.Center}) {
-                ui.label(ctx,"No project was opened on this machine yet",th.font,th.text_muted)
+                ui.label(ctx,"No project was opened on this machine yet",ui.metric(ctx,"font"),ui.tone(ctx,"text_muted"))
             }
         }
     }
@@ -741,10 +737,10 @@ projects_content :: proc(s:^Session,popup:bool) {
     if chosen:=projects_chosen(p);open && !busy && chosen>=0 {
         if message:=projects_open(s,base.text_get(p.recent.projects[chosen].path[:]));message!="" {notify(s,message)}
     }
-    if p.error_length>0 {ui.label(ctx,string(p.error[:p.error_length]),th.font_small,th.danger_soft,0,fade=true)}
+    if p.error_length>0 {ui.label(ctx,string(p.error[:p.error_length]),ui.metric(ctx,"font_small"),ui.tone(ctx,"danger_soft"),0,fade=true)}
     if p.template_count==0 {return}
     if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=10,layer={enabled=busy,opacity=PROJECTS_FADED}}) {
-        ui.label(ctx,"START FROM A TEMPLATE",th.font_caption,th.text_caption,font=ui.FONT_SEMIBOLD)
+        ui.label(ctx,"START FROM A TEMPLATE",ui.metric(ctx,"font_caption"),ui.tone(ctx,"text_caption"),font=ui.FONT_SEMIBOLD)
         if ui.box(ctx,{width=ui.GROW,height=ui.fixed(PROJECTS_TEMPLATE_CARD),gap=10}) {
             for i in 0..<p.template_count {
                 if projects_template_card(s,i,busy,false,false).clicked {projects_new_start(s,i)}
@@ -766,7 +762,6 @@ projects_chosen :: proc(p:^Projects) -> int {
 @(private)
 projects_row :: proc(s:^Session,index:int,row:^Projects_Row,folder:string,busy,opening:bool) -> (remove,open:bool) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     p:=s.projects
     id:=ui.id(ctx,"project_row",index)
     usable:=!busy && !row.missing
@@ -774,34 +769,34 @@ projects_row :: proc(s:^Session,index:int,row:^Projects_Row,folder:string,busy,o
     if (it.clicked || it.double) && usable {p.selected=index+1}
     open=it.double && usable
     fill,stroke:ui.Color
-    if opening || p.selected==index+1 {fill,stroke=th.accent_soft,th.accent} else if it.hot && usable {fill=th.card}
+    if opening || p.selected==index+1 {fill,stroke=ui.tone(ctx,"accent_soft"),ui.tone(ctx,"accent")} else if it.hot && usable {fill=ui.tone(ctx,"card")}
     if ui.box(ctx,{id=id,width=ui.GROW,height=ui.fixed(PROJECTS_ROW),gap=12,padding={10,0,10,0},align_y=.Center,fill=fill,stroke=stroke,stroke_width=1,radius=8,layer={enabled=busy && !opening,opacity=PROJECTS_FADED}}) {
         name:=base.text_get(row.name[:])
         projects_tile(ctx,name,PROJECTS_TILE,row.missing,thumbnail_image_quad(s,row.thumbnail_slot,row.thumbnail))
         if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=3}) {
-            ui.label(ctx,name,th.font,row.missing?th.text_muted:th.text,0,font=ui.FONT_SEMIBOLD)
-            ui.label(ctx,projects_path_shown(s.projects,folder),th.font_small,th.text_faint,0,fade=true)
+            ui.label(ctx,name,ui.metric(ctx,"font"),row.missing?ui.tone(ctx,"text_muted"):ui.tone(ctx,"text"),0,font=ui.FONT_SEMIBOLD)
+            ui.label(ctx,projects_path_shown(s.projects,folder),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"),0,fade=true)
         }
         if opening {
             pulse_dot(ctx,MARK_ARM,true)
-            ui.label(ctx,projects_doing(s.projects),th.font_small,th.text_muted)
-            if ui.button(ctx,ui.id(ctx,"project_cancel"),{label="Cancel",style=.Field,height=28,size=th.font_small}).clicked {projects_cancel(s)}
+            ui.label(ctx,projects_doing(s.projects),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
+            if ui.button(ctx,ui.id(ctx,"project_cancel"),{label="Cancel",variant="field",height=28,size=ui.metric(ctx,"font_small")}).clicked {projects_cancel(s)}
         } else {
-            chip,chip_color,chip_fill:="",th.text_muted,th.card
+            chip,chip_color,chip_fill:="",ui.tone(ctx,"text_muted"),ui.tone(ctx,"card")
             switch {
-            case row.missing:     chip,chip_color,chip_fill="Folder not found",th.danger,GIT_REMOVED_FILL
+            case row.missing:     chip,chip_color,chip_fill="Folder not found",ui.tone(ctx,"danger"),GIT_REMOVED_FILL
             case !row.repository: chip="No repository"
             case:                 chip=base.text_get(row.branch[:])
             }
             if chip!="" {
                 if ui.box(ctx,{width=ui.FIT,height=ui.fixed(22),gap=5,padding={8,0,8,0},align_y=.Center,fill=chip_fill,radius=11}) {
                     if row.repository && !row.missing {ui.icon(ctx,ui.icon_user(u8(User_Icon.Branch)),chip_color,12)}
-                    ui.label(ctx,chip,th.font_small,chip_color)
+                    ui.label(ctx,chip,ui.metric(ctx,"font_small"),chip_color)
                 }
             }
-            if row.missing && ui.button(ctx,ui.id(ctx,"project_remove",index),{label="Remove",style=.Ghost,height=24,size=th.font_small,disabled=busy}).clicked {remove=true}
+            if row.missing && ui.button(ctx,ui.id(ctx,"project_remove",index),{label="Remove",variant="ghost",height=24,size=ui.metric(ctx,"font_small"),disabled=busy}).clicked {remove=true}
             if ui.box(ctx,{width=ui.fixed(76),height=ui.FIT,align_x=.End}) {
-                ui.label(ctx,base.text_get(row.opened[:]),th.font_small,th.text_faint)
+                ui.label(ctx,base.text_get(row.opened[:]),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"))
             }
         }
     }
@@ -813,24 +808,23 @@ projects_row :: proc(s:^Session,index:int,row:^Projects_Row,folder:string,busy,o
 projects_template_card :: proc(s:^Session,index:int,disabled,chosen,tall:bool) -> ui.Interaction {
     p:=s.projects
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     id:=ui.id(ctx,"project_template",index)
     it:=ui.interact(ctx,id,ui.Widget_Flags{.Focusable} if !disabled else {.Passive})
     if disabled {it={}}
     name:=base.text_get(p.templates[index][:])
     game:=name=="game"
-    fill,stroke:=th.well,th.well_stroke_hover if it.hot else th.well_stroke
-    tile,ink:=th.card,th.text_muted
-    if game {tile,ink=th.accent_soft,PROJECTS_TILES[1][1]}
-    if chosen {fill,stroke,tile,ink=th.accent_soft,th.accent,th.accent,th.on_accent}
+    fill,stroke:=ui.tone(ctx,"well"),ui.tone(ctx,"well_stroke_hover") if it.hot else ui.tone(ctx,"well_stroke")
+    tile,ink:=ui.tone(ctx,"card"),ui.tone(ctx,"text_muted")
+    if game {tile,ink=ui.tone(ctx,"accent_soft"),PROJECTS_TILES[1][1]}
+    if chosen {fill,stroke,tile,ink=ui.tone(ctx,"accent_soft"),ui.tone(ctx,"accent"),ui.tone(ctx,"accent"),ui.tone(ctx,"on_accent")}
     side:=f32(40) if tall else 32
     padding:=ui.padding_all(14) if tall else [4]f32{14,0,14,0}
-    if ui.box(ctx,{id=id,width=ui.GROW,height=ui.GROW,direction=.Column if tall else .Row,gap=14 if tall else 12,padding=padding,align_y=.Start if tall else .Center,fill=fill,stroke=stroke,stroke_width=1,radius=th.radius_panel}) {
+    if ui.box(ctx,{id=id,width=ui.GROW,height=ui.GROW,direction=.Column if tall else .Row,gap=14 if tall else 12,padding=padding,align_y=.Start if tall else .Center,fill=fill,stroke=stroke,stroke_width=1,radius=ui.metric(ctx,"radius_panel")}) {
         if ui.box(ctx,{width=ui.fixed(side),height=ui.fixed(side),align_x=.Center,align_y=.Center,fill=tile,radius=side*0.25}) {
             ui.icon(ctx,.Spawn if game else .Cube,ink,side*0.5)
         }
-        ui.label(ctx,strings.to_upper_camel_case(name,context.temp_allocator),th.font,th.text,-1 if tall else 0,font=ui.FONT_SEMIBOLD)
-        if !tall {ui.icon(ctx,.Chevron_Right,th.text_faint,14)}
+        ui.label(ctx,strings.to_upper_camel_case(name,context.temp_allocator),ui.metric(ctx,"font"),ui.tone(ctx,"text"),-1 if tall else 0,font=ui.FONT_SEMIBOLD)
+        if !tall {ui.icon(ctx,.Chevron_Right,ui.tone(ctx,"text_faint"),14)}
     }
     return it
 }
@@ -842,7 +836,6 @@ projects_loading_build :: proc(s:^Session) {
     p:=s.projects
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     folder:=base.text_get(p.opening[:])
     name:=filepath.base(folder)
     Step :: enum u8 {Pending,Current,Done}
@@ -861,29 +854,29 @@ projects_loading_build :: proc(s:^Session) {
             if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=12,padding={20,18,20,12},align_y=.Center}) {
                 projects_tile(ctx,name,40,false)
                 if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=3}) {
-                    ui.label(ctx,fmt.tprintf("Opening %s",name),th.font_heading,th.text,0,font=ui.FONT_SEMIBOLD)
-                    ui.label(ctx,projects_path_shown(p,folder),th.font_small,th.text_faint,0,fade=true)
+                    ui.label(ctx,fmt.tprintf("Opening %s",name),ui.metric(ctx,"font_heading"),ui.tone(ctx,"text"),0,font=ui.FONT_SEMIBOLD)
+                    ui.label(ctx,projects_path_shown(p,folder),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"),0,fade=true)
                 }
             }
             if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,padding={20,4,20,16}}) {
                 for step,i in steps {
                     if i==0 && !p.from_git {continue}
                     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(30),gap=10,align_y=.Center}) {
-                        if ui.box(ctx,{width=ui.fixed(18),height=ui.fixed(18),align_x=.Center,align_y=.Center,fill=th.accent_soft if states[i]==.Done else {},radius=9}) {
+                        if ui.box(ctx,{width=ui.fixed(18),height=ui.fixed(18),align_x=.Center,align_y=.Center,fill=ui.tone(ctx,"accent_soft") if states[i]==.Done else {},radius=9}) {
                             switch states[i] {
                             case .Done:    ui.icon(ctx,.Check,MARK_ARM,10)
                             case .Current: pulse_dot(ctx,MARK_ARM,true)
-                            case .Pending: if ui.box(ctx,{width=ui.fixed(14),height=ui.fixed(14),stroke=th.border,stroke_width=1.5,radius=7}) {}
+                            case .Pending: if ui.box(ctx,{width=ui.fixed(14),height=ui.fixed(14),stroke=ui.tone(ctx,"border"),stroke_width=1.5,radius=7}) {}
                             }
                         }
-                        color:=[Step]ui.Color{.Pending=th.text_faint,.Current=th.text,.Done=th.text_muted}
-                        ui.label(ctx,step,th.font,color[states[i]],font=ui.FONT_SEMIBOLD if states[i]==.Current else 0)
+                        color:=[Step]ui.Color{.Pending=ui.tone(ctx,"text_faint"),.Current=ui.tone(ctx,"text"),.Done=ui.tone(ctx,"text_muted")}
+                        ui.label(ctx,step,ui.metric(ctx,"font"),color[states[i]],font=ui.FONT_SEMIBOLD if states[i]==.Current else 0)
                     }
                 }
             }
-            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=th.divider}) {}
-            if ui.box(ctx,{width=ui.GROW,height=ui.FIT,padding={20,12,20,12},align_x=.End,fill=th.panel,corners={0,0,th.radius_panel,th.radius_panel}}) {
-                if ui.button(ctx,shell_id(g,"projects_loading_cancel"),{label="Cancel",style=.Field,width=90,height=th.control,center=true}).clicked {projects_cancel(s)}
+            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=ui.tone(ctx,"divider")}) {}
+            if ui.box(ctx,{width=ui.GROW,height=ui.FIT,padding={20,12,20,12},align_x=.End,fill=ui.tone(ctx,"panel"),corners={0,0,ui.metric(ctx,"radius_panel"),ui.metric(ctx,"radius_panel")}}) {
+                if ui.button(ctx,shell_id(g,"projects_loading_cancel"),{label="Cancel",variant="field",width=90,height=ui.metric(ctx,"control"),center=true}).clicked {projects_cancel(s)}
             }
         }
     }
@@ -896,13 +889,12 @@ projects_new_build :: proc(s:^Session) {
     p:=s.projects
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     busy:=projects_opening(p) || p.next
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(32),gap=10,align_y=.Center}) {
         back:=ui.id(ctx,"new_project_back")
         named_add(g,back)
-        if ui.icon_button(ctx,back,ui.icon_user(u8(User_Icon.Back)),28,.Field).clicked {p.creating=false}
-        ui.label(ctx,"New project",th.font_heading,th.text,font=ui.FONT_SEMIBOLD)
+        if ui.icon_button(ctx,back,ui.icon_user(u8(User_Icon.Back)),28,"field").clicked {p.creating=false}
+        ui.label(ctx,"New project",ui.metric(ctx,"font_heading"),ui.tone(ctx,"text"),font=ui.FONT_SEMIBOLD)
     }
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(108),gap=10}) {
         for i in 0..<p.template_count {
@@ -911,29 +903,29 @@ projects_new_build :: proc(s:^Session) {
     }
     if ui.box(ctx,{width=ui.GROW,height=ui.GROW,gap=14}) {
         if ui.box(ctx,{width=ui.GROW,height=ui.GROW,direction=.Column,gap=10}) {
-            if ui.property(ctx,"Name",30) {
-                ui.text_field(ctx,ui.id(ctx,"new_project_name"),p.name[:],&p.name_length,{live=true,height=30,size=th.font})
+            if kit.property(ctx,"Name",30) {
+                ui.text_field(ctx,ui.id(ctx,"new_project_name"),p.name[:],&p.name_length,{live=true,height=30,size=ui.metric(ctx,"font")})
             }
-            if ui.property(ctx,"Location",30) {
-                ui.text_field(ctx,ui.id(ctx,"new_project_location"),p.location[:],&p.location_length,{live=true,height=30,size=th.font})
-                if ui.button(ctx,ui.id(ctx,"new_project_browse"),{label="Browse",icon=ui.icon_user(u8(User_Icon.Folder)),style=.Field,height=30}).clicked {
+            if kit.property(ctx,"Location",30) {
+                ui.text_field(ctx,ui.id(ctx,"new_project_location"),p.location[:],&p.location_length,{live=true,height=30,size=ui.metric(ctx,"font")})
+                if ui.button(ctx,ui.id(ctx,"new_project_browse"),{label="Browse",icon=ui.icon_user(u8(User_Icon.Folder)),variant="field",height=30}).clicked {
                     location:=string(p.location[:p.location_length])
                     if !platform.dialog_show(s.app.platform,{kind=.Open_Folder,tag=DIALOG_PROJECT_LOCATION,location=os.is_dir(location)?location:""}) {notify(s,"A file dialog is already open")}
                 }
             }
-            if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=10,padding={14,12,14,12},fill=th.well,stroke=th.divider,stroke_width=1,radius=th.radius_panel}) {
+            if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=10,padding={14,12,14,12},fill=ui.tone(ctx,"well"),stroke=ui.tone(ctx,"divider"),stroke_width=1,radius=ui.metric(ctx,"radius_panel")}) {
                 if ui.box(ctx,{width=ui.GROW,height=ui.fixed(20),gap=8,align_y=.Center}) {
                     ui.checkbox(ctx,ui.id(ctx,"new_project_git"),&p.git)
-                    ui.label(ctx,"Initialize Git repository",th.font,th.text,font=ui.FONT_SEMIBOLD)
+                    ui.label(ctx,"Initialize Git repository",ui.metric(ctx,"font"),ui.tone(ctx,"text"),font=ui.FONT_SEMIBOLD)
                 }
                 if p.git {
                     if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=10,padding={24,0,0,0}}) {
-                        if ui.property(ctx,"Remote",30) {
-                            ui.text_field(ctx,ui.id(ctx,"new_project_remote"),p.remote[:],&p.remote_length,{placeholder="https://github.com/user/repo.git",live=true,height=30,size=th.font})
+                        if kit.property(ctx,"Remote",30) {
+                            ui.text_field(ctx,ui.id(ctx,"new_project_remote"),p.remote[:],&p.remote_length,{placeholder="https://github.com/user/repo.git",live=true,height=30,size=ui.metric(ctx,"font")})
                         }
                         if ui.box(ctx,{width=ui.GROW,height=ui.fixed(20),gap=8,align_y=.Center}) {
                             ui.checkbox(ctx,ui.id(ctx,"new_project_lfs"),&p.lfs)
-                            ui.label(ctx,"Use Git LFS for textures, meshes and sounds",th.font_small,th.text_label,0,fade=true)
+                            ui.label(ctx,"Use Git LFS for textures, meshes and sounds",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_label"),0,fade=true)
                         }
                     }
                 }
@@ -942,8 +934,8 @@ projects_new_build :: proc(s:^Session) {
         projects_new_plugins(s)
     }
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(32),gap=8,align_x=.End,align_y=.Center}) {
-        if ui.button(ctx,ui.id(ctx,"new_project_cancel"),{label="Cancel",style=.Field,width=90,height=32,center=true}).clicked {p.creating=false}
-        if ui.button(ctx,ui.id(ctx,"new_project_create"),{label="Create",style=.Accent,width=90,height=32,center=true,disabled=busy}).clicked {
+        if ui.button(ctx,ui.id(ctx,"new_project_cancel"),{label="Cancel",variant="field",width=90,height=32,center=true}).clicked {p.creating=false}
+        if ui.button(ctx,ui.id(ctx,"new_project_create"),{label="Create",variant="accent",width=90,height=32,center=true,disabled=busy}).clicked {
             if message:=projects_create(s);message!="" {notify(s,message)}
         }
     }
@@ -1047,24 +1039,23 @@ projects_git_link :: proc(text:string) -> bool {
 projects_new_plugins :: proc(s:^Session) {
     p:=s.projects
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     catalog:=plugins_git_catalog(s)
     count:=catalog==nil?0:project.catalog_count(catalog)
     popup:=ui.id(ctx,"new_project_add_popup")
-    row_box:=ui.Box{width=ui.GROW,height=ui.fixed(th.row+4),gap=8,padding={6,0,6,0},align_y=.Center}
-    if ui.box(ctx,{width=ui.fixed(PROJECTS_PLUGINS_WIDTH),height=ui.GROW,direction=.Column,fill=th.well,stroke=th.divider,stroke_width=1,radius=th.radius_panel}) {
+    row_box:=ui.Box{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")+4),gap=8,padding={6,0,6,0},align_y=.Center}
+    if ui.box(ctx,{width=ui.fixed(PROJECTS_PLUGINS_WIDTH),height=ui.GROW,direction=.Column,fill=ui.tone(ctx,"well"),stroke=ui.tone(ctx,"divider"),stroke_width=1,radius=ui.metric(ctx,"radius_panel")}) {
         if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=8,padding={14,8,8,8},align_y=.Center}) {
-            ui.label(ctx,"Plugins",th.font,th.text,font=ui.FONT_SEMIBOLD)
+            ui.label(ctx,"Plugins",ui.metric(ctx,"font"),ui.tone(ctx,"text"),font=ui.FONT_SEMIBOLD)
             ui.spacer(ctx)
             add:=ui.id(ctx,"new_project_add_plugin")
-            if ui.button(ctx,add,{label="Add plugin",icon=.Plus,style=.Field,height=th.control,size=th.font_small,active=ui.popup_is_open(ctx,popup)}).clicked {
+            if ui.button(ctx,add,{label="Add plugin",icon=.Plus,variant="field",height=ui.metric(ctx,"control"),size=ui.metric(ctx,"font_small"),active=ui.popup_is_open(ctx,popup)}).clicked {
                 anchor,_:=ui.widget_rect(ctx,add)
                 p.add_scroll=0
                 ui.popup_open(ctx,popup,anchor)
             }
         }
-        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=th.divider}) {}
-        if ui.scroll_area(ctx,ui.id(ctx,"new_project_plugins"),&p.plugins_scroll,{width=ui.GROW,height=ui.GROW,direction=.Column,padding={8,4,8,6},fade=th.well}) {
+        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=ui.tone(ctx,"divider")}) {}
+        if ui.scroll_area(ctx,ui.id(ctx,"new_project_plugins"),&p.plugins_scroll,{width=ui.GROW,height=ui.GROW,direction=.Column,padding={8,4,8,6},fade=ui.tone(ctx,"well")}) {
             for i in 0..<p.plugin_count {
                 row:=&p.plugins[i]
                 needed:=projects_plugin_needed_by(p,i)
@@ -1076,8 +1067,8 @@ projects_new_plugins :: proc(s:^Session) {
                         ui.checkbox(ctx,ui.id(ctx,"new_project_plugin",i),&row.on)
                     }
                     plugin_icon_draw(s,&row.icon,base.text_get(row.icon_file[:]))
-                    ui.label(ctx,base.text_get(row.name[:]),th.font_small,th.text_label)
-                    if needed>=0 {ui.label(ctx,fmt.tprintf("needed by %s",base.text_get(p.plugins[needed].name[:])),th.font_label,th.text_faint,0,fade=true)}
+                    ui.label(ctx,base.text_get(row.name[:]),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_label"))
+                    if needed>=0 {ui.label(ctx,fmt.tprintf("needed by %s",base.text_get(p.plugins[needed].name[:])),ui.metric(ctx,"font_label"),ui.tone(ctx,"text_faint"),0,fade=true)}
                 }
             }
             for i in 0..<count {
@@ -1087,21 +1078,21 @@ projects_new_plugins :: proc(s:^Session) {
                 if ui.box(ctx,row_box) {
                     ui.checkbox(ctx,ui.id(ctx,"new_project_catalog",i),&p.picked[i])
                     plugin_icon_draw(s,&s.plugins_git.catalog_icons[i],plugin_icon_catalog(s,name))
-                    ui.label(ctx,name,th.font_small,th.text_label)
-                    ui.label(ctx,base.text_get(entry.description[:]),th.font_label,th.text_faint,0,fade=true)
+                    ui.label(ctx,name,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_label"))
+                    ui.label(ctx,base.text_get(entry.description[:]),ui.metric(ctx,"font_label"),ui.tone(ctx,"text_faint"),0,fade=true)
                 }
             }
             for i in 0..<p.link_count {
                 if ui.box(ctx,row_box) {
                     ui.checkbox(ctx,ui.id(ctx,"new_project_link",i),&p.links_on[i])
-                    ui.icon(ctx,ui.icon_user(u8(User_Icon.Branch)),th.text_muted,PLUGIN_ICON_SIZE)
-                    ui.label(ctx,base.text_get(p.links[i][:]),th.font_small,th.text_label,0,fade=true)
+                    ui.icon(ctx,ui.icon_user(u8(User_Icon.Branch)),ui.tone(ctx,"text_muted"),PLUGIN_ICON_SIZE)
+                    ui.label(ctx,base.text_get(p.links[i][:]),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_label"),0,fade=true)
                 }
             }
             text:=""
             if count==0 {text=plugins_git_busy(s)?"Fetching the catalog":base.text_get(s.plugins_git.catalog_message[:])}
             if text!="" {
-                if ui.box(ctx,row_box) {ui.label(ctx,text,th.font_small,th.text_faint,0,fade=true)}
+                if ui.box(ctx,row_box) {ui.label(ctx,text,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"),0,fade=true)}
             }
         }
     }
@@ -1114,7 +1105,6 @@ projects_new_plugins :: proc(s:^Session) {
 projects_add_plugin_popup :: proc(s:^Session,popup:ui.Id) {
     p:=s.projects
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     if !ui.popup_is_open(ctx,popup) {return}
     catalog:=s.plugins_git.catalog
     needle,_:=ui.popup_search(ctx,popup)
@@ -1132,7 +1122,7 @@ projects_add_plugin_popup :: proc(s:^Session,popup:ui.Id) {
         ui.id_push(ctx,popup)
         defer ui.id_pop(ctx)
         if _,changed:=ui.popup_search(ctx,popup);changed {p.add_scroll=0}
-        if link && ui.row(ctx,ui.id(ctx,"link"),{label="Add from Git",detail=needle,icon=ui.icon_user(u8(User_Icon.Branch)),icon_color=th.text_muted,height=row_height}).clicked {taken=true}
+        if link && ui.row(ctx,ui.id(ctx,"link"),{label="Add from Git",detail=needle,icon=ui.icon_user(u8(User_Icon.Branch)),icon_color=ui.tone(ctx,"text_muted"),height=row_height}).clicked {taken=true}
         if len(found)>0 {
             rows:=ui.id(ctx,"rows")
             shown:=f32(min(len(found),8))*row_height
@@ -1142,14 +1132,14 @@ projects_add_plugin_popup :: proc(s:^Session,popup:ui.Id) {
                 entry:=&catalog.plugins[i]
                 name:=base.text_get(entry.name[:])
                 r:=ui.Row{label=name,detail=base.text_get(entry.description[:]),height=row_height,checked=p.picked[i],check_room=true}
-                if quad:=plugin_icon_quad(s,&s.plugins_git.catalog_icons[i],plugin_icon_catalog(s,name));quad.kind!=.Solid {r.quad=quad} else {r.icon,r.icon_color=ui.icon_user(u8(User_Icon.Plugin)),th.text_muted}
+                if quad:=plugin_icon_quad(s,&s.plugins_git.catalog_icons[i],plugin_icon_catalog(s,name));quad.kind!=.Solid {r.quad=quad} else {r.icon,r.icon_color=ui.icon_user(u8(User_Icon.Plugin)),ui.tone(ctx,"text_muted")}
                 if ui.row(ctx,ui.id(ctx,"row",i+1),r).clicked {chosen=i}
             }
             ui.list_end(ctx,rows,len(found),last,row_height)
         } else if !link {
             text:="No plugin of the catalog matches"
             if plugins_git_busy(s) {text="Fetching the catalog"} else if message:=base.text_get(s.plugins_git.catalog_message[:]);message!="" {text=message}
-            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(row_height),padding={8,0,8,0},align_y=.Center}) {ui.label(ctx,text,th.font_small,th.text_faint,0,fade=true)}
+            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(row_height),padding={8,0,8,0},align_y=.Center}) {ui.label(ctx,text,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"),0,fade=true)}
         }
     }
     if chosen>=0 {p.picked[chosen]=true}

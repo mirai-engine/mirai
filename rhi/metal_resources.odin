@@ -146,8 +146,10 @@ texture_create :: proc(d: ^Device, desc: Texture_Desc) -> Texture {
 }
 
 texture_destroy :: proc(d: ^Device, texture: Texture) {
-	if t := pool_get(&d.textures, base.Handle(texture)); t == nil || t.swapchain {return}
-	for entry, index in d.table_textures {if entry == texture {texture_table_set(d, u32(index), 0)}}
+	kept := pool_get(&d.textures, base.Handle(texture))
+	if kept == nil || kept.swapchain {return}
+	from, to := table_refs_range(d.table_textures[:], texture, kept.table)
+	for index in from ..< to {if d.table_textures[index] == texture {texture_table_set(d, u32(index), 0)}}
 	t, _ := pool_remove(&d.textures, base.Handle(texture))
 	for v in t.mip_views {mtl_defer(d, v)}
 	mtl_defer(d, t.encoded)
@@ -312,6 +314,8 @@ texture_table_set :: proc(d: ^Device, index: u32, texture: Texture) -> bool {
 		set_error(d, "texture table entry %d: shaders read the table as 2D textures of one layer", index)
 		return false
 	}
+	before := pool_get(&d.textures, base.Handle(d.table_textures[index]))
+	table_refs_move(&before.table if before != nil else nil, &t.table if texture != 0 else nil, index)
 	d.table_textures[index] = texture
 	d.table_views[index] = t.handle
 	table_changed(&d.table_changes, index)

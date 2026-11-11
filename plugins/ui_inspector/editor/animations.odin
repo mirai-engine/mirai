@@ -63,7 +63,6 @@ key_row :: proc(p:^Pane,property:ui.Anim_Property,key:^std_anim.Keyframe) -> (ch
 section_animations :: proc(p:^Pane,n:^ui.Tree_Node) {
     ctx:=p.s.gui.ctx
     u:=p.u
-    th:=&ctx.theme
     r:=&u.records
     names:=anim_names(r)
     // The list and what removes one on a line; what makes one under it, to
@@ -71,7 +70,7 @@ section_animations :: proc(p:^Pane,n:^ui.Tree_Node) {
     if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=4,align_y=.Center}) {
         chosen:=u.anim+1
         if ui.dropdown(ctx,ui.id(ctx,"anim"),{list=names},&chosen,{width=-1}) {u.anim=chosen-1}
-        if ui.button(ctx,ui.id(ctx,"anim_remove"),{icon=ui.icon_user(u8(editor.User_Icon.Trash)),icon_size=13,icon_color=th.text_muted,tip="Delete",style=.Ghost,width=th.row,height=th.row,disabled=u.anim<0 || u.anim>=len(r.anims)}).clicked {
+        if ui.button(ctx,ui.id(ctx,"anim_remove"),{icon=ui.icon_user(u8(editor.User_Icon.Trash)),icon_size=13,icon_color=ui.tone(ctx,"text_muted"),tip="Delete",variant="ghost",width=ui.metric(ctx,"row"),height=ui.metric(ctx,"row"),disabled=u.anim<0 || u.anim>=len(r.anims)}).clicked {
             author.records_anim_remove(r,u.anim)
             u.anim=min(u.anim,len(r.anims)-1)
             changed(u,"Delete animation")
@@ -112,7 +111,7 @@ section_animations :: proc(p:^Pane,n:^ui.Tree_Node) {
                         changed(u,"Animation")
                     }
                 }
-                if ui.button(ctx,ui.id(ctx,"remove"),{icon=.Cross,tip="Remove track",style=.Ghost,width=th.row,height=th.row,disabled=a.count<=1}).clicked {removed_track=t}
+                if ui.button(ctx,ui.id(ctx,"remove"),{icon=.Cross,tip="Remove track",variant="ghost",width=ui.metric(ctx,"row"),height=ui.metric(ctx,"row"),disabled=a.count<=1}).clicked {removed_track=t}
             }
             removed_key:=-1
             for k in 0..<int(track.key_count) {
@@ -125,7 +124,7 @@ section_animations :: proc(p:^Pane,n:^ui.Tree_Node) {
                         edit(u,"Animation",value_row(p,"Ease",Enum_Value(mm.Ease),&key.ease,mm.Ease.Linear))
                         edit(u,"Animation",value_row(p,"Interpolation",Enum_Value(std_anim.Interpolation),&key.interpolation,std_anim.Interpolation.Linear))
                     }
-                    if ui.button(ctx,ui.id(ctx,"remove"),{icon=.Cross,tip="Remove key",style=.Ghost,width=th.row,height=th.row,disabled=track.key_count<=1}).clicked {removed_key=k}
+                    if ui.button(ctx,ui.id(ctx,"remove"),{icon=.Cross,tip="Remove key",variant="ghost",width=ui.metric(ctx,"row"),height=ui.metric(ctx,"row"),disabled=track.key_count<=1}).clicked {removed_key=k}
                 }
                 ui.id_pop(ctx)
             }
@@ -155,7 +154,7 @@ section_animations :: proc(p:^Pane,n:^ui.Tree_Node) {
             if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column}) {
                 if list_row(p,fmt.tprintf("Part %d",part+1),&chosen,earlier) && chosen>0 {r.parts[at]=chosen;changed(u,"Animation")}
             }
-            if ui.button(ctx,ui.id(ctx,"remove"),{icon=.Cross,tip="Remove part",style=.Ghost,width=th.row,height=th.row}).clicked {removed=part}
+            if ui.button(ctx,ui.id(ctx,"remove"),{icon=.Cross,tip="Remove part",variant="ghost",width=ui.metric(ctx,"row"),height=ui.metric(ctx,"row")}).clicked {removed=part}
         }
         ui.id_pop(ctx)
     }
@@ -195,7 +194,6 @@ section_component :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
     s:=p.s
     u:=p.u
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     r:=&u.records
     // The widgets it can be a use of: a file it uses for its styles has no one root.
     names:=make([dynamic]string,context.temp_allocator)
@@ -215,7 +213,7 @@ section_component :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
     if advanced(p) {component_fields_rows(p,n)}
     component:=&r.components[chosen]
     bind_only(p,"Data",n.data[:],.Data,"What the paths of its widget that start with @ read: a struct or an entity of the game, so one widget shows the health of the player in one place and of an enemy in another")
-    if ui.button(ctx,ui.id(ctx,"open"),{label=fmt.tprintf("Open %s",editor.asset_name_of(a,component.widget,"missing")),style=.Ghost,height=th.row}).clicked {
+    if ui.button(ctx,ui.id(ctx,"open"),{label=fmt.tprintf("Open %s",editor.asset_name_of(a,component.widget,"missing")),variant="ghost",height=ui.metric(ctx,"row")}).clicked {
         editor.asset_document_open(s,component.widget)
     }
     if p.readonly {return}
@@ -230,7 +228,7 @@ section_component :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
         ui.id_push(ctx,ui.id(ctx,"override",row+1))
         if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=4,align_y=.Center}) {
             if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column}) {edit(u,"Override",value_row(p,"Node",Name_Value,&o.node,o.node,"The node of the widget it changes, by its name; one inside a widget of the widget, by both names: outer/inner"))}
-            if ui.button(ctx,ui.id(ctx,"remove"),{icon=.Cross,tip="Remove override",style=.Ghost,width=th.row,height=th.row}).clicked {removed=row}
+            if ui.button(ctx,ui.id(ctx,"remove"),{icon=.Cross,tip="Remove override",variant="ghost",width=ui.metric(ctx,"row"),height=ui.metric(ctx,"row")}).clicked {removed=row}
         }
         field_names:=NODE_FIELD_NAMES
         // What an instance usually changes of a widget; the rest in Advanced, or once it is set.
@@ -297,7 +295,6 @@ section_parameters :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
     s:=p.s
     u:=p.u
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     r:=&u.records
     fields:=author.DOC_PARAM_FIELDS
     slot:=.Slot in n.flags
@@ -317,7 +314,7 @@ section_parameters :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
                     if why:=author.records_param_valid_name(r,i);why!="" {param.name=before;editor.notify(s,why)} else {changed(u,"Parameter")}
                 }
             }
-            if !p.readonly && ui.button(ctx,ui.id(ctx,"remove"),{icon=.Cross,tip="Remove parameter",style=.Ghost,width=th.row,height=th.row}).clicked {removed=i}
+            if !p.readonly && ui.button(ctx,ui.id(ctx,"remove"),{icon=.Cross,tip="Remove parameter",variant="ghost",width=ui.metric(ctx,"row"),height=ui.metric(ctx,"row")}).clicked {removed=i}
         }
         node_name:=serial.text_field(param.node[:])
         chosen:=0
@@ -354,7 +351,7 @@ section_parameters :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
         ui.id_pop(ctx)
     }
     if removed>=0 {ordered_remove(&r.params,removed);changed(u,"Remove parameter")}
-    if !p.readonly && ui.button(ctx,ui.id(ctx,"param_add"),{label="Add parameter",icon=.Plus,style=.Ghost,height=th.row}).clicked {
+    if !p.readonly && ui.button(ctx,ui.id(ctx,"param_add"),{label="Add parameter",icon=.Plus,variant="ghost",height=ui.metric(ctx,"row")}).clicked {
         author.records_param_add(r)
         changed(u,"Add parameter")
     }

@@ -222,7 +222,7 @@ test_layout_commands :: proc(ctx:^Context,out:[]Test_Command) -> int {
 @(test)
 boxes_are_placed_where_the_layout_always_placed_them :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     input:=test_input(CORPUS_SIZE.x,CORPUS_SIZE.y)
     input.safe=CORPUS_SAFE
@@ -239,7 +239,7 @@ boxes_are_placed_where_the_layout_always_placed_them :: proc(t:^testing.T) {
 @(test)
 what_is_drawn_follows_the_layers_and_closes_its_clips :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     input:=test_input(CORPUS_SIZE.x,CORPUS_SIZE.y)
     input.safe=CORPUS_SAFE
@@ -266,7 +266,7 @@ paragraphs_break_into_the_lines_they_always_did :: proc(t:^testing.T) {
         desc:=TEST_FONT
         desc.max_text_words=words
         ctx:Context
-        testing.expect(t,context_init(&ctx,desc))
+        testing.expect(t,test_context_init(&ctx,desc))
         defer context_destroy(&ctx)
         input:=test_input(CORPUS_SIZE.x,CORPUS_SIZE.y)
         input.safe=CORPUS_SAFE
@@ -306,7 +306,7 @@ paragraphs_break_into_the_lines_they_always_did :: proc(t:^testing.T) {
 @(test)
 a_frame_that_shows_the_same_text_measures_none_of_it :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_FONT))
+    testing.expect(t,test_context_init(&ctx,TEST_FONT))
     defer context_destroy(&ctx)
     input:=test_input(CORPUS_SIZE.x,CORPUS_SIZE.y)
     test_frame(&ctx,&input,corpus_texts,nil)
@@ -323,7 +323,7 @@ text_that_fills_more_than_half_the_measures_is_not_measured_again :: proc(t:^tes
     desc:=TEST_FONT
     desc.max_text_words=64
     ctx:Context
-    testing.expect(t,context_init(&ctx,desc))
+    testing.expect(t,test_context_init(&ctx,desc))
     defer context_destroy(&ctx)
     input:=test_input(CORPUS_SIZE.x,CORPUS_SIZE.y)
     // 16 runs of three words: 48 of the 64 a frame holds.
@@ -356,7 +356,7 @@ text_that_fills_more_than_half_the_measures_is_not_measured_again :: proc(t:^tes
 @(test)
 a_world_panel_is_laid_out_from_the_origin_of_its_surface :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     input:=test_input(800,600)
     // The panel takes, in the second frame, the place of an element that was
@@ -604,7 +604,7 @@ GOLDEN_COMMANDS :: []Golden_Command{
 @(test)
 what_floats_in_a_box_that_cuts_its_floats_is_cut_by_it :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     Test :: struct {cut:bool}
     build :: proc(ctx:^Context,user:rawptr) {
@@ -626,7 +626,7 @@ what_floats_in_a_box_that_cuts_its_floats_is_cut_by_it :: proc(t:^testing.T) {
 @(test)
 what_floats_in_nested_boxes_that_cut_their_floats_is_cut_by_all_of_them :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     // The stage of a preview moved past the left of its area: what floats on
     // the stage does not show beside the area.

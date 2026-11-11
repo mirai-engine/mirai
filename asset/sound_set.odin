@@ -4,12 +4,13 @@ import "core:math"
 import "mirai:std/base"
 
 // .sound_set: sounds that play as one. Each time it plays, one of them is
-// chosen by its weight, with a volume and a pitch drawn from their ranges.
-// The sounds are .sound assets.
+// chosen by its weight, with a volume and a pitch drawn from their ranges,
+// heard as its hearing says when audio.play places it in the world. The
+// sounds are .sound assets.
 //
 //   sound_set   Sound_Set_Info, one row
 
-SOUND_SET_VERSION :: 2
+SOUND_SET_VERSION :: 3
 SOUND_SET_CAPACITY :: 16
 SOUND_SET_PITCH_MAX :: 64
 
@@ -18,14 +19,30 @@ Sound_Variation :: struct {
     weight:f32 `mirai:"min=0"`, // how often it is chosen against the others; 0 is taken as 1
 }
 
+// How a sound falls with distance, as audio.Attenuation_Model.
+Attenuation_Model :: enum u8 {None,Inverse,Linear,Exponential}
+
+// How audio.play hears a set; an Audio_Source hears it as its own fields say.
+Sound_Hearing :: struct {
+    attenuation:Attenuation_Model, // how it falls between min_distance and max_distance
+    min_distance:f32 `mirai:"min=0,unit=m"`,
+    max_distance:f32 `mirai:"min=0,unit=m"`, // silent there; one placed farther from the listener does not start
+    rolloff:f32 `mirai:"min=0"`, // how fast it falls: 1 is the curve as its model says it
+    reverb:f32 `mirai:"min=0,max=1"`, // share of it the room of the listener reverberates
+    priority:u8, // when more sounds play than the mixer has voices, the higher keep theirs
+}
+
+SOUND_HEARING_DEFAULT :: Sound_Hearing{attenuation=.Inverse,min_distance=1,max_distance=20,rolloff=1}
+
 Sound_Set_Info :: struct {
     sounds:[SOUND_SET_CAPACITY]Sound_Variation `mirai:"trim"`,
     volume_min,volume_max:f32 `mirai:"min=0"`, // linear gain over the volume it is played at
     pitch_min,pitch_max:f32 `mirai:"min=0,max=64"`, // rate over the pitch it is played at
     no_repeat:bool, // not the same sound twice in a row while it has others
+    hearing:Sound_Hearing,
 }
 
-SOUND_SET_DEFAULTS :: Sound_Set_Info{volume_min=1,volume_max=1,pitch_min=1,pitch_max=1,no_repeat=true}
+SOUND_SET_DEFAULTS :: Sound_Set_Info{volume_min=1,volume_max=1,pitch_min=1,pitch_max=1,no_repeat=true,hearing=SOUND_HEARING_DEFAULT}
 
 Sound_Set_Desc :: struct {
     id:base.Asset_Id,
@@ -48,6 +65,13 @@ sound_set_problem :: proc(info:Sound_Set_Info) -> (field,message:string) {
     if !finite(info.pitch_min) || !finite(info.pitch_max) || info.pitch_min<=0 || info.pitch_min>info.pitch_max || info.pitch_max>SOUND_SET_PITCH_MAX {
         return "pitch_min","the pitches are above 0 and at most 64, and pitch_min is not above pitch_max"
     }
+    h:=info.hearing
+    if h.attenuation>max(Attenuation_Model) {return "hearing.attenuation","the attenuation is one of None, Inverse, Linear and Exponential"}
+    if !finite(h.min_distance) || !finite(h.max_distance) || !(h.min_distance>0) || !(h.max_distance>h.min_distance) {
+        return "hearing.min_distance","the distances are above 0, and max_distance is above min_distance"
+    }
+    if !finite(h.rolloff) || h.rolloff<0 {return "hearing.rolloff","the rolloff is 0 or more"}
+    if !(h.reverb>=0 && h.reverb<=1) {return "hearing.reverb","the reverb is 0 to 1"}
     return "",""
 }
 

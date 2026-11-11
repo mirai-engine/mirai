@@ -389,7 +389,7 @@ stroke_preview :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
             build.source,build.coord,build.preview,build.ok=&stroke.source,preview.coord,next,false
             build.lod=preview.lod
             build.limits=host.assets_limits(a)
-            if parallel {jobs.run(job_system,jobs.OWNER,preview_build,build,&build.counter)} else {preview_build(build,jobs.OWNER)}
+            if parallel {jobs.run(job_system,jobs.OWNER,.Frame,preview_build,build,&build.counter)} else {preview_build(build,jobs.OWNER)}
             count+=1
         }
         for &build in stroke.builds[:count] {
