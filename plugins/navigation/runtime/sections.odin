@@ -32,12 +32,12 @@ Nav_Sections :: struct {
 }
 
 // The region key of a reference: its Id, or its handle with the top bit when it has none.
-section_key :: proc "contextless" (ids:core.Read(core.Id),e:core.Entity) -> u64 {
+section_key :: proc "contextless" (ids:^core.Table(core.Id,$A),e:core.Entity) -> u64 {
     if id,ok:=core.get(ids,e);ok && id.value!=0 {return u64(id.value)&~(u64(1)<<63)}
     return u64(e)|u64(1)<<63
 }
 
-sections_gather :: proc(references:core.Read(scene.Scene_Reference),worlds:core.Read(core.World_Transform),ids:core.Read(core.Id)) -> (s:Nav_Sections) {
+sections_gather :: proc(references:^core.Table(scene.Scene_Reference,$A),worlds:^core.Table(core.World_Transform,$B),ids:^core.Table(core.Id,$C)) -> (s:Nav_Sections) {
     for row in 0..<core.count(references) {
         if s.count==NAV_SECTIONS_MAX {break}
         reference:=core.at(references,row)

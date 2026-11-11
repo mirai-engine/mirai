@@ -641,7 +641,7 @@ vk_flush_bindings :: proc(c: ^Command_List, bind_point: vk.PipelineBindPoint) ->
 			w.pBufferInfo = &buffers[i]
 		case .Sampled_Texture, .Storage_Texture:
 			t := pool_get(&d.textures, base.Handle(s.texture))
-			if t == nil {set_error(d, "pipeline %s: slot %d texture was destroyed", p.name, i); return false}
+			if t == nil {set_error(d, "pipeline %s: slot %d holds no texture: it was destroyed or a buffer is bound there", p.name, i); return false}
 			view := t.view
 			if s.mip >= 0 && t.desc.mip_levels > 1 {view = t.mip_views[s.mip]}
 			layout := t.levels[max(s.mip, 0)].layout

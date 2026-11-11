@@ -138,7 +138,7 @@ wall_measure :: proc(physics:core.Ref(phys.Physics_State),wall:core.Entity,porta
 // its twin and its cut, and loses them when it is through.
 @(step="fixed",loops="game",stage="input")
 portals_collision :: proc(
-    commands:core.Commands,portals:core.Read(Portal),travelers:core.Read(Traveler),worlds:core.Read(core.World_Transform),
+    commands:core.Commands,portals:^core.Table(Portal,.Read),travelers:^core.Table(Traveler,.Read),worlds:^core.Table(core.World_Transform,.Read),
     crossings:core.Ref(Portal_Crossings),physics:core.Ref(phys.Physics_State),colliders:^core.Table(phys.Collider),
     frames:^core.Table(Portal_Frame),cuts:^core.Table(phys.Collider_Cuts),twins:^core.Table(phys.Body_Twin),
 ) {

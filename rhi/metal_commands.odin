@@ -468,7 +468,7 @@ mtl_flush_bindings :: proc(c: ^Command_List, compute: bool) -> bool {
 			}
 		case .Sampled_Texture, .Storage_Texture:
 			t := pool_get(&d.textures, base.Handle(s.texture))
-			if t == nil {set_error(d, "pipeline %s: slot %d texture was destroyed", p.name, i); return false}
+			if t == nil {set_error(d, "pipeline %s: slot %d holds no texture: it was destroyed or a buffer is bound there", p.name, i); return false}
 			view := mtl_texture_view(t, s.mip)
 			if view == nil {set_error(d, "pipeline %s: slot %d texture has no mip %d or no drawable", p.name, i, s.mip); return false}
 			if compute {

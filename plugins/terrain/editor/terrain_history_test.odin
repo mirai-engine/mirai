@@ -46,7 +46,7 @@ a_stroke_keeps_the_pages_it_changed_and_undo_and_redo_trade_them :: proc(t:^test
 
     stroke :: proc(t:^testing.T,s:^editor.Session,tool:^Terrain_Tool,ref:core.World_Ref,world:^Create_Test_World,owner:core.Entity,brush:terrain.Brush) {
         terrain_sync(s,tool,core.read(&world.terrains),s.app.assets)
-        if !testing.expect(t,stroke_prepare(tool,s.app.assets,s.app.allocator,core.read(&world.terrains),core.read(&world.worlds),editor.Pick{entity=owner})) {return}
+        if !testing.expect(t,stroke_prepare(tool,s.app.assets,s.app.allocator,&world.terrains,&world.worlds,editor.Pick{entity=owner})) {return}
         if !testing.expect(t,stroke_baseline(tool)) {return}
         tool.stroke.active=true
         change:=terrain.source_edit(&tool.stroke.source,brush)

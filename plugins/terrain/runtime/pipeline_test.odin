@@ -322,7 +322,7 @@ a_volume_lets_go_of_the_blocks_far_from_its_viewers_and_reading_them_again_keeps
             before:=core.at(&w.statics,core.row_of(&w.statics,zone)).mesh
             dig(&w.terrain_requests,{kind=.Carve,center=near+{20,0,20},radius=3,amount=1},owner)
             for _ in 0..<24 {work_wait(&w.data,nil);pipeline_tick(&w,&resident,&app,settings)}
-            shown,still:=core.get(core.read(&w.statics),zone)
+            shown,still:=core.get(&w.statics,zone)
             testing.expect(t,still && shown.mesh!={} && shown.mesh!=before,"the node is built again with what was dug under it")
             testing.expect(t,source_value(&w.data.entries[0].source,{34,14,34})>0)
         }

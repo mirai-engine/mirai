@@ -366,7 +366,7 @@ section_unload :: proc(w:core.World_Ref,documents:Documents,e:core.Entity) -> (o
         for x in s.content {
             member,in_scene:=row_of(members,x)
             if in_scene {present[member.local]=true}
-            if core.id_of(core.read(ids),x)==0 {continue}
+            if core.id_of(ids,x)==0 {continue}
             if !in_scene || changed[x] || stays[x] {
                 kept[core.entity_index(x)]=true
                 s.left=true
@@ -386,15 +386,14 @@ section_unload :: proc(w:core.World_Ref,documents:Documents,e:core.Entity) -> (o
     // Where what stays and what roams is, before anything moves: one whose parent goes hangs from its reference.
     Move :: struct {entity,parent:core.Entity,local:mm.Transform}
     moves:=make([dynamic]Move,context.temp_allocator)
-    locals:=core.read(transforms)
     for s in sections {
         if !s.loaded {continue}
-        above,_:=core.world_of(locals,core.read(parents),s.reference)
+        above,_:=core.world_of(transforms,parents,s.reference)
         for x in s.content {
             if !kept[core.entity_index(x)] {continue}
             parent,_:=core.get(parents,x)
             if parent.entity==s.reference || kept[core.entity_index(parent.entity)] {continue}
-            at,placed:=core.world_of(locals,core.read(parents),x)
+            at,placed:=core.world_of(transforms,parents,x)
             local,fits:=mm.transform_relative(at,above)
             if !placed || !fits {local=at}
             append(&moves,Move{x,s.reference,local})
@@ -403,14 +402,14 @@ section_unload :: proc(w:core.World_Ref,documents:Documents,e:core.Entity) -> (o
         for x in s.far {
             parent,_:=core.get(parents,x)
             if parent.entity==s.reference {continue}
-            at,placed:=core.world_of(locals,core.read(parents),x)
+            at,placed:=core.world_of(transforms,parents,x)
             local,fits:=mm.transform_relative(at,above)
             if !placed || !fits {local=at}
             append(&moves,Move{x,s.reference,local})
         }
     }
     for x in roamers {
-        at,_:=core.world_of(locals,core.read(parents),x)
+        at,_:=core.world_of(transforms,parents,x)
         append(&moves,Move{x,core.NONE,at})
     }
 
@@ -448,7 +447,7 @@ section_unload :: proc(w:core.World_Ref,documents:Documents,e:core.Entity) -> (o
     }
     for &s in sections {
         if !s.loaded {continue}
-        salt:=core.id_of(core.read(ids),s.reference)
+        salt:=core.id_of(ids,s.reference)
         for x in s.content {
             if goes[core.entity_index(x)] {
                 core.destroy(es,x)
@@ -513,7 +512,7 @@ section_gone :: proc(w:core.World_Ref,documents:Documents,e:core.Entity,out:^[dy
         if row_has(references,x) {continue}
         for child:=core.first_child(h,x);child!=core.NONE;child=core.next_sibling(h,child) {append(&stack,child)}
     }
-    salt:=core.id_of(core.read(ids),e)
+    salt:=core.id_of(ids,e)
     for local in locals {
         if !present[local] {append(out,id_in(salt,local))}
     }
@@ -577,7 +576,7 @@ sleepers_apply :: proc(w,apart:core.World_Ref,e:core.Entity) -> (s:Sleepers) {
     parents:=core.world_table_of(w,core.Parent)
     if hierarchy==nil || dormants==nil || tombstones==nil || parents==nil {return}
     h:=core.ref(hierarchy)
-    ids:=core.read(core.world_table_of(w,core.Id))
+    ids:=core.world_table_of(w,core.Id)
     apart_es:=core.world_entities(apart)
     apart_references:=core.world_table_of(apart,Scene_Reference)
     apart_parents:=core.world_table_of(apart,core.Parent)
@@ -626,7 +625,7 @@ sleepers_apply :: proc(w,apart:core.World_Ref,e:core.Entity) -> (s:Sleepers) {
                     for row in 0..<core.raw_count(t) {
                         if (^core.Parent)(core.raw_value(t,type_info_of(core.Parent),row)).entity==took {append(&children,t.entities[row])}
                     }
-                    apart_ids:=core.read(core.world_table_of(apart,core.Id))
+                    apart_ids:=core.world_table_of(apart,core.Id)
                     for child in children {
                         if there:=core.entity_of(core.world_entities(w),core.id_of(apart_ids,child));core.alive(core.world_entities(w),there) {
                             core.world_destroy_tree(apart,child)
@@ -676,7 +675,7 @@ sleepers_apply :: proc(w,apart:core.World_Ref,e:core.Entity) -> (s:Sleepers) {
 values_apply :: proc(w,apart:core.World_Ref,x,took:core.Entity) {
     types:=schema_of(w)
     if types==nil {return}
-    ids:=core.read(core.world_table_of(w,core.Id))
+    ids:=core.world_table_of(w,core.Id)
     apart_es:=core.world_entities(apart)
     pending:=core.world_storage_of(w,Unresolved_References)
     waiting:=core.world_storage_of(apart,Unresolved_References)
@@ -836,7 +835,7 @@ far_load_begin :: proc(app:^host.App,w:core.World_Ref,e:core.Entity) -> (job:^Lo
     if reference==nil {return nil,.Invalid}
     reference.far=reference.scene
     if len(far_tables(w))==0 || reference.scene=={} {return nil,.None}
-    return load_begin(app,reference.scene,{},core.id_of(core.read(ids),e),far=true)
+    return load_begin(app,reference.scene,{},core.id_of(ids,e),far=true)
 }
 
 // Of a scene instantiated apart, only the entities that draw a far form of
@@ -855,7 +854,7 @@ far_keep :: proc(apart:core.World_Ref) {
     for generation,index in es.generation {
         x:=core.entity_make(index,generation)
         if index==0 || !core.alive(es,x) || !far_has(fars,x) {continue}
-        pose,_:=core.world_of(core.read(transforms),core.read(parents),x)
+        pose,_:=core.world_of(transforms,parents,x)
         append(&placed,Placed{x,pose})
     }
     for generation,index in es.generation {
