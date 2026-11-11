@@ -389,14 +389,22 @@ project_choose :: proc(roots:[]string,engine,named:string) -> string {
     return roots[0]
 }
 
-// The path of the registry an asset named by a command has: the name itself
-// when it is one of the project, else a file outside its assets, which the
-// registry then holds in memory in place of the asset with its id, or as one
-// more asset. problem: why a file cannot be read as an asset of the kind.
+// The path of the registry an asset named by a command has, the one resolver
+// of read, write and check: a path of the registry, with or without assets/,
+// an id or a name the registry resolves, or a file, there or not yet, under
+// the assets of the project or of a plugin. An existing file outside them is
+// read in memory, in place of the asset with its id or as one more asset; a
+// write refuses it. problem: why the name gives no asset of the kind.
 @(private)
-outside_take :: proc(p:^Project,named:string,kind:Document_Kind) -> (path,problem:string) {
+asset_named :: proc(p:^Project,named:string,kind:Document_Kind,writing:bool) -> (path,problem:string) {
     path=asset_path(named)
-    if _,found:=asset.registry_find_path(&p.registry,path);found || !os.is_file(named) {return named,""}
+    if _,found:=asset.registry_find_path(&p.registry,path);found {return path,""}
+    absolute,_:=strings.replace_all(project.path_absolute(named,context.temp_allocator),"\\","/",context.temp_allocator)
+    if relative,under:=asset.registry_relative(&p.registry,absolute);under {return relative,""}
+    if !os.is_file(named) {return path,""}
+    if writing {
+        return "",fmt.tprintf("%s is outside the assets of the project; name the %s by its path under assets/ (with or without assets/), by its id, or by its file under the assets folder of the project or of a plugin",named,kind_extension(kind))
+    }
     bytes,read:=os.read_entire_file(named,context.temp_allocator)
     if read!=nil {return "",fmt.tprintf("%s could not be read",named)}
     file:asset.Asset
@@ -404,7 +412,7 @@ outside_take :: proc(p:^Project,named:string,kind:Document_Kind) -> (path,proble
     id,file_kind:=file.blob.header.id,file.blob.header.kind
     asset.asset_close(&file)
     if file_kind!=(asset.KIND_UI if kind==.Ui else asset.KIND_SCENE) {return "",fmt.tprintf("%s is not a %s",named,kind_extension(kind))}
-    path,_=strings.replace_all(project.path_absolute(named,context.temp_allocator),"\\","/",context.temp_allocator)
+    path=absolute
     if record,known:=asset.registry_find(&p.registry,id);known {path=strings.clone(record.path,context.temp_allocator)}
     if asset.registry_memory_set(&p.registry,path,bytes)!=.None {return "",fmt.tprintf("%s could not be read: memory ran out",named)}
     return path,""
@@ -458,7 +466,7 @@ command_read :: proc(run:^Run,args:[]string) -> int {
         }
     }
     if named=="" {fmt.wprintln(run.errors,COMMAND_USAGE);return 2}
-    path,taken:=outside_take(run.p,named,run.kind)
+    path,taken:=asset_named(run.p,named,run.kind,false)
     if taken!="" {run_fail(run,named,taken);return 1}
     text,problem:=document_text(run,path)
     if problem!="" {run_fail(run,named,problem);return 1}
@@ -499,11 +507,12 @@ command_write :: proc(run:^Run,args:[]string) -> int {
     if len(args)!=2 {fmt.wprintln(run.errors,COMMAND_USAGE);return 2}
     text,error:=os.read_entire_file(args[1],context.temp_allocator)
     if error!=nil {run_fail(run,args[0],fmt.tprintf("%s could not be read",args[1]));return 1}
+    path,problem:=asset_named(run.p,args[0],run.kind,true)
+    if problem!="" {run_fail(run,args[0],problem);return 1}
     written:Written
-    problem:string
     switch run.kind {
-    case .Ui:    written,problem=ui_write(run.p,args[0],string(text))
-    case .Scene: written,problem=scene_write(run.p,args[0],string(text))
+    case .Ui:    written,problem=ui_write(run.p,path,string(text))
+    case .Scene: written,problem=scene_write(run.p,path,string(text))
     }
     if problem!="" {run_fail(run,args[0],problem);return 1}
     state:="unchanged" if written.same else "made" if written.fresh else "written"
@@ -527,7 +536,7 @@ command_check :: proc(run:^Run,args:[]string) -> int {
     case .Ui:
         ids:=make([dynamic]base.Asset_Id,context.temp_allocator)
         for arg in args {
-            path,taken:=outside_take(run.p,arg,.Ui)
+            path,taken:=asset_named(run.p,arg,.Ui,false)
             if taken!="" {run_fail(run,arg,taken);continue}
             id,unknown:=asset.registry_resolve(&run.p.registry,asset_path(path),".ui")
             if unknown!="" {run_fail(run,arg,unknown);continue}
@@ -557,7 +566,7 @@ command_check :: proc(run:^Run,args:[]string) -> int {
 scene_check :: proc(run:^Run,args:[]string) -> (count:int) {
     paths:=make([dynamic]string,context.temp_allocator)
     for arg in args {
-        path,taken:=outside_take(run.p,arg,.Scene)
+        path,taken:=asset_named(run.p,arg,.Scene,false)
         if taken!="" {run_fail(run,arg,taken);continue}
         append(&paths,asset_path(path))
     }

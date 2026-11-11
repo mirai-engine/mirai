@@ -181,7 +181,23 @@ the_commands_read_write_and_check_the_document_of_an_asset :: proc(t:^testing.T)
             of_asset:=on(&q,named.kind,"read",named.path)
             of_file:=on(&q,named.kind,"read",outside)
             testing.expectf(t,of_asset.code==0 && of_file.code==0 && of_file.out==of_asset.out,"%s: %s%s",named.path,of_file.out,of_file.err)
+            // Read and write resolve a name alike: the path of the registry, with or without
+            // assets/, the id and the file under the assets name the same asset; a write refuses
+            // a file outside them.
+            record,_:=asset.registry_find_path(&q.registry,named.path)
+            id:[base.ASSET_ID_TEXT]u8
+            document:=project.path(root,"document.json",allocator=context.temp_allocator)
+            for form in ([]string{named.path,strings.concatenate({"assets/",named.path},context.temp_allocator),base.asset_id_format(record.id,id[:]),project.path(root,"assets",named.path,allocator=context.temp_allocator)}) {
+                read:=on(&q,named.kind,"read",form,"--out",document)
+                written:=on(&q,named.kind,"write",form,document)
+                testing.expectf(t,read.code==0 && written.code==0 && strings.has_prefix(written.out,strings.concatenate({named.path,": "},context.temp_allocator)) && !strings.contains(written.out,": made"),"%s: %s%s%s",form,read.err,written.out,written.err)
+            }
+            outside_write:=on(&q,named.kind,"write",outside,document)
+            testing.expectf(t,outside_write.code==1 && strings.contains(outside_write.err,"is outside the assets of the project"),"%s%s",outside_write.out,outside_write.err)
         }
+        // A file under the assets that does not exist yet is made there.
+        made:=on(&q,.Scene,"write",project.path(root,"assets","arena","annex.scene",allocator=context.temp_allocator),project.path(root,"document.json",allocator=context.temp_allocator))
+        testing.expectf(t,made.code==0 && strings.has_prefix(made.out,"arena/annex.scene: made"),"%s%s",made.out,made.err)
     }
     written:=on(&p,.Ui,"write","hud/hud.ui",hud)
     testing.expectf(t,written.code==0 && strings.contains(written.out,"hud/hud.ui: unchanged"),"%d %s%s",written.code,written.out,written.err)
