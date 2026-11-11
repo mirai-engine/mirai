@@ -130,11 +130,11 @@ the_override_of_a_slot_of_an_entity_goes_into_its_material :: proc(t:^testing.T)
     testing.expect(t,len(view.overlays)==1 && view.overlays[0].material==base.Asset_Id{9,9} && view.overlays[0].blend==.Multiply)
 }
 
-// Apply to material edits the material in memory, as one step with what the
-// entity stops changing: undo gives both back, and only Save writes the file.
+// Apply to material edits the material as one step with what the entity
+// stops changing: its flush writes the file, and undo gives both back.
 @(test)
-applying_to_a_material_is_one_undo_step_in_memory_that_save_writes :: proc(t:^testing.T) {
-    root:=base.test_folder(t,"material-apply-memory")
+applying_to_a_material_is_one_undo_step_whose_flush_writes_the_file :: proc(t:^testing.T) {
+    root:=base.test_folder(t,"material-apply-step")
     if root=="" {return}
     folder:=project.path(root,"assets",allocator=context.temp_allocator)
     os.make_directory_all(folder)
@@ -187,7 +187,8 @@ applying_to_a_material_is_one_undo_step_in_memory_that_save_writes :: proc(t:^te
     testing.expect(t,material==wall && message=="",message)
     testing.expect_value(t,len(f.edits.steps),1)
     testing.expect_value(t,roughness(t,s,&assets),f32(0.2))
-    testing.expect(t,asset_unsaved(s,wall) && on_disk(path)==string(saved),"the material changed in memory: its file is as it was")
+    testing.expect(t,files_flush(s,true))
+    testing.expect(t,on_disk(path)!=string(saved),"the flush of the step writes the material")
     left,_:=core.get(core.read(&world.looks),e)
     testing.expect(t,left.color==[4]f32{1,0,0,1} && left.count==1 && left.slots[0]==1,"the entity keeps its color and what it changes of another slot")
 
@@ -195,16 +196,16 @@ applying_to_a_material_is_one_undo_step_in_memory_that_save_writes :: proc(t:^te
     testing.expect_value(t,roughness(t,s,&assets),asset.MATERIAL_DEFAULTS.roughness)
     back,_:=core.get(core.read(&world.looks),e)
     testing.expect(t,back==look,"undo gives the entity its values")
-    testing.expect(t,!asset_unsaved(s,wall),"and the material what it had")
+    testing.expect(t,files_flush(s,true))
+    testing.expect(t,on_disk(path)==string(saved),"and the material what it had")
 
     testing.expect(t,history.redo(&f.edits,w,&f.selection))
-    testing.expect(t,asset_unsaved(s,wall) && on_disk(path)==string(saved))
-    written,ok:=assets_save(s,{"wall.mat"})
-    testing.expect(t,ok && written==1 && !asset_unsaved(s,wall) && on_disk(path)!=string(saved),"Save writes the file")
+    testing.expect(t,files_flush(s,true))
+    testing.expect(t,on_disk(path)!=string(saved))
     testing.expect_value(t,roughness(t,s,&assets),f32(0.2))
 }
 
-// material.set reaches what a material holds by name, in one step in memory:
+// material.set reaches what a material holds by name, in one step:
 // its maps and the layers drawn over it with its values, and it says which
 // parameter its program does not have.
 @(test)
@@ -266,7 +267,6 @@ material_set_gives_a_material_its_values_textures_and_overlays_in_one_step :: pr
         testing.expect(t,len(view.overlays)==1 && view.overlays[0].material==moss && view.overlays[0].blend==.Multiply)
     }
     asset.asset_close(&file)
-    testing.expect(t,asset_unsaved(s,wall),"it changed in memory")
 
     // What a call does not give stays.
     reply,failure,ok=call(t,state,"material.set",`{"material":"wall.mat","values":{"metallic":1}}`)

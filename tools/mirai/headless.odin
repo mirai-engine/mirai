@@ -8,7 +8,7 @@ import "mirai:std/serial"
 import "mirai:std/subprocess"
 
 // An editor that mirai bench or mirai render opens headless to measure, and
-// closes discarding what it did. tool and label name it in messages.
+// closes. tool and label name it in messages.
 Headless_Editor :: struct {
     port:int,
     process:subprocess.Process,
@@ -38,7 +38,7 @@ headless_open :: proc(e:^Headless_Editor,tool,label,editor,project,checkout,log:
 
 headless_close :: proc(e:^Headless_Editor) {
     if e.port==0 {return}
-    _,_=session_close(e.project,{port=e.port,pid=e.process.pid},true)
+    session_close(e.project,{port=e.port,pid=e.process.pid},true)
     e.port=0
 }
 

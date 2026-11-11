@@ -85,8 +85,8 @@ files_touched_settle :: proc(s:^Session,touched:^[dynamic]string,kept:^int) {
 files_flush :: proc(s:^Session,now:=false) -> bool {
     if s.edits==nil || playing(s) || s.edits.open || s.edits.commit || s.edits.preview {return false}
     for &d in s.asset_documents {if d.history.open {return false}}
-    // A guest of a session holds what its host writes.
-    if st:=collab_state(s);st!=nil && st.role==.Guest && st.phase!=.Ended {return false}
+    // A guest of a session writes nothing: its host does, and what the session gave it goes when it leaves.
+    if st:=collab_state(s);st!=nil && st.role==.Guest {return false}
     f:=&s.flush
     clock:=platform.clock_ns()
     if r:=files_registry(s);r!=nil && len(r.memory)>0 {

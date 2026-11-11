@@ -457,16 +457,16 @@ a_merge_changes_what_the_document_names_and_leaves_the_rest :: proc(t:^testing.T
     _,many,made:=write_scene(f,`{"kind":"Prefab","entities":[]}`)
     testing.expectf(t,!made && strings.contains(many,"exactly one root") && !s.document.prefab,"gave '%s'",many)
     _,why,ok:=write_scene(f,`{"kind":"Prefab","entities":[{"name":"Other","delete":true}]}`)
-    testing.expectf(t,ok && s.document.prefab && document_dirty(s),"gave '%s'",why)
+    testing.expectf(t,ok && s.document.prefab && history.edits_scene_state(&f.edits)!=s.document.written,"gave '%s'",why)
     _,why,ok=write_scene(f,`{"kind":"Scene","entities":[]}`)
     testing.expectf(t,ok && !s.document.prefab,"gave '%s'",why)
 }
 
 // The same document written to the file with no editor gives the bytes the
-// method and a save give. The entities a document makes take their ids from
+// method and the write of the document give. The entities a document makes take their ids from
 // the sequence of whoever makes them, so these documents make none.
 @(test)
-a_document_written_to_a_file_gives_the_bytes_the_method_and_a_save_give :: proc(t:^testing.T) {
+a_document_written_to_a_file_gives_the_bytes_the_method_and_the_editor_write :: proc(t:^testing.T) {
     f:=new(Prefab_Fixture);defer free(f)
     state:Api_State
     if !write_fixture_init(t,f,&state,"write-file") {return}
@@ -480,7 +480,7 @@ a_document_written_to_a_file_gives_the_bytes_the_method_and_a_save_give :: proc(
     write_entity(f,"C",root)
     core.add(&f.world.lamps,a,Prefab_Test_Lamp{intensity=2,range=3})
     core.world_settle(w)
-    if !testing.expect_value(t,scene_save(s,"same.scene"),Document_Error.None) {return}
+    if !testing.expect_value(t,test_document_write(s,"same.scene"),Document_Error.None) {return}
     file:=fmt.tprintf("%s/same.scene",f.root)
     saved,_:=os.read_entire_file(file,context.temp_allocator)
     p:=author.Project{name="same",assets_root=f.root,info=&f.info}
@@ -497,13 +497,13 @@ a_document_written_to_a_file_gives_the_bytes_the_method_and_a_save_give :: proc(
         if !testing.expect_value(t,os.write_entire_file(file,saved),nil) {return}
         if !testing.expect_value(t,scene_open(s,"same.scene"),Document_Error.None) {return}
         _,failure,ok:=write_scene(f,document)
-        if !testing.expect(t,ok,failure) || !testing.expect_value(t,scene_save(s),Document_Error.None) {return}
+        if !testing.expect(t,ok,failure) || !testing.expect_value(t,test_document_write(s,"same.scene"),Document_Error.None) {return}
         live,_:=os.read_entire_file(file,context.temp_allocator)
         if !testing.expect_value(t,os.write_entire_file(file,saved),nil) || !testing.expect_value(t,asset.registry_scan(&p.registry),asset.Error.None) {return}
         _,problem:=author.scene_write(&p,"same.scene",document)
         written,_:=os.read_entire_file(file,context.temp_allocator)
         testing.expect(t,problem=="",problem)
-        testing.expectf(t,slice.equal(live,written),"%s: the method and a save gave %d bytes, the file write %d",document,len(live),len(written))
+        testing.expectf(t,slice.equal(live,written),"%s: the method and the editor gave %d bytes, the file write %d",document,len(live),len(written))
     }
 }
 

@@ -1,5 +1,6 @@
 package editor
 
+import "core:os"
 import "core:fmt"
 import "core:strings"
 import "mirai:asset"
@@ -560,6 +561,7 @@ commands_register :: proc(s:^Session,st:^Api_State) {
         {name="new_prefab",view=proc(s:^Session) {file_new(s,true)},label="New prefab",icon=.Prefab,menu=.File,group=0,modes=edit},
         {name="open",view=file_open,label="Open...",icon=user(.Scene),shortcut=key(.O,{.Primary}),menu=.File,group=0,modes=edit},
         {name="projects",view=projects_show,label="Open project...",icon=user(.Folder),menu=.File,group=0,modes=edit,state=state_projects},
+        {name="keep_file",view=proc(s:^Session) {dialog_new(s,true)},label="Keep in a file...",icon=user(.Save),menu=.File,group=1,modes=edit,scene=true,state=state_keep_file},
         {name="make_prefab",method="scene.write",params=`{"kind":"Prefab","entities":[]}`,label="Make prefab",icon=.Prefab,menu=.File,group=1,modes=edit,scene=true},
         {name="make_scene",method="scene.write",params=`{"kind":"Scene","entities":[]}`,label="Make scene",icon=user(.Scene),menu=.File,group=1,modes=edit,scene=true},
         {name="import",view=import_ask,label="Import...",icon=.Import,menu=.File,group=2,modes=edit},
@@ -687,6 +689,7 @@ state_redo :: proc(s:^Session,b:^Binding) -> (state:Command_State) {
 @(private="file") state_release_input :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=!player_processes_captured(s) && (s.mode!=.Play || s.play_input_released)}}
 @(private="file") state_ai_chat :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=s.mode==.Play,checked=ai_chat_open(s.ai) && (s.gui.layout.left_open || play_shown(s))}}
 @(private="file") state_source_control :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=!s.has_project,checked=s.gui.layout.left_open && s.gui.layout.library_tab==.Git}}
+@(private="file") state_keep_file :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=document_file(s.document)!=""}}
 @(private="file") state_projects :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=s.engine_root=="" || s.projects==nil}}
 @(private="file") state_settings :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=!s.has_project,checked=s.gui.modal==.Settings}}
 @(private="file") state_camera_preview :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=camera_preview_target(s,shown_world(s))==core.NONE}}
@@ -769,6 +772,7 @@ camera_preview_selected :: proc(s:^Session) {
 // ---------------------------------------------------------------- the methods the entries of the editor needed
 
 Api_Scene_New_Params :: struct {
+    path:[DOCUMENT_PATH_BYTES]u8 `mirai:"text,optional,label=The file of the new document, which must not exist: inside the assets folder, or a full path; without it the document has no file and nothing of it is written"`,
     kind:Document_Kind `mirai:"optional,label=Scene: with a sky and a sun, shown in its own light; Prefab: one root, shown in the studio light and placed as instances"`,
 }
 
@@ -788,7 +792,7 @@ Api_Thumbnail_Result :: struct {
 @(private)
 commands_methods_register :: proc(s:^Session,st:^Api_State) {
     tool_on_default:=Api_Tool_Params{on=true}
-    api_register(s,st,{name="scene.new",summary="An empty scene or prefab in place of the document, with an empty history; its first step gives it a file.",params=type_info_of(Api_Scene_New_Params),result=type_info_of(Api_File_Result),flags={.Destructive},run=api_scene_new})
+    api_register(s,st,{name="scene.new",summary="An empty scene or prefab in place of the document, with an empty history.",params=type_info_of(Api_Scene_New_Params),result=type_info_of(Api_File_Result),flags={.Destructive},run=api_scene_new})
     api_register(s,st,{name="scene.thumbnail",summary="Takes the view of the viewport as the thumbnail of the scene of the document, which the content browser and the projects screen show.",result=type_info_of(Api_Thumbnail_Result),can=scene_thumbnail_can,run=api_scene_thumbnail})
     api_register(s,st,{name="editor.tool",summary="Chooses what the pointer does in the viewport: the mode of the gizmo, or the tool of a plugin, whose panel takes the place of Details while it is on.",params=type_info_of(Api_Tool_Params),result=type_info_of(Api_Tool_Result),defaults=&tool_on_default,flags={.Idempotent},run=api_editor_tool})
 }
@@ -801,10 +805,17 @@ api_scene_new :: proc(s:^Session,call:^api.Call) {
         api.call_fail(call,api.SERVER_ERROR,"Leave the session before replacing the scene (collab.leave)")
         return
     }
+    path:=base.text_get(params.path[:])
+    if path!="" {
+        file:=scene_file(s,path)
+        if file=="" {api_document_fail(call,.Bad_Path,path);return}
+        if os.exists(file) || os.exists(strings.concatenate({file,SCENE_EXTENSION},context.temp_allocator)) {api.call_failf(call,api.INVALID_PARAMS,"%s already exists: scene.open opens it",path);return}
+    }
     tool_preview_cancel(s)
     runs_stop(s)
     asset_document_activate(s,-1)
     scene_new(s,params.kind==.Prefab)
+    if path!="" {document_file_give(s,path)}
     api_file_result(s,call)
 }
 

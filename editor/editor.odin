@@ -194,6 +194,8 @@ Session :: struct {
     open_path:[1024]u8,open_length:int,
     open_confirmed:bool, // the scene of open_path replaces the open one: the question was answered
     new_prefab:bool,     // what New makes: a prefab, or a scene
+    new_path:[DOCUMENT_PATH_BYTES]u8, // the file New was given
+    new_length:int,
     frame:u64,
     quit:bool,
     frames:int,          // frames to run before it ends; 0: until it is asked to
@@ -731,6 +733,10 @@ requests_run :: proc(s:^Session) {
         runs_stop(s)
         asset_document_activate(s,-1)
         scene_new(s,s.new_prefab)
+        if s.new_length>0 {
+            if error:=document_file_give(s,string(s.new_path[:s.new_length]));error!=.None {notify(s,document_error_text(error))}
+            s.new_length=0
+        }
     }
     if .Open in requests {open_run(s)}
     if .Document_Switch in requests {

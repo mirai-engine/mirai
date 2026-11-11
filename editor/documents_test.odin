@@ -125,13 +125,14 @@ document_tabs_scroll_and_reveal_the_active_document_with_clipped_native_regions 
 @(test)
 the_question_before_opening_a_scene_keeps_the_other_requests_of_the_frame :: proc(t:^testing.T) {
     gui:Editor_Ui
-    defer delete(gui.confirm_assets)
     document:Document
     edits:history.Edits
-    s:=Session{gui=&gui,document=&document,edits=&edits}
+    // An agent at work in the open scene is asked about before it changes.
+    ai:=new(Ai);defer free(ai)
+    ai.task_count=1
+    s:=Session{gui=&gui,document=&document,edits=&edits,ai=ai}
     append(&s.documents,Document_Tab{})
     defer delete(s.documents)
-    document.unsaved=true
     s.open_length=copy(s.open_path[:],"scenes/other.scene")
     s.requests={.Open,.Quit}
     requests_run(&s)
@@ -143,17 +144,21 @@ the_question_before_opening_a_scene_keeps_the_other_requests_of_the_frame :: pro
 @(test)
 escape_closes_a_dialog_with_what_it_asks_about :: proc(t:^testing.T) {
     gui:Editor_Ui
-    defer delete(gui.confirm_assets)
     viewport:Viewport
     selection:history.Selection
     edits:history.Edits
     s:=Session{gui=&gui,edits=&edits,selection=&selection,viewport=&viewport}
-    for modal in ([]Modal{.Save_Changes,.Delete_Asset,.Git_Discard}) {
+    for modal in ([]Modal{.Confirm,.Delete_Asset,.Git_Discard}) {
         gui.modal=modal
-        confirm_assets_set(&gui,{"materials/clay.mat"})
+        if modal==.Confirm {
+            gui.pending=.New
+            escape_run(&s,&gui,&viewport,&selection)
+            testing.expect(t,gui.modal==.None && gui.pending==.None && .New not_in s.requests,"what the question waited for does not go on")
+            continue
+        }
         gui.delete_asset={1,2}
         base.text_set(gui.discard_path[:],"scenes/a.scene")
         escape_run(&s,&gui,&viewport,&selection)
-        testing.expectf(t,gui.modal==.None && len(gui.confirm_assets)==0 && gui.delete_asset=={} && base.text_get(gui.discard_path[:])=="","%v",modal)
+        testing.expectf(t,gui.modal==.None && gui.delete_asset=={} && base.text_get(gui.discard_path[:])=="","%v",modal)
     }
 }

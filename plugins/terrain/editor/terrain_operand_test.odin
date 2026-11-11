@@ -1,6 +1,7 @@
 package terrain_editor
 
 import "core:fmt"
+import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
@@ -14,7 +15,7 @@ import "mirai:std/base"
 import mm "mirai:std/math"
 import "mirai:std/serial"
 
-// What the registry of the assets holds of a file: its memory, unsaved, or the disk.
+// What the registry of the assets answers for a file: what it holds until the flush, or the disk.
 @(private)
 test_held :: proc(t:^testing.T,assets:^host.Assets,relative:string) -> []u8 {
     data,error:=asset.registry_read(&assets.registry,relative,context.allocator)
@@ -89,7 +90,7 @@ a_closed_mesh_joins_or_carves_a_volume_as_samples_and_undo_brings_its_entity_bac
         testing.expect_value(t,history.selection_active(&selection),owner)
         testing.expect_value(t,world.terrains.values[0].revision,u32(2))
         on_disk,_:=serial.file_read(path,context.allocator);defer delete(on_disk)
-        testing.expect(t,string(on_disk)==string(before),"the file changes in memory, unsaved")
+        testing.expect(t,string(on_disk)==string(before),"the registry holds the step until its flush")
         loaded:terrain.Source;defer terrain.source_destroy(&loaded)
         if !testing.expect(t,terrain.terrain_read(&loaded,&assets,id)) {continue}
         testing.expect_value(t,loaded.revision,u32(2))
@@ -104,6 +105,9 @@ a_closed_mesh_joins_or_carves_a_volume_as_samples_and_undo_brings_its_entity_bac
         testing.expect_value(t,terrain.source_value(&loaded,outside),terrain.source_value(&source,outside))
         committed:=test_held(t,&assets,"solid.terrain")
         defer delete(committed)
+        testing.expect(t,editor.files_flush(&session,true))
+        flushed,_:=serial.file_read(path,context.allocator);defer delete(flushed)
+        testing.expect(t,string(flushed)==string(committed))
         testing.expect(t,history.undo(&edits,ref,&selection))
         terrain_sync(&session,&tool,core.read(&world.terrains),app.assets)
         testing.expect(t,core.alive(&world.entities,operand))
@@ -134,7 +138,7 @@ a_closed_mesh_joins_or_carves_a_volume_as_samples_and_undo_brings_its_entity_bac
     }
 }
 
-// The surface of a Volume goes to a plain .mesh beside it, unsaved until Save.
+// The surface of a Volume goes to a plain .mesh beside it.
 @(test)
 the_surface_of_a_volume_is_saved_as_a_mesh_asset :: proc(t:^testing.T) {
     root:=base.test_folder(t,"terrain")
@@ -178,4 +182,5 @@ the_surface_of_a_volume_is_saved_as_a_mesh_asset :: proc(t:^testing.T) {
     view,error:=asset.mesh_view(&file,&assets.types)
     testing.expect_value(t,error,asset.Error.None)
     testing.expect(t,view.info!=nil && view.info.triangle_count>=2*14*14,"the top of the block and its sides")
+    testing.expect(t,editor.files_flush(&session,true) && os.exists(fmt.tprintf("%s/dug.mesh",root)))
 }

@@ -245,17 +245,16 @@ B"]}}`),"an option is one line")
 }
 
 @(test)
-a_turn_cannot_throw_away_what_the_user_has_not_saved :: proc(t:^testing.T) {
+a_turn_cannot_quit_the_editor_nor_replace_the_document :: proc(t:^testing.T) {
     m:=new(Ai);defer free(m)
     s:=Session{ai=m}
     m.task_count=1
     task:=&m.tasks[0];task.id=4;task.state=.Running
     base.text_set(task.name[:],"4-0")
     out:serial.Writer;serial.writer_init(&out);defer serial.writer_destroy(&out)
-    shutdown:=Api_Shutdown_Params{discard=true}
     load:=Api_Path_Params{}
-    recover:=Api_Recovery_Params{discard=true}
-    calls:=[3]struct{run:Api_Handler,params:rawptr,type:typeid}{{api_shutdown,&shutdown,Api_Shutdown_Params},{api_scene_open,&load,Api_Path_Params},{api_recover,&recover,Api_Recovery_Params}}
+    fresh:=Api_Scene_New_Params{}
+    calls:=[3]struct{run:Api_Handler,params:rawptr,type:typeid}{{api_shutdown,nil,nil},{api_scene_open,&load,Api_Path_Params},{api_scene_new,&fresh,Api_Scene_New_Params}}
     for c in calls {
         method:=api.Method{params_id=c.type}
         call:=api.Call{method=&method,params=c.params,out=&out,allocator=context.temp_allocator,client_tag="4-0"}

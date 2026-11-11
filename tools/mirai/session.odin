@@ -15,7 +15,7 @@ import "mirai:std/serial"
 import "mirai:std/subprocess"
 import "mirai:std/base"
 
-SESSION_USAGE :: "session start|restart|stop|status|sync [project] [paths of sync] [--release] [--no-build] [--copy] [--discard] [--orphans] [--timeout S] [editor arguments]"
+SESSION_USAGE :: "session start|restart|stop|status|sync [project] [paths of sync] [--release] [--no-build] [--copy] [--force] [--orphans] [--timeout S] [editor arguments]"
 
 SESSION_FILE :: api.SESSION_FILE
 Session_Record :: api.Session_Record
@@ -30,12 +30,10 @@ Session_Record :: api.Session_Record
 //            holds it, after deleting the copies whose editor ended
 //   restart  closes it, builds and opens it again, with the mode and the
 //            arguments of the last one unless others are given
-//   stop     asks it to quit and ends it if it does not. Unsaved changes go
-//            alone when they are all of copies under .mirai/tmp/, and with
-//            --discard otherwise. --orphans ends instead the headless editors
-//            of this checkout that no port file names and, with a project,
-//            deletes its copies whose editor ended. Of a copy, it discards
-//            what is unsaved and deletes the copy
+//   stop     asks it to quit and, with --force, ends it if it does not
+//            answer. --orphans ends instead the headless editors of this
+//            checkout that no port file names and, with a project, deletes
+//            its copies whose editor ended. Of a copy, it deletes the copy
 //   status   says whether one answers, and which editors of this checkout no
 //            port file names
 //   sync     brings only the files named from the project into a copy and
@@ -74,7 +72,7 @@ cmd_session :: proc(root:string,args:[]string) -> int {
 // What start and restart take; what is not theirs goes to the editor.
 Session_Options :: struct {
     mode:Build_Mode,
-    no_build,discard,orphans,copy:bool,
+    no_build,force,orphans,copy:bool,
     timeout:int, // seconds for the API to answer
     editor_args:[]string,
 }
@@ -88,7 +86,7 @@ session_options :: proc(arguments:[]string) -> (options:Session_Options,problem:
     for i:=0;i<len(args);i+=1 {
         switch args[i] {
         case "--no-build": options.no_build=true
-        case "--discard":  options.discard=true
+        case "--force":    options.force=true
         case "--orphans":  options.orphans=true
         case "--copy":     options.copy=true
         case "--timeout":
@@ -191,7 +189,7 @@ session_print :: proc(folder:string,file:api.Port_File) {
 @(private="file")
 session_start :: proc(root,folder:string,args:[]string) -> int {
     options,problem:=session_options(args)
-    if problem=="" && (options.discard || options.orphans) {problem="--discard belongs to stop and restart, and --orphans to stop"}
+    if problem=="" && (options.force || options.orphans) {problem="--force belongs to stop and restart, and --orphans to stop"}
     if problem!="" {fmt.eprintfln("mirai session: %s. Usage: mirai %s",problem,SESSION_USAGE);return 2}
     opened:=folder
     copy_lock:workspace.Lock
@@ -228,9 +226,7 @@ session_restart :: proc(root,folder:string,args:[]string) -> int {
             fmt.eprintfln("mirai session restart: the project is open in a windowed editor (pid %d), which is not a session; close it from its window",file.pid)
             return 1
         }
-        discarded:int
-        if closed,discarded=session_close(folder,file,options.discard,"session restart");!closed {return 1}
-        if discarded>0 {fmt.eprintfln("mirai session restart: discarded %d unsaved changes of copies in .mirai/tmp/",discarded)}
+        if closed=session_close(folder,file,options.force,"session restart");!closed {return 1}
     }
     file,code:=session_open(root,folder,mode,options.no_build,options.timeout,editor_args)
     if code!=0 {
@@ -250,7 +246,7 @@ session_open :: proc(root,folder:string,mode:Build_Mode,no_build:bool,timeout:in
         if !found {return}
         // Another editor would take its port file and leave it out of reach.
         if !session_answers(file.port) {
-            if file.manual {fmt.eprintfln("mirai session: the headless editor of the project (pid %d) does not answer: it is busy or hung; mirai session stop %s --discard closes it",file.pid,folder)}
+            if file.manual {fmt.eprintfln("mirai session: the headless editor of the project (pid %d) does not answer: it is busy or hung; mirai session stop %s --force closes it",file.pid,folder)}
             else {fmt.eprintfln("mirai session: the project is open in a windowed editor (pid %d) that does not answer; close it",file.pid)}
             return {},1,true
         }
@@ -328,74 +324,19 @@ session_reusable :: proc(root,folder:string,mode:Build_Mode,file:api.Port_File,c
     return true
 }
 
-// Asks the editor to quit and ends it when it does not. Unsaved changes go
-// with discard, or alone when they are all of copies under .mirai/tmp/
-// (discarded counts those); otherwise it says what they are and how to go on,
-// and closed is false. command names who asks; retry, what discards them.
-session_close :: proc(folder:string,file:api.Port_File,discard:bool,command:="session stop",retry:="") -> (closed:bool,discarded:int) {
-    retry:=retry!=""?retry:fmt.tprintf("mirai %s %s --discard",command,folder)
-    params:=`{"discard":true}`
-    if !discard {
-        unsaved,listed:=session_unsaved(file.port)
-        if listed && len(unsaved)>0 && !session_discardable(folder,unsaved) {
-            fmt.eprintfln("mirai %s: the editor (pid %d) has unsaved changes outside .mirai/tmp/:",command,file.pid)
-            for path in unsaved {fmt.eprintfln("  %s",path!=""?path:"a scene that was never saved")}
-            fmt.eprintfln("mirai %s: `%s` discards them; scene.save and asset.save save them",command,retry)
-            return false,0
-        }
-        if listed {discarded=len(unsaved)}
-        if discarded==0 {params="{}"}
-    }
-    _,err,called:=api.rpc_call(file.port,"engine.shutdown",params,1,10000,context.temp_allocator)
+// Asks the editor to quit, which leaves its files as they are, and with
+// force ends it when it does not answer; without, it says how to go on and
+// closed is false. command names who asks.
+session_close :: proc(folder:string,file:api.Port_File,force:bool,command:="session stop") -> (closed:bool) {
+    _,err,called:=api.rpc_call(file.port,"engine.shutdown","{}",1,10000,context.temp_allocator)
     // An editor that shuts down may close the connection before it answers.
     if !called {for at:=time.tick_now();subprocess.process_alive(file.pid) && time.tick_since(at)<3*time.Second; {time.sleep(50*time.Millisecond)}}
-    if !called && !discard && subprocess.process_alive(file.pid) {
-        fmt.eprintfln("mirai %s: the editor (pid %d) did not close: %s; `%s` closes it anyway and loses what it did not save",command,file.pid,api.error_text(err,context.temp_allocator),retry)
-        return false,0
+    if !called && !force && subprocess.process_alive(file.pid) {
+        fmt.eprintfln("mirai %s: the editor (pid %d) did not close: %s; `mirai %s %s --force` ends it",command,file.pid,api.error_text(err,context.temp_allocator),command,folder)
+        return false
     }
     process_end(file.pid,20*time.Second)
     session_port_remove(folder,file.pid)
-    return true,discarded
-}
-
-// What the editor holds unsaved: the scenes of its documents (relative to
-// the assets folder inside it; "" for one never saved) and the assets
-// (relative to the assets folder, or to the project outside it). listed is
-// false when it could not tell.
-session_unsaved :: proc(port:int) -> (paths:[]string,listed:bool) {
-    documents,_,documents_called:=api.rpc_call(port,"editor.documents","{}",1,5000,context.temp_allocator)
-    if !documents_called {return}
-    assets,_,assets_called:=api.rpc_call(port,"asset.unsaved","{}",2,5000,context.temp_allocator)
-    if !assets_called {return}
-    return session_unsaved_parse(documents,assets)
-}
-
-// The unsaved paths in the results of editor.documents and asset.unsaved.
-session_unsaved_parse :: proc(documents,assets:string) -> (paths:[]string,ok:bool) {
-    Documents :: struct {documents:[]struct {path:string,dirty:bool}}
-    Assets :: struct {assets:[]struct {path:string}}
-    d:Documents
-    a:Assets
-    if serial.text_decode(documents,&d,context.temp_allocator,skip_unknown=true)!="" {return}
-    if serial.text_decode(assets,&a,context.temp_allocator,skip_unknown=true)!="" {return}
-    list:=make([dynamic]string,context.temp_allocator)
-    for document in d.documents {
-        if document.dirty {append(&list,document.path)}
-    }
-    for held in a.assets {append(&list,held.path)}
-    return list[:],true
-}
-
-// Whether every unsaved path is of a copy under .mirai/tmp/ of the project
-// at folder, where agents keep what they try: those go without --discard.
-session_discardable :: proc(folder:string,paths:[]string) -> bool {
-    temporary:=project.path(folder,".mirai","tmp",allocator=context.temp_allocator)
-    for path in paths {
-        if path=="" {return false}
-        file:=os.is_absolute_path(path)?path:project.path(folder,path,allocator=context.temp_allocator)
-        clean,_:=os.clean_path(file,context.temp_allocator)
-        if !path_inside(clean,temporary) {return false}
-    }
     return true
 }
 
@@ -569,10 +510,10 @@ session_log_tail :: proc(log:string) {
 
 @(private="file")
 session_stop :: proc(root,folder:string,args:[]string) -> int {
-    discard,orphans:=false,false
+    force,orphans:=false,false
     for arg in args {
         switch arg {
-        case "--discard": discard=true
+        case "--force":   force=true
         case "--orphans": orphans=true
         case: return argument_unknown("session stop",arg)
         }
@@ -594,15 +535,13 @@ session_stop :: proc(root,folder:string,args:[]string) -> int {
         fmt.eprintfln("mirai session stop: the project is open in a windowed editor (pid %d), which is not a session; close it from its window",file.pid)
         return 1
     }
-    closed,discarded:=session_close(folder,file,discard || copied)
-    if !closed {return 1}
+    if !session_close(folder,file,force || copied) {return 1}
     if copied {
         if !session_copy_remove(folder,"session stop") {return 1}
         fmt.println("Session closed and its copy deleted.")
         return 0
     }
-    if discarded>0 {fmt.printfln("Session closed; discarded %d unsaved changes of copies in .mirai/tmp/.",discarded)}
-    else {fmt.println("Session closed.")}
+    fmt.println("Session closed.")
     return 0
 }
 

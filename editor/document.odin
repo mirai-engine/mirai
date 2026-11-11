@@ -25,6 +25,8 @@ import "mirai:std/base"
 SCENE_EXTENSION :: ".scene"
 DOCUMENT_PATH_BYTES :: 1024
 @(private) DIALOG_OPEN :: u32(0x4d4f5045)
+@(private) DIALOG_NEW :: u32(0x4d4e4557)
+@(private) DIALOG_FILE :: u32(0x4d46494c)
 
 Document_Error :: enum u8 {
     None,
@@ -42,7 +44,7 @@ Document_Error :: enum u8 {
 
 @(storage)
 Document :: struct {
-    path:[DOCUMENT_PATH_BYTES]u8, // as given: relative to the assets folder when inside it; empty until its first step gives it a file
+    path:[DOCUMENT_PATH_BYTES]u8, // as given: relative to the assets folder when inside it; empty for a document without a file, which is not written
     path_length:int,
     file:[DOCUMENT_PATH_BYTES]u8, // absolute
     file_length:int,
@@ -50,6 +52,7 @@ Document :: struct {
     previous:^asset.Scene,        // the document of the file; nil for a new scene
     written:u64,                  // the state of the history its file holds
     stale:bool,                   // the World holds what no step does and the file lacks: of a peer, a merge, a section that could not be written
+    asked:bool,                   // without a file: the person was asked where to keep it
     prefab:bool,                  // its kind: a prefab, shown in the studio light and placed by its one root; chosen when it is made, changed by scene.write kind
     source_stamp:[2]i64,
     sections:Document_Sections,
@@ -148,7 +151,7 @@ scene_open :: proc(s:^Session,path:string) -> Document_Error {
     return .None
 }
 
-// A document without a file yet: a scene with a sky and a sun, or a prefab with its one root.
+// A document without a file: a scene with a sky and a sun, or a prefab with its one root.
 scene_new :: proc(s:^Session,prefab:=false) {
     runs_stop(s)
     tools_release(s)
@@ -173,8 +176,8 @@ scene_new :: proc(s:^Session,prefab:=false) {
 
 // The end of a step for the document in front: its file takes the World
 // when the history is not where the file left it. A document without a file
-// gets one at its first step, in the assets folder. .None when the file holds
-// the document.
+// is not written: at its first step a person is asked once where to keep it.
+// .None when nothing is left to write.
 @(private)
 document_flush :: proc(s:^Session) -> Document_Error {
     d:=s.document
@@ -182,14 +185,15 @@ document_flush :: proc(s:^Session) -> Document_Error {
     if import_busy(s)!="" {return .Importing}
     file:=document_file(d)
     if file=="" {
-        if !s.has_project {return .None}
-        _,file=asset_new_file(s,s.assets_root,d.prefab?"Prefab":"Untitled",SCENE_EXTENSION,false)
-        d.id=asset_id_new(s)
+        if s.has_project && !s.headless && s.gui!=nil && !d.asked {
+            d.asked=true
+            dialog_new(s,true)
+        }
+        return .None
     }
     document_write(s,file,true) or_return
     // A section that could not be written is tried again with the next flush.
     d.stale=!sections_save(s)
-    document_name(d,scene_path(s,file),file)
     assets_wrote(s,file)
     document_source_stamp(s)
     return .Write_Failed if d.stale else .None
@@ -255,12 +259,25 @@ document_previous_free :: proc(d:^Document) {
     d.previous=nil
 }
 
-// Forgets the file: the document of a scene never saved.
+// The document in front keeps its file at path from now on, with an id of
+// its own: the next flush writes it there.
+document_file_give :: proc(s:^Session,path:string) -> Document_Error {
+    file:=scene_file(s,path)
+    if file=="" {return .Bad_Path}
+    if !strings.has_suffix(file,SCENE_EXTENSION) {file=strings.concatenate({file,SCENE_EXTENSION},context.temp_allocator)}
+    d:=s.document
+    d.id=asset_id_new(s)
+    document_name(d,scene_path(s,file),file)
+    d.stale=true
+    return .None
+}
+
+// Forgets the file: a document without one.
 document_reset :: proc(s:^Session) {
     d:=s.document
     document_previous_free(d)
     d.id={}
-    d.stale=false
+    d.stale,d.asked=false,false
     d.prefab=false
     d.written=history.edits_scene_state(s.edits)
     document_name(d,"","")
@@ -273,11 +290,11 @@ document_reset :: proc(s:^Session) {
 // while agents work.
 Pending :: enum u8 {None,New,Quit,Open_Scene}
 
+// A new document: its file is asked for first.
 file_new :: proc(s:^Session,prefab:=false) {
     tool_preview_cancel(s)
     s.new_prefab=prefab
-    if scene_switch_interrupts(s) {confirm_open(s,.New);return}
-    s.requests+={.New}
+    dialog_new(s)
 }
 
 file_open :: proc(s:^Session) {
@@ -331,16 +348,34 @@ dialog_open :: proc(s:^Session) {
     if !platform.dialog_show(s.app.platform,{kind=.Open_File,tag=DIALOG_OPEN,filters=filters[:],location=s.assets_root}) {notify(s,"A file dialog is already open")}
 }
 
+// Asks where a new document keeps its file, or with current the one in
+// front that has none.
+@(private)
+dialog_new :: proc(s:^Session,current:=false) {
+    filters:=[1]platform.Dialog_Filter{{"Scene","scene"}}
+    if !platform.dialog_show(s.app.platform,{kind=.Save_File,tag=current?DIALOG_FILE:DIALOG_NEW,filters=filters[:],location=s.assets_root}) {notify(s,"A file dialog is already open")}
+}
+
 // The answer of the file dialog the editor opened.
 @(private)
 dialogs_answer :: proc(s:^Session) {
     result:=platform.dialog_result(s.app.platform)
-    if result.tag!=DIALOG_OPEN {return}
+    if result.tag!=DIALOG_OPEN && result.tag!=DIALOG_NEW && result.tag!=DIALOG_FILE {return}
     switch result.state {
-    case .None,.Cancelled:
+    case .None:
+    case .Cancelled:
+        if result.tag==DIALOG_FILE {notify(s,"The scene has no file: it is not written. File > Keep in a file gives it one")}
     case .Accepted:
-        s.open_length=copy(s.open_path[:],result.path)
-        s.requests+={.Open}
+        switch result.tag {
+        case DIALOG_OPEN:
+            s.open_length=copy(s.open_path[:],result.path)
+            s.requests+={.Open}
+        case DIALOG_NEW:
+            s.new_length=copy(s.new_path[:],result.path)
+            if scene_switch_interrupts(s) {confirm_open(s,.New)} else {s.requests+={.New}}
+        case DIALOG_FILE:
+            if error:=document_file_give(s,result.path);error!=.None {notify(s,document_error_text(error))}
+        }
     case .Failed:
         notify(s,"The system file dialog is not available")
     }

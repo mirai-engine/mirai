@@ -109,13 +109,13 @@ cmd_capture :: proc(root:string,args:[]string) -> int {
     if code!=0 {return code}
     defer if !reused {session_close(folder,file,true)}
 
-    // The document again, for the second capture of --repeat: its file, unless it has unsaved changes.
-    Document :: struct {path:string,dirty:bool}
+    // The document again, for the second capture of --repeat: its file.
+    Document :: struct {path:string}
     document:Document
     if scene=="" && repeat {
         if text,ok:=capture_call(file.port,"scene.inspect",struct{limit:int}{1});ok {serial.text_decode(text,&document,context.temp_allocator,skip_unknown=true)}
     }
-    reload:=scene if scene!="" else (document.dirty?"":document.path)
+    reload:=scene if scene!="" else document.path
     if scene!="" {
         if _,ok:=capture_call(file.port,"scene.open",struct{path:string}{scene});!ok {return 1}
     }
@@ -159,7 +159,7 @@ cmd_capture :: proc(root:string,args:[]string) -> int {
             _,captured_ok=capture_call(file.port,"scene.open",struct{path:string}{reload})
             if captured_ok && camera!=nil {_,captured_ok=capture_call(file.port,"camera.set",camera)}
         } else {
-            fmt.eprintln("mirai capture: the document has unsaved changes or no file: the second capture goes on from the first, with what the GI gathered since")
+            fmt.eprintln("mirai capture: the document has no file: the second capture goes on from the first, with what the GI gathered since")
         }
         if captured_ok {_,captured_ok=capture_call(file.port,"capture",Capture{again,"Scene",false,width,height,frames,0})}
     }

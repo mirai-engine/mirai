@@ -400,6 +400,17 @@ collab_leave :: proc(s:^Session) {
     collab_destroy(s)
 }
 
+// A guest that is out of its session forgets the files the session gave it:
+// its own keep what they had.
+@(private)
+collab_guest_forget :: proc(s:^Session) {
+    r:=files_registry(s)
+    if r==nil {return}
+    for path in assets_held(s) {
+        if dropped,_:=asset.registry_memory_drop(r,path);dropped {host.app_asset_changed(s.app,path)}
+    }
+}
+
 @(private)
 collab_destroy :: proc(s:^Session) {
     c:=collab_of(s)
@@ -414,8 +425,10 @@ collab_destroy :: proc(s:^Session) {
     collab_tables_free(st)
     history.journal_reading(s.edits,false)
     for &tab in s.documents {history.journal_reading(&tab.edits,false)}
+    guest:=st.role==.Guest
     free(st)
     c.state=nil
+    if guest {collab_guest_forget(s)}
 }
 
 @(private)

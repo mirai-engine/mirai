@@ -77,13 +77,8 @@ test_session_close :: proc(f:^Test_Session) {
     delete(f.selection.entities)
 }
 
-// Gives the document a file under the assets folder and writes it there, as
-// the flush of its first step does for a document without one.
+// Gives the document a file under the assets folder and writes it there.
 test_document_write :: proc(s:^Session,path:string) -> Document_Error {
-    d:=s.document
-    file:=scene_file(s,path)
-    if file!=document_file(d) || d.id=={} {d.id=asset_id_new(s)}
-    document_name(d,scene_path(s,file),file)
-    d.stale=true
+    document_file_give(s,path) or_return
     return document_flush(s)
 }

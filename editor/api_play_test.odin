@@ -203,7 +203,6 @@ probe_open :: proc(t:^testing.T,f:^Probe) -> bool {
     f.gui={layout={left_open=true,right_open=true,library_tab=.Content,bottom_open=true}}
     test_session_open(&f.edited,core.world_ref(f.data,&f.info))
     f.s.app,f.s.editor_world,f.s.build=&f.app,&f.editor,&f.build
-    f.document.saved=history.edits_state(&f.edits)
     api_opened,api_problem:=api_open(&f.s,0,true)
     if !testing.expectf(t,api_opened==.None,"%v: %s",api_opened,api_problem) {return false}
     api_state(&f.s).poll_temp=context.temp_allocator
@@ -1016,7 +1015,7 @@ the_last_play_keeps_its_history_after_stop_until_the_next_play :: proc(t:^testin
     testing.expect(t,strings.contains(text,`"diverged": false`),text)
     api_result_shape_expect(t,text,Api_Play_History_Result)
     edited:=cast(^Probe_World)f.data
-    testing.expect(t,edited.time.tick==0 && !document_dirty(&f.s),"Edit is as it was")
+    testing.expect(t,edited.time.tick==0 && history.edits_scene_state(&f.edits)==f.document.written,"Edit is as it was")
     // play.seek opens it again, paused at that tick.
     error,text=probe_call(f,"play.seek",`{"to":6}`)
     testing.expect_value(t,error.code,0)
@@ -1164,7 +1163,6 @@ probe_drive :: proc(f:^Probe) {
         core.settle(&f.info,world,nil)
     }
     history.edits_reset(&f.edits,edited_world(&f.s))
-    f.document.saved=history.edits_state(&f.edits)
     api_state(&f.s).step_frame=probe_frame
 }
 
@@ -1207,7 +1205,6 @@ play_start_restarts_on_a_changed_document_and_without_a_game_calls_say_so :: pro
     error,_=probe_call(f,"scene.write",`{"root":"Hero","entities":[{"name":"Renamed"}]}`)
     testing.expect_value(t,error.code,0)
     testing.expect(t,run_find(&f.s,0).world==world,"an edit alone does not touch the run")
-    f.document.saved=history.edits_state(&f.edits)
     error,_=probe_call(f,"play.start",`{}`)
     testing.expect_value(t,error.code,0)
     testing.expect(t,run_find(&f.s,7).world==other,"the run of another owner stays")
@@ -1235,10 +1232,6 @@ play_start_restarts_on_a_changed_document_and_without_a_game_calls_say_so :: pro
         error,_=probe_call(f,c.method,c.params)
         testing.expectf(t,error.code!=0 && strings.contains(error.message,"play.start"),"%s: %v",c.method,error)
     }
-    // Nothing offered: recovering has nothing to do and is no error.
-    error,text=probe_call(f,"editor.recover",`{}`)
-    testing.expect_value(t,error.code,0)
-    testing.expect(t,says(text,`"resolved":false`),text)
 }
 
 // A game copies the world: what the API edits is the document, whatever the view shows.
@@ -1254,7 +1247,7 @@ the_api_edits_the_document_while_a_game_plays :: proc(t:^testing.T) {
     hero:=api_entity(document,1)
     testing.expect_value(t,entity_name(document,hero),"Renamed")
     testing.expect_value(t,entity_name(running,f.hero),"Hero")
-    testing.expect(t,f.edits.cursor==1 && document_dirty(&f.s),"a step of the document")
+    testing.expect(t,f.edits.cursor==1 && history.edits_scene_state(&f.edits)!=f.document.written,"a step of the document, written when the game stops")
 }
 
 // editor.input refuses the events no frame takes before it runs one.
