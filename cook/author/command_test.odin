@@ -184,14 +184,15 @@ the_commands_read_write_and_check_the_document_of_an_asset :: proc(t:^testing.T)
             testing.expectf(t,of_asset.code==0 && of_file.code==0 && of_file.out==of_asset.out,"%s: %s%s",named.path,of_file.out,of_file.err)
             // Read and write resolve a name alike: the path of the registry, with or without
             // assets/, the id and the file under the assets name the same asset; a write refuses
-            // a file outside them.
+            // a file outside them. The first write stores the Status of the arena as the game
+            // lays it out, and says so, not that it is still stored otherwise.
             record,_:=asset.registry_find_path(&q.registry,named.path)
             id:[base.ASSET_ID_TEXT]u8
             document:=project.path(root,"document.json",allocator=context.temp_allocator)
             for form in ([]string{named.path,strings.concatenate({"assets/",named.path},context.temp_allocator),base.asset_id_format(record.id,id[:]),project.path(root,"assets",named.path,allocator=context.temp_allocator)}) {
                 read:=on(&q,named.kind,"read",form,"--out",document)
                 written:=on(&q,named.kind,"write",form,document)
-                testing.expectf(t,read.code==0 && written.code==0 && strings.has_prefix(written.out,strings.concatenate({named.path,": "},context.temp_allocator)) && !strings.contains(written.out,": made"),"%s: %s%s%s",form,read.err,written.out,written.err)
+                testing.expectf(t,read.code==0 && written.code==0 && strings.has_prefix(written.out,strings.concatenate({named.path,": "},context.temp_allocator)) && !strings.contains(written.out,": made") && !strings.contains(written.out,"stored with another layout"),"%s: %s%s%s",form,read.err,written.out,written.err)
             }
             // A file outside them, as a recipe, is written back where it is, as it was read.
             outside_read:=on(&q,named.kind,"read",outside,"--out",document)
