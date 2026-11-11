@@ -466,7 +466,8 @@ match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Co
                 m.range,m.mode,m.loop=i32(range),mode,db.ranges[range].loop
                 m.clip=lib.clip_data(&library.lib,db.ranges[range].clips[0]).name
                 m.speed=db.ranges[range].speed
-                m.travel_from,m.travel_to,m.travel_age=m.travel,linalg.normalize0(db.ranges[range].travel),0
+                // A clip that stands travels nowhere: what its feet drift is no direction to turn from.
+                m.travel_from,m.travel_to,m.travel_age=m.travel,linalg.normalize0(db.ranges[range].travel) if m.speed>lib.MATCH_STILL else {},0
                 start=f32(best-int(db.ranges[range].first))/db.rate
                 m.jumps+=1;m.since=0
             }

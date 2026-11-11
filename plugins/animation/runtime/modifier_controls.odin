@@ -119,6 +119,19 @@ modifier_fade_remove :: proc(runtime:^Modifier_Runtime,state:^Modifier_Control_S
     state.fade_row=0
 }
 
+// Moves the weight of a control from the one it has to target over fade seconds.
+@(private)
+modifier_fade_to :: proc(runtime:^Modifier_Runtime,state:^Modifier_Control_State,target:f32,enabled:bool,fade:f32) -> bool {
+    if fade>0 && state.weight!=target && state.fade_row==0 {
+        row:=int((uintptr(state)-uintptr(raw_data(runtime.controls)))/size_of(Modifier_Control_State))
+        if append(&runtime.fades,u32(row))!=1 {return false}
+        state.fade_row=u32(len(runtime.fades))
+    }
+    state.start,state.target,state.enabled,state.duration,state.elapsed=state.weight,target,enabled,fade,0
+    if fade==0 || state.start==target {state.weight=target;state.elapsed=state.duration;modifier_fade_remove(runtime,state)}
+    return true
+}
+
 @(private)
 modifier_controls_take :: proc(runtime:^Modifier_Runtime,requests:^Animation_Requests,problems:^core.Problems,dt:f32) {
     if requests==nil {return}
@@ -140,13 +153,7 @@ modifier_controls_take :: proc(runtime:^Modifier_Runtime,requests:^Animation_Req
         }
         target:=control.weight if control.enabled else f32(0)
         if state.target==target && state.enabled==control.enabled {continue}
-        if control.fade>0 && state.weight!=target && state.fade_row==0 {
-            row:=int((uintptr(state)-uintptr(raw_data(runtime.controls)))/size_of(Modifier_Control_State))
-            if append(&runtime.fades,u32(row))!=1 {memory_problem(problems,control.rig,"the fade of a control of its .character");continue}
-            state.fade_row=u32(len(runtime.fades))
-        }
-        state.start,state.target,state.enabled,state.duration,state.elapsed=state.weight,target,control.enabled,control.fade,0
-        if control.fade==0 || state.start==target {state.weight=target;state.elapsed=state.duration;modifier_fade_remove(runtime,state)}
+        if !modifier_fade_to(runtime,state,target,control.enabled,control.fade) {memory_problem(problems,control.rig,"the fade of a control of its .character");continue}
         modifier_control_apply(runtime,state)
     }
     if !finite(dt) || dt<=0 {return}

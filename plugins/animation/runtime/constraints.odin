@@ -234,7 +234,7 @@ constraints_apply :: proc(state:^Playing,playback:^Playback,inputs:Constraint_In
             if !ok {
                 core.report(problems,state.entity,"animation.rig_parent","the warping of the .character of this rig cannot place it: it or one of its parents has no Transform; give them one")
             } else {
-                motion_apply_pose(motion,state,instance.profile,actor,parent_world,characters,problems)
+                motion_apply_pose(motion,state,instance.profile,actor,parent_world,characters,problems,dt)
             }
         }
     }

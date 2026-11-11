@@ -898,39 +898,41 @@ stack_root :: proc(state:^Playing,content:^host.Content_Animation,animation:Anim
 pose_sample :: proc(playback:^Playback,state:^Playing,content:^host.Content_Animation,animation:Animation,transforms:core.Read(core.Transform),worker:=0) -> (faults:Pose_Faults) {
     if len(state.bindings)==0 {return}
     library:=&content.lib
+    _,bones,shared,ready:=pose_room(playback,state,worker)
+    if !ready {faults.memory=true;return}
+    // Without a clip the base is the rest of what the animation drives, which the stack blends
+    // over and fades back to, as a clip at no weight.
     if state.clip>=0 {
-        _,bones,shared,ready:=pose_room(playback,state,worker)
-        if !ready {faults.memory=true;return}
         tracks:=shared.bones[:]
         lib.bones_blend(bones,tracks,library,state.fader.current,lib.fader_current_weight(state.fader),clip_root_lock(state,content,state.fader.current.clip,animation,transforms))
         for o in state.fader.outgoing[:state.fader.outgoing_count] {lib.bones_blend(bones,tracks,library,o.player,lib.fade_out_weight(o),clip_root_lock(state,content,o.player.clip,animation,transforms))}
         tracks_twins(shared,bones)
-        share:=mm.saturate(animation.weight)
-        for &binding,i in state.bindings {
-            out:=state.local[i]
-            if binding.entity!=core.NONE {
-                row,ok:=core.get(transforms,binding.entity)
-                if !ok {continue}
-                out=core.to_math(row)
-            }
-            rest:=binding.rest
-            if .Position in binding.driven {
-                value,w,ok:=lib.bone_position(bones[i])
-                alpha:=mm.saturate(w)*share
-                out.position=rest.position if !ok || alpha==0 else value if alpha==1 else rest.position+(value-rest.position)*alpha
-            }
-            if .Rotation in binding.driven {
-                value,w,ok:=lib.bone_rotation(bones[i])
-                alpha:=mm.saturate(w)*share
-                out.rotation=rest.rotation if !ok || alpha==0 else value if alpha==1 else mm.quat_slerp(rest.rotation,value,alpha)
-            }
-            if .Scale in binding.driven {
-                value,w,ok:=lib.bone_scale(bones[i])
-                alpha:=mm.saturate(w)*share
-                out.scale=rest.scale if !ok || alpha==0 else value if alpha==1 else rest.scale+(value-rest.scale)*alpha
-            }
-            state.local[i]=out
+    }
+    share:=mm.saturate(animation.weight)
+    for &binding,i in state.bindings {
+        out:=state.local[i]
+        if binding.entity!=core.NONE {
+            row,ok:=core.get(transforms,binding.entity)
+            if !ok {continue}
+            out=core.to_math(row)
         }
+        rest:=binding.rest
+        if .Position in binding.driven {
+            value,w,ok:=lib.bone_position(bones[i])
+            alpha:=mm.saturate(w)*share
+            out.position=rest.position if !ok || alpha==0 else value if alpha==1 else rest.position+(value-rest.position)*alpha
+        }
+        if .Rotation in binding.driven {
+            value,w,ok:=lib.bone_rotation(bones[i])
+            alpha:=mm.saturate(w)*share
+            out.rotation=rest.rotation if !ok || alpha==0 else value if alpha==1 else mm.quat_slerp(rest.rotation,value,alpha)
+        }
+        if .Scale in binding.driven {
+            value,w,ok:=lib.bone_scale(bones[i])
+            alpha:=mm.saturate(w)*share
+            out.scale=rest.scale if !ok || alpha==0 else value if alpha==1 else rest.scale+(value-rest.scale)*alpha
+        }
+        state.local[i]=out
     }
     return pose_layers(playback,state,content,animation,transforms,worker)
 }

@@ -72,7 +72,9 @@ MODIFIER_TARGETED :: bit_set[Modifier_Kind]{.IK,.Look,.Chain_IK,.Multi_IK,.Splin
 // What gameplay gives an operation of a rig's profile, by slot or by name
 // (name, and effector_name for Multi IK, are found again when the .character is
 // read again). target: where IK, Look, Chain IK, a Multi IK effector, a Spline
-// IK control (effector) or Follow aim. position: the external force of Spring.
+// IK control (effector) or Follow aim. position: the external force of Spring. fade: seconds the
+// operation takes to reach its weight from the one it has (none while it is off); one that lets go
+// keeps its target while it fades out.
 Modifier_Goal :: struct {
     rig:core.Entity,
     kind:Modifier_Kind,
@@ -82,14 +84,14 @@ Modifier_Goal :: struct {
     effector_name:[64]u8,
     target:Spatial_Target,
     position:mm.Vec3,
-    weight:f32,
+    weight,fade:f32,
     enabled:bool,
 }
 modifier_goal :: proc(requests:^Animation_Requests,goal:Modifier_Goal) {
     if requests==nil {return}
     goal:=goal
     if !blend_text_valid(goal.name[:],true) || !blend_text_valid(goal.effector_name[:],true) || goal.kind in MODIFIER_TARGETED && !spatial_target_valid(goal.target) ||
-        goal.rig==core.NONE || goal.slot>=POSE_CONSTRAINTS || goal.kind==.Grounding && goal.slot!=0 || goal.kind==.Multi_IK && int(goal.effector)>=RIG_EFFECTORS || goal.kind==.Spline_IK && int(goal.effector)>=len(SPLINE_CONTROLS) || goal.kind>max(Modifier_Kind) || !profile_vector(goal.position) || !profile_weight(goal.weight) {
+        goal.rig==core.NONE || goal.slot>=POSE_CONSTRAINTS || goal.kind==.Grounding && goal.slot!=0 || goal.kind==.Multi_IK && int(goal.effector)>=RIG_EFFECTORS || goal.kind==.Spline_IK && int(goal.effector)>=len(SPLINE_CONTROLS) || goal.kind>max(Modifier_Kind) || !profile_vector(goal.position) || !profile_weight(goal.weight) || !finite(goal.fade) || goal.fade<0 {
         core.refuse(&requests.goals)
         return
     }
@@ -264,7 +266,13 @@ modifier_apply_goal :: proc(runtime:^Modifier_Runtime,goal:Modifier_Goal,problem
     scaled:=goal.weight
     control:=modifier_control_state(runtime,goal.rig,goal.kind,goal.slot)
     active:=goal.enabled
-    if control!=nil {
+    if control!=nil && goal.fade>0 && goal.kind!=.Grounding {
+        // The weight that applies now fades to the one asked: the goal hands it to its control.
+        now:=control.base_weight*control.weight if control.base_enabled && (control.enabled || control.weight>0) else 0
+        control.base_weight,control.base_enabled,control.weight=1,true,now
+        if !modifier_fade_to(runtime,control,goal.weight if goal.enabled else 0,goal.enabled,goal.fade) {memory_problem(problems,goal.rig,"the fade of a goal of its .character")}
+        scaled,active=control.weight,control.enabled || control.weight>0
+    } else if control!=nil {
         control.base_enabled=active
         if goal.kind!=.Grounding {control.base_weight=scaled}
         scaled*=control.weight
@@ -311,6 +319,7 @@ modifier_take :: proc(runtime:^Modifier_Runtime,requests:^Animation_Requests,pro
         }
         index:=-1
         for known,i in runtime.goals {if known.rig==goal.rig && known.kind==goal.kind && known.slot==goal.slot && known.effector==goal.effector {index=i;break}}
+        if index>=0 && !goal.enabled && goal.fade>0 {goal.target=runtime.goals[index].target}
         if index>=0 {runtime.goals[index]=goal} else if append(&runtime.goals,goal)!=1 {memory_problem(problems,goal.rig,"a goal of its .character");continue}
         modifier_apply_goal(runtime,goal,problems)
     }

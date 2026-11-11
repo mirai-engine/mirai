@@ -246,24 +246,24 @@ pose_warp_runtime_binds_the_bones_of_the_body_preserves_source_knee_planes_reuse
     ok:=true
     source:=motion.instances[0].locomotion.source_velocity
     motion.instances[0].locomotion.velocity=source
-    copy(state.local[:],rest[:]);ok &&=motion_apply_pose(&motion,&state,{3,4},actor,mm.TRANSFORM_IDENTITY,&cache,nil)
+    copy(state.local[:],rest[:]);ok &&=motion_apply_pose(&motion,&state,{3,4},actor,mm.TRANSFORM_IDENTITY,&cache,nil,1.0/60)
     identity:=true;for bone,i in state.local {identity &&=bone==rest[i]}
     motion.instances[0].locomotion.velocity=goal.velocity
-    for _ in 0..<120 {copy(state.local[:],rest[:]);ok &&=motion_apply_pose(&motion,&state,{3,4},actor,mm.TRANSFORM_IDENTITY,&cache,nil)}
+    for _ in 0..<120 {copy(state.local[:],rest[:]);ok &&=motion_apply_pose(&motion,&state,{3,4},actor,mm.TRANSFORM_IDENTITY,&cache,nil,1.0/60)}
     final:=state.local[1];spine:=state.world[5];upper:=linalg.length(state.world[3].position-state.world[2].position);lower:=linalg.length(state.world[4].position-state.world[3].position)
-    motion.instances[0].locomotion.weight=0;copy(state.local[:],rest[:]);ok &&=motion_apply_pose(&motion,&state,{3,4},actor,mm.TRANSFORM_IDENTITY,&cache,nil)
+    motion.instances[0].locomotion.weight=0;copy(state.local[:],rest[:]);ok &&=motion_apply_pose(&motion,&state,{3,4},actor,mm.TRANSFORM_IDENTITY,&cache,nil,1.0/60)
     unwarped:=state.local[1]==rest[1]
     // A body that nearly stops leaves the pose nearly as the clip has it, as one that stops does:
     // the warp fades out with the speed instead of shrinking the stride to its minimum.
     motion.instances[0].locomotion.weight=1;motion.instances[0].locomotion.velocity=goal.velocity*.003
-    copy(state.local[:],rest[:]);ok &&=motion_apply_pose(&motion,&state,{3,4},actor,mm.TRANSFORM_IDENTITY,&cache,nil)
+    copy(state.local[:],rest[:]);ok &&=motion_apply_pose(&motion,&state,{3,4},actor,mm.TRANSFORM_IDENTITY,&cache,nil,1.0/60)
     nearly:=true;for bone,i in state.local {nearly &&=mm.quat_angle(bone.rotation,rest[i].rotation)<1e-2 && linalg.length(bone.position-rest[i].position)<1e-2}
     context=saved
     testing.expect(t,nearly,"a body at 5 mm/s keeps the pose of the clip")
     testing.expect(t,ok && identity && final.rotation!=rest[1].rotation && mm.quat_angle(spine.rotation,actor.rotation)<1e-5 && unwarped)
     testing.expect(t,abs(upper-linalg.length(rest[3].position))<1e-5 && abs(lower-linalg.length(rest[4].position))<1e-5)
     state.body[.Foot_L]=0;state.bound+=1
-    testing.expect(t,!motion_apply_pose(&motion,&state,{3,4},actor,mm.TRANSFORM_IDENTITY,&cache,nil) && motion.instances[0].error==.Unbound_Bone)
+    testing.expect(t,!motion_apply_pose(&motion,&state,{3,4},actor,mm.TRANSFORM_IDENTITY,&cache,nil,1.0/60) && motion.instances[0].error==.Unbound_Bone)
 }
 
 @(test)

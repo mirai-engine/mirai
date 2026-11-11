@@ -23,6 +23,7 @@ POSE_WARP_PROFILE_DEFAULT :: Pose_Warp_Profile{min_stride=.5,max_stride=2,max_an
 
 // m/s below which the pose warp fades out with the speed of the body or of its clip.
 MOTION_WARP_FADE_SPEED :: .3
+MOTION_WARP_HALF_LIFE :: .1 // seconds the turn of the legs takes to close half of its way to the one asked
 // A warp window: while a clip crosses its span of this name, the root motion of the clip is
 // warped to end at the target of that name (motion_target).
 Motion_Window :: struct {
@@ -90,6 +91,7 @@ Motion_Instance :: struct {
     bindings:[dynamic]Spatial_Target_Binding, // of each target; never fewer
     locomotion:Motion_Locomotion,
     source_velocity:mm.Vec3,
+    turn,turning:f32, // radians the warp turns the legs by, and per second
     window:i32,
     remaining_error:f32,
     error:Motion_Error,
@@ -341,7 +343,7 @@ motion_root_sample :: proc(content:^host.Content_Animation,state:^Playing,mirror
     return
 }
 
-motion_apply_pose :: proc(runtime:^Motion_Runtime,state:^Playing,profile:base.Asset_Id,actor,root_transform:mm.Transform,characters:^Character_Assets,problems:^core.Problems) -> bool {
+motion_apply_pose :: proc(runtime:^Motion_Runtime,state:^Playing,profile:base.Asset_Id,actor,root_transform:mm.Transform,characters:^Character_Assets,problems:^core.Problems,dt:f32) -> bool {
     if state==nil || profile=={} {return true}
     instance:=motion_instance(runtime,state.entity);if instance==nil {return false}
     content:=character_cached(characters,profile,&instance.content)
@@ -349,12 +351,12 @@ motion_apply_pose :: proc(runtime:^Motion_Runtime,state:^Playing,profile:base.As
     if !motion_bind(instance,state,content) {motion_problem(problems,state.entity,instance.error);return false}
     config:=content.set.motion.warp
     goal:=instance.locomotion
-    if !goal.enabled || goal.weight==0 || config.weight==0 || !config.orientation && !config.stride {return true}
+    if !goal.enabled || goal.weight==0 || config.weight==0 || !config.orientation && !config.stride {instance.turn,instance.turning=0,0;return true}
     speed:=linalg.length(goal.velocity)
     source:=goal.source_velocity if linalg.length(goal.source_velocity)>1e-6 else instance.source_velocity
     source_speed:=linalg.length(source)
     if !finite(speed) || !finite(source_speed) {instance.error=.Invalid;motion_problem(problems,state.entity,.Invalid);return false}
-    if speed<1e-6 || source_speed<1e-6 {return true}
+    if speed<1e-6 || source_speed<1e-6 {instance.turn,instance.turning=0,0;return true}
     // Toward a stop the direction of the velocity means little and its ratio to the clip's tends
     // to the minimum stride, so the warp fades out with the slower of the two speeds: a body that
     // nearly stops keeps the pose of the clip, as one that stops does.
@@ -364,7 +366,10 @@ motion_apply_pose :: proc(runtime:^Motion_Runtime,state:^Playing,profile:base.As
     angle:f32;stride:f32=1
     if config.orientation {value,ok:=lib.orientation_warp_angle(source,goal.velocity,up,config.max_angle);if !ok {instance.error=.Invalid;motion_problem(problems,state.entity,.Invalid);return false};angle=value}
     if config.stride {value,ok:=lib.stride_warp_scale(source_speed,speed,config.min_stride,config.max_stride);if !ok {instance.error=.Invalid;motion_problem(problems,state.entity,.Invalid);return false};stride=value}
-    ok:=lib.pose_warp(playing_skeleton(state),state.local[:],state.world[:],{pelvis=instance.pelvis,spine=instance.spine[:instance.spine_count],legs=instance.legs[:instance.leg_count],up=up,direction=goal.velocity,angle=angle,stride=stride,weight=config.weight*goal.weight*fade},root_transform)
+    weight:=config.weight*goal.weight*fade
+    // The legs follow the turn asked by a spring: a body that starts or turns at once asks it at once.
+    if finite(dt) && dt>0 {instance.turn,instance.turning=mm.spring_critical(instance.turn,instance.turning,angle*weight,mm.spring_omega(MOTION_WARP_HALF_LIFE),dt)}
+    ok:=lib.pose_warp(playing_skeleton(state),state.local[:],state.world[:],{pelvis=instance.pelvis,spine=instance.spine[:instance.spine_count],legs=instance.legs[:instance.leg_count],up=up,direction=goal.velocity,angle=instance.turn,stride=1+(stride-1)*weight,weight=1},root_transform)
     if !ok {instance.error=.Invalid;motion_problem(problems,state.entity,.Invalid)}
     return ok
 }
