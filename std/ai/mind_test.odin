@@ -608,3 +608,35 @@ a_mind_survives_scribbled_state_and_wild_proposals :: proc(t:^testing.T) {
     testing.expect(t,!running)
     _=reserve_take(nil,{1,0},1,1,0)
 }
+
+// A mind that does not decide in a tick runs its action without thinking, and
+// thinks only when that action ends, in the same tick; with nothing running
+// it does nothing.
+@(test)
+a_mind_that_does_not_decide_runs_its_action :: proc(t:^testing.T) {
+    Count :: struct {thinks,updates:int}
+    Wait :: enum u8 {Wait}
+    think :: proc(t:^Think(Wait)) {
+        (^Count)(t.user).thinks+=1
+        propose(t,.Wait,1)
+    }
+    wait :: proc(a:^Act(Wait)) -> Status {
+        if a.phase==.Update {(^Count)(a.user).updates+=1}
+        return after(a,3)
+    }
+    acts:=[Wait]proc(a:^Act(Wait)) -> Status{.Wait=wait}
+    c:Count
+    m:Mind
+    ctx:=Mind_Context{user=&c,dt=1}
+    _,running:=mind_tick(&m,&acts,think,&ctx,false)
+    testing.expect(t,!running && c.thinks==0,"nothing runs: it does not think")
+    mind_tick(&m,&acts,think,&ctx)
+    testing.expect_value(t,c.thinks,1)
+    for tick in u64(1)..=3 {
+        ctx.tick=tick
+        _,running=mind_tick(&m,&acts,think,&ctx,false)
+        testing.expectf(t,running && c.updates==int(tick),"tick %d: %v updates",tick,c.updates)
+    }
+    testing.expect_value(t,c.thinks,2) // when the wait ended, in its tick, and it entered again
+    testing.expect(t,m.main.entered==3)
+}
