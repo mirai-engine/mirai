@@ -1,5 +1,6 @@
 package mirai_render
 
+import "core:math/linalg"
 import "core:mem"
 import "mirai:rhi"
 import "mirai:std/base"
@@ -140,14 +141,31 @@ Pass_Lights :: struct {
 	scene_root:          u32,
 }
 
+// The box of lights_ask for lights a pass cannot tell where they lie.
+LIGHTS_ANYWHERE :: [2]Vec3{{-max(f32), -max(f32), -max(f32)}, {max(f32), max(f32), max(f32)}}
+
 // Asks for room for lights that a pass writes on the GPU in the Simulate
 // stage, which then light the scene as its own lights do: count that cast
-// shadows within its budgets, and shadowless that light whatever stands in
-// their way and trace no rays. From the next frame, each rounded up to a
-// power of two, up to LIGHT_REGION_MAX. Ask in each frame that uses it.
-lights_ask :: proc(r: ^Renderer, count, shadowless: u32) {
+// shadows within its budgets, which lie within box and light up to reach
+// metres from where they lie (the grid of the lights holds the cells of the
+// scene they light; LIGHTS_ANYWHERE, all of them), and shadowless that light
+// whatever stands in their way and trace no rays. From the next frame, each
+// rounded up to a power of two, up to LIGHT_REGION_MAX. Ask in each frame
+// that uses it.
+lights_ask :: proc(r: ^Renderer, count, shadowless: u32, box: [2]Vec3, reach: f32) {
+	first := r.lights_asked == 0
 	r.lights_asked = max(r.lights_asked, count)
 	r.shadowless_asked = max(r.shadowless_asked, shadowless)
+	if count == 0 {return}
+	low, high := box[0], box[1]
+	if !(low.x <= high.x && low.y <= high.y && low.z <= high.z) {low, high = LIGHTS_ANYWHERE[0], LIGHTS_ANYWHERE[1]}
+	reach := reach if reach >= 0 else max(f32)
+	if first {
+		r.lights_asked_box, r.lights_asked_reach = {low, high}, reach
+		return
+	}
+	r.lights_asked_box = {linalg.min(r.lights_asked_box[0], low), linalg.max(r.lights_asked_box[1], high)}
+	r.lights_asked_reach = max(r.lights_asked_reach, reach)
 }
 
 // Binds the lights of the scene at SLOT_PASS0 + lights and the nodes of its

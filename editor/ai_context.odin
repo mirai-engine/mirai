@@ -361,7 +361,7 @@ ai_state_write :: proc(s:^Session,task:^Ai_Task,w:core.World_Ref) -> bool {
 }
 
 // The methods a turn uses most, named in the instructions by their MCP tool.
-AI_PROMPT_TOOLS :: [?]string{"scene.inspect","scene.write","batch","play.start","play.step","scene.save","asset.save","play.inspect","play.check","capture","play.stop","view.viewport","asset.import","finish","engine.describe"}
+AI_PROMPT_TOOLS :: [?]string{"scene.inspect","scene.write","batch","play.start","play.step","scene.save","asset.save","play.check","capture","play.stop","view.viewport","asset.import","finish","engine.describe"}
 // The methods whose parameters go in the instructions, from the live
 // registry: most of what a turn does, without looking their schemas up.
 AI_PROMPT_SCHEMAS :: [?]string{"scene.inspect","scene.write","batch","finish"}
@@ -462,12 +462,12 @@ ai_prompt_write :: proc(s:^Session,task:^Ai_Task,entities:[]Ai_Entity,detached:b
     if task.about!=0 {fmt.sbprintf(&b,"- %s\n",ai_about_note(s.ai,task.about))}
     fmt.sbprintf(&b,"- %s has the region, the camera, the selection and the open scene.\n",ai_task_path(s,task,AI_FILE_CONTEXT))
     if tick,paused:=ai_paused_tick(s,task);paused {
-        fmt.sbprintf(&b,"- The game of the user is paused at tick %d. Answer questions about it using read-only observations: `play.player`, `play.status` and `play.inspect` with `include_runtime=true`. Do not edit files or scenes, resume, step or stop the game, or mutate the paused world.\n",tick)
+        fmt.sbprintf(&b,"- The game of the user is paused at tick %d. Answer questions about it using read-only observations: `play.player`, `play.status` and `scene.inspect` with `world` `Game` with `include_runtime=true`. Do not edit files or scenes, resume, step or stop the game, or mutate the paused world.\n",tick)
         if os.exists(ai_task_path(s,task,AI_FILE_STATE)) {
             fmt.sbprintf(&b,"- %s has the entities the user selected in the paused game, which the message refers to, with the values of their components at tick %d, when they sent it.\n",ai_task_path(s,task,AI_FILE_STATE),tick)
         }
     } else if task.play {
-        strings.write_string(&b,"- The game is playing. Answer questions about the live game and player using read-only observations. The context includes a player snapshot; use `play.player`, `play.status` and `play.inspect` with `include_runtime=true` for current values, components of the body it drives and runtime storage. Do not edit files or scenes, stop or pause the game, or mutate the playing world.\n")
+        strings.write_string(&b,"- The game is playing. Answer questions about the live game and player using read-only observations. The context includes a player snapshot; use `play.player`, `play.status` and `scene.inspect` with `world` `Game` with `include_runtime=true` for current values, components of the body it drives and runtime storage. Do not edit files or scenes, stop or pause the game, or mutate the playing world.\n")
     }
     // How to use the methods of a plugin goes with them, in engine_describe;
     // here only when the message comes from a document of that plugin.

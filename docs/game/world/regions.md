@@ -6,7 +6,7 @@ there, which keeps its own numbers. No other component has a shape or a size of 
 
 ```sh
 P="mirai rpc --project ."
-$P scene.write '{"merge":true,"entities":[
+$P scene.write '{"entities":[
   {"name":"Low gravity room","position":[0,3,0],"components":{
     "Volume":{"shape":"Box","extents":[5,3,5]},
     "Gravity":{"acceleration":2,"zone":{"blend":1,"priority":1}}}},

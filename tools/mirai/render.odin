@@ -1049,7 +1049,7 @@ render_push :: proc(e:^Render_Editor,plan:Render_Plan,view:Render_View,folder:st
         entities:=make(json.Array,1,context.temp_allocator)
         entities[0]=moved
         params:=make(json.Object,context.temp_allocator)
-        params["root"],params["merge"],params["entities"]=push.entity,true,entities
+        params["root"],params["entities"]=push.entity,entities
         _,ok:=render_call(e,"scene.write",params)
         return ok
     }

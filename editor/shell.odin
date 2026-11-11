@@ -1015,15 +1015,28 @@ divider_vertical :: proc(ctx:^ui.Context) {
 }
 
 // The button of an entry: off and checked as the entry is, and it runs it.
+// What it shows is of the entry, unless the place it is in gives another: its
+// icon, or its label when it has none, and as its tip its label and its key.
 // index tells apart two buttons of one entry.
 command_button :: proc(s:^Session,name:string,b:ui.Button,index:int=0) -> bool {
     g:=s.gui
-    state:=command_state(s,name)
+    entry:=command_binding(s,name)
+    // Without its entry the button is there and off.
+    state:=Command_State{disabled=true}
     id:=command_widget(g,name,index)
     named_add(g,id)
     button:=b
+    if entry!=nil {
+        state=binding_state(s,entry)
+        if button.icon==.None && button.label=="" {
+            if entry.icon!=.None {button.icon=entry.icon} else {button.label=entry.label}
+        }
+        if button.tip=="" && button.label=="" {
+            button.tip=entry.label
+            if entry.shortcut.set {button.tip=fmt.tprintf("%s (%s)",entry.label,shortcut_text(entry.shortcut))}
+        }
+    }
     button.disabled=button.disabled || state.disabled
-    if button.tip=="" && button.label=="" {button.tip=command_label(s,name)}
     if button.label!="" && state.label!="" {button.label=state.label}
     if button.variant=="tab" || button.variant=="ghost" || button.variant=="" {button.active=button.active || state.checked}
     if ui.button(g.ctx,id,button).clicked {return command_run(s,name)}
@@ -1063,28 +1076,26 @@ bar_build :: proc(s:^Session,w:core.World_Ref) {
         if document!=nil {
             // An asset document: its save, undo and redo, and what it plays after them.
             if ui.box(ctx,{width=ui.FIT,height=ui.GROW,gap=4,align_y=.Center}) {
-                command_button(s,"save",{icon=ui.icon_user(u8(User_Icon.Save)),variant="ghost",width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON})
-                command_button(s,"undo",{icon=ui.icon_user(u8(User_Icon.Undo)),variant="ghost",width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON})
-                command_button(s,"redo",{icon=ui.icon_user(u8(User_Icon.Redo)),variant="ghost",width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON})
+                command_button(s,"save",{variant="ghost",width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON})
+                command_button(s,"undo",{variant="ghost",width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON})
+                command_button(s,"redo",{variant="ghost",width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON})
             }
             if ui.box(ctx,{id=shell_id(g,"asset_toolbar"),width=ui.GROW,height=ui.GROW,gap=8,padding={10,0,0,0},align_y=.Center,track=true}) {
                 if material_document_shown(s) {ui.label(ctx,material_document_kind(s),ui.metric(ctx,"font"),ui.tone(ctx,"text_muted"))}
             }
         } else if ui.box(ctx,{width=ui.FIT,height=ui.GROW,gap=4,align_y=.Center}) {
-            command_button(s,"save",{icon=ui.icon_user(u8(User_Icon.Save)),variant="ghost",width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON,disabled=!document_dirty(s)})
-            command_button(s,"undo",{icon=ui.icon_user(u8(User_Icon.Undo)),variant="ghost",width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON})
-            command_button(s,"redo",{icon=ui.icon_user(u8(User_Icon.Redo)),variant="ghost",width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON})
+            command_button(s,"save",{variant="ghost",width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON,disabled=!document_dirty(s)})
+            command_button(s,"undo",{variant="ghost",width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON})
+            command_button(s,"redo",{variant="ghost",width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON})
         }
         // The tools go at the left, after the document: Move, Rotate and Scale,
         // the snaps and the axes, the camera, and the tools of the plugins.
         if s.mode!=.Play && s.mode!=.Watch && !scene_covered(s) {
             divider_vertical(ctx)
             if ui.box(ctx,{width=ui.FIT,height=ui.GROW,gap=4,align_y=.Center}) {
-                tools:=[3]string{"tool_move","tool_rotate","tool_scale"}
-                icons:=[3]ui.Icon{.Move,.Rotate,.Scale}
                 // Up to 1050 points they are narrower.
-                for tool,i in tools {
-                    command_button(s,tool,{icon=icons[i],variant="tab",width=25 if ctx.size.x<=1050 else TOOLBAR_BUTTON,height=TOOLBAR_BUTTON,icon_size=16})
+                for tool in ([3]string{"tool_move","tool_rotate","tool_scale"}) {
+                    command_button(s,tool,{variant="tab",width=25 if ctx.size.x<=1050 else TOOLBAR_BUTTON,height=TOOLBAR_BUTTON,icon_size=16})
                 }
                 divider_vertical(ctx)
                 snap_menu_build(s)
@@ -1112,7 +1123,7 @@ bar_build :: proc(s:^Session,w:core.World_Ref) {
             if (ctx.size.x>=900 || s.mode==.Watch) && !scene_covered(s) {watch_bar_build(s)}
             // The finder looks for entities of the scene, which an asset document hides.
             if s.mode!=.Play && !scene_covered(s) {
-                command_button(s,"find",{icon=ui.icon_user(u8(User_Icon.Search)),variant="ghost",width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON,icon_size=14})
+                command_button(s,"find",{variant="ghost",width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON,icon_size=14})
             }
             if document==nil || !asset_document_flat(s,document.kind) {
                 if document==nil && s.mode!=.Play {view_mode_build(s)}
@@ -1339,7 +1350,7 @@ play_controls :: proc(s:^Session) {
     // Who has the keyboard and the mouse says how to get them back.
     eject :: proc(s:^Session) {
         if player_processes_captured(s) || s.mode==.Play && !s.play_input_released {
-            command_button(s,"release_input",{label="Eject (F1)",variant="field",height=BAR_BUTTON_HEIGHT,size=ui.metric(s.gui.ctx,"font_small")})
+            command_button(s,"release_input",{label=fmt.tprintf("%s (%s)",command_label(s,"release_input"),command_shortcut_text(s,"release_input")),variant="field",height=BAR_BUTTON_HEIGHT,size=ui.metric(s.gui.ctx,"font_small")})
         }
     }
     providers_:=providers(s)
@@ -1356,9 +1367,8 @@ play_controls :: proc(s:^Session) {
         players:=s.play_players
         run:=RUN_COMMANDS[kind^]
         // The mode keeps its icon whoever plays it: online players are said in the menu.
-        icon:=command_icon(s,run)
         if ui.box(ctx,{width=ui.FIT,height=ui.fixed(ui.metric(ctx,"control")),gap=0,align_y=.Center,fill=ui.tone(ctx,"accent"),radius=ui.metric(ctx,"radius_control")}) {
-            command_button(s,run,{icon=icon,variant="accent",width=28,height=ui.metric(ctx,"control"),icon_size=14})
+            command_button(s,run,{variant="accent",width=28,height=ui.metric(ctx,"control"),icon_size=14})
             id:=shell_id(g,"run_menu")
             if ui.button(ctx,id,{icon=.Chevron_Down,variant="accent",width=18,height=ui.metric(ctx,"control"),icon_size=10,tip="Execution mode"}).clicked {
                 anchor,_:=ui.widget_rect(ctx,id)
@@ -1369,7 +1379,7 @@ play_controls :: proc(s:^Session) {
             // Choosing a mode also runs it.
             for k in Run_Kind {
                 run:=RUN_COMMANDS[k]
-                if ui.menu_item(ctx,shell_id(g,"run_kind",int(k)+1),command_label(s,run),{icon=command_icon(s,run),shortcut=k==.Play?"F5":"",checked=kind^==k}) {
+                if ui.menu_item(ctx,shell_id(g,"run_kind",int(k)+1),command_label(s,run),{icon=command_icon(s,run),shortcut=command_shortcut_text(s,run),checked=kind^==k}) {
                     kind^=k
                     command_run(s,run)
                 }
@@ -1385,7 +1395,7 @@ play_controls :: proc(s:^Session) {
         }
         return
     }
-    if simulating(s) && !camera_previewing(s) {command_button(s,"apply_simulation",{label="Apply transforms",variant="field",height=BAR_BUTTON_HEIGHT})}
+    if simulating(s) && !camera_previewing(s) {command_button(s,"apply_simulation",{variant="field",height=BAR_BUTTON_HEIGHT})}
     if camera_previewing(s) {
         command_button(s,"camera_discard",{label="Discard",variant="field",height=BAR_BUTTON_HEIGHT})
         command_button(s,"camera_keep",{label="Keep",variant="accent",height=BAR_BUTTON_HEIGHT})
@@ -1395,7 +1405,7 @@ play_controls :: proc(s:^Session) {
     if kit.segments(ctx,ui.FIT,30) {
         // One button: Pause while it plays, Resume while it is paused.
         pause:=play_paused(s)?"resume":"pause"
-        command_button(s,pause,{icon=command_icon(s,pause),variant="tab",icon_color=ui.tone(ctx,"text"),width=BAR_BUTTON_HEIGHT,height=BAR_BUTTON_HEIGHT})
+        command_button(s,pause,{variant="tab",icon_color=ui.tone(ctx,"text"),width=BAR_BUTTON_HEIGHT,height=BAR_BUTTON_HEIGHT})
         command_button(s,"stop",stop)
     }
 }

@@ -161,7 +161,7 @@ the_editor_shell_keeps_the_compact_create_and_details_panels :: proc(t:^testing.
     // Choosing a mode keeps it for the button and runs it.
     shell_test_click(t,&session,shell_id(&g,"run_kind",int(Run_Kind.Simulate)+1))
     asked:=&api_state(&session).commands
-    testing.expect(t,g.layout.run_kind==.Simulate && asked.asked_count==1 && asked.asked[0].method=="play.start" && string(asked.asked[0].params[:asked.asked[0].length])==`{"simulate":true}`)
+    testing.expect(t,g.layout.run_kind==.Simulate && asked.asked_count==1 && asked.asked[0].binding!=nil && asked.asked[0].binding.name=="simulate" && asked.asked[0].binding.params==`{"simulate":true}`)
     asked.asked_count=0
     testing.expect(t,test_command(&session,"rename"))
     ui.frame_begin(&ctx,{size={800,420},pointer_absent=true,dt=1.0/60})

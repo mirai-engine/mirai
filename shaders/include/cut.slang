@@ -69,10 +69,8 @@ bool cluster_finest_resident(Mesh mesh, Cluster c) {
     return cluster_resident(mesh, c) && (c.child_page == INVALID || !page_resident(mesh, c.child_page));
 }
 
-// The box in the world of a cluster under an instance.
-void cluster_world_box(Instance inst, Mesh mesh, Cluster c, out float3 low, out float3 high) {
-    float3 a, b;
-    cluster_box(mesh, c, a, b);
+// A box of the space of a mesh in the world under an instance.
+void instance_world_box(Instance inst, float3 a, float3 b, out float3 low, out float3 high) {
     float3 center = transform_point(inst.world, (a + b) * 0.5);
     float3 half_size = (b - a) * 0.5;
     float3 extent = float3(dot(abs(inst.world[0].xyz), half_size), dot(abs(inst.world[1].xyz), half_size), dot(abs(inst.world[2].xyz), half_size));
@@ -80,23 +78,36 @@ void cluster_world_box(Instance inst, Mesh mesh, Cluster c, out float3 low, out 
     high = center + extent;
 }
 
-// Whether the eye sees a cluster of a closed mesh only from behind its
-// normals: every direction from the eye to its box is within the cutoff of
-// the cone around its axis. An instance that stretches its mesh unevenly
-// turns normals the cone does not hold: it is never left out.
-bool cluster_backfacing(Instance inst, float scale, Mesh mesh, Cluster c, float3 low, float3 high) {
-    if ((mesh.flags & MESH_FLAG_CLOSED) == 0u || (c.counts & CLUSTER_CONE) == 0u) return false;
+// The box in the world of a cluster under an instance.
+void cluster_world_box(Instance inst, Mesh mesh, Cluster c, out float3 low, out float3 high) {
+    float3 a, b;
+    cluster_box(mesh, c, a, b);
+    instance_world_box(inst, a, b, low, high);
+}
+
+// As cluster_backfacing (below), for a cone of the normals in the space of the mesh
+// (axis) whose normals spread from it by the sine `cutoff`.
+bool cone_backfacing(Instance inst, float scale, Mesh mesh, float3 cone_axis, float cutoff, float3 low, float3 high) {
+    if ((mesh.flags & MESH_FLAG_CLOSED) == 0u) return false;
     float3 c0 = float3(inst.world[0].x, inst.world[1].x, inst.world[2].x);
     float3 c1 = float3(inst.world[0].y, inst.world[1].y, inst.world[2].y);
     float3 c2 = float3(inst.world[0].z, inst.world[1].z, inst.world[2].z);
     if (min(length(c0), min(length(c1), length(c2))) < scale * 0.99) return false;
-    float2 packed = float2(float(int(c.size_z_cone << 8u) >> 24), float(int(c.size_z_cone) >> 24)) / 127.0;
-    float3 axis = normalize(transform_normal(inst.world_inv, oct_decode(max(packed, float2(-1.0)))));
-    float cutoff = float(int(c.counts) >> 24) / 127.0;
+    float3 axis = normalize(transform_normal(inst.world_inv, cone_axis));
     float3 center = (low + high) * 0.5;
     float radius = length(high - low) * 0.5;
     if (frame.eye.w < 0.5) return dot(-frame.eye.xyz, axis) >= cutoff + 1e-3;
     float3 to = center - frame.eye.xyz;
     return dot(to, axis) >= cutoff * length(to) + radius;
+}
+
+// Whether the eye sees a cluster of a closed mesh only from behind its
+// normals: every direction from the eye to its box is within the cutoff of
+// the cone around its axis. An instance that stretches its mesh unevenly
+// turns normals the cone does not hold: it is never left out.
+bool cluster_backfacing(Instance inst, float scale, Mesh mesh, Cluster c, float3 low, float3 high) {
+    if ((c.counts & CLUSTER_CONE) == 0u) return false;
+    float2 packed = float2(float(int(c.size_z_cone << 8u) >> 24), float(int(c.size_z_cone) >> 24)) / 127.0;
+    return cone_backfacing(inst, scale, mesh, oct_decode(max(packed, float2(-1.0))), float(int(c.counts) >> 24) / 127.0, low, high);
 }
 #endif

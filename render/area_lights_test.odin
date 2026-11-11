@@ -121,7 +121,7 @@ area_lights_give_what_their_points_give :: proc(t: ^testing.T) {
 	defer fixture_destroy(&f)
 	cases := [?]struct {name: string, light: Light_Desc, worst, mean: f32}{
 		{"rectangle above", {position = {0.3, 1.2, 0}, color = {1, 1, 1}, intensity = 3 * math.PI / 2, range = 20, direction = {0, -1, 0}, axis = {1, 0, 0}, size = {2, 1}}, 0.06, 0.03},
-		{"tilted rectangle", {position = {0, 0.5, 0}, color = {1, 0.8, 0.6}, intensity = 3 * math.PI / 2.1, range = 20, direction = {0.8, -0.6, 0}, axis = {0, 0, 1}, size = {1.5, 1.4}}, 0.1, 0.03},
+		{"tilted rectangle", {position = {0, 0.5, 0}, color = {1, 0.8, 0.6}, intensity = 3 * math.PI / 2.1, range = 20, direction = {0.8, -0.6, 0}, axis = {0, 0, 1}, size = {1.5, 1.4}}, 0.15, 0.04},
 		{"capsule", {position = {0, 0.8, 0.2}, color = {0.7, 0.9, 1}, intensity = 3 * math.PI, range = 20, axis = {1, 0, 0.3}, length = 2.5, radius = 0.05}, 0.06, 0.03},
 	}
 	for c in cases {

@@ -167,7 +167,7 @@ exposes the criterion to classify with neighboring geometry.
 - **A kind of actor is a preset.** When the player, the enemies and the clips that block only one
   of them collide differently, the game declares a category and a preset per kind
   (`PRESET_ENEMY :: physics.Collision_Preset(2)`), writes what each preset is once in
-  `Collision_Settings` (`settings.mirai`, or `physics.collision.set`), and the `Collider` of each
+  `Collision_Settings` (`settings.mirai`, or `settings.set`), and the `Collider` of each
   prefab names its preset: in the inspector, with `asset set` on the prefab, or in the tool that
   writes it. A spawned prefab (the player of a spawn point, an enemy) then collides as its kind
   with no game code, and the navmesh class of those agents names the same preset
@@ -743,8 +743,8 @@ them while no plugin draws them. Without the plugin none of that appears.
 - The **Drop** tool (shortcut **P**): the left button held on the scene drops the chosen mesh, at
   its height and scale, under the pointer and keeps dropping at its speed; what fell is seen
   falling in the document until **Confirm** (one undo step with the meshes and their poses),
-  **Cancel**, Escape or another tool, which leave the document as it was (`physics.drop` ends it
-  by API). Each dropped mesh gets a `Collider` of kind `Hull`, which stays: in the game it is a
+  **Cancel**, Escape or another tool, which leave the document as it was. Each dropped mesh gets a
+  `Collider` of kind `Hull`, which stays: in the game it is a
   static prop that collides.
 - In a settle, the moving entities are dynamic bodies (their `Rigid_Body` when dynamic) and every
   other body is static and every character the still capsule of its collider; joints act. Only

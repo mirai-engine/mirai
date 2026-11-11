@@ -35,7 +35,7 @@ sensor that blocks nothing and reports what goes in and out of it. `Heal_Zone` i
 the game, `@(component) Heal_Zone :: struct {amount:f32}`.
 
 ```json
-{"method":"scene.write","params":{"merge":true,"entities":[{"name":"Heal zone",
+{"method":"scene.write","params":{"entities":[{"name":"Heal zone",
  "components":{"Volume":{"shape":"Box","extents":[4,2,4]},"Heal_Zone":{"amount":10}}}]}}
 ```
 

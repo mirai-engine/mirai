@@ -417,20 +417,19 @@ outliner_menu :: proc(s:^Session,w:core.World_Ref) {
             history.selection_set(s.selection,{child})
             outliner_reveal(o,w,child)
         }
-        if ui.menu_item(ctx,ui.id(ctx,"menu_rename"),"Rename",{shortcut="F2"}) {outliner_rename(o,e)}
-        if ui.menu_item(ctx,ui.id(ctx,"menu_duplicate"),"Duplicate",{shortcut=command_shortcut_text(s,"duplicate")}) {command_run(s,"duplicate")}
+        if ui.menu_item(ctx,ui.id(ctx,"menu_rename"),command_label(s,"rename"),{shortcut=command_shortcut_text(s,"rename")}) {outliner_rename(o,e)}
+        command_menu_item(s,ui.id(ctx,"menu_duplicate"),"duplicate")
         if ui.menu_item(ctx,ui.id(ctx,"menu_root"),"Move to root",{disabled=entity_parent(w,e)==core.NONE}) {
             tool_preview_cancel(s)
             if !entity_reparent(s,e,core.NONE) {notify(s,"The entity could not leave its parent")}
         }
-        if ui.menu_item(ctx,ui.id(ctx,"menu_focus"),"Focus",{shortcut="F"}) {command_run(s,"focus")}
+        command_menu_item(s,ui.id(ctx,"menu_focus"),"focus","Focus")
         ui.menu_separator(ctx)
         for entry,at in ([5]string{"prefab_create","prefab_apply","prefab_apply_base","prefab_revert","prefab_unlink"}) {
-            state:=command_state(s,entry)
-            if ui.menu_item(ctx,ui.id(ctx,"menu_prefab",at+1),command_label(s,entry),{disabled=state.disabled}) {command_run(s,entry)}
+            command_menu_item(s,ui.id(ctx,"menu_prefab",at+1),entry)
         }
         ui.menu_separator(ctx)
-        if ui.menu_item(ctx,ui.id(ctx,"menu_delete"),"Delete",{shortcut="Del"}) {command_run(s,s.mode!=.Edit?"delete_in_game":"delete")}
+        command_menu_item(s,ui.id(ctx,"menu_delete"),"delete")
     }
 }
 

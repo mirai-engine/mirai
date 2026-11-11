@@ -73,8 +73,8 @@ mirai rpc --project . play.qa.report '{"violation":0,"filmstrip":"C:/work/bug.pn
 - `filmstrip` writes one PNG of the ticks around the violation, from the run's past; the game
   stays where it is. Open the image only if the position and tick are not enough.
 - `violation` is the `index` in the report; `-1` or absent writes neither.
-- A repro plays the inputs from tick 0 (holds, devices and the changes of `play.set`,
-  `play.spawn`, `play.destroy` and `play.push`), starts only the monitor of its kind where the run
+- A repro plays the inputs from tick 0 (holds, devices and the changes of `scene.write` with
+  `"world": "Game"` and of `play.push`), starts only the monitor of its kind where the run
   did, and clicks replay at the same window size. `Frame_Time` and `Memory` measure the machine
   (`Memory` is growth since the start): their repros do not fail reliably.
 

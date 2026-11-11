@@ -249,6 +249,8 @@ text_write_value :: proc(w:^Writer,s:^Schema,index:Type_Index,bytes:[]u8,is_text
     case .Bit_Set:
         bits:[2]u64
         intrinsics.mem_copy_non_overlapping(&bits,raw_data(bytes),len(bytes))
+        // A mask of names with every bit set is all of them, those declared later too.
+        if type.named==.Bits && len(bytes)<=8 && bits[0]==max(u64)>>uint(64-len(bytes)*8) {text_write_raw(w,`["*"]`);return}
         write_u8(w,'[')
         first:=true
         for choice in s.choices[type.first:][:type.count] {
@@ -886,6 +888,10 @@ text_read_value :: proc(r:^Text_Reader,s:^Schema,index:Type_Index,bytes:[]u8,is_
                 if text_peek(r)=='"' {
                     name:=text_string(r) or_return
                     value,found:=text_member(r,s.choices[type.first:][:type.count],name)
+                    if !found && name=="*" && type.named==.Bits {
+                        bits=max(u64)
+                        value,found=0,true
+                    }
                     if !found {return text_fail_member(r,at,s.choices[type.first:][:type.count],name)}
                     bit=int(value)
                 } else {

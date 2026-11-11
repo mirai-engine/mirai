@@ -151,7 +151,7 @@ api_component_list :: proc(s:^Session,call:^api.Call) {
             return
         }
         if !params.include_runtime && table.derived {
-            api.call_failf(call,api.INVALID_PARAMS,"%s is derived by the engine: it is not added nor written, play.inspect reads it; include_runtime=true lists it",table.name)
+            api.call_failf(call,api.INVALID_PARAMS,"%s is derived by the engine: it is not added nor written, scene.inspect with world Game reads it; include_runtime=true lists it",table.name)
             return
         }
         named[count]=table
@@ -162,7 +162,7 @@ api_component_list :: proc(s:^Session,call:^api.Call) {
     for &t,i in s.info.tables {
         if t.place!=.World || count>0 && !slice.contains(named[:count],&t) {continue}
         type:=st.types[i]
-        // A derived component is not added nor written: play.inspect reads it.
+        // A derived component is not added nor written: an inspect of the game reads it.
         if !params.include_runtime && t.derived {continue}
         if count==0 {
             append(&components,Api_Component_Entry{name=t.name,description=api.summary_brief(t.description)})

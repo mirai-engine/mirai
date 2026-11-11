@@ -206,6 +206,6 @@ variants_a_scene_may_ask_for_are_made_off_the_frame :: proc(t: ^testing.T) {
 	renderer_pipelines_wait(r)
 	tracer := Pipeline_Rays.Hardware if r.hardware_rt else .Software
 	testing.expect(t, pipeline_slot(r, .Composite, .Any, {COMPOSITE_COMP_UNLAYERED})^ != 0 && pipeline_slot(r, .Reflect, tracer, {REFLECT_COMP_UNLAYERED})^ != 0, "without layers")
-	testing.expect(t, pipeline_slot(r, .Shadow_Trace, tracer, {SHADOW_TRACE_COMP_COLOR})^ != 0 && pipeline_slot(r, .Translucent, tracer, {TRANSLUCENT_FRAG_COLOR})^ != 0, "with colored shadows, while they are off")
+	testing.expect(t, pipeline_slot(r, .Direct_Samples, tracer, {DIRECT_SAMPLES_COMP_COLOR})^ != 0 && pipeline_slot(r, .Translucent, tracer, {TRANSLUCENT_FRAG_COLOR})^ != 0, "with colored shadows, while they are off")
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }

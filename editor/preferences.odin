@@ -1,6 +1,7 @@
 package editor
 
 import "base:runtime"
+import "core:fmt"
 import "core:mem"
 import "core:strings"
 import "mirai:editor/api"
@@ -136,6 +137,18 @@ preferences_close :: proc(s:^Session) {
     delete(p.file)
     delete(p.marks_file)
     p^={}
+}
+
+// Whether an area has the fields given, as the JSON of its fields: what an entry that flips them shows checked by.
+preference_holds :: proc(s:^Session,area,fields:string) -> bool {
+    for setting in preferences_list(s) {
+        if setting.name!=area {continue}
+        one:=[1]project.Setting{setting}
+        next:=project.settings_clone(one[:],context.temp_allocator)
+        if len(next)!=1 || project.settings_parse(fmt.tprintf(`{{%q:{{%s}}}}`,area,fields),next,strict=true).code!=.None {return false}
+        return mem.compare_ptrs(next[0].value,setting.value,setting.info.size)==0
+    }
+    return false
 }
 
 // ---------------------------------------------------------------- API

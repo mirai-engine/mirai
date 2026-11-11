@@ -54,7 +54,7 @@ REQUEST_ROWS :: 64
 Request_Params :: struct {
     entity:editor.Api_Entity_Text `mirai:"text,entity"`,
     stop:bool `mirai:"optional,label=Stops playback where it is"`,
-    seek:f32 `mirai:"optional,min=0,unit=s,label=Plays from this time on the next evaluation"`,
+    seek:f32 `mirai:"optional,min=0,unit=s,label=Plays from this time on the next evaluation. In Edit it moves the head of the Tracks tool, which editor.tool turns on, to the clip of the entity at this time: the scene shows the clip there without changing the document"`,
     parameters:[anim.STACK_PARAMETERS]Preview_Parameter `mirai:"optional,label=Parameters of its .character: the weight of a layer by its name; or an axis of the space of one (an aim yaw)"`,
     actions:[REQUEST_ROWS]Preview_Action `mirai:"optional,label=Actions of its .character to play or stop; in order"`,
     goals:[REQUEST_ROWS]Preview_Goal `mirai:"optional"`,
@@ -90,13 +90,13 @@ request_rows_defaults :: proc(p:^$T) {
 @(private)
 request_register :: proc(s:^editor.Session) {
     defaults:=request_defaults();if defaults==nil {return}
-    editor.api_method_register(s,{params=type_info_of(Request_Params),result=type_info_of(Request_Result),name="animation.request",summary="Asks an animated entity what to do, from playback, the parameters and actions of its .character to intents. Edit takes only stop; the rest needs Play or Simulation.",defaults=defaults,run=request})
+    editor.api_method_register(s,{params=type_info_of(Request_Params),result=type_info_of(Request_Result),name="animation.request",summary="Asks an animated entity what to do, from playback, the parameters and actions of its .character to intents. Edit takes only stop, and seek for the head of the Tracks tool; the rest needs Play or Simulation.",defaults=defaults,run=request})
 }
 
 // Fields of a request that change the document in Edit; the rest change only a running world.
 @(private)
 request_runtime_field :: proc(call:^api.Call) -> string {
-    for field in ([?]string{"seek","parameters","actions","goals","controls","motion","locomotion","distance","locomote","look","gesture","reach"}) {
+    for field in ([?]string{"parameters","actions","goals","controls","motion","locomotion","distance","locomote","look","gesture","reach"}) {
         if authoring_field_present(call,field) {return field}
     }
     return ""
@@ -112,6 +112,16 @@ request :: proc(s:^editor.Session,call:^api.Call) {
         }
     }
     w,e,ok:=subject(s,call,p.entity[:]);if !ok {return}
+    if s.mode==.Edit && authoring_field_present(call,"seek") {
+        if s.viewport==nil || !editor.tool_on(s,TRACKS_TOOL) || !editor.entity_has(w,e,anim.Animation) {
+            authoring_failure(call,"seek","Tracks_Required","an entity with an Animation, and the Tracks tool on","Edit","In Edit seek moves the head of the Tracks tool",fix="Turn the tool on with editor.tool tool tracks, and name the entity whose Animation plays the clip")
+            return
+        }
+        r:=api.call_result(call,Request_Result)
+        r.id=editor.api_entity_id(w,e)
+        r.time,r.playing,_=tracks_command(s,e,.Seek,p.seek,true,0)
+        return
+    }
     e=pose_owner(s,w,e)
     applied:=make([dynamic]Request_Applied,call.allocator)
     if !edit_begin(s,call,"Animation request") {return}

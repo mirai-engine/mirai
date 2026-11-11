@@ -227,7 +227,7 @@ scene_target :: proc(f:^Scene_File) -> Scene_Target {
             _,found:=asset.scene_entity_find(&(^Scene_File)(user).scene,id)
             return Node(id) if found else 0,""
         },
-        named=proc(user:rawptr,text,what:string,allocator:runtime.Allocator) -> ([]Node,string) {
+        named=proc(user:rawptr,text,what:string,allocator:runtime.Allocator) -> (Node,string) {
             f:=(^Scene_File)(user)
             at:=base.Entity_Id(0)
             if id,is_id:=serial.text_parse_hex(text);is_id && (len(text)==16 || strings.has_prefix(text,"0x")) {
@@ -242,8 +242,8 @@ scene_target :: proc(f:^Scene_File) -> Scene_Target {
                     if at=next;at==0 {break}
                 }
             }
-            if at==0 {return nil,fmt.aprintf("%s: %q names no entity of the file; give its id, or its path of names from the top",what,text,allocator=allocator)}
-            return slice.clone([]Node{Node(at)},allocator),""
+            if at==0 {return 0,fmt.aprintf("%s: %q names no entity of the file; give its id, or its path of names from the top",what,text,allocator=allocator)}
+            return Node(at),""
         },
         children=proc(user:rawptr,parent:Node,allocator:runtime.Allocator) -> []Node {
             f:=(^Scene_File)(user)
@@ -321,6 +321,9 @@ scene_target :: proc(f:^Scene_File) -> Scene_Target {
         },
         copy=proc(user:rawptr,sources:[]Node,allocator:runtime.Allocator) -> ([]Node,int,string) {
             return nil,0,"scene.write of the editor makes a copy; in a file, declare the entity in full"
+        },
+        group=proc(user:rawptr,members:[]Node) -> (Node,string) {
+            return 0,"scene.write of the editor groups entities; in a file, declare the entity with them as its children"
         },
         reparent=proc(user:rawptr,node,parent:Node) -> string {
             f:=(^Scene_File)(user)
@@ -415,7 +418,7 @@ scene_file_apply :: proc(f:^Scene_File,text:string) -> (applied:Scene_Applied,pr
     reading:=Reading{allocator=context.temp_allocator,raw=text,assets=registry_assets(&f.p.registry)}
     target:=scene_target(f)
     ok:bool
-    if applied,ok=scene_apply(&target,&reading,text);!ok {problem=reading.problem}
+    if applied,ok=scene_apply(&target,&reading,text,true);!ok {problem=reading.problem}
     return
 }
 

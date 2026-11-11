@@ -19,11 +19,9 @@ api_test_provider_v1 :: proc(dst:rawptr) {(^Api_Test_Provider)(dst)^={provider={
 api_test_provider_v2 :: proc(dst:rawptr) {(^Api_Test_Provider)(dst)^={provider={register=api_test_register_v2}}}
 api_test_register_v1 :: proc(s:^Session) {
     defaults:=Api_Test_Params{value=7}
-    // The method comes with its entry of the View menu and its key: a plugin gives one thing.
-    api_method_register(s,{params=type_info_of(Api_Test_Params),result=type_info_of(Api_Test_Result),
-        name="test.plugin",defaults=&defaults,run=api_test_run_v1,
-        entry={label="Test plugin",params=`{"value":3}`,shortcut={key=.F9,set=true},menu=.View},
-    })
+    // The method and its entry of the View menu, with its key: a plugin gives both.
+    api_method_register(s,{params=type_info_of(Api_Test_Params),result=type_info_of(Api_Test_Result),name="test.plugin",defaults=&defaults,run=api_test_run_v1})
+    command_bind(s,{method="test.plugin",label="Test plugin",params=`{"value":3}`,shortcut={key=.F9,set=true},menu=.View})
 }
 api_test_register_v2 :: proc(s:^Session) {
     defaults:=Api_Test_Params{value=9}
@@ -32,7 +30,7 @@ api_test_register_v2 :: proc(s:^Session) {
 api_test_run_v1 :: proc(s:^Session,call:^api.Call) {
     value:=api.call_params(call,Api_Test_Params).value
     api.call_result(call,Api_Test_Result).value=value
-    if api_person(s) {s.frames=int(value)}
+    if value==3 {s.frames=3}
 }
 api_test_run_v2 :: proc(s:^Session,call:^api.Call) {api.call_result(call,Api_Test_Result).value=2*api.call_params(call,Api_Test_Params).value}
 
@@ -42,7 +40,6 @@ api_test_run_v2 :: proc(s:^Session,call:^api.Call) {api.call_result(call,Api_Tes
 API_HAND_WRITTEN :: [?]struct{file,pattern:string,count:int}{
     {"editor/api/rpc.odin","writes_result=true",1},      // engine.describe writes the schemas themselves
     {"editor/api_material_instance.odin","rpc_init(",2}, // parameters and textures by the names the program of the material gives
-    {"editor/api_play_edit.odin","rpc_init(",1},         // components by the names the world declares
 }
 
 // No method is described, read or written by hand past the files above.
@@ -111,7 +108,7 @@ editor_plugin_methods_exist_before_frames_and_reload_from_current_metadata :: pr
     error,ok:=api.method_execute(&state.server,method,"{}",&out)
     testing.expectf(t,ok,"%v",error)
     testing.expect_value(t,string(serial.writer_bytes(&out)),`{"value": 7}`)
-    testing.expect(t,!api_person(&session) && session.frames==0)
+    testing.expect_value(t,session.frames,0)
     // Its entry is named as its method, and its key runs the method as the person at the editor.
     entry:=command_binding(&session,"test.plugin")
     if !testing.expect(t,entry!=nil && entry.method=="test.plugin" && entry.menu==.View) {return}
@@ -119,7 +116,6 @@ editor_plugin_methods_exist_before_frames_and_reload_from_current_metadata :: pr
     testing.expect_value(t,session.frames,0)
     commands_run(&session)
     testing.expect_value(t,session.frames,3)
-    testing.expect(t,!api_person(&session))
     provider.default=api_test_provider_v2
     session.library_generation+=1
     api_poll(&session)

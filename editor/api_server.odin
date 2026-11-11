@@ -42,7 +42,20 @@ Api_Entry :: struct {
     state:^Api_State,
     session:^Session,
     run:Api_Handler,
+    can:Api_Can,
     provided:bool, // of a plugin, by its provider: its code is of the library it came from
+}
+
+// Why a method cannot be called with these params as the editor is now: "" when it can. params is
+// the value of the params type of the method, or nil for whatever they are (engine.describe). One
+// place says it for the call, which fails with it, whoever makes it, and for the entries of the
+// method, which are off: a menu, a shortcut and a button ask it with the params they would call.
+Api_Can :: #type proc(s:^Session,params:rawptr) -> string
+
+@(private)
+api_can :: proc(user:rawptr,params:rawptr) -> string {
+    entry:=(^Api_Entry)(user)
+    return entry.can(entry.session,params)
 }
 
 // Memory of the API; the storage only points at it because the server must stay where it was made.
@@ -74,7 +87,8 @@ Api_State :: struct {
     plugin:string, // of the provider whose methods are being registered; empty for the editor
     step_frame:Api_Step_Frame,      // a frame of a step in place of one of the editor; for tests without a window
     commands:Commands, // the entries of menus, shortcuts and buttons that call the methods (commands.odin)
-    person:bool,       // the call that runs is a gesture of the person at the editor (api_person)
+    person:bool,       // the call that runs is a gesture of the person at the editor: its edits are theirs and it waits for nothing
+    gesture:string,    // the label of the entry that gesture ran: the name of the step of what it edits
     transaction:bool,  // a batch holds one edit open, which the edits of its calls record into
     joined:bool,       // its edit records into the gesture that is open: of the person, or of a batch (api_edit_begin)
     left_going:bool,   // that call left what it started going, which a call of an agent waits for
@@ -511,28 +525,14 @@ api_call_as_user :: proc(call:^api.Call) -> bool {
     return .As_User in call.method.flags
 }
 
-// Whether the call that runs is a gesture of the person at the editor (a
-// menu entry, a shortcut, a button) and not a call of an agent. The method is
-// the same; a person is asked what the call lacks where an agent is told what
-// to pass (unsaved changes, a file to choose), and sees what goes on where an
-// agent waits for the answer.
-api_person :: proc(s:^Session) -> bool {
-    st:=api_state(s)
-    return st!=nil && st.person
-}
-
-// Whether a param is one the person at the editor is asked for: a binding
-// gives COMMAND_ASK in its place.
-api_asks :: proc(s:^Session,text:string) -> bool {return text==COMMAND_ASK && api_person(s)}
-
 Api_Method :: struct {
     name,summary:string,
     params,result:^runtime.Type_Info, // type_info_of in the library that declares them: each library has its own table
     defaults:rawptr,
     run:Api_Handler,
+    can:Api_Can, // nil: always
     flags:api.Method_Flags,
     writes_result:bool, // the handler writes the result into call.out, in the shape of result
-    entry:Binding,      // with a label: its menu entry, shortcut or button (commands.odin); its method is this one
 }
 
 // A provider is the sole field of an Editor storage with a default procedure.
@@ -575,21 +575,15 @@ api_register :: proc(s:^Session,st:^Api_State,m:Api_Method) -> bool {
         return refuse(st,"%s: the API holds %d methods; raise API_METHOD_CAPACITY in editor/api_server.odin",m.name,API_METHOD_CAPACITY)
     }
     entry:=&st.entries[st.count]
-    entry^={state=st,session=s,run=m.run}
+    entry^={state=st,session=s,run=m.run,can=m.can}
     result:=api.method_register(&st.server,{
         name=m.name,summary=m.summary,plugin=st.plugin,params=m.params,result=m.result,defaults=m.defaults,
-        handler=api_trampoline,user=entry,flags=m.flags,writes_result=m.writes_result,
+        handler=api_trampoline,can=api_can if m.can!=nil else nil,user=entry,flags=m.flags,writes_result=m.writes_result,
     })
     if result!=.None {
         return refuse(st,"%s could not be registered: %v %s",m.name,result,st.server.schema.error)
     }
     st.count+=1
-    if m.entry.label!="" {
-        entry:=m.entry
-        entry.method=m.name
-        if entry.name=="" {entry.name=m.name}
-        if !command_bind(s,entry) {return refuse(st,"%s: its entry did not fit or has the name of another",m.name)}
-    }
     return true
 }
 
@@ -633,6 +627,9 @@ api_edit_begin :: proc(s:^Session,call:^api.Call,label:string) -> bool {
         return true
     }
     api_guard(s,call) or_return
+    // A gesture of an entry names its step as the entry.
+    label:=label
+    if st:=api_state(s);st!=nil && st.gesture!="" {label=st.gesture}
     if !history.edits_begin(s.edits,document_selection(s),label) {
         api.call_fail(call,api.SERVER_ERROR,history.edits_error_text(s.edits.error))
         return false
@@ -713,18 +710,6 @@ rpc_fail_type :: proc(a:^Rpc_Args,format:string,args:..any) -> bool {
     return false
 }
 
-// A key the object does not take: which ones it does, the nearest first when
-// the key looks like it.
-rpc_fail_unknown :: proc(a:^Rpc_Args,key:string,valid:..string) -> bool {
-    nearest:=""
-    closest:=max(len(key)/2,2)+1
-    for name in valid {
-        if distance:=strings.levenshtein_distance(key,name,context.temp_allocator);distance<closest {nearest,closest=name,distance}
-    }
-    if nearest!="" {return rpc_fail_type(a,"unknown field %q; did you mean %s? It takes %s",key,nearest,strings.join(valid,", ",context.temp_allocator))}
-    return rpc_fail_type(a,"unknown field %q; it takes %s",key,strings.join(valid,", ",context.temp_allocator))
-}
-
 rpc_object_begin :: proc(a:^Rpc_Args,what:string) -> bool {
     if a.failed {return false}
     if !serial.text_accept(&a.r,'{') {return rpc_fail_type(a,"%s must be an object",what)}
@@ -777,38 +762,12 @@ rpc_vector :: proc(a:^Rpc_Args,what:string,out:[]f32) -> bool {
     return true
 }
 
-rpc_bool :: proc(a:^Rpc_Args,what:string) -> (value,ok:bool) {
-    if a.failed {return}
-    if serial.text_keyword(&a.r,"true") {return true,true}
-    if serial.text_keyword(&a.r,"false") {return false,true}
-    return false,rpc_fail_type(a,"%s must be true or false",what)
-}
-
-rpc_unsigned :: proc(a:^Rpc_Args,what:string) -> (value:u64,ok:bool) {
-    if a.failed {return}
-    negative,magnitude,read:=serial.text_integer(&a.r)
-    if !read || negative {return 0,rpc_fail_type(a,"%s must be a non negative integer",what)}
-    return magnitude,true
-}
-
 rpc_text :: proc(a:^Rpc_Args,what:string,out:[]u8) -> (text:string,ok:bool) {
     if a.failed {return}
     value,read:=serial.text_string(&a.r)
     if !read {return "",rpc_fail_type(a,"%s must be a string",what)}
     if len(value)>len(out) {return "",rpc_fail_type(a,"%s is longer than %d bytes",what,len(out))}
     return string(out[:copy(out,value)]),true
-}
-
-// The text of the next value, whatever it is.
-rpc_raw :: proc(a:^Rpc_Args) -> (text:string,ok:bool) {
-    if a.failed {return}
-    serial.text_space(&a.r)
-    start:=a.r.offset
-    if !serial.text_skip(&a.r) {
-        line,column:=serial.text_position(a.text,a.r.error.offset)
-        return "",rpc_fail_type(a,"malformed JSON at line %d column %d",line,column)
-    }
-    return a.text[start:a.r.offset],true
 }
 
 // ---------------------------------------------------------------- small helpers

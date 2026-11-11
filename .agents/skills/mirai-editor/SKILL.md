@@ -249,11 +249,12 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   `mirai test editor/records`; the line diff: `mirai test editor/diff`. The editor's tests need
   more memory than the default limit (`MIRAI_COMPILER_MEMORY=14`).
 - Commands: `editor/commands_test.odin` (every entry calls a registered method with params it
-  takes, a gesture runs between frames as a step of the person, the selection is no param of an
-  agent); the entry a plugin gives with its method, in `editor/api_provider_test.odin`.
+  takes or only changes what the person sees, a gesture runs between frames as a step of the
+  person, the entry puts what is in front into its params, a method says in one place that it
+  cannot be called); the entry a plugin gives with its method, in `editor/api_provider_test.odin`.
 - AI panel: `editor/ai_chat_test.odin` (one status line, the answers as one Markdown message with
-  pills, the cards of subagents, the settings of the header gear); its image, `editor.view` with
-  `Chat` and `capture` with the UI in a session, also expanded. The steps of the agent's tools,
+  pills, the cards of subagents, the settings of the header gear); its image, `capture`
+  with the UI in a session with the chat open, also expanded. The steps of the agent's tools,
   the models and the connections of the machine: `editor/ai_runtime_test.odin`; the popup of the
   check of connections (Linux and macOS only): `editor/ai_connections_test.odin`.
 - Chat database and its search: `mirai test editor/ai_store` (reopening, search ranked and kept up

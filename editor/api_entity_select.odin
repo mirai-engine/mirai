@@ -5,7 +5,6 @@ import "core:slice"
 import "core:strings"
 import "mirai:core"
 import "mirai:editor/api"
-import "mirai:editor/history"
 import "mirai:std/base"
 import "mirai:std/serial"
 
@@ -82,7 +81,7 @@ api_entity_find :: proc(w:core.World_Ref,text:string,allocator:=context.temp_all
 // The entity a text names; problem says what is wrong for whoever gave it.
 @(private="file")
 api_entity_named :: proc(w:core.World_Ref,text:string,game:bool,allocator:=context.temp_allocator) -> (e:core.Entity,problem:string) {
-    lister:=game?"play.inspect":"scene.inspect"
+    lister:=game?"scene.inspect with world Game":"scene.inspect"
     if text=="" {return core.NONE,fmt.aprintf("it must be the name of an entity, a path Parent/Child, an id or a handle; %s lists them",lister,allocator=allocator)}
     several:string
     if e,several=api_entity_find(w,text,allocator);e!=core.NONE {return e,""}
@@ -108,96 +107,27 @@ api_call_entity :: proc(call:^api.Call,w:core.World_Ref,field:[]u8,what:="entity
     return e,true
 }
 
-// The entity at the reader of params read by hand; null is none.
-rpc_entity :: proc(a:^Rpc_Args,w:core.World_Ref,what:string,game:=false) -> (e:core.Entity,ok:bool) {
-    if a.failed {return}
-    if serial.text_keyword(&a.r,"null") {return core.NONE,true}
-    text,read:=serial.text_string(&a.r)
-    if !read {return core.NONE,rpc_fail_type(a,"%s must be the name of an entity, a path Parent/Child, an id or a handle",what)}
-    problem:string
-    if e,problem=api_entity_select(w,text,what,game,a.call.allocator);problem!="" {return core.NONE,rpc_fail(a,"%s",problem)}
-    return e,true
-}
-
-// The names an entry of a menu gives where a param names an entity: what the
-// person at the editor has selected or copied, which stands there when the
-// call is their gesture (commands.odin). An agent names its entities: for its
-// calls these are names like any other, of no entity.
-CONTEXT_SELECTION :: "$selection" // the selected entities
-CONTEXT_ROOTS     :: "$roots"     // those of them no other selected one holds
-CONTEXT_ACTIVE    :: "$active"    // the active one
-CONTEXT_COPIED    :: "$copied"    // the roots Copy kept
-CONTEXT_ALL       :: "$all"       // every entity a person selects in the scene
-
-// The entities of w a context name stands for in a gesture of the person;
-// named is false for any other text, and for the call of an agent.
-api_context_entities :: proc(call:^api.Call,w:core.World_Ref,name:string,allocator:=context.temp_allocator) -> (entities:[]core.Entity,named:bool) {
-    if len(name)<2 || name[0]!='$' {return}
-    entry:=(^Api_Entry)(call.user)
-    if entry==nil || entry.state==nil || !entry.state.person {return}
-    s:=entry.session
-    shown:=shown_world(s)
-    found:[]core.Entity
-    switch name {
-    case CONTEXT_SELECTION: found=s.selection.entities[:]
-    case CONTEXT_ROOTS:     found=history.selection_roots(s.selection,shown,context.temp_allocator)
-    case CONTEXT_ACTIVE:
-        if active:=history.selection_active(s.selection);active!=core.NONE {found=slice.clone([]core.Entity{active},context.temp_allocator)}
-    case CONTEXT_COPIED:    return copied_entities(s,w,allocator),true
-    case CONTEXT_ALL:
-        all:=make([dynamic]core.Entity,allocator)
-        items:=scene_items(s,w)
-        for item in scene_item_next(&items) {if entity_author(w,item.entity)==item.entity {append(&all,item.entity)}}
-        return all[:],true
-    case: return
-    }
-    // The selection is of the world the editor shows: in another one its entities are those with their ids.
-    out:=make([dynamic]core.Entity,0,len(found),allocator)
-    for e in found {
-        if w.data==shown.data {append(&out,e);continue}
-        if id:=api_entity_id(shown,e);id!=0 {
-            if other:=api_entity(w,id);other!=core.NONE {append(&out,other)}
-        }
-    }
-    return out[:],true
-}
-
-// The entities a param that names one stands for: the one it names, or in a
-// gesture of the person what a context name stands for, at least one. False
-// after failing the call.
-api_call_targets :: proc(call:^api.Call,w:core.World_Ref,field:[]u8,what:="entity",game:=false) -> (entities:[]core.Entity,ok:bool) {
-    text:=base.text_get(field)
-    if found,named:=api_context_entities(call,w,text,call.allocator);named {
-        if len(found)==0 {
-            api.call_failf(call,api.INVALID_PARAMS,"%s: %s",what,text==CONTEXT_COPIED?"nothing to paste: the copied entities are not in this scene":"nothing is selected")
-            return nil,false
-        }
-        return found,true
-    }
-    e:=api_call_entity(call,w,field,what,game) or_return
-    return slice.clone([]core.Entity{e},call.allocator),true
-}
-
 // The entities of a list of texts of the params: each one named, and none
 // twice; false after failing the call.
 api_call_entities :: proc(call:^api.Call,w:core.World_Ref,texts:[][API_ENTITY_TEXT]u8,what:string,allocator:=context.temp_allocator,game:=false) -> (entities:[]core.Entity,ok:bool) {
-    out:=make([dynamic]core.Entity,0,len(texts),allocator)
-    for &text,i in texts {
-        given:=base.text_get(text[:])
+    names:=make([]string,len(texts),context.temp_allocator)
+    for &text,i in texts {names[i]=base.text_get(text[:])}
+    return api_call_named(call,w,names,what,allocator,game)
+}
+
+// api_call_entities of a list of any length.
+api_call_named :: proc(call:^api.Call,w:core.World_Ref,names:[]string,what:string,allocator:=context.temp_allocator,game:=false) -> (entities:[]core.Entity,ok:bool) {
+    out:=make([dynamic]core.Entity,0,len(names),allocator)
+    for given,i in names {
         if given=="" {continue}
-        if found,named:=api_context_entities(call,w,given,call.allocator);named {
-            for e in found {
-                if !slice.contains(out[:],e) {append(&out,e)}
-            }
-            continue
+        e,problem:=api_entity_select(w,given,fmt.tprintf("%s[%d]",what,i),game,call.allocator)
+        if problem!="" {
+            api.call_fail(call,api.INVALID_PARAMS,problem)
+            return
         }
-        e,known:=api_call_entity(call,w,text[:],fmt.tprintf("%s[%d]",what,i),game)
-        if !known {return}
-        for other in out {
-            if other==e {
-                api.call_failf(call,api.INVALID_PARAMS,"%s[%d]: %q is listed twice; list each entity once",what,i,given)
-                return
-            }
+        if slice.contains(out[:],e) {
+            api.call_failf(call,api.INVALID_PARAMS,"%s[%d]: %q is listed twice; list each entity once",what,i,given)
+            return
         }
         append(&out,e)
     }
