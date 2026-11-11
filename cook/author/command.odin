@@ -532,8 +532,10 @@ command_write :: proc(run:^Run,args:[]string) -> int {
     if written.followed>0 {fmt.wprintf(run.output,"; %d files that use it follow its parameters",written.followed)}
     fmt.wprintln(run.output)
     for entry in written.stored {
-        text,_:=escene.stored_text(entry,written.path)
-        fmt.wprintln(run.output,text)
+        fmt.wprintf(run.output,"%s: %s is now stored with the layout of the game",written.path,entry.component)
+        if len(entry.removed)>0 {fmt.wprintf(run.output,"; the stored fields %v, which it has under no name now, were lost",entry.removed)}
+        if len(entry.incompatible)>0 {fmt.wprintf(run.output,"; the stored fields %v did not convert and start at their default",entry.incompatible)}
+        fmt.wprintln(run.output)
     }
     return 0
 }
