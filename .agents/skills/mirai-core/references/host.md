@@ -106,9 +106,9 @@ its `exit_code` and `script_hold`.
 A GPU that stops working ([device
 loss](../../mirai-rendering/references/rhi.md#device-loss)) does not end the
 application by itself: frames keep going without drawing or waiting for the GPU and the worlds keep
-ticking. `app_gpu_failure` gives the failure and its text, which names the call that saw it and the
-probable cause: the project shaders if they were replaced recently (`GPU_FAILURE_SHADER_FRAMES`), a
-shader that does not finish if it was `Hung`. The first time it is reported in the log and as the
+ticking. `app_gpu_failure` gives the failure and its text, which names the call that saw it, where
+the GPU stopped, and the project shaders if they were replaced recently
+(`GPU_FAILURE_SHADER_FRAMES`). The first time it is reported in the log and as the
 problem `gpu.failure` of the player's world.
 
 - The player prints the text and exits with `PLAYER_GPU_LOST`.

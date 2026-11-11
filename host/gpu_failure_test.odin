@@ -29,7 +29,7 @@ a_lost_gpu_leaves_the_frames_running_without_drawing :: proc(t:^testing.T) {
     app_frame(app)
     failure,text:=app_gpu_failure(app)
     testing.expect_value(t,failure,rhi.Device_Failure.Lost)
-    testing.expectf(t,strings.contains(text,"provoked by device_lose") && strings.contains(text,"likely cause"),"the failure names its call and its likely cause: %s",text)
+    testing.expectf(t,strings.has_prefix(text,"the GPU device stopped working (Lost)") && strings.contains(text,"provoked by device_lose"),"the failure names its call: %s",text)
     started:=time.tick_now()
     for _ in 0..<3 {testing.expect(t,app_frame(app),"the application goes on")}
     testing.expect(t,time.tick_since(started)<time.Second,"no frame waits for the GPU")

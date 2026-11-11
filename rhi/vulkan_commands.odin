@@ -375,7 +375,10 @@ cmd_end_render_pass :: proc(c: ^Command_List) {
 		switch command.kind {
 		case .Pipeline:
 			c.pipeline = command.pipeline
-			if p := pool_get(&d.pipelines, base.Handle(command.pipeline)); p != nil {vk_pipeline_bind(c, p)}
+			if p := pool_get(&d.pipelines, base.Handle(command.pipeline)); p != nil {
+				vk_pipeline_bind(c, p)
+				vk_mark(c, .Pipeline, p.name)
+			}
 			c.dirty = true
 		case .Slot:
 			c.slots[command.slot] = command.binding
@@ -389,15 +392,18 @@ cmd_end_render_pass :: proc(c: ^Command_List) {
 			vk_scissor(c, i32(r.x), i32(r.y), r.z, r.w)
 		case .Draw:
 			v := command.draw.values
-			if vk_flush_bindings(c, .GRAPHICS) {d.dvk.CmdDraw(c.cmd, v.x, v.y, v.z, v.w)}
+			if !vk_flush_bindings(c, .GRAPHICS) {continue}
+			d.dvk.CmdDraw(c.cmd, v.x, v.y, v.z, v.w)
+			vk_mark(c, .Draw)
 		case .Draw_Indirect, .Draw_Indexed_Indirect:
 			b := pool_get(&d.buffers, base.Handle(command.draw.buffer))
 			if b == nil || !vk_flush_bindings(c, .GRAPHICS) {continue}
 			offset, count, stride := vk.DeviceSize(command.draw.offset), command.draw.values.x, command.draw.values.y
 			if command.kind == .Draw_Indirect {d.dvk.CmdDrawIndirect(c.cmd, b.handle, offset, count, stride)} else {d.dvk.CmdDrawIndexedIndirect(c.cmd, b.handle, offset, count, stride)}
+			vk_mark(c, .Draw)
 		case .Push_Label: vk_label_push(c, command.name)
 		case .Pop_Label:  vk_label_pop(c)
-		case .Timestamp:  vk_timestamp_write(&d.frames[d.slot], command.name)
+		case .Timestamp:  vk_section(c, command.name)
 		}
 	}
 	d.dvk.CmdEndRendering(c.cmd)
@@ -507,7 +513,10 @@ cmd_bind_pipeline :: proc(c: ^Command_List, pipeline: Pipeline) {
 	if c.pipeline == bound {return}
 	c.pipeline = bound
 	c.dirty = true
-	if c.in_render_pass {vk_pass_record(c, {kind = .Pipeline, pipeline = bound})} else if p != nil {vk_pipeline_bind(c, p)}
+	if c.in_render_pass {vk_pass_record(c, {kind = .Pipeline, pipeline = bound})} else if p != nil {
+		vk_pipeline_bind(c, p)
+		vk_mark(c, .Pipeline, p.name)
+	}
 }
 
 @(private)
@@ -829,6 +838,7 @@ cmd_pop_label :: proc(c: ^Command_List) {
 
 @(private)
 vk_label_push :: proc(c: ^Command_List, name: string) {
+	vk_mark(c, .Push, name)
 	if !c.device.debug_utils || c.device.dvk.CmdBeginDebugUtilsLabelEXT == nil {return}
 	label := vk.DebugUtilsLabelEXT{sType = .DEBUG_UTILS_LABEL_EXT, pLabelName = strings.clone_to_cstring(name, context.temp_allocator)}
 	c.device.dvk.CmdBeginDebugUtilsLabelEXT(c.cmd, &label)
@@ -836,19 +846,24 @@ vk_label_push :: proc(c: ^Command_List, name: string) {
 
 @(private)
 vk_label_pop :: proc(c: ^Command_List) {
+	vk_mark(c, .Pop)
 	if !c.device.debug_utils || c.device.dvk.CmdEndDebugUtilsLabelEXT == nil {return}
 	c.device.dvk.CmdEndDebugUtilsLabelEXT(c.cmd)
 }
 
 // Records a GPU timestamp in a frame that wants timings. The interval until
 // the next timestamp is reported under this name by frame_timings once the
-// frame slot completes.
+// frame slot completes. It names where the GPU is too, for a loss.
 cmd_timestamp :: proc(c: ^Command_List, name: string) {
-	d := c.device
 	if c.immediate {return}
-	f := &d.frames[d.slot]
-	if !f.passes {return}
-	if c.in_render_pass {vk_pass_record(c, {kind = .Timestamp, name = name})} else {vk_timestamp_write(f, name)}
+	if c.in_render_pass {vk_pass_record(c, {kind = .Timestamp, name = name})} else {vk_section(c, name)}
+}
+
+@(private)
+vk_section :: proc(c: ^Command_List, name: string) {
+	f := &c.device.frames[c.device.slot]
+	vk_mark(c, .Section, name)
+	if f.passes {vk_timestamp_write(f, name)}
 }
 
 @(private)

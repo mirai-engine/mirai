@@ -404,6 +404,7 @@ mtl_create_device :: proc(d: ^Device, desc: Device_Desc) -> bool {
 	d.info.features.texture_bc = bool(MTL.Device_supportsBCTextureCompression(d.device))
 	d.info.features.timestamps = false
 	d.info.features.clip_distance = true
+	d.info.features.stop_place = true
 
 	upload_size := desc.upload_bytes_per_frame if desc.upload_bytes_per_frame > 0 else 16 * 1024 * 1024
 
@@ -698,10 +699,51 @@ mtl_wait :: proc(d: ^Device, cmd: ^MTL.CommandBuffer, what: string) -> bool {
 			if MTL.CommandBufferError(NS.Error_code(err)) == .Timeout {failure = .Hung}
 			description = NS.String_odinString(NS.Error_localizedDescription(err))
 		}
-		device_fail(d, failure, "the %s command buffer failed: %s", what, description)
+		stopped_buffer: [256]u8
+		stopped := mtl_stopped(err, stopped_buffer[:])
+		device_fail(d, failure, "the %s command buffer failed: %s%s%s", what, description, "; the GPU stopped in " if stopped != "" else "", stopped)
 		return false
 	}
 	return d.failure == .None
+}
+
+// The encoder of a failed command buffer that faulted, or else the first that
+// did not complete, by its label and the debug groups open in it; "" when
+// the error does not say.
+@(private)
+mtl_stopped :: proc(err: ^NS.Error, out: []u8) -> string {
+	if err == nil {return ""}
+	infos := cast(^NS.Array)NS.Dictionary_objectForKey(NS.Error_userInfo(err), cast(NS.id)MTL.CommandBufferEncoderInfoErrorKey)
+	if infos == nil {return ""}
+	stopped: ^MTL.CommandBufferEncoderInfo
+	for i in 0 ..< NS.Array_count(infos) {
+		info := cast(^MTL.CommandBufferEncoderInfo)NS.Array_object(infos, i)
+		state := MTL.CommandBufferEncoderInfo_errorState(info)
+		if state == .Faulted {stopped = info; break}
+		if state != .Completed && stopped == nil {stopped = info}
+	}
+	if stopped == nil {return ""}
+	signposts := MTL.CommandBufferEncoderInfo_debugSignposts(stopped)
+	names: [MAX_LABEL_DEPTH + 1]^NS.String
+	names[0] = MTL.CommandBufferEncoderInfo_label(stopped)
+	count := 1
+	for i in 0 ..< (NS.Array_count(signposts) if signposts != nil else 0) {
+		if count < len(names) {names[count] = cast(^NS.String)NS.Array_object(signposts, i); count += 1}
+	}
+	return mtl_labels_text(names[:count], out)
+}
+
+// Names joined by " > ", the empty ones left out.
+@(private)
+mtl_labels_text :: proc(names: []^NS.String, out: []u8) -> string {
+	text := strings.builder_from_bytes(out)
+	for name in names {
+		value := NS.String_odinString(name) if name != nil else ""
+		if value == "" {continue}
+		if strings.builder_len(text) > 0 {strings.write_string(&text, " > ")}
+		strings.write_string(&text, value)
+	}
+	return strings.to_string(text)
 }
 
 // ---------------------------------------------------------------- deletion
@@ -868,7 +910,11 @@ frame_begin :: proc(d: ^Device, present := true) -> (cmd: ^Command_List, ok: boo
 			}
 		}
 	}
-	f.cmd = MTL.CommandQueue_commandBuffer(d.queue)
+	// A failed frame says which encoder faulted (mtl_stopped).
+	cmd_desc := MTL.CommandBufferDescriptor.alloc()->init()
+	MTL.CommandBufferDescriptor_setErrorOptions(cmd_desc, {.EncoderExecutionStatus})
+	f.cmd = MTL.CommandQueue_commandBufferWithDescriptor(d.queue, cmd_desc)
+	mtl_release(cmd_desc)
 	if f.cmd == nil {
 		mtl_release_drawable(d)
 		mtl_drain_frame_pool(f)
@@ -904,6 +950,9 @@ frame_end :: proc(d: ^Device, cmd: ^Command_List, generated := false) -> bool {
 	frame_oversized_release(d)
 	if cmd.in_render_pass {cmd_end_render_pass(cmd)}
 	mtl_end_encoder(cmd)
+	// A provoked loss names the labels the frame left open: where a GPU that completed it stopped.
+	open_buffer: [256]u8
+	open := mtl_labels_text(cmd.labels[:cmd.label_count], open_buffer[:]) if d.lose_asked else ""
 	mtl_release_labels(cmd)
 	presented := d.swapchain.drawable != nil
 	if presented {
@@ -922,7 +971,7 @@ frame_end :: proc(d: ^Device, cmd: ^Command_List, generated := false) -> bool {
 	// A failed command buffer reports at the next wait; this one, once it completed.
 	if device_lose_take(d) {
 		MTL.CommandBuffer_waitUntilCompleted(f.cmd)
-		device_fail(d, .Lost, "the frame command buffer failed: the GPU device was lost")
+		device_fail(d, .Lost, "the frame command buffer failed: the GPU device was lost%s%s", "; the GPU stopped in " if open != "" else "", open)
 	}
 	// f.cmd stays retained until frame_begin reuses this slot, so draining the
 	// pool only drops the autoreleased encoders and the drawable.

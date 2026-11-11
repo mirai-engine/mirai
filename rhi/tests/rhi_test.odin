@@ -47,8 +47,9 @@ rhi_fill_buffer_sets_every_byte_of_its_range_only :: proc(t: ^testing.T) {
 	expect_clean(t, d)
 }
 
-// A loss stops every submission and wait at once, keeps its first cause,
-// and the device is still destroyed cleanly.
+// A loss stops every submission and wait at once, keeps its first cause with
+// where the GPU stopped (the labels left open), and the device is still
+// destroyed cleanly.
 @(test)
 rhi_a_lost_device_fails_every_submission_and_wait_at_once :: proc(t: ^testing.T) {
 	d := test_device(t)
@@ -59,12 +60,20 @@ rhi_a_lost_device_fails_every_submission_and_wait_at_once :: proc(t: ^testing.T)
 	cmd, ok := rhi.frame_begin(d)
 	testing.expect(t, ok, rhi.device_error(d))
 	if !ok {return}
+	rhi.cmd_push_label(cmd, "A")
 	rhi.cmd_fill_buffer(cmd, buffer, 0, 16, 1)
+	rhi.cmd_pop_label(cmd)
+	rhi.cmd_push_label(cmd, "B")
+	rhi.cmd_fill_buffer(cmd, buffer, 0, 16, 2)
 	rhi.device_lose(d)
 	testing.expect(t, !rhi.frame_end(d, cmd), "the submission of the frame reports the loss")
 	failure, text := rhi.device_failure(d)
 	testing.expect_value(t, failure, rhi.Device_Failure.Lost)
-	testing.expectf(t, text == "vkQueueSubmit2 reported the GPU device lost (provoked by device_lose)" || text == "the frame command buffer failed: the GPU device was lost (provoked by device_lose)", "the cause names the call that found it: %s", text)
+	testing.expectf(t, strings.has_prefix(text, "vkQueueSubmit2 reported the GPU device lost") || strings.has_prefix(text, "the frame command buffer failed: the GPU device was lost"), "the cause names the call that found it: %s", text)
+	testing.expectf(t, strings.has_suffix(text, "(provoked by device_lose)"), "the cause says it was provoked: %s", text)
+	if rhi.device_info(d).features.stop_place {
+		testing.expectf(t, strings.contains(text, "stopped in B") && !strings.contains(text, "A > B"), "the cause names the label left open, not the one closed: %s", text)
+	}
 	started := time.tick_now()
 	_, began := rhi.frame_begin(d)
 	testing.expect(t, !began, "no frame begins on a lost device")

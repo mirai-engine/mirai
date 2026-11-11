@@ -128,6 +128,7 @@ Vk_Frame :: struct {
 	paced:        bool, // the frame draws into a pair of the presenter
 	begun_ns:     i64,
 	submitted_ns: i64,
+	marks:        Vk_Marks, // where the GPU went (vulkan_marks.odin)
 }
 
 Vk_Swapchain :: struct {
@@ -297,11 +298,9 @@ vk_lost :: proc(d: ^Device, result: vk.Result, what: string) -> bool {
 			description = strings.trim_space(string(cstring(raw_data(info.description[:]))))
 		}
 	}
-	if description != "" {
-		device_fail(d, .Lost, "%s reported the GPU device lost: %s", what, description)
-	} else {
-		device_fail(d, .Lost, "%s reported the GPU device lost", what)
-	}
+	stopped_buffer: [256]u8
+	stopped := vk_stopped(d, stopped_buffer[:])
+	device_fail(d, .Lost, "%s reported the GPU device lost%s%s%s%s", what, ": " if description != "" else "", description, "; the GPU stopped in " if stopped != "" else "", stopped)
 	return true
 }
 
@@ -310,7 +309,9 @@ vk_lost :: proc(d: ^Device, result: vk.Result, what: string) -> bool {
 vk_waited :: proc(d: ^Device, result: vk.Result, what: string) -> bool {
 	if result != .TIMEOUT {return vk_check(d, result, what)}
 	d.waited_out = true
-	device_fail(d, .Hung, "%s: the GPU did not finish its work in %d s", what, GPU_WAIT_LIMIT_NS / 1_000_000_000)
+	stopped_buffer: [256]u8
+	stopped := vk_stopped(d, stopped_buffer[:])
+	device_fail(d, .Hung, "%s: the GPU did not finish its work in %d s%s%s", what, GPU_WAIT_LIMIT_NS / 1_000_000_000, "; it stopped in " if stopped != "" else "", stopped)
 	return false
 }
 
@@ -813,6 +814,8 @@ vk_create_logical_device :: proc(d: ^Device, desc: Device_Desc) -> bool {
 	d.shared_memory = has_extension(exts, VK_SHARED_EXTENSION)
 	if d.shared_memory {append(&device_exts, VK_SHARED_EXTENSION)}
 	if d.fault_info {append(&device_exts, vk.EXT_DEVICE_FAULT_EXTENSION_NAME)}
+	d.info.features.stop_place = has_extension(exts, vk.AMD_BUFFER_MARKER_EXTENSION_NAME)
+	if d.info.features.stop_place {append(&device_exts, vk.AMD_BUFFER_MARKER_EXTENSION_NAME)}
 	calibrated, calibrated_khr := vk_calibrated_extension(d, exts)
 	if calibrated != nil {append(&device_exts, calibrated)}
 	d.memory_budget = has_extension(exts, vk.EXT_MEMORY_BUDGET_EXTENSION_NAME)
@@ -883,6 +886,11 @@ vk_create_frames :: proc(d: ^Device, desc: Device_Desc) -> bool {
 		if f.upload == 0 {return false}
 		f.upload_ptr = cast([^]u8)pool_get(&d.buffers, base.Handle(f.upload)).mapped
 		f.upload_size = upload_size
+		if d.info.features.stop_place {
+			f.marks.buffer = vk_create_buffer(d, Buffer_Desc{size = 4 * MAX_FRAME_MARKS, usage = {.Transfer_Dst}, memory = .Readback, name = fmt.tprintf("frame marks %d", i)})
+			if f.marks.buffer == 0 {return false}
+			f.marks.words = cast([^]u32)pool_get(&d.buffers, base.Handle(f.marks.buffer)).mapped
+		}
 		if d.info.features.timestamps {
 			query_info := vk.QueryPoolCreateInfo{sType = .QUERY_POOL_CREATE_INFO, queryType = .TIMESTAMP, queryCount = MAX_TIMESTAMPS}
 			d.dvk.CreateQueryPool(d.handle, &query_info, nil, &f.queries)
@@ -911,6 +919,7 @@ device_destroy :: proc(d: ^Device) {
 		vk_destroy_swapchain(d)
 		for &f in d.frames {
 			if f.upload != 0 {buffer_destroy(d, f.upload)}
+			if f.marks.buffer != 0 {buffer_destroy(d, f.marks.buffer)}
 		}
 		if d.scratch != 0 {buffer_destroy(d, d.scratch)}
 		// The blocks of the arena are buffers, released below with the others.
@@ -1014,7 +1023,7 @@ device_validation_messages :: proc(d: ^Device, out: []string) -> int {
 // What the device made for itself, which device_stats leaves out.
 @(private)
 device_own :: proc(d: ^Device) -> (buffers, textures, pipelines: int) {
-	for f in d.frames {buffers += int(f.upload != 0) + f.oversized_count}
+	for f in d.frames {buffers += int(f.upload != 0) + int(f.marks.buffer != 0) + f.oversized_count}
 	for block in d.accel_blocks {if block != 0 {buffers += 1}}
 	if d.scratch != 0 {buffers += 1}
 	if d.staging != 0 {buffers += 1}
@@ -1185,6 +1194,7 @@ frame_begin :: proc(d: ^Device, present := true) -> (cmd: ^Command_List, ok: boo
 	begin := vk.CommandBufferBeginInfo{sType = .COMMAND_BUFFER_BEGIN_INFO, flags = {.ONE_TIME_SUBMIT}}
 	d.dvk.BeginCommandBuffer(f.cmd, &begin)
 	vk_list_reset(&f.list)
+	f.marks.serial, f.marks.sent, f.marks.count, f.marks.named = u32(d.frame_number) + 1, false, 0, 0
 	f.passes = false
 	if f.queries != 0 {
 		d.dvk.CmdResetQueryPool(f.cmd, f.queries, 0, MAX_TIMESTAMPS)
@@ -1210,6 +1220,7 @@ frame_end :: proc(d: ^Device, cmd: ^Command_List, generated := false) -> bool {
 	}
 	vk_flush_barriers(cmd)
 	if f.queries != 0 && !f.passes {vk_timestamp_write(f, "")}
+	vk_mark(cmd, .End)
 	d.dvk.EndCommandBuffer(f.cmd)
 
 	d.timeline_value += 1
@@ -1235,7 +1246,9 @@ frame_end :: proc(d: ^Device, cmd: ^Command_List, generated := false) -> bool {
 	submit.signalSemaphoreInfoCount = u32(signal_count)
 	submit.pSignalSemaphoreInfos = raw_data(signals[:])
 	sync.mutex_lock(&d.queue_lock)
-	ok := vk_check(d, d.dvk.QueueSubmit2(d.queue, 1, &submit, 0), "vkQueueSubmit2")
+	submitted := d.dvk.QueueSubmit2(d.queue, 1, &submit, 0)
+	f.marks.sent = submitted == .SUCCESS
+	ok := vk_check(d, submitted, "vkQueueSubmit2")
 	f.signal_value = d.timeline_value
 	f.submitted_ns = present_now_ns()
 	if ok && f.acquired {
@@ -1254,7 +1267,10 @@ frame_end :: proc(d: ^Device, cmd: ^Command_List, generated := false) -> bool {
 	}
 	sync.mutex_unlock(&d.queue_lock)
 	if ok && f.paced {present_frame_end(d, generated, d.timeline_value, nil)}
-	if ok && device_lose_take(d) {ok = vk_check(d, .ERROR_DEVICE_LOST, "vkQueueSubmit2")}
+	if ok && device_lose_take(d) {
+		vk_wait_timeline(d, f.signal_value)
+		ok = vk_check(d, .ERROR_DEVICE_LOST, "vkQueueSubmit2")
+	}
 	f.acquired = false
 	d.in_frame = false
 	d.frame_number += 1

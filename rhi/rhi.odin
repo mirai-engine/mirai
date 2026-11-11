@@ -52,6 +52,7 @@ Pipeline :: distinct base.Handle
 Accel    :: distinct base.Handle
 
 MAX_FRAMES_IN_FLIGHT :: 2
+MAX_LABEL_DEPTH :: 16 // labels open at once; deeper ones are not kept
 MAX_BINDING_SLOTS    :: 35 // Shared texture slots precede the texture table.
 MAX_BUFFER_BINDING_SLOTS :: 30 // Metal buffer index 30, its last, holds the texture table.
 MAX_SAMPLER_BINDING_SLOTS :: 16
@@ -581,6 +582,7 @@ Features :: struct {
 	timestamps:          bool, // cmd_timestamp intervals while timestamps_want is on; else one "frame" interval
 	validation:          bool, // API validation is active
 	clip_distance:       bool, // a vertex shader can clip by planes of its own
+	stop_place:          bool, // a loss names where the GPU stopped (device_failure); Vulkan with VK_AMD_buffer_marker
 }
 
 Device_Type :: enum u8 {Other, Integrated, Discrete, Virtual, CPU}

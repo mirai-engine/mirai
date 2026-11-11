@@ -11,7 +11,7 @@ import "mirai:platform"
 // started (--gpu-lost) and whose GPU fails again within GPU_FAILURE_AGAIN_NS
 // of being ready would loop on the same work: it keeps every tab and the
 // unsaved assets for the recovery of the next start and ends with
-// EDITOR_GPU_LOST, naming the likely cause.
+// EDITOR_GPU_LOST, naming where the GPU stopped.
 
 GPU_FAILURE_AGAIN_NS :: u64(60_000_000_000)
 
