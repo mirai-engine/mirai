@@ -207,20 +207,19 @@ records_columns_add :: proc(s:^Session,r:^Records_Document,info:^runtime.Type_In
 @(private="file")
 records_grid :: proc(s:^Session,r:^Records_Document,app:^host.App) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     if !r.read {
-        if ui.box(ctx,{width=ui.GROW,height=ui.GROW,padding={12,12,12,12}}) {ui.label(ctx,base.text_get(r.problem[:]),th.font_small,th.text_muted)}
+        if ui.box(ctx,{width=ui.GROW,height=ui.GROW,padding={12,12,12,12}}) {ui.label(ctx,base.text_get(r.problem[:]),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))}
         return
     }
     e:=&r.edit
     if description:=s.app.info.records[e.record].description;description!="" {
-        if ui.box(ctx,{width=ui.GROW,height=ui.FIT,padding={12,6,12,6}}) {ui.text(ctx,description,ui.prose(ctx,th.font_small,th.text_muted))}
+        if ui.box(ctx,{width=ui.GROW,height=ui.FIT,padding={12,6,12,6}}) {ui.text(ctx,description,ui.prose(ctx,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted")))}
     }
-    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.control+12),padding={12,6,12,6},gap=6,align_y=.Center}) {
-        if ui.button(ctx,ui.id(ctx,"add"),{label="Add row",icon=.Plus,style=.Field,height=th.control}).clicked {records_grid_add(s,r)}
+    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"control")+12),padding={12,6,12,6},gap=6,align_y=.Center}) {
+        if ui.button(ctx,ui.id(ctx,"add"),{label="Add row",icon=.Plus,variant="field",height=ui.metric(ctx,"control")}).clicked {records_grid_add(s,r)}
         if r.selected>=0 {
-            if ui.button(ctx,ui.id(ctx,"duplicate"),{label="Duplicate",style=.Field,height=th.control}).clicked {records_grid_duplicate(s,r)}
-            if ui.button(ctx,ui.id(ctx,"remove"),{label="Delete",style=.Field,height=th.control}).clicked {
+            if ui.button(ctx,ui.id(ctx,"duplicate"),{label="Duplicate",variant="field",height=ui.metric(ctx,"control")}).clicked {records_grid_duplicate(s,r)}
+            if ui.button(ctx,ui.id(ctx,"remove"),{label="Delete",variant="field",height=ui.metric(ctx,"control")}).clicked {
                 records.row_remove(e,r.selected)
                 r.selected=min(r.selected,records.row_count(e)-1)
                 r.changed=true
@@ -229,15 +228,15 @@ records_grid :: proc(s:^Session,r:^Records_Document,app:^host.App) {
     }
     width:=f32(RECORDS_NAME_WIDTH)
     for c in r.columns {width+=c.width}
-    row_height:=th.row+4
+    row_height:=ui.metric(ctx,"row")+4
     // The names of the columns stay on top while the rows scroll under them.
     r.header_scroll={r.scroll[0],0}
     if ui.scroll_area(ctx,ui.id(ctx,"header"),&r.header_scroll,{width=ui.GROW,height=ui.fixed(row_height),axes=.Horizontal}) {
-        if ui.box(ctx,{width=ui.fixed(width),height=ui.fixed(row_height),align_y=.Center,fill=th.card}) {
-            if ui.box(ctx,{width=ui.fixed(RECORDS_NAME_WIDTH),height=ui.GROW,padding={12,0,6,0},align_y=.Center}) {ui.label(ctx,"Name",th.font_small,th.text_muted)}
+        if ui.box(ctx,{width=ui.fixed(width),height=ui.fixed(row_height),align_y=.Center,fill=ui.tone(ctx,"card")}) {
+            if ui.box(ctx,{width=ui.fixed(RECORDS_NAME_WIDTH),height=ui.GROW,padding={12,0,6,0},align_y=.Center}) {ui.label(ctx,"Name",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))}
             for c,at in r.columns {
                 header:=ui.id(ctx,"header",at+1)
-                if ui.box(ctx,{id=header,width=ui.fixed(c.width),height=ui.GROW,padding={6,0,6,0},align_y=.Center,clip_x=true,track=c.description!=""}) {ui.label(ctx,c.label,th.font_small,th.text_muted)}
+                if ui.box(ctx,{id=header,width=ui.fixed(c.width),height=ui.GROW,padding={6,0,6,0},align_y=.Center,clip_x=true,track=c.description!=""}) {ui.label(ctx,c.label,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))}
                 if c.description!="" {
                     area,shown:=ui.widget_rect(ctx,header)
                     inspector_description(s,header,c.description,shown && ctx.popup.count==0 && ui.rect_contains(area,ctx.pointer))
@@ -245,7 +244,7 @@ records_grid :: proc(s:^Session,r:^Records_Document,app:^host.App) {
             }
         }
     }
-    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=th.border}) {}
+    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=ui.tone(ctx,"border")}) {}
     area_id:=ui.id(ctx,"rows")
     area,_:=ui.widget_rect(ctx,area_id)
     count:=records.row_count(e)
@@ -267,12 +266,11 @@ records_grid :: proc(s:^Session,r:^Records_Document,app:^host.App) {
 @(private="file")
 records_grid_row :: proc(s:^Session,r:^Records_Document,app:^host.App,row:int,width,height:f32) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     e:=&r.edit
     ui.id_push(ctx,ui.Id(e.ids[row]))
     defer ui.id_pop(ctx)
     line:=ui.id(ctx,"row")
-    fill:=r.selected==row ? th.accent_soft : ui.Color{}
+    fill:=r.selected==row ? ui.tone(ctx,"accent_soft") : ui.Color{}
     if ui.box(ctx,{id=line,width=ui.fixed(width),height=ui.fixed(height),align_y=.Center,fill=fill,track=true}) {
         if ui.box(ctx,{width=ui.fixed(RECORDS_NAME_WIDTH),height=ui.GROW,padding={8,2,6,2},align_y=.Center}) {records_name_cell(s,r,row)}
         for &c,at in r.columns {
@@ -282,16 +280,15 @@ records_grid_row :: proc(s:^Session,r:^Records_Document,app:^host.App,row:int,wi
         }
     }
     if area,shown:=ui.widget_rect(ctx,line);shown && .Left in ctx.input.pressed && ui.rect_contains(area,ctx.pointer) && ctx.popup.count==0 {r.selected=row}
-    if ui.box(ctx,{width=ui.fixed(width),height=ui.fixed(1),fill=th.row_rule}) {}
+    if ui.box(ctx,{width=ui.fixed(width),height=ui.fixed(1),fill=ui.tone(ctx,"row_rule")}) {}
 }
 
 @(private="file")
 records_name_cell :: proc(s:^Session,r:^Records_Document,row:int) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     buffer:[asset.RECORDS_NAME]u8
     length:=copy(buffer[:asset.RECORDS_NAME-1],records.row_name(&r.edit,row))
-    result:=ui.text_field(ctx,ui.id(ctx,"name"),buffer[:asset.RECORDS_NAME-1],&length,{height=th.row,size=th.font_small})
+    result:=ui.text_field(ctx,ui.id(ctx,"name"),buffer[:asset.RECORDS_NAME-1],&length,{height=ui.metric(ctx,"row"),size=ui.metric(ctx,"font_small")})
     if !result.changed {return}
     if problem:=records.row_rename(&r.edit,row,string(buffer[:length]));problem!="" {notify(s,problem)} else {r.changed=true}
 }
@@ -300,7 +297,6 @@ records_name_cell :: proc(s:^Session,r:^Records_Document,row:int) {
 @(private="file")
 records_cell :: proc(s:^Session,r:^Records_Document,app:^host.App,row:int,c:^Records_Column,at:int) -> (changed:bool) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     e:=&r.edit
     value:=records.row_bytes(e,row)[c.offset:][:c.info.size]
     p:=raw_data(value)
@@ -320,7 +316,7 @@ records_cell :: proc(s:^Session,r:^Records_Document,app:^host.App,row:int,c:^Rec
             options[i]=n.name
             if n.value==current {selected=i}
         }
-        if ui.dropdown(ctx,id,{list=options},&selected,{width=-1,height=th.row,searchable=true}) && selected>=0 {
+        if ui.dropdown(ctx,id,{list=options},&selected,{width=-1,height=ui.metric(ctx,"row"),searchable=true}) && selected>=0 {
             number_write(p,c.info,f64(names[selected].value))
             return true
         }
@@ -331,7 +327,7 @@ records_cell :: proc(s:^Session,r:^Records_Document,app:^host.App,row:int,c:^Rec
         return ui.checkbox(ctx,id,cast(^bool)p)
     case runtime.Type_Info_Integer,runtime.Type_Info_Float:
         desc,scale:=field_number(c.info,c.tag)
-        desc.height=th.row
+        desc.height=ui.metric(ctx,"row")
         number:=number_read(p,c.info)*scale
         result:=ui.number_field(ctx,id,&number,desc)
         if result.changed {number_write(p,c.info,number/scale)}
@@ -344,13 +340,13 @@ records_cell :: proc(s:^Session,r:^Records_Document,app:^host.App,row:int,c:^Rec
             options[i]=readable(name)
             if i64(v.values[i])==current {selected=i}
         }
-        if ui.dropdown(ctx,id,{list=options},&selected,{width=-1,height=th.row}) && selected>=0 {
+        if ui.dropdown(ctx,id,{list=options},&selected,{width=-1,height=ui.metric(ctx,"row")}) && selected>=0 {
             number_write(p,v.base,f64(v.values[selected]))
             return true
         }
     case runtime.Type_Info_Array:
         length:=base.text_len(value)
-        result:=ui.text_field(ctx,id,value[:len(value)-1],&length,{height=th.row,size=th.font_small})
+        result:=ui.text_field(ctx,id,value[:len(value)-1],&length,{height=ui.metric(ctx,"row"),size=ui.metric(ctx,"font_small")})
         if result.changed || result.committed {
             mem.zero_slice(value[length:])
             return true
@@ -415,7 +411,6 @@ records_details :: proc(s:^Session,r:^Records_Document,app:^host.App) {
 // the list changed it.
 record_choice :: proc(s:^Session,id:ui.Id,record:int,row:^core.Record_Id,table:^base.Asset_Id,width:ui.Size) -> (changed:bool) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     set:=host.app_record_set(s.app,record)
     tables:=0
     if set!=nil {tables=len(set.tables)}
@@ -434,8 +429,8 @@ record_choice :: proc(s:^Session,id:ui.Id,record:int,row:^core.Record_Id,table:^
         options[i+1]=name
         if entry.table==table^ && entry.row==row^ {selected=i+1}
     }
-    if ui.box(ctx,{width=width,height=ui.fixed(th.row),gap=2,align_y=.Center}) {
-        if ui.dropdown(ctx,id,{list=options},&selected,{width=-1,height=th.row,searchable=true,empty="Missing"}) && selected>=0 {
+    if ui.box(ctx,{width=width,height=ui.fixed(ui.metric(ctx,"row")),gap=2,align_y=.Center}) {
+        if ui.dropdown(ctx,id,{list=options},&selected,{width=-1,height=ui.metric(ctx,"row"),searchable=true,empty="Missing"}) && selected>=0 {
             if selected==0 {
                 table^,row^={},0
             } else {
@@ -443,7 +438,7 @@ record_choice :: proc(s:^Session,id:ui.Id,record:int,row:^core.Record_Id,table:^
             }
             changed=true
         }
-        if table^!={} && ui.button(ctx,ui.id_derive(ctx,id,"open"),{icon=.Chevron_Right,style=.Ghost,width=th.row,height=th.row}).clicked {
+        if table^!={} && ui.button(ctx,ui.id_derive(ctx,id,"open"),{icon=.Chevron_Right,variant="ghost",width=ui.metric(ctx,"row"),height=ui.metric(ctx,"row")}).clicked {
             name:=""
             if set!=nil {
                 if at:=core.record_index(set,table^,row^,set.size);at>=0 {name=base.text_get(set.rows[at].name[:])}

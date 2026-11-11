@@ -164,7 +164,7 @@ test_animated_build :: proc(ctx:^Context,user:rawptr) {
             if box(ctx,{id=id(ctx,"card"),width=fixed(200),height=fixed(100),fill={255,255,255,255}}) {
                 if s.nested {
                     if animated(ctx,id(ctx,"go"),s.inner) {
-                        if button(ctx,id(ctx,"go"),{label="Go",width=50,height=20,style=.Accent}).clicked {s.clicks+=1}
+                        if button(ctx,id(ctx,"go"),{label="Go",width=50,height=20,variant="accent"}).clicked {s.clicks+=1}
                     }
                 }
             }
@@ -175,7 +175,7 @@ test_animated_build :: proc(ctx:^Context,user:rawptr) {
 @(test)
 an_animated_element_is_drawn_through_its_transform :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:=Test_Animated{value=ANIM_IDENTITY,inner=ANIM_IDENTITY}
     input:=test_input()
@@ -205,7 +205,7 @@ an_animated_element_is_drawn_through_its_transform :: proc(t:^testing.T) {
 @(test)
 nested_animations_compose_and_the_pointer_follows_them :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:=Test_Animated{value=ANIM_IDENTITY,inner=ANIM_IDENTITY,nested=true}
     s.value.offset={300,0};s.value.opacity=0.5
@@ -238,7 +238,7 @@ animated_subtrees_beyond_the_capacity_are_drawn_in_place_and_counted :: proc(t:^
     ctx:Context
     desc:=TEST_SMALL
     desc.max_scopes=3
-    testing.expect(t,context_init(&ctx,desc))
+    testing.expect(t,test_context_init(&ctx,desc))
     defer context_destroy(&ctx)
     input:=test_input()
     frame:=test_frame(&ctx,&input,proc(ctx:^Context,user:rawptr) {

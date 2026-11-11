@@ -266,7 +266,6 @@ widget_holds_document :: proc(u:^Ui_Inspector,a:^host.Assets,widget:base.Asset_I
 @(private)
 add_popup :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,popup:ui.Id,parent:int) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     r:=&u.records
     // Under the button, its rows in an area that scrolls.
     if ui.popup(ctx,popup,{min_width=220,search="Search",side=.Below}) {
@@ -293,7 +292,7 @@ add_popup :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,popup:ui.Id,p
                 if !base.contains_fold(path,needle) || widget_holds_document(u,a,file.id) {continue}
                 if !caption {
                     ui.menu_separator(ctx)
-                    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(20),padding={8,0,8,0},align_y=.Center}) {ui.label(ctx,"WIDGETS",th.font_caption,th.text_caption,font=ui.FONT_SEMIBOLD)}
+                    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(20),padding={8,0,8,0},align_y=.Center}) {ui.label(ctx,"WIDGETS",ui.metric(ctx,"font_caption"),ui.tone(ctx,"text_caption"),font=ui.FONT_SEMIBOLD)}
                     caption=true
                 }
                 if ui.menu_item(ctx,ui.id(ctx,"widget",i+1),path,{icon=.Prefab}) {
@@ -388,7 +387,6 @@ shown_rows :: proc(u:^Ui_Inspector,a:^host.Assets,filter:string) -> []Shown_Row 
 @(private)
 nodes_column :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     r:=&u.records
     x:=&u.ux
     ux_sync(u)
@@ -408,7 +406,7 @@ nodes_column :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets) {
     add:=ui.id(ctx,"add")
     if ui.box(ctx,{width=ui.GROW,height=ui.FIT,padding={0,0,0,4},gap=4,align_y=.Center}) {
         popup:=ui.id_derive(ctx,add,"list")
-        if ui.button(ctx,add,{label="Add",icon=.Plus,icon_size=12,style=.Field,height=th.control,size=th.font_small,padding=8,active=ui.popup_is_open(ctx,popup)}).clicked {
+        if ui.button(ctx,add,{label="Add",icon=.Plus,icon_size=12,variant="field",height=ui.metric(ctx,"control"),size=ui.metric(ctx,"font_small"),padding=8,active=ui.popup_is_open(ctx,popup)}).clicked {
             anchor,_:=ui.widget_rect(ctx,add)
             ui.popup_open(ctx,popup,anchor)
         }
@@ -449,7 +447,7 @@ nodes_column :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets) {
             if ui.box(ctx,{width=ui.GROW,height=ui.fixed(NODE_ROW),align_y=.Center}) {
                 if shown.depth>0 {ui.spacer(ctx,f32(shown.depth)*NODE_INDENT,1)}
                 if shown.arrow && filter=="" {
-                    if ui.button(ctx,ui.id(ctx,"fold",i+1),{icon=.Chevron_Down if shown.open else .Chevron_Right,icon_color=th.text_muted,icon_size=10,style=.Ghost,width=16,height=NODE_ROW}).clicked {toggled=i}
+                    if ui.button(ctx,ui.id(ctx,"fold",i+1),{icon=.Chevron_Down if shown.open else .Chevron_Right,icon_color=ui.tone(ctx,"text_muted"),icon_size=10,variant="ghost",width=16,height=NODE_ROW}).clicked {toggled=i}
                 } else if arrows && filter=="" {ui.spacer(ctx,16,1)}
                 if x.rename==i {
                     rename_field(s,u,i)
@@ -471,9 +469,9 @@ nodes_column :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets) {
                 if r,found:=ui.widget_rect(ctx,row_id);found {
                     if area,shown:=ui.widget_rect(ctx,rows_id);shown && r.y>=area.y && r.y+r.h<=area.y+area.h {
                         detail:=kind if name!="" else ""
-                        room:=ui.text_width(&ctx.font,detail,th.font_small)+10 if detail!="" else 6
+                        room:=ui.text_width(&ctx.font,detail,ui.metric(ctx,"font_small"))+10 if detail!="" else 6
                         if ui.box(ctx,{width=ui.fixed(14),height=ui.fixed(14),align_x=.Center,align_y=.Center,float={to=.Surface,offset={r.x+r.w-room-16,r.y+(r.h-14)*0.5},layer=ui.LAYER_BAR+1}}) {
-                            ui.icon(ctx,.Link,th.accent,12)
+                            ui.icon(ctx,.Link,ui.tone(ctx,"accent"),12)
                         }
                     }
                 }
@@ -498,9 +496,9 @@ nodes_column :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets) {
         if area,found:=ui.widget_rect(ctx,rows_id);found {
             if drop.inside>=0 {
                 if rect,shown:=ui.widget_rect(ctx,ui.id(ctx,"node",drop.inside+1));shown {
-                    if ui.box(ctx,{width=ui.fixed(rect.w),height=ui.fixed(rect.h),float={to=.Surface,offset={rect.x,rect.y},layer=ui.LAYER_BAR+1},stroke=th.accent,stroke_width=1,radius=3}) {}
+                    if ui.box(ctx,{width=ui.fixed(rect.w),height=ui.fixed(rect.h),float={to=.Surface,offset={rect.x,rect.y},layer=ui.LAYER_BAR+1},stroke=ui.tone(ctx,"accent"),stroke_width=1,radius=3}) {}
                 }
-            } else if ui.box(ctx,{width=ui.fixed(area.w-8),height=ui.fixed(2),float={to=.Surface,offset={area.x+4,drop.line-1},layer=ui.LAYER_BAR+1},fill=th.accent}) {}
+            } else if ui.box(ctx,{width=ui.fixed(area.w-8),height=ui.fixed(2),float={to=.Surface,offset={area.x+4,drop.line-1},layer=ui.LAYER_BAR+1},fill=ui.tone(ctx,"accent")}) {}
         }
     }
     if .Left in ctx.input.down {return}
@@ -618,7 +616,6 @@ rename_field :: proc(s:^editor.Session,u:^Ui_Inspector,row:int) {
 @(private)
 widget_row :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,shown:Shown_Row,index:int,arrows:bool) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     x:=&u.ux
     widget:=node_widget(&u.records,&u.records.nodes[shown.instance])
     w:=widget_records(u,a,widget)
@@ -629,7 +626,7 @@ widget_row :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,shown:Shown_
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(NODE_ROW),align_y=.Center}) {
         ui.spacer(ctx,f32(shown.depth)*NODE_INDENT+(16 if arrows else 0),1)
         on:=x.peek.instance==shown.instance && x.peek.widget==widget && x.peek.row==shown.row && u.selected==shown.instance
-        it:=ui.row(ctx,ui.id(ctx,"peek",index+1),{label=name if name!="" else labels[n.kind],icon=node_icon(n),icon_size=14,icon_color=th.text_faint,selected=on,height=NODE_ROW})
+        it:=ui.row(ctx,ui.id(ctx,"peek",index+1),{label=name if name!="" else labels[n.kind],icon=node_icon(n),icon_size=14,icon_color=ui.tone(ctx,"text_faint"),selected=on,height=NODE_ROW})
         if it.pressed {
             choose_rows(u,{shown.instance})
             x.peek={instance=shown.instance,widget=widget,row=shown.row}

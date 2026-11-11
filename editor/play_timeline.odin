@@ -44,15 +44,14 @@ play_history_bar :: proc(s:^Session) {
     t:=core.world_storage_of(run_ref(s,r),core.Time)
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     rate:=s.app.tick_dt>0?1/s.app.tick_dt:f32(core.SIMULATION_SETTINGS_DEFAULT.tick_rate)
     // Play resumes from the newest frame; from a frame it went back to, the
     // game can also play on from there, edited or not, without what came after.
     p:=&s.history_playback
     clock:=Timeline_Clock{frame=f32(t.tick-min(t.tick,oldest)),frames=f32(max(newest,t.tick)-oldest),rate=rate,playing=p.playing,loop=p.loop,here=r.history.at<r.history.serial}
     clock.ask=timeline_can_ask(s)
-    width:=min(PLAY_STRIP_WIDTH,max(ctx.size.x-2*th.margin,240))
-    if ui.panel(ctx,shell_id(g,"play_history"),{width=ui.fixed(width),height=ui.FIT,anchor=.Bottom_Center,pivot=.Bottom_Center,offset={0,-th.margin}}) {
+    width:=min(PLAY_STRIP_WIDTH,max(ctx.size.x-2*ui.metric(ctx,"margin"),240))
+    if ui.panel(ctx,shell_id(g,"play_history"),{width=ui.fixed(width),height=ui.FIT,anchor=.Bottom_Center,pivot=.Bottom_Center,offset={0,-ui.metric(ctx,"margin")}}) {
         result:=timeline_strip(s,&s.play_strip,clock,nil,shell_id(g,"play_history_strip"))
         if result.seek {
             s.history_seek=oldest+u64(max(math.round(result.frame),0))+1
@@ -131,10 +130,10 @@ output_frame_draw :: proc(s:^Session) {
     w,h:=view.w,view.w/aspect
     if h>view.h {h=view.h;w=h*aspect}
     x,y:=view.x+(view.w-w)/2,view.y+(view.h-h)/2
-    shade:=ctx.theme.backdrop
+    shade:=ui.tone(ctx,"backdrop")
     ui.draw_rect(ctx,{view.x,view.y,view.w,y-view.y},shade)
     ui.draw_rect(ctx,{view.x,y+h,view.w,view.y+view.h-y-h},shade)
     ui.draw_rect(ctx,{view.x,y,x-view.x,h},shade)
     ui.draw_rect(ctx,{x+w,y,view.x+view.w-x-w,h},shade)
-    ui.draw_rect_lines(ctx,{x,y,w,h},1,ctx.theme.text_muted)
+    ui.draw_rect_lines(ctx,{x,y,w,h},1,ui.tone(ctx,"text_muted"))
 }

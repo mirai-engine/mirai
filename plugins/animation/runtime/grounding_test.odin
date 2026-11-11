@@ -27,7 +27,7 @@ the_feet_stand_along_the_vertical_of_the_character :: proc(t:^testing.T) {
     core.add(&w.transforms,rig,core.Transform{rotation=mm.quat_axis_angle({0,0,1},0.4),scale=1})
     core.add(&w.transforms,statue,core.Transform{rotation=side,scale=1})
     core.add(&w.parents,rig,core.Parent{entity=character})
-    core.add(&w.verticals,character,core.Vertical{side})
+    core.add(&w.verticals,character,core.Vertical{frame=side})
     core.test_world_settle(&w)
     inputs:=Grounding_Inputs{transforms=core.read(&w.transforms),parents=core.read(&w.parents),verticals=core.read(&w.verticals)}
     basis,_:=core.world_of(core.read(&w.transforms),core.read(&w.parents),character)

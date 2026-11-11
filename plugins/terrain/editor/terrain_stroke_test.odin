@@ -3,6 +3,7 @@ package terrain_editor
 import "core:testing"
 import "mirai:core"
 import "mirai:editor"
+import "mirai:editor/kit"
 import mm "mirai:std/math"
 import terrain "plugins:terrain/runtime"
 import "mirai:ui"
@@ -16,7 +17,7 @@ terrain_held_brush_keeps_raising_under_the_pointer :: proc(t:^testing.T) {
     defer core.test_world_destroy(&world)
     ref:=core.test_world_ref(&world)
     ctx:ui.Context
-    if !testing.expect(t,ui.context_init(&ctx,{})) {return}
+    if !testing.expect(t,ui.context_init(&ctx,{}) && kit.theme_set(&ctx)) {return}
     defer ui.context_destroy(&ctx)
     viewport:=editor.Viewport{origin={0,84},size={800,600},view_matrix=mm.look_at({0,12,8},{0,0,0},{0,1,0}),projection=mm.perspective_infinite(60*mm.RAD_PER_DEG,800.0/600,0.1)}
     viewport.view_projection=viewport.projection*viewport.view_matrix

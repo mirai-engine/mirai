@@ -12,6 +12,7 @@ import shapes "plugins:shapes/runtime"
 import "mirai:std/base"
 import "mirai:std/geom"
 import mm "mirai:std/math"
+import "mirai:editor/kit"
 import "mirai:ui"
 import "base:runtime"
 
@@ -466,11 +467,11 @@ shapes_panel :: proc(s:^editor.Session,tool:^Shapes_Tool,world:core.World_Ref,in
             }
             note=fmt.tprintf("%d brushes",count)
         }
-        ui.section(ctx,found?editor.entity_label(world,e):"Shapes",note,80)
-        if ui.segments(ctx,ui.GROW,ctx.theme.control) {
+        kit.section(ctx,found?editor.entity_label(world,e):"Shapes",note,80)
+        if kit.segments(ctx,ui.GROW,ui.metric(ctx,"control")) {
             names,keys:=MODE_NAMES,MODE_KEY_NAMES
             for mode in Shapes_Mode {
-                if ui.button(ctx,ui.id(ctx,"mode",int(mode)+1),{label=names[mode],detail=keys[mode],style=.Tab,active=tool.mode==mode && !editor.tool_aside(s,TOOL),width=-1,height=ctx.theme.control-4,size=ctx.theme.font_small}).clicked {mode_set(s,tool,mode)}
+                if ui.button(ctx,ui.id(ctx,"mode",int(mode)+1),{label=names[mode],detail=keys[mode],variant="tab",active=tool.mode==mode && !editor.tool_aside(s,TOOL),width=-1,height=ui.metric(ctx,"control")-4,size=ui.metric(ctx,"font_small")}).clicked {mode_set(s,tool,mode)}
             }
         }
         defaults:=SETTINGS_DEFAULT

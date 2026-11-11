@@ -264,13 +264,13 @@ inspect_filters_by_name_and_component_and_summarizes_without_values :: proc(t:^t
     testing.expect_value(t,result["entities"].(json.Array)[0].(json.Object)["name"].(string),"Body 29")
 }
 
-@(private="file") Inspect_Drivable :: struct {seat,camera:core.Entity}
+@(private="file") Inspect_Link :: struct {seat,camera:core.Entity}
 @(private="file")
 Spawned_World :: struct {
     using world:core.Test_World,
     ids:core.Table(core.Id),
     parents:core.Table(core.Parent),
-    drivables:core.Table(Inspect_Drivable),
+    links:core.Table(Inspect_Link),
 }
 
 // A prefab spawned while playing has no Ids: play.inspect names its parent
@@ -293,7 +293,7 @@ play_inspection_names_the_references_of_spawned_entities_by_handle :: proc(t:^te
     defer api_schema_free(&state)
     root,camera:=core.create(&world.entities),core.create(&world.entities)
     core.add(&world.parents,camera,core.Parent{entity=root})
-    core.add(&world.drivables,root,Inspect_Drivable{camera=camera})
+    core.add(&world.links,root,Inspect_Link{camera=camera})
     core.settle(&info,&world,nil)
     out:serial.Writer;serial.writer_init(&out);defer serial.writer_destroy(&out)
     scratch:=make([]u8,state.largest);defer delete(scratch)

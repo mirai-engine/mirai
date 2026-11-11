@@ -9,7 +9,6 @@ import scene "mirai:engine/scene"
 Spawn_World :: struct {
     using world:core.Test_World,
     bodies:core.Table(Seat_Body),
-    drivables:core.Table(input.Drivable),
     points:core.Table(Spawn_Point),
     seats:core.Table(input.Seat),
     hierarchy:core.Hierarchy,
@@ -20,18 +19,17 @@ a_body_given_to_a_seat_goes_when_the_seat_goes :: proc(t:^testing.T) {
     w:Spawn_World
     if !core.test_world_init(t,&w,input.test_types) {return}
     defer core.test_world_destroy(&w)
-    es,bodies,drivables,hierarchy:=&w.entities,&w.bodies,&w.drivables,&w.hierarchy
+    es,bodies,hierarchy:=&w.entities,&w.bodies,&w.hierarchy
     seat,given,other:=core.create(es),core.create(es),core.create(es)
-    core.add(bodies,given,Seat_Body{})
-    core.add(drivables,given,input.Drivable{seat=seat})
-    core.add(drivables,other,input.Drivable{seat=seat})
+    core.add(bodies,given,Seat_Body{seat})
+    core.add(&w.seats,seat,input.Seat{body=other})
     core.test_world_settle(&w)
-    spawn_seat_bodies({entities=es},core.ref(hierarchy),core.read(bodies),core.read(drivables))
+    spawn_seat_bodies({entities=es},core.ref(hierarchy),core.read(bodies))
     core.test_world_settle(&w)
     testing.expect(t,core.alive(es,given),"a body stays while its seat is there")
     core.destroy(es,seat)
     core.test_world_settle(&w)
-    spawn_seat_bodies({entities=es},core.ref(hierarchy),core.read(bodies),core.read(drivables))
+    spawn_seat_bodies({entities=es},core.ref(hierarchy),core.read(bodies))
     core.test_world_settle(&w)
     testing.expect(t,!core.alive(es,given),"the body spawn gave goes with its seat")
     testing.expect(t,core.alive(es,other),"a body nobody gave is left to the game")
@@ -40,7 +38,9 @@ a_body_given_to_a_seat_goes_when_the_seat_goes :: proc(t:^testing.T) {
 // Without a point asked for, a seat takes the points of the players in turn
 // and the game the others: a point of an enemy never gives a player its body.
 // A body needs a point with a prefab, a point asked for is the one used, and
-// what the game spawns has no camera of the editor to fall back on.
+// what the game spawns has no camera of the editor to fall back on. Seats get
+// bodies by themselves while a prefab is named: by the project or a point of
+// the players.
 @(test)
 spawn_points_are_taken_in_turn_by_their_kind_or_as_asked :: proc(t:^testing.T) {
     w:Spawn_World
@@ -79,6 +79,15 @@ spawn_points_are_taken_in_turn_by_their_kind_or_as_asked :: proc(t:^testing.T) {
     _,ok=spawn_pick(&a,core.NONE,core.NONE,false,true)
     testing.expect(t,!ok && core.problem_find(&problems,core.NONE,"spawn.no_spawn_point")!=nil,"a spawn of the game without a point of its kind is a problem, also in the Play of the editor")
     testing.expect_value(t,problems.count,2)
+
+    testing.expect(t,prefab_found(&a),"a point of the players names a body")
+    core.remove(points,first)
+    core.remove(points,second)
+    core.add(points,core.create(es),Spawn_Point{prefab={1,4}})
+    core.test_world_settle(&w)
+    testing.expect(t,!prefab_found(&a),"no point of the players names a body; the game's is not for them")
+    a.settings.prefab={1,9}
+    testing.expect(t,prefab_found(&a),"the project names one")
 }
 
 // Where the Play of the editor asks, player 1 gets its first body before any

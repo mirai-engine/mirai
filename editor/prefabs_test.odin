@@ -380,7 +380,7 @@ prefab_selection_and_file_overrides_share_the_undo_history :: proc(t:^testing.T)
     testing.expect(t,prefab_linked(s))
     ctx:=new(ui.Context)
     defer free(ctx)
-    testing.expect(t,ui.context_init(ctx,{}))
+    testing.expect(t,test_ui_init(ctx,{}))
     defer ui.context_destroy(ctx)
     g.ctx=ctx
     for size in ([2][2]f32{{1440,900},{800,420}}) {
@@ -399,7 +399,7 @@ prefab_selection_and_file_overrides_share_the_undo_history :: proc(t:^testing.T)
         action_labels:=[3]string{"Apply changes","Revert all","Unlink"}
         for action,action_index in ([3]string{"prefab_apply","prefab_revert","prefab_unlink"}) {
             rect,shown:=ui.widget_rect(ctx,command_widget(&g,action,1))
-            testing.expect(t,shown && rect.w==22 && rect.h==ctx.theme.control)
+            testing.expect(t,shown && rect.w==22 && rect.h==ui.metric(ctx,"control"))
             if action_row<0 {action_row=rect.y}
             testing.expect_value(t,rect.y,action_row)
             // The tip shows once the pointer rested on the button.

@@ -429,7 +429,6 @@ net_play_menu :: proc(s:^editor.Session) {
     n:=net_play_of(s)
     ctx:=s.gui.ctx
     if n==nil || ctx==nil || s.play_players==nil {return}
-    th:=&ctx.theme
     n.party.online=clamp(n.party.online,0,editor.PLAYER_PROCESSES-local_players(s))
     network:=n.party.online>0
     total:=local_players(s)+n.party.online
@@ -444,7 +443,7 @@ net_play_menu :: proc(s:^editor.Session) {
     }
     ping:=f64(n.party.ping)
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(30),padding={6,2,6,2},gap=8,align_y=.Center}) {
-        ui.label(ctx,"Ping ms",th.font_small,network?th.text:th.text_faint,0)
+        ui.label(ctx,"Ping ms",ui.metric(ctx,"font_small"),network?ui.tone(ctx,"text"):ui.tone(ctx,"text_faint"),0)
         if ui.number_field(ctx,ui.id(ctx,"multiplayer.run_ping"),&ping,{width=ui.fixed(98),min=0,max=1000,has_min=true,has_max=true,decimals=0,speed=1,disabled=!network}).changed {n.party.ping=int(ping)}
     }
 }

@@ -185,7 +185,7 @@ settings_are_written_by_layer_and_the_project_wins :: proc(t:^testing.T) {
 @(test)
 advanced_settings_go_last_under_a_fold_the_search_opens :: proc(t:^testing.T) {
     ctx:ui.Context
-    if !testing.expect(t,ui.context_init(&ctx,{})) {return}
+    if !testing.expect(t,test_ui_init(&ctx,{})) {return}
     defer ui.context_destroy(&ctx)
     world:Advanced_World
     if !core.test_world_init(t,&world) {return}
