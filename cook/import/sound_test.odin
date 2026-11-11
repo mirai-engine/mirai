@@ -59,9 +59,9 @@ a_wav_and_an_ogg_become_sounds_decoded_or_streamed_by_their_length :: proc(t:^te
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
 
     samples:=make([]i16,2*4410);defer delete(samples)
-    for &sample,i in samples {sample=i16(12000*math.sin(f32(i/2)*2*math.PI*440/44100))*(i%2==0?1:-1)}
+    for &sample,i in samples {sample=i16(12000*math.sin(f32(i/2)*2*math.PI*440/48000))*(i%2==0?1:-1)}
     samples[0],samples[1]=32767,-32768
-    wav:=wav_bytes(samples,2,44100);defer delete(wav)
+    wav:=wav_bytes(samples,2,48000);defer delete(wav)
     path:=fmt.tprintf("%s/Step Left.wav",folder)
     _=os.write_entire_file(path,wav)
 
@@ -73,7 +73,7 @@ a_wav_and_an_ogg_become_sounds_decoded_or_streamed_by_their_length :: proc(t:^te
         testing.expect(t,written.kind==asset.KIND_SOUND && written.id!={} && strings.has_suffix(written.path,".sound") && strings.contains(written.path,"/.mirai/imported/") && written.bytes<len(samples)*2)
         a:asset.Asset
         if view,ok:=sound_open(t,written.path,&types,&a);ok {
-            testing.expect(t,view.info^==asset.Sound_Info{2,44100,4410,0,.Lossless,{}})
+            testing.expect(t,view.info^==asset.Sound_Info{2,48000,4410,0,.Lossless,{}})
             lossless_same(t,view,samples)
             testing.expect(t,view.source!=nil && serial.text_field(view.source.importer[:])==IMPORTER_NAME && view.source.source_size==u64(len(wav)))
         }
@@ -86,15 +86,15 @@ a_wav_and_an_ogg_become_sounds_decoded_or_streamed_by_their_length :: proc(t:^te
         testing.expect(t,again.assets[0].id==report.assets[0].id)
         a:asset.Asset
         if view,ok:=sound_open(t,again.assets[0].path,&types,&a);ok {
-            testing.expect(t,view.info^==asset.Sound_Info{2,44100,4410,0,.Lossless,{.Stream}})
+            testing.expect(t,view.info^==asset.Sound_Info{2,48000,4410,0,.Lossless,{.Stream}})
             lossless_same(t,view,samples)
         }
         asset.asset_close(&a)
     }
     report_destroy(&report);report_destroy(&again)
 
-    // A 24 bit WAV that 16 bits would round streams its file as it is.
-    deep:=wav_bytes(samples,2,44100,low=0x40);defer delete(deep)
+    // A 24 bit WAV at the rate of the mixer that 16 bits would round streams its file as it is.
+    deep:=wav_bytes(samples,2,48000,low=0x40);defer delete(deep)
     deep_path:=fmt.tprintf("%s/deep.wav",folder)
     _=os.write_entire_file(deep_path,deep)
     report,error=import_sound(deep_path,{storage=.Stream},{root=root})
@@ -102,13 +102,14 @@ a_wav_and_an_ogg_become_sounds_decoded_or_streamed_by_their_length :: proc(t:^te
     if len(report.assets)==1 {
         a:asset.Asset
         if view,ok:=sound_open(t,report.assets[0].path,&types,&a);ok {
-            testing.expect(t,view.info^==asset.Sound_Info{2,44100,4410,0,.File,{.Stream}} && mem.compare(view.file,deep)==0)
+            testing.expect(t,view.info^==asset.Sound_Info{2,48000,4410,0,.File,{.Stream}} && mem.compare(view.file,deep)==0)
         }
         asset.asset_close(&a)
     }
     report_destroy(&report)
 
-    // Half a second of Vorbis: decoded when short, streamed from a quarter of a second on.
+    // Half a second of Vorbis at 44.1 kHz, brought to the rate of the mixer: decoded when short,
+    // streamed from a quarter of a second on, coded again since its file is at another rate.
     ogg:=fmt.tprintf("%s/sine.ogg",folder)
     _=os.write_entire_file(ogg,SINE_OGG)
     report,error=import_sound(ogg,options={root=root})
@@ -116,7 +117,7 @@ a_wav_and_an_ogg_become_sounds_decoded_or_streamed_by_their_length :: proc(t:^te
     if len(report.assets)==1 {
         a:asset.Asset
         if view,ok:=sound_open(t,report.assets[0].path,&types,&a);ok {
-            testing.expect(t,view.info.encoding==.Lossless && view.info.channels==1 && view.info.sample_rate==44100 && abs(int(view.info.frames)-22050)<=64)
+            testing.expect(t,view.info.encoding==.Lossless && view.info.channels==1 && view.info.sample_rate==audio.MIXER_RATE && abs(int(view.info.frames)-24000)<=70)
             pcm,_:=audio.decode(view.lossless,context.temp_allocator)
             peak:f32
             for sample in pcm.samples {peak=max(peak,abs(sample))}
@@ -130,7 +131,43 @@ a_wav_and_an_ogg_become_sounds_decoded_or_streamed_by_their_length :: proc(t:^te
     if len(report.assets)==1 {
         a:asset.Asset
         if view,ok:=sound_open(t,report.assets[0].path,&types,&a);ok {
-            testing.expect(t,view.info.encoding==.File && .Stream in view.info.flags && mem.compare(view.file,SINE_OGG)==0)
+            testing.expect(t,view.info.encoding==.Lossless && .Stream in view.info.flags && view.info.sample_rate==audio.MIXER_RATE)
+        }
+        asset.asset_close(&a)
+    }
+    report_destroy(&report)
+
+    // A 12 kHz sine recorded at 44.1 kHz plays at its level, copied by a voice at its own pitch.
+    sine:=make([]i16,44100);defer delete(sine)
+    for &sample,i in sine {sample=i16(16000*math.sin(2*math.PI*12000*f64(i)/44100))}
+    sine_wav:=wav_bytes(sine,1,44100);defer delete(sine_wav)
+    sine_path:=fmt.tprintf("%s/air.wav",folder)
+    _=os.write_entire_file(sine_path,sine_wav)
+    report,error=import_sound(sine_path,options={root=root})
+    testing.expect_value(t,error.code,Error_Code.None)
+    if len(report.assets)==1 {
+        a:asset.Asset
+        if view,ok:=sound_open(t,report.assets[0].path,&types,&a);ok {
+            testing.expect(t,view.info.sample_rate==audio.MIXER_RATE && view.info.frames==48000)
+            mixer,_:=audio.mixer_create({})
+            sound,_:=audio.sound_load(mixer,view.lossless)
+            audio.voice_play(mixer,sound)
+            out:=make([]f32,9700*2,context.temp_allocator)
+            // A little at a time, as a game: the voice decodes the lossless samples as it plays.
+            for at:=0;at<9700;at+=485 {
+                audio.mixer_render(mixer,out[at*2:][:485*2])
+                audio.mixer_update(mixer)
+            }
+            audio.mixer_destroy(mixer)
+            s,c:f64
+            for i in 100..<9700 {
+                phase:=2*math.PI*12000*f64(i)/f64(audio.MIXER_RATE)
+                s+=f64(out[i*2])*math.sin(phase)
+                c+=f64(out[i*2])*math.cos(phase)
+            }
+            // Each side of the pan carries it at cos(pi/4).
+            level:=2*math.sqrt(s*s+c*c)/9600/(math.SQRT_TWO/2)/(16000.0/32768)
+            testing.expectf(t,abs(20*math.log10(level))<0.5,"12 kHz plays at %v dB",20*math.log10(level))
         }
         asset.asset_close(&a)
     }

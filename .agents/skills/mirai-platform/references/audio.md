@@ -94,8 +94,9 @@ feed, with its own decoder and a larger ring.
 is valid until a `mixer_update` sees the voice finish or until it is stolen; operations on an
 invalid one return false.
 
-- **Resampling** is Godot's cubic Hermite over four frames, so a 44.1 kHz sound keeps its highs
-  at the mixer's rate; with a step of exactly 1 the samples are copied. The neighbours of a frame
+- **Resampling.** Imported sounds are at `MIXER_RATE` already, so a voice at its own pitch copies
+  its samples; a pitch, Doppler or a sound created at another rate takes Godot's cubic Hermite
+  over four frames, which keeps the highs a line between two frames dulls. The neighbours of a frame
   are those it plays between: silence before the start and after the end, the frames across the
   seam of a loop (its last frame and its loop start), and the frame before an offset (a feed
   decodes it too).
@@ -192,7 +193,9 @@ binaural and panning effects.
   each channel pans from its own azimuth, half the angle the spread subtends to either side, so it
   is wide up close and a point far away; on headphones each ear hears the mid and that share of
   the side, Steam Audio's partial downmix of a stereo input, through the HRTF of its direction.
-  Mixed apart, it carries its mid and side through the EQ; 0 is one source, its channels averaged.
+  Mixed apart, it carries its mid and side through the EQ. The default spread is Unreal's, the
+  width of a pair of speakers, since a stereo recording placed in the world should keep its width
+  up close; 0 is a point source, its channels averaged.
 - The direct path and the pitch of a positional voice are recomputed on the audio thread when its
   place, its occlusion or the listener change; the HRTF only when its direction changed.
 
