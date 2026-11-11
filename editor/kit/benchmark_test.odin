@@ -1,8 +1,9 @@
-package ui
+package kit
 
 import "core:log"
 import "core:testing"
 import "core:time"
+import "mirai:ui"
 
 // -define:UI_BENCHMARK=true measures a frame of a large panel; run it with --release.
 UI_BENCHMARK :: #config(UI_BENCHMARK,false)
@@ -10,9 +11,9 @@ UI_BENCHMARK :: #config(UI_BENCHMARK,false)
 @(test)
 benchmark_a_frame_of_a_large_panel :: proc(t:^testing.T) {
     if !UI_BENCHMARK {return}
-    ctx:Context
-    testing.expect(t,context_init(&ctx,{}))
-    defer context_destroy(&ctx)
+    ctx:ui.Context
+    testing.expect(t,test_context_init(&ctx,{}))
+    defer ui.context_destroy(&ctx)
     // The panels of the editor with 300 more rows of three number fields in
     // Details: about a fifth of them in sight, the rest behind its scroll.
     e:=test_editor_default()
@@ -23,10 +24,10 @@ benchmark_a_frame_of_a_large_panel :: proc(t:^testing.T) {
     build,finish:time.Duration
     for _ in 0..<FRAMES {
         start:=time.tick_now()
-        frame_begin(&ctx,input)
+        ui.frame_begin(&ctx,input)
         test_editor_build(&ctx,&e)
         middle:=time.tick_now()
-        frame:=frame_end(&ctx)
+        frame:=ui.frame_end(&ctx)
         finish+=time.tick_since(middle)
         build+=time.tick_diff(start,middle)
         testing.expect(t,!frame.overflow)
@@ -40,24 +41,24 @@ benchmark_a_frame_of_a_large_panel :: proc(t:^testing.T) {
 @(test)
 benchmark_a_frame_of_a_long_transcript :: proc(t:^testing.T) {
     if !UI_BENCHMARK {return}
-    ctx:Context
-    testing.expect(t,context_init(&ctx,{}))
-    defer context_destroy(&ctx)
+    ctx:ui.Context
+    testing.expect(t,test_context_init(&ctx,{}))
+    defer ui.context_destroy(&ctx)
     // A conversation as the AI panel builds it: 512 wrapped messages, measured
     // once, of which only those in sight are laid out.
     MESSAGE :: "The agent changed the material of the cube and moved the sphere half a metre to the right so that both sit on the grid; the light was left as it was because nothing in the request asked for it."
     Transcript :: struct {offset:f32,heights:[512]f32}
-    build :: proc(ctx:^Context,user:rawptr) {
+    build :: proc(ctx:^ui.Context,user:rawptr) {
         s:=cast(^Transcript)user
-        area:=id(ctx,"transcript")
-        first,last:=rows_begin(ctx,area,&s.offset,s.heights[:],fixed(300),600)
+        area:=ui.id(ctx,"transcript")
+        first,last:=ui.rows_begin(ctx,area,&s.offset,s.heights[:],ui.fixed(300),600)
         for i in first..<last {
-            if box(ctx,{id=id(ctx,"message",i+1),width=GROW,height=fixed(s.heights[i]),direction=.Column}) {text(ctx,MESSAGE,prose(ctx))}
+            if ui.box(ctx,{id=ui.id(ctx,"message",i+1),width=ui.GROW,height=ui.fixed(s.heights[i]),direction=.Column}) {ui.text(ctx,MESSAGE,ui.prose(ctx))}
         }
-        rows_end(ctx,area,&s.offset,s.heights[:],last)
+        ui.rows_end(ctx,area,&s.offset,s.heights[:],last)
     }
     s:Transcript
-    for &h in s.heights {h=text_height(&ctx,MESSAGE,prose(&ctx),300)}
+    for &h in s.heights {h=ui.text_height(&ctx,MESSAGE,ui.prose(&ctx),300)}
     input:=test_input(1440,900)
     for _ in 0..<10 {test_frame(&ctx,&input,build,&s)}
     FRAMES :: 500
@@ -80,32 +81,32 @@ benchmark_rebuilding_the_atlas :: proc(t:^testing.T) {
         fastest:=max(time.Duration)
         height:int
         for _ in 0..<ROUNDS {
-            font:Font
+            font:ui.Font
             start:=time.tick_now()
-            testing.expect(t,font_init(&font,nil,nil,density))
+            testing.expect(t,ui.font_init(&font,nil,nil,density))
             fastest=min(fastest,time.tick_since(start))
             height=font.height
-            font_destroy(&font)
+            ui.font_destroy(&font)
         }
-        log.infof("atlas at density %.2f: %.2f ms, %d x %d texels",density,time.duration_milliseconds(fastest),FONT_ATLAS_WIDTH,height)
+        log.infof("atlas at density %.2f: %.2f ms, %d x %d texels",density,time.duration_milliseconds(fastest),ui.FONT_ATLAS_WIDTH,height)
     }
 }
 
 @(test)
 benchmark_drawing_text :: proc(t:^testing.T) {
     if !UI_BENCHMARK {return}
-    ctx:Context
-    testing.expect(t,context_init(&ctx,{density=1.75}))
-    defer context_destroy(&ctx)
+    ctx:ui.Context
+    testing.expect(t,test_context_init(&ctx,{density=1.75}))
+    defer ui.context_destroy(&ctx)
     // Two thousand short labels, as many as a dense editor window shows.
     LABELS :: [?]string{"Transform","Position","Rotation","Scale","Static Mesh","AVATAR","Material","Point Light"}
     labels:=LABELS
-    draw :: proc(ctx:^Context,user:rawptr) {
+    draw :: proc(ctx:^ui.Context,user:rawptr) {
         labels:=cast(^[len(LABELS)]string)user
         for i in 0..<2000 {
             text:=labels[i%len(labels)]
-            x:=f32(i%8)*170+text_width(&ctx.font,text,11)*0.01
-            draw_text(ctx,text,x,f32(i/8)*3,11,{241,242,247,255})
+            x:=f32(i%8)*170+ui.text_width(&ctx.font,text,11)*0.01
+            ui.draw_text(ctx,text,x,f32(i/8)*3,11,{241,242,247,255})
         }
     }
     input:=test_input(1440,900)
@@ -132,50 +133,50 @@ benchmark_a_font_on_demand_in_the_cases_of_an_application :: proc(t:^testing.T) 
     fastest:[Case]time.Duration
     for &d in fastest {d=max(time.Duration)}
     glyphs,height:int
-    game :: proc(ctx:^Context,user:rawptr) {
-        text(ctx,"60 FPS",{size=14,color={255,255,255,255}})
-        text(ctx,"Score 1200  Lives 3",{size=16,color={255,255,255,255}})
+    game :: proc(ctx:^ui.Context,user:rawptr) {
+        ui.text(ctx,"60 FPS",{size=14,color={255,255,255,255}})
+        ui.text(ctx,"Score 1200  Lives 3",{size=16,color={255,255,255,255}})
     }
     for _ in 0..<ROUNDS {
-        whole:Font
+        whole:ui.Font
         start:=time.tick_now()
-        testing.expect(t,font_init(&whole,nil,nil,1.75))
+        testing.expect(t,ui.font_init(&whole,nil,nil,1.75))
         fastest[.Whole]=min(fastest[.Whole],time.tick_since(start))
-        font_destroy(&whole)
-        owner:Font
+        ui.font_destroy(&whole)
+        owner:ui.Font
         start=time.tick_now()
-        testing.expect(t,font_init(&owner,nil,nil,1.75,on_demand=true))
+        testing.expect(t,ui.font_init(&owner,nil,nil,1.75,on_demand=true))
         fastest[.Init]=min(fastest[.Init],time.tick_since(start))
         desc:=TEST_FONT
         desc.font=&owner
-        editor,play:Context
-        testing.expect(t,context_init(&editor,desc))
+        editor,play:ui.Context
+        testing.expect(t,test_context_init(&editor,desc))
         e:=test_editor_default()
         input:=test_input(1440,900)
         // The first frame of the editor and the glyphs it asks for.
         test_frame(&editor,&input,test_editor_build,&e)
         start=time.tick_now()
-        font_update(&owner)
+        ui.font_update(&owner)
         fastest[.Startup]=min(fastest[.Startup],time.tick_since(start))
         test_frame(&editor,&input,test_editor_build,&e)
         // Play: a context of the game and its text.
         start=time.tick_now()
-        testing.expect(t,context_init(&play,desc))
+        testing.expect(t,test_context_init(&play,desc))
         test_frame(&play,&input,game,nil)
-        font_update(&owner)
+        ui.font_update(&owner)
         fastest[.Play]=min(fastest[.Play],time.tick_since(start))
         // The window moves to a display of density 2.
         start=time.tick_now()
-        font_set_density(&owner,2)
+        ui.font_set_density(&owner,2)
         test_frame(&editor,&input,test_editor_build,&e)
         test_frame(&play,&input,game,nil)
-        font_update(&owner)
+        ui.font_update(&owner)
         fastest[.Density]=min(fastest[.Density],time.tick_since(start))
         glyphs=0
         for &face in owner.faces {for glyph in face.glyphs {if glyph.phases>0 {glyphs+=1}}}
         height=owner.height
-        context_destroy(&play);context_destroy(&editor)
-        font_destroy(&owner)
+        ui.context_destroy(&play);ui.context_destroy(&editor)
+        ui.font_destroy(&owner)
     }
     log.infof("font on demand at 1.75: whole atlas %.2f ms; init %.2f ms; first frame of the editor %.2f ms; Play %.2f ms; density 2 %.2f ms (%d glyphs, %d rows)",
         time.duration_milliseconds(fastest[.Whole]),time.duration_milliseconds(fastest[.Init]),time.duration_milliseconds(fastest[.Startup]),

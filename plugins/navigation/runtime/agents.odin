@@ -265,7 +265,7 @@ agent_filter :: proc "contextless" (n:^Navigation,class:int,agent:Nav_Agent,walk
 @(step="fixed",stage="apply",server)
 navigation_agents :: proc(
     n:core.Ref(Navigation),a:^Navigation_Agents,agents:^core.Table(Nav_Agent,.Read),paths:^core.Table(Nav_Path),
-    requests:^Nav_Requests,events:^Nav_Events,inputs:^core.Table(input.Move_Input),drivables:^core.Table(input.Drivable,.Read),
+    requests:^Nav_Requests,events:^Nav_Events,inputs:^core.Table(input.Move_Input),seats:^core.Table(input.Seat,.Read),
     characters:^core.Table(phys.Character,.Read),loco_states:^core.Table(locomotion.Locomotion_State,.Read),colliders:^core.Table(phys.Collider,.Read),walks:^core.Table(locomotion.Walk,.Read),flights:^core.Table(locomotion.Fly,.Read),swims:^core.Table(locomotion.Swim,.Read),
     grounds:^core.Table(phys.Character_State,.Read),motions:^core.Table(core.Motion,.Read),worlds:^core.Table(core.World_Transform,.Read),
     obstacles:^core.Table(Nav_Obstacle,.Read),volumes:^core.Table(volume.Volume,.Read),loco:^locomotion.Locomotion_Requests,physics:core.Ref(phys.Physics_State),builds:core.Ref(Navigation_Builds),fars:^core.Table(Nav_Far),
@@ -458,7 +458,7 @@ navigation_agents :: proc(
     sections:=&builds.ptr.sections if builds.ptr!=nil else nil
     agents_search(n.ptr,a,builds.ptr,paths,agents,characters,grounds,colliders,walks,swims,worlds,physics,sections,budget,time.dt,events,problems)
     agents_avoid(n.ptr,a,paths,time.dt,problems)
-    crossings.count=agents_steer(n.ptr,agents,paths,inputs,drivables,characters,grounds,worlds,walks,flights,swims,time.dt)
+    crossings.count=agents_steer(n.ptr,agents,paths,inputs,seats,grounds,worlds,walks,flights,swims,time.dt)
     agents_far(n,builds,a,agents,paths,fars,roamings,disabled,walks,flights,swims,colliders,worlds,placer,bodies,events,time)
 }
 
@@ -1073,21 +1073,21 @@ ground_box :: #force_inline proc "contextless" (at:mm.Vec3,reach:f32) -> mm.Aabb
 }
 
 // Writes the Move_Input of every agent no seat drives, and of a seated one
-// while it goes: toward its velocity, facing it, or what it looks at, turning
-// at the turn speed of its Character, at the share of the speed of its Walk
-// that its velocity asks: the velocity that steps aside is the one it moves
-// at. One that flies or swims looks level and climbs or dives with move.y, at
-// the share of the speed of its Fly or its Swim. The seat of a seated one wrote its Move_Input
-// earlier in the tick, with its buttons and the turn of the ground. How many
-// agents cross a link.
+// while it goes: along its velocity, at the share of the speed of its Walk
+// that its velocity asks (the velocity that steps aside is the one it moves
+// at), looking where it goes or at what it looks at; its body turns there at
+// its own rate. One that flies or swims looks level and climbs or dives, at
+// the share of the speed of its Fly or its Swim. The seat of a seated one
+// wrote its Move_Input earlier in the tick, with its buttons and the turn of
+// the ground. How many agents cross a link.
 @(private)
-agents_steer :: proc(n:^Navigation,agents:^core.Table(Nav_Agent,$A),paths:^core.Table(Nav_Path),inputs:^core.Table(input.Move_Input),drivables:^core.Table(input.Drivable,$B),characters:^core.Table(phys.Character,$C),grounds:^core.Table(phys.Character_State,$D),worlds:^core.Table(core.World_Transform,$E),walks:^core.Table(locomotion.Walk,$F),flights:^core.Table(locomotion.Fly,$G),swims:^core.Table(locomotion.Swim,$H),dt:f32) -> (crossing:u32) {
+agents_steer :: proc(n:^Navigation,agents:^core.Table(Nav_Agent,.Read),paths:^core.Table(Nav_Path),inputs:^core.Table(input.Move_Input),seats:^core.Table(input.Seat,.Read),grounds:^core.Table(phys.Character_State,.Read),worlds:^core.Table(core.World_Transform,.Read),walks:^core.Table(locomotion.Walk,.Read),flights:^core.Table(locomotion.Fly,.Read),swims:^core.Table(locomotion.Swim,.Read),dt:f32) -> (crossing:u32) {
     for row in 0..<core.count(paths) {
         e:=core.entity_at(paths,row)
         p:=core.edit_at(paths,row)
         if p.state==.Crossing {crossing+=1}
         driven:=false
-        if d,ok:=core.get(drivables,e);ok && d.seat!=core.NONE {
+        if input.seat_of(seats,e)!=core.NONE {
             agent,_:=core.get(agents,e)
             if !agent.seated {continue}
             driven=true
@@ -1103,25 +1103,16 @@ agents_steer :: proc(n:^Navigation,agents:^core.Table(Nav_Agent,$A),paths:^core.
             continue
         }
         p.halted=false
-        character,_:=core.get(characters,e)
         ground,_:=core.get(grounds,e)
         pose,_:=core.get(worlds,e)
-        yaw:=mi.look_yaw+(driven?0:ground.ground_turn)
-        want:=yaw
+        if !driven {mi.look_yaw=mm.angle_wrap(mi.look_yaw+ground.ground_turn)}
         flat:=mm.Vec3{p.velocity.x,0,p.velocity.z}
         speed:=linalg.length(flat)
         if p.looking {
             to:=p.look-pose.position
             to.y=0
-            if linalg.length(to)>1e-3 {want=mm.yaw_of_direction(to)}
-        } else if speed>0.05 {want=mm.yaw_of_direction(flat)}
-        turn:=math.remainder(want-yaw,2*math.PI)
-        step:=character.turn_speed*dt
-        if character.turn_speed>0 && abs(turn)>step {turn=math.copy_sign(step,turn)}
-        yaw+=turn
-        mi.look_yaw=yaw
-        right:=mm.Vec3{math.cos(yaw),0,-math.sin(yaw)}
-        forward:=mm.Vec3{-math.sin(yaw),0,-math.cos(yaw)}
+            if linalg.length(to)>1e-3 {mi.look_yaw=mm.yaw_of_direction(to)}
+        } else if speed>0.05 {mi.look_yaw=mm.yaw_of_direction(flat)}
         if p.class>=0 && int(p.class)<n.count && class_in_volume(n,int(p.class)) {
             mi.look_pitch=0
             full:=linalg.length(p.velocity)
@@ -1135,14 +1126,13 @@ agents_steer :: proc(n:^Navigation,agents:^core.Table(Nav_Agent,$A),paths:^core.
                 top=fly.speed
             }
             share:=min(full/top,1) if top>0 else 1
-            d:=p.velocity/full*share
-            mi.move={linalg.dot(d,right),d.y,-linalg.dot(d,forward)}
+            mi.move=p.velocity/full*share
             continue
         }
         if speed<=1e-4 || p.state==.Crossing && !p.medium {mi.move={};continue}
         walk,_:=core.get(walks,e)
         top:=max(speed,walk.max_speed if walk.max_speed>0 else 3)
-        mi.move={linalg.dot(flat,right)/top,0,-linalg.dot(flat,forward)/top}
+        mi.move=flat/top
     }
     return
 }

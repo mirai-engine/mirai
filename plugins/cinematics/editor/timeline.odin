@@ -6,6 +6,7 @@ import "mirai:editor"
 import erender "mirai:engine/render"
 import "mirai:std/base"
 import "mirai:ui"
+import "mirai:editor/kit"
 import aed "plugins:animation/editor"
 import anim "plugins:animation/runtime"
 import cine "plugins:cinematics/runtime"
@@ -98,14 +99,14 @@ cinematics_panel :: proc(s:^editor.Session,c:^Cinematic_Editor) {
 @(private)
 side_rows :: proc(s:^editor.Session,c:^Cinematic_Editor,w:core.World_Ref) {
     ctx:=s.gui.ctx
-    ui.section(ctx,"Cinematic")
+    kit.section(ctx,"Cinematic")
     timelines,_:=entity_names(w,cine.Cinematic,false)
     chosen:=-1
     for e,i in timelines.entities {if e==c.timeline {chosen=i}}
-    if ui.property(ctx,"Timeline") {
+    if kit.property(ctx,"Timeline") {
         if ui.dropdown(ctx,ui.id(ctx,"timeline"),{list=timelines.names},&chosen,{width=-1,empty="None"}) && chosen>=0 {c.timeline=timelines.entities[chosen]}
     }
-    if ui.button(ctx,ui.id(ctx,"new"),{label="New timeline",style=.Field,width=-1,center=true}).clicked {
+    if ui.button(ctx,ui.id(ctx,"new"),{label="New timeline",variant="field",width=-1,center=true}).clicked {
         opened,ready:=editor.edit_open(s,"New cinematic")
         if ready {
             if e,_:=part_add(s,w,{part=.Timeline});e!=core.NONE {c.timeline=e}
@@ -113,34 +114,34 @@ side_rows :: proc(s:^editor.Session,c:^Cinematic_Editor,w:core.World_Ref) {
         editor.edit_close(s,opened)
     }
     if !editor.entity_has(w,c.timeline,cine.Cinematic) {return}
-    ui.toggle(ctx,ui.id(ctx,"shot_view"),"Shot view",&c.shot_view)
+    kit.toggle(ctx,ui.id(ctx,"shot_view"),"Shot view",&c.shot_view)
     head,_,_:=aed.tracks_head(s,c.timeline)
 
-    ui.section(ctx,"Shot")
+    kit.section(ctx,"Shot")
     cameras,_:=entity_names(w,erender.Camera,true)
     choose(ctx,"Camera",cameras,&c.camera)
-    if ui.property(ctx,"Blend") {ui.number_field(ctx,ui.id(ctx,"blend"),&c.blend,{min=0,has_min=true,unit="s",decimals=2})}
-    if ui.button(ctx,ui.id(ctx,"shot"),{label="Add shot",style=.Field,width=-1,center=true,disabled=c.camera==core.NONE}).clicked {
+    if kit.property(ctx,"Blend") {ui.number_field(ctx,ui.id(ctx,"blend"),&c.blend,{min=0,has_min=true,unit="s",decimals=2})}
+    if ui.button(ctx,ui.id(ctx,"shot"),{label="Add shot",variant="field",width=-1,center=true,disabled=c.camera==core.NONE}).clicked {
         marker_add(s,w,c.timeline,c.camera,"Shot",head,f32(c.blend))
     }
 
-    ui.section(ctx,"Actor")
+    kit.section(ctx,"Actor")
     targets,_:=entity_names(w,core.Transform,true)
     choose(ctx,"Entity",targets,&c.target)
-    if ui.property(ctx,"Action") {ui.text_field(ctx,ui.id(ctx,"action"),c.action[:len(c.action)-1],&c.action_length,{width=ui.GROW})}
-    if ui.property(ctx,"Duration") {ui.number_field(ctx,ui.id(ctx,"duration"),&c.duration,{min=0,has_min=true,unit="s",decimals=2})}
+    if kit.property(ctx,"Action") {ui.text_field(ctx,ui.id(ctx,"action"),c.action[:len(c.action)-1],&c.action_length,{width=ui.GROW})}
+    if kit.property(ctx,"Duration") {ui.number_field(ctx,ui.id(ctx,"duration"),&c.duration,{min=0,has_min=true,unit="s",decimals=2})}
     action:=string(c.action[:c.action_length])
-    if ui.button(ctx,ui.id(ctx,"act"),{label="Add action",style=.Field,width=-1,center=true,disabled=c.target==core.NONE || c.target==c.timeline || action==""}).clicked {
+    if ui.button(ctx,ui.id(ctx,"act"),{label="Add action",variant="field",width=-1,center=true,disabled=c.target==core.NONE || c.target==c.timeline || action==""}).clicked {
         marker_add(s,w,c.timeline,c.target,action,head,f32(c.duration))
     }
-    if ui.button(ctx,ui.id(ctx,"actor"),{label="Add actor",style=.Field,width=-1,center=true,disabled=c.target==core.NONE || c.target==c.timeline}).clicked {
+    if ui.button(ctx,ui.id(ctx,"actor"),{label="Add actor",variant="field",width=-1,center=true,disabled=c.target==core.NONE || c.target==c.timeline}).clicked {
         add(s,w,{part=.Actor,timeline=c.timeline,target=c.target})
     }
 
     choose :: proc(ctx:^ui.Context,label:string,names:Names,value:^core.Entity) {
         chosen:=-1
         for e,i in names.entities {if e==value^ {chosen=i}}
-        if ui.property(ctx,label) {
+        if kit.property(ctx,label) {
             if ui.dropdown(ctx,ui.id(ctx,label),{list=names.names},&chosen,{width=-1,empty="None"}) && chosen>=0 {value^=names.entities[chosen]}
         }
     }

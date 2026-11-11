@@ -14,7 +14,7 @@ Description_Tag :: struct {}
 @(test)
 component_descriptions_wait_for_the_pointer_to_rest_on_the_header :: proc(t:^testing.T) {
     ctx:ui.Context
-    if !testing.expect(t,ui.context_init(&ctx,{})) {return}
+    if !testing.expect(t,test_ui_init(&ctx,{})) {return}
     defer ui.context_destroy(&ctx)
     inspector:Inspector
     defer core.value_free(&inspector,type_info_of(Inspector))

@@ -24,6 +24,7 @@ Motion :: struct {
 @(component,description="The up of this entity and the frame its look turns in, as its simulation turns them.")
 Vertical :: struct {
     frame:mm.Quat `mirai:"transient,readonly"`,
+    turn:f32 `mirai:"transient,readonly"`, // radians the ground turned it about its up in the last step: whoever writes where it looks (input.Move_Input) adds it
 }
 
 // The frame of the vertical of e: the identity without one.

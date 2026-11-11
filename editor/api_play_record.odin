@@ -267,7 +267,7 @@ api_play_record :: proc(s:^Session,call:^api.Call) {
         append(&shown,shot)
         append(&spans,[2]int{holds_from,len(held)})
         w.sheet,w.tile,w.tick=&sheet,shot.tile,shot.tick
-        jobs.run(&s.app.jobs,jobs.OWNER,record_write,w,&w.counter)
+        jobs.run(&s.app.jobs,jobs.OWNER,.Background,record_write,w,&w.counter)
         done+=1
     }
     for &w in writes {

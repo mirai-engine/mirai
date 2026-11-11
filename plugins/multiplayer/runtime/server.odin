@@ -918,18 +918,17 @@ server_scope :: proc(s:^Net_Session,slot:^Server_Object,config:Replicate,wait:bo
 }
 
 // Server: the body a connection drives looks where its client says, after the
-// seat turned it with the mouse (locomotion_seat, stage input) and before the
+// seat turned it with the mouse (camera_drive, stage input) and before the
 // locomotion moves it (stage simulate). See Input_Packet. The look is of
 // look_behind ticks before the input (its input delay): what it differs by
 // from the look this end had then is put right now, and in the looks kept since.
 @(step="fixed",loops="game",stage="intent")
-remote_look :: proc(session:core.Ref(Net_Session),inputs:^Remote_Inputs,seats:^core.Table(input.Seat,.Read),drivables:^core.Table(input.Drivable,.Read),moves:^core.Table(input.Move_Input),time:core.Time) {
+remote_look :: proc(session:core.Ref(Net_Session),inputs:^Remote_Inputs,seats:^core.Table(input.Seat,.Read),moves:^core.Table(input.Move_Input),time:core.Time) {
     if session.ptr==nil || session.mode!=.Server {return}
-    for row in 0..<core.count(drivables) {
-        seat,has:=core.get(seats,core.at(drivables,row).seat)
-        if !has || seat.peer==0 {continue}
+    for seat in seats.values[:core.count(seats)] {
+        if seat.peer==0 || seat.body==core.NONE {continue}
         entry:=remote_entry(inputs,Connection(seat.peer))
-        move:=core.edit(moves,core.entity_at(drivables,row))
+        move:=core.edit(moves,seat.body)
         if entry==nil || move==nil {continue}
         now:=int(time.tick%len(entry.looks))
         if behind:=int(entry.look_behind);entry.has_look && behind<=int(entry.looks_kept) {

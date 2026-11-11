@@ -35,7 +35,7 @@ ai_build :: proc(s:^Session) {
 // what it ran with, what it was given and every tool it called with its result.
 @(private)
 ai_details_build :: proc(s:^Session) {
-    m:=s.ai;ctx:=s.gui.ctx;th:=&ctx.theme
+    m:=s.ai;ctx:=s.gui.ctx
     task:=ai_task_find(m,m.details)
     if task==nil || ui.escape(ctx) {m.details=0;return}
     id:=shell_id(s.gui,"ai_details")
@@ -44,11 +44,11 @@ ai_details_build :: proc(s:^Session) {
     if ui.modal(ctx,id,{width=520,scroll=&m.details_scroll,close=&closed,own_cross=true}) {
         ui.id_push(ctx,id)
         defer ui.id_pop(ctx)
-        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.control),gap=8,align_y=.Center}) {
+        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"control")),gap=8,align_y=.Center}) {
             ui.icon(ctx,ai_agent_glyph(task),ai_agent_color(task),20)
-            ui.label(ctx,base.text_get(task.title[:]),th.font_heading,th.text,0,font=ui.FONT_SEMIBOLD)
+            ui.label(ctx,base.text_get(task.title[:]),ui.metric(ctx,"font_heading"),ui.tone(ctx,"text"),0,font=ui.FONT_SEMIBOLD)
             ui.spacer(ctx)
-            if ui.button(ctx,ui.id(ctx,"close"),{icon=.Cross,icon_color=th.text_muted,style=.Ghost,width=24,height=24}).clicked {m.details=0}
+            if ui.button(ctx,ui.id(ctx,"close"),{icon=.Cross,icon_color=ui.tone(ctx,"text_muted"),variant="ghost",width=24,height=24}).clicked {m.details=0}
         }
         ai_details_rows(s,task)
     }
@@ -58,12 +58,11 @@ ai_details_build :: proc(s:^Session) {
 // the dialog of the panel and the Details of the Agents tab show them.
 @(private)
 ai_details_rows :: proc(s:^Session,task:^Ai_Task) {
-    ctx:=s.gui.ctx;th:=&ctx.theme
+    ctx:=s.gui.ctx
     row :: proc(ctx:^ui.Context,name,value:string) {
-        th:=&ctx.theme
         if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=8}) {
-            if ui.box(ctx,{width=ui.fixed(th.label_width),height=ui.FIT}) {ui.label(ctx,name,th.font_small,th.text_label)}
-            ui.text(ctx,value,ui.prose(ctx,th.font_small,th.text))
+            if ui.box(ctx,{width=ui.fixed(ui.metric(ctx,"label_width")),height=ui.FIT}) {ui.label(ctx,name,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_label"))}
+            ui.text(ctx,value,ui.prose(ctx,ui.metric(ctx,"font_small"),ui.tone(ctx,"text")))
         }
     }
     buffer:[256]u8
@@ -99,11 +98,11 @@ ai_details_rows :: proc(s:^Session,task:^Ai_Task) {
         if !ai_transcript_hidden(text,kind) {continue}
         calls+=1
         failed:=strings.has_prefix(text,"Tool failed: ")
-        if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,padding=ui.padding_all(8),fill=th.card,radius=th.radius_control}) {
-            ui.text(ctx,text,ui.prose(ctx,th.font_small,failed?th.danger:th.text_muted))
+        if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,padding=ui.padding_all(8),fill=ui.tone(ctx,"card"),radius=ui.metric(ctx,"radius_control")}) {
+            ui.text(ctx,text,ui.prose(ctx,ui.metric(ctx,"font_small"),failed?ui.tone(ctx,"danger"):ui.tone(ctx,"text_muted")))
         }
     }
-    if calls==0 {ui.label(ctx,"No tool calls",th.font_small,th.text_faint)}
+    if calls==0 {ui.label(ctx,"No tool calls",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"))}
 }
 
 // The agent of the chat shown, or the one the first message starts with.
@@ -226,7 +225,7 @@ ai_ask :: proc(s:^Session,assets:[]base.Asset_Id={}) {
 ai_chat_models_header :: proc(ctx:^ui.Context,agent:Ai_Agent,name:string) {
     if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=6,padding={8,6,8,3},align_y=.Center}) {
         ai_connections_logo(ctx,agent,12)
-        ui.label(ctx,name,ctx.theme.font_caption,ctx.theme.text_faint,0)
+        ui.label(ctx,name,ui.metric(ctx,"font_caption"),ui.tone(ctx,"text_faint"),0)
     }
 }
 
@@ -272,16 +271,15 @@ ai_models_items :: proc(s:^Session,needle:string,current:Ai_Provider,chosen:stri
 // clicked, or -1.
 @(private)
 ai_segments :: proc(ctx:^ui.Context,id:ui.Id,names:[]string,chosen:int,disabled:=false,height:ui.Size=ui.GROW) -> int {
-    th:=&ctx.theme
     clicked:=-1
-    if ui.box(ctx,{width=ui.GROW,height=height,gap=2,padding=ui.padding_all(2),fill=th.well,radius=th.radius_popup}) {
+    if ui.box(ctx,{width=ui.GROW,height=height,gap=2,padding=ui.padding_all(2),fill=ui.tone(ctx,"well"),radius=ui.metric(ctx,"radius_popup")}) {
         for name,index in names {
             item:=ui.id_derive(ctx,id,"segment",index+1)
             it:=ui.interact(ctx,item,{.Passive} if disabled else {})
             on:=index==chosen
-            fill:=th.toggle_on if on else (th.field_hover if it.hot && !disabled else ui.Color{})
-            if ui.box(ctx,{id=item,width=ui.GROW,height=ui.GROW,align_x=.Center,align_y=.Center,fill=fill,stroke=on?th.toggle_on_stroke:{},stroke_width=1,radius=th.radius_control}) {
-                ui.label(ctx,name,th.font_small,on?th.text:th.text_muted)
+            fill:=ui.tone(ctx,"toggle_on") if on else (ui.tone(ctx,"field_hover") if it.hot && !disabled else ui.Color{})
+            if ui.box(ctx,{id=item,width=ui.GROW,height=ui.GROW,align_x=.Center,align_y=.Center,fill=fill,stroke=on?ui.tone(ctx,"toggle_on_stroke"):{},stroke_width=1,radius=ui.metric(ctx,"radius_control")}) {
+                ui.label(ctx,name,ui.metric(ctx,"font_small"),on?ui.tone(ctx,"text"):ui.tone(ctx,"text_muted"))
             }
             if it.clicked && !disabled && !on {clicked=index}
         }
@@ -336,7 +334,7 @@ ai_chat_models_menu :: proc(s:^Session,list:ui.Id,side:ui.Popup_Side) {
 // one button that opens the menu of both.
 @(private)
 ai_chat_model_picker :: proc(s:^Session,busy:bool) {
-    m:=s.ai;ctx:=s.gui.ctx;th:=&ctx.theme
+    m:=s.ai;ctx:=s.gui.ctx
     provider,connected:=ai_chat_provider(m)
     model,effort:=ai_chat_model(m)
     id:=ui.id(ctx,"agent")
@@ -345,12 +343,12 @@ ai_chat_model_picker :: proc(s:^Session,busy:bool) {
     it:=ui.interact(ctx,id,{.Passive} if busy else {})
     label:=ai_model_name(m,provider,model) if connected else "Select model"
     effort_label:=ai_effort_name(effort)
-    color:=open || it.hot && !busy?th.text:th.text_muted
+    color:=open || it.hot && !busy?ui.tone(ctx,"text"):ui.tone(ctx,"text_muted")
     if ui.box(ctx,{id=id,width=ui.FIT,height=ui.fixed(24),gap=6,align_y=.Center}) {
         if connected {ui.icon(ctx,ai_connection_mark(m.connections[provider].agent),color,13)}
-        ui.label(ctx,ai_chat_menu_label(ctx,label,120,th.font_small),th.font_small,color)
+        ui.label(ctx,ai_chat_menu_label(ctx,label,120,ui.metric(ctx,"font_small")),ui.metric(ctx,"font_small"),color)
         if effort_label!="" {
-            if ui.box(ctx,{width=ui.FIT,height=ui.FIT,padding={4,0,0,0}}) {ui.label(ctx,effort_label,th.font_small,th.text_faint)}
+            if ui.box(ctx,{width=ui.FIT,height=ui.FIT,padding={4,0,0,0}}) {ui.label(ctx,effort_label,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"))}
         }
     }
     if it.clicked && !busy && !open {
@@ -364,10 +362,10 @@ ai_chat_model_picker :: proc(s:^Session,busy:bool) {
 // The clock and the expansion of the chat, in the bar of the panel beside its settings.
 @(private)
 ai_chat_bar_buttons :: proc(s:^Session) {
-    g:=s.gui;ctx:=g.ctx;m:=s.ai;th:=&ctx.theme
+    g:=s.gui;ctx:=g.ctx;m:=s.ai
     popup:=shell_id(g,"ai_history_menu")
     history:=shell_id(g,"ai_history")
-    if ui.button(ctx,history,{icon=.History,icon_color=th.text_muted,icon_size=15,style=.Ghost,width=24,height=24,active=ui.popup_is_open(ctx,popup)}).clicked {
+    if ui.button(ctx,history,{icon=.History,icon_color=ui.tone(ctx,"text_muted"),icon_size=15,variant="ghost",width=24,height=24,active=ui.popup_is_open(ctx,popup)}).clicked {
         m.history_scroll=0
         m.chat_hit_count=0
         if m.store.folder!="" {if message:=ai_history_refresh(m);message!="" {notify(s,message)}}
@@ -375,7 +373,7 @@ ai_chat_bar_buttons :: proc(s:^Session) {
         ui.popup_open(ctx,popup,anchor)
     }
     corners:=m.chat_expanded?User_Icon.Corners_In:User_Icon.Corners_Out
-    if ui.button(ctx,shell_id(g,"ai_expand"),{icon=ui.icon_user(u8(corners)),icon_color=m.chat_expanded?th.text:th.text_muted,icon_size=14,style=.Ghost,width=24,height=24,active=m.chat_expanded}).clicked {m.chat_expanded=!m.chat_expanded}
+    if ui.button(ctx,shell_id(g,"ai_expand"),{icon=ui.icon_user(u8(corners)),icon_color=m.chat_expanded?ui.tone(ctx,"text"):ui.tone(ctx,"text_muted"),icon_size=14,variant="ghost",width=24,height=24,active=m.chat_expanded}).clicked {m.chat_expanded=!m.chat_expanded}
 }
 
 AI_HISTORY_HEIGHT :: f32(320) // the most the list of History takes before it scrolls
@@ -385,35 +383,35 @@ AI_HISTORY_ROW :: f32(48)
 // how long ago it moved and how it ended.
 @(private)
 ai_history_row :: proc(s:^Session,id:ui.Id,color:ui.Color,title,last,needle:string,ago:i64,open:bool) -> bool {
-    ctx:=s.gui.ctx;th:=&ctx.theme
+    ctx:=s.gui.ctx
     it:=ui.popup_row(ctx,id)
-    fill:=th.toggle_on if open else (ui.color_hover(th) if it.hot else ui.Color{})
+    fill:=ui.tone(ctx,"toggle_on") if open else (ui.color_hover(ctx) if it.hot else ui.Color{})
     width:=AI_HISTORY_WIDTH
     if r,found:=ui.widget_rect(ctx,id);found {width=r.w}
-    small:=th.font_caption
-    if ui.box(ctx,{id=id,width=ui.GROW,height=ui.fixed(AI_HISTORY_ROW),padding={8,0,8,0},align_y=.Center,fill=fill,stroke=open?th.toggle_on_stroke:{},stroke_width=1,radius=th.radius_control}) {
+    small:=ui.metric(ctx,"font_caption")
+    if ui.box(ctx,{id=id,width=ui.GROW,height=ui.fixed(AI_HISTORY_ROW),padding={8,0,8,0},align_y=.Center,fill=fill,stroke=open?ui.tone(ctx,"toggle_on_stroke"):{},stroke_width=1,radius=ui.metric(ctx,"radius_control")}) {
         if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=2}) {
             when_:=ai_time_ago(ago)
             room:=max(width-16-9-7-ui.text_width(&ctx.font,when_,small)-10,1)
             if ui.box(ctx,{width=ui.GROW,height=ui.fixed(17),gap=7,align_y=.Center}) {
                 pulse_dot(ctx,color,false,9)
-                shown:=ai_chat_menu_label(ctx,title,room,th.font_small)
+                shown:=ai_chat_menu_label(ctx,title,room,ui.metric(ctx,"font_small"))
                 at:=ai_index_fold(shown,needle) if needle!="" else -1
                 if at>=0 && (shown==title || at+len(needle)<=len(shown)-len(ui.ELLIPSIS)) {
                     // What the search found, lit, in the run of the title.
                     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(17),align_y=.Center}) {
-                        ui.label(ctx,shown[:at],th.font_small,th.text)
-                        if ui.box(ctx,{width=ui.FIT,height=ui.fixed(15),align_y=.Center,fill=ui.color_alpha(th.accent,71),radius=2}) {
-                            ui.label(ctx,shown[at:][:len(needle)],th.font_small,th.text,font=ui.FONT_SEMIBOLD)
+                        ui.label(ctx,shown[:at],ui.metric(ctx,"font_small"),ui.tone(ctx,"text"))
+                        if ui.box(ctx,{width=ui.FIT,height=ui.fixed(15),align_y=.Center,fill=ui.color_alpha(ui.tone(ctx,"accent"),71),radius=2}) {
+                            ui.label(ctx,shown[at:][:len(needle)],ui.metric(ctx,"font_small"),ui.tone(ctx,"text"),font=ui.FONT_SEMIBOLD)
                         }
-                        ui.label(ctx,shown[at+len(needle):],th.font_small,th.text,0)
+                        ui.label(ctx,shown[at+len(needle):],ui.metric(ctx,"font_small"),ui.tone(ctx,"text"),0)
                     }
                 } else {
-                    ui.label(ctx,shown,th.font_small,th.text,0)
+                    ui.label(ctx,shown,ui.metric(ctx,"font_small"),ui.tone(ctx,"text"),0)
                 }
-                ui.label(ctx,when_,small,th.text_muted)
+                ui.label(ctx,when_,small,ui.tone(ctx,"text_muted"))
             }
-            if last!="" {ui.label(ctx,ai_chat_menu_label(ctx,last,max(width-16,1),th.font_small),th.font_small,th.text_muted,0)}
+            if last!="" {ui.label(ctx,ai_chat_menu_label(ctx,last,max(width-16,1),ui.metric(ctx,"font_small")),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"),0)}
         }
     }
     return it.clicked
@@ -522,7 +520,7 @@ ai_time_ago :: proc(ms:i64) -> string {
 
 @(private)
 ai_chat_menu_label :: proc(ctx:^ui.Context,text:string,width:f32,size:f32=0) -> string {
-    size:=size if size>0 else ctx.theme.font_small
+    size:=size if size>0 else ui.metric(ctx,"font_small")
     if ui.text_width(&ctx.font,text,size)<=width {return text}
     prefix:=ui.text_cut(&ctx.font,text,size,max(width,0))
     bytes:=ui.text_reserve(ctx,len(prefix)+len(ui.ELLIPSIS))
@@ -550,9 +548,8 @@ ai_prompt_height :: proc(s:^Session,width,size:f32) -> f32 {
 ai_chat_content_build :: proc(s:^Session,width,height:f32,size:f32=0) {
     m:=s.ai
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     expanded:=size>0
-    size:=expanded?size:th.font_small
+    size:=expanded?size:ui.metric(ctx,"font_small")
     id:=shell_id(s.gui,"ai_chat")
     ui.id_push(ctx,id)
     defer ui.id_pop(ctx)
@@ -590,7 +587,7 @@ ai_chat_content_build :: proc(s:^Session,width,height:f32,size:f32=0) {
                 ai_transcript_draw(s,m,task,transcript_height-rise,width-2*AI_THREAD_MARGIN,expanded?size:0)
             }
             if current {ai_chat_task_actions(s,task,width)}
-            ai_composer_build(s,width,context_rows,th.well,th.well_stroke,size)
+            ai_composer_build(s,width,context_rows,ui.tone(ctx,"well"),ui.tone(ctx,"well_stroke"),size)
             if rise>0 {if ui.box(ctx,{width=ui.GROW,height=ui.fixed(rise)}) {}}
             m.composer_empty_y=0
         case agents_height==0:
@@ -599,7 +596,7 @@ ai_chat_content_build :: proc(s:^Session,width,height:f32,size:f32=0) {
         case:
             m.composer_empty_y=0
             if ui.box(ctx,{width=ui.GROW,height=ui.fixed(transcript_height)}) {}
-            ai_composer_build(s,width,context_rows,th.well,th.well_stroke,size)
+            ai_composer_build(s,width,context_rows,ui.tone(ctx,"well"),ui.tone(ctx,"well_stroke"),size)
         }
     }
     // An asset dropped on the chat goes with the next message, and an entity
@@ -608,7 +605,7 @@ ai_chat_content_build :: proc(s:^Session,width,height:f32,size:f32=0) {
     if g.drag.kind!=.Asset && g.drag.kind!=.Entity {return}
     area:=m.chat_rect
     if drag_over(g,area) {
-        if ui.box(ctx,{width=ui.fixed(area.w),height=ui.fixed(area.h),float={to=.Surface,offset={area.x,area.y},layer=ui.LAYER_PANEL},fill=ui.color_alpha(th.accent,18),stroke=ui.color_alpha(th.accent,140),stroke_width=1.5,radius=th.radius_popup}) {}
+        if ui.box(ctx,{width=ui.fixed(area.w),height=ui.fixed(area.h),float={to=.Surface,offset={area.x,area.y},layer=ui.LAYER_PANEL},fill=ui.color_alpha(ui.tone(ctx,"accent"),18),stroke=ui.color_alpha(ui.tone(ctx,"accent"),140),stroke_width=1.5,radius=ui.metric(ctx,"radius_popup")}) {}
     }
     if drag_dropped(g,area) {
         switch g.drag.kind {
@@ -624,13 +621,13 @@ ai_chat_content_build :: proc(s:^Session,width,height:f32,size:f32=0) {
 // middle of the panel, a little above its center, under the mark in gray.
 @(private)
 ai_chat_empty_build :: proc(s:^Session,width,room:f32,context_rows:int) {
-    ctx:=s.gui.ctx;th:=&ctx.theme
+    ctx:=s.gui.ctx
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(max(ai_chat_empty_top(room)-AI_EMPTY_MARK-AI_EMPTY_GAP,0))}) {}
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(AI_EMPTY_MARK),align_x=.Center,align_y=.Center}) {
-        ui.icon(ctx,ui.icon_user(u8(User_Icon.Mirai_Shape)),th.well_stroke,AI_EMPTY_MARK)
+        ui.icon(ctx,ui.icon_user(u8(User_Icon.Mirai_Shape)),ui.tone(ctx,"well_stroke"),AI_EMPTY_MARK)
     }
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(AI_EMPTY_GAP)}) {}
-    ai_composer_build(s,width,context_rows,th.popup,th.well_stroke,th.font)
+    ai_composer_build(s,width,context_rows,ui.tone(ctx,"popup"),ui.tone(ctx,"well_stroke"),ui.metric(ctx,"font"))
 }
 @(private) AI_EMPTY_RISE :: f32(20) // what the composer of an empty chat stands above the middle
 @(private) AI_THREAD_MARGIN :: f32(8) // of the thread from the sides of the panel, beyond its padding
@@ -659,14 +656,13 @@ ai_composer_context_rows :: proc(s:^Session,width:f32) -> int {
 ai_composer_build :: proc(s:^Session,width:f32,context_rows:int,fill,stroke:ui.Color,size:f32=0) {
     m:=s.ai
     ctx:=s.gui.ctx
-    th:=&ctx.theme
-    size:=size>0?size:th.font_small
+    size:=size>0?size:ui.metric(ctx,"font_small")
     field:=ui.id(ctx,"prompt")
     shown:=ai_task_find(m,m.selected)
     subagent:=shown!=nil && ai_task_subagent(shown)
     placeholder:="Message..."
     if subagent {placeholder=ui.text_store(ctx,fmt.tprintf("Message %s...",ai_chat_menu_label(ctx,ai_chat_title(base.text_get(shown.title[:])),max(width-90,1),size)))}
-    if ui.box(ctx,{id=ui.id(ctx,"composer"),width=ui.GROW,height=ui.FIT,direction=.Column,padding={9,7,9,6},gap=5,fill=fill,stroke=ctx.edit.id==field?th.accent:stroke,radius=th.radius_popup,track=true}) {
+    if ui.box(ctx,{id=ui.id(ctx,"composer"),width=ui.GROW,height=ui.FIT,direction=.Column,padding={9,7,9,6},gap=5,fill=fill,stroke=ctx.edit.id==field?ui.tone(ctx,"accent"):stroke,radius=ui.metric(ctx,"radius_popup"),track=true}) {
         pin_rows:=min(ai_pin_rows(s,width-22),context_rows)
         ai_pins_build(s,width-22,pin_rows)
         about_rows:=min(ai_about_rows(m),context_rows-pin_rows)
@@ -703,14 +699,14 @@ ai_composer_build :: proc(s:^Session,width:f32,context_rows:int,fill,stroke:ui.C
             if !subagent {
                 ai_context_window_build(s,width)
                 ai_annotate_button(s)
-                if ui.button(ctx,ui.id(ctx,"attach"),{icon=.Texture,icon_color=th.text_muted,icon_size=14,style=.Ghost,width=24,height=24,disabled=m.reference_count>=AI_REFERENCES}).clicked {ai_reference_ask(s)}
+                if ui.button(ctx,ui.id(ctx,"attach"),{icon=.Texture,icon_color=ui.tone(ctx,"text_muted"),icon_size=14,variant="ghost",width=24,height=24,disabled=m.reference_count>=AI_REFERENCES}).clicked {ai_reference_ask(s)}
             }
             // While the agent works the button stops it; something written is sent instead.
             if busy && m.prompt_length==0 {
-                if ui.button(ctx,ui.id(ctx,"stop"),{icon=.Stop,icon_size=11,style=.Accent,width=24,height=24}).clicked {
+                if ui.button(ctx,ui.id(ctx,"stop"),{icon=.Stop,icon_size=11,variant="accent",width=24,height=24}).clicked {
                     if task:=ai_task_find(m,m.selected);task!=nil {ai_task_cancel(s,m,task)}
                 }
-            } else if ui.button(ctx,ui.id(ctx,"send"),{icon=ui.icon_user(u8(User_Icon.Up)),icon_size=15,style=.Accent,width=24,height=24,disabled=m.pending || m.prompt_length==0 || !connected || m.login || m.installer!=0 || !s.has_project}).clicked {ai_chat_send(s)}
+            } else if ui.button(ctx,ui.id(ctx,"send"),{icon=ui.icon_user(u8(User_Icon.Up)),icon_size=15,variant="accent",width=24,height=24,disabled=m.pending || m.prompt_length==0 || !connected || m.login || m.installer!=0 || !s.has_project}).clicked {ai_chat_send(s)}
         }
     }
 }
@@ -727,7 +723,7 @@ ai_tokens_short :: proc(n:i64) -> string {
 // the percent, which opens how many tokens that is and Compact now.
 @(private)
 ai_context_window_build :: proc(s:^Session,width:f32) {
-    m:=s.ai;ctx:=s.gui.ctx;th:=&ctx.theme
+    m:=s.ai;ctx:=s.gui.ctx
     task:=ai_task_find(m,m.selected)
     if task==nil {return}
     u:=task.conversation.usage
@@ -738,8 +734,8 @@ ai_context_window_build :: proc(s:^Session,width:f32) {
     popup:=ui.id_derive(ctx,id,"popup")
     open:=ui.popup_is_open(ctx,popup)
     it:=ui.interact(ctx,id,{.Focusable})
-    if ui.box(ctx,{id=id,width=ui.FIT,height=ui.fixed(24),padding={5,0,5,0},align_y=.Center,fill=open?th.raised:(it.hot?ui.color_hover(th):{}),radius=th.radius_control}) {
-        ui.label(ctx,fmt.tprintf("%d%%",percent),th.font_caption,open?th.text:(percent>=80?th.danger:th.text_faint))
+    if ui.box(ctx,{id=id,width=ui.FIT,height=ui.fixed(24),padding={5,0,5,0},align_y=.Center,fill=open?ui.tone(ctx,"raised"):(it.hot?ui.color_hover(ctx):{}),radius=ui.metric(ctx,"radius_control")}) {
+        ui.label(ctx,fmt.tprintf("%d%%",percent),ui.metric(ctx,"font_caption"),open?ui.tone(ctx,"text"):(percent>=80?ui.tone(ctx,"danger"):ui.tone(ctx,"text_faint")))
     }
     if it.clicked && !open {
         // Over the composer, not over the percent inside it.
@@ -749,13 +745,13 @@ ai_context_window_build :: proc(s:^Session,width:f32) {
     popup_width:=min(width,AI_POPUP_WIDTH)
     if ui.popup(ctx,popup,{side=.Above,width=popup_width,within=m.chat_rect,align_right=true,padding=12,gap=10}) {
         if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=8,align_y=.Center}) {
-            ui.label(ctx,"Context",th.font,th.text,0,font=ui.FONT_MEDIUM)
-            ui.label(ctx,fmt.tprintf("%s of %s tokens",ai_tokens_short(u.context_used),ai_tokens_short(u.context_size)),th.font_caption,th.text_muted)
+            ui.label(ctx,"Context",ui.metric(ctx,"font"),ui.tone(ctx,"text"),0,font=ui.FONT_MEDIUM)
+            ui.label(ctx,fmt.tprintf("%s of %s tokens",ai_tokens_short(u.context_used),ai_tokens_short(u.context_size)),ui.metric(ctx,"font_caption"),ui.tone(ctx,"text_muted"))
         }
-        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(4),fill=th.well,radius=2}) {
-            if ui.box(ctx,{width=ui.fixed(f32(fraction)*(popup_width-24)),height=ui.fixed(4),fill=th.accent,radius=2}) {}
+        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(4),fill=ui.tone(ctx,"well"),radius=2}) {
+            if ui.box(ctx,{width=ui.fixed(f32(fraction)*(popup_width-24)),height=ui.fixed(4),fill=ui.tone(ctx,"accent"),radius=2}) {}
         }
-        if ui.button(ctx,ui.id(ctx,"compact"),{label="Compact now",style=.Accent,width=-1,height=28,size=th.font_small,center=true}).clicked {
+        if ui.button(ctx,ui.id(ctx,"compact"),{label="Compact now",variant="accent",width=-1,height=28,size=ui.metric(ctx,"font_small"),center=true}).clicked {
             if message:=ai_chat_compact(s,task);message!="" {notify(s,message)}
             ui.popup_close(ctx,popup)
         }
@@ -764,7 +760,7 @@ ai_context_window_build :: proc(s:^Session,width:f32) {
 
 @(private)
 ai_selection_context_width :: proc(ctx:^ui.Context,w:core.World_Ref,e:core.Entity,width:f32) -> f32 {
-    return min(width,math.ceil(ui.text_width(&ctx.font,entity_name(w,e),ctx.theme.font_small))+AI_CHIP_ROOM+AI_CHIP_PIN_ROOM)
+    return min(width,math.ceil(ui.text_width(&ctx.font,entity_name(w,e),ui.metric(ctx,"font_small")))+AI_CHIP_ROOM+AI_CHIP_PIN_ROOM)
 }
 
 @(private)
@@ -774,7 +770,7 @@ ai_selection_context_rows :: proc(s:^Session,width:f32) -> int {
         if front.kind==asset.KIND_MATERIAL || front.picked_count==0 {return 0}
         used:=f32(0);rows:=1
         for i in 0..<front.picked_count {
-            size:=min(width,math.ceil(ui.text_width(&s.gui.ctx.font,base.text_get(front.picked[i][:]),s.gui.ctx.theme.font_small))+AI_CHIP_ROOM)
+            size:=min(width,math.ceil(ui.text_width(&s.gui.ctx.font,base.text_get(front.picked[i][:]),ui.metric(s.gui.ctx,"font_small")))+AI_CHIP_ROOM)
             if used>0 && used+size>width {rows+=1;used=0}
             used+=size+5
         }
@@ -799,13 +795,13 @@ ai_selection_context_build :: proc(s:^Session,width:f32,rows:int) {
         used:=f32(0);row:=0
         for i in 0..<front.picked_count {
             label:=base.text_get(front.picked[i][:])
-            size:=min(width,math.ceil(ui.text_width(&ctx.font,label,ctx.theme.font_small))+AI_CHIP_ROOM)
+            size:=min(width,math.ceil(ui.text_width(&ctx.font,label,ui.metric(ctx,"font_small")))+AI_CHIP_ROOM)
             if used>0 && used+size>width {ui.box_end(ctx,{});row+=1;used=0}
             if row>=rows {break}
             if used==0 {ui.box_begin(ctx,{width=ui.GROW,height=ui.fixed(AI_CHIP_HEIGHT),gap=5,align_y=.Center})}
-            if ui.box(ctx,{width=ui.fixed(size),height=ui.fixed(AI_CHIP_HEIGHT),padding={5,0,5,0},gap=4,align_y=.Center,fill=ctx.theme.field,radius=ctx.theme.radius_control}) {
-                ui.icon(ctx,asset_document_icon(s,front),ctx.theme.text_muted,12)
-                ui.label(ctx,ai_chat_menu_label(ctx,label,max(size-AI_CHIP_ROOM+12,1),ctx.theme.font_small),ctx.theme.font_small,ctx.theme.text_muted,size-28)
+            if ui.box(ctx,{width=ui.fixed(size),height=ui.fixed(AI_CHIP_HEIGHT),padding={5,0,5,0},gap=4,align_y=.Center,fill=ui.tone(ctx,"field"),radius=ui.metric(ctx,"radius_control")}) {
+                ui.icon(ctx,asset_document_icon(s,front),ui.tone(ctx,"text_muted"),12)
+                ui.label(ctx,ai_chat_menu_label(ctx,label,max(size-AI_CHIP_ROOM+12,1),ui.metric(ctx,"font_small")),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"),size-28)
             }
             used+=size+5
         }
@@ -821,21 +817,21 @@ ai_selection_context_build :: proc(s:^Session,width:f32,rows:int) {
         if used>0 && used+size>width {ui.box_end(ctx,{});row+=1;used=0}
         if row>=rows {break}
         if used==0 {ui.box_begin(ctx,{width=ui.GROW,height=ui.fixed(AI_CHIP_HEIGHT),gap=5,align_y=.Center})}
-        if ui.box(ctx,{width=ui.fixed(size),height=ui.fixed(AI_CHIP_HEIGHT),padding={5,0,5,0},gap=4,align_y=.Center,fill=ctx.theme.field,radius=ctx.theme.radius_control}) {
+        if ui.box(ctx,{width=ui.fixed(size),height=ui.fixed(AI_CHIP_HEIGHT),padding={5,0,5,0},gap=4,align_y=.Center,fill=ui.tone(ctx,"field"),radius=ui.metric(ctx,"radius_control")}) {
             icon,_:=entity_icon(s,w,e)
             name:=entity_name(w,e)
-            label:=ai_chat_menu_label(ctx,name,max(size-AI_CHIP_ROOM-AI_CHIP_PIN_ROOM,1),ctx.theme.font_small)
-            look:=ui.Node_Style{radius=2,text={size=ctx.theme.font_small,color=ctx.theme.text_muted}}
-            if ui.button(ctx,ui.id(ctx,"context",index+1),{label=label,icon=icon,icon_color=ctx.theme.text_muted,icon_size=12,padding=-1,style=.Ghost,width=size-28-AI_CHIP_PIN_ROOM,height=AI_CHIP_HEIGHT-2,size=ctx.theme.font_small,look=&look}).clicked {focus_selection(s,w)}
+            label:=ai_chat_menu_label(ctx,name,max(size-AI_CHIP_ROOM-AI_CHIP_PIN_ROOM,1),ui.metric(ctx,"font_small"))
+            look:=ui.Node_Style{radius=2,text={size=ui.metric(ctx,"font_small"),color=ui.tone(ctx,"text_muted")}}
+            if ui.button(ctx,ui.id(ctx,"context",index+1),{label=label,icon=icon,icon_color=ui.tone(ctx,"text_muted"),icon_size=12,padding=-1,variant="ghost",width=size-28-AI_CHIP_PIN_ROOM,height=AI_CHIP_HEIGHT-2,size=ui.metric(ctx,"font_small"),look=&look}).clicked {focus_selection(s,w)}
             ai_chip_pin(s,ui.id(ctx,"pin_context",index+1),AI_PIN_ENTITY,ai_entity_id_text(w,entity_author(w,e)),name)
-            if ui.button(ctx,ui.id(ctx,"remove_context",index+1),{icon=.Cross,icon_color=ctx.theme.text_muted,icon_size=10,padding=-1,style=.Ghost,width=12,height=12,look=&look}).clicked {remove=e}
+            if ui.button(ctx,ui.id(ctx,"remove_context",index+1),{icon=.Cross,icon_color=ui.tone(ctx,"text_muted"),icon_size=10,padding=-1,variant="ghost",width=12,height=12,look=&look}).clicked {remove=e}
         }
         used+=size+5;shown+=1
     }
     if used>0 {ui.box_end(ctx,{})}
     if len(s.selection.entities)>shown {
         text:=ui.text_commit(ctx,fmt.bprintf(ui.text_reserve(ctx,32),"+%d selected",len(s.selection.entities)-shown))
-        ui.label(ctx,text,ctx.theme.font_small,ctx.theme.text_faint)
+        ui.label(ctx,text,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"))
     }
     if remove!=core.NONE {history.selection_toggle(s.selection,remove)}
 }
@@ -864,7 +860,7 @@ ai_material_chip_rows :: proc(s:^Session,width:f32) -> int {
     ctx:=s.gui.ctx
     used:=f32(0);rows:=1
     for chip in chips {
-        size:=min(width,math.ceil(ui.text_width(&ctx.font,chip.label,ctx.theme.font_small))+AI_CHIP_ROOM)
+        size:=min(width,math.ceil(ui.text_width(&ctx.font,chip.label,ui.metric(ctx,"font_small")))+AI_CHIP_ROOM)
         if used>0 && used+size>width {rows+=1;used=0}
         used+=size+5
     }
@@ -879,15 +875,15 @@ ai_material_chips_build :: proc(s:^Session,width:f32,rows:int) {
     remove:=-3
     used:=f32(0);row:=0
     for chip,i in chips {
-        size:=min(width,math.ceil(ui.text_width(&ctx.font,chip.label,ctx.theme.font_small))+AI_CHIP_ROOM)
+        size:=min(width,math.ceil(ui.text_width(&ctx.font,chip.label,ui.metric(ctx,"font_small")))+AI_CHIP_ROOM)
         if used>0 && used+size>width {ui.box_end(ctx,{});row+=1;used=0}
         if row>=rows {break}
         if used==0 {ui.box_begin(ctx,{width=ui.GROW,height=ui.fixed(AI_CHIP_HEIGHT),gap=5,align_y=.Center})}
-        if ui.box(ctx,{width=ui.fixed(size),height=ui.fixed(AI_CHIP_HEIGHT),padding={5,0,5,0},gap=4,align_y=.Center,fill=ctx.theme.field,radius=ctx.theme.radius_control}) {
-            look:=ui.Node_Style{radius=2,text={size=ctx.theme.font_small,color=ctx.theme.text_muted}}
-            ui.icon(ctx,.Material,ctx.theme.text_muted,12)
-            ui.label(ctx,ai_chat_menu_label(ctx,chip.label,max(size-AI_CHIP_ROOM,1),ctx.theme.font_small),ctx.theme.font_small,ctx.theme.text_muted,size-40)
-            if ui.button(ctx,ui.id(ctx,"remove_material",i+1),{icon=.Cross,icon_color=ctx.theme.text_muted,icon_size=10,padding=-1,style=.Ghost,width=12,height=12,look=&look}).clicked {remove=chip.pick}
+        if ui.box(ctx,{width=ui.fixed(size),height=ui.fixed(AI_CHIP_HEIGHT),padding={5,0,5,0},gap=4,align_y=.Center,fill=ui.tone(ctx,"field"),radius=ui.metric(ctx,"radius_control")}) {
+            look:=ui.Node_Style{radius=2,text={size=ui.metric(ctx,"font_small"),color=ui.tone(ctx,"text_muted")}}
+            ui.icon(ctx,.Material,ui.tone(ctx,"text_muted"),12)
+            ui.label(ctx,ai_chat_menu_label(ctx,chip.label,max(size-AI_CHIP_ROOM,1),ui.metric(ctx,"font_small")),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"),size-40)
+            if ui.button(ctx,ui.id(ctx,"remove_material",i+1),{icon=.Cross,icon_color=ui.tone(ctx,"text_muted"),icon_size=10,padding=-1,variant="ghost",width=12,height=12,look=&look}).clicked {remove=chip.pick}
         }
         used+=size+5
     }

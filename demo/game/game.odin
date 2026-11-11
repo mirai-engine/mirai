@@ -6,6 +6,7 @@ import "core:math"
 import "core:math/linalg"
 import "core:strings"
 import "mirai:core"
+import cam "mirai:engine/camera"
 import destruct "plugins:destruct/runtime"
 import gui "mirai:engine/gui"
 import inp "mirai:engine/input"
@@ -129,14 +130,8 @@ SWATCH_DEFAULT :: Swatch{reach=3}
 PULSE_DEFAULT :: Pulse{speed=2,low=0.3,high=1}
 PROJECTILE_DEFAULT :: Projectile{speed=THROW_SPEED,seconds_left=CUBE_SECONDS}
 
-// The look yaw of an upright character body: where its front, -Z, heads.
-yaw_of :: proc "contextless" (rotation:mm.Quat) -> f32 {
-    ahead:=mm.quat_forward(rotation)
-    return mm.yaw_of_direction(ahead)
-}
-
-// The actions the game reads, those of interface_demo.odin too; move and jump are of physics
-// (locomotion.Walk_Action) and look of the engine (inp.Look_Action).
+// The actions the game reads, those of interface_demo.odin too; move and look are of the engine
+// (inp.Move_Action, inp.Look_Action) and jump of the locomotion (locomotion.Walk_Action).
 @(actions)
 Action :: enum u8 {
     Use,Flashlight,Throw,Bark,Switch_Body,Overhead_View,
@@ -178,15 +173,13 @@ action_defaults :: proc "contextless" () -> [Action]inp.Action_Bindings {
 // The Menu action lets the focused seat go of its body, and that frees the mouse; again, it takes
 // the body back. The animation gallery lets go too while its player adjusts a panel.
 @(step="frame")
-game_menu :: proc(game:^Game,events:core.Ref(gui.UI_Events),state:core.Ref(inp.Seats),seats:^core.Table(inp.Seat,.Read),drivables:^core.Table(inp.Drivable,.Read),moves:^core.Table(inp.Move_Input),requests:^inp.Seat_Requests) {
+game_menu :: proc(game:^Game,events:core.Ref(gui.UI_Events),state:core.Ref(inp.Seats),seats:^core.Table(inp.Seat,.Read),requests:^inp.Seat_Requests) {
     if !gui.menu_pressed(events.ptr) {return}
     seat:=inp.focused(state.ptr,seats)
     if seat==core.NONE {return}
-    if body:=inp.body_of(drivables,seat);body!=core.NONE {
+    if body:=inp.body_of(seats,seat);body!=core.NONE {
         game.left=body
         inp.release(requests,seat)
-        // Nobody writes the Move_Input of a body no seat drives: it would keep walking.
-        if move:=core.edit(moves,body);move!=nil {move.move,move.buttons={},{}}
     } else if game.left!=core.NONE {
         inp.drive(requests,seat,game.left)
         game.left=core.NONE
@@ -204,7 +197,7 @@ swatch_index :: proc(swatch:Swatch) -> int {return int(swatch.index)%%len(SWATCH
 @(step="fixed")
 game_use :: proc(
     players:^core.Table(Player),doors:^core.Table(Door),swatches:^core.Table(Swatch),inputs:^core.Table(inp.Move_Input,.Read),
-    drivables:^core.Table(inp.Drivable,.Read),actions:inp.Input_Of(Action),worlds:^core.Table(core.World_Transform,.Read),names:^core.Table(core.Name,.Read),spawner:scene.Spawner,
+    sight:cam.Sight,actions:inp.Input_Of(Action),worlds:^core.Table(core.World_Transform,.Read),names:^core.Table(core.Name,.Read),spawner:scene.Spawner,
 ) {
     for row in 0..<core.count(players) {
         e:=core.entity_at(players,row)
@@ -226,7 +219,7 @@ game_use :: proc(
                 if in_reach(worlds,feet,core.entity_at(swatches,at),swatch.reach) {swatch.index=i32((swatch_index(swatch^)+1)%len(SWATCH_MATERIALS))}
             }
         }
-        if origin,aim,aimed:=inp.aim(drivables,worlds,e);aimed && inp.pressed(actions,e,.Throw) {
+        if origin,aim,aimed:=cam.aim(sight,e);aimed && inp.pressed(actions,e,.Throw) {
             from:=origin+aim*0.8
             turn:=mm.quat_from_euler({input.look_pitch,input.look_yaw,0})
             scene.spawn(spawner,THROWN_CUBE,{from,turn,THROWN_CUBE_SIZE},transient=true)

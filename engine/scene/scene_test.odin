@@ -352,8 +352,8 @@ a_load_that_fails_halfway_leaves_the_world_as_it_was :: proc(t:^testing.T) {
     testing.expect(t,len(ranges)==64 && ranges[0]==4 && ranges[63]==4)
 }
 
-// The shape of input.Drivable: Entity fields of a component.
-@(private="file") Scene_Test_Drivable :: struct {seat,camera:core.Entity}
+// Entity fields of a component: one to outside the prefab, one inside it.
+@(private="file") Scene_Test_Rig :: struct {seat,camera:core.Entity}
 
 @(private="file")
 Scene_Test_World :: struct {
@@ -363,7 +363,7 @@ Scene_Test_World :: struct {
     transforms:core.Table(core.Transform),
     parents:core.Table(core.Parent),
     worlds:core.Table(core.World_Transform),
-    drivables:core.Table(Scene_Test_Drivable) `mirai:"name=Drivable"`,
+    rigs:core.Table(Scene_Test_Rig) `mirai:"name=Rig"`,
     references:core.Table(Scene_Reference),
     members:core.Table(Section_Member),
     dormants:core.Table(Dormant),
@@ -561,7 +561,7 @@ spawned_prefabs_keep_their_entity_references_inside :: proc(t:^testing.T) {
     outside,root,camera:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
     core.add(&w.ids,outside,core.Id{7});core.add(&w.ids,root,core.Id{1});core.add(&w.ids,camera,core.Id{2})
     core.add(&w.parents,camera,core.Parent{entity=root})
-    core.add(&w.drivables,root,Scene_Test_Drivable{seat=outside,camera=camera})
+    core.add(&w.rigs,root,Scene_Test_Rig{seat=outside,camera=camera})
     core.test_world_settle(w)
     document:asset.Scene
     captured,capture_error:=capture(ref,&document,&types,{root=root,id={3,4}})
@@ -587,10 +587,10 @@ spawned_prefabs_keep_their_entity_references_inside :: proc(t:^testing.T) {
     }
     core.test_world_settle(w)
     for copy in made {
-        drivable,found:=core.get(&w.drivables,copy[0])
+        link,found:=core.get(&w.rigs,copy[0])
         testing.expect(t,found)
-        testing.expect_value(t,drivable.camera,copy[1])
-        testing.expect_value(t,drivable.seat,core.NONE)
+        testing.expect_value(t,link.camera,copy[1])
+        testing.expect_value(t,link.seat,core.NONE)
     }
 }
 

@@ -21,7 +21,7 @@ animation_motor_preserves_world_root_direction_facing_and_physical_speed_limits_
     delta:=anim.Root_Delta{translation={.1,.5,.2},rotation=mm.quat_axis_angle({0,1,0},.3)}
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     input:=animation_motor_input(delta,actor,10,.1)
-    world:=mm.quat_rotate(mm.quat_axis_angle({0,1,0},input.look_yaw),input.move)*10*.1
+    world:=input.move*10*.1
     requested:=mm.quat_rotate(actor.rotation,delta.translation*actor.scale);requested.y=0
     stopped:=animation_motor_input(delta,actor,10,0)
     clamped:=animation_motor_input({translation={100,0,0},rotation=1},actor,10,.1)

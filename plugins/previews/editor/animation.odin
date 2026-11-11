@@ -461,7 +461,6 @@ animation_document :: proc(s:^editor.Session,previews:^Previews,w:core.World_Ref
     chosen:=d.id
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     a:=app.assets
     scene:=scene_of(w)
     if p.chosen!=chosen {
@@ -533,7 +532,7 @@ animation_say :: proc(d:^editor.Asset_Document,p:^Animation,clip:anim.Clip,durat
 // asset that chooses another, as the Hierarchy does.
 @(private)
 animation_toolbar :: proc(s:^editor.Session,p:^Animation,clip:anim.Clip) {
-    g:=s.gui;ctx:=g.ctx;th:=&ctx.theme
+    g:=s.gui;ctx:=g.ctx
     rect,found:=editor.asset_toolbar_whole(g)
     if !found || rect.w<=0 || len(p.clips)==0 {return}
     if ui.box(ctx,{width=ui.fixed(rect.w),height=ui.fixed(rect.h),align_x=.Center,align_y=.Center,float={to=.Surface,offset={rect.x,rect.y},layer=ui.LAYER_BAR}}) {
@@ -542,7 +541,7 @@ animation_toolbar :: proc(s:^editor.Session,p:^Animation,clip:anim.Clip) {
         names:=make([]string,len(p.clips),context.temp_allocator)
         for &info,i in p.clips {names[i]=base.text_get(info.name[:])}
         selected:=max(int(clip)-1,0)
-        if ui.dropdown(ctx,ui.id(ctx,"clip"),{list=names},&selected,{width=200,height=th.control,searchable=len(names)>10}) {
+        if ui.dropdown(ctx,ui.id(ctx,"clip"),{list=names},&selected,{width=200,height=ui.metric(ctx,"control"),searchable=len(names)>10}) {
             base.text_set(p.clip_name[:],names[selected])
             p.time,p.playing=0,false
         }
@@ -627,7 +626,7 @@ animation_timeline :: proc(s:^editor.Session,p:^Animation,a:^host.Assets,clip:an
         }
     }
     if ui.popup(ctx,naming,{width=200}) {
-        result:=ui.text_field(ctx,field,p.marker.name[:],&p.marker.length,{height=ctx.theme.control,placeholder="Marker name"})
+        result:=ui.text_field(ctx,field,p.marker.name[:],&p.marker.length,{height=ui.metric(ctx,"control"),placeholder="Marker name"})
         if result.committed || result.cancelled {ui.popup_close(ctx,naming)}
         if name:=strings.trim_space(string(p.marker.name[:p.marker.length]));result.committed && name!="" {animation_marker_write(s,a,p,clip,name,false)}
     }
@@ -676,19 +675,19 @@ animation_marker_write :: proc(s:^editor.Session,a:^host.Assets,p:^Animation,cli
 // height it can take.
 @(private)
 animation_details :: proc(s:^editor.Session,p:^Animation,models:^Thumbnail_Models,a:^host.Assets,clip:anim.Clip,width,room:f32) {
-    ctx:=s.gui.ctx;th:=&ctx.theme
+    ctx:=s.gui.ctx
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(editor.INSPECTOR_HEAD),padding={11,0,7,0},gap=6,align_y=.Center}) {
-        ui.icon(ctx,.Rotate,th.text_muted,15)
+        ui.icon(ctx,.Rotate,ui.tone(ctx,"text_muted"),15)
         title:=clip!=0?base.text_get(p.clips[clip-1].name[:]):editor.asset_name_of(a,p.chosen)
-        ui.label(ctx,title,th.font_heading,th.text,0,font=ui.FONT_SEMIBOLD)
+        ui.label(ctx,title,ui.metric(ctx,"font_heading"),ui.tone(ctx,"text"),0,font=ui.FONT_SEMIBOLD)
     }
     origin:=editor.ai_provenance_asset_row(s)
-    if ui.scroll_area(ctx,ui.id(ctx,"details"),&p.details_scroll,{height=ui.FIT,max_height=max(room-editor.INSPECTOR_HEAD-origin,40),padding={8,7,8,8},gap=7,fade=th.panel}) {animation_cards(s,p,models,a,clip,width)}
+    if ui.scroll_area(ctx,ui.id(ctx,"details"),&p.details_scroll,{height=ui.FIT,max_height=max(room-editor.INSPECTOR_HEAD-origin,40),padding={8,7,8,8},gap=7,fade=ui.tone(ctx,"panel")}) {animation_cards(s,p,models,a,clip,width)}
 }
 
 @(private)
 animation_cards :: proc(s:^editor.Session,p:^Animation,models:^Thumbnail_Models,a:^host.Assets,clip:anim.Clip,width:f32) {
-    ctx:=s.gui.ctx;th:=&ctx.theme
+    ctx:=s.gui.ctx
     if clip!=0 {
         if details_card(s,p,.Clip,"Clip",.Play) {
             info:=&p.clips[clip-1]
@@ -720,9 +719,9 @@ animation_cards :: proc(s:^editor.Session,p:^Animation,models:^Thumbnail_Models,
             if candidate.mesh==p.mesh {selected=i+1}
         }
         editor.row_begin(ctx,"Subject")
-        if ui.dropdown(ctx,ui.id(ctx,"subject"),{list=names},&selected,{width=-1,height=th.row,searchable=len(names)>10}) {p.mesh=selected>0?meshes[selected-1].mesh:{}}
+        if ui.dropdown(ctx,ui.id(ctx,"subject"),{list=names},&selected,{width=-1,height=ui.metric(ctx,"row"),searchable=len(names)>10}) {p.mesh=selected>0?meshes[selected-1].mesh:{}}
         editor.row_end(ctx)
-        if p.subject.short {ui.label(ctx,"Part of the subject is left out",th.font_small,th.text_muted)}
+        if p.subject.short {ui.label(ctx,"Part of the subject is left out",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))}
     }
 }
 

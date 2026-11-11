@@ -148,8 +148,7 @@ play_view_json :: proc(w:core.World_Ref,targets:[]Play_View_Target,allocator:=co
             player:=core.NONE
             state,seats:=core.world_storage_of(w,input.Seats),core.world_table_of(w,input.Seat)
             if state!=nil && seats!=nil {player=input.focused(state,seats)}
-            target:=follow.target
-            if drivables:=core.world_table_of(w,input.Drivable);drivables!=nil {target=ecamera.follow_target(camera,follow.target,drivables,player)}
+            target:=ecamera.follow_target(camera,follow.target,core.world_table_of(w,core.Parent),seats,player)
             if core.alive(entities,target) {
                 v.follow.entity,v.follow.name=handle_text(target,allocator),entity_name(w,target)
                 v.follow.distance=linalg.length(entity_world(w,target).position-seen.position)

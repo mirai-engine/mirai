@@ -30,7 +30,6 @@ layout_start :: proc(ctx:^Context) {
     ctx.layout_started=true
 }
 
-@(private)
 element_open :: proc(ctx:^Context,e:Element) -> bool {
     // What a retained subtree lays out in the flow of the surface cannot be drawn apart.
     if ctx.retaining!=0 && e.float.to==.None && ctx.layout.open_len<=1 {ctx.retained[ctx.retaining-1].capturable=false}
@@ -50,13 +49,11 @@ element_open :: proc(ctx:^Context,e:Element) -> bool {
     ctx.elements+=1
     return true
 }
-@(private)
 element_close :: proc(ctx:^Context) {
     if ctx.skipped>0 {ctx.skipped-=1;return}
     layout_close(&ctx.layout)
 }
 // An element without children.
-@(private)
 element_leaf :: proc(ctx:^Context,e:Element) {
     element_open(ctx,e)
     element_close(ctx)

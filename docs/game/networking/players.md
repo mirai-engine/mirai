@@ -7,26 +7,27 @@ connect again; the player's secret is kept in their profile, so a returning clie
 
 ## Bodies
 
-A seat drives a body that carries `inp.Drivable`. With `Spawn_Settings.players` on in
-`settings.mirai`, the `spawn` plugin gives each seat, local or remote, the prefab of a
-`Spawn_Point` with `players` on and destroys it with the seat; a point with `players` off is for
-what the game spawns, such as enemies ([prefabs](../core/prefabs.md#at-spawn-points)). Without it,
-the server asks:
+A seat drives a body (`Seat.body`). With a player prefab (`Spawn_Settings.prefab` in
+`settings.mirai`, or one on a `Spawn_Point` with `players` on) the `spawn` plugin gives each seat,
+local or remote, a body of it at a point with `players` on and destroys it with the seat; a point
+with `players` off is for what the game spawns, such as enemies
+([prefabs](../core/prefabs.md#at-spawn-points)). Without one, the server asks:
 
 ```odin
 @(step="fixed",server)
-give_bodies :: proc(seats:^core.Table(inp.Seat,.Read),drivables:^core.Table(inp.Drivable,.Read),
-    requests:^spawn.Spawn_Requests) {
+give_bodies :: proc(seats:^core.Table(inp.Seat,.Read),requests:^spawn.Spawn_Requests) {
     for row in 0..<core.count(seats) {
         seat:=core.entity_at(seats,row)
-        if inp.body_of(drivables,seat)==core.NONE {spawn.spawn(requests,seat,PLAYER_PREFAB)}
+        if core.at(seats,row).body==core.NONE {spawn.spawn(requests,seat,PLAYER_PREFAB)}
     }
 }
 ```
 
 `PLAYER_PREFAB` is the path in the assets of a prefab that carries `multiplayer.Replicate`.
-`inp.seat_of(drivables,body)` gives the seat of a body. A client takes only bodies it predicts;
-`spawn.spawn` on a client is refused (`spawn.client_spawn`).
+`inp.seat_of(seats,body)` gives the seat of a body. On a client the seat of its own player is the
+replica of the one the server made for its connection, its local seat 0; the seats of the other
+players are of another end. A client takes only bodies it predicts; `spawn.spawn` on a client is
+refused (`spawn.client_spawn`).
 
 ## Which connection is a seat
 

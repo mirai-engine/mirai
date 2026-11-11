@@ -1680,9 +1680,13 @@ update_stats :: proc(r: ^Renderer) {
 	pages_stats(r, s)
 	geometry := geometry_refused_problem(r, r.problem_buffer[:])
 	s.problem = geometry
-	for other in ([]string{r.tlas_problem, pages_problem(r)}) {
+	memory := ""
+	if host := rhi.device_stats(r.device).host_memory; host > 0 {
+		memory = fmt.tprintf("%d resources of GPU memory went to system memory because the device memory was full, which slows the frames: a lower resolution or texture quality frees device memory", host)
+	}
+	for other in ([]string{r.tlas_problem, pages_problem(r), memory}) {
 		if other == "" {continue}
-		if s.problem == "" {s.problem = other; continue}
+		if s.problem == "" {s.problem = string(r.problem_buffer[:copy(r.problem_buffer[:], other)]); continue}
 		// The problems before are at the start of problem_buffer: this one follows them.
 		if raw_data(s.problem) != raw_data(r.problem_buffer[:]) {s.problem = string(r.problem_buffer[:copy(r.problem_buffer[:], s.problem)])}
 		tail := fmt.bprintf(r.problem_buffer[len(s.problem):], "; %s", other)

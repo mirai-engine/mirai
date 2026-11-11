@@ -3,6 +3,7 @@ package game
 import "core:math"
 import "core:math/linalg"
 import "mirai:core"
+import cam "mirai:engine/camera"
 import inp "mirai:engine/input"
 import "mirai:host"
 import "mirai:std/base"
@@ -49,7 +50,7 @@ Dig_Inventory :: struct {
 @(step="fixed",stage="react")
 dig_site :: proc(
     commands:core.Commands,sites:^core.Table(Dig_Site),pickups:^core.Table(Dig_Pickup,.Read),players:^core.Table(Player,.Read),
-    drivables:^core.Table(inp.Drivable,.Read),actions:inp.Input_Of(Action),worlds:^core.Table(core.World_Transform,.Read),
+    sight:cam.Sight,actions:inp.Input_Of(Action),worlds:^core.Table(core.World_Transform,.Read),
     requests:^terrain.Terrain_Requests,digs:core.Ref(terrain.Terrain_Digs),inventories:^core.Table(Dig_Inventory),network:core.Network,time:core.Time,
 ) {
     site_entity,found:=core.sole(sites)
@@ -73,7 +74,7 @@ dig_site :: proc(
     }
     for row in 0..<core.count(players) {
         e:=core.entity_at(players,row)
-        origin,ahead,aimed:=inp.aim(drivables,worlds,e)
+        origin,ahead,aimed:=cam.aim(sight,e)
         if !aimed || !inp.pressed(actions,e,.Use) {continue}
         terrain.dig(requests,{kind=.Carve,center=origin+ahead*DIG_REACH,radius=site.radius*0.8,amount=1,blend=0.2})
     }

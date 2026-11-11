@@ -181,7 +181,7 @@ play_focused :: proc(w:core.World_Ref) -> (seat,body:core.Entity) {
     state,seats:=core.world_storage_of(w,input.Seats),core.world_table_of(w,input.Seat)
     if state==nil || seats==nil {return}
     seat=input.focused(state,seats)
-    if drivables:=core.world_table_of(w,input.Drivable);drivables!=nil {body=input.body_of(drivables,seat)}
+    body=input.body_of(seats,seat)
     return
 }
 

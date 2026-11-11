@@ -123,7 +123,7 @@ portal_way :: proc(portals:^core.Table(Portal,$A),worlds:^core.Table(core.World_
 // behind the exit, and its next way does not start at the entrance. A
 // traveler this end drives looks where the portal turned its look, also out
 // of a floor.
-@(step="fixed",loops="game",stage="input",before="locomotion_seat")
+@(step="fixed",loops="game",stage="input",before="camera_drive")
 portals_travel :: proc(
     portals:^core.Table(Portal,.Read),travelers:^core.Table(Traveler,.Read),worlds:^core.Table(core.World_Transform,.Read),
     motions:^core.Table(core.Motion,.Read),characters:^core.Table(phys.Character_State,.Read),

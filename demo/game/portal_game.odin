@@ -3,6 +3,7 @@ package game
 import "core:math"
 import "core:math/linalg"
 import "mirai:core"
+import cam "mirai:engine/camera"
 import inp "mirai:engine/input"
 import phys "plugins:physics/runtime"
 import render "mirai:engine/render"
@@ -176,7 +177,7 @@ portal_fit :: proc(wall:mm.Transform,box:Surface_Box,point,normal,up:[3]f32,othe
 portal_gun :: proc(
     guns:^core.Table(Portal_Gun),mouths:^core.Table(Portal_Mouth),surfaces:^core.Table(Portal_Surface,.Read),cubes:^core.Table(Portal_Cube,.Read),
     rims:^core.Table(portals.Portal_Rim,.Read),openings:^core.Table(portals.Portal,.Read),
-    colliders:^core.Table(phys.Collider,.Read),inputs:^core.Table(inp.Move_Input,.Read),drivables:^core.Table(inp.Drivable,.Read),actions:inp.Input_Of(Action),worlds:^core.Table(core.World_Transform,.Read),
+    colliders:^core.Table(phys.Collider,.Read),inputs:^core.Table(inp.Move_Input,.Read),sight:cam.Sight,actions:inp.Input_Of(Action),worlds:^core.Table(core.World_Transform,.Read),
     transforms:^core.Table(core.Transform),physics:core.Ref(phys.Physics_State),bodies:^phys.Body_Requests,
     characters:^core.Table(core.Motion,.Read),passes:core.Ref(Grill_Passes),
 ) {
@@ -194,7 +195,7 @@ portal_gun :: proc(
     for row in 0..<core.count(guns) {
         player:=core.entity_at(guns,row)
         gun:=core.at(guns,row)
-        eye,aim,ok:=inp.aim(drivables,worlds,player)
+        eye,aim,ok:=cam.aim(sight,player)
         if !ok {continue}
         blue:=inp.pressed(actions,player,.Portal_Blue)
         orange:=inp.pressed(actions,player,.Portal_Orange)

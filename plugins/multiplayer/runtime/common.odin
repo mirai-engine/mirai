@@ -5,6 +5,7 @@ import "core:mem"
 import "mirai:core"
 import input "mirai:engine/input"
 import wire "mirai:net"
+import "mirai:std/base"
 
 // What both ends do with the world: read and write the replicated components
 // by reflection, move a replica, send events.
@@ -180,11 +181,41 @@ messages_fill :: proc(s:^Net_Session,m:^core.Net_Messages) {
         m.types[event],pending=pending,m.types[event]
         pending.count=0
     }
+    parts_clear(&s.parts)
+    s.parts,s.parts_next=s.parts_next,s.parts
 }
 
-// Sends the messages the games queued.
+@(private)
+parts_clear :: proc(parts:^[dynamic]Journal_Arrived) {
+    for part in parts {delete(part.bytes)}
+    clear(parts)
+}
+
+// Streams the parts the journals handed. One does not start before the one
+// before it to its connection is in the host whole; one the host has no room
+// for waits for the next tick without holding up those to other connections.
+@(private)
+parts_send :: proc(s:^Net_Session,outbox:^Net_Outbox) {
+    kept:=0
+    for i in 0..<len(outbox.parts) {
+        part:=outbox.parts[i]
+        waits:=false
+        for before in outbox.parts[:kept] {waits ||= before.to==part.to}
+        // Invalid: its connection is gone.
+        if !waits && (wire.message_send(&s.host,part.to,JOURNAL_CHANNEL,part.bytes,&part.sent)==.Invalid || part.sent==len(part.bytes)) {
+            delete(part.bytes)
+            continue
+        }
+        outbox.parts[kept]=part
+        kept+=1
+    }
+    base.truncate(&outbox.parts,kept)
+}
+
+// Sends the messages the games queued, and the parts.
 @(private)
 events_send :: proc(s:^Net_Session,outbox:^Net_Outbox) {
+    parts_send(s,outbox)
     h:=&s.host
     items:=outbox.queue.items[:]
     sent:=len(items)

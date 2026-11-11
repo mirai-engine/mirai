@@ -50,7 +50,7 @@ Control_Demo :: struct {}
 // What the players ask of their seats; a dog whose person left goes with it.
 @(step="fixed")
 game_seats :: proc(
-    es:core.Commands,follows:^core.Table(Follow),drivables:^core.Table(inp.Drivable,.Read),
+    es:core.Commands,follows:^core.Table(Follow),
     seats:^core.Table(inp.Seat,.Read),actions:inp.Input_Of(Action),hierarchy:core.Ref(core.Hierarchy),names:^core.Table(core.Name,.Read),demos:^core.Table(Control_Demo,.Read),
     requests:^inp.Seat_Requests,shown:core.Ref(cam.Cameras),camera_requests:^cam.Camera_Requests,
     camera_changes:^cam.Camera_Changes,camera_follows:^core.Table(cam.Camera_Follow,.Read),cameras:^core.Table(render.Camera,.Read),
@@ -62,7 +62,7 @@ game_seats :: proc(
     }
     for row in 0..<core.count(seats) {
         seat:=core.entity_at(seats,row)
-        body:=inp.body_of(drivables,seat)
+        body:=inp.body_of(seats,seat)
         companion:=companion_of(follows,body)
         if companion!=core.NONE && inp.seat_pressed(actions,seat,.Switch_Body) {
             // The seat drives the dog, and the person follows it.
@@ -79,13 +79,13 @@ game_seats :: proc(
                 cam.camera_override(camera_requests,seat,seat,camera,blend=OVERHEAD_BLEND)
             }
         }
-        if owner,driven:=core.get(drivables,body);driven && inp.seat_pressed(actions,seat,.Camera_Mode) {
+        if camera:=cam.body_camera(hierarchy,cameras,body);camera!=core.NONE && inp.seat_pressed(actions,seat,.Camera_Mode) {
             next:=cam.Camera_Preset.Third_Person
-            if mode,preset:=cam.camera_preset_of(camera_follows,cameras,owner.camera);preset {
+            if mode,preset:=cam.camera_preset_of(camera_follows,cameras,camera);preset {
                 cycle:=CAMERA_CYCLE
                 next=cycle[mode]
             }
-            cam.camera_mode(camera_changes,owner.camera,next)
+            cam.camera_mode(camera_changes,camera,next)
         }
     }
 }
@@ -93,12 +93,12 @@ game_seats :: proc(
 // Each person gets a dog behind it.
 @(step="fixed",server)
 game_dogs :: proc(
-    spawner:scene.Spawner,follows:^core.Table(Follow,.Read),drivables:^core.Table(inp.Drivable,.Read),players:^core.Table(Player,.Read),
+    spawner:scene.Spawner,follows:^core.Table(Follow,.Read),players:^core.Table(Player,.Read),
     seats:^core.Table(inp.Seat,.Read),demos:^core.Table(Control_Demo,.Read),worlds:^core.Table(core.World_Transform,.Read),
 ) {
     if core.count(demos)==0 {return}
     for row in 0..<core.count(seats) {
-        body:=inp.body_of(drivables,core.entity_at(seats,row))
+        body:=core.at(seats,row).body
         if !core.has(players,body) || companion_of(follows,body)!=core.NONE {continue}
         placed,found:=core.get(worlds,body)
         if !found {continue}
@@ -119,11 +119,11 @@ companion_of :: proc(follows:^core.Table(Follow,$A),leader:core.Entity) -> core.
     return core.NONE
 }
 
-// A follower no seat drives turns to the body of its leader and walks until
-// it is near, where this end decides what it does.
+// A follower no seat drives walks toward the body of its leader, facing it,
+// until it is near, where this end decides what it does.
 @(step="fixed")
 game_follow :: proc(
-    follows:^core.Table(Follow,.Read),drivables:^core.Table(inp.Drivable,.Read),moves:^core.Table(inp.Move_Input),
+    follows:^core.Table(Follow,.Read),seats:^core.Table(inp.Seat,.Read),moves:^core.Table(inp.Move_Input),
     worlds:^core.Table(core.World_Transform,.Read),remotes:^core.Table(core.Remote,.Read),
 ) {
     for row in 0..<core.count(follows) {
@@ -132,14 +132,14 @@ game_follow :: proc(
         move:=core.edit(moves,e)
         placed,here:=core.get(worlds,e)
         goal,there:=core.get(worlds,follow.leader)
-        if move==nil || !here || !there || inp.seat_of(drivables,e)!=core.NONE || !core.owned(remotes,e) {continue}
+        if move==nil || !here || !there || inp.seat_of(seats,e)!=core.NONE || !core.owned(remotes,e) {continue}
         delta:=goal.position-placed.position
         delta.y=0
         distance:=linalg.length(delta)
         move.move,move.buttons={},{}
         if distance<=max(follow.distance,0.5) {continue}
         move.look_yaw=mm.yaw_of_direction(delta)
-        move.move.z=-min(distance-follow.distance,1)
+        move.move=delta/distance*min(distance-follow.distance,1)
     }
 }
 

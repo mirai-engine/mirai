@@ -41,7 +41,7 @@ Streaming_Sources :: struct {
 
 @(step="frame",loops="game editor",before="scene_sections")
 scene_sources :: proc(
-    sources:^Streaming_Sources,view:core.View,frame:core.Frame_Time,seats:^core.Table(input.Seat,.Read),drivables:^core.Table(input.Drivable,.Read),
+    sources:^Streaming_Sources,view:core.View,frame:core.Frame_Time,seats:^core.Table(input.Seat,.Read),
     marks:^core.Table(Streaming_Source,.Read),worlds:^core.Table(core.World_Transform,.Read),motions:^core.Table(core.Motion,.Read),problems:^core.Problems,
 ) {
     list:[SOURCES_MAX]Source
@@ -62,7 +62,7 @@ scene_sources :: proc(
         count,wanted=1,1
     }
     sources.view,sources.viewed=view.position,view.size.x>0 && view.size.y>0
-    for row in 0..<core.count(seats) {add(&list,&count,&wanted,worlds,motions,input.body_of(drivables,core.entity_at(seats,row)),0)}
+    for row in 0..<core.count(seats) {add(&list,&count,&wanted,worlds,motions,core.at(seats,row).body,0)}
     for row in 0..<core.count(marks) {add(&list,&count,&wanted,worlds,motions,core.entity_at(marks,row),core.at(marks,row).distance)}
     if wanted>SOURCES_MAX {
         core.report(problems,core.NONE,"scene.sources","%d streaming sources and SOURCES_MAX is %d: those past it load nothing around them; take Streaming_Source from the entities that do not need it",wanted,SOURCES_MAX)

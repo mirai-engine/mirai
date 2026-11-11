@@ -145,7 +145,7 @@ streaming_far_build :: proc(app:^host.App,far_meshes:core.Ref(streaming.Streamin
             if source,found:=host.assets_source(a,id,runtime.heap_allocator());found {append(&j.sources,source)} else {far.far_take(&j.build,id,0,nil)}
         }
         clear(&j.wanted)
-        if jobs.worker_count(&app.jobs)>1 {jobs.run(&app.jobs,jobs.OWNER,far_round,j,&j.counter)} else {far_round(j,jobs.OWNER)}
+        if jobs.worker_count(&app.jobs)>1 {jobs.run(&app.jobs,jobs.OWNER,.Background,far_round,j,&j.counter)} else {far_round(j,jobs.OWNER)}
     }
 }
 

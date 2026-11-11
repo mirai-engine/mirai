@@ -17,7 +17,7 @@ animation_motor_input :: proc "contextless" (delta:anim.Root_Delta,actor:mm.Tran
     if dt<=0 || max_speed<=0 || abs(dt)>max(f32) || abs(max_speed)>max(f32) {return}
     velocity:=mm.quat_rotate(actor.rotation,delta.translation*actor.scale)/(dt*max_speed);velocity.y=0
     if length:=linalg.length(velocity);length>1 {velocity/=length}
-    input.move=mm.quat_rotate(mm.quat_inverse(mm.quat_axis_angle({0,1,0},input.look_yaw)),velocity)
+    input.move=velocity
     return
 }
 

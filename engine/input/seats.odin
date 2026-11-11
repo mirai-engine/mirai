@@ -2,57 +2,38 @@ package input
 
 import "mirai:core"
 import "mirai:host"
-import mm "mirai:std/math"
 
 // Who drives what. A seat is someone who plays: at this machine (a slot), or
 // at another end of the network (a peer, which the network seats on a
-// server). Each seat carries the actions of the input map for the tick, which
-// become the Move_Input of the body it drives: what it asks of the body this
-// tick. The body carries a Drivable with its seat and,
-// optionally, the camera that sees through it. Whatever else drives a body
-// (an AI, a replay) writes its Move_Input itself. This library is the only
-// writer of Drivable; the rest of the engine asks through Seat_Requests.
+// server). Each seat carries the actions of the input map for the tick and
+// the body it drives (Seat.body), whose Move_Input those actions become
+// (engine/camera: forward is where its camera looks). Whatever else drives a
+// body (an AI, a replay) writes its Move_Input itself. This library is the
+// only writer of Seat.body; the rest of the engine asks through Seat_Requests.
 //
 // A request is applied at the start of the next fixed tick. A seat drives
 // one body at most and a body has one seat. Held buttons wait for their
 // release when the body or the blocks of a seat change, so a jump held before
-// the swap does not happen in the new body. In a network session the server
-// decides who drives what: a client takes only the bodies it owns (core.owned),
-// and lets go of any.
+// the change does not happen in the new body, and the body a seat lets go of
+// stops: its move and buttons are cleared. In a network session the server
+// decides who drives what: a client takes only the bodies it owns
+// (core.owned), and lets go of any.
 
 LOCAL_CAPACITY :: 4
 BLOCK_CAPACITY :: 64
 
 // One tick of what a body is asked to do, whoever asks: the seat that drives
 // it, the game, an AI, the network or a replay, each for the bodies it
-// drives. A character of physics moves by it, and adds it while it plays.
-@(component,shared,description="What the body is asked this tick: from the seat that drives it, an AI, the network or a replay.")
+// drives. The body turns toward the look yaw at its own rate (a Character of
+// the locomotion plugin at its turn_speed): a driver that wants it to face
+// where it goes gives the yaw of its move.
+@(component,shared,description="What the body is asked this tick: where to go in the world and where to look, from the seat that drives it, an AI, the network or a replay.")
 Move_Input :: struct {
-    move:[3]f32 `mirai:"readonly"`,                // in the axes of the look yaw: +X right, +Y up (modes that fly), -Z forward; up to 1 long
-    look_yaw,look_pitch:f32 `mirai:"readonly,angle"`, // yaw turns left about the up of the body (core.Vertical), pitch looks up; at 0 it looks along -Z, as everything does. Ground that turns adds to it through whoever writes it
+    move:[3]f32 `mirai:"readonly"`,                // in the world, up to 1 long: across the up of the body (core.Vertical) it walks; along it, modes that fly
+    look_yaw,look_pitch:f32 `mirai:"readonly,angle"`, // where it looks and faces: yaw turns left about the up of the body, pitch looks up; at 0 it looks along -Z, as everything does. Ground that turns adds to it (core.Vertical.turn) through whoever writes it
     buttons:Action_Mask `mirai:"readonly"`,        // the button actions held
 }
 #assert(size_of(Move_Input)==32)
-
-// What forward is for the seat that drives a body: where its Move_Input
-// comes from while a seat drives it.
-Move_Relative :: enum u8 {
-    Look,   // where it looks; the look action of the seat turns it and tilts its look: first person, a camera on its head
-    Camera, // where the camera of its Drivable looks; it turns toward its move: a camera that orbits it
-    World,  // -Z of the world; it turns toward its move: seen from above
-    Game,   // the game writes its Move_Input
-    View,   // Look while the camera of its Drivable looks with it (Eyes, or an Orbit that aims), Camera otherwise: for a camera that changes mode
-}
-
-@(component,description="A seat can drive this body, and the camera that sees through it; forward for the seat is where it looks, where its camera looks or -Z of the world. A seat can drive a different body during play.")
-Drivable :: struct {
-    seat:core.Entity,   // none: nobody drives it
-    camera:core.Entity, // an entity with a render.Camera; may be shared and outside the body
-    move_relative_to:Move_Relative,
-    pitch_limit:f32 `mirai:"angle,min=0"`, // of the look the seat gives it, up and down from level
-}
-
-DRIVABLE_DEFAULT :: Drivable{pitch_limit=85*mm.RAD_PER_DEG}
 
 // Someone who plays: at this machine, the seat of a slot, made at runtime for
 // every slot below the number of local players when the scene has none; at
@@ -63,8 +44,9 @@ DRIVABLE_DEFAULT :: Drivable{pitch_limit=85*mm.RAD_PER_DEG}
 @(component,shared,replicated,description="Someone who plays: at this machine (slot 0 is the first one; the keyboard and the mouse go to the focused slot, gamepad i to slot i), or at the other end of a connection.")
 Seat :: struct {
     slot:u8 `mirai:"max=3"`,
-    peer:u64 `mirai:"transient,readonly"`,                // the connection of another end; 0: this machine, or a player away
+    peer:u64 `mirai:"transient,readonly,local"`,          // the connection of another end, on a server; on a client, any value but 0 for the seat of another player; 0: this machine, or a player away
     player:u64 `mirai:"readonly,hidden,local"`,           // server: the hash of the secret the player of another end presents, which gets the seat back; 0: this machine
+    body:core.Entity `mirai:"local"`,                     // the body it drives: a seat of a scene drives it from the start; none: none
     actions:Actions `mirai:"transient,hidden,local"`,
     held:Action_Mask `mirai:"transient,hidden,local"`,    // buttons its source holds
     rearm:Action_Mask `mirai:"transient,hidden,local"`,   // held buttons that wait for their release
@@ -78,20 +60,10 @@ Seat :: struct {
 // A seat of this machine: not one of another end, nor of a player away.
 seat_local :: #force_inline proc "contextless" (seat:Seat) -> bool {return seat.peer==0 && seat.player==0}
 
-// How many players share this machine, on an entity of the scene. Without
-// one, a single player. The players asked for (Run_Players, which the editor
-// sets for its runs, or app.launch.players: --players) take its place; a
-// server has none unless they are asked for.
-@(component,single,description="Players at this machine, each with a part of the screen.")
-Local_Multiplayer :: struct {
-    players:int `mirai:"min=1,max=4"`,
-}
-
-LOCAL_MULTIPLAYER_DEFAULT :: Local_Multiplayer{players=2}
-
-// How many local players whoever runs this world asks for before its first
-// tick (the editor, for a run); 0: app.launch.players, else the scene. Of the
-// run: it stays when the world loads another scene or a save.
+// How many players share this machine, each with a part of the screen: of
+// the run, which the editor sets before the first tick of its runs and a
+// player takes from --players (app.launch.players); 0: one, none on a server.
+// It stays when the world loads another scene or a save.
 @(storage,keep)
 Run_Players :: struct {
     count:int,
@@ -118,7 +90,6 @@ Seats :: struct {
 Request_Kind :: enum u8 {
     Drive,        // seat takes entity; none releases
     Release,      // seat lets go of its body
-    Swap,         // seat and entity (another seat) exchange bodies
     Focus,        // the keyboard and the mouse go to the local seat of slot
     Block_Add,    // owner takes the actions in mask from seat; none: from every local seat
     Block_Remove,
@@ -144,9 +115,6 @@ drive :: proc(r:^Seat_Requests,seat,body:core.Entity) {
 release :: proc(r:^Seat_Requests,seat:core.Entity) {
     core.push(&r.queue,Seat_Request{kind=.Release,seat=seat})
 }
-swap :: proc(r:^Seat_Requests,first,second:core.Entity) {
-    core.push(&r.queue,Seat_Request{kind=.Swap,seat=first,entity=second})
-}
 focus :: proc(r:^Seat_Requests,slot:int) {
     core.push(&r.queue,Seat_Request{kind=.Focus,slot=slot})
 }
@@ -157,25 +125,19 @@ input_unblock :: proc(r:^Seat_Requests,owner:core.Entity) {
     core.push(&r.queue,Seat_Request{kind=.Block_Remove,owner=owner})
 }
 
-// The body a seat drives; none when it has none or the table holds it twice.
-body_of :: proc(drivables:^core.Table(Drivable,$A),seat:core.Entity) -> core.Entity {
-    if seat==core.NONE {return core.NONE}
-    body,valid:=body_find(drivables,seat)
-    return valid?body:core.NONE
+// The body a seat drives; none without one.
+body_of :: proc(seats:^core.Table(Seat,$A),seat:core.Entity) -> core.Entity {
+    value,_:=core.get(seats,seat)
+    return value.body
 }
 
-// The seat that drives a body.
-seat_of :: proc(drivables:^core.Table(Drivable,$A),body:core.Entity) -> core.Entity {
-    value,ok:=core.get(drivables,body)
-    return ok?value.seat:core.NONE
-}
-
-// The ray of the view of a body: from its Drivable.camera, where it looks, as
-// the player sees it, whatever the mode of the camera. False without a camera.
-aim :: proc(drivables:^core.Table(Drivable,$A),worlds:^core.Table(core.World_Transform,$B),body:core.Entity) -> (origin,direction:[3]f32,ok:bool) {
-    drivable:=core.get(drivables,body) or_return
-    placed:=core.get(worlds,drivable.camera) or_return
-    return placed.position,mm.quat_forward(placed.rotation),true
+// The seat that drives a body; none without one.
+seat_of :: proc(seats:^core.Table(Seat,$A),body:core.Entity) -> core.Entity {
+    if body==core.NONE {return core.NONE}
+    for value,row in seats.values[:core.count(seats)] {
+        if value.body==body {return core.entity_at(seats,row)}
+    }
+    return core.NONE
 }
 
 // The seat of a local slot; none without one.
@@ -233,17 +195,10 @@ seat_buttons :: proc(seats:^core.Table(Seat,$A),seat:core.Entity,bindings:^Input
     return mask&~(source.blocked|source.rearm)
 }
 
-// Who plays and what each drives, for a step to receive in one parameter.
-@(params)
-Players :: struct {
-    seats:^core.Table(Seat,.Read),
-    drivables:^core.Table(Drivable,.Read),
-}
-
 // The state of an action of the seat that drives a body this tick; released
 // while nobody drives it.
-body_action :: proc(p:Players,body:core.Entity,a:Action) -> Action_State {
-    return seat_action(p.seats,seat_of(p.drivables,body),a)
+body_action :: proc(seats:^core.Table(Seat,.Read),body:core.Entity,a:Action) -> Action_State {
+    return seat_action(seats,seat_of(seats,body),a)
 }
 
 // The seats of this machine: how many there are, and the actions of each for
@@ -252,16 +207,14 @@ body_action :: proc(p:Players,body:core.Entity,a:Action) -> Action_State {
 // other ends get their actions from the network.
 @(step="fixed",stage="input")
 input_seats :: proc(
-    es:core.Commands,app:^host.App,seats:^core.Table(Seat),
-    multiplayer:^core.Table(Local_Multiplayer,.Read),state:^Seats,run:core.Ref(Run_Players),
+    es:core.Commands,app:^host.App,seats:^core.Table(Seat),state:^Seats,run:^Run_Players,
     device:core.Input,bindings:core.Ref(Input_Map),network:core.Ref(core.Network),keeps:^core.Table(core.Keep),time:core.Time,
 ) {
-    // A server has players of its own only when someone asks for them: one
+    if run.count==0 {run.count=app.launch.players}
+    // A server has players of its own only when the run asks for them: one
     // that is also a player, as the Play of an editor that serves.
-    asked:=run.count>0?run.count:app.launch.players
-    count:=1
-    if core.count(multiplayer)>0 {count=clamp(core.at(multiplayer,0).players,1,LOCAL_CAPACITY)}
-    if asked>0 {count=clamp(asked,1,LOCAL_CAPACITY)} else if network.role==.Server {count=0}
+    count:=clamp(run.count,1,LOCAL_CAPACITY)
+    if run.count==0 && network.role==.Server {count=0}
     state.local_count=count
     state.focus=clamp(state.focus,0,max(count-1,0))
     for slot in 0..<count {
@@ -325,7 +278,7 @@ held_buttons :: proc "contextless" (actions:^Actions,bindings:^Input_Map) -> (ma
 @(private)
 Apply :: struct {
     es:^core.Entities,
-    drivables:^core.Table(Drivable),
+    moves:^core.Table(Move_Input),
     seats:^core.Table(Seat),
     state:^Seats,
     role:core.Network_Role,
@@ -338,10 +291,10 @@ Apply :: struct {
 // blocks take.
 @(step="fixed",stage="input")
 input_drive :: proc(
-    es:core.Ref(core.Entities),drivables:^core.Table(Drivable),seats:^core.Table(Seat),state:^Seats,requests:^Seat_Requests,
+    es:core.Ref(core.Entities),moves:^core.Table(Move_Input),seats:^core.Table(Seat),state:^Seats,requests:^Seat_Requests,
     network:core.Ref(core.Network),elsewhere:^core.Table(core.Remote,.Read),problems:^core.Problems,
 ) {
-    a:=Apply{es=es.ptr,drivables=drivables,seats=seats,state=state,role=network.role,elsewhere=elsewhere,problems=problems}
+    a:=Apply{es=es.ptr,moves=moves,seats=seats,state=state,role=network.role,elsewhere=elsewhere,problems=problems}
     for request in core.take(&requests.queue) {request_apply(&a,request)}
     upkeep(&a)
     blocks_apply(seats,state)
@@ -369,8 +322,6 @@ request_apply :: proc(a:^Apply,r:Seat_Request) {
         refusal_report(a,r,body_assign(a,r.seat,r.entity))
     case .Release:
         refusal_report(a,r,body_assign(a,r.seat,core.NONE))
-    case .Swap:
-        refusal_report(a,r,body_swap(a,r.seat,r.entity))
     case .Focus:
         if r.slot<0 || r.slot>=LOCAL_CAPACITY {
             core.report(a.problems,core.NONE,"input.focus_slot","the keyboard and the mouse were asked to go to the local seat of slot %d; the slots of local seats are 0 to %d",r.slot,LOCAL_CAPACITY-1)
@@ -393,30 +344,21 @@ request_apply :: proc(a:^Apply,r:Seat_Request) {
 
 // Why a request to drive a body was refused.
 @(private)
-Refusal :: enum u8 {None,Not_A_Seat,Seat_Twice,Not_Drivable,Taken,Server_Decides,Same,No_Body}
+Refusal :: enum u8 {None,Not_A_Seat,Not_Alive,Taken,Server_Decides}
 
 @(private)
 refusal_report :: proc(a:^Apply,r:Seat_Request,refusal:Refusal) {
-    request:=r.kind==.Drive?"driving a body":r.kind==.Release?"releasing its body":"swapping bodies"
+    request:=r.kind==.Drive?"driving a body":"releasing its body"
     switch refusal {
     case .None:
     case .Not_A_Seat:
-        gone,subject:=r.seat,r.entity
-        if core.has(a.seats,gone) {gone,subject=r.entity,r.seat}
-        if !core.alive(a.es,subject) {subject=core.NONE}
-        core.report(a.problems,subject,"input.not_a_seat","%s was refused: entity 0x%016x is not a live Seat; ask with the seat of a player (local_seat, or the seat of a connection)",request,u64(gone))
-    case .Seat_Twice:
-        core.report(a.problems,r.seat,"input.seat_twice","%s was refused: this seat is the seat of more than one Drivable; leave it in Drivable.seat of one body only",request)
-    case .Not_Drivable:
-        core.report(a.problems,r.seat,"input.not_drivable","driving entity 0x%016x was refused: it has no Drivable; add one to the body first",u64(r.entity))
+        core.report(a.problems,core.alive(a.es,r.entity)?r.entity:core.NONE,"input.not_a_seat","%s was refused: entity 0x%016x is not a live Seat; ask with the seat of a player (local_seat, or the seat of a connection)",request,u64(r.seat))
+    case .Not_Alive:
+        core.report(a.problems,r.seat,"input.body_gone","driving entity 0x%016x was refused: it is not alive; drive a live body",u64(r.entity))
     case .Taken:
-        core.report(a.problems,r.seat,"input.body_taken","driving entity 0x%016x was refused: another seat drives it; release it first, or swap bodies with that seat",u64(r.entity))
+        core.report(a.problems,r.seat,"input.body_taken","driving entity 0x%016x was refused: another seat drives it; release it first",u64(r.entity))
     case .Server_Decides:
         core.report(a.problems,r.seat,"input.server_decides","%s was refused: a client takes only the bodies it owns; in a network game ask the server, which decides who drives each body",request)
-    case .Same:
-        core.report(a.problems,r.seat,"input.swap_same","swapping bodies with itself was refused; swap two different seats")
-    case .No_Body:
-        core.report(a.problems,r.seat,"input.swap_no_body","swapping bodies with seat 0x%016x was refused: both need a body; drive one first",u64(r.entity))
     }
 }
 
@@ -433,48 +375,20 @@ seated :: proc(a:^Apply,seat:core.Entity) -> bool {
 }
 
 @(private)
-body_find :: proc(drivables:^core.Table(Drivable,$A),seat:core.Entity) -> (body:core.Entity,valid:bool) {
-    for value,row in drivables.values[:core.count(drivables)] {
-        if value.seat!=seat {continue}
-        if body!=core.NONE {return core.NONE,false}
-        body=drivables.entities[row]
-    }
-    return body,true
-}
-
-@(private)
 body_assign :: proc(a:^Apply,seat,body:core.Entity) -> Refusal {
     if !seated(a,seat) {return .Not_A_Seat}
-    previous,valid:=body_find(a.drivables,seat)
-    if !valid {return .Seat_Twice}
-    target:^Drivable
     if body!=core.NONE {
-        target=core.edit(a.drivables,body)
-        if target==nil {return .Not_Drivable}
-        if target.seat!=core.NONE && target.seat!=seat {return .Taken}
+        if !core.alive(a.es,body) {return .Not_Alive}
+        if driver:=seat_of(a.seats,body);driver!=core.NONE && driver!=seat {return .Taken}
     }
     // Letting go decides nothing of a body: a client lets go of what the server gave someone else.
     if !decides(a,body) {return .Server_Decides}
+    source:=core.edit(a.seats,seat)
+    previous:=source.body
     if previous==body {return .None}
-    if previous!=core.NONE {core.edit(a.drivables,previous).seat=core.NONE}
-    if target!=nil {target.seat=seat}
+    source.body=body
+    if left:=core.edit(a.moves,previous);left!=nil {left.move,left.buttons={},{}}
     rearm(a,seat)
-    return .None
-}
-
-@(private)
-body_swap :: proc(a:^Apply,first,second:core.Entity) -> Refusal {
-    if first==second {return .Same}
-    if !seated(a,first) || !seated(a,second) {return .Not_A_Seat}
-    left,valid_left:=body_find(a.drivables,first)
-    right,valid_right:=body_find(a.drivables,second)
-    if !valid_left || !valid_right {return .Seat_Twice}
-    if left==core.NONE || right==core.NONE {return .No_Body}
-    if !decides(a,left) || !decides(a,right) {return .Server_Decides}
-    core.edit(a.drivables,left).seat=second
-    core.edit(a.drivables,right).seat=first
-    rearm(a,first)
-    rearm(a,second)
     return .None
 }
 
@@ -530,9 +444,9 @@ blocking :: proc "contextless" (state:^Seats,owner:core.Entity) -> bool {
 @(private)
 upkeep :: proc(a:^Apply) {
     es:=a.es
-    for value,row in a.drivables.values[:core.count(a.drivables)] {
-        if value.seat==core.NONE || core.alive(es,value.seat) {continue}
-        core.edit_at(a.drivables,row).seat=core.NONE
+    for value,row in a.seats.values[:core.count(a.seats)] {
+        if value.body==core.NONE || core.alive(es,value.body) {continue}
+        core.edit_at(a.seats,row).body=core.NONE
     }
     for &item in a.state.blocks {
         if !item.active {continue}
