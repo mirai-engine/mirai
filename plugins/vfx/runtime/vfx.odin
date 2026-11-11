@@ -68,8 +68,6 @@ Emitter_Shown :: struct {
     program,sub_program:Program,
     desc,sub_desc:Emitter_Desc,   // what the GPU is told of it and of its sub effect, but for what each frame gives
     needs:Program_Needs,          // the resources and stages its program declares
-    sources:[RESOURCES]effect.Particle_Resource, // and what its effect gives them
-    source_count:int,
     resource_previous:[RESOURCE_ROWS]mm.Mat4, // where each of its resources was drawn last
     resource_placed:[RESOURCE_ROWS]bool,
     problem:[192]u8,             // why its program does not run, as text; empty when it does or there is none
@@ -263,7 +261,7 @@ particles_sync :: proc(
         desc.age,desc.born=age,u32(born)
         if shown.info.shape==.Surface || shown.info.shape==.Bones || shown.needs.resources[0].kind!=.None || shown.needs.stages[0].kind!=.None {
             bound,_:=core.get(bindings,e)
-            rows:=emitter_resources(sync,shown,&shown.info,shown.sources[:shown.source_count],&bound,e,transform,host.extras_instances(&app.extras),drawn.ptr,meshes,worlds,id,app.assets,app.renderer)
+            rows:=emitter_resources(sync,shown,&shown.info,&bound,e,host.extras_instances(&app.extras),drawn.ptr,meshes,worlds,id,app.assets,app.renderer)
             desc.resources=u32(len(sync.resources))+1
             append(&sync.resources,..rows[:])
         }
@@ -373,12 +371,6 @@ shown_resolve :: proc(shown:^Emitter_Shown,app:^host.App,particle:base.Asset_Id,
     shown.has_sub=false
     problem:=particle_program(a,particle,&shown.info,&given,&shown.program,&shown.needs)
     channel_needs(a,&shown.program,&shown.needs)
-    shown.source_count=0
-    if a!=nil && particle!={} {
-        if view,ok:=effect_view(a,particle);ok {
-            shown.source_count=copy(shown.sources[:],view.resources)
-        }
-    }
     shown.sub_program={}
     if shown.info.trigger!=.None && shown.info.sub_particle!={} {
         shown.sub=particle_resolve(a,shown.info.sub_particle,nil)

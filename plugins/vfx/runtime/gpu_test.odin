@@ -903,7 +903,7 @@ particle_bones_and_surface_shapes_start_particles_on_the_posed_skin :: proc(t: ^
 	testing.expect(t, linalg.length(rig.joints[1].bind - hand) < 1e-4)
 	// In the bind pose, from the file.
 	identity: matrix[4, 4]f32 = 1
-	bind := asset_bones(&f.sync, f.app.assets,f.app.renderer, mesh_id, identity)
+	bind := bones_of(&f.sync, f.app.renderer, rig, 0, identity, false)
 	testing.expect(t, bind.kind == .Bones && bind.count == 1)
 	if bind.count == 1 {
 		segment := f.sync.segments[bind.first]

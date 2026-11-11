@@ -17,8 +17,6 @@ import "mirai:std/serial"
 //   particle    Particle_Info, one row
 //   parameters  Particle_Parameter: values for its Vfx program, by name
 //   hidden      Particle_Field: fields an instance does not show
-//   resources   Particle_Resource: what the resources of its program read
-//               when an instance binds nothing else, by name
 //
 // A field of an instance is named by its path in Particle_Info: field names
 // and array indices joined by dots ("lifetime", "colors.1",
@@ -26,7 +24,7 @@ import "mirai:std/serial"
 // paths an instance can change, each a value of at most PARTICLE_VALUE_BYTES;
 // text fields (the program) are of the effect alone.
 
-VERSION :: 3
+VERSION :: 4
 PARTICLE_BURSTS :: 4
 PARTICLE_CURVE_KEYS :: 8
 PARTICLE_VALUE_BYTES :: 16
@@ -84,7 +82,6 @@ Particle_Info :: struct {
     bursts:[PARTICLE_BURSTS]Particle_Burst,
     shape:Particle_Shape,
     shape_size:[3]f32 `mirai:"min=0,unit=m"`, // radius in x, half extents of a box, half length of a line
-    surface_mesh:base.Asset_Id,               // of a Surface or Bones shape, where the entity is, in its bind pose; none: what the entity draws
     shape_angle:f32 `mirai:"angle,min=0"`,    // of a cone, from its axis
     shell:f32 `mirai:"min=0,max=1"`,          // 0: from the volume of the shape, 1: from its surface
     lifetime:[2]f32 `mirai:"min=0,unit=s"`,   // each particle takes a value between both
@@ -154,14 +151,6 @@ PARTICLE_DEFAULTS :: Particle_Info{
 
 Particle_Field :: struct {name:[PARTICLE_NAME_BYTES]u8 `mirai:"text"`}
 
-// What a resource of the program of the effect reads, by its name, when an
-// instance binds nothing else (vfx.Particle_Bindings): a surface, the
-// triangles of a mesh where the entity is.
-Particle_Resource :: struct {
-    name:[PARTICLE_NAME_BYTES]u8 `mirai:"text"`,
-    mesh:base.Asset_Id,
-}
-
 // A value for a parameter of the Vfx program of the effect, by its name.
 Particle_Parameter :: struct {
     name:[PARTICLE_NAME_BYTES]u8 `mirai:"text"`,
@@ -176,7 +165,6 @@ Particle_Desc :: struct {
     info:Particle_Info,
     parameters:[]Particle_Parameter,
     hidden:[]Particle_Field,
-    resources:[]Particle_Resource,
     source:^asset.Import_Info, // of an effect an import wrote; nil for one made here
 }
 
@@ -184,12 +172,11 @@ Particle_View :: struct {
     info:^Particle_Info,
     parameters:[]Particle_Parameter,
     hidden:[]Particle_Field,
-    resources:[]Particle_Resource,
 }
 
 particle_document :: proc(doc:^asset.Document,types:^asset.Types,desc:Particle_Desc,allocator:=context.allocator) -> asset.Error {
     info:=desc.info
-    if !particle_check({info=&info,parameters=desc.parameters,hidden=desc.hidden,resources=desc.resources}) {return .Invalid}
+    if !particle_check({info=&info,parameters=desc.parameters,hidden=desc.hidden}) {return .Invalid}
     asset.document_init(doc,PARTICLE_KIND,desc.id,allocator)
     doc.kind_version=VERSION
     error:=particle_tables(doc,types,&info,desc)
@@ -202,7 +189,6 @@ particle_tables :: proc(doc:^asset.Document,types:^asset.Types,info:^Particle_In
     asset.document_put_row(doc,types,"particle",info) or_return
     asset.document_put(doc,types,"parameters",desc.parameters) or_return
     asset.document_put(doc,types,"hidden",desc.hidden) or_return
-    asset.document_put(doc,types,"resources",desc.resources) or_return
     if desc.source!=nil {asset.import_put(doc,types,desc.source) or_return}
     return .None
 }
@@ -227,7 +213,6 @@ particle_view :: proc(a:^asset.Asset,types:^asset.Types) -> (view:Particle_View,
     view.info=asset.asset_row(a,types,"particle",Particle_Info,whole=true) or_return
     view.parameters=table_rows(a,types,"parameters",Particle_Parameter) or_return
     view.hidden=table_rows(a,types,"hidden",Particle_Field) or_return
-    view.resources=table_rows(a,types,"resources",Particle_Resource) or_return
     if !particle_check(view) {return {},.Corrupt}
     return view,.None
 }
@@ -278,13 +263,6 @@ particle_validate :: proc(view:Particle_View) -> Particle_Problem {
     if problem:=particle_parameters_validate(view.parameters);problem.message!="" {return problem}
     for &hidden in view.hidden {
         if name:=serial.text_field(hidden.name[:]);name=="" || len(name)==len(hidden.name) {return {"hidden","Name each hidden field in fewer than 64 bytes"}}
-    }
-    for &resource,at in view.resources {
-        name:=serial.text_field(resource.name[:])
-        if name=="" || len(name)==len(resource.name) {return {"resources","Name each resource as its program declares it, in fewer than 64 bytes"}}
-        for &other in view.resources[:at] {
-            if other.name==resource.name {return {"resources",fmt.tprintf("Give resource %q once",name)}}
-        }
     }
     return {}
 }
@@ -370,14 +348,6 @@ particle_parameter_validate :: proc(parameter:^Particle_Parameter) -> Particle_P
 table_rows :: proc(a:^asset.Asset,types:^asset.Types,name:string,$T:typeid) -> (rows:[]T,error:asset.Error) {
     if _,found:=asset.asset_table(a,name);!found {return nil,.None}
     return asset.asset_rows(a,types,name,"",T)
-}
-
-// The source an effect gives a resource of its program; nil without one.
-particle_resource_find :: proc(resources:[]Particle_Resource,name:string) -> ^Particle_Resource {
-    for &resource in resources {
-        if serial.text_field(resource.name[:])==name {return &resource}
-    }
-    return nil
 }
 
 // The stored value of a program parameter of the effect; nil without one.

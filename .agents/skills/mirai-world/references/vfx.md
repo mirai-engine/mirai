@@ -8,17 +8,17 @@ editor (inspector, document, thumbnails and `particle.*`) is in [its reference](
 
 ## Format
 
-`plugins/vfx/runtime/effect` (`effect.KIND` `PART`, `.particle`, `effect.VERSION` 2; another
+`plugins/vfx/runtime/effect` (`effect.KIND` `PART`, `.particle`, `effect.VERSION` 4; another
 version asks to write it again). An effect is like a material: entities name it
 (`vfx.Particle_Emitter`) and give it values of their own (`vfx.Particle_Override`, and
 `vfx.Particle_Parameters` for its program). Tables: `particle` (`Particle_Info`), `parameters`
-(`Particle_Parameter`), `hidden` (`Particle_Field`) and `resources` (`Particle_Resource`).
+(`Particle_Parameter`) and `hidden` (`Particle_Field`).
 
 - `Particle_Info` is the destination of what is imported from other engines:
   - cycle (`duration`, `prewarm`), rate (`rate`, multiplied along the cycle by `rate_over_cycle`),
     `rate_over_distance` and four `bursts` (time, count, repetitions, interval);
-  - shape (`Surface`: the triangles of `surface_mesh` or of what the entity draws; `Bones`: its
-    bones, [surfaces and bones](#surfaces-bones-and-resources)), life, initial velocity (`speed`
+  - shape (`Surface`: the triangles of what the entity binds or draws; `Bones`: its bones,
+    [surfaces and bones](#surfaces-bones-and-resources)), life, initial velocity (`speed`
     along the shape's normal and `velocity`, a range in the entity's space), `inherit_velocity`;
   - forces: `gravity` (the part it takes from the gravity where each particle is),
     `acceleration`, `drag` (1/s, how fast it reaches the wind where it is), noise and attractor;
@@ -51,8 +51,6 @@ version asks to write it again). An effect is like a material: entities name it
 - `parameters` stores values for the program by name (`Particle_Parameter`: type, from one to four
   components, values or texture).
 - `hidden` lists the fields that an instance does not show.
-- `resources` gives by name the mesh that each surface or bones resource of the program reads when
-  the instance binds nothing else.
 - A value is named by its path (`rate`, `colors.1`, `bursts.0.count`,
   `size_over_life.values.2`). `particle_fields` lists those that an instance can change; the
   program's text no. `particle_value_at` finds one by path and `particle_value_find` by the hash of
@@ -113,9 +111,9 @@ emitter binds or one of the world by its name ([grids](#grids-and-stages)).
   A mesh that nobody poses, in its bind pose.
 - Who gives each one, in order: what the entity binds (`Particle_Bindings`: `surface` for the
   shape, `sources` for those of the program: the source of its name or, with none, the unnamed one
-  of its index), the effect's mesh (`surface_mesh`, `resources`) in the emitter's pose and, for the
-  shape, what the emitter draws. A resource without a source has neither surface nor bones: the
-  program reads it with `valid` false.
+  of its index) and, for the shape, what the emitter draws. An effect names no mesh: one that must
+  emit from a given mesh is a prefab whose emitter binds that mesh's entity. A resource without a
+  source has neither surface nor bones: the program reads it with `valid` false.
 - A grid: that of the entity that binds its source or that of the world's grid it names (`grid`);
   without a binding, the first grid that its stages walk is that of the emitter's entity, if it has
   one, and any other that of the world with the resource's name. A binding to what does not exist

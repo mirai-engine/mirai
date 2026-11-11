@@ -119,8 +119,6 @@ the left and **Effect** with the rows on the right, in the editor's document col
   the file.
 - If the file is read again (undo, the API, another write), each value that the rows did not
   change takes the file's; the parameters and the hidden ones, whole.
-- The effect's `resources` have no rows: the document writes them as it read them and
-  `particle.set` changes them.
 - A frame without changes does not draw the image.
 
 ## Thumbnails

@@ -24,14 +24,14 @@ import "plugins:vfx/runtime/effect"
 // the step wrote.
 
 @(private)
-PARTICLE_PARAMS_SCHEMA :: `{"type":"object","properties":{"particle":{"type":"string","description":"An effect: its path under the assets folder, or its id"},"path":{"type":"string","description":"particle.create: where the new effect goes, under the assets folder"},"values":{"type":"object","description":"Fields of the effect to change, as particle.inspect shows them"},"parameters":{"type":"object","description":"Parameters of its Vfx program by name: a number, a list, true or false, or a texture by path or id; null takes one away"},"hidden":{"type":"array","items":{"type":"string"},"description":"The fields its instances do not show; replaces the list"},"resources":{"type":"object","description":"What each resource of its Vfx program reads when an instance binds nothing else, by name: a mesh by its path or id; null takes one away"}},"additionalProperties":false}`
+PARTICLE_PARAMS_SCHEMA :: `{"type":"object","properties":{"particle":{"type":"string","description":"An effect: its path under the assets folder, or its id"},"path":{"type":"string","description":"particle.create: where the new effect goes, under the assets folder"},"values":{"type":"object","description":"Fields of the effect to change, as particle.inspect shows them"},"parameters":{"type":"object","description":"Parameters of its Vfx program by name: a number, a list, true or false, or a texture by path or id; null takes one away"},"hidden":{"type":"array","items":{"type":"string"},"description":"The fields its instances do not show; replaces the list"}},"additionalProperties":false}`
 
 @(private)
 PARTICLE_INSTANCE_SET_SCHEMA :: `{"type":"object","properties":{"entity":{`+api.ENTITY_SCHEMA+`,"description":"The entity with the Particle_Emitter"},"values":{"type":"object","description":"Values it shows, as particle.instance.inspect gives them: those that differ from its effect become its own, at most 16 and not its assets or program"},"parameters":{"type":"object","description":"Parameters of the Vfx program of its effect for this entity, by name, at most 8; null takes one away"}},"required":["entity"],"additionalProperties":false}`
 
 // The keys of the params of an effect besides its name, path and values.
 @(private)
-PARTICLE_EXTRA :: [3]string{"parameters","hidden","resources"}
+PARTICLE_EXTRA :: [2]string{"parameters","hidden"}
 
 @(private)
 Particle_World :: enum u8 {Edit,Play}
@@ -85,8 +85,7 @@ api_register :: proc(s:^editor.Session) {
 @(private)
 Particle_Params :: struct {
     using common:editor.Asset_Params,
-    parameters:string,
-    resources:string, // the text of the object
+    parameters:string, // the text of the object
     hidden:[dynamic]effect.Particle_Field,
     has_hidden:bool,
 }
@@ -96,7 +95,6 @@ particle_params :: proc(call:^api.Call) -> (p:Particle_Params,ok:bool) {
     extra:=PARTICLE_EXTRA
     p.common=editor.asset_params(call,"particle",extra[:]) or_return
     p.parameters=p.extra[0]
-    p.resources=p.extra[2]
     p.hidden=make([dynamic]effect.Particle_Field,context.temp_allocator)
     if p.extra[1]=="" {return p,true}
     p.has_hidden=true
@@ -255,17 +253,6 @@ api_particle_write :: proc(s:^editor.Session,call:^api.Call,id:base.Asset_Id) {
         serial.text_write_string(out,base.text_get(h.name[:]))
     }
     serial.write_u8(out,']')
-    api.write_key(out,"resources")
-    serial.write_u8(out,'{')
-    for &resource,i in view.resources {
-        if i>0 {serial.write_u8(out,',')}
-        serial.text_write_string(out,base.text_get(resource.name[:]))
-        serial.write_u8(out,':')
-        serial.write_u8(out,'"')
-        serial.text_write_asset_id(out,resource.mesh)
-        serial.write_u8(out,'"')
-    }
-    serial.write_u8(out,'}')
     program:vfx.Program
     api.write_text(out,"problem",vfx.particle_program(a,id,view.info,nil,&program))
     serial.write_u8(out,'}')
@@ -289,8 +276,7 @@ particle_params_apply :: proc(s:^editor.Session,call:^api.Call,p:^Particle_Param
         clear(&file.hidden)
         append(&file.hidden,..p.hidden[:])
     }
-    if !particle_resources_read(s,call,p.resources,&file.info,&file.resources) {return false}
-    if problem:=effect.particle_validate({info=&file.info,parameters=file.parameters[:],hidden=file.hidden[:],resources=file.resources[:]});problem.message!="" {
+    if problem:=effect.particle_validate({info=&file.info,parameters=file.parameters[:],hidden=file.hidden[:]});problem.message!="" {
         api.call_failf(call,api.INVALID_PARAMS,"%s: %s",problem.field,problem.message)
         return false
     }
@@ -301,57 +287,6 @@ particle_params_apply :: proc(s:^editor.Session,call:^api.Call,p:^Particle_Param
             api.call_failf(call,api.INVALID_PARAMS,"parameters: %s",problem)
             return false
         }
-    }
-    return true
-}
-
-// The resources of the text of an object over list: a name of a surface the
-// program of the effect reads and a mesh by its path or id, or null to take it
-// away.
-@(private)
-particle_resources_read :: proc(s:^editor.Session,call:^api.Call,text:string,info:^effect.Particle_Info,list:^[dynamic]effect.Particle_Resource) -> bool {
-    if text=="" {return true}
-    program,problem:=particle_program_of(s,info)
-    r:serial.Text_Reader
-    serial.text_reader_init(&r,text,context.temp_allocator)
-    malformed :: proc(call:^api.Call) -> bool {
-        api.call_fail(call,api.INVALID_PARAMS,"resources: give an object of the names of the resources of the program and a mesh by its path or id, or null")
-        return false
-    }
-    if !serial.text_accept(&r,'{') {return malformed(call)}
-    for !serial.text_accept(&r,'}') {
-        serial.text_space(&r)
-        name,named:=serial.text_string(&r)
-        if !named || !serial.text_expect(&r,':') {return malformed(call)}
-        name=strings.clone(name,context.temp_allocator)
-        serial.text_space(&r)
-        at:=-1
-        for &stored,i in list {
-            if base.text_get(stored.name[:])==name {at=i}
-        }
-        if serial.text_keyword(&r,"null") {
-            if at>=0 {ordered_remove(list,at)}
-        } else {
-            if program==nil {
-                api.call_failf(call,api.INVALID_PARAMS,"resources: %s",problem!="" ? problem : "the effect has no Vfx program: name one in program first")
-                return false
-            }
-            surface:=false
-            for &declared in program.resources {surface||=declared.name==name && (declared.kind==.Surface || declared.kind==.Bones)}
-            if !surface {
-                api.call_failf(call,api.INVALID_PARAMS,"resources: %s reads no surface or bones %q; particle.programs lists its resources",program.name,name)
-                return false
-            }
-            path,read:=serial.text_string(&r)
-            if !read {return malformed(call)}
-            mesh,found:=editor.asset_named(s,call,path,asset.KIND_MESH,".mesh","a mesh")
-            if !found {return false}
-            resource:effect.Particle_Resource
-            base.text_set(resource.name[:],name)
-            resource.mesh=mesh
-            if at>=0 {list[at]=resource} else {append(list,resource)}
-        }
-        serial.text_accept(&r,',')
     }
     return true
 }
