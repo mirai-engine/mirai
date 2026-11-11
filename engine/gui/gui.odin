@@ -751,6 +751,11 @@ frame_end :: proc(
             frame:=ui.frame_end(s.ctx)
             nesting_report(s,problems)
             s.pointer,s.keyboard,s.cursor=frame.pointer_consumed,frame.keyboard_consumed,s.ctx.cursor
+            // An element on its way to a new layout moves the next frame too: no screen of the context is kept.
+            if frame.transitioning {
+                s.animating=true
+                for entry in gui.plan {if entry.player==p {gui.instances[entry.instance].animating=true}}
+            }
             host.app_ui_font_sync(app,s.ctx)
             converted:=host.ui_frame_split(frame,s.draws,s.panels,s.offscreen,s.offscreen_draws,gui.views[p].panels)
             s.layer,s.draw_count,s.panel_count=converted.layer,converted.draw_count,converted.panel_count

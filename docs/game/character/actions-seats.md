@@ -10,7 +10,7 @@ in code. A game reads `menu` with `gui.menu_pressed` ([UI](../ui.md#events)).
 @(actions)
 Action :: enum u8 {Use,Fire}
 
-action_defaults :: proc "contextless" () -> [Action]inp.Action_Default {
+action_defaults :: proc "contextless" () -> [Action]inp.Action_Bindings {
     return {
         .Use=inp.action_default(.Button,inp.binding_key(.E),inp.binding_gamepad_button(.East)),
         .Fire=inp.action_default(.Button,inp.binding_mouse_button(.Left),
@@ -25,8 +25,13 @@ The defaults are found by name, as `NAME_DEFAULT` is: `<enum>_defaults` beside t
 Kinds are `.Button`, `.Axis` and `.Axis2`; bindings come from `inp.binding_key`,
 `binding_key_axis`, `binding_keys` (four keys, an `Axis2`), `binding_mouse_button`,
 `binding_mouse_delta`, `binding_gamepad_button` and `binding_gamepad_axis`. The compiler asks for a
-default of every member. `input.mirai` holds only what Project Settings > Input or the player
-changed; never write it by hand.
+default of every member. What a project or a player changes goes in the section
+`Input_Settings` of `settings.mirai`: an entry per action, by its name, which replaces the one of
+the layer under it (the code, the project, the player). Project Settings > Input and
+`settings.set` write it; an entry the kind of its action does not take is refused with what to
+give. A player's rebinding is the same setting in the player's options: the game changes
+`inp.Input_Settings` (`inp.input_settings_put`, `inp.input_settings_remove`) and the save library
+writes it.
 
 ## Read
 
@@ -43,7 +48,7 @@ game_fire :: proc(players:core.Read(Player),actions:inp.Input_Of(Action)) {
 
 - `pressed`, `down`, `released`, `tapped`, `holding`, `value` (a button or `Axis`), `vector`
   (an `Axis2`). A seat that does not exist or is blocked reads as released.
-- Actions of the engine: `inp.Input_Of(phys.Walk_Action)` (`.Move`, `.Jump`, `.Sprint`,
+- Actions of the engine: `inp.Input_Of(locomotion.Walk_Action)` (`.Move`, `.Jump`, `.Sprint`,
   `.Crouch`) and `inp.Input_Of(inp.Look_Action)`.
 - In `frame`, `late` and `ui` take `inp.Frame_Input_Of(Action)`; the same `inp.pressed` reads
   it, so a press is not missed between ticks.
@@ -60,8 +65,8 @@ A seat is a player of this machine (`slot`) or of a connection (`peer`); it exis
 - `inp.drive(seats,seat,body)`, `inp.release(seats,seat)`, `inp.swap(seats,first,second)` and
   `inp.focus(seats,slot)` push into `^inp.Seat_Requests`; they apply at the start of the tick.
 - `inp.body_of(drivables,seat)` and `inp.seat_of(drivables,body)` read `core.Read(inp.Drivable)`.
-- Bodies appear at spawn points: `Spawn_Settings.players` gives each seat one, or ask with
-  `spawn.spawn(requests,seat,PLAYER_PREFAB)` and `spawn.respawn(requests,body,point)` in
+- Bodies appear at spawn points with `players` on: `Spawn_Settings.players` gives each seat one,
+  or ask with `spawn.spawn(requests,seat,PLAYER_PREFAB)` and `spawn.respawn(requests,body,point)` in
   `^spawn.Spawn_Requests` (a client cannot: the server decides).
 - A body no seat drives is moved by writing its `inp.Move_Input`: `move` (x right, z back, up to
   length 1), `look_yaw`, `look_pitch`, `buttons`. An AI writes it only where the rules are decided.

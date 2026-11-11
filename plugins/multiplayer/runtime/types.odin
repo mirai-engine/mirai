@@ -19,8 +19,8 @@ import wire "mirai:net"
 // replicates. Each different set is a type of the protocol that both ends
 // compose from the list its creation carries: nothing is registered, and the
 // order of the libraries does not matter. The structures declared
-// @(net_message) are the messages: send them with send, read them with
-// event_read.
+// @(net_message) are the messages: send them with send; a function that
+// receives a core.Inbox(T) reads those of type T that arrived for its tick.
 //
 // On a client, what the server simulates is a core.Pose_Target: whoever owns the
 // Transform of the entity takes the pose the network writes there.
@@ -59,9 +59,8 @@ NET_PROTOCOL_ID :: 0x4d495241
 DEFAULT_PORT :: 27500 // of Net_Settings.port
 PLAYER_NET :: 5 // the exit code of a player whose client could not join its server, or lost it with nobody watching
 COMPONENTS :: wire.MAX_FRAGMENTS-3 // replicated components of an entity, besides its pose, motion and driver
-EVENT_BYTES :: 256
 INPUT_DELAY_MAX :: 15 // ticks, of Net_Settings.input_delay
-PENDING_EVENTS :: 1024 // messages that wait for the next tick (a paused game runs none); later ones are dropped and reported
+PENDING_EVENTS :: 1024 // messages of a type that wait for the next tick (a paused game runs none); later ones are dropped and reported
 
 // An entity the network replicates. The game gives it with the entity (in its
 // prefab or its scene), and the network reads it. Its owner, the connection
@@ -200,31 +199,12 @@ Connection_Event :: struct {
 @(storage)
 Net_Connections :: struct {events:core.Events(Connection_Event)}
 
-// An event of the protocol that arrived: read it with event_read.
-Received :: struct {
-    type:typeid,
-    sender:Connection, // server: the client that sent it
-    about:core.Entity,
-    size:u16,
-    data:[EVENT_BYTES]u8,
-}
-
-// The messages that arrived, for the fixed functions: at
-// the start of each tick the network leaves here what arrived since the tick
-// before. A frame without ticks keeps them for the next tick, of a frame with
-// several only the first has them, and a tick that runs again has those it had.
-@(storage)
-Net_Events :: struct {
-    received:core.Queue(Received),
-}
-
-// An event to send. Requests: the games push, this library takes them.
+// A message to send. Requests: the games push, this library takes them.
 Outgoing :: struct {
     type:typeid,
     about:core.Entity,
     to:Connection,
-    size:u16,
-    data:[EVENT_BYTES]u8,
+    at:u32, // of its value in Net_Outbox.bytes
 }
 
 // Not copied with the world: a correction that brings back an older copy
@@ -232,6 +212,7 @@ Outgoing :: struct {
 @(storage,queue,copy=false)
 Net_Outbox :: struct {
     queue:core.Queue(Outgoing),
+    bytes:[dynamic]u8,
     replaying:bool `mirai:"readonly"`, // what runs now runs again (core.Time.resimulating): it sent the first time
 }
 
@@ -244,19 +225,6 @@ Net_Outbox :: struct {
 Net_Rewinds :: struct {queue:core.Queue(u32)}
 
 rewind :: proc(rewinds:^Net_Rewinds,tick:u32) {core.push(&rewinds.queue,tick)}
-
-// Client: entities a library made here for what a replica of the server
-// stands for, by the Id both ends give it. At the end of the tick each takes
-// the place of the entity of its replica.
-Adoption :: struct {
-    id:base.Entity_Id,
-    entity:core.Entity,
-}
-
-@(storage,queue)
-Net_Adoptions :: struct {queue:core.Queue(Adoption)}
-
-adopt :: proc(adoptions:^Net_Adoptions,id:base.Entity_Id,e:core.Entity) {core.push(&adoptions.queue,Adoption{id,e})}
 
 // The actions a connection sent for the tick being simulated, on a server.
 // Updated at the start of every tick; status says whether they arrived in time.
@@ -344,14 +312,30 @@ Net_Gone :: struct {
 @(storage,persist)
 Net_Identity :: struct {secret:[2]u64}
 
-// Client: an entity this client made in a tick, ahead of the server, which
-// makes the same one in that tick (predict_spawn). The replica the server
-// sends for it takes it; one the server did not make goes when the history
-// passes. Only the network writes it.
+// Client: an entity this client made in a tick for what the server makes too
+// (predict_spawn, predict_kept). The replica the server sends for it takes it;
+// when none does within the history, one the replica would own goes, and one
+// a library keeps loses only this mark. Only the network writes it.
 @(component,description="An entity this client made ahead of its server: the replica the server sends takes it, or it goes.")
 Predicted_Spawn :: struct {
     tick:u64 `mirai:"transient,readonly"`,
+    kept:bool `mirai:"transient,readonly"`, // the library that made it keeps it: it outlives its replica
 }
+
+// An entity a fixed function made in the tick that the replica of the
+// server's takes: one of a seat (peer: its Seat.peer), or one a library keeps,
+// which has the Id both ends draw already.
+Spawn :: struct {
+    entity:core.Entity,
+    peer:u64,
+    kept:bool,
+}
+
+// Requests: at the end of the tick the network gives each spawn of a seat the
+// Id both ends draw, from the connection of the seat, the tick and how many
+// that seat made before it in the tick, and marks on a client what it made.
+@(storage,queue)
+Net_Spawns :: struct {queue:core.Queue(Spawn)}
 
 // The Id both ends give an entity a player makes in a tick: from the
 // connection of that player, the tick and which of its spawns of the tick it is.
@@ -361,32 +345,24 @@ spawn_id :: proc(connection:Connection,tick:u64,sequence:u32) -> base.Entity_Id 
 }
 
 // For a fixed function that makes an entity on both ends in the same tick, as
-// the shot of the player a client predicts: e gets the Id both ends draw, so
-// the replica of the server's takes it, also after a correction ran the tick
-// again. peer is Seat.peer of the seat that makes it.
-predict_spawn :: proc(session:core.Ref(Net_Session),ids:^core.Table(core.Id),spawns:^core.Table(Predicted_Spawn),e:core.Entity,peer:u64,time:core.Time,sequence:u32=0) {
-    connection:=peer!=0?Connection(peer):own_connection(session)
-    core.add(ids,e,core.Id{spawn_id(connection,time.tick,sequence)})
-    if is_client(session) {core.add(spawns,e,Predicted_Spawn{time.tick})}
-}
+// the shot of the player a client predicts, with seat the seat that makes it:
+// the replica of the server's takes the client's, also after a correction ran
+// the tick again.
+predict_spawn :: proc(spawns:^Net_Spawns,e:core.Entity,seat:input.Seat) {core.push(&spawns.queue,Spawn{entity=e,peer=seat.peer})}
+
+// For a library that makes on a client, for what the server makes too, an
+// entity of its own with the Id both ends draw (the piece of a fracture): the
+// replica takes it, and the library keeps it.
+predict_kept :: proc(spawns:^Net_Spawns,e:core.Entity) {core.push(&spawns.queue,Spawn{entity=e,kept=true})}
 
 // Sends a message, a @(net_message): from a server to one connection, or to every one
 // that has the entity it is about (to all when it is about none); from a
 // client, to the server. False in a tick that runs again: it sent the first time.
 send :: proc(outbox:^Net_Outbox,value:$T,about:=core.NONE,to:Connection=0) -> bool {
-    #assert(size_of(T)<=EVENT_BYTES)
     if outbox.replaying {return false}
     value:=value
-    item:=Outgoing{type=T,about=about,to=to,size=size_of(T)}
-    copy(item.data[:],([^]u8)(&value)[:size_of(T)])
-    core.push(&outbox.queue,item)
+    at:=len(outbox.bytes)
+    append(&outbox.bytes,..mem.ptr_to_bytes(&value))
+    core.push(&outbox.queue,Outgoing{type=T,about=about,to=to,at=u32(at)})
     return true
-}
-
-// The value of a received event, when it is a T.
-event_read :: proc(item:Received,$T:typeid) -> (value:T,ok:bool) {
-    if item.type!=T || int(item.size)!=size_of(T) {return}
-    item:=item
-    copy(([^]u8)(&value)[:size_of(T)],item.data[:size_of(T)])
-    return value,true
 }

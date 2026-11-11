@@ -52,7 +52,7 @@ bench_terrain_volume_memory :: proc(t:^testing.T) {
             // With a viewer at the middle of its top: the blocks the chunks
             // within REACH of it read, with their halo.
             REACH :: 24
-            g:=&s.distances
+            g:=&s.field
             counts:=chunk_counts(&s)
             needed:=make([]bool,len(g.pages));defer delete(needed)
             for i in 0..<counts.x*counts.y*counts.z {

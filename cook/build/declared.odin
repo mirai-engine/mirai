@@ -1,6 +1,7 @@
 package build
 
 import "core:fmt"
+import "core:odin/ast"
 import "core:os"
 import "core:slice"
 import "core:strconv"
@@ -8,27 +9,33 @@ import "core:strings"
 import "mirai:project"
 import "mirai:std/base"
 
-// What compiles against the declarations of the engine follows the
-// declarations it names, not the packages that hold them. declare leaves, per
-// package, a line for each declaration with the hash of its text and the
-// names that text carries (DECLARED_NAMES). From those, each declaration gets
-// the hash of itself and of every declaration it reaches through them: a type
-// with the types of its fields, a procedure with the types of its signature,
-// an inline body with what it calls. A library, a program or a plugin hashes
-// the ones its own sources name (declared_names, declared_key): a field added
-// to a struct builds again what reaches that struct, and nothing else.
+// What compiles against declarations follows the declarations it names, not
+// the packages that hold them. declare leaves, per package, a line for each
+// declaration with the hash of its text and the names that text carries
+// (DECLARED_NAMES). From those, each declaration gets the hash of itself and
+// of every declaration it reaches through them: a type with the types of its
+// fields, a procedure with the types of its signature, an inline body with
+// what it calls. A library, a program or a plugin hashes the ones its own
+// parsed sources name (declared_named, declared_key): a field added to a
+// struct builds again what reaches that struct, and nothing else. One index
+// keys the declarations of the engine, of its plugins and of the project, each
+// as `<collection>:<package>.<name>`.
 //
-// A name counts wherever it is written, also where a local name hides it or
-// inside a comment: more is followed, never less. What reaches a struct
-// through a pointer follows it too, since nothing in a text says that its
-// fields are left alone.
+// A name counts wherever a selector writes it, also where a local name hides
+// the package: more is followed, never less. What reaches a struct through a
+// pointer follows it too, since nothing in a text says that its fields are
+// left alone.
 
 // Beside the declarations of a package: what each declares and names.
 @(private)
 DECLARED_NAMES :: "declared.names"
 
-// Of each declaration of the engine, by `<package>.<name>`, the hash of what
-// whoever names it compiles against. Empty: no build of the engine wrote it.
+// The collections whose declarations are keyed: the engine, its plugins and the project.
+@(private)
+DECLARED_COLLECTIONS :: [3]string{"mirai","plugins","project"}
+
+// Of each declaration, by its key, the hash of what whoever names it compiles
+// against. Empty: no build of the engine wrote it.
 @(private)
 Declared :: map[string]u64
 
@@ -41,11 +48,57 @@ Declared_Node :: struct {
     stacked:bool,
 }
 
-// Reads DECLARED_NAMES of every package of the engine under decl and writes
-// to file the hash of each declaration with what it reaches. False when it
-// cannot be written.
+// The packages of the keyed collections a file imports, by the name it gives
+// each, as `<collection>:<package>`: the key of one of their declarations adds
+// `.<name>`. The packages of skip are left out.
+@(private)
+imports_named :: proc(file:^ast.File,skip:[]string=nil) -> map[string]string {
+    imports:=make(map[string]string,context.temp_allocator)
+    for imp in file.imports {
+        literal:=strings.trim(imp.fullpath,"\"`")
+        colon:=strings.index_byte(literal,':')
+        collections:=DECLARED_COLLECTIONS
+        if colon<=0 || !slice.contains(collections[:],literal[:colon]) || slice.contains(skip,literal) {continue}
+        name:=imp.name.text if imp.name.text!="" else literal[max(strings.last_index_byte(literal,'/'),colon)+1:]
+        if name!="_" {imports[name]=literal}
+    }
+    return imports
+}
+
+// Adds to names the key of each declaration of another package the files
+// name: what a selector picks of a package they import, but of those of skip,
+// which compile with them.
+@(private)
+declared_named :: proc(files:[]^ast.File,skip:[]string,names:^map[string]bool) {
+    for file in files {
+        imports:=imports_named(file,skip)
+        found:=Names{file=names,imports=&imports}
+        for decl in file.decls {names_add(&found,decl)}
+    }
+}
+
+// Writes to file the index of the declarations of the engine under decl
+// (declared_add). False when it cannot be written.
 @(private)
 declared_write :: proc(decl,file:string) -> bool {
+    declared:=make(Declared,context.temp_allocator)
+    packages:=make([]string,ENGINE_PACKAGE_COUNT,context.temp_allocator)
+    for &path,index in packages {path=engine_package(index)}
+    declared_add(&declared,"mirai",decl,packages)
+    lines:=make([dynamic]string,0,len(declared),context.temp_allocator)
+    for key,hash in declared {append(&lines,fmt.tprintf("%s %x",key,hash))}
+    slice.sort(lines[:])
+    _,error:=write_changed(file,strings.join(lines[:],"\n",context.temp_allocator))
+    return error==nil
+}
+
+// Adds to declared the declarations of the packages of a collection, from
+// their DECLARED_NAMES under decl, each by its key with the hash of itself
+// and of what it reaches. A declaration of another package that declared has
+// counts with the hash it has there; one it lacks counts as missing, and
+// moves what names it once it is declared.
+@(private)
+declared_add :: proc(declared:^Declared,collection,decl:string,packages:[]string) {
     nodes:=make([dynamic]Declared_Node,context.temp_allocator)
     ids:=make(map[string]int,context.temp_allocator)
     node :: proc(nodes:^[dynamic]Declared_Node,ids:^map[string]int,key:string) -> int {
@@ -55,45 +108,42 @@ declared_write :: proc(decl,file:string) -> bool {
         ids[key]=id
         return id
     }
-    texts:[ENGINE_PACKAGE_COUNT]string
-    for &text,index in texts {
-        path:=engine_package(index)
+    texts:=make([]string,len(packages),context.temp_allocator)
+    for path,at in packages {
         data,error:=os.read_entire_file(project.path(decl,path,DECLARED_NAMES,allocator=context.temp_allocator),context.temp_allocator)
         if error!=nil {continue}
-        text=string(data)
-        rest:=text
+        texts[at]=string(data)
+        rest:=texts[at]
         for line in strings.split_lines_iterator(&rest) {
             name,hash:=declared_line(line) or_continue
-            id:=node(&nodes,&ids,fmt.tprintf("%s.%s",path,name))
+            id:=node(&nodes,&ids,fmt.tprintf("%s:%s.%s",collection,path,name))
             nodes[id].own=base.hash_combine(nodes[id].own,hash)
         }
     }
-    // Every declaration is known by now: a bare name that is none of its package is a local one.
-    for text,index in texts {
-        path:=engine_package(index)
+    // Every declaration of these packages is known by now: a bare name that is none of its package is a local one.
+    own:=len(nodes)
+    for text,at in texts {
         rest:=text
         for line in strings.split_lines_iterator(&rest) {
             name,_:=declared_line(line) or_continue
-            id:=ids[fmt.tprintf("%s.%s",path,name)]
+            id:=ids[fmt.tprintf("%s:%s.%s",collection,packages[at],name)]
             fields:=line
             skipped:=0
             for ref in strings.fields_iterator(&fields) {
                 if skipped<2 {skipped+=1;continue}
-                if strings.index_byte(ref,'.')>=0 {
-                    // Of another package, declared or not: one that is not yet moves what names it once it is.
-                    append(&nodes[id].edges,node(&nodes,&ids,ref))
-                } else if to,found:=ids[fmt.tprintf("%s.%s",path,ref)];found && to!=id {
+                if strings.index_byte(ref,':')>=0 {
+                    _,known:=ids[ref]
+                    to:=node(&nodes,&ids,ref)
+                    if !known && to>=own {nodes[to].own=declared[ref]}
+                    append(&nodes[id].edges,to)
+                } else if to,found:=ids[fmt.tprintf("%s:%s.%s",collection,packages[at],ref)];found && to!=id {
                     append(&nodes[id].edges,to)
                 }
             }
         }
     }
     hashes:=declared_reach(nodes[:])
-    lines:=make([dynamic]string,0,len(nodes),context.temp_allocator)
-    for n,id in nodes {append(&lines,fmt.tprintf("%s %x",n.key,hashes[id]))}
-    slice.sort(lines[:])
-    _,error:=write_changed(file,strings.join(lines[:],"\n",context.temp_allocator))
-    return error==nil
+    for n,id in nodes[:own] {declared[n.key]=hashes[id]}
 }
 
 @(private="file")
@@ -223,88 +273,6 @@ declared_read :: proc(file:string,allocator:=context.allocator) -> (declared:Dec
         if key,hash,ok:=declared_line(line);ok {declared[strings.clone(key,allocator)]=hash}
     }
     return
-}
-
-// Adds to names the declarations of the engine a source names, each as its
-// key: of every package it imports, whatever follows the name it gives the
-// package and a dot. A literal that names a package counts only
-// after `import` and the name it may give it: the text of a program a source
-// carries imports nothing. The packages of skip are not followed: they are
-// compiled with the source. A package of the engine imports only the ones
-// before it, those under limit. reached, when given, marks the packages imported.
-@(private)
-declared_names :: proc(source:string,skip:[]string,names:^map[string]bool,reached:^[ENGINE_PACKAGE_COUNT]bool=nil,limit:=ENGINE_PACKAGE_COUNT) {
-    Alias :: struct {name,path:string}
-    aliases:=make([dynamic]Alias,context.temp_allocator)
-    at:=0
-    for {
-        found:=strings.index(source[at:],ENGINE_COLLECTION)
-        if found<0 {break}
-        start:=at+found
-        at=start+len(ENGINE_COLLECTION)
-        quote:=source[start-1] if start>0 else 0
-        if quote!='"' && quote!='`' {continue}
-        end:=strings.index_byte(source[at:],quote)
-        if end<=0 {continue}
-        path:=source[at:at+end]
-        index,is_package:=engine_package_index(path)
-        if !is_package || index>=limit {continue}
-        // `import "mirai:core"` or `import name "mirai:core"`: anything else is no import.
-        before:=strings.trim_right(source[:start-1]," \t")
-        first:=word_before(before)
-        name:=""
-        if first=="import" {
-            name=path[strings.last_index_byte(path,'/')+1:]
-        } else if first!="" && word_before(strings.trim_right(before[:len(before)-len(first)]," \t"))=="import" {
-            name=first
-        }
-        if name=="" {continue}
-        if reached!=nil {reached[index]=true}
-        if name!="_" && !slice.contains(skip,path) {append(&aliases,Alias{name,path})}
-    }
-    for alias in aliases {
-        at=0
-        for {
-            found:=strings.index(source[at:],alias.name)
-            if found<0 {break}
-            start:=at+found
-            at=start+len(alias.name)
-            if start>0 && name_byte(source[start-1]) {continue}
-            dot:=blank_skip(source,at)
-            if dot>=len(source) || source[dot]!='.' {continue}
-            first:=blank_skip(source,dot+1)
-            last:=first
-            for last<len(source) && name_byte(source[last]) {last+=1}
-            if last>first {names[strings.concatenate({alias.path,".",source[first:last]},context.temp_allocator)]=true}
-        }
-    }
-    return
-
-    word_before :: proc(text:string) -> string {
-        start:=len(text)
-        for start>0 && name_byte(text[start-1]) {start-=1}
-        return text[start:]
-    }
-    blank_skip :: proc(text:string,from:int) -> int {
-        at:=from
-        for at<len(text) && (text[at]==' ' || text[at]=='\t' || text[at]=='\n' || text[at]=='\r') {at+=1}
-        return at
-    }
-    name_byte :: proc(c:u8) -> bool {
-        switch c {
-        case 'a'..='z','A'..='Z','0'..='9','_',0x80..=0xff: return true
-        }
-        return false
-    }
-}
-
-// The names of the files given, with declared_names. A file that cannot be read names nothing.
-@(private)
-declared_names_of :: proc(files:[]string,skip:[]string,names:^map[string]bool,reached:^[ENGINE_PACKAGE_COUNT]bool=nil,limit:=ENGINE_PACKAGE_COUNT) {
-    for file in files {
-        data,_:=os.read_entire_file(file,context.temp_allocator)
-        declared_names(string(data),skip,names,reached,limit)
-    }
 }
 
 // The hash of the declarations named, as the index has them: what whoever

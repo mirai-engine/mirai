@@ -1,5 +1,6 @@
 package navigation
 
+import "core:math"
 import "core:math/linalg"
 import "core:mem"
 import "core:slice"
@@ -14,6 +15,7 @@ import "mirai:std/ai"
 import "mirai:std/base"
 import "mirai:std/jobs"
 import mm "mirai:std/math"
+import locomotion "plugins:locomotion/runtime"
 import phys "plugins:physics/runtime"
 
 // A world with physics and navigation, stepped by hand: the static
@@ -34,13 +36,14 @@ Nav_World :: struct {
     paths:core.Table(Nav_Path),
     inputs:core.Table(input.Move_Input),
     drivables:core.Table(input.Drivable),
-    walks:core.Table(phys.Walk),
-    flights:core.Table(phys.Fly),
-    swims:core.Table(phys.Swim),
-    slides:core.Table(phys.Slide),
-    mantles:core.Table(phys.Mantle),
-    tacticals:core.Table(phys.Tactical_Sprint),
-    ledges:core.Table(phys.Ledge_Jump),
+    loco_states:core.Table(locomotion.Locomotion_State),
+    walks:core.Table(locomotion.Walk),
+    flights:core.Table(locomotion.Fly),
+    swims:core.Table(locomotion.Swim),
+    slides:core.Table(locomotion.Slide),
+    mantles:core.Table(locomotion.Mantle),
+    tacticals:core.Table(locomotion.Tactical_Sprint),
+    ledges:core.Table(locomotion.Ledge_Jump),
     remotes:core.Table(core.Remote),
     fars:core.Table(Nav_Far),
     roamings:core.Table(scene.Roaming),
@@ -52,7 +55,7 @@ Nav_World :: struct {
     nav_requests:Nav_Requests,
     nav_events:Nav_Events,
     nav_crossings:Nav_Crossings,
-    loco:phys.Locomotion_Requests,
+    loco:locomotion.Locomotion_Requests,
 }
 
 @(private)
@@ -717,14 +720,14 @@ agents_test_flier :: proc(f:^Nav_Test,feet:[3]f32) -> core.Entity {
     core.add(&f.transforms,e,core.Transform{feet,1,{1,1,1}})
     core.add(&f.colliders,e,phys.collider_character(0.25,0.8))
     character:=phys.character_default()
-    character.mode=phys.MODE_FLYING
     core.add(&f.characters,e,character)
     core.add(&f.moves,e,phys.Character_Move{})
     core.add(&f.bodies,e,core.Motion{})
-    core.add(&f.walks,e,phys.WALK_DEFAULT)
-    core.add(&f.flights,e,phys.Fly{speed=3,acceleration=20})
+    core.add(&f.walks,e,locomotion.WALK_DEFAULT)
+    core.add(&f.flights,e,locomotion.Fly{speed=3,acceleration=20})
     core.add(&f.inputs,e,input.Move_Input{})
     core.add(&f.agents,e,NAV_AGENT_DEFAULT)
+    locomotion.set_mode(&f.loco,e,locomotion.MODE_FLYING)
     return e
 }
 
@@ -741,11 +744,11 @@ agents_test_step :: proc(f:^Nav_Test) {
     }
     nav_test_settle(f)
     navigation_build(&f.nav,&f.builds,core.ref(&f.nav_settings),core.read(&f.bakes),core.ref(&f.state),&f.build_requests,core.read(&f.bounds),core.read(&f.areas),core.read(&f.links),core.read(&f.obstacles),core.read(&f.volumes),time,core.read(&f.transforms),core.read(&f.parents),core.ref(&f.ground),{data=f},core.read(&f.references),core.read(&f.worlds),core.read(&f.ids),&f.app,&f.problems)
-    navigation_agents(core.ref(&f.nav),&f.run,core.read(&f.agents),&f.paths,&f.nav_requests,&f.nav_events,&f.inputs,core.read(&f.drivables),core.read(&f.characters),core.read(&f.colliders),core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.character_states),core.read(&f.bodies),core.read(&f.worlds),core.read(&f.obstacles),core.read(&f.volumes),&f.loco,core.ref(&f.state),core.ref(&f.builds),&f.fars,
+    navigation_agents(core.ref(&f.nav),&f.run,core.read(&f.agents),&f.paths,&f.nav_requests,&f.nav_events,&f.inputs,core.read(&f.drivables),core.read(&f.characters),core.read(&f.loco_states),core.read(&f.colliders),core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.character_states),core.read(&f.bodies),core.read(&f.worlds),core.read(&f.obstacles),core.read(&f.volumes),&f.loco,core.ref(&f.state),core.ref(&f.builds),&f.fars,
         &f.roamings,&f.disabled,{&f.transforms,core.read(&f.parents),&f.places,&f.jumps},&f.requests,&f.nav_crossings,time,&f.problems)
     nav_test_settle(f)
     navigation_crossing(core.read(&f.paths),&f.moves,core.read(&f.characters),core.read(&f.walks),core.read(&f.bodies),core.read(&f.worlds),core.ref(&f.state),core.ref(&f.nav_crossings),time)
-    phys.locomotion_step(&f.characters,&f.moves,&f.inputs,core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.slides),core.read(&f.mantles),core.read(&f.tacticals),core.read(&f.ledges),core.read(&f.character_states),core.read(&f.bodies),core.read(&f.transforms),core.read(&f.parents),core.read(&f.remotes),core.ref(&f.state),{},{},&f.loco,time,core.CLOCK_DEFAULT,&f.problems)
+    locomotion.locomotion_step(core.read(&f.characters),&f.loco_states,&f.moves,&f.inputs,core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.slides),core.read(&f.mantles),core.read(&f.tacticals),core.read(&f.ledges),core.read(&f.character_states),core.read(&f.bodies),core.read(&f.transforms),core.read(&f.parents),core.read(&f.remotes),core.ref(&f.state),{},{},&f.loco,time,core.CLOCK_DEFAULT,&f.problems)
     nav_test_settle(f)
     phys.physics_step(
         &f.state,core.ref(&f.settings),&f.requests,&f.events,&f.meshes,&f.app,time,
@@ -835,12 +838,11 @@ agents_test_swimmer :: proc(f:^Nav_Test,feet:[3]f32) -> core.Entity {
     core.add(&f.transforms,e,core.Transform{feet,1,{1,1,1}})
     core.add(&f.colliders,e,phys.collider_character(0.25,0.8))
     character:=phys.character_default()
-    character.mode=phys.MODE_SWIMMING
     character.density=1000
     core.add(&f.characters,e,character)
     core.add(&f.moves,e,phys.Character_Move{})
     core.add(&f.bodies,e,core.Motion{})
-    core.add(&f.swims,e,phys.Swim{speed=2,acceleration=8,depth=1.2,surface_offset=0.25})
+    core.add(&f.swims,e,locomotion.Swim{speed=2,acceleration=8,depth=1.2,surface_offset=0.25})
     core.add(&f.inputs,e,input.Move_Input{})
     core.add(&f.agents,e,NAV_AGENT_DEFAULT)
     return e
@@ -1148,7 +1150,7 @@ agents_test_walker :: proc(f:^Nav_Test,feet:[3]f32) -> core.Entity {
     core.add(&f.characters,e,phys.character_default())
     core.add(&f.moves,e,phys.Character_Move{})
     core.add(&f.bodies,e,core.Motion{})
-    core.add(&f.walks,e,phys.WALK_DEFAULT)
+    core.add(&f.walks,e,locomotion.WALK_DEFAULT)
     core.add(&f.inputs,e,input.Move_Input{})
     core.add(&f.agents,e,NAV_AGENT_DEFAULT)
     return e
@@ -1374,8 +1376,8 @@ agents_test_amphibian :: proc(f:^Nav_Test,feet:[3]f32,flies:bool) -> core.Entity
     core.add(&f.characters,e,character)
     core.add(&f.moves,e,phys.Character_Move{})
     core.add(&f.bodies,e,core.Motion{})
-    core.add(&f.walks,e,phys.WALK_DEFAULT)
-    if flies {core.add(&f.flights,e,phys.Fly{speed=3,acceleration=20})} else {core.add(&f.swims,e,phys.Swim{speed=2,acceleration=8,depth=1.2,surface_offset=0.25})}
+    core.add(&f.walks,e,locomotion.WALK_DEFAULT)
+    if flies {core.add(&f.flights,e,locomotion.Fly{speed=3,acceleration=20})} else {core.add(&f.swims,e,locomotion.Swim{speed=2,acceleration=8,depth=1.2,surface_offset=0.25})}
     core.add(&f.inputs,e,input.Move_Input{})
     core.add(&f.agents,e,NAV_AGENT_DEFAULT)
     return e
@@ -1387,7 +1389,7 @@ agents_test_travel :: proc(f:^Nav_Test,e:core.Entity,seconds:int) -> (arrived:bo
     crossed=make([dynamic]Nav_Link_Kind,context.temp_allocator)
     for _ in 0..<60*seconds {
         agents_test_step(f)
-        c,_:=core.get(&f.characters,e)
+        c,_:=core.get(&f.loco_states,e)
         if int(c.mode)<16 {modes+={int(c.mode)}}
         for event in f.nav_events.queue.items {if event.entity==e && event.kind==.Crossed {append(&crossed,event.link)}}
         p,_:=core.get(&f.paths,e)
@@ -1422,7 +1424,7 @@ an_amphibian_walks_into_the_water_at_the_shore_swims_across_and_walks_out :: pro
     testing.expectf(t,p.state==.Moving && p.medium && p.kind==LINK_SWIM && p.to.x>p.from.x,"its plan crosses into the water: %v %v %v",p.state,p.medium,p.kind)
     arrived,modes,crossed,failed:=agents_test_travel(&f,e,60)
     testing.expect(t,arrived && !failed,"it walks out on the far side to its goal")
-    testing.expect(t,int(phys.MODE_SWIMMING) in modes,"it swims")
+    testing.expect(t,int(locomotion.MODE_SWIMMING) in modes,"it swims")
     testing.expectf(t,len(crossed)>=2 && crossed[0]==LINK_SWIM && crossed[len(crossed)-1]==LINK_SWIM,"in and out by the shores: %v",crossed)
     at,_:=core.get(&f.worlds,e)
     testing.expectf(t,linalg.distance(at.position,mm.Vec3{22,0,4})<1,"at %v",at.position)
@@ -1456,7 +1458,7 @@ an_agent_that_walks_and_flies_takes_off_and_lands_by_links_of_the_air :: proc(t:
     nav_move_to(&f.nav_requests,e,{21,4,4})
     arrived,modes,crossed,failed:=agents_test_travel(&f,e,60)
     testing.expect(t,arrived && !failed,"it gets onto the platform")
-    testing.expect(t,int(phys.MODE_FLYING) in modes,"it flies")
+    testing.expect(t,int(locomotion.MODE_FLYING) in modes,"it flies")
     testing.expectf(t,len(crossed)>=2 && crossed[0]==LINK_FLY && crossed[len(crossed)-1]==LINK_FLY,"off and down by the links of the air: %v",crossed)
     // It may arrive still falling onto the platform: there it stands.
     for _ in 0..<60 {agents_test_step(&f)}
@@ -1477,7 +1479,7 @@ an_agent_no_class_holds_fails_and_says_so_once :: proc(t:^testing.T) {
     core.add(&f.characters,e,phys.character_default())
     core.add(&f.moves,e,phys.Character_Move{})
     core.add(&f.bodies,e,core.Motion{})
-    core.add(&f.walks,e,phys.WALK_DEFAULT)
+    core.add(&f.walks,e,locomotion.WALK_DEFAULT)
     core.add(&f.inputs,e,input.Move_Input{})
     core.add(&f.agents,e,NAV_AGENT_DEFAULT)
     nav_move_to(&f.nav_requests,e,{4,0,2})
@@ -1898,6 +1900,84 @@ agents_step_aside_from_those_they_meet_within_the_horizon :: proc(t:^testing.T) 
         turned:=first.velocity!=[3]f32{4,0,0} && second.velocity!=[3]f32{-4,0,0}
         still:=first.velocity==[3]f32{4,0,0} && second.velocity==[3]f32{-4,0,0}
         testing.expectf(t,turned if i==0 else still,"%v m apart they go at %v and %v",distance,first.velocity,second.velocity)
+    }
+    testing.expect_value(t,f.problems.count,0)
+}
+
+// The neighbors an agent gathers from the grid are, among those it may meet
+// within the horizon, the nearest ones ORCA counts: the same as a look at
+// every other agent finds, in a crowd, far apart, on two floors, in the air,
+// beside an obstacle and with positions that are not numbers or are huge.
+@(test)
+agents_gather_the_nearest_neighbors_they_may_meet :: proc(t:^testing.T) {
+    f:Nav_Test
+    if !nav_test_init(t,&f) {return}
+    defer nav_test_destroy(&f)
+    Case :: enum {Crowd,Apart,Floors,Air,Obstacle,Hostile}
+    rng:=mm.rng_make(3)
+    for c in Case {
+        clear(&f.run.near)
+        jitter :: proc(rng:^mm.Rng) -> mm.Vec3 {return {mm.random_range(rng,-0.1,0.1),0,mm.random_range(rng,-0.1,0.1)}}
+        walker :: proc(f:^Nav_Test,position,velocity:mm.Vec3) {append(&f.run.near,Near{entity=core.Entity(len(f.run.near)+1),position=position,velocity=velocity,radius=0.4,height=1.8,avoids=true})}
+        switch c {
+        case .Crowd:
+            for i in 0..<240 {walker(&f,mm.Vec3{f32(i%20)*0.7,1,f32(i/20)*0.7}+jitter(&rng),{1,0,0})}
+        case .Apart:
+            for d in ([?]f32{0,3,7,11,15,30,70}) {walker(&f,{d,1,0}+jitter(&rng),{-2,0,0})}
+        case .Floors:
+            for i in 0..<40 {walker(&f,mm.Vec3{f32(i%10),1+f32(i/20)*4,f32(i/10%2)}+jitter(&rng),{0,0,1})}
+        case .Air:
+            for i in 0..<60 {
+                position:=mm.Vec3{f32(i%5)*1.5,2+f32(i/5%4)*1.2,f32(i/20)*1.5}+jitter(&rng)
+                append(&f.run.near,Near{entity=core.Entity(i+1),position=position,velocity={0,1,0},radius=0.3,height=0.8,avoids=true,flies=true})
+            }
+        case .Obstacle:
+            for i in 0..<12 {walker(&f,mm.Vec3{f32(i)*0.9,1,0}+jitter(&rng),{3,0,0})}
+            append(&f.run.near,Near{entity=100,position={4,1,1},velocity={5,0,0},radius=1.5,height=2})
+        case .Hostile:
+            nan:=math.nan_f32()
+            for i in 0..<10 {walker(&f,{f32(i),1,0},{1,0,0})}
+            walker(&f,{nan,1,0},{1,0,0})
+            walker(&f,{1e30,1,-1e30},{1,0,0})
+            walker(&f,{2,1,nan},{nan,0,0})
+        }
+        // Without a path that moves nobody steps aside: the tick only fills the grid.
+        agents_avoid(&f.nav,&f.run,&f.paths,1.0/60,&f.problems)
+        fastest,widest:f32
+        for near in f.run.near {
+            if near.avoids {fastest=max(fastest,linalg.length(near.velocity))}
+            widest=max(widest,near_sphere(near))
+        }
+        for near,i in f.run.near {
+            if !(abs(near.position.x)<1e6) || !(abs(near.position.z)<1e6) {continue}
+            top:=linalg.length(near.velocity)
+            agent_neighbors(&f.run,i,top,NAV_AGENT_HORIZON*(top+fastest)+near_sphere(near)+widest)
+            gathered,every:[dynamic]f32
+            defer delete(gathered)
+            defer delete(every)
+            for other in f.run.neighbors {append(&gathered,linalg.length2(other.position-near.position.xz))}
+            for other in f.run.neighbors_air {append(&gathered,linalg.length2(other.position-near.position))}
+            for other,j in f.run.near {
+                if j==i {continue}
+                velocity:=other.velocity if other.avoids else {}
+                reach:=NAV_AGENT_HORIZON*(top+linalg.length(velocity))
+                distance2:f32
+                if near.flies {
+                    reach+=near_sphere(near)+near_sphere(other)
+                    distance2=linalg.length2(other.position-near.position)
+                } else {
+                    if !(abs(other.position.y-near.position.y)<=max(near.height,other.height)) {continue}
+                    reach+=near.radius+other.radius
+                    distance2=linalg.length2(other.position.xz-near.position.xz)
+                }
+                if distance2<=reach*reach {append(&every,distance2)}
+            }
+            slice.sort(gathered[:])
+            slice.sort(every[:])
+            nearest:=min(len(every),ai.AVOID_MAX_NEIGHBORS)
+            same:=len(gathered)>=nearest && slice.equal(gathered[:nearest],every[:nearest])
+            testing.expectf(t,same,"%v: agent %d gathers %v nearest, and is near %v",c,i,gathered[:min(len(gathered),nearest)],every[:nearest])
+        }
     }
     testing.expect_value(t,f.problems.count,0)
 }

@@ -174,6 +174,7 @@ the_instances_of_a_document_are_components_of_its_entities_and_a_copy_has_none :
     LAMP :: base.Asset_Id{0x1a,2}
     lamp,level:asset.Scene
     asset.scene_init(&lamp,&f.types,LAMP);defer asset.scene_destroy(&lamp)
+    lamp.doc.flags+={.Prefab}
     asset.scene_entity_add(&lamp,1,0,"Lamp")
     asset.scene_entity_add(&lamp,2,1,"Bulb")
     asset.scene_init(&level,&f.types,{0x1a,3});defer asset.scene_destroy(&level)
@@ -207,6 +208,7 @@ the_instances_of_a_document_are_components_of_its_entities_and_a_copy_has_none :
     // A prefab that places the Lamp, copied while the world runs: its entities are of no instance.
     desk:asset.Scene
     asset.scene_init(&desk,&f.types,{0x1a,4});defer asset.scene_destroy(&desk)
+    desk.doc.flags+={.Prefab}
     asset.scene_entity_add(&desk,1,0,"Desk")
     asset.scene_instantiate(&desk,&lamp,LAMP,1)
     copied:asset.Asset

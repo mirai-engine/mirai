@@ -335,11 +335,11 @@ prompts_follow_the_bindings_of_the_family :: proc(t:^testing.T) {
     inp.input_map_action(&m,JUMP,.Button)
     inp.input_map_bind(&m,JUMP,inp.binding_key(.Space))
     inp.input_map_bind(&m,JUMP,inp.binding_gamepad_button(.South))
-    inp.input_map_bind(&m,JUMP,inp.binding_gamepad_button(.North,gamepad=2))
+    inp.input_map_bind(&m,JUMP,inp.binding_gamepad_button(.North,gamepad=3))
     inp.input_map_action(&m,MOVE,.Axis2)
     inp.input_map_bind(&m,MOVE,inp.binding_keys(.A,.D,.S,.W))
     inp.input_map_bind(&m,MOVE,inp.binding_gamepad_stick(.Left))
-    inp.input_map_bind(&m,MOVE,{count=4,gamepad=inp.GAMEPAD_ANY,codes={{.Gamepad_Button,u8(core.Gamepad_Button.Dpad_Left)},{.Gamepad_Button,u8(core.Gamepad_Button.Dpad_Right)},{.Gamepad_Button,u8(core.Gamepad_Button.Dpad_Down)},{.Gamepad_Button,u8(core.Gamepad_Button.Dpad_Up)}}})
+    inp.input_map_bind(&m,MOVE,{inputs={.Dpad_Left,.Dpad_Right,.Dpad_Down,.Dpad_Up}})
     inp.input_map_action(&m,LOOK,.Axis2)
     inp.input_map_bind(&m,LOOK,inp.binding_mouse_delta())
     out:[ui.PROMPT_CAPACITY]ui.Prompt

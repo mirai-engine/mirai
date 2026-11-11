@@ -241,6 +241,7 @@ table_convert :: proc(m:^World_Migration,from,to:^Table_Info,t,old_table:^Raw_Ta
         clear(&t.entities);clear(&t.stamps);clear(&t.page_stamps);clear(&t.off);clear(&t.turns);clear(&t.owners)
         rows_zero(t)
         t.on=0
+        t.version+=1
         t.layout+=1
     }
     // The old values go to the struct the old library destroys.

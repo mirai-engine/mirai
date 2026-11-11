@@ -2,10 +2,9 @@
 name: mirai-plugins
 description: The Mirai plugin system - manifests (`plugin.mirai`), the runtime and editor parts,
   dependencies and order, plugins from git and the catalog (`cook/install`, `mirai plugin`) - and
-  the tool, physics add-on and renderer plugins `paint`, `physics_placement`, `physics_cache`,
-  `ragdoll`, `playtest`, `previews`, `profiler`, `tracy`, `ui_inspector`,
-  `prompts_kenney`, `decals`, `deform`, `monitors`, `portals` (also mirrors), `fog`, `fsr` and
-  `lens`.
+  the tool, physics add-on and renderer plugins `paint`, `physics_cache`, `ragdoll`, `playtest`,
+  `previews`, `profiler`, `tracy`, `ui_inspector`, `prompts_kenney`, `decals`, `deform`,
+  `monitors`, `portals` (also mirrors), `fog`, `fsr` and `lens`.
   Use when creating, changing, splitting, installing or publishing a plugin, when a plugin must
   extend the engine or integrate with the project world, or when working on one of those plugins.
   The plugins of terrain, vegetation, water, particles, navigation and AI are in `mirai-world`.
@@ -35,15 +34,13 @@ project world. Layout, manifests and build:
 - World content (`terrain`, `foliage`, `water`, `imprint`, `vfx`, `navigation`, `behavior`,
   `shapes` and their bridges): [mirai-world](../mirai-world/SKILL.md)
 - `paint` (vertex color brush, `paint.*`): [plugins.md#paint](references/plugins.md#paint)
-- `physics_placement` (`placement.drop`):
-  [plugins.md#physics-placement](references/plugins.md#physics-placement)
 - `previews` (animation documents, animation and skeleton thumbnails; `animation.capture`):
   [animation document](references/previews.md#animation-document),
   [thumbnails](references/previews.md#animation-thumbnails),
   [capture](references/previews.md#animation-capture) and
   [sound documents](references/previews.md#sound-documents)
-- `animation_physics` (automatic bridge: the mode, velocity and request of each `Character` feed
-  the motion matching of its `Animation`):
+- `animation_physics` (automatic bridge of `animation` and `locomotion`: the mode, velocity and
+  request of each `Character` feed the motion matching of its `Animation`):
   [locomotion](../mirai-animation/references/animation.md#locomotion-by-motion-matching)
 - `unreal` and its `unreal_*` bridges (import Unreal packages and maps in the editor) are not part
   of the engine: they are installed from the catalog (`mirai plugin add unreal`); code and

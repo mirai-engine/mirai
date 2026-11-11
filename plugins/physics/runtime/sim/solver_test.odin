@@ -196,18 +196,16 @@ joints_without_color_hold_the_same_with_any_workers :: proc(t:^testing.T) {
         for i in 0..<30 {
             angle:=f32(i)*2*PI/30
             ball:=test_body(w,Sphere{0.1},{2*cmath.cos(angle),8,2*cmath.sin(angle)})
-            desc:=test_joint(w,.Distance,hub,ball,{0,8,0})
-            desc.frame_b.p={}
-            joint_create(w,desc)
+            joint_create(w,test_distance(hub,ball,2,2))
         }
-        types:=[4]Joint_Type{.Spherical,.Revolute,.Prismatic,.Fixed}
+        types:=[4]Test_Joint{.Spherical,.Revolute,.Prismatic,.Fixed}
         for type,k in types {
             previous:=anchor
             for link in 0..<5 {
                 position:=Vec3{f32(k)*2-3,6-f32(link)*0.6,4}
                 body:=test_body(w,Box{{0.1,0.2,0.1}},position)
                 desc:=test_joint(w,type,previous,body,position+{0,0.3,0},{0,0,1})
-                if type==.Prismatic {desc.enable_limit,desc.lower,desc.upper=true,-0.05,0.05}
+                if type==.Prismatic {desc.linear[0]={motion=.Limited,lower=-0.05,upper=0.05}}
                 joint_create(w,desc)
                 previous=body
             }
@@ -259,4 +257,65 @@ a_full_pair_buffer_makes_contacts_only_of_real_pairs :: proc(t:^testing.T) {
         }
     }
     testing.expect(t,world_stats(&a).contact_capacity_exhausted>0)
+}
+
+// The step walks the lists of the awake bodies and of the moved shapes instead of every slot: with thousands
+// asleep it integrates only the awake ones, and the lists hold exactly the bodies that are awake and the
+// shapes that need pairs through sleep, waking, a change of type, a removal and a restore.
+@(test)
+the_step_visits_only_the_awake_bodies :: proc(t:^testing.T) {
+    lists_hold :: proc(t:^testing.T,w:^World) {
+        listed,previous:=0,i32(-1)
+        for i:=w.awake_head;i>=0;i=w.bodies[i].awake_next {
+            testing.expect(t,w.bodies[i].generation&1!=0 && .Awake in w.bodies[i].flags && w.bodies[i].awake_prev==previous)
+            listed,previous=listed+1,i
+        }
+        moved,previous_shape:=0,i32(-1)
+        for i:=w.moved_head;i>=0;i=w.shapes[i].moved_next {
+            testing.expect(t,w.shapes[i].generation&1!=0 && .Moved in w.shapes[i].flags && w.shapes[i].moved_prev==previous_shape)
+            moved,previous_shape=moved+1,i
+        }
+        awake,flagged:=0,0
+        for &body in w.bodies[:w.body_high] {if body.generation&1!=0 && .Awake in body.flags {awake+=1}}
+        for &shape in w.shapes[:w.shape_high] {if shape.generation&1!=0 && .Moved in shape.flags {flagged+=1}}
+        testing.expect_value(t,listed,awake)
+        testing.expect_value(t,moved,flagged)
+    }
+    w:=new(World)
+    defer free(w)
+    testing.expect(t,test_world_threaded(w,nil,4096,16384,8))
+    defer world_destroy(w)
+    test_ground(w,{60,1,60})
+    for i in 0..<3000 {
+        desc:=BODY_DESC_DEFAULT
+        desc.position,desc.asleep={(f32(i%55)-27)*1.1,0.25,(f32(i/55)-27)*1.1},true
+        shape:=SHAPE_DESC_DEFAULT
+        shape.geometry=Box{{0.25,0.25,0.25}}
+        shape_create(w,body_create(w,desc),shape)
+    }
+    falling:=[3]Body_Handle{test_body(w,Sphere{0.2},{0,3,80}),test_body(w,Sphere{0.2},{3,3,80}),test_body(w,Sphere{0.2},{6,3,80})}
+    lists_hold(t,w)
+    for _ in 0..<5 {world_step(w,1.0/60)}
+    integrated,_:=world_stepped(w)
+    testing.expect_value(t,len(integrated),3)
+    testing.expect_value(t,w.moved_head,i32(-1))
+    lists_hold(t,w)
+    asleep:=Body_Handle(body_handle(w,500))
+    body_set_awake(w,asleep,true)
+    body_set_type(w,falling[0],.Static)
+    body_destroy(w,falling[1])
+    lists_hold(t,w)
+    kept:World
+    defer world_destroy(&kept)
+    testing.expect(t,test_keep(&kept,w))
+    world_step(w,1.0/60)
+    integrated,_=world_stepped(w)
+    testing.expect_value(t,len(integrated),2)
+    body_set_type(w,falling[0],.Dynamic)
+    lists_hold(t,w)
+    testing.expect(t,test_restore(w,&kept))
+    lists_hold(t,w)
+    for _ in 0..<60 {world_step(w,1.0/60)}
+    lists_hold(t,w)
+    testing.expect(t,world_stats(w).awake_bodies<=2)
 }

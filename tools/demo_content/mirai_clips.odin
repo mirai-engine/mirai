@@ -100,7 +100,7 @@ mirai_clip_scaled :: proc(clip:asset.Animation_Clip_Desc,name:string,time,swing:
     }
     result.tracks=tracks
     markers:=make([]asset.Animation_Marker_Desc,len(clip.markers),context.temp_allocator)
-    for marker,i in clip.markers {markers[i]={marker.time*time,marker.name,marker.duration*time}}
+    for marker,i in clip.markers {markers[i]={marker.time*time,marker.name,marker.duration*time,marker.target}}
     result.markers=markers
     return result
 }

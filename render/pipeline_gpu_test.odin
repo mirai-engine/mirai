@@ -56,7 +56,7 @@ half_to_f32 :: proc(h: u16) -> f32 {
 @(test)
 pipeline_passes_run_between_stages_over_the_resources_they_declare :: proc(t: ^testing.T) {
 	settings := DEFAULT_SETTINGS
-	settings.gi_enabled, settings.reflections, settings.taa = false, false, false
+	settings.gi_enabled, settings.taa = false, false
 	f: Fixture
 	if !fixture_init(t, &f, 128, 64, settings) {return}
 	defer fixture_destroy(&f)
@@ -78,7 +78,7 @@ pipeline_passes_run_between_stages_over_the_resources_they_declare :: proc(t: ^t
 	floor[0, 0], floor[1, 1], floor[2, 2], floor[1, 3] = 8, 0.1, 8, -0.55
 	instances := []Instance_Desc{{object_id = 1, mesh = cube, transform = 1, tint = {0.7, 0.4, 0.2}}, {object_id = 2, mesh = cube, transform = floor, tint = {0.6, 0.6, 0.6}}}
 	lights := []Light_Desc{{position = {1.2, 1.5, 1}, color = {1, 0.8, 0.6}, intensity = 4 * math.PI, range = 8, radius = 0.1}}
-	scene_set(r, instances, lights, {direction = {0.4, 1, 0.3}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true}, {sky = {0.2, 0.3, 0.5}})
+	scene_given(r, instances, lights, {direction = {0.4, 1, 0.3}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true}, {sky = {0.2, 0.3, 0.5}})
 
 	shader := pass_shader()
 	pipeline := rhi.pipeline_create_compute(device, {shader = &shader, name = "test pass"})
@@ -144,10 +144,23 @@ pipeline_passes_run_between_stages_over_the_resources_they_declare :: proc(t: ^t
 	read :: proc(t: ^testing.T, device: ^rhi.Device, texture: rhi.Texture, pixels: []u16) -> bool {
 		return testing.expect(t, golden_read_texture(device, texture, mem.slice_to_bytes(pixels)), rhi.device_error(device))
 	}
+	counted := make([]u16, 8 * 8 * 4, context.temp_allocator)
+	current := int((own.frames - 1) % 2)
+	if !read(t, device, own.resources[1].textures[current], counted) {return}
+	testing.expect_value(t, half_to_f32(counted[0]), f32(frames))
+
+	// The display of a view lives within its frame, and views of one size share
+	// it: a frame that draws one of them alone leaves it to be read.
 	size := int(standard.targets.width * standard.targets.height * 4)
 	plain := make([]u16, size, context.temp_allocator)
 	scaled := make([]u16, size, context.temp_allocator)
-	if !read(t, device, standard.targets.display, plain) || !read(t, device, own.targets.display, scaled) {return}
+	for alone, at in ([][]u16{plain, scaled}) {
+		own_pipeline, _ := renderer_pipeline(r, desc)
+		views := []Frame_View{{camera = camera, rect = {0, 0, 64, 64}, disabled = at != 0}, {camera = camera, rect = {64, 0, 64, 64}, pipeline = own_pipeline, disabled = at != 1}}
+		testing.expect(t, renderer_frame(r, {camera = camera, views = views}), r.error)
+		rhi.device_wait_idle(device)
+		if !read(t, device, r.views[at].targets.display, alone) {return}
+	}
 	wrong, lit := 0, 0
 	for value, i in plain {
 		if i % 4 == 3 {continue}
@@ -157,11 +170,6 @@ pipeline_passes_run_between_stages_over_the_resources_they_declare :: proc(t: ^t
 	}
 	testing.expect(t, lit > size / 8, "the scene should light the view")
 	testing.expectf(t, wrong == 0, "%d channels of the view with passes are not 16 times those of the standard one", wrong)
-
-	counted := make([]u16, 8 * 8 * 4, context.temp_allocator)
-	current := int((own.frames - 1) % 2)
-	if !read(t, device, own.resources[1].textures[current], counted) {return}
-	testing.expect_value(t, half_to_f32(counted[0]), f32(frames))
 
 	// Steady frames ask for the same pipeline and allocate nothing.
 	tracker: mem.Tracking_Allocator
@@ -185,4 +193,19 @@ pipeline_passes_run_between_stages_over_the_resources_they_declare :: proc(t: ^t
 	}
 	testing.expect_value(t, own.resources[0].textures[0], rhi.Texture(0))
 	testing.expectf(t, rhi.device_validation_errors(device) == 0, "validation reported %d errors; last: %s", rhi.device_validation_errors(device), rhi.device_validation_message(device))
+}
+
+// The variants a scene may ask for are made on the pipeline thread from the
+// start, those of colored shadows too: turning them on waits for none.
+@(test)
+variants_a_scene_may_ask_for_are_made_off_the_frame :: proc(t: ^testing.T) {
+	f: Fixture
+	if !fixture_init(t, &f, 64, 48, DEFAULT_SETTINGS) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	renderer_pipelines_wait(r)
+	tracer := Pipeline_Rays.Hardware if r.hardware_rt else .Software
+	testing.expect(t, pipeline_slot(r, .Composite, .Any, {COMPOSITE_COMP_UNLAYERED})^ != 0 && pipeline_slot(r, .Reflect, tracer, {REFLECT_COMP_UNLAYERED})^ != 0, "without layers")
+	testing.expect(t, pipeline_slot(r, .Shadow_Trace, tracer, {SHADOW_TRACE_COMP_COLOR})^ != 0 && pipeline_slot(r, .Translucent, tracer, {TRANSLUCENT_FRAG_COLOR})^ != 0, "with colored shadows, while they are off")
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }

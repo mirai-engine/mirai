@@ -10,7 +10,10 @@ import "mirai:std/serial"
 //   Sequenced   as Unreliable, and a message still waiting to be sent is
 //               replaced by a newer one: only the latest matters.
 //   Reliable    resent until acknowledged and delivered in the order sent.
-//               Messages are cut in chunks, so they can exceed a datagram.
+//               Messages are cut in chunks as the window draws them from
+//               the queue, so one can exceed the datagram and the queue:
+//               message_send streams it, and it arrives in pieces of at
+//               most PIECE_BYTES (Command.more).
 
 Channel_Kind :: enum u8 {Unreliable,Sequenced,Reliable}
 
@@ -18,12 +21,13 @@ Channel_Desc :: struct {
     kind:Channel_Kind,
     budget:int,            // bytes of this channel per update of a connection; 0 has no limit
     queue_bytes:int,       // messages waiting to be sent, default 32 KiB
-    max_message_bytes:int, // Reliable: default 16 KiB. The others: at most MAX_UNRELIABLE_BYTES
+    max_message_bytes:int, // Unreliable and Sequenced: at most MAX_UNRELIABLE_BYTES, the default. Reliable has no limit
 }
 
 MAX_UNRELIABLE_BYTES :: 1024
 @(private) CHUNK_BYTES :: 256
 @(private) CHUNK_WINDOW :: 64
+PIECE_BYTES :: CHUNK_WINDOW*CHUNK_BYTES
 @(private) CHANNEL_SYSTEM :: 6
 @(private) CHANNEL_EVENTS :: 7
 @(private) CHANNEL_ORDER :: [MAX_CHANNELS]int{CHANNEL_SYSTEM,CHANNEL_EVENTS,0,1,2,3,4,5}
@@ -79,7 +83,7 @@ Channel :: struct {
     active:bool,
     kind:Channel_Kind,
     budget,spent,max_message:int,
-    queue:Byte_Ring,
+    queue:Byte_Ring,  // Reliable: a message streamed in is cut as its bytes come
     applied:u64,     // bytes of the messages for this connection alone taken from the frames
     // Reliable, sending: chunks send_base..<send_next are in the window.
     send_base,send_next:u16,
@@ -105,7 +109,7 @@ channel_allocate :: proc(h:^Host,c:^Channel,desc:Channel_Desc) {
         c.chunk_data=host_make(h,u8,CHUNK_WINDOW*CHUNK_BYTES)
         c.recv_chunks=host_make(h,Recv_Chunk,CHUNK_WINDOW)
         c.recv_data=host_make(h,u8,CHUNK_WINDOW*CHUNK_BYTES)
-        c.assembly=host_make(h,u8,desc.max_message_bytes)
+        c.assembly=host_make(h,u8,PIECE_BYTES)
     }
 }
 @(private)
@@ -127,12 +131,22 @@ channel_reset :: proc(c:^Channel) {
 // alternative is to lose it without anyone knowing. message_send, event_send
 // and the requests of authority refuse what would not fit, counted from the
 // room of the last host_poll, so a sender of this library never gets here.
+// total: of a message streamed in, its size with its first bytes, 0 with the
+// bytes that follow; -1 for a whole one.
 @(private)
-channel_queue :: proc(h:^Host,p:^Peer,index:int,data:[]u8) -> bool {
+channel_queue :: proc(h:^Host,p:^Peer,index:int,data:[]u8,total:=-1) -> bool {
     c:=&p.channels[index]
     if !c.active || len(data)>c.max_message {return false}
     if c.kind==.Sequenced {c.queue.head,c.queue.used=0,0}
-    if ring_write_message(&c.queue,data) {return true}
+    written:bool
+    switch {
+    case total<0: written=ring_write_message(&c.queue,data)
+    case total>0:
+        size:=u32le(total)
+        written=c.queue.used+4+len(data)<=len(c.queue.data) && ring_write(&c.queue,([^]u8)(&size)[:4]) && ring_write(&c.queue,data)
+    case:         written=ring_write(&c.queue,data)
+    }
+    if written {return true}
     p.stats.messages_dropped+=1
     if c.kind==.Reliable {peer_drop(h,p,.Reliable_Overflow,true)}
     return false
@@ -146,7 +160,8 @@ channels_pending :: proc(p:^Peer) -> bool {
     return false
 }
 
-// Cuts queued messages into chunks while the window has room.
+// Cuts queued messages into chunks while the window has room and the bytes
+// of the next chunk are in the queue.
 @(private)
 channel_fill :: proc(c:^Channel) {
     for u16(c.send_next-c.send_base)<CHUNK_WINDOW {
@@ -158,6 +173,7 @@ channel_fill :: proc(c:^Channel) {
         }
         slot:=int(c.send_next%CHUNK_WINDOW)
         length:=min(c.front_left,CHUNK_BYTES)
+        if c.queue.used<length {return}
         ring_read(&c.queue,c.chunk_data[slot*CHUNK_BYTES:][:length])
         c.front_left-=length
         c.front_open=c.front_left>0
@@ -269,7 +285,12 @@ channels_read :: proc(h:^Host,p:^Peer,r:^serial.Bit_Reader,late:=false) -> bool 
         for c.recv_chunks[c.recv_base%CHUNK_WINDOW].present {
             head:=int(c.recv_base%CHUNK_WINDOW)
             chunk:=c.recv_chunks[head]
-            if c.assembly_used+int(chunk.length)>len(c.assembly) {return false}
+            if c.assembly_used+int(chunk.length)>min(len(c.assembly),c.max_message) {
+                // A message of the game goes on in pieces; one of the library is whole.
+                if index>=USER_CHANNELS || !channel_deliver(h,p,index,c.assembly[:c.assembly_used],true) {return false}
+                c.assembly_used=0
+                if p.state!=.Connected {return true}
+            }
             copy(c.assembly[c.assembly_used:],c.recv_data[head*CHUNK_BYTES:][:chunk.length])
             c.assembly_used+=int(chunk.length)
             c.recv_chunks[head]={}
@@ -287,9 +308,9 @@ channels_read :: proc(h:^Host,p:^Peer,r:^serial.Bit_Reader,late:=false) -> bool 
 }
 
 @(private)
-channel_deliver :: proc(h:^Host,p:^Peer,index:int,data:[]u8) -> bool {
+channel_deliver :: proc(h:^Host,p:^Peer,index:int,data:[]u8,more:=false) -> bool {
     if index>=USER_CHANNELS {return repl_message(h,p,index,data)}
-    if command_push(h,{kind=.Message,connection=peer_handle(h,p),channel=u8(index)},data)==nil {
+    if command_push(h,{kind=.Message,connection=peer_handle(h,p),channel=u8(index),more=more},data)==nil {
         if p.channels[index].kind==.Reliable {peer_drop(h,p,.Capacity,true)}
     }
     return true

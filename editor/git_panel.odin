@@ -23,7 +23,7 @@ GIT_SOURCES :: [?]Git_Source{
     {"wav",asset.KIND_SOUND},{"ogg",asset.KIND_SOUND},{"mp3",asset.KIND_SOUND},
     {"png",asset.KIND_TEXTURE},{"jpg",asset.KIND_TEXTURE},{"jpeg",asset.KIND_TEXTURE},{"tga",asset.KIND_TEXTURE},
     {"exr",asset.KIND_TEXTURE},{"hdr",asset.KIND_TEXTURE},{"psd",asset.KIND_TEXTURE},
-    {"glb",SHOWN_PREFAB},{"gltf",SHOWN_PREFAB},{"obj",SHOWN_PREFAB},{"fbx",SHOWN_PREFAB},{"usd",SHOWN_PREFAB},{"usdz",SHOWN_PREFAB},
+    {"glb",asset.KIND_MESH},{"gltf",asset.KIND_MESH},{"obj",asset.KIND_MESH},{"fbx",asset.KIND_MESH},{"usd",asset.KIND_MESH},{"usdz",asset.KIND_MESH},
 }
 
 git_panel_build :: proc(s:^Session,width,room:f32) {
@@ -181,7 +181,7 @@ git_change_icon :: proc(s:^Session,registry:^asset.Registry,path:string) -> (ico
     relative:=strings.trim_prefix(path,"assets/")
     if registry!=nil && relative!=path {
         if file,found:=asset.registry_find_path(registry,relative);found && file.state==.Asset {
-            icon,_=asset_icon(s,shown_kind(file))
+            icon,_=asset_file_icon(s,file)
             return icon,asset_file_color(s,file)
         }
     }

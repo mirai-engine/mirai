@@ -99,7 +99,7 @@ Message :: struct {
 }
 
 @(private="file")
-Param_Kind :: enum u8 {Table_Write,Table_Read,Storage_Write,Storage_Ref,Storage_Value,Storage_Stamp,Entities_Read,Commands,World_Ref,App,App_Part,Records}
+Param_Kind :: enum u8 {Table_Write,Table_Read,Storage_Write,Storage_Ref,Storage_Value,Storage_Stamp,Entities_Read,Commands,World_Ref,App,App_Part,Records,Inbox}
 
 // What host.App holds that a step receives by itself, bound by the type that
 // names it: the call hands out what the application owns.
@@ -125,13 +125,14 @@ APP_PARTS :: [?]App_Part{
 }
 
 @(private="file")
-PARAM_FORMS :: "^core.Table(T), core.Read(T), ^S, core.Ref(S), S, core.Stamp(S), core.Ref(core.Entities), core.Commands, core.World_Ref, a part of the application (^host.Assets, ^host.Frame_Extras, ^render.Renderer, ^audio.Mixer, ^jobs.Job_System, runtime.Allocator, ^core.Texts) or ^host.App"
+PARAM_FORMS :: "^core.Table(T), core.Read(T), ^S, core.Ref(S), S, core.Stamp(S), core.Inbox(M) of a @(net_message), core.Ref(core.Entities), core.Commands, core.World_Ref, a part of the application (^host.Assets, ^host.Frame_Extras, ^render.Renderer, ^audio.Mixer, ^jobs.Job_System, runtime.Allocator, ^core.Texts) or ^host.App"
 
 @(private="file")
 Param :: struct {
     kind:Param_Kind,
     type:^Type,
     record:^Record_Type, // Records
+    message:int,         // Inbox: its index in messages
     part:int,            // App_Part: its index in APP_PARTS
     actions:^Action_Enum, // the enum of the generic @(params) it is a field of
     bundle:^Bundle, // the @(params) the step receives it in; nil when it receives it by itself
@@ -297,7 +298,9 @@ world_generate :: proc(p:^project.Project,allocator:=context.allocator,shipped:=
     g.engine_root,g.root=p.engine_root,p.root
     packages_find(&g,p)
     for pkg in g.packages {package_read(&g,pkg)}
-    for pkg in g.packages {plugin_imports_check(&g,p,pkg)}
+    for pkg in g.packages {
+        if pkg.plugin>=0 {plugin_imports_check(p.plugins,pkg.plugin,pkg.files,&g.errors)}
+    }
     types_settle(&g)
     names_settle(&g)
     bundles_settle(&g)
@@ -449,17 +452,18 @@ plugin_import :: proc(root:string,plugin:^project.Plugin,name,part:string,alloca
     return fmt.aprintf("project:%s/%s",folder,part,allocator=allocator)
 }
 
-// A plugin imports only itself and what it depends on: what it does not name
-// in its plugin.mirai is not active with it.
-@(private="file")
-plugin_imports_check :: proc(g:^Generator,p:^project.Project,pkg:^Package) {
-    if pkg.plugin<0 {return}
-    for file in pkg.files {
+// A plugin imports only itself and what it depends on, and its tests also what
+// they depend on: what it does not name in its plugin.mirai is not active with
+// it. Each import of the files of a package of the plugin at index that
+// reaches another goes to errors, with what to declare.
+plugin_imports_check :: proc(plugins:[]project.Plugin,index:int,files:[]^ast.File,errors:^[dynamic]string) {
+    for file in files {
+        tests:=strings.has_suffix(file.fullpath,"_test.odin")
         for decl in file.imports {
             imported:=strings.trim(decl.fullpath,"\"`")
             other:=project.import_plugin(imported)
-            if other=="" || project.plugin_reaches(p.plugins,pkg.plugin,other,false) {continue}
-            append(&g.errors,fmt.aprintf("%s: imports %s, a plugin %s does not depend on; add %q to the dependencies of its plugin.mirai, or take the import out",file.fullpath,imported,base.text_get(p.plugins[pkg.plugin].manifest.name[:]),other))
+            if other=="" || project.plugin_reaches(plugins,index,other,tests) {continue}
+            append(errors,fmt.aprintf("%s(%d:%d): imports %s, a plugin %s does not depend on; add %q to the %s of its plugin.mirai, or take the import out",file.fullpath,decl.pos.line,decl.pos.column,imported,base.text_get(plugins[index].manifest.name[:]),other,tests?"test_dependencies":"dependencies"))
         }
     }
 }
@@ -474,11 +478,11 @@ has_sources :: proc(folder:string) -> bool {
     return false
 }
 
-// Reads and parses the sources of a package folder, without its tests, and returns its name and
-// its files in path order. Each problem goes to errors naming the file and the position, as the
+// Reads and parses the sources of a package folder, its tests only when asked, and returns its
+// name and its files in path order. Each problem goes to errors naming the file and the position, as the
 // compiler does. Not parser.parse_package: it reads the package clause of a file that failed to
 // parse, which a file without one leaves nil.
-sources_read :: proc(folder:string,errors:^[dynamic]string,allocator:=context.allocator) -> (name:string,files:[]^ast.File,ok:bool) {
+sources_read :: proc(folder:string,errors:^[dynamic]string,allocator:=context.allocator,tests:=false) -> (name:string,files:[]^ast.File,ok:bool) {
     collected,collected_ok:=parser.collect_package(folder)
     if !collected_ok {
         append(errors,fmt.aprintf("%s: the package could not be read",folder))
@@ -486,7 +490,7 @@ sources_read :: proc(folder:string,errors:^[dynamic]string,allocator:=context.al
     }
     sorted:=make([dynamic]^ast.File,0,len(collected.files),allocator)
     for path,file in collected.files {
-        if !strings.has_suffix(path,"_test.odin") {append(&sorted,file)}
+        if tests || !strings.has_suffix(path,"_test.odin") {append(&sorted,file)}
     }
     slice.sort_by(sorted[:],proc(a,b:^ast.File) -> bool {return a.fullpath<b.fullpath})
     p:=parser.default_parser()
@@ -1387,7 +1391,7 @@ mind_proc_bind :: proc(g:^Generator,pkg:^Package,s:^Step,d:Mind_Decl) -> (bound:
         }
         arg:=-1
         for other in s.params {
-            same:=param.bundle!=nil ? other.bundle==param.bundle && other.actions==param.actions : other.bundle==nil && other.kind==param.kind && other.type==param.type && other.record==param.record
+            same:=param.bundle!=nil ? other.bundle==param.bundle && other.actions==param.actions : other.bundle==nil && other.kind==param.kind && other.type==param.type && other.record==param.record && other.message==param.message
             if same {arg=other.arg;break}
         }
         if arg<0 {
@@ -1420,6 +1424,13 @@ param_read :: proc(g:^Generator,file:^ast.File,pkg:^Package,expr:^ast.Expr) -> (
             return {kind=.Records,record=r},found && !pointer
         }
         if wrapper=="mirai:core.Ref" && inner_key=="mirai:core.Entities" {return {kind=.Entities_Read,type=nil},!pointer}
+        if wrapper=="mirai:core.Inbox" {
+            storage:=g.by_key["mirai:core.Net_Messages"] or_else nil
+            for m,index in g.messages {
+                if fmt.tprintf("%s.%s",m.pkg.path,m.name)==inner_key {return {kind=.Inbox,type=storage,message=index},!pointer && storage!=nil}
+            }
+            return
+        }
         inner,found:=g.by_key[inner_key]
         if !found {return}
         switch {
@@ -2054,6 +2065,9 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
                 parts:=APP_PARTS
                 value:=parts[param.part].value
                 if strings.has_prefix(value,"host.") {fmt.sbprintf(&args,"%s.%s",host_alias,value[5:])} else {fmt.sbprint(&args,value)}
+            case .Inbox:
+                m:=g.messages[param.message]
+                fmt.sbprintf(&args,"%s.inbox(&%s.%s,%d,%s.%s)",core_alias,holder,param.type.field,param.message,m.pkg.alias,m.name)
             case .Records:
                 index,_:=slice.linear_search(g.records[:],param.record)
                 fmt.sbprintf(&args,"%s.Records(%s.%s){{%s.app_record_set(app,%d)}}",core_alias,param.record.pkg.alias,param.record.name,host_alias,index)
@@ -2077,7 +2091,7 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
             for param in step.params {
                 if param.arg==last {continue}
                 last=param.arg
-                fmt.sbprintf(w,",a%d:%s",param.arg,param_type(param,core_alias))
+                fmt.sbprintf(w,",a%d:%s",param.arg,param_type(g,param,core_alias))
                 fmt.sbprintf(&fields,",a%d=%s",param.arg,values[param.arg])
             }
             fmt.sbprint(w,"}\n")
@@ -2239,7 +2253,7 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
     // The default bindings of each enum @(actions); the compiler asks for every member.
     for a,ai in g.action_enums {
         value:=actions_defaults_value(a) or_continue
-        fmt.sbprintf(w,"action_defaults_%d :: proc(dst:rawptr) {{(cast(^[%s.%s]%s.Action_Default)dst)^=%s}}\n",ai,a.pkg.alias,a.name,g.actions_type.pkg.alias,value)
+        fmt.sbprintf(w,"action_defaults_%d :: proc(dst:rawptr) {{(cast(^[%s.%s]%s.Action_Bindings)dst)^=%s}}\n",ai,a.pkg.alias,a.name,g.actions_type.pkg.alias,value)
     }
 
     // What a new row of each record type starts as, and the descriptions of their fields.
@@ -2381,7 +2395,7 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
 // The type of an arg of a step as the generated world writes it; "" for a
 // part of the application, which a mind does not receive.
 @(private="file")
-param_type :: proc(param:Param,core_alias:string) -> string {
+param_type :: proc(g:^Generator,param:Param,core_alias:string) -> string {
     if b:=param.bundle;b!=nil {
         if param.actions!=nil {return fmt.tprintf("%s.%s(%s.%s)",b.pkg.alias,b.name,param.actions.pkg.alias,param.actions.name)}
         return fmt.tprintf("%s.%s",b.pkg.alias,b.name)
@@ -2397,6 +2411,7 @@ param_type :: proc(param:Param,core_alias:string) -> string {
     case .Commands: return fmt.tprintf("%s.Commands",core_alias)
     case .World_Ref: return fmt.tprintf("%s.World_Ref",core_alias)
     case .Records: return fmt.tprintf("%s.Records(%s.%s)",core_alias,param.record.pkg.alias,param.record.name)
+    case .Inbox: return fmt.tprintf("%s.Inbox(%s.%s)",core_alias,g.messages[param.message].pkg.alias,g.messages[param.message].name)
     }
     return ""
 }
@@ -2445,7 +2460,7 @@ record_default :: proc(r:^Record_Type) -> (value:string,found:bool) {
 }
 
 // The default bindings of the members of an enum @(actions): <ENUM>_DEFAULTS or
-// <enum>_defaults() of its package, a [E]Action_Default.
+// <enum>_defaults() of its package, a [E]Action_Bindings.
 @(private="file")
 actions_defaults_value :: proc(a:^Action_Enum) -> (value:string,found:bool) {
     buffer:[512]u8
@@ -2622,12 +2637,16 @@ defaults_check :: proc(g:^Generator) {
             if !is_array || array.len==nil {continue}
             elem:=ident_name(array.elem)
             if selector,is_selector:=array.elem.derived.(^ast.Selector_Expr);is_selector {elem=selector.field.name}
-            if elem!="Action_Default" {continue}
+            if elem!="Action_Bindings" {continue}
             enum_name:=ident_name(array.len)
             if selector,is_selector:=array.len.derived.(^ast.Selector_Expr);is_selector {enum_name=selector.field.name}
+            // Indexed by an enum @(actions): its defaults. By anything else: bindings held as data.
+            of_actions:=false
+            for a in g.action_enums {of_actions||=a.name==enum_name}
+            if !of_actions {continue}
             buffer:[512]u8
             constant,maker,_:=core.default_names(enum_name,buffer[:])
-            append(&g.errors,fmt.aprintf("%s(%d): %s carries the defaults of the actions of %s, and a struct carries no defaults of actions: declare them beside the enum as %s :: proc() -> [%s]Action_Default (or a constant %sS), and remove the field",file.fullpath,f.pos.line,name,enum_name,fmt.tprintf("%ss",maker),enum_name,constant))
+            append(&g.errors,fmt.aprintf("%s(%d): %s carries the defaults of the actions of %s, and a struct carries no defaults of actions: declare them beside the enum as %s :: proc() -> [%s]Action_Bindings (or a constant %sS), and remove the field",file.fullpath,f.pos.line,name,enum_name,fmt.tprintf("%ss",maker),enum_name,constant))
         }
         d:=new(Defaulted,context.temp_allocator)
         d.name,d.path,d.pkg,d.order=name,pkg.path,pkg,order[:]

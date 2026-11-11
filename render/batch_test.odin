@@ -132,7 +132,7 @@ the_tables_of_the_batches_drawn_follow_the_world_shown_and_the_instances :: proc
 	testing.expect(t, r.scene.batch.records[2].tree_nodes > 0, "a traced batch has the tree of its instances")
 	// Instances of the scene move the rows and the visible lists after them.
 	instance := Instance_Desc{object_id = 1, mesh = mesh, transform = 1, tint = 1}
-	scene_set(r, {instance}, nil, {}, {})
+	scene_given(r, {instance}, nil, {}, {})
 	batches_build(r)
 
 	// Traced by hardware, the native TLAS takes their instances after the one
@@ -234,7 +234,7 @@ the_tree_of_a_traced_batch_is_built_for_rays_traced_by_software_alone :: proc(t:
 	}
 	for s in seen {testing.expect(t, s)}
 	// Moving an instance of the scene refits the software TLAS over the box of the batch too.
-	scene_set(r, {{object_id = 1, mesh = mesh, transform = 1, tint = 1}}, nil, {}, {})
+	scene_given(r, {{object_id = 1, mesh = mesh, transform = 1, tint = 1}}, nil, {}, {})
 	batches_build(r)
 	moved := linalg.matrix4_translate_f32({0, 50, 0})
 	testing.expect(t, scene_move(r, {0}, {moved}))

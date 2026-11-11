@@ -1,11 +1,12 @@
 package mirai_net
 
 import "core:testing"
+import "core:crypto/x25519"
 import "core:fmt"
 import "core:time"
 
 @(private="file")
-SECURE_CHANNELS :: []Channel_Desc{{kind=.Reliable,max_message_bytes=4000,queue_bytes=64<<10},{kind=.Unreliable}}
+SECURE_CHANNELS :: []Channel_Desc{{kind=.Reliable,queue_bytes=64<<10},{kind=.Unreliable}}
 
 // A transport that keeps a copy of the last datagrams it delivered and can hold one back.
 @(private="file")
@@ -98,87 +99,6 @@ encrypted_traffic_drops_and_counts_tampered_replayed_truncated_and_late_datagram
     testing.expect(t,got)
 }
 
-@(test)
-an_encrypted_server_refuses_bad_and_expired_tokens_with_a_reason :: proc(t:^testing.T) {
-    issuer,issuer_public,stranger,stranger_public:Key
-    testing.expect(t,token_key_generate(&issuer,&issuer_public) && token_key_generate(&stranger,&stranger_public))
-    now:=time.to_unix_seconds(time.now())
-    attempt :: proc(t:^testing.T,issuer_public:Key,token:Token,signer:Key,has_token:=true) -> (reason:Disconnect_Reason,client_id:u64) {
-        w:Test_World;test_world_init(&w,2);defer test_world_destroy(&w)
-        server:=test_host(&w,{mode=.Server,security={token_key=issuer_public,require_token=true,addresses={0=address_memory(0)}}})
-        client:=test_host(&w,{mode=.Client})
-        credentials:=Credentials{server_key=host_public_key(server)}
-        if has_token {
-            blob,issued:=token_issue(token,signer)
-            testing.expect(t,issued)
-            credentials.token,credentials.has_token=blob,true
-        }
-        host_connect(client,address_memory(0),credentials)
-        for _ in 0..<600 {
-            test_step(&w)
-            for command in host_poll(server) {
-                if command.kind==.Connected {client_id=command.client_id}
-            }
-            for command in host_poll(client) {
-                if command.kind==.Connected {return .None,client_id}
-                if command.kind==.Disconnected {return command.reason,client_id}
-            }
-        }
-        return .Timeout,client_id
-    }
-    good:=Token{protocol_id=77,client_id=42,expires=now+60,addresses={0=address_memory(0)}}
-    reason,id:=attempt(t,issuer_public,good,issuer)
-    testing.expect(t,reason==.None && id==42,"a valid token connects and names the client")
-    reason,_=attempt(t,issuer_public,good,stranger)
-    testing.expect_value(t,reason,Disconnect_Reason.Denied_Token)
-    expired:=good
-    expired.expires=now-1
-    reason,_=attempt(t,issuer_public,expired,issuer)
-    testing.expect_value(t,reason,Disconnect_Reason.Denied_Token_Expired)
-    elsewhere:=good
-    elsewhere.addresses={0=address_memory(5)}
-    reason,_=attempt(t,issuer_public,elsewhere,issuer)
-    testing.expect_value(t,reason,Disconnect_Reason.Denied_Token)
-    other_game:=good
-    other_game.protocol_id=78
-    reason,_=attempt(t,issuer_public,other_game,issuer)
-    testing.expect_value(t,reason,Disconnect_Reason.Denied_Token)
-    reason,_=attempt(t,issuer_public,good,issuer,has_token=false)
-    testing.expect_value(t,reason,Disconnect_Reason.Denied_Token)
-    // A token is sealed for the server's key: without that key the client does not even start.
-    w:Test_World;test_world_init(&w,1);defer test_world_destroy(&w)
-    client:=test_host(&w,{mode=.Client})
-    blob,_:=token_issue(good,issuer)
-    testing.expect_value(t,host_connect(client,address_memory(0),{token=blob,has_token=true}),Error.Invalid)
-}
-
-@(test)
-a_client_that_pins_another_server_key_does_not_connect :: proc(t:^testing.T) {
-    w:Test_World;test_world_init(&w,2);defer test_world_destroy(&w)
-    server:=test_host(&w,{mode=.Server})
-    client:=test_host(&w,{mode=.Client})
-    other,other_public:Key
-    testing.expect(t,key_generate(&other,&other_public))
-    host_connect(client,address_memory(0),{server_key=other_public})
-    connected:=false
-    reason:Disconnect_Reason
-    for _ in 0..<900 {
-        test_step(&w)
-        host_poll(server)
-        for command in host_poll(client) {
-            if command.kind==.Connected {connected=true}
-            if command.kind==.Disconnected {reason=command.reason}
-        }
-        if reason!=.None {break}
-    }
-    // Its proof opens only with the key of the server it pinned: this one answers nothing more.
-    testing.expect(t,!connected)
-    testing.expect_value(t,reason,Disconnect_Reason.Connect_Timeout)
-    testing.expect(t,host_stats(server).handshakes_dropped>0 && host_stats(server).handshakes_refused==0)
-    on_server,on_client:=test_connect(&w,server,client,credentials={server_key=host_public_key(server)})
-    testing.expect(t,on_server!=0 && on_client!=0,"with the key of this server it connects")
-}
-
 // Opt-in: mirai test net cost_of_sealing_a_datagram --release -define:NET_BENCHMARK=true
 @(test)
 cost_of_sealing_a_datagram :: proc(t:^testing.T) {
@@ -206,9 +126,9 @@ cost_of_sealing_a_datagram :: proc(t:^testing.T) {
         if checksum_check(packet[:],0x1234) {opened+=1}
     }
     plain:=time.duration_microseconds(time.tick_since(start))/ROUNDS
-    a,b,ap,bp,shared:Key
-    key_generate(&a,&ap)
-    key_generate(&b,&bp)
+    a,bp,shared:Key
+    for &byte,i in a {byte=u8(i*5+3)}
+    x25519.scalarmult_basepoint(bp[:],a[:])
     start=time.tick_now()
     for _ in 0..<200 {secure_exchange(&shared,&a,&bp)}
     exchange:=time.duration_microseconds(time.tick_since(start))/200

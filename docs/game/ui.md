@@ -55,13 +55,13 @@ menu_frame :: proc(ui:core.Ref(gui.UI_Events),screens:core.Read(Menu_Screen),opt
 }
 ```
 
-- Names are `base.name_hash` of the node name: `mirai ui check` refuses a literal no `.ui` has. A
+- Names are `base.name_hash` of the node name; one the screen lacks is a `gui.names` problem. A
   control bound to a storage writes it (a setting is also kept); one bound to a component asks,
   and the game writes it on `Changed`. A `Button` with `bind_value` writes its `choice` there.
 - The helpers (`clicked`, `changed`, `changed_value`, `submitted`, `dropped`, `back`,
   `menu_pressed`...) take that storage. While the clock is stopped, as under a pause menu, no tick
   runs: a frame step reads them then, and a fixed step in the next tick.
-- `gui.menu_pressed(events)` is the `menu` action (Escape, Start, rebound in `input.mirai` like
+- `gui.menu_pressed(events)` is the `menu` action (Escape, Start, rebound in `Input_Settings` like
   any other) when no interface used that Escape: what opens and closes a menu.
 
 ## Focus

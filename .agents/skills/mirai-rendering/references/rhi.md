@@ -158,10 +158,13 @@ For a renderer that generates frames (`rhi/present.odin`):
 
 ## Synchronization and commands
 
-- **Hazards.** Each resource keeps its last access; barriers are derived from the bindings before
-  each dispatch and `cmd_barrier_*` emits only the necessary ones. Inside a render pass there are
-  no barriers: the RHI validates that what is read was declared earlier and reports an error
-  instead of a silent hazard. Metal tracks hazards by itself.
+- **Hazards.** Each resource keeps its last access; barriers are derived from what each dispatch
+  and draw binds (and its index and indirect buffers) and only the necessary ones go out. A render
+  pass holds no barriers, so Vulkan records it and sends it at `cmd_end_render_pass`, after the
+  barriers of everything its draws used; a resource it writes takes one, and one of its targets
+  that a draw samples is an error. `cmd_barrier_*` declares what nothing binds: a buffer the host
+  reads, a texture sampled through the texture table or by another process. Metal tracks hazards
+  by itself.
 - **Clip space.** Y up and depth in [0,1] on both backends; the renderer uses reversed Z.
 - `cmd_fill_buffer` repeats a byte; a word of another value is written with `buffer_upload`
   before the frame, from a shader or by copying a buffer that has it (the GPU-counted indirect

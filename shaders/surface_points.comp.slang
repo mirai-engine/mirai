@@ -4,6 +4,8 @@
 // the resolve: what the program gives at each, or the filter of a filter
 // point, in its record. A thread per point of its bin, or, when the scene has
 // no other program (whole), a thread per point of the window, unbinned.
+// It reports the levels it samples of each texture (texture_feedback in scene.slang).
+#define MIRAI_TEXTURE_FEEDBACK
 #define POINTS_SLOT SLOT_POINTS
 #include "scene.slang"
 #include "points.slang"

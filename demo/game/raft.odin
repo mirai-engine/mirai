@@ -2,7 +2,7 @@ package game
 
 import "core:math"
 import "mirai:core"
-import inp "mirai:engine/input"
+import locomotion "plugins:locomotion/runtime"
 import phys "plugins:physics/runtime"
 import mm "mirai:std/math"
 
@@ -68,42 +68,38 @@ Raft_Doing :: enum u8 {On_Raft,Wading,Surface,Under}
 // How much breath it has left: the variant of the style of its count.
 Raft_Air :: enum u8 {Fine,Low}
 
-// What raft_hud.ui shows of the swimmer it is on, while a seat drives it: the
-// screen is on the swimmer, so it shows in the view of the player that drives it.
+// What raft_hud.ui shows of the swimmer it is on: the screen is on the
+// swimmer, so it shows in the view of the player that drives it, and only then.
 @(component,description="The HUD of a swimmer: its breath, how it moves and the message of its last drowning.")
 Raft_Hud :: struct {
-    shown:bool,        // a seat drives this swimmer
     doing:Raft_Doing,
     oxygen:i32,        // whole seconds of breath left
-    breath:f32,        // of a full one, 0 to 1, in the steps its bar shows
+    breath:f32,        // of a full one, 0 to 1
     air:Raft_Air,      // Low under a quarter of a breath
     drowned:i32,       // times it drowned
     drowned_once:bool,
     message:bool,      // it has just drowned
 }
 
-RAFT_BAR_STEPS :: 300 // the steps the bar of the breath moves in
-
 @(step="frame")
 raft_hud :: proc(
-    huds:^core.Table(Raft_Hud),divers:core.Read(Diver),games:core.Read(Raft_Game),states:core.Read(phys.Character_State),characters:core.Read(phys.Character),
-    drivables:core.Read(inp.Drivable),time:core.Time,
+    huds:^core.Table(Raft_Hud),divers:core.Read(Diver),games:core.Read(Raft_Game),states:core.Read(phys.Character_State),locomotions:core.Read(locomotion.Locomotion_State),
+    time:core.Time,
 ) {
     shown:=core.read(huds)
     for row in 0..<core.count(shown) {
         body:=core.entity_at(shown,row)
         next:Raft_Hud
-        if diver,is_diver:=core.get(divers,body);is_diver && inp.seat_of(drivables,body)!=core.NONE && core.count(games)>0 {
+        if diver,is_diver:=core.get(divers,body);is_diver && core.count(games)>0 {
             state,_:=core.get(states,body)
-            character,_:=core.get(characters,body)
+            character,_:=core.get(locomotions,body)
             switch {
-            case character.mode==phys.MODE_SWIMMING && .Underwater in state.fluid: next.doing=.Under
-            case character.mode==phys.MODE_SWIMMING:                               next.doing=.Surface
+            case character.mode==locomotion.MODE_SWIMMING && .Underwater in state.fluid: next.doing=.Under
+            case character.mode==locomotion.MODE_SWIMMING:                               next.doing=.Surface
             case .In_Fluid in state.fluid:                                         next.doing=.Wading
             }
             share:=diver.capacity>0?clamp(diver.oxygen/diver.capacity,0,1):0
-            next.shown,next.oxygen,next.air=true,i32(math.round(diver.oxygen)),share<0.25?.Low:.Fine
-            next.breath=math.round(share*RAFT_BAR_STEPS)/RAFT_BAR_STEPS
+            next.oxygen,next.breath,next.air=i32(math.round(diver.oxygen)),share,share<0.25?.Low:.Fine
             next.drowned,next.drowned_once=i32(diver.drowned),diver.drowned>0
             for at in 0..<core.count(games) {next.message||=!core.due(time,core.at(games,at).message_until)}
         }

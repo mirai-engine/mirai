@@ -206,13 +206,10 @@ ui_textures_record :: proc(r:^Renderer,cmd:^rhi.Command_List,slot:int,written:^i
     if len(draws)==0 {return}
     rhi.cmd_timestamp(cmd,"ui textures")
     thumbnails:=r.thumbnails if r.thumbnails!=0 else r.dummy_texture
-    rhi.cmd_barrier_texture(cmd,r.font,.Shader_Read)
-    rhi.cmd_barrier_texture(cmd,thumbnails,.Shader_Read)
     rhi.cmd_bind_sampler(cmd,SLOT_LINEAR_SAMPLER,r.linear_sampler)
     rhi.cmd_bind_sampler(cmd,SLOT_POINT_SAMPLER,r.point_sampler)
     rhi.cmd_bind_sampler(cmd,SLOT_MATERIAL_SAMPLER,r.material_sampler)
     materials:=or_dummy(r,r.scene.material_buffer)
-    rhi.cmd_barrier_buffer(cmd,materials,.Shader_Read)
     rhi.cmd_bind_buffer(cmd,SLOT_MATERIALS,materials)
     rhi.cmd_bind_transient(cmd,SLOT_FRAME,frame_constants(r,{time={r.time,r.previous_time,r.delta_time,0},resolution={f32(r.window_width),f32(r.window_height)}}))
     // A texture drawn twice in the frame is shown once, after its last draw.
@@ -280,7 +277,6 @@ effect_views_record :: proc(p:^Pass,views:[]Effect_View) {
             clear_textures(cmd,target.empty)
             target.cleared=true
         }
-        rhi.cmd_barrier_texture(cmd,target.empty,.Shader_Read)
         clear:=rhi.Render_Pass_Desc{color_count=2,name="effect view clear"}
         clear.colors[0]={texture=target.hdr,load=.Clear,store=.Store}
         clear.colors[1]={texture=target.coverage,load=.Clear,store=.Store}
@@ -293,8 +289,6 @@ effect_views_record :: proc(p:^Pass,views:[]Effect_View) {
         for pass in r.passes[:r.pass_count] {
             if pass.stage==.Effect {pass.record(&s,pass.user)}
         }
-        rhi.cmd_barrier_texture(cmd,target.hdr,.Shader_Read)
-        rhi.cmd_barrier_texture(cmd,target.coverage,.Shader_Read)
         resolve:=rhi.Render_Pass_Desc{color_count=1,name="effect view resolve"}
         resolve.colors[0]={texture=target.ldr,load=.Dont_Care,store=.Store}
         rhi.cmd_begin_render_pass(cmd,&resolve)
@@ -342,7 +336,6 @@ depth_probes_record :: proc(p:^Pass) {
     Params :: struct {count,view:u32,scale:Vec2,pixels:[DEPTH_PROBE_CAPACITY]Vec4}
     params:=Params{count=u32(count),view=u32(p.index),scale={f32(t.width)/f32(max(t.output_width,1)),f32(t.height)/f32(max(t.output_height,1))}}
     for probe,i in o.asked[p.slot][:count] {params.pixels[i]={probe.pixel.x,probe.pixel.y,f32(probe.view),0}}
-    rhi.cmd_barrier_texture(cmd,t.linear_depth,.Shader_Read)
     rhi.cmd_bind_pipeline(cmd,r.pipelines[.Depth_Probe])
     set_params(cmd,&params)
     rhi.cmd_bind_texture(cmd,SLOT_PASS0,t.linear_depth)

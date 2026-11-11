@@ -420,7 +420,8 @@ table_append :: proc(t:^Table($T),e:Entity,value:T) -> bool {
 table_added :: proc "contextless" (t:^Table($T),e:Entity) -> ^T {return cast(^T)raw_added(raw(t),type_info_of(T),e)}
 
 // Whether the row at an index is new to its writer: it has its value from an
-// add and was not written since. What the writer of a table asks before it
+// add and was not written since, but by its author outside the loops (the
+// editor, which Play copies: raw_author). What the writer of a table asks before it
 // asks for the row (edit, edit_at, set, writable), to set up in its first
 // tick what the row starts with, in place of a field that says it did. It is
 // of the row: a World copied, or rolled back, keeps it.
@@ -588,7 +589,9 @@ each_joined :: proc{joined2,joined3}
 
 // Whether anything changed in a table since seen, which it moves to now:
 // what a reader asks that makes again whole what it derives from the table.
+// A table the World does not have (nil) never changes.
 raw_touched :: proc "contextless" (t:^Raw_Table,seen:^Seen) -> bool {
+    if t==nil {return false}
     now:=Seen{t.version,log_end(t.gone)}
     if seen^==now {return false}
     seen^=now
@@ -620,6 +623,7 @@ Shape :: distinct u64
 // moves to now, whatever was written in them: what orders or indexes the
 // rows of a table written every tick asks.
 raw_reshaped :: proc "contextless" (t:^Raw_Table,shape:^Shape) -> bool {
+    if t==nil {return false}
     if shape^==Shape(t.layout) {return false}
     shape^=Shape(t.layout)
     return true
@@ -1166,6 +1170,17 @@ raw_edit :: proc "contextless" (t:^Raw_Table,type:^runtime.Type_Info,e:Entity) -
     row:=raw_row(t,e)
     if row<0 {return nil}
     stamp_set(t,row,version_write(t))
+    return raw_value(t,type,row)
+}
+
+// The row of an entity to write as its author, outside the loops (the
+// editor, an undo): it takes a stamp and stays added, since the library that
+// writes the table has not seen it yet. nil without one.
+raw_author :: proc "contextless" (t:^Raw_Table,type:^runtime.Type_Info,e:Entity) -> rawptr {
+    row:=raw_row(t,e)
+    if row<0 {return nil}
+    t.version=version_write(t)+(t.stamps[row]&1)
+    stamp_set(t,row,t.version)
     return raw_value(t,type,row)
 }
 

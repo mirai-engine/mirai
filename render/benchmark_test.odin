@@ -72,7 +72,7 @@ render_benchmark_reports_gpu_time_by_pass :: proc(t:^testing.T) {
         when MATERIAL_BENCHMARK {for &instance,i in instances {if i>0 {instance.material=Material_Handle(1+i%3)}}}
         lights:[6]Light_Desc
         for &light,i in lights {light={position={f32(i%3)*6-6,3,f32(i/3)*8-4},color={1,0.8-f32(i)*0.1,0.5+f32(i)*0.08},intensity=6 * math.PI,range=12}}
-        scene_set(&r,instances[:],lights[:],{direction={0.3,1,0.2},color={1,1,1},illuminance=1.2 * math.PI,enabled=true},{sky={0.3,0.4,0.6}})
+        scene_given(&r,instances[:],lights[:],{direction={0.3,1,0.2},color={1,1,1},illuminance=1.2 * math.PI,enabled=true},{sky={0.3,0.4,0.6}})
         camera:=Camera{position={0,7,14},forward={0,-6.5,-14},up={0,1,0},fov_y=60,near=0.05,far=200,exposure=UNIT_EXPOSURE}
         Pass :: struct {name:string,ms:f64}
         passes:[rhi.MAX_TIMESTAMPS]Pass
@@ -204,7 +204,7 @@ render_benchmark_an_instance_scaled_to_zero :: proc(t:^testing.T) {
         for variant in ([]string{"shown","hidden","zero"}) {
             instances[65]={object_id=100,mesh=sphere,transform=place({0,1.5,0},{1.5,1.5,1.5}),tint={0.8,0.3,0.3},hidden=variant=="hidden"}
             if variant=="zero" {instances[65].transform=place({0,-0.1,0},{0,0,0})}
-            scene_set(&r,instances[:],lights[:],{direction={0.3,1,0.2},color={1,1,1},illuminance=1.2 * math.PI,enabled=true},{sky={0.3,0.4,0.6}})
+            scene_given(&r,instances[:],lights[:],{direction={0.3,1,0.2},color={1,1,1},illuminance=1.2 * math.PI,enabled=true},{sky={0.3,0.4,0.6}})
             for _ in 0..<120 {testing.expect(t,renderer_frame(&r,{camera=camera}),r.error)}
             total,contact:f64
             for _ in 0..<200 {

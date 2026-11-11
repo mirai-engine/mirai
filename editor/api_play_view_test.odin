@@ -56,7 +56,7 @@ play_view_says_what_the_player_sees_and_where_things_show_on_the_screen :: proc(
     core.add(&w.names,camera,core.name_make("Hero camera"))
     core.add(&w.transforms,body,core.Transform{position={0,2,-4},rotation=1,scale={1,1,1}})
     core.add(&w.transforms,camera,core.Transform{position={0,2,6},rotation=1,scale={1,1,1}})
-    core.add(&w.bodies,body,input.Drivable{seat,camera})
+    core.add(&w.bodies,body,input.Drivable{seat=seat,camera=camera})
     core.add(&w.seats,seat,input.Seat{})
     core.add(&w.lenses,camera,erender.Camera{fov=60*math.RAD_PER_DEG})
     follow:=ecamera.CAMERA_FOLLOW_DEFAULT

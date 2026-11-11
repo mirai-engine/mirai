@@ -1,6 +1,6 @@
 {
   "name": "abilities",
   "version": "0.1.0",
-  "dependencies": ["physics", "animation"],
+  "dependencies": ["physics", "locomotion", "animation"],
   "parts": ["Runtime", "Editor"]
 }

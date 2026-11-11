@@ -36,7 +36,7 @@ terrain sends over the network, editor thumbnails, the shaders the executables e
 - **Packs.** A write says how hard it compresses (`Pack`): `PACK_EDIT` for what the editor,
   imports and the game save. A cook hands the packs of `cook/compressor/lz`: `SHIP` for the
   cooking of a shipped game, which writes every asset again with `document_repack` (its chunks
-  and the pages of a mesh), and `QUICK` for the cook of a `--dev` game, a few times faster and a
+  and the pages of a mesh), and `QUICK` for the cook of a dev game, a few times faster and a
   little larger. All decode the same way.
 - **Pieces.** A chunk over `PACK_PIECE` is a run of LZ streams of that many raw bytes, each
   decoding without the others (the library's `seekChunkReset`): a scene load decodes them at once
@@ -142,7 +142,7 @@ validated by their plugin without adding them to the core:
 - **`.mat`** (`MAT `): `material` (`Material_Info`), `imported` (`Material_Info`, of an imported
   material: what the source gave), `parameters`, `overlays`, `hidden`.
 - **`.scene`** (`SCEN`): `entities`, a table per component (those of prefab instances among
-  them), `scene`, `overrides` and `off` (turned-off components). With one root it is a
+  them), `scene`, `overrides` and `off` (turned-off components). `Header_Flag.Prefab` makes it a
   [prefab](scenes.md#prefab).
 - **`.anim`** (`ANIM`): `clips` (`Animation_Clip`), `tracks` (`Animation_Track`), `keys`
   (`anim.Keyframe`), `markers` (`Animation_Marker`, a moment or, with a duration, a span) and the
@@ -218,7 +218,7 @@ scan opens every file and writes it again.
   the program closed. Whoever keeps something per asset (the
   [previews](../../mirai-editor/references/panels.md#previews)) reads them and empties it.
 - `Registry_File.flags` are those of the header: `registry_prefab` reads from them whether a scene
-  has one root ([prefab](scenes.md#prefab)).
+  is a prefab ([prefab](scenes.md#prefab)).
 - `registry_dependents` comes from an inverse index built with each change: how many use an asset is
   its length, without walking the files (`asset.list` reports it as `used_by`).
 - **Imported folders.** An assets folder may have an imported folder with it (that of the root

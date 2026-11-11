@@ -176,7 +176,7 @@ view_probe :: proc(g:^Ground,view:^Ground_View,origin,down:[3]f32,coarse:bool) -
         ok:bool
         local,normal,ok=source_ray(s,o+d*(near-s.cell),d)
         if !ok {
-            held:=s.kind==.Heightfield?cell_held(s,c,r):volume_held(s,{c,0,r},{c+1,int(s.samples.y)-1,r+1})
+            held:=source_region_held(s,{c,0,r},{c+1,int(s.samples.y)-1,r+1})
             return {},held?.Empty:.Unloaded
         }
         normal=linalg.normalize0(normal)
