@@ -116,6 +116,7 @@ a_screen_on_the_body_of_a_player_shows_in_the_part_of_that_player :: proc(t:^tes
     defer {
         ui.font_destroy(&f.app.ui_font)
         host.app_content_destroy(&f.app)
+        host.app_texts_destroy(&f.app)
     }
     if !testing.expect(t,ui.font_init(&f.app.ui_font,nil,nil,1,f.app.allocator,on_demand=true)) {return}
     w:=&f.w
