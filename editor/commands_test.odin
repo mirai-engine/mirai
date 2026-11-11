@@ -35,16 +35,16 @@ Commands_Test :: struct {
 
 @(private="file")
 commands_test_open :: proc(t:^testing.T,f:^Commands_Test) -> bool {
-    if !core.test_world_init(t,&f.world,test_types) {return false}
+    if !test_world_init(t,&f.world) {return false}
     f.entity=core.create(&f.world.entities)
     core.add(&f.world.ids,f.entity,core.Id{1})
     core.add(&f.world.names,f.entity,core.name_make("Object"))
     core.add(&f.world.transforms,f.entity,core.TRANSFORM_IDENTITY)
-    core.test_world_settle(&f.world)
+    test_world_settle(&f.world)
     testing.expect(t,test_ui_init(&f.ctx,{}))
     f.g={ctx=&f.ctx,layout={left_open=true,right_open=true}}
     viewport_init(&f.viewport)
-    f.s=Session{info=core.test_world_info(&f.world),edit_world=&f.world,headless=true,app=&f.app,gui=&f.g,viewport=&f.viewport,selection=&f.selection,inspector=&f.inspector,edits=&f.edits,document=&f.document,build=&f.build,ai=&f.ai,finder=&f.finder,graphics=&f.graphics,materials=&f.materials,content=&f.content}
+    f.s=Session{info=test_world_info(&f.world),edit_world=&f.world,headless=true,app=&f.app,gui=&f.g,viewport=&f.viewport,selection=&f.selection,inspector=&f.inspector,edits=&f.edits,document=&f.document,build=&f.build,ai=&f.ai,finder=&f.finder,graphics=&f.graphics,materials=&f.materials,content=&f.content}
     history.edits_reset(&f.edits,edited_world(&f.s))
     return test_commands_open(t,&f.s,&f.commands)
 }
@@ -59,7 +59,7 @@ commands_test_close :: proc(f:^Commands_Test) {
     core.value_free(&f.content,type_info_of(Content))
     viewport_free(&f.viewport)
     ui.context_destroy(&f.ctx)
-    core.test_world_destroy(&f.world)
+    test_world_destroy(&f.world)
 }
 
 // What the menus, the shortcuts and the buttons of the editor did before they were entries of methods.

@@ -3,9 +3,8 @@ package core
 import "core:fmt"
 
 // What the attributes of a @(component) or @(storage) say of its table or
-// storage. The generator reads it from the declarations of a project and a
-// test world from those of the types of its fields, both through
-// declared_read.
+// storage: the generator reads it with declared_read, for the world of a game
+// and for those of its tests.
 Declared :: struct {
     shared,host,by_world:bool,
     single:bool, // a component the world uses one of at a time: its table keeps one row on

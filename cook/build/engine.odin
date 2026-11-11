@@ -89,7 +89,7 @@ ENGINE_PACKAGES :: [?]Engine_Package{
     {.Cook,"cook/compressor/texture/bc67","cook"},{.Cook,"cook/compressor/texture/bc1","cook"},{.Cook,"cook/compressor/texture/bc4","cook"},{.Cook,"cook/compressor/texture/bc6","cook"},{.Cook,"cook/compressor/texture/bc7","cook"},
     {.Cook,"cook/compressor/texture","cook"},{.Cook,"cook/textures","cook"},{.Cook,"cook/image","cook"},{.Cook,"cook/movie","cook"},{.Cook,"cook/rig","cook"},
     {.Cook,"cook/import","cook"},{.Cook,"cook/import/obj","cook"},{.Cook,"cook/import/gltf","cook"},{.Cook,"cook/import/usd","cook"},
-    {.Cook,"cook/import/fbx","cook"},{.Cook,"cook/shaders","cook"},{.Cook,"cook/prefab","cook"},{.Cook,"cook/import/sources","cook"},{.Cook,"cook/author","cook"},
+    {.Cook,"cook/import/fbx","cook"},{.Cook,"cook/shaders","cook"},{.Cook,"cook/author","cook"},{.Cook,"cook/prefab","cook"},{.Cook,"cook/import/sources","cook"},
     {.Cook,"cook/install","cook"},{.Cook,"cook/build",""},
 
     {.Editor,"third_party/sqlite","sqlite"},{.Editor,"editor/api","editor-parts"},{.Editor,"editor/acp","editor-parts"},{.Editor,"editor/diff","editor-parts"},{.Editor,"editor/ai_store","editor-parts"},

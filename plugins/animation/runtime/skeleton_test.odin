@@ -19,9 +19,10 @@ import mm "mirai:std/math"
 
 // What animation_advance reads and writes of the World, with the tables a test fills.
 // The rows of the constraints go where the World holds them, in its Modifier_Runtime.
-@(private="file")
+@(private)
+@(test_world)
 Rig_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     transforms:core.Table(core.Transform),
     parents:core.Table(core.Parent),
     labels:core.Table(core.Name),
@@ -58,17 +59,17 @@ Rig_Test :: struct {
 }
 
 @(private="file")
-rig_test_init :: proc(t:^testing.T,f:^Rig_Test) -> bool {return core.test_world_init(t,&f.w,test_types)}
+rig_test_init :: proc(t:^testing.T,f:^Rig_Test) -> bool {return test_world_init(t,&f.w)}
 
 @(private="file")
 rig_test_destroy :: proc(f:^Rig_Test) {
-    core.test_world_destroy(&f.w)
+    test_world_destroy(&f.w)
     skeleton_assets_free(&f.cache);character_assets_free(&f.characters);source_assets_free(&f.sources)
 }
 
 @(private="file")
 rig_test_settle :: proc(f:^Rig_Test) {
-    core.test_world_settle(&f.w)
+    test_world_settle(&f.w)
     core.table_settle(&f.modifiers.ik,&f.entities)
 }
 
@@ -289,9 +290,9 @@ frames_played_again_while_a_clip_compressed_progress_as_they_did :: proc(t:^test
     p,error:=platform.create({headless=true,fixed_dt=1.0/60,pacing=platform.Frame_Pacing{}})
     if !testing.expect_value(t,error,platform.Error.None) {return}
     defer platform.destroy(p)
-    info,described:=core.test_info(t,Rig_World,test_types)
+    info,described:=test_info(t,Rig_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     info.loops[.Game][.Fixed]=rig_frame_fixed
     app:=host.App{assets=&assets,allocator=context.allocator,info=&info,platform=p}
     app.tick_dt,app.max_ticks=1.0/60,4

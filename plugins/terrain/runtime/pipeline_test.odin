@@ -15,10 +15,10 @@ import "mirai:std/jobs"
 pipeline_tick :: proc(w:^Terrain_Test_World,resident:^Terrain_Resident,app:^host.App,settings:=TERRAIN_TEST_SETTINGS,view:=core.View{},phase:=core.Phase.Fixed,playing:=true) {
     if w.settings=={} {w.settings={bodies=256,shapes=256,contacts=64,joints=1,characters=1,hulls=1,meshes=256,heightfields=256}}
     if view.size.x>0 && view.size.y>0 {source_place(w,view.position)}
-    test_step(&w.terrain,core.commands_of(core.test_world_ref(&w.w)),resident,app,&w.problems,settings,{playing=playing},{phase=phase},view)
-    core.test_world_settle(&w.w)
+    test_step(&w.terrain,core.commands_of(test_world_ref(&w.w)),resident,app,&w.problems,settings,{playing=playing},{phase=phase},view)
+    test_world_settle(&w.w)
     terrain_test_physics(w,app)
-    core.test_world_settle(&w.w)
+    test_world_settle(&w.w)
 }
 
 @(private="file")
@@ -37,7 +37,7 @@ pipeline_owner :: proc(w:^Terrain_Test_World,id:base.Asset_Id,solid:=true) -> co
     owner:=core.create(&w.entities)
     core.add(&w.transforms,owner,core.TRANSFORM_IDENTITY)
     core.add(&w.terrains,owner,Terrain{source=id,solid=solid})
-    core.test_world_settle(&w.w)
+    test_world_settle(&w.w)
     return owner
 }
 
@@ -139,12 +139,12 @@ chunks_without_a_slot_for_their_collider_still_show_their_ground_and_the_nearest
     holder:=core.create(&w.entities)
     core.add(&w.transforms,holder,core.TRANSFORM_IDENTITY)
     core.add(&w.colliders,holder,phys.collider_heightfield())
-    core.test_world_settle(&w.w)
+    test_world_settle(&w.w)
     for _ in 0..<3 {pipeline_tick(&w,&resident,&app,view=view)}
     testing.expect_value(t,len(w.statics.values),16)
     testing.expect_value(t,len(w.colliders.values),6)
     // A terrain that does not collide shows all of it.
-    core.remove(&w.colliders,holder);core.test_world_settle(&w.w)
+    core.remove(&w.colliders,holder);test_world_settle(&w.w)
     core.edit(&w.terrains,owner).solid=false
     for _ in 0..<2 {pipeline_tick(&w,&resident,&app,view=view)}
     testing.expect_value(t,len(w.statics.values),16)
@@ -195,7 +195,7 @@ letting_go_of_an_excavated_zone_and_reading_it_again_keeps_its_edits :: proc(t:^
         defer terrain_test_world_free(&w)
         resident:Terrain_Resident;defer terrain_resident_free(&resident)
         owner:=pipeline_owner(&w,id)
-        core.test_world_settle(&w.w)
+        test_world_settle(&w.w)
         near:=[3]f32{-100,0,-100}
         source_place(&w,near)
         settings:=Terrain_Settings{resident_distance=100,lod_distance=-1}
@@ -276,7 +276,7 @@ a_volume_lets_go_of_the_blocks_far_from_its_viewers_and_reading_them_again_keeps
         defer terrain_test_world_free(&w)
         resident:Terrain_Resident;defer terrain_resident_free(&resident)
         owner:=pipeline_owner(&w,id)
-        core.test_world_settle(&w.w)
+        test_world_settle(&w.w)
         near:=[3]f32{-50,0,-50}
         source_place(&w,near)
         settings:=Terrain_Settings{resident_distance=30,lod_distance=-1}

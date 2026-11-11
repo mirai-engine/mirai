@@ -11,11 +11,13 @@ import mm "mirai:std/math"
 import "mirai:std/serial"
 import physics "plugins:physics/runtime"
 
-@(private="file")
+@(private)
+@(test_world)
 Removal_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     ids:core.Table(core.Id),
     parents:core.Table(core.Parent),
+    transforms:core.Table(core.Transform),
     foliages:core.Table(Foliage),
     removed:core.Table(Foliage_Removed),
     data:Foliage_Data,
@@ -34,7 +36,7 @@ Removal_Test :: struct {
 // A world of Foliage and what is taken out of them, with one source of id: nil when it could not be made.
 @(private="file")
 removal_init :: proc(t:^testing.T,r:^Removal_Test,id:base.Asset_Id) -> ^Source {
-    if !core.test_world_init(t,&r.w,test_types) {return nil}
+    if !test_world_init(t,&r.w) {return nil}
     r.app=host.App{allocator=context.allocator}
     r.network.role=.Server
     append(&r.data.entries,Data_Entry{id=id,epoch=1})
@@ -42,7 +44,7 @@ removal_init :: proc(t:^testing.T,r:^Removal_Test,id:base.Asset_Id) -> ^Source {
 }
 
 @(private="file")
-removal_destroy :: proc(r:^Removal_Test) {core.test_world_destroy(&r.w)}
+removal_destroy :: proc(r:^Removal_Test) {test_world_destroy(&r.w)}
 
 // A Foliage of the source of the world, with an Id when id is not 0.
 @(private="file")
@@ -50,15 +52,15 @@ removal_foliage :: proc(r:^Removal_Test,id:base.Entity_Id) -> core.Entity {
     e:=core.create(&r.w.entities)
     if id!=0 {core.add(&r.w.ids,e,core.Id{value=id})}
     core.add(&r.w.foliages,e,Foliage{source=r.data.entries[0].id})
-    core.test_world_settle(&r.w)
+    test_world_settle(&r.w)
     return e
 }
 
 @(private="file")
 removal_step :: proc(r:^Removal_Test) {
     w:=&r.w
-    foliage_removals(&r.removals,&r.requests,&w.removed,core.read(&w.foliages),core.read(&w.ids),core.ref(&r.data),core.ref(&r.network),core.commands(w,core.test_world_info(w)),r.app.allocator,&r.problems)
-    core.test_world_settle(w)
+    foliage_removals(&r.removals,&r.requests,&w.removed,core.read(&w.foliages),core.read(&w.ids),core.ref(&r.data),core.ref(&r.network),core.commands(w,test_world_info(w)),r.app.allocator,&r.problems)
+    test_world_settle(w)
 }
 
 // The game asks to take out a manual tree and generated instances: the end
@@ -154,7 +156,7 @@ instances_taken_out_are_one_entity_for_each_cell_that_the_cell_leaves_out :: pro
     for row in 0..<core.count(removed) {
         if core.at(removed,row).coord==coord {core.destroy(&r.w.entities,core.entity_at(removed,row));break}
     }
-    core.test_world_settle(&r.w)
+    test_world_settle(&r.w)
     removal_step(&r)
     gone=removed_owner(&r.removals,wood)
     testing.expect(t,gone!=nil && len(gone.items)==2)
@@ -267,7 +269,7 @@ a_saved_game_takes_out_the_same_instance_after_its_source_is_edited :: proc(t:^t
     page:=core.create(&loaded.w.entities)
     core.add(&loaded.w.parents,page,core.Parent{entity=again})
     core.add(&loaded.w.removed,page,saved)
-    core.test_world_settle(&loaded.w)
+    test_world_settle(&loaded.w)
     removal_step(&loaded)
     ids,_:=removed_cell(removed_owner(&loaded.removals,again),{0,0})
     work:Build_Work

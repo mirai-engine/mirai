@@ -9,9 +9,10 @@ import "mirai:std/base"
 import mm "mirai:std/math"
 import phys "plugins:physics/runtime"
 
-@(private="file")
+@(private)
+@(test_world)
 Ground_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     using terrain:Test_Terrain,
 }
 
@@ -34,7 +35,7 @@ ground_entry :: proc(w:^Ground_World,id:base.Asset_Id,s:Source,at:[3]f32) -> cor
     e:=core.create(&w.entities)
     core.add(&w.terrains,e,Terrain{source=id,solid=true})
     core.add(&w.worlds,e,core.World_Transform{transform={position=at,rotation=1,scale={1,1,1}}})
-    core.test_world_settle(w)
+    test_world_settle(w)
     return e
 }
 
@@ -44,8 +45,8 @@ ground_entry :: proc(w:^Ground_World,id:base.Asset_Id,s:Source,at:[3]f32) -> cor
 @(test)
 the_ground_answers_each_line_as_its_terrain_has_it :: proc(t:^testing.T) {
     w:Ground_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     resident:Terrain_Resident
     defer terrain_resident_free(&resident)
     // Without terrains no line has ground.
@@ -115,7 +116,7 @@ the_ground_answers_each_line_as_its_terrain_has_it :: proc(t:^testing.T) {
     hit,_:=q.probe(q.user,{20,50,20},{0,-1,0},false)
     testing.expect(t,hit.point.y>1)
     core.edit(&w.worlds,land).transform.position={0,0,100}
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     q=ground_step(&w,&resident)
     testing.expect_value(t,len(changed),2)
     // Another epoch of the data starts the resident anew (terrain_update): every terrain is announced.
@@ -132,8 +133,8 @@ the_ground_answers_each_line_as_its_terrain_has_it :: proc(t:^testing.T) {
 @(test)
 the_chunks_of_a_terrain_without_collider_are_unloaded_ground :: proc(t:^testing.T) {
     w:Ground_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     hill:Source
     testing.expect(t,source_make(&hill,.Heightfield,{65,1,65},1,16))
     e:=ground_entry(&w,{3,3},hill,{})
@@ -151,7 +152,7 @@ the_chunks_of_a_terrain_without_collider_are_unloaded_ground :: proc(t:^testing.
         shown[x].shown=true
     }
     shown[5].shown=true
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     q:=ground_step(&w,&resident)
     // Row 0: chunk 2. Row 1: chunk 4, and 6 to 7. Rows 2 and 3: one run each.
     testing.expect_value(t,len(q.unloaded),5)
@@ -167,7 +168,7 @@ the_chunks_of_a_terrain_without_collider_are_unloaded_ground :: proc(t:^testing.
     shown[9].shown=true
     other:=core.create(&w.entities)
     core.add(&w.worlds,other,core.World_Transform{transform={rotation=1,scale={1,1,1}}})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     q=ground_step(&w,&resident)
     testing.expect(t,len(q.unloaded)==5 && len(unloaded)==0)
     resident.marks+=1
@@ -176,14 +177,15 @@ the_chunks_of_a_terrain_without_collider_are_unloaded_ground :: proc(t:^testing.
     // Chunk 2 loads: one box fewer.
     chunks[2]=core.create(&w.entities)
     core.add(&w.colliders,chunks[2],phys.Collider{kind=.Heightfield})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     q=ground_step(&w,&resident)
     testing.expect(t,len(q.unloaded)==5 && len(unloaded)==1)
 }
 
-@(private="file")
+@(private)
+@(test_world)
 Dust_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     dusts:core.Table(Terrain_Dust),
     digs:Terrain_Digs,
     births:core.Births,
@@ -192,15 +194,15 @@ Dust_World :: struct {
 @(test)
 a_dig_raises_dust_of_each_layer_it_took_on_its_channel :: proc(t:^testing.T) {
     w:Dust_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     dusty,bare:=core.create(&w.entities),core.create(&w.entities)
     dust:=TERRAIN_DUST_DEFAULT
     dust.layers[1].color={1,0,0,1}
     base.text_set(dust.layers[1].channel[:],"gravel")
     dust.layers[3].channel={}
     core.add(&w.dusts,dusty,dust)
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     core.push(&w.digs.digs,Terrain_Dig{owner=dusty,center={1,2,3},volume=1,layers={0.5,0.25,0,0.25}})
     core.push(&w.digs.digs,Terrain_Dig{owner=bare,volume=1,layers={1,0,0,0}})
     terrain_dust(core.ref(&w.digs),core.read(&w.dusts),&w.births)
