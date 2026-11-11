@@ -806,7 +806,7 @@ hostile_memories_and_places :: proc(t:^testing.T) {
         _=sight_in_cone(hostile_vec3(&h,true),hostile_vec3(&h,true),hostile_vec3(&h,true),base.hostile_f32(&h),base.hostile_f32(&h))
         points:[32]math.Vec3
         room:=points[:base.hostile_int(&h,33)]
-        written:=places_rings(hostile_vec3(&h,true),base.hostile_f32(&h),base.hostile_f32(&h),base.hostile_int(&h,6)-1,base.hostile_int(&h,40)-1,room)
+        written:=places_rings(hostile_vec3(&h,true),base.hostile_f32(&h),base.hostile_f32(&h),base.hostile_int(&h,6)-1,base.hostile_int(&h,40)-1,room,hostile_vec3(&h,true),base.hostile_f32(&h))
         testing.expect(t,written>=0 && written<=len(room),"More ring points were written than fit")
         room=points[:base.hostile_int(&h,33)]
         written=places_grid(hostile_vec3(&h,true),base.hostile_f32(&h),base.hostile_f32(&h),room)

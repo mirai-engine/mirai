@@ -11,18 +11,26 @@ import math "mirai:std/math"
 // procedures only lay out candidates and keep the best.
 
 // Points on rings around a center, on the XZ plane at its height: `rings`
-// rings from `inner` to `outer` metres, `per_ring` points each, the outer
-// ones turned half a step so the rings interleave. How many were written.
-places_rings :: proc "contextless" (center:math.Vec3,inner,outer:f32,rings,per_ring:int,out:[]math.Vec3) -> int {
+// rings from `inner` to `outer` metres, `per_ring` points each. All around,
+// the outer ones turned half a step so the rings interleave; with an `arc` of
+// radians below a full turn, the points of each ring go evenly from one end of
+// the arc to the other, centered on `facing` across the ground. How many were
+// written.
+places_rings :: proc "contextless" (center:math.Vec3,inner,outer:f32,rings,per_ring:int,out:[]math.Vec3,facing:=math.Vec3{1,0,0},arc:f32=0) -> int {
     if rings<=0 || per_ring<=0 || !(inner>=0) || !(outer>=inner) || !(outer<=1e6) {return 0}
+    around:=!(arc>0 && arc<2*math.PI)
+    across:=linalg.length(facing.xz)
+    if !around && !(across>1e-6 && across<=1e18) {return 0}
+    ahead:=facing.xz/across if !around else {1,0}
     count:=0
     for r in 0..<rings {
         radius:=inner if rings==1 else inner+(outer-inner)*f32(r)/f32(rings-1)
         for k in 0..<per_ring {
             if count>=len(out) {return count}
             turn:=(f32(k)+(0.5 if r%2==1 else 0))/f32(per_ring)*2*math.PI
+            if !around {turn=0 if per_ring==1 else arc*(f32(k)/f32(per_ring-1)-0.5)}
             s,c:=math.sincos_det(turn)
-            out[count]=center+{c*radius,0,s*radius}
+            out[count]=center+{(ahead.x*c-ahead.y*s)*radius,0,(ahead.y*c+ahead.x*s)*radius}
             count+=1
         }
     }

@@ -401,6 +401,8 @@ What those models gave, with a mind:
 - A `Consideration` reads one input, rescales it and maps it through a `Response` curve to 0..1.
   `score_considerations` is the product of those of a choice with the compensation for count, times
   its weight; a zero vetoes it and a choice without considerations is worth its weight.
+  `score_product` applies the same compensation to a product, so a caller that has measured only
+  some inputs bounds the score from above by taking the rest as 1.
 - It uses only arithmetic: the scores do not depend on the platform.
 - They score the places of a query; an agent chooses what to do with a
   [mind](#decisions-minds-mindodin), which takes the score of each proposal from the game.
@@ -416,7 +418,8 @@ What those models gave, with a mind:
   agent.
 - `sight_in_cone` says whether a point is in the cone and range of a gaze; what blocks it belongs to
   the caller.
-- `places_rings` and `places_grid` arrange candidates around a point; `places_mesh`, the mesh points
+- `places_rings` (all around, or an arc centered on a facing) and `places_grid` arrange candidates
+  around a point; `places_mesh`, the mesh points
   joined to a polygon without leaving a radius of the center: a grid over each reached polygon, or
   its middle if none falls on it, in the order in which they are reached. `places_best` scores each
   one with its considerations over the inputs that the caller measured for it and stores the best
