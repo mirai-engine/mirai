@@ -5,12 +5,13 @@ import "mirai:core"
 import "mirai:editor/history"
 import "mirai:std/base"
 
-@(private="file")
+@(private)
 History_Lamp :: struct {intensity:f32,range:f32}
 
-@(private="file")
+@(private)
+@(test_world)
 History_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     using scene_tables:Test_Scene,
     lamps:core.Table(History_Lamp),
 }
@@ -27,9 +28,9 @@ AGENT :: history.Edit_Author(7)
 // A World of count entities with an Id from 1, a Transform and a Lamp.
 @(private="file")
 history_init :: proc(t:^testing.T,f:^History_Fixture,count:int) -> bool {
-    if !core.test_world_init(t,&f.world) {return false}
+    if !test_world_init(t,&f.world) {return false}
     for i in 0..<count {history_entity(f,base.Entity_Id(i+1))}
-    core.test_world_settle(&f.world)
+    test_world_settle(&f.world)
     test_session_open(&f.edited,history_world(f))
     return true
 }
@@ -37,11 +38,11 @@ history_init :: proc(t:^testing.T,f:^History_Fixture,count:int) -> bool {
 @(private="file")
 history_free :: proc(f:^History_Fixture) {
     test_session_close(&f.edited)
-    core.test_world_destroy(&f.world)
+    test_world_destroy(&f.world)
 }
 
 @(private="file")
-history_world :: proc(f:^History_Fixture) -> core.World_Ref {return core.test_world_ref(&f.world)}
+history_world :: proc(f:^History_Fixture) -> core.World_Ref {return test_world_ref(&f.world)}
 
 @(private="file")
 history_entity :: proc(f:^History_Fixture,id:base.Entity_Id) -> core.Entity {
@@ -76,7 +77,7 @@ history_begin :: proc(f:^History_Fixture,author:history.Edit_Author,label:string
 
 @(private="file")
 history_commit :: proc(t:^testing.T,f:^History_Fixture,loc:=#caller_location) {
-    core.test_world_settle(&f.world)
+    test_world_settle(&f.world)
     history.edits_end(&f.edits)
     testing.expect(t,history.edits_commit(&f.edits,history_world(f),&f.selection),loc=loc)
     f.edits.author=history.EDIT_AUTHOR_USER
@@ -185,7 +186,7 @@ undo_restores_its_fields_and_off_state_beside_those_another_author_changed :: pr
     history_lamp(f,1).intensity=9
     history_commit(t,f)
     move:=history_move(f,history.EDIT_AUTHOR_USER,false)
-    core.test_world_settle(&f.world)
+    test_world_settle(&f.world)
     testing.expect(t,move.done && move.kept==0)
     testing.expect_value(t,history_transform(f,1).position,[3]f32{0,0,0})
     testing.expect_value(t,history_transform(f,1).scale,[3]f32{4,4,4})
@@ -195,7 +196,7 @@ undo_restores_its_fields_and_off_state_beside_those_another_author_changed :: pr
     // The undo of the user is a step of its own: the agent's step goes by ids now.
     testing.expect_value(t,f.edits.steps[f.edits.cursor-1].kind,history.Edit_Kind.Undo)
     testing.expect(t,history_move(f,AGENT,false).done)
-    core.test_world_settle(&f.world)
+    test_world_settle(&f.world)
     testing.expect_value(t,history_transform(f,1).scale,[3]f32{1,1,1})
     testing.expect_value(t,history_lamp(f,1).intensity,f32(1))
     testing.expect_value(t,history_transform(f,1).position,[3]f32{0,0,0})
@@ -215,7 +216,7 @@ undo_leaves_an_entity_another_author_deleted :: proc(t:^testing.T) {
     core.destroy(&f.world.entities,history_at(f,1))
     history_commit(t,f)
     move:=history_move(f,history.EDIT_AUTHOR_USER,false)
-    core.test_world_settle(&f.world)
+    test_world_settle(&f.world)
     testing.expect(t,move.done && move.kept==1)
     testing.expect(t,history_at(f,1)==core.NONE,"the user's undo does not bring back what the agent deleted")
     testing.expect_value(t,f.world.entities.alive,1)
@@ -239,18 +240,18 @@ undo_of_a_creation_keeps_the_entity_while_a_child_of_another_author_hangs_from_i
     core.add(&f.world.parents,child,{entity=made})
     history_commit(t,f)
     move:=history_move(f,history.EDIT_AUTHOR_USER,false)
-    core.test_world_settle(&f.world)
+    test_world_settle(&f.world)
     testing.expect(t,move.done && move.kept==1)
     testing.expect(t,core.alive(&f.world.entities,made) && core.alive(&f.world.entities,child))
     parent,_:=core.get(&f.world.parents,child)
     testing.expect_value(t,parent.entity,made)
     // Without the child, the creation goes.
     testing.expect(t,history_move(f,AGENT,false).done)
-    core.test_world_settle(&f.world)
+    test_world_settle(&f.world)
     testing.expect(t,history_at(f,11)==core.NONE)
     testing.expect(t,history_move(f,history.EDIT_AUTHOR_USER,true).done)
     testing.expect(t,history_move(f,history.EDIT_AUTHOR_USER,false).done)
-    core.test_world_settle(&f.world)
+    test_world_settle(&f.world)
     testing.expect(t,history_at(f,10)==core.NONE)
     testing.expect(t,history.journal_settled(&f.edits,history_world(f)))
 }
@@ -424,7 +425,7 @@ the_selections_of_each_author_and_what_goes_away_stay_out_of_the_undo_of_the_oth
     history_select(f,history.EDIT_AUTHOR_USER,1,2)
     // An entity another editor deleted leaves the selection without a step.
     core.destroy(&f.world.entities,history_at(f,2))
-    core.test_world_settle(&f.world)
+    test_world_settle(&f.world)
     history.selection_prune(&f.selection,history_world(f))
     history.edits_select(&f.edits,history_world(f),&f.selection)
     testing.expect_value(t,len(f.edits.selections),3)

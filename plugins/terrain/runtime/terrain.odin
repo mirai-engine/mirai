@@ -20,7 +20,7 @@ Terrain :: struct {
 }
 TERRAIN_DEFAULT :: Terrain{solid=true}
 
-@(component)
+@(component,derived)
 Terrain_Chunk :: struct {
     owner:core.Entity `mirai:"transient"`,
     coord:[3]i32 `mirai:"transient"`, // of its first chunk

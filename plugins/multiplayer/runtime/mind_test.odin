@@ -12,9 +12,10 @@ import anim "plugins:animation/runtime"
 import behavior "plugins:behavior/runtime"
 
 // The test world with the agents of behavior and the actions of their animation.
-@(private="file")
+@(private)
+@(test_world)
 Mind_Net_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     using net:Net_Test_Tables,
     agents:core.Table(behavior.Mind_Agent),
     animations:core.Table(anim.Animation),
@@ -23,13 +24,6 @@ Mind_Net_World :: struct {
     animation_events:anim.Animation_Events,
     playback:anim.Playback,
     actions:anim.Action_Runtime,
-}
-
-@(private="file")
-mind_net_types :: proc(types:^[dynamic]core.Test_Type) {
-    net_test_types(types)
-    behavior.test_types(types)
-    anim.test_types(types)
 }
 
 @(private)
@@ -96,9 +90,9 @@ mind_net_animate :: proc(w:^Mind_Net_World,info:^core.World_Info,characters:^ani
 // snapshot) decides from there the same as the world.
 @(test)
 a_mind_decides_on_the_server_and_the_client_plays_what_it_plays :: proc(t:^testing.T) {
-    info,described:=core.test_info(t,Mind_Net_World,mind_net_types)
+    info,described:=test_info(t,Mind_Net_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     info.loops[.Game][.Fixed]=net_test_fixed
     worlds:[2]Mind_Net_World
     shares:[2]Net_Test_Shared

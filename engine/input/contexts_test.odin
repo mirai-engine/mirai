@@ -82,12 +82,12 @@ a_context_on_top_takes_the_inputs_its_actions_read :: proc(t:^testing.T) {
 @(test)
 seats_enter_and_leave_contexts_by_owner :: proc(t:^testing.T) {
     w:Test_Seats
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     first,second,inventory,map_screen:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
     core.add(&w.seats,first,Seat{})
     core.add(&w.seats,second,Seat{slot=1})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     state:Input_Contexts
     problems:core.Problems
     stack :: proc(seats:^core.Table(Seat),e:core.Entity) -> Context_Stack {return seats.values[core.row_of(seats,e)].contexts}
@@ -154,9 +154,9 @@ input_settings_name_contexts_and_chords :: proc(t:^testing.T) {
         {type=Action,value=17,name="save",file="game/game.odin",line=2},
         {type=Input_Context,value=1,name="menu",file="game/game.odin",line=3},
     }
-    info,made:=core.test_info(t,Test_Seats,test_types)
+    info,made:=test_info(t,Test_Seats)
     if !made {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     info.names=names
     settings:Input_Settings
     input_settings_put(&settings,"jump",action_default(.Button,binding_key(.S)))

@@ -16,7 +16,7 @@ a_hit_breaks_two_equal_worlds_alike_and_restoring_mid_break_repeats_the_rest :: 
         test_ground(w)
         // Small groups are debris that expires, and the rest is removed, within the steps of the test.
         desc:=BREAKABLE_DESC_DEFAULT
-        desc.damage_radius,desc.debris_volume,desc.debris_ticks,desc.removal_ticks=1,0.1,20,40
+        desc.debris_volume,desc.debris_ticks,desc.removal_ticks=0.1,20,40
         test_destructible(w,{4,2,0.4},{0,1,0},24,true,desc)
         test_cannonball(w,{0,1.2,3},{0,0,-30})
     }
@@ -97,7 +97,7 @@ a_contact_of_the_step_that_breaks_a_piece_off_still_names_what_its_shapes_were :
     defer world_destroy(&w)
     test_ground(&w)
     desc:=BREAKABLE_DESC_DEFAULT
-    desc.damage_radius,desc.user_data=1,77
+    desc.user_data=77
     wall,_:=test_destructible(&w,{4,2,0.4},{0,1,0},24,true,desc)
     ball:=test_cannonball(&w,{0,1.2,3},{0,0,-30})
     body_set_user_data(&w,ball,5)

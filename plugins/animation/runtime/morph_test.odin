@@ -111,9 +111,10 @@ morph_weights_report_unknown_targets_and_refuse_invalid_entries_keeping_their_we
     morph_playing_free(&kept)
 }
 
-@(private="file")
+@(private)
+@(test_world)
 Morph_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     meshes:core.Table(erender.Mesh_Renderer),
     configs:core.Table(Morph_Weights),
     animations:core.Table(Animation),
@@ -131,8 +132,8 @@ morph_test_step :: proc(w:^Morph_World,playback:^Playback,cache:^Skin_Runtime,st
 animation_morph_follows_its_mesh_and_its_weights_and_reads_the_curves_of_its_rig :: proc(t:^testing.T) {
     problems:core.Problems
     w:Morph_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     rig_entity,entity,plain:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
     id,other:=base.Asset_Id{71,73},base.Asset_Id{79,83}
     target:=asset.Morph_Target{weight=.25}
@@ -140,7 +141,7 @@ animation_morph_follows_its_mesh_and_its_weights_and_reads_the_curves_of_its_rig
     core.add(&w.meshes,entity,erender.Mesh_Renderer{mesh=id});core.add(&w.meshes,plain,erender.Mesh_Renderer{mesh=other})
     core.add(&w.parents,entity,core.Parent{entity=rig_entity});core.add(&w.animations,rig_entity,ANIMATION_DEFAULT)
     face:Animation_Target;base.text_set(face.path[:],"Face");core.add(&w.targets,entity,face)
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     cache:Skin_Runtime
     cache.rig_rows=make(map[base.Asset_Id]u32)
     append(&cache.rigs,Skin_Rig{id=id,checked=1,revision=1,morphs={target}},Skin_Rig{id=other,checked=1,revision=1})
@@ -162,7 +163,7 @@ animation_morph_follows_its_mesh_and_its_weights_and_reads_the_curves_of_its_rig
     testing.expect_value(t,state.states[0].previous[0],f32(.25))
     config:Morph_Weights
     testing.expect(t,morph_weight_set(&config,"Smile",-.75))
-    core.add(&w.configs,entity,config);core.test_world_settle(&w)
+    core.add(&w.configs,entity,config);test_world_settle(&w)
     morph_test_step(&w,&playback,&cache,&state,&app)
     testing.expect_value(t,state.states[0].current[0],f32(-.75))
     // A changed weight binds again without memory and without asking for the mesh.
@@ -182,7 +183,7 @@ animation_morph_follows_its_mesh_and_its_weights_and_reads_the_curves_of_its_rig
     cache.rigs[0].morphs=next[:];cache.rigs[0].revision+=1;cache.rigs[0].checked=1
     morph_test_step(&w,&playback,&cache,&state,&app)
     testing.expect(t,len(state.states[0].current)==2 && state.states[0].current[0]==-.5 && state.states[0].current[1]==.1)
-    core.remove(&w.meshes,entity);core.test_world_settle(&w)
+    core.remove(&w.meshes,entity);test_world_settle(&w)
     morph_test_step(&w,&playback,&cache,&state,&app)
     testing.expect(t,len(state.states)==0 && morph_playing(&state,entity)==nil)
 }

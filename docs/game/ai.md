@@ -14,7 +14,7 @@ Plugin `behavior` (brings `navigation`, `physics`) in `project.mirai`; import
 
 ## Map
 
-- A mind: its `think` and its actions, which the engine runs: [mind.md](ai/mind.md).
+- A mind: its `think` and its actions, which the engine runs; patrols: [mind.md](ai/mind.md).
 - Smart objects (ammo, cover, turrets), fences the game crosses, place queries:
   [smart-objects.md](ai/smart-objects.md).
 - Animation an agent asks for: [animation](animation.md); over the network:
@@ -29,8 +29,8 @@ The agent's navigation class is chosen from its capsule; with none that fits, th
 `navigation.agent_class` says what size is missing.
 
 - The navmesh builds itself from the world's static collision (a `Nav_Bounds` limits it). A mover
-  that blocks ways is a `Nav_Obstacle`, a costlier or forbidden zone a `Nav_Area`: each a `Box`
-  `Volume` on its entity ([regions](world/regions.md)). Jumps, ladders, doors: `Nav_Link`s.
+  that blocks ways is a `Nav_Obstacle`, a costlier or forbidden zone a `Nav_Area`: each a `Box` or
+  `Sphere` `Volume` on its entity ([regions](world/regions.md)). Jumps, ladders, doors: `Nav_Link`s.
 - Perception: `Perceiver.notices` is a `Teams` mask; the subject has a `Perceivable` with a team
   and a collider, so the sight ray reaches it. Sight is a cone along the body's -Z.
 
@@ -41,9 +41,9 @@ The agent's navigation class is chosen from its capsule; with none that fits, th
   `keep` (or its `ai.commit`). Patrol: low score always on; chase: higher if it remembers someone
   (`ai.memory_best(&perception.memory, here)`); attack: highest if close.
 - **Act.** Each action procedure gets `Enter`, `Update`, `Exit` in `a.phase`. Walk with
-  `behavior.move_act(a, goal)`, chase with `behavior.chase_act(a, target, distance)` (it follows a
-  new target when it changes), wait with `ai.after(a, seconds)`,
-  sequence with `ai.next_stage(a)` and `ai.stage(a)`, or `ai.steps(a, .A, .B)` for a combo.
+  `behavior.move_act(a, goal)`, patrol with `behavior.patrol_act(a)`, chase with
+  `behavior.chase_act(a, target, distance)` (it follows a new target when it changes), wait with
+  `ai.after(a, seconds)`, sequence with `ai.next_stage(a)`, `ai.stage(a)`, `ai.steps(a, .A, .B)`.
   `a.memory` is zeroed on `Enter`. Return `.Running`, `.Success` or `.Failure`.
 - **Events** (damage, stun): a field of your component, written by whoever causes it; `think`
   proposes the reaction above the rest and the action clears the field on `Enter`.
@@ -60,7 +60,7 @@ The agent's navigation class is chosen from its capsule; with none that fits, th
   satisfies with an object (ammo, health) is this.
 - **Move requests:** `nav.nav_move_to`, `nav_follow`, `nav_stop`, `nav_look_at`, `nav_look_along`
   on `Nav_Requests`. `Nav_Path.state` is `Idle`, `Waiting`, `Moving`, `Crossing`, `Arrived` or
-  `Failed`; `partial`: it got as near as the mesh goes.
+  `Failed` (also blocked by a body: `navigation.blocked`); `partial`: it got as near as it goes.
 - **Show it:** an action that takes `requests:^anim.Animation_Requests` calls
   `anim.play(requests,behavior.agent(a),"Bite")` and `anim.look`. Minds run on the server, and every
   client plays what the server played, as far into it as the server is.
@@ -70,7 +70,7 @@ The agent's navigation class is chosen from its capsule; with none that fits, th
 - A `Mind_Agent` name that no `@(mind)` declares does nothing; `engine.diagnostics` lists the
   problem `behavior.mind`. A missing action, a wrong signature or a name too long fail the build
   with what to write.
-- `Exit` must release what `Enter` requested. `move_act` and `chase_act` stop the agent on abort;
+- `Exit` must release what `Enter` requested. The `behavior` acts stop the agent on abort;
   an action that calls `nav.nav_move_to` itself must `nav_stop` when `a.cause == .Aborted`.
 - `think` only reads and proposes; state changes go in the actions.
 - `behavior.PERCEIVER_DEFAULT` notices every team, its own included; set `notices`.

@@ -6,7 +6,7 @@ import "core:testing"
 import "mirai:core"
 
 @(private) Id_Trace :: struct {released:[dynamic]core.World_Id,destroyed:int,ordered:bool}
-@(private) Id_World :: struct {using world:core.Test_World,id:core.World_Id,frame:core.Frame_Time,values:[dynamic]u32}
+@(test_world) @(private) Id_World :: struct {using world:Test_World,id:core.World_Id,frame:core.Frame_Time,values:[dynamic]u32}
 
 @(private)
 id_world_release :: proc(world,shared,editor,app_data:rawptr) {
@@ -18,9 +18,9 @@ id_world_release :: proc(world,shared,editor,app_data:rawptr) {
 
 @(test)
 world_ids_are_stable_and_a_freed_one_names_no_other_world :: proc(t:^testing.T) {
-    info,described:=core.test_info(t,Id_World)
+    info,described:=test_info(t,Id_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     info.loops[.Game][.Release]=id_world_release
     trace:Id_Trace;defer delete(trace.released)
     app:=App{info=&info,allocator=context.allocator,shared=&trace}
@@ -62,24 +62,21 @@ world_ids_are_stable_and_a_freed_one_names_no_other_world :: proc(t:^testing.T) 
 }
 
 @(private) By_World_Held :: struct {value:u32}
+@(private) BY_WORLD_HELD_DEFAULT :: By_World_Held{value=10}
 @(private) By_World_Shared :: struct {values:core.By_World(By_World_Held),seen_at_release:bool}
-
-@(private)
-by_world_test_types :: proc(types:^[dynamic]core.Test_Type) {
-    append(types,core.test_type(By_World_Held,default=proc(dst:^By_World_Held) {dst.value=10}))
-}
+@(test_world,host="By_World_Shared") @(private) By_World_World :: struct {using world:Test_World,id:core.World_Id,frame:core.Frame_Time,values:[dynamic]u32}
 
 @(private)
 by_world_test_release :: proc(world,shared,editor,app_data:rawptr) {
-    w,s:=cast(^Id_World)world,cast(^By_World_Shared)shared
+    w,s:=cast(^By_World_World)world,cast(^By_World_Shared)shared
     s.seen_at_release=core.by_world_get(&s.values,w.id)!=nil
 }
 
 @(test)
 each_world_gets_its_by_world_value_when_made_and_loses_it_after_its_release :: proc(t:^testing.T) {
-    info,described:=core.test_info(t,Id_World,By_World_Shared,core.Test_None,by_world_test_types)
+    info,described:=test_info(t,By_World_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     info.loops[.Game][.Release]=by_world_test_release
     succeeded,failed:=false,false
     for budget in 0..<64 {

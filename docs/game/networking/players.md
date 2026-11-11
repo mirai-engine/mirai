@@ -67,8 +67,11 @@ multiplayer.predict_spawn(spawns,e,seat)     // spawns: ^multiplayer.Net_Spawns
 The replica of the server's takes the one the client made; one the server never makes goes after
 `Net_Settings.replication.history_seconds`.
 
-`Net_Settings.input_delay` (ticks) makes every client act on its input that many ticks later, on
-both ends alike: less to predict and to correct, felt as latency.
+A client acts on its input some ticks later, on both ends alike, as its round trip asks:
+`Net_Settings.replication.input_delay` covers the first `cover` seconds of it with delay (at
+least `min`), the next `predict` seconds with prediction and the rest with delay again, so a
+correction never replays more than `predict`. A fast shooter that wants no delay sets `cover` and
+`predict` to -1.
 
 ## Who simulates
 

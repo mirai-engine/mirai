@@ -70,9 +70,9 @@ physics_gallery_actions :: proc(
         point:=physics_gallery_piece_center(view,item.target,item.origin+mm.Vec3{0,.5,0}) if needs_destructible else item.origin
         switch item.station {
         case 0,8,19,21:
-            phys.apply_area(bodies,volume.sphere(4,blend=4),{position=item.origin+mm.Vec3{0,-.6,0}},35,impulse=true,velocity_change=true)
+            phys.apply_area(bodies,volume.sphere(4),{position=item.origin+mm.Vec3{0,-.6,0}},35,impulse=true,velocity_change=true,blend=4)
         case 22:
-            phys.apply_area(bodies,volume.sphere(4,blend=4),{position=item.origin+mm.Vec3{0,-1,0}},6,impulse=true,velocity_change=true)
+            phys.apply_area(bodies,volume.sphere(4),{position=item.origin+mm.Vec3{0,-1,0}},6,impulse=true,velocity_change=true,blend=4)
         case 2,4,5,7:
             normal:=mm.Vec3{1,0,0} if item.activations%2==1 else mm.Vec3{0,1,0}
             destruct.slice(requests,item.target,point,normal)

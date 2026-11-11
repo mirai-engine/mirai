@@ -10,16 +10,17 @@ import "mirai:core"
 import "mirai:host"
 import "mirai:std/base"
 
-@(private="file") Section_Test_Lamp :: struct {range:f32}
-@(private="file") Section_Test_Link :: struct {target:core.Entity}
+@(private) Section_Test_Lamp :: struct {range:f32}
+@(private) Section_Test_Link :: struct {target:core.Entity}
 // Draws a far form of its own, as a terrain does.
 @(component,far)
-@(private="file") Section_Test_Ground :: struct {height:f32}
+@(private) Section_Test_Ground :: struct {height:f32}
 
 // A World with what sections need, as the generator makes one.
-@(private="file")
+@(private)
+@(test_world)
 Section_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     ids:core.Table(core.Id),
     names:core.Table(core.Name),
     transforms:core.Table(core.Transform),
@@ -65,7 +66,7 @@ Section_Fixture :: struct {
 section_fixture_open :: proc(t:^testing.T,f:^Section_Fixture,name:string) -> bool {
     f.folder=base.test_folder(t,fmt.tprintf("sections-%s",name))
     if f.folder=="" {return false}
-    f.info=core.test_info(t,Section_World,test_types) or_return
+    f.info=test_info(t,Section_World) or_return
     asset.types_init(&f.types)
     if !testing.expect(t,host.assets_init(&f.assets,{root=f.folder,capacity=8})) {return false}
     f.app={info=&f.info,assets=&f.assets,allocator=context.allocator}
@@ -84,7 +85,7 @@ section_fixture_close :: proc(f:^Section_Fixture) {
     delete(f.app.worlds)
     host.assets_destroy(&f.assets)
     asset.types_destroy(&f.types)
-    core.test_info_destroy(&f.info)
+    test_info_destroy(&f.info)
 }
 
 @(private="file")

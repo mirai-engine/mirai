@@ -58,9 +58,9 @@ editor's sun, shining toward its -Z; a `View_Volume` without a `Volume` is the w
 - Indoor: turn the `Sun` off (`"enabled":false`) when the room has no window, keep the `Sky` if
   a window shows it, and light with `Point_Light`, `Spot_Light` and `Rect_Light` (`range` in
   metres; spot and rect lights shine toward their -Z). Emission of materials is in nits.
-- Zones: a `View_Volume` or `Fog_Volume` with a `volume.box(half,blend)` or
-  `volume.sphere(radius,blend)` applies only inside it, with `blend` metres of edge and a
-  `priority`; without a `Volume` it is the world's. A `Volume` with `extents` and no `shape` is the
+- Zones: a `View_Volume` or `Fog_Volume` with a `volume.box(half)` or `volume.sphere(radius)`
+  applies only inside it, with its `zone.blend` metres of edge and its `zone.priority`; without a
+  `Volume` it is the world's. A `Volume` with `extents` and no `shape` is the
   whole world: the problem `volume.unbounded_extents` says so.
 
 ## Exposure

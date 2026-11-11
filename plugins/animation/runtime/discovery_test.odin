@@ -5,9 +5,10 @@ import "core:testing"
 import "mirai:core"
 import "mirai:host"
 
-@(private="file")
+@(private)
+@(test_world)
 Discovery_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     animations:core.Table(Animation),
     attachments:core.Table(Bone_Attachment),
 }
@@ -15,11 +16,11 @@ Discovery_World :: struct {
 @(test)
 modifier_preparation_ignores_unrelated_writes_reloads_only_changed_definitions_and_preserves_headers_on_failure :: proc(t:^testing.T) {
     w:Discovery_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     looker,plain:=core.create(&w.entities),core.create(&w.entities)
     description:=ANIMATION_DEFAULT;description.asset={3,4}
-    core.add(&w.animations,looker,description);core.add(&w.animations,plain,ANIMATION_DEFAULT);core.test_world_settle(&w)
+    core.add(&w.animations,looker,description);core.add(&w.animations,plain,ANIMATION_DEFAULT);test_world_settle(&w)
     characters:Character_Assets;defer character_assets_free(&characters)
     look:=make([]Look_Constraint,1);defer delete(look);look[0]=LOOK_CONSTRAINT_DEFAULT;look[0].bone=bone_ref("head")
     test_character_seed(&characters,{3,4},{pose={look=look}})
@@ -56,7 +57,7 @@ modifier_preparation_ignores_unrelated_writes_reloads_only_changed_definitions_a
     testing.expect(t,prepare(&modifiers,&w,&characters,&skeletons,&playback,&app) && modifiers.look.values[0].weight==.6 && modifiers.geometry==geometry+1)
     // The set is the asset of the Animation: another entity in the place of the first takes it over.
     old:=looker;index:=core.entity_index(looker)
-    core.destroy(&w.entities,looker);core.test_world_settle(&w)
-    looker=core.create(&w.entities);core.add(&w.animations,looker,description);core.test_world_settle(&w)
+    core.destroy(&w.entities,looker);test_world_settle(&w)
+    looker=core.create(&w.entities);core.add(&w.animations,looker,description);test_world_settle(&w)
     testing.expect(t,prepare(&modifiers,&w,&characters,&skeletons,&playback,&app) && looker!=old && core.entity_index(looker)==index && modifiers.look.values[0].rig==looker)
 }

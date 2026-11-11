@@ -29,17 +29,19 @@ binaural_rise :: proc "contextless" (m:^Mixer,i,length:int) -> f32 {
     return 0.5*(1+math.cos(math.PI*(f32(i)/f32(length-1)-1)))
 }
 
-// Adds the block of a voice for the chunk that starts at clock: x holds the
-// chunk, silent before the voice started. direction is in the listener's space.
-binaural_add :: proc "contextless" (m:^Mixer,v:^Mix_Voice,index:u32,x:[]f32,direction:[3]f32,clock:u64) #no_bounds_check {
+// Adds the block of a voice for the chunk that starts at clock: ears holds
+// the chunk, silent before the voice started, as each ear hears it: one input
+// for both, or for a stereo voice one per ear (BinauralEffect's partial
+// downmix, where each ear convolves its own input with its HRTF). direction
+// is in the listener's space.
+binaural_add :: proc "contextless" (m:^Mixer,v:^Mix_Voice,index:u32,ears:[][]f32,direction:[3]f32,clock:u64) #no_bounds_check {
     bins:=m.conv.n/2+1
-    // The HRTF of each ear for its direction, and its last BINAURAL_OVERLAP samples of input.
+    // The HRTF of each ear for its direction, and the last BINAURAL_OVERLAP samples of each input.
     spectra:=[2][]f32{m.binaural_spectra[int(index)*4*bins:][:bins*2],m.binaural_spectra[(int(index)*4+2)*bins:][:bins*2]}
-    dry:=m.binaural_dry[int(index)*BINAURAL_OVERLAP:][:BINAURAL_OVERLAP]
-    count:=len(x)
+    count:=len(ears[0])
     if !v.binaural_live {v.binaural_direction_valid=false}
     // A voice that did not sound in the chunk before has nothing to rise over.
-    if !v.binaural_live || v.binaural_clock!=clock {for &s in dry {s=0}}
+    if !v.binaural_live || v.binaural_clock!=clock {for &s in m.binaural_dry[int(index)*2*BINAURAL_OVERLAP:][:2*BINAURAL_OVERLAP] {s=0}}
     v.binaural_live=true
     d:=v.binaural_direction
     if !v.binaural_direction_valid || v.blend!=v.binaural_blend || direction.x*d.x+direction.y*d.y+direction.z*d.z<m.hrtf.reblend_cos {
@@ -48,15 +50,25 @@ binaural_add :: proc "contextless" (m:^Mixer,v:^Mix_Voice,index:u32,x:[]f32,dire
     }
     kept:=m.binaural_kept
     fall:=min(BINAURAL_OVERLAP,count)
-    window:=m.binaural_windowed
-    for &s in window {s=0}
-    for i in 0..<kept {window[i]=dry[BINAURAL_OVERLAP-kept+i]*binaural_rise(m,i,kept)}
     flat:=count-fall
-    for i in 0..<flat {window[kept+i]=x[i]}
-    for j in 0..<fall {window[kept+flat+j]=x[flat+j]*binaural_rise(m,fall-1-j,fall)}
-    fft_forward(&m.conv,window,m.binaural_dry_spectrum)
-    s:=raw_data(m.binaural_dry_spectrum)
+    window:=m.binaural_windowed
+    for x,e in ears {
+        dry:=m.binaural_dry[(int(index)*2+e)*BINAURAL_OVERLAP:][:BINAURAL_OVERLAP]
+        for &s in window {s=0}
+        for i in 0..<kept {window[i]=dry[BINAURAL_OVERLAP-kept+i]*binaural_rise(m,i,kept)}
+        for i in 0..<flat {window[kept+i]=x[i]}
+        for j in 0..<fall {window[kept+flat+j]=x[flat+j]*binaural_rise(m,fall-1-j,fall)}
+        fft_forward(&m.conv,window,m.binaural_dry_spectrum[e*bins*2:][:bins*2])
+        // The newest BINAURAL_OVERLAP samples of input stay for the rise of the next block.
+        if count>=BINAURAL_OVERLAP {
+            copy(dry,x[count-BINAURAL_OVERLAP:])
+        } else {
+            copy(dry,dry[count:])
+            copy(dry[BINAURAL_OVERLAP-count:],x)
+        }
+    }
     for ear in 0..<2 {
+        s:=raw_data(m.binaural_dry_spectrum[(ear if len(ears)==2 else 0)*bins*2:])
         h:=raw_data(spectra[ear])
         sum:=raw_data(m.binaural_sums[(int(v.bus)*2+ear)*bins*2:])
         for k in 0..<bins {
@@ -66,13 +78,6 @@ binaural_add :: proc "contextless" (m:^Mixer,v:^Mix_Voice,index:u32,x:[]f32,dire
         }
     }
     m.binaural_used[v.bus]=true
-    // The newest BINAURAL_OVERLAP samples of input stay for the rise of the next block.
-    if count>=BINAURAL_OVERLAP {
-        copy(dry,x[count-BINAURAL_OVERLAP:])
-    } else {
-        copy(dry,dry[count:])
-        copy(dry[BINAURAL_OVERLAP-count:],x)
-    }
     v.binaural_clock=clock+u64(count)
 }
 

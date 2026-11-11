@@ -171,10 +171,17 @@ a_long_path_keeps_its_first_part_and_a_target_on_it :: proc(t:^testing.T) {
     defer nav_query_destroy(&q)
     filter:=test_filter()
     c:Nav_Corridor
+    // One that fits is cut once the agent, pushed back, adds what it walked to its front.
+    corridor_plan(t,&c,&q,&mesh,&filter,{8.5,0,0.5},{37.5,0,0.5})
+    testing.expect(t,!c.cut)
+    testing.expect(t,nav_corridor_move(&c,&mesh,&filter,{1.5,0,0.5}))
+    testing.expect(t,c.cut && c.count==NAV_CORRIDOR_CAPACITY && c.target.x<37)
+    on,_:=nav_closest_point_on_poly(&mesh,nav_corridor_last(&c),c.target)
+    testing.expect(t,linalg.distance(on,c.target)<1e-4)
     a,b:=math.Vec3{0.5,0,0.5},math.Vec3{59.5,0,0.5}
     corridor_plan(t,&c,&q,&mesh,&filter,a,b)
     testing.expect_value(t,c.count,i32(NAV_CORRIDOR_CAPACITY))
-    testing.expect(t,c.target.x<59 && c.target.x>20)
+    testing.expect(t,c.cut && c.target.x<59 && c.target.x>20)
     testing.expect(t,nav_corridor_valid(&c,&mesh,&filter,8))
     testing.expect(t,nav_mesh_add_tile(&mesh,cell_tile(t,{0,0},64,2,walkable[:],size=64)))
     testing.expect(t,!nav_corridor_valid(&c,&mesh,&filter,8))

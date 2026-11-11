@@ -6,9 +6,10 @@ import "mirai:host"
 import phys "plugins:physics/runtime"
 import sim "plugins:physics/runtime/sim"
 
-@(private="file")
+@(private)
+@(test_world)
 Collision_View_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     physics:phys.Physics_State,
     settings:phys.Collision_Settings,
 }
@@ -18,8 +19,8 @@ Collision_View_Test_World :: struct {
 @(test)
 collision_view_draws_the_layers_asked_for_and_keeps_its_lines_while_physics_stays :: proc(t:^testing.T) {
     world:Collision_View_Test_World
-    if !core.test_world_init(t,&world,phys.test_types) {return}
-    defer core.test_world_destroy(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
     desc:=sim.world_desc_default()
     desc.body_capacity,desc.shape_capacity,desc.contact_capacity,desc.joint_capacity=16,16,64,4
     if !testing.expect(t,sim.world_init(&world.physics.world,desc)) {return}
@@ -29,7 +30,7 @@ collision_view_draws_the_layers_asked_for_and_keeps_its_lines_while_physics_stay
     view:Collision_View
     defer collision_view_free(&view)
     app:host.App
-    w:=core.test_world_ref(&world)
+    w:=test_world_ref(&world)
     lines_of :: proc(app:^host.App) -> int {
         count:=0
         for lines in app.extras.debug[:app.extras.debug_count] {count+=lines.count/2}

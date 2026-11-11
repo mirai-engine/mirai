@@ -11,9 +11,10 @@ import lib "mirai:std/anim"
 import "mirai:std/base"
 import mm "mirai:std/math"
 
-@(private="file")
+@(private)
+@(test_world)
 Constraints_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     transforms:core.Table(core.Transform),
     parents:core.Table(core.Parent),
     modifiers:Modifier_Runtime,
@@ -22,8 +23,8 @@ Constraints_World :: struct {
 @(test)
 rotation_limits_blend_from_the_input_pose_and_leave_zero_weight_unchanged :: proc(t:^testing.T) {
     w:Constraints_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     rig:=core.create(&w.entities)
     pose:=[2]mm.Transform{mm.TRANSFORM_IDENTITY,{{0,1,0},mm.quat_axis_angle({1,0,0},1),{1,1,1}}}
     state:=constraint_fixture_state(rig,pose[:]);defer playing_free(&state)
@@ -90,8 +91,8 @@ constraint_take_sampled :: proc(target:^Playing,source:^Playing) {target.leader,
 @(test)
 taking_a_sampled_pose_ignores_actor_wrapper_placement_and_keeps_the_destination_actor_transform :: proc(t:^testing.T) {
     w:Constraints_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     source_entity,target_entity:=core.create(&w.entities),core.create(&w.entities)
     source_rest:=[2]mm.Transform{{{3,0,0},mm.quat_axis_angle({0,1,0},0.2),{1,1,1}},{{0,1,0},1,{1,1,1}}}
     target_rest:=[2]mm.Transform{{{5,0,0},mm.quat_axis_angle({0,1,0},0.6),{1,1,1}},{{0,2,0},1,{1,1,1}}}
@@ -130,12 +131,12 @@ constraint_fixture_state :: proc(entity:core.Entity,locals:[]mm.Transform) -> Pl
 @(test)
 taking_a_sampled_pose_pairs_dense_skeletons_by_name_then_path_and_preserves_actor_placement_without_stable_allocations :: proc(t:^testing.T) {
     w:Constraints_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     source_entity,target_entity:=core.create(&w.entities),core.create(&w.entities)
     core.add(&w.transforms,source_entity,core.Transform{{3,0,0},mm.quat_axis_angle({0,1,0},.2),{1,1,1}})
     core.add(&w.transforms,target_entity,core.Transform{{5,0,0},mm.quat_axis_angle({0,1,0},.6),{1,1,1}})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     source_bones:=[4]asset.Skeleton_Bone{{parent=-1},{parent=0,translation={0,1,0}},{parent=1,translation={.5,0,0}},{parent=2,translation={.5,0,0}}}
     target_bones:=[6]asset.Skeleton_Bone{{parent=-1},{parent=0,translation={0,2,0}},{parent=1,translation={0,.5,0}},{parent=1,translation={1,0,0}},{parent=3,translation={1,0,0}},{parent=0,translation={0,0,1}}}
     source_paths:=[4]string{"root","root/hips","root/hips/arm","root/hips/arm/hand"}
@@ -203,8 +204,8 @@ taking_a_sampled_pose_pairs_dense_skeletons_by_name_then_path_and_preserves_acto
 @(test)
 bone_constraints_solve_world_targets_under_rotated_uneven_parents_and_respect_socket_owners :: proc(t:^testing.T) {
     w:Constraints_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     parent,rig,helper,socket:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
     external:=mm.Transform{{3,0,0},mm.quat_axis_angle({0,1,0},0.4),{2,1,1}}
     locals:=[3]mm.Transform{{{1,0,0},mm.quat_axis_angle({0,0,1},0.3),{1,1,1}},{{1,0,0},1,{1,1,1}},{{1,0,0},1,{1,1,1}}}
@@ -212,7 +213,7 @@ bone_constraints_solve_world_targets_under_rotated_uneven_parents_and_respect_so
     state.bindings[1].entity=core.NONE;state.bindings[2].entity=core.NONE
     core.add(&w.transforms,parent,core.from_math(external));core.add(&w.transforms,rig,core.from_math(locals[0]));core.add(&w.transforms,socket,core.TRANSFORM_IDENTITY)
     core.add(&w.parents,rig,{entity=parent})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     lib.skeleton_world(playing_skeleton(&state),state.local[:],state.world[:],external)
     target:=state.world[0].position+mm.Vec3{1,1,0}
     config:=IK_CONSTRAINT_DEFAULT;config.rig=rig;config.root,config.joint,config.end=bone_ref("10"),bone_ref("11"),bone_ref("12");config.target=spatial_point(target);config.pole=target+mm.Vec3{0,0,2}
@@ -247,8 +248,8 @@ bone_constraints_solve_world_targets_under_rotated_uneven_parents_and_respect_so
 @(test)
 taking_a_sampled_pose_reads_the_pose_the_source_sampled_and_preserves_target_lengths :: proc(t:^testing.T) {
     w:Constraints_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     a,b:=core.create(&w.entities),core.create(&w.entities)
     source_rest:=[2]mm.Transform{mm.TRANSFORM_IDENTITY,{{1,0,0},1,{1,1,1}}}
     target_rest:=[2]mm.Transform{mm.TRANSFORM_IDENTITY,{{2,0,0},1,{1,1,1}}}

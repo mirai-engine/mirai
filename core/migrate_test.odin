@@ -4,14 +4,17 @@ import "base:runtime"
 import "core:mem"
 import "core:testing"
 
-@(private="file") Before_Spin :: struct {speed:f32,axis:[3]f32}
-@(private="file") After_Spin :: struct {axis:[3]f32,turns:i32,speed:f64}
-@(private="file") Kept_Tag :: struct {value:u32}
-@(private="file") Added_Tag :: struct {value:u32}
-@(private="file") Before_Score :: struct {points:i32}
-@(private="file") After_Score :: struct {lives:u8,points:i64}
+@(private) Before_Spin :: struct {speed:f32,axis:[3]f32}
+@(private) After_Spin :: struct {axis:[3]f32,turns:i32,speed:f64}
+@(private) Kept_Tag :: struct {value:u32}
+@(private) Added_Tag :: struct {value:u32}
+@(private) Before_Score :: struct {points:i32}
+@(private) After_Score :: struct {lives:u8,points:i64}
+@(private) AFTER_SPIN_DEFAULT :: After_Spin{turns=7}
+@(private) AFTER_SCORE_DEFAULT :: After_Score{lives=3}
 
-@(private="file")
+@(private)
+@(test_world)
 Before_World :: struct {
     using world:Test_World,
     spin:Table(Before_Spin) `mirai:"name=Spin"`,
@@ -19,22 +22,14 @@ Before_World :: struct {
     score:Before_Score `mirai:"name=Score"`,
 }
 
-@(private="file")
+@(private)
+@(test_world)
 After_World :: struct {
     using world:Test_World,
     kept:Table(Kept_Tag),
     added:Table(Added_Tag),
     spin:Table(After_Spin) `mirai:"name=Spin"`,
     score:After_Score `mirai:"name=Score"`,
-}
-
-// What the new library starts its rows and its storage with.
-@(private="file")
-after_types :: proc(types:^[dynamic]Test_Type) {
-    append(types,
-        test_type(After_Spin,default=proc(dst:^After_Spin) {dst^={turns=7}}),
-        test_type(After_Score,default=proc(dst:^After_Score) {dst.lives=3}),
-    )
 }
 
 @(test)
@@ -46,7 +41,7 @@ a_world_migrates_to_another_layout_by_names :: proc(t:^testing.T) {
     context.allocator=allocator
 
     before,before_ok:=test_info(t,Before_World)
-    after,after_ok:=test_info(t,After_World,after_types)
+    after,after_ok:=test_info(t,After_World)
     if !before_ok || !after_ok {return}
 
     old:=new(Before_World)
@@ -95,10 +90,11 @@ a_world_migrates_to_another_layout_by_names :: proc(t:^testing.T) {
     testing.expect_value(t,len(tracking.allocation_map),0)
 }
 
-@(private="file") Test_Action :: distinct u8
-@(private="file") Aim_Tag :: struct {action:Test_Action}
+@(private) Test_Action :: distinct u8
+@(private) Aim_Tag :: struct {action:Test_Action}
 
-@(private="file")
+@(private)
+@(test_world)
 Aim_World :: struct {
     using world:Test_World,
     aim:Table(Aim_Tag),

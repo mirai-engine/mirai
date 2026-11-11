@@ -40,12 +40,13 @@ a_text_breaks_to_the_width_the_layout_gives_it_in_the_same_frame :: proc(t:^test
     testing.expect_value(t,dropped_total(&ctx.stats),u32(0))
     whole:=text_width(&ctx.font,CONTENT,STYLE.size)
     line:=STYLE.size*TEXT_LINE
+    // What a text asks for is rounded up to whole device pixels.
     for c,i in cases {
         r:=test_rect(t,&ctx,id(&ctx,"text",i+1))
         rich:=test_rect(t,&ctx,id(&ctx,"rich",i+1))
-        testing.expectf(t,test_near(r.w,c.wide if c.wide>0 else whole,0.05),"%s: %v wide",c.name,r.w)
+        testing.expectf(t,test_near(r.w,c.wide if c.wide>0 else math.ceil(whole),0.05),"%s: %v wide",c.name,r.w)
         lines:=int(r.h/line+0.5)
-        testing.expectf(t,(lines>1)==(r.w<whole) && test_near(r.h,f32(lines)*line),"%s: %v lines in %v",c.name,r.h/line,r.w)
+        testing.expectf(t,(lines>1)==(r.w<whole) && test_near(r.h,math.ceil(f32(lines)*line)),"%s: %v lines in %v",c.name,r.h/line,r.w)
         testing.expectf(t,test_near(r.h,text_height(&ctx,CONTENT,STYLE,r.w)),"%s: laid out %v, measured %v",c.name,r.h,text_height(&ctx,CONTENT,STYLE,r.w))
         // Spans in a line break where one span of words does, and what holds them took their height in this frame.
         testing.expectf(t,test_near(rich.w,r.w,0.05) && test_near(rich.h,r.h),"%s: rich text %v, text %v",c.name,rich,r)
@@ -91,6 +92,68 @@ a_text_keeps_the_lines_that_fit_and_its_own_line_breaks :: proc(t:^testing.T) {
 }
 
 @(test)
+a_word_wider_than_its_line_breaks_inside_its_box :: proc(t:^testing.T) {
+    ctx:Context
+    testing.expect(t,test_context_init(&ctx,TEST_FONT))
+    defer context_destroy(&ctx)
+    STYLE :: Text_Style{size=14,color={255,255,255,255},wrap=.Words}
+    font:=&ctx.font
+    long:=make([]u8,10_000,context.temp_allocator)
+    for &c in long {c='w'}
+    // first: its first line, when the case says it; lines: how many, when it says it.
+    Case :: struct {name,content:string,width:f32,first:string,lines:int}
+    Cases :: struct {cases:[]Case}
+    cases:=[]Case{
+        {"a long word","Lebensversicherungsgesellschaft",60,"",0},
+        {"after its hyphen","self-contained",text_width(font,"self-contained",14)*0.75,"self-",2},
+        {"after its slash","assets/fonts/inter",text_width(font,"assets/fonts/",14)+1,"assets/fonts/",2},
+        {"after an em dash","yes—no",text_width(font,"yes—",14)+1,"yes—",2},
+        {"a number keeps its hyphen","x-5",text_width(font,"x-",14)+1,"",0},
+        {"at a soft hyphen, drawn","Lebens\u00ADversicherung",text_width(font,"Lebens-",14)+1,"Lebens\u00AD",0},
+        {"a soft hyphen takes no room","Lebens\u00ADversicherung",500,"Lebens\u00ADversicherung",1},
+        {"invalid UTF-8","\xff\xfe\xc2\xe2\x80wordwordword\xc2",20,"",0},
+        // Last: its lines may take all the room for lines of the frame.
+        {"ten thousand characters",string(long),0,"w",0},
+    }
+    s:=Cases{cases}
+    build :: proc(ctx:^Context,user:rawptr) {
+        s:=cast(^Cases)user
+        for c,i in s.cases {
+            if box(ctx,{width=FIT,height=FIT,float={to=.Surface,offset={0,f32(i)*200}}}) {
+                text(ctx,c.content,STYLE,fixed(c.width),FIT,id(ctx,"text",i+1))
+            }
+        }
+    }
+    input:=test_input(800,2000)
+    test_frame(&ctx,&input,build,&s)
+    glyph:=text_width(font,"W",14) // the widest glyph a box of no room holds on each line
+    tree:=&ctx.layout
+    for c,i in cases {
+        index:=layout_index(tree,id(&ctx,"text",i+1))
+        if !testing.expectf(t,index>0,"%s: laid out",c.name) {continue}
+        leaf:=&tree.texts[tree.nodes[index].text]
+        for &line in tree.lines[leaf.lines_first:][:leaf.lines_len] {
+            testing.expectf(t,line.width<=max(c.width,glyph)+0.05,"%s: a line %v wide in %v",c.name,line.width,c.width)
+        }
+        if c.lines>0 {testing.expectf(t,int(leaf.lines_len)==c.lines,"%s: %v lines",c.name,leaf.lines_len)}
+        first:[1]string
+        test_text_lines(&ctx,id(&ctx,"text",i+1),first[:])
+        if c.first!="" {testing.expectf(t,first[0]==c.first,"%s: first line %q",c.name,first[0])}
+    }
+    // A line that breaks at a soft hyphen draws a hyphen; one that does not draws nothing there.
+    Shy :: struct {width:f32}
+    shy:Shy
+    draw_shy :: proc(ctx:^Context,user:rawptr) {
+        text(ctx,"Lebens\u00ADversicherung",STYLE,fixed((cast(^Shy)user).width),FIT)
+    }
+    for width,i in ([2]f32{500,text_width(font,"Lebens-",14)+1}) {
+        shy.width=width
+        frame:=test_frame(&ctx,&input,draw_shy,&shy)
+        testing.expectf(t,len(frame.vertices)==(18+i)*6,"%v glyphs at %v",len(frame.vertices)/6,width)
+    }
+}
+
+@(test)
 text_built_out_of_order_or_from_numbers_that_are_none_ends_no_frame :: proc(t:^testing.T) {
     ctx:Context
     testing.expect(t,test_context_init(&ctx,TEST_FONT))
@@ -113,7 +176,7 @@ text_built_out_of_order_or_from_numbers_that_are_none_ends_no_frame :: proc(t:^t
             text(ctx,"numbers that are none",{size=size,wrap=.Words,line_height=nan},fixed(nan),FIT)
             text(ctx,"numbers that are none",{size=12,wrap=.Words},grow(nan,nan),percent(nan))
         }
-        if text_begin(ctx,{size=12,wrap=.Words},nan,true) {
+        if text_begin(ctx,{size=12,wrap=.Words},nan) {
             text_span(ctx,"a chip",{size=nan,pad=nan,height=nan})
             text_box(ctx,nan,nan,{kind=.Rect},gap=nan)
             text_box(ctx,1e30,-1,{})
@@ -173,11 +236,11 @@ a_row_puts_the_first_lines_of_its_children_on_one_baseline :: proc(t:^testing.T)
     baseline:=large.y+ascent*30
     testing.expect(t,test_near(large.y,5))
     small:=test_rect(t,&ctx,id(&ctx,"small"))
-    testing.expectf(t,test_near(small.y+ascent*12,baseline),"small text: %v under %v",small.y+ascent*12,baseline)
+    testing.expectf(t,test_near(small.y+ascent*12,baseline,PIXEL_EDGE),"small text: %v under %v",small.y+ascent*12,baseline)
     mark:=test_rect(t,&ctx,id(&ctx,"mark"))
-    testing.expectf(t,test_near(mark.y+mark.h,baseline),"what has no text stands on the baseline: %v",mark)
+    testing.expectf(t,test_near(mark.y+mark.h,baseline,PIXEL_EDGE),"what has no text stands on the baseline: %v",mark)
     inner:=test_rect(t,&ctx,id(&ctx,"inner"))
-    testing.expectf(t,test_near(inner.y+ascent*16,baseline),"the first line inside a container: %v",inner)
+    testing.expectf(t,test_near(inner.y+ascent*16,baseline,PIXEL_EDGE),"the first line inside a container: %v",inner)
     // The row is as high as what goes over the baseline and what hangs under it.
     chip:=test_rect(t,&ctx,id(&ctx,"chip"))
     row:=test_rect(t,&ctx,id(&ctx,"row"))
@@ -186,6 +249,29 @@ a_row_puts_the_first_lines_of_its_children_on_one_baseline :: proc(t:^testing.T)
     testing.expect(t,test_near(own.y+own.h,row.y+row.h-5),"A child that aligns itself keeps its own place")
     a,b:=test_rect(t,&ctx,id(&ctx,"centered small")),test_rect(t,&ctx,id(&ctx,"centered large"))
     testing.expect(t,test_near(a.y+a.h*0.5,b.y+b.h*0.5))
+}
+
+@(test)
+a_box_rounded_to_device_pixels_holds_its_text :: proc(t:^testing.T) {
+    build :: proc(ctx:^Context,user:rawptr) {
+        if box(ctx,{width=FIT,height=FIT,padding={10.3,7.6,0,0}}) {
+            if box(ctx,{id=id(ctx,"holder"),width=FIT,height=FIT,clip_x=true,clip_y=true,track=true}) {
+                text(ctx,"Directional light",{size=13,color={255,255,255,255}},id=id(ctx,"label"))
+            }
+        }
+    }
+    for density in ([]f32{1,1.25,1.5}) {
+        ctx:Context
+        testing.expect(t,test_context_init(&ctx,TEST_FONT))
+        defer context_destroy(&ctx)
+        testing.expect(t,context_set_density(&ctx,density))
+        input:=test_input()
+        test_frame(&ctx,&input,build)
+        holder,label:=test_rect(t,&ctx,id(&ctx,"holder")),test_rect(t,&ctx,id(&ctx,"label"))
+        testing.expectf(t,label.w>=text_width(&ctx.font,"Directional light",13),"density %v: the text measures %v",density,label.w)
+        testing.expectf(t,holder.x<=label.x && holder.y<=label.y && label.x+label.w<=holder.x+holder.w && label.y+label.h<=holder.y+holder.h,
+            "density %v: %v holds %v",density,holder,label)
+    }
 }
 
 @(test)
@@ -233,6 +319,6 @@ a_grid_takes_the_heights_of_its_row_tracks_and_children_span_rows :: proc(t:^tes
     // 200 high: 30, 20 and 8 are taken with four gaps, and 102 is shared by one to three.
     testing.expect(t,test_rect_near(rect(t,&ctx,"fixed"),{400,0,100,30}) && test_rect_near(rect(t,&ctx,"fit"),{400,40,100,20}))
     one,three:=rect(t,&ctx,"one"),rect(t,&ctx,"three")
-    testing.expectf(t,test_near(one.y,70) && test_near(one.h,25.5,0.05) && test_near(three.y,105.5,0.05) && test_near(three.h,76.5*0.5,0.05),"one %v, three %v",one,three)
+    testing.expectf(t,test_near(one.y,70) && test_rect_snapped(one,{one.x,70,one.w,25.5}) && test_rect_snapped(three,{three.x,105.5,three.w,76.5*0.5}),"one %v, three %v",one,three)
     testing.expectf(t,test_near(rect(t,&ctx,"after").y,192,0.05),"after %v in %v",rect(t,&ctx,"after"),rect(t,&ctx,"rows"))
 }

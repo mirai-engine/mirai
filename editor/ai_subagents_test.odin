@@ -36,7 +36,7 @@ fixture_open :: proc(t:^testing.T,name:string) -> ^Fixture {
     described:bool
     f.info,described=ai_context_test_info(t)
     if !described || !testing.expect(t,core.world_init(&f.info,.World,&f.world,context.allocator)) || f.root=="" {
-        if described {core.world_destroy(&f.info,.World,&f.world);core.test_info_destroy(&f.info)}
+        if described {core.world_destroy(&f.info,.World,&f.world);test_info_destroy(&f.info)}
         free(f)
         return nil
     }
@@ -62,7 +62,7 @@ fixture_close :: proc(f:^Fixture) {
     ai_store.close(&f.ai.store)
     test_session_close(&f.edited)
     core.world_destroy(&f.info,.World,&f.world)
-    core.test_info_destroy(&f.info)
+    test_info_destroy(&f.info)
     free(f.ai)
     free(f)
 }
@@ -78,7 +78,7 @@ fixture_worker :: proc(t:^testing.T,f:^Fixture,task:^Ai_Task,phase:acp.Phase) ->
 }
 
 @(private="file")
-fixture_worker_close :: proc(worker:^Ai_Worker) {acp.destroy(&worker.client,nil)}
+fixture_worker_close :: proc(worker:^Ai_Worker) {acp.destroy(&worker.client)}
 
 @(private="file")
 sent_text :: proc(worker:^Ai_Worker) -> string {return string(worker.client.tx[:worker.client.queued])}

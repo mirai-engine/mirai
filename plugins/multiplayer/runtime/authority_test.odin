@@ -16,7 +16,7 @@ import "mirai:std/base"
 remote_follows_what_a_client_holds_on_a_server_and_a_new_role_clears_it :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info)
     defer core.world_destroy(&info,.World,&world)
@@ -63,7 +63,7 @@ remote_follows_what_a_client_holds_on_a_server_and_a_new_role_clears_it :: proc(
 remote_follows_the_replicas_a_client_neither_predicts_nor_holds :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info)
     defer core.world_destroy(&info,.World,&world)
@@ -96,24 +96,26 @@ remote_follows_the_replicas_a_client_neither_predicts_nor_holds :: proc(t:^testi
     testing.expect(t,!core.owned(&world.remotes,e))
 }
 
-@(private="file")
+@(private)
 @(component,replicated)
 Net_Test_Names :: struct {names:[]string}
 
-@(private="file")
+@(private)
+@(test_world)
 Names_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     names:core.Table(Net_Test_Names),
 }
 
 // An array of bytes travels as one field, so its bytes must fit one part of a state.
-@(private="file")
+@(private)
 @(component,replicated)
 Net_Test_Wide :: struct {bytes:[1024]u8}
 
-@(private="file")
+@(private)
+@(test_world)
 Wide_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     wide:core.Table(Net_Test_Wide),
 }
 
@@ -122,9 +124,9 @@ Wide_World :: struct {
 @(test)
 a_replicated_component_that_does_not_fit_the_protocol_is_refused_with_its_fix :: proc(t:^testing.T) {
     refused :: proc(t:^testing.T,$W:typeid,name,why:string) {
-        info,described:=core.test_info(t,W)
+        info,described:=test_info(t,W)
         if !described {return}
-        defer core.test_info_destroy(&info)
+        defer test_info_destroy(&info)
         problems:core.Problems
         s:=Net_Session{allocator=context.allocator,problems=&problems}
         testing.expect(t,!protocol_build(&s,core.world_ref(nil,&info)))
@@ -138,16 +140,18 @@ a_replicated_component_that_does_not_fit_the_protocol_is_refused_with_its_fix ::
     refused(t,Wide_World,"Net_Test_Wide","one of its fields encodes in more than")
 }
 
-@(private="file")
+@(private)
+@(test_world)
 Crowded_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     transforms:core.Table(core.Transform),
     worlds:core.Table(core.World_Transform),
     instances:core.Table(scene.Prefab_Instance),
     motions:core.Table(core.Motion),
     moves:core.Table(input.Move_Input),
-    values:[COMPONENTS+1]core.Table(Net_Test_Value),
+    values:[14]core.Table(Net_Test_Value), // one more than an object carries
 }
+#assert(len(Crowded_World{}.values)==COMPONENTS+1)
 
 // A body with a driver and more replicated components than an object carries
 // besides its pose, motion and driver is not replicated, and the problem says
@@ -155,15 +159,15 @@ Crowded_World :: struct {
 @(test)
 an_entity_with_more_replicated_components_than_an_object_carries_is_not_replicated :: proc(t:^testing.T) {
     w:Crowded_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
-    ref:=core.test_world_ref(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    ref:=test_world_ref(&w)
     e:=core.create(&w.entities)
     core.add(&w.transforms,e,core.TRANSFORM_IDENTITY)
     core.add(&w.motions,e,core.Motion{})
     core.add(&w.moves,e,input.Move_Input{})
     for &table in w.values {core.add(&table,e,Net_Test_Value{})}
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     problems:core.Problems
     s:=Net_Session{allocator=context.allocator,problems=&problems}
     defer session_destroy(&s)

@@ -11,12 +11,12 @@ import "mirai:project"
 import "mirai:std/base"
 import "mirai:ui"
 
-@(private="file")
+@(private)
 Create_Test_Provider :: struct {provider:Asset_Document_Provider}
-@(private="file")
-create_test_types :: proc(types:^[dynamic]core.Test_Type) {
-    append(types,core.test_type(Create_Test_Provider,default=proc(dst:^Create_Test_Provider) {dst^={provider={kinds={0=asset.KIND_UI},count=1,creates={0},create=create_test_file}}}))
-}
+// The world of the files tests with what the editor holds of a plugin that makes documents.
+@(private) Create_Test_Editor :: struct {provider:Create_Test_Provider}
+@(test_world,editor="Create_Test_Editor") @(private) Create_Test_World :: struct {using world:Test_World,ids:core.Table(core.Id)}
+@(private) create_test_provider_default :: proc() -> Create_Test_Provider {return {provider={kinds={0=asset.KIND_UI},count=1,creates={0},create=create_test_file}}}
 // The empty .ui of the test plugin; none for the id that stands for a failure.
 @(private="file")
 create_test_file :: proc(s:^Session,kind:asset.Fourcc,id:base.Asset_Id) -> []u8 {
@@ -106,9 +106,9 @@ a_plugin_gives_the_empty_file_of_a_kind_it_creates :: proc(t:^testing.T) {
     f:Files_Test
     if !files_test_open(t,&f,"asset-create-plugin") {return}
     defer files_test_close(&f)
-    info,made:=core.test_info(t,Files_Test_World,core.Test_None,struct {provider:Create_Test_Provider},create_test_types)
+    info,made:=test_info(t,Create_Test_World)
     if !made {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     f.s.info=&info
     assets:host.Assets
     if !testing.expect(t,host.assets_init(&assets,{root=project.path(f.root,"assets",allocator=context.temp_allocator),capacity=8})) {return}

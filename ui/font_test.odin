@@ -213,9 +213,9 @@ text_wraps_at_words_and_newlines :: proc(t:^testing.T) {
         // A word and the space after it fit, or the word starts the next line.
         {"alpha beta",49,.Words,{"alpha beta"}},
         {"alpha beta gamma",49,.Words,{"alpha","beta gamma"}},
-        // A word wider than the line takes one of its own, whole.
-        {"unbreakable word",20,.Words,{"unbreakable","word"}},
-        {"a unbreakable b",20,.Words,{"a","unbreakable","b"}},
+        // A word wider than the line starts one and breaks after its last character that fits.
+        {"unbreakable word",20,.Words,{"unbr","eaka","ble","word"}},
+        {"a unbreakable b",20,.Words,{"a","unbr","eaka","ble","b"}},
         // A line ends before the spaces it breaks at; one that does not fit after a word starts the next line.
         {"aaaa  bbbb",25,.Words,{"aaaa","bbbb"}},
         {"aaaa  bbbb",24,.Words,{"aaaa"," bbbb"}},
@@ -420,6 +420,42 @@ font_reads_cff_outlines_and_the_kerning_of_greek_and_cyrillic :: proc(t:^testing
     a,zhe,alpha:=font_index(&font,0,'A'),font_index(&font,0,'Ж'),font_index(&font,0,'α')
     testing.expect_value(t,metrics_kerning(m,a,a),f32(-50))
     testing.expect_value(t,metrics_kerning(m,zhe,alpha),f32(-120)) // a lookup of 'cyrl' alone
+}
+
+@(test)
+a_glyph_a_font_lacks_is_drawn_from_inter :: proc(t:^testing.T) {
+    ctx:Context
+    desc:=TEST_FONT
+    fonts:=[2][]byte{FONT_INTER,TEST_CFF}
+    desc.fonts=fonts[:]
+    testing.expect(t,test_context_init(&ctx,desc))
+    defer context_destroy(&ctx)
+    font:=&ctx.font
+    question:=font_index(font,1,'?')
+    // from: the font that draws it; -1: '?', which neither has.
+    Case :: struct {character:string,from:int}
+    for c in ([]Case{{"A",1},{"Ж",1},{"B",0},{"П",0},{"и",0},{"é",0},{"\U0001f600",-1}}) {
+        pen:=text_pen(font,14,1)
+        advance:f32
+        for r in c.character {_,advance=text_pen_step(&pen,r)}
+        if c.from<0 {
+            testing.expectf(t,pen.previous==question && pen.from==1,"%q is '?'",c.character)
+            continue
+        }
+        testing.expectf(t,pen.from==c.from && pen.previous!=question && font.metrics[c.from].available[pen.previous],"%q comes from font %v, not %v",c.character,c.from,pen.from)
+        testing.expectf(t,advance==text_width(font,c.character,14,c.from),"%q advances as in the font that has it",c.character)
+    }
+    // Drawn with the glyph of Inter's face, whatever the font of the text.
+    build :: proc(ctx:^Context,user:rawptr) {draw_text(ctx,"Привет",0,0,14,{255,255,255,255},1)}
+    input:=test_input()
+    frame:=test_frame(&ctx,&input,build)
+    testing.expect_value(t,len(frame.vertices),6*6)
+    pe:=font_face(font,0,14).glyphs[font_index(font,1,'П')].uv
+    corner:=frame.vertices[0].uv
+    for v in frame.vertices[:6] {corner={min(corner.x,v.uv.x),min(corner.y,v.uv.y)}}
+    // At whichever phase the pen puts it.
+    phase:=(corner.x-pe.x)/pe.w
+    testing.expectf(t,abs(corner.y-pe.y)<1e-5 && abs(phase-math.round(phase))<1e-3 && phase>-0.001 && phase<4,"'П' is drawn from Inter: %v, %v",corner,pe)
 }
 
 @(test)

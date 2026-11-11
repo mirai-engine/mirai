@@ -1,7 +1,5 @@
 package mirai_physics
 
-import "core:fmt"
-import "core:mem"
 import "core:testing"
 import "core:math/rand"
 import "mirai:std/base"
@@ -87,14 +85,11 @@ random_worlds_kept_by_what_changed_hold_and_put_back_what_whole_copies_do :: pro
                 break
             }
             taken[k]=tick
-            if world_hash(&kept[k])!=hashes[tick] || world_hash(&whole)!=hashes[tick] {
-                testing.expectf(t,false,"round %v tick %v: the copy by what changed differs in %v",round,tick,test_differs(&kept[k],&whole))
-                break
-            }
+            if !test_same(t,&kept[k],&whole,"round %v tick %v: the copy by what changed differs",round,tick) || !test_same(t,&whole,&w,"round %v tick %v: the whole copy differs",round,tick) {break}
         }
         k:=int(seed%len(kept))
         if testing.expect(t,test_restore(&w,&kept[k])) {
-            testing.expectf(t,world_hash(&w)==hashes[taken[k]],"round %v: put back, the world differs in %v",round,test_differs(&w,&kept[k]))
+            test_same(t,&w,&kept[k],"round %v: put back, the world differs",round)
             for tick in taken[k]+1..<TICKS {
                 test_fuzz_edit(&w,seed,tick)
                 world_step(&w,1.0/60)
@@ -108,28 +103,6 @@ random_worlds_kept_by_what_changed_hold_and_put_back_what_whole_copies_do :: pro
         world_destroy(&whole)
         world_destroy(&w)
     }
-}
-
-// The first array of the state, or tree, whose bytes differ between two worlds.
-@(private)
-test_differs :: proc(a,b:^World) -> string {
-    names:=[12]string{"bodies","shapes","contacts","joints","blocks","characters","joint axes","islands","fluids","breakables","pieces","bonds"}
-    other:=state_arrays(b)
-    for array,i in state_arrays(a) {
-        size:=int(array.high)*array.size
-        if array.high!=other[i].high || mem.compare(array.bytes[:size],other[i].bytes[:size])!=0 {
-            for slot in 0..<int(min(array.high,other[i].high)) {
-                at:=slot*array.size
-                if mem.compare(array.bytes[at:][:array.size],other[i].bytes[at:][:array.size])!=0 {return fmt.tprintf("%v, slot %v",names[i],slot)}
-            }
-            return names[i]
-        }
-    }
-    for &tree,i in a.trees {
-        nodes:=mem.slice_to_bytes(tree.nodes[:tree.node_high])
-        if tree.node_high!=b.trees[i].node_high || mem.compare(nodes,mem.slice_to_bytes(b.trees[i].nodes[:tree.node_high]))!=0 {return fmt.tprintf("tree %v",i)}
-    }
-    return a.state==b.state?"nothing":"World_State"
 }
 
 @(private)

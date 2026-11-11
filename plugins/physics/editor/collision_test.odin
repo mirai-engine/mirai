@@ -8,18 +8,18 @@ import "mirai:editor/history"
 import phys "plugins:physics/runtime"
 import "mirai:ui"
 
-@(private="file") Collision_Inspector_Row :: struct {layers:phys.Collision_Layers}
+@(private) Collision_Inspector_Row :: struct {layers:phys.Collision_Layers}
 @(private="file") INSPECTOR_WORLD :: phys.Collision_Category(1)
 @(private="file") INSPECTOR_CAMERA :: phys.Collision_Category(2)
-@(private="file") Collision_Inspector_World :: struct {
-    using world:core.Test_World,
+@(test_world,editor="Physics_Editor_Test_World") @(private) Collision_Inspector_World :: struct {
+    using world:Test_World,
     rows:core.Table(Collision_Inspector_Row),
     colliders:core.Table(phys.Collider),
     settings:phys.Collision_Settings,
 }
 
 // The storages physics gives the World of the editor.
-@(private="file")
+@(private)
 Physics_Editor_Test_World :: struct {
     inspector:Physics_Inspector,
 }
@@ -70,7 +70,7 @@ Collision_Inspector :: struct {
 
 @(private="file")
 collision_inspector_init :: proc(t:^testing.T,f:^Collision_Inspector) -> bool {
-    f.info=core.test_info(t,Collision_Inspector_World,core.Test_None,Physics_Editor_Test_World,test_types) or_return
+    f.info=test_info(t,Collision_Inspector_World) or_return
     f.names={
         {type=phys.Collision_Category,value=0,name="default"},{type=phys.Collision_Category,value=1,name="world"},
         {type=phys.Collision_Category,value=2,name="camera"},
@@ -80,7 +80,7 @@ collision_inspector_init :: proc(t:^testing.T,f:^Collision_Inspector) -> bool {
     f.named_types={{type=phys.Collision_Category,name="Collision_Category",prefix="CATEGORY_",limit=32},{type=phys.Collision_Preset,name="Collision_Preset",prefix="PRESET_",limit=256}}
     f.name_bits={{type=phys.Collision_Layers,of=phys.Collision_Category}}
     f.info.names,f.info.named_types,f.info.name_bits=f.names[:],f.named_types[:],f.name_bits[:]
-    core.test_info_index(&f.info)
+    test_info_index(&f.info)
     if !core.world_init(&f.info,.World,&f.world,context.allocator) {return false}
     if !ui.context_init(&f.ctx,{}) || !kit.theme_set(&f.ctx) {return false}
     f.gui={ctx=&f.ctx}
@@ -95,7 +95,7 @@ collision_inspector_destroy :: proc(f:^Collision_Inspector) {
     core.value_free(&f.inspector,type_info_of(editor.Inspector))
     delete(f.selection.entities)
     core.world_destroy(&f.info,.World,&f.world)
-    core.test_info_destroy(&f.info)
+    test_info_destroy(&f.info)
 }
 
 // The inspector shows the preset of a Collider by name, its sensor, belongs

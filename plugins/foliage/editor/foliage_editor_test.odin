@@ -16,9 +16,10 @@ import mm "mirai:std/math"
 import "mirai:std/serial"
 import foliage "plugins:foliage/runtime"
 
-@(private="file")
+@(private)
+@(test_world)
 Foliage_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     ids:core.Table(core.Id),
     names:core.Table(core.Name),
     transforms:core.Table(core.Transform),
@@ -69,14 +70,14 @@ foliage_strokes_and_selections_are_steps_of_undo_kept_unsaved :: proc(t:^testing
     disk,_:=serial.file_read(path)
     defer delete(disk)
     world:Foliage_Test_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
-    ref:=core.test_world_ref(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    ref:=test_world_ref(&world)
     meadow:=core.create(&world.entities)
     core.add(&world.ids,meadow,core.Id{value=base.Entity_Id(100)})
     core.add(&world.transforms,meadow,core.TRANSFORM_IDENTITY)
     core.add(&world.foliages,meadow,foliage.Foliage{source=id,revision=1})
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     selection:history.Selection;defer delete(selection.entities)
     edits:history.Edits;defer history.edits_free(&edits)
     history.edits_reset(&edits,ref)
@@ -257,14 +258,14 @@ a_move_of_an_imported_foliage_is_undone_back_to_revision_zero :: proc(t:^testing
     delete(bytes)
     host.assets_scan(&assets)
     world:Foliage_Test_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
-    ref:=core.test_world_ref(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    ref:=test_world_ref(&world)
     patch:=core.create(&world.entities)
     core.add(&world.ids,patch,core.Id{value=base.Entity_Id(200)})
     core.add(&world.transforms,patch,core.TRANSFORM_IDENTITY)
     core.add(&world.foliages,patch,foliage.Foliage{source=id})
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     selection:history.Selection;defer delete(selection.entities)
     edits:history.Edits;defer history.edits_free(&edits)
     history.edits_reset(&edits,ref)

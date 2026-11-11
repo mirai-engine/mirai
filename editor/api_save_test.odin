@@ -9,9 +9,10 @@ import "mirai:engine/save"
 import "mirai:host"
 import "mirai:std/base"
 
-@(private="file")
-Save_Api_World :: struct {using world:core.Test_World}
-@(private="file")
+@(private)
+@(test_world,host="Save_Api_Shared")
+Save_Api_World :: struct {using world:Test_World}
+@(private)
 Save_Api_Shared :: struct {state:save.Save_State}
 
 @(private="file")
@@ -30,9 +31,9 @@ save_api_call :: proc(s:^Session,run:proc(s:^Session,call:^api.Call),params:^$P,
 save_methods_read_and_delete_slots_in_edit_and_ask_for_play_to_write :: proc(t:^testing.T) {
     dir:=base.test_folder(t,"save-api")
     if dir=="" {return}
-    info,described:=core.test_info(t,Save_Api_World,Save_Api_Shared,core.Test_None)
+    info,described:=test_info(t,Save_Api_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     shared:Save_Api_Shared
     app:=host.App{info=&info,allocator=context.allocator,shared=&shared}
     save.folder_set(&shared.state,app.allocator,dir)

@@ -32,9 +32,12 @@ probe_windows :: proc(args:[]string) -> int {
             os.write(os.stdout,stdout)
             return 0
         }
-        process,error:=detached(command,args[2],"")
+        log,open_error:=os.open(args[2],{.Write,.Create,.Trunc})
+        if open_error!=nil {fmt.printf("open failed: %v\n",open_error);return 1}
+        process,error:=detached({command=command,stdout=log,stderr=log})
+        os.close(log)
         if error!=nil {fmt.printf("detached failed: %v\n",error);return 1}
-        _,_=os.process_wait(process)
+        _,_=wait(&process)
         written,_:=os.read_entire_file(args[2],context.temp_allocator)
         os.write(os.stdout,written)
         return 0
@@ -61,7 +64,7 @@ orphan_report :: proc(t:^testing.T,kind:string) -> string {
         append(&said,..buffer[:max(count,0)])
         if read_error!=nil || count<=0 {break}
     }
-    _,_=os.process_wait(process)
+    _,_=wait(&process)
     return string(said[:])
 }
 
@@ -84,9 +87,12 @@ a_detached_child_of_a_process_without_console_opens_no_window :: proc(t:^testing
 a_detached_child_has_a_console_without_window_of_its_own :: proc(t:^testing.T) {
     log:=strings.concatenate({probe_program(),".own.log"},context.temp_allocator)
     defer os.remove(log)
-    process,error:=detached(probe_command("console"),log,"")
+    file,open_error:=os.open(log,{.Write,.Create,.Trunc})
+    if open_error!=nil {testing.fail_now(t,fmt.tprintf("open: %v",open_error))}
+    process,error:=detached({command=probe_command("console"),stdout=file,stderr=file})
+    os.close(file)
     if error!=nil {testing.fail_now(t,fmt.tprintf("detached: %v",error))}
-    _,_=os.process_wait(process)
+    _,_=wait(&process)
     said,_:=os.read_entire_file(log,context.temp_allocator)
     testing.expect_value(t,string(said),"console=1 window=0 visible=0 shares=0\n")
 }

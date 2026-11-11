@@ -13,7 +13,7 @@ import "mirai:std/jobs"
 recovery_copy_is_written_by_a_job_and_read_back :: proc(t:^testing.T) {
     info,described:=prefab_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Prefab_Test_World
     if !testing.expect(t,core.world_init(&info,.World,&world,context.allocator)) {return}
     defer core.world_destroy(&info,.World,&world)

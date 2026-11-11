@@ -5,6 +5,7 @@ import "core:math/linalg"
 import "core:slice"
 import "mirai:asset"
 import "mirai:core"
+import scene "mirai:engine/scene"
 import volume "mirai:engine/volume"
 import "mirai:host"
 import gpu "mirai:render"
@@ -50,7 +51,7 @@ set_hidden :: proc(table:^core.Table(Hidden),e:core.Entity,hidden:bool) {
 
 // Its mesh is drawn by something else: the pieces of a broken destructible.
 // The library that draws it instead adds and removes it.
-@(component,description="The mesh is rendered by another system, such as destructible fragments.")
+@(component,derived,description="The mesh is rendered by another system, such as destructible fragments.")
 Drawn_Elsewhere :: struct {}
 
 // Every light shines toward -Z of its entity, as a camera looks, and its
@@ -234,7 +235,7 @@ MATERIAL_VALUES_DEFAULT :: Material_Values{color={1,1,1,1}}
 
 // The outline of the editor's selection: 1 to HIGHLIGHT_LEVELS. It is drawn
 // in place of the Outline of the entity.
-@(component)
+@(component,derived)
 Highlight :: struct {
     level:u8 `mirai:"transient"`,
 }
@@ -274,7 +275,7 @@ instance_outline :: proc(highlights:^core.Table(Highlight,$A),outlines:^core.Tab
 
 // Where an entity and what hangs from it are drawn relative to their
 // simulated place: what the network fades a correction with.
-@(component)
+@(component,derived)
 Draw_Offset :: struct {
     offset:[3]f32 `mirai:"transient"`,
     rotation:mm.Quat `mirai:"transient"`,
@@ -543,7 +544,7 @@ render_sync :: proc(
     sync:^Render_Sync,app:^host.App,id:core.World_Id,frame:core.Frame_Time,view:core.View,
     worlds:^core.Table(core.World_Transform,.Read),meshes:^core.Table(Mesh_Renderer,.Read),values:^core.Table(Material_Values,.Read),
     hidden:^core.Table(Hidden,.Read),elsewhere:^core.Table(Drawn_Elsewhere,.Read),parents:^core.Table(core.Parent,.Read),hierarchy:core.Ref(core.Hierarchy),
-    suns:^core.Table(Sun,.Read),points:^core.Table(Point_Light,.Read),spots:^core.Table(Spot_Light,.Read),rects:^core.Table(Rect_Light,.Read),emissions:^core.Table(Light_Emission,.Read),skies:^core.Table(Sky,.Read),view_volumes:^core.Table(View_Volume,.Read),volumes:^core.Table(volume.Volume,.Read),
+    suns:^core.Table(Sun,.Read),points:^core.Table(Point_Light,.Read),spots:^core.Table(Spot_Light,.Read),rects:^core.Table(Rect_Light,.Read),emissions:^core.Table(Light_Emission,.Read),skies:^core.Table(Sky,.Read),view_volumes:^core.Table(View_Volume,.Read),volumes:^core.Table(volume.Volume,.Read),sections:^core.Table(scene.Scene_Reference,.Read),
     highlights:^core.Table(Highlight,.Read),outlines:^core.Table(Outline,.Read),outline_styles:core.Ref(Outline_Styles),
     offsets:^core.Table(Draw_Offset,.Read),layers:^core.Table(Layers,.Read),bodies:core.Ref(View_Bodies),preview:core.Ref(Environment_Preview),
     locals:^core.Table(core.Transform,.Read),cameras:^core.Table(Camera,.Read),posed:^Posed_Meshes,frame_values:^Frame_Values_Requests,
@@ -737,7 +738,7 @@ render_sync :: proc(
     if preview.ptr!=nil && preview.section!=core.NONE {
         if at,placed:=core.get(worlds,preview.section);placed {looked=at.position}
     }
-    look:=view_volume_at(view_volumes,volumes,worlds,looked)
+    look:=view_volume_at(view_volumes,{volumes,worlds,parents,sections},looked)
     exposure:=host.render_exposure(view_exposure_of(look))
     exposure.own=false
     gpu.scene_set_exposure(r,exposure)

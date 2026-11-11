@@ -410,7 +410,7 @@ cut_tree :: proc(g: asset.Mesh_Geometry, cut: ^Mesh_Ray_Cut, allocator: mem.Allo
 	for index, at in order {
 		primitive := cut.primitives[index]
 		a, b, c := primitive_positions(g, primitive)
-		cut.triangles[at] = {v0 = a, primitive = primitive, e1 = {b.x - a.x, b.y - a.y, b.z - a.z, 0}, e2 = {c.x - a.x, c.y - a.y, c.z - a.z, 0}}
+		cut.triangles[at] = {v0 = a, primitive = primitive, v1 = {b.x, b.y, b.z, 0}, v2 = {c.x, c.y, c.z, 0}}
 	}
 	return true
 }

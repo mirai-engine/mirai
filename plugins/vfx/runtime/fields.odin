@@ -32,19 +32,19 @@ Gpu_Fields :: struct {
 #assert(size_of(Gpu_Fields)==16+16+GRAVITY_VOLUMES*(80+32)+size_of(volume.Gpu_Wind))
 
 // The gravity and the wind of the world, from its fields.
-fields_of :: proc(gravities:^core.Table(volume.Gravity,$A),winds:^core.Table(volume.Wind,.Read),volumes:^core.Table(volume.Volume,$C),worlds:^core.Table(core.World_Transform,$D)) -> (f:Gpu_Fields) {
+fields_of :: proc(gravities:^core.Table(volume.Gravity,$A),winds:^core.Table(volume.Wind,.Read),zones:volume.Where) -> (f:Gpu_Fields) {
     f.fallback.xyz=volume.GRAVITY_WORLD
-    if winds!=nil {f.wind=volume.gpu_wind(winds,volumes,worlds)}
+    if winds!=nil {f.wind=volume.gpu_wind(winds,zones)}
     if gravities==nil {return}
     rows:[GRAVITY_VOLUMES]i32
-    n:=volume.ordered(volumes,worlds,gravities,rows[:])
+    n:=volume.ordered(zones,gravities,rows[:])
     g:=&f.gravity
     for i in 0..<n {
         e:=core.entity_at(gravities,int(rows[i]))
-        v,at,_:=volume.placed(volumes,worlds,e)
-        world,_:=core.get(worlds,e)
+        v,at,_:=volume.placed(zones,e)
+        world,_:=core.get(zones.worlds,e)
         field:=core.at(gravities,int(rows[i]))
-        g.volumes[i]=volume.gpu_volume(v,at)
+        g.volumes[i]=volume.gpu_volume(v,at,field.zone)
         switch field.pull {
         case .Down:
             g.pulls[i].xyz=volume.gravity_of(field,world.transform,{})
