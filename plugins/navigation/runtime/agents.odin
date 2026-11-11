@@ -405,8 +405,12 @@ navigation_agents :: proc(
             if p.time>=NAV_REPLAN_FOLLOW*4 {p.time,p.state,p.stuck=0,.Waiting,0}
         }
         walk,_:=core.get(walks,e)
-        // Each agent jumps under the gravity of its place: a planet, a room without it.
-        filter:=agent_filter(n.ptr,class,agent,walk,can_swim,agent_gravity(physics,e,character))
+        // What it walks and crosses, for one on its way: it jumps under the gravity of its
+        // place (a planet, a room without it).
+        filter:ai.Nav_Filter
+        if !flies && !swims && (p.state==.Waiting || p.state==.Moving || p.state==.Arrived && p.target!=core.NONE) {
+            filter=agent_filter(n.ptr,class,agent,walk,can_swim,agent_gravity(physics,e,character))
+        }
         if p.target!=core.NONE && (p.state==.Moving || p.state==.Arrived) {
             p.time+=time.dt
             if to,ok:=core.get(worlds,p.target);ok {
