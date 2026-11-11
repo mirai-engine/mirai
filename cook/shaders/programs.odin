@@ -25,8 +25,8 @@ import "mirai:std/jobs"
 // names the resources it reads with `//! resource name kind` (RESOURCE_KINDS),
 // up to MAX_RESOURCES: in its namespace, name is the index the functions of
 // the contract take, in the order they are declared. It names its stages with
-// `//! stage name over particles|grid [iterations N] [neighbors radius]
-// [writes grid,grid]`, up to MAX_STAGES: each a function of its namespace that
+// `//! stage name over particles|grid [iterations N] [writes grid,grid]`,
+// up to MAX_STAGES: each a function of its namespace that
 // runs every step before update, in the order they are declared. `//! moves`:
 // the program moves and ages its particles itself. `//! births`: its function
 // births gives how many particles its emitter starts each frame. `//! prepare`:
@@ -99,13 +99,12 @@ Resource :: struct {
     words:u32,
 }
 
-// A stage of a Vfx program: over the particles of its emitter, with those
-// within neighbors of each, or over the cells of a grid it reads; iterations
-// times, each seeing what the one before wrote. writes: the grids it writes besides the one it goes over.
+// A stage of a Vfx program: over the particles of its emitter or over the
+// cells of a grid it reads; iterations times, each seeing what the one before
+// wrote. writes: the grids it writes besides the one it goes over.
 Vfx_Stage :: struct {
     name,over:string, // over: particles, or a grid resource
     iterations:int,
-    neighbors:f64,    // a radius in metres; 0: no neighbors
     writes:[]string,
 }
 
@@ -216,13 +215,13 @@ program_resources :: proc(program:string,lines:[][]string,allocator:=context.all
 }
 
 // The stages of a Vfx program, from the words of its `//! stage name over
-// target [iterations N] [neighbors radius]` lines, or what is wrong with one.
+// target [iterations N] [writes grid,grid]` lines, or what is wrong with one.
 @(private)
 program_stages :: proc(program:string,lines:[][]string,resources:[]Resource,allocator:=context.allocator) -> (stages:[]Vfx_Stage,problem:string) {
     list:=make([dynamic]Vfx_Stage,allocator)
     for words in lines {
         if len(words)<5 || words[3]!="over" || !identifier_valid(words[2]) || len(words)%2!=1 {
-            return nil,fmt.aprintf("%s: declare a stage as `//! stage name over particles|grid [iterations N] [neighbors radius] [writes grid,grid]`",program,allocator=allocator)
+            return nil,fmt.aprintf("%s: declare a stage as `//! stage name over particles|grid [iterations N] [writes grid,grid]`",program,allocator=allocator)
         }
         name,over:=words[2],words[4]
         if name=="initialize" || name=="update" || name=="render" {return nil,fmt.aprintf("%s.%s: initialize, update and render are not stages; name it otherwise",program,name,allocator=allocator)}
@@ -241,11 +240,7 @@ program_stages :: proc(program:string,lines:[][]string,resources:[]Resource,allo
                 }
                 stage.iterations=count
             case "neighbors":
-                radius,valid:=strconv.parse_f64(words[at+1])
-                if grid || !valid || !(radius>0) || radius>MAX_PARAMETER_RANGE {
-                    return nil,fmt.aprintf("%s.%s: neighbors is a radius in metres above 0, of a stage over particles",program,name,allocator=allocator)
-                }
-                stage.neighbors=radius
+                return nil,fmt.aprintf("%s.%s: a stage has no neighbors: declare a grid resource, add each particle to the words of its cell (mirai_vfx_grid_word_add) in a stage over particles, and read the cells around a particle in a later stage",program,name,allocator=allocator)
             case "writes":
                 written:=make([dynamic]string,allocator)
                 for target in strings.split(words[at+1],",",context.temp_allocator) {
@@ -256,7 +251,7 @@ program_stages :: proc(program:string,lines:[][]string,resources:[]Resource,allo
                 }
                 stage.writes=written[:]
             case:
-                return nil,fmt.aprintf("%s.%s: a stage takes iterations, neighbors or writes, not %s",program,name,words[at],allocator=allocator)
+                return nil,fmt.aprintf("%s.%s: a stage takes iterations or writes, not %s",program,name,words[at],allocator=allocator)
             }
         }
         for other in list {
@@ -1331,7 +1326,6 @@ catalog_json :: proc(catalog:Catalog,allocator:=context.allocator) -> []u8 {
                 json_key(&writer,"name");json_string(&writer,stage.name)
                 json_key(&writer,"over");json_string(&writer,stage.over)
                 json_key(&writer,"iterations");json_integer(&writer,i64(stage.iterations))
-                json_key(&writer,"neighbors");json_float(&writer,stage.neighbors)
                 if len(stage.writes)>0 {
                     json_key(&writer,"writes");json_array_begin(&writer)
                     for target in stage.writes {json_string(&writer,target)}

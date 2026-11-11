@@ -67,6 +67,22 @@ void event_push(uint slot, uint trigger, float3 position, float3 velocity, uint 
     particle_event_store(params.parity, at, ev);
 }
 
+// Tells the game of a particle whose emitter's reports name what happened to
+// it: an entry of the reports channel (vfx.REPORTS_CHANNEL), whose copy of the
+// frame program.w names.
+void particle_report(uint slot, uint kind, float3 position, float3 velocity, float3 normal) {
+    uint2 reports = particle_emitters[slot].program.zw;
+    if (reports.x != kind || reports.y == INVALID) return;
+    uint entry;
+    particle_world_bytes.InterlockedAdd(reports.y, 1u, entry);
+    if (entry >= PARTICLE_DATA_ENTRIES) return;
+    uint at = reports.y + 16u + entry * PARTICLE_REPORT_WORDS * 4u;
+    particle_world_bytes.Store2(at, uint2(slot, kind));
+    particle_world_bytes.Store3(at + 8u, asuint(position));
+    particle_world_bytes.Store3(at + 20u, asuint(velocity));
+    particle_world_bytes.Store3(at + 32u, asuint(normal));
+}
+
 void release(uint index, uint slot, uint2 range) {
     particles[index].lifetime = 0.0;
     uint at;

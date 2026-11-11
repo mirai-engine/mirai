@@ -774,35 +774,51 @@ particle_channel_births_start_where_the_game_says :: proc(t: ^testing.T) {
 	expect_clean(t, f.device)
 }
 
-// An effect whose report names death tells the game of each particle that
-// dies, frames later, with the entity of its emitter.
+// An effect whose report names death or collision tells the game, through the
+// reports channel, of each particle that dies or hits the scene, once, frames
+// later, with the entity of its emitter and, of a hit, the normal of the floor.
 @(test)
-particle_reports_tell_the_game_of_deaths :: proc(t: ^testing.T) {
-	f := new(Gpu_Fixture)
-	defer free(f)
-	if !gpu_fixture_init(t, f, 64, 48, test_settings()) {return}
-	defer gpu_fixture_destroy(f)
-	r := &f.renderer
-	camera := gpu.Camera{position = {0, 1, 4}, forward = {0, -0.7, -4}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
-	brief := test_emitter(1, {0, 0, 0})
-	brief.lifetime, brief.report, brief.owner = {0.05, 0.05}, .Death, core.Entity(77)
-	reports: Particle_Reports
-	defer particle_reports_free(&reports)
-	DT :: f32(1.0 / 60)
-	heard := 0
-	for i in 0 ..< 12 {
-		brief.spawns = test_burst(9) if i == 0 else {}
-		testing.expect(t, frame_emitters(f, &f.sync, {brief}, DT))
-		testing.expect(t, gpu.renderer_frame(r, {camera = camera}), r.error)
-		reports_read(&reports, &f.sync, f.app.renderer, core.World_Id{index = 1})
-		for report in reports.reports {
-			testing.expect(t, report.entity == core.Entity(77) && report.kind == .Death)
-			heard += 1
+particle_reports_tell_the_game_of_deaths_and_hits :: proc(t: ^testing.T) {
+	for dt in ([]f32{1.0 / 30, 1.0 / 144}) {
+		f := new(Gpu_Fixture)
+		defer free(f)
+		if !gpu_fixture_init(t, f, 64, 48, test_settings()) {return}
+		defer gpu_fixture_destroy(f)
+		r := &f.renderer
+		gpu.scene_update(r, 0, {{object_id = 1, mesh = f.cube, transform = trs({0, -0.6, 0}, {12, 0.2, 12}), tint = {0.05, 0.05, 0.05}}}, true)
+		camera := gpu.Camera{position = {0, 1, 4}, forward = {0, -0.7, -4}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
+		brief := test_emitter(1, {0, 0, 0})
+		brief.lifetime, brief.report, brief.owner = {0.05, 0.05}, .Death, core.Entity(77)
+		// Thrown over the floor, each dies at its first hit: one report each.
+		falls := test_emitter(2, {-1.5, 0, 0})
+		falls.lifetime, falls.velocity, falls.acceleration = {5, 5}, {{2, 0, 0}, {2, 0, 0}}, {0, -9.8, 0}
+		falls.collision, falls.collision_life, falls.report, falls.owner = .World, 1, .Collision, core.Entity(78)
+		reports: Particle_Reports
+		defer particle_reports_free(&reports)
+		heard: [2]int
+		for i in 0 ..< int(0.75 / dt) {
+			brief.spawns = test_burst(9) if i == 0 else {}
+			falls.spawns = test_burst(4) if i == 0 else {}
+			testing.expect(t, frame_emitters(f, &f.sync, {brief, falls}, dt))
+			testing.expect(t, gpu.renderer_frame(r, {camera = camera}), r.error)
+			data_read(nil, &reports, &f.sync, f.app.renderer, core.World_Id{index = 1}, nil)
+			for report in reports.reports {
+				switch report.entity {
+				case 77:
+					testing.expect(t, report.kind == .Death)
+					heard[0] += 1
+				case 78:
+					testing.expectf(t, report.kind == .Collision && report.normal.y > 0.9 && report.position.y > -0.5 && report.position.y < 0, "a hit over the floor %v", report)
+					heard[1] += 1
+				case:
+					testing.expectf(t, false, "a report of no emitter %v", report)
+				}
+			}
 		}
+		testing.expectf(t, heard == {9, 4}, "at steps of %v s: %v deaths and hits, not 9 and 4", dt, heard)
+		testing.expect_value(t, reports.lost, u32(0))
+		expect_clean(t, f.device)
 	}
-	testing.expect_value(t, heard, 9)
-	testing.expect_value(t, reports.lost, u32(0))
-	expect_clean(t, f.device)
 }
 
 // The Bones shape starts its particles on the bones of a skinned mesh: those
@@ -1070,52 +1086,6 @@ particle_splats_go_into_a_grid_that_particles_sample :: proc(t: ^testing.T) {
 		want: f32 = 10 * FRAMES if at == 1 else 0
 		testing.expectf(t, abs(value - want) < 1e-3, "cell %d holds %v, not %v", at, value, want)
 	}
-	expect_clean(t, f.device)
-}
-
-// A stage with neighbors finds the particles of its emitter within its
-// radius, itself and those of another emitter left out.
-@(test)
-particle_stages_count_the_neighbors_of_their_emitter :: proc(t: ^testing.T) {
-	f := new(Gpu_Fixture)
-	defer free(f)
-	settings := test_settings()
-	settings.taa = false
-	if !gpu_fixture_init(t, f, 64, 48, settings) {return}
-	defer gpu_fixture_destroy(f)
-	camera := gpu.Camera{position = {0, 1, 5}, forward = {0, -0.5, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
-	a := test_emitter(1, {0, 0.5, 0})
-	b := test_emitter(2, {0, 0.5, 0})
-	for &e, i in ([]^Emitter_Desc{&a, &b}) {
-		e.capacity, e.lifetime = 64, {5, 5}
-		if !test_program(t, f, e, "Crowd") {return}
-	}
-	DT :: f32(1.0 / 60)
-	read: [2][]u8
-	for i in 0 ..< 3 {
-		a.spawns = test_burst(20) if i == 0 else {}
-		b.spawns = test_burst(30) if i == 0 else {}
-		if i < 2 {
-			testing.expect(t, frame_emitters(f, &f.sync, {a, b}, DT))
-			testing.expect(t, gpu.renderer_frame(&f.renderer, {camera = camera, time = f32(i) * DT}), f.renderer.error)
-			continue
-		}
-		read = test_frame_read(t, f, {a, b}, DT, camera, f32(i) * DT, {pool_buffer(&f.sync.pool, .Particles), pool_buffer(&f.sync.pool, .Data)})
-	}
-	if read[0] == nil || read[1] == nil {return}
-	particles := ([^]Gpu_Particle)(raw_data(read[0]))[:len(read[0]) / size_of(Gpu_Particle)]
-	counted: [2]int
-	for p, index in particles {
-		if !(p.lifetime > 0) {continue}
-		slot := f.sync.pool.slots[p.emitter]
-		at := ATTRIBUTES_AT + int(slot.attributes) + (index - int(slot.offset)) * int(slot.stride)
-		near := (cast(^f32)&read[1][at])^
-		of := slot.desc.id
-		want: f32 = 19 if of == 1 else 29
-		testing.expectf(t, near == want, "a particle of emitter %d has %v neighbors, not %v", of, near, want)
-		counted[of - 1] += 1
-	}
-	testing.expect(t, counted == {20, 30}, "every particle lives")
 	expect_clean(t, f.device)
 }
 
@@ -1440,7 +1410,7 @@ particles_that_land_hit_once_per_bounce_and_rest_at_any_frame_rate :: proc(t: ^t
 			drop.spawns = test_burst(100) if i == 0 else {}
 			testing.expect(t, frame_emitters(f, &f.sync, {drop}, dt))
 			testing.expect(t, gpu.renderer_frame(r, {camera = camera}), r.error)
-			reports_read(&reports, &f.sync, f.app.renderer, core.World_Id{index = 1})
+			data_read(nil, &reports, &f.sync, f.app.renderer, core.World_Id{index = 1}, nil)
 			for report in reports.reports {hits += 1 if report.kind == .Collision else 0}
 		}
 		testing.expectf(t, hits == 200, "at steps of %v s the 100 particles report a hit per bounce, 200, not %d", dt, hits)
@@ -1498,11 +1468,10 @@ particle_sprites_hand_their_data_to_the_program_of_their_material :: proc(t: ^te
 	expect_clean(t, f.device)
 }
 
-// A grid baked as its steps left it is a .grid of its region from its first
-// cell, wherever the region wraps; a grid of the same cells that names it
-// starts from it, and counts on from there.
+// A grid that names a .grid of its cells starts from it, wherever its region
+// wraps, and counts on from there.
 @(test)
-particle_grids_bake_their_state_and_start_from_it :: proc(t: ^testing.T) {
+particle_grids_start_from_their_state :: proc(t: ^testing.T) {
 	f := new(Gpu_Fixture)
 	defer free(f)
 	settings := test_settings()
@@ -1510,30 +1479,14 @@ particle_grids_bake_their_state_and_start_from_it :: proc(t: ^testing.T) {
 	if !gpu_fixture_init(t, f, 64, 48, settings) {return}
 	defer gpu_fixture_destroy(f)
 	camera := gpu.Camera{position = {0, 1, 5}, forward = {0, -0.5, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
-	// A region that wraps: its first cell is not the first one kept.
-	grid := test_grid(f, "counts", {4, 1, 3}, 0.5, 1, {-3, 0, -1})
-	f.sync.grids.entries[grid].entity = 7
-	tally := test_emitter(1, {0, 0.5, 0})
-	if !test_program(t, f, &tally, "Tally", Resource_Desc{kind = .Grid, first = grid}) {return}
 	DT :: f32(1.0 / 60)
-	frame :: proc(t: ^testing.T, f: ^Gpu_Fixture, tally: Emitter_Desc, i: int, camera: gpu.Camera) {
-		testing.expect(t, frame_emitters(f, &f.sync, {tally}, DT))
-		testing.expect(t, gpu.renderer_frame(&f.renderer, {camera = camera, time = f32(i) * DT}), f.renderer.error)
-	}
-	for i in 0 ..< 3 {frame(t, f, tally, i, camera)}
-	testing.expect(t, grid_bake_ask(&f.sync, 7))
-	for i in 3 ..< 7 {frame(t, f, tally, i, camera)}
-	rhi.device_wait_idle(f.device)
-	for i in 7 ..< 9 {frame(t, f, tally, i, camera)}
-	info, cells, ok := grid_bake_take(&f.sync, f.app.renderer, core.World_Id{index = 1}, context.temp_allocator)
-	if !testing.expect(t, ok, "the bake came back") {return}
-	testing.expect(t, info.cells == {4, 1, 3} && info.layers == 1 && info.cell_size == 0.5)
-	baked := cells[0]
-	testing.expectf(t, baked == 5 * 4, "the cells of the grid count %v after the four steps of the frame that read it", baked)
-	for c in 0 ..< 12 {testing.expect_value(t, cells[c * 4], baked)}
+	baked :: f32(20)
+	info := gridfile.Grid_Info{cells = {4, 1, 3}, layers = 1, cell_size = 0.5}
+	cells: [12 * 4]f32
+	for c in 0 ..< 12 {cells[c * 4] = baked}
 	// The state as a file, and a grid that starts from it.
 	id := base.Asset_Id{0x6772696400000001, 1}
-	bytes, error := gridfile.grid_bytes(&f.assets.types, {id = id, info = info, cells = cells}, context.temp_allocator)
+	bytes, error := gridfile.grid_bytes(&f.assets.types, {id = id, info = info, cells = cells[:]}, context.temp_allocator)
 	if !testing.expect_value(t, error, asset.Error.None) {return}
 	testing.expect(t, os.write_entire_file(fmt.tprintf("%s/state.grid", f.folder), bytes) == nil)
 	testing.expect_value(t, asset.registry_scan(&f.assets.registry), asset.Error.None)
