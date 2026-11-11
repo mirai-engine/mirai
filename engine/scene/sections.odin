@@ -199,11 +199,11 @@ scene_sections :: proc(
         state:=section_wanted(views.ptr,e,reference)
         slot:=-1
         if loads!=nil {for l,i in loads.items {if l.job!=nil && l.entity==e {slot=i}}}
-        stays:=reference.loaded==reference.scene && slice.contains(staying,e)
+        stay:=reference.loaded==reference.scene && slice.contains(staying,e)
         switch {
         case state==.Unloaded || reference.rule!=.With_Document && reference.loaded!={} && reference.loaded!=reference.scene:
             if slot>=0 {load_cancel(loads,&loads.items[slot])}
-            if reference.loaded=={} || stays {break}
+            if reference.loaded=={} || stay {break}
             section_drop(world,documents,e)
         case reference.loaded=={} && loads!=nil && reference.failed!=reference.scene && reference.scene!={}:
             pose,_:=core.get(worlds,e)
@@ -218,7 +218,7 @@ scene_sections :: proc(
         }
         reference=core.at(references,row)
         // Loaded and off: what hangs from it under Disabled; on, without it.
-        if held:=state==.Loaded;reference.loaded!={} && held!=reference.held && !(held && stays) {
+        if held:=state==.Loaded;reference.loaded!={} && held!=reference.held && !(held && stay) {
             if section_hold(world,e,held)!=.None {
                 core.report(problems,e,"scene.memory","out of memory to tell what this section turned on from what changed in it: a save holds it all as changed; free memory")
             }
