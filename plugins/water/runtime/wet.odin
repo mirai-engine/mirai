@@ -38,7 +38,7 @@ wet_level :: proc "contextless" (wet:f32) -> f32 {
 // The body of Water_Wet an entity takes its wetness from: itself or the
 // nearest of its ancestors that is wet, and where it is in the marks.
 @(private)
-wet_owner :: proc(wet:^Water_Wet,parents:core.Read(core.Parent),entity:core.Entity) -> (owner:core.Entity,at:int,ok:bool) {
+wet_owner :: proc(wet:^Water_Wet,parents:^core.Table(core.Parent,$A),entity:core.Entity) -> (owner:core.Entity,at:int,ok:bool) {
     e:=entity
     for _ in 0..=core.count(parents) {
         for mark,i in wet.marks[:wet.count] {
@@ -61,7 +61,7 @@ wet_members :: proc "contextless" (wet:^Water_Wet) -> (sum:u64) {
 }
 
 @(step="render",loops="game editor")
-water_wet_render :: proc(state:^Water_Wet_Render,wet:core.Ref(Water_Wet),synced:core.Ref(render.Render_Sync),parents:core.Read(core.Parent),renderer:^render.Renderer) {
+water_wet_render :: proc(state:^Water_Wet_Render,wet:core.Ref(Water_Wet),synced:core.Ref(render.Render_Sync),parents:^core.Table(core.Parent,.Read),renderer:^render.Renderer) {
     if renderer==nil || wet.ptr==nil || synced.ptr==nil {return}
     sync:=synced.ptr
     seen:=[5]u64{render.instance_revision(renderer),u64(render.instance_count(renderer)),core.layout(parents),core.version(parents),wet_members(wet.ptr)}

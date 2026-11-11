@@ -35,7 +35,7 @@ Collider_Cuts :: struct {
 // simulates with them; a body that the step makes again gets its twin and its
 // cuts in the next tick.
 @(step="fixed",loops="game",stage="simulate",after="physics_places",before="physics_step")
-physics_twins :: proc(state:^Physics_State,twins:core.Read(Body_Twin),cuts:core.Read(Collider_Cuts),problems:^core.Problems) {
+physics_twins :: proc(state:^Physics_State,twins:^core.Table(Body_Twin,.Read),cuts:^core.Table(Collider_Cuts,.Read),problems:^core.Problems) {
     if !state.ready {return}
     w:=&state.world
     list:[sim.CUT_CAPACITY]sim.Cut

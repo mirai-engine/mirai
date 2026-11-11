@@ -40,7 +40,7 @@ split_before :: proc(a,b:Split) -> bool {
 // pieces wait to be built, again once a frame (once_more: the first call of a
 // frame).
 @(private)
-resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:core.Read(core.World_Transform),view:core.View,sources:core.Ref(scene.Streaming_Sources),settings:Terrain_Settings,terrains:core.Read(Terrain),c:^Chunk_Tables,physics:phys.Physics_Settings,problems:^core.Problems,once_more:=true,focus:=Terrain_Focus{}) {
+resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:^core.Table(core.World_Transform,.Read),view:core.View,sources:core.Ref(scene.Streaming_Sources),settings:Terrain_Settings,terrains:^core.Table(Terrain,$A),c:^Chunk_Tables,physics:phys.Physics_Settings,problems:^core.Problems,once_more:=true,focus:=Terrain_Focus{}) {
     moved:=core.touched(worlds,&resident.lod_seen[0]) | core.touched(c.colliders,&resident.lod_seen[1])
     stamp:=[3]u64{sources.ptr!=nil?sources.ptr.revision:0,u64(len(resident.owners)),resident.marks}
     pending:=false
@@ -190,7 +190,7 @@ resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:core.R
 // Physics_Settings has room for beside the colliders of everything else, and
 // of those, with Terrain_Settings.collision_distance, the ones within it.
 @(private)
-resident_colliders :: proc(resident:^Terrain_Resident,data:^Terrain_Data,terrains:core.Read(Terrain),c:^Chunk_Tables,settings:Terrain_Settings,physics:phys.Physics_Settings) {
+resident_colliders :: proc(resident:^Terrain_Resident,data:^Terrain_Data,terrains:^core.Table(Terrain,$A),c:^Chunk_Tables,settings:Terrain_Settings,physics:phys.Physics_Settings) {
     defer {for &owner in resident.owners {
         // A piece it shows whose collider comes or goes shows again.
         for &node,i in owner.nodes[:min(owner.quad.first[1],len(owner.nodes))] {if node.visible && node.collide!=node.can {append(&owner.changed,u32(i))}}}
@@ -259,7 +259,7 @@ resident_cut :: proc(resident:^Terrain_Resident,data:^Terrain_Data) {
 Lod_Distances :: struct {
     resident:^Terrain_Resident,
     data:^Terrain_Data,
-    worlds:core.Read(core.World_Transform),
+    worlds:^core.Table(core.World_Transform,.Read),
     view:core.View,
     sources:core.Ref(scene.Streaming_Sources),
     resident_distance:f32,
@@ -431,7 +431,7 @@ lod_levels_balance :: proc "contextless" (s:^Source,levels:[]u8) {
 // have room for, and with Terrain_Settings.collision_distance within it.
 // A Volume, without nodes, needs every chunk it does not stream.
 @(private)
-resident_needed :: proc(resident:^Terrain_Resident,data:^Terrain_Data,terrains:core.Read(Terrain),c:^Chunk_Tables,settings:Terrain_Settings,physics:phys.Physics_Settings,focus:=Terrain_Focus{}) {
+resident_needed :: proc(resident:^Terrain_Resident,data:^Terrain_Data,terrains:^core.Table(Terrain,$A),c:^Chunk_Tables,settings:Terrain_Settings,physics:phys.Physics_Settings,focus:=Terrain_Focus{}) {
     stream:=settings.resident_distance>0
     reach:=[2]f32{max(f32),max(f32)}
     if !stream {

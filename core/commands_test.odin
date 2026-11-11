@@ -40,7 +40,7 @@ commands_make_an_entity_and_the_function_finishes_what_waits :: proc(t:^testing.
     testing.expect(t,commands_added(c,e,Made)==nil && staged(&w.made,e)!=nil)
     add(&w.made,e,Made{3})
     remove(&w.made,e)
-    testing.expect(t,added(&w.made,e)==nil)
+    testing.expect(t,commands_added(c,e,Made)==nil)
     test_world_settle(&w)
     testing.expect(t,!has(&w.made,e))
     testing.expect(t,commands_destroy(c,e) && !alive(&w.entities,e))

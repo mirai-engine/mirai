@@ -267,14 +267,13 @@ package_parse :: proc(folder:string) -> []^ast.File {
 }
 
 // The lints of mirai check on the parsed sources of a package: the allocations whose error is
-// dropped in what is no test (alloc), the imports of the solver of physics (solver) and the writes
-// of copies of rows. False after printing what one finds.
+// dropped in what is no test (alloc) and the imports of the solver of physics (solver). False
+// after printing what one finds.
 lints_run :: proc(files:[]^ast.File,alloc,solver:bool) -> bool {
     clean:=true
     for file in files {
         if alloc && !strings.has_suffix(file.fullpath,"_test.odin") && !alloc_lint_print(file) {clean=false}
         if solver && !solver_lint_print(file) {clean=false}
-        if !row_copy_lint_print(file) {clean=false}
     }
     return clean
 }

@@ -138,7 +138,7 @@ api_foliage :: proc(s:^editor.Session,call:^api.Call,named:[]u8) -> (tool:^Folia
     found:bool
     if e,found=editor.api_call_entity(call,world,named);!found {return}
     if !core.has(table,e) {api.call_failf(call,api.INVALID_PARAMS,"%s is not an entity with a Foliage: scene.inspect lists them",given);return}
-    if !edit_prepare(tool,s.app.assets,s.app.allocator,core.read(table),e) {api.call_failf(call,api.INVALID_PARAMS,"The source of foliage %s could not be read: engine.diagnostics says why",given);return}
+    if !edit_prepare(tool,s.app.assets,s.app.allocator,table,e) {api.call_failf(call,api.INVALID_PARAMS,"The source of foliage %s could not be read: engine.diagnostics says why",given);return}
     placed,has_place:=core.get(worlds,e)
     if !has_place {api.call_failf(call,api.INVALID_PARAMS,"Foliage %s has no place in the world: give its entity a place with scene.write",given);return}
     owner=placed.transform
