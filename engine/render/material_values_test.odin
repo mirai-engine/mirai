@@ -4,6 +4,7 @@ import "core:testing"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:host"
+import gpu "mirai:render"
 import "mirai:std/base"
 
 @(test)
@@ -62,7 +63,7 @@ only_a_texture_makes_an_entity_show_a_row_of_its_own :: proc(t:^testing.T) {
     testing.expect(t,material_value(core.edit(&f.world.values,e),"alpha_mode",f32(asset.Alpha_Mode.Mask)))
     sync_frame(f)
     testing.expect(t,f.assets.stats.derived==0 && len(s.translucent)==0,"a masked one stays masked as it fades")
-    material_screen(core.edit(&f.world.values,e),0,7)
+    core.edit(&f.world.values,e).live.screen={texture=7}
     sync_frame(f)
     testing.expect_value(t,f.assets.stats.derived,1)
 }
@@ -75,8 +76,8 @@ values_and_textures_are_of_their_slot :: proc(t:^testing.T) {
     o.color.g=0.5
     testing.expect(t,!material_values_plain(&o) && !material_values_slot(&o,0),"a color is of no slot")
     emission,normal:=base.name_hash("maps.emission"),base.name_hash("maps.normal")
-    testing.expect(t,material_texture(&o,emission,2,{},7) && material_values_slot(&o,2))
-    testing.expect(t,material_texture(&o,emission,2,{},9) && o.texture_count==1 && o.shown[0]==9,"a texture given again takes its place")
+    testing.expect(t,material_texture(&o,emission,2,{7,7}) && material_values_slot(&o,2))
+    testing.expect(t,material_texture(&o,emission,2,{9,9}) && o.texture_count==1 && o.textures[0]==base.Asset_Id{9,9},"a texture given again takes its place")
     for i in 1..<MATERIAL_VALUES_TEXTURES {testing.expect(t,material_texture(&o,normal,i%MATERIAL_SLOTS,{3,3}))}
     testing.expect(t,!material_texture(&o,base.name_hash("maps.coat"),0,{3,3}) && !material_texture(&o,emission,MATERIAL_SLOTS,{3,3}))
     material_texture_drop(&o,emission,2)
@@ -92,14 +93,14 @@ values_given_over_those_of_an_entity_compose_with_them :: proc(t:^testing.T) {
     testing.expect(t,material_value(&own,"roughness",0.2) && material_value(&own,"metallic",1,1))
     over:=MATERIAL_VALUES_DEFAULT
     over.emission={0,2,0}
-    testing.expect(t,material_value(&over,"roughness",0.9) && material_value(&over,"emission",{4,4,4,0},2) && material_texture(&over,base.name_hash("maps.base_color"),2,{},5))
+    testing.expect(t,material_value(&over,"roughness",0.9) && material_value(&over,"emission",{4,4,4,0},2) && material_texture(&over,base.name_hash("maps.base_color"),2,{5,5}))
     material_values_over(&own,&over)
     testing.expect_value(t,own.color,[4]f32{0.5,1,1,0.5})
     testing.expect_value(t,own.emission,[3]f32{1,2,0})
     testing.expect_value(t,own.count,u32(3))
     testing.expect_value(t,own.values[material_value_find(&own,0,base.name_hash("roughness"))].x,f32(0.9))
     testing.expect_value(t,own.values[material_value_find(&own,1,base.name_hash("metallic"))].x,f32(1))
-    testing.expect(t,own.texture_count==1 && own.shown[0]==5 && own.texture_slots[0]==2)
+    testing.expect(t,own.texture_count==1 && own.textures[0]==base.Asset_Id{5,5} && own.texture_slots[0]==2)
 }
 
 // What shows a row through an instance without drawing it (the rectangle a
@@ -128,25 +129,44 @@ a_light_that_shows_the_row_of_an_instance_is_given_it_with_its_values :: proc(t:
     testing.expect_value(t,transmute(u32)s.lights[0].size.w,plain)
 }
 
-// A library shows a texture the renderer made on an entity by writing its
-// Material_Values: in one slot, given again without a change, and taken away
-// leaving the names of the others.
+// What a step gives an entity at run time is live over what the entity
+// authors: a value wins over the authored one of its name and leaves it as
+// it was, a screen shows in its slot, and an entity without the component
+// takes it only in a world that plays.
 @(test)
-a_screen_is_the_values_of_one_slot_and_goes_with_them :: proc(t:^testing.T) {
-    o:=MATERIAL_VALUES_DEFAULT
-    color,light,roughness:=base.name_hash("base_color"),base.name_hash("emission"),base.name_hash("roughness")
-    testing.expect(t,material_value(&o,roughness,{0.2,0,0,0},1))
-    material_screen(&o,1,7)
-    testing.expect(t,o.texture_count==1 && o.shown[0]==7 && o.texture_slots[0]==1 && o.texture_names[0]==base.name_hash("maps.base_color"))
-    testing.expect(t,o.count==2 && o.values[material_value_find(&o,1,color)].x==1)
-    same:=o
-    material_screen(&o,1,7)
-    testing.expect(t,o==same,"given again it changes nothing: its entity is not made again")
-    // As light, in another slot: the one that showed it lets go of it.
-    material_screen(&o,2,9,true,200)
-    testing.expect(t,o.texture_count==2 && material_value_find(&o,1,color)<0 && o.values[material_value_find(&o,2,color)].x==0 && o.values[material_value_find(&o,2,light)].x==200)
-    shown:=material_texture_find(&o,2,base.name_hash("maps.emission"))
-    testing.expect(t,shown>=0 && o.shown[shown]==9)
-    material_screen(&o,0,0)
-    testing.expect(t,o.texture_count==0 && o.count==1 && material_value_find(&o,1,roughness)==0)
+what_is_live_goes_over_what_an_entity_authors_and_leaves_it :: proc(t:^testing.T) {
+    f:=new(Sync_Fixture);defer free(f)
+    if !sync_fixture_init(t,f) {return}
+    defer sync_fixture_destroy(f)
+    w:=&f.world
+    authored,bare:=sync_cube(f,0),sync_cube(f,2)
+    own:=MATERIAL_VALUES_DEFAULT
+    roughness:=base.name_hash("roughness")
+    testing.expect(t,material_value(&own,roughness,{0.2,0,0,0}))
+    core.add(&w.values,authored,own)
+    test_world_settle(w)
+    shown :: proc(f:^Sync_Fixture,e:core.Entity) -> (look:Material_Values,desc:gpu.Material_Desc) {
+        test_world_settle(&f.world)
+        look,_=core.get(&f.world.values,e)
+        desc=gpu.DEFAULT_MATERIAL
+        material_values_apply(&f.assets,&desc,&look,0)
+        return
+    }
+    testing.expect(t,material_live(&w.values,bare,false)==nil,"a step authors nothing")
+    live:=material_live(&w.values,authored,false)
+    if !testing.expect(t,live!=nil && material_value(live,roughness,{0.9,0,0,0})) {return}
+    live.screen={texture=9,lit=true,emission=200}
+    look,desc:=shown(f,authored)
+    testing.expect(t,desc.roughness==0.9 && desc.textures[.Emission]==9 && desc.base_color==[3]f32{} && desc.emission==[3]f32{200,200,200})
+    testing.expect(t,material_values_slot(&look,0) && material_values_plain(&look)==material_values_plain(&own))
+    look.live={}
+    testing.expect(t,look==own,"what it authors is as it was")
+    live=material_live(&w.values,authored,false)
+    material_value_drop(live,roughness)
+    live.screen={}
+    look,desc=shown(f,authored)
+    testing.expect(t,look==own && desc.roughness==0.2 && desc.textures[.Emission]==0,"without them its own show again")
+    testing.expect(t,material_live(&w.values,bare,true)!=nil)
+    test_world_settle(w)
+    testing.expect(t,core.has(&w.values,bare),"in a world that plays the entity takes the component")
 }

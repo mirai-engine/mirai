@@ -374,9 +374,11 @@ Components that describe the scene and `render_sync`, which carries it to the re
     only its own names with `material_value` and `material_value_drop` instead of writing the
     whole component over what another gave. A zero value is black and hidden: start from
     what the entity has or from `MATERIAL_VALUES_DEFAULT`.
-  - A library that shows something of its own on an entity writes its names here too, and takes
-    them away when it stops: the curve materials of `animation`, and `material_screen`, the
-    texture a world panel or a `Screen` of `monitors` is drawn into, one per entity.
+  - What a step gives an entity at run time is `live` in the component, where `material_live`
+    lets it write: values by name, over the authored ones of the same name (the curve materials
+    of `animation`), and one screen, the texture a world panel or a `Screen` of `monitors` is
+    drawn into. It is transient: no scene saves it and no undo holds it. A step authors nothing:
+    an entity without `Material_Values` takes the component only in a world that plays.
 - **`Highlight`**: the editor's selection outline; it replaces the entity's `Outline`.
 - **`Outline`**: the game's outline, with one of the 15 styles of `Outline_Styles`, a project
   setting (the same in all its scenes) with the color, the fill and what is seen behind another
@@ -617,9 +619,9 @@ one per local player that has screens or sees a `World_Widget`.
     (`UI_Settings.reference` and `UI_Preferences.scale`), so it keeps their size.
   - `target` `Mesh`: the panel is drawn into a renderer texture of `size` by `pixels` texels per
     unit, which the slot `slot` of the material of the entity's mesh shows as base color, lit and
-    covered like the scene, or as emission of `emission` nits; it is written in the entity's
-    `Material_Values` while the widget is drawn (`render.material_screen`; the standard model: a
-    surface program does not read the map). It is built
+    covered like the scene, or as emission of `emission` nits; it is the screen the entity's
+    `Material_Values` show at run time (`render.material_live`; the standard model: a surface
+    program does not read the map). It is built
     only once, in the window's context, with the ray of the player who has the keyboard, while the
     camera of some local player sees the mesh's box as it was drawn; out of view the texture keeps
     the last one.

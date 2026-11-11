@@ -442,8 +442,8 @@ Editor and skinning:
 - The copy is the mesh the renderer draws its entity with, not another instance
   ([posed mesh](../../mirai-rendering/references/scene.md#visual-instances)): `render_sync` places,
   tints, hides and outlines it as any mesh, and the skin only gives its palette and its weights.
-  Curve materials are written in the `Material_Values` of each mesh of the rig while their curve
-  plays and taken away when it does not: the name is the curve's.
+  Curve materials are live in the `Material_Values` of each mesh of the rig
+  (`erender.material_live`) while their curve plays: over what the entity authors, never saved.
 - A rig whose palette leaves each vertex at its bind (`palette_at_bind`) is drawn with the world's
   shared mesh: a still character or one without animation copies no geometry or BLAS. The copy is
   created the first time the palette leaves the bind and stays until the rig goes away; with morphs,

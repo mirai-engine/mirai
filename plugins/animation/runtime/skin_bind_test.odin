@@ -139,7 +139,8 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
     testing.expect_value(t,result[0].position,vertices[0].position+[3]f32{0,0.5,0})
     testing.expect_value(t,problems.count,0)
 
-    // A rig at the bind whose curves move a material value stays the mesh of the world: the Material_Values of its mesh take the value.
+    // A rig at the bind whose curves move a material value stays the mesh of the world: the value is live in the Material_Values of its mesh.
+    core.add(&w.tints,draws[1],erender.MATERIAL_VALUES_DEFAULT);test_world_settle(&w)
     still:=constraint_playing(&w.playback,roots[1])
     append(&still.curves,Curve_Output{target=base.name_hash("blush"),property=.Float,value={1,0,0,0},weight=1})
     blush:=CURVE_MATERIAL_DEFAULT;blush.rig,blush.every,blush.scale=roots[1],true,{1,0,0,0}
@@ -149,8 +150,8 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
     test_world_settle(&w)
     testing.expect_value(t,measure(renderer,"one rig posed and one with curve materials"),1)
     look,_:=core.get(&w.tints,draws[1])
-    given:=erender.material_value_find(&look,0,base.name_hash("base_color"))
-    testing.expect(t,given>=0 && look.values[given]==[4]f32{1,0,0,0},"the value of the curve is that of the entity")
+    given:=erender.material_value_find(&look.live,0,base.name_hash("base_color"))
+    testing.expect(t,given>=0 && look.live.values[given]==[4]f32{1,0,0,0} && look.count==0,"the value of the curve is live on the entity")
     instance:=core.entity_map_get(&state.instances,draws[1])
     testing.expect(t,instance!=nil && !instance.copied,"the still rig with curve materials makes no copy")
     // A curve that stops playing takes its value away.
@@ -158,7 +159,7 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
     tick(&app,&cache,&state,&w,&problems,&posed,&w.modifiers)
     test_world_settle(&w)
     look,_=core.get(&w.tints,draws[1])
-    testing.expect_value(t,look.count,u32(0))
+    testing.expect_value(t,look.live.count,u32(0))
     testing.expect_value(t,problems.count,0)
     testing.expectf(t,rhi.device_validation_errors(device)==0,"validation: %s",rhi.device_validation_message(device))
     testing.expectf(t,rhi.device_validation_errors(device)==0,"validation: %s",rhi.device_validation_message(device))

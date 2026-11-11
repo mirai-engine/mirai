@@ -213,7 +213,8 @@ Post_Process_Layer :: struct {
 // it, in loop order: each sets and drops only the names it gives. Its
 // instance holds its color, its light and its values (slot_row), given in
 // place when they change; a texture makes the entity show a row of its own,
-// shared by what gives the same.
+// shared by what gives the same. What a step gives it at run time is in
+// live, over the rest (material_live).
 @(component,shared,description="What this entity alone shows of its materials: a color that multiplies theirs, light added to theirs, and values and textures by name.")
 Material_Values :: struct {
     color:[4]f32 `mirai:"color"`,
@@ -226,10 +227,46 @@ Material_Values :: struct {
     texture_slots:[MATERIAL_VALUES_TEXTURES]u8 `mirai:"hidden"`,
     texture_names:[MATERIAL_VALUES_TEXTURES]u64 `mirai:"hidden"`,
     textures:[MATERIAL_VALUES_TEXTURES]base.Asset_Id `mirai:"hidden"`, // 0 takes the texture away
-    shown:[MATERIAL_VALUES_TEXTURES]gpu.Texture_Handle `mirai:"transient"`, // a texture the renderer made at run time, in place of the asset; 0: none
     own_overlays:bool `mirai:"hidden"`,
     overlay_count:u32 `mirai:"hidden"`,
     overlays:[asset.MATERIAL_MAX_OVERLAYS]asset.Material_Overlay `mirai:"hidden"`,
+    live:Material_Live `mirai:"transient"`,
+}
+
+// What the steps of a world give an entity at run time over what it authors
+// (material_live): values by name as those of Material_Values, which win
+// over the authored ones of the same name, and a screen. No scene saves it
+// and no undo holds it.
+Material_Live :: struct {
+    count:u32,
+    slots:[MATERIAL_VALUES_CAPACITY]u8,
+    names:[MATERIAL_VALUES_CAPACITY]u64,
+    values:[MATERIAL_VALUES_CAPACITY][4]f32,
+    screen:Material_Screen,
+}
+
+// A texture the renderer made at run time (the panel of a widget, the image
+// of a camera) that a slot shows: as the base color of a white surface or,
+// lit, as the light of a black one.
+Material_Screen :: struct {
+    texture:gpu.Texture_Handle, // 0: none
+    slot:u8,
+    lit:bool,
+    emission:f32, // of one lit: the luminance of its white, nits
+}
+
+// Where a step writes what it gives an entity at run time: the live part of
+// its Material_Values, written as the component is (material_value,
+// material_value_drop, its screen). A step authors nothing: nil for an
+// entity without the component, which takes it only with `add`, for a world
+// that plays.
+material_live :: proc(looks:^core.Table(Material_Values),e:core.Entity,add:bool) -> ^Material_Live {
+    look:=core.edit(looks,e)
+    if look==nil && add {
+        core.add(looks,e,MATERIAL_VALUES_DEFAULT)
+        look=core.staged(looks,e)
+    }
+    return look!=nil?&look.live:nil
 }
 
 MATERIAL_VALUES_DEFAULT :: Material_Values{color={1,1,1,1}}
@@ -921,7 +958,7 @@ instance_make :: proc(a:^host.Assets,t:Sync_Tables,e:core.Entity,static:Mesh_Ren
     if !instance.hidden {instance.highlight=instance_outline(t.highlights,t.outlines,e)}
     if in_layers,has_layers:=core.get(t.layers,e);has_layers {instance.layers=in_layers.mask}
     instance.owner=body_owner(t,e)
-    return instance,!material_values_plain(&values) || instance.overlays.count>0,true
+    return instance,!material_values_plain(&values) || values.live!={} || instance.overlays.count>0,true
 }
 
 // The instance of the world at `at` as its rows are now, for the renderer,
@@ -1389,7 +1426,7 @@ surface_program :: proc(a:^host.Assets,id:u32) -> ^gpu.Program {
     return nil
 }
 
-// Whether an entity shows its materials as they are: an opaque white color, no light and nothing by name.
+// Whether an entity authors nothing of its materials: an opaque white color, no light and nothing by name.
 material_values_plain :: proc "contextless" (o:^Material_Values) -> bool {
     return o.color=={1,1,1,1} && o.emission=={} && o.count==0 && o.texture_count==0 && !o.own_overlays
 }
@@ -1402,7 +1439,10 @@ material_values_slot :: proc "contextless" (o:^Material_Values,slot:int) -> bool
     for stored in o.slots[:min(int(o.count),len(o.slots))] {
         if int(stored)==slot {return true}
     }
-    return false
+    for stored in o.live.slots[:min(int(o.live.count),len(o.live.slots))] {
+        if int(stored)==slot {return true}
+    }
+    return o.live.screen.texture!=0 && int(o.live.screen.slot)==slot
 }
 
 // What an entity shows with `over` given over its values: its color times
@@ -1412,23 +1452,35 @@ material_values_over :: proc(o:^Material_Values,over:^Material_Values) {
     o.color*=over.color
     o.emission+=over.emission
     for name,i in over.names[:min(int(over.count),len(over.names))] {material_value(o,name,over.values[i],int(over.slots[i]))}
-    for name,i in over.texture_names[:min(int(over.texture_count),len(over.texture_names))] {material_texture(o,name,int(over.texture_slots[i]),over.textures[i],over.shown[i])}
+    for name,i in over.texture_names[:min(int(over.texture_count),len(over.texture_names))] {material_texture(o,name,int(over.texture_slots[i]),over.textures[i])}
     if over.own_overlays {o.own_overlays,o.overlay_count,o.overlays=true,over.overlay_count,over.overlays}
 }
 
 // Puts the values and the textures an entity gives a slot over those of its
-// material, loading the textures. Without `held`, only what a row holds: the
-// textures.
+// material, loading the textures: what it authors, then what is live.
+// Without `held`, only what a row holds: the textures.
 material_values_apply :: proc(a:^host.Assets,values:^gpu.Material_Desc,o:^Material_Values,slot:int,held:=true) {
     program:=surface_program(a,values.program_id)
     for name,i in o.names[:min(int(o.count),len(o.names))] {
         if held && int(o.slots[i])==slot {material_value_apply(values,program,name,o.values[i])}
     }
+    for name,i in o.live.names[:min(int(o.live.count),len(o.live.names))] {
+        if held && int(o.live.slots[i])==slot {material_value_apply(values,program,name,o.live.values[i])}
+    }
+    // A program reads the maps of the standard model only when it builds on it.
+    if screen:=o.live.screen;screen.texture!=0 && int(screen.slot)==slot && (program==nil || program.standard) {
+        values.textures[.Base_Color]=screen.lit?0:screen.texture
+        if screen.lit {values.textures[.Emission]=screen.texture}
+        if held {
+            values.base_color=screen.lit?0:1
+            if screen.lit {values.emission=screen.emission}
+        }
+    }
     maps:=MATERIAL_MAP_NAMES
     each: for name,i in o.texture_names[:min(int(o.texture_count),len(o.texture_names))] {
         if int(o.texture_slots[i])!=slot {continue}
         handle:gpu.Texture_Handle
-        if o.shown[i]!=0 {handle=o.shown[i]} else if loaded:=host.assets_texture_image(a,o.textures[i]);loaded!=nil && !loaded.failed {handle=loaded.handle}
+        if loaded:=host.assets_texture_image(a,o.textures[i]);loaded!=nil && !loaded.failed {handle=loaded.handle}
         if program!=nil {
             for &parameter in program.parameters {
                 if parameter.kind!=.Texture || base.name_hash(parameter.name)!=name {continue}
@@ -1464,54 +1516,33 @@ material_texture_find :: proc "contextless" (o:^Material_Values,slot:int,name:u6
 }
 
 // Gives a map of the standard model or a texture of the program of the
-// material of a slot a texture: an asset (0 shows none), or one the renderer
-// made at run time (shown), as that of a panel of the interface. False when
-// the entity gives MATERIAL_VALUES_TEXTURES others, or for a slot that does
-// not exist.
-material_texture :: proc "contextless" (o:^Material_Values,name:u64,slot:int,texture:base.Asset_Id,shown:gpu.Texture_Handle=0) -> bool {
+// material of a slot a texture, an asset (0 shows none). False when the
+// entity gives MATERIAL_VALUES_TEXTURES others, or for a slot that does not
+// exist.
+material_texture :: proc "contextless" (o:^Material_Values,name:u64,slot:int,texture:base.Asset_Id) -> bool {
     at:=material_texture_find(o,slot,name)
     if at<0 {
         if int(o.texture_count)>=len(o.texture_names) || slot<0 || slot>=MATERIAL_SLOTS {return false}
         at=int(o.texture_count)
         o.texture_count+=1
     }
-    o.texture_slots[at],o.texture_names[at],o.textures[at],o.shown[at]=u8(slot),name,texture,shown
+    o.texture_slots[at],o.texture_names[at],o.textures[at]=u8(slot),name,texture
     return true
-}
-
-// Shows a texture the renderer made at run time (the panel of a widget, the
-// image of a camera) in a slot of an entity, in place of the one the entity
-// showed that way: as the base color of a white surface or, lit, as the light
-// of a black one. 0 shows none.
-material_screen :: proc(o:^Material_Values,slot:int,texture:gpu.Texture_Handle,lit:=false,emission:f32=0) {
-    color,light,color_map,light_map:=base.name_hash("base_color"),base.name_hash("emission"),base.name_hash("maps.base_color"),base.name_hash("maps.emission")
-    for i:=len(o.shown)-1;i>=0;i-=1 {
-        if o.shown[i]==0 {continue}
-        was:=int(o.texture_slots[i])
-        material_texture_drop(o,color_map,was);material_texture_drop(o,light_map,was)
-        material_value_drop(o,color,was);material_value_drop(o,light,was)
-    }
-    if texture==0 {return}
-    material_texture(o,lit?light_map:color_map,slot,{},texture)
-    material_value_hashed(o,color,lit?0:1,slot)
-    if lit {
-        material_texture(o,color_map,slot,{})
-        material_value_hashed(o,light,emission,slot)
-    }
 }
 
 // Takes the texture of one name of a slot away: that of the material shows again.
 material_texture_drop :: proc "contextless" (o:^Material_Values,name:u64,slot:int) {
     last:=min(int(o.texture_count),len(o.texture_names))-1
     if i:=material_texture_find(o,slot,name);i>=0 {
-        o.texture_slots[i],o.texture_names[i],o.textures[i],o.shown[i]=o.texture_slots[last],o.texture_names[last],o.textures[last],o.shown[last]
-        o.texture_slots[last],o.texture_names[last],o.textures[last],o.shown[last]=0,0,{},0
+        o.texture_slots[i],o.texture_names[i],o.textures[i]=o.texture_slots[last],o.texture_names[last],o.textures[last]
+        o.texture_slots[last],o.texture_names[last],o.textures[last]=0,0,{}
         o.texture_count=u32(last)
     }
 }
 
 // Where an entity keeps the value it gives a name of a slot; -1 without one.
-material_value_find :: proc "contextless" (o:^Material_Values,slot:int,name:u64) -> int {
+// o: its Material_Values, or the live part of it, as for the next two.
+material_value_find :: proc "contextless" (o:^$T,slot:int,name:u64) -> int {
     for stored,i in o.names[:min(int(o.count),len(o.names))] {
         if stored==name && int(o.slots[i])==slot {return i}
     }
@@ -1525,11 +1556,11 @@ material_value_find :: proc "contextless" (o:^Material_Values,slot:int,name:u64)
 // for a slot that does not exist or for a value that is not finite.
 material_value :: proc{material_value_named,material_value_hashed}
 
-material_value_named :: proc(o:^Material_Values,name:string,value:[4]f32,slot:=0) -> bool {
+material_value_named :: proc(o:^$T,name:string,value:[4]f32,slot:=0) -> bool {
     return material_value_hashed(o,base.name_hash(name),value,slot)
 }
 
-material_value_hashed :: proc "contextless" (o:^Material_Values,name:u64,value:[4]f32,slot:=0) -> bool {
+material_value_hashed :: proc "contextless" (o:^$T,name:u64,value:[4]f32,slot:=0) -> bool {
     for component in value {if component-component!=0 {return false}}
     if at:=material_value_find(o,slot,name);at>=0 {
         o.values[at]=value
@@ -1542,7 +1573,7 @@ material_value_hashed :: proc "contextless" (o:^Material_Values,name:u64,value:[
 }
 
 // Takes the value of one name of a slot away: that of the material shows again.
-material_value_drop :: proc "contextless" (o:^Material_Values,name:u64,slot:=0) {
+material_value_drop :: proc "contextless" (o:^$T,name:u64,slot:=0) {
     count:=min(int(o.count),len(o.names))
     if i:=material_value_find(o,slot,name);i>=0 {
         o.slots[i],o.names[i],o.values[i]=o.slots[count-1],o.names[count-1],o.values[count-1]

@@ -209,7 +209,7 @@ skin_rig_read :: proc(assets:^host.Assets,allocator:runtime.Allocator,id:base.As
 // targets and no skin its weights alone, by one joint. The copy it poses is
 // the mesh the renderer draws its entity with (erender.Posed_Meshes): placed,
 // tinted, hidden and outlined as any mesh of an entity. The material values
-// the curves of a rig move are written in the Material_Values of its meshes.
+// the curves of a rig move are live in the Material_Values of its meshes.
 @(step="render",loops="game editor",before="render_sync")
 animation_skin :: proc(
     meshes:^core.Table(erender.Mesh_Renderer,.Read),skins:^core.Table(Pose_Source,.Read),parents:^core.Table(core.Parent,.Read),
@@ -289,8 +289,8 @@ animation_skin :: proc(
         instance.seen=state.frame
         source:=host.assets_mesh(assets,static.mesh)
         if source==nil || source.handle==host.ASSETS_MESH_NONE {continue}
-        if !rigid && modifiers.ptr!=nil && !curve_materials_apply(modifiers.ptr,pose,int(source.slot_count),looks,entity) {
-            core.report(problems,entity,"animation.curve_material","the curve materials of the .character of the rig of this entity, with its Material_Values, set more than %d material values, so some are not drawn; move fewer values, or fewer slots",erender.MATERIAL_VALUES_CAPACITY)
+        if !rigid && modifiers.ptr!=nil && !curve_materials_apply(modifiers.ptr,pose,int(source.slot_count),looks,entity,time.playing) {
+            core.report(problems,entity,"animation.curve_material","the curve materials of the .character of the rig of this entity set more than %d material values, so some are not drawn; move fewer values, or fewer slots",erender.MATERIAL_VALUES_CAPACITY)
         }
         bones:=len(pose.local) if !rigid else 0
         // Not drawn in the last frame (new, or shown again): it shows the pose and the weights of the

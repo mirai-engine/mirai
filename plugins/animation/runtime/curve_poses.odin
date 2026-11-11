@@ -60,9 +60,9 @@ CURVE_DRIVE_DEFAULT :: Curve_Drive{scale=1,high=1,weight=1,enabled=true}
 // frames of a flipbook face, a switch) when it is positive. parameter names a
 // value of the material (emission, roughness...) or a parameter of its
 // program; slot is the material slot of the mesh, or every slot with every.
-// It is the value of that name in the Material_Values of each mesh of the
-// rig while the curve plays, and none when it does not: the name is the
-// curve's.
+// It is a value the Material_Values of each mesh of the rig show at run time
+// (erender.material_live) while the curve plays, over the one the entity
+// authors under that name.
 Curve_Material :: struct {
     rig:core.Entity `mirai:"transient"`,
     curve:[64]u8 `mirai:"text"`,
@@ -322,17 +322,18 @@ curve_poses_apply :: proc(state:^Playing,playback:^Playback,runtime:^Modifier_Ru
     return valid
 }
 
-// Writes the material values that the curves of rig give in the
-// Material_Values of entity, a mesh of it with slots material slots, and
-// takes away those of the curves that do not play. False when they do not
-// fit in it (the others still apply).
+// Gives the material values that the curves of rig move to the live part of
+// the Material_Values of entity, a mesh of it with slots material slots, and
+// takes away those of the curves that do not play. playing: the world plays,
+// and an entity without the component takes it. False when they do not fit
+// in it (the others still apply).
 @(private)
-curve_materials_apply :: proc(runtime:^Modifier_Runtime,rig:^Playing,slots:int,looks:^core.Table(erender.Material_Values),entity:core.Entity) -> (fits:bool) {
+curve_materials_apply :: proc(runtime:^Modifier_Runtime,rig:^Playing,slots:int,looks:^core.Table(erender.Material_Values),entity:core.Entity,playing:bool) -> (fits:bool) {
     fits=true
     if runtime==nil || rig==nil {return}
     first,end:=rig_rows(&runtime.curve_materials,rig.entity)
     if first>=end {return}
-    look:=core.edit(looks,entity)
+    live:=erender.material_live(looks,entity,false)
     curves:=playing_curves(rig)
     for row in first..<end {
         config:=&runtime.curve_materials.values[row]
@@ -352,14 +353,11 @@ curve_materials_apply :: proc(runtime:^Modifier_Runtime,rig:^Playing,slots:int,l
         for target in 0..<max(slots,1) {
             if !config.every && target!=int(config.slot) {continue}
             if !plays {
-                if look!=nil {erender.material_value_drop(look,parameter,target)}
+                if live!=nil {erender.material_value_drop(live,parameter,target)}
                 continue
             }
-            if look==nil {
-                core.add(looks,entity,erender.MATERIAL_VALUES_DEFAULT)
-                look=core.staged(looks,entity)
-            }
-            fits &&=erender.material_value(look,parameter,value,target)
+            if live==nil {live=erender.material_live(looks,entity,playing)}
+            if live!=nil {fits &&=erender.material_value(live,parameter,value,target)}
         }
     }
     return

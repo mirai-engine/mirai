@@ -36,6 +36,7 @@ Pool_Move :: struct {
 @(private)
 Geometry_Refused :: struct {
 	meshes, batches, blases: int, // blases: the cuts without their native BLAS, counted when shown
+	values:                  int, // times an instance was not given what it gives over its rows
 	triangles:               u64,
 	pool:                    Mesh_Pool, // the last one that could not grow
 	bytes, held:             u64, // what it asked for and what it holds
@@ -137,12 +138,13 @@ geometry_refused_problem :: proc(r: ^Renderer, buffer: []u8) -> string {
 			for ray, k in m.rays[:m.ray_count] {if m.vertex_count > 0 && ray.blas == 0 && ray_cut_wanted(r, m, k) {refused.blases += 1}}
 		}
 	}
-	if refused.meshes == 0 && refused.batches == 0 && refused.blases == 0 {return ""}
+	if refused.meshes == 0 && refused.batches == 0 && refused.blases == 0 && refused.values == 0 {return ""}
 	MB :: f64(1 << 20)
-	missing: [4]string
+	missing: [5]string
 	count := 0
 	if refused.meshes > 0 {missing[count] = fmt.tprintf("%d meshes of %d triangles are not drawn", refused.meshes, refused.triangles);count += 1}
 	if refused.batches > 0 {missing[count] = fmt.tprintf("%d batches are not drawn", refused.batches);count += 1}
+	if refused.values > 0 {missing[count] = "instances show their materials without what their entities give them";count += 1}
 	if refused.blases > 0 {missing[count] = fmt.tprintf("%d cuts that rays trace have no native BLAS, and rays miss them", refused.blases);count += 1}
 	_, _, _, _, name := pool_gpu(s, refused.pool)
 	if refused.bytes != 0 {missing[count] = fmt.tprintf("the %s asked for %.0f MB and holds %.0f MB", name, f64(refused.bytes) / MB, f64(refused.held) / MB);count += 1}

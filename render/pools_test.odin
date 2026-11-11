@@ -103,6 +103,18 @@ a_pool_without_memory_leaves_out_what_asked_and_draws_the_rest :: proc(t: ^testi
 	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
 	vertices := u64((8 + 1) * (8 + 1)) * size_of(u32)
 	testing.expectf(t, r.stats.geometry_free >= before + vertices && r.stats.geometry_free_largest >= vertices && r.stats.geometry_free_largest <= r.stats.geometry_free, "free %d, largest %d", r.stats.geometry_free, r.stats.geometry_free_largest)
+	// What instances give over their rows lives in the index pool: without room for it they show their rows as they are, and the renderer says so.
+	s.pool_bytes_max = 1
+	given: Instance_Material_Values
+	given.count = INSTANCE_VALUES_MAX
+	for &entry in given.entries {entry = {row = 0, word = 1 << INSTANCE_VALUE_COUNT_SHIFT}}
+	many := make([]Instance_Desc, 4096)
+	defer delete(many)
+	for &desc, i in many {desc = {object_id = u64(i + 1), mesh = large, transform = Mat4(1), material_values = given}}
+	scene_given(r, many, nil, {}, {})
+	said: [1024]u8
+	problem := geometry_refused_problem(r, said[:])
+	testing.expect(t, strings.contains(problem, "what their entities give"), problem)
 }
 
 // A mesh at rest traced by hardware has its BLAS made smaller frames after

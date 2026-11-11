@@ -247,7 +247,7 @@ a_posed_mesh_is_the_instance_of_its_entity_and_a_visual_one_hides_it :: proc(t:^
         if shown {
             // With a texture of its own it shows a row derived for it, which goes when it stops coming.
             look:=Material_Values{color={0,1,0,1}}
-            material_screen(&look,0,7)
+            look.live.screen={texture=7}
             extra,usable:=mesh_instance(&f.assets,{shape=.Cone},1,look)
             extra.object_id,extra.replace_source=u64(a),true
             // One of a mesh the renderer does not have is not drawn, and takes nothing with it.
@@ -265,7 +265,7 @@ a_posed_mesh_is_the_instance_of_its_entity_and_a_visual_one_hides_it :: proc(t:^
     for pass in 0..<3 {
         if pass==0 {
             look:=Material_Values{color={1,0,0,1}}
-            material_screen(&look,0,9)
+            look.live.screen={texture=9}
             ghost,usable:=mesh_instance(&f.assets,{shape=.Cone},1,look)
             testing.expect(t,usable && host.extras_instance_add(&f.app.extras,ghost))
         }

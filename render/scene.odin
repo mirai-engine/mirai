@@ -1542,7 +1542,10 @@ instance_material_values_give :: proc(r: ^Renderer, inst: ^Gpu_Instance, given: 
 	}
 	stored: u32
 	if len(block) > 0 {
-		if !pool_room(r, .Index, len(block)) || reserve(&s.indices, len(s.indices) + len(block)) != nil {return false}
+		if !pool_room(r, .Index, len(block)) || reserve(&s.indices, len(s.indices) + len(block)) != nil {
+			s.refused.values += 1
+			return false
+		}
 		first := u32(len(s.indices))
 		append(&s.indices, ..block)
 		stored = pool_store(&s.indices, &s.pool_free[.Index], &s.pool_dirty[.Index], first) + 1

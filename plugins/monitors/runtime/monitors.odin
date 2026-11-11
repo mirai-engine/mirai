@@ -123,19 +123,19 @@ asked_of :: proc "contextless" (asked:[]Asked,screen:Screen) -> int {
 }
 
 // What the screens ask of their cameras into the frame, each feed at the
-// level its screens ask for, and the image of each screen in the slot of the
-// Material_Values of its entity.
+// level its screens ask for, and the image of each screen as the screen
+// the Material_Values of its entity show at run time.
 @(step="render",loops="game editor",before="render_sync")
 monitors_render :: proc(
     state:^Monitors,screens:^core.Table(Screen,.Read),cameras:^core.Table(erender.Camera,.Read),exposures:^core.Table(erender.Exposure,.Read),
     meshes:^core.Table(erender.Mesh_Renderer,.Read),worlds:^core.Table(core.World_Transform,.Read),parents:^core.Table(core.Parent,.Read),
     looks:^core.Table(erender.Material_Values),hidden:^core.Table(erender.Hidden,.Read),
-    view:core.View,app:^host.App,view_volumes:^core.Table(erender.View_Volume,.Read),volumes:^core.Table(volume.Volume,.Read),sections:^core.Table(scene.Scene_Reference,.Read),splines:^core.Table(volume.Spline,.Read),
+    view:core.View,app:^host.App,time:core.Time,view_volumes:^core.Table(erender.View_Volume,.Read),volumes:^core.Table(volume.Volume,.Read),sections:^core.Table(scene.Scene_Reference,.Read),splines:^core.Table(volume.Spline,.Read),
 ) {
     if app.renderer==nil || app.assets==nil {return}
     state.frame+=1
     for e in core.changes(screens,&state.seen).gone {
-        if look:=core.edit(looks,e);look!=nil {erender.material_screen(look,0,0)}
+        if live:=erender.material_live(looks,e,false);live!=nil {live.screen={}}
     }
     if core.count(screens)==0 {
         for &fed in state.fed {fed.entity=core.NONE}
@@ -239,12 +239,9 @@ monitors_render :: proc(
         if feed>=0 && asked[feed].place>=0 {
             if fed:=&state.fed[asked[feed].place];fed.shown>=0 {texture=fed.textures[fed.shown]}
         }
-        look:=core.edit(looks,e)
-        if look==nil && texture!=0 {
-            core.add(looks,e,erender.MATERIAL_VALUES_DEFAULT)
-            look=core.staged(looks,e)
-        }
         // The slot of the screen gives the image as its light, and reflects none.
-        if look!=nil {erender.material_screen(look,int(min(screen.slot,erender.MATERIAL_SLOTS-1)),texture,true,screen.brightness)}
+        if live:=erender.material_live(looks,e,time.playing && texture!=0);live!=nil {
+            live.screen={texture,u8(min(screen.slot,erender.MATERIAL_SLOTS-1)),true,screen.brightness}
+        }
     }
 }
