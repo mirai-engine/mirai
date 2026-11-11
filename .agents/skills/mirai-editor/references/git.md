@@ -70,6 +70,27 @@ file has changes.
   (`Modal.No_Repository`), a headless editor says so once on stderr, and the methods that edit
   fail saying `git.init` (`git_missing`).
 
+## The entities of a pending scene
+
+`editor/git_entities.odin`.
+
+- A pending scene unfolds in the tab into the entities that differ from what the index holds of
+  it (`git show :path`), by their ids: added, changed (with the components that differ) and
+  removed, under those they hang from. The document in front is compared as the World has it
+  (`document_capture`), another scene as its file; `asset.document_diff` matches the rows, so two
+  layouts of a component compare by the names of their fields. The place of an entity among its
+  siblings alone is no change: it moves when a sibling comes or goes.
+- **Revert** on a node puts that entity back as the index holds it, with what hangs from it in
+  either version: what was changed takes the kept values, what was removed comes back with its
+  id, what was added goes. It is one step of whoever asks (`scene.update` with the kept rows of
+  the subtree), so undo takes it back and the flush writes the file.
+- `git.changes` and `git.revert` are the same for an agent; with `author`, `git.revert` takes
+  back instead what the steps of that author still hold of those entities in the history of the
+  session (`history_revert_author`), keeping what others wrote since.
+- What it does not reach: the content of a section, which is in its own scene; components of a
+  plugin the project lacks; a scene whose kept version git no longer gives whole (over
+  `git.OUTPUT_LIMIT`).
+
 ## Merge mode
 
 `editor/git_merge.odin` (state, computation and resolution) and `editor/git_review.odin`
@@ -97,6 +118,8 @@ file has changes.
 
 - `mirai test editor/git` runs the installed git in a scratch repository: keep, discard from the
   index and unkeep.
+- `mirai test editor the_entities_that_differ_from_what_git_keeps_revert_by_subtree`: the tree
+  and the revert of a subtree, without git.
 - `mirai check editor`; with a session of a new project (`mirai new`) and a bare remote:
   `git.init`, `git.commit` with push, a second clone that changes the scene and `git.pull`, with a
   different field (clean merge) and the same field (merge mode, `UU` file with ours and what did

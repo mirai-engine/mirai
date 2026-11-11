@@ -4,6 +4,7 @@ import "core:strings"
 import "mirai:asset"
 import "mirai:editor/api"
 import "mirai:editor/git"
+import "mirai:editor/history"
 import "mirai:platform"
 import "mirai:std/base"
 import "mirai:std/serial"
@@ -105,6 +106,8 @@ git_api_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="git.choose",summary="Chooses the side of a conflict or the version of a file merged whole; its item waits to be accepted again.",params=type_info_of(Api_Git_Choose_Params),result=type_info_of(Api_Git_Chosen),run=api_git_choose})
     api_register(s,st,{name="git.accept",summary="Accepts an item as chosen, or every item; with reject, keeps ours for its conflicts.",params=type_info_of(Api_Git_Accept_Params),result=type_info_of(Api_Git_Accept_Result),run=api_git_accept})
     api_register(s,st,{name="git.finish",summary="Once every item is accepted: writes each file as chosen and commits the merge.",result=type_info_of(Api_Git_Done),run=api_git_finish})
+    api_register(s,st,{name="git.changes",summary="The entities of a scene that differ from what git keeps of it, by their ids: added, changed and removed, as a tree with those they hang from. The document in front is compared as it is now; another scene, as its file is.",params=type_info_of(Api_Git_Changes_Params),result=type_info_of(Api_Git_Changes),flags={.Read_Only},run=api_git_changes})
+    api_register(s,st,{name="git.revert",summary="Puts entities of the document in front back as git keeps them, with what hangs from them unless subtree is false: one step of history. With author, takes back instead what the steps of that author did to them, keeping what others wrote since.",params=type_info_of(Api_Git_Revert_Params),result=type_info_of(Api_Git_Reverted),flags={.Destructive},run=api_git_revert})
     api_register(s,st,{name="git.keep",summary="Keeps the changes of some files, or of every one: the next commit takes them as they are now, and what changes after is pending again.",params=type_info_of(Api_Git_Paths_Params),result=type_info_of(Api_Git_Done),run=api_git_keep})
     api_register(s,st,{name="git.unkeep",summary="Takes the changes of some files, or of every one, out of what is kept: they are pending again, and the files stay as they are.",params=type_info_of(Api_Git_Paths_Params),result=type_info_of(Api_Git_Done),run=api_git_unkeep})
     api_register(s,st,{name="git.discard",summary="Puts some pending files, or every one, back as they were kept (as the last commit has them when nothing of them was kept); a file git does not track goes to the trash. Refused in a merge.",params=type_info_of(Api_Git_Paths_Params),result=type_info_of(Api_Git_Done),flags={.Destructive},run=api_git_discard})
@@ -127,7 +130,7 @@ api_git_ended :: proc(s:^Session,call:^api.Call,message:string) {
 api_git_status :: proc(s:^Session,call:^api.Call) {
     g:=s.git
     if !git.busy(g) && (!g.checked || platform.clock_seconds()-g.refreshed>1) {git_refresh(s)}
-    operations:=[git.Operation]string{.None="",.Check="check",.Refresh="refresh",.Init="init",.Commit="commit",.Commit_Push="commit",.Push="push",.Pull="pull",.Abort="abort",.Finish="finish",.Load="load",.Fetch="fetch",.Keep="keep",.Unkeep="unkeep",.Discard="discard"}
+    operations:=[git.Operation]string{.None="",.Check="check",.Refresh="refresh",.Init="init",.Commit="commit",.Commit_Push="commit",.Push="push",.Pull="pull",.Abort="abort",.Finish="finish",.Load="load",.Fetch="fetch",.Keep="keep",.Unkeep="unkeep",.Discard="discard",.Base="base"}
     r:=api.call_result(call,Api_Git_Status)
     r^={
         available=g.available,checked=g.checked,repository=g.repository,busy=operations[g.operation],
@@ -169,8 +172,98 @@ api_git_pull :: proc(s:^Session,call:^api.Call) {api_git_ended(s,call,git_pull(s
 @(private)
 api_git_abort :: proc(s:^Session,call:^api.Call) {api_git_ended(s,call,git.abort(s.git,git_roots(s)))}
 
+Api_Git_Changes_Params :: struct {
+    path:string `mirai:"optional,label=A scene from the root of the repository as git.status lists it; none: the document in front"`,
+}
+Api_Git_Entity :: struct {
+    id:base.Entity_Id,
+    name:string,
+    parent:base.Entity_Id `mirai:"label=The entity it hangs from; 0 for none"`,
+    change:Git_Entity_Change `mirai:"label=Against what git keeps of the scene; Same: listed because something that hangs from it differs"`,
+    components:string `mirai:"optional,label=Of one that changed: what of it differs, by the names of its components"`,
+}
+Api_Git_Changes :: struct {
+    path:string `mirai:"label=The scene, from the root of the repository"`,
+    entities:[]Api_Git_Entity `mirai:"label=The entities that differ and those they hang from, in the order of the tree"`,
+}
+Api_Git_Revert_Params :: struct {
+    path:string `mirai:"optional,label=The scene, which must be the document in front; none: that document"`,
+    entities:[]string `mirai:"label=Ids of entities as git.changes gives them"`,
+    subtree:bool `mirai:"optional,label=With what hangs from them, as git keeps it and as the scene has it now"`,
+    author:string `mirai:"optional,label=Takes back only what the steps of one author did to those entities, from the history of this session: user, api, or the name of the task of an agent; none: back to what git keeps"`,
+}
+Api_Git_Reverted :: struct {
+    reverted:int `mirai:"label=Entities put back as git keeps them; with author, rows of its steps gone through"`,
+    kept:int `mirai:"label=With author: fields, components and entities that stayed as others left them"`,
+}
+
 Api_Git_Paths_Params :: struct {
     paths:[]string `mirai:"optional,label=Files from the root of the repository as git.status lists them; none: every change under the project"`,
+}
+
+// The tree of a scene against what git keeps of it, read for this call when
+// it is not the one shown. False, with the call failed, when it could not be.
+@(private)
+api_git_entities :: proc(s:^Session,call:^api.Call,path:string) -> bool {
+    g:=s.git
+    path:=path
+    if path=="" {path=git_path(s,document_file(s.document))}
+    if path=="" {api.call_fail(call,api.INVALID_PARAMS,"The document in front has no file in the repository: pass path");return false}
+    if base.text_get(g.entities.path[:])==path && g.entities.read {
+        git_entities_update(s)
+        return true
+    }
+    files_flush(s,true)
+    if message:=git_entities_show(s,path);message!="" {api.call_fail(call,api.SERVER_ERROR,message);return false}
+    running :: proc(s:^Session,user:rawptr) -> bool {return git.busy(s.git) || s.git.entities.reading}
+    if !api_wait(s,API_GIT_SECONDS,nil,running,"git") || !g.entities.read {
+        api.call_failf(call,api.SERVER_ERROR,"What git keeps of %s could not be read",path)
+        return false
+    }
+    return true
+}
+
+@(private)
+api_git_changes :: proc(s:^Session,call:^api.Call) {
+    if !api_git_entities(s,call,api.call_params(call,Api_Git_Changes_Params).path) {return}
+    n:=&s.git.entities
+    r:=api.call_result(call,Api_Git_Changes)
+    r.path=strings.clone(base.text_get(n.path[:]),call.allocator)
+    r.entities=make([]Api_Git_Entity,len(n.rows),call.allocator)
+    for &row,i in n.rows {
+        r.entities[i]={row.id,strings.clone(base.text_get(row.name[:]),call.allocator),row.parent,row.change,strings.clone(base.text_get(row.components[:]),call.allocator)}
+    }
+}
+
+@(private)
+api_git_revert :: proc(s:^Session,call:^api.Call) {
+    p:=api.call_params(call,Api_Git_Revert_Params)
+    ids:=make([dynamic]base.Entity_Id,context.temp_allocator)
+    for text in p.entities {
+        id,parsed:=base.entity_id_parse(strings.trim_prefix(strings.trim_space(text),"0x"))
+        if !parsed || id==0 {api.call_failf(call,api.INVALID_PARAMS,"%q is not the id of an entity: git.changes gives them",text);return}
+        append(&ids,id)
+    }
+    if len(ids)==0 {api.call_fail(call,api.INVALID_PARAMS,"entities names none: git.changes lists the ids of those that differ");return}
+    r:=api.call_result(call,Api_Git_Reverted)
+    message:string
+    if p.author!="" {
+        author:history.Edit_Author
+        switch p.author {
+        case "user": author=history.EDIT_AUTHOR_USER
+        case "api":  author=history.EDIT_AUTHOR_API
+        case:
+            task:=ai_task_named(s.ai,p.author)
+            if task==nil {api.call_failf(call,api.INVALID_PARAMS,"author %q is not user, api or the name of a task of an agent",p.author);return}
+            author=history.Edit_Author(task.id)
+        }
+        r.reverted,r.kept,message=history_revert_author(s,author,ids[:],"Revert")
+    } else {
+        if !api_git_entities(s,call,p.path) {return}
+        subtree:=p.subtree || !api.call_given(call,"subtree")
+        r.reverted,message=git_entities_revert(s,ids[:],subtree)
+    }
+    if message!="" {api.call_fail(call,api.SERVER_ERROR,message)}
 }
 
 @(private)

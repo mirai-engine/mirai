@@ -1138,6 +1138,7 @@ session_destroy :: proc(s:^Session) {
     import_end(s)
     projects_cancel(s)
     plugins_git_free(s)
+    if s.git!=nil {git_entities_free(&s.git.entities)}
     ai_destroy(s)
     thumbnails_destroy(s)
     gui_destroy(s.gui)

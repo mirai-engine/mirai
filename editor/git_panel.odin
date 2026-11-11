@@ -169,6 +169,13 @@ git_changes_rows :: proc(s:^Session,kept:bool,busy:bool) {
         if ui.box(ctx,{id=row,width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=8,align_y=.Center,padding={4,0,12,0},fill=ai_pointer_on(ctx,row)?ui.tone(ctx,"chip"):{},radius=ui.metric(ctx,"radius_control")}) {
             path:=git.change_path(g,&change)
             slash:=strings.last_index_byte(path,'/')
+            // A pending scene unfolds into its entities that differ from what is kept.
+            if !kept && change.status!='U' && strings.has_suffix(path,SCENE_EXTENSION) {
+                open:=base.text_get(g.entities.path[:])==base.text_get(change.path[:])
+                if ui.button(ctx,ui.id(ctx,"unfold"),{icon=open?.Chevron_Down:.Chevron_Right,icon_color=ui.tone(ctx,"text_muted"),variant="ghost",width=14,height=18,icon_size=10,disabled=busy && !open}).clicked {
+                    if message:=git_entities_show(s,open?"":base.text_get(change.path[:]));message!="" {notify(s,message)}
+                }
+            }
             icon,color:=git_change_icon(s,registry,path)
             ui.icon(ctx,icon,color,14)
             if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=8,align_y=.Center,clip_x=true}) {
@@ -192,7 +199,42 @@ git_changes_rows :: proc(s:^Session,kept:bool,busy:bool) {
             }
             ui.label(ctx,string(letter[:]),ui.metric(ctx,"font_small"),status)
         }
+        if !kept && base.text_get(g.entities.path[:])==base.text_get(change.path[:]) {git_entities_rows(s)}
         ui.id_pop(ctx)
+    }
+}
+
+// The entities of the scene unfolded that differ from what git keeps, under
+// those they hang from: a click selects one, and reverting it puts it back
+// as kept with what hangs from it.
+@(private)
+git_entities_rows :: proc(s:^Session) {
+    g:=s.git;ctx:=s.gui.ctx
+    git_entities_update(s)
+    n:=&g.entities
+    reverted:base.Entity_Id
+    for &entity,i in n.rows {
+        ui.id_push(ctx,ui.id(ctx,"entity",i))
+        row:=ui.id(ctx,"row")
+        it:=ui.interact(ctx,row,{.Focusable})
+        on:=ai_pointer_on(ctx,row)
+        if ui.box(ctx,{id=row,width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=8,align_y=.Center,padding={22+f32(entity.depth)*12,0,12,0},fill=on?ui.tone(ctx,"chip"):{},radius=ui.metric(ctx,"radius_control")}) {
+            same:=entity.change==.Same
+            if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=8,align_y=.Center,clip_x=true}) {
+                ui.label(ctx,base.text_get(entity.name[:]),ui.metric(ctx,"font_small"),same?ui.tone(ctx,"text_muted"):ui.tone(ctx,"text"))
+                if what:=base.text_get(entity.components[:]);what!="" {ui.label(ctx,what,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"),0)}
+            }
+            if on && git_row_button(ctx,"revert",.Revert,same?"Revert what hangs from it":"Revert",git.working(g)) {reverted=entity.id}
+            letters:=[Git_Entity_Change]string{.Same="",.Added="A",.Changed="M",.Removed="D"}
+            tones:=[Git_Entity_Change]string{.Same="text_muted",.Added="success",.Changed="text_muted",.Removed="danger"}
+            ui.label(ctx,letters[entity.change],ui.metric(ctx,"font_small"),ui.tone(ctx,tones[entity.change]))
+        }
+        if it.clicked {git_select(s,entity.id)}
+        ui.id_pop(ctx)
+    }
+    if reverted!=0 {
+        ids:=[1]base.Entity_Id{reverted}
+        if _,message:=git_entities_revert(s,ids[:],true);message!="" {notify(s,message)}
     }
 }
 

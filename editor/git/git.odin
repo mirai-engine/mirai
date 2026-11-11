@@ -39,7 +39,7 @@ Commit :: struct {
     subject:[128]u8,
 }
 
-Operation :: enum u8 {None,Check,Refresh,Init,Commit,Commit_Push,Push,Pull,Abort,Finish,Load,Fetch,Keep,Unkeep,Discard}
+Operation :: enum u8 {None,Check,Refresh,Init,Commit,Commit_Push,Push,Pull,Abort,Finish,Load,Fetch,Keep,Unkeep,Discard,Base}
 
 // The folders a command needs: that of the engine, for the drivers of the
 // assets, and that of the project.
@@ -74,6 +74,8 @@ Repository :: struct {
     finish_paths:[dynamic]string, // the files a merge resolved, for Finish
     paths:[dynamic]string,        // what Keep adds to the index, Unkeep takes out of it and Discard puts back from it; none: everything under the project
     load_paths:[dynamic]string,   // the files in conflict whose three stages Load reads, one per step
+    base_path:[PATH_BYTES]u8,     // the file whose kept version Base reads into out, from the root of the repository
+    base_found:bool,              // the index has that file
 }
 
 // Whether an operation runs now.
@@ -81,7 +83,7 @@ busy :: proc(r:^Repository) -> bool {return r.operation!=.None}
 
 // An operation that changes something runs: a read gives way to whatever the
 // user asks, and runs again after it.
-working :: proc(r:^Repository) -> bool {return r.operation!=.None && r.operation!=.Check && r.operation!=.Refresh && r.operation!=.Load && r.operation!=.Fetch}
+working :: proc(r:^Repository) -> bool {return r.operation!=.None && r.operation!=.Check && r.operation!=.Refresh && r.operation!=.Load && r.operation!=.Fetch && r.operation!=.Base}
 
 // The path of a change from the folder of the project.
 change_path :: proc(r:^Repository,change:^Change) -> string {
@@ -237,6 +239,8 @@ command :: proc(r:^Repository,roots:Roots,operation:Operation,step:int) -> []str
             return arguments[:]
         case 1: return list("commit","--no-edit")
         }
+    case .Base:
+        if step==0 {return list("show",fmt.tprintf(":%s",base.text_get(r.base_path[:])))}
     case .Load:
         // Step k is stage k%3+1 (base, ours, theirs) of file k/3.
         if step>=3*len(r.load_paths) {return nil}
@@ -261,6 +265,15 @@ takes :: proc(r:^Repository,change:^Change) -> bool {
     path:=base.text_get(change.path[:])
     for wanted in r.paths {if wanted==path {return true}}
     return false
+}
+
+// Starts reading into out what the index holds of a file, by its path from
+// the root of the repository: ended gives Base, and base_found whether the
+// index has it.
+start_base :: proc(r:^Repository,roots:Roots,path:string) {
+    base.text_set(r.base_path[:],path)
+    r.base_found=false
+    start(r,roots,.Base)
 }
 
 // Starts Keep, Unkeep or Discard of some paths from the root of the
@@ -323,6 +336,9 @@ step_done :: proc(r:^Repository,roots:Roots,code:int) -> bool {
     #partial switch r.operation {
     case .Load,.Fetch:
         // A fetch without the network or credentials says nothing: the next one tries again.
+        return true
+    case .Base:
+        r.base_found=code==0 && len(r.out)<OUTPUT_LIMIT-8192
         return true
     case .Check:
         r.checked,r.available=true,code==0

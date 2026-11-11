@@ -38,6 +38,7 @@ Git :: struct {
     history_drag:[2]f32,        // the height of the history and the pointer when its edge was pressed
     scroll:[2]f32,         // of the list of changes
     merge:Git_Merge,
+    entities:Git_Entities,
     refreshed:f64,         // platform clock of the last refresh
     fetched:f64,           // platform clock of the last fetch; 0: none yet
     stale:bool,            // something it shows may have changed: it is read again
@@ -315,6 +316,8 @@ git_ended :: proc(s:^Session) {
     case .Finish:
         if !failed {git_merge_finished(s)}
         git.start(g,git_roots(s),.Refresh)
+    case .Base:
+        git_entities_read(s)
     case .Keep,.Discard:
         if finished==.Discard {git_discarded(s,!failed)}
         quits:=g.quits && !failed
