@@ -363,13 +363,13 @@ query :: proc(s:^editor.Session,call:^api.Call) {
     empty_walks:core.Table(locomotion.Walk)
     swims:=core.world_table_of(world,locomotion.Swim)
     empty_swims:core.Table(locomotion.Swim)
-    paths_read:=core.read(paths if paths!=nil else &empty_paths)
-    agents_read:=core.read(agents if agents!=nil else &empty_agents)
+    paths_read:=paths if paths!=nil else &empty_paths
+    agents_read:=agents if agents!=nil else &empty_agents
     time:core.Time
     if t:=core.world_storage_of(world,core.Time);t!=nil {time=t^}
     smart:=behavior.Smart_View{objects=core.read(objects if objects!=nil else &empty_objects),states=core.read(states if states!=nil else &empty_states),worlds=core.read(worlds),claims=core.ref(core.world_storage_of(world,behavior.Claims)),time=time}
-    filter:=behavior.place_filter(core.ref(navigation),e,paths_read,agents_read,core.read(walks if walks!=nil else &empty_walks),core.read(swims if swims!=nil else &empty_swims),core.ref(physics))
-    if !behavior.place_run(&places,q,&result,core.read(worlds),core.read(perceivers if perceivers!=nil else &empty_perceivers),core.read(perceivables if perceivables!=nil else &empty_perceivables),paths_read,core.ref(navigation),core.ref(physics),&filter,smart,agents_read,influence_of(s,world)) {api.call_fail(call,api.SERVER_ERROR,"no memory for the path search of the query: free memory and ask again");return}
+    filter:=behavior.place_filter(core.ref(navigation),e,paths_read,agents_read,walks if walks!=nil else &empty_walks,swims if swims!=nil else &empty_swims,core.ref(physics))
+    if !behavior.place_run(&places,q,&result,worlds,perceivers if perceivers!=nil else &empty_perceivers,perceivables if perceivables!=nil else &empty_perceivables,paths_read,core.ref(navigation),core.ref(physics),&filter,smart,agents_read,influence_of(s,world)) {api.call_fail(call,api.SERVER_ERROR,"no memory for the path search of the query: free memory and ask again");return}
     w:=call.out
     serial.text_write_raw(w,"{")
     api.write_text(w,"status",fmt.tprintf("%v",result.status),true)

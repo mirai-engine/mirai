@@ -19,7 +19,7 @@ A game is a struct in memory and a list of functions that transform it
 - Finding an entity by `Id` and giving new `Id`s:
   [identity](references/core.md#persistent-identity).
 - Queues, requests and events: [queues](references/core.md#queues-and-references).
-- Waiting some seconds, cooldowns and requests for later (`deadline`, `due`, `later`):
+- Waiting some seconds and cooldowns (`deadline`, `due`):
   [waiting](references/core.md#waiting).
 - `Time`, `Frame_Time`, `Input`, `View`, `Jumps`, pause and slow motion (`Clock`) and an entity
   that keeps its pace in it (`Own_Pace`, bullet time):
@@ -147,7 +147,7 @@ A game is a struct in memory and a list of functions that transform it
   asks in the body ([attributes](references/generator.md#attributes)).
 - **Structural changes are applied when the function ends.** `core.add`, `core.remove` and
   `core.destroy` wait in `pending`: no walk or pointer is invalidated inside a function, and what
-  waits is written with `core.added`/`core.staged`. Between functions `core.Entity` is stored,
+  waits is written with `core.staged`. Between functions `core.Entity` is stored,
   never pointers.
 - **What is disabled does not exist for the loop.** A disabled component (`core.disable`) or one of
   an entity with `Disabled` keeps its row and its values, but `count`, `get`, `has` and `row_of`
@@ -165,13 +165,15 @@ A game is a struct in memory and a list of functions that transform it
   new one comes from `core.id_new`** (in a document, `asset.scene_new_id`), never by walking the
   `Id` table or with another generator. An `Id` added before the settle that settles the `Id` table
   is not found yet ([identity](references/core.md#persistent-identity)).
-- **Reading never stamps; writing is requesting the row.** `get` and `at` give the value, on a
-  `Read` and on a `^core.Table` alike. A write asks for the row with `edit`, `edit_at`, `free` or
-  `writable`, or gives its value with `set`, which writes only a value that differs; by reflection,
-  `raw_edit` or `raw_touch`. The row takes a stamp and its readers process it
-  ([stamps](references/core.md#tables)). A direct write into `values` is seen by nobody, and a row
-  asked for with `edit` is stamped whether or not it is written: what may leave the row as it is
-  reads first, or uses `set`.
+- **One handle per table; the access is in the declaration.** A function writes with
+  `^core.Table(C)` and reads with `^core.Table(C,.Read)`; every read procedure takes either, once,
+  and a helper that reads takes `^core.Table(C,$A)`. There is no read wrapper and no read twin.
+- **Reading never stamps; writing is requesting the row.** `get` and `at` give the value. A write
+  asks for the row with `edit`, `edit_at` or `free`, which is written only if its bytes differ when
+  the function ends, or with `writable`, every row; by reflection, `raw_edit` or `raw_touch`. The
+  row takes a stamp and its readers process it ([stamps](references/core.md#tables)). A direct
+  write into `values` is seen by nobody; there is no compare-and-set: what may leave the row as it
+  is asks for it all the same.
 - **A `@(params)` is only a way of writing the signature.** It counts as its loose fields: it gives
   the same write rights, with one writer per datum, and what the function writes reaches it only
   once among its parameters and groups.
@@ -265,7 +267,7 @@ A game is a struct in memory and a list of functions that transform it
 - `Id` index or new `Id`s: also `mirai test engine/save` (borrowed `Id`s),
   `plugins/multiplayer/runtime` (rollback and adoption), `plugins/destruct/runtime` (groups) and
   `editor` (API and collaboration).
-- Deadlines and requests for later: `mirai test core` (`deadline_test.odin`, `queue_test.odin`) and
+- Deadlines: `mirai test core` (`deadline_test.odin`) and
   `engine/save` (a checkpoint brings the clock back).
 - Authority and requested places: `mirai test core` (`place_test.odin`) and
   `plugins/multiplayer/runtime` (`authority_test.odin`).

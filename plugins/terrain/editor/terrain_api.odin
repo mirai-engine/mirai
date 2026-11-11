@@ -168,7 +168,7 @@ api_terrain :: proc(s:^editor.Session,call:^api.Call,named:[]u8) -> (tool:^Terra
     if !core.has(worlds,e) {api.call_failf(call,api.INVALID_PARAMS,"Terrain %s has no place in the world: give its entity a place with scene.write",given);return}
     marker,_:=core.get(terrains,e)
     if !terrain.terrain_stamp(s.app.assets,marker.source).found {api.call_failf(call,api.INVALID_PARAMS,"The .terrain of terrain %s is not among the assets: asset.list shows them",given);return}
-    if !stroke_prepare(tool,s.app.assets,s.app.allocator,core.read(terrains),core.read(worlds),editor.Pick{entity=e}) {api.call_failf(call,api.INVALID_PARAMS,"The .terrain of terrain %s could not be read: engine.diagnostics says why",given);return}
+    if !stroke_prepare(tool,s.app.assets,s.app.allocator,terrains,worlds,editor.Pick{entity=e}) {api.call_failf(call,api.INVALID_PARAMS,"The .terrain of terrain %s could not be read: engine.diagnostics says why",given);return}
     if !stroke_baseline(tool) {api.call_fail(call,api.INTERNAL_ERROR,"The terrain history could not be stored: there is not enough memory");return}
     return tool,world,true
 }
@@ -522,7 +522,7 @@ api_edit_play :: proc(s:^editor.Session,call:^api.Call,p:^Edit_Params,w:core.Wor
     if kind==.Flatten || brush.capped || kind==.Terrace {brush.target=level && editor.tool_call_given(call,"height")?(to_local*[4]f32{p.at.x,p.height,p.at.z,1}).y:from.y}
     step:=to-from
     count:=p.to!={}?clamp(int(math.ceil(linalg.length(step)/(radius*STROKE_SPACING))),1,4096):0
-    place,_:=core.get(core.read(core.world_table_of(w,core.World_Transform)),e)
+    place,_:=core.get(core.world_table_of(w,core.World_Transform),e)
     if kind==.Add || kind==.Carve {
         // One shape: a sphere at at, a capsule to to, or a box.
         shape:=strings.to_lower(base.text_get(p.shape[:]),context.temp_allocator)

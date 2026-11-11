@@ -54,11 +54,11 @@ poses_write :: proc(s:^Session,poses:[]Simulation_Pose) -> bool {
     transforms,parent_table:=core.world_table_of(w,core.Transform),core.world_table_of(w,core.Parent)
     Placed :: struct {depth,pose:int}
     placed:=make([]Placed,len(poses),context.temp_allocator)
-    for e,i in entities {placed[i]={parent_table!=nil?core.depth_of(core.read(parent_table),e):0,i}}
+    for e,i in entities {placed[i]={parent_table!=nil?core.depth_of(parent_table,e):0,i}}
     slice.sort_by(placed,proc(a,b:Placed) -> bool {return a.depth<b.depth})
     for item in placed {
         e:=entities[item.pose]
-        local,ok:=core.local_under(core.read(transforms),core.read(parent_table),entity_parent(w,e),simulation_transform(poses[item.pose]))
+        local,ok:=core.local_under(transforms,parent_table,entity_parent(w,e),simulation_transform(poses[item.pose]))
         if !ok || !transform_set(s,e,local) {return false}
     }
     return true
@@ -162,7 +162,7 @@ settle_add :: proc(s:^Session,world:rawptr,moving:[]core.Entity) -> (at:int,prob
 settle_tick :: proc(s:^Session,world:rawptr,moving:[]core.Entity,rested:[]bool) -> (all,ok:bool) {
     run:=host.app_world_ref(s.app,world)
     if !providers(s).simulation.step(run,s.app,s.app.tick_dt) {return}
-    motions:=core.read(core.world_table_of(run,core.Motion))
+    motions:=core.world_table_of(run,core.Motion)
     all=true
     for e,i in moving {
         motion,made:=core.get(motions,e)

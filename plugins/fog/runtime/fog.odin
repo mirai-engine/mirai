@@ -179,8 +179,8 @@ medium_add :: proc(media:^Fog_Media,medium:Medium) {core.push(&media.queue,mediu
 // The volumes of the world and, over them, the media of the frame into the frame.
 @(step="render",loops="game editor",after="render_sync")
 fog_render :: proc(
-    state:^Fog_Gpu,volumes:core.Read(Fog_Volume),places:core.Read(volume.Volume),media:^Fog_Media,worlds:core.Read(core.World_Transform),
-    hidden:core.Read(render.Hidden),parents:core.Read(core.Parent),settings:core.Ref(Fog_Settings),app:^host.App,problems:^core.Problems,
+    state:^Fog_Gpu,volumes:^core.Table(Fog_Volume,.Read),places:^core.Table(volume.Volume,.Read),media:^Fog_Media,worlds:^core.Table(core.World_Transform,.Read),
+    hidden:^core.Table(render.Hidden,.Read),parents:^core.Table(core.Parent,.Read),settings:core.Ref(Fog_Settings),app:^host.App,problems:^core.Problems,
 ) {
     state.count,state.dry,state.shade=0,false,false
     state.hidden=settings.hidden==.Every_Fourth?4:1
