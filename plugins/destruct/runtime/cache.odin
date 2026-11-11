@@ -276,7 +276,7 @@ prepare_start :: proc(assets:^host.Assets,job_system:^jobs.Job_System,entry:^Ent
     p.desc={pattern=geom.Site_Pattern(d.pattern),seed=d.seed,lo=lo,hi=hi,center=0.5*(lo+hi)}
     p.interior=interior
     p.key={pieces=d.pieces,seed=d.seed,pattern=d.pattern,mesh=static.mesh,shape=static.shape,scale=scale,interior=interior}
-    jobs.run(job_system,jobs.OWNER,prepare_job,p,&p.counter)
+    jobs.run(job_system,jobs.OWNER,.Background,prepare_job,p,&p.counter)
     // Without other threads nobody would cut them while the ticks go on.
     if jobs.worker_count(job_system)==1 {jobs.wait(job_system,jobs.OWNER,&p.counter)}
     return true

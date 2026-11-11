@@ -145,10 +145,10 @@ Ref :: struct($T:typeid) {value:^T}
 `},
         {project.path(engine,"engine","input","input.odin",allocator=context.temp_allocator),`package input
 import "mirai:core"
-@(storage,keep) Actions :: struct {count:u32}
+@(storage) Seats :: struct {count:u32}
 @(storage,keep) Frame_Actions :: struct {count:u32}
-@(params) Input_Of :: struct {actions:core.Ref(Actions)}
-@(params) Frame_Input_Of :: struct {actions:core.Ref(Frame_Actions)}
+@(params) Input_Of :: struct {state:core.Ref(Seats)}
+@(params) Frame_Input_Of :: struct {actions:core.Ref(Frame_Actions),state:core.Ref(Seats)}
 `},
         {project.path(game,"game","game.odin",allocator=context.temp_allocator),`package game
 import "mirai:core"

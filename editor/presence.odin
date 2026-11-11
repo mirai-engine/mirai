@@ -170,9 +170,9 @@ presence_name_draw :: proc(s:^Session,glyph:ui.Rect,name:string,color:ui.Color) 
     ctx:=s.gui.ctx
     width:=ui.text_width(&ctx.font,name,PRESENCE_NAME,ui.FONT_SEMIBOLD)
     plate:=ui.Rect{glyph.x+glyph.w*0.5-width*0.5-7,glyph.y+glyph.h+3,width+14,PRESENCE_NAME+7}
-    ui.draw_rounded(ctx,plate,plate.h*0.5,ui.color_alpha(ctx.theme.panel,215))
+    ui.draw_rounded(ctx,plate,plate.h*0.5,ui.color_alpha(ui.tone(ctx,"panel"),215))
     ui.draw_rounded_stroke(ctx,plate,plate.h*0.5,1,ui.color_alpha(color,150))
-    ui.draw_text(ctx,name,plate.x+7,plate.y+3,PRESENCE_NAME,ctx.theme.text,ui.FONT_SEMIBOLD)
+    ui.draw_text(ctx,name,plate.x+7,plate.y+3,PRESENCE_NAME,ui.tone(ctx,"text"),ui.FONT_SEMIBOLD)
 }
 
 // The glyph of a figure over its head: a circle of its color, faint inside
@@ -186,7 +186,7 @@ presence_disc_draw :: proc(s:^Session,rect:ui.Rect,color:ui.Color) {
     ctx:=s.gui.ctx
     center:=ui.rect_center(rect)
     radius:=rect.w*0.5
-    ui.draw_circle(ctx,center,radius,ui.color_alpha(ctx.theme.panel,235))
+    ui.draw_circle(ctx,center,radius,ui.color_alpha(ui.tone(ctx,"panel"),235))
     ui.draw_circle(ctx,center,radius,ui.color_alpha(color,PRESENCE_GLYPH_FILL))
     ui.draw_ring(ctx,center,radius,2.2,color)
 }
@@ -195,7 +195,7 @@ presence_disc_draw :: proc(s:^Session,rect:ui.Rect,color:ui.Color) {
 presence_icon_draw :: proc(s:^Session,rect:ui.Rect,icon:ui.Icon,color:ui.Color) {
     presence_disc_draw(s,rect,color)
     inset:=rect.w*0.2
-    ui.draw_icon(s.gui.ctx,icon,{rect.x+inset,rect.y+inset,rect.w-2*inset,rect.h-2*inset},s.gui.ctx.theme.text)
+    ui.draw_icon(s.gui.ctx,icon,{rect.x+inset,rect.y+inset,rect.w-2*inset,rect.h-2*inset},ui.tone(s.gui.ctx,"text"))
 }
 
 @(private)
@@ -204,6 +204,6 @@ presence_initial_draw :: proc(s:^Session,rect:ui.Rect,name:string,color:ui.Color
     ctx:=s.gui.ctx
     center:=ui.rect_center(rect)
     initial:=strings.to_upper(name[:min(len(name),1)] if name!="" else "?",context.temp_allocator)
-    size:=ctx.theme.font
-    ui.draw_text(ctx,initial,center.x-ui.text_width(&ctx.font,initial,size,ui.FONT_SEMIBOLD)*0.5,center.y-size*0.62,size,ctx.theme.text,ui.FONT_SEMIBOLD)
+    size:=ui.metric(ctx,"font")
+    ui.draw_text(ctx,initial,center.x-ui.text_width(&ctx.font,initial,size,ui.FONT_SEMIBOLD)*0.5,center.y-size*0.62,size,ui.tone(ctx,"text"),ui.FONT_SEMIBOLD)
 }

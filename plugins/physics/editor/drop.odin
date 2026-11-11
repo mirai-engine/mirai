@@ -10,6 +10,7 @@ import "mirai:std/geom"
 import mm "mirai:std/math"
 import phys "plugins:physics/runtime"
 import "mirai:ui"
+import "mirai:editor/kit"
 
 // The Drop tool: the left button held on the scene drops the chosen mesh under the pointer and
 // keeps dropping at its speed; what falls is the Simulate limited to the dropped meshes, a few
@@ -226,23 +227,23 @@ drop_panel :: proc(s:^editor.Session,tool:^Drop_Tool,input:core.Input) {
     if ui.panel(ctx,id,editor.tool_panel(g,id)) {
         ui.id_push(ctx,id)
         defer ui.id_pop(ctx)
-        ui.section(ctx,"Drop")
+        kit.section(ctx,"Drop")
         if drop_open(s,tool) {
-            ui.section(ctx,tool.ticks>=SETTLE_TICKS?"Paused":tool.resting?"Resting":"Falling")
-            editor.command_button(s,"drop_confirm",{label="Confirm",style=.Field,width=-1,center=true})
-            editor.command_button(s,"drop_cancel",{label="Cancel",style=.Field,width=-1,center=true})
+            kit.section(ctx,tool.ticks>=SETTLE_TICKS?"Paused":tool.resting?"Resting":"Falling")
+            editor.command_button(s,"drop_confirm",{label="Confirm",variant="field",width=-1,center=true})
+            editor.command_button(s,"drop_cancel",{label="Cancel",variant="field",width=-1,center=true})
         }
         editor.row_begin(ctx,"Mesh")
         _=editor.geometry_choice(s,ui.id(ctx,"mesh"),&tool.mesh)
         editor.row_end(ctx)
         speed,height,scale:=f64(tool.speed),f64(tool.height),f64(tool.scale)
-        if ui.property(ctx,"Speed") {
+        if kit.property(ctx,"Speed") {
             if ui.number_field(ctx,ui.id(ctx,"speed"),&speed,{min=0.1,max=60,has_min=true,has_max=true,speed=0.1,unit="/s"}).changed {tool.speed=f32(speed)}
         }
-        if ui.property(ctx,"Drop height") {
+        if kit.property(ctx,"Drop height") {
             if ui.number_field(ctx,ui.id(ctx,"height"),&height,{min=0,max=1000,has_min=true,has_max=true,speed=0.05,unit="m"}).changed {tool.height=f32(height)}
         }
-        if ui.property(ctx,"Scale") {
+        if kit.property(ctx,"Scale") {
             if ui.number_field(ctx,ui.id(ctx,"scale"),&scale,{min=0.001,max=1000,has_min=true,has_max=true,speed=0.05}).changed {tool.scale=f32(scale)}
         }
     }

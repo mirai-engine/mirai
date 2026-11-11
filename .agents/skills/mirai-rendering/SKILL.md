@@ -207,6 +207,8 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
   manifest, the catalog and the table fingerprint.
 - Device loss: `rhi/tests/rhi_test.odin` and `host/gpu_failure_test.odin`; in a session,
   `engine.gpu_lose`. Metal, on a Mac: the same ones of `rhi/tests` with `MTL_DEBUG_LAYER=1`.
+  Device choice and a lost window surface: `rhi/vulkan_pick_test.odin` and
+  `host/surface_lost_test.odin`.
 - Device memory: `rhi/arena_test.odin` and `rhi/vulkan_memory_test.odin` (without a device) and
   `rhi/tests/pool_test.odin`.
 - Extensions: scenes of the render plugins. Benchmarks: only when touching a hot path.

@@ -7,14 +7,14 @@ import mm "mirai:std/math"
 // looks down -Z and has +X at its right.
 
 Attenuation_Model :: enum u8 {
-    None,        // the same level at any distance
+    None,        // the same level until it fades out before max_distance
     Inverse,     // min/(min+rolloff*(d-min)): halves at twice the minimum distance with rolloff 1
     Linear,      // 1-rolloff*(d-min)/(max-min): silent at the maximum distance with rolloff 1
     Exponential, // (d/min)^-rolloff
 }
-// The distance is clamped to [min_distance,max_distance] before the model
-// is applied: nearer than the minimum the gain is 1, beyond the maximum it
-// stops falling.
+// Nearer than min_distance the gain is 1; over the last ATTENUATION_FADE of
+// the way to max_distance the gain of the model fades to 0, and beyond it the
+// voice is not heard.
 Attenuation :: struct {
     model:Attenuation_Model,
     min_distance,max_distance:f32,
@@ -28,6 +28,7 @@ Attenuation :: struct {
 }
 // The HRTF is measured 1 m from the head: nearer, it no longer tells where a source is.
 ATTENUATION_DEFAULT :: Attenuation{model=.Inverse,min_distance=1,max_distance=100,rolloff=1,near_radius=1}
+ATTENUATION_FADE :: f32(0.25)
 
 // What the output plays on. Speakers pan each spatial voice between them;
 // headphones hear it through the HRTF of its direction, which tells ahead from
@@ -43,16 +44,17 @@ Listener :: struct {
 attenuation_gain :: proc "contextless" (a:Attenuation,distance:f32) -> f32 {
     low:=max(a.min_distance,1e-4)
     high:=max(a.max_distance,low)
-    d:=clamp(distance,low,high)
+    if !(distance<high) {return 0}
+    if high<=low {return 1}
+    d:=max(distance,low)
+    gain:=f32(1)
     switch a.model {
-    case .None:return 1
-    case .Inverse:return low/(low+a.rolloff*(d-low))
-    case .Linear:
-        if high<=low {return 1}
-        return clamp(1-a.rolloff*(d-low)/(high-low),0,1)
-    case .Exponential:return math.pow(d/low,-a.rolloff)
+    case .None:
+    case .Inverse:gain=low/(low+a.rolloff*(d-low))
+    case .Linear:gain=clamp(1-a.rolloff*(d-low)/(high-low),0,1)
+    case .Exponential:gain=math.pow(d/low,-a.rolloff)
     }
-    return 1
+    return gain*min((high-d)/(ATTENUATION_FADE*(high-low)),1)
 }
 
 // Constant power: the two gains always add up to the same energy, so a sound

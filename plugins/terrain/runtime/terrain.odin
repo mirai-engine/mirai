@@ -500,7 +500,7 @@ data_load_begin :: proc(data:^Terrain_Data,a:^host.Assets,id:base.Asset_Id) -> ^
         data_load_free(load)
         return nil
     }
-    if data.jobs!=nil {jobs.run(data.jobs,jobs.OWNER,source_load_job,load,&load.counter)} else {source_load_job(load,jobs.OWNER)}
+    if data.jobs!=nil {jobs.run(data.jobs,jobs.OWNER,.Background,source_load_job,load,&load.counter)} else {source_load_job(load,jobs.OWNER)}
     return load
 }
 

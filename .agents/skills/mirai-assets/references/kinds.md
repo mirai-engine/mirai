@@ -206,7 +206,8 @@ importer stores: [imports guide](../../mirai-imports/references/imports.md#sound
 
 `asset/sound_set.odin`. A `.sound_set` is `.sound`s that sound as one: each time it sounds one is
 chosen by its weight, with a volume and a pitch from its ranges ([how it is
-played](../../mirai-gameplay/references/libraries.md#audio)). It stores no audio: its sounds are
+played](../../mirai-gameplay/references/libraries.md#audio)). Its `hearing` is how `audio.play`
+hears it; an `Audio_Source` hears it by its own fields. It stores no audio: its sounds are
 references, so they are dependencies and load like any `.sound`.
 
 - `sound_set_problem` says which field is wrong and how to fix it; that each sound is a `.sound` is

@@ -617,7 +617,7 @@ asset_workspace_rect :: proc(g:^Editor_Ui) -> ui.Rect {
     ctx:=g.ctx
     x0:f32
     if r:=g.rects.left;r.w>0 && r.h>0 {x0=r.x+r.w-asset_workspace_under(g)}
-    y0:=ctx.theme.bar_height+toolbar_height(g)
+    y0:=ui.metric(ctx,"bar_height")+toolbar_height(g)
     return {x0,y0,max(ctx.size.x-x0,120),max(ctx.size.y-y0,120)}
 }
 
@@ -658,7 +658,7 @@ asset_workspace_details :: proc(s:^Session) -> (document,details:ui.Panel_Float,
         dock_edge(s,width,r.y,room)
         return document,details,room
     }
-    radius:=ctx.theme.radius_panel
+    radius:=ui.metric(ctx,"radius_panel")
     details={width=ui.fixed(width_of(RIGHT_WIDTH,ctx.size.x)),height=ui.FIT,anchor=.Top_Right,pivot=.Top_Right,offset={-DETAILS_MARGIN,r.y+DETAILS_MARGIN},docked=true,corners={radius,radius,radius,radius}}
     return document,details,max(room-2*DETAILS_MARGIN,120)
 }
@@ -681,19 +681,18 @@ ASSET_HEADING :: f32(33)
 // The row of the heading of a part of a document:
 // the caller fills it, and asset_heading_end draws the line under it.
 asset_heading_box :: proc(ctx:^ui.Context,id:ui.Id=0) -> ui.Box {
-    return {id=id,width=ui.GROW,height=ui.fixed(ASSET_HEADING-1),padding={12,0,12,0},gap=8,align_y=.Center,fill=ctx.theme.card}
+    return {id=id,width=ui.GROW,height=ui.fixed(ASSET_HEADING-1),padding={12,0,12,0},gap=8,align_y=.Center,fill=ui.tone(ctx,"card")}
 }
 asset_heading_end :: proc(ctx:^ui.Context) {
-    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=ctx.theme.border}) {}
+    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=ui.tone(ctx,"border")}) {}
 }
 
 // A heading with its title and, at the right, a note.
 asset_heading :: proc(ctx:^ui.Context,title:string,note:="") {
-    th:=&ctx.theme
     if ui.box(ctx,asset_heading_box(ctx)) {
-        ui.label(ctx,title,th.font,th.text,font=ui.FONT_MEDIUM)
+        ui.label(ctx,title,ui.metric(ctx,"font"),ui.tone(ctx,"text"),font=ui.FONT_MEDIUM)
         ui.spacer(ctx)
-        if note!="" {ui.label(ctx,note,th.font_label,th.text_muted)}
+        if note!="" {ui.label(ctx,note,ui.metric(ctx,"font_label"),ui.tone(ctx,"text_muted"))}
     }
     asset_heading_end(ctx)
 }

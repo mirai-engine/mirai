@@ -54,7 +54,7 @@ inspector_copies_and_pastes_values_as_the_json_of_the_api :: proc(t:^testing.T) 
 
     board:Clipboard_Test_Board
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{no_font=true,clipboard_get=clipboard_test_get,clipboard_set=clipboard_test_set,clipboard_user=&board}))
+    testing.expect(t,test_ui_init(&ctx,{no_font=true,clipboard_get=clipboard_test_get,clipboard_set=clipboard_test_set,clipboard_user=&board}))
     defer ui.context_destroy(&ctx)
     gui:=Editor_Ui{ctx=&ctx}
     edits:history.Edits

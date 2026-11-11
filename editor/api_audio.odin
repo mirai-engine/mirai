@@ -35,7 +35,7 @@ sound_hear_source :: proc(s:^Session,source:eaudio.Audio_Source) -> bool {
     eaudio.buses_apply(s.app.mixer,core.world_storage_of(edited_world(s),eaudio.Audio_Settings),core.world_storage_of(edited_world(s),eaudio.Audio_Volumes))
     heard:=source
     heard.spatial=false
-    s.heard,_=eaudio.voice_start(s.app.mixer,s.app,heard,core.NONE,nil)
+    s.heard=eaudio.voice_start(s.app.mixer,s.app,heard,core.NONE,nil)
     if s.heard=={} {return false}
     s.heard_sound=source
     return true

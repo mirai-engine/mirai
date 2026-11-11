@@ -139,6 +139,10 @@ Net_Session :: struct {
     secret:[2]u64, // client: of the player it presents (Net_Player); kept while the World lives
     arrived:[dynamic]Connection_Event, // since the last tick began: Net_Connections of the next one
     received:[]core.Net_Arrived,       // likewise the messages of the game, by message: core.Net_Messages of the next one
+    parts_next:[dynamic]Journal_Arrived, // client: likewise the parts of the journals: parts of the next one
+    parts:[dynamic]Journal_Arrived,    // client: the parts of the tick, which journal_receive hands to each journal
+    incoming:[dynamic]u8,              // client: the part arriving on the channel of parts, until its last piece
+    incoming_over:bool,                // it is larger than a part can be: dropped when it ends
     scratch:[]u8, // one event or one component
     placed:u32,   // the places it asked of core.Pose_Target: each a new number
     taken:u32,    // client: the last place asked before a tick began, which its simulation took
@@ -341,6 +345,7 @@ session_open :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,port:int) -> 
         mode=s.mode,transport=transport,protocol=&s.protocol,protocol_id=d.protocol_id,version=d.version,
         seed=d.seed,invite=s.invite,max_connections=d.max_clients,tick_rate=int(1/app.tick_dt+0.5),replication=d.replication,allocator=allocator,
         timeout=d.timeout,connect_timeout=d.connect_timeout,hold=s.follows,
+        channels=JOURNAL_CHANNELS,
     }
     host_desc.replication.max_objects=d.max_objects
     host_desc.frame_ops=max(4096,d.max_objects*8)
@@ -531,6 +536,9 @@ session_destroy :: proc(s:^Net_Session) {
     delete(s.arrived);s.arrived=nil
     for pending in s.received {delete(pending.blocks)}
     delete(s.received,allocator);s.received=nil
+    parts_clear(&s.parts);parts_clear(&s.parts_next)
+    delete(s.parts);delete(s.parts_next);delete(s.incoming)
+    s.parts,s.parts_next,s.incoming,s.incoming_over=nil,nil,nil,false
     delete(s.scratch,allocator);s.scratch=nil
     delete(s.address,allocator);s.address=""
     delete(s.invite_code,allocator);s.invite_code=""

@@ -10,7 +10,7 @@ import "mirai:ui"
 @(test)
 geometry_selector_works_without_selection_and_preserves_materials :: proc(t:^testing.T) {
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{}))
+    testing.expect(t,test_ui_init(&ctx,{}))
     defer ui.context_destroy(&ctx)
     g:=Editor_Ui{ctx=&ctx}
     app:host.App

@@ -20,7 +20,6 @@ play_players_overlay :: proc(s:^Session) {
     n:=control.local_count
     if n<2 {return}
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     frame:=platform.input_frame(s.app.platform)
     point:=s.app.ui_input.pointer/(s.app.ui_input.scale>0?s.app.ui_input.scale:f32(1))
     clicked:=s.play_capture_click && .Left in frame.mouse_pressed
@@ -32,9 +31,9 @@ play_players_overlay :: proc(s:^Session) {
         rect:=ui.Rect{tile.x,top,tile.z,tile.y+tile.w-top}
         if clicked && ui.rect_contains(rect,point) {input.focus(requests,index)}
         focused:=index==control.focus
-        if focused && !s.play_input_released {ui.draw_rect_lines(ctx,rect,2,th.accent)}
-        if ui.box(ctx,{width=ui.FIT,height=ui.FIT,padding={7,4,7,4},float={to=.Surface,offset={rect.x+rect.w-38,rect.y+8},layer=ui.LAYER_PANEL},fill=th.panel,radius=th.radius_control}) {
-            ui.label(ctx,fmt.tprintf("P%d",index+1),th.font_small,focused?th.accent:th.text_muted)
+        if focused && !s.play_input_released {ui.draw_rect_lines(ctx,rect,2,ui.tone(ctx,"accent"))}
+        if ui.box(ctx,{width=ui.FIT,height=ui.FIT,padding={7,4,7,4},float={to=.Surface,offset={rect.x+rect.w-38,rect.y+8},layer=ui.LAYER_PANEL},fill=ui.tone(ctx,"panel"),radius=ui.metric(ctx,"radius_control")}) {
+            ui.label(ctx,fmt.tprintf("P%d",index+1),ui.metric(ctx,"font_small"),focused?ui.tone(ctx,"accent"):ui.tone(ctx,"text_muted"))
         }
     }
 }

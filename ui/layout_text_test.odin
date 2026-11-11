@@ -8,7 +8,7 @@ import "core:testing"
 @(test)
 a_text_breaks_to_the_width_the_layout_gives_it_in_the_same_frame :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_FONT))
+    testing.expect(t,test_context_init(&ctx,TEST_FONT))
     defer context_destroy(&ctx)
     CONTENT :: "The quick brown fox jumps over the lazy dog and keeps on running"
     STYLE :: Text_Style{size=14,color={255,255,255,255},wrap=.Words}
@@ -61,7 +61,7 @@ a_text_breaks_to_the_width_the_layout_gives_it_in_the_same_frame :: proc(t:^test
 @(test)
 a_text_keeps_the_lines_that_fit_and_its_own_line_breaks :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_FONT))
+    testing.expect(t,test_context_init(&ctx,TEST_FONT))
     defer context_destroy(&ctx)
     line:=f32(10)*TEXT_LINE
     Case :: struct {content:string,style:Text_Style,width,lines:f32}
@@ -93,7 +93,7 @@ a_text_keeps_the_lines_that_fit_and_its_own_line_breaks :: proc(t:^testing.T) {
 @(test)
 text_built_out_of_order_or_from_numbers_that_are_none_ends_no_frame :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_FONT))
+    testing.expect(t,test_context_init(&ctx,TEST_FONT))
     defer context_destroy(&ctx)
     nan:=math.nan_f32()
     build :: proc(ctx:^Context,user:rawptr) {
@@ -146,7 +146,7 @@ text_built_out_of_order_or_from_numbers_that_are_none_ends_no_frame :: proc(t:^t
 @(test)
 a_row_puts_the_first_lines_of_its_children_on_one_baseline :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_FONT))
+    testing.expect(t,test_context_init(&ctx,TEST_FONT))
     defer context_destroy(&ctx)
     build :: proc(ctx:^Context,user:rawptr) {
         white:=Color{255,255,255,255}
@@ -191,7 +191,7 @@ a_row_puts_the_first_lines_of_its_children_on_one_baseline :: proc(t:^testing.T)
 @(test)
 a_grid_takes_the_heights_of_its_row_tracks_and_children_span_rows :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     build :: proc(ctx:^Context,user:rawptr) {
         // A child of two rows keeps its column in the row under it, and the children after it flow around it.
