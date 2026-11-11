@@ -1646,7 +1646,8 @@ particle_sprites_go_behind_the_fog_of_the_view :: proc(t: ^testing.T) {
 	if !gpu_fixture_init(t, f, 192, 128, settings) {return}
 	defer gpu_fixture_destroy(f)
 	r := &f.renderer
-	gpu.scene_set(r, {{object_id = 1, mesh = f.cube, transform = trs({0, 0, -20}, {40, 40, 0.2}), tint = {0.02, 0.02, 0.02}}}, nil, {}, {sky = {0.02, 0.02, 0.02}})
+	gpu.scene_update(r,0,{{object_id = 1, mesh = f.cube, transform = trs({0, 0, -20}, {40, 40, 0.2}), tint = {0.02, 0.02, 0.02}}},true)
+	gpu.scene_set_environment(r,{},{sky = {0.02, 0.02, 0.02}})
 	camera := gpu.Camera{position = {0, 0, 0}, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	BEHIND :: [3]f32{-0.8, 0, -9}
 	FRONT :: [3]f32{0.8, 0, -3}
