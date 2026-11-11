@@ -352,8 +352,12 @@ no GOAP. What those models gave is written this way, without implementing them o
 
 - `Reservations` counts who holds each key (a target and which of its reservations: 0 is an attack
   token, an offer of a smart object another). `token_take(a, target, limit)` and
-  `claim(a, target, which, limit)` take it for the frame that asks for it, which has only one:
-  another releases the previous one, and its `Exit` releases it.
+  `claim(a, target, which, limit, priority)` take it for the frame that asks for it, which has
+  only one: another releases the previous one, and its `Exit` releases it.
+- Priority: without room, a claim of a higher priority displaces the live holder of the lowest
+  priority below it that is not in use; `claim_use` (`reserve_use`) marks a holder in use, and
+  then nobody displaces it. Equal priorities never displace. The displaced holder is not
+  notified: `reserve_holds` (`claim_held` of its frame) is false for it.
 - The mind renews the lease of what it holds on each tick; whoever stops running loses it `lease`
   ticks later (far agents, until their next decision). `think` reads without taking with
   `reserve_free(t, target, N)` (`reserve_open` from outside a think); `reserve_count` and
@@ -438,7 +442,8 @@ What those models gave, with a mind:
 
 - `mirai test std/ai` runs `mind_test.odin`: the zombie, the boss and a tactical bot of the demo
   tick by tick (chase, bites, attacks that end, reactions in the same tick, combos as steps, tokens
-  and a shared ammo box), that do not oscillate, the trace, the lease of a reservation, that a copy
+  and a shared ammo box), that do not oscillate, the trace, the lease of a reservation, the
+  priority of claims and their use, that a copy
   gives the same future without allocating and hostile states and proposals; and
   `influence_test.odin`: passes within the budget, falloff per meter, cover and hostile inputs.
 - `bench_minds` (`-define:MIRAI_BENCH=true`) measures the tick of 1000 zombies; `bench_navmesh`,

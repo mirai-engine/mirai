@@ -40,6 +40,7 @@ Query_Params :: struct {
     entities:[behavior.PLACE_ENTITIES]editor.Api_Entity_Text `mirai:"text,entity,optional,label=The candidates of the layout Entities"`,
     teams:behavior.Teams `mirai:"optional,label=The teams whose Perceivables are the candidates of the layouts Perceivables and Remembered"`,
     use:behavior.Smart_Use `mirai:"optional,label=The use whose offers of smart objects are the candidates of the layout Offers"`,
+    priority:u8 `mirai:"optional,label=The claim priority the querier takes the offers of the layout Offers at"`,
     from:editor.Api_Entity_Text `mirai:"text,entity,optional,label=Whom the tests measure from; omitted: the querier"`,
     nearer:bool `mirai:"optional,label=Prefer places nearer to the querier"`,
     hidden:bool `mirai:"optional,label=Prefer places 'from' does not see (cover by a ray)"`,
@@ -363,7 +364,7 @@ query :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Query_Params)
     world,e,_,ok:=entity_of(s,call,p.entity[:],core.World_Transform,"place in the world")
     if !ok {return}
-    q:=behavior.Place_Query{querier=e,layout=p.layout,inner=p.inner,outer=max(p.outer,p.inner),rings=p.rings,per_ring=p.per_ring,arc=p.arc,spacing=p.spacing,teams=p.teams,use=p.use,keep=p.keep}
+    q:=behavior.Place_Query{querier=e,layout=p.layout,inner=p.inner,outer=max(p.outer,p.inner),rings=p.rings,per_ring=p.per_ring,arc=p.arc,spacing=p.spacing,teams=p.teams,use=p.use,priority=p.priority,keep=p.keep}
     for &text,i in p.entities {
         if text[0]==0 {continue}
         candidate,named:=editor.api_call_entity(call,world,text[:],fmt.tprintf("entities[%d]",i),s.mode!=.Edit)

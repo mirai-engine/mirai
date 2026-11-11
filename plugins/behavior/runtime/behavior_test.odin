@@ -1,6 +1,7 @@
 package behavior
 
 import "base:runtime"
+import "core:math"
 import "core:math/linalg"
 import "core:testing"
 import "mirai:core"
@@ -1020,6 +1021,13 @@ places_come_from_the_mesh_joined_to_the_center_from_entities_and_from_offers :: 
     offered.layout,offered.outer,offered.use,offered.entity_count=.Offers,8,1,0
     result=run(&f,offered)
     testing.expect(t,result.count==1 && result.entities[0]==crate && result.offers[0]==1 && linalg.distance(result.points[0],mm.Vec3{1,0,3})<1e-3)
+    // Held by another at priority 0: closed to the querier at that priority, open at a higher one.
+    testing.expect(t,ai.reserve_take(&f.claims.reservations,{u64(crate),2},u64(friend),1,0,10))
+    result=run(&f,offered)
+    testing.expect(t,result.status!=.Found,"held by another at the same priority")
+    offered.priority=1
+    result=run(&f,offered)
+    testing.expect(t,result.status==.Found && result.entities[0]==crate,"a higher priority displaces the holder")
     testing.expect_value(t,f.problems.count,0)
 }
 
@@ -1176,7 +1184,7 @@ smart_objects_offer_their_uses_to_whom_may_take_them :: proc(t:^testing.T) {
     m:ai.Mind
     ctx:=ai.Mind_Context{tick=1,holder=u64(a),reservations=&world.claims.reservations}
     act:=ai.Act(Smart_Act){ctx=&ctx,mind=&m,frame=&m.main}
-    testing.expect(t,smart_claim(&act,found))
+    testing.expect(t,smart_claim(&act,found,red))
     other:=Smart_User{entity=core.create(&world.entities),team=1}
     _,ok=smart_offer(&looks,crate,USE_AMMO,other)
     testing.expect(t,!ok,"claimed")
@@ -1236,6 +1244,78 @@ smart_objects_offer_their_uses_to_whom_may_take_them :: proc(t:^testing.T) {
     core.test_world_settle(&world)
     status,_=offer_act(&act,USE_HEAL,healer,10,1)
     testing.expect_value(t,status,ai.Status.Failure)
+}
+
+// A seat turned a quarter: its user comes in by its way, stands at it and
+// faces its way, all turned with the seat. A claim of a higher priority takes
+// the seat from one still walking to it, which fails; never from one that sits.
+@(test)
+offer_act_comes_in_by_its_way_faces_it_and_yields_only_before_using :: proc(t:^testing.T) {
+    world:Behavior_World
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    USE_SIT :: Smart_Use(1)
+    seat,civilian,guard:=core.create(&world.entities),placed(&world,{6,0,0}),core.create(&world.entities)
+    core.add(&world.worlds,seat,core.World_Transform{transform={rotation=mm.quat_axis_angle({0,1,0},math.PI/2),scale=1}})
+    chair:Smart_Object
+    chair.offers[0]={use=USE_SIT,at={0,0,1},yaw=0.25,enter={0,0,2},users=1}
+    core.add(&world.objects,seat,chair)
+    core.add(&world.paths,civilian,nav.Nav_Path{class=-1})
+    test_world_settle(&world)
+    smart_update(core.read(&world.objects),&world.states,&world.uses,{seconds=0})
+    test_world_settle(&world)
+    v:=Mind_World{objects=core.read(&world.objects),states=core.read(&world.states),worlds=core.read(&world.worlds),claims=&world.claims,requests=&world.moves,paths=core.read(&world.paths),time=clock_at(60,1)}
+    near :: proc(a,b:[3]f32) -> bool {return linalg.distance(mm.Vec3(a),mm.Vec3(b))<1e-4}
+    asked :: proc(world:^Behavior_World) -> nav.Nav_Request {return world.moves.queue.items[len(world.moves.queue.items)-1]}
+    sits:=Smart_User{entity=civilian}
+    guards:=Smart_User{entity=guard,priority=1}
+    looks:=ai.Mind_Context{user=&v}
+    found,ok:=smart_offer(&looks,seat,USE_SIT,sits)
+    testing.expectf(t,ok && near(found.at,{1,0,0}) && near(found.enter,{3,0,0}) && abs(found.yaw-(math.PI/2+0.25))<1e-4,"turned with the seat: %v",found)
+    m:ai.Mind
+    memory:[ai.MIND_WORDS]u64
+    ctx:=ai.Mind_Context{user=&v,tick=v.time.tick,dt=v.time.dt,holder=u64(civilian),reservations=&world.claims.reservations,lease=1000}
+    walk:=ai.Act(Smart_Act){ctx=&ctx,mind=&m,frame=&m.main,phase=.Enter,memory=memory[:]}
+    guarding:ai.Mind
+    gctx:=ai.Mind_Context{tick=v.time.tick,holder=u64(guard),reservations=&world.claims.reservations}
+    takes:=ai.Act(Smart_Act){ctx=&gctx,mind=&guarding,frame=&guarding.main}
+    // Walking to the way in, the seat is taken by the guard and the walk fails.
+    status,_:=offer_act(&walk,USE_SIT,sits,10,1)
+    testing.expect(t,status==.Running && asked(&world).kind==.Move_To && near(asked(&world).point,found.enter))
+    core.edit(&world.paths,civilian)^={state=.Moving,goal=found.enter,class=-1}
+    walk.phase=.Update
+    status,_=offer_act(&walk,USE_SIT,sits,10,1)
+    testing.expect_value(t,status,ai.Status.Running)
+    _,ok=smart_offer(&looks,seat,USE_SIT,{entity=guard})
+    testing.expect(t,!ok,"held by one of the same priority")
+    taken,open:=smart_offer(&looks,seat,USE_SIT,guards)
+    testing.expect(t,open && smart_claim(&takes,taken,guards))
+    status,_=offer_act(&walk,USE_SIT,sits,10,1)
+    testing.expect_value(t,status,ai.Status.Failure)
+    ai.reserve_release(&world.claims.reservations,guarding.main.reserved,u64(guard))
+    guarding.main={}
+    m.main={}
+    // Again: to the way in, then to the seat, where it faces the way of the seat and keeps it.
+    walk.phase=.Enter
+    for &word in memory {word=0}
+    status,_=offer_act(&walk,USE_SIT,sits,10,1)
+    testing.expect(t,status==.Running && near(asked(&world).point,found.enter))
+    walk.phase=.Update
+    core.edit(&world.paths,civilian)^={state=.Arrived,goal=found.enter,class=-1}
+    status,_=offer_act(&walk,USE_SIT,sits,10,1)
+    testing.expect(t,status==.Running && asked(&world).kind==.Move_To && near(asked(&world).point,found.at))
+    core.edit(&world.paths,civilian)^={state=.Arrived,goal=found.at,class=-1}
+    status,_=offer_act(&walk,USE_SIT,sits,10,1)
+    s,c:=math.sincos(found.yaw)
+    testing.expect(t,status==.Running && ai.stage(&walk)==1 && asked(&world).kind==.Look_At && near(asked(&world).point,mm.Vec3(found.at)+{-s,0,-c}))
+    _,ok=smart_offer(&looks,seat,USE_SIT,guards)
+    testing.expect(t,!ok && !smart_claim(&takes,taken,guards),"in use")
+    ctx.tick+=60
+    status,_=offer_act(&walk,USE_SIT,sits,10,1)
+    testing.expect_value(t,status,ai.Status.Success)
+    walk.phase,walk.cause=.Exit,.Success
+    offer_act(&walk,USE_SIT,sits,10,1)
+    testing.expect(t,asked(&world).kind==.Look_Along)
 }
 
 // The influence of each team is where its Perceivables are, less farther

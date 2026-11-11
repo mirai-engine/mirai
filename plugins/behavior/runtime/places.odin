@@ -73,6 +73,7 @@ Place_Query :: struct {
     entity_count:u8,
     teams:Teams,          // of the Perceivables of the layouts Perceivables and Remembered
     use:Smart_Use,        // of the layout Offers
+    priority:u8,          // of the layout Offers: the querier's, as its Smart_User claims them
     tests:[PLACE_TESTS]Place_Test,
     test_count:u8,
     keep:u8,              // best places kept, at most PLACE_KEPT
@@ -289,7 +290,7 @@ place_run :: proc(places:^Places,query:Place_Query,result:^Place_Result,worlds:^
             add(&c,o.position,e)
         }
     case .Offers:
-        user:=Smart_User{entity=query.querier}
+        user:=Smart_User{entity=query.querier,priority=query.priority}
         if p,found:=core.get(perceivables,query.querier);found {user.team=p.team}
         if a,found:=core.get(agents,query.querier);found {user.abilities=a.abilities}
         for row in 0..<core.count(smart.objects) {

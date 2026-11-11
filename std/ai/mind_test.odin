@@ -524,6 +524,49 @@ a_reservation_outlives_its_holder_by_its_lease :: proc(t:^testing.T) {
     }
 }
 
+// A taker of a higher priority displaces the lowest holder not in use; never
+// one in use, nor one of its own priority or above; a lease that ran out
+// leaves room for any.
+@(test)
+a_claim_of_a_higher_priority_displaces_one_not_in_use :: proc(t:^testing.T) {
+    key:=Reservation_Key{9,1}
+    Case :: struct {held:[2]u8,used:[2]bool,priority:u8,tick:u64,takes:bool,displaced:u64}
+    cases:=[?]Case{
+        {held={1,1},priority=2,takes=true,displaced=1},
+        {held={2,1},priority=3,takes=true,displaced=2},       // the lowest of them
+        {held={1,1},used={true,false},priority=2,takes=true,displaced=2},
+        {held={1,1},used={true,true},priority=2,takes=false},
+        {held={2,2},priority=2,takes=false},                  // equals keep it
+        {held={3,2},priority=1,takes=false},
+        {held={1,1},used={true,true},priority=0,tick=10,takes=true}, // their leases ran out
+    }
+    for c,i in cases {
+        r:Reservations
+        for h in 0..<2 {
+            testing.expect(t,reserve_take(&r,key,u64(h+1),2,0,5,c.held[h]))
+            if c.used[h] {reserve_use(&r,key,u64(h+1))}
+        }
+        testing.expectf(t,reserve_open(&r,key,7,2,c.tick,c.priority)==c.takes,"case %d: open",i)
+        testing.expectf(t,reserve_take(&r,key,7,2,c.tick,5,c.priority)==c.takes,"case %d: take",i)
+        if c.displaced!=0 {
+            testing.expectf(t,!reserve_holds(&r,key,c.displaced,c.tick) && reserve_holds(&r,key,3-c.displaced,c.tick),"case %d: displaced %d",i,c.displaced)
+            testing.expectf(t,!reserve_open(&r,key,c.displaced,2,c.tick,c.held[c.displaced-1]),"case %d: it cannot take it back",i)
+        }
+        testing.expect_value(t,reserve_count(&r,key,c.tick),2 if c.tick==0 else 1)
+        testing.expect_value(t,r.failed,0)
+    }
+    // A frame displaced claims again only by displacing in turn: its key alone does not hold it.
+    r:Reservations
+    m:Mind
+    ctx:=Mind_Context{tick=1,holder=1,reservations=&r}
+    a:=Act(Bot_Act){ctx=&ctx,mind=&m,frame=&m.main}
+    testing.expect(t,claim(&a,9,1,1,1))
+    testing.expect(t,reserve_take(&r,key,2,1,1,1,2))
+    testing.expect(t,!claim(&a,9,1,1,1) && !reserve_holds(&r,key,1,1))
+    claim_use(&a)
+    testing.expect(t,reserve_take(&r,key,2,1,1,1,2),"the use of one that lost it marks nothing")
+}
+
 // Copying the minds and the world in the middle of an errand, with the crate
 // and a token held, gives the same future, and the ticks after the copy do not
 // allocate.
