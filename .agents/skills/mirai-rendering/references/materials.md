@@ -522,7 +522,6 @@ the pieces of a mesh, numbered in UV1, fly in with a turn as its `progress` goes
 - **No glass in view.** If no blend instance touches the frustum, these passes are not recorded. If
   all are hidden, the layer raster draws nothing and the indirect dispatches have size zero (the
   cull's two-phase occlusion decides).
-- The reflection filter discards its history if the passes did not run in the previous frame.
 - **Limits.** Glass appears in sharp reflections only as a color filter; behind the layers it does
   not refract; TAA reprojects it with the motion of what is behind it; no caustics or dispersion.
   From inside: a single solid per view (no relative IOR for a glass inside water), what lies

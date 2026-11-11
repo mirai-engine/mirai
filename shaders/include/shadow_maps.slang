@@ -221,7 +221,8 @@ float light_shadow_seen(uint light, float3 position, float3 n, float radius) {
     float step = shadow_map_texel(m, shadow_map_local(m, position).z);
     float3 local = shadow_map_local(m, position + n * (1.5 * step));
     float2 unit = shadow_map_unit(m, local);
-    if (any(abs(unit) >= 1.0) || local.z <= m.near) return -1.0;
+    // Past its far plane a map holds nothing: an empty texel would read as a blocker there.
+    if (any(abs(unit) >= 1.0) || local.z <= m.near || local.z >= m.far) return -1.0;
     float2 texel = float2(unit.x * 0.5 + 0.5, 0.5 - unit.y * 0.5) * float(m.rect.z);
     float bias = step * (1.0 + lean) + 0.001 * local.z;
     return shadow_hard_seen(view_shadow_atlas, m, texel, local.z, bias, max(m.near, min(3.0 * radius, radius + 0.3)));

@@ -59,10 +59,10 @@ float3 media_local_light(float3 position, float3 eye_ray, float g, float pick, i
     float3 through = float3(1.0);
     if (root == 0u) {
 #ifdef SHADOW_DATA_SLOT
-        // From its maps; where none holds the point the light has no shadow there.
+        // From its maps; where none holds the point, a ray.
         Shadow_Map m;
         float seen = light_shadow_seen(index, position, float3(0.0), light_extent(light));
-        if (seen >= 0.0) through = float3(seen);
+        through = seen >= 0.0 ? float3(seen) : trace_transmission(position, direction, reach);
 #ifdef SHADOW_TINT_SLOT
         if (seen > 0.0 && light_map_of(index, position, m)) through *= shadow_tint(m, position);
 #endif
@@ -92,14 +92,14 @@ float3 media_ambient(float3 position, float3 to_eye_ray) {
 // sun_kept, what the medium itself lets through, and the phase towards the
 // eye; none without a sun. A pass with the maps of the view (SUN_SHADOW_SLOT)
 // takes from them what stops the sun and, from their tint (SHADOW_TINT_SLOT),
-// what the glass on its way lets through; past its cascades the sun has no
-// shadow there. changed: as for media_local_light.
+// what the glass on its way lets through, and a ray where no cascade holds
+// the point. changed: as for media_local_light.
 float3 media_sun(float3 position, float3 eye_ray, float g, float3 sun_kept, inout bool changed) {
     if (frame.sun_direction.w < 0.5) return float3(0.0);
     float reach = sun_reach(position, frame.sun_direction.xyz);
 #ifdef SUN_SHADOW_SLOT
     float known = sun_shadow_seen(position, float3(0.0));
-    float3 through = float3(known < 0.0 ? 1.0 : known);
+    float3 through = known < 0.0 ? trace_transmission(position, frame.sun_direction.xyz, reach) : float3(known);
 #ifdef SHADOW_TINT_SLOT
     Shadow_Map m;
     if (known > 0.0 && sun_map_of(position, m)) through *= shadow_tint(m, position);
