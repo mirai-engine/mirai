@@ -237,7 +237,7 @@ physics_step :: proc(
             unordered_remove(&state.held,at)
             continue
         }
-        if (l.kind==.Body || l.kind==.Proxy) && held_kinematic(h) && sim.body_valid(w,l.body) {
+        if (l.kind==.Body || l.kind==.Proxy) && (.Target in h.by || .Manipulation in h.by && h.follow) && sim.body_valid(w,l.body) {
             pose:=hold_pose(h)
             sim.body_set_kinematic_target(w,l.body,pose.p,pose.q,s.dt)
         }
@@ -1360,9 +1360,9 @@ held_take :: proc(state:^Physics_State,e:core.Entity) -> ^Held {
     return &state.held[len(state.held)-1]
 }
 
-// Whether what holds the body makes it kinematic: a following pose target or manipulation.
+// Whether what holds the body makes it kinematic: a following pose target or manipulation, or a section.
 @(private)
-held_kinematic :: proc "contextless" (h:Held) -> bool {return .Target in h.by || .Manipulation in h.by && h.follow}
+held_kinematic :: proc "contextless" (h:Held) -> bool {return .Target in h.by || .Section in h.by || .Manipulation in h.by && h.follow}
 
 // A source lets go.
 @(private)
@@ -1380,7 +1380,11 @@ hold_end :: proc(state:^Physics_State,h:^Held,l:^Link,source:Hold_Source,rigids:
 @(private)
 hold_type :: proc(state:^Physics_State,h:^Held,l:^Link,was:bool,rigids:^core.Table(Rigid_Body,.Read)) -> bool {
     w:=&state.world
-    if l.kind==.Character || !sim.body_valid(w,l.body) {return true}
+    if l.kind==.Character {
+        sim.character_set_held(w,l.character,.Section in h.by)
+        return true
+    }
+    if !sim.body_valid(w,l.body) {return true}
     now:=held_kinematic(h^)
     if now && !was {
         h.type_before=sim.body_type(w,l.body)

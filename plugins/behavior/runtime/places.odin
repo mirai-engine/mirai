@@ -126,7 +126,7 @@ places_free :: proc(p:^Places) {
 places_run :: proc(
     requests:^Place_Requests,places:^Places,results:^core.Table(Place_Result),settings:core.Ref(Behavior_Settings),
     worlds:^core.Table(core.World_Transform,.Read),perceivers:^core.Table(Perceiver,.Read),perceivables:^core.Table(Perceivable,.Read),paths:^core.Table(nav.Nav_Path,.Read),
-    agents:^core.Table(nav.Nav_Agent,.Read),walks:^core.Table(locomotion.Walk,.Read),swims:^core.Table(locomotion.Swim,.Read),
+    agents:^core.Table(nav.Nav_Agent,.Read),characters:^core.Table(phys.Character,.Read),walks:^core.Table(locomotion.Walk,.Read),swims:^core.Table(locomotion.Swim,.Read),
     navigation:core.Ref(nav.Navigation),physics:core.Ref(phys.Physics_State),
     smart:Smart_View,influence:core.Ref(Influence),problems:^core.Problems,
 ) {
@@ -149,7 +149,7 @@ places_run :: proc(
         if row!=nil && row.request!=query.request {continue}
         budget-=1
         result:Place_Result
-        filter:=place_filter(navigation,query.querier,paths,agents,walks,swims,physics)
+        filter:=place_filter(navigation,query.querier,paths,agents,characters,walks,swims,physics)
         if !place_run(places,query,&result,worlds,perceivers,perceivables,paths,navigation,physics,&filter,smart,agents,influence.ptr) {
             core.report(problems,query.querier,"behavior.memory","no memory for the path search of a place query: its Path tests find no path to any place; free memory")
         }
@@ -166,14 +166,14 @@ places_run :: proc(
 }
 
 // What the querier walks and crosses, for the Path measure: as navigation moves it.
-place_filter :: proc(navigation:core.Ref(nav.Navigation),querier:core.Entity,paths:^core.Table(nav.Nav_Path,$A),agents:^core.Table(nav.Nav_Agent,$B),walks:^core.Table(locomotion.Walk,$C),swims:^core.Table(locomotion.Swim,$D),physics:core.Ref(phys.Physics_State)) -> ai.Nav_Filter {
+place_filter :: proc(navigation:core.Ref(nav.Navigation),querier:core.Entity,paths:^core.Table(nav.Nav_Path,$A),agents:^core.Table(nav.Nav_Agent,$B),characters:^core.Table(phys.Character,$E),walks:^core.Table(locomotion.Walk,$C),swims:^core.Table(locomotion.Swim,$D),physics:core.Ref(phys.Physics_State)) -> ai.Nav_Filter {
     if navigation.ptr==nil || !navigation.ready || navigation.count==0 {return {}}
     class:=0
     if p,found:=core.get(paths,querier);found && p.class>=0 && int(p.class)<navigation.count {class=int(p.class)}
     agent,_:=core.get(agents,querier)
     walk,_:=core.get(walks,querier)
-    gravity:=linalg.length(phys.gravity_of_entity(physics,querier))
-    return nav.agent_filter(navigation.ptr,class,agent,{walk.jump_height,walk.max_speed},core.has(swims,querier),gravity)
+    character,_:=core.get(characters,querier)
+    return nav.agent_filter(navigation.ptr,class,agent,walk,core.has(swims,querier),nav.agent_gravity(physics,querier,character))
 }
 
 // Runs one query into a result.

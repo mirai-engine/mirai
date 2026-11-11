@@ -66,7 +66,8 @@ A cinematic is a clip (plugin `cinematics`, which needs `animation`) of an entit
 the clip on a camera is a shot: from its time on the seat (`Cinematic.seat`, none: the focused
 player) sees through it, blended in over the marker's duration as `cam.camera_override` blends,
 with the actions of `Cinematic.block_mask` blocked. A marker on another actor plays the action of
-its name there (`anim.play`) until a span ends, or the clip for a moment.
+its name there until a span ends, or the clip for a moment, driven by the clip (`anim.play_at`):
+paused, sought or scrubbed in the editor, the actor shows the pose of that time.
 
 "The camera moves from A to B, then cuts to C while the character waves" is a timeline entity
 (`Animation` + `Cinematic`), the cameras `Cam` and `C` and the character `Hero` as actors, and one

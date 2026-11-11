@@ -231,6 +231,29 @@ the_commands_read_write_and_check_the_document_of_an_asset :: proc(t:^testing.T)
     testing.expect_value(t,asset.registry_refresh(&p.registry,{"menu/theme.ui"}),asset.Error.None)
     broken:=on(&p,.Ui,"check","hud/hud.ui")
     testing.expectf(t,broken.code==1 && strings.contains(broken.out,"does not load") && strings.contains(broken.err,"problems"),"%d %s%s",broken.code,broken.out,broken.err)
+    // A check of every scene, the recipes of the engine among them, keeps what it said of each
+    // by its key: a scene whose key did not move is said again from there, and one that
+    // changed is checked again.
+    build_folder:=project.path(root,".mirai","build",allocator=context.temp_allocator)
+    testing.expect(t,os.make_directory_all(build_folder)==nil)
+    keys:=project.path(build_folder,SCENE_KEYS_FILE,allocator=context.temp_allocator)
+    on(&p,.Scene,"check")
+    types:=scene_types_key(&p)
+    said:=make([dynamic]Scene_Checked,context.temp_allocator)
+    recipes:=0
+    for shown,entry in scene_keys_read(keys,types,context.temp_allocator) {
+        changed:=entry
+        if shown=="arena/main.scene" {changed.text="arena/main.scene: kept\n"}
+        if strings.has_suffix(shown,"/recipes/cube.scene") {recipes+=1}
+        append(&said,changed)
+    }
+    testing.expect(t,types!=0 && recipes==1 && len(said)>1,"every scene and recipe has its key")
+    scene_keys_write(keys,types,said[:])
+    testing.expect(t,strings.contains(on(&p,.Scene,"check").out,"arena/main.scene: kept"),"a scene whose key did not move is not checked again")
+    more:=project.path(root,"more.json",allocator=context.temp_allocator)
+    testing.expect(t,os.write_entire_file(more,`{"merge":true,"entities":[{"name":"Probe"}]}`)==nil)
+    testing.expect_value(t,on(&p,.Scene,"write","arena/main.scene",more).code,0)
+    testing.expect(t,!strings.contains(on(&p,.Scene,"check").out,"kept"),"a scene that changed is checked again")
 }
 
 @(private="file")
