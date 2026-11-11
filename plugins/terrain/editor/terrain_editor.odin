@@ -20,11 +20,6 @@ RING_SEGMENTS :: 64
 SCROLL_GUTTER :: ui.SCROLL_BAR+4 // the bar of the scroll area floats over the right edge of its content
 PREVIEW_OWNER :: u64(0x7465727261696e)
 
-// A .terrain in the browser and in the field of a Terrain.
-@(storage)
-Terrain_Kinds :: struct {provider:editor.Asset_Kind_Provider}
-TERRAIN_KINDS_DEFAULT :: Terrain_Kinds{provider={kinds={0={kind=terrain.KIND,label="Terrain",color={168,124,72,255},icon=ui.Icon(u8(ui.Icon.User)+u8(editor.User_Icon.Terrain)),extension=terrain.EXTENSION,scene_data=true}},count=1}}
-
 @(storage,free="terrain_tool_free")
 Terrain_Tool :: struct {
     active,begin,over,ready:bool,
