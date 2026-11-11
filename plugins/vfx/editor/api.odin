@@ -130,10 +130,10 @@ particle_program_of :: proc(s:^editor.Session,info:^effect.Particle_Info) -> (pr
     return
 }
 
-// Puts the parameters of the params ({name: value|null}) over list, as the
-// program of the effect declares them.
+// Puts the parameters of the params ({name: value|null}) over those of
+// file, as the program of info declares them.
 @(private)
-particle_parameters_read :: proc(s:^editor.Session,call:^api.Call,text:string,info:^effect.Particle_Info,list:^[dynamic]effect.Particle_Parameter) -> bool {
+particle_parameters_read :: proc(s:^editor.Session,call:^api.Call,text:string,info:^effect.Particle_Info,file:^Particle_File) -> bool {
     if text=="" {return true}
     program,problem:=particle_program_of(s,info)
     r:serial.Text_Reader
@@ -151,9 +151,7 @@ particle_parameters_read :: proc(s:^editor.Session,call:^api.Call,text:string,in
         name=strings.clone(name,context.temp_allocator)
         serial.text_space(&r)
         if serial.text_keyword(&r,"null") {
-            for &stored,at in list {
-                if base.text_get(stored.name[:])==name {ordered_remove(list,at);break}
-            }
+            effect_parameter_remove(file,name)
         } else {
             if program==nil {return fail(call,"parameters: %s",problem!="" ? problem : "the effect has no Vfx program: name one in program first")}
             declared:=erender.program_parameter(program,name)
@@ -183,7 +181,7 @@ particle_parameters_read :: proc(s:^editor.Session,call:^api.Call,text:string,in
                 parameter.value[0]=value
             }
             if problem:=effect.particle_parameter_validate(&parameter);problem.message!="" {return fail(call,"parameters: %s",problem.message)}
-            if stored:=effect.particle_parameter_find(list[:],name);stored!=nil {stored^=parameter} else {append(list,parameter)}
+            if !effect_parameter_store(file,parameter) {return fail(call,"parameters: give at most %d",len(file.parameters))}
         }
         if serial.text_accept(&r,',') {continue}
         if !serial.text_expect(&r,'}') {return fail(call,"parameters: malformed JSON")}
@@ -242,7 +240,7 @@ api_particle_write :: proc(s:^editor.Session,call:^api.Call,id:base.Asset_Id) {
     }
     out:=call.out
     editor.asset_named_write(s,out,"particle",id)
-    editor.asset_values_write(out,"values",view.info)
+    editor.asset_values_write(out,"values",&view.info)
     particle_parameters_write(out,"parameters",view.parameters)
     api.write_key(out,"hidden")
     serial.write_u8(out,'[')
@@ -252,7 +250,7 @@ api_particle_write :: proc(s:^editor.Session,call:^api.Call,id:base.Asset_Id) {
     }
     serial.write_u8(out,']')
     program:vfx.Program
-    api.write_text(out,"problem",vfx.particle_program(a,id,view.info,nil,&program))
+    api.write_text(out,"problem",vfx.particle_program(a,id,&view.info,nil,&program))
     serial.write_u8(out,'}')
 }
 
@@ -269,19 +267,23 @@ api_particle_inspect :: proc(s:^editor.Session,call:^api.Call) {
 @(private)
 particle_params_apply :: proc(s:^editor.Session,call:^api.Call,p:^Particle_Params,file:^Particle_File) -> bool {
     if !editor.asset_values_read(call,p.values,&file.info) {return false}
-    if !particle_parameters_read(s,call,p.parameters,&file.info,&file.parameters) {return false}
+    if !particle_parameters_read(s,call,p.parameters,&file.info,file) {return false}
     if p.has_hidden {
-        clear(&file.hidden)
-        append(&file.hidden,..p.hidden[:])
+        if len(p.hidden)>len(file.hidden) {
+            api.call_failf(call,api.INVALID_PARAMS,"hidden: give at most %d fields",len(file.hidden))
+            return false
+        }
+        file.hidden={}
+        file.hidden_count=copy(file.hidden[:],p.hidden[:])
     }
-    if problem:=effect.particle_validate({info=&file.info,parameters=file.parameters[:],hidden=file.hidden[:]});problem.message!="" {
+    if problem:=effect.particle_validate(particle_desc(file));problem.message!="" {
         api.call_failf(call,api.INVALID_PARAMS,"%s: %s",problem.field,problem.message)
         return false
     }
     // Values a program the shaders have does not take are refused; a program they do not have yet is named all the same.
     if program,_:=particle_program_of(s,&file.info);program!=nil {
         checked:vfx.Program
-        if problem:=vfx.particle_program_check(s.app.assets,&file.info,file.parameters[:],nil,&checked);problem!="" {
+        if problem:=vfx.particle_program_check(s.app.assets,&file.info,file.parameters[:file.parameter_count],nil,&checked);problem!="" {
             api.call_failf(call,api.INVALID_PARAMS,"parameters: %s",problem)
             return false
         }
@@ -424,8 +426,9 @@ particle_instance_write :: proc(s:^editor.Session,call:^api.Call,w:core.World_Re
     override,_:=editor.entity_get(w,e,vfx.Particle_Override)
     info:effect.Particle_Info
     error:=vfx.particle_resolve_checked(a,emitter.particle,&override,&info)
-    given:=make([dynamic]effect.Particle_Parameter,context.temp_allocator)
-    instance_parameters(s,&info,&override,&given)
+    given:Particle_File
+    given.info=info
+    instance_parameters(s,&override,&given)
     out:=call.out
     serial.write_u8(out,'{')
     api.write_key(out,"id",first=true)
@@ -437,7 +440,7 @@ particle_instance_write :: proc(s:^editor.Session,call:^api.Call,w:core.World_Re
     serial.write_u8(out,'"')
     editor.asset_values_write(out,"values",&info)
     particle_overrides_write(out,&override)
-    particle_parameters_write(out,"parameters",given[:])
+    particle_parameters_write(out,"parameters",given.parameters[:given.parameter_count])
     problem:=vfx.error_message(error)
     if problem=="" {
         program:vfx.Program
@@ -543,7 +546,7 @@ api_particle_instance_set :: proc(s:^editor.Session,call:^api.Call) {
     // The values it shows, with those given over them; what differs from the effect is its own.
     shown:=vfx.particle_resolve(s.app.assets,emitter.particle,&override)
     if !editor.asset_values_read(call,values,&shown) {return}
-    if problem:=effect.particle_validate({info=&shown});problem.message!="" {
+    if problem:=effect.particle_validate({info=shown});problem.message!="" {
         api.call_failf(call,api.INVALID_PARAMS,"values: %s: %s",problem.field,problem.message)
         return
     }
@@ -564,10 +567,11 @@ api_particle_instance_set :: proc(s:^editor.Session,call:^api.Call) {
             return
         }
     }
-    list:=make([dynamic]effect.Particle_Parameter,context.temp_allocator)
-    instance_parameters(s,&file.info,&override,&list)
-    if !particle_parameters_read(s,call,parameters,&file.info,&list) {return}
-    for &parameter in list {
+    given:Particle_File
+    given.info=file.info
+    instance_parameters(s,&override,&given)
+    if !particle_parameters_read(s,call,parameters,&file.info,&given) {return}
+    for &parameter in given.parameters[:given.parameter_count] {
         value:=vfx.parameter_value(&parameter)
         if error:=vfx.value_put(&next,vfx.parameter_hash(base.text_get(parameter.name[:])),value[:]);error!=.None {
             api.call_failf(call,api.INVALID_PARAMS,"parameters: %s",vfx.error_message(error))
@@ -575,7 +579,7 @@ api_particle_instance_set :: proc(s:^editor.Session,call:^api.Call) {
         }
     }
     checked:vfx.Program
-    if problem:=vfx.particle_program_check(s.app.assets,&file.info,file.parameters[:],&next,&checked);problem!="" {
+    if problem:=vfx.particle_program_check(s.app.assets,&file.info,file.parameters[:file.parameter_count],&next,&checked);problem!="" {
         api.call_failf(call,api.INVALID_PARAMS,"parameters: %s",problem)
         return
     }
@@ -606,16 +610,14 @@ instance_clear :: proc(w:core.World_Ref,e:core.Entity) {
     if table:=core.world_table_of(w,vfx.Particle_Override);table!=nil && core.has(table,e) {core.remove(table,e)}
 }
 
-// Puts the parameters an instance gives the program of info over list, as
-// the program declares them; what the program does not declare is left out.
+// Puts the parameters an instance gives the program of the file over its
+// own, as the program declares them; what it does not declare is left out.
 @(private)
-instance_parameters :: proc(s:^editor.Session,info:^effect.Particle_Info,override:^vfx.Particle_Override,list:^[dynamic]effect.Particle_Parameter) {
-    program,_:=particle_program_of(s,info)
+instance_parameters :: proc(s:^editor.Session,override:^vfx.Particle_Override,file:^Particle_File) {
+    program,_:=particle_program_of(s,&file.info)
     if program==nil {return}
     for name,at in override.names[:min(override.count,vfx.PARTICLE_OVERRIDE_CAPACITY)] {
-        parameter,declared:=vfx.value_parameter(program,name,override.values[at])
-        if !declared {continue}
-        if stored:=effect.particle_parameter_find(list[:],base.text_get(parameter.name[:]));stored!=nil {stored^=parameter} else {append(list,parameter)}
+        if parameter,declared:=vfx.value_parameter(program,name,override.values[at]);declared {effect_parameter_store(file,parameter)}
     }
 }
 
@@ -633,7 +635,7 @@ api_particle_instance_apply :: proc(s:^editor.Session,call:^api.Call) {
     override,_:=editor.entity_get(w,e,vfx.Particle_Override)
     file:=particle_file(s,emitter.particle)
     file.info=vfx.particle_resolve(s.app.assets,emitter.particle,&override)
-    instance_parameters(s,&file.info,&override,&file.parameters)
+    instance_parameters(s,&override,&file)
     a:=s.app.assets
     record,_:=asset.registry_find(&a.registry,emitter.particle)
     // The file and the entity in one step.

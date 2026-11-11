@@ -171,7 +171,7 @@ effect_reach :: proc(a:^host.Assets,info:^effect.Particle_Info) -> (low,high:[3]
 // those of an instance: what the emitter of its preview shows over the file
 // until they are written. The assets and the program are written at once.
 @(private)
-preview_values :: proc(held,file:^Effect_Values) -> (override:vfx.Particle_Override) {
+preview_values :: proc(held,file:^Particle_File) -> (override:vfx.Particle_Override) {
     Gather :: struct {held,file:^effect.Particle_Info,override:^vfx.Particle_Override}
     gather:=Gather{&held.info,&file.info,&override}
     visit :: proc(value:effect.Particle_Value,user:rawptr) -> bool {
@@ -213,7 +213,7 @@ effect_subject :: proc(s:^editor.Session,file:^asset.Registry_File,clip:u32,subj
         if clip>0 || s.app.assets==nil {return false}
         view,ok:=vfx.effect_view(s.app.assets,file.id)
         if !ok {return false}
-        shown.id,shown.info=file.id,view.info^
+        shown.id,shown.info=file.id,view.info
     }
     subject.provider=effect.PARTICLE_KIND
     mem.copy(&subject.data,&shown,size_of(shown))
