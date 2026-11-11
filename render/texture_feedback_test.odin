@@ -115,7 +115,7 @@ texture_feedback_keeps_every_level_the_image_reads :: proc(t: ^testing.T) {
 	materials_set(r, {material})
 	quad := feedback_quad(r)
 	floor := scaled(4)
-	scene_set(r, {{object_id = 1, mesh = quad, transform = floor, material = 1, tint = {1, 1, 1}}}, nil, {}, {})
+	testing.expect(t, scene_update(r, 0, {{object_id = 1, mesh = quad, transform = floor, material = 1, tint = {1, 1, 1}}}, true))
 	// Far first: a view after another starts from the levels the one before asked for.
 	cases := []struct {name: string, camera: Camera}{
 		{"far", {position = {0, 30, 0}, forward = {0, -1, 0}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}},
@@ -176,11 +176,12 @@ texture_feedback_takes_what_reflections_see_and_nothing_unseen :: proc(t: ^testi
 	facing[1, 1], facing[1, 3], facing[2, 3] = -1, 0.5, -0.5
 	behind := Mat4(1)
 	behind[1, 3], behind[2, 3] = 2, 6
-	scene_set(r, {
+	testing.expect(t, scene_update(r, 0, {
 		{object_id = 1, mesh = quad, transform = scaled(20), material = 1, tint = {1, 1, 1}},
 		{object_id = 2, mesh = quad, transform = facing, material = 2, tint = {1, 1, 1}},
 		{object_id = 3, mesh = quad, transform = behind, material = 3, tint = {1, 1, 1}},
-	}, nil, {}, {sky = {0, 0, 0.2}})
+	}, true))
+	scene_set_environment(r, {}, {sky = {0, 0, 0.2}})
 	camera := Camera{position = {0, 1, 1}, forward = {0, -1, -1}, up = {0, 1, 0}, fov_y = 30, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	feedback_settle(t, r, camera, {reflected_whole, unseen_whole})
 	streams := r.textures.residency.streams[:]
@@ -214,7 +215,7 @@ texture_feedback_takes_hostile_sizes :: proc(t: ^testing.T) {
 		instances[i] = {object_id = u64(i + 1), mesh = quad, transform = at, material = Material_Handle(i + 1), tint = {1, 1, 1}}
 	}
 	materials_set(r, materials[:])
-	scene_set(r, instances[:], nil, {}, {})
+	testing.expect(t, scene_update(r, 0, instances[:], true))
 	camera := Camera{position = {0, 3, 0}, forward = {0, -1, 0}, up = {0, 0, -1}, fov_y = 90, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	feedback_settle(t, r, camera, wholes[:])
 	for &stream in r.textures.residency.streams[:len(sizes)] {

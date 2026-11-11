@@ -366,7 +366,6 @@ verify_asset :: proc(a:^asset.Asset,path:string,types:^asset.Types) -> string {
     if known,found:=asset.kind_info(a.blob.header.kind);found && known.version!=0 && a.blob.header.kind_version!=known.version {
         return asset.version_message(a,types,path,allocator=context.temp_allocator)
     }
-    if strings.has_suffix(path,".prefab") {return "a prefab is a .scene with exactly one root, and this build reads no other: import its source again, or make it again"}
     switch a.blob.header.kind {
     case asset.KIND_MESH:
         view,error:=asset.mesh_view(a,types)
@@ -378,8 +377,11 @@ verify_asset :: proc(a:^asset.Asset,path:string,types:^asset.Types) -> string {
         if _,error:=asset.material_view(a,types);error!=.None {return "material: a value out of range or an invalid name"}
     case asset.KIND_SCENE:
         view,error:=asset.scene_view(a,types)
-        if error!=.None {return "scene: a component table names rows that do not exist or are out of order, or the header does not say whether it has one root"}
+        if error!=.None {return "scene: a component table names rows that do not exist or are out of order"}
         if asset.scene_view_check(view)!=.None {return "scene: repeated ids, missing or cyclic parents, or prefab records without an entity"}
+        roots:=0
+        for parent in view.parents {roots+=int(parent==0)}
+        if asset.asset_prefab(a) && roots!=1 {return fmt.tprintf("scene: a prefab with %d roots: put its entities under one in the editor, or make it a scene there",roots)}
     case asset.KIND_ANIMATION:
         if _,error:=asset.animation_view(a,types);error!=.None {return "animation: an invalid range, key or name"}
     case asset.KIND_SKELETON:

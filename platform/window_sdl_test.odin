@@ -354,7 +354,7 @@ clock_advances :: proc(mixer:^audio.Mixer,frames:u64) -> bool {
 // SDL's dummy audio driver plays to nowhere at the pace of a real device.
 @(private="file")
 sdl_audio_device_pulls_from_the_mixer :: proc(t:^testing.T) {
-    mixer,mixer_error:=audio.mixer_create({sample_rate=48000,channels=2})
+    mixer,mixer_error:=audio.mixer_create({channels=2})
     testing.expect_value(t,mixer_error,audio.Error.None)
     if mixer==nil {return}
     defer audio.mixer_destroy(mixer)
@@ -415,4 +415,17 @@ sdl_audio_device_pulls_from_the_mixer :: proc(t:^testing.T) {
     audio_device_close(p)
     testing.expect_value(t,audio_device_open(p,mixer,{driver="dummy",device="no such output"}),Audio_Error.None)
     testing.expect(t,clock_advances(mixer,2400))
+    // An output of 44.1 kHz plays the mixer on headphones as on any other: the stream converts it.
+    // The output runs at the rate of what opened it first.
+    audio_device_close(p)
+    testing.expect(t,sdl.SetHint(sdl.HINT_AUDIO_DRIVER,"dummy") && sdl.InitSubSystem({.AUDIO}))
+    other:=sdl.AudioSpec{format=.F32,channels=2,freq=44100}
+    first:=sdl.OpenAudioDevice(sdl.AUDIO_DEVICE_DEFAULT_PLAYBACK,&other)
+    defer {sdl.CloseAudioDevice(first);sdl.QuitSubSystem({.AUDIO})}
+    testing.expect(t,audio.mixer_set_output(mixer,.Headphones) && audio.mixer_output(mixer)==.Headphones)
+    testing.expect_value(t,audio_device_open(p,mixer,{driver="dummy"}),Audio_Error.None)
+    played,device:sdl.AudioSpec
+    testing.expect(t,sdl.GetAudioStreamFormat(p.audio.stream,&played,nil) && sdl.GetAudioDeviceFormat(sdl.GetAudioStreamDevice(p.audio.stream),&device,nil))
+    testing.expectf(t,played.freq==audio.MIXER_RATE && device.freq==44100,"the mixer at %d Hz into a device of %d Hz",played.freq,device.freq)
+    testing.expect(t,clock_advances(mixer,2400) && audio.mixer_output(mixer)==.Headphones)
 }

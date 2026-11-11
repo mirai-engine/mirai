@@ -135,7 +135,7 @@ world_panels_use_analytic_shapes_and_share_their_upload_with_screen_ui :: proc(t
     f:Overlay_Fixture
     if !overlay_fixture(t,&f,128,96) {return}
     defer overlay_fixture_destroy(t,&f)
-    scene_set(f.renderer,nil,nil,{},{background={0,0,0},use_background=true})
+    scene_given(f.renderer,nil,nil,{},{background={0,0,0},use_background=true})
     shapes:=[]Ui_Shape{{bounds={0,0,100,100},fill={1,0,1,1},params={0,1,0,0}}}
     vertices:=shape_quad(-1,-1,102,102,0)
     panels:=[]World_Panel{panel(vertices[:],{0,0,0}),panel(vertices[:],{1.5,0,0})}

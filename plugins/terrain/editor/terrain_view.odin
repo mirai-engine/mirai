@@ -63,7 +63,7 @@ terrain_view_modes :: proc(s:^editor.Session,view:^Terrain_View,renderer:^erende
     view.overlay=.None
     current:=editor.view_mode_current(s.viewport)
     shown:=false
-    if s.mode!=.Play && !editor.document_is_prefab(s) {
+    if s.mode!=.Play {
         for desc,mode in TERRAIN_VIEW_MODES {
             if strings.equal_fold(current,desc.name) {view.mode,shown=mode,true}
         }

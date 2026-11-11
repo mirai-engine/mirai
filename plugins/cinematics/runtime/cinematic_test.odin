@@ -3,13 +3,12 @@ package cinematics
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
-import camera "mirai:engine/camera"
+import cam "mirai:engine/camera"
 import input "mirai:engine/input"
 import render "mirai:engine/render"
 import "mirai:host"
 import lib "mirai:std/anim"
 import "mirai:std/base"
-import mm "mirai:std/math"
 import anim "plugins:animation/runtime"
 
 @(private="file")
@@ -26,9 +25,8 @@ Cinematic_World :: struct {
     attachments:core.Table(anim.Bone_Attachment),
     sources:core.Table(anim.Pose_Source),
     cinematics:core.Table(Cinematic),
-    shots:core.Table(Cinematic_Shot),
-    viewers:core.Table(Cinematic_Viewer),
-    views:core.Table(Cinematic_View),
+    activations:core.Table(cam.Camera_Activation),
+    follows:core.Table(cam.Camera_Follow),
     seats:core.Table(input.Seat),
     remotes:core.Table(core.Remote),
     hierarchy:core.Hierarchy,
@@ -42,48 +40,36 @@ Cinematic_World :: struct {
     grounding:anim.Grounding_Runtime,
     actions:anim.Action_Runtime,
     motion_requests:anim.Motion_Requests,
-    shown:camera.Cameras,
+    shown:cam.Cameras,
     seat_state:input.Seats,
-    camera_requests:camera.Camera_Requests,
+    camera_requests:cam.Camera_Requests,
     seat_requests:input.Seat_Requests,
 }
 
 @(private="file")
 cinematic_types :: proc(types:^[dynamic]core.Test_Type) {
-    camera.test_types(types)
+    cam.test_types(types)
     anim.test_types(types)
 }
 
+// The clip "intro" and what it moves: it dollies the camera "wide" from 0 to 8 on x in a second and
+// narrows the lens of "close"; its markers cut to wide at 0, wave the actor "hero" from .25 to .5,
+// blend into close from .5 over half a second and cut to "gone" at .75.
 @(private="file")
-Cinematic_Shared :: struct {
+Cinematic_Fixture :: struct {
+    using w:Cinematic_World,
+    problems:core.Problems,
+    assets:host.Assets,
+    app:host.App,
     characters:anim.Character_Assets,
     skeletons:anim.Skeleton_Assets,
-    sources:anim.Source_Assets,
+    content_sources:anim.Source_Assets,
+    timeline,seat,wide,close,hero,gone:core.Entity,
 }
 
-// A tick of the game for a timeline: its commands, its clip, the fields and the transforms the
-// clip writes, and then what the viewers see of it.
 @(private="file")
-cinematic_tick :: proc(w:^Cinematic_World,s:^Cinematic_Shared,app:^host.App,problems:^core.Problems,tick:u64,dt:f32) {
-    time:=core.Time{dt=dt,tick=tick,playing=true}
-    anim.animation_sample(core.read(&w.animations),&w.progress,core.read(&w.attachments),&w.transforms,core.read(&w.parents),core.ref(&w.hierarchy),core.read(&w.names),core.read(&w.targets),core.read(&w.meshes),core.read(&w.sources),&w.requests,&w.events,&w.modifier_requests,&w.modifier_runtime,&w.playback,&s.characters,&s.skeletons,app,time,{},problems,&w.actions,nil,&w.motion_requests,&s.sources,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
-    core.test_world_settle(w)
-    anim.animation_fields(core.test_world_ref(w),core.ref(&w.playback),&w.fields,core.ref(&s.sources),app,problems)
-    anim.animation_advance(&w.transforms,core.read(&w.parents),{},&w.modifier_requests,&w.modifier_runtime,&w.playback,&w.constraints,&w.grounding,{},{},time,&w.requests,core.ref(&s.skeletons),problems,nil,&s.characters,{},{},core.CLOCK_DEFAULT,nil)
-    cinematic_advance(core.ref(&w.entities),&w.cinematics,core.read(&w.shots),core.read(&w.viewers),&w.views,core.read(&w.cameras),core.ref(&w.hierarchy),&w.transforms,core.read(&w.parents),core.read(&w.animations),core.ref(&w.playback),core.ref(&w.shown),core.ref(&w.seat_state),&w.camera_requests,&w.seat_requests,core.read(&w.seats),time,core.read(&w.remotes),problems)
-    core.test_world_settle(w)
-}
-
-// A cinematic is a clip with shots: the clip moves the cameras and writes their lens as it does
-// any entity and field, and the viewer shows the camera of the shot in force as the clip left it
-// in the tick, while the clip plays.
-@(test)
-a_viewer_shows_the_shots_of_a_clip_while_it_plays :: proc(t:^testing.T) {
-    DT :: f32(.25)
-    problems:core.Problems
-    assets:host.Assets;app:=host.App{assets=&assets,allocator=context.allocator};defer host.app_content_destroy(&app)
-    s:Cinematic_Shared
-    defer {anim.character_assets_free(&s.characters);anim.skeleton_assets_free(&s.skeletons);anim.source_assets_free(&s.sources)}
+fixture_init :: proc(t:^testing.T,f:^Cinematic_Fixture) -> bool {
+    f.app={assets=&f.assets,allocator=context.allocator}
     id:=base.Asset_Id{0xc1,0xc2}
     {
         dolly:=[]lib.Keyframe{{time=0,value={0,0,0,0}},{time=1,value={8,0,0,0}}}
@@ -95,138 +81,193 @@ a_viewer_shows_the_shots_of_a_clip_while_it_plays :: proc(t:^testing.T) {
         rows:[2]asset.Animation_Track
         base.text_set(rows[0].target[:],"wide");rows[0].property=.Position
         base.text_set(rows[1].target[:],"close/@field/Camera.fov");rows[1].property=.Float
+        named:=[]asset.Animation_Marker_Desc{{0,"Shot",0,"wide"},{.25,"Wave",.25,"hero"},{.5,"Shot",.5,"close"},{.75,"Shot",0,"gone"}}
+        marks:=make([]lib.Marker,len(named),context.temp_allocator)
         source:=host.Content_Animation{id=id,generation=1,clip_count=1}
-        if !testing.expect(t,lib.library_init(&source.lib,{max_clips=2,max_tracks=2,max_keys=4,allocator=app.allocator})) {return}
-        clip,_:=lib.clip_add(&source.lib,{name=base.name_hash("intro"),tracks=tracks})
-        host.content_animation_loops(&source.lib,1)
-        source.names=make([][asset.ANIMATION_NAME_CAPACITY]u8,1,app.allocator)
-        source.roots=make([]asset.Animation_Root,1,app.allocator)
-        source.fields,_=host.content_animation_fields({tracks=rows[:]},app.allocator)
-        content:=host.app_content(&app)
-        append(&content.animations,source);content.index[id]={kind=.Animation,index=0}
-        if !testing.expect(t,clip==1 && len(source.fields)==1) {return}
-    }
-    w:Cinematic_World
-    if !core.test_world_init(t,&w,cinematic_types) {return}
-    defer core.test_world_destroy(&w)
-    es:=&w.entities
-    actor :: proc(w:^Cinematic_World,timeline:core.Entity,name:string,position:[3]f32) -> core.Entity {
-        e:=core.create(&w.entities)
-        transform:=core.TRANSFORM_IDENTITY;transform.position=position
-        core.add(&w.transforms,e,transform)
-        lens:=render.CAMERA_DEFAULT;lens.fov,lens.near=1,.1
-        core.add(&w.cameras,e,lens)
-        if name!="" {
-            target:anim.Animation_Target;base.text_set(target.path[:],name);target.animation=timeline
-            core.add(&w.targets,e,target)
+        source.markers=make([]host.Content_Marker,len(named),f.app.allocator)
+        for marker,i in named {
+            marks[i]={time=marker.time,id=u32(i),duration=marker.duration}
+            source.markers[i]={name=base.name_hash(marker.name),target=base.name_hash(marker.target)}
+            base.text_set(source.markers[i].text[:],marker.name)
         }
+        if !testing.expect(t,lib.library_init(&source.lib,{max_clips=2,max_tracks=2,max_keys=4,max_markers=len(named),allocator=f.app.allocator})) {return false}
+        clip,_:=lib.clip_add(&source.lib,{name=base.name_hash("intro"),tracks=tracks,markers=marks})
+        host.content_animation_loops(&source.lib,1)
+        source.names=make([][asset.ANIMATION_NAME_CAPACITY]u8,1,f.app.allocator)
+        source.roots=make([]asset.Animation_Root,1,f.app.allocator)
+        source.fields,_=host.content_animation_fields({tracks=rows[:]},f.app.allocator)
+        content:=host.app_content(&f.app)
+        append(&content.animations,source);content.index[id]={kind=.Animation,index=0}
+        if !testing.expect(t,clip==1 && len(source.fields)==1) {return false}
+    }
+    if !core.test_world_init(t,&f.w,cinematic_types) {return false}
+    es:=&f.entities
+    actor :: proc(f:^Cinematic_Fixture,name:string,position:[3]f32,lens:bool) -> core.Entity {
+        e:=core.create(&f.entities)
+        transform:=core.TRANSFORM_IDENTITY;transform.position=position
+        core.add(&f.transforms,e,transform)
+        if lens {
+            value:=render.CAMERA_DEFAULT;value.fov,value.near=1,.1
+            core.add(&f.cameras,e,value)
+        }
+        target:anim.Animation_Target;base.text_set(target.path[:],name);target.animation=f.timeline
+        core.add(&f.targets,e,target)
         return e
     }
-    timeline,seat:=core.create(es),core.create(es)
-    core.add(&w.transforms,timeline,core.TRANSFORM_IDENTITY)
-    wide,close,output:=actor(&w,timeline,"wide",{0,0,0}),actor(&w,timeline,"close",{0,5,0}),actor(&w,core.NONE,"",{9,9,9})
+    f.timeline,f.seat=core.create(es),core.create(es)
+    core.add(&f.transforms,f.timeline,core.TRANSFORM_IDENTITY)
+    f.wide,f.close,f.gone=actor(f,"wide",{0,0,0},true),actor(f,"close",{0,5,0},true),actor(f,"gone",{0,9,0},true)
+    f.hero=actor(f,"hero",{1,0,1},false)
     animation:=anim.ANIMATION_DEFAULT;animation.asset,animation.loop,animation.fade=id,false,0
-    core.add(&w.animations,timeline,animation)
-    core.add(&w.cinematics,timeline,Cinematic{})
-    core.add(&w.shots,wide,Cinematic_Shot{timeline=timeline,camera=wide})
-    core.add(&w.shots,close,Cinematic_Shot{timeline=timeline,camera=close,time=.5,blend=.5})
-    core.add(&w.viewers,output,Cinematic_Viewer{timeline=timeline,seat=seat})
-    core.test_world_settle(&w)
-    core.hierarchy_settle(&w.hierarchy,core.read(&w.parents),&w.entities)
-    shown :: proc(w:^Cinematic_World,e:core.Entity) -> [3]f32 {value,_:=core.get(core.read(&w.transforms),e);return value.position}
-    asked :: proc(w:^Cinematic_World,owner:core.Entity) -> (fov:f32,found:bool) {
-        #reverse for request in w.camera_requests.items {if request.add && request.override.owner==owner {return request.override.fov,true}}
+    core.add(&f.animations,f.timeline,animation)
+    core.add(&f.cinematics,f.timeline,Cinematic{seat=f.seat,block_mask=3})
+    core.test_world_settle(&f.w)
+    core.hierarchy_settle(&f.hierarchy,core.read(&f.parents),&f.entities)
+    return true
+}
+
+@(private="file")
+fixture_destroy :: proc(f:^Cinematic_Fixture) {
+    core.test_world_destroy(&f.w)
+    anim.character_assets_free(&f.characters);anim.skeleton_assets_free(&f.skeletons);anim.source_assets_free(&f.content_sources)
+    host.app_content_destroy(&f.app)
+}
+
+// A tick of the game for a timeline, in the order of its stages: the camera overrides asked in the
+// tick before, the commands and the clip, the fields and the transforms the clip writes, and then
+// what the timeline asks of it. acting runs before the timeline: what the actions play then.
+@(private="file")
+fixture_tick :: proc(f:^Cinematic_Fixture,tick:u64,dt:f32,playing:=true,acting:proc(f:^Cinematic_Fixture)=nil) {
+    time:=core.Time{dt=dt,tick=tick,playing=playing}
+    cam.camera_select(core.ref(&f.entities),core.read(&f.cameras),&f.shown,&f.camera_requests,core.read(&f.activations),core.read(&f.follows),core.read(&f.parents),core.read(&f.seats),core.ref(&f.seat_state),&f.problems)
+    anim.animation_sample(core.read(&f.animations),&f.progress,core.read(&f.attachments),&f.transforms,core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.names),core.read(&f.targets),core.read(&f.meshes),core.read(&f.sources),&f.requests,&f.events,&f.modifier_requests,&f.modifier_runtime,&f.playback,&f.characters,&f.skeletons,&f.app,time,{},&f.problems,&f.actions,nil,&f.motion_requests,&f.content_sources,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
+    core.test_world_settle(&f.w)
+    anim.animation_fields(core.test_world_ref(&f.w),core.ref(&f.playback),&f.fields,core.ref(&f.content_sources),&f.app,&f.problems)
+    anim.animation_advance(&f.transforms,core.read(&f.parents),{},&f.modifier_requests,&f.modifier_runtime,&f.playback,&f.constraints,&f.grounding,{},{},time,&f.requests,core.ref(&f.skeletons),&f.problems,nil,&f.characters,{},{},core.CLOCK_DEFAULT,nil)
+    if acting!=nil {acting(f)}
+    cinematic_advance(core.ref(&f.entities),&f.cinematics,core.read(&f.cameras),core.read(&f.animations),core.ref(&f.playback),core.ref(&f.content_sources),&f.app,core.ref(&f.actions),&f.requests,core.ref(&f.shown),core.ref(&f.seat_state),&f.camera_requests,&f.seat_requests,core.read(&f.seats),time,core.read(&f.remotes),&f.problems)
+    core.test_world_settle(&f.w)
+}
+
+// A cinematic is a clip whose markers stage it: one on a camera is a shot, which the timeline asks
+// of engine/camera as the camera_override of its seat with the blend of the marker, while the clip
+// plays or is paused; one on an actor plays the action of its name there and a span stops it at
+// its end. A marker on an entity that is gone is a problem, never a crash.
+@(test)
+the_markers_of_a_clip_cut_between_cameras_and_play_actions_while_it_plays :: proc(t:^testing.T) {
+    DT :: f32(.25)
+    f:=new(Cinematic_Fixture);defer free(f)
+    if !fixture_init(t,f) {return}
+    defer fixture_destroy(f)
+    core.destroy(&f.entities,f.gone);core.test_world_settle(&f.w)
+    asked :: proc(f:^Cinematic_Fixture,camera:core.Entity,seconds:f32) -> cam.Camera_Request {
+        r:cam.Camera_Requests
+        cam.camera_override(&r,f.timeline,f.seat,camera,blend={seconds,cam.CAMERA_BLEND.ease})
+        defer delete(r.items)
+        return r.items[0]
+    }
+    plays :: proc(f:^Cinematic_Fixture) -> (asked:[dynamic]anim.Play_Request) {
+        for request in f.requests.plays.items {append(&asked,request)}
+        clear(&f.requests.plays.items)
         return
     }
 
-    // The clip plays by itself, as the Animation of the timeline says: the first shot shows the
-    // camera where the clip put it in this tick.
-    cinematic_tick(&w,&s,&app,&problems,1,DT)
-    c,_:=core.get(core.read(&w.cinematics),timeline)
+    // The clip plays by itself: the first shot cuts to wide, the input of the seat is blocked, and
+    // the actor starts to wave.
+    fixture_tick(f,1,DT)
+    c,_:=core.get(core.read(&f.cinematics),f.timeline)
     testing.expect(t,c.status==.Playing && c.time==.25 && c.duration==1)
-    testing.expect_value(t,shown(&w,wide),[3]f32{2,0,0})
-    testing.expect_value(t,shown(&w,output),[3]f32{2,0,0})
-    fov,found:=asked(&w,output)
-    testing.expect(t,found && fov==1)
-    view,viewing:=core.get(core.read(&w.views),output)
-    testing.expect(t,viewing && view.shot_camera==wide && view.seat==seat)
+    testing.expect(t,len(f.camera_requests.items)==1 && f.camera_requests.items[0]==asked(f,f.wide,0))
+    testing.expect(t,len(f.seat_requests.items)==1 && f.seat_requests.items[0].kind==.Block_Add && f.seat_requests.items[0].mask==3)
+    clear(&f.seat_requests.items)
+    waves:=plays(f);defer delete(waves)
+    testing.expect(t,len(waves)==1 && !waves[0].stop && waves[0].entity==f.hero && base.text_get(waves[0].action[:])=="Wave")
 
-    // The second shot blends in from the first; its lens is the one the clip writes on its camera.
-    cinematic_tick(&w,&s,&app,&problems,2,DT)
-    testing.expect_value(t,shown(&w,output),[3]f32{4,0,0})
-    cinematic_tick(&w,&s,&app,&problems,3,DT)
-    lens,_:=core.get(core.read(&w.cameras),close)
+    // At the end of its span the wave is stopped, while it plays; the shot of close is asked with the
+    // blend of its marker, as camera_override asks it.
+    fixture_tick(f,2,DT,acting=proc(f:^Cinematic_Fixture) {
+        profile:anim.Action_Profile
+        profile.actions=make([]anim.Action_Definition,1,context.temp_allocator);base.text_set(profile.actions[0].name[:],"Wave")
+        append(&f.actions.plans,anim.Action_Plan{profile=profile})
+        state:=anim.Action_State{entity=f.hero};state.slots[0]={active=true}
+        append(&f.actions.states,state)
+        resize(&f.actions.rows,core.entity_index(f.hero)+1);f.actions.rows[core.entity_index(f.hero)]=i32(len(f.actions.states))
+    })
+    clear(&f.actions.plans);clear(&f.actions.states);clear(&f.actions.rows)
+    stops:=plays(f);defer delete(stops)
+    testing.expect(t,len(stops)==1 && stops[0].stop && stops[0].entity==f.hero)
+    testing.expect(t,len(f.camera_requests.items)==1 && f.camera_requests.items[0]==asked(f,f.close,.5))
+    fixture_tick(f,3,DT)
+    selected,_:=cam.camera_selected(&f.shown,core.read(&f.seats),core.read(&f.cameras),core.ref(&f.hierarchy),f.seat)
+    testing.expect_value(t,selected,f.close)
+    testing.expect(t,len(f.camera_requests.items)==0,"the shot in force is asked once")
+    lens,_:=core.get(core.read(&f.cameras),f.close)
     testing.expect_value(t,lens.fov,f32(.625))
-    testing.expect_value(t,shown(&w,output),[3]f32{3,2.5,0})
-    fov,_=asked(&w,output)
-    testing.expect_value(t,fov,f32(.8125))
+    testing.expect(t,core.problem_find(&f.problems,f.timeline,"cinematics.marker_target")!=nil,"the shot on the camera that is gone is reported and left out")
 
-    // Paused, the viewer keeps showing it; at its end the viewer gives the seat its view back.
-    anim.animation_command(&w.requests,timeline,.Pause)
-    cinematic_tick(&w,&s,&app,&problems,4,DT)
-    c,_=core.get(core.read(&w.cinematics),timeline)
-    testing.expect(t,c.status==.Paused && core.has(&w.views,output))
-    anim.animation_command(&w.requests,timeline,.Resume)
-    clear(&w.camera_requests.items)
-    cinematic_tick(&w,&s,&app,&problems,5,DT)
-    c,_=core.get(core.read(&w.cinematics),timeline)
-    testing.expect(t,c.status==.Completed && c.time==1 && !core.has(&w.views,output))
-    testing.expect(t,len(w.camera_requests.items)==1 && !w.camera_requests.items[0].add && w.camera_requests.items[0].override.owner==output)
-    testing.expect(t,problems.count==0)
+    // Paused, the shot stays; at the end of the clip the seat gets its view and its input back.
+    anim.animation_command(&f.requests,f.timeline,.Pause)
+    fixture_tick(f,4,DT)
+    c,_=core.get(core.read(&f.cinematics),f.timeline)
+    testing.expect(t,c.status==.Paused && len(f.camera_requests.items)==0)
+    anim.animation_command(&f.requests,f.timeline,.Resume)
+    clear(&f.seat_requests.items)
+    fixture_tick(f,5,DT)
+    c,_=core.get(core.read(&f.cinematics),f.timeline)
+    testing.expect(t,c.status==.Completed && c.time==1)
+    testing.expect(t,len(f.camera_requests.items)==1 && !f.camera_requests.items[0].add && f.camera_requests.items[0].override.owner==f.timeline)
+    testing.expect(t,len(f.seat_requests.items)==0,"no block is asked once it ends")
 
     // On an end that does not decide the timeline, the clip is asked to go where the anchor says.
-    core.add(&w.remotes,timeline,core.Remote{});core.test_world_settle(&w)
-    remote:=core.edit(&w.cinematics,timeline)
+    core.add(&f.remotes,f.timeline,core.Remote{});core.test_world_settle(&f.w)
+    remote:=core.edit(&f.cinematics,f.timeline)
     remote.status,remote.anchor_tick,remote.anchor_time,remote.anchor_rate=.Playing,10,.25,1
-    clear(&w.requests.timeline.items)
-    cinematic_follow(core.read(&w.cinematics),core.read(&w.animations),core.ref(&w.playback),&w.requests,{dt=DT,tick=11,playing=true},core.read(&w.remotes))
-    commands:=w.requests.timeline.items[:]
-    testing.expect(t,len(commands)==1 && commands[0]==anim.Animation_Command{timeline,.25,.Seek},"a clip that plays is sought a tick before the half second the anchor gives the end of the tick")
-    clear(&w.requests.timeline.items)
+    clear(&f.requests.timeline.items)
+    cinematic_follow(core.read(&f.cinematics),core.read(&f.animations),core.ref(&f.playback),&f.requests,{dt=DT,tick=11,playing=true},core.read(&f.remotes))
+    commands:=f.requests.timeline.items[:]
+    testing.expect(t,len(commands)==1 && commands[0]==anim.Animation_Command{f.timeline,.25,.Seek},"a clip that plays is sought a tick before the half second the anchor gives the end of the tick")
+    clear(&f.requests.timeline.items)
     remote.status,remote.anchor_time,remote.anchor_rate=.Paused,.75,0
-    cinematic_follow(core.read(&w.cinematics),core.read(&w.animations),core.ref(&w.playback),&w.requests,{dt=DT,tick=40,playing=true},core.read(&w.remotes))
-    commands=w.requests.timeline.items[:]
-    testing.expect(t,len(commands)==2 && commands[0].command==.Pause && commands[1]==anim.Animation_Command{timeline,.75,.Seek},"paused by the server, it pauses where the anchor is")
-    clear(&w.requests.timeline.items)
-    core.remove(&w.remotes,timeline);core.test_world_settle(&w)
+    cinematic_follow(core.read(&f.cinematics),core.read(&f.animations),core.ref(&f.playback),&f.requests,{dt=DT,tick=40,playing=true},core.read(&f.remotes))
+    commands=f.requests.timeline.items[:]
+    testing.expect(t,len(commands)==2 && commands[0].command==.Pause && commands[1]==anim.Animation_Command{f.timeline,.75,.Seek},"paused by the server, it pauses where the anchor is")
+    clear(&f.requests.timeline.items)
+    core.remove(&f.remotes,f.timeline);core.test_world_settle(&f.w)
 
     // A Cinematic whose entity has no Animation says so.
-    bare:=core.create(es)
-    core.add(&w.cinematics,bare,Cinematic{});core.test_world_settle(&w)
-    cinematic_tick(&w,&s,&app,&problems,7,DT)
-    testing.expect(t,core.problem_find(&problems,bare,"cinematics.animation")!=nil)
+    bare:=core.create(&f.entities)
+    core.add(&f.cinematics,bare,Cinematic{});core.test_world_settle(&f.w)
+    fixture_tick(f,7,DT)
+    testing.expect(t,core.problem_find(&f.problems,bare,"cinematics.animation")!=nil)
 }
 
+// The editor scrubs a timeline by seeking its clip: whatever the order of the heads, a head shows the
+// same cameras where the clip puts them and the same shot, which blends in from the one before it.
 @(test)
-the_shot_in_force_blends_in_from_the_one_before_it :: proc(t:^testing.T) {
-    w:Cinematic_World
-    if !core.test_world_init(t,&w,cinematic_types) {return}
-    defer core.test_world_destroy(&w)
-    es,shots:=&w.entities,&w.shots
-    timeline,first,second:=core.create(es),core.create(es),core.create(es)
-    core.add(shots,core.create(es),Cinematic_Shot{timeline=timeline,camera=second,time=3,blend=1})
-    core.add(shots,core.create(es),Cinematic_Shot{timeline=timeline,camera=first})
-    core.add(shots,core.create(es),Cinematic_Shot{timeline=core.create(es),camera=first,time=2})
-    core.test_world_settle(&w)
-    nan:=f32(0h7fc00000)
-    for time in ([]f32{-1,nan}) {
-        _,_,found:=cinematic_shots_at(core.read(shots),timeline,time)
-        testing.expect(t,!found)
+a_head_of_a_scrubbed_clip_shows_one_shot :: proc(t:^testing.T) {
+    f:=new(Cinematic_Fixture);defer free(f)
+    if !fixture_init(t,f) {return}
+    defer fixture_destroy(f)
+    Seen :: struct {shot,previous:Shot,wide:[3]f32,fov:f32}
+    look :: proc(f:^Cinematic_Fixture,head:f32) -> (seen:Seen) {
+        anim.animation_seek(&f.requests,f.timeline,head)
+        fixture_tick(f,1,0,playing=false)
+        seen.shot,seen.previous=cinematic_shot(&f.playback,&f.content_sources,&f.app,&f.entities,core.read(&f.cameras),f.timeline,head)
+        place,_:=core.get(core.read(&f.transforms),f.wide);seen.wide=place.position
+        lens,_:=core.get(core.read(&f.cameras),f.close);seen.fov=lens.fov
+        return
     }
-    current,previous,_:=cinematic_shots_at(core.read(shots),timeline,2.95)
-    testing.expect_value(t,current.camera,first)
-    testing.expect_value(t,previous.camera,core.NONE)
-    current,previous,_=cinematic_shots_at(core.read(shots),timeline,3.5)
-    testing.expect_value(t,current.camera,second)
-    testing.expect_value(t,previous.camera,first)
-    from:=Camera_Sample{pose=mm.TRANSFORM_IDENTITY,fov=1,near=0.1}
-    to:=from;to.pose.position={10,0,0};to.fov=2
-    halfway:=cinematic_shot_blend(current,from,to,3.5)
-    testing.expect_value(t,halfway.pose.position.x,f32(5))
-    testing.expect_value(t,halfway.fov,f32(1.5))
-    for time in ([]f32{4,2.9,nan}) {testing.expect_value(t,cinematic_shot_blend(current,from,to,time),to)}
-    current.blend=nan
-    testing.expect_value(t,cinematic_shot_blend(current,from,to,3.5),to)
+    nan:=f32(0h7fc00000)
+    late,early:=look(f,.6),look(f,.25)
+    testing.expect_value(t,look(f,.6),late)
+    testing.expect_value(t,look(f,.25),early)
+    testing.expect(t,late.shot.camera==f.close && late.shot.time==.5 && late.shot.blend.seconds==.5 && late.previous.camera==f.wide)
+    testing.expect(t,early.shot.camera==f.wide && early.previous.camera==core.NONE && early.wide==[3]f32{2,0,0})
+    testing.expect_value(t,look(f,.9).shot.camera,f.gone)
+    shot,previous:=cinematic_shot(&f.playback,&f.content_sources,&f.app,&f.entities,core.read(&f.cameras),f.timeline,nan)
+    testing.expect(t,shot.camera==core.NONE && previous.camera==core.NONE,"no time of the clip has no shot")
+    core.destroy(&f.entities,f.gone);core.test_world_settle(&f.w)
+    testing.expect_value(t,look(f,.9).shot.camera,f.close)
 }
 
 // The state a timeline sends over the network is an anchor: every end finds the same time of

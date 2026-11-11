@@ -9,7 +9,6 @@ RATE :: 48000
 @(private)
 test_mixer :: proc(t:^testing.T,desc:Mixer_Desc={}) -> ^Mixer {
     desc:=desc
-    if desc.sample_rate==0 {desc.sample_rate=RATE}
     m,error:=mixer_create(desc)
     testing.expect_value(t,error,Error.None)
     return m
@@ -61,8 +60,6 @@ test_no_allocator :: proc(count:^int) -> runtime.Allocator {
 @(test)
 mixer_rejects_a_desc_it_cannot_serve :: proc(t:^testing.T) {
     m,error:=mixer_create({channels=6})
-    testing.expect(t,m==nil && error==.Invalid_Desc)
-    m,error=mixer_create({sample_rate=-1})
     testing.expect(t,m==nil && error==.Invalid_Desc)
     m,error=mixer_create({voice_capacity=-4})
     testing.expect(t,m==nil && error==.Invalid_Desc)
@@ -664,6 +661,8 @@ steady_playback_allocates_nothing :: proc(t:^testing.T) {
     sent,_:=bus_create(m)
     out:=make([]f32,480*2)
     defer delete(out)
+    // Headphones build their HRTF the first time they are chosen, a change of settings and not a steady frame.
+    testing.expect(t,mixer_set_output(m,.Headphones) && mixer_set_output(m,.Speakers))
     count:=0
     {
         context.allocator=test_no_allocator(&count)

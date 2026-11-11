@@ -152,10 +152,10 @@ glass_filters_the_scene_where_a_coat_covers_it :: proc(t: ^testing.T) {
 	sheet := sheet_mesh(r)
 	floor := Instance_Desc{object_id = 1, mesh = sheet, transform = placed({}, {20, 1, 20}), tint = {1, 1, 1}}
 	above := Camera{position = {0, 5, 0}, forward = {0, -5, 0}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-	scene_set(r, {floor}, nil, SUN, {})
+	scene_given(r, {floor}, nil, SUN, {})
 	open := shown(t, &f, above, {0, 1, 0})
 	testing.expect_value(t, r.targets.glass_scene, rhi.Texture(0))
-	scene_set(r, {floor, {object_id = 2, mesh = sheet, transform = placed({0, 1, 0}, {2, 1, 2}), material = 1, tint = {1, 1, 1}}}, nil, SUN, {})
+	scene_given(r, {floor, {object_id = 2, mesh = sheet, transform = placed({0, 1, 0}, {2, 1, 2}), material = 1, tint = {1, 1, 1}}}, nil, SUN, {})
 	covered := shown(t, &f, above, {0, 1, 0})
 	// 60% of the sheet is a red surface lit by the sun and 40% of the floor shows.
 	testing.expectf(t, abs(covered.g - 0.4 * open.g) < 0.03 && covered.r > open.r * 0.9, "a coat covers the floor with its own color: %v over %v", covered, open)
@@ -164,7 +164,7 @@ glass_filters_the_scene_where_a_coat_covers_it :: proc(t: ^testing.T) {
 		settings := r.settings
 		settings.glass_layers = layers
 		testing.expect(t, renderer_apply_settings(r, settings))
-		scene_set(r, {floor, {object_id = 2, mesh = sheet, transform = placed({0, 1, 0}, {2, 1, 2}), material = 2, tint = {1, 1, 1}}}, nil, SUN, {})
+		scene_given(r, {floor, {object_id = 2, mesh = sheet, transform = placed({0, 1, 0}, {2, 1, 2}), material = 2, tint = {1, 1, 1}}}, nil, SUN, {})
 		through := shown(t, &f, above, {0, 1, 0})
 		// Glass diffuses nothing: the floor comes through its filter, which
 		// takes 60% of what is not red and the little the surface reflects.
@@ -172,7 +172,7 @@ glass_filters_the_scene_where_a_coat_covers_it :: proc(t: ^testing.T) {
 			"%d layers: glass filters the floor behind it: %v over %v", layers, through, open)
 		testing.expect(t, r.scene.instances[1].meta.w & INSTANCE_FLAG_BLENDED != 0 && r.scene.instances[0].meta.w & INSTANCE_FLAG_BLENDED == 0, "only the glass is its own class of ray")
 	}
-	scene_set(r, {floor, {object_id = 2, mesh = sheet, transform = placed({0, 1, 0}, {2, 1, 2}), material = 3, tint = {1, 1, 1}}}, nil, SUN, {})
+	scene_given(r, {floor, {object_id = 2, mesh = sheet, transform = placed({0, 1, 0}, {2, 1, 2}), material = 3, tint = {1, 1, 1}}}, nil, SUN, {})
 	red := shown(t, &f, above, {0, 1, 0})
 	testing.expectf(t, len(r.scene.translucent) == 1 && abs(red.r - 0.96 * open.r) < 0.04 && red.g < 0.02, "a transmissive material is glass of its base color whatever its alpha mode: %v", red)
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
@@ -214,7 +214,7 @@ glass_wears_the_layers_of_its_material :: proc(t: ^testing.T) {
 	sheet := sheet_mesh(r)
 	mirror := Camera{position = {-3, 3, 0}, forward = {3, -3, 0}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	seen :: proc(t: ^testing.T, f: ^Fixture, sheet: Mesh_Handle, material: int, camera: Camera) -> Vec3 {
-		scene_set(f.renderer, {{object_id = 1, mesh = sheet, transform = placed({}, {4, 1, 4}), material = Material_Handle(material + 1), tint = {1, 1, 1}}}, nil, SUN, {})
+		scene_given(f.renderer, {{object_id = 1, mesh = sheet, transform = placed({}, {4, 1, 4}), material = Material_Handle(material + 1), tint = {1, 1, 1}}}, nil, SUN, {})
 		return shown(t, f, camera, {})
 	}
 	plain := seen(t, &f, sheet, 0, mirror)
@@ -230,7 +230,7 @@ glass_wears_the_layers_of_its_material :: proc(t: ^testing.T) {
 	floor := Instance_Desc{object_id = 1, mesh = sheet, transform = placed({}, {20, 1, 20}), tint = {1, 1, 1}}
 	above := Camera{position = {0, 5, 0}, forward = {0, -5, 0}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	over := proc(t: ^testing.T, f: ^Fixture, floor: Instance_Desc, sheet: Mesh_Handle, material: int, camera: Camera) -> Vec3 {
-		scene_set(f.renderer, {floor, {object_id = 2, mesh = sheet, transform = placed({0, 1, 0}, {2, 1, 2}), material = Material_Handle(material + 1), tint = {1, 1, 1}}}, nil, SUN, {})
+		scene_given(f.renderer, {floor, {object_id = 2, mesh = sheet, transform = placed({0, 1, 0}, {2, 1, 2}), material = Material_Handle(material + 1), tint = {1, 1, 1}}}, nil, SUN, {})
 		return shown(t, f, camera, {0, 1, 0})
 	}
 	through := over(t, &f, floor, sheet, 8, above)
@@ -259,9 +259,9 @@ glass_solid_filters_once_absorbs_and_shades_colored_shadows :: proc(t: ^testing.
 	floor := Instance_Desc{object_id = 1, mesh = sheet, transform = placed({}, {20, 1, 20}), tint = {1, 1, 1}}
 	block := Instance_Desc{object_id = 2, mesh = box, transform = placed({0, 1, 0}, {2, 0.5, 2}), material = 1, tint = {1, 1, 1}}
 	above := Camera{position = {0, 5, 0}, forward = {0, -5, 0}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-	scene_set(r, {floor}, nil, SUN, {})
+	scene_given(r, {floor}, nil, SUN, {})
 	open := shown(t, &f, above, {0, 1, 0})
-	scene_set(r, {floor, block}, nil, SUN, {})
+	scene_given(r, {floor, block}, nil, SUN, {})
 	through := shown(t, &f, above, {0, 1, 0})
 	testing.expectf(t, abs(through.g - 0.96 * open.g) < 0.04 && abs(through.r - 0.2 * 0.96 * open.r) < 0.03, "the two faces of a solid are one filter: %v over %v", through, open)
 	rhi.device_wait_idle(f.device)
@@ -271,7 +271,7 @@ glass_solid_filters_once_absorbs_and_shades_colored_shadows :: proc(t: ^testing.
 	depth := depths[center.y * int(r.targets.width) + center.x]
 	testing.expectf(t, abs(depth - 3.75) < 0.02, "the layer is the face where the view enters the solid: depth %v", depth)
 	block.material = 2
-	scene_set(r, {floor, block}, nil, SUN, {})
+	scene_given(r, {floor, block}, nil, SUN, {})
 	absorbed := shown(t, &f, above, {0, 1, 0})
 	testing.expectf(t, abs(absorbed.r - 0.96 * open.r) < 0.04 && abs(absorbed.b - 0.25 * 0.96 * open.b) < 0.03, "half a unit of the solid leaves a quarter of the blue: %v over %v", absorbed, open)
 
@@ -288,11 +288,11 @@ glass_solid_filters_once_absorbs_and_shades_colored_shadows :: proc(t: ^testing.
 		testing.expect(t, renderer_apply_settings(r, settings))
 		// What the floor receives with nothing above it: the surface keeps for
 		// its own reflection a part of the light, so the reference is measured.
-		scene_set(r, {floor}, nil, sun, {})
+		scene_given(r, {floor}, nil, sun, {})
 		for _ in 0 ..< 2 {testing.expect(t, renderer_frame(r, {camera = side}), r.error)}
 		lit := read_halves(t, &f, r.targets.direct, under)
 		block.material = 1
-		scene_set(r, {floor, block}, nil, sun, {})
+		scene_given(r, {floor, block}, nil, sun, {})
 		for _ in 0 ..< 2 {testing.expect(t, renderer_frame(r, {camera = side}), r.error)}
 		plain := read_halves(t, &f, r.targets.direct, under)
 		testing.expectf(t, lit.r > 0.9 && abs(plain.r - lit.r) < 0.02 && abs(plain.g - lit.g) < 0.02, "%v: glass casts no shadow: %v of %v", provider, plain, lit)
@@ -302,7 +302,7 @@ glass_solid_filters_once_absorbs_and_shades_colored_shadows :: proc(t: ^testing.
 		colored := read_halves(t, &f, r.targets.direct, under)
 		testing.expectf(t, abs(colored.g - 0.92 * lit.g) < 0.03 && abs(colored.r - 0.2 * 0.92 * lit.r) < 0.03, "%v: the shadow of a solid has its color once: %v of %v", provider, colored, lit)
 		block.material = 2
-		scene_set(r, {floor, block}, nil, sun, {})
+		scene_given(r, {floor, block}, nil, sun, {})
 		for _ in 0 ..< 2 {testing.expect(t, renderer_frame(r, {camera = side}), r.error)}
 		smoked := read_halves(t, &f, r.targets.direct, under)
 		testing.expectf(t, abs(smoked.r - 0.92 * lit.r) < 0.03 && abs(smoked.b - 0.25 * 0.92 * lit.b) < 0.03, "%v: the shadow of a solid has what it absorbs: %v of %v", provider, smoked, lit)
@@ -347,7 +347,7 @@ glass_tints_the_indirect_light_with_its_mean :: proc(t: ^testing.T) {
 			settings.trace_mode = provider
 			settings.colored_shadows = colored
 			testing.expect(t, renderer_apply_settings(r, settings))
-			scene_set(r, room, nil, {}, {sky = {1, 1, 1}})
+			scene_given(r, room, nil, {}, {sky = {1, 1, 1}})
 			for _ in 0 ..< 48 {testing.expect(t, renderer_frame(r, {camera = camera, inspection = {mode = .Indirect}}), r.error)}
 			light := read_halves(t, &f, r.targets.display, floor)
 			if !colored {
@@ -359,7 +359,7 @@ glass_tints_the_indirect_light_with_its_mean :: proc(t: ^testing.T) {
 		}
 		// The same color given by a program over a blue row: the mean is what the program gives.
 		materials_set(r, {painted})
-		scene_set(r, room, nil, {}, {sky = {1, 1, 1}})
+		scene_given(r, room, nil, {}, {sky = {1, 1, 1}})
 		for _ in 0 ..< 48 {testing.expect(t, renderer_frame(r, {camera = camera, inspection = {mode = .Indirect}}), r.error)}
 		light := read_halves(t, &f, r.targets.display, floor)
 		testing.expectf(t, light.r > 0.05 && abs(light.g / light.r - 0.2) < 0.05 && abs(light.b - light.g) < 0.05 * light.r, "%v: the light through glass with a program has the color it gives: %v", provider, light)
@@ -388,10 +388,10 @@ glass_ball_turns_the_scene_behind_it_upside_down :: proc(t: ^testing.T) {
 		settings := r.settings
 		settings.trace_mode = provider
 		testing.expect(t, renderer_apply_settings(r, settings))
-		scene_set(r, {red, blue}, nil, {}, {})
+		scene_given(r, {red, blue}, nil, {}, {})
 		left := shown(t, &f, camera, {-0.4, 1, 0})
 		testing.expectf(t, left.r > 0.9 && left.b < 0.05, "%v: the left of the wall is red: %v", provider, left)
-		scene_set(r, {red, blue, lens}, nil, {}, {})
+		scene_given(r, {red, blue, lens}, nil, {}, {})
 		through_left := shown(t, &f, camera, {-0.4, 1, 0})
 		through_right := shown(t, &f, camera, {0.4, 1, 0})
 		testing.expectf(t, through_left.b > 0.7 && through_left.r < 0.1 && through_right.r > 0.7 && through_right.b < 0.1,
@@ -422,12 +422,12 @@ glass_pane_shows_what_a_ray_through_it_finds :: proc(t: ^testing.T) {
 	// About 40 degrees from straight down, the view leaves the pane 15 cm
 	// nearer the camera than it would go without it.
 	at := [4]f32{-0.3, -0.2, -0.05, 0.05}
-	scene_set(r, {red, blue, pane}, nil, {}, {})
+	scene_given(r, {red, blue, pane}, nil, {}, {})
 	seen: [4]Vec3
 	for &c, i in seen {c = shown(t, &f, camera, {at[i], 0, 0})}
 	testing.expectf(t, seen[1].r > 0.7 && seen[1].b < 0.1 && seen[2].b > 0.7 && seen[2].r < 0.1, "the edge of the floor shows moved aside: %v at -20 cm, %v at -5 cm", seen[1], seen[2])
 	pane.mesh = solid
-	scene_set(r, {red, blue, pane}, nil, {}, {})
+	scene_given(r, {red, blue, pane}, nil, {}, {})
 	for c, i in seen {
 		traced := shown(t, &f, camera, {at[i], 0, 0})
 		testing.expectf(t, abs(c.r - traced.r) < 0.05 && abs(c.b - traced.b) < 0.05, "at %v m the pane shows %v and the ray inside the solid %v", at[i], c, traced)
@@ -456,7 +456,7 @@ glass_reflects_what_stands_before_it :: proc(t: ^testing.T) {
 		applied.trace_mode = provider
 		applied.reflections = .Detailed
 		testing.expect(t, renderer_apply_settings(r, applied))
-		scene_set(r, {pane, lamp}, nil, {}, {})
+		scene_given(r, {pane, lamp}, nil, {}, {})
 		reflected := shown(t, &f, camera, image, 10)
 		away := shown(t, &f, camera, {-2, 1, 0}, 1)
 		testing.expectf(t, reflected.g > 0.5 && reflected.g < 4 && away.g < 0.05, "%v: the pane reflects a few percent of the lamp, and nothing where it is not: %v and %v", provider, reflected, away)
@@ -482,11 +482,11 @@ glass_rough_scatters_what_shows_through :: proc(t: ^testing.T) {
 	camera := Camera{position = {0, 1, 5}, forward = {0, 0, -5}, up = {0, 1, 0}, fov_y = 50, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	// A point of the wall a hand's width into its red half.
 	point := Vec3{-0.12, 1, 0}
-	scene_set(r, {red, blue, pane}, nil, {}, {})
+	scene_given(r, {red, blue, pane}, nil, {}, {})
 	sharp := shown(t, &f, camera, point)
 	testing.expectf(t, sharp.r > 0.85 && sharp.b < 0.05, "smooth glass shows the wall as it is: %v", sharp)
 	pane.material = 2
-	scene_set(r, {red, blue, pane}, nil, {}, {})
+	scene_given(r, {red, blue, pane}, nil, {}, {})
 	frosted := shown(t, &f, camera, point)
 	testing.expectf(t, frosted.r > 0.3 && frosted.b > 0.1, "frosted glass mixes in the blue beside it: %v", frosted)
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
@@ -519,10 +519,10 @@ glass_and_gloss_show_in_sharp_reflections :: proc(t: ^testing.T) {
 		applied.trace_mode = provider
 		applied.reflections = .Detailed
 		testing.expect(t, renderer_apply_settings(r, applied))
-		scene_set(r, {floor, pane, lamp}, nil, {}, {})
+		scene_given(r, {floor, pane, lamp}, nil, {}, {})
 		filtered := shown(t, &f, camera, {})
 		testing.expectf(t, filtered.r > 1.2 && filtered.g < 0.5, "%v: the mirror shows the lamp through the red glass above it: %v", provider, filtered)
-		scene_set(r, {floor, ceiling}, []Light_Desc{light}, {}, {})
+		scene_given(r, {floor, ceiling}, []Light_Desc{light}, {}, {})
 		// The light is strong enough for the scene to take another light scale: in nits.
 		glossy := shown(t, &f, camera, {}) / r.scene.light_scale
 		testing.expectf(t, glossy.g < 0.05, "%v: a metal plate away from its highlight is dark in the mirror: %v", provider, glossy)
@@ -530,7 +530,7 @@ glass_and_gloss_show_in_sharp_reflections :: proc(t: ^testing.T) {
 		testing.expect(t, renderer_apply_settings(r, applied))
 		matte := shown(t, &f, camera, {}) / r.scene.light_scale
 		testing.expectf(t, matte.g > 0.3, "%v: without the detail the plate is a matte surface: %v", provider, matte)
-		scene_set(r, {floor, pane, lamp}, nil, {}, {})
+		scene_given(r, {floor, pane, lamp}, nil, {}, {})
 		plain := shown(t, &f, camera, {})
 		testing.expectf(t, plain.g > 1.2 && abs(plain.r - plain.g) < 0.1, "%v: and the glass is not in the reflection: %v", provider, plain)
 	}
@@ -553,7 +553,7 @@ reflection_on_a_ball_keeps_its_place_on_the_move :: proc(t: ^testing.T) {
 	polished.metallic, polished.roughness = 1, 0.15
 	materials_set(r, {polished})
 	sheet, ball := sheet_mesh(r), ball_mesh(r)
-	scene_set(r, {
+	scene_given(r, {
 		{object_id = 1, mesh = ball, transform = placed({0, 1, 0}, {2, 2, 2}), material = 1, tint = {1, 1, 1}},
 		{object_id = 2, mesh = sheet, transform = standing({-6, 1, 12}, 12, 12), tint = {0, 0, 0}, emission = {1, 0, 0}},
 		{object_id = 3, mesh = sheet, transform = standing({6, 1, 12}, 12, 12), tint = {0, 0, 0}, emission = {0, 0, 1}},
@@ -603,10 +603,10 @@ glass_behind_a_wall_shows_the_frame_the_wall_goes :: proc(t: ^testing.T) {
 	pane := Instance_Desc{object_id = 2, mesh = sheet, transform = placed({0, 1, 0}, {2, 1, 2}), material = 1, tint = {1, 1, 1}}
 	wall := Instance_Desc{object_id = 3, mesh = sheet, transform = placed({0, 2, 0}, {8, 1, 8}), tint = {1, 1, 1}}
 	above := Camera{position = {0, 5, 0}, forward = {0, -5, 0}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-	scene_set(r, {floor, pane, wall}, nil, SUN, {})
+	scene_given(r, {floor, pane, wall}, nil, SUN, {})
 	hidden := shown(t, &f, above, {0, 1, 0}, 4)
 	testing.expectf(t, abs(hidden.r - hidden.g) < 0.01 && hidden.r > 0.5, "the wall hides the glass: %v", hidden)
-	scene_set(r, {floor, pane}, nil, SUN, {})
+	scene_given(r, {floor, pane}, nil, SUN, {})
 	first := shown(t, &f, above, {0, 1, 0}, 1)
 	settled := shown(t, &f, above, {0, 1, 0}, 3)
 	testing.expectf(t, first.g < 0.6 * first.r && abs(first.r - settled.r) < 0.02 && abs(first.g - settled.g) < 0.02, "the glass is there in the first frame without the wall: %v, then %v", first, settled)
@@ -633,7 +633,7 @@ glass_frames_stay_allocation_free :: proc(t: ^testing.T) {
 		{object_id = 3, mesh = sheet, transform = placed({0, 2, 0}, {2, 1, 2}), material = 2, tint = {1, 1, 1}},
 		{object_id = 4, mesh = sheet, transform = placed({0, 0.5, 0}, {2, 1, 2}), material = 2, tint = {1, 1, 1}},
 	}
-	scene_set(r, instances, []Light_Desc{{position = {1, 3, 1}, color = {1, 1, 1}, intensity = 8 * math.PI, range = 10}}, SUN, {})
+	scene_given(r, instances, []Light_Desc{{position = {1, 3, 1}, color = {1, 1, 1}, intensity = 8 * math.PI, range = 10}}, SUN, {})
 	camera := Camera{position = {0, 5, 0.5}, forward = {0, -5, -0.5}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	for _ in 0 ..< 4 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
 	targets := [3]rhi.Texture{r.targets.glass_scene, r.targets.glass[1].depth, r.targets.glass_history[0]}
@@ -681,7 +681,7 @@ glass_seen_from_inside_bends_out_reflects_past_the_critical_angle_absorbs_and_sc
 		settings := r.settings
 		settings.trace_mode = provider
 		testing.expect(t, renderer_apply_settings(r, settings))
-		scene_set(r, {block, floor}, nil, SUN, sky)
+		scene_given(r, {block, floor}, nil, SUN, sky)
 		inside := Vec3{0, 0, 0}
 		window := look(inside, critical - 0.25)
 		up := shown(t, &f, window, window.position + window.forward)
@@ -693,20 +693,20 @@ glass_seen_from_inside_bends_out_reflects_past_the_critical_angle_absorbs_and_sc
 		down := Camera{position = {0, -0.9, 0}, forward = {0, -1, 0}, up = {0, 0, -1}, fov_y = 30, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 		clear := shown(t, &f, down, {0, -1.9, 0})
 		block.material = 2
-		scene_set(r, {block, floor}, nil, SUN, sky)
+		scene_given(r, {block, floor}, nil, SUN, sky)
 		absorbed := shown(t, &f, down, {0, -1.9, 0})
 		testing.expectf(t, clear.g > 0.05 && abs(absorbed.g - clear.g) < 0.02 * clear.g + 1e-3 && abs(absorbed.b - 0.25 * clear.b) < 0.05 * clear.b + 1e-3,
 			"%v: a metre of the water leaves a quarter of the blue: %v of %v", provider, absorbed, clear)
 		// What it stops of the blue it scatters back towards the eye, lit by the sky and the sun that reach it.
 		block.material = 3
-		scene_set(r, {block, floor}, nil, SUN, sky)
+		scene_given(r, {block, floor}, nil, SUN, sky)
 		scattered := shown(t, &f, down, {0, -1.9, 0})
 		testing.expectf(t, scattered.b > absorbed.b * 1.05 && abs(scattered.g - absorbed.g) < 0.02 * absorbed.g + 1e-3,
 			"%v: a solid that scatters adds its color to what it lets through: %v over %v", provider, scattered, absorbed)
 		block.material = 1
 		// From outside nothing of this applies: the camera over the block sees its top as glass.
 		outside := Camera{position = {0, 6, 0.01}, forward = {0, -7.9, -0.01}, up = {0, 0, -1}, fov_y = 30, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-		scene_set(r, {block, floor}, nil, SUN, sky)
+		scene_given(r, {block, floor}, nil, SUN, sky)
 		seen := shown(t, &f, outside, {0, -1.9, 0})
 		testing.expectf(t, seen.g > 2 * seen.b, "%v: from outside the floor shows through the top: %v", provider, seen)
 	}

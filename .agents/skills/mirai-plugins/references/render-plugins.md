@@ -52,8 +52,8 @@ scale), through its local Y axis.
 `Deform` deforms on the GPU the mesh of its entity, for raster and for rays: shadows, reflections
 and motion vectors follow the shape.
 
-- `deform_render` creates per entity a deformable copy of its mesh (`deformable_create`), hands it
-  over as a visual replacement (`host.extras_instance_add` with `replace_source`) and, while the
+- `deform_render` creates per entity a deformable copy of its mesh (`deformable_create`), gives it
+  as the posed mesh of its entity (`posed_set`) and, while the
   shape changes, requests a `Geometry` pass where the stage of its shape writes the vertices from
   the rest ones, as `render.Gpu_Posed_Vertex` in the words of the vertex pool that
   `pass_deformable` gives. With `speed` 0 the shape stays fixed and is only written when its

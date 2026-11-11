@@ -71,10 +71,10 @@ description: Create and modify Mirai interfaces with the `ui` package (layout, f
   previous frame's rectangles live in the widget registry, which `frame_end` indexes by id: a
   lookup by id (`widget_rect`) does not go through the widgets.
 - **The layout keeps between frames only the text measure and the rectangles of the elements that
-  transition** (by id, those a style with `transition` asks for: game nodes, never the editor's
-  widgets). A span of text that did not change is not measured again (`Stats.text_measured` and
-  `text_reused`), and one that does not fit in `max_text_words` is measured again when split into
-  lines, without being discarded.
+  transition** (by id, those a style with `layout_transition` asks for: game nodes, never the
+  editor's widgets, in a table of `Context_Desc.max_transitions`). A span of text that did not
+  change is not measured again (`Stats.text_measured` and `text_reused`), and one that does not fit
+  in `max_text_words` is measured again when split into lines, without being discarded.
 - **Text goes into a box one way**: the text leaf, whose lines and height the layout computes in
   the frame that builds it ([text](references/ui.md#text)). No widget wraps text, counts its lines
   or reads last frame's width to do it.
@@ -131,8 +131,11 @@ description: Create and modify Mirai interfaces with the `ui` package (layout, f
 - **The override of a style by a node is an unnamed style with `extends`**: it says what differs
   and follows later changes of the style in the rest.
 - **A game has one route to an interface, the `.ui`.** What code draws is a `Draw` node, through
-  `Game_Source.draw`: its procedure reads only the node, so a screen is still skipped and replayed
+  `Context.draw_user`: its procedure reads only the node, so a screen is still skipped and replayed
   by what it binds.
+- **One custom-draw hook.** A canvas, a `Draw` node and an icon from `Icon.User` on are one
+  paint, `Paint_Kind.Draw`, handed as a `Draw_Node` to `Context.draw_user`, which draws by its
+  `name`.
 - **The first control of each page takes the focus** when it shows (a flag set the first time a
   tree is built by `tree_pages_focus`, not inside a `List`); a node can still ask with
   `Focus_First`.

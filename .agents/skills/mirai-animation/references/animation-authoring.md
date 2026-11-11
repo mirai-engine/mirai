@@ -138,8 +138,10 @@ detected unsaved one) and a clip library (by default, the one it plays). With `s
   the clip by name and the destination by canonical path or curve name. `key.set` replaces
   the key of a track at `time` or inserts one in order, moves it with `to` (replacing one already
   there) or removes it; a field of `key` left out keeps what the key holds, so only a new key needs
-  `value`. `marker.set` changes a marker by `name` (`at` the time among several of the name, `add`
-  one more); a `duration` makes it a span, which sections, action windows and warp windows name.
+  `value`. `marker.set` changes a marker by `name` and `target` (`at` the time among several, `add`
+  one more); a `duration` makes it a span, which sections, action windows and warp windows name; a
+  `target` puts it on an entity, a shot or an action of a
+  [cinematic](../../mirai-gameplay/references/cinematics.md#shots-and-actions).
   Both work on tracks longer than the capacity of `track.set`.
 - `animation.key.capture` keys at `time` every track of the clip of an `Animation` that moves an
   entity with what the entity has now (its local transform, the fields of its `@field` tracks): one
@@ -157,11 +159,13 @@ The one editor of the keys of any clip (a door, a light, a camera move, a cinema
 `plugins/animation/editor/tracks.odin`: Tools > Tracks, or `animation.tracks.show`, on the clip of
 the `Animation` of the selection or of the entity whose clip moves it. Its panel lists the tracks by
 target and field, the key chosen (interpolation, ease) and what adds a track for a value of the
-selected entity; the strip at the bottom has a lane of keys per track in view.
+selected entity; the strip at the bottom has a lane of keys per track in view and, after them, a
+lane of markers for each target they are on (the clip's own, the shots of a camera, the actions of
+an actor), whose marks a drag moves and the right button deletes.
 
 - It keeps only its view (head, zoom, range, the track and key chosen, the `.anim` it reads): every
-  edit is a call of `animation.key.set`, `animation.track.set` or `animation.key.capture` through
-  `editor.command_call`, one step of undo, in memory until Save.
+  edit is a call of `animation.key.set`, `animation.track.set`, `animation.marker.set` or
+  `animation.key.capture` through `editor.command_call`, one step of undo, in memory until Save.
 - The scene shows the clip at the head because the tool seeks it there, as the preview of an
   `Animation`; turning it off takes the clip back to its start. A new key at the head takes the
   value the track has there.

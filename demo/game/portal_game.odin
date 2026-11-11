@@ -360,11 +360,10 @@ door_opened :: proc(doors:core.Read(Door),buttons:core.Read(Floor_Button),e:core
     return false
 }
 
-// What portal_hud.ui shows of the body with the gun it is on, while a seat
-// drives it: the screen is on the body, so it shows in the view of its player.
+// What portal_hud.ui shows of the body with the gun it is on: the screen is on
+// the body, so it shows in the view of its player, and only then.
 @(component,description="The HUD of a portal gun: the crosshair with the portals it has open, what its actions do and the caption of what is near.")
 Portal_Hud :: struct {
-    shown:bool,   // a seat drives this body
     blue,orange:bool, // that portal is open
     holding:bool, // it carries a cube
     aiming:bool,  // it does not: its buttons open portals
@@ -375,15 +374,15 @@ Portal_Hud :: struct {
 @(step="frame")
 portal_hud :: proc(
     huds:^core.Table(Portal_Hud),guns:core.Read(Portal_Gun),mouths:core.Read(Portal_Mouth),exhibits:core.Read(Exhibit),
-    seats:core.Read(inp.Seat),worlds:core.Read(core.World_Transform),names:core.Read(core.Name),
+    worlds:core.Read(core.World_Transform),names:core.Read(core.Name),
 ) {
     shown:=core.read(huds)
     for row in 0..<core.count(shown) {
         body:=core.entity_at(shown,row)
         next:Portal_Hud
         gun,has_gun:=core.get(guns,body)
-        if placed,has_world:=core.get(worlds,body);has_world && has_gun && inp.seat_of(seats,body)!=core.NONE {
-            next.shown,next.holding,next.aiming=true,gun.held!=core.NONE,gun.held==core.NONE
+        if placed,has_world:=core.get(worlds,body);has_world && has_gun {
+            next.holding,next.aiming=gun.held!=core.NONE,gun.held==core.NONE
             for at in 0..<core.count(mouths) {
                 mouth:=core.at(mouths,at)
                 if !mouth.placed {continue}

@@ -103,7 +103,7 @@ USAGE_TEXT :: `Usage: [--project <folder>] [--scene <path>] [--headless] [--hidd
   --api-port    port of the agent API (JSON-RPC and MCP); 7940 if missing, or a free one when it is taken; 0: a free one, never 7940
   --no-api      without the agent API
   --share       shares the scene with other editors; port 7950 if missing. Prints the invitation code
-  --join        joins the session of another editor with the code of its invitation (K7Q2-9XMA-PL3F-0B2C)
+  --join        joins the session of another editor with the code of its invitation (R2M0-253B-DK5G-0W87-DDP5-XG9E-FB1A)
   --name        name in the shared session
   --project     project folder; the current one if missing
   --scene       scene to open: a file or a path relative to the assets folder
@@ -196,6 +196,7 @@ Session :: struct {
     gpu_failure:Gpu_Failure_Reaction, // what the editor did once its GPU stopped working (gpu_failure.odin)
     open_path:[1024]u8,open_length:int,
     open_confirmed:bool, // the scene of open_path replaces the open one: the question was answered
+    new_prefab:bool,     // what New makes: a prefab, or a scene
     frame:u64,
     quit:bool,
     frames:int,          // frames to run before it ends; 0: until it is asked to
@@ -748,7 +749,7 @@ requests_run :: proc(s:^Session) {
     if .New in requests {
         runs_stop(s)
         asset_document_activate(s,-1)
-        scene_new(s)
+        scene_new(s,s.new_prefab)
     }
     if .Open in requests {open_run(s)}
     if .Document_Switch in requests {

@@ -405,7 +405,7 @@ a_scene_document_makes_entities_from_presets_cards_and_prefabs :: proc(t:^testin
     testing.expect(t,len(asset.scene_instance_roots(&after))==1 && len(after_members)==len(members))
 
     // What the document says of a member, however deep, by its name, the instance holds on its own.
-    _,gate_why:=scene_write(&p,"arena/Gate.scene",`{"entities":[{"name":"Gate","children":[{"name":"Frame","children":[{"name":"Lamp","preset":"point_light"}]}]}]}`)
+    _,gate_why:=scene_write(&p,"arena/Gate.scene",`{"kind":"Prefab","entities":[{"name":"Gate","children":[{"name":"Frame","children":[{"name":"Lamp","preset":"point_light"}]}]}]}`)
     if !testing.expect(t,gate_why=="",gate_why) {return}
     court:=`{"entities":[{"name":"North","prefab":"arena/Gate.scene","children":[{"name":"Frame","children":[{"name":"Lamp","position":[0,2,0],"components":{"Point_Light":{"intensity":9}}}]}]}]}`
     north,north_why:=scene_write(&p,"arena/court.scene",court)
@@ -420,7 +420,7 @@ a_scene_document_makes_entities_from_presets_cards_and_prefabs :: proc(t:^testin
     testing.expect(t,why=="" && again.same,fmt.tprintf("%s %v",why,again))
 
     // A prefab is not placed in a file it holds, itself or through the prefabs it places.
-    _,wall_why:=scene_write(&p,"arena/Wall.scene",`{"entities":[{"name":"Wall","children":[{"name":"Door","prefab":"arena/Gate.scene"}]}]}`)
+    _,wall_why:=scene_write(&p,"arena/Wall.scene",`{"kind":"Prefab","entities":[{"name":"Wall","children":[{"name":"Door","prefab":"arena/Gate.scene"}]}]}`)
     testing.expect(t,wall_why=="",wall_why)
     gate:=slice.clone(file_bytes(&p,"arena/Gate.scene"),context.temp_allocator)
     for inner in ([]string{"arena/Gate.scene","arena/Wall.scene"}) {
@@ -428,29 +428,33 @@ a_scene_document_makes_entities_from_presets_cards_and_prefabs :: proc(t:^testin
         testing.expectf(t,strings.contains(refused,"entities[0].children[0].prefab: ") && strings.contains(refused,"holds the scene it would be placed in"),"%s gave '%s'",inner,refused)
     }
     testing.expect(t,slice.equal(file_bytes(&p,"arena/Gate.scene"),gate),"a refused document leaves the file as it was")
+
+    // A prefab has exactly one root: a scene with several is not made one, and a prefab keeps one.
+    _,many:=scene_write(&p,"arena/yard.scene",`{"merge":true,"kind":"Prefab","entities":[]}`)
+    testing.expectf(t,strings.contains(many,"exactly one root"),"gave '%s'",many)
+    _,second:=scene_write(&p,"arena/Gate.scene",`{"merge":true,"entities":[{"name":"Second"}]}`)
+    testing.expectf(t,strings.contains(second,"exactly one root"),"gave '%s'",second)
 }
 
 
-// The bytes a document read from the .ui id and written back gives; ok false
-// when it does not read or write.
+// The bytes the document mirai ui read gives of the .ui path, written back as
+// mirai ui write writes it, and the .strings that write would touch. The
+// bindings are not checked: the test world is not the game of the project.
 @(private="file")
-ui_round_trip :: proc(p:^Project,id:base.Asset_Id) -> (bytes:[]u8,why:string,ok:bool) {
-    r:Records
-    if !records_read(p.assets,id,&r,context.temp_allocator) {return nil,"it does not read",false}
-    reading:=Reading{allocator=context.temp_allocator,assets=registry_assets(&p.registry)}
-    args:=Tree_Args{reading=&reading,types=&p.types,registry=&p.registry,assets=p.assets,asset=id}
-    libs:=doc_libs(&args,&r)
+ui_round_trip :: proc(p:^Project,path:string,id:base.Asset_Id) -> (bytes:[]u8,texts:[]Texts_Written,why:string) {
+    info:=p.info
+    p.info=nil
+    defer p.info=info
     out:serial.Writer
     serial.writer_init(&out,0,context.temp_allocator)
-    document_write(&out,&p.types,&r,-1,libs[:],p.assets)
-    text:=string(serial.writer_bytes(&out))
-    reading.raw=text
-    again:Records
-    if !records_read(p.assets,id,&again,context.temp_allocator) {return nil,"it does not read",false}
-    if _,_,applied:=document_apply(&args,&again,-1,text);!applied {return nil,reading.problem,false}
-    written,_,loads:=document_bytes(&args,id,&again)
-    if !loads {return nil,reading.problem,false}
-    return written,"",true
+    if why=ui_read(p,path,&out);why!="" {return}
+    r:Records
+    if !records_read(p.assets,id,&r,context.temp_allocator) {return nil,nil,"it does not read"}
+    keys:=texts_read(p.assets,p.languages[0])
+    written:Written
+    if bytes,_,why=ui_apply(p,id,&r,string(serial.writer_bytes(&out)),&keys,&written);why!="" {return}
+    texts,why=texts_written(&keys,&p.types,{})
+    return
 }
 
 // Every interface, scene and prefab the engine tracks, in the game template
@@ -478,9 +482,10 @@ the_documents_of_the_tracked_assets_write_back_the_files_they_were_read_from :: 
             switch file.kind {
             case asset.KIND_UI:
                 files+=1
-                written,why,ok:=ui_round_trip(&p,file.id)
-                if !testing.expectf(t,ok,"%s/%s: %s",folder,path,why) {continue}
+                written,texts,why:=ui_round_trip(&p,path,file.id)
+                if !testing.expectf(t,why=="","%s/%s: %s",folder,path,why) {continue}
                 testing.expectf(t,slice.equal(written,file_bytes(&p,path)),"%s/%s: its document writes other bytes: mirai ui write saves it again",folder,path)
+                for touched in texts {testing.expectf(t,slice.equal(touched.bytes,file_bytes(&p,touched.path)),"%s/%s: its document writes other texts in %s",folder,path,touched.path)}
             case asset.KIND_SCENE:
                 files+=1
                 problem:=scene_verify(&p,path)

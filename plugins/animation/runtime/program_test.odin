@@ -24,7 +24,7 @@ program_test_content :: proc(t:^testing.T,content:^host.Content_Animation) -> Pl
     content.lib.clips[2].first_marker,content.lib.clips[2].marker_count=1,1
     content.lib.clips[3]=content.lib.clips[0];content.lib.clips[3].loop=.Loop
     content.lib.clips[5]=content.lib.clips[2];content.lib.clips[5].loop=.Loop
-    content.markers=make([]u64,1);content.markers[0]=base.name_hash("step")
+    content.markers=make([]host.Content_Marker,1);content.markers[0].name=base.name_hash("step")
     return state
 }
 
@@ -37,7 +37,7 @@ program_test_sync_markers :: proc(content:^host.Content_Animation) {
     markers:=[4]lib.Marker{{time=.2,id=0},{time=1.2,id=1},{time=.1,id=0},{time=.4,id=1}};copy(content.lib.markers,markers[:])
     for index in ([2]int{0,3}) {content.lib.clips[index].first_marker,content.lib.clips[index].marker_count=0,2}
     for index in ([2]int{2,5}) {content.lib.clips[index].first_marker,content.lib.clips[index].marker_count=2,2}
-    delete(content.markers);content.markers=make([]u64,2);content.markers[0],content.markers[1]=base.name_hash("step"),base.name_hash("lift")
+    delete(content.markers);content.markers=make([]host.Content_Marker,2);content.markers[0].name,content.markers[1].name=base.name_hash("step"),base.name_hash("lift")
 }
 
 // The program of one group of clips, as the search of the locomotion of a .character leaves it.

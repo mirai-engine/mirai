@@ -727,18 +727,18 @@ a_record_without_memory_to_look_waits_for_the_next_look :: proc(t:^testing.T) {
 @(private="file") SECTION_YARD :: base.Asset_Id{0x6a,8}
 @(private="file") SECTION_CELLAR :: base.Asset_Id{0x6a,9}
 
-// One kind of scene, placed as its use asks. A scene with one root spawns as
-// a copy, whose root says the scene it is of, and hangs as a section in the
-// same world; one with several roots hangs as a section and does not spawn,
-// and the problem says what to do with it. The sections a copy holds load
+// A prefab spawns as a copy by its one root, which says the scene it is of,
+// and hangs as a section in the same world; a scene hangs as a section and
+// does not spawn, whatever its roots, and the problem says what to do with it. The sections a copy holds load
 // with it under the Id its reference has in the world: two copies repeat no
 // Id, and a copy without Ids brings its sections without them.
 @(test)
-a_scene_spawns_by_its_one_root_and_any_scene_hangs_as_a_section :: proc(t:^testing.T) {
+a_prefab_spawns_by_its_one_root_and_any_scene_hangs_as_a_section :: proc(t:^testing.T) {
     f:Section_Fixture
     if !section_fixture_open(t,&f,"both-ways") {return}
     defer section_fixture_close(&f)
     cellar:asset.Scene;asset.scene_init(&cellar,&f.types,SECTION_CELLAR)
+    cellar.doc.flags+={.Prefab}
     asset.scene_entity_add(&cellar,1,0,"Cellar")
     asset.scene_entity_add(&cellar,2,1,"Lamp")
     asset.scene_set(&cellar,2,"Section_Test_Lamp",&Section_Test_Lamp{3})
@@ -748,6 +748,7 @@ a_scene_spawns_by_its_one_root_and_any_scene_hangs_as_a_section :: proc(t:^testi
     asset.scene_entity_add(&yard,2,0,"Well")
     section_save(t,&f,&yard,"yard.scene")
     house:asset.Scene;asset.scene_init(&house,&f.types,SECTION_HOUSE)
+    house.doc.flags+={.Prefab}
     asset.scene_entity_add(&house,1,0,"House")
     asset.scene_entity_add(&house,2,1,"Below")
     asset.scene_set(&house,2,"Scene_Reference",&Scene_Reference{scene=SECTION_CELLAR})
@@ -766,10 +767,10 @@ a_scene_spawns_by_its_one_root_and_any_scene_hangs_as_a_section :: proc(t:^testi
     testing.expect_value(t,spawn(s,"empty.scene"),core.NONE)
     if testing.expect_value(t,f.problems.count,1) {
         said:=base.text_get(f.problems.entries[0].text[:])
-        testing.expectf(t,strings.contains(said,"exactly one root") && strings.contains(said,"Scene_Reference"),"it says why and what to do: %s",said)
+        testing.expectf(t,strings.contains(said,"not a prefab") && strings.contains(said,"Scene_Reference"),"it says why and what to do: %s",said)
     }
     _,cycle:=spawn_prefab(s.commands,s.assets,{prefab=SECTION_YARD})
-    testing.expect_value(t,cycle,Error.Not_One_Root)
+    testing.expect_value(t,cycle,Error.Not_A_Prefab)
 
     first:=spawn(s,"house.scene")
     second:=spawn(s,SECTION_HOUSE)

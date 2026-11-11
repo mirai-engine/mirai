@@ -245,7 +245,7 @@ pack_reach :: proc "contextless" (size:u64) -> u64 {return size/PACK_BLOCK_MIN*c
 
 Header_Flag :: enum u32 {
     Cooked,   // built by an importer from a source file: edits belong in the source
-    One_Root, // a scene whose entities hang from one root, which is what a prefab is: derived from its entities each time it is written
+    Prefab,   // a scene placed as instances, with exactly one root: what whoever made it chose, never derived from its entities
 }
 Header_Flags :: bit_set[Header_Flag;u32]
 

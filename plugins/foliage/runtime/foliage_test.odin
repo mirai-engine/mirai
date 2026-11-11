@@ -460,6 +460,7 @@ the_parts_of_a_prefab_are_its_shown_meshes_placed_from_its_root :: proc(t:^testi
     prefab:asset.Scene
     testing.expect_value(t,asset.scene_init(&prefab,&types,{0xf0,0xf1}),asset.Error.None)
     defer asset.scene_destroy(&prefab)
+    prefab.doc.flags+={.Prefab}
     asset.scene_entity_add(&prefab,1,0,"Tree")
     asset.scene_entity_add(&prefab,2,1,"Trunk")
     asset.scene_entity_add(&prefab,3,2,"Crown")

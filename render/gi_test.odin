@@ -61,7 +61,7 @@ gi_reference_gives_the_light_of_a_white_furnace :: proc(t: ^testing.T) {
 			for wall, i in walls {
 				instances[i] = {object_id = u64(i + 1), mesh = cube, transform = wall, tint = {1, 1, 1}, emission = {1, 1, 1}, material = material}
 			}
-			scene_set(r, instances[:], nil, {}, {})
+			scene_given(r, instances[:], nil, {}, {})
 			for _ in 0 ..< 48 {testing.expect(t, renderer_frame(r, {camera = camera, inspection = {mode = .Indirect}}), r.error)}
 			targets := &r.main.targets
 			size := int(targets.width * targets.height)
@@ -150,7 +150,7 @@ a_new_light_scale_keeps_the_indirect_light :: proc(t: ^testing.T) {
 		before := gi_mean_after(t, &f, 240)
 		scale := r.scene.light_scale
 		append(&f.lights, Light_Desc{position = {1000, 1000, 1000}, color = {1, 1, 1}, intensity = 9425 * times, range = 0.5, radius = 0.05})
-		scene_set_lights(r, f.lights[:], f.sun, f.environment)
+		scene_lights_given(r, f.lights[:], f.sun, f.environment)
 		after := gi_mean_after(t, &f, 1)
 		later := gi_mean_after(t, &f, 120)
 		testing.expectf(t, r.scene.light_scale != scale, "a light %v times the strongest leaves the light scale at %v", times, scale)
@@ -705,7 +705,7 @@ gi_setup :: proc(f: ^Gi_Fixture, kind: Gi_Kind) {
 	copy(f.instances[:], f.base[:])
 	resize(&f.lights, len(f.base_lights))
 	copy(f.lights[:], f.base_lights[:])
-	scene_set(f.r, f.instances[:], f.lights[:], f.sun, f.environment)
+	scene_given(f.r, f.instances[:], f.lights[:], f.sun, f.environment)
 	skin_update(f.r, f.body, f.palette[:], true)
 }
 
@@ -790,7 +790,7 @@ gi_pose :: proc(f: ^Gi_Fixture, kind: Gi_Kind, at: f32) {
 		resize(&f.lights, len(lights))
 		copy(f.lights[:], lights[:])
 		started := time.tick_now()
-		scene_set_lights(f.r, f.lights[:], f.sun, f.environment)
+		scene_lights_given(f.r, f.lights[:], f.sun, f.environment)
 		f.light_ms += time.duration_milliseconds(time.tick_since(started))
 		f.light_sets += 1
 	}
@@ -1720,11 +1720,11 @@ gi_benchmark_reports_noise_error_settling_and_cost :: proc(t: ^testing.T) {
 			lights := make([]Light_Desc, count)
 			defer delete(lights)
 			for &light, i in lights {light = {position = {f32(i % 64) - 32, 1, f32(i / 64) - 32}, color = {1, 1, 1}, intensity = 100, range = 4, radius = 0.05}}
-			scene_set_lights(f.r, lights, {}, {})
+			scene_lights_given(f.r, lights, {}, {})
 			started := time.tick_now()
 			for _ in 0 ..< 20 {
 				lights[0].position.x += 0.01
-				scene_set_lights(f.r, lights, {}, {})
+				scene_lights_given(f.r, lights, {}, {})
 			}
 			fmt.printfln("| %d | %.3f |", count, time.duration_milliseconds(time.tick_since(started)) / 20)
 		}

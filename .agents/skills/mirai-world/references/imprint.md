@@ -41,8 +41,8 @@ not stamp. Without `stride` it stamps a furrow from where it was on the previous
 
 - `Imprint_Ground` on an entity: its mesh and those of the entities below (`DEPTH` levels: the
   chunks of a terrain, without `terrain` knowing of the plugin) are drawn, while the field's
-  region reaches its box, by a deformable copy (`deformable_create`) that replaces the instance
-  (`replace_source`). The copy's box is the rest box grown by `depth_max` and `rise_max` along the
+  region reaches its box, by a deformable copy (`deformable_create`), the posed mesh of its entity
+  (`posed_set`). The copy's box is the rest box grown by `depth_max` and `rise_max` along the
   world's up: culling knows it from the first frame.
 - `imprint_displace.comp.slang`, in the `Geometry` stage, moves each vertex along the world's up by
   the field filtered with a tent two vertex spacings wide on each side (the spacing comes from the
