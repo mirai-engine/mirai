@@ -127,7 +127,9 @@ game's named buses belong to [`engine/audio`](../../mirai-gameplay/references/li
   `LIMITER_CEILING` brings the gain down to it at once, which holds `LIMITER_HOLD` and comes back
   in `LIMITER_RELEASE`. A mix that never reaches full scale comes out as it is.
 
-- Volume and mute are ramped within a chunk; a muted bus keeps its volume.
+- Volume and mute are ramped within a chunk; a muted bus keeps its volume. A new cutoff of its
+  low-pass runs beside the old filter for a chunk, whose memory it takes, and the output
+  crossfades from one to the other, so a sweep has no steps.
 - `bus_set_duck`: while the peak of the `source` bus, measured after its volume and its filter,
   exceeds `threshold`, the bus drops to `1-amount` in `attack` and returns in `release`. The master
   is not ducked and a bus does not duck itself.

@@ -30,8 +30,11 @@ Biquad :: struct {b0,b1,b2,a1,a2:f32}
 Mix_Bus :: struct {
     volume:f32,muted:bool,
     gain:f32, // applied at the end of the last chunk
-    filter:Biquad,filtering:bool,
-    filter_state:[2][2]f32, // per output channel
+    // The low-pass, and the one it changes from: across the chunk after a
+    // change both run and the output crossfades from the old to the new.
+    filter,old:Biquad,
+    filtering,old_filtering,fading:bool,
+    filter_state,old_state:[2]Biquad_State, // per output channel
     duck:Duck,
     duck_gain,duck_gain_now:f32,
     peak:f32, // of the last chunk, before ducking
@@ -111,32 +114,44 @@ biquad_lowpass :: proc "contextless" (cutoff_hz,sample_rate:f32) -> Biquad {
     a0:=1+alpha
     return {b0=(1-cosine)/2/a0,b1=(1-cosine)/a0,b2=(1-cosine)/2/a0,a1=-2*cosine/a0,a2=(1-alpha)/a0}
 }
+// Godot's AudioFilterSW::update_coeffs moves its coefficients over the
+// buffer; here, as the EQ of a spatial voice does, the filter before the
+// change keeps running through the chunk and the output crossfades to the
+// new one, which takes over its memory, so a sweep has no steps.
 @(private)
 bus_lowpass_apply :: proc "contextless" (m:^Mixer,bus:^Mix_Bus,cutoff_hz:f32) {
     filtering:=cutoff_hz>0 && cutoff_hz<f32(m.sample_rate)*0.49
+    if !bus.fading {bus.old,bus.old_state,bus.old_filtering,bus.fading=bus.filter,bus.filter_state,bus.filtering,true}
     if filtering {bus.filter=biquad_lowpass(cutoff_hz,f32(m.sample_rate))}
-    if !filtering || !bus.filtering {bus.filter_state={}}
+    bus.filter_state=bus.old_state if bus.old_filtering else {}
     bus.filtering=filtering
+}
+@(private)
+biquad_tick :: #force_inline proc "contextless" (f:Biquad,s:^Biquad_State,x:f32) -> f32 {
+    y:=f.b0*x+s.z1
+    s.z1=f.b1*x-f.a1*y+s.z2
+    s.z2=f.b2*x-f.a2*y
+    return y
 }
 
 // Filter, volume and peak of one bus over n frames of its buffer.
 @(private)
 bus_process :: proc "contextless" (bus:^Mix_Bus,buffer:[^]f32,n:int) {
     #no_bounds_check {
-        if bus.filtering {
-            f:=bus.filter
-            for channel in 0..<2 {
-                z1,z2:=bus.filter_state[channel][0],bus.filter_state[channel][1]
+        for channel in 0..<2 {
+            switch {
+            case bus.fading:
                 for k in 0..<n {
                     x:=buffer[k*2+channel]
-                    y:=f.b0*x+z1
-                    z1=f.b1*x-f.a1*y+z2
-                    z2=f.b2*x-f.a2*y
-                    buffer[k*2+channel]=y
+                    y:=biquad_tick(bus.filter,&bus.filter_state[channel],x) if bus.filtering else x
+                    old:=biquad_tick(bus.old,&bus.old_state[channel],x) if bus.old_filtering else x
+                    buffer[k*2+channel]=old+(y-old)*(f32(k)/f32(n))
                 }
-                bus.filter_state[channel]={z1,z2}
+            case bus.filtering:
+                for k in 0..<n {buffer[k*2+channel]=biquad_tick(bus.filter,&bus.filter_state[channel],buffer[k*2+channel])}
             }
         }
+        bus.fading=false
         target:=f32(0) if bus.muted else bus.volume
         gain,step:=bus.gain,(target-bus.gain)/f32(n)
         peak:=f32(0)
