@@ -121,7 +121,7 @@ character_setup_builds_locomotion_look_feet_hands_and_gestures_from_the_body :: 
         actions:=set.actions
         testing.expect(t,len(actions.actions)==3 && len(actions.layers)==3)
         if len(actions.actions)==3 && len(actions.layers)==3 {
-            testing.expect(t,base.text_get(actions.layers[0].over.path[:])=="@upper_body" && base.text_get(actions.layers[1].over.path[:])=="@arm_l" && base.text_get(actions.layers[2].over.path[:])=="@arm_r")
+            testing.expect(t,base.text_get(actions.layers[0].over[0].bone.path[:])=="@upper_body" && actions.layers[0].over[0].depth>1 && base.text_get(actions.layers[1].over[0].bone.path[:])=="@arm_l" && base.text_get(actions.layers[2].over[0].bone.path[:])=="@arm_r")
             for action,i in actions.actions {testing.expect(t,action.layer==actions.layers[i].name,"each gesture plays in the layer of its part of the body")}
         }
         // Idle and walk alone make a valid locomotion: rates cover the speeds between them.

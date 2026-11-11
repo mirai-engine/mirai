@@ -30,7 +30,7 @@ gallery_program_assets :: proc(o:^Out,model:^importer.Imported_Model,animation:b
     shoulder:=rig_path(model,"LeftShoulder")
     layer :: proc(name:string) -> anim.Stack_Layer {value:=anim.STACK_LAYER_DEFAULT;base.text_set(value.name[:],name);return value}
     // The wave over the left arm of the walk, by the weight the game sets.
-    arm:=layer(game.GALLERY_ARM);base.text_set(arm.clip[:],"wave");arm.over,arm.fade=anim.bone_ref(shoulder),.35
+    arm:=layer(game.GALLERY_ARM);base.text_set(arm.clip[:],"wave");arm.over[0].bone,arm.fade=anim.bone_ref(shoulder),.35
     gallery_set(o,folder,"mirai_greeting",animation,{actions={layers={arm}}})
     // The jog in step with the walk, by the weight the game sets.
     jog:=layer(game.GALLERY_JOG);base.text_set(jog.clip[:],"jog");jog.sync,jog.weight,jog.fade=true,.5,.25
@@ -44,7 +44,7 @@ gallery_program_assets :: proc(o:^Out,model:^importer.Imported_Model,animation:b
     // Greet in a layer over the left arm; Step and Wave over the whole body, which over
     // locomotion leave it and come back to it by inertialization. Their sections are spans of
     // their clips (mirai_gallery_animation).
-    greet:=layer("Arm");greet.over=anim.bone_ref(shoulder)
+    greet:=layer("Arm");greet.over[0].bone=anim.bone_ref(shoulder)
     definitions:=[3]anim.Action_Definition{anim.ACTION_DEFINITION_DEFAULT,anim.ACTION_DEFINITION_DEFAULT,anim.ACTION_DEFINITION_DEFAULT}
     base.text_set(definitions[0].name[:],"Greet");base.text_set(definitions[0].clip[:],"wave");base.text_set(definitions[0].layer[:],"Arm");definitions[0].priority=1
     base.text_set(definitions[1].name[:],"Step");base.text_set(definitions[1].clip[:],"stride");definitions[1].root_motion=.In_Place;definitions[1].priority=2;definitions[1].fade_in=.15;definitions[1].fade_out=.2

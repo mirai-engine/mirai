@@ -284,24 +284,43 @@ bone_named :: proc(state:^Playing,hash:u64) -> int {
     return found
 }
 
-// What a reference of a mask or an over holds: a bone and the bones below
-// it, or with bone -1, regions of the body.
-Bone_Selection :: struct {bone:int,regions:lib.Body_Regions}
+// A branch of the body a layer moves: a bone, @part or @region and the bones below it. The share of
+// the layer grows by 1/depth a bone down from where the branch starts, so the layer fades in along
+// the chain instead of cutting at it; 0 and 1 cut.
+LAYER_BRANCHES :: 4
+Layer_Branch :: struct {bone:Bone_Ref,depth:u8 `mirai:"optional"`}
+Layer_Over :: [LAYER_BRANCHES]struct {bone:u64,depth:u8} // the branches of a layer by base.name_hash of their reference; none: the whole pose
 
-bone_select :: proc(state:^Playing,hash:u64) -> (selection:Bone_Selection,ok:bool) {
-    if bone:=bone_named(state,hash);bone>=0 {return {bone=bone},true}
-    if state.body=={} {return {bone=-1},false}
-    part,regions,is_part,is_region:=body_label(hash)
-    if is_region && len(state.regions)==len(state.parents) {return {bone=-1,regions=regions},true}
-    if is_part && state.body[part]>0 {return {bone=int(state.body[part])},true}
-    return {bone=-1},false
-}
-
-bone_selected :: proc "contextless" (state:^Playing,selection:Bone_Selection,bone:int) -> bool {
-    if selection.bone<0 {return lib.body_region_inside(state.regions[bone],selection.regions)}
-    at:=bone
-    for at>selection.bone {at=int(state.parents[at])}
-    return at==selection.bone
+// The share of its layer each bone of state takes, into weights by binding: the most any branch of
+// over gives it, or all of it without branches. False for a branch this rig does not have.
+layer_mask :: proc(state:^Playing,over:Layer_Over,weights:[]f32) -> bool {
+    n:=len(weights)
+    if over=={} {slice.fill(weights,1);return true}
+    slice.zero(weights)
+    for branch in over {
+        if branch.bone==0 {continue}
+        root:=bone_named(state,branch.bone)
+        regions:lib.Body_Regions
+        if root<0 {
+            if state.body=={} {return false}
+            part,named,is_part,is_region:=body_label(branch.bone)
+            if is_region && len(state.regions)==n {regions=named} else if is_part && state.body[part]>0 {root=int(state.body[part])} else {return false}
+        }
+        step:=1/f32(max(branch.depth,1))
+        for b in 0..<n {
+            // Bones of the branch from b up to where it starts; parents come before their bones.
+            steps:=0
+            if root<0 {
+                for at:=b;at>=0 && lib.body_region_inside(state.regions[at],regions);at=int(state.parents[at]) {steps+=1}
+            } else {
+                at:=b
+                for at>root {at=int(state.parents[at]);steps+=1}
+                steps=steps+1 if at==root else 0
+            }
+            weights[b]=max(weights[b],min(f32(steps)*step,1))
+        }
+    }
+    return true
 }
 
 bone_target :: proc(state:^Playing,reference:Bone_Ref) -> u64 {

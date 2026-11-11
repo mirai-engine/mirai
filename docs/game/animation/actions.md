@@ -7,8 +7,11 @@ of any set (its `layers` and `actions` rows say every field), and `animation.ins
 `Actions` shows what plays.
 
 - A layer plays by itself a clip, or a `space` of the set (aim offsets, additive poses),
-  over a branch (`over`: a bone or `@upper_body`, `@arm_l`) or the whole pose, replacing
-  (`Override`) or adding (`Additive`) over the layers before it.
+  over up to four branches (`over`: each a `bone`, `@upper_body` or `@arm_l`, with a `depth`
+  that fades it in over that many bones, so an upper-body layer does not break at the waist) or
+  the whole pose, replacing (`Override`) or adding (`Additive`) over the layers before it. An aim
+  offset is an `Additive` layer with `mesh_space`: it turns about the axes of the rig, so it
+  aims where it says over a base that leans or twists.
 - `anim.set(requests,e,"<layer name>",w)` is its weight; `anim.set(requests,e,"<axis name>",v)`
   moves the place its space is sampled at. Two clips mixed by a value are a layer whose weight
   is that value.

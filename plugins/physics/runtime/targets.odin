@@ -2,6 +2,7 @@ package physics
 
 import "core:math/linalg"
 import "mirai:core"
+import scene "mirai:engine/scene"
 import sim "plugins:physics/runtime/sim"
 import mm "mirai:std/math"
 
@@ -53,6 +54,34 @@ physics_pose_targets :: proc(
             target_place(state,l,e,local,target.position,rotation,target.linear,target.angular,target.rest)
         }
         target_follow(state,h,l,target,rigids)
+    }
+}
+
+// What its section holds (scene.Section_Held on an entity that is on: a body a
+// seat drives that stands where its section is not loaded, scene_holds) is placed
+// and not stepped: its body or character is kinematic, at rest where it is, and
+// still collides and is drawn; a place asked meanwhile moves it. Let go, it is
+// dynamic again, at rest.
+@(step="fixed",loops="game",stage="begin")
+physics_section_holds :: proc(state:^Physics_State,marks:^core.Table(scene.Section_Held,.Read),rigids:^core.Table(Rigid_Body,.Read)) {
+    if !state.ready {return}
+    for &h in state.held {
+        if .Section not_in h.by || core.has(marks,h.entity) {continue}
+        if l:=link_find(state,h.entity);l!=nil {
+            hold_end(state,&h,l,.Section,rigids)
+            link_touch(state,l)
+        } else {h.by-={.Section}}
+    }
+    for row in 0..<core.count(marks) {
+        e:=core.entity_at(marks,row)
+        l:=link_find(state,e)
+        if l==nil || !link_made(state,l) {continue}
+        h:=held_take(state,e)
+        if h==nil || .Section in h.by {continue}
+        was:=held_kinematic(h^)
+        h.by+={.Section}
+        hold_type(state,h,l,was,rigids)
+        link_touch(state,l)
     }
 }
 
