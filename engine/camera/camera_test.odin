@@ -505,3 +505,47 @@ an_orbit_turns_to_look_at_a_point_from_its_pivot :: proc(t:^testing.T) {
     follow.aim=true
     testing.expect(t,!camera_look_toward(&input_queue,core.Entity(1),follow,{5,2,0}))
 }
+
+// Some time after it was last turned, an Orbit comes back behind a target that
+// goes away from it, and keeps its yaw while the target walks toward it or
+// across it relative to the camera, which chasing would spin without end.
+@(test)
+an_orbit_recenters_only_behind_a_target_that_goes_away :: proc(t:^testing.T) {
+    f:=test_make(t)
+    if f==nil {return}
+    defer test_free(f)
+    camera,body:=core.create(&f.entities),core.create(&f.entities)
+    core.add(&f.transforms,camera,core.Transform{rotation=1,scale={1,1,1}})
+    test_place(f,body,{})
+    test_world_settle(&f.w)
+    TICK :: f32(1.0/60)
+    Case :: struct {name:string,heading:f32,relative,turns:bool} // heading: yaw of the walk, from the camera's when relative
+    cases:=[?]Case{
+        {"away along a heading of the world",1,false,true},
+        {"diagonally away from the camera",math.PI/4,true,true},
+        {"toward the camera",math.PI,true,false},
+        {"across the camera",math.PI/2,true,false},
+        {"diagonally toward the camera",-3*math.PI/4,true,false},
+    }
+    for c in cases {
+        follow:=Camera_Follow{target=body,mode=.Orbit,distance=4,recenter=0.5}
+        position:[3]f32
+        for _ in 0..<180 {
+            heading:=c.heading+(c.relative?follow.looking.x:0)
+            step:=mm.quat_rotate(mm.quat_axis_angle({0,1,0},heading),[3]f32{0,0,-1})*3*TICK
+            placed:=core.World_Transform{transform={position=position+step,rotation=1,scale={1,1,1}}}
+            placed.previous={position=position,rotation=1,scale={1,1,1}}
+            core.edit(&f.worlds,body)^=placed
+            position+=step
+            follow_one(camera,&follow,body,&f.transforms,core.read(&f.worlds),core.read(&f.parents),core.read(&f.moves),mm.QUAT_IDENTITY,{},core.Frame_Time{dt=TICK,alpha=1},TICK)
+        }
+        switch {
+        case !c.turns:
+            testing.expectf(t,close(follow.looking.x,0,1e-5),"%s: the camera keeps its yaw, not %v",c.name,follow.looking.x)
+        case c.relative:
+            testing.expectf(t,abs(follow.looking.x)>0.5,"%s: the camera comes around behind, at %v",c.name,follow.looking.x)
+        case:
+            testing.expectf(t,close(follow.looking.x,c.heading,0.05),"%s: the camera comes behind, at %v",c.name,follow.looking.x)
+        }
+    }
+}
