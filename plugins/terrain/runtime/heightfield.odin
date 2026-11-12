@@ -68,7 +68,8 @@ source_height_held :: proc "contextless" (s:^Source,x,z:f32) -> (height:f32,ok:b
 // The level of each chunk of a Heightfield: the coarsest its error lets the view see, or by its
 // distance, made finer where it meets a finer neighbor (lod_levels_balance). A chunk joined to a
 // Volume stays at level 0, where the Volume meets its samples; one with holes takes any level,
-// its material cutting what its triangles span (Surface_Maps.holed).
+// its material cutting what its triangles span (Surface_Maps.holed), but under a program of the
+// source, which cuts none.
 @(private)
 heightfield_levels :: proc(entry:^Data_Source,source:^Resident_Source,settings:Terrain_Settings,by_error:bool,base:f32) {
     s:=&entry.source
@@ -77,7 +78,8 @@ heightfield_levels :: proc(entry:^Data_Source,source:^Resident_Source,settings:T
         chunk:=&source.chunks[i]
         next:=u8(0)
         joined:=source.join.ground!={} && join_side_chunk(s,i) || join_cut_key(s,source.join.cuts[:],i)!=0
-        if settings.lod_distance>=0 && !joined {
+        // A program of the source cuts no holes: its chunks with holes keep them in their triangles.
+        if settings.lod_distance>=0 && !joined && !(s.layers_material!={} && chunk_holed(s,i)) {
             maximum:=chunk_lod_max(s,chunk_coord(s,i))
             next=lod_level_error(entry.errors,q,i,0,maximum,chunk.pixels,chunk.spacing,s.cell,level)
             // The distance makes a chunk coarser only as far as its error lets it be.

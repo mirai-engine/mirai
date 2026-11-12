@@ -21,10 +21,13 @@ import "base:runtime"
 // what it reads changes. Only what is drawn moves: the collider, the picking
 // and the brushes keep the surface of the samples.
 //
-// The relief is measured from a place that follows the view by steps of an
-// eighth of Terrain_Settings.displacement_distance, and fades to nothing over
-// the last DISPLACEMENT_FADE of that distance, or of the distance of the
-// nearest chunk past DISPLACED_CAPACITY: a chunk comes and goes flat.
+// The relief is measured from a place that follows the view by steps of
+// DISPLACEMENT_STEP of Terrain_Settings.displacement_distance, and fades to
+// nothing over the last DISPLACEMENT_FADE of that distance, or of the
+// distance of the nearest chunk past DISPLACED_CAPACITY. A chunk is taken a
+// step before the relief reaches it, so it comes and goes flat; a step moves
+// the relief by a small part of it, and its chunks are written once a step,
+// not each frame the view moves.
 //
 // Two displaced chunks build the side they share at the steps of the coarser
 // of their details; a side shared with a chunk that is not displaced keeps
@@ -35,7 +38,8 @@ import "base:runtime"
 DISPLACEMENT_MAX :: f32(4)   // metres a layer raises its highest texel over its lowest, at most
 DISPLACED_CAPACITY :: 64     // chunks displaced at once: the nearest
 DISPLACED_BUILDS :: 2        // displaced chunks built in a frame
-DISPLACEMENT_FADE :: f32(0.25) // the part of the distance over which the relief fades out
+DISPLACEMENT_FADE :: f32(0.5)    // the part of the distance over which the relief fades out
+DISPLACEMENT_STEP :: f32(1.0/32) // the part of the distance the place it is measured from moves by
 
 @(private)
 Displaced :: struct {
@@ -159,7 +163,7 @@ terrain_displace :: proc(
     distance:=settings.displacement_distance
     d.pipeline=distance>0?render.stage_pipeline(renderer,{stage=.Geometry,shader="terrain_displace",name="terrain displace"}):0
     // Where the relief is measured from: the view, by steps, so it moves seldom.
-    step:=max(distance/8,1e-3)
+    step:=max(distance*DISPLACEMENT_STEP,1e-3)
     anchor:=linalg.round(view.position/step)*step
     reach:=distance
     // The chunks within the distance, nearest first.
@@ -176,7 +180,7 @@ terrain_displace :: proc(
             world,placed:=core.get(worlds,e)
             if !placed {continue}
             near:=chunk_view_distance(&entry.source,chunk.coord,mm.transform_matrix(world.transform),anchor)
-            if near>distance {continue}
+            if near>distance+step {continue}
             append(&candidates,Displace_Candidate{e,chunk.owner,chunk.coord,marker.source,near})
         }
         slice.sort_by(candidates[:],proc(a,b:Displace_Candidate) -> bool {return a.distance<b.distance})
