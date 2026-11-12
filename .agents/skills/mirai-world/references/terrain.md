@@ -417,7 +417,7 @@ ground in the color of the level it shows, a coarser node one.
 world on the entity they name (no selection needed), each change an undo step like a
 stroke, at the place the entity has now: a manual editor runs the frame that places it, and its
 ground and colliders with it. `terrain.create` takes a `name` for its entity and file, beside the
-scene. A layer is named
+scene, and takes again the file a deleted terrain of that name left. A layer is named
 by its material
 (`asset.slot_named`: the path or stem, `default` with no material, `#2` for the second of the same).
 A Volume's interior is edited in Paint,
