@@ -6,3 +6,4 @@ import "mirai:asset"
 
 NAVMESH_KIND :: asset.Fourcc(u32('N')|u32('A')<<8|u32('V')<<16|u32('M')<<24)
 NAVMESH_EXTENSION :: ".navmesh"
+NAVMESH_VERSION :: 3

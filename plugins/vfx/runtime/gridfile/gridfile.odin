@@ -10,8 +10,6 @@ import "mirai:std/base"
 //   cells  f32: of each cell from the first of the region, x fastest, then
 //          y, then z, its layers of four floats in order
 
-VERSION :: 1
-
 Grid_Info :: struct {
     cells:[3]u32,
     layers:u32,
@@ -40,7 +38,7 @@ grid_bytes :: proc(types:^asset.Types,desc:Grid_Desc,allocator:=context.allocato
     doc:asset.Document
     asset.document_init(&doc,GRID_KIND,desc.id,allocator)
     defer asset.document_destroy(&doc)
-    doc.kind_version=VERSION
+    doc.kind_version=GRID_VERSION
     info:=desc.info
     asset.document_put_row(&doc,types,"grid",&info) or_return
     asset.document_put(&doc,types,"cells",desc.cells,{.Bulk},.Stream) or_return
@@ -50,7 +48,7 @@ grid_bytes :: proc(types:^asset.Types,desc:Grid_Desc,allocator:=context.allocato
 
 // The state a file holds; Corrupt when its cells are not those of its grid.
 grid_view :: proc(a:^asset.Asset,types:^asset.Types) -> (info:Grid_Info,cells:[]f32,error:asset.Error) {
-    asset.kind_check(a,GRID_KIND,VERSION) or_return
+    asset.kind_check(a,GRID_KIND,GRID_VERSION) or_return
     row:=asset.asset_row(a,types,"grid",Grid_Info) or_return
     cells=asset.asset_rows(a,types,"cells","",f32) or_return
     if !grid_valid(row^,len(cells)) {return {},nil,.Corrupt}

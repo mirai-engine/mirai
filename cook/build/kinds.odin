@@ -9,9 +9,9 @@ import "mirai:std/base"
 // The manifest of a plugin is the one declaration of the kinds of asset it
 // adds (project.Asset_Kind): a build generates into the package of each kind
 // the constants its code names, <STEM>_KIND (the four letters its files begin
-// with) and <STEM>_EXTENSION, where .stem is its extension. The file is kept
-// by git, so the plugin compiles and tests without a build, and a build writes
-// it only when the manifest says something else.
+// with), <STEM>_EXTENSION and <STEM>_VERSION, where .stem is its extension.
+// The file is kept by git, so the plugin compiles and tests without a build,
+// and a build writes it only when the manifest says something else.
 
 KINDS_FILE :: "kinds_gen.odin"
 
@@ -24,6 +24,7 @@ kinds_text :: proc(kinds:[]^project.Asset_Kind,package_name:string,allocator:=co
         stem:=strings.to_upper(extension[1:],context.temp_allocator)
         fmt.sbprintf(&b,"\n%s_KIND :: asset.Fourcc(u32('%c')|u32('%c')<<8|u32('%c')<<16|u32('%c')<<24)\n",stem,kind.kind[0],kind.kind[1],kind.kind[2],kind.kind[3])
         fmt.sbprintf(&b,"%s_EXTENSION :: %q\n",stem,extension)
+        fmt.sbprintf(&b,"%s_VERSION :: %d\n",stem,kind.version)
     }
     return strings.to_string(b)
 }
