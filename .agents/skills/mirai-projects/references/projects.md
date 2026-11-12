@@ -71,6 +71,9 @@ keeps its default; one the struct does not have is an error.
   writes from it `kinds_gen.odin` into the package `folder` names (`runtime` without it), with
   `<STEM>_KIND` and `<STEM>_EXTENSION` for each `.stem`; git keeps the file, so the plugin tests
   without a build.
+- `import_sources`: the extensions of the files the importers of a plugin read (`.umap`): a
+  repository with LFS keeps them in it as it keeps the sources of the engine's formats
+  ([git and assets](../../mirai-assets/references/cli.md#git)).
 - `build.compression`: what the assets of the project and its game are compressed with: `none`,
   `open`, or empty for the best its engine has ([compressor](build.md#compressor)). The projects
   of the repository of the engine (the demo, the templates) declare `open`; a project made from a

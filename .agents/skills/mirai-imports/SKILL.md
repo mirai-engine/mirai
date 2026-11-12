@@ -31,8 +31,8 @@ the assets.
   [texture cache](references/imports.md#texture-cache) and
   [mesh cache](references/imports.md#mesh-cache); mips, BC format, green of normal maps and
   heightmaps: [Textures](references/imports.md#textures-cooktextures).
-- Importing in parallel (`model_cook`, `Known`, `Import_Options.worker`) and `mirai import
-  --profile`: [in parallel](references/imports.md#in-parallel).
+- Importing in parallel (`model_cook`, `Import_Options.worker`) and `mirai import --profile`:
+  [in parallel](references/imports.md#in-parallel).
 - A character or an animal without a rig (`rig=Humanoid`, `Fox`, `Spider`..., `cook/rig`):
   [template rigs](references/imports.md#template-rigs-cookrig); how an agent animates it:
   [auto-rig](../mirai-animation/references/animation-autorig.md#workflow).
@@ -206,7 +206,10 @@ the assets.
   image get a texture each and neither touches the other, a checkout without its imported folder
   gets the same assets byte for byte and only what changed is imported again, the sources of a
   plugin format build in the cache and sync reads them with the formats of the plugins, a source
-  outside the assets is refused, when a material is a part of a model),
+  outside the assets is refused, when a material is a part of a model, sync runs the importer of
+  a plugin for a whole source whose inputs changed), `cook/import/outputs_test.odin` (the models
+  of a whole source share their parts by name, names with `/` go to subfolders, inputs count in
+  the key),
   `asset/registry_test.odin` (the listing of the cache by where the sidecar is, never by the order
   of a scan), `cook/import/sources/settings_test.odin` (a sidecar that is not one is refused) and
   `cook/import/sources/write_test.odin` (importing again keeps what was changed in a material and

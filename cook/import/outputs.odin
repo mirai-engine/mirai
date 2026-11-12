@@ -6,23 +6,27 @@ import "core:strings"
 import "mirai:asset"
 import "mirai:std/base"
 
-// The assets an import writes that are not the outputs of a model: the scene
-// of a level, the sources of plugins. They are the assets the sidecar of
-// their source lists as those of a model are (identity.odin): the root by
-// output_root, each other one by kind and name (then index). A new one gets a
-// random id and a file of its own, and outputs_end writes the sidecar.
-// Outputs does not move while it is open: its search keeps memory of its own.
+// The assets of an import that is not that of one model: the scene of a
+// level, the source a plugin imports whole with the models it reads
+// (output_model). They are the assets the sidecar of their source lists as
+// those of a model are (identity.odin): the root by output_root, each other
+// one by kind and name (then index). A new one gets a random id and a file of
+// its own, a name with '/' in that folder under the one of the import, and
+// outputs_end writes the sidecar. Outputs does not move while it is open: its
+// search keeps memory of its own. One thread at a time.
 Outputs :: struct {
     w:Writer,
     report:Import_Report,
     source:string, // the source as imports name it
     size,hash:u64,
     version:u32,
+    current:Maybe(bool), // every output of the cache the sidecar lists is current: models cook nothing ahead
     scratch:mem.Dynamic_Arena, // the temp memory of the search
 }
 
 // Starts the outputs of an import of the file at source, whose bytes have
-// size and hash, read by a writer of version (import_version). folder: under
+// size and hash, read by a writer of version (import_version), with the
+// settings its sidecar keeps unless options.ignore_stored. folder: under
 // the folder of the source, where the new documents of a first import go
 // ("" beside it), unless output_part names another.
 outputs_begin :: proc(o:^Outputs,source,folder:string,size,hash:u64,version:u32,options:Import_Options,allocator:=context.allocator) -> Error {
@@ -31,13 +35,15 @@ outputs_begin :: proc(o:^Outputs,source,folder:string,size,hash:u64,version:u32,
     mem.dynamic_arena_init(&o.scratch,allocator,allocator,block_size=1<<20,out_band_size=1<<20)
     context.temp_allocator=base.dynamic_arena_allocator(&o.scratch)
     report_init(&o.report,allocator)
-    o.report.settings=options.settings
     o.source=source_path(options,source)
     if !writer_init(&o.w,source,folder,options,&o.report,allocator) {
         error:=outputs_error(o,caller)
         outputs_end(o,true)
         return error
     }
+    // The settings kept with the source are those of every import of it.
+    if o.w.stored && !options.ignore_stored {o.w.options.settings=o.w.sidecar.settings}
+    o.report.settings=o.w.options.settings
     return {}
 }
 
@@ -48,12 +54,28 @@ outputs_error :: proc(o:^Outputs,allocator:mem.Allocator) -> Error {
 }
 
 // The file (in the temp allocator) and id of the root of the import: the
-// output of kind the sidecar of the source lists, else a new one.
+// output of kind the sidecar of the source lists, of that name when it lists
+// several of the kind, else a new one.
 output_root :: proc(o:^Outputs,kind:asset.Fourcc,name,extension:string) -> (id:base.Asset_Id,path:string,error:Error) {
     caller:=context.temp_allocator
     context.temp_allocator=base.dynamic_arena_allocator(&o.scratch)
-    id,path=root_take(&o.w,kind,name,extension)
-    return id,strings.clone(path,caller),{}
+    listed:=0
+    for output in o.w.sidecar.outputs {listed+=int(output.kind==kind)}
+    parts:=[1]Part{{kind=kind,name=name,extension=extension,only=listed<=1}}
+    parts_plan(&o.w,parts[:])
+    return parts[0].id,strings.clone(parts[0].path,caller),{}
+}
+
+// A file the import reads besides its source: the sidecar lists it, and its
+// bytes are part of what the outputs of the cache are built from
+// (import_key), so sync imports the source again when it changes. Every
+// input is given before the first output of the cache is planned, when that
+// key is fixed: a new one after it is an error.
+output_input :: proc(o:^Outputs,file:string) -> Error {
+    caller:=context.temp_allocator
+    context.temp_allocator=base.dynamic_arena_allocator(&o.scratch)
+    if writer_input(&o.w,file) {return {}}
+    return input_late(file,caller)
 }
 
 // The file and id of another output of kind: the one the sidecar of the

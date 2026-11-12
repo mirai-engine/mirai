@@ -16,9 +16,10 @@ import "mirai:std/jobs"
 // The command mirai import, which the import program of the engine runs: it
 // turns a model (OBJ, glTF, GLB, USD, FBX, or a format a plugin of the
 // project adds), an image, a sound (WAV, Ogg Vorbis), a font (TrueType,
-// OpenType) or a manifest of prompts (<name>.prompts.json) in the assets
-// folder of a project or a plugin into assets with import_source, as the
-// editor does: a model also gets the prefab of its hierarchy.
+// OpenType), a manifest of prompts (<name>.prompts.json) or a source a plugin
+// of the project imports whole in the assets folder of a project or a plugin
+// into assets with import_source, as the editor does: a model also gets the
+// prefab of its hierarchy.
 // A source is imported with the settings its sidecar keeps (<file>.import),
 // changed by the options given; the result is written back there with the id
 // of each asset, so importing again without options gives the same assets.
@@ -42,8 +43,9 @@ import "mirai:std/jobs"
 @(private="file")
 IMPORT_USAGE :: "Usage: mirai import <file> [--max-texture N] [--uncompressed|--blocks] [--rdo-lambda L] [--srgb|--normal|--normal-green-down|--data] [--alpha-coverage C] [--lods auto|none] [--max-triangles N] [--collision none|hull|pieces|mesh|exact] [--force-collision] [--hulls N] [--parts auto|all|none] [--front auto|negative_z|z|x|negative_x] [--rig source|humanoid|fox|horse|bird|dragon|kaiju|shark|snake|spider] [--rig-crotch M] [--rig-neck M] [--skeleton <id>] [--rebuild] [--texture-cache <folder>] [--mesh-cache <folder>] [--profile] [--release]"
 
-// library reads the formats the plugins of a project add and the types of its
-// game (in the import program of the engine, editor.import_library).
+// library reads the formats and the importers of whole sources the plugins of
+// a project add and the types of its game (in the import program of the
+// engine, editor.import_library).
 command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> int {
     file:string
     options:importer.Import_Options
@@ -208,17 +210,17 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
     if options.mesh_cache=="" {options.mesh_cache=project.content_cache_path(root,project.MESH_CACHE,context.temp_allocator)}
     formats:=FORMATS[:]
     kind:=source_kind(file)
-    release:proc(state:rawptr)
-    state:rawptr
-    defer if release!=nil {release(state)}
+    plugins:Library_Imports
+    defer if plugins.release!=nil {plugins.release(plugins.state)}
     if (kind==.None || kind==.Model) && library!=nil {
-        found:[]importer.Format
-        found,options.world,release,state,_=library(root,context.temp_allocator)
-        all:=make([dynamic]importer.Format,0,len(FORMATS)+len(found),context.temp_allocator)
+        plugins=library(root,context.temp_allocator)
+        options.world=plugins.world
+        all:=make([dynamic]importer.Format,0,len(FORMATS)+len(plugins.formats),context.temp_allocator)
         append(&all,..FORMATS[:])
-        append(&all,..found)
+        append(&all,..plugins.formats)
         formats=all[:]
         kind=source_kind(file,formats)
+        if _,claimed:=whole_find(plugins.wholes,file);claimed {kind=.None}
     }
     if changed&{.Image,.Alpha_Coverage}!={} && kind!=.Image {fmt.wprintln(errors,"mirai import: --srgb, --normal, --normal-green-down, --data and --alpha-coverage apply only to images");return 2}
     if changed&{.Lods,.Max_Triangles,.Collision,.Force_Collision,.Hulls,.Parts,.Front,.Rig,.Rig_Crotch,.Rig_Neck,.Skeleton}!={} && kind!=.Model {fmt.wprintln(errors,"mirai import: --lods, --max-triangles, --collision, --force-collision, --hulls, --parts, --front, --skeleton and the --rig options apply only to models");return 2}
@@ -258,7 +260,7 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
     started:=time.tick_now()
     if profiled && !importer.profile_begin(&profile,&options) {fmt.wprintln(errors,"mirai import: no memory for --profile");return 1}
     defer if profiled {profile_print(&profile,started,output);base.profile_destroy(&profile)}
-    report,error:=import_source(file,options,formats)
+    report,error:=import_source(file,options,formats,plugins.wholes)
     if error.code!=.None {
         fmt.wprintfln(errors,"mirai import: %s: %s",file,error.message)
         return 1

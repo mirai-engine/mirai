@@ -205,19 +205,57 @@ folder_valid :: proc(folder:string) -> bool {
 
 // The paths the registry lists the cache outputs of a sidecar at, under
 // listed (the path of the sidecar's folder in the registry, "" or ending
-// with '/'): <folder>/<name><extension>, and " (<index>)" before the
-// extension for an output whose kind and name one of a lower index has. ""
-// for an output that is not of the cache. In the temp allocator.
+// with '/'): <folder>/<name><extension> with the name as safe_path gives it,
+// and " (<index>)" before the extension for an output whose kind and name one
+// of a lower index has. "" for an output that is not of the cache. In the
+// temp allocator.
 sidecar_paths :: proc(sidecar:Sidecar,listed:string) -> []string {
     paths:=make([]string,len(sidecar.outputs),context.temp_allocator)
     folder:=sidecar.folder!=""?fmt.tprintf("%s%s/",listed,sidecar.folder):listed
     for output,at in sidecar.outputs {
         info,known:=kind_info(output.kind)
         if !known || !import_cached(output.kind) {continue}
-        name,_:=strings.replace_all(output.name,"/","_",context.temp_allocator)
+        name:=safe_path(output.name)
         repeated:=false
         for other in sidecar.outputs {repeated||=other.kind==output.kind && other.name==output.name && other.index<output.index}
         paths[at]=fmt.tprintf("%s%s (%d)%s",folder,name,output.index,info.extension) if repeated else fmt.tprintf("%s%s%s",folder,name,info.extension)
     }
     return paths
+}
+
+// A name a file can have: what no file system takes becomes _, and the
+// spaces and dots of its ends go. "unnamed" when nothing is left. In the
+// temp allocator.
+safe_name :: proc(name:string) -> string {
+    cleaned:=name_clean(name)
+    return cleaned if cleaned!="" else "unnamed"
+}
+
+// Where under the folder of an import the output named name goes: each part
+// between '/' as safe_name makes it, without the parts that are empty, "."
+// or "..". "unnamed" when no part is left. In the temp allocator.
+safe_path :: proc(name:string) -> string {
+    b:=strings.builder_make(context.temp_allocator)
+    rest:=name
+    for part in strings.split_iterator(&rest,"/") {
+        cleaned:=name_clean(part)
+        if cleaned=="" {continue}
+        if strings.builder_len(b)>0 {strings.write_byte(&b,'/')}
+        strings.write_string(&b,cleaned)
+    }
+    return strings.to_string(b) if strings.builder_len(b)>0 else "unnamed"
+}
+
+@(private="file")
+name_clean :: proc(name:string) -> string {
+    b:=strings.builder_make(context.temp_allocator)
+    for r in name {
+        switch {
+        case r<32 || r==127,r=='<',r=='>',r==':',r=='"',r=='/',r=='\\',r=='|',r=='?',r=='*',r=='#':
+            strings.write_byte(&b,'_')
+        case:
+            strings.write_rune(&b,r)
+        }
+    }
+    return strings.trim(strings.to_string(b)," .")
 }

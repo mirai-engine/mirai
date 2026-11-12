@@ -234,6 +234,8 @@ a_bad_plugin_manifest_is_refused_with_what_and_where :: proc(t:^testing.T) {
         {`{"name": "a", "version": "1.0.0", "asset_kinds": [{"extension": ".biome"}]}`,.Asset_Kind_Invalid,.None,".biome"},
         {`{"name": "a", "version": "1.0.0", "asset_kinds": [{"extension": ".biome", "kind": "BIOM"}, {"extension": ".zone", "kind": "BIOM"}]}`,.Asset_Kind_Invalid,.None,".zone"},
         {`{"name": "a", "version": "1.0.0", "asset_kinds": [{"extension": ".biome", "kind": "BIOM", "folder": "../elsewhere"}]}`,.Asset_Kind_Invalid,.None,".biome"},
+        {`{"name": "a", "version": "1.0.0", "import_sources": ["umap"]}`,.Import_Source_Invalid,.None,"umap"},
+        {`{"name": "a", "version": "1.0.0", "import_sources": [".umap", ".umap"]}`,.Import_Source_Invalid,.None,".umap"},
     }
     for c in cases {
         _,error:=plugin_parse(c.text)

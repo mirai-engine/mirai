@@ -117,13 +117,22 @@ Registry :: struct {
     allocator:runtime.Allocator,
 }
 
+// A copy of path with forward slashes, as every path the registry gives is written.
+@(private="file")
+registry_slashed :: proc(path:string,allocator:runtime.Allocator) -> (slashed:string,error:runtime.Allocator_Error) {
+    bytes:=make([]u8,len(path),allocator) or_return
+    copy(bytes,path)
+    for &b in bytes {if b=='\\' {b='/'}}
+    return string(bytes),nil
+}
+
 // False, with a registry of no folder that registry_destroy takes, without memory for it.
 registry_init :: proc(r:^Registry,root:string,cache:="",allocator:=context.allocator,imported:="") -> bool {
     r^={allocator=allocator}
     no_root,no_cache,no_imported:runtime.Allocator_Error
-    r.root,no_root=strings.clone(root,allocator)
-    r.cache,no_cache=strings.clone(cache,allocator)
-    r.imported,no_imported=strings.clone(imported,allocator)
+    r.root,no_root=registry_slashed(root,allocator)
+    r.cache,no_cache=registry_slashed(cache,allocator)
+    r.imported,no_imported=registry_slashed(imported,allocator)
     if no_root!=nil || no_cache!=nil || no_imported!=nil {
         delete(r.root,allocator)
         delete(r.cache,allocator)

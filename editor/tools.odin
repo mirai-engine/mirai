@@ -39,7 +39,7 @@ API_IMPORT_SECONDS :: 1800
 
 Import_Params :: struct {
     path:[API_PATH_BYTES]u8 `mirai:"text,label=The source file anywhere on disk; the editor reads it and writes only into the asset folder: a model (OBJ or glTF or GLB or USD or FBX or a format a plugin adds); an image; a sound (WAV or Ogg); a font (TTF or OTF); a manifest of prompts (.prompts.json) or a folder of their images that becomes .prompts; or a source a plugin imports whole, which writes where its importer says"`,
-    folder:[API_PATH_BYTES]u8 `mirai:"text,optional,label=The folder under the asset folder it goes in (a model keeps a folder of its name inside); without it, the root of the assets. A source a plugin imports whole takes none"`,
+    folder:[API_PATH_BYTES]u8 `mirai:"text,optional,label=The folder under the asset folder a source from outside goes in, with what it reads when a plugin imports it whole (a model keeps a folder of its name inside); without it, the root of the assets"`,
     profile:bool `mirai:"optional,label=Records where its time goes: the answer gives the seconds of each zone"`,
     seconds:int `mirai:"optional,min=1,max=7200,unit=s,label=How long it waits for the end of the import; past that it answers importing and the import goes on"`,
     rig:[16]u8 `mirai:"text,optional,label=Of a model: a template of Mesh2Motion fitted to its meshes and weighted to them, in place of what the source has: humanoid, fox, horse, bird, dragon, kaiju, shark, snake or spider, standing on +Y and facing -Z; source keeps the source's. Of a source in the project, the choice stays in its settings. Empty: what they say"`,

@@ -5,6 +5,7 @@ import "core:math/linalg"
 import "core:mem"
 import "core:os"
 import "core:path/filepath"
+import "core:slice"
 import "core:strings"
 import "core:time"
 import "mirai:asset"
@@ -127,8 +128,12 @@ Writer :: struct {
     inputs:[dynamic]string,      // the files read besides the source, as the sidecar lists them (writer_input)
     key:u64,                     // import_key of the import, once a file of the cache is named; inputs are whole by then
     owner:base.Asset_Id,         // of the parts: the prefab of a model
+    stored:bool,                 // the source has a sidecar
+    whole:bool,                  // writes a model for Outputs: its prefab and clips are parts by their names
+    given:int,                   // of outputs, those a part of the same kind and name is (parts_plan)
     rng:base.Rng,
     allocator:mem.Allocator,
+    keep:mem.Allocator,          // what lives as long as the writer: the temp allocator it began in
     error:Error,
 }
 
@@ -373,6 +378,78 @@ import_write :: proc(model:^Imported_Model,options:Import_Options={},allocator:=
     return report,{}
 }
 
+// Writes a model as parts of the import of o, with what import_write writes
+// one with: its meshes, materials, textures, skeletons and clips, each the
+// output of the sidecar of its kind and name (then index), named as the model
+// names them, a name with '/' in that folder under the one of the import. A
+// part of the kind and name of one o already gave is that asset, which is not
+// written again. When the model has nodes, its prefab is the scene of its
+// name, the owner of its meshes and skeletons: the caller writes it
+// (cook/prefab.model_prefab) and records it (output_written), unless
+// prefab_path is "" (o gave it already). The report gives, in allocator, the
+// ids by row as that of import_write and the prefab; what is written, the
+// warnings and the programs of the model go to the report of o. The files the
+// model was read from are inputs of the import (output_input). Its assets name
+// the source of o, with its size, hash and version, and are made with its
+// settings. A failure leaves in o what was written, for outputs_end.
+output_model :: proc(o:^Outputs,model:^Imported_Model,allocator:=context.allocator) -> (report:Import_Report,error:Error) {
+    caller:=context.temp_allocator
+    w:=&o.w
+    scratch:mem.Dynamic_Arena
+    mem.dynamic_arena_init(&scratch,w.allocator,w.allocator,block_size=1<<20,out_band_size=1<<20)
+    defer mem.dynamic_arena_destroy(&scratch)
+    context.temp_allocator=base.dynamic_arena_allocator(&scratch)
+    defer model_cooked_destroy(model)
+    for file in model.files {
+        if !writer_input(w,file) {return {},input_late(file,caller)}
+    }
+    for image in model.images {
+        if image.path!="" && !writer_input(w,image.path) {return {},input_late(image.path,caller)}
+    }
+    for warning in model.warnings {writer_warn(w,"%s",warning)}
+    for program in model.programs {append(&o.report.programs,strings.clone(program,w.allocator))}
+
+    written:Import_Report
+    report_init(&written,w.allocator)
+    written.settings=o.report.settings
+    w.report,w.whole,w.given=&written,true,len(w.outputs)
+    // The source its assets name is that of o.
+    m:=model^
+    m.source_size,m.source_hash,m.version,m.stored=o.size,o.hash,o.version,false
+    // Whether the cache is current fixes the key: only a model with outputs of the cache asks.
+    if w.options.worker.system!=nil && len(m.meshes)+len(m.images)>0 {
+        if _,known:=o.current.?;!known {o.current=writer_current(w)}
+        if !o.current.? {model_cook(&m,w.options)}
+    }
+    ok:=write_model(w,&m)
+    w.report,w.whole,w.given=&o.report,false,0
+    append(&o.report.assets,..written.assets[:])
+    append(&o.report.warnings,..written.warnings[:])
+    clear(&written.assets);clear(&written.warnings)
+    defer report_destroy(&written)
+    if !ok {
+        error=writer_error(w,caller)
+        w.error={}
+        return {},error
+    }
+    report_init(&report,allocator)
+    report.settings=written.settings
+    report.mesh_ids=slice.clone(written.mesh_ids,allocator)
+    report.material_ids=slice.clone(written.material_ids,allocator)
+    report.image_ids=slice.clone(written.image_ids,allocator)
+    report.skeleton_ids=slice.clone(written.skeleton_ids,allocator)
+    report.animation_id=written.animation_id
+    report.prefab,report.prefab_info=written.prefab,written.prefab_info
+    report.prefab_path=strings.clone(written.prefab_path,allocator)
+    return report,{}
+}
+
+// The error of an input given once the key of the import was fixed.
+@(private)
+input_late :: proc(file:string,allocator:mem.Allocator) -> Error {
+    return error_make(.Malformed,"%s is an input given after the first output of the cache was planned, when what the import is built from was fixed: give every input (output_input) before",file,allocator=allocator)
+}
+
 // What a model is written with: its settings, its warnings and programs, and
 // the files it was read from.
 @(private="file")
@@ -398,12 +475,15 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
     if chosen.skeleton!={} {return write_clips_onto(w,model,source,name,chosen.skeleton)}
 
     // The prefab of the model: the one its sidecar lists, which a model that lost its nodes keeps.
+    // For Outputs, a scene of its name.
     listed:=false
-    for output in w.sidecar.outputs {listed||=output.kind==asset.KIND_SCENE}
+    for output in w.sidecar.outputs {listed||=output.kind==asset.KIND_SCENE && (!w.whole || output.name==name)}
+    w.owner={}
     if listed || len(model.nodes)>0 {
-        prefab_path:string
-        w.owner,prefab_path=root_take(w,asset.KIND_SCENE,name,".scene")
-        w.report.prefab,w.report.prefab_path=w.owner,strings.clone(prefab_path,w.allocator)
+        prefab:=[1]Part{{kind=asset.KIND_SCENE,name=name,extension=".scene",only=!w.whole}}
+        parts_plan(w,prefab[:])
+        w.owner=prefab[0].id
+        w.report.prefab,w.report.prefab_path=w.owner,strings.clone(prefab[0].path,w.allocator)
         w.report.prefab_info=import_info(source,name,0,model.source_size,model.source_hash,0,model.version)
     }
 
@@ -434,7 +514,7 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
     first_mesh:=len(parts)
     for mesh,i in model.meshes {append(&parts,Part{kind=asset.KIND_MESH,name=mesh.name,index=i,extension=".mesh"})}
     animation:=len(parts)
-    if len(model.animations)>0 {append(&parts,Part{kind=asset.KIND_ANIMATION,name=name,extension=".anim",only=true})}
+    if len(model.animations)>0 {append(&parts,Part{kind=asset.KIND_ANIMATION,name=name,extension=".anim",only=!w.whole})}
     parts_plan(w,parts[:])
     reasons:=make([]string,len(model.materials),context.temp_allocator)
     parts_own(w,model,jobs[:],parts[:],first_material,reasons)
@@ -444,6 +524,10 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
     w.report.image_ids=image_ids
     for job,i in jobs {
         part:=&parts[i]
+        if part.given {
+            image_ids[job.index]=part.id
+            continue
+        }
         built:=write_texture(w,job,part.id,part.owner,part.path,source)
         if w.error.code!=.None {return false}
         if built {image_ids[job.index]=part.id}
@@ -453,8 +537,9 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
     w.report.material_ids=material_ids
     for &material,i in model.materials {
         part:=&parts[first_material+i]
-        info:=material_given(&material,image_ids)
         material_ids[i]=part.id
+        if part.given {continue}
+        info:=material_given(&material,image_ids)
         import_data:=import_info(source,material.name,i,model.source_size,model.source_hash,0,model.version)
         existed:=os.exists(part.path)
         parameters:=material_given_parameters(&material,image_ids)
@@ -469,6 +554,13 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
     for skeleton,i in model.skeletons {
         part:=&parts[first_skeleton+i]
         w.report.skeleton_ids[i]=part.id
+        if part.given {
+            body:asset.Skeleton_Body
+            body_parts:[len(anim.Body_Part)]asset.Skeleton_Body_Part
+            count,map_:=skeleton_body(nil,skeleton.bones,&body,&body_parts)
+            root_bones[i]=skeleton_root_bone(skeleton.bones,map_) if count>0 else -1
+            continue
+        }
         import_data:=import_info(source,skeleton.name,i,model.source_size,model.source_hash,0,model.version)
         existed:=os.exists(part.path)
         // The file it replaces: what a person set on it stays (body parts, sockets of their own).
@@ -498,6 +590,7 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
         part:=&parts[first_mesh+i]
         id,path,owner:=part.id,part.path,part.owner
         w.report.mesh_ids[i]=id
+        if part.given {continue}
         skeleton:base.Asset_Id
         if len(mesh.skin)>0 {
             if mesh.skeleton<0 || mesh.skeleton>=len(w.report.skeleton_ids) {return writer_fail(w,.Malformed,"mesh %s has no skeleton",mesh.name)}
@@ -547,7 +640,8 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
         if cooked==&own {cooked_mesh_destroy(&own)}
         if saved!=.None {return save_failed(w,saved,path)}
     }
-    if len(model.animations)>0 {
+    if len(model.animations)>0 && parts[animation].given {w.report.animation_id=parts[animation].id}
+    if len(model.animations)>0 && !parts[animation].given {
         part:=&parts[animation]
         import_data:=import_info(source,name,0,model.source_size,model.source_hash,0,model.version)
         existed:=os.exists(part.path)
@@ -584,9 +678,11 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
 @(private="file")
 write_clips_onto :: proc(w:^Writer,model:^Imported_Model,source,name:string,skeleton:base.Asset_Id) -> bool {
     if len(model.animations)==0 {return writer_fail(w,.Malformed,"%s has no clips to put on the skeleton of Import_Settings.skeleton",source)}
-    parts:=[1]Part{{kind=asset.KIND_ANIMATION,name=name,extension=".anim",only=true}}
+    parts:=[1]Part{{kind=asset.KIND_ANIMATION,name=name,extension=".anim",only=!w.whole}}
     parts_plan(w,parts[:])
     part:=&parts[0]
+    w.report.animation_id=part.id
+    if part.given {return true}
     import_data:=import_info(source,name,0,model.source_size,model.source_hash,0,model.version)
     existed:=os.exists(part.path)
     clips:=make([]asset.Animation_Clip_Desc,len(model.animations),context.temp_allocator)

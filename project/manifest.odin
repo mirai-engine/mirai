@@ -29,6 +29,7 @@ MAX_DEPENDENCIES :: 16
 MAX_DEFINES :: 16
 MAX_SOURCES :: 16
 MAX_ASSET_KINDS :: 16
+MAX_IMPORT_SOURCES :: 8
 
 Name :: [64]u8
 Path :: [256]u8
@@ -137,6 +138,7 @@ Plugin_Manifest :: struct {
     automatic:bool,                                 // active exactly when all its dependencies are: what joins them; no project names it
     icon:Path `mirai:"text"`,                       // a PNG the lists of plugins of the editor show it with, relative to its folder, with forward slashes, PLUGIN_ICON_MAX wide and tall at most. Empty: the generic one
     asset_kinds:[MAX_ASSET_KINDS]Asset_Kind `mirai:"trim"`, // the kinds of asset it adds: exactly the ones its editor part registers
+    import_sources:[MAX_IMPORT_SOURCES][32]u8 `mirai:"text"`, // the extensions of the files its importers read, with the dot, in lowercase (".umap"): a repository with LFS keeps them in it
 }
 
 Origin :: enum u8 {Project,Engine}
@@ -172,6 +174,7 @@ Error_Code :: enum u8 {
     Automatic_Named,    // the project names subject, an automatic plugin: it is active when its dependencies are
     Automatic_Alone,    // subject is automatic and depends on nothing
     Source_Invalid,     // the source subject has no url, or its commit is not the full hash of one
+    Import_Source_Invalid, // the extension subject of import_sources is not a dot and lowercase letters, digits and '_', or it is there twice
     Asset_Kind_Invalid, // of the asset kind of the extension subject: the extension is not a dot and lowercase letters, digits and '_', its kind is not four printable letters, its folder is not a relative path, or its extension or kind is there twice
     Schema_Failed,      // std/serial cannot describe the type subject: a defect of the engine, not of the file
     Out_Of_Memory,      // nothing of the files is wrong
@@ -329,6 +332,14 @@ plugin_validate :: proc(m:^Plugin_Manifest) -> Error {
             if other.extension==kind.extension || other.kind==kind.kind {return error_about(.Asset_Kind_Invalid,extension)}
         }
     }
+    for &source,i in m.import_sources {
+        extension:=base.text_get(source[:])
+        if extension=="" {continue}
+        if extension[0]!='.' || !name_valid(extension[1:]) {return error_about(.Import_Source_Invalid,extension)}
+        for &other in m.import_sources[:i] {
+            if base.text_get(other[:])==extension {return error_about(.Import_Source_Invalid,extension)}
+        }
+    }
     if m.automatic {
         alone:=true
         for &dependency in m.dependencies {
@@ -445,6 +456,7 @@ error_text :: proc(folder:string,error:Error,allocator:=context.allocator) -> st
     case .Compression_Invalid: text=fmt.tprintf("%s: build.compression '%s' is not one Mirai has: write none, open, or leave it out for the best the engine has",file,subject)
     case .Automatic_Alone:    text=fmt.tprintf("%s: '%s' is automatic and depends on nothing; name in dependencies the plugins it joins or remove automatic",file,subject)
     case .Source_Invalid:     text=fmt.tprintf("%s: the source '%s' has no url or its commit is not a full hash",file,subject)
+    case .Import_Source_Invalid: text=fmt.tprintf("%s: the import source '%s' needs an extension of a dot and lowercase letters, digits and '_', once",file,subject)
     case .Asset_Kind_Invalid: text=fmt.tprintf("%s: the asset kind '%s' needs an extension of a dot and lowercase letters, digits and '_', a kind of four printable letters and a folder relative to the plugin, and no other kind with its extension or its letters",file,subject)
     case .Schema_Failed:      text=fmt.tprintf("%s: std/serial does not describe the type %s; it is a defect of the engine, not of the file",file,subject)
     case .Out_Of_Memory:      text=fmt.tprintf("%s: there is not enough memory to read the project and its plugins; free memory and try again",file)

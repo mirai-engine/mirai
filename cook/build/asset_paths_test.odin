@@ -25,12 +25,15 @@ a_path_of_an_asset_in_the_code_names_one_or_the_build_says_where :: proc(t:^test
     asset.scene_entity_add(&dog,1,0,"Dog")
     testing.expect_value(t,asset.scene_save(&dog,project.path(game,"assets","pets","Dog.scene",allocator=context.temp_allocator)),asset.Error.None)
     asset.scene_destroy(&dog)
+    // A source an import reads is in the assets too, and is no asset.
+    testing.expect(t,os.write_entire_file(project.path(game,"assets","pets","Dog.umap",allocator=context.temp_allocator),"map")==nil)
     cases:=[]struct{code,says:string}{
         {`DOG :: "pets/Dog.scene"`,""},
         {`DOG :: "pets/Dgo.scene"`,`"pets/Dgo.scene" names no asset`},
         {`DOG :: "Dog.scene"`,`the asset of that name is "pets/Dog.scene"`},
         {`SAID :: "spawned %s.scene"`,""},
         {`SAID :: "a .scene of the assets"`,""},
+        {`SAID :: "no level in it: open a .umap"`,""},
     }
     for c in cases {
         source:=strings.concatenate({"package game\n",c.code,"\n"},context.temp_allocator)

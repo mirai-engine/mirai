@@ -116,8 +116,32 @@ source_root :: proc(path:string,allocator:=context.allocator) -> (root:string,ok
     }
 }
 
+// A source a plugin imports whole (editor.Source_Importer), prepared for the
+// assets of a root: claims says whether it is one, by its path and up to
+// importer.SNIFF_BYTES of its head, and run imports it as import_source does,
+// with the state its plugin prepared. scene: the scene it wrote, in
+// allocator, "" for none.
+Whole_Source :: struct {
+    claims:proc(path:string,head:[]u8) -> bool,
+    run:proc(state:rawptr,source:string,options:importer.Import_Options,allocator:mem.Allocator) -> (report:importer.Import_Report,scene:string,error:importer.Error),
+    state:rawptr,
+}
+
+// The first of wholes that claims the file at path.
+whole_find :: proc(wholes:[]Whole_Source,path:string) -> (whole:Whole_Source,claimed:bool) {
+    if len(wholes)==0 || importer.unsafe_path(path) || os.is_dir(path) {return}
+    buffer:[importer.SNIFF_BYTES]u8
+    head,_,error:=serial.file_read_head(path,buffer[:])
+    if error!=.None {return}
+    for candidate in wholes {
+        if candidate.claims!=nil && candidate.run!=nil && candidate.claims(path,head) {return candidate,true}
+    }
+    return
+}
+
 // Imports a source file in the assets folder of a project or a plugin
-// (options.root; "": source_root): a model writes its assets and, when it
+// (options.root; "": source_root): one of wholes claims is imported whole by
+// it, before the formats; a model writes its assets and, when it
 // has nodes, the prefab of its hierarchy, which the report lists last; an
 // image or a sound writes one asset. The sidecar of the source
 // (<source>.import, Import_Report.saved) keeps the settings it was imported
@@ -125,11 +149,17 @@ source_root :: proc(path:string,allocator:=context.allocator) -> (root:string,ok
 // source again gives the same assets. What the import builds that nobody
 // edits goes to the imported folder of the root (importer.Sidecar), whatever
 // the format that reads it.
-import_source :: proc(path:string,options:importer.Import_Options={},formats:[]importer.Format=nil,allocator:=context.allocator) -> (report:importer.Import_Report,error:importer.Error) {
+import_source :: proc(path:string,options:importer.Import_Options={},formats:[]importer.Format=nil,wholes:[]Whole_Source=nil,allocator:=context.allocator) -> (report:importer.Import_Report,error:importer.Error) {
     formats:=formats if formats!=nil else FORMATS[:]
     options:=options
-    kind:=source_kind(path,formats)
     if options.root=="" {options.root,_=source_root(path,context.temp_allocator)}
+    if whole,claimed:=whole_find(wholes,path);claimed {
+        scene:string
+        report,scene,error=whole.run(whole.state,path,options,allocator)
+        delete(scene,allocator)
+        return
+    }
+    kind:=source_kind(path,formats)
     switch kind {
     case .None:
         if importer.unsafe_path(path) || !os.exists(path) {return {},importer.error_make(.Not_Found,"%s does not exist",path)}

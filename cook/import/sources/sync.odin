@@ -21,16 +21,26 @@ import "mirai:std/serial"
 // its settings and the importer, with textures built Final; a file whose
 // size and modification time the cache of the root knows is not read
 // (importer.Source_Hashes). A source with an
-// output that is not is imported, with the formats of the engine or those the
-// plugins of the project add; a file of the folder that no sidecar with its
-// source lists is removed.
+// output that is not is imported, with the formats of the engine or, for one
+// none of them reads, the importer of a plugin of the project that claims it
+// whole or else the formats the plugins add; a file of the folder that no
+// sidecar with its source lists is removed.
 
 // What the library of the editor of the project at root gives its imports:
-// the formats of models its plugins add, with what they read prepared for its
-// assets, and the types of its game, which the prefab of a model is written
-// in; release(state) lets them go. problem: why there are none. Only a
-// program that links the editor reads it (editor.import_library).
-Library :: #type proc(root:string,allocator:mem.Allocator) -> (formats:[]importer.Format,world:^core.World_Info,release:proc(state:rawptr),state:rawptr,problem:string)
+// the formats of models and the importers of whole sources its plugins add,
+// with what they read prepared for its assets, and the types of its game,
+// which the prefab of a model is written in; release(state) lets them go.
+// problem: why there are none. Only a program that links the editor reads it
+// (editor.import_library).
+Library :: #type proc(root:string,allocator:mem.Allocator) -> Library_Imports
+Library_Imports :: struct {
+    formats:[]importer.Format,
+    wholes:[]Whole_Source,
+    world:^core.World_Info,
+    release:proc(state:rawptr),
+    state:rawptr,
+    problem:string,
+}
 
 Sync_Options :: struct {
     texture_cache,mesh_cache:string, // "": those of the root (project.content_cache_path)
@@ -86,7 +96,7 @@ sync :: proc(root:string,options:Sync_Options={},allocator:=context.allocator) -
     hashes:=importer.source_hashes_load(hashes_path,context.temp_allocator)
     defer importer.source_hashes_save(&hashes,hashes_path)
     listed:=make(map[string]struct{},context.temp_allocator) // the files of the imported folder the sidecars list
-    whole:=true
+    complete:=true
     todo:=make([dynamic]string,context.temp_allocator)
     append(&todo,assets)
     for next:=0;next<len(todo);next+=1 {
@@ -99,21 +109,27 @@ sync :: proc(root:string,options:Sync_Options={},allocator:=context.allocator) -
             sidecar,_,error:=importer.sidecar_load(source,context.temp_allocator)
             if error.code!=.None {
                 append(&report.failures,strings.clone(error.message,allocator))
-                whole=false
+                complete=false
                 continue
             }
             formats:=FORMATS[:]
             kind:=source_kind(source,formats)
+            // A source a plugin imports whole is keyed as a source of no format: version 0.
+            wholes:[]Whole_Source
             if kind==.None && len(sidecar.outputs)>0 {
                 library_read(&library,options,top,&import_options)
-                all:=make([dynamic]importer.Format,0,len(FORMATS)+len(library.formats),context.temp_allocator)
-                append(&all,..FORMATS[:])
-                append(&all,..library.formats)
-                formats=all[:]
-                if kind=source_kind(source,formats);kind==.None {
-                    append(&report.failures,fmt.aprintf("%s: no format of the engine or of the plugins of the project reads it%s",source,library.problem!=""?fmt.tprintf(" (%s)",library.problem):"",allocator=allocator))
-                    whole=false
-                    continue
+                if _,claimed:=whole_find(library.wholes,source);claimed {
+                    wholes=library.wholes
+                } else {
+                    all:=make([dynamic]importer.Format,0,len(FORMATS)+len(library.formats),context.temp_allocator)
+                    append(&all,..FORMATS[:])
+                    append(&all,..library.formats)
+                    formats=all[:]
+                    if kind=source_kind(source,formats);kind==.None {
+                        append(&report.failures,fmt.aprintf("%s: no format or importer of the engine or of the plugins of the project reads it%s",source,library.problem!=""?fmt.tprintf(" (%s)",library.problem):"",allocator=allocator))
+                        complete=false
+                        continue
+                    }
                 }
             }
             version:=importer.import_version(0)
@@ -137,22 +153,22 @@ sync :: proc(root:string,options:Sync_Options={},allocator:=context.allocator) -
                 report.sources+=1
                 if current {continue}
                 if kind==.Model {library_read(&library,options,top,&import_options)}
-                written,import_error:=import_source(source,import_options,formats,allocator)
+                written,import_error:=import_source(source,import_options,formats,wholes,allocator)
                 if import_error.code!=.None {
                     append(&report.failures,fmt.aprintf("%s: %s",source,import_error.message,allocator=allocator))
-                    whole=false
+                    complete=false
                     break
                 }
                 report.imported+=1
                 for warning in written.warnings {append(&report.warnings,fmt.aprintf("%s: %s",source,warning,allocator=allocator))}
                 importer.report_destroy(&written)
                 // What the import gives now: a part the source gained, or lost.
-                if sidecar,_,error=importer.sidecar_load(source,context.temp_allocator);error.code!=.None {whole=false;break}
+                if sidecar,_,error=importer.sidecar_load(source,context.temp_allocator);error.code!=.None {complete=false;break}
                 key=importer.import_key(source,sidecar,version,false,&hashes)
             }
         }
     }
-    if !whole {return}
+    if !complete {return}
     entries,_:=os.read_all_directory_by_path(imported,context.temp_allocator)
     for entry in entries {
         if _,kept:=listed[entry.name];entry.type!=.Regular || kept || strings.has_suffix(entry.name,".tmp") {continue}
@@ -162,11 +178,12 @@ sync :: proc(root:string,options:Sync_Options={},allocator:=context.allocator) -
 }
 
 @(private="file")
-Library_Read :: struct {formats:[]importer.Format,release:proc(state:rawptr),state:rawptr,problem:string,read:bool}
+Library_Read :: struct {using imports:Library_Imports,read:bool}
 
 @(private="file")
 library_read :: proc(library:^Library_Read,options:Sync_Options,top:string,import_options:^importer.Import_Options) {
     if library.read || options.library==nil {return}
-    library.formats,import_options.world,library.release,library.state,library.problem=options.library(top,context.temp_allocator)
+    library.imports=options.library(top,context.temp_allocator)
+    import_options.world=library.world
     library.read=true
 }
