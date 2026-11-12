@@ -37,7 +37,7 @@ Step :: struct {
 }
 
 @(private)
-cell_free :: proc(c:^foliage.Cell) {delete(c.manual);delete(c.overrides);c^={}}
+cell_free :: proc(c:^foliage.Cell) {delete(c.manual);delete(c.overrides);delete(c.density);c^={}}
 
 step_destroy :: proc(step:^Step) {
     for &entry in step.cells {if entry.present {cell_free(&entry.cell)}}
@@ -52,6 +52,8 @@ cell_clone :: proc(c:^foliage.Cell) -> (copied:foliage.Cell,ok:bool) {
     error:mem.Allocator_Error
     if copied.manual,error=make([dynamic]foliage.Foliage_Instance,len(c.manual));error!=nil {return {},false}
     if copied.overrides,error=make([dynamic]foliage.Foliage_Override,len(c.overrides));error!=nil {delete(copied.manual);return {},false}
+    if copied.density,error=make([dynamic]u8,len(c.density));error!=nil {delete(copied.manual);delete(copied.overrides);return {},false}
+    copy(copied.density[:],c.density[:])
     copy(copied.manual[:],c.manual[:])
     copy(copied.overrides[:],c.overrides[:])
     return copied,true
@@ -59,7 +61,7 @@ cell_clone :: proc(c:^foliage.Cell) -> (copied:foliage.Cell,ok:bool) {
 
 @(private)
 cell_same :: proc(a,b:^foliage.Cell) -> bool {
-    if a.generate!=b.generate || len(a.manual)!=len(b.manual) || len(a.overrides)!=len(b.overrides) {return false}
+    if a.generate!=b.generate || len(a.manual)!=len(b.manual) || len(a.overrides)!=len(b.overrides) || mem.compare(a.density[:],b.density[:])!=0 {return false}
     return mem.compare(mem.slice_to_bytes(a.manual[:]),mem.slice_to_bytes(b.manual[:]))==0 && mem.compare(mem.slice_to_bytes(a.overrides[:]),mem.slice_to_bytes(b.overrides[:]))==0
 }
 

@@ -6,7 +6,8 @@ import mm "mirai:std/math"
 
 // The ground the instances of each Foliage stand on, in the space of its
 // entity: a tile of heights over each cell, with the weights of the layers of
-// the ground there, read from core.Ground_Queries (ground_read.odin). Each
+// the ground there, read from core.Ground_Queries (ground_read.odin), and
+// where a Foliage_Keep_Out keeps foliage out of it (keep_out.odin). Each
 // tile it changes raises its revision, and foliage builds again the cells
 // whose tile changed. A tile may be coarser than the others (the ground far
 // from where it is seen). A cell without a tile (not read yet, or no ground
@@ -21,6 +22,8 @@ Foliage_Ground :: struct {
     streamed:u64,      // the revision of the streaming sources
     queue:[dynamic]Ground_Task,  // tiles to read, in the order they were asked
     queued:[dynamic]Ground_Task, // the same, sorted
+    keep_outs:[dynamic]Keep_Out_Seen, // where they were when the tiles under them were last asked for
+    keep_seen:[4]core.Seen,           // the tables of Foliage_Keep_Out, Volume, Spline and Collider
 }
 Ground_Owner :: struct {
     entity:core.Entity,
@@ -45,6 +48,7 @@ Ground_Pool :: struct {
     samples:u32,             // per side
     heights:[dynamic]f32,    // samples*samples of each block, x first; NaN where there is no ground
     weights:[dynamic][4]u8,  // of each height: of the layers of the ground there, adding up to 255; 0 where it has none or there is no ground
+    kept:[dynamic]u64,       // KEEP_OUT_WORDS of each block (Ground_Cell.kept)
     coords:[dynamic][2]i32,  // the tile of each block
 }
 
@@ -94,7 +98,13 @@ ground_cell :: proc "contextless" (owner:^Ground_Owner,coord:[2]i32) -> (ground:
     n:=int(pool.samples)
     if n<2 {return}
     first:=int(tile.block)*n*n
-    return Ground_Cell{samples=n,heights=pool.heights[first:][:n*n],weights=pool.weights[first:][:n*n]},tile.revision
+    return Ground_Cell{samples=n,heights=pool.heights[first:][:n*n],weights=pool.weights[first:][:n*n],kept=pool.kept[int(tile.block)*KEEP_OUT_WORDS:][:KEEP_OUT_WORDS]},tile.revision
+}
+
+// Where foliage is kept out of the tile of index at of an owner (Ground_Cell.kept).
+ground_tile_kept :: proc "contextless" (owner:^Ground_Owner,at:int) -> []u64 {
+    tile:=owner.tiles[at]
+    return owner.pools[tile.pool].kept[int(tile.block)*KEEP_OUT_WORDS:][:KEEP_OUT_WORDS]
 }
 
 // The samples per side of the tile of a cell; 0 without one.
@@ -146,11 +156,15 @@ pool_block_add :: proc(pool:^Ground_Pool,coord:[2]i32) -> (block:u32,ok:bool) {
     // They grow by doubling: tile after tile does not copy them all each time.
     if first+side>cap(pool.heights) && reserve(&pool.heights,max(first+side,2*cap(pool.heights)))!=nil {return}
     if first+side>cap(pool.weights) && reserve(&pool.weights,max(first+side,2*cap(pool.weights)))!=nil {return}
+    words:=len(pool.kept)
+    if words+KEEP_OUT_WORDS>cap(pool.kept) && reserve(&pool.kept,max(words+KEEP_OUT_WORDS,2*cap(pool.kept)))!=nil {return}
     if resize(&pool.heights,first+side)!=nil {return}
     if resize(&pool.weights,first+side)!=nil {base.truncate(&pool.heights,first);return}
-    if _,error:=append(&pool.coords,coord);error!=nil {base.truncate(&pool.heights,first);base.truncate(&pool.weights,first);return}
+    if resize(&pool.kept,words+KEEP_OUT_WORDS)!=nil {base.truncate(&pool.heights,first);base.truncate(&pool.weights,first);return}
+    if _,error:=append(&pool.coords,coord);error!=nil {base.truncate(&pool.heights,first);base.truncate(&pool.weights,first);base.truncate(&pool.kept,words);return}
     for &h in pool.heights[first:] {h=NO_GROUND}
     for &w in pool.weights[first:] {w={}}
+    for &w in pool.kept[words:] {w=0}
     return u32(len(pool.coords)-1),true
 }
 
@@ -163,19 +177,21 @@ pool_block_free :: proc(owner:^Ground_Owner,p,block:u32) {
     if int(block)!=last {
         copy(pool.heights[int(block)*side:][:side],pool.heights[last*side:][:side])
         copy(pool.weights[int(block)*side:][:side],pool.weights[last*side:][:side])
+        copy(pool.kept[int(block)*KEEP_OUT_WORDS:][:KEEP_OUT_WORDS],pool.kept[last*KEEP_OUT_WORDS:][:KEEP_OUT_WORDS])
         moved:=pool.coords[last]
         pool.coords[block]=moved
         if at:=ground_tile_find(owner,moved);at>=0 {owner.tiles[at].block=block}
     }
     base.truncate(&pool.heights,last*side)
     base.truncate(&pool.weights,last*side)
+    base.truncate(&pool.kept,last*KEEP_OUT_WORDS)
     base.truncate(&pool.coords,last)
 }
 
 NO_GROUND :: f32(0h7fc00000)
 
 ground_owner_destroy :: proc(owner:^Ground_Owner) {
-    for &pool in owner.pools {delete(pool.heights);delete(pool.weights);delete(pool.coords)}
+    for &pool in owner.pools {delete(pool.heights);delete(pool.weights);delete(pool.kept);delete(pool.coords)}
     delete(owner.pools);delete(owner.tiles)
     owner^={}
 }
@@ -192,6 +208,6 @@ ground_tile_remove :: proc(owner:^Ground_Owner,at:int) {
 ground_owner_reset :: proc(owner:^Ground_Owner,samples:u32) {
     if len(owner.tiles)>0 {owner.revision+=1}
     clear(&owner.tiles)
-    for &pool in owner.pools {clear(&pool.heights);clear(&pool.weights);clear(&pool.coords)}
+    for &pool in owner.pools {clear(&pool.heights);clear(&pool.weights);clear(&pool.kept);clear(&pool.coords)}
     owner.samples=samples
 }

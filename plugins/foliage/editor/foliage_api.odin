@@ -33,6 +33,7 @@ Type_Add_Params :: struct {
     mesh:base.Asset_Id `mirai:"label=The .mesh it shows"`,
     name:[32]u8 `mirai:"text,optional,label=What names it; omitted: that of its mesh"`,
     density:f32 `mirai:"optional,min=0,unit=1/m2,label=Instances per square metre the generator and Paint place"`,
+    radius:f32 `mirai:"optional,min=0,unit=m,label=At scale 1: a generated instance stands no nearer to another of a type with a radius than both radii; 0: anywhere"`,
     scale:[2]f32 `mirai:"optional,label=Across x and z: lowest and highest"`,
     height:[2]f32 `mirai:"optional,label=Along y times the scale across: lowest and highest"`,
     yaw:f32 `mirai:"optional,label=Degrees of a turn at random"`,
@@ -56,6 +57,7 @@ Type_Set_Params :: struct {
     name:[32]u8 `mirai:"text,optional,label=Another name; no other type may have it"`,
     mesh:base.Asset_Id `mirai:"optional,label=Another mesh: its instances stay"`,
     density:f32 `mirai:"optional,min=0,unit=1/m2,label=Instances per square metre the generator and Paint place"`,
+    radius:f32 `mirai:"optional,min=0,unit=m,label=At scale 1: a generated instance stands no nearer to another of a type with a radius than both radii; 0: anywhere"`,
     scale:[2]f32 `mirai:"optional,label=Across x and z: lowest and highest"`,
     height:[2]f32 `mirai:"optional,label=Along y times the scale across: lowest and highest"`,
     yaw:f32 `mirai:"optional,label=Degrees of a turn at random"`,
@@ -104,7 +106,7 @@ Query_Params :: struct {
 }
 
 @(private) LAYER_NAME_BYTES :: 256
-@(private) TYPE_OUT_OF_RANGE :: "The type is out of range: densities and distances at least 0, slopes from 0 to 90 degrees, align and weight from 0 to 1"
+@(private) TYPE_OUT_OF_RANGE :: "The type is out of range: densities and distances at least 0, a radius at most 8 m at the highest scale, slopes from 0 to 90 degrees, align and weight from 0 to 1"
 Foliage_Create_Result :: struct {
     id:base.Entity_Id,
 }
@@ -145,7 +147,7 @@ foliage_api_register :: proc(s:^editor.Session) {
     editor.api_method_register(s,{name="foliage.type_add",summary="Adds a type of foliage that shows a mesh with the values it is given, as one step of undo; the name it answers names it in the other methods.",params=type_info_of(Type_Add_Params),result=type_info_of(Type_Result),run=api_type_add})
     editor.api_method_register(s,{name="foliage.type_set",summary="Changes the values of a type of foliage it is given, as one step of undo; the others stay: its mesh, how dense, large, turned and leaned it is, its offset, its rule of slope, height and terrain layers, its distances, wind and shadow.",params=type_info_of(Type_Set_Params),result=type_info_of(Type_Result),run=api_type_set})
     editor.api_method_register(s,{name="foliage.type_remove",summary="Takes a type of foliage out with its instances, as one step of undo.",params=type_info_of(Type_Remove_Params),flags={.Destructive},result=type_info_of(Type_Result),run=api_type_remove})
-    editor.api_method_register(s,{name="foliage.paint",summary="One stroke of the foliage brush from at to to (or at alone), as one step of undo: paint fills the ring to the density of each type under its rules, erase leaves erase_density of it, reapply gives the instances the scale, turn and offset of their type again, generate and ungenerate turn the generator of the cells under the ring on or off.",params=type_info_of(Paint_Params),defaults=&paint_defaults,result=type_info_of(Foliage_Paint_Result),run=api_paint})
+    editor.api_method_register(s,{name="foliage.paint",summary="One stroke of the foliage brush from at to to (or at alone), as one step of undo: paint fills the ring to the density of each type under its rules, erase leaves erase_density of it, reapply gives the instances the scale, turn and offset of their type again, generate raises the density the cells generate with under the ring to all of it, fading toward its border, and ungenerate lowers it to none.",params=type_info_of(Paint_Params),defaults=&paint_defaults,result=type_info_of(Foliage_Paint_Result),run=api_paint})
     editor.api_method_register(s,{name="foliage.place",summary="Puts one instance of a type on the surface under a point, with the scale, turn and offset of its type at random, as one step of undo.",params=type_info_of(Place_Params),result=type_info_of(Type_Result),run=api_place})
     editor.api_method_register(s,{name="foliage.query",summary="The types of a Foliage with how many instances each shows, and the instances inside a box of the world: type, where they are, their scale and whether they are manual or generated.",params=type_info_of(Query_Params),defaults=&query_defaults,flags={.Read_Only},result=type_info_of(Foliage_Query_Result),run=api_query})
 }
@@ -285,6 +287,7 @@ rule_layers :: proc(s:^editor.Session,call:^api.Call,ground:^foliage.Ground_Owne
 @(private)
 type_values :: proc(call:^api.Call,t:^foliage.Foliage_Type,p:^$T,layers:u32) {
     if editor.tool_call_given(call,"density") {t.density=p.density}
+    if editor.tool_call_given(call,"radius") {t.radius=p.radius}
     if editor.tool_call_given(call,"scale") {t.scale={min(p.scale.x,p.scale.y),max(p.scale.x,p.scale.y)}}
     if editor.tool_call_given(call,"height") {t.height={min(p.height.x,p.height.y),max(p.height.x,p.height.y)}}
     if editor.tool_call_given(call,"yaw") {t.yaw=math.to_radians(p.yaw)}

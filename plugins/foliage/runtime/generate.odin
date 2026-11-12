@@ -1,13 +1,18 @@
 package foliage
 
+import "base:intrinsics"
 import "core:math/linalg"
+import "core:slice"
 import "mirai:std/base"
 import mm "mirai:std/math"
 
 // The instances of a cell: its manual ones, and those the generator makes
-// with the overrides applied. The generator is the first producer: a scatter
-// of each type at its density, the same on every machine for a seed (only
-// arithmetic, a square root and the deterministic sine of std/math).
+// with the overrides applied. The generator is the first producer: the points
+// of each type at its density, spread evenly over the cell, kept apart by the
+// radius of their types and thinned by the density of the cell, the layers of
+// the ground and what keeps foliage out. It is the same on every machine for a
+// seed: only integer arithmetic, a square root and the deterministic sine of
+// std/math.
 
 // A point the generator makes: with its cell, its type and its index among
 // those of its type there, the id an override names it by. The index of a
@@ -22,6 +27,7 @@ Generated :: struct {
     tilt_turn:f32,   // radians around y of the side it leans to
     scale:[2]f32,    // across and along y
     offset:f32,      // metres along its y, over the ground
+    chance:f32,      // 0 to 1: it stands where the density there is above it
 }
 
 // How many points of a type a cell gets, and the stream of each one.
@@ -37,8 +43,35 @@ room :: proc(array:^[dynamic]$T,more:int) -> bool {
     return needed<=cap(array) || reserve(array,max(needed,2*cap(array)))==nil
 }
 
-// The points of one type in a cell, appended to out. False, with none
-// appended, without memory for them.
+// The second dimension of the Sobol sequence at index i, as a fraction of 2^32.
+@(private)
+sobol_second :: proc "contextless" (i:u32) -> u32 {
+    r,v,i:=u32(0),u32(1)<<31,i
+    for i!=0 {
+        if i&1!=0 {r~=v}
+        i>>=1
+        v~=v>>1
+    }
+    return r
+}
+
+// A nested uniform (Owen) scramble of a fraction of 2^32: each bit flips by a
+// hash of the bits above it, so a set stratified in base 2 stays so.
+@(private)
+owen_scramble :: proc "contextless" (x,seed:u32) -> u32 {
+    v:=intrinsics.reverse_bits(x)+seed
+    v~=v*0x6c50b47c
+    v~=v*0xb82f1e52
+    v~=v*0xc7afe638
+    v~=v*0x8d22f6e6
+    return intrinsics.reverse_bits(v)
+}
+
+// The points of one type in a cell, appended to out. Their places are the
+// first points of a (0,2) sequence of base 2, scrambled by the cell and the
+// type: however many there are, they cover the cell as a jittered grid does,
+// without the clumps and gaps of points at random. False, with none appended,
+// without memory for them.
 scatter :: proc(seed:u32,coord:[2]i32,t:Foliage_Type,out:^[dynamic]Generated) -> bool {
     key:=scatter_key(seed,coord,t.id)
     counter:=mm.rng_make(key)
@@ -46,17 +79,20 @@ scatter :: proc(seed:u32,coord:[2]i32,t:Foliage_Type,out:^[dynamic]Generated) ->
     count:=u32(expected)
     if f64(mm.random_f32(&counter))<expected-f64(count) {count+=1}
     if !room(out,int(count)) {return false}
+    scramble:=base.hash_u64(key)
     for point in 0..<count {
         r:=mm.rng_make(key,u64(point)+1)
         g:=Generated{type=t.id,point=point}
-        g.position={mm.random_f32(&r)*CELL_SIZE,mm.random_f32(&r)*CELL_SIZE}
+        across:=owen_scramble(intrinsics.reverse_bits(point),u32(scramble))
+        along:=owen_scramble(sobol_second(point),u32(scramble>>32))
+        g.position=[2]f32{f32(across>>8),f32(along>>8)}*(CELL_SIZE/16777216.0)
         g.yaw=mm.random_f32(&r)*t.yaw
         g.tilt=mm.random_f32(&r)*t.tilt
         g.tilt_turn=mm.random_f32(&r)*6.2831855
-        across:=t.scale[0]+(t.scale[1]-t.scale[0])*mm.random_f32(&r)
-        g.scale={across,across*(t.height[0]+(t.height[1]-t.height[0])*mm.random_f32(&r))}
-        // After the values it had before: those of the points stay.
+        scale:=t.scale[0]+(t.scale[1]-t.scale[0])*mm.random_f32(&r)
+        g.scale={scale,scale*(t.height[0]+(t.height[1]-t.height[0])*mm.random_f32(&r))}
         g.offset=t.offset.x+(t.offset.y-t.offset.x)*mm.random_f32(&r)
+        g.chance=mm.random_f32(&r)
         append(out,g)
     }
     return true
@@ -65,14 +101,45 @@ scatter :: proc(seed:u32,coord:[2]i32,t:Foliage_Type,out:^[dynamic]Generated) ->
 // The ground under a cell, in the space of its entity (Foliage_Ground):
 // heights on a grid of samples by samples points over the cell, x first,
 // NaN where there is none, and the weights of the layers of the terrain at
-// each, none when they are not known. Without samples the plane y = 0 is the
-// ground, unless absent: the world has a ground and none is known under the
-// cell (not read yet, or none there), and no generated instance stands there.
+// each, none when they are not known; and where foliage is kept out of it
+// (Foliage_Keep_Out), none when nothing keeps it out. Without samples the
+// plane y = 0 is the ground, unless absent: the world has a ground and none
+// is known under the cell (not read yet, or none there), and no generated
+// instance stands there.
 Ground_Cell :: struct {
     samples:int,
     heights:[]f32,
     weights:[][4]u8,
+    kept:[]u64, // KEEP_OUT_SIDE squares per side, x first, a bit each: set where foliage is kept out
     absent:bool,
+}
+
+KEEP_OUT_SIDE :: 64 // squares per side of a cell where foliage is kept out or not, as its centre is
+KEEP_OUT_WORDS :: KEEP_OUT_SIDE*KEEP_OUT_SIDE/64
+
+// Whether foliage is kept out at x and z from the corner of its cell; past
+// its border, as the nearest square inside it is.
+kept_out :: proc "contextless" (g:Ground_Cell,x,z:f32) -> bool {
+    if len(g.kept)<KEEP_OUT_WORDS {return false}
+    step:=CELL_SIZE/KEEP_OUT_SIDE
+    k:=clamp(int(z/step),0,KEEP_OUT_SIDE-1)*KEEP_OUT_SIDE+clamp(int(x/step),0,KEEP_OUT_SIDE-1)
+    return g.kept[k>>6]>>(uint(k)&63)&1!=0
+}
+
+// How much of the density of its types a cell generates at x and z from its
+// corner, from 0 to 1, between the samples of its density around it; past
+// its border, as at the nearest point of it.
+cell_density_at :: proc "contextless" (cell:^Cell,x,z:f32) -> f32 {
+    n:=DENSITY_SAMPLES
+    if len(cell.density)!=n*n {return 1}
+    step:=CELL_SIZE/f32(n-1)
+    u,v:=clamp(x/step,0,f32(n-1)),clamp(z/step,0,f32(n-1))
+    c,r:=min(int(u),n-2),min(int(v),n-2)
+    fu,fv:=u-f32(c),v-f32(r)
+    d:=cell.density
+    a,b:=f32(d[r*n+c]),f32(d[r*n+c+1])
+    e,f:=f32(d[(r+1)*n+c]),f32(d[(r+1)*n+c+1])
+    return ((a+(b-a)*fu)*(1-fv)+(e+(f-e)*fu)*fv)/255
 }
 
 // The height and normal of the ground at x and z from the corner of its
@@ -166,10 +233,183 @@ placed_of :: proc "contextless" (coord:[2]i32,b:Foliage_Instance,type:u32,id:u64
 // Scratch of cell_expand, kept by whoever expands many cells.
 Expand_Scratch :: struct {
     points:[dynamic]Generated,
-    matched:[dynamic]bool, // of each override of the cell
+    matched:[dynamic]bool,  // of each override of the cell
+    spaced:[dynamic]Spaced, // the points of one type with a radius, in the cells around
+    stood:[dynamic]Spaced,  // those that stand of the types with a radius placed before
+    fresh:[dynamic]Spaced,  // those that stand of the type being placed
+    standing:[dynamic]u32,  // the points of the cell that stand, of each type with a radius in turn
+    ranges:[dynamic][2]int, // of standing, by the index of the type in its source
+    order:[dynamic]Spaced_Type,
+    grid,stood_grid:Grid,
 }
 
-expand_scratch_destroy :: proc(e:^Expand_Scratch) {delete(e.points);delete(e.matched)}
+expand_scratch_destroy :: proc(e:^Expand_Scratch) {
+    delete(e.points);delete(e.matched);delete(e.spaced);delete(e.stood);delete(e.fresh)
+    delete(e.standing);delete(e.ranges);delete(e.order)
+    delete(e.grid.heads);delete(e.grid.next);delete(e.stood_grid.heads);delete(e.stood_grid.next)
+}
+
+// A point of a type with a radius, from the corner of the cell expanded,
+// which is in the middle of the 3 by 3 cells its points come from.
+@(private)
+Spaced :: struct {
+    at:[2]f32,
+    reach:f32, // its radius times its scale across
+    chance:f32,
+    point:u32,
+    cell:u8,   // of the 3 by 3, x first: 4 is the cell expanded
+}
+
+@(private)
+Spaced_Type :: struct {radius:f32,id:u32,index:int}
+
+// Which of two points of a type keeps its place when they are too near: the
+// one of the lower index, or of the cell first in z and then x.
+@(private)
+spaced_before :: proc "contextless" (a,b:Spaced) -> bool {return a.point<b.point || a.point==b.point && a.cell<b.cell}
+
+// Buckets over the 3 by 3 cells around the one expanded, at least as wide as
+// the reaches of two points together: a point meets only those of the 9
+// buckets around its own.
+@(private)
+Grid :: struct {
+    heads:[dynamic]i32,
+    next:[dynamic]i32, // of each point added, the one added before it to its bucket
+    side:int,
+    size:f32,
+}
+@(private) GRID_SIDE_MAX :: 192
+
+@(private)
+grid_reset :: proc(g:^Grid,reach:f32) -> bool {
+    g.side=clamp(int(3*CELL_SIZE/max(reach,1e-3)),1,GRID_SIDE_MAX)
+    g.size=3*CELL_SIZE/f32(g.side)
+    clear(&g.next)
+    if resize(&g.heads,g.side*g.side)!=nil {return false}
+    for &h in g.heads {h=-1}
+    return true
+}
+
+@(private)
+grid_bucket :: proc "contextless" (g:^Grid,at:[2]f32) -> [2]int {
+    b:=(at+CELL_SIZE)/g.size
+    return {clamp(int(b.x),0,g.side-1),clamp(int(b.y),0,g.side-1)}
+}
+
+// Adds the next point to the grid, the one of index len(g.next).
+@(private)
+grid_add :: proc(g:^Grid,at:[2]f32) -> bool {
+    b:=grid_bucket(g,at)
+    k:=b.y*g.side+b.x
+    if _,error:=append(&g.next,g.heads[k]);error!=nil {return false}
+    g.heads[k]=i32(len(g.next)-1)
+    return true
+}
+
+@(private)
+Block :: enum u8 {
+    Same_Cell,   // by those of the cell of the point
+    Other_Cells, // by those of the other cells that keep their place before it
+    Any,
+}
+
+// Whether one of points, those the grid holds, is nearer to p than their
+// two reaches.
+@(private)
+grid_blocks :: proc "contextless" (g:^Grid,points:[]Spaced,p:Spaced,by:Block) -> bool {
+    b:=grid_bucket(g,p.at)
+    for z in max(b.y-1,0)..=min(b.y+1,g.side-1) {
+        for x in max(b.x-1,0)..=min(b.x+1,g.side-1) {
+            for i:=g.heads[z*g.side+x];i>=0;i=g.next[i] {
+                q:=points[i]
+                switch by {
+                case .Same_Cell: if q.cell!=p.cell {continue}
+                case .Other_Cells: if q.cell==p.cell || !spaced_before(q,p) {continue}
+                case .Any:
+                }
+                d:=q.at-p.at
+                r:=q.reach+p.reach
+                if d.x*d.x+d.y*d.y<r*r {return true}
+            }
+        }
+    }
+    return false
+}
+
+// Whether a point of a type stands on the ground of a cell, at at from its
+// corner, and where: not where the ground has none, its rule does not take
+// that ground, its chance is not under the density there or foliage is kept
+// out. Past the border of the cell, the ground, the density and what keeps
+// foliage out at the nearest point of the border stand for those there.
+point_stands :: proc "contextless" (cell:^Cell,t:Foliage_Type,chance:f32,ground:Ground_Cell,at:[2]f32) -> (height:f32,normal:[3]f32,ok:bool) {
+    normal={0,1,0}
+    if ground.samples>0 {
+        found:bool
+        height,normal,found=ground_at(ground,at.x,at.y)
+        if !found {return}
+    }
+    if chance>=cell_density_at(cell,at.x,at.y) || kept_out(ground,at.x,at.y) {return}
+    if t.rule.enabled {
+        weights,known:=ground_weights_at(ground,at.x,at.y)
+        if !rule_allows(t,height,normal,weights,known,chance) {return}
+    }
+    return height,normal,true
+}
+
+// The points of a cell that stand, of each type with a radius, into
+// e.standing by e.ranges. The types go from the widest radius (the lower id
+// first among equal ones). A point keeps apart from those of its type, in
+// its cell in the order of their index and across the border from those
+// that keep their place before it; then, if it stands, from those that stand
+// of the types before. Only the place, the scale and the stream of the points
+// of the cells around are known here, not their ground: whether one stands
+// is told at the border of this cell nearest to it. False without memory.
+@(private)
+spaced_stand :: proc(s:^Source,cell:^Cell,ground:Ground_Cell,e:^Expand_Scratch) -> bool {
+    clear(&e.order);clear(&e.standing);clear(&e.stood)
+    if resize(&e.ranges,len(s.types))!=nil {return false}
+    for &r in e.ranges {r={}}
+    widest:f32
+    for t,i in s.types {
+        if t.radius<=0 {continue}
+        if _,error:=append(&e.order,Spaced_Type{t.radius,t.id,i});error!=nil {return false}
+        widest=max(widest,t.radius*t.scale[1])
+    }
+    if len(e.order)==0 {return true}
+    slice.sort_by(e.order[:],proc(a,b:Spaced_Type) -> bool {return a.radius>b.radius || a.radius==b.radius && a.id<b.id})
+    // How far from the cell a point can keep one of it away.
+    margin:=2*widest
+    if !grid_reset(&e.stood_grid,margin) {return false}
+    for o in e.order {
+        t:=s.types[o.index]
+        clear(&e.spaced);clear(&e.fresh)
+        if !grid_reset(&e.grid,margin) {return false}
+        for k in 0..<9 {
+            d:=[2]i32{i32(k%3)-1,i32(k/3)-1}
+            clear(&e.points)
+            if !scatter(s.info.seed,cell.coord+d,t,&e.points) {return false}
+            for g in e.points {
+                p:=Spaced{at=g.position+[2]f32{f32(d.x),f32(d.y)}*CELL_SIZE,reach=t.radius*g.scale[0],chance=g.chance,point=g.point,cell=u8(k)}
+                if grid_blocks(&e.grid,e.spaced[:],p,.Same_Cell) {continue}
+                if _,error:=append(&e.spaced,p);error!=nil || !grid_add(&e.grid,p.at) {return false}
+            }
+        }
+        first:=len(e.standing)
+        for p in e.spaced {
+            if p.at.x< -margin || p.at.y< -margin || p.at.x>CELL_SIZE+margin || p.at.y>CELL_SIZE+margin {continue}
+            if grid_blocks(&e.grid,e.spaced[:],p,.Other_Cells) {continue}
+            if _,_,stands:=point_stands(cell,t,p.chance,ground,p.at);!stands {continue}
+            if grid_blocks(&e.stood_grid,e.stood[:],p,.Any) {continue}
+            if _,error:=append(&e.fresh,p);error!=nil {return false}
+            if p.cell==4 {if _,error:=append(&e.standing,p.point);error!=nil {return false}}
+        }
+        e.ranges[o.index]={first,len(e.standing)}
+        for p in e.fresh {
+            if _,error:=append(&e.stood,p);error!=nil || !grid_add(&e.stood_grid,p.at) {return false}
+        }
+    }
+    return true
+}
 
 // Where an instance of a cell stands: with INSTANCE_GROUNDED, `ground` over
 // the ground under it where there is one; with INSTANCE_ALIGNED also leaned
@@ -205,7 +445,13 @@ cell_expand :: proc(s:^Source,cell:^Cell,ground:Ground_Cell,out:^[dynamic]Placed
     if !room(out,len(cell.manual)) || !room(orphans,len(cell.overrides)) || resize(&scratch.matched,len(cell.overrides))!=nil {return false}
     for b in cell.manual {append(out,placed_grounded(s,cell.coord,b,b.type,MANUAL | u64(b.id),ground))}
     if cell.generate && !ground.absent {
-        for t in s.types {
+        if !spaced_stand(s,cell,ground,scratch) {
+            base.truncate(out,first)
+            return false
+        }
+        for t,i in s.types {
+            standing:=scratch.standing[scratch.ranges[i][0]:scratch.ranges[i][1]]
+            next:=0
             clear(&scratch.points)
             // A point gives one instance at most.
             if !scatter(s.info.seed,cell.coord,t,&scratch.points) || !room(out,len(scratch.points)) {
@@ -225,17 +471,12 @@ cell_expand :: proc(s:^Source,cell:^Cell,ground:Ground_Cell,out:^[dynamic]Placed
                     }
                     continue
                 }
-                height:f32=0
-                normal:=[3]f32{0,1,0}
-                if ground.samples>0 {
-                    h,n,ok:=ground_at(ground,g.position.x,g.position.y)
-                    if !ok {continue}
-                    height,normal=h,n
+                if t.radius>0 {
+                    for next<len(standing) && standing[next]<g.point {next+=1}
+                    if next==len(standing) || standing[next]!=g.point {continue}
                 }
-                if t.rule.enabled {
-                    weights,known:=ground_weights_at(ground,g.position.x,g.position.y)
-                    if !rule_allows(t,height,normal,weights,known) {continue}
-                }
+                height,normal,stands:=point_stands(cell,t,g.chance,ground,g.position)
+                if !stands {continue}
                 x,z:=g.position.x+f32(cell.coord.x)*CELL_SIZE,g.position.y+f32(cell.coord.y)*CELL_SIZE
                 rotation:=generated_rotation(g,t.align,normal)
                 position:=[3]f32{x,height,z}
