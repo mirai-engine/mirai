@@ -31,7 +31,8 @@ terrain_holes_panel :: proc(s:^editor.Session,tool:^Terrain_Tool) {
 // under the list what the chosen one has; the brush paints it. The program that blends
 // them shows only when it is not the one of the plugin.
 @(private)
-terrain_paint_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,assets:^host.Assets) {
+terrain_paint_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,app:^host.App) {
+    assets:=app.assets
     ctx:=s.gui.ctx
     source:=&tool.stroke.source
     count:=int(source.layer_count)
@@ -60,7 +61,13 @@ terrain_paint_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.Worl
             if kit.property(ctx,"Weight") {if ui.number_field(ctx,ui.id(ctx,"target"),&percent,{width=ui.fixed(FIELD_WIDTH),min=0,max=100,has_min=true,has_max=true,speed=0.5,decimals=0,unit="%"}).changed {tool.target=f32(percent/100)}}
         }
     }
-    if tool.stroke.source.kind==.Heightfield {slope_fields(s,tool)}
+    if tool.stroke.source.kind!=.Heightfield {return}
+    slope_fields(s,tool)
+    kit.section(ctx,"Weightmap","",80)
+    if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=4}) {
+        if ui.button(ctx,ui.id(ctx,"weights_import"),{label="Import",variant="field",width=-1,center=true}).clicked {heightmap_dialog(s,tool,app,WEIGHTS_IMPORT_DIALOG)}
+        if ui.button(ctx,ui.id(ctx,"weights_export"),{label="Export",variant="field",width=-1,center=true}).clicked {heightmap_dialog(s,tool,app,WEIGHTS_EXPORT_DIALOG)}
+    }
 }
 
 // The heading of the layers, as a section: how many of the most it has, and

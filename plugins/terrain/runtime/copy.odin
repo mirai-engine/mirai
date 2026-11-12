@@ -15,6 +15,8 @@ data_source_copy :: proc(dst,src:^Source) -> bool {
     }
     if !grid_copy(&dst.field,&src.field,dst.allocator) || !grid_copy(&dst.holes,&src.holes,dst.allocator) || !grid_copy(&dst.field,&src.field,dst.allocator) {return false}
     if !grid_copy(&dst.weights,&src.weights,dst.allocator) || !coarse_copy(&dst.coarse,&src.coarse,dst.allocator) {return false}
+    for i in 0..<EDITS_MAX {if !grid_copy(&dst.edit_heights[i],&src.edit_heights[i],dst.allocator) {return false}}
+    if !grid_copy(&dst.edit_under,&src.edit_under,dst.allocator) {return false}
     dst.info,dst.origin=src.info,src.origin
     return true
 }
@@ -95,6 +97,7 @@ source_resize :: proc(dst,src:^Source,samples:[2]int,allocator:=context.allocato
             if !grid_put(&temporary.holes,{x,0,z},1,allocator) {return false}
         }}
     }
+    if !edits_resize(&temporary,src,shift) {return false}
     source_destroy(dst)
     dst^=temporary
     temporary={}

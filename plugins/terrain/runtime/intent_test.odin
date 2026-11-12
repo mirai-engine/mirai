@@ -83,7 +83,7 @@ a_wrong_brush_is_an_error_that_says_what_failed_and_changes_nothing :: proc(t:^t
         {"a blend below zero",{kind=.Carve,center={},radius=3,amount=1,blend=-1},.Blend,"blend"},
         {"a hardness of one",{kind=.Raise,center={},radius=3,amount=1,hardness=1},.Falloff,"hardness"},
         {"a shape that is none",{kind=.Carve,shape=Brush_Shape(9),center={},radius=3,amount=1},.Falloff,"shape"},
-        {"a kind that is none",{kind=Brush_Kind(200),center={},radius=3,amount=1},.Kind,"Raise to Erode"},
+        {"a kind that is none",{kind=Brush_Kind(200),center={},radius=3,amount=1},.Kind,"Raise to Thermal"},
         {"a layer the source lacks",{kind=.Paint,center={},radius=3,amount=1,layer=3},.Layer,"layer"},
         {"a terrace without steps",{kind=.Terrace,center={},radius=3,amount=1},.Terrace,"interval"},
         {"noise without a scale",{kind=.Noise,center={},radius=3,amount=1},.Noise,"scale"},
@@ -115,6 +115,7 @@ a_wrong_brush_is_an_error_that_says_what_failed_and_changes_nothing :: proc(t:^t
         {{kind=.Ramp,center={},delta={4,1,0},radius=2,amount=1},"Add with a Capsule"},
         {{kind=.Terrace,center={},radius=2,amount=1,interval=1},"Flatten"},
         {{kind=.Erode,center={},radius=2,amount=1},"Smooth or Noise"},
+        {{kind=.Thermal,center={},radius=2,amount=1,talus=0.5},"Thermal is of a Heightfield"},
     }
     for c in lacks {
         change:=source_edit(&volume,c.brush)

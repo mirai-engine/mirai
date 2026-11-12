@@ -37,6 +37,9 @@ Source_Info :: struct {
     // the layers.
     layers_material:base.Asset_Id,
     interior:Interior, // Volume: what is under its surface, written into its weights by source_interior_apply
+    edit_count:u32,    // Heightfield: its edit layers (edits.odin), from the lowest
+    edit_layers:[EDITS_MAX]Edit_Layer,
+    conform:u64,       // Heightfield: the hash of the splines its layer of splines was made from, kept by the editor; 0: none
 }
 
 Source :: struct {
@@ -50,11 +53,13 @@ Source :: struct {
     file:string,           // Heightfield and Volume: where the pages of its grids in blocks are read from
     origin:u64,            // the content hash of the file it was read from or last saved to; 0: none. Its pages and sections tell whether they were written since (altered)
     coarse:Coarse,         // Heightfield of a world: kept with its samples (coarse.odin)
+    edit_heights:[EDITS_MAX]Grid(f32), // what each edit layer adds to the field, of the size of the field
+    edit_under:Grid(Weights),          // the weights under what the layer of splines painted; none where it painted nothing
 }
 
 source_valid :: proc "contextless" (info:Source_Info) -> bool {
     if !(info.cell>0) || info.cell-info.cell!=0 || info.cell>10000 || info.chunk_cells<CHUNK_CELLS_MIN || info.chunk_cells>CHUNK_CELLS_MAX {return false}
-    if info.layer_count<1 || info.layer_count>LAYERS_MAX {return false}
+    if info.layer_count<1 || info.layer_count>LAYERS_MAX || !edits_valid(info) {return false}
     if info.kind==.Volume {if !interior_valid(info.interior,info.layer_count) {return false}} else if info.interior!={} {return false}
     for layer,i in info.layers {
         if i<int(info.layer_count) {if !layer_valid(layer) {return false}} else if layer!={} {return false}
@@ -87,7 +92,7 @@ source_allocate :: proc(s:^Source,info:Source_Info,allocator:=context.allocator)
     if !source_valid(info) {return false}
     temporary:=Source{allocator=allocator,info=info}
     if !grid_init(&temporary.field,{int(info.samples.x),int(info.samples.y),int(info.samples.z)},field_fill(info),allocator) {return false}
-    if !weights_init(&temporary) {source_destroy(&temporary);return false}
+    if !weights_init(&temporary) || !edits_init(&temporary) {source_destroy(&temporary);return false}
     temporary.scratch=make([dynamic]f32,allocator)
     source_destroy(s)
     s^=temporary
@@ -107,6 +112,7 @@ source_destroy :: proc(s:^Source) {
     grid_destroy(&s.holes,s.allocator)
     grid_destroy(&s.weights,s.allocator)
     coarse_destroy(&s.coarse,s.allocator)
+    edits_destroy(s)
     delete(s.file,s.allocator)
     s^={}
 }
@@ -121,7 +127,7 @@ source_clone :: proc(dst,src:^Source,allocator:=context.allocator) -> bool {
     if !source_valid(src.info) || !source_samples_held(src) {return false}
     temporary:Source
     if !source_allocate(&temporary,src.info,allocator) {return false}
-    if !grid_clone(&temporary.field,&src.field,allocator) || !grid_clone(&temporary.holes,&src.holes,allocator) || !grid_clone(&temporary.weights,&src.weights,allocator) {source_destroy(&temporary);return false}
+    if !grid_clone(&temporary.field,&src.field,allocator) || !grid_clone(&temporary.holes,&src.holes,allocator) || !grid_clone(&temporary.weights,&src.weights,allocator) || !edits_clone(&temporary,src,allocator) {source_destroy(&temporary);return false}
     if src.file!="" {
         error:runtime.Allocator_Error
         if temporary.file,error=strings.clone(src.file,allocator);error!=nil {source_destroy(&temporary);return false}
@@ -158,7 +164,7 @@ source_read :: proc(s:^Source,file:^asset.Asset,types:^asset.Types,allocator:=co
         if temporary.file,error=strings.clone(pages,allocator);error!=nil {return}
     }
     paged:=pages!=""
-    if !source_weights_read(&temporary,file,types,allocator,paged) || !source_holes_read(&temporary,file,types,allocator,paged) {return}
+    if !source_weights_read(&temporary,file,types,allocator,paged) || !source_holes_read(&temporary,file,types,allocator,paged) || !edits_read(&temporary,file,types,allocator,paged) {return}
     if coarse && !coarse_read(&temporary,file,types) {return}
     temporary.origin=file.blob.header.content_hash
     source_destroy(s)
@@ -210,6 +216,7 @@ source_bytes :: proc(s:^Source,id:base.Asset_Id,types:^asset.Types,allocator:=co
             coarse_put(&document,types,&measured) or_return
         }
     }
+    edits_put(&document,types,s,keep) or_return
     asset.import_put(&document,types,import_info) or_return
     return asset.document_bytes(&document,allocator)
 }
@@ -217,7 +224,7 @@ source_bytes :: proc(s:^Source,id:base.Asset_Id,types:^asset.Types,allocator:=co
 // What a source counts against Terrain_Settings.samples: the samples its
 // grids hold in memory, with the coarse grid of a Heightfield.
 source_cost :: proc(s:^Source) -> int {
-    return grid_dense(&s.field)+grid_dense(&s.weights)+grid_dense(&s.holes)+grid_dense(&s.coarse.heights)
+    return grid_dense(&s.field)+grid_dense(&s.weights)+grid_dense(&s.holes)+grid_dense(&s.coarse.heights)+edits_cost(s)
 }
 
 // The value of a sample: a height of a Heightfield, a distance of a Volume;
