@@ -23,9 +23,8 @@ import "mirai:ui"
 // choice is written to the edited World and to the settings at once, and
 // changes neither the document nor its history.
 
-GRAPHICS_WIDTH :: f32(420)
-GRAPHICS_LABEL_WIDTH :: f32(108)
-GRAPHICS_ROW :: f32(25)
+GRAPHICS_WIDTH :: f32(520)
+GRAPHICS_LABEL_GAP :: f32(16) // from the widest name of a row to its choices
 GRAPHICS_QUALITY_LABELS :: [erender.Graphics_Quality]string{.Low="Low",.Medium="Medium",.High="High",.Ultra="Ultra",.Custom="Custom"}
 // The section of Graphics_Settings whose rows go to the Frame rate card.
 GRAPHICS_RATE_SECTION :: "Frames"
@@ -65,34 +64,48 @@ settings_graphics_preset :: proc(list:[]project.Setting,name:string) -> (message
     return fmt.tprintf("%q is not a preset: Low, Medium, High or Ultra",name)
 }
 
-// Keeps the graphics settings in the edited World and the settings of the project.
-// Graphics are a preference of this machine: the change goes to the engine
-// layer, and the editor draws with it now. A value the project fixes wins
-// again when the settings are read.
+// Keeps the graphics settings in the edited World and in the settings, as
+// graphics_keep does with the fields that change.
 graphics_commit :: proc(s:^Session,next:erender.Graphics_Settings) -> bool {
     g:=graphics_settings(s)
-    if g==nil {return false}
-    if s.engine_root!="" {
-        if s.settings_engine==nil {settings_engine_load(s)}
-        if engine:=(^erender.Graphics_Settings)(setting_engine_value(s,"Graphics_Settings"));engine!=nil {
-            // Only the fields that change: what the project fixes stays its own.
-            before,after:=g^,next
-            for field in reflect.struct_fields_zipped(erender.Graphics_Settings) {
-                size:=field.type.size
-                was:=([^]u8)(&before)[field.offset:][:size]
-                now:=([^]u8)(&after)[field.offset:][:size]
-                if mem.compare(was,now)==0 {continue}
-                mem.copy(rawptr(uintptr(engine)+field.offset),raw_data(now),size)
-            }
-            settings_save(s,.Engine)
-            g=graphics_settings(s)
-            if g!=nil {g^=next}
-            return g!=nil
-        }
+    at,found:=s.info.storages_by_type[erender.Graphics_Settings]
+    if g==nil || !found {return false}
+    fields:=make([dynamic]Graphics_Field,context.temp_allocator)
+    before,after:=g^,next
+    for field in reflect.struct_fields_zipped(erender.Graphics_Settings) {
+        size:=field.type.size
+        if mem.compare(([^]u8)(&before)[field.offset:][:size],([^]u8)(&after)[field.offset:][:size])!=0 {append(&fields,Graphics_Field{field.offset,size})}
     }
     g^=next
-    settings_save(s)
-    return true
+    return graphics_keep(s,&s.info.storages[at],fields[:])
+}
+
+// A field of a setting: its bytes.
+Graphics_Field :: struct {offset:uintptr,size:int}
+
+// Keeps fields of a setting of the machine that the edited World already has
+// changed. Graphics are a preference of this machine: the fields go to the
+// engine layer, and the editor draws with them now. A field the project
+// fixes would win again when the settings are read: the project then takes
+// the chosen value too, and forgets the field when it equals the engine's.
+@(private)
+graphics_keep :: proc(s:^Session,info:^core.Storage_Info,fields:[]Graphics_Field) -> bool {
+    world:=([^]u8)(graphics_setting_of(s,info))
+    if s.engine_root=="" {return settings_save(s)}
+    if s.settings_engine==nil {settings_engine_load(s)}
+    engine:=([^]u8)(setting_engine_value(s,info.name))
+    if engine==nil {return settings_save(s)}
+    chosen:=make([]u8,info.info.size,context.temp_allocator)
+    copy(chosen,world[:info.info.size])
+    for f in fields {copy(engine[f.offset:][:f.size],chosen[f.offset:][:f.size])}
+    if !settings_save(s,.Engine) {return false}
+    fixed:=false
+    for f in fields {
+        if mem.compare(world[f.offset:][:f.size],chosen[f.offset:][:f.size])==0 {continue}
+        copy(world[f.offset:][:f.size],chosen[f.offset:][:f.size])
+        fixed=true
+    }
+    return !fixed || settings_save(s)
 }
 
 @(private)
@@ -112,19 +125,23 @@ graphics_build :: proc(s:^Session) {
     changed:=false
     preset_labels:=GRAPHICS_QUALITY_LABELS
     shown:=erender.graphics_quality_of(current^)
-    row:=ui.Box{width=ui.GROW,height=ui.fixed(GRAPHICS_ROW),gap=7,align_y=.Center}
+    label_width:=ui.metric(ctx,"label_width")
+    label_width=max(label_width,ui.text_width(&ctx.font,"Preset",ui.metric(ctx,"font_small"))+GRAPHICS_LABEL_GAP)
+    for each in rows {label_width=max(label_width,ui.text_width(&ctx.font,each.label,ui.metric(ctx,"font_small"))+GRAPHICS_LABEL_GAP)}
+    row_height:=ui.metric(ctx,"control")
+    row:=ui.Box{width=ui.GROW,height=ui.fixed(row_height),gap=8,align_y=.Center}
     segment:=ui.Button{variant="tab",width=-1,height=ui.metric(ctx,"row")-4,size=ui.metric(ctx,"font_small"),center=true,padding=2}
     if ui.popup(ctx,popup,{width=GRAPHICS_WIDTH,align_right=true,flush=true}) {
         ui.id_push(ctx,popup)
-        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(40),padding={BAND_INSET,0,BAND_INSET,0},gap=12,align_y=.Center}) {
-            ui.label(ctx,"Graphics",13,ui.tone(ctx,"text"),font=ui.FONT_SEMIBOLD)
+        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"bar_height")),padding={BAND_INSET,0,BAND_INSET,0},gap=12,align_y=.Center}) {
+            ui.label(ctx,"Graphics",ui.metric(ctx,"font"),ui.tone(ctx,"text"),font=ui.FONT_SEMIBOLD)
             ui.spacer(ctx)
             ui.label(ctx,fmt.tprintf("%.0f fps",s.app.stats.fps),ui.metric(ctx,"font_small"),ui.tone(ctx,"text"),font=ui.FONT_MEDIUM)
             gpu_ms:=f32(0)
             if s.app.renderer!=nil {gpu_ms=gpu.renderer_stats(s.app.renderer).gpu_ms}
             ui.label(ctx,fmt.tprintf("GPU %.1f ms",gpu_ms),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
         }
-        if ui.scroll_area(ctx,ui.id(ctx,"rows"),&gs.scroll,{height=ui.FIT,max_height=max(ctx.size.y-ui.metric(ctx,"bar_height")-GRAPHICS_ROW-80,GRAPHICS_ROW),gap=0,fade=ui.tone(ctx,"popup")}) {
+        if ui.scroll_area(ctx,ui.id(ctx,"rows"),&gs.scroll,{height=ui.FIT,max_height=max(ctx.size.y-ui.metric(ctx,"bar_height")-row_height-80,row_height),gap=0,fade=ui.tone(ctx,"popup")}) {
             // Two sections, each under its band that folds it: what the presets set,
             // and the frame rate. A section_card ends with the if that opens it.
             for rate in ([]bool{false,true}) {
@@ -132,7 +149,7 @@ graphics_build :: proc(s:^Session) {
                     if !rate {
                         ui.box_begin(ctx,row)
                         defer ui.box_end(ctx,{})
-                        ui.label(ctx,"Preset",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_label"),GRAPHICS_LABEL_WIDTH)
+                        ui.label(ctx,"Preset",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_label"),label_width)
                         if kit.segments(ctx,ui.GROW,ui.metric(ctx,"row")) {
                             for candidate in erender.Graphics_Quality {
                                 if candidate==.Custom {continue}
@@ -150,7 +167,7 @@ graphics_build :: proc(s:^Session) {
                         ui.spacer(ctx,REVERT_SIDE,1)
                     }
                     for &each,r in rows {
-                        if each.rate==rate {graphics_row(s,&each,r,row,segment)}
+                        if each.rate==rate {graphics_row(s,&each,r,row,segment,label_width)}
                     }
                 }
             }
@@ -291,23 +308,17 @@ graphics_setting_of :: proc(s:^Session,info:^core.Storage_Info) -> rawptr {
     return rawptr(uintptr(data)+info.offset)
 }
 
-// Writes a choice of a row to the edited World and to the layer of the
-// engine, as graphics_commit does; false for a choice the row has not.
+// Writes a choice of a row to the edited World and keeps it as graphics_keep
+// does; false for a choice the row has not.
 graphics_row_commit :: proc(s:^Session,row:^Graphics_Row,choice:int) -> bool {
     if choice<0 || choice>=len(row.choices) {return false}
     info:=&s.info.storages[row.storage]
     graphics_row_write(row,graphics_setting_of(s,info),choice)
-    if s.engine_root=="" {settings_save(s);return true}
-    if s.settings_engine==nil {settings_engine_load(s)}
-    if engine:=setting_engine_value(s,info.name);engine!=nil {
-        graphics_row_write(row,engine,choice)
-        settings_save(s,.Engine)
-    } else {settings_save(s)}
-    return true
+    return graphics_keep(s,info,{{row.offset,int(row.type.size)}})
 }
 
 @(private="file")
-graphics_row :: proc(s:^Session,row:^Graphics_Row,r:int,box:ui.Box,segment:ui.Button) {
+graphics_row :: proc(s:^Session,row:^Graphics_Row,r:int,box:ui.Box,segment:ui.Button,label_width:f32) {
     ctx:=s.gui.ctx
     info:=&s.info.storages[row.storage]
     current:=graphics_row_choice(row,graphics_setting_of(s,info))
@@ -317,7 +328,7 @@ graphics_row :: proc(s:^Session,row:^Graphics_Row,r:int,box:ui.Box,segment:ui.Bu
     }
     base_choice:=graphics_row_choice(row,&defaults[0])
     if ui.box(ctx,box) {
-        ui.label(ctx,row.label,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_label"),GRAPHICS_LABEL_WIDTH)
+        ui.label(ctx,row.label,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_label"),label_width)
         if kit.segments(ctx,ui.GROW,ui.metric(ctx,"row")) {
             for label,choice in row.choices {
                 button:=segment
