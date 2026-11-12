@@ -68,11 +68,38 @@ scatter :: proc(seed:u32,coord:[2]i32,t:Foliage_Type,out:^[dynamic]Generated) ->
 // each, none when they are not known. Without samples the plane y = 0 is the
 // ground, unless absent: the world has a ground and none is known under the
 // cell (not read yet, or none there), and no generated instance stands there.
+// With keys it holds only the samples keys names (in order), and where one of
+// the four around a point is not held the point has no ground.
 Ground_Cell :: struct {
     samples:int,
     heights:[]f32,
     weights:[][4]u8,
+    keys:[]u16,
     absent:bool,
+}
+
+// The four samples of a grid of samples a side around x and z from the
+// corner of its cell, x first, and how far the point is between them.
+ground_around :: proc "contextless" (samples:int,x,z:f32) -> (corners:[4]int,fu,fv:f32) {
+    step:=CELL_SIZE/f32(samples-1)
+    u,v:=clamp(x/step,0,f32(samples-1)),clamp(z/step,0,f32(samples-1))
+    c,r:=min(int(u),samples-2),min(int(v),samples-2)
+    return {r*samples+c,r*samples+c+1,(r+1)*samples+c,(r+1)*samples+c+1},u-f32(c),v-f32(r)
+}
+
+// Where the ground keeps the four samples around x and z, in heights and
+// weights; false when it does not keep one.
+@(private)
+ground_held :: proc "contextless" (g:Ground_Cell,x,z:f32) -> (at:[4]int,fu,fv:f32,ok:bool) {
+    at,fu,fv=ground_around(g.samples,x,z)
+    if len(g.keys)==0 {return at,fu,fv,true}
+    for &k in at {
+        low,high:=0,len(g.keys)
+        for low<high {mid:=(low+high)/2;if int(g.keys[mid])<k {low=mid+1} else {high=mid}}
+        if low==len(g.keys) || int(g.keys[low])!=k {return}
+        k=low
+    }
+    return at,fu,fv,true
 }
 
 // The height and normal of the ground at x and z from the corner of its
@@ -80,11 +107,9 @@ Ground_Cell :: struct {
 ground_at :: proc "contextless" (g:Ground_Cell,x,z:f32) -> (height:f32,normal:[3]f32,ok:bool) {
     if g.samples<2 {return}
     step:=CELL_SIZE/f32(g.samples-1)
-    u,v:=clamp(x/step,0,f32(g.samples-1)),clamp(z/step,0,f32(g.samples-1))
-    c,r:=min(int(u),g.samples-2),min(int(v),g.samples-2)
-    fu,fv:=u-f32(c),v-f32(r)
-    a,b:=g.heights[r*g.samples+c],g.heights[r*g.samples+c+1]
-    d,e:=g.heights[(r+1)*g.samples+c],g.heights[(r+1)*g.samples+c+1]
+    at,fu,fv,held:=ground_held(g,x,z)
+    if !held {return}
+    a,b,d,e:=g.heights[at[0]],g.heights[at[1]],g.heights[at[2]],g.heights[at[3]]
     if a-a!=0 || b-b!=0 || d-d!=0 || e-e!=0 {return}
     height=a+(b-a)*fu+(d-a)*fv+(a-b-d+e)*fu*fv
     dx:=((b-a)+(a-b-d+e)*fv)/step
@@ -97,12 +122,10 @@ ground_at :: proc "contextless" (g:Ground_Cell,x,z:f32) -> (height:f32,normal:[3
 // cell, from 0 to 1, between the four samples around it; false where they are
 // not known or one has no layers.
 ground_weights_at :: proc "contextless" (g:Ground_Cell,x,z:f32) -> (w:[4]f32,ok:bool) {
-    if g.samples<2 || len(g.weights)<g.samples*g.samples {return}
-    step:=CELL_SIZE/f32(g.samples-1)
-    u,v:=clamp(x/step,0,f32(g.samples-1)),clamp(z/step,0,f32(g.samples-1))
-    c,r:=min(int(u),g.samples-2),min(int(v),g.samples-2)
-    fu,fv:=u-f32(c),v-f32(r)
-    corners:=[4][4]u8{g.weights[r*g.samples+c],g.weights[r*g.samples+c+1],g.weights[(r+1)*g.samples+c],g.weights[(r+1)*g.samples+c+1]}
+    if g.samples<2 || len(g.weights)<(len(g.keys)>0?len(g.keys):g.samples*g.samples) {return}
+    at,fu,fv,held:=ground_held(g,x,z)
+    if !held {return}
+    corners:=[4][4]u8{g.weights[at[0]],g.weights[at[1]],g.weights[at[2]],g.weights[at[3]]}
     share:=[4]f32{(1-fu)*(1-fv),fu*(1-fv),(1-fu)*fv,fu*fv}
     for corner,k in corners {
         if int(corner[0])+int(corner[1])+int(corner[2])+int(corner[3])==0 {return}

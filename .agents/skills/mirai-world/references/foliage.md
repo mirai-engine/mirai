@@ -103,12 +103,15 @@ to the overrides).
   `Unloaded` (far from every viewer) leave it without ground, NaN; a grid where no sample is
   covered is removed, and a cell that generates there is the `foliage.no_ground` problem of its
   entity. The layers of the first ground read name what the weights of the owner are of.
-- **Fine near, coarse far**: the grid of a cell is fine (the samples per side follow the spacing of
-  the ground, `Ground_Query.spacing`, up to `SAMPLES_MAX`) near the [streaming sources][sources],
-  with their hysteresis, up to where the meshes of their types are drawn and no more than
-  `GROUND_REACH`, and where the editor requests it; far away it has `COARSE_SAMPLES` per side,
-  asked `coarse`. Without sources all are fine. Those that cross the limit are read again when the
-  sources move.
+- **Whole near, sparse far, one grid**: the grid of a cell has the samples per side that follow
+  the spacing of the ground (`Ground_Query.spacing`, up to `SAMPLES_MAX`). Near the
+  [streaming sources][sources], with their hysteresis, up to where the meshes of their types are
+  drawn and no more than `GROUND_REACH`, and where the editor requests it, a tile holds all of
+  them; farther it is sparse (`Sparse_Tile`): only the four samples of the same grid around each
+  instance of the types seen past that reach (generated, or grounded), and those around its
+  centre. An instance stands, leans and passes its rule on a sparse tile exactly as on the whole
+  one: where it is does not depend on how far it is seen from. Without sources all are whole.
+  Those that cross the limit, and the sparse ones of a source read again, are read again.
 - It reads again only the cells under the boxes the ground announced since it last ran
   (`Ground_Queries.changed`), or all those of a `Foliage` that moves or arrives. The cells to read
   wait in a queue and are read `GROUND_TILES` per call, in jobs: a world that loads much ground and
@@ -384,7 +387,8 @@ the registry's memory as a file of the undo step that creates it.
   `a_saved_game_takes_out_the_same_instance_after_its_source_is_edited` and
   `an_instance_taken_out_later_sends_a_small_part_of_its_cell`; that they reach a client:
   `an_entity_with_a_replicated_object_component_reaches_a_client` in `plugins/multiplayer/runtime`.
-- Ground (`plugins/foliage/runtime`): `the_ground_of_foliage_is_read_where_the_ground_changed`.
+- Ground (`plugins/foliage/runtime`): `the_ground_of_foliage_is_read_where_the_ground_changed`
+  and `far_trees_stand_where_they_stand_near`.
 - `mirai test plugins/foliage/editor -collection:plugins=<root>/plugins`:
   `foliage_strokes_and_selections_are_steps_of_undo_written_at_the_flush`,
   `a_move_of_an_imported_foliage_is_undone_back_to_revision_zero`,

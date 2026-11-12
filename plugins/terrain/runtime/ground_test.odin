@@ -52,7 +52,7 @@ the_ground_answers_each_line_as_its_terrain_has_it :: proc(t:^testing.T) {
     defer terrain_resident_free(&resident)
     // Without terrains no line has ground.
     q:=ground_step(&w,&resident)
-    _,found:=q.probe(q.user,{0,10,0},{0,-1,0},false)
+    _,found:=q.probe(q.user,{0,10,0},{0,-1,0})
     testing.expect_value(t,found,core.Ground_Found.None)
     hill:Source
     if !testing.expect(t,source_make(&hill,.Heightfield,{65,1,65},1,16)) {return}
@@ -76,24 +76,23 @@ the_ground_answers_each_line_as_its_terrain_has_it :: proc(t:^testing.T) {
     coarse,_,_,_:=source_coarse_at(s,-20,-16)
     testing.expect(t,abs(coarse-source_height(s,-20,-16))>1e-2,"the coarse grid is not the samples there")
     testing.expect_value(t,q.spacing,f32(1))
-    Case :: struct {origin:[3]f32,coarse:bool,found:core.Ground_Found,height:f32,why:string}
+    Case :: struct {origin:[3]f32,found:core.Ground_Found,height:f32,why:string}
     cases:=[]Case{
-        {{-16,50,-16},false,.Ground,source_height(s,-16,-16),"the samples of the Heightfield"},
-        {{-20,50,-16},true,.Ground,coarse,"its coarse grid, asked far from the viewers"},
-        {{16.5,50,-16.5},false,.Empty,0,"a hole"},
-        {{200,50,0},false,.None,0,"off every terrain"},
-        {{492,90,-8},false,.Ground,0,"the top of the Volume where its blocks are in memory"},
-        {{530,90,30},false,.Unloaded,0,"where they are not"},
-        {{math.nan_f32(),50,0},false,.None,0,"a line that is not a number"},
+        {{-16,50,-16},.Ground,source_height(s,-16,-16),"the samples of the Heightfield"},
+        {{16.5,50,-16.5},.Empty,0,"a hole"},
+        {{200,50,0},.None,0,"off every terrain"},
+        {{492,90,-8},.Ground,0,"the top of the Volume where its blocks are in memory"},
+        {{530,90,30},.Unloaded,0,"where they are not"},
+        {{math.nan_f32(),50,0},.None,0,"a line that is not a number"},
     }
     for c in cases {
-        hit,found:=q.probe(q.user,c.origin,{0,-1,0},c.coarse)
+        hit,found:=q.probe(q.user,c.origin,{0,-1,0})
         testing.expectf(t,found==c.found,"%s: %v",c.why,found)
         if found!=.Ground {continue}
         testing.expectf(t,abs(hit.point.y-c.height)<0.6 && abs(hit.point.x-c.origin.x)+abs(hit.point.z-c.origin.z)<1e-3,"%s: %v, not %v",c.why,hit.point,c.height)
         testing.expect(t,hit.weights=={255,0,0,0} && hit.layers[0]==LAYER_DEFAULT.material && hit.normal.y>0.9)
     }
-    _,found=q.probe(q.user,{0,10,0},{0,0,0},false)
+    _,found=q.probe(q.user,{0,10,0},{0,0,0})
     testing.expect_value(t,found,core.Ground_Found.None)
     changed:=&w.ground_queries.changed.items
     // A call where nothing changed announces nothing.
@@ -102,10 +101,10 @@ the_ground_answers_each_line_as_its_terrain_has_it :: proc(t:^testing.T) {
     // A stroke held over (12, 12) leaves its region without surface until it ends, announced both times.
     held:=Terrain_Focus{source={3,3},center={12,0,12},radius=2,stroke=true,low={10,10},high={14,14}}
     q=ground_step(&w,&resident,held)
-    _,found=q.probe(q.user,{12,50,12},{0,-1,0},false)
+    _,found=q.probe(q.user,{12,50,12},{0,-1,0})
     testing.expect(t,found==.Empty && len(changed)==1)
     q=ground_step(&w,&resident)
-    _,found=q.probe(q.user,{12,50,12},{0,-1,0},false)
+    _,found=q.probe(q.user,{12,50,12},{0,-1,0})
     testing.expect(t,found==.Ground && len(changed)==1)
     // An edit announces the box of its chunks, and a terrain that moves all it covered and covers.
     change:=source_edit(s,{kind=.Raise,center={20,0,20},radius=3,amount=1.5})
@@ -114,7 +113,7 @@ the_ground_answers_each_line_as_its_terrain_has_it :: proc(t:^testing.T) {
     for z in low.z..=high.z {for x in low.x..=high.x {w.data.entries[0].versions[chunk_index(s,{i32(x),0,i32(z)})]=2}}
     q=ground_step(&w,&resident)
     testing.expect(t,len(changed)==1 && mm.aabb_contains(changed[0],{{20,0,20},{20,0,20}}) && !mm.aabb_contains(changed[0],{{-16,0,-16},{-16,0,-16}}))
-    hit,_:=q.probe(q.user,{20,50,20},{0,-1,0},false)
+    hit,_:=q.probe(q.user,{20,50,20},{0,-1,0})
     testing.expect(t,hit.point.y>1)
     core.edit(&w.worlds,land).transform.position={0,0,100}
     test_world_settle(&w)

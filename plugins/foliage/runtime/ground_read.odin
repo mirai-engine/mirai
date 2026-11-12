@@ -10,13 +10,14 @@ import mm "mirai:std/math"
 
 // foliage_ground reads again the tiles over what the ground announces changed,
 // the cells a Foliage gains and those the editor asks for, GROUND_TILES a call
-// in jobs. A tile is fine near the streaming sources, within the reach of the
-// meshes of its types, and where the editor asks; coarse farther.
+// in jobs. A tile is whole near the streaming sources, within the reach of the
+// meshes of its types, and where the editor asks; farther it is sparse: the
+// samples of the same grid around the instances of the types seen that far,
+// so that they stand and pass their rules as near.
 
 GROUND_TILES :: 24 // tiles of ground read in a call (the step runs in the frame and in each tick)
-GROUND_REACH :: f32(512) // m from a source past which a tile is coarse, for the meshes of every type
-COARSE_SAMPLES :: 5 // per side of a coarse tile
-SAMPLES_MIN :: 9 // per side of a fine tile, whatever the spacing of the ground
+GROUND_REACH :: f32(512) // m from a source past which a tile is sparse, for the meshes of every type
+SAMPLES_MIN :: 9 // per side of a tile, whatever the spacing of the ground
 SAMPLES_MAX :: 65
 
 // A tile of the ground of a Foliage to read again.
@@ -32,7 +33,8 @@ Tile_Work :: struct {
     task:Ground_Task,
     owner_world,owner_local:mm.Mat4,
     samples:int,
-    coarse:bool,
+    sparse:bool,
+    keys:[]u16,     // of a sparse tile: the samples it reads
     generates:bool, // its cell: one without ground there is a problem
     heights:[]f32,
     weights:[][4]u8,
@@ -108,8 +110,9 @@ foliage_ground :: proc(
                 for z in first.y..=last.y {for x in first.x..=last.x {if covers_tile(box,{x,z}) {touched[{x,z}]={}}}}
             }
         }
+        // A sparse tile holds the samples around the instances of its cell: another source asks them again.
         for tile in owner.tiles {
-            if all || tile.coord in touched {ground_ask(ground,e,tile.coord)}
+            if all || tile.coord in touched || cells && tile.pool==SPARSE_POOL {ground_ask(ground,e,tile.coord)}
         }
         // A change also covers cells without a tile: ground came, moved or grew, or its pages came.
         for &cell in entry.source.cells {
@@ -117,14 +120,14 @@ foliage_ground :: proc(
         }
         // The editor asks for fine ground under its brush.
         for request in asked {
-            if request.entity==e && ground_tile_samples(owner,request.coord)!=owner.samples {ground_ask(ground,e,request.coord,true)}
+            if request.entity==e && (ground_tile_samples(owner,request.coord)!=owner.samples || ground_tile_sparse(owner,request.coord)) {ground_ask(ground,e,request.coord,true)}
         }
-        // A tile goes from fine to coarse, or back, as the sources move.
+        // A tile goes from whole to sparse, or back, as the sources move.
         if sources_moved || cells || all {
-            near:=ground_near(sources.ptr,owner_world,&entry.source)
+            near:=scene.sources_near(sources.ptr,owner_world,ground_reach(&entry.source))
             for tile in owner.tiles {
-                fine:=ground_tile_samples(owner,tile.coord)!=COARSE_SAMPLES
-                if tile_fine(&near,tile.coord,fine)!=fine {ground_ask(ground,e,tile.coord)}
+                whole:=tile.pool!=SPARSE_POOL
+                if tile_fine(&near,tile.coord,whole)!=whole {ground_ask(ground,e,tile.coord)}
             }
         }
     }
@@ -137,19 +140,58 @@ covers_tile :: proc "contextless" (box:mm.Aabb,coord:[2]i32) -> bool {
     return box.min.x<=corner.x+CELL_SIZE && box.max.x>=corner.x && box.min.z<=corner.z+CELL_SIZE && box.max.z>=corner.z
 }
 
-// The sources as a Foliage sees them, as far as the meshes of its types are
-// drawn (a type never culled, or none, as far as GROUND_REACH), up to it.
+// How far from the sources the tiles of a source are whole: as far as the
+// meshes of its types are drawn (a type never culled, or none, as far as
+// GROUND_REACH), up to it. Past it only the types seen farther than that show.
 @(private)
-ground_near :: proc(sources:^scene.Streaming_Sources,placed:mm.Mat4,s:^Source) -> scene.Sources_Near {
+ground_reach :: proc "contextless" (s:^Source) -> f32 {
     reach:=len(s.types)==0?GROUND_REACH:0
     for t in s.types {
         _,cull:=mesh_distances(t,type_far(t))
         reach=max(reach,cull>0?min(cull,GROUND_REACH):GROUND_REACH)
     }
-    return scene.sources_near(sources,placed,reach)
+    return reach
 }
 
-// Whether the tile of a cell is fine: near a source, by its residency, or
+// The samples of the grid of samples a side that a sparse tile of a cell
+// keeps, in order: the four around each instance of the types seen farther
+// than reach that stands on the ground (generated, or grounded), and those
+// around the centre, which say whether the cell has ground at all.
+sparse_keys :: proc(s:^Source,cell:^Cell,coord:[2]i32,samples:int,reach:f32,keys:^[dynamic]u16) -> bool {
+    clear(keys)
+    if samples<2 || samples*samples>int(max(u16))+1 {return false}
+    marks:=make([]bool,samples*samples,context.temp_allocator)
+    mark :: proc "contextless" (marks:[]bool,samples:int,x,z:f32) {
+        corners,_,_:=ground_around(samples,x,z)
+        for k in corners {marks[k]=true}
+    }
+    seen :: proc "contextless" (t:^Foliage_Type,reach:f32) -> bool {return t!=nil && (t.cull_distance<=0 || t.cull_distance>reach)}
+    mark(marks,samples,CELL_SIZE*0.5,CELL_SIZE*0.5)
+    if cell!=nil {
+        for b in cell.manual {
+            if t,_:=source_type(s,b.type);b.flags&INSTANCE_GROUNDED!=0 && seen(t,reach) {mark(marks,samples,b.position.x,b.position.z)}
+        }
+        for o in cell.overrides {
+            if t,_:=source_type(s,o.kind==.Moved?o.type:o.instance.type);o.kind!=.Deleted && o.instance.flags&INSTANCE_GROUNDED!=0 && seen(t,reach) {mark(marks,samples,o.instance.position.x,o.instance.position.z)}
+        }
+        if cell.generate {
+            points:=make([dynamic]Generated,context.temp_allocator)
+            for &t in s.types {
+                if !seen(&t,reach) {continue}
+                clear(&points)
+                if !scatter(s.info.seed,coord,t,&points) {return false}
+                for g in points {mark(marks,samples,g.position.x,g.position.y)}
+            }
+        }
+    }
+    for m,k in marks {
+        if !m {continue}
+        if _,error:=append(keys,u16(k));error!=nil {return false}
+    }
+    return true
+}
+
+// Whether the tile of a cell is whole: near a source, by its residency, or
 // everywhere without sources.
 @(private)
 tile_fine :: proc "contextless" (near:^scene.Sources_Near,coord:[2]i32,was:bool) -> bool {
@@ -183,25 +225,24 @@ task_order :: proc(a,b:Ground_Task) -> slice.Ordering {
 // The heights of a tile of an owner: the highest ground under each sample
 // along the down of the Foliage, in its space, and the weights of its layers
 // there; false when no ground covers any of it.
-tile_sample :: proc(q:^core.Ground_Query,owner_world,owner_local:mm.Mat4,coord:[2]i32,samples:int,heights:[]f32,weights:[][4]u8,coarse:=false) -> (layers:[RULE_LAYERS]base.Asset_Id,any:bool) {
+tile_sample :: proc(q:^core.Ground_Query,owner_world,owner_local:mm.Mat4,coord:[2]i32,samples:int,heights:[]f32,weights:[][4]u8,keys:[]u16=nil) -> (layers:[RULE_LAYERS]base.Asset_Id,any:bool) {
     down:=-(owner_world*[4]f32{0,1,0,0}).xyz
     step:=CELL_SIZE/f32(samples-1)
     corner:=cell_corner(coord)
-    for z in 0..<samples {
-        for x in 0..<samples {
-            k:=z*samples+x
-            heights[k],weights[k]=NO_GROUND,{}
-            hit,found:=q.probe(q.user,mm.mat4_point(owner_world,corner+{f32(x)*step,0,f32(z)*step}),down,coarse)
-            any||=found!=.None
-            if found!=.Ground {continue}
-            heights[k],weights[k]=mm.mat4_point(owner_local,hit.point).y,hit.weights
-            if layers=={} {layers=hit.layers}
-        }
+    count:=len(keys)>0?len(keys):samples*samples
+    for i in 0..<count {
+        k:=len(keys)>0?int(keys[i]):i
+        heights[i],weights[i]=NO_GROUND,{}
+        hit,found:=q.probe(q.user,mm.mat4_point(owner_world,corner+{f32(k%samples)*step,0,f32(k/samples)*step}),down)
+        any||=found!=.None
+        if found!=.Ground {continue}
+        heights[i],weights[i]=mm.mat4_point(owner_local,hit.point).y,hit.weights
+        if layers=={} {layers=hit.layers}
     }
     return
 }
 
-// Reads GROUND_TILES tiles of the queue, in jobs, fine or coarse by where the
+// Reads GROUND_TILES tiles of the queue, in jobs, whole or sparse by where the
 // sources are then, and writes them in the order they were asked.
 @(private)
 ground_read :: proc(ground:^Foliage_Ground,q:^core.Ground_Query,data:core.Ref(Foliage_Data),foliages:^core.Table(Foliage,$A),worlds:^core.Table(core.World_Transform,$B),sources:^scene.Streaming_Sources,job_system:^jobs.Job_System,problems:^core.Problems) {
@@ -209,6 +250,7 @@ ground_read :: proc(ground:^Foliage_Ground,q:^core.Ground_Query,data:core.Ref(Fo
     Reading :: struct {q:^core.Ground_Query,work:[dynamic]Tile_Work}
     // Temporary like the slices it holds: kept in the storage, the world would free them.
     reading:=Reading{q,make([dynamic]Tile_Work,0,GROUND_TILES,context.temp_allocator)}
+    keys:=make([dynamic]u16,context.temp_allocator)
     taken:=0
     for taken<len(ground.queue) && len(reading.work)<GROUND_TILES {
         task:=ground.queue[taken]
@@ -225,34 +267,51 @@ ground_read :: proc(ground:^Foliage_Ground,q:^core.Ground_Query,data:core.Ref(Fo
         owner_world:=mm.transform_matrix(world.transform)
         owner_local,inverted:=mm.transform_inverse_matrix(world.transform)
         if !inverted || entry==nil {continue}
-        near:=ground_near(sources,owner_world,&entry.source)
-        was:=ground_tile_samples(owner,task.coord)
-        coarse:=!task.fine && !tile_fine(&near,task.coord,was!=0 && was!=COARSE_SAMPLES)
-        n:=coarse?COARSE_SAMPLES:int(owner.samples)
+        reach:=ground_reach(&entry.source)
+        near:=scene.sources_near(sources,owner_world,reach)
+        at:=ground_tile_find(owner,task.coord)
+        sparse:=!task.fine && !tile_fine(&near,task.coord,at>=0 && owner.tiles[at].pool!=SPARSE_POOL)
+        n:=int(owner.samples)
         cell:=source_cell(&entry.source,task.coord)
-        append(&reading.work,Tile_Work{task=task,owner_world=owner_world,owner_local=owner_local,samples=n,coarse=coarse,generates=cell!=nil && cell.generate,heights=make([]f32,n*n,context.temp_allocator),weights=make([][4]u8,n*n,context.temp_allocator)})
+        w:=Tile_Work{task=task,owner_world=owner_world,owner_local=owner_local,samples=n,sparse=sparse,generates=cell!=nil && cell.generate}
+        count:=n*n
+        if sparse {
+            if !sparse_keys(&entry.source,cell,task.coord,n,reach,&keys) {
+                memory_problem(problems,task.entity,"the ground under this Foliage far away")
+                continue
+            }
+            w.keys=slice.clone(keys[:],context.temp_allocator)
+            count=len(w.keys)
+        }
+        w.heights,w.weights=make([]f32,count,context.temp_allocator),make([][4]u8,count,context.temp_allocator)
+        append(&reading.work,w)
     }
     remove_range(&ground.queue,0,taken)
     sample :: proc(reading:^Reading,first,last:int,worker:int) {
-        for &w in reading.work[first:last] {w.layers,w.any=tile_sample(reading.q,w.owner_world,w.owner_local,w.task.coord,w.samples,w.heights,w.weights,w.coarse)}
+        for &w in reading.work[first:last] {w.layers,w.any=tile_sample(reading.q,w.owner_world,w.owner_local,w.task.coord,w.samples,w.heights,w.weights,w.keys)}
     }
     if job_system!=nil && jobs.worker_count(job_system)>1 && len(reading.work)>1 {
         jobs.parallel_for(job_system,jobs.OWNER,len(reading.work),1,sample,&reading)
     } else {sample(&reading,0,len(reading.work),jobs.OWNER)}
     for &w in reading.work {
         owner:=ground_owner(ground,w.task.entity)
-        if owner==nil || !w.coarse && int(owner.samples)!=w.samples {continue}
+        if owner==nil || int(owner.samples)!=w.samples {continue}
         at:=ground_tile_find(owner,w.task.coord)
         if !w.any {
             if at>=0 {ground_tile_remove(owner,at)}
-            if w.generates {core.report(problems,w.task.entity,"foliage.no_ground","cell %v of this Foliage generates instances but no ground is under it, so none stands there: move the Foliage or the ground under the cell, or turn its generator off (foliage.paint ungenerate)",w.task.coord)}
+            // A sparse tile reads too little of its cell to say that it has no ground.
+            if w.generates && !w.sparse {core.report(problems,w.task.entity,"foliage.no_ground","cell %v of this Foliage generates instances but no ground is under it, so none stands there: move the Foliage or the ground under the cell, or turn its generator off (foliage.paint ungenerate)",w.task.coord)}
             continue
         }
         if w.layers!={} {
             owner.layers,owner.layer_count=w.layers,0
             for layer in w.layers {if layer!={} {owner.layer_count+=1}}
         }
-        same:=at>=0 && int(ground_tile_samples(owner,w.task.coord))==w.samples
+        if w.sparse {
+            ground_sparse_write(owner,w.task.coord,w.keys,w.heights,w.weights)
+            continue
+        }
+        same:=at>=0 && owner.tiles[at].pool!=SPARSE_POOL && int(ground_tile_samples(owner,w.task.coord))==w.samples
         heights,weights,tile:=ground_tile(owner,w.task.coord,u32(w.samples))
         if tile==nil {continue}
         if same && same_heights(heights,w.heights) && slice.equal(weights,w.weights) {continue}
