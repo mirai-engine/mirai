@@ -347,7 +347,12 @@ session ([collaboration](collaboration.md#what-travels)) is drawn with the same 
   `AGENT_LEVEL`; `AI_CONTEXT_LEVEL` is what a turn only read. The glyph and the name distinguish
   an agent and an editor of the same color.
 - It moves toward where it is said to be, which arrives a few times per second, with exponential
-  smoothing (`presence_follow`), and jumps if far (`PRESENCE_SNAP`). The instance is rebuilt only
+  smoothing along its way (`presence_follow`), and jumps if far (`PRESENCE_SNAP`). The figure of an
+  agent goes through no body of what collides in its world (`core.World_Query`, which physics
+  gives; `presence_route`): straight when clear, else up, across over what stands between and
+  down, and it jumps when there is no clear way. It asks as a sphere about its middle that rests
+  on what is under it. Without a world query it goes straight. That of another editor follows its
+  camera wherever it goes. The instance is rebuilt only
   if the place, the rotation, the color, the assets or the round of derived rows change
   (`Presence_Key`); at rest, a frame does not allocate.
 - A game is seen alone (`presence_in_scene`): in Play, paused or stepped, and in Watch no figure,

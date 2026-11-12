@@ -4,6 +4,7 @@ import "core:math"
 import "core:math/linalg"
 import "core:strings"
 import "mirai:asset"
+import "mirai:core"
 import erender "mirai:engine/render"
 import "mirai:host"
 import gpu "mirai:render"
@@ -58,25 +59,63 @@ Presence :: struct {
     at:[3]f32,   // where it is shown: it follows where it is said to be,
     facing:f32,  // which arrives a few times a second, instead of jumping
     placed:bool,
+    goal:[3]f32, // where it was last said to be, and the turns of its way there
+    route:[PRESENCE_ROUTE][3]f32,
+    route_count:int,
 }
 
-// How fast a figure reaches where it is said to be: the share left after a
-// second is e^-PRESENCE_FOLLOW. Farther than PRESENCE_SNAP meters it jumps.
+// What a figure faces: a turn about +Y from -Z, or a point it looks at
+// wherever it is on its way.
+@(private)
+Presence_Facing :: union {f32,[3]f32}
+
+// How fast a figure reaches where it is said to be: the share of its way left
+// after a second is e^-PRESENCE_FOLLOW. Farther than PRESENCE_SNAP meters it jumps.
 PRESENCE_FOLLOW :: f32(12)
 PRESENCE_SNAP :: f32(25)
 
-// The figure a step closer to where it is said to be, for a frame of dt seconds.
+// The figure a step further along its way, for a frame of dt seconds.
 @(private)
-presence_follow :: proc(figure:^Presence,eyes:[3]f32,yaw,dt:f32) {
+presence_follow :: proc(figure:^Presence,eyes:[3]f32,dt:f32) {
     if !figure.placed || linalg.length(eyes-figure.at)>PRESENCE_SNAP || dt<=0 {
-        figure.at,figure.facing,figure.placed=eyes,yaw,true
+        figure.at,figure.placed,figure.route_count=eyes,true,0
         return
     }
-    k:=1-math.exp(-dt*PRESENCE_FOLLOW)
-    figure.at+=(eyes-figure.at)*k
+    left:=f32(0)
+    from:=figure.at
+    for turn in figure.route[:figure.route_count] {left+=linalg.length(turn-from);from=turn}
+    left+=linalg.length(eyes-from)
+    if left<1e-4 {
+        figure.at,figure.route_count=eyes,0
+        return
+    }
+    step:=left*(1-math.exp(-dt*PRESENCE_FOLLOW))
+    for figure.route_count>0 {
+        next:=figure.route[0]
+        span:=linalg.length(next-figure.at)
+        if step<span {
+            figure.at+=(next-figure.at)*(step/span)
+            return
+        }
+        step-=span
+        figure.at=next
+        copy(figure.route[:],figure.route[1:figure.route_count])
+        figure.route_count-=1
+    }
+    span:=linalg.length(eyes-figure.at)
+    if step>=span || span-step<1e-4 {figure.at=eyes} else {figure.at+=(eyes-figure.at)*(step/span)}
+}
+
+// The figure turned a step toward `yaw`, for a frame of dt seconds.
+@(private)
+presence_turn :: proc(figure:^Presence,yaw,dt:f32) {
+    if dt<=0 {
+        figure.facing=yaw
+        return
+    }
     turn:=math.mod(yaw-figure.facing+3*math.PI,2*math.PI)-math.PI
-    figure.facing+=turn*k
-    if linalg.length(eyes-figure.at)<1e-4 && abs(turn)<1e-4 {figure.at,figure.facing=eyes,yaw}
+    figure.facing+=turn*(1-math.exp(-dt*PRESENCE_FOLLOW))
+    if abs(turn)<1e-4 {figure.facing=yaw}
 }
 
 // Where a figure is shown, or where it is said to be before it was.
@@ -94,12 +133,29 @@ presence_mesh :: proc(a:^host.Assets) -> (id:base.Asset_Id,low,high:[3]f32,ok:bo
     return file.id,mesh.bounds_min,mesh.bounds_max,true
 }
 
-// The figure with its eyes at `eyes`, turned by `yaw` about +Y from -Z.
+// The figure with its eyes at `eyes`, facing as `facing` says. With a world,
+// it goes there around the bodies of that world, or jumps when no way is clear.
 @(private)
-presence_prepare :: proc(s:^Session,figure:^Presence,eyes:[3]f32,yaw:f32,color:ui.Color,level:u8,variant:u64) -> bool {
+presence_prepare :: proc(s:^Session,figure:^Presence,eyes:[3]f32,facing:Presence_Facing,color:ui.Color,level:u8,variant:u64,w:=core.World_Ref{}) -> bool {
     a:=s.app.assets
     if a==nil {return false}
-    presence_follow(figure,eyes,yaw,s.viewport.dt)
+    if figure.placed && eyes!=figure.goal && w.data!=nil {
+        if _,low,high,loaded:=presence_mesh(a);loaded {
+            route,count,clear:=presence_route(presence_space(w,low,high),figure.at,eyes)
+            figure.route,figure.route_count=route,count
+            if !clear {figure.at,figure.route_count=eyes,0}
+        }
+    }
+    figure.goal=eyes
+    was_placed:=figure.placed
+    presence_follow(figure,eyes,s.viewport.dt)
+    want:=figure.facing
+    switch f in facing {
+    case f32:want=f
+    case [3]f32:
+        if toward:=f-figure.at;toward.x*toward.x+toward.z*toward.z>1e-6 {want=presence_yaw(toward)}
+    }
+    presence_turn(figure,want,was_placed?s.viewport.dt:0)
     eyes,yaw:=figure.at,figure.facing
     key:=Presence_Key{eyes,yaw,color,level,variant,a.revision+a.structure,a.appearance}
     if figure.ready && figure.key==key {return true}

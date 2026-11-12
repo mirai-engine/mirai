@@ -24,7 +24,8 @@ Code: `editor/api/` (package `api`: server, JSON-RPC, MCP, schemas, client),
   `-32000` and a request without temporary memory, `-32603`. What the socket does not absorb goes
   out in the following polls.
 - It is served **once per frame**, between frames, in the main thread; a **manual** editor
-  (`--headless` without `--frames`) does not draw on its own and advances when a method asks. With
+  (`--headless` without `--frames`) does not draw on its own and advances when a method asks; its
+  builds, imports and agents (`ai_poll`) go on between frames (`api_jobs`). With
   no calls it waits on the API sockets (`api.server_wait`), not in a `sleep`: a request wakes it on
   arrival, without waiting for the Windows timer tick.
 - A request without `id` is a notification (202 without a body); an empty batch is `-32600`.

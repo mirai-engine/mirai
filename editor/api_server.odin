@@ -322,6 +322,7 @@ api_jobs :: proc(s:^Session) {
     play_plugin_poll(s)
     runs_pump(s)
     collab_update(s)
+    if s.ai!=nil && s.has_project {ai_poll(s,s.ai)}
     events_steps(s)
     files_flush(s)
 }
