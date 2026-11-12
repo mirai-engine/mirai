@@ -121,6 +121,8 @@ source_clone :: proc(dst,src:^foliage.Source,allocator:=context.allocator) {
         append(&copy.manual,..cell.manual[:])
         copy.overrides=make([dynamic]foliage.Foliage_Override,0,len(cell.overrides),allocator)
         append(&copy.overrides,..cell.overrides[:])
+        copy.density=make([dynamic]u8,0,len(cell.density),allocator)
+        append(&copy.density,..cell.density[:])
         append(&dst.cells,copy)
     }
 }
@@ -529,7 +531,7 @@ type_panel :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,ass
     if tool.held_type!=t.id || !tool.held_dirty {tool.held,tool.held_type=t^,t.id}
     defaults:=foliage.FOLIAGE_TYPE_DEFAULT
     h:=editor.Held_Values{key=u64(PANEL_SCOPE)<<32|u64(t.id),info=type_info_of(foliage.Foliage_Type),value=&tool.held,defaults=&defaults}
-    fields:=[?]string{"name","mesh","prefab","materials","density","scale","height","yaw","tilt","align","offset","rule","fade_distance","cull_distance","impostor_distance","wind","wind_variants","casts_shadow","ray_visible","collision","size"}
+    fields:=[?]string{"name","mesh","prefab","materials","density","radius","scale","height","yaw","tilt","align","offset","rule","fade_distance","cull_distance","impostor_distance","wind","wind_variants","casts_shadow","ray_visible","collision","size"}
     kit.section(ctx,type_name(t),"",80)
     for field in fields {if editor.held_field_row(s,h,field) {tool.held_dirty=true}}
     if tool.held_dirty && !core.mouse_down(input,.Left) && ctx.edit.id==0 {
@@ -658,7 +660,7 @@ foliage_create :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref
 Foliage_Thumbnails :: struct {provider:editor.Thumbnail_Provider}
 FOLIAGE_THUMBNAILS_DEFAULT :: Foliage_Thumbnails{provider={kinds={0=foliage.FOLIAGE_KIND},count=1,subject=foliage_thumbnail}}
 
-// A .foliage in the browser, with the color of Unreal's foliage types.
+// A .foliage in the browser, with the color of its kind.
 // The menu of a mesh in the browser adds it as a type to the foliage the tool
 // edits, or makes a foliage of it when none is selected.
 @(storage)

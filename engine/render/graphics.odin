@@ -159,7 +159,7 @@ graphics_render_settings :: proc(settings:gpu.Settings,quality:Graphics_Settings
 @(step="render",loops="game editor",before="render_sync")
 graphics_apply :: proc(settings:core.Ref(Graphics_Settings),sync:^Render_Sync,app:^host.App) {
     graphics:=settings.ptr^
-    if sync.graphics_applied && sync.graphics==graphics {return}
+    if sync.graphics_applied && sync.graphics==graphics && sync.paced==app.paced {return}
     r:=app.renderer
     if r!=nil && rhi.device_info(r.device).type!=.CPU {
         before:=r.settings
@@ -172,6 +172,6 @@ graphics_apply :: proc(settings:core.Ref(Graphics_Settings),sync:^Render_Sync,ap
         if app.device!=nil && pacing.vsync!=platform.pacing(app.platform).vsync {rhi.swapchain_set_vsync(app.device,pacing.vsync)}
         platform.set_pacing(app.platform,pacing)
     }
-    sync.graphics=graphics
+    sync.graphics,sync.paced=graphics,app.paced
     sync.graphics_applied=true
 }

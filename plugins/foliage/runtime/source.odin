@@ -6,6 +6,7 @@ import "core:slice"
 import "mirai:asset"
 import render "mirai:engine/render"
 import "mirai:std/base"
+import "mirai:std/geom"
 import "mirai:std/serial"
 
 // The .foliage asset of a scene: the types of foliage and, by cells of
@@ -17,15 +18,18 @@ import "mirai:std/serial"
 // generator makes it (the cell, the type and its point). Overrides change a
 // generated instance by that id: they take it out, move it or put another in
 // its place. An override whose id the generator no longer makes is kept, as
-// an orphan.
+// an orphan. A cell that generates may say how much of the density of its
+// types it generates where, on a grid over it.
 
-VERSION :: 3
+VERSION :: 4
 CELL_SIZE :: f32(32)    // metres across x and z of a cell
 TYPES_MAX :: 1024
 CELLS_MAX :: 1 << 20
 INSTANCES_MAX :: 1 << 26 // manual instances and overrides of a source, each
-COORD_MAX :: 1 << 24     // of a cell, in cells from the origin of its entity
-POSITION_MAX :: f32(1e6) // metres above or below the plane of the entity
+POSITION_MAX :: f32(1e6) // metres from the entity along each axis: a position there keeps 6 cm
+COORD_MAX :: i32(POSITION_MAX/CELL_SIZE) // of a cell, in cells from the origin of its entity
+RADIUS_MAX :: CELL_SIZE/4 // metres of the radius of a type at its highest scale
+DENSITY_SAMPLES :: 17     // per side of the density of a cell, CELL_SIZE/16 apart: its corners and borders included
 
 Foliage_Info :: struct {
     seed:u32,      // of the generated instances
@@ -49,6 +53,7 @@ Foliage_Type :: struct {
     materials:[render.MATERIAL_SLOTS]base.Asset_Id, // by slot of its mesh, instead of the mesh's; none: the mesh's
     prefab:base.Asset_Id,       // its meshes, when it has no mesh of its own
     density:f32 `mirai:"min=0,unit=1/m2"`, // generated instances per square metre
+    radius:f32 `mirai:"min=0,unit=m"`, // at scale 1: a generated instance stands no nearer to another of a type with a radius than both radii; 0: anywhere
     scale:[2]f32 `mirai:"min=0"`,  // across x and z: lowest and highest
     height:[2]f32 `mirai:"min=0"`, // along y, times the scale across: lowest and highest
     yaw:f32 `mirai:"angle"`,       // a turn around y of up to this, at random
@@ -69,15 +74,18 @@ Foliage_Type :: struct {
 }
 
 // Where a type stands: the slope and height of the ground in their ranges,
-// and the layers of the terrain under it with at least weight of them.
+// and the layers of the ground under it with at least weight of them, where
+// its generated instances are as dense as those layers are there. A layer is
+// named by its material, which means the same on every terrain whatever the
+// order of its layers.
 Foliage_Rule :: struct {
     enabled:bool,
     slope:[2]f32 `mirai:"angle"`,   // from horizontal: lowest and highest
     height:[2]f32 `mirai:"unit=m"`, // of the ground in the space of the entity: lowest and highest
-    layers:u32,                     // bits of the layers of the terrain it stands on; 0: any
+    layers:[RULE_LAYERS]base.Asset_Id, // the materials of the layers it stands on; none: any
     weight:f32 `mirai:"min=0,max=1"`, // of those layers together, at least
 }
-RULE_LAYERS :: 4 // the bits of Foliage_Rule.layers, as the layers of a terrain
+RULE_LAYERS :: 4
 
 FOLIAGE_TYPE_DEFAULT :: Foliage_Type{density=0.5,scale={0.8,1.2},height={1,1},yaw=6.2831855,align=1,cull_distance=120,fade_distance=100,wind=1,size={0.3,2,0},rule={slope={0,math.PI/2},height={-POSITION_MAX,POSITION_MAX},weight=0.5}}
 
@@ -86,6 +94,7 @@ Foliage_Cell :: struct {
     generate:bool, // the generator scatters its types in it
     manual_first,manual_count:u32,
     override_first,override_count:u32,
+    density_first,density_count:u32, // of the bytes of densities: none or DENSITY_SAMPLES squared
 }
 
 INSTANCE_GROUNDED :: u32(1) // placed on the ground: `ground` is how far above it
@@ -126,6 +135,10 @@ Cell :: struct {
     version:u32,
     manual:[dynamic]Foliage_Instance,
     overrides:[dynamic]Foliage_Override,
+    // Of one that generates, how much of the density of its types, from 0 to
+    // 255, on DENSITY_SAMPLES by DENSITY_SAMPLES points over it, x first;
+    // none: all of it everywhere. Some of it is above 0.
+    density:[dynamic]u8,
 }
 
 // A .foliage in memory. Cells are in the order of their coordinates, z then x.
@@ -136,7 +149,7 @@ Source :: struct {
 }
 
 source_destroy :: proc(s:^Source) {
-    for &cell in s.cells {delete(cell.manual);delete(cell.overrides)}
+    for &cell in s.cells {delete(cell.manual);delete(cell.overrides);delete(cell.density)}
     delete(s.types);delete(s.cells)
     s^={}
 }
@@ -213,30 +226,75 @@ source_cell :: proc(s:^Source,coord:[2]i32,make_it:=false) -> ^Cell {
     return &s.cells[low]
 }
 
-// Turns the generator on or off in the cells whose square meets a disc around
-// center, in x and z. True when one changed.
-source_generate_area :: proc(s:^Source,center:[3]f32,radius:f32,on:bool) -> (changed:bool) {
+// Raises (on) or lowers the density the cells generate with under a disc
+// around center, in x and z: to all of it, or by all of it, within hardness
+// of its radius, and less toward its border (geom.Falloff.Smooth), so that
+// lowering takes away what the same disc raised. A
+// cell that comes to generate all of it everywhere keeps no grid of it; one
+// that comes to generate none stops generating, and goes when it holds
+// nothing else. True when one changed; false also without memory, with the
+// cells as they were.
+source_generate_area :: proc(s:^Source,center:[3]f32,radius:f32,on:bool,hardness:f32) -> (changed:bool) {
+    if !(radius>0) {return}
+    n:=DENSITY_SAMPLES
+    step:=CELL_SIZE/f32(n-1)
     low,_:=cell_of(center-{radius,0,radius})
     high,_:=cell_of(center+{radius,0,radius})
+    mask:[DENSITY_SAMPLES*DENSITY_SAMPLES]u8
     for z in low.y..=high.y {for x in low.x..=high.x {
+        cell:=source_cell(s,{x,z})
+        if cell==nil && !on {continue}
+        full:=cell!=nil && cell.generate && len(cell.density)!=n*n
+        for &v,k in mask {
+            v=cell!=nil && cell.generate && len(cell.density)==n*n?cell.density[k]:(full?255:0)
+        }
         corner:=cell_corner({x,z})
-        nearest:=[2]f32{clamp(center.x,corner.x,corner.x+CELL_SIZE),clamp(center.z,corner.z,corner.z+CELL_SIZE)}
-        d:=nearest-center.xz
-        if d.x*d.x+d.y*d.y<=radius*radius {changed|=source_cell_generate(s,{x,z},on)}
+        for &v,k in mask {
+            d:=corner.xz+{f32(k%n),f32(k/n)}*step-center.xz
+            w:=geom.falloff_weight(.Smooth,hardness,math.sqrt(d.x*d.x+d.y*d.y)/radius)
+            if w<=0 {continue}
+            change:=u8(w*255+0.5)
+            v=on?max(v,change):v-min(v,change)
+        }
+        changed|=cell_density_set(s,{x,z},mask[:])
     }}
     return
 }
 
-// Turns the generator of a cell on or off: on makes the cell, and off takes
-// out one that holds nothing else. False when it already was so.
+// Gives a cell the density it generates with (DENSITY_SAMPLES squared, as
+// Cell.density): all of it is no grid, none stops the generator there.
+// True when it changed.
+cell_density_set :: proc(s:^Source,coord:[2]i32,mask:[]u8) -> bool {
+    some,all:=false,true
+    for v in mask {some|=v>0;all&=v==255}
+    if !some {return source_cell_generate(s,coord,false)}
+    cell:=source_cell(s,coord,true)
+    if cell==nil {return false}
+    if all {
+        if cell.generate && len(cell.density)==0 {return false}
+        clear(&cell.density)
+        cell.generate=true
+        return true
+    }
+    if cell.generate && slice.equal(cell.density[:],mask) {return false}
+    if resize(&cell.density,len(mask))!=nil {return false}
+    copy(cell.density[:],mask)
+    cell.generate=true
+    return true
+}
+
+// Turns the generator of a cell on or off, with all of the density of its
+// types everywhere: on makes the cell, and off takes out one that holds
+// nothing else. False when it already was so.
 source_cell_generate :: proc(s:^Source,coord:[2]i32,on:bool) -> bool {
     cell:=source_cell(s,coord,on)
-    if cell==nil || cell.generate==on {return false}
+    if cell==nil || cell.generate==on && len(cell.density)==0 {return false}
     cell.generate=on
+    clear(&cell.density)
     if on || len(cell.manual)>0 || len(cell.overrides)>0 {return true}
     for &held,i in s.cells {
         if &held!=cell {continue}
-        delete(held.manual);delete(held.overrides)
+        delete(held.manual);delete(held.overrides);delete(held.density)
         ordered_remove(&s.cells,i)
         break
     }
@@ -321,28 +379,30 @@ type_valid :: proc (type:Foliage_Type,next:u32) -> bool {
     if t.id>=next || len(serial.text_field(t.name[:]))>=len(t.name) {return false}
     values:=[?]f32{t.density,t.scale[0],t.scale[1],t.height[0],t.height[1],t.yaw,t.tilt,t.align,t.fade_distance,t.cull_distance,t.wind,t.size.x,t.size.y,t.size.z,t.impostor_distance}
     for v in values {if !finite(v) || v<0 {return false}}
+    if !finite(t.radius) || t.radius<0 || t.radius*t.scale[1]>RADIUS_MAX {return false}
     if t.density>1000 || t.scale[0]<=0 || t.scale[1]<t.scale[0] || t.height[0]<=0 || t.height[1]<t.height[0] || t.align>1 {return false}
     if t.scale[1]>1000 || t.height[1]>1000 || t.collision>max(Foliage_Collision) || t.wind_variants>WIND_VARIANTS_MAX {return false}
     r:=t.rule
     for v in ([7]f32{t.offset.x,t.offset.y,r.slope.x,r.slope.y,r.height.x,r.height.y,r.weight}) {if !finite(v) {return false}}
     if t.offset.x>t.offset.y || abs(t.offset.x)>POSITION_MAX || abs(t.offset.y)>POSITION_MAX {return false}
     if r.slope.x<0 || r.slope.x>r.slope.y || r.slope.y>math.PI/2+1e-4 || r.height.x>r.height.y || abs(r.height.x)>POSITION_MAX || abs(r.height.y)>POSITION_MAX {return false}
-    return r.weight>=0 && r.weight<=1 && r.layers>>RULE_LAYERS==0
+    return r.weight>=0 && r.weight<=1
 }
 
 // Whether a type stands at a point of its ground: its rule (when on) with the
-// height, the normal and the weights of the ground there.
-rule_allows :: proc "contextless" (t:Foliage_Type,height:f32,normal:[3]f32,weights:[4]f32,weights_known:bool) -> bool {
+// height and the normal of the ground there, and the weight there of the
+// layers it names (ground_layer_weight), known or not. With layers, an
+// instance whose chance (0 to 1) is not under that weight is not there
+// either: its density follows the weight.
+rule_allows :: proc "contextless" (t:Foliage_Type,height:f32,normal:[3]f32,weight:f32,weight_known:bool,chance:f32=0) -> bool {
     r:=t.rule
     if !r.enabled {return true}
     slope:=math.acos(clamp(normal.y,-1,1))
     if !(slope>=r.slope.x && slope<=r.slope.y && height>=r.height.x && height<=r.height.y) {return false}
-    if r.layers==0 {return true}
-    if !weights_known {return false}
-    sum:f32
-    for i in 0..<RULE_LAYERS {if r.layers&(1<<u32(i))!=0 {sum+=weights[i]}}
+    if r.layers=={} {return true}
+    if !weight_known {return false}
     // Within half a step of the 255 of the weights: a full layer between samples takes weight 1.
-    return sum+0.5/255>=r.weight
+    return weight+0.5/255>=max(r.weight,chance)
 }
 
 @(private)
@@ -368,7 +428,10 @@ cell_valid :: proc "contextless" (s:^Source,cell:^Cell) -> bool {
         if o.kind!=.Deleted && !instance_valid(o.instance) {return false}
         if o.kind==.Replaced {if t,_:=source_type(s,o.instance.type);t==nil {return false}}
     }
-    return true
+    if len(cell.density)!=0 && (len(cell.density)!=DENSITY_SAMPLES*DENSITY_SAMPLES || !cell.generate) {return false}
+    some:=len(cell.density)==0
+    for v in cell.density {some|=v>0}
+    return some
 }
 
 source_valid :: proc (s:^Source) -> bool {
@@ -398,9 +461,10 @@ source_valid :: proc (s:^Source) -> bool {
 // record of the import it comes from.
 source_bytes :: proc(s:^Source,id:base.Asset_Id,types:^asset.Types,allocator:=context.allocator,import_info:^asset.Import_Info=nil) -> (data:[]u8,error:asset.Error) {
     if !source_valid(s) {return nil,.Invalid}
-    manual,overrides:=0,0
-    for cell in s.cells {manual+=len(cell.manual);overrides+=len(cell.overrides)}
+    manual,overrides,densities:=0,0,0
+    for cell in s.cells {manual+=len(cell.manual);overrides+=len(cell.overrides);densities+=len(cell.density)}
     cells,e1:=make([]Foliage_Cell,len(s.cells),context.temp_allocator)
+    density:=make([dynamic]u8,0,densities,context.temp_allocator)
     instances,e2:=make([]u8,manual*INSTANCE_BYTES,context.temp_allocator)
     changes,e3:=make([]u8,overrides*OVERRIDE_BYTES,context.temp_allocator)
     if e1!=nil || e2!=nil || e3!=nil {return nil,.Out_Of_Memory}
@@ -408,7 +472,8 @@ source_bytes :: proc(s:^Source,id:base.Asset_Id,types:^asset.Types,allocator:=co
     override_planes:=Planes(OVERRIDE_WORDS){data=changes,count=overrides}
     manual,overrides=0,0
     for cell,i in s.cells {
-        cells[i]={coord=cell.coord,generate=cell.generate,manual_first=u32(manual),manual_count=u32(len(cell.manual)),override_first=u32(overrides),override_count=u32(len(cell.overrides))}
+        cells[i]={coord=cell.coord,generate=cell.generate,manual_first=u32(manual),manual_count=u32(len(cell.manual)),override_first=u32(overrides),override_count=u32(len(cell.overrides)),density_first=u32(len(density)),density_count=u32(len(cell.density))}
+        append(&density,..cell.density[:])
         manual_planes.in_cell,override_planes.in_cell=false,false
         for b in cell.manual {planes_put(&manual_planes,INSTANCE_CODES,manual,instance_words(b));manual+=1}
         for o in cell.overrides {planes_put(&override_planes,OVERRIDE_CODES,overrides,override_words(o));overrides+=1}
@@ -423,6 +488,7 @@ source_bytes :: proc(s:^Source,id:base.Asset_Id,types:^asset.Types,allocator:=co
     asset.document_put(&document,types,"cells",cells) or_return
     asset.document_put(&document,types,"manual",instances,{.Bulk},.Stream) or_return
     asset.document_put(&document,types,"overrides",changes,{.Bulk},.Stream) or_return
+    asset.document_put(&document,types,"density",density[:],{.Bulk},.Stream) or_return
     asset.import_put(&document,types,import_info) or_return
     return asset.document_bytes(&document,allocator)
 }
@@ -537,18 +603,21 @@ source_read :: proc(s:^Source,file:^asset.Asset,types:^asset.Types,allocator:=co
     cells:=rows_or_none(file,types,"cells",Foliage_Cell) or_return
     manual_bytes:=rows_or_none(file,types,"manual",u8) or_return
     override_bytes:=rows_or_none(file,types,"overrides",u8) or_return
+    density:=rows_or_none(file,types,"density",u8) or_return
     manual,overrides:=len(manual_bytes)/INSTANCE_BYTES,len(override_bytes)/OVERRIDE_BYTES
     if manual*INSTANCE_BYTES!=len(manual_bytes) || overrides*OVERRIDE_BYTES!=len(override_bytes) {return}
     if len(kinds)>TYPES_MAX || len(cells)>CELLS_MAX || manual>INSTANCES_MAX || overrides>INSTANCES_MAX {return}
     // The ranges of the cells follow each other and cover every record once.
-    next_manual,next_override:=u32(0),u32(0)
+    next_manual,next_override,next_density:=u32(0),u32(0),u32(0)
     for cell in cells {
-        if cell.manual_first!=next_manual || cell.override_first!=next_override {return}
+        if cell.manual_first!=next_manual || cell.override_first!=next_override || cell.density_first!=next_density {return}
         if u64(cell.manual_first)+u64(cell.manual_count)>u64(manual) || u64(cell.override_first)+u64(cell.override_count)>u64(overrides) {return}
+        if cell.density_count!=0 && cell.density_count!=DENSITY_SAMPLES*DENSITY_SAMPLES || u64(cell.density_first)+u64(cell.density_count)>u64(len(density)) {return}
         next_manual+=cell.manual_count
         next_override+=cell.override_count
+        next_density+=cell.density_count
     }
-    if int(next_manual)!=manual || int(next_override)!=overrides {return}
+    if int(next_manual)!=manual || int(next_override)!=overrides || int(next_density)!=len(density) {return}
     manual_planes:=Planes(INSTANCE_WORDS){data=manual_bytes,count=manual}
     override_planes:=Planes(OVERRIDE_WORDS){data=override_bytes,count=overrides}
     temporary:Source
@@ -558,13 +627,14 @@ source_read :: proc(s:^Source,file:^asset.Asset,types:^asset.Types,allocator:=co
     append(&temporary.types,..kinds)
     for cell in cells {
         held:=Cell{coord=cell.coord,generate=cell.generate}
-        if !reserved(&held.manual,int(cell.manual_count)) || !reserved(&held.overrides,int(cell.override_count)) {
-            delete(held.manual);delete(held.overrides)
+        if !reserved(&held.manual,int(cell.manual_count)) || !reserved(&held.overrides,int(cell.override_count)) || !reserved(&held.density,int(cell.density_count)) {
+            delete(held.manual);delete(held.overrides);delete(held.density)
             source_destroy(&temporary)
             return
         }
+        append(&held.density,..density[cell.density_first:][:cell.density_count])
         if _,err:=append(&temporary.cells,held);err!=nil {
-            delete(held.manual);delete(held.overrides)
+            delete(held.manual);delete(held.overrides);delete(held.density)
             source_destroy(&temporary)
             return
         }

@@ -31,20 +31,25 @@ The template's `assets/menu/theme.ui` is the example of tokens and styles, and i
   either. `shadow` and `text_shadow` are `{color, blur, x, y}` and a state lists only the parts it
   changes. A hard shadow has no blur: it is an edge of the shape.
 - `fill2` makes the fill a gradient from `fill`, downward, or toward the right with
-  `"gradient": "right"`. `"italic": true` leans the glyphs of the text.
-- `program` names a UI program that colors the fill instead, and `program_values` are its first
-  four parameters; the node does not take their defaults. The engine ones: `Ui_Slant` (the fill cut
-  to a parallelogram, `lean` times its height), `Ui_Shine`, `Ui_Gradient_Sweep`, `Ui_Dissolve` and
-  `Ui_Radial_Wipe`.
+  `"gradient": "right"`. `"italic": true` draws the text in the italic of its font; `color2`
+  takes its glyphs down to that color (gold).
+- `program` names a UI program that colors the fill instead (an image too: a hexagon portrait),
+  and `program_values` are its first four parameters, without their defaults. The engine ones:
+  `Ui_Slant` (a parallelogram, `lean`), `Ui_Polygon` (`sides`, `turn`: 6, 0.0833 is a hexagon on a
+  side), `Ui_Radial_Gradient` (to `color`, `reach` from the center: a rarity glow), `Ui_Rays`
+  (`count`, `turn`, `speed`, `fade`), `Ui_Shine`, `Ui_Gradient_Sweep`, `Ui_Dissolve` and
+  `Ui_Radial_Wipe`. An `Image` takes `shadow`, `radius`, `stroke` and `program` as a `Box` does. A
+  `Scroll` draws its bar `bar` wide, `knob` (`mark` under the pointer) over `track`, with `radius`.
 - States: `hover`, `focus`, `pressed`, `disabled`, `selected`, `over`. Each lists what differs;
   `extends` makes one start from another (`"focus": {"extends": "hover", ...}`). `focus` is the
   ring of keys and gamepad: give it a look that is not `hover`.
 - `move_x`, `move_y` and `scale` draw the node somewhere else without moving the layout or the
-  pointer; with `transition` they animate. `layout_transition` carries the node to a new place or
-  size when the layout changes (an item inserted above it in a `List` with `bind_key`, a panel that
-  grows), over its own
-  seconds: change its size in the layout, never with an animation. `blur` blurs what is behind the
-  node, for a pause screen.
+  pointer; with `transition` they animate. `rotate` (radians, clockwise) and `skew` (right per unit
+  up) turn and lean it for good, a slanted banner, and the pointer finds it where it is drawn.
+  `layout_transition` carries the node to a new place or size when the layout changes (an item
+  inserted above it in a `List` with `bind_key`, a panel that grows), over its own seconds: change
+  its size in the layout, never with an animation. `blur` blurs what is behind the node, for a
+  pause screen.
 - Layout goes in a style too: `width`, `height`, `direction`, `gap`, `padding`, `align_x`,
   `align_y`. A node takes it and states only what differs; a change of the style reaches every node
   that uses it.

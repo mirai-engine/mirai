@@ -135,11 +135,11 @@ ai_scene_figures_render_as_transient_geometry_and_reuse_descriptors :: proc(t:^t
     viewport:=Viewport{orbit=ORBIT_DEFAULT}
     session:=Session{app=app,viewport=&viewport}
     // It faces the camera, which looks at it along -Z.
-    task:=Ai_Task{id=7,anchor_set=true,facing=math.PI}
+    task:=Ai_Task{id=7,anchor_set=true,look={0,0,1}}
     figure:Presence
     ready:=false
     for _ in 0..<8 {
-        ready=ai_scene_figure_prepare(&session,&task,&figure)
+        ready=ai_scene_figure_prepare(&session,{},&task,&figure)
         host.assets_commit(app.assets)
         if ready {break}
     }
@@ -160,7 +160,7 @@ ai_scene_figures_render_as_transient_geometry_and_reuse_descriptors :: proc(t:^t
     mem.tracking_allocator_init(&tracker,context.allocator);defer mem.tracking_allocator_destroy(&tracker)
     {
         context.allocator=mem.tracking_allocator(&tracker)
-        for _ in 0..<64 {testing.expect(t,ai_scene_figure_prepare(&session,&task,&figure))}
+        for _ in 0..<64 {testing.expect(t,ai_scene_figure_prepare(&session,{},&task,&figure))}
     }
     testing.expect_value(t,tracker.total_allocation_count,i64(0))
     testing.expect_value(t,figure,before)

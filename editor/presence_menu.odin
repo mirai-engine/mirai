@@ -104,7 +104,7 @@ presence_menu_items :: proc(s:^Session,menu:Presence_Menu) {
             ai_chat_show(s.ai,true)
         }
         eyes,_,shown:=ai_scene_eyes(s,task)
-        if ui.menu_item(ctx,ui.id(ctx,"go"),"Go to",{icon=.Target,disabled=!shown || !editing || !ai_scene_task_visible(s,shown_world(s),task)}) {presence_go_to(s,eyes,task.facing)}
+        if ui.menu_item(ctx,ui.id(ctx,"go"),"Go to",{icon=.Target,disabled=!shown || !editing || !ai_scene_task_visible(s,shown_world(s),task)}) {presence_go_to(s,eyes,presence_yaw(task.look-eyes))}
         watched:=s.mode==.Watch && s.watch.task==task.id
         if watched {
             if ui.menu_item(ctx,ui.id(ctx,"unwatch"),"Stop watching",{icon=.Stop}) {watch_stop(s)}
@@ -144,7 +144,7 @@ presence_menu_items :: proc(s:^Session,menu:Presence_Menu) {
         agent:=agents[menu.agent]
         header(ctx,fmt.tprintf("%s of %s",string(agent.name[:agent.name_length]),collab_peer_name(s,menu.peer)))
         _,low,_,loaded:=presence_mesh(s.app.assets)
-        if ui.menu_item(ctx,ui.id(ctx,"go"),"Go to",{icon=.Target,disabled=!loaded || !editing}) {presence_go_to(s,agent.anchor+{0,-low.y,0},agent.facing)}
+        if ui.menu_item(ctx,ui.id(ctx,"go"),"Go to",{icon=.Target,disabled=!loaded || !editing}) {presence_go_to(s,agent.anchor+{0,-low.y,0},presence_yaw(agent.look-agent.anchor))}
     }
 }
 

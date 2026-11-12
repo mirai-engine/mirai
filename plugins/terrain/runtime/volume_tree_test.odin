@@ -116,8 +116,8 @@ a_cave_deeper_than_the_old_limit_is_dug_saved_read_by_pages_and_dug_again :: pro
     from,to:=grid_pages(g,change.low,change.high)
     testing.expect(t,to.y-from.y>=12 && to.x>from.x && to.z>from.z,"the dig crosses blocks along every axis")
     middle:=[3]int{32,256,32}
-    testing.expect(t,source_value(&s,middle-{0,180,0})>0,"air 180 m down the shaft")
-    testing.expect(t,source_value(&s,middle-{8,180,0})<0 && source_value(&s,middle-{0,230,0})<0,"rock beside it and under it")
+    testing.expect(t,(source_value(&s,middle-{0,180,0}) or_else 0)>0,"air 180 m down the shaft")
+    testing.expect(t,(source_value(&s,middle-{8,180,0}) or_else 0)<0 && (source_value(&s,middle-{0,230,0}) or_else 0)<0,"rock beside it and under it")
     // What it holds: the blocks its surface crosses.
     with_values:=0
     for page in g.pages {if page.values!=nil {with_values+=1}}
@@ -143,13 +143,13 @@ a_cave_deeper_than_the_old_limit_is_dug_saved_read_by_pages_and_dug_again :: pro
     low,high:=middle-{12,196,12},middle-{-12,164,-12}
     testing.expect(t,!source_region_held(&paged,low,high) && source_region_read(&paged,low,high))
     same:=true
-    for z in low.z..=high.z {for y in low.y..=high.y {for x in low.x..=high.x {same&&=source_value(&paged,{x,y,z})==source_value(&s,{x,y,z})}}}
+    for z in low.z..=high.z {for y in low.y..=high.y {for x in low.x..=high.x {same&&=(source_value(&paged,{x,y,z}) or_else 0)==(source_value(&s,{x,y,z}) or_else 0)}}}
     testing.expect(t,same,"the cave reads as it was saved")
     testing.expect(t,grid_dense(&paged.field)<with_values*PAGE_VALUES/2,"the rest of the shaft stays in the file")
     // Dug again down there, and shown: the chunk that deep builds its walls.
     room:=source_edit(&paged,{kind=.Carve,center={0,-180,0},radius=8,amount=1})
     testing.expect(t,room.error==.None && room.changed)
-    testing.expect(t,source_value(&paged,middle-{6,180,0})>0,"the room is wider than the shaft")
+    testing.expect(t,(source_value(&paged,middle-{6,180,0}) or_else 0)>0,"the room is wider than the shaft")
     mesh:Chunk_Mesh;chunk_mesh_init(&mesh);defer chunk_mesh_destroy(&mesh)
     deep:=[3]i32{0,i32((256-180)/32),0}
     region_low,region_high,_:=chunk_pages_region(&paged,chunk_index(&paged,deep))

@@ -59,12 +59,20 @@ Button :: struct {
     image:Node_Image, // behind it instead of its fill, which tints it
     program:u32,      // a ui program that colors the fill instead, given that of its look: see draw_program
     block:bool,       // the label takes the lines, the outline and the shadow of the text of its look, centered
+    holds:bool,       // what is built until button_end follows the label, laid out as the whole of layout says
 }
 
 // A clickable box with an optional icon, preview, label and right aligned
 // detail: every button of the editor and of a game. Disabled, the pointer goes
 // through it unless it has a tooltip to show.
 button :: proc(ctx:^Context,id:Id,b:Button) -> Interaction {
+    it:=button_begin(ctx,id,b)
+    button_end(ctx)
+    return it
+}
+// A button whose content goes on until button_end: what is built in between
+// is inside it, after its label, and the pointer on it is the button's.
+button_begin :: proc(ctx:^Context,id:Id,b:Button) -> Interaction {
     b:=b
     b.disabled|=ctx.disabled_depth>0
     it:=interact(ctx,id,{.Focusable} if !b.disabled else ({.Block} if b.tip!="" else {.Passive}))
@@ -90,7 +98,7 @@ button :: proc(ctx:^Context,id:Id,b:Button) -> Interaction {
     padding:[4]f32
     if l:=b.layout;l!=nil {
         width,height,padding=l.width,l.height,l.padding
-        if height=={} {height=fixed(size*TEXT_LINE+l.padding[1]+l.padding[3])}
+        if height=={} && !b.holds {height=fixed(size*TEXT_LINE+l.padding[1]+l.padding[3])}
     } else {
         row:=b.height if b.height>0 else metric(ctx,"row")
         width,height=fixed(b.width),fixed(row)
@@ -103,7 +111,8 @@ button :: proc(ctx:^Context,id:Id,b:Button) -> Interaction {
     style.size,style.color,style.align_y=size,text_color,.Center
     // A centered label that does not size its button centers in the whole of it.
     center:=(b.center || b.block || (b.label=="" && b.detail=="")) && width.kind!=.Fit
-    if center {style.align_x,padding[0],padding[2]=.Center,0,0}
+    if center {style.align_x=.Center}
+    if center && !b.holds {padding[0],padding[2]=0,0}
     // A text that fits keeps a unit for the edge of its last glyph, which the padding after it already holds.
     if b.detail!="" || b.icon_after || width.kind==.Fit {padding[2]=max(padding[2]-1,0)}
     if !b.block {style.wrap=.None}
@@ -112,14 +121,19 @@ button :: proc(ctx:^Context,id:Id,b:Button) -> Interaction {
     paint:=paint_add(ctx,{kind=.Box,fill=fill,fill2=look.fill2,gradient=look.gradient,stroke=look.stroke,corners=look.radius,stroke_width=look.stroke_width,
         shadow=look.shadow,shadow_color=look.shadow_color,shadow_blur=look.shadow_blur,shadow_offset=look.shadow_offset,
         program=b.program,program_values=look.program_values,quad2=b.image.quad,border=b.image.border,border_uv=b.image.border_uv})
-    if element_open(ctx,{id=id,layout={width=width,height=height,padding=padding,gap=box_gap(b.label,b.detail),align_y=.Center},custom=paint}) {
+    layout:=Layout{width=width,height=height,padding=padding,gap=box_gap(b.label,b.detail),align_y=.Center}
+    if b.holds && b.layout!=nil {
+        layout=b.layout^
+        layout.width,layout.height,layout.padding=width,height,padding
+    }
+    if element_open(ctx,{id=id,layout=layout,custom=paint}) {
         detail:=color_alpha(tone(ctx,"on_accent"),170) if text_color==tone(ctx,"on_accent") else tone(ctx,"text_faint")
         box_content(ctx,{label=b.label,detail=b.detail,style=style,detail_color=detail,icon=b.icon,icon_color=icon_color,icon_size=icon_size,icon_after=b.icon_after,
-            quad=b.quad,preview=max(height.value-(8 if b.label!="" else 4),0),fit=width.kind==.Fit,fade=!center && (b.icon_after || b.detail!="")})
+            quad=b.quad,preview=max(height.value-(8 if b.label!="" else 4),0),fit=width.kind==.Fit,holds=b.holds,fade=!center && (b.icon_after || b.detail!="")})
     }
-    element_close(ctx)
     return it
 }
+button_end :: proc(ctx:^Context) {element_close(ctx)}
 
 // What a button or a row holds inside its padding, each a text: its icon and
 // preview in the line of its label, then its detail and the icon that follows
@@ -136,6 +150,7 @@ Box_Content :: struct {
     quad:Quad,
     preview:f32,           // the side of the quad
     fit:bool,              // the label is as wide as it says, instead of taking what is left
+    holds:bool,            // more content follows: the label is as wide and as high as its lines
     fade:bool,             // a label that does not fit fades out before what follows it
 }
 // Between the content of a button or a row: a label and its detail are 16
@@ -156,7 +171,7 @@ box_content :: proc(ctx:^Context,c:Box_Content) {
         if leads {text_box(ctx,c.icon_size,c.icon_size,{kind=.Icon,icon=c.icon,icon_color=c.icon_color},gap=6 if c.label!="" || c.quad.kind!=.Solid else 0)}
         if c.quad.kind!=.Solid {text_box(ctx,c.preview,c.preview,{kind=.Image,quad=c.quad,fill={255,255,255,255}},gap=6 if c.label!="" else 0)}
         text_span(ctx,c.label)
-        text_end(ctx,{width=FIT if c.fit || cut else GROW,height=GROW},fade=c.fade && !cut)
+        text_end(ctx,{width=FIT if c.fit || cut || c.holds else GROW,height=FIT if c.holds else GROW},fade=c.fade && !cut)
     }
     if cut {element_close(ctx)}
     if c.detail!="" {text(ctx,c.detail,{size=metric(ctx,"font_small"),color=c.detail_color,align_y=.Center,ellipsis=cut},FIT,GROW)}

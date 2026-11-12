@@ -259,8 +259,9 @@ stands :: proc(tool:^Foliage_Tool,t:^foliage.Foliage_Type,ground:^foliage.Ground
     h,_,known:=foliage.ground_at(cell,in_cell.x,in_cell.z)
     if tool.ground_only && (!known || abs(local.y-h)>GROUND_SNAP) {return false}
     if !t.rule.enabled {return true}
-    weights,weights_known:=foliage.ground_weights_at(cell,in_cell.x,in_cell.z)
-    return foliage.rule_allows(t^,known?h:local.y,up,weights,weights_known)
+    mask:=foliage.layer_mask(t.rule,cell.layers)
+    weight,weight_known:=foliage.ground_layer_weight(cell,&mask,in_cell.x,in_cell.z)
+    return foliage.rule_allows(t^,known?h:local.y,up,weight,weight_known)
 }
 
 // The outlines of the cells near the ring, those that generate in green.

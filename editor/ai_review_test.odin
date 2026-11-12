@@ -349,7 +349,7 @@ ai_scene_follows_committed_edits_to_new_entities_and_keeps_the_sent_context :: p
     task.context_ids[0],task.context_count=11,1
     defer ai_review_free(&task.review)
     initial:=ai_scene_anchor(&f.s,task)
-    testing.expect(t,(initial.x==0 || initial.z==0) && initial.y>0,"the figure starts on a single horizontal gizmo axis and above its pivot")
+    testing.expect(t,(initial.x==0 || initial.z==0) && initial.y<=0,"with no gizmo drawn, the figure starts on a single horizontal axis beside the bottom of what it was given")
     history.selection_clear(&f.selection)
     serial:=f.edits.serial
     history.edits_begin(&f.edits,&f.selection,"Create agent object")
@@ -358,14 +358,16 @@ ai_scene_follows_committed_edits_to_new_entities_and_keeps_the_sent_context :: p
     core.edit(&f.w.transforms,second).position={20,2,30}
     history.edits_commit(&f.edits,ref,&f.selection)
     ai_review_record(&f.s,task,serial)
-    testing.expect(t,task.anchor!=initial && (task.anchor.x==20 || task.anchor.z==30) && task.anchor.y>2,"committed creation moves the figure along one gizmo axis above the new entity")
+    ai_scene_anchor(&f.s,task)
+    testing.expect(t,task.anchor!=initial && (task.anchor.x==20 || task.anchor.z==30) && task.anchor.y>1 && task.anchor.y<=2,"committed creation moves the figure along one axis beside the new entity, at the level of its bottom")
     testing.expect(t,task.context_count==1 && task.context_ids[0]==11,"following edits preserves the context captured at send")
     serial=f.edits.serial
     history.edits_begin(&f.edits,&f.selection,"Move original context")
     core.edit(&f.w.transforms,first).position={-15,1,-25}
     history.edits_commit(&f.edits,ref,&f.selection)
     ai_review_record(&f.s,task,serial)
-    testing.expect(t,(task.anchor.x==-15 || task.anchor.z==-25) && task.anchor.y>1,"the next transaction relocates the same figure on a single gizmo axis")
+    ai_scene_anchor(&f.s,task)
+    testing.expect(t,(task.anchor.x==-15 || task.anchor.z==-25) && task.anchor.y>0 && task.anchor.y<=1,"the next transaction relocates the same figure on a single axis")
 }
 
 @(test)
@@ -376,6 +378,8 @@ ai_scene_places_figures_on_gizmo_axes_above_the_handles_at_different_zooms :: pr
     ref:=test_world_ref(&f.w)
     core.world_settle(ref)
     targets:=[1]core.Entity{e}
+    // The gizmo is drawn on it while it is selected.
+    history.selection_set(&f.selection,{e})
     f.viewport.orbit,f.viewport.size=ORBIT_DEFAULT,{1440,900}
     task:Ai_Task
     for space in ([2]Space{.World,.Local}) {

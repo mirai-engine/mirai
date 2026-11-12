@@ -42,6 +42,8 @@ Terrain_Tool :: struct {
     heightmap_length:int,
     alphas:Terrain_Alphas,
     resize:[2]int, // the samples Resize gives a Heightfield; 0: those it has
+    mirror:Mirror_Settings,
+    edit_layer:int, // 0: strokes edit the base; n: also edit layer n-1 of the source
     entity_open:bool, // the panel shows the details of the entity of the terrain
     stroke:Stroke,
     using history:Revisions,
@@ -207,7 +209,7 @@ terrain_sculpt :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
     if stroke.active {
         if !core.alive(core.world_entities(world),stroke.entity) || !core.has(terrains,stroke.entity) {stroke_free(tool);return}
         if ui.escape(s.gui.ctx) {stroke_cancel(tool);return}
-        if !core.mouse_down(input,.Left) {stroke_end(s,tool,world,assets);return}
+        if !core.mouse_down(input,.Left) {stroke_end(s,tool,world,assets,layered=true);return}
         stroke_apply(s,tool,world,input,view,frame)
         stroke_preview(s,tool,world,terrains,chunks,worlds,assets,extras,job_system)
         cursor_draw(s,tool,input,view)
@@ -445,7 +447,9 @@ preview_build :: proc(build:^Preview_Build,worker:int) {
     if build.ok {terrain.chunk_render_prepare(&build.mesh,build.limits)}
 }
 @(private)
-stroke_end :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,assets:^host.Assets,consume:=core.NONE,label:="Sculpt") {
+// layered: what it changed of the heights of a Heightfield goes into the
+// chosen edit layer too (Terrain_Tool.edit_layer).
+stroke_end :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,assets:^host.Assets,consume:=core.NONE,label:="Sculpt",layered:=false) {
     stroke:=&tool.stroke
     committed:=false
     defer if !committed {stroke_free(tool)}
@@ -456,11 +460,15 @@ stroke_end :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,ass
     if !terrain_budget(s,world,&stroke.source,stroke.id) {return}
     held:=editor.revision_applied(&tool.history,stroke.id)
     if held==nil || !held.held || held.revision!=stroke.revision {editor.notify(s,"The terrain history could not be stored");return}
+    all:=stroke.dirty_all || !stroke.dirty_any
+    if layered && tool.edit_layer>0 && stroke.source.kind==.Heightfield {
+        if !terrain.source_edit_layer_take(&stroke.source,&held.head.field,tool.edit_layer-1,{stroke.dirty[0].x,0,stroke.dirty[0].y},{stroke.dirty[1].x,0,stroke.dirty[1].y},all) {editor.notify(s,"The chosen edit layer is hidden or made by splines: show it, or choose another");return}
+    }
     next:=stroke.revision+1;stroke.source.revision=next
     // The head takes what the stroke changed and the step what it held there.
     step:=Step{source=stroke.id,from=stroke.revision,to=next}
     // A change no touch reported is looked for everywhere.
-    if !step_make(&step,&held.head,&stroke.source,stroke.dirty[0],stroke.dirty[1],stroke.dirty_all || !stroke.dirty_any) {editor.notify(s,"The terrain history could not be stored");return}
+    if !step_make(&step,&held.head,&stroke.source,stroke.dirty[0],stroke.dirty[1],all) {editor.notify(s,"The terrain history could not be stored");return}
     if !terrain_write(s,a,stroke.id,&held.head,keep=true) {step_revert(&step,&held.head);editor.notify(s,"The terrain could not be written");return}
     if !editor.revision_push(&tool.history,&step,step_destroy) {editor.notify(s,"The terrain history could not be stored")}
     stroke.stamp=terrain.terrain_stamp(a,stroke.id)

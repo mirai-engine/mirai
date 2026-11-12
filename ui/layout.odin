@@ -136,7 +136,9 @@ box_begin :: proc(ctx:^Context,b:Box) {
     if b.float.to!=.None {layer_push(ctx,float_layer(b.float,ctx.layer))}
     paint:Paint
     if b.image.kind!=.Solid {
-        paint=image_paint({quad=b.image,tint=b.fill,border=b.image_border,border_uv=b.image_border_uv,fit=b.image_fit,size=b.image_size})
+        paint=image_paint({quad=b.image,tint=b.fill,border=b.image_border,border_uv=b.image_border_uv,fit=b.image_fit,size=b.image_size,program=b.program})
+        paint.stroke,paint.stroke_width,paint.radius,paint.corners,paint.program_values=b.stroke,b.stroke_width,b.radius,b.corners,b.program_values
+        paint.shadow,paint.shadow_color,paint.shadow_blur,paint.shadow_offset=b.shadow,b.shadow_color,b.shadow_blur,b.shadow_offset
     } else {
         paint={kind=.Bar if b.fill2[3]>0 && b.radius==0 && b.corners=={} && b.stroke_width==0 && !b.shadow else .Panel if b.stroke[3]>0 || b.shadow else .Rect,fill=b.fill,fill2=b.fill2,gradient=b.gradient,stroke=b.stroke,radius=b.radius,corners=b.corners,shadow=b.shadow,stroke_width=b.stroke_width,shadow_color=b.shadow_color,shadow_blur=b.shadow_blur,shadow_offset=b.shadow_offset,
             program=b.program,program_values=b.program_values}

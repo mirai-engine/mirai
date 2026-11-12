@@ -193,22 +193,32 @@ Dust_World :: struct {
 }
 
 @(test)
-a_dig_raises_dust_of_each_layer_it_took_on_its_channel :: proc(t:^testing.T) {
+a_dig_raises_the_dust_of_the_material_of_each_layer_it_took_wherever_the_layer_is :: proc(t:^testing.T) {
     w:Dust_World
     if !test_world_init(t,&w) {return}
     defer test_world_destroy(&w)
     dusty,bare:=core.create(&w.entities),core.create(&w.entities)
+    soil,gravel,ore:=base.Asset_Id{1,0},base.Asset_Id{2,0},base.Asset_Id{3,0}
     dust:=TERRAIN_DUST_DEFAULT
-    dust.layers[1].color={1,0,0,1}
-    base.text_set(dust.layers[1].channel[:],"gravel")
-    dust.layers[3].channel={}
+    dust.materials[1]={material=gravel,color={1,0,0,1}}
+    base.text_set(dust.materials[1].channel[:],"gravel")
+    dust.materials[2]={material=ore}
     core.add(&w.dusts,dusty,dust)
     test_world_settle(&w)
-    core.push(&w.digs.digs,Terrain_Dig{owner=dusty,center={1,2,3},volume=1,layers={0.5,0.25,0,0.25}})
-    core.push(&w.digs.digs,Terrain_Dig{owner=bare,volume=1,layers={1,0,0,0}})
+    // The same dig with its layers in another order: each material keeps its dust.
+    core.push(&w.digs.digs,Terrain_Dig{owner=dusty,center={1,2,3},volume=1,layers={0.5,0.25,0,0.25},materials={soil,gravel,{},ore}})
+    core.push(&w.digs.digs,Terrain_Dig{owner=dusty,center={1,2,3},volume=1,layers={0.25,0.25,0.5,0},materials={ore,gravel,soil,{}}})
+    core.push(&w.digs.digs,Terrain_Dig{owner=bare,volume=1,layers={1,0,0,0},materials={soil,{},{},{}}})
     terrain_dust(core.ref(&w.digs),core.read(&w.dusts),&w.births)
     births:=w.births.queue.items[:]
-    if !testing.expect_value(t,len(births),2) {return}
-    testing.expect(t,births[0].channel==core.birth_channel(CHANNEL_DUST) && births[0].count==20 && births[0].position==[3]f32{1,2,3})
-    testing.expect(t,births[1].channel==core.birth_channel("gravel") && births[1].count==10 && births[1].color==[4]f32{1,0,0,1})
+    if !testing.expect_value(t,len(births),4) {return}
+    for dig in 0..<2 {
+        soil_birth,gravel_birth:core.Birth
+        for birth in births[2*dig:][:2] {
+            if birth.channel==core.birth_channel(CHANNEL_DUST) {soil_birth=birth}
+            if birth.channel==core.birth_channel("gravel") {gravel_birth=birth}
+        }
+        testing.expect(t,soil_birth.count==20 && soil_birth.position==[3]f32{1,2,3},"a material no entry names takes the entry without one")
+        testing.expect(t,gravel_birth.count==10 && gravel_birth.color==[4]f32{1,0,0,1},"a layer takes the entry of its material")
+    }
 }

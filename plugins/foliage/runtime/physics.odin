@@ -10,11 +10,12 @@ import physics "plugins:physics/runtime"
 // The collision of the foliage: a static body per resident cell of each
 // Foliage, with a shape per instance of a type that collides, made as bodies
 // the foliage owns in the simulation (physics.owned_body_create). A cell
-// collides while it is resident by the residency of the streaming sources
+// collides while it is resident by the residency of the sources
 // (scene.resident), as it is drawn, within the farthest distance at which a
 // type that collides is drawn as its mesh (collision_reach): far away there
-// is nothing to meet it. On a server the sources are the bodies of every
-// connection, and each end has the cells around the bodies it simulates.
+// is nothing to meet it. The sources are those of the simulation
+// (scene.Simulation_Sources), never the view, so that a world collides the
+// same whoever looks at it; without any, every cell collides.
 // Its handles live with the world, as the simulation does: a copy for Play
 // or a rollback takes both. A shape is the instance's alone, so taking one
 // instance out destroys one shape (collider_remove) and touches nothing else.
@@ -24,6 +25,9 @@ Foliage_Physics :: struct {
     owners:[dynamic]Physics_Owner,
     cells:[dynamic]Physics_Cell,
     shapes:[dynamic]physics.Shape_Handle, // by cell, one per instance that collides; zero once removed
+    chosen:[scene.SOURCES_MAX]scene.Source, // the simulation sources the cells were last chosen by
+    chosen_count:int,
+    revision:u64, // raised when those sources move (scene.sources_moved)
     stats:Foliage_Physics_Stats,
 }
 Foliage_Physics_Stats :: struct {bodies,shapes,removed:u64}
@@ -34,7 +38,7 @@ Physics_Owner :: struct {
     loads:u32,
     ground:u32,
     transform:mm.Transform,
-    sources:u64, // the revision of the streaming sources its cells were chosen by
+    sources:u64, // Foliage_Physics.revision when its cells were chosen
     removed:u64, // the hash of the instances taken out of it then (Removed_Owner)
     pending:bool, // some of its cells wait for the budget of a tick
 }
@@ -276,10 +280,17 @@ shape_instance :: proc(state:^physics.Physics_State,body:physics.Body_Handle,sha
 }
 
 // Keeps the bodies of the foliage of the world equal to its sources, the
-// places of their entities and the cells the streaming sources keep resident.
+// places of their entities and the cells the simulation sources keep resident.
 @(step="fixed",loops="game editor",stage="simulate",after="physics_prepare",before="physics_places")
-foliage_physics :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,collision:core.Ref(physics.Collision_Settings),data:core.Ref(Foliage_Data),grounds:core.Ref(Foliage_Ground),removals:core.Ref(Foliage_Removals),foliages:^core.Table(Foliage,.Read),worlds:^core.Table(core.World_Transform,.Read),kept:^core.Table(scene.Far_Kept,.Read),sources:core.Ref(scene.Streaming_Sources),time:core.Time,problems:^core.Problems) {
+foliage_physics :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,collision:core.Ref(physics.Collision_Settings),data:core.Ref(Foliage_Data),grounds:core.Ref(Foliage_Ground),removals:core.Ref(Foliage_Removals),foliages:^core.Table(Foliage,.Read),worlds:^core.Table(core.World_Transform,.Read),kept:^core.Table(scene.Far_Kept,.Read),sources:core.Ref(scene.Simulation_Sources),time:core.Time,problems:^core.Problems) {
     if !state.ready || data.ptr==nil || time.resimulating {return}
+    now:[]scene.Source
+    if sources.ptr!=nil {now=sources.ptr.items[:clamp(sources.ptr.count,0,scene.SOURCES_MAX)]}
+    if scene.sources_moved(fp.chosen[:fp.chosen_count],now) {
+        copy(fp.chosen[:],now)
+        fp.chosen_count=len(now)
+        fp.revision+=1
+    }
     // Without settings every preset is the Default category, colliding with all.
     defaults:physics.Collision_Settings
     settings:=collision.ptr if collision.ptr!=nil else &defaults
@@ -298,7 +309,7 @@ foliage_physics :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,collisi
         if entry==nil || (kept!=nil && core.has(kept,e)) {continue}
         ground:=ground_owner(grounds.ptr,e)
         revision:=ground!=nil?ground.revision:0
-        streamed:=sources.ptr!=nil?sources.ptr.revision:0
+        streamed:=fp.revision
         gone:=removed_owner(removals.ptr,e)
         removed:=gone!=nil?gone.hash:0
         owner:^Physics_Owner
@@ -315,9 +326,9 @@ foliage_physics :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,collisi
         owner.epoch,owner.loads,owner.ground,owner.transform,owner.source,owner.sources,owner.removed=entry.epoch,entry.loads,revision,world.transform,f.source,streamed,removed
         reach:=collision_reach(&entry.source)
         near:scene.Sources_Near
-        if reach>0 {near=scene.sources_near(sources.ptr,mm.transform_matrix(world.transform),reach)}
+        if reach>0 {near=scene.sources_near_of(fp.chosen[:fp.chosen_count],mm.transform_matrix(world.transform),reach)}
         budget.waiting=false
-        complete,enough:=physics_owner_build(fp,state,settings,e,&entry.source,world.transform,ground,all,sources.ptr!=nil?&near:nil,reach,gone,&budget)
+        complete,enough:=physics_owner_build(fp,state,settings,e,&entry.source,world.transform,ground,all,fp.chosen_count>0?&near:nil,reach,gone,&budget)
         owner.pending=budget.waiting
         if !enough {
             owner.loads=0

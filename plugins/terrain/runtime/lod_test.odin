@@ -6,6 +6,7 @@ import "core:fmt"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
+import camera "mirai:engine/camera"
 import phys "plugins:physics/runtime"
 import "mirai:host"
 import "mirai:std/base"
@@ -27,6 +28,31 @@ lod_levels_double_with_distance_and_hold_near_their_boundaries :: proc(t:^testin
     volume:Source;defer source_destroy(&volume)
     testing.expect(t,source_make(&volume,.Volume,{9,9,9},1,8))
     testing.expect_value(t,chunk_lod_max(&volume,{0,0,0}),u8(0)) // a Volume has no levels of its own
+}
+
+// Balanced, every chunk is at most one level above each that touches it, and
+// as coarse as that lets it: the least of every level plus its distance in chunks.
+@(test)
+balanced_levels_are_the_coarsest_one_apart_from_their_neighbors :: proc(t:^testing.T) {
+    s:Source;defer source_destroy(&s)
+    testing.expect(t,source_make(&s,.Heightfield,{17*16+1,1,11*16+1},1,16))
+    n:=chunk_counts(&s)
+    levels:=make([]u8,n.x*n.z,context.temp_allocator)
+    for round in 0..<4 {
+        for &level in levels {level=u8(rand.int_max(8))}
+        if round==0 {for &level in levels {level=7};levels[3+n.x*5]=0}
+        want:=make([]u8,len(levels),context.temp_allocator)
+        for i in 0..<len(levels) {
+            least:=255
+            for j in 0..<len(levels) {
+                d:=max(abs(i%n.x-j%n.x),abs(i/n.x-j/n.x))
+                least=min(least,int(levels[j])+d)
+            }
+            want[i]=u8(least)
+        }
+        lod_levels_balance(&s,levels)
+        for level,i in levels {testing.expect_value(t,level,want[i])}
+    }
 }
 
 @(private)
@@ -149,6 +175,20 @@ far_chunks_show_coarser_levels_while_colliders_keep_every_sample :: proc(t:^test
     testing.expect(t,chunks[0].built.lod.level>=2)
     apart(t,s,chunks[:64])
     testing.expect(t,resident.stats.built>built && resident.stats.built<built+64)
+    // A second player at the first corner, in its half of a split screen: the
+    // chunks near each view are as fine as that view needs.
+    locals:camera.Camera_Views
+    for &slot,i in locals.slots[:2] {
+        slot.camera,slot.pose.fov=owner,view.fov
+        slot.pose.position=i==0?view.position:{-60,5,-60}
+    }
+    terrain_test_update(&w,&resident,&app,view=view,settings=settings,locals=core.ref(&locals))
+    testing.expect(t,chunks[far].built.lod.level==0 && chunks[0].built.lod.level==0,"each view sees its own chunks at level 0")
+    apart(t,s,chunks[:64])
+    // Back to one player: what only the other view needed coarsens again.
+    locals.slots[1].camera=core.NONE
+    terrain_test_update(&w,&resident,&app,view=view,settings=settings,locals=core.ref(&locals))
+    testing.expect(t,chunks[far].built.lod.level==0 && chunks[0].built.lod.level>=2)
     hit,ok=phys.raycast({&w.state},{57,20,57},{0,-1,0})
     testing.expect(t,ok && abs(hit.point.y-3)<1e-4)
     // Colliders only near the view.

@@ -81,19 +81,20 @@ stroke_cell_set :: proc(stroke:^Foliage_Stroke,coord:[2]i32,cell:^Cell,filed:boo
         if _,error:=inject_at(&stroke.cells,at,Cell{coord=coord});error!=nil {return false}
     }
     held:=&stroke.cells[at]
-    clear(&held.manual);clear(&held.overrides)
+    clear(&held.manual);clear(&held.overrides);clear(&held.density)
     held.generate,held.version=false,0
     if cell==nil {return true}
     held.generate,held.version=cell.generate,1
     _,manual:=append(&held.manual,..cell.manual[:])
     _,overrides:=append(&held.overrides,..cell.overrides[:])
-    return manual==nil && overrides==nil
+    _,density:=append(&held.density,..cell.density[:])
+    return manual==nil && overrides==nil && density==nil
 }
 
 // Ends what a stroke shows: its source is read again from its file.
 stroke_clear :: proc(stroke:^Foliage_Stroke) {
     if stroke.source=={} && len(stroke.cells)==0 {return}
-    for &cell in stroke.cells {delete(cell.manual);delete(cell.overrides)}
+    for &cell in stroke.cells {delete(cell.manual);delete(cell.overrides);delete(cell.density)}
     clear(&stroke.cells)
     stroke.source,stroke.instances={},0
     stroke.revision+=1
@@ -111,7 +112,7 @@ stroke_apply :: proc(entry:^Data_Entry,stroke:^Foliage_Stroke) -> (changed:bool)
         found:=at<len(s.cells) && s.cells[at].coord==held.coord
         if held.version==0 {
             if !found {continue}
-            delete(s.cells[at].manual);delete(s.cells[at].overrides)
+            delete(s.cells[at].manual);delete(s.cells[at].overrides);delete(s.cells[at].density)
             ordered_remove(&s.cells,at)
             entry.layout+=1
             changed=true
@@ -120,16 +121,17 @@ stroke_apply :: proc(entry:^Data_Entry,stroke:^Foliage_Stroke) -> (changed:bool)
         if !cell_valid(s,&held) {continue}
         if found {
             cell:=&s.cells[at]
-            if cell.generate==held.generate && same_rows(cell.manual[:],held.manual[:]) && same_rows(cell.overrides[:],held.overrides[:]) {continue}
+            if cell.generate==held.generate && same_rows(cell.manual[:],held.manual[:]) && same_rows(cell.overrides[:],held.overrides[:]) && same_rows(cell.density[:],held.density[:]) {continue}
         } else {
             if _,error:=inject_at(&s.cells,at,Cell{coord=held.coord});error!=nil {continue}
             entry.layout+=1
         }
         cell:=&s.cells[at]
-        clear(&cell.manual);clear(&cell.overrides)
+        clear(&cell.manual);clear(&cell.overrides);clear(&cell.density)
         _,manual:=append(&cell.manual,..held.manual[:])
         _,overrides:=append(&cell.overrides,..held.overrides[:])
-        if manual!=nil || overrides!=nil {clear(&cell.manual);clear(&cell.overrides)}
+        _,density:=append(&cell.density,..held.density[:])
+        if manual!=nil || overrides!=nil || density!=nil {clear(&cell.manual);clear(&cell.overrides);clear(&cell.density)}
         cell.generate=held.generate
         entry.versions+=1
         cell.version=entry.versions
@@ -216,15 +218,14 @@ ROLE_REST :: Batch_Role(1)
 ROLE_CROWN :: Batch_Role(2)
 ROLE_CELL_CROWN :: Batch_Role(3) // of no type: the crown of the whole cell
 
-// The crown of a cell of a source at a version, in the space of its Foliage:
-// every Foliage that shows the source traces the same mesh, placed by its
-// own transform (a world of sections that reference one scene many times).
+// The crown of a cell of a source, in the space of its Foliage: every
+// Foliage that shows the source with the same instances there traces the
+// same mesh, placed by its own transform (a world of sections that reference
+// one scene many times).
 Shared_Crown :: struct {
     source:base.Asset_Id,
     coord:[2]i32,
-    version:u32,
-    look:u32,    // of the entry of the source: how its types were drawn
-    removed:u64, // the hash of the instances taken out of the cell
+    key:u64, // crown_key of what it is made of
     mesh:base.Asset_Id,
     users:int,
 }
@@ -288,7 +289,7 @@ Build_Work :: struct {
 }
 
 // A cell expanded in a job (cells_expand), with room taken beforehand for
-// the most it shows: a job allocates nothing.
+// the most it shows.
 Cell_Expansion :: struct {
     index:u32, // of the cell in its source
     ground:Ground_Cell,
@@ -325,6 +326,23 @@ resident_owner_free :: proc(resident:^Foliage_Resident,owner:^Resident_Owner) {
     for &cell in owner.cells {resident_cell_free(resident,&cell)}
     delete(owner.cells);delete(owner.resident);delete(owner.types);delete(owner.parts);delete(owner.kinds);delete(owner.winds)
     owner.cells,owner.resident,owner.types,owner.parts,owner.kinds,owner.winds=nil,nil,nil,nil,nil,nil
+}
+
+// What the renderer forgot with its batches and every mesh (meshes_clear):
+// the cells, with the crowns they share, and the far forms and variants made
+// of those meshes, all made again. A batch it forgot is not found again.
+@(private)
+resident_forget :: proc(resident:^Foliage_Resident) {
+    for &owner in resident.owners {
+        for &cell in owner.cells {resident_cell_free(resident,&cell)}
+        delete(owner.cells)
+        owner.cells,owner.built=nil,false
+        clear(&owner.kinds);clear(&owner.winds);clear(&owner.resident)
+    }
+    for &kind in resident.kinds {kind_free(resident.app,&kind)}
+    clear(&resident.kinds)
+    clear(&resident.winds)
+    resident.impostors.dirty=true
 }
 
 // Lets go of the far forms and the variants no Foliage shows any longer, or
@@ -434,7 +452,7 @@ cells_version :: proc(next,previous:^Source,versions:^u32,look:^u32=nil) {
         for j<len(previous.cells) && coord_before(previous.cells[j].coord,cell.coord) {j+=1}
         if types_same && j<len(previous.cells) && previous.cells[j].coord==cell.coord {
             old:=&previous.cells[j]
-            if old.generate==cell.generate && same_rows(old.manual[:],cell.manual[:]) && same_rows(old.overrides[:],cell.overrides[:]) {
+            if old.generate==cell.generate && same_rows(old.manual[:],cell.manual[:]) && same_rows(old.overrides[:],cell.overrides[:]) && slice.equal(old.density[:],cell.density[:]) {
                 cell.version=old.version
                 continue
             }
@@ -602,15 +620,7 @@ foliage_render :: proc(resident:^Foliage_Resident,data:core.Ref(Foliage_Data),gr
         resident.impostors.dirty=true
     }
     if resident.epoch!=render.batches_epoch(app.renderer) {
-        // The renderer forgot them, and every mesh with them: their handles name nothing.
-        for &owner in resident.owners {
-            for &cell in owner.cells {delete(cell.batches);delete(cell.impostors);delete(cell.near)}
-            delete(owner.cells)
-            owner.cells,owner.built=nil,false
-            clear(&owner.resident)
-        }
-        clear(&resident.winds)
-        resident.impostors.dirty=true
+        resident_forget(resident)
         resident.epoch=render.batches_epoch(app.renderer)
     }
     if resident.structure!=a.structure {
@@ -818,8 +828,8 @@ coords_near :: proc(items:[]$T,near:^scene.Sources_Near,out:^[dynamic]u32) {
             for k in 0..<len(items) {append(out,u32(k))}
             return
         }
-        low:=i32(clamp(math.floor((point.x-d)/CELL_SIZE),-COORD_MAX-1,COORD_MAX+1))
-        high:=i32(clamp(math.floor((point.x+d)/CELL_SIZE),-COORD_MAX-1,COORD_MAX+1))
+        low:=i32(clamp(math.floor((point.x-d)/CELL_SIZE),-f32(COORD_MAX)-1,f32(COORD_MAX)+1))
+        high:=i32(clamp(math.floor((point.x+d)/CELL_SIZE),-f32(COORD_MAX)-1,f32(COORD_MAX)+1))
         for z in i32(first)..=i32(last) {
             for at:=coord_lower(items,{low,z});at<len(items) && items[at].coord.y==z && items[at].coord.x<=high;at+=1 {append(out,u32(at))}
         }
@@ -1001,9 +1011,9 @@ builds_take :: proc(builds:[]scene.Resident_Order,s:^Source,thin:f32,left:^int) 
 }
 
 // Expands the cells builds names (by index in the cells of s) into the
-// expansions of work, in jobs. The room each needs (cell_bound) is taken
-// here, from allocator, which the threads may share: a job allocates
-// nothing, and a cell without that room is not built. Those it expands, in
+// expansions of work, in jobs. The room of what it shows (cell_bound) is
+// taken here and a cell without it is not built; what the spacing of its
+// types needs more comes from allocator, which the threads share. Those it expands, in
 // the order of builds; fewer when the expansions do not fit in memory.
 cells_expand :: proc(work:^Build_Work,s:^Source,ground:^Ground_Owner,gone:^Removed_Owner,builds:[]scene.Resident_Order,thin:f32,job_system:^jobs.Job_System,allocator:runtime.Allocator) -> []Cell_Expansion {
     count:=0
@@ -1020,14 +1030,16 @@ cells_expand :: proc(work:^Build_Work,s:^Source,ground:^Ground_Owner,gone:^Remov
         e.ready=expansion_room(e,instances,points,len(cell.overrides),allocator)
         count+=1
     }
-    Expanding :: struct {s:^Source,cells:[]Cell_Expansion,thin:f32}
+    Expanding :: struct {s:^Source,cells:[]Cell_Expansion,thin:f32,allocator:runtime.Allocator}
     expand :: proc(x:^Expanding,first,last:int,worker:int) {
+        // What an expansion grows comes from the allocator the threads share.
+        context.allocator=x.allocator
         for &e in x.cells[first:last] {
             clear(&e.placed);clear(&e.orphans)
             e.built=e.ready && cell_expand(x.s,&x.s.cells[e.index],e.ground,&e.placed,&e.orphans,&e.scratch,e.removed,x.thin)
         }
     }
-    expanding:=Expanding{s,work.expansions[:count],thin}
+    expanding:=Expanding{s,work.expansions[:count],thin,allocator}
     if job_system!=nil && jobs.worker_count(job_system)>1 && count>1 {
         jobs.parallel_for(job_system,jobs.OWNER,count,1,expand,&expanding)
     } else {expand(&expanding,0,count,jobs.OWNER)}
@@ -1208,6 +1220,22 @@ foliage_release :: proc(resident:^Foliage_Resident,app:^host.App) {
     resident.stats=stats
 }
 
+// What the crown of a cell is made of (cell_crown_build): each instance
+// where it stands on its ground, and the crown of its type. Two cells with the
+// same key make the same crown.
+crown_key :: proc(placed:[]Placed,crowns:[]Crown_Triangles) -> u64 {
+    key:u64
+    for c,i in crowns {
+        if len(c.indices)==0 {continue}
+        key=base.hash64(bytes_of(c.positions),base.hash64(bytes_of(c.indices),key~u64(i)))
+    }
+    for p in placed {
+        values:=[?]f32{transmute(f32)p.type,p.position.x,p.position.y,p.position.z,real(p.rotation),imag(p.rotation),jmag(p.rotation),kmag(p.rotation),p.scale[0],p.scale[1]}
+        key=base.hash64(bytes_of(values[:]),key)
+    }
+    return key
+}
+
 // The crown of a cell far away: one batch of one instance whose mesh is the
 // crown of the crowns of its instances that cast shadows (cell_crown_build),
 // made again with its batches. Called with the instances of the cell placed
@@ -1231,9 +1259,20 @@ cell_crown_publish :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,held
         any||=len(kind.crown_indices)>0
     }
     if !any {return}
+    // Each instance that gives the crown, by the index of its type.
+    placed:=make([dynamic]Placed,0,len(work.placed),context.temp_allocator)
+    for i in 0..<len(owner.types) {
+        if len(work.crowns[i].indices)==0 {continue}
+        for at in work.order[work.firsts[i]:work.firsts[i+1]] {
+            p:=work.placed[at]
+            p.type=u32(i)
+            append(&placed,p)
+        }
+    }
+    key:=crown_key(placed[:],work.crowns[:])
     crown:base.Asset_Id
     for &c in resident.crowns {
-        if c.source==owner.source && c.coord==held.coord && c.version==held.version && c.look==owner.look && c.removed==held.removed {
+        if c.source==owner.source && c.coord==held.coord && c.key==key {
             c.users+=1
             crown=c.mesh
             break
@@ -1242,20 +1281,11 @@ cell_crown_publish :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,held
     if crown=={} {
         shape:geom.Mesh_Buffer
         geom.mesh_buffer_init(&shape,context.temp_allocator)
-        // Each instance by the index of its type.
-        placed:=make([dynamic]Placed,0,len(work.placed),context.temp_allocator)
-        for i in 0..<len(owner.types) {
-            for at in work.order[work.firsts[i]:work.firsts[i+1]] {
-                p:=work.placed[at]
-                p.type=u32(i)
-                append(&placed,p)
-            }
-        }
         if !cell_crown_build(placed[:],work.crowns[:],&shape) {return}
         made:bool
         crown,made=host.assets_mesh_generate(assets,geom.mesh_buffer_view(&shape),options={no_lods=true})
         if !made {return}
-        append(&resident.crowns,Shared_Crown{owner.source,held.coord,held.version,owner.look,held.removed,crown,1})
+        append(&resident.crowns,Shared_Crown{owner.source,held.coord,key,crown,1})
     }
     held.crown=crown
     desc,ok:=render.batch_desc(assets,{mesh=crown})

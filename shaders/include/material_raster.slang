@@ -5,8 +5,7 @@
 #include "scene.slang"
 
 // A lobe narrower than the spread of the normal across the pixel flickers:
-// that spread widens it (Tokuyoshi and Kaplanyan 2019; Unreal calls it normal
-// curvature to roughness).
+// that spread widens it (Tokuyoshi and Kaplanyan 2019).
 float specular_antialiasing(float3 n, float roughness) {
     float3 dx = ddx(n);
     float3 dy = ddy(n);

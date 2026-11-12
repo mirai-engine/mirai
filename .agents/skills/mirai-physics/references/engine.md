@@ -98,8 +98,10 @@ own the `Transform` (`locks="core.Transform"`): the game moves through requests.
 ## `Collider` fields
 
 - Without a body of its own or of an ancestor, the collider is static. A compound body can have
-  surfaces with different frictions. The graphic material does not determine friction or bounce;
-  there is no physical material asset.
+  surfaces with different frictions. The graphic material does not determine friction or bounce,
+  except where a collider shows one material per place (a terrain heightfield, by the material that
+  covers most of each cell) and `Collision_Settings.surfaces` has an entry for it; there is no
+  physical material asset.
 - The capsule of a `Character` has zero friction: its drives move it, each with a force cap, and the
   friction of the ground does not define how much it slips.
 - `COLLIDER_DEFAULT` (also when adding it from the inspector) uses the `Default` preset without
@@ -182,6 +184,9 @@ differs from its defaults:
   value makes `Trigger` a sensor that sees all.
 - `pushes`: pairs of categories whose dynamics yield to each other with at most `force`
   ([push rules](physics.md#contact-rules)) and pass through each other, like teammates or a crowd.
+- `surfaces`: per material, the friction and restitution of the cells that show it, given to the
+  simulation as surface rules with the push rules. A wrong entry is `physics.collision_surface` and
+  is left out.
 - An entry for a value that no code declares is not rejected: `physics_step` reports the first one,
   with how many there are (`physics.collision_settings`). An undeclared preset in a collider is
   `physics.collision` and keeps its number; a push that does not apply, `physics.collision_push`.
@@ -579,8 +584,9 @@ shape without an end. This is the one way a zone says what went in; there is no 
 
 On `core.Ref(Physics_State)`, with a `Query_Filter` and `ignore` (entity whose body is omitted). A
 `Hit` carries body entity, `collider`, point, normal, distance, `overlap` (does not block the
-query), body and shape. A query that starts inside a shape gives distance zero and null normal.
-Without simulation (`!ready`) it returns nothing.
+query), `material` (what a collider of one material per place shows there, as `Contact_Begin`
+does; zero otherwise), body and shape. A query that starts inside a shape gives distance zero and
+null normal. Without simulation (`!ready`) it returns nothing.
 
 - `raycast(physics, origin, direction, max=1000, ignore, filter) -> (Hit, ok)`: the nearest impact
   that blocks. The direction does not need a particular length.

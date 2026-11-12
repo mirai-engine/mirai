@@ -331,7 +331,7 @@ focusable :: proc(kind:ui.Node_Kind) -> bool {
 @(private)
 shows_text :: proc(kind:ui.Node_Kind) -> bool {
     #partial switch kind {
-    case .Text,.Button,.Rich_Text,.Field,.Selector,.Dropdown,.Prompt,.Action_Bar,.Checkbox,.Radio,.Slider,.Number,.Tabs: return true
+    case .Text,.Button,.Rich_Text,.Field,.Selector,.Dropdown,.Prompt,.Action_Bar,.Checkbox,.Radio,.Slider,.Number: return true
     }
     return false
 }
@@ -368,9 +368,6 @@ section_node :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
     case .Selector,.Dropdown:
         about:="The options, separated by |; the bubble gives them in the other languages. The link takes them from an array of texts or of enums of the game instead"
         if bindable(p,"Options",n.bind_items[:],.Options,about) {text_row(p,n,"Options",about)}
-    case .Tabs:
-        about:="What each tab shows, separated by |; the bubble gives them in the other languages. The link takes them from an array of texts or of enums of the game instead. A tab without one shows the text of its node, or its name"
-        if bindable(p,"Labels",n.bind_items[:],.Options,about) {text_row(p,n,"Labels",about)}
     case .Field:
         bind_only(p,"Text",n.bind_text[:],.Shown,"What it holds: it writes there what is typed")
         text_row(p,n,"Placeholder","What it shows while its value is empty")
@@ -380,7 +377,7 @@ section_node :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
         edit(u,"Action",action_row(p,"Action",n.action[:]))
         if n.kind==.Button {
             edit(u,"Hold",value_row(p,"Hold",Seconds_Value,&n.hold,d.hold,"How long the action is held before it clicks; 0 clicks at once"))
-            bind_only(p,"Value",n.bind_value[:],.Number,"Where a click writes what Writes says: the page of a menu")
+            bind_only(p,"Value",n.bind_value[:],.Number,"Where a click writes what Writes says: the page of a menu or a tab, which shows selected while it holds that")
             if serial.text_field(n.bind_value[:])!="" {edit(u,"Writes",value_row(p,"Writes",Count_Value,&n.choice,d.choice,"What a click writes in its value"))}
         }
     case .Progress:
@@ -395,8 +392,6 @@ section_node :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
         bind_only(p,"Value",n.bind_value[:],.Any,"The field of the game whose bytes its procedure reads")
     case .Switcher:
         if bindable(p,"Child",n.bind_value[:],.Number,"The node it builds: 0 is the first it holds; bound to an enum or a text, the node of that name") {edit(u,"Child",value_row(p,"Child",Count_Value,&n.index,d.index,"The node it builds: 0 is the first it holds"))}
-    case .Tabs:
-        if bindable(p,"Tab",n.bind_value[:],.Number,"The tab it shows, and where it writes the one the player chooses: 0 is the first node it holds") {edit(u,"Tab",value_row(p,"Tab",Count_Value,&n.index,d.index,"The tab it shows first: 0 is the first node it holds"))}
     case .Popup:
         bind_only(p,"Open",n.bind_value[:],.Number,"A bool of the game: it is open while it is true; unbound, a click on its parent opens it")
     case .List:

@@ -415,7 +415,7 @@ records_rows_own :: proc(r:^Records,n:^ui.Tree_Node,fields:ui.Node_Fields) {
 
 KIND_NAMES :: [ui.Node_Kind]string{.Box="box",.Text="text",.Image="image",.Progress="progress",.Button="button",.Checkbox="checkbox",.Spacer="spacer",.Component="component",
     .Scroll="scroll",.Switcher="switcher",.List="list",.Prompt="prompt",.Slider="slider",.Field="field",.Selector="selector",.Dropdown="dropdown",.Radio="radio",
-    .Tooltip="tooltip",.Rich_Text="rich_text",.View="view",.Action_Bar="action_bar",.Number="number",.Tabs="tabs",.Popup="popup",.Modal="modal",
+    .Tooltip="tooltip",.Rich_Text="rich_text",.View="view",.Action_Bar="action_bar",.Number="number",.Popup="popup",.Modal="modal",
     .Context_Menu="context_menu",.Radial="radial",.Particles="particles",.Draw="draw"}
 
 // Names a node after base_name and the first number no other node of its scope uses.

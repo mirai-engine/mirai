@@ -1,6 +1,7 @@
 package mirai_physics
 
 import "base:intrinsics"
+import cmath "core:math"
 import "core:simd"
 
 // Contact constraints are solved four at a time: the manifolds of one graph color share no body they move,
@@ -155,6 +156,21 @@ bodies_scatter :: #force_inline proc "contextless" (bodies:[]Solver_Body,indices
     }
 }
 
+// The friction and restitution of a manifold: those of its contact, or, on a surface of a heightfield
+// that has a rule, those of the rule mixed with shape B as two shapes mix (contact_mix_material).
+@(private)
+manifold_material :: #force_inline proc "contextless" (w:^World,contact:^Contact,a,b:^Shape,surface:u32) -> (friction,restitution:f32) #no_bounds_check {
+    friction,restitution=contact.friction,contact.restitution
+    if w.surface_rule_count==0 || a.type!=.Heightfield {return}
+    key:=heightfield_surface(&w.heightfields[a.resource].field,surface)
+    if key=={} {return}
+    for rule in w.surface_rules[:w.surface_rule_count] {
+        if rule.surface!=key {continue}
+        return cmath.sqrt(rule.friction*b.friction),max(rule.restitution,b.restitution)
+    }
+    return
+}
+
 // Fills the lanes of a block from the manifolds that `refs` names; a lane whose contact is -1 stays empty.
 @(private)
 contact_block_prepare :: proc(w:^World,c:^Contact_Block($N),refs:[]Constraint_Ref) #no_bounds_check {
@@ -207,7 +223,8 @@ contact_block_prepare :: proc(w:^World,c:^Contact_Block($N),refs:[]Constraint_Re
         c.a[lane],c.b[lane]=a,b
         c.write_a[lane],c.write_b[lane]=ma>0?a:-1,mb>0?b:-1
         c.count=max(c.count,manifold.count)
-        if contact.restitution!=0 {c.bounce=true}
+        friction,restitution:=manifold_material(w,contact,shape_a,shape_b,state.surface)
+        if restitution!=0 {c.bounce=true}
         if contact.rolling_resistance>0 {
             c.rolls=true
             lane_set(&c.rolling_resistance,lane,contact.rolling_resistance)
@@ -221,8 +238,8 @@ contact_block_prepare :: proc(w:^World,c:^Contact_Block($N),refs:[]Constraint_Re
         lane_set(&c.inv_mass_b,lane,mb)
         lane_set_sym(&c.inv_inertia_a,lane,ia)
         lane_set_sym(&c.inv_inertia_b,lane,ib)
-        lane_set(&c.friction,lane,contact.friction)
-        lane_set(&c.restitution,lane,contact.restitution)
+        lane_set(&c.friction,lane,friction)
+        lane_set(&c.restitution,lane,restitution)
         lane_set(&c.push_cap,lane,push>0?push*st.h/f32(max(manifold.count,1)):max(f32))
         softness:=ma==0 || mb==0?st.static_softness:st.contact_softness
         lane_set(&c.bias_rate,lane,softness.mass_scale*softness.bias_rate)

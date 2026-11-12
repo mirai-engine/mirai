@@ -49,7 +49,7 @@ terrain_creation_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.W
         if result.tag==HEIGHTMAP_DIALOG && result.state==.Accepted {tool.heightmap_length=copy(tool.heightmap_path[:],transmute([]u8)result.path)}
         path:=string(tool.heightmap_path[:tool.heightmap_length])
         if ui.button(ctx,ui.id(ctx,"heightmap"),{label=path==""?"Choose heightmap":filepath.base(path),variant="field",width=-1,center=true}).clicked {
-            if !platform.dialog_show(app.platform,{kind=.Open_File,tag=HEIGHTMAP_DIALOG,filters={{"Heightmap","png;tga;bmp"}},location=s.assets_root}) {editor.notify(s,"A file dialog is already open")}
+            if !platform.dialog_show(app.platform,{kind=.Open_File,tag=HEIGHTMAP_DIALOG,filters=HEIGHTMAP_FILTERS[:],location=s.assets_root}) {editor.notify(s,"A file dialog is already open")}
         }
         heightmap_fields(s,tool)
     }
@@ -77,20 +77,11 @@ terrain_create :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
         ok:bool
         if over,ok=volume_over_ground(s,world,assets,allocator,ground,at,placed,tool,&source);!ok {return}
     } else if tool.create_source==.Heightmap {
-        path:=string(tool.heightmap_path[:tool.heightmap_length])
-        bytes,error:=serial.file_read(path,allocator,limit=64*1024*1024)
-        if error!=.None {editor.notify(s,fmt.tprintf("The heightmap %s could not be read: %v",path,error));return}
-        defer delete(bytes,allocator)
-        heightmap,decode:=textures.heightmap_decode(bytes,terrain.SAMPLES_MAX,allocator)
-        if decode!=.None {editor.notify(s,fmt.tprintf("Heightmap: %v",decode));return}
+        heightmap,read:=heightmap_read(s,string(tool.heightmap_path[:tool.heightmap_length]),allocator)
+        if !read {return}
         defer textures.heightmap_destroy(&heightmap)
         if !terrain.source_make(&source,.Heightfield,{heightmap.width,1,heightmap.height},tool.cell,tool.chunk_cells,allocator) {editor.notify(s,"The heightmap dimensions exceed their budget");return}
-        if !terrain.grid_prepare(&source.field,{0,0,0},{heightmap.width-1,0,heightmap.height-1},source.allocator) {editor.notify(s,"There is not enough memory for the heightmap");return}
-        for value,i in heightmap.values {
-            height:=value*tool.height_scale+tool.height_offset
-            if abs(height)>terrain.HEIGHT_LIMIT {editor.notify(s,"Heightmap heights exceed the terrain limit");return}
-            terrain.grid_set(&source.field,i%heightmap.width,i/heightmap.width,height)
-        }
+        if !heights_take(s,&source,&heightmap,tool.height_scale,tool.height_offset) {return}
     } else {
         samples:=[3]int{tool.samples,tool.create_kind==.Volume?tool.depth:1,tool.samples}
         if !terrain.source_make(&source,tool.create_kind,samples,tool.cell,tool.chunk_cells,allocator) {editor.notify(s,"The terrain dimensions exceed their budget");return}

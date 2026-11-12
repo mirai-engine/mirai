@@ -15,6 +15,8 @@ data_source_copy :: proc(dst,src:^Source) -> bool {
     }
     if !grid_copy(&dst.field,&src.field,dst.allocator) || !grid_copy(&dst.holes,&src.holes,dst.allocator) || !grid_copy(&dst.field,&src.field,dst.allocator) {return false}
     if !grid_copy(&dst.weights,&src.weights,dst.allocator) || !coarse_copy(&dst.coarse,&src.coarse,dst.allocator) {return false}
+    for i in 0..<EDITS_MAX {if !grid_copy(&dst.edit_heights[i],&src.edit_heights[i],dst.allocator) {return false}}
+    if !grid_copy(&dst.edit_under,&src.edit_under,dst.allocator) {return false}
     dst.info,dst.origin=src.info,src.origin
     return true
 }
@@ -30,9 +32,9 @@ data_chunks_copy :: proc(dst,src:^Data_Source) -> bool {
     if dst.allocator.procedure==nil {dst.allocator=context.allocator}
     count:=len(src.dirty)
     a:=dst.allocator
-    if !same(&dst.versions,len(src.versions),a) || !same(&dst.nodes,len(src.nodes),a) || !same(&dst.ranges,len(src.ranges),a) || !same(&dst.errors,len(src.errors),a) || !same(&dst.dirty,count,a) {return false}
+    if !same(&dst.versions,len(src.versions),a) || !same(&dst.nodes,len(src.nodes),a) || !same(&dst.dirty,count,a) {return false}
     if reserve(&dst.pending,count)!=nil || resize(&dst.pending,count)!=nil {return false}
-    copy(dst.versions,src.versions);copy(dst.nodes,src.nodes);copy(dst.ranges,src.ranges);copy(dst.errors,src.errors)
+    copy(dst.versions,src.versions);copy(dst.nodes,src.nodes)
     dst.quad=src.quad
     for i in 0..<count {dst.dirty[i]=true;dst.pending[i]=u32(i)}
     return true
@@ -95,6 +97,7 @@ source_resize :: proc(dst,src:^Source,samples:[2]int,allocator:=context.allocato
             if !grid_put(&temporary.holes,{x,0,z},1,allocator) {return false}
         }}
     }
+    if !edits_resize(&temporary,src,shift) {return false}
     source_destroy(dst)
     dst^=temporary
     temporary={}

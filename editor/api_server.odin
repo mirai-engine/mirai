@@ -322,6 +322,7 @@ api_jobs :: proc(s:^Session) {
     play_plugin_poll(s)
     runs_pump(s)
     collab_update(s)
+    if s.ai!=nil && s.has_project {ai_poll(s,s.ai)}
     events_steps(s)
     files_flush(s)
 }
@@ -516,7 +517,7 @@ api_trampoline :: proc(call:^api.Call) {
     if edits!=nil {
         // A gesture the call opened and ended is its step, without waiting for the frame.
         if edits.commit && edits.opener==edits.author {
-            sections_sync(entry.session)
+            edits_follow(entry.session)
             history.edits_flush(edits,edited_world(entry.session),document_selection(entry.session))
         }
         // What the call selected is a step of its author.
@@ -679,7 +680,7 @@ api_edit_end :: proc(s:^Session,call:^api.Call,applied:bool) -> bool {
     if st:=api_state(s);st!=nil && st.joined {
         st.joined=false
         if !applied && !call.failed {api.call_fail(call,api.SERVER_ERROR,"The edit could not be applied")}
-        if applied && !call.failed {sections_sync(s)}
+        if applied && !call.failed {edits_follow(s)}
         return applied && !call.failed
     }
     if !applied || call.failed {
@@ -688,7 +689,7 @@ api_edit_end :: proc(s:^Session,call:^api.Call,applied:bool) -> bool {
         if !call.failed {api.call_fail(call,api.SERVER_ERROR,"The edit could not be applied")}
         return false
     }
-    sections_sync(s)
+    edits_follow(s)
     history.edits_end(s.edits)
     if !history.edits_commit(s.edits,w,selection) && s.edits.error!=.No_Change {
         error:=s.edits.error

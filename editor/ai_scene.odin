@@ -1,5 +1,6 @@
 package editor
 
+import "core:slice"
 import "mirai:core"
 import "mirai:editor/history"
 import erender "mirai:engine/render"
@@ -81,6 +82,10 @@ ai_scene_highlights :: proc(s:^Session,w:core.World_Ref,levels:[]u8) {
 
 @(private)
 ai_scene_anchor :: proc(s:^Session,task:^Ai_Task) -> [3]f32 {
+    if task.follows && s.viewport!=nil {
+        task.follows=false
+        if n:=len(task.review.transactions);n>0 {ai_scene_follow(s,task,edited_world(s),task.review.transactions[n-1].rows[:])}
+    }
     if !task.anchor_set {
         point:=s.viewport.orbit.target
         point.y=0.02
@@ -98,10 +103,11 @@ ai_scene_anchor :: proc(s:^Session,task:^Ai_Task) -> [3]f32 {
     return task.anchor
 }
 
-// Beside what the turn works on, which it faces.
+// Beside what the turn works on, in no body of the scene, looking at the
+// middle of what it works on.
 @(private)
 ai_scene_place :: proc(s:^Session,task:^Ai_Task,w:core.World_Ref,point:[3]f32,entities:[]core.Entity) {
-    target:=point
+    look:=point
     point:=point
     active:=core.NONE
     if len(entities)>0 {active=entities[len(entities)-1]}
@@ -110,37 +116,55 @@ ai_scene_place :: proc(s:^Session,task:^Ai_Task,w:core.World_Ref,point:[3]f32,en
     if g.usable[2] && (!g.usable[0] || abs(g.ends[2].x-g.screen.x)>abs(g.ends[0].x-g.screen.x)) {axis=2}
     axes:=AXES;direction:=axes[axis]
     if g.visible {direction=g.axes[axis]}
-    distance:=max(f32(1.25),g.size+0.55)
-    height:=point.y+g.size+0.35
+    // The gizmo is kept clear only where it is drawn: on what the turn works
+    // on while it is selected. Elsewhere the figure stands beside it, at the
+    // level of its bottom.
+    gizmo:=g.visible && active!=core.NONE && s.selection!=nil && slice.contains(s.selection.entities[:],active)
+    distance:=gizmo?max(f32(1.25),g.size+0.55):f32(1)
+    height:=gizmo?point.y+g.size+0.35:point.y
     if len(entities)>0 && s.app!=nil && s.app.assets!=nil {
         if low,high,found:=entities_bounds(s,w,entities);found {
             edge:=[3]f32{direction.x>=0?high.x:low.x,direction.y>=0?high.y:low.y,direction.z>=0?high.z:low.z}
-            distance=max(distance,direction.x*(edge.x-point.x)+direction.y*(edge.y-point.y)+direction.z*(edge.z-point.z)+0.55)
-            height=max(height,high.y+0.35)
+            beside:=direction.x*(edge.x-point.x)+direction.y*(edge.y-point.y)+direction.z*(edge.z-point.z)+0.55
+            distance=gizmo?max(distance,beside):beside
+            height=gizmo?max(height,high.y+0.35):low.y
+            look=(low+high)*0.5
         }
     }
     point+=direction*(distance+f32(task.color_index%3)*0.55)
-    point.y=max(point.y+g.size+0.35,height)
-    task.anchor,task.anchor_set=point,true
-    task.facing=presence_yaw(target-point)
+    point.y=gizmo?max(point.y+g.size+0.35,height):height
+    if s.app!=nil && s.viewport!=nil {
+        if _,low,high,loaded:=presence_mesh(s.app.assets);loaded {point=presence_free_place(presence_space(w,low,high),low,point,look,orbit_position(s.viewport.orbit))}
+    }
+    task.anchor,task.anchor_set,task.look=point,true,look
 }
+
+// The latest entities a transaction changed that the figure of a turn looks at.
+AI_SCENE_TARGETS :: 64
 
 @(private)
 ai_scene_follow :: proc(s:^Session,task:^Ai_Task,w:core.World_Ref,rows:[]history.Change_Row) {
-    if s.viewport==nil {return}
+    targets:[AI_SCENE_TARGETS]core.Entity
+    count:=0
+    pivot:[3]f32
     #reverse for row in rows {
+        if count==len(targets) {break}
         e:=history.change_entity(w,row.id)
-        if !entity_alive(w,e) {
-            // What it deleted: beside where it was.
-            if place,deleted:=ai_review_deleted_world(w,task,row.id,0);deleted {
-                ai_scene_place(s,task,w,place.position,nil)
-                break
-            }
-            continue
+        if !entity_alive(w,e) || slice.contains(targets[:count],e) {continue}
+        if count==0 {pivot=entity_world(w,e).position}
+        targets[count]=e
+        count+=1
+    }
+    if count>0 {
+        ai_scene_place(s,task,w,pivot,targets[:count])
+        return
+    }
+    // It only deleted: beside where the last one was.
+    #reverse for row in rows {
+        if place,deleted:=ai_review_deleted_world(w,task,row.id,0);deleted {
+            ai_scene_place(s,task,w,place.position,nil)
+            return
         }
-        targets:=[1]core.Entity{e}
-        ai_scene_place(s,task,w,entity_world(w,e).position,targets[:])
-        break
     }
 }
 
@@ -164,9 +188,9 @@ ai_scene_figure_of :: proc(s:^Session,task:^Ai_Task) -> ^Presence {
 }
 
 @(private)
-ai_scene_figure_prepare :: proc(s:^Session,task:^Ai_Task,figure:^Presence) -> bool {
+ai_scene_figure_prepare :: proc(s:^Session,w:core.World_Ref,task:^Ai_Task,figure:^Presence) -> bool {
     eyes,_,ok:=ai_scene_eyes(s,task)
-    return ok && presence_prepare(s,figure,eyes,task.facing,ai_agent_color(task),agent_level(int(task.color_index)),u64(task.id))
+    return ok && presence_prepare(s,figure,eyes,task.look,ai_agent_color(task),agent_level(int(task.color_index)),u64(task.id),w)
 }
 
 @(private)
@@ -207,7 +231,7 @@ ai_scene_draw :: proc(s:^Session,w:core.World_Ref) {
     for &task,index in m.tasks[:m.task_count] {
         if !ai_scene_figure_shown(s,w,&task) {continue}
         task.figure_shown=true
-        if ai_scene_figure_prepare(s,&task,&state.figures[index]) {host.extras_instance_add(&s.app.extras,state.figures[index].instance)}
+        if ai_scene_figure_prepare(s,w,&task,&state.figures[index]) {host.extras_instance_add(&s.app.extras,state.figures[index].instance)}
         if rect,ok:=ai_scene_screen(s,w,&task);ok {
             color:=ai_agent_color(&task)
             presence_icon_draw(s,rect,ai_agent_icon(&task),color)

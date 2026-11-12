@@ -145,6 +145,37 @@ app_gpu_destroy :: proc(app:^App) {
     }
 }
 
+// Gives an application made without a window the one window describes, from
+// the next frame on: its device presents to it, its frames last what the
+// clock says at the pace of the display and its mixer plays on the output of
+// the system. The worlds and what the GPU holds stay. On an error it goes on
+// without a window, as it was.
+app_window_open :: proc(app:^App,window:platform.Window_Desc) -> App_Error {
+    p:=app.platform
+    if p==nil || !p.headless {return .None}
+    if platform.window_attach(p,window)!=.None {return .Platform_Failed}
+    if app.device!=nil {
+        source:=platform.surface_source(p)
+        surface:=rhi.Surface_Desc{vulkan_create=source.vulkan_create,vulkan_user=source.vulkan_user,metal_layer=source.metal_layer,width=source.width,height=source.height,vsync=true}
+        if !rhi.swapchain_attach(app.device,surface) {
+            log.errorf("GPU device: %s",rhi.device_error(app.device))
+            platform.window_detach(p)
+            return .Device_Failed
+        }
+    }
+    // A window shows each frame to someone, who would see one wait for the driver.
+    if app.renderer!=nil {app.renderer.pipelines_async=true}
+    app.window=window
+    app.paced=true
+    p.fixed_dt=0
+    platform.set_pacing(p,{limit=platform.FRAME_PACING_DEFAULT.limit,vsync=true})
+    if app.mixer!=nil && platform.audio_device_is_open(p) {
+        platform.audio_device_close(p)
+        if platform.audio_device_open(p,app.mixer)!=.None {log.warn("the window opened without sound: the audio output of the system could not open")}
+    }
+    return .None
+}
+
 // Ends the player at the end of this frame with code as its exit status; the
 // first library that asks decides it.
 app_exit :: proc(app:^App,code:int) {
