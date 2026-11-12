@@ -3,6 +3,7 @@ package foliage_editor
 import "core:math"
 import "core:fmt"
 import "core:math/linalg"
+import "core:slice"
 import "core:strings"
 import "mirai:asset"
 import "mirai:core"
@@ -42,7 +43,7 @@ Type_Add_Params :: struct {
     rule:bool `mirai:"optional,label=It stands only where slope and ground_height and layers take it"`,
     slope:[2]f32 `mirai:"optional,label=Degrees from horizontal of its rule"`,
     ground_height:[2]f32 `mirai:"optional,label=Metres of the ground of its rule in the space of the Foliage"`,
-    layers:[foliage.RULE_LAYERS][LAYER_NAME_BYTES]u8 `mirai:"optional,text,label=The layers of the terrain of its rule by their material (a path or its stem; default is one without a material); an empty list takes any"`,
+    layers:[foliage.RULE_LAYERS][LAYER_NAME_BYTES]u8 `mirai:"optional,text,label=The layers of the terrain of its rule by their material (a path or its stem); an empty list takes any"`,
     weight:f32 `mirai:"optional,min=0,max=1,label=Of those layers together at least"`,
     fade_distance:f32 `mirai:"optional,min=0,unit=m"`,
     cull_distance:f32 `mirai:"optional,min=0,unit=m"`,
@@ -65,7 +66,7 @@ Type_Set_Params :: struct {
     rule:bool `mirai:"optional,label=It stands only where slope and ground_height and layers take it"`,
     slope:[2]f32 `mirai:"optional,label=Degrees from horizontal of its rule"`,
     ground_height:[2]f32 `mirai:"optional,label=Metres of the ground of its rule in the space of the Foliage"`,
-    layers:[foliage.RULE_LAYERS][LAYER_NAME_BYTES]u8 `mirai:"optional,text,label=The layers of the terrain of its rule by their material (a path or its stem; default is one without a material); an empty list takes any"`,
+    layers:[foliage.RULE_LAYERS][LAYER_NAME_BYTES]u8 `mirai:"optional,text,label=The layers of the terrain of its rule by their material (a path or its stem); an empty list takes any"`,
     weight:f32 `mirai:"optional,min=0,max=1,label=Of those layers together at least"`,
     fade_distance:f32 `mirai:"optional,min=0,unit=m"`,
     cull_distance:f32 `mirai:"optional,min=0,unit=m"`,
@@ -262,28 +263,46 @@ ground_settled :: proc(s:^editor.Session,e:core.Entity) -> ^foliage.Ground_Owner
     waited:=Waited{e}
     missing :: proc(s:^editor.Session,user:rawptr) -> bool {
         owner:=held(s,user)
-        return owner==nil || owner.layer_count==0
+        return owner==nil || len(owner.layers)==0
     }
     editor.api_settle(s,&waited,missing)
     return held(s,&waited)
 }
 
-// The bits of the layers of its rule that the names of a type stand for.
+// The materials of the layers of its rule that the names of a type stand
+// for: of the layers of the terrains under the foliage.
 @(private)
-rule_layers :: proc(s:^editor.Session,call:^api.Call,ground:^foliage.Ground_Owner,names:[][LAYER_NAME_BYTES]u8,count:int) -> (bits:u32,ok:bool) {
-    for &name in names[:clamp(count,0,len(names))] {
-        if ground==nil || ground.layer_count==0 {api.call_fail(call,api.INVALID_PARAMS,"The foliage stands on no terrain, so its rule has no layers to name: make the terrain first");return}
-        at,problem:=asset.slot_named(asset.slot_names(&s.app.assets.registry,ground.layers[:ground.layer_count]),ground.layers[:ground.layer_count],base.text_get(name[:]),"layers of the terrain under the foliage")
-        if problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
-        bits|=1<<u32(at)
+rule_layers :: proc(s:^editor.Session,call:^api.Call,ground:^foliage.Ground_Owner,names:[][LAYER_NAME_BYTES]u8,count:int) -> (layers:[foliage.RULE_LAYERS]base.Asset_Id,ok:bool) {
+    if count<=0 {return {},true}
+    materials:=make([dynamic]base.Asset_Id,context.temp_allocator)
+    if ground!=nil {
+        for set in ground.layers {for material in set {if material!={} && !slice.contains(materials[:],material) {append(&materials,material)}}}
     }
-    return bits,true
+    if len(materials)==0 {api.call_fail(call,api.INVALID_PARAMS,"The foliage stands on no terrain whose layers have materials, so its rule has no layers to name: make the terrain first, or give its layers materials");return}
+    for &name,i in names[:clamp(count,0,len(names))] {
+        at,problem:=asset.slot_named(asset.slot_names(&s.app.assets.registry,materials[:]),materials[:],base.text_get(name[:]),"layers of the terrain under the foliage")
+        if problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
+        layers[i]=materials[at]
+    }
+    return layers,true
+}
+
+// Whether a point of the world a field gives, and what reaches around it in
+// x and z of the space of the Foliage, are where the Foliage holds instances;
+// with the failure of the call when they are not.
+@(private)
+point_held :: proc(call:^api.Call,field:string,point:[3]f32,to_local:mm.Mat4,reach:f32=0) -> bool {
+    local:=mm.mat4_point(to_local,point)
+    held:=foliage.POSITION_MAX-reach
+    if abs(local.x)<=held && abs(local.y)<=foliage.POSITION_MAX && abs(local.z)<=held {return true}
+    api.call_failf(call,api.INVALID_PARAMS,"%s is at %v in the space of the Foliage: what it changes reaches past the %.0f m from its entity along each axis that a foliage holds; give a point nearer the Foliage, or move the Foliage",field,local,foliage.POSITION_MAX)
+    return false
 }
 
 // Puts the values the params of a type give on it; they are of its rule and
 // of how it shows, what is not given stays.
 @(private)
-type_values :: proc(call:^api.Call,t:^foliage.Foliage_Type,p:^$T,layers:u32) {
+type_values :: proc(call:^api.Call,t:^foliage.Foliage_Type,p:^$T,layers:[foliage.RULE_LAYERS]base.Asset_Id) {
     if editor.tool_call_given(call,"density") {t.density=p.density}
     if editor.tool_call_given(call,"scale") {t.scale={min(p.scale.x,p.scale.y),max(p.scale.x,p.scale.y)}}
     if editor.tool_call_given(call,"height") {t.height={min(p.height.x,p.height.y),max(p.height.x,p.height.y)}}
@@ -406,6 +425,7 @@ api_paint :: proc(s:^editor.Session,call:^api.Call) {
     from,to:=p.at,p.to!={}?p.to:p.at
     // The ground of the cells the stroke reaches, for what it places.
     reach:=clamp(p.radius,RADIUS_MIN,RADIUS_MAX)/max(abs(owner.scale.x),1e-6)
+    if !point_held(call,"at",from,to_local,reach) || !point_held(call,"to",to,to_local,reach) {return}
     low,_:=cells_around(linalg.min(mm.mat4_point(to_local,from),mm.mat4_point(to_local,to)),reach)
     _,high:=cells_around(linalg.max(mm.mat4_point(to_local,from),mm.mat4_point(to_local,to)),reach)
     ground=ground_settle(s,e,low,high)
@@ -460,6 +480,7 @@ api_place :: proc(s:^editor.Session,call:^api.Call) {
     if t==nil {return}
     to_local,inverted:=mm.transform_inverse_matrix(owner)
     if !inverted {api.call_fail(call,api.INVALID_PARAMS,"The transform of the Foliage cannot be inverted");return}
+    if !point_held(call,"at",p.at,to_local) {return}
     hit:=editor.pick_ray(s,world,mm.Ray{p.at+{0,1000,0},{0,-1,0}},4000)
     at,normal:=p.at,[3]f32{0,1,0}
     if hit.entity!=core.NONE {at,normal=hit.position,hit.normal}

@@ -7,7 +7,8 @@ import mm "mirai:std/math"
 
 // A ground that is the plane y = height over x and z from -32 to 32 m, with
 // no surface over x and z from 4 to 8 m, as a provider of core.Ground_Queries
-// gives it.
+// gives it: two terrains of one material, its second layer over x >= 0 and
+// its first below.
 @(private)
 @(test_world)
 Ground_World :: struct {
@@ -38,6 +39,7 @@ ground_test_open :: proc(w:core.World_Ref) -> (core.Ground_Query,bool) {
         if coarse {f.coarse+=1}
         if abs(origin.x)>32 || abs(origin.z)>32 {return}
         if origin.x>4 && origin.x<8 && origin.z>4 && origin.z<8 {return {},.Empty}
+        if origin.x<0 {return {point={origin.x,f.height,origin.z},normal={0,1,0},weights={255,0,0,0},layers={0={7,7}}},.Ground}
         return {point={origin.x,f.height,origin.z},normal={0,1,0},weights={0,255,0,0},layers={1={7,7}}},.Ground
     }
     return {user=f,probe=probe,spacing=1},true
@@ -90,8 +92,14 @@ the_ground_of_foliage_is_read_where_the_ground_changed :: proc(t:^testing.T) {
     testing.expect(t,ok && height==2)
     _,_,ok=ground_at(tile,6,6)
     testing.expect(t,!ok,"no ground where it shows no surface")
-    weights,_:=ground_weights_at(tile,16,16)
-    testing.expect(t,weights=={0,1,0,0} && owner.layers[1]=={7,7} && owner.layer_count==1)
+    // Each terrain keeps its own order of layers, and a rule finds the material on both.
+    testing.expect_value(t,len(owner.layers),2)
+    mask:=layer_mask({layers={{7,7},{},{},{}}},owner.layers[:])
+    for coord in ([2][2]i32{{0,0},{-1,-1}}) {
+        cell,_:=ground_cell(owner,coord)
+        weight,known:=ground_layer_weight(cell,&mask,16,16)
+        testing.expectf(t,known && weight==1,"%v: %v",coord,weight)
+    }
     // A stable call reads nothing.
     revision:=owner.revision
     ground_test_step(&f)

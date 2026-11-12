@@ -19,13 +19,13 @@ import "mirai:std/serial"
 // its place. An override whose id the generator no longer makes is kept, as
 // an orphan.
 
-VERSION :: 3
+VERSION :: 4
 CELL_SIZE :: f32(32)    // metres across x and z of a cell
 TYPES_MAX :: 1024
 CELLS_MAX :: 1 << 20
 INSTANCES_MAX :: 1 << 26 // manual instances and overrides of a source, each
-COORD_MAX :: 1 << 24     // of a cell, in cells from the origin of its entity
-POSITION_MAX :: f32(1e6) // metres above or below the plane of the entity
+POSITION_MAX :: f32(1e6) // metres from the entity along each axis: a position there keeps 6 cm
+COORD_MAX :: i32(POSITION_MAX/CELL_SIZE) // of a cell, in cells from the origin of its entity
 
 Foliage_Info :: struct {
     seed:u32,      // of the generated instances
@@ -69,15 +69,17 @@ Foliage_Type :: struct {
 }
 
 // Where a type stands: the slope and height of the ground in their ranges,
-// and the layers of the terrain under it with at least weight of them.
+// and the layers of the ground under it with at least weight of them. A
+// layer is named by its material, which means the same on every terrain
+// whatever the order of its layers.
 Foliage_Rule :: struct {
     enabled:bool,
     slope:[2]f32 `mirai:"angle"`,   // from horizontal: lowest and highest
     height:[2]f32 `mirai:"unit=m"`, // of the ground in the space of the entity: lowest and highest
-    layers:u32,                     // bits of the layers of the terrain it stands on; 0: any
+    layers:[RULE_LAYERS]base.Asset_Id, // the materials of the layers it stands on; none: any
     weight:f32 `mirai:"min=0,max=1"`, // of those layers together, at least
 }
-RULE_LAYERS :: 4 // the bits of Foliage_Rule.layers, as the layers of a terrain
+RULE_LAYERS :: 4
 
 FOLIAGE_TYPE_DEFAULT :: Foliage_Type{density=0.5,scale={0.8,1.2},height={1,1},yaw=6.2831855,align=1,cull_distance=120,fade_distance=100,wind=1,size={0.3,2,0},rule={slope={0,math.PI/2},height={-POSITION_MAX,POSITION_MAX},weight=0.5}}
 
@@ -327,22 +329,21 @@ type_valid :: proc (type:Foliage_Type,next:u32) -> bool {
     for v in ([7]f32{t.offset.x,t.offset.y,r.slope.x,r.slope.y,r.height.x,r.height.y,r.weight}) {if !finite(v) {return false}}
     if t.offset.x>t.offset.y || abs(t.offset.x)>POSITION_MAX || abs(t.offset.y)>POSITION_MAX {return false}
     if r.slope.x<0 || r.slope.x>r.slope.y || r.slope.y>math.PI/2+1e-4 || r.height.x>r.height.y || abs(r.height.x)>POSITION_MAX || abs(r.height.y)>POSITION_MAX {return false}
-    return r.weight>=0 && r.weight<=1 && r.layers>>RULE_LAYERS==0
+    return r.weight>=0 && r.weight<=1
 }
 
 // Whether a type stands at a point of its ground: its rule (when on) with the
-// height, the normal and the weights of the ground there.
-rule_allows :: proc "contextless" (t:Foliage_Type,height:f32,normal:[3]f32,weights:[4]f32,weights_known:bool) -> bool {
+// height and the normal of the ground there, and the weight there of the
+// layers it names (ground_layer_weight), known or not.
+rule_allows :: proc "contextless" (t:Foliage_Type,height:f32,normal:[3]f32,weight:f32,weight_known:bool) -> bool {
     r:=t.rule
     if !r.enabled {return true}
     slope:=math.acos(clamp(normal.y,-1,1))
     if !(slope>=r.slope.x && slope<=r.slope.y && height>=r.height.x && height<=r.height.y) {return false}
-    if r.layers==0 {return true}
-    if !weights_known {return false}
-    sum:f32
-    for i in 0..<RULE_LAYERS {if r.layers&(1<<u32(i))!=0 {sum+=weights[i]}}
+    if r.layers=={} {return true}
+    if !weight_known {return false}
     // Within half a step of the 255 of the weights: a full layer between samples takes weight 1.
-    return sum+0.5/255>=r.weight
+    return weight+0.5/255>=r.weight
 }
 
 @(private)

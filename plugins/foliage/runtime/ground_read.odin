@@ -4,7 +4,6 @@ import "core:math"
 import "core:slice"
 import "mirai:core"
 import scene "mirai:engine/scene"
-import "mirai:std/base"
 import "mirai:std/jobs"
 import mm "mirai:std/math"
 
@@ -35,9 +34,17 @@ Tile_Work :: struct {
     coarse:bool,
     generates:bool, // its cell: one without ground there is a problem
     heights:[]f32,
-    weights:[][4]u8,
-    layers:[RULE_LAYERS]base.Asset_Id,
+    weights:[]Layer_Weights, // their layers index those of the tile
+    layers:Tile_Layers,
     any:bool,
+}
+
+// The Ground_Layers a tile meets, which its samples index while it is read.
+TILE_LAYERS :: 8
+Tile_Layers :: struct {
+    items:[TILE_LAYERS]Ground_Layers,
+    count:int,
+    over:bool, // more than TILE_LAYERS: the samples of those have no layers
 }
 
 @(step="fixed frame",loops="game editor",stage="simulate")
@@ -182,8 +189,9 @@ task_order :: proc(a,b:Ground_Task) -> slice.Ordering {
 
 // The heights of a tile of an owner: the highest ground under each sample
 // along the down of the Foliage, in its space, and the weights of its layers
-// there; false when no ground covers any of it.
-tile_sample :: proc(q:^core.Ground_Query,owner_world,owner_local:mm.Mat4,coord:[2]i32,samples:int,heights:[]f32,weights:[][4]u8,coarse:=false) -> (layers:[RULE_LAYERS]base.Asset_Id,any:bool) {
+// there, of the materials of that ground: those weights index in layers.
+// False when no ground covers any of it.
+tile_sample :: proc(q:^core.Ground_Query,owner_world,owner_local:mm.Mat4,coord:[2]i32,samples:int,heights:[]f32,weights:[]Layer_Weights,coarse:=false) -> (layers:Tile_Layers,any:bool) {
     down:=-(owner_world*[4]f32{0,1,0,0}).xyz
     step:=CELL_SIZE/f32(samples-1)
     corner:=cell_corner(coord)
@@ -194,8 +202,13 @@ tile_sample :: proc(q:^core.Ground_Query,owner_world,owner_local:mm.Mat4,coord:[
             hit,found:=q.probe(q.user,mm.mat4_point(owner_world,corner+{f32(x)*step,0,f32(z)*step}),down,coarse)
             any||=found!=.None
             if found!=.Ground {continue}
-            heights[k],weights[k]=mm.mat4_point(owner_local,hit.point).y,hit.weights
-            if layers=={} {layers=hit.layers}
+            heights[k]=mm.mat4_point(owner_local,hit.point).y
+            if hit.weights=={} {continue}
+            at:=0
+            for at<layers.count && layers.items[at]!=hit.layers {at+=1}
+            if at==TILE_LAYERS {layers.over=true;continue}
+            if at==layers.count {layers.items[at]=hit.layers;layers.count+=1}
+            weights[k]={hit.weights,u8(at)}
         }
     }
     return
@@ -230,7 +243,7 @@ ground_read :: proc(ground:^Foliage_Ground,q:^core.Ground_Query,data:core.Ref(Fo
         coarse:=!task.fine && !tile_fine(&near,task.coord,was!=0 && was!=COARSE_SAMPLES)
         n:=coarse?COARSE_SAMPLES:int(owner.samples)
         cell:=source_cell(&entry.source,task.coord)
-        append(&reading.work,Tile_Work{task=task,owner_world=owner_world,owner_local=owner_local,samples=n,coarse=coarse,generates=cell!=nil && cell.generate,heights=make([]f32,n*n,context.temp_allocator),weights=make([][4]u8,n*n,context.temp_allocator)})
+        append(&reading.work,Tile_Work{task=task,owner_world=owner_world,owner_local=owner_local,samples=n,coarse=coarse,generates=cell!=nil && cell.generate,heights=make([]f32,n*n,context.temp_allocator),weights=make([]Layer_Weights,n*n,context.temp_allocator)})
     }
     remove_range(&ground.queue,0,taken)
     sample :: proc(reading:^Reading,first,last:int,worker:int) {
@@ -248,9 +261,17 @@ ground_read :: proc(ground:^Foliage_Ground,q:^core.Ground_Query,data:core.Ref(Fo
             if w.generates {core.report(problems,w.task.entity,"foliage.no_ground","cell %v of this Foliage generates instances but no ground is under it, so none stands there: move the Foliage or the ground under the cell, or turn its generator off (foliage.paint ungenerate)",w.task.coord)}
             continue
         }
-        if w.layers!={} {
-            owner.layers,owner.layer_count=w.layers,0
-            for layer in w.layers {if layer!={} {owner.layer_count+=1}}
+        // The layers of the tile by their index among those of the owner.
+        index:[TILE_LAYERS]u8
+        known:[TILE_LAYERS]bool
+        for layers,i in w.layers.items[:w.layers.count] {index[i],known[i]=ground_layers_index(owner,layers)}
+        for &sample in w.weights {
+            if sample.weights=={} {continue}
+            if !known[sample.layers] {sample={};continue}
+            sample.layers=index[sample.layers]
+        }
+        if w.layers.over || slice.contains(known[:w.layers.count],false) {
+            core.report(problems,w.task.entity,"foliage.layers","the ground under cell %v of this Foliage has more terrains with other layers than it keeps apart (%d in a cell, LAYERS_MAX in all), so a rule of layers takes none of the ground of some of them: give the terrains under it the same layers, or fewer terrains",w.task.coord,TILE_LAYERS)
         }
         same:=at>=0 && int(ground_tile_samples(owner,w.task.coord))==w.samples
         heights,weights,tile:=ground_tile(owner,w.task.coord,u32(w.samples))
