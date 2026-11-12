@@ -78,6 +78,10 @@ LINE_CAPACITY :: 4096         // vertices of the lines the editor draws in a fra
 INDICATOR_RADIUS :: f32(11)
 INDICATOR_HIT :: f32(14)
 INDICATOR_EXTENT :: f32(0.35) // m: half the box an entity without a body counts for when framed
+// m from the camera, at VIEW_FOV, where a disc starts to fade and where it is gone: no farther is it
+// drawn or picked, unless it is selected or outlined (indicator_shade).
+INDICATOR_FADE :: f32(30)
+INDICATOR_REACH :: f32(50)
 HIGHLIGHT_SELECTED :: u8(1)
 HIGHLIGHT_DESCENDANT :: u8(2)
 
@@ -146,7 +150,7 @@ Viewport :: struct {
     modifiers:ui.Modifiers,
     dt:f32,
     gizmo:Gizmo_State,
-    indicators:[dynamic]core.Entity, // the entities without a body, as last found
+    indicators:[dynamic]core.Entity, // the entities without a body, as last found, at any distance
     indicators_key:[2]u64,           // the world and the hierarchy the indicators were found in, and whether ghosts counted
     indicators_seen:[3]core.Seen,    // the meshes, the parents and Disabled then
     indicators_shapes:[3]core.Shape, // the transforms, Hidden and the ids then
@@ -832,8 +836,11 @@ indicators_draw :: proc(s:^Session,w:core.World_Ref) {
     margin:=INDICATOR_RADIUS+8
     spots:=core.world_table_of(w,erender.Spot_Light)
     es:=core.world_entities(w)
+    zoom:=indicator_zoom(v)
     for e in v.indicators {
         world:=entity_world(w,e)
+        shade:=indicator_shade(s,e,world.position,zoom)
+        if !(shade>0) {continue}
         p,front:=viewport_screen(v,world.position)
         if !front || p.x<v.origin.x-margin || p.y<v.origin.y-margin || p.x>v.origin.x+v.size.x+margin || p.y>v.origin.y+v.size.y+margin {continue}
         icon,base_color:=entity_icon(s,w,e)
@@ -843,10 +850,10 @@ indicators_draw :: proc(s:^Session,w:core.World_Ref) {
             tip,tip_front:=viewport_screen(v,world.position+mm.quat_forward(world.rotation))
             if length:=linalg.distance(tip,p);tip_front && length>radius {
                 direction:=(tip-p)/length
-                ui.draw_line(ctx,p+direction*radius,p+direction*min(length,radius+48),1.6,ui.color_alpha(base_color,hidden?110:200))
+                ui.draw_line(ctx,p+direction*radius,p+direction*min(length,radius+48),1.6,ui.color_alpha(base_color,indicator_alpha(hidden?110:200,shade)))
             }
         }
-        glyph:=ui.color_alpha(base_color,hidden?130:255)
+        glyph:=ui.color_alpha(base_color,indicator_alpha(hidden?130:255,shade))
         level:=entity_level(v,e)
         if level!=0 {
             color:=level_color(level)
@@ -854,12 +861,34 @@ indicators_draw :: proc(s:^Session,w:core.World_Ref) {
             ui.draw_circle(ctx,p,radius,ui.color_alpha(ui.tone(ctx,"panel"),200))
             ui.draw_ring(ctx,p,radius,2.2,color)
         } else {
-            ui.draw_circle(ctx,p,radius,ui.color_alpha(ui.tone(ctx,"panel"),hidden?110:165))
-            ui.draw_ring(ctx,p,radius,1.4,ui.color_alpha(base_color,hidden?110:210))
+            ui.draw_circle(ctx,p,radius,ui.color_alpha(ui.tone(ctx,"panel"),indicator_alpha(hidden?110:165,shade)))
+            ui.draw_ring(ctx,p,radius,1.4,ui.color_alpha(base_color,indicator_alpha(hidden?110:210,shade)))
         }
         ui.draw_icon(ctx,icon,{p.x-7,p.y-7,14,14},glyph)
     }
 }
+
+// How much nearer the field of view of the camera brings what it sees than VIEW_FOV does: the
+// reach of the discs grows with it, so that a disc fades at the same size on the screen.
+indicator_zoom :: proc(v:^Viewport) -> f32 {
+    fov:=v.camera.fov_y
+    if !(fov>0 && fov<180) {return 1}
+    return math.tan(VIEW_FOV*0.5*mm.RAD_PER_DEG)/math.tan(fov*0.5*mm.RAD_PER_DEG)
+}
+
+// How much of the disc of an entity at a place shows: all of it up to INDICATOR_FADE from the
+// camera, nothing from INDICATOR_REACH, both times zoom; a selected or outlined one, all of it
+// wherever it is.
+indicator_shade :: proc(s:^Session,e:core.Entity,position:[3]f32,zoom:f32) -> f32 {
+    v:=s.viewport
+    distance:=linalg.distance(position,v.camera.position)/zoom
+    shade:=clamp((INDICATOR_REACH-distance)/(INDICATOR_REACH-INDICATOR_FADE),0,1)
+    if shade<1 && (entity_level(v,e)!=0 || s.selection!=nil && history.selection_has(s.selection,e)) {return 1}
+    return shade
+}
+
+@(private)
+indicator_alpha :: proc "contextless" (alpha:u8,shade:f32) -> u8 {return u8(f32(alpha)*shade)}
 
 // Finds the entities without a body again only when what decides it changed.
 @(private)
@@ -881,7 +910,7 @@ indicators_sync :: proc(s:^Session,w:core.World_Ref,ghosts:bool) {
     if !moved && key==v.indicators_key {return}
     v.indicators_key=key
     clear(&v.indicators)
-    items:=scene_items(s,w,ghosts)
+    items:=scene_items(s,w,ghosts,far=true)
     for item in scene_item_next(&items) {
         if item.indicator {append(&v.indicators,item.entity)}
     }
