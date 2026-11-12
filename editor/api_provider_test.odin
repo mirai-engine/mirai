@@ -39,6 +39,7 @@ api_test_run_v2 :: proc(s:^Session,call:^api.Call) {api.call_result(call,Api_Tes
 @(private="file")
 API_HAND_WRITTEN :: [?]struct{file,pattern:string,count:int}{
     {"editor/api/rpc.odin","writes_result=true",1},      // engine.describe writes the schemas themselves
+    {"editor/api_methods.odin","writes_result=true",1},  // batch writes the answer of each call into the response as it runs
     {"editor/api_material_instance.odin","rpc_init(",2}, // parameters and textures by the names the program of the material gives
 }
 
