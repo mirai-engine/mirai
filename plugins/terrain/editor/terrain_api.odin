@@ -38,7 +38,7 @@ Create_Params :: struct {
     heightmap:[512]u8 `mirai:"text,optional,label=A PNG (16-bit too) or TGA or BMP of the project whose heights it takes in place of samples"`,
     height_scale:f32 `mirai:"optional,unit=m,label=How far the white of the heightmap stands over its black"`,
     height_offset:f32 `mirai:"optional,unit=m,label=The height of its black"`,
-    at:[3]f32 `mirai:"optional,label=Where its entity stands; omitted: under the target of the view"`,
+    at:[3]f32 `mirai:"optional,label=Where its entity stands, the center of the terrain; omitted: under the target of the view"`,
     ground:editor.Api_Entity_Text `mirai:"text,entity,optional,label=Of a volume: a Heightfield terrain it joins, standing on its samples and centered at at, its field its ground to dig into; it takes the spacing of the Heightfield"`,
 }
 
@@ -148,9 +148,9 @@ Terrain_Interior_Result :: struct {
 
 Terrain_Sample_Result :: struct {
     found:bool,
-    height:f32 `mirai:"optional"`,
+    height:f32,
     normal:[3]f32 `mirai:"optional"`,
-    slope:f32 `mirai:"optional,unit=deg"`,
+    slope:f32 `mirai:"unit=deg"`,
     weights:serial.Json `mirai:"optional"`,
     hole:bool `mirai:"optional"`,
     layers:int `mirai:"optional"`,
@@ -184,9 +184,7 @@ terrain_api_register :: proc(s:^editor.Session) {
 // the tool edits the selected one.
 @(private)
 api_terrain :: proc(s:^editor.Session,call:^api.Call,named:[]u8) -> (tool:^Terrain_Tool,world:core.World_Ref,ok:bool) {
-    // A terrain just made takes its place in the world with the next frame.
     given:=base.text_get(named)
-    if api_terrain_unplaced(s,&given) {editor.api_settle(s,&given,api_terrain_unplaced)}
     tool=core.world_storage_of(core.world_ref(s.editor_world,s.info,.Editor),Terrain_Tool)
     world=editor.edited_world(s)
     terrains:=core.world_table_of(world,terrain.Terrain);worlds:=core.world_table_of(world,core.World_Transform)
@@ -197,21 +195,16 @@ api_terrain :: proc(s:^editor.Session,call:^api.Call,named:[]u8) -> (tool:^Terra
     if !named_found {return}
     if !core.has(terrains,e) {api.call_failf(call,api.INVALID_PARAMS,"%s is not an entity with a Terrain: scene.inspect lists them",given);return}
     if s.app==nil || s.app.assets==nil {api.call_fail(call,api.INTERNAL_ERROR,"The editor has no assets loaded");return}
+    // Where it is now, also just made or moved by scene.write, with its ground and colliders.
+    editor.api_place_settle(s,e)
+    world=editor.edited_world(s)
+    terrains,worlds=core.world_table_of(world,terrain.Terrain),core.world_table_of(world,core.World_Transform)
     if !core.has(worlds,e) {api.call_failf(call,api.INVALID_PARAMS,"Terrain %s has no place in the world: give its entity a place with scene.write",given);return}
     marker,_:=core.get(terrains,e)
     if !terrain.terrain_stamp(s.app.assets,marker.source).found {api.call_failf(call,api.INVALID_PARAMS,"The .terrain of terrain %s is not among the assets: asset.list shows them",given);return}
     if !stroke_prepare(tool,s.app.assets,s.app.allocator,terrains,worlds,editor.Pick{entity=e}) {api.call_failf(call,api.INVALID_PARAMS,"The .terrain of terrain %s could not be read: engine.diagnostics says why",given);return}
     if !stroke_baseline(tool) {api.call_fail(call,api.INTERNAL_ERROR,"The terrain history could not be stored: there is not enough memory");return}
     return tool,world,true
-}
-
-// Whether the entity named (^string) is a terrain still without a place in the world.
-@(private)
-api_terrain_unplaced :: proc(s:^editor.Session,user:rawptr) -> bool {
-    world:=editor.edited_world(s)
-    terrains:=core.world_table_of(world,terrain.Terrain);worlds:=core.world_table_of(world,core.World_Transform)
-    e,_:=editor.api_entity_find(world,(^string)(user)^)
-    return terrains!=nil && worlds!=nil && e!=core.NONE && core.has(terrains,e) && !core.has(worlds,e)
 }
 
 @(private)

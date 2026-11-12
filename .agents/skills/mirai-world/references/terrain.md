@@ -415,7 +415,9 @@ ground in the color of the level it shows, a coarser node one.
 `terrain.create`, `terrain.edit`, `terrain.layer`, `terrain.interior`, `terrain.sample`,
 `terrain.heightmap` and `terrain.resize` (`terrain_api.odin`) do what the panel does in the edited
 world on the entity they name (no selection needed), each change an undo step like a
-stroke. `terrain.create` takes a `name` for its entity and file, beside the scene. A layer is named
+stroke, at the place the entity has now: a manual editor runs the frame that places it, and its
+ground and colliders with it. `terrain.create` takes a `name` for its entity and file, beside the
+scene, and takes again the file a deleted terrain of that name left. A layer is named
 by its material
 (`asset.slot_named`: the path or stem, `default` with no material, `#2` for the second of the same).
 A Volume's interior is edited in Paint,
@@ -460,8 +462,8 @@ touches fit in a tick's queue.
   save.
 - `Terrain_Data` copies the sources for Play and snapshots sharing their pages, and a copy onto a
   destination that already has its tables does not allocate; its copy and its `swap` raise `epoch`
-  so that `Terrain_Resident` rebuilds. Clearing the world takes it to its start; `Terrain_Settings`
-  is a project setting and clearing the world does not touch it.
+  so that `Terrain_Resident` and `Terrain_Ground` rebuild. Clearing the world takes it to its
+  start; `Terrain_Settings` is a project setting and clearing the world does not touch it.
 - `Terrain_Resident` (`host,by_world`) stores the derived meshes of each world, which are not
   rebuilt when another world runs in the same frame; `terrain_release` frees them with that world.
   Physics retains geometries for its snapshots; editor and Play share no mutable arrays.
@@ -496,17 +498,20 @@ points) and these plugins:
 ## Ground
 
 `ground.odin` gives `core.Ground_Queries` (set by `terrain_update`), so foliage, navigation and any
-other plugin read the ground without importing terrain. The probe answers the highest terrain along
-a line; a Heightfield read straight down takes its coarse grid when asked or where its pages are
-not in memory, so far from every viewer it still answers, coarser; a Volume there answers
-`Unloaded`, and the page that comes marks its chunks, which announces them. A hole, or the region of
-a stroke the editor holds (not in `Terrain_Data` until confirmed), answers `Empty`. At the end of
-each `terrain_update` the views are made again when the terrains or their places changed
-(`core.touched`) or the data did, and each change is pushed to `changed` as a box of the world: a
-terrain that comes, goes, moves or shows another source (its whole box), the chunks whose version
-passed the change last seen (`terrain_changed`, with a cell around them) and a stroke that begins,
-grows or ends. Another epoch of `Terrain_Data` (a copied, swapped or reloaded world) starts the
-resident meshes anew, and with them the box of every terrain is pushed. `unloaded` names the runs
+other plugin read the ground without importing terrain. Its probe reads `Terrain_Ground`, a `World`
+storage that is not copied (`copy=false`), so that `Ground_Queries.open` finds it from the world:
+its views point into the sources of the `Terrain_Data` of that world. The probe answers the
+highest terrain along a line; a Heightfield read straight down takes its coarse grid when asked
+or where its pages are not in memory, so far from every viewer it still answers, coarser; a
+Volume there answers `Unloaded`, and the page that comes marks its chunks, which announces them.
+A hole, or the region of a stroke the editor holds (not in `Terrain_Data` until confirmed),
+answers `Empty`. At the end of each `terrain_update` the views are made again when the terrains or
+their places changed (`core.touched`) or the data did, and each change is pushed to `changed` as a
+box of the world: a terrain that comes, goes, moves or shows another source (its whole box), the
+chunks whose version passed the change last seen (`terrain_changed`, with a cell around them) and
+a stroke that begins, grows or ends. Another epoch of `Terrain_Data` (a copied, swapped or
+reloaded world) starts the resident meshes and the views anew, and the box of every terrain is
+pushed. `unloaded` names the runs
 of chunks of each solid terrain that have no collider now (not resident, beyond
 `collision_distance`, waiting for a slot or a build); a chunk shown empty has nothing to load. They
 are made again only when the colliders, the terrains or the data change or `Terrain_Resident.marks`

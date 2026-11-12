@@ -27,6 +27,7 @@ Ground_Test :: struct {
     height:f32,
     coarse:int, // probes asked coarse
     plant:core.Entity,
+    problems:core.Problems,
 }
 
 @(private="file")
@@ -44,7 +45,7 @@ ground_test_open :: proc(w:core.World_Ref) -> (core.Ground_Query,bool) {
 
 @(private="file")
 ground_test_step :: proc(f:^Ground_Test) {
-    foliage_ground(&f.ground,&f.requests,core.ref(&f.data),core.read(&f.foliages),core.read(&f.worlds),core.ref(&f.streaming),core.ref(&f.queries),{data=f},nil,nil)
+    foliage_ground(&f.ground,&f.requests,core.ref(&f.data),core.read(&f.foliages),core.read(&f.worlds),core.ref(&f.streaming),core.ref(&f.queries),{data=f},nil,&f.problems)
     clear(&f.queries.changed.items)
 }
 
@@ -82,6 +83,8 @@ the_ground_of_foliage_is_read_where_the_ground_changed :: proc(t:^testing.T) {
     if !testing.expect(t,owner!=nil) {return}
     testing.expect_value(t,owner.samples,u32(33))
     testing.expect_value(t,ground_tile_find(owner,{10,10}),-1)
+    off,_:=ground_cell(owner,{10,10})
+    testing.expect(t,off.absent && f.problems.count==1 && f.problems.entries[0].entity==f.plant,"a cell that generates off the ground has none, and says so")
     tile,_:=ground_cell(owner,{0,0})
     height,_,ok:=ground_at(tile,16,16)
     testing.expect(t,ok && height==2)

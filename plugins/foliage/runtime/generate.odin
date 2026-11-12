@@ -65,12 +65,14 @@ scatter :: proc(seed:u32,coord:[2]i32,t:Foliage_Type,out:^[dynamic]Generated) ->
 // The ground under a cell, in the space of its entity (Foliage_Ground):
 // heights on a grid of samples by samples points over the cell, x first,
 // NaN where there is none, and the weights of the layers of the terrain at
-// each, none when they are not known. Without samples there is no ground
-// known, and the plane y = 0 is taken.
+// each, none when they are not known. Without samples the plane y = 0 is the
+// ground, unless absent: the world has a ground and none is known under the
+// cell (not read yet, or none there), and no generated instance stands there.
 Ground_Cell :: struct {
     samples:int,
     heights:[]f32,
     weights:[][4]u8,
+    absent:bool,
 }
 
 // The height and normal of the ground at x and z from the corner of its
@@ -202,7 +204,7 @@ cell_expand :: proc(s:^Source,cell:^Cell,ground:Ground_Cell,out:^[dynamic]Placed
     clear(&scratch.matched)
     if !room(out,len(cell.manual)) || !room(orphans,len(cell.overrides)) || resize(&scratch.matched,len(cell.overrides))!=nil {return false}
     for b in cell.manual {append(out,placed_grounded(s,cell.coord,b,b.type,MANUAL | u64(b.id),ground))}
-    if cell.generate {
+    if cell.generate && !ground.absent {
         for t in s.types {
             clear(&scratch.points)
             // A point gives one instance at most.

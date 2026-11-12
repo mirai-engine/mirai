@@ -15,9 +15,11 @@ import phys "plugins:physics/runtime"
 // source are not in memory, a Heightfield answers from its coarse grid and a
 // Volume answers Unloaded until the page that comes announces its chunks.
 // Another epoch of Terrain_Data (a copy of the world, a swap, a scene loaded)
-// starts Terrain_Resident anew, and with it every terrain is announced.
-
-Ground :: struct {
+// starts its views anew, and with them every terrain is announced: they point
+// into the sources of the Terrain_Data they were made from, so a copy or a
+// swap of the world does not move them.
+@(storage,copy=false)
+Terrain_Ground :: struct {
     views:[dynamic]Ground_View,
     spacing:f32,
     seen:[3]core.Seen,    // of Terrain, World_Transform and Collider
@@ -40,17 +42,15 @@ Ground_View :: struct {
 
 @(private)
 ground_open :: proc(w:core.World_Ref) -> (core.Ground_Query,bool) {
-    resident:=core.world_storage_of(w,Terrain_Resident)
-    if resident==nil {return {},false}
-    g:=&resident.ground
+    g:=core.world_storage_of(w,Terrain_Ground)
+    if g==nil {return {},false}
     return {user=g,probe=ground_probe,spacing=g.spacing,unloaded=g.unloaded[:]},true
 }
 
 // What the ground of the world is now, at the end of terrain_update, and
 // where it changed.
 @(private)
-ground_update :: proc(resident:^Terrain_Resident,data:^Terrain_Data,terrains:^core.Table(Terrain,$A),colliders:^core.Table(phys.Collider),worlds:^core.Table(core.World_Transform,.Read),focus:Terrain_Focus,queries:^core.Ground_Queries) {
-    g:=&resident.ground
+ground_update :: proc(g:^Terrain_Ground,resident:^Terrain_Resident,data:^Terrain_Data,terrains:^core.Table(Terrain,$A),colliders:^core.Table(phys.Collider),worlds:^core.Table(core.World_Transform,.Read),focus:Terrain_Focus,queries:^core.Ground_Queries) {
     // A terrain that came, went or moved: the transforms of the rest do not count.
     placed:=core.touched(terrains,&g.seen[0])
     moved:=core.changes(worlds,&g.seen[1])
@@ -61,6 +61,8 @@ ground_update :: proc(resident:^Terrain_Resident,data:^Terrain_Data,terrains:^co
     }
     change:=terrain_data_change({data})
     edited:=change!=g.data
+    // Another epoch: the sources the views point at went, and every terrain is announced.
+    if change>>32!=g.data>>32 {clear(&g.views);clear(&g.unloaded)}
     g.data=change
     if placed || edited {
         views:=make([dynamic]Ground_View,0,len(g.views),context.temp_allocator)
@@ -109,7 +111,7 @@ ground_update :: proc(resident:^Terrain_Resident,data:^Terrain_Data,terrains:^co
     }
     if placed | edited | core.touched(colliders,&g.seen[2]) | (resident.marks!=g.marks) {
         g.marks=resident.marks
-        ground_unloaded(resident,data,colliders,worlds,&queries.unloaded)
+        ground_unloaded(g,resident,data,colliders,worlds,&queries.unloaded)
     }
 }
 
@@ -121,7 +123,7 @@ ground_change :: proc(changed:^core.Events(mm.Aabb),view:^Ground_View,low,high:[
 
 @(private)
 ground_probe :: proc(user:rawptr,origin,down:[3]f32,coarse:bool) -> (best:core.Ground_Hit,found:core.Ground_Found) {
-    g:=cast(^Ground)user
+    g:=cast(^Terrain_Ground)user
     up:=-linalg.normalize0(down)
     if up=={} || linalg.is_nan(up.x) || !(abs(origin.x)<max(f32) && abs(origin.y)<max(f32) && abs(origin.z)<max(f32)) {return}
     top:f32
@@ -137,7 +139,7 @@ ground_probe :: proc(user:rawptr,origin,down:[3]f32,coarse:bool) -> (best:core.G
 
 // The ground of one terrain along the line, from above it.
 @(private)
-view_probe :: proc(g:^Ground,view:^Ground_View,origin,down:[3]f32,coarse:bool) -> (hit:core.Ground_Hit,found:core.Ground_Found) {
+view_probe :: proc(g:^Terrain_Ground,view:^Ground_View,origin,down:[3]f32,coarse:bool) -> (hit:core.Ground_Hit,found:core.Ground_Found) {
     s:=view.source
     o:=mm.mat4_point(view.to_local,origin)
     d:=linalg.normalize0((view.to_local*[4]f32{down.x,down.y,down.z,0}).xyz)
@@ -221,8 +223,7 @@ shown_weights :: proc "contextless" (s:^Source,local,normal:[3]f32) -> Weights {
 // comes, goes or turns empty or not (Terrain_Resident.marks); where it
 // changed is pushed.
 @(private)
-ground_unloaded :: proc(resident:^Terrain_Resident,data:^Terrain_Data,colliders:^core.Table(phys.Collider),worlds:^core.Table(core.World_Transform,.Read),unloaded:^core.Events(mm.Aabb)) {
-    g:=&resident.ground
+ground_unloaded :: proc(g:^Terrain_Ground,resident:^Terrain_Resident,data:^Terrain_Data,colliders:^core.Table(phys.Collider),worlds:^core.Table(core.World_Transform,.Read),unloaded:^core.Events(mm.Aabb)) {
     before:=slice.clone(g.unloaded[:],context.temp_allocator)
     clear(&g.unloaded)
     for &owner in resident.owners {

@@ -364,6 +364,14 @@ instances_stand_on_their_ground_and_generated_ones_leave_where_it_has_none :: pr
     defer build_work_destroy(&flat)
     cell_build(&s,cell,{},&flat)
     testing.expect(t,len(work.placed)<len(flat.placed),"generated instances over the hole are not there")
+    // Under a Foliage that has ground, a cell whose ground is not known is not the plane y = 0.
+    owner:Ground_Owner
+    unknown,_:=ground_cell(&owner,{0,0})
+    unread:Build_Work
+    defer build_work_destroy(&unread)
+    cell_build(&s,cell,unknown,&unread)
+    testing.expect_value(t,len(unread.placed),2)
+    for p in unread.placed {testing.expect(t,p.id&MANUAL!=0,"no generated instance where the ground is not known")}
     for p in work.placed {
         switch p.id {
         case MANUAL|10: testing.expect(t,abs(p.position.y-6.5)<1e-4,"a grounded instance stands its offset over the ground")

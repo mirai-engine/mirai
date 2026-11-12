@@ -43,7 +43,7 @@ Build_Options :: struct {
     optimization:Optimization,                  // of the module libraries; the shipped game is always built for speed
     debug:bool,                                 // debug information in the libraries editor and play: a crash names their procedures and lines
     defines:[MAX_DEFINES]Define `mirai:"text,trim"`, // NAME or NAME=value, given to every build of the project
-    compression:Name `mirai:"text"`,            // what its assets and its game are compressed with: none, open, or empty for the best its engine has (Compression)
+    compression:Name `mirai:"text"`,            // what its assets and its game are compressed with: none, open, or empty for the best its engine has (asset.Codecs)
 }
 
 // How the game opens: maximized, on the whole display, or as a window of

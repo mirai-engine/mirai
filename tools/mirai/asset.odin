@@ -10,7 +10,6 @@ import "mirai:asset"
 import audio "mirai:audio"
 import "mirai:cook/build"
 import "mirai:editor/api"
-import "mirai:host"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
@@ -763,7 +762,7 @@ asset_repack :: proc(root:string,args:[]string) -> int {
         types.codecs=.Open
         for at:=os.dir(project.path_absolute(path,context.temp_allocator));at!="";at=os.dir(at) {
             if os.is_file(project.path(at,project.PROJECT_FILE,allocator=context.temp_allocator)) {
-                types.codecs=host.codecs_of(project.compression(at,root))
+                types.codecs=asset.project_codecs(at,root)
                 break
             }
             if os.dir(at)==at {break}

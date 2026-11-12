@@ -1,7 +1,9 @@
 package asset
 
+import "core:os"
 import "core:testing"
 import "compressor:data"
+import "mirai:project"
 import "mirai:std/base"
 
 // Every profile a write may compress with, as every codecs allow, makes a stream of the format
@@ -139,4 +141,37 @@ a_cook_compresses_again_the_blocks_a_document_reads_alone :: proc(t:^testing.T) 
     record.size+=1
     _,outside:=document_repack(write(&types,record,block[:size]),.Ultra,.Open,context.temp_allocator)
     testing.expect_value(t,outside,Error.Corrupt)
+}
+
+// A project is compressed with nothing, the open compressor, or by default the best its engine
+// has: the private one only where the engine has it in ext/. A folder without a project is open.
+@(test)
+a_project_is_compressed_as_its_manifest_says_with_what_its_engine_has :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"project")
+    if folder=="" {return}
+    root:=project.path(folder,"game",allocator=context.temp_allocator)
+    engine:=project.path(folder,"engine",allocator=context.temp_allocator)
+    testing.expect(t,os.make_directory_all(root)==nil && os.make_directory_all(engine)==nil)
+    testing.expect_value(t,project_codecs(root,engine),Codecs.Open)
+    Case :: struct {compression:string,private:bool,error:project.Error_Code,result:Codecs}
+    cases:=[?]Case{
+        {"",false,.None,.Open},
+        {"",true,.None,.Best},
+        {project.COMPRESSION_OPEN,true,.None,.Open},
+        {project.COMPRESSION_NONE,false,.None,.None},
+        {"compression_mirai",false,.Compression_Invalid,.Open},
+    }
+    for c in cases {
+        private:=project.path(engine,project.COMPRESSOR_PRIVATE,allocator=context.temp_allocator)
+        if c.private {testing.expect(t,os.make_directory_all(private)==nil)} else {_=os.remove_all(private)}
+        m:=project.manifest_default("Test")
+        base.text_set(m.build.compression[:],c.compression)
+        testing.expect_value(t,project.manifest_write(project.path(root,project.PROJECT_FILE,allocator=context.temp_allocator),&m).code,project.Error_Code.None)
+        p,error:=project.open(root)
+        testing.expect_value(t,error.code,c.error)
+        if c.error==.None {
+            project.close(&p)
+            testing.expectf(t,project_codecs(root,engine)==c.result,"%v",c)
+        }
+    }
 }

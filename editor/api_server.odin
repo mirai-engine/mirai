@@ -385,6 +385,28 @@ api_settle :: proc(s:^Session,user:rawptr,pending:proc(s:^Session,user:rawptr)->
     return !pending(s,user)
 }
 
+// Advances frames from inside a handler until the World_Transform of an entity
+// of the edited world is the place its transforms give now: a manual editor
+// propagates places only in a frame, and what follows an entity there (the
+// ground and colliders of a terrain, the ground under a Foliage) follows it in
+// that frame. An entity just made takes its first place so.
+api_place_settle :: proc(s:^Session,e:core.Entity) {
+    entity:=e
+    api_settle(s,&entity,api_unplaced)
+}
+
+// Whether the entity (^core.Entity) has a Transform and no World_Transform
+// yet, or one its transforms moved from.
+@(private)
+api_unplaced :: proc(s:^Session,user:rawptr) -> bool {
+    w:=edited_world(s)
+    e:=(^core.Entity)(user)^
+    locals,worlds:=core.world_table_of(w,core.Transform),core.world_table_of(w,core.World_Transform)
+    if locals==nil || worlds==nil || !core.has(locals,e) {return false}
+    placed,has:=core.get(worlds,e)
+    return !has || placed.transform!=entity_world(w,e)
+}
+
 // Between two calls of _wait_until the editor goes on as a handler that waits does.
 @(private)
 api_server_pause :: proc(server:^api.Server,seconds:f64) -> bool {
