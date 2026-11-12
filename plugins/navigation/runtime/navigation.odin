@@ -212,6 +212,7 @@ Tile_Mark :: struct {
     links:bool,    // its generated links wait to be made again
     unloaded:bool, // dirty, it waits for the collision it reads to load: it keeps what it has
     collision:bool, // dirty, the collision under it may have changed, not only its areas and obstacles: its build reads it again
+    wanted:bool,    // dirty, an agent waits for it to find its way: it builds before the others
 }
 
 // Where the collision is not loaded this tick: what the ground names

@@ -70,7 +70,7 @@ Nav_State :: enum u8 {
     Waiting,  // for its path, walking on along the one it had
     Moving,
     Crossing, // a link
-    Arrived,  // at its end, or as near as it can (Nav_Path.partial)
+    Arrived,  // at its end, or as near as it can once its class builds nothing more (Nav_Path.partial)
     Failed,   // no way, or blocked: see the problems of the entity
 }
 
@@ -84,7 +84,7 @@ Nav_Path :: struct {
     distance:f32 `mirai:"readonly,unit=m"`,  // kept from the target
     look:[3]f32 `mirai:"readonly,unit=m"`,   // where it faces while it moves, when looking
     looking:bool `mirai:"readonly"`,
-    partial:bool `mirai:"readonly,transient"`, // the path ends as near the goal as the mesh goes
+    partial:bool `mirai:"readonly,transient"`, // the path ends as near the goal as the mesh goes: it plans again when a tile is built
     class:i8 `mirai:"readonly,transient"`,
     kind:Nav_Link_Kind `mirai:"readonly,transient"`, // of the link it crosses
     manual:bool `mirai:"readonly,transient"`,       // the game crosses it
@@ -175,6 +175,7 @@ Navigation_Agents :: struct {
     trees:[NAV_FOLLOW_TREES]Follow_Tree,
     uid:u64,               // of the Navigation the search is in
     made:u32,              // and which of its meshes
+    revision:u64,          // of the meshes the agents last looked at: partial paths plan again when it grows
     coarse:ai.Search,      // over the portals of a coarse graph
     route:[NAV_FAR_POINTS]mm.Vec3,
     far_sections:u64,      // the sections the far simulation last looked at
@@ -350,6 +351,8 @@ navigation_agents :: proc(
         return
     }
     clear(&a.near)
+    built:=a.revision!=n.revision
+    a.revision=n.revision
     walking:=core.join(paths,agents)
     for e,_,agent in core.each_joined(&walking) {
         p:=core.edit_at(paths,walking.row)
@@ -406,6 +409,8 @@ navigation_agents :: proc(
             p.time+=time.dt
             if p.time>=NAV_REPLAN_FOLLOW*4 {p.time,p.state,p.stuck=0,.Waiting,0}
         }
+        // A tile built may take it nearer its goal.
+        if p.partial && p.state==.Moving && built {agent_replan(p)}
         walk,_:=core.get(walks,e)
         // What it walks and crosses, for one on its way: it jumps under the gravity of its
         // place (a planet, a room without it).
@@ -432,7 +437,7 @@ navigation_agents :: proc(
             if flies || swims {
                 p.velocity={}
                 if p.state==.Moving {
-                    agent_fly(p,e,agent,center,&n.classes[class].volume,swim.speed if swims else fly.speed,swim.acceleration if swims else fly.acceleration,flies,moving.mode,events,loco)
+                    agent_fly(p,e,agent,center,&n.classes[class].volume,swim.speed if swims else fly.speed,swim.acceleration if swims else fly.acceleration,flies,moving.mode,n.classes[class].pending>0,events,loco)
                 }
             } else if p.corridor.count>0 {
                 agent_follow(n.ptr,p,e,agent,pose.position,&n.classes[class].mesh,&filter,walk,time.dt,events,loco,problems)
@@ -543,6 +548,8 @@ agent_follow :: proc(n:^Navigation,p:^Nav_Path,e:core.Entity,agent:Nav_Agent,pos
         // At the portal into a section away: it goes far from here (agents_far).
         if p.state==.Waiting || p.through {return}
         if p.medium {agent_medium_begin(p,e,false,events,loco);return}
+        // The end of a partial path while tiles still build is not as near as it gets: it waits there.
+        if p.partial && n.classes[p.class].pending>0 {return}
         p.state=.Arrived
         core.push(&events.queue,Nav_Event{kind=.Arrived,entity=e})
         return
@@ -570,8 +577,9 @@ agent_follow :: proc(n:^Navigation,p:^Nav_Path,e:core.Entity,agent:Nav_Agent,pos
 
 // Heads for the farthest portal of its corridor in sight, flying, or
 // swimming, whose mode the physics decides by the depth of the water.
+// building: its class has zones to build, so a partial end is no arrival.
 @(private)
-agent_fly :: proc(p:^Nav_Path,e:core.Entity,agent:Nav_Agent,position:mm.Vec3,volume:^ai.Nav_Volume,speed,acceleration:f32,flies:bool,mode:locomotion.Locomotion_Mode,events:^Nav_Events,loco:^locomotion.Locomotion_Requests) {
+agent_fly :: proc(p:^Nav_Path,e:core.Entity,agent:Nav_Agent,position:mm.Vec3,volume:^ai.Nav_Volume,speed,acceleration:f32,flies:bool,mode:locomotion.Locomotion_Mode,building:bool,events:^Nav_Events,loco:^locomotion.Locomotion_Requests) {
     if flies && mode!=locomotion.MODE_FLYING {locomotion.set_mode(loco,e,locomotion.MODE_FLYING)}
     next,end,ok:=ai.nav_volume_corridor_steer(&p.corridor,volume,position,NAV_FLY_AHEAD)
     if !ok {agent_replan(p);return}
@@ -586,6 +594,7 @@ agent_fly :: proc(p:^Nav_Path,e:core.Entity,agent:Nav_Agent,position:mm.Vec3,vol
         // At the portal into a section away: it goes far from here (agents_far).
         if p.through {return}
         if p.medium {agent_medium_begin(p,e,true,events,loco);return}
+        if p.partial && building {return}
         p.state=.Arrived
         core.push(&events.queue,Nav_Event{kind=.Arrived,entity=e})
         return
