@@ -8,6 +8,7 @@ Test_Menus :: struct {
     chosen:int,
     under:int,       // clicks on the button under the menus
     snap:bool,
+    grid:bool,
     selected:int,
     changed:int,
     modal:bool,
@@ -25,6 +26,7 @@ test_menus_build :: proc(ctx:^Context,user:rawptr) {
         }
         if menu(ctx,id(ctx,"edit"),"Edit") {
             if menu_item(ctx,id(ctx,"snap"),"Snap to grid",{checked=s.snap}) {s.snap=!s.snap;s.chosen=4}
+            if menu_item(ctx,id(ctx,"grid"),"Show grid",{checked=s.grid,toggle=true}) {s.grid=!s.grid}
         }
     }
     if panel(ctx,id(ctx,"panel"),{width=fixed(300),height=FIT,padding=padding_all(10),gap=10,offset={0,38}}) {
@@ -118,6 +120,17 @@ a_menu_opens_under_its_title_and_an_item_closes_it :: proc(t:^testing.T) {
 
 @(test)
 pointing_at_another_title_switches_menus_and_a_checked_item_shows_its_check :: proc(t:^testing.T) {
+    // The box of a toggle: its stroke, and whether it holds the check.
+    toggle_box :: proc(ctx:^Context) -> (stroke:Color,found:bool) {
+        for &p in ctx.paints[:ctx.paint_count] {
+            if p.kind==.Box && p.fill==tone(ctx,"well") {return p.stroke,true}
+        }
+        return
+    }
+    checks :: proc(ctx:^Context) -> (count:int) {
+        for &p in ctx.paints[:ctx.paint_count] {if p.kind==.Icon && p.icon==.Check {count+=1}}
+        return
+    }
     ctx:Context
     testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
@@ -137,6 +150,13 @@ pointing_at_another_title_switches_menus_and_a_checked_item_shows_its_check :: p
     testing.expect(t,test_paint(&ctx,"Snap to grid")!=nil)
     check:=test_icon_paint(&ctx,.Check)
     testing.expect(t,check!=nil && check.icon_color==tone(&ctx,"accent_hover") && check.icon_size==13,"A checked item ends in its check")
+    // A toggle that is off still ends in its empty box; on, the box holds the check.
+    stroke,boxed:=toggle_box(&ctx)
+    testing.expect(t,boxed && stroke==tone(&ctx,"well_stroke") && checks(&ctx)==1,"An unchecked toggle shows its box")
+    s.grid=true
+    test_menus_frame(&ctx,&input,&s)
+    stroke,boxed=toggle_box(&ctx)
+    testing.expect(t,boxed && stroke==tone(&ctx,"accent") && checks(&ctx)==2,"A checked toggle holds the check")
     edit:=test_rect(t,&ctx,id(&ctx,"edit"))
     testing.expect(t,test_near(test_rect(t,&ctx,id(&ctx,"snap")).x,edit.x+4),"The menu hangs under its own title")
     // The title of the open menu closes it.

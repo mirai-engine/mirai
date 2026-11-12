@@ -306,6 +306,7 @@ menu_button_scope_end :: proc(ctx:^Context,id:Id,text:string,b:Menu_Button,open:
 MENU_CHOICE_WIDTH :: f32(140) // the least width of the menu of a menu button
 MENU_WIDTH :: f32(230) // of a menu of a bar
 MENU_ICON :: f32(16)   // the column of icons every item keeps
+MENU_TOGGLE :: f32(14) // the side of the box of a toggle
 
 // What an item of a menu shows besides its text.
 Menu_Item :: struct {
@@ -313,6 +314,7 @@ Menu_Item :: struct {
     icon_color:Color, // text_muted when transparent
     shortcut:string,
     checked:bool,     // a check at its right end
+    toggle:bool,      // a setting turned on and off: a box at its right end, holding the check when checked
     disabled:bool,    // shown faded; it does nothing
     chosen:^bool,     // of a submenu that is also a choice: a click sets it and closes the menu
     danger:bool,      // it destroys something: its text in the color of danger
@@ -407,7 +409,13 @@ menu_row :: proc(ctx:^Context,id:Id,text:string,item:Menu_Item,open,arrow:bool) 
         if column {element_leaf(ctx,{layout={width=fixed(MENU_ICON),height=fixed(MENU_ICON)},custom=paint_add(ctx,{kind=.Icon,icon=item.icon,icon_color=icon_color,icon_size=MENU_ICON}) if item.icon!=.None else nil})}
         label(ctx,text,size,text_color,0)
         if item.shortcut!="" {label(ctx,item.shortcut,MENU_HEADER_FONT,muted,shortcut)}
-        if item.checked {icon(ctx,.Check,check,13)}
+        if item.toggle {
+            stroke:=tone(ctx,"accent") if item.checked else tone(ctx,"well_stroke_hover") if it.hot else tone(ctx,"well_stroke")
+            if disabled {stroke=color_faded(stroke)}
+            paint:=paint_add(ctx,{kind=.Box,fill=tone(ctx,"well"),stroke=stroke,corners=metric(ctx,"radius_control")})
+            if element_open(ctx,{layout={width=fixed(MENU_TOGGLE),height=fixed(MENU_TOGGLE),align_x=.Center,align_y=.Center},custom=paint}) && item.checked {icon(ctx,.Check,check,MENU_TOGGLE*0.75)}
+            element_close(ctx)
+        } else if item.checked {icon(ctx,.Check,check,13)}
         if arrow {icon(ctx,.Chevron_Right,muted,12)}
     }
     menu_row_count(ctx)

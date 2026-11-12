@@ -54,7 +54,6 @@ CONTENT_NAMED_COLUMNS :: 5    // with more, names give way to a preview under th
 CONTENT_PREVIEW :: f32(126)   // the side of that preview
 CONTENT_PREVIEW_ROOM :: f32(190) // of the list above a cell: the preview goes above it
 CONTENT_PREVIEW_LARGE :: f32(192) // the side of the preview beside a row of Folders
-CONTENT_PREVIEW_DELAY :: 0.4      // s the pointer rests on a row of Folders before its preview shows
 CONTENT_TREE_INDENT :: f32(14) // a level of Folders
 CONTENT_TREE_ARROW :: f32(16)  // the room of the arrow of a row of Folders, also of one with none
 CONTENT_TREE_GAP :: f32(5)     // between the arrow, the icon and the name of a row of Folders
@@ -341,7 +340,7 @@ Content :: struct {
     variants:[dynamic]Content_Part, // of the prefabs of the registry: a prefab whose base is the owner
     clips:[dynamic]Content_Clip,   // of the libraries of the registry
     clip_text:[dynamic]u8,
-    clips_key:[2]u64,              // revisions of the registry and of the assets they were read at
+    clips_key:[3]u64,              // of the registry they were read from
     scene_used:[dynamic]u32,       // sorted, of Registry.files: what the open scene references, transitively
     scene_key:[4]u64,
     selection_used:[dynamic]u32,   // sorted, of Registry.files: what the selection uses and what that uses
@@ -355,9 +354,7 @@ Content :: struct {
     menu:base.Asset_Id,            // the asset whose card opened the menu
     clipboard:[dynamic]base.Asset_Id, // what Copy or Cut took for Paste
     clipboard_cut:bool,            // Paste moves them instead of copying them
-    preview_row:ui.Id,             // the row of Folders the pointer rests on, since preview_since
-    preview_since:f64,
-    place:[API_PATH_BYTES]u8,      // the folder of what was clicked last: where the + of Create makes what it makes
+    place:[API_PATH_BYTES]u8,      // the folder of what was clicked last: where the + of Create makes in Tabs and Cards
     place_length:int,
     create_into:[API_PATH_BYTES]u8, // the folder the menu of Create makes in
     create_into_length:int,
@@ -741,11 +738,11 @@ content_clip_name :: proc(c:^Content,clip:int) -> string {
     return string(c.clip_text[at.start:][:at.length])
 }
 
-// Reads the names of the clips of every library again when the registry or
-// the assets changed.
+// Reads the names of the clips of every library again when the files of the
+// registry changed; what is loaded does not change them.
 @(private)
 content_clips_read :: proc(c:^Content,a:^host.Assets) {
-    key:=[2]u64{a.registry.revision,a.revision}
+    key:=[3]u64{u64(uintptr(raw_data(a.registry.files))),a.registry.revision,u64(len(a.registry.files))}
     if key==c.clips_key {return}
     c.clips_key=key
     clear(&c.clips)
@@ -950,13 +947,15 @@ content_tree_rows_add :: proc(c:^Content,first,depth:int,group:u64=0,parent:i32=
 }
 
 // The tree of Folders: a row of each virtual folder with what it holds under
-// it, then the folders of the assets and the assets of the root.
+// it, also an empty one unless a filter is on, as an empty folder; then the
+// folders of the assets and the assets of the root.
 @(private)
 content_tree_add :: proc(c:^Content,b:^Content_Build,entries:[]Content_Entry) {
     labels:=CONTENT_VIRTUAL_LABELS
+    filtering:=c.category!=.None || c.unused || c.selection_only
     for virtual in ([3]Content_Virtual{.Recent,.Scene,.Favorites}) {
         files:=content_virtual_files(c,b,virtual)
-        if len(files)==0 {continue}
+        if len(files)==0 && filtering {continue}
         group:=content_virtual_group(virtual)
         header:=i32(len(c.lines))
         append(&c.lines,Content_Line{kind=.Header,group=group,name=labels[virtual],virtual=virtual,parent=-1})
@@ -1324,15 +1323,22 @@ content_create_open :: proc(s:^Session,folder:string,anchor:ui.Rect,on_folder:=f
     ui.popup_open(s.gui.ctx,content_create_id(s.gui),anchor)
 }
 
-// The +: the menu of Create, to make in the folder of what was clicked last.
+// The +: the menu of Create, to make in the folder of what was clicked last;
+// in Folders, in the root of the assets.
 @(private)
 content_create_button :: proc(s:^Session,id:ui.Id,height:f32=22) {
     ctx:=s.gui.ctx
     popup:=content_create_id(s.gui)
     if ui.button(ctx,id,{icon=.Plus,icon_color=ui.tone(ctx,"text_muted"),tip="Create",variant="toggle",width=height,height=height,disabled=s.content==nil || files_registry(s)==nil,active=ui.popup_is_open(ctx,popup)}).clicked && !ui.popup_is_open(ctx,popup) {
         anchor,_:=ui.widget_rect(ctx,id)
-        content_create_open(s,string(s.content.place[:s.content.place_length]),anchor)
+        content_create_open(s,content_create_place(s.content),anchor)
     }
+}
+
+// Where the + of Create makes what it makes.
+@(private)
+content_create_place :: proc(c:^Content) -> string {
+    return "" if c.view.arrangement==.Folders else string(c.place[:c.place_length])
 }
 
 // The entries of Create, one for each kind it makes, into folder.
@@ -1656,11 +1662,11 @@ content_settings_build :: proc(s:^Session,content_view:bool) {
                     c.scroll=0
                 }
             }
-            if ui.menu_item(ctx,ui.id(ctx,"unused"),"Only unused assets",{icon=.Filter,checked=c.unused}) {
+            if ui.menu_item(ctx,ui.id(ctx,"unused"),"Only unused assets",{icon=.Filter,checked=c.unused,toggle=true}) {
                 c.unused=!c.unused
                 c.scroll=0
             }
-            if ui.menu_item(ctx,ui.id(ctx,"parts"),"Show parts of imports",{icon=.Layers,checked=c.view.show_parts}) {
+            if ui.menu_item(ctx,ui.id(ctx,"parts"),"Show parts of imports",{icon=.Layers,checked=c.view.show_parts,toggle=true}) {
                 c.view.show_parts=!c.view.show_parts
                 c.scroll=0
             }
@@ -1691,9 +1697,9 @@ content_preview :: proc(s:^Session,file:^asset.Registry_File,points:f32,clip:u32
     a:=s.app.assets
     if a.renderer==nil {return}
     switch file.kind {
-    case asset.KIND_MATERIAL:  quad=ui.quad_whole(host.UI_QUAD_MATERIAL_PREVIEW,host.assets_material_row(a,file.id))
+    case asset.KIND_MATERIAL:  if preview_load_turn(s,file.id) {quad=ui.quad_whole(host.UI_QUAD_MATERIAL_PREVIEW,host.assets_material_row(a,file.id))}
     case asset.KIND_MESH:      quad=preview_geometry(s,.None,file.id,points)
-    case asset.KIND_TEXTURE:   quad=texture_quad(s,file.id)
+    case asset.KIND_TEXTURE:   if preview_load_turn(s,file.id) {quad=texture_quad(s,file.id)}
     case asset.KIND_SCENE:     quad=preview_document(s,file.id,points) if asset.registry_prefab(file) else preview_scene(s,file.id,points)
     case:                      quad=preview_provided(s,file,clip,points)
     }
@@ -2810,8 +2816,7 @@ content_build :: proc(s:^Session,w:core.World_Ref,height:f32,width:f32=CONTENT_W
             area_rect,placed:=ui.widget_rect(ctx,area)
             if built && placed {content_preview_float(s,hovered,cell_rect,area_rect)}
         }
-        if row_id!=c.preview_row || !quiet {c.preview_row,c.preview_since=row_id,ctx.time}
-        if row.file>=0 && ctx.time-c.preview_since>=CONTENT_PREVIEW_DELAY {
+        if row.file>=0 && quiet {
             row_rect,built:=ui.widget_rect(ctx,row_id)
             area_rect,placed:=ui.widget_rect(ctx,area)
             if built && placed {content_preview_beside(s,row,row_rect,area_rect)}
