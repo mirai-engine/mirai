@@ -85,6 +85,7 @@ Piece :: struct {
     detail:u8,
     fine:[4]u8,
     spacing:int,
+    edges:^[4]Edge_Read, // the terrains beside it (adjacency.odin); nil: none
 }
 
 // The lines of a level across size cells: every step, and the last one.
@@ -149,9 +150,9 @@ piece_vertex :: proc(s:^Source,mesh:^Chunk_Mesh,p:Piece,lines:^Piece_Lines,at:[2
     step:=1<<uint(level)
     position,normal:[3]f32
     switch {
-    case at.x&split!=0 || at.y&split!=0: position,normal=detail_vertex(s,{x,z},{at.x&split,at.y&split},p.detail)
-    case coarse:                         position,normal=coarse_vertex(s,x,z,step)
-    case:                                position,normal=heightfield_vertex(s,x,z,step)
+    case at.x&split!=0 || at.y&split!=0: position,normal=detail_vertex(s,{x,z},{at.x&split,at.y&split},p.detail,p.edges)
+    case coarse:                         position,normal=coarse_vertex(s,x,z,step,p.edges)
+    case:                                position,normal=heightfield_vertex(s,x,z,step,p.edges)
     }
     // Where it is over the maps of the piece, in texels.
     uv:=[2]f32{f32(at.x),f32(at.y)}/f32(max(p.spacing,1)<<p.detail)
@@ -214,7 +215,7 @@ piece_build :: proc(s:^Source,p:Piece,mesh:^Chunk_Mesh) -> bool {
     width,depth:=(p.high.x-p.low.x)<<p.detail,(p.high.y-p.low.y)<<p.detail
     if width<1 || depth<1 {return false}
     mesh.grid=true
-    if !surface_maps_build(s,p.low,p.high,max(p.spacing,1),p.coarse,p.cuts,&mesh.maps) {return false}
+    if !surface_maps_build(s,p.low,p.high,max(p.spacing,1),p.coarse,p.cuts,&mesh.maps,p.edges) {return false}
     cells:=int(s.chunk_cells)<<p.detail
     lines:=&mesh.lines
     lines.level=p.level

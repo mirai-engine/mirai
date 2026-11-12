@@ -323,7 +323,8 @@ terrain_replay :: proc(replays:^Terrain_Replays,events:^Terrain_Replay_Events,di
         core.push(&events.results,result)
     }
     if !routed {return}
-    for asked_edit in core.take(&requests.edits) {
+    // A brush over an edge two terrains share writes both.
+    for asked in core.take(&requests.edits) {spread,count:=edit_spread(asked,data,terrains,worlds);for asked_edit in spread[:count] {
         request,scaled:=edit_resolve(asked_edit,data,terrains,worlds) or_continue
         result:=Replay_Result{request=true,owner=request.owner,brush=request.brush}
         entry:=request_source(data,terrains,request.owner,"an edit",problems,assets) or_continue
@@ -338,7 +339,7 @@ terrain_replay :: proc(replays:^Terrain_Replays,events:^Terrain_Replay_Events,di
             if change.changed {dig_push(digs,request.owner,entry,worlds)}
         }
         core.push(&events.results,result)
-    }
+    }}
     for request in core.take(&requests.layers) {
         result:=Replay_Result{kind=.Layer,request=true,owner=request.owner,layer=request.change}
         entry:=request_source(data,terrains,request.owner,"a layer change",problems,assets) or_continue

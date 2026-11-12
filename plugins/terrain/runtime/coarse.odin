@@ -119,7 +119,7 @@ coarse_read :: proc(s:^Source,file:^asset.Asset,types:^asset.Types) -> bool {
     if !values_within(heights,HEIGHT_LIMIT) || !page_valid(weights,weights_full) {return false}
     for range in ranges {if !(range.x>=-HEIGHT_LIMIT && range.x<=range.y && range.y<=HEIGHT_LIMIT) {return false}}
     for &e in errors {
-        if !(e.coarse>=0 && e.coarse<=2*HEIGHT_LIMIT) {return false}
+        if !(e.coarse>=0 && e.coarse<=2*HEIGHT_LIMIT) || !(e.below>=0 && e.below<=4*HEIGHT_LIMIT) {return false}
         for level in e.levels {if !(level>=0 && level<=2*HEIGHT_LIMIT) {return false}}
     }
     next:=Coarse{size=size}
@@ -239,20 +239,43 @@ coarse_hole_cell :: proc "contextless" (s:^Source,i,j:int) -> u8 {
 }
 
 // As heightfield_normal, over the coarse grid.
-coarse_normal :: proc "contextless" (s:^Source,x,z,step:int) -> [3]f32 {
+coarse_normal :: proc "contextless" (s:^Source,x,z,step:int,edges:^[4]Edge_Read=nil) -> [3]f32 {
     nx,nz:=int(s.samples.x),int(s.samples.z)
     x0,x1,z0,z1:=max(x-step,0),min(x+step,nx-1),max(z-step,0),min(z+step,nz-1)
-    west,east:=coarse_height(s,x0,z),coarse_height(s,x1,z)
-    north,south:=coarse_height(s,x,z0),coarse_height(s,x,z1)
+    if edge_has(s,edges,x-step,z) {x0=x-step}
+    if edge_has(s,edges,x+step,z) {x1=x+step}
+    if edge_has(s,edges,x,z-step) {z0=z-step}
+    if edge_has(s,edges,x,z+step) {z1=z+step}
+    west,east:=coarse_edge_height(s,edges,x0,z),coarse_edge_height(s,edges,x1,z)
+    north,south:=coarse_edge_height(s,edges,x,z0),coarse_edge_height(s,edges,x,z1)
     return linalg.normalize0([3]f32{(west-east)/(f32(x1-x0)*s.cell),1,(north-south)/(f32(z1-z0)*s.cell)})
+}
+
+// As edge_height, over the coarse grids.
+@(private)
+coarse_edge_height :: proc "contextless" (s:^Source,edges:^[4]Edge_Read,x,z:int) -> f32 {
+    if edges!=nil {
+        read :: proc "contextless" (e:Edge_Read,x,z:int) -> (h:f32,ok:bool) {
+            if e.s==nil {return}
+            p:=[2]int{x,z}-e.offset
+            if p.x<0 || p.y<0 || p.x>=int(e.s.samples.x) || p.y>=int(e.s.samples.z) {return}
+            return coarse_height(e.s,p.x,p.y)+e.dy,true
+        }
+        if side:=edge_beyond(s,x,z);side>=0 {
+            if h,ok:=read(edges[side],x,z);ok {return h}
+        } else {
+            for e,i in edges {if e.owns && edge_on(s,i,x,z) {if h,ok:=read(e,x,z);ok {return h}}}
+        }
+    }
+    return coarse_height(s,clamp(x,0,int(s.samples.x)-1),clamp(z,0,int(s.samples.z)-1))
 }
 
 // As heightfield_vertex, over the coarse grid.
 @(private)
-coarse_vertex :: proc "contextless" (s:^Source,x,z,step:int) -> (position,normal:[3]f32) {
+coarse_vertex :: proc "contextless" (s:^Source,x,z,step:int,edges:^[4]Edge_Read=nil) -> (position,normal:[3]f32) {
     position=source_origin(s)+[3]f32{f32(x),0,f32(z)}*s.cell
-    position.y=coarse_height(s,x,z)
-    return position,coarse_normal(s,x,z,step)
+    position.y=coarse_edge_height(s,edges,x,z)
+    return position,coarse_normal(s,x,z,step,edges)
 }
 
 // The values of page i of a grid, from memory or read from its block into
@@ -275,6 +298,7 @@ LOD_ERRORS :: LOD_LEVELS_MAX+QUAD_DEPTH_MAX+1
 Lod_Errors :: struct {
     levels:[LOD_ERRORS]f32,
     coarse:f32,
+    below:f32, // of a node: the largest error a node under it shows at its finest level, what a walk from the roots goes down for (resident_lod)
 }
 
 // Measures the coarse data of a Heightfield from every sample, reading the
@@ -624,8 +648,12 @@ node_errors_measure :: proc(s:^Source,q:^Quad,errors:[]Lod_Errors,i:int,within:=
     whole:=within[0].x==min(int)
     e:=&errors[i]
     if whole {e^={}}
-    e.coarse=0
-    for child in quad_children(q,i) {if child>=0 {e.coarse=max(e.coarse,errors[child].coarse)}}
+    e.coarse,e.below=0,0
+    for child in quad_children(q,i) {
+        if child<0 {continue}
+        e.coarse=max(e.coarse,errors[child].coarse)
+        if child>=q.first[1] {e.below=max(e.below,errors[child].below,lod_error(errors,q,child,int(node_lod_min(s,q,child))))}
+    }
     for level in int(node_lod_min(s,q,i))..=min(int(node_lod_max(s,q,i)),LOD_ERRORS-1) {
         step:=1<<uint(level)
         worst:=e.levels[level]

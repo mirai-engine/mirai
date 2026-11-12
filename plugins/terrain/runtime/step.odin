@@ -384,7 +384,7 @@ terrain_schedule :: proc(data:^Terrain_Data,resident:^Terrain_Resident,entry:^Da
                 if low,high,ok:=chunk_pages_region(s,i);ok && !pages_ready(data,resident,entry,low,high,urgent,phase,problems,terrains) {keep=true;break build}
             } else if s.kind==.Heightfield {
                 border=&resident.border
-                levels:=Border_Levels{counts=q.counts[0],levels=source.levels,deep=source.deep}
+                levels:=resident_border(resident,source)
                 a,b:=quad_chunks(q,i)
                 piece_border(&levels,a,b,border)
                 if !node_border_ready(data,resident,entry,i,border,urgent,phase,problems,terrains) {keep=true;break build}
@@ -395,7 +395,9 @@ terrain_schedule :: proc(data:^Terrain_Data,resident:^Terrain_Resident,entry:^Da
                 if urgent {urgent_left^=true}
                 break build
             }
-            if !work_build(data,slot,entry,source.owner,i,chunk.wanted,urgent,phase,host.assets_limits(resident.assets),border,&source.join) {
+            edges:[4]Edge_Read
+            if owner:=resident_owner_find(resident,source.owner,source.id);owner!=nil && s.kind==.Heightfield {edges=owner_edges(resident,data,owner)}
+            if !work_build(data,slot,entry,source.owner,i,chunk.wanted,urgent,phase,host.assets_limits(resident.assets),border,&source.join,edges) {
                 name:[base.ASSET_ID_TEXT]u8
                 core.report(problems,source.owner,"terrain.memory","out of memory for the border of a piece of terrain source %s; it is built in a later frame: free memory, or make the source smaller",host.assets_name(resident.assets,entry.id,&name))
                 keep=true
@@ -806,7 +808,8 @@ terrain_update :: proc(
         }
     }
     if !time.playing || frame.phase==.Fixed {
-        for asked_edit in core.take(&requests.edits) {
+        // A brush over an edge two terrains share writes both.
+        for asked in core.take(&requests.edits) {spread,count:=edit_spread(asked,data,terrains,worlds);for asked_edit in spread[:count] {
             request,scaled:=edit_resolve(asked_edit,data,terrains,worlds) or_continue
             entry:=request_source(data,terrains,request.owner,"an edit",problems,app.assets) or_continue
             change:=scaled==.None?data_edit(data,entry,request.brush):Change{error=scaled}
@@ -818,7 +821,7 @@ terrain_update :: proc(
             if time.playing {dig_push(digs,request.owner,entry,worlds)}
             entry.source.revision+=1
             for value,row in terrains.values[:core.count(terrains)] {if value.source==entry.id {core.edit_at(terrains,row).revision=entry.source.revision}}
-        }
+        }}
         for request in core.take(&requests.layers) {
             entry:=request_source(data,terrains,request.owner,"a layer change",problems,app.assets) or_continue
             applied,error:=data_layer(data,entry,request.change)
@@ -958,9 +961,8 @@ resident_owner :: proc(resident:^Terrain_Resident,e:core.Entity,entry:^Data_Sour
     owner.chunks,e0=make([]core.Entity,count,allocator)
     owner.nodes,e1=make([]Owner_Node,count,allocator)
     owner.changed,e2=make([dynamic]u32,0,2*count,allocator)
-    room,spans:=count,(count+LOD_SPAN-1)/LOD_SPAN
-    for &other in resident.owners {room+=len(other.nodes);spans+=(len(other.nodes)+LOD_SPAN-1)/LOD_SPAN}
-    reserved:=reserve(&resident.splits,room)==nil && reserve(&resident.places,len(resident.owners)+1)==nil && reserve(&resident.spans,spans)==nil
+    owner.visit,owner.kept=make([dynamic]u32,allocator),make([dynamic]u32,allocator)
+    reserved:=reserve(&resident.places,len(resident.owners)+1)==nil
     if e0!=nil || e1!=nil || e2!=nil || !reserved || append(&resident.owners,owner)!=1 {
         resident_owner_free(&owner)
         source_memory(problems,e,resident.assets,entry.id)

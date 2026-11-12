@@ -40,6 +40,7 @@ Chunk_Join :: struct {
     offset:[2]int,
     lift:f32,
     cuts:[]Join_Cut, // Heightfield
+    edges:[4]Edge_Read, // Heightfield: the terrains beside it (adjacency.odin)
 }
 
 // Whether a cell of a Heightfield is a hole: of the source, or one a Volume takes.
@@ -246,34 +247,61 @@ join_ground_check :: proc(problems:^core.Problems,e:core.Entity,v,h:^Source,join
 
 // Where one of a Volume and the Heightfield it joins is resident as a chunk
 // over some cells, the chunks of the other over them are too: the hole
-// never shows without the Volume, nor the Volume over the ground.
+// never shows without the Volume, nor the Volume over the ground. A chunk
+// made resident so is looked at, with what is above it.
 @(private)
-joins_resident :: proc(resident:^Terrain_Resident,data:^Terrain_Data) {
+joins_resident :: proc(resident:^Terrain_Resident,data:^Terrain_Data,pass:u32,count:int,stream:bool) {
     for &source in resident.sources {
         join:=&source.join
         if join.ground=={} {continue}
         entry,ground_entry:=data_find(data,source.id),data_find(data,join.ground)
         volume,ground:=resident_owner_find(resident,source.owner,source.id),resident_owner_find(resident,join.entity,join.ground)
         if entry==nil || ground_entry==nil || volume==nil || ground==nil {continue}
+        volume_place,ground_place:=owner_place(resident,volume),owner_place(resident,ground)
+        if volume_place==nil || ground_place==nil {continue}
         v,h:=&entry.source,&ground_entry.source
         vc,hc:=int(v.chunk_cells),int(h.chunk_cells)
-        // Twice: what a Volume chunk brings, then what the ground brings back.
-        for pass in 0..<2 {
-            for &node,i in volume.nodes[:min(volume.quad.first[1],len(volume.nodes))] {
-                coord:=chunk_coord(v,i)
-                low:=join.offset+[2]int{int(coord.x),int(coord.z)}*vc
-                high:=low+vc
-                any:=false
-                for cz in low.y/hc..=min((high.y-1)/hc,chunk_counts(h).z-1) {for cx in low.x/hc..=min((high.x-1)/hc,chunk_counts(h).x-1) {
-                    index:=chunk_index(h,{i32(cx),0,i32(cz)})
-                    if index<0 || index>=len(ground.nodes) {continue}
-                    if pass==0 && node.resident {ground.nodes[index].resident=true}
-                    any||=ground.nodes[index].resident
-                }}
-                if pass==1 && any {node.resident=true}
-            }
+        nv,nh:=chunk_counts(v),chunk_counts(h)
+        // What a Volume chunk brings, then what the ground brings back.
+        for k in 0..<len(volume.visit) {
+            i:=int(volume.visit[k])
+            if i>=volume.quad.first[1] || !volume.nodes[i].resident {continue}
+            coord:=chunk_coord(v,i)
+            low:=join.offset+[2]int{int(coord.x),int(coord.z)}*vc
+            high:=low+vc
+            for cz in max(low.y/hc,0)..=min((high.y-1)/hc,nh.z-1) {for cx in max(low.x/hc,0)..=min((high.x-1)/hc,nh.x-1) {
+                index:=chunk_index(h,{i32(cx),0,i32(cz)})
+                if index<0 || index>=len(ground.nodes) {continue}
+                visit_add_up(ground,ground_place,index,pass,count,stream)
+                ground.nodes[index].resident=true
+            }}
+        }
+        for k in 0..<len(ground.visit) {
+            index:=int(ground.visit[k])
+            if index>=ground.quad.first[1] || !ground.nodes[index].resident {continue}
+            coord:=chunk_coord(h,index)
+            low:=[2]int{int(coord.x),int(coord.z)}*hc-join.offset
+            high:=low+hc
+            for cz in max(low.y/vc,0)..=min((high.y-1)/vc,nv.z-1) {for cx in max(low.x/vc,0)..=min((high.x-1)/vc,nv.x-1) {
+                if high.x<=0 || high.y<=0 {continue}
+                for cy in 0..<nv.y {
+                    i:=chunk_index(v,{i32(cx),i32(cy),i32(cz)})
+                    if i<0 || i>=len(volume.nodes) {continue}
+                    visit_add_up(volume,volume_place,i,pass,count,stream)
+                    volume.nodes[i].resident=true
+                }
+            }}
         }
     }
+}
+
+// The place an owner is seen from in this evaluation; nil for one without.
+@(private)
+owner_place :: proc "contextless" (resident:^Terrain_Resident,owner:^Resident_Owner) -> ^Lod_Place {
+    for &other,o in resident.owners {
+        if &other==owner {return o<len(resident.places) && resident.places[o].s!=nil?&resident.places[o]:nil}
+    }
+    return nil
 }
 
 @(private)

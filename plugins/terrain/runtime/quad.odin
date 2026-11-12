@@ -160,34 +160,77 @@ Border_Levels :: struct {
     counts:[2]int,
     levels:[]u8,
     deep:[]bool, // nil: every chunk deep
+    // The Heightfields beside it (-X, +X, -Z, +Z, adjacency.odin): a chunk past a
+    // side is one of theirs, so both build the border they share alike.
+    sides:[4]Border_Side,
+}
+// The chunks of a Heightfield beside a side: chunk c past it is chunk c-shift
+// of these, shift along the side and across it the width of this grid.
+Border_Side :: struct {
+    counts:[2]int,
+    levels:[]u8, // nil: none
+    deep:[]bool,
+    shift:[2]int,
 }
 
+// The level of chunk x,z of the grid or of a terrain beside it, and whether it
+// is deep; ok false for none.
+@(private)
+border_chunk :: proc "contextless" (b:^Border_Levels,x,z:int) -> (level:u8,deep,ok:bool) {
+    if x>=0 && z>=0 && x<b.counts.x && z<b.counts.y {
+        i:=x+b.counts.x*z
+        return b.levels[i],b.deep==nil || b.deep[i],true
+    }
+    side:=-1
+    switch {
+    case x<0 && z>=0 && z<b.counts.y:          side=0
+    case x>=b.counts.x && z>=0 && z<b.counts.y: side=1
+    case z<0 && x>=0 && x<b.counts.x:          side=2
+    case z>=b.counts.y && x>=0 && x<b.counts.x: side=3
+    }
+    if side<0 || b.sides[side].levels==nil {return}
+    o:=&b.sides[side]
+    p:=[2]int{x,z}-o.shift
+    if p.x<0 || p.y<0 || p.x>=o.counts.x || p.y>=o.counts.y {return}
+    i:=p.x+o.counts.x*p.y
+    return o.levels[i],o.deep==nil || o.deep[i],true
+}
+
+// A segment between two chunks: the finer of them; 255 where neither is.
 @(private)
 border_segment :: proc "contextless" (b:^Border_Levels,a_x,a_z,c_x,c_z:int) -> u8 {
     level:=u8(255)
     deep:=true
     for p in ([2][2]int{{a_x,a_z},{c_x,c_z}}) {
-        if p.x<0 || p.y<0 || p.x>=b.counts.x || p.y>=b.counts.y {continue}
-        i:=p.x+b.counts.x*p.y
-        level=min(level,b.levels[i])
-        if b.deep!=nil && !b.deep[i] {deep=false}
+        at,is_deep,ok:=border_chunk(b,p.x,p.y)
+        if !ok {continue}
+        level=min(level,at)
+        if !is_deep {deep=false}
     }
-    if level==255 {return 0}
+    if level==255 {return 255}
     if !deep {level=max(level,COARSE_LEVEL)}
     return level
 }
 
 // The segment of the line of the chunk grid at x=gx, along row z.
-border_vertical :: #force_inline proc "contextless" (b:^Border_Levels,gx,z:int) -> u8 {return border_segment(b,gx-1,z,gx,z)}
+border_vertical :: #force_inline proc "contextless" (b:^Border_Levels,gx,z:int) -> u8 {
+    level:=border_segment(b,gx-1,z,gx,z)
+    return level==255?0:level
+}
 // The segment of the line of the chunk grid at z=gz, along column x.
-border_horizontal :: #force_inline proc "contextless" (b:^Border_Levels,gz,x:int) -> u8 {return border_segment(b,x,gz-1,x,gz)}
+border_horizontal :: #force_inline proc "contextless" (b:^Border_Levels,gz,x:int) -> u8 {
+    level:=border_segment(b,x,gz-1,x,gz)
+    return level==255?0:level
+}
 
+// A point of the chunk grid: the finest of the segments that meet there, of
+// this grid or of a terrain beside it.
 border_corner :: proc "contextless" (b:^Border_Levels,gx,gz:int) -> u8 {
     level:=u8(255)
-    if gz>0 {level=min(level,border_vertical(b,gx,gz-1))}
-    if gz<b.counts.y {level=min(level,border_vertical(b,gx,gz))}
-    if gx>0 {level=min(level,border_horizontal(b,gz,gx-1))}
-    if gx<b.counts.x {level=min(level,border_horizontal(b,gz,gx))}
+    level=min(level,border_segment(b,gx-1,gz-1,gx,gz-1))
+    level=min(level,border_segment(b,gx-1,gz,gx,gz))
+    level=min(level,border_segment(b,gx-1,gz-1,gx-1,gz))
+    level=min(level,border_segment(b,gx,gz-1,gx,gz))
     return level==255?0:level
 }
 

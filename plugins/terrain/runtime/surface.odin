@@ -58,7 +58,7 @@ normal_bytes :: #force_inline proc "contextless" (n:[3]f32) -> [4]u8 {
 // spacing of them. A chunk (coarse false) reads its samples; a node, the
 // coarse grid, as its vertices do.
 @(private)
-surface_maps_build :: proc(s:^Source,low,high:[2]int,spacing:int,coarse:bool,cuts:[]Join_Cut,m:^Surface_Maps) -> bool {
+surface_maps_build :: proc(s:^Source,low,high:[2]int,spacing:int,coarse:bool,cuts:[]Join_Cut,m:^Surface_Maps,edges:^[4]Edge_Read=nil) -> bool {
     surface_maps_clear(m)
     size:=[2]int{(high.x-low.x+spacing-1)/spacing+1,(high.y-low.y+spacing-1)/spacing+1}
     count:=size.x*size.y
@@ -73,13 +73,15 @@ surface_maps_build :: proc(s:^Source,low,high:[2]int,spacing:int,coarse:bool,cut
         mix:Layer_Mix
         normal:[3]f32
         if coarse {
-            normal=coarse_normal(s,x,z,spacing)
-            mix=layers_vertex(s,coarse_weights(s,x,z),coarse_normal(s,x,z,LAYER_RULE_SAMPLES),coarse_height(s,x,z))
+            normal=coarse_normal(s,x,z,spacing,edges)
+            mix=layers_vertex(s,coarse_weights(s,x,z),coarse_normal(s,x,z,LAYER_RULE_SAMPLES,edges),coarse_edge_height(s,edges,x,z))
             if painted {m.paint[at]=coarse_paint(s,x,z)}
         } else {
-            normal=heightfield_normal(s,x,z,1)
-            mix=heightfield_weights(s,x,z,grid_get(&s.field,x,z))
+            normal=heightfield_normal(s,x,z,1,edges)
+            mix=heightfield_weights(s,x,z,edge_height(s,edges,x,z),edges)
             if painted {m.paint[at]=grid_get(&s.paint,x,z)}
+            // On an edge another terrain owns, what it painted there.
+            if other,p,owned:=edge_owner(s,edges,x,z);owned && painted && !grid_none(&other.paint) {m.paint[at]=grid_get(&other.paint,p.x,p.y)}
         }
         control:=u32(weights_quantize(mix,layers))
         // The hole of the cell from the texel: those of the samples, or what share of them is holes.

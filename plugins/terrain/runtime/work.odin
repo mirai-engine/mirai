@@ -88,7 +88,7 @@ work_free :: proc(data:^Terrain_Data) {
 @(private)
 work_wait :: proc(data:^Terrain_Data,source:^Source) {
     for &slot in data.work {
-        if slot.kind==.None || source!=nil && (!slot.reads || slot.source!=source && slot.join.ground!=source) || !jobs.pending(&slot.counter) {continue}
+        if slot.kind==.None || source!=nil && (!slot.reads || slot.source!=source && slot.join.ground!=source && !edges_read(&slot.join,source)) || !jobs.pending(&slot.counter) {continue}
         jobs.wait(data.jobs,jobs.OWNER,&slot.counter)
     }
 }
@@ -96,7 +96,7 @@ work_wait :: proc(data:^Terrain_Data,source:^Source) {
 // Whether a slot holds a job or a result over source, nil for any.
 @(private)
 work_busy :: proc(data:^Terrain_Data,source:^Source) -> bool {
-    for &slot in data.work {if slot.kind!=.None && (source==nil || slot.source==source || slot.join.ground==source) {return true}}
+    for &slot in data.work {if slot.kind!=.None && (source==nil || slot.source==source || slot.join.ground==source || edges_read(&slot.join,source)) {return true}}
     return false
 }
 
@@ -120,7 +120,7 @@ work_start :: proc(data:^Terrain_Data,slot:^Work_Slot) {
 // The build of a chunk or a node, from its source as it is now; a node of a
 // Heightfield takes a copy of its border.
 @(private)
-work_build :: proc(data:^Terrain_Data,slot:^Work_Slot,entry:^Data_Source,owner:core.Entity,index:int,key:Chunk_Key,urgent:bool,phase:core.Phase,limits:host.Assets_Limits,border:^Piece_Border=nil,join:^Terrain_Join=nil) -> bool {
+work_build :: proc(data:^Terrain_Data,slot:^Work_Slot,entry:^Data_Source,owner:core.Entity,index:int,key:Chunk_Key,urgent:bool,phase:core.Phase,limits:host.Assets_Limits,border:^Piece_Border=nil,join:^Terrain_Join=nil,edges:[4]Edge_Read={}) -> bool {
     // Before the slot is taken: without room for the border it stays free.
     if border!=nil {for i in 0..<4 {
         if resize(&slot.border.sides[i],len(border.sides[i]))!=nil || resize(&slot.border.corners[i],len(border.corners[i]))!=nil {return false}
@@ -139,6 +139,7 @@ work_build :: proc(data:^Terrain_Data,slot:^Work_Slot,entry:^Data_Source,owner:c
         } else {append(&slot.cuts,..join.cuts[:])}
     }
     slot.join.cuts=slot.cuts[:]
+    slot.join.edges=edges
     work_start(data,slot)
     return true
 }
