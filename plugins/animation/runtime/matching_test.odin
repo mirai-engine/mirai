@@ -620,13 +620,15 @@ a_new_mode_of_the_match_goal_enters_by_its_entry_clip :: proc(t:^testing.T) {
     f:Match_Fixture;defer match_fixture_free(&f)
     if !testing.expect(t,match_fixture(t,&f)) {return}
     dt:=f32(1.0/30)
-    for _ in 0..<10 {testing.expect(t,match_step(&f,dt,GROUND))}
-    value,_:=animation_match(&f.playback,f.rig)
-    testing.expect(t,value.mode==GROUND && (value.clip==base.name_hash("idle") || value.clip==base.name_hash("walk")))
     // The first search, with no clip playing, notes the best row of each clip of the ground: the
     // one it jumped to first, the costs in order and each the sum of its kinds of feature.
-    db:=animation_match_database(&f.graphs,&f.content,f.state)
+    testing.expect(t,match_step(&f,dt,GROUND))
+    first,_:=animation_match(&f.playback,f.rig)
     searched:=f.state.program.match.searched
+    for _ in 1..<10 {testing.expect(t,match_step(&f,dt,GROUND))}
+    value,_:=animation_match(&f.playback,f.rig)
+    testing.expect(t,value.mode==GROUND && (value.clip==base.name_hash("idle") || value.clip==base.name_hash("walk")))
+    db:=animation_match_database(&f.graphs,&f.content,f.state)
     if testing.expect(t,db!=nil) {
         noted:=match_searched_candidates(db,searched)
         candidates:=noted.items[:noted.count]
@@ -639,7 +641,7 @@ a_new_mode_of_the_match_goal_enters_by_its_entry_clip :: proc(t:^testing.T) {
         }
         if len(candidates)>0 {
             range:=lib.match_range_of(db,int(candidates[0].row))
-            testing.expectf(t,range>=0 && lib.clip_data(&f.content.lib,db.ranges[range].clips[0]).name==value.clip,"the first candidate is the clip it plays")
+            testing.expectf(t,range>=0 && lib.clip_data(&f.content.lib,db.ranges[range].clips[0]).name==first.clip,"the first candidate is the clip it jumped to")
         }
         // Noting candidates bounds each clip by its own best row and gives the same row.
         request:=lib.Match_Request{query=lib.match_features(db,0),trajectory=lib.match_row_trajectory(db,int(db.ranges[1].first)),modes=~u32(0),min_rate=.5,max_rate=1}

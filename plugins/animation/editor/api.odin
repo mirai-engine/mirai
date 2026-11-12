@@ -66,6 +66,7 @@ register :: proc(s:^editor.Session) {
     authoring_register(s)
     program_register(s)
     morph_register(s)
+    history_register(s)
     play_defaults:=Play_Params{speed=1,fade=0.2,loop=true}
     preview_defaults:=new(Preview_Params,context.temp_allocator);if preview_defaults==nil {return}
     preview_defaults.dt,preview_defaults.limit,preview_defaults.trace_limit=1.0/60,256,16

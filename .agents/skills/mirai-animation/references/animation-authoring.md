@@ -187,14 +187,20 @@ an actor), whose marks a drag moves and the right button deletes.
   also takes, in Play or Simulate, the handle `scene.inspect` of the game gives, the only name of
   an entity the game made.
 - `animation.inspect` part `Match` lists the clips of the database and the candidates of its last
-  forced search with their costs per feature, then the best row of each clip it left out with its
+  search with their costs per feature, then the best row of each clip it left out with its
   `reason`: why a jump or a start chose its clip, or never picks one, is read there. The tick keeps
   only that search's request; inspect searches it again to note them.
 - `animation.inspect` part `Pose` (only when asked, with `names`) places bones and sockets in the
-  world and in the space of the entity from the pose its rig ended its last tick with: a pose,
-  socket or root-motion problem is read as numbers, in a paused Play after `play.step`, instead of
-  by captures. A bone is named by path, by a name no other bone has or as a part of its body
-  (`@hand_r`), and a socket by its name; a name the skeleton lacks fails the call.
+  world and in the space of the entity from a pose of the last tick of its rig: `Finished`, the one
+  it ended with, or `Sampled`, the one before its modifiers. A pose, socket, root-motion or
+  modifier problem is read as numbers, in a paused Play after `play.step`, instead of by captures.
+  A bone is named by path, by a name no other bone has or as a part of its body (`@hand_r`), and a
+  socket by its name; a name the skeleton lacks fails the call.
+- `animation.history` reads a rig across the ticks the run keeps, as `play.history` does: it plays
+  them again on the World of the run and puts it back after, and reads each row with the code of
+  the parts `Match` and `Pose`, so a search is read one way. No recorder: the runtime keeps
+  nothing for it. `searched` and `jumped` compare the counters of the matching with the tick
+  before; a tick the rig lacks is a row with its `code`.
 
 ## Skeletons, sockets and profiles
 
