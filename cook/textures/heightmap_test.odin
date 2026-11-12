@@ -2,6 +2,7 @@ package textures
 
 import "base:runtime"
 import "core:hash"
+import "core:math"
 import "core:testing"
 
 @(private="file")
@@ -77,9 +78,9 @@ heightmap_rejects_limits_invalid_sources_and_exhausted_allocators :: proc(t:^tes
     testing.expect_value(t,error,Error.Unsupported)
     _,error=heightmap_decode(nil)
     testing.expect_value(t,error,Error.Unsupported)
-    bytes[16],bytes[17],bytes[18],bytes[19]=0,0,0x80,0
-    bytes[20],bytes[21],bytes[22],bytes[23]=0,0,0x80,0
-    _,error=heightmap_decode(bytes[:],allocator=runtime.nil_allocator())
+    bytes[16],bytes[17],bytes[18],bytes[19]=0,0,0x40,2
+    bytes[20],bytes[21],bytes[22],bytes[23]=0,0,0x40,2
+    _,error=heightmap_decode(bytes[:],16385,runtime.nil_allocator())
     testing.expect_value(t,error,Error.Too_Large)
     heightmap_destroy(&result);heightmap_destroy(&result);heightmap_destroy(nil)
 }
@@ -128,20 +129,67 @@ heightmap_rejects_pnm_before_the_decoder :: proc(t:^testing.T) {
 }
 
 @(test)
-an_encoded_heightmap_decodes_to_its_sixteen_bit_values :: proc(t:^testing.T) {
-    width,height:=300,129 // a raw image of more than one stored block
-    values:=make([]f32,width*height);defer delete(values)
-    for &value,i in values {value=f32(i%997)/996}
-    bytes,error:=heightmap_encode(values,width,height)
-    defer delete(bytes)
-    if !testing.expect_value(t,error,Error.None) {return}
-    decoded,decode_error:=heightmap_decode(bytes)
-    defer heightmap_destroy(&decoded)
-    if !testing.expect_value(t,decode_error,Error.None) {return}
-    testing.expect(t,decoded.width==width && decoded.height==height)
-    worst:=f32(0)
-    for value,i in values {worst=max(worst,abs(decoded.values[i]-value))}
-    testing.expect(t,worst<=0.5/65535+1e-7,"each value comes back within half a step of 16 bits")
-    _,refused:=heightmap_encode(values,width,height+1)
+an_encoded_heightmap_decodes_to_its_values_in_each_format :: proc(t:^testing.T) {
+    side:=301
+    values:=make([]f32,side*side);defer delete(values)
+    for &value,i in values {x,z:=f32(i%side),f32(i/side);value=0.5+0.25*math.sin(x*0.05)*math.cos(z*0.03)}
+    cases:=[3]struct {format:Heightmap_Format,worst:f32}{{.Image,0.5/65535+1e-7},{.R16,0.5/65535+1e-7},{.R32,0}}
+    for entry in cases {
+        bytes,error:=heightmap_encode(values,side,side,context.allocator,entry.format)
+        defer delete(bytes)
+        if !testing.expect_value(t,error,Error.None) {continue}
+        testing.expect(t,len(bytes)<=heightmap_bytes_max(side),"the read limit takes what it writes")
+        if entry.format==.Image {testing.expectf(t,len(bytes)<side*side*2*3/4,"smooth ground compresses: %d bytes for %d samples",len(bytes),side*side)}
+        decoded,decode_error:=heightmap_decode(bytes,format=entry.format)
+        defer heightmap_destroy(&decoded)
+        if !testing.expect_value(t,decode_error,Error.None) {continue}
+        testing.expect(t,decoded.width==side && decoded.height==side)
+        worst:=f32(0)
+        for value,i in values {worst=max(worst,abs(decoded.values[i]-value))}
+        testing.expectf(t,worst<=entry.worst,"%v comes back within %v, not %v",entry.format,entry.worst,worst)
+    }
+    _,refused:=heightmap_encode(values,side,side-1)
     testing.expect_value(t,refused,Error.Invalid)
+    wide:=[6]f32{0,0.2,0.4,0.6,0.8,1}
+    _,refused=heightmap_encode(wide[:],3,2,context.allocator,.R16)
+    testing.expect_value(t,refused,Error.Invalid)
+    _,refused=heightmap_encode([]f32{math.nan_f32()},1,1,context.allocator,.R32)
+    testing.expect_value(t,refused,Error.Invalid)
+}
+
+@(test)
+raw_heightmaps_are_squares_of_finite_values_within_the_limit :: proc(t:^testing.T) {
+    format,known:=heightmap_format("ground.R32")
+    testing.expect(t,known && format==.R32)
+    _,known=heightmap_format("ground.exr")
+    testing.expect(t,!known)
+    nan:=transmute([4]u8)math.nan_f32()
+    cases:=[5]struct {bytes:[]u8,format:Heightmap_Format,max_side:int,error:Error}{
+        {{1,2,3},.R16,8,.Invalid},           // not whole samples
+        {{1,2,3,4,5,6},.R16,8,.Invalid},     // three samples, not a square
+        {{0,0,0,0,0,0,0,0},.R16,1,.Too_Large},
+        {nan[:],.R32,8,.Invalid},
+        {nil,.R32,8,.Invalid},
+    }
+    for entry in cases {
+        result,error:=heightmap_decode(entry.bytes,entry.max_side,context.allocator,entry.format)
+        testing.expect_value(t,error,entry.error)
+        testing.expect_value(t,len(result.values),0)
+        heightmap_destroy(&result)
+    }
+    _,error:=heightmap_decode([]u8{0,0,255,255,0,128,255,127},format=.R16,allocator=runtime.nil_allocator())
+    testing.expect_value(t,error,Error.Out_Of_Memory)
+}
+
+@(test)
+a_heightmap_of_the_most_samples_a_terrain_takes_is_not_too_large :: proc(t:^testing.T) {
+    values:=[6]u16{0,1,128,254,255,70}
+    bytes:=height_png(values[:],3,2)
+    defer delete(bytes)
+    // Its header says 16385 by 16385: past what the decoder takes in pixels of a texture.
+    bytes[16],bytes[17],bytes[18],bytes[19]=0,0,0x40,0x01
+    bytes[20],bytes[21],bytes[22],bytes[23]=0,0,0x40,0x01
+    _,error:=heightmap_decode(bytes[:],16385,runtime.nil_allocator())
+    testing.expect_value(t,error,Error.Out_Of_Memory)
+    testing.expect(t,heightmap_bytes_max(16385)>=16385*16385*4,"the read limit takes an R32 of that side")
 }

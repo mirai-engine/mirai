@@ -53,7 +53,7 @@ terrain_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,
             mode:=tool_mode_index(tool)
             if kit.tabs(ctx,ui.id(ctx,"mode"),mode_names(kind),&mode) {mode_set(s,tool,world,app.assets,mode)}
             switch {
-            case tool_painting(tool): terrain_paint_panel(s,tool,world,app.assets)
+            case tool_painting(tool): terrain_paint_panel(s,tool,world,app)
             case tool_holing(tool):   terrain_holes_panel(s,tool)
             case tool_shaping(tool):  terrain_shapes_panel(s,tool,world,app.assets,app.allocator)
             case:                     terrain_sculpt_panel(s,tool,world,app)

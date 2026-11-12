@@ -272,9 +272,10 @@ T or its entry in the Tools menu, outside Play.
   with one, only its modes. The brush only sculpts a selected terrain: a click on another selects
   it. Picking on a child leads to the owner and, if the picker finds nothing, the brush tries
   `source_ray` of the selected terrain.
-- **Create**: Plane or Heightmap for a Heightfield. Heightmap (16-bit PNG with its precision, TGA
-  and BMP) normalizes integers to [0,1] without gamma and scales and offsets the height; its first
-  row is the start of Z. Volumetric Terrain starts with a solid block surrounded by air. Plane
+- **Create**: Plane or Heightmap for a Heightfield. Heightmap (16-bit PNG with its precision, TGA,
+  BMP and R16 or `.raw` normalized to [0,1] without gamma, R32 floats as they are) scales and
+  offsets the values; its first row is the start of Z. R16 and R32 have no header: they are square.
+  Any size a terrain takes reads back: the read limit follows `SAMPLES_MAX`. Volumetric Terrain starts with a solid block surrounded by air. Plane
   shows the size in meters and in chunks, and the view draws its outline where it will be born.
 - The new file (`terrain/<type>.terrain`) waits in the registry until its step ends and is
   part of the undo step: undoing it removes it even if later strokes changed it.
@@ -283,8 +284,11 @@ T or its entry in the Tools menu, outside Play.
   dug, to place as any mesh. The terrain stays as it is.
 - **Heightmap** (Sculpt of a Heightfield): Import sets the heights of an image, scaled and offset
   as in Create (one of another size gives it its size, with its layers and without what was
-  painted or the holes); Export writes its heights into a 16-bit PNG from lowest to highest and
-  leaves in the fields the scale and offset that import it back. **Size** gives it other samples
+  painted or the holes); Export writes its heights into a 16-bit PNG (deflated) or R16 from lowest
+  to highest, or an R32 of the heights as they are, and leaves in the fields the scale and offset
+  that import it back. **Weightmap** (Paint of a Heightfield) exports the weight of the chosen layer
+  from 0 to 1 in the same formats and imports one of the terrain's size: the layer takes that
+  weight and the others keep their shares of the rest. **Size** gives it other samples
   around its center (each side changes by an even number, so the center remains a sample): what it
   had stays in place and what grows takes the heights and weights of the nearest edge
   (`source_resize`). Each one is an undo step.

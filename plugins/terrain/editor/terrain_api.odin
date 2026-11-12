@@ -35,7 +35,7 @@ Create_Params :: struct {
     depth:u32 `mirai:"optional,min=3,max=16385,label=Samples along y of a volume"`,
     spacing:f32 `mirai:"optional,min=0.01,max=100,unit=m,label=Between two samples"`,
     chunk_cells:u32 `mirai:"optional,min=4,max=256,label=Cells on a side of a chunk"`,
-    heightmap:[512]u8 `mirai:"text,optional,label=A PNG (16-bit too) or TGA or BMP of the project whose heights it takes in place of samples"`,
+    heightmap:[512]u8 `mirai:"text,optional,label=A .png (16-bit too), .tga, .bmp, .r16 or .raw (0 to 1) or .r32 (as they are) of the project whose values it takes scaled and offset in place of samples"`,
     height_scale:f32 `mirai:"optional,unit=m,label=How far the white of the heightmap stands over its black"`,
     height_offset:f32 `mirai:"optional,unit=m,label=The height of its black"`,
     at:[3]f32 `mirai:"optional,label=Where its entity stands, the center of the terrain; omitted: under the target of the view"`,
@@ -115,8 +115,9 @@ Sample_Params :: struct {
 
 Heightmap_Params :: struct {
     entity:editor.Api_Entity_Text `mirai:"text,entity,label=The entity of a Heightfield Terrain"`,
-    import_path:[512]u8 `mirai:"text,optional,label=An image whose heights it takes scaled and offset; another size gives it its size"`,
-    export_path:[512]u8 `mirai:"text,optional,label=A 16-bit PNG it writes from its lowest height to its highest"`,
+    import_path:[512]u8 `mirai:"text,optional,label=A .png, .tga, .bmp, .r16 or .raw (0 to 1) or .r32 (as they are) whose values it takes scaled and offset; another size gives it its size"`,
+    export_path:[512]u8 `mirai:"text,optional,label=A .png or .r16 it writes from its lowest height to its highest, or a .r32 of its heights as they are"`,
+    layer:[LAYER_NAME_BYTES]u8 `mirai:"text,optional,label=A layer by its material: the files are its weightmap, its weight from 0 to 1 at each sample, and of the size of the terrain"`,
     height_scale:f32 `mirai:"optional,unit=m"`,
     height_offset:f32 `mirai:"optional,unit=m"`,
 }
@@ -176,7 +177,7 @@ terrain_api_register :: proc(s:^editor.Session) {
     editor.api_method_register(s,{name="terrain.layer",summary="Adds, changes or takes out a material layer of a terrain, with its tiling, height blend and its automatic rule of slope and height, as one step of undo; what it is not given stays as it is. From one layer, which covers everything when the terrain is made, up to four.",params=type_info_of(Layer_Params),defaults=&layer_defaults,result=type_info_of(Terrain_Layer_Result),run=api_layer})
     editor.api_method_register(s,{name="terrain.interior",summary="Sets what a Volume holds under its surface, as its layers, and writes it into every sample as one step of undo: strata down from the top of each column (grass, dirt, rock) and pockets or veins of noise over them (ore). The walls and floor of what is dug show it, and what a game digs reports it by layer (terrain.Terrain_Digs). What it is not given stays as it is.",params=type_info_of(Interior_Params),defaults=&interior_defaults,result=type_info_of(Terrain_Interior_Result),run=api_interior})
     editor.api_method_register(s,{name="terrain.sample",summary="What a terrain has under a point: the height and normal of its surface in the world, its slope, the weight of each of its layers there by its name (rules included) and whether it is a hole; while a game of the caller plays, in that game, with check, a hash of every value of its source, equal in two games that hold the same.",params=type_info_of(Sample_Params),flags={.Read_Only},result=type_info_of(Terrain_Sample_Result),run=api_sample})
-    editor.api_method_register(s,{name="terrain.heightmap",summary="Imports a heightmap into a Heightfield Terrain as one step of undo, or exports its heights as a 16-bit PNG (the scale and offset it answers import it back).",params=type_info_of(Heightmap_Params),result=type_info_of(Terrain_Heightmap_Result),run=api_heightmap})
+    editor.api_method_register(s,{name="terrain.heightmap",summary="Imports a heightmap into a Heightfield Terrain as one step of undo, or exports its heights as a 16-bit PNG or R16 (the scale and offset it answers import it back) or as R32 floats; with layer, the weightmap of that layer instead.",params=type_info_of(Heightmap_Params),result=type_info_of(Terrain_Heightmap_Result),run=api_heightmap})
     editor.api_method_register(s,{name="terrain.resize",summary="Gives a Heightfield Terrain other samples around its center as one step of undo: what it had stays where it was, and what grows takes the heights and layers of the nearest edge.",params=type_info_of(Resize_Params),result=type_info_of(Id_Result),run=api_resize})
 }
 
@@ -659,17 +660,23 @@ api_heightmap :: proc(s:^editor.Session,call:^api.Call) {
     imported,exported:=base.text_get(p.import_path[:]),base.text_get(p.export_path[:])
     if imported=="" && exported=="" {api.call_fail(call,api.INVALID_PARAMS,"Give import_path or export_path");return}
     s.toast_length=0
+    layer:=-1
+    if named:=base.text_get(p.layer[:]);named!="" {
+        found:bool
+        if layer,found=layer_named(s,call,&tool.stroke.source,named);!found {return}
+    }
     if imported!="" {
         file,problem:=editor.api_file_path(s.project_root,imported,context.temp_allocator)
         if problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
-        if !heightmap_import(s,tool,world,s.app.assets,file) {editor.tool_call_fail(s,call,"The heightmap could not be imported");return}
+        done:=layer<0?heightmap_import(s,tool,world,s.app.assets,file):weightmap_import(s,tool,world,s.app.assets,file,layer)
+        if !done {editor.tool_call_fail(s,call,"The file could not be imported");return}
     }
     if exported!="" {
         file,problem:=editor.api_file_path(s.project_root,exported,context.temp_allocator)
         if problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
         exported=file
     }
-    if exported!="" && !heightmap_export(s,tool,exported) {editor.tool_call_fail(s,call,"The heightmap could not be written");return}
+    if exported!="" && !(layer<0?heightmap_export(s,tool,exported):weightmap_export(s,tool,exported,layer)) {editor.tool_call_fail(s,call,"The file could not be written");return}
     api.call_result(call,Terrain_Heightmap_Result)^={exported,tool.height_scale,tool.height_offset}
 }
 
