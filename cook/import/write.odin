@@ -122,6 +122,7 @@ Writer :: struct {
     sidecar:Sidecar,             // of the source, as the import found it
     taken:[]bool,                // the outputs of sidecar the import gives again
     outputs:[dynamic]Output,     // what the import gives: the outputs of the sidecar it writes
+    paths:[dynamic]string,       // the file of each of outputs
     imported:string,             // the imported folder of options.root
     path:string,                 // the source
     version:u32,                 // import_version of what reads the source

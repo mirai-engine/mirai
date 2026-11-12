@@ -57,6 +57,7 @@ writer_source :: proc(w:^Writer,path,folder:string) -> bool {
     w.folder=filepath.dir(path) if w.sidecar.folder=="" else fmt.tprintf("%s/%s",filepath.dir(path),w.sidecar.folder)
     w.taken=make([]bool,len(w.sidecar.outputs),context.temp_allocator)
     w.outputs=make([dynamic]Output,context.temp_allocator)
+    w.paths=make([dynamic]string,context.temp_allocator)
     w.imported=project.imported_path(w.options.root,context.temp_allocator)
     w.registry=w.options.registry
     if w.registry==nil {
@@ -96,14 +97,15 @@ writer_input :: proc(w:^Writer,file:string) -> bool {
 // kind and name (the one of its index first), or of its kind for the only one
 // of its kind, else a new id. What the import gives is listed in w.outputs, the sidecar it
 // writes when it ends. A part of the kind and name of one of the first
-// w.given outputs is that one (given).
+// w.given outputs, or of the kind, name and index of a later one, is that one
+// (given): an output is listed once however many times it is asked for.
 @(private)
 parts_plan :: proc(w:^Writer,parts:[]Part) {
     each: for &p in parts {
         if !p.only {
-            for output,at in w.outputs[:w.given] {
-                if output.kind!=p.kind || output.name!=p.name {continue}
-                p.id,p.output,p.given=output.id,at,true
+            for output,at in w.outputs {
+                if output.kind!=p.kind || output.name!=p.name || at>=w.given && output.index!=p.index {continue}
+                p.id,p.output,p.path,p.given=output.id,at,w.paths[at],true
                 continue each
             }
         }
@@ -134,6 +136,7 @@ parts_plan :: proc(w:^Writer,parts:[]Part) {
         if folder:=filepath.dir(p.path);!os.is_dir(folder) {_=os.make_directory_all(folder)}
         p.output=len(w.outputs)
         append(&w.outputs,Output{kind=p.kind,name=strings.clone(p.name,w.keep),index=p.index,id=p.id})
+        append(&w.paths,strings.clone(p.path,w.keep))
     }
 }
 
