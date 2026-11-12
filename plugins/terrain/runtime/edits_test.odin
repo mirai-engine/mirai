@@ -98,18 +98,18 @@ splines_conform_a_bed_that_paints_follows_the_ground_and_gives_back_what_was_und
     testing.expect(t,abs(grid_get(&s.field,16,10)-grid_get(&base_field,16,10))<1e-4)
     testing.expect_value(t,grid_get(&s.weights,16,10),base_weights)
     testing.expect(t,grid_get(&s.weights,24,10)[1]==WEIGHT_FULL)
-    // Without splines the ground is the base again, with its weights.
+    // Without splines the ground is the base again, with its weights, and the layer is gone.
     testing.expect(t,source_conform(&s,nil).changed)
     testing.expect(t,fields_near(&s,&base_field,1e-4))
     testing.expect_value(t,grid_get(&s.weights,24,10),base_weights)
     testing.expect(t,grid_none(&s.edit_under))
-    // A hidden layer of splines stays empty; a wrong path changes nothing.
+    testing.expect_value(t,s.edit_count,u32(0))
+    // It follows its splines alone: it is not hidden or taken out by hand, and a wrong path changes nothing.
     testing.expect(t,source_conform(&s,paths[:]).changed)
-    testing.expect(t,source_edit_layer_hide(&s,0,true).changed)
-    testing.expect(t,fields_near(&s,&base_field,1e-4))
-    testing.expect(t,!source_conform(&s,paths[:]).changed)
+    testing.expect_value(t,source_edit_layer_hide(&s,0,true).error,Edit_Error.Layer)
+    testing.expect_value(t,source_edit_layer_remove(&s,0).error,Edit_Error.Layer)
     bad:=paths
     bad[0].layer=3
-    testing.expect_value(t,source_edit_layer_hide(&s,0,false).error,Edit_Error.None)
     testing.expect_value(t,source_conform(&s,bad[:]).error,Edit_Error.Layer)
+    testing.expect_value(t,s.edit_count,u32(1))
 }

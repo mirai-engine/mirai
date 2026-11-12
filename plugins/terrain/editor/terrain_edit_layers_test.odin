@@ -80,24 +80,46 @@ strokes_on_an_edit_layer_and_a_conformed_spline_are_steps_of_undo :: proc(t:^tes
     undo(t,&s,&tool,&world)
     height,_=held(t,&assets,id,16,16);testing.expect_value(t,height,f32(3))
 
-    // A road over it: its bed is cut a metre into the ground the layer raised.
+    // A road made in a gesture: its bed is cut a metre into the raised ground,
+    // in the step of that gesture, which takes both back.
+    gesture :: proc(t:^testing.T,s:^editor.Session,tool:^Terrain_Tool,world:^Create_Test_World,label:string,change:proc(world:^Create_Test_World,road:core.Entity),road:core.Entity) {
+        ref:=test_world_ref(world)
+        testing.expect(t,history.edits_begin(s.edits,s.selection,label))
+        change(world,road)
+        core.world_settle(ref)
+        test_world_settle(world)
+        terrain_splines_follow(s,tool,ref,s.app.assets)
+        history.edits_end(s.edits)
+        testing.expect(t,history.edits_commit(s.edits,ref,s.selection))
+    }
     road:=core.create(&world.entities)
-    core.add(&world.transforms,road,core.TRANSFORM_IDENTITY)
-    core.add(&world.worlds,road,core.World_Transform{transform={rotation=1,scale={1,1,1}}})
-    core.add(&world.splines,road,volume.Spline{count=2,points={0={position={0,0,-16},width=2},1={position={0,0,16},width=2}}})
-    core.add(&world.conforms,road,terrain.Terrain_Conform{depth=1,sides=1,smooth=0})
-    core.world_settle(ref)
     tool.edit_layer=0
-    if !prepare(t,&s,&tool,&world,owner) {return}
-    changed,splines,conformed:=terrain_conform(&s,&tool,ref,app.assets)
-    testing.expect(t,changed && splines==1 && conformed)
-    testing.expect(t,history.edits_commit(&edits,ref,&selection))
+    steps:=edits.cursor
+    gesture(t,&s,&tool,&world,"Road",proc(world:^Create_Test_World,road:core.Entity) {
+        core.add(&world.transforms,road,core.TRANSFORM_IDENTITY)
+        core.add(&world.worlds,road,core.World_Transform{transform={rotation=1,scale={1,1,1}}})
+        core.add(&world.splines,road,volume.Spline{count=2,points={0={position={0,0,-16},width=2},1={position={0,0,16},width=2}}})
+        core.add(&world.conforms,road,terrain.Terrain_Conform{depth=1,sides=1,smooth=0})
+    },road)
+    testing.expect_value(t,edits.cursor,steps+1)
     height,layers=held(t,&assets,id,16,16)
     testing.expect(t,abs(height-2)<1e-3 && layers==2,"the bed lies a metre under the raised ground, in a layer of its own")
     height,_=held(t,&assets,id,16,0);testing.expect(t,abs(height-(-1))<1e-3)
+    // Moved, it follows; undo puts the road and its bed back where they were.
+    gesture(t,&s,&tool,&world,"Move road",proc(world:^Create_Test_World,road:core.Entity) {
+        core.edit(&world.worlds,road).transform.position.x=8
+        core.edit(&world.transforms,road).position.x=8
+    },road)
+    height,_=held(t,&assets,id,16,0);testing.expect(t,abs(height)<1e-3,"the old bed is gone")
+    height,_=held(t,&assets,id,24,0);testing.expect(t,abs(height-(-1))<1e-3)
     undo(t,&s,&tool,&world)
+    height,_=held(t,&assets,id,16,0);testing.expect(t,abs(height-(-1))<1e-3)
+    height,_=held(t,&assets,id,24,0);testing.expect(t,abs(height)<1e-3)
+    // Without its road the layer of splines goes.
+    gesture(t,&s,&tool,&world,"Delete road",proc(world:^Create_Test_World,road:core.Entity) {core.remove(&world.conforms,road)},road)
     height,layers=held(t,&assets,id,16,16)
     testing.expect(t,height==3 && layers==1)
-    undo(t,&s,&tool,&world,redo=true)
-    height,_=held(t,&assets,id,16,16);testing.expect(t,abs(height-2)<1e-3)
+    undo(t,&s,&tool,&world)
+    height,layers=held(t,&assets,id,16,16)
+    testing.expect(t,abs(height-2)<1e-3 && layers==2)
 }

@@ -43,8 +43,8 @@ $P scene.write '{"entities":[
 - A `Terrain_Conform` on the entity shapes the Heightfield under it: a level bed across its width
   that follows the ground along its middle, `depth` under it (a river channel; negative raises an
   embankment), meeting the ground over `sides` and painted with the layer of its `paint`. The
-  terrain takes it on `terrain.conform` (or Conform to splines in Sculpt), in a layer of its own:
-  calling it again after a road moves gives back the ground where it was.
+  terrain follows it by itself, in a layer of its own: a road that moves gives back the ground
+  where it was, and undoing the move undoes its bed.
 
 ## Pitfalls that fail silently
 

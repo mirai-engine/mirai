@@ -303,13 +303,18 @@ T or its entry in the Tools menu, outside Play.
   reads the field alone, and the base is not stored. A stroke, a ramp, a pasted region or a mirror
   with a layer chosen writes the field and adds what it changed to that layer
   (`source_edit_layer_take`); hiding or taking a layer out takes what it adds out of the field.
-  Holes and paint go to the base. The layer of **Splines**, the last, is made, not sculpted:
+  Holes and paint go to the base. Each change of a layer of sculpting is an undo step.
+- The layer of **Splines**, the last, is derived from the splines, never edited by hand: it is not
+  chosen, hidden or taken out, and it goes with the last spline that reaches the terrain.
   `source_conform` takes out what it added and gives back the weights it painted (`edit_under`),
   then each `volume.Spline` with a `Terrain_Conform` over the terrain lays a bed level across its
   width that follows the mean of the ground under its middle over `smooth` metres, `depth` under
-  it, and meets the ground over `sides`, painting the layer of `paint`. It is made on Conform to
-  splines or `terrain.conform`, never by itself, so undo of a spline and of the terrain stay
-  apart; hidden, it holds nothing until shown, which makes it again. Each change is an undo step.
+  it, and meets the ground over `sides`, painting the layer of `paint`.
+- It follows by itself: right before the history records a gesture, in the panel or through the
+  API, the editor asks its `Edit_Follow_Provider`s, and `terrain_follow` remakes every Heightfield
+  whose hash of the splines that reach it (`Source_Info.conform`) is not theirs. That change joins
+  the gesture's step, so undoing the spline undoes its bed; undo remakes nothing. Sculpting under a
+  road moves its bed with the ground until the spline changes again.
 - Everything of the tool is in its panel, from top to bottom: mode, brushes with their key, radius,
   strength, pen pressure, falloff, shape (alpha) and what is specific to the brush, and at the foot
   the **Entity** section with the entity's details, which the panel covers. **Sculpt** offers the
@@ -439,9 +444,9 @@ ground in the color of the level it shows, a coarser node one.
 ## API
 
 `terrain.create`, `terrain.edit`, `terrain.layer`, `terrain.interior`, `terrain.sample`,
-`terrain.heightmap`, `terrain.resize`, `terrain.region`, `terrain.mirror`, `terrain.edit_layer`
-and `terrain.conform` (`terrain_api.odin`, `terrain_region.odin`, `terrain_edit_layers.odin`) do
-what the panel does in the edited
+`terrain.heightmap`, `terrain.resize`, `terrain.region`, `terrain.mirror` and `terrain.edit_layer`
+(`terrain_api.odin`, `terrain_region.odin`, `terrain_edit_layers.odin`) do what the panel does in
+the edited
 world on the entity they name (no selection needed), each change an undo step like a
 stroke, at the place the entity has now: a manual editor runs the frame that places it, and its
 ground and colliders with it. `terrain.create` takes a `name` for its entity and file, beside the

@@ -38,6 +38,7 @@ Source_Info :: struct {
     interior:Interior, // Volume: what is under its surface, written into its weights by source_interior_apply
     edit_count:u32,    // Heightfield: its edit layers (edits.odin), from the lowest
     edit_layers:[EDITS_MAX]Edit_Layer,
+    conform:u64,       // Heightfield: the hash of the splines its layer of splines was made from, kept by the editor; 0: none
 }
 
 Source :: struct {

@@ -1,6 +1,8 @@
 package terrain_editor
 
 import "core:fmt"
+import "core:math/linalg"
+import "core:mem"
 import "mirai:core"
 import "mirai:editor"
 import "mirai:editor/api"
@@ -8,14 +10,21 @@ import "mirai:editor/kit"
 import volume "mirai:engine/volume"
 import "mirai:host"
 import terrain "plugins:terrain/runtime"
+import "mirai:std/base"
 import mm "mirai:std/math"
 import "mirai:ui"
 
 // The edit layers of a Heightfield in Sculpt and through the API: the base
-// and each layer, which strokes take when it is chosen, shown or hidden,
-// added and taken out, and the layer of splines, made again from the splines
-// with a Terrain_Conform over the terrain (terrain_conform). Each change is
-// one step of undo.
+// and each layer of sculpting, which strokes take when it is chosen, shown or
+// hidden, added and taken out, each one step of undo. The layer of splines is
+// derived: before the history records a gesture, every Heightfield whose
+// splines with a Terrain_Conform changed takes them again (terrain_follow),
+// and that change joins the step of the gesture, so its undo takes both back.
+
+@(storage)
+Terrain_Follow :: struct {provider:editor.Edit_Follow_Provider}
+
+TERRAIN_FOLLOW_DEFAULT :: Terrain_Follow{provider={follow=terrain_follow}}
 
 Edit_Layer_Params :: struct {
     entity:editor.Api_Entity_Text `mirai:"text,entity,label=The entity of a Heightfield Terrain"`,
@@ -24,25 +33,17 @@ Edit_Layer_Params :: struct {
     hidden:bool `mirai:"optional,label=Hides the layer, taking what it adds out of the ground until it is shown"`,
 }
 
-Conform_Params :: struct {
-    entity:editor.Api_Entity_Text `mirai:"text,entity,label=The entity of a Heightfield Terrain"`,
-}
-
 Terrain_Edit_Layer_Result :: struct {
     layers:int,
     layer:int `mirai:"optional"`,
 }
 
-Terrain_Conform_Result :: struct {
-    changed:bool,
-    splines:int,
-}
-
-// What the splines with a Terrain_Conform of a world give a terrain, in the
-// space of its source: curves sampled at its spacing, from temp memory.
-// problem says what one of them names wrong.
+// What the splines with a Terrain_Conform of a world give the terrain of the
+// stroke, in the space of its source: curves sampled at its spacing that
+// reach it, from temp memory, and the hash of all of them. problem says what
+// one of them names wrong, which paints nothing.
 @(private)
-conform_paths :: proc(tool:^Terrain_Tool,world:core.World_Ref) -> (paths:[dynamic]terrain.Conform_Path,problem:string) {
+conform_paths :: proc(tool:^Terrain_Tool,world:core.World_Ref) -> (paths:[dynamic]terrain.Conform_Path,hash:u64,problem:string) {
     paths=make([dynamic]terrain.Conform_Path,context.temp_allocator)
     conforms:=core.world_table_of(world,terrain.Terrain_Conform)
     splines:=core.world_table_of(world,volume.Spline)
@@ -59,40 +60,96 @@ conform_paths :: proc(tool:^Terrain_Tool,world:core.World_Ref) -> (paths:[dynami
         layer:=-1
         if conform.paint!={} {
             for l,i in source.layers[:source.layer_count] {if l.material==conform.paint {layer=i}}
-            if layer<0 {return paths,fmt.tprintf("A Terrain_Conform paints a material that is no layer of this terrain: add it with terrain.layer, or clear paint")}
+            if layer<0 {problem="A Terrain_Conform paints a material that is no layer of the terrain under it: add it with terrain.layer, or clear paint"}
         }
         // At the spacing of the terrain, so its bed meets every sample.
         samples:=make([]mm.Path_Point,RIBBON_SAMPLES,context.temp_allocator)
         count:=volume.spline_sample(&spline,source.cell*scale,samples)
         if count<2 {continue}
-        for &p in samples[:count] {
+        path:=terrain.Conform_Path{points=samples[:count],depth=conform.depth/scale,sides=max(conform.sides,0)/scale,smooth=max(conform.smooth,0)/scale,layer=layer}
+        low,high:=[2]f32{max(f32),max(f32)},[2]f32{-max(f32),-max(f32)}
+        for &p in path.points {
             world_point:=mm.transform_point(place.transform,p.position)
             p.position=local_of(tool,world_point)
             p.width=p.width*abs(place.transform.scale.x)/scale
+            reach:=p.width*0.5+path.sides
+            low,high=linalg.min(low,p.position.xz-reach),linalg.max(high,p.position.xz+reach)
         }
-        append(&paths,terrain.Conform_Path{points=samples[:count],depth=conform.depth/scale,sides=max(conform.sides,0)/scale,smooth=max(conform.smooth,0)/scale,layer=layer})
+        // One that does not reach the terrain leaves it as it is.
+        a,b:=terrain.source_box(source,{},{int(source.samples.x)-1,0,int(source.samples.z)-1})
+        if high.x<a.x || low.x>b.x || high.y<a.z || low.y>b.z {continue}
+        append(&paths,path)
+        hash=base.hash64(mem.slice_to_bytes(path.points),hash)
+        settings:=[4]f32{path.depth,path.sides,path.smooth,f32(path.layer)}
+        hash=base.hash64(mem.slice_to_bytes(settings[:]),hash)
     }
+    // None reaching it is no layer of splines: the hash of a terrain without one.
+    if len(paths)==0 {hash=0} else if hash==0 {hash=1}
     return
 }
 
 @(private) RIBBON_SAMPLES :: 4096
 
-// Makes the layer of splines of the selected Heightfield again as one step
-// of undo; false with what failed told.
-terrain_conform :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,assets:^host.Assets) -> (changed:bool,splines:int,ok:bool) {
-    stroke:=&tool.stroke
-    if stroke.id=={} || stroke.active || stroke.source.kind!=.Heightfield {return}
-    paths,problem:=conform_paths(tool,world)
-    if problem!="" {editor.notify(s,problem);return}
-    if !stroke_baseline(tool) {editor.notify(s,"The terrain history could not be stored");return}
-    change:=terrain.source_conform(&stroke.source,paths[:])
-    if change.error!=.None {edit_error(s,change.error,.Flatten);return}
-    if !change.changed {return false,len(paths),true}
-    stroke.active=true
-    stroke_changed(&tool.stroke,change)
-    stroke.changed,stroke.dirty_all=true,true
-    stroke_end(s,tool,world,assets,label="Conform to splines")
-    return true,len(paths),!stroke.active
+// The editor's hook before it records a gesture of the edited scene.
+@(private)
+terrain_follow :: proc(s:^editor.Session) {
+    tool:=core.world_storage_of(core.world_ref(s.editor_world,s.info,.Editor),Terrain_Tool)
+    if tool==nil || s.app==nil || s.app.assets==nil {return}
+    tool_ready(tool)
+    terrain_splines_follow(s,tool,editor.edited_world(s),s.app.assets)
+}
+
+// Every Heightfield whose splines with a Terrain_Conform are not those its
+// layer of splines was made from takes them again, inside the open gesture.
+// Which terrains to look at comes from what the runtime holds of them and
+// where the splines are, so a gesture far from any reads no source.
+terrain_splines_follow :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,assets:^host.Assets) {
+    terrains:=core.world_table_of(world,terrain.Terrain)
+    places:=core.world_table_of(world,core.World_Transform)
+    if terrains==nil || places==nil || tool.stroke.active {return}
+    data:=core.world_storage_of(world,terrain.Terrain_Data)
+    reaches:=make([dynamic]mm.Aabb,context.temp_allocator)
+    if conforms,splines:=core.world_table_of(world,terrain.Terrain_Conform),core.world_table_of(world,volume.Spline);conforms!=nil && splines!=nil {
+        for row in 0..<core.count(conforms) {
+            e:=core.entity_at(conforms,row)
+            spline,has:=core.get(splines,e)
+            place,placed:=core.get(places,e)
+            if !has || !placed {continue}
+            if reach,ok:=volume.spline_reach(&spline,place.transform);ok {append(&reaches,reach)}
+        }
+    }
+    owners:=make([dynamic]core.Entity,context.temp_allocator)
+    for marker,row in terrains.values[:core.count(terrains)] {
+        e:=core.entity_at(terrains,row)
+        place,placed:=core.get(places,e)
+        if !placed {continue}
+        held:=data!=nil?terrain.terrain_source(core.ref(data),marker.source):nil
+        // A source the runtime has not read yet is looked at as one with splines.
+        look:=held==nil || held.conform!=0
+        if !look && held.kind==.Heightfield {
+            a,b:=terrain.source_box(held,{},{int(held.samples.x)-1,0,int(held.samples.z)-1})
+            box:=mm.aabb_transform(mm.Aabb{min={a.x,-terrain.HEIGHT_LIMIT,a.z},max={b.x,terrain.HEIGHT_LIMIT,b.z}},mm.transform_matrix(place.transform))
+            for reach in reaches {if box.min.x<=reach.max.x && box.max.x>=reach.min.x && box.min.z<=reach.max.z && box.max.z>=reach.min.z {look=true;break}}
+        }
+        if look {append(&owners,e)}
+    }
+    for e in owners {
+        if !stroke_prepare(tool,assets,s.app.allocator,terrains,places,editor.Pick{entity=e}) {continue}
+        stroke:=&tool.stroke
+        if stroke.source.kind!=.Heightfield {continue}
+        paths,hash,problem:=conform_paths(tool,world)
+        if hash==stroke.source.conform {continue}
+        if problem!="" {editor.notify(s,problem)}
+        if !stroke_baseline(tool) {editor.notify(s,"The terrain history could not be stored");continue}
+        change:=terrain.source_conform(&stroke.source,paths[:])
+        if change.error!=.None {edit_error(s,change.error,.Flatten);stroke_cancel(tool);continue}
+        stroke.source.conform=hash
+        stroke.active=true
+        if change.changed {stroke_changed(stroke,change)}
+        stroke.changed,stroke.dirty_all=true,true
+        // Inside the open gesture: its step takes the revision of the terrain too.
+        stroke_end(s,tool,world,assets,label="Conform to splines")
+    }
 }
 
 // Adds, takes out, hides or shows an edit layer (index from 0) as one step of undo.
@@ -108,15 +165,7 @@ edit_layer_commit :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_
         if at,ok=terrain.source_edit_layer_add(&stroke.source);!ok {editor.notify(s,fmt.tprintf("A terrain holds %d edit layers at most",terrain.EDITS_MAX));return}
         change.changed=true
     case remove: change=terrain.source_edit_layer_remove(&stroke.source,index)
-    case:
-        change=terrain.source_edit_layer_hide(&stroke.source,index,hidden)
-        // That of splines is shown again by making it from its splines.
-        if change.error==.None && !hidden && stroke.source.edit_layers[index].splines {
-            paths,problem:=conform_paths(tool,world)
-            if problem!="" {editor.notify(s,problem);stroke_cancel(tool);return}
-            conformed:=terrain.source_conform(&stroke.source,paths[:])
-            if conformed.error!=.None {change.error=conformed.error}
-        }
+    case: change=terrain.source_edit_layer_hide(&stroke.source,index,hidden)
     }
     if change.error!=.None {edit_error(s,change.error,.Flatten);stroke_cancel(tool);return}
     if !change.changed {return at,true}
@@ -139,9 +188,14 @@ edit_layers_fields :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World
     for i in 0..<count {
         layer:=source.edit_layers[i]
         name:=layer.splines?"Splines":fmt.tprintf("Layer %d",i+1)
+        // That of splines follows its splines: it is shown, never chosen.
+        if layer.splines {
+            ui.label(ctx,name,ui.metric(ctx,"font"),ui.tone(ctx,"text_muted"))
+            continue
+        }
         if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=4}) {
             chosen:=tool.edit_layer==i+1
-            if ui.button(ctx,ui.id(ctx,"edit_layer",i+1),{label=name,variant="tab",active=chosen,width=-1}).clicked && !layer.splines && !layer.hidden {tool.edit_layer=i+1}
+            if ui.button(ctx,ui.id(ctx,"edit_layer",i+1),{label=name,variant="tab",active=chosen,width=-1}).clicked && !layer.hidden {tool.edit_layer=i+1}
             shown:=!layer.hidden
             if ui.checkbox(ctx,ui.id(ctx,"edit_shown",i+1),&shown) {
                 edit_layer_commit(s,tool,world,assets,i,false,false,!shown)
@@ -158,7 +212,6 @@ edit_layers_fields :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World
             edit_layer_commit(s,tool,world,assets,tool.edit_layer-1,false,true,false)
         }
     }
-    if ui.button(ctx,ui.id(ctx,"conform"),{label="Conform to splines",variant="field",width=-1,center=true}).clicked {terrain_conform(s,tool,world,assets)}
 }
 
 @(private)
@@ -172,22 +225,11 @@ api_edit_layer :: proc(s:^editor.Session,call:^api.Call) {
     if !given && (p.remove || editor.tool_call_given(call,"hidden")) {api.call_fail(call,api.INVALID_PARAMS,"Give layer, the edit layer to take out, hide or show");return}
     index:=p.layer-1
     if given && (index<0 || index>=int(source.edit_count)) {api.call_failf(call,api.INVALID_PARAMS,"layer is from 1 to %d, the edit layers of the terrain: omit it to add one",source.edit_count);return}
+    if given && source.edit_layers[index].splines {api.call_fail(call,api.INVALID_PARAMS,"That is the layer of splines, which follows the splines with a Terrain_Conform over the terrain: move, change or delete those instead");return}
     s.toast_length=0
     at,done:=edit_layer_commit(s,tool,world,s.app.assets,index,!given,p.remove,p.hidden)
     if !done {editor.tool_call_fail(s,call,"The edit layer could not be changed");return}
     api.call_result(call,Terrain_Edit_Layer_Result)^={int(tool.stroke.source.edit_count),p.remove?0:at+1}
-}
-
-@(private)
-api_conform :: proc(s:^editor.Session,call:^api.Call) {
-    p:=api.call_params(call,Conform_Params)
-    tool,world,ok:=api_terrain(s,call,p.entity[:])
-    if !ok {return}
-    if tool.stroke.source.kind!=.Heightfield {api.call_fail(call,api.INVALID_PARAMS,"A Volume does not conform to splines: carve or add along them with terrain.edit");return}
-    s.toast_length=0
-    changed,splines,done:=terrain_conform(s,tool,world,s.app.assets)
-    if !done {editor.tool_call_fail(s,call,"The terrain could not conform to its splines");return}
-    api.call_result(call,Terrain_Conform_Result)^={changed,splines}
 }
 
 @(private)
@@ -196,7 +238,7 @@ edit_layer_param :: proc(s:^editor.Session,call:^api.Call,tool:^Terrain_Tool,lay
     if !editor.tool_call_given(call,"edit_layer") || layer==0 {return true}
     source:=&tool.stroke.source
     if source.kind!=.Heightfield || layer<0 || layer>int(source.edit_count) {api.call_failf(call,api.INVALID_PARAMS,"edit_layer is 0 (the base) or from 1 to %d, the edit layers of the terrain: terrain.edit_layer adds one",source.edit_count);return false}
-    if l:=source.edit_layers[layer-1];l.hidden || l.splines {api.call_fail(call,api.INVALID_PARAMS,"That edit layer is hidden or made by splines: show it with terrain.edit_layer, or choose another");return false}
+    if l:=source.edit_layers[layer-1];l.hidden || l.splines {api.call_fail(call,api.INVALID_PARAMS,"That edit layer is hidden or is the layer of splines, which follows its splines: show it with terrain.edit_layer, or choose another");return false}
     tool.edit_layer=layer
     return true
 }

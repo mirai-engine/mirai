@@ -15,18 +15,18 @@ import mm "mirai:std/math"
 // writes the field and adds what it changed to that layer. Hiding a layer
 // takes what it adds out of the field, showing it puts it back.
 //
-// The layer of splines is made, not sculpted: it holds what the splines that
-// conform the ground (a road bed, a river channel) add over everything else,
-// made again from them whenever asked (source_conform). The weights it
-// paints keep what they were under it (edit_under), which come back when it
-// is made again or taken out.
+// The layer of splines is derived, not sculpted: it holds what the splines
+// that conform the ground (a road bed, a river channel) add over everything
+// else, made again from them by the editor whenever they change
+// (source_conform), and gone with the last of them. It is not hidden or taken
+// out by hand. The weights it paints keep what they were under it
+// (edit_under), which come back when it is made again.
 
 EDITS_MAX :: 8
 
-// On the entity of a volume.Spline: the Heightfield terrains under it take,
-// when they conform to their splines, a bed along it in their layer of
-// splines. Its points give the width; the ground under its middle, the height.
-@(component,description="The Heightfield terrains under the Spline of this entity conform to it: a level bed across its width that follows the ground along its middle, depth under it, meeting the ground over sides, painted with a layer. A road bed, a river channel or an embankment, made again whenever the terrain conforms (terrain.conform, Conform in Sculpt).")
+// On the entity of a volume.Spline: the Heightfield terrains under it take a
+// bed along it in their layer of splines, made again whenever it changes. Its points give the width; the ground under its middle, the height.
+@(component,description="The Heightfield terrains under the Spline of this entity conform to it: a level bed across its width that follows the ground along its middle, depth under it, meeting the ground over sides, painted with a layer. A road bed, a river channel or an embankment, made again whenever the spline, its place or these values change; undoing that change undoes the bed.")
 Terrain_Conform :: struct {
     depth:f32 `mirai:"unit=m"`,         // of its bed under the ground along its middle; negative raises it
     sides:f32 `mirai:"min=0,unit=m"`,   // past its width over which the ground meets its bed
@@ -47,7 +47,7 @@ Edit_Layer :: struct {
 
 @(private)
 edits_valid :: proc "contextless" (info:Source_Info) -> bool {
-    if info.edit_count>EDITS_MAX || info.kind!=.Heightfield && info.edit_count>0 {return false}
+    if info.edit_count>EDITS_MAX || info.kind!=.Heightfield && (info.edit_count>0 || info.conform!=0) {return false}
     splines:=0
     for layer,i in info.edit_layers {
         if i>=int(info.edit_count) {if layer!={} {return false};continue}
@@ -190,10 +190,15 @@ source_edit_layer_add :: proc(s:^Source,splines:=false) -> (index:int,ok:bool) {
     return at,true
 }
 
-// Takes a layer out, and what it adds out of the field; the weights a layer
-// of splines painted go back.
+// Takes a layer of sculpting out, and what it adds out of the field.
 source_edit_layer_remove :: proc(s:^Source,index:int) -> (change:Change) {
-    if index<0 || index>=int(s.edit_count) || !source_samples_held(s) {return Change{error=.Layer}}
+    if index<0 || index>=int(s.edit_count) || s.edit_layers[index].splines || !source_samples_held(s) {return Change{error=.Layer}}
+    return edit_layer_drop(s,index)
+}
+
+// A layer and what it adds out; the weights a layer of splines painted go back.
+@(private="file")
+edit_layer_drop :: proc(s:^Source,index:int) -> (change:Change) {
     layer:=s.edit_layers[index]
     if !layer.hidden && !field_add(s,&s.edit_heights[index],-1,&change) {return Change{error=.Out_Of_Memory}}
     if layer.splines && !under_restore(s,&change) {return Change{error=.Out_Of_Memory}}
@@ -207,17 +212,12 @@ source_edit_layer_remove :: proc(s:^Source,index:int) -> (change:Change) {
 }
 
 // Hides a layer of sculpting, or shows it: the field loses or takes back what
-// it adds. That of splines is shown again by source_conform.
+// it adds.
 source_edit_layer_hide :: proc(s:^Source,index:int,hidden:bool) -> (change:Change) {
-    if index<0 || index>=int(s.edit_count) || !source_samples_held(s) {return Change{error=.Layer}}
+    if index<0 || index>=int(s.edit_count) || s.edit_layers[index].splines || !source_samples_held(s) {return Change{error=.Layer}}
     layer:=&s.edit_layers[index]
     if layer.hidden==hidden {return}
-    if layer.splines {
-        if hidden {
-            if !field_add(s,&s.edit_heights[index],-1,&change) || !under_restore(s,&change) {return Change{error=.Out_Of_Memory}}
-            if !grid_init(&s.edit_heights[index],s.field.size,0,s.allocator) {return Change{error=.Out_Of_Memory}}
-        }
-    } else if !field_add(s,&s.edit_heights[index],hidden?-1:1,&change) {return Change{error=.Out_Of_Memory}}
+    if !field_add(s,&s.edit_heights[index],hidden?-1:1,&change) {return Change{error=.Out_Of_Memory}}
     layer.hidden=hidden
     change.changed=true
     return
@@ -264,8 +264,8 @@ Conform_Path :: struct {
 // bed that follows the ground under its middle, minus its depth, fading over
 // its sides into the ground, and paints its layer there. The ground under a
 // path is the base and every other layer, so a sculpted change under a road
-// is followed by its bed the next time it is made. No paths take the layer
-// out of the field; a hidden layer of splines stays empty.
+// is followed by its bed the next time it is made. Without paths that reach
+// it the layer goes, and what it added and painted with it.
 source_conform :: proc(s:^Source,paths:[]Conform_Path) -> (change:Change) {
     if s.kind!=.Heightfield || !source_valid(s.info) || !source_samples_held(s) {return Change{error=.Unloaded}}
     // What is wrong with a path changes nothing.
@@ -279,14 +279,23 @@ source_conform :: proc(s:^Source,paths:[]Conform_Path) -> (change:Change) {
     index:=-1
     for layer,i in s.edit_layers[:s.edit_count] {if layer.splines {index=i}}
     if index<0 {
-        if len(paths)==0 {return}
+        reaching:=false
+        for path in paths {if len(path.points)>=2 {reaching=true}}
+        if !reaching {return}
         ok:bool
         if index,ok=source_edit_layer_add(s,splines=true);!ok {return Change{error=.Out_Of_Memory}}
         change.changed=true
     }
+    reaching:=false
+    for path in paths {if len(path.points)>=2 {reaching=true}}
+    if !reaching {
+        dropped:=edit_layer_drop(s,index)
+        if dropped.error!=.None {return dropped}
+        change_grow(&change,dropped.low,dropped.high)
+        return
+    }
     if !field_add(s,&s.edit_heights[index],-1,&change) || !under_restore(s,&change) {return Change{error=.Out_Of_Memory}}
     if !grid_init(&s.edit_heights[index],s.field.size,0,s.allocator) {return Change{error=.Out_Of_Memory}}
-    if s.edit_layers[index].hidden || len(paths)==0 {return}
     // The bed of each path from the ground as it is now, without the layer.
     beds:=make([][]f32,len(paths),context.temp_allocator)
     for path,k in paths {
