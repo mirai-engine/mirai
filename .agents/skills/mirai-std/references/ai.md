@@ -320,11 +320,19 @@ no GOAP. What those models gave is written this way, without implementing them o
   trip to an object, a jump. What must interrupt it proposes more (stun, die).
 - An action that ends asks for `think` again in the same tick, over what changed, and the best one
   enters; it may be itself again, unless it failed.
+- A tick without `decide` runs the running action without asking `think`, which is asked only when
+  that action ends; with nothing running it does nothing. What spaces out thinking passes it, so
+  actions keep their timing.
 - `Mind_Context` is what the caller gives: `user` (the context of the mind), `tick`, `dt`, `keep`,
   `holder` (the agent, owner of its reservations), `reservations` and `lease`.
   `behavior.minds_tick` fills all of it.
 - Deterministic within a configuration, without allocating: copying the minds and the world
   halfway gives the same future.
+- **Cadence** (`cadence.odin`): `cadence_period` gives the ticks between two runs of something by
+  its distance to the nearest viewer and `cadence_due` whether it runs in a tick, by a phase (the
+  index of the agent) that spreads one period over its ticks. No state: a world and its copy run
+  the same ticks. Whatever spaces out work by distance (the minds of `behavior`) uses this one
+  rule.
 
 ### Actions
 
@@ -344,8 +352,12 @@ no GOAP. What those models gave is written this way, without implementing them o
 
 - `Reservations` counts who holds each key (a target and which of its reservations: 0 is an attack
   token, an offer of a smart object another). `token_take(a, target, limit)` and
-  `claim(a, target, which, limit)` take it for the frame that asks for it, which has only one:
-  another releases the previous one, and its `Exit` releases it.
+  `claim(a, target, which, limit, priority)` take it for the frame that asks for it, which has
+  only one: another releases the previous one, and its `Exit` releases it.
+- Priority: without room, a claim of a higher priority displaces the live holder of the lowest
+  priority below it that is not in use; `claim_use` (`reserve_use`) marks a holder in use, and
+  then nobody displaces it. Equal priorities never displace. The displaced holder is not
+  notified: `reserve_holds` (`claim_held` of its frame) is false for it.
 - The mind renews the lease of what it holds on each tick; whoever stops running loses it `lease`
   ticks later (far agents, until their next decision). `think` reads without taking with
   `reserve_free(t, target, N)` (`reserve_open` from outside a think); `reserve_count` and
@@ -355,7 +367,8 @@ no GOAP. What those models gave is written this way, without implementing them o
 ### Trace
 
 - The mind stores the best proposals of its last decision (`proposals`, from highest to lowest) and
-  its last exits with the cause and the action that interrupted them (`mind_exit_trace`).
+  its last exits with the tick, the cause and the action that interrupted them
+  (`mind_exit_trace`).
   `mind_running` gives the running action and step as numbers, what is presented; `mind_doing`, as
   enum values.
 
@@ -401,6 +414,8 @@ What those models gave, with a mind:
 - A `Consideration` reads one input, rescales it and maps it through a `Response` curve to 0..1.
   `score_considerations` is the product of those of a choice with the compensation for count, times
   its weight; a zero vetoes it and a choice without considerations is worth its weight.
+  `score_product` applies the same compensation to a product, so a caller that has measured only
+  some inputs bounds the score from above by taking the rest as 1.
 - It uses only arithmetic: the scores do not depend on the platform.
 - They score the places of a query; an agent chooses what to do with a
   [mind](#decisions-minds-mindodin), which takes the score of each proposal from the game.
@@ -408,14 +423,16 @@ What those models gave, with a mind:
 ## Perception and places (`perception.odin`, `places.odin`)
 
 - `Perception_Memory` stores observations of fixed capacity: subject (a handle of the caller),
-  position, senses of the last instant, confidence and instants. `memory_perceive` raises it;
+  position, senses of the last instant, confidence and instants. `memory_perceive` raises it as of
+  a tick, which may be past: a report older than the last of its subject changes nothing;
   `memory_forget` lowers it to zero `forget` seconds after the last time and removes what was
   forgotten; `memory_remove` removes a subject immediately (one that no longer exists). When full, a
   new subject replaces the least certain one if it is more so. It is plain: it is copied with the
   agent.
 - `sight_in_cone` says whether a point is in the cone and range of a gaze; what blocks it belongs to
   the caller.
-- `places_rings` and `places_grid` arrange candidates around a point; `places_mesh`, the mesh points
+- `places_rings` (all around, or an arc centered on a facing) and `places_grid` arrange candidates
+  around a point; `places_mesh`, the mesh points
   joined to a polygon without leaving a radius of the center: a grid over each reached polygon, or
   its middle if none falls on it, in the order in which they are reached. `places_best` scores each
   one with its considerations over the inputs that the caller measured for it and stores the best
@@ -425,7 +442,8 @@ What those models gave, with a mind:
 
 - `mirai test std/ai` runs `mind_test.odin`: the zombie, the boss and a tactical bot of the demo
   tick by tick (chase, bites, attacks that end, reactions in the same tick, combos as steps, tokens
-  and a shared ammo box), that do not oscillate, the trace, the lease of a reservation, that a copy
+  and a shared ammo box), that do not oscillate, the trace, the lease of a reservation, the
+  priority of claims and their use, that a copy
   gives the same future without allocating and hostile states and proposals; and
   `influence_test.odin`: passes within the budget, falloff per meter, cover and hostile inputs.
 - `bench_minds` (`-define:MIRAI_BENCH=true`) measures the tick of 1000 zombies; `bench_navmesh`,

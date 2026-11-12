@@ -16,14 +16,20 @@ core.commands_add(c, crate, behavior.Smart_Object{offers = {
 }})
 ```
 
-`at` is where the user stands, in the object's frame; `uses` 0 is unlimited; `teams` none is open
-to anyone. `Smart_Object` is also a component to add to an entity in a scene.
+`at` is where the user stands, in the object's frame; `yaw` is which way it faces there, from the
+object's front; `enter` is where it comes to `at` from, relative to `at` (zero: straight to it);
+`uses` 0 is unlimited; `teams` none is open to anyone. `Smart_Object` is also a component to add
+to an entity in a scene. A bar with many stools is many entities with one offer each.
 
 ## Going to use it
 
 `think` proposes the trip only if one is open; the action does the whole trip (take the nearest,
-claim it, walk, wait) with `offer_act` and applies the effect. It walks after an object that
-moves, and fails if the offer is gone or closed before it is used:
+claim it, walk to `enter` and then to `at`, face `yaw`, wait) with `offer_act` and applies the
+effect. It walks after an object that moves, and fails if the offer is gone or closed before it is
+used. `Smart_User.priority` is the priority of its claims (the game declares its levels as
+constants): a higher one takes an offer from a user still walking to it, whose `offer_act` then
+fails; once a user is using it (`offer_act` facing it, `cross_act` crossing, or `ai.claim_use`)
+nobody takes it:
 
 ```odin
 user := behavior.Smart_User{entity=behavior.agent(t), team=TEAM_ENEMY}
@@ -65,7 +71,11 @@ vault :: proc(a:^ai.Act(Act),links:^core.Table(nav.Nav_Link,.Read),placer:core.P
 ## Choosing a place (cover, flank)
 
 A query is asked on `Enter`; the answer arrives in the agent's `Place_Result` a tick or more
-later. Candidate layouts, tests and responses: the params of `behavior.query`.
+later. Candidate layouts, tests and responses: the params of `behavior.query`. Layout
+`Remembered` takes what the agent remembers (the enemies of the teams asked and the noises with no
+maker), where it last perceived it, so it does not flank someone it never saw; `arc` (radians)
+keeps `Rings` to a span around where the center faces.
+Order the tests freely: rays and path searches are spent only where they can change the answer.
 
 ```odin
 case .Enter:
@@ -84,5 +94,8 @@ case .Update:
     // r.points[0] is the best place; r.entities[0] and r.offers[0] name the object and its offer
 ```
 
-To use an offer that a query found, build a `behavior.Smart_Found` (`object`, `offer`, `at`,
-`users`) and claim it with `behavior.smart_claim(a, found)` before walking to `at`.
+The layout `Offers` lays out the offers open to the querier at the query's `priority`: give it
+its `Smart_User.priority`. To use an offer that a query found, build a `behavior.Smart_Found`
+(`object`, `offer`, `at`, `users`) and claim it with `behavior.smart_claim(a, found, user)` before
+walking to `at`; while it walks, `ai.claim_held(a)` false means a higher priority took it; call
+`ai.claim_use(a)` when the agent starts using it.

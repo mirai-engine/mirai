@@ -37,6 +37,7 @@ Instance_Inspect_Params :: struct {
     entity:[editor.API_ENTITY_TEXT]u8 `mirai:"text,entity,label=By its name or a path Parent/Child or its id; in Play or Simulate also its handle as scene.inspect with world Game gives it"`,
     parts:Instance_Parts `mirai:"optional,label=Omitted is all of them but Pose, which needs names"`,
     names:[POSE_NAMES][aa.NODE_PATH_CAPACITY]u8 `mirai:"text,optional,label=Pose: the bones and sockets to place; a bone by path or name or as a part of the body (@hand_r) and a socket by its name"`,
+    stage:anim.Tick_Pose `mirai:"optional,label=Pose: Finished, the pose its rig ended its last tick with; Sampled, the one its clips, layers and actions gave before its modifiers"`,
     offset:u32 `mirai:"optional,label=First bone; rig operation or morph target"`,
     limit:u32 `mirai:"optional,min=1,max=256,clamp"`,
     diagnostics:bool `mirai:"optional,label=Solver and fade details of rig operations and morphs"`,
@@ -71,6 +72,7 @@ Asset_Inspect_Result :: struct {
     match:anim.Match_Info `mirai:"optional,label=.character: its locomotion: the rate of its database, the interval of its searches, the blend of a jump, its memory and weights"`,
     match_clips_total:u32 `mirai:"optional,label=.character"`,
     match_clips:[]Asset_Match_Clip `mirai:"optional,label=.character: a page of its locomotion clips with the Locomotion_Mode each serves"`,
+    match_spans:[]anim.Match_Span `mirai:"optional,label=.character: the rules over the rows of its locomotion clips inside the spans of each name"`,
     databases:[]Asset_Match_Database `mirai:"optional,label=.character: the database built for each skeleton a rig played it on"`,
     layers_total,actions_total,sections_total:u32 `mirai:"optional,label=.character"`,
     layers:[]Authoring_Page(anim.Stack_Layer) `mirai:"optional,label=.character: its stack over the base, in order"`,
@@ -128,10 +130,10 @@ Instance_Inspect_Result :: struct {
     actions:Instance_Actions `mirai:"optional"`,
     motion:Instance_Motion `mirai:"optional,label=Warp windows and their targets"`,
     morphs:Instance_Morphs `mirai:"optional,label=Morph targets of the mesh instance"`,
-    pose:Instance_Pose `mirai:"optional,label=Where the bones and sockets asked end, from the pose its rig ended its last tick with"`,
+    pose:Instance_Pose `mirai:"optional,label=Where the bones and sockets asked are in the pose of stage of the last tick of its rig"`,
 }
-// The fields of Preview_Match_Result, then the clips of the database of its skeleton and the last
-// search matching had to make.
+// The fields of Preview_Match_Result, then the clips of the database of its skeleton and its last
+// search.
 Instance_Match :: struct {
     using missing:Instance_Missing `mirai:"inline"`,
     available:bool `mirai:"optional,label=false when the entity plays no locomotion"`,
@@ -139,7 +141,7 @@ Instance_Match :: struct {
     time:f32 `mirai:"optional,unit=s"`,rate:f32 `mirai:"optional"`,speed:f32 `mirai:"optional,unit=m/s"`,cost:f32 `mirai:"optional"`,
     searches,jumps:u32 `mirai:"optional"`,
     ranges:[]Instance_Match_Range `mirai:"optional,label=Each clip or blended sample of the database, by its index"`,
-    search:Instance_Match_Search `mirai:"optional,label=The last search it had to make: entering a mode, starting, stopping, or leaving a clip that ends"`,
+    search:Instance_Match_Search `mirai:"optional,label=Its last search"`,
 }
 // clips: of a blended sample, each clip with its share; travel: where it goes in the space of the
 // rig (-Z forward).
@@ -168,7 +170,7 @@ Instance_Match_Candidate :: struct {
     rate:f32 `mirai:"label=It plays at to follow the trajectory, or to reach its landing marker"`,
     cost:f32,
     costs:Instance_Match_Costs,
-    reason:lib.Match_Reject `mirai:"label=None: the one it chose; Cost: it cost more; Mode, Entry, Stationary, Reselect, Event (no landing marker ahead) and Window (its marker is not reached at a landing rate, or its rows go back in the arc in the air): why it was left out"`,
+    reason:lib.Match_Reject `mirai:"label=None: the one it chose; Cost: it cost more; Mode, Entry, Stationary, Reselect, Event (no landing marker ahead), Window (its marker is not reached at a landing rate, or its rows go back in the arc in the air) and Span (spans of the set exclude or block its rows): why it was left out"`,
 }
 Instance_Match_Costs :: struct {foot_position,foot_velocity,hip_velocity,body_velocity,trajectory_position,trajectory_direction:f32}
 Instance_Pose :: struct {
@@ -311,12 +313,7 @@ instance_inspect :: proc(s:^editor.Session,call:^api.Call) {
     r.id=editor.api_entity_id(w,e)
     if r.id==0 {base.text_set(r.entity[:],fmt.tprintf("0x%016x",u64(e)))}
     // A part the entity lacks says why; the rest stays.
-    missing :: proc(call:^api.Call) -> (m:Instance_Missing) {
-        base.text_set(m.code[:],strings.trim(api.json_member(call.error.data,"code"),`"`))
-        base.text_set(m.reason[:],call.error.message)
-        call.failed,call.error=false,{}
-        return
-    }
+    missing:=history_missing
     for part in parts {
         switch part {
         case .Rig: r.rig=instance_rig(s,call,w,e,p);if call.failed {r.rig={missing=missing(call)}}
@@ -325,54 +322,75 @@ instance_inspect :: proc(s:^editor.Session,call:^api.Call) {
         case .Actions: r.actions=authoring_action_inspect(s,call,w,e);if call.failed {r.actions={missing=missing(call)}}
         case .Motion: r.motion=authoring_motion_inspect(s,call,w,e);if call.failed {r.motion={missing=missing(call)}}
         case .Morphs: r.morphs=morph_inspect(s,call,w,e,p);if call.failed {r.morphs={missing=missing(call)}}
-        case .Pose: r.pose=instance_pose(call,w,e,&query);if call.failed {r.pose={missing=missing(call)}}
+        case .Pose: r.pose=instance_pose(call,w,e,&query,p.stage);if call.failed {r.pose={missing=missing(call)}}
         }
     }
+}
+
+// The matching of a rig in a world: what it plays, its state, the library of its clips and the
+// database it searches (nil before its first tick or when it could not be built).
+@(private)
+Match_Open :: struct {result:Preview_Match_Result,state:^anim.Playing,library:^host.Content_Animation,db:^lib.Match_Database}
+
+// The matching of a rig; false after failing the call with why it has none.
+@(private)
+match_open :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,entity:core.Entity) -> (m:Match_Open,ok:bool) {
+    value,present:=editor.entity_get(world,entity,anim.Animation)
+    if !present {authoring_failure(call,"entity","Missing_Component","an Animation component","missing component","The entity has no Animation component");return}
+    if anim.animation_character(s.app.assets,value)=={} {authoring_failure(call,"entity","Not_Matching","an Animation.asset that is a .character with locomotion","another asset","The entity plays no motion matching",fix="Make one with animation.character.setup");return}
+    matching:bool
+    m.result,matching=preview_match(world,s.app,entity)
+    if !matching {authoring_failure(call,"entity","Not_Running","locomotion the world plays","not sampled or without locomotion clips","Matching runs in Play, Simulation, the preview of the editor or animation.preview, for a .character with locomotion clips");return}
+    playback:=core.world_storage_of(world,anim.Playback)
+    for &playing in playback.states {if playing.entity==entity {m.state=&playing;break}}
+    shared:=core.world_ref(s.app.shared,world.info,.Shared)
+    m.library=anim.animation_playing_content(core.world_storage_of(shared,anim.Source_Assets),s.app,m.state)
+    m.db=anim.animation_match_database(core.world_storage_of(shared,anim.Character_Assets),m.library,m.state)
+    return m,true
+}
+
+// The candidates of the last search of a rig, searched again as it made it: at most limit.
+@(private)
+match_candidates :: proc(call:^api.Call,m:^Match_Open,limit:int) -> []Instance_Match_Candidate {
+    if m.db==nil || m.state==nil {return nil}
+    candidates:=make([dynamic]Instance_Match_Candidate,call.allocator)
+    noted:=anim.match_searched_candidates(m.db,m.state.program.match.searched)
+    for &candidate in noted.items[:clamp(int(noted.count),0,min(limit,lib.MATCH_CANDIDATES))] {
+        index:=lib.match_range_of(m.db,int(candidate.row));if index<0 {continue}
+        range:=m.db.ranges[index];c:=candidate.costs
+        append(&candidates,Instance_Match_Candidate{
+            range=u32(index),clip=anim.source_clip_label(m.library,range.clips[0]),time=f32(int(candidate.row)-int(range.first))/range.rate,rate=candidate.rate,cost=candidate.cost,reason=candidate.reason,
+            costs={c[.Foot_Position],c[.Foot_Velocity],c[.Hip_Velocity],c[.Body_Velocity],c[.Trajectory_Position],c[.Trajectory_Direction]},
+        })
+    }
+    return candidates[:]
 }
 
 // What the motion matching of an entity plays, the clips of its database and its last search.
 @(private)
 instance_match :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,entity:core.Entity) -> (r:Instance_Match) {
-    value,present:=editor.entity_get(world,entity,anim.Animation)
-    if !present {authoring_failure(call,"entity","Missing_Component","an Animation component","missing component","The entity has no Animation component");return}
-    if anim.animation_character(s.app.assets,value)=={} {authoring_failure(call,"entity","Not_Matching","an Animation.asset that is a .character with locomotion","another asset","The entity plays no motion matching",fix="Make one with animation.character.setup");return}
-    result,matching:=preview_match(world,s.app,entity)
-    if !matching {authoring_failure(call,"entity","Not_Running","locomotion the world plays","not sampled or without locomotion clips","Matching runs in Play, Simulation, the preview of the editor or animation.preview, for a .character with locomotion clips");return}
-    authoring_struct_fields(&r,result)
-    playback:=core.world_storage_of(world,anim.Playback)
-    state:^anim.Playing;for &playing in playback.states {if playing.entity==entity {state=&playing;break}}
-    shared:=core.world_ref(s.app.shared,world.info,.Shared)
-    library:=anim.animation_playing_content(core.world_storage_of(shared,anim.Source_Assets),s.app,state)
-    db:=anim.animation_match_database(core.world_storage_of(shared,anim.Character_Assets),library,state)
+    m,ok:=match_open(s,call,world,entity);if !ok {return}
+    authoring_struct_fields(&r,m.result)
+    db,library:=m.db,m.library
     if db==nil {return}
     modes:=locomotion_modes(world.info)
     r.ranges=make([]Instance_Match_Range,len(db.ranges),call.allocator)
     for &row,i in r.ranges {
         range:=&db.ranges[i]
-        row={clip=anim.source_clip_label(library,range.clips[0]),modes=match_modes(call,modes,range.modes),loop=range.loop,entry=range.entry,speed=range.speed,travel=range.travel,duration=f32(max(range.count-1,0))/db.rate}
+        row={clip=anim.source_clip_label(library,range.clips[0]),modes=match_modes(call,modes,range.modes),loop=range.loop,entry=range.entry,speed=range.speed,travel=range.travel,duration=f32(max(range.count-1,0))/range.rate}
         if range.weights=={0=1} {continue}
         members:=make([dynamic]Instance_Match_Member,call.allocator)
         for clip,k in range.clips {if range.weights[k]>0 {append(&members,Instance_Match_Member{clip=anim.source_clip_label(library,clip),weight=range.weights[k]})}}
         row.clips=members[:]
     }
-    searched:=&state.program.match.searched
+    searched:=&m.state.program.match.searched
     if searched.search==0 {return}
     mode:=u16(intrinsics.count_trailing_zeros(searched.request.modes))
     name,named:=locomotion_mode_name(modes,mode)
     r.search={search=u32(searched.search),entry=searched.request.entry}
     base.text_set(r.search.mode[:],name if named else fmt.tprintf("%d",mode))
     if searched.request.event>0 {r.search.time_to_land=searched.request.event}
-    candidates:=make([dynamic]Instance_Match_Candidate,call.allocator)
-    noted:=anim.match_searched_candidates(db,searched^)
-    for &candidate in noted.items[:clamp(noted.count,0,lib.MATCH_CANDIDATES)] {
-        index:=lib.match_range_of(db,int(candidate.row));if index<0 {continue}
-        range:=db.ranges[index];c:=candidate.costs
-        append(&candidates,Instance_Match_Candidate{
-            range=u32(index),clip=anim.source_clip_label(library,range.clips[0]),time=f32(int(candidate.row)-int(range.first))/db.rate,rate=candidate.rate,cost=candidate.cost,reason=candidate.reason,
-            costs={c[.Foot_Position],c[.Foot_Velocity],c[.Hip_Velocity],c[.Body_Velocity],c[.Trajectory_Position],c[.Trajectory_Direction]},
-        })
-    }
-    r.search.candidates=candidates[:]
+    r.search.candidates=match_candidates(call,&m,lib.MATCH_CANDIDATES)
     return
 }
 

@@ -165,11 +165,11 @@ animation_document :: proc(doc:^Document,types:^Types,desc:Animation_Desc,alloca
 
 @(private="file")
 animation_tables :: proc(doc:^Document,types:^Types,view:Animation_View,desc:Animation_Desc) -> Error {
-    document_put(doc,types,"clips",view.clips,{},.LZ) or_return
-    document_put(doc,types,"tracks",view.tracks,{},.LZ) or_return
-    document_put(doc,types,"keys",view.keys,{},.LZ) or_return
-    document_put(doc,types,"markers",view.markers,{},.LZ) or_return
-    document_put(doc,types,"streams",view.streams,{.Bulk},.LZ,ANIMATION_STREAMS_ALIGNMENT) or_return
+    document_put(doc,types,"clips",view.clips,{},.Stream) or_return
+    document_put(doc,types,"tracks",view.tracks,{},.Stream) or_return
+    document_put(doc,types,"keys",view.keys,{},.Stream) or_return
+    document_put(doc,types,"markers",view.markers,{},.Stream) or_return
+    document_put(doc,types,"streams",view.streams,{.Bulk},.Stream,ANIMATION_STREAMS_ALIGNMENT) or_return
     return import_put(doc,types,desc.source)
 }
 

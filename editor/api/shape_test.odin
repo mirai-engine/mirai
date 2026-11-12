@@ -206,6 +206,8 @@ an_invalid_params_error_says_what_the_method_takes_and_only_it_does :: proc(t:^t
     testing.expect(t,!ran)
     usage,is_text:=json_string(json_member(err.data,"usage"))
     testing.expect(t,is_text,"the data of the error has usage")
+    unknown,_:=json_string(json_member(err.data,"unknown_field"))
+    testing.expect_value(t,unknown,"bogus")
     testing.expectf(t,strings.contains(usage,"count: integer 1..9, required\n") && strings.contains(usage,"example: mirai rpc small count=1\n"),"%s",usage)
     testing.expectf(t,!strings.contains(usage,"Count") && !strings.contains(usage,"unit"),"the labels stay out: %s",usage)
     failures:=[]struct{method,params,data:string}{
@@ -236,5 +238,5 @@ an_invalid_params_error_says_what_the_method_takes_and_only_it_does :: proc(t:^t
     s.out.count=len(s.out.data)-USAGE_BYTES
     err,_=run(&s,"small",`{"bogus":2}`,buffer)
     s.out.count=full
-    testing.expect_value(t,err.data,"")
+    testing.expect_value(t,err.data,`{"unknown_field":"bogus"}`)
 }

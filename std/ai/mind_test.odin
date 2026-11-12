@@ -488,14 +488,18 @@ the_trace_says_why_a_mind_changed :: proc(t:^testing.T) {
     w:Zombie_World
     mind:Mind
     ctx:=Mind_Context{user=&w,keep=0.05}
+    exited_at:u64
     for tick in 0..=60 {
         zombie_script(&w,tick)
         ctx.tick,ctx.dt=u64(w.tick),1.0/MIND_HZ
+        seen:=mind.exits_seen
         mind_tick(&mind,&ZOMBIE_ACTS,zombie_think,&ctx)
+        if mind.exits_seen!=seen {exited_at=ctx.tick}
     }
     testing.expect(t,mind.proposals[0]==Mind_Proposal{u16(Zombie_Act.Chase),0.5} && mind.proposals[1]==Mind_Proposal{u16(Zombie_Act.Wander),0.1} && mind.proposals[2].score==0)
     exit,ok:=mind_exit_trace(&mind,0)
     testing.expect(t,ok && exit.action==u16(Zombie_Act.Wander) && exit.cause==.Aborted && exit.by==u16(Zombie_Act.Chase))
+    testing.expectf(t,exit.tick==exited_at && exited_at>0,"the exit says tick %d, it happened at %d",exit.tick,exited_at)
     action,step:=mind_running(&mind)
     testing.expect(t,action==u16(Zombie_Act.Chase) && step==MIND_NONE)
 }
@@ -518,6 +522,49 @@ a_reservation_outlives_its_holder_by_its_lease :: proc(t:^testing.T) {
         reserve_release(&r,key,2)
         testing.expect_value(t,reserve_count(&r,key,101+c.lease),0)
     }
+}
+
+// A taker of a higher priority displaces the lowest holder not in use; never
+// one in use, nor one of its own priority or above; a lease that ran out
+// leaves room for any.
+@(test)
+a_claim_of_a_higher_priority_displaces_one_not_in_use :: proc(t:^testing.T) {
+    key:=Reservation_Key{9,1}
+    Case :: struct {held:[2]u8,used:[2]bool,priority:u8,tick:u64,takes:bool,displaced:u64}
+    cases:=[?]Case{
+        {held={1,1},priority=2,takes=true,displaced=1},
+        {held={2,1},priority=3,takes=true,displaced=2},       // the lowest of them
+        {held={1,1},used={true,false},priority=2,takes=true,displaced=2},
+        {held={1,1},used={true,true},priority=2,takes=false},
+        {held={2,2},priority=2,takes=false},                  // equals keep it
+        {held={3,2},priority=1,takes=false},
+        {held={1,1},used={true,true},priority=0,tick=10,takes=true}, // their leases ran out
+    }
+    for c,i in cases {
+        r:Reservations
+        for h in 0..<2 {
+            testing.expect(t,reserve_take(&r,key,u64(h+1),2,0,5,c.held[h]))
+            if c.used[h] {reserve_use(&r,key,u64(h+1))}
+        }
+        testing.expectf(t,reserve_open(&r,key,7,2,c.tick,c.priority)==c.takes,"case %d: open",i)
+        testing.expectf(t,reserve_take(&r,key,7,2,c.tick,5,c.priority)==c.takes,"case %d: take",i)
+        if c.displaced!=0 {
+            testing.expectf(t,!reserve_holds(&r,key,c.displaced,c.tick) && reserve_holds(&r,key,3-c.displaced,c.tick),"case %d: displaced %d",i,c.displaced)
+            testing.expectf(t,!reserve_open(&r,key,c.displaced,2,c.tick,c.held[c.displaced-1]),"case %d: it cannot take it back",i)
+        }
+        testing.expect_value(t,reserve_count(&r,key,c.tick),2 if c.tick==0 else 1)
+        testing.expect_value(t,r.failed,0)
+    }
+    // A frame displaced claims again only by displacing in turn: its key alone does not hold it.
+    r:Reservations
+    m:Mind
+    ctx:=Mind_Context{tick=1,holder=1,reservations=&r}
+    a:=Act(Bot_Act){ctx=&ctx,mind=&m,frame=&m.main}
+    testing.expect(t,claim(&a,9,1,1,1))
+    testing.expect(t,reserve_take(&r,key,2,1,1,1,2))
+    testing.expect(t,!claim(&a,9,1,1,1) && !reserve_holds(&r,key,1,1))
+    claim_use(&a)
+    testing.expect(t,reserve_take(&r,key,2,1,1,1,2),"the use of one that lost it marks nothing")
 }
 
 // Copying the minds and the world in the middle of an errand, with the crate
@@ -607,4 +654,36 @@ a_mind_survives_scribbled_state_and_wild_proposals :: proc(t:^testing.T) {
     _,running:=mind_tick(&zero,&BOT_ACTS,nil,&ctx)
     testing.expect(t,!running)
     _=reserve_take(nil,{1,0},1,1,0)
+}
+
+// A mind that does not decide in a tick runs its action without thinking, and
+// thinks only when that action ends, in the same tick; with nothing running
+// it does nothing.
+@(test)
+a_mind_that_does_not_decide_runs_its_action :: proc(t:^testing.T) {
+    Count :: struct {thinks,updates:int}
+    Wait :: enum u8 {Wait}
+    think :: proc(t:^Think(Wait)) {
+        (^Count)(t.user).thinks+=1
+        propose(t,.Wait,1)
+    }
+    wait :: proc(a:^Act(Wait)) -> Status {
+        if a.phase==.Update {(^Count)(a.user).updates+=1}
+        return after(a,3)
+    }
+    acts:=[Wait]proc(a:^Act(Wait)) -> Status{.Wait=wait}
+    c:Count
+    m:Mind
+    ctx:=Mind_Context{user=&c,dt=1}
+    _,running:=mind_tick(&m,&acts,think,&ctx,false)
+    testing.expect(t,!running && c.thinks==0,"nothing runs: it does not think")
+    mind_tick(&m,&acts,think,&ctx)
+    testing.expect_value(t,c.thinks,1)
+    for tick in u64(1)..=3 {
+        ctx.tick=tick
+        _,running=mind_tick(&m,&acts,think,&ctx,false)
+        testing.expectf(t,running && c.updates==int(tick),"tick %d: %v updates",tick,c.updates)
+    }
+    testing.expect_value(t,c.thinks,2) // when the wait ended, in its tick, and it entered again
+    testing.expect(t,m.main.entered==3)
 }

@@ -132,9 +132,9 @@ records_tables :: proc(doc:^Document,types:^Types,desc:Records_Desc,info:^Record
     }
     table:=document_table_add(doc,TABLE_ROWS) or_return
     document_resize(doc,table,len(desc.ids)) or_return
-    document_column_put(doc,types,table,"id",desc.ids,{},.LZ) or_return
-    document_column_put(doc,types,table,"name",desc.names,{.Text},.LZ) or_return
-    value:=document_column_add(doc,table,"value",type,{},.LZ) or_return
+    document_column_put(doc,types,table,"id",desc.ids,{},.Stream) or_return
+    document_column_put(doc,types,table,"name",desc.names,{.Text},.Stream) or_return
+    value:=document_column_add(doc,table,"value",type,{},.Stream) or_return
     copy(doc.tables[table].columns[value].data,desc.images)
     doc.tables[table].key=ROWS_ID
     return .None

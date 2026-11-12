@@ -1,5 +1,6 @@
 package vfx
 
+import "core:math"
 import "mirai:core"
 import scene "mirai:engine/scene"
 import volume "mirai:engine/volume"
@@ -360,7 +361,10 @@ shown_resolve :: proc(shown:^Emitter_Shown,a:^host.Assets,renderer:^erender.Rend
         shown.sub_desc=sub_desc
         sub:=&shown.sub_desc
         if sub_problem:=particle_program(a,d.info.sub_particle,&sub.info,nil,&sub.program);problem=="" {problem=sub_problem}
-        sub.capacity+=min(d.capacity*d.info.sub_count,1<<16)
+        // Those of the events of its live particles: one each, or of a trail, those of a life of the sub effect.
+        events:=u64(d.capacity)*u64(d.info.sub_count)
+        if d.info.trigger==.Trail {events*=u64(min(math.ceil(f32(TRAILS_PER_SECOND)*max(sub.info.lifetime[0],sub.info.lifetime[1],0)),1<<16))}
+        sub.capacity+=u32(min(events,1<<16))
         d.event_target=sub.id
         ready&&=sub_ready
     }
@@ -386,11 +390,44 @@ emitter_desc :: proc(info:effect.Particle_Info,a:^host.Assets,renderer:^erender.
     if m.render==.Mesh {
         // A material that blends draws its meshes over the lit scene, as a sprite.
         if found:=host.assets_material(a,m.material);found!=nil {d.blended=found.info.alpha_mode==.Blend}
-        entry:=m.mesh!={}?host.assets_mesh(a,m.mesh):host.assets_shape(a,.Cube)
-        if entry!=nil {d.mesh.x,ready=erender.mesh_draw_range(renderer,entry.handle);d.mesh.y=u32(entry.handle)}
+        // Each mesh of the effect with its weight; none: the cube.
+        handles:[effect.PARTICLE_MESHES]erender.Mesh_Handle
+        weights:[effect.PARTICLE_MESHES]f32
+        count:=0
+        for id,c in m.meshes {
+            if id=={} {continue}
+            entry:=host.assets_mesh(a,id)
+            if entry==nil {ready=false;continue}
+            handles[count],weights[count]=entry.handle,m.mesh_weights[c]
+            count+=1
+        }
+        if count==0 && ready {
+            if cube:=host.assets_shape(a,.Cube);cube!=nil {handles[0],weights[0],count=cube.handle,1,1}
+        }
+        ready=mesh_choices(&d,renderer,handles[:count],weights[:count]) && ready
         ready||=renderer==nil
     }
     return
+}
+
+// The meshes Mesh particles show, with the vertices of a draw of each and
+// their weights added up to 1 (all 0: each as often). False while one of the
+// meshes is not on the GPU yet.
+mesh_choices :: proc(d:^Emitter_Desc,renderer:^erender.Renderer,handles:[]erender.Mesh_Handle,weights:[]f32) -> bool {
+    d.meshes,d.mesh_count={},0
+    total:f32
+    for w in weights {total+=max(w,0)}
+    ready:=true
+    for handle,c in handles[:min(len(handles),effect.PARTICLE_MESHES)] {
+        choice:=&d.meshes[c]
+        vertices,drawable:=erender.mesh_draw_range(renderer,handle)
+        ready&&=drawable
+        share:=max(weights[c],0)/total if total>0 else 1/f32(len(handles))
+        choice^={handle=handle,vertices=vertices,weight=share+(d.meshes[c-1].weight if c>0 else 0)}
+        d.mesh_count+=1
+    }
+    if d.mesh_count>0 {d.meshes[d.mesh_count-1].weight=1}
+    return ready
 }
 
 Particle_State :: enum u8 {

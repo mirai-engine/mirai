@@ -3,15 +3,14 @@ package asset
 import "base:intrinsics"
 import "core:mem"
 import "core:slice"
+import "compressor:data"
 import "mirai:std/base"
-import "mirai:std/compressor"
-import "mirai:std/compressor/lz"
 
-// How page_data stores the block of a page (mesh_page_layout): LZ over
+// How page_data stores the block of a page (mesh_page_layout): a stream over
 // its words as they are (Mesh_Page.coded_bytes 0) or over a coding of them,
-// whichever LZ makes smaller. The coding writes every field of the words
+// whichever compresses smaller. The coding writes every field of the words
 // as whole bytes and gathers the bytes of each field in a slot of its own,
-// its low bytes and then its high bytes, so that LZ meets values of one
+// its low bytes and then its high bytes, so that the compressor meets values of one
 // kind together. The runs are the clusters of the page, one shorter than
 // PAGE_RUN_MERGE with the next.
 //
@@ -32,7 +31,7 @@ import "mirai:std/compressor/lz"
 // for a new one, else how many distinct ones back. A byte of a triangle is
 // the zero codes met so far in the run less its code, so a vertex used for
 // the first time codes as 0. The tangent and normal of a vertex are kept as
-// they are: they repeat across the clusters of a page, which LZ finds in
+// they are: they repeat across the clusters of a page, which the compressor finds in
 // those 6 bytes and loses in codes of steps. The fields and the kept bytes
 // cover every bit of the words: any words code back bit for bit.
 
@@ -89,7 +88,7 @@ page_streams :: proc "contextless" (flags:Mesh_Flags,layout:Mesh_Page_Layout) ->
 // its mesh (Mesh_Geometry.page_data), into out[:page.words], with scratch of
 // MESH_PAGE_SCRATCH_BYTES and the decoder of the reader. False for a page
 // whose block is not inside page_data or does not decode to its words.
-mesh_page_decode :: proc(flags:Mesh_Flags,page:Mesh_Page,page_data:[]u8,scratch:[]u8,out:[]u32,decoder:^compressor.Decoder) -> bool {
+mesh_page_decode :: proc(flags:Mesh_Flags,page:Mesh_Page,page_data:[]u8,scratch:[]u8,out:[]u32,decoder:^Stream_Decoder) -> bool {
     if !page_block_valid(flags,page,len(page_data)) || page.data_bytes==0 || len(out)<int(page.words) || int(page.coded_bytes)>len(scratch) {return false}
     block:=page_data[page.data_offset:][:page.data_bytes]
     if page.coded_bytes==0 {return unpack(decoder,block,mem.slice_to_bytes(out[:page.words]))==.None}
@@ -482,7 +481,7 @@ distinct_values :: proc(coder:^Page_Coder,f:int) -> bool {
     return true
 }
 
-// What LZ is taken to spend on codes: their significant bits.
+// What the compressor is taken to spend on codes: their significant bits.
 @(private="file")
 codes_cost :: proc(codes:[]u32) -> (bits:int) {
     for c in codes {bits+=int(bit_width(c))}
@@ -553,50 +552,54 @@ field_codes :: proc(coder:^Page_Coder,values:[]u32,bits:u8) -> (header:[2]u32,co
 @(private="file")
 bit_width :: proc "contextless" (v:u32) -> u32 {return 32-intrinsics.count_leading_zeros(v)}
 
-// The block of a page of g, gathered in block, appended to data as LZ
-// packs it as p says: over its coding or over its words, whichever is
-// smaller. coded is scratch of MESH_PAGE_SCRATCH_BYTES. Sets where page
-// finds it.
+// The block of a page of g, gathered in block, appended to blocks as a stream of profile and
+// codecs: over its coding or over its words, whichever is smaller. coded is scratch of
+// MESH_PAGE_SCRATCH_BYTES. Sets where page finds it.
 @(private)
-page_pack :: proc(coder:^Page_Coder,encoder:^lz.Encoder,g:Mesh_Geometry,page:^Mesh_Page,block:[]u32,coded:[]u8,p:Pack,data:^[dynamic]u8) -> Error {
+page_pack :: proc(coder:^Page_Coder,encoder:^Stream_Encoder,g:Mesh_Geometry,page:^Mesh_Page,block:[]u32,coded:[]u8,profile:data.Profile,codecs:Codecs,blocks:^[dynamic]u8) -> Error {
     words:=mem.slice_to_bytes(block[:page.words])
     size,ok:=page_code(coder,g,page^,block,coded)
-    at:=len(data)
-    if at+pack_bound(len(words))+(pack_bound(size) if ok else 0)>int(max(u32)) || resize(data,at+pack_bound(len(words))+(pack_bound(size) if ok else 0))!=nil {return .Out_Of_Memory}
-    packed:=pack(encoder,p,words,data[at:]) or_return
+    at:=len(blocks)
+    bound:=pack_bound(len(words))+(pack_bound(size) if ok else 0)
+    if at+bound>int(max(u32)) || resize(blocks,at+bound)!=nil {return .Out_Of_Memory}
+    packed:=pack(encoder,profile,codecs,words,blocks[at:]) or_return
     page.data_offset,page.data_bytes,page.coded_bytes=u32(at),u32(packed),0
     if ok {
         tried:=at+packed
-        smaller:=pack(encoder,p,coded[:size],data[tried:]) or_return
+        smaller:=pack(encoder,profile,codecs,coded[:size],blocks[tried:]) or_return
         if smaller<packed {
-            copy(data[at:],data[tried:][:smaller])
+            copy(blocks[at:],blocks[tried:][:smaller])
             page.data_bytes,page.coded_bytes=u32(smaller),u32(size)
         }
     }
-    base.truncate(data,at+int(page.data_bytes))
+    base.truncate(blocks,at+int(page.data_bytes))
     return .None
 }
 
-// The pages of g with the block of each, LZ as p says, one after the other in data.
+// The pages of g with the block of each, a stream of profile and codecs, one after the other in
+// blocks.
 @(private)
-pages_compress :: proc(g:Mesh_Geometry,p:Pack,allocator:=context.allocator) -> (pages:[]Mesh_Page,data:[dynamic]u8,error:Error) {
+pages_compress :: proc(g:Mesh_Geometry,profile:data.Profile,codecs:Codecs,allocator:=context.allocator) -> (pages:[]Mesh_Page,blocks:[dynamic]u8,error:Error) {
     allocation:mem.Allocator_Error
     pages,allocation=make([]Mesh_Page,len(g.pages),allocator)
     if allocation!=nil {return nil,nil,.Out_Of_Memory}
-    data=make([dynamic]u8,allocator)
+    blocks=make([dynamic]u8,allocator)
     block:=make([]u32,MESH_PAGE_WORDS,context.temp_allocator)
     coded:=make([]u8,MESH_PAGE_SCRATCH_BYTES,context.temp_allocator)
     if block==nil || coded==nil {delete(pages,allocator);return nil,nil,.Out_Of_Memory}
     coder:=page_coder_make(context.temp_allocator)
     defer page_coder_destroy(&coder)
-    encoder:lz.Encoder
-    lz.encoder_init(&encoder,context.temp_allocator)
-    defer lz.encoder_destroy(&encoder)
+    encoder:Stream_Encoder
+    if error=stream_encoder_init(&encoder,context.temp_allocator);error!=.None {
+        delete(pages,allocator);delete(blocks)
+        return nil,nil,error
+    }
+    defer stream_encoder_destroy(&encoder)
     copy(pages,g.pages)
     for &page in pages {
         mesh_page_gather(g,page,block)
-        if error=page_pack(&coder,&encoder,g,&page,block,coded,p,&data);error!=.None {
-            delete(pages,allocator);delete(data)
+        if error=page_pack(&coder,&encoder,g,&page,block,coded,profile,codecs,&blocks);error!=.None {
+            delete(pages,allocator);delete(blocks)
             return nil,nil,error
         }
     }

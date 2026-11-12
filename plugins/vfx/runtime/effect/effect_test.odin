@@ -112,6 +112,9 @@ invalid_effects_say_which_field_and_how_to_correct_it :: proc(t:^testing.T) {
         {proc(p:^Particle_Info) {p.render=Particle_Render(9)},"render"},
         {proc(p:^Particle_Info) {p.emission_mode=asset.Emission_Mode(7)},"emission_mode"},
         {proc(p:^Particle_Info) {p.bursts[3].interval=-1},"bursts"},
+        {proc(p:^Particle_Info) {p.render,p.sort,p.meshes[0],p.meshes[2]=.Mesh,true,{1,2},{3,4}},"sort"},
+        {proc(p:^Particle_Info) {p.mesh_weights[1]=-1},"mesh_weights"},
+        {proc(p:^Particle_Info) {p.facing=Particle_Facing(5)},"facing"},
     }
     for c in cases {
         info:=PARTICLE_DEFAULTS

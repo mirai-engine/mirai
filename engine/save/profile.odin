@@ -151,7 +151,7 @@ profile_write :: proc(w:core.World_Ref,app:^host.App,state:^Save_State,problems:
         if imported==serial.TYPE_NONE {return .Failed}
         table,table_error:=asset.document_table_add(&doc,profile_table(storage),{.Single})
         if table_error!=.None {return .Failed}
-        if _,column_error:=asset.document_column_add(&doc,table,asset.COLUMN_VALUE,imported,{},.LZ);column_error!=.None {return .Failed}
+        if _,column_error:=asset.document_column_add(&doc,table,asset.COLUMN_VALUE,imported,{},.Stream);column_error!=.None {return .Failed}
         serial.value_write(&v.layout,asset.document_cell(&doc,table,0,0),rawptr(uintptr(w.data)+storage.offset),1)
     }
     data,write_error:=asset.document_bytes(&doc,context.temp_allocator)

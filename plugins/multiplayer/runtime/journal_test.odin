@@ -10,7 +10,6 @@ import "mirai:core"
 import "mirai:host"
 import wire "mirai:net"
 import "mirai:std/base"
-import "mirai:std/compressor/lz"
 
 @(private="file") TOY_JOURNAL :: u32(0x746f79)
 @(private="file") TOY_KEY :: Journal_Key{1,0}
@@ -334,8 +333,9 @@ what_a_client_receives_without_memory_is_left_out_and_reported :: proc(t:^testin
     }
     s:=&j.streams[0]
     testing.expect(t,s.first==3 && len(s.log)==7 && s.newest==9)
-    encoder:lz.Encoder
-    defer lz.encoder_destroy(&encoder)
+    encoder:asset.Stream_Encoder
+    asset.stream_encoder_init(&encoder)
+    defer asset.stream_encoder_destroy(&encoder)
     session:=new(Net_Session)
     defer {parts_clear(&session.parts);delete(session.parts);free(session)}
     // A part as the server tells it and its bytes, together or the bytes first.
@@ -345,7 +345,7 @@ what_a_client_receives_without_memory_is_left_out_and_reported :: proc(t:^testin
         raw:=make([]u8,int(c.total),context.temp_allocator)
         for &b,i in raw {b=u8(i*13)}
         packed:=make([]u8,asset.pack_bound(int(c.total)),context.temp_allocator)
-        size,_:=asset.pack(&encoder,asset.PACK_EDIT,raw,packed)
+        size,_:=asset.pack(&encoder,.Fast,.Open,raw,packed)
         stood,refused:=false,false
         for served in 0..<8 {
             number+=1

@@ -6,10 +6,8 @@ import "core:math"
 import "core:mem"
 import "mirai:asset"
 import "mirai:std/base"
-import "mirai:std/compressor"
-import "mirai:std/compressor/lz"
 
-// The values of a page as its block holds them, before LZ: one coding for
+// The values of a page as its block holds them, before it is compressed: one coding for
 // the file, the blocks of pages that leave memory and the pages the network
 // sends.
 
@@ -137,16 +135,16 @@ page_uncode :: proc(coded,out:[]u8) -> bool #no_bounds_check {
 }
 
 // What reading the block of a page works in: room for the block and for its
-// coded values, and the decoder of its LZ.
+// coded values, and the decoder of its stream.
 @(private)
-Page_Reader :: struct {block:[]u8,coded:[]u8,decoder:compressor.Decoder}
+Page_Reader :: struct {block:[]u8,coded:[]u8,decoder:asset.Stream_Decoder}
 
 @(private)
 page_reader_init :: proc(r:^Page_Reader,allocator:runtime.Allocator) -> bool {
     r^={}
     error:runtime.Allocator_Error
     if r.block,error=make([]u8,asset.pack_bound(PAGE_BYTES_MAX),allocator);error!=nil {return false}
-    if r.coded,error=make([]u8,PAGE_BYTES_MAX,allocator);error!=nil || compressor.decoder_init(&r.decoder,allocator)!=.None {
+    if r.coded,error=make([]u8,PAGE_BYTES_MAX,allocator);error!=nil || asset.stream_decoder_init(&r.decoder,allocator)!=.None {
         delete(r.block,allocator)
         delete(r.coded,allocator)
         r^={}
@@ -159,14 +157,14 @@ page_reader_init :: proc(r:^Page_Reader,allocator:runtime.Allocator) -> bool {
 page_reader_destroy :: proc(r:^Page_Reader,allocator:runtime.Allocator) {
     delete(r.block,allocator)
     delete(r.coded,allocator)
-    compressor.decoder_destroy(&r.decoder)
+    asset.stream_decoder_destroy(&r.decoder)
     r^={}
 }
 
 // The coded values of a block into all of coded: false when the block is not
 // the one hashed or does not hold that many.
 @(private)
-page_unpack :: proc(block:[]u8,hash:u64,coded:[]u8,decoder:^compressor.Decoder) -> bool {
+page_unpack :: proc(block:[]u8,hash:u64,coded:[]u8,decoder:^asset.Stream_Decoder) -> bool {
     return base.hash64(block)==hash && asset.unpack(decoder,block,coded)==.None
 }
 
@@ -174,20 +172,20 @@ page_unpack :: proc(block:[]u8,hash:u64,coded:[]u8,decoder:^compressor.Decoder) 
 // PAGE_BYTES_MAX bytes: false when the block is not the one hashed or does
 // not hold them.
 @(private)
-page_decode :: proc(block:[]u8,hash:u64,out:[]u8,decoder:^compressor.Decoder,coded:[]u8) -> bool {
+page_decode :: proc(block:[]u8,hash:u64,out:[]u8,decoder:^asset.Stream_Decoder,coded:[]u8) -> bool {
     if PAGE_HEADER+len(out)>len(coded) {return false}
     page:=coded[:PAGE_HEADER+len(out)]
     return page_unpack(block,hash,page,decoder) && page_uncode(page,out)
 }
 
-// What coding a page into a block works in: the LZ encoder, and room for
-// the coded values and for the block.
+// What coding a page into a block works in: the encoder, what it may compress with, and
+// room for the coded values and for the block.
 @(private)
-Page_Writer :: struct {encoder:lz.Encoder,coded:[]u8,block:[]u8,allocator:runtime.Allocator}
+Page_Writer :: struct {encoder:asset.Stream_Encoder,codecs:asset.Codecs,coded:[]u8,block:[]u8,allocator:runtime.Allocator}
 
 @(private)
-page_writer_init :: proc(w:^Page_Writer,allocator:runtime.Allocator) -> bool {
-    w^={allocator=allocator}
+page_writer_init :: proc(w:^Page_Writer,allocator:runtime.Allocator,codecs:=asset.Codecs.Open) -> bool {
+    w^={codecs=codecs,allocator=allocator}
     error:runtime.Allocator_Error
     if w.coded,error=make([]u8,PAGE_BYTES_MAX,allocator);error!=nil {return false}
     if w.block,error=make([]u8,asset.pack_bound(PAGE_BYTES_MAX),allocator);error!=nil {
@@ -195,14 +193,19 @@ page_writer_init :: proc(w:^Page_Writer,allocator:runtime.Allocator) -> bool {
         w^={}
         return false
     }
-    lz.encoder_init(&w.encoder,allocator)
+    if asset.stream_encoder_init(&w.encoder,allocator)!=.None {
+        delete(w.coded,allocator)
+        delete(w.block,allocator)
+        w^={}
+        return false
+    }
     return true
 }
 
 @(private)
 page_writer_destroy :: proc(w:^Page_Writer) {
     if w.coded==nil {return}
-    lz.encoder_destroy(&w.encoder)
+    asset.stream_encoder_destroy(&w.encoder)
     delete(w.coded,w.allocator)
     delete(w.block,w.allocator)
     w^={}
@@ -212,6 +215,6 @@ page_writer_destroy :: proc(w:^Page_Writer) {
 // call; quantize as page_code.
 @(private)
 page_encode :: proc(w:^Page_Writer,values:[]$T,width:int,quantize:bool) -> (block:[]u8,ok:bool) {
-    size,error:=asset.pack(&w.encoder,asset.PACK_EDIT,page_code(values,width,quantize,w.coded),w.block)
+    size,error:=asset.pack(&w.encoder,.Fast,w.codecs,page_code(values,width,quantize,w.coded),w.block)
     return w.block[:size],error==.None
 }

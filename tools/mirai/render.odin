@@ -883,34 +883,17 @@ render_session :: proc(report:^Render_Report,r:^Render_Run,target:Render_Target,
     return true
 }
 
-// One call; a build older than the check does not take every field: the
-// call goes again without it, and the run says so.
+// One call; a field an older build does not take is left out, and the run
+// says so.
 @(private="file")
 render_call :: proc(e:^Render_Editor,method:string,params:any) -> (result:string,ok:bool) {
-    encoded,_:=serial.text_encode(params,.Line,context.temp_allocator,sparse=true)
-    text:=string(encoded)
-    for {
-        response,err,called:=api.rpc_call(e.port,method,text,1,RENDER_TIMEOUT_MS,context.allocator)
-        if called {return response,true}
-        if err.code==api.INVALID_PARAMS {
-            MARK :: `unknown field "`
-            if at:=strings.index(err.message,MARK);at>=0 {
-                rest:=err.message[at+len(MARK):]
-                field:=rest[:max(strings.index_byte(rest,'"'),0)]
-                members,_:=api.json_members(text)
-                kept:=make([dynamic]string,context.temp_allocator)
-                for member in members {if member.name!=field {append(&kept,fmt.tprintf("%s:%s",serial.text_quote(member.name),member.value))}}
-                if len(kept)<len(members) {
-                    text=fmt.tprintf("{{%s}}",strings.join(kept[:],",",context.temp_allocator))
-                    note:=fmt.aprintf("%s does not take %s in this build: measured without it",method,field)
-                    if !slice.contains(e.run.notes[:],note) {append(&e.run.notes,note)}
-                    continue
-                }
-            }
-        }
-        fmt.eprintfln("mirai render: %s: %s",method,api.error_text(err,context.temp_allocator))
-        return "",false
+    response,err,called,dropped:=headless_call(e,method,params)
+    for field in dropped {
+        note:=fmt.aprintf("%s does not take %s in this build: measured without it",method,field)
+        if !slice.contains(e.run.notes[:],note) {append(&e.run.notes,note)}
     }
+    if !called {fmt.eprintfln("mirai render: %s: %s",method,api.error_text(err,context.temp_allocator));return "",false}
+    return response,true
 }
 
 // A capture of the window with the interface, frames after the last call.

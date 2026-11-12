@@ -3,6 +3,7 @@ package host
 import "core:strings"
 import "mirai:asset"
 import "mirai:platform"
+import "mirai:project"
 
 @(private)
 app_assets_create :: proc(app:^App,root,cache:string,mounts:[]asset.Registry_Mount=nil,imported:="") -> App_Error {
@@ -13,6 +14,9 @@ app_assets_create :: proc(app:^App,root,cache:string,mounts:[]asset.Registry_Mou
         return .Assets_Failed
     }
     app.assets=assets
+    // What a program that edits a project saves its assets with; a shipped game saves with the open
+    // compressor.
+    if app.engine_root!="" {assets.types.codecs=codecs_of(project.compression(app.root,app.engine_root))}
     assets.load_profile=&app.load_profile
     // Without a watch nothing reloads; the application still runs.
     app.assets_watch.watch,_=platform.watch_create(app.platform,{path=root,recursive=true})

@@ -5,7 +5,6 @@ import "core:fmt"
 import "core:mem"
 import "core:testing"
 import "core:time"
-import "mirai:std/compressor/lz"
 import "mirai:std/serial"
 
 // A document in the container against the same document as the text `mirai asset unpack` writes
@@ -24,7 +23,7 @@ Text_Bench :: struct {
     container,text:int,       // bytes
     bare:int,                 // of the text without its schema, which pack does not read
     bulk:int,                 // of the files next to the text
-    packed:int,               // of the text as one LZ stream at PACK_EDIT
+    packed:int,               // of the text as one stream of the profile Fast
 }
 
 // Seconds of the best round: on the clock, and of them those the thread had a processor.
@@ -99,9 +98,9 @@ text_bench :: proc(t:^testing.T,doc:^Document,rounds:int) -> (b:Text_Bench,ok:bo
         if .Bulk not_in table.flags {continue}
         for column in table.columns {b.bulk+=len(column.data)}
     }
-    encoder:lz.Encoder;defer lz.encoder_destroy(&encoder)
+    encoder:Stream_Encoder;stream_encoder_init(&encoder);defer stream_encoder_destroy(&encoder)
     packed:=make([]u8,pack_bound(len(source)));defer delete(packed)
-    b.packed,_=pack(&encoder,PACK_EDIT,source,packed)
+    b.packed,_=pack(&encoder,.Fast,.Open,source,packed)
     return b,true
 }
 

@@ -10,6 +10,7 @@ import "mirai:asset"
 import audio "mirai:audio"
 import "mirai:cook/build"
 import "mirai:editor/api"
+import "mirai:host"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
@@ -39,6 +40,7 @@ ASSET_COMMANDS :: [?]Asset_Command{
     {"merge","merge <base> <ours> <theirs> [--out <file>]","Three-way merge by row and field; writes into <ours> as a git merge driver",asset_merge},
     {"unpack","unpack <file> <folder>","asset.json and one file per bulk column",asset_unpack},
     {"pack","pack <folder> <file>","The binary file of an unpack folder",asset_pack},
+    {"repack","repack <file>...","Writes each file again compressed as the project that holds it saves (build.compression)",asset_repack},
 }
 
 cmd_asset :: proc(root:string,args:[]string) -> int {
@@ -104,6 +106,7 @@ error_text :: proc(error:asset.Error) -> string {
     case .Hash: return "the content does not match its hash"
     case .Too_Large: return "needs more memory than the limit"
     case .Schema: return "the schema table is not valid"
+    case .Codec_Missing: return "it is compressed with a format the compressor of this build does not decode: build with the private compressor, or write it again with build.compression open"
     case .Out_Of_Memory: return "out of memory"
     case .Not_Found: return "does not exist"
     case .IO: return "could not be read or written"
@@ -744,4 +747,48 @@ imported_beside :: proc(folder:string) -> string {
     names:=project.FOLDER_NAMES
     if os.base(absolute)!=names[.Assets] {return ""}
     return project.imported_path(os.dir(absolute),context.temp_allocator)
+}
+
+// Writes each asset again compressed as the project that holds it saves (build.compression), or
+// with the open compressor outside a project; a texture, with its blocks as they are. A file
+// that already is so stays as it is.
+asset_repack :: proc(root:string,args:[]string) -> int {
+    if code:=positionals("repack",args);code!=0 {return code}
+    if len(args)==0 {return misuse("repack")}
+    types:asset.Types
+    asset.types_init(&types)
+    bad,written:=0,0
+    for path in args {
+        defer free_all(context.temp_allocator)
+        types.codecs=.Open
+        for at:=os.dir(project.path_absolute(path,context.temp_allocator));at!="";at=os.dir(at) {
+            if os.is_file(project.path(at,project.PROJECT_FILE,allocator=context.temp_allocator)) {
+                types.codecs=host.codecs_of(project.compression(at,root))
+                break
+            }
+            if os.dir(at)==at {break}
+        }
+        data,error:=asset.asset_file_read(path,context.temp_allocator)
+        header:asset.Header
+        if error==.None {header,error=asset.header_read(data)}
+        repacked:[]u8
+        switch {
+        case error!=.None:
+        case header.kind==asset.KIND_TEXTURE: repacked,error=asset.texture_repack(data,&types,.Fast,context.temp_allocator)
+        case: repacked,error=asset.document_repack(data,.Fast,types.codecs,context.temp_allocator)
+        }
+        if error!=.None {
+            bad+=failed("repack",path,error_text(error))
+            continue
+        }
+        if string(repacked)==string(data) {continue}
+        if serial.file_write_atomic(path,repacked)!=.None {
+            bad+=failed("repack",path,error_text(.IO))
+            continue
+        }
+        written+=1
+        fmt.println(path)
+    }
+    fmt.printfln("%d of %d files written again",written,len(args))
+    return bad==0?0:1
 }

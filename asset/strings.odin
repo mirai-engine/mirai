@@ -57,9 +57,9 @@ strings_document :: proc(doc:^Document,types:^Types,desc:Strings_Desc,allocator:
 @(private="file")
 strings_tables :: proc(doc:^Document,types:^Types,desc:Strings_Desc) -> Error {
     document_put(doc,types,"languages",desc.languages) or_return
-    document_put(doc,types,"keys",desc.keys,{},.LZ) or_return
-    document_put(doc,types,"entries",desc.entries,{},.LZ) or_return
-    document_put(doc,types,"text",desc.text,{.Bulk},.LZ) or_return
+    document_put(doc,types,"keys",desc.keys,{},.Stream) or_return
+    document_put(doc,types,"entries",desc.entries,{},.Stream) or_return
+    document_put(doc,types,"text",desc.text,{.Bulk},.Stream) or_return
     return import_put(doc,types,desc.source)
 }
 

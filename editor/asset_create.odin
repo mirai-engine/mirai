@@ -235,7 +235,7 @@ asset_create :: proc(s:^Session,kind:asset.Fourcc,path:string,id:base.Asset_Id) 
         if problem!="" {return problem}
         if !file_write(s,file,bytes,label) {return "The table of game data could not be written"}
     case asset.KIND_FONT:
-        bytes,error:=asset.font_bytes(&a.types,{id=id,file=ui.FONT_INTER,compression=.LZ},context.temp_allocator)
+        bytes,error:=asset.font_bytes(&a.types,{id=id,file=ui.FONT_INTER,compression=.Stream},context.temp_allocator)
         if error!=.None || !file_write(s,file,bytes,label) {return "The font could not be written"}
     case:
         if !file_write(s,file,made,label) {return fmt.tprintf("%s could not be written",path)}

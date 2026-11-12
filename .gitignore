@@ -30,3 +30,6 @@ worlds_gen_test.odin
 
 # La fuente de la figura del editor; se conservan sus ajustes y assets importados.
 editor/assets/presence/source/*.glb
+
+# A clone of the private compressor (project.COMPRESSOR_PRIVATE), never versioned here.
+/ext/

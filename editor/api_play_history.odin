@@ -191,7 +191,11 @@ api_play_history :: proc(s:^Session,call:^api.Call) {
     {
         kept:=extras_mark(s.app)
         defer extras_drop(s.app,kept)
-        if traced {problem=api_history_trace(s,call,r,&p.trace,raw[0],from,to,&trace,&info.next)}
+        if traced {
+            every:=u64(max(p.trace.every,1))
+            look:=History_Trace{call=call,p=&p.trace,raw=raw[0],span=int(min(to-from,u64(API_TRACE_ROWS-1)*every)),trace=&trace}
+            problem=history_rows(s,r,from,to,every,API_TRACE_ROWS,history_trace_look,&look,&info.next)
+        }
         if problem=="" && p.verify {problem=api_history_verify(s,r,from,to,&info.verify)}
     }
     history_restore(s,r,&saved)
@@ -206,33 +210,92 @@ api_play_history_write :: proc(s:^Session,call:^api.Call,info:^Api_Play_History_
     if trace!=nil {result.trace=api_trace_table(s,trace,call.allocator)}
 }
 
-// The rows of a trace at the frames kept from the one at or before from to
-// the last at or before to: the first, then one a frame that reached every
-// ticks past the row before, and the last. A frame that ran several ticks
-// shows the last. Rows beyond API_TRACE_ROWS are left for next.
-@(private)
-api_history_trace :: proc(s:^Session,call:^api.Call,r:^Run,p:^Api_Play_Trace,raw:string,from,to:u64,trace:^Api_Trace,next:^u64) -> string {
+// What looking at the past calls on the World of a run after each frame it plays again. row: the
+// frame is a row: the one at or before from, then one a frame that reached every ticks past the
+// row before, and the last at or before to (a frame that ran several ticks shows the last). The
+// frames between rows, and the one before the first when the history keeps it, are looked at
+// with row false. A problem ends the look and fails the call with it.
+History_Look :: #type proc(s:^Session,w:core.World_Ref,row:bool,data:rawptr) -> (problem:string)
+
+// Plays again on the World of the run of a call, as play.history does (player, from and to as
+// it takes them), the frames it keeps from from to to, calling look after each, and puts the
+// World back after, as it was. At most rows rows: next is the from that goes on, 0 when it
+// reached to. False after failing the call.
+history_look :: proc(s:^Session,call:^api.Call,player:int,from_text,to_text:[]u8,every,rows:int,look:History_Look,data:rawptr) -> (next:u64,ok:bool) {
+    r,_,_:=api_history_run(s,call,player)
+    if r==nil {api_no_game(call);return}
+    if reason:=history_reason(s,r);reason!="" {api.call_fail(call,api.SERVER_ERROR,reason);return}
     h:=r.history
+    oldest,newest,_,_,_:=history_span(h)
+    from_tick,_:=api_history_tick(call,h,from_text,"from")
+    to_tick,_:=api_history_tick(call,h,to_text,"to")
+    if call.failed {return}
+    from:=from_tick!=0?from_tick:oldest
+    to:=to_tick!=0?min(to_tick,newest):newest
+    if from>to {api.call_failf(call,api.INVALID_PARAMS,"from %d is after to %d: give from at or before to; the history keeps ticks %d to %d",from,to,oldest,newest);return}
+    if history_frame_for(h,from)==0 {api_history_older(call,h,from);return}
+    saved,copied:=history_save(s,r)
+    if !copied {api.call_fail(call,api.SERVER_ERROR,"No memory for a copy of the World to play its past on; the game stays as it is");return}
+    problem:string
+    {
+        kept:=extras_mark(s.app)
+        defer extras_drop(s.app,kept)
+        problem=history_rows(s,r,from,to,u64(max(every,1)),max(rows,1),look,data,&next)
+    }
+    history_restore(s,r,&saved)
+    if problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
+    return next,true
+}
+
+// The rows of history_look from the frame at or before from to the last at or before to, on the
+// World of r, which the caller puts back. A frame goes on from the one before by playing it again,
+// unless an edit made while paused is kept there: then its copy is taken, as play.seek does.
+@(private)
+history_rows :: proc(s:^Session,r:^Run,from,to,every:u64,rows:int,look:History_Look,data:rawptr,next:^u64) -> string {
+    h:=r.history
+    w:=run_ref(s,r)
     first:=history_frame_for(h,from)
-    if !history_seek(s,r,first).ok {return "No memory to go back to the first tick of the trace"}
-    every:=u64(max(p.every,1))
-    span:=int(min(to-from,u64(API_TRACE_ROWS-1)*every))
-    if problem:=api_trace_read(s,call,run_ref(s,r),p,raw,span,trace);problem!="" {return problem}
+    before:=first>history_at(h,0).frame && history_frame_of(h,first-1)!=nil
+    if !history_seek(s,r,first-1 if before else first).ok {return "No memory to go back to the first tick"}
+    if before {
+        if problem:=look(s,w,false,data);problem!="" {return problem}
+        if !history_next(s,r) {return "No memory to play the past again"}
+    }
+    if problem:=look(s,w,true,data);problem!="" {return problem}
+    taken:=1
     walk:=history_walk(h,first,to,every)
-    pending:=u64(0) // a frame played after the last row, whose tick is the last of the trace
     for f,due in history_walk_next(&walk) {
-        if due && len(trace.rows)==API_TRACE_ROWS {next^,pending=f.tick,0;break}
-        if !history_seek(s,r,walk.at).ok {return "No memory to play the past again"}
-        if !due {pending=walk.at;continue}
-        if problem:=api_trace_take(s,trace,run_ref(s,r),0);problem!="" {return problem}
-        pending=0
+        after:=history_frame_of(h,walk.at+1)
+        row:=due || after==nil || after.tick>to
+        if row && taken==rows {next^=f.tick;break}
+        if !history_next(s,r) {return "No memory to play the past again"}
+        if problem:=look(s,w,row,data);problem!="" {return problem}
+        if row {taken+=1}
     }
-    if pending==0 {return ""}
-    if len(trace.rows)==API_TRACE_ROWS {
-        next^=history_frame_of(h,pending).tick
-        return ""
+    return ""
+}
+
+// The World of a run goes on to the next frame it keeps.
+@(private)
+history_next :: proc(s:^Session,r:^Run) -> bool {
+    h:=r.history
+    for n in 0..<h.count {
+        if key:=history_at(h,n);key.frame==h.at+1 && key.edited {return history_load(s,r,key)}
     }
-    return api_trace_take(s,trace,run_ref(s,r),0)
+    f:=history_frame_of(h,h.at+1)
+    return f!=nil && history_replay(s,r,f)
+}
+
+// A trace that play.history reads along history_rows: the first row reads its params.
+@(private)
+History_Trace :: struct {call:^api.Call,p:^Api_Play_Trace,raw:string,span:int,trace:^Api_Trace,read:bool}
+
+@(private)
+history_trace_look :: proc(s:^Session,w:core.World_Ref,row:bool,data:rawptr) -> string {
+    t:=(^History_Trace)(data)
+    if !row {return ""}
+    if !t.read {t.read=true;return api_trace_read(s,t.call,w,t.p,t.raw,t.span,t.trace)}
+    return api_trace_take(s,t.trace,w,0)
 }
 
 // Plays again the frames from each keyframe to the next that reach from to

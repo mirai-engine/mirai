@@ -966,7 +966,10 @@ of an instance" are `-32602`; the rest, `-32000`
 - **Emitters** (`entity`; `world` `Edit`, the document, or `Play`, the caller's):
   - `particle.instance.inspect` (`world` `Edit` by default): `values` (what it shows), `overrides`
     (its own values by path), `parameters` (its own), `problem` and `status` (`state` `Idle`,
-    `Playing`, `Paused`, `Finishing` or `Done`, `seconds`, `generation`, `births`).
+    `Playing`, `Paused`, `Finishing` or `Done`, `seconds`, `generation`, `births`), and `gpu`, what
+    the GPU copied back of its particles some frames ago (from the call on, the editor watches it):
+    counters, `not_finite` and the first particles with their `attributes` by the names of the
+    fields of its program.
   - `particle.instance.set` (Edit, one undo step): of `values` (as inspect gives them) what differs
     from the effect becomes its own and `parameters` is added to its own, up to 16 together
     (`Particle_Override`); its assets and its program are the effect's (`-32602`).
@@ -976,6 +979,9 @@ of an instance" are `-32602`; the rest, `-32000`
     its `active`; Play only, `-32602` in Edit), `Restart`, `Pause`, `Resume` or `Burst` with
     `count`; the emitter takes it on its next fixed step (in Edit, the next frame of the preview).
     Returns `{id,queued}`.
+  - `particle.pool.inspect` (`world` `Edit` by default): every emitter of the world with `alive`,
+    `dead`, `capacity`, `program` and `bytes`, the most alive first; `frame` 0 until the first
+    readback comes back.
 - `material.inspect`: `{material,path,values}`. `values` is the text of `asset.Material_Info`: the
   base, the layers (`coat`, `fuzz`, `anisotropy`, `unlit`), the maps with their textures by id and
   the program ([model](../../mirai-rendering/references/materials.md#layers-openpbr)). For an

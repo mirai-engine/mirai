@@ -271,16 +271,16 @@ what surely belongs to that model is a part; what is doubtful stays independent 
 the sources of its assets folder (`cook/import/sources/sync.odin`): it is what makes a checkout
 that was just cloned, a worktree that was just made or a branch that changed a source run.
 
-- It imports each source whose sidecar lists outputs of the cache when one of them has no file
-  named by the key of what the import builds from now (`importer.import_key`): the bytes of the
-  source and of every file it read (the buffers and images of a glTF, the material library of an
-  OBJ, the images of a pack of prompts), its settings, the versions of the importer and of what it
-  writes, with textures Final. One notion of current, the bytes: a source that only moved is not
-  imported, and one whose `.bin` or image changed is. The hash of a file whose size and
-  modification time are those the cache of the root keeps for it (`importer.Source_Hashes`, in
-  `.mirai/cache/sources`) is taken from there, so a build reads only the files that changed. A
-  USD is composed by `usdcat`, which does not say which layers it read: after changing one
-  alone, import the stage.
+- It imports each source whose sidecar lists outputs of the cache when one of them has no file named
+  by the key of what the import builds from now (`importer.import_key`): the bytes of the source and
+  of every file it read (the buffers and images of a glTF, the material library of an OBJ, the
+  images of a pack of prompts), its settings, the versions of the importer and of what it writes and
+  the block encoders of the program, with textures Final. One notion of current, the bytes: a source
+  that only moved is not imported, and one whose `.bin` or image changed is. The hash of a file
+  whose size and modification time are those the cache of the root keeps for it
+  (`importer.Source_Hashes`, in `.mirai/cache/sources`) is taken from there, so a build reads only
+  the files that changed. A USD is composed by `usdcat`, which does not say which layers it read:
+  after changing one alone, import the stage.
 - A source no format of the engine reads takes the formats the plugins of the project add
   (`Sync_Options.plugins`); one no format reads is a failure that says so.
 - A file of the imported folder that no sidecar with its source next to it lists under its
@@ -341,6 +341,8 @@ shares it.
   [sync](#sync) of a build. `Import_Info.settings_hash` says which of the two the file holds.
 - [Cooking](../../mirai-projects/references/build.md#asset-cooking) stores there the blocks of
   an RGBA8 texture by `textures.cache_key_blocks`.
+- A key names what made the blocks (`textures.external_id`): the encoders of the program or the
+  one a cook was given, so checkouts with other encoders share the folder without sharing entries.
 - `cache_read` checks hash and key: a damaged file or one of another `TEXTURE_VERSION` is a miss and
   is built again. Reading an entry marks it used.
 - An entry belongs to no asset (an old one serves again when switching branch or setting): that is
@@ -424,7 +426,7 @@ Each imported asset carries the `Cooked` flag and its `Import_Info` ([cache](#im
   [parts](#parts) name their prefab as `owner`. Dependencies come from the `Asset_Id`s that each
   asset names.
 - **Compression.** Texels go in BC blocks ([textures](#textures-cooktextures)); the bulk columns of
-  a mesh and the levels of a texture go in LZ
+  a mesh and the levels of a texture go compressed
   ([compression](../../mirai-assets/references/formats.md#compression)).
 - **Materials.** The `.mat` stores in `imported` what the source gives and in `material` what the
   material is ([two layers](../../mirai-assets/references/kinds.md#material)). Over the file of the
@@ -596,16 +598,16 @@ libraries](../../mirai-physics/references/engine.md).
     BC1, and with alpha, BC3. A 16-bit source without `keep_precision` is compressed by use like an
     8-bit one.
   - It is stored linear except in 8-bit formats with `srgb` (`level_store`).
-- **Encoder**: every block format goes through `cook/compressor/texture`
-  (`level_encode`, the only implementation), with the perceptual metric and the lambda of
-  `rdo_lambda`: the rate-distortion optimization picks blocks a little worse that repeat endpoints
-  and indices, so LZ (after BC7Split for BC7) compresses the file smaller. Each layer of a level
-  is one surface. Alpha keeps exact 0 and 255; a BC7 layer with every texel opaque is encoded
-  without alpha and decodes 255. BC1 may use the three-color mode, whose fourth color decodes
-  black with alpha 0: a BC1 map is read for its RGB. BC6H is encoded from half floats (light beyond
-  them clamped, a NaN 0) in any of its modes. On a worker of the job system the blocks of a level
-  go in parallel with scratch from the heap; a large level without one runs on a job system of the
-  build's own. `asset` decodes ([texture](../../mirai-assets/references/kinds.md#texture)).
+- **Encoder**: every block format goes through `cook/textures` (`level_encode`), which runs
+  the block encoders of the collection compressor (`compressor:blocks`), with the
+  perceptual metric and the lambda of `rdo_lambda`: the rate-distortion optimization picks blocks a
+  little worse that repeat endpoints and indices, so the file compresses smaller. Each layer of a
+  level is one surface. Alpha keeps exact 0 and 255; a BC7 layer with every texel opaque is encoded
+  without alpha and decodes 255. BC1 may use the three-color mode, whose fourth color decodes black
+  with alpha 0: a BC1 map is read for its RGB. BC6H is encoded from half floats (light beyond them
+  clamped, a NaN 0) in any of its modes. On a worker of the job system the blocks of a level go in
+  parallel with scratch from the heap; a large level without one runs on a job system of the build's
+  own. `asset` decodes ([texture](../../mirai-assets/references/kinds.md#texture)).
 - **Devices without BC.** The file carries no alternative formats: `host` decodes the blocks when
   loading, to RGBA8 and BC6H to RGBA16F, when the device does not sample them; the renderer's
   limits discard large levels without re-encoding
@@ -883,7 +885,7 @@ WAV and Ogg Vorbis, mono or stereo) and writes `<name>.sound`, the root of its i
 ## Fonts
 
 `cook/import/font.odin`. `import_font` writes `<name>.font` with the bytes of the file as is
-(LZ in the asset), the root of its import.
+(compressed in the asset), the root of its import.
 
 - It reads TrueType and OpenType with TrueType or CFF outlines, and before writing it opens it like
   the UI does (`ui.font_init`): what is imported loads.

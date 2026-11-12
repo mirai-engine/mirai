@@ -21,7 +21,7 @@ font_keeps_the_bytes_of_one_font :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
     file:=#load("../assets/fixtures/cff.otf")
     doc:Document
-    if !testing.expect_value(t,font_document(&doc,&types,{id={0xf0,1},file=file,compression=.LZ}),Error.None) {return}
+    if !testing.expect_value(t,font_document(&doc,&types,{id={0xf0,1},file=file,compression=.Stream}),Error.None) {return}
     a:Asset
     ok:=test_reopen(t,&doc,&a)
     document_destroy(&doc)

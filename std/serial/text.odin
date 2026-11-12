@@ -584,6 +584,26 @@ text_error_message :: proc(r:^Text_Reader,prefix:="",allocator:=context.allocato
     return string(out[:])
 }
 
+// The field an Unknown_Field error of r names, with where it is in the value
+// (`parts[1].nope`); "" for any other error or without the memory for it.
+text_error_field :: proc(r:^Text_Reader,allocator:=context.allocator) -> string {
+    if r.error.code!=.Unknown_Field {return ""}
+    given:Text_Reader
+    text_reader_init(&given,r.text,allocator)
+    defer text_reader_destroy(&given)
+    given.offset=r.error.offset
+    name,named:=text_string(&given)
+    if !named {return ""}
+    path:=string(r.error.path[:r.error.path_length])
+    joint:=path==""?"":"."
+    out,failed:=make([]u8,len(path)+len(joint)+len(name),allocator)
+    if failed!=nil {return ""}
+    copy(out,path)
+    copy(out[len(path):],joint)
+    copy(out[len(path)+len(joint):],name)
+    return string(out)
+}
+
 // What a code of the reader means, in words.
 text_error_words :: proc(code:Text_Error_Code) -> string {
     switch code {

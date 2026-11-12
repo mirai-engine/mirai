@@ -17,11 +17,15 @@ exe="$root/bin/mirai$suffix"
 if [ ! -x "$exe" ] || [ ! -f "$exe.sources.json" ]; then
     mkdir -p "$root/bin"
     # MIRAI_ODIN, the Odin of .deps, the one of the main checkout of a worktree, or odin in PATH.
+    common="$(git -C "$root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+    main="$root"
+    if [ -n "$common" ]; then main="$(dirname "$common")"; fi
     deps="$root/.deps"
-    if [ ! -d "$deps" ]; then
-        common="$(git -C "$root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
-        if [ -n "$common" ]; then deps="$(dirname "$common")/.deps"; fi
-    fi
+    if [ ! -d "$deps" ]; then deps="$main/.deps"; fi
+    # The collection compressor, as project.compressor_folder finds it.
+    compressor="$root/std/compressor"
+    if [ -d "$root/ext/mirai-compression" ]; then compressor="$root/ext/mirai-compression"
+    elif [ -d "$main/ext/mirai-compression" ]; then compressor="$main/ext/mirai-compression"; fi
     compiler="${MIRAI_ODIN:-}"
     first() { for candidate in "$@"; do if [ -z "$compiler" ] && [ -x "$candidate" ]; then compiler="$candidate"; fi; done; }
     if [ -n "$windows" ]; then
@@ -35,7 +39,7 @@ if [ ! -x "$exe" ] || [ ! -f "$exe.sources.json" ]; then
     # written on Windows, but it can be renamed, as executable_publish (tools/mirai) does.
     staging="$root/bin/.mirai-build-$$$suffix"
     # The attributes the engine reads in its sources mean nothing to the tool.
-    if "${compiler:-odin}" build "$root/tools/mirai" -collection:mirai="$root" -ignore-unknown-attributes -o:minimal -out:"$staging" \
+    if "${compiler:-odin}" build "$root/tools/mirai" -collection:mirai="$root" -collection:compressor="$compressor" -collection:compressor_open="$root/std/compressor" -ignore-unknown-attributes -o:minimal -out:"$staging" \
         -export-dependencies:json -export-dependencies-file:"$staging.sources.json" >&2 \
         && { mv -f "$staging" "$exe" 2>/dev/null || { mv "$exe" "$root/bin/.retired-$$$suffix" && mv "$staging" "$exe"; }; }; then
         mv -f "$staging.sources.json" "$exe.sources.json"

@@ -112,7 +112,7 @@ a_far_mesh_made_in_memory_carries_the_blocks_of_its_pages :: proc(t:^testing.T) 
     defer decoder_destroy(&decoder)
     scratch:=make([]u8,MESH_PAGE_SCRATCH_BYTES,context.temp_allocator)
     for page,at in far.pages {
-        if !testing.expectf(t,page.data_bytes>0 && mesh_page_decode(far.flags,page,far.page_data,scratch,block,&decoder.lz),"page %d decodes",at) {return}
+        if !testing.expectf(t,page.data_bytes>0 && mesh_page_decode(far.flags,page,far.page_data,scratch,block,&decoder.stream),"page %d decodes",at) {return}
         testing.expect(t,mesh_page_gather(far,page,want))
         testing.expectf(t,string(mem.slice_to_bytes(block[:page.words]))==string(mem.slice_to_bytes(want[:page.words])),"page %d decodes to its clusters",at)
     }

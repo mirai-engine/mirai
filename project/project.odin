@@ -21,7 +21,18 @@ FOLDER_NAMES :: [Folder]string{
     .Assets="assets",.Game="game",.Editor="editor",
     .Plugins="plugins",.Shaders="shaders",.Panels="panels",.Generated=".mirai",
 }
-PART_NAMES :: [Plugin_Part]string{.Runtime="runtime",.Editor="editor",.Shaders="shaders",.Assets="assets",.Recipes="recipes"}
+PART_NAMES :: [Plugin_Part]string{.Runtime="runtime",.Editor="editor",.Shaders="shaders",.Assets="assets",.Recipes="recipes",.Cook="cook"}
+
+// What build.compression names besides the default, the best compressor of the engine.
+COMPRESSION_NONE :: "none"
+COMPRESSION_OPEN :: "open"
+
+// What the assets of a project and the game it ships are compressed with.
+Compression :: enum u8 {
+    Best, // the best compressor the games built with its engine have: the private one where it is there (compressor_folder), else the open one
+    Open, // the open compressor, which every build of the engine reads
+    None, // nothing
+}
 
 // Under the generated folder, beside the libraries of the project: the libraries of the engine's plugins it links.
 PLUGIN_LIBRARIES :: "plugins/lib"
@@ -95,6 +106,10 @@ open :: proc(root:string,engine_root:="",allocator:=context.allocator) -> (p:Pro
             return
         }
         append(&wanted,text)
+    }
+    if compression:=base.text_get(p.manifest.build.compression[:]);compression!="" && compression!=COMPRESSION_NONE && compression!=COMPRESSION_OPEN {
+        error=error_about(.Compression_Invalid,compression)
+        return
     }
     if p.active,error=plugins_order(found[:],wanted[:],allocator);error.code!=.None {return}
     // An automatic plugin joins once all its dependencies are active, after
@@ -430,4 +445,19 @@ asset_folders :: proc(p:^Project,allocator:=context.allocator) -> []Asset_Folder
         })
     }
     return folders[:]
+}
+
+// What the assets of the project at root, built with the engine at engine_root, are compressed
+// with: Best only where the games of that engine have the private compressor, since what a game
+// does not decode it cannot ship. A folder without a project, as the assets of the engine and of
+// its plugins: Open.
+compression :: proc(root,engine_root:string) -> Compression {
+    m,error:=manifest_read(path(root,PROJECT_FILE,allocator=context.temp_allocator))
+    if error.code!=.None {return .Open}
+    switch base.text_get(m.build.compression[:]) {
+    case COMPRESSION_NONE: return .None
+    case COMPRESSION_OPEN: return .Open
+    }
+    _,private:=compressor_folder(engine_root,context.temp_allocator)
+    return .Best if private else .Open
 }

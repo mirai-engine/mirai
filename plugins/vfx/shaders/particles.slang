@@ -1,4 +1,12 @@
 //! mirai constant PARTICLE_CURVE_KEYS uint ../runtime/effect/effect.odin
+//! mirai constant RIBBON_SHIFT uint ../runtime/gpu.odin
+//! mirai constant RIBBON_PIECES_SHIFT uint ../runtime/gpu.odin
+//! mirai constant RIBBON_LOOK_BYTES uint ../runtime/gpu.odin
+//! mirai constant SORT_SLOT_BITS uint ../runtime/gpu.odin
+//! mirai constant RIBBON_PIECES uint ../runtime/gpu.odin
+//! mirai constant TRAILS_PER_SECOND uint ../runtime/gpu.odin
+//! mirai constant MESH_CHOICE_SHIFT uint ../runtime/gpu.odin
+//! mirai constant PARTICLE_MESHES uint ../runtime/effect/effect.odin
 // Particles: the pool, the emitters and what the passes share. Layouts are
 // those of gpu.odin of the vfx plugin (sizes asserted there).
 #ifndef MIRAI_PARTICLES_SLANG
@@ -14,7 +22,7 @@ struct Particle {
     uint color;                     // rgba8 of the square root of the linear color
     uint light;                     // rgb with a shared exponent: the light it receives
     uint emitter;                   // slot
-    uint flags;                     // 1: light holds a value
+    uint flags;                     // 1: light holds a value; from MESH_CHOICE_SHIFT, the mesh of a Mesh particle; from RIBBON_PIECES_SHIFT, the pieces of the segment it starts; above RIBBON_SHIFT, the ribbon it joins
 };
 
 #define PARTICLE_SPAWNS 8u
@@ -52,6 +60,8 @@ struct Particle_Emitter {
     float4 light;         // intensity (cd), range, radius (0: half the size of the particle)
     uint4 lights;         // its share of the room of the frame: x the first of its lights with shadows, y how many; z, w those without
     uint4 data;           // bytes of particle_data to the Attributes of its range, bytes of those of a particle, its age (bits), particles it started before the frame
+    float4 mesh_weights;  // of Mesh particles: the weights of its meshes added up
+    uint4 mesh_vertices;  // and the vertices of a draw of each
 };
 
 struct Particle_State {
@@ -66,7 +76,11 @@ struct Particle_State {
 struct Particle_Event {
     float3 position; uint target; // slot of the emitter it starts particles in, and how many above 16 bits
     float3 velocity; uint color;
+    uint ribbon;                  // that the particles it starts join
 };
+// An event a trail makes at the end of each frame: the point it starts lives
+// until the next step, drawn where its head is now.
+#define PARTICLE_EVENT_LEADER 0x80000000u
 
 #define PARTICLE_FLAG_ACTIVE 1u
 #define PARTICLE_FLAG_RESET 2u
@@ -100,12 +114,17 @@ struct Particle_Event {
 #define PARTICLE_RENDER_MESH 4u
 
 #define PARTICLE_COLLISION_WORLD 1u
+#define PARTICLE_FACING_TUMBLE 0u
+#define PARTICLE_FACING_VELOCITY 1u
 #define PARTICLE_EVENT_DEATH 1u
 #define PARTICLE_EVENT_COLLISION 2u
+#define PARTICLE_EVENT_TRAIL 3u
 
 #define PARTICLE_EVENT_CAPACITY 16384u
 #define PARTICLE_EVENTS_AT 64u // words of particle_queue before the events: their counts and dispatches
-#define PARTICLE_EVENT_WORDS 8u
+#define PARTICLE_EVENT_WORDS 9u
+// Words of particle_queue to a draw of each mesh of each emitter (vfx.MESH_DRAWS_AT).
+#define PARTICLE_MESH_DRAWS_AT (PARTICLE_EVENTS_AT + 2u * PARTICLE_EVENT_CAPACITY * PARTICLE_EVENT_WORDS)
 
 // The resources of an emitter in particle_frame: the surface of its shape,
 // then those of its program, in the order it declares them.
@@ -145,6 +164,9 @@ struct Particle_Event {
 #else
 [[vk::binding(SLOT_PASS0, 0)]] StructuredBuffer<Particle> particles : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);
 [[vk::binding(SLOT_PASS3, 0)]] StructuredBuffer<uint> particle_lists : register(MIRAI_REGISTER(t, SLOT_PASS3), space0);
+#ifdef PARTICLE_STATES_READ
+[[vk::binding(SLOT_PASS2, 0)]] StructuredBuffer<Particle_State> particle_states : register(MIRAI_REGISTER(t, SLOT_PASS2), space0);
+#endif
 #endif
 [[vk::binding(SLOT_PASS1, 0)]] StructuredBuffer<Particle_Emitter> particle_emitters : register(MIRAI_REGISTER(t, SLOT_PASS1), space0);
 #ifndef PARTICLES_COUNTED
@@ -367,6 +389,7 @@ Particle_Event particle_event_load(uint half, uint at) {
     ev.target = particle_queue[base + 3u];
     ev.velocity = asfloat(uint3(particle_queue[base + 4u], particle_queue[base + 5u], particle_queue[base + 6u]));
     ev.color = particle_queue[base + 7u];
+    ev.ribbon = particle_queue[base + 8u];
     return ev;
 }
 
@@ -376,10 +399,30 @@ void particle_event_store(uint half, uint at, Particle_Event ev) {
     particle_queue[base + 3u] = ev.target;
     particle_queue[base + 4u] = asuint(ev.velocity.x); particle_queue[base + 5u] = asuint(ev.velocity.y); particle_queue[base + 6u] = asuint(ev.velocity.z);
     particle_queue[base + 7u] = ev.color;
+    particle_queue[base + 8u] = ev.ribbon;
 }
 #endif
 
 uint particle_emitter_of(Particle p) { return p.emitter; }
+
+// The ribbon a particle joins (0: the one of its emitter), and the ribbon of
+// its own that the particles its events start join: never 0, the same while
+// it lives, apart from those of the others alive in all but rare cases.
+#define PARTICLE_RIBBON_MASK (0xFFFFFFFFu >> RIBBON_SHIFT)
+uint particle_ribbon(Particle p) { return p.flags >> RIBBON_SHIFT; }
+uint particle_own_ribbon(uint seed) { return max(hash_u32(seed) & PARTICLE_RIBBON_MASK, 1u); }
+
+// The pieces of the segment of a ribbon a particle starts, last frame.
+#define PARTICLE_PIECES_MASK 15u
+uint particle_pieces(Particle p) { return (p.flags >> RIBBON_PIECES_SHIFT) & PARTICLE_PIECES_MASK; }
+
+// The direction a ribbon leaves a particle at here in, between those it came
+// from before and goes on to after: the mean of both.
+float3 ribbon_tangent(float3 before, float3 here, float3 after) {
+    float3 in_dir = here - before, out_dir = after - here;
+    float3 mean = (length(in_dir) > 1e-6 ? normalize(in_dir) : float3(0.0)) + (length(out_dir) > 1e-6 ? normalize(out_dir) : float3(0.0));
+    return length(mean) > 1e-6 ? normalize(mean) : out_dir;
+}
 
 // The pool index of the i-th particle an emitter draws.
 uint particle_drawn(uint slot, uint i) { return particle_lists[particle_emitters[slot].program.y + particle_emitters[slot].range.x + i]; }
@@ -506,6 +549,41 @@ float particle_puff(float2 tile, float seed) {
     return disc * disc * saturate(0.35 + n * 1.1);
 }
 
+// Which of the meshes of an emitter a particle shows, by a number from 0 to 1 against their weights.
+uint particle_mesh_pick(uint slot, float u) {
+    uint count = max(particle_emitters[slot].mesh.x, 1u);
+    float4 weights = particle_emitters[slot].mesh_weights;
+    for (uint c = 0u; c + 1u < count; c++) {
+        if (u < weights[c]) return c;
+    }
+    return count - 1u;
+}
+
+// Where a Mesh particle that faces its velocity last went faster than
+// PARTICLE_MESH_FACING_SPEED, in the bits of flags a ribbon has: two of 10
+// over an octahedron and whether they hold it. Slower, it keeps it, so that
+// what rests does not jitter.
+#define PARTICLE_MESH_FACING_SPEED 0.1
+#define PARTICLE_HEADING_HELD 0x80000000u
+uint particle_heading_pack(float3 d) {
+    float2 o = d.xy / (abs(d.x) + abs(d.y) + abs(d.z));
+    if (d.z < 0.0) o = (1.0 - abs(o.yx)) * float2(o.x >= 0.0 ? 1.0 : -1.0, o.y >= 0.0 ? 1.0 : -1.0);
+    uint2 q = uint2(saturate(o * 0.5 + 0.5) * 1023.0 + 0.5);
+    return (q.x | (q.y << 10u)) << RIBBON_SHIFT | PARTICLE_HEADING_HELD;
+}
+float3 particle_heading(uint flags) {
+    uint bits = flags >> RIBBON_SHIFT;
+    float2 o = float2(float(bits & 1023u), float((bits >> 10u) & 1023u)) / 1023.0 * 2.0 - 1.0;
+    float3 d = float3(o, 1.0 - abs(o.x) - abs(o.y));
+    if (d.z < 0.0) d.xy = (1.0 - abs(d.yx)) * float2(d.x >= 0.0 ? 1.0 : -1.0, d.y >= 0.0 ? 1.0 : -1.0);
+    return normalize(d);
+}
+
+// The mesh a Mesh particle shows among those of its emitter.
+uint particle_mesh_choice(uint slot, Particle p) {
+    return min((p.flags >> MESH_CHOICE_SHIFT) & (PARTICLE_MESHES - 1u), max(particle_emitters[slot].mesh.x, 1u) - 1u);
+}
+
 // Rotation of a particle mesh: about an axis of its own.
 float3x3 particle_rotation(uint seed, float angle) {
     uint s = seed * 31u + 7u;
@@ -515,6 +593,33 @@ float3x3 particle_rotation(uint seed, float angle) {
         t * axis.x * axis.x + c, t * axis.x * axis.y - si * axis.z, t * axis.x * axis.z + si * axis.y,
         t * axis.x * axis.y + si * axis.z, t * axis.y * axis.y + c, t * axis.y * axis.z - si * axis.x,
         t * axis.x * axis.z - si * axis.y, t * axis.y * axis.z + si * axis.x, t * axis.z * axis.z + c);
+}
+
+// The rotation of a Mesh particle as its effect turns it (Particle_Facing):
+// Tumble, about an axis of its own; Velocity, its front (-Z) along its
+// velocity (up when still), its +Y as near the up of the world, rolled about
+// its front by its rotation.
+float3x3 particle_mesh_rotation(uint slot, Particle p) {
+    if (particle_emitters[slot].mesh.y != PARTICLE_FACING_VELOCITY) return particle_rotation(p.seed, p.rotation);
+    float3 v = particle_world_vector(slot, p.velocity);
+    float3 forward = (p.flags & PARTICLE_HEADING_HELD) != 0u ? particle_heading(p.flags) : length(v) > 1e-5 ? normalize(v) : float3(0.0, 1.0, 0.0);
+    float3 up = abs(forward.y) > 0.99 ? float3(0.0, 0.0, forward.y > 0.0 ? 1.0 : -1.0) : float3(0.0, 1.0, 0.0);
+    float3 z = -forward;
+    float3 x = normalize(cross(up, z));
+    float3 y = cross(z, x);
+    float s = sin(p.rotation), c = cos(p.rotation);
+    float3 rx = x * c + y * s, ry = y * c - x * s;
+    return float3x3(rx.x, ry.x, z.x, rx.y, ry.y, z.y, rx.z, ry.z, z.z);
+}
+
+// A vector of the space of its mesh in the world: one that tumbles turns in
+// the space of its emitter; one that faces its velocity, in the world, grown
+// by the scale of its emitter along each axis.
+float3 particle_mesh_vector(uint slot, float3x3 rotation, float3 v) {
+    float4 w[3] = particle_emitters[slot].world;
+    if (particle_emitters[slot].mesh.y == PARTICLE_FACING_TUMBLE) return particle_world_vector(slot, mul(rotation, v));
+    float3 scale = float3(length(float3(w[0].x, w[1].x, w[2].x)), length(float3(w[0].y, w[1].y, w[2].y)), length(float3(w[0].z, w[1].z, w[2].z)));
+    return mul(rotation, v * scale);
 }
 
 #endif

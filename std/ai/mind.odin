@@ -43,6 +43,7 @@ Act_Frame :: struct {
 }
 
 Mind_Exit :: struct {
+    tick:u64, // it exited at
     action:u16,
     by:u16, // the action that interrupted it, MIND_NONE when none did
     cause:Exit_Cause,
@@ -123,8 +124,10 @@ Act :: struct($A:typeid) {
 // or its commit), and is interrupted when something does or when it is neither
 // proposed nor committed. An action that ends asks `think` again in the same
 // tick, over what it changed, and the best enters; it can be itself unless it
-// failed. Returns what runs after the tick.
-mind_tick :: proc(m:^Mind,acts:^[$A]$P,think:proc(t:^Think(A)),ctx:^Mind_Context) -> (doing:A,running:bool) {
+// failed. Without `decide` it does not think while an action runs: the
+// action runs its tick, and `think` is asked only when it ends, or never when
+// nothing runs. Returns what runs after the tick.
+mind_tick :: proc(m:^Mind,acts:^[$A]$P,think:proc(t:^Think(A)),ctx:^Mind_Context,decide:=true) -> (doing:A,running:bool) {
     #assert(intrinsics.type_is_enum(A) && int(min(A))>=0 && int(max(A))<MIND_ACTIONS)
     #assert(P==proc(a:^Act(A)) -> Status)
     if m==nil || acts==nil || think==nil || ctx==nil {return}
@@ -137,15 +140,18 @@ mind_tick :: proc(m:^Mind,acts:^[$A]$P,think:proc(t:^Think(A)),ctx:^Mind_Context
     current:=int(m.main.action)-1
     if current>=0 && !mind_valid(A,current) {current=-1;m.main={}}
     if m.step.action!=0 && (current<0 || !mind_valid(A,int(m.step.action)-1)) {m.step={}}
+    if current<0 && !decide {return}
     t:=Think(A){ctx=ctx,mind=m,best=-1,running=current,excluded=-1}
-    think(&t)
-    m.proposals=t.top
+    if decide {
+        think(&t)
+        m.proposals=t.top
+    }
     if current>=0 {
         standing:f32
         if t.standing>0 {standing=t.standing+(ctx.keep if ctx.keep>0 && ctx.keep<=max(f32) else 0)}
         if m.commit>standing {standing=m.commit}
-        if standing>0 && !(t.score>standing) {
-            m.score=standing
+        if !decide || standing>0 && !(t.score>standing) {
+            if decide {m.score=standing}
             r:=act_call(m,acts,ctx,&m.main,.Update,.Success)
             if r==.Running {return A(current),true}
             mind_exit(m,acts,ctx,exit_cause(r),MIND_NONE)
@@ -274,16 +280,29 @@ token_take :: proc(a:^Act($A),target:u64,limit:int) -> bool {return claim(a,targ
 
 // Claims `what` of `target` (an offer of a smart object, the game's id) for
 // the action (or step) that asks, one of `limit` holders at once, until it
-// exits: false when `limit` others hold it. A frame holds one reservation: a
-// new one releases the one it held.
-claim :: proc(a:^Act($A),target:u64,what:u16,limit:int) -> bool {
+// exits: false when `limit` others hold it and none can be displaced. A claim
+// of a higher `priority` displaces the lowest one not in use (claim_use),
+// whose holder then finds it no longer holds it. A frame holds one
+// reservation: a new one releases the one it held.
+claim :: proc(a:^Act($A),target:u64,what:u16,limit:int,priority:u8=0) -> bool {
     if a.reservations==nil || target==0 {return false}
     key:=Reservation_Key{target,what}
-    if a.frame.reserved==key {return true}
-    if !reserve_take(a.reservations,key,a.holder,limit,a.tick,u64(max(a.lease,1))) {return false}
+    lease:=u64(max(a.lease,1))
+    if a.frame.reserved==key {return reserve_take(a.reservations,key,a.holder,limit,a.tick,lease,priority)}
+    if !reserve_take(a.reservations,key,a.holder,limit,a.tick,lease,priority) {return false}
     if a.frame.reserved.target!=0 {reserve_release(a.reservations,a.frame.reserved,a.holder)}
     a.frame.reserved=key
     return true
+}
+
+// What the frame claimed is in use from now on: no claim displaces it until it is released.
+claim_use :: proc "contextless" (a:^Act($A)) {
+    if a.frame.reserved.target!=0 {reserve_use(a.reservations,a.frame.reserved,a.holder)}
+}
+
+// Whether the frame still holds what it claimed: false once a claim of a higher priority took it.
+claim_held :: proc "contextless" (a:^Act($A)) -> bool {
+    return reserve_holds(a.reservations,a.frame.reserved,a.holder,a.tick)
 }
 
 @(private)
@@ -321,7 +340,7 @@ frame_exit :: proc(m:^Mind,acts:^[$A]$P,ctx:^Mind_Context,frame:^Act_Frame,cause
     if frame.reserved.target!=0 && ctx.reservations!=nil {reserve_release(ctx.reservations,frame.reserved,ctx.holder)}
     m.ended[action]=ctx.tick
     m.exited|=1<<uint(action)
-    m.exits[m.exits_seen%MIND_TRACE]={action=u16(action),by=by,cause=cause,step=frame==&m.step}
+    m.exits[m.exits_seen%MIND_TRACE]={tick=ctx.tick,action=u16(action),by=by,cause=cause,step=frame==&m.step}
     m.exits_seen+=1
     frame^={}
 }
@@ -339,8 +358,9 @@ mind_exit :: proc(m:^Mind,acts:^[$A]$P,ctx:^Mind_Context,cause:Exit_Cause,by:u16
 // Reservations: how many agents hold a target at once, for an attack token
 // or an offer of a smart object. A holder renews its lease on every tick its
 // mind runs; one that stops (destroyed, or its mind no longer ticks) loses it
-// `lease` ticks after its last renewal. Plain data, shared by the agents a
-// function ticks.
+// `lease` ticks after its last renewal. A holder of a lower priority that does
+// not use it yet gives its place to a taker of a higher one; one that uses it
+// keeps it. Plain data, shared by the agents a function ticks.
 
 RESERVATION_TARGETS :: #config(MIRAI_RESERVATION_TARGETS,128)
 RESERVATION_HOLDERS :: #config(MIRAI_RESERVATION_HOLDERS,4)
@@ -349,6 +369,8 @@ Reservation_Slot :: struct {
     key:Reservation_Key,
     holders:[RESERVATION_HOLDERS]u64,
     until:[RESERVATION_HOLDERS]u64, // the last tick of each lease
+    priority:[RESERVATION_HOLDERS]u8,
+    used:[RESERVATION_HOLDERS]bool, // in use: no taker displaces it
 }
 Reservations :: struct {
     slots:[RESERVATION_TARGETS]Reservation_Slot,
@@ -364,6 +386,18 @@ reserve_live :: #force_inline proc "contextless" (s:^Reservation_Slot,k:int,tick
 reserve_slot :: proc "contextless" (r:^Reservations,key:Reservation_Key) -> ^Reservation_Slot {
     for &s in r.slots {if s.key==key {return &s}}
     return nil
+}
+
+// The holder a taker at `priority` displaces: of the live ones below it and
+// not in use, the lowest, the first of equals; -1 for none.
+@(private="file")
+reserve_displaced :: proc "contextless" (s:^Reservation_Slot,tick:u64,priority:u8) -> int {
+    found:=-1
+    for k in 0..<RESERVATION_HOLDERS {
+        if !reserve_live(s,k,tick) || s.used[k] || s.priority[k]>=priority {continue}
+        if found<0 || s.priority[k]<s.priority[found] {found=k}
+    }
+    return found
 }
 
 // Holders of `key` whose lease is live.
@@ -388,18 +422,18 @@ reserve_free_key :: proc "contextless" (t:^Think($A),key:Reservation_Key,limit:i
     return reserve_open(t.reservations,key,t.holder,limit,t.tick)
 }
 
-// Whether `holder` holds `key` or could take it as one of `limit`.
-reserve_open :: proc "contextless" (r:^Reservations,key:Reservation_Key,holder:u64,limit:int,tick:u64) -> bool {
-    if r==nil || key.target==0 || holder==0 {return false}
+// Whether `holder` holds `key` or could take it as one of `limit` at `priority`.
+reserve_open :: proc "contextless" (r:^Reservations,key:Reservation_Key,holder:u64,limit:int,tick:u64,priority:u8=0) -> bool {
+    if r==nil || key.target==0 || holder==0 || limit<=0 {return false}
     s:=reserve_slot(r,key)
-    if s==nil {return limit>0}
+    if s==nil {return true}
     count:=0
     for k in 0..<RESERVATION_HOLDERS {
         if !reserve_live(s,k,tick) {continue}
         if s.holders[k]==holder {return true}
         count+=1
     }
-    return count<limit && count<RESERVATION_HOLDERS
+    return count<limit && count<RESERVATION_HOLDERS || reserve_displaced(s,tick,priority)>=0
 }
 
 // Whether `holder` holds `key` now.
@@ -411,7 +445,10 @@ reserve_holds :: proc "contextless" (r:^Reservations,key:Reservation_Key,holder:
     return false
 }
 
-reserve_take :: proc "contextless" (r:^Reservations,key:Reservation_Key,holder:u64,limit:int,tick:u64,lease:u64=1) -> bool {
+// Takes `key` for `holder` as one of `limit` at `priority`, displacing a
+// holder reserve_displaced names when there is no room; renews it when it
+// holds it already.
+reserve_take :: proc "contextless" (r:^Reservations,key:Reservation_Key,holder:u64,limit:int,tick:u64,lease:u64=1,priority:u8=0) -> bool {
     if r==nil || key.target==0 || holder==0 || limit<=0 {return false}
     s:=reserve_slot(r,key)
     if s==nil {
@@ -431,10 +468,23 @@ reserve_take :: proc "contextless" (r:^Reservations,key:Reservation_Key,holder:u
         if s.holders[k]==holder {s.until[k]=tick+lease;return true}
         count+=1
     }
-    if count>=limit {return false}
-    if place<0 {r.failed+=1;return false}
-    s.holders[place],s.until[place]=holder,tick+lease
+    if count>=limit || place<0 {
+        unplaced:=count<limit
+        if place=reserve_displaced(s,tick,priority);place<0 {
+            if unplaced {r.failed+=1}
+            return false
+        }
+    }
+    s.holders[place],s.until[place],s.priority[place],s.used[place]=holder,tick+lease,priority,false
     return true
+}
+
+// What `holder` holds of `key` is in use: no taker displaces it.
+reserve_use :: proc "contextless" (r:^Reservations,key:Reservation_Key,holder:u64) {
+    if r==nil || key.target==0 || holder==0 {return}
+    if s:=reserve_slot(r,key);s!=nil {
+        for k in 0..<RESERVATION_HOLDERS {if s.holders[k]==holder {s.used[k]=true}}
+    }
 }
 
 reserve_renew :: proc "contextless" (r:^Reservations,key:Reservation_Key,holder:u64,tick:u64,lease:u64=1) {
@@ -450,7 +500,7 @@ reserve_release :: proc "contextless" (r:^Reservations,key:Reservation_Key,holde
     if s==nil {return}
     empty:=true
     for k in 0..<RESERVATION_HOLDERS {
-        if s.holders[k]==holder {s.holders[k]=0}
+        if s.holders[k]==holder {s.holders[k],s.used[k]=0,false}
         if s.holders[k]!=0 {empty=false}
     }
     if empty {s^={}}

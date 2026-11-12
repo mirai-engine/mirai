@@ -21,6 +21,7 @@ import "base:runtime"
 // death), and matching goes on when it ends.
 
 MATCH_CLIPS :: 64
+MATCH_SPANS :: 64
 // Share of the speed the pose walks at that its root closes on the body by, with a lag.
 MATCH_LAG_CLOSE :: .5
 
@@ -70,7 +71,12 @@ Match_Mirror :: enum u8 {Off,Both,Only}
 // its blend, each in 0..1 with a positive sum, played as shares of that sum; speed, when positive,
 // the m/s it travels at instead of the one measured from its blended feet.
 Match_Sample :: struct {source:u32,weights:[MATCH_BLEND]f32,speed:f32 `mirai:"unit=m/s"`}
-Match_Profile :: struct {info:Match_Info,clips:[]Match_Source,samples:[]Match_Sample}
+// A rule over the rows of the clips inside the spans of name (markers with a duration on the
+// clips): Exclude keeps them out of every search and a clip that plays into them searches at once;
+// Block keeps them out of every search while a clip that plays on may play into them (the end of a
+// swing). A blended sample has no spans.
+Match_Span :: struct {name:[32]u8 `mirai:"text"`,kind:lib.Match_Span_Kind}
+Match_Profile :: struct {info:Match_Info,clips:[]Match_Source,samples:[]Match_Sample,spans:[]Match_Span}
 
 // The clips a source plays: its clip, then those of its blend.
 match_source_clips :: proc(source:^Match_Source) -> (names:[MATCH_BLEND]string,count:int) {
@@ -82,9 +88,18 @@ match_source_clips :: proc(source:^Match_Source) -> (names:[MATCH_BLEND]string,c
     return
 }
 
+// Whether spans fit a set: each named, of a kind, and one rule per name.
+match_spans_check :: proc(spans:[]Match_Span) -> bool {
+    if len(spans)>MATCH_SPANS {return false}
+    for &span,i in spans {
+        if !blend_text_valid(span.name[:],false) || span.kind>max(lib.Match_Span_Kind) {return false}
+        for &other in spans[:i] {if other.name==span.name {return false}}
+    }
+    return true
+}
 match_check :: proc(profile:Match_Profile) -> bool {
     info:=profile.info
-    if len(profile.clips)>MATCH_CLIPS || len(profile.samples)>MATCH_SAMPLES || info.memory==0 {return false}
+    if len(profile.clips)>MATCH_CLIPS || len(profile.samples)>MATCH_SAMPLES || !match_spans_check(profile.spans) || info.memory==0 {return false}
     for value in ([19]f32{info.rate,info.interval,info.blend,info.bias,info.min_rate,info.max_rate,info.foot_position,info.foot_velocity,info.hip_velocity,info.body_velocity,info.trajectory_position,info.trajectory_direction,info.stationary_speed,info.reselect,info.hold,info.lag,info.lag_half_life,info.landing_rates[0],info.landing_rates[1]}) {if !finite(value) || value<0 {return false}}
     if info.rate<=0 || info.rate>lib.FRAMES_MAX_RATE || info.min_rate<=0 || info.min_rate>info.max_rate || info.lag>0 && info.lag_half_life<=0 {return false}
     if !blend_text_valid(info.landing_marker[:],true) || info.landing_rates[0]<=0 || info.landing_rates[0]>info.landing_rates[1] {return false}
@@ -118,6 +133,10 @@ match_check :: proc(profile:Match_Profile) -> bool {
 // mirror on a skeleton whose bones do not name their sides.
 @(private)
 Match_Fault :: struct {kind:enum u8 {None,Missing,Mirror},source,member:i32}
+// What a span of a set leaves undone (its index in spans): no clip of the library has a span of
+// its name; or the Exclude spans leave out every row of a clip (its range in the database).
+@(private)
+Match_Span_Fault :: struct {kind:enum u8 {None,Unknown,Whole},span,clip:i32}
 // What the body does and is asked to do in this tick, for a rig that plays the locomotion of a .character: mode is its
 // locomotion mode; velocity, where it goes; desired, the velocity its walk heads to at
 // acceleration (braking toward zero); facing, where it turns to at turn_rate rad/s (0: at once);
@@ -191,14 +210,13 @@ Match_Playing :: struct {
     told:bool,               // body holds a velocity
     searched:Match_Searched,
 }
-// The last search matching had to make (a mode it enters, a start or a stop, a clip that ends or
-// none playing), as it made it: its request, the row that played, whether its clip was left whole,
-// the reselect span and the rows the rig had left, and which of searches it was. It searched mode
-// m for the bit m of request.modes. match_searched_candidates searches it again to note its
-// candidates; the tick does not.
+// The last search of matching, as it made it: its request, the row that played, whether its clip
+// was left whole, the reselect span and the rows the rig had left, and which of searches it was.
+// It searched mode m for the bit m of request.modes. match_searched_candidates searches it again
+// to note its candidates; the tick does not.
 Match_Searched :: struct {request:lib.Match_Request,row:i32,whole:bool,span:f32,recent:lib.Match_Recent,search:u32}
 
-// The candidates of the last search matching had to make, searched again as it was made in db.
+// The candidates of the last search of matching, searched again as it was made in db.
 match_searched_candidates :: proc "contextless" (db:^lib.Match_Database,searched:Match_Searched) -> (candidates:lib.Match_Candidates) {
     if db==nil || searched.search==0 {return}
     recent:=searched.recent
@@ -242,10 +260,10 @@ animation_match_database :: proc(matches:^Character_Assets,library:^host.Content
 // The database of a library for the skeleton of a rig, built the first time a rig of that
 // skeleton loads it.
 @(private)
-match_database :: proc(content:^Character_Content,library:^host.Content_Animation,state:^Playing,source:base.Asset_Id,allocator:mem.Allocator) -> (^lib.Match_Database,lib.Match_Build_Error,Match_Fault) {
-    if library==nil || len(state.parents)<2 || len(state.rest)!=len(state.parents) {return nil,.Invalid,{}}
+match_database :: proc(content:^Character_Content,library:^host.Content_Animation,state:^Playing,source:base.Asset_Id,allocator:mem.Allocator) -> (^lib.Match_Database,lib.Match_Build_Error,Match_Fault,Match_Span_Fault) {
+    if library==nil || len(state.parents)<2 || len(state.rest)!=len(state.parents) {return nil,.Invalid,{},{}}
     key:=match_database_key(library,state,source)
-    for &built in content.databases {if built.key==key {return &built.database if built.error==.None else nil,built.error,built.fault}}
+    for &built in content.databases {if built.key==key {return &built.database if built.error==.None else nil,built.error,built.fault,built.span}}
     context.allocator=allocator
     info:=content.set.match.info;animation:=content.set.info.animation
     bones:=[3]int{int(state.body[.Foot_L]),int(state.body[.Foot_R]),int(state.body[.Pelvis])}
@@ -299,12 +317,26 @@ match_database :: proc(content:^Character_Content,library:^host.Content_Animatio
                 name:=base.name_hash(landing)
                 for marker,k in library.markers {if marker.name==name {append(&event,u32(k))}}
             }
-            built.error=lib.match_database_build(&built.database,&library.lib,rig,clips,info.rate,weights,int(info.memory)*1024,event[:],allocator)
+            // Each clip names a span with a marker of its own: a rule for every one of its name.
+            spans:=make([dynamic]lib.Match_Span,context.temp_allocator)
+            for &span,i in content.set.match.spans {
+                name:=base.name_hash(base.text_get(span.name[:]))
+                named:=false
+                for marker,k in library.markers {if marker.name==name {append(&spans,lib.Match_Span{marker=u32(k),kind=span.kind});named=true}}
+                if !named && built.span.kind==.None {built.span={kind=.Unknown,span=i32(i)}}
+            }
+            built.error=lib.match_database_build(&built.database,&library.lib,rig,clips,info.rate,weights,int(info.memory)*1024,event[:],spans[:],allocator)
+            if built.error==.None && built.span.kind==.None {
+                db:=&built.database
+                for r,range in db.ranges {
+                    if lib.match_rows_flagged(db,int(r.first),int(r.first+r.count),.Exclude,all=true) {built.span={kind=.Whole,clip=i32(range)};break}
+                }
+            }
         }
     }
-    if append(&content.databases,built)!=1 {lib.match_database_free(&built.database);return nil,.Out_Of_Memory,{}}
+    if append(&content.databases,built)!=1 {lib.match_database_free(&built.database);return nil,.Out_Of_Memory,{},{}}
     last:=&content.databases[len(content.databases)-1]
-    return &last.database if last.error==.None else nil,last.error,last.fault
+    return &last.database if last.error==.None else nil,last.error,last.fault,last.span
 }
 
 // Moves the root of the pose of a rig that matches to where its spring left it from the body: the
@@ -326,7 +358,20 @@ match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Co
     goal:Match_Goal;has_goal:=false
     for value in goals {if value.rig==state.entity {goal,has_goal=value,true}}
     mode:=goal.mode if has_goal else m.mode
-    db,built,fault:=match_database(content,library,state,source,allocator)
+    db,built,fault,span_fault:=match_database(content,library,state,source,allocator)
+    if db!=nil && span_fault.kind!=.None {
+        name:[base.ASSET_ID_TEXT]u8;path:=host.assets_name(assets,content.id,&name)
+        switch span_fault.kind {
+        case .None:
+        case .Unknown:
+            span_name:=base.text_get(content.set.match.spans[span_fault.span].name[:]) if int(span_fault.span)<len(content.set.match.spans) else ""
+            core.report(problems,state.entity,"animation.match_span","%s rules the span %s of its clips, and no clip of its library has a span of that name; mark that span on the clips (animation.marker.set with a duration), or name a span they have",path,span_name)
+        case .Whole:
+            label:[asset.ANIMATION_NAME_CAPACITY]u8
+            if int(span_fault.clip)<len(db.ranges) {label=source_clip_label(library,db.ranges[span_fault.clip].clips[0])}
+            core.report(problems,state.entity,"animation.match_span","%s excludes every row of the clip %s with its Exclude spans, so the search never plays it; shorten those spans, or take the clip out of the clips of the set",path,base.text_get(label[:]))
+        }
+    }
     // A rig binds its skeleton after its first program: until then it plays the first clip.
     if db==nil && len(state.parents)>=2 {
         name:[base.ASSET_ID_TEXT]u8;path:=host.assets_name(assets,content.id,&name)
@@ -399,14 +444,14 @@ match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Co
         current:=playing if playing>=0 && (db.ranges[playing].modes&bit!=0 || m.phase==.Landed) else -1
         // A blended sample is at the share of its clips its leaves are at.
         time:=state.time
-        if current>=0 && db.ranges[current].weights!={0=1} && state.duration>0 {time*=f32(db.ranges[current].count-1)/(db.rate*state.duration)}
+        if current>=0 && db.ranges[current].weights!={0=1} && state.duration>0 {time*=f32(db.ranges[current].count-1)/(db.ranges[current].rate*state.duration)}
         row:=lib.match_row(db,current,time) if current>=0 else -1
         // A clip that does not loop is left once it ends or nears its end, before the trajectory runs
         // past it: its own pose would win every search from there, frozen. One toward its landing
         // marker, or on from it, is left when it ends.
         ending:=false
         if current>=0 && !db.ranges[current].loop {
-            r:=db.ranges[current];tail:=int(cmath.ceil(lib.MATCH_HORIZON[lib.MATCH_TRAJECTORY-1]*db.rate))
+            r:=db.ranges[current];tail:=int(cmath.ceil(lib.MATCH_HORIZON[lib.MATCH_TRAJECTORY-1]*r.rate))
             ending=state.ended || m.phase==.Matching && int(r.count)>tail+1 && row>=int(r.first+r.count)-tail
         }
         // With stationary_speed, a body that stands plays the clips that stand and one that moves
@@ -426,7 +471,10 @@ match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Co
         // loop that does not move as the body does would hold its legs still, or walk in place. A
         // clip that plays once goes on until it ends or a search leaves it.
         incompatible:=filter_stationary && current>=0 && db.ranges[current].loop && (db.ranges[current].speed>lib.MATCH_STILL)!=moving
-        forced:=current<0 || entering || ending || incompatible || left
+        // A clip that plays into rows its spans exclude leaves them at once; one in rows they block
+        // plays on, which no search would have jumped to.
+        excluded:=.Exclude in lib.match_row_flags(db,row)
+        forced:=current<0 || entering || ending || incompatible || left || excluded
         if forced || m.timer<=0 && m.since>=info.hold {
             m.timer=info.interval
             request:=lib.Match_Request{modes=bit,min_rate=info.min_rate,max_rate=info.max_rate,rate=m.rate,entry=entering}
@@ -461,9 +509,9 @@ match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Co
                 toward.min_rate,toward.max_rate,toward.event,toward.event_rates=0,0,time_to_land,info.landing_rates
                 if m.phase==.Landing && !entering {toward.event_from=max(ahead,0)}
                 passed=row>=0 && !entering && ahead<0 && lib.match_event_ahead(db,current,0)>=0
-                if m.phase==.Landing && row>=0 && !entering {
+                if m.phase==.Landing && row>=0 && !entering && !excluded {
                     if _,inside:=lib.match_event_window(db,row,toward);inside {query,weights,_:=lib.match_query(db,toward,current);playing_on=lib.match_cost(db,row,query,weights)}
-                } else if passed {
+                } else if passed && !excluded {
                     query,weights,_:=lib.match_query(db,request,current);playing_on=lib.match_cost(db,row,query,weights)
                 }
                 best,cost,_=lib.match_search(db,toward,row,whole,info.reselect,&m.recent)
@@ -474,12 +522,12 @@ match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Co
                 landing=best>=0
             }
             if !landing && m.phase!=.Landing {
-                if row>=0 && !entering && !ending {query,weights,_:=lib.match_query(db,request,current);playing_on=lib.match_cost(db,row,query,weights)}
+                if row>=0 && !entering && !ending && !excluded {query,weights,_:=lib.match_query(db,request,current);playing_on=lib.match_cost(db,row,query,weights)}
                 searched=request
                 best,cost,_=lib.match_search(db,request,row,whole,info.reselect,&m.recent)
             }
             m.searches+=1;m.cost=min(cost,playing_on)
-            if forced {m.searched={request=searched,row=i32(row),whole=whole,span=info.reselect,recent=m.recent,search=m.searches}}
+            m.searched={request=searched,row=i32(row),whole=whole,span=info.reselect,recent=m.recent,search=m.searches}
             if best>=0 && (forced && !passed || playing_on==max(f32) || cost<playing_on-info.bias) {
                 m.phase=.Landing if landing else .Matching
                 range:=lib.match_range_of(db,best)
@@ -489,7 +537,7 @@ match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Co
                 m.speed=db.ranges[range].speed
                 // A clip that stands travels nowhere: what its feet drift is no direction to turn from.
                 m.travel_from,m.travel_to,m.travel_age=m.travel,linalg.normalize0(db.ranges[range].travel) if m.speed>lib.MATCH_STILL else {},0
-                start=f32(best-int(db.ranges[range].first))/db.rate
+                start=f32(best-int(db.ranges[range].first))/db.ranges[range].rate
                 m.jumps+=1;m.since=0
             }
         }
@@ -531,7 +579,7 @@ match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Co
         r:=db.ranges[m.range]
         group.count,group.mode=0,.Weighted
         // Each clip starts at the share of its own duration the row is at.
-        share:=max(start,0)*db.rate/f32(r.count-1)
+        share:=max(start,0)*r.rate/f32(r.count-1)
         for clip,k in r.clips {
             if r.weights[k]<=0 {continue}
             group.leaves[group.count]={clip=lib.clip_data(&library.lib,clip).name,key=u32(k)+1,weight=r.weights[k],speed=m.rate,loop=true,sync=true,start=share*lib.clip_duration(&library.lib,clip)}

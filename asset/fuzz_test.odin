@@ -199,7 +199,7 @@ damaged_fonts_texts_and_prompts_go_through_every_command :: proc(t:^testing.T) {
     // The paths outlive the temp allocator, which fuzz_file frees.
     folder:=base.test_folder(t,"fuzz-interface")
     font:=fmt.aprintf("%s/face.font",folder);defer delete(font)
-    testing.expect_value(t,font_save(font,&types,{id={0xf0,1},file=#load("../assets/fixtures/cff.otf"),compression=.LZ}),Error.None)
+    testing.expect_value(t,font_save(font,&types,{id={0xf0,1},file=#load("../assets/fixtures/cff.otf"),compression=.Stream}),Error.None)
     languages:=[2]String_Language{};text_set(languages[0].code[:],"es");text_set(languages[1].code[:],"en")
     keys:=[2]String_Key{};text_set(keys[0].name[:],"menu.play");text_set(keys[1].name[:],"menu.quit")
     entries:=[3]String_Entry{{0,0,0,5},{0,1,5,4},{1,0,9,5}}
