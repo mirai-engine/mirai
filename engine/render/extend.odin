@@ -469,20 +469,22 @@ Batch_Flags :: gpu.Batch_Flags
 BATCH_INDICES_MAX :: gpu.BATCH_INDICES_MAX
 batch_instance :: gpu.batch_instance
 batch_instance_unpack :: gpu.batch_instance_unpack
+batch_color :: gpu.batch_color
 
 // The key the renderer knows a world by (gpu.scene_world): the frames draw
 // the batches of the world shown.
 world_key :: proc "contextless" (id:core.World_Id) -> u64 {return u64(id.generation)<<32|u64(id.index)}
 
 // Gives a batch of the world `world` its mesh, materials, how it is drawn and
-// traced, and its instances (Batch_Instance, 20 bytes each): a new one for
+// traced, its instances (Batch_Instance, 24 bytes each) and, or none, what
+// each of them shows of its own (batch_color, a word each): a new one for
 // handle 0, or the one handle names, which keeps it. A load transaction; the
 // error says what is wrong and how to fix it, and changes nothing. A batch
 // stays until batch_remove, or until the renderer forgets every batch
 // (batches_epoch).
-batch_set :: proc(renderer:^Renderer,world:core.World_Id,handle:Batch_Handle,desc:Batch_Desc,instances:[]Batch_Instance) -> (Batch_Handle,string) {
+batch_set :: proc(renderer:^Renderer,world:core.World_Id,handle:Batch_Handle,desc:Batch_Desc,instances:[]Batch_Instance,colors:[]u32=nil) -> (Batch_Handle,string) {
     if renderer==nil {return handle,"batch_set: there is no renderer"}
-    return gpu.batch_set(renderer,handle,world_key(world),desc,instances)
+    return gpu.batch_set(renderer,handle,world_key(world),desc,instances,colors)
 }
 
 // False for a handle that names no batch.

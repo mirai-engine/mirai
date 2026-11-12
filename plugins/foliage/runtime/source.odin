@@ -38,6 +38,7 @@ Foliage_Collision :: enum u8 {
     None,
     Capsule, // along y, standing on the instance: size.x radius, size.y height
     Box,     // standing on the instance: size the sides
+    Prefab,  // the Box, Sphere, Capsule and Cylinder colliders of its prefab, with their own collision
 }
 
 // A type of foliage: what it shows, how the generator scatters it and how it
@@ -64,8 +65,8 @@ Foliage_Type :: struct {
     impostor_distance:f32 `mirai:"min=0,unit=m"`, // from the eye, where its mesh gives way to its impostor and its shadows to its crown; 0: none
     wind_variants:u32 `mirai:"max=16"`, // the swaying shapes of a type that casts shadows, each instance on one; 0: WIND_VARIANTS
     collision:Foliage_Collision,
-    size:[3]f32 `mirai:"min=0,unit=m"`, // of its collision, at scale 1
-    preset:u32,                    // the Collision_Preset of its collision
+    size:[3]f32 `mirai:"min=0,unit=m"`, // of its capsule or box, at scale 1
+    preset:u32,                    // the Collision_Preset of its capsule or box
 }
 
 // Where a type stands: the slope and height of the ground in their ranges,

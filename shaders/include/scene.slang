@@ -311,7 +311,8 @@ int2 reflect_block_pixel(int2 cell) {
 // A row keeps in its transforms, which none of its instances has, where they
 // are and how they are drawn. An instance is BATCH_WORDS words of the pool:
 // its position, its rotation (quat_pack of std/math, 10 bits) and its scale
-// across (x and z) and along y, two half floats.
+// along x, y and z, half floats; a batch with colors has a word more of
+// each in the pool (render.batch_color).
 
 bool instance_batched(uint index) { return index >= frame.instance_count; }
 uint batch_of(uint index) { return indices[frame.batches.y + (index - frame.instance_count) / BATCH_GROUP]; }
@@ -330,12 +331,13 @@ uint batch_classes(Instance row) { return asuint(row.world[2].w); }  // of rays 
 float4 batch_vertex(Instance row) { return row.world_inv[0]; }       // what the vertex hook of the generation reads of it
 float3 batch_anchor(Instance row) { return row.world_inv[1].xyz; }   // what its instances in the pool, its tree and its box are relative to, relative to the origin
 float batch_reach(Instance row) { return row.world_inv[1].w; }       // metres the vertex hook moves a point of its instances at most
+uint batch_colors(Instance row) { return asuint(row.world_inv[2].x); } // 1 + the word of the color of its first instance in the pool; 0: none
 
 // The transform of the instance of a batch whose words start at `words`,
 // moved by the anchor of its batch, and its inverse.
 void batch_placement(uint words, float3 anchor, out float4 world[3], out float4 inverse[3]) {
     float3 p = asfloat(uint3(indices[words], indices[words + 1u], indices[words + 2u])) + anchor;
-    batch_instance_placement(p, indices[words + 3u], indices[words + 4u], world, inverse);
+    batch_instance_placement(p, indices[words + 3u], uint2(indices[words + 4u], indices[words + 5u]), world, inverse);
 }
 
 // The box in the world of a box of its own space under a transform.
@@ -359,12 +361,19 @@ uint scene_mesh_word(uint index) {
 }
 
 // The instance an index names, of the scene or of a batch: that of a batch
-// is the row of its batch with its own transforms and box, and at rest.
+// is the row of its batch with its own transforms and box, at rest, and its
+// own tint and wetness when its batch has colors.
 Instance scene_instance(uint index) {
     if (!instance_batched(index)) return instances[index];
     Instance inst = batch_row(batch_of(index));
-    uint words = batch_records(inst) + (index - frame.instance_count - batch_first(inst)) * BATCH_WORDS;
-    batch_placement(words, batch_anchor(inst), inst.world, inst.world_inv);
+    uint k = index - frame.instance_count - batch_first(inst);
+    uint colors = batch_colors(inst);
+    if (colors != 0u) {
+        uint c = indices[colors - 1u + k];
+        inst.tint.rgb *= float3(float(c & 255u), float((c >> 8u) & 255u), float((c >> 16u) & 255u)) / 255.0;
+        inst.wet = float(c >> 24u) / 255.0;
+    }
+    batch_placement(batch_records(inst) + k * BATCH_WORDS, batch_anchor(inst), inst.world, inst.world_inv);
     inst.prev_world = inst.world;
     float3 low, high;
     transformed_bounds(inst.world, meshes[instance_mesh(inst)], low, high);

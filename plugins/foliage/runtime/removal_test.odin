@@ -19,6 +19,7 @@ Removal_World :: struct {
     parents:core.Table(core.Parent),
     transforms:core.Table(core.Transform),
     foliages:core.Table(Foliage),
+    worlds:core.Table(core.World_Transform),
     removed:core.Table(Foliage_Removed),
     data:Foliage_Data,
     removals:Foliage_Removals,
@@ -140,16 +141,26 @@ instances_taken_out_are_one_entity_for_each_cell_that_the_cell_leaves_out :: pro
     fp:Foliage_Physics
     defer core.value_free(&fp,type_info_of(Foliage_Physics))
     collision:physics.Collision_Settings
-    {complete,enough:=physics_owner_build(&fp,&simulation,&collision,wood,s,{scale={1,1,1},rotation=1});testing.expect(t,complete && enough)}
+    types:=make([dynamic]Type_Shape,context.temp_allocator)
+    type_shapes(s,nil,&types)
+    {complete,enough:=physics_owner_build(&fp,&simulation,&collision,wood,s,{scale={1,1,1},rotation=1},types[:]);testing.expect(t,complete && enough)}
     shapes:=int(simulation.world.shape_count)
-    {complete,enough:=physics_owner_build(&fp,&simulation,&collision,wood,s,{scale={1,1,1},rotation=1},nil,false,nil,0,gone);testing.expect(t,complete && enough)}
+    body:physics.Body_Handle
+    for cell in fp.cells {if cell.coord=={0,0} {body=cell.body}}
+    {complete,enough:=physics_owner_build(&fp,&simulation,&collision,wood,s,{scale={1,1,1},rotation=1},types[:],nil,false,gone);testing.expect(t,complete && enough)}
     testing.expect_value(t,int(simulation.world.shape_count),shapes-3)
-    for cell in fp.cells {if cell.coord==coord {testing.expect(t,cell.body=={},"a cell without an instance that collides has no body")}}
+    for cell in fp.cells {
+        if cell.coord==coord {testing.expect(t,cell.body=={},"a cell without an instance that collides has no body")}
+        if cell.coord=={0,0} {testing.expect(t,body!={} && cell.body==body,"the generated cell keeps its body: only the shapes of what left go")}
+    }
     // A hit on a shape names the instance it is.
     for cell in fp.cells {
-        if cell.body=={} || cell.count==0 {continue}
-        hit,found:=shape_instance(&simulation,cell.body,fp.shapes[cell.first])
-        testing.expect(t,found && hit.foliage==wood && hit.coord==cell.coord && hit.instance!=generated && hit.instance!=other)
+        if cell.body=={} {continue}
+        for shape in fp.shapes[cell.first:][:cell.count] {
+            if shape.handle=={} {continue}
+            hit,found:=shape_instance(&simulation,cell.body,shape.handle)
+            testing.expect(t,found && hit.foliage==wood && hit.coord==cell.coord && hit.instance!=generated && hit.instance!=other)
+        }
     }
     // Taking the entity of a cell away puts its instances back.
     removed=&r.w.removed
@@ -162,6 +173,51 @@ instances_taken_out_are_one_entity_for_each_cell_that_the_cell_leaves_out :: pro
     testing.expect(t,gone!=nil && len(gone.items)==2)
     ids,_=removed_cell(gone,coord)
     testing.expect_value(t,len(ids),0)
+    // Its tree collides again, and the generated cell keeps its body.
+    {complete,enough:=physics_owner_build(&fp,&simulation,&collision,wood,s,{scale={1,1,1},rotation=1},types[:],nil,false,gone);testing.expect(t,complete && enough)}
+    testing.expect_value(t,int(simulation.world.shape_count),shapes-2)
+    for cell in fp.cells {
+        if cell.coord==coord {testing.expect(t,cell.body!={})}
+        if cell.coord=={0,0} {testing.expect_value(t,cell.body,body)}
+    }
+}
+
+// A game finds the instances the world shows, with collision or not, in a
+// sphere or a box of the world, and where one stands; not those taken out.
+@(test)
+the_instances_a_game_finds_are_those_the_world_shows :: proc(t:^testing.T) {
+    r:Removal_Test
+    defer removal_destroy(&r)
+    s:=removal_init(t,&r,{63,64})
+    if s==nil {return}
+    tree:=source_type_add(s,"tree",{2,2})
+    tree.collision=.Capsule
+    tree_id:=tree.id
+    grass_id:=source_type_add(s,"grass",{3,3}).id
+    one:=u32(mm.quat_pack(1,10))
+    coord,cut:=source_instance_add(s,tree_id,{40,0,5},one,{1,1})
+    _,kept:=source_instance_add(s,grass_id,{41,0,5},one,{1,2})
+    _,far:=source_instance_add(s,tree_id,{200,0,5},one,{1,1})
+    for &cell,i in s.cells {cell.version=u32(i+1)}
+    wood:=removal_foliage(&r,700)
+    core.add(&r.w.worlds,wood,core.World_Transform{transform={position={1000,0,0},rotation=1,scale={1,1,1}}})
+    test_world_settle(&r.w)
+    foliage_remove(&r.requests,{wood,coord,MANUAL|u64(cut)})
+    removal_step(&r)
+    removal_step(&r)
+    data,removals:=core.ref(&r.data),core.ref(&r.removals)
+    found:=make([dynamic]Foliage_Found,context.temp_allocator)
+    testing.expect(t,foliage_in_sphere(&found,{1041,0,5},3,data,{},removals,core.read(&r.w.foliages),core.read(&r.w.worlds)))
+    if !testing.expect_value(t,len(found),1) {return}
+    testing.expect(t,found[0].plant==Foliage_Plant{wood,coord,MANUAL|u64(kept)} && found[0].type==grass_id,"the grass, which does not collide; the tree taken out is not there")
+    testing.expect(t,found[0].transform.position==[3]f32{1041,0,5} && found[0].transform.scale==[3]f32{1,2,1})
+    clear(&found)
+    testing.expect(t,foliage_in_box(&found,{1000,-1,0},{1300,1,10},data,{},removals,core.read(&r.w.foliages),core.read(&r.w.worlds)))
+    testing.expect_value(t,len(found),2)
+    plant,shown:=foliage_plant({wood,{6,0},MANUAL|u64(far)},data,{},removals,core.read(&r.w.foliages),core.read(&r.w.worlds))
+    testing.expect(t,shown && plant.type==tree_id && plant.transform.position==[3]f32{1200,0,5})
+    _,shown=foliage_plant({wood,coord,MANUAL|u64(cut)},data,{},removals,core.read(&r.w.foliages),core.read(&r.w.worlds))
+    testing.expect(t,!shown,"taken out, the world does not show it")
 }
 
 // A game that takes out thousands of instances of a few cells holds them in

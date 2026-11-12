@@ -247,9 +247,11 @@ Impostor_Placed :: struct {
 // the anchor of all of them, and the row of its Foliage and type.
 Impostor_Instance :: struct {
     position:[3]f32,
-    rotation,scale,row:u32,
+    rotation:u32,
+    scale:[4]u16,
+    row:u32,
 }
-#assert(size_of(Impostor_Instance)==24)
+#assert(size_of(Impostor_Instance)==28)
 
 Impostor_Row :: struct {
     sphere:[4]f32,

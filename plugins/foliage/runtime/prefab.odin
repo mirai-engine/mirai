@@ -6,6 +6,7 @@ import "mirai:core"
 import render "mirai:engine/render"
 import "mirai:std/base"
 import mm "mirai:std/math"
+import physics "plugins:physics/runtime"
 
 // A type armed from a prefab draws each Mesh_Renderer of the prefab where
 // its instances are: a batch per cell, type and part, with the transform of
@@ -17,14 +18,24 @@ Prefab_Part :: struct {
     placement:mm.Mat4,
 }
 
+// A Collider of a prefab, as a type of Prefab collision collides, and where
+// it is from the root.
+Prefab_Collider :: struct {
+    collider:physics.Collider,
+    placement:mm.Mat4,
+}
+
 // The parts of an open prefab, appended to out: its entities with a
-// Mesh_Renderer that is on and not hidden, under its root. False when it is
-// not a prefab this reads (no single root, a parent that is not there).
-prefab_parts :: proc(file:^asset.Asset,types:^asset.Types,out:^[dynamic]Prefab_Part) -> bool {
+// Mesh_Renderer that is on and not hidden, under its root; and with
+// colliders, its Colliders that are on, of a kind an owned body holds (Box,
+// Sphere, Capsule, Cylinder) and block, appended there: left_out counts the
+// others. False when it is not a prefab this reads (no single root, a parent
+// that is not there).
+prefab_parts :: proc(file:^asset.Asset,types:^asset.Types,out:^[dynamic]Prefab_Part,colliders:^[dynamic]Prefab_Collider=nil) -> (ok:bool,left_out:int) {
     view,error:=asset.scene_view(file,types)
-    if error!=.None {return false}
+    if error!=.None {return}
     count:=len(view.ids)
-    if !asset.asset_prefab(file) {return false}
+    if !asset.asset_prefab(file) {return}
     root:=-1
     for parent,row in view.parents {
         if parent==0 {root=row}
@@ -38,6 +49,8 @@ prefab_parts :: proc(file:^asset.Asset,types:^asset.Types,out:^[dynamic]Prefab_P
     hidden:=make([]bool,count,context.temp_allocator)
     renderers:[]render.Mesh_Renderer
     renderer_rows:[]u32
+    shapes:[]physics.Collider
+    shape_rows:[]u32
     for &component in view.components {
         switch component.name {
         case "Transform":
@@ -51,48 +64,74 @@ prefab_parts :: proc(file:^asset.Asset,types:^asset.Types,out:^[dynamic]Prefab_P
         case "Mesh_Renderer":
             renderer_rows=component.entities
             renderers=asset.asset_rows(file,types,component.name,asset.COLUMN_VALUE,render.Mesh_Renderer) or_else nil
+        case "Collider":
+            if colliders==nil {continue}
+            shape_rows=component.entities
+            shapes=asset.asset_rows(file,types,component.name,asset.COLUMN_VALUE,physics.Collider) or_else nil
         }
     }
-    mesh_hash:=base.name_hash("Mesh_Renderer")
-    for renderer,k in renderers[:min(len(renderers),len(renderer_rows))] {
-        row:=int(renderer_rows[k])
-        if row>=count || renderer.mesh=={} && renderer.shape==.None {continue}
-        off:=false
-        for record in view.off {if record.entity==view.ids[row] && record.component==mesh_hash {off=true}}
-        // Up to the root, whose own placement is the instance's.
-        placement:=mm.Mat4(1)
+    // Up to the root, whose own placement is the instance's; and whether one on the way is hidden.
+    placed :: proc(view:asset.Scene_View,locals:[]mm.Mat4,hidden:[]bool,root,row:int) -> (placement:mm.Mat4,off,ok:bool) {
+        placement=1
         at:=row
         for steps:=0;at!=root;steps+=1 {
-            if at<0 || steps>count {return false}
+            if at<0 || steps>len(locals) {return}
             off||=hidden[at]
             placement=locals[at]*placement
             at=row_of(view,view.parents[at])
         }
-        off||=hidden[root]
-        if !off {append(out,Prefab_Part{renderer=renderer,placement=placement})}
+        return placement,off||hidden[root],true
     }
-    return true
+    is_off :: proc(view:asset.Scene_View,row:int,name:string) -> bool {
+        hash:=base.name_hash(name)
+        for record in view.off {if record.entity==view.ids[row] && record.component==hash {return true}}
+        return false
+    }
+    for renderer,k in renderers[:min(len(renderers),len(renderer_rows))] {
+        row:=int(renderer_rows[k])
+        if row>=count || renderer.mesh=={} && renderer.shape==.None {continue}
+        placement,off,walked:=placed(view,locals,hidden,root,row)
+        if !walked {return}
+        if !off && !is_off(view,row,"Mesh_Renderer") {append(out,Prefab_Part{renderer=renderer,placement=placement})}
+    }
+    for shape,k in shapes[:min(len(shapes),len(shape_rows))] {
+        row:=int(shape_rows[k])
+        if row>=count || is_off(view,row,"Collider") {continue}
+        placement,_,walked:=placed(view,locals,hidden,root,row)
+        if !walked {return}
+        #partial switch shape.kind {
+        case .Box,.Sphere,.Capsule,.Cylinder: if !shape.sensor {append(colliders,Prefab_Collider{shape,placement});continue}
+        }
+        left_out+=1
+    }
+    return true,left_out
 }
 
 // An instance as a batch draws it, for a part placed by `part` under the
 // instance, carried by the matrix of its entity. What Batch_Instance does
-// not hold (a scale along x unlike along z, a shear) is approximated:
-// error is how much of the transform is left out, as a part of it.
+// not hold (a shear, a mirror) is approximated: error is how much of the
+// transform is left out, as a part of it.
 part_instance :: proc "contextless" (p:Placed,owner:mm.Mat4,part:mm.Mat4) -> (instance:render.Batch_Instance,error:f32) {
     placed:=mm.transform_matrix({position=p.position,rotation=p.rotation,scale={p.scale[0],p.scale[1],p.scale[0]}})
-    m:=owner*placed*part
+    position,rotation,scale,left:=matrix_pose(owner*placed*part)
+    return render.batch_instance(position,rotation,scale),left
+}
+
+// A matrix as a place, a rotation and a scale along each axis of it: y keeps
+// its direction, x is made square to it and z to both. left: how much of the
+// matrix that leaves out (a shear, a mirror), as a part of it; 1 for one
+// without size along an axis, given the least scale.
+matrix_pose :: proc "contextless" (m:mm.Mat4) -> (position:[3]f32,rotation:mm.Quat,scale:[3]f32,left:f32) {
     c:=[3][3]f32{m[0].xyz,m[1].xyz,m[2].xyz}
-    sx,sy,sz:=linalg.length(c[0]),linalg.length(c[1]),linalg.length(c[2])
-    if !(sx>1e-12) || !(sy>1e-12) || !(sz>1e-12) {return render.batch_instance(m[3].xyz,1,1e-6,1e-6),1}
-    y:=c[1]/sy
+    position,rotation=m[3].xyz,1
+    scale={linalg.length(c[0]),linalg.length(c[1]),linalg.length(c[2])}
+    if !(scale.x>1e-12) || !(scale.y>1e-12) || !(scale.z>1e-12) {return position,1,1e-6,1}
+    y:=c[1]/scale.y
     x:=c[0]-y*linalg.dot(c[0],y)
     if linalg.length(x)<1e-9 {x=linalg.cross(y,c[2])}
     x=linalg.normalize(x)
     z:=linalg.cross(x,y)
-    across,along:=(sx+sz)*0.5,sy
-    // What is left: the columns against those of the rotation scaled.
-    left:=linalg.length(c[0]-x*across)+linalg.length(c[1]-y*along)+linalg.length(c[2]-z*across)
-    error=left/(sx+sy+sz)
-    rotation:=linalg.normalize(mm.quat_from_mat3(mm.Mat3{x.x,y.x,z.x,x.y,y.y,z.y,x.z,y.z,z.z}))
-    return render.batch_instance(m[3].xyz,rotation,across,along),error
+    left=(linalg.length(c[0]-x*scale.x)+linalg.length(c[1]-y*scale.y)+linalg.length(c[2]-z*scale.z))/(scale.x+scale.y+scale.z)
+    rotation=linalg.normalize(mm.quat_from_mat3(mm.Mat3{x.x,y.x,z.x,x.y,y.y,z.y,x.z,y.z,z.z}))
+    return
 }

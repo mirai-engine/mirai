@@ -134,10 +134,10 @@ to the overrides).
 - **Type built from a prefab** (no mesh): each `Mesh_Renderer` of the prefab that is on and not
   hidden, with its transform from the root (`prefab_parts`; the root's place is that of the
   instance), is a batch per cell, type and part with the composed transforms (`part_instance`).
-  What `Batch_Instance` does not have (a different scale in x than in z, shear) is approximated
-  with the mean of x and z; if it leaves out more than `PREFAB_ERROR` of the transform it is the
-  `foliage.prefab_transform` problem, which says how to fix it. A prefab that cannot be read or
-  has no meshes is `foliage.prefab`. The collision is that of the type.
+  What `Batch_Instance` does not have (a shear, a mirror) is approximated; if it leaves out more
+  than `PREFAB_ERROR` of the transform it is the `foliage.prefab_transform` problem, which says
+  how to fix it. A prefab that cannot be read or has no meshes is `foliage.prefab`. With
+  `Prefab` collision it also collides as its prefab ([collision](#collision)).
 - A cell is drawn while it is resident through the [residency of the streaming
   sources](../../mirai-gameplay/references/libraries.md#sources-and-residency), with the farthest
   `cull_distance` of its types as its reach; a type that is never culled leaves all of them
@@ -223,18 +223,25 @@ same function:
 ## Collision
 
 - `foliage_physics` (between `physics_prepare` and `physics_places`) makes one static body per
-  resident cell with one shape per instance of a type with collision, in the entity's pose and on
-  its ground, and rebuilds only the cells that changed or changed residency. The body's
-  `user_data` is the entity and the shape's the instance id.
-- **Residency.** That of the streaming sources, like drawing, with `collision_reach`: the farthest
-  that a type with collision is drawn with its mesh, and no more than `COLLISION_REACH`, also for a
-  type that is never culled: many loaded sections do not fill the simulation with all their cells.
-  On a server the sources are the bodies of all connections, so each end has the cells around what
-  it simulates; what the server moves far from every source does not collide with the foliage.
+  cell of each loaded `Foliage`, at the corner of the cell in the entity's pose, with the shapes of
+  each instance of a type with collision on its ground, and rebuilds only the cells whose content
+  or ground changed. The body's `user_data` is the entity and the shape's the instance id.
+- **Shapes of a type** (`type_shapes`): its `Capsule` or `Box` of `size`, standing on the
+  instance, or with `Prefab` the `Box`, `Sphere`, `Capsule` and `Cylinder` colliders of its prefab
+  with their own collision and their transform from its root. Each is scaled by the instance and
+  the entity (`collider_scaled`: a capsule keeps its length from end to end). A Hull, Mesh or
+  sensor of the prefab, or a `Prefab` type without one, is the `foliage.collision` problem.
+- **Every cell of a loaded Foliage collides**, however far from the streaming sources: an NPC or
+  a shot on a server meets the trees far from every player, and the navmesh, built from the static
+  collision, has the same obstacles wherever the players are. A `Foliage` kept for a section that
+  is not loaded (`scene.Far_Kept`) collides with nothing. Physics_Settings must hold the shapes
+  of every loaded cell; past them it is the `foliage.physics` problem.
+- **Instances taken out** leave with their shapes alone (`collider_remove`): the body of the cell
+  stays unless it has none left, and the navmesh rebuilds only around them. One put back builds
+  its cell again.
 - `Foliage_Physics` stores bodies and shapes with the world: a Play copy or a rollback carries
   both together. They are [owned bodies](../../mirai-physics/references/engine.md#owned-bodies) of
-  physics. It does not run in a resimulated tick. `collider_remove` removes the collision of an
-  instance in constant time.
+  physics. It does not run in a resimulated tick.
 
 ## Instances removed in play
 
@@ -243,8 +250,11 @@ like the [tombstones](../../mirai-gameplay/references/libraries.md#scene-referen
 is destroyed in a section (`removal.odin`).
 
 - `foliage_remove(requests, plant)` requests it with a `Foliage_Plant` (its Foliage, cell and id,
-  `Placed.id`), as a pick of its batches gives it or `hit_of(physics, hit)` from
-  a `physics.Hit`.
+  `Placed.id`), as a pick of its batches gives it, `hit_of(physics, hit)` from a `physics.Hit`,
+  or a query of the game (`query.odin`): `foliage_in_sphere` and `foliage_in_box` give the
+  instances whose place is in an area of the world and `foliage_plant` where one stands and of
+  which type, as the world shows them (on their ground, without what was taken out), with
+  collision or not and however far from the players.
 - `foliage_removals` fulfills it at the end that decides (alone, or the server; a client requests
   nothing), once per instance that the cell shows, grouped **by cell**: an entity with
   `Foliage_Removed` (`replicated`) hanging from the `Foliage` stores the cell, the count and the
@@ -369,8 +379,8 @@ the registry's memory as a file of the undo step that creates it.
   `placed_instances_group_by_type_keeping_their_order`,
   `a_part_of_a_prefab_composes_with_its_instance_and_says_what_it_leaves_out`,
   `the_parts_of_a_prefab_are_its_shown_meshes_placed_from_its_root`), collision
-  (`a_cell_collides_with_one_static_body_and_one_instance_leaves_alone`,
-  `the_cells_of_foliage_collide_while_they_are_resident`), types
+  (`a_cell_collides_with_one_static_body_and_one_instance_leaves_alone`; the colliders of a prefab
+  in `the_parts_of_a_prefab_are_its_shown_meshes_placed_from_its_root`), types
   (`a_removed_type_takes_its_instances_and_overrides_with_it`,
   `a_type_with_an_impostor_draws_its_mesh_up_to_its_distance`), crown
   (`a_crown_is_the_closed_surface_of_the_voxels_dense_with_leaves`) and wind
@@ -382,7 +392,8 @@ the registry's memory as a file of the undo step that creates it.
   `instances_taken_out_are_one_entity_for_each_cell_that_the_cell_leaves_out`,
   `thousands_of_instances_taken_out_of_a_few_cells_are_a_few_entities` and
   `a_saved_game_takes_out_the_same_instance_after_its_source_is_edited` and
-  `an_instance_taken_out_later_sends_a_small_part_of_its_cell`; that they reach a client:
+  `an_instance_taken_out_later_sends_a_small_part_of_its_cell`; what a game finds:
+  `the_instances_a_game_finds_are_those_the_world_shows`; that they reach a client:
   `an_entity_with_a_replicated_object_component_reaches_a_client` in `plugins/multiplayer/runtime`.
 - Ground (`plugins/foliage/runtime`): `the_ground_of_foliage_is_read_where_the_ground_changed`.
 - `mirai test plugins/foliage/editor -collection:plugins=<root>/plugins`:

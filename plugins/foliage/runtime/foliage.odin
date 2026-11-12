@@ -402,7 +402,7 @@ placed_group :: proc(s:^Source,work:^Build_Work) -> bool {
 
 // An instance as a batch draws it, carried by the transform of its entity.
 batch_instance_of :: proc "contextless" (p:Placed,owner:mm.Transform) -> render.Batch_Instance {
-    return render.batch_instance(mm.transform_point(owner,p.position),owner.rotation*p.rotation,p.scale[0]*owner.scale.x,p.scale[1]*owner.scale.y)
+    return render.batch_instance(mm.transform_point(owner,p.position),owner.rotation*p.rotation,[3]f32{p.scale[0],p.scale[1],p.scale[0]}*owner.scale)
 }
 
 @(private)
@@ -514,7 +514,7 @@ resident_prefab :: proc(resident:^Foliage_Resident,a:^host.Assets,id:base.Asset_
     for &prefab in resident.prefabs {if prefab.id==id {return &prefab}}
     if _,err:=append(&resident.prefabs,Resident_Prefab{id=id});err!=nil {return nil}
     prefab:=&resident.prefabs[len(resident.prefabs)-1]
-    if file:=host.assets_scene(a,id);file!=nil {prefab.read=prefab_parts(file,&a.types,&prefab.parts)}
+    if file:=host.assets_scene(a,id);file!=nil {prefab.read,_=prefab_parts(file,&a.types,&prefab.parts)}
     return prefab
 }
 
@@ -934,7 +934,7 @@ cell_crown_publish :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,held
     desc.object_id=u64(owner.entity)
     handle:render.Batch_Handle
     for &b in held.batches {if b.role==ROLE_CELL_CROWN && b.handle!=0 {handle,b.handle=b.handle,0;break}}
-    instance:=[1]render.Batch_Instance{render.batch_instance(transform.position,transform.rotation,transform.scale.x,transform.scale.y)}
+    instance:=[1]render.Batch_Instance{render.batch_instance(transform.position,transform.rotation,transform.scale)}
     next,error:=render.batch_set(renderer,id,handle,desc,instance[:])
     if error!="" {
         if handle!=0 {render.batch_remove(renderer,handle)}

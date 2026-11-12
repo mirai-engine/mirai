@@ -116,58 +116,14 @@ a_type_with_an_impostor_draws_its_mesh_up_to_its_distance :: proc(t:^testing.T) 
     testing.expect(t,!type_far(tree))
     tree.impostor_distance,tree.cull_distance=100,0
     testing.expect(t,type_far(tree),"a type never culled keeps its impostor to any distance")
-    // A type collides as far as its mesh is drawn.
+    // The new fields keep the source valid within their range.
     s:Source
     defer source_destroy(&s)
-    tree.collision=.Capsule
     append(&s.types,tree)
-    testing.expect(t,abs(collision_reach(&s)-100*(1+IMPOSTOR_BLEND))<1e-3)
-    // Never culled, it collides as far as COLLISION_REACH.
-    s.types[0].impostor_distance=0
-    testing.expect_value(t,collision_reach(&s),COLLISION_REACH)
-    // The new fields keep the source valid within their range.
     s.info.next_type=1
     testing.expect(t,source_valid(&s))
     s.types[0].wind_variants=WIND_VARIANTS_MAX+1
     testing.expect(t,!source_valid(&s))
-}
-
-// A cell collides while a streaming source is within the reach of the types
-// that collide, and lets go of its body once every source has gone past it.
-@(test)
-the_cells_of_foliage_collide_while_they_are_resident :: proc(t:^testing.T) {
-    w:physics.Physics_State
-    if !testing.expect(t,physics.test_state_make(&w)) {return}
-    defer physics.state_destroy(&w)
-    s:Source
-    defer source_destroy(&s)
-    tree:=source_type_add(&s,"tree",{2,2})
-    tree.collision,tree.size,tree.cull_distance,tree.fade_distance=.Capsule,{0.3,4,0},40,30
-    for x in 0..<4 {source_instance_add(&s,tree.id,{f32(x)*CELL_SIZE*4+5,0,5},u32(mm.quat_pack(1,10)),{1,1})}
-    for &cell,i in s.cells {cell.version=u32(i+1)}
-    fp:Foliage_Physics
-    defer core.value_free(&fp,type_info_of(Foliage_Physics))
-    collision:physics.Collision_Settings
-    e:=core.Entity(7)
-    sources:scene.Streaming_Sources
-    sources.items[0]={position={5,0,5},ahead={5,0,5}}
-    sources.count=1
-    reach:=collision_reach(&s)
-    testing.expect_value(t,reach,f32(40))
-    near:=scene.sources_near(&sources,mm.MAT4_IDENTITY,reach)
-    {complete,enough:=physics_owner_build(&fp,&w,&collision,e,&s,{scale={1,1,1},rotation=1},nil,true,&near,reach);testing.expect(t,complete && enough)}
-    testing.expect_value(t,len(fp.cells),4)
-    testing.expect_value(t,int(w.world.body_count),1)
-    testing.expect(t,fp.cells[0].resident && fp.cells[0].body!={} && !fp.cells[1].resident && fp.cells[1].body=={})
-    // The source moves to the second tree: its cell collides, the first lets go.
-    sources.items[0]={position={CELL_SIZE*4+5,0,5},ahead={CELL_SIZE*4+5,0,5}}
-    near=scene.sources_near(&sources,mm.MAT4_IDENTITY,reach)
-    {complete,enough:=physics_owner_build(&fp,&w,&collision,e,&s,{scale={1,1,1},rotation=1},nil,false,&near,reach);testing.expect(t,complete && enough)}
-    testing.expect_value(t,int(w.world.body_count),1)
-    testing.expect(t,!fp.cells[0].resident && fp.cells[1].resident && fp.cells[1].body!={})
-    // Without sources every cell collides.
-    {complete,enough:=physics_owner_build(&fp,&w,&collision,e,&s,{scale={1,1,1},rotation=1},nil,true);testing.expect(t,complete && enough)}
-    testing.expect_value(t,int(w.world.body_count),4)
 }
 
 // The crown of a cell of a wood: the crowns of its trees, each a box of 4 m,

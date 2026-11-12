@@ -25,7 +25,7 @@ struct Impostor_Row {
 struct Impostor_Instance {
     float3 position;
     uint rotation;
-    uint scale;
+    uint2 scale;
     uint row;
 };
 

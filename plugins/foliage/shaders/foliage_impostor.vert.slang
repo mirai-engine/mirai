@@ -20,7 +20,7 @@ Impostor_Varyings main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV
     o.position = float4(2.0, 2.0, 2.0, 1.0);
     if (appear <= 0.0 || gone >= 1.0) return o;
     float3 center = transform_point(world, row.sphere.xyz);
-    float scale = max(length(float3(world[0].x, world[1].x, world[2].x)), length(float3(world[0].y, world[1].y, world[2].y)));
+    float scale = max(max(length(float3(world[0].x, world[1].x, world[2].x)), length(float3(world[0].y, world[1].y, world[2].y))), length(float3(world[0].z, world[1].z, world[2].z)));
     float radius = row.sphere.w * scale;
     // Toward the eye, or against the direction a parallel view looks along.
     bool point = frame.eye.w > 0.5;
