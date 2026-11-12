@@ -48,7 +48,7 @@ Scene_Item :: struct {
     mesh:erender.Mesh_Renderer,
     hidden:bool,               // itself or an ancestor, hidden or turned off
     body:bool,                 // the renderer draws something for it, or its ghost does
-    indicator:bool,
+    indicator:bool,            // it shows a disc, within the reach of the discs unless the iteration is far
 }
 
 Scene_Iter :: struct {
@@ -60,14 +60,17 @@ Scene_Iter :: struct {
     any_hidden:bool,
     ghosts:bool,               // what is hidden or turned off counts as shown (ghosts_shown)
     locals:bool,               // the places come from the locals, as an edit of this frame left them
+    far:bool,                  // a disc counts at any distance from the camera
+    zoom:f32,                  // of the camera, for the reach of the discs (indicator_zoom)
     row:int,
 }
 
-scene_items :: proc(s:^Session,w:core.World_Ref,ghosts:=false,locals:=false) -> Scene_Iter {
+scene_items :: proc(s:^Session,w:core.World_Ref,ghosts:=false,locals:=false,far:=false) -> Scene_Iter {
     hidden:=core.world_table_of(w,erender.Hidden)
     return {
         s=s,w=w,transforms=core.world_table_of(w,core.Transform),worlds=core.world_table_of(w,core.World_Transform),
-        meshes=core.world_table_of(w,erender.Mesh_Renderer),any_hidden=hidden!=nil && core.count(hidden)>0,ghosts=ghosts,locals=locals,row=-1,
+        meshes=core.world_table_of(w,erender.Mesh_Renderer),any_hidden=hidden!=nil && core.count(hidden)>0,ghosts=ghosts,locals=locals,
+        far=far || s.viewport==nil,zoom=s.viewport!=nil?indicator_zoom(s.viewport):1,row=-1,
     }
 }
 
@@ -85,7 +88,7 @@ scene_item_next :: proc(it:^Scene_Iter) -> (item:Scene_Item,ok:bool) {
     item.hidden||=core.entity_off(core.world_entities(it.w),e)
     shown:=!item.hidden || it.ghosts
     item.body=shown && has_mesh && (item.mesh.mesh!={} || item.mesh.shape!=.None)
-    item.indicator=shown && !has_mesh && entity_author(it.w,e)==e && entity_marked(it.s,it.w,e)
+    item.indicator=shown && !has_mesh && entity_author(it.w,e)==e && (it.far || indicator_shade(it.s,e,item.world.position,it.zoom)>0) && entity_marked(it.s,it.w,e)
     return item,true
 }
 

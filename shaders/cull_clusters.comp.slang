@@ -156,7 +156,7 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID, uint3 dispatc
         if (boxed && occluded(low, high, frame.view_proj_unjittered, frame.camera_position.xyz, frame.depth_plane)) return;
     } else {
         float scale = instance_scale(inst);
-        Cluster_Cut cut = cluster_cut(inst, scale, mesh, c, frame.cut.x);
+        Cluster_Cut cut = cluster_cut(view_detail(), inst, scale, mesh, c, frame.cut.x);
         if (!cut.drawn) return;
         if (material_row(material_of(inst, cluster_material(mesh, c)), inst.material_values).alpha_mode == ALPHA_BLEND) return;
         if (boxed) {

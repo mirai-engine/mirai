@@ -227,7 +227,8 @@ shapes_collide :: proc(w:^World,a,b:^Shape,xf:Transform,speculative:f32,out:^[1+
             break
         }
         storage_a,storage_b:Box_Hull=---,---
-        hull_a:=a.type==.Box?box_hull(&storage_a,a.size):w.hulls[a.resource].hull
+        scaled_a,scaled_b:Scaled_Hull=---,---
+        hull_a:=a.type==.Box?box_hull(&storage_a,a.size):shape_hull_of(w,a,false,&scaled_a)^
         #partial switch b.type {
         case .Sphere:
             collide_hull_sphere(m,&hull_a,xf.p,b.size.x,speculative)
@@ -239,7 +240,7 @@ shapes_collide :: proc(w:^World,a,b:^Shape,xf:Transform,speculative:f32,out:^[1+
                 collide_boxes(m,a.size,b.size,xf,speculative)
                 break
             }
-            hull_b:=b.type==.Box?box_hull(&storage_b,b.size):w.hulls[b.resource].hull
+            hull_b:=b.type==.Box?box_hull(&storage_b,b.size):shape_hull_of(w,b,false,&scaled_b)^
             collide_hulls(m,&hull_a,&hull_b,xf,speculative,sat)
         }
     case .Cylinder:
@@ -258,6 +259,7 @@ shapes_collide :: proc(w:^World,a,b:^Shape,xf:Transform,speculative:f32,out:^[1+
 manifold_state_update :: proc "contextless" (state:^Manifold_State,local:^Local_Manifold) #no_bounds_check {
     old:=state^
     state.count=local.count
+    state.surface=local.surface
     state.normal=local.count>0?local.normal:{}
     used,matched:[MANIFOLD_MAX_POINTS]bool
     for i in 0..<int(local.count) {
@@ -298,6 +300,7 @@ manifold_state_update :: proc "contextless" (state:^Manifold_State,local:^Local_
 manifold_to_world :: proc "contextless" (out:^Manifold,local:^Local_Manifold,xf:Transform,center_a,center_b:Vec3) #no_bounds_check {
     out.normal=q_rotate(xf.q,local.normal)
     out.count=local.count
+    out.surface=local.surface
     for i in 0..<int(local.count) {
         point:=xf_point(xf,local.points[i].point)
         out.points[i]={point-center_a,point-center_b,point,local.points[i].separation,0,0}
@@ -315,7 +318,7 @@ manifolds_carry :: proc "contextless" (w:^World,contact:^Contact,relative:Transf
     for m in 0..<count {
         state:=m==0?&contact.manifold:&w.blocks[contact.extra].manifolds[m-1]
         local:=&out[m]
-        local.normal,local.count=state.normal,state.count
+        local.normal,local.count,local.surface=state.normal,state.count,state.surface
         for i in 0..<int(state.count) {
             half:=0.5*state.separations[i]*state.normal
             on_a,on_b:=state.points[i]-half,xf_point(move,state.points[i]+half)
@@ -357,6 +360,8 @@ contact_update :: proc(w:^World,index:i32) #no_bounds_check {
         contact.flags+={.Carried}
     } else {
         count=shapes_collide(w,a,b,relative,overlap?0:speculative,&locals,&contact.sat)
+        // Only the triangles of a mesh or a heightfield name their surface.
+        if a.type<.Mesh {for &local in locals[:count] {local.surface=0}}
         contact.relative=carry?relative:{}
         contact.flags-={.Carried}
     }
@@ -376,7 +381,7 @@ contact_update :: proc(w:^World,index:i32) #no_bounds_check {
     } else {
         if count>1 && contact.extra<0 {count=1}
         contact.manifold_count=i32(count)
-        if count==0 {locals[0].count=0}
+        if count==0 {locals[0].count,locals[0].surface=0,0}
         // A contact of a copy of a twin is solved in the frame of the body of the copy.
         frame:=xf_a
         center_a,center_b:=body_a.center,body_b.center
@@ -392,7 +397,7 @@ contact_update :: proc(w:^World,index:i32) #no_bounds_check {
         if contact.extra>=0 {
             block:=&w.blocks[contact.extra]
             for i in 1..=EXTRA_MANIFOLDS {
-                if i>=count {locals[i].count=0}
+                if i>=count {locals[i].count,locals[i].surface=0,0}
                 if !carried {manifold_state_update(&block.manifolds[i-1],&locals[i])}
                 manifold_to_world(&w.extra_manifolds[contact.extra][i-1],&locals[i],frame,center_a,center_b)
             }

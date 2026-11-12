@@ -418,7 +418,8 @@ shape_load :: proc(w:^World,shape:^Shape,xf:Transform,terms:[]Fluid_Term,flow:Ve
                 polyhedron_hull(&clip.buffers[0],&hull,xf)
                 part=polyhedron_load(clip,&term,crossing,d)
             case .Hull:
-                polyhedron_hull(&clip.buffers[0],&w.hulls[shape.resource].hull,xf)
+                scaled:Scaled_Hull=---
+                polyhedron_hull(&clip.buffers[0],shape_hull_of(w,shape,false,&scaled),xf)
                 part=polyhedron_load(clip,&term,crossing,d)
             case .Sphere:
                 part=sphere_load(shape.size.x,center,&term,crossing,d,clip)
@@ -469,7 +470,8 @@ shape_shown :: proc "contextless" (w:^World,shape:^Shape,xf:Transform,d:Vec3) ->
         l:=q_inv_rotate(xf.q,d)
         return 4*(e.y*e.z*abs(l.x)+e.x*e.z*abs(l.y)+e.x*e.y*abs(l.z))
     case .Hull:
-        hull:=&w.hulls[shape.resource].hull
+        scaled:Scaled_Hull=---
+        hull:=shape_hull_of(w,shape,false,&scaled)
         l:=q_inv_rotate(xf.q,d)
         // Half the sum of the projected areas of the faces.
         total:f32

@@ -48,7 +48,7 @@ coded_pages_keep_heights_within_half_a_step_and_other_values_exactly :: proc(t:^
     }
     // Values of other grids come back as they were.
     weights:[PAGE_VALUES]Weights
-    for &w,k in weights {w={u8(k),u8(k>>8),u8(255-k),0}}
+    for &w,k in weights {w=Weights(u32(k)*0x9e3779b1)}
     out:[PAGE_VALUES]Weights
     testing.expect(t,page_uncode(page_code(weights[:],PAGE,true,coded[:]),mem.slice_to_bytes(out[:])))
     testing.expect(t,out==weights)
@@ -77,13 +77,13 @@ saved_heights_stay_where_the_file_put_them_through_edits_and_saves :: proc(t:^te
     _,ok:=source_load(&loaded,path,&types)
     testing.expect(t,ok)
     for z in 0..<samples.z {for x in 0..<samples.x {
-        h:=source_value(&loaded,{x,0,z})
-        testing.expect(t,abs(h-source_value(&s,{x,0,z}))<=HEIGHT_STEP/2 && h==height_quantize(h))
+        h:=source_value(&loaded,{x,0,z}) or_else 0
+        testing.expect(t,abs(h-(source_value(&s,{x,0,z}) or_else 0))<=HEIGHT_STEP/2 && h==height_quantize(h))
     }}
     // Edit and save several times: what is not edited keeps its height, bit for bit.
     edited:=[3]int{3,0,PAGE+2}
     for round in 0..<3 {
-        testing.expect(t,source_set(&loaded,edited,source_value(&loaded,edited)+0.0001234))
+        testing.expect(t,source_set(&loaded,edited,(source_value(&loaded,edited) or_else 0)+0.0001234))
         testing.expect_value(t,source_save(&loaded,path,id,&types),asset.Error.None)
         again:Source;defer source_destroy(&again)
         _,ok=source_load(&again,path,&types)
@@ -91,8 +91,8 @@ saved_heights_stay_where_the_file_put_them_through_edits_and_saves :: proc(t:^te
         for z in 0..<samples.z {for x in 0..<samples.x {
             p:=[3]int{x,0,z}
             if p==edited {
-                testing.expect(t,abs(source_value(&again,p)-source_value(&loaded,p))<=HEIGHT_STEP/2)
-            } else if source_value(&again,p)!=source_value(&loaded,p) {
+                testing.expect(t,abs((source_value(&again,p) or_else 0)-(source_value(&loaded,p) or_else 0))<=HEIGHT_STEP/2)
+            } else if (source_value(&again,p) or_else 0)!=(source_value(&loaded,p) or_else 0) {
                 testing.expectf(t,false,"round %d: sample %v moved",round,p);return
             }
         }}

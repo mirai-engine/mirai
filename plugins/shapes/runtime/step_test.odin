@@ -393,7 +393,7 @@ polygons_without_brushes_do_no_work_and_allocate_nothing_while_nothing_changes :
 // Ground of a test that rises toward +x.
 @(private="file")
 slope_open :: proc(w:core.World_Ref) -> (core.Ground_Query,bool) {
-    probe :: proc(user:rawptr,origin,down:[3]f32,coarse:bool) -> (core.Ground_Hit,core.Ground_Found) {
+    probe :: proc(user:rawptr,origin,down:[3]f32) -> (core.Ground_Hit,core.Ground_Found) {
         return {point={origin.x,origin.x/10,origin.z},normal={0,1,0}},.Ground
     }
     return {probe=probe,spacing=0.5},true
@@ -402,7 +402,7 @@ slope_open :: proc(w:core.World_Ref) -> (core.Ground_Query,bool) {
 // Flat ground at 0 with a pit dug in it, which counts what it was probed.
 @(private="file")
 pit_open :: proc(w:core.World_Ref) -> (core.Ground_Query,bool) {
-    probe :: proc(user:rawptr,origin,down:[3]f32,coarse:bool) -> (core.Ground_Hit,core.Ground_Found) {
+    probe :: proc(user:rawptr,origin,down:[3]f32) -> (core.Ground_Hit,core.Ground_Found) {
         pit:=cast(^Pit)user
         pit.probes+=1
         b:=pit.box

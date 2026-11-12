@@ -174,13 +174,19 @@ Occluder_Changes :: struct {
 	lights:      [LIGHT_MOVES_MAX]u32,
 	light_count: int, // past LIGHT_MOVES_MAX every light counts as moved
 	sun:         bool,
+	covers:      bool, // a masked material changed what its casters cover, wherever they are
 }
 
 // An instance that casts shadows covered low to high in the frame before, or
 // covers it now: the box it changed in grows by it.
 @(private)
 occluder_changed :: proc(s: ^Scene_State, instance: u32, low, high: Vec3) {
-	o := &s.occluders
+	occluder_add(&s.occluders, instance, low, high)
+}
+
+// The box of an instance (OCCLUDERS_MANY: of several) joins a list of changes.
+@(private)
+occluder_add :: proc "contextless" (o: ^Occluder_Changes, instance: u32, low, high: Vec3) {
 	if !(low.x <= high.x && low.y <= high.y && low.z <= high.z) {return}
 	if instance != OCCLUDERS_MANY {
 		for &box in o.boxes[:o.count] {
@@ -381,6 +387,7 @@ Scene_State :: struct {
 	exposure:             Exposure, // of the views whose camera has no exposure of its own (Exposure.own)
 	changes:              Light_Changes, // where the light of the world changed since the GI last looked
 	occluders:            Occluder_Changes, // what casts shadows and changed since the last frame drew the scene
+	paged:                Occluder_Changes, // the instances of the meshes whose pages came or went since then
 	sun:                  Sun_Desc,
 	environment:          Environment,
 
@@ -592,6 +599,8 @@ material_store :: proc(s: ^Scene_State, row: u32, value: Gpu_Material_Row, chang
 		changes.lit_count += 1
 	}
 	changes.class ||= material_class(held^) != material_class(value)
+	// What a masked row covers is in the maps of the shadows that hold its casters.
+	s.occluders.covers ||= held.alpha_mode != value.alpha_mode || value.alpha_mode == u32(asset.Alpha_Mode.Mask)
 	changes.smoothest ||= material_smoothness(value) < s.smoothest || material_smoothness(held^) == s.smoothest
 	if held.program_id != value.program_id || held.alpha_mode != value.alpha_mode {
 		program_rows_count(s, held^, false)

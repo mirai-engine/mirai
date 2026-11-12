@@ -10,7 +10,7 @@ import "mirai:std/base"
 // was. The grids of a source share its pages: they come and go together.
 
 // The grids of a source, which paging, the network, residency and saves go through alike.
-Grid_Kind :: enum u8 {Field,Weights,Holes}
+Grid_Kind :: enum u8 {Field,Weights,Holes,Paint}
 
 // The samples a build of a Volume chunk reads past its own along each axis:
 // its gradients, and the cells its collider looks at across its faces.
@@ -87,7 +87,7 @@ grid_within :: proc(g:^Grid(f32),limit:f32) -> bool {
 
 // Whether every page of the grids of a source over the inclusive region of samples is in memory.
 source_region_held :: proc "contextless" (s:^Source,low,high:[3]int) -> bool {
-    return !grid_region_absent(&s.field,low,high) && !grid_region_absent(&s.weights,low,high) && !grid_region_absent(&s.holes,low,high)
+    return !grid_region_absent(&s.field,low,high) && !grid_region_absent(&s.weights,low,high) && !grid_region_absent(&s.holes,low,high) && !grid_region_absent(&s.paint,low,high)
 }
 
 // A page whose values are in its block, into memory: false when the block
@@ -161,7 +161,7 @@ source_region_read :: proc(s:^Source,low,high:[3]int,entry:^Data_Source=nil) -> 
         }}}
         return true
     }
-    return read(&s.field,low,high,s.file,value_finite,s.allocator,entry,field_limit(s.info)) && read(&s.weights,low,high,s.file,weights_full,s.allocator,entry) && read(&s.holes,low,high,s.file,hole_valid,s.allocator,entry)
+    return read(&s.field,low,high,s.file,value_finite,s.allocator,entry,field_limit(s.info)) && read(&s.weights,low,high,s.file,weights_full,s.allocator,entry) && read(&s.holes,low,high,s.file,hole_valid,s.allocator,entry) && read(&s.paint,low,high,s.file,paint_valid,s.allocator,entry)
 }
 
 // What chunks read of the samples low..high came into memory: the chunks
@@ -185,16 +185,58 @@ data_pages_arrived :: proc(entry:^Data_Source,low,high:[3]int) {
     }}}
 }
 
-// Every page of the weights of a source into memory, as taking a layer away needs.
+// A page of a grid read by pages, rewritten without coming into memory: a
+// block of its own, or none when it turned uniform, and its fill.
 @(private)
-source_weights_read_all :: proc(s:^Source) -> bool {
-    g:=&s.weights
+Away_Page :: struct($T:typeid) {slot:int,block:Page_Block,fill:T}
+
+// Rewrites by change the values of every page of g that is in its block, one
+// page in memory at a time, into blocks of their own for grid_away_install:
+// g does not change. False when a page cannot be read or without memory.
+@(private)
+grid_away_map :: proc(g:^Grid($T),file:string,valid:proc "contextless" (value:T) -> bool,user:rawptr,change:proc(user:rawptr,value:T) -> T,out:^[dynamic]Away_Page(T),allocator:runtime.Allocator) -> bool {
     if !g.paged {return true}
+    read:Page_Reader
+    if !page_reader_init(&read,context.temp_allocator) {return false}
+    defer page_reader_destroy(&read,context.temp_allocator)
+    writer:Page_Writer
+    if !page_writer_init(&writer,context.temp_allocator) {return false}
+    defer page_writer_destroy(&writer)
+    scratch,error:=make([]T,PAGE_VALUES,context.temp_allocator)
+    if error!=nil {return false}
     for slot in 0..<len(g.pages) {
-        if id:=grid_id(g,slot);id>=0 && !grid_page_read(g,id,s.file,weights_full,s.allocator) {return false}
+        id:=grid_id(g,slot)
+        if id<0 || !grid_absent(g,id) {continue}
+        extent,count:=grid_page_extent(g,id)
+        values:=scratch[:count]
+        if !page_load(g.blocks[slot],file,&read,mem.slice_to_bytes(values)) || !page_valid(values,valid) {return false}
+        for &value in values {value=change(user,value)}
+        away:=Away_Page(T){slot=slot,fill=values[0]}
+        if !page_uniform(values) {
+            encoded,ok:=page_encode(&writer,values,extent.x,false)
+            if !ok {return false}
+            own,made:=shared_make(u8,len(encoded),allocator)
+            if !made {return false}
+            copy(own,encoded)
+            away.block={size=u32(len(encoded)),hash=base.hash64(own),own=own}
+        }
+        if _,append_error:=append(out,away);append_error!=nil {shared_free(away.block.own);return false}
     }
     return true
 }
+
+// Puts in place what grid_away_map made.
+@(private)
+grid_away_install :: proc(g:^Grid($T),away:[]Away_Page(T)) {
+    for page in away {
+        shared_free(g.blocks[page.slot].own)
+        g.blocks[page.slot]=page.block
+        g.pages[page.slot].fill=page.fill
+    }
+}
+
+@(private)
+grid_away_free :: proc(away:[]Away_Page($T)) {for page in away {shared_free(page.block.own)}}
 
 // Lets go of the values of the page a slot holds: with edits, they stay in a
 // block of its own first. False without memory, with the page as it was.
@@ -242,7 +284,7 @@ source_pages_leave :: proc(s:^Source) -> (left:int) {
         }
         return
     }
-    return leave(&s.field,s.allocator)+leave(&s.weights,s.allocator)+leave(&s.holes,s.allocator)
+    return leave(&s.field,s.allocator)+leave(&s.weights,s.allocator)+leave(&s.holes,s.allocator)+leave(&s.paint,s.allocator)
 }
 
 // Marks the pages of the grids of a source a build of chunk index reads, for
@@ -265,7 +307,7 @@ region_pages_mark :: proc(s:^Source,low,high:[3]int) {
             if slot,_:=grid_find(g,{px,py,pz});slot>=0 {g.pages[slot].kept=true}
         }}}
     }
-    mark(&s.field,low,high);mark(&s.weights,low,high);mark(&s.holes,low,high)
+    mark(&s.field,low,high);mark(&s.weights,low,high);mark(&s.holes,low,high);mark(&s.paint,low,high)
 }
 
 // What differs between next, read again, and g of the same size: next takes

@@ -3,6 +3,33 @@ package terrain
 import "core:math"
 import "core:testing"
 
+// Far displaced chunks split their cells less, and a side two of them share
+// takes the steps of the coarser.
+@(test)
+displaced_chunks_split_less_far_away_and_meet_at_the_coarser_detail :: proc(t:^testing.T) {
+    testing.expect_value(t,displaced_detail(3,2,32),u8(3))
+    testing.expect_value(t,displaced_detail(3,12,32),u8(2))
+    testing.expect_value(t,displaced_detail(3,30,32),u8(1))
+    s:Source;defer source_destroy(&s)
+    lod_seam_source(t,&s)
+    counts:=chunk_counts(&s)
+    levels:=make([]u8,counts.x*counts.z);defer delete(levels)
+    near,far:Chunk_Mesh
+    chunk_mesh_init(&near);defer chunk_mesh_destroy(&near)
+    chunk_mesh_init(&far);defer chunk_mesh_destroy(&far)
+    testing.expect(t,chunk_detail_build(&s,{0,0,0},chunk_lod_sides(&s,levels,{0,0,0}),3,{0,1,0,0},&near))
+    testing.expect(t,chunk_detail_build(&s,{1,0,0},chunk_lod_sides(&s,levels,{1,0,0}),1,{1,0,0,0},&far))
+    chunk_in_terrain(&near);chunk_in_terrain(&far)
+    _,high,_:=chunk_region(&s,{0,0,0})
+    side:=source_point(&s,high).x
+    count :: proc(m:^Chunk_Mesh,x:f32) -> (n:int) {
+        for p in m.geometry.positions {if abs(p.x-x)<1e-4 {n+=1}}
+        return
+    }
+    testing.expect_value(t,count(&near,side),count(&far,side))
+    testing.expect_value(t,count(&far,side),(high.z-0)*2+1)
+}
+
 // A displaced chunk splits its cells on the triangles of its collider, keeps
 // the side it shares with a chunk that is not displaced at the steps of that
 // chunk, takes the fine steps on a side it shares with another, and leaves
@@ -19,7 +46,7 @@ displaced_chunks_split_their_cells_on_the_collider_and_join_their_neighbors :: p
     lod:=chunk_lod_sides(&s,levels,{0,0,0})
     DETAIL :: 2
     mesh:Chunk_Mesh;chunk_mesh_init(&mesh);defer chunk_mesh_destroy(&mesh)
-    testing.expect(t,chunk_detail_build(&s,{0,0,0},lod,DETAIL,{false,true,false,false},&mesh))
+    testing.expect(t,chunk_detail_build(&s,{0,0,0},lod,DETAIL,{0,DETAIL,0,0},&mesh))
     chunk_in_terrain(&mesh)
     m:=&mesh.geometry
     low,high,_:=chunk_region(&s,{0,0,0})

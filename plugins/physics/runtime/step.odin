@@ -130,6 +130,7 @@ physics_step :: proc(
         rules:[COLLISION_PUSH_CAPACITY]sim.Push_Rule
         count:=collision_push_rules(s.collision,&rules)
         sim.world_set_push_rules(w,rules[:count])
+        collision_surfaces_apply(w,s.collision,problems)
         state.pushes_set=true
         for push,i in s.collision.pushes {
             if push.force==0 || push.force>0 && push.force<=max(f32) && int(push.a)<COLLISION_CATEGORY_CAPACITY && int(push.b)<COLLISION_CATEGORY_CAPACITY {continue}
@@ -1459,7 +1460,7 @@ events_forward :: proc(s:^Sync,events:^Physics_Events,sent:^[6]int) {
     for event in list.contact_begin[sent[0]:] {
         core.push(&events.contact_begin,Contact_Begin{
             a=core.Entity(event.users.body_a),b=core.Entity(event.users.body_b),collider_a=core.Entity(event.users.shape_a),collider_b=core.Entity(event.users.shape_b),
-            point=event.point,normal=event.normal,impulse=event.impulse,
+            point=event.point,normal=event.normal,impulse=event.impulse,material=base.Asset_Id(event.surface),
         })
     }
     for event in list.contact_end[sent[1]:] {core.push(&events.contact_end,Contact_End{core.Entity(event.users.body_a),core.Entity(event.users.body_b),core.Entity(event.users.shape_a),core.Entity(event.users.shape_b)})}

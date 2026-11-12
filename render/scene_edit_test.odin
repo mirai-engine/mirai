@@ -583,13 +583,13 @@ occluders_list_what_moved_came_or_went_and_the_lights_that_moved :: proc(t: ^tes
 	}
 
 	s.occluders = {}
-	batch, problem := batch_set(r, 0, r.world_key, {mesh = mesh, flags = {.Casts_Shadow, .Ray_Visible}}, {batch_instance({40, 0, 0}, 1, 1, 1)})
+	batch, problem := batch_set(r, 0, r.world_key, {mesh = mesh, flags = {.Casts_Shadow, .Ray_Visible}}, {batch_instance({40, 0, 0}, 1, {1, 1, 1})})
 	testing.expect_value(t, problem, "")
 	testing.expect(t, s.occluders.count == 1 && s.occluders.boxes[0].instance == OCCLUDERS_MANY && s.occluders.boxes[0].low.x == 39.5, "a batch that comes casts shadows in its box")
 	s.occluders = {}
 	testing.expect(t, batch_remove(r, batch))
 	testing.expect(t, s.occluders.count == 1 && s.occluders.boxes[0].high.x == 40.5, "and one that goes")
-	_, problem = batch_set(r, 0, r.world_key, {mesh = mesh, flags = {.Ray_Visible}}, {batch_instance({40, 0, 0}, 1, 1, 1)})
+	_, problem = batch_set(r, 0, r.world_key, {mesh = mesh, flags = {.Ray_Visible}}, {batch_instance({40, 0, 0}, 1, {1, 1, 1})})
 	testing.expect(t, problem == "" && s.occluders.count == 1, "one that casts none changes no shadow")
 
 	s.occluders = {}

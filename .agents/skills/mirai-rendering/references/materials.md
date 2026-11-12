@@ -455,7 +455,9 @@ tests: the pieces of a mesh, numbered in UV1, fly in with a turn as its `progres
 - **Impostors** (`render/impostor.odin`): `impostor_capture` draws with the same pass (the
   `impostor` variant of `thumbnail.frag`, without light) the frames of a hemi-octahedral grid of
   the scene's meshes, from their CPU copy and with the scene's material table: base color and
-  coverage, normal and depth. What is not covered is extended by `impostor_dilate`, on any thread,
+  coverage, normal and depth, and roughness, metallic, occlusion and diffuse transmission; the
+  color of the light the materials let through comes back as one mean (`impostor_transmission`).
+  What is not covered is extended by `impostor_dilate`, on any thread,
   like the levels (`texture_build`, which `texture_add_built` uploads afterwards). The grid and the
   axes of each frame are `impostor_direction` and `impostor_axes`; a shader that draws an impostor
   repeats them ([foliage](../../mirai-world/references/foliage.md#far-impostor-and-crown)).

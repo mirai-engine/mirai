@@ -55,7 +55,8 @@ Chunks:
 
 - The Volume owns its box. The pieces of that terrain take the cells under it as holes
   (`Join_Cut`: drawing, collider and picking), without writing into the source; a chunk with taken
-  cells stays at level 0 and is not displaced. Nodes have no holes.
+  cells stays at level 0 and is not displaced. A node cuts the cells its maps take as holes
+  ([holes](#materials-and-layers)), so far away the ground does not show under the Volume.
 - In `JOIN_BAND` samples inside each side of the box (x and z), a chunk of the Volume blends its
   field with the height above the ground (`join_blend`), which at the side is all of it: the
   surface runs over the edges of the Heightfield between its samples. Heights are read live, from
@@ -80,11 +81,12 @@ Chunks:
 `terrain:Source_Info` row (type, samples, cell, chunk, revision and layers) whose limits
 `source.odin` validates. A file of another `VERSION` is refused.
 
-- **Paged grids** (`Grid`, `grid.odin`): a source holds three, `field`, `weights` and `holes`
-  (`Grid_Kind`), which paging, network pages, residency and saves go through alike, without
-  asking the kind. The field is the heights of a Heightfield, in pages of `PAGE` samples per side
-  over X/Z, or the distances of a Volume, in blocks of `BLOCK` samples per side in X/Y/Z; weights
-  follow the field, and holes, only of a Heightfield, are none in a Volume. What each kind does its
+- **Paged grids** (`Grid`, `grid.odin`): a source holds four, `field`, `weights`, `holes` and
+  `paint` (`Grid_Kind`), which paging, network pages, residency and saves go through alike,
+  without asking the kind. The field is the heights of a Heightfield, in pages of `PAGE` samples
+  per side over X/Z, or the distances of a Volume, in blocks of `BLOCK` samples per side in X/Y/Z;
+  weights follow the field, and holes and paint, only of a Heightfield, are none in a Volume. Holes
+  and paint hold no pages until a cell is cut or a sample painted. What each kind does its
   own way (sampling, rays, the field of a new Volume, levels of detail) is in `heightfield.odin`
   and `volume.odin`. Every page has `PAGE_VALUES` values, so reading, copying, releasing and the
   format are one for both shapes. A page is named by its id, its place among every page of the grid.
@@ -98,6 +100,16 @@ Chunks:
   compressed block in `<grid>_blocks`, stored uncompressed, so each page is read alone, by file
   range ([residency](#jobs-publishing-and-residency)). The runs depend on the values, not on what a
   grid happens to hold: two sources with the same samples write the same file.
+- **Coarse data** of a Heightfield ([tree](#tree-and-nodes)) is in the file too, in records the
+  front of the file holds: the `coarse` table, a row per point of the coarse grid with a column
+  per kind of value (heights, weights, the share of holes of the cell from the point, paint), and
+  the `pieces` table, a row per chunk and node with the heights it reaches and the errors of its
+  levels, a node with the largest error under it. A world reads it with the source, so no page
+  is decoded for what is far; a source without it in memory (one of the editor) measures it when
+  it is written. A new value of the coarse grid is one more column of `coarse`.
+- **Edit layers** of a Heightfield are more X/Z grids, `edit<n>_pages` and `edit<n>_blocks`, with
+  the weights under the splines in `edit_under_pages`: authoring data the game reads but never
+  composes ([tool](#tool)).
 - **Page coding** (`page_code.odin`): before the codec a page goes in byte planes, or, f32 values on
   multiples of `HEIGHT_STEP`, as the zigzag distance in steps from the plane of each sample's
   neighbors left, above and above-left, in byte planes. Saving puts heights on that lattice, at
@@ -145,13 +157,14 @@ Levels of detail:
   level (`Chunk_Mesh.locked`, `asset.Mesh_Source.locked`), so nodes and chunks meet without cracks
   at any mix of levels.
 - The level of a Heightfield piece is the coarsest whose error (`Lod_Errors`: the farthest it
-  ends up from its samples, measured when reading the source and followed by the edits) covers
+  ends up from its samples, stored in the file and followed by the edits) covers
   about `LOD_PIXELS` of the view from its terrain, and never finer than samples at
   `LOD_SPACING_PIXELS` pixels, which at a grazing angle come closer (`LOD_GRAZING`): the detail
   between samples that a pixel covers is not seen, however large its error. The pixels come from
-  the height and field of the view (`core.View`), with hysteresis. With a positive
-  `Terrain_Settings.lod_distance` the level comes from the distance to the box, never coarser
-  than its error allows.
+  the height and field of each view (`core.View` and, on a split screen, the slot of each local
+  player in `camera.Camera_Views`), with hysteresis: a piece is one mesh for every view, so it
+  shows what the view that sees it finest needs. With a positive `Terrain_Settings.lod_distance`
+  the level comes from the distance to the box, never coarser than its error allows.
 - Two Heightfield chunks that touch, by a side or a corner, are at most one level apart
   (`lod_levels_balance` refines the coarser one): a fine edge stitched to an interior several
   levels coarser folds.
@@ -169,15 +182,22 @@ Levels of detail:
   each side to the interior grid. A vertex's normal comes from the samples at a step of what the
   vertex shares (interior, segment of the side or point of the chunk grid, at the level of its
   border): a coarse level shades the slope that its triangles span and shared vertices have a
-  single normal. A chunk with holes stays at level 0.
+  single normal: what a coarse level spans is its silhouette. What it shades (normal, layers,
+  paint) comes from the [maps](#materials-and-layers) of the piece, a texel per sample whatever
+  its level, so changing level moves only the triangles, by at most about `LOD_PIXELS`.
+- A chunk with holes takes any level: its triangles over holes alone are left out, and one whose
+  triangles span holes and ground shows the holed material, which cuts them by its alpha.
 
 Collision and picking:
 
-- Only chunks collide; a node never does. The nearest chunks collide that fit in the
-  `Physics_Settings` slots (`heightfields` or `meshes`, and `shapes`) not occupied by the colliders
-  of other entities, and with `Terrain_Settings.collision_distance` only those inside it: physics
-  capacity bounds how many, the distance which ones. No distance forces more chunks than physics
-  admits.
+- Every piece a solid terrain shows collides: a chunk with every sample, a node with the triangles
+  it shows (a Mesh collider), so far ground stops long rays and thrown bodies however few chunks
+  physics admits. The nearest pieces collide that fit in the `Physics_Settings` slots
+  (`heightfields` or `meshes`, and `shapes`) not occupied by the colliders of other entities, every
+  chunk before any node, and with `Terrain_Settings.collision_distance` only those inside it:
+  physics capacity bounds how many, the distance which ones. No distance forces more chunks than
+  physics admits. Where its collision is loaded for the ground (`Ground_Query.unloaded`) still
+  counts chunks only.
 - Drawing does not depend on the collider: a chunk whose collider finds no slot shows its ground
   without it (`terrain.collider_budget`) and tries again when the colliders change.
 - While the world is not playing, every published chunk keeps its triangles on the CPU, also
@@ -185,6 +205,11 @@ Collision and picking:
   collider keeps them.
 - A holed cell has no visible triangles, picking or collision; the physics heightfield receives the
   chunk's mask and its edges next to a hole stay active.
+- Each cell of a Heightfield collider shows one material: the one whose layers cover most of it, by
+  the weights its four corners show (painted and automatic) added up by material. Hits and contacts
+  name it, and `Collision_Settings.surfaces` gives it its friction and restitution
+  ([collision](../../mirai-physics/references/engine.md#collision-categories-and-presets)). A
+  Volume's Mesh collider has one surface.
 
 Construction and publishing:
 
@@ -203,26 +228,52 @@ Construction and publishing:
 
 - A source has from one to `LAYERS_MAX` layers, in both representations; there is no
   layerless mode. It is born with one that covers everything. Each `Terrain_Layer` has material,
-  `tiling`, `height_blend` and an automatic rule of slope and height (`Layer_Auto`).
+  `tiling`, `height_blend`, `detile`, `variation`, `far_tiling` and an automatic rule of slope and
+  height (`Layer_Auto`).
 - The one slot of a piece shows the layers.
-- The weights of each sample add up to `WEIGHT_FULL`: over the X/Z grid in Heightfield,
-  and at each sample of a Volume, which stores in this way what it has under the surface
-  ([interior](#volume-interior)). Removing a layer distributes its share among the others in their
-  proportions; the last one is not removed. Paint adds a fraction of the brush's layer and Erase
-  removes it; the others keep their proportions (`weights_paint`). In a Volume they touch the
-  brush's ball, not the column.
-- Each vertex takes the painted weights (`source_weights_at`: in Volume between the samples of its
-  cell) and then each automatic layer, in order, covers the previous according to its rule
-  (`layers_vertex`), which distinguishes walls and ceilings. A rule falls linearly along its
-  softness, so between two samples it changes at most what their slopes differ over it; in
-  Heightfield it reads the slope the same at all levels.
-- The weights travel in UV0 and UV1 of the vertices.
+- A sample holds the weights of its `WEIGHT_SLOTS` heaviest layers (`Weights`, layers and
+  weights packed in 32 bits), adding up to `WEIGHT_FULL`: over the X/Z grid in Heightfield, and at
+  each sample of a Volume, which stores in this way what it has under the surface
+  ([interior](#volume-interior)). A point between samples blends those of the samples around, so
+  it can show more. Removing a layer distributes its share among the others in their proportions
+  and those above it take the index below; the last one is not removed. Paint adds a fraction of
+  the brush's layer and Erase removes it; the others keep their proportions (`weights_paint`),
+  and the layer painted keeps its slot over the lightest. In a Volume they touch the brush's ball,
+  not the column. Brushes and blends work on a share of every layer (`Layer_Mix`).
+- Each sample takes the painted weights and then each automatic layer, in order, covers the
+  previous according to its rule (`layers_vertex`), which distinguishes walls and ceilings. A
+  rule falls linearly along its softness, so between two samples it changes at most what their
+  slopes differ over it; in Heightfield it reads the slope the same at all levels.
+- **Maps** (`surface.odin`): a piece of a Heightfield publishes with its mesh generated textures
+  of its region (`Surface_Maps`), a texel per sample (a node, every `2^depth` samples, from the
+  coarse grid): `control`, the weights with the rules applied and the hole of the cell from each
+  texel; `normal`, of the surface over a step of one; and `paint` when the source has paint. Its
+  vertices carry where they are over them in `uv0`, in texels, and its `Material_Values` give
+  them (`piece_values`) with their size. They are made in the job that builds the piece and leave
+  with its mesh.
+- A piece of a Volume has no maps: each vertex carries in `uv0` and `uv1` the weights of the four
+  layers that weigh most over the piece (its palette, a value of the piece).
 - The slot shows the source's layers material (`layers_material`): a Surface program that blends
-  them reading their weights in `ctx.uv0` and `ctx.uv1`, and what it needs of the point (world
-  position, normal, object). Without one, the standard layers one is a case of the same path:
-  `LAYERS_MATERIAL` (`Terrain_Layers` program of `shaders/`) with the `Material_Values` that the
-  plugin builds with each layer material. The values the owner gives by name do not pass to the
-  chunks, and a program of its own takes its parameters from its material.
+  them reading the maps (`terrain_surface.slang`), and what it needs of the point. Without one,
+  the standard layers one is a case of the same path: `LAYERS_MATERIAL` (`Terrain_Layers` program
+  of `shaders/`), which reads the layers from a table the plugin makes of them (`layers_table`, a
+  generated texture of a row per layer: the places of its maps in the texture table and its
+  values), made again only when what it holds changes. The values the owner gives by name do not
+  pass to the chunks, and a program of its own takes its parameters from its material.
+- `Terrain_Layers` blends at each point the four layers that weigh most among the texels around
+  it, with the normal of the map; the triangles of the level do not change what it shades.
+- **Holes**: a piece whose triangles span holes and ground shows `LAYERS_HOLED_MATERIAL`, the same
+  program in a masked material, whose alpha is the hole of the cell under the point: only those
+  pieces pay for the alpha in raster and rays. A node takes as a hole a texel at least half holes
+  (the share of each cell of the coarse grid, `Coarse.holes`), and the cuts of its joins.
+- **Paint** (`paint.odin`): the color (sRGB) and roughness painted over the layers of a
+  Heightfield, a sample each, `PAINT_NEUTRAL` where nothing is painted. Tint takes the color
+  toward `Brush.color`, Roughness the roughness toward `target` (0.5: the layers as they are);
+  the layers show the color multiplied and the roughness offset.
+- **Look of a layer**: `detile` shifts its repeats by bands of a slow noise of the world, a point
+  blending the two bands it lies between, the higher texel first; `variation` darkens and
+  brightens it by a slow noise; `far_tiling` takes over from `tiling` where one repeat shrinks to
+  a few pixels.
 - `Terrain_Layers` projects the textures from the three axes, each by how much the surface faces
   it, sharpened: flat ground reads only the top one and a cliff those of its sides. A projection
   that barely weighs and a layer without weight are not read, and a ray reads the dominant
@@ -254,12 +305,17 @@ Construction and publishing:
   `Terrain_Layers` blends with `height_blend` and projects the same (`terrain_projection.slang`).
   It is draw-only: the collider, picking and brushes follow the surface of the samples.
 - `displacement.odin` does it: the level 0 chunks within `Terrain_Settings.displacement_distance`,
-  the nearest ones, are built again with each cell split into `2^displacement_detail` per side
-  (`chunk_detail_build`), over the collider's triangles. They are drawn with a deformable copy of
+  the nearest ones, are built again with each cell split into `2^displacement_detail` per side,
+  one less each time the distance doubles past its first quarter (`chunk_detail_build`), over the
+  collider's triangles. The relief is measured from a place that follows the view by steps and
+  fades out over the last `DISPLACEMENT_FADE` of the distance, or of that of the nearest chunk
+  past `DISPLACED_CAPACITY`: a chunk comes and goes flat. They are drawn with a deformable copy of
   that mesh, the posed mesh of the chunk (`posed_set`), whose vertices the `terrain_displace.comp`
   Geometry pass writes once: when built, when what it reads changes or when the vertex buffer is
   rebuilt.
-- Two displaced chunks build the side they share at the step of their cells; a side with a chunk
+- Two displaced chunks build the side they share at the step of the coarser of their details;
+  the heights of the layers are read at the level of the finest detail, so both raise it alike. A
+  side with a chunk
   that is not displaced keeps the samples, stitched to the interior grid with the strip of
   `piece_build`, and the relief turns off within a cell of it. A chunk is shown displaced only
   while each side matches the neighbor's: while one is rebuilt, the other shows its common mesh.
@@ -272,10 +328,12 @@ T or its entry in the Tools menu, outside Play.
   with one, only its modes. The brush only sculpts a selected terrain: a click on another selects
   it. Picking on a child leads to the owner and, if the picker finds nothing, the brush tries
   `source_ray` of the selected terrain.
-- **Create**: Plane or Heightmap for a Heightfield. Heightmap (16-bit PNG with its precision, TGA
-  and BMP) normalizes integers to [0,1] without gamma and scales and offsets the height; its first
-  row is the start of Z. Volumetric Terrain starts with a solid block surrounded by air. Plane
-  shows the size in meters and in chunks, and the view draws its outline where it will be born.
+- **Create**: Plane or Heightmap for a Heightfield. Heightmap (16-bit PNG with its precision, TGA,
+  BMP and R16 or `.raw` normalized to [0,1] without gamma, R32 floats as they are) scales and
+  offsets the values; its first row is the start of Z. R16 and R32 have no header: they are square.
+  Any size a terrain takes reads back: the read limit follows `SAMPLES_MAX`. Volumetric Terrain
+  starts with a solid block surrounded by air. Plane shows the size in meters and in chunks, and
+  the view draws its outline where it will be born.
 - The new file (`terrain/<type>.terrain`) waits in the registry until its step ends and is
   part of the undo step: undoing it removes it even if later strokes changed it.
 - **Save surface as mesh** (Sculpt of a Volume) writes its surface as a plain `.mesh` beside its
@@ -283,11 +341,33 @@ T or its entry in the Tools menu, outside Play.
   dug, to place as any mesh. The terrain stays as it is.
 - **Heightmap** (Sculpt of a Heightfield): Import sets the heights of an image, scaled and offset
   as in Create (one of another size gives it its size, with its layers and without what was
-  painted or the holes); Export writes its heights into a 16-bit PNG from lowest to highest and
-  leaves in the fields the scale and offset that import it back. **Size** gives it other samples
+  painted or the holes); Export writes its heights into a 16-bit PNG (deflated) or R16 from lowest
+  to highest, or an R32 of the heights as they are, and leaves in the fields the scale and offset
+  that import it back. **Weightmap** (Paint of a Heightfield) exports the weight of the chosen layer
+  from 0 to 1 in the same formats and imports one of the terrain's size: the layer takes that
+  weight and the others keep their shares of the rest. **Size** gives it other samples
   around its center (each side changes by an even number, so the center remains a sample): what it
   had stays in place and what grows takes the heights and weights of the nearest edge
-  (`source_resize`). Each one is an undo step.
+  (`source_resize`). **Mirror** puts one half onto the other across a plane along X or Z through
+  the center, or turns it around the center (Turn it), mixing both halves over Blend metres on each
+  side of the plane so they meet (`source_mirror`). Each one is an undo step.
+- **Edit layers** (Sculpt of a Heightfield, `edits.odin`): what each one adds to the heights is a
+  grid of its own; the field is the base plus every shown layer, so everything that reads heights
+  reads the field alone, and the base is not stored. A stroke, a ramp, a pasted region or a mirror
+  with a layer chosen writes the field and adds what it changed to that layer
+  (`source_edit_layer_take`); hiding or taking a layer out takes what it adds out of the field.
+  Holes and paint go to the base. Each change of a layer of sculpting is an undo step.
+- The layer of **Splines**, the last, is derived from the splines, never edited by hand: it is not
+  chosen, hidden or taken out, and it goes with the last spline that reaches the terrain.
+  `source_conform` takes out what it added and gives back the weights it painted (`edit_under`),
+  then each `volume.Spline` with a `Terrain_Conform` over the terrain lays a bed level across its
+  width that follows the mean of the ground under its middle over `smooth` metres, `depth` under
+  it, and meets the ground over `sides`, painting the layer of `paint`.
+- It follows by itself: right before the history records a gesture, in the panel or through the
+  API, the editor asks its `Edit_Follow_Provider`s, and `terrain_follow` remakes every Heightfield
+  whose hash of the splines that reach it (`Source_Info.conform`) is not theirs. That change joins
+  the gesture's step, so undoing the spline undoes its bed; undo remakes nothing. Sculpting under a
+  road moves its bed with the ground until the spline changes again.
 - Everything of the tool is in its panel, from top to bottom: mode, brushes with their key, radius,
   strength, pen pressure, falloff, shape (alpha) and what is specific to the brush, and at the foot
   the **Entity** section with the entity's details, which the panel covers. **Sculpt** offers the
@@ -295,7 +375,8 @@ T or its entry in the Tools menu, outside Play.
   height, which the crosshair button or Ctrl and a click take under the pointer); **Shapes**
   (Volume), the shapes; **Paint**, the list of
   layers with that of the chosen one below and the brush, which adds or takes the layer to a
-  weight (**Up to a weight**). Remove is disabled with a single layer. The material that blends the
+  weight (**Up to a weight**), and on a Heightfield Tint and Roughness, which paint a color and a
+  roughness over the layers. Remove is disabled with a single layer. The material that blends the
   layers (**Blend**) appears only when it is not the plugin's (an import sets it). **Holes**
   (Heightfield), Hole and Fill per cell. Each material or layer change is an undo step.
 - Radius, strength, falloff, hardness, pressure, alpha and slope filter belong to each mode
@@ -305,7 +386,10 @@ T or its entry in the Tools menu, outside Play.
   Step meters from the height of the press, which rise in their Riser part; **Noise** adds value
   noise of Scale meters, the same at each point for its source, so each pass deepens a pattern
   (also in Volume); **Erode** releases drops on the disc that run down the surface carrying soil
-  and leave it where they slow down (`erode.odin`), and its effect fades out past the disc. **Way**
+  and leave it where they slow down (`erode.odin`), and its effect fades out past the disc;
+  **Thermal** slides what stands steeper than its **Talus** down to the neighbors below that slope,
+  over eight neighbors and from the same heights for every sample, keeping the ground it moves.
+  **Way**
   (Both, Raise, Lower) lets Smooth, Flatten, Terrace and Noise only raise or only lower; **To the
   press** (or Alt) makes Raise only lift what is below the height of the press, up to it, and
   Lower only lower what is above it.
@@ -367,7 +451,8 @@ Preview and confirmation:
   between two revisions stores what the source had at the revision in which the head is not, only
   where they differ: pages of a Heightfield's grids (those of the region the stroke touched),
   blocks of a Volume's values and the parts of its directory that took one value, info and
-  materials, or the whole source when its type or size changes. Undo and redo swap the step with
+  materials, the edit layers, or the whole source when its type or size changes. Undo and redo
+  swap the step with
   the head, without copying, and the source that the tool edits follows the head without reading
   the file. The chain of revisions is that of the
   [editor](../../mirai-editor/references/extensions.md#a-viewport-tool).
@@ -413,7 +498,9 @@ ground in the color of the level it shows, a coarser node one.
 ## API
 
 `terrain.create`, `terrain.edit`, `terrain.layer`, `terrain.interior`, `terrain.sample`,
-`terrain.heightmap` and `terrain.resize` (`terrain_api.odin`) do what the panel does in the edited
+`terrain.heightmap`, `terrain.resize`, `terrain.region`, `terrain.mirror` and `terrain.edit_layer`
+(`terrain_api.odin`, `terrain_region.odin`, `terrain_edit_layers.odin`) do what the panel does in
+the edited
 world on the entity they name (no selection needed), each change an undo step like a
 stroke, at the place the entity has now: a manual editor runs the frame that places it, and its
 ground and colliders with it. `terrain.create` takes a `name` for its entity and file, beside the
@@ -421,7 +508,10 @@ scene, and takes again the file a deleted terrain of that name left. A layer is 
 by its material
 (`asset.slot_named`: the path or stem, `default` with no material, `#2` for the second of the same).
 A Volume's interior is edited in Paint,
-under its layers: its rows hold what is changed until Apply. `terrain.edit` is a stroke of a brush
+under its layers: its rows hold what is changed until Apply. `terrain.region` copies a box of a
+Heightfield (heights and layers, `source_region_copy`) onto the same or another one at `at`,
+turned, mirrored, raised, faded at its edges and only raising or lowering if asked
+(`source_region_paste`): copy and paste, or a stamp. `terrain.edit` is a stroke of a brush
 by its name from `at` to `to`, touching every quarter of the radius with what a pass does; a ramp
 or a shape is a touch from `at` to `to`. A brush that the representation does not have, a layer
 that does not exist, removing the only layer or an alpha that is not there answer what they take;
@@ -437,7 +527,10 @@ touches fit in a tick's queue.
 - `terrain.dig(requests,Brush,owner) -> Edit_Error` asks for an edit, in the world:
   `terrain_replay` and `terrain_update` resolve the owner first (given, or the terrain the brush
   touches: the nearest to the center, then the smallest footprint) and hand the brush on in its
-  space, so networking keys edits by that owner. `terrain_requests_serve` keeps the room
+  space, so networking keys edits by that owner: lengths by the terrain's scale over x and z, the
+  metres Raise, Lower and Noise move and the steps of a Terrace by its scale along y. A scale
+  uneven over x and z, or along y for a shape of Add or Carve or any brush of a Volume, is the
+  error `Scale`. `terrain_requests_serve` keeps the room
   of `Terrain_Settings.requests` and reports what was dropped or refused.
 - **A brush is an intent** (`Brush_Kind`), the same call on whichever representation is under it:
   Add and Carve join or take the shape of the brush (sphere, capsule or box), Raise and Lower
@@ -484,21 +577,26 @@ that stopped being solid, with its weights; in a Heightfield, the height that we
 with the weights of its column. `terrain` stores none of that: the game uses it (an inventory,
 points) and these plugins:
 
-- **Dust:** `Terrain_Dust` on the terrain (`dust.odin`) gives per layer a channel of
+- **Dust:** `Terrain_Dust` on the terrain (`dust.odin`) gives per material a channel of
   `core.Births` (`CHANNEL_DUST` or another, for another effect) and its color, and births per cubic
   meter with a cap per edit. An emitter of [`vfx`](vfx.md#channels) with a `Particle_Channel` of
   that channel shows it; without `vfx` nobody takes them.
-- **Pieces and drops:** the `terrain_debris` plugin. `Terrain_Debris` gives per layer a piece
-  prefab (with `Rigid_Body`, of the layer's material, which leaves with `speed`) and a drop one,
+- **Pieces and drops:** the `terrain_debris` plugin. `Terrain_Debris` gives per material a piece
+  prefab (with `Rigid_Body`, which leaves with `speed`) and a drop one,
   each per so many cubic meters removed; what does not reach is owed to the next edit of that
   terrain (`Debris_Owed`), with a cap per tick for each.
+- Both key their entries by the material of the layer taken (`material_entry`): an entry without
+  a material is for every material no entry names, and a layer keeps its entry when the layers are
+  reordered or removed.
 - Both are configured in the inspector and by `scene.write`; the demo has them in the `dig`
   scene.
 
 ## Ground
 
 `ground.odin` gives `core.Ground_Queries` (set by `terrain_update`), so foliage, navigation and any
-other plugin read the ground without importing terrain. Its probe reads `Terrain_Ground`, a `World`
+other plugin read the ground without importing terrain. A hit gives the four layers that weigh
+most at the point by their material (`layers_dominant`: layers of one material add up), whatever
+the count of layers. Its probe reads `Terrain_Ground`, a `World`
 storage that is not copied (`copy=false`), so that `Ground_Queries.open` finds it from the world:
 its views point into the sources of the `Terrain_Data` of that world. The probe answers the
 highest terrain along a line; a Heightfield read straight down takes its coarse grid when asked
@@ -542,7 +640,9 @@ other; authority, prediction and rollback for the rest belong to the
   which the client made it. What is not allowed is refused with the cause (rate, connection
   without a seat, reach from what its seat drives, radius, brush, tick, unloaded source or the
   edit's error), which the client reports as the `terrain.net_refused` problem with how to fix it.
-  `Terrain_Net_Settings` (project setting) sets the rate, the reach and the radius.
+  `Terrain_Net_Settings` (project setting) sets the rate, the reach of the brush's center and the
+  radius: half of the longest side of the world box the brush may change, and the metres it moves
+  the ground.
 - **What the game asks of a client is a prediction:** an edit is applied at its tick, stored with
   its check and asked of the server. When the server's edit comes back, a prediction that left the
   same check stays as that edit, without repeating the brush. A layer change is not predicted
@@ -602,8 +702,8 @@ Construction in jobs:
   tick without ground under a viewer. Those jobs can use all the slots; the others, half.
 - Changing level, border or collider publishes the piece and the neighbors whose sides change in
   the same call.
-- A source is read whole in a job (`data_load_begin`): its file, its coarse grid and what its
-  chunks and nodes reach, in memory of its own (`Data_Source.allocator`), and `data_load_end` adds
+- A source is read whole in a job (`data_load_begin`): its file and its coarse data, in memory of
+  its own (`Data_Source.allocator`), and `data_load_end` adds
   it to the sources. Those that a section's load names are requested while it waits for the
   libraries and make it wait (`scene.Load_Waits`): the section joins with its ground ready. One
   that nobody waited for (the scene that opens, the one the editor adds) is read in the call that
@@ -635,7 +735,12 @@ per frame (in the first call); what the data changes, in each call.
   it needs a chunk, or, in a Heightfield, whose finest level is still coarse for the view (a node
   of a Volume holds every sample, and the renderer picks its detail). It needs as a chunk what is
   near a viewer if it has streaming; if not, being solid, what carries a collider (the nearest
-  ones that fit in `Physics_Settings`, within `collision_distance`). It opens the nearest first
+  ones that fit in `Physics_Settings`, within `collision_distance`, found nearest first from the
+  roots). It looks only at what a walk from its roots reaches: it goes down under a node where a
+  chunk may be near a viewer or take a collider, where the brush of the editor is, or where a node
+  under it may be finer for the view (`Lod_Errors.below` bounds their errors), with what holds a
+  state from before and the chunks along the borders of what shows; what it looks at follows what
+  is near and seen, not how many nodes it has. It opens the nearest first
   (reach and distance) as long as the pieces of all the terrains fit in `Terrain_Settings.chunks`:
   past that, the far field shows coarser nodes and nothing is hidden. Roots always count; if they
   alone do not fit it is `terrain.chunks_full`.
@@ -647,18 +752,24 @@ per frame (in the first call); what the data changes, in each call.
   built.
 - A Heightfield node is assembled from the coarse grid (`coarse.odin`): heights and layer weights
   every `COARSE` samples and in the last row and column, in memory while the source is there, with
-  a bilinear between them. Reading the source fills it reading each page once, by rows of chunks in
-  jobs (and the chunks of each row too); edits and layers follow it. Its interior level is at least
-  its depth and `COARSE_LEVEL`, and the layer rule reads the slope of the coarse grid. A node shows
-  no holes.
+  a bilinear between them. It comes from the file ([format](#canonical-format)); one made in
+  memory measures it reading each page once, by rows of chunks in jobs (and the chunks of each row
+  too). Edits and layers follow it: the heights a piece reaches and its errors only grow with an
+  edit until the source is measured again. Its interior level is at least
+  its depth and `COARSE_LEVEL`, and the layer rule reads the slope of the coarse grid. A node cuts
+  the holes the coarse grid holds ([holes](#materials-and-layers)).
 - A Volume node is built from the blocks of its chunks (`node_build`), read for the build and let
   go once it shows ([levels](#geometry-and-collision)). Its job is taken when it ends, without
   waiting for it, and its levels are made in a second job that reads no source, so an edit does
   not wait for them. Chunks are built before nodes. An edit under a node that shows builds it
   again.
-- A node has no collider; it keeps its triangles for picking while the world is not playing.
-- The distance of an unbuilt piece uses the heights of its samples (`Data_Source.ranges`, from
-  reading the source and from edits), not a 0.
+- A node collides with the triangles it shows ([collision](#geometry-and-collision)); without a
+  collider it keeps them for picking while the world is not playing.
+- The distance of an unbuilt piece uses the heights of its samples (`Coarse.ranges`, from the
+  file and from edits), not a 0.
+- What each piece is from the views and viewers is measured when the walk reaches it; it is
+  measured again when a view or a viewer moves, or the place of a terrain, not when anything else
+  in the world moves.
 
 Residency by distance:
 
@@ -682,9 +793,11 @@ Residency by distance:
   weights come and go with its distances, block by block.
 - The residency of the pages is that of the chunks, which is the shared one of `scene`: the terrain
   has none of its own. Far from every viewer the chunks of a Volume are released, and their blocks
-  with them: what a game reads of a source there (`source_ray`, `source_value`) is not in memory.
-- A brush first reads, in the tick, the pages it touches, and removing a layer all those of its
-  weights. Save writes each page, those in memory and those in their blocks.
+  with them: what a game reads of a source there is not in memory (`source_value` answers
+  `ok=false` there and outside the source, and `source_ray` ends).
+- A brush first reads, in the tick, the pages it touches. Removing a layer rewrites each page of
+  the weights in its block into a block of its own, one page in memory at a time. Save writes each
+  page, those in memory and those in their blocks.
 - A source that only has the registry's memory (held by the editor until its step ends) is read
   whole.
 - A world copy (Play, snapshot, rollback) shares the pages in memory, the own blocks and the coarse
@@ -710,14 +823,22 @@ Reading from other plugins (such as the foliage bridge), with `core.Ref(Terrain_
 ## Limits in open worlds
 
 - A source that is only in the registry's memory (held until its step ends) is read whole.
-- **Volume** is limited to `VOLUME_SAMPLES_MAX` per axis and `VOLUME_CHUNKS_MAX` chunks. Its
-  octree stops at `VOLUME_NODE_CELLS`: a Volume kilometers wide shows its far ground as that many
-  roots, each a piece of `Terrain_Settings.chunks`, and a streamed one builds each root once.
+- A source is limited to `SAMPLES_MAX` per axis and `CHUNKS_MAX` chunks, whatever its file says:
+  a larger one takes more cells per chunk. A **Volume**'s octree stops at `VOLUME_NODE_CELLS`: a
+  Volume kilometers wide shows its far ground as that many roots, each a piece of
+  `Terrain_Settings.chunks`, and a streamed one builds each root once.
 - A Heightfield cannot hold an overhang: Add and Carve move its columns. Ground that needs one is
   a Volume, alone or [joined](#joining-a-volume-with-a-heightfield) to the Heightfield around it.
 - **Joining a Volume with a Heightfield:** a Volume rotated against the ground does not join
   (`terrain.ground_misaligned`); several Volumes that overlap over a Heightfield are not
-  supported; far away the Heightfield shows nodes without holes under the nodes of the Volume.
+  supported.
+- **Two Heightfields side by side** meet by themselves (`adjacency.odin`): with the same cell and
+  cells per chunk, the same turn and scale, samples on one lattice and edges that touch, shifted
+  along them by whole chunks. The samples of the edge are those of the terrain of the lower Id;
+  the levels of the border are chosen over both and meet one level apart at most; normals, rules
+  of the layers and edges of the collider read across; a brush over the edge, of a game or of the
+  tool, writes both (the tool as a step of each). One terrain per side; four that meet at a point
+  see only those of their sides there.
 
 ## Verification
 
@@ -739,13 +860,28 @@ physics, saving, stability and world copy.
   borders of its blocks) and `a_large_volume_holds_and_stores_only_the_blocks_of_its_surfaces`.
 - Recycled handles, relinked sources and incomplete chunks: authors are not confused with derived
   children nor left orphaned.
-- `layers_test.odin`, `holes_test.odin`, `shading_test.odin` and `shape_test.odin` (falloff, wide
+- Surface: `a_piece_shows_the_weights_and_normals_of_every_sample_at_any_level`,
+  `the_table_of_the_layers_holds_each_layer_where_the_program_reads_it`,
+  `the_ground_takes_the_four_heaviest_materials_of_any_number_of_layers`,
+  `color_and_roughness_painted_over_the_layers_reach_the_maps_and_the_file`,
+  `bodies_fall_through_holes_cut_at_run_time_and_far_holed_chunks_cut_them_by_their_material`,
+  `far_nodes_and_the_coarse_ground_keep_the_holes_the_coarse_grid_holds` and
+  `displaced_chunks_split_less_far_away_and_meet_at_the_coarser_detail`.
+- Edit layers (`edits_test.odin`):
+  `edit_layers_hold_what_their_strokes_add_through_hide_show_save_and_remove` and
+  `splines_conform_a_bed_that_paints_follows_the_ground_and_gives_back_what_was_under`.
+- Regions (`region_test.odin`): `a_copied_region_goes_elsewhere_turned_mirrored_raised_and_faded`
+  and `a_mirrored_heightfield_meets_itself_at_the_plane`.
+- `layers_test.odin` (`each_collider_cell_shows_the_material_that_covers_most_of_it` among them),
+  `holes_test.odin`, `shading_test.odin` and `shape_test.odin` (falloff, wide
   Smooth, ramp and shapes).
 - `displaced_chunks_split_their_cells_on_the_collider_and_join_their_neighbors`: the relief
   subdivides over the collider, stitches the sides and respects the holes; its image needs a GPU
   capture.
-- Levels: `chunks_of_mixed_levels_join_without_cracks_or_overlaps` and
-  `far_chunks_show_coarser_levels_while_colliders_keep_every_sample`. `bench_terrain_levels`
+- Levels: `chunks_of_mixed_levels_join_without_cracks_or_overlaps`,
+  `balanced_levels_are_the_coarsest_one_apart_from_their_neighbors` and
+  `far_chunks_show_coarser_levels_while_colliders_keep_every_sample` (also a second local view).
+  `bench_terrain_levels`
   (`-define:TERRAIN_BENCH=true`) measures each level.
 - `terrains_that_cannot_load_or_be_edited_report_their_entity_and_the_fix`.
 - Brushes (`brush_options_test.odin`):
@@ -754,6 +890,7 @@ physics, saving, stability and world copy.
   `terraces_level_each_step_and_rise_over_their_riser`,
   `noise_is_the_same_pattern_at_a_point_and_passes_deepen_it`,
   `erosion_carries_ground_down_a_slope_into_a_basin_and_stays_near_the_disc`,
+  `thermal_erosion_slides_a_cliff_down_to_its_talus_and_keeps_its_ground`,
   `the_slope_filter_and_an_alpha_choose_what_a_brush_touches`,
   `paint_toward_a_target_stops_at_its_weight` and
   `a_resized_heightfield_keeps_its_ground_in_place_and_grows_from_its_edges`.
@@ -780,13 +917,15 @@ physics, saving, stability and world copy.
   `chunks_without_a_slot_for_their_collider_still_show_their_ground_and_the_nearest_collide`,
   `letting_go_of_an_excavated_zone_and_reading_it_again_keeps_its_edits`,
   `a_volume_lets_go_of_the_blocks_far_from_its_viewers_and_reading_them_again_keeps_its_edits`,
-  `reading_a_paged_source_again_keeps_the_pages_its_file_still_holds` and
+  `reading_a_paged_source_again_keeps_the_pages_its_file_still_holds`,
+  `a_paged_heightfield_reads_its_coarse_data_and_loses_a_layer_without_holding_its_pages` and
   `a_streamed_volume_past_its_budget_shows_nodes_in_place_of_its_far_chunks`.
   `bench_terrain_update_while_a_brush_edits` (`-define:MIRAI_BENCH=true`).
 - Quadtree: `quad_test.odin`
   (`quadtree_nodes_and_chunks_of_mixed_levels_join_without_cracks_or_overlaps`, the coarse grid) and
   `quad_pipeline_test.odin`: a streamed terrain is covered once on each tick when crossing it, an
-  elevated chunk is resident before being built, the piece budget opens by distance, and
+  elevated chunk is resident before being built, the piece budget opens by distance and far
+  nodes collide, and
   `sixty_four_terrains_of_one_source_stream_without_holes_caps_or_allocations` (the 8 by 8 world of
   terrains of one source, scaled down, without allocating in a stable frame).
 
@@ -799,13 +938,15 @@ cause, a correction that comes back and repeats the ticks, the brush in bytes, a
 Ground and dust: `mirai test plugins/terrain/runtime` with
 `the_ground_answers_each_line_as_its_terrain_has_it`,
 `the_chunks_of_a_terrain_without_collider_are_unloaded_ground` and
-`a_dig_raises_dust_of_each_layer_it_took_on_its_channel`. Debris:
+`a_dig_raises_the_dust_of_the_material_of_each_layer_it_took_wherever_the_layer_is`. Debris:
 `mirai test plugins/terrain_debris/runtime`
 (`digs_give_a_piece_for_each_volume_taken_and_keep_what_falls_short_for_the_next`).
 
 Editor: `mirai test plugins/terrain/editor` (CPU).
 
 - `terrain_creation_separates_heightfield_and_volume_and_keeps_undo`
+- `heights_and_weightmaps_go_out_and_come_back_in_each_format`
+- `strokes_on_an_edit_layer_and_a_conformed_spline_are_steps_of_undo`
 - `a_closed_mesh_joins_or_carves_a_volume_as_samples_and_undo_brings_its_entity_back`,
   `the_surface_of_a_volume_is_saved_as_a_mesh_asset`
 - `a_canceled_stroke_takes_back_its_head_and_keeps_the_history`

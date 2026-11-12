@@ -2,6 +2,8 @@ package terrain
 
 import "base:runtime"
 import "mirai:core"
+import "mirai:std/base"
+import camera "mirai:engine/camera"
 import render "mirai:engine/render"
 import scene "mirai:engine/scene"
 import "mirai:host"
@@ -33,19 +35,19 @@ TERRAIN_TEST_SETTINGS :: Terrain_Settings{lod_distance=-1}
 // terrain_update alone, on the rows as they are and as the loop calls it: in
 // a fixed tick of a world that plays, unless told. commands are those of the
 // world that holds the tables.
-test_step :: proc(g:^Test_Terrain,commands:core.Commands,resident:^Terrain_Resident,app:^host.App,problems:^core.Problems,settings:=TERRAIN_TEST_SETTINGS,time:=core.Time{playing=true},frame:=core.Frame_Time{phase=.Fixed},view:=core.View{}) {
+test_step :: proc(g:^Test_Terrain,commands:core.Commands,resident:^Terrain_Resident,app:^host.App,problems:^core.Problems,settings:=TERRAIN_TEST_SETTINGS,time:=core.Time{playing=true},frame:=core.Frame_Time{phase=.Fixed},view:=core.View{},locals:=core.Ref(camera.Camera_Views){}) {
     terrain_update(
         commands,&g.terrains,&g.chunks,core.read(&g.transforms),core.read(&g.parents),core.read(&g.ids),&g.colliders,
         &g.statics,&g.looks,&g.data,resident,&g.terrain_requests,&g.digs,settings,app,time,frame,
-        view,core.read(&g.worlds),core.ref(&g.streaming),{},g.settings,{},nil,problems,{},&g.ground_queries,&g.terrain_ground,
+        view,locals,core.read(&g.worlds),core.ref(&g.streaming),{},g.settings,{},nil,problems,{},&g.ground_queries,&g.terrain_ground,
     )
 }
 
-// The chunks that show values of layers over their material.
+// The chunks that show the table of the layers of Terrain_Layers over their material.
 @(private)
 layered_chunks :: proc(g:^Test_Terrain) -> (count:int) {
     for &look in g.looks.values[:core.count(&g.looks)] {
-        if look.count>0 {count+=1}
+        if table,has:=render.material_texture_of(&look,0,base.name_hash("layers"));has && table!={} {count+=1}
     }
     return
 }

@@ -3,6 +3,7 @@ package terrain
 import "base:runtime"
 import "core:fmt"
 import "core:math"
+import "core:math/linalg"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
@@ -114,8 +115,8 @@ a_streamed_terrain_never_disappears_far_away_and_covers_itself_once_as_the_viewe
     testing.expect(t,grid_dense(&s.field)<len(s.field.pages)*PAGE*PAGE/2,"the pages far from the viewer are not in memory")
     hit,ok:=phys.raycast({&w.state},corner+{0,20,0},{0,-1,0})
     testing.expect(t,ok && abs(hit.point.y)<1)
-    _,ok=phys.raycast({&w.state},{110,20,110},{0,-1,0})
-    testing.expect(t,!ok,"a node has no collider")
+    hit,ok=phys.raycast({&w.state},{110,20,110},{0,-1,0})
+    testing.expect(t,ok && piece_depth(&w,hit)>0,"far ground collides with its node")
     // A frame that changes nothing builds and allocates nothing.
     calls,built:=counter.requests,resident.stats.built
     for _ in 0..<5 {quad_tick(&w,&resident,&app,settings)}
@@ -134,8 +135,8 @@ a_streamed_terrain_never_disappears_far_away_and_covers_itself_once_as_the_viewe
     quad_settle(&w,&resident,&app,settings)
     hit,ok=phys.raycast({&w.state},{110,20,110},{0,-1,0})
     testing.expect(t,ok,"the chunks near the viewer collide")
-    _,ok=phys.raycast({&w.state},corner+{0,20,0},{0,-1,0})
-    testing.expect(t,!ok)
+    hit,ok=phys.raycast({&w.state},corner+{0,20,0},{0,-1,0})
+    testing.expect(t,ok && piece_depth(&w,hit)>0,"the corner it left collides with its node")
     testing.expect_value(t,w.problems.count,0)
 }
 
@@ -156,7 +157,7 @@ an_elevated_chunk_becomes_resident_near_a_viewer_before_it_is_built :: proc(t:^t
     quad_viewer(&w,{0,801,0})
     settings:=Terrain_Settings{resident_distance=30}
     quad_tick(&w,&resident,&app,settings)
-    for range in w.data.entries[0].ranges {testing.expect(t,range.x>=800 && range.y<=801)}
+    for range in w.data.entries[0].source.coarse.ranges {testing.expect(t,range.x>=800 && range.y<=801)}
     quad_settle(&w,&resident,&app,settings)
     hit,ok:=phys.raycast({&w.state},{0,900,0},{0,-1,0})
     testing.expectf(t,ok && abs(hit.point.y-800)<1,"a viewer standing on it has ground: %v",hit.point)
@@ -193,6 +194,9 @@ past_the_chunk_budget_far_chunks_show_as_nodes_by_distance_not_by_index :: proc(
     testing.expect(t,o.nodes[63].visible,"the nearest chunk shows")
     testing.expect(t,!o.nodes[0].visible,"the farthest shows in a node")
     testing.expect_value(t,len(w.statics.values),visible)
+    // The far ground collides with the triangles its node shows: a long ray from the view stops on it.
+    hit,ok:=phys.raycast({&w.state},view.position,linalg.normalize([3]f32{-57,0,-57}-view.position),400)
+    testing.expectf(t,ok && piece_depth(&w,hit)>0 && hit.point.x<-30 && hit.point.y>-0.01 && hit.point.y<0.51,"the ray hits the node of the far corner: %v",hit.point)
     testing.expect(t,core.problem_find(&w.problems,owner,"terrain.chunks_full")==nil)
     // The view moves to the other corner: the nodes open there.
     view.position={-60,5,-60}
@@ -295,5 +299,45 @@ a_still_view_builds_nothing_once_settled_at_any_distance_for_chunks_of_odd_cells
         if o.nodes[o.quad.first[1]].open {opened=true} else {closed=true}
     }
     testing.expect(t,opened && closed,"the sweep crosses the distance where the nodes close")
+    testing.expect_value(t,w.problems.count,0)
+}
+
+// Choosing what a terrain shows walks its tree from the roots and goes down
+// only where it is near or seen finer: a large terrain seen from above one
+// corner looks at a small part of its nodes, wherever the corner is.
+@(test)
+choosing_the_pieces_of_a_large_terrain_looks_at_what_is_near_not_at_every_node :: proc(t:^testing.T) {
+    root:=base.test_folder(t,"terrain")
+    id:=base.Asset_Id{335,336}
+    samples:=1025
+    {
+        source:Source;testing.expect(t,source_make(&source,.Heightfield,{samples,1,samples},1,4));defer source_destroy(&source)
+        for z in 0..<samples {for x in 0..<samples {testing.expect(t,source_set(&source,{x,0,z},2*math.sin(f32(x)*0.013)*math.cos(f32(z)*0.011)))}}
+        source.revision=1
+        types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+        testing.expect_value(t,source_save(&source,fmt.tprintf("%s/source.terrain",root),id,&types),asset.Error.None)
+    }
+    assets:host.Assets;testing.expect(t,host.assets_init(&assets,{root=root,capacity=8192}));defer host.assets_destroy(&assets)
+    app:=host.App{assets=&assets,allocator=context.allocator}
+    w:Terrain_Test_World
+    if !terrain_test_world_init(t,&w) {return}
+    defer terrain_test_world_free(&w)
+    resident:Terrain_Resident;defer terrain_resident_free(&resident)
+    quad_owner(&w,id)
+    view:=core.VIEW_DEFAULT
+    view.size={1440,900}
+    nodes:=0
+    looked:[2]u32
+    for corner,k in ([2][3]f32{{-500,20,-500},{480,20,470}}) {
+        view.position=corner
+        quad_settle(&w,&resident,&app,{},view)
+        // Chosen again once what the corner before showed has gone.
+        for _ in 0..<2 {resident.marks+=1;quad_tick(&w,&resident,&app,{},view)}
+        looked[k]=resident.stats.visited
+        nodes=len(resident.owners[0].nodes)
+        holes,overlaps:=quad_coverage(&resident.owners[0])
+        testing.expectf(t,holes==0 && overlaps==0,"%d chunks without a piece, %d with more",holes,overlaps)
+    }
+    testing.expectf(t,int(looked[0])*10<nodes && int(looked[1])*10<nodes,"%v of %d nodes looked at",looked,nodes)
     testing.expect_value(t,w.problems.count,0)
 }

@@ -160,7 +160,8 @@ shape_triangles :: proc(w:^World,out:^Triangle_Out,shape:^Shape,box:Aabb) -> boo
         hull:=box_hull(&storage,shape.size)
         return hull_triangles(out,&hull,xf)
     case .Hull:
-        return hull_triangles(out,&w.hulls[shape.resource].hull,xf)
+        scaled:Scaled_Hull=---
+        return hull_triangles(out,shape_hull_of(w,shape,false,&scaled),xf)
     case .Mesh:
         return mesh_triangles(out,&w.meshes[shape.resource].mesh,xf,box)
     case .Heightfield:

@@ -77,7 +77,7 @@ gpu_what_phase_1_rescues_is_drawn_once :: proc(t: ^testing.T) {
 	scene_given(r, {{object_id = 1, mesh = cube, transform = wall, tint = 1}}, nil, {}, {})
 	N :: 30
 	field := make([]Batch_Instance, N * N, context.temp_allocator)
-	for &b, i in field {b = batch_instance({f32(i % N) - N / 2, f32(i / N) * 0.7 - 10, 20}, 1, 0.5, 0.5)}
+	for &b, i in field {b = batch_instance({f32(i % N) - N / 2, f32(i / N) * 0.7 - 10, 20}, 1, {0.5, 0.5, 0.5})}
 	_, error := batch_set(r, 0, r.world_key, {mesh = cube, tint = 1}, field)
 	testing.expect_value(t, error, "")
 	camera := Camera{position = {0, 0, -10}, forward = {0, 0, 1}, up = {0, 1, 0}, fov_y = 60, near = 0.1, far = 200, exposure = UNIT_EXPOSURE}
@@ -114,8 +114,8 @@ gpu_instances_of_batches_smaller_than_a_pixel_are_not_rasterized :: proc(t: ^tes
 	settings := r.settings
 	camera := Camera{position = {0, 0, 0}, forward = {0, 0, 1}, up = {0, 1, 0}, fov_y = 60, near = 0.1, far = 5000, exposure = UNIT_EXPOSURE}
 	// At 1000 m a pixel of this view is about 9.6 m: the box of 2 m spans under half of one, that of 60 m about eleven.
-	tiny := [1]Batch_Instance{batch_instance({0, 0, 1000}, 1, 2, 2)}
-	large := [1]Batch_Instance{batch_instance({0, 0, 1000}, 1, 60, 60)}
+	tiny := [1]Batch_Instance{batch_instance({0, 0, 1000}, 1, {2, 2, 2})}
+	large := [1]Batch_Instance{batch_instance({0, 0, 1000}, 1, {60, 60, 60})}
 	drawn :: proc(t: ^testing.T, r: ^Renderer, mesh: Mesh_Handle, instances: []Batch_Instance, camera: Camera) -> u32 {
 		handle, error := batch_set(r, 0, r.world_key, {mesh = mesh, tint = 1}, instances)
 		testing.expect_value(t, error, "")

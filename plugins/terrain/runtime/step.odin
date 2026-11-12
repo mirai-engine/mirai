@@ -5,6 +5,7 @@ import "core:math/linalg"
 import "core:slice"
 import "mirai:asset"
 import "mirai:core"
+import camera "mirai:engine/camera"
 import scene "mirai:engine/scene"
 import render "mirai:engine/render"
 import phys "plugins:physics/runtime"
@@ -76,6 +77,11 @@ shown_touched :: proc "contextless" (terrains:^core.Table(Terrain),c:^Chunk_Tabl
 
 @(private)
 collider_kind :: #force_inline proc "contextless" (kind:Source_Kind) -> phys.Collider_Kind {return kind==.Heightfield?.Heightfield:.Mesh}
+
+// What piece i of a source collides with: a chunk of a Heightfield its
+// heightfield, a node or a piece of a Volume the triangles it shows.
+@(private)
+piece_collider_kind :: #force_inline proc "contextless" (s:^Source,chunks,i:int) -> phys.Collider_Kind {return i<chunks?collider_kind(s.kind):.Mesh}
 
 // The slots of Physics_Settings the colliders of a source take: 0 for heightfields, 1 for meshes.
 @(private)
@@ -157,17 +163,24 @@ chunk_take :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,entry:^Data_Source
     chunk:=&source.chunks[index]
     s:=&entry.source
     mesh,ok:=chunk_publish(resident.assets,&slot.mesh,slot.key.collision,resident.picking,piece_levels(s,&source.quad,index))
+    maps:Piece_Maps
+    if ok && mesh!={} {
+        maps,ok=piece_maps_publish(resident.assets,&slot.mesh.maps)
+        if !ok {host.assets_mesh_release(resident.assets,mesh)}
+    }
     if !ok {
         name:[base.ASSET_ID_TEXT]u8
         core.report(problems,source_owner(terrains,entry.id),"terrain.chunk_mesh","the mesh of piece %v (depth %d) of terrain source %s could not be made: out of memory for the mesh or its collision; free memory, or give the source fewer cells per chunk",quad_place(&entry.source,&source.quad,index),quad_depth(&source.quad,index),host.assets_name(resident.assets,entry.id,&name))
         source_pending(source,index)
         return
     }
-    if chunk.mesh!={} {host.assets_mesh_release(resident.assets,chunk.mesh);resident.stats.released+=1;resident.stats.meshes-=1}
+    if chunk.mesh!={} {resident.stats.released+=1;resident.stats.meshes-=1}
     if !chunk.shown {resident.cut=true}
     // A chunk that turns empty or stops being so gives or wants a collider (resident_colliders).
     if !chunk.shown || (chunk.mesh=={})!=(mesh=={}) {resident.marks+=1}
+    piece_release(resident.assets,chunk)
     chunk.mesh,chunk.revision,chunk.built,chunk.shown=mesh,slot.version,slot.key,true
+    chunk.maps,chunk.shape=maps,piece_shape(s,&slot.mesh.maps)
     // The blocks a node of a Volume read may leave now.
     if piece_levels(s,&source.quad,index) {source.leave=true}
     if mesh!={} {resident.stats.meshes+=1}
@@ -179,9 +192,10 @@ chunk_take :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,entry:^Data_Source
 @(private)
 piece_take_empty :: proc(resident:^Terrain_Resident,entry:^Data_Source,source:^Resident_Source,index:int) {
     chunk:=&source.chunks[index]
-    if chunk.mesh!={} {host.assets_mesh_release(resident.assets,chunk.mesh);resident.stats.released+=1;resident.stats.meshes-=1}
+    if chunk.mesh!={} {resident.stats.released+=1;resident.stats.meshes-=1}
     if !chunk.shown {resident.cut=true}
     if !chunk.shown || chunk.mesh!={} {resident.marks+=1}
+    piece_release(resident.assets,chunk)
     chunk.mesh,chunk.revision,chunk.built,chunk.shown={},data_version(entry,index),chunk.wanted,true
     append(&source.changed,u32(index))
 }
@@ -190,8 +204,9 @@ piece_take_empty :: proc(resident:^Terrain_Resident,entry:^Data_Source,source:^R
 @(private)
 chunk_evict :: proc(resident:^Terrain_Resident,source:^Resident_Source,index:int) {
     chunk:=&source.chunks[index]
-    if chunk.mesh!={} {host.assets_mesh_release(resident.assets,chunk.mesh);resident.stats.released+=1;resident.stats.meshes-=1} else if chunk.shown {resident.marks+=1}
-    chunk.mesh,chunk.revision,chunk.built,chunk.shown={},0,{},false
+    if chunk.mesh!={} {resident.stats.released+=1;resident.stats.meshes-=1} else if chunk.shown {resident.marks+=1}
+    piece_release(resident.assets,chunk)
+    chunk.revision,chunk.built,chunk.shown=0,{},false
     append(&source.changed,u32(index))
     source.leave=true
     resident.stats.evicted+=1
@@ -250,6 +265,7 @@ work_take :: proc(c:^Chunk_Tables,data:^Terrain_Data,resident:^Terrain_Resident,
         case .Field:   first,last,installed=install(&s.field,slot,data)
         case .Weights: first,last,installed=install(&s.weights,slot,data)
         case .Holes:   first,last,installed=install(&s.holes,slot,data)
+        case .Paint:   first,last,installed=install(&s.paint,slot,data)
         }
         if !installed {return}
         slot.page=nil
@@ -280,7 +296,7 @@ pages_start :: proc(data:^Terrain_Data,entry:^Data_Source,low,high:[3]int,phase:
         }}}
         return true
     }
-    _=start(data,entry,&s.field,.Field,low,high,phase,problems,e,a) && start(data,entry,&s.weights,.Weights,low,high,phase,problems,e,a) && start(data,entry,&s.holes,.Holes,low,high,phase,problems,e,a)
+    _=start(data,entry,&s.field,.Field,low,high,phase,problems,e,a) && start(data,entry,&s.weights,.Weights,low,high,phase,problems,e,a) && start(data,entry,&s.holes,.Holes,low,high,phase,problems,e,a) && start(data,entry,&s.paint,.Paint,low,high,phase,problems,e,a)
 }
 
 // Whether the pages of a region of samples are in memory: if not, a build
@@ -368,7 +384,7 @@ terrain_schedule :: proc(data:^Terrain_Data,resident:^Terrain_Resident,entry:^Da
                 if low,high,ok:=chunk_pages_region(s,i);ok && !pages_ready(data,resident,entry,low,high,urgent,phase,problems,terrains) {keep=true;break build}
             } else if s.kind==.Heightfield {
                 border=&resident.border
-                levels:=Border_Levels{counts=q.counts[0],levels=source.levels,deep=source.deep}
+                levels:=resident_border(resident,source)
                 a,b:=quad_chunks(q,i)
                 piece_border(&levels,a,b,border)
                 if !node_border_ready(data,resident,entry,i,border,urgent,phase,problems,terrains) {keep=true;break build}
@@ -379,7 +395,9 @@ terrain_schedule :: proc(data:^Terrain_Data,resident:^Terrain_Resident,entry:^Da
                 if urgent {urgent_left^=true}
                 break build
             }
-            if !work_build(data,slot,entry,source.owner,i,chunk.wanted,urgent,phase,host.assets_limits(resident.assets),border,&source.join) {
+            edges:[4]Edge_Read
+            if owner:=resident_owner_find(resident,source.owner,source.id);owner!=nil && s.kind==.Heightfield {edges=owner_edges(resident,data,owner)}
+            if !work_build(data,slot,entry,source.owner,i,chunk.wanted,urgent,phase,host.assets_limits(resident.assets),border,&source.join,edges) {
                 name:[base.ASSET_ID_TEXT]u8
                 core.report(problems,source.owner,"terrain.memory","out of memory for the border of a piece of terrain source %s; it is built in a later frame: free memory, or make the source smaller",host.assets_name(resident.assets,entry.id,&name))
                 keep=true
@@ -426,17 +444,35 @@ pages_leave :: proc(data:^Terrain_Data,resident:^Terrain_Resident,entry:^Data_So
     data.samples=u32(int(data.samples)-before+source_cost(s))
 }
 
-// The layers of a source as each chunk shows them, made again when its layers
-// or the assets change.
+// The layers of a source as each piece shows them: the texture of their
+// table, made again when its layers or the assets change.
 @(private)
 resident_layers_override :: proc(resident:^Terrain_Resident,source:^Resident_Source,s:^Source) -> render.Material_Values {
     a:=resident.assets
     stamp:=[2]u64{a.revision,a.structure}
     if source.override_info.layer_count!=s.layer_count || source.override_info.layers!=s.layers || source.override_assets!=stamp {
-        source.override=layers_override(a,s)
         source.override_info.layer_count,source.override_info.layers,source.override_assets=s.layer_count,s.layers,stamp
+        // The assets change as pieces come and go: a texture of the same table stays.
+        pixels:[4*LAYERS_TEXELS*LAYERS_MAX]u8
+        layers_table(a,s,pixels[:4*LAYERS_TEXELS*int(s.layer_count)])
+        if source.table!={} && pixels==source.table_pixels {return source.override}
+        if source.table!={} {host.assets_texture_release(a,source.table);source.table={}}
+        source.table,_=host.assets_texture_generate(a,pixels[:4*LAYERS_TEXELS*int(s.layer_count)],LAYERS_TEXELS,int(s.layer_count),false,"terrain layers")
+        source.table_pixels=pixels
+        source.override=render.MATERIAL_VALUES_DEFAULT
+        render.material_texture(&source.override,base.name_hash("layers"),0,source.table)
+        // Releasing the texture it held changed the assets.
+        source.override_assets={a.revision,a.structure}
     }
     return source.override
+}
+
+// Lets go of the mesh of a piece and of the textures of its maps.
+@(private)
+piece_release :: proc(a:^host.Assets,chunk:^Resident_Chunk) {
+    if chunk.mesh!={} {host.assets_mesh_release(a,chunk.mesh)}
+    piece_maps_release(a,&chunk.maps)
+    chunk.mesh,chunk.shape={},{}
 }
 
 // Shows the pieces of a source for an owner: every one when its appearance,
@@ -517,7 +553,7 @@ owner_chunk_show :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,owner:^Resid
         owner.chunks[index]=e
         created=true
     }
-    kind:=collider_kind(s.kind)
+    kind:=piece_collider_kind(s,q.first[1],index)
     wants:=owner.solid && chunk.built.collision && node.collide && chunk.mesh!={}
     old,has_old:=core.get(c.chunks,e)
     held,_:=core.get(c.meshes,e)
@@ -539,25 +575,33 @@ owner_chunk_show :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,owner:^Resid
             starved_report(problems,owner.entity,resident.assets,entry.id,coord,kind,physics)
         } else if has {room_give(resident,collider.kind)}
     }
-    core.add(c.meshes,e,render.Mesh_Renderer{mesh=chunk.mesh,materials=owner.materials})
+    materials:=owner.materials
+    if chunk.shape.holed {materials[0]=piece_material(s,true)}
+    core.add(c.meshes,e,render.Mesh_Renderer{mesh=chunk.mesh,materials=materials})
     look:=owner.tint
     render.material_values_over(&look,&owner.override)
+    piece_values(&look,chunk.maps,chunk.shape)
     core.add(c.looks,e,look)
     if wants {
         made:=phys.COLLIDER_DEFAULT
-        made.kind=collider_kind(s.kind)
+        made.kind=kind
         core.add(c.colliders,e,made)
     } else if has {core.remove(c.colliders,e);room_give(resident,collider.kind)}
 }
 
 // The loaded source of the terrain a request names; without it the request is a problem of that entity.
 // The terrain a request edits and its brush as its source reads it: what an
-// edit keys on from here on, also on the network.
+// edit keys on from here on, also on the network. error: a scale of the
+// terrain the brush cannot take (brush_local).
 @(private)
-edit_resolve :: proc(request:Edit_Request,data:^Terrain_Data,terrains:^core.Table(Terrain,$A),worlds:^core.Table(core.World_Transform,$B)) -> (resolved:Edit_Request,ok:bool) {
+edit_resolve :: proc(request:Edit_Request,data:^Terrain_Data,terrains:^core.Table(Terrain,$A),worlds:^core.Table(core.World_Transform,$B)) -> (resolved:Edit_Request,error:Edit_Error,ok:bool) {
     owner:=request.owner
     if owner==core.NONE {owner=dig_owner(request.brush,data,terrains,worlds) or_return}
-    return {owner,brush_local(request.brush,edit_place(worlds,owner))},true
+    kind:=Source_Kind.Heightfield
+    if marker,found:=core.get(terrains,owner);found {if entry:=data_find(data,marker.source);entry!=nil {kind=entry.source.kind}}
+    resolved.owner=owner
+    resolved.brush,error=brush_local(request.brush,edit_place(worlds,owner),kind)
+    return resolved,error,true
 }
 
 @(private)
@@ -576,7 +620,7 @@ dig_owner :: proc(brush:Brush,data:^Terrain_Data,terrains:^core.Table(Terrain,$A
         entry:=data_find(data,marker.source)
         if entry==nil {continue}
         e:=core.entity_at(terrains,row)
-        local:=brush_local(brush,edit_place(worlds,e))
+        local,_:=brush_local(brush,edit_place(worlds,e),entry.source.kind)
         s:=&entry.source
         low,high:=source_box(s,{},s.field.size-1)
         outside:=linalg.max(low-local.center,local.center-high,[3]f32{})
@@ -631,15 +675,17 @@ data_layer :: proc(data:^Terrain_Data,entry:^Data_Source,change:Layer_Change) ->
     s:=&entry.source
     work_wait(data,s)
     previous_cost:=source_cost(s)
-    // Taking a layer away rewrites every weight.
-    read:=!change.remove || source_weights_read_all(s)
-    data.samples=u32(int(data.samples)-previous_cost+source_cost(s))
-    if !read {return false,.Out_Of_Memory}
-    if !(change.remove?source_layer_remove(s,int(change.index)):source_layer_set(s,int(change.index),change.layer)) {return false,.Invalid}
+    if change.remove {
+        // Taking a layer away rewrites every weight, page by page; what it cannot take away is invalid.
+        if change.index>=s.layer_count || s.layer_count==1 {return false,.Invalid}
+        removed:=source_layer_remove(s,int(change.index))
+        data.samples=u32(int(data.samples)-previous_cost+source_cost(s))
+        if !removed {return false,.Out_Of_Memory}
+    } else if !source_layer_set(s,int(change.index),change.layer) {return false,.Invalid}
     source_pages_edited(s)
     data_mark_all(entry)
     data.stats.edits+=1
-    return true,source_coarse_weights(s)?.None:.Out_Of_Memory
+    return true,.None
 }
 
 @(private)
@@ -681,7 +727,7 @@ terrain_update :: proc(
     locals:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),ids:^core.Table(core.Id,.Read),colliders:^core.Table(phys.Collider),
     meshes:^core.Table(render.Mesh_Renderer),looks:^core.Table(render.Material_Values),
     data:^Terrain_Data,resident:^Terrain_Resident,requests:^Terrain_Requests,digs:^Terrain_Digs,settings:Terrain_Settings,app:^host.App,time:core.Time,frame:core.Frame_Time,
-    view:core.View,worlds:^core.Table(core.World_Transform,.Read),sources:core.Ref(scene.Streaming_Sources),kept:^core.Table(scene.Far_Kept,.Read),physics:phys.Physics_Settings,
+    view:core.View,camera_views:core.Ref(camera.Camera_Views),worlds:^core.Table(core.World_Transform,.Read),sources:core.Ref(scene.Streaming_Sources),kept:^core.Table(scene.Far_Kept,.Read),physics:phys.Physics_Settings,
     loads:core.Ref(scene.Section_Loads),waits:^scene.Load_Waits,problems:^core.Problems,focus:Terrain_Focus,queries:^core.Ground_Queries,ground:^Terrain_Ground,
 ) {
     c:=Chunk_Tables{commands,chunks,locals,parents,ids,colliders,meshes,looks}
@@ -762,10 +808,11 @@ terrain_update :: proc(
         }
     }
     if !time.playing || frame.phase==.Fixed {
-        for asked_edit in core.take(&requests.edits) {
-            request:=edit_resolve(asked_edit,data,terrains,worlds) or_continue
+        // A brush over an edge two terrains share writes both.
+        for asked in core.take(&requests.edits) {spread,count:=edit_spread(asked,data,terrains,worlds);for asked_edit in spread[:count] {
+            request,scaled:=edit_resolve(asked_edit,data,terrains,worlds) or_continue
             entry:=request_source(data,terrains,request.owner,"an edit",problems,app.assets) or_continue
-            change:=data_edit(data,entry,request.brush)
+            change:=scaled==.None?data_edit(data,entry,request.brush):Change{error=scaled}
             if change.error!=.None {
                 edit_report(problems,request.owner,app.assets,entry,request.brush,change.error)
                 continue
@@ -774,7 +821,7 @@ terrain_update :: proc(
             if time.playing {dig_push(digs,request.owner,entry,worlds)}
             entry.source.revision+=1
             for value,row in terrains.values[:core.count(terrains)] {if value.source==entry.id {core.edit_at(terrains,row).revision=entry.source.revision}}
-        }
+        }}
         for request in core.take(&requests.layers) {
             entry:=request_source(data,terrains,request.owner,"a layer change",problems,app.assets) or_continue
             applied,error:=data_layer(data,entry,request.change)
@@ -815,7 +862,7 @@ terrain_update :: proc(
         // What stands for a section that is not loaded collides with nothing.
         for &owner in resident.owners {owner.far=kept!=nil && core.has(kept,owner.entity)}
         resident_joins(resident,data,terrains,ids,worlds,locals,problems)
-        resident_lod(resident,data,worlds,view,sources,settings,terrains,&c,physics,problems,changed || first,focus)
+        resident_lod(resident,data,worlds,lod_views_of(view,camera_views,app),sources,settings,terrains,&c,physics,problems,changed || first,focus)
         resident_cut(resident,data)
         stream:=settings.resident_distance>0
         // A piece that is wanted where nothing shows is built in this call.
@@ -914,9 +961,9 @@ resident_owner :: proc(resident:^Terrain_Resident,e:core.Entity,entry:^Data_Sour
     owner.chunks,e0=make([]core.Entity,count,allocator)
     owner.nodes,e1=make([]Owner_Node,count,allocator)
     owner.changed,e2=make([dynamic]u32,0,2*count,allocator)
-    room:=count
-    for &other in resident.owners {room+=len(other.nodes)}
-    if e0!=nil || e1!=nil || e2!=nil || reserve(&resident.splits,room)!=nil || append(&resident.owners,owner)!=1 {
+    owner.visit,owner.kept=make([dynamic]u32,allocator),make([dynamic]u32,allocator)
+    reserved:=reserve(&resident.places,len(resident.owners)+1)==nil
+    if e0!=nil || e1!=nil || e2!=nil || !reserved || append(&resident.owners,owner)!=1 {
         resident_owner_free(&owner)
         source_memory(problems,e,resident.assets,entry.id)
         return nil

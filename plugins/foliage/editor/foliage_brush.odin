@@ -114,10 +114,13 @@ disc_point :: proc "contextless" (center,normal:[3]f32,radius:f32,random:^mm.Rng
 }
 
 
-// Turns the generator on or off in the cells under a brush. True when one changed.
+// Raises (on) or lowers the density the cells under a brush generate with.
+// True when one changed.
 generate_touch :: proc(s:^foliage.Source,center:[3]f32,radius:f32,on:bool) -> (changed:bool) {
-    return foliage.source_generate_area(s,center,radius,on)
+    return foliage.source_generate_area(s,center,radius,on,GENERATE_HARDNESS)
 }
+
+GENERATE_HARDNESS :: f32(0.5) // of the radius of the Generate brush: where it gives all of the density, or takes all of it
 
 // An instance a selection names: its cell and its id (foliage.Placed.id).
 Instance_Ref :: struct {
@@ -128,7 +131,7 @@ Instance_Ref :: struct {
 // The instance of a cell that the k-th instance of a batch of a type shows:
 // the batches of a cell hold the instances of each type in the order the
 // cell places them.
-instance_of_batch :: proc(s:^foliage.Source,ground:^foliage.Ground_Owner,coord:[2]i32,type:u32,k:int,work:^foliage.Build_Work,role:=foliage.ROLE_MESH,owner:=mm.Quat(1)) -> (ref:Instance_Ref,placed:foliage.Placed,found:bool) {
+instance_of_batch :: proc(s:^foliage.Source,ground:^foliage.Ground_Owner,coord:[2]i32,type:u32,k:int,work:^foliage.Build_Work,role:=foliage.ROLE_MESH,owner:=mm.TRANSFORM_IDENTITY) -> (ref:Instance_Ref,placed:foliage.Placed,found:bool) {
     cell:=foliage.source_cell(s,coord)
     if cell==nil {return}
     if !foliage.cell_build(s,cell,ground_of(ground,coord),work) || !foliage.placed_group(s,work) {return}
@@ -166,7 +169,9 @@ instance_record :: proc "contextless" (s:^foliage.Source,p:foliage.Placed,ground
         rotation=linalg.normalize(conj(foliage.ground_slope(t.align,normal))*rotation)
         flags|=foliage.INSTANCE_ALIGNED
     }
-    return coord,{type=p.type,flags=flags,position=local,rotation=u32(mm.quat_pack(rotation,10)),scale=p.scale,ground=offset}
+    color:u32
+    if p.colored {flags,color=flags|foliage.INSTANCE_COLORED,p.color}
+    return coord,{type=p.type,flags=flags,position=local,rotation=u32(mm.quat_pack(rotation,10)),scale=p.scale,ground=offset,color=color}
 }
 
 // Puts an instance where a placement says, with its type: a manual one in
@@ -196,7 +201,7 @@ instance_set :: proc(s:^foliage.Source,ground:^foliage.Ground_Owner,ref:Instance
         foliage.source_override_set(s,ref.coord,{type=type,point=point,kind=p.type==type?.Moved:.Replaced,instance=instance})
         return ref,true
     }
-    added_coord,added:=foliage.source_instance_add(s,p.type,p.position,instance.rotation,instance.scale,instance.flags,instance.ground)
+    added_coord,added:=foliage.source_instance_add(s,p.type,p.position,instance.rotation,instance.scale,instance.flags,instance.ground,instance.color)
     if added==0 {return}
     foliage.source_override_set(s,ref.coord,{type=type,point=point,kind=.Deleted})
     return {added_coord,foliage.MANUAL | u64(added)},true

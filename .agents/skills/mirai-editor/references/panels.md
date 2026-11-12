@@ -236,7 +236,11 @@ the `World` (cancelling a drag leaves no trace):
 
 - 1 m grid: 40 lines per side, major every 10; X axis red and Z blue.
 - Disks of what has no body (lights, cameras, groups): they are picked with a click and mark the
-  highlight level.
+  highlight level. They show only near the camera: whole up to `INDICATOR_FADE`, fading by
+  distance (never over time) to nothing at `INDICATOR_REACH`, both scaled by how much the field of
+  view magnifies against `VIEW_FOV`. Past it a disk is neither drawn, picked, taken by a rectangle
+  nor given to the AI context, and costs no more than its distance; a selected or outlined one
+  shows whole at any distance.
 - Short arrows from each sun toward where it shines (its -Z). Of the selected light: three circles
   of its `range` (point and rect), the square and an arrow toward the side it shines (rect), and
   the cone of a spot up to `range`: the circle of its edge, eight lines from the light to it and,

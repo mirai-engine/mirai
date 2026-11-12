@@ -7,9 +7,9 @@ import "mirai:asset"
 import "mirai:std/base"
 
 @(private="file")
-dominant :: proc(w:[4]f32) -> int {
+dominant :: proc(w:Layer_Mix) -> int {
     best:=0
-    for i in 1..<4 {if w[i]>w[best] {best=i}}
+    for i in 1..<LAYERS_MAX {if w[i]>w[best] {best=i}}
     return best
 }
 
@@ -30,11 +30,11 @@ the_interior_of_a_volume_shows_where_it_is_dug_and_what_fills_keeps_its_layer ::
     for z in 4..<29 {for y in 0..<17 {for x in 4..<29 {
         p:=[3]int{x,y,z}
         depth:=-source_point(&s,p).y
-        w:=grid_value(&s.weights,p)
+        w:=weights_float(grid_value(&s.weights,p))
         if depth<3.5 {testing.expect(t,w[3]==0);continue}
         if depth>7 {continue}
         deep+=1
-        if w[3]==WEIGHT_FULL {ore+=1} else {testing.expect_value(t,w[2],u8(WEIGHT_FULL))}
+        if w[3]==1 {ore+=1} else {testing.expect_value(t,w[2],f32(1))}
     }}}
     testing.expectf(t,ore>deep/10 && ore<deep*9/10,"pockets take part of the deep samples: %d of %d",ore,deep)
 

@@ -45,7 +45,8 @@ $P scene.write '{"entities":[
 - `nav.Nav_Bounds`, `nav.Nav_Area`, `nav.Nav_Obstacle`: where navmeshes are made, an area with a
   cost, a blocker ([ai](../ai.md)). A `Box`, a `Sphere` or an `Outline`; without one, the problem
   `navigation.volume`.
-- `foliage.Foliage_Bender`: leans the grass around a body, as far as its volume reaches.
+- `foliage.Foliage_Bender`: leans the foliage around a body, as far as its volume reaches; it
+  stands back up over a few seconds after the body leaves.
 
 Several of them on one entity share its `Volume`: a `Force_Field` and a `Strain_Field` make a
 field that pushes and breaks.

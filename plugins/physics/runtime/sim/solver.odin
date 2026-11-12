@@ -615,6 +615,13 @@ proxies_update :: proc(w:^World) #no_bounds_check {
     }
 }
 
+// The surface of shape A a manifold of a contact is on.
+@(private)
+manifold_surface :: proc "contextless" (w:^World,contact:^Contact,index:u32) -> Surface {
+    a:=&w.shapes[contact.shape_a]
+    return a.type==.Heightfield?heightfield_surface(&w.heightfields[a.resource].field,index):{}
+}
+
 // Contact events with the impulse of the step, in contact order.
 @(private)
 step_events :: proc(w:^World) {
@@ -625,7 +632,7 @@ step_events :: proc(w:^World) {
         if .Debris in (w.bodies[contact.body_a].flags+w.bodies[contact.body_b].flags) {continue}
         manifold:=&w.manifolds[i]
         shape_a,shape_b,body_a,body_b:=contact_handles(w,contact)
-        event:=Contact_Begin_Event{shape_a=shape_a,shape_b=shape_b,body_a=body_a,body_b=body_b,normal=manifold.normal}
+        event:=Contact_Begin_Event{shape_a=shape_a,shape_b=shape_b,body_a=body_a,body_b=body_b,normal=manifold.normal,surface=manifold_surface(w,contact,manifold.surface)}
         event.users,_=event_users(w,contact.shape_a,contact.shape_b)
         for point in manifold.points[:manifold.count] {
             event.point+=point.point/f32(manifold.count)
@@ -664,7 +671,7 @@ step_hits :: proc(w:^World) {
         if points==0 || impulse<=0 {continue}
         shape_a,shape_b,_,_:=contact_handles(w,contact)
         through:=contact_through(w,contact)
-        event_push(w,w.events.hit,7,Contact_Hit_Event{shape_a=shape_a,shape_b=shape_b,point=xf_point(through,point/f32(points)),normal=q_rotate(through.q,w.manifolds[i].normal),impulse=impulse})
+        event_push(w,w.events.hit,7,Contact_Hit_Event{shape_a=shape_a,shape_b=shape_b,point=xf_point(through,point/f32(points)),normal=q_rotate(through.q,w.manifolds[i].normal),impulse=impulse,surface=manifold_surface(w,contact,w.manifolds[i].surface)})
     }
 }
 
