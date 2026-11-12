@@ -885,7 +885,7 @@ job_run :: proc(desc:Desc) -> ^Job {
 @(private)
 job_imports :: proc(job:^Job) -> bool {
     if len(job.imports)==0 {return true}
-    ok,message:=imports_sync(job.import_program,job.imports)
+    ok,message:=imports_sync(job.import_program,job.imports,fast=job.cook.assets=="")
     if !ok {
         job.result.text=strings.clone(message,virtual.arena_allocator(&job.arena))
         job_fail(job,.Import_Failed)

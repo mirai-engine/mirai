@@ -10,8 +10,9 @@ import importer "mirai:cook/import"
 import "mirai:cook/build"
 import "mirai:std/base"
 
-// A texture the editor imported Fast ships Final: the sync of a build builds
-// it again from its source with the id it has, and a cook without it says so.
+// A texture the editor imported Fast ships Final: the sync of a build that
+// cooks builds it again from its source with the id it has, a cook without it
+// says so, and the sync of a build that does not cook takes either as it is.
 @(test)
 a_cook_ships_a_fast_texture_final_from_its_source :: proc(t:^testing.T) {
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
@@ -56,9 +57,17 @@ a_cook_ships_a_fast_texture_final_from_its_source :: proc(t:^testing.T) {
     report:=build.cook_assets({assets=assets,output=fmt.tprintf("%s/program",folder),manifest=manifest,root=folder,allocator=context.temp_allocator})
     testing.expectf(t,report.error==.Source_Failed && strings.contains(report.detail,"assets/noise.tga") && strings.contains(report.detail,"mirai build game"),"%v %s",report.error,report.detail)
 
-    // The sync of a build does, with the id the texture has.
-    synced:=sync(folder,{texture_cache=fmt.tprintf("%s/cache/textures",folder),mesh_cache=fmt.tprintf("%s/cache/meshes",folder)},context.temp_allocator)
+    caches:=Sync_Options{texture_cache=fmt.tprintf("%s/cache/textures",folder),mesh_cache=fmt.tprintf("%s/cache/meshes",folder)}
+    fast:=caches
+    fast.fast_textures=true
+    kept:=sync(folder,fast,context.temp_allocator)
+    testing.expectf(t,kept.imported==0 && kept.removed==0 && len(kept.failures)==0,"Fast is current for a build that does not cook: %v",kept)
+
+    // The sync of a build that cooks does, with the id the texture has.
+    synced:=sync(folder,caches,context.temp_allocator)
     testing.expectf(t,synced.imported==1 && len(synced.failures)==0,"%v",synced)
+    kept=sync(folder,fast,context.temp_allocator)
+    testing.expectf(t,kept.imported==0 && kept.removed==0 && len(kept.failures)==0,"Final is current for a build that does not cook: %v",kept)
     report=build.cook_assets({assets=assets,output=fmt.tprintf("%s/game",folder),manifest=manifest,root=folder,allocator=context.temp_allocator})
     testing.expectf(t,report.error==.None,"%v %s",report.error,report.detail)
     shipped_id,shipped_flags,shipped_blocks:=level_of(t,&types,fmt.tprintf("%s/game/noise.tex",folder))

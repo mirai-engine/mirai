@@ -165,8 +165,9 @@ the assets.
 - **Textures in blocks are encoded with a perceptual metric and RDO** at
   `RDO_LAMBDA_DEFAULT` unless the setting `rdo_lambda` says otherwise.
 - **The editor never waits for the final encode** (`textures.Encode_Speed`): its imports take the
-  Final of the texture cache, else build Fast (no RDO, low effort, `Texture_Flag.Fast`), and the
-  sync of a build or of a cook builds a Fast texture again as Final from its source. `mirai import`
+  Final of the texture cache, else build Fast (no RDO, low effort, `Texture_Flag.Fast`). The sync
+  of a build that does not cook (the editor's) builds Fast too and takes Fast or Final as current;
+  only the sync of a build that cooks, or of `mirai package engine`, builds Final. `mirai import`
   and tools build Final, and so does the editor for a texture that is a document.
 - **One algorithm, once.** Mips, color rules and block compression in `cook/textures` (the
   encoders are `compressor:blocks`); PBR conversions in `cook/import/pbr.odin`; triangulation,
@@ -189,7 +190,7 @@ the assets.
   a mesh that another import built is taken from the cache);
   `cook/build/cook_cache_test.odin` (a cook takes the blocks of a texture from the cache of its
   content) and `cook/import/sources/cook_test.odin` (the sync of a cook builds a fast texture
-  final from its source).
+  final from its source; that of a build that does not cook keeps either).
 - Parallel: import a map with `mirai import --rebuild` over a copy of an import made without the
   job system (or before the change) and compare the trees with `diff -r`: the same bytes.
 - Also test `cook/prefab` if the imported hierarchy changes, and `asset` if an asset format or its

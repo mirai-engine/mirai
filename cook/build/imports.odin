@@ -10,10 +10,13 @@ import "mirai:std/subprocess"
 // import program of the engine (Engine_Paths.import_program, of the defines
 // the engine was built with), which reads the formats the plugins of the
 // project add from the library of its editor: the tool builds without the
-// importers. message, in the temp allocator: what it did, or why it failed.
-imports_sync :: proc(program:string,roots:[]string) -> (ok:bool,message:string) {
+// importers. Textures are built Final for a build that cooks them and Fast,
+// as the editor imports them, for one that does not (fast). message, in the
+// temp allocator: what it did, or why it failed.
+imports_sync :: proc(program:string,roots:[]string,fast:bool) -> (ok:bool,message:string) {
     command:=make([dynamic]string,context.temp_allocator)
     append(&command,program)
+    if fast {append(&command,"--fast")}
     for root in roots {append(&command,"--sync",root)}
     if len(roots)==0 {return true,""}
     state,output,errors,error:=subprocess.exec({command=command[:]},context.temp_allocator)

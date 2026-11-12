@@ -117,7 +117,7 @@ cmd_package :: proc(root:string,args:[]string) -> int {
     for plugin in plugins {
         if os.is_dir(join(out,"plugins",plugin.name,"assets")) {append(&imported,join(out,"plugins",plugin.name))}
     }
-    if ok,message:=build.imports_sync(build.engine_paths(out,.Release,context.temp_allocator).import_program,imported[:]);!ok {
+    if ok,message:=build.imports_sync(build.engine_paths(out,.Release,context.temp_allocator).import_program,imported[:],fast=false);!ok {
         fmt.eprintfln("mirai package: could not import the sources of the plugins: %s",message)
         return 1
     }

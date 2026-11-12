@@ -18,7 +18,8 @@ import "mirai:std/serial"
 // their sidecars: what every build of a project runs. An output is current
 // when its file is named by the key of what its import builds from now
 // (importer.import_key): the bytes of the source and of the files it read,
-// its settings and the importer, with textures built Final; a file whose
+// its settings and the importer, with textures built Final, or Fast under
+// Sync_Options.fast_textures, which also takes them Final; a file whose
 // size and modification time the cache of the root knows is not read
 // (importer.Source_Hashes). A source with an
 // output that is not is imported, with the formats of the engine or, for one
@@ -45,6 +46,10 @@ Library_Imports :: struct {
 Sync_Options :: struct {
     texture_cache,mesh_cache:string, // "": those of the root (project.content_cache_path)
     rebuild:bool,                    // imports every source again
+    // Textures built Fast, as the editor imports them, unless the texture
+    // cache keeps them Final: what a build that does not cook needs. Outputs
+    // built Final are current too. False: Final, what a cooked game ships.
+    fast_textures:bool,
     worker:jobs.Worker_Ref,
     library:Library,                 // nil: the formats of the engine alone, and no model imports
 }
@@ -85,7 +90,7 @@ sync :: proc(root:string,options:Sync_Options={},allocator:=context.allocator) -
     asset.registry_init(&registry,assets,"",context.temp_allocator,imported)
     asset.registry_scan(&registry)
     import_options:=importer.Import_Options{
-        root=top,registry=&registry,rebuild=options.rebuild,worker=options.worker,
+        root=top,registry=&registry,rebuild=options.rebuild,worker=options.worker,fast_textures=options.fast_textures,
         texture_cache=options.texture_cache if options.texture_cache!="" else project.content_cache_path(top,project.TEXTURE_CACHE,context.temp_allocator),
         mesh_cache=options.mesh_cache if options.mesh_cache!="" else project.content_cache_path(top,project.MESH_CACHE,context.temp_allocator),
     }
@@ -138,33 +143,33 @@ sync :: proc(root:string,options:Sync_Options={},allocator:=context.allocator) -
                 head,_,_:=serial.file_read_head(source,buffer[:])
                 if format,found:=importer.format_find(formats,head,filepath.ext(source));found {version=importer.import_version(format.version)}
             }
+            // Final is current in either mode; Fast only for a sync of fast textures.
             key:=importer.import_key(source,sidecar,version,false,&hashes)
-            for pass in 0..<2 {
-                cached,current:=false,!options.rebuild || pass==1
-                for output in sidecar.outputs {
-                    known,_:=asset.kind_info(output.kind)
-                    if !asset.import_cached(output.kind) {continue}
-                    path:=asset.imported_file(imported,output.id,key,known.extension,context.temp_allocator)
-                    cached=true
-                    current&&=os.exists(path)
-                    if pass==1 {listed[filepath.base(path)]={}}
-                }
-                if pass==1 || !cached {break}
-                report.sources+=1
-                if current {continue}
+            cached,current:=outputs_held(sidecar,imported,key)
+            if cached && !current && options.fast_textures {
+                fast:=importer.import_key(source,sidecar,version,true,&hashes)
+                if _,held:=outputs_held(sidecar,imported,fast);held {key,current=fast,true}
+            }
+            if !cached {continue}
+            report.sources+=1
+            if !current || options.rebuild {
                 if kind==.Model {library_read(&library,options,top,&import_options)}
                 written,import_error:=import_source(source,import_options,formats,wholes,allocator)
                 if import_error.code!=.None {
                     append(&report.failures,fmt.aprintf("%s: %s",source,import_error.message,allocator=allocator))
                     complete=false
-                    break
+                    continue
                 }
                 report.imported+=1
                 for warning in written.warnings {append(&report.warnings,fmt.aprintf("%s: %s",source,warning,allocator=allocator))}
                 importer.report_destroy(&written)
                 // What the import gives now: a part the source gained, or lost.
-                if sidecar,_,error=importer.sidecar_load(source,context.temp_allocator);error.code!=.None {complete=false;break}
-                key=importer.import_key(source,sidecar,version,false,&hashes)
+                if sidecar,_,error=importer.sidecar_load(source,context.temp_allocator);error.code!=.None {complete=false;continue}
+                key=importer.import_key(source,sidecar,version,options.fast_textures,&hashes)
+            }
+            for output in sidecar.outputs {
+                known,_:=asset.kind_info(output.kind)
+                if asset.import_cached(output.kind) {listed[filepath.base(asset.imported_file(imported,output.id,key,known.extension,context.temp_allocator))]={}}
             }
         }
     }
@@ -173,6 +178,20 @@ sync :: proc(root:string,options:Sync_Options={},allocator:=context.allocator) -
     for entry in entries {
         if _,kept:=listed[entry.name];entry.type!=.Regular || kept || strings.has_suffix(entry.name,".tmp") {continue}
         if os.remove(fmt.tprintf("%s/%s",imported,entry.name))==nil {report.removed+=1}
+    }
+    return
+}
+
+// Whether the sidecar lists outputs of the cache, and whether the imported
+// folder has each of them built from key.
+@(private="file")
+outputs_held :: proc(sidecar:importer.Sidecar,imported:string,key:u64) -> (cached,current:bool) {
+    current=true
+    for output in sidecar.outputs {
+        known,_:=asset.kind_info(output.kind)
+        if !asset.import_cached(output.kind) {continue}
+        cached=true
+        current&&=os.exists(asset.imported_file(imported,output.id,key,known.extension,context.temp_allocator))
     }
     return
 }
