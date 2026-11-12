@@ -476,6 +476,17 @@ vk_create_instance_and_device :: proc(d: ^Device, desc: Device_Desc) -> bool {
 		append(&extensions, e)
 		if string(e) == "VK_KHR_surface" {d.surface_ext = true}
 	}
+	// A device without a window may be given one later (swapchain_attach): it
+	// takes the surface extensions of every window system the loader offers.
+	if desc.surface == {} {
+		for name in VK_WINDOW_SURFACE_EXTENSIONS {
+			taken := false
+			for e in extensions {taken ||= string(e) == string(name)}
+			if taken || !has_extension(instance_exts, name) {continue}
+			append(&extensions, name)
+			if string(name) == "VK_KHR_surface" {d.surface_ext = true}
+		}
+	}
 	if d.debug_utils {append(&extensions, "VK_EXT_debug_utils")}
 	enabled_layers := make([dynamic]cstring, 0, 2, context.temp_allocator)
 	if validation {append(&enabled_layers, "VK_LAYER_KHRONOS_validation")}
@@ -537,6 +548,10 @@ vk_create_instance_and_device :: proc(d: ^Device, desc: Device_Desc) -> bool {
 	if !vk_pick_physical_device(d, desc) {return false}
 	return vk_create_logical_device(d, desc)
 }
+
+// VK_KHR_surface first: the others extend it.
+@(private)
+VK_WINDOW_SURFACE_EXTENSIONS :: [?]cstring{"VK_KHR_surface", "VK_KHR_win32_surface", "VK_KHR_xlib_surface", "VK_KHR_xcb_surface", "VK_KHR_wayland_surface"}
 
 @(private)
 vk_finish_device :: proc(d: ^Device, desc: Device_Desc) -> bool {
@@ -1321,6 +1336,28 @@ immediate_end :: proc(d: ^Device, cmd: ^Command_List) -> bool {
 }
 
 // ---------------------------------------------------------------- swapchain
+
+// Gives a device made without a window the swapchain of one, between frames.
+// False, with device_error, when it already has one or the window's surface
+// takes no images of its GPU; the device goes on drawing without it.
+swapchain_attach :: proc(d: ^Device, surface: Surface_Desc) -> bool {
+	if d.has_swapchain || d.in_frame {set_error(d, "swapchain_attach on a device that has a swapchain or is recording a frame"); return false}
+	if surface.vulkan_create == nil || !d.swapchain_ext {set_error(d, "the device cannot present: its instance or GPU lacks VK_KHR_surface or VK_KHR_swapchain"); return false}
+	sc := &d.swapchain
+	sc.desc = surface
+	if !vk_surface_make(d) {
+		if sc.surface != 0 {d.ivk.DestroySurfaceKHR(d.instance, sc.surface, nil)}
+		sc.surface, sc.desc = 0, {}
+		return false
+	}
+	d.has_swapchain = true
+	if vk_recreate_swapchain(d) {return true}
+	vk_destroy_swapchain(d)
+	d.ivk.DestroySurfaceKHR(d.instance, sc.surface, nil)
+	sc.surface, sc.desc = 0, {}
+	d.has_swapchain = false
+	return false
+}
 
 swapchain_resize :: proc(d: ^Device, width, height: u32) {
 	if !d.has_swapchain {return}

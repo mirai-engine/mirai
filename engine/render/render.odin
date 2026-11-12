@@ -407,6 +407,7 @@ Render_Sync :: struct {
     outline_styles:Outline_Styles, // the last ones applied
     graphics:Graphics_Settings, // the last ones applied
     graphics_applied:bool,
+    paced:bool, // app.paced when they were applied: a window given later takes their pacing
     synced:bool,
     starved:bool, // a list had no memory in the frame (push)
 }
