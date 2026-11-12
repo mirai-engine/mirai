@@ -29,6 +29,7 @@ Scroll :: struct {
 Scroll_Bar :: struct {
     width:f32,         // across the bar; SCROLL_BAR when 0
     track,knob:Color,  // the whole bar under its thumb, and the thumb; a transparent knob: the tones of the theme
+    held:Color,        // the thumb under the pointer or dragged; transparent: knob
     radius:[4]f32,     // of both; none: round
 }
 
@@ -179,7 +180,7 @@ scroll_bar :: proc(ctx:^Context,id:Id,offset:^f32,vertical:bool,look:Scroll_Bar=
     }
     along:=travel*(offset^/span if span>0 else 0)
     width:=look.width if look.width>0 else SCROLL_BAR
-    color:=look.knob
+    color:=look.held if look.held[3]>0 && (it.hot || it.active) else look.knob
     if color[3]==0 {color=tone(ctx,"text_faint") if it.active || it.hot else tone(ctx,"border")}
     corners:=look.radius if look.radius!={} else [4]f32{width,width,width,width}*0.5
     place :: proc(e:^Element,vertical:bool,view:Rect,width,along,length:f32) {

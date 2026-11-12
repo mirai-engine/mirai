@@ -53,7 +53,7 @@ Node_Style :: struct {
     track:Color,       // of a Progress, a Slider or the bar of a Scroll
     knob:Color,        // of a Slider, and the thumb of the bar of a Scroll
     bar:f32,           // the width of the bar of a Scroll; 0: SCROLL_BAR
-    mark:Color,        // the filled part of a Slider, the dot of a Radio, the tick of a Checkbox, the arrows of a Selector and a Number, the accent of a Dropdown, the bar of a held Button
+    mark:Color,        // the thumb of the bar of a Scroll under the pointer, the filled part of a Slider, the dot of a Radio, the tick of a Checkbox, the arrows of a Selector and a Number, the accent of a Dropdown, the bar of a held Button
     radius:[4]f32,     // of the corners: top left, top right, bottom right, bottom left
     fill2:Color,
     gradient:Fill_Gradient, // the way fill goes to fill2
@@ -937,7 +937,7 @@ tree_build_container :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,next,sl
     #partial switch node.kind {
     case .Popup,.Context_Menu: tree_build_popup(ctx,b,node,index,next,slot,node_id,values,copy,item,&box)
     case .Modal:               tree_build_modal(ctx,b,node,index,next,node_id,values,copy,item,&box)
-    case:                      tree_build_box(ctx,b,node,index,next,slot,node_id,values,copy,item,&box,{width=style.bar,track=style.track,knob=style.knob,radius=style.radius})
+    case:                      tree_build_box(ctx,b,node,index,next,slot,node_id,values,copy,item,&box,{width=style.bar,track=style.track,knob=style.knob,held=style.mark,radius=style.radius})
     }
     if disabled {disabled_end(ctx)}
     if .Draggable in node.flags {tree_drag_ghost(ctx,b,node,index,node_id,values,copy,item)}

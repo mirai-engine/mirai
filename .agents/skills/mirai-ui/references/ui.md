@@ -395,8 +395,8 @@ All take the context, an id and their state by parameter.
     with Ctrl (Cmd on macOS) before the area scrolls.
   - A content that shrinks leaves in place what was seen: the area stores below the missing place,
     which goes away when scrolling up and never when scrolling down with the wheel. The bar floats
-    and takes no layout; `Scroll.bar` (from the `bar`, `track`, `knob` and `radius` of the style of
-    a `Scroll` node) gives its width, colors and corners, and zero is the bar of the theme.
+    and takes no layout; `Scroll.bar` (from the `bar`, `track`, `knob`, `mark` and `radius` of the
+    style of a `Scroll` node) gives its width, colors and corners, and zero is the bar of the theme.
   - When the keyboard or the gamepad move the focus, the areas that contain it bring it into view
     from the inside out.
 

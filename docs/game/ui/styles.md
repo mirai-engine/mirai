@@ -38,7 +38,7 @@ The template's `assets/menu/theme.ui` is the example of tokens and styles, and i
   side), `Ui_Radial_Gradient` (to `color`, `reach` from the center: a rarity glow), `Ui_Rays`
   (`count`, `turn`, `speed`, `fade`), `Ui_Shine`, `Ui_Gradient_Sweep`, `Ui_Dissolve` and
   `Ui_Radial_Wipe`. An `Image` takes `shadow`, `radius`, `stroke` and `program` as a `Box` does. A
-  `Scroll` draws its bar `bar` wide, `knob` over `track`, with its `radius` (round without one).
+  `Scroll` draws its bar `bar` wide, `knob` (`mark` under the pointer) over `track`, with `radius`.
 - States: `hover`, `focus`, `pressed`, `disabled`, `selected`, `over`. Each lists what differs;
   `extends` makes one start from another (`"focus": {"extends": "hover", ...}`). `focus` is the
   ring of keys and gamepad: give it a look that is not `hover`.
