@@ -437,7 +437,10 @@ touches fit in a tick's queue.
 - `terrain.dig(requests,Brush,owner) -> Edit_Error` asks for an edit, in the world:
   `terrain_replay` and `terrain_update` resolve the owner first (given, or the terrain the brush
   touches: the nearest to the center, then the smallest footprint) and hand the brush on in its
-  space, so networking keys edits by that owner. `terrain_requests_serve` keeps the room
+  space, so networking keys edits by that owner: lengths by the terrain's scale over x and z, the
+  metres Raise, Lower and Noise move and the steps of a Terrace by its scale along y. A scale
+  uneven over x and z, or along y for a shape of Add or Carve or any brush of a Volume, is the
+  error `Scale`. `terrain_requests_serve` keeps the room
   of `Terrain_Settings.requests` and reports what was dropped or refused.
 - **A brush is an intent** (`Brush_Kind`), the same call on whichever representation is under it:
   Add and Carve join or take the shape of the brush (sphere, capsule or box), Raise and Lower
@@ -542,7 +545,9 @@ other; authority, prediction and rollback for the rest belong to the
   which the client made it. What is not allowed is refused with the cause (rate, connection
   without a seat, reach from what its seat drives, radius, brush, tick, unloaded source or the
   edit's error), which the client reports as the `terrain.net_refused` problem with how to fix it.
-  `Terrain_Net_Settings` (project setting) sets the rate, the reach and the radius.
+  `Terrain_Net_Settings` (project setting) sets the rate, the reach of the brush's center and the
+  radius: half of the longest side of the world box the brush may change, and the metres it moves
+  the ground.
 - **What the game asks of a client is a prediction:** an edit is applied at its tick, stored with
   its check and asked of the server. When the server's edit comes back, a prediction that left the
   same check stays as that edit, without repeating the brush. A layer change is not predicted
@@ -682,7 +687,8 @@ Residency by distance:
   weights come and go with its distances, block by block.
 - The residency of the pages is that of the chunks, which is the shared one of `scene`: the terrain
   has none of its own. Far from every viewer the chunks of a Volume are released, and their blocks
-  with them: what a game reads of a source there (`source_ray`, `source_value`) is not in memory.
+  with them: what a game reads of a source there is not in memory (`source_value` answers
+  `ok=false` there and outside the source, and `source_ray` ends).
 - A brush first reads, in the tick, the pages it touches, and removing a layer all those of its
   weights. Save writes each page, those in memory and those in their blocks.
 - A source that only has the registry's memory (held by the editor until its step ends) is read
@@ -710,9 +716,10 @@ Reading from other plugins (such as the foliage bridge), with `core.Ref(Terrain_
 ## Limits in open worlds
 
 - A source that is only in the registry's memory (held until its step ends) is read whole.
-- **Volume** is limited to `VOLUME_SAMPLES_MAX` per axis and `VOLUME_CHUNKS_MAX` chunks. Its
-  octree stops at `VOLUME_NODE_CELLS`: a Volume kilometers wide shows its far ground as that many
-  roots, each a piece of `Terrain_Settings.chunks`, and a streamed one builds each root once.
+- A source is limited to `SAMPLES_MAX` per axis and `CHUNKS_MAX` chunks, whatever its file says:
+  a larger one takes more cells per chunk. A **Volume**'s octree stops at `VOLUME_NODE_CELLS`: a
+  Volume kilometers wide shows its far ground as that many roots, each a piece of
+  `Terrain_Settings.chunks`, and a streamed one builds each root once.
 - A Heightfield cannot hold an overhang: Add and Carve move its columns. Ground that needs one is
   a Volume, alone or [joined](#joining-a-volume-with-a-heightfield) to the Heightfield around it.
 - **Joining a Volume with a Heightfield:** a Volume rotated against the ground does not join

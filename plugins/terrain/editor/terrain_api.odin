@@ -304,10 +304,15 @@ brush_named :: proc(name:string) -> (kind:terrain.Brush_Kind,level,ok:bool) {
 }
 
 // The brush of the params of terrain.edit in the space of a source, which
-// to_local and scale take the world into, and the ends of its stroke there on
-// its surface; amount and the points it touches are the caller's.
+// to_local takes the world into, scaling its axes by scale, and the ends of
+// its stroke there on its surface; across: the metres of the world in one of
+// the source over x and z (terrain.brush_scale). The points it touches are
+// the caller's.
 @(private)
-edit_brush :: proc(s:^editor.Session,call:^api.Call,p:^Edit_Params,source:^terrain.Source,to_local:matrix[4,4]f32,scale:f32,kind:terrain.Brush_Kind,level:bool) -> (brush:terrain.Brush,from,to:[3]f32,ok:bool) {
+edit_brush :: proc(s:^editor.Session,call:^api.Call,p:^Edit_Params,source:^terrain.Source,to_local:matrix[4,4]f32,scale:[3]f32,kind:terrain.Brush_Kind,level:bool) -> (brush:terrain.Brush,from,to:[3]f32,across:f32,ok:bool) {
+    up:f32
+    scaled:terrain.Edit_Error
+    if across,up,scaled=terrain.brush_scale(scale,source.kind,kind);scaled!=.None {api.call_failf(call,api.INVALID_PARAMS,"The terrain was not edited: %s",terrain.edit_error_fix(scaled,kind));return}
     layer:=0
     if name:=base.text_get(p.layer[:]);name!="" {
         found:bool
@@ -330,8 +335,8 @@ edit_brush :: proc(s:^editor.Session,call:^api.Call,p:^Edit_Params,source:^terra
     from,_=terrain.source_carry(source,local(to_local,p.at),{0,1,0},0)
     to=from
     if p.to!={} {to,_=terrain.source_carry(source,local(to_local,p.to),{0,1,0},0)}
-    radius:=p.radius/scale
-    brush={kind=kind,radius=radius,falloff=falloff,hardness=clamp(p.hardness,0,0.95),way=way,capped=p.capped && (kind==.Raise || kind==.Lower),interval=max(p.interval,0.01)/scale,riser=clamp(p.riser,0,1),scale=max(p.scale,0.1)/scale,layer=u32(layer),turn=math.to_radians(p.turn),rotation=1}
+    radius:=p.radius/across
+    brush={kind=kind,radius=radius,amount=edit_amount(p,kind,p.radius/up),falloff=falloff,hardness=clamp(p.hardness,0,0.95),way=way,capped=p.capped && (kind==.Raise || kind==.Lower),interval=max(p.interval,0.01)/up,riser=clamp(p.riser,0,1),scale=max(p.scale,0.1)/across,layer=u32(layer),turn=math.to_radians(p.turn),rotation=1}
     if p.slope!={} {
         low,high:=math.to_radians(min(p.slope.x,p.slope.y)),math.to_radians(max(p.slope.x,p.slope.y))
         brush.slope,brush.slope_invert={clamp(low,0,math.PI/2),clamp(max(high,low+1e-4),0,math.PI/2)},p.slope_invert
@@ -350,7 +355,7 @@ edit_brush :: proc(s:^editor.Session,call:^api.Call,p:^Edit_Params,source:^terra
         if brush.shape==.Capsule {brush.delta=local(to_local,p.to)-brush.center}
         if brush.shape==.Box {brush.extent=radius}
     }
-    return brush,from,to,true
+    return brush,from,to,across,true
 }
 
 // What one touch of a stroke of terrain.edit does at a point, by its params.
@@ -376,7 +381,8 @@ api_edit :: proc(s:^editor.Session,call:^api.Call) {
     if !ok {return}
     stroke:=&tool.stroke
     source:=&stroke.source
-    brush,from,to,made:=edit_brush(s,call,p,source,stroke.to_local,stroke.scale,kind,level)
+    axes:=[3]f32{linalg.length(stroke.to_world[0].xyz),linalg.length(stroke.to_world[1].xyz),linalg.length(stroke.to_world[2].xyz)}
+    brush,from,to,across,made:=edit_brush(s,call,p,source,stroke.to_local,axes,kind,level)
     if !made {return}
     brush.seed=u32(stroke.id[0])
     if name:=base.text_get(p.alpha[:]);name!="" && kind!=.Add && kind!=.Carve {
@@ -393,11 +399,11 @@ api_edit :: proc(s:^editor.Session,call:^api.Call) {
     if kind==.Ramp || kind==.Add || kind==.Carve {
         if kind==.Ramp {
             if !path {api.call_fail(call,api.INVALID_PARAMS,"A ramp goes from at to to: give to");return}
-            sides:=max(p.sides,0)/stroke.scale
+            sides:=max(p.sides,0)/across
             at,end:=(stroke.to_local*[4]f32{p.at.x,p.at.y,p.at.z,1}).y,(stroke.to_local*[4]f32{p.to.x,p.to.y,p.to.z,1}).y
             brush.center,brush.delta,brush.amount={from.x,at,from.z},{to.x-from.x,end-at,to.z-from.z},1
             brush.radius,brush.hardness=brush.radius+sides,min(brush.radius/(brush.radius+sides),0.99)
-        } else {brush.blend=max(tool.blend,0)/stroke.scale}
+        } else {brush.blend=max(tool.blend,0)/across}
         change:=terrain.source_edit(source,brush)
         if change.error!=.None {api.call_failf(call,api.INVALID_PARAMS,"The terrain was not edited: %s",terrain.edit_error_fix(change.error,brush.kind));return}
         stroke_changed(stroke,change)
@@ -405,7 +411,6 @@ api_edit :: proc(s:^editor.Session,call:^api.Call) {
     } else {
         step:=to-from
         count:=path?clamp(int(math.ceil(linalg.length(step)/(brush.radius*STROKE_SPACING))),1,4096):0
-        brush.amount=edit_amount(p,kind,brush.radius)
         for _ in 0..<max(p.passes,1) {
             for i in 0..=count {
                 brush.center,_=terrain.source_carry(source,from+step*(f32(i)/f32(max(count,1))),{0,1,0},brush.radius*4)
@@ -487,7 +492,7 @@ layer_values :: proc(call:^api.Call,p:^Layer_Params,layer:^terrain.Terrain_Layer
 // The terrain of an id in a game that plays, its source there, its
 // requests and the transform of the world into it.
 @(private)
-api_play_terrain :: proc(call:^api.Call,w:core.World_Ref,named:[]u8) -> (e:core.Entity,source:^terrain.Source,requests:^terrain.Terrain_Requests,to_local:matrix[4,4]f32,scale:f32,ok:bool) {
+api_play_terrain :: proc(call:^api.Call,w:core.World_Ref,named:[]u8) -> (e:core.Entity,source:^terrain.Source,requests:^terrain.Terrain_Requests,to_local:matrix[4,4]f32,place:mm.Transform,ok:bool) {
     terrains,worlds:=core.world_table_of(w,terrain.Terrain),core.world_table_of(w,core.World_Transform)
     data,queued:=core.world_storage_of(w,terrain.Terrain_Data),core.world_storage_of(w,terrain.Terrain_Requests)
     if terrains==nil || worlds==nil || data==nil || queued==nil {api.call_fail(call,api.INVALID_PARAMS,"The game has no terrain: activate the plugin terrain in project.mirai");return}
@@ -500,23 +505,22 @@ api_play_terrain :: proc(call:^api.Call,w:core.World_Ref,named:[]u8) -> (e:core.
     source=terrain.terrain_source(core.ref(data),marker.source)
     if !has || source==nil {api.call_failf(call,api.INVALID_PARAMS,"The source of terrain %s is not loaded in the game yet: step it and call again",given);return}
     to_local=linalg.inverse(mm.transform_matrix(placed.transform))
-    scale=max(abs(placed.scale.x),1e-6)
-    return e,source,queued,to_local,scale,true
+    return e,source,queued,to_local,placed.transform,true
 }
 
 // terrain.edit in a game that plays: its touches as requests of the game.
 @(private)
 api_edit_play :: proc(s:^editor.Session,call:^api.Call,p:^Edit_Params,w:core.World_Ref,kind:terrain.Brush_Kind,level:bool) {
-    e,source,requests,to_local,scale,ok:=api_play_terrain(call,w,p.entity[:])
+    e,source,requests,to_local,place,ok:=api_play_terrain(call,w,p.entity[:])
     if !ok {return}
     if base.text_get(p.alpha[:])!="" {api.call_fail(call,api.INVALID_PARAMS,"A game asks for brushes without an alpha: leave alpha out");return}
     if kind==.Ramp {api.call_fail(call,api.INVALID_PARAMS,"While a game plays terrain.edit asks for the brushes that touch along a stroke and for add and carve; a ramp goes in a request of play.push");return}
-    brush,from,to,made:=edit_brush(s,call,p,source,to_local,scale,kind,level)
+    brush,from,to,_,made:=edit_brush(s,call,p,source,to_local,linalg.abs(place.scale),kind,level)
     if !made {return}
     brush.seed=u32(editor.api_entity_id(w,e))
-    place,_:=core.get(core.world_table_of(w,core.World_Transform),e)
     if kind==.Add || kind==.Carve {
-        if error:=terrain.dig(requests,terrain.brush_world(brush,place.transform),e);error!=.None {api.call_failf(call,api.INVALID_PARAMS,"The terrain was not edited: %s",terrain.edit_error_fix(error,kind));return}
+        world,_:=terrain.brush_world(brush,place,source.kind)
+        if error:=terrain.dig(requests,world,e);error!=.None {api.call_failf(call,api.INVALID_PARAMS,"The terrain was not edited: %s",terrain.edit_error_fix(error,kind));return}
         api_changed_write(call,true,1)
         return
     }
@@ -525,12 +529,12 @@ api_edit_play :: proc(s:^editor.Session,call:^api.Call,p:^Edit_Params,w:core.Wor
     touches:=(count+1)*int(max(p.passes,1))
     room:=cap(requests.edits.items)-len(requests.edits.items)
     if touches>room {api.call_failf(call,api.INVALID_PARAMS,"The stroke would ask for %d touches and the game has room for %d in this tick: make it shorter or the radius larger, go on after a tick, or raise Terrain_Settings.requests",touches,room);return}
-    brush.amount=edit_amount(p,kind,brush.radius)
     pushed:=0
     for _ in 0..<max(p.passes,1) {
         for i in 0..=count {
             brush.center,_=terrain.source_carry(source,from+step*(f32(i)/f32(max(count,1))),{0,1,0},brush.radius*4)
-            if brush.amount>0 && terrain.dig(requests,terrain.brush_world(brush,place.transform),e)==.None {pushed+=1}
+            world,_:=terrain.brush_world(brush,place,source.kind)
+            if brush.amount>0 && terrain.dig(requests,world,e)==.None {pushed+=1}
         }
     }
     api_changed_write(call,pushed>0,pushed)

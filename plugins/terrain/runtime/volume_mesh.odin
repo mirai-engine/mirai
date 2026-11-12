@@ -86,7 +86,7 @@ source_volume_mesh :: proc(s:^Source,operand:geom.Mesh,brush:Brush) -> (change:C
         p:=[3]int{x,y,z}
         at:=x-low.x+size.x*(y-low.y+size.y*(z-low.z))
         d:=inside[at]!=0?-distances[at]:distances[at]
-        old:=source_value(s,p)
+        old:=grid_value(&s.field,p)
         target:=brush.kind==.Add?smooth_min(old,d,brush.blend):-smooth_min(-old,d,brush.blend)
         value:=clamp(math.lerp(old,target,brush.amount),-band,band)
         if value==old {continue}

@@ -117,13 +117,17 @@ dig :: proc(requests:^Terrain_Requests,brush:Brush,owner:=core.NONE) -> Edit_Err
     core.offer(&requests.edits,Edit_Request{owner,brush})
     return .None
 }
-// Sets layer index of the source of a terrain, or adds one with index equal to its count.
+// Sets layer index of the source of a terrain, or adds one with index equal
+// to its count. An index below 0 or from LAYERS_MAX is refused.
 request_layer :: proc(requests:^Terrain_Requests,owner:core.Entity,index:int,layer:Terrain_Layer) {
-    core.offer(&requests.layers,Layer_Request{owner,{index=u32(max(index,0)),layer=layer}})
+    if index<0 || index>=LAYERS_MAX {core.refuse(&requests.layers);return}
+    core.offer(&requests.layers,Layer_Request{owner,{index=u32(index),layer=layer}})
 }
-// Takes layer index away from the source of a terrain; what it covered goes to the others.
+// Takes layer index away from the source of a terrain; what it covered goes
+// to the others. An index below 0 or from LAYERS_MAX is refused.
 request_layer_remove :: proc(requests:^Terrain_Requests,owner:core.Entity,index:int) {
-    core.offer(&requests.layers,Layer_Request{owner,{index=u32(max(index,0)),remove=true}})
+    if index<0 || index>=LAYERS_MAX {core.refuse(&requests.layers);return}
+    core.offer(&requests.layers,Layer_Request{owner,{index=u32(index),remove=true}})
 }
 request_save :: proc(requests:^Terrain_Requests,owner:core.Entity,path:string="") {
     if len(path)>=512 {core.refuse(&requests.saves);return}
@@ -137,32 +141,54 @@ request_save :: proc(requests:^Terrain_Requests,owner:core.Entity,path:string=""
 terrain_requests_serve :: proc(requests:^Terrain_Requests,settings:Terrain_Settings,problems:^core.Problems) {
     capacity,setting:=int(settings.requests),"Terrain_Settings.requests"
     core.queue_serve(&requests.edits,capacity,problems,"terrain.requests","terrain edits",setting)
-    core.queue_serve(&requests.layers,capacity,problems,"terrain.requests","terrain layer changes",setting)
+    core.queue_serve(&requests.layers,capacity,problems,"terrain.requests","terrain layer changes",setting,"a layer change names a layer from 0 to below LAYERS_MAX")
     core.queue_serve(&requests.saves,capacity,problems,"terrain.requests","terrain saves",setting,"a save names a path shorter than 512 bytes")
 }
 
-// A brush of the world as the terrain at place reads it, and the other way.
-brush_local :: proc(brush:Brush,place:mm.Transform) -> Brush {
-    return brush_placed(brush,linalg.inverse(mm.transform_matrix(place)),mm.quat_inverse(place.rotation),1/max(abs(place.scale.x),1e-6))
+// The metres of the world in one of a terrain whose axes it scales by scale
+// (each above 0), for a brush of kind on a source of a kind: across x and z,
+// which a disc over them needs equal, and up y, which a shape of Add and
+// Carve and any brush of a Volume, which measure in three dimensions, need
+// equal to them too. Scale when they are not; across and up are then still
+// those of x and y.
+brush_scale :: proc "contextless" (scale:[3]f32,source:Source_Kind,kind:Brush_Kind) -> (across,up:f32,error:Edit_Error) {
+    equal :: proc "contextless" (a,b:f32) -> bool {return abs(a-b)<=max(a,b)*SCALE_TOLERANCE}
+    across,up=max(scale.x,1e-6),max(scale.y,1e-6)
+    solid:=source==.Volume || kind==.Add || kind==.Carve
+    if !(scale.x>0 && scale.y>0 && scale.z>0) || !equal(scale.x,scale.z) || solid && !equal(scale.x,scale.y) {error=.Scale}
+    return
 }
-brush_world :: proc(brush:Brush,place:mm.Transform) -> Brush {
-    return brush_placed(brush,mm.transform_matrix(place),place.rotation,max(abs(place.scale.x),1e-6))
+// How far apart two scales of a terrain may be, as a part of the larger, to be one.
+SCALE_TOLERANCE :: f32(1e-4)
+
+// A brush of the world as the terrain at place, of a source of kind, reads
+// it, and the other way: lengths across by its scale across, the metres
+// Raise, Lower and Noise move the surface and the steps of a Terrace by its
+// scale up (brush_scale, whose error it returns).
+brush_local :: proc(brush:Brush,place:mm.Transform,kind:Source_Kind) -> (Brush,Edit_Error) {
+    across,up,error:=brush_scale(linalg.abs(place.scale),kind,brush.kind)
+    return brush_placed(brush,linalg.inverse(mm.transform_matrix(place)),mm.quat_inverse(place.rotation),1/across,1/up),error
+}
+brush_world :: proc(brush:Brush,place:mm.Transform,kind:Source_Kind) -> (Brush,Edit_Error) {
+    across,up,error:=brush_scale(linalg.abs(place.scale),kind,brush.kind)
+    return brush_placed(brush,mm.transform_matrix(place),place.rotation,across,up),error
 }
 @(private)
-brush_placed :: proc(brush:Brush,to:matrix[4,4]f32,rotation:quaternion128,factor:f32) -> (moved:Brush) {
+brush_placed :: proc(brush:Brush,to:matrix[4,4]f32,rotation:quaternion128,across,up:f32) -> (moved:Brush) {
     moved=brush
     c,d:=brush.center,brush.delta
     moved.center=(to*[4]f32{c.x,c.y,c.z,1}).xyz
     moved.delta=(to*[4]f32{d.x,d.y,d.z,0}).xyz
-    moved.target=(to*[4]f32{c.x,brush.target,c.z,1}).y
-    moved.rotation=rotation*brush.rotation
-    moved.radius*=factor
-    moved.extent*=factor
-    moved.blend*=factor
-    moved.interval*=factor
-    moved.scale*=factor
+    // That of Paint is a weight.
+    if brush.kind!=.Paint {moved.target=(to*[4]f32{c.x,brush.target,c.z,1}).y}
+    moved.rotation=rotation*(brush.rotation==0?1:brush.rotation)
+    moved.radius*=across
+    moved.extent*=across
+    moved.blend*=across
+    moved.scale*=across
+    moved.interval*=up
     #partial switch brush.kind {
-    case .Raise,.Lower,.Noise: moved.amount*=factor
+    case .Raise,.Lower,.Noise: moved.amount*=up
     }
     return
 }

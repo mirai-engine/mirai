@@ -187,9 +187,14 @@ layered_terrains_show_the_layered_material_and_repaint_only_touched_chunks :: pr
     request_layer(&w.terrain_requests,owner,0,grass)
     request_layer(&w.terrain_requests,owner,1,rock)
     request_layer(&w.terrain_requests,owner,3,rock)
+    // An index no layer has is refused, not taken as the first.
+    request_layer(&w.terrain_requests,owner,-1,rock)
+    request_layer_remove(&w.terrain_requests,owner,min(int))
+    testing.expect_value(t,w.terrain_requests.layers.refused,2)
     terrain_test_update(&w,&resident,&app)
     testing.expect(t,core.problem_find(&w.problems,owner,"terrain.layer_invalid")!=nil)
     testing.expect_value(t,w.data.entries[0].source.layer_count,u32(2))
+    testing.expect_value(t,w.data.entries[0].source.layers[0],grass)
     testing.expect_value(t,layered_chunks(&w),16)
     for row in 0..<core.count(&w.statics) {
         e:=w.statics.entities[row]

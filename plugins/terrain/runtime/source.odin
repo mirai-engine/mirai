@@ -13,8 +13,9 @@ import "mirai:std/serial"
 
 VERSION :: 11
 SAMPLES_MAX :: 16385
-// A Volume has at most this many chunks: one that reaches further takes more cells per chunk.
-VOLUME_CHUNKS_MAX :: 1<<18
+// A source has at most this many chunks, which each hold their state: one that reaches further
+// takes more cells per chunk.
+CHUNKS_MAX :: 1<<18
 CHUNK_CELLS_MIN :: 4
 CHUNK_CELLS_MAX :: 256
 UV_METERS :: f32(4)
@@ -60,14 +61,13 @@ source_valid :: proc "contextless" (info:Source_Info) -> bool {
     }
     for n in info.samples {if n>SAMPLES_MAX {return false}}
     switch info.kind {
-    case .Heightfield: return info.samples.y==1 && info.samples.x>=2 && info.samples.z>=2
-    case .Volume:
-        if !(info.samples.x>=3 && info.samples.y>=3 && info.samples.z>=3) {return false}
-        chunks:=u64(1)
-        for n in info.samples {chunks*=u64(max((int(n)-2+int(info.chunk_cells))/int(info.chunk_cells),1))}
-        return chunks<=VOLUME_CHUNKS_MAX
+    case .Heightfield: if !(info.samples.y==1 && info.samples.x>=2 && info.samples.z>=2) {return false}
+    case .Volume:      if !(info.samples.x>=3 && info.samples.y>=3 && info.samples.z>=3) {return false}
+    case:              return false
     }
-    return false
+    chunks:=u64(1)
+    for n in info.samples {chunks*=u64(max((int(n)-2+int(info.chunk_cells))/int(info.chunk_cells),1))}
+    return chunks<=CHUNKS_MAX
 }
 // How far from zero a value of the field may be: a height, or the band of the distances of a Volume.
 field_limit :: proc "contextless" (info:Source_Info) -> f32 {return info.kind==.Volume?info.cell*SDF_BAND_CELLS:HEIGHT_LIMIT}
@@ -203,11 +203,21 @@ source_cost :: proc(s:^Source) -> int {
     return grid_dense(&s.field)+grid_dense(&s.weights)+grid_dense(&s.holes)+grid_dense(&s.coarse.heights)
 }
 
-// The value of a sample: a height of a Heightfield, a distance of a Volume.
-source_value :: #force_inline proc "contextless" (s:^Source,p:[3]int) -> f32 {return grid_value(&s.field,p)}
+// The value of a sample: a height of a Heightfield, a distance of a Volume;
+// ok is false for one outside the source or whose page is not in memory.
+source_value :: proc "contextless" (s:^Source,p:[3]int) -> (value:f32,ok:bool) {
+    g:=&s.field
+    if !grid_inside(g,p) {return}
+    if id,_:=grid_page_at(g,p);grid_absent(g,id) {return}
+    return grid_value(g,p),true
+}
 
-// Writes a sample, giving its page its own values; false without memory.
-source_set :: proc(s:^Source,p:[3]int,value:f32) -> bool {return grid_put(&s.field,p,value,s.allocator)}
+// Writes a sample, giving its page its own values; false for a value past
+// field_limit or not a number, outside the source, where its page is not in
+// memory, or without memory.
+source_set :: proc(s:^Source,p:[3]int,value:f32) -> bool {
+    return abs(value)<=field_limit(s.info) && grid_put(&s.field,p,value,s.allocator)
+}
 
 source_origin :: proc "contextless" (s:^Source) -> [3]f32 {
     return -[3]f32{f32(s.samples.x-1),f32(s.samples.y-1),f32(s.samples.z-1)}*(s.cell*0.5)
