@@ -8,8 +8,7 @@ import "mirai:editor/api"
 import "mirai:std/base"
 import "mirai:std/serial"
 
-// skeleton.bone.add: a bone the clips of another skeleton animate (Fortnite's
-// hand_attach_r, which the body mesh does not weight) added to this one. It
+// skeleton.bone.add: a bone the clips of another skeleton animate (a hand attachment bone, which the body mesh does not weight) added to this one. It
 // goes after the other bones, so the meshes skinned to them and every index
 // keep theirs. Clips name bones by canonical path: the tracks of the clips
 // given whose target ends in a node of the bone's name under another path

@@ -31,7 +31,7 @@ Attenuation :: struct {
     delay:bool, // starts later by its distance over the speed of sound, as thunder after its flash
 }
 // The HRTF is measured 1 m from the head: nearer, it no longer tells where a source is. A
-// stereo recording keeps the width of a pair of speakers 2 m apart (Unreal's default spread).
+// stereo recording keeps the width of a pair of speakers 2 m apart.
 ATTENUATION_DEFAULT :: Attenuation{model=.Inverse,min_distance=1,max_distance=100,rolloff=1,near_radius=1,spread=2}
 ATTENUATION_FADE :: f32(0.25)
 
@@ -106,8 +106,7 @@ doppler_pitch :: proc "contextless" (listener_position,listener_velocity,source_
 // plane, so ahead and behind both sit in the middle) and centered otherwise.
 // Within its near radius the pan goes toward the middle by its blend. On
 // speakers each channel of a stereo voice is placed at its own azimuth, half
-// the angle its spread subtends to either side of it, as Unreal places the
-// two of a stereo source (the idea only); headphones widen it in binaural_add.
+// the angle its spread subtends to either side of it; headphones widen it in binaural_add.
 @(private)
 spatial_gains :: proc "contextless" (m:^Mixer,v:^Mix_Voice) -> [4]f32 {
     if v.spatial_dirty || v.listener_serial!=m.listener_serial {
