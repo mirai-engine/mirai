@@ -22,7 +22,19 @@ Scroll :: struct {
     max_height:f32,      // with a FIT height: the area stops growing here
     fade:Color,          // what is under the area: content scrolled past an edge fades into it there; transparent: none
     axes:Scroll_Axes,
+    bar:Scroll_Bar,
 }
+
+// How the bars of an area look; zero: as the theme draws them.
+Scroll_Bar :: struct {
+    width:f32,         // across the bar; SCROLL_BAR when 0
+    track,knob:Color,  // the whole bar under its thumb, and the thumb; a transparent knob: the tones of the theme
+    radius:[4]f32,     // of both; none: round
+}
+
+// The room an area leaves at the right or the bottom of content that scrolls, which its bar takes.
+@(private)
+scroll_gutter :: proc "contextless" (bar:Scroll_Bar) -> f32 {return (bar.width if bar.width>0 else SCROLL_BAR)+SCROLL_GUTTER-SCROLL_BAR}
 
 @(private)
 scroll_content_id :: proc(ctx:^Context,id:Id) -> Id {return id_derive(ctx,id,"content")}
@@ -146,10 +158,10 @@ scroll_route :: proc(ctx:^Context) {
 }
 
 // The bar of an area with more content than room in an axis: a thumb over
-// its right edge, or its bottom edge, that takes no layout and can be
-// dragged. Nothing is drawn when it all fits.
+// its track along its right edge, or its bottom edge, that takes no layout
+// and can be dragged. Nothing is drawn when it all fits.
 @(private)
-scroll_bar :: proc(ctx:^Context,id:Id,offset:^f32,vertical:bool) {
+scroll_bar :: proc(ctx:^Context,id:Id,offset:^f32,vertical:bool,look:Scroll_Bar={}) {
     view,found:=widget_rect(ctx,id)
     content,_:=widget_rect(ctx,scroll_content_id(ctx,id))
     room,length:=view.h,content.h
@@ -166,15 +178,26 @@ scroll_bar :: proc(ctx:^Context,id:Id,offset:^f32,vertical:bool) {
         offset^=clamp(ctx.scroll_grab+moved*span/travel,0,span)
     }
     along:=travel*(offset^/span if span>0 else 0)
-    color:=tone(ctx,"text_faint") if it.active || it.hot else tone(ctx,"border")
-    e:=Element{id=bar,custom=paint_add(ctx,{kind=.Rect,fill=color,radius=SCROLL_BAR*0.5})}
-    if vertical {
-        e.layout={width=fixed(SCROLL_BAR),height=fixed(thumb)}
-        e.float={to=.Parent,offset={view.w-SCROLL_BAR,along}}
-    } else {
-        e.layout={width=fixed(thumb),height=fixed(SCROLL_BAR)}
-        e.float={to=.Parent,offset={along,view.h-SCROLL_BAR}}
+    width:=look.width if look.width>0 else SCROLL_BAR
+    color:=look.knob
+    if color[3]==0 {color=tone(ctx,"text_faint") if it.active || it.hot else tone(ctx,"border")}
+    corners:=look.radius if look.radius!={} else [4]f32{width,width,width,width}*0.5
+    place :: proc(e:^Element,vertical:bool,view:Rect,width,along,length:f32) {
+        if vertical {
+            e.layout={width=fixed(width),height=fixed(length)}
+            e.float={to=.Parent,offset={view.w-width,along}}
+        } else {
+            e.layout={width=fixed(length),height=fixed(width)}
+            e.float={to=.Parent,offset={along,view.h-width}}
+        }
     }
+    if look.track[3]>0 {
+        track:=Element{custom=paint_add(ctx,{kind=.Rect,fill=look.track,corners=corners})}
+        place(&track,vertical,view,width,0,room)
+        element_leaf(ctx,track)
+    }
+    e:=Element{id=bar,custom=paint_add(ctx,{kind=.Rect,fill=color,corners=corners})}
+    place(&e,vertical,view,width,along,thumb)
     element_leaf(ctx,e)
 }
 
@@ -210,11 +233,11 @@ scroll_begin :: proc(ctx:^Context,id:Id,offset:^[2]f32,s:Scroll={}) {
     inner.height=GROW if s.axes==.Horizontal else FIT
     if s.axes==.Vertical {inner.direction=.Column}
     // Content larger than the area leaves the bar a column, or a row, of its own.
-    if found && moves.y && content.h-view.h>0.5 {inner.padding[2]=max(inner.padding[2],SCROLL_GUTTER)}
-    if found && moves.x && content.w-view.w>0.5 {inner.padding[3]=max(inner.padding[3],SCROLL_GUTTER)}
+    if found && moves.y && content.h-view.h>0.5 {inner.padding[2]=max(inner.padding[2],scroll_gutter(s.bar))}
+    if found && moves.x && content.w-view.w>0.5 {inner.padding[3]=max(inner.padding[3],scroll_gutter(s.bar))}
     box_begin(ctx,{id=content_id,layout=inner,track=true})
 }
-scroll_end :: proc(ctx:^Context,id:Id,offset:^[2]f32=nil,fade:Color={}) {
+scroll_end :: proc(ctx:^Context,id:Id,offset:^[2]f32=nil,fade:Color={},bar:Scroll_Bar={}) {
     box_end(ctx,{id=scroll_content_id(ctx,id)})
     if offset!=nil {
         view,found:=widget_rect(ctx,id)
@@ -223,8 +246,8 @@ scroll_end :: proc(ctx:^Context,id:Id,offset:^[2]f32=nil,fade:Color={}) {
     }
     if offset!=nil && fade[3]>0 {scroll_fade(ctx,id,offset.y,fade)}
     if offset!=nil {
-        scroll_bar(ctx,id,&offset.y,true)
-        scroll_bar(ctx,id,&offset.x,false)
+        scroll_bar(ctx,id,&offset.y,true,bar)
+        scroll_bar(ctx,id,&offset.x,false,bar)
     }
     box_end(ctx,{id=id,clip_y=true})
 }
@@ -250,7 +273,7 @@ scroll_area :: proc(ctx:^Context,id:Id,offset:^[2]f32,s:Scroll={}) -> bool {
     return true
 }
 @(private)
-scroll_area_end :: proc(ctx:^Context,id:Id,offset:^[2]f32,s:Scroll) {scroll_end(ctx,id,offset,s.fade)}
+scroll_area_end :: proc(ctx:^Context,id:Id,offset:^[2]f32,s:Scroll) {scroll_end(ctx,id,offset,s.fade,s.bar)}
 
 // The notches of a Ctrl+wheel (Cmd on macOS) over the scroll area id: the
 // gesture that zooms what it shows. The area does not scroll with them. Call

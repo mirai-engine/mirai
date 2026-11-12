@@ -18,12 +18,12 @@ import "mirai:ui"
 
 KIND_LABELS :: [ui.Node_Kind]string{.Box="Box",.Text="Text",.Image="Image",.Progress="Progress",.Button="Button",.Checkbox="Checkbox",.Spacer="Spacer",.Component="Component",
     .Scroll="Scroll",.Switcher="Switcher",.List="List",.Prompt="Prompt",.Slider="Slider",.Field="Field",.Selector="Selector",.Dropdown="Dropdown",.Radio="Radio",
-    .Tooltip="Tooltip",.Rich_Text="Rich text",.View="View",.Action_Bar="Action bar",.Number="Number",.Tabs="Tabs",.Popup="Popup",.Modal="Modal",
+    .Tooltip="Tooltip",.Rich_Text="Rich text",.View="View",.Action_Bar="Action bar",.Number="Number",.Popup="Popup",.Modal="Modal",
     .Context_Menu="Context menu",.Radial="Radial",.Particles="Particles",.Draw="Draw"}
 
 // The kinds Add offers, in the order of its list.
 ADDED_KINDS :: [?]ui.Node_Kind{.Box,.Text,.Rich_Text,.Image,.Button,.Progress,.Checkbox,.Slider,.Field,.Selector,.Dropdown,.Radio,
-    .Number,.Prompt,.Action_Bar,.Scroll,.List,.Switcher,.Tabs,.Popup,.Modal,.Context_Menu,.Radial,.Tooltip,.View,.Particles,.Draw,.Spacer}
+    .Number,.Prompt,.Action_Bar,.Scroll,.List,.Switcher,.Popup,.Modal,.Context_Menu,.Radial,.Tooltip,.View,.Particles,.Draw,.Spacer}
 
 // How a node looks in the hierarchy and in Add: by its kind, a box by its
 // direction, and a widget of another .ui as any widget of the user.
@@ -56,7 +56,6 @@ node_icon :: proc(n:^ui.Tree_Node) -> ui.Icon {
     case .Tooltip:         return .Focus
     case .View:            return .Eye
     case .Number:          return .Axis
-    case .Tabs:            return .Split
     case .Popup,.Context_Menu: return .Dropdown
     case .Modal:           return .Focus
     case .Radial:          return .Target

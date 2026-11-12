@@ -233,48 +233,54 @@ an_array_whose_source_did_not_change_is_not_copied_and_only_changed_texts_are_ma
     testing.expect(t,s.instance.kept[s.instance.slots[tab]].valid)
 }
 
+// A strip of tabs is Buttons that bind one value, each writing its choice there and selected
+// while the value holds it, over a Switcher of that value. A Button holds what it shows, here an
+// icon and a badge floating over its corner, and the pointer on what it holds clicks it.
 @(test)
-a_tabs_shows_the_page_of_the_tab_chosen :: proc(t:^testing.T) {
+buttons_that_bind_one_value_over_a_switcher_of_it_are_tabs :: proc(t:^testing.T) {
     ctx:Context
-    desc:=TEST_SMALL
-    desc.navigation=true
-    testing.expect(t,test_context_init(&ctx,desc))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     ctx.release_activates=true
     s:Test_Containers
     test_containers_init(t,&s)
     defer test_containers_destroy(&s)
+    chosen:=Color{200,40,40,255}
     style,_:=tree_style(&s.tree,{text={size=12,color={255,255,255,255}},fill={40,40,40,255}})
-    tabs:=tree_node(&s.tree,-1,{kind=.Tabs,name="tabs",style=style,index=1,layout={width=fixed(300),height=FIT,gap=4}})
-    pages:=[3]string{"Gear","Map","Quests"}
-    for page in pages {
-        p:=tree_node(&s.tree,tabs,{kind=.Box,text=page})
-        tree_node(&s.tree,p,{kind=.Text,text=page=="Map" ? "the map" : "a page",layout={width=fixed(50),height=fixed(10)}})
+    testing.expect(t,tree_style_variant(&s.tree,{style=style,states={.Selected},patch={fields={.Fill},values={fill=chosen}}}))
+    badge,_:=tree_style(&s.tree,{text={size=8,color={255,255,255,255}},fill={250,200,0,255}})
+    root:=tree_node(&s.tree,-1,{kind=.Box,name="root",layout={direction=.Column,gap=4}})
+    strip:=tree_node(&s.tree,root,{kind=.Box,name="strip",layout={gap=4}})
+    for name,i in ([3]string{"gear","map","quests"}) {
+        tab:=tree_node(&s.tree,strip,{kind=.Button,name=name,style=style,text=name,bind_value="Camp.tab",choice=u16(i),
+            layout={direction=.Column,align_x=.Center,padding={6,4,6,4},gap=2,width=fixed(80)}})
+        if name!="map" {continue}
+        tree_node(&s.tree,tab,{kind=.Image,name="icon",layout={width=fixed(20),height=fixed(20)}})
+        tree_node(&s.tree,tab,{kind=.Text,name="badge",style=badge,text="+5",float={to=.Parent,anchor=.Top_Right,pivot=.Center},layout={width=fixed(16),height=fixed(10)}})
     }
+    pages:=tree_node(&s.tree,root,{kind=.Switcher,name="pages",bind_value="Camp.tab"})
+    for page in ([3]string{"a page","the map","a quest"}) {tree_node(&s.tree,pages,{kind=.Text,text=page,layout={width=fixed(50),height=fixed(10)}})}
     testing.expect(t,tree_instance_init(&s.instance,&s.tree,&s.host))
     input:=test_input()
     test_frame(&ctx,&input,test_containers_build,&s)
-    testing.expect(t,test_paint(&ctx,"Gear")!=nil && test_paint(&ctx,"Quests")!=nil,"Each node held is a tab, by its text")
-    testing.expect(t,test_paint(&ctx,"the map")!=nil,"Without a binding it starts at index")
-    tabs_id:=tree_element_id(&ctx,"tabs")
-    test_click(&ctx,&input,test_containers_build,&s,id_derive(&ctx,tabs_id,"tab",3))
-    testing.expect(t,test_paint(&ctx,"the map")==nil && test_paint(&ctx,"a page")!=nil)
-    changed,count:=test_containers_said(&s,.Changed,"tabs")
-    testing.expect(t,count==1 && changed.value==2)
-    // The keys choose the tab they move the focus to.
-    test_key(&input,.Left)
     test_frame(&ctx,&input,test_containers_build,&s)
+    selected :: proc(ctx:^Context,fill:Color) -> (count:int) {
+        for &p in ctx.paints[:ctx.paint_count] {if p.kind==.Box && p.fill==fill {count+=1}}
+        return
+    }
+    testing.expect(t,test_paint(&ctx,"a page")!=nil && selected(&ctx,chosen)==1,"the tab the value holds is the one selected")
+    tab:=test_rect(t,&ctx,tree_element_id(&ctx,"map"))
+    icon:=test_rect(t,&ctx,tree_element_id(&ctx,"icon"))
+    mark:=test_rect(t,&ctx,tree_element_id(&ctx,"badge"))
+    testing.expect(t,rect_holds(tab,icon) && icon.y>=tab.y+4+12,"what a Button holds goes inside it, under its text")
+    testing.expect(t,test_near(mark.x+mark.w*0.5,tab.x+tab.w) && test_near(mark.y+mark.h*0.5,tab.y),"a float of a Button hangs from it")
+    test_click(&ctx,&input,test_containers_build,&s,tree_element_id(&ctx,"icon"))
+    _,clicked:=test_containers_said(&s,.Clicked,"map")
+    changed,_:=test_containers_said(&s,.Changed,"map")
+    testing.expect(t,clicked==1 && changed.value==1,"the pointer on what a Button holds clicks it, and it asks for its choice")
+    s.camp.tab=1
     test_frame(&ctx,&input,test_containers_build,&s)
-    testing.expect(t,test_paint(&ctx,"the map")!=nil)
-    // Bound, it shows the value of the game, which writes what it asks for.
-    s.tree.nodes[tabs].binds[.Value]=Name_Ref{u32(s.tree.string_length),8}
-    copy(s.tree.strings[s.tree.string_length:],"Camp.tab")
-    s.tree.string_length+=8
-    tree_instance_destroy(&s.instance)
-    testing.expect(t,tree_instance_init(&s.instance,&s.tree,&s.host))
-    s.camp.tab=2
-    test_frame(&ctx,&input,test_containers_build,&s)
-    testing.expect(t,test_paint(&ctx,"a page")!=nil && test_paint(&ctx,"the map")==nil)
+    testing.expect(t,test_paint(&ctx,"the map")!=nil && test_paint(&ctx,"a page")==nil && selected(&ctx,chosen)==1)
 }
 
 @(test)

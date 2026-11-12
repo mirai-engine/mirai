@@ -41,7 +41,7 @@ style_patch :: proc "contextless" (style:^Node_Style,patch:^Style_Patch) {
     v:=&patch.values
     if .Text_Font in patch.fields {style.text.font=v.text.font}
     if .Text_Size in patch.fields {style.text.size=v.text.size}
-    if .Text_Color in patch.fields {style.text.color=v.text.color}
+    if .Text_Color in patch.fields {style.text.color,style.text.color2=v.text.color,v.text.color2}
     if .Text_Outline in patch.fields {style.text.outline,style.text.outline_color=v.text.outline,v.text.outline_color}
     if .Text_Shadow in patch.fields {style.text.shadow,style.text.shadow_color=v.text.shadow,v.text.shadow_color}
     if .Fill in patch.fields {style.fill=v.fill}

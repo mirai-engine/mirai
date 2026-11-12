@@ -62,7 +62,7 @@ Tree_Node :: struct {
     bind_image:[TREE_PATH_CAPACITY]u8 `mirai:"text"`, // an Image: a texture, as an asset id
     bind_tint:[TREE_PATH_CAPACITY]u8 `mirai:"text"`,  // a color in place of its fill, linear RGBA in floats or display RGBA in bytes
     bind_variant:[TREE_PATH_CAPACITY]u8 `mirai:"text"`, // a text or an enum: the name of the variant
-    index:u16,  // what a Switcher or a Tabs builds when it binds no value
+    index:u16,  // what a Switcher builds when it binds no value
     count:u16,  // how many times a List builds its node when it binds no array
     choice:u16, // what a Radio writes, and a Button that binds a value when it is clicked
     limit:u16,  // bytes a Field takes; 0: as many as its value holds
@@ -280,7 +280,6 @@ tree_load :: proc(tree:^Widget_Tree,data:Tree_Data,resources:Tree_Resources,allo
         for field in ([9][]u8{node.bind_text[:],node.bind_value[:],node.bind_visible[:],node.bind_selected[:],node.bind_disabled[:],node.bind_items[:],node.bind_key[:],node.bind_image[:],node.bind_tint[:]}) {strings+=len(serial.text_field(field))}
         strings+=len(serial.text_field(node.bind_variant[:]))+len(serial.text_field(node.action[:]))
         for &f in node.fields {strings+=len(serial.text_field(f.path[:]))}
-        if parent:=int(node.parent);parent>=0 && parent<len(data.nodes) && data.nodes[parent].kind==.Tabs {strings+=len(serial.text_field(node.name[:]))}
     }
     groups:=0
     for a in data.anims {if a.kind!=.Clip {groups+=1}}

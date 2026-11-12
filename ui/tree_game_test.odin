@@ -166,6 +166,41 @@ bindings_choose_the_image_the_tint_and_the_variant :: proc(t:^testing.T) {
     testing.expect(t,card!=nil && card.fill==Color{200,0,0,255},"The variant is the name the field holds")
 }
 
+// An Image, and a Box that shows one, take the shadow, the corners, the stroke and the program of
+// their style as a plain Box does: the program gets the image as the color of the node.
+@(test)
+an_image_takes_the_shadow_the_corners_and_the_program_of_its_style :: proc(t:^testing.T) {
+    s:Test_Game
+    test_game_init(t,&s)
+    defer test_game_destroy(&s)
+    round,_:=tree_style(&s.tree,{fill={255,255,255,255},radius={8,8,8,8},shadow=true,shadow_color={0,0,0,255},shadow_offset={0,4}})
+    cut,_:=tree_style(&s.tree,{fill={255,255,255,255},program_values={6,0,0,0}})
+    sheet,_:=tree_image(&s.tree,{quad={.Image,4,{0,0,0.5,0.5}}})
+    root:=tree_node(&s.tree,-1,{kind=.Box,name="root",layout={direction=.Column,gap=8}})
+    tree_node(&s.tree,root,{kind=.Image,name="face",style=round,bind_image="Test.portrait",layout={width=fixed(20),height=fixed(20)}})
+    tree_node(&s.tree,root,{kind=.Box,name="card",style=cut,image=sheet,layout={width=fixed(30),height=fixed(30)}})
+    tree_programs_set(&s.tree,{0,11})
+    testing.expect(t,test_game_instance(&s))
+    s.values.portrait={9,0}
+    ctx:Context
+    test_game_context(t,&ctx,&s)
+    defer context_destroy(&ctx)
+    input:=test_input()
+    test_frame(&ctx,&input,test_game_build,&s)
+    frame:=test_frame(&ctx,&input,test_game_build,&s)
+    face:=test_rect(t,&ctx,tree_element_id(&ctx,"face"))
+    rounded,shaded,programmed:=false,false,false
+    for shape in frame.shapes {
+        texture:=transmute(u32)shape.stroke[1]
+        if texture==10 && transmute(u32)shape.stroke[0]==0 && shape.radii[0]==8 {rounded=true}
+        if shape.bounds=={face.x,face.y+4,face.w,face.h} && shape.fill[3]==1 {shaded=true}
+        if texture==5 && transmute(u32)shape.stroke[0]==11 && shape.params[0]==6 && shape.fill2=={0,0,0.5,0.5} && shape.bounds[2]==30 {programmed=true}
+    }
+    testing.expect(t,rounded,"the image is cut to the corners of its style")
+    testing.expect(t,shaded,"and casts its shadow")
+    testing.expect(t,programmed,"the program of the style colors the image of a Box, with its part of the texture")
+}
+
 @(test)
 a_text_draws_what_its_style_fills_behind_it_with_its_padding :: proc(t:^testing.T) {
     s:Test_Game

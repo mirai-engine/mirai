@@ -48,6 +48,8 @@ Draw :: struct {
     fade:[2]f32,        // x where what is drawn starts to fade and where it is gone, in the space of the clip; equal: none
     shear:f32,          // textured quads lean right by this much per unit above shear_base: the glyphs of italics
     shear_base:f32,     // the baseline of the line draw_text draws
+    color2:Color,       // when set: textured quads go from their color at band[0] down to this at band[1]
+    band:[2]f32,
     transformed:bool,   // scope is not the identity
     scale:f32,          // layout units to surface units
     ppu:f32,            // device pixels per layout unit
@@ -311,17 +313,23 @@ draw_shape :: proc(ctx:^Context,r:Rect,style:Shape_Style) {
     shape_emit(ctx,shape,ctx.draw.pixel)
 }
 
-// A rounded rectangle colored by a ui program of the renderer (its id, never
-// 0): it gets color, the place of each point and values, its first four
-// floats. The shape keeps the id in the bits of stroke.x and values in params.
-draw_program :: proc(ctx:^Context,r:Rect,program:u32,values:[4]f32,color:Color,radii:[4]f32) {
-    if r.w<=0 || r.h<=0 || program==0 {return}
+// A rounded rectangle colored by a ui program of the renderer (its id): it
+// gets color, the place of each point and values, its first four floats. With
+// an image of the texture table its color is that image tinted by color, and
+// without a program the image alone is cut to the corners. The shape keeps the
+// id in the bits of stroke.x, the texture in stroke.y and values in params.
+draw_program :: proc(ctx:^Context,r:Rect,program:u32,values:[4]f32,color:Color,radii:[4]f32,image:Quad={}) {
+    if r.w<=0 || r.h<=0 || program==0 && image.kind!=.Image {return}
     radius:=radii
     for &v in radius {v=clamp(v,0,min(r.w,r.h)*0.5)}
     shape:=Shape{
         bounds={r.x,r.y,r.w,r.h},radii=radius,
         fill=[4]f32{f32(color[0]),f32(color[1]),f32(color[2]),f32(color[3])}/255,
         stroke={transmute(f32)program,0,0,0},params=values,
+    }
+    if image.kind==.Image {
+        shape.stroke[1]=transmute(f32)(image.data+1)
+        shape.fill2={image.uv.x,image.uv.y,image.uv.w,image.uv.h}
     }
     shape_emit(ctx,shape,ctx.draw.pixel,.Program)
 }
@@ -475,18 +483,23 @@ draw_quad :: proc(ctx:^Context,rect,uv:Rect,color:Color,quad:u32) {
     u1:=u0+clipped.w/rect.w*uv.w
     v1:=v0+clipped.h/rect.h*uv.h
     x0,y0:=clipped.x,clipped.y;x1,y1:=x0+clipped.w,y0+clipped.h
-    tint:=draw_tint(d,color)
-    left,right:=tint,tint
+    high:=draw_tint(d,color)
+    low:=high
+    if d.color2[3]>0 && d.band[1]>d.band[0] {
+        other:=draw_tint(d,d.color2)
+        high,low=high+(other-high)*clamp((y0-d.band[0])/(d.band[1]-d.band[0]),0,1),high+(other-high)*clamp((y1-d.band[0])/(d.band[1]-d.band[0]),0,1)
+    }
+    left,right:=f32(1),f32(1)
     if d.fade[1]>d.fade[0] {
-        left*=clamp((d.fade[1]-x0)/(d.fade[1]-d.fade[0]),0,1)
-        right*=clamp((d.fade[1]-x1)/(d.fade[1]-d.fade[0]),0,1)
+        left=clamp((d.fade[1]-x0)/(d.fade[1]-d.fade[0]),0,1)
+        right=clamp((d.fade[1]-x1)/(d.fade[1]-d.fade[0]),0,1)
     }
     // A sheared quad is clipped as the rectangle it leans from.
     top,bottom:=d.shear*(d.shear_base-y0),d.shear*(d.shear_base-y1)
-    a:=Vertex{position=draw_point(d,{x0+top,y0}),color=left,quad=quad,uv={u0,v0}}
-    b:=Vertex{position=draw_point(d,{x1+top,y0}),color=right,quad=quad,uv={u1,v0}}
-    c:=Vertex{position=draw_point(d,{x1+bottom,y1}),color=right,quad=quad,uv={u1,v1}}
-    e:=Vertex{position=draw_point(d,{x0+bottom,y1}),color=left,quad=quad,uv={u0,v1}}
+    a:=Vertex{position=draw_point(d,{x0+top,y0}),color=high*left,quad=quad,uv={u0,v0}}
+    b:=Vertex{position=draw_point(d,{x1+top,y0}),color=high*right,quad=quad,uv={u1,v0}}
+    c:=Vertex{position=draw_point(d,{x1+bottom,y1}),color=low*right,quad=quad,uv={u1,v1}}
+    e:=Vertex{position=draw_point(d,{x0+bottom,y1}),color=low*left,quad=quad,uv={u0,v1}}
     out[0],out[1],out[2],out[3],out[4],out[5]=a,b,c,a,c,e
 }
 draw_image :: proc(ctx:^Context,rect:Rect,image:Quad,tint:Color={255,255,255,255}) {

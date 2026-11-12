@@ -14,7 +14,7 @@ ux_sample :: proc(t:^testing.T,r:^Records) -> bool {
         ui.tree_node_record(&texts,0,{kind=.Text,name="title",text="Trips"}),
         ui.tree_node_record(&texts,0,{kind=.Box,name="bar"}),
         ui.tree_node_record(&texts,2,{kind=.Progress,name="fuel"}),
-        ui.tree_node_record(&texts,-1,{kind=.Button,name="menu",text="Menu"}),
+        ui.tree_node_record(&texts,-1,{kind=.Text,name="menu",text="Menu"}),
         ui.tree_node_record(&texts,-1,{kind=.List,name="list"}),
         ui.tree_node_record(&texts,5,{kind=.Text,name="slot"}),
     }

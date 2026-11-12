@@ -196,8 +196,11 @@
   node's values). A parameter that is not a float reads the bits of that float. The engine ones
   (`shaders/materials/ui_*.slang`) are `Ui_Radial_Wipe` (the sector of a cooldown), `Ui_Dissolve`
   (the node dissolves into noise), `Ui_Shine` (a stripe of brightness crosses it),
-  `Ui_Gradient_Sweep` (a gradient toward another color that shifts) and `Ui_Slant` (the fill cut to
-  a parallelogram). Selector and registration:
+  `Ui_Gradient_Sweep` (a gradient toward another color that shifts), `Ui_Slant` (the fill cut to
+  a parallelogram), `Ui_Polygon` (cut to a regular polygon), `Ui_Radial_Gradient` (toward another
+  color away from the center) and `Ui_Rays` (a burst of turning rays). On an image node
+  `ctx.color` is the image tinted by the fill, so every program also cuts and colors images.
+  Selector and registration:
   [UI](ui.md#ui-world-panels-and-debug-lines).
 
 ## Programs and stages

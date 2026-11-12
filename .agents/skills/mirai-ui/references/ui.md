@@ -158,7 +158,12 @@ gave it and takes the height of those lines in the same frame, whatever the widt
   [UI program](../../mirai-rendering/references/shaders.md#programs), whose `ui` id it does not
   interpret; the scope tints it by the vertex color, like a shape. With `program` in a `Box`, a
   `Button`, a `Progress` or a `Paint`, the fill comes from the program instead of the fill and its
-  gradient; shadow, border and track are still shapes.
+  gradient; shadow, border and track are still shapes. With an image of the texture table the
+  program gets the image tinted by the fill as `ctx.color`, and without a program the image alone
+  is cut to the corners (`paint_image`): an `Image` or a `Box` with an image takes shadow, corners,
+  stroke and program as a plain `Box`.
+- A `color2` of `Text_Style` makes the glyph quads of the run go from its color at the top of the
+  line to it at the baseline (`Draw.color2` and `band`); shadow and outline stay plain.
 - What does not fit in `max_vertices`, `max_commands` or `max_shapes` is discarded whole and
   counted.
 
@@ -390,7 +395,8 @@ All take the context, an id and their state by parameter.
     with Ctrl (Cmd on macOS) before the area scrolls.
   - A content that shrinks leaves in place what was seen: the area stores below the missing place,
     which goes away when scrolling up and never when scrolling down with the wheel. The bar floats
-    and takes no layout.
+    and takes no layout; `Scroll.bar` (from the `bar`, `track`, `knob` and `radius` of the style of
+    a `Scroll` node) gives its width, colors and corners, and zero is the bar of the theme.
   - When the keyboard or the gamepad move the focus, the areas that contain it bring it into view
     from the inside out.
 
@@ -489,8 +495,11 @@ The node types are in `Node_Kind` (`tree.odin`) and the events in `Tree_Event`.
     carries it from its old row. An item that comes in takes a slot no item of the build holds and
     starts its states afresh; one that moved formats its texts again, because what the copy says
     changed is by place. Two items with one key are two elements with one id.
-  - Each tab of a `Tabs` shows its option, like those of a `Selector` (its text separated by `|` or
-    the array it binds), and without it the text of its node, its name or its number.
+  - A `Button` is a control that holds nodes: `tree_button` builds them inside its element, after
+    its label, by the whole layout of the node (`Button.holds`, `button_begin`/`button_end`). What
+    it holds draws and does not take the pointer, so the button keeps its click, focus and states.
+    One that binds a value is `selected` while it holds its `choice`: tabs are such buttons over a
+    `Switcher` of that value.
   - A `Popup` that the player closed stays closed until the game hides it; `Modal` takes all the
     input and Escape emits `Closed` so the game hides it. `Radial` gives the focus to the node in
     the direction of the left stick (`Input.aim`), of the arrows or of the pointer.
