@@ -38,7 +38,7 @@ Create_Params :: struct {
     heightmap:[512]u8 `mirai:"text,optional,label=A PNG (16-bit too) or TGA or BMP of the project whose heights it takes in place of samples"`,
     height_scale:f32 `mirai:"optional,unit=m,label=How far the white of the heightmap stands over its black"`,
     height_offset:f32 `mirai:"optional,unit=m,label=The height of its black"`,
-    at:[3]f32 `mirai:"optional,label=Where its entity stands; omitted: under the target of the view"`,
+    at:[3]f32 `mirai:"optional,label=Where its entity stands, the center of the terrain; omitted: under the target of the view"`,
     ground:editor.Api_Entity_Text `mirai:"text,entity,optional,label=Of a volume: a Heightfield terrain it joins, standing on its samples and centered at at, its field its ground to dig into; it takes the spacing of the Heightfield"`,
 }
 
@@ -148,9 +148,9 @@ Terrain_Interior_Result :: struct {
 
 Terrain_Sample_Result :: struct {
     found:bool,
-    height:f32 `mirai:"optional"`,
+    height:f32,
     normal:[3]f32 `mirai:"optional"`,
-    slope:f32 `mirai:"optional,unit=deg"`,
+    slope:f32 `mirai:"unit=deg"`,
     weights:serial.Json `mirai:"optional"`,
     hole:bool `mirai:"optional"`,
     layers:int `mirai:"optional"`,

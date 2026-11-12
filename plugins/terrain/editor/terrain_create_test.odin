@@ -1,6 +1,7 @@
 package terrain_editor
 
 import "core:fmt"
+import "core:mem"
 import "core:os"
 import "core:strings"
 import "core:testing"
@@ -254,6 +255,22 @@ a_named_terrain_takes_the_name_and_a_missing_heightmap_says_its_path :: proc(t:^
     name:=core.edit(&world.names,e)
     testing.expect(t,name!=nil && base.text_get(name.text[:])=="Island","the entity takes the name")
     testing.expect(t,editor.file_exists(&s,fmt.tprintf("%s/terrain/Island.terrain",root)),"the file takes the name")
+}
+
+// A sample answers the height and slope of what it finds, also where they are 0.
+@(test)
+a_sample_answers_its_height_and_slope_where_they_are_zero :: proc(t:^testing.T) {
+    schema:serial.Schema
+    serial.schema_init(&schema);defer serial.schema_destroy(&schema)
+    // As the API writes its results.
+    schema.unsized,schema.sparse=true,true
+    type,ok:=serial.schema_add_type_info(&schema,type_info_of(Terrain_Sample_Result))
+    if !testing.expect(t,ok) {return}
+    flat:=Terrain_Sample_Result{found=true,normal={0,1,0}}
+    out:serial.Writer;serial.writer_init(&out,512);defer serial.writer_destroy(&out)
+    serial.text_write(&out,&schema,type,mem.ptr_to_bytes(&flat),.Line)
+    text:=string(serial.writer_bytes(&out))
+    testing.expectf(t,strings.contains(text,`"height"`) && strings.contains(text,`"slope"`),"%s",text)
 }
 
 @(test)
