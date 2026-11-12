@@ -218,7 +218,8 @@ Terrain_Resident :: struct {
     gc_parents:core.Seen,
     shown:[2]core.Seen, // Terrain and Material_Values after the owners last showed their chunks
     stats:Terrain_Resident_Stats,
-    lod_view:[3]f32,  // where the view was at the last evaluation of levels
+    lod_views:[LOD_VIEWS][3]f32, // where the views were at the last evaluation of levels
+    lod_view_count:int,
     lod_stamp:[3]u64, // the revision of the streaming sources, the count of owners, marks
     lod_seen:[2]core.Seen, // the transforms and the colliders
     marks:u64,        // advances when what the levels or the unloaded ground are chosen from changes: a page, a source, an owner, a chunk that empties, fills or goes
@@ -227,6 +228,8 @@ Terrain_Resident :: struct {
     room:Collider_Room,
     cut:bool,               // what the owners show is to be chosen again: the cuts or what is built changed
     splits:[dynamic]Split,  // room for a node of every owner: the order of the budget and of the colliders
+    places:[dynamic]Lod_Place, // room for every owner, and spans for its nodes: how resident_lod measures them
+    spans:[dynamic][3]int,
     border:Piece_Border,    // of a node, while its pages are looked for
     picking:bool,           // chunks without a collider keep their triangles on the CPU: while the world does not play, for the picking of the editor
 }
@@ -754,7 +757,7 @@ terrain_release :: proc(resident:^Terrain_Resident,allocator:runtime.Allocator) 
 terrain_resident_free :: proc(resident:^Terrain_Resident) {
     for &source in resident.sources {resident_source_free(resident,&source)}
     for &owner in resident.owners {resident_owner_free(&owner)}
-    delete(resident.sources);delete(resident.owners);delete(resident.splits)
+    delete(resident.sources);delete(resident.owners);delete(resident.splits);delete(resident.places);delete(resident.spans)
     piece_border_destroy(&resident.border)
     resident^={}
 }

@@ -9,6 +9,7 @@ import "core:testing"
 import "core:mem"
 import "mirai:asset"
 import "mirai:core"
+import camera "mirai:engine/camera"
 import phys "plugins:physics/runtime"
 import render "mirai:engine/render"
 import "mirai:host"
@@ -395,18 +396,18 @@ a_dig_finds_the_terrain_it_touches_and_reads_in_its_space :: proc(t:^testing.T) 
     testing.expect(t,ok && resolved.owner==near,"a dig that names its terrain is not searched for")
 }
 
-terrain_test_update :: proc(w:^Terrain_Test_World,resident:^Terrain_Resident,app:^host.App,time:core.Time={},view:=core.View{},settings:=TERRAIN_TEST_SETTINGS) {
+terrain_test_update :: proc(w:^Terrain_Test_World,resident:^Terrain_Resident,app:^host.App,time:core.Time={},view:=core.View{},settings:=TERRAIN_TEST_SETTINGS,locals:=core.Ref(camera.Local_Views){}) {
     // A tick, and those that take what its jobs built: a rebuilt chunk shows in the tick after it changed.
-    terrain_test_tick(w,resident,app,time,view,settings)
+    terrain_test_tick(w,resident,app,time,view,settings,locals)
     for _ in 0..<8 {
         if !work_busy(&w.data,nil) {break}
-        terrain_test_tick(w,resident,app,{},view,settings)
+        terrain_test_tick(w,resident,app,{},view,settings,locals)
     }
 }
 
-terrain_test_tick :: proc(w:^Terrain_Test_World,resident:^Terrain_Resident,app:^host.App,time:core.Time={},view:=core.View{},settings:=TERRAIN_TEST_SETTINGS) {
+terrain_test_tick :: proc(w:^Terrain_Test_World,resident:^Terrain_Resident,app:^host.App,time:core.Time={},view:=core.View{},settings:=TERRAIN_TEST_SETTINGS,locals:=core.Ref(camera.Local_Views){}) {
     if w.settings=={} {w.settings={bodies=64,shapes=64,contacts=64,joints=1,characters=1,hulls=1,meshes=64,heightfields=64}}
-    test_step(&w.terrain,core.commands_of(test_world_ref(&w.w)),resident,app,&w.problems,settings,view=view)
+    test_step(&w.terrain,core.commands_of(test_world_ref(&w.w)),resident,app,&w.problems,settings,view=view,locals=locals)
     test_world_settle(&w.w)
     terrain_test_physics(w,app,time)
     test_world_settle(&w.w)

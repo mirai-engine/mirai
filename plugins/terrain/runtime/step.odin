@@ -5,6 +5,7 @@ import "core:math/linalg"
 import "core:slice"
 import "mirai:asset"
 import "mirai:core"
+import camera "mirai:engine/camera"
 import scene "mirai:engine/scene"
 import render "mirai:engine/render"
 import phys "plugins:physics/runtime"
@@ -683,7 +684,7 @@ terrain_update :: proc(
     locals:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),ids:^core.Table(core.Id,.Read),colliders:^core.Table(phys.Collider),
     meshes:^core.Table(render.Mesh_Renderer),looks:^core.Table(render.Material_Values),
     data:^Terrain_Data,resident:^Terrain_Resident,requests:^Terrain_Requests,digs:^Terrain_Digs,settings:Terrain_Settings,app:^host.App,time:core.Time,frame:core.Frame_Time,
-    view:core.View,worlds:^core.Table(core.World_Transform,.Read),sources:core.Ref(scene.Streaming_Sources),kept:^core.Table(scene.Far_Kept,.Read),physics:phys.Physics_Settings,
+    view:core.View,local_views:core.Ref(camera.Local_Views),worlds:^core.Table(core.World_Transform,.Read),sources:core.Ref(scene.Streaming_Sources),kept:^core.Table(scene.Far_Kept,.Read),physics:phys.Physics_Settings,
     loads:core.Ref(scene.Section_Loads),waits:^scene.Load_Waits,problems:^core.Problems,focus:Terrain_Focus,queries:^core.Ground_Queries,ground:^Terrain_Ground,
 ) {
     c:=Chunk_Tables{commands,chunks,locals,parents,ids,colliders,meshes,looks}
@@ -817,7 +818,7 @@ terrain_update :: proc(
         // What stands for a section that is not loaded collides with nothing.
         for &owner in resident.owners {owner.far=kept!=nil && core.has(kept,owner.entity)}
         resident_joins(resident,data,terrains,ids,worlds,locals,problems)
-        resident_lod(resident,data,worlds,view,sources,settings,terrains,&c,physics,problems,changed || first,focus)
+        resident_lod(resident,data,worlds,lod_views_of(view,local_views),sources,settings,terrains,&c,physics,problems,changed || first,focus)
         resident_cut(resident,data)
         stream:=settings.resident_distance>0
         // A piece that is wanted where nothing shows is built in this call.
@@ -916,9 +917,10 @@ resident_owner :: proc(resident:^Terrain_Resident,e:core.Entity,entry:^Data_Sour
     owner.chunks,e0=make([]core.Entity,count,allocator)
     owner.nodes,e1=make([]Owner_Node,count,allocator)
     owner.changed,e2=make([dynamic]u32,0,2*count,allocator)
-    room:=count
-    for &other in resident.owners {room+=len(other.nodes)}
-    if e0!=nil || e1!=nil || e2!=nil || reserve(&resident.splits,room)!=nil || append(&resident.owners,owner)!=1 {
+    room,spans:=count,(count+LOD_SPAN-1)/LOD_SPAN
+    for &other in resident.owners {room+=len(other.nodes);spans+=(len(other.nodes)+LOD_SPAN-1)/LOD_SPAN}
+    reserved:=reserve(&resident.splits,room)==nil && reserve(&resident.places,len(resident.owners)+1)==nil && reserve(&resident.spans,spans)==nil
+    if e0!=nil || e1!=nil || e2!=nil || !reserved || append(&resident.owners,owner)!=1 {
         resident_owner_free(&owner)
         source_memory(problems,e,resident.assets,entry.id)
         return nil
