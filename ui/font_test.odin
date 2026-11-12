@@ -365,6 +365,13 @@ a_context_that_asks_its_owner_draws_new_glyphs_in_the_same_frame :: proc(t:^test
     height:=owner.height
     testing.expect(t,font_update(&owner) && owner.height>height)
     testing.expect_value(t,test_glyph_vertices(test_frame(&ctx,&input,many)),6*6)
+    // A font without faces yet (the italics, which the faces of the editor leave out) asks for one,
+    // and draws once its owner adds it between frames.
+    testing.expect_value(t,owner.metrics[FONT_SEMIBOLD_ITALIC].faces[1],0)
+    italic :: proc(ctx:^Context,user:rawptr) {draw_text(ctx,"PLAY",10,10,22,{255,255,255,255},FONT_SEMIBOLD_ITALIC)}
+    testing.expect_value(t,test_glyph_vertices(test_frame(&ctx,&input,italic)),0)
+    testing.expect(t,font_faces_add(&owner))
+    testing.expect_value(t,test_glyph_vertices(test_frame(&ctx,&input,italic)),4*6)
 }
 
 @(test)
@@ -514,7 +521,7 @@ a_whole_font_is_rasterized_again_when_a_font_is_added_or_replaced :: proc(t:^tes
 }
 
 @(test)
-text_at_a_size_no_face_is_close_to_gets_a_face_of_its_own_between_frames :: proc(t:^testing.T) {
+text_at_a_size_without_its_face_gets_one_between_frames :: proc(t:^testing.T) {
     owner:Font
     testing.expect(t,font_init(&owner,nil,nil,1,on_demand=true))
     defer font_destroy(&owner)
@@ -536,4 +543,16 @@ text_at_a_size_no_face_is_close_to_gets_a_face_of_its_own_between_frames :: proc
     testing.expect(t,owner.faces[moved].glyphs[int('W')].phases>0,"what was wanted follows its face")
     // The faces of the regular font did not move: it is first.
     testing.expect_value(t,owner.metrics[FONT_REGULAR].faces[0],0)
+    // Text a pixel from a face gets a face of its own too: a scaled face is resampled, and blurs.
+    ctx:Context
+    desc:=TEST_FONT
+    desc.font=&owner
+    testing.expect(t,test_context_init(&ctx,desc))
+    defer context_destroy(&ctx)
+    near :: proc(ctx:^Context,user:rawptr) {draw_text(ctx,"Quality",10,10,18,{255,255,255,255},FONT_SEMIBOLD)}
+    input:=test_input()
+    test_frame(&ctx,&input,near)
+    testing.expect(t,font_faces_add(&owner))
+    semibold:=font_face(&owner,FONT_SEMIBOLD,18)
+    testing.expect(t,semibold!=nil && semibold.size==18,"18 next to the face of 17 has its own")
 }

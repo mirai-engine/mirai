@@ -31,7 +31,7 @@ The template's `assets/menu/theme.ui` is the example of tokens and styles, and i
   either. `shadow` and `text_shadow` are `{color, blur, x, y}` and a state lists only the parts it
   changes. A hard shadow has no blur: it is an edge of the shape.
 - `fill2` makes the fill a gradient from `fill`, downward, or toward the right with
-  `"gradient": "right"`. `"italic": true` leans the glyphs of the text.
+  `"gradient": "right"`. `"italic": true` draws the text in the italic of its font.
 - `program` names a UI program that colors the fill instead, and `program_values` are its first
   four parameters; the node does not take their defaults. The engine ones: `Ui_Slant` (the fill cut
   to a parallelogram, `lean` times its height), `Ui_Shine`, `Ui_Gradient_Sweep`, `Ui_Dissolve` and
