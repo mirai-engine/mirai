@@ -467,6 +467,8 @@ pass_gbuffer_begin :: proc(s: ^Stage_Pass, name := "extension surfaces") {
 	for target, i in targets[:count] {pass.colors[i] = {texture = target, load = .Load, store = .Store}}
 	pass.depth = {texture = p.t.depth, load = .Load, store = .Store}
 	rhi.cmd_begin_render_pass(p.cmd, &pass)
+	// The fragment of the engine reports the levels it samples, also with no scene drawn before.
+	textures_feedback_bind(p.r, p.cmd)
 }
 
 // The pipeline of the Gbuffer stage that draws with <shader>.vert of the

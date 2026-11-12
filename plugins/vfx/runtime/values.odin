@@ -52,7 +52,7 @@ error_message :: proc(error:Error) -> string {
     case .Override_Capacity: return fmt.tprintf("An entity changes at most %d values of its effect: remove one first",PARTICLE_OVERRIDE_CAPACITY)
     case .Invalid_Entity: return "Name a live entity that has a Particle_Emitter"
     case .Asset_Not_Found: return "Name a .particle, material or mesh of the project"
-    case .Asset_Kind: return "material takes a material, mesh a mesh and sub_particle a .particle"
+    case .Asset_Kind: return "material takes a material, meshes take meshes and sub_particle a .particle"
     }
     return ""
 }

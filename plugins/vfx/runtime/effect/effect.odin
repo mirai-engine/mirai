@@ -24,18 +24,26 @@ import "mirai:std/serial"
 // paths an instance can change, each a value of at most PARTICLE_VALUE_BYTES;
 // text fields (the program) are of the effect alone.
 
-VERSION :: 4
+VERSION :: 5
 PARTICLE_BURSTS :: 4
 PARTICLE_CURVE_KEYS :: 8
 PARTICLE_VALUE_BYTES :: 16
 PARTICLE_NAME_BYTES :: 64
 PARTICLE_MAX_PARAMETERS :: 32
+PARTICLE_MESHES :: 4
 
 Particle_Shape :: enum u32 {Point,Sphere,Hemisphere,Cone,Box,Circle,Line,Surface,Bones}
 Particle_Render :: enum u32 {Billboard,Velocity,Horizontal,Ribbon,Mesh}
 Particle_Blend :: enum u32 {Additive,Alpha}
 Particle_Collision :: enum u32 {None,World}
-Particle_Event :: enum u32 {None,Death,Collision}
+// How a Mesh particle turns: Tumble, about an axis of its own by its rotation
+// and spin; Velocity, its front (-Z) along its velocity, its +Y as near the
+// up of the world, rolled about its front by its rotation.
+Particle_Facing :: enum u32 {Tumble,Velocity}
+// Trail: vfx.TRAILS_PER_SECOND times each second of its life, where it is.
+// The particles an event starts join a ribbon of the particle that made it:
+// those of Trail are a trail behind it.
+Particle_Event :: enum u32 {None,Death,Collision,Trail}
 
 // Particles started at once, when the cycle reaches time. cycles above one
 // repeat it every interval seconds.
@@ -111,7 +119,9 @@ Particle_Info :: struct {
     light_radius:f32 `mirai:"min=0,unit=m"`,  // of the sphere that glows; 0: half the size of the particle
     sort:bool,                                // blended particles drawn back to front (2048 at most)
     material:base.Asset_Id,                   // its base color texture is the flipbook; none: a soft puff
-    mesh:base.Asset_Id,                       // of Mesh particles; none: a cube
+    meshes:[PARTICLE_MESHES]base.Asset_Id,    // of Mesh particles, each picked by its weight; none: a cube
+    mesh_weights:[PARTICLE_MESHES]f32 `mirai:"min=0"`, // how often each of meshes is picked; all 0: each as often
+    facing:Particle_Facing,
     stretch:f32 `mirai:"min=0,unit=s"`,       // Velocity: seconds of motion a sprite spans
     soft:f32 `mirai:"min=0,unit=m"`,          // a sprite fades over this distance into what is behind it
     flipbook:[2]u32,                          // columns and rows
@@ -221,8 +231,15 @@ particle_validate :: proc(desc:Particle_Desc) -> Particle_Problem {
     if p.render>max(Particle_Render) {return {"render","Use Billboard, Velocity, Horizontal, Ribbon or Mesh"}}
     if p.blend>max(Particle_Blend) {return {"blend","Use Additive or Alpha"}}
     if p.collision>max(Particle_Collision) {return {"collision","Use None or World"}}
-    if p.trigger>max(Particle_Event) {return {"trigger","Use None, Death or Collision"}}
-    if p.report>max(Particle_Event) {return {"report","Use None, Death or Collision"}}
+    if p.facing>max(Particle_Facing) {return {"facing","Use Tumble or Velocity"}}
+    for weight in p.mesh_weights {if weight<0 {return {"mesh_weights","Use weights of zero or more"}}}
+    if p.render==.Mesh && p.sort {
+        meshes:=0
+        for id in p.meshes {meshes+=1 if id!={} else 0}
+        if meshes>1 {return {"sort","A sorted effect draws one mesh back to front: keep one of meshes, or turn sort off"}}
+    }
+    if p.trigger>max(Particle_Event) {return {"trigger","Use None, Death, Collision or Trail"}}
+    if p.report>max(Particle_Event) || p.report==.Trail {return {"report","Use None, Death or Collision"}}
     if p.emission_mode>max(asset.Emission_Mode) {return {"emission_mode","Use Physical or Relative"}}
     if len(serial.text_field(p.program[:]))==len(p.program) {return {"program","Name the program in fewer than 64 bytes"}}
     if p.duration<0 {return {"duration","Use a duration of zero or more seconds"}}

@@ -5,12 +5,12 @@
 // (particle_sprite.frag), so its color, opacity and the curves of its life
 // show and fade as a sprite's do, additive or covering by alpha as the
 // effect says. It turns, grows and is placed as particle_mesh.vert places
-// it; the uv0 and uv1 of its vertices take the place of the two frames of
+// it, a draw for each of its meshes; the uv0 and uv1 of its vertices take the place of the two frames of
 // the flipbook, and the fragment reads them through the material's map.
 #include "gbuffer_vertex.slang"
 #include "particle_programs.slang"
 
-struct Params_Block { uint emitter; uint pass; uint pad0; uint pad1; };
+struct Params_Block { uint emitter; uint pass; uint mesh; uint pad1; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 
 // What particle_sprite.frag reads (particle_sprite.vert gives the same).
@@ -34,7 +34,7 @@ struct Stage_Output {
 Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_VulkanInstanceID) {
     Stage_Output output = (Stage_Output)0;
     Particle_Emitter e = particle_emitters[params.emitter];
-    Mesh mesh = meshes[e.mesh.y];
+    Mesh mesh = meshes[params.mesh];
     Cluster c = mesh_cluster(mesh, vertex_id / CLUSTER_DRAW_VERTICES);
     uint corner = vertex_id % CLUSTER_DRAW_VERTICES;
     if (corner >= cluster_triangle_count(c) * 3u || !cluster_resident(mesh, c)) {
@@ -42,11 +42,12 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
         return output;
     }
     Mesh_Point v = cluster_point(mesh, c, cluster_corner(mesh, c, corner));
+    // The first instance of the draw is where the run of its mesh starts in the list.
     uint index = particle_drawn(params.emitter, instance_id);
     Particle p = particles[index];
     Particle_Look look = particle_program_look(params.emitter, index, p);
-    float3x3 rotation = particle_rotation(p.seed, p.rotation);
-    float3 world = particle_world(params.emitter, p.position) + particle_world_vector(params.emitter, mul(rotation, v.position * look.size));
+    float3x3 rotation = particle_mesh_rotation(params.emitter, p);
+    float3 world = particle_world(params.emitter, p.position) + particle_mesh_vector(params.emitter, rotation, v.position * look.size);
     output.position = view_clip(world);
     // The color of the mesh tints it as it tints the mesh in the G-buffer.
     output.out_color = float4(material_vertex_tint(material_row(e.mesh.w), v.color.rgb), 1.0) * look.color;

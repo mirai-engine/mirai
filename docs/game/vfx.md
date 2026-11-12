@@ -17,6 +17,7 @@ sends requests. Imports: `plugins:vfx/runtime` as `vfx`,
 - Other color or rate for one entity: [values](#values-of-one-instance).
 - Many hits per tick, each with its place and velocity: [channels](vfx/channels.md).
 - A sound or decal where a particle dies or hits: [reports](vfx/reports.md).
+- A trail behind each spark or comet: [trails](#trails).
 - Write or tune an effect: [authoring](#author-an-effect).
 
 ## One-shot effect
@@ -54,7 +55,8 @@ and `request_values_clear`. Assets belong to the effect.
 
 ## Author an effect
 
-Editor: the `.particle` document. Agent: `particle.set`, `particle.inspect`.
+Editor: the `.particle` document. Agent: `particle.set`, `particle.inspect`. Debris: `Mesh` with
+up to four `meshes` and `mesh_weights`, `facing` `Velocity` for shards that point where they fly.
 Content tool, over the defaults ([assets](assets.md)):
 
 ```odin
@@ -62,6 +64,11 @@ fx:=effect.PARTICLE_DEFAULTS
 fx.duration, fx.rate, fx.bursts[0] = .05, 0, {count=50, cycles=1}
 err:=effect.particle_save("assets/particles/dust.particle", &types, {id=id, info=fx})
 ```
+
+## Trails
+
+A trail behind each spark: a `Ribbon` effect (`Point`, speed 0) named by `sub_particle` of the
+first with `trigger` `Trail`, `sub_count` 1; a program may set `particle.ribbon` in `initialize`.
 
 ## Pitfalls
 

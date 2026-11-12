@@ -130,10 +130,11 @@ multi_ik_full_and_partial_weights_preserve_solver_pose_and_diagnostics :: proc(t
         multi.effectors[0]=MULTI_IK_EFFECTOR_DEFAULT;multi.effectors[0].bone=bone_ref("joint4");multi.effectors[0].target=spatial_point({.3,.5,0})
         testing.expect(t,modifier_append(&modifiers.multi_ik,rig,multi))
         joints:[3]lib.Multi_IK_Joint;effectors:[1]lib.Multi_IK_Effector;residuals:[1]f32
-        for joint,i in multi.joints[:3] {joints[i]={bone=i32(i+1),stiffness=joint.stiffness,preferred=joint.preferred,preferred_weight=joint.preferred_weight,limit=joint.limit,use_limit=joint.use_limit}}
+        for joint,i in multi.joints[:3] {joints[i]={bone=i32(i+1),stiffness=joint.stiffness,preferred=joint.preferred,preferred_weight=joint.preferred_weight,frame=joint.frame,limits=joint.limits}}
         effectors[0]={bone=4,position=multi.effectors[0].target.position,rotation=1,position_weight=1}
         settings:=multi.settings;settings.root=1
-        result,valid:=lib.multi_ik(playing_skeleton(&reference),reference.local[:],reference.world[:],joints[:],effectors[:],settings,residuals[:])
+        links:[64]lib.Pose_Link;hierarchy,_:=lib.pose_hierarchy_prepare(reference.parents[:],links[:])
+        result,valid:=lib.multi_ik(playing_skeleton(&reference),hierarchy,reference.local[:],reference.world[:],joints[:],effectors[:],settings,residuals[:])
         if !testing.expect(t,valid && rigs_apply(&state,&modifiers,{},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60)) {return}
         if weight!=1 {
             for &local,i in reference.local {local=mm.transform_interpolate(reference.sampled[i],local,weight)}

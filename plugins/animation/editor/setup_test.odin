@@ -181,7 +181,8 @@ character_setup_classifies_the_clips_it_is_given_at_their_speeds_and_fails_past_
     // A blend of Idle and Walk takes their place in the locomotion, with its samples, and the rates
     // and the weight of the direction of the trajectory are written as given.
     blends:=`"blends":[{"clips":["Idle","Walk"],"samples":[{"weights":[1,0,0,0,0,0,0,0]},{"weights":[0.5,0.5,0,0,0,0,0,0],"speed":0.6},{"weights":[0,1,0,0,0,0,0,0]}],"min_rate":0.5,"max_rate":2}]`
-    result=authoring_test_execute(a,"setup",fmt.tprintf(`{{%s,"want":["Locomotion"],"replace":true,%s,"min_rate":0.3,"max_rate":1.5,"trajectory_direction":0}}`,ids,blends))
+    spans:=`"spans":[{"name":"stumble","kind":"Block"},{"name":"swing_end","kind":"Exclude"}]`
+    result=authoring_test_execute(a,"setup",fmt.tprintf(`{{%s,"want":["Locomotion"],"replace":true,%s,"min_rate":0.3,"max_rate":1.5,"trajectory_direction":0,%s}}`,ids,blends,spans))
     if !testing.expectf(t,result.code==0,"%s %s",result.message,result.data) {return}
     text=api.json_compact(string(serial_bytes(a)))
     testing.expectf(t,strings.contains(text,`"locomotion":[],"blends":[{"clips":["Idle","Walk"],"mode":"WALKING","samples":3,"rates":[0.5,2]}]`),"blends in %s",text)
@@ -193,6 +194,7 @@ character_setup_classifies_the_clips_it_is_given_at_their_speeds_and_fails_past_
             testing.expect(t,base.text_get(source.clip[:])=="Idle" && base.text_get(source.blend[0][:])=="Walk" && source.blend[1][0]==0 && source.loop && source.modes==1<<1 && source.min_rate==.5 && source.max_rate==2)
             testing.expect(t,profile.samples[1]==anim.Match_Sample{source=0,weights={0=.5,1=.5},speed=.6} && profile.samples[2].weights=={1=1})
             testing.expect(t,profile.info.min_rate==.3 && profile.info.max_rate==1.5 && profile.info.trajectory_direction==0)
+            testing.expect(t,len(profile.spans)==2 && profile.spans[1].kind==.Exclude && base.text_get(profile.spans[0].name[:])=="stumble","the spans are written as given")
         }
         asset.asset_close(&match)
     }
@@ -209,6 +211,7 @@ character_setup_classifies_the_clips_it_is_given_at_their_speeds_and_fails_past_
         {`"rates":[{"clip":"Wave","min_rate":0.5,"max_rate":1}]`,"rates[0].clip","Not_Locomotion"},
         {`"rates":[{"clip":"Walk","min_rate":2,"max_rate":1}]`,"rates[0].min_rate","Invalid_Rate"},
         {`"rates":[{"clip":"Walk","min_rate":0.5,"max_rate":1},{"clip":"Walk","min_rate":0.5,"max_rate":1}]`,"rates[1].clip","Duplicate"},
+        {`"spans":[{"name":"stumble","kind":"Block"},{"name":"stumble","kind":"Block"}]`,"spans","Invalid_Span"},
         {`"blends":[{"clips":["Idle","Walk"],"samples":[{"weights":[1,0,0,0,0,0,0,0]}]}],"rates":[{"clip":"Walk","min_rate":0.5,"max_rate":1}]`,"rates[0].clip","Blended"},
     }) {
         result=authoring_test_execute(a,"setup",fmt.tprintf(`{{%s,"want":["Locomotion"],"replace":true,%s}}`,ids,refused.params))
