@@ -9,11 +9,12 @@ import phys "plugins:physics/runtime"
 
 // The ground of the terrains of a world, for core.Ground_Queries: the probe
 // reads the terrains as they are placed, and terrain_update pushes where each
-// terrain comes, goes, moves, shows another source, its chunks change (an
-// edit, a page that comes) or a stroke of the editor is held, and where its
-// collision loads or goes. Far from every viewer, where the pages of a
-// source are not in memory, a Heightfield answers from its coarse grid and a
-// Volume answers Unloaded until the page that comes announces its chunks.
+// terrain comes, goes, moves, shows another source, its samples change (an
+// edit, a page that comes: only the columns over them) or a stroke of the
+// editor is held, and where its collision loads or goes. Far from every
+// viewer, where the pages of a source are not in memory, a Heightfield
+// answers from its coarse grid and a Volume answers Unloaded until the page
+// that comes announces its columns.
 // Another epoch of Terrain_Data (a copy of the world, a swap, a scene loaded)
 // starts its views anew, and with them every terrain is announced: they point
 // into the sources of the Terrain_Data they were made from, so a copy or a
@@ -27,6 +28,39 @@ Terrain_Ground :: struct {
     marks:u64,            // Terrain_Resident.marks when the unloaded boxes were last made
     stroke:Terrain_Focus, // the stroke held, its center and radius left out; zero: none
     unloaded:[dynamic]mm.Aabb,
+}
+
+// Where the ground of a source changed: regions of its samples, each with the
+// change of the source that marked it. When they do not fit, a new region
+// joins the one it widens least.
+GROUND_MARKS :: 32
+Ground_Marks :: struct {
+    regions:[GROUND_MARKS]Ground_Mark,
+    count:int,
+}
+Ground_Mark :: struct {change:u32,low,high:[3]int}
+
+// The samples around a changed one whose probe reads it: the normals of the
+// layer rule at the samples of the cell under a line.
+PROBE_REACH :: LAYER_RULE_SAMPLES+1
+
+// The inclusive region of samples low..high of a source changed what its
+// probe answers.
+@(private)
+data_ground_mark :: proc "contextless" (entry:^Data_Source,low,high:[3]int) {
+    m:=&entry.ground
+    if m.count<GROUND_MARKS {
+        m.regions[m.count]={entry.change,low,high}
+        m.count+=1
+        return
+    }
+    size :: proc "contextless" (low,high:[3]int) -> int {return (high.x-low.x+1)*(high.y-low.y+1)*(high.z-low.z+1)}
+    best,grow:=0,max(int)
+    for r,i in m.regions {
+        if g:=size(linalg.min(r.low,low),linalg.max(r.high,high))-size(r.low,r.high);g<grow {best,grow=i,g}
+    }
+    r:=&m.regions[best]
+    r.change,r.low,r.high=entry.change,linalg.min(r.low,low),linalg.max(r.high,high)
 }
 
 // A terrain as the probe reads it.
@@ -93,11 +127,22 @@ ground_update :: proc(g:^Terrain_Ground,resident:^Terrain_Resident,data:^Terrain
             for &seen in g.views {if same(seen,now) {old=&seen;break}}
             if old==nil {ground_change(&queries.changed,&now,now.low,now.high);continue}
             if old.change==now.change {continue}
-            // The cells around the chunks that changed: the normals of the samples next to them change too.
-            if low,high,changed:=terrain_changed({data},now.id,old.change);changed {ground_change(&queries.changed,&now,low-now.source.cell,high+now.source.cell)}
+            // A source let go and read again starts its changes anew: all of it.
+            if now.change<old.change {ground_change(&queries.changed,&now,now.low,now.high);continue}
+            entry:=data_find(data,now.id)
+            for mark in entry.ground.regions[:entry.ground.count] {
+                if mark.change<=old.change {continue}
+                // The whole column: a line down reaches another surface where one came or went.
+                s:=now.source
+                last:=[3]int{int(s.samples.x)-1,int(s.samples.y)-1,int(s.samples.z)-1}
+                low,high:=source_box(s,{max(mark.low.x-PROBE_REACH,0),0,max(mark.low.z-PROBE_REACH,0)},{min(mark.high.x+PROBE_REACH,last.x),last.y,min(mark.high.z+PROBE_REACH,last.z)})
+                ground_change(&queries.changed,&now,low,high)
+            }
         }
         clear(&g.views)
         append(&g.views,..views[:])
+        // Every view took the change of its source: what was marked is announced.
+        for &entry in data.entries {entry.ground.count=0}
     }
     stroke:=focus.stroke?focus:{}
     stroke.center,stroke.radius={},0

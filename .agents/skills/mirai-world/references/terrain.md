@@ -601,15 +601,16 @@ storage that is not copied (`copy=false`), so that `Ground_Queries.open` finds i
 its views point into the sources of the `Terrain_Data` of that world. The probe answers the
 highest terrain along a line; a Heightfield read straight down takes its coarse grid when asked
 or where its pages are not in memory, so far from every viewer it still answers, coarser; a
-Volume there answers `Unloaded`, and the page that comes marks its chunks, which announces them.
+Volume there answers `Unloaded`, and the page that comes announces the columns over it.
 A hole, or the region of a stroke the editor holds (not in `Terrain_Data` until confirmed),
 answers `Empty`. At the end of each `terrain_update` the views are made again when the terrains or
 their places changed (`core.touched`) or the data did, and each change is pushed to `changed` as a
 box of the world: a terrain that comes, goes, moves or shows another source (its whole box), the
-chunks whose version passed the change last seen (`terrain_changed`, with a cell around them) and
-a stroke that begins, grows or ends. Another epoch of `Terrain_Data` (a copied, swapped or
-reloaded world) starts the resident meshes and the views anew, and the box of every terrain is
-pushed. `unloaded` names the runs
+regions of samples an edit changed or a page brought into memory since the last call
+(`Ground_Marks`: each the whole column over the samples, with the reach of the probe's normals
+around them; never the chunks that read them) and a stroke that begins, grows or ends. Another
+epoch of `Terrain_Data` (a copied, swapped or reloaded world) starts the resident meshes and the
+views anew, and the box of every terrain is pushed. `unloaded` names the runs
 of chunks of each solid terrain that have no collider now (not resident, beyond
 `collision_distance`, waiting for a slot or a build); a chunk shown empty has nothing to load. They
 are made again only when the colliders, the terrains or the data change or `Terrain_Resident.marks`
@@ -820,10 +821,10 @@ Reading from other plugins (such as the foliage bridge), with `core.Ref(Terrain_
   of a Heightfield over the collider's triangles; `ok=false` for another type, outside the source
   or where its pages are not in memory (no resident chunk nearby). `source_ray` ends at the first
   cell without pages.
-- `terrain_change(data,id)` and `terrain_changed(data,id,since) -> (low,high,changed)`: the change
-  of a source's data and the local box of the chunks that changed after `since`;
-  `terrain_data_change(data)` changes with that of any source. A page that arrives in memory marks
-  the chunks that read it (what can be read changed); releasing it marks nothing.
+- `terrain_change(data,id)`: the change of a source's data; `terrain_data_change(data)` changes
+  with that of any source. A page that arrives in memory marks the chunks that read it (what can
+  be read changed); releasing it marks nothing. Where the ground changed is `changed` of
+  `core.Ground_Queries` ([ground](#ground)).
 
 ## Limits in open worlds
 

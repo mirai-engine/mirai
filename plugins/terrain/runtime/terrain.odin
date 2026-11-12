@@ -86,6 +86,7 @@ Data_Source :: struct {
     nodes:[]u32,     // of each node of the quadtree above the chunks: the last change of a chunk it covers
     dirty:[]bool,    // by chunk and node
     pending:[dynamic]u32,
+    ground:Ground_Marks, // where the ground it gives changed since terrain_update last announced it
     allocator:runtime.Allocator, // of versions, nodes and dirty
 }
 
@@ -417,27 +418,6 @@ terrain_change :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id) -> u32 {
     return 0
 }
 
-// The local box of the chunks of a source that changed after change since
-// (terrain_change); changed false when none did. A source loaded again after
-// since was let go starts its changes anew: while its change is below since
-// it counts as changed whole.
-terrain_changed :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id,since:u32) -> (low,high:[3]f32,changed:bool) {
-    for &entry in data.entries {
-        if entry.id!=id {continue}
-        s:=&entry.source
-        anew:=entry.change<since
-        for version,index in entry.versions {
-            if version<=since && !anew {continue}
-            a,b,valid:=chunk_region(s,chunk_coord(s,index))
-            if !valid {continue}
-            from,to:=source_box(s,a,b)
-            if !changed {low,high,changed=from,to,true;continue}
-            for axis in 0..<3 {low[axis]=min(low[axis],from[axis]);high[axis]=max(high[axis],to[axis])}
-        }
-    }
-    return
-}
-
 @(private)
 data_find :: proc(data:^Terrain_Data,id:base.Asset_Id) -> ^Data_Source {
     for &entry in data.entries {if entry.id==id {return &entry}}
@@ -477,7 +457,7 @@ terrain_data_copy :: proc(dst,src:^Terrain_Data) -> bool {
     for &entry,i in src.entries {
         target:=&dst.entries[i]
         if !data_source_copy(&target.source,&entry.source) || !data_chunks_copy(target,&entry) {return false}
-        target.id,target.stamp,target.change=entry.id,entry.stamp,entry.change
+        target.id,target.stamp,target.change,target.ground=entry.id,entry.stamp,entry.change,entry.ground
         dst.samples+=u32(source_cost(&target.source))
     }
     epoch:=max(dst.epoch,src.epoch)+1;if epoch==0 {epoch=1}
@@ -512,6 +492,8 @@ data_chunks_allocate :: proc(entry:^Data_Source,allocator:runtime.Allocator,js:^
     for &version in entry.versions {version=entry.change}
     for &version in entry.nodes {version=entry.change}
     for i in 0..<total {entry.dirty[i]=true;append(&entry.pending,u32(i))}
+    s:=&entry.source
+    data_ground_mark(entry,{},{int(s.samples.x)-1,int(s.samples.y)-1,int(s.samples.z)-1})
     return entry.source.kind!=.Heightfield || coarse_ready(&entry.source) || source_coarse_build(&entry.source,js,worker)
 }
 
@@ -645,6 +627,7 @@ data_ready :: proc(data:^Terrain_Data,settings:Terrain_Settings,allocator:=conte
 @(private)
 data_mark :: proc(entry:^Data_Source,change:Change) {
     entry.change+=1
+    if change.changed {data_ground_mark(entry,change.low,change.high)}
     low,high:=chunk_range(&entry.source,change)
     for z in low.z..=high.z {for y in low.y..=high.y {for x in low.x..=high.x {
         if index:=chunk_index(&entry.source,{i32(x),i32(y),i32(z)});index>=0 {data_mark_chunk(entry,index);data_mark_nodes(entry,index)}

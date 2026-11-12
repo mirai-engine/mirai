@@ -165,9 +165,9 @@ source_region_read :: proc(s:^Source,low,high:[3]int,entry:^Data_Source=nil) -> 
 }
 
 // What chunks read of the samples low..high came into memory: the chunks
-// whose build reads them take the next change of the source, so that who
-// reads the source (a bridge) reads them again. A chunk that shows something
-// read them before: none of those is marked.
+// whose build reads them take the next change of the source, and the ground
+// changed over low..high alone. A chunk that shows something read them
+// before: none of those is marked.
 @(private)
 data_pages_arrived :: proc(entry:^Data_Source,low,high:[3]int) {
     s:=&entry.source
@@ -177,6 +177,7 @@ data_pages_arrived :: proc(entry:^Data_Source,low,high:[3]int) {
     from,to:[3]int
     for axis in 0..<3 {from[axis],to[axis]=max(low[axis]-halo,0)/cells,min((high[axis]+halo)/cells,counts[axis]-1)}
     entry.change+=1
+    data_ground_mark(entry,low,high)
     for cz in from.z..=to.z {for cy in from.y..=to.y {for cx in from.x..=to.x {
         index:=chunk_index(s,{i32(cx),i32(cy),i32(cz)})
         a,b,ok:=chunk_pages_region(s,index)
