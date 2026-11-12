@@ -138,18 +138,24 @@ to the overrides).
   on its ground, a keep-out holds (`Ground_Cell.kept`), at the same resolution near and far. A
   keep-out that comes, goes or changes is a change of the ground under its old and new boxes, so
   the cells under it are built again; without a ground in the world nothing is kept out.
-- **Fine near, coarse far**: the grid of a cell is fine (the samples per side follow the spacing of
-  the ground, `Ground_Query.spacing`, up to `SAMPLES_MAX`) near the [streaming sources][sources],
-  with their hysteresis, up to where the meshes of their types are drawn and no more than
-  `GROUND_REACH`, and where the editor requests it; far away it has `COARSE_SAMPLES` per side,
-  asked `coarse`. Without sources all are fine. Those that cross the limit are read again when the
-  sources move.
+- **Whole near, sparse far, one grid**: the grid of a cell has the samples per side that follow
+  the spacing of the ground (`Ground_Query.spacing`, up to `SAMPLES_MAX`). Near the
+  [streaming sources][sources], with their hysteresis, up to where the meshes of their types are
+  drawn and no more than `GROUND_REACH`, and where the editor requests it, a tile holds all of
+  them; farther it is sparse (`Sparse_Tile`): only the four samples of the same grid around each
+  point that may show there (`sparse_keys`: the instances of the types seen past that reach,
+  generated or grounded, and with one of them spaced, the points of every spaced type around
+  the cell) and under the centre of its square of keep-out, and those around the centre of the
+  cell. An instance stands, leans, keeps apart and passes its rule and its keep-outs on a sparse
+  tile exactly as on the whole one: where it is does not depend on how far it is seen from.
+  Without sources all are whole. Those that cross the limit, and the sparse ones of a source read
+  again, are read again.
 - It reads again only the cells under the boxes the ground announced since it last ran
   (`Ground_Queries.changed`), or all those of a `Foliage` that moves or arrives. The cells to read
   wait in a queue, each once, and are read `GROUND_TILES` per call, in jobs, those the editor asks
   for first and then the nearest a source (`queue_order`, again when the sources move): a world
   that loads much ground and many `Foliage` at once keeps responding and fills in around the
-  sources. When only the sources move, only the fine tiles and the coarse ones near a source are
+  sources. When only the sources move, only the whole tiles and the sparse ones near a source are
   looked at. A grid (heights and weights) equal to the previous one
   does not raise its revision, and a frame without changes reads nothing.
 
@@ -194,32 +200,43 @@ to the overrides).
 ## Far: impostor and crown
 
 A type with `impostor_distance` less than its `cull_distance` (or without it) has a far shape
-(`far.odin`), one per asset it shows (mesh or prefab) and per world, made the first time a type
-shows it and again when the mesh changes, like any cook:
+(`far.odin`), one per asset it shows (mesh or prefab), frame size and world (`Kind_Key`), made
+the first time a type shows it and again when the mesh changes, like any cook:
 
 - **Octahedral impostor** (Brucks): `render.impostor_capture` draws with the thumbnail renderer
   `IMPOSTOR_GRID`² frames of the upper half of the sphere, unlit: base color and coverage, normal
-  and depth; two textures of the table with levels (`alpha_coverage` in the color). While it could
-  not be made, the type is drawn with its mesh up to its `cull_distance`.
-- **Bands.** The mesh fades between `impostor_distance` and `IMPOSTOR_BLEND` beyond it, and the
-  impostor appears in the same stretch with the complement of the same pattern over the same box
-  (`box_faded`): the instance stays whole, without pop. Far away the impostor fades with the
-  type's `fade_distance` and `cull_distance`.
-- **Drawing.** The `Gbuffer` stage draws one quad per instance toward the eye with a fragment of
-  its own (`foliage_impostor.frag`): it blends the three neighboring frames of the direction, each
-  moved by its depth, and writes color, normal and the depth of the leaves (`SV_Depth`), so it is
-  lit and shaded like the scene. The instances of the resident cells go to a world buffer; nested
-  views do not draw it.
+  and depth, and the roughness, metallic, occlusion and diffuse transmission of the material;
+  three textures of the table with levels (`alpha_coverage` in the color), the color of the light
+  the leaves let through and the mean color of the frames. A frame has the pixels its largest
+  instance spans at `impostor_distance` (`impostor_frame`), so a tree near its impostor distance
+  is as sharp as its mesh and a bush costs little. While it could not be made, the type is drawn
+  with its mesh up to its `cull_distance`.
+- **Bands.** The mesh fades between `impostor_distance` and `IMPOSTOR_BLEND` beyond it, and when
+  it is small on the screen; the impostor appears where it fades, by the same two terms, with the
+  complement of the same pattern over the same box (`box_faded`, `box_small_faded`): the instance
+  stays whole, without pop or hole. Far away the impostor fades with the type's `fade_distance`
+  and `cull_distance`.
+- **Drawing.** The impostors are in one world buffer by blocks, one per cell (`Impostor_Draw`): a
+  cell that changes writes only its block, the next draw takes the change and until then the
+  buffer shows what it held; the room of a freed block is taken by the next cell that fits. In
+  the `Gbuffer` stage of each view a dispatch (`foliage_impostor_cull.comp`) keeps the instances
+  of the band of their type whose sphere is in the frustum, and one indirect draw makes a quad of
+  each toward the eye, with a fragment of its own (`foliage_impostor.frag`): it blends the three
+  neighboring frames of the direction, each moved by its depth, and writes color, normal, the
+  terms of the material and the depth of the leaves (`SV_Depth`), so it is lit and shaded like
+  the scene. An instance names its row by the slot of its `Foliage` (`Resident_Owner.slot`) and
+  its type, so other `Foliage` coming and going rewrite nothing. Nested views do not draw it.
 - **Rays.** Per cell and type, according to the distance to the sources (`scene.resident`, with
   its hysteresis): near, the mesh batches; far, the crown (`crown_build`: the surface of the
-  voxels dense in triangles, `CROWN_INSET` inside) as a `Casts_Shadow` and `Rays_Only` batch: the
-  shadow rays see it (also those of the sun at the GI hits) and the probes and reflections do not.
-  The impostor enters no ray structure.
+  voxels dense in triangles, `CROWN_INSET` inside) as a `Rays_Only` batch that casts shadows if
+  the type does and that reflections, probes and indirect light see if they see the type
+  (`ray_visible`), in the mean color of its frames (`crown_flags`, `Batch_Desc.tint`). The
+  impostor enters no ray structure.
 - **Cell crown.** Past `CELL_CROWN_REACH` times the reach of the meshes of its types, a cell gives
   the rays a single crown instead of one per instance: `cell_crown_build` makes with `crown_build`
-  the crown of the crowns of its instances that cast shadows, in the `Foliage` space, as a
-  generated mesh of a one-instance batch. One entry of the ray structure per cell; the impostors
-  remain per instance.
+  the crown of the crowns of its instances that rays meet far, in the `Foliage` space, as a
+  generated mesh of a one-instance batch, with what rays meet of its types and their mean color
+  by instance. One entry of the ray structure per cell; the impostors remain per instance.
 - `Foliage` is `@(component,far)`: when its section is not loaded it stays with these far shapes
   ([what is unloaded](../../mirai-gameplay/references/libraries.md#scene-references)). With
   `scene.Far_Kept` it draws only the types with a far shape and only that shape (impostors and
@@ -432,7 +449,8 @@ the registry's memory as a file of the undo step that creates it.
   `a_type_with_an_impostor_draws_its_mesh_up_to_its_distance`), crown
   (`a_crown_is_the_closed_surface_of_the_voxels_dense_with_leaves`,
   `the_crown_of_a_cell_covers_its_trees_with_fewer_triangles_than_theirs`,
-  `what_the_renderer_forgets_takes_the_crowns_and_far_forms_with_it`) and wind
+  `what_the_renderer_forgets_takes_the_crowns_and_far_forms_with_it`), impostors
+  (`a_cell_writes_only_its_block_of_impostors`) and wind
   (`an_instance_sways_with_the_variant_of_its_turn_and_downwind`,
   `the_instance_of_a_variant_is_found_among_those_of_its_type`).
 - Ids of the manual ones: `a_manual_instance_keeps_its_id_through_the_edits_of_its_cell`.
@@ -450,8 +468,9 @@ the registry's memory as a file of the undo step that creates it.
   `an_instance_taken_out_later_sends_a_small_part_of_its_cell`; that they reach a client:
   `an_entity_with_a_replicated_object_component_reaches_a_client` in `plugins/multiplayer/runtime`.
 - Ground (`plugins/foliage/runtime`): `the_ground_of_foliage_is_read_where_the_ground_changed`,
-  `foliage_is_kept_out_of_volumes_splines_and_colliders` and
-  `the_ground_is_read_nearest_the_sources_first_and_each_tile_once`.
+  `foliage_is_kept_out_of_volumes_splines_and_colliders`,
+  `the_ground_is_read_nearest_the_sources_first_and_each_tile_once` and
+  `far_trees_stand_where_they_stand_near`.
 - `mirai test plugins/foliage/editor -collection:plugins=<root>/plugins`:
   `foliage_strokes_and_selections_are_steps_of_undo_written_at_the_flush`,
   `a_move_of_an_imported_foliage_is_undone_back_to_revision_zero`,
@@ -473,7 +492,8 @@ the registry's memory as a file of the undo step that creates it.
 - `mirai test render` (CPU): `impostor_frames_cover_the_upper_hemisphere_and_fold_back`,
   `impostor_frames_spread_their_color_into_what_they_do_not_cover`,
   `a_batch_only_rays_meet_is_in_no_layer_and_the_picker_does_not_find_it` and
-  `a_deformable_with_levels_keeps_the_levels_of_its_source_in_its_own_vertices`.
+  `a_deformable_with_levels_keeps_the_levels_of_its_source_in_its_own_vertices`; GPU:
+  `gpu_impostor_frames_keep_the_surface_of_their_material`.
 - What is seen (batches, fade into the impostor, wind, crown shadows) is verified in the editor of
   a project that enables the plugin (alien-planet), with GPU validation: the tests of the
   [batches](../../mirai-rendering/SKILL.md) and captures from close up and from more than 1 km.

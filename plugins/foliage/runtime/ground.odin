@@ -1,5 +1,7 @@
 package foliage
 
+import "base:runtime"
+import "core:slice"
 import "mirai:core"
 import "mirai:std/base"
 import mm "mirai:std/math"
@@ -9,8 +11,11 @@ import mm "mirai:std/math"
 // the ground there, read from core.Ground_Queries (ground_read.odin), and
 // where a Foliage_Keep_Out keeps foliage out of it (keep_out.odin). Each
 // tile it changes raises its revision, and foliage builds again the cells
-// whose tile changed. A tile may be coarser than the others (the ground far
-// from where it is seen). A cell without a tile (not read yet, or no ground
+// whose tile changed. Every tile is on the fine grid of its owner; far from
+// where it is seen a tile keeps only the samples around the instances that
+// may show there (sparse), which stand and pass their rules as they do on a
+// whole tile: where an instance is does not depend on how far it is seen
+// from. A cell without a tile (not read yet, or no ground
 // covers it) has no ground: its generated instances are not there. Without a
 // ground in the world there are no owners, and the plane y = 0 of each entity
 // is its ground.
@@ -32,6 +37,7 @@ Ground_Owner :: struct {
     layers:[dynamic]Ground_Layers, // what the weights of its samples are of: those of each ground under it, at most LAYERS_MAX
     tiles:[dynamic]Ground_Tile, // in the order of their coordinates, z then x
     pools:[dynamic]Ground_Pool, // the samples of its tiles, a pool for each count of them
+    sparse:[dynamic]Sparse_Tile, // the samples of its sparse tiles, one each
     transform:mm.Transform,     // of its entity when its tiles were last asked for
     epoch:u64,                  // and of its entry of Foliage_Data
     loads:u32,
@@ -39,7 +45,18 @@ Ground_Owner :: struct {
 Ground_Tile :: struct {
     coord:[2]i32,
     revision:u32,
-    pool,block:u32, // where its samples are
+    pool,block:u32, // where its samples are: a block of a pool, or with SPARSE_POOL the sparse tile of that index
+}
+SPARSE_POOL :: max(u32)
+// Some samples of the fine grid of the owner over a tile: those keys names
+// (x first, in order), with their heights and weights, and where foliage is
+// kept out of it.
+Sparse_Tile :: struct {
+    coord:[2]i32,
+    keys:[dynamic]u16,
+    heights:[dynamic]f32,
+    weights:[dynamic]Layer_Weights,
+    kept:[KEEP_OUT_WORDS]u64, // Ground_Cell.kept
 }
 // The samples of the tiles of an owner with the same count per side, a block
 // for each: a tile that takes another count leaves its block to the last.
@@ -128,6 +145,11 @@ ground_cell :: proc "contextless" (owner:^Ground_Owner,coord:[2]i32) -> (ground:
     at:=ground_tile_find(owner,coord)
     if at<0 {return {absent=true},0}
     tile:=owner.tiles[at]
+    if tile.pool==SPARSE_POOL {
+        sparse:=&owner.sparse[tile.block]
+        if owner.samples<2 {return}
+        return Ground_Cell{samples=int(owner.samples),heights=sparse.heights[:],weights=sparse.weights[:],layers=owner.layers[:],kept=sparse.kept[:],keys=sparse.keys[:]},tile.revision
+    }
     pool:=&owner.pools[tile.pool]
     n:=int(pool.samples)
     if n<2 {return}
@@ -138,14 +160,23 @@ ground_cell :: proc "contextless" (owner:^Ground_Owner,coord:[2]i32) -> (ground:
 // Where foliage is kept out of the tile of index at of an owner (Ground_Cell.kept).
 ground_tile_kept :: proc "contextless" (owner:^Ground_Owner,at:int) -> []u64 {
     tile:=owner.tiles[at]
+    if tile.pool==SPARSE_POOL {return owner.sparse[tile.block].kept[:]}
     return owner.pools[tile.pool].kept[int(tile.block)*KEEP_OUT_WORDS:][:KEEP_OUT_WORDS]
 }
 
-// The samples per side of the tile of a cell; 0 without one.
+// The samples per side of the grid of the tile of a cell; 0 without one.
 ground_tile_samples :: proc "contextless" (owner:^Ground_Owner,coord:[2]i32) -> u32 {
     if owner==nil {return 0}
     at:=ground_tile_find(owner,coord)
-    return at<0?0:owner.pools[owner.tiles[at].pool].samples
+    if at<0 {return 0}
+    return owner.tiles[at].pool==SPARSE_POOL?owner.samples:owner.pools[owner.tiles[at].pool].samples
+}
+
+// Whether the tile of a cell keeps only some of its samples.
+ground_tile_sparse :: proc "contextless" (owner:^Ground_Owner,coord:[2]i32) -> bool {
+    if owner==nil {return false}
+    at:=ground_tile_find(owner,coord)
+    return at>=0 && owner.tiles[at].pool==SPARSE_POOL
 }
 
 // The tile of a cell to write, made when it is not there or has another
@@ -155,10 +186,11 @@ ground_tile_samples :: proc "contextless" (owner:^Ground_Owner,coord:[2]i32) -> 
 ground_tile :: proc(owner:^Ground_Owner,coord:[2]i32,samples:u32=0) -> (heights:[]f32,weights:[]Layer_Weights,tile:^Ground_Tile) {
     at:=ground_tile_lower(owner,coord)
     found:=at<len(owner.tiles) && owner.tiles[at].coord==coord
+    sparse:=found && owner.tiles[at].pool==SPARSE_POOL
     n:=samples
-    if n==0 {n=found?owner.pools[owner.tiles[at].pool].samples:owner.samples}
+    if n==0 {n=found && !sparse?owner.pools[owner.tiles[at].pool].samples:owner.samples}
     if n<2 {return}
-    if !found || owner.pools[owner.tiles[at].pool].samples!=n {
+    if !found || sparse || owner.pools[owner.tiles[at].pool].samples!=n {
         p:=-1
         for pool,i in owner.pools {if pool.samples==n {p=i;break}}
         if p<0 {
@@ -168,7 +200,7 @@ ground_tile :: proc(owner:^Ground_Owner,coord:[2]i32,samples:u32=0) -> (heights:
         block,made:=pool_block_add(&owner.pools[p],coord)
         if !made {return}
         if found {
-            pool_block_free(owner,owner.tiles[at].pool,owner.tiles[at].block)
+            tile_samples_free(owner,owner.tiles[at])
             owner.tiles[at].pool,owner.tiles[at].block=u32(p),block
         } else if _,error:=inject_at(&owner.tiles,at,Ground_Tile{coord=coord,pool=u32(p),block=block});error!=nil {
             pool_block_free(owner,u32(p),block)
@@ -180,6 +212,62 @@ ground_tile :: proc(owner:^Ground_Owner,coord:[2]i32,samples:u32=0) -> (heights:
     side:=int(n)*int(n)
     first:=int(tile.block)*side
     return pool.heights[first:][:side],pool.weights[first:][:side],tile
+}
+
+// Writes the sparse tile of a cell with the samples keys names (in order, of
+// the grid of the owner): false when it held them already, or memory ran out
+// and it keeps what it had. It raises the revision of the tile and the owner's.
+ground_sparse_write :: proc(owner:^Ground_Owner,coord:[2]i32,keys:[]u16,heights:[]f32,weights:[]Layer_Weights,kept:[]u64) -> bool {
+    at:=ground_tile_lower(owner,coord)
+    found:=at<len(owner.tiles) && owner.tiles[at].coord==coord
+    if found && owner.tiles[at].pool==SPARSE_POOL {
+        held:=&owner.sparse[owner.tiles[at].block]
+        if slice.equal(held.keys[:],keys) && same_heights(held.heights[:],heights) && slice.equal(held.weights[:],weights) && slice.equal(held.kept[:],kept) {return false}
+        if resize(&held.keys,len(keys))!=nil || resize(&held.heights,len(keys))!=nil || resize(&held.weights,len(keys))!=nil {return false}
+        copy(held.keys[:],keys);copy(held.heights[:],heights);copy(held.weights[:],weights);copy(held.kept[:],kept)
+    } else {
+        made:=Sparse_Tile{coord=coord}
+        e0,e1,e2,e3:runtime.Allocator_Error
+        made.keys,e0=make([dynamic]u16,len(keys))
+        made.heights,e1=make([dynamic]f32,len(keys))
+        made.weights,e2=make([dynamic]Layer_Weights,len(keys))
+        if e0==nil && e1==nil && e2==nil {_,e3=append(&owner.sparse,made)}
+        if e0!=nil || e1!=nil || e2!=nil || e3!=nil {
+            delete(made.keys);delete(made.heights);delete(made.weights)
+            return false
+        }
+        copy(made.keys[:],keys);copy(made.heights[:],heights);copy(made.weights[:],weights);copy(made.kept[:],kept)
+        block:=u32(len(owner.sparse)-1)
+        if found {
+            tile_samples_free(owner,owner.tiles[at])
+            owner.tiles[at].pool,owner.tiles[at].block=SPARSE_POOL,u32(len(owner.sparse)-1)
+        } else if _,error:=inject_at(&owner.tiles,at,Ground_Tile{coord=coord,pool=SPARSE_POOL,block=block});error!=nil {
+            sparse_free(owner,block)
+            return false
+        }
+    }
+    owner.revision+=1
+    owner.tiles[at].revision=owner.revision
+    return true
+}
+
+// Lets go of where the samples of a tile are.
+@(private)
+tile_samples_free :: proc(owner:^Ground_Owner,tile:Ground_Tile) {
+    if tile.pool==SPARSE_POOL {sparse_free(owner,tile.block)} else {pool_block_free(owner,tile.pool,tile.block)}
+}
+
+// Lets go of a sparse tile: the last takes its place.
+@(private)
+sparse_free :: proc(owner:^Ground_Owner,block:u32) {
+    gone:=&owner.sparse[block]
+    delete(gone.keys);delete(gone.heights);delete(gone.weights)
+    last:=len(owner.sparse)-1
+    if int(block)!=last {
+        owner.sparse[block]=owner.sparse[last]
+        if at:=ground_tile_find(owner,owner.sparse[block].coord);at>=0 {owner.tiles[at].block=block}
+    }
+    pop(&owner.sparse)
 }
 
 // A block at the end of a pool for the tile of coord, without ground.
@@ -226,7 +314,8 @@ NO_GROUND :: f32(0h7fc00000)
 
 ground_owner_destroy :: proc(owner:^Ground_Owner) {
     for &pool in owner.pools {delete(pool.heights);delete(pool.weights);delete(pool.kept);delete(pool.coords)}
-    delete(owner.pools);delete(owner.tiles);delete(owner.layers)
+    for &sparse in owner.sparse {delete(sparse.keys);delete(sparse.heights);delete(sparse.weights)}
+    delete(owner.pools);delete(owner.tiles);delete(owner.sparse);delete(owner.layers)
     owner^={}
 }
 
@@ -234,7 +323,7 @@ ground_owner_destroy :: proc(owner:^Ground_Owner) {
 ground_tile_remove :: proc(owner:^Ground_Owner,at:int) {
     tile:=owner.tiles[at]
     ordered_remove(&owner.tiles,at)
-    pool_block_free(owner,tile.pool,tile.block)
+    tile_samples_free(owner,tile)
     owner.revision+=1
 }
 
@@ -243,6 +332,8 @@ ground_owner_reset :: proc(owner:^Ground_Owner,samples:u32) {
     if len(owner.tiles)>0 {owner.revision+=1}
     clear(&owner.tiles)
     for &pool in owner.pools {clear(&pool.heights);clear(&pool.weights);clear(&pool.kept);clear(&pool.coords)}
+    for &sparse in owner.sparse {delete(sparse.keys);delete(sparse.heights);delete(sparse.weights)}
+    clear(&owner.sparse)
     clear(&owner.layers)
     owner.samples=samples
 }

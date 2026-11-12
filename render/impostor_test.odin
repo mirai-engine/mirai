@@ -38,27 +38,35 @@ impostor_frames_spread_their_color_into_what_they_do_not_cover :: proc(t: ^testi
 	images := Impostor_Images{grid = 2, frame = 4}
 	images.color = make([]u8, 8 * 8 * 4)
 	images.normal = make([]u8, 8 * 8 * 4)
+	images.surface = make([]u8, 8 * 8 * 4)
 	defer impostor_images_destroy(&images)
-	put :: proc(images: ^Impostor_Images, x, y: int, color: [4]u8, normal: [4]u8) {
+	put :: proc(images: ^Impostor_Images, x, y: int, color, normal, surface: [4]u8) {
 		at := (y * 8 + x) * 4
-		for c in 0 ..< 4 {images.color[at + c], images.normal[at + c] = color[c], normal[c]}
+		for c in 0 ..< 4 {images.color[at + c], images.normal[at + c], images.surface[at + c] = color[c], normal[c], surface[c]}
 	}
-	put(&images, 1, 1, {200, 10, 10, 255}, {128, 255, 128, 100})
-	put(&images, 6, 1, {10, 200, 10, 255}, {128, 128, 255, 50})
+	put(&images, 1, 1, {200, 10, 10, 255}, {128, 255, 128, 100}, {200, 0, 255, 90})
+	put(&images, 6, 1, {10, 200, 10, 255}, {128, 128, 255, 50}, {60, 0, 255, 0})
 	impostor_dilate(&images)
-	texel :: proc(images: ^Impostor_Images, x, y: int) -> (color, normal: [4]u8) {
+	texel :: proc(images: ^Impostor_Images, x, y: int) -> (color, normal, surface: [4]u8) {
 		at := (y * 8 + x) * 4
-		for c in 0 ..< 4 {color[c], normal[c] = images.color[at + c], images.normal[at + c]}
+		for c in 0 ..< 4 {color[c], normal[c], surface[c] = images.color[at + c], images.normal[at + c], images.surface[at + c]}
 		return
 	}
-	color, normal := texel(&images, 3, 3)
+	color, normal, surface := texel(&images, 3, 3)
 	testing.expect_value(t, color, [4]u8{200, 10, 10, 0})
 	testing.expect_value(t, normal, [4]u8{128, 255, 128, 100})
-	color, _ = texel(&images, 4, 0)
+	testing.expect_value(t, surface, [4]u8{200, 0, 255, 90})
+	color, _, _ = texel(&images, 4, 0)
 	testing.expect_value(t, color, [4]u8{10, 200, 10, 0})
-	color, _ = texel(&images, 1, 1)
+	color, _, _ = texel(&images, 1, 1)
 	testing.expect_value(t, color.a, 255)
 	// The lower frames cover nothing: they stay cleared.
-	color, _ = texel(&images, 2, 6)
+	color, _, _ = texel(&images, 2, 6)
 	testing.expect_value(t, color, [4]u8{})
+	// The light the frames let through is that of the texels that let it through.
+	transmitted := make([]u8, 8 * 8 * 4)
+	defer delete(transmitted)
+	for i := 0; i < len(transmitted); i += 4 {transmitted[i], transmitted[i + 1], transmitted[i + 2] = 51, 255, 0}
+	testing.expect(t, linalg.length(impostor_transmission(images.surface, transmitted) - Vec3{0.2, 1, 0}) < 1e-3)
+	testing.expect_value(t, impostor_transmission(make([]u8, 16, context.temp_allocator), transmitted), Vec3{1, 1, 1})
 }
