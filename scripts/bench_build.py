@@ -254,6 +254,10 @@ class Bench:
         """The compiler run alone, as mirai runs it, with -show-more-timings."""
         release = checkout / ".mirai" / "engine" / "release"
         attribute = f"-custom-attribute:{attributes(checkout)}"
+        # The collections of the compressor, as project.compressor_flags names them.
+        private = [folder / "ext/mirai-compression" for folder in (checkout, main_checkout(checkout))]
+        found = next((folder for folder in private if folder.is_dir()), checkout / "std/compressor")
+        compressor = [f"-collection:compressor={found}", f"-collection:compressor_open={checkout / 'std/compressor'}"]
         with tempfile.TemporaryDirectory(prefix="bench-build-") as folder:
             timings = Path(folder) / "timings.json"
             if demo:
@@ -266,6 +270,7 @@ class Bench:
                 stage = release / "stage-engine"
                 command = [str(compiler(checkout)), "build", str(stage / "__mirai_engine"), "-build-mode:dll",
                            f"-collection:mirai={stage}", "-o:speed", "-debug", attribute]
+            command += compressor
             command += [f"-out:{Path(folder) / ('editor' if demo else 'mirai-engine')}.dll", "-show-more-timings",
                         "-export-timings:json", f"-export-timings-file:{timings}"]
             done = subprocess.run(command, cwd=checkout, capture_output=True, text=True, encoding="utf-8", errors="replace")

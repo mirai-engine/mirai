@@ -6,7 +6,6 @@ import "core:mem"
 import "core:testing"
 import "mirai:asset"
 import mm "mirai:std/math"
-import "mirai:std/compressor"
 
 // A bumpy sheet of side cells as a file holds it: a DAG with pages out of
 // its root and the LZ block of each page in page_data.
@@ -108,9 +107,9 @@ a_streamed_mesh_keeps_its_root_and_loads_its_other_pages_into_slots :: proc(t: ^
 	testing.expect_value(t, base, s.pages.region + slot * PAGE_SLOT_WORDS)
 	block := make([]u32, asset.MESH_PAGE_WORDS, context.temp_allocator)
 	scratch := make([]u8, asset.MESH_PAGE_SCRATCH_BYTES, context.temp_allocator)
-	decoder: compressor.Decoder
-	testing.expect_value(t, compressor.decoder_init(&decoder), compressor.Error.None)
-	defer compressor.decoder_destroy(&decoder)
+	decoder: asset.Stream_Decoder
+	testing.expect_value(t, asset.stream_decoder_init(&decoder), asset.Error.None)
+	defer asset.stream_decoder_destroy(&decoder)
 	testing.expect(t, asset.mesh_page_decode(g.flags, g.pages[page], g.page_data, scratch, block, &decoder))
 	words := g.pages[page].words
 	testing.expect(t, mem.compare(mem.slice_to_bytes(s.vertices[base:][:words]), mem.slice_to_bytes(block[:words])) == 0, "the copy of the slot is the decoded block of its page")
@@ -164,9 +163,9 @@ a_far_mesh_made_in_memory_streams_as_a_mesh_of_a_file :: proc(t: ^testing.T) {
 	base := record_pooled(s, s.meshes[handle]).pages[page].base
 	block := make([]u32, asset.MESH_PAGE_WORDS, context.temp_allocator)
 	scratch := make([]u8, asset.MESH_PAGE_SCRATCH_BYTES, context.temp_allocator)
-	decoder: compressor.Decoder
-	testing.expect_value(t, compressor.decoder_init(&decoder), compressor.Error.None)
-	defer compressor.decoder_destroy(&decoder)
+	decoder: asset.Stream_Decoder
+	testing.expect_value(t, asset.stream_decoder_init(&decoder), asset.Error.None)
+	defer asset.stream_decoder_destroy(&decoder)
 	testing.expect(t, asset.mesh_page_decode(g.flags, g.pages[page], g.page_data, scratch, block, &decoder))
 	words := g.pages[page].words
 	testing.expect(t, mem.compare(mem.slice_to_bytes(s.vertices[base:][:words]), mem.slice_to_bytes(block[:words])) == 0, "the copy of the slot is the decoded block of its page")

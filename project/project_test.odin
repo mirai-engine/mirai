@@ -705,3 +705,36 @@ plugins_order_without_memory_fails_whole :: proc(t:^testing.T) {
     }
     testing.expect(t,merged && no_field,"a merge without memory for a field says so, and with memory it is whole")
 }
+
+// A project is compressed with nothing, the open compressor, or by default the best its engine
+// has: the private one only where the engine has it in ext/. A folder without a project is open.
+@(test)
+a_project_is_compressed_as_its_manifest_says_with_what_its_engine_has :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"project")
+    if folder=="" {return}
+    root:=path(folder,"game",allocator=context.temp_allocator)
+    engine:=path(folder,"engine",allocator=context.temp_allocator)
+    testing.expect(t,os.make_directory_all(root)==nil && os.make_directory_all(engine)==nil)
+    testing.expect_value(t,compression(root,engine),Compression.Open)
+    Case :: struct {compression:string,private:bool,error:Error_Code,result:Compression}
+    cases:=[?]Case{
+        {"",false,.None,.Open},
+        {"",true,.None,.Best},
+        {COMPRESSION_OPEN,true,.None,.Open},
+        {COMPRESSION_NONE,false,.None,.None},
+        {"compression_mirai",false,.Compression_Invalid,.Open},
+    }
+    for c in cases {
+        private:=path(engine,COMPRESSOR_PRIVATE,allocator=context.temp_allocator)
+        if c.private {testing.expect(t,os.make_directory_all(private)==nil)} else {_=os.remove_all(private)}
+        m:=manifest_default("Test")
+        base.text_set(m.build.compression[:],c.compression)
+        testing.expect_value(t,manifest_write(path(root,PROJECT_FILE,allocator=context.temp_allocator),&m).code,Error_Code.None)
+        p,error:=open(root)
+        testing.expect_value(t,error.code,c.error)
+        if c.error==.None {
+            close(&p)
+            testing.expectf(t,compression(root,engine)==c.result,"%v",c)
+        }
+    }
+}

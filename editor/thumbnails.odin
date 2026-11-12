@@ -14,8 +14,6 @@ import gpu "mirai:render"
 import "mirai:std/base"
 import "mirai:std/geom"
 import mm "mirai:std/math"
-import "mirai:std/compressor"
-import "mirai:std/compressor/lz"
 import "mirai:std/serial"
 import "mirai:ui"
 
@@ -57,19 +55,19 @@ THUMBNAIL_RENDERER :: 3
 THUMBNAIL_LOADS :: 8
 THUMBNAIL_FILE_MAGIC :: u32('M')|u32('T')<<8|u32('H')<<16|u32('B')<<24
 THUMBNAIL_FILE_VERSION :: 3
-THUMBNAIL_FILE_HEADER :: 24 // magic, version, key, side and the bytes of the LZ image after it
+THUMBNAIL_FILE_HEADER :: 24 // magic, version, key, side and the bytes of the stream of the image after it
 
 // A stored preview as its file holds it, and the coders of its image.
 Thumbnail_File :: struct {
     bytes:[dynamic]u8,
-    decoder:compressor.Decoder,
-    encoder:lz.Encoder,
+    decoder:asset.Stream_Decoder,
+    encoder:asset.Stream_Encoder,
 }
 
 thumbnail_file_destroy :: proc(file:^Thumbnail_File) {
     delete(file.bytes)
-    compressor.decoder_destroy(&file.decoder)
-    lz.encoder_destroy(&file.encoder)
+    asset.stream_decoder_destroy(&file.decoder)
+    asset.stream_encoder_destroy(&file.encoder)
     file^={}
 }
 
@@ -448,7 +446,7 @@ thumbnail_load :: proc(folder:string,id:base.Asset_Id,side:int,key:u64,file:^Thu
     if serial.read_u32(&r)!=THUMBNAIL_FILE_MAGIC || serial.read_u32(&r)!=THUMBNAIL_FILE_VERSION || serial.read_u64(&r)!=key || serial.read_u32(&r)!=u32(side) {return false}
     packed:=int(serial.read_u32(&r))
     if r.failed || packed!=len(head)-THUMBNAIL_FILE_HEADER {return false}
-    if len(file.decoder.scratch)==0 && compressor.decoder_init(&file.decoder)!=.None {return false}
+    if file.decoder.data==nil && asset.stream_decoder_init(&file.decoder)!=.None {return false}
     resize(image,pixels)
     return asset.unpack(&file.decoder,head[THUMBNAIL_FILE_HEADER:],image[:])==.None
 }
@@ -457,8 +455,9 @@ thumbnail_load :: proc(folder:string,id:base.Asset_Id,side:int,key:u64,file:^Thu
 @(private)
 thumbnail_save :: proc(folder:string,id:base.Asset_Id,side:int,key:u64,image:[]u8,file:^Thumbnail_File) -> bool {
     if len(image)!=side*side*4 {return false}
+    if file.encoder.data==nil && asset.stream_encoder_init(&file.encoder)!=.None {return false}
     resize(&file.bytes,THUMBNAIL_FILE_HEADER+asset.pack_bound(len(image)))
-    packed,error:=asset.pack(&file.encoder,asset.PACK_EDIT,image,file.bytes[THUMBNAIL_FILE_HEADER:])
+    packed,error:=asset.pack(&file.encoder,.Fast,.Open,image,file.bytes[THUMBNAIL_FILE_HEADER:])
     if error!=.None {return false}
     w:serial.Writer
     serial.writer_init(&w,allocator=context.temp_allocator)

@@ -29,6 +29,9 @@ them.
 - **`shaders/`** is not imported: it feeds the project's shader generation (`//! mirai surface
   Name` or `postprocess`, with a unique name across engine, project and plugins) and the stages,
   hooks and constants of a [render plugin](render-plugins.md).
+- **`cook/`** runs only while a game is cooked: a package built apart, into a library the cook
+  loads, that gives the `codec.Cook_Api` of a compression plugin through `codec.COOK_SYMBOL`. It
+  goes by the C convention and is never imported from `runtime/`.
 - **`assets/`** is mounted under `plugins/<n>/`; everything it has is a cook root, because its code
   refers to it and no scene names it.
 

@@ -152,6 +152,8 @@ run_with :: proc(root:string,command:[]string,stdout:^os.File,limits:=subprocess
 odin_command :: proc(root:string,verb,target:string,attributes:=true) -> [dynamic]string {
     command:=make([dynamic]string)
     append(&command,odin_executable(root),verb,target,fmt.aprintf("-collection:mirai=%s",root))
+    compressor,_:=project.compressor_flags(root)
+    append(&command,..compressor[:])
     if attributes {append(&command,fmt.aprintf("-custom-attribute:%s",build.CUSTOM_ATTRIBUTES))}
     if verb!="check" {platform_flags(root,&command)}
     if extra,found:=os.lookup_env("MIRAI_ODIN_FLAGS",context.allocator);found {

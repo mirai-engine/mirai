@@ -29,7 +29,7 @@ test_fracture :: proc(s:^Test_Fracture) -> Fracture_Desc {
     s.info.source_mesh={42,3}
     s.connections[0]={0,1,0.1,30}
     s.clusters[0]={-1,100}
-    return {id={42,2},source_mesh=s.info.source_mesh,vertices=s.vertices[:],indices=s.indices[:],pieces=s.pieces[:],connections=s.connections[:],clusters=s.clusters[:],compression=.LZ}
+    return {id={42,2},source_mesh=s.info.source_mesh,vertices=s.vertices[:],indices=s.indices[:],pieces=s.pieces[:],connections=s.connections[:],clusters=s.clusters[:],compression=.Stream}
 }
 
 @(test)

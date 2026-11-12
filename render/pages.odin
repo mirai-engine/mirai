@@ -6,7 +6,6 @@ import "core:slice"
 import "mirai:asset"
 import "mirai:rhi"
 import "mirai:std/jobs"
-import "mirai:std/compressor"
 import "mirai:render/abi"
 
 // The pages of streamed meshes. A mesh with the blocks of its pages (of a
@@ -84,7 +83,7 @@ Page_Slot :: struct {
 Page_Scratch :: struct {
 	words:        []u32, // MESH_PAGE_WORDS
 	coded:        []u8, // MESH_PAGE_SCRATCH_BYTES, what decoding it works in
-	decoder:      compressor.Decoder,
+	decoder:      asset.Stream_Decoder,
 	stream, page: u32, // what it holds; stream 0: nothing
 }
 
@@ -115,7 +114,7 @@ Pages_State :: struct {
 	load_count:       int,
 	scratch:          Page_Scratch,
 	decode_scratch:   []u8, // MESH_PAGE_SCRATCH_BYTES of each worker of jobs, at least one
-	decoders:         []compressor.Decoder, // of each worker of jobs, at least one
+	decoders:         []asset.Stream_Decoder, // of each worker of jobs, at least one
 	streamed:         [dynamic]u32, // the handles of the meshes with a Mesh_Stream
 	next_id:          u32,
 	jobs:             ^jobs.Job_System, // the pages decode in its jobs; nil: on the calling thread
@@ -232,8 +231,8 @@ pages_destroy :: proc(r: ^Renderer) {
 	pages_buffers_destroy(r)
 	a := r.allocator
 	delete(st.slots, a);delete(st.free);delete(st.requests);delete(st.victims);delete(st.scratch.words, a);delete(st.scratch.coded, a);delete(st.decode_scratch, a);delete(st.streamed)
-	compressor.decoder_destroy(&st.scratch.decoder)
-	for &d in st.decoders {compressor.decoder_destroy(&d)}
+	asset.stream_decoder_destroy(&st.scratch.decoder)
+	for &d in st.decoders {asset.stream_decoder_destroy(&d)}
 	delete(st.decoders, a)
 	st^ = {}
 }
@@ -306,16 +305,16 @@ mesh_stream_start :: proc(r: ^Renderer, stream: ^Mesh_Stream) -> bool {
 		if error != nil {return false}
 		st.scratch.coded = coded
 	}
-	if len(st.scratch.decoder.scratch) == 0 && compressor.decoder_init(&st.scratch.decoder, r.allocator) != .None {return false}
+	if st.scratch.decoder.data == nil && asset.stream_decoder_init(&st.scratch.decoder, r.allocator) != .None {return false}
 	if st.decode_scratch == nil {
 		workers := jobs.worker_count(st.jobs) if st.jobs != nil else 1
 		coded, error := make([]u8, max(workers, 1) * asset.MESH_PAGE_SCRATCH_BYTES, r.allocator)
 		if error != nil {return false}
-		decoders, decoders_error := make([]compressor.Decoder, max(workers, 1), r.allocator)
+		decoders, decoders_error := make([]asset.Stream_Decoder, max(workers, 1), r.allocator)
 		if decoders_error != nil {delete(coded, r.allocator);return false}
 		for &d in decoders {
-			if compressor.decoder_init(&d, r.allocator) == .None {continue}
-			for &made in decoders {compressor.decoder_destroy(&made)}
+			if asset.stream_decoder_init(&d, r.allocator) == .None {continue}
+			for &made in decoders {asset.stream_decoder_destroy(&made)}
 			delete(decoders, r.allocator);delete(coded, r.allocator)
 			return false
 		}
@@ -521,12 +520,12 @@ page_loading :: proc(st: ^Pages_State, stream: ^Mesh_Stream, page: u32) -> bool 
 // Decodes the loads into the CPU copy of their slots.
 @(private)
 pages_decode :: proc(r: ^Renderer) {
-	Decode :: struct {loads: []Page_Load, vertices: []u32, region: u32, scratch: []u8, decoders: []compressor.Decoder}
+	Decode :: struct {loads: []Page_Load, vertices: []u32, region: u32, scratch: []u8, decoders: []asset.Stream_Decoder}
 	st := &r.scene.pages
 	decode := Decode{st.loads[:st.load_count], r.scene.vertices[:], st.region, st.decode_scratch, st.decoders}
 	run :: proc(d: ^Decode, first, last: int, worker: int) {
 		scratch: []u8
-		decoder: ^compressor.Decoder
+		decoder: ^asset.Stream_Decoder
 		if (worker + 1) * asset.MESH_PAGE_SCRATCH_BYTES <= len(d.scratch) && worker < len(d.decoders) {
 			scratch = d.scratch[worker * asset.MESH_PAGE_SCRATCH_BYTES:][:asset.MESH_PAGE_SCRATCH_BYTES]
 			decoder = &d.decoders[worker]

@@ -87,7 +87,7 @@ engine_time_packages :: proc(sources:[]string,root,engine_root:string,developmen
         if !strings.has_prefix(relative,"plugins/") {return false}
         rest:=relative[len("plugins/"):]
         slash:=strings.index_byte(rest,'/')
-        return slash>0 && strings.has_prefix(rest[slash+1:],"editor/")
+        return slash>0 && (strings.has_prefix(rest[slash+1:],"editor/") || strings.has_prefix(rest[slash+1:],"cook/"))
     }
     found:=make([dynamic]string,allocator)
     for source in sources {

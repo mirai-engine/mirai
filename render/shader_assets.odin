@@ -10,7 +10,6 @@ import "core:strings"
 import "mirai:asset"
 import "mirai:render/abi"
 import "mirai:rhi"
-import "mirai:std/compressor"
 import "mirai:std/serial"
 
 // A generation of the shaders loaded from disk; owned: its codes are memory of allocator.
@@ -56,10 +55,10 @@ embedded_shaders_decode :: proc(codes:^[Shader_Id]rhi.Shader_Code,programs:^[len
     if total>0 {
         allocation_error:runtime.Allocator_Error
         if bytes,allocation_error=make([]u8,total,allocator);allocation_error!=nil {return nil,"out of memory for the embedded shaders"}
-        decoder:compressor.Decoder
-        if compressor.decoder_init(&decoder,allocator)!=.None {delete(bytes,allocator);return nil,"out of memory for the embedded shaders"}
+        decoder:asset.Stream_Decoder
+        if asset.stream_decoder_init(&decoder,allocator)!=.None {delete(bytes,allocator);return nil,"out of memory for the embedded shaders"}
         unpack_error:=asset.unpack(&decoder,sizes[4*count:],bytes)
-        compressor.decoder_destroy(&decoder)
+        asset.stream_decoder_destroy(&decoder)
         if unpack_error!=.None {delete(bytes,allocator);return nil,"the embedded shaders do not decode: build the engine again"}
     }
     at:=0
