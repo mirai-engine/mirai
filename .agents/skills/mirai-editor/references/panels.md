@@ -510,9 +510,9 @@ are built; it is rebuilt when the registry, the filters, the marks or the place 
   navigation) and makes the place of Create; under it, one level in, its folders and then its
   assets. Every asset is one row whatever the zoom, and what holds others (clips, parts, variants)
   has its arrow before its icon and unfolds them one level under it. Recent, Current scene and
-  Favorites are foldable rows on top. The row of the folder the first line is in stays on top.
-  The pointer resting on an asset's row shows its large preview beside the browser; a right click
-  only opens the menu.
+  Favorites are foldable rows on top, also empty while no filter is on. The row of the folder the
+  first line is in stays on top. The pointer on an asset's row shows its large preview beside the
+  browser at once; a right click only opens the menu.
   **Tabs** has chips of the first-level folders, after Recent, Current scene and Favorites as
   their glyphs, and rows of those of the chosen one over a grid of what it holds and everything
   under it. **Cards** shows folders as cells of an asset, with Recent open at the top of the root,
@@ -531,7 +531,8 @@ are built; it is rebuilt when the registry, the filters, the marks or the place 
 **Create** (`asset_create.odin`): the **+**, the right click on an empty place or on a folder and
 the Create submenu of a card offer Folder, Scene, Material, Particle, Sound set and what a plugin
 creates ([extensions](extensions.md#an-asset-document)), in the clicked folder, the card's or
-that of the last thing clicked (`Content.place`). They are off outside Edit and while watching.
+that of the last thing clicked (`Content.place`); the + of Folders makes in the root of the
+assets. They are off outside Edit and while watching.
 
 - Choosing an entry empties search and filters and puts at the top of the list a line with a free
   name to type over; an invalid or taken name warns and leaves the line.
@@ -677,8 +678,9 @@ browser cards and asset fields):
   largest card of the content browser at density 2.
 - `preview_request`, `preview_geometry`, `asset_quad` and `preview_entity` receive the points at
   which the preview is shown and return the quad of the cell of its size when it exists; the same
-  subject at two sizes occupies one cell of each. One is drawn per frame; until then the icon is
-  shown.
+  subject at two sizes occupies one cell of each. One is drawn per frame, and a texture or a
+  material a preview shows that is not loaded yet takes the turn of that frame instead
+  (`preview_load_turn`); until then the icon is shown.
 - A subject that changed keeps its old image until it has the new one, and waits for an open edit
   to finish. The cell that has gone longest without being requested is reused.
 - The signature is `Thumbnail_Subject`: mesh, `Material_Values`, rotation, scale, the

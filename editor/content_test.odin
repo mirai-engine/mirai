@@ -3,6 +3,7 @@ package editor
 import "core:fmt"
 import "core:os"
 import "core:slice"
+import "core:strings"
 import "core:testing"
 import "mirai:asset"
 import "mirai:cook/author"
@@ -117,6 +118,10 @@ content_test_lines :: proc(c:^Content,registry:^asset.Registry,width:f32=CONTENT
     return content_lines(c,registry,width,opened,scene_kinds)
 }
 
+// The rows of the virtual folders on top of Folders while nothing is marked.
+@(private)
+CONTENT_TEST_MARKS :: "[Recent] [Current scene] [Favorites] "
+
 @(private)
 content_test_show :: proc(c:^Content,registry:^asset.Registry,opened:[]asset.Fourcc=nil,scene_kinds:[]asset.Fourcc=nil) -> string {
     return content_test_names(c,registry,content_test_lines(c,registry,CONTENT_TEST_WIDTH,opened,scene_kinds))
@@ -131,7 +136,7 @@ content_folders_is_a_tree_that_unfolds_in_place :: proc(t:^testing.T) {
     defer content_test_registry_free(&registry)
     c:=CONTENT_DEFAULT
     defer core.value_free(&c,type_info_of(Content))
-    tree:="[Castle] .[Props] ..barrel ..crate ..torch ..wall .[Towers] ..big .gate [Levels] .one rock"
+    tree:=CONTENT_TEST_MARKS+"[Castle] .[Props] ..barrel ..crate ..torch ..wall .[Towers] ..big .gate [Levels] .one rock"
     lines:=content_test_lines(&c,&registry)
     testing.expect_value(t,content_test_names(&c,&registry,lines),tree)
     for line,i in lines {
@@ -139,7 +144,7 @@ content_folders_is_a_tree_that_unfolds_in_place :: proc(t:^testing.T) {
     }
     parents:=make([dynamic]i32,context.temp_allocator)
     for line in lines {append(&parents,line.parent)}
-    testing.expect(t,slice.equal(parents[:],[]i32{-1,0,1,1,1,1,0,6,0,-1,9,-1}),"each row scrolls under the folder it is in")
+    testing.expect(t,slice.equal(parents[:],[]i32{-1,-1,-1,-1,3,4,4,4,4,3,9,3,-1,12,-1}),"each row scrolls under the folder it is in")
     // The zoom does not change it.
     for view in ([]Content_View{{mode=.Grid,columns=8},{mode=.List,columns=4},{mode=.Grid,columns=3}}) {
         c.view.mode,c.view.columns=view.mode,view.columns
@@ -151,13 +156,13 @@ content_folders_is_a_tree_that_unfolds_in_place :: proc(t:^testing.T) {
     testing.expect_value(t,raw_data(content_test_lines(&c,&registry)),cached)
     // A folded folder keeps its row and shows nothing of what it holds, at any depth.
     content_fold_flip(&c,content_test_hash("Castle/Props"))
-    testing.expect_value(t,content_test_show(&c,&registry),"[Castle] .[Props] .[Towers] ..big .gate [Levels] .one rock")
+    testing.expect_value(t,content_test_show(&c,&registry),CONTENT_TEST_MARKS+"[Castle] .[Props] .[Towers] ..big .gate [Levels] .one rock")
     content_fold_flip(&c,content_test_hash("Castle"))
-    testing.expect_value(t,content_test_show(&c,&registry),"[Castle] [Levels] .one rock")
+    testing.expect_value(t,content_test_show(&c,&registry),CONTENT_TEST_MARKS+"[Castle] [Levels] .one rock")
     content_fold_flip(&c,content_test_hash("Castle"))
     // Entering a folder does not change it, and it has no back row.
     content_enter(&c,.None,"Castle/Props")
-    testing.expect_value(t,content_test_show(&c,&registry),"[Castle] .[Props] .[Towers] ..big .gate [Levels] .one rock")
+    testing.expect_value(t,content_test_show(&c,&registry),CONTENT_TEST_MARKS+"[Castle] .[Props] .[Towers] ..big .gate [Levels] .one rock")
     testing.expect(t,!content_back_shown(&c))
     // Showing an asset unfolds the folders it is in.
     c.reveal=registry.files[1].id
@@ -239,6 +244,11 @@ content_virtual_folders_are_entered_and_current_scene_is_what_the_scene_referenc
     c:=CONTENT_DEFAULT
     defer core.value_free(&c,type_info_of(Content))
     session:=Session{content=&c}
+    // All three are on top of Folders, also empty, unless a filter is on.
+    testing.expect(t,strings.has_prefix(content_test_show(&c,&registry),CONTENT_TEST_MARKS+"[Castle]"))
+    c.category=.Mesh
+    testing.expect(t,!strings.contains(content_test_show(&c,&registry),"[Favorites]"))
+    c.category=.None
     content_used(&session,{4,8})
     content_favorite_toggle(&c,{4,2})
     // The scene uses the barrel, which uses the crate.
@@ -356,7 +366,7 @@ content_selection_toggle_shows_what_the_selection_uses :: proc(t:^testing.T) {
     c.category=.Mesh
     content_filters_clear(&c)
     testing.expect(t,c.category==.None && !c.selection_only)
-    testing.expect_value(t,content_test_show(&c,&registry),"[Robot] .MI_Shared .robot [Spider] .spider [Stray] .orphan")
+    testing.expect_value(t,content_test_show(&c,&registry),CONTENT_TEST_MARKS+"[Robot] .MI_Shared .robot [Spider] .spider [Stray] .orphan")
 }
 
 // A search lists the results flat, best first, of the folder shown in Cards;
@@ -536,12 +546,17 @@ content_browser_folds_folders_selects_drags_previews_stars_filters_and_searches_
         testing.expect_value(t,ctx.stats.layout_errors,u32(0))
     }
     // A click on the row of a folder folds it in place and makes Create make
-    // there; another unfolds it.
+    // there, but for the + of Folders, which makes in the root; another
+    // unfolds it.
     folder:=ui.id_derive(&ctx,100,"content_folder",int(content_test_hash("Meshes")))
     rect,found:=ui.widget_rect(&ctx,folder)
     testing.expectf(t,found && rect.w==CONTENT_TEST_WIDTH && rect.h==CONTENT_ROW,"%v",rect)
     content_test_click(t,&session,folder)
     testing.expect(t,content_folded(&c,content_test_hash("Meshes")) && c.at.length==0 && string(c.place[:c.place_length])=="Meshes")
+    testing.expect_value(t,content_create_place(&c),"")
+    c.view.arrangement=.Tabs
+    testing.expect_value(t,content_create_place(&c),"Meshes")
+    c.view.arrangement=.Folders
     content_test_still(&session)
     asset_id:=assets.registry.files[3].id
     entry:=ui.id_derive(&ctx,100,"content_entry",int(content_test_hash(assets.registry.files[3].path)))
@@ -558,14 +573,11 @@ content_browser_folds_folders_selects_drags_previews_stars_filters_and_searches_
     testing.expect_value(t,c.selected,asset_id)
     testing.expect(t,g.drag.kind==.Asset && g.drag.asset_id==asset_id)
     g.drag={}
-    // The pointer resting on a row opens its large preview beside the
-    // browser; a right click only opens the menu.
+    // The pointer on a row opens its large preview beside the browser at
+    // once; a right click only opens the menu.
     preview:=ui.id_derive(&ctx,100,"content_preview")
-    rest:=ui.Input{size={800,600},pointer=ui.rect_center(rect),dt=0.25}
+    rest:=ui.Input{size={800,600},pointer=ui.rect_center(rect)}
     _=content_test_frame(&session,rest)
-    _,shown:=ui.widget_rect(&ctx,preview)
-    testing.expect(t,!shown,"not before the pointer rests")
-    for _ in 0..<3 {_=content_test_frame(&session,rest)}
     beside,open:=ui.widget_rect(&ctx,preview)
     testing.expectf(t,open && beside.x>=CONTENT_TEST_WIDTH && beside.w>=CONTENT_PREVIEW_LARGE,"%v",beside)
     menu:=content_menu_id(&g)
@@ -574,7 +586,7 @@ content_browser_folds_folders_selects_drags_previews_stars_filters_and_searches_
         if phase==0 {input.down,input.pressed={.Right},{.Right}}
         if phase==1 {input.released={.Right}}
         _=content_test_frame(&session,input)
-        _,shown=ui.widget_rect(&ctx,preview)
+        _,shown:=ui.widget_rect(&ctx,preview)
         testing.expect(t,!shown && ui.popup_is_open(&ctx,menu),"a right click shows no preview")
     }
     ui.popup_close(&ctx,menu)
@@ -913,14 +925,14 @@ content_hides_the_parts_of_an_import_in_their_folder_and_a_prefab_opens_to_its_v
     defer core.value_free(&c,type_info_of(Content))
     // The atlas material, the mesh, the skeleton and the texture are parts;
     // the material two imports share and the part without its owner show.
-    lines:=content_test_lines(&c,&registry)
+    lines:=content_test_lines(&c,&registry)[3:]
     testing.expect_value(t,content_test_names(&c,&registry,lines),"[Robot] .MI_Shared .robot [Spider] .spider [Stray] .orphan")
     testing.expect(t,content_part(&registry,&registry.files[0]) && !content_part(&registry,&registry.files[1]) && !content_part(&registry,&registry.files[7]))
     // A prefab opens to its variants, not to its parts: without variants it has no arrow.
     owner:=c.cards[lines[2].first]
     testing.expect(t,!owner.holds && !c.cards[lines[1].first].holds)
     content_unfold(&c,CONTENT_TEST_ROBOT)
-    lines=content_test_lines(&c,&registry)
+    lines=content_test_lines(&c,&registry)[3:]
     testing.expect_value(t,content_test_names(&c,&registry,lines[:4]),"[Robot] .MI_Shared .robot [Spider]")
     content_unfold(&c,CONTENT_TEST_ROBOT)
     // A search finds a part in its folder; Recent and Favorites list it.
@@ -931,7 +943,7 @@ content_hides_the_parts_of_an_import_in_their_folder_and_a_prefab_opens_to_its_v
     content_used(&session,registry.files[2].id)
     content_favorite_toggle(&c,registry.files[4].id)
     lines=content_test_lines(&c,&registry)
-    testing.expect_value(t,content_test_names(&c,&registry,lines[:7]),"[Recent] .SKM_Robot [Favorites] .T_Robot_01_D [Robot] .MI_Shared .robot")
+    testing.expect_value(t,content_test_names(&c,&registry,lines[:8]),"[Recent] .SKM_Robot [Current scene] [Favorites] .T_Robot_01_D [Robot] .MI_Shared .robot")
     // A filter of families that leaves the owner out shows its parts in their folder.
     c.category=.Mesh
     testing.expect_value(t,content_test_show(&c,&registry),"[Recent] .SKM_Robot [Robot] .SKM_Robot [Stray] .orphan")
@@ -942,14 +954,14 @@ content_hides_the_parts_of_an_import_in_their_folder_and_a_prefab_opens_to_its_v
     c.revision+=1
     // Show parts of imports lists them in their folders too.
     c.view.show_parts=true
-    lines=content_test_lines(&c,&registry)
+    lines=content_test_lines(&c,&registry)[3:]
     testing.expect_value(t,content_test_names(&c,&registry,lines[:6]),"[Robot] .MI_Robot_01 .MI_Shared .SKM_Robot .T_Robot_01_D .robot")
     c.view.show_parts=false
     // Find in Content Browser of a hidden part of a prefab lists the parts in their folders.
     c.reveal=registry.files[2].id
     content_reveal_open(&c,&registry)
     testing.expect(t,c.view.show_parts && !slice.contains(c.unfolded[:],CONTENT_TEST_ROBOT))
-    lines=content_test_lines(&c,&registry)
+    lines=content_test_lines(&c,&registry)[3:]
     testing.expect_value(t,content_test_names(&c,&registry,lines[:6]),"[Robot] .MI_Robot_01 .MI_Shared .SKM_Robot .T_Robot_01_D .robot")
 }
 
@@ -1023,13 +1035,13 @@ content_lists_the_clips_of_a_library_while_it_is_open_and_when_a_search_finds_th
     append(&c.clip_text,..transmute([]u8)string("idlerun"))
     append(&c.clips,Content_Clip{walk,0,4},Content_Clip{walk,4,3})
     // In Folders the library has an arrow, and its clips are rows a level under it.
-    lines:=content_test_lines(&c,&registry)
+    lines:=content_test_lines(&c,&registry)[3:]
     testing.expect_value(t,content_test_names(&c,&registry,lines[:2]),"[Animations] .walk")
     testing.expect(t,c.cards[lines[1].first].holds && !c.cards[lines[1].first].open)
     content_unfold(&c,walk)
-    lines=content_test_lines(&c,&registry)
+    lines=content_test_lines(&c,&registry)[3:]
     testing.expect_value(t,content_test_names(&c,&registry,lines[:5]),"[Animations] .walk ..idle ..run [Materials]")
-    testing.expect(t,lines[2].parent==0 && c.cards[lines[2].first].clip==1 && c.heights[2]==CONTENT_ROW)
+    testing.expect(t,lines[2].parent==3 && c.cards[lines[2].first].clip==1 && c.heights[5]==CONTENT_ROW)
     c.filter_length=copy(c.filter[:],"RUN")
     testing.expect_value(t,content_test_show(&c,&registry),"walk .run")
     c.filter_length=0
@@ -1060,7 +1072,7 @@ content_shows_empty_folders_and_the_line_of_create :: proc(t:^testing.T) {
     defer delete(registry.folders)
     c:=CONTENT_DEFAULT
     defer core.value_free(&c,type_info_of(Content))
-    testing.expect_value(t,content_test_show(&c,&registry),"[Animations] .walk [Empty] [Materials] .red [Meshes] .[nested] ..sphere .box [Prefabs] .robot [Sounds] .hit [Textures] .color [UI] .hud")
+    testing.expect_value(t,content_test_show(&c,&registry),CONTENT_TEST_MARKS+"[Animations] .walk [Empty] [Materials] .red [Meshes] .[nested] ..sphere .box [Prefabs] .robot [Sounds] .hit [Textures] .color [UI] .hud")
     c.view.arrangement=.Cards
     testing.expect_value(t,content_test_show(&c,&registry),"#Animations,#Empty,#Materials,#Meshes #Prefabs,#Sounds,#Textures,#UI")
     c.view.arrangement=.Folders
@@ -1069,7 +1081,7 @@ content_shows_empty_folders_and_the_line_of_create :: proc(t:^testing.T) {
     c.create_name_length=copy(c.create_name[:],"New Material")
     c.revision+=1
     lines:=content_test_lines(&c,&registry)
-    testing.expect_value(t,content_test_names(&c,&registry,lines[:2]),"(New Material) [Animations]")
+    testing.expect_value(t,content_test_names(&c,&registry,lines[:2]),"(New Material) [Recent]")
     // A search hides the folders without files.
     content_create_end(&c)
     c.filter_length=copy(c.filter[:],"box")
