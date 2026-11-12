@@ -273,10 +273,23 @@ params_shape :: proc(s:^Server,schema,params:string,names:=false) -> (shaped,pro
     return strings.to_string(b),""
 }
 
-// What the params of a method are, by name and type, with an example, for the
-// data of an error; "" when it has no schema or the answer could not take it.
-// Long ones keep their first fields and their example.
-params_usage :: proc(s:^Server,method:^Method) -> string {
+// The data of an error of the params of a method: the field of them it does
+// not have, when unknown_field names one, and what they are, by name and type,
+// with an example, when it has a schema and the answer can take it; "" with
+// neither. Long ones keep their first fields and their example.
+params_usage :: proc(s:^Server,method:^Method,unknown_field:="") -> string {
+    allocator:=base.arena_allocator(&s.scratch)
+    usage:=params_usage_text(s,method)
+    switch {
+    case unknown_field=="" && usage=="": return ""
+    case unknown_field=="":              return format_text(allocator,`{{"usage":%s}}`,serial.text_quote(usage,allocator))
+    case usage=="":                      return format_text(allocator,`{{"unknown_field":%s}}`,serial.text_quote(unknown_field,allocator))
+    }
+    return format_text(allocator,`{{"unknown_field":%s,"usage":%s}}`,serial.text_quote(unknown_field,allocator),serial.text_quote(usage,allocator))
+}
+
+@(private="file")
+params_usage_text :: proc(s:^Server,method:^Method) -> string {
     if s.out.count+2*USAGE_BYTES>len(s.out.data) {return ""}
     schema:=params_schema_text(s,method)
     if json_member(schema,"properties")=="" {return ""}
@@ -291,7 +304,7 @@ params_usage :: proc(s:^Server,method:^Method) -> string {
         text=text[:max(strings.last_index_byte(text[:max(room,0)],'\n')+1,0)]
         text=strings.concatenate({text,USAGE_CUT},allocator)
     }
-    return format_text(allocator,`{{"usage":%s}}`,serial.text_quote(strings.concatenate({text,strings.to_string(example)},allocator),allocator))
+    return strings.concatenate({text,strings.to_string(example)},allocator)
 }
 
 // The most an invalid-params error carries of what its method takes.

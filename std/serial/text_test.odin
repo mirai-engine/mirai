@@ -485,6 +485,8 @@ an_unsized_schema_reads_and_writes_slices_strings_and_any_json :: proc(t:^testin
         reader:Text_Reader;text_reader_init(&reader,c.text,context.temp_allocator)
         testing.expectf(t,!text_read(&reader,&s,type,bytes_of(&into)) && reader.error.code==c.code,"%s: %v",c.text,reader.error.code)
         if c.path!="" {testing.expectf(t,string(reader.error.path[:reader.error.path_length])==c.path,"%s: %s",c.text,string(reader.error.path[:reader.error.path_length]))}
+        field:=text_error_field(&reader,context.temp_allocator)
+        testing.expectf(t,c.code==.Unknown_Field?field==strings.concatenate({c.path,".nope"},context.temp_allocator):field=="","%s: field %q",c.text,field)
     }
     // The same through the schema a call makes for one value: what a file of Mirai is read and written with.
     decoded:struct {title:string,lines:[dynamic]string,count:u8}

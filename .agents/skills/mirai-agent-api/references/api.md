@@ -394,7 +394,8 @@ when the server opens; code reload rebuilds methods and schemas without closing 
     column. A `-32602` for the shape or the type of the params (unknown field, wrong type,
     missing required field) carries in `data.usage` its fields with their types and a valid
     example, when the answer has room for it; a name that names nothing and what a handler
-    refuses do not.
+    refuses do not. An unknown field also carries its path in `data.unknown_field`
+    (`camera.ev100`), so a client can call an older build again without it.
 - **Enums by name** (`"Edit"`), **bit sets as arrays of names** (`["W","Left_Shift"]`). A NaN or
   infinite float is written `"nan"`, `"inf"` or `"bits:0x…"`.
 - **Hexadecimal ids.** An entity (`core.Id`) is taken as a string of up to 16 digits

@@ -280,7 +280,7 @@ params_parse :: proc(s:^Server,method:^Method,params:string,bytes:[]u8,r:^serial
 params_parse_error :: proc(s:^Server,method:^Method,text:string,r:^serial.Text_Reader) -> Error {
     if r.error.code==.Unknown_Entity {return {INVALID_PARAMS,serial.text_error_message(r,allocator=base.arena_allocator(&s.scratch)),""}}
     err:=text_error(s,"invalid params",text,r)
-    if r.error.code!=.Unknown_Asset {err.data=params_usage(s,method)}
+    if r.error.code!=.Unknown_Asset {err.data=params_usage(s,method,serial.text_error_field(r,base.arena_allocator(&s.scratch)))}
     return err
 }
 
