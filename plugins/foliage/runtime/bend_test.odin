@@ -1,8 +1,10 @@
 package foliage
 
 import "core:math"
+import "core:math/linalg"
 import "core:testing"
 import "mirai:core"
+import scene "mirai:engine/scene"
 import volume "mirai:engine/volume"
 import mm "mirai:std/math"
 
@@ -97,4 +99,68 @@ every_bender_tramples_the_foliage_and_it_stands_back_up_over_time :: proc(t: ^te
 	trample_frame(&w, &f, {}, 0)
 	lean, _, inside = trample_at(&f, {0.5, 0, 0})
 	testing.expect(t, inside && lean == {}, "what enters the field enters standing")
+}
+
+@(private)
+@(test_world)
+Zone_World :: struct {
+	using world: Test_World,
+	winds: core.Table(volume.Wind),
+	volumes: core.Table(volume.Volume),
+	worlds: core.Table(core.World_Transform),
+	parents: core.Table(core.Parent),
+	sections: core.Table(scene.Scene_Reference),
+	splines: core.Table(volume.Spline),
+}
+
+@(private = "file")
+zone_where :: proc(w: ^Zone_World) -> volume.Where {
+	return {core.read(&w.volumes), core.read(&w.worlds), core.read(&w.parents), core.read(&w.sections), core.read(&w.splines)}
+}
+
+// Each place takes the zone of the Wind on top where it stands, and the
+// variants of a zone sway with the wind of that zone wherever the view is: a
+// calm valley under a windy world stays still. A change of the speed of a
+// wind keeps the zones of the cells; a move of its volume takes them again.
+@(test)
+the_variants_of_a_calm_valley_stay_still_whatever_blows_at_the_view :: proc(t: ^testing.T) {
+	w: Zone_World
+	if !test_world_init(t, &w) {return}
+	defer test_world_destroy(&w)
+	everywhere := core.create(&w.entities)
+	core.add(&w.winds, everywhere, volume.Wind{speed = 8, gusts = 0.5, zone = volume.ZONE_DEFAULT})
+	core.add(&w.worlds, everywhere, core.World_Transform{mm.TRANSFORM_IDENTITY, mm.TRANSFORM_IDENTITY})
+	valley := core.create(&w.entities)
+	place := mm.TRANSFORM_IDENTITY
+	place.position = {100, 0, 0}
+	core.add(&w.winds, valley, volume.Wind{speed = 0, zone = {blend = 1, priority = 1}})
+	core.add(&w.volumes, valley, volume.box({20, 20, 20}))
+	core.add(&w.worlds, valley, core.World_Transform{place, place})
+	test_world_settle(&w)
+	resident: Foliage_Resident
+	defer volume.index_destroy(&resident.zones)
+	defer delete(resident.winds)
+	wind_zones_update(&resident, core.read(&w.winds), zone_where(&w))
+	testing.expect_value(t, resident.zones_revision, 1)
+	open, calm := wind_zone_at(&resident, {0, 0, 0}), wind_zone_at(&resident, {100, 0, 0})
+	testing.expect(t, open >= 0 && calm >= 0 && open != calm, "the valley is a zone of its own")
+	// Sets made without a renderer: no variants, only their wind.
+	append(&resident.winds, Wind_Set{zone = open, at = {0, 0, 0}, made = true}, Wind_Set{zone = calm, at = {100, 0, 0}, made = true})
+	testing.expect(t, wind_sets_sway(&resident, core.read(&w.winds), zone_where(&w), nil), "the open set sways")
+	testing.expect(t, abs(linalg.length(resident.winds[0].sway.xyz) - 8) < 1e-4, "the open world sways with its wind")
+	testing.expect(t, resident.winds[1].sway.xyz == {} && resident.winds[1].still, "the valley stays still")
+	// A stronger wind keeps the zones; a valley moved takes them again.
+	core.free(&w.winds, everywhere).speed = 12
+	test_world_settle(&w)
+	wind_zones_update(&resident, core.read(&w.winds), zone_where(&w))
+	testing.expect_value(t, resident.zones_revision, 1)
+	wind_sets_sway(&resident, core.read(&w.winds), zone_where(&w), nil)
+	testing.expect(t, abs(linalg.length(resident.winds[0].sway.xyz) - 12) < 1e-4, "the open world sways with its new wind")
+	place.position = {300, 0, 0}
+	core.free(&w.worlds, valley)^ = core.World_Transform{place, place}
+	test_world_settle(&w)
+	wind_zones_update(&resident, core.read(&w.winds), zone_where(&w))
+	testing.expect_value(t, resident.zones_revision, 2)
+	testing.expect_value(t, wind_zone_at(&resident, {100, 0, 0}), open)
+	testing.expect_value(t, wind_zone_at(&resident, {300, 0, 0}), calm)
 }

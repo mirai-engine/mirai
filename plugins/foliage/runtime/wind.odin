@@ -1,7 +1,10 @@
 package foliage
 
+import "core:hash"
 import "core:math"
 import "core:math/linalg"
+import "core:mem"
+import "core:slice"
 import "mirai:core"
 import render "mirai:engine/render"
 import scene "mirai:engine/scene"
@@ -16,9 +19,11 @@ import mm "mirai:std/math"
 // phase: an instance takes the turn nearest its own, and sways downwind
 // within half the turn between them, and the phase of the band of the gust
 // wave (WIND_WAVE) it stands in, so that gusts cross a forest as they cross
-// its grass. The wind of the variants is the one where the first streaming
-// source is (the view), with its speed held to WIND_SPEED_MAX, which their
-// boxes hold: a frame of wind changes no box and marks no light. What the
+// its grass. Each cell takes the variants of its zone of wind (the Wind on
+// top where its instances stand, wind_zone_at), which sway with the wind of
+// that zone, so a calm valley stays calm whatever blows where the view is;
+// their speed is held to WIND_SPEED_MAX, which their boxes hold: a frame of
+// wind changes no box and marks no light. What the
 // rays of reflections and probes see is the mesh at rest (batch of
 // Rays_Only). A type without shadows sways in the vertex hook of its batches
 // (foliage_vertex.slang), with the wind where each instance stands and the
@@ -161,23 +166,72 @@ wind_bounds :: proc "contextless" (low,high:[3]f32,amount:f32) -> (grown_low,gro
     return low-reach,high+reach
 }
 
-// The variants of a mesh for the types that sway it as much and in as many.
+// The variants of a mesh for the types that sway it as much and in as many,
+// in one zone of wind.
 Wind_Set :: struct {
     source:render.Mesh_Handle,
     count:u32,
     amount:f32,
+    zone:i32,        // of wind_zone_at
+    at:[3]f32,       // a place of the world in that zone: the middle of the last cell that took it
+    sway:[4]f32,     // the wind there this frame, held to WIND_SPEED_MAX: its velocity, m/s, and its gusts
     variants:[WIND_VARIANTS_MAX]render.Mesh_Handle,
     low,high:[3]f32, // the box they stay in
     made:bool,       // every variant was made
     still:bool,      // written at rest the last frame, with no wind
 }
 
-// The set of a mesh, swayed by this many variants this much; made the first
-// time, with the levels of the mesh (a load transaction). -1 when the
-// renderer cannot make them: the type is drawn at rest.
-wind_set :: proc(resident:^Foliage_Resident,renderer:^render.Renderer,source:render.Mesh_Handle,count:u32,amount:f32) -> int {
-    for &set,i in resident.winds {if set.source==source && set.count==count && set.amount==amount {return set.made?i:-1}}
-    set:=Wind_Set{source=source,count=min(count,WIND_VARIANTS_MAX),amount=amount}
+// The zone of wind of a place of the world, which the variants of the cells
+// there sway in: the row of the Wind on top of those that hold it (as they
+// apply), or -1 for none. Which Wind it names is that of the revision of the
+// zones it was taken at (Foliage_Resident.zones_revision).
+wind_zone_at :: proc(resident:^Foliage_Resident,at:[3]f32) -> i32 {
+    hits,_:=volume.index_hits(&resident.zones,at)
+    return hits.hits[hits.count-1].row if hits.count>0 else -1
+}
+
+// The zones of wind made again from the Wind of the world: a new revision
+// when where they are changed, so that the cells take their zones again; a
+// change of their values alone keeps it, as the sets sway with them each frame.
+wind_zones_update :: proc(resident:^Foliage_Resident,winds:^core.Table(volume.Wind,$A),zones:volume.Where) {
+    changed,ok:=volume.index_update(&resident.zones,zones,winds)
+    if !changed {return}
+    h:=u64(0xcbf29ce484222325)
+    if ok {
+        bytes :: proc(h:u64,data:[]u8) -> u64 {return hash.fnv64a(data,h)}
+        for &p in resident.zones.places {
+            h=bytes(h,mem.ptr_to_bytes(&p.volume))
+            h=bytes(h,mem.ptr_to_bytes(&p.pose))
+            h=bytes(h,mem.ptr_to_bytes(&p.zone))
+            h=bytes(h,mem.ptr_to_bytes(&p.rules))
+            h=bytes(h,mem.slice_to_bytes(p.outline))
+        }
+    }
+    if h!=resident.zones_hash || !ok {
+        resident.zones_hash=h
+        resident.zones_revision+=1
+    }
+}
+
+// Whether a cell of an owner sways in a set: one of its types sways that mesh
+// in as many variants as much, and one of its cells is in that zone.
+wind_set_used :: proc(set:^Wind_Set,owner:^Resident_Owner) -> bool {
+    if !slice.contains(owner.winds[:],Wind_Key{set.source,set.count,set.amount}) {return false}
+    for &cell in owner.cells {if cell.built && cell.zone==set.zone {return true}}
+    return false
+}
+
+// The set of a mesh, swayed by this many variants this much in a zone, which
+// `at` is in; made the first time, with the levels of the mesh (a load
+// transaction). -1 when the renderer cannot make them: the type is drawn at rest.
+wind_set :: proc(resident:^Foliage_Resident,renderer:^render.Renderer,source:render.Mesh_Handle,count:u32,amount:f32,zone:i32,at:[3]f32) -> int {
+    for &set,i in resident.winds {
+        if set.source==source && set.count==count && set.amount==amount && set.zone==zone {
+            set.at=at
+            return set.made?i:-1
+        }
+    }
+    set:=Wind_Set{source=source,count=min(count,WIND_VARIANTS_MAX),amount=amount,zone=zone,at=at}
     low,high,known:=render.mesh_bounds(renderer,source)
     if known {
         set.low,set.high=wind_bounds(low,high,amount)
@@ -201,9 +255,9 @@ wind_set_free :: proc(renderer:^render.Renderer,set:^Wind_Set) {
 }
 
 // The wind of each frame: the hook reads all of it in the constants of each
-// view, with the trampled field, and the variants of the types with shadows
-// sway with the wind at the first streaming source, around which every
-// bender tramples the field.
+// view, with the field every bender tramples around the first streaming
+// source; the zones of wind are read again, and each set of variants of the
+// types with shadows sways with the wind of its zone.
 @(step="render",loops="game editor")
 foliage_wind :: proc(resident:^Foliage_Resident,winds:^core.Table(volume.Wind,.Read),volumes:^core.Table(volume.Volume,.Read),worlds:^core.Table(core.World_Transform,.Read),parents:^core.Table(core.Parent,.Read),sections:^core.Table(scene.Scene_Reference,.Read),splines:^core.Table(volume.Spline,.Read),sources:core.Ref(scene.Streaming_Sources),benders:^core.Table(Foliage_Bender,.Read),frame:core.Frame_Time,renderer:^render.Renderer) {
     if resident==nil || len(resident.owners)==0 {return}
@@ -213,22 +267,28 @@ foliage_wind :: proc(resident:^Foliage_Resident,winds:^core.Table(volume.Wind,.R
     if sources.ptr!=nil && sources.ptr.count>0 {at=sources.ptr.items[0].position} else if len(resident.owners)>0 {at=resident.owners[0].transform.position}
     trample_draw(resident,benders,volumes,worlds,frame,at,renderer)
     render.frame_pass(renderer,.Mask,foliage_wind_record,resident)
-    if len(resident.winds)>0 {
-        value:=volume.wind_at(winds,zones,at)
+    wind_zones_update(resident,winds,zones)
+    if wind_sets_sway(resident,winds,zones,renderer) {render.frame_pass(renderer,.Geometry,foliage_sway_record,resident)}
+    if resident.impostors.count>0 {render.frame_pass(renderer,.Gbuffer,foliage_impostors_record,resident)}
+}
+
+// Each set of variants takes the wind of its zone this frame, held to
+// WIND_SPEED_MAX, which the boxes of the variants hold. True when one is to
+// be written: those with no wind stay still without writing.
+wind_sets_sway :: proc(resident:^Foliage_Resident,winds:^core.Table(volume.Wind,$A),zones:volume.Where,renderer:^render.Renderer) -> (sway:bool) {
+    for &set in resident.winds {
+        if !set.made {continue}
+        value:=volume.wind_at(winds,zones,set.at)
         velocity:=value.xyz
         if speed:=linalg.length(velocity);speed>WIND_SPEED_MAX {velocity*=WIND_SPEED_MAX/speed}
-        resident.sway={velocity.x,velocity.y,velocity.z,value.w}
+        set.sway={velocity.x,velocity.y,velocity.z,value.w}
         still:=velocity=={}
-        sway:=false
-        for &set in resident.winds {
-            if !set.made || still && set.still {continue}
-            for mesh in set.variants[:set.count] {render.deformable_update(renderer,mesh,set.low,set.high)}
-            set.still=still
-            sway=true
-        }
-        if sway {render.frame_pass(renderer,.Geometry,foliage_sway_record,resident)}
+        if still && set.still {continue}
+        for mesh in set.variants[:set.count] {render.deformable_update(renderer,mesh,set.low,set.high)}
+        set.still=still
+        sway=true
     }
-    if resident.impostors.count>0 {render.frame_pass(renderer,.Gbuffer,foliage_impostors_record,resident)}
+    return
 }
 
 // The field of this frame around `at`: what left it is forgotten, what was
@@ -464,8 +524,8 @@ foliage_sway_record :: proc(pass:^render.Pass,user:rawptr) {
         for mesh,k in set.variants[:set.count] {
             written,rest,count,row,known:=render.pass_deformable(pass,mesh)
             if !known {continue}
-            local:=wind_variant_local(resident.sway.xyz,u32(k),set.count)
-            params:=Params{written=written,rest=rest,count=count,mesh=row,wind={local.x,local.y,local.z,resident.sway.w},sway={set.amount,wind_variant_phase(u32(k),set.count),pass.time,0}}
+            local:=wind_variant_local(set.sway.xyz,u32(k),set.count)
+            params:=Params{written=written,rest=rest,count=count,mesh=row,wind={local.x,local.y,local.z,set.sway.w},sway={set.amount,wind_variant_phase(u32(k),set.count),pass.time,0}}
             if render.pass_params(pass,&params,size_of(Params)) {render.pass_dispatch(pass,(count+63)/64)}
         }
     }

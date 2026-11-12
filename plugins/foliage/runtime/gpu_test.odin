@@ -161,9 +161,9 @@ a_variant_leans_downwind_about_its_place :: proc(t: ^testing.T) {
 	defer free(f)
 	if !gpu_fixture_init(t, f) {return}
 	defer gpu_fixture_destroy(f)
-	at := wind_set(&f.resident, &f.renderer, f.cube, 4, 0.08)
+	at := wind_set(&f.resident, &f.renderer, f.cube, 4, 0.08, -1, {})
 	if !testing.expect(t, at >= 0, "the variants are made") {return}
-	f.resident.sway = {WIND_SPEED_MAX, 0, 0, 0.6}
+	f.resident.winds[at].sway = {WIND_SPEED_MAX, 0, 0, 0.6}
 	variant := f.resident.winds[at].variants[wind_variant(1, {0, 3, 0}, 4)]
 	_, problem := render.batch_set(&f.renderer, f.resident.world, 0, {mesh = variant, tint = 1}, {render.batch_instance({0, 3, 0}, 1, 6, 6)})
 	if !testing.expect(t, problem == "", problem) {return}

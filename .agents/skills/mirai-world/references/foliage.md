@@ -203,10 +203,14 @@ function:
   and, past them, phases of each turn (`wind_turns`): an instance takes the turn nearest its own
   and tilts with the wind within half a step, and the phase of the band of the gust wave its place
   is in (`wind_variant`). Raster and shadow rays see the same variant; reflections, GI and probes
-  see the rest mesh (`Ray_Visible` and `Rays_Only` batch). The wind is that of the first streaming
-  source, up to `WIND_SPEED_MAX`: the variants' box contains it, so a frame of wind changes no
-  boxes and marks no light, and the direct light is not reset by it. Without wind the variants
-  stay still without writing.
+  see the rest mesh (`Ray_Visible` and `Rays_Only` batch). Sets of variants are per zone of wind:
+  a cell takes those of the `Wind` on top at the middle of its instances (`wind_zone_at`, over a
+  `volume.Index` of the zones), and each set sways with the wind of its zone, so a calm valley
+  stays calm whatever blows at the view. Where the zones are (not their values) has a revision:
+  when it changes, the cells whose zone changed are published again. The wind is held to
+  `WIND_SPEED_MAX`: the variants' box contains it, so a frame of wind changes no boxes and marks
+  no light, and the direct light is not reset by it. Without wind the variants stay still
+  without writing.
 - **Type without shadow: hook.** `foliage_vertex.slang` is the [vertex hook][hook] of its batches,
   with the wind of its place (`//! mirai frame Foliage_Wind_Frame foliage_wind`, written from the
   `Mask` stage relative to the origin of each view) and the gust wave of its place. No ray sees it
@@ -387,7 +391,8 @@ the registry's memory as a file of the undo step that creates it.
   (`a_crown_is_the_closed_surface_of_the_voxels_dense_with_leaves`) and wind
   (`an_instance_sways_with_the_variant_of_its_turn_and_downwind`,
   `the_instance_of_a_variant_is_found_among_those_of_its_type`), trampling
-  (`every_bender_tramples_the_foliage_and_it_stands_back_up_over_time`); on the GPU, with
+  (`every_bender_tramples_the_foliage_and_it_stands_back_up_over_time`), zones of wind
+  (`the_variants_of_a_calm_valley_stay_still_whatever_blows_at_the_view`); on the GPU, with
   validation: `a_stalk_leans_away_from_where_a_bender_trampled_the_field` and
   `a_variant_leans_downwind_about_its_place`.
 - Ids of the manual ones: `a_manual_instance_keeps_its_id_through_the_edits_of_its_cell`.

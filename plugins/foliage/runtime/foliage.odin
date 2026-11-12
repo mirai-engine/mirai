@@ -64,11 +64,13 @@ Foliage_Resident :: struct {
     prefabs:[dynamic]Resident_Prefab,
     kinds:[dynamic]Resident_Kind, // the far forms of the assets types show
     crowns:[dynamic]Shared_Crown, // the crowns of cells, which the Foliage that show one source share
-    winds:[dynamic]Wind_Set,      // the variants of the meshes that sway casting shadows
+    winds:[dynamic]Wind_Set,      // the variants of the meshes that sway casting shadows, by the zone of wind they sway in
+    zones:volume.Index,           // of the Wind zones, which the cells take their variants by
+    zones_hash:u64,               // of where the zones are, not of their values
+    zones_revision:u64,           // counts the changes of where the zones are
     epoch:u64,     // of the batches of the renderer (render.batches_epoch)
     structure:u64, // of the assets, when the meshes of the batches were resolved
     wind:volume.Gpu_Wind, // what the frame gives the shaders of the wind (foliage_wind.slang), in the world: each view takes it relative to its origin
-    sway:[4]f32,          // the wind the variants sway with in this frame: its velocity, m/s, and its gusts
     trample:Foliage_Trample,
     impostors:Impostor_Draw,
     cells_left,kinds_left:int, // of this frame: the cells it may build, by their cost, and the far forms it may make
@@ -85,6 +87,7 @@ Resident_Owner :: struct {
     ground:u32,   // the revision of its ground then
     sources:u64,  // the revision of the streaming sources its cells were chosen by
     removed:u64,  // the hash of the instances taken out of it then (Removed_Owner)
+    zones:u64,    // the revision of the zones of wind its cells were keyed by
     cells:[dynamic]Resident_Cell, // in the order of the cells of the source
     kinds:[dynamic]base.Asset_Id, // the far forms its types show
     winds:[dynamic]Wind_Key,      // the variants its types sway with
@@ -99,6 +102,8 @@ Resident_Cell :: struct {
     version:u32,
     ground:u32,
     removed:u64,   // the hash of the instances taken out of it (removed_cell)
+    zone:i32,      // the zone of wind its variants sway in (wind_zone_at), at `at`
+    at:[3]f32,     // the middle of its instances in the world
     built:bool,
     stale:bool,    // it waits for the budget of a frame to be built again
     resident:bool, // near a streaming source
@@ -171,7 +176,8 @@ Part_Draw :: struct {
     desc:render.Batch_Desc,
     placement:mm.Mat4,
     identity:bool,
-    wind:int, // the variants it sways with, of Foliage_Resident.winds; -1 for none
+    variants:u32, // the variants it sways with in the zone of each cell (Wind_Set); 0 for none
+    amount:f32,   // its sway (sway_amount)
 }
 
 // What building the cells reuses.
@@ -234,7 +240,7 @@ resident_sweep :: proc(resident:^Foliage_Resident,all:=false) {
     for i:=len(resident.winds)-1;i>=0;i-=1 {
         set:=&resident.winds[i]
         used:=false
-        if !all {for owner in resident.owners {for key in owner.winds {used||=key==Wind_Key{set.source,set.count,set.amount}}}}
+        if !all {for &owner in resident.owners {used||=wind_set_used(set,&owner)}}
         if used {continue}
         if app!=nil {wind_set_free(app.renderer,set)}
         unordered_remove(&resident.winds,i)
@@ -250,6 +256,7 @@ foliage_resident_free :: proc(resident:^Foliage_Resident) {
     delete(resident.owners);delete(resident.prefabs);delete(resident.kinds);delete(resident.winds);delete(resident.crowns)
     impostor_draw_destroy(&resident.impostors)
     trample_free(resident)
+    volume.index_destroy(&resident.zones)
     build_work_destroy(&resident.work)
     resident^={}
 }
@@ -498,7 +505,7 @@ foliage_render :: proc(resident:^Foliage_Resident,data:core.Ref(Foliage_Data),gr
         gone:=removed_owner(removals.ptr,e)
         removed:=gone!=nil?gone.hash:0
         if owner.far_only!=far_only {owner.built=false}
-        if owner.built && !owner.pending && owner.epoch==entry.epoch && owner.loads==entry.loads && owner.transform==world.transform && owner.ground==revision && owner.sources==streamed && owner.removed==removed {continue}
+        if owner.built && !owner.pending && owner.epoch==entry.epoch && owner.loads==entry.loads && owner.transform==world.transform && owner.ground==revision && owner.sources==streamed && owner.removed==removed && (owner.zones==resident.zones_revision || len(owner.winds)==0) {continue}
         if resident.cells_left<=0 && owner.built {continue}
         owner.far_only=far_only
         owner_publish(resident,owner,entry,world.transform,ground,gone,sources.ptr,id,app,problems)
@@ -559,16 +566,17 @@ types_draw :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,entry:^Data_
             if t.ray_visible {desc.flags+={.Ray_Visible}}
             desc.fade_distance,desc.cull_distance=fade,cull
             desc.object_id=u64(owner.entity)
-            part:=Part_Draw{desc=desc,placement=piece.placement,identity=piece.placement==1,wind=-1}
-            if variants>0 {
-                part.wind=wind_set(resident,renderer,desc.mesh,variants,amount)
+            part:=Part_Draw{desc=desc,placement=piece.placement,identity=piece.placement==1,amount=amount}
+            low,high,known:=render.mesh_bounds(renderer,desc.mesh)
+            if variants>0 && known {
+                part.variants=variants
                 append(&owner.winds,Wind_Key{desc.mesh,variants,amount})
             }
             // The hook bends every part where bodies trampled it (y), and
             // sways in the wind what does not sway in variants (x); the views
             // cull it by boxes that hold how far both move it.
-            part.desc.vertex={amount if part.wind<0 && t.wind>0 else 0,1,0,0}
-            if low,high,known:=render.mesh_bounds(renderer,desc.mesh);known {
+            part.desc.vertex={amount if part.variants==0 && t.wind>0 else 0,1,0,0}
+            if known {
                 corner:=linalg.max(linalg.abs(low),linalg.abs(high))
                 part.desc.reach=hook_reach(part.desc.vertex.x,linalg.length(corner)*t.scale[1]*max(t.height[1],1))
             }
@@ -612,6 +620,8 @@ owner_publish :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,entry:^Da
     owner.ground=ground!=nil?ground.revision:0
     owner.removed=gone!=nil?gone.hash:0
     owner.sources=sources!=nil?sources.revision:0
+    rezone:=owner.zones!=resident.zones_revision && len(owner.winds)>0
+    owner.zones=resident.zones_revision
     s:=&entry.source
     work:=&resident.work
     owner.pending=false
@@ -686,7 +696,9 @@ owner_publish :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,entry:^Da
         banded||=held.far!=was_far
         tile,revision:=ground_cell(ground,cell.coord)
         removed,removed_hash:=removed_cell(gone,cell.coord)
-        if all || banded || held.stale || !held.built || held.version!=cell.version || held.ground!=revision || held.removed!=removed_hash {
+        // Where the zones of wind changed, a cell whose zone is another sways in that one.
+        rezoned:=rezone && held.built && wind_zone_at(resident,held.at)!=held.zone
+        if all || banded || rezoned || held.stale || !held.built || held.version!=cell.version || held.ground!=revision || held.removed!=removed_hash {
             // What stands for a section that is not loaded publishes no batches: it costs less.
             cost:=owner.far_only?1:CELL_COST
             if resident.cells_left<cost {
@@ -768,6 +780,14 @@ cell_publish :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,held:^Resi
         return
     }
     owner_matrix:=mm.transform_matrix(transform)
+    // Its zone of wind is the one at the middle of its instances.
+    if len(work.placed)>0 {
+        sum:=[3]f64{}
+        for p in work.placed {at:=mm.transform_point(transform,p.position);sum+={f64(at.x),f64(at.y),f64(at.z)}}
+        sum/=f64(len(work.placed))
+        held.at={f32(sum.x),f32(sum.y),f32(sum.z)}
+    }
+    held.zone=wind_zone_at(resident,held.at)
     clear(&work.batches)
     if len(held.impostors)>0 {resident.impostors.dirty=true}
     clear(&held.impostors)
@@ -803,12 +823,16 @@ cell_publish :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,held:^Resi
                 draw.error=max(draw.error,error)
                 append(&work.instances,instance)
             }
-            if part.wind<0 {
+            // The variants of the zone of wind of the cell draw and cast
+            // shadows; the rays that see surfaces meet the mesh at rest.
+            // Without them (the renderer cannot make them) it stands at rest.
+            wind:=-1
+            if part.variants>0 {wind=wind_set(resident,app.renderer,part.desc.mesh,part.variants,part.amount,held.zone,held.at)}
+            if wind<0 {
                 publish(resident,owner,held,cell.coord,t,u32(k),ROLE_MESH,part.desc,id,app,problems)
                 continue
             }
-            // The variants draw and cast shadows; the rays that see surfaces meet the mesh at rest.
-            set:=&resident.winds[part.wind]
+            set:=&resident.winds[wind]
             if t.ray_visible {
                 rest:=part.desc
                 rest.flags={.Ray_Visible,.Rays_Only}
