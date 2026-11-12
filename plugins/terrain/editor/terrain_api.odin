@@ -44,7 +44,7 @@ Create_Params :: struct {
 
 Edit_Params :: struct {
     entity:editor.Api_Entity_Text `mirai:"text,entity,label=The entity of the terrain"`,
-    brush:[16]u8 `mirai:"text,label=raise or lower or smooth or flatten or set_height or ramp or terrace or noise or erode or paint or erase or hole or fill or add or carve"`,
+    brush:[16]u8 `mirai:"text,label=raise or lower or smooth or flatten or set_height or ramp or terrace or noise or erode or paint or erase or tint or roughness or hole or fill or add or carve"`,
     at:[3]f32 `mirai:"label=Where it touches in the world; on a Heightfield the surface under its x and z"`,
     to:[3]f32 `mirai:"optional,label=Where the stroke goes on to; the other end of a ramp (at its height) or of a capsule"`,
     radius:f32 `mirai:"optional,min=0.1,max=500,unit=m"`,
@@ -63,6 +63,8 @@ Edit_Params :: struct {
     slope_invert:bool `mirai:"optional,label=It touches outside slope instead"`,
     layer:[LAYER_NAME_BYTES]u8 `mirai:"text,optional,label=Of paint and erase, and of add on a Volume: the layer by its material (a path or its stem; default is one without a material); omitted: the first"`,
     weight:f32 `mirai:"optional,min=0,max=1,label=Of paint: the weight it takes the layer to in place of adding to it"`,
+    color:[3]f32 `mirai:"optional,color,label=Of tint on a Heightfield: the sRGB color the layers are tinted toward; white shows them as they are"`,
+    roughness:f32 `mirai:"optional,min=0,max=1,label=Of roughness on a Heightfield: 0 smooth, 0.5 the layers as they are, 1 rough"`,
     shape:[16]u8 `mirai:"text,optional,label=Of add and carve: sphere or capsule or box; omitted: a sphere, or a capsule from at to to"`,
     alpha:[32]u8 `mirai:"text,optional,label=A shape of the brush by its name as the panel lists them"`,
     turn:f32 `mirai:"optional,label=Degrees the alpha turns"`,
@@ -77,6 +79,9 @@ Layer_Params :: struct {
     tiling:f32 `mirai:"optional,min=0.01,unit=m,label=Over which its textures repeat"`,
     height_blend:f32 `mirai:"optional,min=0,max=1"`,
     displacement:f32 `mirai:"optional,min=0,max=4,unit=m,label=Of a Heightfield near the view: how far its textures raise it"`,
+    detile:f32 `mirai:"optional,min=0,max=1,label=How far its repeats shift against each other where a noise of the world says"`,
+    variation:f32 `mirai:"optional,min=0,max=1,label=How much a slow noise of the world darkens and brightens it"`,
+    far_tiling:f32 `mirai:"optional,min=0,unit=m,label=Over which its textures repeat far away; 0: tiling everywhere"`,
     automatic:bool `mirai:"optional,label=It covers where the slope and the height are in its ranges"`,
     slope:[2]f32 `mirai:"optional,label=Degrees of its rule"`,
     height:[2]f32 `mirai:"optional,label=Metres of its rule in the terrain"`,
@@ -295,6 +300,8 @@ brush_named :: proc(name:string) -> (kind:terrain.Brush_Kind,level,ok:bool) {
     case "erode":      return .Erode,false,true
     case "paint":      return .Paint,false,true
     case "erase":      return .Erase,false,true
+    case "tint":       return .Tint,false,true
+    case "roughness":  return .Roughness,false,true
     case "hole":       return .Hole,false,true
     case "fill":       return .Fill,false,true
     case "add":        return .Add,false,true
@@ -339,6 +346,8 @@ edit_brush :: proc(s:^editor.Session,call:^api.Call,p:^Edit_Params,source:^terra
     // Flatten, set_height and a capped brush keep the height of at, or the one given.
     if kind==.Flatten || brush.capped || kind==.Terrace {brush.target=level && editor.tool_call_given(call,"height")?local(to_local,{p.at.x,p.height,p.at.z}).y:from.y}
     if kind==.Paint && editor.tool_call_given(call,"weight") {brush.toward,brush.target=true,clamp(p.weight,0,1)}
+    if kind==.Tint {brush.color=editor.tool_call_given(call,"color")?p.color:{1,1,1}}
+    if kind==.Roughness {brush.target=editor.tool_call_given(call,"roughness")?p.roughness:0.5}
     if kind==.Add || kind==.Carve {
         // One shape: a sphere at at, a capsule to to, or a box.
         shape:=strings.to_lower(base.text_get(p.shape[:]),context.temp_allocator)
@@ -428,6 +437,8 @@ api_edit :: proc(s:^editor.Session,call:^api.Call) {
 fmt_label :: proc(kind:terrain.Brush_Kind,level:bool) -> string {
     #partial switch kind {
     case .Paint,.Erase: return "Paint terrain"
+    case .Tint:         return "Tint terrain"
+    case .Roughness:    return "Terrain roughness"
     case .Hole,.Fill:   return "Terrain holes"
     case .Ramp:         return "Ramp"
     case .Add,.Carve:   return "Shape"
@@ -476,11 +487,14 @@ layer_values :: proc(call:^api.Call,p:^Layer_Params,layer:^terrain.Terrain_Layer
     if editor.tool_call_given(call,"tiling") {layer.tiling=p.tiling}
     if editor.tool_call_given(call,"height_blend") {layer.height_blend=p.height_blend}
     if editor.tool_call_given(call,"displacement") {layer.displacement=p.displacement}
+    if editor.tool_call_given(call,"detile") {layer.detile=p.detile}
+    if editor.tool_call_given(call,"variation") {layer.variation=p.variation}
+    if editor.tool_call_given(call,"far_tiling") {layer.far_tiling=p.far_tiling}
     if editor.tool_call_given(call,"automatic") {layer.auto.enabled=p.automatic}
     if editor.tool_call_given(call,"slope") {layer.auto.slope={math.to_radians(min(p.slope.x,p.slope.y)),math.to_radians(max(p.slope.x,p.slope.y))}}
     if editor.tool_call_given(call,"height") {layer.auto.height={min(p.height.x,p.height.y),max(p.height.x,p.height.y)}}
     if editor.tool_call_given(call,"softness") {layer.auto.softness={math.to_radians(max(p.softness.x,0)),max(p.softness.y,0)}}
-    if !terrain.layer_valid(layer^) {api.call_fail(call,api.INVALID_PARAMS,"The layer is out of range: tiling above 0, height_blend from 0 to 1, displacement from 0 to 4 m, slope from 0 to 90 degrees");return false}
+    if !terrain.layer_valid(layer^) {api.call_fail(call,api.INVALID_PARAMS,"The layer is out of range: tiling above 0, height_blend, detile and variation from 0 to 1, displacement from 0 to 4 m, far_tiling from 0 to 10000 m, slope from 0 to 90 degrees");return false}
     return true
 }
 

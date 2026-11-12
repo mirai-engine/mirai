@@ -247,6 +247,8 @@ Resident_Chunk :: struct {
     urgent:bool,            // an owner wants it where nothing shows
     shown:bool,             // what it built is published: a mesh, or none for an empty chunk
     working:bool,           // a job builds it
+    maps:Piece_Maps,        // the textures of the maps of its mesh (surface.odin)
+    shape:Piece_Shape,
 }
 // A piece is built again when its level, its border or its collider changes.
 // border: a hash of the levels of the border of a node (Piece_Border).
@@ -265,6 +267,8 @@ Resident_Source :: struct {
     override:render.Material_Values, // of its layers
     override_info:Source_Info,         // the layers it was made from
     override_assets:[2]u64,            // and the revision and structure of the assets
+    table:base.Asset_Id,               // the texture of the table of its layers (layers_table) in override
+    table_pixels:[4*LAYERS_TEXELS*LAYERS_MAX]u8, // what it holds
     join:Terrain_Join,
 }
 Resident_Owner :: struct {
@@ -769,6 +773,11 @@ source_compare :: proc(next,s:^Source) -> (change:Change,ok:bool) {
     } else if low,high,differ=grid_take(&next.holes,&s.holes,&writer,false);differ {
         widen(&change,low,high+{1,0,1})
     }
+    if grid_none(&next.paint)!=grid_none(&s.paint) {
+        widen(&change,{},{last.x,0,last.z})
+    } else if low,high,differ=grid_take(&next.paint,&s.paint,&writer,false);differ {
+        widen(&change,low,high)
+    }
     if layers_reshape(next.info,s.info) {
         widen(&change,{},last)
     } else if low,high,differ=grid_take(&next.weights,&s.weights,&writer,false);differ {
@@ -800,11 +809,12 @@ resident_owner_free :: proc(owner:^Resident_Owner) {
 }
 @(private)
 resident_source_free :: proc(resident:^Terrain_Resident,source:^Resident_Source) {
-    for chunk in source.chunks {
-        if chunk.mesh=={} || resident.assets==nil {continue}
-        host.assets_mesh_release(resident.assets,chunk.mesh)
-        resident.stats.released+=1;resident.stats.meshes-=1
+    for &chunk in source.chunks {
+        if resident.assets==nil {continue}
+        if chunk.mesh!={} {resident.stats.released+=1;resident.stats.meshes-=1}
+        piece_release(resident.assets,&chunk)
     }
+    if source.table!={} && resident.assets!=nil {host.assets_texture_release(resident.assets,source.table)}
     delete(source.chunks);delete(source.levels);delete(source.deep);delete(source.changed);delete(source.dirty);delete(source.pending)
     delete(source.join.cuts)
     source^={}

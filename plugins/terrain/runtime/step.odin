@@ -157,17 +157,24 @@ chunk_take :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,entry:^Data_Source
     chunk:=&source.chunks[index]
     s:=&entry.source
     mesh,ok:=chunk_publish(resident.assets,&slot.mesh,slot.key.collision,resident.picking,piece_levels(s,&source.quad,index))
+    maps:Piece_Maps
+    if ok && mesh!={} {
+        maps,ok=piece_maps_publish(resident.assets,&slot.mesh.maps)
+        if !ok {host.assets_mesh_release(resident.assets,mesh)}
+    }
     if !ok {
         name:[base.ASSET_ID_TEXT]u8
         core.report(problems,source_owner(terrains,entry.id),"terrain.chunk_mesh","the mesh of piece %v (depth %d) of terrain source %s could not be made: out of memory for the mesh or its collision; free memory, or give the source fewer cells per chunk",quad_place(&entry.source,&source.quad,index),quad_depth(&source.quad,index),host.assets_name(resident.assets,entry.id,&name))
         source_pending(source,index)
         return
     }
-    if chunk.mesh!={} {host.assets_mesh_release(resident.assets,chunk.mesh);resident.stats.released+=1;resident.stats.meshes-=1}
+    if chunk.mesh!={} {resident.stats.released+=1;resident.stats.meshes-=1}
     if !chunk.shown {resident.cut=true}
     // A chunk that turns empty or stops being so gives or wants a collider (resident_colliders).
     if !chunk.shown || (chunk.mesh=={})!=(mesh=={}) {resident.marks+=1}
+    piece_release(resident.assets,chunk)
     chunk.mesh,chunk.revision,chunk.built,chunk.shown=mesh,slot.version,slot.key,true
+    chunk.maps,chunk.shape=maps,piece_shape(s,&slot.mesh.maps)
     // The blocks a node of a Volume read may leave now.
     if piece_levels(s,&source.quad,index) {source.leave=true}
     if mesh!={} {resident.stats.meshes+=1}
@@ -179,9 +186,10 @@ chunk_take :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,entry:^Data_Source
 @(private)
 piece_take_empty :: proc(resident:^Terrain_Resident,entry:^Data_Source,source:^Resident_Source,index:int) {
     chunk:=&source.chunks[index]
-    if chunk.mesh!={} {host.assets_mesh_release(resident.assets,chunk.mesh);resident.stats.released+=1;resident.stats.meshes-=1}
+    if chunk.mesh!={} {resident.stats.released+=1;resident.stats.meshes-=1}
     if !chunk.shown {resident.cut=true}
     if !chunk.shown || chunk.mesh!={} {resident.marks+=1}
+    piece_release(resident.assets,chunk)
     chunk.mesh,chunk.revision,chunk.built,chunk.shown={},data_version(entry,index),chunk.wanted,true
     append(&source.changed,u32(index))
 }
@@ -190,8 +198,9 @@ piece_take_empty :: proc(resident:^Terrain_Resident,entry:^Data_Source,source:^R
 @(private)
 chunk_evict :: proc(resident:^Terrain_Resident,source:^Resident_Source,index:int) {
     chunk:=&source.chunks[index]
-    if chunk.mesh!={} {host.assets_mesh_release(resident.assets,chunk.mesh);resident.stats.released+=1;resident.stats.meshes-=1} else if chunk.shown {resident.marks+=1}
-    chunk.mesh,chunk.revision,chunk.built,chunk.shown={},0,{},false
+    if chunk.mesh!={} {resident.stats.released+=1;resident.stats.meshes-=1} else if chunk.shown {resident.marks+=1}
+    piece_release(resident.assets,chunk)
+    chunk.revision,chunk.built,chunk.shown=0,{},false
     append(&source.changed,u32(index))
     source.leave=true
     resident.stats.evicted+=1
@@ -250,6 +259,7 @@ work_take :: proc(c:^Chunk_Tables,data:^Terrain_Data,resident:^Terrain_Resident,
         case .Field:   first,last,installed=install(&s.field,slot,data)
         case .Weights: first,last,installed=install(&s.weights,slot,data)
         case .Holes:   first,last,installed=install(&s.holes,slot,data)
+        case .Paint:   first,last,installed=install(&s.paint,slot,data)
         }
         if !installed {return}
         slot.page=nil
@@ -280,7 +290,7 @@ pages_start :: proc(data:^Terrain_Data,entry:^Data_Source,low,high:[3]int,phase:
         }}}
         return true
     }
-    _=start(data,entry,&s.field,.Field,low,high,phase,problems,e,a) && start(data,entry,&s.weights,.Weights,low,high,phase,problems,e,a) && start(data,entry,&s.holes,.Holes,low,high,phase,problems,e,a)
+    _=start(data,entry,&s.field,.Field,low,high,phase,problems,e,a) && start(data,entry,&s.weights,.Weights,low,high,phase,problems,e,a) && start(data,entry,&s.holes,.Holes,low,high,phase,problems,e,a) && start(data,entry,&s.paint,.Paint,low,high,phase,problems,e,a)
 }
 
 // Whether the pages of a region of samples are in memory: if not, a build
@@ -426,17 +436,35 @@ pages_leave :: proc(data:^Terrain_Data,resident:^Terrain_Resident,entry:^Data_So
     data.samples=u32(int(data.samples)-before+source_cost(s))
 }
 
-// The layers of a source as each chunk shows them, made again when its layers
-// or the assets change.
+// The layers of a source as each piece shows them: the texture of their
+// table, made again when its layers or the assets change.
 @(private)
 resident_layers_override :: proc(resident:^Terrain_Resident,source:^Resident_Source,s:^Source) -> render.Material_Values {
     a:=resident.assets
     stamp:=[2]u64{a.revision,a.structure}
     if source.override_info.layer_count!=s.layer_count || source.override_info.layers!=s.layers || source.override_assets!=stamp {
-        source.override=layers_override(a,s)
         source.override_info.layer_count,source.override_info.layers,source.override_assets=s.layer_count,s.layers,stamp
+        // The assets change as pieces come and go: a texture of the same table stays.
+        pixels:[4*LAYERS_TEXELS*LAYERS_MAX]u8
+        layers_table(a,s,pixels[:4*LAYERS_TEXELS*int(s.layer_count)])
+        if source.table!={} && pixels==source.table_pixels {return source.override}
+        if source.table!={} {host.assets_texture_release(a,source.table);source.table={}}
+        source.table,_=host.assets_texture_generate(a,pixels[:4*LAYERS_TEXELS*int(s.layer_count)],LAYERS_TEXELS,int(s.layer_count),false,"terrain layers")
+        source.table_pixels=pixels
+        source.override=render.MATERIAL_VALUES_DEFAULT
+        render.material_texture(&source.override,base.name_hash("layers"),0,source.table)
+        // Releasing the texture it held changed the assets.
+        source.override_assets={a.revision,a.structure}
     }
     return source.override
+}
+
+// Lets go of the mesh of a piece and of the textures of its maps.
+@(private)
+piece_release :: proc(a:^host.Assets,chunk:^Resident_Chunk) {
+    if chunk.mesh!={} {host.assets_mesh_release(a,chunk.mesh)}
+    piece_maps_release(a,&chunk.maps)
+    chunk.mesh,chunk.shape={},{}
 }
 
 // Shows the pieces of a source for an owner: every one when its appearance,
@@ -539,9 +567,12 @@ owner_chunk_show :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,owner:^Resid
             starved_report(problems,owner.entity,resident.assets,entry.id,coord,kind,physics)
         } else if has {room_give(resident,collider.kind)}
     }
-    core.add(c.meshes,e,render.Mesh_Renderer{mesh=chunk.mesh,materials=owner.materials})
+    materials:=owner.materials
+    if chunk.shape.holed {materials[0]=piece_material(s,true)}
+    core.add(c.meshes,e,render.Mesh_Renderer{mesh=chunk.mesh,materials=materials})
     look:=owner.tint
     render.material_values_over(&look,&owner.override)
+    piece_values(&look,chunk.maps,chunk.shape)
     core.add(c.looks,e,look)
     if wants {
         made:=phys.COLLIDER_DEFAULT

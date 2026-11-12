@@ -204,8 +204,8 @@ a_dig_raises_dust_of_each_layer_it_took_on_its_channel :: proc(t:^testing.T) {
     dust.layers[3].channel={}
     core.add(&w.dusts,dusty,dust)
     test_world_settle(&w)
-    core.push(&w.digs.digs,Terrain_Dig{owner=dusty,center={1,2,3},volume=1,layers={0.5,0.25,0,0.25}})
-    core.push(&w.digs.digs,Terrain_Dig{owner=bare,volume=1,layers={1,0,0,0}})
+    core.push(&w.digs.digs,Terrain_Dig{owner=dusty,center={1,2,3},volume=1,layers={0=0.5,1=0.25,3=0.25}})
+    core.push(&w.digs.digs,Terrain_Dig{owner=bare,volume=1,layers={0=1}})
     terrain_dust(core.ref(&w.digs),core.read(&w.dusts),&w.births)
     births:=w.births.queue.items[:]
     if !testing.expect_value(t,len(births),2) {return}

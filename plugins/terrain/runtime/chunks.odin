@@ -32,6 +32,7 @@ Chunk_Mesh :: struct {
     lines:Piece_Lines,
     side,inner,other:[dynamic][2]int,
     positions_a,positions_b:[dynamic]int,
+    maps:Surface_Maps, // of a piece of a Heightfield, or the palette of one of a Volume
 }
 
 chunk_mesh_init :: proc(mesh:^Chunk_Mesh,allocator:=context.allocator) {
@@ -53,6 +54,7 @@ chunk_mesh_init :: proc(mesh:^Chunk_Mesh,allocator:=context.allocator) {
     mesh.lines.column,mesh.lines.row=make([dynamic]i32,allocator),make([dynamic]i32,allocator)
     mesh.side,mesh.inner,mesh.other=make([dynamic][2]int,allocator),make([dynamic][2]int,allocator),make([dynamic][2]int,allocator)
     mesh.positions_a,mesh.positions_b=make([dynamic]int,allocator),make([dynamic]int,allocator)
+    surface_maps_init(&mesh.maps,allocator)
 }
 
 chunk_mesh_destroy :: proc(mesh:^Chunk_Mesh) {
@@ -68,6 +70,7 @@ chunk_mesh_destroy :: proc(mesh:^Chunk_Mesh) {
     piece_border_destroy(&mesh.border)
     delete(mesh.lines.xs);delete(mesh.lines.zs);delete(mesh.lines.column);delete(mesh.lines.row)
     delete(mesh.side);delete(mesh.inner);delete(mesh.other);delete(mesh.positions_a);delete(mesh.positions_b)
+    surface_maps_destroy(&mesh.maps)
     mesh^={}
 }
 
@@ -131,7 +134,9 @@ node_build :: proc(s:^Source,q:^Quad,index:int,lod:Chunk_Lod,border:^Piece_Borde
     switch s.kind {
     case .Heightfield:
         low,high:=quad_region(s,q,index)
-        if !piece_build(s,{low=low,high=high,level=lod.level,coarse=true,border=border},mesh) {return false}
+        depth,_:=quad_coord(q,index)
+        holes:=!grid_none(&s.holes) || len(join.cuts)>0
+        if !piece_build(s,{low=low,high=high,level=lod.level,coarse=true,border=border,holes=holes,cuts=join.cuts,spacing=1<<uint(depth)},mesh) {return false}
     case .Volume:
         from,to:=quad_chunks3(q,index)
         merged:=&mesh.halo
@@ -146,12 +151,10 @@ node_build :: proc(s:^Source,q:^Quad,index:int,lod:Chunk_Lod,border:^Piece_Borde
         chunk_mesh_clear(mesh)
         if len(merged.indices)==0 {break}
         if !geom.mesh_weld(geom.mesh_buffer_view(merged),0,m) {return false}
-        if resize(&m.uvs,len(m.positions))!=nil || resize(&mesh.uv1s,len(m.positions))!=nil || resize(&mesh.locked,len(m.positions))!=nil {return false}
+        if !volume_palette(s,mesh) || resize(&mesh.locked,len(m.positions))!=nil {return false}
         low,high:=quad_region3(s,q,index)
         origin:=source_origin(s)
         for position,i in m.positions {
-            w:=layers_vertex(s,source_weights_at(s,position),i<len(m.normals)?m.normals[i]:{0,1,0},position.y)
-            m.uvs[i],mesh.uv1s[i]={w[0],w[1]},{w[2],w[3]}
             locked:=false
             for axis in 0..<3 {
                 if low[axis]>0 && position[axis]==origin[axis]+f32(low[axis])*s.cell {locked=true}
@@ -187,15 +190,16 @@ chunk_mesh_clear :: proc(mesh:^Chunk_Mesh) {
     mesh.render_ready,mesh.grid=false,false
     geom.mesh_buffer_clear(&mesh.geometry)
     clear(&mesh.uv1s);clear(&mesh.heights);clear(&mesh.disabled_edges);clear(&mesh.disabled_borders);clear(&mesh.holes);clear(&mesh.locked)
+    surface_maps_clear(&mesh.maps)
     mesh.columns,mesh.rows=0,0
     mesh.origin,mesh.cell={},{}
 }
 
 // A displaced chunk (displacement.odin), without collider: at level 0 with
 // each cell split in 2^detail per side, its sides at the levels of lod but
-// those that join another displaced chunk (fine), at its steps.
+// those that join another displaced chunk (fine), at the steps of that detail.
 @(private)
-chunk_detail_build :: proc(s:^Source,coord:[3]i32,lod:Chunk_Lod,detail:u8,fine:[4]bool,mesh:^Chunk_Mesh) -> bool {
+chunk_detail_build :: proc(s:^Source,coord:[3]i32,lod:Chunk_Lod,detail:u8,fine:[4]u8,mesh:^Chunk_Mesh) -> bool {
     chunk_mesh_clear(mesh)
     low,high,valid:=chunk_region(s,coord)
     if !valid || lod.level!=0 {return false}
@@ -222,12 +226,7 @@ chunk_build_terrain :: proc(s:^Source,coord:[3]i32,mesh:^Chunk_Mesh,collision:=t
             mesh.geometry,mesh.welded=mesh.welded,mesh.geometry
             if collision && !chunk_volume_edges(s,grid,low,high,mesh,m) {return false}
         }
-        if resize(&m.uvs,len(m.positions))!=nil || resize(&mesh.uv1s,len(m.positions))!=nil {return false}
-        for position,i in m.positions {
-            w:=layers_vertex(s,source_weights_at(s,position),i<len(m.normals)?m.normals[i]:{0,1,0},position.y)
-            m.uvs[i],mesh.uv1s[i]={w[0],w[1]},{w[2],w[3]}
-        }
-        return true
+        return volume_palette(s,mesh)
     }
     columns,rows:=high.x-low.x+1,high.z-low.z+1
     mesh.grid=true
@@ -236,10 +235,12 @@ chunk_build_terrain :: proc(s:^Source,coord:[3]i32,mesh:^Chunk_Mesh,collision:=t
         if !piece_build(s,{low=low.xz,high=high.xz,level=lod.level,border=&mesh.border,holes=!grid_none(&s.holes) || len(join.cuts)>0,cuts=join.cuts},mesh) {return false}
     } else {
         count:=columns*rows
+        if !surface_maps_build(s,low.xz,high.xz,1,false,join.cuts,&mesh.maps) {return false}
         if resize(&m.positions,count)!=nil || resize(&m.normals,count)!=nil || resize(&m.uvs,count)!=nil || resize(&mesh.uv1s,count)!=nil || resize(&m.indices,(columns-1)*(rows-1)*6)!=nil {return false}
         for row in 0..<rows {for column in 0..<columns {
             at:=row*columns+column
-            m.positions[at],m.normals[at],m.uvs[at],mesh.uv1s[at]=heightfield_vertex(s,low.x+column,low.z+row,1)
+            m.positions[at],m.normals[at]=heightfield_vertex(s,low.x+column,low.z+row,1)
+            m.uvs[at],mesh.uv1s[at]={f32(column),f32(row)},{}
         }}
         next:=0
         for row in 0..<rows-1 {for column in 0..<columns-1 {
@@ -263,23 +264,19 @@ chunk_build_terrain :: proc(s:^Source,coord:[3]i32,mesh:^Chunk_Mesh,collision:=t
     return chunk_heightfield_borders(s,low,high,mesh,join.cuts)
 }
 
-// The attributes of the vertex of a Heightfield sample, in the space of the
-// terrain: its normal from the samples step away in the whole source, the
-// slope the triangles of that step span, and the weights of its layers in the
-// uvs.
+// The vertex of a Heightfield sample, in the space of the terrain: its normal
+// from the samples step away in the whole source, the slope the triangles of
+// that step span.
 @(private)
-heightfield_vertex :: proc "contextless" (s:^Source,x,z,step:int) -> (position,normal:[3]f32,uv,uv1:[2]f32) {
-    position=source_point(s,{x,0,z})
-    normal=heightfield_normal(s,x,z,step)
-    w:=layers_vertex(s,weights_float(grid_get(&s.weights,x,z)),heightfield_normal(s,x,z,LAYER_RULE_SAMPLES),position.y)
-    return position,normal,{w[0],w[1]},{w[2],w[3]}
+heightfield_vertex :: proc "contextless" (s:^Source,x,z,step:int) -> (position,normal:[3]f32) {
+    return source_point(s,{x,0,z}),heightfield_normal(s,x,z,step)
 }
 
 // A vertex inside the cell whose lowest sample is at, a step of 2^detail per
 // sample in from it: on the triangle of the collider it falls in, with the
-// attributes of its corners blended as its place is.
+// normals of its corners blended as its place is.
 @(private)
-detail_vertex :: proc "contextless" (s:^Source,at,step:[2]int,detail:u8) -> (position,normal:[3]f32,uv,uv1:[2]f32) {
+detail_vertex :: proc "contextless" (s:^Source,at,step:[2]int,detail:u8) -> (position,normal:[3]f32) {
     nx,nz:=int(s.samples.x),int(s.samples.z)
     f:=[2]f32{f32(step.x),f32(step.y)}/f32(int(1)<<detail)
     corners:=[4][2]int{at,{min(at.x+1,nx-1),at.y},{at.x,min(at.y+1,nz-1)},{min(at.x+1,nx-1),min(at.y+1,nz-1)}}
@@ -287,8 +284,8 @@ detail_vertex :: proc "contextless" (s:^Source,at,step:[2]int,detail:u8) -> (pos
     w:=f.x+f.y<=1?[4]f32{1-f.x-f.y,f.x,f.y,0}:[4]f32{0,1-f.y,1-f.x,f.x+f.y-1}
     for corner,i in corners {
         if w[i]==0 {continue}
-        p,n,a,b:=heightfield_vertex(s,corner.x,corner.y,1)
-        position+=p*w[i];normal+=n*w[i];uv+=a*w[i];uv1+=b*w[i]
+        p,n:=heightfield_vertex(s,corner.x,corner.y,1)
+        position+=p*w[i];normal+=n*w[i]
     }
     normal=linalg.normalize0(normal)
     return
@@ -309,10 +306,10 @@ chunk_render_prepare :: proc(mesh:^Chunk_Mesh,limits:host.Assets_Limits,levels:=
     return mesh.render_ready
 }
 
-// The tangents of the vertices of a Heightfield chunk, whose uvs are their
-// place over UV_METERS (or weights of layers, which shade triplanar): +x
-// across the normal, and the bitangent up the image, towards -z, as Mirai's
-// v grows with z. What MikkTSpace gives such a grid, without its cost.
+// The tangents of the vertices of a Heightfield piece, whose uvs are their
+// place over its maps: +x across the normal, and the bitangent up the image,
+// towards -z, as Mirai's v grows with z. What MikkTSpace gives such a grid,
+// without its cost.
 heightfield_tangents :: proc "contextless" (normals:[][3]f32,out:[][4]f32) {
     for n,i in normals {
         t:=linalg.normalize0([3]f32{1,0,0}-n*n.x)

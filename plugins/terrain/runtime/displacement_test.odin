@@ -19,7 +19,7 @@ displaced_chunks_split_their_cells_on_the_collider_and_join_their_neighbors :: p
     lod:=chunk_lod_sides(&s,levels,{0,0,0})
     DETAIL :: 2
     mesh:Chunk_Mesh;chunk_mesh_init(&mesh);defer chunk_mesh_destroy(&mesh)
-    testing.expect(t,chunk_detail_build(&s,{0,0,0},lod,DETAIL,{false,true,false,false},&mesh))
+    testing.expect(t,chunk_detail_build(&s,{0,0,0},lod,DETAIL,{0,DETAIL,0,0},&mesh))
     chunk_in_terrain(&mesh)
     m:=&mesh.geometry
     low,high,_:=chunk_region(&s,{0,0,0})

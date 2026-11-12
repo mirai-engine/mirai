@@ -70,7 +70,7 @@ terrain_layers_paint_and_holes_are_steps_of_undo :: proc(t:^testing.T) {
     tool.stroke.changed=true
     stroke_end(&s,&tool,ref,app.assets,label="Paint terrain")
     testing.expect(t,history.edits_commit(&edits,ref,&selection))
-    held=registry_source(t,&assets,id);testing.expect(t,terrain.grid_get(&held.weights,4,4)[1]>200);terrain.source_destroy(&held)
+    held=registry_source(t,&assets,id);testing.expect(t,terrain.weights_float(terrain.grid_get(&held.weights,4,4))[1]>200.0/255);terrain.source_destroy(&held)
 
     // A hole.
     if !prepare(t,&s,&tool,&world,owner) {return}
@@ -83,11 +83,23 @@ terrain_layers_paint_and_holes_are_steps_of_undo :: proc(t:^testing.T) {
     held=registry_source(t,&assets,id);testing.expect(t,terrain.source_hole(&held,4,4));terrain.source_destroy(&held)
     testing.expect_value(t,edits.cursor,4)
 
+    // A color painted over the layers.
+    if !prepare(t,&s,&tool,&world,owner) {return}
+    if !testing.expect(t,stroke_baseline(&tool)) {return}
+    tool.stroke.active=true
+    testing.expect(t,terrain.source_edit(&tool.stroke.source,{kind=.Tint,center={0,0,0},radius=1.5,amount=1,color={1,0,0}}).changed)
+    tool.stroke.changed=true
+    stroke_end(&s,&tool,ref,app.assets,label="Tint terrain")
+    testing.expect(t,history.edits_commit(&edits,ref,&selection))
+    held=registry_source(t,&assets,id);testing.expect_value(t,terrain.grid_get(&held.paint,4,4),terrain.Paint{255,0,0,terrain.PAINT_ROUGHNESS_NEUTRAL});terrain.source_destroy(&held)
+    testing.expect(t,history.undo(&edits,ref,&selection));terrain_sync(&s,&tool,core.read(&world.terrains),app.assets)
+    held=registry_source(t,&assets,id);testing.expect(t,terrain.grid_none(&held.paint) || terrain.grid_get(&held.paint,4,4)==terrain.PAINT_NEUTRAL);terrain.source_destroy(&held)
+
     // Undo goes back through the hole, the paint and the layers.
     testing.expect(t,history.undo(&edits,ref,&selection));terrain_sync(&s,&tool,core.read(&world.terrains),app.assets)
-    held=registry_source(t,&assets,id);testing.expect(t,!terrain.source_hole(&held,4,4) && terrain.grid_get(&held.weights,4,4)[1]>200);terrain.source_destroy(&held)
+    held=registry_source(t,&assets,id);testing.expect(t,!terrain.source_hole(&held,4,4) && terrain.weights_float(terrain.grid_get(&held.weights,4,4))[1]>200.0/255);terrain.source_destroy(&held)
     testing.expect(t,history.undo(&edits,ref,&selection));terrain_sync(&s,&tool,core.read(&world.terrains),app.assets)
-    held=registry_source(t,&assets,id);testing.expect_value(t,terrain.grid_get(&held.weights,4,4),terrain.Weights{255,0,0,0});terrain.source_destroy(&held)
+    held=registry_source(t,&assets,id);testing.expect_value(t,terrain.grid_get(&held.weights,4,4),terrain.WEIGHTS_FIRST);terrain.source_destroy(&held)
     testing.expect(t,history.undo(&edits,ref,&selection));terrain_sync(&s,&tool,core.read(&world.terrains),app.assets)
     testing.expect(t,history.undo(&edits,ref,&selection));terrain_sync(&s,&tool,core.read(&world.terrains),app.assets)
     held=registry_source(t,&assets,id);testing.expect_value(t,held.layer_count,u32(1));terrain.source_destroy(&held)

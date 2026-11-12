@@ -68,11 +68,12 @@ chunk_lod_border :: proc "contextless" (b:^Border_Levels,level:u8,coord:[2]int) 
 
 // What builds a piece of a Heightfield: its region of samples, inclusive;
 // the level of its inner grid and whether that comes from the coarse grid (a
-// node); its border; and whether the cells that are holes stay empty (a chunk).
+// node); its border; whether it has holes; and the samples between the
+// texels of its maps (a node, 2^depth).
 // A displaced chunk splits each cell in 2^detail per side, on the triangles of
 // its collider: its positions count those steps, its sides keep the levels of
 // their border but those that join another displaced chunk (fine), built at
-// its steps.
+// the steps of the detail they share.
 @(private)
 Piece :: struct {
     low,high:[2]int,
@@ -82,7 +83,8 @@ Piece :: struct {
     holes:bool,
     cuts:[]Join_Cut, // cells a joined Volume takes, holes too
     detail:u8,
-    fine:[4]bool,
+    fine:[4]u8,
+    spacing:int,
 }
 
 // The lines of a level across size cells: every step, and the last one.
@@ -95,13 +97,13 @@ lod_lines :: proc(size,step:int,out:^[dynamic]int) {
 
 // The positions along a side of size cells, cut by the chunk grid every
 // cells into segments, each at its level; a step of a level spans 2^detail
-// positions, and a fine side takes every position.
+// positions, and a fine side takes the positions of its own detail.
 @(private)
-piece_side_lines :: proc(size,cells:int,levels:[]u8,out:^[dynamic]int,detail:u8=0,fine:=false) {
+piece_side_lines :: proc(size,cells:int,levels:[]u8,out:^[dynamic]int,detail:u8=0,fine:u8=0) {
     clear(out)
     for start,k:=0,0;start<size;start,k=start+cells,k+1 {
         end:=min(start+cells,size)
-        step:=fine?1:1<<uint(levels[min(k,len(levels)-1)]+detail)
+        step:=fine>0?1<<uint(detail-min(fine,detail)):1<<uint(levels[min(k,len(levels)-1)]+detail)
         for at:=start;at<end;at+=step {append(out,at)}
     }
     append(out,size)
@@ -146,15 +148,16 @@ piece_vertex :: proc(s:^Source,mesh:^Chunk_Mesh,p:Piece,lines:^Piece_Lines,at:[2
     x,z:=p.low.x+at.x>>p.detail,p.low.y+at.y>>p.detail
     step:=1<<uint(level)
     position,normal:[3]f32
-    uv,uv1:[2]f32
     switch {
-    case at.x&split!=0 || at.y&split!=0: position,normal,uv,uv1=detail_vertex(s,{x,z},{at.x&split,at.y&split},p.detail)
-    case coarse:                         position,normal,uv,uv1=coarse_vertex(s,x,z,step)
-    case:                                position,normal,uv,uv1=heightfield_vertex(s,x,z,step)
+    case at.x&split!=0 || at.y&split!=0: position,normal=detail_vertex(s,{x,z},{at.x&split,at.y&split},p.detail)
+    case coarse:                         position,normal=coarse_vertex(s,x,z,step)
+    case:                                position,normal=heightfield_vertex(s,x,z,step)
     }
+    // Where it is over the maps of the piece, in texels.
+    uv:=[2]f32{f32(at.x),f32(at.y)}/f32(max(p.spacing,1)<<p.detail)
     m:=&mesh.geometry
     index=u32(len(m.positions))
-    if append(&m.positions,position)!=1 || append(&m.normals,normal)!=1 || append(&m.uvs,uv)!=1 || append(&mesh.uv1s,uv1)!=1 {return}
+    if append(&m.positions,position)!=1 || append(&m.normals,normal)!=1 || append(&m.uvs,uv)!=1 || append(&mesh.uv1s,[2]f32{})!=1 {return}
     mesh.remap[slot]=i32(index)
     return index,true
 }
@@ -168,8 +171,8 @@ Piece_Lines :: struct {
     interior:int,            // vertices of the inner grid, before those of the sides
 }
 
-// A triangle of three points of the piece, facing up; one over a hole of a
-// chunk is left out.
+// A triangle of three points of the piece, facing up; one over holes alone is
+// left out (piece_triangle_holes).
 @(private)
 piece_triangle :: proc(s:^Source,mesh:^Chunk_Mesh,p:Piece,lines:^Piece_Lines,a,b,c:[2]int) -> bool {
     b,c:=b,c
@@ -178,7 +181,7 @@ piece_triangle :: proc(s:^Source,mesh:^Chunk_Mesh,p:Piece,lines:^Piece_Lines,a,b
         // The cells of samples under it.
         x0,z0:=min(a.x,b.x,c.x)>>p.detail,min(a.y,b.y,c.y)>>p.detail
         x1,z1:=max((max(a.x,b.x,c.x)-1)>>p.detail,x0),max((max(a.y,b.y,c.y)-1)>>p.detail,z0)
-        for z in z0..=z1 {for x in x0..=x1 {if cell_hole(s,p.cuts,p.low.x+x,p.low.y+z) {return true}}}
+        if piece_triangle_holes(s,p,mesh,{p.low.x+x0,p.low.y+z0},{p.low.x+x1+1,p.low.y+z1+1}) {return true}
     }
     ia:=piece_vertex(s,mesh,p,lines,a) or_return
     ib:=piece_vertex(s,mesh,p,lines,b) or_return
@@ -211,6 +214,7 @@ piece_build :: proc(s:^Source,p:Piece,mesh:^Chunk_Mesh) -> bool {
     width,depth:=(p.high.x-p.low.x)<<p.detail,(p.high.y-p.low.y)<<p.detail
     if width<1 || depth<1 {return false}
     mesh.grid=true
+    if !surface_maps_build(s,p.low,p.high,max(p.spacing,1),p.coarse,p.cuts,&mesh.maps) {return false}
     cells:=int(s.chunk_cells)<<p.detail
     lines:=&mesh.lines
     lines.level=p.level

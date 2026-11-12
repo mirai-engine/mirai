@@ -13,7 +13,7 @@ data_source_copy :: proc(dst,src:^Source) -> bool {
         if error!=nil {return false}
         delete(dst.file,dst.allocator);dst.file=file
     }
-    if !grid_copy(&dst.field,&src.field,dst.allocator) || !grid_copy(&dst.holes,&src.holes,dst.allocator) || !grid_copy(&dst.field,&src.field,dst.allocator) {return false}
+    if !grid_copy(&dst.field,&src.field,dst.allocator) || !grid_copy(&dst.holes,&src.holes,dst.allocator) || !grid_copy(&dst.paint,&src.paint,dst.allocator) {return false}
     if !grid_copy(&dst.weights,&src.weights,dst.allocator) || !coarse_copy(&dst.coarse,&src.coarse,dst.allocator) {return false}
     dst.info,dst.origin=src.info,src.origin
     return true
@@ -93,6 +93,12 @@ source_resize :: proc(dst,src:^Source,samples:[2]int,allocator:=context.allocato
             sx,sz:=x-shift.x,z-shift.y
             if sx<0 || sz<0 || sx>=old.x-1 || sz>=old.y-1 || grid_get(&src.holes,sx,sz)==0 {continue}
             if !grid_put(&temporary.holes,{x,0,z},1,allocator) {return false}
+        }}
+    }
+    if !grid_none(&src.paint) {
+        if !grid_init(&temporary.paint,{samples.x,1,samples.y},PAINT_NEUTRAL,allocator) || !grid_prepare(&temporary.paint,{},last,allocator) {return false}
+        for z in 0..<samples.y {for x in 0..<samples.x {
+            grid_set(&temporary.paint,x,z,grid_get(&src.paint,clamp(x-shift.x,0,old.x-1),clamp(z-shift.y,0,old.y-1)))
         }}
     }
     source_destroy(dst)

@@ -155,6 +155,7 @@ work_page :: proc(data:^Terrain_Data,slot:^Work_Slot,entry:^Data_Source,grid:Gri
     case .Field:   block=grid_block(&s.field,index);_,count=grid_page_extent(&s.field,index)
     case .Weights: block=grid_block(&s.weights,index);_,count=grid_page_extent(&s.weights,index)
     case .Holes:   block,size=grid_block(&s.holes,index),1;_,count=grid_page_extent(&s.holes,index)
+    case .Paint:   block,size=grid_block(&s.paint,index),size_of(Paint);_,count=grid_page_extent(&s.paint,index)
     }
     made:bool
     if slot.page,made=shared_make(u8,count*size,s.allocator);!made {return false}
@@ -193,6 +194,7 @@ work_run :: proc(slot:^Work_Slot,worker:int) {
         case .Field:   slot.ok=values_within(slice.reinterpret([]f32,slot.page),slot.band)
         case .Weights: slot.ok=page_valid(slice.reinterpret([]Weights,slot.page),weights_full)
         case .Holes:   slot.ok=page_valid(slot.page,hole_valid)
+        case .Paint:   slot.ok=page_valid(slice.reinterpret([]Paint,slot.page),paint_valid)
         }
     }
 }

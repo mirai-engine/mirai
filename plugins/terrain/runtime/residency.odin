@@ -178,6 +178,8 @@ resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:^core.
                 if s.kind==.Heightfield {
                     a,b:=quad_chunks(q,i)
                     key.border=piece_border(&border,a,b)
+                    low,high:=quad_region(s,q,i)
+                    key.join=join_cut_region_key(source.join.cuts[:],low,high)
                 }
             }
             chunk.wanted=key

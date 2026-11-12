@@ -259,6 +259,8 @@ brush_make :: proc(tool:^Terrain_Tool,kind:terrain.Brush_Kind,point,normal:[3]f3
         brush.slope,brush.slope_invert={low,max(high,low+1e-6)},b.slope_invert
     }
     if kind==.Paint && tool.toward {brush.toward,brush.target=true,clamp(tool.target,0,1)}
+    if kind==.Tint {brush.color=linalg.clamp(tool.tint,0,1)}
+    if kind==.Roughness {brush.target=clamp(tool.roughness,0,1)}
     // Noise keeps the seed of its source, so a pass deepens one pattern; the
     // drops of Erode start elsewhere at each touch.
     if kind==.Erode {brush.seed=u32(base.hash_u64(tool.touches))}

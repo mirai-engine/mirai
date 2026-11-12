@@ -80,7 +80,15 @@ Stroke :: struct {
     stamp:terrain.File_Stamp, // of the file source holds
 }
 // lod: the level the chunk shows outside the stroke, which its neighbors join.
-Preview :: struct {coord:[3]i32,lod:terrain.Chunk_Lod,mesh:base.Asset_Id,dirty,ready:bool}
+Preview :: struct {coord:[3]i32,lod:terrain.Chunk_Lod,mesh:base.Asset_Id,maps:terrain.Piece_Maps,shape:terrain.Piece_Shape,dirty,ready:bool}
+
+// Lets go of the mesh of a preview and of the textures of its maps.
+@(private)
+preview_release :: proc(a:^host.Assets,preview:^Preview) {
+    if preview.mesh!={} {host.assets_mesh_release(a,preview.mesh)}
+    terrain.piece_maps_release(a,&preview.maps)
+    preview.mesh={}
+}
 // A preview chunk built in a job with the geometry the renderer takes, then
 // published by the frame.
 Preview_Build :: struct {
@@ -112,7 +120,7 @@ tool_ready :: proc(t:^Terrain_Tool) {
 }
 @(private)
 stroke_free :: proc(t:^Terrain_Tool) {
-    if t.assets!=nil {for preview in t.stroke.previews {if preview.mesh!={} {host.assets_mesh_release(t.assets,preview.mesh)}}}
+    if t.assets!=nil {for &preview in t.stroke.previews {preview_release(t.assets,&preview)}}
     delete(t.stroke.previews)
     delete(t.stroke.preview_at)
     for &build in t.stroke.builds {terrain.chunk_mesh_destroy(&build.mesh)}
@@ -397,9 +405,14 @@ stroke_preview :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
             preview:=&stroke.previews[build.preview]
             if !build.ok {editor.notify(s,"The terrain preview could not be rebuilt");continue}
             id,ok:=terrain.chunk_publish(a,&build.mesh,false)
+            maps:terrain.Piece_Maps
+            if ok && id!={} {
+                maps,ok=terrain.piece_maps_publish(a,&build.mesh.maps)
+                if !ok {host.assets_mesh_release(a,id)}
+            }
             if !ok {editor.notify(s,"The terrain preview could not be rebuilt");continue}
-            if preview.mesh!={} {host.assets_mesh_release(a,preview.mesh)}
-            preview.mesh,preview.ready,preview.dirty=id,true,false
+            preview_release(a,preview)
+            preview.mesh,preview.maps,preview.shape,preview.ready,preview.dirty=id,maps,terrain.piece_shape(build.source,&build.mesh.maps),true,false
         }
     }
     statics:=core.world_table_of(world,erender.Mesh_Renderer)
@@ -426,9 +439,10 @@ stroke_preview :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
             if value,ok:=core.get(core.read(looks),e);ok {look=value} else if value,ok:=core.get(core.read(looks),chunk.owner);ok {look=value}
         }
         if preview.mesh!={} {static.mesh,static.shape=preview.mesh,.None}
+        terrain.piece_values(&look,preview.maps,preview.shape)
+        static.materials[0]=terrain.piece_material(&stroke.source,preview.shape.holed)
         if overlay_weights(overlay) {
             static.materials[0]=WEIGHTS_MATERIAL
-            look={color=look.color,emission=look.emission}
             weights_values(&look,overlay,tool.layer)
         }
         if instance,ok:=erender.mesh_instance(a,static,mm.transform_matrix(placed.transform),look);ok {
@@ -469,8 +483,8 @@ stroke_end :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,ass
     if consume!=core.NONE {editor.entities_delete(s,{consume});history.selection_set(s.selection,{stroke.entity})}
     history.edits_end(s.edits)
     held.revision,held.stamp=next,stroke.stamp
-    for preview in stroke.previews {
-        if preview.mesh!={} {host.assets_mesh_release(a,preview.mesh)}
+    for &preview in stroke.previews {
+        preview_release(a,&preview)
         if slot:=preview_slot(stroke,preview.coord);slot>=0 {stroke.preview_at[slot]=-1}
     }
     clear(&stroke.previews)
@@ -489,8 +503,8 @@ stroke_cancel :: proc(tool:^Terrain_Tool) {
     head:=editor.revision_head(&tool.history,stroke.id,stroke.revision)
     if head==nil || !source_take_back(&stroke.source,head,stroke.dirty[0],stroke.dirty[1]) {stroke_free(tool);return}
     if tool.assets!=nil {
-        for preview in stroke.previews {
-            if preview.mesh!={} {host.assets_mesh_release(tool.assets,preview.mesh)}
+        for &preview in stroke.previews {
+            preview_release(tool.assets,&preview)
             if slot:=preview_slot(stroke,preview.coord);slot>=0 {stroke.preview_at[slot]=-1}
         }
     }

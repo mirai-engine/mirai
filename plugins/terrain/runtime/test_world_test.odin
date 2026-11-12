@@ -2,6 +2,7 @@ package terrain
 
 import "base:runtime"
 import "mirai:core"
+import "mirai:std/base"
 import render "mirai:engine/render"
 import scene "mirai:engine/scene"
 import "mirai:host"
@@ -41,11 +42,11 @@ test_step :: proc(g:^Test_Terrain,commands:core.Commands,resident:^Terrain_Resid
     )
 }
 
-// The chunks that show values of layers over their material.
+// The chunks that show the table of the layers of Terrain_Layers over their material.
 @(private)
 layered_chunks :: proc(g:^Test_Terrain) -> (count:int) {
     for &look in g.looks.values[:core.count(&g.looks)] {
-        if look.count>0 {count+=1}
+        if table,has:=render.material_texture_of(&look,0,base.name_hash("layers"));has && table!={} {count+=1}
     }
     return
 }

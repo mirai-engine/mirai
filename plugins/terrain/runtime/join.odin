@@ -54,9 +54,15 @@ join_cut_key :: proc "contextless" (s:^Source,cuts:[]Join_Cut,index:int) -> u64 
     if len(cuts)==0 {return 0}
     low,high,valid:=chunk_region(s,chunk_coord(s,index))
     if !valid {return 0}
+    return join_cut_region_key(cuts,low.xz,high.xz)
+}
+
+// The cuts over the cells of the samples low to high of a Heightfield, as a
+// key: 0 for none. A node takes them as holes of its maps.
+join_cut_region_key :: proc "contextless" (cuts:[]Join_Cut,low,high:[2]int) -> u64 {
     key:=u64(0)
     for cut in cuts {
-        if cut.high.x<=low.x || cut.low.x>=high.x || cut.high.y<=low.z || cut.low.y>=high.z {continue}
+        if cut.high.x<=low.x || cut.low.x>=high.x || cut.high.y<=low.y || cut.low.y>=high.y {continue}
         key=base.hash_mix(base.hash_mix(base.hash_mix(base.hash_mix(key|1,u64(cut.low.x)),u64(cut.low.y)),u64(cut.high.x)),u64(cut.high.y))
     }
     return key

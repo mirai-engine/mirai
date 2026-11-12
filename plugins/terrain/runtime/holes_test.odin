@@ -73,8 +73,10 @@ holes_leave_no_triangles_picking_or_flat_edges_and_keep_the_collider_samples :: 
     testing.expect(t,!chunk_holed(&source,chunk_index(&source,{0,0,1})))
 }
 
+// A chunk with holes keeps its level far away: its collider has every hole,
+// and its material cuts those its coarse triangles span.
 @(test)
-bodies_fall_through_holes_cut_at_run_time_and_far_holed_chunks_stay_exact :: proc(t:^testing.T) {
+bodies_fall_through_holes_cut_at_run_time_and_far_holed_chunks_cut_them_by_their_material :: proc(t:^testing.T) {
     root:=base.test_folder(t,"terrain")
     source:Source;defer source_destroy(&source)
     testing.expect(t,source_make(&source,.Heightfield,{65,1,65},1,16))
@@ -103,7 +105,9 @@ bodies_fall_through_holes_cut_at_run_time_and_far_holed_chunks_stay_exact :: pro
     dig(&w.terrain_requests,{kind=.Hole,center={28.5,0,28.5},radius=0.6},owner)
     terrain_test_update(&w,&resident,&app,view=view,settings=settings)
     chunk:=resident.sources[0].chunks[far]
-    testing.expect_value(t,chunk.built.lod.level,u8(0))
+    testing.expect(t,chunk.built.lod.level>0 && chunk.shape.holed)
+    shown:=resident.owners[0].chunks[far]
+    if static,has:=core.get(&w.statics,shown);testing.expect(t,has) {testing.expect_value(t,static.materials[0],LAYERS_HOLED_MATERIAL)}
     testing.expect(t,w.data.entries[0].source.revision==2)
     _,hit=phys.raycast({&w.state},{28.5,10,28.5},{0,-1,0})
     testing.expect(t,!hit,"the collider has the hole")
@@ -113,8 +117,47 @@ bodies_fall_through_holes_cut_at_run_time_and_far_holed_chunks_stay_exact :: pro
     terrain_test_update(&w,&resident,&app,view=view,settings=settings)
     _,hit=phys.raycast({&w.state},{28.5,10,28.5},{0,-1,0})
     testing.expect(t,hit)
-    testing.expect(t,resident.sources[0].chunks[far].built.lod.level>0)
+    testing.expect(t,resident.sources[0].chunks[far].built.lod.level>0 && !resident.sources[0].chunks[far].shape.holed)
     testing.expect_value(t,w.problems.count,0)
+}
+
+// The coarse grid holds what share of each of its cells is holes: a node far
+// away leaves out the triangles over holes alone and cuts by its maps those
+// over a hole of half its texel or more, and the ground answers no surface
+// there, whatever pages are in memory.
+@(test)
+far_nodes_and_the_coarse_ground_keep_the_holes_the_coarse_grid_holds :: proc(t:^testing.T) {
+    s:Source;defer source_destroy(&s)
+    testing.expect(t,source_make(&s,.Heightfield,{129,1,129},1,16))
+    // A pit of 24 cells a side from cell 40, and one cell alone at 100.
+    for z in 40..<64 {for x in 40..<64 {testing.expect(t,source_edit(&s,{kind=.Hole,center=source_point(&s,{x,0,z})+{0.5,0,0.5},radius=0.4}).changed)}}
+    testing.expect(t,source_edit(&s,{kind=.Hole,center=source_point(&s,{100,0,100})+{0.5,0,0.5},radius=0.4}).changed)
+    counts:=chunk_counts(&s)
+    ranges:=make([][2]f32,counts.x*counts.z);defer delete(ranges)
+    testing.expect(t,source_coarse_build(&s,ranges))
+    testing.expect_value(t,grid_get(&s.coarse.holes,5,5),u8(255))
+    testing.expect_value(t,grid_get(&s.coarse.holes,4,4),u8(0))
+    testing.expect_value(t,grid_get(&s.coarse.holes,12,12),u8(4))
+    q:=quad_of(&s)
+    node:=quad_index(&q,2,{0,0})
+    border:Piece_Border;defer piece_border_destroy(&border)
+    for i in 0..<4 {append(&border.sides[i],..[]u8{3,3,3,3});append(&border.corners[i],..[]u8{3,3,3,3,3})}
+    mesh:Chunk_Mesh;chunk_mesh_init(&mesh);defer chunk_mesh_destroy(&mesh)
+    testing.expect(t,node_build(&s,&q,node,{level=3},&border,&mesh))
+    m:=&mesh.maps
+    testing.expect_value(t,m.spacing,4)
+    testing.expect(t,m.control[12+m.size.x*12]&WEIGHT_HOLE!=0,"the texel inside the pit is a hole")
+    testing.expect(t,m.control[2+m.size.x*2]&WEIGHT_HOLE==0)
+    // No triangle lies inside the pit.
+    origin:=chunk_origin(&s,quad_place(&s,&q,node))
+    for corner:=0;corner+2<len(mesh.geometry.indices);corner+=3 {
+        c:=(mesh.geometry.positions[mesh.geometry.indices[corner]]+mesh.geometry.positions[mesh.geometry.indices[corner+1]]+mesh.geometry.positions[mesh.geometry.indices[corner+2]])/3+origin-source_origin(&s)
+        testing.expect(t,!(c.x>41 && c.x<63 && c.z>41 && c.z<63),"a triangle over the pit")
+    }
+    inside:=source_point(&s,{52,0,52})
+    _,_,_,ok:=source_coarse_at(&s,inside.x,inside.z)
+    testing.expect(t,!ok,"the ground over the pit is no surface")
+    testing.expect(t,!source_hole(&s,30,30))
 }
 
 // The tangents a Heightfield chunk gives its vertices are those MikkTSpace
