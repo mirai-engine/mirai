@@ -395,15 +395,22 @@ and joins them with the engine's.
   same way when a build syncs the project (`import_library`). `release(data, allocator)`
   releases them on finishing.
 - `editor.Import_Source_Provider{source}` gives a `Source_Importer`, a source the plugin imports
-  whole and that is not a model, without a folder. Its fields are `name` (the dialog's filter and
-  the messages), `extensions`, `claims(path, head)` (claims the file by its extension and its first
-  `importer.SNIFF_BYTES`; it is tried before the formats), `prepare(s, allocator)`,
-  `run(state, source, options, allocator)` and `release(state, allocator)`.
-  - `prepare` runs in the editor's thread, before starting: what `run` needs from the session (for
-    example, what other providers give) is gathered there, in the received allocator, and is the
-    `state`. `run` runs in the import's thread with a job system of its own in `options.worker` and
-    returns the report, the scene it wrote (`""` if none) and the error; it does not touch the
-    session. `release` releases `state` on finishing.
+  whole with `importer.Outputs`, the single source of every asset it makes
+  ([plugin formats](../../mirai-imports/references/imports.md#plugin-formats)). Its fields are
+  `name` (the dialog's filter and the messages), `extensions`, `claims(path, head)` (claims the
+  file by its extension and its first `importer.SNIFF_BYTES`; it is tried before the formats),
+  `prepare(assets, info, allocator)`, `run(state, source, options, allocator)`,
+  `release(state, allocator)` and `bring(source, folder, allocator)`.
+  - `prepare` runs before starting, like that of a format, with no session: what `run` needs from
+    the registry of the project and the library of its plugins (for example, what other providers
+    give) is gathered there, in the received allocator, and is the `state`. `run` runs in the
+    import's thread with a job system of its own in `options.worker` and returns the report, the
+    scene it wrote (`""` if none) and the error. `release` releases `state` on finishing. The
+    import program prepares and runs it the same way when a build syncs the project
+    (`import_library`).
+  - `bring`, when given, takes a source from outside the assets: it copies it with the files it
+    reads into `folder` (absolute, in the assets) and returns where the source is now. Without it
+    the editor copies the source alone.
   - A plugin can define its own providers so that other plugins join it: the one that gives the
     source gathers them in `prepare` and passes them to `run` through the `state`. This way an
     import plugin delegates to automatic bridge plugins the actors of optional domains, without

@@ -505,14 +505,76 @@ the_sources_of_a_plugin_format_build_in_the_cache_and_a_source_outside_the_asset
     lacking:=sync(project,caches,context.temp_allocator)
     testing.expectf(t,len(lacking.failures)==1 && strings.contains(lacking.failures[0],"no format"),"%v",lacking)
     context.user_ptr=prefab.import_world(t)
-    caches.library=proc(root:string,allocator:mem.Allocator) -> (formats:[]importer.Format,world:^core.World_Info,release:proc(state:rawptr),state:rawptr,problem:string) {
+    caches.library=proc(root:string,allocator:mem.Allocator) -> Library_Imports {
         listed:=make([]importer.Format,1,allocator)
         listed[0]=probe_format()
-        return listed,(^core.World_Info)(context.user_ptr),nil,nil,""
+        return {formats=listed,world=(^core.World_Info)(context.user_ptr)}
     }
     synced:=sync(project,caches,context.temp_allocator)
     testing.expectf(t,synced.sources==1 && synced.imported==1 && len(synced.failures)==0,"%v",synced)
     testing.expect(t,os.exists(mesh.path),"the mesh is built again where it was")
+}
+
+// A source a plugin imports whole: "LEVEL <file>", a level of the glTF at
+// that file beside it, which it reads and writes as a model of its import.
+@(private="file") Level_Importer :: struct {runs:int}
+@(private="file")
+level_claims :: proc(path:string,head:[]u8) -> bool {return strings.has_prefix(string(head),"LEVEL ")}
+@(private="file")
+level_run :: proc(state:rawptr,source:string,options:importer.Import_Options,allocator:mem.Allocator) -> (report:importer.Import_Report,scene:string,error:importer.Error) {
+    (^Level_Importer)(state).runs+=1
+    bytes,_:=os.read_entire_file(source,context.temp_allocator)
+    model_path:=fmt.tprintf("%s/%s",filepath.dir(source),string(bytes[len("LEVEL "):]))
+    o:importer.Outputs
+    if error=importer.outputs_begin(&o,source,"",u64(len(bytes)),base.hash64(bytes),importer.import_version(0),options,allocator);error.code!=.None {return}
+    model:importer.Imported_Model
+    if error=importer.output_input(&o,model_path);error.code==.None {model,error=importer.import_model(model_path,FORMATS[:],options)}
+    defer importer.model_destroy(&model)
+    if error.code==.None {_,error=importer.output_model(&o,&model,context.temp_allocator)}
+    return importer.outputs_end(&o,error.code!=.None),"",error
+}
+
+// Sync runs the importer of a plugin that claims a whole source whose cache
+// is stale, by its bytes or those of a file it reads, and leaves a current
+// one alone.
+@(test)
+sync_imports_again_a_whole_source_of_a_plugin_whose_inputs_changed :: proc(t:^testing.T) {
+    root,assets:=test_project(t,"sync-whole")
+    if root=="" {return}
+    props:=fmt.tprintf("%s/props",assets)
+    os.make_directory_all(props)
+    box_source(props,"crate.gltf","Wood","Paint")
+    level:=write_text(assets,"hall.level","LEVEL props/crate.gltf")
+    state:Level_Importer
+    wholes:=[1]Whole_Source{{claims=level_claims,run=level_run,state=&state}}
+    caches:=Sync_Options{texture_cache=fmt.tprintf("%s/cache/textures",root),mesh_cache=fmt.tprintf("%s/cache/meshes",root)}
+    first,error:=import_source(level,{root=root,textures=.Uncompressed,texture_cache=caches.texture_cache,mesh_cache=caches.mesh_cache},wholes=wholes[:])
+    if !testing.expectf(t,error.code==.None,"%s",error.message) {return}
+    defer importer.report_destroy(&first)
+    mesh,has_mesh:=written_of(&first,asset.KIND_MESH,"Box")
+    testing.expect(t,has_mesh && strings.contains(mesh.path,"/.mirai/imported/"),"the mesh of the level is of the cache")
+    sidecar,_,_:=importer.sidecar_load(level,context.temp_allocator)
+    testing.expectf(t,slice.contains(sidecar.inputs[:],"props/crate.gltf") && slice.contains(sidecar.inputs[:],"props/wood.png"),"the files it reads are its inputs: %v",sidecar.inputs)
+
+    lacking:=sync(root,caches,context.temp_allocator)
+    testing.expectf(t,len(lacking.failures)==1 && strings.contains(lacking.failures[0],"no format or importer"),"%v",lacking)
+    context.user_ptr=&state
+    caches.library=proc(root:string,allocator:mem.Allocator) -> Library_Imports {
+        wholes:=make([]Whole_Source,1,allocator)
+        wholes[0]={claims=level_claims,run=level_run,state=context.user_ptr}
+        return {wholes=wholes}
+    }
+    current:=sync(root,caches,context.temp_allocator)
+    testing.expectf(t,current.sources==1 && current.imported==0 && len(current.failures)==0 && state.runs==1,"a current source is left alone: %v",current)
+    _=os.write_entire_file(fmt.tprintf("%s/wood.png",props),png_bytes(4,4,{20,90,200}))
+    changed:=sync(root,caches,context.temp_allocator)
+    testing.expectf(t,changed.imported==1 && len(changed.failures)==0 && state.runs==2,"an image the level reads changed: %v",changed)
+    testing.expect(t,base.remove_all(fmt.tprintf("%s/.mirai",root))==nil)
+    cloned:=sync(root,caches,context.temp_allocator)
+    testing.expectf(t,cloned.imported==1 && len(cloned.failures)==0 && state.runs==3,"%v",cloned)
+    again,_,_:=importer.sidecar_load(level,context.temp_allocator)
+    testing.expect(t,len(again.outputs)==len(sidecar.outputs) && again.outputs[0].id==sidecar.outputs[0].id,"the level keeps its assets")
+    testing.expect_value(t,sync(root,caches,context.temp_allocator).imported,0)
 }
 
 // An image with no settings holds what its name says, from mirai import as

@@ -35,8 +35,8 @@ write_text :: proc(folder,name,text:string) -> string {
 
 // A Library that gives no formats and the types of the game context.user_ptr
 // points to: what sync and mirai import write the prefab of a model in.
-test_library :: proc(root:string,allocator:mem.Allocator) -> (formats:[]importer.Format,world:^core.World_Info,release:proc(state:rawptr),state:rawptr,problem:string) {
-    return nil,(^core.World_Info)(context.user_ptr),nil,nil,""
+test_library :: proc(root:string,allocator:mem.Allocator) -> Library_Imports {
+    return {world=(^core.World_Info)(context.user_ptr)}
 }
 
 // formats: FORMATS when nil.

@@ -25,6 +25,7 @@ Part :: struct {
     extension:string,
     only:bool,        // the one of its kind, whatever its name, as the root (the clips of a model, named after it)
     output:int,       // what the sidecar the import writes lists for it (Writer.outputs)
+    given:bool,       // an output this import gave before (Writer.given), written then
     decided:bool,     // whether it is a part of the root was decided by an import before: part says it
     part:bool,
     id:base.Asset_Id,
@@ -39,6 +40,7 @@ Part :: struct {
 @(private)
 writer_source :: proc(w:^Writer,path,folder:string) -> bool {
     w.path=path
+    w.keep=context.temp_allocator
     w.source=source_path(w.options,path)
     w.inputs.allocator=context.temp_allocator
     names:=project.FOLDER_NAMES
@@ -50,6 +52,7 @@ writer_source :: proc(w:^Writer,path,folder:string) -> bool {
     sidecar,found,error:=sidecar_load(path,context.temp_allocator)
     if error.code!=.None {return writer_fail(w,error.code,"%s",error.message)}
     w.sidecar=sidecar
+    w.stored=found
     if !found {w.sidecar.folder=folder}
     w.folder=filepath.dir(path) if w.sidecar.folder=="" else fmt.tprintf("%s/%s",filepath.dir(path),w.sidecar.folder)
     w.taken=make([]bool,len(w.sidecar.outputs),context.temp_allocator)
@@ -76,21 +79,34 @@ imported_file :: proc(w:^Writer,id:base.Asset_Id,extension:string) -> string {
 }
 
 // Notes a file the import reads besides its source, as the sidecar lists it.
+// False for a new one once the key of the import is fixed: the files of the
+// cache are named without it.
 @(private)
-writer_input :: proc(w:^Writer,file:string) {
+writer_input :: proc(w:^Writer,file:string) -> bool {
     relative,error:=filepath.rel(filepath.dir(path_key(w.path)),path_key(file),context.temp_allocator)
-    if error!=.None {return}
+    if error!=.None {return true}
     slashed,_:=strings.replace_all(relative,"\\","/",context.temp_allocator)
-    if !slice.contains(w.inputs[:],slashed) {append(&w.inputs,slashed)}
+    if slice.contains(w.inputs[:],slashed) {return true}
+    if w.key!=0 {return false}
+    append(&w.inputs,strings.clone(slashed,w.keep))
+    return true
 }
 
 // Gives each part its asset and its file: the output of the sidecar of its
 // kind and name (the one of its index first), or of its kind for the only one
 // of its kind, else a new id. What the import gives is listed in w.outputs, the sidecar it
-// writes when it ends.
+// writes when it ends. A part of the kind and name of one of the first
+// w.given outputs is that one (given).
 @(private)
 parts_plan :: proc(w:^Writer,parts:[]Part) {
-    for &p in parts {
+    each: for &p in parts {
+        if !p.only {
+            for output,at in w.outputs[:w.given] {
+                if output.kind!=p.kind || output.name!=p.name {continue}
+                p.id,p.output,p.given=output.id,at,true
+                continue each
+            }
+        }
         entry:=-1
         for output,at in w.sidecar.outputs {
             if w.taken[at] || output.kind!=p.kind || !p.only && output.name!=p.name {continue}
@@ -112,12 +128,12 @@ parts_plan :: proc(w:^Writer,parts:[]Part) {
                 p.path=asset.registry_file_path(w.registry,file.path,context.temp_allocator)
                 p.decided,p.part=true,file.owner!={}
             } else {
-                p.path=fresh_path(w,fmt.tprintf("%s%s",safe_name(p.name),p.extension))
+                p.path=fresh_path(w,fmt.tprintf("%s%s",asset.safe_path(p.name),p.extension))
             }
         }
         if folder:=filepath.dir(p.path);!os.is_dir(folder) {_=os.make_directory_all(folder)}
         p.output=len(w.outputs)
-        append(&w.outputs,Output{kind=p.kind,name=p.name,index=p.index,id=p.id})
+        append(&w.outputs,Output{kind=p.kind,name=strings.clone(p.name,w.keep),index=p.index,id=p.id})
     }
 }
 
@@ -135,7 +151,7 @@ root_take :: proc(w:^Writer,kind:asset.Fourcc,name,extension:string) -> (id:base
 @(private)
 parts_record :: proc(w:^Writer,parts:[]Part) {
     for &p in parts {
-        if asset.import_cached(p.kind) {w.outputs[p.output].part=p.owner!={}}
+        if asset.import_cached(p.kind) && !p.given {w.outputs[p.output].part=p.owner!={}}
     }
 }
 
@@ -173,34 +189,21 @@ writer_finish :: proc(w:^Writer) -> bool {
     return true
 }
 
-// A name a file can have: what no file system takes becomes _.
-safe_name :: proc(name:string) -> string {
-    builder:strings.Builder
-    strings.builder_init(&builder,context.temp_allocator)
-    for r in name {
-        switch {
-        case r<32 || r==127,r=='<',r=='>',r==':',r=='"',r=='/',r=='\\',r=='|',r=='?',r=='*',r=='#':
-            strings.write_byte(&builder,'_')
-        case:
-            strings.write_rune(&builder,r)
-        }
-    }
-    cleaned:=strings.trim(strings.to_string(builder)," .")
-    return cleaned if cleaned!="" else "unnamed"
-}
-
-// The first of file in the folder of the import, then file with " (2)" and
-// on before its extension, that no part of this write took and no file has.
+// The first of file (a path under the folder of the import) there, then file
+// with " (2)" and on before its extension, that no part of this write took
+// and no file has.
 @(private)
 fresh_path :: proc(w:^Writer,file:string) -> string {
-    stem,extension:=filepath.stem(file),filepath.ext(file)
+    slash:=strings.last_index_byte(file,'/')
+    under,last:=file[:slash+1],file[slash+1:]
+    stem,extension:=filepath.stem(last),filepath.ext(last)
     for at:=1;;at+=1 {
-        name:=fmt.tprintf("%s%s",stem,extension) if at==1 else fmt.tprintf("%s (%d)%s",stem,at,extension)
+        name:=fmt.tprintf("%s%s%s",under,stem,extension) if at==1 else fmt.tprintf("%s%s (%d)%s",under,stem,at,extension)
         key:=strings.to_lower(name,context.temp_allocator)
         joined,_:=filepath.join({w.folder,name},context.temp_allocator)
         candidate,_:=strings.replace_all(joined,"\\","/",context.temp_allocator)
         if w.names[key] || os.exists(candidate) {continue}
-        w.names[key]=true
+        w.names[strings.clone(key,w.keep)]=true
         return candidate
     }
 }

@@ -30,9 +30,16 @@ Packages, all *engine-time*:
   (`sources.FORMATS[:]` or those of a test) into an `Imported_Model` in its own arena
   (`model_destroy`); `importer.import_write` writes its assets and returns the `Import_Report`.
   `prefab.model_import` does both with the prefab (`cook/prefab.model_prefab`).
-- `Outputs` (`output_root`, `output_part`): the assets of an import that is not a model (a scene,
-  the source of a plugin) are those the sidecar of their source lists, like those of a model: the
-  root by its kind and every other by kind and name; `outputs_end` writes the sidecar.
+- `Outputs` (`output_root`, `output_part`, `output_model`, `output_input`): the assets of an
+  import that is not that of one model (a scene, a source a plugin imports whole) are those the
+  sidecar of their source lists, like those of a model: the root by its kind (and its name when
+  the sidecar lists several of the kind) and every other by kind and name; `outputs_end` writes
+  the sidecar. `output_model` writes a model as parts of the import with the writer of
+  `import_write` (cooking ahead, Fast textures, kept files, the caches); its prefab is a scene of
+  the model's name that the caller writes with `prefab.model_prefab`. A part whose kind and name
+  the import already gave is that asset, written once: two models that name the same material
+  or texture share it. `output_input` lists a file the import reads in the sidecar and in its
+  key; every input comes before the first output of the cache, which fixes the key.
 - For engine-time tools: `mesh_levels` ([levels](#levels-of-detail)), `mesh_collision`
   ([colliders](#collision)) and the PBR conversions of `pbr.odin`.
 - `Error` is `{code,message}`; `message` lives in the caller's `temp_allocator`. `Import_Options`
@@ -154,11 +161,14 @@ part ([extension](../../mirai-editor/references/extensions.md#importers-of-a-plu
   source is read by no format of the engine or a model imports, whose prefab is written in the
   types of the game the library has. A clone without that library built fails those sources and
   says to build the editor.
-- `Import_Source_Provider{source}` is a source that the plugin imports whole, without a folder: it
-  is not a model, and it writes what its importer says (a scene, its assets). It appears with its
-  name as a filter of the dialog and claims a file with `claims(path, head)`. The Unreal content
-  importer is the `unreal` plugin of the catalog ([git plugins and
-  catalog](../../mirai-plugins/references/plugins.md#git-plugins-and-catalog)).
+- `Import_Source_Provider{source}` is a source that the plugin imports whole with `Outputs`: it
+  is the single source of every asset it makes (a scene, the models it reads with
+  `output_model`), and the files it reads besides it are its `inputs`, like the `.bin` of a glTF.
+  It appears with its name as a filter of the dialog and claims a file with `claims(path, head)`
+  before the formats. One from outside the assets is brought in by its `bring`, with the files it
+  reads, else copied alone. The import program takes these importers from the same library and
+  [sync](#sync) runs them. The Unreal content importer is the `unreal` plugin of the catalog
+  ([git plugins and catalog](../../mirai-plugins/references/plugins.md#git-plugins-and-catalog)).
 
 ## Import cache
 
@@ -212,6 +222,8 @@ source, the engine's or a plugin's:
   registry of the root, wherever a person moved it, writes again what the source gives and keeps
   what was changed ([what is written](#what-is-written)); a new one goes to the folder of the
   import.
+- **A name with `/`** is a folder under that of the import, for the cache as for documents:
+  each part made safe (`asset.safe_path`), without empty, `.` and `..` parts.
 
 - **The root** of an import is the prefab of a model, the texture of an image or the sound of a
   sound, without `owner`: the output of its kind the sidecar lists. A model with nodes that has
@@ -281,8 +293,10 @@ that was just cloned, a worktree that was just made or a branch that changed a s
   `.mirai/cache/sources`) is taken from there, so a build reads only the files that changed. A
   USD is composed by `usdcat`, which does not say which layers it read: after changing one
   alone, import the stage.
-- A source no format of the engine reads takes the formats the plugins of the project add
-  (`Sync_Options.plugins`); one no format reads is a failure that says so.
+- A source no format of the engine reads goes to the importer of a plugin that claims it whole,
+  else to the formats the plugins add (`Sync_Options.library`); one nothing reads is a failure
+  that says so. A whole source is keyed like any source of no format (`import_version(0)`), and
+  its importer reads the settings its sidecar keeps, as every import does.
 - A file of the imported folder that no sidecar with its source next to it lists under its
   current key is removed. A source that does not import is a failure of the report that names it:
   the others are imported, and nothing is removed.
