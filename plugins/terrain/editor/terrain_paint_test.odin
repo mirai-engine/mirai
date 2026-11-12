@@ -116,6 +116,63 @@ terrain_layers_paint_and_holes_are_steps_of_undo :: proc(t:^testing.T) {
     held=registry_source(t,&assets,id);testing.expect_value(t,held.layers_material,base.Asset_Id{});terrain.source_destroy(&held)
 }
 
+// A stroke over the edge two Heightfields share writes both: the one beside
+// takes its brushes as a step of its own, and the tool stays on the terrain
+// it had.
+@(test)
+a_stroke_over_a_shared_edge_writes_the_terrain_beside :: proc(t:^testing.T) {
+    root:=base.test_folder(t,"terrain")
+    assets:host.Assets
+    if !testing.expect(t,host.assets_init(&assets,{root=root,capacity=16})) {return}
+    defer host.assets_destroy(&assets)
+    world:Create_Test_World
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    ref:=test_world_ref(&world)
+    ids:=[2]base.Asset_Id{{95,1},{95,2}}
+    owners:[2]core.Entity
+    for id,k in ids {
+        source:terrain.Source;defer terrain.source_destroy(&source)
+        if !testing.expect(t,terrain.source_make(&source,.Heightfield,{9,1,9},1,4)) {return}
+        source.revision=1
+        testing.expect_value(t,terrain.source_save(&source,fmt.tprintf("%s/side%d.terrain",root,k),id,&assets.types),asset.Error.None)
+    }
+    host.assets_scan(&assets)
+    for id,k in ids {
+        owners[k]=core.create(&world.entities)
+        core.add(&world.ids,owners[k],core.Id{value=base.Entity_Id(200+k)})
+        place:=core.TRANSFORM_IDENTITY
+        place.position.x=f32(8*k)
+        core.add(&world.transforms,owners[k],place)
+        core.add(&world.terrains,owners[k],terrain.Terrain{source=id,revision=1})
+        core.add(&world.worlds,owners[k],core.World_Transform{transform={position=place.position,rotation=place.rotation,scale=place.scale}})
+    }
+    test_world_settle(&world)
+    selection:history.Selection;defer delete(selection.entities)
+    edits:history.Edits;defer history.edits_free(&edits)
+    history.edits_reset(&edits,ref)
+    app:=host.App{allocator=context.allocator,assets=&assets}
+    s:=editor.Session{app=&app,info=ref.info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits}
+    tool:Terrain_Tool;tool_ready(&tool);defer terrain_tool_free(&tool)
+    terrain_sync(&s,&tool,core.read(&world.terrains),app.assets)
+    if !testing.expect(t,stroke_prepare(&tool,app.assets,app.allocator,&world.terrains,&world.worlds,editor.Pick{entity=owners[0]})) {return}
+    testing.expect(t,stroke_baseline(&tool))
+    tool.stroke.active=true
+    // On the edge at x 4 of the first, x -4 of the second.
+    brush:=terrain.Brush{kind=.Raise,center={4,0,0},radius=2,amount=1}
+    change:=terrain.source_edit(&tool.stroke.source,brush)
+    testing.expect(t,change.changed)
+    stroke_brush_keep(&tool,brush)
+    stroke_changed(&tool.stroke,change)
+    stroke_end(&s,&tool,ref,app.assets,layered=true)
+    first,second:=registry_source(t,&assets,ids[0]),registry_source(t,&assets,ids[1])
+    defer terrain.source_destroy(&first);defer terrain.source_destroy(&second)
+    testing.expect(t,terrain.grid_get(&first.field,8,4)>0.5,"the terrain of the stroke is raised at its edge")
+    testing.expect(t,terrain.grid_get(&second.field,0,4)>0.5,"and the one beside too")
+    testing.expect(t,abs(terrain.grid_get(&first.field,8,4)-terrain.grid_get(&second.field,0,4))<1e-3)
+    testing.expect_value(t,tool.stroke.entity,owners[0])
+}
+
 // The source the registry answers for a terrain.
 @(private="file")
 registry_source :: proc(t:^testing.T,a:^host.Assets,id:base.Asset_Id) -> (s:terrain.Source) {

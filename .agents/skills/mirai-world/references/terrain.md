@@ -102,10 +102,11 @@ Chunks:
   grid happens to hold: two sources with the same samples write the same file.
 - **Coarse data** of a Heightfield ([tree](#tree-and-nodes)) is in the file too, in records the
   front of the file holds: the `coarse` table, a row per point of the coarse grid with a column
-  per kind of value, and the `pieces` table, a row per chunk and node with the heights it
-  reaches and the errors of its levels. A world reads it with the source, so no page is decoded
-  for what is far; a source without it in memory (one of the editor) measures it when it is
-  written. A new value of the coarse grid is one more column of `coarse`.
+  per kind of value (heights, weights, the share of holes of the cell from the point, paint), and
+  the `pieces` table, a row per chunk and node with the heights it reaches and the errors of its
+  levels, a node with the largest error under it. A world reads it with the source, so no page
+  is decoded for what is far; a source without it in memory (one of the editor) measures it when
+  it is written. A new value of the coarse grid is one more column of `coarse`.
 - **Edit layers** of a Heightfield are more X/Z grids, `edit<n>_pages` and `edit<n>_blocks`, with
   the weights under the splines in `edit_under_pages`: authoring data the game reads but never
   composes ([tool](#tool)).
@@ -734,7 +735,12 @@ per frame (in the first call); what the data changes, in each call.
   it needs a chunk, or, in a Heightfield, whose finest level is still coarse for the view (a node
   of a Volume holds every sample, and the renderer picks its detail). It needs as a chunk what is
   near a viewer if it has streaming; if not, being solid, what carries a collider (the nearest
-  ones that fit in `Physics_Settings`, within `collision_distance`). It opens the nearest first
+  ones that fit in `Physics_Settings`, within `collision_distance`, found nearest first from the
+  roots). It looks only at what a walk from its roots reaches: it goes down under a node where a
+  chunk may be near a viewer or take a collider, where the brush of the editor is, or where a node
+  under it may be finer for the view (`Lod_Errors.below` bounds their errors), with what holds a
+  state from before and the chunks along the borders of what shows; what it looks at follows what
+  is near and seen, not how many nodes it has. It opens the nearest first
   (reach and distance) as long as the pieces of all the terrains fit in `Terrain_Settings.chunks`:
   past that, the far field shows coarser nodes and nothing is hidden. Roots always count; if they
   alone do not fit it is `terrain.chunks_full`.
@@ -761,9 +767,9 @@ per frame (in the first call); what the data changes, in each call.
   collider it keeps them for picking while the world is not playing.
 - The distance of an unbuilt piece uses the heights of its samples (`Coarse.ranges`, from the
   file and from edits), not a 0.
-- What each piece is from the views and viewers is measured in spans of nodes in jobs, so a large
-  terrain spreads over the workers; it is measured again when a view or a viewer moves, or the
-  place of a terrain, not when anything else in the world moves.
+- What each piece is from the views and viewers is measured when the walk reaches it; it is
+  measured again when a view or a viewer moves, or the place of a terrain, not when anything else
+  in the world moves.
 
 Residency by distance:
 
@@ -826,9 +832,13 @@ Reading from other plugins (such as the foliage bridge), with `core.Ref(Terrain_
 - **Joining a Volume with a Heightfield:** a Volume rotated against the ground does not join
   (`terrain.ground_misaligned`); several Volumes that overlap over a Heightfield are not
   supported.
-- **Two Heightfields side by side** do not meet: each takes its border as the end of the world
-  (normals, levels of the border, edges of the collider). A world wider than one source is one
-  Heightfield, or Heightfields that do not touch.
+- **Two Heightfields side by side** meet by themselves (`adjacency.odin`): with the same cell and
+  cells per chunk, the same turn and scale, samples on one lattice and edges that touch, shifted
+  along them by whole chunks. The samples of the edge are those of the terrain of the lower Id;
+  the levels of the border are chosen over both and meet one level apart at most; normals, rules
+  of the layers and edges of the collider read across; a brush over the edge, of a game or of the
+  tool, writes both (the tool as a step of each). One terrain per side; four that meet at a point
+  see only those of their sides there.
 
 ## Verification
 

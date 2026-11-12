@@ -237,6 +237,7 @@ stroke_touch :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,k
     }
     change:=terrain.source_edit(&stroke.source,brush)
     if change.error!=.None {edit_error(s,change.error,brush.kind);return}
+    if change.changed {stroke_brush_keep(tool,brush)}
     stroke_changed(stroke,change)
 }
 

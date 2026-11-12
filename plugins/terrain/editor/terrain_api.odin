@@ -426,6 +426,7 @@ api_edit :: proc(s:^editor.Session,call:^api.Call) {
         } else {brush.blend=max(tool.blend,0)/across}
         change:=terrain.source_edit(source,brush)
         if change.error!=.None {api.call_failf(call,api.INVALID_PARAMS,"The terrain was not edited: %s",terrain.edit_error_fix(change.error,brush.kind));return}
+        if change.changed {stroke_brush_keep(tool,brush)}
         stroke_changed(stroke,change)
         touches=1
     } else {
@@ -438,6 +439,7 @@ api_edit :: proc(s:^editor.Session,call:^api.Call) {
                 if !(brush.amount>0) {continue}
                 change:=terrain.source_edit(source,brush)
                 if change.error!=.None {api.call_failf(call,api.INVALID_PARAMS,"The terrain was not edited: %s",terrain.edit_error_fix(change.error,brush.kind));return}
+                if change.changed {stroke_brush_keep(tool,brush)}
                 stroke_changed(stroke,change)
                 touches+=1
             }
