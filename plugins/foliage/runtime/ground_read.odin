@@ -33,6 +33,7 @@ Tile_Work :: struct {
     owner_world,owner_local:mm.Mat4,
     samples:int,
     coarse:bool,
+    generates:bool, // its cell: one without ground there is a problem
     heights:[]f32,
     weights:[][4]u8,
     layers:[RULE_LAYERS]base.Asset_Id,
@@ -48,7 +49,7 @@ foliage_ground :: proc(
     asked:=core.take(&requests.cells)
     q:=core.ground_query(world,queries)
     if q.probe==nil || data.ptr==nil {return}
-    defer ground_read(ground,&q,data,foliages,worlds,sources.ptr,job_system)
+    defer ground_read(ground,&q,data,foliages,worlds,sources.ptr,job_system,problems)
     foliage_now:=[2]u64{data.made,data.stats.loads}
     moved:=core.touched(foliages,&ground.seen[0]) | core.touched(worlds,&ground.seen[1])
     streamed:=sources.ptr!=nil?sources.ptr.revision:0
@@ -203,7 +204,7 @@ tile_sample :: proc(q:^core.Ground_Query,owner_world,owner_local:mm.Mat4,coord:[
 // Reads GROUND_TILES tiles of the queue, in jobs, fine or coarse by where the
 // sources are then, and writes them in the order they were asked.
 @(private)
-ground_read :: proc(ground:^Foliage_Ground,q:^core.Ground_Query,data:core.Ref(Foliage_Data),foliages:^core.Table(Foliage,$A),worlds:^core.Table(core.World_Transform,$B),sources:^scene.Streaming_Sources,job_system:^jobs.Job_System) {
+ground_read :: proc(ground:^Foliage_Ground,q:^core.Ground_Query,data:core.Ref(Foliage_Data),foliages:^core.Table(Foliage,$A),worlds:^core.Table(core.World_Transform,$B),sources:^scene.Streaming_Sources,job_system:^jobs.Job_System,problems:^core.Problems) {
     if len(ground.queue)==0 {return}
     Reading :: struct {q:^core.Ground_Query,work:[dynamic]Tile_Work}
     // Temporary like the slices it holds: kept in the storage, the world would free them.
@@ -228,7 +229,8 @@ ground_read :: proc(ground:^Foliage_Ground,q:^core.Ground_Query,data:core.Ref(Fo
         was:=ground_tile_samples(owner,task.coord)
         coarse:=!task.fine && !tile_fine(&near,task.coord,was!=0 && was!=COARSE_SAMPLES)
         n:=coarse?COARSE_SAMPLES:int(owner.samples)
-        append(&reading.work,Tile_Work{task=task,owner_world=owner_world,owner_local=owner_local,samples=n,coarse=coarse,heights=make([]f32,n*n,context.temp_allocator),weights=make([][4]u8,n*n,context.temp_allocator)})
+        cell:=source_cell(&entry.source,task.coord)
+        append(&reading.work,Tile_Work{task=task,owner_world=owner_world,owner_local=owner_local,samples=n,coarse=coarse,generates=cell!=nil && cell.generate,heights=make([]f32,n*n,context.temp_allocator),weights=make([][4]u8,n*n,context.temp_allocator)})
     }
     remove_range(&ground.queue,0,taken)
     sample :: proc(reading:^Reading,first,last:int,worker:int) {
@@ -243,6 +245,7 @@ ground_read :: proc(ground:^Foliage_Ground,q:^core.Ground_Query,data:core.Ref(Fo
         at:=ground_tile_find(owner,w.task.coord)
         if !w.any {
             if at>=0 {ground_tile_remove(owner,at)}
+            if w.generates {core.report(problems,w.task.entity,"foliage.no_ground","cell %v of this Foliage generates instances but no ground is under it, so none stands there: move the Foliage or the ground under the cell, or turn its generator off (foliage.paint ungenerate)",w.task.coord)}
             continue
         }
         if w.layers!={} {

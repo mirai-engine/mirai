@@ -22,7 +22,8 @@ $P terrain.layer '{"entity":"Hills","material":"hills/rock.mat","automatic":true
 
 - Kinds: `heightfield` (heights over x and z: hills, valleys, plains) and `volume` (solid and
   air: caves, overhangs and digging, as large as the ground needs). Size is `samples` minus 1
-  times `spacing`. `name` names the entity and its file, which goes beside the scene.
+  times `spacing`, centered on `at`. `name` names the entity and its file, which goes beside the
+  scene.
 - Brushes of `terrain.edit`, the same on both kinds: `raise`, `lower`, `smooth`, `flatten`,
   `set_height`, `noise`, `paint` and `erase` (a layer), and `add` and `carve`, which join or take
   out a `shape` (`sphere`, `capsule` to `to`, `box`). Of a heightfield alone: `ramp` (from `at` to

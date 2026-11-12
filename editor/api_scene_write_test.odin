@@ -560,3 +560,30 @@ a_preset_gives_an_entity_of_a_write_the_components_and_place_it_leaves_out :: pr
     testing.expect(t,!ok && strings.has_prefix(failure,"entities[0].children[0].preset: "),failure)
     testing.expect_value(t,core.world_entities(w).alive,4)
 }
+
+@(test_world)
+Place_Test_World :: struct {
+    using world:Test_World,
+    using scene_tables:Test_Scene,
+    worlds:core.Table(core.World_Transform),
+}
+
+// What a write moves keeps its World_Transform until a frame: a manual editor
+// runs none between two calls, and a handler that reads where it is runs one.
+@(test)
+a_handler_waits_for_the_place_of_what_a_write_moved :: proc(t:^testing.T) {
+    world:Place_Test_World
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    e:=core.create(&world.entities)
+    at:=core.Transform{{-128,0,-128},1,{1,1,1}}
+    core.add(&world.transforms,e,at)
+    test_world_settle(&world)
+    s:=Session{info=test_world_info(&world),edit_world=&world}
+    testing.expect(t,api_unplaced(&s,&e),"made, it has no place yet")
+    core.add(&world.worlds,e,core.World_Transform{core.to_math(at),core.to_math(at)})
+    test_world_settle(&world)
+    testing.expect(t,!api_unplaced(&s,&e))
+    core.edit(&world.transforms,e).position={0,0,0}
+    testing.expect(t,api_unplaced(&s,&e),"moved, its World_Transform is where it was")
+}

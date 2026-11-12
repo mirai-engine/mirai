@@ -153,9 +153,7 @@ foliage_api_register :: proc(s:^editor.Session) {
 // The tool and the edited world with the source of a Foliage ready to edit.
 @(private)
 api_foliage :: proc(s:^editor.Session,call:^api.Call,named:[]u8) -> (tool:^Foliage_Tool,world:core.World_Ref,e:core.Entity,owner:mm.Transform,ground:^foliage.Ground_Owner,ok:bool) {
-    // A Foliage just made takes its place in the world with the next frame.
     given:=base.text_get(named)
-    if api_foliage_unplaced(s,&given) {editor.api_settle(s,&given,api_foliage_unplaced)}
     tool=core.world_storage_of(core.world_ref(s.editor_world,s.info,.Editor),Foliage_Tool)
     world=editor.edited_world(s)
     table:=core.world_table_of(world,foliage.Foliage);worlds:=core.world_table_of(world,core.World_Transform)
@@ -165,27 +163,64 @@ api_foliage :: proc(s:^editor.Session,call:^api.Call,named:[]u8) -> (tool:^Folia
     found:bool
     if e,found=editor.api_call_entity(call,world,named);!found {return}
     if !core.has(table,e) {api.call_failf(call,api.INVALID_PARAMS,"%s is not an entity with a Foliage: scene.inspect lists them",given);return}
+    editor.api_place_settle(s,e)
+    ground=ground_settle(s,e)
+    world=editor.edited_world(s)
+    table,worlds=core.world_table_of(world,foliage.Foliage),core.world_table_of(world,core.World_Transform)
     if !edit_prepare(tool,s.app.assets,s.app.allocator,table,e) {api.call_failf(call,api.INVALID_PARAMS,"The source of foliage %s could not be read: engine.diagnostics says why",given);return}
     placed,has_place:=core.get(worlds,e)
     if !has_place {api.call_failf(call,api.INVALID_PARAMS,"Foliage %s has no place in the world: give its entity a place with scene.write",given);return}
     owner=placed.transform
-    if grounds:=core.world_storage_of(world,foliage.Foliage_Ground);grounds!=nil {ground=foliage.ground_owner(grounds,e)}
     ok=true
     return
+}
+
+// Runs the frames that read the ground under a Foliage as it is now, from
+// inside a handler (a manual editor reads it only in a frame): under its
+// cells, those from low to high (a stroke) when asked, and what a move, a
+// moved ground or a reload of its source changed. The ground then; nil
+// without one in the world.
+@(private)
+ground_settle :: proc(s:^editor.Session,e:core.Entity,low:=[2]i32{1,1},high:=[2]i32{0,0}) -> ^foliage.Ground_Owner {
+    world:=editor.edited_world(s)
+    grounds:=core.world_storage_of(world,foliage.Foliage_Ground)
+    if requests:=core.world_storage_of(world,foliage.Foliage_Ground_Requests);requests!=nil {
+        held:=foliage.ground_owner(grounds,e)
+        for z in low.y..=high.y {for x in low.x..=high.x {
+            if held==nil || foliage.ground_tile_find(held,{x,z})<0 {foliage.ground_request(requests,e,{x,z})}
+        }}
+    }
+    Settling :: struct {e:core.Entity,looked:bool}
+    reading :: proc(s:^editor.Session,user:rawptr) -> bool {
+        settling:=(^Settling)(user)
+        e:=settling.e
+        w:=editor.edited_world(s)
+        grounds,data:=core.world_storage_of(w,foliage.Foliage_Ground),core.world_storage_of(w,foliage.Foliage_Data)
+        queries,requests:=core.world_storage_of(w,core.Ground_Queries),core.world_storage_of(w,foliage.Foliage_Ground_Requests)
+        marker,shown:=core.get(core.world_table_of(w,foliage.Foliage),e)
+        placed,has:=core.get(core.world_table_of(w,core.World_Transform),e)
+        if grounds==nil || data==nil || queries==nil || requests==nil || !shown || !has {return false}
+        // A world whose steps did not run since it was made or cleared has no ground yet, nor knows it has none: a frame tells.
+        if queries.open==nil {
+            defer settling.looked=true
+            return !settling.looked
+        }
+        entry:=foliage.data_find(data,marker.source)
+        if entry==nil || entry.stamp!=foliage.foliage_stamp(s.app.assets,marker.source) {return true}
+        owner:=foliage.ground_owner(grounds,e)
+        if owner==nil || owner.epoch!=entry.epoch || owner.loads!=entry.loads || owner.transform!=placed.transform {return true}
+        for task in grounds.queue {if task.entity==e {return true}}
+        for asked in requests.cells.items {if asked.entity==e {return true}}
+        return false
+    }
+    settling:=Settling{e=e}
+    editor.api_settle(s,&settling,reading)
+    return foliage.ground_owner(core.world_storage_of(editor.edited_world(s),foliage.Foliage_Ground),e)
 }
 
 @(private)
 type_write :: proc(call:^api.Call,name:string) {
     api.call_result(call,Type_Result).type=strings.clone(name,call.allocator)
-}
-
-// Whether the entity named (^string) is a Foliage still without a place in the world.
-@(private)
-api_foliage_unplaced :: proc(s:^editor.Session,user:rawptr) -> bool {
-    world:=editor.edited_world(s)
-    table:=core.world_table_of(world,foliage.Foliage);worlds:=core.world_table_of(world,core.World_Transform)
-    e,_:=editor.api_entity_find(world,(^string)(user)^)
-    return table!=nil && worlds!=nil && e!=core.NONE && core.has(table,e) && !core.has(worlds,e)
 }
 
 @(private)
@@ -364,8 +399,16 @@ api_paint :: proc(s:^editor.Session,call:^api.Call) {
     case "ungenerate": mode,generate=.Generate,false
     case: api.call_fail(call,api.INVALID_PARAMS,"mode is paint, erase, reapply, generate or ungenerate");return
     }
-    tool,world,_,owner,ground,ok:=api_foliage(s,call,p.entity[:])
+    tool,world,e,owner,ground,ok:=api_foliage(s,call,p.entity[:])
     if !ok {return}
+    to_local,inverted:=mm.transform_inverse_matrix(owner)
+    if !inverted {api.call_fail(call,api.INVALID_PARAMS,"The transform of the Foliage cannot be inverted");return}
+    from,to:=p.at,p.to!={}?p.to:p.at
+    // The ground of the cells the stroke reaches, for what it places.
+    reach:=clamp(p.radius,RADIUS_MIN,RADIUS_MAX)/max(abs(owner.scale.x),1e-6)
+    low,_:=cells_around(linalg.min(mm.mat4_point(to_local,from),mm.mat4_point(to_local,to)),reach)
+    _,high:=cells_around(linalg.max(mm.mat4_point(to_local,from),mm.mat4_point(to_local,to)),reach)
+    ground=ground_settle(s,e,low,high)
     source:=&tool.edit.source
     // What the brush of the tool holds goes back to it after the stroke.
     held_prefs,held_painted,held_stroke:=tool.prefs,make([dynamic]u32,0,len(tool.painted),context.temp_allocator),tool.stroke
@@ -387,10 +430,7 @@ api_paint :: proc(s:^editor.Session,call:^api.Call) {
     if len(tool.painted)==0 && mode!=.Generate {api.call_fail(call,api.INVALID_PARAMS,"The foliage has no type: foliage.type_add adds one");return}
     tool.radius,tool.paint_density,tool.erase_density,tool.ground_only=clamp(p.radius,RADIUS_MIN,RADIUS_MAX),clamp(p.density,0.01,1),clamp(p.erase_density,0,1),p.ground_only
     tool.stroke={active=true,mode=mode,generate=generate}
-    to_local,inverted:=mm.transform_inverse_matrix(owner)
-    if !inverted {api.call_fail(call,api.INVALID_PARAMS,"The transform of the Foliage cannot be inverted");return}
     edit_baseline(tool)
-    from,to:=p.at,p.to!={}?p.to:p.at
     step:=to-from
     count:=clamp(int(math.ceil(linalg.length(step)/(tool.radius*STROKE_SPACING))),1,4096)
     changed:=false

@@ -96,7 +96,13 @@ terrain_create :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
         if !terrain.source_make(&source,tool.create_kind,samples,tool.cell,tool.chunk_cells,allocator) {editor.notify(s,"The terrain dimensions exceed their budget");return}
     }
     if !terrain_budget(s,world,&source) {return}
-    label,path:=editor.asset_new_file(s,fmt.tprintf("%s/terrain",a.registry.root),name!=""?name:terrain_kind_name(source.kind),terrain.TERRAIN_EXTENSION,name!="")
+    folder:=fmt.tprintf("%s/terrain",a.registry.root)
+    label,path:=editor.asset_new_file(s,folder,name!=""?name:terrain_kind_name(source.kind),terrain.TERRAIN_EXTENSION,name!="")
+    if name!="" {
+        // The file a deleted terrain of that name left is this one's: the step keeps what it held.
+        left:=fmt.tprintf("%s/%s%s",editor.scene_folder(s,folder),name,terrain.TERRAIN_EXTENSION)
+        if left!=path && terrain_file_left(s,world,a,left) {path=left}
+    }
     source.revision=1;seed:=base.hash_combine(base.name_hash(path),platform.clock_ns())
     id:=base.Asset_Id{seed,base.hash_combine(seed,base.name_hash("Terrain"))}
     bytes,error:=terrain.source_bytes(&source,id,&a.types,allocator)
@@ -117,6 +123,22 @@ terrain_create :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
 }
 
 Ground_Placement :: struct {transform:core.Transform,id:base.Entity_Id}
+
+// Whether the .terrain at path is one no terrain of the edited world shows and
+// no file but the open scene uses: what deleting its terrain left.
+@(private)
+terrain_file_left :: proc(s:^editor.Session,world:core.World_Ref,a:^host.Assets,path:string) -> bool {
+    relative,inside:=asset.registry_relative(&a.registry,path)
+    if !inside {return false}
+    file,found:=asset.registry_find_path(&a.registry,relative)
+    if !found || file.kind!=terrain.TERRAIN_KIND {return false}
+    if terrains:=core.world_table_of(world,terrain.Terrain);terrains!=nil {
+        for marker in terrains.values[:core.count(terrains)] {if marker.source==file.id {return false}}
+    }
+    scene:=s.document!=nil?editor.scene_path(s,editor.document_file(s.document)):""
+    for user in asset.registry_dependents(&a.registry,file.id) {if a.registry.files[user].path!=scene {return false}}
+    return true
+}
 
 // A Volume over a Heightfield terrain, joined to it (Terrain.ground): its
 // samples over those of the Heightfield, its box centered on at (the target

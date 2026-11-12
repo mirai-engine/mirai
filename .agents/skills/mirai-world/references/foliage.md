@@ -76,8 +76,9 @@ to the overrides).
   after the other values, it takes an `offset` in the range of its type along its y. A manual one
   (or a `Moved` or `Replaced`) with `INSTANCE_GROUNDED` stays `ground` meters above it and keeps
   its rotation, unless with `INSTANCE_ALIGNED` it tilts with the normal of the current ground like
-  a generated one; without the mark or without ground it stays where it was put. Without a known
-  ground the ground is the entity's y = 0 plane.
+  a generated one; without the mark or without ground it stays where it was put. In a world
+  without ground the entity's y = 0 plane is the ground; in one with ground, a cell whose ground is
+  not read yet or covers none of it shows no generated instance.
 - **Placement rule** (`Foliage_Rule`, like `GroundSlopeAngle`, `Height` and the layers of an
   Unreal `UFoliageType`): on, `rule_allows` admits the ground whose slope (from the normal) and
   height fall in its ranges and, with `layers`, whose terrain layers add up to at least `weight`.
@@ -100,7 +101,8 @@ to the overrides).
 - Each sample asks the probe along the down of the `Foliage` for the highest ground: `Ground` is a
   height and the weights of the layers there; `Empty` (a hole, a stroke the editor holds) and
   `Unloaded` (far from every viewer) leave it without ground, NaN; a grid where no sample is
-  covered is removed. The layers of the first ground read name what the weights of the owner are of.
+  covered is removed, and a cell that generates there is the `foliage.no_ground` problem of its
+  entity. The layers of the first ground read name what the weights of the owner are of.
 - **Fine near, coarse far**: the grid of a cell is fine (the samples per side follow the spacing of
   the ground, `Ground_Query.spacing`, up to `SAMPLES_MAX`) near the [streaming sources][sources],
   with their hysteresis, up to where the meshes of their types are drawn and no more than
@@ -341,7 +343,9 @@ the registry's memory as a file of the undo step that creates it.
   values it receives; the others stay; a rule's `layers` are materials of the terrain under it, as
   `Ground_Owner.layers` lists them), `foliage.type_remove`, `foliage.paint` (a paint, erase,
   reapply, generate or ungenerate stroke from `at` to `to`), `foliage.place` and `foliage.query`
-  (types with their instances and instances inside a box), each change an undo step.
+  (types with their instances and instances inside a box), each change an undo step. They read
+  the place and the ground of the `Foliage` as they are now: a manual editor runs the frames that
+  read them.
 - In the content browser, `Foliage_Kinds` and `Foliage_Thumbnails` list the `.foliage` and show
   them with a mesh of their types
   ([content browser](../../mirai-editor/references/panels.md#content-browser)).

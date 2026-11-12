@@ -9,8 +9,10 @@ import mm "mirai:std/math"
 // the ground there, read from core.Ground_Queries (ground_read.odin). Each
 // tile it changes raises its revision, and foliage builds again the cells
 // whose tile changed. A tile may be coarser than the others (the ground far
-// from where it is seen). Without a tile, where no ground covers a cell, the
-// plane y = 0 of the entity is the ground.
+// from where it is seen). A cell without a tile (not read yet, or no ground
+// covers it) has no ground: its generated instances are not there. Without a
+// ground in the world there are no owners, and the plane y = 0 of each entity
+// is its ground.
 @(storage)
 Foliage_Ground :: struct {
     owners:[dynamic]Ground_Owner,
@@ -81,11 +83,12 @@ ground_tile_find :: proc "contextless" (owner:^Ground_Owner,coord:[2]i32) -> int
     return at<len(owner.tiles) && owner.tiles[at].coord==coord?at:-1
 }
 
-// The ground of a cell as cell_expand reads it: none when no tile is known.
+// The ground of a cell as cell_expand reads it: absent when no tile is known
+// under a Foliage with a ground; the plane without one (owner nil).
 ground_cell :: proc "contextless" (owner:^Ground_Owner,coord:[2]i32) -> (ground:Ground_Cell,revision:u32) {
     if owner==nil {return}
     at:=ground_tile_find(owner,coord)
-    if at<0 {return}
+    if at<0 {return {absent=true},0}
     tile:=owner.tiles[at]
     pool:=&owner.pools[tile.pool]
     n:=int(pool.samples)
