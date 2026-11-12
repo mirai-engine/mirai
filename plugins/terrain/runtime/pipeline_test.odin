@@ -21,6 +21,18 @@ pipeline_tick :: proc(w:^Terrain_Test_World,resident:^Terrain_Resident,app:^host
     test_world_settle(&w.w)
 }
 
+// Ticks until what the terrain wants is built: the first shows its roots and
+// the ground near bodies, the others what comes from the jobs.
+@(private="file")
+pipeline_settle :: proc(w:^Terrain_Test_World,resident:^Terrain_Resident,app:^host.App,settings:=TERRAIN_TEST_SETTINGS,view:=core.View{},ticks:=32) {
+    for _ in 0..<ticks {
+        pipeline_tick(w,resident,app,settings,view)
+        idle:=!work_busy(&w.data,nil)
+        for &source in resident.sources {if len(source.pending)>0 {idle=false}}
+        if idle {break}
+    }
+}
+
 @(private="file")
 pipeline_source :: proc(t:^testing.T,root:string,kind:Source_Kind,samples:[3]int,cells:int,id:base.Asset_Id,bumpy:=false) -> string {
     source:Source;testing.expect(t,source_make(&source,kind,samples,1,cells));defer source_destroy(&source)
@@ -63,7 +75,7 @@ rebuilt_chunks_show_in_the_next_tick_whatever_the_threads_and_stale_results_are_
         defer terrain_test_world_free(&w)
         resident:Terrain_Resident;defer terrain_resident_free(&resident)
         owner:=pipeline_owner(&w,id)
-        pipeline_tick(&w,&resident,&app)
+        pipeline_settle(&w,&resident,&app)
         testing.expect_value(t,len(w.chunks.values),16)
         testing.expect_value(t,len(w.colliders.values),16)
         testing.expect_value(t,resident.stats.built,u64(16))
@@ -116,7 +128,7 @@ chunks_without_a_slot_for_their_collider_still_show_their_ground_and_the_nearest
     owner:=pipeline_owner(&w,id)
     view:=core.VIEW_DEFAULT
     view.position,view.size={-14,5,-14},{64,64}
-    for _ in 0..<2 {pipeline_tick(&w,&resident,&app,view=view)}
+    pipeline_settle(&w,&resident,&app,view=view)
     // Every chunk shows its ground; Physics_Settings has room for six colliders: the nearest take them.
     testing.expect_value(t,len(w.statics.values),16)
     testing.expect_value(t,len(w.colliders.values),6)
@@ -177,6 +189,8 @@ source_place :: proc(w:^Terrain_Test_World,position:[3]f32) {
     w.streaming.items[0]={position,position,0}
     w.streaming.count=1
     w.streaming.revision+=1
+    // A body stands there: the simulation needs its ground.
+    w.simulation.items[0],w.simulation.count=w.streaming.items[0],1
 }
 
 @(test)

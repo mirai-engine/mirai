@@ -341,3 +341,51 @@ choosing_the_pieces_of_a_large_terrain_looks_at_what_is_near_not_at_every_node :
     testing.expectf(t,int(looked[0])*10<nodes && int(looked[1])*10<nodes,"%v of %d nodes looked at",looked,nodes)
     testing.expect_value(t,w.problems.count,0)
 }
+
+// A terrain that opens under a view builds in its first tick only what has
+// to be there: its root, from the coarse grid of its file, which collides
+// while it stands in, so neither the view nor a body lacks ground, and what
+// the ground under the body needs to show. Its other pieces come from jobs
+// over the ticks that follow, and in every tick the terrain covers its
+// region once.
+@(test)
+a_terrain_that_opens_builds_its_root_and_the_ground_under_bodies_at_once_and_the_rest_in_jobs :: proc(t:^testing.T) {
+    root:=base.test_folder(t,"terrain")
+    id:=base.Asset_Id{331,332}
+    quad_source(t,root,129,16,id)
+    assets:host.Assets;testing.expect(t,host.assets_init(&assets,{root=root,capacity=256}));defer host.assets_destroy(&assets)
+    app:=host.App{assets=&assets,allocator=context.allocator}
+    w:Terrain_Test_World
+    if !terrain_test_world_init(t,&w) {return}
+    defer terrain_test_world_free(&w)
+    resident:Terrain_Resident;defer terrain_resident_free(&resident)
+    quad_owner(&w,id)
+    body:=core.create(&w.entities)
+    at:=[3]f32{-50,2,-50}
+    placed:=core.TRANSFORM_IDENTITY
+    placed.position=at
+    core.add(&w.transforms,body,placed)
+    core.add(&w.worlds,body,core.World_Transform{transform={position=placed.position,rotation=placed.rotation,scale=placed.scale}})
+    core.add(&w.rigids,body,phys.Rigid_Body{type=.Dynamic})
+    test_world_settle(&w.w)
+    view:=core.VIEW_DEFAULT
+    view.position,view.size={40,6,40},{64,64}
+    settings:=Terrain_Settings{}
+    quad_tick(&w,&resident,&app,settings,view)
+    o:=&resident.owners[0]
+    holes,overlaps:=quad_coverage(o)
+    testing.expectf(t,holes==0 && overlaps==0,"the first tick covers the region once: %d chunks without a piece, %d with more",holes,overlaps)
+    testing.expect(t,resident.sources[0].chunks[quad_total(&o.quad)-1].shown,"the root shows in the first tick")
+    hit,ok:=phys.raycast({&w.state},at+{0,20,0},{0,-1,0})
+    testing.expect(t,ok && piece_depth(&w,hit)>=0 && abs(hit.point.y)<1,"the body has ground in the first tick")
+    first:=resident.stats.built
+    testing.expectf(t,first<16,"the rest comes from jobs: %d pieces built in the first tick",first)
+    for _ in 0..<32 {
+        quad_tick(&w,&resident,&app,settings,view)
+        holes,overlaps=quad_coverage(&resident.owners[0])
+        testing.expectf(t,holes==0 && overlaps==0,"every tick covers the region once: %d and %d",holes,overlaps)
+    }
+    testing.expect(t,resident.stats.built>first+16,"the pieces the view wants arrived")
+    testing.expect(t,!resident.owners[0].nodes[quad_total(&o.quad)-1].visible,"the root gave way to them")
+    testing.expect_value(t,w.problems.count,0)
+}

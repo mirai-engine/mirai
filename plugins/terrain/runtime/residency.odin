@@ -44,7 +44,7 @@ split_before :: proc(a,b:Split) -> bool {
 // colliders or the chunks change; while pieces wait to be built, again once a
 // frame (once_more: the first call of a frame).
 @(private)
-resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:^core.Table(core.World_Transform,.Read),views:Lod_Views,sources:core.Ref(scene.Streaming_Sources),settings:Terrain_Settings,terrains:^core.Table(Terrain,$A),c:^Chunk_Tables,physics:phys.Physics_Settings,problems:^core.Problems,once_more:=true,focus:=Terrain_Focus{}) {
+resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:^core.Table(core.World_Transform,.Read),views:Lod_Views,sources:core.Ref(scene.Streaming_Sources),simulation:core.Ref(scene.Simulation_Sources),settings:Terrain_Settings,terrains:^core.Table(Terrain,$A),c:^Chunk_Tables,physics:phys.Physics_Settings,problems:^core.Problems,once_more:=true,focus:=Terrain_Focus{}) {
     views:=views
     // Only the places of the terrains move their pieces: what else moves in the world does not.
     placed:=core.changes(worlds,&resident.lod_seen[0])
@@ -54,6 +54,9 @@ resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:^core.
     }}
     moved|=core.touched(c.colliders,&resident.lod_seen[1])
     stamp:=[3]u64{sources.ptr!=nil?sources.ptr.revision:0,u64(len(resident.owners)),resident.marks}
+    simulated:[]scene.Source
+    if simulation.ptr!=nil {simulated=simulation.ptr.items[:clamp(simulation.ptr.count,0,scene.SOURCES_MAX)]}
+    grounds_moved:=scene.sources_moved(resident.lod_simulation[:resident.lod_simulation_count],simulated)
     pending:=false
     if once_more {for &source in resident.sources {if len(source.pending)>0 {pending=true;break}}}
     still:=views.count==resident.lod_view_count
@@ -64,17 +67,20 @@ resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:^core.
     distances:=[3]f32{settings.lod_distance,settings.collision_distance,settings.resident_distance}
     // Where the brush is chooses pieces; what its stroke changed does not.
     brush:=Terrain_Focus{source=focus.source,center=focus.center,radius=focus.radius}
-    if !pending && !moved && stamp==resident.lod_stamp && distances==resident.lod_distances && brush==resident.focus && still {return}
+    if !pending && !moved && !grounds_moved && stamp==resident.lod_stamp && distances==resident.lod_distances && brush==resident.focus && still {return}
+    resident.lod_simulation_count=copy(resident.lod_simulation[:],simulated)
     for view,v in views.items[:views.count] {resident.lod_views[v]=view.position}
     resident.lod_view_count,resident.lod_stamp,resident.lod_distances,resident.focus=views.count,stamp,distances,brush
     resident.cut=true
     stream:=settings.resident_distance>0
+    looked:=false
+    for view in views.items[:views.count] {looked||=view.size.x>0 && view.size.y>0}
     resident.lod_pass+=1
     pass:=resident.lod_pass
     clear(&resident.splits)
     roots:=0
     owners_sides(resident,data,worlds,c.ids)
-    if !lod_places(resident,data,worlds,terrains,views,sources,settings.resident_distance,stream) {return}
+    if !lod_places(resident,data,worlds,terrains,views,sources,simulated,settings.resident_distance,stream) {return}
     // What each terrain held a state of is looked at again, with what is above it.
     for &owner,o in resident.owners {
         place:=&resident.places[o]
@@ -151,7 +157,7 @@ resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:^core.
             node.cut=!node.open && (parent<0 || owner.nodes[parent].open)
         }
     }
-    resident_colliders(resident,data,terrains,c,settings,physics)
+    resident_colliders(resident,data,terrains,c,settings,physics,looked)
     // How each terrain builds what it wants: the levels of its chunks, then
     // those along the edges it shares, then each piece.
     for &owner,o in resident.owners {
@@ -167,8 +173,10 @@ resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:^core.
             chunk:=&source.chunks[i]
             // A streamed terrain keeps its open nodes and its roots too: they stand in
             // for what they cover while it comes (owner_cut), and show when all else goes.
-            chunk.resident=node.cut || stream && (node.open || int(i)>=q.first[q.depth])
-            chunk.wanted.collision=node.cut && node.collide
+            root:=int(i)>=q.first[q.depth]
+            standing:=root_stands_in(&owner,s,int(i),looked)
+            chunk.resident=node.cut || standing || stream && (node.open || root)
+            chunk.wanted.collision=(node.cut || standing) && node.collide
             if int(i)<chunks {source.deep[i]=node.cut && (!stream || node.reach<=DEEP_REACH)}
         }
         // A Volume has no levels of its own: its nodes show what is far.
@@ -450,7 +458,7 @@ owner_walk :: proc(resident:^Terrain_Resident,data:^Terrain_Data,owner:^Resident
 // colliders of everything else, every chunk before any node, and of those,
 // with Terrain_Settings.collision_distance, the ones within it.
 @(private)
-resident_colliders :: proc(resident:^Terrain_Resident,data:^Terrain_Data,terrains:^core.Table(Terrain,$A),c:^Chunk_Tables,settings:Terrain_Settings,physics:phys.Physics_Settings) {
+resident_colliders :: proc(resident:^Terrain_Resident,data:^Terrain_Data,terrains:^core.Table(Terrain,$A),c:^Chunk_Tables,settings:Terrain_Settings,physics:phys.Physics_Settings,looked:bool) {
     defer {for &owner in resident.owners {
         // A piece it shows whose collider comes or goes shows again.
         for i in owner.visit {if node:=&owner.nodes[i];node.visible && node.collide!=node.can {append(&owner.changed,i)}}}
@@ -467,7 +475,7 @@ resident_colliders :: proc(resident:^Terrain_Resident,data:^Terrain_Data,terrain
             // What it had, until owner_cut takes can again.
             node.can=node.collide
             node.collide=false
-            if !known || entry==nil || !marker.solid || owner.far || !node.cut {continue}
+            if !known || entry==nil || !marker.solid || owner.far || !node.cut && !root_stands_in(&owner,&entry.source,i,looked) {continue}
             // A piece built empty takes no slot.
             if source!=nil && i<len(source.chunks) && source.chunks[i].shown && source.chunks[i].mesh=={} {continue}
             if settings.collision_distance>0 && node.distance>settings.collision_distance {continue}
@@ -491,11 +499,17 @@ resident_colliders :: proc(resident:^Terrain_Resident,data:^Terrain_Data,terrain
 
 // What each terrain shows: the pieces it wants where they are built, and
 // elsewhere what it showed, until all that replaces it is built. Marks as
-// urgent the pieces a terrain wants where it shows nothing near a viewer
-// (farther they wait for their jobs), and lets go of what it neither wants
-// nor shows. It looks at the nodes the last evaluation of levels looked at.
+// urgent, built in the call that wants them, only what the simulation and a
+// first frame need: the pieces with a collider within GROUND_REACH of a
+// simulation source (the bodies the seats drive, the marks) or of a body that
+// moves or a character, and where a Heightfield shows
+// nothing, its roots, which the coarse grid of its file builds; the rest
+// arrives from jobs over the frames. A Volume, without a coarse grid, builds
+// the pieces it wants where it shows nothing near a viewer. It lets go of
+// what it neither wants nor shows. It looks at the nodes the last evaluation
+// of levels looked at.
 @(private)
-resident_cut :: proc(resident:^Terrain_Resident,data:^Terrain_Data) {
+resident_cut :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:^core.Table(core.World_Transform,.Read)) {
     if !resident.cut {return}
     resident.cut=false
     for &owner in resident.owners {
@@ -506,17 +520,92 @@ resident_cut :: proc(resident:^Terrain_Resident,data:^Terrain_Data) {
         stream:=resident.lod_distances[2]>0
         owner_cut(&owner,source,stream)
         chunks:=owner.quad.first[1]
+        roots:=owner.quad.first[owner.quad.depth]
+        field:=entry.source.kind==.Heightfield
+        bodies:=Bodies_Near{}
+        if len(resident.bodies)>0 {bodies=bodies_near(&entry.source,worlds,owner.entity)}
         for at in owner.visit {
             i:=int(at)
             node:=&owner.nodes[i]
             chunk:=&source.chunks[i]
             chunk.visible=node.visible
-            if i>=chunks && node.cut && !node.covered && !chunk.shown && (!stream || node.reach<=URGENT_REACH) {chunk.urgent=true}
+            needed:=node.cut && node.collide && (node.ground<=GROUND_REACH || body_over(resident,&entry.source,&owner.quad,&bodies,i))
+            switch {
+            case chunk.shown:
+            case needed: chunk.urgent=true
+            case field: chunk.urgent=i>=roots && chunk.resident && !node.covered
+            case node.cut && !node.covered && (!stream || node.reach<=URGENT_REACH): chunk.urgent=true
+            }
             if !chunk.visible && !chunk.resident && (chunk.shown || chunk.mesh!={}) {source_pending(source,i)}
+            if !needed || node.visible {continue}
+            // A piece the simulation needs shows now: what keeps the node shown
+            // over it from opening is built in this call too, a level a round.
+            for up:=quad_parent(&owner.quad,i);up>=0 && owner.nodes[up].covering;up=quad_parent(&owner.quad,up) {
+                for child in quad_children(&owner.quad,up) {if child>=0 && child!=i {pieces_standing(resident,&owner,source,child)}}
+                if owner.nodes[up].visible {break}
+            }
         }
         // What stands for a section that is not loaded has no viewer on it: it waits for its jobs.
         if owner.far {for i in owner.visit {source.chunks[i].urgent=false}}
     }
+}
+
+// Whether node i is a root of a Heightfield that stands in, from the coarse
+// grid of its file, for what it covers while that is built: where a view
+// looks and nothing covers its region. It collides meanwhile, so a body never
+// lacks ground.
+@(private)
+root_stands_in :: proc "contextless" (owner:^Resident_Owner,s:^Source,i:int,looked:bool) -> bool {
+    q:=&owner.quad
+    return looked && s.kind==.Heightfield && i>=q.first[q.depth] && i<quad_total(q) && !owner.nodes[i].cut && !owner.nodes[i].covered
+}
+
+// Marks urgent what has to be built for the region of node i to show: the
+// pieces it wants there that do not stand yet.
+@(private)
+pieces_standing :: proc(resident:^Terrain_Resident,owner:^Resident_Owner,source:^Resident_Source,i:int) {
+    q:=&owner.quad
+    chunks:=q.first[1]
+    stack:=&resident.stack
+    base_len:=len(stack)
+    if append(stack,u32(i))!=1 {return}
+    for len(stack)>base_len {
+        at:=int(pop(stack))
+        node:=&owner.nodes[at]
+        if node.can || at>=chunks && source.chunks[at].shown {continue}
+        if node.cut || at<chunks {
+            source.chunks[at].urgent=true
+            continue
+        }
+        for child in quad_children(q,at) {if child>=0 && append(stack,u32(child))!=1 {return}}
+    }
+}
+
+// What places the bodies in the space of a source: the inverse of the place
+// of its terrain, and a chunk width there.
+@(private)
+Bodies_Near :: struct {inverse:mm.Mat4,width:f32,ok:bool}
+
+@(private)
+bodies_near :: proc(s:^Source,worlds:^core.Table(core.World_Transform,.Read),owner:core.Entity) -> (near:Bodies_Near) {
+    placed:=mm.MAT4_IDENTITY
+    if world,known:=core.get(worlds,owner);known {placed=mm.transform_matrix(world.transform)}
+    scale:=max(linalg.length(placed[0].xyz),linalg.length(placed[1].xyz),linalg.length(placed[2].xyz))
+    if !(scale>0) {return}
+    return {linalg.inverse(placed),s.cell*f32(s.chunk_cells),true}
+}
+
+// Whether a body that moves or a character stands within GROUND_REACH of
+// piece i: what it falls on or walks to is to collide in this tick.
+@(private)
+body_over :: proc(resident:^Terrain_Resident,s:^Source,q:^Quad,near:^Bodies_Near,i:int) -> bool {
+    if !near.ok {return false}
+    low,high:=node_box(s,q,s.coarse.ranges,i)
+    for body in resident.bodies {
+        local:=(near.inverse*[4]f32{body.x,body.y,body.z,1}).xyz
+        if scene.box_distance(low,high,local)<=GROUND_REACH*near.width {return true}
+    }
+    return false
 }
 
 // The views the levels are chosen for: that of the frame and, on a split
@@ -561,11 +650,12 @@ Lod_Place :: struct {
     pixels:[LOD_VIEWS]f32,
     scale:f32,
     near:scene.Sources_Near,
+    ground:scene.Sources_Near, // the simulation sources, a chunk width their reach
 }
 
 // Where each owner is seen from, before its nodes are measured.
 @(private)
-lod_places :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:^core.Table(core.World_Transform,.Read),terrains:^core.Table(Terrain,$A),views:Lod_Views,sources:core.Ref(scene.Streaming_Sources),resident_distance:f32,stream:bool) -> bool {
+lod_places :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:^core.Table(core.World_Transform,.Read),terrains:^core.Table(Terrain,$A),views:Lod_Views,sources:core.Ref(scene.Streaming_Sources),simulated:[]scene.Source,resident_distance:f32,stream:bool) -> bool {
     views:=views
     places:=&resident.places
     // Room for every owner is made with it (resident_owner).
@@ -586,6 +676,7 @@ lod_places :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:^core.Ta
             place.pixels[v]=view_pixels(view)
         }
         if stream {place.near=scene.sources_near(sources.ptr,placed,resident_distance)}
+        place.ground=scene.sources_near_of(simulated,placed,entry.source.cell*f32(entry.source.chunk_cells)*place.scale)
         places[o]=place
     }
     return true
@@ -610,6 +701,7 @@ node_measure :: proc "contextless" (owner:^Resident_Owner,place:^Lod_Place,i,cou
     }
     node.distance=nearest*place.scale
     node.reach=stream?scene.box_near(&place.near,low,high):0
+    node.ground=scene.box_near(&place.ground,low,high)
     node.pixels,node.spacing=pixels,spacing
     chunk:=&place.chunks[i]
     chunk.distance,chunk.reach,chunk.pixels,chunk.spacing=node.distance,node.reach,node.pixels,node.spacing
@@ -644,7 +736,8 @@ owner_cut :: proc(owner:^Resident_Owner,source:^Resident_Source,stream:bool) {
         node:=&nodes[i]
         parent:=quad_parent(q,i)
         was:=node.visible
-        opened:=parent>=0 && !nodes[parent].covering && nodes[parent].can && !nodes[parent].cut
+        // A root stands in for what it covers while that comes: its parent is the whole region.
+        opened:=parent<0 || !nodes[parent].covering && nodes[parent].can && !nodes[parent].cut
         switch {
         case parent>=0 && nodes[parent].covering: node.visible,node.covering=false,true
         case node.can: node.visible,node.covering=node.cut,node.cut
@@ -653,18 +746,6 @@ owner_cut :: proc(owner:^Resident_Owner,source:^Resident_Source,stream:bool) {
         }
         if node.visible!=was {append(&owner.changed,u32(i))}
     }
-    // A chunk near a viewer shows now, with its collider: what keeps the node
-    // shown over it from opening is built in this call.
-    if stream {for at in visit {
-        i:=int(at)
-        if i>=chunks {break}
-        node:=&nodes[i]
-        if !node.cut || node.visible || node.reach>URGENT_REACH {continue}
-        for up:=quad_parent(q,i);up>=0 && nodes[up].covering;up=quad_parent(q,up) {
-            for child in quad_children(q,up) {if child>=0 && !stands(source,nodes,chunks,child) {source.chunks[child].urgent=true}}
-            if nodes[up].visible {break}
-        }
-    }}
     for at in visit {
         i:=int(at)
         node:=&nodes[i]

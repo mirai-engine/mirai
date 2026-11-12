@@ -44,6 +44,24 @@ Collider_Room :: struct {
 // A chunk shows nothing yet and a viewer is within this share of its
 // distance: the call that builds it waits for it.
 @(private) URGENT_REACH :: f32(0.5)
+// Where the bodies that move and the characters stand, for the colliders
+// they need at once (resident_cut); without memory for them, none.
+@(private)
+resident_bodies :: proc(resident:^Terrain_Resident,rigids:^core.Table(phys.Rigid_Body,.Read),characters:^core.Table(phys.Character,.Read),worlds:^core.Table(core.World_Transform,.Read)) {
+    clear(&resident.bodies)
+    if rigids!=nil {for row in 0..<core.count(rigids) {
+        if core.at(rigids,row).type==.Static {continue}
+        if at,placed:=core.get(worlds,core.entity_at(rigids,row));placed && append(&resident.bodies,at.position)!=1 {return}
+    }}
+    if characters!=nil {for row in 0..<core.count(characters) {
+        if at,placed:=core.get(worlds,core.entity_at(characters,row));placed && append(&resident.bodies,at.position)!=1 {return}
+    }}
+}
+
+// Chunk widths from a simulation source within which a chunk that takes a
+// collider is built in the call that wants it: the ground under a body and
+// where its motion takes it.
+@(private) GROUND_REACH :: f32(1)
 
 @(private)
 chunk_entity_matches :: proc(c:^Chunk_Tables,e,owner:core.Entity,coord:[3]i32,depth:u8) -> bool {
@@ -368,8 +386,7 @@ terrain_schedule :: proc(data:^Terrain_Data,resident:^Terrain_Resident,entry:^Da
             if (chunk.shown || chunk.mesh!={}) && !chunk.visible {chunk_evict(resident,source,i)}
         case chunk.shown && chunk.revision==data_version(entry,i) && chunk.built==chunk.wanted:
         case:
-            // A chunk near a viewer is wanted with its collider; a node where nothing shows, cheap from the coarse grid.
-            urgent:=!chunk.shown && (chunk.urgent || i<chunks && (!stream || chunk.reach<=URGENT_REACH))
+            urgent:=!chunk.shown && chunk.urgent
             border:^Piece_Border
             if s.kind==.Volume {
                 // Where its directory holds no surface a piece is empty: nothing is read or built.
@@ -727,8 +744,9 @@ terrain_update :: proc(
     locals:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),ids:^core.Table(core.Id,.Read),colliders:^core.Table(phys.Collider),
     meshes:^core.Table(render.Mesh_Renderer),looks:^core.Table(render.Material_Values),
     data:^Terrain_Data,resident:^Terrain_Resident,requests:^Terrain_Requests,digs:^Terrain_Digs,settings:Terrain_Settings,app:^host.App,time:core.Time,frame:core.Frame_Time,
-    view:core.View,camera_views:core.Ref(camera.Camera_Views),worlds:^core.Table(core.World_Transform,.Read),sources:core.Ref(scene.Streaming_Sources),kept:^core.Table(scene.Far_Kept,.Read),physics:phys.Physics_Settings,
+    view:core.View,camera_views:core.Ref(camera.Camera_Views),worlds:^core.Table(core.World_Transform,.Read),sources:core.Ref(scene.Streaming_Sources),simulation:core.Ref(scene.Simulation_Sources),kept:^core.Table(scene.Far_Kept,.Read),physics:phys.Physics_Settings,
     loads:core.Ref(scene.Section_Loads),waits:^scene.Load_Waits,problems:^core.Problems,focus:Terrain_Focus,queries:^core.Ground_Queries,ground:^Terrain_Ground,
+    rigids:^core.Table(phys.Rigid_Body,.Read),characters:^core.Table(phys.Character,.Read),
 ) {
     c:=Chunk_Tables{commands,chunks,locals,parents,ids,colliders,meshes,looks}
     if queries.open==nil {queries.open=ground_open}
@@ -862,8 +880,9 @@ terrain_update :: proc(
         // What stands for a section that is not loaded collides with nothing.
         for &owner in resident.owners {owner.far=kept!=nil && core.has(kept,owner.entity)}
         resident_joins(resident,data,terrains,ids,worlds,locals,problems)
-        resident_lod(resident,data,worlds,lod_views_of(view,camera_views,app),sources,settings,terrains,&c,physics,problems,changed || first,focus)
-        resident_cut(resident,data)
+        resident_lod(resident,data,worlds,lod_views_of(view,camera_views,app),sources,simulation,settings,terrains,&c,physics,problems,changed || first,focus)
+        resident_bodies(resident,rigids,characters,worlds)
+        resident_cut(resident,data,worlds)
         stream:=settings.resident_distance>0
         // A piece that is wanted where nothing shows is built in this call.
         for round:=0;;round+=1 {
@@ -882,7 +901,7 @@ terrain_update :: proc(
                 work_take(&c,data,resident,&slot,physics,problems,terrains)
                 took=true
             }
-            resident_cut(resident,data)
+            resident_cut(resident,data,worlds)
             // Each round may open one more node over a chunk near a viewer (owner_cut).
             if !took || round>QUAD_DEPTH_MAX {break}
         }
