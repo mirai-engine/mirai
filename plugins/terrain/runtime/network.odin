@@ -320,11 +320,11 @@ terrain_replay :: proc(replays:^Terrain_Replays,events:^Terrain_Replay_Events,di
     }
     if !routed {return}
     for asked_edit in core.take(&requests.edits) {
-        request:=edit_resolve(asked_edit,data,terrains,worlds) or_continue
+        request,scaled:=edit_resolve(asked_edit,data,terrains,worlds) or_continue
         result:=Replay_Result{request=true,owner=request.owner,brush=request.brush}
         entry:=request_source(data,terrains,request.owner,"an edit",problems,assets) or_continue
         result.source,result.loaded=entry.id,true
-        change:=data_edit(data,entry,request.brush)
+        change:=scaled==.None?data_edit(data,entry,request.brush):Change{error=scaled}
         result.error,result.changed=change.error,change.changed
         if change.error!=.None {
             edit_report(problems,request.owner,assets,entry,request.brush,change.error)

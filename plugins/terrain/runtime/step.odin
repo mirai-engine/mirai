@@ -552,12 +552,17 @@ owner_chunk_show :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,owner:^Resid
 
 // The loaded source of the terrain a request names; without it the request is a problem of that entity.
 // The terrain a request edits and its brush as its source reads it: what an
-// edit keys on from here on, also on the network.
+// edit keys on from here on, also on the network. error: a scale of the
+// terrain the brush cannot take (brush_local).
 @(private)
-edit_resolve :: proc(request:Edit_Request,data:^Terrain_Data,terrains:^core.Table(Terrain,$A),worlds:^core.Table(core.World_Transform,$B)) -> (resolved:Edit_Request,ok:bool) {
+edit_resolve :: proc(request:Edit_Request,data:^Terrain_Data,terrains:^core.Table(Terrain,$A),worlds:^core.Table(core.World_Transform,$B)) -> (resolved:Edit_Request,error:Edit_Error,ok:bool) {
     owner:=request.owner
     if owner==core.NONE {owner=dig_owner(request.brush,data,terrains,worlds) or_return}
-    return {owner,brush_local(request.brush,edit_place(worlds,owner))},true
+    kind:=Source_Kind.Heightfield
+    if marker,found:=core.get(terrains,owner);found {if entry:=data_find(data,marker.source);entry!=nil {kind=entry.source.kind}}
+    resolved.owner=owner
+    resolved.brush,error=brush_local(request.brush,edit_place(worlds,owner),kind)
+    return resolved,error,true
 }
 
 @(private)
@@ -576,7 +581,7 @@ dig_owner :: proc(brush:Brush,data:^Terrain_Data,terrains:^core.Table(Terrain,$A
         entry:=data_find(data,marker.source)
         if entry==nil {continue}
         e:=core.entity_at(terrains,row)
-        local:=brush_local(brush,edit_place(worlds,e))
+        local,_:=brush_local(brush,edit_place(worlds,e),entry.source.kind)
         s:=&entry.source
         low,high:=source_box(s,{},s.field.size-1)
         outside:=linalg.max(low-local.center,local.center-high,[3]f32{})
@@ -763,9 +768,9 @@ terrain_update :: proc(
     }
     if !time.playing || frame.phase==.Fixed {
         for asked_edit in core.take(&requests.edits) {
-            request:=edit_resolve(asked_edit,data,terrains,worlds) or_continue
+            request,scaled:=edit_resolve(asked_edit,data,terrains,worlds) or_continue
             entry:=request_source(data,terrains,request.owner,"an edit",problems,app.assets) or_continue
-            change:=data_edit(data,entry,request.brush)
+            change:=scaled==.None?data_edit(data,entry,request.brush):Change{error=scaled}
             if change.error!=.None {
                 edit_report(problems,request.owner,app.assets,entry,request.brush,change.error)
                 continue

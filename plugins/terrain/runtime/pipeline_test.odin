@@ -254,7 +254,7 @@ letting_go_of_an_excavated_zone_and_reading_it_again_keeps_its_edits :: proc(t:^
         pipeline_tick(&w,&resident,&app,settings)
         saved:Source;defer source_destroy(&saved)
         _,loaded:=source_load(&saved,fmt.tprintf("%s/saved.terrain",root),&assets.types)
-        testing.expect(t,loaded && source_value(&saved,{int(near.x)+128,0,int(near.z)+128})==-2)
+        testing.expect(t,loaded && (source_value(&saved,{int(near.x)+128,0,int(near.z)+128}) or_else 0)==-2)
         testing.expect_value(t,w.problems.count,0)
         for &p in core.problems_list(&w.problems) {fmt.println(core.problem_text(&p))}
     }
@@ -298,7 +298,7 @@ a_volume_lets_go_of_the_blocks_far_from_its_viewers_and_reading_them_again_keeps
         testing.expectf(t,ok && hit.point.y< -1.5,"the excavation: %v",hit.point)
         excavated:=hit.point.y
         at:=[3]int{14,16,14}
-        dug:=source_value(s,at)
+        dug:=source_value(s,at) or_else 0
         testing.expect(t,dug>0)
         // A snapshot of the World copies what is in memory.
         snapshot:Terrain_Data;defer terrain_data_free(&snapshot)
@@ -324,7 +324,9 @@ a_volume_lets_go_of_the_blocks_far_from_its_viewers_and_reading_them_again_keeps
             for _ in 0..<24 {work_wait(&w.data,nil);pipeline_tick(&w,&resident,&app,settings)}
             shown,still:=core.get(&w.statics,zone)
             testing.expect(t,still && shown.mesh!={} && shown.mesh!=before,"the node is built again with what was dug under it")
-            testing.expect(t,source_value(&w.data.entries[0].source,{34,14,34})>0)
+            // Far from every viewer its block may be in the file: it is read to be looked at.
+            testing.expect(t,source_region_read(s,{34,14,34},{34,14,34}))
+            testing.expect(t,(source_value(s,{34,14,34}) or_else 0)>0)
         }
         testing.expect(t,w.data.stats.pages_left>0)
         block,_:=grid_page_at(&s.field,at)
@@ -337,13 +339,13 @@ a_volume_lets_go_of_the_blocks_far_from_its_viewers_and_reading_them_again_keeps
         for _ in 0..<8 {pipeline_tick(&w,&resident,&app,settings)}
         hit,ok=phys.raycast({&w.state},near+{0,20,0},{0,-1,0})
         testing.expectf(t,ok && hit.point.y==excavated,"reading the zone again keeps its edits (%d threads): %v",threads,hit.point)
-        testing.expect_value(t,source_value(&w.data.entries[0].source,at),dug)
+        testing.expect_value(t,source_value(&w.data.entries[0].source,at) or_else 0,dug)
         // Saving writes every block, those in memory and those in blocks of their own or in the file.
         request_save(&w.terrain_requests,owner,fmt.tprintf("%s/saved.terrain",root))
         pipeline_tick(&w,&resident,&app,settings)
         saved:Source;defer source_destroy(&saved)
         _,loaded:=source_load(&saved,fmt.tprintf("%s/saved.terrain",root),&assets.types)
-        testing.expect(t,loaded && source_value(&saved,at)==dug && source_value(&saved,{110,10,110})<0)
+        testing.expect(t,loaded && (source_value(&saved,at) or_else 0)==dug && (source_value(&saved,{110,10,110}) or_else 0)<0)
         testing.expect_value(t,w.problems.count,0)
         for &p in core.problems_list(&w.problems) {fmt.println(core.problem_text(&p))}
     }

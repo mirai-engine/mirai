@@ -57,11 +57,11 @@ a_copy_shares_its_pages_and_a_write_on_either_side_leaves_the_other_as_it_was ::
         // A write on the source copies the pages it touches; the copy keeps what it read.
         at:=kind==.Heightfield?[3]int{32,0,32}:[3]int{40,46,40}
         point:=source_point(&source,at)
-        before:=source_value(&source,at)
+        before:=source_value(&source,at) or_else 0
         brush:=kind==.Heightfield?Brush{kind=.Raise,center=point,radius=2,amount=0.5,falloff=.Smooth,hardness=0.5}:Brush{kind=.Carve,center=point,radius=1.5,amount=1}
         testing.expect(t,source_edit(&source,brush).changed)
-        testing.expect(t,source_value(&source,at)!=before)
-        testing.expect_value(t,source_value(&copied,at),before)
+        testing.expect(t,(source_value(&source,at) or_else 0)!=before)
+        testing.expect_value(t,source_value(&copied,at) or_else 0,before)
         touched,_:=grid_page_at(g,at)
         touched=grid_slot(g,touched)
         if !testing.expect(t,touched>=0 && touched==grid_slot(c,grid_id(g,touched)),"the copy holds its pages where the source does") {return}
@@ -70,9 +70,9 @@ a_copy_shares_its_pages_and_a_write_on_either_side_leaves_the_other_as_it_was ::
         for page,i in g.pages {if page.values!=nil && raw_data(page.values)==raw_data(c.pages[i].values) {shared+=1}}
         testing.expect(t,shared>0,"the pages the brush did not touch stay shared")
         // And a write on the copy leaves the source as it is.
-        edited:=source_value(&source,at)
+        edited:=source_value(&source,at) or_else 0
         testing.expect(t,source_edit(&copied,brush).changed)
-        testing.expect_value(t,source_value(&source,at),edited)
+        testing.expect_value(t,source_value(&source,at) or_else 0,edited)
         // A page written alone is written in place: no copy is left to keep it.
         values:=raw_data(g.pages[touched].values)
         brush.kind=kind==.Heightfield?.Raise:.Add
@@ -122,11 +122,11 @@ the_pages_a_copy_holds_outlive_the_source_they_came_from :: proc(t:^testing.T) {
         context.allocator=mem.tracking_allocator(&second)
         testing.expect(t,data_source_copy(&copied,&source))
     }
-    expected:=source_value(&source,{100,0,200})
+    expected:=source_value(&source,{100,0,200}) or_else 0
     held:=first.current_memory_allocated
     source_destroy(&source)
     testing.expect(t,first.current_memory_allocated>0 && first.current_memory_allocated<held,"the values the copy holds stay; the tables of the source go")
-    testing.expect_value(t,source_value(&copied,{100,0,200}),expected)
+    testing.expect_value(t,source_value(&copied,{100,0,200}) or_else 0,expected)
     // The copy holds them alone now: it writes them in place.
     values:=raw_data(copied.field.pages[1+5*3].values)
     testing.expect(t,share_raise(&copied,{1,3}).changed)
