@@ -112,7 +112,8 @@ Ai_Task :: struct {
     review:Ai_Review,
     anchor:[3]f32,  // where its figure stands
     anchor_set:bool,
-    facing:f32,     // the turn of its figure about +Y, toward what it works on
+    follows:bool,   // placed beside its last transaction when next drawn, once the bodies took it
+    look:[3]f32,    // what its figure looks at: the middle of what it works on
     figure_shown:bool, // its figure appeared: it stays through the turns of the conversation until the agent ends
     context_ids:[AI_ENTITY_CAPACITY]base.Entity_Id,
     context_count:int,
@@ -386,6 +387,12 @@ ai_input :: proc(s:^Session,m:^Ai) {
         m.focus=true
     }
     ai_play_follow(s)
+    ai_poll(s,m)
+}
+
+// What the agents said and what waits for them, every frame and between
+// the frames of a manual editor, whose agents work while nothing draws.
+ai_poll :: proc(s:^Session,m:^Ai) {
     ai_task_poll(s,m)
     ai_external_poll(s,m)
     ai_deliveries_advance(s,m)

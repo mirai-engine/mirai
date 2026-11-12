@@ -8,7 +8,7 @@ import "mirai:std/serial"
 import "mirai:ui"
 
 // The agents of each editor stand in the scenes of the others: where its
-// figure is and what it faces, its color, glyph and name, and what the turn
+// figure is and what it looks at, its color, glyph and name, and what the turn
 // changed while it waits for review, which the others outline in its color.
 // Each end sends its own when they change, and every COLLAB_AGENTS_INTERVAL
 // while it has some, so whoever joins later sees them; the host passes them
@@ -23,7 +23,7 @@ Collab_Agent :: struct {
     task:u16,
     color,icon:u8,
     anchor:[3]f32,
-    facing:f32,
+    look:[3]f32,
     name:[32]u8,
     name_length:int,
     first,count:int, // of the ids of its editor
@@ -59,7 +59,7 @@ collab_agents_send :: proc(s:^Session,st:^Collab_State,now:f64) {
         serial.write_scalar(&w,task.color_index)
         serial.write_scalar(&w,task.icon)
         serial.write_scalar(&w,anchor.x);serial.write_scalar(&w,anchor.y);serial.write_scalar(&w,anchor.z)
-        serial.write_scalar(&w,task.facing)
+        serial.write_scalar(&w,task.look.x);serial.write_scalar(&w,task.look.y);serial.write_scalar(&w,task.look.z)
         name:=ai_agent_name(s.ai,&task)
         serial.write_string(&w,name)
         ids:[]base.Entity_Id
@@ -91,7 +91,7 @@ collab_agents_receive :: proc(st:^Collab_State,from:int,data:[]u8) {
         agent.color=serial.read_u8(&r)
         agent.icon=serial.read_u8(&r)
         agent.anchor={serial.read_f32(&r),serial.read_f32(&r),serial.read_f32(&r)}
-        agent.facing=serial.read_f32(&r)
+        agent.look={serial.read_f32(&r),serial.read_f32(&r),serial.read_f32(&r)}
         agent.name_length=copy(agent.name[:],serial.read_string(&r))
         ids:=int(serial.read_u16(&r))
         if r.failed || ids>COLLAB_AGENT_IDS-agents.id_count {break}
@@ -118,7 +118,7 @@ collab_remote_agents :: proc(m:^Ai,st:^Collab_State,i:int,now:f64) -> []Collab_A
 
 // Their figures, glyphs and names, as those of the agents of this end.
 @(private)
-collab_agents_draw :: proc(s:^Session,st:^Collab_State,now:f64) {
+collab_agents_draw :: proc(s:^Session,st:^Collab_State,w:core.World_Ref,now:f64) {
     _,low,high,loaded:=presence_mesh(s.app.assets)
     if !loaded {return}
     for i in 0..<COLLAB_PEERS {
@@ -126,7 +126,7 @@ collab_agents_draw :: proc(s:^Session,st:^Collab_State,now:f64) {
             color:=agent_color(int(agent.color))
             eyes:=agent.anchor+{0,-low.y,0}
             figure:=&st.agent_figures[i][k]
-            if presence_prepare(s,figure,eyes,agent.facing,color,agent_level(int(agent.color)),u64(1)<<32|u64(i)<<16|u64(agent.task)) {host.extras_instance_add(&s.app.extras,figure.instance)}
+            if presence_prepare(s,figure,eyes,agent.look,color,agent_level(int(agent.color)),u64(1)<<32|u64(i)<<16|u64(agent.task),w) {host.extras_instance_add(&s.app.extras,figure.instance)}
             if rect,shown:=presence_glyph_rect(s,presence_shown(figure,eyes)+{0,high.y,0},s.viewport.view_projection);shown {
                 presence_icon_draw(s,rect,collab_agent_icon(agent),color)
                 presence_name_draw(s,rect,string(agent.name[:agent.name_length]),color)

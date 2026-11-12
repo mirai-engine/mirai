@@ -118,8 +118,7 @@ alpha_coverage :: proc(pixels: []u8, cutoff, scale: f32) -> f32 {
 
 // Averaging thins a cutout: fewer texels of each smaller level pass the test,
 // and foliage or a fence fades away with distance. Scaling the alpha of the
-// level brings its coverage back to the one of the image (Castano 2010; the
-// alpha coverage setting of Unreal textures).
+// level brings its coverage back to the one of the image (Castano 2010).
 @(private = "file")
 alpha_coverage_keep :: proc(pixels: []u8, cutoff, wanted: f32) {
 	lo, hi := f32(0), f32(8)

@@ -639,7 +639,7 @@ foliage_create :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref
 Foliage_Thumbnails :: struct {provider:editor.Thumbnail_Provider}
 FOLIAGE_THUMBNAILS_DEFAULT :: Foliage_Thumbnails{provider={kinds={0=foliage.FOLIAGE_KIND},count=1,subject=foliage_thumbnail}}
 
-// A .foliage in the browser, with the color of Unreal's foliage types.
+// A .foliage in the browser, with the color of its kind.
 // The menu of a mesh in the browser adds it as a type to the foliage the tool
 // edits, or makes a foliage of it when none is selected.
 @(storage)

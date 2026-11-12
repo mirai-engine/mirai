@@ -571,3 +571,54 @@ a_ball_rests_on_a_ridge_too_flat_to_be_hit :: proc(t:^testing.T) {
         body_destroy(&w,ball)
     }
 }
+
+@(test)
+the_cells_of_a_heightfield_meet_what_touches_them_as_the_rule_of_their_surface_says :: proc(t:^testing.T) {
+    w:World
+    testing.expect(t,test_world(&w))
+    defer world_destroy(&w)
+    // Three bands of 7 cells along x: rough (no rule), ice and rubber.
+    rough,ice,rubber:=Surface{1,0},Surface{2,0},Surface{3,0}
+    heights:=make([]f32,22*22,context.temp_allocator)
+    surfaces:=[3]Surface{rough,ice,rubber}
+    cells:=make([]u8,21*21,context.temp_allocator)
+    for row in 0..<21 {for column in 0..<21 {cells[row*21+column]=u8(column/7)}}
+    desc:=Heightfield_Desc{heights=heights,columns=22,rows=22,cell={1,1,1},surfaces=surfaces[:],cell_surfaces=cells}
+    bad:=desc
+    bad.cell_surfaces=cells[:20]
+    _,short:=heightfield_create(&w,bad)
+    bad=desc;bad.surfaces=surfaces[:2]
+    _,unnamed:=heightfield_create(&w,bad)
+    testing.expect(t,!short && !unnamed,"every cell names one of the surfaces")
+    field,ok:=heightfield_create(&w,desc)
+    if !testing.expect(t,ok) {return}
+    cells[0]=2
+    test_static_shape(&w,field)
+    testing.expect(t,!world_set_surface_rules(&w,{{ice,-1,0}}) && !world_set_surface_rules(&w,{{ice,0,0},{ice,1,0}}) && !world_set_surface_rules(&w,{{{},0,0}}))
+    testing.expect(t,world_set_surface_rules(&w,{{ice,0,0},{rubber,0.6,0.9}}))
+    for x,surface in ([3]f32{3.5,10.5,17.5}) {
+        hit,found:=ray_cast_closest(&w,{x,2,0.5},{0,-4,0})
+        testing.expect(t,found && hit.surface==surfaces[surface],"a ray names the surface of the cell it hits")
+    }
+    slow:=test_body(&w,Box{{0.3,0.3,0.3}},{3.5,0.3,2})
+    slides:=test_body(&w,Box{{0.3,0.3,0.3}},{10.5,0.3,2})
+    flat:=test_body(&w,Sphere{0.3},{3.5,3,15})
+    bounces:=test_body(&w,Sphere{0.3},{17.5,3,15})
+    for body in ([2]Body_Handle{slow,slides}) {body_set_velocity(&w,body,{0,0,4},{})}
+    touched:[4]Surface
+    for _ in 0..<60 {
+        world_step(&w,1.0/60)
+        for event in world_events(&w).contact_begin {
+            for body,i in ([4]Body_Handle{slow,slides,flat,bounces}) {
+                if event.body_b==body {touched[i]=event.surface}
+            }
+        }
+        if body_linear_velocity(&w,bounces).y>2 {break}
+    }
+    testing.expect(t,touched[2]==rough && touched[3]==rubber,"a contact names the surface of the cell it touches")
+    testing.expect(t,body_linear_velocity(&w,bounces).y>2,"rubber gives back the fall")
+    testing.expect(t,body_linear_velocity(&w,flat).y<0.5,"a cell without a rule keeps the restitution of the shape")
+    test_steps(&w,30)
+    testing.expect(t,length(body_linear_velocity(&w,slow))<0.1,"a cell without a rule keeps the friction of the shape")
+    expect_near(t,body_linear_velocity(&w,slides).z,4,0.05)
+}

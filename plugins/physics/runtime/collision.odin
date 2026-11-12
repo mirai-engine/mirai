@@ -54,12 +54,13 @@ Collision_Push :: struct {
     force:f32 `mirai:"min=0,unit=N"`,
 }
 
-// One entry per preset that differs from the Default category colliding with everything; an entry of
-// zeros says nothing.
+// One entry per preset that differs from the Default category colliding with everything, and per material
+// that collides otherwise than its colliders (Collision_Surface); an entry of zeros says nothing.
 @(storage,setting)
 Collision_Settings :: struct {
     presets:[COLLISION_PRESET_CAPACITY]Collision_Preset_Setting `mirai:"trim"`,
     pushes:[COLLISION_PUSH_CAPACITY]Collision_Push `mirai:"trim"`,
+    surfaces:[COLLISION_SURFACE_CAPACITY]Collision_Surface `mirai:"trim"`,
 }
 
 COLLISION_SETTINGS_DEFAULT :: Collision_Settings{

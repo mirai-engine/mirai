@@ -5,8 +5,7 @@ import "mirai:std/spatial"
 import "mirai:std/base"
 import math "mirai:std/math"
 
-// How the weight of a volume goes from its border (x=0) to its center (x=1): the falloff curves of Chaos
-// fields.
+// How the weight of a volume goes from its border (x=0) to its center (x=1): the falloff curves of a force field.
 Radial_Falloff :: enum u8 {
     Constant,    // 1
     Linear,      // x
@@ -15,8 +14,7 @@ Radial_Falloff :: enum u8 {
     Logarithmic, // log2(x+1)
 }
 
-// Weights at the border (min) and at the center (max): the curve goes from one to the other, as MinRange and
-// MaxRange of a Chaos field. The zero value is {0,1}.
+// Weights at the border (min) and at the center (max): the curve goes from one to the other. The zero value is {0,1}.
 Weight_Range :: struct {min,max:f32}
 
 // Gradient noise that scales the weight of a volume: features about `scale` meters across, fixed to the frame

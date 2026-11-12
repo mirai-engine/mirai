@@ -120,7 +120,7 @@ ai_external_turn :: proc(s:^Session,client:string) -> ^Ai_Task {
     task.world=s.edit_world
     task.play=s.mode!=.Edit
     task.context_count=0
-    task.anchor_set=false
+    task.anchor_set,task.follows=false,false
     ai_scene_anchor(s,task)
     m.next_id=max(m.next_id,task.id)
     base.text_format(task.name[:],"%d-%d",task.id,task.transcript.dropped+task.transcript.count)

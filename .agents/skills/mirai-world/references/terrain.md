@@ -98,6 +98,12 @@ Chunks:
   compressed block in `<grid>_blocks`, stored uncompressed, so each page is read alone, by file
   range ([residency](#jobs-publishing-and-residency)). The runs depend on the values, not on what a
   grid happens to hold: two sources with the same samples write the same file.
+- **Coarse data** of a Heightfield ([tree](#tree-and-nodes)) is in the file too, in records the
+  front of the file holds: the `coarse` table, a row per point of the coarse grid with a column
+  per kind of value, and the `pieces` table, a row per chunk and node with the heights it
+  reaches and the errors of its levels. A world reads it with the source, so no page is decoded
+  for what is far; a source without it in memory (one of the editor) measures it when it is
+  written. A new value of the coarse grid is one more column of `coarse`.
 - **Page coding** (`page_code.odin`): before the codec a page goes in byte planes, or, f32 values on
   multiples of `HEIGHT_STEP`, as the zigzag distance in steps from the plane of each sample's
   neighbors left, above and above-left, in byte planes. Saving puts heights on that lattice, at
@@ -145,13 +151,14 @@ Levels of detail:
   level (`Chunk_Mesh.locked`, `asset.Mesh_Source.locked`), so nodes and chunks meet without cracks
   at any mix of levels.
 - The level of a Heightfield piece is the coarsest whose error (`Lod_Errors`: the farthest it
-  ends up from its samples, measured when reading the source and followed by the edits) covers
+  ends up from its samples, stored in the file and followed by the edits) covers
   about `LOD_PIXELS` of the view from its terrain, and never finer than samples at
   `LOD_SPACING_PIXELS` pixels, which at a grazing angle come closer (`LOD_GRAZING`): the detail
   between samples that a pixel covers is not seen, however large its error. The pixels come from
-  the height and field of the view (`core.View`), with hysteresis. With a positive
-  `Terrain_Settings.lod_distance` the level comes from the distance to the box, never coarser
-  than its error allows.
+  the height and field of each view (`core.View` and, on a split screen, the slot of each local
+  player in `camera.Camera_Views`), with hysteresis: a piece is one mesh for every view, so it
+  shows what the view that sees it finest needs. With a positive `Terrain_Settings.lod_distance`
+  the level comes from the distance to the box, never coarser than its error allows.
 - Two Heightfield chunks that touch, by a side or a corner, are at most one level apart
   (`lod_levels_balance` refines the coarser one): a fine edge stitched to an interior several
   levels coarser folds.
@@ -173,11 +180,14 @@ Levels of detail:
 
 Collision and picking:
 
-- Only chunks collide; a node never does. The nearest chunks collide that fit in the
-  `Physics_Settings` slots (`heightfields` or `meshes`, and `shapes`) not occupied by the colliders
-  of other entities, and with `Terrain_Settings.collision_distance` only those inside it: physics
-  capacity bounds how many, the distance which ones. No distance forces more chunks than physics
-  admits.
+- Every piece a solid terrain shows collides: a chunk with every sample, a node with the triangles
+  it shows (a Mesh collider), so far ground stops long rays and thrown bodies however few chunks
+  physics admits. The nearest pieces collide that fit in the `Physics_Settings` slots
+  (`heightfields` or `meshes`, and `shapes`) not occupied by the colliders of other entities, every
+  chunk before any node, and with `Terrain_Settings.collision_distance` only those inside it:
+  physics capacity bounds how many, the distance which ones. No distance forces more chunks than
+  physics admits. Where its collision is loaded for the ground (`Ground_Query.unloaded`) still
+  counts chunks only.
 - Drawing does not depend on the collider: a chunk whose collider finds no slot shows its ground
   without it (`terrain.collider_budget`) and tries again when the colliders change.
 - While the world is not playing, every published chunk keeps its triangles on the CPU, also
@@ -185,6 +195,11 @@ Collision and picking:
   collider keeps them.
 - A holed cell has no visible triangles, picking or collision; the physics heightfield receives the
   chunk's mask and its edges next to a hole stay active.
+- Each cell of a Heightfield collider shows one material: the one whose layers cover most of it, by
+  the weights its four corners show (painted and automatic) added up by material. Hits and contacts
+  name it, and `Collision_Settings.surfaces` gives it its friction and restitution
+  ([collision](../../mirai-physics/references/engine.md#collision-categories-and-presets)). A
+  Volume's Mesh collider has one surface.
 
 Construction and publishing:
 
@@ -437,7 +452,10 @@ touches fit in a tick's queue.
 - `terrain.dig(requests,Brush,owner) -> Edit_Error` asks for an edit, in the world:
   `terrain_replay` and `terrain_update` resolve the owner first (given, or the terrain the brush
   touches: the nearest to the center, then the smallest footprint) and hand the brush on in its
-  space, so networking keys edits by that owner. `terrain_requests_serve` keeps the room
+  space, so networking keys edits by that owner: lengths by the terrain's scale over x and z, the
+  metres Raise, Lower and Noise move and the steps of a Terrace by its scale along y. A scale
+  uneven over x and z, or along y for a shape of Add or Carve or any brush of a Volume, is the
+  error `Scale`. `terrain_requests_serve` keeps the room
   of `Terrain_Settings.requests` and reports what was dropped or refused.
 - **A brush is an intent** (`Brush_Kind`), the same call on whichever representation is under it:
   Add and Carve join or take the shape of the brush (sphere, capsule or box), Raise and Lower
@@ -484,14 +502,17 @@ that stopped being solid, with its weights; in a Heightfield, the height that we
 with the weights of its column. `terrain` stores none of that: the game uses it (an inventory,
 points) and these plugins:
 
-- **Dust:** `Terrain_Dust` on the terrain (`dust.odin`) gives per layer a channel of
+- **Dust:** `Terrain_Dust` on the terrain (`dust.odin`) gives per material a channel of
   `core.Births` (`CHANNEL_DUST` or another, for another effect) and its color, and births per cubic
   meter with a cap per edit. An emitter of [`vfx`](vfx.md#channels) with a `Particle_Channel` of
   that channel shows it; without `vfx` nobody takes them.
-- **Pieces and drops:** the `terrain_debris` plugin. `Terrain_Debris` gives per layer a piece
-  prefab (with `Rigid_Body`, of the layer's material, which leaves with `speed`) and a drop one,
+- **Pieces and drops:** the `terrain_debris` plugin. `Terrain_Debris` gives per material a piece
+  prefab (with `Rigid_Body`, which leaves with `speed`) and a drop one,
   each per so many cubic meters removed; what does not reach is owed to the next edit of that
   terrain (`Debris_Owed`), with a cap per tick for each.
+- Both key their entries by the material of the layer taken (`material_entry`): an entry without
+  a material is for every material no entry names, and a layer keeps its entry when the layers are
+  reordered or removed.
 - Both are configured in the inspector and by `scene.write`; the demo has them in the `dig`
   scene.
 
@@ -542,7 +563,9 @@ other; authority, prediction and rollback for the rest belong to the
   which the client made it. What is not allowed is refused with the cause (rate, connection
   without a seat, reach from what its seat drives, radius, brush, tick, unloaded source or the
   edit's error), which the client reports as the `terrain.net_refused` problem with how to fix it.
-  `Terrain_Net_Settings` (project setting) sets the rate, the reach and the radius.
+  `Terrain_Net_Settings` (project setting) sets the rate, the reach of the brush's center and the
+  radius: half of the longest side of the world box the brush may change, and the metres it moves
+  the ground.
 - **What the game asks of a client is a prediction:** an edit is applied at its tick, stored with
   its check and asked of the server. When the server's edit comes back, a prediction that left the
   same check stays as that edit, without repeating the brush. A layer change is not predicted
@@ -602,8 +625,8 @@ Construction in jobs:
   tick without ground under a viewer. Those jobs can use all the slots; the others, half.
 - Changing level, border or collider publishes the piece and the neighbors whose sides change in
   the same call.
-- A source is read whole in a job (`data_load_begin`): its file, its coarse grid and what its
-  chunks and nodes reach, in memory of its own (`Data_Source.allocator`), and `data_load_end` adds
+- A source is read whole in a job (`data_load_begin`): its file and its coarse data, in memory of
+  its own (`Data_Source.allocator`), and `data_load_end` adds
   it to the sources. Those that a section's load names are requested while it waits for the
   libraries and make it wait (`scene.Load_Waits`): the section joins with its ground ready. One
   that nobody waited for (the scene that opens, the one the editor adds) is read in the call that
@@ -647,8 +670,10 @@ per frame (in the first call); what the data changes, in each call.
   built.
 - A Heightfield node is assembled from the coarse grid (`coarse.odin`): heights and layer weights
   every `COARSE` samples and in the last row and column, in memory while the source is there, with
-  a bilinear between them. Reading the source fills it reading each page once, by rows of chunks in
-  jobs (and the chunks of each row too); edits and layers follow it. Its interior level is at least
+  a bilinear between them. It comes from the file ([format](#canonical-format)); one made in
+  memory measures it reading each page once, by rows of chunks in jobs (and the chunks of each row
+  too). Edits and layers follow it: the heights a piece reaches and its errors only grow with an
+  edit until the source is measured again. Its interior level is at least
   its depth and `COARSE_LEVEL`, and the layer rule reads the slope of the coarse grid. A node shows
   no holes.
 - A Volume node is built from the blocks of its chunks (`node_build`), read for the build and let
@@ -656,9 +681,13 @@ per frame (in the first call); what the data changes, in each call.
   waiting for it, and its levels are made in a second job that reads no source, so an edit does
   not wait for them. Chunks are built before nodes. An edit under a node that shows builds it
   again.
-- A node has no collider; it keeps its triangles for picking while the world is not playing.
-- The distance of an unbuilt piece uses the heights of its samples (`Data_Source.ranges`, from
-  reading the source and from edits), not a 0.
+- A node collides with the triangles it shows ([collision](#geometry-and-collision)); without a
+  collider it keeps them for picking while the world is not playing.
+- The distance of an unbuilt piece uses the heights of its samples (`Coarse.ranges`, from the
+  file and from edits), not a 0.
+- What each piece is from the views and viewers is measured in spans of nodes in jobs, so a large
+  terrain spreads over the workers; it is measured again when a view or a viewer moves, or the
+  place of a terrain, not when anything else in the world moves.
 
 Residency by distance:
 
@@ -682,9 +711,11 @@ Residency by distance:
   weights come and go with its distances, block by block.
 - The residency of the pages is that of the chunks, which is the shared one of `scene`: the terrain
   has none of its own. Far from every viewer the chunks of a Volume are released, and their blocks
-  with them: what a game reads of a source there (`source_ray`, `source_value`) is not in memory.
-- A brush first reads, in the tick, the pages it touches, and removing a layer all those of its
-  weights. Save writes each page, those in memory and those in their blocks.
+  with them: what a game reads of a source there is not in memory (`source_value` answers
+  `ok=false` there and outside the source, and `source_ray` ends).
+- A brush first reads, in the tick, the pages it touches. Removing a layer rewrites each page of
+  the weights in its block into a block of its own, one page in memory at a time. Save writes each
+  page, those in memory and those in their blocks.
 - A source that only has the registry's memory (held by the editor until its step ends) is read
   whole.
 - A world copy (Play, snapshot, rollback) shares the pages in memory, the own blocks and the coarse
@@ -710,9 +741,10 @@ Reading from other plugins (such as the foliage bridge), with `core.Ref(Terrain_
 ## Limits in open worlds
 
 - A source that is only in the registry's memory (held until its step ends) is read whole.
-- **Volume** is limited to `VOLUME_SAMPLES_MAX` per axis and `VOLUME_CHUNKS_MAX` chunks. Its
-  octree stops at `VOLUME_NODE_CELLS`: a Volume kilometers wide shows its far ground as that many
-  roots, each a piece of `Terrain_Settings.chunks`, and a streamed one builds each root once.
+- A source is limited to `SAMPLES_MAX` per axis and `CHUNKS_MAX` chunks, whatever its file says:
+  a larger one takes more cells per chunk. A **Volume**'s octree stops at `VOLUME_NODE_CELLS`: a
+  Volume kilometers wide shows its far ground as that many roots, each a piece of
+  `Terrain_Settings.chunks`, and a streamed one builds each root once.
 - A Heightfield cannot hold an overhang: Add and Carve move its columns. Ground that needs one is
   a Volume, alone or [joined](#joining-a-volume-with-a-heightfield) to the Heightfield around it.
 - **Joining a Volume with a Heightfield:** a Volume rotated against the ground does not join
@@ -739,13 +771,16 @@ physics, saving, stability and world copy.
   borders of its blocks) and `a_large_volume_holds_and_stores_only_the_blocks_of_its_surfaces`.
 - Recycled handles, relinked sources and incomplete chunks: authors are not confused with derived
   children nor left orphaned.
-- `layers_test.odin`, `holes_test.odin`, `shading_test.odin` and `shape_test.odin` (falloff, wide
+- `layers_test.odin` (`each_collider_cell_shows_the_material_that_covers_most_of_it` among them),
+  `holes_test.odin`, `shading_test.odin` and `shape_test.odin` (falloff, wide
   Smooth, ramp and shapes).
 - `displaced_chunks_split_their_cells_on_the_collider_and_join_their_neighbors`: the relief
   subdivides over the collider, stitches the sides and respects the holes; its image needs a GPU
   capture.
-- Levels: `chunks_of_mixed_levels_join_without_cracks_or_overlaps` and
-  `far_chunks_show_coarser_levels_while_colliders_keep_every_sample`. `bench_terrain_levels`
+- Levels: `chunks_of_mixed_levels_join_without_cracks_or_overlaps`,
+  `balanced_levels_are_the_coarsest_one_apart_from_their_neighbors` and
+  `far_chunks_show_coarser_levels_while_colliders_keep_every_sample` (also a second local view).
+  `bench_terrain_levels`
   (`-define:TERRAIN_BENCH=true`) measures each level.
 - `terrains_that_cannot_load_or_be_edited_report_their_entity_and_the_fix`.
 - Brushes (`brush_options_test.odin`):
@@ -780,13 +815,15 @@ physics, saving, stability and world copy.
   `chunks_without_a_slot_for_their_collider_still_show_their_ground_and_the_nearest_collide`,
   `letting_go_of_an_excavated_zone_and_reading_it_again_keeps_its_edits`,
   `a_volume_lets_go_of_the_blocks_far_from_its_viewers_and_reading_them_again_keeps_its_edits`,
-  `reading_a_paged_source_again_keeps_the_pages_its_file_still_holds` and
+  `reading_a_paged_source_again_keeps_the_pages_its_file_still_holds`,
+  `a_paged_heightfield_reads_its_coarse_data_and_loses_a_layer_without_holding_its_pages` and
   `a_streamed_volume_past_its_budget_shows_nodes_in_place_of_its_far_chunks`.
   `bench_terrain_update_while_a_brush_edits` (`-define:MIRAI_BENCH=true`).
 - Quadtree: `quad_test.odin`
   (`quadtree_nodes_and_chunks_of_mixed_levels_join_without_cracks_or_overlaps`, the coarse grid) and
   `quad_pipeline_test.odin`: a streamed terrain is covered once on each tick when crossing it, an
-  elevated chunk is resident before being built, the piece budget opens by distance, and
+  elevated chunk is resident before being built, the piece budget opens by distance and far
+  nodes collide, and
   `sixty_four_terrains_of_one_source_stream_without_holes_caps_or_allocations` (the 8 by 8 world of
   terrains of one source, scaled down, without allocating in a stable frame).
 
@@ -799,7 +836,7 @@ cause, a correction that comes back and repeats the ticks, the brush in bytes, a
 Ground and dust: `mirai test plugins/terrain/runtime` with
 `the_ground_answers_each_line_as_its_terrain_has_it`,
 `the_chunks_of_a_terrain_without_collider_are_unloaded_ground` and
-`a_dig_raises_dust_of_each_layer_it_took_on_its_channel`. Debris:
+`a_dig_raises_the_dust_of_the_material_of_each_layer_it_took_wherever_the_layer_is`. Debris:
 `mirai test plugins/terrain_debris/runtime`
 (`digs_give_a_piece_for_each_volume_taken_and_keep_what_falls_short_for_the_next`).
 

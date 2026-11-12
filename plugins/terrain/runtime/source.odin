@@ -11,10 +11,11 @@ import "mirai:std/geom"
 import mm "mirai:std/math"
 import "mirai:std/serial"
 
-VERSION :: 11
+VERSION :: 12
 SAMPLES_MAX :: 16385
-// A Volume has at most this many chunks: one that reaches further takes more cells per chunk.
-VOLUME_CHUNKS_MAX :: 1<<18
+// A source has at most this many chunks, which each hold their state: one that reaches further
+// takes more cells per chunk.
+CHUNKS_MAX :: 1<<18
 CHUNK_CELLS_MIN :: 4
 CHUNK_CELLS_MAX :: 256
 UV_METERS :: f32(4)
@@ -60,14 +61,13 @@ source_valid :: proc "contextless" (info:Source_Info) -> bool {
     }
     for n in info.samples {if n>SAMPLES_MAX {return false}}
     switch info.kind {
-    case .Heightfield: return info.samples.y==1 && info.samples.x>=2 && info.samples.z>=2
-    case .Volume:
-        if !(info.samples.x>=3 && info.samples.y>=3 && info.samples.z>=3) {return false}
-        chunks:=u64(1)
-        for n in info.samples {chunks*=u64(max((int(n)-2+int(info.chunk_cells))/int(info.chunk_cells),1))}
-        return chunks<=VOLUME_CHUNKS_MAX
+    case .Heightfield: if !(info.samples.y==1 && info.samples.x>=2 && info.samples.z>=2) {return false}
+    case .Volume:      if !(info.samples.x>=3 && info.samples.y>=3 && info.samples.z>=3) {return false}
+    case:              return false
     }
-    return false
+    chunks:=u64(1)
+    for n in info.samples {chunks*=u64(max((int(n)-2+int(info.chunk_cells))/int(info.chunk_cells),1))}
+    return chunks<=CHUNKS_MAX
 }
 // How far from zero a value of the field may be: a height, or the band of the distances of a Volume.
 field_limit :: proc "contextless" (info:Source_Info) -> f32 {return info.kind==.Volume?info.cell*SDF_BAND_CELLS:HEIGHT_LIMIT}
@@ -142,8 +142,9 @@ source_load :: proc(s:^Source,path:string,types:^asset.Types,allocator:=context.
 // The source an open .terrain holds; s is replaced only when it is valid. With
 // pages, the path of file, a Heightfield or Volume leaves the values of its
 // pages in that file (asset_load_front opens it without them), read when
-// needed.
-source_read :: proc(s:^Source,file:^asset.Asset,types:^asset.Types,allocator:=context.allocator,pages:="") -> (id:base.Asset_Id,ok:bool) {
+// needed. coarse: a Heightfield reads its coarse data too, as the source of a
+// world keeps it.
+source_read :: proc(s:^Source,file:^asset.Asset,types:^asset.Types,allocator:=context.allocator,pages:="",coarse:=false) -> (id:base.Asset_Id,ok:bool) {
     if asset.kind_check(file,TERRAIN_KIND,VERSION)!=.None {return}
     info,error:=asset.asset_row(file,types,"terrain",Source_Info)
     if error!=.None || info==nil || !source_valid(info^) {return}
@@ -158,6 +159,7 @@ source_read :: proc(s:^Source,file:^asset.Asset,types:^asset.Types,allocator:=co
     }
     paged:=pages!=""
     if !source_weights_read(&temporary,file,types,allocator,paged) || !source_holes_read(&temporary,file,types,allocator,paged) {return}
+    if coarse && !coarse_read(&temporary,file,types) {return}
     temporary.origin=file.blob.header.content_hash
     source_destroy(s)
     s^=temporary
@@ -193,6 +195,21 @@ source_bytes :: proc(s:^Source,id:base.Asset_Id,types:^asset.Types,allocator:=co
     grid_put_document(&document,types,&s.field,"field_pages","field_blocks",value_finite,s.file,s.allocator,keep,quantize=s.kind==.Heightfield) or_return
     source_weights_put(&document,types,s,keep) or_return
     source_holes_put(&document,types,s,keep) or_return
+    if s.kind==.Heightfield {
+        // A source without its coarse data (one of the editor) measures it for the file and lets it go.
+        if coarse_ready(s) {
+            coarse_put(&document,types,&s.coarse) or_return
+        } else {
+            held:=s.coarse
+            s.coarse={}
+            built:=source_coarse_build(s)
+            measured:=s.coarse
+            s.coarse=held
+            defer coarse_destroy(&measured,s.allocator)
+            if !built {return nil,.Out_Of_Memory}
+            coarse_put(&document,types,&measured) or_return
+        }
+    }
     asset.import_put(&document,types,import_info) or_return
     return asset.document_bytes(&document,allocator)
 }
@@ -203,11 +220,21 @@ source_cost :: proc(s:^Source) -> int {
     return grid_dense(&s.field)+grid_dense(&s.weights)+grid_dense(&s.holes)+grid_dense(&s.coarse.heights)
 }
 
-// The value of a sample: a height of a Heightfield, a distance of a Volume.
-source_value :: #force_inline proc "contextless" (s:^Source,p:[3]int) -> f32 {return grid_value(&s.field,p)}
+// The value of a sample: a height of a Heightfield, a distance of a Volume;
+// ok is false for one outside the source or whose page is not in memory.
+source_value :: proc "contextless" (s:^Source,p:[3]int) -> (value:f32,ok:bool) {
+    g:=&s.field
+    if !grid_inside(g,p) {return}
+    if id,_:=grid_page_at(g,p);grid_absent(g,id) {return}
+    return grid_value(g,p),true
+}
 
-// Writes a sample, giving its page its own values; false without memory.
-source_set :: proc(s:^Source,p:[3]int,value:f32) -> bool {return grid_put(&s.field,p,value,s.allocator)}
+// Writes a sample, giving its page its own values; false for a value past
+// field_limit or not a number, outside the source, where its page is not in
+// memory, or without memory.
+source_set :: proc(s:^Source,p:[3]int,value:f32) -> bool {
+    return abs(value)<=field_limit(s.info) && grid_put(&s.field,p,value,s.allocator)
+}
 
 source_origin :: proc "contextless" (s:^Source) -> [3]f32 {
     return -[3]f32{f32(s.samples.x-1),f32(s.samples.y-1),f32(s.samples.z-1)}*(s.cell*0.5)

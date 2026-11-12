@@ -3,7 +3,7 @@ package rig
 // The humanoid template: the human skeleton of Mesh2Motion (CC0,
 // github.com/Mesh2Motion/mesh2motion-app, static/assets/human/skeleton.glb),
 // in the engine's space. Its bones keep the names of that rig and of the
-// Quaternius and Unreal ones, so the clips of its library play on what the
+// Quaternius and Epic mannequin ones, so the clips of its library play on what the
 // fit makes and the body is found by its names.
 //
 // rest is the local transform of a bone in the template and reference its

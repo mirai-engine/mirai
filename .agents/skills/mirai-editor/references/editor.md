@@ -33,6 +33,13 @@ The editor prints its usage (`USAGE_TEXT`) on an unknown argument. What the usag
   API and advances when asked. While waiting it keeps up what runs in real time outside the world:
   the Build, the game of the plugin that plays one (`Play_Provider.poll`) and collaboration.
   With `--frames n` it runs n frames, serves the API once per frame and ends.
+- An editor opened with a window on a project whose manual headless editor (a `mirai session`)
+  runs the binaries of the same folder, so the same worktree and build mode, does not open: it
+  calls `editor.show` on that one and ends. That editor gets its window, real-time frames, the
+  editor preferences and the arguments of a windowed restart; its agent's calls go on, and
+  `engine.step` and `editor.input` end with the manual mode. One that does not answer within
+  `SHOW_WAIT_MS` (its agent's call runs) ends the new editor with an error, never a second one
+  that would take its port file. `--launcher`, `--frames`, `--share` and `--join` open their own.
 - `--no-gpu` and `--density` require `--headless`. `--density` serves to see in a capture what only
   fails with fractional scale.
 - `--hidden` opens the native window hidden with the continuous loop; `--width` and `--height`
@@ -347,7 +354,12 @@ session ([collaboration](collaboration.md#what-travels)) is drawn with the same 
   `AGENT_LEVEL`; `AI_CONTEXT_LEVEL` is what a turn only read. The glyph and the name distinguish
   an agent and an editor of the same color.
 - It moves toward where it is said to be, which arrives a few times per second, with exponential
-  smoothing (`presence_follow`), and jumps if far (`PRESENCE_SNAP`). The instance is rebuilt only
+  smoothing along its way (`presence_follow`), and jumps if far (`PRESENCE_SNAP`). The figure of an
+  agent goes through no body of what collides in its world (`core.World_Query`, which physics
+  gives; `presence_route`): straight when clear, else up, across over what stands between and
+  down, and it jumps when there is no clear way. It asks as a sphere about its middle that rests
+  on what is under it. Without a world query it goes straight. That of another editor follows its
+  camera wherever it goes. The instance is rebuilt only
   if the place, the rotation, the color, the assets or the round of derived rows change
   (`Presence_Key`); at rest, a frame does not allocate.
 - A game is seen alone (`presence_in_scene`): in Play, paused or stepped, and in Watch no figure,

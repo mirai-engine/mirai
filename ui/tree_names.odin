@@ -20,7 +20,7 @@ Style_Key :: enum u8 {
     Text_Align_X, Text_Align_Y, Text_Wrap, Ellipsis, Line_Height,
     Fill_Mode, Program, Program_Values, Sounds, Transition, Layout_Transition, Blur,
     Width, Height, Direction, Padding, Gap, Align_X, Align_Y, Columns, Span, Self_X, Self_Y, Aspect,
-    Italic, Gradient,
+    Italic, Gradient, Bar, Rotate, Skew, Color2,
 }
 Style_Keys :: bit_set[Style_Key;u64]
 
@@ -110,6 +110,10 @@ STYLE_KEYS := [Style_Key]Style_Key_Info{
     .Aspect={name="aspect",kind=.Number,place=.Layout,offset=u16(offset_of(Layout,aspect)),size=size_of(f32)},
     .Italic={name="italic",kind=.Flag,offset=u16(offset_of(Node_Style,text)+offset_of(Text_Style,italic)),size=size_of(bool)},
     .Gradient={name="gradient",kind=.Enum,offset=u16(offset_of(Node_Style,gradient)),size=size_of(Fill_Gradient),type=Fill_Gradient},
+    .Bar={name="bar",kind=.Number,offset=u16(offset_of(Node_Style,bar)),size=size_of(f32)},
+    .Rotate={name="rotate",kind=.Number,offset=u16(offset_of(Node_Style,rotate)),size=size_of(f32)},
+    .Skew={name="skew",kind=.Number,offset=u16(offset_of(Node_Style,skew)),size=size_of(f32)},
+    .Color2={name="color2",kind=.Color,offset=u16(offset_of(Node_Style,text)+offset_of(Text_Style,color2)),size=size_of(Color),rule=true,field=.Text_Color},
 }
 
 // The bytes of a value of a style; none for a key of its layout or its blur.
@@ -224,8 +228,8 @@ tree_nodes_take_styles :: proc(nodes:[]Tree_Node,infos:[]Tree_Style_Info) {
     }
 }
 
-// The first control of each page (a tree, a page of a Switcher or a Tabs, a
-// Modal or a Popup) takes the focus when it shows, unless a node of that page
+// The first control of each page (a tree, a page of a Switcher, a Modal or a
+// Popup) takes the focus when it shows, unless a node of that page
 // asks for it: a flag the frame reads as ever, set the first time a tree is
 // built. A List is passed over: its elements come and go.
 tree_pages_focus :: proc "contextless" (nodes:[]Node) {
@@ -239,7 +243,7 @@ tree_pages_focus :: proc "contextless" (nodes:[]Node) {
         parent:=nodes[row].parent
         if parent<0 {return true}
         #partial switch nodes[parent].kind {
-        case .Switcher,.Tabs,.Modal,.Popup:return true
+        case .Switcher,.Modal,.Popup:return true
         }
         return false
     }

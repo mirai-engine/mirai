@@ -1,5 +1,6 @@
 package api
 
+import "core:mem"
 import "core:os"
 import "core:strconv"
 import "core:strings"
@@ -187,20 +188,11 @@ mcp_tools_call :: proc(s:^Server,req:^Request,w:^serial.Writer) -> (Error,bool) 
         s.stats.oversized+=1
         err,ok={SERVER_ERROR,"the result does not fit in the response buffer",""},false
     }
+    // Checking the result takes no memory, so a result of any size the response holds goes.
     if ok {
-        result:=string(serial.writer_bytes(&s.stage))
-        mark:=base.arena_mark(&s.scratch)
-        failed:=s.scratch.failed
         r:serial.Text_Reader
-        serial.text_reader_init(&r,result,base.arena_allocator(&s.scratch))
-        valid:=serial.text_skip(&r) && serial.text_end(&r)
-        base.arena_rewind(&s.scratch,mark)
-        if s.scratch.failed!=failed {
-            s.stats.scratch_failures+=1
-            err,ok={INTERNAL_ERROR,"the result needs more scratch memory than the server has",""},false
-        } else if !valid {
-            err,ok={INTERNAL_ERROR,"the tool returned an invalid result",""},false
-        }
+        serial.text_reader_init(&r,string(serial.writer_bytes(&s.stage)),mem.nil_allocator())
+        if !serial.text_skip(&r) || !serial.text_end(&r) {err,ok={INTERNAL_ERROR,"the tool returned an invalid result",""},false}
     }
     if !ok {
         serial.writer_reset(&s.stage)

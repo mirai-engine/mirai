@@ -126,14 +126,14 @@ ROLE_REST :: Batch_Role(1)
 ROLE_CROWN :: Batch_Role(2)
 ROLE_CELL_CROWN :: Batch_Role(3) // of no type: the crown of the whole cell
 
-// The crown of a cell of a source at a version, in the space of its Foliage:
-// every Foliage that shows the source traces the same mesh, placed by its
-// own transform (a world of sections that reference one scene many times).
+// The crown of a cell of a source, in the space of its Foliage: every
+// Foliage that shows the source with the same instances there traces the
+// same mesh, placed by its own transform (a world of sections that reference
+// one scene many times).
 Shared_Crown :: struct {
     source:base.Asset_Id,
     coord:[2]i32,
-    version:u32,
-    removed:u64, // the hash of the instances taken out of the cell
+    key:u64, // crown_key of what it is made of
     mesh:base.Asset_Id,
     users:int,
 }
@@ -218,6 +218,23 @@ resident_owner_free :: proc(resident:^Foliage_Resident,owner:^Resident_Owner) {
     for &cell in owner.cells {resident_cell_free(resident,&cell)}
     delete(owner.cells);delete(owner.kinds);delete(owner.winds)
     owner.cells,owner.kinds,owner.winds=nil,nil,nil
+}
+
+// What the renderer forgot with its batches and every mesh (meshes_clear):
+// the cells, with the crowns they share, and the far forms and variants made
+// of those meshes, all made again. A batch it forgot is not found again.
+@(private)
+resident_forget :: proc(resident:^Foliage_Resident) {
+    for &owner in resident.owners {
+        for &cell in owner.cells {resident_cell_free(resident,&cell)}
+        delete(owner.cells)
+        owner.cells,owner.built=nil,false
+        clear(&owner.kinds);clear(&owner.winds)
+    }
+    for &kind in resident.kinds {kind_free(resident.app,&kind)}
+    clear(&resident.kinds)
+    clear(&resident.winds)
+    resident.impostors.dirty=true
 }
 
 // Lets go of the far forms and the variants no Foliage shows any longer, or
@@ -430,14 +447,7 @@ foliage_render :: proc(resident:^Foliage_Resident,data:core.Ref(Foliage_Data),gr
     resident.app,resident.world=app,id
     changed:=false
     if resident.epoch!=render.batches_epoch(app.renderer) {
-        // The renderer forgot them, and every mesh with them: their handles name nothing.
-        for &owner in resident.owners {
-            for &cell in owner.cells {delete(cell.batches);delete(cell.impostors);delete(cell.near)}
-            delete(owner.cells)
-            owner.cells,owner.built=nil,false
-        }
-        clear(&resident.winds)
-        resident.impostors.dirty=true
+        resident_forget(resident)
         resident.epoch=render.batches_epoch(app.renderer)
     }
     if resident.structure!=a.structure {
@@ -878,6 +888,22 @@ foliage_release :: proc(resident:^Foliage_Resident,app:^host.App) {
     resident.stats=stats
 }
 
+// What the crown of a cell is made of (cell_crown_build): each instance
+// where it stands on its ground, and the crown of its type. Two cells with the
+// same key make the same crown.
+crown_key :: proc(placed:[]Placed,crowns:[]Crown_Triangles) -> u64 {
+    key:u64
+    for c,i in crowns {
+        if len(c.indices)==0 {continue}
+        key=base.hash64(bytes_of(c.positions),base.hash64(bytes_of(c.indices),key~u64(i)))
+    }
+    for p in placed {
+        values:=[?]f32{transmute(f32)p.type,p.position.x,p.position.y,p.position.z,real(p.rotation),imag(p.rotation),jmag(p.rotation),kmag(p.rotation),p.scale[0],p.scale[1]}
+        key=base.hash64(bytes_of(values[:]),key)
+    }
+    return key
+}
+
 // The crown of a cell far away: one batch of one instance whose mesh is the
 // crown of the crowns of its instances that cast shadows (cell_crown_build),
 // made again with its batches. Called with the instances of the cell placed
@@ -901,9 +927,20 @@ cell_crown_publish :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,held
         any||=len(kind.crown_indices)>0
     }
     if !any {return}
+    // Each instance that gives the crown, by the index of its type.
+    placed:=make([dynamic]Placed,0,len(work.placed),context.temp_allocator)
+    for i in 0..<len(work.types) {
+        if len(work.crowns[i].indices)==0 {continue}
+        for at in work.order[work.firsts[i]:work.firsts[i+1]] {
+            p:=work.placed[at]
+            p.type=u32(i)
+            append(&placed,p)
+        }
+    }
+    key:=crown_key(placed[:],work.crowns[:])
     crown:base.Asset_Id
     for &c in resident.crowns {
-        if c.source==owner.source && c.coord==held.coord && c.version==held.version && c.removed==held.removed {
+        if c.source==owner.source && c.coord==held.coord && c.key==key {
             c.users+=1
             crown=c.mesh
             break
@@ -912,20 +949,11 @@ cell_crown_publish :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,held
     if crown=={} {
         shape:geom.Mesh_Buffer
         geom.mesh_buffer_init(&shape,context.temp_allocator)
-        // Each instance by the index of its type.
-        placed:=make([dynamic]Placed,0,len(work.placed),context.temp_allocator)
-        for i in 0..<len(work.types) {
-            for at in work.order[work.firsts[i]:work.firsts[i+1]] {
-                p:=work.placed[at]
-                p.type=u32(i)
-                append(&placed,p)
-            }
-        }
         if !cell_crown_build(placed[:],work.crowns[:],&shape) {return}
         made:bool
         crown,made=host.assets_mesh_generate(assets,geom.mesh_buffer_view(&shape),options={no_lods=true})
         if !made {return}
-        append(&resident.crowns,Shared_Crown{owner.source,held.coord,held.version,held.removed,crown,1})
+        append(&resident.crowns,Shared_Crown{owner.source,held.coord,key,crown,1})
     }
     held.crown=crown
     desc,ok:=render.batch_desc(assets,{mesh=crown})

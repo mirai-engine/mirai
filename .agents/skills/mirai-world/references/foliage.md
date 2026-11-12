@@ -100,11 +100,11 @@ to the overrides).
   not read yet or covers none of it shows no generated instance.
 - **Placement rule** (`Foliage_Rule`, like `GroundSlopeAngle`, `Height` and the layers of an
   Unreal `UFoliageType`): on, `rule_allows` admits the ground whose slope (from the normal) and
-  height fall in its ranges and, with `layers`, whose terrain layers add up to at least `weight`;
-  above it, the generated ones are as dense as those layers are there, so the edge of a painted
-  layer fades out.
-  Where it does not meet it, the generated one is absent, as in a hole: the ids of the others do
-  not change. Without known weights (without terrain ground, or a terrain without layers) a rule
+  height fall in its ranges and, with `layers` (materials), whose layers of those materials add
+  up to at least `weight`, whatever the order of the layers of each terrain; above it, the
+  generated ones are as dense as those layers are there, so the edge of a painted layer fades
+  out. Where it does not meet it, the generated one is absent, as in a hole: the ids of the others
+  do not change. Without known weights (without terrain ground, or a terrain without layers) a rule
   with layers admits nothing.
 
 ## Ground
@@ -123,7 +123,9 @@ to the overrides).
   height and the weights of the layers there; `Empty` (a hole, a stroke the editor holds) and
   `Unloaded` (far from every viewer) leave it without ground, NaN; a grid where no sample is
   covered is removed, and a cell that generates there is the `foliage.no_ground` problem of its
-  entity. The layers of the first ground read name what the weights of the owner are of.
+  entity. Each sample names which `Ground_Layers` of its owner (the materials of the four weights
+  of the ground there) its weights are of: a `Foliage` over terrains with other layers, or in
+  another order, keeps them apart, up to `LAYERS_MAX`.
 - **Keep-outs** (`keep_out.odin`): an entity with `Foliage_Keep_Out` keeps generated foliage out
   of its `Volume`, else the width of its `Spline` (a road, a path, a river), else its box,
   sphere, capsule or cylinder `Collider`, and `margin` metres around it; one with neither is the
@@ -206,8 +208,10 @@ shows it and again when the mesh changes, like any cook:
   ([what is unloaded](../../mirai-gameplay/references/libraries.md#scene-references)). With
   `scene.Far_Kept` it draws only the types with a far shape and only that shape (impostors and
   crowns, never the mesh), without physics bodies. The crown of a cell is one per source, cell and
-  version (`Shared_Crown`): the `Foliage`s of the same source trace the same mesh, each with its
-  transform.
+  what it is made of (`Shared_Crown`, `crown_key`: its instances where they stand on the ground
+  and the crowns of their types): the `Foliage`s of the same source on the same ground trace the
+  same mesh, each with its transform. When the renderer forgets its meshes (`batches_epoch`) the
+  cells let go of them, and crowns and far forms are made again.
 - **Budget.** A frame builds cells by `CELLS_A_FRAME` of cost (`CELL_COST` the one that publishes
   batches, 1 that of a `Foliage` that is not loaded) and takes `KINDS_A_FRAME` steps of far
   shapes: drawing the frames of an impostor (that frame builds no cells), or giving the renderer
@@ -254,11 +258,12 @@ same function:
   resident cell with one shape per instance of a type with collision, in the entity's pose and on
   its ground, and rebuilds only the cells that changed or changed residency. The body's
   `user_data` is the entity and the shape's the instance id.
-- **Residency.** That of the streaming sources, like drawing, with `collision_reach`: the farthest
-  that a type with collision is drawn with its mesh, and no more than `COLLISION_REACH`, also for a
-  type that is never culled: many loaded sections do not fill the simulation with all their cells.
-  On a server the sources are the bodies of all connections, so each end has the cells around what
-  it simulates; what the server moves far from every source does not collide with the foliage.
+- **Residency.** That of the simulation sources (`scene.Simulation_Sources`: the bodies the seats
+  drive and the marks, never the view), so a world collides the same whoever looks at it, with
+  `collision_reach`: the farthest that a type with collision is drawn with its mesh, and no more
+  than `COLLISION_REACH`, also for a type that is never culled: many loaded sections do not fill
+  the simulation with all their cells. Without simulation sources every cell collides; what moves
+  far from every source does not collide with the foliage.
 - `Foliage_Physics` stores bodies and shapes with the world: a Play copy or a rollback carries
   both together. They are [owned bodies](../../mirai-physics/references/engine.md#owned-bodies) of
   physics. It does not run in a resimulated tick. `collider_remove` removes the collision of an
@@ -274,7 +279,7 @@ is destroyed in a section (`removal.odin`).
   `Placed.id`), as a pick of its batches gives it or `hit_of(physics, hit)` from
   a `physics.Hit`.
 - `foliage_removals` fulfills it at the end that decides (alone, or the server; a client requests
-  nothing), once per instance that the cell shows, grouped **by cell**: an entity with
+  nothing), once per instance that the cell shows on its ground, grouped **by cell**: an entity with
   `Foliage_Removed` (`replicated`) hanging from the `Foliage` stores the cell, the count and the
   ids of up to `REMOVED_PAGE` instances removed from it, in the order in which they left. What is
   new in a cell goes to its entity with room, and what does not fit, to another. It names the
@@ -370,8 +375,8 @@ the registry's memory as a file of the undo step that creates it.
 - **API** (`foliage_api.odin`): `foliage.create` (with `name`, for its entity and file beside the
   scene), `foliage.type_add` (a type by its mesh with
   the values it receives; its name is unique), `foliage.type_set` (the type by its name, the
-  values it receives; the others stay; a rule's `layers` are materials of the terrain under it, as
-  `Ground_Owner.layers` lists them), `foliage.type_remove`, `foliage.paint` (a paint, erase,
+  values it receives; the others stay; a rule's `layers` are materials of the layers of the
+  terrains under it), `foliage.type_remove`, `foliage.paint` (a paint, erase,
   reapply, generate or ungenerate stroke from `at` to `to`), `foliage.place` and `foliage.query`
   (types with their instances and instances inside a box), each change an undo step. They read
   the place and the ground of the `Foliage` as they are now: a manual editor runs the frames that
@@ -396,7 +401,7 @@ the registry's memory as a file of the undo step that creates it.
   (`instances_stand_on_their_ground_and_generated_ones_leave_where_it_has_none`,
   `a_manual_instance_aligned_with_its_ground_leans_with_the_ground_that_changes`), rules and offset
   (`a_rule_of_slope_and_height_takes_out_the_generated_points_off_it_and_keeps_the_ids_of_the_rest`,
-  `a_rule_of_layers_takes_the_ground_with_enough_of_them_and_none_where_they_are_not_known`,
+  `a_rule_of_layers_takes_its_materials_in_any_order_and_nothing_unknown`,
   `a_generated_point_takes_an_offset_of_its_type_and_keeps_its_other_values`,
   `a_foliage_file_written_before_the_rules_reads_them_off_and_bad_rules_are_refused`), batches and
   prefabs (`batch_instances_carry_the_transform_of_their_entity`,
@@ -407,13 +412,16 @@ the registry's memory as a file of the undo step that creates it.
   `the_cells_of_foliage_collide_while_they_are_resident`), types
   (`a_removed_type_takes_its_instances_and_overrides_with_it`,
   `a_type_with_an_impostor_draws_its_mesh_up_to_its_distance`), crown
-  (`a_crown_is_the_closed_surface_of_the_voxels_dense_with_leaves`) and wind
+  (`a_crown_is_the_closed_surface_of_the_voxels_dense_with_leaves`,
+  `the_crown_of_a_cell_covers_its_trees_with_fewer_triangles_than_theirs`,
+  `what_the_renderer_forgets_takes_the_crowns_and_far_forms_with_it`) and wind
   (`an_instance_sways_with_the_variant_of_its_turn_and_downwind`,
   `the_instance_of_a_variant_is_found_among_those_of_its_type`).
 - Ids of the manual ones: `a_manual_instance_keeps_its_id_through_the_edits_of_its_cell`.
 - Resident cap: `past_their_budget_the_nearest_cells_stay_resident`.
 - Instances removed (`plugins/foliage/runtime`):
   `instances_taken_out_are_one_entity_for_each_cell_that_the_cell_leaves_out`,
+  `an_instance_is_taken_out_of_what_its_cell_shows_on_its_ground`,
   `thousands_of_instances_taken_out_of_a_few_cells_are_a_few_entities` and
   `a_saved_game_takes_out_the_same_instance_after_its_source_is_edited` and
   `an_instance_taken_out_later_sends_a_small_part_of_its_cell`; that they reach a client:
@@ -435,7 +443,8 @@ the registry's memory as a file of the undo step that creates it.
   `generate_turns_on_the_cells_under_the_ring_and_ctrl_turns_them_off`,
   `a_step_keeps_the_cells_it_changed_and_trades_them_back`,
   `a_group_moves_together_and_an_instance_that_leaves_its_cell_keeps_the_others_named`,
-  `reapply_gives_the_instances_the_scale_of_their_type_once_a_stroke`.
+  `reapply_gives_the_instances_the_scale_of_their_type_once_a_stroke`,
+  `a_point_past_what_a_foliage_holds_fails_naming_its_field`.
   Gestures (strokes, clicks, the gizmo) are tested by the user.
 - `mirai test render` (CPU): `impostor_frames_cover_the_upper_hemisphere_and_fold_back`,
   `impostor_frames_spread_their_color_into_what_they_do_not_cover`,

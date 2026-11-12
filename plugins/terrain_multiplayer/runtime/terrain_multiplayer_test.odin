@@ -261,7 +261,7 @@ same_ground :: proc(a,b:^End) -> (same:bool,differ:int) {
     last:=[3]int{int(sa.samples.x)-1,int(sa.samples.y)-1,int(sa.samples.z)-1}
     if !terrain.source_region_read(sa,{},last) || !terrain.source_region_read(sb,{},last) {return}
     for z in 0..<int(sa.samples.z) {for y in 0..<int(sa.samples.y) {for x in 0..<int(sa.samples.x) {
-        if terrain.source_value(sa,{x,y,z})!=terrain.source_value(sb,{x,y,z}) {differ+=1}
+        if (terrain.source_value(sa,{x,y,z}) or_else 0)!=(terrain.source_value(sb,{x,y,z}) or_else 0) {differ+=1}
     }}}
     return differ==0,differ
 }
@@ -269,7 +269,7 @@ same_ground :: proc(a,b:^End) -> (same:bool,differ:int) {
 @(private="file")
 height :: proc(e:^End,x,z:int) -> f32 {
     s:=terrain.terrain_source(core.ref(&e.data),SOURCE)
-    return terrain.source_value(s,{x,0,z})
+    return (terrain.source_value(s,{x,0,z}) or_else 0)
 }
 
 // A brush over sample x,z of the source.
@@ -441,7 +441,10 @@ an_edit_the_server_does_not_allow_is_refused_with_what_failed_and_taken_back :: 
     // a has a seat; b does not.
     end_seat(&s,1)
     s.net_settings.radius=3
-    terrain.dig(&a.terrain_requests,brush_at(&a,.Raise,40,40,5,1),a.owner)
+    // A box of radius 1 that reaches 20 m: the radius is not what the server bounds.
+    wide:=brush_at(&a,.Add,40,40,1,1)
+    wide.shape,wide.extent=.Box,{20,2,20}
+    testing.expect_value(t,terrain.dig(&a.terrain_requests,wide,a.owner),terrain.Edit_Error.None)
     terrain.dig(&b.terrain_requests,brush_at(&b,.Raise,60,60,2,1),b.owner)
     end_tick(&a,&f);end_tick(&b,&f)
     testing.expect(t,height(&a,40,40)>0.5 && height(&b,60,60)>0.5,"each predicts its edit")
@@ -460,6 +463,26 @@ an_edit_the_server_does_not_allow_is_refused_with_what_failed_and_taken_back :: 
         testing.expect_value(t,u32(len(e.net.journal.predictions)),u32(0))
         same,differ:=same_ground(e,&s)
         testing.expectf(t,same,"a refused prediction is taken back by the pages of the server: %d samples differ",differ)
+    }
+}
+
+// The size a server bounds is of all a brush may change and how far it moves the ground.
+@(test)
+a_brush_is_as_large_as_what_it_may_change :: proc(t:^testing.T) {
+    turn:=quaternion128(quaternion(w=0.9238795,x=0,y=0.38268343,z=0)) // an eighth of a turn about y
+    cases:=[?]struct {brush:terrain.Brush,size:f32}{
+        {{kind=.Raise,radius=2,amount=1},2},
+        {{kind=.Raise,radius=2,amount=9},9},
+        {{kind=.Erode,radius=2,amount=1},3},
+        {{kind=.Ramp,radius=1,amount=1,delta={10,0,0}},6},
+        {{kind=.Flatten,center={0,1,0},radius=1,amount=1,target=7},6},
+        {{kind=.Carve,radius=1,amount=1,blend=3},4},
+        {{kind=.Add,shape=.Box,radius=1,amount=1,extent={20,1,1}},20},
+        {{kind=.Add,shape=.Box,radius=1,amount=1,extent={1,1,1},rotation=turn},1.4142135},
+    }
+    for c in cases {
+        size:=brush_size(c.brush)
+        testing.expectf(t,abs(size-c.size)<1e-4,"%v: %v, not %v",c.brush.kind,size,c.size)
     }
 }
 
@@ -584,7 +607,7 @@ a_volume_dig_that_differs_on_a_client_comes_back_as_its_blocks_and_a_late_client
     for _ in 0..<60 {round(&f,&s,&a)}
     testing.expect(t,a.net.journal.stats.desyncs>0,"the dig of the server left other ground on the client")
     dug:=terrain.terrain_source(core.ref(&s.data),SOURCE)
-    testing.expect(t,terrain.source_value(dug,{32,14,32})>0 && terrain.source_value(dug,{32,8,32})<0,"the server dug a bowl under its surface")
+    testing.expect(t,(terrain.source_value(dug,{32,14,32}) or_else 0)>0 && (terrain.source_value(dug,{32,8,32}) or_else 0)<0,"the server dug a bowl under its surface")
     same,differ:=same_ground(&a,&s)
     testing.expectf(t,same,"the blocks of the server repair the client: %d samples differ",differ)
     // One that comes late gets the blocks the server changed.

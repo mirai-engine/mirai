@@ -7,7 +7,7 @@
 // kept to the range of the camera. The view comes to it exponentially, as in
 // Unity and Godot: whatever the change, 95 % of the way in params.adaptation
 // seconds when the light falls and in EXPOSURE_UP of that when it grows. At
-// params.speed, as in Unreal and Bevy: params.adaptation seconds for each EV
+// params.speed, as in Bevy: params.adaptation seconds for each EV
 // it darkens, EXPOSURE_SPEED_UP times as fast when the light grows, and within
 // EXPOSURE_TRANSITION EV of it exponentially, at the rate it had there. The
 // first image of a view and the first after a discontinuity (a camera cut,

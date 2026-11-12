@@ -704,7 +704,7 @@ ai_task_create :: proc(s:^Session,m:^Ai,region:ui.Rect,prompt,agent:string,conti
     }
     task.material=m.material.open && !detached?m.material:{}
     // A figure in the scene keeps its place through a message that gives it nothing new to work on.
-    if task.context_count>0 || !task.figure_shown {task.anchor_set=false}
+    if task.context_count>0 || !task.figure_shown {task.anchor_set,task.follows=false,false}
     ai_scene_anchor(s,task)
     m.next_id=max(m.next_id,task.id)
     m.scene_serial+=1

@@ -2126,7 +2126,7 @@ inspector_pick_finish :: proc(s:^Session,w:core.World_Ref,e:core.Entity) {
     v.pick={}
 }
 
-// The thumbnail of a field that references an asset, as in Unreal: its
+// The thumbnail of a field that references an asset: its
 // preview with the border and the line of the color of its kind, also while
 // it is empty. A double click opens the asset in its editor, a prefab in its
 // tab. quad, icon: what it shows instead, as a shape of the engine.

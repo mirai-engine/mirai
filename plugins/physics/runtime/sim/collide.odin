@@ -7,8 +7,8 @@ MANIFOLD_MAX_POINTS :: 4
 
 // Contact point in the frame of shape A: midway between the two surfaces. Negative separation is penetration.
 Local_Point :: struct {point:Vec3,separation:f32,id:u32}
-// Normal from A to B.
-Local_Manifold :: struct {normal:Vec3,count:i32,points:[MANIFOLD_MAX_POINTS]Local_Point}
+// Normal from A to B. surface: as Manifold_State.
+Local_Manifold :: struct {normal:Vec3,count:i32,surface:u32,points:[MANIFOLD_MAX_POINTS]Local_Point}
 
 @(private) ID_OWNER_B :: 0x8000
 @(private) ID_EDGE_PAIR :: 0x4000

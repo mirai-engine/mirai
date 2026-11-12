@@ -108,6 +108,11 @@ a_foliage_asset_comes_back_as_it_was_written_and_damage_is_refused :: proc(t:^te
     source_cell(&s,{2,-1}).manual[0].scale={0,1}
     _,invalid:=source_bytes(&s,{5,6},&types)
     testing.expect_value(t,invalid,asset.Error.Invalid)
+    source_cell(&s,{2,-1}).manual[0].scale={1,1}
+    // A cell is no farther from its entity than POSITION_MAX.
+    testing.expect(t,f32(COORD_MAX+1)*CELL_SIZE<=POSITION_MAX+CELL_SIZE && source_valid(&s))
+    source_cell(&s,{COORD_MAX+1,0},true)
+    testing.expect(t,!source_valid(&s))
 }
 
 // A manual instance keeps its id while its source keeps it: deleting one
@@ -578,36 +583,42 @@ a_rule_of_slope_and_height_takes_out_the_generated_points_off_it_and_keeps_the_i
     testing.expect_value(t,len(work.placed),len(all.placed))
 }
 
+// A rule names layers by their material: two terrains with the same
+// materials in another order give the same forest.
 @(test)
-a_rule_of_layers_takes_the_ground_with_enough_of_them_and_none_where_they_are_not_known :: proc(t:^testing.T) {
-    testing.expect(t,rule_allows({rule={enabled=true,slope={0,1},height={-1,1},layers=0b0110,weight=0.6}},0,{0,1,0},{0.2,0.3,0.4,0},true),"layers 1 and 2 together")
-    testing.expect(t,!rule_allows({rule={enabled=true,slope={0,1},height={-1,1},layers=0b0010,weight=0.6}},0,{0,1,0},{0.2,0.3,0.4,0},true))
-    testing.expect(t,!rule_allows({rule={enabled=true,slope={0,1},height={-1,1},layers=0b0010}},0,{0,1,0},{},false),"no weights known")
-    testing.expect(t,rule_allows({rule={enabled=true,slope={0,1},height={-1,1}}},0,{0,1,0},{},false),"no layers asked")
-    // Layer 1 all over x up to 16 m, then layer 0 from 24 m; between them, half of each at 20 m.
+a_rule_of_layers_takes_its_materials_in_any_order_and_nothing_unknown :: proc(t:^testing.T) {
+    GRASS,ROCK:=base.Asset_Id{1,1},base.Asset_Id{2,2}
+    testing.expect(t,rule_allows({rule={enabled=true,slope={0,1},height={-1,1},layers={GRASS,ROCK,{},{}},weight=0.6}},0,{0,1,0},0.7,true))
+    testing.expect(t,!rule_allows({rule={enabled=true,slope={0,1},height={-1,1},layers={GRASS,{},{},{}},weight=0.6}},0,{0,1,0},0.5,true))
+    testing.expect(t,!rule_allows({rule={enabled=true,slope={0,1},height={-1,1},layers={GRASS,{},{},{}}}},0,{0,1,0},0,false),"no weights known")
+    testing.expect(t,rule_allows({rule={enabled=true,slope={0,1},height={-1,1}}},0,{0,1,0},0,false),"no layers asked")
+    // Up to x = 16 m a terrain with grass second, all grass; from 24 m one
+    // with grass first, all rock; between them, half of each at 20 m.
     samples:=5
     heights:=make([]f32,samples*samples)
     defer delete(heights)
-    weights:=make([][4]u8,samples*samples)
+    weights:=make([]Layer_Weights,samples*samples)
     defer delete(weights)
-    for z in 0..<samples {for x in 0..<samples {weights[z*samples+x]=x<=2?{0,255,0,0}:{255,0,0,0}}}
-    ground:=Ground_Cell{samples=samples,heights=heights,weights=weights}
-    w,ok:=ground_weights_at(ground,20,5)
-    testing.expect(t,ok && abs(w[0]-0.5)<1e-4 && abs(w[1]-0.5)<1e-4)
+    layers:=[]Ground_Layers{{ROCK,GRASS,{},{}},{GRASS,ROCK,{},{}}}
+    for z in 0..<samples {for x in 0..<samples {weights[z*samples+x]=x<=2?{{0,255,0,0},0}:{{0,255,0,0},1}}}
+    ground:=Ground_Cell{samples=samples,heights=heights,weights=weights,layers=layers}
+    grass:=layer_mask({layers={GRASS,{},{},{}}},layers)
+    w,ok:=ground_layer_weight(ground,&grass,20,5)
+    testing.expect(t,ok && abs(w-0.5)<1e-4)
     s:Source
     defer source_destroy(&s)
     all:Build_Work
     defer build_work_destroy(&all)
     cell:=rule_sample(&s,ground,&all)
-    s.types[0].rule={enabled=true,slope={0,math.PI/2},height={-POSITION_MAX,POSITION_MAX},layers=0b10,weight=1}
+    s.types[0].rule={enabled=true,slope={0,math.PI/2},height={-POSITION_MAX,POSITION_MAX},layers={GRASS,{},{},{}},weight=1}
     work:Build_Work
     defer build_work_destroy(&work)
     cell_build(&s,cell,ground,&work)
     kept:=0
     for p in all.placed {
         _,found:=placed_by_id(work.placed[:],p.id)
-        if p.position.x<=16-1e-3 {testing.expect(t,found,"all of layer 1");kept+=1}
-        if p.position.x>16+1e-3 {testing.expect(t,!found,"less than all of layer 1")}
+        if p.position.x<=16-1e-3 {testing.expect(t,found,"all grass");kept+=1}
+        if p.position.x>16+1e-3 {testing.expect(t,!found,"less than all grass")}
     }
     testing.expect(t,kept>0)
     // Half of it takes the ground to x = 20 m.
@@ -615,13 +626,18 @@ a_rule_of_layers_takes_the_ground_with_enough_of_them_and_none_where_they_are_no
     cell_build(&s,cell,ground,&work)
     for p in work.placed {testing.expect(t,p.position.x<=20+1e-3)}
     testing.expect(t,len(work.placed)>kept)
+    // Grass on both terrains, first on one and second on the other: all of it.
+    s.types[0].rule.weight=1
+    for z in 0..<samples {for x in 3..<samples {weights[z*samples+x]={{255,0,0,0},1}}}
+    cell_build(&s,cell,ground,&work)
+    testing.expect_value(t,len(work.placed),len(all.placed))
     // A sample without layers, or no weights at all: a rule of layers takes nothing.
     weights[1]={}
-    _,ok=ground_weights_at(ground,1,1)
+    _,ok=ground_layer_weight(ground,&grass,1,1)
     testing.expect(t,!ok)
     cell_build(&s,cell,{samples=samples,heights=heights},&work)
     testing.expect_value(t,len(work.placed),0)
-    s.types[0].rule.layers=0
+    s.types[0].rule.layers={}
     cell_build(&s,cell,{samples=samples,heights=heights},&work)
     testing.expect_value(t,len(work.placed),len(all.placed))
 }
@@ -705,7 +721,7 @@ a_foliage_file_written_before_the_rules_reads_them_off_and_bad_rules_are_refused
     testing.expect(t,s.types[0].density==0.2 && s.types[0].height==[2]f32{1,2})
     testing.expect_value(t,s.types[0].rule,Foliage_Rule{})
     testing.expect_value(t,s.types[0].offset,[2]f32{})
-    testing.expect(t,rule_allows(s.types[0],100,{1,0,0},{},false),"a rule that is off takes any ground")
+    testing.expect(t,rule_allows(s.types[0],100,{1,0,0},0,false),"a rule that is off takes any ground")
     // The default, turned on, is valid; what is out of range is not.
     s.types[0].rule=FOLIAGE_TYPE_DEFAULT.rule
     s.types[0].rule.enabled=true
@@ -717,7 +733,6 @@ a_foliage_file_written_before_the_rules_reads_them_off_and_bad_rules_are_refused
         {height={1,0}},
         {height={0,math.F32_MAX}},
         {weight=1.5},
-        {layers=1<<4},
         {slope={0,math.nan_f32()}},
     }
     for rule in bad {

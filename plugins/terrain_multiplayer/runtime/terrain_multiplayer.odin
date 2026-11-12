@@ -43,7 +43,7 @@ NET_READ_SAMPLES :: 8 // samples past what an edit writes that another edit read
 Terrain_Net_Settings :: struct {
     rate:f32 `mirai:"min=0"`,          // edits a second each client may ask, in bursts of one second; 0: clients do not edit
     reach:f32 `mirai:"min=0,unit=m"`,  // how far from a body its seat drives a client may edit; 0: anywhere
-    radius:f32 `mirai:"min=0,unit=m"`, // the largest brush a client may ask; 0: any
+    radius:f32 `mirai:"min=0,unit=m"`, // the largest brush a client may ask, in the world: half of the longest side of the box it may change, and the metres it moves the ground; 0: any
 }
 TERRAIN_NET_SETTINGS_DEFAULT :: Terrain_Net_Settings{rate=60,radius=64}
 
@@ -54,7 +54,7 @@ Terrain_Refusal :: enum u8 {
     Player,     // the connection has no seat
     Reach,      // farther than Terrain_Net_Settings.reach from what its seat drives
     Radius,     // a brush larger than Terrain_Net_Settings.radius
-    Brush,      // not a brush, or not a layer change
+    Brush,      // not a brush, or not a layer change, or one the scale of its terrain does not take
     Tick,       // for a tick too far ahead
     Not_Loaded, // the server does not have the source loaded
     Edit,       // the edit failed there: its error says why
@@ -217,23 +217,45 @@ ask_check :: proc(n:^Terrain_Net,held:multiplayer.Journal_Held,time:core.Time,da
     source:=base.Asset_Id(held.ask.key)
     ok:bool
     if replay,ok=op_replay(source,held.ask.body);!ok {return {},.Brush}
-    if replay.kind==.Edit && settings.radius>0 && replay.brush.radius>settings.radius {return {},.Radius}
-    if terrain.terrain_source(data,source)==nil {return {},.Not_Loaded}
+    s:=terrain.terrain_source(data,source)
+    if s==nil {return {},.Not_Loaded}
+    // What the brush may change, in the world.
+    owner:=terrain.terrain_of_source(terrains,source)
+    place:=mm.TRANSFORM_IDENTITY
+    if world,found:=core.get(worlds,owner);owner!=core.NONE && found {place=world.transform}
+    brush:terrain.Brush
+    if replay.kind==.Edit {
+        if terrain.brush_check(replay.brush)!=.None {return {},.Brush}
+        scaled:terrain.Edit_Error
+        if brush,scaled=terrain.brush_world(replay.brush,place,s.kind);scaled!=.None {return {},.Brush}
+        if settings.radius>0 && brush_size(brush)>settings.radius {return {},.Radius}
+    }
     seat:=core.NONE
     if seats!=nil {
         for value,row in seats.values[:core.count(seats)] {if multiplayer.Connection(value.peer)==held.connection {seat=core.entity_at(seats,row);break}}
     }
     if seat==core.NONE {return {},.Player}
     if settings.reach>0 && replay.kind==.Edit {
-        at:=replay.brush.center
-        if owner:=terrain.terrain_of_source(terrains,source);owner!=core.NONE {
-            if world,found:=core.get(worlds,owner);found {at=mm.transform_point(world.transform,at)}
-        }
         world,found:=core.get(worlds,input.body_of(seats,seat))
-        d:=world.position-at
+        d:=world.position-brush.center
         if !found || d.x*d.x+d.y*d.y+d.z*d.z>settings.reach*settings.reach {return {},.Reach}
     }
     return replay,.None
+}
+
+// How large a brush of the world is: half of the longest side of the box it
+// may change, or the metres it moves the ground by amount or to target if
+// more.
+@(private)
+brush_size :: proc(brush:terrain.Brush) -> f32 {
+    low,high:=terrain.brush_bounds(brush)
+    half:=(high-low)*0.5
+    size:=max(half.x,half.y,half.z)
+    #partial switch brush.kind {
+    case .Raise,.Lower,.Noise: size=max(size,brush.amount)
+    case .Flatten,.Terrace:    size=max(size,abs(brush.target-brush.center.y))
+    }
+    return size
 }
 
 @(private)
@@ -328,8 +350,8 @@ refusal_report :: proc(problems:^core.Problems,e:core.Entity,refused:multiplayer
     case .Rate:       core.report(problems,e,code,"the server refused an edit of this terrain: its client asked for more edits a second than Terrain_Net_Settings.rate of the server allows; ask for fewer, or raise it on the server")
     case .Player:     core.report(problems,e,code,"the server refused an edit of this terrain: the connection has no seat there yet; ask once the player is seated")
     case .Reach:      core.report(problems,e,code,"the server refused an edit of this terrain: its center is farther than Terrain_Net_Settings.reach of the server from every body the player drives; edit closer, or raise it on the server")
-    case .Radius:     core.report(problems,e,code,"the server refused an edit of this terrain: its brush is larger than Terrain_Net_Settings.radius of the server; use a smaller radius, or raise it on the server")
-    case .Brush:      core.report(problems,e,code,"the server refused an edit of this terrain: a field of its brush or layer change is not finite or not one of its values; give each field a valid value")
+    case .Radius:     core.report(problems,e,code,"the server refused an edit of this terrain: its brush reaches farther from its center, or moves the ground more, than Terrain_Net_Settings.radius of the server allows; use a smaller brush, amount or height, or raise it on the server")
+    case .Brush:      core.report(problems,e,code,"the server refused an edit of this terrain: a field of its brush or layer change is not finite, out of its range or not one of its values, or the scale of the terrain there does not take the brush; give each field a valid value (terrain.edit_error_fix says which)")
     case .Tick:       core.report(problems,e,code,"the server refused an edit of this terrain: it was asked for a tick more than %d ticks ahead of the server; the clock of the client is not the server's",multiplayer.JOURNAL_AHEAD_TICKS)
     case .Not_Loaded: core.report(problems,e,code,"the server refused an edit of this terrain: the server does not have its source loaded; edit where the server keeps its sections loaded")
     case .Edit:       core.report(problems,e,code,"the server refused an edit of this terrain: there it failed as %v; the problem terrain.edit_* or terrain.layer_* of the same request here says how to fix it",terrain.Edit_Error(refused.error))

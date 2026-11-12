@@ -101,15 +101,16 @@ scatter :: proc(seed:u32,coord:[2]i32,t:Foliage_Type,out:^[dynamic]Generated) ->
 // The ground under a cell, in the space of its entity (Foliage_Ground):
 // heights on a grid of samples by samples points over the cell, x first,
 // NaN where there is none, and the weights of the layers of the terrain at
-// each, none when they are not known; and where foliage is kept out of it
-// (Foliage_Keep_Out), none when nothing keeps it out. Without samples the
-// plane y = 0 is the ground, unless absent: the world has a ground and none
-// is known under the cell (not read yet, or none there), and no generated
-// instance stands there.
+// each with the materials they are of, none when they are not known; and
+// where foliage is kept out of it (Foliage_Keep_Out), none when nothing keeps
+// it out. Without samples the plane y = 0 is the ground, unless absent: the
+// world has a ground and none is known under the cell (not read yet, or none
+// there), and no generated instance stands there.
 Ground_Cell :: struct {
     samples:int,
     heights:[]f32,
-    weights:[][4]u8,
+    weights:[]Layer_Weights,
+    layers:[]Ground_Layers, // what weights name
     kept:[]u64, // KEEP_OUT_SIDE squares per side, x first, a bit each: set where foliage is kept out
     absent:bool,
 }
@@ -160,22 +161,27 @@ ground_at :: proc "contextless" (g:Ground_Cell,x,z:f32) -> (height:f32,normal:[3
     return height,normal,true
 }
 
-// The weights of the layers of the terrain at x and z from the corner of its
-// cell, from 0 to 1, between the four samples around it; false where they are
-// not known or one has no layers.
-ground_weights_at :: proc "contextless" (g:Ground_Cell,x,z:f32) -> (w:[4]f32,ok:bool) {
+// The weight of the layers of a mask (layer_mask of the layers of the
+// ground) at x and z from the corner of its cell, from 0 to 1, between the
+// four samples around it, each by the materials of its own ground; false
+// where they are not known or one has no layers.
+ground_layer_weight :: proc "contextless" (g:Ground_Cell,mask:^Layer_Mask,x,z:f32) -> (weight:f32,ok:bool) {
     if g.samples<2 || len(g.weights)<g.samples*g.samples {return}
     step:=CELL_SIZE/f32(g.samples-1)
     u,v:=clamp(x/step,0,f32(g.samples-1)),clamp(z/step,0,f32(g.samples-1))
     c,r:=min(int(u),g.samples-2),min(int(v),g.samples-2)
     fu,fv:=u-f32(c),v-f32(r)
-    corners:=[4][4]u8{g.weights[r*g.samples+c],g.weights[r*g.samples+c+1],g.weights[(r+1)*g.samples+c],g.weights[(r+1)*g.samples+c+1]}
+    corners:=[4]Layer_Weights{g.weights[r*g.samples+c],g.weights[r*g.samples+c+1],g.weights[(r+1)*g.samples+c],g.weights[(r+1)*g.samples+c+1]}
     share:=[4]f32{(1-fu)*(1-fv),fu*(1-fv),(1-fu)*fv,fu*fv}
     for corner,k in corners {
-        if int(corner[0])+int(corner[1])+int(corner[2])+int(corner[3])==0 {return}
-        w+=share[k]*[4]f32{f32(corner[0]),f32(corner[1]),f32(corner[2]),f32(corner[3])}/255
+        w:=corner.weights
+        if int(w[0])+int(w[1])+int(w[2])+int(w[3])==0 {return}
+        bits:=mask[corner.layers]
+        named:=0
+        for i in 0..<4 {if bits&(1<<u8(i))!=0 {named+=int(w[i])}}
+        weight+=share[k]*f32(named)/255
     }
-    return w,true
+    return weight,true
 }
 
 @(private)
@@ -336,12 +342,19 @@ grid_blocks :: proc "contextless" (g:^Grid,points:[]Spaced,p:Spaced,by:Block) ->
     return false
 }
 
+// The layers of the ground of a cell that the rule of a type names.
+@(private)
+type_mask :: proc "contextless" (t:Foliage_Type,ground:Ground_Cell) -> (mask:Layer_Mask) {
+    if t.rule.enabled && t.rule.layers!={} {mask=layer_mask(t.rule,ground.layers)}
+    return
+}
+
 // Whether a point of a type stands on the ground of a cell, at at from its
 // corner, and where: not where the ground has none, its rule does not take
 // that ground, its chance is not under the density there or foliage is kept
 // out. Past the border of the cell, the ground, the density and what keeps
 // foliage out at the nearest point of the border stand for those there.
-point_stands :: proc "contextless" (cell:^Cell,t:Foliage_Type,chance:f32,ground:Ground_Cell,at:[2]f32) -> (height:f32,normal:[3]f32,ok:bool) {
+point_stands :: proc "contextless" (cell:^Cell,t:Foliage_Type,mask:^Layer_Mask,chance:f32,ground:Ground_Cell,at:[2]f32) -> (height:f32,normal:[3]f32,ok:bool) {
     normal={0,1,0}
     if ground.samples>0 {
         found:bool
@@ -350,8 +363,8 @@ point_stands :: proc "contextless" (cell:^Cell,t:Foliage_Type,chance:f32,ground:
     }
     if chance>=cell_density_at(cell,at.x,at.y) || kept_out(ground,at.x,at.y) {return}
     if t.rule.enabled {
-        weights,known:=ground_weights_at(ground,at.x,at.y)
-        if !rule_allows(t,height,normal,weights,known,chance) {return}
+        weight,known:=ground_layer_weight(ground,mask,at.x,at.y)
+        if !rule_allows(t,height,normal,weight,known,chance) {return}
     }
     return height,normal,true
 }
@@ -382,6 +395,7 @@ spaced_stand :: proc(s:^Source,cell:^Cell,ground:Ground_Cell,e:^Expand_Scratch) 
     if !grid_reset(&e.stood_grid,margin) {return false}
     for o in e.order {
         t:=s.types[o.index]
+        mask:=type_mask(t,ground)
         clear(&e.spaced);clear(&e.fresh)
         if !grid_reset(&e.grid,margin) {return false}
         for k in 0..<9 {
@@ -398,7 +412,7 @@ spaced_stand :: proc(s:^Source,cell:^Cell,ground:Ground_Cell,e:^Expand_Scratch) 
         for p in e.spaced {
             if p.at.x< -margin || p.at.y< -margin || p.at.x>CELL_SIZE+margin || p.at.y>CELL_SIZE+margin {continue}
             if grid_blocks(&e.grid,e.spaced[:],p,.Other_Cells) {continue}
-            if _,_,stands:=point_stands(cell,t,p.chance,ground,p.at);!stands {continue}
+            if _,_,stands:=point_stands(cell,t,&mask,p.chance,ground,p.at);!stands {continue}
             if grid_blocks(&e.stood_grid,e.stood[:],p,.Any) {continue}
             if _,error:=append(&e.fresh,p);error!=nil {return false}
             if p.cell==4 {if _,error:=append(&e.standing,p.point);error!=nil {return false}}
@@ -452,6 +466,7 @@ cell_expand :: proc(s:^Source,cell:^Cell,ground:Ground_Cell,out:^[dynamic]Placed
         for t,i in s.types {
             standing:=scratch.standing[scratch.ranges[i][0]:scratch.ranges[i][1]]
             next:=0
+            mask:=type_mask(t,ground)
             clear(&scratch.points)
             // A point gives one instance at most.
             if !scatter(s.info.seed,cell.coord,t,&scratch.points) || !room(out,len(scratch.points)) {
@@ -475,7 +490,7 @@ cell_expand :: proc(s:^Source,cell:^Cell,ground:Ground_Cell,out:^[dynamic]Placed
                     for next<len(standing) && standing[next]<g.point {next+=1}
                     if next==len(standing) || standing[next]!=g.point {continue}
                 }
-                height,normal,stands:=point_stands(cell,t,g.chance,ground,g.position)
+                height,normal,stands:=point_stands(cell,t,&mask,g.chance,ground,g.position)
                 if !stands {continue}
                 x,z:=g.position.x+f32(cell.coord.x)*CELL_SIZE,g.position.y+f32(cell.coord.y)*CELL_SIZE
                 rotation:=generated_rotation(g,t.align,normal)

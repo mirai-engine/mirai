@@ -29,8 +29,7 @@ Ground_Owner :: struct {
     entity:core.Entity,
     samples:u32,                // per side of a tile written without saying how many; a cell is samples-1 steps across
     revision:u32,               // raised with the revision of any of its tiles
-    layers:[RULE_LAYERS]base.Asset_Id, // what the weights of its tiles are of: the material of each layer of the ground under it
-    layer_count:u32,
+    layers:[dynamic]Ground_Layers, // what the weights of its samples are of: those of each ground under it, at most LAYERS_MAX
     tiles:[dynamic]Ground_Tile, // in the order of their coordinates, z then x
     pools:[dynamic]Ground_Pool, // the samples of its tiles, a pool for each count of them
     transform:mm.Transform,     // of its entity when its tiles were last asked for
@@ -47,9 +46,44 @@ Ground_Tile :: struct {
 Ground_Pool :: struct {
     samples:u32,             // per side
     heights:[dynamic]f32,    // samples*samples of each block, x first; NaN where there is no ground
-    weights:[dynamic][4]u8,  // of each height: of the layers of the ground there, adding up to 255; 0 where it has none or there is no ground
+    weights:[dynamic]Layer_Weights, // of each height
     kept:[dynamic]u64,       // KEEP_OUT_WORDS of each block (Ground_Cell.kept)
     coords:[dynamic][2]i32,  // the tile of each block
+}
+
+// The materials of the four weights of a ground (core.Ground_Hit.layers):
+// the layers of a terrain, in its order; none for a weight it does not have.
+Ground_Layers :: [4]base.Asset_Id
+LAYERS_MAX :: 256 // Ground_Layers of an owner, which a sample names by a byte
+
+// The weights of the layers of the ground at a sample, adding up to 255, and
+// which of the Ground_Layers of its owner they are of: all 0 where it has no
+// layers or there is no ground.
+Layer_Weights :: struct {
+    weights:[4]u8,
+    layers:u8,
+}
+
+// Of each Ground_Layers of an owner, the bits of the weights whose material a rule names.
+Layer_Mask :: [LAYERS_MAX]u8
+
+layer_mask :: proc "contextless" (r:Foliage_Rule,layers:[]Ground_Layers) -> (mask:Layer_Mask) {
+    for set,k in layers[:min(len(layers),LAYERS_MAX)] {
+        for material,i in set {
+            if material=={} {continue}
+            for named in r.layers {if named==material {mask[k]|=1<<u8(i)}}
+        }
+    }
+    return
+}
+
+// The index of a Ground_Layers in those of an owner, added when it is not
+// there; false when the owner has LAYERS_MAX or no memory for more.
+ground_layers_index :: proc(owner:^Ground_Owner,layers:Ground_Layers) -> (index:u8,ok:bool) {
+    for held,i in owner.layers {if held==layers {return u8(i),true}}
+    if len(owner.layers)>=LAYERS_MAX {return}
+    if _,error:=append(&owner.layers,layers);error!=nil {return}
+    return u8(len(owner.layers)-1),true
 }
 
 // The cells whose ground someone needs before it shows instances there: the
@@ -98,7 +132,7 @@ ground_cell :: proc "contextless" (owner:^Ground_Owner,coord:[2]i32) -> (ground:
     n:=int(pool.samples)
     if n<2 {return}
     first:=int(tile.block)*n*n
-    return Ground_Cell{samples=n,heights=pool.heights[first:][:n*n],weights=pool.weights[first:][:n*n],kept=pool.kept[int(tile.block)*KEEP_OUT_WORDS:][:KEEP_OUT_WORDS]},tile.revision
+    return Ground_Cell{samples=n,heights=pool.heights[first:][:n*n],weights=pool.weights[first:][:n*n],layers=owner.layers[:],kept=pool.kept[int(tile.block)*KEEP_OUT_WORDS:][:KEEP_OUT_WORDS]},tile.revision
 }
 
 // Where foliage is kept out of the tile of index at of an owner (Ground_Cell.kept).
@@ -118,7 +152,7 @@ ground_tile_samples :: proc "contextless" (owner:^Ground_Owner,coord:[2]i32) -> 
 // count of samples (its heights NaN, its weights 0), with samples per side
 // (0: those it has, or the owner's). The writer raises its revision and the
 // owner's after writing it.
-ground_tile :: proc(owner:^Ground_Owner,coord:[2]i32,samples:u32=0) -> (heights:[]f32,weights:[][4]u8,tile:^Ground_Tile) {
+ground_tile :: proc(owner:^Ground_Owner,coord:[2]i32,samples:u32=0) -> (heights:[]f32,weights:[]Layer_Weights,tile:^Ground_Tile) {
     at:=ground_tile_lower(owner,coord)
     found:=at<len(owner.tiles) && owner.tiles[at].coord==coord
     n:=samples
@@ -192,7 +226,7 @@ NO_GROUND :: f32(0h7fc00000)
 
 ground_owner_destroy :: proc(owner:^Ground_Owner) {
     for &pool in owner.pools {delete(pool.heights);delete(pool.weights);delete(pool.kept);delete(pool.coords)}
-    delete(owner.pools);delete(owner.tiles)
+    delete(owner.pools);delete(owner.tiles);delete(owner.layers)
     owner^={}
 }
 
@@ -209,5 +243,6 @@ ground_owner_reset :: proc(owner:^Ground_Owner,samples:u32) {
     if len(owner.tiles)>0 {owner.revision+=1}
     clear(&owner.tiles)
     for &pool in owner.pools {clear(&pool.heights);clear(&pool.weights);clear(&pool.kept);clear(&pool.coords)}
+    clear(&owner.layers)
     owner.samples=samples
 }

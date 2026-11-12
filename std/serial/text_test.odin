@@ -318,6 +318,15 @@ text_reader_walks_any_json :: proc(t:^testing.T) {
     defer text_reader_destroy(&r)
     testing.expect(t,text_skip(&r))
     testing.expect_value(t,r.text[r.offset:]," tail")
+    // It skips escaped strings without memory: a reply of any size is checked in no scratch.
+    tracking:mem.Tracking_Allocator
+    mem.tracking_allocator_init(&tracking,context.allocator)
+    defer mem.tracking_allocator_destroy(&tracking)
+    escaped:Text_Reader
+    text_reader_init(&escaped,`{"text": "line\none \"quoted\" é😀", "list": ["a\tb"]}`,mem.tracking_allocator(&tracking))
+    defer text_reader_destroy(&escaped)
+    testing.expect(t,text_skip(&escaped) && text_end(&escaped))
+    testing.expect_value(t,tracking.total_allocation_count,i64(0))
     testing.expect(t,!text_end(&r))
     testing.expect_value(t,r.error.code,Text_Error_Code.Syntax)
 

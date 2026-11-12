@@ -62,7 +62,7 @@ bind_kind :: proc(binding:ui.Binding,node:ui.Node_Kind) -> Bind_Kind {
     case .Text:                         return .Shown
     case .Value:                        return .Entity if node==.View else .Any if node==.Draw else .Number
     case .Visible,.Selected,.Disabled:  return .Number
-    case .Items:                        return .Options if node==.Selector || node==.Dropdown || node==.Tabs else .Items
+    case .Items:                        return .Options if node==.Selector || node==.Dropdown else .Items
     case .Key:                          return .Key
     case .Image:                        return .Asset
     case .Tint:                         return .Color
@@ -726,7 +726,7 @@ document_bytes :: proc(args:^Tree_Args,id:base.Asset_Id,r:^Records) -> (bytes:[]
     why:string
     bytes,imports,why,ok=records_bytes(args.assets,id,r)
     if !ok {
-        reading_failf(args.reading,"%s. Nothing changed. A tree loads when containers (Box, Scroll, Switcher, List, Tooltip, Tabs, Popup, Modal, Context_Menu, Radial) hold the nodes, a List holds one node, numbers are finite, keys go in time order and every row it names exists",why)
+        reading_failf(args.reading,"%s. Nothing changed. A tree loads when containers (Box, Button, Scroll, Switcher, List, Tooltip, Popup, Modal, Context_Menu, Radial) hold the nodes, a List holds one node, numbers are finite, keys go in time order and every row it names exists",why)
     }
     return
 }

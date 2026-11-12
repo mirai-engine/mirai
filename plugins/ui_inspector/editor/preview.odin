@@ -361,7 +361,7 @@ samples_shown :: proc(p:^Preview) {
         case .Progress:              sample_write(values,b.value,0.5)
         case .Slider,.Number:        sample_write(values,b.value,f64(n.range[0]+n.range[1])*0.5)
         case .Checkbox,.Popup:       sample_write(values,b.value,1)
-        case .Selector,.Dropdown,.Switcher,.Tabs,.Radio: sample_write(values,b.value,0)
+        case .Selector,.Dropdown,.Switcher,.Radio: sample_write(values,b.value,0)
         }
         sample_write(values,b.disabled,0)
         sample_write(values,b.selected,0)

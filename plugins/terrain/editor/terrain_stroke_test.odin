@@ -37,12 +37,12 @@ terrain_held_brush_keeps_raising_under_the_pointer :: proc(t:^testing.T) {
     heights:[dynamic]f32;defer delete(heights)
     for _ in 0..<20 {
         stroke_apply(&s,&tool,ref,input,core.VIEW_DEFAULT,{dt=0.05})
-        append(&heights,terrain.source_value(&stroke.source,under))
+        append(&heights,terrain.source_value(&stroke.source,under) or_else 0)
     }
     for i in 1..<len(heights) {testing.expectf(t,heights[i]>heights[i-1],"the touch %d of a held brush lifted nothing",i)}
     // A second at half strength lifts the middle by about half the radius.
     testing.expectf(t,heights[len(heights)-1]>1 && heights[len(heights)-1]<2,"a second lifted %v",heights[len(heights)-1])
     for z in 0..<17 {for x in 0..<17 {
-        testing.expect(t,terrain.source_value(&stroke.source,{x,0,z})<=heights[len(heights)-1])
+        testing.expect(t,(terrain.source_value(&stroke.source,{x,0,z}) or_else 0)<=heights[len(heights)-1])
     }}
 }

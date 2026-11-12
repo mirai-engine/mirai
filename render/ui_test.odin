@@ -181,6 +181,16 @@ ui_draws_images_of_the_texture_table :: proc(t:^testing.T) {
     tinted:=captured(t,&f,{camera=EMPTY_CAMERA,ui={{vertices=vertices[:]}}})
     defer delete(tinted)
     testing.expect(t,near_color(at(tinted,64,20,24),{128,128,0,255},2),fmt.tprintf("tinted: %v",at(tinted,64,20,24)))
+    // A ui program shape with the texture plus one in stroke.y and its part in fill2 gets the
+    // image as the color of the node: without a program, the image cut to its corners.
+    rounded:=[]Ui_Shape{{bounds={16,8,32,32},radii={16,16,16,16},fill={1,1,1,1},stroke={0,transmute(f32)((material&~UI_MATERIAL_IMAGE_BIT)+1),0,0},fill2={0,0,1,1}}}
+    cut:=quad(15,7,34,34,{1,1,1,1},UI_MATERIAL_PROGRAM_BIT)
+    for &vertex in cut {vertex.uv=vertex.position.xy}
+    copy(vertices[6:],cut[:])
+    disc:=captured(t,&f,{camera=EMPTY_CAMERA,ui={{vertices=vertices[:],shapes=rounded}}})
+    defer delete(disc)
+    testing.expect(t,near_color(at(disc,64,24,24),{255,128,0,255},2),fmt.tprintf("the program shows the image: %v",at(disc,64,24,24)))
+    testing.expect_value(t,at(disc,64,17,9),[4]u8{255,255,255,255})
 }
 
 @(test)
