@@ -3,6 +3,7 @@ package importer
 import "core:fmt"
 import "core:os"
 import "core:path/filepath"
+import "core:slice"
 import "core:strconv"
 import "core:strings"
 import "core:time"
@@ -22,6 +23,10 @@ import "mirai:std/serial"
 // assets, found by their id.
 
 SIDECAR_EXTENSION :: asset.SIDECAR_EXTENSION
+// Of the empty file of the imported folder that says an import of documents
+// alone is current, named as a file of the cache is by the id of its first
+// output and its key: what sync looks for when no output is of the cache.
+STAMP_EXTENSION :: ".stamp"
 
 Output :: asset.Import_Output
 
@@ -80,18 +85,21 @@ sidecar_parse :: proc(text:string,allocator:=context.allocator) -> (sidecar:Side
 
 // What the outputs of an import are built from, as one number: the bytes of
 // the source at path and of each input its sidecar lists, its settings, the
-// version of what reads and writes it, the encoders of the program and whether
-// its textures are built Fast. An output of the cache is current when its file is named by this key.
-// With hashes, a file whose size and modification time it knows is not read.
-import_key :: proc(path:string,sidecar:Sidecar,version:u32,fast:bool,hashes:^Source_Hashes=nil) -> u64 {
-    key:=base.hash_combine(u64(version)<<1|u64(fast),u64(asset.SOUND_VERSION)<<48|u64(asset.MESH_VERSION)<<32|u64(asset.TEXTURE_VERSION)<<16|u64(textures.BUILD_VERSION))
-    key=base.hash_combine(key,base.hash64(transmute([]u8)settings_text(sidecar.settings,context.temp_allocator)))
-    key=base.hash_combine(key,textures.encoders_id())
+// version of what reads and writes it, the code of the plugin that imports it
+// whole (Import_Options.importer_code), the versions of the kinds of the
+// cache, the encoders of the program and whether its textures are built Fast.
+// An output of the cache is current when its file is named by this key. With
+// hashes, a file whose size and modification time it knows is not read.
+import_key :: proc(path:string,sidecar:Sidecar,version:u32,code:u64,fast:bool,hashes:^Source_Hashes=nil) -> u64 {
+    words:=make([dynamic]u64,0,7+len(sidecar.inputs),context.temp_allocator)
+    append(&words,u64(version)<<1|u64(fast),u64(asset.SOUND_VERSION)<<48|u64(asset.MESH_VERSION)<<32|u64(asset.TEXTURE_VERSION)<<16|u64(textures.BUILD_VERSION),u64(asset.FONT_VERSION),code)
+    append(&words,base.hash64(transmute([]u8)settings_text(sidecar.settings,context.temp_allocator)),textures.encoders_id())
     folder:=filepath.dir(path)
     for at in -1..<len(sidecar.inputs) {
-        key=base.hash_combine(key,file_hash(hashes,path if at<0 else fmt.tprintf("%s/%s",folder,sidecar.inputs[at])))
+        append(&words,file_hash(hashes,path if at<0 else fmt.tprintf("%s/%s",folder,sidecar.inputs[at])))
     }
-    return key|1
+    // Hashed whole: a change of any bit of a part changes the key.
+    return base.hash64(slice.to_bytes(words[:]))|1
 }
 
 // The hashes of the files the imports of a root read, by path, as they were

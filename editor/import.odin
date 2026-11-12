@@ -159,7 +159,7 @@ import_file :: proc(s:^Session,source:string,folder:="",profiled:=false,rig:Mayb
     name:=filepath.base(source)
     source:=source
     // A source a plugin imports whole goes before the formats, which may read its bytes too.
-    whole,claimed:=import_whole(s,source)
+    whole,code,claimed:=import_whole(s,source)
     if _,in_assets:=sources.source_root(source,context.temp_allocator);!in_assets {
         for at:=filepath.dir(project.path_absolute(source,context.temp_allocator));filepath.dir(at)!=at;at=filepath.dir(at) {
             if !project.path_same(at,s.project_root) {continue}
@@ -262,6 +262,7 @@ import_file :: proc(s:^Session,source:string,folder:="",profiled:=false,rig:Mayb
     }
     if claimed {
         job.whole=whole
+        job.options.importer_code=code
         if whole.prepare!=nil {job.state=whole.prepare(&a.registry,s.info,allocator)}
     }
     job.thread=thread.create_and_start_with_poly_data(job,import_run)
@@ -590,12 +591,14 @@ import_library :: proc(root:string,allocator:mem.Allocator) -> sources.Library_I
         if provider.prepare!=nil {held.formats[i].data=provider.prepare(&held.registry,&held.library.info,allocator)}
     }
     claimed:[PROVIDER_CAPACITY]Import_Source_Provider
-    count:=provided_in(&held.library.info,claimed[:])
+    plugins:[PROVIDER_CAPACITY]string
+    count:=provided_in(&held.library.info,claimed[:],plugins[:])
     held.importers=make([]Source_Importer,count,allocator)
     held.wholes=make([]sources.Whole_Source,count,allocator)
+    engine:=project.engine_root_find("",context.temp_allocator)
     for provider,i in claimed[:count] {
         held.importers[i]=provider.source
-        held.wholes[i]={claims=provider.source.claims,run=provider.source.run}
+        held.wholes[i]={claims=provider.source.claims,run=provider.source.run,code=plugin_code(root,engine,plugins[i])}
         if provider.source.prepare!=nil {held.wholes[i].state=provider.source.prepare(&held.registry,&held.library.info,allocator)}
     }
     return {formats=held.formats,wholes=held.wholes,world=&held.library.info,state=held,release=proc(state:rawptr) {
@@ -611,18 +614,30 @@ import_library :: proc(root:string,allocator:mem.Allocator) -> sources.Library_I
     }}
 }
 
-// The importer of a plugin that claims source whole.
+// The importer of a plugin that claims source whole, with the identity of
+// the code of that plugin.
 @(private)
-import_whole :: proc(s:^Session,source:string) -> (whole:Source_Importer,claimed:bool) {
+import_whole :: proc(s:^Session,source:string) -> (whole:Source_Importer,code:u64,claimed:bool) {
     if importer.unsafe_path(source) || os.is_dir(source) {return}
     buffer:[importer.SNIFF_BYTES]u8
     head,_,error:=serial.file_read_head(source,buffer[:])
     if error!=.None {return}
     found:[PROVIDER_CAPACITY]Import_Source_Provider
-    for provider in found[:provided_all(s,found[:])] {
-        if provider.source.claims!=nil && provider.source.run!=nil && provider.source.claims(source,head) {return provider.source,true}
+    plugins:[PROVIDER_CAPACITY]string
+    for provider,i in found[:provided_all(s,found[:],plugins[:])] {
+        if provider.source.claims!=nil && provider.source.run!=nil && provider.source.claims(source,head) {return provider.source,plugin_code(s.project_root,s.engine_root,plugins[i]),true}
     }
     return
+}
+
+// sources.code_identity of the plugin named plugin of the project at root; 0
+// when the project or the plugin is not found.
+@(private="file")
+plugin_code :: proc(root,engine_root,plugin:string) -> u64 {
+    opened,error:=project.open(root,engine_root,context.temp_allocator)
+    if error.code!=.None {return 0}
+    index,found:=project.plugin_find(opened.plugins,plugin)
+    return sources.code_identity(opened.plugins[index].folder) if found else 0
 }
 
 // "obj;gltf;glb": the extensions of a file dialog filter.

@@ -65,6 +65,10 @@ Import_Options :: struct {
     // encodes again as Final. False: Final, what tools and the CLI build.
     fast_textures:bool,
     mesh_cache:string,    // folder of meshes built before, kept by geometry and settings (mesh_cook); "": none
+    // The identity of the code of the plugin that imports the source whole
+    // (sources.code_identity), 0 for the engine's: part of what its outputs
+    // are built from (import_key).
+    importer_code:u64,
     material_index:int,   // the index of the first material among those of the source: imports that write its materials apart give each its own
     // Where the import cooks: the worker that calls it (the owner of its
     // job system, or the job that imports), which runs its builds in

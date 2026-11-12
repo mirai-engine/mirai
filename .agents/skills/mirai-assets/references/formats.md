@@ -176,11 +176,15 @@ One rule for all types, of the engine and of plugins:
 
 - **A type reads only the version it writes** (`*_VERSION`): each `*_view` (and a plugin's read)
   starts with `kind_check(&a,KIND,VERSION)`, which gives `Invalid` for another type and `Version`
-  for a file of another version, older or newer. The engine's types carry theirs in `KINDS`.
+  for a file of another version, older or newer. The engine's types carry theirs in `KINDS`; a
+  plugin's type, in the `version` of its `asset_kinds`, which the build generates as
+  `<STEM>_VERSION` ([manifests](../../mirai-projects/references/projects.md#manifests)).
 - **A change in what a type stores or in what a stored value means raises its version**, and every
-  file of the type is made again. `version_message` says which asset it is, its type, its version
-  and the one the build reads and, if it was imported, the `mirai import` that rebuilds it in its
-  folder with the root where its source is; for a newer file, a newer engine. `mirai asset verify`
+  file of the type is made again: the [sync](../../mirai-imports/references/imports.md#sync) of
+  the next build imports again the source of an imported one. `version_message` says which asset
+  it is, its type, its version and the one the build reads and, if it was imported, the
+  `mirai import` that rebuilds it in its folder with the root where its source is; for a newer
+  file, a newer engine. `mirai asset verify`
   and the `asset_errors` of `engine.diagnostics` show it.
 - **Rows are read by the schema the file carries**, by field name (`serial.Migration`): the types
   a game declares (components, records) change while its files stay, and a field their file lacks
