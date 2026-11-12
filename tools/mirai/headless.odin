@@ -2,6 +2,7 @@ package main
 
 import "core:fmt"
 import "core:os"
+import "core:strings"
 import "core:time"
 import "mirai:editor/api"
 import "mirai:std/serial"
@@ -51,15 +52,30 @@ Camera_Set :: struct {
 }
 Profile_Capture :: struct {frames:int,advance:bool,label:string,top:int}
 
-headless_call :: proc(e:^Headless_Editor,method:string,params:any) -> (result:string,err:api.Error,called:bool) {
-    text,_:=serial.text_encode(params,.Line,context.temp_allocator,sparse=true)
-    return api.rpc_call(e.port,method,string(text),1,RENDER_TIMEOUT_MS,context.allocator)
+// One call. A build older than the caller does not take every field of params:
+// the call goes again without each one its error names, which dropped lists.
+headless_call :: proc(e:^Headless_Editor,method:string,params:any) -> (result:string,err:api.Error,called:bool,dropped:[]string) {
+    encoded,_:=serial.text_encode(params,.Line,context.temp_allocator,sparse=true)
+    text:=string(encoded)
+    left:=make([dynamic]string,context.temp_allocator)
+    for {
+        result,err,called=api.rpc_call(e.port,method,text,1,RENDER_TIMEOUT_MS,context.allocator)
+        if called || err.code!=api.INVALID_PARAMS {break}
+        field,_:=api.json_string(api.json_member(err.data,"unknown_field"))
+        members,_:=api.json_members(text)
+        kept:=make([dynamic]string,context.temp_allocator)
+        for member in members {if member.name!=field {append(&kept,fmt.tprintf("%s:%s",serial.text_quote(member.name,context.temp_allocator),member.value))}}
+        if field=="" || len(kept)==len(members) {break}
+        text=fmt.tprintf("{{%s}}",strings.join(kept[:],",",context.temp_allocator))
+        append(&left,field)
+    }
+    return result,err,called,left[:]
 }
 
 // Advances frames, each with the fixed dt of engine.step.
 headless_step :: proc(e:^Headless_Editor,frames:int) -> bool {
     for left:=frames;left>0;left-=3600 {
-        if _,err,called:=headless_call(e,"engine.step",struct{frames:int}{min(left,3600)});!called {
+        if _,err,called,_:=headless_call(e,"engine.step",struct{frames:int}{min(left,3600)});!called {
             fmt.eprintfln("mirai %s: %s: engine.step: %s",e.tool,e.label,api.error_text(err,context.temp_allocator))
             return false
         }
