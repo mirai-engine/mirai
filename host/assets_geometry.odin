@@ -76,6 +76,12 @@ assets_geometry :: proc(a:^Assets,mesh:base.Asset_Id,shape:Shape,buffer:^geom.Me
     defer asset.asset_close(&file)
     view,error:=asset.mesh_view(&file,&a.types)
     if error!=.None || !asset.mesh_check_indices(view) {return false}
+    return geometry_of_view(view,buffer,attributes,slots)
+}
+
+// The finest level of a mesh file, as assets_geometry gives it.
+@(private="file")
+geometry_of_view :: proc(view:asset.Mesh_View,buffer:^geom.Mesh_Buffer,attributes:=false,slots:^Assets_Slots=nil) -> bool {
     vertices:=make([dynamic]asset.Vertex,context.temp_allocator)
     indices:=make([dynamic]u32,context.temp_allocator)
     if !asset.mesh_level_decode(view.geometry,0,&vertices,&indices) || len(indices)==0 {return false}
@@ -159,7 +165,13 @@ assets_collision :: proc(a:^Assets,mesh:base.Asset_Id,shape:Shape,kind:Collision
     file:asset.Asset
     if _,_,opened:=assets_open(a,mesh,.Mesh,&file);!opened {return}
     defer asset.asset_close(&file)
-    view,error:=asset.mesh_view(&file,&a.types)
+    return assets_collision_file(&file,&a.types,kind,buffer)
+}
+
+// assets_collision of the open file of a mesh asset (Hull or Mesh), on any
+// thread with types of its own: what a job reads (assets_source_open).
+assets_collision_file :: proc(file:^asset.Asset,types:^asset.Types,kind:Collision,buffer:^geom.Mesh_Buffer) -> (stored,ok:bool) {
+    view,error:=asset.mesh_view(file,types)
     if error!=.None || !asset.mesh_check_indices(view) {return}
     surface,shapes:=-1,0
     for collider,at in view.colliders {
@@ -193,7 +205,7 @@ assets_collision :: proc(a:^Assets,mesh:base.Asset_Id,shape:Shape,kind:Collision
         base.truncate(&buffer.positions,positions)
         base.truncate(&buffer.indices,indices)
     }
-    return false,assets_geometry(a,mesh,shape,buffer)
+    return false,geometry_of_view(view,buffer)
 }
 
 COLLIDER_SHAPE_SEGMENTS :: 12
@@ -223,7 +235,18 @@ assets_collision_hulls :: proc(a:^Assets,mesh:base.Asset_Id,shape:Shape,points:^
     file:asset.Asset
     if _,_,opened:=assets_open(a,mesh,.Mesh,&file);!opened {return false}
     defer asset.asset_close(&file)
-    view,error:=asset.mesh_view(&file,&a.types)
+    return assets_collision_hulls_file(&file,&a.types,points,sizes)
+}
+
+// assets_collision_hulls of the open file of a mesh asset, on any thread with
+// types of its own.
+assets_collision_hulls_file :: proc(file:^asset.Asset,types:^asset.Types,points:^[dynamic]geom.Vec3,sizes:^[dynamic]u32) -> bool {
+    if points==nil || sizes==nil {return false}
+    held_points,held_sizes:=len(points),len(sizes)
+    defer if len(sizes)==held_sizes {
+        base.truncate(points,held_points)
+    }
+    view,error:=asset.mesh_view(file,types)
     if error!=.None || !asset.mesh_check_indices(view) {return false}
     for collider in view.colliders {
         if collider.kind==.Mesh && collider.index_count>0 {return false}

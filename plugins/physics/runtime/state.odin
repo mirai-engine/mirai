@@ -142,7 +142,7 @@ Held :: struct {
 Shown :: struct {
     mesh:base.Asset_Id,
     shape:host.Shape,
-    revision:u64, // asset revision; zero for immutable generated IDs
+    size,time:i64, // of the file of a mesh asset, as Geometry_Source; zero for an immutable generated id
     generated:bool,
 }
 
