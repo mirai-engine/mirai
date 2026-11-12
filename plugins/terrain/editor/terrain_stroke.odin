@@ -30,7 +30,7 @@ Stroke_Axis :: enum u8 {Free,X,Z}
 // A brush of the Sculpt list; Set height is Flatten to a typed height.
 Sculpt_Brush :: struct {kind:terrain.Brush_Kind,level:bool,name:string}
 
-@(rodata) HEIGHTFIELD_BRUSHES := [?]Sculpt_Brush{{.Raise,false,"Raise"},{.Lower,false,"Lower"},{.Smooth,false,"Smooth"},{.Flatten,false,"Flatten"},{.Ramp,false,"Ramp"},{.Flatten,true,"Set height"},{.Terrace,false,"Terrace"},{.Noise,false,"Noise"},{.Erode,false,"Erode"}}
+@(rodata) HEIGHTFIELD_BRUSHES := [?]Sculpt_Brush{{.Raise,false,"Raise"},{.Lower,false,"Lower"},{.Smooth,false,"Smooth"},{.Flatten,false,"Flatten"},{.Ramp,false,"Ramp"},{.Flatten,true,"Set height"},{.Terrace,false,"Terrace"},{.Noise,false,"Noise"},{.Erode,false,"Erode"},{.Thermal,false,"Thermal"}}
 @(rodata) VOLUME_BRUSHES := [?]Sculpt_Brush{{.Add,false,"Add"},{.Carve,false,"Remove"},{.Raise,false,"Raise"},{.Lower,false,"Lower"},{.Smooth,false,"Smooth"},{.Flatten,false,"Flatten"},{.Flatten,true,"Set height"},{.Noise,false,"Noise"}}
 @(rodata) BRUSH_KEYS := [9]core.Key{.One,.Two,.Three,.Four,.Five,.Six,.Seven,.Eight,.Nine}
 // The keys the tool takes from the shortcuts of the editor while it is on.
@@ -250,6 +250,7 @@ brush_make :: proc(tool:^Terrain_Tool,kind:terrain.Brush_Kind,point,normal:[3]f3
         kind=kind,center=point,radius=b.radius/stroke.scale,target=stroke.target,
         layer=u32(tool.layer),falloff=b.falloff,hardness=clamp(b.hardness,0,0.95),
         way=tool.way,interval=max(tool.interval,0.01)/stroke.scale,riser=clamp(tool.riser,0,1),scale=max(tool.noise_scale,0.1)/stroke.scale,
+        talus=clamp(tool.talus,math.to_radians(f32(1)),math.to_radians(f32(89))),
         seed=u32(stroke.id[0]),turn=b.turn,
     }
     brush.alpha=alpha_of(tool,b)

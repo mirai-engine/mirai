@@ -100,7 +100,7 @@ terrain_sculpt_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.Wor
     stroke:=&tool.stroke
     kind:=stroke.source.kind
     brushes:=sculpt_brushes(kind)
-    names:[9]string
+    names:[len(HEIGHTFIELD_BRUSHES)]string
     chosen:=-1
     for brush,i in brushes {
         names[i]=brush.name
@@ -138,6 +138,10 @@ terrain_sculpt_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.Wor
         scale:=f64(tool.noise_scale)
         if kit.property(ctx,"Scale") {if ui.number_field(ctx,ui.id(ctx,"noise"),&scale,{width=ui.fixed(FIELD_WIDTH),min=0.1,max=10000,has_min=true,has_max=true,speed=0.05,unit="m"}).changed {tool.noise_scale=f32(scale)}}
     }
+    if brush==.Thermal {
+        talus:=f64(math.to_degrees(tool.talus))
+        if kit.property(ctx,"Talus") {if ui.number_field(ctx,ui.id(ctx,"talus"),&talus,{width=ui.fixed(FIELD_WIDTH),min=1,max=89,has_min=true,has_max=true,speed=0.5,decimals=0,unit="°"}).changed {tool.talus=math.to_radians(f32(talus))}}
+    }
     if brush==.Ramp {
         sides:=f64(tool.ramp_sides)
         if kit.property(ctx,"Sides") {if ui.number_field(ctx,ui.id(ctx,"sides"),&sides,{width=ui.fixed(FIELD_WIDTH),min=0,max=500,has_min=true,has_max=true,speed=0.05,unit="m"}).changed {tool.ramp_sides=f32(sides)}}
@@ -162,6 +166,7 @@ terrain_sculpt_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.Wor
         }
         kit.section(ctx,"Size",fmt.tprintf("%.0f × %.0f m",f32(stroke.source.samples.x-1)*stroke.source.cell,f32(stroke.source.samples.z-1)*stroke.source.cell),140)
         resize_fields(s,tool,world,app.assets)
+        mirror_fields(s,tool,world,app.assets)
     } else {
         kit.section(ctx,"Mesh","",80)
         if ui.button(ctx,ui.id(ctx,"export_mesh"),{label="Save surface as mesh",variant="field",width=-1,center=true}).clicked {terrain_surface_mesh(s,tool,app.assets,app.allocator)}

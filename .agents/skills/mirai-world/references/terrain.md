@@ -275,8 +275,9 @@ T or its entry in the Tools menu, outside Play.
 - **Create**: Plane or Heightmap for a Heightfield. Heightmap (16-bit PNG with its precision, TGA,
   BMP and R16 or `.raw` normalized to [0,1] without gamma, R32 floats as they are) scales and
   offsets the values; its first row is the start of Z. R16 and R32 have no header: they are square.
-  Any size a terrain takes reads back: the read limit follows `SAMPLES_MAX`. Volumetric Terrain starts with a solid block surrounded by air. Plane
-  shows the size in meters and in chunks, and the view draws its outline where it will be born.
+  Any size a terrain takes reads back: the read limit follows `SAMPLES_MAX`. Volumetric Terrain
+  starts with a solid block surrounded by air. Plane shows the size in meters and in chunks, and
+  the view draws its outline where it will be born.
 - The new file (`terrain/<type>.terrain`) waits in the registry until its step ends and is
   part of the undo step: undoing it removes it even if later strokes changed it.
 - **Save surface as mesh** (Sculpt of a Volume) writes its surface as a plain `.mesh` beside its
@@ -291,7 +292,9 @@ T or its entry in the Tools menu, outside Play.
   weight and the others keep their shares of the rest. **Size** gives it other samples
   around its center (each side changes by an even number, so the center remains a sample): what it
   had stays in place and what grows takes the heights and weights of the nearest edge
-  (`source_resize`). Each one is an undo step.
+  (`source_resize`). **Mirror** puts one half onto the other across a plane along X or Z through
+  the center, or turns it around the center (Turn it), mixing both halves over Blend metres on each
+  side of the plane so they meet (`source_mirror`). Each one is an undo step.
 - Everything of the tool is in its panel, from top to bottom: mode, brushes with their key, radius,
   strength, pen pressure, falloff, shape (alpha) and what is specific to the brush, and at the foot
   the **Entity** section with the entity's details, which the panel covers. **Sculpt** offers the
@@ -309,7 +312,10 @@ T or its entry in the Tools menu, outside Play.
   Step meters from the height of the press, which rise in their Riser part; **Noise** adds value
   noise of Scale meters, the same at each point for its source, so each pass deepens a pattern
   (also in Volume); **Erode** releases drops on the disc that run down the surface carrying soil
-  and leave it where they slow down (`erode.odin`), and its effect fades out past the disc. **Way**
+  and leave it where they slow down (`erode.odin`), and its effect fades out past the disc;
+  **Thermal** slides what stands steeper than its **Talus** down to the neighbors below that slope,
+  over eight neighbors and from the same heights for every sample, keeping the ground it moves.
+  **Way**
   (Both, Raise, Lower) lets Smooth, Flatten, Terrace and Noise only raise or only lower; **To the
   press** (or Alt) makes Raise only lift what is below the height of the press, up to it, and
   Lower only lower what is above it.
@@ -417,7 +423,8 @@ ground in the color of the level it shows, a coarser node one.
 ## API
 
 `terrain.create`, `terrain.edit`, `terrain.layer`, `terrain.interior`, `terrain.sample`,
-`terrain.heightmap` and `terrain.resize` (`terrain_api.odin`) do what the panel does in the edited
+`terrain.heightmap`, `terrain.resize`, `terrain.region` and `terrain.mirror` (`terrain_api.odin`,
+`terrain_region.odin`) do what the panel does in the edited
 world on the entity they name (no selection needed), each change an undo step like a
 stroke, at the place the entity has now: a manual editor runs the frame that places it, and its
 ground and colliders with it. `terrain.create` takes a `name` for its entity and file, beside the
@@ -425,7 +432,10 @@ scene, and takes again the file a deleted terrain of that name left. A layer is 
 by its material
 (`asset.slot_named`: the path or stem, `default` with no material, `#2` for the second of the same).
 A Volume's interior is edited in Paint,
-under its layers: its rows hold what is changed until Apply. `terrain.edit` is a stroke of a brush
+under its layers: its rows hold what is changed until Apply. `terrain.region` copies a box of a
+Heightfield (heights and layers, `source_region_copy`) onto the same or another one at `at`,
+turned, mirrored, raised, faded at its edges and only raising or lowering if asked
+(`source_region_paste`): copy and paste, or a stamp. `terrain.edit` is a stroke of a brush
 by its name from `at` to `to`, touching every quarter of the radius with what a pass does; a ramp
 or a shape is a touch from `at` to `to`. A brush that the representation does not have, a layer
 that does not exist, removing the only layer or an alpha that is not there answer what they take;
@@ -743,6 +753,8 @@ physics, saving, stability and world copy.
   borders of its blocks) and `a_large_volume_holds_and_stores_only_the_blocks_of_its_surfaces`.
 - Recycled handles, relinked sources and incomplete chunks: authors are not confused with derived
   children nor left orphaned.
+- Regions (`region_test.odin`): `a_copied_region_goes_elsewhere_turned_mirrored_raised_and_faded`
+  and `a_mirrored_heightfield_meets_itself_at_the_plane`.
 - `layers_test.odin`, `holes_test.odin`, `shading_test.odin` and `shape_test.odin` (falloff, wide
   Smooth, ramp and shapes).
 - `displaced_chunks_split_their_cells_on_the_collider_and_join_their_neighbors`: the relief
@@ -758,6 +770,7 @@ physics, saving, stability and world copy.
   `terraces_level_each_step_and_rise_over_their_riser`,
   `noise_is_the_same_pattern_at_a_point_and_passes_deepen_it`,
   `erosion_carries_ground_down_a_slope_into_a_basin_and_stays_near_the_disc`,
+  `thermal_erosion_slides_a_cliff_down_to_its_talus_and_keeps_its_ground`,
   `the_slope_filter_and_an_alpha_choose_what_a_brush_touches`,
   `paint_toward_a_target_stops_at_its_weight` and
   `a_resized_heightfield_keeps_its_ground_in_place_and_grows_from_its_edges`.
@@ -810,6 +823,7 @@ Ground and dust: `mirai test plugins/terrain/runtime` with
 Editor: `mirai test plugins/terrain/editor` (CPU).
 
 - `terrain_creation_separates_heightfield_and_volume_and_keeps_undo`
+- `heights_and_weightmaps_go_out_and_come_back_in_each_format`
 - `a_closed_mesh_joins_or_carves_a_volume_as_samples_and_undo_brings_its_entity_back`,
   `the_surface_of_a_volume_is_saved_as_a_mesh_asset`
 - `a_canceled_stroke_takes_back_its_head_and_keeps_the_history`

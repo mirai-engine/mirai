@@ -18,7 +18,7 @@ CURSOR_OUTLINE :: editor.BRUSH_OUTLINE
 @(private)
 cursor_color :: proc "contextless" (kind:terrain.Brush_Kind) -> ui.Color {
     #partial switch kind {
-    case .Lower,.Carve,.Erase,.Hole,.Erode: return CURSOR_TAKE
+    case .Lower,.Carve,.Erase,.Hole,.Erode,.Thermal: return CURSOR_TAKE
     case .Smooth:                                return CURSOR_SMOOTH
     }
     return CURSOR_ADD

@@ -42,6 +42,7 @@ Terrain_Tool :: struct {
     heightmap_length:int,
     alphas:Terrain_Alphas,
     resize:[2]int, // the samples Resize gives a Heightfield; 0: those it has
+    mirror:Mirror_Settings,
     entity_open:bool, // the panel shows the details of the entity of the terrain
     stroke:Stroke,
     using history:Revisions,

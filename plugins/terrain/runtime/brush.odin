@@ -10,8 +10,8 @@ import mm "mirai:std/math"
 // Volume, takes it out. Add and Carve join or take the shape of the brush;
 // Raise and Lower move the surface by amount metres; Smooth, Flatten and Noise
 // take it a part of the way; Paint and Erase change the weight of a layer.
-// Hole, Fill, Ramp, Terrace and Erode are of a Heightfield alone.
-Brush_Kind :: enum u8 {Raise,Lower,Smooth,Flatten,Add,Carve,Paint,Erase,Hole,Fill,Ramp,Terrace,Noise,Erode}
+// Hole, Fill, Ramp, Terrace, Erode and Thermal are of a Heightfield alone.
+Brush_Kind :: enum u8 {Raise,Lower,Smooth,Flatten,Add,Carve,Paint,Erase,Hole,Fill,Ramp,Terrace,Noise,Erode,Thermal}
 
 // Which way a brush may move a sample: Up never lowers one, Down never raises one.
 Brush_Way :: enum u8 {Both,Up,Down}
@@ -41,6 +41,7 @@ Brush :: struct {
     interval:f32,       // Terrace: metres between its steps, from target
     riser:f32,          // Terrace: the part of each step that rises, from 0 (a cliff) to 1
     scale:f32,          // Noise: metres across its features
+    talus:f32,          // Thermal: radians from horizontal the ground stands at; steeper slides down
     seed:u32,           // Noise and Erode
     slope:[2]f32,       // radians from horizontal of the Heightfield it touches; zero: any
     slope_invert:bool,  // it touches outside slope instead
@@ -58,7 +59,7 @@ SMOOTH_SAMPLES_MAX :: 8
 // the source lacks. edit_error_fix says how to fix each.
 // Invalid and Budget are of what a replay or a layer change asks: bytes or
 // a layer that do not fit the source, and no room for another source.
-Edit_Error :: enum u8 {None,Kind,Center,Radius,Amount,Target,Delta,Extent,Blend,Falloff,Layer,Alpha,Slope,Terrace,Noise,Unloaded,Out_Of_Memory,Invalid,Budget}
+Edit_Error :: enum u8 {None,Kind,Center,Radius,Amount,Target,Delta,Extent,Blend,Falloff,Layer,Alpha,Slope,Terrace,Noise,Talus,Unloaded,Out_Of_Memory,Invalid,Budget}
 
 Change :: struct {
     changed:bool,
@@ -77,8 +78,9 @@ edit_error_fix :: proc "contextless" (error:Edit_Error,kind:Brush_Kind) -> strin
         case .Ramp:       return "a Ramp is of a Heightfield: on a Volume use Add with a Capsule or a Box"
         case .Terrace:    return "Terrace is of a Heightfield: on a Volume use Flatten at the height of each step"
         case .Erode:      return "Erode is of a Heightfield: on a Volume use Smooth or Noise"
+        case .Thermal:    return "Thermal is of a Heightfield: on a Volume use Smooth"
         }
-        return "kind is not a brush: name one from Raise to Erode"
+        return "kind is not a brush: name one from Raise to Thermal"
     case .Center:  return "center has a value that is not a number: give the point to edit"
     case .Radius:  return "radius is not above 0 or passes 100000 m: give the reach of the brush in metres"
     case .Amount:  return "amount is not above 0, is not a number or, for Add and Carve, passes 1: metres for Raise, Lower and Noise, a part from 0 to 1 for the others (1 takes or adds the whole shape)"
@@ -92,6 +94,7 @@ edit_error_fix :: proc "contextless" (error:Edit_Error,kind:Brush_Kind) -> strin
     case .Slope:   return "slope is not an ordered range from 0 to a quarter turn, or turn is not a number"
     case .Terrace: return "interval of a Terrace is not above 0 or its riser is not from 0 to 1"
     case .Noise:   return "scale of a Noise is not above 0 or passes 100000 m"
+    case .Talus:   return "talus of a Thermal is not above 0 and below a quarter turn: give the angle in radians the ground stands at"
     case .Unloaded: return "the source holds no samples there: it is not loaded, or its pages could not be read"
     case .Out_Of_Memory: return "out of memory and nothing changed: free memory, or use a smaller brush"
     case .Invalid: return "what it brings does not fit the source: its shape, its pages or its layers are of another one"
@@ -124,6 +127,7 @@ brush_check :: proc "contextless" (brush:Brush) -> Edit_Error {
     #partial switch brush.kind {
     case .Terrace: if !(brush.interval>0 && brush.interval<=HEIGHT_LIMIT && brush.riser>=0 && brush.riser<=1) {return .Terrace}
     case .Noise:   if !(brush.scale>0 && brush.scale<=HEIGHT_LIMIT) {return .Noise}
+    case .Thermal: if !(brush.talus>0 && brush.talus<math.PI/2) {return .Talus}
     case .Paint:   if brush.toward && !(brush.target>=0 && brush.target<=1) {return .Target}
     }
     return .None
@@ -142,7 +146,7 @@ source_edit :: proc(s:^Source,brush:Brush) -> (change:Change) {
     if brush.kind==.Paint || brush.kind==.Erase {return source_paint(s,brush)}
     if volume {
         #partial switch brush.kind {
-        case .Hole,.Fill,.Ramp,.Terrace,.Erode: return Change{error=.Kind}
+        case .Hole,.Fill,.Ramp,.Terrace,.Erode,.Thermal: return Change{error=.Kind}
         case .Add,.Carve: return source_volume_shape(s,brush)
         }
     }
@@ -152,6 +156,8 @@ source_edit :: proc(s:^Source,brush:Brush) -> (change:Change) {
     reach:=brush.radius
     // The water of Erode runs past the disc and leaves there what it carries.
     if brush.kind==.Erode {reach*=EROSION_REACH}
+    // What slides leaves the disc for the samples around it.
+    if brush.kind==.Thermal {reach+=s.cell*1.5}
     origin:=source_origin(s)
     span_low,span_high:=brush.center-reach,brush.center+reach
     if segment {
@@ -171,6 +177,7 @@ source_edit :: proc(s:^Source,brush:Brush) -> (change:Change) {
     }
     if !grid_prepare(&s.field,low,high,s.allocator) {return Change{error=.Out_Of_Memory}}
     if brush.kind==.Erode {return source_erode(s,brush,low,high)}
+    if brush.kind==.Thermal {return source_thermal(s,brush,low,high)}
     // Smooth reads the region as it was, with a halo as wide as its box, and
     // so does the slope filter: what the brush raises before a sample does not
     // change whether it touches it.
@@ -272,7 +279,7 @@ source_edit :: proc(s:^Source,brush:Brush) -> (change:Change) {
                 if n<2 {continue}
                 mean:=blurred[at.x+size.x*(at.y+size.y*at.z)]
                 value=math.lerp(old,(mean*f32(n)-old)/f32(n-1),min(brush.amount*weight,1))
-            case .Add,.Carve,.Paint,.Erase,.Hole,.Fill,.Erode:
+            case .Add,.Carve,.Paint,.Erase,.Hole,.Fill,.Erode,.Thermal:
             }
             value=brush_way_keep(brush.way,volume,old,value)
         }
