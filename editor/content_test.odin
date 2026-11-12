@@ -82,14 +82,17 @@ content_test_depends :: proc(r:^asset.Registry,at:int,uses:..int) {
     r.revision+=1
 }
 
+// The lines as text: a folder of Folders in brackets, a dot for each level of
+// a row or a folder in the tree, the cards of a line of the grid by commas.
 @(private)
 content_test_names :: proc(c:^Content,registry:^asset.Registry,lines:[]Content_Line) -> string {
     out:=make([dynamic]u8,context.temp_allocator)
     for line,i in lines {
         if i>0 {append(&out,' ')}
+        for _ in 0..<line.depth {append(&out,'.')}
         switch line.kind {
         case .Header:    append(&out,..transmute([]u8)fmt.tprintf("[%s]",line.name))
-        case .Subheader: append(&out,..transmute([]u8)fmt.tprintf("<%s>",line.name))
+        case .Row:       append(&out,..transmute([]u8)c.cards[line.first].name)
         case .Label:     append(&out,..transmute([]u8)fmt.tprintf("{{%s}}",line.name))
         case .Create:    append(&out,..transmute([]u8)fmt.tprintf("(%s)",string(c.create_name[:c.create_name_length])))
         case .Cards:
@@ -119,48 +122,53 @@ content_test_show :: proc(c:^Content,registry:^asset.Registry,opened:[]asset.Fou
     return content_test_names(c,registry,content_test_lines(c,registry,CONTENT_TEST_WIDTH,opened,scene_kinds))
 }
 
-// Names: the names of the first level stay above their assets; a subfolder
-// of at least a row has a thin name and the smaller ones flow together. A
-// click enters a folder: nothing folds in place.
+// Folders: a tree of rows that enters no folder. A folder unfolds in place
+// with its folders and then its assets one level in, each asset a row
+// whatever the zoom; a search lists its results as rows, without folders.
 @(test)
-content_names_is_a_wall_under_the_names_of_the_folders :: proc(t:^testing.T) {
+content_folders_is_a_tree_that_unfolds_in_place :: proc(t:^testing.T) {
     registry:=content_test_wall_registry()
     defer content_test_registry_free(&registry)
     c:=CONTENT_DEFAULT
     defer core.value_free(&c,type_info_of(Content))
+    tree:="[Castle] .[Props] ..barrel ..crate ..torch ..wall .[Towers] ..big .gate [Levels] .one rock"
     lines:=content_test_lines(&c,&registry)
-    testing.expect_value(t,content_test_names(&c,&registry,lines),"rock [Castle] gate <Props> barrel,crate,torch,wall big [Levels] one")
-    testing.expect(t,lines[1].kind==.Header && c.heights[1]==CONTENT_HEADER && lines[3].kind==.Subheader && c.heights[3]==CONTENT_SUBHEADER)
-    testing.expect(t,lines[2].parent==1 && lines[3].parent==1 && lines[4].parent==1 && lines[0].parent==-1 && lines[7].parent==6 && lines[6].parent==-1)
-    // The columns decide what is a full row.
-    c.view.columns=5
-    testing.expect_value(t,content_test_show(&c,&registry),"rock [Castle] gate,barrel,crate,torch,wall big [Levels] one")
-    c.view.columns=3
-    testing.expect_value(t,content_test_show(&c,&registry),"rock [Castle] gate <Props> barrel,crate,torch wall big [Levels] one")
-    c.view.columns=4
+    testing.expect_value(t,content_test_names(&c,&registry,lines),tree)
+    for line,i in lines {
+        testing.expect(t,c.heights[i]==CONTENT_ROW && (line.kind==.Header || line.kind==.Row && line.count==1),"one row each")
+    }
+    parents:=make([dynamic]i32,context.temp_allocator)
+    for line in lines {append(&parents,line.parent)}
+    testing.expect(t,slice.equal(parents[:],[]i32{-1,0,1,1,1,1,0,6,0,-1,9,-1}),"each row scrolls under the folder it is in")
+    // The zoom does not change it.
+    for view in ([]Content_View{{mode=.Grid,columns=8},{mode=.List,columns=4},{mode=.Grid,columns=3}}) {
+        c.view.mode,c.view.columns=view.mode,view.columns
+        testing.expect_value(t,content_test_show(&c,&registry),tree)
+    }
+    c.view.mode,c.view.columns=.Grid,4
     // Lines are built once for the same inputs.
     cached:=raw_data(c.lines)
     testing.expect_value(t,raw_data(content_test_lines(&c,&registry)),cached)
-    // A folded folder keeps its name and shows nothing of what it holds.
+    // A folded folder keeps its row and shows nothing of what it holds, at any depth.
+    content_fold_flip(&c,content_test_hash("Castle/Props"))
+    testing.expect_value(t,content_test_show(&c,&registry),"[Castle] .[Props] .[Towers] ..big .gate [Levels] .one rock")
     content_fold_flip(&c,content_test_hash("Castle"))
-    testing.expect_value(t,content_test_show(&c,&registry),"rock [Castle] [Levels] one")
+    testing.expect_value(t,content_test_show(&c,&registry),"[Castle] [Levels] .one rock")
     content_fold_flip(&c,content_test_hash("Castle"))
-    // Entering a folder keeps where it was, and a folder holds folders and assets.
-    content_enter(&c,.None,"Castle")
-    testing.expect_value(t,content_test_show(&c,&registry),"gate [Props] barrel,crate,torch,wall [Towers] big")
-    testing.expect_value(t,string(c.place[:c.place_length]),"Castle")
+    // Entering a folder does not change it, and it has no back row.
     content_enter(&c,.None,"Castle/Props")
-    testing.expect_value(t,content_test_show(&c,&registry),"barrel,crate,torch,wall")
-    content_back(&c)
-    testing.expect_value(t,string(c.at.folder[:c.at.length]),"Castle")
-    content_back(&c)
-    testing.expect(t,c.at.length==0 && c.at.virtual==.None && len(c.history)==0)
-    content_back(&c)
-    testing.expect(t,c.at.length==0,"Back at the root stays there")
-    // A folder is listed on its own run even with a name that sorts around it.
-    content_enter(&c,.None,"Castle")
-    content_enter(&c,.None,"Levels",reset=true)
-    testing.expect(t,len(c.history)==0,"the root of the breadcrumb forgets the way")
+    testing.expect_value(t,content_test_show(&c,&registry),"[Castle] .[Props] .[Towers] ..big .gate [Levels] .one rock")
+    testing.expect(t,!content_back_shown(&c))
+    // Showing an asset unfolds the folders it is in.
+    c.reveal=registry.files[1].id
+    content_reveal_open(&c,&registry)
+    testing.expect(t,len(c.folded)==0 && string(c.at.folder[:c.at.length])=="Castle/Props")
+    testing.expect_value(t,content_test_show(&c,&registry),tree)
+    // A search lists rows of what matches, without folders.
+    c.filter_length=copy(c.filter[:],"to")
+    lines=content_test_lines(&c,&registry)
+    testing.expect_value(t,content_test_names(&c,&registry,lines),"torch big")
+    for line,i in lines {testing.expect(t,line.kind==.Row && c.heights[i]==CONTENT_ROW)}
 }
 
 // Tabs: chips of the first level, rows of the folders of the one chosen, and
@@ -202,14 +210,28 @@ content_cards_put_the_folders_among_the_assets :: proc(t:^testing.T) {
     lines:=content_test_lines(&c,&registry)
     testing.expect_value(t,content_test_names(&c,&registry,lines),"{Recent} gate,rock #Favorites,#Castle,#Levels,rock")
     testing.expect_value(t,lines[0].kind,Content_Line_Kind.Label)
+    // Entering a folder keeps where it was.
     content_enter(&c,.None,"Castle")
     testing.expect_value(t,content_test_show(&c,&registry),"#Props,#Towers,gate")
+    testing.expect_value(t,string(c.place[:c.place_length]),"Castle")
+    content_enter(&c,.None,"Castle/Props")
+    testing.expect_value(t,content_test_show(&c,&registry),"barrel,crate,torch,wall")
+    content_back(&c)
+    testing.expect_value(t,string(c.at.folder[:c.at.length]),"Castle")
+    content_back(&c)
+    testing.expect(t,c.at.length==0 && c.at.virtual==.None && len(c.history)==0)
+    content_back(&c)
+    testing.expect(t,c.at.length==0,"Back at the root stays there")
+    content_enter(&c,.None,"Castle")
+    content_enter(&c,.None,"Levels",reset=true)
+    testing.expect(t,len(c.history)==0,"the root of the breadcrumb forgets the way")
     content_enter(&c,.Recent)
     testing.expect_value(t,content_test_show(&c,&registry),"gate,rock")
 }
 
-// Recent, Favorites and Current scene are entered as folders; Current scene is
-// what the scene references transitively, read when the registry changes.
+// Recent, Favorites and Current scene are rows on top of Folders and entered
+// as folders in Cards; Current scene is what the scene references
+// transitively, read when the registry changes.
 @(test)
 content_virtual_folders_are_entered_and_current_scene_is_what_the_scene_references :: proc(t:^testing.T) {
     registry:=content_test_wall_registry()
@@ -225,19 +247,17 @@ content_virtual_folders_are_entered_and_current_scene_is_what_the_scene_referenc
     content_scene_read(&c,&registry,registry.files[6].id)
     used:=raw_data(c.scene_used)
     testing.expect_value(t,len(c.scene_used),2)
-    testing.expect_value(t,content_test_show(&c,&registry),"[Recent] rock [Current scene] barrel,crate [Favorites] crate rock [Castle] gate <Props> barrel,crate,torch,wall big [Levels] one")
-    // A row of each at the root, with no more than the columns.
-    c.view.columns=3
+    testing.expect_value(t,content_test_show(&c,&registry),"[Recent] .rock [Current scene] .barrel .crate [Favorites] .crate [Castle] .[Props] ..barrel ..crate ..torch ..wall .[Towers] ..big .gate [Levels] .one rock")
+    // Each holds all of it, and folds to its row.
     content_favorite_toggle(&c,{4,3})
     content_favorite_toggle(&c,{4,4})
     content_favorite_toggle(&c,{4,5})
     lines:=content_test_lines(&c,&registry)
-    header:=-1
-    for line,i in lines {
-        if line.kind==.Header && line.virtual==.Favorites {header=i;break}
-    }
-    testing.expect(t,header>=0 && lines[header+1].count==3 && lines[header+2].kind!=.Cards || lines[header+2].kind==.Cards && lines[header+2].parent!=i32(header),"one row")
-    c.view.columns=4
+    testing.expect_value(t,content_test_names(&c,&registry,lines[5:10]),"[Favorites] .crate .torch .wall .big")
+    testing.expect(t,lines[6].parent==5 && lines[6].group==CONTENT_FAVORITES_GROUP)
+    content_fold_flip(&c,CONTENT_FAVORITES_GROUP)
+    testing.expect_value(t,content_test_names(&c,&registry,content_test_lines(&c,&registry)[5:7]),"[Favorites] [Castle]")
+    content_fold_flip(&c,CONTENT_FAVORITES_GROUP)
     // Reading again without a change neither rebuilds nor moves the list.
     revision:=c.revision
     content_scene_read(&c,&registry,registry.files[6].id)
@@ -246,6 +266,7 @@ content_virtual_folders_are_entered_and_current_scene_is_what_the_scene_referenc
     content_scene_read(&c,&registry,registry.files[6].id)
     testing.expect(t,c.revision>revision,"a change of the registry reads it again")
     // Entering one shows all of it.
+    c.view.arrangement=.Cards
     content_enter(&c,.Favorites)
     testing.expect_value(t,content_test_show(&c,&registry),"crate,torch,wall,big")
     content_enter(&c,.Scene)
@@ -273,6 +294,7 @@ content_hides_what_a_scene_makes_of_itself_and_colors_every_plugin_kind_alike ::
     c:=CONTENT_DEFAULT
     defer core.value_free(&c,type_info_of(Content))
     kinds:=[]asset.Fourcc{CONTENT_TEST_PLUGIN_KIND}
+    c.view.arrangement=.Cards
     content_enter(&c,.None,"Animations")
     testing.expect_value(t,content_test_show(&c,&registry,kinds),"run,walk")
     testing.expect_value(t,content_test_show(&c,&registry,kinds,kinds),"walk")
@@ -300,9 +322,9 @@ content_filters_keep_the_folders_of_what_they_take :: proc(t:^testing.T) {
     defer core.value_free(&c,type_info_of(Content))
     kinds:=[]asset.Fourcc{CONTENT_TEST_PLUGIN_KIND}
     c.category=.Mesh
-    testing.expect_value(t,content_test_show(&c,&registry),"[Meshes] box,sphere")
+    testing.expect_value(t,content_test_show(&c,&registry),"[Meshes] .[nested] ..sphere .box")
     c.category=.Plugin
-    testing.expect_value(t,content_test_show(&c,&registry,kinds),"[Animations] run")
+    testing.expect_value(t,content_test_show(&c,&registry,kinds),"[Animations] .run")
     c.category=.None
     ui_category,_:=content_category(asset.KIND_UI)
     testing.expect_value(t,ui_category,Content_Category.Ui)
@@ -313,7 +335,7 @@ content_filters_keep_the_folders_of_what_they_take :: proc(t:^testing.T) {
     // Only unused: what no asset references, never a scene.
     content_test_depends(&registry,5,3)
     c.unused=true
-    testing.expect_value(t,content_test_show(&c,&registry),"[Animations] walk [Materials] red [Meshes] sphere [Prefabs] robot [Sounds] hit [Textures] color [UI] hud")
+    testing.expect_value(t,content_test_show(&c,&registry),"[Animations] .walk [Materials] .red [Meshes] .[nested] ..sphere [Prefabs] .robot [Sounds] .hit [Textures] .color [UI] .hud")
 }
 
 // The selection toggle shows what the selection holds and what that uses,
@@ -328,17 +350,17 @@ content_selection_toggle_shows_what_the_selection_uses :: proc(t:^testing.T) {
     content_test_depends(&registry,2,0)
     c.selection_only=true
     content_selection_set(&c,&registry,{CONTENT_TEST_ROBOT,{77,77}})
-    testing.expect_value(t,content_test_show(&c,&registry),"[Robot] MI_Robot_01,SKM_Robot,robot")
+    testing.expect_value(t,content_test_show(&c,&registry),"[Robot] .MI_Robot_01 .SKM_Robot .robot")
     content_selection_set(&c,&registry,{})
     testing.expect_value(t,len(content_test_lines(&c,&registry)),0)
     c.category=.Mesh
     content_filters_clear(&c)
     testing.expect(t,c.category==.None && !c.selection_only)
-    testing.expect_value(t,content_test_show(&c,&registry),"[Robot] MI_Shared,robot [Spider] spider [Stray] orphan")
+    testing.expect_value(t,content_test_show(&c,&registry),"[Robot] .MI_Shared .robot [Spider] .spider [Stray] .orphan")
 }
 
-// A search lists the results of the folder shown flat, best first, and Enter
-// takes the first.
+// A search lists the results flat, best first, of the folder shown in Cards;
+// Enter takes the first.
 @(test)
 content_search_ranks_results_of_the_folder_shown :: proc(t:^testing.T) {
     files:=make([dynamic]asset.Registry_File)
@@ -354,11 +376,13 @@ content_search_ranks_results_of_the_folder_shown :: proc(t:^testing.T) {
     c:=CONTENT_DEFAULT
     defer core.value_free(&c,type_info_of(Content))
     c.filter_length=copy(c.filter[:],"BOX")
-    testing.expect_value(t,content_test_show(&c,&registry),"box,red_box,xboxy,zed")
+    testing.expect_value(t,content_test_show(&c,&registry),"box red_box xboxy zed")
     c.filter_length=copy(c.filter[:],"red box")
     testing.expect_value(t,content_test_show(&c,&registry),"red_box")
     c.filter_length=copy(c.filter[:],"box")
     content_enter(&c,.None,"box")
+    testing.expect_value(t,content_test_show(&c,&registry),"box red_box xboxy zed")
+    c.view.arrangement=.Cards
     testing.expect_value(t,content_test_show(&c,&registry),"zed")
     c.filter_length=copy(c.filter[:],"   ")
     testing.expect_value(t,content_test_show(&c,&registry),"zed")
@@ -430,7 +454,7 @@ content_lines_follow_registry_revisions_when_storage_and_count_are_reused :: pro
     c:=Content{category=.Mesh,view=CONTENT_VIEW_DEFAULT}
     defer core.value_free(&c,type_info_of(Content))
     c.selected=source.files[3].id
-    testing.expect_value(t,content_test_show(&c,&registry),"[Meshes] box,sphere")
+    testing.expect_value(t,content_test_show(&c,&registry),"[Meshes] .[nested] ..sphere .box")
     files,count,revision:=raw_data(registry.files),len(registry.files),registry.revision
     source.files[3].path="Meshes/bar_box.mesh"
     source.files[4].path="Meshes/renamed/round_sphere.mesh"
@@ -438,7 +462,7 @@ content_lines_follow_registry_revisions_when_storage_and_count_are_reused :: pro
     testing.expect_value(t,asset.registry_load(&registry,path),asset.Error.None)
     testing.expect(t,raw_data(registry.files)==files && len(registry.files)==count)
     testing.expect_value(t,registry.revision,revision+1)
-    testing.expect_value(t,content_test_show(&c,&registry),"[Meshes] bar_box,round_sphere")
+    testing.expect_value(t,content_test_show(&c,&registry),"[Meshes] .[renamed] ..round_sphere .bar_box")
     testing.expect_value(t,c.selected,source.files[3].id)
     cached:=raw_data(c.lines)
     testing.expect_value(t,raw_data(content_test_lines(&c,&registry)),cached)
@@ -493,7 +517,7 @@ content_test_click_at :: proc(t:^testing.T,s:^Session,rect:ui.Rect,modifiers:ui.
 content_test_still :: proc(s:^Session,content_view:bool=true) {_=content_test_frame(s,{size={800,600},pointer_absent=true},content_view)}
 
 @(test)
-content_browser_enters_folders_selects_drags_stars_filters_and_searches_from_the_keyboard :: proc(t:^testing.T) {
+content_browser_folds_folders_selects_drags_previews_stars_filters_and_searches_from_the_keyboard :: proc(t:^testing.T) {
     ctx:ui.Context
     testing.expect(t,test_ui_init(&ctx,{}))
     defer ui.context_destroy(&ctx)
@@ -511,36 +535,56 @@ content_browser_enters_folders_selects_drags_stars_filters_and_searches_from_the
         testing.expect(t,!frame.overflow)
         testing.expect_value(t,ctx.stats.layout_errors,u32(0))
     }
+    // A click on the row of a folder folds it in place and makes Create make
+    // there; another unfolds it.
     folder:=ui.id_derive(&ctx,100,"content_folder",int(content_test_hash("Meshes")))
     rect,found:=ui.widget_rect(&ctx,folder)
-    testing.expectf(t,found && rect.w==CONTENT_TEST_WIDTH && rect.h==CONTENT_HEADER,"%v",rect)
+    testing.expectf(t,found && rect.w==CONTENT_TEST_WIDTH && rect.h==CONTENT_ROW,"%v",rect)
     content_test_click(t,&session,folder)
-    testing.expect_value(t,string(c.at.folder[:c.at.length]),"Meshes")
+    testing.expect(t,content_folded(&c,content_test_hash("Meshes")) && c.at.length==0 && string(c.place[:c.place_length])=="Meshes")
     content_test_still(&session)
     asset_id:=assets.registry.files[3].id
     entry:=ui.id_derive(&ctx,100,"content_entry",int(content_test_hash(assets.registry.files[3].path)))
+    _,found=ui.widget_rect(&ctx,entry)
+    testing.expect(t,!found,"a folded folder hides what it holds")
+    content_test_click(t,&session,folder)
+    testing.expect(t,!content_folded(&c,content_test_hash("Meshes")))
+    content_test_still(&session)
+    // An asset is a row as wide as the list, at any zoom; the layout puts
+    // edges on whole pixels: a size moves by one at most.
     rect,found=ui.widget_rect(&ctx,entry)
-    _,cell:=content_cells(c.view,CONTENT_TEST_WIDTH)
-    names:=u8(2)
-    for line in c.lines {
-        if line.kind!=.Cards {continue}
-        for card in c.cards[line.first:][:line.count] {if card.file==3 {names=line.names}}
-    }
-    // The layout puts edges on whole pixels: a size moves by one at most.
-    testing.expectf(t,found && abs(rect.w-cell)<=1 && abs(rect.h-content_card_height(c.view,cell,names))<=1,"%v",rect)
+    testing.expectf(t,found && abs(rect.w-CONTENT_TEST_WIDTH)<=1 && abs(rect.h-CONTENT_ROW)<=1,"%v",rect)
     content_test_click(t,&session,entry)
     testing.expect_value(t,c.selected,asset_id)
     testing.expect(t,g.drag.kind==.Asset && g.drag.asset_id==asset_id)
     g.drag={}
-    // Ctrl+click adds a card to the selection, and takes it away again.
-    content_enter(&c,.None,"Materials")
+    // The pointer resting on a row opens its large preview beside the
+    // browser; a right click only opens the menu.
+    preview:=ui.id_derive(&ctx,100,"content_preview")
+    rest:=ui.Input{size={800,600},pointer=ui.rect_center(rect),dt=0.25}
+    _=content_test_frame(&session,rest)
+    _,shown:=ui.widget_rect(&ctx,preview)
+    testing.expect(t,!shown,"not before the pointer rests")
+    for _ in 0..<3 {_=content_test_frame(&session,rest)}
+    beside,open:=ui.widget_rect(&ctx,preview)
+    testing.expectf(t,open && beside.x>=CONTENT_TEST_WIDTH && beside.w>=CONTENT_PREVIEW_LARGE,"%v",beside)
+    menu:=content_menu_id(&g)
+    for phase in 0..<4 {
+        input:=rest
+        if phase==0 {input.down,input.pressed={.Right},{.Right}}
+        if phase==1 {input.released={.Right}}
+        _=content_test_frame(&session,input)
+        _,shown=ui.widget_rect(&ctx,preview)
+        testing.expect(t,!shown && ui.popup_is_open(&ctx,menu),"a right click shows no preview")
+    }
+    ui.popup_close(&ctx,menu)
     content_test_still(&session)
+    // Ctrl+click adds a card to the selection, and takes it away again.
     material:=ui.id_derive(&ctx,100,"content_entry",int(content_test_hash(assets.registry.files[2].path)))
     content_test_click(t,&session,material,modifiers={.Primary})
     testing.expect(t,c.selected==assets.registry.files[2].id && content_selected(&c,asset_id) && content_selected_count(&c)==2 && g.drag.kind==.None)
     content_test_click(t,&session,material,modifiers={.Shift})
     testing.expect(t,c.selected==asset_id && content_selected_count(&c)==1)
-    content_enter(&c,.None,"Meshes")
     content_test_still(&session)
     rect,_=ui.widget_rect(&ctx,entry)
     // The star of a card under the pointer marks it.
@@ -603,20 +647,21 @@ content_browser_enters_folders_selects_drags_stars_filters_and_searches_from_the
     content_test_still(&session)
     content_test_click(t,&session,ui.id_derive(&ctx,popup,"layout",int(Content_Arrangement.Tabs)+1))
     testing.expect(t,c.view.arrangement==.Tabs && ui.popup_is_open(&ctx,popup))
-    content_test_click(t,&session,ui.id_derive(&ctx,popup,"layout",int(Content_Arrangement.Names)+1))
+    content_test_click(t,&session,ui.id_derive(&ctx,popup,"layout",int(Content_Arrangement.Folders)+1))
     content_test_click(t,&session,ui.id_derive(&ctx,popup,"unused"))
     testing.expect(t,c.unused && !ui.popup_is_open(&ctx,popup))
     c.unused=false
-    // Shown from a field of Details: the search empties, its folder is entered
-    // if it is not in sight and it is selected with the keyboard.
+    // Shown from a field of Details: the search empties, the folders it is in
+    // unfold and it is selected with the keyboard.
     c.selected={}
+    content_fold_flip(&c,content_test_hash("Meshes"))
     c.filter_length=copy(c.filter[:],"robot")
     session.ai=new(Ai)
     defer free(session.ai)
     content_reveal(&session,assets.registry.files[4].id)
     testing.expect(t,c.filter_length==0 && !c.focus_search)
     content_test_still(&session)
-    testing.expect(t,c.selected==assets.registry.files[4].id && c.reveal=={} && string(c.at.folder[:c.at.length])=="Meshes")
+    testing.expect(t,c.selected==assets.registry.files[4].id && c.reveal=={} && c.at.length==0 && !content_folded(&c,content_test_hash("Meshes")))
     testing.expect_value(t,ctx.focus,ui.id_derive(&ctx,100,"content_entry",int(content_test_hash(assets.registry.files[4].path))))
     testing.expect(t,ctx.edit.id==0 && c.filter_length==0)
     // Without assets the browser is still built and the gear still answers.
@@ -643,11 +688,12 @@ content_navigation_gestures_of_the_browser :: proc(t:^testing.T) {
     info:core.World_Info
     session:=Session{app=&app,gui=&g,content=&c,selection=&selection,info=&info,headless=true}
     content_test_depends(&assets.registry,0,1)
+    c.view.arrangement=.Cards
     for _ in 0..<2 {content_test_still(&session)}
-    // No back row at the root; entering shows it.
+    // Cards has its back row at the root too.
     back:=ui.id_derive(&ctx,100,"content_back")
     _,shown:=ui.widget_rect(&ctx,back)
-    testing.expect(t,!shown)
+    testing.expect(t,shown)
     content_test_click(t,&session,ui.id_derive(&ctx,100,"content_folder",int(content_test_hash("Castle"))))
     testing.expect_value(t,string(c.at.folder[:c.at.length]),"Castle")
     content_test_still(&session)
@@ -673,13 +719,11 @@ content_navigation_gestures_of_the_browser :: proc(t:^testing.T) {
     content_test_still(&session)
     content_test_click(t,&session,ui.id_derive(&ctx,100,"content_crumb",0))
     testing.expect(t,c.at.length==0 && len(c.history)==0)
-    // In Cards the row stays at the root too, with Project alone.
-    c.view.arrangement=.Cards
+    // The row stays at the root too, with Project alone.
     content_test_still(&session)
     _,shown=ui.widget_rect(&ctx,back)
     _,crumb:=ui.widget_rect(&ctx,ui.id_derive(&ctx,100,"content_crumb",1))
     testing.expect(t,shown && !crumb,"Cards keeps the back row at the root")
-    c.view.arrangement=.Names
     // Alt+click walks the relations and carries nothing.
     content_enter(&c,.None,"Castle/Props")
     content_test_still(&session)
@@ -766,6 +810,15 @@ the_zoom_of_the_browser_walks_columns_and_names_follow_it :: proc(t:^testing.T) 
     _=content_test_frame(&session,over)
     zoom:=over
     zoom.modifiers,zoom.wheel={.Primary},{0,2}
+    // The rows of Folders keep their size, and the list does not scroll.
+    _=content_test_frame(&session,zoom)
+    testing.expect(t,c.view==CONTENT_VIEW_DEFAULT && c.scroll==0)
+    c.view.arrangement=.Cards
+    content_test_still(&session)
+    header,_=ui.widget_rect(&ctx,ui.id_derive(&ctx,100,"content_folder",int(content_test_hash("Meshes"))))
+    over.pointer=ui.rect_center(header)
+    zoom.pointer=over.pointer
+    _=content_test_frame(&session,over)
     _=content_test_frame(&session,zoom)
     testing.expect_value(t,c.view.columns,3)
     zoom.wheel={0,-10}
@@ -861,14 +914,14 @@ content_hides_the_parts_of_an_import_in_their_folder_and_a_prefab_opens_to_its_v
     // The atlas material, the mesh, the skeleton and the texture are parts;
     // the material two imports share and the part without its owner show.
     lines:=content_test_lines(&c,&registry)
-    testing.expect_value(t,content_test_names(&c,&registry,lines),"[Robot] MI_Shared,robot [Spider] spider [Stray] orphan")
+    testing.expect_value(t,content_test_names(&c,&registry,lines),"[Robot] .MI_Shared .robot [Spider] .spider [Stray] .orphan")
     testing.expect(t,content_part(&registry,&registry.files[0]) && !content_part(&registry,&registry.files[1]) && !content_part(&registry,&registry.files[7]))
     // A prefab opens to its variants, not to its parts: without variants it has no arrow.
-    owner:=c.cards[lines[1].first+1]
+    owner:=c.cards[lines[2].first]
     testing.expect(t,!owner.holds && !c.cards[lines[1].first].holds)
     content_unfold(&c,CONTENT_TEST_ROBOT)
     lines=content_test_lines(&c,&registry)
-    testing.expect_value(t,content_test_names(&c,&registry,lines[:2]),"[Robot] MI_Shared,robot")
+    testing.expect_value(t,content_test_names(&c,&registry,lines[:4]),"[Robot] .MI_Shared .robot [Spider]")
     content_unfold(&c,CONTENT_TEST_ROBOT)
     // A search finds a part in its folder; Recent and Favorites list it.
     c.filter_length=copy(c.filter[:],"skm")
@@ -878,27 +931,26 @@ content_hides_the_parts_of_an_import_in_their_folder_and_a_prefab_opens_to_its_v
     content_used(&session,registry.files[2].id)
     content_favorite_toggle(&c,registry.files[4].id)
     lines=content_test_lines(&c,&registry)
-    testing.expect_value(t,content_test_names(&c,&registry,lines[:6]),"[Recent] SKM_Robot [Favorites] T_Robot_01_D [Robot] MI_Shared,robot")
+    testing.expect_value(t,content_test_names(&c,&registry,lines[:7]),"[Recent] .SKM_Robot [Favorites] .T_Robot_01_D [Robot] .MI_Shared .robot")
     // A filter of families that leaves the owner out shows its parts in their folder.
     c.category=.Mesh
-    testing.expect_value(t,content_test_show(&c,&registry),"[Recent] SKM_Robot [Robot] SKM_Robot [Stray] orphan")
+    testing.expect_value(t,content_test_show(&c,&registry),"[Recent] .SKM_Robot [Robot] .SKM_Robot [Stray] .orphan")
     c.category=.Prefab
-    testing.expect_value(t,content_test_show(&c,&registry),"[Robot] robot [Spider] spider")
+    testing.expect_value(t,content_test_show(&c,&registry),"[Robot] .robot [Spider] .spider")
     c.category=.None
     c.marks={}
     c.revision+=1
     // Show parts of imports lists them in their folders too.
     c.view.show_parts=true
     lines=content_test_lines(&c,&registry)
-    testing.expect_value(t,content_test_names(&c,&registry,lines[:2]),"[Robot] MI_Robot_01,MI_Shared,SKM_Robot,T_Robot_01_D")
-    testing.expect_value(t,content_test_names(&c,&registry,lines[2:3]),"robot")
+    testing.expect_value(t,content_test_names(&c,&registry,lines[:6]),"[Robot] .MI_Robot_01 .MI_Shared .SKM_Robot .T_Robot_01_D .robot")
     c.view.show_parts=false
     // Find in Content Browser of a hidden part of a prefab lists the parts in their folders.
     c.reveal=registry.files[2].id
     content_reveal_open(&c,&registry)
     testing.expect(t,c.view.show_parts && !slice.contains(c.unfolded[:],CONTENT_TEST_ROBOT))
     lines=content_test_lines(&c,&registry)
-    testing.expect_value(t,content_test_names(&c,&registry,lines[:2]),"[Robot] MI_Robot_01,MI_Shared,SKM_Robot,T_Robot_01_D")
+    testing.expect_value(t,content_test_names(&c,&registry,lines[:6]),"[Robot] .MI_Robot_01 .MI_Shared .SKM_Robot .T_Robot_01_D .robot")
 }
 
 @(test)
@@ -967,8 +1019,22 @@ content_lists_the_clips_of_a_library_while_it_is_open_and_when_a_search_finds_th
     walk:=base.Asset_Id{1,1}
     append(&c.clip_text,..transmute([]u8)string("idlerun"))
     append(&c.clips,Content_Clip{walk,0,4},Content_Clip{walk,4,3})
-    content_enter(&c,.None,"Animations")
+    // In Folders the library has an arrow, and its clips are rows a level under it.
     lines:=content_test_lines(&c,&registry)
+    testing.expect_value(t,content_test_names(&c,&registry,lines[:2]),"[Animations] .walk")
+    testing.expect(t,c.cards[lines[1].first].holds && !c.cards[lines[1].first].open)
+    content_unfold(&c,walk)
+    lines=content_test_lines(&c,&registry)
+    testing.expect_value(t,content_test_names(&c,&registry,lines[:5]),"[Animations] .walk ..idle ..run [Materials]")
+    testing.expect(t,lines[2].parent==0 && c.cards[lines[2].first].clip==1 && c.heights[2]==CONTENT_ROW)
+    c.filter_length=copy(c.filter[:],"RUN")
+    testing.expect_value(t,content_test_show(&c,&registry),"walk .run")
+    c.filter_length=0
+    content_unfold(&c,walk)
+    // In a grid the clips follow it.
+    c.view.arrangement=.Cards
+    content_enter(&c,.None,"Animations")
+    lines=content_test_lines(&c,&registry)
     testing.expect_value(t,content_test_names(&c,&registry,lines),"walk")
     testing.expect(t,c.cards[lines[0].first].holds && !c.cards[lines[0].first].open)
     content_unfold(&c,walk)
@@ -991,10 +1057,10 @@ content_shows_empty_folders_and_the_line_of_create :: proc(t:^testing.T) {
     defer delete(registry.folders)
     c:=CONTENT_DEFAULT
     defer core.value_free(&c,type_info_of(Content))
-    testing.expect_value(t,content_test_show(&c,&registry),"[Animations] walk [Empty] [Materials] red [Meshes] box,sphere [Prefabs] robot [Sounds] hit [Textures] color [UI] hud")
+    testing.expect_value(t,content_test_show(&c,&registry),"[Animations] .walk [Empty] [Materials] .red [Meshes] .[nested] ..sphere .box [Prefabs] .robot [Sounds] .hit [Textures] .color [UI] .hud")
     c.view.arrangement=.Cards
     testing.expect_value(t,content_test_show(&c,&registry),"#Animations,#Empty,#Materials,#Meshes #Prefabs,#Sounds,#Textures,#UI")
-    c.view.arrangement=.Names
+    c.view.arrangement=.Folders
     c.creating,c.create_kind=true,asset.KIND_MATERIAL
     c.create_folder_length=copy(c.create_folder[:],"Meshes")
     c.create_name_length=copy(c.create_name[:],"New Material")
@@ -1007,7 +1073,7 @@ content_shows_empty_folders_and_the_line_of_create :: proc(t:^testing.T) {
     testing.expect_value(t,content_test_show(&c,&registry),"box")
     c.filter_length=0
     c.category=.Mesh
-    testing.expect_value(t,content_test_show(&c,&registry),"[Meshes] box,sphere")
+    testing.expect_value(t,content_test_show(&c,&registry),"[Meshes] .[nested] ..sphere .box")
 }
 
 // A right click on a folder opens Create; its entry names the new asset in
@@ -1086,9 +1152,10 @@ a_click_on_the_background_of_the_browser_clears_its_selection :: proc(t:^testing
     info:core.World_Info
     session:=Session{app=&app,gui=&g,content=&c,selection=&selection,info=&info,headless=true}
     for _ in 0..<2 {content_test_still(&session)}
-    for mode in Content_Mode {
-        c.view.mode=mode
+    for view in ([]Content_View{{arrangement=.Folders},{arrangement=.Cards,mode=.Grid},{arrangement=.Cards,mode=.List}}) {
+        c.view.arrangement,c.view.mode=view.arrangement,view.mode
         content_enter(&c,.None,"",reset=true)
+        clear(&c.folded)
         c.selected=assets.registry.files[7].id
         content_test_still(&session)
         folder:=ui.id_derive(&ctx,100,"content_folder",int(content_test_hash("Castle")))
@@ -1126,6 +1193,7 @@ content_navigation_falls_to_what_the_registry_still_has :: proc(t:^testing.T) {
     copy(n.place[:],"Meshes/gone/deeper")
     copy(n.at[:],"Meshes/nested/gone")
     n.category=.Mesh
+    c.view.arrangement=.Cards
     content_navigation_set(&c,&n)
     content_registry_read(&c,&registry,{CONTENT_TEST_PLUGIN_KIND})
     content_navigation_restore(&c,&registry)
