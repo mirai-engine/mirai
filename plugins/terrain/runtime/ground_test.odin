@@ -29,9 +29,7 @@ ground_step :: proc(w:^Ground_World,resident:^Terrain_Resident,focus:=Terrain_Fo
 @(private="file")
 ground_entry :: proc(w:^Ground_World,id:base.Asset_Id,s:Source,at:[3]f32) -> core.Entity {
     entry:=Data_Source{id=id,source=s,change=1}
-    n:=chunk_counts(&entry.source)
-    entry.versions=make([]u32,n.x*n.y*n.z)
-    for &version in entry.versions {version=1}
+    data_chunks_allocate(&entry,context.allocator)
     append(&w.data.entries,entry)
     e:=core.create(&w.entities)
     core.add(&w.terrains,e,Terrain{source=id,solid=true})
@@ -106,13 +104,11 @@ the_ground_answers_each_line_as_its_terrain_has_it :: proc(t:^testing.T) {
     q=ground_step(&w,&resident)
     _,found=q.probe(q.user,{12,50,12},{0,-1,0})
     testing.expect(t,found==.Ground && len(changed)==1)
-    // An edit announces the box of its chunks, and a terrain that moves all it covered and covers.
-    change:=source_edit(s,{kind=.Raise,center={20,0,20},radius=3,amount=1.5})
-    low,high:=chunk_range(s,change)
-    w.data.entries[0].change=2
-    for z in low.z..=high.z {for x in low.x..=high.x {w.data.entries[0].versions[chunk_index(s,{i32(x),0,i32(z)})]=2}}
+    // An edit announces the columns over the samples it changed, not over its chunk (from 16 to
+    // 32 m), and a terrain that moves all it covered and covers.
+    data_mark(&w.data.entries[0],source_edit(s,{kind=.Raise,center={20,0,20},radius=3,amount=1.5}))
     q=ground_step(&w,&resident)
-    testing.expect(t,len(changed)==1 && mm.aabb_contains(changed[0],{{20,0,20},{20,0,20}}) && !mm.aabb_contains(changed[0],{{-16,0,-16},{-16,0,-16}}))
+    testing.expect(t,len(changed)==1 && mm.aabb_contains(changed[0],{{20,-1e3,20},{20,1e3,20}}) && !mm.aabb_contains(changed[0],{{30,0,30},{30,0,30}}))
     hit,_:=q.probe(q.user,{20,50,20},{0,-1,0})
     testing.expect(t,hit.point.y>1)
     core.edit(&w.worlds,land).transform.position={0,0,100}
@@ -124,6 +120,46 @@ the_ground_answers_each_line_as_its_terrain_has_it :: proc(t:^testing.T) {
     terrain_resident_free(&resident)
     q=ground_step(&w,&resident)
     testing.expect_value(t,len(changed),2)
+    q=ground_step(&w,&resident)
+    testing.expect_value(t,len(changed),0)
+}
+
+// A Heightfield of 256 m read by pages, in chunks of 32 m: a page that
+// comes announces the columns over its samples, not over the chunks whose
+// build reads it (their halo is half a chunk), and the next call nothing.
+@(test)
+a_page_that_comes_announces_only_the_ground_over_it :: proc(t:^testing.T) {
+    w:Ground_World
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    resident:Terrain_Resident
+    defer terrain_resident_free(&resident)
+    hill,paged:Source
+    if !testing.expect(t,source_make(&hill,.Heightfield,{257,1,257},1,32)) {return}
+    testing.expect(t,source_edit(&hill,{kind=.Raise,center={-32,0,-32},radius=30,amount=4}).changed)
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    path:=fmt.tprintf("%s/paged.terrain",base.test_folder(t,"terrain"))
+    testing.expect_value(t,source_save(&hill,path,{7,7},&types),asset.Error.None)
+    source_destroy(&hill)
+    front:asset.Asset
+    if !testing.expect_value(t,asset.asset_load_front(&front,path),asset.Error.None) {return}
+    _,read:=source_read(&paged,&front,&types,pages=path,coarse=true)
+    asset.asset_close(&front)
+    if !testing.expect(t,read) {return}
+    ground_entry(&w,{7,7},paged,{})
+    q:=ground_step(&w,&resident)
+    changed:=&w.ground_queries.changed.items
+    testing.expect_value(t,len(changed),1)
+    entry:=&w.data.entries[0]
+    // The page of the samples 64 to 127 along x and z, from -64 to -1 m.
+    if !testing.expect(t,source_region_read(&entry.source,{64,0,64},{127,0,127},entry)) {return}
+    q=ground_step(&w,&resident)
+    if !testing.expect_value(t,len(changed),1) {return}
+    box:=changed[0]
+    testing.expect(t,mm.aabb_contains(box,{{-64,-1e3,-64},{-1,1e3,-1}}),"the columns over the page")
+    testing.expectf(t,box.min.x> -70 && box.min.z> -70 && box.max.x<5 && box.max.z<5,"not the chunks that read it: %v",box)
+    hit,found:=q.probe(q.user,{-32,50,-32},{0,-1,0})
+    testing.expect(t,found==.Ground && abs(hit.point.y-source_height(&entry.source,-32,-32))<1e-3)
     q=ground_step(&w,&resident)
     testing.expect_value(t,len(changed),0)
 }
