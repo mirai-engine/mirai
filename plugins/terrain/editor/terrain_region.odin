@@ -70,7 +70,7 @@ region_commit :: proc(s:^editor.Session,call:^api.Call,tool:^Terrain_Tool,world:
     if !change.changed {stroke_cancel(tool);api_changed_write(call,false,0);return}
     stroke.active=true
     stroke_changed(stroke,change)
-    stroke_end(s,tool,world,s.app.assets,label=label)
+    stroke_end(s,tool,world,s.app.assets,label=label,layered=true)
     if stroke.active || stroke.changed {editor.tool_call_fail(s,call,"The change could not be kept");return}
     api_changed_write(call,true,1)
 }
@@ -147,5 +147,5 @@ mirror_fields :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,
     if !change.changed {return}
     stroke.active=true
     stroke_changed(stroke,change)
-    stroke_end(s,tool,world,assets,label="Mirror terrain")
+    stroke_end(s,tool,world,assets,label="Mirror terrain",layered=true)
 }

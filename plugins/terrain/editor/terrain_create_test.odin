@@ -1,5 +1,6 @@
 package terrain_editor
 
+import volume "mirai:engine/volume"
 import "core:fmt"
 import "core:mem"
 import "core:os"
@@ -32,6 +33,8 @@ Create_Test_World :: struct {
     terrains:core.Table(terrain.Terrain),
     worlds:core.Table(core.World_Transform),
     overrides:core.Table(erender.Material_Values),
+    splines:core.Table(volume.Spline),
+    conforms:core.Table(terrain.Terrain_Conform),
 }
 
 @(test)

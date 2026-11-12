@@ -32,7 +32,7 @@ Sculpt_Brush :: struct {kind:terrain.Brush_Kind,level:bool,name:string}
 
 @(rodata) HEIGHTFIELD_BRUSHES := [?]Sculpt_Brush{{.Raise,false,"Raise"},{.Lower,false,"Lower"},{.Smooth,false,"Smooth"},{.Flatten,false,"Flatten"},{.Ramp,false,"Ramp"},{.Flatten,true,"Set height"},{.Terrace,false,"Terrace"},{.Noise,false,"Noise"},{.Erode,false,"Erode"},{.Thermal,false,"Thermal"}}
 @(rodata) VOLUME_BRUSHES := [?]Sculpt_Brush{{.Add,false,"Add"},{.Carve,false,"Remove"},{.Raise,false,"Raise"},{.Lower,false,"Lower"},{.Smooth,false,"Smooth"},{.Flatten,false,"Flatten"},{.Flatten,true,"Set height"},{.Noise,false,"Noise"}}
-@(rodata) BRUSH_KEYS := [9]core.Key{.One,.Two,.Three,.Four,.Five,.Six,.Seven,.Eight,.Nine}
+@(rodata) BRUSH_KEYS := [10]core.Key{.One,.Two,.Three,.Four,.Five,.Six,.Seven,.Eight,.Nine,.Zero}
 // The keys the tool takes from the shortcuts of the editor while it is on.
 TOOL_KEYS :: core.Keys{.F,.Left_Bracket,.Right_Bracket,.One,.Two,.Three,.Four,.Five,.Six,.Seven,.Eight,.Nine}
 

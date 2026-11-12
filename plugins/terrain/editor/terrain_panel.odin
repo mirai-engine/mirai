@@ -13,7 +13,7 @@ import "mirai:ui"
 import "base:runtime"
 
 FIELD_WIDTH :: f32(84) // of the number fields of the panel: a value and its unit
-@(rodata) KEY_NAMES := [9]string{"1","2","3","4","5","6","7","8","9"}
+@(rodata) KEY_NAMES := [10]string{"1","2","3","4","5","6","7","8","9","0"}
 @(rodata) FALLOFF_NAMES := [len(geom.Falloff)]string{"Smooth","Sphere","Linear","Sharp","Flat"}
 @(rodata) SHAPE_NAMES := [len(Shape_Kind)]string{"Sphere","Capsule","Box","Selected mesh"}
 ALPHA_PREVIEW :: 24 // cells on a side of the preview of an alpha
@@ -167,6 +167,7 @@ terrain_sculpt_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.Wor
         kit.section(ctx,"Size",fmt.tprintf("%.0f × %.0f m",f32(stroke.source.samples.x-1)*stroke.source.cell,f32(stroke.source.samples.z-1)*stroke.source.cell),140)
         resize_fields(s,tool,world,app.assets)
         mirror_fields(s,tool,world,app.assets)
+        edit_layers_fields(s,tool,world,app.assets)
     } else {
         kit.section(ctx,"Mesh","",80)
         if ui.button(ctx,ui.id(ctx,"export_mesh"),{label="Save surface as mesh",variant="field",width=-1,center=true}).clicked {terrain_surface_mesh(s,tool,app.assets,app.allocator)}

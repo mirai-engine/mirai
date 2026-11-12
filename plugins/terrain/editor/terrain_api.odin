@@ -67,6 +67,7 @@ Edit_Params :: struct {
     shape:[16]u8 `mirai:"text,optional,label=Of add and carve: sphere or capsule or box; omitted: a sphere, or a capsule from at to to"`,
     alpha:[32]u8 `mirai:"text,optional,label=A shape of the brush by its name as the panel lists them"`,
     turn:f32 `mirai:"optional,label=Degrees the alpha turns"`,
+    edit_layer:int `mirai:"optional,min=0,max=8,label=Of a Heightfield: the edit layer the stroke also goes into, from 1 (terrain.edit_layer); 0: the base alone"`,
     player:int `mirai:"optional,min=0,max=3,label=While a game plays: the run of that player of a game a turn plays on the network"`,
 }
 
@@ -182,6 +183,8 @@ terrain_api_register :: proc(s:^editor.Session) {
     editor.api_method_register(s,{name="terrain.heightmap",summary="Imports a heightmap into a Heightfield Terrain as one step of undo, or exports its heights as a 16-bit PNG or R16 (the scale and offset it answers import it back) or as R32 floats; with layer, the weightmap of that layer instead.",params=type_info_of(Heightmap_Params),result=type_info_of(Terrain_Heightmap_Result),run=api_heightmap})
     editor.api_method_register(s,{name="terrain.region",summary="Copies a box of a Heightfield Terrain, its heights and layers, and puts it onto the same or another Heightfield with its middle at at, turned, mirrored, raised and faded into the ground at its edges, as one step of undo: copy and paste, or a stamp of a hill, a crater or a pad.",params=type_info_of(Region_Params),defaults=&region_defaults,result=type_info_of(Terrain_Edit_Result),run=api_region})
     editor.api_method_register(s,{name="terrain.mirror",summary="Mirrors one half of a Heightfield Terrain, its heights and layers, onto the other across a plane along x or z through at (omitted: its center), or turns it around the center for two sides that face each other, as one step of undo; blend mixes both halves near the plane so they meet.",params=type_info_of(Mirror_Params),result=type_info_of(Terrain_Edit_Result),run=api_mirror})
+    editor.api_method_register(s,{name="terrain.edit_layer",summary="Adds an edit layer to a Heightfield Terrain, or takes one out, hides or shows it, as one step of undo: what the strokes of terrain.edit with its edit_layer add stays apart in it, so hiding or taking it out gives back the ground without them. The layer of splines is made by terrain.conform.",params=type_info_of(Edit_Layer_Params),result=type_info_of(Terrain_Edit_Layer_Result),run=api_edit_layer})
+    editor.api_method_register(s,{name="terrain.conform",summary="Makes the layer of splines of a Heightfield Terrain again from every volume.Spline with a Terrain_Conform over it, as one step of undo: a level bed across each width that follows the ground under its middle, its depth under it, meeting the ground over its sides and painted with its layer; what the layer held before, heights and paint, goes back first, so a moved road leaves no trace where it was.",params=type_info_of(Conform_Params),result=type_info_of(Terrain_Conform_Result),run=api_conform})
     editor.api_method_register(s,{name="terrain.resize",summary="Gives a Heightfield Terrain other samples around its center as one step of undo: what it had stays where it was, and what grows takes the heights and layers of the nearest edge.",params=type_info_of(Resize_Params),result=type_info_of(Id_Result),run=api_resize})
 }
 
@@ -380,6 +383,9 @@ api_edit :: proc(s:^editor.Session,call:^api.Call) {
     }
     tool,world,ok:=api_terrain(s,call,p.entity[:])
     if !ok {return}
+    chosen:=tool.edit_layer
+    defer tool.edit_layer=chosen
+    if !edit_layer_param(s,call,tool,p.edit_layer) {return}
     stroke:=&tool.stroke
     source:=&stroke.source
     brush,from,to,made:=edit_brush(s,call,p,source,stroke.to_local,stroke.scale,kind,level)
@@ -425,7 +431,7 @@ api_edit :: proc(s:^editor.Session,call:^api.Call) {
         }
     }
     if !stroke.changed {stroke_cancel(tool);api_changed_write(call,false,touches);return}
-    stroke_end(s,tool,world,s.app.assets,label=fmt_label(kind,level))
+    stroke_end(s,tool,world,s.app.assets,label=fmt_label(kind,level),layered=true)
     if stroke.active || stroke.changed {editor.tool_call_fail(s,call,"The stroke could not be kept");return}
     api_changed_write(call,true,touches)
 }
