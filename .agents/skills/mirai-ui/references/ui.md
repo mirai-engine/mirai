@@ -117,8 +117,10 @@ measures each span once for what it says, breaks the leaf into lines at the widt
 gave it and takes the height of those lines in the same frame, whatever the width is.
 
 - Only a `FIT` width asks for what the text says, on one line; a text that wraps breaks down to its
-  widest word when its parent is narrower. Any other width is what the layout gives. A `FIT`
-  height holds the lines; any other shows the lines that fit, aligned by the style.
+  widest word when its parent is narrower, and one line that ends in an ellipsis can be cut to
+  nothing. Any other width is what the layout gives. A `FIT` height holds the lines; any other
+  shows the lines that fit, aligned by the style. The label and the detail of a button or a row
+  that do not fit side by side are both cut that way, the longer first.
 - `label`, `text`, `rich_text`, `markdown`, the label of a column, a tooltip and the text of a
   game control are that leaf with different spans: `text_begin`, then `text_span` (words),
   `text_link` (words that take the pointer on every line they end up on), `text_box` (an image, a

@@ -989,8 +989,9 @@ content_gear_shows_the_parts_and_details_lists_them_after_the_rest :: proc(t:^te
     testing.expect_value(t,ctx.focus,ui.id_derive(ctx,100,"content_entry",int(content_card_key(assets.registry.files[2].path,{},0))))
     testing.expect_value(t,c.selected,assets.registry.files[2].id)
     // The list of a material field of Details: None, the material of its own,
-    // then the part; choosing it marks it as used.
-    list_open(session,{key=77,table=-1,kinds={0=asset.KIND_MATERIAL}},{20,20,260,40})
+    // then the part; choosing it marks it as used. From a narrow field it is
+    // as wide as it needs, with its rows inside it.
+    list_open(session,{key=77,table=-1,kinds={0=asset.KIND_MATERIAL}},{20,20,60,40})
     frame :: proc(ctx:^ui.Context,s:^Session,input:ui.Input) {
         ui.frame_begin(ctx,input)
         list_build(s,core.World_Ref{})
@@ -1001,6 +1002,8 @@ content_gear_shows_the_parts_and_details_lists_them_after_the_rest :: proc(t:^te
     _,more:=ui.widget_rect(ctx,ui.id_derive(ctx,list_popup(g),"row",4))
     testing.expect(t,shown && !more)
     if !shown {return}
+    popup,_:=ui.widget_rect(ctx,list_popup(g))
+    testing.expectf(t,popup.w>=CHOICE_LIST_WIDTH && row.x>=popup.x && row.x+row.w<=popup.x+popup.w,"%v holds %v",popup,row)
     for phase in 0..<3 {
         input:=ui.Input{size={800,600},pointer=ui.rect_center(row)}
         if phase==1 {input.down,input.pressed={.Left},{.Left}}

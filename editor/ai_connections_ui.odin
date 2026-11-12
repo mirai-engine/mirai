@@ -31,6 +31,9 @@ Ai_Connections_Ui :: struct {
 }
 
 AI_CONNECTIONS_WIDTH :: f32(550)
+AI_DISCLOSURE_PAD :: f32(10)  // before the triangle of Advanced settings
+AI_DISCLOSURE_ICON :: f32(16) // its triangle
+AI_DISCLOSURE_GAP :: f32(6)   // between an icon and the label of a button
 AI_CONNECTION_RUNTIME_LABELS :: [Ai_Runtime]string{.Automatic="Automatic",.Bun="Bun",.Node="Node",.Pnpm="pnpm",.Bundled="Standalone package"}
 
 ai_connections_open :: proc(s:^Session) {
@@ -211,9 +214,10 @@ ai_connections_overview :: proc(s:^Session) {
     }
     if ui.button(ctx,ui.id(ctx,"add_agent"),{label="Add agent by command",icon=.Plus,variant="ghost",width=-1,height=30,disabled=state.busy || m.connection_count>=AI_CONNECTION_CAPACITY}).clicked {ai_connections_page(s,.Add,AI_CODEX)}
     ai_connections_missing_runtime(s)
-    if ui.button(ctx,ui.id(ctx,"advanced"),{label="Advanced settings",icon=state.advanced?.Chevron_Down:.Chevron_Right,variant="ghost",width=-1,height=28}).clicked {state.advanced=!state.advanced}
+    if ui.button(ctx,ui.id(ctx,"advanced"),{label="Advanced settings",icon=state.advanced?.Chevron_Down:.Chevron_Right,icon_size=AI_DISCLOSURE_ICON,variant="ghost",width=-1,height=28,padding=AI_DISCLOSURE_PAD}).clicked {state.advanced=!state.advanced}
     if !state.advanced {return}
-    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(40),gap=12,align_y=.Center}) {
+    // What it holds starts under the text of its title, past its triangle.
+    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(40),padding={AI_DISCLOSURE_PAD+AI_DISCLOSURE_ICON+AI_DISCLOSURE_GAP,0,0,0},gap=12,align_y=.Center}) {
         ui.label(ctx,"Runtime",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
         ui.spacer(ctx)
         labels:=AI_CONNECTION_RUNTIME_LABELS

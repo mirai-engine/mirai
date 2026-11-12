@@ -180,7 +180,9 @@ popup_begin :: proc(ctx:^Context,id:Id,desc:Popup={}) -> bool {
         }
     }
     top:=metric(ctx,"bar_height")+2 if ctx.surface==0 else 0
-    b:=Box{id=id,width=fixed(desc.width) if desc.width>0 else fit(desc.min_width),height=FIT,direction=.Column,padding=padding_all(padding),gap=desc.gap,
+    // No wider than its surface less its margins, where the layout keeps it.
+    most:=max(surface_size(ctx).x-2*metric(ctx,"margin"),0)
+    b:=Box{id=id,width=fixed(min(desc.width,most)) if desc.width>0 else fit(min(desc.min_width,most),most),height=FIT,direction=.Column,padding=padding_all(padding),gap=desc.gap,
         float=float,from=from,contain=true,inset={metric(ctx,"margin"),top,metric(ctx,"margin"),metric(ctx,"margin")},fill=tone(ctx,"popup"),stroke=tone(ctx,"border"),radius=metric(ctx,"radius_popup"),shadow=true,block=true}
     if s:=desc.style;s!=nil {
         b.fill,b.stroke,b.stroke_width,b.radius,b.corners=s.fill,s.stroke,s.stroke_width,0,s.radius

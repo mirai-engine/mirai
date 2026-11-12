@@ -397,8 +397,8 @@ a_popup_opened_in_a_world_panel_belongs_to_its_surface :: proc(t:^testing.T) {
     frame:=test_frame(&ctx,&input,build,&s)
     list:=id_derive(&ctx,id(&ctx,"kind"),"list")
     testing.expect(t,popup_is_open(&ctx,list))
-    // Under its button and inside the margin of the panel, three rows tall inside 4 of padding.
-    testing.expect(t,test_rect_near(test_rect(t,&ctx,list),{metric(&ctx,"margin"),10+metric(&ctx,"row")+4,180,3*metric(&ctx,"row")+8}),"It hangs under its button, inside the panel")
+    // Under its button and inside the margins of the panel, three rows tall inside 4 of padding.
+    testing.expect(t,test_rect_near(test_rect(t,&ctx,list),{metric(&ctx,"margin"),10+metric(&ctx,"row")+4,min(180,200-2*metric(&ctx,"margin")),3*metric(&ctx,"row")+8}),"It hangs under its button, inside the panel")
     for command in frame.commands {testing.expect_value(t,command.surface,u32(1))}
     testing.expect_value(t,ctx.stats.layout_errors,u32(0))
     // The third row, through the ray.
