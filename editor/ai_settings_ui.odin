@@ -101,7 +101,7 @@ ai_settings_agents_build :: proc(s:^Session) {
     provider,connected:=ai_chat_provider(m)
     model,effort:=ai_chat_model(m)
     label:=connected?ai_model_name(m,provider,model):"Select model"
-    list:=ai_model_field(ctx,ui.id(ctx,"main_model"),m.connections[provider].agent,connected,label,ai_effort_name(effort))
+    list:=ai_model_field(ctx,ui.id(ctx,"main_model"),m.connections[provider].agent,connected,label,ai_effort_name(effort) if connected else "")
     ai_chat_models_menu(s,list,.Auto)
 
     ai_settings_caption(ctx,"Subagents")

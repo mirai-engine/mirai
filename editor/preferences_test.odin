@@ -71,7 +71,7 @@ preferences_keep_what_differs_from_the_code_and_come_back :: proc(t:^testing.T) 
     testing.expect_value(t,f.p.file,path)
     delete(path)
     testing.expect(t,f.g.layout.bottom_open && f.g.layout.bottom_height==300 && f.g.layout.left_open)
-    testing.expect(t,f.c.view.columns==7 && f.c.view.arrangement==.Names)
+    testing.expect(t,f.c.view.columns==7 && f.c.view.arrangement==.Folders)
     testing.expect(t,f.v.snap && f.v.fly_speed==9 && f.v.grid==0.5)
     testing.expect(t,f.console.hidden=={.Debug,.Info} && f.n.players==3 && !f.ai.show_agents_in_scene)
     // Nothing changed: nothing is written; a Play keeps its layout out of the file.
@@ -150,7 +150,7 @@ the_navigation_of_the_browser_is_kept_in_the_project :: proc(t:^testing.T) {
     f.s.project_root=project
     preferences_open(&f.s,{})
     content_place_set(&f.c,"Meshes/nested")
-    f.c.categories,f.c.unused={.Mesh},true
+    f.c.category,f.c.unused=.Mesh,true
     content_enter(&f.c,.None,"Meshes/nested")
     f.c.filter_length=copy(f.c.filter[:],"box")
     preferences_save(&f.s)
@@ -166,7 +166,7 @@ the_navigation_of_the_browser_is_kept_in_the_project :: proc(t:^testing.T) {
     expect_kept :: proc(t:^testing.T,c:^Content) {
         testing.expect_value(t,string(c.place[:c.place_length]),"Meshes/nested")
         testing.expect_value(t,string(c.at.folder[:c.at.length]),"Meshes/nested")
-        testing.expect(t,c.categories=={.Mesh} && c.unused && c.filter_length==0)
+        testing.expect(t,c.category==.Mesh && c.unused && c.filter_length==0)
     }
     expect_kept(t,&f.c)
     testing.expect(t,f.c.restore)

@@ -204,7 +204,7 @@ settings_project_card :: proc(s:^Session,title,needle:string,every:bool) {
     if !p.loaded {settings_project_load(s)}
     if !p.loaded {return}
     defaults:=project.manifest_default(base.text_get(p.manifest.name[:]))
-    c:=Inspect{s=s,w=edited_world(s),index=HELD_INDEX,held=PROJECT_HELD,name="Manifest",type=project.Manifest,value=cast([^]u8)&p.manifest,defaults=cast([^]u8)&defaults,size=size_of(project.Manifest),width=SETTINGS_SIZE.x-SETTINGS_NAV-60,sections=true,section=title,ruled=true}
+    c:=Inspect{s=s,w=edited_world(s),index=HELD_INDEX,held=PROJECT_HELD,name="Manifest",type=project.Manifest,value=cast([^]u8)&p.manifest,defaults=cast([^]u8)&defaults,size=size_of(project.Manifest),width=settings_fields_width(s.gui.ctx),sections=true,section=title,ruled=true}
     if !every && !base.contains_fold(title,needle) {c.needle=needle}
     if !inspect_schema(&c,type_info_of(project.Manifest)) {return}
     held_take(&c)

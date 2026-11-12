@@ -66,7 +66,7 @@ kinds_write :: proc(p:^project.Project) -> (errors:[]string) {
 }
 
 // The name of the package of the Odin sources of a folder.
-@(private="file")
+@(private)
 package_of :: proc(folder:string) -> (name:string,found:bool) {
     entries,error:=os.read_all_directory_by_path(folder,context.temp_allocator)
     if error!=nil {return}

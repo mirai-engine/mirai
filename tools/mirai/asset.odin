@@ -402,7 +402,7 @@ verify_asset :: proc(a:^asset.Asset,path:string,types:^asset.Types) -> string {
     case asset.KIND_PROMPTS:
         if _,error:=asset.prompts_view(a,types);error!=.None {return "prompts: a family or an entry that does not exist, a key too many or too few, a part outside its texture, or a repeated entry"}
     case asset.KIND_RECORDS:
-        if _,error:=asset.records_view(a,types);error!=.None {return "records: no type of rows, a row with the id 0, a repeated id or name, a name that is not a word, or a text out of order or outside the UTF-8"}
+        if _,error:=asset.records_view(a,types);error!=.None {return "records: no type of rows, columns that are not valid (a name that is not a word or is there twice, options that do not fit its kind) or that a table of rows of another's type has, no defaults, a row with the id 0, a repeated id or name, or a name that is not a word"}
     }
     return ""
 }

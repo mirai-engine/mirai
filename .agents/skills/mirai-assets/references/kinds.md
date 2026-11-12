@@ -286,11 +286,15 @@ a key without text in a language has no entry.
 
 ## Records
 
-`asset/records.odin` defines `.records`: a game data table whose rows are values of a code
-`@(record)` struct ([game data](../../mirai-core/references/core.md#game-data)).
+`asset/records.odin` defines `.records`: a typed table of game data
+([game data](../../mirai-core/references/core.md#game-data)).
 
-- `records` says the type of the rows as `library.Name`; the editor and `host` look it up in
-  `World_Info.records`.
+- `records` says the name of the type of the rows, its description and whether the file declares
+  it; `host` and the editor match a table to a type by that name alone.
+- A file that declares its type has `columns` (`Records_Column`: name, kind and the options of the
+  kind, description and the names it had) and `defaults` (one row: what a new row holds); the build
+  generates the struct from them. One that does not has neither: its rows are of the type another
+  file declares. `records_columns_problem` says which column is not valid and how to fix it.
 - `rows` has `id` (the key: what a `core.Record` stores), `name` (a word of ASCII letters, digits
   and `_`, unique in the table, by which the API and the CSV name the row) and `value`, with the
   type of the file's schema: a tool reads the rows without the code and the code reads them by field

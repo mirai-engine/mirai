@@ -556,12 +556,13 @@ field_content :: proc(ctx:^Context,id:Id,f:Field_Look) {
         if !editing {lo,hi,caret=0,0,len(f.text)}
         text_span(ctx,f.text[:lo if hi>lo else caret])
         if hi>lo {text_span(ctx,f.text[lo:hi],{back=f.selection})}
-        if editing && hi<=lo && int(max(ctx.time-e.caret_started,0)*2)%2==0 {text_box(ctx,0,0,{kind=.Caret,fill=style.color})}
-        text_span(ctx,f.text[hi if hi>lo else caret:])
-        if f.text=="" && f.placeholder!="" {
-            if editing && !f.multiline {text_put(ctx,{width=2})}
-            text_span(ctx,f.placeholder,{font=style.font,size=style.size,color=f.faint})
+        // The caret stays in the line while it blinks off, so what follows it does not move.
+        if editing && hi<=lo {
+            shown:=int(max(ctx.time-e.caret_started,0)*2)%2==0
+            text_box(ctx,0,0,{kind=.Caret,fill=style.color if shown else {}})
         }
+        text_span(ctx,f.text[hi if hi>lo else caret:])
+        if f.text=="" && f.placeholder!="" {text_span(ctx,f.placeholder,{font=style.font,size=style.size,color=f.faint})}
         if editing {text_end(ctx,{width=GROW if f.multiline else FIT})} else {text_end(ctx,{width=GROW,height=GROW},area)}
     }
     if editing {box_end(ctx,scroller)}

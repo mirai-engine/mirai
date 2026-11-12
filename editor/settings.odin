@@ -27,7 +27,10 @@ import "mirai:ui"
 // and the game read the files when they make their worlds.
 
 SETTINGS_PLUGINS :: 64
-SETTINGS_SECTION_INDENT :: f32(16) // of the sections of a category in the list, under its name
+SETTINGS_CATEGORY_INDENT :: f32(8) // of the categories of the list, under the name of their group
+SETTINGS_SECTION_INDENT :: f32(14) // of the sections of a category in the list, under its name
+SETTINGS_GROUP_SPACE :: f32(18)    // above the name of a group of the list but the first
+SETTINGS_GLIDE :: 0.15             // seconds a card takes to glide to the top when its section is clicked
 
 // The plugins the settings dialog lists: every one the project can see, the
 // ones the project names and the ones their dependencies bring.
@@ -103,7 +106,7 @@ settings_open :: proc(s:^Session,name:string) {
     for c in settings_categories(s) {
         for storage,k in c.storages {
             if s.info.storages[storage].name!=name {continue}
-            d.current,d.section,d.jump=c.storage,k,k
+            d.current,d.jump,d.glide=c.storage,k,false
             return
         }
     }
@@ -248,16 +251,19 @@ settings_flush :: proc(s:^Session) {
 // shown as cards on its right. A category is the Plugins of the project or a
 // setting; its sections are the titles of its fields (section=Title), and
 // the fields before the first title make one with its name.
-SETTINGS_SIZE :: [2]f32{800,576}
+SETTINGS_SIZE :: [2]f32{1100,740}
 SETTINGS_NAV :: f32(202)
+SETTINGS_LABEL_WIDTH :: f32(260) // at most, of the column of the names of the fields
 SETTINGS_CATEGORY_PLUGINS :: -1
 SETTINGS_CATEGORY_INPUT :: -2
 SETTINGS_CATEGORY_EDITOR :: -4 // the preferences of the editor in the machine (preferences.odin), not of the project
 
 Settings_Dialog :: struct {
     current:int,          // the category shown: a storage of the world info, SETTINGS_CATEGORY_PROJECT, SETTINGS_CATEGORY_PLUGINS or SETTINGS_CATEGORY_INPUT
-    section:int,          // the card in sight of the category shown
-    jump:int,             // a card to bring to the top on the next frame; -1: none
+    jump:int,             // a card to bring to the top once it is laid out; -1: none
+    glide:bool,           // the jump glides, from a section of the list
+    glide_at:f64,         // ui time the cards began to glide to glide_to; 0: still
+    glide_from,glide_to:f32,
     unfolded:[256]bool,   // categories whose sections the list shows, by settings_fold_slot
     search:[64]u8,
     search_length:int,
@@ -288,10 +294,6 @@ settings_categories :: proc(s:^Session) -> []Settings_Category {
     list:=make([dynamic]Settings_Category,context.temp_allocator)
     d:=&s.settings_dialog
     needle:=string(d.search[:d.search_length])
-    // The editor goes first in both layers: its preferences are of the machine.
-    if needle=="" || base.contains_fold("Editor Panels Floating Docked",needle) {
-        append(&list,Settings_Category{storage=SETTINGS_CATEGORY_EDITOR,name="Editor",group="Editor",sections=[]string{"Panels"}})
-    }
     if s.settings_layer==.Project && s.has_project {
         manifest:=Settings_Category{storage=SETTINGS_CATEGORY_PROJECT,name="Project",group="Project"}
         manifest.sections=settings_sections(s,type_info_of(project.Manifest),manifest.name,needle)
@@ -306,6 +308,10 @@ settings_categories :: proc(s:^Session) -> []Settings_Category {
     if s.settings_layer==.Project && s.has_project {
         sections:=input_sections(s,needle)
         if len(sections)>0 {append(&list,Settings_Category{storage=SETTINGS_CATEGORY_INPUT,name="Input",group="Project",sections=sections})}
+    }
+    // The editor after the project: its preferences are of the machine.
+    if needle=="" || base.contains_fold("Editor Panels Floating Docked",needle) {
+        append(&list,Settings_Category{storage=SETTINGS_CATEGORY_EDITOR,name="Editor",group="Editor",sections=[]string{"Panels"}})
     }
     // The settings of one package or plugin are one category, each a part of it.
     for pass in 0..<3 {
@@ -535,6 +541,15 @@ settings_reset :: proc(s:^Session) {
     settings_save(s,s.settings_layer)
 }
 
+// The size of the dialog in a window of ctx.size, and the width of the fields of its cards.
+@(private)
+settings_size :: proc(ctx:^ui.Context) -> [2]f32 {
+    margin:=2*ui.metric(ctx,"margin")
+    return {min(SETTINGS_SIZE.x,ctx.size.x-margin),min(SETTINGS_SIZE.y,ctx.size.y-margin)}
+}
+@(private)
+settings_fields_width :: proc(ctx:^ui.Context) -> f32 {return max(settings_size(ctx).x-SETTINGS_NAV-60,0)}
+
 @(private)
 settings_modal :: proc(s:^Session) {
     g:=s.gui
@@ -545,7 +560,7 @@ settings_modal :: proc(s:^Session) {
     if s.settings_layer==.Engine {settings_layer_set(s,.Project)}
     closed:=false
     defer if closed {g.modal,d.input.listen=.None,{}}
-    size:=[2]f32{min(SETTINGS_SIZE.x,ctx.size.x-2*ui.metric(ctx,"margin")),min(SETTINGS_SIZE.y,ctx.size.y-2*ui.metric(ctx,"margin"))}
+    size:=settings_size(ctx)
     needle:=strings.trim_space(string(d.search[:d.search_length]))
     categories:=settings_categories(s)
     shown:=-1
@@ -554,7 +569,7 @@ settings_modal :: proc(s:^Session) {
     }
     if shown<0 && len(categories)>0 {
         shown=0
-        d.current,d.section,d.scroll=categories[0].storage,0,0
+        d.current,d.scroll,d.jump,d.glide_at=categories[0].storage,0,-1,0
     }
     if d.input.listen.active {input_listen_poll(s)}
     if ui.modal(ctx,shell_id(g,"settings"),{width=size.x,padding=-1,close=&closed,own_cross=true,fill=ui.tone(ctx,"panel")}) {
@@ -567,8 +582,8 @@ settings_modal :: proc(s:^Session) {
                     search:=shell_id(g,"settings_search")
                     if ui.box(ctx,{width=ui.fixed(220),height=ui.fixed(ui.metric(ctx,"control")),padding={9,0,4,0},gap=6,align_y=.Center,fill=ui.tone(ctx,"well"),stroke=ctx.edit.id==search?ui.tone(ctx,"accent"):ui.tone(ctx,"well_stroke"),radius=ui.metric(ctx,"radius_control")}) {
                         ui.icon(ctx,ui.icon_user(u8(User_Icon.Search)),ui.tone(ctx,"text_muted"),13)
-                        if ui.text_field(ctx,search,d.search[:],&d.search_length,{placeholder="Search settings",live=true,keep_caret=true,height=ui.metric(ctx,"control"),size=ui.metric(ctx,"font"),bare=true}).changed {d.scroll=0}
-                        if d.search_length>0 && ui.button(ctx,shell_id(g,"settings_search_clear"),{icon=.Cross,icon_size=10,icon_color=ui.tone(ctx,"text_muted"),variant="ghost",width=20,height=20}).clicked {d.search_length,d.scroll=0,0}
+                        if ui.text_field(ctx,search,d.search[:],&d.search_length,{placeholder="Search settings",live=true,keep_caret=true,height=ui.metric(ctx,"control"),size=ui.metric(ctx,"font"),bare=true}).changed {d.scroll,d.glide_at=0,0}
+                        if d.search_length>0 && ui.button(ctx,shell_id(g,"settings_search_clear"),{icon=.Cross,icon_size=10,icon_color=ui.tone(ctx,"text_muted"),variant="ghost",width=20,height=20}).clicked {d.search_length,d.scroll,d.glide_at=0,0,0}
                     }
                     if ui.button(ctx,shell_id(g,"settings_close"),{icon=.Cross,icon_size=12,icon_color=ui.tone(ctx,"text_muted"),variant="ghost",width=25,height=ui.metric(ctx,"control")}).clicked {closed=true}
                 }
@@ -606,10 +621,10 @@ settings_nav :: proc(s:^Session,categories:[]Settings_Category,shown:int,needle:
         if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"control")+4),padding={5,0,0,0},gap=8,align_y=.Center}) {
             if ui.box(ctx,{width=ui.fixed(28),height=ui.fixed(28),fill=ui.tone(ctx,"accent"),radius=ui.metric(ctx,"radius_popup"),align_x=.Center,align_y=.Center}) {ui.icon(ctx,ui.icon_user(u8(User_Icon.Gear)),ui.tone(ctx,"on_accent"),15)}
             if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column}) {
-                ui.label(ctx,"Project settings",ui.metric(ctx,"font"),ui.tone(ctx,"text"),0,font=ui.FONT_SEMIBOLD)
+                ui.label(ctx,"Settings",ui.metric(ctx,"font"),ui.tone(ctx,"text"),0,font=ui.FONT_SEMIBOLD)
                 ui.label(ctx,project_name(s),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"),0)
             }
-            if ui.button(ctx,shell_id(g,"settings_unfold"),{icon=any_open?ui.icon_user(u8(User_Icon.Collapse)):.Plus,icon_size=13,icon_color=ui.tone(ctx,"text_muted"),variant="ghost",width=25,height=ui.metric(ctx,"control"),disabled=!foldable || needle!=""}).clicked {
+            if ui.button(ctx,shell_id(g,"settings_unfold"),{icon=ui.icon_user(u8(any_open?User_Icon.Collapse:User_Icon.Expand)),icon_size=13,icon_color=ui.tone(ctx,"text_muted"),variant="ghost",width=25,height=ui.metric(ctx,"control"),disabled=!foldable || needle!=""}).clicked {
                 for c in categories {
                     if slot:=settings_fold_slot(c.storage);slot>=0 && slot<len(d.unfolded) {d.unfolded[slot]=!any_open}
                 }
@@ -618,42 +633,46 @@ settings_nav :: proc(s:^Session,categories:[]Settings_Category,shown:int,needle:
         // The bar of the scroll goes in its own gutter at the right, over no item.
         if ui.scroll_area(ctx,shell_id(g,"settings_nav"),&d.nav_scroll,{height=ui.GROW,padding={0,6,10,0},gap=2,fade=ui.tone(ctx,"panel")}) {
             group:=""
+            row:=ui.metric(ctx,"control")
             for c,i in categories {
+                // A group opens with its name in caption type, with room above it.
                 if c.group!=group {
                     group=c.group
-                    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(i==0?20:30),padding={9,0,0,4},gap=7,align_y=.End}) {
+                    if ui.box(ctx,{width=ui.GROW,height=ui.FIT,padding={9,i==0?2:SETTINGS_GROUP_SPACE,0,4}}) {
                         ui.label(ctx,strings.to_upper(group,context.temp_allocator),ui.metric(ctx,"font_caption"),ui.tone(ctx,"text_caption"),font=ui.FONT_SEMIBOLD)
-                        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(5),padding={0,0,0,4},direction=.Column}) {
-                            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=ui.tone(ctx,"border")}) {}
-                        }
                     }
                 }
                 open:=unfolded(d,c,needle)
                 current:=i==shown
+                ui.box_begin(ctx,{width=ui.GROW,height=ui.FIT,padding={SETTINGS_CATEGORY_INDENT,0,0,0},direction=.Column,gap=1})
+                // The row shows the category; only its arrow folds it.
                 id:=shell_id(g,"settings_category",i+1)
                 it:=ui.interact(ctx,id,{.Focusable})
-                if ui.box(ctx,{id=id,width=ui.GROW,height=ui.fixed(ui.metric(ctx,"control")),padding={9,0,9,0},align_y=.Center,fill=current?ui.tone(ctx,"accent_soft"):it.hot?ui.tone(ctx,"field_hover"):ui.Color{},radius=ui.metric(ctx,"radius_control")}) {
-                    ui.label(ctx,c.name,ui.metric(ctx,"font"),current?ui.tone(ctx,"text"):ui.tone(ctx,"text_muted"),0,font=current?ui.FONT_SEMIBOLD:ui.FONT_REGULAR)
-                    if len(c.sections)>1 {ui.icon(ctx,open?.Chevron_Down:.Chevron_Right,ui.tone(ctx,"text_faint"),11)}
-                }
-                if it.clicked {
-                    if d.current!=c.storage {d.current,d.section,d.scroll=c.storage,0,0}
-                    if slot:=settings_fold_slot(c.storage);len(c.sections)>1 && needle=="" && slot>=0 && slot<len(d.unfolded) {d.unfolded[slot]=!d.unfolded[slot]}
-                }
-                if !open {continue}
-                // The sections hang from their category: indented, after a rule.
-                ui.box_begin(ctx,{width=ui.GROW,height=ui.FIT,padding={SETTINGS_SECTION_INDENT,2,0,2},gap=6})
-                if ui.box(ctx,{width=ui.fixed(1),height=ui.GROW,fill=ui.tone(ctx,"border")}) {}
-                ui.box_begin(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column})
-                for title,k in c.sections {
-                    sub:=shell_id(g,"settings_section",(i+1)*64+k)
-                    on:=current && d.section==k
-                    if ui.button(ctx,sub,{label=settings_section_title(s,c,k),variant="ghost",active=on,width=-1,height=ui.metric(ctx,"row"),size=ui.metric(ctx,"font_small"),padding=7}).clicked {
-                        if d.current!=c.storage {d.current,d.scroll=c.storage,0}
-                        d.section,d.jump=k,k
+                if ui.box(ctx,{id=id,width=ui.GROW,height=ui.fixed(row),padding={9,0,2,0},align_y=.Center,fill=current?ui.tone(ctx,"accent_soft"):it.hot?ui.tone(ctx,"field_hover"):ui.Color{},radius=ui.metric(ctx,"radius_control")}) {
+                    ui.label(ctx,c.name,ui.metric(ctx,"font"),ui.tone(ctx,"text"),0,font=current?ui.FONT_SEMIBOLD:ui.FONT_REGULAR)
+                    if len(c.sections)>1 {
+                        side:=row-4
+                        if ui.button(ctx,shell_id(g,"settings_fold",i+1),{icon=open?.Chevron_Down:.Chevron_Right,icon_size=11,icon_color=ui.tone(ctx,"text_muted"),variant="ghost",width=side,height=side,center=true,disabled=needle!=""}).clicked {
+                            if slot:=settings_fold_slot(c.storage);slot>=0 && slot<len(d.unfolded) {d.unfolded[slot]=!d.unfolded[slot]}
+                        }
                     }
                 }
-                ui.box_end(ctx,{})
+                if it.clicked && d.current!=c.storage {d.current,d.scroll,d.jump,d.glide_at=c.storage,0,-1,0}
+                // Its sections go further in, smaller and dimmer, and are never
+                // the one selected: one glides its card to the top.
+                if open {
+                    for _,k in c.sections {
+                        sub:=shell_id(g,"settings_section",(i+1)*64+k)
+                        on:=ui.interact(ctx,sub,{.Focusable})
+                        if ui.box(ctx,{id=sub,width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),padding={9+SETTINGS_SECTION_INDENT,0,4,0},align_y=.Center,fill=on.hot?ui.tone(ctx,"field_hover"):ui.Color{},radius=ui.metric(ctx,"radius_control")}) {
+                            ui.label(ctx,settings_section_title(s,c,k),ui.metric(ctx,"font_small"),on.hot?ui.tone(ctx,"text"):ui.tone(ctx,"text_muted"),-1)
+                        }
+                        if on.clicked {
+                            if d.current!=c.storage {d.current,d.scroll=c.storage,0}
+                            d.jump,d.glide=k,true
+                        }
+                    }
+                }
                 ui.box_end(ctx,{})
             }
         }
@@ -696,22 +715,31 @@ settings_cards :: proc(s:^Session,category:Settings_Category,needle:string,heigh
     ctx:=g.ctx
     d:=&s.settings_dialog
     area:=shell_id(g,"settings_cards")
-    // The card asked for comes to the top; the one at the top is the one the list lights.
-    if view,found:=ui.widget_rect(ctx,area);found {
+    // The card asked for comes to the top as far as the area scrolls, once the
+    // cards of its category are laid out; one they do not have is dropped.
+    if view,found:=ui.widget_rect(ctx,area);found && d.jump>=0 && category.storage==d.current {
+        content,_:=ui.widget_rect(ctx,ui.id_derive(ctx,area,"content"))
+        laid:=false
         for k in 0..<len(category.sections) {
             card_rect,placed:=ui.widget_rect(ctx,settings_card_id(s,category.storage,k))
-            if !placed {continue}
-            if d.jump==k {d.scroll+=card_rect.y-view.y-14}
-            if d.jump<0 && card_rect.y-view.y<=48 {d.section=k}
+            laid|=placed
+            if !placed || k!=d.jump {continue}
+            to:=clamp(d.scroll.y+card_rect.y-view.y-14,0,max(content.h-view.h,0))
+            if d.glide {d.glide_at,d.glide_from,d.glide_to=max(ctx.time,1e-6),d.scroll.y,to} else {d.scroll.y=to}
         }
+        if laid {d.jump=-1}
     }
-    d.jump=-1
+    if d.glide_at>0 {
+        t:=clamp(f32((ctx.time-d.glide_at)/SETTINGS_GLIDE),0,1)
+        d.scroll.y=d.glide_from+(d.glide_to-d.glide_from)*(1-(1-t)*(1-t)*(1-t))
+        if t>=1 {d.glide_at=0}
+    }
     // The bands of the sections reach both edges; their rows are set in.
     if ui.scroll_area(ctx,area,&d.scroll,{height=ui.fixed(height),padding={0,14,0,18},gap=10,fade=ui.tone(ctx,"panel")}) {
         // The fields read at the size of the rest of the dialog, with the room
         // it has for the column of labels.
         small:=ui.metric_set(ctx,"font_small",ui.metric(ctx,"font"))
-        labels:=ui.metric_set(ctx,"label_width",(SETTINGS_SIZE.x-SETTINGS_NAV-60)*0.3)
+        labels:=ui.metric_set(ctx,"label_width",min(settings_fields_width(ctx)*0.3,SETTINGS_LABEL_WIDTH))
         defer {ui.metric_set(ctx,"font_small",small);ui.metric_set(ctx,"label_width",labels)}
         if category.storage==SETTINGS_CATEGORY_EDITOR {
             if section_card(s,settings_card_id(s,category.storage,0),"Panels") {settings_panels_card(s)}
@@ -742,7 +770,7 @@ settings_cards :: proc(s:^Session,category:Settings_Category,needle:string,heigh
                 // The ids of the rows are those of their setting: two of a category do not share them.
                 ui.id_push(ctx,ui.id(ctx,info.name))
                 defer ui.id_pop(ctx)
-                c:=Inspect{s=s,w=w,index=SETTING_INDEX+storage,storage=storage+1,name=info.name,type=info.type,value=cast([^]u8)setting_data(s,storage),size=info.info.size,width=SETTINGS_SIZE.x-SETTINGS_NAV-60,sections=true,section=title,ruled=true}
+                c:=Inspect{s=s,w=w,index=SETTING_INDEX+storage,storage=storage+1,name=info.name,type=info.type,value=cast([^]u8)setting_data(s,storage),size=info.info.size,width=settings_fields_width(ctx),sections=true,section=title,ruled=true}
                 if !every && !base.contains_fold(title,needle) {c.needle=needle}
                 defaults:[INSPECTOR_COMPONENT_BYTES]u8
                 c.defaults=settings_defaults(s,info,&defaults)

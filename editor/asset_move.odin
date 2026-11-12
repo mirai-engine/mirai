@@ -405,7 +405,7 @@ asset_start_scene_moved :: proc(s:^Session,from,to:string,folder:bool) {
     scene:=base.text_get(m.start_scene[:])
     if scene!=from && !(folder && asset_path_inside(scene,from)) {return}
     if !base.text_set(m.start_scene[:],strings.concatenate({to,scene[len(from):]},context.temp_allocator)) || project.manifest_write(file,&m).code!=.None {
-        notify(s,fmt.tprintf("The start scene moved and %s could not be changed: set it again in Project settings",project.PROJECT_FILE))
+        notify(s,fmt.tprintf("The start scene moved and %s could not be changed: set it again in Settings",project.PROJECT_FILE))
     }
 }
 

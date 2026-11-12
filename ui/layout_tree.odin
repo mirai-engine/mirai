@@ -422,7 +422,8 @@ layout_fit_text :: proc(t:^Layout_Tree,font:^Font,n:^Layout_Node) {
     }
     if l.height.kind==.Fit {n.dim.y,n.min_dim.y=text.line,text.line}
     n.dim={layout_whole(t.ppu,n.dim.x),layout_whole(t.ppu,n.dim.y)}
-    if text.wrap==.None {n.min_dim.x=n.dim.x}
+    // A line that ends in an ellipsis where it does not fit can be cut to nothing.
+    if text.wrap==.None {n.min_dim.x=0 if text.ellipsis else n.dim.x}
     n.min_dim.y=n.dim.y
     layout_limit(n)
 }

@@ -3,11 +3,11 @@ package core
 import "base:runtime"
 import "mirai:std/base"
 
-// Game data the code declares and the editor fills: a struct marked
-// @(record) is the row of the tables of .records assets. The rows are read
-// only while the game runs and live outside the World: a Play, a copy and a
-// rollback leave them as they are, and what changes in a run lives in
-// components that name rows.
+// Game data a .records declares and the editor fills: the build generates
+// the struct of its rows from its columns. The rows are read only while the
+// game runs and live outside the World: a Play, a copy and a rollback leave
+// them as they are, and what changes in a run lives in components that name
+// rows.
 
 Record_Id :: distinct u64
 
@@ -37,15 +37,21 @@ text_of :: proc "contextless" (texts:^Texts,text:Text,language:string) -> (value
 RECORD_NAME :: 64 // bytes of the name of a row, its NUL included
 
 Record_Info :: struct {
-    name:string,    // the type, as the API names it
-    library:string, // the package that declares it; a .records names its type as "library.name"
+    name:string,    // the type, as its .records names it
+    library:string, // the package the build generates it into
     type:typeid,
     info:^runtime.Type_Info, // from the library that declares the type
     ref:typeid, // of Record(T): how the editor knows which rows a field offers, as reflection does not know the T of a Record
     default:proc(dst:rawptr), // writes the value a new row starts with; nil: zero
-    description:string,
-    fields:[]Field_Description, // of the fields of its struct that have a comment on their line
-    game:bool, // the game of the project declares it, not the engine or a plugin
+    game:bool, // a .records of the project declares it, not one of a plugin
+}
+
+// A type the code of a package that holds record types declares: what a
+// column of a .records may hold whole (asset.Records_Kind.Type).
+Record_Code :: struct {
+    name:string,
+    folder:string, // the assets whose .records generate into its package: "" for the project, plugins/<name> for a plugin
+    info:^runtime.Type_Info,
 }
 
 // The rows of every table of one record type, as the application loaded

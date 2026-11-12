@@ -15,7 +15,7 @@ import "mirai:ui"
 
 // New assets of Create in the content browser and of asset.create: a folder,
 // a scene, a prefab (a scene of that kind with its one root), a material, a sound set, a table of texts (no languages yet), a
-// font (the Inter of the editor, for another one import its file), or a kind a plugin creates
+// table of game data (no columns, its type named from the file), a font (the Inter of the editor, for another one import its file), or a kind a plugin creates
 // (Asset_Document_Provider.creates), such as a particle effect. A folder and a scene are written
 // at once, as an import writes: a scene or a prefab opens from its file. The others are a
 // step of the history of the scene, written when it ends, as material.set
@@ -28,7 +28,7 @@ ASSET_CREATE_PREFAB :: asset.Fourcc(1) // what Create makes as a .scene of kind 
 ASSET_CREATE_NAME :: 64                // bytes of a name Create gives
 
 Api_Asset_Create_Params :: struct {
-    kind:[32]u8 `mirai:"text,label=What to make: folder; scene; prefab; material; sound_set; strings (a table of texts without languages); font (Inter; import a TTF or OTF for another); particle or a kind a plugin creates (such as ui)"`,
+    kind:[32]u8 `mirai:"text,label=What to make: folder; scene; prefab; material; sound_set; strings (a table of texts without languages); records (a table of game data that declares a type named from the file, without columns: records.column.add gives it them); font (Inter; import a TTF or OTF for another); particle or a kind a plugin creates (such as ui)"`,
     folder:[API_PATH_BYTES]u8 `mirai:"text,optional,label=The folder under the assets folder it goes in; none: the root"`,
     name:[ASSET_CREATE_NAME]u8 `mirai:"text,optional,label=Its name without extension; none: New and its kind numbered while it is taken"`,
 }
@@ -42,7 +42,7 @@ Api_Asset_Create_Result :: struct {
 // the kinds plugins create.
 asset_create_kinds :: proc(s:^Session) -> []asset.Fourcc {
     kinds:=make([dynamic]asset.Fourcc,context.temp_allocator)
-    append(&kinds,ASSET_CREATE_FOLDER,asset.KIND_SCENE,ASSET_CREATE_PREFAB,asset.KIND_MATERIAL,asset.KIND_SOUND_SET,asset.KIND_STRINGS,asset.KIND_FONT)
+    append(&kinds,ASSET_CREATE_FOLDER,asset.KIND_SCENE,ASSET_CREATE_PREFAB,asset.KIND_MATERIAL,asset.KIND_SOUND_SET,asset.KIND_STRINGS,asset.KIND_RECORDS,asset.KIND_FONT)
     if s.info==nil {return kinds[:]}
     found:[PROVIDER_CAPACITY]Asset_Document_Provider
     for &provider in found[:provided_all(s,found[:])] {
@@ -60,7 +60,7 @@ asset_create_kinds :: proc(s:^Session) -> []asset.Fourcc {
 @(private)
 asset_create_plugin :: proc(kind:asset.Fourcc) -> bool {
     switch kind {
-    case ASSET_CREATE_FOLDER,asset.KIND_SCENE,ASSET_CREATE_PREFAB,asset.KIND_MATERIAL,asset.KIND_SOUND_SET,asset.KIND_STRINGS,asset.KIND_FONT: return false
+    case ASSET_CREATE_FOLDER,asset.KIND_SCENE,ASSET_CREATE_PREFAB,asset.KIND_MATERIAL,asset.KIND_SOUND_SET,asset.KIND_STRINGS,asset.KIND_RECORDS,asset.KIND_FONT: return false
     }
     return true
 }
@@ -69,6 +69,7 @@ asset_create_label :: proc(s:^Session,kind:asset.Fourcc) -> string {
     switch kind {
     case ASSET_CREATE_FOLDER: return "Folder"
     case ASSET_CREATE_PREFAB: return "Prefab"
+    case asset.KIND_RECORDS:  return "Record"
     }
     return asset_kind_label(s,kind)
 }
@@ -229,6 +230,10 @@ asset_create :: proc(s:^Session,kind:asset.Fourcc,path:string,id:base.Asset_Id) 
     case asset.KIND_STRINGS:
         bytes,error:=asset.strings_bytes(&a.types,{id=id},context.temp_allocator)
         if error!=.None || !file_write(s,file,bytes,label) {return "The table of texts could not be written"}
+    case asset.KIND_RECORDS:
+        bytes,problem:=records_create_bytes(s,id,path,file)
+        if problem!="" {return problem}
+        if !file_write(s,file,bytes,label) {return "The table of game data could not be written"}
     case asset.KIND_FONT:
         bytes,error:=asset.font_bytes(&a.types,{id=id,file=ui.FONT_INTER,compression=.Stream},context.temp_allocator)
         if error!=.None || !file_write(s,file,bytes,label) {return "The font could not be written"}
@@ -250,13 +255,9 @@ api_asset_create :: proc(s:^Session,call:^api.Call) {
     for candidate in kinds {
         if strings.equal_fold(asset_create_kind_name(s,candidate),named) || strings.equal_fold(asset_create_label(s,candidate),named) {kind,known=candidate,true;break}
     }
-    if kind==asset.KIND_RECORDS {
-        api.call_fail(call,api.INVALID_PARAMS,"A table of game data has a type: records.create {path,type} makes it")
-        return
-    }
     if !known {
         names:=make([dynamic]string,context.temp_allocator)
-        for candidate in kinds {if candidate!=asset.KIND_RECORDS {append(&names,asset_create_kind_name(s,candidate))}}
+        for candidate in kinds {append(&names,asset_create_kind_name(s,candidate))}
         api.call_failf(call,api.INVALID_PARAMS,"kind %q is not one asset.create makes: give %s",named,strings.join(names[:],", ",context.temp_allocator))
         return
     }

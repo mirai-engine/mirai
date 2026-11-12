@@ -139,7 +139,7 @@ Thumbnails :: struct {
     capture_renderer:^gpu.Renderer,
     dirty:bool,             // the atlas changed since the renderer got it
     changed:[4]int,         // the pixels that did: left, top, right and bottom
-    drawn:u64,              // the frame the last preview was drawn in
+    drawn:u64,              // the frame the last preview was drawn in, or loaded what it shows
     picture:Thumbnail_Picture,
     opened:base.Asset_Id,   // a scene the editor opened, whose view it takes at the frame opened_frame
     opened_frame:u64,
@@ -290,6 +290,20 @@ preview_request :: proc(s:^Session,key:u64,subject:^Thumbnail_Subject,points:f32
     cell.ready=preview_render(s,subject,level,p.image[:])
     thumbnail_drawn(p,slot,side,folder,stored,wanted)
     return thumbnail_quad(cell,slot)
+}
+
+// Whether a preview may show an asset this frame: at once when it is loaded;
+// otherwise it waits its turn, as a preview that is drawn does, and loads in a
+// frame no other preview drew or loaded in.
+@(private)
+preview_load_turn :: proc(s:^Session,id:base.Asset_Id) -> bool {
+    a:=s.app.assets
+    if _,loaded:=a.index[id];loaded {return true}
+    p:=s.thumbnails
+    if p==nil {return true}
+    if p.drawn==s.frame+1 {return false}
+    p.drawn=s.frame+1
+    return true
 }
 
 // The image of the cell its provider asked to draw between frames

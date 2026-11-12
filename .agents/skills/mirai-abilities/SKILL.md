@@ -38,7 +38,8 @@ and the tick it started, and derives everything else from the tick against the s
 
 1. The game declares its names in code: statuses (`STATUS_STUNNED :: abilities.Ability_Status(1)`),
    tags (`Ability_Tag`), attributes (`Ability_Attribute`, 0 is none) and cues (`Ability_Cue`).
-2. Write the rows with `records.create`, `records.add` and `records.set` (or a CSV with
+2. Make tables of rows of the plugin's types (`records.create` with `rows_of` `Ability` or
+   `Ability_Kit`) and write the rows with `records.add` and `records.set` (or a CSV with
    `records.import`): one `Ability` per technique and one `Ability_Kit` per weapon or character.
    Then `abilities.check` until it returns no problems.
 3. Give the character an `Ability_User` with its kit and attribute entries; the seat that drives

@@ -13,6 +13,13 @@ Weapon_V1 :: struct {damage:f32,rarity:u8,prefab:base.Asset_Id}
 Weapon_V2 :: struct {weight:f32,prefab:base.Asset_Id,damage:f32}
 
 @(private="file")
+records_info :: proc(type:string,declares:bool) -> (info:Records_Info) {
+    base.text_set(info.type[:],type)
+    info.declares=declares
+    return
+}
+
+@(private="file")
 records_name :: proc(text:string) -> (name:Records_Name) {
     base.text_set(name[:],text)
     return
@@ -30,7 +37,7 @@ records_keep_their_rows_and_migrate_by_field_names :: proc(t:^testing.T) {
     v1,_:=serial.schema_add_type_info(&schema,type_info_of(Weapon_V1))
     values:=[]Weapon_V1{{damage=10,rarity=2,prefab={5,6}},{damage=25,rarity=1}}
     desc:=Records_Desc{
-        id={7,8},type="game.Weapon",
+        id={7,8},info=records_info("Weapon",false),
         ids={11,12},names={records_name("iron_sword"),records_name("bow")},
         schema=&schema,value_type=v1,images=mem.slice_to_bytes(values),
     }
@@ -41,7 +48,7 @@ records_keep_their_rows_and_migrate_by_field_names :: proc(t:^testing.T) {
     defer asset_close(&a)
     view,viewed:=records_view(&a,&types)
     if !testing.expect_value(t,viewed,Error.None) {return}
-    testing.expect_value(t,records_type(view),"game.Weapon")
+    testing.expect_value(t,records_type(view),"Weapon")
     testing.expect(t,len(view.ids)==2 && view.ids[1]==12)
     testing.expect_value(t,serial.text_field(view.names[0][:]),"iron_sword")
     testing.expect(t,len(a.dependencies)==1 && a.dependencies[0]==base.Asset_Id{5,6})
@@ -75,12 +82,11 @@ records_refuse_repeated_or_empty_ids_and_names :: proc(t:^testing.T) {
         {{1,2},{records_name("a"),records_name("has space")},1},
         {{1,2},{records_name("a"),records_name("")},1},
     }
-    info:Records_Info
-    base.text_set(info.type[:],"game.Weapon")
+    info:=records_info("Weapon",false)
     for c in cases {
         row,message:=records_problem({info=&info,ids=c.ids,names=c.names})
         testing.expect(t,row==c.row && message!="")
-        _,error:=records_bytes(&types,{id={1,1},type="game.Weapon",ids=c.ids,names=c.names,schema=&schema,value_type=v1,images=mem.slice_to_bytes(values)},context.temp_allocator)
+        _,error:=records_bytes(&types,{id={1,1},info=info,ids=c.ids,names=c.names,schema=&schema,value_type=v1,images=mem.slice_to_bytes(values)},context.temp_allocator)
         testing.expect_value(t,error,Error.Invalid)
     }
     _,message:=records_problem({info=&info})

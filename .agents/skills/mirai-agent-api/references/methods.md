@@ -867,14 +867,22 @@ of an instance" are `-32602`; the rest, `-32000`
     exists): `values.sounds` carries `.sound` paths or ids; one that is
     not a `.sound` of the registry or an inverted range is `-32602` and says which field to fix.
     They are an undo step.
-- **Game data** (`records.*`, `api_records.odin`): `.records` tables of the `@(record)` types ([game
+- **Game data** (`records.*`, `api_records.odin`): `.records` tables, each the declaration of its
+  record type or rows of one another declares ([game
   data](../../mirai-core/references/core.md#game-data)). A table is `records` (its path with or
-  without extension, or its id) and a row, its name. Each change is an undo step; a change the table
-  does not admit fails with the row, the field or the column and what value is expected.
-  - `records.types`: each type as `library.Name`, with its description, its fields (type, options
-    of an enum, `records` of the type a `core.Record` names, description) and its tables.
-  - `records.create {path,type}` creates an empty table of that type, the only method that does;
-    Create of the content browser has one entry per type.
+  without extension, or its id), a row and a column, their names. Each change is an undo step; a
+  change the table does not admit fails with the row, the field or the column and what value is
+  expected.
+  - `records.types`: each type by its name, with its description, the table that declares it,
+    whether the game library has it built, its columns (kind and options, default, description)
+    and its tables.
+  - `records.create {path,type?,description?,columns?}` makes a table that declares a type (named
+    from the file without `type`); `records.create {path,rows_of}` one that holds rows of a type
+    another declares. `asset.create` of kind `records` and Create > Record make an empty one.
+  - `records.column.add {records,name,kind,...,after?}`, `records.column.set {records,column,...}`
+    (only what it gives changes; a new `name` keeps the values) and
+    `records.column.remove {records,column}` change the columns of a table that declares its type;
+    `default` is given as `records.set` gives the field, and a column added gives it to every row.
   - `records.inspect {records,rows?}`: `{records,path,type,rows:[{id,name,values}]}`; `id` is
     a JSON number (ids have 53 bits).
   - `records.set {records,row,values?,name?}` and `records.add {records,name,values?,

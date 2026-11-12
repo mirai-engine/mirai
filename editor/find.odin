@@ -104,6 +104,8 @@ finder_build :: proc(s:^Session,w:core.World_Ref) {
         }
         // The Escape that leaves the field closes the list.
         if result.cancelled {ui.popup_close(ctx)}
+        // What Enter takes is lit: the row of the arrows, or the first one found.
+        target:=f.cursor if f.cursor>=0 else (0 if f.filter_length>0 && len(candidates)>0 else -1)
         rows:=ui.id(ctx,"rows")
         first,last:=ui.list_begin(ctx,rows,&f.scroll,len(candidates),ui.metric(ctx,"row"),height)
         for index in first..<last {
@@ -111,12 +113,12 @@ finder_build :: proc(s:^Session,w:core.World_Ref) {
             if ctx.hot==row_id && ctx.pointer_moved {f.cursor=index}
             e:=candidates[index]
             icon,color:=entity_icon(s,w,e)
-            it:=ui.row(ctx,row_id,{label=entity_name(w,e),icon=icon,icon_color=color,selected=f.cursor==index,quiet=true})
+            it:=ui.row(ctx,row_id,{label=entity_name(w,e),icon=icon,icon_color=color,selected=target==index,quiet=true})
             if it.hot {f.outlined=e}
             if it.clicked {chosen=index}
         }
         ui.list_end(ctx,rows,len(candidates),last,ui.metric(ctx,"row"))
-        if f.outlined==core.NONE && f.cursor>=0 && f.cursor<len(candidates) {f.outlined=candidates[f.cursor]}
+        if f.outlined==core.NONE && target>=0 && target<len(candidates) {f.outlined=candidates[target]}
         ui.id_pop(ctx)
     }
     if chosen>=0 && chosen<len(candidates) {

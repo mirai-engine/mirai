@@ -568,13 +568,13 @@ commands_register :: proc(s:^Session,st:^Api_State) {
         {name="make_scene",method="scene.write",params=`{"kind":"Scene","entities":[]}`,label="Make scene",icon=user(.Scene),menu=.File,group=1,modes=edit,scene=true},
         {name="import",view=import_ask,label="Import...",icon=.Import,menu=.File,group=2,modes=edit},
         {name="build",method="build.start",label="Build",icon=user(.Hammer),shortcut=key(.B,{.Primary}),menu=.File,group=3,state=state_build},
-        {name="settings",view=settings_toggle,label="Project settings",icon=user(.Gear),menu=.File,group=3,modes=edit,state=state_settings},
+        {name="settings",view=settings_toggle,label="Settings",icon=user(.Gear),menu=.File,group=3,modes=edit,state=state_settings},
         {name="quit",view=quit_request,label="Quit",icon=.Cross,shortcut=key(.Q,{.Primary}),menu=.File,group=4},
 
         {name="undo",method="history.undo",params=`{"asset":"$document"}`,label="Undo",icon=user(.Undo),shortcut=key(.Z,{.Primary}),state=state_undo},
         {name="redo",method="history.redo",params=`{"asset":"$document"}`,label="Redo",icon=user(.Redo),shortcut=key(.Y,{.Primary}),alternate=key(.Z,{.Primary,.Shift}),state=state_redo},
         {name="copy",view=copy_roots,params=CONTEXT_ROOTS,label="Copy",icon=user(.Copy),shortcut=key(.C,{.Primary}),modes=edit,scene=true},
-        {name="paste",method="scene.write",params=`{"world":"$shown","select":true,"entities":[{"copy":"$copied"}]}`,label="Paste",shortcut=key(.V,{.Primary}),scene=true},
+        {name="paste",method="scene.write",params=`{"world":"$shown","select":true,"entities":[{"copy":"$copied"}]}`,label="Paste",icon=user(.Paste),shortcut=key(.V,{.Primary}),scene=true},
         {name="duplicate",method="scene.write",params=`{"world":"$shown","select":true,"entities":[{"copy":"$roots"}]}`,label="Duplicate",icon=user(.Copy),shortcut=key(.D,{.Primary}),scene=true},
         {name="delete",method="scene.write",params=`{"world":"$shown","entities":[{"id":"$roots","delete":true}]}`,label="Delete",icon=user(.Trash),shortcut=key(.Delete),alternate=key(.Backspace),scene=true},
         {name="rename",view=rename_focus,label="Rename",icon=.Edit,shortcut=key(.F2),state=state_rename,scene=true},
@@ -594,7 +594,7 @@ commands_register :: proc(s:^Session,st:^Api_State) {
         {name="grid",preference=VIEWPORT,on=`"show_grid":true`,off=`"show_grid":false`,label="Grid",icon=.Grid,menu=.View,group=1,scene=true},
         {name="indicators",preference=VIEWPORT,on=`"show_indicators":true`,off=`"show_indicators":false`,label="Indicators",icon=.Eye,menu=.View,group=1,scene=true},
         {name="output_frame",preference=VIEWPORT,on=`"show_output_frame":true`,off=`"show_output_frame":false`,label="Output frame",icon=user(.Camera),menu=.View,group=1,scene=true},
-        {name="game_detail",preference=VIEWPORT,on=`"game_detail":true`,off=`"game_detail":false`,label="Detail of the game camera",menu=.View,group=1,scene=true},
+        {name="game_detail",preference=VIEWPORT,on=`"game_detail":true`,off=`"game_detail":false`,label="Detail of the game camera",icon=.Target,menu=.View,group=1,scene=true},
         {name="studio_light",view=proc(s:^Session) {s.viewport.studio_light=!s.viewport.studio_light},label="Studio light",icon=.Sun,menu=.View,group=1,modes=edit,state=state_studio_light,scene=true},
         {name="graphics",view=graphics_toggle,label="Graphics",icon=user(.Graphics),menu=.View,group=1,state=state_graphics},
         {name="inspector_panel",preference=LAYOUT,on=`"right_open":true`,off=`"right_open":false`,label="Details",icon=user(.Graphics),menu=.View,group=2},
@@ -631,6 +631,9 @@ commands_register :: proc(s:^Session,st:^Api_State) {
         {name="asset_delete",view=proc(s:^Session) {asset_delete_ask(s,card_focused(s))},label="Delete",icon=user(.Trash),shortcut=key(.Delete),alternate=key(.Backspace),modes=edit,card=true},
         {name="asset_rename",view=proc(s:^Session) {content_rename_begin(s,card_focused(s))},label="Rename",icon=.Edit,shortcut=key(.F2),modes=edit,card=true},
         {name="asset_duplicate",method="asset.move",params=`{"asset":"$card","copy":true}`,label="Duplicate",icon=user(.Copy),shortcut=key(.D,{.Primary}),modes=edit,card=true},
+        {name="asset_copy",view=proc(s:^Session) {content_clipboard_set(s.content,card_focused(s),false)},label="Copy",icon=user(.Copy),shortcut=key(.C,{.Primary}),card=true},
+        {name="asset_cut",view=proc(s:^Session) {content_clipboard_set(s.content,card_focused(s),true)},label="Cut",icon=user(.Cut),shortcut=key(.X,{.Primary}),modes=edit,card=true},
+        {name="asset_paste",view=content_paste_focused,label="Paste",icon=user(.Paste),shortcut=key(.V,{.Primary}),modes=edit,card=true,state=state_asset_paste},
     }
     for entry in entries {command_bind(s,entry)}
     if s.has_project {tool_entry(s,AI_ANNOTATE_TOOL,"Annotate",ai_annotate_icon())}
@@ -641,6 +644,11 @@ commands_register :: proc(s:^Session,st:^Api_State) {
 // A key is of Play or of Stop: an agent plays again a game that plays, a person stops it.
 @(private="file") state_play :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=s.mode!=.Edit || play_plugin_active(s)}}
 @(private="file") state_stop :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=s.mode==.Edit && !play_plugin_active(s)}}
+
+@(private="file")
+state_asset_paste :: proc(s:^Session,b:^Binding) -> Command_State {
+    return {disabled=s.content==nil || len(s.content.clipboard)==0 || asset_create_refusal(s)!=""}
+}
 
 @(private="file")
 state_build :: proc(s:^Session,b:^Binding) -> (state:Command_State) {
@@ -879,7 +887,7 @@ settings_show :: proc(s:^Session) {
     g:=s.gui
     ui.popup_close(g.ctx)
     g.modal,g.modal_scroll=.Settings,0
-    s.settings_dialog.scroll,s.settings_dialog.jump=0,-1
+    s.settings_dialog.scroll,s.settings_dialog.jump,s.settings_dialog.glide_at=0,-1,0
     settings_layer_set(s,.Project)
     settings_engine_load(s)
     settings_plugins_load(s)

@@ -20,9 +20,10 @@ import "mirai:std/base"
 import "mirai:std/serial"
 
 // The methods of the tables of game data (.records) by code: records.types,
-// create, inspect, set, add, remove, rename and move, and their exchange with
-// the CSV files of a spreadsheet (records.import and records.export). Rows go
-// by name; a change of a table is one step of the history.
+// create, inspect, set, add, remove, rename and move, the columns of a type
+// (records.column.add, set and remove), and their exchange with the CSV
+// files of a spreadsheet (records.import and records.export). Rows and
+// columns go by name; a change of a table is one step of the history.
 
 // What a core.Record(T) holds, for any T.
 Records_Api_Ref :: struct {table:base.Asset_Id,row:core.Record_Id}
@@ -30,13 +31,12 @@ Records_Api_Ref :: struct {table:base.Asset_Id,row:core.Record_Id}
 
 Records_Api_Ref_Type :: struct {
     type:serial.Type_Index, // of core.Record(T) in the schema
-    record:int,             // T, in World_Info.records
-    name:string,            // "library.Name" of T
+    record:string,          // T
 }
 
 // A table whose rows a core.Record names.
 Records_Api_Rows :: struct {
-    record:int,
+    record:string, // the type of its rows
     id:base.Asset_Id,
     path:string, // under the assets folder
     ids:[]u64,
@@ -47,7 +47,7 @@ Records_Api_Rows :: struct {
 Records_Api_Context :: struct {
     schema:^serial.Schema,
     type:serial.Type_Index,  // of the rows
-    name:string,             // "library.Name" of the rows
+    name:string,             // the type of the rows
     refs:[]Records_Api_Ref_Type,
     tables:[]Records_Api_Rows,
     edit:^records.Edit,      // the table that changes: its rows stand for those of its file in tables
@@ -68,7 +68,7 @@ Records_Api_Leaf :: struct {
     kind:Records_Api_Leaf_Kind,
     type:serial.Type_Index,
     offset:int,
-    record:int, // Ref: the type of the rows it names
+    record:string, // Ref: the type of the rows it names
 }
 
 Records_Api_Column :: struct {
@@ -90,18 +90,28 @@ Api_Records_Types :: struct {
 }
 @(private)
 Api_Records_Type :: struct {
-    type:string `mirai:"label=library.Name: what records.create takes"`,
+    type:string `mirai:"label=The name of the struct of its rows: what a column of kind record and rows_of of records.create take"`,
     description:string `mirai:"optional"`,
-    fields:[]Api_Records_Field `mirai:"label=The fields of its rows"`,
-    tables:[]Api_Records_Table_Entry `mirai:"label=Its .records in the assets"`,
+    declared:string `mirai:"label=The .records that declares it, under the assets folder: where its columns change"`,
+    built:bool `mirai:"label=The game library has the type; a change of its columns reaches the game once it builds again"`,
+    columns:[]Api_Records_Column,
+    tables:[]Api_Records_Table_Entry `mirai:"label=Its .records in the assets: the one that declares it and those that hold rows of it"`,
 }
 @(private)
-Api_Records_Field :: struct {
+Api_Records_Column :: struct {
     name:string,
-    type:string `mirai:"label=As the code writes it"`,
-    options:[]string `mirai:"optional,label=Of an enum: the names it takes"`,
-    records:string `mirai:"optional,label=Of a core.Record: the type of the rows it names"`,
+    kind:string `mirai:"label=int, float, bool, enum, asset, text, string, record or type"`,
+    count:int `mirai:"optional,label=Values it holds; none: one"`,
+    length:int `mirai:"optional,label=Of a string: its bytes, its end included"`,
+    min:serial.Json `mirai:"optional"`,
+    max:serial.Json `mirai:"optional"`,
+    unit:string `mirai:"optional"`,
+    type:string `mirai:"optional,label=Of an enum: the name of its enum; of a record: the record type of the rows it names; of a type: the type of the code"`,
+    values:[]string `mirai:"optional,label=Of an enum: its values, in order"`,
+    asset_kind:string `mirai:"optional,label=Of an asset: the extensions it takes"`,
     description:string `mirai:"optional"`,
+    was:string `mirai:"optional,label=Names it had: rows stored under them keep their values"`,
+    default:serial.Json `mirai:"optional,label=What a new row holds in it"`,
 }
 @(private)
 Api_Records_Table_Entry :: struct {
@@ -113,8 +123,15 @@ Api_Records_Table_Entry :: struct {
 Api_Records_Table :: struct {
     records:base.Asset_Id,
     path:string `mirai:"optional,label=Under the assets folder"`,
-    type:string `mirai:"label=library.Name of its rows"`,
+    type:string `mirai:"label=The record type of its rows"`,
     rows:[]Api_Records_Row,
+}
+@(private)
+Api_Records_Columns :: struct {
+    records:base.Asset_Id,
+    path:string `mirai:"optional,label=Under the assets folder"`,
+    type:string `mirai:"label=The record type it declares"`,
+    columns:[]Api_Records_Column,
 }
 @(private)
 Api_Records_Row :: struct {
@@ -151,9 +168,28 @@ Api_Records_Export :: struct {
     columns:int,
 }
 
+// A column as records.create, records.column.add and records.column.set take it.
+Api_Records_Column_Params :: struct {
+    name:string `mirai:"optional,label=The name of the field: a word of ASCII letters, digits and _ that starts with a letter; a new name keeps the values of the rows"`,
+    kind:string `mirai:"optional,label=int, float, bool, enum, asset, text (a key of the .strings of the game), string (a text of the row itself), record (a row of a table) or type (a type the code of its package declares)"`,
+    count:int `mirai:"optional,label=A fixed array of this many values; 0: one value"`,
+    length:int `mirai:"optional,label=Of a string: its bytes, its end included"`,
+    min:serial.Json `mirai:"optional,label=Of an int or a float: the least value; null: none"`,
+    max:serial.Json `mirai:"optional,label=Of an int or a float: the most value; null: none"`,
+    unit:string `mirai:"optional,label=Of an int or a float: what it counts, as s or m/s"`,
+    type:string `mirai:"optional,label=Of an enum: the name of its enum (Item_Rarity); of a record: the record type of the rows it names; of a type: a struct, enum or bit set the code of the package declares"`,
+    values:[]string `mirai:"optional,label=Of an enum: the names of its values, in order; a row keeps its value by its name"`,
+    asset_kind:string `mirai:"optional,label=Of an asset: the extensions it takes, separated by spaces (.tex)"`,
+    description:string `mirai:"optional"`,
+    default:serial.Json `mirai:"optional,label=What a new row holds in it, as records.set takes the field; a column added gives it to the rows there are too"`,
+}
+
 Api_Records_Create_Params :: struct {
     path:string `mirai:"label=Where the new table goes, under the assets folder; .records is added when missing"`,
-    type:string `mirai:"label=The type of its rows as library.Name, as records.types lists them"`,
+    type:string `mirai:"optional,label=The name of the type it declares (Item, Horde_Wave): a word that starts with a letter; none: one made from the name of the file"`,
+    description:string `mirai:"optional,label=What a row of the type is"`,
+    columns:[]Api_Records_Column_Params `mirai:"optional,label=The columns of the type, in order; records.column.add adds more"`,
+    rows_of:string `mirai:"optional,label=Instead of declaring a type: the type another table declares (of a plugin, as Ability), whose rows this one holds; records.types lists them"`,
 }
 Api_Records_Inspect_Params :: struct {
     records:string `mirai:"label=A table of game data: its path under the assets folder, with or without .records, or its id; records.types lists them"`,
@@ -188,21 +224,29 @@ Api_Records_Export_Params :: struct {
     records:string `mirai:"label=A table of game data: its path under the assets folder, with or without .records, or its id; records.types lists them"`,
     file:string `mirai:"label=The CSV file to write: its path from the root of the project, or absolute; an existing one is replaced"`,
 }
+Api_Records_Column_Add_Params :: struct {
+    records:string `mirai:"label=A table that declares its type: its path under the assets folder, with or without .records, or its id"`,
+    using column:Api_Records_Column_Params `mirai:"inline"`,
+    after:string `mirai:"optional,label=The column it goes after; without it, at the end"`,
+}
+Api_Records_Column_Set_Params :: struct {
+    records:string `mirai:"label=A table that declares its type: its path under the assets folder, with or without .records, or its id"`,
+    column:string `mirai:"label=The name of the column, as records.types lists them"`,
+    using change:Api_Records_Column_Params `mirai:"inline"`,
+}
+Api_Records_Column_Remove_Params :: struct {
+    records:string `mirai:"label=A table that declares its type: its path under the assets folder, with or without .records, or its id"`,
+    column:string `mirai:"label=The name of the column; the values of the rows in it go with it"`,
+}
 
 // ---------------------------------------------------------------- the shape of a row
 
-records_api_ref_record :: proc(c:^Records_Api_Context,type:serial.Type_Index) -> int {
+// The record type a core.Record of the schema names; "" for another type.
+records_api_ref_record :: proc(c:^Records_Api_Context,type:serial.Type_Index) -> string {
     for r in c.refs {
         if r.type==type {return r.record}
     }
-    return -1
-}
-
-records_api_ref_name :: proc(c:^Records_Api_Context,record:int) -> string {
-    for r in c.refs {
-        if r.record==record {return r.name}
-    }
-    return "?"
+    return ""
 }
 
 // Every value of a row that is a cell of a CSV, in the order of its fields.
@@ -211,12 +255,12 @@ records_api_leaves :: proc(c:^Records_Api_Context,allocator:=context.temp_alloca
     add :: proc(c:^Records_Api_Context,type:serial.Type_Index,path:string,offset:int,text:bool,out:^[dynamic]Records_Api_Leaf,depth:int) {
         s:=c.schema
         if depth>16 || !serial.type_valid(s,type) {return}
-        if record:=records_api_ref_record(c,type);record>=0 {
+        if record:=records_api_ref_record(c,type);record!="" {
             append(out,Records_Api_Leaf{path=path,kind=.Ref,type=type,offset=offset,record=record})
             return
         }
         if text && serial.type_is_bytes(s,type) {
-            append(out,Records_Api_Leaf{path=path,kind=.Bytes,type=type,offset=offset,record=-1})
+            append(out,Records_Api_Leaf{path=path,kind=.Bytes,type=type,offset=offset})
             return
         }
         t:=s.types[type]
@@ -232,10 +276,10 @@ records_api_leaves :: proc(c:^Records_Api_Context,allocator:=context.temp_alloca
             for i in 0..<int(t.count) {add(c,t.elem,fmt.aprintf("%s[%d]",path,i,allocator=context.allocator),offset+i*size,text,out,depth+1)}
         case .Bit_Set:
             for choice in records_api_choices(s,type) {
-                append(out,Records_Api_Leaf{path=fmt.aprintf("%s.%s",path,choice.name,allocator=context.allocator),kind=.Member,type=type,offset=offset,record=-1})
+                append(out,Records_Api_Leaf{path=fmt.aprintf("%s.%s",path,choice.name,allocator=context.allocator),kind=.Member,type=type,offset=offset})
             }
         case:
-            append(out,Records_Api_Leaf{path=path,kind=.Value,type=type,offset=offset,record=-1})
+            append(out,Records_Api_Leaf{path=path,kind=.Value,type=type,offset=offset})
         }
     }
     context.allocator=allocator
@@ -283,9 +327,9 @@ records_api_path_bare :: proc(path:string) -> string {return strings.trim_suffix
 // The row a text names among the tables of a record type: "name" when one
 // of them has it, "table/name" with the path of the table, with or without
 // .records, or the serial form {"table":...,"row":...}.
-records_api_ref_parse :: proc(c:^Records_Api_Context,record:int,text:string) -> (ref:Records_Api_Ref,message:string) {
+records_api_ref_parse :: proc(c:^Records_Api_Context,record:string,text:string) -> (ref:Records_Api_Ref,message:string) {
     text:=strings.trim_space(text)
-    type_name:=records_api_ref_name(c,record)
+    type_name:=record
     if strings.has_prefix(text,"{") {
         values:[2]string
         if !api.object_values(context.temp_allocator,text,{"table","row"},values[:]) {return {},fmt.tprintf("%q is not a reference: give the name of a row of %s",text,type_name)}
@@ -333,7 +377,7 @@ records_api_ref_parse :: proc(c:^Records_Api_Context,record:int,text:string) -> 
 
 // A reference as records_api_ref_parse reads it: the name of the row, with
 // its table when another table of the type has a row of that name.
-records_api_ref_text :: proc(c:^Records_Api_Context,record:int,ref:Records_Api_Ref) -> string {
+records_api_ref_text :: proc(c:^Records_Api_Context,record:string,ref:Records_Api_Ref) -> string {
     if ref=={} {return ""}
     for &t in c.tables {
         if t.record!=record || t.id!=ref.table {continue}
@@ -550,7 +594,7 @@ records_api_import_rows :: proc(s:^Session,c:^Records_Api_Context,leaves:[]Recor
     for column,i in columns {
         if column.leaf<0 {name_column=i}
     }
-    scratch:=make([]u8,e.info.size,context.temp_allocator)
+    scratch:=make([]u8,records.row_size(e),context.temp_allocator)
     for record,at in parsed {
         line:=lines[at]
         name:=strings.trim_space(record[name_column]) if name_column<len(record) else ""
@@ -622,7 +666,7 @@ records_api_rewrite :: proc(c:^Records_Api_Context,r:^serial.Text_Reader,type:se
     s:=c.schema
     peek:=serial.text_peek(r)
     if peek=='"' && serial.type_valid(s,type) {
-        if record:=records_api_ref_record(c,type);record>=0 {
+        if record:=records_api_ref_record(c,type);record!="" {
             text,read:=serial.text_string(r)
             if !read {return records_api_json_error(r,"values")}
             ref,problem:=records_api_ref_parse(c,record,text)
@@ -761,8 +805,8 @@ records_api_value_put :: proc(c:^Records_Api_Context,r:^serial.Text_Reader,row:[
 @(private)
 records_api_open :: proc(s:^Session,call:^api.Call,name:string,e:^records.Edit) -> bool {
     a:=s.app.assets
-    if a==nil || s.app.info==nil || s.app.info.schema==nil {
-        api.call_fail(call,api.SERVER_ERROR,"The editor has no project with a world: open one to edit its tables")
+    if a==nil || s.app.info==nil || !s.has_project {
+        api.call_fail(call,api.SERVER_ERROR,"The editor has no project: open one to edit its tables")
         return false
     }
     host.assets_scan(a)
@@ -786,19 +830,26 @@ records_api_open :: proc(s:^Session,call:^api.Call,name:string,e:^records.Edit) 
     return true
 }
 
-// What the rows of e read and write by: the schema of the world and the
-// tables of every type a field of them names.
+// What the rows of e read and write by: the schema its columns make and the
+// tables of every type a reference of them names.
 @(private)
 records_api_context :: proc(s:^Session,e:^records.Edit) -> (c:Records_Api_Context,leaves:[]Records_Api_Leaf) {
-    info:=s.app.info
-    ws:=info.schema
-    c={schema=&ws.schema,type=ws.records[e.record].type,name=records.type_name(info,e.record),edit=e,registry=&s.app.assets.registry}
+    c={schema=&e.schema,type=e.type,name=records.type_name(e),edit=e,registry=&s.app.assets.registry,default=e.defaults}
     refs:=make([dynamic]Records_Api_Ref_Type,context.temp_allocator)
-    for &r,i in info.records {
-        if t,found:=ws.schema.lookup[r.ref];found {append(&refs,Records_Api_Ref_Type{t,i,records.type_name(info,i)})}
+    for &column,at in e.columns {
+        if column.kind!=.Record {continue}
+        field,_:=records.column_field(e,at)
+        type:=field.type
+        if column.count>0 {type=e.schema.types[type].elem}
+        append(&refs,Records_Api_Ref_Type{type,serial.text_field(column.type[:])})
+    }
+    // References inside the types of the code: core.Record(T) of a type the build has.
+    if info:=s.app.info;info!=nil {
+        for &r in info.records {
+            if t,found:=e.schema.lookup[r.ref];found {append(&refs,Records_Api_Ref_Type{t,r.name})}
+        }
     }
     c.refs=refs[:]
-    c.default=records_api_default(s,e)
     leaves=records_api_leaves(&c)
     tables:=make([dynamic]Records_Api_Rows,context.temp_allocator)
     for &leaf in leaves {
@@ -811,9 +862,8 @@ records_api_context :: proc(s:^Session,e:^records.Edit) -> (c:Records_Api_Contex
         for &file in records_tables(s,leaf.record) {
             entry:=Records_Api_Rows{record=leaf.record,id=file.id,path=file.path}
             if file.id!=e.id {
-                loaded:records.Edit
-                if records_edit_load(s,file.id,&loaded,context.temp_allocator)!="" {continue}
-                entry.ids,entry.names=loaded.ids[:],loaded.names[:]
+                ok:bool
+                if entry.ids,entry.names,ok=records.rows_read(&s.app.assets.registry,&s.app.assets.types,file.id);!ok {continue}
             }
             append(&tables,entry)
         }
@@ -822,34 +872,20 @@ records_api_context :: proc(s:^Session,e:^records.Edit) -> (c:Records_Api_Contex
     return
 }
 
-// The bytes of a new row of the table's type: its default, or zeros.
-@(private)
-records_api_default :: proc(s:^Session,e:^records.Edit) -> []u8 {
-    default:=make([]u8,e.info.size,context.temp_allocator)
-    if r:=&s.app.info.records[e.record];r.default!=nil {
-        aligned,_:=mem.alloc_bytes(max(e.info.size,1),max(e.info.align,16),context.temp_allocator)
-        r.default(raw_data(aligned))
-        copy(default,aligned)
-    }
-    return default
-}
-
 // The table as records.inspect gives it, with the rows at the places given;
 // nil: every row.
 @(private)
-records_api_table :: proc(s:^Session,call:^api.Call,c:^Records_Api_Context,rows:[]int,all:bool) {
-    e:=c.edit
+records_api_table :: proc(s:^Session,call:^api.Call,e:^records.Edit,rows:[]int,all:bool) {
     count:=all ? records.row_count(e) : len(rows)
     shown:=make([]Api_Records_Row,count,call.allocator)
-    for &row,i in shown {row=records_api_row(c,all ? i : rows[i],call.allocator)}
-    api.call_result(call,Api_Records_Table)^={e.id,asset_path(s,e.id),c.name,shown}
+    for &row,i in shown {row=records_api_row(e,all ? i : rows[i],call.allocator)}
+    api.call_result(call,Api_Records_Table)^={e.id,asset_path(s,e.id),strings.clone(records.type_name(e),call.allocator),shown}
 }
 
-records_api_row :: proc(c:^Records_Api_Context,row:int,allocator:=context.temp_allocator) -> Api_Records_Row {
-    e:=c.edit
+records_api_row :: proc(e:^records.Edit,row:int,allocator:=context.temp_allocator) -> Api_Records_Row {
     values:serial.Writer
     serial.writer_init(&values,256,allocator)
-    serial.text_write(&values,c.schema,c.type,records.row_bytes(e,row),.Line)
+    serial.text_write(&values,&e.schema,e.type,records.row_bytes(e,row),.Line)
     return {e.ids[row],strings.clone(records.row_name(e,row),allocator),serial.Json(serial.writer_bytes(&values))}
 }
 
@@ -882,60 +918,254 @@ records_api_file :: proc(s:^Session,path:string) -> string {
 
 @(private)
 records_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="records.types",summary="The record types of the project (structs marked @(record)) with their fields and their .records tables.",result=type_info_of(Api_Records_Types),flags={.Read_Only},run=api_records_types})
-    api_register(s,st,{name="records.create",params=type_info_of(Api_Records_Create_Params),summary="Makes a new empty table (.records) of a record type at a path under the assets folder.",result=type_info_of(Api_Records_Table),run=api_records_create})
+    api_register(s,st,{name="records.types",summary="The record types the .records of the project declare: their columns, whether the game library has them built, and their tables.",result=type_info_of(Api_Records_Types),flags={.Read_Only},run=api_records_types})
+    api_register(s,st,{name="records.create",params=type_info_of(Api_Records_Create_Params),summary="Makes a new table (.records) under the assets folder: one that declares a record type with the columns given, which the build generates as the struct of its rows, or one that holds rows of a type another table declares.",result=type_info_of(Api_Records_Columns),run=api_records_create})
     api_register(s,st,{name="records.inspect",params=type_info_of(Api_Records_Inspect_Params),summary="The rows of a table of game data (.records) with their ids, names and values.",result=type_info_of(Api_Records_Table),flags={.Read_Only},run=api_records_inspect})
     api_register(s,st,{name="records.set",params=type_info_of(Api_Records_Set_Params),summary="Changes the values or the name of a row of a table of game data.",result=type_info_of(Api_Records_Table),run=api_records_set})
-    api_register(s,st,{name="records.add",params=type_info_of(Api_Records_Add_Params),summary="Adds a row to a table of game data with the defaults of its type and the values given.",result=type_info_of(Api_Records_Table),run=api_records_add})
+    api_register(s,st,{name="records.add",params=type_info_of(Api_Records_Add_Params),summary="Adds a row to a table of game data with the defaults of its columns and the values given.",result=type_info_of(Api_Records_Table),run=api_records_add})
     api_register(s,st,{name="records.remove",params=type_info_of(Api_Records_Remove_Params),summary="Removes rows of a table of game data by name; the references to them are left as they are.",result=type_info_of(Api_Records_Removed),flags={.Destructive},run=api_records_remove})
     api_register(s,st,{name="records.move",params=type_info_of(Api_Records_Move_Params),summary="Moves a row of a table of game data to another place of its order; its id stays.",result=type_info_of(Api_Records_Table),run=api_records_move})
     api_register(s,st,{name="records.import",params=type_info_of(Api_Records_Import_Params),summary="Updates the rows of a table of game data from a CSV file by their names and adds the rows it lacks, as one step of the history.",result=type_info_of(Api_Records_Import),run=api_records_import})
     api_register(s,st,{name="records.export",params=type_info_of(Api_Records_Export_Params),summary="Writes the rows of a table of game data to a CSV file that records.import reads back.",result=type_info_of(Api_Records_Export),flags={.Idempotent},run=api_records_export})
+    api_register(s,st,{name="records.column.add",params=type_info_of(Api_Records_Column_Add_Params),summary="Adds a column to the type a table declares; its rows take its default. The game reads it once it builds again.",result=type_info_of(Api_Records_Columns),run=api_records_column_add})
+    api_register(s,st,{name="records.column.set",params=type_info_of(Api_Records_Column_Set_Params),summary="Changes a column of the type a table declares: its name (the rows keep their values), kind, options, default or description.",result=type_info_of(Api_Records_Columns),run=api_records_column_set})
+    api_register(s,st,{name="records.column.remove",params=type_info_of(Api_Records_Column_Remove_Params),summary="Removes a column of the type a table declares, with the values of its rows.",result=type_info_of(Api_Records_Columns),flags={.Destructive},run=api_records_column_remove})
+}
+
+// ---------------------------------------------------------------- columns
+
+@(private)
+RECORDS_API_KINDS :: [asset.Records_Kind]string{.Int="int",.Float="float",.Bool="bool",.Enum="enum",.Asset="asset",.Text="text",.String="string",.Record="record",.Type="type"}
+
+// The columns of a table as the methods answer them.
+@(private)
+records_api_columns :: proc(e:^records.Edit,allocator:=context.temp_allocator) -> []Api_Records_Column {
+    kinds:=RECORDS_API_KINDS
+    out:=make([]Api_Records_Column,len(e.columns),allocator)
+    for &c,at in e.columns {
+        shown:=&out[at]
+        shown.name=strings.clone(records.column_name(&c),allocator)
+        shown.kind=kinds[c.kind]
+        shown.count=int(c.count)
+        if c.kind==.String {shown.length=int(c.length)}
+        if c.has_min {shown.min=serial.Json(fmt.aprint(c.min,allocator=allocator))}
+        if c.has_max {shown.max=serial.Json(fmt.aprint(c.max,allocator=allocator))}
+        shown.unit=strings.clone(serial.text_field(c.unit[:]),allocator)
+        shown.type=strings.clone(serial.text_field(c.type[:]),allocator)
+        if c.kind==.Enum {shown.values=strings.fields(serial.text_field(c.values[:]),allocator) or_else nil}
+        shown.asset_kind=strings.clone(serial.text_field(c.asset_kind[:]),allocator)
+        shown.description=strings.clone(serial.text_field(c.description[:]),allocator)
+        shown.was=strings.clone(serial.text_field(c.was[:]),allocator)
+        if field,found:=records.column_field(e,at);found && e.defaults!=nil {
+            part:=e.defaults[field.offset:][:e.schema.types[field.type].size]
+            if !mem.check_zero(part) {
+                w:serial.Writer
+                serial.writer_init(&w,64,allocator)
+                serial.text_write(&w,&e.schema,field.type,part,.Line,is_text=.Text in field.flags)
+                shown.default=serial.Json(serial.writer_bytes(&w))
+            }
+        }
+    }
+    return out
 }
 
 @(private)
+records_api_columns_result :: proc(s:^Session,call:^api.Call,e:^records.Edit) {
+    api.call_result(call,Api_Records_Columns)^={e.id,asset_path(s,e.id),strings.clone(records.type_name(e),call.allocator),records_api_columns(e,call.allocator)}
+}
+
+// The options of params over a column, those given: by name in the call
+// (given), or set when the column is new. message says which does not fit
+// and how to fix it.
+@(private)
+records_api_column_put :: proc(c:^asset.Records_Column,e:^records.Edit,p:^Api_Records_Column_Params,call:^api.Call,new:bool) -> (message:string) {
+    given :: proc(call:^api.Call,name:string,new:bool,set:bool) -> bool {return new ? set : api.call_given(call,name)}
+    if given(call,"name",new,p.name!="") {
+        c.name={}
+        if !base.text_set(c.name[:],p.name) {return fmt.tprintf("name %q is longer than %d bytes",p.name,asset.RECORDS_NAME-1)}
+    }
+    if given(call,"kind",new,p.kind!="") {
+        kinds:=RECORDS_API_KINDS
+        found:=false
+        for name,kind in kinds {
+            if strings.equal_fold(name,strings.trim_space(p.kind)) {
+                records.kind_set(e,c,kind)
+                found=true
+            }
+        }
+        if !found {return fmt.tprintf("kind %q is not one there is: give int, float, bool, enum, asset, text, string, record or type",p.kind)}
+    }
+    if given(call,"count",new,p.count!=0) {
+        if p.count<0 || p.count>asset.RECORDS_COUNT {return fmt.tprintf("count %d is not from 0 (one value) to %d",p.count,asset.RECORDS_COUNT)}
+        c.count=u16(p.count)
+    }
+    if given(call,"length",new,p.length!=0) {
+        if p.length<2 || p.length>asset.RECORDS_LENGTH {return fmt.tprintf("length %d is not from 2 to %d bytes",p.length,asset.RECORDS_LENGTH)}
+        c.length=u16(p.length)
+    }
+    bound :: proc(text:serial.Json,has:^bool,value:^f64,name:string) -> string {
+        trimmed:=strings.trim_space(string(text))
+        if trimmed=="" || trimmed=="null" {
+            has^=false
+            return ""
+        }
+        number,ok:=strconv.parse_f64(trimmed)
+        if !ok {return fmt.tprintf("%s %s is not a number, nor null for none",name,trimmed)}
+        has^,value^=true,number
+        return ""
+    }
+    if new ? p.min!="" : json_member_given(call,"min") {
+        if message=bound(p.min,&c.has_min,&c.min,"min");message!="" {return}
+    }
+    if new ? p.max!="" : json_member_given(call,"max") {
+        if message=bound(p.max,&c.has_max,&c.max,"max");message!="" {return}
+    }
+    text :: proc(field:[]u8,value,name:string) -> string {
+        mem.zero_slice(field)
+        if !base.text_set(field,value) {return fmt.tprintf("%s is longer than %d bytes",name,len(field)-1)}
+        return ""
+    }
+    if given(call,"unit",new,p.unit!="") {if message=text(c.unit[:],p.unit,"unit");message!="" {return}}
+    if given(call,"type",new,p.type!="") {if message=text(c.type[:],p.type,"type");message!="" {return}}
+    if given(call,"values",new,len(p.values)>0) {if message=text(c.values[:],strings.join(p.values," ",context.temp_allocator),"values");message!="" {return}}
+    if given(call,"asset_kind",new,p.asset_kind!="") {if message=text(c.asset_kind[:],p.asset_kind,"asset_kind");message!="" {return}}
+    if given(call,"description",new,p.description!="") {if message=text(c.description[:],p.description,"description");message!="" {return}}
+    return ""
+}
+
+// Whether the params of the call have a key, also when it is null.
+@(private)
+json_member_given :: proc(call:^api.Call,name:string) -> bool {
+    return api.json_member(call.raw,name)!=""
+}
+
+// Puts the default params give a column in the defaults of the table; with
+// rows, the rows there are take it too.
+@(private)
+records_api_column_default :: proc(s:^Session,e:^records.Edit,name:string,value:serial.Json,rows:bool) -> (message:string) {
+    if strings.trim_space(string(value))=="" {return ""}
+    at:=records.column_find(e,name)
+    field,_:=records.column_field(e,at)
+    c,_:=records_api_context(s,e)
+    text:=fmt.tprintf(`{{%q:%s}}`,name,string(value))
+    if message=records_api_values_put(&c,e.defaults,text);message!="" {return fmt.tprintf("default: %s",message)}
+    if rows {
+        size:=int(e.schema.types[field.type].size)
+        for row in 0..<records.row_count(e) {copy(records.row_bytes(e,row)[field.offset:][:size],e.defaults[field.offset:][:size])}
+    }
+    return ""
+}
+
+// A table that declares its type; false with the call failed for one that
+// holds rows of another's.
+@(private)
+records_api_declares :: proc(s:^Session,call:^api.Call,e:^records.Edit) -> bool {
+    if e.info.declares {return true}
+    api.call_failf(call,api.INVALID_PARAMS,"%s holds rows of %s, which %s declares: change its columns there",asset_path(s,e.id),records.type_name(e),asset_path(s,e.declaring))
+    return false
+}
+
+@(private)
+records_api_column_named :: proc(call:^api.Call,e:^records.Edit,name:string) -> int {
+    at:=records.column_find(e,name)
+    if at<0 {
+        names:=make([dynamic]string,context.temp_allocator)
+        for &c in e.columns {append(&names,records.column_name(&c))}
+        api.call_failf(call,api.INVALID_PARAMS,"%s has no column %q: its columns are %s",records.type_name(e),name,len(names)>0 ? strings.join(names[:],", ",context.temp_allocator) : "none yet; records.column.add adds one")
+    }
+    return at
+}
+
+@(private)
+api_records_column_add :: proc(s:^Session,call:^api.Call) {
+    p:=api.call_params(call,Api_Records_Column_Add_Params)
+    e:records.Edit
+    if !records_api_open(s,call,p.records,&e) || !records_api_declares(s,call,&e) {return}
+    if p.column.name=="" || p.column.kind=="" {
+        api.call_fail(call,api.INVALID_PARAMS,"a column needs a name and a kind: give both, as {\"name\":\"damage\",\"kind\":\"float\"}")
+        return
+    }
+    c:asset.Records_Column
+    if message:=records_api_column_put(&c,&e,&p.column,call,true);message!="" {
+        api.call_fail(call,api.INVALID_PARAMS,message)
+        return
+    }
+    at:=-1
+    if p.after!="" {
+        if at=records_api_column_named(call,&e,p.after);at<0 {return}
+        at+=1
+    }
+    if message:=records.column_add(&e,s.app.info,c,at);message!="" {
+        api.call_fail(call,api.INVALID_PARAMS,message)
+        return
+    }
+    if message:=records_api_column_default(s,&e,p.column.name,p.column.default,true);message!="" {
+        api.call_fail(call,api.INVALID_PARAMS,message)
+        return
+    }
+    if !records_api_publish(s,call,&e,"Add column") {return}
+    records_api_columns_result(s,call,&e)
+}
+
+@(private)
+api_records_column_set :: proc(s:^Session,call:^api.Call) {
+    p:=api.call_params(call,Api_Records_Column_Set_Params)
+    e:records.Edit
+    if !records_api_open(s,call,p.records,&e) || !records_api_declares(s,call,&e) {return}
+    at:=records_api_column_named(call,&e,p.column)
+    if at<0 {return}
+    c:=e.columns[at]
+    if message:=records_api_column_put(&c,&e,&p.change,call,false);message!="" {
+        api.call_failf(call,api.INVALID_PARAMS,"column %s: %s",p.column,message)
+        return
+    }
+    if message:=records.column_change(&e,s.app.info,at,c);message!="" {
+        api.call_fail(call,api.INVALID_PARAMS,message)
+        return
+    }
+    if message:=records_api_column_default(s,&e,records.column_name(&e.columns[at]),p.change.default,false);message!="" {
+        api.call_fail(call,api.INVALID_PARAMS,message)
+        return
+    }
+    if !records_api_publish(s,call,&e,"Change column") {return}
+    records_api_columns_result(s,call,&e)
+}
+
+@(private)
+api_records_column_remove :: proc(s:^Session,call:^api.Call) {
+    p:=api.call_params(call,Api_Records_Column_Remove_Params)
+    e:records.Edit
+    if !records_api_open(s,call,p.records,&e) || !records_api_declares(s,call,&e) {return}
+    at:=records_api_column_named(call,&e,p.column)
+    if at<0 {return}
+    if message:=records.column_remove(&e,s.app.info,at);message!="" {
+        api.call_fail(call,api.INVALID_PARAMS,message)
+        return
+    }
+    if !records_api_publish(s,call,&e,"Remove column") {return}
+    records_api_columns_result(s,call,&e)
+}
+
+// ---------------------------------------------------------------- tables
+
+@(private)
 api_records_types :: proc(s:^Session,call:^api.Call) {
-    info:=s.app.info
     if s.app.assets!=nil {host.assets_scan(s.app.assets)}
     types:=make([dynamic]Api_Records_Type,call.allocator)
-    if info!=nil && info.schema!=nil {
-        ws:=info.schema
-        for &r,index in info.records {
-            shown:=Api_Records_Type{type=records.type_name(info,index),description=r.description}
-            fields:=make([dynamic]Api_Records_Field,call.allocator)
-            if v,is_struct:=runtime.type_info_base(r.info).variant.(runtime.Type_Info_Struct);is_struct {
-                schema_fields:=serial.schema_fields(&ws.schema,ws.records[index].type)
-                for i in 0..<int(v.field_count) {
-                    name:=v.names[i]
-                    field:=Api_Records_Field{name=name,type=serial.type_label(v.types[i])}
-                    for each in schema_fields {
-                        if each.name!=name {continue}
-                        if choices:=records_api_choices(&ws.schema,each.type);len(choices)>0 && records_api_kind(ws.schema.types[each.type])==.Enum {
-                            field.options=make([]string,len(choices),call.allocator)
-                            for choice,j in choices {field.options[j]=choice.name}
-                        }
-                        break
-                    }
-                    if named:=core.record_of_ref(info,v.types[i].id);named>=0 {field.records=records.type_name(info,named)}
-                    for description in r.fields {
-                        if description.name==name && description.text!="" {field.description=description.text}
-                    }
-                    append(&fields,field)
-                }
-            }
-            shown.fields=fields[:]
-            tables:=make([dynamic]Api_Records_Table_Entry,call.allocator)
-            if s.app.assets!=nil {
-                for &file in records_tables(s,index) {
-                    loaded:records.Edit
-                    rows:=0
-                    if records_edit_load(s,file.id,&loaded,context.temp_allocator)=="" {rows=records.row_count(&loaded)}
-                    append(&tables,Api_Records_Table_Entry{file.id,file.path,rows})
-                }
-            }
-            shown.tables=tables[:]
-            append(&types,shown)
+    for &file in host.app_record_files(s.app) {
+        if !file.declares {continue}
+        e:records.Edit
+        if records_edit_load(s,file.id,&e,context.temp_allocator)!="" {continue}
+        name:=records.type_name(&e)
+        shown:=Api_Records_Type{type=strings.clone(name,call.allocator),description=strings.clone(records.description(&e),call.allocator),declared=strings.clone(file.path,call.allocator),built=records_built(s,name)>=0}
+        shown.columns=records_api_columns(&e,call.allocator)
+        tables:=make([dynamic]Api_Records_Table_Entry,call.allocator)
+        for &table in records_tables(s,name) {
+            ids,_,ok:=records.rows_read(&s.app.assets.registry,&s.app.assets.types,table.id)
+            append(&tables,Api_Records_Table_Entry{table.id,strings.clone(table.path,call.allocator),len(ids) if ok else 0})
         }
+        shown.tables=tables[:]
+        append(&types,shown)
     }
     api.call_result(call,Api_Records_Types).types=types[:]
 }
@@ -943,16 +1173,11 @@ api_records_types :: proc(s:^Session,call:^api.Call) {
 @(private)
 api_records_create :: proc(s:^Session,call:^api.Call) {
     p:=api.call_params(call,Api_Records_Create_Params)
-    info:=s.app.info
-    if s.app.assets==nil || info==nil || info.schema==nil || !s.has_project {
-        api.call_fail(call,api.SERVER_ERROR,"The editor has no project with a world: open one to make tables")
+    if s.app.assets==nil || !s.has_project {
+        api.call_fail(call,api.SERVER_ERROR,"The editor has no project: open one to make tables")
         return
     }
-    index:=records.type_index(info,p.type)
-    if index<0 {
-        api.call_failf(call,api.INVALID_PARAMS,"%q is not a record type of the project: records.types lists them as library.Name; a struct marked @(record) is one once the project builds",p.type)
-        return
-    }
+    host.assets_scan(s.app.assets)
     path:=strings.has_suffix(p.path,".records") ? p.path : fmt.tprintf("%s.records",p.path)
     file:=scene_file(s,path)
     if file=="" {
@@ -960,15 +1185,58 @@ api_records_create :: proc(s:^Session,call:^api.Call) {
         return
     }
     if file_exists(s,file) {
-        api.call_failf(call,api.INVALID_PARAMS,"%s already exists: records.set and records.add change it",path)
+        api.call_failf(call,api.INVALID_PARAMS,"%s already exists: records.set and records.add change its rows, records.column.add its columns",path)
         return
     }
     e:records.Edit
-    records.create(s.app.info,index,asset_id_new(s),file,&e,context.temp_allocator)
+    if p.rows_of!="" {
+        if p.type!="" || len(p.columns)>0 {
+            api.call_fail(call,api.INVALID_PARAMS,"rows_of makes a table of rows of a type another declares, which has no type or columns of its own: give rows_of alone, or type and columns")
+            return
+        }
+        declaring:=records_declaring(s,p.rows_of)
+        if declaring.id=={} {
+            api.call_failf(call,api.INVALID_PARAMS,"no .records declares %s: records.types lists the record types there are",p.rows_of)
+            return
+        }
+        if message:=records_edit_load(s,declaring.id,&e,context.temp_allocator);message!="" {
+            api.call_fail(call,api.INVALID_PARAMS,message)
+            return
+        }
+        e.id,e.file,e.declaring=asset_id_new(s),file,declaring.id
+        e.info.declares=false
+        e.info.description={}
+        clear(&e.ids);clear(&e.names)
+        e.values=e.values[:0]
+    } else {
+        type:=p.type if p.type!="" else records.type_of_file(path)
+        if other:=records_declaring(s,type);other.id!={} {
+            api.call_failf(call,api.INVALID_PARAMS,"%s already declares %s: give another type, or rows_of %s to hold rows of it",other.path,type,type)
+            return
+        }
+        if message:=records.create(asset_id_new(s),file,records.folder_of(path),type,&e,context.temp_allocator);message!="" {
+            api.call_failf(call,api.INVALID_PARAMS,"type: %s",message)
+            return
+        }
+        records.description_set(&e,p.description)
+        for &column,i in p.columns {
+            if column.name=="" || column.kind=="" {
+                api.call_failf(call,api.INVALID_PARAMS,"columns[%d]: a column needs a name and a kind",i)
+                return
+            }
+            c:asset.Records_Column
+            message:=records_api_column_put(&c,&e,&column,call,true)
+            if message=="" {message=records.column_add(&e,s.app.info,c)}
+            if message=="" {message=records_api_column_default(s,&e,column.name,column.default,false)}
+            if message!="" {
+                api.call_failf(call,api.INVALID_PARAMS,"columns[%d] (%s): %s",i,column.name,message)
+                return
+            }
+        }
+    }
     if !records_api_publish(s,call,&e,"Create records") {return}
     host.assets_scan(s.app.assets)
-    c,leaves:=records_api_context(s,&e)
-    records_api_table(s,call,&c,nil,true)
+    records_api_columns_result(s,call,&e)
 }
 
 @(private)
@@ -976,14 +1244,13 @@ api_records_inspect :: proc(s:^Session,call:^api.Call) {
     p:=api.call_params(call,Api_Records_Inspect_Params)
     e:records.Edit
     if !records_api_open(s,call,p.records,&e) {return}
-    c,leaves:=records_api_context(s,&e)
     rows:=make([dynamic]int,context.temp_allocator)
     for name in p.rows {
         row:=records_api_row_named(call,&e,name)
         if row<0 {return}
         append(&rows,row)
     }
-    records_api_table(s,call,&c,rows[:],!api.call_given(call,"rows"))
+    records_api_table(s,call,&e,rows[:],!api.call_given(call,"rows"))
 }
 
 // Puts the values of the params over a row; false with the call failed.
@@ -1005,7 +1272,7 @@ api_records_set :: proc(s:^Session,call:^api.Call) {
     if !records_api_open(s,call,p.records,&e) {return}
     row:=records_api_row_named(call,&e,p.row)
     if row<0 {return}
-    c,leaves:=records_api_context(s,&e)
+    c,_:=records_api_context(s,&e)
     if !records_api_row_put(call,&c,row,p.values) {return}
     if api.call_given(call,"name") && p.name!=p.row {
         if message:=records.row_rename(&e,row,p.name);message!="" {
@@ -1014,7 +1281,7 @@ api_records_set :: proc(s:^Session,call:^api.Call) {
         }
     }
     if !records_api_publish(s,call,&e,"Records") {return}
-    records_api_table(s,call,&c,[]int{row},false)
+    records_api_table(s,call,&e,[]int{row},false)
 }
 
 @(private)
@@ -1026,15 +1293,15 @@ api_records_add :: proc(s:^Session,call:^api.Call) {
     if api.call_given(call,"after") {
         if after=records_api_row_named(call,&e,p.after);after<0 {return}
     }
-    row,message:=records.row_add(&e,&s.id_state,p.name,nil,after,s.app.info.records[e.record].default)
+    row,message:=records.row_add(&e,&s.id_state,p.name,nil,after)
     if message!="" {
         api.call_fail(call,api.INVALID_PARAMS,message)
         return
     }
-    c,leaves:=records_api_context(s,&e)
+    c,_:=records_api_context(s,&e)
     if !records_api_row_put(call,&c,row,p.values) {return}
     if !records_api_publish(s,call,&e,"Add record") {return}
-    records_api_table(s,call,&c,[]int{row},false)
+    records_api_table(s,call,&e,[]int{row},false)
 }
 
 @(private)
@@ -1075,8 +1342,7 @@ api_records_move :: proc(s:^Session,call:^api.Call) {
     }
     records.row_move(&e,row,to)
     if !records_api_publish(s,call,&e,"Move record") {return}
-    c,leaves:=records_api_context(s,&e)
-    records_api_table(s,call,&c,[]int{to},false)
+    records_api_table(s,call,&e,[]int{to},false)
 }
 
 @(private)

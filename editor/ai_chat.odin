@@ -342,7 +342,8 @@ ai_chat_model_picker :: proc(s:^Session,busy:bool) {
     open:=ui.popup_is_open(ctx,list)
     it:=ui.interact(ctx,id,{.Passive} if busy else {})
     label:=ai_model_name(m,provider,model) if connected else "Select model"
-    effort_label:=ai_effort_name(effort)
+    // The effort belongs to a model: without one there is none to show.
+    effort_label:=fmt.tprintf("%s effort",ai_effort_name(effort)) if connected && ai_effort_name(effort)!="" else ""
     color:=open || it.hot && !busy?ui.tone(ctx,"text"):ui.tone(ctx,"text_muted")
     if ui.box(ctx,{id=id,width=ui.FIT,height=ui.fixed(24),gap=6,align_y=.Center}) {
         if connected {ui.icon(ctx,ai_connection_mark(m.connections[provider].agent),color,13)}

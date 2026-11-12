@@ -102,7 +102,7 @@ test_text_rect :: proc(ctx:^Context,text:string) -> Rect {
 }
 // The caret of the text being edited, while it shows.
 test_caret :: proc(ctx:^Context) -> ^Paint {
-    for &p in ctx.paints[:ctx.paint_count] {if p.kind==.Caret {return &p}}
+    for &p in ctx.paints[:ctx.paint_count] {if p.kind==.Caret && p.fill[3]>0 {return &p}}
     return nil
 }
 // Whether a paint is that of a text.
