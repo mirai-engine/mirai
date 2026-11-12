@@ -475,8 +475,8 @@ The Content Browser tab shows the registry of the assets of the project and its 
   previous frame (`Content.card_focus`). With the panel closed or another tab chosen, or after a
   click in the scene or on what does not take the keyboard, letters are shortcuts again.
 - It is case-insensitive and matches each word by name, path or the name of a clip. Results of the
-  folder shown and what is under it are listed flat, best first (`content_score`), and Enter takes
-  the first for placement.
+  folder shown and what is under it (in Folders, of every folder) are listed flat, best first
+  (`content_score`), and Enter takes the first for placement.
 - **Selection of the viewport**: its toggle shows only what the selected entities hold and what
   that uses (`content_selection_read`, `host.entity_asset_ids`), read again when the selection, the
   registry or the document change.
@@ -495,23 +495,27 @@ The Content Browser tab shows the registry of the assets of the project and its 
   with the Plugins filter or a search. Every kind of a plugin has the same color; each keeps its
   icon. The type of an asset is written nowhere but in a tooltip.
 - The zoom beside the strip (and Ctrl+wheel over the list, one notch per step) walks the counts of
-  columns and, past the most, the list; with few columns cells carry their names, with more a
-  floating preview names the asset under the pointer.
+  columns of Tabs and Cards and, past the most, the list; with few columns cells carry their names,
+  with more a floating preview names the asset under the pointer. Folders keeps its rows.
 
 **List** (`content_lines`, `ui.rows_begin`): lines of different heights, of which the visible ones
 are built; it is rebuilt when the registry, the filters, the marks or the place change
 ([registry review](../../mirai-assets/references/formats.md#registry)).
 
-- **The place** (`Content.at`) is a folder or a virtual folder, entered with `content_enter`;
-  nothing folds in place. Entering keeps a history (Back, the back button of the mouse,
-  `content_back`) and shows a row with the back arrow and a breadcrumb.
-- **Layouts** (`Content_Arrangement`, in the gear): **Names** is a continuous wall, with each
-  first-level folder's name sticky over what it holds, a thin name on subfolders of at least a full
-  row and the smaller ones flowing together, and at the root one row of each virtual folder. A
-  name enters its folder and its arrow folds it in place.
+- **The place** (`Content.at`) of Tabs and Cards is a folder or a virtual folder, entered with
+  `content_enter`. Entering keeps a history (Back, the back button of the mouse, `content_back`);
+  in Cards it shows a row with the back arrow and a breadcrumb.
+- **Layouts** (`Content_Arrangement`, in the gear): **Folders** is a tree that enters no folder.
+  Each folder is a row that a click folds or unfolds in place (`Content.folded`, kept with the
+  navigation) and makes the place of Create; under it, one level in, its folders and then its
+  assets. Every asset is one row whatever the zoom, and what holds others (clips, parts, variants)
+  has its arrow before its icon and unfolds them one level under it. Recent, Current scene and
+  Favorites are foldable rows on top. The row of the folder the first line is in stays on top.
+  The pointer resting on an asset's row shows its large preview beside the browser; a right click
+  only opens the menu.
   **Tabs** has chips of the first-level folders and rows of those of the chosen one over a grid of
   what it holds and everything under it. **Cards** shows folders as cells of an asset, with Recent
-  open at the top of the root. No level is indented.
+  open at the top of the root. Tabs and Cards indent no level.
 - **Recent** (what was placed, opened or assigned recently, `content_used`) and **Favorites** belong
   to each user and project (`Content_Marks`, [preferences](#preferences)). **Current scene** is what
   the open scene references, read from the registry transitively and cached by its revision.
@@ -549,7 +553,7 @@ and rescan the registry. Identity is the id, so references, Recent, Favorites an
 documents follow the asset; the selection passes to it (`Content.reveal`).
 
 - A card: Rename (F2) puts in its folder the Create line with its name; Duplicate (Ctrl+D); Move to
-  lists the project's folders; dropping it on the name, chip or cell of a folder moves it there. The
+  lists the project's folders; dropping it on the row, chip or cell of a folder moves it there. The
   shortcuts look at `content_focused`, like Del. A folder: its right click adds Rename, Duplicate
   and Move to to the Create menu.
 - The Create line and what is dropped on a folder act after building the lines: their names are
@@ -609,7 +613,8 @@ documents follow the asset; the selection passes to it (`Content.reveal`).
 - Selection, filters, the place and the scroll are kept on changing tabs; the folder, the filters
   and the place, also between runs ([preferences](#preferences)).
 - **Find in Content Browser** (`content_reveal`, the magnifier of a Details field) empties search
-  and filters immediately; the next frame enters the asset's folder if the view does not show it,
+  and filters immediately; the next frame unfolds the folders it is in (Folders) or enters its
+  folder if the view does not show it,
   selects it alone, gives the keyboard to its card and centers it. For a hidden part of a prefab, it
   turns on Show parts of imports and shows it in its folder; for that of another owner, it opens its
   owner.
@@ -621,7 +626,7 @@ Gestures:
   it in the `scene` of a `Scene_Reference`.
 - **Dragging a mesh**: creates an entity with that mesh, resting on the surface.
 - **Dragging a material**: assigns it to the mesh under the pointer.
-- **Dropping a card on the name, chip or cell of a folder**: moves it there.
+- **Dropping a card on the row, chip or cell of a folder**: moves it there.
 - **Click on a prefab or a mesh**: selects it and arms placement (`Editor_Ui.placement`): each click
   on the scene places one, and Escape or the right button ends it.
 - **Click on a material**: assigns it to the selected meshes.

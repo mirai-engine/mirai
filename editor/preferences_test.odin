@@ -71,7 +71,7 @@ preferences_keep_what_differs_from_the_code_and_come_back :: proc(t:^testing.T) 
     testing.expect_value(t,f.p.file,path)
     delete(path)
     testing.expect(t,f.g.layout.bottom_open && f.g.layout.bottom_height==300 && f.g.layout.left_open)
-    testing.expect(t,f.c.view.columns==7 && f.c.view.arrangement==.Names)
+    testing.expect(t,f.c.view.columns==7 && f.c.view.arrangement==.Folders)
     testing.expect(t,f.v.snap && f.v.fly_speed==9 && f.v.grid==0.5)
     testing.expect(t,f.console.hidden=={.Debug,.Info} && f.n.players==3 && !f.ai.show_agents_in_scene)
     // Nothing changed: nothing is written; a Play keeps its layout out of the file.
