@@ -189,8 +189,9 @@ ui_layers_pass :: proc(r:^Renderer,cmd:^rhi.Command_List,s:Ui_Surface,slot:int,w
             rhi.cmd_bind_buffer(cmd,SLOT_PASS4,r.ui_shape_buffers[slot])
             rhi.cmd_bind_texture(cmd,SLOT_PASS1,r.font)
             rhi.cmd_bind_texture(cmd,SLOT_PASS2,thumbnails)
-            // The depth of the scene, which only a panel in the world reads.
+            // The depth of the scene and the views of its pixels, which only a panel in the world reads.
             rhi.cmd_bind_texture(cmd,SLOT_PASS3,r.font)
+            rhi.cmd_bind_texture(cmd,SLOT_VIEWS,r.dummy_texture)
             rhi.cmd_bind_texture(cmd,SLOT_PASS5,r.display_lut)
             pipeline=r.pipelines[.Ui]
             ui_programs_draw(r,cmd,&r.pipelines[.Ui],layer.vertices,base,0,count,&pipeline)
@@ -244,6 +245,7 @@ ui_layers_pass :: proc(r:^Renderer,cmd:^rhi.Command_List,s:Ui_Surface,slot:int,w
                     rhi.cmd_bind_texture(cmd,SLOT_PASS1,r.font)
                     rhi.cmd_bind_texture(cmd,SLOT_PASS2,thumbnails)
                     rhi.cmd_bind_texture(cmd,SLOT_PASS3,r.font)
+                    rhi.cmd_bind_texture(cmd,SLOT_VIEWS,r.dummy_texture)
                     rhi.cmd_bind_texture(cmd,SLOT_PASS5,r.display_lut)
                     bound=true
                 }

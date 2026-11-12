@@ -54,7 +54,7 @@ import_font :: proc(path:string,options:Import_Options={},allocator:=context.all
         source:=w.source
         name:=filepath.stem(path)
         info:=import_info(source,name,0,u64(len(bytes)),base.hash64(bytes),0,import_version(0))
-        desc:=asset.Font_Desc{file=bytes,source=&info,compression=.LZ}
+        desc:=asset.Font_Desc{file=bytes,source=&info,compression=.Stream}
         target:string
         desc.id,target=root_take(&w,asset.KIND_FONT,name,".font")
         existed:=os.exists(target)

@@ -414,8 +414,8 @@ source_bytes :: proc(s:^Source,id:base.Asset_Id,types:^asset.Types,allocator:=co
     asset.document_put_row(&document,types,"foliage",&info) or_return
     asset.document_put(&document,types,"types",s.types[:]) or_return
     asset.document_put(&document,types,"cells",cells) or_return
-    asset.document_put(&document,types,"manual",instances,{.Bulk},.LZ) or_return
-    asset.document_put(&document,types,"overrides",changes,{.Bulk},.LZ) or_return
+    asset.document_put(&document,types,"manual",instances,{.Bulk},.Stream) or_return
+    asset.document_put(&document,types,"overrides",changes,{.Bulk},.Stream) or_return
     asset.import_put(&document,types,import_info) or_return
     return asset.document_bytes(&document,allocator)
 }

@@ -1,5 +1,6 @@
 package project
 
+import "base:runtime"
 import "core:os"
 import "core:strings"
 
@@ -40,6 +41,31 @@ shared_root :: proc(root:string,allocator:=context.allocator) -> string {
 machine_folder :: proc(engine_root:string,allocator:=context.allocator) -> string {
     if engine_root=="" {return ""}
     return folder_path(shared_root(engine_root,context.temp_allocator),.Generated,allocator)
+}
+
+// The collections of the compressor: compressor is what the engine imports, the private one
+// where a checkout holds a clone of it (git ignores ext/), in ext/ of its own or of its main
+// checkout, and the open one otherwise; compressor_open is always the open one, which the private
+// one delegates the open formats to.
+COMPRESSOR_PRIVATE :: "ext/mirai-compression"
+COMPRESSOR_OPEN :: "std/compressor"
+
+// The folder of the collection compressor of a build of the engine at engine_root.
+compressor_folder :: proc(engine_root:string,allocator:=context.allocator) -> (folder:string,private:bool) {
+    own:=path(engine_root,COMPRESSOR_PRIVATE,allocator=context.temp_allocator)
+    if os.is_dir(own) {return forward_slashes(own,allocator),true}
+    shared:=path(shared_root(engine_root,context.temp_allocator),COMPRESSOR_PRIVATE,allocator=context.temp_allocator)
+    if os.is_dir(shared) {return forward_slashes(shared,allocator),true}
+    return forward_slashes(path(engine_root,COMPRESSOR_OPEN,allocator=context.temp_allocator),allocator),false
+}
+
+// The flags of the compiler that name the collections of the compressor.
+compressor_flags :: proc(engine_root:string,allocator:=context.allocator) -> (flags:[2]string,error:runtime.Allocator_Error) {
+    folder,_:=compressor_folder(engine_root,context.temp_allocator)
+    open:=forward_slashes(path(engine_root,COMPRESSOR_OPEN,allocator=context.temp_allocator),context.temp_allocator)
+    flags[0]=strings.concatenate({"-collection:compressor=",folder},allocator) or_return
+    flags[1]=strings.concatenate({"-collection:compressor_open=",open},allocator) or_return
+    return
 }
 
 // A cache of what imports build, kept by content (TEXTURE_CACHE, MESH_CACHE):

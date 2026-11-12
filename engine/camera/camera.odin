@@ -53,7 +53,7 @@ Camera_Follow :: struct {
     pitch:f32 `mirai:"angle,mode=Orbit|Eyes"`, // Orbit: where it starts, positive above the pivot looking down, negative below it looking up; aiming, what it adds to the look. Eyes: where it starts, positive looks up
     min_pitch,max_pitch:f32 `mirai:"angle,mode=Orbit|Eyes"`, // both 0: almost straight up and down
     turn:bool `mirai:"mode=Orbit"`, // without aim: the look action of the local player who drives its target turns it
-    recenter:f32 `mirai:"min=0,unit=s,mode=Orbit"`, // without aim: this long after it was last turned, it comes back behind a target that moves; 0: never
+    recenter:f32 `mirai:"min=0,unit=s,mode=Orbit"`, // without aim: this long after it was last turned, it comes back behind a target that moves away from it; 0: never
     look_at:bool `mirai:"mode=Follow"`, // the camera faces the target
     aim:bool `mirai:"mode=Orbit"`,  // it looks where the Move_Input of the target looks
     pull_grace:f32 `mirai:"min=0,unit=s,section=Advanced,mode=Orbit"`, // what only crosses between the pivot and the camera is let be this long before the camera comes in
@@ -554,8 +554,14 @@ follow_one :: proc(
         } else if follow.recenter>0 {
             s.idle+=dt
             if s.idle>=follow.recenter && linalg.length(ground)>RECENTER_SPEED {
-                along:=mm.quat_rotate(conj(vertical),ground)
-                follow.looking.x=mm.damp_angle(follow.looking.x,mm.yaw_of_direction(along),RECENTER_RATE,dt)
+                // Only going away from the camera brings it behind, the more the straighter:
+                // walking toward it or across it keeps its yaw, since a walk relative to the
+                // camera turns with it and chasing it would spin the camera without end.
+                along:=mm.yaw_of_direction(mm.quat_rotate(conj(vertical),ground))
+                if away:=math.cos(mm.angle_delta(follow.looking.x,along));away>0 {
+                    turned:=mm.damp_angle(follow.looking.x,along,RECENTER_RATE*away,dt)
+                    follow.looking.x=mm.angle_wrap(turned)
+                }
             }
         }
         orbit:=orbit_make(pivot,follow.distance,follow.looking.x,follow.looking.y)

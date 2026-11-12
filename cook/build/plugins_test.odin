@@ -115,7 +115,7 @@ a_plugin_library_is_linked_against_an_import_library_made_ahead :: proc(t:^testi
         import_library,read:=os.read_entire_file(lib.linked,context.temp_allocator)
         testing.expect(t,read==nil && strings.contains(string(import_library),"plugin-thing-runtime-minimal-00000001.dll") && strings.contains(string(import_library),"plugins.thing.runtime.answer"),"the import library names the published file and what it exports")
         staged:=project.path(folder,"a folder","staged.dll")
-        command:=plugin_command(&lib,compiler,lib.stage,staged,{"-build-mode:dll","-o:minimal"})
+        command:=plugin_command(&lib,compiler,root,lib.stage,staged,{"-build-mode:dll","-o:minimal"})
         memory,_:=compiler_memory()
         state,_,errors,error:=subprocess.exec({command=command,env=child_environment(root,context.temp_allocator)},context.temp_allocator,{memory=memory})
         if !testing.expectf(t,error==nil && state.exit_code==0,"the library does not link:\n%s",string(errors)) {return}

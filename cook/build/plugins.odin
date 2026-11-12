@@ -310,11 +310,13 @@ plugin_definition :: proc(lib:^Plugin_Library) -> string {
 
 // The compiler's command for a library, which writes it to staged.
 @(private)
-plugin_command :: proc(lib:^Plugin_Library,compiler,engine_decl,staged:string,flags:[]string,allocator:=context.allocator) -> []string {
+plugin_command :: proc(lib:^Plugin_Library,compiler,engine_root,engine_decl,staged:string,flags:[]string,allocator:=context.allocator) -> []string {
 	command:=make([dynamic]string,allocator)
 	append(&command,compiler,"build",project.path(lib.stage,PLUGIN_ENTRY,allocator=allocator))
 	folder,_:=plugin_folder_of(lib)
 	append(&command,fmt.aprintf("-collection:mirai=%s",engine_decl,allocator=allocator),fmt.aprintf("-collection:%s=%s",STAGE_COLLECTION,lib.stage,allocator=allocator))
+	compressor,_:=project.compressor_flags(engine_root,allocator)
+	append(&command,..compressor[:])
 	append(&command,fmt.aprintf("-collection:plugins=%s",project.path(folder,"decl",allocator=context.temp_allocator),allocator=allocator))
 	// The code of the project sees its own plugins and game/ through their declarations.
 	if lib.project {append(&command,fmt.aprintf("-collection:project=%s",project.path(folder,"decl-project",allocator=context.temp_allocator),allocator=allocator))}

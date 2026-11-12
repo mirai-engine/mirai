@@ -13,6 +13,7 @@ POPUP_DEPTH :: 4
 Popup_Entry :: struct {
     id:Id,
     anchor:Rect,  // what it hangs from
+    opener:Id,    // the widget a click opened it from; 0: none
     layer:i16,
     cursor:int,   // row the keyboard is on; -1: none
     keys:bool,    // Up, Down and Enter in its search move over its rows and take one (row)
@@ -37,7 +38,8 @@ Popup_State :: struct {
     depth:int,    // popups being built around the current element
     rows:[POPUP_DEPTH]int, // items each popup being built has so far
     building:[POPUP_DEPTH]int, // the entry of the stack of each popup being built
-    closed:u64,   // the frame a press closed popups: that press opens none
+    closed:u64,   // the frame a press on what opened a popup closed it: that press opens none
+    dismissed:u64,// the frame a press closed popups
 }
 
 @(private)
@@ -53,7 +55,8 @@ popup_open :: proc(ctx:^Context,id:Id,anchor:Rect) {
     p.count=min(p.depth,p.count)
     if p.count>=POPUP_DEPTH {return}
     base:=LAYER_POPUP if ctx.layer<LAYER_MODAL else ctx.layer+2
-    p.stack[p.count]={id=id,anchor=anchor,layer=base+i16(p.count)*2,cursor=-1,opened=ctx.stats.frame}
+    clicked:=ctx.input.pressed&{.Left,.Right}!={} || ctx.input.released&{.Left,.Right}!={}
+    p.stack[p.count]={id=id,anchor=anchor,opener=ctx.hot if clicked else 0,layer=base+i16(p.count)*2,cursor=-1,opened=ctx.stats.frame}
     p.count+=1
 }
 popup_is_open :: proc(ctx:^Context,id:Id) -> bool {return popup_find(ctx,id)!=nil}
@@ -65,8 +68,9 @@ popup_close :: proc(ctx:^Context,id:Id=0) {
 }
 
 // Before the frame is built: a press outside the open popups closes them and
-// does nothing else, and Escape closes the last one. A press on a menu keeps
-// its submenus open.
+// still reaches what it lands on, except on what opened one of them, which it
+// only closes; Escape closes the last one. A press on a menu keeps its
+// submenus open.
 @(private)
 popup_route :: proc(ctx:^Context) {
     p:=&ctx.popup
@@ -78,9 +82,14 @@ popup_route :: proc(ctx:^Context) {
         // A press on a menu leaves its submenus to its items: the one that opened it chooses or closes it.
         for keep>0 && keep<p.count && p.stack[keep].side {keep+=1}
         if keep<p.count {
+            on_opener:=false
+            for entry in p.stack[keep:p.count] {on_opener||=ctx.hot!=0 && entry.opener==ctx.hot || entry.anchor.w>0 && entry.anchor.h>0 && rect_contains(entry.anchor,ctx.pointer)}
             p.count=keep
-            p.closed=ctx.stats.frame
-            ctx.press_used=true;ctx.right_press_used=true
+            p.dismissed=ctx.stats.frame
+            if on_opener {
+                p.closed=ctx.stats.frame
+                ctx.press_used=true;ctx.right_press_used=true
+            }
         }
     }
     if p.count>0 && ctx.edit.id==0 && !ctx.escape_used && (.Escape in in_.keys_pressed || .Cancel in in_.pad) {
@@ -171,7 +180,9 @@ popup_begin :: proc(ctx:^Context,id:Id,desc:Popup={}) -> bool {
         }
     }
     top:=metric(ctx,"bar_height")+2 if ctx.surface==0 else 0
-    b:=Box{id=id,width=fixed(desc.width) if desc.width>0 else fit(desc.min_width),height=FIT,direction=.Column,padding=padding_all(padding),gap=desc.gap,
+    // No wider than its surface less its margins, where the layout keeps it.
+    most:=max(surface_size(ctx).x-2*metric(ctx,"margin"),0)
+    b:=Box{id=id,width=fixed(min(desc.width,most)) if desc.width>0 else fit(min(desc.min_width,most),most),height=FIT,direction=.Column,padding=padding_all(padding),gap=desc.gap,
         float=float,from=from,contain=true,inset={metric(ctx,"margin"),top,metric(ctx,"margin"),metric(ctx,"margin")},fill=tone(ctx,"popup"),stroke=tone(ctx,"border"),radius=metric(ctx,"radius_popup"),shadow=true,block=true}
     if s:=desc.style;s!=nil {
         b.fill,b.stroke,b.stroke_width,b.radius,b.corners=s.fill,s.stroke,s.stroke_width,0,s.radius
@@ -251,7 +262,7 @@ menu :: proc(ctx:^Context,id:Id,title:string,height:f32=26,look:Button={}) -> bo
         popup_open(ctx,list,anchor)
         p.stack[p.count-1].menu=true
     } else if !open && p.count==1 && p.stack[0].menu && it.hot && p.depth==0 {
-        p.stack[0]={id=list,anchor=anchor,layer=p.stack[0].layer,cursor=-1,opened=ctx.stats.frame,menu=true}
+        p.stack[0]={id=list,anchor=anchor,opener=id,layer=p.stack[0].layer,cursor=-1,opened=ctx.stats.frame,menu=true}
     }
     return popup_begin(ctx,list,{min_width=MENU_WIDTH})
 }
@@ -297,6 +308,7 @@ menu_button_scope_end :: proc(ctx:^Context,id:Id,text:string,b:Menu_Button,open:
 MENU_CHOICE_WIDTH :: f32(140) // the least width of the menu of a menu button
 MENU_WIDTH :: f32(230) // of a menu of a bar
 MENU_ICON :: f32(16)   // the column of icons every item keeps
+MENU_TOGGLE :: f32(14) // the side of the box of a toggle
 
 // What an item of a menu shows besides its text.
 Menu_Item :: struct {
@@ -304,6 +316,7 @@ Menu_Item :: struct {
     icon_color:Color, // text_muted when transparent
     shortcut:string,
     checked:bool,     // a check at its right end
+    toggle:bool,      // a setting turned on and off: a box at its right end, holding the check when checked
     disabled:bool,    // shown faded; it does nothing
     chosen:^bool,     // of a submenu that is also a choice: a click sets it and closes the menu
     danger:bool,      // it destroys something: its text in the color of danger
@@ -398,7 +411,13 @@ menu_row :: proc(ctx:^Context,id:Id,text:string,item:Menu_Item,open,arrow:bool) 
         if column {element_leaf(ctx,{layout={width=fixed(MENU_ICON),height=fixed(MENU_ICON)},custom=paint_add(ctx,{kind=.Icon,icon=item.icon,icon_color=icon_color,icon_size=MENU_ICON}) if item.icon!=.None else nil})}
         label(ctx,text,size,text_color,0)
         if item.shortcut!="" {label(ctx,item.shortcut,MENU_HEADER_FONT,muted,shortcut)}
-        if item.checked {icon(ctx,.Check,check,13)}
+        if item.toggle {
+            stroke:=tone(ctx,"accent") if item.checked else tone(ctx,"well_stroke_hover") if it.hot else tone(ctx,"well_stroke")
+            if disabled {stroke=color_faded(stroke)}
+            paint:=paint_add(ctx,{kind=.Box,fill=tone(ctx,"well"),stroke=stroke,corners=metric(ctx,"radius_control")})
+            if element_open(ctx,{layout={width=fixed(MENU_TOGGLE),height=fixed(MENU_TOGGLE),align_x=.Center,align_y=.Center},custom=paint}) && item.checked {icon(ctx,.Check,check,MENU_TOGGLE*0.75)}
+            element_close(ctx)
+        } else if item.checked {icon(ctx,.Check,check,13)}
         if arrow {icon(ctx,.Chevron_Right,muted,12)}
     }
     menu_row_count(ctx)
@@ -718,8 +737,8 @@ modal :: proc(ctx:^Context,id:Id,m:Modal={}) -> bool {
         float={to=.Surface,anchor=.Center,pivot=.Center,layer=LAYER_MODAL+1},fill=m.fill if m.fill[3]>0 else tone(ctx,"popup"),stroke=tone(ctx,"border"),radius=metric(ctx,"radius_panel"),shadow=true,block=true})
     widget_add(ctx,id,{.Passive,.Scroll})
     if m.close!=nil {
-        // A press outside the dialog closes it, unless a popup of the dialog takes it.
-        if rect,found:=widget_rect(ctx,id);found && .Left in ctx.input.pressed && !ctx.press_used && ctx.popup.count==0 && !rect_contains(rect,ctx.pointer) {
+        // A press outside the dialog closes it, unless a popup of the dialog takes it or it closed one.
+        if rect,found:=widget_rect(ctx,id);found && .Left in ctx.input.pressed && !ctx.press_used && ctx.popup.count==0 && ctx.popup.dismissed!=ctx.stats.frame && !rect_contains(rect,ctx.pointer) {
             m.close^=true
             ctx.press_used=true
         }

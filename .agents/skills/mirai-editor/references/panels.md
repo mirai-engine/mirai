@@ -45,10 +45,11 @@ lands on Close. In a narrow window the bar drops its dividers and some labels (`
   the glyph and color of its [figure](editor.md#figures-of-whoever-works); a click opens its menu.
   While watching, the bar says "Watching", hides the edit tools and shows Stop.
 
-**Rail and left panel:** the rail (44 points, under the bar, colored like it) has the tabs Editor,
-Content Browser (the startup one), Hierarchy, World ([world](#world)), AI and Source control as
-icons. A click on the one shown folds the panel, on another shows that one. The panel is fixed at
-the side of the rail, the height of the window, 320 points wide and with its right corners rounded;
+**Rail and left panel:** the rail (44 points, under the bar, colored like it) has the tabs Create
+([create](#create)), Content Browser (the startup one), Hierarchy, World ([world](#world)), AI
+and Source control as icons. A click on the one shown folds the panel, on another shows that one.
+The panel is fixed at the side of the rail, the height of the window, 320 points wide and with its
+right corners rounded;
 the scene runs 16 points under it, so those corners show the scene (with the panel folded it starts
 at the rail). It folds like Tab in Edit; with the chat folded, the AI action of View shows it again,
 and in Play it stays minimized; the chat opens only in the pause, where the rail holds only it
@@ -86,9 +87,10 @@ Other panels:
 - On startup Content Browser is shown. Every tab has the height of the window under the bar: the
   panel does not change size when the tab changes.
 - Cards: 32-point icons in 40 squares, four columns; with names, 10-point labels and rows of 62.
-- Only the tabs with controls of their own have a slim row at the top of the panel: the
-  presentation gear of Editor and the chat buttons and settings of AI. Content Browser draws its
-  own in its search row. All are `ui` menus: a chosen item closes them.
+- Every tab heads the panel with a slim row: its name (`LIBRARY_TAB_NAMES`, the tooltips of the
+  rail say the same) and, at its right, its own controls: the presentation gear of Create, the
+  **+** and the gear of Content Browser and the chat buttons and settings of AI. All are `ui`
+  menus: a chosen item closes them.
 - **Hierarchy** (list icon, also Hierarchy in View) shows the scene's outliner; with an asset
   document in front, the hierarchy its plugin builds in `hierarchy_room`
   (`Asset_Document_Provider.hierarchy`), or that the document has none.
@@ -464,7 +466,8 @@ The Content Browser tab shows the registry of the assets of the project and its 
 **Search and filters:**
 
 - **Search** always in view, with the magnifier inside and its x, in one row with the toggle of the
-  selection of the viewport, the **+** and the gear. Choosing the tab gives it the keyboard
+  selection of the viewport; the **+** and the gear are in the row of the tab's name. Choosing the
+  tab gives it the keyboard
   (`Content.focus_search`, from `library_select`), as AI gives it to the message, except when Find
   in Content Browser opens it. Escape clears it. What is typed while a card has the keyboard goes to
   the search and does not trigger shortcuts (`content_typing`, which `content_build` and
@@ -472,42 +475,49 @@ The Content Browser tab shows the registry of the assets of the project and its 
   previous frame (`Content.card_focus`). With the panel closed or another tab chosen, or after a
   click in the scene or on what does not take the keyboard, letters are shortcuts again.
 - It is case-insensitive and matches each word by name, path or the name of a clip. Results of the
-  folder shown and what is under it are listed flat, best first (`content_score`), and Enter takes
-  the first for placement.
+  folder shown and what is under it (in Folders, of every folder) are listed flat, best first
+  (`content_score`), and Enter takes the first for placement.
 - **Selection of the viewport**: its toggle shows only what the selected entities hold and what
   that uses (`content_selection_read`, `host.entity_asset_ids`), read again when the selection, the
   registry or the document change.
-- **Strip** under the search: a bar per family (Prefab, Model, Material, Scene, Plugins), each named
-  only in its tooltip. Prefab and Scene are one kind of file told apart by the kind its header says,
-  in its color, with its icon and under its filter ([what a prefab is](prefabs.md)); a funnel opens
-  the rest (Texture, Animation, Sound, UI) and lights up while one of them is on, and a cross by it,
-  there only while a filter is on, clears them and the viewport selection. They combine; none active
-  shows everything. Model gathers meshes, fractures and physics caches; Sound, sounds and sound
-  sets; Plugins, every kind of a plugin ([types of a
+- **Strip** under the search: a toggle per family (Prefab, Model, Material, Scene, Texture,
+  Animation, Sound, UI, Plugins) with the glyph of its cards in the color of its kind, each named
+  only in its tooltip. One family at a time: another one takes its place, the one on turns it off,
+  and while one is on the others fade; a cross after them, there only while a filter is on, clears
+  it and the viewport selection. Prefab and Scene are one kind of file told apart by the kind its
+  header says, in its color, with its icon and under its filter ([what a prefab is](prefabs.md)).
+  None active shows everything. Model gathers meshes, fractures and physics caches; Sound, sounds
+  and sound sets; Plugins, every kind of a plugin ([types of a
   plugin](extensions.md#asset-types-of-a-plugin)). A part of an import appears in its folder when
   the filters leave out its owner (Model shows the meshes of an imported prefab). Skeletons are not
   listed: the mesh that uses them represents them (`content_listed`).
 - What a scene makes of itself (`Asset_Kind.scene_data`: foliage, terrain, navmesh bakes) shows only
   with the Plugins filter or a search. Every kind of a plugin has the same color; each keeps its
   icon. The type of an asset is written nowhere but in a tooltip.
-- The zoom beside the strip (and Ctrl+wheel over the list, one notch per step) walks the counts of
-  columns and, past the most, the list; with few columns cells carry their names, with more a
-  floating preview names the asset under the pointer.
+- Ctrl+wheel over the list, one notch per step, is the zoom of Tabs and Cards: it walks the counts
+  of columns and, past the most, the list; with few columns cells carry their names, with more a
+  floating preview names the asset under the pointer. Folders keeps its rows.
 
 **List** (`content_lines`, `ui.rows_begin`): lines of different heights, of which the visible ones
 are built; it is rebuilt when the registry, the filters, the marks or the place change
 ([registry review](../../mirai-assets/references/formats.md#registry)).
 
-- **The place** (`Content.at`) is a folder or a virtual folder, entered with `content_enter`;
-  nothing folds in place. Entering keeps a history (Back, the back button of the mouse,
-  `content_back`) and shows a row with the back arrow and a breadcrumb.
-- **Layouts** (`Content_Arrangement`, in the gear): **Names** is a continuous wall, with each
-  first-level folder's name sticky over what it holds, a thin name on subfolders of at least a full
-  row and the smaller ones flowing together, and at the root one row of each virtual folder. A
-  name enters its folder and its arrow folds it in place.
-  **Tabs** has chips of the first-level folders and rows of those of the chosen one over a grid of
-  what it holds and everything under it. **Cards** shows folders as cells of an asset, with Recent
-  open at the top of the root. No level is indented.
+- **The place** (`Content.at`) of Tabs and Cards is a folder or a virtual folder, entered with
+  `content_enter`. Entering keeps a history (Back, the back button of the mouse, `content_back`);
+  in Cards it shows a row with the back arrow and a breadcrumb.
+- **Layouts** (`Content_Arrangement`, in the gear): **Folders** is a tree that enters no folder.
+  Each folder is a row that a click folds or unfolds in place (`Content.folded`, kept with the
+  navigation) and makes the place of Create; under it, one level in, its folders and then its
+  assets. Every asset is one row whatever the zoom, and what holds others (clips, parts, variants)
+  has its arrow before its icon and unfolds them one level under it. Recent, Current scene and
+  Favorites are foldable rows on top, also empty while no filter is on. The row of the folder the
+  first line is in stays on top. The pointer on an asset's row shows its large preview beside the
+  browser at once; a right click only opens the menu.
+  **Tabs** has chips of the first-level folders, after Recent, Current scene and Favorites as
+  their glyphs, and rows of those of the chosen one over a grid of what it holds and everything
+  under it. **Cards** shows folders as cells of an asset, with Recent open at the top of the root,
+  and its back row and breadcrumb always, from Project at the root too. Tabs and Cards indent no
+  level.
 - **Recent** (what was placed, opened or assigned recently, `content_used`) and **Favorites** belong
   to each user and project (`Content_Marks`, [preferences](#preferences)). **Current scene** is what
   the open scene references, read from the registry transitively and cached by its revision.
@@ -521,7 +531,8 @@ are built; it is rebuilt when the registry, the filters, the marks or the place 
 **Create** (`asset_create.odin`): the **+**, the right click on an empty place or on a folder and
 the Create submenu of a card offer Folder, Scene, Material, Particle, Sound set and what a plugin
 creates ([extensions](extensions.md#an-asset-document)), in the clicked folder, the card's or
-that of the last thing clicked (`Content.place`). They are off outside Edit and while watching.
+that of the last thing clicked (`Content.place`); the + of Folders makes in the root of the
+assets. They are off outside Edit and while watching.
 
 - Choosing an entry empties search and filters and puts at the top of the list a line with a free
   name to type over; an invalid or taken name warns and leaves the line.
@@ -545,9 +556,14 @@ and rescan the registry. Identity is the id, so references, Recent, Favorites an
 documents follow the asset; the selection passes to it (`Content.reveal`).
 
 - A card: Rename (F2) puts in its folder the Create line with its name; Duplicate (Ctrl+D); Move to
-  lists the project's folders; dropping it on the name, chip or cell of a folder moves it there. The
+  lists the project's folders; dropping it on the row, chip or cell of a folder moves it there. The
   shortcuts look at `content_focused`, like Del. A folder: its right click adds Rename, Duplicate
   and Move to to the Create menu.
+- **Copy, Cut and Paste** (the card's menu, Ctrl+C, Ctrl+X and Ctrl+V with a focused card) keep
+  the ids of the asset and, when it is selected, of the rest of the selection, in the browser
+  (`Content.clipboard`), not in the system's clipboard. Paste, in the menu of a card (its folder),
+  of a folder or of an empty place (`Content.place`), duplicates them there with free names, or
+  moves what was cut, which is then let go.
 - The Create line and what is dropped on a folder act after building the lines: their names are
   registry paths that the scan replaces.
 - **Parts and imports.** An asset moves with the parts it owns; each keeps its place relative to
@@ -605,7 +621,8 @@ documents follow the asset; the selection passes to it (`Content.reveal`).
 - Selection, filters, the place and the scroll are kept on changing tabs; the folder, the filters
   and the place, also between runs ([preferences](#preferences)).
 - **Find in Content Browser** (`content_reveal`, the magnifier of a Details field) empties search
-  and filters immediately; the next frame enters the asset's folder if the view does not show it,
+  and filters immediately; the next frame unfolds the folders it is in (Folders) or enters its
+  folder if the view does not show it,
   selects it alone, gives the keyboard to its card and centers it. For a hidden part of a prefab, it
   turns on Show parts of imports and shows it in its folder; for that of another owner, it opens its
   owner.
@@ -617,7 +634,7 @@ Gestures:
   it in the `scene` of a `Scene_Reference`.
 - **Dragging a mesh**: creates an entity with that mesh, resting on the surface.
 - **Dragging a material**: assigns it to the mesh under the pointer.
-- **Dropping a card on the name, chip or cell of a folder**: moves it there.
+- **Dropping a card on the row, chip or cell of a folder**: moves it there.
 - **Click on a prefab or a mesh**: selects it and arms placement (`Editor_Ui.placement`): each click
   on the scene places one, and Escape or the right button ends it.
 - **Click on a material**: assigns it to the selected meshes.
@@ -661,8 +678,9 @@ browser cards and asset fields):
   largest card of the content browser at density 2.
 - `preview_request`, `preview_geometry`, `asset_quad` and `preview_entity` receive the points at
   which the preview is shown and return the quad of the cell of its size when it exists; the same
-  subject at two sizes occupies one cell of each. One is drawn per frame; until then the icon is
-  shown.
+  subject at two sizes occupies one cell of each. One is drawn per frame, and a texture or a
+  material a preview shows that is not loaded yet takes the turn of that frame instead
+  (`preview_load_turn`); until then the icon is shown.
 - A subject that changed keeps its old image until it has the new one, and waits for an open edit
   to finish. The cell that has gone longest without being requested is reused.
 - The signature is `Thumbnail_Subject`: mesh, `Material_Values`, rotation, scale, the
@@ -703,7 +721,7 @@ browser cards and asset fields):
   they show their icon.
 - **Stored.** The preview of an asset (mesh, prefab or a type of a project plugin, not that of an
   entity, a shape or the default of a type) stays in `.mirai/thumbs/<id>-<side>.thumb`, one per
-  asset and size, with premultiplied alpha in LZ and the key it was drawn with.
+  asset and size, with premultiplied alpha, compressed, and the key it was drawn with.
   - The key (`thumbnail_store_key`) combines `THUMBNAIL_RENDERER`, the size, the subject without
     the revision and the `content_hash` of the asset and of the whole dependency closure the
     subject names, as the registry has it. Changing the asset or a dependency
@@ -783,28 +801,33 @@ the user looks at the result, adjusts values and chooses among variants.
 
 ### Records document
 
-`records_document.odin`, over the table as the package `editor/records` changes it (rows, names,
-ids and texts, without the session). A `.records`: a grid with a row per record and a column per
-field, and on the right all the fields of the chosen row with the Details rows
-(`held_field_row`). On top, the type's description; that of a field appears on hovering the name
-of its column.
+`records_document.odin`, over the table as the package `editor/records` changes it (columns, rows,
+names, ids and texts, without the session). A `.records`: a grid with a row per record and a column
+per column of its type, and on the right a panel that edits what was clicked last.
 
-- **Columns** (`records_columns_make`): the type's fields, with structs opened up to
-  `RECORDS_COLUMN_DEPTH` levels and arrays of up to `RECORDS_ARRAY_COLUMNS` elements, one per
-  column; what is longest is edited alone on the right. The first column is the row's name, which
-  is renamed by typing.
-- **Cells:** a draggable or typed number, a checkbox, a list of an `enum` or of a named id, an
-  asset button, the text of a `[N]u8` and, of a `core.Text`, its key of the `.strings` (what the
-  key says goes through `texts.set` or `mirai texts`). A `core.Record` is the list of the rows of
-  its type (`record_choice`), the same as in the inspector.
-- **Add row** adds a row with the type's default after the chosen one; **Duplicate** copies it with
+- **Header:** each column shows its name and its kind (the enum, record type or type of the code
+  it holds); a click selects the column. The `+` after the last one adds a column; the corner
+  (Name) selects the table. A table of rows of another's type shows the columns of the one that
+  declares it, read-only, and a button that opens that table.
+- **Cells** show their values as text. A click on a cell of a row opens its control there: a
+  number, a list of an `enum`, an asset button, the text of a `string` or the key of a `text`, the
+  list of the rows of a `record` (`record_choice`, the same as in the inspector); a checkbox is
+  always one. A column of many values or of a type of the code shows what it holds and is edited
+  in the panel.
+- **The panel** of a row: its name and every column with the Details rows (`held_schema_row`, over
+  the schema the columns make). Of a column: name, kind and the options of the kind, count,
+  description, its default (what Add row starts with), move and delete. Of the table: the name of
+  its type and its description. A renamed column keeps its values (its `was`).
+- **Add row** adds a row with the defaults after the chosen one; **Duplicate** copies it with
   other text ids; **Delete** removes it. The visible rows are the only ones built.
-- What the grid and the right column change is a copy of the table, which is written as a step of
-  the document's history when nothing holds it (a drag, a text being typed, an open list). A change
-  the table does not admit (a repeated name) is warned about and the copy rereads the file. If the
-  file changes elsewhere (`records.*`, Undo), it is read again.
+- What the grid and the panel change, rows and columns, is a copy of the table, which is written
+  as a step of the document's history when nothing holds it (a drag, a text being typed, an open
+  list). A change the table does not admit (a repeated name) is warned about and the copy rereads
+  the file. If the file changes elsewhere (`records.*`, Undo), it is read again.
 - `Asset_Document.part` with a row's name chooses it and shows it on opening: the button of an
   inspector `core.Record` uses it.
+- Create > Record in the content browser makes an empty table that declares a type named from the
+  file (`records_create_bytes`), as `asset.create` with kind `records` does.
 
 The documents of animations, sounds and sound sets belong to the plugin
 [previews](../../mirai-plugins/references/previews.md), and those of particle effects, to the
@@ -896,6 +919,10 @@ plugins and the game, with the Details rows.
   block a shade lighter than the panel. `advanced` fields go at the end of their part, under an
   Advanced fold that starts closed and that the search opens; the API and the files do not
   distinguish them.
+- The list on the left: group names in caption type, their categories set in under them and the
+  sections of an unfolded category further in, smaller and dimmer. A click on a category shows
+  it; only its arrow folds it. A section is never the selected item: its click glides the cards
+  to its card and the category stays the selected one.
 - Editor goes first in both layers: it is not of the project but of the machine
   [preferences](#preferences). Its Panels card gives the mode of each side panel and that of each
   document type ([Floating or Docked](#layout)); it is written like the rest of the

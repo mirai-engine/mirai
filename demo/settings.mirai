@@ -4,7 +4,6 @@
   },
   "Graphics_Settings": {
     "glass_shadows": true,
-    "glass_layers": 2,
-    "frame_limit": 0
+    "glass_layers": 2
   }
 }

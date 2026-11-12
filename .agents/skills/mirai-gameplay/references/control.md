@@ -348,8 +348,10 @@ tags).
   - With `aim`, it turns with the `look_yaw`/`look_pitch` of the target's `inp.Move_Input` plus
     `yaw` and `pitch`: it looks where the body looks, which is what the server simulates.
   - Without `aim`, with `turn` the `look` action of the local player who drives the target turns
-    it, from the devices of that player's slot, and with `recenter` it returns behind a moving
-    target that long after the last turn. `camera_look(&Camera_Input, camera, yaw, pitch)` turns
+    it, from the devices of that player's slot, and with `recenter` it returns behind a
+    target that moves away from it that long after the last turn, the more the straighter it goes
+    away; a target walking toward it or across it never turns it, since a walk relative to the
+    camera would make it spin. `camera_look(&Camera_Input, camera, yaw, pitch)` turns
     it from the game.
 - `Eyes`: first person. It sits at `offset` from the target and looks with the look of its
   `Move_Input` (that is how the cameras of the demo and template prefabs are).

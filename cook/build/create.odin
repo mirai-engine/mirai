@@ -85,6 +85,9 @@ project_create :: proc(template,folder,name:string,engine_root:="") -> Create_Er
     m,error:=project.manifest_read(file)
     if error.code!=.None {return .Manifest_Failed}
     title:=name!=""?name:root[strings.last_index_byte(root,'/')+1:]
+    // The templates of the repository of the engine are compressed with the open compressor, as
+    // everything that repository keeps; a new project, with the best its engine has.
+    m.build.compression={}
     if !base.text_set(m.name[:],title) || project.manifest_write(file,&m).code!=.None {return .Manifest_Failed}
     attributes:=project.path(root,".gitattributes",allocator=context.temp_allocator)
     existing,_:=os.read_entire_file(attributes,context.temp_allocator)

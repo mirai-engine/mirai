@@ -7,6 +7,7 @@ import "mirai:editor/api"
 import erender "mirai:engine/render"
 import lib "mirai:std/anim"
 import "mirai:std/base"
+import "mirai:ui"
 import aed "plugins:animation/editor"
 import anim "plugins:animation/runtime"
 import cine "plugins:cinematics/runtime"
@@ -66,7 +67,7 @@ Control_Result :: struct {
 
 @(private)
 register :: proc(s:^editor.Session) {
-    editor.tool_entry(s,TOOL,"Cinematics",.Play)
+    editor.tool_entry(s,TOOL,"Cinematics",ui.icon_user(u8(editor.User_Icon.Camera)))
     inspect_defaults:=Inspect_Params{time=-1}
     editor.api_method_register(s,{params=type_info_of(Inspect_Params),result=type_info_of(Inspect_Result),name="cinematics.inspect",summary="A timeline: the clip of its Animation and where it is, its shots and actions (the markers of the clip on its cameras and actors), the actors its clip moves, what its seat sees at a time, and the preview of the editor. animation.asset.inspect reads the keys and markers of the clip.",defaults=&inspect_defaults,flags={.Read_Only},run=api_inspect})
     editor.api_method_register(s,{params=type_info_of(Control_Params),result=type_info_of(Control_Result),name="cinematics.control",summary="Plays, pauses, resumes, stops or seeks the clip of a timeline: in Edit the head of the Tracks tool in the Cinematics tool, which shows the scene there without changing the document (animation.request with seek for any clip); in Play the running world, as anim.animation_command does.",run=api_control})

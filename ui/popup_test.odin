@@ -8,6 +8,7 @@ Test_Menus :: struct {
     chosen:int,
     under:int,       // clicks on the button under the menus
     snap:bool,
+    grid:bool,
     selected:int,
     changed:int,
     modal:bool,
@@ -25,6 +26,7 @@ test_menus_build :: proc(ctx:^Context,user:rawptr) {
         }
         if menu(ctx,id(ctx,"edit"),"Edit") {
             if menu_item(ctx,id(ctx,"snap"),"Snap to grid",{checked=s.snap}) {s.snap=!s.snap;s.chosen=4}
+            if menu_item(ctx,id(ctx,"grid"),"Show grid",{checked=s.grid,toggle=true}) {s.grid=!s.grid}
         }
     }
     if panel(ctx,id(ctx,"panel"),{width=fixed(300),height=FIT,padding=padding_all(10),gap=10,offset={0,38}}) {
@@ -118,6 +120,17 @@ a_menu_opens_under_its_title_and_an_item_closes_it :: proc(t:^testing.T) {
 
 @(test)
 pointing_at_another_title_switches_menus_and_a_checked_item_shows_its_check :: proc(t:^testing.T) {
+    // The box of a toggle: its stroke, and whether it holds the check.
+    toggle_box :: proc(ctx:^Context) -> (stroke:Color,found:bool) {
+        for &p in ctx.paints[:ctx.paint_count] {
+            if p.kind==.Box && p.fill==tone(ctx,"well") {return p.stroke,true}
+        }
+        return
+    }
+    checks :: proc(ctx:^Context) -> (count:int) {
+        for &p in ctx.paints[:ctx.paint_count] {if p.kind==.Icon && p.icon==.Check {count+=1}}
+        return
+    }
     ctx:Context
     testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
@@ -137,6 +150,13 @@ pointing_at_another_title_switches_menus_and_a_checked_item_shows_its_check :: p
     testing.expect(t,test_paint(&ctx,"Snap to grid")!=nil)
     check:=test_icon_paint(&ctx,.Check)
     testing.expect(t,check!=nil && check.icon_color==tone(&ctx,"accent_hover") && check.icon_size==13,"A checked item ends in its check")
+    // A toggle that is off still ends in its empty box; on, the box holds the check.
+    stroke,boxed:=toggle_box(&ctx)
+    testing.expect(t,boxed && stroke==tone(&ctx,"well_stroke") && checks(&ctx)==1,"An unchecked toggle shows its box")
+    s.grid=true
+    test_menus_frame(&ctx,&input,&s)
+    stroke,boxed=toggle_box(&ctx)
+    testing.expect(t,boxed && stroke==tone(&ctx,"accent") && checks(&ctx)==2,"A checked toggle holds the check")
     edit:=test_rect(t,&ctx,id(&ctx,"edit"))
     testing.expect(t,test_near(test_rect(t,&ctx,id(&ctx,"snap")).x,edit.x+4),"The menu hangs under its own title")
     // The title of the open menu closes it.
@@ -148,7 +168,7 @@ pointing_at_another_title_switches_menus_and_a_checked_item_shows_its_check :: p
 }
 
 @(test)
-a_press_outside_a_popup_closes_it_and_does_nothing_else :: proc(t:^testing.T) {
+a_press_outside_a_popup_closes_it_and_reaches_what_it_lands_on :: proc(t:^testing.T) {
     ctx:Context
     testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
@@ -165,12 +185,12 @@ a_press_outside_a_popup_closes_it_and_does_nothing_else :: proc(t:^testing.T) {
     test_menus_frame(&ctx,&input,&s)
     test_release(&input)
     test_menus_frame(&ctx,&input,&s)
-    testing.expect(t,ctx.popup.count==0 && s.under==0,"The press that closes a popup reaches nothing")
-    test_press(&input)
-    test_menus_frame(&ctx,&input,&s)
-    test_release(&input)
-    test_menus_frame(&ctx,&input,&s)
-    testing.expect_value(t,s.under,1)
+    testing.expect(t,ctx.popup.count==0 && s.under==1,"The press that closes a popup also presses what it is on")
+    // A press on what opened the popup only closes it.
+    test_click(&ctx,&input,test_menus_build,&s,id(&ctx,"file"))
+    testing.expect_value(t,ctx.popup.count,1)
+    test_click(&ctx,&input,test_menus_build,&s,id(&ctx,"file"))
+    testing.expect_value(t,ctx.popup.count,0)
     // Escape closes it too, before anything else hears the key.
     test_click(&ctx,&input,test_menus_build,&s,id(&ctx,"file"))
     test_key(&input,.Escape)
@@ -377,8 +397,54 @@ a_popup_that_does_not_fit_below_opens_above_and_stays_inside :: proc(t:^testing.
         placed:=test_rect(t,&ctx,id(&ctx,"list"))
         testing.expectf(t,test_rect_near(placed,{c.origin.x,c.origin.y,180,86}),"beside %v: %v, expected at %v",c.anchor,placed,c.origin)
     }
+    // One asked wider than its surface is as wide as the surface less its margins.
+    wide :: proc(ctx:^Context,user:rawptr) {
+        s:=cast(^Placed)user
+        list:=id(ctx,"list")
+        if !s.open {popup_open(ctx,list,s.anchor);s.open=true}
+        if popup(ctx,list,s.desc) {spacer(ctx,10,78)}
+    }
+    margin:=metric(&ctx,"margin")
+    for desc in ([]Popup{{width=2000},{min_width=2000}}) {
+        s:=Placed{c={anchor={100,100,96,26},desc=desc}}
+        popup_close(&ctx)
+        test_frame(&ctx,&input,wide,&s)
+        placed:=test_rect(t,&ctx,id(&ctx,"list"))
+        testing.expectf(t,test_rect_near(placed,{margin,130,800-2*margin,86}),"%v: %v",desc,placed)
+    }
     frame_begin(&ctx,input)
     frame_end(&ctx)
+}
+
+@(test)
+a_row_too_narrow_for_its_label_and_detail_cuts_both_inside_it :: proc(t:^testing.T) {
+    ctx:Context
+    testing.expect(t,test_context_init(&ctx,TEST_FONT))
+    defer context_destroy(&ctx)
+    input:=test_input(800,600)
+    Case :: struct {label,detail:string,width:f32}
+    LONG_NAME :: "a_character_with_a_very_long_name"
+    LONG_PATH :: "characters/heroes/of/the/first/chapter/a_character_with_a_very_long_name.character"
+    build :: proc(ctx:^Context,user:rawptr) {
+        c:=cast(^Case)user
+        if box(ctx,{width=fixed(c.width),height=FIT,direction=.Column}) {row(ctx,id(ctx,"row"),{label=c.label,detail=c.detail,icon=.Cube})}
+    }
+    for c in ([]Case{{"Hero",LONG_PATH,240},{LONG_NAME,"short/path.character",240},{LONG_NAME,LONG_PATH,240},{"Hero","heroes/hero.character",400}}) {
+        c:=c
+        test_frame(&ctx,&input,build,&c)
+        r:=test_rect(t,&ctx,id(&ctx,"row"))
+        label,detail:=test_text_rect(&ctx,c.label),test_text_rect(&ctx,c.detail)
+        testing.expectf(t,test_near(r.w,c.width),"%v: the row keeps the width of its list, %v",c,r)
+        testing.expectf(t,label.w>0 && detail.w>0,"%v: both show, %v %v",c,label,detail)
+        testing.expectf(t,detail.x+detail.w<=r.x+r.w+0.5 && label.x+label.w<=detail.x,"%v: the detail stays inside the row, after the label: %v %v %v",c,r,label,detail)
+        // The label holds the icon before its text.
+        whole:=16+6+text_width(&ctx.font,c.label,metric(&ctx,"font_small"))+1
+        natural:=row_width(&ctx,{label=c.label,detail=c.detail,icon=.Cube})
+        testing.expectf(t,natural>c.width || test_near(label.w,whole,1),"%v: a row that fits shows its whole label, %v",c,label)
+        // The shorter of the two is not cut while it is under half of the row.
+        if whole<c.width/2 {testing.expectf(t,test_near(label.w,whole,1),"%v: %v",c,label)}
+    }
+    testing.expect_value(t,ctx.stats.layout_errors,u32(0))
 }
 
 @(test)

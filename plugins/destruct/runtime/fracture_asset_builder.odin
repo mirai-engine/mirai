@@ -127,5 +127,5 @@ fracture_connect_proximity :: proc(b:^Fracture_Builder,distance,area:f32,strengt
 }
 
 fracture_builder_desc :: proc(b:^Fracture_Builder,id:base.Asset_Id,source_mesh:base.Asset_Id={}) -> Fracture_Desc {
-    return {id=id,source_mesh=source_mesh,vertices=b.vertices[:],indices=b.indices[:],pieces=b.pieces[:],connections=b.connections[:],clusters=b.clusters[:],compression=.LZ}
+    return {id=id,source_mesh=source_mesh,vertices=b.vertices[:],indices=b.indices[:],pieces=b.pieces[:],connections=b.connections[:],clusters=b.clusters[:],compression=.Stream}
 }

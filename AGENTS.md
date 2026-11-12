@@ -55,9 +55,10 @@ own `AGENTS.md` applies, not the one of the checkout that contains it.
 - **UI.** Own layout in Odin (`ui`). Editor UI changes are made directly in the native editor.
   Text: [typography](.agents/skills/mirai-ui/SKILL.md); editable text is US-keyboard ASCII; no
   IME, HTML, CSS or embedded browser. The editor UI animates only the text cursor, the dot of what
-  is working (an agent, a load) and the composer of the AI chat going down on its first message,
-  and has no help texts except the description of a component above its header and that of a
-  field when hovering its name; game UI does allow animations.
+  is working (an agent, a load), the composer of the AI chat going down on its first message and
+  the settings cards gliding to a section clicked in their list, and has no help texts except the
+  description of a component above its header and that of a field when hovering its name; game UI
+  does allow animations.
 - **The engine does not crash on valid input.** No public function terminates the process for any
   input: it validates what it receives and returns an error, also when it runs out of memory;
   `#no_bounds_check` goes only where the inputs were already validated. Tests with hostile inputs

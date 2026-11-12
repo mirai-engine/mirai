@@ -64,7 +64,7 @@ animation_round_trips_and_fills_a_library :: proc(t:^testing.T) {
     testing.expect(t,a.blob.header.kind==KIND_ANIMATION && a.blob.header.kind_version==ANIMATION_VERSION && a.blob.header.id==desc.id)
     // The track targets are mostly zeros: their table goes in LZ.
     packed:=false
-    for i in 0..<int(a.blob.header.chunk_count) {packed||=blob_chunk(&a.blob,i).compression==.LZ}
+    for i in 0..<int(a.blob.header.chunk_count) {packed||=blob_chunk(&a.blob,i).compression!=.None}
     testing.expect(t,packed,"the tables of an animation are compressed")
     view,error:=animation_view(&a,&types)
     testing.expect_value(t,error,Error.None)
@@ -198,7 +198,7 @@ sound_round_trips_lossless_and_as_a_file :: proc(t:^testing.T) {
 
     file:=make([]u8,64);defer delete(file)
     copy(file,"RIFF\x38\x00\x00\x00WAVEfmt ")
-    testing.expect_value(t,sound_document(&doc,&types,{id={0x51,1},channels=1,sample_rate=22050,frames=10,file=file,flags={.Stream},compression=.LZ}),Error.None)
+    testing.expect_value(t,sound_document(&doc,&types,{id={0x51,1},channels=1,sample_rate=22050,frames=10,file=file,flags={.Stream},compression=.Stream}),Error.None)
     w:serial.Writer;serial.writer_init(&w);defer serial.writer_destroy(&w)
     testing.expect_value(t,document_write(&doc,&w),Error.None)
     same_through_text(t,&doc)

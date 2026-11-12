@@ -14,8 +14,6 @@ import gpu "mirai:render"
 import "mirai:std/base"
 import "mirai:std/geom"
 import mm "mirai:std/math"
-import "mirai:std/compressor"
-import "mirai:std/compressor/lz"
 import "mirai:std/serial"
 import "mirai:ui"
 
@@ -57,19 +55,19 @@ THUMBNAIL_RENDERER :: 3
 THUMBNAIL_LOADS :: 8
 THUMBNAIL_FILE_MAGIC :: u32('M')|u32('T')<<8|u32('H')<<16|u32('B')<<24
 THUMBNAIL_FILE_VERSION :: 3
-THUMBNAIL_FILE_HEADER :: 24 // magic, version, key, side and the bytes of the LZ image after it
+THUMBNAIL_FILE_HEADER :: 24 // magic, version, key, side and the bytes of the stream of the image after it
 
 // A stored preview as its file holds it, and the coders of its image.
 Thumbnail_File :: struct {
     bytes:[dynamic]u8,
-    decoder:compressor.Decoder,
-    encoder:lz.Encoder,
+    decoder:asset.Stream_Decoder,
+    encoder:asset.Stream_Encoder,
 }
 
 thumbnail_file_destroy :: proc(file:^Thumbnail_File) {
     delete(file.bytes)
-    compressor.decoder_destroy(&file.decoder)
-    lz.encoder_destroy(&file.encoder)
+    asset.stream_decoder_destroy(&file.decoder)
+    asset.stream_encoder_destroy(&file.encoder)
     file^={}
 }
 
@@ -141,7 +139,7 @@ Thumbnails :: struct {
     capture_renderer:^gpu.Renderer,
     dirty:bool,             // the atlas changed since the renderer got it
     changed:[4]int,         // the pixels that did: left, top, right and bottom
-    drawn:u64,              // the frame the last preview was drawn in
+    drawn:u64,              // the frame the last preview was drawn in, or loaded what it shows
     picture:Thumbnail_Picture,
     opened:base.Asset_Id,   // a scene the editor opened, whose view it takes at the frame opened_frame
     opened_frame:u64,
@@ -292,6 +290,20 @@ preview_request :: proc(s:^Session,key:u64,subject:^Thumbnail_Subject,points:f32
     cell.ready=preview_render(s,subject,level,p.image[:])
     thumbnail_drawn(p,slot,side,folder,stored,wanted)
     return thumbnail_quad(cell,slot)
+}
+
+// Whether a preview may show an asset this frame: at once when it is loaded;
+// otherwise it waits its turn, as a preview that is drawn does, and loads in a
+// frame no other preview drew or loaded in.
+@(private)
+preview_load_turn :: proc(s:^Session,id:base.Asset_Id) -> bool {
+    a:=s.app.assets
+    if _,loaded:=a.index[id];loaded {return true}
+    p:=s.thumbnails
+    if p==nil {return true}
+    if p.drawn==s.frame+1 {return false}
+    p.drawn=s.frame+1
+    return true
 }
 
 // The image of the cell its provider asked to draw between frames
@@ -448,7 +460,7 @@ thumbnail_load :: proc(folder:string,id:base.Asset_Id,side:int,key:u64,file:^Thu
     if serial.read_u32(&r)!=THUMBNAIL_FILE_MAGIC || serial.read_u32(&r)!=THUMBNAIL_FILE_VERSION || serial.read_u64(&r)!=key || serial.read_u32(&r)!=u32(side) {return false}
     packed:=int(serial.read_u32(&r))
     if r.failed || packed!=len(head)-THUMBNAIL_FILE_HEADER {return false}
-    if len(file.decoder.scratch)==0 && compressor.decoder_init(&file.decoder)!=.None {return false}
+    if file.decoder.data==nil && asset.stream_decoder_init(&file.decoder)!=.None {return false}
     resize(image,pixels)
     return asset.unpack(&file.decoder,head[THUMBNAIL_FILE_HEADER:],image[:])==.None
 }
@@ -457,8 +469,9 @@ thumbnail_load :: proc(folder:string,id:base.Asset_Id,side:int,key:u64,file:^Thu
 @(private)
 thumbnail_save :: proc(folder:string,id:base.Asset_Id,side:int,key:u64,image:[]u8,file:^Thumbnail_File) -> bool {
     if len(image)!=side*side*4 {return false}
+    if file.encoder.data==nil && asset.stream_encoder_init(&file.encoder)!=.None {return false}
     resize(&file.bytes,THUMBNAIL_FILE_HEADER+asset.pack_bound(len(image)))
-    packed,error:=asset.pack(&file.encoder,asset.PACK_EDIT,image,file.bytes[THUMBNAIL_FILE_HEADER:])
+    packed,error:=asset.pack(&file.encoder,.Fast,.Open,image,file.bytes[THUMBNAIL_FILE_HEADER:])
     if error!=.None {return false}
     w:serial.Writer
     serial.writer_init(&w,allocator=context.temp_allocator)

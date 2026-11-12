@@ -682,7 +682,7 @@ terrain_update :: proc(
     meshes:^core.Table(render.Mesh_Renderer),looks:^core.Table(render.Material_Values),
     data:^Terrain_Data,resident:^Terrain_Resident,requests:^Terrain_Requests,digs:^Terrain_Digs,settings:Terrain_Settings,app:^host.App,time:core.Time,frame:core.Frame_Time,
     view:core.View,worlds:^core.Table(core.World_Transform,.Read),sources:core.Ref(scene.Streaming_Sources),kept:^core.Table(scene.Far_Kept,.Read),physics:phys.Physics_Settings,
-    loads:core.Ref(scene.Section_Loads),waits:^scene.Load_Waits,problems:^core.Problems,focus:Terrain_Focus,queries:^core.Ground_Queries,
+    loads:core.Ref(scene.Section_Loads),waits:^scene.Load_Waits,problems:^core.Problems,focus:Terrain_Focus,queries:^core.Ground_Queries,ground:^Terrain_Ground,
 ) {
     c:=Chunk_Tables{commands,chunks,locals,parents,ids,colliders,meshes,looks}
     if queries.open==nil {queries.open=ground_open}
@@ -898,7 +898,7 @@ terrain_update :: proc(
     // What the owners wrote as they showed is not a change for the next call.
     _=shown_touched(terrains,&c,&resident.shown)
     if resident.room.starved {_=core.touched(c.colliders,&resident.room.seen)}
-    ground_update(resident,data,terrains,colliders,worlds,focus,queries)
+    ground_update(ground,resident,data,terrains,colliders,worlds,focus,queries)
     host.assets_commit(app.assets)
 }
 

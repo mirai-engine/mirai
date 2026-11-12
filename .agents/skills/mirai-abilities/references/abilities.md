@@ -6,7 +6,10 @@
 
 ## Sheets
 
-An `Ability` is a `@(record)` row; its fields read top to bottom as the sheet of a technique.
+An `Ability` is a row of game data; its fields read top to bottom as the sheet of a technique. The
+plugin declares `Ability` and `Ability_Kit` in its `assets/` (`ability.records`,
+`ability_kit.records`, without rows), whose columns hold the types of `abilities.odin`; a game
+writes its rows in tables of its own (`records.create` with `rows_of`).
 
 - `input`: the input action of the seat that drives the user and when it fires: `pressed`,
   `released` (after being held at least `hold` seconds), `held` (the tick it reaches `hold`

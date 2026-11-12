@@ -5,8 +5,6 @@ import "mirai:asset"
 import "mirai:core"
 import "mirai:engine/scene"
 import wire "mirai:net"
-import "mirai:std/compressor"
-import "mirai:std/compressor/lz"
 
 // A replicated operation journal: what a library that changes by operations
 // something both ends hold (a fracture, a dig) keeps in a host storage of its
@@ -253,16 +251,16 @@ Journal :: struct {
     handed:u32,                          // server: the number of the last part handed
     early:[dynamic]Journal_Arrived,      // client: bytes of parts it has not heard of yet
     raw,packed:[dynamic]u8,
-    decoder:compressor.Decoder, // client: of the parts received
-    encoder:lz.Encoder,         // server: of the parts sent
+    decoder:asset.Stream_Decoder, // client: of the parts received
+    encoder:asset.Stream_Encoder, // server: of the parts sent
     stats:Journal_Stats,
 }
 
 journal_free :: proc(j:^Journal) {
     journal_forget(j)
     delete(j.streams);delete(j.held);delete(j.serves);delete(j.entered);delete(j.predictions);delete(j.refused);delete(j.applying);delete(j.early);delete(j.raw);delete(j.packed)
-    compressor.decoder_destroy(&j.decoder)
-    lz.encoder_destroy(&j.encoder)
+    asset.stream_decoder_destroy(&j.decoder)
+    asset.stream_encoder_destroy(&j.encoder)
     j^={}
 }
 
@@ -489,7 +487,7 @@ part_bytes :: proc(j:^Journal,arrived:Journal_Arrived,problems:^core.Problems) {
             if part.bytes,error=make([]u8,int(part.raw));error!=nil {
                 part.broken=true
                 journal_memory(problems)
-            } else if len(j.decoder.scratch)==0 && compressor.decoder_init(&j.decoder)!=.None || asset.unpack(&j.decoder,arrived.bytes,part.bytes)!=.None {
+            } else if j.decoder.data==nil && asset.stream_decoder_init(&j.decoder,context.allocator)!=.None || asset.unpack(&j.decoder,arrived.bytes,part.bytes)!=.None {
                 delete(part.bytes)
                 part.bytes,part.broken=nil,true
             }
@@ -894,7 +892,8 @@ journal_part :: proc(j:^Journal,sv:^Journal_Serve,raw:[]u8,last:bool) -> bool {
     total:=0
     if len(raw)>0 {
         error:asset.Error
-        if total,error=asset.pack(&j.encoder,asset.PACK_EDIT,raw,j.packed[HEAD:]);error!=.None {return false}
+        if j.encoder.data==nil && asset.stream_encoder_init(&j.encoder,context.allocator)!=.None {return false}
+        if total,error=asset.pack(&j.encoder,.Fast,.Open,raw,j.packed[HEAD:]);error!=.None {return false}
     }
     message,error:=make([]u8,HEAD+total)
     if error!=nil {return false}

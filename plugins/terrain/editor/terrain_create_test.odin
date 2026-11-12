@@ -1,9 +1,11 @@
 package terrain_editor
 
 import "core:fmt"
+import "core:mem"
 import "core:os"
 import "core:strings"
 import "core:testing"
+import "mirai:asset"
 import "mirai:core"
 import "mirai:editor"
 import "mirai:editor/kit"
@@ -253,7 +255,37 @@ a_named_terrain_takes_the_name_and_a_missing_heightmap_says_its_path :: proc(t:^
     if !testing.expect(t,e!=core.NONE && history.edits_commit(&edits,ref,&selection)) {return}
     name:=core.edit(&world.names,e)
     testing.expect(t,name!=nil && base.text_get(name.text[:])=="Island","the entity takes the name")
-    testing.expect(t,editor.file_exists(&s,fmt.tprintf("%s/terrain/Island.terrain",root)),"the file takes the name")
+    island:=fmt.tprintf("%s/terrain/Island.terrain",root)
+    testing.expect(t,editor.file_exists(&s,island),"the file takes the name")
+    // Deleted, its terrain leaves the file; the next of its name takes it, and undo gives it back.
+    first:=core.get(&world.terrains,e) or_else terrain.Terrain{}
+    history.edits_begin(&edits,editor.document_selection(&s),"Delete")
+    core.destroy(&world.entities,e)
+    history.edits_end(&edits)
+    if !testing.expect(t,history.edits_commit(&edits,ref,&selection)) {return}
+    again:=terrain_create(&s,&tool,ref,app.assets,app.allocator,at={0,0,0},placed=true,name="Island")
+    if !testing.expect(t,again!=core.NONE && history.edits_commit(&edits,ref,&selection)) {return}
+    second:=core.get(&world.terrains,again) or_else terrain.Terrain{}
+    file,found:=asset.registry_find(&assets.registry,second.source)
+    testing.expect(t,found && file.path=="terrain/Island.terrain" && !editor.file_exists(&s,fmt.tprintf("%s/terrain/Island 2.terrain",root)))
+    testing.expect(t,history.undo(&edits,ref,&selection) && history.undo(&edits,ref,&selection))
+    testing.expect(t,terrain.terrain_stamp(&assets,first.source).found,"undo gives back the file of the first")
+}
+
+// A sample answers the height and slope of what it finds, also where they are 0.
+@(test)
+a_sample_answers_its_height_and_slope_where_they_are_zero :: proc(t:^testing.T) {
+    schema:serial.Schema
+    serial.schema_init(&schema);defer serial.schema_destroy(&schema)
+    // As the API writes its results.
+    schema.unsized,schema.sparse=true,true
+    type,ok:=serial.schema_add_type_info(&schema,type_info_of(Terrain_Sample_Result))
+    if !testing.expect(t,ok) {return}
+    flat:=Terrain_Sample_Result{found=true,normal={0,1,0}}
+    out:serial.Writer;serial.writer_init(&out,512);defer serial.writer_destroy(&out)
+    serial.text_write(&out,&schema,type,mem.ptr_to_bytes(&flat),.Line)
+    text:=string(serial.writer_bytes(&out))
+    testing.expectf(t,strings.contains(text,`"height"`) && strings.contains(text,`"slope"`),"%s",text)
 }
 
 @(test)

@@ -74,6 +74,10 @@ keeps its default; one the struct does not have is an error.
 - `import_sources`: the extensions of the files the importers of a plugin read (`.umap`): a
   repository with LFS keeps them in it as it keeps the sources of the engine's formats
   ([git and assets](../../mirai-assets/references/cli.md#git)).
+- `build.compression`: what the assets of the project and its game are compressed with: `none`,
+  `open`, or empty for the best its engine has ([compressor](build.md#compressor)). The projects
+  of the repository of the engine (the demo, the templates) declare `open`; a project made from a
+  template does not keep it.
 - `development`: a tool for making the game (`profiler`, `tracy`). It goes into the `editor` and
   `play` libraries; the shipped game is generated with `shipped_world`, the world without them, and
   if its code reaches them the build fails with `Engine_Time_Code`.
@@ -553,8 +557,9 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
 - `mirai docs [topic] [section]` and the `docs` tool of `mirai mcp` serve `docs/game` from the root
   of the running `mirai`, with or without an editor; a project keeps no copy of it.
 - `mirai worktree new` creates `<main>/.worktrees/<name>` on a new branch and prints the `cd` and
-  the first build. It copies nothing: `.deps` and the caches (engine binaries, C libraries, shader
-  stages) are those of the main checkout ([dependencies](build.md#dependencies-and-worktrees)).
+  the first build. `.deps` and the caches (engine binaries, C libraries, shader stages) are those
+  of the main checkout ([dependencies](build.md#dependencies-and-worktrees)), and so is the private
+  compressor in its `ext/` ([compressor](build.md#compressor)).
 - `mirai doctor [project]` checks the machine and the project, says how to fix each finding and
   ends with 1 if there are errors. It requires `git config core.symlinks` and `.claude/skills` as a
   symbolic link to `.agents/skills`: without it, the skills do not reach the agents (on Windows

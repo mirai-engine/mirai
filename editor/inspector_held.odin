@@ -71,6 +71,17 @@ held_field_row :: proc(s:^Session,h:Held_Values,name:string,label:string="",desc
     return c.changed
 }
 
+// The rows of one field of values a schema describes instead of a type of
+// the code: those of a table of game data, whose layout its columns make.
+// h.info is not read.
+held_schema_row :: proc(s:^Session,h:Held_Values,schema:^serial.Schema,of:serial.Type_Index,field:serial.Field,label:string,description:string="") -> (changed:bool) {
+    if h.key==0 || h.value==nil || h.defaults==nil || !serial.type_valid(schema,of) {return false}
+    c:=Inspect{s=s,w=shown_world(s),index=HELD_INDEX,held=h.key,write=h.write,user=h.user,name=h.name,schema=schema,of=of,value=cast([^]u8)h.value,defaults=cast([^]u8)h.defaults,size=int(schema.types[of].size),width=h.width}
+    held_take(&c)
+    field_row(&c,field,label,uintptr(field.offset),0,description)
+    return c.changed
+}
+
 // An asset a panel holds, as a button for a toolbar: its thumbnail and name,
 // and the list of the assets of its kinds when it is clicked. key: of the value
 // among those panels hold, not 0. True when the list or a drop changed it.

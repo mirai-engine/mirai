@@ -107,10 +107,10 @@ scene_init :: proc(scene:^Scene,types:^Types,id:base.Asset_Id,allocator:=context
     if !order_ok {return .Out_Of_Memory}
     name_type,name_ok:=document_type(&scene.doc,types,Entity_Name)
     if !name_ok {return .Out_Of_Memory}
-    document_column_add(&scene.doc,table,"id",id_type,{},.LZ) or_return
-    document_column_add(&scene.doc,table,"parent",id_type,{},.LZ) or_return
-    document_column_add(&scene.doc,table,"order",order_type,{},.LZ) or_return
-    document_column_add(&scene.doc,table,"name",name_type,{.Text},.LZ) or_return
+    document_column_add(&scene.doc,table,"id",id_type,{},.Stream) or_return
+    document_column_add(&scene.doc,table,"parent",id_type,{},.Stream) or_return
+    document_column_add(&scene.doc,table,"order",order_type,{},.Stream) or_return
+    document_column_add(&scene.doc,table,"name",name_type,{.Text},.Stream) or_return
     scene.doc.tables[table].key=COLUMN_ID
     return .None
 }
@@ -262,8 +262,8 @@ scene_component_create :: proc(scene:^Scene,name:string,type:serial.Type_Index) 
     row_type,imported:=document_type(&scene.doc,scene.types,u32)
     if !imported {return -1,.Out_Of_Memory}
     table=document_table_add(&scene.doc,name) or_return
-    entity:=document_column_add(&scene.doc,table,COLUMN_ENTITY,row_type,{},.LZ) or_return
-    document_column_add(&scene.doc,table,COLUMN_VALUE,type,{},.LZ) or_return
+    entity:=document_column_add(&scene.doc,table,COLUMN_ENTITY,row_type,{},.Stream) or_return
+    document_column_add(&scene.doc,table,COLUMN_VALUE,type,{},.Stream) or_return
     scene.doc.tables[table].columns[entity].ref=0
     return table,.None
 }
@@ -517,8 +517,8 @@ scene_records_put :: proc(scene:^Scene) -> Error {
         if table,found:=document_table(doc,name);found {document_table_remove(doc,table)}
     }
     document_put_row(doc,scene.types,TABLE_SCENE,&scene.info) or_return
-    if len(scene.overrides)>0 {document_put(doc,scene.types,TABLE_OVERRIDES,scene.overrides[:],{},.LZ) or_return}
-    if len(scene.off)>0 {document_put(doc,scene.types,TABLE_OFF,scene.off[:],{},.LZ) or_return}
+    if len(scene.overrides)>0 {document_put(doc,scene.types,TABLE_OVERRIDES,scene.overrides[:],{},.Stream) or_return}
+    if len(scene.off)>0 {document_put(doc,scene.types,TABLE_OFF,scene.off[:],{},.Stream) or_return}
     return .None
 }
 

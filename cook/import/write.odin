@@ -289,7 +289,7 @@ write_texture :: proc(w:^Writer,job:Texture_Job,id,owner:base.Asset_Id,path,sour
     }
     built:=&cooked.built
     info.settings_hash=cooked.settings
-    desc:=textures.built_desc(built,id,&info)
+    desc:=textures.built_desc(built,id,&info,w.types.codecs==.Best)
     desc.owner=owner
     existed:=os.exists(path)
     zone(w.options,"texture.save")
@@ -318,6 +318,7 @@ writer_init :: proc(w:^Writer,path,folder:string,options:Import_Options,report:^
     w.names.allocator=context.temp_allocator
     w.rng=base.rng_make(u64(time.time_to_unix_nano(time.now())),u64(uintptr(w)))
     asset.types_init(&w.types)
+    w.types.codecs=asset.project_codecs(options.root,project.engine_root_find("",context.temp_allocator))
     zone(options,"import.scan")
     return writer_source(w,path,folder)
 }

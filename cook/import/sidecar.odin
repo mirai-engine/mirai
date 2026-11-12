@@ -80,12 +80,13 @@ sidecar_parse :: proc(text:string,allocator:=context.allocator) -> (sidecar:Side
 
 // What the outputs of an import are built from, as one number: the bytes of
 // the source at path and of each input its sidecar lists, its settings, the
-// version of what reads and writes it and whether its textures are built
-// Fast. An output of the cache is current when its file is named by this key.
+// version of what reads and writes it, the encoders of the program and whether
+// its textures are built Fast. An output of the cache is current when its file is named by this key.
 // With hashes, a file whose size and modification time it knows is not read.
 import_key :: proc(path:string,sidecar:Sidecar,version:u32,fast:bool,hashes:^Source_Hashes=nil) -> u64 {
     key:=base.hash_combine(u64(version)<<1|u64(fast),u64(asset.SOUND_VERSION)<<48|u64(asset.MESH_VERSION)<<32|u64(asset.TEXTURE_VERSION)<<16|u64(textures.BUILD_VERSION))
     key=base.hash_combine(key,base.hash64(transmute([]u8)settings_text(sidecar.settings,context.temp_allocator)))
+    key=base.hash_combine(key,textures.encoders_id())
     folder:=filepath.dir(path)
     for at in -1..<len(sidecar.inputs) {
         key=base.hash_combine(key,file_hash(hashes,path if at<0 else fmt.tprintf("%s/%s",folder,sidecar.inputs[at])))

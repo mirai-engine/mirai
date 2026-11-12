@@ -32,7 +32,7 @@ import "mirai:std/serial"
 // Names what the generator produces from a given source and compiler. It is
 // part of every fingerprint: raise it when the outputs change for a reason the
 // fingerprints do not see (another flag is already seen, as are the tools).
-GENERATOR_CONTRACT :: "mirai-shaders/6"
+GENERATOR_CONTRACT :: "mirai-shaders/7"
 
 // The folders of the engine every stage includes, under its root: the shaders
 // of the renderer and those engine/render gives the plugins that extend it.

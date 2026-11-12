@@ -39,7 +39,7 @@ receives the place of its origin: a type or a function of an editor package neve
 @(storage,reset="state_reset")
 @(storage,copy="state_copy",swap="state_swap") @(storage,copy=false) @(storage,free="state_free")
 @(step="fixed late",loops="game editor",stage="end",after="a b",before="c",server)
-@(params) @(record) @(record,description="...")
+@(params)
 @(mind="zombie") @(act="Chase Circle")
 ```
 
@@ -179,11 +179,13 @@ receives the place of its origin: a type or a function of an editor package neve
   world data.
 - `mind="name"` and `act="Value ..."`: the think procedure of a mind and the actions of its enum
   ([minds](#minds)).
-- `record`: a struct that is the row of game data tables ([game data](core.md#game-data)); it
-  is not world data. It ends up in `World_Info.records` with its default, its description and that
-  of its fields, like a component. It belongs to a library or to `game/`, with no other attribute,
-  and of plain data: the generator rejects the same as in a `persist` (also an `Entity`), and two
-  with one package and one name, because the `.records` names its type that way.
+- `record="<the .records>"`: only in `records_gen.odin`, which the build writes from the `.records`
+  that declare their type before it reads the packages ([game data](core.md#game-data)); anywhere
+  else it is an error that says where the schema lives. The struct is not world data: it ends up
+  in `World_Info.records` with its default, and the types of its package in
+  `World_Info.record_codes`. It is plain data (the generator rejects the same as in a `persist`,
+  also an `Entity`), and a name is of one record type in the project and its plugins, because a
+  `.records` names its type by it alone.
 
 Attributes go on `Name :: struct` and `name :: proc` declarations. A type is declared only once per
 package.
@@ -260,7 +262,7 @@ Each parameter is bound by its type; the order in the signature is free.
   what it holds.
 - `^host.App`: the application itself, for what is not one of those parts (its worlds, its window
   and the views of the frame, its clock, its content, the launch).
-- `core.Records(T)`, with `T` a `@(record)`: the rows of its tables, read-only
+- `core.Records(T)`, with `T` a record type: the rows of its tables, read-only
   (`host.app_record_set`).
 - `core.Inbox(M)`, with `M` a `@(net_message)`: the messages of that type that arrived for the
   tick, read-only; a read of `core.Net_Messages`, which the network writes.

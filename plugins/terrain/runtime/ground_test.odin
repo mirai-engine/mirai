@@ -16,13 +16,14 @@ Ground_World :: struct {
     using terrain:Test_Terrain,
 }
 
-// A call of terrain_update as its readers see it: what it pushed in it.
+// A call of terrain_update as its readers see it: what it pushed in it, and
+// the ground they open from the world.
 @(private="file")
 ground_step :: proc(w:^Ground_World,resident:^Terrain_Resident,focus:=Terrain_Focus{}) -> core.Ground_Query {
     clear(&w.ground_queries.changed.items);clear(&w.ground_queries.unloaded.items)
-    ground_update(resident,&w.data,core.read(&w.terrains),&w.colliders,core.read(&w.worlds),focus,&w.ground_queries)
-    g:=&resident.ground
-    return {user=g,probe=ground_probe,spacing=g.spacing,unloaded=g.unloaded[:]}
+    ground_update(&w.terrain_ground,resident,&w.data,core.read(&w.terrains),&w.colliders,core.read(&w.worlds),focus,&w.ground_queries)
+    w.ground_queries.open=ground_open
+    return core.ground_query(test_world_ref(w),core.ref(&w.ground_queries))
 }
 
 @(private="file")

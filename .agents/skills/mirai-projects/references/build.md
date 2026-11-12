@@ -235,9 +235,10 @@ sources and their sidecars ([sync](../../mirai-imports/references/imports.md#syn
   its active plugins once its target stands (`job_imports`, `build.imports_sync`): the editor,
   the game, the server, `mirai play` and the builds the editor starts. It uses the engine's import
   program, since the tool builds without the importers, which reads the formats the plugins of
-  the project add from its editor library. A source that does not import fails the build naming
-  it (`Import_Failed`). There is no other step: a checkout that was just cloned runs after any
-  build.
+  the project add from its editor library; the game, compiled from the engine's sources,
+  builds those binaries too when its project has assets. A source that does not import fails
+  the build naming it (`Import_Failed`). There is no other step: a checkout that was just cloned
+  runs after any build.
 - **What ships.** A game has no imported folder and no sources: the cook writes every asset it
   reaches at its path in the assets of the game, whichever of the two folders it came from.
 - **The installed engine** carries the imported folder of each of its plugins, built when it is
@@ -268,8 +269,8 @@ texture cache of the project; a failure is `Cook_Failed` with `Result.cook.error
 - **Parallel.** Files are cooked on a job system (`Cook_Desc.worker`, else one of the cook with a
   thread per core), the largest first; what is written and the report are those of a cook on one
   thread, and an error is the first by path. Prefab resolution and texture cache writes take a lock.
-  A dev game is cooked with the pack `QUICK` of `cook/compressor/lz` (`Cook_Desc.quick`), a
-  release one with `SHIP`.
+  A dev game is cooked with the profile `Balanced` (`Cook_Desc.quick`), a release one with
+  `Ultra`.
 - **Scope.** The roots and, transitively, the dependencies each asset declares; the rest goes to
   `dropped`. A dependency that is not any file goes to `missing` and does not stop the cooking.
 - **Textures.** With `"textures": "blocks"` (default), an RGBA8 texture is written in blocks
@@ -291,6 +292,21 @@ texture cache of the project; a failure is `Cook_Failed` with `Result.cook.error
   section references its far mesh, `<scene>.far.mesh` with the id `asset.far_mesh_id` gives
   (`cook/far`): the game shows it and makes none
   ([far shape](../../mirai-gameplay/references/libraries.md#plugin-streaming)).
+- **Compression.** A cook writes with the codecs of its project (`Cook_Desc.codecs`, from
+  `project.compression`): every texture is written again with the layouts and planes of fields
+  those codecs take, and with `None` its blocks are made without RDO. What a cook compresses with,
+  and the name of the compressor, are part of the key of each file it keeps.
+
+#### Compressor
+
+The collection `compressor` every compile names (`project.compressor_flags`): the private clone
+in `ext/mirai-compression` of the checkout or of its main checkout (git ignores `ext/`), else the
+open `std/compressor`; `compressor_open` is always the open one. The script `mirai` finds it the
+same way to build the tool. A project's `build.compression` empty is `Best` only where its engine
+has the private one: a game built from an installed engine, which carries no sources of it,
+reads only the open formats. The fingerprints of the libraries of the engine take the folder and
+the sources of the collection. A release is packaged with the open one: its binaries carry no
+private compressor, and `PACKAGE_TRACKED` never takes `ext/`.
 - Every other asset is written again compressed for shipping (`asset.document_repack` with
   `SHIP`, [compression](../../mirai-assets/references/formats.md#compression)), and so are the
   textures it writes in blocks; a file that is not an asset is copied byte by byte.
@@ -317,7 +333,8 @@ and the development plugins. If there is any, the job fails with `Engine_Time_Co
 publish. A new engine-time folder of the engine is added there.
 
 The compiler also reads the `_test.odin` files of every package the game imports, with their
-imports: a test of a runtime package does not import an engine-time one. A GPU test of a plugin
+imports: a test of a runtime package does not import an engine-time one, and the build writes the
+test worlds they declare from the generated world, as a check does. A GPU test of a plugin
 loads the shaders that `mirai test` generates for it (`package_test_shaders`) instead of generating
 them with `cook/shaders`.
 

@@ -43,7 +43,7 @@ grid_bytes :: proc(types:^asset.Types,desc:Grid_Desc,allocator:=context.allocato
     doc.kind_version=VERSION
     info:=desc.info
     asset.document_put_row(&doc,types,"grid",&info) or_return
-    asset.document_put(&doc,types,"cells",desc.cells,{.Bulk},.LZ) or_return
+    asset.document_put(&doc,types,"cells",desc.cells,{.Bulk},.Stream) or_return
     if desc.source!=nil {asset.import_put(&doc,types,desc.source) or_return}
     return asset.document_bytes(&doc,allocator)
 }

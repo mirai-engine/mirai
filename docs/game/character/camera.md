@@ -26,7 +26,7 @@ pitches are radians (the sign is below); `aim` makes it look where the body look
 - Shooter, the body turns with the look: `aim=true`.
 - Free orbit, the body turns toward its movement: `turn=true` (the `look` action of the player who
   drives it turns the camera; with several players, each one's own), `recenter` seconds to swing
-  back behind a moving body.
+  back behind a body that moves away from it (walking toward it or across it keeps its yaw).
 - Over the shoulder, smoothing, dead zones and fading the body up close are more fields of
   `Camera_Follow`. `.Follow` keeps `offset` from the body; `look_at` faces it.
 

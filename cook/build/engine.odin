@@ -77,17 +77,16 @@ Engine_Package :: struct {
 ENGINE_PACKAGES :: [?]Engine_Package{
     {.Base,"std/base","std"},{.Base,"std/subprocess","std"},{.Base,"std/math","std"},{.Base,"std/geom","std"},{.Base,"std/serial","std"},
     {.Base,"std/spatial","std"},{.Base,"std/jobs","std"},{.Base,"std/anim","std"},{.Base,"std/ai","std"},{.Base,"std/input","std"},
-    {.Base,"std/ui_format","std"},{.Base,"std/compressor","std"},{.Base,"std/compressor/bc7split","std"},{.Base,"std/compressor/lz/entropy","std"},{.Base,"std/compressor/lz/match","std"},
-    {.Base,"std/compressor/lz/parse","std"},{.Base,"std/compressor/lz","std"},{.Base,"audio","system"},{.Base,"platform","system"},{.Base,"rhi","system"},
+    {.Base,"std/ui_format","std"},
+    {.Base,"audio","system"},{.Base,"platform","system"},{.Base,"rhi","system"},
     {.Base,"project","system"},{.Base,"core",""},
 
     {.Engine,"asset",""},{.Engine,"net",""},{.Engine,"render/abi","render"},{.Engine,"render","render"},{.Engine,"third_party/freetype","freetype"},
     {.Engine,"ui","ui"},{.Engine,"host",""},{.Engine,"engine/input","engine"},{.Engine,"engine/scene","engine"},{.Engine,"engine/volume","engine"},
     {.Engine,"engine/render","engine"},{.Engine,"engine/audio","engine"},{.Engine,"engine/gui","engine"},{.Engine,"engine/camera","engine"},{.Engine,"engine/save","engine"},
 
-    {.Cook,"third_party/ufbx","ufbx"},{.Cook,"cook/workspace","cook"},{.Cook,"cook/cache","cook"},{.Cook,"cook/far","cook"},{.Cook,"cook/compressor/lz","cook"},{.Cook,"cook/compressor/bc7split","cook"},{.Cook,"cook/compressor/texture/common","cook"},
-    {.Cook,"cook/compressor/texture/bc67","cook"},{.Cook,"cook/compressor/texture/bc1","cook"},{.Cook,"cook/compressor/texture/bc4","cook"},{.Cook,"cook/compressor/texture/bc6","cook"},{.Cook,"cook/compressor/texture/bc7","cook"},
-    {.Cook,"cook/compressor/texture","cook"},{.Cook,"cook/textures","cook"},{.Cook,"cook/image","cook"},{.Cook,"cook/movie","cook"},{.Cook,"cook/rig","cook"},
+    {.Cook,"third_party/ufbx","ufbx"},{.Cook,"cook/workspace","cook"},{.Cook,"cook/cache","cook"},{.Cook,"cook/far","cook"},
+    {.Cook,"cook/textures","cook"},{.Cook,"cook/image","cook"},{.Cook,"cook/movie","cook"},{.Cook,"cook/rig","cook"},
     {.Cook,"cook/import","cook"},{.Cook,"cook/import/obj","cook"},{.Cook,"cook/import/gltf","cook"},{.Cook,"cook/import/usd","cook"},
     {.Cook,"cook/import/fbx","cook"},{.Cook,"cook/shaders","cook"},{.Cook,"cook/author","cook"},{.Cook,"cook/prefab","cook"},{.Cook,"cook/import/sources","cook"},
     {.Cook,"cook/install","cook"},{.Cook,"cook/build",""},
@@ -166,6 +165,7 @@ DECLARE_VERSION :: 13
 STAGE_COLLECTION :: "staged"
 
 Engine_Paths :: struct {
+    root:string,                      // of the engine
     mode:Engine_Mode,                 // of the binaries there: the one asked for, but in an installed engine
     folder:string,
     decl:string,                      // the collection "mirai" of a project
@@ -233,6 +233,7 @@ engine_mode_resolve :: proc(engine_root:string,mode:Engine_Mode) -> Engine_Mode 
 engine_paths :: proc(engine_root:string,mode:Engine_Mode,allocator:=context.allocator,defines:[]string=nil) -> (paths:Engine_Paths) {
     context.allocator=allocator
     folders:=ENGINE_MODE_FOLDERS
+    paths.root=project.path(engine_root)
     paths.mode=engine_mode_resolve(engine_root,mode)
     paths.defines=slice.clone(defines)
     folder:=folders[paths.mode]
@@ -396,6 +397,7 @@ engine_plan :: proc(root,compiler:string,mode:Engine_Mode,paths:Engine_Paths,lib
     names:=shaders.EMBEDDED_NAMES
     embedded:=[2]string{project.path(root,"shaders/build/manifest.json",allocator=context.temp_allocator),project.path(root,"shaders/build",names[shaders.HOST_BACKEND],allocator=context.temp_allocator)}
     plan.programs,_=fingerprint(root,compiler,plan.flags[:],nil)
+    compressor:=compressor_sources(root)
     plan.libraries=make([]Library_Stamp,len(libraries),context.temp_allocator)
     plan.library_flags=make([][]string,len(libraries),context.temp_allocator)
     for &library,which in plan.libraries {
@@ -403,7 +405,9 @@ engine_plan :: proc(root,compiler:string,mode:Engine_Mode,paths:Engine_Paths,lib
         for define in defines_read(root,libraries[which].packages,paths.defines,context.temp_allocator) {append(&flags,fmt.tprintf("-define:%s",define))}
         plan.library_flags[which]=flags[:]
         loads:=embedded[:] if mode==.Release && slice.contains(libraries[which].packages,ENGINE_EMBEDS_SHADERS) else nil
-        library.sources,_=fingerprint(root,compiler,flags[:],engine_sources(root,libraries[which].packages,..loads))
+        sources:=slice.clone_to_dynamic(engine_sources(root,libraries[which].packages,..loads),context.temp_allocator)
+        append(&sources,..compressor)
+        library.sources,_=fingerprint(root,compiler,flags[:],sources[:])
         library.tools,_=fingerprint(root,compiler,flags[:],loads)
     }
     previous,stamped:=engine_stamp_read(paths.stamp,libraries)
@@ -1139,7 +1143,32 @@ engine_flags :: proc(root:string,dev:bool) -> [dynamic]string {
     if !dev {append(&flags,"-debug")}
     platform_flags(root,&flags,false,context.temp_allocator)
     environment_flags(&flags,context.temp_allocator)
+    compressor,_:=project.compressor_flags(root,context.temp_allocator)
+    append(&flags,..compressor[:])
     return flags
+}
+
+// A source of each package of the collections of the compressor, which every library compiles
+// from where they are (they are not packages of the engine): what names them in a fingerprint.
+@(private)
+compressor_sources :: proc(root:string) -> []string {
+    list:=make([dynamic]string,context.temp_allocator)
+    walk :: proc(folder:string,list:^[dynamic]string) {
+        entries,_:=os.read_all_directory_by_path(folder,context.temp_allocator)
+        found:=false
+        for entry in entries {
+            if entry.type==.Directory {
+                if !strings.has_prefix(entry.name,".") && entry.name!="testdata" {walk(entry.fullpath,list)}
+            } else if !found && strings.has_suffix(entry.name,".odin") {
+                append(list,slashes(entry.fullpath,context.temp_allocator))
+                found=true
+            }
+        }
+    }
+    folder,private:=project.compressor_folder(root,context.temp_allocator)
+    walk(folder,&list)
+    if private {walk(project.path(root,project.COMPRESSOR_OPEN,allocator=context.temp_allocator),&list)}
+    return list[:]
 }
 
 // The sources of some packages under root, sorted, with the files they load

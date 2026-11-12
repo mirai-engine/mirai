@@ -21,7 +21,11 @@ FOLDER_NAMES :: [Folder]string{
     .Assets="assets",.Game="game",.Editor="editor",
     .Plugins="plugins",.Shaders="shaders",.Panels="panels",.Generated=".mirai",
 }
-PART_NAMES :: [Plugin_Part]string{.Runtime="runtime",.Editor="editor",.Shaders="shaders",.Assets="assets",.Recipes="recipes"}
+PART_NAMES :: [Plugin_Part]string{.Runtime="runtime",.Editor="editor",.Shaders="shaders",.Assets="assets",.Recipes="recipes",.Cook="cook"}
+
+// What build.compression names besides the default, the best compressor of the engine.
+COMPRESSION_NONE :: "none"
+COMPRESSION_OPEN :: "open"
 
 // Under the generated folder, beside the libraries of the project: the libraries of the engine's plugins it links.
 PLUGIN_LIBRARIES :: "plugins/lib"
@@ -95,6 +99,10 @@ open :: proc(root:string,engine_root:="",allocator:=context.allocator) -> (p:Pro
             return
         }
         append(&wanted,text)
+    }
+    if compression:=base.text_get(p.manifest.build.compression[:]);compression!="" && compression!=COMPRESSION_NONE && compression!=COMPRESSION_OPEN {
+        error=error_about(.Compression_Invalid,compression)
+        return
     }
     if p.active,error=plugins_order(found[:],wanted[:],allocator);error.code!=.None {return}
     // An automatic plugin joins once all its dependencies are active, after
@@ -431,3 +439,4 @@ asset_folders :: proc(p:^Project,allocator:=context.allocator) -> []Asset_Folder
     }
     return folders[:]
 }
+

@@ -97,6 +97,7 @@ Choice_List :: struct {
     field:ui.Id,
     path:int,          // a text of this many bytes takes the path of the asset under the assets folder instead of its id
     scroll:f32,
+    width:f32,         // of its popup, as its widest row when it opened; 0: not measured yet
 }
 
 Geometry_Choice :: struct {
@@ -219,6 +220,7 @@ inspector_section_toggle :: proc(ins:^Inspector,key:u64) {
 CARD_HEADER :: f32(26)    // height of the line with the title of a section
 SECTION_INDENT :: f32(10) // of the rows of a section from the edge of its title
 BAND_INSET :: f32(16)     // from the edge of the panel to the title of a band and to the end of its rows
+SLIDER_VALUES_MAX :: 256  // an integer field with more values has no slider
 ENUM_SEGMENTS :: 4        // the most names of an enum shown as segments
 INSPECTOR_HEAD :: f32(40) // the line of the entity, over the scroll
 INSPECTOR_VARIANT :: f32(18) // the line under it that names the base of a variant
@@ -653,6 +655,7 @@ hierarchy_section :: proc(s:^Session,w:core.World_Ref,e:core.Entity,width:f32) {
             clicked,unlink:=hierarchy_square(s,w,parent,0,editable)
             if clicked {selected=parent}
             if unlink {release=e}
+            ui.label(ctx,entity_name(w,parent),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"),0)
         } else if ui.button(ctx,ui.id(ctx,"parent_pick"),plus).clicked {
             s.gui.placement={}
             s.viewport.pick={active=true,kind=.Parent,owner=e}
@@ -1684,7 +1687,9 @@ number_cell :: proc(c:^Inspect,field:serial.Field,type:serial.Type,id:ui.Id,key:
     if axis_label!="" && strip[3]==0 {desc.label=axis_label}
     value:=number_read(&c.value[offset],type)*scale
     r:ui.Number_Result
-    if axis_label=="" {r=kit.slider_field(c.s.gui.ctx,id,&value,desc)} else {r=ui.number_field(c.s.gui.ctx,id,&value,desc)}
+    // An integer with more values than a track has points is typed or scrubbed, not slid.
+    slid:=axis_label=="" && !(desc.integer && desc.has_min && desc.has_max && desc.max-desc.min>SLIDER_VALUES_MAX)
+    if slid {r=kit.slider_field(c.s.gui.ctx,id,&value,desc)} else {r=ui.number_field(c.s.gui.ctx,id,&value,desc)}
     // The values a panel holds are no step of the document.
     stepped:=inspect_stepped(c)
     if stepped {gesture_follow(c.s,key,r,readable(c.name))}
@@ -2370,6 +2375,17 @@ asset_kind_of_field :: proc(s:^Session,name:string) -> asset.Fourcc {
 
 @(private) ADD_COMPONENT_KEY :: u64(0x6164645f636f6d70)
 @(private) ASSET_LIST_ROW :: f32(32) // a row of the list of assets of a field, with the preview of each
+@(private) CHOICE_LIST_WIDTH :: f32(260)      // the least width of the list of a field, however narrow the field
+@(private) CHOICE_LIST_WIDTH_MOST :: f32(520)
+@(private) CHOICE_LIST_PADDING :: f32(4)      // of its popup, the default one
+
+// The name a list of assets shows for one: that of its file without its
+// extension, or its path when that leaves nothing.
+@(private)
+asset_list_name :: proc(path:string) -> string {
+    if name:=asset_name(path);name!="" {return name}
+    return path
+}
 
 @(private)
 list_popup :: proc(g:^Editor_Ui) -> ui.Id {return shell_id(g,"choice_list")}
@@ -2433,12 +2449,12 @@ list_build :: proc(s:^Session,w:core.World_Ref) {
                     append(&parts,&file)
                     continue
                 }
-                append(&choices,asset_name(file.path))
+                append(&choices,asset_list_name(file.path))
                 append(&ids,file.id)
                 append(&shapes,erender.Shape.None)
             }
             for file in parts {
-                append(&choices,asset_name(file.path))
+                append(&choices,asset_list_name(file.path))
                 append(&ids,file.id)
                 append(&shapes,erender.Shape.None)
             }
@@ -2446,8 +2462,24 @@ list_build :: proc(s:^Session,w:core.World_Ref) {
     }
     row_height:=ui.metric(ctx,"row") if l.key==ADD_COMPONENT_KEY else ASSET_LIST_ROW
     shown:=f32(clamp(len(choices),1,10))*row_height
+    // As wide as its widest row, measured once so that it keeps its width
+    // while it scrolls and filters; popup keeps it inside the window.
+    if l.width==0 {
+        widest:=f32(0)
+        for label,index in choices {
+            r:=ui.Row{label=label,height=row_height}
+            if l.key!=ADD_COMPONENT_KEY {
+                r.icon=.Cube
+                if ids[index]!={} {
+                    if file,found:=asset.registry_find(&s.app.assets.registry,ids[index]);found {r.icon,r.quad,r.detail=.None,{kind=.Image},file.path}
+                }
+            }
+            widest=max(widest,ui.row_width(ctx,r))
+        }
+        l.width=clamp(widest+2*CHOICE_LIST_PADDING,CHOICE_LIST_WIDTH,CHOICE_LIST_WIDTH_MOST)
+    }
     chosen:=-1
-    if ui.popup(ctx,popup,{width=260,search="Search"}) {
+    if ui.popup(ctx,popup,{width=l.width,search="Search"}) {
         ui.id_push(ctx,popup)
         if _,changed:=ui.popup_search(ctx,popup);changed {l.scroll=0}
         rows:=ui.id(ctx,"rows")

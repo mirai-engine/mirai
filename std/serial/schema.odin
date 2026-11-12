@@ -296,6 +296,54 @@ schema_add_type_info :: proc(s:^Schema,info:^runtime.Type_Info) -> (index:Type_I
     return schema_add_info(s,info,"")
 }
 
+// Adds a type no Odin type gives: a struct of fields, an enum or a bit set of
+// choices, or an array, as type says them (first and count are set here).
+// The schema copies the names; id, when not nil, is the Odin type it stands
+// for, for what is keyed by it. False without memory, adding nothing.
+schema_type_add :: proc(s:^Schema,type:Type,fields:[]Field=nil,choices:[]Choice=nil) -> (index:Type_Index,ok:bool) {
+    type:=type
+    given:=type.name
+    type.name,type.was="",""
+    if given!="" {
+        name,error:=strings.clone(given,s.allocator)
+        if error!=nil {return TYPE_NONE,false}
+        type.name,type.name_hash=name,base.name_hash(given)
+    }
+    #partial switch type.kind {
+    case .Struct:
+        type.first,type.count=u32(len(s.fields)),u32(len(fields))
+        if reserve(&s.fields,len(s.fields)+len(fields))!=nil {
+            delete(type.name,s.allocator)
+            return TYPE_NONE,false
+        }
+        for field in fields {
+            kept:=field
+            kept.name_hash=base.name_hash(kept.name)
+            if !schema_field_keep(s,&kept) {
+                schema_field_free(s,kept)
+                schema_type_drop(s,type)
+                return TYPE_NONE,false
+            }
+            append(&s.fields,kept)
+        }
+    case .Enum,.Bit_Set:
+        type.first,type.count=u32(len(s.choices)),u32(len(choices))
+        for choice in choices {
+            if !schema_choice_add(s,choice.name,choice.value) {
+                schema_type_drop(s,type)
+                return TYPE_NONE,false
+            }
+        }
+    }
+    if type.id!=nil {return schema_push(s,type.id,type)}
+    index=Type_Index(len(s.types))
+    if _,error:=append(&s.types,type);error!=nil {
+        schema_type_drop(s,type)
+        return TYPE_NONE,false
+    }
+    return index,true
+}
+
 // Changes when a name, kind, offset or size of the type or of anything inside
 // it changes. Equal hashes mean equal bytes: values can be copied whole.
 schema_layout_hash :: proc(s:^Schema,index:Type_Index) -> u64 {

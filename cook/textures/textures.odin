@@ -2,20 +2,21 @@ package textures
 
 import "base:runtime"
 import "core:c"
+import "core:fmt"
 import "core:math"
 import "core:mem"
 import stbi "vendor:stb/image"
+import "compressor:blocks"
+import "compressor:texture"
 import "mirai:asset"
-import bc7split_encode "mirai:cook/compressor/bc7split"
-import bcn "mirai:cook/compressor/texture"
 import "mirai:std/base"
 import "mirai:std/jobs"
 import mm "mirai:std/math"
 
 // Source texels to .tex records: decoding, the mip chain of every layer and
 // what the renderer expects of each level, stored by what the texture is used
-// for and by what its source holds (stored_format), block compressed by
-// cook/compressor/texture unless the import asks for it
+// for and by what its source holds (stored_format), block compressed by the
+// collection compressor (compressor:blocks) unless the import asks for it
 // uncompressed.
 
 DEFAULT_MAX_SIZE :: 4096
@@ -215,9 +216,6 @@ Encode_Speed :: enum u8 {
     Fast,  // without RDO and at the encoder's low effort: what the editor imports in its session
 }
 
-// The effort of a Fast encode.
-FAST_EFFORT :: bcn.Effort.Low
-
 // Where a channel of a built texture comes from: the same channel of the
 // image, another of its channels, or a constant.
 Channel :: enum u8 {Same,R,G,B,A,Zero,One}
@@ -244,6 +242,10 @@ Build_Options :: struct {
     channels:Channels,   // what each channel is made of, before anything else; the zero value keeps them
 }
 
+// What names the blocks the encoders of this build make in the caches and in the key of an
+// import: checkouts with and without the private compressor share the caches.
+encoders_id :: proc "contextless" () -> u64 {return base.name_hash(blocks.NAME)}
+
 // The lambda of the RDO of options, 0 for none.
 rdo_lambda :: proc "contextless" (options:Build_Options) -> int {
     if options.rdo_lambda<0 || options.speed==.Fast {return 0}
@@ -252,14 +254,8 @@ rdo_lambda :: proc "contextless" (options:Build_Options) -> int {
 
 // How the blocks of a level are encoded.
 @(private)
-Block_Encode :: struct {
-    lambda:int,
-    effort:bcn.Effort,
-}
-
-@(private)
-block_encode :: proc "contextless" (options:Build_Options) -> Block_Encode {
-    return {lambda=rdo_lambda(options),effort=FAST_EFFORT if options.speed==.Fast else .Default}
+block_encode :: proc "contextless" (options:Build_Options) -> blocks.Options {
+    return {lambda=rdo_lambda(options),fast=options.speed==.Fast,srgb=options.srgb}
 }
 
 Built :: struct {
@@ -279,36 +275,41 @@ built_destroy :: proc(built:^Built) {
 }
 
 // The description asset.texture_save takes; the levels stay owned by built.
-// A BC7 texture stores two BC7Split streams, in the temporary allocator: one
-// of its tail (asset.TEXTURE_TAIL), which a read of the small levels restores
-// alone, and one of the larger levels; a stream per level would compress
-// larger. Without memory for them the blocks are stored as they are.
-built_desc :: proc(built:^Built,id:base.Asset_Id,source:^asset.Import_Info) -> asset.Texture_Desc {
+// With layouts, for a document that compresses with the best codecs, a
+// texture of blocks of 16 bytes stores the layouts of the compressor that do
+// better than its blocks, in the temporary allocator: one of its tail
+// (asset.TEXTURE_TAIL), which a read of the small levels restores alone, and
+// one of the larger levels; one per level would compress larger. Without
+// memory for them the blocks are stored as they are.
+built_desc :: proc(built:^Built,id:base.Asset_Id,source:^asset.Import_Info,layouts:=false) -> asset.Texture_Desc {
     desc:=asset.Texture_Desc{id=id,width=built.width,height=built.height,layers=built.layers,format=built.format,flags=built.flags,alpha_coverage=built.alpha_coverage,mips=built.mips,source=source}
-    if built.format!=.BC7 || len(built.mips)==0 {return desc}
+    if !layouts || asset.texture_block_bytes(built.format)!=16 || len(built.mips)==0 {return desc}
+    formats:=#partial [asset.Texture_Format]blocks.Block_Format{.BC3=.BC3,.BC5=.BC5,.BC6H=.BC6H,.BC7=.BC7}
     tail:=0
     for tail+1<len(built.mips) && max(built.width>>uint(tail),built.height>>uint(tail))>asset.TEXTURE_TAIL {tail+=1}
     runs:=[2][2]int{{0,tail},{tail,len(built.mips)}}
     total:=0
     for level in built.mips {total+=len(level)}
-    preps:=make([]asset.Texture_Bc7split,2,context.temp_allocator)
-    blocks:=make([]u8,total,context.temp_allocator)
-    payload:=make([]u8,bc7split_encode.min_output_size(total/16)+1,context.temp_allocator)
-    scratch:=make([]u8,bc7split_encode.min_scratch_size(total/16),context.temp_allocator)
-    if preps==nil || blocks==nil || payload==nil || scratch==nil {return desc}
+    // A compressor without layouts writes none.
+    bound:=blocks.layout_bound(total/16)
+    if bound==0 {return desc}
+    laid:=make([]asset.Texture_Layout,2,context.temp_allocator)
+    run_blocks:=make([]u8,total,context.temp_allocator)
+    payload:=make([]u8,bound,context.temp_allocator)
+    if laid==nil || run_blocks==nil || payload==nil {return desc}
     count,at:=0,0
     for run in runs {
         if run[0]==run[1] {continue}
         // Its levels the smallest first, as the texels hold them.
         size:=0
-        #reverse for level in built.mips[run[0]:run[1]] {size+=copy(blocks[size:],level)}
-        written,error:=bc7split_encode.encode(&preps[count].header,payload[at:],blocks[:size],scratch)
-        if error!=.None || written==0 {return desc}
-        preps[count].level,preps[count].payload=run[0],payload[at:][:written]
+        #reverse for level in built.mips[run[0]:run[1]] {size+=copy(run_blocks[size:],level)}
+        layout,header,written,error:=blocks.layout_encode(formats[built.format],run_blocks[:size],payload[at:],context.temp_allocator)
+        if error!=.None || layout==texture.NO_LAYOUT {return desc}
+        laid[count]={layout=layout,header=header,level=run[0],payload=payload[at:][:written]}
         count+=1
         at+=written
     }
-    desc.bc7split=preps[:count]
+    desc.layouts=laid[:count]
     return desc
 }
 
@@ -322,6 +323,7 @@ settings_hash :: proc(options:Build_Options) -> u64 {
     final:=options
     final.speed=.Final
     hash=base.hash_combine(hash,u64(rdo_lambda(final)))
+    hash=base.hash_combine(hash,encoders_id())
     if options.channels!={} {
         c:=options.channels
         packed:=u64(c.from[0])|u64(c.from[1])<<8|u64(c.from[2])<<16|u64(c.from[3])<<24|u64(transmute(u8)c.invert)<<32
@@ -480,7 +482,7 @@ from_bytes :: proc(bytes:[]u8,options:Build_Options,allocator:=context.allocator
 // formats of 8 bits take it as sRGB under transfer, RGBA16, RGBA16F and BC6H
 // linear. In allocator.
 @(private)
-level_store :: proc(level:Source,format:asset.Texture_Format,transfer:^Transfer,encode:Block_Encode,allocator:mem.Allocator,worker:jobs.Worker_Ref) -> (out:[]u8,error:Error) {
+level_store :: proc(level:Source,format:asset.Texture_Format,transfer:^Transfer,encode:blocks.Options,allocator:mem.Allocator,worker:jobs.Worker_Ref) -> (out:[]u8,error:Error) {
     alloc_error:mem.Allocator_Error
     switch format {
     case .RGBA8: out,alloc_error=level_convert(level,.RGBA8,transfer,transfer,allocator)
@@ -494,17 +496,17 @@ level_store :: proc(level:Source,format:asset.Texture_Format,transfer:^Transfer,
     return out,.None
 }
 
-// The blocks of a level, each layer apart, by cook/compressor/texture with the
-// perceptual metric, lambda and effort of encode: BC6H from half floats, the others from RGBA8.
-// Alpha keeps its exact 0 and 255, and a BC7 layer whose texels are all
+// The blocks of a level, each layer apart, by compressor:blocks with the
+// lambda, effort and metric of encode: BC6H from half floats, the others from
+// RGBA8. Alpha keeps its exact 0 and 255, and a BC7 layer whose texels are all
 // opaque is encoded without alpha, which then decodes 255. On a worker the
 // blocks go in parallel, with scratch from the heap.
 @(private)
-level_encode :: proc(level:Source,format:asset.Texture_Format,transfer:^Transfer,encode:Block_Encode,allocator:mem.Allocator,worker:jobs.Worker_Ref) -> (out:[]u8,error:Error) {
+level_encode :: proc(level:Source,format:asset.Texture_Format,transfer:^Transfer,encode:blocks.Options,allocator:mem.Allocator,worker:jobs.Worker_Ref) -> (out:[]u8,error:Error) {
     layers:=max(level.layers,1)
     texels:=level
     texels.layers=layers
-    pixel:=bcn.Pixel_Format.RGBA8
+    pixel:=blocks.Pixel_Format.RGBA8
     owned:=false
     defer if owned {delete(texels.texels,allocator)}
     alloc_error:mem.Allocator_Error
@@ -519,21 +521,14 @@ level_encode :: proc(level:Source,format:asset.Texture_Format,transfer:^Transfer
     }
     size:=asset.texture_level_size(format,level.width,level.height)
     if out,alloc_error=make([]u8,size*layers,allocator);alloc_error!=nil {return nil,.Out_Of_Memory}
-    options:=bcn.Options{effort=encode.effort,lambda=encode.lambda,metric=.Perceptual,preserve_extremes=true}
-    blocks:bcn.Format
-    #partial switch format {
-    case .BC1: blocks=.BC1
-    case .BC3: blocks=.BC3
-    case .BC5: blocks=.BC5
-    case .BC6H: blocks=.BC6H
-    case .BC7: blocks=.BC7
-    }
+    formats:=#partial [asset.Texture_Format]blocks.Block_Format{.BC1=.BC1,.BC3=.BC3,.BC5=.BC5,.BC6H=.BC6H,.BC7=.BC7}
     scratch:=allocator if worker.system==nil else runtime.heap_allocator()
     image:=source_bytes(texels)/layers
     for layer in 0..<layers {
         pixels:=texels.texels[layer*image:][:image]
+        options:=encode
         options.ignore_alpha=format==.BC7 && opaque(pixels)
-        result:=bcn.encode(blocks,{pixels=pixels,width=level.width,height=level.height,format=pixel},options,out[layer*size:][:size],scratch,worker)
+        result:=blocks.encode(formats[format],{pixels=pixels,width=level.width,height=level.height,format=pixel},options,out[layer*size:][:size],scratch,worker)
         if result!=.None {
             delete(out,allocator)
             return nil,.Out_Of_Memory if result==.Out_Of_Memory else .Invalid
@@ -689,8 +684,9 @@ alpha_coverage_keep :: proc(level:Source,cutoff,wanted:f32) {
 // (stored_format): each of its levels and layers compressed as it is, so the
 // chain is the one the asset has. False, with nothing, for a texture in
 // another format, which keeps it: blocks already, or more than 8 bits. The
-// blocks are encoded on the job system of worker, else on one of their own.
-blocks_of :: proc(view:asset.Texture_View,allocator:=context.allocator,worker:=jobs.Worker_Ref{}) -> (built:Built,ok:bool) {
+// blocks are encoded on the job system of worker, else on one of their own;
+// without rdo, with the least error, for a game that compresses nothing.
+blocks_of :: proc(view:asset.Texture_View,allocator:=context.allocator,worker:=jobs.Worker_Ref{},rdo:=true) -> (built:Built,ok:bool) {
     info:=view.info
     if info==nil || info.format!=.RGBA8 || len(view.mips)==0 {return}
     layers:=int(info.layers)
@@ -698,7 +694,7 @@ blocks_of :: proc(view:asset.Texture_View,allocator:=context.allocator,worker:=j
         mip:=view.mips[level]
         return {texels=asset.texture_mip(view,level),width=int(mip.width),height=int(mip.height),layers=int(view.info.layers),format=.RGBA8,cube=.Cube in view.info.flags}
     }
-    options:=Build_Options{srgb=.Srgb in info.flags,normal_map=.Normal_Map in info.flags}
+    options:=Build_Options{srgb=.Srgb in info.flags,normal_map=.Normal_Map in info.flags,rdo_lambda=0 if rdo else -1}
     format:=stored_format(plane(view,0),options)
     built={width=int(info.width),height=int(info.height),layers=layers,format=format,flags=info.flags,alpha_coverage=info.alpha_coverage,allocator=allocator}
     built.mips=make([][]u8,len(view.mips),allocator)

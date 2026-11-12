@@ -5,6 +5,7 @@ import "core:log"
 import "core:os"
 import "core:strings"
 import "core:testing"
+import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/subprocess"
 
@@ -44,7 +45,8 @@ mirai_image_reports_metrics_and_exit_codes :: proc(t:^testing.T) {
     exe:=fmt.tprintf("%s/bin/tests/mirai-image-cli%s",root,EXE)
     os.make_directory_all(fmt.tprintf("%s/bin/tests",root))
     {
-        state,stdout,stderr,error:=subprocess.exec({command={compiler,"build",fmt.tprintf("%s/tools/mirai",root),fmt.tprintf("-collection:mirai=%s",root),"-ignore-unknown-attributes","-o:minimal",fmt.tprintf("-out:%s",exe)}},context.temp_allocator)
+        compressor,_:=project.compressor_flags(root,context.temp_allocator)
+        state,stdout,stderr,error:=subprocess.exec({command={compiler,"build",fmt.tprintf("%s/tools/mirai",root),fmt.tprintf("-collection:mirai=%s",root),compressor[0],compressor[1],"-ignore-unknown-attributes","-o:minimal",fmt.tprintf("-out:%s",exe)}},context.temp_allocator)
         if !testing.expectf(t,error==nil && state.exit_code==0,"the tool does not build: %v\n%s%s",error,string(stdout),string(stderr)) {return}
     }
     a,b,small:=fmt.tprintf("%s/a.png",folder),fmt.tprintf("%s/b.png",folder),fmt.tprintf("%s/small.png",folder)

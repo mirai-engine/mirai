@@ -10,10 +10,11 @@ import "core:slice"
 import "core:strings"
 import "core:sync"
 import "core:time"
+import "compressor:data"
+import "compressor:blocks"
 import "mirai:asset"
 import "mirai:cook/far"
 import anim "mirai:std/anim"
-import lz_optimal "mirai:cook/compressor/lz"
 import "mirai:cook/textures"
 import "mirai:project"
 import "mirai:std/base"
@@ -55,18 +56,19 @@ Cook_Desc :: struct {
     plugins:[]project.Asset_Folder, // the assets of active plugins: every file a root, cooked under its prefix
     texture_cache:string, // folder of compressed textures kept by content (textures.cache_read); "": none
     mesh_cache:string,    // folder of the meshes an import keeps (cook/import Import_Options); "": none
+    codecs:asset.Codecs, // what the project ships with (build.compression)
     root:string,          // of the project: the sources of imported assets are named relative to it. "": the folder of assets
     worker:jobs.Worker_Ref, // where the files are cooked, in parallel on its system. No system: a system of the cook, a thread per core
     server:bool, // for a dedicated server: what is only shown or heard (asset.Kind_Info.presentation) stays behind, and is not missing
-    quick:bool,  // a cook that checks a change (a dev game): lz_optimal.QUICK in place of SHIP
+    quick:bool,  // a cook that checks a change (a dev game): the profile Balanced in place of Ultra
     far:bool,    // the far meshes of the scenes sections reference: the game streams sections (plugin streaming)
     keys:string, // the file where the cook keeps what each file it wrote was made of: a later cook writes again only what changed. "": every file
     allocator:runtime.Allocator, // of the report. Unset: context.allocator
 }
 
-// How the assets of a cook are compressed.
+// How hard the assets of a cook are compressed.
 @(private="file")
-cook_pack :: proc(desc:Cook_Desc) -> asset.Pack {return lz_optimal.QUICK if desc.quick else lz_optimal.SHIP}
+cook_profile :: proc(desc:Cook_Desc) -> data.Profile {return .Balanced if desc.quick else .Ultra}
 
 Cook_Error :: enum u8 {
     None,
@@ -412,7 +414,10 @@ work_text :: proc(work:^Cook_Work,format:string,args:..any) -> string {
 @(private="file")
 work_types :: proc(work:^Cook_Work,worker:int) -> ^asset.Types {
     types:=&work.types[worker]
-    if types.allocator.procedure==nil {asset.types_init(types,work.allocator)}
+    if types.allocator.procedure==nil {
+        asset.types_init(types,work.allocator)
+        types.codecs=work.desc.codecs
+    }
     return types
 }
 
@@ -485,7 +490,10 @@ file_cook :: proc(work:^Cook_Work,at:int,worker:int,entry:^Cook_File) -> (error:
         if !cooked {return .Write_Failed,work_text(work,"%s",file.path)}
         entry.compressed=compressed
     }
-    if !entry.compressed {
+    // Any other texture is written again with its blocks laid out as the project ships them.
+    laid:=!entry.compressed && file.state==.Asset && file.kind==asset.KIND_TEXTURE
+    if laid && !texture_lay(work,source,target,types) {return .Write_Failed,work_text(work,"%s",file.path)}
+    if !entry.compressed && !laid {
         data,read_error:=serial.file_read(source,context.temp_allocator)
         if read_error!=.None {return .Read_Failed,work_text(work,"%s",file.path)}
         if file.state==.Asset && (file.kind==asset.KIND_SCENE) {
@@ -496,7 +504,7 @@ file_cook :: proc(work:^Cook_Work,at:int,worker:int,entry:^Cook_File) -> (error:
             if resolved!=nil {data,entry.resolved=resolved,true}
         }
         if file.state==.Asset {
-            repacked,repack_error:=asset.document_repack(data,cook_pack(work.desc),context.temp_allocator,jobs.worker_ref_at(work.on,worker))
+            repacked,repack_error:=asset.document_repack(data,cook_profile(work.desc),work.desc.codecs,context.temp_allocator,jobs.worker_ref_at(work.on,worker))
             if repack_error!=.None {return .Write_Failed,work_text(work,"%s",file.path)}
             data=repacked
         }
@@ -529,6 +537,7 @@ Cook_Key :: struct {key:u64,bytes,time:i64,compressed,resolved:bool}
 cook_key :: proc(work:^Cook_Work,at:int,closure:^[dynamic]u32,far:=false) -> u64 {
     file:=&work.files[at]
     key:=base.hash_combine(COOK_KEYS_VERSION,u64(work.desc.quick)|u64(work.textures)<<1|u64(work.drawn[at])<<8|u64(work.shown[at])<<9|u64(far)<<10)
+    key=base.hash_combine(key,base.hash_combine(u64(work.desc.codecs),base.hash_combine(base.name_hash(data.NAME),base.name_hash(blocks.NAME))))
     if file.state!=.Asset {return base.hash_combine(base.hash_combine(key,u64(file.size)),u64(file.time))}
     key=base.hash_combine(key,file.content_hash)
     asset.registry_closure(work.registry,file.id,closure)
@@ -679,11 +688,13 @@ texture_cook :: proc(work:^Cook_Work,source,target:string,types:^asset.Types,wor
     if error!=.None {return}
     if view.info.format!=.RGBA8 {return false,true}
     cache:=work.desc.texture_cache
-    key:=textures.cache_key_blocks(file.blob.header.content_hash)
+    // Blocks that nothing compresses keep the least error.
+    rdo:=work.desc.codecs!=.None
+    key:=textures.cache_key_blocks(file.blob.header.content_hash,rdo)
     built,cached:=textures.cache_read(cache,key,types,context.temp_allocator)
     if !cached {
         built_ok:bool
-        if built,built_ok=textures.blocks_of(view,context.temp_allocator,worker);!built_ok {return}
+        if built,built_ok=textures.blocks_of(view,context.temp_allocator,worker,rdo);!built_ok {return}
         // Textures of one content build the same blocks: the first to get here keeps them.
         if cache!="" {
             sync.mutex_lock(&work.cache)
@@ -695,7 +706,35 @@ texture_cook :: proc(work:^Cook_Work,source,target:string,types:^asset.Types,wor
         }
     }
     defer textures.built_destroy(&built)
-    return true,asset.texture_save(target,types,textures.built_desc(&built,file.blob.header.id,view.source),p=cook_pack(work.desc))==.None
+    return true,asset.texture_save(target,types,textures.built_desc(&built,file.blob.header.id,view.source,work.desc.codecs==.Best),profile=cook_profile(work.desc))==.None
+}
+
+// Writes a texture with the blocks it stores, laid out and compressed as the project ships them.
+@(private="file")
+texture_lay :: proc(work:^Cook_Work,source,target:string,types:^asset.Types) -> bool {
+    file:asset.Asset
+    if asset.asset_load(&file,source,context.temp_allocator)!=.None {return false}
+    defer asset.asset_close(&file)
+    view,error:=asset.texture_view(&file,types)
+    if error!=.None {return false}
+    info:=view.info
+    mips:=make([][]u8,len(view.mips),context.temp_allocator)
+    for _,level in view.mips {mips[level]=asset.texture_mip(view,level)}
+    built:=textures.Built{width=int(info.width),height=int(info.height),layers=int(info.layers),format=info.format,flags=info.flags,alpha_coverage=info.alpha_coverage,mips=mips}
+    desc:=textures.built_desc(&built,file.blob.header.id,view.source,work.desc.codecs==.Best)
+    desc.owner=file.blob.header.owner
+    doc:asset.Document
+    if asset.texture_document(&doc,types,desc,context.temp_allocator)!=.None {return false}
+    defer asset.document_destroy(&doc)
+    doc.flags=file.blob.header.flags
+    return asset.document_save(&doc,target,profile=cook_profile(work.desc))==.None
+}
+
+@(private="file")
+texture_texels_entry :: proc(file:^asset.Asset) -> (entry:asset.Chunk_Entry,found:bool) {
+    table,has:=asset.asset_table(file,"texels")
+    if !has || len(table.columns)!=1 {return}
+    return asset.blob_chunk(&file.blob,table.columns[0].chunk),true
 }
 
 // A scene or prefab with its stale prefab instances brought up to date with
@@ -768,5 +807,5 @@ animation_cook :: proc(work:^Cook_Work,source,target:string,types:^asset.Types) 
     if asset.animation_cooked_document(&doc,types,file.blob.header.id,file.blob.header.owner,view,&library,context.temp_allocator)!=.None {return}
     defer asset.document_destroy(&doc)
     doc.flags=file.blob.header.flags
-    return true,asset.document_save(&doc,target,p=cook_pack(work.desc))==.None
+    return true,asset.document_save(&doc,target,profile=cook_profile(work.desc))==.None
 }

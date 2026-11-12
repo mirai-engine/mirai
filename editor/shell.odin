@@ -28,7 +28,7 @@ import "mirai:ui"
 @(private) LEFT_UNDER :: f32(16) // of the left panel, what the scene runs under: its rounded corners show the scene
 @(private) LEFT_RADIUS :: f32(12)
 @(private) DETAILS_MARGIN :: f32(8)
-@(private) PANEL_HEADER :: f32(24) // the row of a tab of the left panel that has controls
+@(private) PANEL_HEADER :: f32(24) // the row of the name of a tab of the left panel and its controls
 @(private) WINDOW_CONTROL_WIDTH :: f32(28)
 @(private) PANEL_PADDING :: f32(8)
 @(private) SPLITTER_WIDTH :: f32(6)
@@ -41,7 +41,14 @@ BOTTOM_HEIGHT :: f32(220)
 BOTTOM_MIN :: f32(120)
 
 Library_Tab :: enum u8 {Editor,Content,Ai,Hierarchy,Git,World}
+LIBRARY_TAB_NAMES :: [Library_Tab]string{.Editor="Create",.Content="Content Browser",.Ai="AI",.Hierarchy="Hierarchy",.Git="Source control",.World="World"}
 Library_Tabs :: bit_set[Library_Tab]
+
+// The sections of Keyboard shortcuts, each a run of the entries of the editor from its first to its
+// last; Plugins takes what no run holds.
+Shortcut_Group :: struct {name,first,last:string}
+SHORTCUT_GROUPS :: [?]Shortcut_Group{{"File","new","quit"},{"Edit","undo","group"},{"Tools","tool_move","snap"},{"View","focus","find"},{"Play","play","camera_discard"},{"Content Browser","asset_delete","asset_paste"},{"Plugins","",""}}
+SHORTCUTS_WIDTH :: f32(640)
 
 // The tabs of the left panel each type of document has: what can be shown
 // beside it. An asset document has Hierarchy too when its plugin builds one.
@@ -185,6 +192,8 @@ User_Icon :: enum u8 {
     Dashed_Box,    // the outline of its area as dashes; data: its color
     Annotate,      // a map pin
     Pin,Pin_Filled, // a thumbtack: what keeps a chip of the composer, and the same when it keeps one
+    Cut,           // scissors
+    Paste,         // a clipboard
 }
 
 DRAWING_CAPACITY :: 8 // areas plugins draw in one frame
@@ -512,6 +521,13 @@ draw_user :: proc(user:rawptr,ctx:^ui.Context,node:ui.Draw_Node) {
         for &point in body {point=c+point*s}
         ui.draw_polyline(ctx,body[:],1.3*s,color)
         ui.draw_line(ctx,c+[2]f32{0,1.5}*s,c+[2]f32{0,7}*s,1.3*s,color)
+    case .Cut:
+        for x in ([2]f32{-3,3}) {ui.draw_ring(ctx,c+[2]f32{x,4}*s,2*s,1.3*s,color)}
+        ui.draw_line(ctx,c+[2]f32{-1.8,2.4}*s,c+[2]f32{3.5,-6.5}*s,1.3*s,color)
+        ui.draw_line(ctx,c+[2]f32{1.8,2.4}*s,c+[2]f32{-3.5,-6.5}*s,1.3*s,color)
+    case .Paste:
+        ui.draw_rounded_stroke(ctx,{c.x-5*s,c.y-4.67*s,10*s,11.33*s},1.33*s,1.3*s,color)
+        ui.draw_rounded_stroke(ctx,{c.x-2.67*s,c.y-6.67*s,5.33*s,3.33*s},0.67*s,1.3*s,color)
     case .Back:
         chevron:=[3][2]f32{{2.5,-5},{-2.5,0},{2.5,5}}
         for &p in chevron {p=c+p*s}
@@ -671,14 +687,22 @@ shell_build :: proc(s:^Session,w:core.World_Ref) {
         style:=ui.Panel_Float{width=ui.fixed(left_width),height=ui.fixed(height),padding=ui.padding_all(PANEL_PADDING),gap=8,anchor=.Top_Left,pivot=.Top_Left,offset={RAIL_WIDTH,bars},docked=true,corners={0,LEFT_RADIUS,LEFT_RADIUS,0}}
         if expanded {style.padding,style.gap,style.corners={},0,{}}
         if ui.panel(ctx,id,style) {
-            // Only the tabs with controls of their own take a row for them.
-            header:=shown_tab==.Ai && !expanded || shown_tab==.Editor
+            // Every tab heads the panel with its name, and its own controls at the right.
+            header:=!expanded
             if header {
-                if ui.box(ctx,{width=ui.GROW,height=ui.fixed(PANEL_HEADER),gap=shown_tab==.Ai?2:3,align_x=.End,align_y=.Center}) {
-                    if shown_tab==.Ai {
+                if ui.box(ctx,{width=ui.GROW,height=ui.fixed(PANEL_HEADER),padding={4,0,0,0},gap=2,align_y=.Center}) {
+                    names:=LIBRARY_TAB_NAMES
+                    ui.label(ctx,names[shown_tab],ui.metric(ctx,"font"),ui.tone(ctx,"text"),font=ui.FONT_SEMIBOLD)
+                    ui.spacer(ctx)
+                    #partial switch shown_tab {
+                    case .Ai:
                         ai_chat_bar_buttons(s)
                         ai_chat_settings_button(s)
-                    } else {content_settings_button(s,shell_id(g,"library_settings"),22)}
+                    case .Editor: content_settings_button(s,shell_id(g,"library_settings"),PANEL_HEADER)
+                    case .Content:
+                        content_create_button(s,shell_id(g,"content_create_open"),PANEL_HEADER)
+                        content_settings_button(s,shell_id(g,"content_settings_open"),PANEL_HEADER)
+                    }
                 }
             }
             room:=height-2*PANEL_PADDING
@@ -787,8 +811,8 @@ rail_build :: proc(s:^Session,shown_tab:Library_Tab,bars:f32) {
     l:=&g.layout
     play:=play_shown(s)
     tabs:=library_tabs(s)
-    icons:=[Library_Tab]ui.Icon{.Editor=ui.icon_user(u8(User_Icon.Puzzle)),.Content=ui.icon_user(u8(User_Icon.Folder)),.Hierarchy=ui.icon_user(u8(User_Icon.List)),.World=.Layers,.Ai=.Sparkle,.Git=ui.icon_user(u8(User_Icon.Branch))}
-    tips:=[Library_Tab]string{.Editor="Editor",.Content="Content Browser",.Hierarchy="Hierarchy",.World="World",.Ai="AI",.Git="Source control"}
+    icons:=[Library_Tab]ui.Icon{.Editor=.Cube,.Content=ui.icon_user(u8(User_Icon.Folder)),.Hierarchy=ui.icon_user(u8(User_Icon.List)),.World=.Layers,.Ai=.Sparkle,.Git=ui.icon_user(u8(User_Icon.Branch))}
+    tips:=LIBRARY_TAB_NAMES
     if ui.box(ctx,{id=shell_id(g,"rail"),width=ui.fixed(RAIL_WIDTH),height=ui.fixed(max(ctx.size.y-bars,1)),padding={0,8,0,8},gap=4,direction=.Column,align_x=.Center,float={to=.Surface,offset={0,bars},layer=ui.LAYER_BAR},fill=ui.tone(ctx,"bar_top"),block=true}) {
         for tab in ([]Library_Tab{.Editor,.Content,.Hierarchy,.World,.Ai,.Git}) {
             if tab not_in tabs {continue}
@@ -1525,21 +1549,57 @@ modal_build :: proc(s:^Session) {
     case .Shortcuts:
         closed:=false
         defer if closed {g.modal=.None}
-        if ui.modal(ctx,shell_id(g,"shortcuts"),{width=440,scroll=&g.modal_scroll,close=&closed}) {
+        if ui.modal(ctx,shell_id(g,"shortcuts"),{width=SHORTCUTS_WIDTH,scroll=&g.modal_scroll,close=&closed}) {
             ui.label(ctx,"Keyboard shortcuts",ui.metric(ctx,"font_title"),ui.tone(ctx,"text"),font=ui.FONT_SEMIBOLD)
-            row :: proc(ctx:^ui.Context,name,keys:string) {
-                if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),align_y=.Center}) {
-                    ui.label(ctx,name,ui.metric(ctx,"font_small"),ui.tone(ctx,"text"))
-                    ui.spacer(ctx)
-                    ui.label(ctx,keys,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
+            bindings:=command_bindings(s)
+            groups:=SHORTCUT_GROUPS
+            of:=make([]int,len(bindings),context.temp_allocator)
+            for &o in of {o=len(groups)-1}
+            for group,k in groups[:len(groups)-1] {
+                first,last:=-1,-1
+                for &b,i in bindings {
+                    if b.name==group.first {first=i}
+                    if b.name==group.last {last=i}
                 }
+                if first>=0 {for i in first..=max(first,last) {of[i]=k}}
             }
-            // An entry by its key: two entries of one key are what it does by turns (Pause and Resume).
-            for &b,at in command_bindings(s) {
+            // An entry by its key: two entries of one key in a section are what it does by turns (Pause and Resume).
+            listed:=make([]bool,len(bindings),context.temp_allocator)
+            filled:[len(SHORTCUT_GROUPS)]bool
+            for &b,at in bindings {
                 if !b.shortcut.set {continue}
                 repeated:=false
-                for &other in command_bindings(s)[:at] {repeated||=other.shortcut==b.shortcut}
-                if !repeated {row(ctx,b.label,shortcut_text(b.shortcut))}
+                for &other,i in bindings[:at] {repeated||=other.shortcut==b.shortcut && of[i]==of[at]}
+                listed[at]=!repeated
+                filled[of[at]]||=!repeated
+            }
+            // The sections with entries fill the two columns by turns.
+            column_of:[len(SHORTCUT_GROUPS)]int
+            n:=0
+            for k in 0..<len(groups) {if filled[k] {column_of[k]=n%2;n+=1}}
+            if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=28}) {
+                for column in 0..<2 {
+                    if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=2}) {
+                        for group,k in groups {
+                            if !filled[k] || column_of[k]!=column {continue}
+                            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),padding={0,8,0,0},align_y=.End}) {
+                                ui.label(ctx,group.name,ui.metric(ctx,"font_caption"),ui.tone(ctx,"text_faint"),font=ui.FONT_SEMIBOLD)
+                            }
+                            for &b,at in bindings {
+                                if !listed[at] || of[at]!=k {continue}
+                                if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=4,align_y=.Center}) {
+                                    ui.label(ctx,b.label,ui.metric(ctx,"font_small"),ui.tone(ctx,"text"))
+                                    ui.spacer(ctx)
+                                    for key in strings.split(shortcut_text(b.shortcut),"+",context.temp_allocator) {
+                                        if ui.box(ctx,{width=ui.FIT,height=ui.fixed(20),padding={6,0,6,0},align_y=.Center,fill=ui.tone(ctx,"field"),stroke=ui.tone(ctx,"border"),radius=4}) {
+                                            ui.label(ctx,key,ui.metric(ctx,"font_caption"),ui.tone(ctx,"text_muted"))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     case .Settings: settings_modal(s)

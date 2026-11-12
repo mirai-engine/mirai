@@ -132,11 +132,17 @@ damaged_tables_of_game_data_go_through_every_command :: proc(t:^testing.T) {
     index,_:=types_index(&types,Written)
     names:=[2]Records_Name{}
     text_set(names[0][:],"iron_sword");text_set(names[1][:],"bow")
-    bytes,error:=records_bytes(&types,{id={0x7a,1},type="game.Weapon",ids={11,12},names=names[:],schema=&types.schema,value_type=index,images=mem.slice_to_bytes(values[:])},context.temp_allocator)
+    bytes,error:=records_bytes(&types,{id={0x7a,1},info=fuzz_info(),ids={11,12},names=names[:],schema=&types.schema,value_type=index,images=mem.slice_to_bytes(values[:])},context.temp_allocator)
     testing.expect_value(t,error,Error.None)
     path:=fmt.aprintf("%s/weapons.records",folder);defer delete(path)
     testing.expect(t,os.write_entire_file(path,bytes)==nil)
     fuzz_file(t,&types,path,800)
+}
+
+@(private="file")
+fuzz_info :: proc() -> (info:Records_Info) {
+    text_set(info.type[:],"Weapon")
+    return
 }
 
 // Cuts the file at lengths spread over it and changes bytes spread over it.
@@ -193,7 +199,7 @@ damaged_fonts_texts_and_prompts_go_through_every_command :: proc(t:^testing.T) {
     // The paths outlive the temp allocator, which fuzz_file frees.
     folder:=base.test_folder(t,"fuzz-interface")
     font:=fmt.aprintf("%s/face.font",folder);defer delete(font)
-    testing.expect_value(t,font_save(font,&types,{id={0xf0,1},file=#load("../assets/fixtures/cff.otf"),compression=.LZ}),Error.None)
+    testing.expect_value(t,font_save(font,&types,{id={0xf0,1},file=#load("../assets/fixtures/cff.otf"),compression=.Stream}),Error.None)
     languages:=[2]String_Language{};text_set(languages[0].code[:],"es");text_set(languages[1].code[:],"en")
     keys:=[2]String_Key{};text_set(keys[0].name[:],"menu.play");text_set(keys[1].name[:],"menu.quit")
     entries:=[3]String_Entry{{0,0,0,5},{0,1,5,4},{1,0,9,5}}

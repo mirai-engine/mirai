@@ -789,6 +789,8 @@ app_capture :: proc(app:^App,path:string) -> bool {
 // time settles; the edges of its input are cleared first so that its UI does
 // not act twice on a press its game already took. The light probes keep the
 // world that is shown, and the next frame shown starts a new history.
+// The world and its UI take the whole image, not the part of the window that
+// app.scene gives the view of the editor.
 // A size, in pixels, draws the world alone through the camera of its view
 // into an image of that size, with the inspection its render phase asks for:
 // no screen UI, world panels, debug lines or outlines. editor is the World of
@@ -802,6 +804,9 @@ app_capture_world :: proc(app:^App,world:rawptr,frames:=8,size:=[2]i32{},editor:
     ui_only:=app.ui_only
     app.ui_only=false
     defer app.ui_only=ui_only
+    scene,shift:=app.scene,app.scene_shift
+    app.scene,app.scene_shift={},{}
+    defer app.scene,app.scene_shift=scene,shift
     alone:=size!={}
     texture:render.Texture_Handle
     if alone {texture=render.view_texture_add(r,u32(size.x),u32(size.y),"capture") or_return}

@@ -8,6 +8,7 @@ import "core:strings"
 import "core:testing"
 import "core:thread"
 import "core:time"
+import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/subprocess"
 
@@ -26,7 +27,8 @@ tool_build :: proc(t:^testing.T) -> (tool:Tool,ok:bool) {
     if !found || odin=="" {odin="odin"}
     collection:=strings.concatenate({"-collection:mirai=",root},context.temp_allocator)
     output:=strings.concatenate({"-out:",tool.exe},context.temp_allocator)
-    state,stdout,stderr,err:=subprocess.exec({working_dir=root,command={odin,"build","tools/mirai",collection,"-ignore-unknown-attributes","-o:minimal",output}},context.temp_allocator)
+    compressor,_:=project.compressor_flags(root,context.temp_allocator)
+    state,stdout,stderr,err:=subprocess.exec({working_dir=root,command={odin,"build","tools/mirai",collection,compressor[0],compressor[1],"-ignore-unknown-attributes","-o:minimal",output}},context.temp_allocator)
     testing.expectf(t,err==nil && state.exit_code==0,"building tools/mirai failed (%v): %s%s",err,string(stdout),string(stderr))
     return tool,err==nil && state.exit_code==0
 }
@@ -178,8 +180,28 @@ rpc_batch_cases :: proc(t:^testing.T,tool:Tool,f:^Fixture,port:string) {
     code,out,err:=run_tool(tool,"","rpc","batch","--file",file,"--port",port)
     testing.expectf(t,code==0,"%d %s %s",code,out,err)
     answers:=parse_json(t,out)
+    testing.expect_value(t,result_mismatch(Batch_Result,out),"")
     testing.expect_value(t,integer(at(answers,"results",1,"result","sum")),15)
     testing.expect_value(t,integer(at(answers,"results",2,"result","position",0)),5)
+    // An answer larger than the scratch of its call stays whole for the calls
+    // after it, and answers past the response are an error that says how to
+    // split them.
+    write(file,`{"calls":[{"method":"test.big"},{"method":"test.raw","params":{"a":"$0"}}]}`)
+    code,out,err=run_tool(tool,"","rpc","batch","--file",file,"--port",port)
+    testing.expectf(t,code==0,"%d %s",code,err)
+    answers=parse_json(t,out)
+    big,_:=at(answers,"results",0,"result").(json.Array)
+    testing.expect_value(t,len(big),2001)
+    echo,_:=at(answers,"results",1,"result","echo","a").(json.Array)
+    testing.expect_value(t,len(echo),2001)
+    calls:=strings.builder_make(context.temp_allocator)
+    strings.write_string(&calls,`{"calls":[`)
+    for i in 0..<BATCH_CALLS {strings.write_string(&calls,i>0?`,{"method":"test.big"}`:`{"method":"test.big"}`)}
+    strings.write_string(&calls,`]}`)
+    write(file,strings.to_string(calls))
+    code,out,err=run_tool(tool,"","rpc","batch","--file",file,"--port",port)
+    testing.expectf(t,code==1 && strings.contains(err,"split the calls into smaller batches"),"%d %s",code,err)
+    testing.expect(t,integer(at(parse_json(t,err),"error","data","failed"))>0,err)
     connections:=f.server.stats.connections
     code,out,err=run_tool(tool,`{"calls":[{"method":"test.add","params":{"a":4,"b":5}},{"method":"missing.method"},{"method":"test.add"}]}`,"rpc","batch","-","--port",port)
     testing.expectf(t,code==1,"%d %s %s",code,out,err)
