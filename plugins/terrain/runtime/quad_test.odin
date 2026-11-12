@@ -2,6 +2,7 @@ package terrain
 
 import "core:math"
 import "core:math/rand"
+import "core:slice"
 import "core:testing"
 import "mirai:core"
 import "mirai:std/geom"
@@ -48,8 +49,8 @@ the_coarse_grid_holds_the_samples_at_its_points_and_follows_edits :: proc(t:^tes
     testing.expect(t,source_make(&s,.Heightfield,{101,1,77},1,16))
     for z in 0..<77 {for x in 0..<101 {source_set(&s,{x,0,z},f32((x*7+z*3)%11)*0.5+f32(x)*0.01)}}
     n:=chunk_counts(&s)
-    ranges:=make([][2]f32,n.x*n.z,context.temp_allocator)
-    testing.expect(t,source_coarse_build(&s,ranges))
+    testing.expect(t,source_coarse_build(&s))
+    ranges:=s.coarse.ranges[:n.x*n.z]
     check :: proc(t:^testing.T,s:^Source) {
         for j in 0..<s.coarse.size.y {for i in 0..<s.coarse.size.x {
             x,z:=coarse_position(i,int(s.samples.x)),coarse_position(j,int(s.samples.z))
@@ -65,13 +66,14 @@ the_coarse_grid_holds_the_samples_at_its_points_and_follows_edits :: proc(t:^tes
     }
     change:=source_edit(&s,{kind=.Raise,center={-10,0,-6},radius=6,amount=40})
     testing.expect(t,change.changed)
-    source_coarse_update(&s,change.low,change.high,ranges)
+    source_coarse_update(&s,change.low,change.high)
     check(t,&s)
     top:=f32(0)
     for z in change.low.z..=change.high.z {for x in change.low.x..=change.high.x {top=max(top,grid_get(&s.field,x,z))}}
     covered:=false
     for range in ranges {if range.y>=top {covered=true}}
     testing.expect(t,top>30 && covered,"the ranges reach what the edit raised")
+    testing.expect(t,s.coarse.ranges[len(s.coarse.ranges)-1].y>=top,"the root reaches what the edit raised")
 }
 
 @(test)
@@ -79,22 +81,19 @@ the_coarse_grid_built_in_jobs_is_the_one_built_alone :: proc(t:^testing.T) {
     s:Source;defer source_destroy(&s)
     testing.expect(t,source_make(&s,.Heightfield,{133,1,101},1,16))
     for z in 0..<101 {for x in 0..<133 {source_set(&s,{x,0,z},math.sin(f32(x)*0.31)*4+f32((x*5+z*11)%7)*0.3)}}
-    n:=chunk_counts(&s)
-    alone_ranges:=make([][2]f32,n.x*n.z,context.temp_allocator)
-    alone_errors:=make([]Lod_Errors,n.x*n.z,context.temp_allocator)
-    testing.expect(t,source_coarse_build(&s,alone_ranges,alone_errors))
+    testing.expect(t,source_coarse_build(&s))
     size:=s.coarse.size
     alone:=make([]f32,size.x*size.y,context.temp_allocator)
     for j in 0..<size.y {for i in 0..<size.x {alone[i+size.x*j]=grid_get(&s.coarse.heights,i,j)}}
+    alone_ranges:=slice.clone(s.coarse.ranges,context.temp_allocator)
+    alone_errors:=slice.clone(s.coarse.errors,context.temp_allocator)
     system:jobs.Job_System
     if !testing.expect(t,jobs.system_init(&system,{threads=3})) {return}
     defer jobs.system_destroy(&system)
-    ranges:=make([][2]f32,n.x*n.z,context.temp_allocator)
-    errors:=make([]Lod_Errors,n.x*n.z,context.temp_allocator)
-    testing.expect(t,source_coarse_build(&s,ranges,errors,&system))
+    testing.expect(t,source_coarse_build(&s,&system))
     for j in 0..<size.y {for i in 0..<size.x {testing.expect_value(t,grid_get(&s.coarse.heights,i,j),alone[i+size.x*j])}}
-    for range,i in ranges {testing.expect_value(t,range,alone_ranges[i])}
-    for e,i in errors {testing.expect_value(t,e,alone_errors[i])}
+    for range,i in s.coarse.ranges {testing.expect_value(t,range,alone_ranges[i])}
+    for e,i in s.coarse.errors {testing.expect_value(t,e,alone_errors[i])}
 }
 
 // A Heightfield of 8 by 8 chunks shown by chunks of mixed levels, nodes of
@@ -104,7 +103,7 @@ quadtree_nodes_and_chunks_of_mixed_levels_join_without_cracks_or_overlaps :: pro
     s:Source;defer source_destroy(&s)
     testing.expect(t,source_make(&s,.Heightfield,{129,1,129},0.5,16))
     for z in 0..<129 {for x in 0..<129 {source_set(&s,{x,0,z},math.sin(f32(x)*0.37)*2+math.cos(f32(z)*0.23)*3+f32((x*7+z*13)%5)*0.1)}}
-    testing.expect(t,source_coarse_build(&s,nil))
+    testing.expect(t,source_coarse_build(&s))
     q:=quad_of(&s)
     testing.expect_value(t,q.depth,3)
     // By chunk: the depth of the piece that covers it.

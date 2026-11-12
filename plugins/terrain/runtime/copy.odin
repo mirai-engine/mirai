@@ -30,9 +30,9 @@ data_chunks_copy :: proc(dst,src:^Data_Source) -> bool {
     if dst.allocator.procedure==nil {dst.allocator=context.allocator}
     count:=len(src.dirty)
     a:=dst.allocator
-    if !same(&dst.versions,len(src.versions),a) || !same(&dst.nodes,len(src.nodes),a) || !same(&dst.ranges,len(src.ranges),a) || !same(&dst.errors,len(src.errors),a) || !same(&dst.dirty,count,a) {return false}
+    if !same(&dst.versions,len(src.versions),a) || !same(&dst.nodes,len(src.nodes),a) || !same(&dst.dirty,count,a) {return false}
     if reserve(&dst.pending,count)!=nil || resize(&dst.pending,count)!=nil {return false}
-    copy(dst.versions,src.versions);copy(dst.nodes,src.nodes);copy(dst.ranges,src.ranges);copy(dst.errors,src.errors)
+    copy(dst.versions,src.versions);copy(dst.nodes,src.nodes)
     dst.quad=src.quad
     for i in 0..<count {dst.dirty[i]=true;dst.pending[i]=u32(i)}
     return true

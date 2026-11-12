@@ -89,7 +89,7 @@ resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:^core.
                 case settings.lod_distance<0: node.want=true
                 case by_error:
                     slack:=f32(node.open?1/LOD_HYSTERESIS:1)
-                    node.want=lod_error(entry.errors,q,i,int(minimum))*node.pixels>LOD_PIXELS*slack && lod_spacing_level(node.spacing/slack,s.cell)<minimum
+                    node.want=lod_error(entry.source.coarse.errors,q,i,int(minimum))*node.pixels>LOD_PIXELS*slack && lod_spacing_level(node.spacing/slack,s.cell)<minimum
                 case minimum>0:
                     reach:=base*f32(u64(1)<<uint(minimum-1))
                     node.want=node.distance<reach/LOD_HYSTERESIS || node.open && node.distance<reach*LOD_HYSTERESIS
@@ -168,7 +168,7 @@ resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:^core.
                 level:=chunk.wanted.lod.level
                 switch {
                 case settings.lod_distance<0: level=minimum
-                case by_error: level=lod_level_error(entry.errors,q,i,minimum,maximum,chunk.pixels,chunk.spacing,s.cell,level)
+                case by_error: level=lod_level_error(entry.source.coarse.errors,q,i,minimum,maximum,chunk.pixels,chunk.spacing,s.cell,level)
                 case: level=lod_level(chunk.distance,base,maximum,level)
                 }
                 key.lod=Chunk_Lod{level=clamp(level,minimum,maximum)}
@@ -285,7 +285,7 @@ lod_distances :: proc(work:^Lod_Distances,first,last:int,worker:int) {
         near:scene.Sources_Near
         if work.stream {near=scene.sources_near(work.sources.ptr,placed,work.resident_distance)}
         for &node,i in owner.nodes {
-            low,high:=node_box(s,q,entry.ranges,i)
+            low,high:=node_box(s,q,entry.source.coarse.ranges,i)
             at:=scene.box_distance(low,high,local)
             node.distance=at*scale
             node.reach=work.stream?scene.box_near(&near,low,high):0
@@ -383,7 +383,7 @@ view_pixels :: proc "contextless" (view:core.View) -> f32 {
 // (Terrain_Settings.lod_distance 0, a Heightfield, which measures them).
 @(private)
 lod_by_error :: #force_inline proc "contextless" (entry:^Data_Source,settings:Terrain_Settings) -> bool {
-    return settings.lod_distance==0 && len(entry.errors)==quad_total(&entry.quad)
+    return settings.lod_distance==0 && len(entry.source.coarse.errors)==quad_total(&entry.quad)
 }
 
 // The coarsest level of piece i between minimum and maximum whose error

@@ -83,11 +83,9 @@ Data_Source :: struct {
     versions:[]u32, // of each chunk: the change it last took
     quad:Quad,
     nodes:[]u32,     // of each node of the quadtree above the chunks: the last change of a chunk it covers
-    ranges:[][2]f32, // of each chunk and node: the lowest and highest point of its samples or sections
-    errors:[]Lod_Errors, // of each chunk and node of a Heightfield: how far each level is from its samples
     dirty:[]bool,    // by chunk and node
     pending:[dynamic]u32,
-    allocator:runtime.Allocator, // of versions, nodes, ranges, errors and dirty
+    allocator:runtime.Allocator, // of versions, nodes and dirty
 }
 
 // Where the editor brushes a source, in its space: the chunks of its terrains
@@ -323,8 +321,9 @@ terrain_file :: proc(a:^host.Assets,id:base.Asset_Id,allocator:=context.temp_all
 
 // Reads the source of a terrain as the registry of the assets holds it: what
 // its memory holds until the file is written, or the file. paged leaves the pages of a
-// Heightfield or Volume on disk in the file, read when needed; one only the
-// memory of the registry holds is read whole.
+// Heightfield or Volume on disk in the file, read when needed, and reads the
+// coarse data a world keeps; one only the memory of the registry holds is
+// read whole.
 terrain_read :: proc(s:^Source,a:^host.Assets,id:base.Asset_Id,allocator:=context.allocator,paged:=false) -> bool {
     if paged {
         record,found:=asset.registry_find(&a.registry,id)
@@ -334,14 +333,14 @@ terrain_read :: proc(s:^Source,a:^host.Assets,id:base.Asset_Id,allocator:=contex
             front:asset.Asset
             if asset.asset_load_front(&front,path,a.allocator)!=.None {return false}
             defer asset.asset_close(&front)
-            loaded,ok:=source_read(s,&front,&a.types,allocator,path)
+            loaded,ok:=source_read(s,&front,&a.types,allocator,path,coarse=true)
             return ok && loaded==id
         }
     }
     file:asset.Asset
     if host.assets_file(a,id,TERRAIN_KIND,&file)!=.None {return false}
     defer asset.asset_close(&file)
-    loaded,ok:=source_read(s,&file,&a.types,allocator)
+    loaded,ok:=source_read(s,&file,&a.types,allocator,coarse=paged)
     return ok && loaded==id
 }
 terrain_source :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id) -> ^Source {
@@ -402,7 +401,7 @@ data_find :: proc(data:^Terrain_Data,id:base.Asset_Id) -> ^Data_Source {
 data_entry_free :: proc(entry:^Data_Source) {
     source_destroy(&entry.source)
     allocator:=entry.allocator if entry.allocator.procedure!=nil else context.allocator
-    delete(entry.versions,allocator);delete(entry.nodes,allocator);delete(entry.ranges,allocator);delete(entry.errors,allocator);delete(entry.dirty,allocator);delete(entry.pending)
+    delete(entry.versions,allocator);delete(entry.nodes,allocator);delete(entry.dirty,allocator);delete(entry.pending)
     entry^={}
 }
 terrain_data_free :: proc(data:^Terrain_Data) {
@@ -448,8 +447,8 @@ terrain_data_swap :: proc(a,b:^Terrain_Data) {
     a.epoch,b.epoch=epoch,epoch
 }
 // The chunks and nodes of the quadtree of the source of entry, every one
-// pending, and the heights each reaches: a Heightfield reads every page once
-// for them and for its coarse grid.
+// pending. A Heightfield its file did not give its coarse data to (one made
+// in memory) measures it reading every page once.
 @(private)
 data_chunks_allocate :: proc(entry:^Data_Source,allocator:runtime.Allocator,js:^jobs.Job_System=nil,worker:=jobs.OWNER) -> bool {
     entry.allocator=allocator
@@ -460,10 +459,6 @@ data_chunks_allocate :: proc(entry:^Data_Source,allocator:runtime.Allocator,js:^
     if error!=nil {return false}
     entry.nodes,error=make([]u32,total-chunks,allocator)
     if error!=nil {return false}
-    entry.ranges,error=make([][2]f32,total,allocator)
-    if error!=nil {return false}
-    entry.errors,error=make([]Lod_Errors,entry.source.kind==.Heightfield?total:0,allocator)
-    if error!=nil {return false}
     entry.dirty,error=make([]bool,total,allocator)
     if error!=nil {return false}
     entry.pending,error=make([dynamic]u32,0,total,allocator)
@@ -471,10 +466,7 @@ data_chunks_allocate :: proc(entry:^Data_Source,allocator:runtime.Allocator,js:^
     for &version in entry.versions {version=entry.change}
     for &version in entry.nodes {version=entry.change}
     for i in 0..<total {entry.dirty[i]=true;append(&entry.pending,u32(i))}
-    if !source_coarse_build(&entry.source,entry.ranges[:chunks],entry.errors[:min(chunks,len(entry.errors))],js,worker) {return false}
-    data_ranges(entry)
-    data_errors(entry)
-    return true
+    return entry.source.kind!=.Heightfield || coarse_ready(&entry.source) || source_coarse_build(&entry.source,js,worker)
 }
 
 // Starts reading a source in a job: nil when it is not a file the job can
@@ -513,7 +505,7 @@ source_load_job :: proc(load:^Source_Load,worker:int) {
     front:asset.Asset
     if asset.asset_load_front(&front,load.path,context.allocator)!=.None {return}
     defer asset.asset_close(&front)
-    id,read:=source_read(&load.entry.source,&front,&load.types,context.allocator,load.path)
+    id,read:=source_read(&load.entry.source,&front,&load.types,context.allocator,load.path,coarse=true)
     if !read || id!=load.id {return}
     load.entry.id,load.entry.stamp,load.entry.change=load.id,load.stamp,1
     load.ok=data_chunks_allocate(&load.entry,context.allocator,load.js,worker)
@@ -567,14 +559,6 @@ data_version :: #force_inline proc "contextless" (entry:^Data_Source,i:int) -> u
     return i<chunks?entry.versions[i]:entry.nodes[i-chunks]
 }
 
-// The errors of the nodes of a Heightfield, from the chunks up.
-@(private)
-data_errors :: proc(entry:^Data_Source) {
-    q:=&entry.quad
-    if len(entry.errors)!=quad_total(q) {return}
-    for d in 1..=q.depth {for i in q.first[d]..<q.first[d+1] {node_errors_measure(&entry.source,q,entry.errors,i)}}
-}
-
 // After an edit of the inclusive region of samples low..high: the chunks it
 // touched measure their levels again where their pages are in memory, and
 // the errors of the nodes above grow with what changed.
@@ -582,33 +566,20 @@ data_errors :: proc(entry:^Data_Source) {
 data_errors_edit :: proc(entry:^Data_Source,low,high:[3]int) {
     s:=&entry.source
     q:=&entry.quad
-    if len(entry.errors)!=quad_total(q) {return}
+    errors:=s.coarse.errors
+    if len(errors)!=quad_total(q) {return}
     first,last:=chunk_range(s,{changed=true,low=low,high=high})
     for z in first.z..=last.z {for x in first.x..=last.x {
         index:=chunk_index(s,{i32(x),0,i32(z)})
         a,b,ok:=chunk_region(s,{i32(x),0,i32(z)})
         if index<0 || !ok || !source_region_held(s,a,b) {continue}
-        chunk_errors_measure(s,{s=s},{x,z},&entry.errors[index])
+        chunk_errors_measure(s,{s=s},{x,z},&errors[index])
     }}
     for d in 1..=q.depth {
         for z in first.z>>uint(d)..=last.z>>uint(d) {for x in first.x>>uint(d)..=last.x>>uint(d) {
-            if node:=quad_index(q,d,{x,z});node>=0 {node_errors_measure(s,q,entry.errors,node,{low.xz,high.xz})}
+            if node:=quad_index(q,d,{x,z});node>=0 {node_errors_measure(s,q,errors,node,{low.xz,high.xz})}
         }}
     }
-}
-
-// The ranges of the nodes from those of their children; a Volume chunk spans
-// its region.
-@(private)
-data_ranges :: proc(entry:^Data_Source) {
-    s:=&entry.source
-    q:=&entry.quad
-    if s.kind==.Volume {for &range in entry.ranges {range={-HEIGHT_LIMIT,HEIGHT_LIMIT}}}
-    for d in 1..=q.depth {for i in q.first[d]..<q.first[d+1] {
-        range:=[2]f32{max(f32),-max(f32)}
-        for c in quad_children(q,i) {if c>=0 {range={min(range.x,entry.ranges[c].x),max(range.y,entry.ranges[c].y)}}}
-        entry.ranges[i]=range
-    }}
 }
 @(private)
 data_ready :: proc(data:^Terrain_Data,settings:Terrain_Settings,allocator:=context.allocator) -> bool {
@@ -624,8 +595,7 @@ data_ready :: proc(data:^Terrain_Data,settings:Terrain_Settings,allocator:=conte
 }
 // Every chunk of the inclusive region of samples of change takes the next
 // change of the source.
-// The nodes above take it too, and the heights the chunks and nodes reach
-// follow the samples.
+// The nodes above take it too.
 @(private)
 data_mark :: proc(entry:^Data_Source,change:Change) {
     entry.change+=1
@@ -633,7 +603,6 @@ data_mark :: proc(entry:^Data_Source,change:Change) {
     for z in low.z..=high.z {for y in low.y..=high.y {for x in low.x..=high.x {
         if index:=chunk_index(&entry.source,{i32(x),i32(y),i32(z)});index>=0 {data_mark_chunk(entry,index);data_mark_nodes(entry,index)}
     }}}
-    data_ranges(entry)
 }
 // A chunk takes the change of the source: a page that came into memory marks
 // only the chunks, whose build reads it.
@@ -733,11 +702,6 @@ data_reload :: proc(data:^Terrain_Data,entry:^Data_Source,a:^host.Assets,problem
         data_entry_free(entry);entry^=replacement
     } else {
         source_destroy(&entry.source);entry.source=next
-        // A page that does not read leaves its part of the coarse grid as the samples it holds.
-        chunks:=entry.quad.first[1]
-        if !source_coarse_build(&entry.source,entry.ranges[:chunks],entry.errors[:min(chunks,len(entry.errors))],data.jobs) {source_unread(problems,owner,a,entry.id)}
-        data_ranges(entry)
-        data_errors(entry)
         if change.changed {data_mark(entry,change)}
     }
     data.samples=u32(int(data.samples)-before+source_cost(&entry.source))

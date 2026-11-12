@@ -156,7 +156,7 @@ an_elevated_chunk_becomes_resident_near_a_viewer_before_it_is_built :: proc(t:^t
     quad_viewer(&w,{0,801,0})
     settings:=Terrain_Settings{resident_distance=30}
     quad_tick(&w,&resident,&app,settings)
-    for range in w.data.entries[0].ranges {testing.expect(t,range.x>=800 && range.y<=801)}
+    for range in w.data.entries[0].source.coarse.ranges {testing.expect(t,range.x>=800 && range.y<=801)}
     quad_settle(&w,&resident,&app,settings)
     hit,ok:=phys.raycast({&w.state},{0,900,0},{0,-1,0})
     testing.expectf(t,ok && abs(hit.point.y-800)<1,"a viewer standing on it has ground: %v",hit.point)

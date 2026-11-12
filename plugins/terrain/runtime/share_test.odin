@@ -95,13 +95,13 @@ a_copy_shares_the_coarse_grid_until_an_edit_writes_it :: proc(t:^testing.T) {
         if !testing.expect(t,source_make(&source,.Heightfield,{1025,1,1025},1,64)) {return}
         if !testing.expect(t,grid_prepare(&source.field,{},{1024,0,1024},source.allocator)) {return}
         for z in 0..<1025 {for x in 0..<1025 {grid_set(&source.field,x,z,math.sin(f32(x)*0.05)*4)}}
-        if !testing.expect(t,source_coarse_build(&source,nil)) {return}
+        if !testing.expect(t,source_coarse_build(&source)) {return}
         if !testing.expect(t,data_source_copy(&copied,&source)) {return}
         g,c:=&source.coarse.heights,&copied.coarse.heights
         for page,i in g.pages {testing.expect(t,page.values!=nil && raw_data(page.values)==raw_data(c.pages[i].values),"the copy holds the coarse grid")}
         before:=grid_get(c,4,4)
         change:=source_edit(&source,{kind=.Raise,center=source_point(&source,{32,0,32}),radius=6,amount=2,falloff=.Smooth,hardness=0.5})
-        testing.expect(t,change.changed && source_coarse_update(&source,change.low,change.high,nil))
+        testing.expect(t,change.changed && source_coarse_update(&source,change.low,change.high))
         testing.expect(t,grid_get(g,4,4)!=before)
         testing.expect_value(t,grid_get(c,4,4),before)
         testing.expect(t,raw_data(g.pages[0].values)!=raw_data(c.pages[0].values),"the source took its own page")

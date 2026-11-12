@@ -631,15 +631,17 @@ data_layer :: proc(data:^Terrain_Data,entry:^Data_Source,change:Layer_Change) ->
     s:=&entry.source
     work_wait(data,s)
     previous_cost:=source_cost(s)
-    // Taking a layer away rewrites every weight.
-    read:=!change.remove || source_weights_read_all(s)
-    data.samples=u32(int(data.samples)-previous_cost+source_cost(s))
-    if !read {return false,.Out_Of_Memory}
-    if !(change.remove?source_layer_remove(s,int(change.index)):source_layer_set(s,int(change.index),change.layer)) {return false,.Invalid}
+    if change.remove {
+        // Taking a layer away rewrites every weight, page by page; what it cannot take away is invalid.
+        if change.index>=s.layer_count || s.layer_count==1 {return false,.Invalid}
+        removed:=source_layer_remove(s,int(change.index))
+        data.samples=u32(int(data.samples)-previous_cost+source_cost(s))
+        if !removed {return false,.Out_Of_Memory}
+    } else if !source_layer_set(s,int(change.index),change.layer) {return false,.Invalid}
     source_pages_edited(s)
     data_mark_all(entry)
     data.stats.edits+=1
-    return true,source_coarse_weights(s)?.None:.Out_Of_Memory
+    return true,.None
 }
 
 @(private)
