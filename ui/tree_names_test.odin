@@ -68,17 +68,19 @@ tokens_give_their_values_to_styles_and_rules_that_name_them :: proc(t:^testing.T
 }
 
 @(test)
-a_node_takes_what_its_style_gives_of_its_layout_but_what_it_has_as_its_own :: proc(t:^testing.T) {
+a_node_takes_what_its_style_gives_now_of_its_layout_but_what_it_has_as_its_own :: proc(t:^testing.T) {
     infos:=make([]Tree_Style_Info,2,context.temp_allocator)
     infos[1].layout={width=GROW,height=fixed(60),gap=10}
     infos[1].layout_keys={.Width,.Height,.Gap}
     infos[1].blur=4
-    node:=Tree_Node{kind=.Box,style=1,layout={width=fixed(200),padding={1,2,3,4}},layout_own={.Width}}
+    // Its padding is what an older version of its style gave: the style gives none now.
+    node:=Tree_Node{kind=.Box,style=1,layout={width=fixed(200),padding={1,2,3,4},direction=.Column},layout_own={.Width,.Direction}}
     nodes:=[]Tree_Node{node}
     tree_nodes_take_styles(nodes,infos)
     testing.expect_value(t,nodes[0].layout.width,fixed(200))
+    testing.expect_value(t,nodes[0].layout.direction,Direction.Column)
     testing.expect_value(t,nodes[0].layout.height,fixed(60))
-    testing.expect_value(t,nodes[0].layout.padding,[4]f32{1,2,3,4})
+    testing.expect_value(t,nodes[0].layout.padding,[4]f32{})
     testing.expect_value(t,nodes[0].layout.gap,f32(10))
     testing.expect(t,nodes[0].layer.enabled && nodes[0].layer.backdrop_blur==4,"a style with a blur gives its node the layer that draws it")
 }

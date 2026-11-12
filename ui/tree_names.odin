@@ -208,8 +208,11 @@ style_own_keys :: proc "contextless" (info:^Tree_Style_Info) -> Style_Keys {
 // The layout and the blur a node takes from its style: what the style gives
 // that the node does not have as its own.
 tree_node_take_style :: proc "contextless" (node:^Tree_Node,info:^Tree_Style_Info) {
-    for key in info.layout_keys&LAYOUT_KEYS {
-        if key not_in node.layout_own {layout_key_copy(&node.layout,&info.layout,key)}
+    // What is not its own is what the style gives now: a key the style no longer gives goes back
+    // to the default, not to what the style gave when the file was written.
+    unset:Layout
+    for key in LAYOUT_KEYS-node.layout_own {
+        layout_key_copy(&node.layout,&info.layout if key in info.layout_keys else &unset,key)
     }
     if info.blur>0 && node.layer=={} {node.layer={enabled=true,opacity=1,backdrop_blur=info.blur}}
 }
