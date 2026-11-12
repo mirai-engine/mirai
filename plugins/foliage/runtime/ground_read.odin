@@ -6,14 +6,16 @@ import "mirai:core"
 import scene "mirai:engine/scene"
 import volume "mirai:engine/volume"
 import physics "plugins:physics/runtime"
+import "mirai:std/base"
 import "mirai:std/jobs"
 import mm "mirai:std/math"
 
 // foliage_ground reads again the tiles over what the ground announces changed,
 // the cells a Foliage gains and those the editor asks for, GROUND_TILES a call
-// in jobs, with where foliage is kept out of them. A keep-out that comes,
+// in jobs, those the editor asks for first and then the nearest the streaming
+// sources, with where foliage is kept out of them. A keep-out that comes,
 // goes or changes is a change of the ground under its old and new boxes. A
-// tile is fine near the streaming sources, within the reach of the meshes of
+// tile is fine near the sources, within the reach of the meshes of
 // its types, and where the editor asks; coarse farther.
 
 GROUND_TILES :: 24 // tiles of ground read in a call (the step runs in the frame and in each tick)
@@ -26,7 +28,8 @@ SAMPLES_MAX :: 65
 Ground_Task :: struct {
     entity:core.Entity,
     coord:[2]i32,
-    fine:bool, // asked for by the editor: fine wherever the sources are (what the sorted queue holds)
+    fine:bool, // asked for by the editor: fine wherever the sources are, and read first
+    near:f32,  // how near the sources came to it when the queue was ordered, in reaches of its fine tiles
 }
 
 // A tile read in a job.
@@ -133,26 +136,44 @@ foliage_ground :: proc(
                 for z in first.y..=last.y {for x in first.x..=last.x {if covers_tile(box,{x,z}) {touched[{x,z}]={}}}}
             }
         }
-        for tile in owner.tiles {
-            if all || tile.coord in touched {ground_ask(ground,e,tile.coord)}
-        }
+        if all {for tile in owner.tiles {ground_ask(ground,e,tile.coord)}}
         // A change also covers cells without a tile: ground came, moved or grew, or its pages came.
-        for &cell in entry.source.cells {
-            if (cells || all || cell.coord in touched) && ground_tile_find(owner,cell.coord)<0 {ground_ask(ground,e,cell.coord)}
+        if cells || all {
+            for &cell in entry.source.cells {if ground_tile_find(owner,cell.coord)<0 {ground_ask(ground,e,cell.coord)}}
+        } else {
+            for coord in touched {
+                if ground_tile_find(owner,coord)>=0 || source_cell(&entry.source,coord)!=nil {ground_ask(ground,e,coord)}
+            }
         }
         // The editor asks for fine ground under its brush.
         for request in asked {
             if request.entity==e && ground_tile_samples(owner,request.coord)!=owner.samples {ground_ask(ground,e,request.coord,true)}
         }
-        // A tile goes from fine to coarse, or back, as the sources move.
+        // A tile goes from fine to coarse, or back, as the sources move: only
+        // the fine ones and the coarse ones near a source can.
         if sources_moved || cells || all {
             near:=ground_near(sources.ptr,owner_world,&entry.source)
-            for tile in owner.tiles {
-                fine:=ground_tile_samples(owner,tile.coord)!=COARSE_SAMPLES
-                if tile_fine(&near,tile.coord,fine)!=fine {ground_ask(ground,e,tile.coord)}
+            flip :: proc(ground:^Foliage_Ground,owner:^Ground_Owner,near:^scene.Sources_Near,e:core.Entity,coord:[2]i32) {
+                fine:=ground_tile_samples(owner,coord)!=COARSE_SAMPLES
+                if tile_fine(near,coord,fine)!=fine {ground_ask(ground,e,coord)}
+            }
+            if cells || all || near.count==0 {
+                for tile in owner.tiles {flip(ground,owner,&near,e,tile.coord)}
+            } else {
+                for pool in owner.pools {
+                    if pool.samples==COARSE_SAMPLES {continue}
+                    for coord in pool.coords {flip(ground,owner,&near,e,coord)}
+                }
+                close:=make([dynamic]u32,context.temp_allocator)
+                coords_near(owner.tiles[:],&near,&close)
+                for at in close {
+                    coord:=owner.tiles[at].coord
+                    if ground_tile_samples(owner,coord)==COARSE_SAMPLES {flip(ground,owner,&near,e,coord)}
+                }
             }
         }
     }
+    if ground.unordered || sources_moved {queue_order(ground,data.ptr,foliages,worlds,sources.ptr)}
 }
 
 // Whether a box of the space of an owner, in x and z, covers some of a tile.
@@ -184,25 +205,60 @@ tile_fine :: proc "contextless" (near:^scene.Sources_Near,coord:[2]i32,was:bool)
     return scene.resident(scene.box_near(near,low,high),was)
 }
 
-// Asks for a tile of the ground of a Foliage to be read again, once; fine
-// wherever the sources are.
+// Asks for a tile of the ground of a Foliage to be read again; fine
+// wherever the sources are. queue_order keeps it once.
 @(private)
 ground_ask :: proc(ground:^Foliage_Ground,e:core.Entity,coord:[2]i32,fine:=false) {
-    task:=Ground_Task{e,coord,fine}
-    at,found:=slice.binary_search_by(ground.queued[:],task,task_order)
-    if found {ground.queued[at].fine||=fine;return}
-    inject_at(&ground.queued,at,task)
-    append(&ground.queue,task)
+    append(&ground.queue,Ground_Task{entity=e,coord=coord,fine=fine})
+    ground.unordered=true
 }
 
 @(private)
-task_order :: proc(a,b:Ground_Task) -> slice.Ordering {
-    switch {
-    case a.entity!=b.entity: return a.entity<b.entity?.Less:.Greater
-    case a.coord.x!=b.coord.x: return a.coord.x<b.coord.x?.Less:.Greater
-    case a.coord.y!=b.coord.y: return a.coord.y<b.coord.y?.Less:.Greater
+task_before :: proc(a,b:Ground_Task) -> bool {
+    if a.entity!=b.entity {return a.entity<b.entity}
+    return coord_before(a.coord,b.coord)
+}
+
+// Orders the queue of tiles to read when something was asked or the sources
+// moved: each tile once (fine if one ask was), none of a Foliage that is gone,
+// and the next to read at its end: those the editor asks for, then the
+// nearest a source.
+@(private)
+queue_order :: proc(ground:^Foliage_Ground,data:^Foliage_Data,foliages:^core.Table(Foliage,$A),worlds:^core.Table(core.World_Transform,$B),sources:^scene.Streaming_Sources) {
+    ground.unordered=false
+    if len(ground.queue)==0 {return}
+    slice.sort_by(ground.queue[:],task_before)
+    kept:=0
+    near:scene.Sources_Near
+    held:=core.NONE
+    known:=false
+    for task in ground.queue {
+        if kept>0 && ground.queue[kept-1].entity==task.entity && ground.queue[kept-1].coord==task.coord {
+            ground.queue[kept-1].fine||=task.fine
+            continue
+        }
+        if task.entity!=held {
+            held,known=task.entity,false
+            world,placed:=core.get(worlds,task.entity)
+            f,shown:=core.get(foliages,task.entity)
+            if entry:=data_find(data,f.source);placed && shown && entry!=nil {
+                near=ground_near(sources,mm.transform_matrix(world.transform),&entry.source)
+                known=true
+            }
+        }
+        if !known {continue}
+        next:=task
+        corner:=cell_corner(task.coord)
+        next.near=0 if near.count==0 else scene.box_near(&near,{corner.x,-POSITION_MAX,corner.z},{corner.x+CELL_SIZE,POSITION_MAX,corner.z+CELL_SIZE})
+        ground.queue[kept]=next
+        kept+=1
     }
-    return .Equal
+    base.truncate(&ground.queue,kept)
+    slice.sort_by(ground.queue[:],proc(a,b:Ground_Task) -> bool {
+        if a.fine!=b.fine {return b.fine}
+        if a.near!=b.near {return a.near>b.near}
+        return task_before(b,a)
+    })
 }
 
 // The heights of a tile of an owner: the highest ground under each sample
@@ -232,22 +288,16 @@ tile_sample :: proc(q:^core.Ground_Query,owner_world,owner_local:mm.Mat4,coord:[
     return
 }
 
-// Reads GROUND_TILES tiles of the queue, in jobs, fine or coarse by where the
-// sources are then, and writes them in the order they were asked.
+// Reads the GROUND_TILES tiles at the end of the queue, in jobs, fine or
+// coarse by where the sources are then, and writes them in that order.
 @(private)
 ground_read :: proc(ground:^Foliage_Ground,q:^core.Ground_Query,data:core.Ref(Foliage_Data),foliages:^core.Table(Foliage,$A),worlds:^core.Table(core.World_Transform,$B),sources:^scene.Streaming_Sources,keeps:[]Keep_Out,job_system:^jobs.Job_System,problems:^core.Problems) {
     if len(ground.queue)==0 {return}
     Reading :: struct {q:^core.Ground_Query,keeps:[]Keep_Out,work:[dynamic]Tile_Work}
     // Temporary like the slices it holds: kept in the storage, the world would free them.
     reading:=Reading{q,keeps,make([dynamic]Tile_Work,0,GROUND_TILES,context.temp_allocator)}
-    taken:=0
-    for taken<len(ground.queue) && len(reading.work)<GROUND_TILES {
-        task:=ground.queue[taken]
-        taken+=1
-        if at,found:=slice.binary_search_by(ground.queued[:],task,task_order);found {
-            task.fine=ground.queued[at].fine
-            ordered_remove(&ground.queued,at)
-        }
+    for len(ground.queue)>0 && len(reading.work)<GROUND_TILES {
+        task:=pop(&ground.queue)
         owner:=ground_owner(ground,task.entity)
         world,placed:=core.get(worlds,task.entity)
         f,shown:=core.get(foliages,task.entity)
@@ -263,7 +313,6 @@ ground_read :: proc(ground:^Foliage_Ground,q:^core.Ground_Query,data:core.Ref(Fo
         cell:=source_cell(&entry.source,task.coord)
         append(&reading.work,Tile_Work{task=task,owner_world=owner_world,owner_local=owner_local,samples=n,coarse=coarse,generates=cell!=nil && cell.generate,heights=make([]f32,n*n,context.temp_allocator),weights=make([]Layer_Weights,n*n,context.temp_allocator),kept=make([]u64,KEEP_OUT_WORDS,context.temp_allocator)})
     }
-    remove_range(&ground.queue,0,taken)
     sample :: proc(reading:^Reading,first,last:int,worker:int) {
         for &w in reading.work[first:last] {
             w.layers,w.any=tile_sample(reading.q,w.owner_world,w.owner_local,w.task.coord,w.samples,w.heights,w.weights,w.coarse)

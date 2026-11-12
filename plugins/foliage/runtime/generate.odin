@@ -43,6 +43,30 @@ room :: proc(array:^[dynamic]$T,more:int) -> bool {
     return needed<=cap(array) || reserve(array,max(needed,2*cap(array)))==nil
 }
 
+// The most points the generator makes in a cell, of all its types: past it
+// every type keeps the same share of its points (generated_share), and the
+// cell is the foliage.cell_instances problem of whoever shows it.
+CELL_GENERATED_MAX :: 1 << 18
+
+// The share of the points of each type the generator makes in every cell of a
+// source: 1, or less when their densities give more than CELL_GENERATED_MAX.
+generated_share :: proc "contextless" (s:^Source) -> f32 {
+    total:=f64(0)
+    for t in s.types {total+=f64(t.density)*f64(CELL_SIZE)*f64(CELL_SIZE)}
+    return total>CELL_GENERATED_MAX?f32(CELL_GENERATED_MAX/total):1
+}
+
+// The share of the points of a type a cell keeps: that of its source, times
+// thin for a type without collision (what a lower detail draws of it).
+type_share :: proc "contextless" (t:Foliage_Type,share,thin:f32) -> f32 {
+    return t.collision==.None?share*clamp(thin,0,1):share
+}
+
+// The points of a type in a cell, scatter makes at most.
+scatter_max :: proc "contextless" (t:Foliage_Type,share:f32) -> int {
+    return int(f64(t.density)*f64(CELL_SIZE)*f64(CELL_SIZE)*f64(share))+1
+}
+
 // The second dimension of the Sobol sequence at index i, as a fraction of 2^32.
 @(private)
 sobol_second :: proc "contextless" (i:u32) -> u32 {
@@ -70,12 +94,13 @@ owen_scramble :: proc "contextless" (x,seed:u32) -> u32 {
 // The points of one type in a cell, appended to out. Their places are the
 // first points of a (0,2) sequence of base 2, scrambled by the cell and the
 // type: however many there are, they cover the cell as a jittered grid does,
-// without the clumps and gaps of points at random. False, with none appended,
-// without memory for them.
-scatter :: proc(seed:u32,coord:[2]i32,t:Foliage_Type,out:^[dynamic]Generated) -> bool {
+// without the clumps and gaps of points at random. Of share, the first of its
+// points, which a lower share leaves where they were. False, with none
+// appended, without memory for them.
+scatter :: proc(seed:u32,coord:[2]i32,t:Foliage_Type,out:^[dynamic]Generated,share:=f32(1)) -> bool {
     key:=scatter_key(seed,coord,t.id)
     counter:=mm.rng_make(key)
-    expected:=f64(t.density)*f64(CELL_SIZE)*f64(CELL_SIZE)
+    expected:=f64(t.density)*f64(CELL_SIZE)*f64(CELL_SIZE)*f64(share)
     count:=u32(expected)
     if f64(mm.random_f32(&counter))<expected-f64(count) {count+=1}
     if !room(out,int(count)) {return false}
@@ -376,9 +401,11 @@ point_stands :: proc "contextless" (cell:^Cell,t:Foliage_Type,mask:^Layer_Mask,c
 // that keep their place before it; then, if it stands, from those that stand
 // of the types before. Only the place, the scale and the stream of the points
 // of the cells around are known here, not their ground: whether one stands
-// is told at the border of this cell nearest to it. False without memory.
+// is told at the border of this cell nearest to it. Each type gives share of
+// its points (generated_share), never fewer for a lower detail: what stands
+// is the same for whoever expands the cell. False without memory.
 @(private)
-spaced_stand :: proc(s:^Source,cell:^Cell,ground:Ground_Cell,e:^Expand_Scratch) -> bool {
+spaced_stand :: proc(s:^Source,cell:^Cell,ground:Ground_Cell,e:^Expand_Scratch,share:=f32(1)) -> bool {
     clear(&e.order);clear(&e.standing);clear(&e.stood)
     if resize(&e.ranges,len(s.types))!=nil {return false}
     for &r in e.ranges {r={}}
@@ -401,7 +428,7 @@ spaced_stand :: proc(s:^Source,cell:^Cell,ground:Ground_Cell,e:^Expand_Scratch) 
         for k in 0..<9 {
             d:=[2]i32{i32(k%3)-1,i32(k/3)-1}
             clear(&e.points)
-            if !scatter(s.info.seed,cell.coord+d,t,&e.points) {return false}
+            if !scatter(s.info.seed,cell.coord+d,t,&e.points,share) {return false}
             for g in e.points {
                 p:=Spaced{at=g.position+[2]f32{f32(d.x),f32(d.y)}*CELL_SIZE,reach=t.radius*g.scale[0],chance=g.chance,point=g.point,cell=u8(k)}
                 if grid_blocks(&e.grid,e.spaced[:],p,.Same_Cell) {continue}
@@ -451,15 +478,17 @@ placed_grounded :: proc "contextless" (s:^Source,coord:[2]i32,b:Foliage_Instance
 // and point, as the points of a type are: each type walks its own range of
 // them once. The ids in removed (in order: those taken out in play,
 // Foliage_Removed) are not there; one that names nothing of the cell takes
-// nothing out. False, with nothing appended, without memory: each part
-// takes the room of all it appends before it writes.
-cell_expand :: proc(s:^Source,cell:^Cell,ground:Ground_Cell,out:^[dynamic]Placed,orphans:^[dynamic]int,scratch:^Expand_Scratch,removed:[]u64={}) -> bool {
+// nothing out. thin: the share of the generated points of the types without
+// collision it keeps (type_share). False, with nothing appended, without
+// memory: each part takes the room of all it appends before it writes.
+cell_expand :: proc(s:^Source,cell:^Cell,ground:Ground_Cell,out:^[dynamic]Placed,orphans:^[dynamic]int,scratch:^Expand_Scratch,removed:[]u64={},thin:=f32(1)) -> bool {
     first:=len(out)
+    share:=generated_share(s)
     clear(&scratch.matched)
     if !room(out,len(cell.manual)) || !room(orphans,len(cell.overrides)) || resize(&scratch.matched,len(cell.overrides))!=nil {return false}
     for b in cell.manual {append(out,placed_grounded(s,cell.coord,b,b.type,MANUAL | u64(b.id),ground))}
     if cell.generate && !ground.absent {
-        if !spaced_stand(s,cell,ground,scratch) {
+        if !spaced_stand(s,cell,ground,scratch,share) {
             base.truncate(out,first)
             return false
         }
@@ -469,7 +498,7 @@ cell_expand :: proc(s:^Source,cell:^Cell,ground:Ground_Cell,out:^[dynamic]Placed
             mask:=type_mask(t,ground)
             clear(&scratch.points)
             // A point gives one instance at most.
-            if !scatter(s.info.seed,cell.coord,t,&scratch.points) || !room(out,len(scratch.points)) {
+            if !scatter(s.info.seed,cell.coord,t,&scratch.points,type_share(t,share,thin)) || !room(out,len(scratch.points)) {
                 base.truncate(out,first)
                 return false
             }

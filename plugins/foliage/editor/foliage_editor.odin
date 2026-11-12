@@ -195,6 +195,25 @@ edit_preview :: proc(s:^editor.Session,t:^Foliage_Tool,assets:^host.Assets) -> b
     return true
 }
 
+// Shows what touches of the brush changed before the stroke is a step: the
+// cells from low to high as the edit holds them, in the stroke the runtime
+// shows over the file (Foliage_Stroke), which is written when it ends.
+edit_show :: proc(t:^Foliage_Tool,shown:^foliage.Foliage_Stroke,low,high:[2]i32) {
+    if shown.source!=t.edit.id {
+        foliage.stroke_clear(shown)
+        shown.source=t.edit.id
+    }
+    shown.instances=t.edit.source.info.instances
+    head:=editor.revision_head(&t.history,t.edit.id,t.edit.revision)
+    for z in low.y..=high.y {
+        for x in low.x..=high.x {
+            filed:=head!=nil && foliage.source_cell(head,{x,z})!=nil
+            foliage.stroke_cell_set(shown,{x,z},foliage.source_cell(&t.edit.source,{x,z}),filed)
+        }
+    }
+    shown.revision+=1
+}
+
 // Puts back the revision the edit started from: its head.
 edit_cancel :: proc(s:^editor.Session,t:^Foliage_Tool,assets:^host.Assets) {
     head:=editor.revision_head(&t.history,t.edit.id,t.edit.revision)
@@ -262,8 +281,10 @@ target :: proc(s:^editor.Session,foliages:^core.Table(foliage.Foliage,$A)) -> co
 foliage_tool :: proc(
     s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,foliages:^core.Table(foliage.Foliage,.Read),worlds:^core.Table(core.World_Transform,.Read),
     grounds:core.Ref(foliage.Foliage_Ground),requests:^foliage.Foliage_Ground_Requests,resident:core.Ref(foliage.Foliage_Resident),
-    assets:^host.Assets,allocator:runtime.Allocator,input:core.Input,frame:core.Frame_Time,
+    shown:^foliage.Foliage_Stroke,assets:^host.Assets,allocator:runtime.Allocator,input:core.Input,frame:core.Frame_Time,
 ) {
+    // A stroke that ended (a step, or given back) shows nothing more: the runtime reads its file again.
+    defer if !tool.stroke.active {foliage.stroke_clear(shown)}
     if !tool.active || editor.playing(s) {
         if tool.stroke.active || tool.gizmo.drag.active {edit_cancel(s,tool,assets)}
         tool.stroke,tool.gizmo,tool.adjust={},{},{}
@@ -284,7 +305,7 @@ foliage_tool :: proc(
     ground:=foliage.ground_owner(grounds.ptr,e)
     if !tool.stroke.active && !tool.adjust.active && !tool.gizmo.drag.active {tool_keys_frame(s,tool,assets,input)}
     switch tool.mode {
-    case .Paint,.Erase,.Reapply,.Generate: brush_frame(s,tool,world,e,owner,ground,requests,assets,input,frame)
+    case .Paint,.Erase,.Reapply,.Generate: brush_frame(s,tool,world,e,owner,ground,requests,shown,assets,input,frame)
     case .Select: select_frame(s,tool,world,e,owner,ground,resident.ptr,assets,input,frame)
     case .Place:  place_frame(s,tool,world,owner,ground,assets,input)
     }

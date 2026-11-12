@@ -196,3 +196,32 @@ foliage_is_kept_out_of_volumes_splines_and_colliders :: proc(t:^testing.T) {
     tile,_=ground_cell(owner,{0,0})
     testing.expect(t,kept_out(tile,10,20) && !kept_out(tile,10,28),"one that moves is kept out of where it is now")
 }
+
+// The tiles to read are read once each: those the editor asks for first,
+// then the nearest a source, whatever order they were asked in.
+@(test)
+the_ground_is_read_nearest_the_sources_first_and_each_tile_once :: proc(t:^testing.T) {
+    f:Ground_Test
+    if !test_world_init(t,&f.w) {return}
+    defer test_world_destroy(&f.w)
+    f.plant=core.create(&f.entities)
+    core.add(&f.foliages,f.plant,Foliage{source={4,4}})
+    core.add(&f.worlds,f.plant,core.World_Transform{transform={rotation=1,scale={1,1,1}}})
+    test_world_settle(&f.w)
+    plants:Source
+    for x in 0..<40 {source_cell(&plants,{i32(x),0},true).generate=true}
+    append(&f.data.entries,Data_Entry{id={4,4},epoch=1,loads=1,source=plants})
+    f.data.made=1
+    far:=[3]f32{39*CELL_SIZE+16,0,16}
+    f.streaming.items[0]={position=far,ahead=far}
+    f.streaming.count=1
+    for x in 0..<40 {ground_ask(&f.ground,f.plant,{i32(x),0})}
+    ground_ask(&f.ground,f.plant,{5,0})
+    ground_ask(&f.ground,f.plant,{1,0},true)
+    queue_order(&f.ground,&f.data,core.read(&f.foliages),core.read(&f.worlds),&f.streaming)
+    queue:=f.ground.queue[:]
+    if !testing.expect_value(t,len(queue),40) {return}
+    testing.expect(t,queue[39].coord==[2]i32{1,0} && queue[39].fine,"what the editor asks for is read first")
+    testing.expect(t,queue[38].coord==[2]i32{39,0},"then the nearest a source")
+    for i in 1..<39 {testing.expect(t,queue[i-1].near>=queue[i].near && queue[i].coord!=queue[i-1].coord)}
+}

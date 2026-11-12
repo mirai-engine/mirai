@@ -20,8 +20,8 @@ Foliage_Ground :: struct {
     foliage:[2]u64,    // Foliage_Data: entries made and loads
     seen:[2]core.Seen, // the tables of Foliage and World_Transform
     streamed:u64,      // the revision of the streaming sources
-    queue:[dynamic]Ground_Task,  // tiles to read, in the order they were asked
-    queued:[dynamic]Ground_Task, // the same, sorted
+    queue:[dynamic]Ground_Task, // tiles to read, the next one last (queue_order)
+    unordered:bool,             // some were asked since the queue was ordered
     keep_outs:[dynamic]Keep_Out_Seen, // where they were when the tiles under them were last asked for
     keep_seen:[4]core.Seen,           // the tables of Foliage_Keep_Out, Volume, Spline and Collider
 }
