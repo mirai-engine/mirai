@@ -134,14 +134,17 @@ git_settings :: proc(engine_root,repository:string,allocator:=context.allocator)
 // How a driver names the tool. In a checkout of the engine it is the launcher
 // at its top, by a relative path: the same line serves every clone and every
 // worktree of it, each with its own tool. In another repository it is the
-// launcher of this engine, or the tool of an installed one, by its absolute
-// path: an engine that moved is set again (git_setup).
+// tool of an installed engine, or the launcher of the main checkout of this
+// one (project.shared_root), by its absolute path: every worktree of the
+// engine writes the same line, so opening a project from one, or from a copy,
+// rewrites nothing and leaves nothing that names it once it is deleted. An
+// engine that moved is set again (git_setup).
 @(private="file")
 git_tool :: proc(engine_root,repository:string,allocator:=context.allocator) -> string {
     if repository!="" && !project.engine_installed(repository) && project.engine_root_is(repository) && os.is_file(project.path(repository,"mirai",allocator=context.temp_allocator)) {
         return strings.clone("./mirai",allocator)
     }
-    tool:=project.engine_installed(engine_root)?project.tool_file(engine_root,context.temp_allocator):project.path(engine_root,"mirai",allocator=context.temp_allocator)
+    tool:=project.engine_installed(engine_root)?project.tool_file(engine_root,context.temp_allocator):project.path(project.shared_root(engine_root,context.temp_allocator),"mirai",allocator=context.temp_allocator)
     return strings.concatenate({"\"",tool,"\""},allocator)
 }
 
