@@ -99,50 +99,71 @@ feedback_image :: proc(t: ^testing.T, r: ^Renderer, camera: Camera) -> []u8 {
 
 // The levels the feedback keeps are never coarser than the sampler reads:
 // over a set of views (near, far, grazing) the image is the one every level
-// gives, byte for byte, and a far view keeps fewer levels.
+// gives, byte for byte, and a far view keeps fewer levels; the same whether a
+// map of the material or a program (testdata/sampled.slang) samples it.
 @(test)
 texture_feedback_keeps_every_level_the_image_reads :: proc(t: ^testing.T) {
 	f: Fixture
-	if !fixture_init(t, &f, 160, 120, feedback_settings()) {return}
+	if !fixture_init(t, &f, 160, 120, feedback_settings(), programs = true) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	SIDE :: 1024
-	texture, whole := noise_texture(t, r, SIDE, SIDE)
-	defer texture_data_destroy(&whole)
-	material := DEFAULT_MATERIAL
-	material.textures[.Base_Color] = texture
-	materials_set(r, {material})
 	quad := feedback_quad(r)
 	floor := scaled(4)
-	testing.expect(t, scene_update(r, 0, {{object_id = 1, mesh = quad, transform = floor, material = 1, tint = {1, 1, 1}}}, true))
-	// Far first: a view after another starts from the levels the one before asked for.
-	cases := []struct {name: string, camera: Camera}{
-		{"far", {position = {0, 30, 0}, forward = {0, -1, 0}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}},
-		{"near", {position = {0, 1.5, 0}, forward = {0, -1, 0}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}},
-		{"grazing", {position = {0, 0.3, 3}, forward = {0, -0.15, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}},
-	}
-	stream := &r.textures.residency.streams[texture - 1]
-	kept: [dynamic][dynamic][]u8
-	defer {
-		for levels in kept {delete(levels)}
-		delete(kept)
-	}
-	for c in cases {
-		every := Texture_Request{handle = texture, level = 0, stamp = stream.stamp}
-		levels := texture_levels_from(whole, 0, &kept, int(stream.top))
-		if stream.top > 0 {
-			testing.expect_value(t, texture_levels_queue(r, every, levels), Texture_Levels_Result.Set)
-			for texture_upload_pending(r, every) {testing.expect(t, renderer_frame(r, {camera = c.camera}), r.error)}
+	sampled := program_find(r, "Sampled", .Surface)
+	if !testing.expect(t, sampled != nil, "the tests have the Sampled program") {return}
+	// A texture each: the feedback of the frames before the next one does not reach it.
+	wholes: [2]Texture_Data
+	handles: [2]Texture_Handle
+	defer for &whole in wholes {texture_data_destroy(&whole)}
+	for by_program, at in ([]bool{false, true}) {
+		sampler := "program" if by_program else "map"
+		handles[at], wholes[at] = noise_texture(t, r, SIDE, SIDE)
+		texture, whole := handles[at], wholes[at]
+		material := DEFAULT_MATERIAL
+		if by_program {
+			material.program_id = sampled.id
+			material.custom_params = program_defaults(sampled)
+			testing.expect(t, program_parameter_set_texture(r, &material.custom_params, program_parameter(sampled, "image"), texture))
+		} else {
+			material.textures[.Base_Color] = texture
 		}
-		testing.expect_value(t, stream.top, 0)
-		before := feedback_image(t, r, c.camera)
-		feedback_settle(t, r, c.camera, {whole})
-		after := feedback_image(t, r, c.camera)
-		testing.expectf(t, stream.shown, "%s: the frames sample the texture", c.name)
-		testing.expectf(t, c.name != "far" || stream.top > 0, "%s: it keeps every level", c.name)
-		differ := 0
-		for b, i in before {if b != after[i] {differ += 1}}
-		testing.expectf(t, differ == 0 && len(before) == len(after), "%s: %d bytes differ from the image of every level (from level %d)", c.name, differ, stream.top)
+		materials_set(r, {material})
+		testing.expect(t, scene_update(r, 0, {{object_id = 1, mesh = quad, transform = floor, material = 1, tint = {1, 1, 1}}}, true))
+		// A program draws as its row until its pipelines are made.
+		testing.expect(t, renderer_frame(r, {}), r.error)
+		renderer_pipelines_wait(r)
+		// Far first: a view after another starts from the levels the one before asked for.
+		cases := []struct {name: string, camera: Camera}{
+			{"far", {position = {0, 30, 0}, forward = {0, -1, 0}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}},
+			{"near", {position = {0, 1.5, 0}, forward = {0, -1, 0}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}},
+			{"grazing", {position = {0, 0.3, 3}, forward = {0, -0.15, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}},
+		}
+		stream := &r.textures.residency.streams[texture - 1]
+		kept: [dynamic][dynamic][]u8
+		defer {
+			for levels in kept {delete(levels)}
+			delete(kept)
+		}
+		textures := make([]Texture_Data, int(texture), context.temp_allocator)
+		for handle, i in handles[:at + 1] {textures[handle - 1] = wholes[i]}
+		for c in cases {
+			every := Texture_Request{handle = texture, level = 0, stamp = stream.stamp}
+			levels := texture_levels_from(whole, 0, &kept, int(stream.top))
+			if stream.top > 0 {
+				testing.expect_value(t, texture_levels_queue(r, every, levels), Texture_Levels_Result.Set)
+				for texture_upload_pending(r, every) {testing.expect(t, renderer_frame(r, {camera = c.camera}), r.error)}
+			}
+			testing.expect_value(t, stream.top, 0)
+			before := feedback_image(t, r, c.camera)
+			feedback_settle(t, r, c.camera, textures)
+			after := feedback_image(t, r, c.camera)
+			testing.expectf(t, stream.shown, "%s, %s: the frames sample the texture", sampler, c.name)
+			testing.expectf(t, c.name != "far" || stream.top > 0, "%s, %s: it keeps every level", sampler, c.name)
+			differ := 0
+			for b, i in before {if b != after[i] {differ += 1}}
+			testing.expectf(t, differ == 0 && len(before) == len(after), "%s, %s: %d bytes differ from the image of every level (from level %d)", sampler, c.name, differ, stream.top)
+		}
 	}
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }

@@ -178,7 +178,9 @@
   passes that draw over it (`fragment_evaluate(input, opaque)`: glass layers, filter and
   translucents); in the others, the view's far depth. `ctx.object_low` and `object_high` are the
   bounds of the instance's mesh in its space. `mirai_texture_size(index)` gives the texels of a
-  texture at its finest resident level: a program asks for all the levels of its textures.
+  texture at its finest resident level: a program that asks for it, or that names a mip with
+  `mirai_sample_texture_level`, keeps all the levels of that texture; the other samples keep the
+  levels they read ([residency](materials.md#residency-by-sampling)).
 - `ctx.particle_data`, `ctx.particle_given`, `ctx.particle_random` and `ctx.particle_radius` are
   what the particle of a sprite that draws the point gives, which also gives its color in
   `ctx.vertex_color` ([`vfx` sprites](../../mirai-world/references/vfx.md#passes)); in
