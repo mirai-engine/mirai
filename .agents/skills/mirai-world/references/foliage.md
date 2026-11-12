@@ -219,7 +219,8 @@ function:
   `TRAMPLE_SIDE` texels of `TRAMPLE_TEXEL` around the first streaming source, which follows it in
   place and whose entering texels enter standing: `lean` radians at its center and nothing at
   half the largest side of the box its
-  [`Volume`](../../mirai-gameplay/references/libraries.md#volume) is in, along x and z, each texel keeping the strongest lean and the height of what leaned it.
+  [`Volume`](../../mirai-gameplay/references/libraries.md#volume) is in, along x and z, each
+  texel keeping the strongest lean and the height of what leaned it.
   What it trampled stays after it leaves and stands back up by 1/e every `TRAMPLE_RECOVER`
   seconds; the field is written only while it changes. The hook reads it for every batch of
   foliage, variants included, by the red of the vertex color, unless what leaned it passed far
