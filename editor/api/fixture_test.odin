@@ -88,7 +88,7 @@ fixture_start :: proc(f:^Fixture,t:^testing.T,desc:Server_Desc={}) -> bool {
     defaults:=Echo_Params{times=1}
     shapes_defaults:=Shapes{mode=.Walk}
     ok:=true
-    ok&&=method_register(&f.server,{name="batch",summary=BATCH_SUMMARY,params=type_info_of(Batch_Params),result=type_info_of(Batch_Result),handler=batch})==.None
+    ok&&=method_register(&f.server,{name="batch",summary=BATCH_SUMMARY,params=type_info_of(Batch_Params),result=type_info_of(Batch_Result),writes_result=true,handler=batch})==.None
     ok&&=method_register(&f.server,{name="test.add",summary="Adds two integers.",params=type_info_of(Add_Params),result=type_info_of(Add_Result),handler=add_handler,flags={.Read_Only,.Idempotent,.Core}})==.None
     ok&&=method_register(&f.server,{name="test.echo",summary="Repeats a text.",params=type_info_of(Echo_Params),result=type_info_of(Echo_Result),defaults=&defaults,handler=echo_handler,flags={.Core}})==.None
     ok&&=method_register(&f.server,{name="test.fail",summary="Always fails.",params=type_info_of(Fail_Params),handler=fail_handler,flags={.Destructive,.Core}})==.None

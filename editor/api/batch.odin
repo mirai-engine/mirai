@@ -89,10 +89,13 @@ batch :: proc(call:^Call) {
         if server.transaction==nil {call_fail(call,INVALID_PARAMS,"transaction is of a server that edits a scene; leave it out");return}
         if !server.transaction(server,call,true) {return}
     }
-    out:serial.Writer
-    serial.writer_init(&out,4096,call.allocator)
+    // The answers go straight into the response: the scratch each call takes
+    // back after it runs never holds them.
+    out:=call.out
+    start:=out.count
+    raw(out,`{"results":[`)
+    list:=out.count
     answers:=make([dynamic][2]int,0,len(p.calls),call.allocator)
-    results:=make([]Batch_Answer,len(p.calls),call.allocator)
     for &given,at in p.calls {
         failure:Error
         method:=method_find(server,given.method)
@@ -109,24 +112,42 @@ batch :: proc(call:^Call) {
             }
             if problem!="" {failure={INVALID_PARAMS,problem,""}}
         }
+        entry:=out.count
+        ran:=false
         if failure.code==0 {
-            start:=out.count
+            if at>0 {raw(out,",")}
+            raw(out,`{"method":`);serial.text_write_string(out,given.method);raw(out,`,"result":`)
+            begin:=out.count
             mark:=base.arena_mark(&server.scratch)
-            if failed,_:=method_execute(server,method,params,&out);failed.code!=0 {failure={failed.code,strings.clone(failed.message,context.temp_allocator),""}}
-            base.arena_rewind(&server.scratch,mark)
-            if failure.code==0 {
-                append(&answers,[2]int{start,out.count})
-                results[at].method=given.method
-                continue
+            failed,_:=method_execute(server,method,params,out)
+            if failed.code==0 {
+                base.arena_rewind(&server.scratch,mark)
+                end:=out.count
+                raw(out,"}")
+                if out.overflow==0 {
+                    append(&answers,[2]int{begin,end})
+                    continue
+                }
+                ran=true
+                failure={SERVER_ERROR,fmt.tprintf("its result does not fit in the %d bytes of a response with those of the calls before it; split the calls into smaller batches",server.max_response),""}
+            } else {
+                failure={failed.code,failed.message,""}
             }
         }
-        for &answer,i in answers {results[i].result=serial.Json(out.data[answer[0]:answer[1]])}
-        done,_:=serial.text_encode(results[:at],.Line,context.temp_allocator)
-        call_fail(call,failure.code,fmt.tprintf("calls[%d] %s: %s; the %d calls before it ran%s",at,given.method,failure.message,at,p.transaction?", and what they edited of the scene was taken back":""),fmt.tprintf(`{{"failed":%d,"results":%s}}`,at,string(done)))
+        // In the scratch of the call, the message first: the results so far
+        // may not fit there, and then the error goes without them.
+        message:=fmt.tprintf("calls[%d] %s: %s; %s %d calls before it ran%s",at,given.method,failure.message,ran?"it and the":"the",at,p.transaction?", and what they edited of the scene was taken back":"")
+        data:=ran?fmt.tprintf(`{{"failed":%d}}`,at):fmt.tprintf(`{{"failed":%d,"results":[%s]}}`,at,string(out.data[list:entry]))
+        rewind(out,start)
+        call.failed,call.error=true,{failure.code,message,data}
         break
     }
-    if p.transaction && !server.transaction(server,call,false) {return}
-    if call.failed {return}
-    for &answer,i in answers {results[i].result=serial.Json(out.data[answer[0]:answer[1]])}
-    call_result(call,Batch_Result).results=results
+    if !call.failed {
+        raw(out,"]}")
+        if out.overflow>0 {
+            rewind(out,start)
+            call_failf(call,SERVER_ERROR,"the results of the %d calls do not fit in the %d bytes of a response; split the calls into smaller batches",len(p.calls),server.max_response)
+        }
+    }
+    if p.transaction {server.transaction(server,call,false)}
 }
