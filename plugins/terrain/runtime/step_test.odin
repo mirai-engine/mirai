@@ -10,6 +10,7 @@ import "core:testing"
 import "core:mem"
 import "mirai:asset"
 import "mirai:core"
+import camera "mirai:engine/camera"
 import phys "plugins:physics/runtime"
 import render "mirai:engine/render"
 import "mirai:host"
@@ -432,18 +433,24 @@ a_brush_reads_the_scale_of_its_terrain_across_and_up :: proc(t:^testing.T) {
     testing.expect(t,abs(real(box.rotation*turned.rotation)-1)<1e-5)
 }
 
-terrain_test_update :: proc(w:^Terrain_Test_World,resident:^Terrain_Resident,app:^host.App,time:core.Time={},view:=core.View{},settings:=TERRAIN_TEST_SETTINGS) {
+terrain_test_update :: proc(w:^Terrain_Test_World,resident:^Terrain_Resident,app:^host.App,time:core.Time={},view:=core.View{},settings:=TERRAIN_TEST_SETTINGS,locals:=core.Ref(camera.Camera_Views){}) {
     // A tick, and those that take what its jobs built: a rebuilt chunk shows in the tick after it changed.
-    terrain_test_tick(w,resident,app,time,view,settings)
+    terrain_test_tick(w,resident,app,time,view,settings,locals)
     for _ in 0..<8 {
         if !work_busy(&w.data,nil) {break}
-        terrain_test_tick(w,resident,app,{},view,settings)
+        terrain_test_tick(w,resident,app,{},view,settings,locals)
     }
 }
 
-terrain_test_tick :: proc(w:^Terrain_Test_World,resident:^Terrain_Resident,app:^host.App,time:core.Time={},view:=core.View{},settings:=TERRAIN_TEST_SETTINGS) {
+// The depth of the piece of a terrain a hit is on: 0 a chunk, above that a node; -1 none.
+piece_depth :: proc(w:^Terrain_Test_World,hit:phys.Hit) -> int {
+    piece,is_piece:=core.get(&w.chunks,hit.entity)
+    return is_piece?int(piece.depth):-1
+}
+
+terrain_test_tick :: proc(w:^Terrain_Test_World,resident:^Terrain_Resident,app:^host.App,time:core.Time={},view:=core.View{},settings:=TERRAIN_TEST_SETTINGS,locals:=core.Ref(camera.Camera_Views){}) {
     if w.settings=={} {w.settings={bodies=64,shapes=64,contacts=64,joints=1,characters=1,hulls=1,meshes=64,heightfields=64}}
-    test_step(&w.terrain,core.commands_of(test_world_ref(&w.w)),resident,app,&w.problems,settings,view=view)
+    test_step(&w.terrain,core.commands_of(test_world_ref(&w.w)),resident,app,&w.problems,settings,view=view,locals=locals)
     test_world_settle(&w.w)
     terrain_test_physics(w,app,time)
     test_world_settle(&w.w)

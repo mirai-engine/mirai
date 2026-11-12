@@ -209,8 +209,8 @@ letting_go_of_an_excavated_zone_and_reading_it_again_keeps_its_edits :: proc(t:^
         testing.expect(t,w.data.stats.pages_read>0,"the chunks farther from the viewer read their pages in jobs")
         hit,ok:=phys.raycast({&w.state},near+{0,20,0},{0,-1,0})
         testing.expect(t,ok && abs(hit.point.y)<1e-4)
-        _,ok=phys.raycast({&w.state},{100,20,100},{0,-1,0})
-        testing.expect(t,!ok,"far from the viewer there is no collider")
+        hit,ok=phys.raycast({&w.state},{100,20,100},{0,-1,0})
+        testing.expect(t,ok && piece_depth(&w,hit)>0,"far from the viewer the ground collides with its node")
         // Excavate near the viewer.
         dig(&w.terrain_requests,{kind=.Lower,center=near,radius=0.4,amount=2},owner)
         for _ in 0..<2 {pipeline_tick(&w,&resident,&app,settings)}
@@ -228,8 +228,8 @@ letting_go_of_an_excavated_zone_and_reading_it_again_keeps_its_edits :: proc(t:^
         // What it showed stays until the nodes that replace it are built.
         for _ in 0..<8 {pipeline_tick(&w,&resident,&app,settings)}
         s=&w.data.entries[0].source
-        _,ok=phys.raycast({&w.state},near+{0,20,0},{0,-1,0})
-        testing.expect(t,!ok,"the zone let go of its colliders")
+        hit,ok=phys.raycast({&w.state},near+{0,20,0},{0,-1,0})
+        testing.expect(t,ok && piece_depth(&w,hit)>0,"the zone let go of its chunk colliders: its node collides")
         _,known=terrain_height({&w.data},id,near.x,near.z)
         testing.expect(t,!known,"and of its pages")
         testing.expect(t,w.data.stats.pages_left>0)
@@ -309,8 +309,8 @@ a_volume_lets_go_of_the_blocks_far_from_its_viewers_and_reading_them_again_keeps
         // The node over the zone is built from its blocks before they leave; a node is taken when its job ends.
         for _ in 0..<48 {work_wait(&w.data,nil);pipeline_tick(&w,&resident,&app,settings)}
         s=&w.data.entries[0].source
-        _,ok=phys.raycast({&w.state},near+{0,20,0},{0,-1,0})
-        testing.expect(t,!ok,"the zone let go of its colliders")
+        hit,ok=phys.raycast({&w.state},near+{0,20,0},{0,-1,0})
+        testing.expect(t,ok && piece_depth(&w,hit)>0,"the zone let go of its chunk colliders: its node collides")
         // What is far shows as a node of the octree: one mesh for the surface of its chunks, with the excavation.
         zone:=core.NONE
         for chunk,row in w.chunks.values[:core.count(&w.chunks)] {
@@ -368,6 +368,52 @@ reading_a_paged_source_again_keeps_the_pages_its_file_still_holds :: proc(t:^tes
     change,ok:=source_compare(&second,&first)
     testing.expect(t,ok && change.changed && change.low.x==0 && change.high.x==PAGE-1 && change.high.z==PAGE-1,"only the edited page differs from the file")
     testing.expect_value(t,grid_dense(&second.field),held-PAGE*PAGE)
+}
+
+// The coarse data comes from the file without a page in memory, as measuring
+// the samples gives it, and taking a layer away rewrites the pages in their
+// blocks without keeping them.
+@(test)
+a_paged_heightfield_reads_its_coarse_data_and_loses_a_layer_without_holding_its_pages :: proc(t:^testing.T) {
+    root:=base.test_folder(t,"terrain")
+    id:=base.Asset_Id{313,314}
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    {
+        source:Source;defer source_destroy(&source)
+        testing.expect(t,source_make(&source,.Heightfield,{129,1,97},1,16))
+        testing.expect(t,source_layer_set(&source,1,LAYER_DEFAULT) && source_layer_set(&source,2,LAYER_DEFAULT))
+        for z in 0..<97 {for x in 0..<129 {
+            testing.expect(t,source_set(&source,{x,0,z},pipeline_bump(x,z)))
+            a:=u8((x*7+z*3)%150)
+            testing.expect(t,grid_put(&source.weights,{x,0,z},Weights{255-a-u8(z),a,u8(z),0},source.allocator))
+        }}
+        testing.expect_value(t,source_save(&source,fmt.tprintf("%s/source.terrain",root),id,&types),asset.Error.None)
+    }
+    assets:host.Assets;testing.expect(t,host.assets_init(&assets,{root=root,capacity=16}));defer host.assets_destroy(&assets)
+    paged,whole:Source;defer source_destroy(&paged);defer source_destroy(&whole)
+    testing.expect(t,terrain_read(&paged,&assets,id,paged=true))
+    testing.expect(t,coarse_ready(&paged) && grid_dense(&paged.field)==0 && grid_dense(&paged.weights)==0,"the coarse data reads no page")
+    _,loaded:=source_load(&whole,fmt.tprintf("%s/source.terrain",root),&types)
+    testing.expect(t,loaded && !coarse_ready(&whole) && source_coarse_build(&whole))
+    same :: proc(t:^testing.T,a,b:^Source) {
+        testing.expect(t,a.coarse.size==b.coarse.size && len(a.coarse.errors)==len(b.coarse.errors))
+        for j in 0..<a.coarse.size.y {for i in 0..<a.coarse.size.x {
+            testing.expect_value(t,grid_get(&a.coarse.heights,i,j),grid_get(&b.coarse.heights,i,j))
+            testing.expect_value(t,grid_get(&a.coarse.weights,i,j),grid_get(&b.coarse.weights,i,j))
+        }}
+        for range,i in a.coarse.ranges {testing.expect(t,abs(range.x-b.coarse.ranges[i].x)<=HEIGHT_STEP && abs(range.y-b.coarse.ranges[i].y)<=HEIGHT_STEP)}
+        for e,i in a.coarse.errors {
+            testing.expect(t,abs(e.coarse-b.coarse.errors[i].coarse)<=HEIGHT_STEP)
+            for level,l in e.levels {testing.expect(t,abs(level-b.coarse.errors[i].levels[l])<=HEIGHT_STEP)}
+        }
+    }
+    same(t,&paged,&whole)
+    testing.expect(t,source_layer_remove(&paged,1) && source_layer_remove(&whole,1))
+    testing.expect(t,grid_dense(&paged.weights)==0 && paged.layer_count==2,"the pages it rewrote are not in memory")
+    testing.expect(t,source_region_read(&paged,{},{128,0,96}))
+    for z in 0..<97 {for x in 0..<129 {testing.expect_value(t,grid_value(&paged.weights,{x,0,z}),grid_value(&whole.weights,{x,0,z}))}}
+    testing.expect(t,source_coarse_build(&whole))
+    same(t,&paged,&whole)
 }
 
 @(test)

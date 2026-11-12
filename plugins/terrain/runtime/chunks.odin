@@ -461,7 +461,7 @@ chunk_publish :: proc(a:^host.Assets,mesh:^Chunk_Mesh,collision:=true,picking:=f
         options.tangents=tangents
     }
     heightfield:host.Assets_Heightfield
-    if mesh.grid && collision {
+    if mesh.grid && collision && mesh.columns>0 {
         // In the space of the chunk, whose first sample is its origin.
         heightfield={heights=mesh.heights[:],columns=mesh.columns,rows=mesh.rows,cell=mesh.cell,disabled_borders=mesh.disabled_borders[:],holes=mesh.holes[:]}
         options.heightfield=&heightfield

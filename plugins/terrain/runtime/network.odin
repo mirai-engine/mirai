@@ -159,7 +159,7 @@ data_edit :: proc(data:^Terrain_Data,entry:^Data_Source,brush:Brush) -> (change:
     previous_cost=source_cost(&entry.source)
     change=source_edit(&entry.source,brush)
     if change.error!=.None || !change.changed {return}
-    if !source_coarse_update(&entry.source,change.low,change.high,entry.ranges[:entry.quad.first[1]]) {return {error=.Out_Of_Memory}}
+    if !source_coarse_update(&entry.source,change.low,change.high) {return {error=.Out_Of_Memory}}
     data_errors_edit(entry,change.low,change.high)
     data.samples=u32(int(data.samples)-previous_cost+source_cost(&entry.source))
     data_mark(entry,change)
@@ -277,7 +277,7 @@ replay_page :: proc(data:^Terrain_Data,entry:^Data_Source,replay:Replay) -> (cha
     if !ok {return {error=.Invalid}}
     if high.x<low.x {return}
     change={changed=true,low=low,high=high}
-    if !source_coarse_update(s,low,high,entry.ranges[:entry.quad.first[1]]) {return {error=.Out_Of_Memory}}
+    if !source_coarse_update(s,low,high) {return {error=.Out_Of_Memory}}
     data_errors_edit(entry,low,high)
     data_mark(entry,change)
     return

@@ -11,7 +11,7 @@ import "mirai:std/geom"
 import mm "mirai:std/math"
 import "mirai:std/serial"
 
-VERSION :: 11
+VERSION :: 12
 SAMPLES_MAX :: 16385
 // A source has at most this many chunks, which each hold their state: one that reaches further
 // takes more cells per chunk.
@@ -142,8 +142,9 @@ source_load :: proc(s:^Source,path:string,types:^asset.Types,allocator:=context.
 // The source an open .terrain holds; s is replaced only when it is valid. With
 // pages, the path of file, a Heightfield or Volume leaves the values of its
 // pages in that file (asset_load_front opens it without them), read when
-// needed.
-source_read :: proc(s:^Source,file:^asset.Asset,types:^asset.Types,allocator:=context.allocator,pages:="") -> (id:base.Asset_Id,ok:bool) {
+// needed. coarse: a Heightfield reads its coarse data too, as the source of a
+// world keeps it.
+source_read :: proc(s:^Source,file:^asset.Asset,types:^asset.Types,allocator:=context.allocator,pages:="",coarse:=false) -> (id:base.Asset_Id,ok:bool) {
     if asset.kind_check(file,TERRAIN_KIND,VERSION)!=.None {return}
     info,error:=asset.asset_row(file,types,"terrain",Source_Info)
     if error!=.None || info==nil || !source_valid(info^) {return}
@@ -158,6 +159,7 @@ source_read :: proc(s:^Source,file:^asset.Asset,types:^asset.Types,allocator:=co
     }
     paged:=pages!=""
     if !source_weights_read(&temporary,file,types,allocator,paged) || !source_holes_read(&temporary,file,types,allocator,paged) {return}
+    if coarse && !coarse_read(&temporary,file,types) {return}
     temporary.origin=file.blob.header.content_hash
     source_destroy(s)
     s^=temporary
@@ -193,6 +195,21 @@ source_bytes :: proc(s:^Source,id:base.Asset_Id,types:^asset.Types,allocator:=co
     grid_put_document(&document,types,&s.field,"field_pages","field_blocks",value_finite,s.file,s.allocator,keep,quantize=s.kind==.Heightfield) or_return
     source_weights_put(&document,types,s,keep) or_return
     source_holes_put(&document,types,s,keep) or_return
+    if s.kind==.Heightfield {
+        // A source without its coarse data (one of the editor) measures it for the file and lets it go.
+        if coarse_ready(s) {
+            coarse_put(&document,types,&s.coarse) or_return
+        } else {
+            held:=s.coarse
+            s.coarse={}
+            built:=source_coarse_build(s)
+            measured:=s.coarse
+            s.coarse=held
+            defer coarse_destroy(&measured,s.allocator)
+            if !built {return nil,.Out_Of_Memory}
+            coarse_put(&document,types,&measured) or_return
+        }
+    }
     asset.import_put(&document,types,import_info) or_return
     return asset.document_bytes(&document,allocator)
 }
