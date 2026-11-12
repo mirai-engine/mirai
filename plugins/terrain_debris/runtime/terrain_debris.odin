@@ -10,24 +10,26 @@ import phys "plugins:physics/runtime"
 import terrain "plugins:terrain/runtime"
 
 // What a game's digs of a terrain leave besides the hole: pieces, prefabs
-// with a body that fly out of it with the material their layer had, and
-// drops, prefabs to pick up. Each layer of a Terrain_Debris says which and
-// how many cubic metres taken give one; what a dig takes short of one is
+// with a body that fly out of it, and drops, prefabs to pick up. Each
+// material of a Terrain_Debris says which a layer of that material gives
+// and how many cubic metres taken give one; what a dig takes short of one is
 // owed to the next dig of that terrain. A prefab with Replicate is born on
 // the server and replicated: in a network session nothing is born on a
 // client, which sees what the server sends.
 
 TERRAINS :: 16 // terrains of a world whose owed cubic metres are kept
+DEBRIS_MATERIALS :: 16
 
-@(component,description="Pieces with physics and drops to pick up that a game's digs of this terrain spawn, by layer.")
+@(component,description="Pieces with physics and drops to pick up that a game's digs of this terrain spawn, by the material of each layer taken.")
 Terrain_Debris :: struct {
-    layers:[terrain.LAYERS_MAX]Debris_Layer, // by the index of the layer
+    materials:[DEBRIS_MATERIALS]Debris_Material `mirai:"trim"`, // by terrain.material_entry
     pieces_per_tick:u32,                     // pieces it spawns in a tick at most
     drops_per_tick:u32,                      // drops it spawns in a tick at most
     speed:f32 `mirai:"min=0,unit=m/s"`,      // pieces leave the middle of what was taken this fast, up and out
 }
 
-Debris_Layer :: struct {
+Debris_Material :: struct {
+    material:base.Asset_Id `mirai:"kind=.mat"`, // none: every material no entry names
     piece:base.Asset_Id `mirai:"kind=.scene"`, // a prefab with a Rigid_Body; none: no pieces
     piece_volume:f32 `mirai:"min=0,unit=m3"`, // cubic metres taken for each piece
     drop:base.Asset_Id `mirai:"kind=.scene"`,  // a prefab to pick up; none: no drops
@@ -35,7 +37,7 @@ Debris_Layer :: struct {
 }
 
 TERRAIN_DEBRIS_DEFAULT :: Terrain_Debris{
-    layers={0..<terrain.LAYERS_MAX={piece_volume=0.5,drop_volume=2}},
+    materials={0={piece_volume=0.5,drop_volume=2}},
     pieces_per_tick=8,
     drops_per_tick=4,
     speed=3,
@@ -50,7 +52,7 @@ Debris_Owed :: struct {
 
 Owed :: struct {
     owner:core.Entity,
-    pieces,drops:[terrain.LAYERS_MAX]f32,
+    pieces,drops:[DEBRIS_MATERIALS]f32, // by entry of its Terrain_Debris
 }
 
 @(step="fixed",loops="game",stage="react")
@@ -71,19 +73,20 @@ terrain_debris :: proc(
         }
         if !touched[slot] {rooms[slot],touched[slot]={config.pieces_per_tick,config.drops_per_tick},true}
         o:=&owed.terrains[slot]
-        for layer,i in config.layers {
-            taken:=dig.layers[i]
-            if !(taken>0) {continue}
+        for taken,i in dig.layers {
+            at:=terrain.material_entry(config.materials[:],dig.materials[i])
+            if at<0 || !(taken>0) {continue}
+            layer:=config.materials[at]
             rng:=base.rng_make(base.hash_combine(u64(time.tick),u64(i)),u64(dig.owner))
             if layer.piece!={} {
-                for _ in 0..<debris_count(&o.pieces[i],taken,layer.piece_volume,&rooms[slot][0]) {
+                for _ in 0..<debris_count(&o.pieces[at],taken,layer.piece_volume,&rooms[slot][0]) {
                     direction:=spread(&rng)
                     root,ok:=debris_spawn(commands,assets,layer.piece,dig.center+direction*dig.radius*0.2,problems)
                     if ok && config.speed>0 {phys.set_velocity(bodies,root,(direction+{0,1,0})*config.speed*0.5)}
                 }
             }
             if layer.drop!={} {
-                for _ in 0..<debris_count(&o.drops[i],taken,layer.drop_volume,&rooms[slot][1]) {
+                for _ in 0..<debris_count(&o.drops[at],taken,layer.drop_volume,&rooms[slot][1]) {
                     debris_spawn(commands,assets,layer.drop,dig.center+spread(&rng)*dig.radius*0.1,problems)
                 }
             }

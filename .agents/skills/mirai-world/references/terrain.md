@@ -185,6 +185,11 @@ Collision and picking:
   collider keeps them.
 - A holed cell has no visible triangles, picking or collision; the physics heightfield receives the
   chunk's mask and its edges next to a hole stay active.
+- Each cell of a Heightfield collider shows one material: the one whose layers cover most of it, by
+  the weights its four corners show (painted and automatic) added up by material. Hits and contacts
+  name it, and `Collision_Settings.surfaces` gives it its friction and restitution
+  ([collision](../../mirai-physics/references/engine.md#collision-categories-and-presets)). A
+  Volume's Mesh collider has one surface.
 
 Construction and publishing:
 
@@ -484,14 +489,17 @@ that stopped being solid, with its weights; in a Heightfield, the height that we
 with the weights of its column. `terrain` stores none of that: the game uses it (an inventory,
 points) and these plugins:
 
-- **Dust:** `Terrain_Dust` on the terrain (`dust.odin`) gives per layer a channel of
+- **Dust:** `Terrain_Dust` on the terrain (`dust.odin`) gives per material a channel of
   `core.Births` (`CHANNEL_DUST` or another, for another effect) and its color, and births per cubic
   meter with a cap per edit. An emitter of [`vfx`](vfx.md#channels) with a `Particle_Channel` of
   that channel shows it; without `vfx` nobody takes them.
-- **Pieces and drops:** the `terrain_debris` plugin. `Terrain_Debris` gives per layer a piece
-  prefab (with `Rigid_Body`, of the layer's material, which leaves with `speed`) and a drop one,
+- **Pieces and drops:** the `terrain_debris` plugin. `Terrain_Debris` gives per material a piece
+  prefab (with `Rigid_Body`, which leaves with `speed`) and a drop one,
   each per so many cubic meters removed; what does not reach is owed to the next edit of that
   terrain (`Debris_Owed`), with a cap per tick for each.
+- Both key their entries by the material of the layer taken (`material_entry`): an entry without
+  a material is for every material no entry names, and a layer keeps its entry when the layers are
+  reordered or removed.
 - Both are configured in the inspector and by `scene.write`; the demo has them in the `dig`
   scene.
 
@@ -739,7 +747,8 @@ physics, saving, stability and world copy.
   borders of its blocks) and `a_large_volume_holds_and_stores_only_the_blocks_of_its_surfaces`.
 - Recycled handles, relinked sources and incomplete chunks: authors are not confused with derived
   children nor left orphaned.
-- `layers_test.odin`, `holes_test.odin`, `shading_test.odin` and `shape_test.odin` (falloff, wide
+- `layers_test.odin` (`each_collider_cell_shows_the_material_that_covers_most_of_it` among them),
+  `holes_test.odin`, `shading_test.odin` and `shape_test.odin` (falloff, wide
   Smooth, ramp and shapes).
 - `displaced_chunks_split_their_cells_on_the_collider_and_join_their_neighbors`: the relief
   subdivides over the collider, stitches the sides and respects the holes; its image needs a GPU
@@ -799,7 +808,7 @@ cause, a correction that comes back and repeats the ticks, the brush in bytes, a
 Ground and dust: `mirai test plugins/terrain/runtime` with
 `the_ground_answers_each_line_as_its_terrain_has_it`,
 `the_chunks_of_a_terrain_without_collider_are_unloaded_ground` and
-`a_dig_raises_dust_of_each_layer_it_took_on_its_channel`. Debris:
+`a_dig_raises_the_dust_of_the_material_of_each_layer_it_took_wherever_the_layer_is`. Debris:
 `mirai test plugins/terrain_debris/runtime`
 (`digs_give_a_piece_for_each_volume_taken_and_keep_what_falls_short_for_the_next`).
 
