@@ -121,6 +121,8 @@ source_clone :: proc(dst,src:^foliage.Source,allocator:=context.allocator) {
         append(&copy.manual,..cell.manual[:])
         copy.overrides=make([dynamic]foliage.Foliage_Override,0,len(cell.overrides),allocator)
         append(&copy.overrides,..cell.overrides[:])
+        copy.density=make([dynamic]u8,0,len(cell.density),allocator)
+        append(&copy.density,..cell.density[:])
         append(&dst.cells,copy)
     }
 }
@@ -193,6 +195,25 @@ edit_preview :: proc(s:^editor.Session,t:^Foliage_Tool,assets:^host.Assets) -> b
     return true
 }
 
+// Shows what touches of the brush changed before the stroke is a step: the
+// cells from low to high as the edit holds them, in the stroke the runtime
+// shows over the file (Foliage_Stroke), which is written when it ends.
+edit_show :: proc(t:^Foliage_Tool,shown:^foliage.Foliage_Stroke,low,high:[2]i32) {
+    if shown.source!=t.edit.id {
+        foliage.stroke_clear(shown)
+        shown.source=t.edit.id
+    }
+    shown.instances=t.edit.source.info.instances
+    head:=editor.revision_head(&t.history,t.edit.id,t.edit.revision)
+    for z in low.y..=high.y {
+        for x in low.x..=high.x {
+            filed:=head!=nil && foliage.source_cell(head,{x,z})!=nil
+            foliage.stroke_cell_set(shown,{x,z},foliage.source_cell(&t.edit.source,{x,z}),filed)
+        }
+    }
+    shown.revision+=1
+}
+
 // Puts back the revision the edit started from: its head.
 edit_cancel :: proc(s:^editor.Session,t:^Foliage_Tool,assets:^host.Assets) {
     head:=editor.revision_head(&t.history,t.edit.id,t.edit.revision)
@@ -260,8 +281,10 @@ target :: proc(s:^editor.Session,foliages:^core.Table(foliage.Foliage,$A)) -> co
 foliage_tool :: proc(
     s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,foliages:^core.Table(foliage.Foliage,.Read),worlds:^core.Table(core.World_Transform,.Read),
     grounds:core.Ref(foliage.Foliage_Ground),requests:^foliage.Foliage_Ground_Requests,resident:core.Ref(foliage.Foliage_Resident),
-    assets:^host.Assets,allocator:runtime.Allocator,input:core.Input,frame:core.Frame_Time,
+    shown:^foliage.Foliage_Stroke,assets:^host.Assets,allocator:runtime.Allocator,input:core.Input,frame:core.Frame_Time,
 ) {
+    // A stroke that ended (a step, or given back) shows nothing more: the runtime reads its file again.
+    defer if !tool.stroke.active {foliage.stroke_clear(shown)}
     if !tool.active || editor.playing(s) {
         if tool.stroke.active || tool.gizmo.drag.active {edit_cancel(s,tool,assets)}
         tool.stroke,tool.gizmo,tool.adjust={},{},{}
@@ -282,7 +305,7 @@ foliage_tool :: proc(
     ground:=foliage.ground_owner(grounds.ptr,e)
     if !tool.stroke.active && !tool.adjust.active && !tool.gizmo.drag.active {tool_keys_frame(s,tool,assets,input)}
     switch tool.mode {
-    case .Paint,.Erase,.Reapply,.Generate,.Tint: brush_frame(s,tool,world,e,owner,ground,requests,assets,input,frame)
+    case .Paint,.Erase,.Reapply,.Generate,.Tint: brush_frame(s,tool,world,e,owner,ground,requests,shown,assets,input,frame)
     case .Select: select_frame(s,tool,world,e,owner,ground,resident.ptr,assets,input,frame)
     case .Place:  place_frame(s,tool,world,owner,ground,assets,input)
     }
@@ -515,7 +538,7 @@ type_panel :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,ass
     if tool.held_type!=t.id || !tool.held_dirty {tool.held,tool.held_type=t^,t.id}
     defaults:=foliage.FOLIAGE_TYPE_DEFAULT
     h:=editor.Held_Values{key=u64(PANEL_SCOPE)<<32|u64(t.id),info=type_info_of(foliage.Foliage_Type),value=&tool.held,defaults=&defaults}
-    fields:=[?]string{"name","mesh","prefab","materials","density","scale","height","yaw","tilt","align","offset","rule","fade_distance","cull_distance","impostor_distance","wind","wind_variants","casts_shadow","ray_visible","collision","size"}
+    fields:=[?]string{"name","mesh","prefab","materials","density","radius","scale","height","yaw","tilt","align","offset","rule","fade_distance","cull_distance","impostor_distance","wind","wind_variants","casts_shadow","ray_visible","collision","size"}
     kit.section(ctx,type_name(t),"",80)
     for field in fields {if editor.held_field_row(s,h,field) {tool.held_dirty=true}}
     if tool.held_dirty && !core.mouse_down(input,.Left) && ctx.edit.id==0 {

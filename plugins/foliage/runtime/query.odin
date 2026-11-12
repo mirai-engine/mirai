@@ -91,9 +91,10 @@ plants_in :: proc(out:^[dynamic]Foliage_Found,low,high,center:[3]f32,radius:f32,
             p:=mm.transform_point(inverse,{corner&1!=0?high.x:low.x,corner&2!=0?high.y:low.y,corner&4!=0?high.z:low.z})
             local_low,local_high=linalg.min(local_low,p),linalg.max(local_high,p)
         }
-        if !(local_high.x>=-COORD_MAX*CELL_SIZE && local_low.x<=COORD_MAX*CELL_SIZE && local_high.z>=-COORD_MAX*CELL_SIZE && local_low.z<=COORD_MAX*CELL_SIZE) {continue}
-        first,_:=cell_of({max(local_low.x,-COORD_MAX*CELL_SIZE),0,max(local_low.z,-COORD_MAX*CELL_SIZE)})
-        last,_:=cell_of({min(local_high.x,COORD_MAX*CELL_SIZE),0,min(local_high.z,COORD_MAX*CELL_SIZE)})
+        reach:=f32(COORD_MAX)*CELL_SIZE
+        if !(local_high.x>=-reach && local_low.x<=reach && local_high.z>=-reach && local_low.z<=reach) {continue}
+        first,_:=cell_of({max(local_low.x,-reach),0,max(local_low.z,-reach)})
+        last,_:=cell_of({min(local_high.x,reach),0,min(local_high.z,reach)})
         s:=&entry.source
         // From the first cell of the box on, a row of it at a time: the cells are in order, z then x.
         at:=cell_lower(s,first)

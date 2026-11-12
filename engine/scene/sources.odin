@@ -69,13 +69,7 @@ scene_sources :: proc(
     sources.view,sources.viewed=view.position,view.size.x>0 && view.size.y>0
     count=sources_gather(&list,count,seats,marks,worlds,motions,problems)
     // What moved less than SOURCE_MOVE is where it was: the residencies look again when something moved.
-    moved:=count!=sources.count
-    for source,i in list[:count] {
-        if moved {break}
-        was:=sources.items[i]
-        moved=source.distance!=was.distance || linalg.length2(source.position-was.position)>SOURCE_MOVE*SOURCE_MOVE || linalg.length2(source.ahead-was.ahead)>SOURCE_MOVE*SOURCE_MOVE
-    }
-    if !moved {return}
+    if !sources_moved(sources.items[:sources.count],list[:count]) {return}
     sources.items=list
     sources.count=count
     sources.revision+=1
@@ -87,6 +81,17 @@ scene_simulation_sources :: proc(
     worlds:^core.Table(core.World_Transform,.Read),motions:^core.Table(core.Motion,.Read),problems:^core.Problems,
 ) {
     sources.count=sources_gather(&sources.items,0,seats,marks,worlds,motions,problems)
+}
+
+// Whether sources are others than those of before: one came or went, or
+// moved SOURCE_MOVE or more.
+sources_moved :: proc "contextless" (before,now:[]Source) -> bool {
+    if len(before)!=len(now) {return true}
+    for source,i in now {
+        was:=before[i]
+        if source.distance!=was.distance || linalg.length2(source.position-was.position)>SOURCE_MOVE*SOURCE_MOVE || linalg.length2(source.ahead-was.ahead)>SOURCE_MOVE*SOURCE_MOVE {return true}
+    }
+    return false
 }
 
 // Adds to list, from count, the bodies the seats drive and the marks, each
@@ -138,12 +143,18 @@ Sources_Near :: struct {
     count:int,
 }
 
-sources_near :: proc "contextless" (sources:^Streaming_Sources,placed:mm.Mat4,reach:f32) -> (near:Sources_Near) {
-    if sources==nil {return}
+sources_near :: proc "contextless" (sources:^Streaming_Sources,placed:mm.Mat4,reach:f32) -> Sources_Near {
+    if sources==nil {return {}}
+    return sources_near_of(sources.items[:clamp(sources.count,0,SOURCES_MAX)],placed,reach)
+}
+
+// The same of a list of sources, as those of the simulation.
+sources_near_of :: proc "contextless" (sources:[]Source,placed:mm.Mat4,reach:f32) -> (near:Sources_Near) {
+    if len(sources)==0 {return}
     inverse:=linalg.inverse(placed)
     scale:=max(linalg.length(placed[0].xyz),linalg.length(placed[1].xyz),linalg.length(placed[2].xyz))
     if !(scale>0) {return}
-    for source in sources.items[:sources.count] {
+    for source in sources[:min(len(sources),SOURCES_MAX)] {
         distance:=source.distance>0?source.distance:reach
         if !(distance>0 && distance-distance==0) {continue}
         for point,i in ([2][3]f32{source.position,source.ahead}) {

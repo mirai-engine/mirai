@@ -114,10 +114,13 @@ disc_point :: proc "contextless" (center,normal:[3]f32,radius:f32,random:^mm.Rng
 }
 
 
-// Turns the generator on or off in the cells under a brush. True when one changed.
+// Raises (on) or lowers the density the cells under a brush generate with.
+// True when one changed.
 generate_touch :: proc(s:^foliage.Source,center:[3]f32,radius:f32,on:bool) -> (changed:bool) {
-    return foliage.source_generate_area(s,center,radius,on)
+    return foliage.source_generate_area(s,center,radius,on,GENERATE_HARDNESS)
 }
+
+GENERATE_HARDNESS :: f32(0.5) // of the radius of the Generate brush: where it gives all of the density, or takes all of it
 
 // An instance a selection names: its cell and its id (foliage.Placed.id).
 Instance_Ref :: struct {

@@ -69,6 +69,13 @@ Run_Provider :: struct {
     ended:proc(s:^Session,r:^Run),                             // the run goes away, or stays only as the past of the last Play
 }
 
+// What a plugin derives from a gesture of the edited World before the history
+// records it (the bed a terrain takes under a spline that moved): what follow
+// changes joins the step of that gesture, so its undo takes both back.
+Edit_Follow_Provider :: struct {
+    follow:proc(s:^Session),
+}
+
 // An area of the preferences of the editor a plugin keeps: the editor reads
 // it from the file and writes it there as its own.
 Preferences_Provider :: struct {
@@ -172,6 +179,8 @@ Providers :: struct {
     menu_count:int,
     runs:[PROVIDER_CAPACITY]Run_Provider,
     run_count:int,
+    follows:[PROVIDER_CAPACITY]Edit_Follow_Provider,
+    follow_count:int,
 }
 
 // The providers of the plugins of the library in use, looked for again when it changes.
@@ -189,6 +198,7 @@ providers :: proc(s:^Session) -> ^Providers {
     p.menu_count=provided_all(s,p.menus[:])
     p.run_count=provided_all(s,p.runs[:])
     p.click_count=provided_all(s,p.clicks[:])
+    p.follow_count=provided_all(s,p.follows[:])
     if !s.has_project {return p}
     opened,error:=project.open(s.project_root,s.engine_root,context.temp_allocator)
     if error.code!=.None {return p}
@@ -210,6 +220,16 @@ providers :: proc(s:^Session) -> ^Providers {
         }
     }
     return p
+}
+
+// What the plugins derive from the gesture about to be recorded, and the
+// sections it moved: run right before the history records a gesture.
+@(private)
+edits_follow :: proc(s:^Session) {
+    sections_sync(s)
+    if s.mode!=.Edit {return}
+    p:=providers(s)
+    for &each in p.follows[:p.follow_count] {if each.follow!=nil {each.follow(s)}}
 }
 
 @(private)

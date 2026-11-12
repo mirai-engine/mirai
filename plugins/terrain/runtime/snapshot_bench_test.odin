@@ -61,7 +61,7 @@ bench_terrain_snapshots :: proc(t:^testing.T) {
                 change:=source_edit(s,brush)
                 testing.expect(t,change.changed)
                 // As an edit of the World does: the coarse grid follows the samples.
-                if c.kind==.Heightfield {source_coarse_update(s,change.low,change.high,nil)}
+                if c.kind==.Heightfield {source_coarse_update(s,change.low,change.high)}
                 start=time.tick_now()
                 testing.expect(t,terrain_data_copy(&ring[tick%SNAPSHOT_RING],&live))
                 if tick>=SNAPSHOT_RING {warm+=time.duration_milliseconds(time.tick_since(start))}

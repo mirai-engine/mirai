@@ -341,8 +341,8 @@ stage. `ground_query` gives a `Ground_Query` or, without one, one without a prob
 reads it keeps its own default (foliage the plane of its entity).
 The probe answers the highest ground along a line: `Ground` with the point, normal and layer
 weights, `None` where no ground covers it, `Empty` where ground covers it without a surface, and
-`Unloaded` where it is not in memory, far from every viewer, which a change announces when it loads;
-`coarse` asks for the cheaper answer from what stays in memory. Where the ground changed is two
+`Unloaded` where it is not in memory, far from every viewer, which a change announces when it loads.
+Where the ground changed is two
 `core.Events` of boxes of the world, read as any other: `changed` (its surface, for foliage) and
 `unloaded` (whether its collision is loaded, which `Ground_Query.unloaded` names, for
 navigation). The query is valid during the function that opens it, and its probe may run from the

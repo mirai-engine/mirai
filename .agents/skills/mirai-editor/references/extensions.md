@@ -366,6 +366,11 @@ ended. What it keeps of a run goes in a storage of its own, keyed by `Run.id`. `
 with an `Api_Step_Input` drives a run, and `editor.play_ui_screen` says what its screen on top shows
 ([`playtest`](../../mirai-plugins/references/plugins.md#first-party-plugins)).
 
+An Editor storage whose only field is `editor.Edit_Follow_Provider` derives what follows a gesture
+of the edited scene right before the history records it (`edits_follow`, with the sections): what
+its `follow(s)` changes joins that step, so one undo takes both back, and undo itself follows
+nothing (`terrain` remakes the bed of a moved spline).
+
 What steers or watches a body in those runs asks the plugin that moves it, never a component by
 its name: an Editor storage whose only field is `editor.Body_Provider` answers for the bodies of
 its plugin (`physics`, whether a character stands; `locomotion`, how a walker measures), and

@@ -199,13 +199,13 @@ removals_index :: proc(r:^Foliage_Removals,removed:^core.Table(Foliage_Removed,$
 }
 
 // Takes what the game asked out, on the end that decides: the ids of the
-// instances a cell shows and has not taken out go to the entities of that
+// instances a cell shows on its ground and has not taken out go to the entities of that
 // cell with room, and past them to new ones under the Foliage. A client asks
 // nothing; what the server took out arrives.
 @(step="fixed frame",loops="game editor",stage="simulate",before="physics_prepare")
 foliage_removals :: proc(
     r:^Foliage_Removals,requests:^Foliage_Requests,removed:^core.Table(Foliage_Removed),foliages:^core.Table(Foliage,.Read),ids:^core.Table(core.Id,.Read),
-    data:core.Ref(Foliage_Data),authority:core.Ref(core.Network),commands:core.Commands,allocator:runtime.Allocator,problems:^core.Problems,
+    data:core.Ref(Foliage_Data),grounds:core.Ref(Foliage_Ground),authority:core.Ref(core.Network),commands:core.Commands,allocator:runtime.Allocator,problems:^core.Problems,
 ) {
     asked:=core.take(&requests.removes)
     context.allocator=allocator
@@ -236,7 +236,8 @@ foliage_removals :: proc(
         entry:=data_find(data.ptr,f.source)
         cell:=entry!=nil?source_cell(&entry.source,coord):nil
         if cell==nil {continue}
-        if !cell_build(&entry.source,cell,{},&work) {
+        tile,_:=ground_cell(ground_owner(grounds.ptr,e),coord)
+        if !cell_build(&entry.source,cell,tile,&work) {
             for request in group {core.offer(&requests.removes,request)}
             memory_problem(problems,e,"taking instances out of this Foliage")
             continue

@@ -17,10 +17,13 @@ import physics "plugins:physics/runtime"
 // on a server) meets the foliage as near ones do, and the navmesh, built from
 // the static collision, has the same obstacles wherever the players are. A
 // Foliage kept for a section that is not loaded (scene.Far_Kept) collides
-// with nothing. Its handles live with the world, as the simulation does: a
-// copy for Play or a rollback takes both. The shapes of an instance are its
-// own, so taking it out destroys them (collider_remove) and touches nothing
-// else; putting one back builds its cell again.
+// with nothing. A tick builds at most a budget of instances, the cells
+// nearest the simulation sources (scene.Simulation_Sources) first, never the
+// view, so that a world collides the same whoever looks at it; the others
+// wait for the ticks after. Its handles live with the world, as the
+// simulation does: a copy for Play or a rollback takes both. The shapes of an
+// instance are its own, so taking it out destroys them (collider_remove) and
+// touches nothing else; putting one back builds its cell again.
 
 @(storage)
 Foliage_Physics :: struct {
@@ -39,6 +42,16 @@ Physics_Owner :: struct {
     ground:u32,
     transform:mm.Transform,
     removed:u64, // the hash of the instances taken out of it then (Removed_Owner)
+    pending:bool, // some of its cells wait for the budget of a tick
+}
+
+// What a tick builds of the collision of the foliage at most: instances of
+// the cells, by the most each shows (cell_bound), the nearest a source first;
+// the rest wait (waiting) for the ticks after.
+PHYSICS_INSTANCES_A_TICK :: 1 << 14
+Physics_Budget :: struct {
+    instances:int, // left
+    waiting:bool,  // some cell waits for the next tick
 }
 // Each cell of the source of a Foliage, with a body when an instance of it collides.
 Physics_Cell :: struct {
@@ -176,8 +189,10 @@ instance_shape :: proc "contextless" (shape:Type_Shape,p:Placed,coord:[2]i32,own
 // the shapes of its types (type_shapes). With all, those it had are
 // destroyed first; otherwise a cell whose content and ground did not change
 // keeps its body, and the instances newly taken out of it (gone) leave with
-// their shapes alone. False when the simulation had no room for all of them.
-physics_owner_build :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,collision:^physics.Collision_Settings,e:core.Entity,s:^Source,transform:mm.Transform,shapes:[]Type_Shape,ground:^Ground_Owner=nil,all:=true,gone:^Removed_Owner=nil) -> (complete,enough:bool) {
+// their shapes alone. With a budget, the cells to build go nearest the
+// sources of near first while it lasts, and the others wait without a body
+// (version 0). False when the simulation had no room for all of them.
+physics_owner_build :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,collision:^physics.Collision_Settings,e:core.Entity,s:^Source,transform:mm.Transform,shapes:[]Type_Shape,ground:^Ground_Owner=nil,all:=true,gone:^Removed_Owner=nil,near:^scene.Sources_Near=nil,budget:^Physics_Budget=nil) -> (complete,enough:bool) {
     held:=make([dynamic]Physics_Cell,context.temp_allocator)
     held_shapes:=make([dynamic]Physics_Shape,context.temp_allocator)
     if !all {
@@ -203,10 +218,30 @@ physics_owner_build :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,col
     }
     physics_owner_clear(fp,state,e,held[:])
     complete,enough=true,true
+    // Which of the cells to build the budget takes: the nearest.
+    chosen:[]bool
+    if budget!=nil {
+        chosen=make([]bool,len(s.cells),context.temp_allocator)
+        wanted:=make([dynamic]scene.Resident_Order,context.temp_allocator)
+        j:=0
+        for &cell,k in s.cells {
+            for j<len(held) && coord_before(held[j].coord,cell.coord) {j+=1}
+            if j<len(held) && held[j].coord==cell.coord {continue}
+            low,high:=cell_box(cell.coord)
+            append(&wanted,scene.Resident_Order{near=near!=nil?scene.box_near(near,low,high):0,index=u32(k)})
+        }
+        slice.sort_by(wanted[:],proc(a,b:scene.Resident_Order) -> bool {return a.near<b.near || a.near==b.near && a.index<b.index})
+        for order in wanted {
+            if budget.instances<=0 {budget.waiting=true;break}
+            instances,_:=cell_bound(s,&s.cells[order.index],0)
+            budget.instances-=max(instances,1)
+            chosen[order.index]=true
+        }
+    }
     work:Build_Work
     defer build_work_destroy(&work)
     j:=0
-    for &cell in s.cells {
+    for &cell,k in s.cells {
         // The cells of an owner and those it keeps are in the order of the cells of its source.
         for j<len(held) && coord_before(held[j].coord,cell.coord) {j+=1}
         if j<len(held) && held[j].coord==cell.coord {
@@ -219,7 +254,12 @@ physics_owner_build :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,col
         }
         tile,revision:=ground_cell(ground,cell.coord)
         removed,removed_hash:=removed_cell(gone,cell.coord)
-        if !cell_build(s,&cell,tile,&work,removed) {
+        if budget!=nil && !chosen[k] {
+            // Version 0: built by a later tick.
+            append(&fp.cells,Physics_Cell{owner=e,coord=cell.coord,ground=revision,removed=removed_hash,first=u32(len(fp.shapes))})
+            continue
+        }
+        if !cell_build(s,&cell,tile,&work,removed,0) {
             // Version 0: built again by the next build of the owner.
             enough=false
             append(&fp.cells,Physics_Cell{owner=e,coord=cell.coord,ground=revision,removed=removed_hash,first=u32(len(fp.shapes))})
@@ -330,9 +370,9 @@ shape_instance :: proc(state:^physics.Physics_State,body:physics.Body_Handle,sha
 }
 
 // Keeps the bodies of the foliage of the world equal to its sources and the
-// places of their entities.
+// places of their entities, a budget of instances a tick.
 @(step="fixed",loops="game editor",stage="simulate",after="physics_prepare",before="physics_places")
-foliage_physics :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,collision:core.Ref(physics.Collision_Settings),data:core.Ref(Foliage_Data),grounds:core.Ref(Foliage_Ground),removals:core.Ref(Foliage_Removals),foliages:^core.Table(Foliage,.Read),worlds:^core.Table(core.World_Transform,.Read),kept:^core.Table(scene.Far_Kept,.Read),assets:^host.Assets,time:core.Time,problems:^core.Problems) {
+foliage_physics :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,collision:core.Ref(physics.Collision_Settings),data:core.Ref(Foliage_Data),grounds:core.Ref(Foliage_Ground),removals:core.Ref(Foliage_Removals),foliages:^core.Table(Foliage,.Read),worlds:^core.Table(core.World_Transform,.Read),kept:^core.Table(scene.Far_Kept,.Read),sources:core.Ref(scene.Simulation_Sources),assets:^host.Assets,time:core.Time,problems:^core.Problems) {
     if !state.ready || data.ptr==nil || time.resimulating {return}
     // Without settings every preset is the Default category, colliding with all.
     defaults:physics.Collision_Settings
@@ -348,6 +388,9 @@ foliage_physics :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,collisi
         unordered_remove(&fp.owners,i)
         built=true
     }
+    now:[]scene.Source
+    if sources.ptr!=nil {now=sources.ptr.items[:clamp(sources.ptr.count,0,scene.SOURCES_MAX)]}
+    budget:=Physics_Budget{instances=PHYSICS_INSTANCES_A_TICK}
     placed:=core.join(foliages,worlds)
     for e,f,world in core.each_joined(&placed) {
         entry:=data_find(data.ptr,f.source)
@@ -364,7 +407,7 @@ foliage_physics :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,collisi
                 continue
             }
             owner=&fp.owners[len(fp.owners)-1]
-        } else if owner.epoch==entry.epoch && owner.loads==entry.loads && owner.ground==revision && owner.transform==world.transform && owner.removed==removed {continue}
+        } else if !owner.pending && owner.epoch==entry.epoch && owner.loads==entry.loads && owner.ground==revision && owner.transform==world.transform && owner.removed==removed {continue}
         // A source read again, a ground that changed or instances taken out build only the cells that changed.
         all:=owner.epoch!=entry.epoch || owner.transform!=world.transform
         owner.epoch,owner.loads,owner.ground,owner.transform,owner.source,owner.removed=entry.epoch,entry.loads,revision,world.transform,f.source,removed
@@ -372,7 +415,11 @@ foliage_physics :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,collisi
         if type_shapes(fp,state,&entry.source,assets,&shapes)>0 {
             core.report(problems,e,"foliage.collision","a type of its foliage collides as its prefab or its hulls but has nothing it can collide as: give a Prefab type a prefab whose colliders are boxes, spheres, capsules, cylinders or hulls; give a Hull type a mesh with collision geometry; or raise the hulls of Physics_Settings")
         }
-        complete,enough:=physics_owner_build(fp,state,settings,e,&entry.source,world.transform,shapes[:],ground,all,gone)
+        // The nearest cells first, in cells from the sources.
+        near:=scene.sources_near_of(now,mm.transform_matrix(world.transform),CELL_SIZE)
+        budget.waiting=false
+        complete,enough:=physics_owner_build(fp,state,settings,e,&entry.source,world.transform,shapes[:],ground,all,gone,len(now)>0?&near:nil,&budget)
+        owner.pending=budget.waiting
         built=true
         if !enough {
             owner.loads=0

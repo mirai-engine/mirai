@@ -937,13 +937,17 @@ bool material_program(Material m, Mirai_Surface_Context ctx, float3 tint, float3
 #define WET_DARKEST 0.2        // of the base color of a porous dielectric soaked
 #define WET_FILM_ROUGHNESS 0.05
 #define WET_FILM_COVER 0.3
-void material_wet_apply(inout Material_Sample s, Material m, float wet) {
-    if (!(wet > 0.0) || m.transmission > 0.0 || (s.layers.bits & MATERIAL_LAYER_UNLIT) != 0u) return;
-    float porosity = saturate((s.roughness - 0.5) / 0.4);
-    float factor = lerp(1.0, WET_DARKEST, (1.0 - s.metallic) * porosity);
-    s.base_color *= lerp(1.0, factor, wet);
+void surface_wet(inout float3 base_color, inout float roughness, float metallic, float wet) {
+    if (!(wet > 0.0)) return;
+    float porosity = saturate((roughness - 0.5) / 0.4);
+    float factor = lerp(1.0, WET_DARKEST, (1.0 - metallic) * porosity);
+    base_color *= lerp(1.0, factor, wet);
     float film = wet * max(0.5 * (1.0 - factor), WET_FILM_COVER);
-    s.roughness = clamp(lerp(s.roughness, min(s.roughness, WET_FILM_ROUGHNESS), film), MIN_ROUGHNESS, 1.0);
+    roughness = clamp(lerp(roughness, min(roughness, WET_FILM_ROUGHNESS), film), MIN_ROUGHNESS, 1.0);
+}
+void material_wet_apply(inout Material_Sample s, Material m, float wet) {
+    if (m.transmission > 0.0 || (s.layers.bits & MATERIAL_LAYER_UNLIT) != 0u) return;
+    surface_wet(s.base_color, s.roughness, s.metallic, wet);
 }
 
 // A Surface program replaces the shared PBR values. Resolve it before sampling

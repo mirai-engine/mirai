@@ -35,12 +35,20 @@ collider_geometry_unchanged :: proc(s:^Sync,l:^Link,e:core.Entity,collider:Colli
         actual:=sim.heightfield_geometry(w,l.heightfield)
         field,found:=host.assets_heightfield(s.app.assets,static.mesh)
         if actual==nil || !found || actual.columns!=field.columns || actual.rows!=field.rows || actual.cell!=field.cell*scale || !sliced_equal(actual.heights,field.heights) || !sliced_equal(actual.disabled_borders,field.disabled_borders) || !sliced_equal(actual.holes,field.holes) {return false}
+        if !sliced_equal(actual.surfaces,heightfield_surfaces(field)) || !sliced_equal(actual.cell_surfaces,field.surfaces) {return false}
         origin+=field.origin*scale
     case:
         return false
     }
     return !pose_differs(sim.shape_local_transform(w,l.shape),{relative.position+mm.quat_rotate(relative.rotation,origin),relative.rotation})
 }
+
+// The surfaces of the simulation are the materials of the cells: the material is what a hit names.
+@(private)
+heightfield_surfaces :: proc "contextless" (field:host.Assets_Heightfield) -> []sim.Surface {
+    return transmute([]sim.Surface)field.materials
+}
+#assert(size_of(sim.Surface)==size_of(base.Asset_Id))
 
 // The convex radius of a collider at the scale of its entity: the smallest axis of the scale shrinks it.
 @(private)
@@ -340,7 +348,7 @@ collider_geometry_make :: proc(s:^Sync,l:^Link,kind:Collider_Kind,static:render.
     made:bool
     if kind==.Heightfield {
         field,_:=host.assets_heightfield(s.app.assets,static.mesh)
-        l.heightfield,made=sim.heightfield_create(w,{field.heights,field.columns,field.rows,field.cell*scale,field.disabled_borders,field.holes})
+        l.heightfield,made=sim.heightfield_create(w,{field.heights,field.columns,field.rows,field.cell*scale,field.disabled_borders,field.holes,heightfield_surfaces(field),field.surfaces})
         if !made {return {},.Geometry_Budget}
         return l.heightfield,.None
     }

@@ -23,10 +23,13 @@ struct Stage_Input {
 #ifdef MIRAI_THUMBNAIL_IMPOSTOR
 // A frame of an impostor: its base color and coverage, and the normal in the
 // space of the mesh with the depth from the near plane of the frame (0) to
-// its far one (1).
+// its far one (1); the roughness, metallic, occlusion and diffuse
+// transmission of the material, and the color of what it lets through.
 struct Stage_Output {
     float4 color : SV_Target0;
     float4 normal : SV_Target1;
+    float4 surface : SV_Target2;
+    float4 transmission : SV_Target3;
 };
 #endif
 
@@ -107,6 +110,10 @@ float4 main(Stage_Input input) : SV_Target0 {
     frame_output.color = float4(saturate(surface.values.base_color), 1.0);
     float depth = (dot(raster.in_world - frame.camera_position.xyz, frame.camera_forward.xyz) - frame.camera_position.w) / max(frame.camera_forward.w - frame.camera_position.w, 1e-6);
     frame_output.normal = float4(normalize(surface.normal) * 0.5 + 0.5, saturate(depth));
+    Material_Layers layers = surface.values.layers;
+    float through = (layers.bits & MATERIAL_LAYER_DIFFUSE_TRANSMISSION) != 0u ? saturate(layers.diffuse_transmission) : 0.0;
+    frame_output.surface = float4(saturate(surface.material_roughness), saturate(surface.values.metallic), saturate(surface.values.occlusion), through);
+    frame_output.transmission = float4(saturate(layers.diffuse_transmission_color), 1.0);
     return frame_output;
 #else
     // The studio takes render units as nits and exposes them itself.

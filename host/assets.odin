@@ -92,6 +92,8 @@ Assets_Heightfield :: struct {
     cell,origin:[3]f32,
     disabled_borders:[]u8,
     holes:[]u8, // one per cell, row after row, or none: 1 where the cell has no surface
+    materials:[]base.Asset_Id, // what its cells show, at most 256; none: the surface of its collider
+    surfaces:[]u8, // one per cell, row after row, its index in materials; none: every cell shows the first
 }
 
 Mesh_Generate_Options :: struct {
@@ -732,6 +734,8 @@ assets_mesh_generate :: proc(a:^Assets,mesh:geom.Mesh,slot_materials:[]base.Asse
         for mask in field.disabled_borders {if mask>1 {return}}
         if len(field.holes)!=0 && len(field.holes)!=(field.columns-1)*(field.rows-1) {return}
         for hole in field.holes {if hole>1 {return}}
+        if len(field.materials)>256 || len(field.surfaces)!=0 && (len(field.materials)==0 || len(field.surfaces)!=(field.columns-1)*(field.rows-1)) {return}
+        for surface in field.surfaces {if int(surface)>=len(field.materials) {return}}
         for value in field.cell {if !(value>0) || value-value!=0 {return}}
         for value in field.origin {if value-value!=0 {return}}
         for value in field.heights {if value-value!=0 {return}}
@@ -790,6 +794,9 @@ assets_mesh_generate :: proc(a:^Assets,mesh:geom.Mesh,slot_materials:[]base.Asse
             copy(holes,field.holes)
             entry.heightfield.holes=holes
         }
+        failed:mem.Allocator_Error
+        if entry.heightfield.materials,failed=slice.clone(field.materials,a.allocator);failed!=nil {return}
+        if entry.heightfield.surfaces,failed=slice.clone(field.surfaces,a.allocator);failed!=nil {return}
     }
     entry.bounds_min,entry.bounds_max=geom.mesh_bounds(mesh.positions)
     copy(entry.slot_materials[:],slot_materials)
@@ -972,6 +979,8 @@ assets_generated_free :: proc(mesh:^Assets_Mesh,a:mem.Allocator) {
     delete(mesh.heightfield.heights,a)
     delete(mesh.heightfield.disabled_borders,a)
     delete(mesh.heightfield.holes,a)
+    delete(mesh.heightfield.materials,a)
+    delete(mesh.heightfield.surfaces,a)
     delete(mesh.disabled_edges,a)
     delete(mesh.hull_points,a);delete(mesh.hull_sizes,a)
     mesh.collision,mesh.heightfield={},{}
