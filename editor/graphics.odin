@@ -64,48 +64,34 @@ settings_graphics_preset :: proc(list:[]project.Setting,name:string) -> (message
     return fmt.tprintf("%q is not a preset: Low, Medium, High or Ultra",name)
 }
 
-// Keeps the graphics settings in the edited World and in the settings, as
-// graphics_keep does with the fields that change.
+// Keeps the graphics settings in the edited World and the settings of the project.
+// Graphics are a preference of this machine: the change goes to the engine
+// layer, and the editor draws with it now. A value the project fixes wins
+// again when the settings are read.
 graphics_commit :: proc(s:^Session,next:erender.Graphics_Settings) -> bool {
     g:=graphics_settings(s)
-    at,found:=s.info.storages_by_type[erender.Graphics_Settings]
-    if g==nil || !found {return false}
-    fields:=make([dynamic]Graphics_Field,context.temp_allocator)
-    before,after:=g^,next
-    for field in reflect.struct_fields_zipped(erender.Graphics_Settings) {
-        size:=field.type.size
-        if mem.compare(([^]u8)(&before)[field.offset:][:size],([^]u8)(&after)[field.offset:][:size])!=0 {append(&fields,Graphics_Field{field.offset,size})}
+    if g==nil {return false}
+    if s.engine_root!="" {
+        if s.settings_engine==nil {settings_engine_load(s)}
+        if engine:=(^erender.Graphics_Settings)(setting_engine_value(s,"Graphics_Settings"));engine!=nil {
+            // Only the fields that change: what the project fixes stays its own.
+            before,after:=g^,next
+            for field in reflect.struct_fields_zipped(erender.Graphics_Settings) {
+                size:=field.type.size
+                was:=([^]u8)(&before)[field.offset:][:size]
+                now:=([^]u8)(&after)[field.offset:][:size]
+                if mem.compare(was,now)==0 {continue}
+                mem.copy(rawptr(uintptr(engine)+field.offset),raw_data(now),size)
+            }
+            settings_save(s,.Engine)
+            g=graphics_settings(s)
+            if g!=nil {g^=next}
+            return g!=nil
+        }
     }
     g^=next
-    return graphics_keep(s,&s.info.storages[at],fields[:])
-}
-
-// A field of a setting: its bytes.
-Graphics_Field :: struct {offset:uintptr,size:int}
-
-// Keeps fields of a setting of the machine that the edited World already has
-// changed. Graphics are a preference of this machine: the fields go to the
-// engine layer, and the editor draws with them now. A field the project
-// fixes would win again when the settings are read: the project then takes
-// the chosen value too, and forgets the field when it equals the engine's.
-@(private)
-graphics_keep :: proc(s:^Session,info:^core.Storage_Info,fields:[]Graphics_Field) -> bool {
-    world:=([^]u8)(graphics_setting_of(s,info))
-    if s.engine_root=="" {return settings_save(s)}
-    if s.settings_engine==nil {settings_engine_load(s)}
-    engine:=([^]u8)(setting_engine_value(s,info.name))
-    if engine==nil {return settings_save(s)}
-    chosen:=make([]u8,info.info.size,context.temp_allocator)
-    copy(chosen,world[:info.info.size])
-    for f in fields {copy(engine[f.offset:][:f.size],chosen[f.offset:][:f.size])}
-    if !settings_save(s,.Engine) {return false}
-    fixed:=false
-    for f in fields {
-        if mem.compare(world[f.offset:][:f.size],chosen[f.offset:][:f.size])==0 {continue}
-        copy(world[f.offset:][:f.size],chosen[f.offset:][:f.size])
-        fixed=true
-    }
-    return !fixed || settings_save(s)
+    settings_save(s)
+    return true
 }
 
 @(private)
@@ -308,13 +294,19 @@ graphics_setting_of :: proc(s:^Session,info:^core.Storage_Info) -> rawptr {
     return rawptr(uintptr(data)+info.offset)
 }
 
-// Writes a choice of a row to the edited World and keeps it as graphics_keep
-// does; false for a choice the row has not.
+// Writes a choice of a row to the edited World and to the layer of the
+// engine, as graphics_commit does; false for a choice the row has not.
 graphics_row_commit :: proc(s:^Session,row:^Graphics_Row,choice:int) -> bool {
     if choice<0 || choice>=len(row.choices) {return false}
     info:=&s.info.storages[row.storage]
     graphics_row_write(row,graphics_setting_of(s,info),choice)
-    return graphics_keep(s,info,{{row.offset,int(row.type.size)}})
+    if s.engine_root=="" {settings_save(s);return true}
+    if s.settings_engine==nil {settings_engine_load(s)}
+    if engine:=setting_engine_value(s,info.name);engine!=nil {
+        graphics_row_write(row,engine,choice)
+        settings_save(s,.Engine)
+    } else {settings_save(s)}
+    return true
 }
 
 @(private="file")
