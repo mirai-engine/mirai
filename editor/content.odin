@@ -1995,7 +1995,7 @@ content_item :: proc(s:^Session,card:Content_Card,group:u64,cell:f32,whole,first
             if reviewed!=nil {content_review_badge(ctx,reviewed,{})}
             if starred {content_star(s,star,file.id,favorite)} else {ui.spacer(ctx,18,18)}
         }
-        if it.hot {ui.tooltip(ctx,content_item_tip(s,card,file))}
+        // What the tooltip of a cell says goes in the preview beside the row.
         return
     }
     if c.view.mode==.List {
@@ -2612,15 +2612,18 @@ content_preview_float :: proc(s:^Session,card:Content_Card,rect,area:ui.Rect) {
 }
 
 // The large preview of a row of Folders the pointer rests on, beside the
-// browser where it fits: its thumbnail and its name.
+// browser where it fits: its thumbnail, its name and what a cell's tooltip says.
 @(private)
 content_preview_beside :: proc(s:^Session,card:Content_Card,row,area:ui.Rect) {
     ctx:=s.gui.ctx
     file:=&s.app.assets.registry.files[card.file]
     float:=ui.Float{to=.Surface,anchor=.Top_Right,pivot=.Top_Left,offset={6,0},layer=ui.LAYER_TOOLTIP}
-    if ui.box(ctx,{id=ui.id(ctx,"content_preview"),track=true,width=ui.fixed(CONTENT_PREVIEW_LARGE+8),height=ui.FIT,direction=.Column,gap=4,padding=ui.padding_all(4),float=float,from=ui.Rect{area.x,row.y,area.w,row.h},contain=true,fill=ui.tone(ctx,"popup"),stroke=ui.tone(ctx,"border"),stroke_width=1,radius=ui.metric(ctx,"radius_popup")}) {
+    if ui.box(ctx,{id=ui.id(ctx,"content_preview"),track=true,width=ui.fixed(CONTENT_PREVIEW_LARGE+12),height=ui.FIT,direction=.Column,gap=8,padding=ui.padding_all(6),float=float,from=ui.Rect{area.x,row.y,area.w,row.h},contain=true,fill=ui.tone(ctx,"popup"),stroke=ui.tone(ctx,"border"),stroke_width=1,radius=ui.metric(ctx,"radius_popup")}) {
         asset_thumbnail(s,file,CONTENT_PREVIEW_LARGE,clip=content_clip_index(s.content,card))
-        ui.text(ctx,card.name,{size=ui.metric(ctx,"font"),color=ui.tone(ctx,"text"),wrap=.Words},ui.GROW,ui.FIT)
+        if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=2,padding={4,0,4,2}}) {
+            ui.text(ctx,card.name,{size=ui.metric(ctx,"font"),color=ui.tone(ctx,"text"),font=ui.FONT_SEMIBOLD,wrap=.Words},ui.GROW,ui.FIT)
+            ui.text(ctx,content_item_tip(s,card,file),{size=ui.metric(ctx,"font_small"),color=ui.tone(ctx,"text_muted"),wrap=.Words},ui.GROW,ui.FIT)
+        }
     }
 }
 

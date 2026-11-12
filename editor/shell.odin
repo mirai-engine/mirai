@@ -192,6 +192,8 @@ User_Icon :: enum u8 {
     Dashed_Box,    // the outline of its area as dashes; data: its color
     Annotate,      // a map pin
     Pin,Pin_Filled, // a thumbtack: what keeps a chip of the composer, and the same when it keeps one
+    Cut,           // scissors
+    Paste,         // a clipboard
 }
 
 DRAWING_CAPACITY :: 8 // areas plugins draw in one frame
@@ -519,6 +521,13 @@ draw_user :: proc(user:rawptr,ctx:^ui.Context,node:ui.Draw_Node) {
         for &point in body {point=c+point*s}
         ui.draw_polyline(ctx,body[:],1.3*s,color)
         ui.draw_line(ctx,c+[2]f32{0,1.5}*s,c+[2]f32{0,7}*s,1.3*s,color)
+    case .Cut:
+        for x in ([2]f32{-3,3}) {ui.draw_ring(ctx,c+[2]f32{x,4}*s,2*s,1.3*s,color)}
+        ui.draw_line(ctx,c+[2]f32{-1.8,2.4}*s,c+[2]f32{3.5,-6.5}*s,1.3*s,color)
+        ui.draw_line(ctx,c+[2]f32{1.8,2.4}*s,c+[2]f32{-3.5,-6.5}*s,1.3*s,color)
+    case .Paste:
+        ui.draw_rounded_stroke(ctx,{c.x-5*s,c.y-4.67*s,10*s,11.33*s},1.33*s,1.3*s,color)
+        ui.draw_rounded_stroke(ctx,{c.x-2.67*s,c.y-6.67*s,5.33*s,3.33*s},0.67*s,1.3*s,color)
     case .Back:
         chevron:=[3][2]f32{{2.5,-5},{-2.5,0},{2.5,5}}
         for &p in chevron {p=c+p*s}

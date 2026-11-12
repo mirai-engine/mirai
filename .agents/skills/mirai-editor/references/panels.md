@@ -486,8 +486,8 @@ The Content Browser tab shows the registry of the assets of the project and its 
   and while one is on the others fade; a cross after them, there only while a filter is on, clears
   it and the viewport selection. Prefab and Scene are one kind of file told apart by the kind its
   header says, in its color, with its icon and under its filter ([what a prefab is](prefabs.md)).
-  None active shows everything. Model gathers meshes, fractures and physics caches; Sound, sounds and
-  sound sets; Plugins, every kind of a plugin ([types of a
+  None active shows everything. Model gathers meshes, fractures and physics caches; Sound, sounds
+  and sound sets; Plugins, every kind of a plugin ([types of a
   plugin](extensions.md#asset-types-of-a-plugin)). A part of an import appears in its folder when
   the filters leave out its owner (Model shows the meshes of an imported prefab). Skeletons are not
   listed: the mesh that uses them represents them (`content_listed`).
