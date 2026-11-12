@@ -70,7 +70,6 @@ Nav_Test :: struct {
     builds:Navigation_Builds,
     unloaded:[dynamic]mm.Aabb, // what the ground names unloaded
     ground:core.Ground_Queries,
-    sources:scene.Simulation_Sources, // tiles near them build first
     run:Navigation_Agents,
     time:core.Time, // of the build
     tick:u64,
