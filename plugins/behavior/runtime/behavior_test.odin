@@ -1,9 +1,11 @@
 package behavior
 
 import "base:runtime"
+import "core:math"
 import "core:math/linalg"
 import "core:testing"
 import "mirai:core"
+import scene "mirai:engine/scene"
 import "mirai:engine/volume"
 import "mirai:std/ai"
 import mm "mirai:std/math"
@@ -69,6 +71,7 @@ Behavior_World :: struct {
     moves:nav.Nav_Requests,
     navigation:nav.Navigation,
     physics:phys.Physics_State,
+    sources:scene.Simulation_Sources,
 }
 
 // A world whose perceivers look: with what the application keeps for them.
@@ -208,6 +211,99 @@ the_mind_of_an_agent_far_ticks_at_the_steps_of_what_is_far :: proc(t:^testing.T)
     ctx.tick,ctx.lease=100,31
     testing.expect(t,ai.claim(&a,7,1,1))
     testing.expect(t,!ai.reserve_open(&world.claims.reservations,{7,1},u64(near),1,130) && ai.reserve_open(&world.claims.reservations,{7,1},u64(near),1,132))
+}
+
+@(private="file")
+Hold_Act :: enum u8 {Hold}
+
+// Counts, by the index of its entity, the decisions of each agent, the tick
+// of its first and the ticks its action ran.
+@(private="file")
+Holding :: struct {
+    world:Mind_World,
+    thinks,runs:[8]int,
+    first:[8]u64,
+}
+
+@(private="file")
+holding_think :: proc(t:^ai.Think(Hold_Act)) {
+    c,i:=(^Holding)(t.user),core.entity_index(agent(t))%len(Holding{}.thinks)
+    if c.thinks[i]==0 {c.first[i]=t.tick}
+    c.thinks[i]+=1
+    ai.propose(t,.Hold,1)
+}
+
+// Holds a claim of its own for as long as it runs.
+@(private="file")
+holding_act :: proc(a:^ai.Act(Hold_Act)) -> ai.Status {
+    if a.phase==.Enter && !ai.claim(a,1000+u64(core.entity_index(agent(a))),1,1) {return .Failure}
+    if a.phase!=.Exit {(^Holding)(a.user).runs[core.entity_index(agent(a))%len(Holding{}.runs)]+=1}
+    return .Running
+}
+
+@(private="file")
+HOLDING_ACTS := [Hold_Act]proc(a:^ai.Act(Hold_Act)) -> ai.Status{.Hold=holding_act}
+
+// An agent decides less often the farther it is from the simulation sources,
+// on the ticks of its phase, while its action runs every tick: what it claims
+// lasts while it runs, a copy of the world decides the same ticks, and without
+// sources every agent decides every tick. A position, a source or a setting that is not a number
+// stays in range, and the ticks after the first do not allocate.
+@(test)
+a_mind_decides_less_often_far_from_the_sources :: proc(t:^testing.T) {
+    minds:=new(Minds)
+    defer free(minds)
+    world,copied:Behavior_World
+    if !test_world_init(t,&world) || !test_world_init(t,&copied) {return}
+    defer test_world_destroy(&world)
+    defer test_world_destroy(&copied)
+    nan:=f32(0h7FC00000)
+    // A source at the origin; within 2 near every tick, at 4.5 near every 4, unplaced every tick.
+    world.settings.think_near,world.settings.think_slowest=10,6.0/60
+    world.sources.items[0]={position={0,0,0}}
+    world.sources.count=1
+    near,far,lost,nowhere:=placed(&world,{5,0,0}),placed(&world,{0,0,45}),placed(&world,{nan,0,0}),core.create(&world.entities)
+    for e in ([]core.Entity{near,far,lost,nowhere}) {core.add(&world.mind_agents,e,Mind_Agent{mind=mind_name("holder")})}
+    test_world_settle(&world)
+    run :: proc(w:^Behavior_World,minds:^Minds,from,to:u64) -> (c:Holding,calls:int) {
+        c.world={minds=minds,agents=&w.mind_agents,worlds=core.read(&w.worlds),claims=&w.claims,sources=core.ref(&w.sources),settings=core.ref(&w.settings)}
+        for tick in from..<to {
+            saved:=context.allocator
+            if tick>from {context.allocator=refusing_allocator(&calls)}
+            c.world.time={tick=tick,dt=1.0/60,playing=true}
+            minds_tick(&c.world,"holder",&HOLDING_ACTS,holding_think)
+            context.allocator=saved
+        }
+        return
+    }
+    c,calls:=run(&world,minds,1,9)
+    testing.expect_value(t,calls,0)
+    Want :: struct {e:core.Entity,thinks:int}
+    for want in ([]Want{{near,8},{far,2},{lost,1},{nowhere,8}}) {
+        i:=core.entity_index(want.e)
+        testing.expectf(t,c.thinks[i]==want.thinks,"%v thinks %d times",want.e,c.thinks[i])
+        testing.expectf(t,c.runs[i]==int(9-c.first[i]),"%v runs %d ticks from tick %d",want.e,c.runs[i],c.first[i])
+    }
+    // Its claim holds between its decisions, as its action runs: nobody else takes it.
+    decided:=0
+    for tick in u64(9)..<13 {
+        h,_:=run(&world,minds,tick,tick+1)
+        decided+=h.thinks[core.entity_index(far)]
+        testing.expectf(t,!ai.reserve_open(&world.claims.reservations,{1000+u64(core.entity_index(far)),1},999,1,tick+1),"tick %d",tick)
+    }
+    testing.expect_value(t,decided,1)
+    // A copy decides the same ticks as the world it was copied from.
+    testing.expect(t,test_world_copy(&copied,&world))
+    a,_:=run(&world,minds,13,40)
+    b,_:=run(&copied,minds,13,40)
+    testing.expect(t,a.thinks==b.thinks && len(world.mind_agents.values)==len(copied.mind_agents.values))
+    for agent,row in world.mind_agents.values {testing.expectf(t,agent==copied.mind_agents.values[row],"row %d",row)}
+    // Without sources, or with a near that is not a number, all decide every tick.
+    for edit in 0..<2 {
+        if edit==0 {world.sources.count=0} else {world.sources.count,world.settings.think_near=1,nan}
+        c,_=run(&world,minds,40,44)
+        for e in ([]core.Entity{near,far,lost,nowhere}) {testing.expectf(t,c.thinks[core.entity_index(e)]==4,"%d: %v",edit,e)}
+    }
 }
 
 @(private="file")
@@ -387,12 +483,13 @@ perceivers_see_the_teams_they_notice_in_their_cone_hear_noises_and_forget :: pro
     testing.expect(t,mine!=nil && mine.memory.count==1 && ai.memory_find(&mine.memory,u64(ahead))!=nil)
     testing.expect(t,len(f.events.queue.items)==1 && f.events.queue.items[0].kind==.Noticed && f.events.queue.items[0].subject==ahead)
     // A noise behind it is heard; out of hearing, not.
-    noise(&f.noises,{0,0,4},10,behind)
-    noise(&f.noises,{0,0,40},10,friend)
+    noise(&f.noises,{position={0,0,4},loudness=10,maker=behind})
+    distant:=core.create(&f.entities)
+    noise(&f.noises,{position={0,0,40},loudness=10,maker=distant})
     sight_tick(&f,0.2)
     mine=core.edit(&f.perceptions,guard)
     heard:=ai.memory_find(&mine.memory,u64(behind))
-    testing.expect(t,heard!=nil && heard.senses=={.Hearing} && ai.memory_find(&mine.memory,u64(friend))==nil)
+    testing.expect(t,heard!=nil && heard.senses=={.Hearing} && ai.memory_find(&mine.memory,u64(distant))==nil)
     // What it saw stays in sight a little past its range; what it did not is not noticed there.
     core.edit(&f.worlds,ahead).position={0,0,-21}
     beyond:=placed(&f,{1.5,0,-21})
@@ -412,6 +509,135 @@ perceivers_see_the_teams_they_notice_in_their_cone_hear_noises_and_forget :: pro
     testing.expect(t,forgot)
 }
 
+// Within `aware` of its eyes a perceiver sees all around, not only in its cone.
+@(test)
+a_perceiver_sees_all_around_within_aware :: proc(t:^testing.T) {
+    for c in ([]struct{aware:f32,seen:bool}{{0,false},{2,true},{0.5,false}}) {
+        f:Sight_World
+        if !test_world_init(t,&f.behavior) {return}
+        defer sight_world_destroy(&f)
+        guard:=placed(&f,{})
+        watch:=PERCEIVER_DEFAULT
+        watch.aware=c.aware
+        core.add(&f.perceivers,guard,watch)
+        behind:=placed(&f,{0,0,1})
+        core.add(&f.perceivables,behind,Perceivable{point=1})
+        sight_tick(&f,0)
+        sight_tick(&f,0.1)
+        mine:=core.edit(&f.perceptions,guard)
+        testing.expectf(t,mine!=nil && (ai.memory_find(&mine.memory,u64(behind))!=nil)==c.seen,"aware %v",c.aware)
+    }
+}
+
+// Asked about one subject, a perceiver says why it sees it or not: out of
+// range, out of its cone or within `aware`, a team it does not notice, the
+// entity a ray from its eyes hits first, or no rays to look with.
+@(test)
+sight_why_names_what_hides_a_subject :: proc(t:^testing.T) {
+    Case :: struct {at:mm.Vec3,team:Team,reason:Sight_Reason,blocker:core.Entity}
+    for rays in ([]i32{BEHAVIOR_SETTINGS_DEFAULT.rays,0}) {
+        f:Sight_World
+        if !test_world_init(t,&f.behavior) {return}
+        defer sight_world_destroy(&f)
+        if !testing.expect(t,phys.test_state_make(&f.physics)) {return}
+        f.settings.rays=rays
+        guard:=placed(&f,{})
+        watch:=PERCEIVER_DEFAULT
+        watch.notices=Teams(1<<1)
+        watch.aware=2
+        core.add(&f.perceivers,guard,watch)
+        wall:=core.create(&f.entities)
+        body,_:=phys.owned_body_create(&f.physics,{1,wall,0},{2,1.5,-4},1)
+        collision:=phys.COLLISION_SETTINGS_DEFAULT
+        phys.owned_shape_create(&f.physics,&collision,body,{collider=phys.collider_box({1,2,0.1}),rotation=1})
+        cases:=[]Case{
+            {{0,0,-5},1,.Seen,core.NONE},
+            {{0,0,1},1,.Aware,core.NONE},
+            {{0,0,5},1,.Out_Of_Cone,core.NONE},
+            {{0,0,-30},1,.Out_Of_Range,core.NONE},
+            {{1,0,-5},2,.Team,core.NONE},
+            {{4,0,-8},1,.Blocked,wall},
+        }
+        if rays==0 {
+            for &c in cases {c.reason,c.blocker=.No_Rays,core.NONE}
+        }
+        subjects:[6]core.Entity
+        for c,i in cases {
+            subjects[i]=placed(&f,c.at)
+            core.add(&f.perceivables,subjects[i],Perceivable{team=c.team,point=1})
+        }
+        test_world_settle(&f)
+        for c,i in cases {
+            why:=sight_why(core.read(&f.perceivers),core.read(&f.perceptions),core.read(&f.perceivables),core.read(&f.worlds),core.read(&f.fars),core.ref(&f.settings),core.ref(&f.physics),guard,subjects[i])
+            testing.expectf(t,why.reason==c.reason && why.blocker==c.blocker,"rays %v, %v: %v by %v, %v by %v expected",rays,c.at,why.reason,why.blocker,c.reason,c.blocker)
+        }
+        // What it says is what its turn does: it remembers those it sees, not the hidden ones.
+        sight_tick(&f,0)
+        sight_tick(&f,0.1)
+        mine:=core.edit(&f.perceptions,guard)
+        for c,i in cases {
+            found:=mine!=nil && ai.memory_find(&mine.memory,u64(subjects[i]))!=nil
+            testing.expectf(t,found==(c.reason==.Seen || c.reason==.Aware),"rays %v, %v: remembered %v",rays,c.at,found)
+        }
+    }
+}
+
+// A noise reaches the perceivers that notice its team, that of its maker's
+// Perceivable or else the one given, and with no team all of them: by ear
+// within their hearing, or only its listener wherever it is (a hit), without
+// a ray; one of long ago is remembered as of then.
+@(test)
+a_noise_reaches_those_that_notice_its_team_or_only_its_listener :: proc(t:^testing.T) {
+    Maker :: enum {None,Mate,Enemy,Bell}
+    cases:=[?]struct{maker:Maker,team:Maybe(Team),heard:bool,what:string}{
+        {.Enemy,nil,true,"the team of its maker, noticed"},
+        {.Mate,nil,false,"the team of its maker, not noticed"},
+        {.Mate,Team(1),false,"the team of its maker over the one given"},
+        {.None,nil,true,"no maker and no team: all hear it"},
+        {.Bell,nil,true,"a maker of no team and no team: all hear it"},
+        {.None,Team(2),false,"the team given, not noticed"},
+        {.Bell,Team(1),true,"the team given, noticed"},
+    }
+    watch:=PERCEIVER_DEFAULT
+    watch.notices=Teams(1<<1)
+    for c in cases {
+        f:Sight_World
+        if !test_world_init(t,&f.behavior) {return}
+        defer sight_world_destroy(&f)
+        f.settings.rays=0
+        guard:=placed(&f,{})
+        core.add(&f.perceivers,guard,watch)
+        makers:[Maker]core.Entity
+        for &m,kind in makers {if kind!=.None {m=core.create(&f.entities)}}
+        core.add(&f.perceivables,makers[.Mate],Perceivable{team=2})
+        core.add(&f.perceivables,makers[.Enemy],Perceivable{team=1})
+        sight_tick(&f,0)
+        noise(&f.noises,{position={0,0,4},loudness=10,maker=makers[c.maker],team=c.team})
+        sight_tick(&f,1)
+        mine:=core.edit(&f.perceptions,guard)
+        testing.expectf(t,(ai.memory_find(&mine.memory,u64(makers[c.maker]))!=nil)==c.heard,"%s",c.what)
+    }
+
+    f:Sight_World
+    if !test_world_init(t,&f.behavior) {return}
+    defer sight_world_destroy(&f)
+    f.settings.rays=0
+    guard,near:=placed(&f,{}),placed(&f,{0,0,40})
+    core.add(&f.perceivers,guard,watch)
+    core.add(&f.perceivers,near,watch)
+    mate,hitter:=core.create(&f.entities),core.create(&f.entities)
+    core.add(&f.perceivables,mate,Perceivable{team=2})
+    sight_tick(&f,0)
+    noise(&f.noises,{position={0,0,39},maker=hitter,listener=guard,age=30})
+    noise(&f.noises,{position={0,0,39},maker=mate,listener=guard})
+    sight_tick(&f,1)
+    mine,other:=core.edit(&f.perceptions,guard),core.edit(&f.perceptions,near)
+    hit:=ai.memory_find(&mine.memory,u64(hitter))
+    testing.expect(t,hit!=nil && hit.first==30 && hit.position=={0,0,39},"its listener perceives it, as long ago as its age")
+    testing.expect(t,ai.memory_find(&other.memory,u64(hitter))==nil,"another perceiver beside it does not")
+    testing.expect(t,ai.memory_find(&mine.memory,u64(mate))==nil,"its listener does not notice its team")
+}
+
 // A subject remembered and then destroyed is forgotten at once, with its
 // event; its handle is not taken for the entity that reuses its slot, and a
 // noise remembered without a maker stays.
@@ -427,7 +653,7 @@ a_remembered_subject_that_is_destroyed_is_forgotten_at_once :: proc(t:^testing.T
     seen:=placed(&f,{0,0,-5})
     core.add(&f.perceivables,seen,Perceivable{point=1})
     sight_tick(&f,0)
-    noise(&f.noises,{3,0,0},10)
+    noise(&f.noises,{position={3,0,0},loudness=10})
     sight_tick(&f,0.1)
     mine:=core.edit(&f.perceptions,guard)
     testing.expect(t,mine!=nil && ai.memory_find(&mine.memory,u64(seen))!=nil && ai.memory_find(&mine.memory,0)!=nil)
@@ -547,20 +773,20 @@ places_are_answered_in_order_within_the_budget :: proc(t:^testing.T) {
     q.querier=b
     place_query(&world.requests,q)
     problems:core.Problems
-    places_run(&world.requests,&places,&world.results,core.ref(&world.settings),core.read(&world.worlds),core.read(&world.perceivers),{},core.read(&world.paths),core.read(&world.agents),core.read(&world.characters),core.read(&world.walks),core.read(&world.swims),core.ref(&world.navigation),core.ref(&world.physics),{},{},&problems)
+    places_run(&world.requests,&places,&world.results,core.ref(&world.settings),core.read(&world.worlds),core.read(&world.perceivers),core.read(&world.perceptions),{},core.read(&world.paths),core.read(&world.agents),core.read(&world.characters),core.read(&world.walks),core.read(&world.swims),core.ref(&world.navigation),core.ref(&world.physics),{},{},&problems)
     test_world_settle(&world)
     first,_:=core.get(&world.results,a)
     second,_:=core.get(&world.results,b)
     testing.expect(t,first.status==.Found && first.request==1 && first.count==3 && first.points[0]=={3,0,0} && first.scores[0]>=first.scores[1])
     testing.expect(t,second.status==.Waiting && second.request==2)
-    places_run(&world.requests,&places,&world.results,core.ref(&world.settings),core.read(&world.worlds),core.read(&world.perceivers),{},core.read(&world.paths),core.read(&world.agents),core.read(&world.characters),core.read(&world.walks),core.read(&world.swims),core.ref(&world.navigation),core.ref(&world.physics),{},{},&problems)
+    places_run(&world.requests,&places,&world.results,core.ref(&world.settings),core.read(&world.worlds),core.read(&world.perceivers),core.read(&world.perceptions),{},core.read(&world.paths),core.read(&world.agents),core.read(&world.characters),core.read(&world.walks),core.read(&world.swims),core.ref(&world.navigation),core.ref(&world.physics),{},{},&problems)
     second,_=core.get(&world.results,b)
     testing.expect(t,second.status==.Found && linalg.distance(second.points[0],mm.Vec3{6,0,0})<1e-4)
     // Of two queries of one querier, the last one is answered and the first does not take its place.
     q.querier=a
     place_query(&world.requests,q)
     place_query(&world.requests,q)
-    places_run(&world.requests,&places,&world.results,core.ref(&world.settings),core.read(&world.worlds),core.read(&world.perceivers),{},core.read(&world.paths),core.read(&world.agents),core.read(&world.characters),core.read(&world.walks),core.read(&world.swims),core.ref(&world.navigation),core.ref(&world.physics),{},{},&problems)
+    places_run(&world.requests,&places,&world.results,core.ref(&world.settings),core.read(&world.worlds),core.read(&world.perceivers),core.read(&world.perceptions),{},core.read(&world.paths),core.read(&world.agents),core.read(&world.characters),core.read(&world.walks),core.read(&world.swims),core.ref(&world.navigation),core.ref(&world.physics),{},{},&problems)
     first,_=core.get(&world.results,a)
     testing.expect(t,first.status==.Found && first.request==4)
 }
@@ -595,7 +821,7 @@ places_of_a_target_that_is_destroyed_are_none :: proc(t:^testing.T) {
     from.test_count=1
     orphan:=Place_Query{querier=gone,center=.Querier,layout=.Grid,outer=2,spacing=1,keep=1}
     run :: proc(f:^Places_Test) {
-        places_run(&f.requests,&f.places,&f.results,core.ref(&f.settings),core.read(&f.worlds),core.read(&f.perceivers),{},core.read(&f.paths),
+        places_run(&f.requests,&f.places,&f.results,core.ref(&f.settings),core.read(&f.worlds),core.read(&f.perceivers),core.read(&f.perceptions),{},core.read(&f.paths),
             core.read(&f.agents),core.read(&f.characters),core.read(&f.walks),core.read(&f.swims),core.ref(&f.navigation),core.ref(&f.physics),Smart_View{objects=core.read(&f.objects),states=core.read(&f.states),worlds=core.read(&f.worlds),claims=core.ref(&f.claims)},{},&f.problems)
         test_world_settle(&f.w)
     }
@@ -677,9 +903,10 @@ the_path_of_places_walks_only_what_the_querier_walks :: proc(t:^testing.T) {
 }
 
 // The points of the mesh around the querier are those joined to where it
-// stands: an island across a gap gives none. Entities are candidates too,
-// those of the query or the Perceivables of some teams, and the offers of a
-// use of smart objects; each place found from one says which.
+// stands: an island across a gap gives none; rings in an arc are centered on
+// where the center faces. Entities are candidates too, those of the query,
+// the Perceivables of some teams or what the querier remembers, and the
+// offers of a use of smart objects; each place found from one says which.
 @(test)
 places_come_from_the_mesh_joined_to_the_center_from_entities_and_from_offers :: proc(t:^testing.T) {
     f:Places_Test
@@ -710,7 +937,7 @@ places_come_from_the_mesh_joined_to_the_center_from_entities_and_from_offers :: 
     f.settings=Behavior_Settings{queries=4}
     run :: proc(f:^Places_Test,q:Place_Query) -> Place_Result {
         place_query(&f.requests,q)
-        places_run(&f.requests,&f.places,&f.results,core.ref(&f.settings),core.read(&f.worlds),core.read(&f.perceivers),core.read(&f.perceivables),core.read(&f.paths),
+        places_run(&f.requests,&f.places,&f.results,core.ref(&f.settings),core.read(&f.worlds),core.read(&f.perceivers),core.read(&f.perceptions),core.read(&f.perceivables),core.read(&f.paths),
             core.read(&f.agents),core.read(&f.characters),core.read(&f.walks),core.read(&f.swims),core.ref(&f.navigation),core.ref(&f.physics),Smart_View{objects=core.read(&f.objects),states=core.read(&f.states),worlds=core.read(&f.worlds),claims=core.ref(&f.claims)},{},&f.problems)
         test_world_settle(&f.w)
         result,_:=core.get(&f.results,q.querier)
@@ -724,6 +951,29 @@ places_come_from_the_mesh_joined_to_the_center_from_entities_and_from_offers :: 
     testing.expect(t,result.status==.Found && result.count==8)
     for p in result.points[:result.count] {testing.expectf(t,p.x<=6.01 && p.y==0,"%v is on the ground the querier stands on",p)}
     testing.expect(t,linalg.distance(result.points[0],mm.Vec3{5,0,2})>4.5,"the farthest of that ground")
+    // Rings in a half turn around a lookout: from its right through where it faces to its left,
+    // the one point of a ring where it faces, and none when it faces straight up.
+    Arc :: struct {rotation:mm.Quat,per_ring:u8,points:[]mm.Vec3}
+    arcs:=[]Arc{
+        {mm.quat_axis_angle({0,1,0},-mm.PI/2),3,{{2,0,0.5},{3.5,0,2},{2,0,3.5}}},
+        {mm.quat_axis_angle({0,1,0},-mm.PI/2),1,{{3.5,0,2}}},
+        {mm.quat_axis_angle({1,0,0},mm.PI/2),3,{}},
+    }
+    for arc,i in arcs {
+        lookout:=core.create(&f.entities)
+        core.add(&f.worlds,lookout,core.World_Transform{transform={position={2,0,2},rotation=arc.rotation,scale=1}})
+        test_world_settle(&f.w)
+        rings:=Place_Query{querier=querier,center=.Target,target=lookout,layout=.Rings,inner=1.5,outer=1.5,rings=1,per_ring=arc.per_ring,arc=mm.PI,keep=8}
+        rings.tests[0]={measure=.Distance,from=.Target,target=lookout,min=0,max=16,response={kind=.Linear,slope=-1,shift_y=1}}
+        rings.test_count=1
+        result=run(&f,rings)
+        testing.expectf(t,int(result.count)==len(arc.points),"arc %d: %v",i,result)
+        for want in arc.points {
+            found:=false
+            for p in result.points[:result.count] {found||=linalg.distance(p,want)<1e-3}
+            testing.expectf(t,found,"arc %d: %v is a place",i,want)
+        }
+    }
     // The entities given, the nearest first.
     given:=Place_Query{querier=querier,center=.Querier,layout=.Entities,keep=2}
     given.entities[0],given.entities[1]=far,near
@@ -737,6 +987,25 @@ places_come_from_the_mesh_joined_to_the_center_from_entities_and_from_offers :: 
     seen.layout,seen.outer,seen.teams,seen.entity_count=.Perceivables,4,Teams(1<<1),0
     result=run(&f,seen)
     testing.expect(t,result.count==1 && result.entities[0]==near && linalg.distance(result.points[0],mm.Vec3{3,0,2})<1e-3)
+    // Within 8 m the far one on the island is a Perceivable of team 1 too, but the querier never
+    // perceived it: of what it remembers, the near one and a noise no one made, where it last
+    // perceived them; not the friend, of another team.
+    remembers:Perception
+    ai.memory_perceive(&remembers.memory,u64(near),{4,0,1},.Sight,1,0)
+    ai.memory_perceive(&remembers.memory,u64(friend),{4,0,1.5},.Sight,1,0)
+    ai.memory_perceive(&remembers.memory,u64(core.NONE),{2,0,3},.Hearing,0.75,0)
+    // A forged memory: past its capacity, and the far one nowhere.
+    remembers.memory.items[3]={subject=u64(far),position={transmute(f32)u32(0x7fc00000),0,0},confidence=1}
+    remembers.memory.count=99
+    core.add(&f.perceptions,querier,remembers)
+    test_world_settle(&f.w)
+    seen.outer=8
+    result=run(&f,seen)
+    testing.expect(t,result.count==2 && result.entities[1]==far)
+    seen.layout=.Remembered
+    result=run(&f,seen)
+    testing.expectf(t,result.count==2 && result.entities[0]==near && linalg.distance(result.points[0],mm.Vec3{4,0,1})<1e-3,"remembered: %v",result)
+    testing.expectf(t,result.entities[1]==core.NONE && linalg.distance(result.points[1],mm.Vec3{2,0,3})<1e-3,"the noise: %v",result)
     // The offers of a use within 8 m: of the crate, its second offer, where its user stands; not those of another use.
     crate,box:=core.create(&f.entities),core.create(&f.entities)
     core.add(&f.worlds,crate,core.World_Transform{transform={position={1,0,2},rotation=1,scale=1}})
@@ -752,7 +1021,119 @@ places_come_from_the_mesh_joined_to_the_center_from_entities_and_from_offers :: 
     offered.layout,offered.outer,offered.use,offered.entity_count=.Offers,8,1,0
     result=run(&f,offered)
     testing.expect(t,result.count==1 && result.entities[0]==crate && result.offers[0]==1 && linalg.distance(result.points[0],mm.Vec3{1,0,3})<1e-3)
+    // Held by another at priority 0: closed to the querier at that priority, open at a higher one.
+    testing.expect(t,ai.reserve_take(&f.claims.reservations,{u64(crate),2},u64(friend),1,0,10))
+    result=run(&f,offered)
+    testing.expect(t,result.status!=.Found,"held by another at the same priority")
+    offered.priority=1
+    result=run(&f,offered)
+    testing.expect(t,result.status==.Found && result.entities[0]==crate,"a higher priority displaces the holder")
     testing.expect_value(t,f.problems.count,0)
+}
+
+// A ray is cast only for a candidate that the cheaper measures left above
+// zero and that can still be among the kept, and the places found are those
+// of measuring every test on every candidate.
+@(test)
+places_cast_rays_only_where_they_can_change_the_answer :: proc(t:^testing.T) {
+    f:Places_Test
+    if !test_world_init(t,&f.w) {return}
+    defer {
+        places_free(&f.places)
+        test_world_destroy(&f.w)
+    }
+    if !testing.expect(t,phys.test_state_make(&f.physics)) {return}
+    // A wall 2 m ahead of the querier hides some of the places behind it.
+    querier,wall:=placed(&f.w,{}),core.create(&f.entities)
+    body,_:=phys.owned_body_create(&f.physics,{1,wall,0},{0,2,-2},1)
+    collision:=phys.COLLISION_SETTINGS_DEFAULT
+    phys.owned_shape_create(&f.physics,&collision,body,{collider=phys.collider_box({1.2,2,0.1}),rotation=1})
+    test_world_settle(&f.w)
+    _,blocked:=phys.raycast(core.ref(&f.physics),{0,1.6,0},{0,-0.1,-1},4)
+    testing.expect(t,blocked,"the wall blocks the way")
+    falling:=ai.Response{kind=.Linear,slope=-1,shift_y=1}
+    rising:=ai.Response{kind=.Linear,slope=1}
+    Case :: struct {keep:u8,visible:ai.Response,fewer:bool} // fewer: rays than places near enough
+    cases:=[]Case{{8,falling,false},{8,rising,false},{1,falling,true},{1,rising,true}}
+    for c in cases {
+        // Within 3 m of a point behind the wall, hidden from the querier or seen by it.
+        q:=Place_Query{querier=querier,center=.Querier,layout=.Grid,outer=4,spacing=1,keep=c.keep}
+        q.tests[0]={measure=.Visible,from=.Querier,min=0,max=1,response=c.visible}
+        q.tests[1]={measure=.Distance,from=.Point,point={0,0,-4},min=0,max=3,response=falling}
+        q.test_count=2
+        result:Place_Result
+        filter:ai.Nav_Filter
+        evals,_:=place_run(&f.places,q,&result,core.read(&f.worlds),core.read(&f.perceivers),core.read(&f.perceptions),core.read(&f.perceivables),core.read(&f.paths),core.ref(&f.navigation),core.ref(&f.physics),&filter,{},core.read(&f.agents),nil)
+        // Every test measured on every candidate, scored all at once.
+        points:[PLACE_CANDIDATES]mm.Vec3
+        count:=ai.places_grid({},4,1,points[:])
+        inputs:[PLACE_CANDIDATES*2]f32
+        near:=0
+        for p,i in points[:count] {
+            for test,k in q.tests[:2] {
+                from:=mm.Transform{position=test.point,rotation=1,scale=1}
+                inputs[i*2+k]=place_measure(test,from,p,querier,core.read(&f.perceivers),core.ref(&f.physics),nil)
+            }
+            if linalg.distance(p,mm.Vec3{0,0,-4})<3 {near+=1}
+        }
+        rule:=[2]ai.Consideration{{input=0,min=0,max=1,response=c.visible},{input=1,min=0,max=3,response=falling}}
+        best:[PLACE_KEPT]ai.Place_Score
+        kept:=ai.places_best(rule[:],inputs[:count*2],2,best[:c.keep])
+        testing.expectf(t,kept>0 && int(result.count)==kept,"keep %d: %d places, %d expected",c.keep,result.count,kept)
+        for b,i in best[:kept] {
+            testing.expectf(t,result.points[i]==points[b.index] && result.scores[i]==b.score,"keep %d: place %d is %v %v, %v %v expected",c.keep,i,result.points[i],result.scores[i],points[b.index],b.score)
+        }
+        testing.expectf(t,evals<=near && (!c.fewer || evals<near),"keep %d: %d rays for %d places near enough",c.keep,evals,near)
+    }
+}
+
+// Asked to explain, a query gives the same answer and every candidate with
+// each test it measured: the vetoing test is the first that scored 0, and one
+// a cheaper test vetoed takes no ray.
+@(test)
+a_query_explains_each_candidate_and_the_test_that_vetoed_it :: proc(t:^testing.T) {
+    f:Places_Test
+    if !test_world_init(t,&f.w) {return}
+    defer {
+        places_free(&f.places)
+        test_world_destroy(&f.w)
+    }
+    if !testing.expect(t,phys.test_state_make(&f.physics)) {return}
+    querier,wall:=placed(&f.w,{}),core.create(&f.entities)
+    body,_:=phys.owned_body_create(&f.physics,{1,wall,0},{0,2,-2},1)
+    collision:=phys.COLLISION_SETTINGS_DEFAULT
+    phys.owned_shape_create(&f.physics,&collision,body,{collider=phys.collider_box({1.2,2,0.1}),rotation=1})
+    test_world_settle(&f.w)
+    falling:=ai.Response{kind=.Linear,slope=-1,shift_y=1}
+    // Near the querier, seen by it and near a point behind the wall: two cheap tests around a ray.
+    q:=Place_Query{querier=querier,center=.Querier,layout=.Grid,outer=4,spacing=1,keep=2}
+    q.tests[0]={measure=.Distance,from=.Querier,min=0,max=3,response=falling}
+    q.tests[1]={measure=.Visible,from=.Querier,min=0,max=1,response={kind=.Linear,slope=1}}
+    q.tests[2]={measure=.Distance,from=.Point,point={0,0,-3},min=0,max=3,response=falling}
+    q.test_count=3
+    run :: proc(f:^Places_Test,q:Place_Query,result:^Place_Result,explain:^Place_Explain) -> int {
+        filter:ai.Nav_Filter
+        evals,_:=place_run(&f.places,q,result,core.read(&f.worlds),core.read(&f.perceivers),core.read(&f.perceptions),core.read(&f.perceivables),core.read(&f.paths),core.ref(&f.navigation),core.ref(&f.physics),&filter,{},core.read(&f.agents),nil,explain)
+        return evals
+    }
+    plain,explained:Place_Result
+    explain:Place_Explain
+    evals:=run(&f,q,&plain,nil)
+    testing.expect(t,run(&f,q,&explained,&explain)==evals && explained==plain,"explaining changes nothing of the answer")
+    points:[PLACE_CANDIDATES]mm.Vec3
+    testing.expectf(t,explain.count==ai.places_grid({},4,1,points[:]),"%d candidates explained",explain.count)
+    first_of_two,cheap_veto,ray_veto,kept:=false,false,false,0
+    for e in explain.candidates[:explain.count] {
+        first:=i8(-1)
+        for k in 0..<3 {if k in e.measured && e.responses[k]==0 {first=i8(k);break}}
+        testing.expectf(t,e.veto==first && (e.fate==.Vetoed)==(first>=0),"%v: veto %d, the first test with response 0 is %d",e.point,e.veto,first)
+        testing.expectf(t,1 in e.measured || e.fate==.Vetoed || e.fate==.Below,"%v: %v without its ray",e.point,e.fate)
+        first_of_two|=e.veto==0 && 2 in e.measured && e.responses[2]==0
+        cheap_veto|=e.veto==2 && 1 not_in e.measured
+        ray_veto|=e.veto==1
+        if e.fate==.Kept {kept+=1}
+    }
+    testing.expect(t,first_of_two && cheap_veto && ray_veto && kept==int(plain.count))
 }
 
 @(private="file")
@@ -803,7 +1184,7 @@ smart_objects_offer_their_uses_to_whom_may_take_them :: proc(t:^testing.T) {
     m:ai.Mind
     ctx:=ai.Mind_Context{tick=1,holder=u64(a),reservations=&world.claims.reservations}
     act:=ai.Act(Smart_Act){ctx=&ctx,mind=&m,frame=&m.main}
-    testing.expect(t,smart_claim(&act,found))
+    testing.expect(t,smart_claim(&act,found,red))
     other:=Smart_User{entity=core.create(&world.entities),team=1}
     _,ok=smart_offer(&looks,crate,USE_AMMO,other)
     testing.expect(t,!ok,"claimed")
@@ -863,6 +1244,78 @@ smart_objects_offer_their_uses_to_whom_may_take_them :: proc(t:^testing.T) {
     core.test_world_settle(&world)
     status,_=offer_act(&act,USE_HEAL,healer,10,1)
     testing.expect_value(t,status,ai.Status.Failure)
+}
+
+// A seat turned a quarter: its user comes in by its way, stands at it and
+// faces its way, all turned with the seat. A claim of a higher priority takes
+// the seat from one still walking to it, which fails; never from one that sits.
+@(test)
+offer_act_comes_in_by_its_way_faces_it_and_yields_only_before_using :: proc(t:^testing.T) {
+    world:Behavior_World
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    USE_SIT :: Smart_Use(1)
+    seat,civilian,guard:=core.create(&world.entities),placed(&world,{6,0,0}),core.create(&world.entities)
+    core.add(&world.worlds,seat,core.World_Transform{transform={rotation=mm.quat_axis_angle({0,1,0},math.PI/2),scale=1}})
+    chair:Smart_Object
+    chair.offers[0]={use=USE_SIT,at={0,0,1},yaw=0.25,enter={0,0,2},users=1}
+    core.add(&world.objects,seat,chair)
+    core.add(&world.paths,civilian,nav.Nav_Path{class=-1})
+    test_world_settle(&world)
+    smart_update(core.read(&world.objects),&world.states,&world.uses,{seconds=0})
+    test_world_settle(&world)
+    v:=Mind_World{objects=core.read(&world.objects),states=core.read(&world.states),worlds=core.read(&world.worlds),claims=&world.claims,requests=&world.moves,paths=core.read(&world.paths),time=clock_at(60,1)}
+    near :: proc(a,b:[3]f32) -> bool {return linalg.distance(mm.Vec3(a),mm.Vec3(b))<1e-4}
+    asked :: proc(world:^Behavior_World) -> nav.Nav_Request {return world.moves.queue.items[len(world.moves.queue.items)-1]}
+    sits:=Smart_User{entity=civilian}
+    guards:=Smart_User{entity=guard,priority=1}
+    looks:=ai.Mind_Context{user=&v}
+    found,ok:=smart_offer(&looks,seat,USE_SIT,sits)
+    testing.expectf(t,ok && near(found.at,{1,0,0}) && near(found.enter,{3,0,0}) && abs(found.yaw-(math.PI/2+0.25))<1e-4,"turned with the seat: %v",found)
+    m:ai.Mind
+    memory:[ai.MIND_WORDS]u64
+    ctx:=ai.Mind_Context{user=&v,tick=v.time.tick,dt=v.time.dt,holder=u64(civilian),reservations=&world.claims.reservations,lease=1000}
+    walk:=ai.Act(Smart_Act){ctx=&ctx,mind=&m,frame=&m.main,phase=.Enter,memory=memory[:]}
+    guarding:ai.Mind
+    gctx:=ai.Mind_Context{tick=v.time.tick,holder=u64(guard),reservations=&world.claims.reservations}
+    takes:=ai.Act(Smart_Act){ctx=&gctx,mind=&guarding,frame=&guarding.main}
+    // Walking to the way in, the seat is taken by the guard and the walk fails.
+    status,_:=offer_act(&walk,USE_SIT,sits,10,1)
+    testing.expect(t,status==.Running && asked(&world).kind==.Move_To && near(asked(&world).point,found.enter))
+    core.edit(&world.paths,civilian)^={state=.Moving,goal=found.enter,class=-1}
+    walk.phase=.Update
+    status,_=offer_act(&walk,USE_SIT,sits,10,1)
+    testing.expect_value(t,status,ai.Status.Running)
+    _,ok=smart_offer(&looks,seat,USE_SIT,{entity=guard})
+    testing.expect(t,!ok,"held by one of the same priority")
+    taken,open:=smart_offer(&looks,seat,USE_SIT,guards)
+    testing.expect(t,open && smart_claim(&takes,taken,guards))
+    status,_=offer_act(&walk,USE_SIT,sits,10,1)
+    testing.expect_value(t,status,ai.Status.Failure)
+    ai.reserve_release(&world.claims.reservations,guarding.main.reserved,u64(guard))
+    guarding.main={}
+    m.main={}
+    // Again: to the way in, then to the seat, where it faces the way of the seat and keeps it.
+    walk.phase=.Enter
+    for &word in memory {word=0}
+    status,_=offer_act(&walk,USE_SIT,sits,10,1)
+    testing.expect(t,status==.Running && near(asked(&world).point,found.enter))
+    walk.phase=.Update
+    core.edit(&world.paths,civilian)^={state=.Arrived,goal=found.enter,class=-1}
+    status,_=offer_act(&walk,USE_SIT,sits,10,1)
+    testing.expect(t,status==.Running && asked(&world).kind==.Move_To && near(asked(&world).point,found.at))
+    core.edit(&world.paths,civilian)^={state=.Arrived,goal=found.at,class=-1}
+    status,_=offer_act(&walk,USE_SIT,sits,10,1)
+    s,c:=math.sincos(found.yaw)
+    testing.expect(t,status==.Running && ai.stage(&walk)==1 && asked(&world).kind==.Look_At && near(asked(&world).point,mm.Vec3(found.at)+{-s,0,-c}))
+    _,ok=smart_offer(&looks,seat,USE_SIT,guards)
+    testing.expect(t,!ok && !smart_claim(&takes,taken,guards),"in use")
+    ctx.tick+=60
+    status,_=offer_act(&walk,USE_SIT,sits,10,1)
+    testing.expect_value(t,status,ai.Status.Success)
+    walk.phase,walk.cause=.Exit,.Success
+    offer_act(&walk,USE_SIT,sits,10,1)
+    testing.expect(t,asked(&world).kind==.Look_Along)
 }
 
 // The influence of each team is where its Perceivables are, less farther
@@ -1015,13 +1468,13 @@ a_tick_with_nothing_to_do_goes_through_no_row :: proc(t:^testing.T) {
     testing.expect_value(t,f.turns.remembering,1)
     sight_tick(&f,70)
     testing.expect(t,core.edit(&f.perceptions,guard).memory.count==0 && f.turns.remembering==0)
-    noise(&f.noises,{0,0,2},10)
+    noise(&f.noises,{position={0,0,2},loudness=10})
     sight_tick(&f,71)
     testing.expect_value(t,f.turns.remembering,1)
 
     // No request and none waiting: no table is looked at, the results least of all.
     places:Places
-    places_run(&f.requests,&places,nil,{},{},{},{},{},{},{},{},{},{},{},{},{},nil)
+    places_run(&f.requests,&places,nil,{},{},{},{},{},{},{},{},{},{},{},{},{},{},nil)
 
     // The objects get their state when they come; a tick after, with the tables as they were, none is gone through.
     box:=placed(&f,{})
