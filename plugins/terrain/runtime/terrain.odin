@@ -231,7 +231,6 @@ Terrain_Resident :: struct {
     splits:[dynamic]Split,  // room for a node of every owner: the order of the budget and of the colliders
     border:Piece_Border,    // of a node, while its pages are looked for
     picking:bool,           // chunks without a collider keep their triangles on the CPU: while the world does not play, for the picking of the editor
-    ground:Ground,          // what core.Ground_Queries answers (ground.odin)
 }
 // stale: results of jobs whose chunk changed while they ran; starved: chunks
 // shown without the collider Physics_Settings had no slot for.
@@ -792,7 +791,6 @@ terrain_resident_free :: proc(resident:^Terrain_Resident) {
     for &source in resident.sources {resident_source_free(resident,&source)}
     for &owner in resident.owners {resident_owner_free(&owner)}
     delete(resident.sources);delete(resident.owners);delete(resident.splits)
-    delete(resident.ground.views);delete(resident.ground.unloaded)
     piece_border_destroy(&resident.border)
     resident^={}
 }
