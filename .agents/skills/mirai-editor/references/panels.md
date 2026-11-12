@@ -799,28 +799,33 @@ the user looks at the result, adjusts values and chooses among variants.
 
 ### Records document
 
-`records_document.odin`, over the table as the package `editor/records` changes it (rows, names,
-ids and texts, without the session). A `.records`: a grid with a row per record and a column per
-field, and on the right all the fields of the chosen row with the Details rows
-(`held_field_row`). On top, the type's description; that of a field appears on hovering the name
-of its column.
+`records_document.odin`, over the table as the package `editor/records` changes it (columns, rows,
+names, ids and texts, without the session). A `.records`: a grid with a row per record and a column
+per column of its type, and on the right a panel that edits what was clicked last.
 
-- **Columns** (`records_columns_make`): the type's fields, with structs opened up to
-  `RECORDS_COLUMN_DEPTH` levels and arrays of up to `RECORDS_ARRAY_COLUMNS` elements, one per
-  column; what is longest is edited alone on the right. The first column is the row's name, which
-  is renamed by typing.
-- **Cells:** a draggable or typed number, a checkbox, a list of an `enum` or of a named id, an
-  asset button, the text of a `[N]u8` and, of a `core.Text`, its key of the `.strings` (what the
-  key says goes through `texts.set` or `mirai texts`). A `core.Record` is the list of the rows of
-  its type (`record_choice`), the same as in the inspector.
-- **Add row** adds a row with the type's default after the chosen one; **Duplicate** copies it with
+- **Header:** each column shows its name and its kind (the enum, record type or type of the code
+  it holds); a click selects the column. The `+` after the last one adds a column; the corner
+  (Name) selects the table. A table of rows of another's type shows the columns of the one that
+  declares it, read-only, and a button that opens that table.
+- **Cells** show their values as text. A click on a cell of a row opens its control there: a
+  number, a list of an `enum`, an asset button, the text of a `string` or the key of a `text`, the
+  list of the rows of a `record` (`record_choice`, the same as in the inspector); a checkbox is
+  always one. A column of many values or of a type of the code shows what it holds and is edited
+  in the panel.
+- **The panel** of a row: its name and every column with the Details rows (`held_schema_row`, over
+  the schema the columns make). Of a column: name, kind and the options of the kind, count,
+  description, its default (what Add row starts with), move and delete. Of the table: the name of
+  its type and its description. A renamed column keeps its values (its `was`).
+- **Add row** adds a row with the defaults after the chosen one; **Duplicate** copies it with
   other text ids; **Delete** removes it. The visible rows are the only ones built.
-- What the grid and the right column change is a copy of the table, which is written as a step of
-  the document's history when nothing holds it (a drag, a text being typed, an open list). A change
-  the table does not admit (a repeated name) is warned about and the copy rereads the file. If the
-  file changes elsewhere (`records.*`, Undo), it is read again.
+- What the grid and the panel change, rows and columns, is a copy of the table, which is written
+  as a step of the document's history when nothing holds it (a drag, a text being typed, an open
+  list). A change the table does not admit (a repeated name) is warned about and the copy rereads
+  the file. If the file changes elsewhere (`records.*`, Undo), it is read again.
 - `Asset_Document.part` with a row's name chooses it and shows it on opening: the button of an
   inspector `core.Record` uses it.
+- Create > Record in the content browser makes an empty table that declares a type named from the
+  file (`records_create_bytes`), as `asset.create` with kind `records` does.
 
 The documents of animations, sounds and sound sets belong to the plugin
 [previews](../../mirai-plugins/references/previews.md), and those of particle effects, to the

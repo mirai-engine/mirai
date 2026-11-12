@@ -8,7 +8,7 @@ import "mirai:std/base"
 import "mirai:std/serial"
 
 // The rows of the record types of the world (core.Records): every .records
-// of the assets whose rows are of a type the world declares, loaded the
+// of the assets whose rows are of a type the world has, loaded the
 // first time a function asks for that type and again once one of its files
 // changes, on disk or in memory, appears or goes. One set per type for the
 // whole application: every World reads the same rows, so a Play, a copy and
@@ -35,6 +35,7 @@ Record_File :: struct {
     content_hash:u64,
     path:string,
     type:[asset.RECORDS_TYPE]u8,
+    declares:bool, // its columns are the type
 }
 
 #assert(asset.RECORDS_NAME==core.RECORD_NAME)
@@ -43,16 +44,8 @@ Record_File :: struct {
 // brought up to date with the files of the assets; nil for an index the
 // world does not have, without assets or without memory.
 app_record_set :: proc(app:^App,index:int) -> ^core.Record_Set {
-    if app==nil || app.info==nil || app.assets==nil || index<0 || index>=len(app.info.records) {return nil}
+    if app==nil || app.info==nil || index<0 || index>=len(app.info.records) || !records_ready(app) {return nil}
     r:=&app.records
-    if len(r.sets)!=len(app.info.records) {
-        records_free(app)
-        sets,error:=make([]Record_Load,len(app.info.records),app.allocator)
-        if error!=nil {return nil}
-        r.sets=sets
-        r.files=make([dynamic]Record_File,app.allocator)
-    }
-    if (!r.scanned || r.revision!=app.assets.registry.revision) && !records_scan(app) {return nil}
     load:=&r.sets[index]
     if load.loaded && load.revision==r.revision {return &load.set}
     load.revision=r.revision
@@ -63,15 +56,36 @@ app_record_set :: proc(app:^App,index:int) -> ^core.Record_Set {
     return &load.set
 }
 
-// The .records of the assets whose rows are of the type at index, as the
-// registry has them now, by path.
-app_record_tables :: proc(app:^App,index:int,allocator:=context.temp_allocator) -> []Record_File {
-    if app_record_set(app,index)==nil {return nil}
+// Every .records of the assets, as the registry has them now, with the type
+// of its rows: also those of a type the world does not have yet.
+app_record_files :: proc(app:^App) -> []Record_File {
+    if app==nil || app.info==nil || !records_ready(app) {return nil}
+    return app.records.files[:]
+}
+
+// The .records of the assets whose rows are of the type named, by path.
+app_record_tables :: proc(app:^App,type:string,allocator:=context.temp_allocator) -> []Record_File {
     out:=make([dynamic]Record_File,allocator)
-    for &file in app.records.files {
-        if records_type_matches(&app.info.records[index],file.type[:]) {append(&out,file)}
+    for &file in app_record_files(app) {
+        if serial.text_field(file.type[:])==type {append(&out,file)}
     }
     return out[:]
+}
+
+// The sets of the types of the world and the files of the registry as it is
+// now; false without assets or memory.
+@(private="file")
+records_ready :: proc(app:^App) -> bool {
+    if app.assets==nil {return false}
+    r:=&app.records
+    if len(r.sets)!=len(app.info.records) || r.files.allocator.procedure==nil {
+        records_free(app)
+        sets,error:=make([]Record_Load,len(app.info.records),app.allocator)
+        if error!=nil {return false}
+        r.sets=sets
+        r.files=make([dynamic]Record_File,app.allocator)
+    }
+    return r.scanned && r.revision==app.assets.registry.revision || records_scan(app)
 }
 
 // How many tables of the type at index did not load the last time.
@@ -123,7 +137,7 @@ records_scan :: proc(app:^App) -> bool {
         }
         if entry.path=="" {
             entry={id=file.id,content_hash=file.content_hash}
-            if !records_type_read(app,file.path,&entry.type) {continue}
+            if !records_type_read(app,file.path,&entry) {continue}
             entry.path=clone_string(file.path,app.allocator)
         }
         append(&kept,entry)
@@ -161,19 +175,19 @@ records_open :: proc(app:^App,path:string,file:^asset.Asset) -> (view:asset.Reco
 }
 
 @(private="file")
-records_type_read :: proc(app:^App,path:string,type:^[asset.RECORDS_TYPE]u8) -> bool {
+records_type_read :: proc(app:^App,path:string,entry:^Record_File) -> bool {
     file:asset.Asset
     view:=records_open(app,path,&file) or_return
     defer asset.asset_close(&file)
-    type^=view.info.type
+    entry.type,entry.declares=view.info.type,view.info.declares
     return true
 }
 
-// The name a .records gives the type of its rows: "library.Name".
+// A .records names the type of its rows by its name alone: the build keeps
+// the names of record types unique.
 @(private="file")
 records_type_matches :: proc(info:^core.Record_Info,type:[]u8) -> bool {
-    text:=serial.text_field(type)
-    return len(text)==len(info.library)+1+len(info.name) && text[:len(info.library)]==info.library && text[len(info.library)]=='.' && text[len(info.library)+1:]==info.name
+    return serial.text_field(type)==info.name
 }
 
 @(private="file")

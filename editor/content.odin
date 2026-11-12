@@ -364,7 +364,6 @@ Content :: struct {
     create_on_folder:bool,         // the menu of Create opened on the folder create_into: it also renames, copies and moves it
     creating:bool,                 // a line names what Create makes in create_folder
     create_kind:asset.Fourcc,
-    create_record:int,             // of a .records: its type, in World_Info.records
     create_folder:[API_PATH_BYTES]u8,
     create_folder_length:int,
     create_name:[ASSET_CREATE_NAME]u8,
@@ -1345,18 +1344,6 @@ content_create_items :: proc(s:^Session,folder:string) {
         // Fonts come from the files dropped in, and texts from the API.
         if kind==asset.KIND_FONT || kind==asset.KIND_STRINGS {continue}
         icon,color:=content_create_icon(s,kind)
-        // A table of game data is of a type of the code: one entry for each.
-        if kind==asset.KIND_RECORDS {
-            records:[]core.Record_Info
-            if s.app.info!=nil {records=s.app.info.records}
-            for &r,at in records {
-                if ui.menu_item(ctx,ui.id(ctx,"create_records",at+1),fmt.tprintf("Records: %s",readable(r.name)),{icon=icon,icon_color=color,disabled=disabled}) {
-                    s.content.create_record=at
-                    content_create_begin(s,kind,folder)
-                }
-            }
-            continue
-        }
         if ui.menu_item(ctx,ui.id(ctx,"create",i+1),asset_create_label(s,kind),{icon=icon,icon_color=color,disabled=disabled}) {content_create_begin(s,kind,folder)}
     }
 }

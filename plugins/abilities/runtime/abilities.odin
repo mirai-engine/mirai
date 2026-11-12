@@ -162,33 +162,6 @@ Ability_Window :: struct {
     cue:Ability_Cue,   // carried by the events of its opening and closing
 }
 
-@(record,description="An ability: the input that starts it, what it requires and costs, how long it lasts, what it plays and a timeline of windows from its start (hitboxes, dashes, cancel windows, statuses, cues). It starts over the running one only inside a window of that one that accepts one of its tags.")
-Ability :: struct {
-    input:Ability_Input,
-    priority:i16, // among the candidates of a tick, the highest starts
-    tags:Ability_Tags,
-    requires:Ability_Statuses, // all of them
-    blocked_by:Ability_Statuses, // any of them
-    modes:Ability_Modes, // of the user's Character; none: any
-    conditions:[ABILITY_CONDITIONS]Ability_Condition,
-    costs:[ABILITY_COSTS]Ability_Cost,
-    cooldown:f32 `mirai:"min=0,unit=s"`,
-    duration:f32 `mirai:"min=0,unit=s"`,
-    hold:bool, // it ends when its input is let go
-    action:[ABILITY_NAME]u8 `mirai:"text"`, // an action of the user's .character: in its layer over locomotion, or the whole body when it names none
-    windows:[ABILITY_WINDOWS]Ability_Window,
-    next:core.Record(Ability), // asked for when it completes, in the statuses its windows gave on its last tick
-}
-ABILITY_DEFAULT :: Ability{input={on=.Pressed},duration=0.5}
-
-@(record,description="The abilities an Ability_User may start by input, in order of preference on equal priority: those of a weapon or a character.")
-Ability_Kit :: struct {
-    abilities:[KIT_ABILITIES]core.Record(Ability),
-    buffer:f32 `mirai:"min=0,unit=s"`, // an input that cannot start its ability yet waits this long
-    interrupts:Ability_Tags,           // abilities with these tags start over any other: reactions, death
-}
-ABILITY_KIT_DEFAULT :: Ability_Kit{buffer=0.2}
-
 Ability_Attribute_Entry :: struct {
     attribute:Ability_Attribute,
     base:f32 `mirai:"min=0"`, // costs and effects change it; it stays in 0..max

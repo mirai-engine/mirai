@@ -2,5 +2,5 @@
   "name": "abilities",
   "version": "0.1.0",
   "dependencies": ["physics", "locomotion", "animation"],
-  "parts": ["Runtime", "Editor"]
+  "parts": ["Runtime", "Editor", "Assets"]
 }

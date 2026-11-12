@@ -2,7 +2,7 @@
 name: mirai-core
 description: Mirai data core - `core` (entities, tables, queues, `Time`, `Frame_Time`, `Input`,
   `View`, transforms and hierarchy, world reflection, runtime problems with `core.report`, typed
-  game data with `@(record)` and `core.Record`), the world generator (`cook/build/world.odin`, with
+  game data in `.records` and `core.Record`), the world generator (`cook/build/world.odin`, with
   `@(component)`, `@(storage)`, `@(step)`) and `host` (application, loops, player, assets, content
   and shaders at run time). Use when declaring components, storages or loop functions, when
   touching tables, entities or `settle`, when copying or replacing worlds, or on a generator error.
@@ -39,8 +39,9 @@ A game is a struct in memory and a list of functions that transform it
 - Named values that the code declares and that the data, the API and the editor name (modes,
   actions, categories; `@(names)`, `@(name_bits)`):
   [named ids](references/core.md#named-ids).
-- Game data catalogs (`@(record)`, `.records`, `core.Record(T)`, `core.Records(T)`) and texts by
-  key (`core.Text`, `core.Texts`): [game data](references/core.md#game-data).
+- Game data catalogs (`.records` with their columns, `records_gen.odin`, `core.Record(T)`,
+  `core.Records(T)`) and texts by key (`core.Text`, `core.Texts`):
+  [game data](references/core.md#game-data).
 - What a function could not do, with its entity and how to fix it:
   [problems](references/core.md#problems).
 - The world of a test (`@(test_world)`, `test_info`, `test_world_init`) and what a library gives
@@ -116,6 +117,9 @@ A game is a struct in memory and a list of functions that transform it
 
 ## Invariants
 
+- **A record type is declared by its `.records`**, never by code: its columns are the schema and
+  the build generates the struct (`records_gen.odin`, kept in git); `@(record)` written by hand is
+  a generator error. One declaring file per type; other tables hold rows of it without columns.
 - **One coordinate convention for the whole engine:** right-handed, +Y up, +X right, -Z forward for
   every entity (bodies, characters, cameras, lights, spawn points, input axes, view space).
   Models reach it at import. A world panel or screen (`World_Widget`) is placed with that same
@@ -290,9 +294,9 @@ A game is a struct in memory and a list of functions that transform it
   `plugins/terrain/runtime` (their `copy` and `swap`) and `editor` (opening a document and edit
   transaction). The copy of what changed: `core/world_copy_test.odin` and
   `plugins/multiplayer/runtime/world_copy_test.odin`.
-- Game data: `mirai test core`, `asset`, `cook/build` and `host` (their `records_test.odin`) and
-  `editor` (`api_records_test.odin`: CSV and references by name); the grid and `records.*`, with a
-  project that declares a `@(record)`, in a session.
+- Game data: `mirai test core`, `asset`, `cook/build`, `host` and `editor/records` (their
+  `records_test.odin`) and `editor` (`api_records_test.odin`: CSV, references by name and the
+  columns the API takes); the grid, its columns and `records.*` in a session of the demo.
 - Meshes with UV1 on GPU: `mirai test engine/render` in the
   [GPU environment](../mirai-rendering/references/verification.md#gpu-environment).
 - Generator or build: [project verification](../mirai-projects/SKILL.md#verification).

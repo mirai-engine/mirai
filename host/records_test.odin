@@ -28,7 +28,9 @@ records_save :: proc(t:^testing.T,path:string,id:base.Asset_Id,type:string,ids:[
     value_type,_:=serial.schema_add_type_info(&schema,type_info_of(T))
     named:=make([]asset.Records_Name,len(names),context.temp_allocator)
     for name,i in names {base.text_set(named[i][:],name)}
-    bytes,error:=asset.records_bytes(&types,{id=id,type=type,ids=ids,names=named,schema=&schema,value_type=value_type,images=mem.slice_to_bytes(values)},context.temp_allocator)
+    info:asset.Records_Info
+    base.text_set(info.type[:],type)
+    bytes,error:=asset.records_bytes(&types,{id=id,info=info,ids=ids,names=named,schema=&schema,value_type=value_type,images=mem.slice_to_bytes(values)},context.temp_allocator)
     testing.expect_value(t,error,asset.Error.None) or_return
     return testing.expect(t,os.write_entire_file(path,bytes)==nil)
 }
@@ -41,9 +43,9 @@ the_rows_of_a_type_load_from_every_table_and_follow_their_files :: proc(t:^testi
     root:=base.test_folder(t,"host-records")
     if root=="" {return}
     swords,bows,ammo:=base.Asset_Id{0x51,1},base.Asset_Id{0x52,1},base.Asset_Id{0x53,1}
-    if !records_save(t,fmt.tprintf("%s/swords.records",root),swords,"game.Weapon",{10,11},{"iron","steel"},[]Weapon{{damage=5,weight=3},{damage=8,weight=4}}) {return}
-    if !records_save(t,fmt.tprintf("%s/bows.records",root),bows,"game.Weapon",{10},{"long"},[]Weapon_Before{{damage=6}}) {return}
-    if !records_save(t,fmt.tprintf("%s/ammo.records",root),ammo,"game.Ammo",{1},{"arrow"},[]Weapon_Before{{}}) {return}
+    if !records_save(t,fmt.tprintf("%s/swords.records",root),swords,"Weapon",{10,11},{"iron","steel"},[]Weapon{{damage=5,weight=3},{damage=8,weight=4}}) {return}
+    if !records_save(t,fmt.tprintf("%s/bows.records",root),bows,"Weapon",{10},{"long"},[]Weapon_Before{{damage=6}}) {return}
+    if !records_save(t,fmt.tprintf("%s/ammo.records",root),ammo,"Ammo",{1},{"arrow"},[]Weapon_Before{{}}) {return}
 
     info:core.World_Info
     records:=[]core.Record_Info{{name="Weapon",library="game",type=Weapon,info=type_info_of(Weapon),ref=typeid_of(core.Record(Weapon)),default=proc(dst:rawptr) {(cast(^Weapon)dst)^=WEAPON_DEFAULT}}}
@@ -73,7 +75,7 @@ the_rows_of_a_type_load_from_every_table_and_follow_their_files :: proc(t:^testi
     generation:=rows.set.generation
     testing.expect(t,app_record_set(&app,0)==rows.set && rows.set.generation==generation)
 
-    if !records_save(t,fmt.tprintf("%s/swords.records",root),swords,"game.Weapon",{10,11},{"iron","steel"},[]Weapon{{damage=50},{damage=80}}) {return}
+    if !records_save(t,fmt.tprintf("%s/swords.records",root),swords,"Weapon",{10,11},{"iron","steel"},[]Weapon{{damage=50},{damage=80}}) {return}
     testing.expect(t,assets_refresh(&assets,{"swords.records"}))
     app_record_set(&app,0)
     testing.expect(t,rows.set.generation!=generation)

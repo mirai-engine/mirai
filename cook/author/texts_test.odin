@@ -142,7 +142,9 @@ a_missing_text_names_the_document_and_who_shows_it :: proc(t:^testing.T) {
     base.text_set(items[0].lines[1].key[:],"menu.start")
     names:=[1]asset.Records_Name{}
     base.text_set(names[0][:],"sword")
-    bytes,error:=asset.records_bytes(&p.types,{id={0x22,1},type="game.Item",ids={7},names=names[:],schema=&schema,value_type=value_type,images=mem.slice_to_bytes(items[:])},context.temp_allocator)
+    info:asset.Records_Info
+    base.text_set(info.type[:],"Item")
+    bytes,error:=asset.records_bytes(&p.types,{id={0x22,1},info=info,ids={7},names=names[:],schema=&schema,value_type=value_type,images=mem.slice_to_bytes(items[:])},context.temp_allocator)
     testing.expect(t,error==.None && os.write_entire_file(fmt.tprintf("%s/items.records",p.root),bytes)==nil)
 
     texts:=texts_read(a,"en")
