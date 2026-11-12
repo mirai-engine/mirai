@@ -877,7 +877,7 @@ app_capture_world :: proc(app:^App,world:rawptr,frames:=8,size:=[2]i32{},editor:
         app.inspection={}
         app.view_count=0
         if !drawn {break}
-        if wait>0 {count=capture_frames_streaming(count,frame,max(frames,1),render.textures_update(r),time.tick_since(started),wait)}
+        if wait>0 {count=capture_frames_streaming(count,frame,max(frames,1),render.textures_update(r)+app_textures_arriving(app),time.tick_since(started),wait)}
         // The last frame drew a program as its rows while its pipelines were made: one more with them.
         if frame==count-1 && render.renderer_pipelines_pending(r) {
             render.renderer_pipelines_wait(r)

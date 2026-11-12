@@ -254,8 +254,10 @@ A texture of an asset resides with the levels the GPU samples of it
   its entry between frames (`texture_uploads_install`). Fewer levels need no read: the renderer
   copies them from those it holds through the same queue (`textures_shrink`). What the job read
   stays while `texture_upload_pending`; a large level does not stall a frame.
-- What a section load brings arrives with the levels of side `TEXTURE_TAIL` and the frames that
-  sample it ask for the others; the main scene and direct loads arrive whole.
+- What a section load brings, and a texture a material asks for that is not loaded
+  ([arrivals](../../mirai-core/references/host.md#loaded-assets)), arrives with the levels of
+  side `TEXTURE_TAIL` and the frames that sample it ask for the others; the main scene and direct
+  loads arrive whole.
 - A texture that a load gives over several frames (`texture_add_over_frames`) enters with its
   levels of side `TEXTURE_TAIL` or less and the larger ones go through the same queue: until all
   were uploaded the small ones are shown, never a half level. Those that the pool has no room for

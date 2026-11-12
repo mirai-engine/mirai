@@ -78,7 +78,7 @@ Load_Asset :: enum u8 {Mesh,Texture,Material,Animation,Sound,Interface,Plugin} /
 // What a load waits for before it is resident.
 Load_Busy :: enum u32 {
     Assets,     // an asset loaded in the frame
-    Uploads,    // levels or geometry going to the GPU over frames
+    Uploads,    // levels or geometry going to the GPU over frames, or textures arriving (app_textures_arriving)
     Animations, // the first load of an .anim compresses
     Pipelines,  // pipelines of programs, or the shaders of the project, being made
     Sections,   // sections loading
@@ -396,7 +396,7 @@ load_profile_frame :: proc(app:^App,drawn:bool) {
     load_steps_add(app)
     busy:=p.reports
     if loaded {busy+={.Assets}}
-    if app_assets_uploading(app) {busy+={.Uploads}}
+    if app_assets_uploading(app) || app_textures_arriving(app)>0 {busy+={.Uploads}}
     if render.renderer_pipelines_pending(app.renderer) || len(app.shaders.loads)>0 {busy+={.Pipelines}}
     if load_animations_pending(app) {busy+={.Animations}}
     now:=time.duration_nanoseconds(time.tick_since(r.started))

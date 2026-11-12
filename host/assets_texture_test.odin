@@ -403,3 +403,68 @@ a_cube_loads_whole_and_a_material_does_not_sample_it :: proc(t:^testing.T) {
     testing.expect(t,unsupported)
     testing.expectf(t,rhi.device_validation_errors(device)==0,"validation: %s",rhi.device_validation_message(device))
 }
+
+// A texture a material names arrives: the material loads without reading it,
+// its row leaves it out, and once a job read its levels of side
+// render.TEXTURE_TAIL and the assets took them, the row takes the texture.
+// Asked for directly while it arrives, it loads whole in the call.
+@(test)
+a_texture_a_material_names_arrives_with_its_small_levels :: proc(t:^testing.T) {
+    device:=shared_device.take_or_skip(t,hardware_rt=false)
+    if device==nil {return}
+    r:=new(render.Renderer);defer free(r)
+    if !render.renderer_init(r,{device=device,width=64,height=64}) {testing.expect(t,false,r.error);return}
+    defer render.renderer_destroy(r)
+
+    root:=base.test_folder(t,"host-arrivals")
+    if root=="" {return}
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    SIZE :: 512
+    mips:=make([dynamic][]u8,context.temp_allocator)
+    for side:=SIZE;;side/=2 {
+        level:=make([]u8,side*side*4,context.temp_allocator)
+        for &value in level {value=200}
+        append(&mips,level)
+        if side==1 {break}
+    }
+    stone,bark,material:=base.Asset_Id{9,9},base.Asset_Id{8,8},base.Asset_Id{7,7}
+    testing.expect_value(t,asset.texture_save(fmt.tprintf("%s/stone.tex",root),&types,{id=stone,width=SIZE,height=SIZE,format=.RGBA8,flags={.Srgb},mips=mips[:]}),asset.Error.None)
+    testing.expect_value(t,asset.texture_save(fmt.tprintf("%s/bark.tex",root),&types,{id=bark,width=SIZE,height=SIZE,format=.RGBA8,flags={.Srgb},mips=mips[:]}),asset.Error.None)
+    info:=asset.MATERIAL_DEFAULTS
+    info.maps.base_color.texture=stone
+    info.maps.normal.texture=bark
+    testing.expect_value(t,asset.material_save(fmt.tprintf("%s/stone.mat",root),&types,{id=material,info=info}),asset.Error.None)
+    a:Assets
+    if !testing.expect(t,assets_init(&a,{root=root,capacity=8,renderer=r})) {return}
+    defer assets_destroy(&a)
+    a.arrive=true
+
+    row:=assets_material_row(&a,material)
+    testing.expect(t,row!=0 && assets_texture_arriving(&a,stone) && assets_texture_arriving(&a,bark),"the material loads, its textures arrive")
+    testing.expect(t,!assets_loaded(&a,stone) && len(a.arrivals)==2)
+    testing.expect_value(t,assets_material_values(&a,row).textures[.Base_Color],render.Texture_Handle(0))
+
+    // What a job of app_textures_stream reads, and the frame takes.
+    prepared:Assets_Prepared
+    found:bool
+    prepared.source,found=assets_source(&a,stone,context.allocator)
+    if !testing.expect(t,found) {return}
+    assets_prepare(&prepared,assets_limits(&a,tail=true),&types)
+    defer assets_prepared_free(&prepared)
+    testing.expect_value(t,assets_take(&a,&prepared),Assets_Take.Taken)
+    texture:=assets_texture(&a,stone)
+    if !testing.expect(t,texture!=nil && !texture.failed && texture.handle!=0 && !assets_texture_arriving(&a,stone)) {return}
+    testing.expect_value(t,rhi.texture_desc(r.device,r.textures.textures[texture.handle-1]).width,u32(render.TEXTURE_TAIL))
+    testing.expect(t,assets_arrivals_settle(&a),"the row that waited changes")
+    testing.expect_value(t,assets_material_values(&a,row).textures[.Base_Color],texture.handle)
+    testing.expect(t,assets_material(&a,material).waiting,"it still waits for the other")
+
+    // Asked for directly, an arriving texture loads whole now.
+    whole:=assets_texture(&a,bark)
+    if !testing.expect(t,whole!=nil && whole.handle!=0 && !assets_texture_arriving(&a,bark)) {return}
+    testing.expect_value(t,rhi.texture_desc(r.device,r.textures.textures[whole.handle-1]).width,u32(SIZE))
+    testing.expect(t,assets_arrivals_settle(&a))
+    testing.expect_value(t,assets_material_values(&a,row).textures[.Normal],whole.handle)
+    testing.expect(t,!assets_material(&a,material).waiting)
+    testing.expectf(t,rhi.device_validation_errors(device)==0,"validation: %s",rhi.device_validation_message(device))
+}

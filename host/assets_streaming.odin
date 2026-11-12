@@ -5,6 +5,7 @@ import "base:runtime"
 import "core:time"
 import "mirai:asset"
 import render "mirai:render"
+import "mirai:std/base"
 import "mirai:std/jobs"
 
 // The levels of the textures of assets follow what the GPU samples of them
@@ -15,8 +16,17 @@ import "mirai:std/jobs"
 // the GPU over the frames that follow (render.texture_levels_queue), and
 // what the job read stays until they went; then a job frees it
 // (app_assets_release).
+//
+// A texture a material asks for arrives the same way (Assets.arrive): the
+// material shows without it, a job reads its levels of side TEXTURE_TAIL,
+// TEXTURE_ARRIVALS at once, and the frames give them to the renderer before
+// the levels of others, in the same part of the frame; the rows of the
+// materials that waited take it (assets_arrivals_settle) and what the GPU
+// samples asks for its larger levels. No frame reads, decodes or uploads a
+// whole texture for a material.
 
 TEXTURE_READS :: 8
+TEXTURE_ARRIVALS :: 32
 
 Texture_Read :: struct {
     request:render.Texture_Request,
@@ -29,6 +39,8 @@ Texture_Read :: struct {
 
 Texture_Streaming :: struct {
     reads:[TEXTURE_READS]Texture_Read,
+    arrivals:[TEXTURE_ARRIVALS]Texture_Read, // of arriving textures: no request, their small levels
+    arrived:int,                             // of Assets.arrivals, those given to a read
     counter:jobs.Counter,
     load:u64, // its id in the budget of the loads while it has levels to give
 }
@@ -38,7 +50,7 @@ Texture_Streaming :: struct {
 // next. Nothing without assets or renderer, or while nothing changes.
 app_textures_stream :: proc(app:^App) {
     a,r:=app.assets,app.renderer
-    if a==nil || r==nil || len(a.texture_assets)==0 {return}
+    if a==nil || r==nil || len(a.texture_assets)==0 && len(a.arrivals)==0 {return}
     st:=&app.texture_streaming
     start:=time.tick_now()
     for &read in st.reads {
@@ -50,6 +62,27 @@ app_textures_stream :: proc(app:^App) {
         if st.load==0 {st.load=assets_load_open(a)}
         share:=assets_load_share(a,app.stats.frames,st.load)
         taken,first:=0,true
+        // What has no level yet goes before more levels of what shows.
+        for &read in st.arrivals {
+            if !read.busy || !intrinsics.atomic_load(&read.ready) {continue}
+            if !first && time.duration_seconds(time.tick_since(start))>=share.seconds {break}
+            cost:=read.prepared.cost
+            if !(first && share.alone) && taken+cost>share.bytes {
+                if first {assets_load_alone(a,st.load)}
+                break
+            }
+            id:=read.prepared.source.id
+            if assets_texture_arriving(a,id) {
+                app_assets_take(app,&read.prepared)
+                // Its file changed after the job read it: it is read again.
+                if assets_texture_arriving(a,id) && append(&a.arrivals,id)!=1 {_=assets_texture(a,id)}
+            } else {
+                app_assets_release(app,&read.prepared)
+            }
+            read={}
+            taken+=cost
+            first=false
+        }
         for &read in st.reads {
             if !read.busy || read.uploading || !intrinsics.atomic_load(&read.ready) {continue}
             // Its first levels of the frame go if their bytes fit, whatever the time.
@@ -65,6 +98,8 @@ app_textures_stream :: proc(app:^App) {
         }
         assets_load_spend(a,time.duration_seconds(time.tick_since(start)),taken)
     }
+    if assets_arrivals_settle(a) {assets_commit(a)}
+    arrivals_read(app,st)
     // The load asks for its part only while it has levels to give.
     if st.load!=0 && !texture_reads_ready(st) {
         assets_load_close(a,st.load)
@@ -113,6 +148,11 @@ app_textures_stream_stop :: proc(app:^App) {
         if read.busy {assets_prepared_free(&read.prepared)}
         read={}
     }
+    for &read in st.arrivals {
+        if read.busy {assets_prepared_free(&read.prepared)}
+        read={}
+    }
+    st.arrived=0
     if st.load!=0 && app.assets!=nil {assets_load_close(app.assets,st.load)}
     st.load=0
 }
@@ -122,7 +162,55 @@ texture_reads_ready :: proc(st:^Texture_Streaming) -> bool {
     for &read in st.reads {
         if read.busy && !read.uploading && intrinsics.atomic_load(&read.ready) {return true}
     }
+    for &read in st.arrivals {
+        if read.busy && intrinsics.atomic_load(&read.ready) {return true}
+    }
     return false
+}
+
+// Textures still arriving: asked for by a material, their first levels not
+// given yet.
+app_textures_arriving :: proc(app:^App) -> int {
+    if app.assets==nil {return 0}
+    st:=&app.texture_streaming
+    count:=len(app.assets.arrivals)-st.arrived
+    for read in st.arrivals {count+=int(read.busy)}
+    return count
+}
+
+// Starts reading the arriving textures the free reads take, in the order they
+// were asked for. Without job threads one a frame, here.
+@(private="file")
+arrivals_read :: proc(app:^App,st:^Texture_Streaming) {
+    a:=app.assets
+    threads:=jobs.worker_count(&app.jobs)>1
+    limits:=assets_limits(a,tail=true)
+    for &read in st.arrivals {
+        if read.busy {continue}
+        id:base.Asset_Id
+        for st.arrived<len(a.arrivals) && id=={} {
+            next:=a.arrivals[st.arrived]
+            st.arrived+=1
+            if assets_texture_arriving(a,next) {id=next}
+        }
+        if id=={} {break}
+        source,found:=assets_source(a,id,runtime.heap_allocator())
+        if !found {
+            // The registry lost its file: it loads here, and fails as it would.
+            _=assets_texture(a,id)
+            continue
+        }
+        read={prepared={source=source},limits=limits,busy=true}
+        if !threads {
+            texture_read(&read,jobs.OWNER)
+            break
+        }
+        jobs.run(&app.jobs,jobs.OWNER,.Background,texture_read,&read,&st.counter)
+    }
+    if st.arrived>0 && st.arrived==len(a.arrivals) {
+        clear(&a.arrivals)
+        st.arrived=0
+    }
 }
 
 // A job: reads and decodes the levels of a texture.
