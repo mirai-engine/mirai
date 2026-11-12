@@ -131,8 +131,8 @@ The files derived from Apache-2.0 work state their changes in their header.
 
 ## Fonts and assets
 
-- **Inter 4.1** (SIL OFL 1.1; © The Inter Project Authors), <https://rsms.me/inter>. Game, with
-  `assets/fonts/Inter-LICENSE.txt`.
+- **Inter 4.1** (SIL OFL 1.1; © The Inter Project Authors), <https://rsms.me/inter>: Regular,
+  Medium and SemiBold and their italics. Game, with `assets/fonts/Inter-LICENSE.txt`.
 - **JetBrains Mono 2.304** (SIL OFL 1.1; © The JetBrains Mono Project Authors),
   <https://www.jetbrains.com/lp/mono>. Game, with `assets/fonts/JetBrainsMono-LICENSE.txt`.
 - **CIPIC HRTF Database**, the set `cipic_124` as Steam Audio ships it (free to reproduce and

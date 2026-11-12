@@ -191,13 +191,15 @@ With `backdrop_blur` the layer takes a filtered copy of its parent's background.
 
 - **Sizes in em**, in layout units: a size is the CSS `font-size` in pixels. Each face is
   rasterized at its exact fractional size in device pixels, so at any density the glyphs land 1:1
-  on screen. Another size scales the nearest face of the same font; in an on-demand font, if none
-  is near, `draw_text` asks for a face of that size (`font_face_ask`), which its owner adds between
-  frames (up to `FONT_FACES_MAX`). This way a game's text, of its own sizes and scaled to its
-  reference, looks sharp.
+  on screen. Another size scales the nearest face of the same font, which resamples and blurs it;
+  in an on-demand font `draw_text` asks for a face of that size (`font_face_ask`), also for a font
+  without faces yet, which its owner adds between frames (up to `FONT_FACES_MAX`). This way a
+  game's text, of its own sizes and scaled to its reference, looks sharp.
 - **Faces.** Without `fonts` there are `FONT_DEFAULTS` embedded fonts from `assets/fonts`: Inter 4.1
-  Regular, Medium and SemiBold and JetBrains Mono (`FONT_MONO`, the code), with the faces of
-  `FONT_FACES_EDITOR` (the sizes and weights of the editor's theme and those of the code). Measuring
+  Regular, Medium and SemiBold, their italics and JetBrains Mono (`FONT_MONO`, the code), with the
+  faces of `FONT_FACES_EDITOR` (the sizes and weights of the editor's theme and those of the code).
+  Italic text (`italic` of a style, `<i>`) takes the font of `Font.italics`; one without leans its
+  glyphs (`TEXT_ITALIC`), which resamples them. Measuring
   and drawing a text with different fonts misaligns it. `font_add` and `font_replace` keep the face
   and glyph indices that existed: the first font added is `FONT_DEFAULTS`.
 - **Rasterization.** The light auto-hinter aligns heights vertically to the pixel grid and leaves
@@ -285,7 +287,7 @@ All take the context, an id and their state by parameter.
   in, builds one that changed where nothing shows it when it is out of sight, and otherwise builds
   only those in view with `rows_begin` (the chat of the editor).
   - It is parsed line by line: it stores nothing between frames or allocates. What it does not
-    recognize (HTML, tables) stays as text; italic has no face and its marks are removed. Bold and
+    recognize (HTML, tables) stays as text; the marks of italic are removed. Bold and
     italic open and close on the same line.
   - A word longer than the line is cut where the line ends (`text_begin` with `cut`), and a line
     of fenced code is a `solid` span, which breaks at no space and is cut the same way, so its
@@ -545,7 +547,8 @@ The node types are in `Node_Kind` (`tree.odin`) and the events in `Tree_Event`.
   `Game_Source.family`: the image the game gives or a drawing of its own. `Rich_Text` accepts `<b>`,
   `<i>`, `<u>`, `<s>`, `<color>`, `<size>`, `<link>`, `<prompt>` and `<img>`; it cuts its lines with
   the layout's algorithm (`layout_walk`). `<b>` uses the SemiBold face of the application font if
-  the text is in Regular or Medium and, in another font, a synthetic bold; `<i>` is synthetic. A
+  the text is in Regular or Medium and, in another font, a synthetic bold; `<i>` takes the italic
+  of the font. A
   link takes the `mark` color and a click emits `Link`.
 - **Game.** `ui.Game_Source` (in `Context.game`) is the only thing `ui` knows of the game: prompts,
   action state, texts, textures, camera views, particles (alive while their element is built) and

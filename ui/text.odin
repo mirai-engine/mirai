@@ -70,6 +70,11 @@ text_put :: proc(ctx:^Context,s:Layout_Span) {
     o:=&ctx.text_open
     s:=s
     if s.size<=0 {s.font,s.size,s.color=o.style.font,o.style.size,o.style.color}
+    // Italics are drawn with the italic of the font when it has one, its glyphs leaning otherwise.
+    if o.style.italic && !s.box {s.decoration+={.Italic}}
+    if .Italic in s.decoration {
+        if italic:=ctx.font.italics[s.font] if int(s.font)<len(ctx.font.italics) else 0;italic!=0 && int(italic)<ctx.font.font_count {s.font=italic;s.decoration-={.Italic}}
+    }
     t:=&ctx.layout
     // Every span after the first takes the room of an element.
     if !o.measure && t.texts[t.text_count].spans_len>0 {
@@ -219,9 +224,7 @@ text_chars_before :: proc(t:^Layout_Tree,text:^Layout_Text,piece:^Layout_Piece) 
 text_piece_style :: #force_inline proc(p:^Paint,s:^Layout_Span) -> (style:Text_Style,decoration:Text_Decorations) {
     style=p.style
     style.font,style.size,style.color=s.font,s.size,s.color
-    decoration=p.decoration+s.decoration
-    if style.italic {decoration+={.Italic}}
-    return
+    return style,p.decoration+s.decoration
 }
 
 // Draws a line of a text where the layout placed it.
@@ -276,7 +279,7 @@ text_draw_line :: proc(ctx:^Context,n:^Layout_Node,index:i32) {
             d.fade={r.x+r.w-TEXT_FADE,r.x+r.w}
             clip_push(ctx,r)
         } else {
-            margin:=p.style.outline+max(abs(p.style.shadow.x),abs(p.style.shadow.y))+(p.style.size*TEXT_ITALIC if .Italic in p.decoration || p.style.italic else 0)
+            margin:=p.style.outline+max(abs(p.style.shadow.x),abs(p.style.shadow.y))+(p.style.size*TEXT_ITALIC if .Italic in p.decoration else 0)
             clip_push(ctx,{r.x-margin,r.y-margin,r.w+2*margin,r.h+2*margin})
         }
     }

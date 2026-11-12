@@ -548,13 +548,14 @@ draw_text :: proc(ctx:^Context,text:string,x,y,size:f32,color:Color,f:int=0) {
             other:=int(pen.from!=f)
             if faces[other]==nil {faces[other]=font_face(font,pen.from,pixels)}
             face,face_from=faces[other],pen.from
-            if face==nil {return}
-            // A size no face is close to is asked for: until it comes, the nearest one is scaled.
-            if abs(face.pixel_size-pixels)>max(1,pixels*0.05) {font_face_ask(font,face_from,pixels)}
+            // A font without faces yet, on demand, asks for this one and draws from the next frame.
+            if face==nil {font_face_ask(font,pen.from,pixels);return}
             face_index=mem.ptr_sub(face,&font.faces[0])
             scale=pixels/face.pixel_size // 1 when the face matches the size
             // A scaled face is resampled anyway: its glyphs only snap to whole pixels.
             exact=abs(scale-1)<1e-3
+            // A size without its face is asked for: until it comes, the nearest one is scaled.
+            if !exact {font_face_ask(font,face_from,pixels)}
         }
         if index:=pen.previous;index>=0 {
             glyph:=&face.glyphs[index]

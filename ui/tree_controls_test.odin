@@ -297,7 +297,7 @@ a_transition_carries_the_colors_of_a_node_between_its_states :: proc(t:^testing.
     testing.expect(t,back[0]<200 && back[0]>150)
 }
 
-// The look of a Button comes whole from its style: italic text leans its glyphs, a gradient goes
+// The look of a Button comes whole from its style: italic text takes the italic face, a gradient goes
 // the way the style says and a ui program colors the fill instead.
 @(test)
 a_button_takes_italics_the_gradient_and_the_program_of_its_style :: proc(t:^testing.T) {
@@ -317,12 +317,8 @@ a_button_takes_italics_the_gradient_and_the_program_of_its_style :: proc(t:^test
     defer context_destroy(&ctx)
     input:=test_input()
     frame:=test_frame(&ctx,&input,test_shop_build,&s)
-    leaning:=0
-    v:=frame.vertices
-    for i:=0;i+6<=len(v);i+=6 {
-        if quad_kind(v[i].quad)==.Glyph && v[i].position.x>v[i+5].position.x+0.5 {leaning+=1}
-    }
-    testing.expect(t,leaning>0,"the glyphs of an italic style lean")
+    go:=test_paint(&ctx,"Go")
+    testing.expect(t,go!=nil && go.style.font==FONT_ITALIC && go.decoration=={},"an italic style draws with the italic face of its font")
     horizontal,program:=false,false
     for shape in frame.shapes {
         if shape.params[3]==f32(Gradient.Horizontal) && shape.fill2[0]>shape.fill[0] {horizontal=true}
@@ -631,7 +627,7 @@ rich_text_takes_italics_rules_links_and_images :: proc(t:^testing.T) {
     heavy.font=FONT_SEMIBOLD
     count,_=rich_parse("<b>x</b>",heavy,spans[:])
     testing.expect(t,spans[0].decoration=={.Bold} && spans[0].style.font==FONT_SEMIBOLD,"A font without a heavier face of its own draws a synthetic bold")
-    Test_Rich :: struct {clicked:u64,text:string}
+    Test_Rich :: struct {clicked:u64,text:string,font:u8}
     ctx:Context
     testing.expect(t,test_context_init(&ctx,TEST_FONT))
     defer context_destroy(&ctx)
@@ -640,12 +636,12 @@ rich_text_takes_italics_rules_links_and_images :: proc(t:^testing.T) {
     build :: proc(ctx:^Context,user:rawptr) {
         r:=cast(^Test_Rich)user
         images:=[1]Node_Image{{name=base.name_hash("coin"),quad={.Image,3,{0,0,1,1}},size={32,16}}}
-        if link:=rich_text(ctx,id(ctx,"rich"),r.text,{size=12,color={255,255,255,255}},{width=fixed(300)},images[:],{255,0,0,255});link!=0 {r.clicked=link}
+        if link:=rich_text(ctx,id(ctx,"rich"),r.text,{font=r.font,size=12,color={255,255,255,255}},{width=fixed(300)},images[:],{255,0,0,255});link!=0 {r.clicked=link}
     }
     r:=Test_Rich{text="Buy <link=shop>more <i>gold</i></link> <img=coin>"}
     test_frame(&ctx,&input,build,&r)
     gold:=test_paint(&ctx,"gold")
-    testing.expect(t,gold!=nil && gold.style.color==Color{255,0,0,255} && gold.decoration=={.Italic},"A link takes its color and keeps its decorations")
+    testing.expect(t,gold!=nil && gold.style.color==Color{255,0,0,255} && gold.style.font==FONT_ITALIC && gold.decoration=={},"A link takes its color and keeps its italics")
     coin:^Paint
     for &p in ctx.paints[:ctx.paint_count] {if p.kind==.Image {coin=&p}}
     testing.expect(t,coin!=nil && coin.quad.data==3,"An image of the tree goes in the line")
@@ -658,8 +654,8 @@ rich_text_takes_italics_rules_links_and_images :: proc(t:^testing.T) {
     test_press(&input);test_release(&input)
     test_frame(&ctx,&input,build,&r)
     testing.expect_value(t,r.clicked,base.name_hash("shop"))
-    // Italics lean the glyphs: their tops are to the right of their bottoms.
-    r.text="<i>Italic</i>"
+    // Italics of a font without an italic face lean its glyphs: their tops are to the right of their bottoms.
+    r.text,r.font="<i>Italic</i>",FONT_MONO
     frame:=test_frame(&ctx,&input,build,&r)
     leaning:=0
     v:=frame.vertices
@@ -667,6 +663,7 @@ rich_text_takes_italics_rules_links_and_images :: proc(t:^testing.T) {
         if quad_kind(v[i].quad)==.Glyph && v[i].position.x>v[i+5].position.x+0.5 {leaning+=1}
     }
     testing.expect(t,leaning>0)
+    r.font=FONT_REGULAR
     // Spans past the capacity are left out and counted.
     builder:=strings.builder_make(context.temp_allocator)
     for _ in 0..<RICH_SPANS+4 {strings.write_string(&builder,"<b>x</b>")}
