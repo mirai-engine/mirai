@@ -71,6 +71,9 @@ keeps its default; one the struct does not have is an error.
   writes from it `kinds_gen.odin` into the package `folder` names (`runtime` without it), with
   `<STEM>_KIND` and `<STEM>_EXTENSION` for each `.stem`; git keeps the file, so the plugin tests
   without a build.
+- `import_sources`: the extensions of the files the importers of a plugin read (`.umap`): a
+  repository with LFS keeps them in it as it keeps the sources of the engine's formats
+  ([git and assets](../../mirai-assets/references/cli.md#git)).
 - `development`: a tool for making the game (`profiler`, `tracy`). It goes into the `editor` and
   `play` libraries; the shipped game is generated with `shipped_world`, the world without them, and
   if its code reaches them the build fails with `Engine_Time_Code`.

@@ -35,7 +35,7 @@ git_conflicts_go_by_file_and_path :: proc(t:^testing.T) {
 // engine and what the manifest of each plugin declares.
 @(test)
 git_merges_the_document_kinds_of_the_engine_and_of_the_plugins :: proc(t:^testing.T) {
-    plugins:=[]build.Git_Kind{{".particle",true},{".grid",false}}
+    plugins:=[]build.Git_Kind{{".particle",true,false},{".grid",false,false}}
     cases:=[]struct {path:string,merged:bool}{
         {"assets/arena/main.scene",true},{"assets/leaf.mat",true},{"assets/rows.records",true},
         {"assets/plant.mesh",false},{"assets/hum.sound",false},{"assets/hum.sound_set",true},

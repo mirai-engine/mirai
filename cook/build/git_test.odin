@@ -22,7 +22,7 @@ attributes_of :: proc(text,extension:string) -> string {
 
 @(test)
 git_attributes_follow_the_kinds_and_keep_the_other_lines :: proc(t:^testing.T) {
-    plugins:=[]Git_Kind{{".particle",true},{".grid",false},{".mesh",true},{"",true}}
+    plugins:=[]Git_Kind{{".particle",true,false},{".grid",false,false},{".mesh",true,false},{"",true,false},{".umap",false,true}}
     existing:="* text=auto eol=lf\n*.scene binary\n# kept\n\n*.cmd text eol=crlf\n"
     text,changed:=git_attributes(plugins,false,existing,context.temp_allocator)
     testing.expect(t,changed)
@@ -33,6 +33,7 @@ git_attributes_follow_the_kinds_and_keep_the_other_lines :: proc(t:^testing.T) {
     }
     testing.expect(t,merges(attributes_of(text,".particle")),"a document of a plugin merges and diffs")
     testing.expect_value(t,attributes_of(text,".grid"),"binary")
+    testing.expect_value(t,attributes_of(text,".umap"),"")
     testing.expect(t,strings.has_prefix(text,"* text=auto eol=lf\n# kept\n\n*.cmd text eol=crlf\n*"),"the lines of other files stay, before those of the kinds")
     again:string
     again,changed=git_attributes(plugins,false,text,context.temp_allocator)
@@ -47,6 +48,7 @@ git_attributes_follow_the_kinds_and_keep_the_other_lines :: proc(t:^testing.T) {
         testing.expectf(t,info.merged?merges(attributes):strings.contains(attributes,"filter=lfs"),"%s with LFS: %q",info.extension,attributes)
     }
     testing.expect(t,strings.contains(attributes_of(large,".grid"),"filter=lfs") && strings.contains(attributes_of(large,".png"),"filter=lfs"))
+    testing.expect(t,strings.contains(attributes_of(large,".umap"),"filter=lfs"),"the sources a plugin imports go to LFS with the others")
     again,changed=git_attributes(plugins,false,large,context.temp_allocator)
     testing.expect(t,again==large && !changed,"a file that keeps files in LFS keeps them there")
     free_all(context.temp_allocator)
@@ -161,6 +163,6 @@ git_setup_wires_a_clone_once_and_again_for_another_engine_or_plugin :: proc(t:^t
     }
     write(t,join(clone,"plugins/held",project.PLUGIN_FILE),`{"name": "held", "version": "1.0.0", "asset_kinds": [{"extension": ".held", "kind": "HELD"}]}`)
     held,read:=git_plugin_kinds(other,{clone,game},context.temp_allocator)
-    testing.expect(t,read && len(held)==1 && held[0]==Git_Kind{".held",false})
+    testing.expect(t,read && len(held)==1 && held[0]==Git_Kind{".held",false,false})
     free_all(context.temp_allocator)
 }

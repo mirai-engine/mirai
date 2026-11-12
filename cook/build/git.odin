@@ -17,22 +17,26 @@ import "mirai:std/subprocess"
 
 GIT_DRIVER :: "mirai"
 
-// A kind of asset of a plugin, as its manifest declares it.
+// A kind of asset of a plugin, or a source its importers read, as its manifest declares it.
 Git_Kind :: struct {
     extension:string, // of its files, with the dot
     merged:bool,
+    source:bool,      // a source of imports: in LFS when the repository uses it, as git takes it otherwise
 }
 
 // The kinds of asset of the plugins that the first of folders that is a
-// checkout of the engine or a project holds or uses, as their manifests
-// declare them: every plugin of the checkout, or the plugins the project
+// checkout of the engine or a project holds or uses, and the sources their
+// importers read, as their manifests declare them: every plugin of the checkout, or the plugins the project
 // uses, its own and those of the engine. None when no folder is either; ok
 // is false when the plugins or the project do not read.
 git_plugin_kinds :: proc(engine_root:string,folders:[]string,allocator:=context.allocator) -> (kinds:[]Git_Kind,ok:bool) {
     out:=make([dynamic]Git_Kind,allocator)
     add :: proc(out:^[dynamic]Git_Kind,plugin:^project.Plugin) {
         for &kind in plugin.manifest.asset_kinds {
-            if extension:=base.text_get(kind.extension[:]);extension!="" {append(out,Git_Kind{strings.clone(extension,out.allocator),kind.merged})}
+            if extension:=base.text_get(kind.extension[:]);extension!="" {append(out,Git_Kind{strings.clone(extension,out.allocator),kind.merged,false})}
+        }
+        for &source in plugin.manifest.import_sources {
+            if extension:=base.text_get(source[:]);extension!="" {append(out,Git_Kind{strings.clone(extension,out.allocator),false,true})}
         }
     }
     for folder in folders {
@@ -78,13 +82,13 @@ git_attributes :: proc(plugins:[]Git_Kind=nil,lfs:=false,existing:="",allocator:
         return false
     }
     large:=lfs || strings.contains(existing,"filter=lfs")
-    for info in asset.KINDS {append(&kinds,Git_Kind{info.extension,info.merged})}
+    for info in asset.KINDS {append(&kinds,Git_Kind{info.extension,info.merged,false})}
     for kind in plugins {
-        if kind.extension!="" && !listed(kinds[:],kind.extension) {append(&kinds,kind)}
+        if kind.extension!="" && (!kind.source || large) && !listed(kinds[:],kind.extension) {append(&kinds,kind)}
     }
     if large {
         for extension in GIT_LFS_SOURCES {
-            if !listed(kinds[:],extension) {append(&kinds,Git_Kind{extension,false})}
+            if !listed(kinds[:],extension) {append(&kinds,Git_Kind{extension,false,false})}
         }
     }
     out:=strings.builder_make(allocator)
