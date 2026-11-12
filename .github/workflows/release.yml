@@ -106,10 +106,10 @@ jobs:
           TOKEN: ${{ secrets.MIRAI_COMPRESSION_TOKEN }}
         run: |
           if [ -z "$TOKEN" ]; then
-            echo "::error::the secret MIRAI_COMPRESSION_TOKEN, a token that reads tomaszbk/mirai-compression, is missing"
+            echo "::error::the secret MIRAI_COMPRESSION_TOKEN, a token that reads mirai-engine/mirai-compression, is missing"
             exit 1
           fi
-          git clone --quiet --depth 1 "https://x-access-token:$TOKEN@github.com/tomaszbk/mirai-compression.git" ext/mirai-compression
+          git clone --quiet --depth 1 "https://x-access-token:$TOKEN@github.com/mirai-engine/mirai-compression.git" ext/mirai-compression
 
       - name: Package
         run: ./mirai package engine --out "$RUNNER_TEMP/package/${{ steps.package.outputs.name }}"
