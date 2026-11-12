@@ -134,10 +134,11 @@ content_file_category :: proc "contextless" (file:^asset.Registry_File) -> Conte
     return category
 }
 
-// The icon of a kind of the engine or of a plugin, with its color.
+// The icon of a kind of the engine or of a plugin, with its color: that of
+// any kind for a plugin's that names none.
 asset_icon :: proc(s:^Session,kind:asset.Fourcc) -> (icon:ui.Icon,color:ui.Color) {
     color=asset_kind_color(s,kind)
-    if declared:=asset_plugin_kind(s,kind);declared!=nil {return declared.icon,color}
+    if declared:=asset_plugin_kind(s,kind);declared!=nil {return declared.icon if declared.icon!=.None else asset_engine_icon(0),color}
     return asset_engine_icon(kind),color
 }
 

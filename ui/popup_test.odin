@@ -377,8 +377,54 @@ a_popup_that_does_not_fit_below_opens_above_and_stays_inside :: proc(t:^testing.
         placed:=test_rect(t,&ctx,id(&ctx,"list"))
         testing.expectf(t,test_rect_near(placed,{c.origin.x,c.origin.y,180,86}),"beside %v: %v, expected at %v",c.anchor,placed,c.origin)
     }
+    // One asked wider than its surface is as wide as the surface less its margins.
+    wide :: proc(ctx:^Context,user:rawptr) {
+        s:=cast(^Placed)user
+        list:=id(ctx,"list")
+        if !s.open {popup_open(ctx,list,s.anchor);s.open=true}
+        if popup(ctx,list,s.desc) {spacer(ctx,10,78)}
+    }
+    margin:=metric(&ctx,"margin")
+    for desc in ([]Popup{{width=2000},{min_width=2000}}) {
+        s:=Placed{c={anchor={100,100,96,26},desc=desc}}
+        popup_close(&ctx)
+        test_frame(&ctx,&input,wide,&s)
+        placed:=test_rect(t,&ctx,id(&ctx,"list"))
+        testing.expectf(t,test_rect_near(placed,{margin,130,800-2*margin,86}),"%v: %v",desc,placed)
+    }
     frame_begin(&ctx,input)
     frame_end(&ctx)
+}
+
+@(test)
+a_row_too_narrow_for_its_label_and_detail_cuts_both_inside_it :: proc(t:^testing.T) {
+    ctx:Context
+    testing.expect(t,test_context_init(&ctx,TEST_FONT))
+    defer context_destroy(&ctx)
+    input:=test_input(800,600)
+    Case :: struct {label,detail:string,width:f32}
+    LONG_NAME :: "a_character_with_a_very_long_name"
+    LONG_PATH :: "characters/heroes/of/the/first/chapter/a_character_with_a_very_long_name.character"
+    build :: proc(ctx:^Context,user:rawptr) {
+        c:=cast(^Case)user
+        if box(ctx,{width=fixed(c.width),height=FIT,direction=.Column}) {row(ctx,id(ctx,"row"),{label=c.label,detail=c.detail,icon=.Cube})}
+    }
+    for c in ([]Case{{"Hero",LONG_PATH,240},{LONG_NAME,"short/path.character",240},{LONG_NAME,LONG_PATH,240},{"Hero","heroes/hero.character",400}}) {
+        c:=c
+        test_frame(&ctx,&input,build,&c)
+        r:=test_rect(t,&ctx,id(&ctx,"row"))
+        label,detail:=test_text_rect(&ctx,c.label),test_text_rect(&ctx,c.detail)
+        testing.expectf(t,test_near(r.w,c.width),"%v: the row keeps the width of its list, %v",c,r)
+        testing.expectf(t,label.w>0 && detail.w>0,"%v: both show, %v %v",c,label,detail)
+        testing.expectf(t,detail.x+detail.w<=r.x+r.w+0.5 && label.x+label.w<=detail.x,"%v: the detail stays inside the row, after the label: %v %v %v",c,r,label,detail)
+        // The label holds the icon before its text.
+        whole:=16+6+text_width(&ctx.font,c.label,metric(&ctx,"font_small"))+1
+        natural:=row_width(&ctx,{label=c.label,detail=c.detail,icon=.Cube})
+        testing.expectf(t,natural>c.width || test_near(label.w,whole,1),"%v: a row that fits shows its whole label, %v",c,label)
+        // The shorter of the two is not cut while it is under half of the row.
+        if whole<c.width/2 {testing.expectf(t,test_near(label.w,whole,1),"%v: %v",c,label)}
+    }
+    testing.expect_value(t,ctx.stats.layout_errors,u32(0))
 }
 
 @(test)

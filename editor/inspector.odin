@@ -97,6 +97,7 @@ Choice_List :: struct {
     field:ui.Id,
     path:int,          // a text of this many bytes takes the path of the asset under the assets folder instead of its id
     scroll:f32,
+    width:f32,         // of its popup, as its widest row when it opened; 0: not measured yet
 }
 
 Geometry_Choice :: struct {
@@ -2374,6 +2375,17 @@ asset_kind_of_field :: proc(s:^Session,name:string) -> asset.Fourcc {
 
 @(private) ADD_COMPONENT_KEY :: u64(0x6164645f636f6d70)
 @(private) ASSET_LIST_ROW :: f32(32) // a row of the list of assets of a field, with the preview of each
+@(private) CHOICE_LIST_WIDTH :: f32(260)      // the least width of the list of a field, however narrow the field
+@(private) CHOICE_LIST_WIDTH_MOST :: f32(520)
+@(private) CHOICE_LIST_PADDING :: f32(4)      // of its popup, the default one
+
+// The name a list of assets shows for one: that of its file without its
+// extension, or its path when that leaves nothing.
+@(private)
+asset_list_name :: proc(path:string) -> string {
+    if name:=asset_name(path);name!="" {return name}
+    return path
+}
 
 @(private)
 list_popup :: proc(g:^Editor_Ui) -> ui.Id {return shell_id(g,"choice_list")}
@@ -2437,12 +2449,12 @@ list_build :: proc(s:^Session,w:core.World_Ref) {
                     append(&parts,&file)
                     continue
                 }
-                append(&choices,asset_name(file.path))
+                append(&choices,asset_list_name(file.path))
                 append(&ids,file.id)
                 append(&shapes,erender.Shape.None)
             }
             for file in parts {
-                append(&choices,asset_name(file.path))
+                append(&choices,asset_list_name(file.path))
                 append(&ids,file.id)
                 append(&shapes,erender.Shape.None)
             }
@@ -2450,8 +2462,24 @@ list_build :: proc(s:^Session,w:core.World_Ref) {
     }
     row_height:=ui.metric(ctx,"row") if l.key==ADD_COMPONENT_KEY else ASSET_LIST_ROW
     shown:=f32(clamp(len(choices),1,10))*row_height
+    // As wide as its widest row, measured once so that it keeps its width
+    // while it scrolls and filters; popup keeps it inside the window.
+    if l.width==0 {
+        widest:=f32(0)
+        for label,index in choices {
+            r:=ui.Row{label=label,height=row_height}
+            if l.key!=ADD_COMPONENT_KEY {
+                r.icon=.Cube
+                if ids[index]!={} {
+                    if file,found:=asset.registry_find(&s.app.assets.registry,ids[index]);found {r.icon,r.quad,r.detail=.None,{kind=.Image},file.path}
+                }
+            }
+            widest=max(widest,ui.row_width(ctx,r))
+        }
+        l.width=clamp(widest+2*CHOICE_LIST_PADDING,CHOICE_LIST_WIDTH,CHOICE_LIST_WIDTH_MOST)
+    }
     chosen:=-1
-    if ui.popup(ctx,popup,{width=260,search="Search"}) {
+    if ui.popup(ctx,popup,{width=l.width,search="Search"}) {
         ui.id_push(ctx,popup)
         if _,changed:=ui.popup_search(ctx,popup);changed {l.scroll=0}
         rows:=ui.id(ctx,"rows")

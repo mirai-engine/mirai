@@ -144,13 +144,21 @@ box_gap :: proc "contextless" (label,detail:string) -> f32 {return 15 if label!=
 @(private)
 box_content :: proc(ctx:^Context,c:Box_Content) {
     leads:=c.icon!=.None && !c.icon_after
-    if (c.label!="" || leads || c.quad.kind!=.Solid) && text_begin(ctx,c.style) {
+    // A label and a detail that do not fit side by side are both cut, the
+    // longer first, each ending in an ellipsis: the label in a box that takes
+    // the room left, so the detail stays at the end.
+    cut:=c.label!="" && c.detail!="" && !c.fit && c.style.align_x!=.Center
+    style:=c.style
+    if cut {style.ellipsis=true}
+    if cut {element_open(ctx,{layout={width=GROW,height=GROW,align_y=.Center}})}
+    if (c.label!="" || leads || c.quad.kind!=.Solid) && text_begin(ctx,style) {
         if leads {text_box(ctx,c.icon_size,c.icon_size,{kind=.Icon,icon=c.icon,icon_color=c.icon_color},gap=6 if c.label!="" || c.quad.kind!=.Solid else 0)}
         if c.quad.kind!=.Solid {text_box(ctx,c.preview,c.preview,{kind=.Image,quad=c.quad,fill={255,255,255,255}},gap=6 if c.label!="" else 0)}
         text_span(ctx,c.label)
-        text_end(ctx,{width=FIT if c.fit else GROW,height=GROW},fade=c.fade)
+        text_end(ctx,{width=FIT if c.fit || cut else GROW,height=GROW},fade=c.fade && !cut)
     }
-    if c.detail!="" {text(ctx,c.detail,{size=metric(ctx,"font_small"),color=c.detail_color,align_y=.Center},FIT,GROW)}
+    if cut {element_close(ctx)}
+    if c.detail!="" {text(ctx,c.detail,{size=metric(ctx,"font_small"),color=c.detail_color,align_y=.Center,ellipsis=cut},FIT,GROW)}
     if c.icon!=.None && c.icon_after && text_begin(ctx,c.style) {
         text_box(ctx,c.icon_size,c.icon_size,{kind=.Icon,icon=c.icon,icon_color=c.icon_color})
         text_end(ctx,{height=GROW})
@@ -248,6 +256,22 @@ row :: proc(ctx:^Context,id:Id,r:Row) -> Interaction {
     element_close(ctx)
     if r.depth>0 {box_end(ctx,{})}
     return it
+}
+
+// The width row draws r at when nothing of it is cut: what a list measures to
+// be as wide as its widest row.
+row_width :: proc(ctx:^Context,r:Row) -> f32 {
+    height:=r.height if r.height>0 else metric(ctx,"row")
+    size:=metric(ctx,"font_small")
+    mark,mark_size:=r.icon,r.icon_size if r.icon_size>0 else 16
+    if r.checked {mark,mark_size=.Check,14}
+    width:=f32(28 if r.check_room && !r.checked else 8)+8
+    if r.depth>0 {width+=f32(r.depth)*(r.indent if r.indent>0 else 12)}
+    if mark!=.None {width+=mark_size+6}
+    if r.quad.kind!=.Solid {width+=height-8+6}
+    width+=text_width(&ctx.font,r.label,size,int(r.font))+1
+    if r.detail!="" {width+=box_gap(r.label,r.detail)+text_width(&ctx.font,r.detail,size)+1}
+    return math.ceil(width)
 }
 
 // Text next to the pointer for this frame: call it while the pointer is on what
