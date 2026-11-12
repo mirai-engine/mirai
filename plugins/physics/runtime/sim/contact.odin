@@ -227,7 +227,8 @@ shapes_collide :: proc(w:^World,a,b:^Shape,xf:Transform,speculative:f32,out:^[1+
             break
         }
         storage_a,storage_b:Box_Hull=---,---
-        hull_a:=a.type==.Box?box_hull(&storage_a,a.size):w.hulls[a.resource].hull
+        scaled_a,scaled_b:Scaled_Hull=---,---
+        hull_a:=a.type==.Box?box_hull(&storage_a,a.size):shape_hull_of(w,a,false,&scaled_a)^
         #partial switch b.type {
         case .Sphere:
             collide_hull_sphere(m,&hull_a,xf.p,b.size.x,speculative)
@@ -239,7 +240,7 @@ shapes_collide :: proc(w:^World,a,b:^Shape,xf:Transform,speculative:f32,out:^[1+
                 collide_boxes(m,a.size,b.size,xf,speculative)
                 break
             }
-            hull_b:=b.type==.Box?box_hull(&storage_b,b.size):w.hulls[b.resource].hull
+            hull_b:=b.type==.Box?box_hull(&storage_b,b.size):shape_hull_of(w,b,false,&scaled_b)^
             collide_hulls(m,&hull_a,&hull_b,xf,speculative,sat)
         }
     case .Cylinder:

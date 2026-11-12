@@ -138,16 +138,10 @@ a_type_with_an_impostor_draws_its_mesh_up_to_its_distance :: proc(t:^testing.T) 
     testing.expect_value(t,impostor_frame(tree,1),u32(IMPOSTOR_FRAME_MIN))
     testing.expect_value(t,impostor_frame(tree,1000),u32(IMPOSTOR_FRAME_MAX))
     tree.impostor_distance=100
-    // A type collides as far as its mesh is drawn.
+    // The new fields keep the source valid within their range.
     s:Source
     defer source_destroy(&s)
-    tree.collision=.Capsule
     append(&s.types,tree)
-    testing.expect(t,abs(collision_reach(&s)-100*(1+IMPOSTOR_BLEND))<1e-3)
-    // Never culled, it collides as far as COLLISION_REACH.
-    s.types[0].impostor_distance=0
-    testing.expect_value(t,collision_reach(&s),COLLISION_REACH)
-    // The new fields keep the source valid within their range.
     s.info.next_type=1
     testing.expect(t,source_valid(&s))
     s.types[0].wind_variants=WIND_VARIANTS_MAX+1
@@ -198,12 +192,10 @@ Collision_World :: struct {
     sources:scene.Simulation_Sources,
 }
 
-// A cell collides while a source of the simulation (a body a seat drives, a
-// mark) is within the reach of the types that collide, whatever the view,
-// and lets go of its body once every source has gone past it; without
-// sources every cell collides.
+// Every cell of a loaded Foliage collides wherever the sources of the
+// simulation are.
 @(test)
-the_cells_of_foliage_collide_while_they_are_resident :: proc(t:^testing.T) {
+every_cell_of_a_loaded_foliage_collides_wherever_the_sources_are :: proc(t:^testing.T) {
     w:Collision_World
     if !test_world_init(t,&w) {return}
     defer test_world_destroy(&w)
@@ -216,7 +208,6 @@ the_cells_of_foliage_collide_while_they_are_resident :: proc(t:^testing.T) {
     tree.collision,tree.size,tree.cull_distance,tree.fade_distance=.Capsule,{0.3,4,0},40,30
     for x in 0..<4 {source_instance_add(s,tree.id,{f32(x)*CELL_SIZE*4+5,0,5},u32(mm.quat_pack(1,10)),{1,1})}
     for &cell,i in s.cells {cell.version=u32(i+1)}
-    testing.expect_value(t,collision_reach(s),f32(40))
     e:=core.create(&w.entities)
     core.add(&w.foliages,e,Foliage{source={9,9}})
     core.add(&w.worlds,e,core.World_Transform{transform={rotation=1,scale={1,1,1}}})
@@ -224,27 +215,14 @@ the_cells_of_foliage_collide_while_they_are_resident :: proc(t:^testing.T) {
     fp:Foliage_Physics
     defer core.value_free(&fp,type_info_of(Foliage_Physics))
     problems:core.Problems
-    step :: proc(w:^Collision_World,fp:^Foliage_Physics,state:^physics.Physics_State,problems:^core.Problems) {
-        foliage_physics(fp,state,{},core.ref(&w.data),{},{},core.read(&w.foliages),core.read(&w.worlds),core.read(&w.kept),core.ref(&w.sources),{},problems)
-    }
-    w.sources.items[0]={position={5,0,5},ahead={5,0,5}}
+    // A source by the last tree, 400 m from the first: every tree collides.
+    w.sources.items[0]={position={CELL_SIZE*12+5,0,5},ahead={CELL_SIZE*12+5,0,5}}
     w.sources.count=1
-    step(&w,&fp,&state,&problems)
+    foliage_physics(&fp,&state,{},core.ref(&w.data),{},{},core.read(&w.foliages),core.read(&w.worlds),core.read(&w.kept),core.ref(&w.sources),nil,{},&problems)
     testing.expect_value(t,len(fp.cells),4)
-    testing.expect_value(t,int(state.world.body_count),1)
-    testing.expect(t,fp.cells[0].resident && fp.cells[0].body!={} && !fp.cells[1].resident && fp.cells[1].body=={})
-    // The source moves to the second tree: its cell collides, the first lets go.
-    w.sources.items[0]={position={CELL_SIZE*4+5,0,5},ahead={CELL_SIZE*4+5,0,5}}
-    step(&w,&fp,&state,&problems)
-    testing.expect_value(t,int(state.world.body_count),1)
-    testing.expect(t,!fp.cells[0].resident && fp.cells[1].resident && fp.cells[1].body!={})
-    // Without sources every cell collides.
-    w.sources.count=0
-    step(&w,&fp,&state,&problems)
     testing.expect_value(t,int(state.world.body_count),4)
     testing.expect_value(t,problems.count,0)
 }
-
 // The crown of a cell of a wood: the crowns of its trees, each a box of 4 m,
 // placed and scaled as each instance is, give one crown of the cell that
 // covers every tree and has fewer triangles than their crowns together.

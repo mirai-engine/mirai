@@ -78,7 +78,8 @@ rules of [the plugin system](../mirai-plugins/SKILL.md). Layout, manifests and b
 - `foliage` (`.foliage`, cells, generator with radius, density and keep-outs, overrides and
   orphans, ground read from `core.Ground_Queries`, per-cell batches, types from prefabs,
   octahedral impostors and canopy in rays, wind by variants and by hook, bending by
-  `Foliage_Bender`, collision by resident cells, brush and instance selection):
+  `Foliage_Bender`, collision of every loaded cell, queries of instances, brush and instance
+  selection):
   [source](references/foliage.md#entity-and-source), [format](references/foliage.md#format),
   [cells](references/foliage.md#layers-of-a-cell), [ground](references/foliage.md#ground),
   [drawing](references/foliage.md#drawing),

@@ -306,9 +306,12 @@ kind_free :: proc(app:^host.App,kind:^Resident_Kind) {
 // (Resident_Owner.slot) in the high half, the index of its type in the low.
 Impostor_Instance :: struct {
     position:[3]f32,
-    rotation,scale,row:u32,
+    rotation:u32,
+    scale:[4]u16,
+    row:u32,
+    color:u32, // its tint and wetness (render.batch_color)
 }
-#assert(size_of(Impostor_Instance)==24)
+#assert(size_of(Impostor_Instance)==32)
 
 Impostor_Row :: struct {
     sphere:[4]f32,

@@ -39,9 +39,9 @@ Removed_Instance :: struct {
     id:u64, // in its cell (Placed.id)
 }
 
-// What the game asks: take an instance of a Foliage out.
+// What the game asks: take an instance of a Foliage out, or mark one (marks.odin).
 @(storage,queue)
-Foliage_Requests :: struct {removes:core.Queue(Foliage_Plant)}
+Foliage_Requests :: struct {removes:core.Queue(Foliage_Plant),marks:core.Queue(Foliage_Mark)}
 
 // An instance of a Foliage: its cell and its id there (Placed.id).
 Foliage_Plant :: struct {
@@ -57,14 +57,16 @@ foliage_remove :: proc(requests:^Foliage_Requests,instance:Foliage_Plant) {core.
 @(storage,setting)
 Foliage_Settings :: struct {
     removes:u32 `mirai:"advanced"`,         // instances a tick can ask to take out; past it they are dropped and reported
+    marks:u32 `mirai:"advanced"`,           // instances a tick can ask to mark; as many
     ground_requests:u32 `mirai:"advanced"`, // cells a tick can ask the ground of; as many
 }
-FOLIAGE_SETTINGS_DEFAULT :: Foliage_Settings{removes=1024,ground_requests=256}
+FOLIAGE_SETTINGS_DEFAULT :: Foliage_Settings{removes=1024,marks=1024,ground_requests=256}
 
 // The room of the requests of a tick, and what did not fit in it.
 @(step="input fixed",loops="game editor",stage="begin")
 foliage_requests_serve :: proc(requests:^Foliage_Requests,ground:^Foliage_Ground_Requests,settings:Foliage_Settings,problems:^core.Problems) {
     core.queue_serve(&requests.removes,int(settings.removes),problems,"foliage.requests","instances asked to be taken out","Foliage_Settings.removes")
+    core.queue_serve(&requests.marks,int(settings.marks),problems,"foliage.requests","instances asked to be marked","Foliage_Settings.marks")
     core.queue_serve(&ground.cells,int(settings.ground_requests),problems,"foliage.requests","cells asked of the ground","Foliage_Settings.ground_requests")
 }
 
@@ -115,12 +117,17 @@ removed_cell :: proc "contextless" (owner:^Removed_Owner,coord:[2]i32) -> (ids:[
 
 // The entities that hold the instances taken out of a cell of a Foliage.
 removed_pages :: proc "contextless" (owner:^Removed_Owner,coord:[2]i32) -> []Removed_Page {
-    if owner==nil {return nil}
-    low,high:=0,len(owner.pages)
-    for low<high {mid:=(low+high)/2;if coord_before(owner.pages[mid].coord,coord) {low=mid+1} else {high=mid}}
+    return pages_of(owner.pages[:],coord) if owner!=nil else nil
+}
+
+// The pages of a cell among pages in the order of their cell.
+@(private)
+pages_of :: proc "contextless" (pages:[]Removed_Page,coord:[2]i32) -> []Removed_Page {
+    low,high:=0,len(pages)
+    for low<high {mid:=(low+high)/2;if coord_before(pages[mid].coord,coord) {low=mid+1} else {high=mid}}
     end:=low
-    for end<len(owner.pages) && owner.pages[end].coord==coord {end+=1}
-    return owner.pages[low:end]
+    for end<len(pages) && pages[end].coord==coord {end+=1}
+    return pages[low:end]
 }
 
 // Whether a sorted list of ids holds one.

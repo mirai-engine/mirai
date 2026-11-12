@@ -42,6 +42,8 @@ Foliage_Collision :: enum u8 {
     None,
     Capsule, // along y, standing on the instance: size.x radius, size.y height
     Box,     // standing on the instance: size the sides
+    Prefab,  // the Box, Sphere, Capsule, Cylinder and Hull colliders of its prefab, with their own collision
+    Hull,    // the convex hulls of its mesh, or of each mesh of its prefab: each instance scales the same ones
 }
 
 // A type of foliage: what it shows, how the generator scatters it and how it
@@ -69,8 +71,8 @@ Foliage_Type :: struct {
     impostor_distance:f32 `mirai:"min=0,unit=m"`, // from the eye, where its mesh gives way to its impostor and its shadows to its crown; 0: none
     wind_variants:u32 `mirai:"max=16"`, // the swaying shapes of a type that casts shadows, each instance on one; 0: WIND_VARIANTS
     collision:Foliage_Collision,
-    size:[3]f32 `mirai:"min=0,unit=m"`, // of its collision, at scale 1
-    preset:u32,                    // the Collision_Preset of its collision
+    size:[3]f32 `mirai:"min=0,unit=m"`, // of its capsule or box, at scale 1
+    preset:u32,                    // the Collision_Preset of its capsule or box
 }
 
 // Where a type stands: the slope and height of the ground in their ranges,
@@ -99,6 +101,7 @@ Foliage_Cell :: struct {
 
 INSTANCE_GROUNDED :: u32(1) // placed on the ground: `ground` is how far above it
 INSTANCE_ALIGNED :: u32(2)  // of one grounded: its rotation is from the ground under it, which leans it as much as its type aligns
+INSTANCE_COLORED :: u32(4)  // painted: `color` is its tint and wetness
 
 // An instance of a cell: where it is from the corner of its cell, its
 // rotation (quat_pack of std/math, 10 bits), its scale across and along y.
@@ -110,6 +113,7 @@ Foliage_Instance :: struct {
     rotation:u32,
     scale:[2]f32,
     ground:f32 `mirai:"unit=m"`, // with INSTANCE_GROUNDED, its height over the ground it was placed on
+    color:u32,  // with INSTANCE_COLORED, its tint and wetness as render.batch_color packs them; 0 without
 }
 
 Override_Kind :: enum u8 {
@@ -304,14 +308,14 @@ source_cell_generate :: proc(s:^Source,coord:[2]i32,on:bool) -> bool {
 // Adds a manual instance at a point of the space of the entity, to the cell
 // it falls in, with the next id; its cell and its id, 0 when the ids of the
 // source ran out.
-source_instance_add :: proc(s:^Source,type:u32,position:[3]f32,rotation:u32,scale:[2]f32,flags:u32=0,ground:f32=0) -> (coord:[2]i32,id:u32) {
+source_instance_add :: proc(s:^Source,type:u32,position:[3]f32,rotation:u32,scale:[2]f32,flags:u32=0,ground:f32=0,color:u32=0) -> (coord:[2]i32,id:u32) {
     local:[3]f32
     coord,local=cell_of(position)
     if s.info.instances==max(u32) {return}
     s.info.instances+=1
     id=s.info.instances
     cell:=source_cell(s,coord,true)
-    append(&cell.manual,Foliage_Instance{id=id,type=type,flags=flags,position=local,rotation=rotation,scale=scale,ground=ground})
+    append(&cell.manual,Foliage_Instance{id=id,type=type,flags=flags,position=local,rotation=rotation,scale=scale,ground=ground,color=color})
     return
 }
 
@@ -410,7 +414,7 @@ instance_valid :: proc "contextless" (b:Foliage_Instance) -> bool {
     p:=b.position
     if !finite(p.x) || !finite(p.y) || !finite(p.z) || !finite(b.ground) {return false}
     if p.x<0 || p.x>=CELL_SIZE || p.z<0 || p.z>=CELL_SIZE || abs(p.y)>POSITION_MAX {return false}
-    return finite(b.scale[0]) && finite(b.scale[1]) && b.scale[0]>0 && b.scale[1]>0 && b.scale[0]<=1000 && b.scale[1]<=1000 && b.flags&~(INSTANCE_GROUNDED|INSTANCE_ALIGNED)==0 && (b.flags&INSTANCE_ALIGNED==0 || b.flags&INSTANCE_GROUNDED!=0)
+    return finite(b.scale[0]) && finite(b.scale[1]) && b.scale[0]>0 && b.scale[1]>0 && b.scale[0]<=1000 && b.scale[1]<=1000 && b.flags&~(INSTANCE_GROUNDED|INSTANCE_ALIGNED|INSTANCE_COLORED)==0 && (b.flags&INSTANCE_ALIGNED==0 || b.flags&INSTANCE_GROUNDED!=0) && (b.flags&INSTANCE_COLORED!=0 || b.color==0)
 }
 
 // Whether a source can be saved and shown: what source_read checks of a file.
@@ -504,12 +508,12 @@ Code :: enum u8 {
     Near,     // less that of the record before it in its cell, zigzag: neighbours share their high bits
     Rotation, // quat_pack of 10 bits with the low bytes of its components apart from their high bits
 }
-INSTANCE_WORDS :: 10 // id, type, flags, position, rotation, scale, ground
+INSTANCE_WORDS :: 11 // id, type, flags, position, rotation, scale, ground, color
 OVERRIDE_WORDS :: 3+INSTANCE_WORDS // type, point, kind, the instance
 INSTANCE_BYTES :: INSTANCE_WORDS*4
 OVERRIDE_BYTES :: OVERRIDE_WORDS*4
-@(private) INSTANCE_CODES :: [INSTANCE_WORDS]Code{.Id,.Plain,.Plain,.Near,.Near,.Near,.Rotation,.Plain,.Plain,.Plain}
-@(private) OVERRIDE_CODES :: [OVERRIDE_WORDS]Code{.Plain,.Near,.Plain,.Id,.Plain,.Plain,.Near,.Near,.Near,.Rotation,.Plain,.Plain,.Plain}
+@(private) INSTANCE_CODES :: [INSTANCE_WORDS]Code{.Id,.Plain,.Plain,.Near,.Near,.Near,.Rotation,.Plain,.Plain,.Plain,.Plain}
+@(private) OVERRIDE_CODES :: [OVERRIDE_WORDS]Code{.Plain,.Near,.Plain,.Id,.Plain,.Plain,.Near,.Near,.Near,.Rotation,.Plain,.Plain,.Plain,.Plain}
 
 @(private)
 Planes :: struct($N:int) {
@@ -521,12 +525,12 @@ Planes :: struct($N:int) {
 
 @(private)
 instance_words :: proc "contextless" (b:Foliage_Instance) -> [INSTANCE_WORDS]u32 {
-    return {b.id,b.type,b.flags,transmute(u32)b.position.x,transmute(u32)b.position.y,transmute(u32)b.position.z,b.rotation,transmute(u32)b.scale[0],transmute(u32)b.scale[1],transmute(u32)b.ground}
+    return {b.id,b.type,b.flags,transmute(u32)b.position.x,transmute(u32)b.position.y,transmute(u32)b.position.z,b.rotation,transmute(u32)b.scale[0],transmute(u32)b.scale[1],transmute(u32)b.ground,b.color}
 }
 
 @(private)
 instance_of_words :: proc "contextless" (w:[]u32) -> Foliage_Instance {
-    return {id=w[0],type=w[1],flags=w[2],position={transmute(f32)w[3],transmute(f32)w[4],transmute(f32)w[5]},rotation=w[6],scale={transmute(f32)w[7],transmute(f32)w[8]},ground=transmute(f32)w[9]}
+    return {id=w[0],type=w[1],flags=w[2],position={transmute(f32)w[3],transmute(f32)w[4],transmute(f32)w[5]},rotation=w[6],scale={transmute(f32)w[7],transmute(f32)w[8]},ground=transmute(f32)w[9],color=w[10]}
 }
 
 @(private)

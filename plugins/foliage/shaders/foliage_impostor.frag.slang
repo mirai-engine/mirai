@@ -85,6 +85,10 @@ Stage_Output main(Impostor_Varyings input, float4 pixel_position : SV_Position) 
     terms /= covered;
     float roughness = terms.x;
     float metallic = terms.y;
+    // What the instance shows of its own, as an instance of a batch does.
+    uint own = input.color;
+    color *= float3(float(own & 255u), float((own >> 8u) & 255u), float((own >> 16u) & 255u)) / 255.0;
+    surface_wet(color, roughness, metallic, float(own >> 24u) / 255.0);
     float4 world[3] = {input.world0, input.world1, input.world2};
     float3 place = transform_point(world, surface);
     // Normals go by the inverse transpose: the axes divided by their squared scales.

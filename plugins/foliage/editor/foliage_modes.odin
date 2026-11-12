@@ -5,6 +5,7 @@ import "core:math/linalg"
 import "core:slice"
 import "mirai:core"
 import "mirai:editor"
+import render "mirai:engine/render"
 import "mirai:host"
 import "mirai:std/base"
 import mm "mirai:std/math"
@@ -19,14 +20,17 @@ import foliage "plugins:foliage/runtime"
 // Paint density, or leave it at Erase density of it; Place puts one instance
 // of the selected types, in turn, where it is clicked; Reapply gives the
 // instances under the ring the scale, the turn and the offset of their type
-// again, each once a stroke; Generate turns on the generator of the cells
-// under the ring, whose rules then place the types; Select takes instances by
-// a click or under the ring and the gizmo moves the group.
+// again, each once a stroke; Tint gives them the tint and the wetness of the
+// panel, which the source keeps (white and dry: their own look again);
+// Generate turns on the generator of the cells under the ring, whose rules
+// then place the types; Select takes instances by a click or under the ring
+// and the gizmo moves the group.
 
-Foliage_Mode :: enum u8 {Paint,Erase,Select,Place,Reapply,Generate}
-@(rodata) MODE_NAMES := [Foliage_Mode]string{.Paint="Paint",.Erase="Erase",.Select="Select",.Place="Place",.Reapply="Reapply",.Generate="Generate"}
-@(rodata) MODE_KEYS := [Foliage_Mode]core.Key{.Paint=.One,.Erase=.Two,.Select=.Three,.Place=.Four,.Reapply=.Five,.Generate=.Six}
-TOOL_KEYS :: core.Keys{.F,.Left_Bracket,.Right_Bracket,.One,.Two,.Three,.Four,.Five,.Six}
+Foliage_Mode :: enum u8 {Paint,Erase,Select,Place,Reapply,Generate,Tint}
+@(rodata) MODE_NAMES := [Foliage_Mode]string{.Paint="Paint",.Erase="Erase",.Select="Select",.Place="Place",.Reapply="Reapply",.Generate="Generate",.Tint="Tint"}
+@(rodata) MODE_KEYS := [Foliage_Mode]core.Key{.Paint=.One,.Erase=.Two,.Select=.Three,.Place=.Four,.Reapply=.Five,.Generate=.Six,.Tint=.Seven}
+@(rodata) STROKE_LABELS := [Foliage_Mode]string{.Paint="Paint foliage",.Erase="Erase foliage",.Select="",.Place="",.Reapply="Reapply foliage",.Generate="Generate foliage",.Tint="Tint foliage"}
+TOOL_KEYS :: core.Keys{.F,.Left_Bracket,.Right_Bracket,.One,.Two,.Three,.Four,.Five,.Six,.Seven}
 RADIUS_MIN :: f32(0.1)
 RADIUS_MAX :: f32(500)
 RADIUS_STEP :: f32(1.15) // what [ and ] multiply the radius by
@@ -43,8 +47,10 @@ Foliage_Preferences :: struct {
     reapply_scale:bool,
     reapply_turn:bool,
     reapply_offset:bool,
+    tint:[3]f32 `mirai:"min=0,max=1"`, // what Tint multiplies the colors of the instances by
+    wet:f32 `mirai:"min=0,max=1"`,     // how wet Tint leaves them, 0 dry to 1 soaked
 }
-FOLIAGE_PREFERENCES_DEFAULT :: Foliage_Preferences{radius=3,paint_density=1,reapply_scale=true,reapply_turn=true,reapply_offset=true}
+FOLIAGE_PREFERENCES_DEFAULT :: Foliage_Preferences{radius=3,paint_density=1,reapply_scale=true,reapply_turn=true,reapply_offset=true,tint={1,1,1}}
 
 @(storage)
 Foliage_Tool_Preferences :: struct {provider:editor.Preferences_Provider}
@@ -117,7 +123,7 @@ ring_draw :: proc(s:^editor.Session,tool:^Foliage_Tool,owner:mm.Transform,ground
 mode_color :: proc "contextless" (mode:Foliage_Mode) -> ui.Color {
     #partial switch mode {
     case .Erase:            return editor.BRUSH_TAKE
-    case .Reapply,.Select: return editor.BRUSH_CHANGE
+    case .Reapply,.Select,.Tint: return editor.BRUSH_CHANGE
     }
     return editor.BRUSH_ADD
 }
@@ -137,8 +143,7 @@ brush_frame :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,e:
     if stroke.active {
         if ui.escape(s.gui.ctx) {edit_cancel(s,tool,assets);tool.stroke={};return}
         if !core.mouse_down(input,.Left) {
-            labels:=[Foliage_Mode]string{.Paint="Paint foliage",.Erase="Erase foliage",.Select="",.Place="",.Reapply="Reapply foliage",.Generate="Generate foliage"}
-            if stroke.changed {edit_commit(s,tool,world,assets,labels[stroke.mode])}
+            if stroke.changed {edit_commit(s,tool,world,assets,STROKE_LABELS[stroke.mode])}
             tool.stroke={}
             clear(&tool.reapplied)
             return
@@ -215,6 +220,8 @@ brush_touch :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,ow
         return erase_touch(source,ground,tool.painted[:],center,radius,&tool.work,tool.erase_density,&random)
     case .Reapply:
         return reapply_touch(tool,source,ground,center,radius)
+    case .Tint:
+        return tint_touch(tool,source,ground,center,radius)
     case .Paint:
     case .Select,.Place,.Generate: return
     }
@@ -326,22 +333,7 @@ instances_delete :: proc(s:^foliage.Source,refs:[]Instance_Ref) -> (changed:bool
 // boxes of the panel choose.
 @(private)
 reapply_touch :: proc(tool:^Foliage_Tool,s:^foliage.Source,ground:^foliage.Ground_Owner,center:[3]f32,radius:f32) -> (changed:bool) {
-    Found :: struct {ref:Instance_Ref,placed:foliage.Placed}
-    found:=make([dynamic]Found,context.temp_allocator)
-    low,high:=cells_around(center,radius)
-    for z in low.y..=high.y {for x in low.x..=high.x {
-        cell:=foliage.source_cell(s,{x,z})
-        if cell==nil {continue}
-        if !foliage.cell_build(s,cell,ground_of(ground,cell.coord),&tool.work) {continue}
-        for p in tool.work.placed {
-            if !slice.contains(tool.painted[:],p.type) || !in_brush(p.position,center,radius) {continue}
-            key:=base.hash_combine(base.hash_u64(u64(u32(cell.coord.x))|u64(u32(cell.coord.y))<<32),p.id)
-            if slice.contains(tool.reapplied[:],key) {continue}
-            append(&tool.reapplied,key)
-            append(&found,Found{{cell.coord,p.id},p})
-        }
-    }}
-    for f in found {
+    for f in stroke_instances(tool,s,ground,center,radius) {
         t,_:=foliage.source_type(s,f.placed.type)
         if t==nil {continue}
         tool.random+=1
@@ -364,6 +356,45 @@ reapply_touch :: proc(tool:^Foliage_Tool,s:^foliage.Source,ground:^foliage.Groun
         if _,ok:=instance_set(s,ground,f.ref,p);ok {changed=true}
     }
     return
+}
+
+// Tint: the instances of the selected types under the ring take, once a
+// stroke, the tint and the wetness of the panel; white and dry, their own
+// look again.
+@(private)
+tint_touch :: proc(tool:^Foliage_Tool,s:^foliage.Source,ground:^foliage.Ground_Owner,center:[3]f32,radius:f32) -> (changed:bool) {
+    color:=render.batch_color(tool.tint,tool.wet)
+    for f in stroke_instances(tool,s,ground,center,radius) {
+        p:=f.placed
+        p.color,p.colored=color,color!=render.BATCH_COLOR_PLAIN
+        if p.colored==f.placed.colored && p.color==f.placed.color {continue}
+        if !p.colored {p.color=0}
+        if _,ok:=instance_set(s,ground,f.ref,p);ok {changed=true}
+    }
+    return
+}
+
+// The instances of the selected types under the ring a stroke has not
+// touched yet, which it touches now.
+@(private)
+Stroke_Found :: struct {ref:Instance_Ref,placed:foliage.Placed}
+@(private)
+stroke_instances :: proc(tool:^Foliage_Tool,s:^foliage.Source,ground:^foliage.Ground_Owner,center:[3]f32,radius:f32) -> []Stroke_Found {
+    found:=make([dynamic]Stroke_Found,context.temp_allocator)
+    low,high:=cells_around(center,radius)
+    for z in low.y..=high.y {for x in low.x..=high.x {
+        cell:=foliage.source_cell(s,{x,z})
+        if cell==nil {continue}
+        if !foliage.cell_build(s,cell,ground_of(ground,cell.coord),&tool.work) {continue}
+        for p in tool.work.placed {
+            if !slice.contains(tool.painted[:],p.type) || !in_brush(p.position,center,radius) {continue}
+            key:=base.hash_combine(base.hash_u64(u64(u32(cell.coord.x))|u64(u32(cell.coord.y))<<32),p.id)
+            if slice.contains(tool.reapplied[:],key) {continue}
+            append(&tool.reapplied,key)
+            append(&found,Stroke_Found{{cell.coord,p.id},p})
+        }
+    }}
+    return found[:]
 }
 
 // Place: one instance of the selected types, in turn, where the pointer is,

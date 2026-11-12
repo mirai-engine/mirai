@@ -186,11 +186,11 @@ geometry_source_same :: proc "contextless" (a,b:Geometry_Source) -> bool {
 // What the geometry of a collider is made from. False when the file of its mesh is unknown: then it is not
 // shared.
 @(private)
-geometry_source_of :: proc(s:^Sync,kind:Collider_Kind,static:render.Mesh_Renderer,scale:[3]f32,round:f32) -> (source:Geometry_Source,ok:bool) {
+geometry_source_of :: proc(assets:^host.Assets,kind:Collider_Kind,static:render.Mesh_Renderer,scale:[3]f32,round:f32) -> (source:Geometry_Source,ok:bool) {
     source={kind=kind,shape=static.mesh=={}?static.shape:.None,mesh=static.mesh,scale=scale,round=round}
-    if static.mesh!={} && !host.assets_mesh_generated(s.app.assets,static.mesh) {
-        if s.app.assets==nil {return}
-        file,found:=asset.registry_find(&s.app.assets.registry,static.mesh)
+    if static.mesh!={} && !host.assets_mesh_generated(assets,static.mesh) {
+        if assets==nil {return}
+        file,found:=asset.registry_find(&assets.registry,static.mesh)
         if !found {return}
         source.size,source.time=file.size,file.time
     }
@@ -200,10 +200,10 @@ geometry_source_of :: proc(s:^Sync,kind:Collider_Kind,static:render.Mesh_Rendere
 // A live slot made from the same source: hulls, then meshes (a flat hull is one), then heightfields, in the
 // order of Physics_State.geometry.
 @(private)
-geometry_shared :: proc(s:^Sync,source:Geometry_Source) -> (geometry:sim.Geometry,ok:bool) {
-    w:=&s.state.world
+geometry_shared :: proc(state:^Physics_State,source:Geometry_Source) -> (geometry:sim.Geometry,ok:bool) {
+    w:=&state.world
     hulls,meshes:=len(w.hulls),len(w.meshes)
-    for &known,at in s.state.sources {
+    for &known,at in state.sources {
         if known.generation==0 || !geometry_source_same(known,source) {continue}
         switch {
         case at<hulls:
@@ -222,8 +222,7 @@ geometry_shared :: proc(s:^Sync,source:Geometry_Source) -> (geometry:sim.Geometr
 
 // Writes down what a slot was made from. Without memory the slot is only not shared.
 @(private)
-geometry_remember :: proc(s:^Sync,geometry:sim.Geometry,source:Geometry_Source) {
-    state:=s.state
+geometry_remember :: proc(state:^Physics_State,geometry:sim.Geometry,source:Geometry_Source) {
     w:=&state.world
     total:=len(w.hulls)+len(w.meshes)+len(w.heightfields)
     if len(state.sources)!=total && (resize(&state.sources,total)!=nil || resize(&state.source_stamps,base.chunks_of(total))!=nil) {return}
@@ -247,7 +246,7 @@ geometry_remember :: proc(s:^Sync,geometry:sim.Geometry,source:Geometry_Source) 
 collider_geometry :: proc(s:^Sync,l:^Link,kind:Collider_Kind,e:core.Entity,scale:[3]f32,round:f32) -> (geometry:sim.Geometry,origin:[3]f32,failure:Shape_Failure) {
     static,has_mesh:=core.get(s.statics,e)
     if !has_mesh {return {},{},.No_Mesh}
-    source,shareable:=geometry_source_of(s,kind,static,scale,round)
+    source,shareable:=geometry_source_of(s.app.assets,kind,static,scale,round)
     if kind==.Heightfield {
         field,found:=host.assets_heightfield(s.app.assets,static.mesh)
         if !found {return {},{},.No_Heightfield}
@@ -256,7 +255,7 @@ collider_geometry :: proc(s:^Sync,l:^Link,kind:Collider_Kind,e:core.Entity,scale
         for value in origin {if value-value!=0 {return {},{},.No_Heightfield}}
     }
     if shareable {
-        if shared,found:=geometry_shared(s,source);found {
+        if shared,found:=geometry_shared(s.state,source);found {
             #partial switch g in shared {
             case sim.Hull_Handle:        l.hull=g
             case sim.Mesh_Handle:        l.mesh=g
@@ -266,7 +265,7 @@ collider_geometry :: proc(s:^Sync,l:^Link,kind:Collider_Kind,e:core.Entity,scale
         }
     }
     geometry,failure=collider_geometry_make(s,l,kind,static,scale,round)
-    if failure==.None && shareable {geometry_remember(s,geometry,source)}
+    if failure==.None && shareable {geometry_remember(s.state,geometry,source)}
     return geometry,origin,failure
 }
 
@@ -287,7 +286,7 @@ collider_pieces_make :: proc(s:^Sync,l:^Link,e:core.Entity,scale:[3]f32,round:f3
         if !zone_pieces(volume.spline_outline(s.splines,e),zone.extents.y,&points,&sizes) {return true,.Hull}
     } else {
         if !has_mesh || !host.assets_collision_hulls(s.app.assets,static.mesh,static.shape,&points,&sizes) || len(sizes)<2 {return}
-        source,shareable=geometry_source_of(s,.Hull,static,scale,round)
+        source,shareable=geometry_source_of(s.app.assets,.Hull,static,scale,round)
     }
     run,taken:=pieces_take(s.state,len(sizes)-1)
     if !taken {return true,.Geometry_Budget}
@@ -300,7 +299,7 @@ collider_pieces_make :: proc(s:^Sync,l:^Link,e:core.Entity,scale:[3]f32,round:f3
         source.piece=u32(at+1)
         hull:sim.Hull_Handle
         if shareable {
-            if shared,found:=geometry_shared(s,source);found {hull,_=shared.(sim.Hull_Handle)}
+            if shared,found:=geometry_shared(s.state,source);found {hull,_=shared.(sim.Hull_Handle)}
         }
         if hull=={} {
             for &point in piece {point*=scale}
@@ -312,7 +311,7 @@ collider_pieces_make :: proc(s:^Sync,l:^Link,e:core.Entity,scale:[3]f32,round:f3
                 if mesh,is_mesh:=made.(sim.Mesh_Handle);is_mesh {sim.mesh_destroy(&s.state.world,mesh)}
                 return true,.Hull
             }
-            if shareable {geometry_remember(s,hull,source)}
+            if shareable {geometry_remember(s.state,hull,source)}
         }
         if at==0 {l.hull=hull} else {s.state.pieces[run.first+u32(at)-1].hull=hull}
     }

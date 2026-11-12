@@ -1,7 +1,7 @@
 // An instance of a batch as the pool holds it (render.Batch_Instance),
 // BATCH_WORDS words: its position, its rotation (quat_pack of std/math, 10
-// bits) and its scale across (x and z) and along y, two half floats. Decoded
-// here alone: by the scene, and by the instances of the native TLAS.
+// bits) and its scale along its x, y and z, half floats in two words.
+// Decoded here alone: by the scene, and by the instances of the native TLAS.
 #ifndef MIRAI_BATCH_INSTANCE_SLANG
 #define MIRAI_BATCH_INSTANCE_SLANG
 #include <shared_constants.slang>
@@ -18,13 +18,12 @@ float4 batch_rotation(uint packed) {
 }
 
 // The transform of an instance as a Batch_Instance holds it: its place, its
-// packed rotation and its packed scales; and its inverse.
-void batch_instance_placement(float3 p, uint rotation, uint packed, out float4 world[3], out float4 inverse[3]) {
+// packed rotation and its packed scales (x | y << 16, then z); and its inverse.
+void batch_instance_placement(float3 p, uint rotation, uint2 packed, out float4 world[3], out float4 inverse[3]) {
     float4 q = batch_rotation(rotation);
     // Positive half floats, without the 16-bit types a device may lack: the
     // bits of the half moved into those of a float, times 2^112.
-    float2 halves = float2(asfloat((packed & 0x7fffu) << 13u), asfloat(((packed >> 16u) & 0x7fffu) << 13u)) * asfloat(0x77800000u);
-    float3 scale = halves.xyx;
+    float3 scale = float3(asfloat((packed.x & 0x7fffu) << 13u), asfloat(((packed.x >> 16u) & 0x7fffu) << 13u), asfloat((packed.y & 0x7fffu) << 13u)) * asfloat(0x77800000u);
     float3 x = float3(1.0 - 2.0 * (q.y * q.y + q.z * q.z), 2.0 * (q.x * q.y + q.w * q.z), 2.0 * (q.x * q.z - q.w * q.y));
     float3 y = float3(2.0 * (q.x * q.y - q.w * q.z), 1.0 - 2.0 * (q.x * q.x + q.z * q.z), 2.0 * (q.y * q.z + q.w * q.x));
     float3 z = float3(2.0 * (q.x * q.z + q.w * q.y), 2.0 * (q.y * q.z - q.w * q.x), 1.0 - 2.0 * (q.x * q.x + q.y * q.y));

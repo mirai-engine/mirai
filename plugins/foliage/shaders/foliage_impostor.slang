@@ -30,8 +30,9 @@ struct Impostor_Row {
 struct Impostor_Instance {
     float3 position;
     uint rotation;
-    uint scale;
+    uint2 scale;
     uint row;
+    uint color; // its tint and wetness (render.batch_color)
 };
 
 struct Impostor_Params {
@@ -50,6 +51,7 @@ struct Impostor_Varyings {
     [[vk::location(5)]] nointerpolation float4 world0 : TEXCOORD5;  // its transform
     [[vk::location(6)]] nointerpolation float4 world1 : TEXCOORD6;
     [[vk::location(7)]] nointerpolation float4 world2 : TEXCOORD7;
+    [[vk::location(8)]] nointerpolation uint color : TEXCOORD8;     // its tint and wetness (render.batch_color)
 };
 
 [[vk::binding(SLOT_PASS0, 0)]] StructuredBuffer<Impostor_Instance> impostor_instances : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);
@@ -79,7 +81,7 @@ bool impostor_shape(Impostor_Instance inst, Impostor_Row row, out Impostor_Shape
     s.appear = max(box_faded(low, high, row.low.w, row.high.w), box_small_faded(low, high));
     s.gone = box_faded(low, high, row.far.x, row.far.y);
     s.center = transform_point(s.world, row.sphere.xyz);
-    float scale = max(length(float3(s.world[0].x, s.world[1].x, s.world[2].x)), length(float3(s.world[0].y, s.world[1].y, s.world[2].y)));
+    float scale = max(max(length(float3(s.world[0].x, s.world[1].x, s.world[2].x)), length(float3(s.world[0].y, s.world[1].y, s.world[2].y))), length(float3(s.world[0].z, s.world[1].z, s.world[2].z)));
     s.radius = row.sphere.w * scale;
     return (row.frames.w & 0xffffu) >= 2u && s.appear > 0.0 && s.gone < 1.0;
 }

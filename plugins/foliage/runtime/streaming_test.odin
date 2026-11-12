@@ -127,17 +127,19 @@ the_collision_of_the_nearest_cells_is_built_first_within_its_budget :: proc(t:^t
     sources.items[0]={position={2*CELL_SIZE+5,0,5},ahead={2*CELL_SIZE+5,0,5}}
     sources.count=1
     near:=scene.sources_near(&sources,mm.MAT4_IDENTITY,200)
+    types:=make([dynamic]Type_Shape,context.temp_allocator)
+    type_shapes(nil,nil,&s,nil,&types)
     budget:=Physics_Budget{instances=1}
-    {complete,enough:=physics_owner_build(&fp,&w,&collision,7,&s,{scale={1,1,1},rotation=1},nil,true,&near,200,nil,&budget);testing.expect(t,complete && enough)}
+    {complete,enough:=physics_owner_build(&fp,&w,&collision,7,&s,{scale={1,1,1},rotation=1},types[:],nil,true,nil,&near,&budget);testing.expect(t,complete && enough)}
     testing.expect(t,budget.waiting && int(w.world.body_count)==1 && fp.cells[2].body!={},"the nearest cell first")
     testing.expect(t,fp.cells[0].version==0 && fp.cells[0].body=={},"the others wait")
     for _ in 0..<2 {
         budget={instances=1}
-        {complete,enough:=physics_owner_build(&fp,&w,&collision,7,&s,{scale={1,1,1},rotation=1},nil,false,&near,200,nil,&budget);testing.expect(t,complete && enough)}
+        {complete,enough:=physics_owner_build(&fp,&w,&collision,7,&s,{scale={1,1,1},rotation=1},types[:],nil,false,nil,&near,&budget);testing.expect(t,complete && enough)}
     }
     testing.expect_value(t,int(w.world.body_count),3)
     budget={instances=1}
-    {complete,enough:=physics_owner_build(&fp,&w,&collision,7,&s,{scale={1,1,1},rotation=1},nil,false,&near,200,nil,&budget);testing.expect(t,complete && enough)}
+    {complete,enough:=physics_owner_build(&fp,&w,&collision,7,&s,{scale={1,1,1},rotation=1},types[:],nil,false,nil,&near,&budget);testing.expect(t,complete && enough)}
     testing.expect(t,!budget.waiting && budget.instances==1,"a stable call builds nothing")
 }
 

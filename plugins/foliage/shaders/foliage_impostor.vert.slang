@@ -57,5 +57,6 @@ Impostor_Varyings main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV
     o.world0 = s.world[0];
     o.world1 = s.world[1];
     o.world2 = s.world[2];
+    o.color = inst.color;
     return o;
 }

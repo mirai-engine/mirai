@@ -79,14 +79,17 @@ a_batch_casts_the_shadows_and_shows_in_the_reflections_of_its_instances :: proc(
 	// A white floor takes the shadows, and a strip of mirror in front of the posts their reflections.
 	floor := Instance_Desc{object_id = 1, mesh = box, transform = trace_placed({0, -0.1, 0}, {14, 0.2, 14}), tint = {0.8, 0.8, 0.8}}
 	strip := Instance_Desc{object_id = 2, mesh = box, material = 1, transform = trace_placed({0, -0.09, 2}, {14, 0.2, 3}), tint = 1}
-	color := Vec3{0.8, 0.3, 0.2}
+	// The posts deeper than wide, each in the color the batch gives it of its own (a byte a channel).
+	color := Vec3{204, 77, 51} / 255
 	places := [3]Vec3{{-2, 1, 0}, {0, 1, 0}, {2, 1, 0}}
 	posts: [5]Instance_Desc
 	posts[0], posts[1] = floor, strip
 	batched: [3]Batch_Instance
+	colors: [3]u32
 	for p, i in places {
-		posts[i + 2] = {object_id = u64(i + 3), mesh = box, transform = trace_placed(p, {0.4, 2, 0.4}), tint = color}
-		batched[i] = batch_instance(p, 1, 0.4, 2)
+		posts[i + 2] = {object_id = u64(i + 3), mesh = box, transform = trace_placed(p, {0.4, 2, 0.6}), tint = color}
+		batched[i] = batch_instance(p, 1, {0.4, 2, 0.6})
+		colors[i] = batch_color(color, 0)
 	}
 	sun := Sun_Desc{direction = {0.70710678, 0.70710678, 0}, color = {1, 1, 1}, illuminance = 1.5 * math.PI, enabled = true}
 	sky := Environment{sky = {0.3, 0.4, 0.6}}
@@ -105,7 +108,7 @@ a_batch_casts_the_shadows_and_shows_in_the_reflections_of_its_instances :: proc(
 		instanced := trace_frame(t, r, camera)
 		defer delete(instanced.pixels)
 		scene_given(r, posts[:2], nil, sun, sky)
-		handle, error := batch_set(r, 0, r.world_key, {mesh = box, tint = color, flags = {.Casts_Shadow, .Ray_Visible}}, batched[:])
+		handle, error := batch_set(r, 0, r.world_key, {mesh = box, tint = 1, flags = {.Casts_Shadow, .Ray_Visible}}, batched[:], colors[:])
 		testing.expect_value(t, error, "")
 		batch := trace_frame(t, r, camera)
 		defer delete(batch.pixels)
@@ -158,8 +161,8 @@ a_native_tlas_larger_than_the_upload_ring_is_built_and_met :: proc(t: ^testing.T
 	count := TLAS_INSTANCES if TLAS_INSTANCES > 0 else RING / 64 + 40_000
 	batched := make([]Batch_Instance, count)
 	defer delete(batched)
-	batched[0] = batch_instance({0, 1, 0}, 1, 0.4, 2)
-	for &b, i in batched[1:] {b = batch_instance({f32(i % 300) * 2 - 300, -200, f32(i / 300) * 2 - 300}, 1, 0.4, 0.4)}
+	batched[0] = batch_instance({0, 1, 0}, 1, {0.4, 2, 0.4})
+	for &b, i in batched[1:] {b = batch_instance({f32(i % 300) * 2 - 300, -200, f32(i / 300) * 2 - 300}, 1, {0.4, 0.4, 0.4})}
 	sun := Sun_Desc{direction = {0.70710678, 0.70710678, 0}, color = {1, 1, 1}, illuminance = 1.5 * math.PI, enabled = true}
 	camera := Camera{position = {0, 7, 4}, forward = {0, -7, -4}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 500, exposure = UNIT_EXPOSURE}
 	shadow := trace_pixel(r, camera, {-1, 0, 0})

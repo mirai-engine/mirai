@@ -56,6 +56,11 @@ ranges of each cell.
   it was put, to reproject it when the ground changes. With `INSTANCE_ALIGNED` (only together with
   the other) its rotation is from the ground: it tilts with it according to the `align` of its
   type, also when it changes.
+- An instance with `INSTANCE_COLORED` (manual, or of an override `Moved` or `Replaced`) stores in
+  `color` its tint and wetness as `render.batch_color` packs them, which the Tint brush paints;
+  without the flag `color` is 0. The batches of a cell carry the colors only where some instance
+  has one ([batch colors](../../mirai-rendering/references/scene.md#instance-batches)); its
+  impostor tints and wets its frames the same way (`Impostor_Instance.color`).
 - An override changes a generated instance by its id (type and point in its cell): `Deleted`,
   `Moved` or `Replaced`. In each cell they go in type and point order, without repeating:
   `source_override_set` inserts them in place, `source_read` sorts those of a file and
@@ -178,10 +183,10 @@ to the overrides).
 - **Type built from a prefab** (no mesh): each `Mesh_Renderer` of the prefab that is on and not
   hidden, with its transform from the root (`prefab_parts`; the root's place is that of the
   instance), is a batch per cell, type and part with the composed transforms (`part_instance`).
-  What `Batch_Instance` does not have (a different scale in x than in z, shear) is approximated
-  with the mean of x and z; if it leaves out more than `PREFAB_ERROR` of the transform it is the
-  `foliage.prefab_transform` problem, which says how to fix it. A prefab that cannot be read or
-  has no meshes is `foliage.prefab`. The collision is that of the type.
+  What `Batch_Instance` does not have (a shear, a mirror) is approximated; if it leaves out more
+  than `PREFAB_ERROR` of the transform it is the `foliage.prefab_transform` problem, which says
+  how to fix it. A prefab that cannot be read or has no meshes is `foliage.prefab`. With
+  `Prefab` collision it also collides as its prefab ([collision](#collision)).
 - A cell is drawn while it is resident through the [residency of the streaming
   sources](../../mirai-gameplay/references/libraries.md#sources-and-residency), with the farthest
   `cull_distance` of its types as its reach; a type that is never culled leaves all of them
@@ -288,20 +293,31 @@ same function:
 ## Collision
 
 - `foliage_physics` (between `physics_prepare` and `physics_places`) makes one static body per
-  resident cell with one shape per instance of a type with collision, in the entity's pose and on
-  its ground, and rebuilds only the cells that changed or changed residency, nearest a source
-  first and `PHYSICS_INSTANCES_A_TICK` a tick, expanding only the types that collide. The body's
-  `user_data` is the entity and the shape's the instance id.
-- **Residency.** That of the simulation sources (`scene.Simulation_Sources`: the bodies the seats
-  drive and the marks, never the view), so a world collides the same whoever looks at it, with
-  `collision_reach`: the farthest that a type with collision is drawn with its mesh, and no more
-  than `COLLISION_REACH`, also for a type that is never culled: many loaded sections do not fill
-  the simulation with all their cells. Without simulation sources every cell collides; what moves
-  far from every source does not collide with the foliage.
+  cell of each loaded `Foliage`, at the corner of the cell in the entity's pose, with the shapes of
+  each instance of a type with collision on its ground, and rebuilds only the cells whose content
+  or ground changed, nearest a simulation source (`scene.Simulation_Sources`: the bodies the seats
+  drive and the marks, never the view) first and `PHYSICS_INSTANCES_A_TICK` a tick, expanding
+  only the types that collide. The body's `user_data` is the entity and the shape's the instance
+  id.
+- **Shapes of a type** (`type_shapes`): its `Capsule` or `Box` of `size`, standing on the
+  instance; with `Prefab` the `Box`, `Sphere`, `Capsule`, `Cylinder` and `Hull` colliders of its
+  prefab with their own collision and their transform from its root; with `Hull` the convex hulls
+  of its mesh, or of each mesh of its prefab. A primitive is scaled by the instance and the entity
+  (`collider_scaled`: a capsule keeps its length from end to end); a hull is one slot of physics
+  (`physics.owned_hulls`) that every instance scales and turns, kept in `Foliage_Physics.hulls`
+  and given back once no shape uses it. A Mesh or sensor of the prefab, a type without what it
+  collides as, or no room for hulls is the `foliage.collision` problem.
+- **Every cell of a loaded Foliage collides**, however far from the sources: an NPC or a shot on a
+  server meets the trees far from every player, and the navmesh, built from the static collision,
+  has the same obstacles wherever the players are. A `Foliage` kept for a section that is not
+  loaded (`scene.Far_Kept`) collides with nothing. Physics_Settings must hold the shapes of every
+  loaded cell; past them it is the `foliage.physics` problem.
+- **Instances taken out** leave with their shapes alone (`collider_remove`): the body of the cell
+  stays unless it has none left, and the navmesh rebuilds only around them. One put back builds
+  its cell again.
 - `Foliage_Physics` stores bodies and shapes with the world: a Play copy or a rollback carries
   both together. They are [owned bodies](../../mirai-physics/references/engine.md#owned-bodies) of
-  physics. It does not run in a resimulated tick. `collider_remove` removes the collision of an
-  instance in constant time.
+  physics. It does not run in a resimulated tick.
 
 ## Instances removed in play
 
@@ -310,8 +326,11 @@ like the [tombstones](../../mirai-gameplay/references/libraries.md#scene-referen
 is destroyed in a section (`removal.odin`).
 
 - `foliage_remove(requests, plant)` requests it with a `Foliage_Plant` (its Foliage, cell and id,
-  `Placed.id`), as a pick of its batches gives it or `hit_of(physics, hit)` from
-  a `physics.Hit`.
+  `Placed.id`), as a pick of its batches gives it, `hit_of(physics, hit)` from a `physics.Hit`,
+  or a query of the game (`query.odin`): `foliage_in_sphere` and `foliage_in_box` give the
+  instances whose place is in an area of the world and `foliage_plant` where one stands and of
+  which type, as the world shows them (on their ground, without what was taken out), with
+  collision or not and however far from the players.
 - `foliage_removals` fulfills it at the end that decides (alone, or the server; a client requests
   nothing), once per instance that the cell shows on its ground, grouped **by cell**: an entity with
   `Foliage_Removed` (`replicated`) hanging from the `Foliage` stores the cell, the count and the
@@ -339,6 +358,14 @@ is destroyed in a section (`removal.odin`).
   creation, in parts if it does not fit in a datagram; an array of loose ids would be a single
   field, which is resent whole. The client makes it with its component and its foliage leaves it
   out. Each `REMOVED_PAGE` instances of a cell occupy one object of `Net_Settings.max_objects`.
+- **Marks** (`marks.odin`): what play changes of how instances look (burnt, wet) is world state
+  the same way. `foliage_mark(requests, plant, tint, wet)` asks it; `foliage_marks`, at the end
+  that decides, keeps each instance once in an entity `Foliage_Marked` of its cell (up to
+  `MARKED_PAGE`), changing its entry when it is marked again, so the network sends that entry
+  alone. Saves, Play, rollback and `Far_Kept` keep them as removals; removing the entity gives the
+  instances their look back. `Foliage_Marks` orders them by cell (`marked_cell`) and only the cells
+  whose marks changed are drawn again; a mark goes over what the source paints. An id the cell
+  does not show colors nothing and is kept.
 
 [fragments]: ../../mirai-networking/references/networking.md#protocol-and-descriptors
 
@@ -363,7 +390,7 @@ the registry's memory as a file of the undo step that creates it.
   the total appears when none is left; a frame without changes counts nothing.
 - **Live info** (folded at the start, as in Terrain3D): under the brush, place, cell and its
   instances, height of the surface and of the foliage ground, and slope.
-- Modes (`foliage_modes.odin`), with keys 1 to 6. **Paint** puts under the ring manual instances
+- Modes (`foliage_modes.odin`), with keys 1 to 7. **Paint** puts under the ring manual instances
   of each selected type up to its density by Paint density (counting those already there and
   separated by half a step from it), lowered to the surface that the picker finds, where the type's
   [rule](#layers-of-a-cell) takes them, with the offset of their type, and `INSTANCE_GROUNDED` and
@@ -373,10 +400,13 @@ the registry's memory as a file of the undo step that creates it.
   leave their cell and generated ones with a `Deleted` override. **Place** puts one instance of
   the selected types, in turn, where it is clicked. **Reapply** gives the instances under the ring
   the scale, turn and offset of their type again (whatever their checkboxes mark), each one once
-  per stroke. **Generate** turns on the generator of the cells whose square touches the ring and
-  with Ctrl turns it off: it raises the density of the cells under the ring to all of it within
-  `GENERATE_HARDNESS` of its radius, less toward its border, and Ctrl takes away what the same
-  ring gave; a cell left with none stops generating and goes when it has nothing else
+  per stroke. **Tint** gives them the tint and wetness of the panel, which the source keeps
+  (`INSTANCE_COLORED`; a generated one by a `Moved` override where it stands); white and dry gives
+  them their own look again. **Generate** turns on the generator of the cells whose square
+  touches the ring and with Ctrl turns it off: it raises the density of the cells under the ring
+  to all of it within `GENERATE_HARDNESS` of its radius, less toward its border, and Ctrl takes
+  away what the same ring gave; a cell left with none stops generating and goes when it has
+  nothing else
   (`source_cell_generate`). It draws the nearby cells, in green those that generate.
 - Keys like those of the [terrain](terrain.md#tool) (`editor.brush_adjust_*`, the same
   adjustment): `[` and `]` and F change the radius, Shift F the density of Paint or Erase, Ctrl
@@ -444,7 +474,8 @@ the registry's memory as a file of the undo step that creates it.
   `a_part_of_a_prefab_composes_with_its_instance_and_says_what_it_leaves_out`,
   `the_parts_of_a_prefab_are_its_shown_meshes_placed_from_its_root`), collision
   (`a_cell_collides_with_one_static_body_and_one_instance_leaves_alone`,
-  `the_cells_of_foliage_collide_while_they_are_resident`), types
+  `rocks_collide_as_one_hull_each_instance_scales`; the colliders of a prefab in
+  `the_parts_of_a_prefab_are_its_shown_meshes_placed_from_its_root`), types
   (`a_removed_type_takes_its_instances_and_overrides_with_it`,
   `a_type_with_an_impostor_draws_its_mesh_up_to_its_distance`), crown
   (`a_crown_is_the_closed_surface_of_the_voxels_dense_with_leaves`,
@@ -465,7 +496,9 @@ the registry's memory as a file of the undo step that creates it.
   `an_instance_is_taken_out_of_what_its_cell_shows_on_its_ground`,
   `thousands_of_instances_taken_out_of_a_few_cells_are_a_few_entities` and
   `a_saved_game_takes_out_the_same_instance_after_its_source_is_edited` and
-  `an_instance_taken_out_later_sends_a_small_part_of_its_cell`; that they reach a client:
+  `an_instance_taken_out_later_sends_a_small_part_of_its_cell`; what a game finds:
+  `the_instances_a_game_finds_are_those_the_world_shows`; marks:
+  `marks_of_play_are_one_entry_for_each_instance_of_their_cell`; that they reach a client:
   `an_entity_with_a_replicated_object_component_reaches_a_client` in `plugins/multiplayer/runtime`.
 - Ground (`plugins/foliage/runtime`): `the_ground_of_foliage_is_read_where_the_ground_changed`,
   `foliage_is_kept_out_of_volumes_splines_and_colliders`,
@@ -487,6 +520,7 @@ the registry's memory as a file of the undo step that creates it.
   `a_step_keeps_the_cells_it_changed_and_trades_them_back`,
   `a_group_moves_together_and_an_instance_that_leaves_its_cell_keeps_the_others_named`,
   `reapply_gives_the_instances_the_scale_of_their_type_once_a_stroke`,
+  `tint_paints_the_instances_under_the_ring_into_the_source`,
   `a_point_past_what_a_foliage_holds_fails_naming_its_field`.
   Gestures (strokes, clicks, the gizmo) are tested by the user.
 - `mirai test render` (CPU): `impostor_frames_cover_the_upper_hemisphere_and_fold_back`,

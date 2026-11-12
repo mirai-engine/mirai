@@ -72,7 +72,10 @@ a_foliage_asset_comes_back_as_it_was_written_and_damage_is_refused :: proc(t:^te
     shuffled.manual[3].ground=-0.0
     shuffled.manual[5].position.y=-0.0
     shuffled.manual[7],shuffled.manual[40]=shuffled.manual[40],shuffled.manual[7]
-    source_override_set(&s,{2,-1},{type=1,point=900,kind=.Moved,instance={type=1,position={31.99,-4,0},rotation=max(u32),scale={3,3},flags=INSTANCE_GROUNDED,ground=-0.0}})
+    // A painted one, manual and generated: their tint and wetness come back with them.
+    shuffled.manual[9].flags|=INSTANCE_COLORED
+    shuffled.manual[9].color=render.batch_color({0.2,0.1,0.05},0.75)
+    source_override_set(&s,{2,-1},{type=1,point=900,kind=.Moved,instance={type=1,position={31.99,-4,0},rotation=max(u32),scale={3,3},flags=INSTANCE_GROUNDED|INSTANCE_COLORED,ground=-0.0,color=max(u32)}})
     s.types[1].radius=2
     source_generate_area(&s,{-20,0,-10},9,true,0.5)
     data,error:=source_bytes(&s,{5,6},&types)
@@ -104,8 +107,13 @@ a_foliage_asset_comes_back_as_it_was_written_and_damage_is_refused :: proc(t:^te
         testing.expect(t,!read,"a cut file is refused")
     }
     testing.expect_value(t,len(back.cells),len(s.cells))
-    // What does not validate is not written.
-    source_cell(&s,{2,-1}).manual[0].scale={0,1}
+    // What does not validate is not written: a color without its flag, a scale of 0.
+    painted:=source_cell(&s,{2,-1})
+    painted.manual[9].flags&~=INSTANCE_COLORED
+    _,uncolored:=source_bytes(&s,{5,6},&types)
+    testing.expect_value(t,uncolored,asset.Error.Invalid)
+    painted.manual[9].flags|=INSTANCE_COLORED
+    painted.manual[0].scale={0,1}
     _,invalid:=source_bytes(&s,{5,6},&types)
     testing.expect_value(t,invalid,asset.Error.Invalid)
     source_cell(&s,{2,-1}).manual[0].scale={1,1}
@@ -239,8 +247,8 @@ batch_instances_carry_the_transform_of_their_entity :: proc(t:^testing.T) {
     p:=Placed{position={1,0,0},rotation=1,scale={1,1.5}}
     b:=batch_instance_of(p,owner)
     testing.expect(t,linalg.length(b.position-[3]f32{100,5,-2})<1e-4,"turned and scaled by its entity")
-    _,across,along:=render.batch_instance_unpack(b)
-    testing.expect(t,abs(across-2)<1e-3 && abs(along-3)<1e-3)
+    _,scale:=render.batch_instance_unpack(b)
+    testing.expect(t,linalg.length(scale-[3]f32{2,3,2})<1e-3)
 }
 
 @(test)
@@ -256,38 +264,98 @@ a_cell_collides_with_one_static_body_and_one_instance_leaves_alone :: proc(t:^te
     collision:physics.Collision_Settings
     e:=core.Entity(42)
     for &cell,i in s.cells {cell.version=u32(i+1)}
-    {complete,enough:=physics_owner_build(&fp,&w,&collision,e,&s,{scale={1,1,1},rotation=1});testing.expect(t,complete && enough)}
+    types:=make([dynamic]Type_Shape,context.temp_allocator)
+    testing.expect_value(t,type_shapes(nil,nil,&s,nil,&types),0)
+    // The entity far from the origin: each body stands at the corner of its cell.
+    owner:=mm.Transform{position={20000,0,-30000},rotation=1,scale={1,1,1}}
+    {complete,enough:=physics_owner_build(&fp,&w,&collision,e,&s,owner,types[:]);testing.expect(t,complete && enough)}
     // Trees collide, grass does not: the generated cell and the manual tree of cell (1,-1).
     testing.expect_value(t,len(fp.cells),len(s.cells))
     testing.expect_value(t,int(w.world.body_count),2)
     shapes:=int(w.world.shape_count)
     testing.expect_value(t,shapes,len(fp.shapes))
-    for cell in fp.cells {if cell.body!={} {owned,_:=physics.owned_body_of(&w,cell.body);testing.expect(t,owned.owner==BODY_OWNER && owned.entity==e)}}
-    // One instance leaves: its shape, and nothing else.
-    testing.expect(t,collider_remove(&fp,&w,0,0))
+    tree,generated:=[2]i32{1,-1},[2]i32{0,0}
+    at:=-1
+    for cell,i in fp.cells {
+        if cell.coord==generated {at=i}
+        if cell.body=={} {continue}
+        owned,_:=physics.owned_body_of(&w,cell.body)
+        testing.expect(t,owned.owner==BODY_OWNER && owned.entity==e)
+        info,_:=physics.body_info({ptr=&w},cell.body)
+        testing.expect(t,linalg.length(info.pose.position-(owner.position+cell_corner(cell.coord)))<1e-3,"at the corner of its cell")
+    }
+    // The manual tree, twice as tall, 8 m and 27 m from the corner of its cell: its capsule from its foot up.
+    manual:=Placed{type=1,position={40,1,-5},rotation=1,scale={1,2}}
+    shape,made:=instance_shape(types[0],manual,tree,owner)
+    testing.expect(t,made && linalg.length(shape.position-[3]f32{8,1+4,27})<1e-3)
+    testing.expect(t,abs(shape.collider.size.x-0.3)<1e-5 && abs(shape.collider.size.y-(4-0.3))<1e-4,"8 m from end to end")
+    // One instance leaves: its shapes, and nothing else.
+    if !testing.expect(t,at>=0 && fp.cells[at].count>1) {return}
+    gone:=fp.shapes[fp.cells[at].first].instance
+    testing.expect(t,collider_remove(&fp,&w,at,gone))
     testing.expect_value(t,int(w.world.shape_count),shapes-1)
-    testing.expect(t,!collider_remove(&fp,&w,0,0),"once")
-    for handle,i in fp.shapes {if i>0 {_,valid:=physics.owned_shape_user(&w,handle);testing.expect(t,valid)}}
+    testing.expect(t,!collider_remove(&fp,&w,at,gone),"once")
+    for shape,i in fp.shapes {if i!=int(fp.cells[at].first) {_,valid:=physics.owned_shape_user(&w,shape.handle);testing.expect(t,valid)}}
     // Building again replaces the bodies of the entity.
-    {complete,enough:=physics_owner_build(&fp,&w,&collision,e,&s,{scale={1,1,1},rotation=1});testing.expect(t,complete && enough)}
+    {complete,enough:=physics_owner_build(&fp,&w,&collision,e,&s,owner,types[:]);testing.expect(t,complete && enough)}
     testing.expect_value(t,int(w.world.body_count),2)
     testing.expect_value(t,int(w.world.shape_count),shapes)
     // Building what changed keeps the bodies of the other cells.
-    tree,generated:=[2]i32{1,-1},[2]i32{0,0}
     kept:physics.Body_Handle
     for cell in fp.cells {if cell.coord==tree {kept=cell.body}}
     source_cell(&s,{0,0}).version+=10
-    {complete,enough:=physics_owner_build(&fp,&w,&collision,e,&s,{scale={1,1,1},rotation=1},nil,false);testing.expect(t,complete && enough)}
+    {complete,enough:=physics_owner_build(&fp,&w,&collision,e,&s,owner,types[:],nil,false);testing.expect(t,complete && enough)}
     testing.expect_value(t,int(w.world.body_count),2)
     testing.expect_value(t,int(w.world.shape_count),shapes)
     testing.expect_value(t,len(fp.shapes),shapes)
     for cell in fp.cells {
         if cell.coord==tree {testing.expect_value(t,cell.body,kept)}
         if cell.coord==generated {_,owned:=physics.owned_body_of(&w,cell.body);testing.expect(t,owned,"the cell that changed has a body again")}
-        for handle in fp.shapes[cell.first:][:cell.count] {_,valid:=physics.owned_shape_user(&w,handle);testing.expect(t,valid)}
+        for shape in fp.shapes[cell.first:][:cell.count] {_,valid:=physics.owned_shape_user(&w,shape.handle);testing.expect(t,valid)}
     }
     physics_owner_clear(&fp,&w,e)
     testing.expect(t,w.world.body_count==0 && len(fp.cells)==0 && len(fp.shapes)==0)
+}
+
+// Rocks of a type of Hull collision share one hull, which each instance
+// scales and turns: a ray meets each at its own size, and the hull goes
+// back to physics once no rock uses it.
+@(test)
+rocks_collide_as_one_hull_each_instance_scales :: proc(t:^testing.T) {
+    w:physics.Physics_State
+    if !testing.expect(t,physics.test_state_make(&w)) {return}
+    defer physics.state_destroy(&w)
+    s:Source
+    defer source_destroy(&s)
+    rock:=source_type_add(&s,"rock",{2,2})
+    rock.collision=.Hull
+    turned:=u32(mm.quat_pack(mm.quat_axis_angle({0,1,0},math.PI*0.5),10))
+    _,wide:=source_instance_add(&s,rock.id,{5,0,5},turned,{2,1})
+    source_instance_add(&s,rock.id,{10,0,5},u32(mm.quat_pack(1,10)),{1,3})
+    for &cell,i in s.cells {cell.version=u32(i+1)}
+    fp:Foliage_Physics
+    defer core.value_free(&fp,type_info_of(Foliage_Physics))
+    hulls:=make([dynamic]physics.Hull_Handle,context.temp_allocator)
+    if !testing.expect(t,physics.owned_hulls(&w,nil,{shape=.Cube},&hulls) && len(hulls)==1) {return}
+    append(&fp.hulls,hulls[0])
+    types:=[1]Type_Shape{{rock.id,physics.collider_hull(),1,hulls[0]}}
+    collision:physics.Collision_Settings
+    e:=core.Entity(5)
+    {complete,enough:=physics_owner_build(&fp,&w,&collision,e,&s,{rotation=1,scale={1,1,1}},types[:]);testing.expect(t,complete && enough)}
+    testing.expect_value(t,len(fp.shapes),2)
+    top,on_top:=physics.raycast(core.ref(&w),{5,10,5},{0,-1,0},20)
+    tall,on_tall:=physics.raycast(core.ref(&w),{10,10,5},{0,-1,0},20)
+    testing.expect(t,on_top && abs(top.distance-9.5)<1e-3,"a metre tall")
+    testing.expect(t,on_tall && abs(tall.distance-8.5)<1e-3,"three metres tall")
+    side,on_side:=physics.raycast(core.ref(&w),{0,0.2,5},{1,0,0},20)
+    testing.expect(t,on_side && abs(side.distance-4)<1e-3,"two metres wide across x")
+    plant,found:=shape_instance(&w,side.body,side.shape)
+    testing.expect(t,found && plant.instance==MANUAL|u64(wide))
+    hulls_sweep(&fp,&w)
+    testing.expect_value(t,len(fp.hulls),1)
+    physics_owner_clear(&fp,&w,e)
+    hulls_sweep(&fp,&w)
+    testing.expect_value(t,len(fp.hulls),0)
 }
 
 @(test)
@@ -476,11 +544,17 @@ a_part_of_a_prefab_composes_with_its_instance_and_says_what_it_leaves_out :: pro
     b,error:=part_instance(p,owner,part)
     testing.expect(t,error<1e-4)
     testing.expect(t,linalg.length(b.position-[3]f32{12,3,0})<1e-3,"the part one metre up, under the instance and the entity")
-    _,across,along:=render.batch_instance_unpack(b)
-    testing.expect(t,abs(across-2)<1e-2 && abs(along-3)<1e-2)
-    // A part scaled along x alone is approximated, and says by how much.
+    _,scale:=render.batch_instance_unpack(b)
+    testing.expect(t,linalg.length(scale-[3]f32{2,3,2})<1e-2)
+    // A part stretched along its x alone is drawn as it is.
     stretched:=mm.transform_matrix({rotation=1,scale={3,1,1}})
-    _,error=part_instance(p,owner,stretched)
+    b,error=part_instance(p,owner,stretched)
+    _,scale=render.batch_instance_unpack(b)
+    testing.expect(t,error<1e-4 && linalg.length(scale-[3]f32{6,3,2})<2e-2)
+    // A sheared one is approximated, and says by how much.
+    sheared:=mm.Mat4(1)
+    sheared[1].x=1
+    _,error=part_instance(p,owner,sheared)
     testing.expect(t,error>PREFAB_ERROR)
 }
 
@@ -502,6 +576,15 @@ the_parts_of_a_prefab_are_its_shown_meshes_placed_from_its_root :: proc(t:^testi
     asset.scene_set(&prefab,4,"Mesh_Renderer",&crown)
     hidden:render.Hidden
     asset.scene_set(&prefab,4,"Hidden",&hidden)
+    // A capsule on the trunk collides, and so does the hull of what the hidden one shows; a triangle
+    // mesh, on the root, cannot be an instance's.
+    trunk:=physics.collider_capsule(0.25,1)
+    asset.scene_set(&prefab,2,"Collider",&trunk)
+    hull:=physics.collider_hull()
+    asset.scene_set(&prefab,4,"Collider",&hull)
+    triangles:=physics.COLLIDER_DEFAULT
+    triangles.kind=.Mesh
+    asset.scene_set(&prefab,1,"Collider",&triangles)
     data,error:=asset.scene_bytes(&prefab)
     defer delete(data)
     if !testing.expect_value(t,error,asset.Error.None) {return}
@@ -510,12 +593,24 @@ the_parts_of_a_prefab_are_its_shown_meshes_placed_from_its_root :: proc(t:^testi
     defer asset.asset_close(&file)
     parts:[dynamic]Prefab_Part
     defer delete(parts)
-    testing.expect(t,prefab_parts(&file,&types,&parts))
+    colliders:[dynamic]Prefab_Collider
+    defer delete(colliders)
+    read,left_out:=prefab_parts(&file,&types,&parts,&colliders)
+    testing.expect(t,read && left_out==1)
     if !testing.expect_value(t,len(parts),1) {return}
     testing.expect_value(t,parts[0].renderer.mesh,base.Asset_Id{7,7})
     // The trunk one metre up scaled twice, the crown one metre along it; the root's own place is the instance's.
     testing.expect(t,linalg.length(parts[0].placement[3].xyz-[3]f32{2,1,0})<1e-5)
     testing.expect(t,abs(linalg.length(parts[0].placement[0].xyz)-2)<1e-5)
+    if !testing.expect_value(t,len(colliders),2) {return}
+    if colliders[0].collider.kind!=.Capsule {colliders[0],colliders[1]=colliders[1],colliders[0]}
+    testing.expect(t,colliders[0].collider.kind==.Capsule && linalg.length(colliders[0].placement[3].xyz-[3]f32{0,1,0})<1e-5)
+    testing.expect(t,colliders[1].collider.kind==.Hull && colliders[1].renderer.mesh==base.Asset_Id{7,7})
+    // An instance 1.5 times as tall turned a quarter: the trunk's capsule twice as thick, three times as long, one and a half metres up from its foot.
+    p:=Placed{type=0,position={33,0,1},rotation=mm.quat_axis_angle({0,1,0},math.PI*0.5),scale={1,1.5}}
+    made,ok:=instance_shape({0,colliders[0].collider,colliders[0].placement,{}},p,{1,0},{rotation=1,scale={1,1,1}})
+    testing.expect(t,ok && linalg.length(made.position-[3]f32{1,1.5,1})<1e-4)
+    testing.expect(t,abs(made.collider.size.x-0.5)<1e-4 && abs(made.collider.size.y-((1+0.25)*3-0.5))<1e-4)
 }
 
 @(test)
@@ -798,6 +893,8 @@ foliage_calls_without_memory_are_refused :: proc(t:^testing.T) {
     file:asset.Asset
     if !testing.expect(t,written==.None && asset.asset_open(&file,data)==.None) {return}
     defer asset.asset_close(&file)
+    shapes:=make([dynamic]Type_Shape,context.temp_allocator)
+    type_shapes(nil,nil,&s,nil,&shapes)
     Call :: enum {Cell_Build,Placed_Group,Ground_Tile,Collision,Type_Add,Source_Read}
     for call in Call {
         fresh:Source
@@ -821,7 +918,7 @@ foliage_calls_without_memory_are_refused :: proc(t:^testing.T) {
                 _,_,tile:=ground_tile(&ground,{0,0},4)
                 done=tile!=nil
             case .Collision:
-                _,done=physics_owner_build(&fp,&w,&collision,core.Entity(42),&s,{scale={1,1,1},rotation=1})
+                _,done=physics_owner_build(&fp,&w,&collision,core.Entity(42),&s,{scale={1,1,1},rotation=1},shapes[:])
             case .Type_Add:
                 done=source_type_add(&fresh,"moss",{2,2})!=nil
             case .Source_Read:

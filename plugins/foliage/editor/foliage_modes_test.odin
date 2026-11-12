@@ -3,6 +3,7 @@ package foliage_editor
 import "core:testing"
 import "mirai:core"
 import mm "mirai:std/math"
+import render "mirai:engine/render"
 import foliage "plugins:foliage/runtime"
 
 @(private="file")
@@ -106,4 +107,45 @@ reapply_gives_the_instances_the_scale_of_their_type_once_a_stroke :: proc(t:^tes
     testing.expect(t,reapply_touch(&tool,s,nil,{2,0,1},4))
     for p in s.cells[0].manual {testing.expect(t,p.scale[0]>=2 && p.scale[0]<=3)}
     testing.expect(t,!reapply_touch(&tool,s,nil,{2,0,1},4),"each once a stroke")
+}
+
+// Tint paints the instances under the ring, manual ones in place and
+// generated ones by an override where they stand, and white and dry gives
+// them their own look again.
+@(test)
+tint_paints_the_instances_under_the_ring_into_the_source :: proc(t:^testing.T) {
+    tool:Foliage_Tool;tool_ready(&tool);defer foliage_tool_free(&tool)
+    s:=&tool.edit.source
+    s.info.seed=3
+    fern:=foliage.source_type_add(s,"fern",{1,1})
+    fern.density=0.05
+    id:=fern.id
+    foliage.source_instance_add(s,id,{40,0,5},u32(mm.quat_pack(1,10)),{1,1})
+    foliage.source_cell(s,{0,0},true).generate=true
+    work:foliage.Build_Work
+    defer foliage.build_work_destroy(&work)
+    foliage.cell_build(s,foliage.source_cell(s,{0,0}),{},&work)
+    if !testing.expect(t,len(work.placed)>0) {return}
+    generated:=work.placed[0]
+    append(&tool.painted,id)
+    tool.tint,tool.wet=[3]f32{1,0.5,0.25},0.5
+    burnt:=render.batch_color(tool.tint,tool.wet)
+    testing.expect(t,tint_touch(&tool,s,nil,{40,0,5},1))
+    testing.expect(t,tint_touch(&tool,s,nil,generated.position,0.01))
+    manual:=foliage.source_cell(s,{1,0}).manual[0]
+    testing.expect(t,manual.flags&foliage.INSTANCE_COLORED!=0 && manual.color==burnt)
+    foliage.cell_build(s,foliage.source_cell(s,{0,0}),{},&work)
+    found:=false
+    for p in work.placed {
+        if p.id!=generated.id {continue}
+        found=true
+        testing.expect(t,p.colored && p.color==burnt && p.position==generated.position,"painted where it stands")
+    }
+    testing.expect(t,found)
+    // A new stroke, white and dry: the manual one has no color of its own again.
+    clear(&tool.reapplied)
+    tool.tint,tool.wet={1,1,1},0
+    testing.expect(t,tint_touch(&tool,s,nil,{40,0,5},1))
+    manual=foliage.source_cell(s,{1,0}).manual[0]
+    testing.expect(t,manual.flags&foliage.INSTANCE_COLORED==0 && manual.color==0)
 }

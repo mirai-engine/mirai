@@ -7,7 +7,7 @@ ccd_finds_an_angular_impact_after_starting_inside_the_outer_clearance :: proc(t:
     rod:=Shape{type=.Box,size={1,.05,.1}}
     floor:=Shape{type=.Box,size={5,.5,5}}
     rod_points,floor_points:[8]Vec3
-    a,b:=shape_proxy(nil,&rod,&rod_points),shape_proxy(nil,&floor,&floor_points)
+    a,b:=shape_proxy(nil,&rod,&rod_points,nil),shape_proxy(nil,&floor,&floor_points,nil)
     sa:=Sweep{c1={0,.054,0},c2={0,.154,0},q1=QUAT_IDENTITY,q2=q_axis_angle({0,0,1},.5)}
     sb:=Sweep{c1={0,-.5,0},c2={0,-.5,0},q1=QUAT_IDENTITY,q2=QUAT_IDENTITY}
     outer:=time_of_impact(a,b,sa,sb)

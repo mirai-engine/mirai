@@ -170,7 +170,8 @@ continuous_task :: proc(data:rawptr,first,last,worker:int) #no_bounds_check {
             shape:=&w.shapes[s]
             if shape.filter.block|shape.filter.overlap==0 || shape.type>=.Mesh {continue}
             storage_a,storage_b:[8]Vec3=---,---
-            proxy:=shape_proxy(w,shape,&storage_a)
+            scaled_a,scaled_b:Scaled_Hull=---,---
+            proxy:=shape_proxy(w,shape,&storage_a,&scaled_a)
             box:=c.bounds[s]
             for tree,which in trees[:.Bullet in body.flags?3:1] {
                 query:=spatial.dynamic_tree_query(tree,box)
@@ -206,7 +207,7 @@ continuous_task :: proc(data:rawptr,first,last,worker:int) #no_bounds_check {
                         known:=false
                         for hit in slots[:kept+found] {known=known || hit.shape_a==s && hit.shape_b==i32(user)}
                         if known {continue}
-                        out:=time_of_impact(proxy,shape_proxy(w,other,&storage_b),sweep,other_sweep,1)
+                        out:=time_of_impact(proxy,shape_proxy(w,other,&storage_b,&scaled_b),sweep,other_sweep,1)
                         if out.state!=.Hit {continue}
                         if kept+found>=CCD_OVERLAP_CAPACITY {
                             b.dropped+=1
@@ -222,7 +223,7 @@ continuous_task :: proc(data:rawptr,first,last,worker:int) #no_bounds_check {
                     local:=limit
                     keep:f32=start>0?CCD_RESUME_KEEP:0
                     if other.type<.Mesh {
-                        out:=continuous_toi(proxy,shape_proxy(w,other,&storage_b),sweep,other_sweep,limit,keep,core)
+                        out:=continuous_toi(proxy,shape_proxy(w,other,&storage_b,&scaled_b),sweep,other_sweep,limit,keep,core)
                         if out.state==.Hit && out.fraction<local {local=out.fraction}
                     } else {
                         local_start:=xf_inv_mul(sweep_transform(other_sweep,0),sweep_transform(sweep,0))
@@ -413,8 +414,9 @@ continuous_crossings :: proc(w:^World,bullets:int) #no_bounds_check {
         for hit in c.overlaps[int(b.index)*CCD_OVERLAP_CAPACITY:][:entry.crossed] {
             a,s:=&w.shapes[hit.shape_a],&w.shapes[hit.shape_b]
             storage_a,storage_b:[8]Vec3=---,---
+            scaled_a,scaled_b:Scaled_Hull=---,---
             xf:=xf_inv_mul(shape_transform_of(w,a),shape_transform_of(w,s))
-            if gjk_distance(shape_proxy(w,a,&storage_a),shape_proxy(w,s,&storage_b),xf,nil,true).distance<=0 {continue}
+            if gjk_distance(shape_proxy(w,a,&storage_a,&scaled_a),shape_proxy(w,s,&storage_b,&scaled_b),xf,nil,true).distance<=0 {continue}
             shape_a,shape_b:=shape_handle(w,hit.shape_a),shape_handle(w,hit.shape_b)
             body_a,body_b:=body_handle(w,a.body),body_handle(w,s.body)
             users,swapped:=event_users(w,hit.shape_a,hit.shape_b)

@@ -53,36 +53,53 @@ Batch_Desc :: struct {
 	object_id:      u64,  // what its instances give as object id
 }
 
-// An instance of a batch as the GPU reads it, 20 bytes: where it is, its
+// An instance of a batch as the GPU reads it, 24 bytes: where it is, its
 // rotation (quat_pack of std/math, 10 bits a component, under 0.3 degrees)
-// and its scale across, along x and z, and along y, half floats. A position
-// of the world in f32, as every transform of the renderer; the pool keeps it
+// and its scale along its own x, y and z, half floats. A position of the
+// world in f32, as every transform of the renderer; the pool keeps it
 // relative to the anchor of its batch.
 Batch_Instance :: struct {
 	position: Vec3,
 	rotation: u32,
-	scale:    u32, // across in the low half, along y in the high one
+	scale:    [4]u16, // x, y and z; the fourth is 0
 }
 #assert(size_of(Batch_Instance) == BATCH_WORDS * 4)
 
-batch_instance :: proc "contextless" (position: Vec3, rotation: mm.Quat, across, along: f32) -> Batch_Instance {
-	return {position = position, rotation = u32(mm.quat_pack(rotation, 10)), scale = u32(mm.half_pack(across)) | u32(mm.half_pack(along)) << 16}
+batch_instance :: proc "contextless" (position: Vec3, rotation: mm.Quat, scale: Vec3) -> Batch_Instance {
+	return {position = position, rotation = u32(mm.quat_pack(rotation, 10)), scale = {mm.half_pack(scale.x), mm.half_pack(scale.y), mm.half_pack(scale.z), 0}}
 }
 
-// The rotation and the scales an instance holds, as the GPU reads them.
-batch_instance_unpack :: proc "contextless" (b: Batch_Instance) -> (rotation: mm.Quat, across, along: f32) {
-	return mm.quat_unpack(u64(b.rotation), 10), mm.half_unpack(u16(b.scale & 0xffff)), mm.half_unpack(u16(b.scale >> 16))
+// The rotation and the scale an instance holds, as the GPU reads them.
+batch_instance_unpack :: proc "contextless" (b: Batch_Instance) -> (rotation: mm.Quat, scale: Vec3) {
+	return mm.quat_unpack(u64(b.rotation), 10), {mm.half_unpack(b.scale[0]), mm.half_unpack(b.scale[1]), mm.half_unpack(b.scale[2])}
 }
 
 // The transform of an instance, the rows of a 3x4 matrix, as the shaders make it (batch_placement).
 batch_instance_rows :: proc "contextless" (b: Batch_Instance) -> [3]Vec4 {
-	q, across, along := batch_instance_unpack(b)
+	q, scale := batch_instance_unpack(b)
 	m := mm.quat_to_mat3(q)
 	return {
-		{m[0, 0] * across, m[0, 1] * along, m[0, 2] * across, b.position.x},
-		{m[1, 0] * across, m[1, 1] * along, m[1, 2] * across, b.position.y},
-		{m[2, 0] * across, m[2, 1] * along, m[2, 2] * across, b.position.z},
+		{m[0, 0] * scale.x, m[0, 1] * scale.y, m[0, 2] * scale.z, b.position.x},
+		{m[1, 0] * scale.x, m[1, 1] * scale.y, m[1, 2] * scale.z, b.position.y},
+		{m[2, 0] * scale.x, m[2, 1] * scale.y, m[2, 2] * scale.z, b.position.z},
 	}
+}
+
+// What an instance of a batch shows of its own (batch_set): a tint, which
+// multiplies that of its batch, and how wet it is, 0 dry to 1 soaked, as an
+// instance of the scene is (scene_set_instance_wet); a byte each.
+BATCH_COLOR_PLAIN :: u32(0x00ffffff) // batch_color({1, 1, 1}, 0): the tint of its batch alone, dry
+
+batch_color :: proc "contextless" (tint: Vec3, wet: f32) -> u32 {
+	unorm :: proc "contextless" (v: f32) -> u32 {return u32(clamp(v, 0, 1) * 255 + 0.5)}
+	return unorm(tint.x) | unorm(tint.y) << 8 | unorm(tint.z) << 16 | unorm(wet) << 24
+}
+
+// Instance k of a batch, as its words in the pool hold it.
+@(private)
+batch_instance_at :: #force_inline proc "contextless" (s: ^Scene_State, record: ^Batch_Record, k: u32) -> Batch_Instance {
+	words := s.indices[record.words + k * BATCH_WORDS:][:BATCH_WORDS]
+	return transmute(Batch_Instance)[BATCH_WORDS]u32{words[0], words[1], words[2], words[3], words[4], words[5]}
 }
 
 @(private)
@@ -94,6 +111,8 @@ Batch_Record :: struct {
 	desc:                   Batch_Desc,
 	count:                  u32,
 	words:                  u32, // its instances in the u32 pool, BATCH_WORDS each
+	colors:                 u32, // with colored, a word of each of its instances in the u32 pool (batch_color)
+	colored:                bool,
 	order:                  u32, // the instances of the leaves of its tree, in the pool
 	tree, tree_nodes:       u32, // the tree of its instances in the BLAS nodes; no nodes when no ray meets it, or rays are traced by hardware
 	// The place of the world, a multiple of ORIGIN_STEP near its instances,
@@ -217,8 +236,9 @@ batch_offset :: #force_inline proc "contextless" (r: ^Renderer, record: ^Batch_R
 @(private)
 batch_release :: proc(s: ^Scene_State, record: ^Batch_Record) {
 	if record.count > 0 {pool_release(&s.indices, &s.pool_free[.Index], record.words, record.count * BATCH_WORDS)}
+	if record.count > 0 && record.colored {pool_release(&s.indices, &s.pool_free[.Index], record.colors, record.count)}
 	batch_tree_release(s, record)
-	record.count = 0
+	record.count, record.colored = 0, false
 }
 
 @(private)
@@ -241,9 +261,7 @@ batch_tree_build :: proc(r: ^Renderer, record: ^Batch_Record) {
 	if items_error != nil {set_error(r, "batch tree of %d instances: out of memory", record.count);return}
 	defer delete(items, r.allocator)
 	for &item, k in items {
-		words := s.indices[record.words + u32(k) * BATCH_WORDS:][:BATCH_WORDS]
-		instance := transmute(Batch_Instance)[BATCH_WORDS]u32{words[0], words[1], words[2], words[3], words[4]}
-		a, z := rows_bounds(batch_instance_rows(instance), mesh.bounds_min, mesh.bounds_max)
+		a, z := rows_bounds(batch_instance_rows(batch_instance_at(s, record, u32(k))), mesh.bounds_min, mesh.bounds_max)
 		item = {a, z}
 	}
 	nodes := make([dynamic]Gpu_Bvh_Node, 0, 0, r.allocator)
@@ -274,12 +292,13 @@ batches_trees_build :: proc(r: ^Renderer) {
 // Gives a batch its mesh, its materials, how it is drawn and traced, and its
 // instances: a new batch for handle 0, or the batch handle names, which
 // keeps it. world: the key of the world it belongs to, as scene_world names
-// it; a frame draws the batches of the world shown. A load transaction: the
-// instances go to the u32 pool of the scene with the geometry, and those
-// rays meet get the tree rays walk. The light changes around the instances
-// rays met and those they meet now. On an error, which says what is wrong
-// and how to fix it, nothing changes.
-batch_set :: proc(r: ^Renderer, handle: Batch_Handle, world: u64, desc: Batch_Desc, instances: []Batch_Instance) -> (Batch_Handle, string) {
+// it; a frame draws the batches of the world shown. colors: none, or what
+// each instance shows of its own (batch_color), in their order. A load
+// transaction: the instances go to the u32 pool of the scene with the
+// geometry, and those rays meet get the tree rays walk. The light changes
+// around the instances rays met and those they meet now. On an error, which
+// says what is wrong and how to fix it, nothing changes.
+batch_set :: proc(r: ^Renderer, handle: Batch_Handle, world: u64, desc: Batch_Desc, instances: []Batch_Instance, colors: []u32 = nil) -> (Batch_Handle, string) {
 	s := &r.scene
 	b := &s.batch
 	index := -1
@@ -290,6 +309,9 @@ batch_set :: proc(r: ^Renderer, handle: Batch_Handle, world: u64, desc: Batch_De
 	}
 	if int(desc.mesh) >= len(s.meshes) || s.meshes[desc.mesh].vertex_count == 0 {
 		return handle, "batch_set: the mesh is not one of the renderer; give it a handle that mesh_add or the assets returned"
+	}
+	if len(colors) != 0 && len(colors) != len(instances) {
+		return handle, fmt.tprintf("batch_set: %d colors for %d instances; give one for each instance, or none", len(colors), len(instances))
 	}
 	if len(instances) > BATCH_INDICES_MAX {
 		return handle, fmt.tprintf("batch_set: %d instances, more than the %d a batch holds; split them in several batches", len(instances), BATCH_INDICES_MAX)
@@ -304,17 +326,17 @@ batch_set :: proc(r: ^Renderer, handle: Batch_Handle, world: u64, desc: Batch_De
 	for value in desc.vertex {if !finite(value) {return handle, "batch_set: a number of Batch_Desc.vertex is not finite"}}
 	if !finite(desc.reach) || desc.reach < 0 {return handle, "batch_set: Batch_Desc.reach is negative or not finite; give the metres the vertex hook moves a point at most, or 0"}
 	for instance, i in instances {
-		_, across, along := batch_instance_unpack(instance)
+		_, scale := batch_instance_unpack(instance)
 		if !finite(instance.position.x) || !finite(instance.position.y) || !finite(instance.position.z) {
 			return handle, fmt.tprintf("batch_set: instance %d has a position that is not finite", i)
 		}
-		if !(across > 0) || !(along > 0) || !finite(across) || !finite(along) {
-			return handle, fmt.tprintf("batch_set: instance %d has a scale of %v across and %v along y; give scales above 0 and below 65504", i, across, along)
+		if !(scale.x > 0) || !(scale.y > 0) || !(scale.z > 0) || !finite(scale.x) || !finite(scale.y) || !finite(scale.z) {
+			return handle, fmt.tprintf("batch_set: instance %d has a scale of %v; give scales above 0 and below 65504", i, scale)
 		}
 	}
-	// The instances and, at most, their order for the tree; a batch it
-	// replaces gives its words back only after.
-	if !pool_room(r, .Index, len(instances) * (BATCH_WORDS + 1)) {
+	// The instances, their colors and, at most, their order for the tree; a
+	// batch it replaces gives its words back only after.
+	if !pool_room(r, .Index, len(instances) * (BATCH_WORDS + 1) + len(colors)) {
 		s.refused.batches += 1
 		return handle, fmt.tprintf("batch_set: the GPU has no memory for %d instances (renderer_stats().problem says what it holds); fewer sections loaded at once or fewer instances avoid it", len(instances))
 	}
@@ -331,6 +353,7 @@ batch_set :: proc(r: ^Renderer, handle: Batch_Handle, world: u64, desc: Batch_De
 	}
 	record := &b.records[index]
 	record.used, record.gone, record.world, record.desc, record.count = true, false, world, desc, u32(len(instances))
+	record.colored = len(colors) > 0
 	record.bounds_min, record.bounds_max, record.reach, record.small, record.scale = {}, {}, 0, true, 0
 	// The anchor: the multiple of ORIGIN_STEP nearest the middle of their positions.
 	low, high := Vec3{max(f32), max(f32), max(f32)}, Vec3{min(f32), min(f32), min(f32)}
@@ -345,8 +368,8 @@ batch_set :: proc(r: ^Renderer, handle: Batch_Handle, world: u64, desc: Batch_De
 		low, high = linalg.min(low, a), linalg.max(high, z)
 		reach := linalg.length(z - a) * 0.5
 		record.reach = max(record.reach, reach)
-		_, across, along := batch_instance_unpack(given)
-		record.scale = max(record.scale, abs(across), abs(along))
+		_, scale := batch_instance_unpack(given)
+		record.scale = max(record.scale, scale.x, scale.y, scale.z)
 		record.small &&= reach <= SMALL_INSTANCE_REACH
 		words := transmute([BATCH_WORDS]u32)instance
 		append(&s.indices, ..words[:])
@@ -355,6 +378,11 @@ batch_set :: proc(r: ^Renderer, handle: Batch_Handle, world: u64, desc: Batch_De
 	if len(instances) > 0 {
 		record.bounds_min, record.bounds_max = low, high
 		record.words = pool_store(&s.indices, &s.pool_free[.Index], &s.pool_dirty[.Index], first)
+	}
+	if record.colored {
+		first = u32(len(s.indices))
+		append(&s.indices, ..colors)
+		record.colors = pool_store(&s.indices, &s.pool_free[.Index], &s.pool_dirty[.Index], first)
 	}
 	if !r.hardware_rt {batch_tree_build(r, record)}
 	batch_changed_near(r, record)
@@ -372,7 +400,7 @@ batch_remove :: proc(r: ^Renderer, handle: Batch_Handle) -> bool {
 	if !ok {return false}
 	record := &s.batch.records[index]
 	batch_changed_near(r, record)
-	geometry_released(s, u64(record.count) * (BATCH_WORDS + 1) * 4)
+	geometry_released(s, u64(record.count) * (BATCH_WORDS + 1 + (1 if record.colored else 0)) * 4)
 	batch_release(s, record)
 	generation := record.generation + 1
 	record^ = {generation = generation, drawn = -1}
@@ -478,7 +506,7 @@ batches_build :: proc(r: ^Renderer) {
 				{bits(record.order), desc.fade_distance, desc.cull_distance, 0},
 				{0, 0, 0, bits(classes)},
 			},
-			world_inv = {desc.vertex, {offset.x, offset.y, offset.z, desc.reach}, {}},
+			world_inv = {desc.vertex, {offset.x, offset.y, offset.z, desc.reach}, {bits(record.colors + 1 if record.colored else 0), 0, 0, 0}},
 			// Rays meet the instances of a batch in the cut its mesh always has.
 			meta = {u32(desc.mesh) | (u32(ray_cut_always(s.meshes[desc.mesh])) << INSTANCE_RAY_SHIFT if int(desc.mesh) < len(s.meshes) else 0), material, u32(desc.object_id), flags},
 			bounds_min = {low.x, low.y, low.z, 0},
@@ -652,8 +680,7 @@ batch_ray :: proc(r: ^Renderer, world: u64, origin, direction: Vec3, max_distanc
 		if t, crossed := mm.ray_aabb_fast(origin, inverse, {record.bounds_min, record.bounds_max}, nearest); !crossed || t > nearest {continue}
 		mesh := s.meshes[record.desc.mesh]
 		for k in 0 ..< record.count {
-			words := s.indices[record.words + k * BATCH_WORDS:][:BATCH_WORDS]
-			rows := batch_instance_rows(transmute(Batch_Instance)[BATCH_WORDS]u32{words[0], words[1], words[2], words[3], words[4]})
+			rows := batch_instance_rows(batch_instance_at(s, &record, k))
 			low, high := rows_bounds(rows, mesh.bounds_min, mesh.bounds_max)
 			if t, crossed := mm.ray_aabb_fast(origin, inverse, {low, high}, nearest); !crossed || t > nearest {continue}
 			m := Mat4{rows[0].x, rows[0].y, rows[0].z, rows[0].w, rows[1].x, rows[1].y, rows[1].z, rows[1].w, rows[2].x, rows[2].y, rows[2].z, rows[2].w, 0, 0, 0, 1}

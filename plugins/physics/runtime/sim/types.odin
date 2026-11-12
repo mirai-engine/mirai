@@ -204,6 +204,9 @@ Shape_Desc :: struct {
     // A hull is rounded when it is made (hull_create); spheres, capsules, meshes and heightfields ignore it.
     convex_radius:f32,
     drag:f32, // Cd in a fluid; zero takes the measured value of its form (CD_SPHERE...)
+    // Of a hull, along its own axes, each above 0: shapes of many scales share one hull. Zero: 1. The
+    // convex radius of the hull scales by the least of them. Other shapes ignore it.
+    scale:Vec3,
 }
 
 SHAPE_DESC_DEFAULT :: Shape_Desc{transform=TRANSFORM_IDENTITY,friction=0.6,density=1000,filter=FILTER_DEFAULT}
@@ -212,7 +215,7 @@ Shape :: struct {
     user_data:u64,
     filter:Filter,
     local:Transform,
-    size:Vec3, // sphere: radius in x. capsule and cylinder: radius in x, half height in y. box: half extents
+    size:Vec3, // sphere: radius in x. capsule and cylinder: radius in x, half height in y. box: half extents. hull: its scale
     aabb,fat:Aabb,
     friction,restitution,density:f32,
     body,next,prev:i32,
