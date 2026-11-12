@@ -70,22 +70,21 @@ pose_query :: proc(s:^editor.Session,call:^api.Call,w:core.World_Ref,e:core.Enti
     return
 }
 
-// Each bone and socket asked where its rig ended its last tick, in the space of the entity and in
-// the world from where the entity is now.
+// Each bone and socket asked where its rig had it in a pose of its last tick, in the space of the
+// entity and in the world from where the entity is now.
 @(private)
-instance_pose :: proc(call:^api.Call,w:core.World_Ref,e:core.Entity,query:^Pose_Query) -> (r:Instance_Pose) {
+instance_pose :: proc(call:^api.Call,w:core.World_Ref,e:core.Entity,query:^Pose_Query,stage:anim.Tick_Pose) -> (r:Instance_Pose) {
     if query.rows==nil {
         authoring_failure(call,"entity","Missing_Skeleton","a rig with a skeleton","none","The entity has no skeleton to place bones on",fix="Give it a mesh with a skeleton and play it")
         return
     }
-    playback:=core.world_storage_of(w,anim.Playback)
     if query.skeleton=={} {
         authoring_failure(call,"entity","Not_Posed","a rig animated in the last tick","not animated","The entity has not posed a skeleton yet",fix="Run the world (play.start, play.step) or animation.preview so a tick poses it; a mesh that shares the pose of a rig of its skeleton through Pose_Source is asked on that rig")
         return
     }
     actor,placed:=core.world_of(core.world_table_of(w,core.Transform),core.world_table_of(w,core.Parent),e)
     if !placed {authoring_failure(call,"entity","Not_Placed","an entity with a transform","none","The entity has no transform",api.SERVER_ERROR);return}
-    pose,posed:=anim.pose_space(playback,e,call.allocator)
+    pose,posed:=anim.pose_space(core.world_storage_of(w,anim.Playback),e,call.allocator,stage)
     r.skeleton=query.skeleton
     r.transforms=make([]Instance_Pose_Transform,len(query.rows),call.allocator)
     for &row,i in query.rows {

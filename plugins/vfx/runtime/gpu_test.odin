@@ -6,6 +6,7 @@ import "core:math/linalg"
 import "core:mem"
 import "core:os"
 import "core:path/filepath"
+import "core:strings"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
@@ -35,7 +36,7 @@ Gpu_Fixture :: struct {
 	app:        host.App,
 	sync:       Particle_Sync,
 	cube:       gpu.Mesh_Handle,
-	cube_range: [3]u32, // the mesh of an emitter (Emitter_Desc.mesh) of the cube
+	cube_vertices: u32, // of a draw of level 0 of the cube
 	folder:     string,
 }
 
@@ -59,8 +60,7 @@ gpu_fixture_init :: proc(t: ^testing.T, f: ^Gpu_Fixture, width, height: u32, set
 	cube := host.assets_shape(&f.assets, .Cube)
 	if !testing.expect(t, cube != nil) {return false}
 	f.cube = cube.handle
-	f.cube_range.x, _ = erender.mesh_draw_range(f.app.renderer, f.cube)
-	f.cube_range.y = u32(f.cube)
+	f.cube_vertices, _ = erender.mesh_draw_range(f.app.renderer, f.cube)
 	f.sync.world = 1
 	gpu.scene_world(&f.renderer, f.sync.world)
 	return true
@@ -225,7 +225,8 @@ particles_of_every_kind_draw_around_glass_without_validation_errors :: proc(t: ^
 	trail := test_emitter(3, {0, 0.5, 0})
 	trail.info.render, trail.info.lit, trail.info.lifetime = .Ribbon, true, {0.4, 0.4}
 	pieces := test_emitter(4, {0, 1, 0})
-	pieces.info.render, pieces.mesh, pieces.info.lit, pieces.info.collision, pieces.info.size, pieces.info.spin = .Mesh, f.cube_range, true, .World, {0.1, 0.2}, {-3, 3}
+	pieces.info.render, pieces.info.lit, pieces.info.collision, pieces.info.size, pieces.info.spin = .Mesh, true, .World, {0.1, 0.2}, {-3, 3}
+	mesh_choices(&pieces, f.app.renderer, {f.cube}, {1})
 	pieces.info.shape, pieces.info.shape_size, pieces.info.acceleration = .Sphere, {0.3, 0.3, 0.3}, {0, -9.8, 0}
 	ripples := test_emitter(5, {0, -0.45, 0})
 	ripples.info.render, ripples.info.flipbook, ripples.info.local_space = .Horizontal, {2, 2}, true
@@ -320,6 +321,314 @@ ribbon_lays_a_band_along_the_path_of_its_emitter :: proc(t: ^testing.T) {
 	expect_clean(t, f.device)
 }
 
+// Two heads leave a trail each, one ribbon of the trail emitter per head:
+// two bands, nothing between them, and points that die along a trail before
+// those behind them leave no gap.
+@(test)
+trails_of_two_heads_lay_two_bands_and_close_over_their_dead :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	settings := test_settings()
+	settings.taa = false
+	if !gpu_fixture_init(t, f, 192, 128, settings) {return}
+	defer gpu_fixture_destroy(f)
+	r := &f.renderer
+	gpu.scene_set_environment(r,{},{sky = {0.02, 0.02, 0.02}})
+	camera := gpu.Camera{position = {0, 0, 4}, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
+	heads := test_emitter(1, {-2.5, 0.6, 0})
+	heads.info.lifetime, heads.info.velocity, heads.info.size, heads.info.intensity = {5, 5}, {{3, 0, 0}, {3, 0, 0}}, {0.01, 0.01}, 0
+	heads.info.trigger, heads.info.sub_count, heads.event_target = .Trail, 1, 2
+	trail := test_emitter(2, {0, 0, 0})
+	trail.capacity = 256
+	trail.info.render, trail.info.soft, trail.info.size = .Ribbon, 0, {0.12, 0.12}
+	// Some points of a trail die long before the older ones behind them.
+	trail.info.lifetime = {0.4, 3}
+	DT :: f32(1.0 / 60)
+	for i in 0 ..< 48 {
+		// One head at y 0.6, the next frame one at y -0.6, both leaving along +x.
+		heads.spawns = {}
+		if i < 2 {
+			heads.transform = trs({-2.5, 0.6 if i == 0 else -0.6, 0}, {1, 1, 1})
+			heads.spawns = test_burst(1, u32(i))
+		}
+		heads.previous = heads.transform
+		testing.expect(t, frame_emitters(f, &f.sync, {heads, trail}, DT))
+		testing.expect(t, gpu.renderer_frame(r, {camera = camera, time = f32(i) * DT}), r.error)
+	}
+	rhi.device_wait_idle(f.device)
+	pixels, w, _, ok := gpu.renderer_capture(r)
+	testing.expect(t, ok, r.error)
+	if !ok {return}
+	defer delete(pixels)
+	for x in ([]f32{-2, -1.5, -1, -0.5}) {
+		upper := pixel(pixels, w, project(r, camera, {x, 0.6, 0}))
+		lower := pixel(pixels, w, project(r, camera, {x, -0.6, 0}))
+		between := pixel(pixels, w, project(r, camera, {x, 0, 0}))
+		testing.expectf(t, upper[0] > between[0] + 60 && lower[0] > between[0] + 60, "at x %v each trail %v %v must cover its path, and nothing between them %v", x, upper, lower, between)
+	}
+	expect_clean(t, f.device)
+}
+
+// The points of a quarter circle, every 45 degrees from -45 to 135, one a
+// frame: the middle segments have neighbours at both ends.
+@(private = "file")
+quarter_circle :: proc(t: ^testing.T, f: ^Gpu_Fixture, trail: ^Emitter_Desc, camera: gpu.Camera, radius: f32) {
+	for i in 0 ..< 5 {
+		angle := math.to_radians(f32(-45 + 45 * i))
+		trail.transform = trs({radius * math.cos(angle), radius * math.sin(angle), 0}, {1, 1, 1})
+		trail.previous = trail.transform
+		trail.spawns = test_burst(1, u32(i))
+		testing.expect(t, frame_emitters(f, &f.sync, {trail^}, 1.0 / 60))
+		testing.expect(t, gpu.renderer_frame(&f.renderer, {camera = camera, time = f32(i) / 60}), f.renderer.error)
+	}
+	trail.spawns = {}
+}
+
+// A ribbon through points of a quarter circle follows the circle between
+// them, where straight pieces would cut inside it.
+@(test)
+a_ribbon_follows_the_curve_through_its_points :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	settings := test_settings()
+	settings.taa = false
+	if !gpu_fixture_init(t, f, 256, 256, settings) {return}
+	defer gpu_fixture_destroy(f)
+	r := &f.renderer
+	gpu.scene_set_environment(r,{},{sky = {0.02, 0.02, 0.02}})
+	camera := gpu.Camera{position = {0.75, 0.75, 3.5}, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
+	RADIUS :: f32(1.5)
+	trail := test_emitter(1, {0, 0, 0})
+	trail.info.render, trail.info.soft, trail.info.size, trail.info.lifetime = .Ribbon, 0, {0.06, 0.06}, {10, 10}
+	quarter_circle(t, f, &trail, camera, RADIUS)
+	for i in 0 ..< 3 {
+		frame_emitters(f, &f.sync, {trail}, 1.0 / 60)
+		testing.expect(t, gpu.renderer_frame(r, {camera = camera, time = f32(5 + i) / 60}), r.error)
+	}
+	rhi.device_wait_idle(f.device)
+	pixels, w, _, ok := gpu.renderer_capture(r)
+	testing.expect(t, ok, r.error)
+	if !ok {return}
+	defer delete(pixels)
+	for degrees in ([]f32{22.5, 67.5}) {
+		angle := math.to_radians(degrees)
+		on := pixel(pixels, w, project(r, camera, {RADIUS * math.cos(angle), RADIUS * math.sin(angle), 0}))
+		// Where a straight piece between its points passes, inside the circle.
+		chord := pixel(pixels, w, project(r, camera, {RADIUS * math.cos(f32(math.PI / 8)) * math.cos(angle), RADIUS * math.cos(f32(math.PI / 8)) * math.sin(angle), 0}))
+		testing.expectf(t, on[0] > chord[0] + 60, "the ribbon %v must lie on the circle at %v degrees, not on the chord between its points %v", on, degrees, chord)
+	}
+	expect_clean(t, f.device)
+}
+
+// Each segment of a ribbon takes the pieces its own turn asks for (those at
+// the ends, which turn less, fewer), rising at once and coming down one a
+// frame where the curve asks for fewer.
+@(test)
+ribbon_pieces_follow_each_segment_rise_at_once_and_come_down_a_frame_at_a_time :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	if !gpu_fixture_init(t, f, 64, 64, test_settings()) {return}
+	defer gpu_fixture_destroy(f)
+	near := gpu.Camera{position = {0, 0, 3.5}, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 2000, exposure = gpu.UNIT_EXPOSURE}
+	far := near
+	far.position.z = 1000
+	trail := test_emitter(1, {0, 0, 0})
+	trail.info.render, trail.info.lifetime = .Ribbon, {30, 30}
+	quarter_circle(t, f, &trail, near, 1.5)
+	pieces :: proc(t: ^testing.T, f: ^Gpu_Fixture, trail: Emitter_Desc, camera: gpu.Camera) -> (most, instances: u32) {
+		read := test_frame_read(t, f, {trail}, 1.0 / 60, camera, 0, {pool_buffer(&f.sync.pool, .Particles), pool_buffer(&f.sync.pool, .State)})
+		if read[0] == nil || read[1] == nil {return}
+		slot := pool_slot_find(&f.sync.pool, 1)
+		range := f.sync.pool.slots[slot]
+		for p in mem.slice_data_cast([]Gpu_Particle, read[0])[range.offset:][:range.capacity] {
+			if p.lifetime > 0 {most = max(most, (p.flags >> RIBBON_PIECES_SHIFT) & 15)}
+		}
+		return most, mem.slice_data_cast([]Gpu_State, read[1])[slot].draw[1]
+	}
+	most, instances := pieces(t, f, trail, near)
+	testing.expectf(t, most > 1 && instances > 4 && instances < 4 * most, "a curve seen from near is cut in pieces, each segment its own: at most %d, %d quads", most, instances)
+	for k in 1 ..< min(most, 3) {
+		got, _ := pieces(t, f, trail, far)
+		testing.expectf(t, got == most - k, "seen from far, a frame comes down one piece: %d, not %d", got, most - k)
+	}
+	again, _ := pieces(t, f, trail, near)
+	testing.expect_value(t, again, most)
+	expect_clean(t, f.device)
+}
+
+// The newest point of a trail is where its head is in the frame, however fast it goes.
+@(test)
+a_trail_reaches_its_head :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	if !gpu_fixture_init(t, f, 64, 64, test_settings()) {return}
+	defer gpu_fixture_destroy(f)
+	camera := gpu.Camera{position = {0, 0, 6}, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
+	heads := test_emitter(1, {-3, 0, 0})
+	heads.info.lifetime, heads.info.velocity = {5, 5}, {{30, 0, 0}, {30, 0, 0}}
+	heads.info.trigger, heads.info.sub_count, heads.event_target = .Trail, 1, 2
+	trail := test_emitter(2, {0, 0, 0})
+	trail.capacity = 256
+	trail.info.render, trail.info.lifetime = .Ribbon, {1, 1}
+	for i in 0 ..< 7 {
+		heads.spawns = test_burst(1) if i == 0 else {}
+		testing.expect(t, frame_emitters(f, &f.sync, {heads, trail}, 1.0 / 60))
+		testing.expect(t, gpu.renderer_frame(&f.renderer, {camera = camera, time = f32(i) / 60}), f.renderer.error)
+	}
+	heads.spawns = {}
+	read := test_frame_read(t, f, {heads, trail}, 1.0 / 60, camera, 0, {pool_buffer(&f.sync.pool, .Particles), {}})
+	if read[0] == nil {return}
+	particles := mem.slice_data_cast([]Gpu_Particle, read[0])
+	head_range := f.sync.pool.slots[pool_slot_find(&f.sync.pool, 1)]
+	trail_range := f.sync.pool.slots[pool_slot_find(&f.sync.pool, 2)]
+	head: [3]f32
+	for p in particles[head_range.offset:][:head_range.capacity] {if p.lifetime > 0 {head = p.position}}
+	newest, youngest := [3]f32{}, f32(max(f32))
+	for p in particles[trail_range.offset:][:trail_range.capacity] {
+		if p.lifetime > 0 && p.age < youngest {newest, youngest = p.position, p.age}
+	}
+	testing.expectf(t, linalg.length(newest - head) < 0.05, "the newest point %v of the trail is at its head %v", newest, head)
+	expect_clean(t, f.device)
+}
+
+@(test)
+ribbon_lists_sort_by_ribbon_then_age :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	if !gpu_fixture_init(t, f, 64, 64, test_settings()) {return}
+	defer gpu_fixture_destroy(f)
+	camera := gpu.Camera{position = {0, 0, 6}, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
+	PER :: 600
+	ribbons := test_emitter(1, {0, 0, 0})
+	ribbons.capacity = 3 * PER
+	ribbons.info.render, ribbons.info.lifetime = .Ribbon, {30, 30}
+	program := erender.program_find(&f.assets, "Two_Ribbons", .Vfx)
+	if !testing.expect(t, program != nil, "testdata has the Vfx program Two_Ribbons") {return}
+	ribbons.program = {id = program.id, parameters = transmute([16][4]f32)erender.program_defaults(program), attributes = u32(program.attributes)}
+	base.text_set(ribbons.info.program[:], program.name)
+	for i in 0 ..< 3 {
+		// A burst: the ages of a frame are alike, and the slot orders them.
+		ribbons.spawns = test_burst(PER, u32(i) * PER)
+		testing.expect(t, frame_emitters(f, &f.sync, {ribbons}, 1.0 / 60))
+		testing.expect(t, gpu.renderer_frame(&f.renderer, {camera = camera, time = f32(i) / 60}), f.renderer.error)
+	}
+	ribbons.spawns = {}
+	read := test_frame_read(t, f, {ribbons}, 1.0 / 60, camera, 0, {pool_buffer(&f.sync.pool, .Particles), pool_buffer(&f.sync.pool, .Lists)})
+	if read[0] == nil || read[1] == nil {return}
+	particles := mem.slice_data_cast([]Gpu_Particle, read[0])
+	lists := mem.slice_data_cast([]u32, read[1])
+	slot := &f.sync.pool.slots[pool_slot_find(&f.sync.pool, 1)]
+	drawn := lists[f.sync.pool.capacity + slot.offset:][:3 * PER]
+	boundaries := 0
+	for k in 1 ..< len(drawn) {
+		a, b := particles[drawn[k - 1]], particles[drawn[k]]
+		ra, rb := a.flags >> RIBBON_SHIFT, b.flags >> RIBBON_SHIFT
+		boundaries += 1 if ra != rb else 0
+		if !testing.expectf(t, ra < rb || ra == rb && (a.age < b.age || a.age == b.age && drawn[k - 1] < drawn[k]), "in order at %d: (%d, %v) then (%d, %v)", k, ra, a.age, rb, b.age) {break}
+	}
+	testing.expect_value(t, boundaries, 1)
+	expect_clean(t, f.device)
+}
+
+// Mesh particles pick among the meshes of their effect by weight, once, and
+// each mesh draws a run of the list of those that show it.
+@(test)
+mesh_particles_pick_their_meshes_by_weight :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	if !gpu_fixture_init(t, f, 64, 64, test_settings()) {return}
+	defer gpu_fixture_destroy(f)
+	camera := gpu.Camera{position = {0, 0, 4}, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
+	sphere := host.assets_shape(&f.assets, .Sphere)
+	if !testing.expect(t, sphere != nil) {return}
+	COUNT :: 800
+	pieces := test_emitter(1, {0, 0, 0})
+	pieces.capacity = COUNT
+	pieces.info.render, pieces.info.lifetime, pieces.info.size = .Mesh, {30, 30}, {0.3, 0.3}
+	pieces.info.shape, pieces.info.shape_size = .Box, {1, 1, 1}
+	mesh_choices(&pieces, f.app.renderer, {f.cube, sphere.handle}, {3, 1})
+	pieces.spawns = test_burst(COUNT)
+	testing.expect(t, frame_emitters(f, &f.sync, {pieces}, 1.0 / 60))
+	testing.expect(t, gpu.renderer_frame(&f.renderer, {camera = camera}), f.renderer.error)
+	pieces.spawns = {}
+	picked :: proc(t: ^testing.T, f: ^Gpu_Fixture, pieces: Emitter_Desc, camera: gpu.Camera) -> (counts: [effect.PARTICLE_MESHES]u32, draws: [effect.PARTICLE_MESHES]u32) {
+		read := test_frame_read(t, f, {pieces}, 1.0 / 60, camera, 0, {pool_buffer(&f.sync.pool, .Particles), pool_buffer(&f.sync.pool, .Events)})
+		if read[0] == nil || read[1] == nil {return}
+		slot := f.sync.pool.slots[pool_slot_find(&f.sync.pool, 1)]
+		for p in mem.slice_data_cast([]Gpu_Particle, read[0])[slot.offset:][:slot.capacity] {
+			if p.lifetime > 0 {counts[(p.flags >> MESH_CHOICE_SHIFT) & (effect.PARTICLE_MESHES - 1)] += 1}
+		}
+		for c in 0 ..< effect.PARTICLE_MESHES {
+			at := int(mesh_draw(u32(pool_slot_find(&f.sync.pool, 1)), u32(c)))
+			draws[c] = mem.slice_data_cast([]u32, read[1][at:][:16])[1]
+		}
+		return
+	}
+	first, draws := picked(t, f, pieces, camera)
+	testing.expectf(t, first[0] + first[1] == COUNT && first[0] > 540 && first[0] < 660, "a weight of 3 to 1: %v", first)
+	testing.expectf(t, draws == first, "each mesh draws those that show it: %v of %v", draws, first)
+	again, _ := picked(t, f, pieces, camera)
+	testing.expect_value(t, again, first)
+	expect_clean(t, f.device)
+}
+
+// A long box along -Z of its mesh, which a particle that faces its velocity
+// lays along where it goes.
+@(test)
+mesh_particles_face_their_velocity :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	settings := test_settings()
+	settings.taa = false
+	if !gpu_fixture_init(t, f, 128, 128, settings) {return}
+	defer gpu_fixture_destroy(f)
+	r := &f.renderer
+	gpu.scene_set_environment(r,{direction = {0.2, 0.4, 1}, color = {1, 1, 1}, illuminance = 4 * math.PI, enabled = true},{sky = {0.02, 0.02, 0.02}})
+	// A box 0.1 across and 1 long, along z.
+	corners := [8][3]f32{{-0.05, -0.05, -0.5}, {0.05, -0.05, -0.5}, {0.05, 0.05, -0.5}, {-0.05, 0.05, -0.5}, {-0.05, -0.05, 0.5}, {0.05, -0.05, 0.5}, {0.05, 0.05, 0.5}, {-0.05, 0.05, 0.5}}
+	faces := [6][4]u32{{0, 3, 2, 1}, {4, 5, 6, 7}, {0, 1, 5, 4}, {2, 3, 7, 6}, {1, 2, 6, 5}, {0, 4, 7, 3}}
+	vertices := make([dynamic]gpu.Mesh_Vertex, context.temp_allocator)
+	indices := make([dynamic]u32, context.temp_allocator)
+	for face in faces {
+		a, b, c := corners[face[0]], corners[face[1]], corners[face[2]]
+		normal := linalg.normalize(linalg.cross(b - a, c - a))
+		first := u32(len(vertices))
+		for k in face {append(&vertices, gpu.Mesh_Vertex{position = corners[k], normal = normal, color = {1, 1, 1}, tangent = {1, 0, 0, 1}})}
+		append(&indices, first, first + 1, first + 2, first, first + 2, first + 3)
+	}
+	stick, added := gpu.mesh_add(r, vertices[:], indices[:])
+	if !testing.expect(t, added) {return}
+	camera := gpu.Camera{position = {0, 0, 3}, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
+	for _ in 0 ..< 3 {testing.expect(t, gpu.renderer_frame(r, {camera = camera}), r.error)}
+	sticks := test_emitter(1, {0, 0, 0})
+	sticks.info.render, sticks.info.lifetime, sticks.info.size, sticks.info.lit = .Mesh, {30, 30}, {1, 1}, true
+	// It leaves along +x until drag stops it: at rest it keeps where it went.
+	sticks.info.velocity, sticks.info.facing, sticks.info.drag = {{1, 0, 0}, {1, 0, 0}}, .Velocity, 40
+	if !testing.expect(t, mesh_choices(&sticks, f.app.renderer, {stick}, {1})) {return}
+	for i in 0 ..< 40 {
+		sticks.spawns = test_burst(1) if i == 0 else {}
+		testing.expect(t, frame_emitters(f, &f.sync, {sticks}, 1.0 / 60))
+		testing.expect(t, gpu.renderer_frame(r, {camera = camera, time = f32(i) / 60}), r.error)
+	}
+	rhi.device_wait_idle(f.device)
+	pixels, w, _, ok := gpu.renderer_capture(r)
+	testing.expect(t, ok, r.error)
+	if !ok {return}
+	defer delete(pixels)
+	sky := pixel(pixels, w, project(r, camera, {0, 0.8, 0}))
+	read := test_frame_read(t, f, {sticks}, 1.0 / 60, camera, 1, {pool_buffer(&f.sync.pool, .Particles), {}})
+	if read[0] == nil {return}
+	at: [3]f32
+	for p in mem.slice_data_cast([]Gpu_Particle, read[0])[:sticks.capacity] {if p.lifetime > 0 {at = p.position}}
+	for x in ([]f32{-0.35, 0.35}) {
+		along := pixel(pixels, w, project(r, camera, at + {x, 0, 0}))
+		testing.expectf(t, along[0] > sky[0] + 30, "the stick lies along where it went, also at rest: at x %v %v, the sky %v", x, along, sky)
+	}
+	above := pixel(pixels, w, project(r, camera, at + {0, 0.35, 0}))
+	testing.expectf(t, abs(above[0] - sky[0]) < 10, "and not across it: %v, the sky %v", above, sky)
+	expect_clean(t, f.device)
+}
+
 @(test)
 mesh_particles_of_a_blending_material_cover_by_their_alpha :: proc(t: ^testing.T) {
 	f := new(Gpu_Fixture)
@@ -337,7 +646,8 @@ mesh_particles_of_a_blending_material_cover_by_their_alpha :: proc(t: ^testing.T
 	camera := gpu.Camera{position = {0, 0, 5}, forward = {0, 0, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	// Two cubes of the material: one with full alpha, one whose curve takes its alpha to zero.
 	shown := test_emitter(1, {-1.2, 0, 0})
-	shown.info.render, shown.mesh, shown.material, shown.blended, shown.info.blend = .Mesh, f.cube_range, 1, true, .Alpha
+	shown.info.render, shown.material, shown.blended, shown.info.blend = .Mesh, 1, true, .Alpha
+	mesh_choices(&shown, f.app.renderer, {f.cube}, {1})
 	shown.info.lifetime, shown.info.size, shown.info.soft, shown.info.emission_mode, shown.info.intensity = {10, 10}, {1, 1}, 0, .Relative, 1
 	faded := shown
 	faded.id, faded.transform, faded.previous = 2, trs({1.2, 0, 0}, {1, 1, 1}), trs({1.2, 0, 0}, {1, 1, 1})
@@ -670,7 +980,7 @@ particle_surface_shape_starts_particles_on_its_mesh :: proc(t: ^testing.T) {
 	shell.capacity, shell.info.lifetime, shell.info.size = 512, {5, 5}, {0.12, 0.12}
 	shell.info.shape = .Surface
 	box := trs({1.2, 0.5, 0}, {0.8, 0.8, 0.8})
-	shell.resources = test_resources(&f.sync, {kind = .Surface, mesh = f.cube, triangles = f.cube_range.x / 3, transform = box, previous = box})
+	shell.resources = test_resources(&f.sync, {kind = .Surface, mesh = f.cube, triangles = f.cube_vertices / 3, transform = box, previous = box})
 	DT :: f32(1.0 / 60)
 	for i in 0 ..< 8 {
 		shell.spawns = test_burst(400) if i == 0 else {}
@@ -715,7 +1025,7 @@ particle_programs_follow_a_surface_that_moves :: proc(t: ^testing.T) {
 	for i in 0 ..< 40 {
 		x := -1.5 + f32(i) * 3.0 / 39
 		clear(&f.sync.resources)
-		sticky.resources = test_resources(&f.sync, {}, {kind = .Surface, mesh = f.cube, triangles = f.cube_range.x / 3, transform = place(x), previous = place(max(x - 3.0 / 39, -1.5))})
+		sticky.resources = test_resources(&f.sync, {}, {kind = .Surface, mesh = f.cube, triangles = f.cube_vertices / 3, transform = place(x), previous = place(max(x - 3.0 / 39, -1.5))})
 		sticky.spawns = test_burst(300) if i == 0 else {}
 		testing.expect(t, frame_emitters(f, &f.sync, {sticky}, DT))
 		testing.expect(t, gpu.renderer_frame(r, {camera = camera, time = f32(i) * DT}), r.error)
@@ -901,7 +1211,7 @@ particle_bones_and_surface_shapes_start_particles_on_the_posed_skin :: proc(t: ^
 	onto := test_emitter(2, {2.5, 2, 0})
 	onto.capacity, onto.info.lifetime, onto.info.size = 512, {5, 5}, {0.12, 0.12}
 	onto.info.shape = .Surface
-	onto.resources = test_resources(&f.sync, {kind = .Surface, mesh = posed, triangles = f.cube_range.x / 3, transform = identity, previous = identity})
+	onto.resources = test_resources(&f.sync, {kind = .Surface, mesh = posed, triangles = f.cube_vertices / 3, transform = identity, previous = identity})
 	DT :: f32(1.0 / 60)
 	for i in 0 ..< 8 {
 		along.spawns = test_burst(400) if i == 0 else {}
@@ -1624,5 +1934,144 @@ particle_sprites_go_behind_the_fog_of_the_view :: proc(t: ^testing.T) {
 	testing.expectf(t, open[0].r > 40 && open[1].r > 40, "without fog both sprites show: %v", open)
 	testing.expectf(t, misty[0].r < open[0].r * 0.3, "the sprite behind the fog %v is dimmed by it, from %v", misty[0], open[0])
 	testing.expectf(t, abs(misty[1].r - open[1].r) <= 0.1 * open[1].r + 2, "the sprite in front of the fog %v shows as without it %v", misty[1], open[1])
+	expect_clean(t, f.device)
+}
+
+// What a test reads back of the ranges of one emitter (emitter_ranges), in
+// the Simulate stage after the particles.
+@(private = "file")
+Range_Read :: struct {
+	sync:  ^Particle_Sync,
+	id:    u64,
+	count: u32,
+}
+
+@(private = "file")
+RANGE_NAMES :: [3]string{"vfx test particles", "vfx test attributes", "vfx test state"}
+
+@(private = "file")
+range_read_pass :: proc(pass: ^erender.Pass, user: rawptr) {
+	r := cast(^Range_Read)user
+	if pass.world != r.sync.world {return}
+	ranges, ok := emitter_ranges(&r.sync.pool, r.id, r.count)
+	if !ok {return}
+	names := RANGE_NAMES
+	for range, i in ([3]Pool_Range{ranges.particles, ranges.attributes, ranges.state}) {
+		if range.size > 0 {erender.pass_readback(pass, range.buffer, range.offset, {names[i], range.size})}
+	}
+}
+
+// Frames of the emitters of a world with the ranges of one read back, and
+// what came back of them: its particles, their Attributes and its counters.
+@(private = "file")
+range_frames :: proc(t: ^testing.T, f: ^Gpu_Fixture, emitters: []Emitter_Desc, id: u64, count: u32) -> (particles: []Gpu_Particle, words: []u32, state: Gpu_State) {
+	camera := gpu.Camera{position = {0, 1, 4}, forward = {0, -0.7, -4}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
+	read := Range_Read{sync = &f.sync, id = id, count = count}
+	list := make([]Emitter_Desc, len(emitters), context.temp_allocator)
+	copy(list, emitters)
+	for i in 0 ..< 3 + rhi.MAX_FRAMES_IN_FLIGHT {
+		testing.expect(t, frame_emitters(f, &f.sync, list, 1.0 / 60))
+		for &e in list {e.spawns = {}}
+		erender.frame_pass(f.app.renderer, .Simulate, range_read_pass, &read)
+		testing.expect(t, gpu.renderer_frame(&f.renderer, {camera = camera, time = f32(i) / 60}), f.renderer.error)
+	}
+	names := RANGE_NAMES
+	if data, _, ok := gpu.readback(&f.renderer, f.sync.world, names[0]); ok {particles = ([^]Gpu_Particle)(raw_data(data))[:len(data) / size_of(Gpu_Particle)]}
+	if data, _, ok := gpu.readback(&f.renderer, f.sync.world, names[1]); ok {words = ([^]u32)(raw_data(data))[:len(data) / 4]}
+	if data, _, ok := gpu.readback(&f.renderer, f.sync.world, names[2]); ok && len(data) == size_of(Gpu_State) {state = (^Gpu_State)(raw_data(data))^}
+	return
+}
+
+// Each pass of the particles marks the interval the profiler lists by its name.
+@(test)
+particle_passes_mark_the_intervals_the_profiler_lists :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	if !gpu_fixture_init(t, f, 64, 48, test_settings()) {return}
+	defer gpu_fixture_destroy(f)
+	rhi.timestamps_want(f.device, true)
+	defer rhi.timestamps_want(f.device, false)
+	camera := gpu.Camera{position = {0, 1, 4}, forward = {0, -0.7, -4}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
+	emitter := test_emitter(1, {0, 0, 0})
+	emitter.info.lifetime = {5, 5}
+	seen: map[string]int
+	defer delete(seen)
+	for i in 0 ..< 6 {
+		emitter.spawns = test_burst(16) if i == 0 else {}
+		// Long frames take several steps; each kind of pass still marks one interval.
+		testing.expect(t, frame_emitters(f, &f.sync, {emitter}, 0.2))
+		testing.expect(t, gpu.renderer_frame(&f.renderer, {camera = camera, time = f32(i) * 0.2}), f.renderer.error)
+		frame: map[string]int
+		defer delete(frame)
+		for timing in gpu.renderer_stats(&f.renderer).timings {
+			if strings.has_prefix(timing.name, "particle") {frame[timing.name] += 1}
+		}
+		for name, count in frame {
+			seen[strings.clone(name, context.temp_allocator)] = max(seen[name], count)
+		}
+	}
+	for name in ([]string{"particle begin", "particle emit", "particle simulate", "particle steps", "particle finish", "particle lights", "particle sprites"}) {
+		testing.expectf(t, seen[name] == 1, "the profiler lists %q once a frame: %v", name, seen)
+	}
+	expect_clean(t, f.device)
+}
+
+// The ranges of each emitter point at its rows and its counters: as many
+// alive as its rows hold, and the bytes it holds of the pool.
+@(test)
+particle_ranges_point_at_the_rows_and_counters_of_each_emitter :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	if !gpu_fixture_init(t, f, 64, 48, test_settings()) {return}
+	defer gpu_fixture_destroy(f)
+	a, b := test_emitter(1, {0, 0, 0}), test_emitter(2, {1, 0, 0})
+	a.info.lifetime, b.info.lifetime = {5, 5}, {5, 5}
+	b.capacity = 32
+	a.spawns, b.spawns = test_burst(10), test_burst(7)
+	for e in ([]Emitter_Desc{a, b}) {
+		particles, _, state := range_frames(t, f, {a, b}, e.id, e.capacity)
+		a.spawns, b.spawns = {}, {}
+		testing.expect_value(t, len(particles), int(e.capacity))
+		held: u32
+		for p in particles {if p.lifetime > 0 {held += 1}}
+		testing.expect_value(t, held, u32(10) if e.id == 1 else u32(7))
+		testing.expect_value(t, state.alive, held)
+		at := pool_slot_find(&f.sync.pool, e.id)
+		testing.expect(t, at >= 0 && emitter_bytes(&f.sync.pool, at) >= u64(e.capacity) * size_of(Gpu_Particle))
+	}
+	_, missing := emitter_ranges(&f.sync.pool, 99, 1)
+	testing.expect(t, !missing, "no ranges for an emitter the pool does not hold")
+	expect_clean(t, f.device)
+}
+
+// The catalog names the Attributes of a program where its particles keep
+// them: a program that writes NaN into heat and 1 into calm.
+@(test)
+particle_attributes_are_where_the_catalog_names_them :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	if !gpu_fixture_init(t, f, 64, 48, test_settings()) {return}
+	defer gpu_fixture_destroy(f)
+	emitter := test_emitter(1, {0, 0, 0})
+	emitter.info.lifetime = {5, 5}
+	base.text_set(emitter.info.program[:], "Glitch")
+	if !testing.expect_value(t, particle_program_check(&f.assets, &emitter.info, nil, nil, &emitter.program), "") {return}
+	program := erender.program_find(&f.assets, "Glitch", .Vfx)
+	if !testing.expect(t, program != nil && len(program.attribute_fields) == 2) {return}
+	heat, calm := program.attribute_fields[0], program.attribute_fields[1]
+	testing.expect(t, heat.name == "heat" && calm.name == "calm" && heat.kind == .Float && calm.offset == 4)
+	emitter.spawns = test_burst(5)
+	particles, words, _ := range_frames(t, f, {emitter}, emitter.id, emitter.capacity)
+	ranges, _ := emitter_ranges(&f.sync.pool, emitter.id, emitter.capacity)
+	stride := int(ranges.stride / 4)
+	if !testing.expect(t, stride > 0 && len(words) == len(particles) * stride) {return}
+	held := 0
+	for p, slot in particles {
+		if !(p.lifetime > 0) {continue}
+		held += 1
+		testing.expect(t, math.is_nan(transmute(f32)words[slot * stride + int(heat.offset / 4)]))
+		testing.expect_value(t, transmute(f32)words[slot * stride + int(calm.offset / 4)], f32(1))
+	}
+	testing.expect_value(t, held, 5)
 	expect_clean(t, f.device)
 }

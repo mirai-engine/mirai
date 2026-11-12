@@ -153,6 +153,14 @@ topology differs.
 
 - It prepares the correspondences of `std/anim` once and resamples the destination poses. Chains
   keep translations and scales of the destination.
+- Where both bodies have both legs, the feet of the destination are locked to the ground with the
+  clip edit `Lock_Feet` over the frames the feet of the source stand, if any: a mapping cannot keep
+  them by itself when the limbs have other proportions. Whether the bake loops is decided on the
+  source.
+- `crotch_floor` (both skeletons with a body of pelvis, hips and feet, or the bake fails) raises
+  the pelvis while the source crouches so the hips keep the share of their rest height over the
+  feet that the hips of the source keep, and turns the legs so the feet stay
+  (`retarget_crotch_pose`). It only raises: a body of longer legs keeps what the mapping gave.
 - Float/Vector curves, slots and markers keep their keys.
 - The root motion bone is remapped by name or by exact chain correspondence; if it corresponds
   exactly to no destination, the bake turns off the root flags instead of choosing an intermediate
@@ -181,8 +189,9 @@ topology differs.
 
 `plugins/animation/editor` (with `-collection:plugins=<root>/plugins`):
 
-- `baking_without_chains_pairs_bones_by_name_once_and_preserves_curves_markers_and_root_metadata`
-  and the two `baking_semantic_chains_*`.
+- `baking_without_chains_pairs_bones_by_name_once_and_preserves_curves_markers_and_root_metadata`,
+  the two `baking_semantic_chains_*` and
+  `baking_a_walk_onto_a_shorter_body_keeps_its_feet_from_sliding_more_than_the_source`.
 - `rig_modifier_api_discovers_named_operations_effectors_and_retarget_chains_of_the_character`.
 - `curve_poses_are_made_from_the_frames_of_a_clip_and_replace_those_of_their_curves`.
 

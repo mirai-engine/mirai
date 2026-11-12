@@ -29,12 +29,16 @@ without clips or an assumed human rig.
 - `Multi_IK.root` delimits the subtree: `Fixed` keeps its translation and `Translate` lets it move
   up to `max_root_translation`. A stiffness of one prevents the correction.
 - Only the enumerated joints rotate; each may have a preferred orientation (a bias before each pass)
-  and a swing/twist limit relative to the rest. The orientation of an effector respects the limit
-  and the stiffness of its bone if it is enumerated.
-- The result gives the largest position residual, the largest angular error, the iterations, one
-  residual per effector and `reached`, which requires both tolerances. An incompatible target gives
-  a valid solution with `reached=false`; it is not a physical solver nor does it guarantee global
-  convergence.
+  and per-axis limits from its rest rotation: each axis of `frame` is `Free`, `Limited` (min, max)
+  or `Locked`, so two locked axes make a hinge. `joint_limit_axes` keeps each component of the
+  rotation vector from rest in its range. The orientation of an effector respects the limits and
+  the stiffness of its bone if it is enumerated.
+- A turned joint recomposes only its own branch (`pose_world_branch` over the caller's
+  `Pose_Hierarchy`), so a solve costs the same whatever the skeleton has outside the subtree.
+- The result gives the largest position residual, the largest angular error, the iterations, the
+  bones it recomposed, one residual per effector and `reached`, which requires both tolerances. An
+  incompatible target gives a valid solution with `reached=false`; it is not a physical solver nor
+  does it guarantee global convergence.
 - The membership of each effector in the subtree is checked on entry; the walk ends at the root and
   preserves its ancestors and the siblings of the subtree.
 
@@ -78,7 +82,9 @@ without clips or an assumed human rig.
 
 ## Verification
 
-- `mirai test std/anim` with the affected cases of `rigs_test.odin` and `rig_shapes_test.odin`.
+- `mirai test std/anim` with the affected cases of `rigs_test.odin` and `rig_shapes_test.odin`;
+  for Multi IK, `joint_limit_axes_*`, `multi_ik_hinge_knee_*` and
+  `multi_ik_recomposes_only_the_branch_of_each_joint`.
 - The hostile rig cases are repeated with `ANIM_RIG_HOSTILE_ROUNDS=20000` after changing validation
   or memory.
 - `multi_ik_validates_reference_and_current_pose_before_iterating_without_joint_corrections`: the

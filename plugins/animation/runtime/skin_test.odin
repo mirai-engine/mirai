@@ -1,7 +1,10 @@
 package anim
 
+import "core:fmt"
 import "core:math/linalg"
+import "core:mem"
 import "core:path/filepath"
+import "core:slice"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
@@ -10,6 +13,7 @@ import "mirai:host"
 import gpu "mirai:render"
 import "mirai:rhi"
 import "mirai:rhi/shared_device"
+import lib "mirai:std/anim"
 import "mirai:std/base"
 import mm "mirai:std/math"
 
@@ -119,7 +123,7 @@ skeletal_instances_use_independent_dense_poses_and_eighth_influence :: proc(t:^t
     }
     tick :: proc(app:^host.App,cache:^Skin_Runtime,state:^Skin_Instances,w:^Skin_World,problems:^core.Problems,posed:^erender.Posed_Meshes,time:core.Time={},frame:=core.FRAME_TIME_DEFAULT) {
         clear(&app.extras.instances)
-        animation_skin(core.read(&w.meshes),core.read(&w.skins),core.read(&w.parents),core.read(&w.worlds),&w.lives,core.read(&w.hidden),core.read(&w.elsewhere),cache,state,app.assets,app.renderer,posed,&app.jobs,app.allocator,time,frame,core.Ref(Playback){ptr=&w.playback},{},problems,{},nil,ANIMATION_BUDGET_CONFIG_DEFAULT,{},{})
+        animation_skin(core.read(&w.meshes),core.read(&w.skins),core.read(&w.parents),core.read(&w.worlds),&w.lives,core.read(&w.hidden),core.read(&w.elsewhere),cache,state,app.assets,app.renderer,posed,&app.jobs,app.allocator,time,frame,core.Ref(Playback){ptr=&w.playback},{},problems,{},nil,ANIMATION_BUDGET_CONFIG_DEFAULT,{},{},{})
         skin_shown(app,posed,core.read(&w.meshes),core.read(&w.worlds),core.read(&w.offsets),core.read(&w.parents),frame)
     }
     tick(&app,&cache,&state,&w,&problems,&posed)
@@ -261,7 +265,7 @@ a_skin_part_collapses_the_vertices_of_its_bone_into_it :: proc(t:^testing.T) {
     if !testing.expect(t,pose!=nil && skeleton_bind(&w.playback,pose,definition,nil,&w.transforms)) {return}
     pose.local[2].position={0.5,2,0}
     copy(pose.previous[:],pose.local[:]);pose.pose_ready=true
-    animation_skin(core.read(&w.meshes),core.read(&w.skins),core.read(&w.parents),core.read(&w.worlds),&w.lives,core.read(&w.hidden),core.read(&w.elsewhere),&cache,&state,app.assets,app.renderer,&posed,&app.jobs,app.allocator,{},core.FRAME_TIME_DEFAULT,core.Ref(Playback){ptr=&w.playback},{},&problems,{},nil,ANIMATION_BUDGET_CONFIG_DEFAULT,core.read(&w.parts),{})
+    animation_skin(core.read(&w.meshes),core.read(&w.skins),core.read(&w.parents),core.read(&w.worlds),&w.lives,core.read(&w.hidden),core.read(&w.elsewhere),&cache,&state,app.assets,app.renderer,&posed,&app.jobs,app.allocator,{},core.FRAME_TIME_DEFAULT,core.Ref(Playback){ptr=&w.playback},{},&problems,{},nil,ANIMATION_BUDGET_CONFIG_DEFAULT,core.read(&w.parts),{},{})
     skin_shown(&app,&posed,core.read(&w.meshes),core.read(&w.worlds),core.read(&w.offsets),core.read(&w.parents),core.FRAME_TIME_DEFAULT)
     testing.expect_value(t,problems.count,0)
     if !testing.expect_value(t,len(state.instances.values),1) {return}
@@ -288,4 +292,116 @@ rig_mesh_save :: proc(path:string,types:^asset.Types,desc:asset.Mesh_Desc,vertic
     desc:=desc
     if !asset.mesh_build({vertices=vertices,skin=skin},indices,nil,&desc.geometry,context.temp_allocator) {return .Invalid}
     return asset.mesh_save(path,types,desc)
+}
+
+// The loop the automatic palette period runs in: the fixed steps of the animation and the skin.
+@(private)
+@(test_world)
+Skin_Loop_World :: struct {
+    using world:Test_World,
+    transforms:core.Table(core.Transform),
+    parents:core.Table(core.Parent),
+    labels:core.Table(core.Name),
+    meshes:core.Table(erender.Mesh_Renderer),
+    skins:core.Table(Pose_Source),
+    animations:core.Table(Animation),
+    targets:core.Table(Animation_Target),
+    progress:core.Table(Animation_Progress),
+    attachments:core.Table(Bone_Attachment),
+    worlds:core.Table(core.World_Transform),
+    played:core.Table(Animation_Played),
+    remotes:core.Table(core.Remote),
+    lives:core.Table(erender.Material_Live),
+    hidden:core.Table(erender.Hidden),
+    elsewhere:core.Table(erender.Drawn_Elsewhere),
+    parts:core.Table(Skin_Part),
+    requests:Animation_Requests,
+    events:Animation_Events,
+    playback:Playback,
+    constraints:Animation_Constraints,
+    grounding:Grounding_Runtime,
+    modifiers:Modifier_Runtime,
+    actions:Action_Runtime,
+    motion:Motion_Runtime,
+    budget:Budget_Runtime,
+}
+
+// The palettes the automatic period leaves for later are presentation only: from one snapshot, the
+// same ticks with the camera near, where every palette is made, and far, where most wait, leave
+// the simulation the same, bit for bit.
+@(test)
+the_automatic_period_leaves_the_simulation_as_it_is :: proc(t:^testing.T) {
+    TICKS :: 30
+    problems:core.Problems
+    directory:=base.test_folder(t,"animation-skin-loop")
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    bones:=[3]asset.Skeleton_Bone{{parent=-1,translation={0,2,0},rotation=1,scale={1,1,1}},{parent=0,translation={0,-1,0},rotation=1,scale={1,1,1}},{parent=1,translation={0,-1,0},rotation=1,scale={1,1,1}}}
+    paths:=[3]string{"upper","upper/lower","upper/lower/foot"}
+    names:=[3]string{"upper","lower","foot"}
+    for &bone,i in bones {base.text_set(bone.path[:],paths[i]);base.text_set(bone.name[:],names[i]);bone.target=base.name_hash(paths[i])}
+    skeleton,mesh,clips:=base.Asset_Id{0x5b1,1},base.Asset_Id{0x5b1,2},base.Asset_Id{0x5b1,3}
+    vertices:=[3]asset.Vertex{{position={-1,0,0},normal=mm.normal_pack({0,0,1}),color=0xffffffff},{position={1,0,0},normal=mm.normal_pack({0,0,1}),color=0xffffffff},{position={0,1,0},normal=mm.normal_pack({0,0,1}),color=0xffffffff}}
+    influences:[3]asset.Skin_Vertex
+    for &influence in influences {influence.weights[0]=255}
+    joints:=[1]asset.Rig_Joint{{node=1,inverse_bind=1}}
+    turn:=[2]lib.Keyframe{{time=0,value=lib.quat_vec4(1)},{time=1,value=lib.quat_vec4(mm.quat_axis_angle({1,0,0},mm.PI*0.5))}}
+    if !testing.expect_value(t,asset.skeleton_save(fmt.tprintf("%s/rig.skeleton",directory),&types,{id=skeleton,bones=bones[:]}),asset.Error.None) ||
+       !testing.expect_value(t,rig_mesh_save(fmt.tprintf("%s/rig.mesh",directory),&types,{id=mesh,skeleton=skeleton,joints=joints[:]},vertices[:],{0,1,2},influences[:]),asset.Error.None) ||
+       !testing.expect_value(t,asset.animation_save(fmt.tprintf("%s/rig.anim",directory),&types,{id=clips,clips={{name="lift",tracks={{target="upper/lower",property=.Rotation,keys=turn[:]}}}}}),asset.Error.None) {return}
+    device:=shared_device.take_or_skip(t,hardware_rt=false)
+    if device==nil {return}
+    renderer:=new(gpu.Renderer);defer free(renderer)
+    settings:=gpu.DEFAULT_SETTINGS;settings.gi_enabled,settings.taa=false,false
+    if !testing.expect(t,gpu.renderer_init(renderer,{device=device,width=96,height=64,settings=settings}),renderer.error) {return}
+    defer gpu.renderer_destroy(renderer)
+    assets:host.Assets
+    if !testing.expect(t,host.assets_init(&assets,{root=directory,renderer=renderer})) {return}
+    defer host.assets_destroy(&assets)
+    app:=host.App{allocator=context.allocator,renderer=renderer,assets=&assets}
+    defer {host.extras_free(&app.extras);host.app_content_destroy(&app)}
+    if !testing.expect(t,host.content_animation_wait(&app,clips)!=nil) {return}
+    cache:Skin_Runtime;defer skin_runtime_free(&cache)
+    state:Skin_Instances;defer skin_instances_free(&state)
+    posed:erender.Posed_Meshes;defer core.value_free(&posed,type_info_of(erender.Posed_Meshes))
+    skeletons:Skeleton_Assets;defer skeleton_assets_free(&skeletons)
+    characters:Character_Assets;defer character_assets_free(&characters)
+    sources:Source_Assets;defer source_assets_free(&sources)
+    w,kept,near:=new(Skin_Loop_World),new(Skin_Loop_World),new(Skin_Loop_World)
+    defer {free(w);free(kept);free(near)}
+    if !test_world_init(t,w) || !test_world_init(t,kept) || !test_world_init(t,near) {return}
+    defer {test_world_destroy(w);test_world_destroy(kept);test_world_destroy(near)}
+    rig:=core.create(&w.entities)
+    core.add(&w.transforms,rig,core.TRANSFORM_IDENTITY)
+    core.add(&w.worlds,rig,{transform=mm.TRANSFORM_IDENTITY,previous=mm.TRANSFORM_IDENTITY})
+    core.add(&w.meshes,rig,{mesh=mesh})
+    animation:=ANIMATION_DEFAULT;animation.asset=clips;animation_clip(&animation,"lift")
+    core.add(&w.animations,rig,animation)
+    test_world_settle(w)
+    view:=core.VIEW_DEFAULT;view.size={1920,1080}
+    play :: proc(w:^Skin_Loop_World,app:^host.App,cache:^Skin_Runtime,state:^Skin_Instances,posed:^erender.Posed_Meshes,skeletons:^Skeleton_Assets,characters:^Character_Assets,sources:^Source_Assets,view:^core.View,problems:^core.Problems,ticks:int) {
+        for _ in 0..<ticks {
+            time:=core.Time{tick=w.playback.frame,dt=1.0/60,playing=true}
+            animation_sample(core.read(&w.animations),&w.progress,&w.played,core.read(&w.attachments),&w.transforms,core.read(&w.parents),{},core.read(&w.labels),core.read(&w.targets),core.read(&w.meshes),core.read(&w.skins),core.read(&w.remotes),&w.requests,&w.events,&w.modifiers,&w.playback,characters,skeletons,app,time,{},problems,&w.actions,&w.motion,sources,{},core.CLOCK_DEFAULT,ANIMATION_BUDGET_CONFIG_DEFAULT)
+            animation_advance(&w.transforms,core.read(&w.parents),core.read(&w.worlds),&w.requests,&w.modifiers,&w.playback,&w.constraints,&w.grounding,{},{},time,{ptr=skeletons},problems,&w.motion,characters,{},{},core.CLOCK_DEFAULT,nil)
+            animation_skin(core.read(&w.meshes),core.read(&w.skins),core.read(&w.parents),core.read(&w.worlds),&w.lives,core.read(&w.hidden),core.read(&w.elsewhere),cache,state,app.assets,app.renderer,posed,&app.jobs,app.allocator,time,{dt=1.0/60,alpha=1},{ptr=&w.playback},{},problems,{},&w.budget,ANIMATION_BUDGET_CONFIG_DEFAULT,core.read(&w.parts),{},{ptr=view})
+        }
+    }
+    play(w,&app,&cache,&state,&posed,&skeletons,&characters,&sources,&view,&problems,3)
+    if !testing.expect(t,test_world_copy(kept,w)) {return}
+    view.position={0,1,4}
+    play(w,&app,&cache,&state,&posed,&skeletons,&characters,&sources,&view,&problems,TICKS)
+    near_throttled:=w.budget.throttled-kept.budget.throttled
+    if !testing.expect(t,test_world_copy(near,w) && test_world_copy(w,kept)) {return}
+    view.position={0,1,600}
+    play(w,&app,&cache,&state,&posed,&skeletons,&characters,&sources,&view,&problems,TICKS)
+    far_throttled:=w.budget.throttled-kept.budget.throttled
+    testing.expectf(t,near_throttled==0 && far_throttled>TICKS/2,"palettes left for later: %d near, %d far, of %d ticks",near_throttled,far_throttled,TICKS)
+    testing.expect_value(t,problems.count,0)
+    same :: proc(a,b:[]$T) -> bool {return len(a)==len(b) && mem.compare(slice.to_bytes(a),slice.to_bytes(b))==0}
+    testing.expect(t,same(w.transforms.values[:],near.transforms.values[:]) && same(w.progress.values[:],near.progress.values[:]) && same(w.played.values[:],near.played.values[:]) && same(w.events.items[:],near.events.items[:]),"the tables of the simulation")
+    if !testing.expect(t,len(w.playback.states)==1 && len(near.playback.states)==1) {return}
+    a,b:=&w.playback.states[0],&near.playback.states[0]
+    testing.expect(t,!same(a.local[1:],a.rest[1:]),"the clip moves the rig")
+    testing.expect(t,same(a.local[:],b.local[:]) && same(a.sampled[:],b.sampled[:]) && same(a.previous[:],b.previous[:]) && a.time==b.time && a.changed==b.changed && w.playback.frame==near.playback.frame,"the poses")
+    testing.expectf(t,rhi.device_validation_errors(device)==0,"validation: %s",rhi.device_validation_message(device))
 }

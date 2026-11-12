@@ -28,6 +28,13 @@ reservations) belongs to
   its target and the new one when it changes), `patrol_act`, `path_status`, `agent_path`,
   `smart_offer`, `smart_nearest`, `offer_act`, `cross_act`. An action shows what it does with
   `anim.play` and `anim.look`, taking `^anim.Animation_Requests` as any other parameter.
+- An agent thinks less often the farther it is from the
+  [simulation sources](../../mirai-gameplay/references/libraries.md#sources-and-residency) (the
+  bodies the seats drive, each `Streaming_Source`, never the view): once every
+  `ai.cadence_period` ticks by `Behavior_Settings.think_near`, up to `think_slowest`, on the ticks
+  of its own phase (`ai.cadence_due`). Only `think` is spaced: its running action runs every tick,
+  and it thinks too when that action ends, so a wait or an attack lasts what it says. Without
+  sources, or with `think_near` 0, every agent decides every tick.
 - What those actions request goes on when the agent's section unloads
   ([the far field](navigation.md#the-far-field)): `minds_tick` also runs the agents with
   `Nav_Far`, on the tick after each far step (`nav.nav_far_decide`), and what they reserve lasts
@@ -77,17 +84,24 @@ what it perceives; `think` only reads and proposes, and the actions write.
 ## Smart objects
 
 - `Smart_Object` publishes up to `SMART_OFFERS` offers: the use (`Smart_Use`, ids that the game
-  declares as `USE_*`), where the one who uses it stands (in the object's frame), how many at a
-  time, how many times, the cooldown after each use, the teams that can take it and the abilities
-  (`Nav_Agent.abilities`) that it requires.
+  declares as `USE_*`), where the one who uses it stands (in the object's frame), which way it
+  faces there (a yaw: a seat cannot pitch or roll), where it comes from (`enter`, from `at`), how
+  many at a time, how many times, the cooldown after each use, the teams that can take it and the
+  abilities (`Nav_Agent.abilities`) that it requires. One slot per entity: many seats are many
+  entities, never one object with many slots or several ways in for one seat.
 - An offer is open to a user (`smart_offer`) if it was not spent, is not in cooldown, is of its
-  team and its abilities, and he holds it or there is room. They are found among what the agent
+  team and its abilities, and he holds it, there is room, or a holder of a lower priority
+  (`Smart_User.priority`) has not started to use it. They are found among what the agent
   perceives (`smart_offer` of the subject), near a point (`smart_nearest`, which looks at each
-  object) or with a place query of layout `Offers`, scored like the others.
+  object) or with a place query of layout `Offers` (open at the query's `priority`), scored like
+  the others.
 - The action that uses it reserves it for its whole life (`smart_claim`, in `Claims` with the
-  attack tokens) and the mind releases it in its `Exit`. `offer_act` does the whole trip: it takes
-  the closest, reserves it, walks (after it, if it moves) and waits, and fails when the offer is
-  gone or closed to it before; whoever spends it says so with `smart_used`, and
+  attack tokens) and the mind releases it in its `Exit`. A claim of a higher priority displaces
+  one not in use; one in use (`ai.claim_use`) is never displaced, and the one displaced is not
+  told: its next `Update` finds it no longer holds it and fails. `offer_act` does the whole trip:
+  it takes the closest, reserves it, walks to `enter` and then to `at` (after it, if it moves),
+  marks it in use, faces its yaw (`nav_look_at`, released on `Exit`) and waits, and fails when the
+  offer is gone, closed to it or taken before; whoever spends it says so with `smart_used`, and
   `smart_update` (`fixed`, `react`, `server`), sole writer of `Smart_State`, counts the use and
   starts the cooldown.
 - `Claims` belongs to the world and is written by the steps of the minds (`ctx.reservations`);
@@ -116,8 +130,9 @@ what it perceives; `think` only reads and proposes, and the actions write.
 
 ## Perception
 
-- `Perceiver`: range and half angle of sight, eye height, hearing (meters per volume) and
-  forgetting time, and the teams (`Team`, named id) that it notices. `Perceivable`: its team and
+- `Perceiver`: range and half angle of sight, eye height, hearing (meters per volume),
+  forgetting time, the radius within which it sees all around (`aware`) and the teams (`Team`,
+  named id) that it notices, for sight and for noises alike. `Perceivable`: its team and
   the height of the point that is looked at.
 - `perception_update` (`fixed`, `input`, `server`) adds `Perception` to each `Perceiver` and is
   its sole writer. Sight sees what is in its cone, around the perceiver's -Z (its front), if a
@@ -126,7 +141,10 @@ what it perceives; `think` only reads and proposes, and the actions write.
   goes first in the next tick, on from where it stopped: every subject in sight is looked at again
   within as many ticks as there are candidates per ray. What it saw last stays in sight up to
   `SIGHT_KEEP` times its range and angle, so that at the edge it is not noticed and forgotten in
-  turn. Hearing takes the noises of `Noises` (`noise`) within its range by volume.
+  turn. Hearing takes the noises of `Noises` (`noise`) within its range by volume, or the ones
+  whose `listener` it is wherever they are, if it notices their team: that of the maker's
+  `Perceivable`, else the noise's own; a noise of no team reaches everyone. A noise with an `age`
+  is remembered as of that many ticks ago.
   Memory lowers confidence until forgetting, only on the perceiver's turn: what it could not look
   at it does not forget before looking at it again. A destroyed subject is forgotten at once.
 - Each perceiver looks only at the `Perceivable`s around it: those of the tick are put in a
@@ -144,15 +162,23 @@ what it perceives; `think` only reads and proposes, and the actions write.
 ## Places
 
 - `place_query` asks for places for an agent: candidates around it, around another entity or
-  around a point (in rings, in a grid or the points of its navmesh joined to that center,
-  `ai.places_mesh`), entities (those of the request, or the `Perceivable`s of some teams near the
-  center) or the open offers of a use of the smart objects, brought to its navmesh, measured by
-  its tests (distance, angle, visibility from someone with a ray, path length over what the agent
-  walks and crosses, influence of some teams and cover) and scored with utility; the best ones
-  come back in its `Place_Result`, with the request number, the entity of each one that came from
-  one and the offer. The path length of all the candidates comes from a single search from the
-  one measuring (`ai.nav_costs`), with the filter with which navigation moves the agent
+  around a point (in rings, all around or in an arc centered on where the center faces, in a grid
+  or the points of its navmesh joined to that center, `ai.places_mesh`), entities (those of the
+  request, the `Perceivable`s of some teams near the center, or with `Remembered` what the agent's
+  `Perception` memory holds, where it last perceived it, a `Perceivable` only of those teams and a
+  noise with no maker too: an unseen enemy is no candidate) or
+  the open offers of a use of the smart objects, brought to its navmesh, measured by its tests
+  (distance, angle, visibility from someone with a ray, path length over what the agent walks and
+  crosses, influence of some teams and cover) and scored with utility; the best ones come back in
+  its `Place_Result`, with the request number, the entity of each one that came from one and the
+  offer. The path length of all the candidates comes from a single search from the one measuring
+  (`ai.nav_costs`), with the filter with which navigation moves the agent
   (`nav.agent_filter`).
+- Measures run by cost: those that read numbers on every candidate, then the search over the mesh,
+  then rays (`Visible`) and searches through a volume one candidate at a time, from the highest
+  score the measured tests allow down. The score is a product, so a candidate a measure vetoes
+  takes no more of them, and one whose bound stays below the kept ones is not measured; the places
+  found are exactly those of measuring everything.
 - A query whose center or one of whose tests measures from an entity that no longer exists finds
   no places (`Empty`), and that of one who was destroyed while waiting is not answered. Of
   several queries of an agent that wait, only the last is answered.
@@ -163,24 +189,36 @@ what it perceives; `think` only reads and proposes, and the actions write.
 
 - `behavior.minds` (names, actions and agents of each one), `behavior.inspect` (the action and
   step they run, their stage and since when, the commit, the best proposals of the last decision
-  with their scores, the latest exits with the cause and what interrupted them, and what it has
-  reserved), `behavior.perception`, `behavior.offers` (the offers of a smart object, their uses
-  and who holds them), `behavior.influence` (the influence of each team and the cover at a point)
-  and `behavior.query` (runs a query at once).
+  with their scores, the latest exits with the seconds since each, the cause and what interrupted
+  them, and what it has reserved), `behavior.perception`, `behavior.offers` (the offers of a
+  smart object, their uses and who holds them), `behavior.influence` (the influence of each team
+  and the cover at a point) and `behavior.query` (runs a query at once).
+- Why, on request and never recorded: `behavior.perception` with `subject` says why it sees that
+  one or not at this tick (`sight_why`, over the same `sight_reach` its turns use: range, cone or
+  `aware`, team, the entity a ray hits first, no rays); `behavior.query` with `explain` gives every
+  candidate with each test's input and response, its fate and the vetoing test, the first that
+  scored 0 (`place_run` fills a `Place_Explain` only when given one). What was decided at an
+  earlier tick is asked after `play.seek`.
+- The viewport mode `behavior.perception` draws, for the selected `Perceiver`s, the cone, the
+  reach within which it keeps what it saw, `aware` and a line to each subject it remembers, as
+  bright as its confidence; only while the mode is on.
 - There is no method that sends events: an event is a field of a game component, written like any
   other.
 - The entities that the game creates at runtime need a `core.Id` for the API to name them.
 
 ## Verification
 
-- `mirai test plugins/behavior/runtime`: registration by name and unknown names, agent tick
-  without allocating, that it does not decide when resimulating or stopped,
-  far agents and their lease, movement, chase and patrol actions, sight by cone and team, noise,
-  forgetting, a remembered subject that is
-  destroyed, ray turns, random crowds that remember by the grid whom they would among every
-  perceivable, a tick with nothing to do that goes through no row, places by budget, from the
-  navmesh, from entities and from offers, a place
-  target that is destroyed, the offers by team, ability, capacity, uses and cooldown, and the
+- `mirai test plugins/behavior/runtime`: registration by name and unknown names, agent tick without
+  allocating, that it does not decide when resimulating or stopped, far agents and their lease, the
+  cadence of a mind by its distance to the sources, movement, chase and patrol actions, sight by
+  cone and team, noise, forgetting, a remembered subject that is destroyed, ray turns, random crowds
+  that remember by the grid whom they would among every perceivable, why a subject is seen or not
+  (`sight_why_names_what_hides_a_subject`), a tick with nothing to do that goes through no row,
+  places by budget, from the navmesh, from entities, from memory and from offers, rays only where
+  they change the answer, the explanation of each candidate
+  (`a_query_explains_each_candidate_and_the_test_that_vetoed_it`), a place
+  target that is destroyed, the offers by team, ability, capacity, uses and cooldown, the way in
+  and the facing of `offer_act` and the claim of a higher priority before use, and the
   influence maps without allocating.
   `mirai test plugins/multiplayer/runtime
   a_mind_decides_on_the_server_and_the_client_plays_what_it_plays`: a mind in a session, the

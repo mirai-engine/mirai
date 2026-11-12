@@ -113,6 +113,7 @@ Navigation_Settings :: struct {
     builds:i32 `mirai:"min=1,max=64,advanced"`,            // tiles a tick starts building
     areas:[NAV_AREA_CAPACITY]Nav_Area_Cost `mirai:"trim"`,
     path_iterations:i32 `mirai:"min=1,section=Agents,advanced"`, // polygons the searches of all agents expand in a tick
+    avoidance_reach:f32 `mirai:"min=0,unit=m,advanced"`, // agents step aside this near a source; 0: everywhere
 }
 
 NAVIGATION_SETTINGS_DEFAULT :: Navigation_Settings{
@@ -122,7 +123,7 @@ NAVIGATION_SETTINGS_DEFAULT :: Navigation_Settings{
         2={name={0='S',1='w',2='i',3='m',4='m',5='e',6='r'},space=.Water,radius=0.3,height=1.8},
     },
     cell_size=0.15,cell_height=0.1,tile_cells=64,max_tiles=1024,max_links=4096,builds=4,
-    path_iterations=2048,
+    path_iterations=2048,avoidance_reach=160,
 }
 
 // The three that follow say what the Volume of their entity is to the
@@ -211,6 +212,7 @@ Tile_Mark :: struct {
     links:bool,    // its generated links wait to be made again
     unloaded:bool, // dirty, it waits for the collision it reads to load: it keeps what it has
     collision:bool, // dirty, the collision under it may have changed, not only its areas and obstacles: its build reads it again
+    wanted:bool,    // dirty, an agent waits for it to find its way: it builds before the others
 }
 
 // Where the collision is not loaded this tick: what the ground names

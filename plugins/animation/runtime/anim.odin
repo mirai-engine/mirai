@@ -1288,15 +1288,21 @@ pose_skeleton :: proc(playback:^Playback,entity:core.Entity) -> base.Asset_Id {
     return state.skeleton if state!=nil && state.pose_ready else {}
 }
 
-// The pose a rig ended its last tick with in the space of its entity, after its modifiers and
-// without the interpolation between ticks. A bone of its skeleton is at its index plus one.
-pose_space :: proc(playback:^Playback,entity:core.Entity,allocator:=context.allocator) -> (pose:[]mm.Transform,ok:bool) {
+// Which pose of its last tick a rig is read at: Finished, the one it ended the tick with, after its
+// modifiers; Sampled, the one its clips, layers and actions gave, before them (Playing.sampled).
+Tick_Pose :: enum u8 {Finished,Sampled}
+
+// A pose of a rig in its last tick in the space of its entity, without the interpolation between
+// ticks. A bone of its skeleton is at its index plus one.
+pose_space :: proc(playback:^Playback,entity:core.Entity,allocator:=context.allocator,which:=Tick_Pose.Finished) -> (pose:[]mm.Transform,ok:bool) {
     state:=constraint_playing(playback,entity) if playback!=nil else nil
     if state==nil || !state.pose_ready || len(state.local)==0 {return nil,false}
-    buffer,error:=make([]mm.Transform,len(state.local),allocator)
+    local:=state.sampled[:] if which==.Sampled else state.local[:]
+    if len(local)!=len(state.local) {return nil,false}
+    buffer,error:=make([]mm.Transform,len(local),allocator)
     if error!=nil {return nil,false}
     pose=buffer
-    copy(pose,state.local[:])
+    copy(pose,local)
     pose[0]=mm.TRANSFORM_IDENTITY
     if !lib.pose_world(state.parents[:],pose,pose) {delete(pose,allocator);return nil,false}
     return pose,true

@@ -4,11 +4,11 @@ description: Mirai world content plugins - `terrain` (heightfield and volume ter
   material layers, digging, dust, the ground contract, with the `terrain_debris` pieces), `foliage`
   (cells, impostors, wind, collision, ground), `water` (waves, caustics, foam, wakes), `imprint`
   (footprints in snow, mud and sand), `vfx` (GPU particles, `.particle` effects, births by channel,
-  grids and volumes), `navigation` (automatic navmesh, links, agents), `behavior` (AI minds, smart
-  objects, perception, influence maps) and `shapes` (editable solids of a polygon and brush
-  entities, and splines of roads, paths and rivers). Use when sculpting or painting terrain,
-  scattering vegetation, making water, snow or particles, making enemies and NPCs walk and decide,
-  or changing any of those plugins.
+  grids and volumes, debugging particles), `navigation` (automatic navmesh, links, agents),
+  `behavior` (AI minds, smart objects, perception, influence maps) and `shapes` (editable solids of
+  a polygon and brush entities, and splines of roads, paths and rivers). Use when sculpting or
+  painting terrain, scattering vegetation, making water, snow or particles, making enemies and NPCs
+  walk and decide, or changing any of those plugins.
 ---
 
 # Mirai world
@@ -33,13 +33,16 @@ rules of [the plugin system](../mirai-plugins/SKILL.md). Layout, manifests and b
   [reports](references/vfx.md#reports),
   [GPU pools and emitters](references/vfx.md#pools-and-emitters),
   [births and steps](references/vfx.md#births-and-steps),
-  [Vfx programs](references/vfx.md#vfx-programs), [passes](references/vfx.md#passes) and
+  [Vfx programs](references/vfx.md#vfx-programs), [passes](references/vfx.md#passes),
+  [ribbons and trails](references/vfx.md#ribbons),
+  [mesh particles](references/vfx.md#mesh-particles) and
   [particle lights](references/vfx.md#particle-lights)
 - `vfx` in the editor (GPU effect preview, effects document, `Particle_Emitter` section,
   thumbnails, Particles card, `particle.*` methods):
   [Particle_Emitter section](references/vfx-editor.md#particle_emitter-section),
   [effect preview](references/vfx-editor.md#effect-preview),
-  [particle document](references/vfx-editor.md#particle-document) and
+  [particle document](references/vfx-editor.md#particle-document),
+  [debugging](references/vfx-editor.md#debugging) (pool and rows read back, `vfx.nan`) and
   [thumbnails](references/vfx-editor.md#thumbnails)
 - `fluids` (plane fluids on a `vfx` grid) is not part of the engine: it is installed from the
   catalog (<https://github.com/tomaszbk/mirai-fluids>); how `water` takes its waves:

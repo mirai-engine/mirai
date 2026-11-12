@@ -59,8 +59,13 @@ Automatic navmesh and agents that walk on it, and volumes they fly through
     without a job. If not, a background job builds it and the tile is published `NAV_BUILD_TICKS`
     ticks after its build started, only if nobody marked it again; a job not done by then is waited
     for, so the tick of a tile never depends on how fast the threads ran. `builds` of
-    `Navigation_Settings` is the builds a tick starts. Publishing does not allocate; a replaced
-    tile expires its references.
+    `Navigation_Settings` is the builds a tick starts: first the marked tiles and zones on the line
+    from each agent waiting for a path to its goal (`Tile_Mark.wanted`), as it finds no way or one
+    cut short until they are; then, with
+    [simulation sources](../../mirai-gameplay/references/libraries.md#sources-and-residency),
+    those nearest them, in metres (`scene.sources_distance`); without, in the order of the marks.
+    A tick with no build free looks at no mark. Publishing does not allocate; a replaced tile
+    expires its references.
   - **Carving.** A build from the collision leaves the heightfield of its tile with
     `Navigation_Builds`, which keeps those of the last `NAV_FIELDS` tiles. A tile marked only by a
     `Nav_Area` or an obstacle since its build began is built again from that heightfield
@@ -155,11 +160,12 @@ Automatic navmesh and agents that walk on it, and volumes they fly through
 - `navigation_agents` (`fixed`, `apply`, `server`): searches paths in portions in arrival order
   within `path_iterations` per tick, moves the corridor to where the body is, goes to the next
   corner, steps aside from the others with ORCA (characters that do not navigate, obstacles and
-  agents idle or crossing a link enter as neighbors that do not step aside: it takes the whole
-  change, at their real velocity) and writes the `Move_Input`, unless a seat drives the
-  body: its velocity as a velocity (`Move_Input.velocity`), which the locomotion takes up to the
-  top speed of its mode (crouched, backing off). It turns at the `turn_speed` of its `Character`
-  and adds the turn of the ground.
+  agents idle, crossing a link or farther than `Navigation_Settings.avoidance_reach` from every
+  simulation source (`scene.sources_distance`) enter as neighbors that do not step aside: it
+  takes the whole change, at their real velocity) and writes the `Move_Input`, unless a seat
+  drives the body: its velocity as a velocity (`Move_Input.velocity`), which the locomotion takes
+  up to the top speed of its mode (crouched, backing off). It turns at the `turn_speed` of its
+  `Character` and adds the turn of the ground.
 - **Neighbors as far as the horizon.** An agent gathers those it may meet within
   `NAV_AGENT_HORIZON` at its speed and theirs, from the cells around its own in blocks that grow
   until they hold that reach, or as many neighbors nearer than the block as ORCA counts.
@@ -178,6 +184,9 @@ Automatic navmesh and agents that walk on it, and volumes they fly through
 - **Planning on the way.** While its path is searched (`Waiting`), one that walks goes on along
   the corridor it has, from whose first polygon the search starts. It plans again when a step
   ahead stops being valid or the end of a cut corridor is near: `Arrived` only at the goal.
+  A `partial` path plans again each time a tile is built (`Navigation.revision` grows); at its
+  end it waits, `Moving` toward its goal, while its class still has tiles to build, and is
+  `Arrived` and `partial` only once it has none: tiles not built yet are never an arrival.
 - **Blocked.** One that walks in place within its radius (asking for a quarter of its speed or
   more, so not one that ORCA holds back) plans once more after `NAV_BLOCKED` and fails after
   twice that, with `navigation.blocked`.
@@ -307,28 +316,28 @@ It needs no component or configuration.
 
 ## Verification
 
-- `mirai test plugins/navigation/runtime`: building around a box, rebuilding only the tiles that a
-  change touched, blocked areas, generated links between roofs and their arc closed by a wall, a
-  staircase `Nav_Link`, the arc of a jump `Nav_Link` covered by a roof, the world copy, an agent's
-  class, the launch that lands, reading a `.navmesh` and two agents that fly through a U-shaped
-  cave, passing under its wall and stepping aside from each other; an amphibian that enters the
-  water through the shore, crosses it swimming and exits, and one that walks and flies that takes
-  off and lands through `LINK_FLY` `Nav_Link`s; a seated agent that walks while its seat drives
-  it, beside one that is not seated and stays; six that patrol together over a staircase, a drop
-  and a fence that the game crosses without falling off the platform, and one that is taken out of
-  its level and climbs back, and one that is asked for another destination in the middle of a
-  jump; eight that follow a runner by one search toward it, and after a step aside without one;
-  tiles that an area or an obstacle changes, built again from their heightfields and equal to
-  those the collision gives; the crossing of links that looks at no path while none crosses; the
-  tiles waiting for unloaded collision, with and without `Nav_Bounds`, and those of the unloaded
-  terrain, which are dropped in a running world, kept in the edited one and come back
-  from their bake without being built. Sections: the bakes of two that stitch at their border,
-  the tiles of one that leaves and comes back with its bake, nothing to do without changes, an
-  agent that crosses an unloaded section far away and appears in the next, one that arrives far
+- `mirai test plugins/navigation/runtime`: building around a box, nearest the simulation sources
+  first, rebuilding only the tiles that a change touched, blocked areas, generated links between
+  roofs and their arc closed by a wall, a staircase `Nav_Link`, the arc of a jump `Nav_Link` covered
+  by a roof, the world copy, an agent's class, the launch that lands, reading a `.navmesh` and two
+  agents that fly through a U-shaped cave, passing under its wall and stepping aside from each
+  other; an amphibian that enters the water through the shore, crosses it swimming and exits, and
+  one that walks and flies that takes off and lands through `LINK_FLY` `Nav_Link`s; a seated agent
+  that walks while its seat drives it, beside one that is not seated and stays; six that patrol
+  together over a staircase, a drop and a fence that the game crosses without falling off the
+  platform, and one that is taken out of its level and climbs back, and one that is asked for
+  another destination in the middle of a jump; eight that follow a runner by one search toward it,
+  and after a step aside without one; tiles that an area or an obstacle changes, built again from
+  their heightfields and equal to those the collision gives; the crossing of links that looks at no
+  path while none crosses; the tiles waiting for unloaded collision, with and without `Nav_Bounds`,
+  and those of the unloaded terrain, which are dropped in a running world, kept in the edited one
+  and come back from their bake without being built. Sections: the bakes of two that stitch at their
+  border, the tiles of one that leaves and comes back with its bake, nothing to do without changes,
+  an agent that crosses an unloaded section far away and appears in the next, one that arrives far
   away and appears when its section loads, one that receives requests far away, one that flies far
   away along the air path of the unloaded section and the tiles over a far section in a column.
-  `mirai test std/ai` builds and walks the coarse graph. `mirai test plugins/navigation/editor`
-  says what an agent does far away (`nav.agent`) and the next point of a drive; the unloaded boxes
-  of a terrain are tested in [terrain](terrain.md#verification).
+  `mirai test std/ai` builds and walks the coarse graph. `mirai test plugins/navigation/editor` says
+  what an agent does far away (`nav.agent`) and the next point of a drive; the unloaded boxes of a
+  terrain are tested in [terrain](terrain.md#verification).
 - In a demo session: `nav.status` until no tiles are left waiting, `nav.path` between two points
   and, in Play, `nav.agent` of an agent that walks; the `Swarm` arena for the air.

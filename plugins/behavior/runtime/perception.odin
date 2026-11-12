@@ -1,5 +1,6 @@
 package behavior
 
+import "core:math"
 import "core:math/linalg"
 import "core:slice"
 import "mirai:core"
@@ -10,8 +11,9 @@ import nav "plugins:navigation/runtime"
 import phys "plugins:physics/runtime"
 
 // What agents perceive. A Perceiver sees the Perceivables of the teams it
-// notices that are in its cone and that a ray of the physics reaches, and
-// hears the noises the game makes within its hearing; it remembers each in
+// notices that are in its cone, or within `aware` of its eyes, and that a ray
+// of the physics reaches, and hears the noises the game makes of those teams,
+// or of none, within its hearing, or meant for it alone; it remembers each in
 // its Perception, surer the more recently it perceived it, and forgets it
 // `forget` seconds after it last did, or at once when it is destroyed. Each
 // looks only at those around it, found in a grid over the ground made every
@@ -33,13 +35,14 @@ TEAM_NEUTRAL :: Team(0)
 @(name_bits="Team")
 Teams :: distinct u32
 
-@(component,description="Sees, hears and remembers: the Perceivables of the teams it notices in its cone of sight that nothing hides, and the noises within its hearing.")
+@(component,description="Sees, hears and remembers: the Perceivables of the teams it notices in its cone of sight, or close around it, that nothing hides, and the noises of those teams, or of none, within its hearing.")
 Perceiver :: struct {
     sight:f32 `mirai:"min=0,unit=m"`,          // how far it sees
     angle:f32 `mirai:"angle,min=0"`,           // half of the cone it sees, from where its body faces
     eyes:f32 `mirai:"unit=m"`,                 // above its origin
     hearing:f32 `mirai:"min=0"`,               // times the loudness of a noise, in metres, that it hears
     forget:f32 `mirai:"min=0,unit=s"`,         // after it stops perceiving something
+    aware:f32 `mirai:"min=0,unit=m"`,          // of its eyes, within which it sees all around; 0: only its cone
     notices:Teams,
 }
 PERCEIVER_DEFAULT :: Perceiver{sight=20,angle=1.0472,eyes=1.6,hearing=1,forget=8,notices=Teams(0xffffffff)}
@@ -58,8 +61,8 @@ Perception :: struct {
     next:u32 `mirai:"transient,hidden"`, // row of the Perceivable it looks at first in its next turn
 }
 
-// The work of perception, of the queries of places and of the influence maps
-// in a tick, for all the agents, and where the maps are.
+// The work of perception, of the queries of places, of the influence maps and
+// of the minds in a tick, for all the agents, and where the maps are.
 @(storage,setting)
 Behavior_Settings :: struct {
     rays:i32 `mirai:"min=0,advanced"`,    // of sight
@@ -71,17 +74,26 @@ Behavior_Settings :: struct {
     influence_rays:i32 `mirai:"min=0,advanced"`,   // of cover in a tick
     influence_falloff:f32 `mirai:"min=0,max=1"`,   // of an influence, per metre
     influence_blend:f32 `mirai:"min=0,max=1"`,     // of the way to the new value a pass moves a cell
+    think_near:f32 `mirai:"min=0,unit=m"`,    // per this from a source, a tick less often an agent decides; 0: none
+    think_slowest:f32 `mirai:"min=0,unit=s"`, // between two decisions of an agent at most
 }
 BEHAVIOR_SETTINGS_DEFAULT :: Behavior_Settings{
     rays=256,queries=4,
     influence_cell=2,influence_size=128,influence_cells=8192,influence_rays=90,influence_falloff=0.15,influence_blend=0.6,
+    think_near=80,think_slowest=0.5,
 }
 
-// A noise the game makes: whoever hears within loudness times its hearing perceives its maker there.
+// A noise the game makes: whoever hears it within loudness times its hearing,
+// or only `listener` wherever it is (a hit, a touch), and notices its team,
+// perceives its maker there as of `age` ticks ago. Its team is that of its
+// maker's Perceivable; a noise of no team is heard by all.
 Noise :: struct {
     position:[3]f32,
-    loudness:f32,      // m it carries for a hearing of 1
-    maker:core.Entity, // whom it reveals; none: only the place
+    loudness:f32,         // m it carries for a hearing of 1; unused with a listener
+    maker:core.Entity,    // whom it reveals; none: only the place
+    team:Maybe(Team),     // when its maker is not a Perceivable; none: of no team
+    listener:core.Entity, // the only perceiver it reaches; none: those that hear it
+    age:u32,              // ticks since the maker was there
 }
 
 @(storage,queue)
@@ -89,9 +101,7 @@ Noises :: struct {
     using queue:core.Queue(Noise),
 }
 
-noise :: proc(noises:^Noises,position:[3]f32,loudness:f32,maker:=core.NONE) {
-    core.push(&noises.queue,Noise{position=position,loudness=loudness,maker=maker})
-}
+noise :: proc(noises:^Noises,n:Noise) {core.push(&noises.queue,n)}
 
 Perception_Event_Kind :: enum u8 {Noticed,Forgot}
 
@@ -153,8 +163,11 @@ perception_update :: proc(
     if !time.playing || time.dt<=0 {return}
     // With nobody to look at or to hear, and nothing remembered, nobody perceives or forgets.
     if len(perceivers.entities)==0 || len(perceivables.entities)==0 && len(heard)==0 && turns.remembering==0 {return}
+    for &n in heard {
+        if maker,ok:=core.get(perceivables,n.maker);ok {n.team=maker.team}
+    }
     count:=core.count(perceivers)
-    rays:=int(settings.rays) if settings.ptr!=nil else 256
+    rays:=sight_rays(settings)
     far:=nav.nav_far_decide(time) && fars!=nil && len(perceivers.entities)>count
     // Without rays nobody looks, and all remember as time goes.
     sighted:=rays>0
@@ -189,7 +202,7 @@ perception_update :: proc(
                 subject:=core.entity_at(perceivables,int(target))
                 if subject==e {continue}
                 seen:=perceivables.values[target]
-                if u32(p.notices)&(1<<u32(seen.team))==0 {continue}
+                if !noticed(p,seen.team) {continue}
                 at,ok:=core.get(worlds,subject)
                 if !ok {continue}
                 point:=at.position+mm.Vec3{0,seen.point,0}
@@ -212,6 +225,12 @@ perception_update :: proc(
         if turn {forget(&mine.memory,e,p,events,entities.ptr,time)}
         remembering_count(turns,remembered,mine.memory.count>0)
     }
+}
+
+// The rays of sight of a tick: with none, the perceivers near the players do not look.
+@(private)
+sight_rays :: #force_inline proc "contextless" (settings:core.Ref(Behavior_Settings)) -> int {
+    return int(settings.rays if settings.ptr!=nil else BEHAVIOR_SETTINGS_DEFAULT.rays)
 }
 
 @(private)
@@ -289,7 +308,7 @@ perceive_far :: proc(perceivers:^core.Table(Perceiver,$A),perceptions:^core.Tabl
             subject:=perceivables.entities[target]
             if subject==e {continue}
             seen:=perceivables.values[target]
-            if u32(p.notices)&(1<<u32(seen.team))==0 {continue}
+            if !noticed(p,seen.team) {continue}
             at,ok:=core.get(worlds,subject)
             if !ok || !sees(&mine.memory,subject,p,eye,forward,at.position+mm.Vec3{0,seen.point,0}) {continue}
             if ai.memory_perceive(&mine.memory,u64(subject),at.position,.Sight,1,time.tick)==.New {
@@ -302,19 +321,85 @@ perceive_far :: proc(perceivers:^core.Table(Perceiver,$A),perceptions:^core.Tabl
     }
 }
 
-// Whether a point is in the cone of a perceiver: wider and farther for a subject it saw last.
 @(private)
-sees :: proc(memory:^ai.Perception_Memory,subject:core.Entity,p:Perceiver,eye,forward,point:mm.Vec3) -> bool {
+noticed :: #force_inline proc "contextless" (p:Perceiver,team:Team) -> bool {return u32(p.notices)&(1<<u32(team))!=0}
+
+// Whether a point is in the cone of a perceiver, wider and farther for a
+// subject it saw last, or within its `aware` all around.
+@(private)
+sees :: #force_inline proc(memory:^ai.Perception_Memory,subject:core.Entity,p:Perceiver,eye,forward,point:mm.Vec3) -> bool {
+    reach:=sight_reach(memory,subject,p,eye,forward,point)
+    return reach==.Seen || reach==.Aware
+}
+
+// Why a perceiver sees a subject or not, as its turn decides it.
+Sight_Reason :: enum u8 {
+    Seen,         // in its cone, and nothing hides it
+    Aware,        // outside its cone but within `aware`, and nothing hides it
+    Out_Of_Range, // farther than its sight
+    Out_Of_Cone,  // within its sight, outside its cone and beyond `aware`
+    Team,         // of a team it does not notice
+    Blocked,      // a ray from its eyes hits another entity first
+    No_Rays,      // Behavior_Settings.rays is 0: a perceiver near the players does not look
+    Unseeable,    // not a placed Perceivable, or the perceiver itself
+}
+
+// Where a point stands for the sight of a perceiver, before any ray.
+@(private)
+sight_reach :: proc(memory:^ai.Perception_Memory,subject:core.Entity,p:Perceiver,eye,forward,point:mm.Vec3) -> Sight_Reason {
     keep:=f32(1)
     if o:=ai.memory_find(memory,u64(subject));o!=nil && .Sight in o.senses {keep=SIGHT_KEEP}
-    return ai.sight_in_cone(eye,forward,point,p.sight*keep,p.angle*keep)
+    if ai.sight_in_cone(eye,forward,point,p.sight*keep,p.angle*keep) {return .Seen}
+    if p.aware>0 && ai.sight_in_cone(eye,forward,point,min(p.aware,p.sight*keep),mm.PI) {return .Aware}
+    return .Out_Of_Cone if ai.sight_in_cone(eye,forward,point,p.sight*keep,mm.PI) else .Out_Of_Range
+}
+
+Sight_Why :: struct {
+    reason:Sight_Reason,
+    blocker:core.Entity, // what the ray hit first, when Blocked
+    distance:f32,        // m from its eyes to the point of the subject
+    angle:f32,           // radians between where it faces and the way to the subject
+}
+
+// Why a perceiver sees a subject or not at this tick: what its next turn
+// finds, a ray included (none for a far perceiver, as for its turns). On
+// request, never from the tick.
+sight_why :: proc(perceivers:^core.Table(Perceiver,$A),perceptions:^core.Table(Perception,$B),perceivables:^core.Table(Perceivable,$C),worlds:^core.Table(core.World_Transform,$D),fars:^core.Table(nav.Nav_Far,$E),settings:core.Ref(Behavior_Settings),physics:core.Ref(phys.Physics_State),perceiver,subject:core.Entity) -> (why:Sight_Why) {
+    why.reason=.Unseeable
+    p,is_perceiver:=core.get(perceivers,perceiver)
+    pose,placed:=core.get(worlds,perceiver)
+    seen,perceivable:=core.get(perceivables,subject)
+    at,there:=core.get(worlds,subject)
+    if !is_perceiver || !placed || !perceivable || !there || subject==perceiver {return}
+    eye:=pose.position+mm.Vec3{0,p.eyes,0}
+    forward:=mm.quat_forward(pose.rotation)
+    point:=at.position+mm.Vec3{0,seen.point,0}
+    to:=point-eye
+    why.distance=linalg.length(to)
+    if why.distance>1e-4 && linalg.length(forward)>1e-6 {
+        why.angle=math.acos(clamp(linalg.dot(to/why.distance,linalg.normalize(forward)),-1,1))
+    }
+    far:=far_of(fars,perceiver)
+    if !far && sight_rays(settings)<=0 {why.reason=.No_Rays;return}
+    if !noticed(p,seen.team) {why.reason=.Team;return}
+    memory:ai.Perception_Memory
+    if mine,found:=core.get(perceptions,perceiver);found {memory=mine.memory}
+    why.reason=sight_reach(&memory,subject,p,eye,forward,point)
+    if why.reason!=.Seen && why.reason!=.Aware || far || !(why.distance>1e-4) {return}
+    if hit,blocked:=phys.raycast(physics,eye,to/why.distance,why.distance,perceiver);blocked && hit.entity!=subject {
+        why.reason,why.blocker=.Blocked,hit.entity
+    }
+    return
 }
 
 @(private)
 hear :: proc(memory:^ai.Perception_Memory,e:core.Entity,p:Perceiver,position:mm.Vec3,heard:[]Noise,events:^Perception_Events,time:core.Time) {
     for n in heard {
-        if !(n.loudness>0) || linalg.length(mm.Vec3(n.position)-position)>n.loudness*p.hearing {continue}
-        if ai.memory_perceive(memory,u64(n.maker),n.position,.Hearing,0.75,time.tick)==.New {
+        if n.listener!=core.NONE {
+            if n.listener!=e {continue}
+        } else if !(n.loudness>0) || linalg.length(mm.Vec3(n.position)-position)>n.loudness*p.hearing {continue}
+        if team,sided:=n.team.?;sided && !noticed(p,team) {continue}
+        if ai.memory_perceive(memory,u64(n.maker),n.position,.Hearing,0.75,time.tick-min(u64(n.age),time.tick))==.New {
             core.push(&events.queue,Perception_Event{kind=.Noticed,perceiver=e,subject=n.maker,sense=.Hearing,position=n.position})
         }
     }

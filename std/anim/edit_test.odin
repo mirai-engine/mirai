@@ -180,6 +180,21 @@ lock_feet_and_mirror_fix_sliding_and_swap_sides :: proc(t:^testing.T) {
     before,after=body_test_metrics(rig,in_place),body_test_metrics(rig,locked)
     testing.expectf(t,after.foot_slide[.Left].mean<before.foot_slide[.Left].mean/2,"in place slide %v to %v",before.foot_slide[.Left],after.foot_slide[.Left])
 
+    // Contacts given by foot and frames lock as those found, with their anchors placed where the
+    // feet of the clip stand; frames outside the clip are refused.
+    contacts:=make([]Contact,32,context.temp_allocator)
+    measured,measured_ok:=clip_metrics(rig,sliding,{contacts=contacts},make([]math.Transform,frames_scratch_size(sliding),context.temp_allocator))
+    if !testing.expect(t,measured_ok && measured.contacts>0 && measured.contacts<=len(contacts)) {return}
+    given:=contacts[:measured.contacts]
+    for &contact in given {contact.anchors={}}
+    found,_:=body_test_edit(rig,Lock_Feet{},sliding)
+    placed,placed_result:=body_test_edit(rig,Lock_Feet{contacts=given},sliding)
+    testing.expect_value(t,placed_result.error,Edit_Error.None)
+    for value,i in placed.local {testing.expect(t,body_test_close(value,found.local[i]))}
+    given[0].last=i32(frames_count(sliding))
+    _,placed_result=body_test_edit(rig,Lock_Feet{contacts=given},sliding)
+    testing.expect_value(t,placed_result.error,Edit_Error.Invalid_Range)
+
     _,result=body_test_edit(rig,Mirror{},sliding);testing.expect_value(t,result.error,Edit_Error.Missing_Mirror)
     n:=len(rig.parents)
     pairs:=make([]i32,n,context.temp_allocator)
@@ -256,7 +271,7 @@ hostile_edits_metrics_and_detection_return :: proc(t:^testing.T) {
         case 4: edit=Smooth{number(&state),transmute(Body_Regions)u8(next(&state)),range}
         case 5: edit=Make_Loop{number(&state)}
         case 6: edit=Offset{Body_Part(next(&state)%20),Body_Direction(next(&state)%7),Body_Amount(next(&state)%4),range,number(&state)}
-        case 7: edit=Lock_Feet{number(&state)}
+        case 7: edit=Lock_Feet{blend=number(&state)}
         case 8: edit=Mirror{}
         case 9: edit=Face_Rest{}
         }

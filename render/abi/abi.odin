@@ -170,8 +170,7 @@ LIGHT_WEIGHT_ROWS          :: 2
 // word for each light, four to a row, 0 for a light without maps, else its
 // first map + 1 and, from bit SHADOW_LIGHT_FACES, which faces of its cube have
 // one; then SHADOW_MAP_ROWS for each map. The constants of a view hold those of
-// the cascades of the sun, SUN_MAP_ROWS. The maps draw SHADOW_ENTRIES clusters
-// at most, SHADOW_TESTED_ENTRIES of them of masked or blended materials.
+// the cascades of the sun, SUN_MAP_ROWS.
 SHADOW_MAP_ROWS            :: 6
 SHADOW_LIGHT_FACES         :: 16
 // The face of a spot whose one map lies along its cone, after the six of the cube.
@@ -179,8 +178,6 @@ SHADOW_SPOT_FACE           :: 6
 SHADOW_MAP_ORTHOGRAPHIC    :: 1
 SHADOW_SUN_MAPS            :: 6
 SUN_MAP_ROWS               :: SHADOW_SUN_MAPS * SHADOW_MAP_ROWS
-SHADOW_ENTRIES             :: u32(1 << 18)
-SHADOW_TESTED_ENTRIES      :: u32(1 << 16)
 REFLECTION_SHARED_ROUGHNESS :: f32(0.15)
 
 // The probe volume, and the rays of its contact occlusion at each pixel.
@@ -303,7 +300,7 @@ Shader_Entry :: struct {
 // by its id and gives it up to PROGRAM_PARAMETER_BYTES of parameters, laid
 // out as the program reflects them.
 SHADER_CATALOG :: "catalog.json"
-SHADER_CATALOG_VERSION :: 2
+SHADER_CATALOG_VERSION :: 3
 
 Shader_Catalog :: struct {
     version:int,
@@ -342,6 +339,7 @@ Program :: struct {
     coverage:bool,                // of a Surface program: its alpha is not that of the default material
     standard:bool,                // of a Surface program: it builds on the standard model of its material (mirai_surface_standard), whose maps it reads
     attributes:int,               // of a Vfx program: bytes of what it keeps of each particle
+    attribute_fields:[]Program_Attribute, // of a Vfx program: the fields of those bytes, in the order it declares them
     resources:[]Program_Resource, // of a Vfx program, in the order it declares them
     stages:[]Program_Stage,       // of a Vfx program, in the order they run
     moves:bool,                   // of a Vfx program: it moves and ages its particles itself
@@ -359,6 +357,15 @@ Program_Parameter :: struct {
     min,max:f64,
     srgb,normal,color:bool,
     group:string, // the section of Details that shows it; empty: the first, without a title
+}
+
+// A field of the Attributes of a Vfx program: a Float, Int, Uint or Bool
+// scalar or vector, at offset bytes of what it keeps of a particle.
+Program_Attribute :: struct {
+    name:string,
+    kind:Program_Kind,
+    components:u8, // 1 to 4
+    offset:u16,
 }
 
 // A resource of a Vfx program, which each emitter binds by its name: its

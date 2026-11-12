@@ -23,7 +23,12 @@ program parameters alike). Tables: `particle` (`Particle_Info`), `parameters`
     volumes bodies and foliage read, evaluated on the GPU
     ([volumes](../../mirai-gameplay/references/libraries.md#volume)); those of an effect view fall
     with `GRAVITY`;
-  - a `Mesh` particle turns its mesh by its `rotation` (and `spin`) about an axis of its own;
+  - a `Mesh` particle shows one of `meshes`, picked by `mesh_weights` when it starts (a
+    program's `particle.mesh` may change it; `flags` from `MESH_CHOICE_SHIFT`), and turns as
+    `facing` says: by its `rotation` (and `spin`) about an axis of its own, or with its front
+    (-Z) along where it last went faster than `PARTICLE_MESH_FACING_SPEED` (kept in the bits of
+    `flags` a ribbon has, so what rests does not turn), its +Y up, rolled by its rotation and
+    scaled along each axis by its emitter; a sorted effect has one mesh (validation);
   - its particles light the scene with `lights`, and cast shadows only with `light_shadows`
     ([lights](#particle-lights));
   - the editor shows each field in the group its `group` tag names, or in that of the field
@@ -323,6 +328,8 @@ To the GPU:
   capacity that the device does not take leaves the pool that there was and is the `vfx.capacity`
   problem, like an emitter that does not fit in the pool or in the emitter table, or a `sort` or
   `Ribbon` effect that needs more alive than `SORT_MAX`: its emitter is left with `SORT_MAX`.
+- The sub effect of a `trigger` gets the room of the events of the effect's live particles: one
+  each, or with `Trail`, those of a whole life of the sub effect at `TRAILS_PER_SECOND`.
 
 ## GPU
 
@@ -375,6 +382,8 @@ To the GPU:
   them.
 - The `finish` pass counts in the `particles` counters (`erender.counters`): those alive and the
   emitters that have any, two frames back.
+- Each kind of pass marks one GPU interval (`particle begin` ... `sprites`; `particle steps`
+  after the first step): time per pass, not per emitter, as a pass goes over every emitter.
 - Asking for a world's passes is asking for them once per frame even if several lists arrive.
 
 ### Births and steps
@@ -413,9 +422,7 @@ To the GPU:
   of its program have (in the pool or in the emitter table) and filters those of others; events are
   dispatched only for the programs of some destination emitter. The spans and pipelines are looked
   up again when a range, a program or a destination, or the shaders change.
-- `particle.instance.inspect` copies the particles of the emitter it looks at with their
-  Attributes, to debug a program: the editor part asks for that readback in a `Simulate` pass of
-  its own (`editor/watch.odin`), so a game binary has none of it.
+- [Debugging](vfx-editor.md#debugging) reads through `emitter_ranges`, in editor passes only.
 - The resource functions of `mirai_vfx.slang` are defined by `particle_programs.slang` over the
   emitter's resource rows (`ctx.emitter`), the areas buffer and the frame's channel births.
 
@@ -442,8 +449,8 @@ In the `Simulate` stage, per step:
     step) bounces and hits: event, report and lost life. Slower it stays on the surface without a
     hit, so a particle at rest is silent and keeps its life at any step. Friction takes tangent
     speed in proportion to the normal speed stopped (Coulomb), the same per second at any step.
-  - Deaths to the free list; death or hit events, and reports of those that the emitter's `report`
-    names.
+  - Deaths to the free list; death, hit and `Trail` events ([ribbons](#ribbons)), and reports
+    of those that the emitter's `report` names.
   - In the last step: the live ones to the draw list and, the `lit` ones, their light (sun with
     shadow ray, local lights without rays, probe volume and ambient), renewed for half of them each
     frame and stored as RGB with shared exponent.
@@ -455,16 +462,16 @@ Once per frame, in `Simulate`:
   moved since the last time the GPU cleared them.
 - **volume light**: after the steps, the light of the cells of each volume; `_hw` variant.
 - **finish**: one group per emitter.
+  - Sorted list in shared memory (bitonic, up to `SORT_MAX`): back to front, or a ribbon as
+    [ribbons](#ribbons) says.
   - Indirect draw of what is alive and the counters.
-  - Sorted list in shared memory (bitonic, up to `SORT_MAX`): back to front, or by age for a
-    ribbon.
 
 In each view:
 
 - **volumes** (`Blend`): the volumes' media, before the sprites.
 - **sprites** (`Blend`): over the lit image, before TAA; the emitters from farthest to nearest.
   - `Billboard` (faces the camera, with rotation), `Velocity` (stretched according to `stretch`),
-    `Horizontal` (plane in XZ) and `Ribbon` (each particle joined to the next in the list).
+    `Horizontal` (plane in XZ) and `Ribbon` ([ribbons](#ribbons)).
   - `Mesh` particles whose material blends (alpha mode `blend`, `Emitter_Desc.blended`): their
     mesh with `particle_mesh_blend.vert` and the sprites' fragment, placed as in the G-buffer, so
     their color, opacity and curves fade them as a sprite's, additive or covering by alpha as the
@@ -487,18 +494,8 @@ In each view:
 - **effects** (`Effect`): the sprites of the emitters of a `Particles` node, in the effect view of
   its texture, with the same sorted list and the same pipelines; none of them is drawn in the
   world's views, and `Mesh` particles are not drawn in them but those whose material blends.
-- **meshes** (`Gbuffer`): `Mesh` particles (but those whose material blends) in the G-buffer with
-  `particle_mesh.vert` and the
-  engine's fragment, or that of the Surface program of their materials, one draw per program
-  (`pass_mesh_programs`): turned by their rotation about an axis of their own
-  (`particle_rotation` of `particles.slang`), motion vectors from their velocity
-  and the emitter's material or the mesh's, which the plugin tells the renderer each frame
-  (`frame_gbuffer_mesh`) so that the views store their reflectance and their layers. Everything
-  that follows lights, shades and reflects them. Each one draws without indices the level 0
-  clusters of its mesh (`erender.mesh_draw_range`, `pass_draw_indirect`) and reads its vertices
-  only through `geometry.slang`: the plugin asks each frame for the whole mesh (`frame_mesh_whole`),
-  and a mesh with pages outside its root loads them all and does not release them while it is
-  drawn, because the scene's cull does not see the particles.
+- **meshes** (`Gbuffer`): `Mesh` particles (but those whose material blends) in the G-buffer
+  ([mesh particles](#mesh-particles)).
 
 ### Particle lights
 
@@ -524,6 +521,43 @@ they light everything within their reach, without shadow rays or a place in thos
 - Each group sorts its lights by a Z curve over the box of those of this frame and builds its tree
   by halves, each node what its lights give together, like the CPU tree.
 
+## Ribbons
+
+- A particle joins a ribbon (`flags` above `RIBBON_SHIFT`; 0, that of the emitter): that of the
+  particle whose event started it (`particle_own_ribbon` of its seed), or what its program gives
+  `particle.ribbon`. `Trail` makes an event each time a particle's age (before a hit takes life
+  from it) passes a multiple of `1/TRAILS_PER_SECOND`, and at the end of each frame a leader:
+  the events of the last step start their points after it, drawn in the frame, and the point of a
+  leader lives until the next step, so a trail reaches its head.
+- **finish** sorts a ribbon's list by its ribbon (as wide as the word leaves above the slot,
+  `SORT_SLOT_BITS`), its age and its slot, so a burst keeps one order. Each segment within a ribbon
+  takes the pieces its turn needs for straight pieces to stay within about a pixel of its curve at
+  its distance (up to `RIBBON_PIECES`; none between ribbons), rising at once and coming down one a
+  frame (kept in its first particle's `flags`); where the quads of each segment start goes in the
+  lists quarter after the births, and the draw has their sum.
+- The vertices of a segment find it by binary search and lie on the cubic that leaves each point
+  along the mean of the directions to its neighbours (toward its one neighbour at an end), with
+  width, color and light lerped; what each particle shows is kept by the last step and by its
+  birth after the Attributes of its program (`RIBBON_LOOK_BYTES`), so no program runs per vertex.
+- A death needs no state: the next frame's list joins the neighbours of a dead point.
+
+## Mesh particles
+
+- They are drawn with `particle_mesh.vert` and the engine's fragment, or that of the Surface
+  program of their materials: a draw per mesh of the emitter and program (`pass_mesh_programs`),
+  the mesh in its parameters, whose first instance is where `finish` put the run of the list of
+  that mesh (through the scratch quarter of the lists, for more than one mesh), turned as their
+  effect says (`particle_mesh_rotation`), with motion vectors from their velocity and the
+  emitter's material or the mesh's, which the plugin tells the renderer each frame
+  (`frame_gbuffer_mesh`) so that the views store their reflectance and their layers. Everything
+  that follows lights, shades and reflects them.
+- Each draw takes the level 0 clusters of its mesh without indices (`erender.mesh_draw_range`,
+  `pass_draw_indirect`, the draws `finish` writes after the events, `MESH_DRAWS_AT`; weights and
+  vertices are in the emitter's row) and reads its vertices only through `geometry.slang`: the
+  plugin asks each frame for the whole mesh (`frame_mesh_whole`), and a mesh with pages outside
+  its root loads them all and does not release them while it is drawn, because the scene's cull
+  does not see the particles. What a program's `render` gives does not reach them.
+
 ## Verification
 
 - `mirai test plugins/vfx/runtime/effect`: format, validation and value paths.
@@ -532,19 +566,23 @@ they light everything within their reach, without shadow rays or a place in thos
   and the parts of the lights' place that each emitter takes, without a renderer (`vfx_test.odin`,
   `data_test.odin`), and on the GPU (`gpu_test.odin`), with the generation of the engine and plugin
   shaders that `mirai test` does in `.mirai/tmp/vfx-test-shaders`: births, steps, generations and
-  pauses, events, pools per world, rejected capacity, ribbons, programs, the `Surface` shape and a
+  pauses, events, pools per world, rejected capacity, ribbons (trails of two heads, curves, pieces
+  and the order of two ribbons, `two_ribbons.slang`), programs, the `Surface` shape and a
   program that follows a moving surface (`testdata/stick.slang`), the `Bones` and `Surface` shapes
   with the rig of a mesh and a skeleton written in the test and a posed skin, `World` hits that
   fall to the floor and slide according to their friction, sprites that run the Surface program of
   their material with what their particle gives, its random value and its radius
   (`hand_over.slang`, `particle_data.slang`), stages over cells with iterations (`tally.slang`),
-  splats that a stage stores (`spread.slang`), rays from a
+  splats that a stage stores (`spread.slang`), mesh particles that pick their meshes by weight
+  and face their velocity, rays from a
   stage against a cube (`probe.slang`), read back with `pass_readback`, a volume that glows
   (`puff.slang`), particle lights with shadow that light the floor within their reach and not
   behind a cube, and without shadow, also behind it, a floor whose Surface program reads a grid's
   world texture (`count_ground.slang`), channel births and their rollback (`testdata/gather.slang`),
   reports, sprites behind a `fog` box dimmed by it and one in front of it not, all the modes
-  around glass without validation errors and stable frames without allocating.
+  around glass without validation errors and stable frames without allocating; for debugging,
+  one interval per kind of pass, the ranges of each emitter against its counters and the
+  Attributes of a program where the catalog names them (`glitch.slang`).
 - `mirai test plugins/vfx/editor` (with `-collection:plugins=<root>/plugins`): the effects document
   (`document_test.odin`).
 - In the demo editor, without a window and with validation: the physics gallery launches

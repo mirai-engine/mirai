@@ -34,28 +34,31 @@ Memory_Change :: enum u8 {
     Again,   // known, perceived again
 }
 
-// Perceives a subject at the tick now. Full, a new subject takes the place of the
-// observation it is least sure of, when that is less sure than `confidence`.
-memory_perceive :: proc "contextless" (m:^Perception_Memory,subject:u64,position:math.Vec3,sense:Sense,confidence:f32,now:u64) -> Memory_Change {
+// Perceives a subject as it was at the tick `at`: a report older than what
+// is known of it changes nothing, and one of a past tick is forgotten as much
+// sooner. Full, a new subject takes the place of the observation it is least
+// sure of, when that is less sure than `confidence`.
+memory_perceive :: proc "contextless" (m:^Perception_Memory,subject:u64,position:math.Vec3,sense:Sense,confidence:f32,at:u64) -> Memory_Change {
     if !(confidence>0) || !(abs(position.x)<=1e9 && abs(position.y)<=1e9 && abs(position.z)<=1e9) {return .None}
     sure:=min(confidence,1)
     count:=int(clamp(m.count,0,PERCEPTION_CAPACITY))
     for &o in m.items[:count] {
         if o.subject!=subject {continue}
-        if o.last!=now {o.senses={}}
+        if at<o.last {return .None}
+        if o.last!=at {o.senses={}}
         o.senses+={sense}
-        o.position,o.last=position,now
+        o.position,o.last=position,at
         o.confidence=max(o.confidence,sure)
         return .Again
     }
-    at:=count
+    slot:=count
     if count>=PERCEPTION_CAPACITY {
-        at=0
-        for o,i in m.items {if o.confidence<m.items[at].confidence {at=i}}
-        if m.items[at].confidence>=sure {return .None}
+        slot=0
+        for o,i in m.items {if o.confidence<m.items[slot].confidence {slot=i}}
+        if m.items[slot].confidence>=sure {return .None}
         m.replaced+=1
     } else {m.count=i32(count+1)}
-    m.items[at]={subject=subject,position=position,senses={sense},confidence=sure,first=now,last=now}
+    m.items[slot]={subject=subject,position=position,senses={sense},confidence=sure,first=at,last=at}
     return .New
 }
 

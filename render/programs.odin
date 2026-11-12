@@ -19,6 +19,7 @@ PROGRAM_DATA_WORDS :: abi.PROGRAM_DATA_WORDS // of an entry of a data channel
 Program :: abi.Program
 Program_Domain :: abi.Program_Domain
 Program_Kind :: abi.Program_Kind
+Program_Attribute :: abi.Program_Attribute
 Program_Parameter :: abi.Program_Parameter
 Program_Resource :: abi.Program_Resource
 Program_Resource_Kind :: abi.Program_Resource_Kind
@@ -63,6 +64,9 @@ catalog_valid :: proc(catalog:abi.Shader_Catalog) -> bool {
     for program in catalog.programs {
         if program.id<1 || program.size<0 || program.size>PROGRAM_PARAMETER_BYTES || program.attributes<0 || program.attributes>PARTICLE_ATTRIBUTE_BYTES || program.attributes%4!=0 {return false}
         if len(program.resources)>PROGRAM_RESOURCES || len(program.stages)>PROGRAM_STAGES {return false}
+        for field in program.attribute_fields {
+            if field.kind==.Texture || field.components<1 || field.components>4 || field.offset%4!=0 || int(field.offset)+int(field.components)*4>program.attributes {return false}
+        }
         grids:u32
         for resource,index in program.resources {
             if resource.kind==.Grid {grids|=1<<u32(index)}

@@ -70,7 +70,7 @@ Nav_State :: enum u8 {
     Waiting,  // for its path, walking on along the one it had
     Moving,
     Crossing, // a link
-    Arrived,  // at its end, or as near as it can (Nav_Path.partial)
+    Arrived,  // at its end, or as near as it can once its class builds nothing more (Nav_Path.partial)
     Failed,   // no way, or blocked: see the problems of the entity
 }
 
@@ -84,7 +84,7 @@ Nav_Path :: struct {
     distance:f32 `mirai:"readonly,unit=m"`,  // kept from the target
     look:[3]f32 `mirai:"readonly,unit=m"`,   // where it faces while it moves, when looking
     looking:bool `mirai:"readonly"`,
-    partial:bool `mirai:"readonly,transient"`, // the path ends as near the goal as the mesh goes
+    partial:bool `mirai:"readonly,transient"`, // the path ends as near the goal as the mesh goes: it plans again when a tile is built
     class:i8 `mirai:"readonly,transient"`,
     kind:Nav_Link_Kind `mirai:"readonly,transient"`, // of the link it crosses
     manual:bool `mirai:"readonly,transient"`,       // the game crosses it
@@ -124,8 +124,9 @@ Nav_Requests :: struct {
 nav_move_to :: proc(r:^Nav_Requests,e:core.Entity,point:[3]f32) {core.push(&r.queue,Nav_Request{kind=.Move_To,entity=e,point=point})}
 // Walks the agent after an entity, keeping that far from it.
 nav_follow :: proc(r:^Nav_Requests,e,target:core.Entity,distance:f32=1) {core.push(&r.queue,Nav_Request{kind=.Follow,entity=e,target=target,distance=distance})}
+// Stops the agent where it is, and its look: what it faces next is not navigation's.
 nav_stop :: proc(r:^Nav_Requests,e:core.Entity) {core.push(&r.queue,Nav_Request{kind=.Stop,entity=e})}
-// Faces a point while it walks (a shooter that strafes); nav_look_along faces the way again.
+// Faces a point, walking (a shooter that strafes) or standing; nav_look_along faces the way again.
 nav_look_at :: proc(r:^Nav_Requests,e:core.Entity,point:[3]f32) {core.push(&r.queue,Nav_Request{kind=.Look_At,entity=e,point=point})}
 nav_look_along :: proc(r:^Nav_Requests,e:core.Entity) {core.push(&r.queue,Nav_Request{kind=.Look_Along,entity=e})}
 // The game crossed the link the agent waits at: it goes on from its end.
@@ -174,6 +175,7 @@ Navigation_Agents :: struct {
     trees:[NAV_FOLLOW_TREES]Follow_Tree,
     uid:u64,               // of the Navigation the search is in
     made:u32,              // and which of its meshes
+    revision:u64,          // of the meshes the agents last looked at: partial paths plan again when it grows
     coarse:ai.Search,      // over the portals of a coarse graph
     route:[NAV_FAR_POINTS]mm.Vec3,
     far_sections:u64,      // the sections the far simulation last looked at
@@ -279,7 +281,8 @@ navigation_agents :: proc(
     characters:^core.Table(phys.Character,.Read),loco_states:^core.Table(locomotion.Locomotion_State,.Read),colliders:^core.Table(phys.Collider,.Read),walks:^core.Table(locomotion.Walk,.Read),flights:^core.Table(locomotion.Fly,.Read),swims:^core.Table(locomotion.Swim,.Read),
     grounds:^core.Table(phys.Character_State,.Read),motions:^core.Table(core.Motion,.Read),worlds:^core.Table(core.World_Transform,.Read),
     obstacles:^core.Table(Nav_Obstacle,.Read),volumes:^core.Table(volume.Volume,.Read),splines:^core.Table(volume.Spline,.Read),loco:^locomotion.Locomotion_Requests,physics:core.Ref(phys.Physics_State),builds:core.Ref(Navigation_Builds),fars:^core.Table(Nav_Far),
-    roamings:^core.Table(scene.Roaming),disabled:^core.Table(core.Disabled),placer:core.Placer,bodies:^phys.Body_Requests,crossings:^Nav_Crossings,time:core.Time,problems:^core.Problems,
+    roamings:^core.Table(scene.Roaming),disabled:^core.Table(core.Disabled),placer:core.Placer,bodies:^phys.Body_Requests,crossings:^Nav_Crossings,
+    sources:core.Ref(scene.Simulation_Sources),time:core.Time,problems:^core.Problems,
 ) {
     if core.reshaped(agents,&a.shapes[0]) | core.reshaped(paths,&a.shapes[1]) {
         for row in 0..<core.count(agents) {
@@ -304,7 +307,7 @@ navigation_agents :: proc(
             if pose,ok:=core.get(worlds,asked.target);ok {p.goal=pose.position}
         case .Stop:
             agent_stop_crossing(p,asked.entity,loco)
-            p.state=.Idle
+            p.state,p.looking=.Idle,false
             p.velocity={}
             p.corridor.count=0
             if mi:=core.edit(inputs,asked.entity);mi!=nil {mi.move,mi.velocity={},false}
@@ -348,6 +351,8 @@ navigation_agents :: proc(
         return
     }
     clear(&a.near)
+    built:=a.revision!=n.revision
+    a.revision=n.revision
     walking:=core.join(paths,agents)
     for e,_,agent in core.each_joined(&walking) {
         p:=core.edit_at(paths,walking.row)
@@ -404,6 +409,8 @@ navigation_agents :: proc(
             p.time+=time.dt
             if p.time>=NAV_REPLAN_FOLLOW*4 {p.time,p.state,p.stuck=0,.Waiting,0}
         }
+        // A tile built may take it nearer its goal.
+        if p.partial && p.state==.Moving && built {agent_replan(p)}
         walk,_:=core.get(walks,e)
         // What it walks and crosses, for one on its way: it jumps under the gravity of its
         // place (a planet, a room without it).
@@ -430,7 +437,7 @@ navigation_agents :: proc(
             if flies || swims {
                 p.velocity={}
                 if p.state==.Moving {
-                    agent_fly(p,e,agent,center,&n.classes[class].volume,swim.speed if swims else fly.speed,swim.acceleration if swims else fly.acceleration,flies,moving.mode,events,loco)
+                    agent_fly(p,e,agent,center,&n.classes[class].volume,swim.speed if swims else fly.speed,swim.acceleration if swims else fly.acceleration,flies,moving.mode,n.classes[class].pending>0,events,loco)
                 }
             } else if p.corridor.count>0 {
                 agent_follow(n.ptr,p,e,agent,pose.position,&n.classes[class].mesh,&filter,walk,time.dt,events,loco,problems)
@@ -479,7 +486,7 @@ navigation_agents :: proc(
     }
     sections:=&builds.ptr.sections if builds.ptr!=nil else nil
     agents_search(n.ptr,a,builds.ptr,paths,agents,characters,grounds,colliders,walks,swims,worlds,physics,sections,budget,time.dt,events,problems)
-    agents_avoid(n.ptr,a,paths,time.dt,problems)
+    agents_avoid(n.ptr,a,paths,sources.ptr,time.dt,problems)
     crossings.count=agents_steer(n.ptr,agents,paths,inputs,seats,grounds,worlds)
     agents_far(n,builds,a,agents,paths,fars,roamings,disabled,walks,flights,swims,colliders,worlds,placer,bodies,events,time)
 }
@@ -541,6 +548,8 @@ agent_follow :: proc(n:^Navigation,p:^Nav_Path,e:core.Entity,agent:Nav_Agent,pos
         // At the portal into a section away: it goes far from here (agents_far).
         if p.state==.Waiting || p.through {return}
         if p.medium {agent_medium_begin(p,e,false,events,loco);return}
+        // The end of a partial path while tiles still build is not as near as it gets: it waits there.
+        if p.partial && n.classes[p.class].pending>0 {return}
         p.state=.Arrived
         core.push(&events.queue,Nav_Event{kind=.Arrived,entity=e})
         return
@@ -568,8 +577,9 @@ agent_follow :: proc(n:^Navigation,p:^Nav_Path,e:core.Entity,agent:Nav_Agent,pos
 
 // Heads for the farthest portal of its corridor in sight, flying, or
 // swimming, whose mode the physics decides by the depth of the water.
+// building: its class has zones to build, so a partial end is no arrival.
 @(private)
-agent_fly :: proc(p:^Nav_Path,e:core.Entity,agent:Nav_Agent,position:mm.Vec3,volume:^ai.Nav_Volume,speed,acceleration:f32,flies:bool,mode:locomotion.Locomotion_Mode,events:^Nav_Events,loco:^locomotion.Locomotion_Requests) {
+agent_fly :: proc(p:^Nav_Path,e:core.Entity,agent:Nav_Agent,position:mm.Vec3,volume:^ai.Nav_Volume,speed,acceleration:f32,flies:bool,mode:locomotion.Locomotion_Mode,building:bool,events:^Nav_Events,loco:^locomotion.Locomotion_Requests) {
     if flies && mode!=locomotion.MODE_FLYING {locomotion.set_mode(loco,e,locomotion.MODE_FLYING)}
     next,end,ok:=ai.nav_volume_corridor_steer(&p.corridor,volume,position,NAV_FLY_AHEAD)
     if !ok {agent_replan(p);return}
@@ -584,6 +594,7 @@ agent_fly :: proc(p:^Nav_Path,e:core.Entity,agent:Nav_Agent,position:mm.Vec3,vol
         // At the portal into a section away: it goes far from here (agents_far).
         if p.through {return}
         if p.medium {agent_medium_begin(p,e,true,events,loco);return}
+        if p.partial && building {return}
         p.state=.Arrived
         core.push(&events.queue,Nav_Event{kind=.Arrived,entity=e})
         return
@@ -1036,13 +1047,13 @@ agent_medium_path :: proc(n:^Navigation,a:^Navigation_Agents,p:^Nav_Path,e:core.
     p.time=0
 }
 
-// Steps every avoiding agent aside from the others, each from its wanted
+// Steps every avoiding agent near the sources aside from the others, each from its wanted
 // velocity, with ORCA: on the plane, among those at its height and within the
 // edges of its mesh near it, for an agent that walks; in three axes, every
 // neighbor a sphere, for one that flies. Its neighbors are those it may meet
 // within the horizon (agent_neighbors).
 @(private)
-agents_avoid :: proc(n:^Navigation,a:^Navigation_Agents,paths:^core.Table(Nav_Path),dt:f32,problems:^core.Problems) {
+agents_avoid :: proc(n:^Navigation,a:^Navigation_Agents,paths:^core.Table(Nav_Path),sources:^scene.Simulation_Sources,dt:f32,problems:^core.Problems) {
     count:=len(a.near)
     if count<2 {return}
     if count>len(a.grid.items) {
@@ -1055,14 +1066,16 @@ agents_avoid :: proc(n:^Navigation,a:^Navigation_Agents,paths:^core.Table(Nav_Pa
         }
     }
     spatial.grid_clear(&a.grid)
+    reach:=n.settings.avoidance_reach if n!=nil else 0
     // The fastest and the widest: farther than those close within the horizon, nobody shapes a velocity.
     fastest,widest:f32
     for &near,i in a.near {
         spatial.grid_insert(&a.grid,ground_box(near.position,0),u64(i))
-        // Only those that step aside in this tick share the change: one idle or crossing a link does not.
+        // Only those that step aside in this tick share the change: one idle, crossing a link or
+        // out of the reach of the sources does not, and the others step aside from it as it goes.
         if near.avoids {
             p,_:=core.get(paths,near.entity)
-            near.avoids=agent_goes(p) && p.state!=.Crossing
+            near.avoids=agent_goes(p) && p.state!=.Crossing && !(reach>0 && scene.sources_distance(sources,near.position,near.position)>reach)
         }
         fastest=max(fastest,linalg.length(near.velocity))
         widest=max(widest,near_sphere(near))
@@ -1154,8 +1167,8 @@ ground_box :: #force_inline proc "contextless" (at:mm.Vec3,reach:f32) -> mm.Aabb
 // Writes the Move_Input of every agent no seat drives, and of a seated one
 // while it goes: its velocity, which its mover takes up to its top speed (the
 // velocity that steps aside is the one it moves at), looking where it goes or
-// at what it looks at; its body turns there at its own rate. One that flies or
-// swims looks level and climbs or dives. The seat of a seated one
+// at what it looks at, also standing; its body turns there at its own rate.
+// One that flies or swims looks level and climbs or dives. The seat of a seated one
 // wrote its Move_Input earlier in the tick, with its buttons and the turn of
 // the ground. How many agents cross a link.
 @(private)
@@ -1173,24 +1186,23 @@ agents_steer :: proc(n:^Navigation,agents:^core.Table(Nav_Agent,.Read),paths:^co
         }
         mi:=core.edit(inputs,e)
         if mi==nil {continue}
+        pose,_:=core.get(worlds,e)
         if !agent_goes(p^) {
-            // Once, when it stops: whatever writes it next is not navigation.
+            // Once, when it stops: whatever writes it next is not navigation, but where it looks.
             if !p.halted {
                 if !driven {mi.move,mi.velocity={},false}
                 p.halted=true
             }
+            if p.looking && !driven {agent_look(mi,p^,pose.position)}
             continue
         }
         p.halted=false
         ground,_:=core.get(grounds,e)
-        pose,_:=core.get(worlds,e)
         if !driven {mi.look_yaw=mm.angle_wrap(mi.look_yaw+ground.ground_turn)}
         flat:=mm.Vec3{p.velocity.x,0,p.velocity.z}
         speed:=linalg.length(flat)
         if p.looking {
-            to:=p.look-pose.position
-            to.y=0
-            if linalg.length(to)>1e-3 {mi.look_yaw=mm.yaw_of_direction(to)}
+            agent_look(mi,p^,pose.position)
         } else if speed>0.05 {mi.look_yaw=mm.yaw_of_direction(flat)}
         mi.velocity=true
         if p.class>=0 && int(p.class)<n.count && class_in_volume(n,int(p.class)) {
@@ -1202,6 +1214,13 @@ agents_steer :: proc(n:^Navigation,agents:^core.Table(Nav_Agent,.Read),paths:^co
         if speed<=1e-4 || p.state==.Crossing && !p.medium {mi.move={}}
     }
     return
+}
+
+@(private)
+agent_look :: #force_inline proc "contextless" (mi:^input.Move_Input,p:Nav_Path,position:mm.Vec3) {
+    to:=p.look-position
+    to.y=0
+    if linalg.length(to)>1e-3 {mi.look_yaw=mm.yaw_of_direction(to)}
 }
 
 // Drives the characters that cross a link of the engine: the launch of a

@@ -47,19 +47,30 @@ Consideration :: struct {
     response:Response,
 }
 
+// The score of one consideration, from 0 to 1. An input index past `inputs` reads as 0.
+consideration_score :: proc "contextless" (c:Consideration,inputs:[]f32) -> f32 {
+    x:f32=inputs[c.input] if int(c.input)<len(inputs) else 0
+    span:=c.max-c.min
+    normalized:=math.saturate((x-c.min)/span) if span!=0 else (1 if x>=c.max else 0)
+    return response_evaluate(c.response,normalized)
+}
+
 // The score of one choice: the product of its considerations, compensated for
-// their count, times its weight; its weight without considerations. An input
-// index past `inputs` reads as 0.
+// their count, times its weight; its weight without considerations.
 score_considerations :: proc "contextless" (considerations:[]Consideration,weight:f32,inputs:[]f32) -> f32 {
     if len(considerations)==0 {return weight}
     product:f32=1
     for c in considerations {
-        x:f32=inputs[c.input] if int(c.input)<len(inputs) else 0
-        span:=c.max-c.min
-        normalized:=math.saturate((x-c.min)/span) if span!=0 else (1 if x>=c.max else 0)
-        product*=response_evaluate(c.response,normalized)
+        product*=consideration_score(c,inputs)
         if product==0 {return 0}
     }
-    compensation:=1-1/f32(len(considerations))
+    return score_product(product,len(considerations),weight)
+}
+
+// The score of a choice from the product of its `count` considerations, as
+// score_considerations gives it.
+score_product :: proc "contextless" (product:f32,count:int,weight:f32) -> f32 {
+    if count<=0 {return weight}
+    compensation:=1-1/f32(count)
     return (product+(1-product)*compensation*product)*weight
 }

@@ -9,7 +9,8 @@ catalog](../../mirai-agent-api/references/methods.md); flows and contracts:
 
 - **Intent**, first: `skeleton.body.detect/set`, `animation.character.setup`, `animation.request`,
   `animation.clip.edit` and `animation.analyze`. It is looked at with `animation.preview` and
-  `animation.capture` and inspected with `animation.inspect` and `animation.asset.inspect`.
+  `animation.capture`, inspected with `animation.inspect` and `animation.asset.inspect`, and read
+  across the ticks of a Play with `animation.history`.
 - **Expert layer**, for fine work: clips, tracks, keys, markers and spans, skeletons and sockets,
   the tables of a `.character` (`animation.action.set`, `animation.space.set`,
   `animation.motion.set`, `animation.modifier.set`), bakes, morphs and
