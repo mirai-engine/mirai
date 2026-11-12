@@ -194,6 +194,102 @@ render_soft_shadow_leaves_with_its_caster :: proc(t: ^testing.T) {
 	expect_clean(t, f.device)
 }
 
+// The maps of the shadows keep what does not move: a caster that moves once,
+// one that keeps moving, one that stops and a light that moves each change the
+// shadow in the frame they change it.
+@(test)
+render_shadow_maps_follow_what_moves_in_its_frame :: proc(t: ^testing.T) {
+	f: Cube_Fixture
+	settings := test_settings()
+	settings.gi_enabled = false
+	settings.taa = false
+	if !cube_fixture_init(t, &f, 192, 128, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	// A slab 1.5 m under a light 3 m up shades the floor twice as far from under the light as it is.
+	slab :: proc(x: f32) -> Mat4 {return trs({x, 1.5, 0}, {1, 0.2, 1})}
+	instances := []Instance_Desc{
+		{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {16, 0.2, 16}), tint = {0.8, 0.8, 0.8}},
+		{object_id = 2, mesh = f.cube, transform = slab(-1), tint = {0.5, 0.5, 0.5}},
+	}
+	light := Light_Desc{position = {0, 3, 0}, color = {1, 1, 1}, intensity = 30 * math.PI, range = 14}
+	testing.expect(t, scene_given(r, instances, []Light_Desc{light}, {}, {}))
+	camera := Camera{position = {0, 9, 0.001}, forward = {0, -9, -0.001}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	// After one frame, the floor at `dark` is in shadow and the one as far from the light at `lit` is not.
+	expect_shadow :: proc(t: ^testing.T, f: ^Cube_Fixture, camera: Camera, dark, lit: f32, what: string, loc := #caller_location) {
+		r := f.renderer
+		testing.expect(t, renderer_frame(r, {camera = camera}), r.error, loc = loc)
+		rhi.device_wait_idle(f.device)
+		pixels, w, _, ok := golden_capture(r)
+		testing.expect(t, ok, r.error, loc = loc)
+		if !ok {return}
+		defer delete(pixels)
+		shaded, open := pixel(pixels, w, project(r, camera, {dark, 0.001, 0}))[0], pixel(pixels, w, project(r, camera, {lit, 0.001, 0}))[0]
+		testing.expectf(t, open > 40 && shaded < 0.5 * open, "%s: the floor at %v has %f against %f at %v", what, dark, shaded, open, lit, loc = loc)
+	}
+	for _ in 0 ..< 8 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	expect_shadow(t, &f, camera, -2, 2, "still")
+	moved := []u32{1}
+	testing.expect(t, scene_move(r, moved, []Mat4{slab(1)}))
+	expect_shadow(t, &f, camera, 2, -2, "moved once")
+	for k in 0 ..< 4 {
+		x := f32(-1) if k % 2 == 0 else 1
+		testing.expect(t, scene_move(r, moved, []Mat4{slab(x)}))
+		expect_shadow(t, &f, camera, 2 * x, -2 * x, "moving")
+	}
+	for _ in 0 ..< SHADOW_MOVER_FRAMES {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	expect_shadow(t, &f, camera, 2, -2, "stopped")
+	// The light 1 m to the side: the slab at 1 shades the floor at 3, which
+	// the light lit as it lit the floor at -1.
+	light.position = {-1, 3, 0}
+	testing.expect(t, scene_light_update(r, 0, light))
+	expect_shadow(t, &f, camera, 3, -5, "the light moved")
+	expect_clean(t, f.device)
+}
+
+// A cascade of the sun the eye moves by whole texels keeps what it held where
+// it still holds it and draws what came in: the image is the one of maps
+// drawn whole.
+@(test)
+render_moved_cascades_give_what_whole_ones_give :: proc(t: ^testing.T) {
+	f: Cube_Fixture
+	settings := test_settings()
+	settings.gi_enabled = false
+	settings.taa = false
+	if !cube_fixture_init(t, &f, 192, 128, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	instances: [10]Instance_Desc
+	instances[0] = {object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {40, 0.2, 40}), tint = {0.8, 0.8, 0.8}}
+	for k in 1 ..< len(instances) {
+		instances[k] = {object_id = u64(k + 1), mesh = f.cube, transform = trs({f32(k % 3) * 2.3 - 2.3, 0.8, f32(k / 3) * 2.1 - 3}, {0.3, 1.6, 0.3}), tint = {0.5, 0.5, 0.5}}
+	}
+	sun := Sun_Desc{direction = {0.4, 1, 0.3}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true}
+	testing.expect(t, scene_given(r, instances[:], nil, sun, {sky = {0, 0, 0}}))
+	camera := Camera{position = {0, 5, 7}, forward = {0, -5, -7}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	read :: proc(t: ^testing.T, f: ^Cube_Fixture) -> []u8 {
+		rhi.device_wait_idle(f.device)
+		pixels, _, _, ok := golden_capture(f.renderer)
+		testing.expect(t, ok, f.renderer.error)
+		return pixels
+	}
+	for k in 0 ..< 12 {
+		camera.position.x = 0.013 * f32(k)
+		testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	}
+	moved := read(t, &f)
+	defer delete(moved)
+	r.main.targets.shadow_raster.held_count = 0
+	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	whole := read(t, &f)
+	defer delete(whole)
+	if len(moved) != len(whole) || len(moved) == 0 {return}
+	differ := 0
+	for v, k in moved {if abs(int(v) - int(whole[k])) > 2 {differ += 1}}
+	testing.expectf(t, differ * 1000 <= len(moved), "%d of %d values differ from the maps drawn whole", differ, len(moved))
+	expect_clean(t, f.device)
+}
+
 @(test)
 render_diffuse_color_bleeding :: proc(t: ^testing.T) {
 	f: Cube_Fixture
