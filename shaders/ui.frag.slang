@@ -70,7 +70,9 @@ float glyph_alpha(float coverage, float3 color) {
     return saturate((blended - dst) / (src - dst));
 }
 
-// A node colored by a ui program, cut to its rounded corners.
+// A node colored by a ui program, cut to its rounded corners. With an image
+// (stroke.y: its texture plus one, fill2: its part), the color of the node is
+// the image tinted by fill.
 float4 ui_program_color(float2 p, Ui_Shape shape) {
     float distance = ui_rounded_distance(p, shape.bounds, shape.radii);
     float coverage = saturate(0.5 - distance / max(fwidth(distance), 1e-4));
@@ -78,6 +80,13 @@ float4 ui_program_color(float2 p, Ui_Shape shape) {
     ctx.size = shape.bounds.zw;
     ctx.uv = (p - shape.bounds.xy) / max(shape.bounds.zw, float2(1e-4));
     ctx.color = shape.fill;
+    float2 uv = shape.fill2.xy + ctx.uv * shape.fill2.zw;
+    float2 dx = ddx(uv), dy = ddy(uv);
+    uint image = asuint(shape.stroke.y);
+    if (image != 0u) {
+        float4 c = mirai_sample_texture_grad(image - 1u, uv, dx, dy);
+        ctx.color *= float4(linear_to_srgb(c.rgb), c.a);
+    }
     ctx.time = frame.time.x;
     float4 packed[16];
     for (uint i = 0u; i < 16u; ++i) packed[i] = float4(0.0);

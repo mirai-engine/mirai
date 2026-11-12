@@ -101,7 +101,9 @@ mirai ui check
 
 ## Controls
 
-`Button` reports `Clicked` (with a `bind_value` it writes its `choice` there); `Checkbox`,
+`Button` reports `Clicked` (with a `bind_value` it writes its `choice` there and is `selected`
+while the value holds it) and holds nodes after its text, by its own layout: an icon, two lines, a
+`+5` badge floating over its corner. Tabs: such buttons over a `Switcher` of its value. `Checkbox`,
 `Slider`, `Selector`, `Dropdown`, `Radio`, `Number` and `Field` report `Changed`; `Field` also
 `Submitted`. A `Selector` takes its options in `text` separated by `|`; what each one writes:
 [add an option](menus-settings.md#add-an-option). Who writes what: [events](../ui.md#events).

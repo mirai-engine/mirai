@@ -113,6 +113,7 @@ Anim_Value :: struct {
     offset:[2]f32,
     scale:[2]f32,
     rotation:f32,
+    skew:f32,            // units right per unit above the pivot
     opacity:f32,
     color:[4]f32,
     value,frame,reveal:f32,
@@ -328,8 +329,9 @@ scopes_resolve :: proc(ctx:^Context) {
         if w,found:=element_rect(ctx,s.id);found {pivot=rect_center(w)}
         v:=s.value
         cos,sin:=math.cos(v.rotation),math.sin(v.rotation)
-        // p -> pivot + offset + R * S * (p - pivot)
+        // p -> pivot + offset + R * S * K * (p - pivot), K the lean of skew
         a,b,c,d:=cos*v.scale.x,-sin*v.scale.y,sin*v.scale.x,cos*v.scale.y
+        b,d=b-a*v.skew,d-c*v.skew
         local:=Affine{a,b,pivot.x+v.offset.x-(a*pivot.x+b*pivot.y), c,d,pivot.y+v.offset.y-(c*pivot.x+d*pivot.y)}
         s.m=affine_mul(parent.m,local)
         s.tint=parent.tint*v.color*[4]f32{1,1,1,v.opacity}

@@ -50,9 +50,10 @@ Sound_Cue :: enum u8 {
 Node_Style :: struct {
     text:Text_Style,
     fill,stroke:Color, // background of a Box or a control, bar of a Progress, tint of an Image; its edge
-    track:Color,       // of a Progress or a Slider
-    knob:Color,        // of a Slider
-    mark:Color,        // the filled part of a Slider, the dot of a Radio, the tick of a Checkbox, the arrows of a Selector and a Number, the accent of a Dropdown, the bar of a held Button
+    track:Color,       // of a Progress, a Slider or the bar of a Scroll
+    knob:Color,        // of a Slider, and the thumb of the bar of a Scroll
+    bar:f32,           // the width of the bar of a Scroll; 0: SCROLL_BAR
+    mark:Color,        // the thumb of the bar of a Scroll under the pointer, the filled part of a Slider, the dot of a Radio, the tick of a Checkbox, the arrows of a Selector and a Number, the accent of a Dropdown, the bar of a held Button
     radius:[4]f32,     // of the corners: top left, top right, bottom right, bottom left
     fill2:Color,
     gradient:Fill_Gradient, // the way fill goes to fill2
@@ -69,6 +70,8 @@ Node_Style :: struct {
     layout_transition:f32, // seconds its rectangle takes to go to a new place or size the layout gives it
     move:[2]f32,    // drawn this far from where the layout put it; the layout and the pointer stay
     scale:f32,      // drawn this size around its center, as move; 0: 1
+    rotate:f32,     // drawn turned this many radians clockwise around its center; the pointer follows
+    skew:f32,       // drawn leaning this many units right per unit above its center, as rotate
 }
 // How an image takes the rectangle of its node.
 Image_Fit :: enum u8 {
@@ -102,10 +105,9 @@ Node :: struct {
     image:u16,        // index in images plus one; 0: none
     anims:u16,        // index in anim_sets plus one; 0: none
     text_offset,text_length:u32, // in strings
-    tab:Name_Ref,     // of a node a Tabs holds: its name, in strings, which its tab shows when it has no text
     binds:[Binding]Name_Ref, // the fields it binds, by their names in strings
     fields:[TREE_TEXT_FIELDS]Node_Field_Ref, // what the names in braces of its text show
-    index:u16,        // what a Switcher or a Tabs builds when it binds no value
+    index:u16,        // what a Switcher builds when it binds no value
     count:u16,        // elements a List builds when it binds no array; of one that binds a table, the most rows it shows (TREE_TABLE_ROWS when 0)
     choice:u16,       // what a Radio writes, and a Button that binds a value when it is clicked
     limit:u16,        // bytes a Field takes; 0: as many as its value holds
@@ -259,11 +261,10 @@ Node_Desc :: struct {
     order:i16,
 }
 
-// The bytes of strings a node takes: its text, the names it binds and, held
-// by a Tabs, its own.
+// The bytes of strings a node takes: its text and the names it binds.
 @(private)
-tree_node_strings :: proc "contextless" (desc:^Node_Desc,tab:bool) -> int {
-    fields:=len(desc.name) if tab else 0
+tree_node_strings :: proc "contextless" (desc:^Node_Desc) -> int {
+    fields:=0
     for f in desc.fields {fields+=len(f.path)}
     return len(desc.text)+len(desc.bind_text)+len(desc.bind_value)+len(desc.bind_visible)+len(desc.bind_selected)+len(desc.bind_disabled)+
         len(desc.bind_items)+len(desc.bind_key)+len(desc.bind_image)+len(desc.bind_tint)+len(desc.bind_variant)+len(desc.action)+fields
@@ -293,8 +294,7 @@ tree_node :: proc(tree:^Widget_Tree,parent:i32,desc:Node_Desc) -> i32 {
     if desc.kind==.Component {return -1}
     count:=i32(tree.node_count)
     if parent<-1 || parent>=count {return -1}
-    tab:=parent>=0 && tree.nodes[parent].kind==.Tabs
-    if int(count)>=len(tree.nodes) || tree.string_length+tree_node_strings(&desc,tab)>len(tree.strings) {return -1}
+    if int(count)>=len(tree.nodes) || tree.string_length+tree_node_strings(&desc)>len(tree.strings) {return -1}
     if parent>=0 && (!node_kind_holds(tree.nodes[parent].kind) || parent+tree.nodes[parent].subtree+1!=count) {return -1}
     hashed :: proc(name:string) -> u64 {return base.name_hash(name) if name!="" else 0}
     keep :: proc(tree:^Widget_Tree,text:string) -> Name_Ref {
@@ -318,7 +318,6 @@ tree_node :: proc(tree:^Widget_Tree,parent:i32,desc:Node_Desc) -> i32 {
         node.fields[i]={base.name_hash(f.name),keep(tree,f.path)}
     }
     node.action_name=keep(tree,desc.action)
-    if tab {node.tab=keep(tree,desc.name)}
     tree.nodes[count]=node;tree.node_count+=1
     for ancestor:=parent;ancestor>=0;ancestor=tree.nodes[ancestor].parent {tree.nodes[ancestor].subtree+=1}
     return count
@@ -328,7 +327,6 @@ TREE_SLOTS :: 1<<16 // states one instance keeps: a node inside lists has one pe
 TREE_BAR :: 32      // buttons with an action an Action_Bar shows; the others are counted in Stats.dropped_tree
 TREE_TABLE_ROWS :: 256 // rows of a table a List shows when its count does not say
 TREE_LIST_PROBE :: 32  // elements a List that builds only those in sight builds while it does not know their size
-TREE_TAB_PADDING :: [4]f32{10,4,10,4} // around the text of a tab of a Tabs
 
 // What a node was in the last build, for the events and sounds of its changes.
 @(private)
@@ -481,7 +479,7 @@ tree_instance_init :: proc(instance:^Tree_Instance,tree:^Widget_Tree,host:^Bind_
         b.image,o[.Image]=tree_bind_field(instance,scope,name(tree,&node,.Image),.Asset)
         b.tint,o[.Tint]=tree_bind_field(instance,scope,name(tree,&node,.Tint),.Color)
         b.variant,o[.Variant]=tree_bind_field(instance,scope,name(tree,&node,.Variant),.Name)
-        if node.kind==.Selector || node.kind==.Dropdown || node.kind==.Tabs {b.options,o[.Items]=tree_bind_options(instance,scope,name(tree,&node,.Items))}
+        if node.kind==.Selector || node.kind==.Dropdown {b.options,o[.Items]=tree_bind_options(instance,scope,name(tree,&node,.Items))}
         for bound,binding in o {
             if !bound {ok=false;instance.failure={node=i,binding=binding};break}
         }
@@ -787,6 +785,8 @@ tree_build_node :: proc(ctx:^Context,b:^Tree_Build,index:int,values:rawptr,copy:
     // The focus of navigation, or a field being typed.
     focused:=ctx.focus==node_id && (ctx.focus_ring || ctx.edit.id==node_id)
     selected:=bound_number(values,bound.selected)!=0 if bound.selected.bound else node.selected
+    // A Button that binds a value is selected while the value is its choice, as a Radio is.
+    if node.kind==.Button && bound.value.bound && !bound.selected.bound {selected=int(bound_number(values,bound.value))==int(node.choice)}
     base_style:=tree.styles[node.style] if int(node.style)<tree.style_count else Node_Style{}
     if visible!=state.shown {
         tree_sound(ctx,&base_style,.Show if visible else .Hide)
@@ -869,6 +869,14 @@ tree_build_node :: proc(ctx:^Context,b:^Tree_Build,index:int,values:rawptr,copy:
     if base_style.transition>0 && style_transition(&state.look,&resolved,base_style.transition,ctx.input.dt) {b.animating=true}
     if base_style.layout_transition>0 && !layout_transition_ask(&ctx.layout,node_id,base_style.layout_transition,ctx.stats.frame) {ctx.stats.dropped_transitions+=1}
     style:=&resolved
+    // A turn or a lean of a style is where the node is: the pointer follows it.
+    turned:=false
+    if style.rotate!=0 || style.skew!=0 {
+        look:=ANIM_IDENTITY
+        look.rotation,look.skew=style.rotate,style.skew
+        turned=animated_begin(ctx,node_id,look)
+    }
+    defer if turned {animated_end(ctx)}
     // A style moves what its node draws, not where the layout or the pointer find it.
     moved:=false
     if style.move!={} || style.scale!=0 && style.scale!=1 {
@@ -887,7 +895,8 @@ tree_build_node :: proc(ctx:^Context,b:^Tree_Build,index:int,values:rawptr,copy:
     skip:=.Skip in node.flags
     if skip {ctx.unfocusable+=1}
     defer if skip {ctx.unfocusable-=1}
-    if node_kind_holds(node.kind) {
+    // A Button is a control: what it holds is built inside it (tree_button).
+    if node_kind_holds(node.kind) && node.kind!=.Button {
         tree_build_container(ctx,b,node,index,next,slot,node_id,values,copy,item,style,image_ref,disabled)
         return next
     }
@@ -899,7 +908,7 @@ tree_build_node :: proc(ctx:^Context,b:^Tree_Build,index:int,values:rawptr,copy:
         holder.float.layer=i16(clamp(b.floor+int(node.float.layer),int(min(i16)),int(max(i16))))
         box_begin(ctx,holder)
     }
-    tree_build_leaf(ctx,b,node,index,slot,node_id,values,item,&base_style,style,variant,image_ref,content,selected,disabled,&value if playing else nil)
+    tree_build_leaf(ctx,b,node,index,next,slot,node_id,values,copy,item,&base_style,style,variant,image_ref,content,selected,disabled,&value if playing else nil)
     if node.float.to!=.None {box_end(ctx,holder)}
     tree_focus_links(ctx,node,node_id)
     // Only containers hold nodes: what hangs from any other kind is not built.
@@ -928,7 +937,7 @@ tree_build_container :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,next,sl
     #partial switch node.kind {
     case .Popup,.Context_Menu: tree_build_popup(ctx,b,node,index,next,slot,node_id,values,copy,item,&box)
     case .Modal:               tree_build_modal(ctx,b,node,index,next,node_id,values,copy,item,&box)
-    case:                      tree_build_box(ctx,b,node,index,next,slot,node_id,values,copy,item,&box)
+    case:                      tree_build_box(ctx,b,node,index,next,slot,node_id,values,copy,item,&box,{width=style.bar,track=style.track,knob=style.knob,held=style.mark,radius=style.radius})
     }
     if disabled {disabled_end(ctx)}
     if .Draggable in node.flags {tree_drag_ghost(ctx,b,node,index,node_id,values,copy,item)}
@@ -937,10 +946,10 @@ tree_build_container :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,next,sl
 }
 
 // A container in the flow of its parent (a Box, a Scroll, a Switcher, a
-// List, a Tabs or a Radial), or a Tooltip, which floats under the node that
+// List or a Radial), or a Tooltip, which floats under the node that
 // holds it and stays inside the surface.
 @(private)
-tree_build_box :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,next,slot:int,node_id:Id,values:rawptr,copy:int,item:i32,box:^Box) {
+tree_build_box :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,next,slot:int,node_id:Id,values:rawptr,copy:int,item:i32,box:^Box,bar:Scroll_Bar) {
     tree,instance:=b.tree,b.instance
     if node.kind==.Tooltip {
         // Under the node, or where its float puts it against the node.
@@ -948,7 +957,6 @@ tree_build_box :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,next,slot:int
         if node.float.to!=.None {box.float.anchor,box.float.pivot,box.float.offset=node.float.anchor,node.float.pivot,node.float.offset}
         box.block,box.contain=false,true
     }
-    if node.kind==.Tabs {box.direction=.Column}
     scrolls:=node.kind==.Scroll || node.kind==.List && node.clip
     axes:=tree_scroll_axes(node)
     inner:=box.layout
@@ -978,7 +986,7 @@ tree_build_box :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,next,slot:int
     box_begin(ctx,box^)
     ctx.area=0
     if scrolls {
-        scroll_begin(ctx,area,&instance.scrolls[slot],{width=GROW,height=GROW,axes=axes})
+        scroll_begin(ctx,area,&instance.scrolls[slot],{width=GROW,height=GROW,axes=axes,bar=bar})
         box_begin(ctx,{layout=inner})
     }
     #partial switch node.kind {
@@ -997,24 +1005,28 @@ tree_build_box :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,next,slot:int
         }
     case .List:
         tree_build_list(ctx,b,node,index,slot,values,copy,axis,virtual,items,area)
-    case .Tabs:
-        tree_build_tabs(ctx,b,node,index,next,slot,node_id,values,copy,item)
     case .Radial:
         tree_build_radial(ctx,b,node,index,next,node_id,values,copy,item)
     case:
-        for child:=index+1;child<next; {
-            if c:=&tree.nodes[child];c.kind==.Tooltip && !tree_tooltip_shown(ctx,b,node_id,slot,c.delay) {
-                child+=int(c.subtree)+1
-                continue
-            }
-            child=tree_build_node(ctx,b,child,values,copy,item)
-        }
+        tree_build_children(ctx,b,index,next,slot,node_id,values,copy,item)
     }
     if scrolls {
         box_end(ctx,{layout=inner})
-        scroll_end(ctx,area,&instance.scrolls[slot])
+        scroll_end(ctx,area,&instance.scrolls[slot],bar=bar)
     }
     box_end(ctx,box^)
+}
+
+// The nodes the node at index holds, each in turn; a Tooltip only while it shows.
+@(private)
+tree_build_children :: proc(ctx:^Context,b:^Tree_Build,index,next,slot:int,node_id:Id,values:rawptr,copy:int,item:i32) {
+    for child:=index+1;child<next; {
+        if c:=&b.tree.nodes[child];c.kind==.Tooltip && !tree_tooltip_shown(ctx,b,node_id,slot,c.delay) {
+            child+=int(c.subtree)+1
+            continue
+        }
+        child=tree_build_node(ctx,b,child,values,copy,item)
+    }
 }
 
 // What the bound value of a node of this kind must hold.
@@ -1252,45 +1264,6 @@ tree_node_variant :: proc(b:^Tree_Build,node:^Node,index:int,values:rawptr) -> u
     variant:=node.variant
     if bound:=b.instance.bounds[index].variant;bound.bound {variant=bound_variant(values,bound)}
     return variant if variant!=0 else b.desc.variant
-}
-
-// A strip of tabs, one per node held and labeled by its text (its number
-// without one), over the page of the one chosen: the bound value, or what
-// the strip chose last (index at first). A tab chosen says Changed with its
-// index; one the keys or the gamepad move the focus to is chosen.
-@(private)
-tree_build_tabs :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,next,slot:int,node_id:Id,values:rawptr,copy:int,item:i32) {
-    tree,instance:=b.tree,b.instance
-    bound:=instance.bounds[index].value
-    state:=&instance.slot[slot]
-    chosen:=int(node.index)
-    if bound.bound {chosen=int(bound_number(values,bound))} else if state.held>0 {chosen=int(state.held)-1}
-    base_style:=tree.styles[node.style] if int(node.style)<tree.style_count else Node_Style{}
-    variant:=tree_node_variant(b,node,index,values)
-    picked:=chosen
-    // A tab shows its option, as a Selector has them, or else the text of its node, its name or its number.
-    options:=tree_options(b,index,values,tree_node_text(ctx,b,node,index,slot,values))
-    if box(ctx,{id=id_derive(ctx,node_id,"strip"),width=GROW,height=FIT,gap=node.layout.gap}) {
-        for child,at:=index+1,0;child<next;at+=1 {
-            c:=&tree.nodes[child]
-            tab:=id_derive(ctx,node_id,"tab",at+1)
-            label:=option(options,at)
-            if label=="" {label=tree_node_text(ctx,b,c,child,int(instance.slots[child])+copy,values)}
-            if label=="" {label=string(tree.strings[c.tab.offset:][:c.tab.length])}
-            if label=="" {label=number_text(ctx,f64(at+1),0)}
-            look:=style_resolve(base_style,tree_style_rules(tree,node.style),node.style,variant,widget_states(ctx,tab,at==chosen))
-            if button(ctx,tab,{label=label,look=&look,layout=&Layout{padding=TREE_TAB_PADDING},block=true}).clicked {picked=at}
-            if ctx.focus==tab && ctx.focus_moved {picked=at}
-            child+=int(c.subtree)+1
-        }
-    }
-    if picked!=chosen {
-        if bound.bound {bound_write(values,bound,f64(picked))} else {state.held=f32(picked+1)}
-        tree_emit(b,{name=node.name,node=i32(index),kind=.Changed,item=item,value=f64(picked)})
-        tree_sound(ctx,&base_style,.Change)
-        chosen=picked
-    }
-    tree_build_child(ctx,b,index,next,chosen,values,copy,item)
 }
 
 RADIAL_DEAD :: f32(0.5) // of the travel of the left stick, or of the radius for the pointer, past which a direction chooses

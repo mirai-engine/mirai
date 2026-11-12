@@ -395,7 +395,7 @@ program_catalog_keeps_the_ui_programs_apart :: proc(t: ^testing.T) {
 	r:=new(Renderer);defer free(r)
 	r.allocator = context.allocator
 	defer program_catalog_destroy(&r.programs)
-	for name in ([]string{"Ui_Radial_Wipe", "Ui_Dissolve", "Ui_Shine", "Ui_Gradient_Sweep", "Ui_Slant"}) {
+	for name in ([]string{"Ui_Radial_Wipe", "Ui_Dissolve", "Ui_Shine", "Ui_Gradient_Sweep", "Ui_Slant", "Ui_Radial_Gradient", "Ui_Rays", "Ui_Polygon"}) {
 		program := program_find(r, name, .Ui)
 		testing.expectf(t, program != nil && program.size <= 16, "%s is a ui program of the engine", name)
 		testing.expectf(t, program_find(r, name, .Postprocess) == nil && program_find(r, name, .Surface) == nil, "%s is of the ui domain alone", name)
