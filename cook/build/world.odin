@@ -3354,7 +3354,10 @@ asset_paths_check :: proc(g:^Generator,p:^project.Project) {
     if asset.registry_scan(&registry)!=.None {return}
     extensions:=make(map[string]bool,context.temp_allocator)
     for info in asset.KINDS {extensions[info.extension]=true}
+    // Those of the kinds of plugins, as the assets of the project have them; a source
+    // an import reads (a .png, a .umap) is no asset.
     for file in registry.files {
+        if file.kind==0 {continue}
         if dot:=strings.last_index_byte(file.path,'.');dot>0 {extensions[file.path[dot:]]=true}
     }
     Walk :: struct {g:^Generator,file:^ast.File,registry:^asset.Registry,extensions:^map[string]bool}
