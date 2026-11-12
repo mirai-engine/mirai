@@ -86,6 +86,11 @@ are kept here and, where the license asks for it, in the header of the file.
   of `audio/bus.odin`, the steady ticks of `host/frame.odin`, the floor between two slopes of
   `plugins/physics/runtime/sim/character.odin` and the start of a process of
   `std/subprocess/subprocess_posix.odin`, altered. Game.
+- **Terrain3D 1.1** (MIT; © 2023-2026 Cory Petkovsek, Roope Palmroos, and Contributors),
+  <https://github.com/TokisanGames/Terrain3D>. The layers of a point blended from those of the
+  four texels around it of `plugins/terrain/shaders/terrain_surface.slang`, and the color and
+  roughness painted over the layers of `plugins/terrain/shaders/terrain_layers.slang`, altered.
+  Game, with the `terrain` plugin.
 - **Odin** `core:os` (BSD-3-Clause; © 2016-2025 Ginger Bill), <https://odin-lang.org>. The start
   of a process of `std/subprocess/subprocess_posix.odin`, altered. Game.
 - **taffy** (MIT; © 2018 Visly Inc., © 2026 Taffy Authors),
