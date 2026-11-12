@@ -68,6 +68,31 @@ the_tests_of_runtime_packages_import_no_engine_time_package :: proc(t:^testing.T
     testing.expect(t,tests>0,"the tests of the runtime packages were found")
 }
 
+// The compiler of the game reads the tests of every package it reads, so a
+// build of the game writes the test worlds they declare, as a check does.
+@(test)
+a_game_build_writes_the_test_worlds_of_what_it_reads :: proc(t:^testing.T) {
+    context.allocator=context.temp_allocator
+    folder:=base.test_folder(t,"game_worlds")
+    if folder=="" {return}
+    engine:=slashes(project.path_absolute(#directory+"../.."),context.allocator)
+    root:=project.path(folder,"project")
+    game:=project.path(root,project.FOLDER_NAMES[.Game])
+    testing.expect(t,os.make_directory_all(game)==nil)
+    m:=project.manifest_default("Worlds Game")
+    testing.expect(t,os.write_entire_file(project.path(root,project.PROJECT_FILE),project.manifest_text(&m))==nil)
+    testing.expect(t,os.write_entire_file(project.path(game,"game.odin"),"package game\n\n@(component)\nScore :: struct {points:int}\n")==nil)
+    testing.expect(t,os.write_entire_file(project.path(game,"game_test.odin"),"package game\n\nimport \"mirai:core\"\n\n@(test_world)\nScore_World :: struct {\n    using world:Test_World,\n    scores:core.Table(Score),\n}\n")==nil)
+    p,open_error:=project.open(root,engine)
+    defer project.close(&p)
+    if !testing.expect_value(t,open_error.code,project.Error_Code.None) {return}
+    generated,written:=generated_write(&p,.Game)
+    if !testing.expectf(t,written,"%v",generated.errors) {return}
+    errors:=build_test_worlds_write(&p,.Build,.Game,"")
+    testing.expectf(t,len(errors)==0,"%v",errors)
+    testing.expect(t,os.is_file(project.path(game,TEST_WORLDS_FILE)),"the test world of the game is written")
+}
+
 // A shipped game has no engine: it carries the settings of the machine of
 // the file of the engine with those of its project over them, as the editor
 // read them.

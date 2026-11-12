@@ -326,7 +326,8 @@ build_project :: proc(root:string,target:build.Target,args:[]string,mode:Build_M
     // The binaries of the engine the libraries are built against.
     engine:=build.engine_mode_resolve(root,mode)
     paths:=build.project_engine(&p,engine,context.temp_allocator)
-    engine_current:=target==.Game || build.engine_current(root,engine,paths.defines)
+    // A game needs them only to import the sources of its project.
+    engine_current:=target==.Game && len(build.imports_roots(&p))==0 || build.engine_current(root,engine,paths.defines)
     // A project with sources goes on: its build imports what changed among them before it finds the library current.
     if target!=.Game && engine_current && len(build.imports_roots(&p))==0 && library_current(root,&p,target,engine,mode==.Dev) {
         _=engine_report({status=.Up_To_Date,mode=engine,folder=paths.folder},root)
@@ -352,11 +353,11 @@ build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out
     // ui links the FreeType library, the importer that of ufbx and the editor that of SQLite.
     if !ensure_runtime_dependencies(root) {return 1,"",false}
     // The libraries of a project are built against the binaries of the engine;
-    // the game, against its sources.
-    if target!=.Game && engine_current {
-        _=engine_report({status=.Up_To_Date,mode=engine.mode,folder=engine.folder},root)
-    } else if target!=.Game {
+    // the game, against its sources, with the importer of those binaries.
+    if !engine_current {
         if code:=engine_report(build.engine_build({engine_root=root,mode=engine.mode,defines=engine.defines}),root);code!=0 {return code,"",false}
+    } else if target!=.Game {
+        _=engine_report({status=.Up_To_Date,mode=engine.mode,folder=engine.folder},root)
     } else if !engine_shaders(root,turn_held=true) {
         return 1,"",false
     }
