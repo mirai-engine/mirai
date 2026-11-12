@@ -3,5 +3,5 @@
   "version": "0.1.0",
   "dependencies": ["physics"],
   "parts": ["Runtime", "Editor", "Shaders", "Assets"],
-  "asset_kinds": [{"extension": ".terrain", "kind": "TERR", "label": "Terrain", "color": [168, 124, 72], "icon": "Terrain", "scene_data": true}]
+  "asset_kinds": [{"extension": ".terrain", "kind": "TERR", "version": 13, "label": "Terrain", "color": [168, 124, 72], "icon": "Terrain", "scene_data": true}]
 }

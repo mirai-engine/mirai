@@ -174,7 +174,7 @@ the_models_of_an_import_share_their_parts_by_name :: proc(t:^testing.T) {
 
     // An input that changed changes what the cache is built from.
     sidecar,_,_:=sidecar_load(source,context.temp_allocator)
-    before:=import_key(source,sidecar,import_version(0),false)
+    before:=import_key(source,sidecar,import_version(0),0,false)
     testing.expect(t,os.write_entire_file(package_file,"other props")==nil)
-    testing.expect(t,len(sidecar.inputs)==1 && sidecar.inputs[0]=="props.pkg" && import_key(source,sidecar,import_version(0),false)!=before,"the input is listed and counts in the key")
+    testing.expect(t,len(sidecar.inputs)==1 && sidecar.inputs[0]=="props.pkg" && import_key(source,sidecar,import_version(0),0,false)!=before,"the input is listed and counts in the key")
 }

@@ -422,7 +422,7 @@ memory_problem :: proc(problems:^core.Problems,e:core.Entity,what:string) {
 @(private)
 source_unread :: proc(problems:^core.Problems,e:core.Entity,a:^host.Assets,id:base.Asset_Id) {
     name:[base.ASSET_ID_TEXT]u8
-    core.report(problems,e,"foliage.source_unread","foliage source %s cannot be read: it is missing, of another kind or version (%s, version %d), damaged, or memory ran out; give Foliage.source a .foliage asset",host.assets_name(a,id,&name),FOLIAGE_EXTENSION,VERSION)
+    core.report(problems,e,"foliage.source_unread","foliage source %s cannot be read: it is missing, of another kind or version (%s, version %d), damaged, or memory ran out; give Foliage.source a .foliage asset",host.assets_name(a,id,&name),FOLIAGE_EXTENSION,FOLIAGE_VERSION)
 }
 
 @(private)

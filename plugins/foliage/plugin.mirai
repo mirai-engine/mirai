@@ -3,5 +3,5 @@
   "version": "0.1.0",
   "dependencies": ["physics"],
   "parts": ["Runtime", "Editor", "Shaders"],
-  "asset_kinds": [{"extension": ".foliage", "kind": "FOLI", "label": "Foliage", "color": [12, 173, 12], "icon": "Agent_Leaf", "scene_data": true}]
+  "asset_kinds": [{"extension": ".foliage", "kind": "FOLI", "version": 4, "label": "Foliage", "color": [12, 173, 12], "icon": "Agent_Leaf", "scene_data": true}]
 }

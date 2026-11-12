@@ -810,7 +810,7 @@ a_foliage_file_written_before_the_rules_reads_them_off_and_bad_rules_are_refused
     document:asset.Document
     asset.document_init(&document,FOLIAGE_KIND,{7,8})
     defer asset.document_destroy(&document)
-    document.kind_version=VERSION
+    document.kind_version=FOLIAGE_VERSION
     info:=Foliage_Info{seed=3,next_type=1}
     older:=[]Older_Type{{id=0,mesh={1,1},density=0.2,scale={1,1},height={1,2},yaw=1,align=1}}
     _,put:=asset.document_put_row(&document,&types,"foliage",&info)

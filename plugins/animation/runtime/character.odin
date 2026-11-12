@@ -14,7 +14,6 @@ import "base:runtime"
 // the modifiers of its pose (IK, look, grounding, rigs, faces). Animation.asset names it. Its
 // limbs are those of the body of the skeleton (@foot_l, @pelvis); the sections and windows of its
 // actions and its warp windows are spans of its clips.
-CHARACTER_VERSION :: 5
 
 Character_Info :: struct {animation:base.Asset_Id} // the .anim of its clips; empty for a set that names none (the modifiers of a rope)
 // spaces: the aim offsets and additive poses its layers sample, each with its samples in

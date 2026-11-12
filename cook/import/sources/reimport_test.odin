@@ -516,8 +516,11 @@ the_sources_of_a_plugin_format_build_in_the_cache_and_a_source_outside_the_asset
 }
 
 // A source a plugin imports whole: "LEVEL <file>", a level of the glTF at
-// that file beside it, which it reads and writes as a model of its import.
-@(private="file") Level_Importer :: struct {runs:int}
+// that file beside it, which it reads and writes as a model of its import,
+// and with kit a document of the kind KIT of that version. code: the
+// identity of the code of its plugin.
+@(private="file") Level_Importer :: struct {runs:int,code:u64,kit:u16}
+@(private="file") KIT :: asset.Fourcc(u32('K')|u32('I')<<8|u32('T')<<16|u32('S')<<24)
 @(private="file")
 level_claims :: proc(path:string,head:[]u8) -> bool {return strings.has_prefix(string(head),"LEVEL ")}
 @(private="file")
@@ -531,21 +534,34 @@ level_run :: proc(state:rawptr,source:string,options:importer.Import_Options,all
     if error=importer.output_input(&o,model_path);error.code==.None {model,error=importer.import_model(model_path,FORMATS[:],options)}
     defer importer.model_destroy(&model)
     if error.code==.None {_,error=importer.output_model(&o,&model,context.temp_allocator)}
+    if version:=(^Level_Importer)(state).kit;version!=0 && error.code==.None {
+        id,path:=importer.output_part(&o,KIT,"hall",0,".kit")
+        kit:asset.Document
+        asset.document_init(&kit,KIT,id,context.temp_allocator)
+        kit.kind_version=version
+        if asset.document_save(&kit,path)!=.None {error=importer.error_make(.Write,"%s could not be written",path)}
+        importer.output_written(&o,id,KIT,"hall",path,false)
+    }
     return importer.outputs_end(&o,error.code!=.None),"",error
 }
 
-// Sync runs the importer of a plugin that claims a whole source whose cache
-// is stale, by its bytes or those of a file it reads, and leaves a current
-// one alone.
+// Sync runs the importer of a plugin that claims a whole source when what it
+// is built from changes: its bytes or those of a file it reads, the code of
+// the plugin, or the version of a kind of document it wrote, of the engine or
+// of a plugin; it leaves a current one alone.
 @(test)
-sync_imports_again_a_whole_source_of_a_plugin_whose_inputs_changed :: proc(t:^testing.T) {
+sync_imports_again_a_whole_source_when_what_it_is_built_from_changes :: proc(t:^testing.T) {
     root,assets:=test_project(t,"sync-whole")
     if root=="" {return}
+    write_text(root,project.PROJECT_FILE,`{"name": "Hall", "version": "0.1.0"}`)
+    os.make_directory_all(fmt.tprintf("%s/plugins/kit",root))
+    kit_manifest :: proc(root:string,version:int) {write_text(fmt.tprintf("%s/plugins/kit",root),project.PLUGIN_FILE,strings.concatenate({`{"name": "kit", "version": "1.0.0", "asset_kinds": [{"extension": ".kit", "kind": "KITS", "version": `,fmt.tprint(version),`}]}`},context.temp_allocator))}
+    kit_manifest(root,2)
     props:=fmt.tprintf("%s/props",assets)
     os.make_directory_all(props)
     box_source(props,"crate.gltf","Wood","Paint")
     level:=write_text(assets,"hall.level","LEVEL props/crate.gltf")
-    state:Level_Importer
+    state:=Level_Importer{kit=2}
     wholes:=[1]Whole_Source{{claims=level_claims,run=level_run,state=&state}}
     caches:=Sync_Options{texture_cache=fmt.tprintf("%s/cache/textures",root),mesh_cache=fmt.tprintf("%s/cache/meshes",root)}
     first,error:=import_source(level,{root=root,textures=.Uncompressed,texture_cache=caches.texture_cache,mesh_cache=caches.mesh_cache},wholes=wholes[:])
@@ -561,20 +577,55 @@ sync_imports_again_a_whole_source_of_a_plugin_whose_inputs_changed :: proc(t:^te
     context.user_ptr=&state
     caches.library=proc(root:string,allocator:mem.Allocator) -> Library_Imports {
         wholes:=make([]Whole_Source,1,allocator)
-        wholes[0]={claims=level_claims,run=level_run,state=context.user_ptr}
+        wholes[0]={claims=level_claims,run=level_run,state=context.user_ptr,code=(^Level_Importer)(context.user_ptr).code}
         return {wholes=wholes}
     }
     current:=sync(root,caches,context.temp_allocator)
     testing.expectf(t,current.sources==1 && current.imported==0 && len(current.failures)==0 && state.runs==1,"a current source is left alone: %v",current)
-    _=os.write_entire_file(fmt.tprintf("%s/wood.png",props),png_bytes(4,4,{20,90,200}))
-    changed:=sync(root,caches,context.temp_allocator)
-    testing.expectf(t,changed.imported==1 && len(changed.failures)==0 && state.runs==2,"an image the level reads changed: %v",changed)
-    testing.expect(t,base.remove_all(fmt.tprintf("%s/.mirai",root))==nil)
-    cloned:=sync(root,caches,context.temp_allocator)
-    testing.expectf(t,cloned.imported==1 && len(cloned.failures)==0 && state.runs==3,"%v",cloned)
+    Change :: enum {Input,Code,Engine_Kind,Plugin_Kind,Clone}
+    material,has_material:=written_of(&first,asset.KIND_MATERIAL,"Wood")
+    kit,has_kit:=written_of(&first,KIT,"hall")
+    if !testing.expect(t,has_material && has_kit,"the level wrote documents") {return}
+    for change in Change {
+        switch change {
+        case .Input: _=os.write_entire_file(fmt.tprintf("%s/wood.png",props),png_bytes(4,4,{20,90,200}))
+        case .Code: state.code=7
+        case .Engine_Kind:
+            data,_:=os.read_entire_file(material.path,context.temp_allocator)
+            old:=asset.MATERIAL_VERSION-1
+            data[10],data[11]=u8(old),u8(old>>8)
+            testing.expect(t,os.write_entire_file(material.path,data)==nil)
+        case .Plugin_Kind:
+            kit_manifest(root,3)
+            state.kit=3
+        case .Clone: testing.expect(t,base.remove_all(fmt.tprintf("%s/.mirai",root))==nil)
+        }
+        runs:=state.runs
+        changed:=sync(root,caches,context.temp_allocator)
+        testing.expectf(t,changed.imported==1 && len(changed.failures)==0 && state.runs==runs+1,"%v: %v",change,changed)
+        testing.expectf(t,sync(root,caches,context.temp_allocator).imported==0,"%v: then nothing",change)
+    }
+    testing.expect(t,header_of(material.path).kind_version==asset.MATERIAL_VERSION && header_of(material.path).id==material.id,"the material is of this version again, with its id")
+    testing.expect(t,header_of(kit.path).kind_version==3 && header_of(kit.path).id==kit.id,"the document of the plugin is of its version again, with its id")
     again,_,_:=importer.sidecar_load(level,context.temp_allocator)
     testing.expect(t,len(again.outputs)==len(sidecar.outputs) && again.outputs[0].id==sidecar.outputs[0].id,"the level keeps its assets")
-    testing.expect_value(t,sync(root,caches,context.temp_allocator).imported,0)
+}
+
+// The code of a plugin is its Odin sources and those of the plugins it holds,
+// not its tests nor what git keeps.
+@(test)
+the_code_of_a_plugin_changes_with_its_sources_alone :: proc(t:^testing.T) {
+    plugin:=base.test_folder(t,"plugin-code")
+    if plugin=="" {return}
+    for folder in ([?]string{"editor","plugins/bridge/editor",".git"}) {os.make_directory_all(fmt.tprintf("%s/%s",plugin,folder))}
+    write_text(plugin,"editor/level.odin","package level")
+    write_text(plugin,"plugins/bridge/editor/bridge.odin","package bridge")
+    Edit :: struct {file:string,changes:bool}
+    for edit in ([?]Edit{{"editor/level.odin",true},{"plugins/bridge/editor/bridge.odin",true},{"editor/level_test.odin",false},{".git/HEAD",false},{"editor/notes.md",false}}) {
+        before:=code_identity(plugin)
+        write_text(plugin,edit.file,fmt.tprintf("// %s",edit.file))
+        testing.expectf(t,(code_identity(plugin)!=before)==edit.changes,"%s",edit.file)
+    }
 }
 
 // An image with no settings holds what its name says, from mirai import as

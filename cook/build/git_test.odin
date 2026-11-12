@@ -95,8 +95,8 @@ git_setup_wires_a_clone_once_and_again_for_another_engine_or_plugin :: proc(t:^t
     engine,other,clone:=join(root,"engine"),join(root,"other engine"),join(root,"clone")
     game:=join(clone,"game")
     for copy in ([]string{engine,other}) {
-        write(t,join(copy,"plugins/fx",project.PLUGIN_FILE),`{"name": "fx", "version": "1.0.0", "asset_kinds": [{"extension": ".spark", "kind": "SPAR", "merged": true}, {"extension": ".bake", "kind": "BAKE"}]}`)
-        write(t,join(copy,"plugins/unused",project.PLUGIN_FILE),`{"name": "unused", "version": "1.0.0", "asset_kinds": [{"extension": ".never", "kind": "NEVE", "merged": true}]}`)
+        write(t,join(copy,"plugins/fx",project.PLUGIN_FILE),`{"name": "fx", "version": "1.0.0", "asset_kinds": [{"extension": ".spark", "kind": "SPAR", "version": 1, "merged": true}, {"extension": ".bake", "kind": "BAKE", "version": 1}]}`)
+        write(t,join(copy,"plugins/unused",project.PLUGIN_FILE),`{"name": "unused", "version": "1.0.0", "asset_kinds": [{"extension": ".never", "kind": "NEVE", "version": 1, "merged": true}]}`)
     }
     write(t,join(game,project.PROJECT_FILE),`{"name": "G", "plugins": ["fx"]}`)
 
@@ -135,7 +135,7 @@ git_setup_wires_a_clone_once_and_again_for_another_engine_or_plugin :: proc(t:^t
     testing.expect_value(t,state,Git_Wiring.Wired)
 
     // A plugin the project starts to use brings its kinds.
-    write(t,join(game,"plugins/own",project.PLUGIN_FILE),`{"name": "own", "version": "1.0.0", "asset_kinds": [{"extension": ".quest", "kind": "QUES", "merged": true}]}`)
+    write(t,join(game,"plugins/own",project.PLUGIN_FILE),`{"name": "own", "version": "1.0.0", "asset_kinds": [{"extension": ".quest", "kind": "QUES", "version": 1, "merged": true}]}`)
     write(t,join(game,project.PROJECT_FILE),`{"name": "G", "plugins": ["fx", "own"]}`)
     _,_,stale=git_wiring(other,game,context.temp_allocator)
     testing.expect(t,stale,"the .gitattributes lacks the kind of the new plugin")
@@ -161,7 +161,7 @@ git_setup_wires_a_clone_once_and_again_for_another_engine_or_plugin :: proc(t:^t
     for setting in git_settings(other,clone,context.temp_allocator) {
         testing.expectf(t,!strings.contains(setting.value,root),"%s = %s names a folder of this machine",setting.key,setting.value)
     }
-    write(t,join(clone,"plugins/held",project.PLUGIN_FILE),`{"name": "held", "version": "1.0.0", "asset_kinds": [{"extension": ".held", "kind": "HELD"}]}`)
+    write(t,join(clone,"plugins/held",project.PLUGIN_FILE),`{"name": "held", "version": "1.0.0", "asset_kinds": [{"extension": ".held", "kind": "HELD", "version": 1}]}`)
     held,read:=git_plugin_kinds(other,{clone,game},context.temp_allocator)
     testing.expect(t,read && len(held)==1 && held[0]==Git_Kind{".held",false,false})
     free_all(context.temp_allocator)

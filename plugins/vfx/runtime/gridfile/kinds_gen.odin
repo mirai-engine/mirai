@@ -6,3 +6,4 @@ import "mirai:asset"
 
 GRID_KIND :: asset.Fourcc(u32('V')|u32('G')<<8|u32('R')<<16|u32('D')<<24)
 GRID_EXTENSION :: ".grid"
+GRID_VERSION :: 1

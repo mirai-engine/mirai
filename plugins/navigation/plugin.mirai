@@ -3,5 +3,5 @@
   "version": "0.1.0",
   "dependencies": ["physics", "locomotion"],
   "parts": ["Runtime", "Editor"],
-  "asset_kinds": [{"extension": ".navmesh", "kind": "NAVM", "label": "Navmesh", "color": [60, 180, 140], "icon": "Plane", "scene_data": true}]
+  "asset_kinds": [{"extension": ".navmesh", "kind": "NAVM", "version": 3, "label": "Navmesh", "color": [60, 180, 140], "icon": "Plane", "scene_data": true}]
 }

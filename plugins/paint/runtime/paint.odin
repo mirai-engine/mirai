@@ -17,7 +17,6 @@ Painted :: struct {
 // of the vertices of its clusters, every level of detail), RGBA8, with where
 // each vertex was in the mesh and the content hash of the file of the mesh it
 // was painted on, so that the editor fits the colors to another version of it.
-VERSION :: 2
 
 Paint_Info :: struct {
     mesh:u64, // content_hash of the file of the mesh painted on; 0: a shape
@@ -32,7 +31,7 @@ Paint_View :: struct {
 paint_document :: proc(doc:^asset.Document,types:^asset.Types,id:base.Asset_Id,view:Paint_View,allocator:=context.allocator) -> asset.Error {
     if len(view.colors)==0 || len(view.positions)!=len(view.colors) {return .Invalid}
     asset.document_init(doc,PAINT_KIND,id,allocator)
-    doc.kind_version=VERSION
+    doc.kind_version=PAINT_VERSION
     error:=paint_tables(doc,types,view)
     if error!=.None {asset.document_destroy(doc)}
     return error
@@ -48,7 +47,7 @@ paint_tables :: proc(doc:^asset.Document,types:^asset.Types,view:Paint_View) -> 
 }
 
 paint_view :: proc(a:^asset.Asset,types:^asset.Types) -> (view:Paint_View,error:asset.Error) {
-    asset.kind_check(a,PAINT_KIND,VERSION) or_return
+    asset.kind_check(a,PAINT_KIND,PAINT_VERSION) or_return
     view.info=(asset.asset_row(a,types,"paint",Paint_Info) or_return)^
     view.positions=asset.asset_rows(a,types,"positions","",[3]f32) or_return
     view.colors=asset.asset_rows(a,types,"colors","",u32) or_return

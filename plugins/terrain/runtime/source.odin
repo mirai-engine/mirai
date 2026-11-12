@@ -11,7 +11,6 @@ import "mirai:std/geom"
 import mm "mirai:std/math"
 import "mirai:std/serial"
 
-VERSION :: 13
 SAMPLES_MAX :: 16385
 // A source has at most this many chunks, which each hold their state: one that reaches further
 // takes more cells per chunk.
@@ -153,7 +152,7 @@ source_load :: proc(s:^Source,path:string,types:^asset.Types,allocator:=context.
 // needed. coarse: a Heightfield reads its coarse data too, as the source of a
 // world keeps it.
 source_read :: proc(s:^Source,file:^asset.Asset,types:^asset.Types,allocator:=context.allocator,pages:="",coarse:=false) -> (id:base.Asset_Id,ok:bool) {
-    if asset.kind_check(file,TERRAIN_KIND,VERSION)!=.None {return}
+    if asset.kind_check(file,TERRAIN_KIND,TERRAIN_VERSION)!=.None {return}
     info,error:=asset.asset_row(file,types,"terrain",Source_Info)
     if error!=.None || info==nil || !source_valid(info^) {return}
     temporary:Source
@@ -196,7 +195,7 @@ source_bytes :: proc(s:^Source,id:base.Asset_Id,types:^asset.Types,allocator:=co
     document:asset.Document
     asset.document_init(&document,TERRAIN_KIND,id,s.allocator)
     defer asset.document_destroy(&document)
-    document.kind_version=VERSION
+    document.kind_version=TERRAIN_VERSION
     info:=s.info
     asset.document_put_row(&document,types,"terrain",&info) or_return
     // Heights go on the lattice of their page coding; distances stay as they are.

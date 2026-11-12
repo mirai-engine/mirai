@@ -22,12 +22,13 @@ the_constants_of_the_kinds_of_each_plugin_are_those_its_manifest_declares :: pro
         }
     }
     testing.expect(t,generated>0)
-    // Each constant names the kind by the stem of its extension, with its four letters.
+    // Each constant names the kind by the stem of its extension, with its four letters and version.
     cache:project.Asset_Kind
     base.text_set(cache.extension[:],".physics_cache")
     base.text_set(cache.kind[:],"PCAC")
+    cache.version=7
     text:=kinds_text({&cache},"sample",context.temp_allocator)
-    for part in ([]string{"package sample\n",`PHYSICS_CACHE_KIND :: asset.Fourcc(u32('P')|u32('C')<<8|u32('A')<<16|u32('C')<<24)`,`PHYSICS_CACHE_EXTENSION :: ".physics_cache"`}) {
+    for part in ([]string{"package sample\n",`PHYSICS_CACHE_KIND :: asset.Fourcc(u32('P')|u32('C')<<8|u32('A')<<16|u32('C')<<24)`,`PHYSICS_CACHE_EXTENSION :: ".physics_cache"`,`PHYSICS_CACHE_VERSION :: 7`}) {
         testing.expect(t,strings.contains(text,part),text)
     }
 }

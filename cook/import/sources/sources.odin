@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:mem"
 import "core:os"
 import "core:path/filepath"
+import "core:slice"
 import "core:strings"
 import "mirai:asset"
 import importer "mirai:cook/import"
@@ -13,6 +14,7 @@ import "mirai:cook/import/obj"
 import "mirai:cook/import/usd"
 import "mirai:cook/prefab"
 import "mirai:project"
+import "mirai:std/base"
 import "mirai:std/serial"
 
 // The source files a project imports and the one way they are imported, the
@@ -125,6 +127,32 @@ Whole_Source :: struct {
     claims:proc(path:string,head:[]u8) -> bool,
     run:proc(state:rawptr,source:string,options:importer.Import_Options,allocator:mem.Allocator) -> (report:importer.Import_Report,scene:string,error:importer.Error),
     state:rawptr,
+    code:u64, // code_identity of the folder of its plugin: a change of it imports its sources again
+}
+
+// The identity of the code of a plugin: the Odin sources but tests in folder
+// and under it, those of the plugins it holds too, by path and bytes. 0 for
+// none.
+code_identity :: proc(folder:string) -> u64 {
+    files:=make([dynamic]string,context.temp_allocator)
+    todo:=make([dynamic]string,context.temp_allocator)
+    append(&todo,folder)
+    for next:=0;next<len(todo);next+=1 {
+        entries,_:=os.read_all_directory_by_path(todo[next],context.temp_allocator)
+        for entry in entries {
+            if strings.has_prefix(entry.name,".") || entry.name=="testdata" {continue}
+            file:=fmt.tprintf("%s/%s",todo[next],entry.name)
+            if entry.type==.Directory {append(&todo,file)} else if strings.has_suffix(entry.name,".odin") && !strings.has_suffix(entry.name,"_test.odin") {append(&files,file)}
+        }
+    }
+    slice.sort(files[:])
+    code:u64
+    for file in files {
+        bytes,error:=os.read_entire_file(file,context.temp_allocator)
+        if error!=nil {continue}
+        code=base.hash_combine(base.hash_combine(code,base.hash64(transmute([]u8)file[len(folder):])),base.hash64(bytes))
+    }
+    return code
 }
 
 // The first of wholes that claims the file at path.
@@ -154,6 +182,7 @@ import_source :: proc(path:string,options:importer.Import_Options={},formats:[]i
     options:=options
     if options.root=="" {options.root,_=source_root(path,context.temp_allocator)}
     if whole,claimed:=whole_find(wholes,path);claimed {
+        options.importer_code=whole.code
         scene:string
         report,scene,error=whole.run(whole.state,path,options,allocator)
         delete(scene,allocator)

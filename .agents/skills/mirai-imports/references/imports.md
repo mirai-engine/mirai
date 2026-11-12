@@ -189,7 +189,8 @@ index, size and hash of what was read (the source, or the image of a texture), v
   `owner` changes, it rewrites the header. Materials, skeletons, clips and prefabs, which are
   cheap, are always written, with what a person changed in them ([what is
   written](#what-is-written)), also with `rebuild`.
-- A change of writer or format version, of the settings or of `kind_version`
+- A change of writer or format version, of the code of the plugin that imports a source whole,
+  of the settings or of `kind_version` of a kind of the cache
   ([version rule](../../mirai-assets/references/formats.md#versions)) changes the key and
   rebuilds; `rebuild` (`mirai import --rebuild`) rebuilds everything.
 
@@ -283,22 +284,29 @@ what surely belongs to that model is a part; what is doubtful stays independent 
 the sources of its assets folder (`cook/import/sources/sync.odin`): it is what makes a checkout
 that was just cloned, a worktree that was just made or a branch that changed a source run.
 
-- It imports each source whose sidecar lists outputs of the cache when one of them has no file named
-  by the key of what the import builds from now (`importer.import_key`): the bytes of the source and
-  of every file it read (the buffers and images of a glTF, the material library of an OBJ, the
-  images of a pack of prompts), its settings, the versions of the importer and of what it writes and
-  the block encoders of the program, with textures Final. A sync with `fast_textures` (`--fast`,
-  what a build that does not cook runs) also takes outputs built Fast as current and imports with
-  Fast textures; Final stays current there. One notion of current, the bytes: a source
-  that only moved is not imported, and one whose `.bin` or image changed is. The hash of a file
-  whose size and modification time are those the cache of the root keeps for it
-  (`importer.Source_Hashes`, in `.mirai/cache/sources`) is taken from there, so a build reads only
-  the files that changed. A USD is composed by `usdcat`, which does not say which layers it read:
-  after changing one alone, import the stage.
+- It imports each source whose sidecar lists an output of the cache with no file named by the key
+  of what the import builds from now (`importer.import_key`): the bytes of the source and of every
+  file it read (the buffers and images of a glTF, the material library of an OBJ, the images of a
+  pack of prompts), its settings, the versions of the importer and of what it writes and the block
+  encoders of the program, with textures Final. An import of documents alone (clips of a glTF
+  without meshes) leaves instead an empty stamp named the same way (`importer.STAMP_EXTENSION`).
+  A sync with `fast_textures` (`--fast`, what a build that does not cook runs) also takes outputs
+  built Fast as current and imports with Fast textures; Final stays current there. One notion of
+  current, the bytes: a source that only moved is not imported, and one whose `.bin` or image
+  changed is. The hash of a file whose size and modification time are those the cache of the root
+  keeps for it (`importer.Source_Hashes`, in `.mirai/cache/sources`) is taken from there, so a
+  build reads only the files that changed. A USD is composed by `usdcat`, which does not say which
+  layers it read: after changing one alone, import the stage.
+- It also imports a source with a document of a version of its kind this build does not read (the
+  engine's in `asset.KINDS`, a plugin's in the `version` of its `asset_kinds`): the import writes
+  it again in the current version, with its id and what was kept of it.
 - A source no format of the engine reads goes to the importer of a plugin that claims it whole,
   else to the formats the plugins add (`Sync_Options.library`); one nothing reads is a failure
-  that says so. A whole source is keyed like any source of no format (`import_version(0)`), and
-  its importer reads the settings its sidecar keeps, as every import does.
+  that says so. A whole source is keyed like any source of no format (`import_version(0)`) plus
+  the code of the plugin that claims it (`sources.code_identity` of its folder: its Odin sources
+  but tests, with the plugins it holds, as `Whole_Source.code` and
+  `Import_Options.importer_code`), so a change of that code imports it again with no version to
+  raise; its importer reads the settings its sidecar keeps, as every import does.
 - A file of the imported folder that no sidecar with its source next to it lists under its
   current key is removed. A source that does not import is a failure of the report that names it:
   the others are imported, and nothing is removed.

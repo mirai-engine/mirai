@@ -6,3 +6,4 @@ import "mirai:asset"
 
 PARTICLE_KIND :: asset.Fourcc(u32('P')|u32('A')<<8|u32('R')<<16|u32('T')<<24)
 PARTICLE_EXTENSION :: ".particle"
+PARTICLE_VERSION :: 5

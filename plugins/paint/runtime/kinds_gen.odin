@@ -6,3 +6,4 @@ import "mirai:asset"
 
 PAINT_KIND :: asset.Fourcc(u32('P')|u32('A')<<8|u32('N')<<16|u32('T')<<24)
 PAINT_EXTENSION :: ".paint"
+PAINT_VERSION :: 2

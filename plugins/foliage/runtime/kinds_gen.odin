@@ -6,3 +6,4 @@ import "mirai:asset"
 
 FOLIAGE_KIND :: asset.Fourcc(u32('F')|u32('O')<<8|u32('L')<<16|u32('I')<<24)
 FOLIAGE_EXTENSION :: ".foliage"
+FOLIAGE_VERSION :: 4

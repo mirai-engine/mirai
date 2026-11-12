@@ -71,7 +71,7 @@ volume_blocks_all_air_or_all_solid_hold_no_values_through_brushes_and_the_file :
     testing.expect_value(t,source_save(&source,path,id,&types),asset.Error.None)
     file:asset.Asset
     if !testing.expect_value(t,asset.asset_load(&file,path),asset.Error.None) {return}
-    testing.expect_value(t,file.blob.header.kind_version,u16(VERSION))
+    testing.expect_value(t,file.blob.header.kind_version,u16(TERRAIN_VERSION))
     runs,error:=asset.asset_rows(&file,&types,"field_pages","",Page_Run)
     testing.expect_value(t,error,asset.Error.None)
     // A run for each block with values, and one for the blocks of one value that follow one another.
@@ -119,7 +119,7 @@ volume_files_of_another_version_or_with_distances_past_the_band_are_refused :: p
     // The version is in the header: the file of the version before is not read.
     document:asset.Document
     asset.document_init(&document,TERRAIN_KIND,id)
-    document.kind_version=VERSION-1
+    document.kind_version=TERRAIN_VERSION-1
     info:=source.info
     _,put:=asset.document_put_row(&document,&types,"terrain",&info)
     testing.expect_value(t,put,asset.Error.None)

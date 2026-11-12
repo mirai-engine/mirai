@@ -24,7 +24,6 @@ import "mirai:std/serial"
 // paths an instance can change, each a value of at most PARTICLE_VALUE_BYTES;
 // text fields (the program) are of the effect alone.
 
-VERSION :: 5
 PARTICLE_BURSTS :: 4
 PARTICLE_CURVE_KEYS :: 8
 PARTICLE_VALUE_BYTES :: 16
@@ -174,7 +173,7 @@ Particle_Desc :: struct {
 particle_document :: proc(doc:^asset.Document,types:^asset.Types,desc:Particle_Desc,allocator:=context.allocator) -> asset.Error {
     if !particle_check(desc) {return .Invalid}
     asset.document_init(doc,PARTICLE_KIND,desc.id,allocator)
-    doc.kind_version=VERSION
+    doc.kind_version=PARTICLE_VERSION
     error:=particle_tables(doc,types,desc)
     if error!=.None {asset.document_destroy(doc)}
     return error
@@ -206,7 +205,7 @@ particle_bytes :: proc(types:^asset.Types,desc:Particle_Desc,allocator:=context.
 }
 
 particle_view :: proc(a:^asset.Asset,types:^asset.Types) -> (desc:Particle_Desc,error:asset.Error) {
-    asset.kind_check(a,PARTICLE_KIND,VERSION) or_return
+    asset.kind_check(a,PARTICLE_KIND,PARTICLE_VERSION) or_return
     desc.info=(asset.asset_row(a,types,"particle",Particle_Info,whole=true) or_return)^
     desc.parameters=table_rows(a,types,"parameters",Particle_Parameter) or_return
     desc.hidden=table_rows(a,types,"hidden",Particle_Field) or_return
