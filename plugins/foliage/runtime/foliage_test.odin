@@ -106,7 +106,7 @@ a_foliage_asset_comes_back_as_it_was_written_and_damage_is_refused :: proc(t:^te
     _,invalid:=source_bytes(&s,{5,6},&types)
     testing.expect_value(t,invalid,asset.Error.Invalid)
     s.cells[0].manual[0].scale={1,1}
-    // A cell is as far from its entity as a position keeps centimetres, no farther.
+    // A cell is no farther from its entity than POSITION_MAX.
     testing.expect(t,f32(COORD_MAX+1)*CELL_SIZE<=POSITION_MAX+CELL_SIZE && source_valid(&s))
     source_cell(&s,{COORD_MAX+1,0},true)
     testing.expect(t,!source_valid(&s))

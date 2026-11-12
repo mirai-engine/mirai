@@ -24,7 +24,7 @@ CELL_SIZE :: f32(32)    // metres across x and z of a cell
 TYPES_MAX :: 1024
 CELLS_MAX :: 1 << 20
 INSTANCES_MAX :: 1 << 26 // manual instances and overrides of a source, each
-POSITION_MAX :: f32(1e6) // metres from the entity along each axis, where a position of its space keeps centimetres
+POSITION_MAX :: f32(1e6) // metres from the entity along each axis: a position there keeps 6 cm
 COORD_MAX :: i32(POSITION_MAX/CELL_SIZE) // of a cell, in cells from the origin of its entity
 
 Foliage_Info :: struct {
