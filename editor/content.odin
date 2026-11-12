@@ -23,7 +23,7 @@ CONTENT_CATEGORY_LABELS :: [Content_Category]string{.None="",.Prefab="Prefab",.M
 // The kind whose glyph and color a filter carries; the Plugins and Prefab filters have their own.
 CONTENT_CATEGORY_KINDS :: [Content_Category]asset.Fourcc{.None=0,.Prefab=0,.Mesh=asset.KIND_MESH,.Material=asset.KIND_MATERIAL,.Scene=asset.KIND_SCENE,.Plugin=0,.Texture=asset.KIND_TEXTURE,.Animation=asset.KIND_ANIMATION,.Sound=asset.KIND_SOUND,.Ui=asset.KIND_UI}
 CONTENT_PLUGIN_COLOR :: ui.Color{214,107,255,255} // of every kind of a plugin
-PREFAB_ASSET_COLOR :: ui.Color{63,126,255,255}    // of a .scene whose header says Prefab, as Unreal draws a Blueprint
+PREFAB_ASSET_COLOR :: ui.Color{63,126,255,255}    // of a .scene whose header says Prefab
 
 CONTENT_ROW :: f32(28)        // a row of the list
 CONTENT_CONTROL :: f32(28)    // the row of the search and its buttons
@@ -80,7 +80,7 @@ CONTENT_FAVORITES_GROUP :: u64(4)
 CONTENT_USES_GROUP :: u64(5)
 CONTENT_USERS_GROUP :: u64(6)
 
-// The color of each type of asset, as Unreal draws its own: the border and the
+// The color of each type of asset: the border and the
 // line under its thumbnail, its filter and its fields in Details.
 asset_color :: proc "contextless" (kind:asset.Fourcc) -> ui.Color {
     switch kind {

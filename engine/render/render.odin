@@ -166,8 +166,7 @@ CAMERA_DEFAULT :: Camera{fov=60*mm.RAD_PER_DEG,near=0.1,active=true}
 Exposure_Mode :: enum u8 {Auto,Manual}
 
 // How Auto comes to a new light: in the same time whatever the change (Time),
-// or at the same EV a second, so that a larger change takes longer (Speed, as
-// in Unreal).
+// or at the same EV a second, so that a larger change takes longer (Speed).
 Exposure_Adaptation :: enum u8 {Time,Speed}
 
 // How the camera of its entity exposes its image. Without it, as the
@@ -183,7 +182,7 @@ Exposure :: struct {
     iso:f32 `mirai:"min=0"`,               // Manual
     min_ev100:f32 `mirai:"unit=EV"`,       // Auto: the darkest scene it exposes for
     max_ev100:f32 `mirai:"unit=EV"`,       // Auto: the brightest
-    adaptation_mode:Exposure_Adaptation,   // Auto: Time takes as long for any change of light; Speed changes as many EV a second, so a larger change takes longer, as in Unreal
+    adaptation_mode:Exposure_Adaptation,   // Auto: Time takes as long for any change of light; Speed changes as many EV a second, so a larger change takes longer
     adaptation:f32 `mirai:"min=0,unit=s"`, // Auto: Time: to adapt 95 % of the way to less light, half that to more; Speed: for each EV of less light, a third of that for each EV of more, and exponentially within 1.5 EV
 }
 

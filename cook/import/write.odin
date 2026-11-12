@@ -743,7 +743,7 @@ clip_moves :: proc(clip:asset.Animation_Clip_Desc) -> bool {
 }
 
 // The bone a skeleton carries the motion of its body on: the parent of its pelvis (the root bone of
-// an Unreal skeleton, which a clamber or a jump start moves up and along). -1 when the pelvis is its
+// a mannequin-style skeleton, which a clamber or a jump start moves up and along). -1 when the pelvis is its
 // top bone: its track is the bob of the body, which a root kept in place would flatten.
 @(private="file")
 skeleton_root_bone :: proc(bones:[]asset.Skeleton_Bone,map_:anim.Body_Map) -> int {

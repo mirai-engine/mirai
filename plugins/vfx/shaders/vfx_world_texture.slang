@@ -50,7 +50,7 @@ float4 vfx_world_texture_named(uint name, float3 position) {
 #endif
 }
 // (0, 0) is the start of the first cell of the region and (1, 1) the end of
-// its last; bilinear between cells and repeating, as Unreal samples a texture.
+// its last; bilinear between cells and repeating.
 float4 vfx_world_texture_uv_named(uint name, float2 uv) {
 #ifdef MIRAI_MATERIAL_REFLECTION
     return float4(0.0);
