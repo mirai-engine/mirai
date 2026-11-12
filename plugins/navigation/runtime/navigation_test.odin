@@ -339,6 +339,46 @@ the_tiles_a_waiting_agent_needs_build_before_those_nearer_the_sources :: proc(t:
     testing.expect_value(t,f.problems.count,0)
 }
 
+// The tile between an agent and its goal still waits for its build: the agent
+// walks to where its partial path ends and waits there without arriving, and
+// goes on to its goal once the tile is built.
+@(test)
+an_agent_cut_short_by_a_tile_not_built_yet_goes_on_once_it_is :: proc(t:^testing.T) {
+    f:Nav_Test
+    if !nav_test_init(t,&f) {return}
+    defer nav_test_destroy(&f)
+    nav_test_box(&f,{0,-0.5,1.5},{18,0.5,1.5})
+    wall:=nav_test_box(&f,{4.8,1,1.5},{0.3,1,2})
+    nav_test_settled(t,&f)
+    // The wall goes where the collision is not loaded: its tile waits, keeping the wall.
+    append(&f.unloaded,mm.Aabb{{1,-1,-1},{8.6,3,4}})
+    core.push(&f.ground.unloaded,mm.Aabb{})
+    core.destroy(&f.entities,wall)
+    to:=mm.Vec3{14,0,1.5}
+    e:=agents_test_walker(&f,{-14,0,1.5})
+    nav_test_settle(&f)
+    nav_move_to(&f.nav_requests,e,to)
+    arrived:=false
+    for _ in 0..<600 {
+        agents_test_step(&f)
+        clear(&f.ground.unloaded.items)
+        for event in f.nav_events.queue.items {arrived|=event.entity==e && event.kind==.Arrived}
+    }
+    pose,_:=core.get(&f.worlds,e)
+    p,_:=core.get(&f.paths,e)
+    testing.expectf(t,!arrived && p.state!=.Arrived && p.goal==to && pose.position.x>2,"it is %v at %v, arrived %v",p.state,pose.position,arrived)
+    clear(&f.unloaded)
+    core.push(&f.ground.unloaded,mm.Aabb{})
+    for _ in 0..<600 {
+        agents_test_step(&f)
+        clear(&f.ground.unloaded.items)
+        if p,_=core.get(&f.paths,e);p.state==.Arrived {break}
+    }
+    pose,_=core.get(&f.worlds,e)
+    testing.expectf(t,p.state==.Arrived && !p.partial && linalg.distance(pose.position.xz,to.xz)<0.5,"it is %v at %v",p.state,pose.position)
+    testing.expect_value(t,f.problems.count,0)
+}
+
 @(test)
 moving_collision_builds_again_only_the_tiles_it_touches :: proc(t:^testing.T) {
     f:Nav_Test
