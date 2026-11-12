@@ -122,7 +122,7 @@ a_stalk_leans_away_from_where_a_bender_trampled_the_field :: proc(t: ^testing.T)
 	defer gpu_fixture_destroy(f)
 	// A white stalk 4 m tall standing at the origin, its place at its middle.
 	desc := render.Batch_Desc{mesh = f.cube, tint = 1, vertex = {0, 1, 0, 0}, reach = hook_reach(0, 2)}
-	stalk, problem := render.batch_set(&f.renderer, f.resident.world, 0, desc, {render.batch_instance({0, 2, 0}, 1, 0.4, 4)})
+	stalk, problem := render.batch_set(&f.renderer, f.resident.world, 0, desc, {render.batch_instance({0, 2, 0}, 1, {0.4, 4, 0.4})})
 	if !testing.expect(t, problem == "", problem) {return}
 	standing, ok := stalk_frames(t, f)
 	if !ok {return}
@@ -143,7 +143,7 @@ a_stalk_leans_away_from_where_a_bender_trampled_the_field :: proc(t: ^testing.T)
 	testing.expect(t, !differs(pixel_at(leaning, {-1.4, 0}), floor), "and nothing leans toward it")
 	// The same stalk, of a batch that is not of foliage, stands.
 	desc.vertex = {}
-	_, problem = render.batch_set(&f.renderer, f.resident.world, stalk, desc, {render.batch_instance({0, 2, 0}, 1, 0.4, 4)})
+	_, problem = render.batch_set(&f.renderer, f.resident.world, stalk, desc, {render.batch_instance({0, 2, 0}, 1, {0.4, 4, 0.4})})
 	if !testing.expect(t, problem == "", problem) {return}
 	other, drawn := stalk_frames(t, f)
 	if !drawn {return}
@@ -165,7 +165,7 @@ a_variant_leans_downwind_about_its_place :: proc(t: ^testing.T) {
 	if !testing.expect(t, at >= 0, "the variants are made") {return}
 	f.resident.winds[at].sway = {WIND_SPEED_MAX, 0, 0, 0.6}
 	variant := f.resident.winds[at].variants[wind_variant(1, {0, 3, 0}, 4)]
-	_, problem := render.batch_set(&f.renderer, f.resident.world, 0, {mesh = variant, tint = 1}, {render.batch_instance({0, 3, 0}, 1, 6, 6)})
+	_, problem := render.batch_set(&f.renderer, f.resident.world, 0, {mesh = variant, tint = 1}, {render.batch_instance({0, 3, 0}, 1, {6, 6, 6})})
 	if !testing.expect(t, problem == "", problem) {return}
 	pixels, ok := stalk_frames(t, f)
 	if !ok {return}

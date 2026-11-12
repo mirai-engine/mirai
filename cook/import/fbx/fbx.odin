@@ -144,7 +144,7 @@ fbx_space :: proc(r:^importer.Reader,scene:^ufbx.Scene) -> bool {
 node_label :: #force_inline proc(f:^Fbx,node:^ufbx.Node) -> string {return f.labels[node.typed_id]}
 
 // The name of a node without its namespace: Maya and Mixamo write "ns:name",
-// and the importer of Unreal keeps the name alone too.
+// and the name alone is what a bone is called.
 @(private="file")
 plain_label :: proc(node:^ufbx.Node) -> string {
     name:=node.name
@@ -932,7 +932,7 @@ before_step :: proc(keys:^[dynamic]anim.Keyframe,time:f32,value:mm.Vec4) {
 
 // The keys inside the range of the stack, from 0 to end (none: to the last
 // key), with a key at each edge they cross that has the value the keys give
-// there; the range of the stack is the clip, as Unreal imports it by default.
+// there; the range of the stack is the clip.
 @(private="file")
 keys_window :: proc(r:^importer.Reader,keys:[dynamic]anim.Keyframe,end:f32,rotation:bool,total_keys:^int) -> (window:[]anim.Keyframe,ok:bool) {
     at :: proc(keys:[]anim.Keyframe,time:f32,rotation:bool) -> anim.Keyframe {

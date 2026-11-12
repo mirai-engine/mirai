@@ -104,7 +104,7 @@ spline_under :: proc(splines:^core.Table(Spline,$A),e:core.Entity,place:mm.Trans
 spline_lay :: proc(q:core.Ground_Query,place:mm.Transform,local:[3]f32,height:f32) -> [3]f32 {
     p:=mm.transform_point(place,local)
     if q.probe!=nil {
-        if hit,found:=q.probe(q.user,p,DOWN,false);found==.Ground {p.y=hit.point.y}
+        if hit,found:=q.probe(q.user,p,DOWN);found==.Ground {p.y=hit.point.y}
     }
     return p+{0,height,0}
 }

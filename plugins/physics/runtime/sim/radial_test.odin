@@ -66,7 +66,7 @@ an_area_weighs_filters_and_pushes_each_body_once :: proc(t:^testing.T) {
 
 @(test)
 each_falloff_curve_goes_from_the_border_to_the_center_within_its_range :: proc(t:^testing.T) {
-    // Weights at the center, halfway and at the border, with the formulas of Chaos fields.
+    // Weights at the center, halfway and at the border, with the formulas of the curves.
     expected:=[Radial_Falloff][3]f32{
         .Constant={1,1,1},
         .Linear={1,0.5,0},

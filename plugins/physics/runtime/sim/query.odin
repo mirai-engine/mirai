@@ -17,8 +17,9 @@ Query_Filter :: struct {
 QUERY_FILTER_DEFAULT :: Query_Filter{filter=FILTER_DEFAULT}
 
 // `normal` points out of the shape that was hit. A query that starts inside a shape reports fraction zero
-// and a zero normal. `overlap`: the shape does not block the query.
-Ray_Hit :: struct {shape:Shape_Handle,body:Body_Handle,point,normal:Vec3,fraction:f32,overlap:bool}
+// and a zero normal. `overlap`: the shape does not block the query. `surface`: that of the cell of a
+// heightfield it hit; zero for a shape of one surface.
+Ray_Hit :: struct {shape:Shape_Handle,body:Body_Handle,point,normal:Vec3,fraction:f32,overlap:bool,surface:Surface}
 Closest_Hit :: struct {
     shape:Shape_Handle,
     body:Body_Handle,
@@ -117,8 +118,9 @@ ray_cylinder :: proc "contextless" (o,d:Vec3,radius,half_height,max_fraction:f32
 @(private)
 ray_rounded :: proc(w:^World,shape:^Shape,o,d:Vec3,max_fraction:f32) -> (t:f32,normal:Vec3,hit:bool) {
     storage:[8]Vec3=---
+    scaled:Scaled_Hull=---
     origin:=[1]Vec3{}
-    out:=gjk_cast(shape_proxy(w,shape,&storage),{origin[:],0,0},{o,QUAT_IDENTITY},d,max_fraction)
+    out:=gjk_cast(shape_proxy(w,shape,&storage,&scaled),{origin[:],0,0},{o,QUAT_IDENTITY},d,max_fraction)
     return out.fraction,out.normal,out.hit
 }
 
@@ -202,7 +204,7 @@ ray_mesh :: proc(mesh:^Mesh,o,d:Vec3,max_fraction:f32) -> (t:f32,normal:Vec3,hit
 
 // Walks the cells under the ray in order, so the first cell with a hit ends the search.
 @(private)
-ray_heightfield :: proc "contextless" (field:^Heightfield,o,d:Vec3,max_fraction:f32) -> (t:f32,normal:Vec3,hit:bool) {
+ray_heightfield :: proc "contextless" (field:^Heightfield,o,d:Vec3,max_fraction:f32) -> (t:f32,normal:Vec3,hit:bool,surface:u32) {
     start,inside:=spatial.aabb_ray(field.aabb,o,d,max_fraction)
     if !inside {return}
     entry:=o+d*start
@@ -223,7 +225,7 @@ ray_heightfield :: proc "contextless" (field:^Heightfield,o,d:Vec3,max_fraction:
                 normal=normalize(cross(triangle[1]-triangle[0],triangle[2]-triangle[0]))
             }
         }
-        if hit {return}
+        if hit {return t,normal,hit,heightfield_cell_surface(field,column,row)}
         if min(next_column,next_row)>max_fraction {return}
         if next_column<next_row {
             column+=step_column
@@ -236,18 +238,26 @@ ray_heightfield :: proc "contextless" (field:^Heightfield,o,d:Vec3,max_fraction:
     return
 }
 
-// Ray against one shape, in the frame of the shape.
+// Ray against one shape, in the frame of the shape, with the surface it hit.
 @(private)
-shape_ray :: proc(w:^World,shape:^Shape,o,d:Vec3,max_fraction:f32) -> (t:f32,normal:Vec3,hit:bool) {
-    if shape.radius>0 {return ray_rounded(w,shape,o,d,max_fraction)}
+shape_ray :: proc(w:^World,shape:^Shape,o,d:Vec3,max_fraction:f32) -> (t:f32,normal:Vec3,hit:bool,surface:Surface) {
+    if shape.radius>0 {t,normal,hit=ray_rounded(w,shape,o,d,max_fraction);return}
     switch shape.type {
-    case .Sphere: return ray_sphere(o,d,shape.size.x,max_fraction)
-    case .Capsule: return ray_capsule(o,d,shape.size.x,shape.size.y,max_fraction)
-    case .Box: return ray_box(o,d,shape.size,max_fraction)
-    case .Cylinder: return ray_cylinder(o,d,shape.size.x,shape.size.y,max_fraction)
-    case .Hull: return ray_hull(&w.hulls[shape.resource].hull,o,d,max_fraction)
-    case .Mesh: return ray_mesh(&w.meshes[shape.resource].mesh,o,d,max_fraction)
-    case .Heightfield: return ray_heightfield(&w.heightfields[shape.resource].field,o,d,max_fraction)
+    case .Sphere: t,normal,hit=ray_sphere(o,d,shape.size.x,max_fraction)
+    case .Capsule: t,normal,hit=ray_capsule(o,d,shape.size.x,shape.size.y,max_fraction)
+    case .Box: t,normal,hit=ray_box(o,d,shape.size,max_fraction)
+    case .Cylinder: t,normal,hit=ray_cylinder(o,d,shape.size.x,shape.size.y,max_fraction)
+    case .Hull:
+        // In the space of the hull before its scale the ray keeps its fractions; the normal goes by the inverse.
+        scale:=shape.size
+        t,normal,hit=ray_hull(&w.hulls[shape.resource].hull,o/scale,d/scale,max_fraction)
+        normal=normalize(normal/scale)
+    case .Mesh: t,normal,hit=ray_mesh(&w.meshes[shape.resource].mesh,o,d,max_fraction)
+    case .Heightfield:
+        field:=&w.heightfields[shape.resource].field
+        index:u32
+        t,normal,hit,index=ray_heightfield(field,o,d,max_fraction)
+        if hit {surface=heightfield_surface(field,index)}
     }
     return
 }
@@ -282,9 +292,9 @@ ray_cast :: proc(w:^World,origin,translation:Vec3,filter:Query_Filter,mode:Ray_M
             if response==.Ignore || response==.Overlap && mode!=.All {continue}
             xf:=shape_transform_of(w,shape)
             limit:=mode==.All?f32(1):ray.max_fraction
-            t,normal,hit:=shape_ray(w,shape,xf_inv_point(xf,origin),q_inv_rotate(xf.q,translation),limit)
+            t,normal,hit,surface:=shape_ray(w,shape,xf_inv_point(xf,origin),q_inv_rotate(xf.q,translation),limit)
             if !hit || (w.cut_count>0 || .Twin in shape.flags) && point_cut(w,i32(user),shape,origin+translation*t) {continue}
-            result:=Ray_Hit{shape_handle(w,i32(user)),body_handle(w,shape.body),origin+translation*t,q_rotate(xf.q,normal),t,response==.Overlap}
+            result:=Ray_Hit{shape_handle(w,i32(user)),body_handle(w,shape.body),origin+translation*t,q_rotate(xf.q,normal),t,response==.Overlap,surface}
             switch mode {
             case .Any:
                 return 1
@@ -322,9 +332,9 @@ shape_ray_cast :: proc(w:^World,h:Shape_Handle,origin,translation:Vec3) -> (Ray_
     shape,index:=shape_read(w,h)
     if shape==nil {return {},false}
     xf:=shape_transform_of(w,shape)
-    t,normal,hit:=shape_ray(w,shape,xf_inv_point(xf,origin),q_inv_rotate(xf.q,translation),1)
+    t,normal,hit,surface:=shape_ray(w,shape,xf_inv_point(xf,origin),q_inv_rotate(xf.q,translation),1)
     if !hit {return {},false}
-    return {shape_handle(w,index),body_handle(w,shape.body),origin+translation*t,q_rotate(xf.q,normal),t,false},true
+    return {shape_handle(w,index),body_handle(w,shape.body),origin+translation*t,q_rotate(xf.q,normal),t,false,surface},true
 }
 
 // Ray against the shapes of one body as if the body were at a pose, whatever their filter: where it was at
@@ -336,8 +346,8 @@ body_ray_cast :: proc(w:^World,h:Body_Handle,at:Transform,origin,translation:Vec
     for s:=body.shape_list;s>=0;s=w.shapes[s].next {
         shape:=&w.shapes[s]
         xf:=xf_mul(at,shape.local)
-        if t,normal,hit:=shape_ray(w,shape,xf_inv_point(xf,origin),q_inv_rotate(xf.q,translation),best.fraction);hit {
-            best,found={shape_handle(w,s),h,origin+translation*t,q_rotate(xf.q,normal),t,false},true
+        if t,normal,hit,surface:=shape_ray(w,shape,xf_inv_point(xf,origin),q_inv_rotate(xf.q,translation),best.fraction);hit {
+            best,found={shape_handle(w,s),h,origin+translation*t,q_rotate(xf.q,normal),t,false,surface},true
         }
     }
     return
@@ -386,7 +396,7 @@ proxy_aabb :: proc "contextless" (proxy:Proxy,xf:Transform) -> Aabb {
     return {box.min-grow,box.max+grow}
 }
 
-@(private) Triangle_Visit :: #type proc(data:rawptr,a,b,c:Vec3) -> bool
+@(private) Triangle_Visit :: #type proc(data:rawptr,a,b,c:Vec3,surface:Surface) -> bool
 
 // Calls `visit` for the triangles of a mesh or heightfield whose boxes touch `box` swept by `translation`,
 // all in the frame of the shape, until it returns false.
@@ -398,7 +408,7 @@ triangles_visit :: proc(w:^World,shape:^Shape,box:Aabb,translation:Vec3,data:raw
         for leaf in spatial.bvh_sweep_next(&sweep) {
             for index in leaf {
                 triangle:=mesh.triangles[index]
-                if !visit(data,mesh.vertices[triangle[0]],mesh.vertices[triangle[1]],mesh.vertices[triangle[2]]) {return}
+                if !visit(data,mesh.vertices[triangle[0]],mesh.vertices[triangle[1]],mesh.vertices[triangle[2]],{}) {return}
             }
         }
     } else if shape.type==.Heightfield {
@@ -410,39 +420,41 @@ triangles_visit :: proc(w:^World,shape:^Shape,box:Aabb,translation:Vec3,data:raw
             for column in column0..=column1 {
                 triangles,_,open:=heightfield_cell(field,column,row)
                 if !open {continue}
+                surface:=heightfield_surface(field,heightfield_cell_surface(field,column,row))
                 for triangle in triangles {
                     if swept.min.y>max(triangle[0].y,triangle[1].y,triangle[2].y) {continue}
-                    if !visit(data,triangle[0],triangle[1],triangle[2]) {return}
+                    if !visit(data,triangle[0],triangle[1],triangle[2],surface) {return}
                 }
             }
         }
     }
 }
 
-@(private) Cast_Visit :: struct {proxy:Proxy,xf:Transform,translation:Vec3,best:Cast_Output}
+@(private) Cast_Visit :: struct {proxy:Proxy,xf:Transform,translation:Vec3,best:Cast_Output,surface:Surface}
 
 @(private)
-cast_triangle :: proc(data:rawptr,a,b,c:Vec3) -> bool {
+cast_triangle :: proc(data:rawptr,a,b,c:Vec3,surface:Surface) -> bool {
     visit:=(^Cast_Visit)(data)
     // A shape moving away from the front of a triangle does not hit it.
     if dot(cross(b-a,c-a),visit.translation)>=0 {return true}
     points:=[3]Vec3{a,b,c}
     out:=gjk_cast({points[:],0,0},visit.proxy,visit.xf,visit.translation,visit.best.hit?visit.best.fraction:1)
-    if out.hit && (!visit.best.hit || out.fraction<visit.best.fraction) {visit.best=out}
+    if out.hit && (!visit.best.hit || out.fraction<visit.best.fraction) {visit.best,visit.surface=out,surface}
     return !(out.hit && out.fraction==0)
 }
 
 // Cast of a convex proxy against one shape. `xf` and `translation` are in the frame of the shape.
 @(private)
-shape_cast_local :: proc(w:^World,shape:^Shape,proxy:Proxy,xf:Transform,translation:Vec3,max_fraction:f32) -> Cast_Output {
+shape_cast_local :: proc(w:^World,shape:^Shape,proxy:Proxy,xf:Transform,translation:Vec3,max_fraction:f32) -> (Cast_Output,Surface) {
     if shape.type<.Mesh {
         storage:[8]Vec3=---
-        return gjk_cast(shape_proxy(w,shape,&storage),proxy,xf,translation,max_fraction)
+        scaled:Scaled_Hull=---
+        return gjk_cast(shape_proxy(w,shape,&storage,&scaled),proxy,xf,translation,max_fraction),{}
     }
     visit:=Cast_Visit{proxy=proxy,xf=xf,translation=translation}
     triangles_visit(w,shape,proxy_aabb(proxy,xf),translation,&visit,cast_triangle)
     if visit.best.hit && visit.best.fraction>max_fraction {visit.best.hit=false}
-    return visit.best
+    return visit.best,visit.surface
 }
 
 @(private)
@@ -460,9 +472,9 @@ shape_cast :: proc(w:^World,geometry:Geometry,transform:Transform,translation:Ve
             response:=query_response(w,shape,filter)
             if response==.Ignore || response==.Overlap && !all {continue}
             xf:=shape_transform_of(w,shape)
-            out:=shape_cast_local(w,shape,proxy,xf_inv_mul(xf,start),q_inv_rotate(xf.q,translation),all?1:sweep.max_fraction)
+            out,surface:=shape_cast_local(w,shape,proxy,xf_inv_mul(xf,start),q_inv_rotate(xf.q,translation),all?1:sweep.max_fraction)
             if !out.hit || (w.cut_count>0 || .Twin in shape.flags) && point_cut(w,i32(user),shape,xf_point(xf,out.point)) {continue}
-            result:=Ray_Hit{shape_handle(w,i32(user)),body_handle(w,shape.body),xf_point(xf,out.point),q_rotate(xf.q,out.normal),out.fraction,response==.Overlap}
+            result:=Ray_Hit{shape_handle(w,i32(user)),body_handle(w,shape.body),xf_point(xf,out.point),q_rotate(xf.q,out.normal),out.fraction,response==.Overlap,surface}
             if all {
                 hits_insert(hits,&count,result)
                 if count==len(hits) {sweep.max_fraction=hits[count-1].fraction}
@@ -492,7 +504,7 @@ shape_cast_all :: proc(w:^World,geometry:Geometry,transform:Transform,translatio
 @(private) Distance_Visit :: struct {proxy:Proxy,xf:Transform,best:Gjk_Output,limit:f32,found:bool}
 
 @(private)
-distance_triangle :: proc(data:rawptr,a,b,c:Vec3) -> bool {
+distance_triangle :: proc(data:rawptr,a,b,c:Vec3,_:Surface) -> bool {
     visit:=(^Distance_Visit)(data)
     points:=[3]Vec3{a,b,c}
     out:=gjk_distance({points[:],0,0},visit.proxy,visit.xf,nil,true)
@@ -507,7 +519,8 @@ distance_triangle :: proc(data:rawptr,a,b,c:Vec3) -> bool {
 shape_distance_local :: proc(w:^World,shape:^Shape,proxy:Proxy,xf:Transform,limit:f32) -> (Gjk_Output,bool) {
     if shape.type<.Mesh {
         storage:[8]Vec3=---
-        out:=gjk_distance(shape_proxy(w,shape,&storage),proxy,xf,nil,true)
+        scaled:Scaled_Hull=---
+        out:=gjk_distance(shape_proxy(w,shape,&storage,&scaled),proxy,xf,nil,true)
         return out,out.distance<=limit
     }
     visit:=Distance_Visit{proxy=proxy,xf=xf,limit=limit}

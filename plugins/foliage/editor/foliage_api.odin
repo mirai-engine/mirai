@@ -3,6 +3,7 @@ package foliage_editor
 import "core:math"
 import "core:fmt"
 import "core:math/linalg"
+import "core:slice"
 import "core:strings"
 import "mirai:asset"
 import "mirai:core"
@@ -33,6 +34,7 @@ Type_Add_Params :: struct {
     mesh:base.Asset_Id `mirai:"label=The .mesh it shows"`,
     name:[32]u8 `mirai:"text,optional,label=What names it; omitted: that of its mesh"`,
     density:f32 `mirai:"optional,min=0,unit=1/m2,label=Instances per square metre the generator and Paint place"`,
+    radius:f32 `mirai:"optional,min=0,unit=m,label=At scale 1: a generated instance stands no nearer to another of a type with a radius than both radii; 0: anywhere"`,
     scale:[2]f32 `mirai:"optional,label=Across x and z: lowest and highest"`,
     height:[2]f32 `mirai:"optional,label=Along y times the scale across: lowest and highest"`,
     yaw:f32 `mirai:"optional,label=Degrees of a turn at random"`,
@@ -42,7 +44,7 @@ Type_Add_Params :: struct {
     rule:bool `mirai:"optional,label=It stands only where slope and ground_height and layers take it"`,
     slope:[2]f32 `mirai:"optional,label=Degrees from horizontal of its rule"`,
     ground_height:[2]f32 `mirai:"optional,label=Metres of the ground of its rule in the space of the Foliage"`,
-    layers:[foliage.RULE_LAYERS][LAYER_NAME_BYTES]u8 `mirai:"optional,text,label=The layers of the terrain of its rule by their material (a path or its stem; default is one without a material); an empty list takes any"`,
+    layers:[foliage.RULE_LAYERS][LAYER_NAME_BYTES]u8 `mirai:"optional,text,label=The layers of the terrain of its rule by their material (a path or its stem); an empty list takes any"`,
     weight:f32 `mirai:"optional,min=0,max=1,label=Of those layers together at least"`,
     fade_distance:f32 `mirai:"optional,min=0,unit=m"`,
     cull_distance:f32 `mirai:"optional,min=0,unit=m"`,
@@ -56,6 +58,7 @@ Type_Set_Params :: struct {
     name:[32]u8 `mirai:"text,optional,label=Another name; no other type may have it"`,
     mesh:base.Asset_Id `mirai:"optional,label=Another mesh: its instances stay"`,
     density:f32 `mirai:"optional,min=0,unit=1/m2,label=Instances per square metre the generator and Paint place"`,
+    radius:f32 `mirai:"optional,min=0,unit=m,label=At scale 1: a generated instance stands no nearer to another of a type with a radius than both radii; 0: anywhere"`,
     scale:[2]f32 `mirai:"optional,label=Across x and z: lowest and highest"`,
     height:[2]f32 `mirai:"optional,label=Along y times the scale across: lowest and highest"`,
     yaw:f32 `mirai:"optional,label=Degrees of a turn at random"`,
@@ -65,7 +68,7 @@ Type_Set_Params :: struct {
     rule:bool `mirai:"optional,label=It stands only where slope and ground_height and layers take it"`,
     slope:[2]f32 `mirai:"optional,label=Degrees from horizontal of its rule"`,
     ground_height:[2]f32 `mirai:"optional,label=Metres of the ground of its rule in the space of the Foliage"`,
-    layers:[foliage.RULE_LAYERS][LAYER_NAME_BYTES]u8 `mirai:"optional,text,label=The layers of the terrain of its rule by their material (a path or its stem; default is one without a material); an empty list takes any"`,
+    layers:[foliage.RULE_LAYERS][LAYER_NAME_BYTES]u8 `mirai:"optional,text,label=The layers of the terrain of its rule by their material (a path or its stem); an empty list takes any"`,
     weight:f32 `mirai:"optional,min=0,max=1,label=Of those layers together at least"`,
     fade_distance:f32 `mirai:"optional,min=0,unit=m"`,
     cull_distance:f32 `mirai:"optional,min=0,unit=m"`,
@@ -80,7 +83,7 @@ Type_Remove_Params :: struct {
 
 Paint_Params :: struct {
     entity:editor.Api_Entity_Text `mirai:"text,entity,label=The entity of the Foliage"`,
-    mode:[16]u8 `mirai:"text,label=paint or erase or reapply or generate or ungenerate"`,
+    mode:[16]u8 `mirai:"text,label=paint or erase or reapply or tint or generate or ungenerate"`,
     at:[3]f32 `mirai:"label=Where the brush touches in the world: the surface under it"`,
     to:[3]f32 `mirai:"optional,label=Where the stroke goes on to touching every half radius"`,
     radius:f32 `mirai:"optional,min=0.1,max=500,unit=m"`,
@@ -88,6 +91,8 @@ Paint_Params :: struct {
     density:f32 `mirai:"optional,min=0.01,max=1,label=Of paint: of the density of each type"`,
     erase_density:f32 `mirai:"optional,min=0,max=1,label=Of erase: of the density of each type it leaves"`,
     ground_only:bool `mirai:"optional,label=Of paint: only on the ground of the foliage (a terrain)"`,
+    tint:[3]f32 `mirai:"optional,min=0,max=1,label=Of tint: what multiplies the colors of the instances; white and dry: their own look"`,
+    wet:f32 `mirai:"optional,min=0,max=1,label=Of tint: how wet they are, 0 dry to 1 soaked"`,
 }
 
 Place_Params :: struct {
@@ -104,7 +109,7 @@ Query_Params :: struct {
 }
 
 @(private) LAYER_NAME_BYTES :: 256
-@(private) TYPE_OUT_OF_RANGE :: "The type is out of range: densities and distances at least 0, slopes from 0 to 90 degrees, align and weight from 0 to 1"
+@(private) TYPE_OUT_OF_RANGE :: "The type is out of range: densities and distances at least 0, a radius at most 8 m at the highest scale, slopes from 0 to 90 degrees, align and weight from 0 to 1"
 Foliage_Create_Result :: struct {
     id:base.Entity_Id,
 }
@@ -139,13 +144,13 @@ Foliage_Query_Result :: struct {
 @(private)
 foliage_api_register :: proc(s:^editor.Session) {
     editor.tool_entry(s,TOOL,"Foliage",.Edit,{key=.G,set=true})
-    paint_defaults:=Paint_Params{radius=3,density=1}
+    paint_defaults:=Paint_Params{radius=3,density=1,tint={1,1,1}}
     query_defaults:=Query_Params{limit=256}
     editor.api_method_register(s,{name="foliage.create",summary="Makes a Foliage in the edited scene, with a new .foliage of no types; one step of undo takes it and its file away.",params=type_info_of(Create_Params),result=type_info_of(Foliage_Create_Result),run=api_create})
     editor.api_method_register(s,{name="foliage.type_add",summary="Adds a type of foliage that shows a mesh with the values it is given, as one step of undo; the name it answers names it in the other methods.",params=type_info_of(Type_Add_Params),result=type_info_of(Type_Result),run=api_type_add})
     editor.api_method_register(s,{name="foliage.type_set",summary="Changes the values of a type of foliage it is given, as one step of undo; the others stay: its mesh, how dense, large, turned and leaned it is, its offset, its rule of slope, height and terrain layers, its distances, wind and shadow.",params=type_info_of(Type_Set_Params),result=type_info_of(Type_Result),run=api_type_set})
     editor.api_method_register(s,{name="foliage.type_remove",summary="Takes a type of foliage out with its instances, as one step of undo.",params=type_info_of(Type_Remove_Params),flags={.Destructive},result=type_info_of(Type_Result),run=api_type_remove})
-    editor.api_method_register(s,{name="foliage.paint",summary="One stroke of the foliage brush from at to to (or at alone), as one step of undo: paint fills the ring to the density of each type under its rules, erase leaves erase_density of it, reapply gives the instances the scale, turn and offset of their type again, generate and ungenerate turn the generator of the cells under the ring on or off.",params=type_info_of(Paint_Params),defaults=&paint_defaults,result=type_info_of(Foliage_Paint_Result),run=api_paint})
+    editor.api_method_register(s,{name="foliage.paint",summary="One stroke of the foliage brush from at to to (or at alone), as one step of undo: paint fills the ring to the density of each type under its rules, erase leaves erase_density of it, reapply gives the instances the scale, turn and offset of their type again, tint gives them a tint and a wetness the source keeps, generate raises the density the cells generate with under the ring to all of it, fading toward its border, and ungenerate lowers it to none.",params=type_info_of(Paint_Params),defaults=&paint_defaults,result=type_info_of(Foliage_Paint_Result),run=api_paint})
     editor.api_method_register(s,{name="foliage.place",summary="Puts one instance of a type on the surface under a point, with the scale, turn and offset of its type at random, as one step of undo.",params=type_info_of(Place_Params),result=type_info_of(Type_Result),run=api_place})
     editor.api_method_register(s,{name="foliage.query",summary="The types of a Foliage with how many instances each shows, and the instances inside a box of the world: type, where they are, their scale and whether they are manual or generated.",params=type_info_of(Query_Params),defaults=&query_defaults,flags={.Read_Only},result=type_info_of(Foliage_Query_Result),run=api_query})
 }
@@ -262,29 +267,48 @@ ground_settled :: proc(s:^editor.Session,e:core.Entity) -> ^foliage.Ground_Owner
     waited:=Waited{e}
     missing :: proc(s:^editor.Session,user:rawptr) -> bool {
         owner:=held(s,user)
-        return owner==nil || owner.layer_count==0
+        return owner==nil || len(owner.layers)==0
     }
     editor.api_settle(s,&waited,missing)
     return held(s,&waited)
 }
 
-// The bits of the layers of its rule that the names of a type stand for.
+// The materials of the layers of its rule that the names of a type stand
+// for: of the layers of the terrains under the foliage.
 @(private)
-rule_layers :: proc(s:^editor.Session,call:^api.Call,ground:^foliage.Ground_Owner,names:[][LAYER_NAME_BYTES]u8,count:int) -> (bits:u32,ok:bool) {
-    for &name in names[:clamp(count,0,len(names))] {
-        if ground==nil || ground.layer_count==0 {api.call_fail(call,api.INVALID_PARAMS,"The foliage stands on no terrain, so its rule has no layers to name: make the terrain first");return}
-        at,problem:=asset.slot_named(asset.slot_names(&s.app.assets.registry,ground.layers[:ground.layer_count]),ground.layers[:ground.layer_count],base.text_get(name[:]),"layers of the terrain under the foliage")
-        if problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
-        bits|=1<<u32(at)
+rule_layers :: proc(s:^editor.Session,call:^api.Call,ground:^foliage.Ground_Owner,names:[][LAYER_NAME_BYTES]u8,count:int) -> (layers:[foliage.RULE_LAYERS]base.Asset_Id,ok:bool) {
+    if count<=0 {return {},true}
+    materials:=make([dynamic]base.Asset_Id,context.temp_allocator)
+    if ground!=nil {
+        for set in ground.layers {for material in set {if material!={} && !slice.contains(materials[:],material) {append(&materials,material)}}}
     }
-    return bits,true
+    if len(materials)==0 {api.call_fail(call,api.INVALID_PARAMS,"The foliage stands on no terrain whose layers have materials, so its rule has no layers to name: make the terrain first, or give its layers materials");return}
+    for &name,i in names[:clamp(count,0,len(names))] {
+        at,problem:=asset.slot_named(asset.slot_names(&s.app.assets.registry,materials[:]),materials[:],base.text_get(name[:]),"layers of the terrain under the foliage")
+        if problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
+        layers[i]=materials[at]
+    }
+    return layers,true
+}
+
+// Whether a point of the world a field gives, and what reaches around it in
+// x and z of the space of the Foliage, are where the Foliage holds instances;
+// with the failure of the call when they are not.
+@(private)
+point_held :: proc(call:^api.Call,field:string,point:[3]f32,to_local:mm.Mat4,reach:f32=0) -> bool {
+    local:=mm.mat4_point(to_local,point)
+    held:=foliage.POSITION_MAX-reach
+    if abs(local.x)<=held && abs(local.y)<=foliage.POSITION_MAX && abs(local.z)<=held {return true}
+    api.call_failf(call,api.INVALID_PARAMS,"%s is at %v in the space of the Foliage: what it changes reaches past the %.0f m from its entity along each axis that a foliage holds; give a point nearer the Foliage, or move the Foliage",field,local,foliage.POSITION_MAX)
+    return false
 }
 
 // Puts the values the params of a type give on it; they are of its rule and
 // of how it shows, what is not given stays.
 @(private)
-type_values :: proc(call:^api.Call,t:^foliage.Foliage_Type,p:^$T,layers:u32) {
+type_values :: proc(call:^api.Call,t:^foliage.Foliage_Type,p:^$T,layers:[foliage.RULE_LAYERS]base.Asset_Id) {
     if editor.tool_call_given(call,"density") {t.density=p.density}
+    if editor.tool_call_given(call,"radius") {t.radius=p.radius}
     if editor.tool_call_given(call,"scale") {t.scale={min(p.scale.x,p.scale.y),max(p.scale.x,p.scale.y)}}
     if editor.tool_call_given(call,"height") {t.height={min(p.height.x,p.height.y),max(p.height.x,p.height.y)}}
     if editor.tool_call_given(call,"yaw") {t.yaw=math.to_radians(p.yaw)}
@@ -395,9 +419,10 @@ api_paint :: proc(s:^editor.Session,call:^api.Call) {
     case "paint":      mode=.Paint
     case "erase":      mode=.Erase
     case "reapply":    mode=.Reapply
+    case "tint":       mode=.Tint
     case "generate":   mode=.Generate
     case "ungenerate": mode,generate=.Generate,false
-    case: api.call_fail(call,api.INVALID_PARAMS,"mode is paint, erase, reapply, generate or ungenerate");return
+    case: api.call_fail(call,api.INVALID_PARAMS,"mode is paint, erase, reapply, tint, generate or ungenerate");return
     }
     tool,world,e,owner,ground,ok:=api_foliage(s,call,p.entity[:])
     if !ok {return}
@@ -406,6 +431,7 @@ api_paint :: proc(s:^editor.Session,call:^api.Call) {
     from,to:=p.at,p.to!={}?p.to:p.at
     // The ground of the cells the stroke reaches, for what it places.
     reach:=clamp(p.radius,RADIUS_MIN,RADIUS_MAX)/max(abs(owner.scale.x),1e-6)
+    if !point_held(call,"at",from,to_local,reach) || !point_held(call,"to",to,to_local,reach) {return}
     low,_:=cells_around(linalg.min(mm.mat4_point(to_local,from),mm.mat4_point(to_local,to)),reach)
     _,high:=cells_around(linalg.max(mm.mat4_point(to_local,from),mm.mat4_point(to_local,to)),reach)
     ground=ground_settle(s,e,low,high)
@@ -429,6 +455,7 @@ api_paint :: proc(s:^editor.Session,call:^api.Call) {
     if len(tool.painted)==0 {for t in source.types {append(&tool.painted,t.id)}}
     if len(tool.painted)==0 && mode!=.Generate {api.call_fail(call,api.INVALID_PARAMS,"The foliage has no type: foliage.type_add adds one");return}
     tool.radius,tool.paint_density,tool.erase_density,tool.ground_only=clamp(p.radius,RADIUS_MIN,RADIUS_MAX),clamp(p.density,0.01,1),clamp(p.erase_density,0,1),p.ground_only
+    tool.tint,tool.wet=linalg.clamp(p.tint,0,1),clamp(p.wet,0,1)
     tool.stroke={active=true,mode=mode,generate=generate}
     edit_baseline(tool)
     step:=to-from
@@ -444,9 +471,8 @@ api_paint :: proc(s:^editor.Session,call:^api.Call) {
         changed|=brush_touch(s,tool,world,owner,to_local,ground,at,normal)
     }
     if !changed {changed_write(call,false);return}
-    labels:=[Foliage_Mode]string{.Paint="Paint foliage",.Erase="Erase foliage",.Select="",.Place="",.Reapply="Reapply foliage",.Generate="Generate foliage"}
     s.toast_length=0
-    if !edit_commit(s,tool,world,s.app.assets,labels[mode]) {editor.tool_call_fail(s,call,"The stroke could not be kept");return}
+    if !edit_commit(s,tool,world,s.app.assets,STROKE_LABELS[mode]) {editor.tool_call_fail(s,call,"The stroke could not be kept");return}
     changed_write(call,true)
 }
 
@@ -460,6 +486,7 @@ api_place :: proc(s:^editor.Session,call:^api.Call) {
     if t==nil {return}
     to_local,inverted:=mm.transform_inverse_matrix(owner)
     if !inverted {api.call_fail(call,api.INVALID_PARAMS,"The transform of the Foliage cannot be inverted");return}
+    if !point_held(call,"at",p.at,to_local) {return}
     hit:=editor.pick_ray(s,world,mm.Ray{p.at+{0,1000,0},{0,-1,0}},4000)
     at,normal:=p.at,[3]f32{0,1,0}
     if hit.entity!=core.NONE {at,normal=hit.position,hit.normal}

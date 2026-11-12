@@ -7,8 +7,8 @@ MANIFOLD_MAX_POINTS :: 4
 
 // Contact point in the frame of shape A: midway between the two surfaces. Negative separation is penetration.
 Local_Point :: struct {point:Vec3,separation:f32,id:u32}
-// Normal from A to B.
-Local_Manifold :: struct {normal:Vec3,count:i32,points:[MANIFOLD_MAX_POINTS]Local_Point}
+// Normal from A to B. surface: as Manifold_State.
+Local_Manifold :: struct {normal:Vec3,count:i32,surface:u32,points:[MANIFOLD_MAX_POINTS]Local_Point}
 
 @(private) ID_OWNER_B :: 0x8000
 @(private) ID_EDGE_PAIR :: 0x4000
@@ -690,14 +690,14 @@ Convex :: struct {
     margin:f32, // GJK sees the core smaller by this and inflated by it
 }
 
-// The Convex of a shape of type Capsule, Box, Hull or Cylinder; points and box hold what it points to.
+// The Convex of a shape of type Capsule, Box, Hull or Cylinder; points, box and scaled hold what it points to.
 @(private)
-convex_of :: proc "contextless" (w:^World,shape:^Shape,points:^[8]Vec3,box:^Box_Hull) -> (c:Convex) #no_bounds_check {
-    c.proxy=shape_proxy(w,shape,points)
+convex_of :: proc "contextless" (w:^World,shape:^Shape,points:^[8]Vec3,box:^Box_Hull,scaled:^Scaled_Hull) -> (c:Convex) #no_bounds_check {
+    c.proxy=shape_proxy(w,shape,points,scaled)
     c.type=shape.type
     #partial switch shape.type {
     case .Box: c.hull=box_hull(box,shape.size-shape.radius)
-    case .Hull: c.hull=hull_core(&w.hulls[shape.resource].hull)^
+    case .Hull: c.hull=shape_hull_of(w,shape,true,scaled)^
     case .Cylinder: c.margin=clamp(CONVEX_MARGIN-shape.radius,0,0.5*min(c.proxy.disc,c.proxy.points[1].y))
     }
     return
@@ -1026,7 +1026,8 @@ collide_rounded :: proc(w:^World,m:^Local_Manifold,a,b:^Shape,xf:Transform,specu
     ra,rb:=a.radius,b.radius
     spec:=speculative+ra+rb
     storage_a,storage_b:Box_Hull=---,---
-    hull_a:=a.type==.Box?box_hull(&storage_a,a.size-ra):hull_core(&w.hulls[a.resource].hull)^
+    scaled_a,scaled_b:Scaled_Hull=---,---
+    hull_a:=a.type==.Box?box_hull(&storage_a,a.size-ra):shape_hull_of(w,a,true,&scaled_a)^
     #partial switch b.type {
     case .Sphere:
         collide_hull_sphere(m,&hull_a,xf.p,b.size.x,spec)
@@ -1038,13 +1039,13 @@ collide_rounded :: proc(w:^World,m:^Local_Manifold,a,b:^Shape,xf:Transform,specu
         if a.type==.Box && b.type==.Box {
             separation=collide_boxes(m,a.size-ra,b.size-rb,xf,spec)
         } else {
-            hull_b:=b.type==.Box?box_hull(&storage_b,b.size-rb):hull_core(&w.hulls[b.resource].hull)^
+            hull_b:=b.type==.Box?box_hull(&storage_b,b.size-rb):shape_hull_of(w,b,true,&scaled_b)^
             separation=collide_hulls(m,&hull_a,&hull_b,xf,spec,sat)
         }
         if !sat_decides(m,separation,spec) {
             // The cores are apart and their nearest features are off the axes of the SAT: GJK.
             points_a,points_b:[8]Vec3=---,---
-            convex_a,convex_b:=convex_of(w,a,&points_a,&storage_a),convex_of(w,b,&points_b,&storage_b)
+            convex_a,convex_b:=convex_of(w,a,&points_a,&storage_a,&scaled_a),convex_of(w,b,&points_b,&storage_b,&scaled_b)
             cores:=m^
             if _,overlap:=collide_convex(m,&convex_a,&convex_b,xf,speculative,false);!overlap {return}
             m^=cores
@@ -1062,7 +1063,8 @@ collide_cylinder :: proc(w:^World,m:^Local_Manifold,a,b:^Shape,xf:Transform,spec
     }
     points_a,points_b:[8]Vec3=---,---
     storage_b:Box_Hull=---
-    convex_a,convex_b:=convex_of(w,a,&points_a,nil),convex_of(w,b,&points_b,&storage_b)
+    scaled_b:Scaled_Hull=---
+    convex_a,convex_b:=convex_of(w,a,&points_a,nil,nil),convex_of(w,b,&points_b,&storage_b,&scaled_b)
     if b.type>=.Box && cylinder_faces_contact(m,&convex_a,&convex_b,xf,speculative) {return}
     if (b.type==.Cylinder || b.type==.Capsule) && cylinder_apart(&convex_a,&convex_b,xf,speculative) {return}
     if b.type==.Cylinder && cylinder_caps_contact(m,&convex_a,&convex_b,xf,speculative) {return}

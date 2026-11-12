@@ -39,9 +39,9 @@ Removed_Instance :: struct {
     id:u64, // in its cell (Placed.id)
 }
 
-// What the game asks: take an instance of a Foliage out.
+// What the game asks: take an instance of a Foliage out, or mark one (marks.odin).
 @(storage,queue)
-Foliage_Requests :: struct {removes:core.Queue(Foliage_Plant)}
+Foliage_Requests :: struct {removes:core.Queue(Foliage_Plant),marks:core.Queue(Foliage_Mark)}
 
 // An instance of a Foliage: its cell and its id there (Placed.id).
 Foliage_Plant :: struct {
@@ -57,14 +57,16 @@ foliage_remove :: proc(requests:^Foliage_Requests,instance:Foliage_Plant) {core.
 @(storage,setting)
 Foliage_Settings :: struct {
     removes:u32 `mirai:"advanced"`,         // instances a tick can ask to take out; past it they are dropped and reported
+    marks:u32 `mirai:"advanced"`,           // instances a tick can ask to mark; as many
     ground_requests:u32 `mirai:"advanced"`, // cells a tick can ask the ground of; as many
 }
-FOLIAGE_SETTINGS_DEFAULT :: Foliage_Settings{removes=1024,ground_requests=256}
+FOLIAGE_SETTINGS_DEFAULT :: Foliage_Settings{removes=1024,marks=1024,ground_requests=256}
 
 // The room of the requests of a tick, and what did not fit in it.
 @(step="input fixed",loops="game editor",stage="begin")
 foliage_requests_serve :: proc(requests:^Foliage_Requests,ground:^Foliage_Ground_Requests,settings:Foliage_Settings,problems:^core.Problems) {
     core.queue_serve(&requests.removes,int(settings.removes),problems,"foliage.requests","instances asked to be taken out","Foliage_Settings.removes")
+    core.queue_serve(&requests.marks,int(settings.marks),problems,"foliage.requests","instances asked to be marked","Foliage_Settings.marks")
     core.queue_serve(&ground.cells,int(settings.ground_requests),problems,"foliage.requests","cells asked of the ground","Foliage_Settings.ground_requests")
 }
 
@@ -115,12 +117,17 @@ removed_cell :: proc "contextless" (owner:^Removed_Owner,coord:[2]i32) -> (ids:[
 
 // The entities that hold the instances taken out of a cell of a Foliage.
 removed_pages :: proc "contextless" (owner:^Removed_Owner,coord:[2]i32) -> []Removed_Page {
-    if owner==nil {return nil}
-    low,high:=0,len(owner.pages)
-    for low<high {mid:=(low+high)/2;if coord_before(owner.pages[mid].coord,coord) {low=mid+1} else {high=mid}}
+    return pages_of(owner.pages[:],coord) if owner!=nil else nil
+}
+
+// The pages of a cell among pages in the order of their cell.
+@(private)
+pages_of :: proc "contextless" (pages:[]Removed_Page,coord:[2]i32) -> []Removed_Page {
+    low,high:=0,len(pages)
+    for low<high {mid:=(low+high)/2;if coord_before(pages[mid].coord,coord) {low=mid+1} else {high=mid}}
     end:=low
-    for end<len(owner.pages) && owner.pages[end].coord==coord {end+=1}
-    return owner.pages[low:end]
+    for end<len(pages) && pages[end].coord==coord {end+=1}
+    return pages[low:end]
 }
 
 // Whether a sorted list of ids holds one.
@@ -192,13 +199,13 @@ removals_index :: proc(r:^Foliage_Removals,removed:^core.Table(Foliage_Removed,$
 }
 
 // Takes what the game asked out, on the end that decides: the ids of the
-// instances a cell shows and has not taken out go to the entities of that
+// instances a cell shows on its ground and has not taken out go to the entities of that
 // cell with room, and past them to new ones under the Foliage. A client asks
 // nothing; what the server took out arrives.
 @(step="fixed frame",loops="game editor",stage="simulate",before="physics_prepare")
 foliage_removals :: proc(
     r:^Foliage_Removals,requests:^Foliage_Requests,removed:^core.Table(Foliage_Removed),foliages:^core.Table(Foliage,.Read),ids:^core.Table(core.Id,.Read),
-    data:core.Ref(Foliage_Data),authority:core.Ref(core.Network),commands:core.Commands,allocator:runtime.Allocator,problems:^core.Problems,
+    data:core.Ref(Foliage_Data),grounds:core.Ref(Foliage_Ground),authority:core.Ref(core.Network),commands:core.Commands,allocator:runtime.Allocator,problems:^core.Problems,
 ) {
     asked:=core.take(&requests.removes)
     context.allocator=allocator
@@ -229,7 +236,8 @@ foliage_removals :: proc(
         entry:=data_find(data.ptr,f.source)
         cell:=entry!=nil?source_cell(&entry.source,coord):nil
         if cell==nil {continue}
-        if !cell_build(&entry.source,cell,{},&work) {
+        tile,_:=ground_cell(ground_owner(grounds.ptr,e),coord)
+        if !cell_build(&entry.source,cell,tile,&work) {
             for request in group {core.offer(&requests.removes,request)}
             memory_problem(problems,e,"taking instances out of this Foliage")
             continue

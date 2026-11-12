@@ -36,7 +36,7 @@ a_touch_of_a_brush_over_many_batches_costs_what_it_changes :: proc(t: ^testing.T
 		start := time.tick_now()
 		for b in 0 ..< BATCHES {
 			cell := Vec3{f32(b % 50) * 32, 0, f32(b / 50) * 32}
-			for &instance, k in instances {instance = batch_instance(cell + {f32(k % 25), 0, f32(k / 25)}, 1, 1, 1)}
+			for &instance, k in instances {instance = batch_instance(cell + {f32(k % 25), 0, f32(k / 25)}, 1, {1, 1, 1})}
 			flags := Batch_Flags{.Casts_Shadow, .Ray_Visible} if b % 3 == 0 else {}
 			handles[b], _ = batch_set(r, 0, 0, {mesh = mesh, flags = flags}, instances)
 		}
@@ -100,7 +100,7 @@ a_jump_of_the_origin_costs_what_the_batches_are_not_what_they_hold :: proc(t: ^t
 		defer delete(instances)
 		for b in 0 ..< BATCHES {
 			cell := far + Vec3{f32(b % 50) * 32, 0, f32(b / 50) * 32}
-			for &instance, k in instances {instance = batch_instance(cell + {f32(k % 25), 0, f32(k / 25)}, 1, 1, 1)}
+			for &instance, k in instances {instance = batch_instance(cell + {f32(k % 25), 0, f32(k / 25)}, 1, {1, 1, 1})}
 			flags := Batch_Flags{.Casts_Shadow, .Ray_Visible} if b % 3 == 0 else {}
 			batch_set(r, 0, 0, {mesh = mesh, flags = flags}, instances)
 		}

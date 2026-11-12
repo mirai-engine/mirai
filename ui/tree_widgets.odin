@@ -32,7 +32,7 @@ tree_build_text :: proc(ctx:^Context,node:^Node,style:^Node_Style,node_id:Id,con
 }
 
 @(private)
-tree_build_leaf :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,node_id:Id,values:rawptr,item:i32,base_style,style:^Node_Style,variant:u64,image_ref:Node_Image,content:string,selected,disabled:bool,anim:^Anim_Value) {
+tree_build_leaf :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,next,slot:int,node_id:Id,values:rawptr,copy:int,item:i32,base_style,style:^Node_Style,variant:u64,image_ref:Node_Image,content:string,selected,disabled:bool,anim:^Anim_Value) {
     tree,instance:=b.tree,b.instance
     bound:=&instance.bounds[index]
     ctx.order=node.order
@@ -65,7 +65,8 @@ tree_build_leaf :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,nod
     case .Text:
         tree_build_text(ctx,node,style,node_id,content,reveal)
     case .Image:
-        image(ctx,{id=node_id,quad=image_ref.quad,tint=style.fill,width=node.layout.width,height=node.layout.height,border=image_ref.border,border_uv=image_ref.border_uv,fit=image_ref.fit,size=image_ref.size})
+        image(ctx,{id=node_id,quad=image_ref.quad,tint=style.fill,width=node.layout.width,height=node.layout.height,border=image_ref.border,border_uv=image_ref.border_uv,fit=image_ref.fit,size=image_ref.size,
+            look=style,program=tree_program(tree,node.style)})
     case .Progress:
         // The bar redraws when its fill moves a pixel.
         if r:=bound_range(b.instance,bound.value);r!=nil && r.step!=0 {
@@ -75,7 +76,7 @@ tree_build_leaf :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,nod
             fill=style.fill,track=style.track,stroke=style.stroke,corners=style.radius,quad=image_ref.quad,border=image_ref.border,border_uv=image_ref.border_uv,
             fill_mode=style.fill_mode,stroke_width=style.stroke_width,program=tree_program(tree,node.style),program_values=style.program_values})
     case .Button:
-        tree_button(ctx,b,node,index,slot,node_id,values,item,base_style,style,image_ref,content,selected,disabled)
+        tree_button(ctx,b,node,index,next,slot,node_id,values,copy,item,base_style,style,image_ref,content,selected,disabled)
     case .Checkbox:
         value:=bound.value.bound && current!=0
         if checkbox(ctx,node_id,&value,disabled,style,node.layout.width,node.layout.height) {
@@ -191,13 +192,15 @@ tree_own_text :: proc(b:^Tree_Build,node:^Node,index:int) -> string {
 // hold, only once the pointer or the action has held it that long, while a
 // bar of mark a fifth of its text tall fills along its bottom. One that binds
 // a value writes its choice there when clicked, as a Radio does, and reports
-// Changed after Clicked.
+// Changed after Clicked. What it holds is built inside it, after its text.
 @(private)
-tree_button :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,node_id:Id,values:rawptr,item:i32,base_style,style:^Node_Style,image_ref:Node_Image,content:string,selected,disabled:bool) {
+tree_button :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,next,slot:int,node_id:Id,values:rawptr,copy_at:int,item:i32,base_style,style:^Node_Style,image_ref:Node_Image,content:string,selected,disabled:bool) {
     instance:=b.instance
     state:=&instance.slot[slot]
     program:=tree_program(b.tree,node.style)
-    it:=button(ctx,node_id,{label=content,look=style,layout=&node.layout,image=image_ref,program=program,block=true,disabled=disabled})
+    it:=button_begin(ctx,node_id,{label=content,look=style,layout=&node.layout,image=image_ref,program=program,block=true,holds=next>index+1,disabled=disabled})
+    tree_build_children(ctx,b,index,next,slot,node_id,values,copy_at,item)
+    button_end(ctx)
     takes:=node.action!=0 && !b.desc.passive && !disabled
     down,pressed:bool
     if takes && ctx.game.action!=nil {down,pressed=ctx.game.action(ctx.game.user,node.action)}

@@ -186,7 +186,10 @@ source_layer_set :: proc(s:^Source,index:int,layer:Terrain_Layer) -> bool {
 }
 
 // Takes a layer away; what it covered goes to the others in their
-// proportions. The last one stays.
+// proportions. The last one stays. A page in its block is rewritten into a
+// block of its own without staying in memory. False, the source as it was,
+// for a layer it cannot take away, or when a page cannot be read or without
+// memory.
 source_layer_remove :: proc(s:^Source,index:int) -> bool {
     count:=int(s.layer_count)
     if index<0 || index>=count || count==1 {return false}
@@ -199,18 +202,28 @@ source_layer_remove :: proc(s:^Source,index:int) -> bool {
         shared_free(page.values)
         page.values=values
     }
+    c:=&s.coarse
+    if !grid_none(&c.weights) && !grid_prepare(&c.weights,{},{c.size.x-1,0,c.size.y-1},s.allocator) {return false}
+    Removed :: struct {index,count:int}
+    removed:=Removed{index,count}
+    remove :: proc(user:rawptr,w:Weights) -> Weights {
+        r:=(^Removed)(user)
+        return weights_remove(w,r.index,r.count)
+    }
+    away:=make([dynamic]Away_Page(Weights),context.temp_allocator)
+    if !grid_away_map(&s.weights,s.file,weights_full,&removed,remove,&away,s.allocator) {grid_away_free(away[:]);return false}
     for &page in s.weights.pages {
         page.altered=true
         page.fill=weights_remove(page.fill,index,count)
         for &value in page.values {value=weights_remove(value,index,count)}
     }
-    Removed :: struct {index,count:int}
-    removed:=Removed{index,count}
-    grid_tiles_map(&s.weights,&removed,proc(user:rawptr,fill:Weights) -> Weights {
-        r:=(^Removed)(user)
-        return weights_remove(fill,r.index,r.count)
-    })
+    grid_away_install(&s.weights,away[:])
+    grid_tiles_map(&s.weights,&removed,remove)
     s.weights.filled=true
+    if !grid_none(&c.weights) {for &page in c.weights.pages {
+        page.fill=weights_remove(page.fill,index,count)
+        for &value in page.values {value=weights_remove(value,index,count)}
+    }}
     copy(s.layers[index:count],s.layers[index+1:count])
     s.layers[count-1]={}
     s.layer_count-=1

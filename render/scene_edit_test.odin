@@ -395,7 +395,7 @@ program_catalog_keeps_the_ui_programs_apart :: proc(t: ^testing.T) {
 	r:=new(Renderer);defer free(r)
 	r.allocator = context.allocator
 	defer program_catalog_destroy(&r.programs)
-	for name in ([]string{"Ui_Radial_Wipe", "Ui_Dissolve", "Ui_Shine", "Ui_Gradient_Sweep", "Ui_Slant"}) {
+	for name in ([]string{"Ui_Radial_Wipe", "Ui_Dissolve", "Ui_Shine", "Ui_Gradient_Sweep", "Ui_Slant", "Ui_Radial_Gradient", "Ui_Rays", "Ui_Polygon"}) {
 		program := program_find(r, name, .Ui)
 		testing.expectf(t, program != nil && program.size <= 16, "%s is a ui program of the engine", name)
 		testing.expectf(t, program_find(r, name, .Postprocess) == nil && program_find(r, name, .Surface) == nil, "%s is of the ui domain alone", name)
@@ -583,13 +583,13 @@ occluders_list_what_moved_came_or_went_and_the_lights_that_moved :: proc(t: ^tes
 	}
 
 	s.occluders = {}
-	batch, problem := batch_set(r, 0, r.world_key, {mesh = mesh, flags = {.Casts_Shadow, .Ray_Visible}}, {batch_instance({40, 0, 0}, 1, 1, 1)})
+	batch, problem := batch_set(r, 0, r.world_key, {mesh = mesh, flags = {.Casts_Shadow, .Ray_Visible}}, {batch_instance({40, 0, 0}, 1, {1, 1, 1})})
 	testing.expect_value(t, problem, "")
 	testing.expect(t, s.occluders.count == 1 && s.occluders.boxes[0].instance == OCCLUDERS_MANY && s.occluders.boxes[0].low.x == 39.5, "a batch that comes casts shadows in its box")
 	s.occluders = {}
 	testing.expect(t, batch_remove(r, batch))
 	testing.expect(t, s.occluders.count == 1 && s.occluders.boxes[0].high.x == 40.5, "and one that goes")
-	_, problem = batch_set(r, 0, r.world_key, {mesh = mesh, flags = {.Ray_Visible}}, {batch_instance({40, 0, 0}, 1, 1, 1)})
+	_, problem = batch_set(r, 0, r.world_key, {mesh = mesh, flags = {.Ray_Visible}}, {batch_instance({40, 0, 0}, 1, {1, 1, 1})})
 	testing.expect(t, problem == "" && s.occluders.count == 1, "one that casts none changes no shadow")
 
 	s.occluders = {}

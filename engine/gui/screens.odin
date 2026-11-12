@@ -360,7 +360,7 @@ asked_report :: proc(gui:^Gui,assets:^host.Assets,asked:^Asked_Name,slots:^Insta
         if error!=.None {continue}
         for &n in data.nodes {
             #partial switch n.kind {
-            case .Button,.Checkbox,.Slider,.Number,.Field,.Selector,.Dropdown,.Radio,.Component,.Tabs:
+            case .Button,.Checkbox,.Slider,.Number,.Field,.Selector,.Dropdown,.Radio,.Component:
                 if text:=string(cstring(&n.name[0]));text!="" {append(&has,text)}
             }
         }

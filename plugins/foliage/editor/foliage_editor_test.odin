@@ -210,6 +210,14 @@ a_canceled_stroke_puts_back_what_the_file_held :: proc(t:^testing.T) {
     edit_baseline(&tool)
     random:=mm.rng_make(3,1)
     paint_instance(&tool.edit.source,&tool.edit.source.types[0],{1,0,1},{0,1,0},&random,nil)
+    // A touch hands the runtime the cells it changed, and the file stays as it was.
+    shown:foliage.Foliage_Stroke
+    defer {foliage.stroke_clear(&shown);delete(shown.cells)}
+    edit_show(&tool,&shown,{-1,-1},{1,1})
+    testing.expect(t,shown.source==id && len(shown.cells)==1 && len(shown.cells[0].manual)==1 && shown.cells[0].version!=0)
+    held_before:=held_source(t,&assets,id)
+    testing.expect_value(t,manual_count(&held_before),0)
+    foliage.source_destroy(&held_before)
     testing.expect(t,edit_preview(&s,&tool,app.assets))
     held:=held_source(t,&assets,id)
     testing.expect_value(t,manual_count(&held),1)
@@ -288,7 +296,7 @@ a_move_of_an_imported_foliage_is_undone_back_to_revision_zero :: proc(t:^testing
     problems:core.Problems
     // A frame: the runtime reads the source before the tool syncs.
     frame :: proc(s:^editor.Session,tool:^Foliage_Tool,data:^foliage.Foliage_Data,foliages:^core.Table(foliage.Foliage,$A),problems:^core.Problems) {
-        foliage.foliage_load(data,core.read(foliages),s.app.assets,s.app.allocator,problems)
+        foliage.foliage_load(data,core.read(foliages),{},s.app.assets,s.app.allocator,problems)
         foliage_sync(s,tool,core.read(foliages),s.app.assets)
     }
     x_of :: proc(t:^testing.T,a:^host.Assets,id:base.Asset_Id) -> f32 {

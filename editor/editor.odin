@@ -392,6 +392,14 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
     root:=project.path_absolute(options.project!=""?options.project:".",context.temp_allocator)
     engine:=project.engine_root_find(options.engine,context.temp_allocator)
     assets:=project.path(root,ASSETS_FOLDER,allocator=context.temp_allocator)
+    // The headless editor of a session of the project takes the window instead.
+    if !options.headless && !options.launcher && options.frames==0 && options.share==0 && options.join=="" {
+        switch session_show(root) {
+        case .None:
+        case .Shown: return nil,EDITOR_OK
+        case .Busy:  return nil,EDITOR_FAILED
+        }
+    }
     if !os.is_dir(assets) {_=os.make_directory_all(assets)}
 
     window:=platform.Window_Desc{

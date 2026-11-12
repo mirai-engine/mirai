@@ -28,12 +28,12 @@ terrain_sources_save_load_and_clone_preserve_both_representations :: proc(t:^tes
         got,ok:=source_load(&loaded,path,&types)
         testing.expect(t,ok && got==id)
         testing.expect_value(t,loaded.info,original.info)
-        for z in 0..<samples.z {for y in 0..<samples.y {for x in 0..<samples.x {testing.expect_value(t,source_value(&loaded,{x,y,z}),source_value(&original,{x,y,z}))}}}
+        for z in 0..<samples.z {for y in 0..<samples.y {for x in 0..<samples.x {testing.expect_value(t,source_value(&loaded,{x,y,z}) or_else 0,source_value(&original,{x,y,z}) or_else 0)}}}
         testing.expect(t,source_clone(&cloned,&loaded))
         testing.expect_value(t,cloned.layers[0].material,original.layers[0].material)
-        testing.expect(t,source_set(&cloned,at,source_value(&cloned,at)+2))
-        testing.expect_value(t,source_value(&loaded,at),f32(-0.75))
-        testing.expect_value(t,source_value(&original,at),f32(-0.75))
+        testing.expect(t,source_set(&cloned,at,(source_value(&cloned,at) or_else 0)+2))
+        testing.expect_value(t,source_value(&loaded,at) or_else 0,f32(-0.75))
+        testing.expect_value(t,source_value(&original,at) or_else 0,f32(-0.75))
         if kind==.Heightfield {
             _,page_samples:=grid_page_extent(&loaded.field,0)
             testing.expect_value(t,grid_dense(&loaded.field),page_samples)
@@ -50,11 +50,16 @@ terrain_sources_reject_invalid_dimensions_values_and_unavailable_memory :: proc(
     // A Volume reaches as far as a Heightfield; past its chunks it takes more cells in each.
     testing.expect(t,!source_make(&source,.Volume,{SAMPLES_MAX+1,5,5},1,4))
     testing.expect(t,!source_make(&source,.Volume,{4097,4097,4097},1,4) && source_valid({kind=.Volume,samples={4097,4097,4097},cell=1,chunk_cells=256,layer_count=1,layers={0=LAYER_DEFAULT}}))
+    // So does a Heightfield: a file of a few runs of fill cannot ask for millions of chunks.
+    widest:=Source_Info{kind=.Heightfield,samples={SAMPLES_MAX,1,SAMPLES_MAX},cell=1,chunk_cells=4,layer_count=1,layers={0=LAYER_DEFAULT}}
+    testing.expect(t,!source_valid(widest))
+    widest.chunk_cells=32
+    testing.expect(t,source_valid(widest))
     testing.expect(t,!source_make(&source,.Heightfield,{5,1,5},0,4))
     testing.expect(t,!source_make(&source,.Heightfield,{5,1,5},1,3))
     testing.expect(t,!source_make(&source,.Heightfield,{5,1,5},1,4,runtime.nil_allocator()))
     testing.expect(t,source_make(&source,.Volume,{3,3,3},1,4))
-    testing.expect(t,source_value(&source,{1,1,1})<0)
+    testing.expect(t,(source_value(&source,{1,1,1}) or_else 0)<0)
     source_destroy(&source)
     testing.expect(t,source_make(&source,.Heightfield,{5,1,5},1,4))
     source.field.pages[0].fill=f32(0h7fc00000)
@@ -62,8 +67,37 @@ terrain_sources_reject_invalid_dimensions_values_and_unavailable_memory :: proc(
     path:=fmt.tprintf("%s/invalid.terrain",base.test_folder(t,"terrain"))
     testing.expect_value(t,source_save(&source,path,{1,2},&types),asset.Error.Invalid)
     source.field.pages[0].fill=0
-    testing.expect(t,source_set(&source,{0,0,0},HEIGHT_LIMIT+1))
+    testing.expect(t,!source_set(&source,{0,0,0},HEIGHT_LIMIT+1),"a sample takes no height past the limit")
+    testing.expect(t,grid_put(&source.field,{0,0,0},HEIGHT_LIMIT+1,source.allocator))
     testing.expect_value(t,source_save(&source,path,{1,2},&types),asset.Error.Invalid)
+}
+
+// A sample outside a source, or a value no sample holds, reads nothing and
+// writes nothing, whatever the index: no read or write lands outside a page.
+@(test)
+samples_outside_a_source_are_refused :: proc(t:^testing.T) {
+    nan:=transmute(f32)u32(0x7fc00000)
+    for kind in Source_Kind {
+        s:Source;defer source_destroy(&s)
+        samples:=kind==.Volume?[3]int{20,18,20}:[3]int{70,1,70}
+        if !testing.expect(t,source_make(&s,kind,samples,1,4)) {return}
+        inside:=[3]int{samples.x-1,samples.y-1,samples.z-1}
+        testing.expect(t,source_set(&s,inside,-1))
+        outside:=[?][3]int{{-1,0,0},{0,0,-1},{samples.x,0,0},{0,samples.y,0},{0,0,samples.z},{min(int),0,0},{0,0,max(int)},{PAGE,0,samples.z}}
+        for p in outside {
+            value,ok:=source_value(&s,p)
+            testing.expectf(t,!ok && value==0,"%v reads %v of a %v",p,value,kind)
+            testing.expectf(t,!source_set(&s,p,1),"%v is written in a %v",p,kind)
+            testing.expect_value(t,grid_value(&s.field,p),f32(0))
+            if kind==.Heightfield {testing.expect_value(t,grid_get(&s.field,p.x,p.z),f32(0))} else {testing.expect_value(t,block_get(&s.field,p),f32(0))}
+            testing.expect(t,!grid_put(&s.field,p,1,s.allocator))
+        }
+        testing.expect(t,!source_set(&s,{1,0,1},nan) && !source_set(&s,{1,0,1},-2*field_limit(s.info)),"a value no sample holds")
+        value,ok:=source_value(&s,inside)
+        testing.expect(t,ok && value==-1)
+        // A point that is not a number reads no sample outside the source.
+        if kind==.Heightfield {_=source_height(&s,nan,nan)}
+    }
 }
 
 @(test)
@@ -182,7 +216,7 @@ heightfield_queries_and_meshes_use_the_physics_diagonal_and_high_surfaces_sculpt
     for z in 0..<2 {for x in 0..<2 {testing.expect(t,source_set(&source,{x,0,z},100))}}
     change:=source_edit(&source,{kind=.Raise,center={-0.5,100,-0.5},radius=0.4,amount=2})
     testing.expect(t,change.changed)
-    testing.expect_value(t,source_value(&source,{0,0,0}),f32(102))
+    testing.expect_value(t,source_value(&source,{0,0,0}) or_else 0,f32(102))
     testing.expect_value(t,source.revision,u32(0))
 }
 
@@ -202,14 +236,14 @@ terrain_brushes_mark_only_touched_chunks_including_border_normals :: proc(t:^tes
     testing.expect(t,source_edit(&source,{kind=.Lower,center={0,50,0},radius=0.4,amount=0.5}).changed)
     testing.expect(t,source_edit(&source,{kind=.Smooth,center={0,50,0},radius=0.4,amount=1}).changed)
     source.allocator=context.allocator
-    testing.expect_value(t,source_value(&source,{32,0,32}),f32(0))
+    testing.expect_value(t,source_value(&source,{32,0,32}) or_else 0,f32(0))
     testing.expect_value(t,raw_data(source.field.pages[0].values),held);testing.expect_value(t,raw_data(source.scratch),scratch)
     _,page_samples:=grid_page_extent(&source.field,0)
     testing.expect_value(t,grid_dense(&source.field),page_samples)
     source.allocator=runtime.nil_allocator()
     testing.expect_value(t,source_edit(&source,{kind=.Raise,center={32,0,32},radius=0.4,amount=1}).error,Edit_Error.Out_Of_Memory)
     source.allocator=context.allocator
-    testing.expect_value(t,source_value(&source,{64,0,64}),f32(0))
+    testing.expect_value(t,source_value(&source,{64,0,64}) or_else 0,f32(0))
 }
 
 @(test)

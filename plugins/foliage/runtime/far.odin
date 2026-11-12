@@ -1,6 +1,7 @@
 package foliage
 
 import "base:runtime"
+import "core:math"
 import "core:math/linalg"
 import "mirai:core"
 import render "mirai:engine/render"
@@ -15,30 +16,46 @@ import mm "mirai:std/math"
 // the mesh and the appearance of the impostor share the pattern of the
 // batches, so the instance stays whole), and the rays meet its crown instead
 // of its leaves. Both are made once per asset a type shows (its mesh or its
-// prefab) in each world, when a type first shows it, and made again when it
-// changes, as any cooking: the frames by the render of the thumbnails
-// (render.impostor_capture), the crown from the triangles of the mesh
-// (crown_build). A cell decides by its distance to the streaming sources
+// prefab) and frame size in each world, when a type first shows it, and made
+// again when it changes, as any cooking: the frames by the render of the
+// thumbnails (render.impostor_capture), the crown from the triangles of the
+// mesh (crown_build). A cell decides by its distance to the streaming sources
 // which of the two the rays meet: its mesh within the distance where the
 // mesh is gone, its crown past it.
 
-IMPOSTOR_GRID :: 8      // frames a side of the atlas of an impostor
-IMPOSTOR_FRAME :: 128   // pixels a side of a frame
+IMPOSTOR_GRID :: 8         // frames a side of the atlas of an impostor
+IMPOSTOR_FRAME_MIN :: 32   // pixels a side of a frame, at least
+IMPOSTOR_FRAME_MAX :: 256  // and at most
+// Pixels a unit of tangent across the view for which the frames are as sharp
+// as the mesh where it gives way to them: 1440 lines over 60 degrees.
+IMPOSTOR_FOCAL :: f32(1250)
 IMPOSTOR_BLEND :: f32(0.1) // of the impostor distance: how far past it the mesh fades out while the impostor shows
 IMPOSTOR_BUFFER :: "foliage impostors"
-IMPOSTOR_UPLOAD :: 4<<20 // bytes of instances a frame uploads at most
+IMPOSTOR_VISIBLE :: "foliage impostors visible"
+IMPOSTOR_DRAW :: "foliage impostors draw"
+IMPOSTOR_SLOTS_MIN :: 4096 // instances the buffer holds at least
+IMPOSTOR_NONE :: 0xFFFFFFFF // the row of a place of the buffer that holds no instance
+
+// What a far form is made of: the asset a type shows, and the pixels a side
+// of each of its frames.
+Kind_Key :: struct {
+    id:base.Asset_Id,
+    frame:u32,
+}
 
 // What a type shows far away, kept by the asset it shows.
 Resident_Kind :: struct {
-    id:base.Asset_Id,
-    made:bool,                          // its impostor and its crown were asked for
-    color,normal:render.Texture_Handle, // its frames; none when they could not be made
-    sphere:[4]f32,                      // centre and radius of its frames, in the space of the type
-    low,high:[3]f32,                    // the box of its mesh, which the batches of its mesh fade by
-    crown:base.Asset_Id,                // the mesh rays meet far away; none without dense voxels
-    crown_positions:[][3]f32,           // its triangles, which the crown of a cell is made of
+    key:Kind_Key,
+    made:bool,                                  // its impostor and its crown were asked for
+    color,normal,surface:render.Texture_Handle, // its frames; none when they could not be made
+    sphere:[4]f32,                              // centre and radius of its frames, in the space of the type
+    low,high:[3]f32,                            // the box of its mesh, which the batches of its mesh fade by
+    albedo:[3]f32,                              // the mean base color of its frames, linear: what rays see of its crown
+    transmission:[3]f32,                        // the color of the light its leaves let through
+    crown:base.Asset_Id,                        // the mesh rays meet far away; none without dense voxels
+    crown_positions:[][3]f32,                   // its triangles, which the crown of a cell is made of
     crown_indices:[]u32,
-    bake:^Kind_Bake,                    // what a job makes of it; nil once the renderer has it
+    bake:^Kind_Bake,                            // what a job makes of it; nil once the renderer has it
 }
 
 // Whether the mesh of a type gives way to an impostor before it is gone.
@@ -55,8 +72,31 @@ mesh_distances :: proc "contextless" (t:Foliage_Type,far:bool) -> (fade,cull:f32
     return
 }
 
-kind_find :: proc(resident:^Foliage_Resident,id:base.Asset_Id) -> ^Resident_Kind {
-    for &kind in resident.kinds {if kind.id==id {return &kind}}
+// The pixels a side of the frames of a type whose parts span a box of that
+// diagonal at scale 1: those its largest instance spans where its mesh gives
+// way to them, in a power of two.
+impostor_frame :: proc "contextless" (t:Foliage_Type,diagonal:f32) -> u32 {
+    across:=diagonal*max(t.scale[1],t.scale[1]*t.height[1])
+    pixels:=across/max(t.impostor_distance,1e-3)*IMPOSTOR_FOCAL
+    frame:=u32(IMPOSTOR_FRAME_MIN)
+    for frame<IMPOSTOR_FRAME_MAX && f32(frame)<pixels {frame*=2}
+    return frame
+}
+
+// The pixels a side of the frames of a type of those parts (impostor_frame).
+kind_frame :: proc(renderer:^render.Renderer,t:Foliage_Type,parts:[]Part_Draw) -> u32 {
+    low,high:=[3]f32{max(f32),max(f32),max(f32)},[3]f32{min(f32),min(f32),min(f32)}
+    for part in parts {
+        a,b,known:=render.mesh_bounds(renderer,part.desc.mesh)
+        if !known {continue}
+        a,b=box_placed(part.placement,a,b)
+        low,high=linalg.min(low,a),linalg.max(high,b)
+    }
+    return impostor_frame(t,low.x<=high.x?linalg.length(high-low):0)
+}
+
+kind_find :: proc(resident:^Foliage_Resident,key:Kind_Key) -> ^Resident_Kind {
+    for &kind in resident.kinds {if kind.key==key {return &kind}}
     return nil
 }
 
@@ -65,9 +105,9 @@ kind_find :: proc(resident:^Foliage_Resident,id:base.Asset_Id) -> ^Resident_Kind
 // fills out the frames, builds their levels and the crown in a job, given to
 // the renderer in a later frame. KINDS_A_FRAME of those steps a frame; -1
 // while it waits for one, or for its job.
-kind_ensure :: proc(resident:^Foliage_Resident,assets:^host.Assets,renderer:^render.Renderer,job_system:^jobs.Job_System,allocator:runtime.Allocator,id:base.Asset_Id,parts:[]Part_Draw,problems:^core.Problems,e:core.Entity) -> int {
+kind_ensure :: proc(resident:^Foliage_Resident,assets:^host.Assets,renderer:^render.Renderer,job_system:^jobs.Job_System,allocator:runtime.Allocator,key:Kind_Key,parts:[]Part_Draw,problems:^core.Problems,e:core.Entity) -> int {
     for &kind,i in resident.kinds {
-        if kind.id!=id {continue}
+        if kind.key!=key {continue}
         if kind.bake==nil {return i}
         if jobs.pending(&kind.bake.counter) || resident.kinds_left<=0 {return -1}
         resident.kinds_left-=1
@@ -77,8 +117,8 @@ kind_ensure :: proc(resident:^Foliage_Resident,assets:^host.Assets,renderer:^ren
     if resident.kinds_left<=0 {return -1}
     // Drawing its frames is the work of a frame: no cell is built with it.
     resident.kinds_left-=1
-    resident.cells_left=0
-    if _,error:=append(&resident.kinds,Resident_Kind{id=id});error!=nil {memory_problem(problems,e,"the far form of a type");return -1}
+    resident.instances_left=0
+    if _,error:=append(&resident.kinds,Resident_Kind{key=key});error!=nil {memory_problem(problems,e,"the far form of a type");return -1}
     kind:=&resident.kinds[len(resident.kinds)-1]
     if !kind_make(kind,assets,renderer,job_system,parts) {
         pop(&resident.kinds)
@@ -88,7 +128,7 @@ kind_ensure :: proc(resident:^Foliage_Resident,assets:^host.Assets,renderer:^ren
     return kind.bake==nil?len(resident.kinds)-1:-1
 }
 
-kind_ready :: proc "contextless" (kind:^Resident_Kind) -> bool {return kind!=nil && kind.color!=0 && kind.normal!=0}
+kind_ready :: proc "contextless" (kind:^Resident_Kind) -> bool {return kind!=nil && kind.color!=0 && kind.normal!=0 && kind.surface!=0}
 
 // The box of a box of its own space under a transform.
 @(private)
@@ -109,7 +149,8 @@ Kind_Bake :: struct {
     images:render.Impostor_Images,
     captured:bool,
     max_size:int, // render.texture_max_size when its frames were drawn
-    color,normal:render.Texture_Data,
+    color,normal,surface:render.Texture_Data,
+    albedo:[3]f32,
     built:bool,
     positions:[dynamic][3]f32, // the triangles of its meshes, in the space of the type
     indices:[dynamic]u32,
@@ -143,8 +184,11 @@ kind_make :: proc(kind:^Resident_Kind,assets:^host.Assets,renderer:^render.Rende
     geom.mesh_buffer_init(&bake.crown,heap)
     host.assets_render_geometry_init(&bake.made,heap)
     if assets!=nil {bake.limits=host.assets_limits(assets)}
-    bake.images,bake.captured=render.impostor_capture(renderer,pieces[:],IMPOSTOR_GRID,IMPOSTOR_FRAME,heap)
-    if bake.captured {kind.sphere={bake.images.center.x,bake.images.center.y,bake.images.center.z,bake.images.radius}}
+    bake.images,bake.captured=render.impostor_capture(renderer,pieces[:],IMPOSTOR_GRID,kind.key.frame,heap)
+    if bake.captured {
+        kind.sphere={bake.images.center.x,bake.images.center.y,bake.images.center.z,bake.images.radius}
+        kind.transmission=bake.images.transmission
+    }
     bake.max_size=render.texture_max_size(renderer)
     for part in parts {
         first:=len(bake.positions)
@@ -160,19 +204,39 @@ kind_make :: proc(kind:^Resident_Kind,assets:^host.Assets,renderer:^render.Rende
     return true
 }
 
-// A job: the frames of a kind filled out and built into levels, and its crown.
+// A job: the frames of a kind filled out and built into levels, their mean
+// color, and its crown.
 @(private)
 kind_bake :: proc(bake:^Kind_Bake,worker:int) {
     context.allocator=runtime.heap_allocator()
     if bake.captured {
+        bake.albedo=frames_albedo(bake.images.color)
         render.impostor_dilate(&bake.images)
         side:=int(bake.images.grid*bake.images.frame)
         color,color_built:=render.texture_build({pixels=bake.images.color,width=side,height=side,srgb=true,alpha_coverage=0.5},bake.max_size)
         normal,normal_built:=render.texture_build({pixels=bake.images.normal,width=side,height=side,normal_map=true},bake.max_size)
-        bake.color,bake.normal,bake.built=color,normal,color_built && normal_built
+        surface,surface_built:=render.texture_build({pixels=bake.images.surface,width=side,height=side},bake.max_size)
+        bake.color,bake.normal,bake.surface,bake.built=color,normal,surface,color_built && normal_built && surface_built
     }
     bake.crowned=len(bake.indices)>0 && crown_build(bake.positions[:],bake.indices[:],&bake.crown)
     bake.meshed=bake.crowned && host.assets_render_geometry_make(geom.mesh_buffer_view(&bake.crown),nil,0,&bake.made,bake.limits)
+}
+
+// The mean base color of the covered texels of frames (sRGB, RGBA8), linear;
+// mid grey where none is covered.
+frames_albedo :: proc "contextless" (color:[]u8) -> [3]f32 {
+    sum:[3]f64
+    count:f64
+    for i:=0;i+3<len(color);i+=4 {
+        if color[i+3]==0 {continue}
+        for c in 0..<3 {
+            s:=f64(color[i+c])/255
+            sum[c]+=s<=0.04045?s/12.92:math.pow((s+0.055)/1.055,2.4)
+        }
+        count+=1
+    }
+    if count==0 {return {0.5,0.5,0.5}}
+    return {f32(sum[0]/count),f32(sum[1]/count),f32(sum[2]/count)}
 }
 
 // Gives the renderer what the job of a kind made.
@@ -183,10 +247,11 @@ kind_finish :: proc(assets:^host.Assets,renderer:^render.Renderer,allocator:runt
     if bake.built {
         kind.color,_=render.texture_add_built(renderer,bake.color,"foliage impostor color")
         kind.normal,_=render.texture_add_built(renderer,bake.normal,"foliage impostor normal")
-        if kind.color==0 || kind.normal==0 {
-            if kind.color!=0 {render.texture_remove(renderer,kind.color)}
-            if kind.normal!=0 {render.texture_remove(renderer,kind.normal)}
-            kind.color,kind.normal=0,0
+        kind.surface,_=render.texture_add_built(renderer,bake.surface,"foliage impostor surface")
+        kind.albedo=bake.albedo
+        if kind.color==0 || kind.normal==0 || kind.surface==0 {
+            for texture in ([]render.Texture_Handle{kind.color,kind.normal,kind.surface}) {if texture!=0 {render.texture_remove(renderer,texture)}}
+            kind.color,kind.normal,kind.surface=0,0,0
         }
     }
     if bake.meshed && assets!=nil {
@@ -215,6 +280,7 @@ kind_bake_free :: proc(kind:^Resident_Kind) {
     render.impostor_images_destroy(&bake.images,heap)
     render.texture_data_destroy(&bake.color,heap)
     render.texture_data_destroy(&bake.normal,heap)
+    render.texture_data_destroy(&bake.surface,heap)
     delete(bake.positions);delete(bake.indices)
     geom.mesh_buffer_destroy(&bake.crown)
     host.assets_render_geometry_destroy(&bake.made)
@@ -228,137 +294,231 @@ kind_free :: proc(app:^host.App,kind:^Resident_Kind) {
         kind_bake_free(kind)
     }
     if app!=nil {
-        if kind.color!=0 {render.texture_remove(app.renderer,kind.color)}
-        if kind.normal!=0 {render.texture_remove(app.renderer,kind.normal)}
+        for texture in ([]render.Texture_Handle{kind.color,kind.normal,kind.surface}) {if texture!=0 {render.texture_remove(app.renderer,texture)}}
         if kind.crown!={} && app.assets!=nil {host.assets_mesh_release(app.assets,kind.crown)}
     }
     if app!=nil {delete(kind.crown_positions,app.allocator);delete(kind.crown_indices,app.allocator)}
-    kind^={id=kind.id}
-}
-
-// An impostor of a cell: an instance of its type as its batches place it
-// (in the world), and the index of the type in its source.
-Impostor_Placed :: struct {
-    instance:render.Batch_Instance,
-    type:u32,
+    kind^={key=kind.key}
 }
 
 // What the shaders read (foliage_impostor.slang): an instance relative to
-// the anchor of all of them, and the row of its Foliage and type.
+// the anchor of all of them, and its row: the slot of its Foliage
+// (Resident_Owner.slot) in the high half, the index of its type in the low.
 Impostor_Instance :: struct {
     position:[3]f32,
-    rotation,scale,row:u32,
+    rotation:u32,
+    scale:[4]u16,
+    row:u32,
+    color:u32, // its tint and wetness (render.batch_color)
 }
-#assert(size_of(Impostor_Instance)==24)
+#assert(size_of(Impostor_Instance)==32)
 
 Impostor_Row :: struct {
     sphere:[4]f32,
-    low,high:[4]f32, // w: where the mesh fades out, and where it is gone
-    frames:[4]u32,   // the textures of color and of normal, frames a side, pixels a side of a frame
-    far:[4]f32,      // where the impostor fades out, and where it is gone (0: never); z: the sway of its type (sway_amount)
+    low,high:[4]f32,     // w: where the mesh fades out, and where it is gone
+    frames:[4]u32,       // the textures of color, of normal and of surface; frames a side | pixels a side of a frame << 16
+    far:[4]f32,          // where the impostor fades out, and where it is gone (0: never); z: the sway of its type (sway_amount)
+    transmission:[4]f32, // the color of the light its leaves let through
 }
 
-// The impostors of the world: the rows of every type of every Foliage, the
-// instances of every resident cell, and what of them the buffer of the world holds.
+// A run of the instances of the buffer that a cell holds.
+Impostor_Block :: struct {
+    first,count,capacity:u32,
+    used:bool,
+}
+
+// The impostors of the world, in the buffer of the world by blocks, one a
+// cell: a cell that changes writes its block alone, and the buffer keeps
+// what it held until the next draw takes the change. Each view culls them on
+// the GPU (foliage_impostor_cull.comp) and draws those it sees.
 Impostor_Draw :: struct {
-    instances:[dynamic]Impostor_Instance,
+    instances:[dynamic]Impostor_Instance, // what the buffer holds; IMPOSTOR_NONE rows where no block is
+    blocks:[dynamic]Impostor_Block,
+    writes:[dynamic][2]u32, // first and count of the instances the buffer is to take
     rows:[dynamic]Impostor_Row,
-    anchor:[3]f32,  // a multiple of render.ORIGIN_STEP the positions are from
-    count:int,      // the instances to draw
-    written:int,    // of them, those the buffer holds
-    capacity:u64,   // bytes of the buffer
-    dirty:bool,     // the impostors of a cell changed: built again
+    bases:[dynamic]u32,     // the first row of each slot of a Foliage
+    anchor:[3]f32,          // a multiple of render.ORIGIN_STEP the positions are from
+    count:int,              // instances its blocks hold
+    capacity:u64,           // bytes of the buffer
+    whole:bool,             // the buffer was made again: it holds nothing until all of them are written
 }
 
 impostor_draw_destroy :: proc(d:^Impostor_Draw) {
-    delete(d.instances);delete(d.rows)
+    delete(d.instances);delete(d.blocks);delete(d.writes);delete(d.rows);delete(d.bases)
     d^={}
 }
 
+// Forgets every block: the cells that held them are gone.
+impostor_draw_clear :: proc(d:^Impostor_Draw) {
+    clear(&d.instances);clear(&d.blocks);clear(&d.writes)
+    d.count=0
+}
+
+// Gives the block of a cell (block: its index plus one, 0 for none) the
+// instances given, placed in the world: in its own room while they fit, else
+// in a free block or a new one at the end, and the old one goes. False
+// without memory, with the block as it was.
+impostors_set :: proc(d:^Impostor_Draw,block:^u32,given:[]Impostor_Instance) -> bool {
+    n:=u32(len(given))
+    if n==0 {
+        impostors_free(d,block)
+        return true
+    }
+    if len(d.instances)==0 {
+        p:=given[0].position
+        d.anchor={f32(i64(p.x/render.ORIGIN_STEP))*render.ORIGIN_STEP,f32(i64(p.y/render.ORIGIN_STEP))*render.ORIGIN_STEP,f32(i64(p.z/render.ORIGIN_STEP))*render.ORIGIN_STEP}
+    }
+    at:=-1
+    if block^>0 && n<=d.blocks[block^-1].capacity {at=int(block^-1)}
+    if at<0 {
+        for b,i in d.blocks {
+            if !b.used && b.capacity>=n && b.capacity<=2*n {at=i;break}
+        }
+        if at<0 {
+            first:=len(d.instances)
+            if resize(&d.instances,first+int(n))!=nil {return false}
+            if _,error:=append(&d.blocks,Impostor_Block{first=u32(first),capacity=n});error!=nil {
+                base.truncate(&d.instances,first)
+                return false
+            }
+            at=len(d.blocks)-1
+        }
+        d.blocks[at].used,d.blocks[at].count=true,0
+        impostors_free(d,block)
+    }
+    if _,error:=append(&d.writes,[2]u32{d.blocks[at].first,max(n,d.blocks[at].count)});error!=nil {
+        if d.blocks[at].count==0 {d.blocks[at].used=false}
+        return false
+    }
+    b:=&d.blocks[at]
+    for g,k in given {
+        d.instances[b.first+u32(k)]=g
+        d.instances[b.first+u32(k)].position=g.position-d.anchor
+    }
+    for k in n..<b.count {d.instances[b.first+k].row=IMPOSTOR_NONE}
+    d.count+=int(n)-int(b.count)
+    b.count=n
+    block^=u32(at+1)
+    return true
+}
+
+// Lets go of the block of a cell: what it held is drawn no more, and the
+// free blocks at the end give their room back.
+impostors_free :: proc(d:^Impostor_Draw,block:^u32) {
+    if block^==0 {return}
+    b:=&d.blocks[block^-1]
+    block^=0
+    for k in 0..<b.count {d.instances[b.first+k].row=IMPOSTOR_NONE}
+    if b.count>0 {append(&d.writes,[2]u32{b.first,b.count})}
+    d.count-=int(b.count)
+    b.count,b.used=0,false
+    for len(d.blocks)>0 && !d.blocks[len(d.blocks)-1].used {
+        last:=pop(&d.blocks)
+        base.truncate(&d.instances,int(last.first))
+    }
+}
+
 // The row of a type of a Foliage: its frames and the distances that fade
-// them in and out. Zero, and never drawn, for a type without them.
-impostor_row :: proc(resident:^Foliage_Resident,t:^Foliage_Type) -> (row:Impostor_Row) {
+// them in and out, scaled as the meshes are (Foliage_Resident.detail). Zero,
+// and never drawn, for a type without them.
+impostor_row :: proc(resident:^Foliage_Resident,t:^Foliage_Type,key:Kind_Key) -> (row:Impostor_Row) {
     if !type_far(t^) {return}
-    id:=t.mesh if t.mesh!={} else t.prefab
-    kind:=kind_find(resident,id)
+    kind:=kind_find(resident,key)
     if !kind_ready(kind) {return}
+    distance:=resident.detail[1]
     fade,cull:=mesh_distances(t^,true)
     row.sphere=kind.sphere
-    row.low={kind.low.x,kind.low.y,kind.low.z,fade}
-    row.high={kind.high.x,kind.high.y,kind.high.z,cull}
-    row.frames={render.texture_index(kind.color),render.texture_index(kind.normal),IMPOSTOR_GRID,IMPOSTOR_FRAME}
-    row.far={t.fade_distance,t.cull_distance,sway_amount(t^),0}
+    row.low={kind.low.x,kind.low.y,kind.low.z,fade*distance}
+    row.high={kind.high.x,kind.high.y,kind.high.z,cull*distance}
+    row.frames={render.texture_index(kind.color),render.texture_index(kind.normal),render.texture_index(kind.surface),IMPOSTOR_GRID | key.frame<<16}
+    row.far={t.fade_distance*distance,t.cull_distance*distance,sway_amount(t^),0}
+    row.transmission={kind.transmission.x,kind.transmission.y,kind.transmission.z,0}
     return
 }
 
-// The rows and instances of the impostors of every resident cell of each
-// Foliage, from the anchor nearest the first of them.
-impostors_build :: proc(resident:^Foliage_Resident,data:^Foliage_Data) {
+// The rows of the types of every Foliage, those of each from the base of its slot.
+impostor_rows_build :: proc(resident:^Foliage_Resident,data:^Foliage_Data) {
     d:=&resident.impostors
-    d.dirty=false
-    clear(&d.instances);clear(&d.rows)
-    anchored:=false
+    clear(&d.rows);clear(&d.bases)
     for &owner in resident.owners {
         entry:=data_find(data,owner.source)
         if entry==nil {continue}
-        base_row:=u32(len(d.rows))
-        for &t in entry.source.types {append(&d.rows,impostor_row(resident,&t))}
-        for &cell in owner.cells {
-            for placed in cell.impostors {
-                if int(placed.type)>=len(entry.source.types) {continue}
-                if !anchored {
-                    p:=placed.instance.position
-                    d.anchor={f32(i64(p.x/render.ORIGIN_STEP))*render.ORIGIN_STEP,f32(i64(p.y/render.ORIGIN_STEP))*render.ORIGIN_STEP,f32(i64(p.z/render.ORIGIN_STEP))*render.ORIGIN_STEP}
-                    anchored=true
-                }
-                b:=placed.instance
-                append(&d.instances,Impostor_Instance{position=b.position-d.anchor,rotation=b.rotation,scale=b.scale,row=base_row+placed.type})
-            }
-        }
-    }
-    d.count,d.written=len(d.instances),0
-    need:=u64(max(d.count,1)*size_of(Impostor_Instance))
-    if d.capacity<need || d.capacity>4*need && d.capacity>64<<10 {
-        d.capacity=64<<10
-        for d.capacity<need {d.capacity*=2}
-        // A multiple of the instance and of 4 bytes, as a buffer of the world takes it.
-        d.capacity-=d.capacity%size_of(Impostor_Instance)
-        for d.capacity<need {d.capacity+=size_of(Impostor_Instance)}
+        if int(owner.slot)>=len(d.bases) && resize(&d.bases,int(owner.slot)+1)!=nil {return}
+        d.bases[owner.slot]=u32(len(d.rows))
+        for &t,i in entry.source.types {append(&d.rows,impostor_row(resident,&t,i<len(owner.kinds)?owner.kinds[i]:{}))}
     }
 }
 
-// The impostors of the world into the G-buffer of each view: one quad an
-// instance, which the shaders leave out where its mesh is still whole.
+// The impostors of the world into the G-buffer of each view: what changed
+// goes to the buffer, a dispatch keeps those in the band of their type and
+// in the view, and one draw makes a quad of each.
 @(private)
 foliage_impostors_record :: proc(pass:^render.Pass,user:rawptr) {
     resident:=cast(^Foliage_Resident)user
     d:=&resident.impostors
-    if pass.world!=render.world_key(resident.world) || d.count==0 || len(d.rows)==0 {return}
-    pipeline:=render.pass_gbuffer_pipeline(pass,"foliage_impostor","foliage impostors","foliage_impostor")
-    if pipeline==0 {return}
-    desc:=render.Buffer_Desc{name=IMPOSTOR_BUFFER,size=d.capacity}
-    ok,made:=render.pass_buffer(pass,0,desc)
-    if !ok {return}
-    if made {d.written=0}
-    if d.written<d.count {
-        n:=min(d.count-d.written,IMPOSTOR_UPLOAD/size_of(Impostor_Instance))
-        if render.pass_buffer_write(pass,desc,u64(d.written*size_of(Impostor_Instance)),&d.instances[d.written],n*size_of(Impostor_Instance)) {d.written+=n}
+    if pass.world!=render.world_key(resident.world) || d.count==0 || len(d.rows)==0 || len(d.bases)==0 {return}
+    draw:=render.pass_gbuffer_pipeline(pass,"foliage_impostor","foliage impostors","foliage_impostor")
+    cull:=render.pass_stage_pipeline(pass,{stage=.Simulate,shader="foliage_impostor_cull",name="foliage impostor cull"})
+    if draw==0 || cull==0 {return}
+    held:=u64(len(d.instances))
+    slots:=d.capacity/size_of(Impostor_Instance)
+    if slots<held || slots>4*held && slots>IMPOSTOR_SLOTS_MIN {
+        slots=IMPOSTOR_SLOTS_MIN
+        for slots<held {slots*=2}
+        d.capacity=slots*size_of(Impostor_Instance)
     }
-    if d.written==0 {return}
+    instances:=render.Buffer_Desc{name=IMPOSTOR_BUFFER,size=d.capacity}
+    visible:=render.Buffer_Desc{name=IMPOSTOR_VISIBLE,size=slots*4}
+    args:=render.Buffer_Desc{name=IMPOSTOR_DRAW,size=16}
+    ok,made:=render.pass_buffer(pass,0,instances)
+    if !ok {return}
+    if made {
+        d.whole=true
+        clear(&d.writes)
+        append(&d.writes,[2]u32{0,u32(held)})
+    }
+    // What does not fit in the memory of the frame waits for the next one.
+    kept:=0
+    for w in d.writes {
+        if u64(w[0])>=held {continue}
+        count:=min(w[1],u32(held)-w[0])
+        if count==0 {continue}
+        if render.pass_buffer_write(pass,instances,u64(w[0])*size_of(Impostor_Instance),&d.instances[w[0]],int(count)*size_of(Impostor_Instance)) {
+            if w[0]==0 && u64(count)==held {d.whole=false}
+            continue
+        }
+        d.writes[kept]=w
+        kept+=1
+    }
+    base.truncate(&d.writes,kept)
+    if d.whole {return}
+    seen,_:=render.pass_buffer(pass,1,visible)
+    counted,_:=render.pass_buffer(pass,2,args)
+    start:=[4]u32{6,0,0,0}
+    if !seen || !counted || !render.pass_buffer_write(pass,args,0,&start,size_of(start)) {return}
     rows,uploaded:=render.pass_rows_upload(pass,raw_data(d.rows),len(d.rows)*size_of(Impostor_Row))
-    if !uploaded {return}
-    render.pass_gbuffer_begin(pass,"foliage impostors")
-    render.pass_pipeline(pass,pipeline)
-    render.pass_buffer(pass,0,desc)
-    render.pass_rows(pass,1,rows)
+    bases,based:=render.pass_rows_upload(pass,raw_data(d.bases),len(d.bases)*size_of(u32))
+    if !uploaded || !based {return}
     anchor:=render.origin_point(d.anchor,pass.origin)
-    params:=[4]f32{anchor.x,anchor.y,anchor.z,0}
-    if render.pass_params(pass,&params,size_of(params)) {render.pass_draw(pass,6,u32(d.written))}
+    Params :: struct {anchor:[4]f32,count:[4]u32}
+    params:=Params{anchor={anchor.x,anchor.y,anchor.z,0},count={u32(held),0,0,0}}
+    render.pass_pipeline(pass,cull)
+    render.pass_rows(pass,3,rows)
+    render.pass_rows(pass,4,bases)
+    if !render.pass_params(pass,&params,size_of(params)) {return}
+    render.pass_dispatch(pass,(u32(held)+63)/64)
+    render.pass_gbuffer_begin(pass,"foliage impostors")
+    render.pass_pipeline(pass,draw)
+    render.pass_buffer(pass,0,instances)
+    render.pass_buffer(pass,1,visible)
+    render.pass_rows(pass,3,rows)
+    render.pass_rows(pass,4,bases)
+    if render.pass_params(pass,&params,size_of(params)) {render.pass_draw_indirect(pass,args,0)}
     render.pass_end(pass)
 }
 
 // Past CELL_CROWN_REACH times the reach of the meshes of its types, a cell
-// gives rays one crown for all the instances of its types that cast shadows
+// gives rays one crown for all the instances of its types that rays meet far
 // in place of a crown each: one entry of the structure of rays a cell, and
 // a BLAS of the cell, coarse and opaque, made as the crown of a type is
 // (crown_build) of the crowns of its instances, in the space of its
@@ -368,8 +528,7 @@ CELL_CROWN_REACH :: f32(4)
 // The crown of a cell, into out: of the crowns of the instances placed (in
 // the space of their Foliage), each from the triangles of the crown of its
 // type, crowns[type] (type: the index of the type); a type without them
-// gives none. False when there is
-// nothing to cover.
+// gives none. False when there is nothing to cover.
 cell_crown_build :: proc(placed:[]Placed,crowns:[]Crown_Triangles,out:^geom.Mesh_Buffer) -> bool {
     positions:=make([dynamic][3]f32,context.temp_allocator)
     indices:=make([dynamic]u32,context.temp_allocator)
@@ -391,4 +550,14 @@ cell_crown_build :: proc(placed:[]Placed,crowns:[]Crown_Triangles,out:^geom.Mesh
 Crown_Triangles :: struct {
     positions:[][3]f32,
     indices:[]u32,
+}
+
+// What rays meet of the crown of a type: it casts shadows if the type does,
+// and reflections and indirect light see it, in the mean color of its
+// frames, if they see the type.
+crown_flags :: proc "contextless" (t:^Foliage_Type) -> (flags:render.Batch_Flags) {
+    flags={.Rays_Only}
+    if t.casts_shadow {flags+={.Casts_Shadow}}
+    if t.ray_visible {flags+={.Ray_Visible}}
+    return
 }

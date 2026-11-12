@@ -137,7 +137,7 @@ PRIMITIVE_TRIANGLE_BITS :: 7
 PAGE_SLOT_WORDS         :: asset.MESH_PAGE_WORDS
 PAGE_REQUEST_FIRST      :: 4
 BATCH_GROUP             :: 64
-BATCH_WORDS             :: 5
+BATCH_WORDS             :: 6
 // Of a pose, from Gpu_Mesh.bounds_word, POSED_BOUNDS_WORDS for each cluster it
 // poses as the skin wrote them this frame: the low corner of its box and its
 // flags (POSED_BOUNDS_BOX, POSED_BOUNDS_CONE, and in bits 8-15 the cutoff of

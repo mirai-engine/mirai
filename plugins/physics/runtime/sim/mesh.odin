@@ -33,8 +33,13 @@ Heightfield :: struct {
     aabb:Aabb,
     disabled_borders:[]u8, // MinX, MaxX (rows-1 each), MinZ, MaxZ (columns-1 each); bytes 0 or 1
     holes:[]u8,            // one per cell, row after row, or none: 1 where the cell has no surface
+    surfaces:[]Surface,    // what its cells show; none: the surface of the shape
+    cell_surfaces:[]u8,    // one per cell, row after row, its index in surfaces; none: every cell shows the first
 }
-Heightfield_Desc :: struct {heights:[]f32,columns,rows:int,cell:Vec3,disabled_borders:[]u8,holes:[]u8}
+Heightfield_Desc :: struct {heights:[]f32,columns,rows:int,cell:Vec3,disabled_borders:[]u8,holes:[]u8,surfaces:[]Surface,cell_surfaces:[]u8}
+
+// Most surfaces a heightfield names: its cells index them with a byte.
+HEIGHTFIELD_SURFACES :: 256
 
 // An inner edge can be hit only where the surface folds down by more than this sine.
 @(private) ACTIVE_EDGE_SINE :: 0.05
@@ -238,11 +243,13 @@ heightfield_geometry :: proc(w:^World,h:Heightfield_Handle) -> ^Heightfield {
     return slot!=nil?&slot.field:nil
 }
 
-@(private)
+// Frees what a heightfield made outside a world holds, as heightfield_destroy does inside one.
 heightfield_free :: proc(field:^Heightfield,allocator:mem.Allocator) {
     delete(field.heights,allocator)
     delete(field.disabled_borders,allocator)
     delete(field.holes,allocator)
+    delete(field.surfaces,allocator)
+    delete(field.cell_surfaces,allocator)
     field^={}
 }
 
@@ -257,6 +264,8 @@ heightfield_create :: proc(w:^World,desc:Heightfield_Desc) -> (Heightfield_Handl
         if len(desc.holes)!=(desc.columns-1)*(desc.rows-1) {return {},false}
         for hole in desc.holes {if hole>1 {return {},false}}
     }
+    if len(desc.surfaces)>HEIGHTFIELD_SURFACES || len(desc.cell_surfaces)>0 && (len(desc.surfaces)==0 || len(desc.cell_surfaces)!=(desc.columns-1)*(desc.rows-1)) {return {},false}
+    for surface in desc.cell_surfaces {if int(surface)>=len(desc.surfaces) {return {},false}}
     if !(desc.cell.x>0 && desc.cell.y>0 && desc.cell.z>0) || !finite(desc.cell) {return {},false}
     extent:=Vec3{f32(desc.columns-1)*desc.cell.x,0,f32(desc.rows-1)*desc.cell.z}
     if !finite(extent) {return {},false}
@@ -271,13 +280,21 @@ heightfield_create :: proc(w:^World,desc:Heightfield_Desc) -> (Heightfield_Handl
         holes,holes_error:=make([]u8,len(desc.holes),w.allocator)
         if holes_error!=nil {delete(heights,w.allocator);delete(borders,w.allocator);return {},false}
         copy(holes,desc.holes)
+        field:=Heightfield{heights=heights,columns=desc.columns,rows=desc.rows,cell=desc.cell,disabled_borders=borders,holes=holes}
+        surfaces_error,cells_error:mem.Allocator_Error
+        field.surfaces,surfaces_error=make([]Surface,len(desc.surfaces),w.allocator)
+        field.cell_surfaces,cells_error=make([]u8,len(desc.cell_surfaces),w.allocator)
+        if surfaces_error!=nil || cells_error!=nil {heightfield_free(&field,w.allocator);return {},false}
+        copy(field.surfaces,desc.surfaces)
+        copy(field.cell_surfaces,desc.cell_surfaces)
         low,high:=max(f32),min(f32)
         for h in heights {
             height:=h*desc.cell.y
-            if height-height!=0 {delete(heights,w.allocator);delete(borders,w.allocator);delete(holes,w.allocator);return {},false}
+            if height-height!=0 {heightfield_free(&field,w.allocator);return {},false}
             low,high=min(low,height),max(high,height)
         }
-        slot.field={heights,desc.columns,desc.rows,desc.cell,{{0,low,0},{extent.x,high,extent.z}},borders,holes}
+        field.aabb={{0,low,0},{extent.x,high,extent.z}}
+        slot.field=field
         slot.generation+=1
         slot.refs=0
         return Heightfield_Handle(base.handle_make(u32(index),slot.generation)),true
@@ -303,6 +320,17 @@ heightfield_point :: #force_inline proc "contextless" (field:^Heightfield,column
 heightfield_hole :: #force_inline proc "contextless" (field:^Heightfield,column,row:int) -> bool #no_bounds_check {
     if column<0 || row<0 || column>=field.columns-1 || row>=field.rows-1 {return true}
     return len(field.holes)>0 && field.holes[row*(field.columns-1)+column]!=0
+}
+
+// The index in its surfaces of what a cell shows; 0 without them.
+@(private)
+heightfield_cell_surface :: #force_inline proc "contextless" (field:^Heightfield,column,row:int) -> u32 #no_bounds_check {
+    return len(field.cell_surfaces)>0?u32(field.cell_surfaces[row*(field.columns-1)+column]):0
+}
+
+// The surface of a heightfield of index index; zero, that of the shape, past its surfaces.
+heightfield_surface :: proc "contextless" (field:^Heightfield,index:u32) -> Surface {
+    return int(index)<len(field.surfaces)?field.surfaces[index]:{}
 }
 
 // The two triangles of a cell with the flags of their edges; open false for
@@ -336,7 +364,7 @@ heightfield_cell :: proc "contextless" (field:^Heightfield,column,row:int) -> (t
 }
 
 @(private) CLUSTER_POINTS :: 24
-@(private) Triangle_Cluster :: struct {normal:Vec3,deepest:f32,count:int,points:[CLUSTER_POINTS]Local_Point}
+@(private) Triangle_Cluster :: struct {normal:Vec3,deepest:f32,surface:u32,count:int,points:[CLUSTER_POINTS]Local_Point} // surface: of its deepest triangle
 // Contact points of a convex shape against many triangles, grouped by normal. flat holds the contacts on
 // edges that cannot be hit, taken on the plane of their face: a direction takes them only when no triangle
 // gave it a contact of its own.
@@ -346,7 +374,7 @@ heightfield_cell :: proc "contextless" (field:^Heightfield,column,row:int) -> (t
 // and with inner edges that cannot be hit are dropped: those would catch bodies sliding over a flat surface.
 // `body` is the Convex of a box, hull or cylinder.
 @(private)
-triangle_collide :: proc(w:^World,collector:^Triangle_Collector,shape:^Shape,body:^Convex,xf:Transform,a,b,c:Vec3,flags:u8,index:u32,speculative:f32,bounds:Aabb) #no_bounds_check {
+triangle_collide :: proc(w:^World,collector:^Triangle_Collector,shape:^Shape,body:^Convex,xf:Transform,a,b,c:Vec3,flags:u8,index,surface:u32,speculative:f32,bounds:Aabb) #no_bounds_check {
     storage:Triangle_Hull=---
     triangle:=triangle_hull(&storage,a,b,c)
     normal:=storage.planes[0].n
@@ -433,17 +461,17 @@ triangle_collide :: proc(w:^World,collector:^Triangle_Collector,shape:^Shape,bod
             }
             m.normal=normal
             for &p in m.points[:m.count] {p.id~=index*0x9e3779b1}
-            cluster_add(collector.flat[:],&collector.flat_count,m.normal,m.points[:m.count])
+            cluster_add(collector.flat[:],&collector.flat_count,m.normal,surface,m.points[:m.count])
             return
         }
     }
     for &p in m.points[:m.count] {p.id~=index*0x9e3779b1}
-    cluster_add(collector.clusters[:],&collector.count,m.normal,m.points[:m.count])
+    cluster_add(collector.clusters[:],&collector.count,m.normal,surface,m.points[:m.count])
 }
 
 // Points along a normal into the cluster of that direction.
 @(private)
-cluster_add :: proc "contextless" (clusters:[]Triangle_Cluster,count:^int,normal:Vec3,points:[]Local_Point) #no_bounds_check {
+cluster_add :: proc "contextless" (clusters:[]Triangle_Cluster,count:^int,normal:Vec3,surface:u32,points:[]Local_Point) #no_bounds_check {
     deepest:=max(f32)
     for point in points {deepest=min(deepest,point.separation)}
     cluster:^Triangle_Cluster
@@ -470,6 +498,7 @@ cluster_add :: proc "contextless" (clusters:[]Triangle_Cluster,count:^int,normal
     if deepest<cluster.deepest {
         cluster.deepest=deepest
         cluster.normal=normal
+        cluster.surface=surface
     }
     for point in points {
         if cluster.count>=CLUSTER_POINTS {break}
@@ -516,7 +545,7 @@ collector_finish :: proc(collector:^Triangle_Collector,speculative:f32,out:^[1+E
     for &flat in collector.flat[:collector.flat_count] {
         owned:=false
         for cluster in collector.clusters[:collector.count] {owned||=dot(cluster.normal,flat.normal)>0.99}
-        if !owned {cluster_add(collector.clusters[:],&collector.count,flat.normal,flat.points[:flat.count])}
+        if !owned {cluster_add(collector.clusters[:],&collector.count,flat.normal,flat.surface,flat.points[:flat.count])}
     }
     clusters:=collector.clusters[:collector.count]
     for i in 1..<len(clusters) {
@@ -525,6 +554,7 @@ collector_finish :: proc(collector:^Triangle_Collector,speculative:f32,out:^[1+E
     count:=0
     for &cluster in clusters {
         out[count].normal=cluster.normal
+        out[count].surface=cluster.surface
         manifold_reduce(&out[count],cluster.points[:],cluster.count,speculative)
         if out[count].count>0 {count+=1}
     }
@@ -541,9 +571,10 @@ shape_aabb_at :: proc "contextless" (w:^World,shape:^Shape,xf:Transform) -> Aabb
 mesh_collide :: proc(w:^World,mesh:^Mesh,shape:^Shape,xf:Transform,speculative:f32,out:^[1+EXTRA_MANIFOLDS]Local_Manifold) -> int #no_bounds_check {
     box:=math.aabb_expand(shape_aabb_at(w,shape,xf),speculative)
     storage:Box_Hull=---
+    scaled:Scaled_Hull=---
     points:[8]Vec3=---
     body:Convex=---
-    if shape.type>=.Box {body=convex_of(w,shape,&points,&storage)}
+    if shape.type>=.Box {body=convex_of(w,shape,&points,&storage,&scaled)}
     collector:Triangle_Collector=---
     collector.count,collector.flat_count=0,0
     query:=spatial.bvh_query(&mesh.bvh,box)
@@ -552,7 +583,7 @@ mesh_collide :: proc(w:^World,mesh:^Mesh,shape:^Shape,xf:Transform,speculative:f
             triangle:=mesh.triangles[index]
             a,b,c:=mesh.vertices[triangle[0]],mesh.vertices[triangle[1]],mesh.vertices[triangle[2]]
             if !math.aabb_overlaps(box,{vmin(a,vmin(b,c)),vmax(a,vmax(b,c))}) {continue}
-            triangle_collide(w,&collector,shape,&body,xf,a,b,c,mesh.flags[index],index,speculative,box)
+            triangle_collide(w,&collector,shape,&body,xf,a,b,c,mesh.flags[index],index,0,speculative,box)
         }
     }
     return collector_finish(&collector,speculative,out)
@@ -574,19 +605,21 @@ heightfield_collide :: proc(w:^World,field:^Heightfield,shape:^Shape,xf:Transfor
     column0,column1,row0,row1,ok:=heightfield_cells(field,box)
     if !ok {return 0}
     storage:Box_Hull=---
+    scaled:Scaled_Hull=---
     points:[8]Vec3=---
     body:Convex=---
-    if shape.type>=.Box {body=convex_of(w,shape,&points,&storage)}
+    if shape.type>=.Box {body=convex_of(w,shape,&points,&storage,&scaled)}
     collector:Triangle_Collector=---
     collector.count,collector.flat_count=0,0
     for row in row0..=row1 {
         for column in column0..=column1 {
             triangles,flags,open:=heightfield_cell(field,column,row)
             if !open {continue}
+            surface:=heightfield_cell_surface(field,column,row)
             for triangle,i in triangles {
                 a,b,c:=triangle[0],triangle[1],triangle[2]
                 if box.min.y>max(a.y,b.y,c.y) || box.max.y<min(a.y,b.y,c.y) {continue}
-                triangle_collide(w,&collector,shape,&body,xf,a,b,c,flags[i],u32(2*(row*field.columns+column)+i),speculative,box)
+                triangle_collide(w,&collector,shape,&body,xf,a,b,c,flags[i],u32(2*(row*field.columns+column)+i),surface,speculative,box)
             }
         }
     }

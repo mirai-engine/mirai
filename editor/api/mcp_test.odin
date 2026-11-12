@@ -481,7 +481,7 @@ mcp_rejects_malformed_results :: proc(t:^testing.T) {
 }
 
 @(test)
-mcp_results_remain_bounded_and_recover_after_scratch_failure_without_allocations :: proc(t:^testing.T) {
+mcp_results_remain_bounded_and_are_checked_without_scratch_or_allocations :: proc(t:^testing.T) {
     s,ok:=test_server(t,{max_request=1024,max_response=4096});if !ok {return}
     defer server_destroy(&s)
     buffer:[3600]u8
@@ -501,6 +501,12 @@ mcp_results_remain_bounded_and_recover_after_scratch_failure_without_allocations
     testing.expect_value(t,integer(at(reply,"id")),8)
     testing.expect_value(t,integer(at(reply,"error","code")),SERVER_ERROR)
     testing.expect(t,at(reply,"result")==nil,"a partial result is never sent")
+    // A result the response holds goes whatever its escapes, with no scratch to check it in.
+    serial.writer_reset(&w)
+    raw(&w,`{"value":"`)
+    for _ in 0..<400 {raw(&w,`\n`)}
+    raw(&w,`"}`)
+    text=string(serial.writer_bytes(&w))
     saved_scratch:=s.scratch.arena.data
     s.scratch.arena.data=saved_scratch[:64]
     context.allocator=mem.nil_allocator()
@@ -509,9 +515,8 @@ mcp_results_remain_bounded_and_recover_after_scratch_failure_without_allocations
     context.allocator=saved_allocator
     s.scratch.arena.data=saved_scratch
     reply=parse_json(t,string(serial.writer_bytes(&s.out)))
-    testing.expect(t,is_bool(at(reply,"result","isError"),true))
-    testing.expect_value(t,integer(at(tool_text(t,reply),"error","code")),INTERNAL_ERROR)
-    testing.expect_value(t,s.stats.scratch_failures,1)
+    testing.expect(t,is_bool(at(reply,"result","isError"),false))
+    testing.expect_value(t,s.stats.scratch_failures,0)
     text=`{"value":42}`
     context.allocator=mem.nil_allocator()
     serial.writer_reset(&s.out)

@@ -45,12 +45,12 @@ geometry_test_step :: proc(g:^Geometry_Test) {
 }
 
 @(private)
-geometry_test_mesh :: proc(g:^Geometry_Test,heights:[]f32=nil,origin:[3]f32={},cell:[3]f32={1,1,1},disabled_borders:[]u8=nil) -> (base.Asset_Id,bool) {
+geometry_test_mesh :: proc(g:^Geometry_Test,heights:[]f32=nil,origin:[3]f32={},cell:[3]f32={1,1,1},disabled_borders:[]u8=nil,materials:[]base.Asset_Id=nil) -> (base.Asset_Id,bool) {
     positions:=[4]geom.Vec3{origin,origin+{cell.x,0,0},origin+{0,0,cell.z},origin+{cell.x,0,cell.z}}
     for &p,index in positions {if len(heights)==4 {p.y+=heights[index]*cell.y}}
     indices:=[6]u32{0,2,1,1,2,3}
     options:=host.Mesh_Generate_Options{no_lods=true,collision=len(heights)==0}
-    field:=host.Assets_Heightfield{heights=heights,columns=2,rows=2,cell=cell,origin=origin,disabled_borders=disabled_borders}
+    field:=host.Assets_Heightfield{heights=heights,columns=2,rows=2,cell=cell,origin=origin,disabled_borders=disabled_borders,materials=materials}
     if len(heights)>0 {options.heightfield=&field}
     return host.assets_mesh_generate(&g.assets,{positions=positions[:],indices=indices[:]},options=options)
 }
@@ -181,6 +181,30 @@ copying_physics_replaces_divergent_meshes_and_heightfields_with_equal_generation
 }
 
 @(test)
+a_collider_of_one_material_per_cell_names_it_in_hits_and_takes_its_collision_surface :: proc(t:^testing.T) {
+    g:Geometry_Test
+    if !geometry_test_init(t,&g) {return}
+    defer geometry_test_destroy(&g)
+    ice:=base.Asset_Id{7,0}
+    heights:=[4]f32{}
+    mesh,ok:=geometry_test_mesh(&g,heights[:],materials={ice})
+    testing.expect(t,ok)
+    e:=core.create(&g.entities)
+    core.add(&g.colliders,e,collider_heightfield())
+    core.add(&g.statics,e,render.Mesh_Renderer{mesh=mesh})
+    core.add(&g.transforms,e,core.TRANSFORM_IDENTITY)
+    g.collision.surfaces[0]={material=ice,friction=0.05,restitution=0.2}
+    g.collision.surfaces[1]={material=ice,friction=1}
+    g.collision.surfaces[2]={material={8,0},friction=-1}
+    geometry_test_step(&g)
+    hit,hit_ok:=raycast({&g.state},{0.5,3,0.5},{0,-1,0})
+    testing.expect(t,hit_ok && hit.material==ice)
+    rules:=sim.world_surface_rules(&g.state.world)
+    testing.expect(t,len(rules)==1 && rules[0]=={sim.Surface(ice),0.05,0.2},"the simulation takes each valid entry once")
+    testing.expect(t,g.problems.count>0,"a wrong entry is a problem")
+}
+
+@(test)
 copying_physics_gives_the_copy_its_own_heightfield_holes :: proc(t:^testing.T) {
     worlds:[2]Physics_State
     defer for &state in worlds {state_destroy(&state)}
@@ -193,7 +217,9 @@ copying_physics_gives_the_copy_its_own_heightfield_holes :: proc(t:^testing.T) {
         // The same heights and generation, a hole only in the first cell of the source.
         heights:=[6]f32{}
         holes:=[2]u8{index==0?1:0,0}
-        field,ok:=sim.heightfield_create(&state.world,{heights=heights[:],columns=3,rows=2,cell={1,1,1},holes=holes[:]})
+        surfaces:=[2]sim.Surface{{1,0},{2,0}}
+        cells:=[2]u8{0,u8(1-index)}
+        field,ok:=sim.heightfield_create(&state.world,{heights=heights[:],columns=3,rows=2,cell={1,1,1},holes=holes[:],surfaces=surfaces[:],cell_surfaces=cells[:]})
         testing.expect(t,ok)
         body_desc:=sim.BODY_DESC_DEFAULT
         body_desc.type=.Static
@@ -204,8 +230,8 @@ copying_physics_gives_the_copy_its_own_heightfield_holes :: proc(t:^testing.T) {
     state_copy(&worlds[1],&worlds[0])
     state_destroy(&worlds[0])
     _,in_hole:=raycast({&worlds[1]},{0.5,10,0.5},{0,-1,0})
-    _,beside:=raycast({&worlds[1]},{1.5,10,0.5},{0,-1,0})
-    testing.expect(t,!in_hole && beside)
+    hit,beside:=raycast({&worlds[1]},{1.5,10,0.5},{0,-1,0})
+    testing.expect(t,!in_hole && beside && hit.material==base.Asset_Id{2,0},"the copy takes the surfaces of its source")
 }
 
 @(test)

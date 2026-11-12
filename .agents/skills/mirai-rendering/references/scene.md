@@ -260,9 +260,13 @@ instances.
   it from a `Mesh_Renderer`. The material rows it derives (fade, override) live as long as the
   batch lives: `render_sync` retains them in each round of derived rows, so whoever publishes
   batches does not publish them again because what the entities show changes.
-- **`Batch_Instance`**: position in f32, rotation of `quat_pack` (std/math) and scale across (x
-  and z) and along y in half floats. An instance has no previous transform: a batch is still and
-  its motion vectors are those of the camera and those of the vertex hook.
+- **`Batch_Instance`**: position in f32, rotation of `quat_pack` (std/math) and a scale along each
+  of its axes in half floats. An instance has no previous transform: a batch is still and its
+  motion vectors are those of the camera and those of the vertex hook.
+- **Colors of its instances**: `batch_set` takes, or not, a word of each instance
+  (`batch_color`): a tint that multiplies that of the batch and its wetness, which
+  `scene_instance` gives the instance as an instance of the scene has them, so raster, rays and
+  shadows see them alike. A batch without them keeps no word for them.
 - **World.** Each batch belongs to a world (`world`, the key of `scene_world`) and those of the
   displayed world are drawn. Changing world, batches or the scene's instance count rebuilds the
   tables of the batches drawn in the next frame (`batches_build`); a stable frame does not touch

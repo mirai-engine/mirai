@@ -201,7 +201,10 @@ a_scroll_node_moves_what_does_not_fit_with_the_wheel :: proc(t:^testing.T) {
     s:Test_Kinds
     testing.expect(t,tree_init(&s.tree))
     defer tree_destroy(&s.tree)
-    area:=tree_node(&s.tree,-1,{kind=.Scroll,name="area",layout={width=fixed(100),height=fixed(50),direction=.Column,gap=0}})
+    track,knob:=Color{20,20,40,255},Color{250,200,0,255}
+    held:=Color{255,255,255,255}
+    skin,_:=tree_style(&s.tree,{track=track,knob=knob,mark=held,bar=10,radius={2,2,2,2}})
+    area:=tree_node(&s.tree,-1,{kind=.Scroll,name="area",style=skin,layout={width=fixed(100),height=fixed(50),direction=.Column,gap=0}})
     for i in 0..<5 {
         names:=[5]string{"a","b","c","d","e"}
         tree_node(&s.tree,area,{kind=.Spacer,name=names[i],layout={width=fixed(100),height=fixed(20)}})
@@ -215,6 +218,20 @@ a_scroll_node_moves_what_does_not_fit_with_the_wheel :: proc(t:^testing.T) {
     view:=test_rect(t,&ctx,id(&ctx,"scroll",1))
     last:=test_rect(t,&ctx,tree_element_id(&ctx,"last"))
     testing.expect_value(t,last.y,view.y+100)
+    // Its bar is of the track, the knob, the corners and the width of its style.
+    thumb:=test_rect(t,&ctx,scroll_bar_id(&ctx,id(&ctx,"scroll",1),true))
+    testing.expect(t,thumb.w==10,"the bar is as wide as its style says")
+    skinned:=0
+    for &p in ctx.paints[:ctx.paint_count] {
+        if p.kind==.Rect && p.corners=={2,2,2,2} && (p.fill==track || p.fill==knob) {skinned+=1}
+    }
+    testing.expect(t,skinned==2,"its track and its knob are of the colors and the corners of its style")
+    test_point(&input,thumb)
+    test_frame(&ctx,&input,test_kinds_build,&s)
+    lit:=false
+    for &p in ctx.paints[:ctx.paint_count] {lit||=p.kind==.Rect && p.fill==held}
+    testing.expect(t,lit,"the knob under the pointer is of its mark")
+    input.pointer={-100,-100}
     test_point(&input,view)
     input.wheel={0,-10}
     test_frame(&ctx,&input,test_kinds_build,&s)

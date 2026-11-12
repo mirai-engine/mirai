@@ -150,3 +150,73 @@ erode_drop :: proc "contextless" (h:[]f32,size:[2]int,start:[2]f32) {
     }
 }
 
+
+// Thermal of a Heightfield: where the ground stands steeper than its talus
+// toward a neighbor, half of what passes the steepest one slides down to the
+// neighbors below that slope, shared by how far past it each lies (the model
+// of Musgrave, Kolb and Mace). Eight neighbors at their distances, so a
+// slope settles alike along any direction, and every sample moves from the
+// same heights (Jacobi), so the order of the samples does not matter. What
+// slides is kept: the ground in the region weighs the same before and after.
+
+THERMAL_ITERATIONS :: 8 // slides of a touch
+
+@(private="file") THERMAL_NEIGHBORS :: [8][2]int{{-1,0},{1,0},{0,-1},{0,1},{-1,-1},{1,-1},{-1,1},{1,1}}
+
+@(private)
+source_thermal :: proc(s:^Source,brush:Brush,low,high:[3]int) -> (change:Change) {
+    size:=[2]int{high.x-low.x+1,high.z-low.z+1}
+    if size.x<2 || size.y<2 {return}
+    n:=size.x*size.y
+    if resize(&s.scratch,4*n)!=nil {return Change{error=.Out_Of_Memory}}
+    h,moved,weight,before:=s.scratch[:n],s.scratch[n:2*n],s.scratch[2*n:3*n],s.scratch[3*n:4*n]
+    origin:=source_origin(s)
+    for z in 0..<size.y {for x in 0..<size.x {
+        i:=x+size.x*z
+        h[i]=grid_get(&s.field,low.x+x,low.z+z)
+        point:=origin.xz+[2]f32{f32(low.x+x),f32(low.z+z)}*s.cell
+        distance:=linalg.length(point-brush.center.xz)
+        w:=distance<brush.radius?brush_weight(brush,point-brush.center.xz,distance):0
+        if w>0 && brush.slope!={} && !brush_slope_allows(s,brush,low.x+x,low.z+z) {w=0}
+        weight[i]=w*min(brush.amount,1)
+    }}
+    copy(before,h)
+    rise:=math.tan(brush.talus)*s.cell
+    for _ in 0..<THERMAL_ITERATIONS {
+        for &m in moved {m=0}
+        for z in 0..<size.y {for x in 0..<size.x {
+            i:=x+size.x*z
+            if weight[i]<=0 {continue}
+            excess:[8]f32
+            total,steepest:=f32(0),f32(0)
+            for d,k in THERMAL_NEIGHBORS {
+                nx,nz:=x+d.x,z+d.y
+                if nx<0 || nz<0 || nx>=size.x || nz>=size.y {continue}
+                past:=h[i]-h[nx+size.x*nz]-rise*(k<4?1:math.SQRT_TWO)
+                if past<=0 {continue}
+                excess[k]=past;total+=past;steepest=max(steepest,past)
+            }
+            if total<=0 {continue}
+            slide:=steepest*0.5*weight[i]
+            moved[i]-=slide
+            for d,k in THERMAL_NEIGHBORS {
+                if excess[k]>0 {moved[x+d.x+size.x*(z+d.y)]+=slide*excess[k]/total}
+            }
+        }}
+        for &value,i in h {value+=moved[i]}
+    }
+    change.low,change.high=high,low
+    for z in 0..<size.y {for x in 0..<size.x {
+        i:=x+size.x*z
+        if h[i]==before[i] {continue}
+        gx,gz:=low.x+x,low.z+z
+        value:=clamp(brush_way_keep(brush.way,false,before[i],h[i]),-HEIGHT_LIMIT,HEIGHT_LIMIT)
+        if value==before[i] {continue}
+        grid_set(&s.field,gx,gz,value)
+        change.changed=true
+        change.low.x,change.low.z=min(change.low.x,gx),min(change.low.z,gz)
+        change.high.x,change.high.z=max(change.high.x,gx),max(change.high.z,gz)
+    }}
+    change.low.y,change.high.y=0,0
+    return
+}

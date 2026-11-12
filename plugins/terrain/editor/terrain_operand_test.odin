@@ -98,11 +98,11 @@ a_closed_mesh_joins_or_carves_a_volume_as_samples_and_undo_brings_its_entity_bac
         inside:=[3]int{16,16+int(centre.y),16}
         outside:=[3]int{16+8,16+int(centre.y),16}
         if brush==.Add {
-            testing.expect(t,terrain.source_value(&source,inside)>0 && terrain.source_value(&loaded,inside)<0,"the air the cube holds turns solid")
+            testing.expect(t,(terrain.source_value(&source,inside) or_else 0)>0 && (terrain.source_value(&loaded,inside) or_else 0)<0,"the air the cube holds turns solid")
         } else {
-            testing.expect(t,terrain.source_value(&source,inside)<0 && terrain.source_value(&loaded,inside)>0,"the ground the cube holds turns to air")
+            testing.expect(t,(terrain.source_value(&source,inside) or_else 0)<0 && (terrain.source_value(&loaded,inside) or_else 0)>0,"the ground the cube holds turns to air")
         }
-        testing.expect_value(t,terrain.source_value(&loaded,outside),terrain.source_value(&source,outside))
+        testing.expect_value(t,terrain.source_value(&loaded,outside) or_else 0,terrain.source_value(&source,outside) or_else 0)
         committed:=test_held(t,&assets,"solid.terrain")
         defer delete(committed)
         testing.expect(t,editor.files_flush(&session,true))

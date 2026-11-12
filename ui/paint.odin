@@ -20,8 +20,8 @@ Paint_Kind :: enum u8 {
     Sat_Value,  // the square of saturation and value of a color picker
     Hue,        // its bar of hues
     Icon,
-    Image,      // quad tinted by fill
-    Nine_Slice, // quad with borders that keep their size
+    Image,      // quad tinted by fill, with the shadow, corners, stroke and program of a Rect
+    Nine_Slice, // quad with borders that keep their size, with the shadow and stroke of a Rect
     Progress,   // a bar filled up to value over its track
     Slider,
     Switch,     // a track of fill with a knob of stroke, at its right end while value is 1
@@ -41,6 +41,7 @@ Text_Style :: struct {
     font:u8,
     size:f32,
     color:Color,
+    color2:Color,        // when set: the glyphs go from color at the top of their line to it at the baseline
     align_x,align_y:Align,
     wrap:Text_Wrap,
     ellipsis:bool,       // text that does not fit ends in an ellipsis
@@ -79,7 +80,7 @@ Paint :: struct {
     style:Text_Style,
     border,border_uv:[4]f32, // nine slice
     value:f32,               // progress, 0 to 1
-    program:u32,             // of Rect, Panel, Bar and the bar of Progress: a ui program that colors the fill
+    program:u32,             // of Rect, Panel, Bar, Box, Image and the bar of Progress: a ui program that colors the fill
     program_values:[4]f32,
     user_data:u64,           // of Replay: the retained subtree
     draw:Draw_Node,          // of Draw: what Context.draw_user is handed, but its rect
@@ -97,18 +98,27 @@ FIELD_ICON :: f32(10)  // side of the icon inside a field, before its value
 TEXT_FADE :: 12
 
 @(private)
-paint_background :: proc(ctx:^Context,r:Rect,p:^Paint) {
-    radii:=p.corners if p.corners!={} else [4]f32{p.radius,p.radius,p.radius,p.radius}
-    if p.shadow {
-        color:=p.shadow_color if p.shadow_color[3]>0 else tone(ctx,"shadow")
-        radius:=max(radii[0],radii[1],radii[2],radii[3])
-        // Without blur an offset is a hard edge of its shape, a default shadow without one.
-        switch {
-        case p.shadow_blur>0:     draw_blurred_shadow(ctx,r,radius,p.shadow_blur,p.shadow_offset,color)
-        case p.shadow_offset!={}: draw_shape(ctx,{r.x+p.shadow_offset.x,r.y+p.shadow_offset.y,r.w,r.h},{fill=color,radii=radii})
-        case:                     draw_shadow(ctx,r,radius,color)
-        }
+paint_radii :: #force_inline proc "contextless" (p:^Paint) -> [4]f32 {
+    return p.corners if p.corners!={} else [4]f32{p.radius,p.radius,p.radius,p.radius}
+}
+
+@(private)
+paint_shadow :: proc(ctx:^Context,r:Rect,p:^Paint,radii:[4]f32) {
+    if !p.shadow {return}
+    color:=p.shadow_color if p.shadow_color[3]>0 else tone(ctx,"shadow")
+    radius:=max(radii[0],radii[1],radii[2],radii[3])
+    // Without blur an offset is a hard edge of its shape, a default shadow without one.
+    switch {
+    case p.shadow_blur>0:     draw_blurred_shadow(ctx,r,radius,p.shadow_blur,p.shadow_offset,color)
+    case p.shadow_offset!={}: draw_shape(ctx,{r.x+p.shadow_offset.x,r.y+p.shadow_offset.y,r.w,r.h},{fill=color,radii=radii})
+    case:                     draw_shadow(ctx,r,radius,color)
     }
+}
+
+@(private)
+paint_background :: proc(ctx:^Context,r:Rect,p:^Paint) {
+    radii:=paint_radii(p)
+    paint_shadow(ctx,r,p,radii)
     if p.program!=0 {
         draw_program(ctx,r,p.program,p.program_values,p.fill,radii)
         draw_shape(ctx,r,{stroke=p.stroke,radii=radii,stroke_width=p.stroke_width if p.stroke_width>0 else 1})
@@ -132,11 +142,7 @@ paint_draw :: proc(ctx:^Context,r:Rect,p:^Paint) {
         }
         draw_rect(ctx,{r.x,r.y+r.h-1,r.w,1},p.stroke)
     case .Box:
-        switch {
-        case p.quad2.kind==.Solid: paint_background(ctx,r,p)
-        case p.border!={}:         draw_nine_slice(ctx,r,p.quad2,p.border,p.border_uv,p.fill)
-        case:                      draw_image(ctx,r,p.quad2,p.fill)
-        }
+        if p.quad2.kind==.Solid {paint_background(ctx,r,p)} else {paint_image(ctx,r,p,p.quad2)}
     case .Field:
         draw_rounded_corners(ctx,r,p.corners,p.fill)
         if p.strip[3]>0 {draw_rounded(ctx,{r.x+3,r.y+4,3,max(r.h-8,2)},1.5,p.strip)}
@@ -176,19 +182,8 @@ paint_draw :: proc(ctx:^Context,r:Rect,p:^Paint) {
         draw_rect(ctx,{x-1.5,r.y-2,3,r.h+4},{255,255,255,255})
     case .Icon:
         draw_icon(ctx,p.icon,r,p.icon_color)
-    case .Image:
-        if p.fit==.Stretch || p.image_size.x<=0 || p.image_size.y<=0 {
-            draw_image(ctx,r,p.quad,p.fill)
-            break
-        }
-        place,uv:=image_fit(r,p.quad.uv,p.image_size,p.fit)
-        quad:=p.quad
-        quad.uv=uv
-        clip_push(ctx,r)
-        draw_image(ctx,place,quad,p.fill)
-        clip_pop(ctx)
-    case .Nine_Slice:
-        draw_nine_slice(ctx,r,p.quad,p.border,p.border_uv,p.fill)
+    case .Image,.Nine_Slice:
+        paint_image(ctx,r,p,p.quad)
     case .Slider:
         // radius: of the knob; stroke_width: the thickness of the track; corners: of the track. 6, 4 and round when 0.
         diameter:=p.radius*2 if p.radius>0 else 12
@@ -293,14 +288,41 @@ draw_text_decorated :: proc(ctx:^Context,text:string,x,y:f32,style:Text_Style,de
             run(ctx,text,x+offset.x,y+offset.y,style.size,bold,style.outline_color,f)
         }
     }
-    run(ctx,text,x,y,style.size,bold,style.color,f)
-    if decoration&{.Underline,.Strike}=={} || text=="" {return}
     ascent:=ctx.font.metrics[f].ascent if ctx.font.ready && f>=0 && f<ctx.font.font_count else f32(0.97)
+    if style.color2[3]>0 {d.color2,d.band=style.color2,{y,y+ascent*style.size}}
+    run(ctx,text,x,y,style.size,bold,style.color,f)
+    d.color2={}
+    if decoration&{.Underline,.Strike}=={} || text=="" {return}
     width:=text_width(&ctx.font,text,style.size,f)+bold
     thickness:=max(style.size*TEXT_RULE,d.pixel)
     baseline:=y+ascent*style.size
     if .Underline in decoration {draw_rect(ctx,{x,baseline+thickness,width,thickness},style.color)}
     if .Strike in decoration {draw_rect(ctx,{x,baseline-style.size*0.3-thickness*0.5,width,thickness},style.color)}
+}
+
+// An image as fit and its borders place it in r, over its shadow and under its
+// stroke. With corners or a program, one of the texture table is cut to them
+// and colored by it (draw_program).
+@(private)
+paint_image :: proc(ctx:^Context,r:Rect,p:^Paint,quad:Quad) {
+    radii:=paint_radii(p)
+    place,shown:=r,quad
+    fitted:=p.border=={} && p.fit!=.Stretch && p.image_size.x>0 && p.image_size.y>0
+    if fitted {place,shown.uv=image_fit(r,quad.uv,p.image_size,p.fit)}
+    paint_shadow(ctx,place,p,radii)
+    switch {
+    case p.border!={}:
+        draw_nine_slice(ctx,r,quad,p.border,p.border_uv,p.fill)
+    case quad.kind==.Image && (p.program!=0 || radii!={}):
+        draw_program(ctx,place,p.program,p.program_values,p.fill,radii,shown)
+    case fitted:
+        clip_push(ctx,r)
+        draw_image(ctx,place,shown,p.fill)
+        clip_pop(ctx)
+    case:
+        draw_image(ctx,place,shown,p.fill)
+    }
+    if p.stroke[3]>0 {draw_shape(ctx,place,{stroke=p.stroke,radii=radii,stroke_width=p.stroke_width if p.stroke_width>0 else 1})}
 }
 
 // Where an image whose part shown is size texels goes in r as fit says, and

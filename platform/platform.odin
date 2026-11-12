@@ -1,6 +1,7 @@
 package platform
 
 import "base:runtime"
+import sdl "vendor:sdl3"
 
 // The operating system layer: window, input, clock and frame pacing,
 // clipboard and dialogs, file watching, paths and the audio
@@ -138,6 +139,31 @@ platform_init :: proc(p:^Platform,desc:Platform_Desc) -> Error {
     }
     p.clock.last=clock_ns();p.clock.pace_target=p.clock.last
     return .None
+}
+
+// Gives a headless Platform the window desc describes, from the next frame
+// on; its title is the one the Platform has. Injected input and the clipboard
+// go on, the latter now that of the system. On an error it stays headless.
+window_attach :: proc(p:^Platform,window:Window_Desc) -> Error {
+    if !p.headless {return .None}
+    desc:=Platform_Desc{window=window}
+    desc.window.title=window_title(p)
+    if error:=window_open(p,desc);error!=.None {
+        window_close(p)
+        return error
+    }
+    p.headless=false
+    _=sdl.RaiseWindow(p.window.handle)
+    window_refresh(p,&p.input.frame.window)
+    if p.live.frame!=nil {window_watch_live(p,true)}
+    return .None
+}
+
+// Closes the window window_attach gave: the Platform is headless again.
+window_detach :: proc(p:^Platform) {
+    if p.headless {return}
+    window_close(p)
+    p.headless=true
 }
 
 destroy :: proc(p:^Platform) {

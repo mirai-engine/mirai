@@ -100,9 +100,9 @@ terrain_history_writes_its_file_at_the_flush_and_follows_a_change_outside_it :: 
     terrain_sync(&s,&tool,core.read(&world.terrains),app.assets)
     head:=editor.revision_head(&tool.history,id,3)
     if !testing.expect(t,head!=nil) {return}
-    testing.expect_value(t,terrain.source_value(head,middle),f32(2))
+    testing.expect_value(t,terrain.source_value(head,middle) or_else 0,f32(2))
     testing.expect(t,stroke_prepare(&tool,app.assets,app.allocator,&world.terrains,&world.worlds,editor.Pick{entity=owner}))
-    testing.expect_value(t,terrain.source_value(&tool.stroke.source,middle),f32(2))
+    testing.expect_value(t,terrain.source_value(&tool.stroke.source,middle) or_else 0,f32(2))
     testing.expect(t,history.undo(&edits,ref,&selection))
     terrain_sync(&s,&tool,core.read(&world.terrains),app.assets)
     testing.expect(t,history.redo(&edits,ref,&selection))
@@ -219,7 +219,7 @@ volume_strokes_are_steps_of_undo_that_keep_only_their_blocks :: proc(t:^testing.
     held=test_held(t,&assets,relative);testing.expect(t,string(held)==string(created));delete(held)
     loaded:terrain.Source;defer terrain.source_destroy(&loaded)
     testing.expect(t,terrain.terrain_read(&loaded,&assets,id))
-    testing.expect(t,terrain.source_value(&loaded,deep)<0,"undoing the carving gives back the solid")
+    testing.expect(t,(terrain.source_value(&loaded,deep) or_else 0)<0,"undoing the carving gives back the solid")
     for _ in 0..<2 {
         testing.expect(t,history.redo(&edits,ref,&selection))
         terrain_sync(&s,&tool,core.read(&world.terrains),app.assets)
