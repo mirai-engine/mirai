@@ -360,7 +360,9 @@ the_api_renames_moves_and_copies_by_path_or_id :: proc(t:^testing.T) {
 }
 
 // Rename puts the line of Create over the name of a card: what is typed
-// renames it. A card let go on the header of a folder moves there.
+// renames it. A card let go on the header of a folder moves there. Copy and
+// Paste copy what was taken, with the rest of the selection, with free names;
+// Cut and Paste move it, once.
 @(test)
 the_line_of_create_renames_a_card_and_a_card_let_go_on_a_folder_moves_there :: proc(t:^testing.T) {
     root:=base.test_folder(t,"content-rename")
@@ -406,4 +408,27 @@ the_line_of_create_renames_a_card_and_a_card_let_go_on_a_folder_moves_there :: p
     g.drag={}
     file,found=asset.registry_find(&assets.registry,MOVE_TEST_ROCK)
     testing.expect(t,found && file.path=="Archive/granite.mat",file.path if found else "")
+
+    content_clipboard_set(&c,MOVE_TEST_ROCK,false)
+    content_paste(&session,"Materials")
+    content_paste(&session,"Materials")
+    pasted:=c.reveal // Materials/granite 2.mat: its name is free at the root too
+    copies:=0
+    for &each in assets.registry.files {copies+=int(each.id!=MOVE_TEST_ROCK && strings.has_prefix(each.path,"Materials/granite"))}
+    testing.expect_value(t,copies,2)
+    testing.expect(t,pasted!={} && pasted!=MOVE_TEST_ROCK && len(c.clipboard)==1,"a copy is pasted as often as asked")
+    testing.expect_value(t,move_test_registry_path(&assets.registry,MOVE_TEST_ROCK),"Archive/granite.mat")
+    content_select(&c,pasted,false)
+    content_select(&c,MOVE_TEST_ROCK,true)
+    content_clipboard_set(&c,MOVE_TEST_ROCK,true)
+    testing.expect_value(t,len(c.clipboard),2)
+    content_paste(&session,"")
+    testing.expect_value(t,move_test_registry_path(&assets.registry,MOVE_TEST_ROCK),"granite.mat")
+    testing.expect(t,!strings.contains(move_test_registry_path(&assets.registry,pasted),"/") && len(c.clipboard)==0,"a cut moves its assets and is let go")
+}
+
+@(private="file")
+move_test_registry_path :: proc(r:^asset.Registry,id:base.Asset_Id) -> string {
+    file,found:=asset.registry_find(r,id)
+    return file.path if found else "<none>"
 }

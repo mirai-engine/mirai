@@ -276,10 +276,10 @@ content_hides_what_a_scene_makes_of_itself_and_colors_every_plugin_kind_alike ::
     content_enter(&c,.None,"Animations")
     testing.expect_value(t,content_test_show(&c,&registry,kinds),"run,walk")
     testing.expect_value(t,content_test_show(&c,&registry,kinds,kinds),"walk")
-    c.categories={.Plugin}
+    c.category=.Plugin
     c.revision+=1
     testing.expect_value(t,content_test_show(&c,&registry,kinds,kinds),"run")
-    c.categories={}
+    c.category=.None
     c.filter_length=copy(c.filter[:],"run")
     testing.expect_value(t,content_test_show(&c,&registry,kinds,kinds),"run")
     c.filter_length=0
@@ -299,11 +299,11 @@ content_filters_keep_the_folders_of_what_they_take :: proc(t:^testing.T) {
     c:=CONTENT_DEFAULT
     defer core.value_free(&c,type_info_of(Content))
     kinds:=[]asset.Fourcc{CONTENT_TEST_PLUGIN_KIND}
-    c.categories={.Mesh,.Material}
-    testing.expect_value(t,content_test_show(&c,&registry),"[Materials] red [Meshes] box,sphere")
-    c.categories={.Plugin}
+    c.category=.Mesh
+    testing.expect_value(t,content_test_show(&c,&registry),"[Meshes] box,sphere")
+    c.category=.Plugin
     testing.expect_value(t,content_test_show(&c,&registry,kinds),"[Animations] run")
-    c.categories={}
+    c.category=.None
     ui_category,_:=content_category(asset.KIND_UI)
     testing.expect_value(t,ui_category,Content_Category.Ui)
     skeleton_category,_:=content_category(asset.KIND_SKELETON)
@@ -331,9 +331,9 @@ content_selection_toggle_shows_what_the_selection_uses :: proc(t:^testing.T) {
     testing.expect_value(t,content_test_show(&c,&registry),"[Robot] MI_Robot_01,SKM_Robot,robot")
     content_selection_set(&c,&registry,{})
     testing.expect_value(t,len(content_test_lines(&c,&registry)),0)
-    c.categories={.Mesh}
+    c.category=.Mesh
     content_filters_clear(&c)
-    testing.expect(t,c.categories=={} && !c.selection_only)
+    testing.expect(t,c.category==.None && !c.selection_only)
     testing.expect_value(t,content_test_show(&c,&registry),"[Robot] MI_Shared,robot [Spider] spider [Stray] orphan")
 }
 
@@ -427,7 +427,7 @@ content_lines_follow_registry_revisions_when_storage_and_count_are_reused :: pro
     defer asset.registry_destroy(&registry)
     resize(&registry.files,len(source.files))
     testing.expect_value(t,asset.registry_load(&registry,path),asset.Error.None)
-    c:=Content{categories={.Mesh},view=CONTENT_VIEW_DEFAULT}
+    c:=Content{category=.Mesh,view=CONTENT_VIEW_DEFAULT}
     defer core.value_free(&c,type_info_of(Content))
     c.selected=source.files[3].id
     testing.expect_value(t,content_test_show(&c,&registry),"[Meshes] box,sphere")
@@ -548,23 +548,21 @@ content_browser_enters_folders_selects_drags_stars_filters_and_searches_from_the
     _=content_test_frame(&session,{size={800,600},pointer=ui.rect_center(rect)})
     content_test_click(t,&session,star)
     testing.expect(t,content_favorite(&c.marks,asset_id))
-    // A bar of the strip takes one family; another adds to it.
-    bar:=ui.id_derive(&ctx,100,"content_category",int(Content_Category.Mesh)+1)
-    content_test_click(t,&session,bar)
-    testing.expect_value(t,c.categories,Content_Categories{.Mesh})
-    content_test_click(t,&session,ui.id_derive(&ctx,100,"content_category",int(Content_Category.Material)+1))
-    testing.expect_value(t,c.categories,Content_Categories{.Mesh,.Material})
-    content_test_click(t,&session,bar)
-    content_test_click(t,&session,ui.id_derive(&ctx,100,"content_category",int(Content_Category.Material)+1))
-    testing.expect_value(t,c.categories,Content_Categories{})
-    // The dots open the families the strip has no room for; a click keeps it open.
-    content_test_click(t,&session,ui.id_derive(&ctx,100,"content_more_open"))
-    more:=content_more_popup(&g)
-    content_test_still(&session)
-    content_test_click(t,&session,ui.id_derive(&ctx,more,"category",int(Content_Category.Texture)+1))
-    testing.expect(t,c.categories=={.Texture} && ui.popup_is_open(&ctx,more))
-    c.categories={}
-    ui.popup_close(&ctx,more)
+    // A bar of the strip takes one family; another takes its place, and the
+    // one on turns off. Every family has its bar.
+    bar :: proc(ctx:^ui.Context,category:Content_Category) -> ui.Id {return ui.id_derive(ctx,100,"content_category",int(category)+1)}
+    content_test_click(t,&session,bar(&ctx,.Mesh))
+    testing.expect_value(t,c.category,Content_Category.Mesh)
+    content_test_click(t,&session,bar(&ctx,.Material))
+    testing.expect_value(t,c.category,Content_Category.Material)
+    content_test_click(t,&session,bar(&ctx,.Material))
+    testing.expect_value(t,c.category,Content_Category.None)
+    for category in CONTENT_STRIP_CATEGORIES {
+        content_test_click(t,&session,bar(&ctx,category))
+        testing.expect_value(t,c.category,category)
+    }
+    content_test_click(t,&session,bar(&ctx,.Plugin))
+    testing.expect_value(t,c.category,Content_Category.None)
     content_test_still(&session)
     // Choosing the tab gives the keyboard to the search; what is typed over a
     // card searches too.
@@ -628,8 +626,8 @@ content_browser_enters_folders_selects_drags_stars_filters_and_searches_from_the
     testing.expect(t,ui.popup_is_open(&ctx,popup))
 }
 
-// Enter arms the first result, the back row walks the way, the mouse button
-// goes back and Alt+click opens the relations without carrying the asset.
+// Enter arms the first result, the back row walks the way (always there in
+// Cards), the mouse button goes back and Alt+click opens the relations without carrying the asset.
 @(test)
 content_navigation_gestures_of_the_browser :: proc(t:^testing.T) {
     ctx:ui.Context
@@ -675,6 +673,13 @@ content_navigation_gestures_of_the_browser :: proc(t:^testing.T) {
     content_test_still(&session)
     content_test_click(t,&session,ui.id_derive(&ctx,100,"content_crumb",0))
     testing.expect(t,c.at.length==0 && len(c.history)==0)
+    // In Cards the row stays at the root too, with Project alone.
+    c.view.arrangement=.Cards
+    content_test_still(&session)
+    _,shown=ui.widget_rect(&ctx,back)
+    _,crumb:=ui.widget_rect(&ctx,ui.id_derive(&ctx,100,"content_crumb",1))
+    testing.expect(t,shown && !crumb,"Cards keeps the back row at the root")
+    c.view.arrangement=.Names
     // Alt+click walks the relations and carries nothing.
     content_enter(&c,.None,"Castle/Props")
     content_test_still(&session)
@@ -713,7 +718,7 @@ content_navigation_gestures_of_the_browser :: proc(t:^testing.T) {
     testing.expect(t,g.placement.active && g.placement.kind==.Asset && g.placement.asset_id==assets.registry.files[0].id)
 }
 
-// Each step of the slider and of Ctrl+wheel changes the columns, and names go
+// Each step of Ctrl+wheel changes the columns, and names go
 // with five or fewer; below the most columns the grid is the list.
 @(test)
 the_zoom_of_the_browser_walks_columns_and_names_follow_it :: proc(t:^testing.T) {
@@ -742,7 +747,7 @@ the_zoom_of_the_browser_walks_columns_and_names_follow_it :: proc(t:^testing.T) 
     columns,_:=content_cells(bad,CONTENT_TEST_WIDTH)
     testing.expect_value(t,columns,CONTENT_COLUMNS_MAX)
 
-    // In the browser Ctrl+wheel zooms and the slider walks every step.
+    // In the browser Ctrl+wheel zooms.
     ctx:ui.Context
     testing.expect(t,test_ui_init(&ctx,{}))
     defer ui.context_destroy(&ctx)
@@ -767,17 +772,6 @@ the_zoom_of_the_browser_walks_columns_and_names_follow_it :: proc(t:^testing.T) 
     _=content_test_frame(&session,zoom)
     testing.expect_value(t,c.view.mode,Content_Mode.List)
     _=content_test_frame(&session,over)
-    testing.expect_value(t,ctx.stats.layout_errors,u32(0))
-    content_test_still(&session)
-    track:=ui.id_derive(&ctx,ui.id_derive(&ctx,100,"content_size"),"track")
-    rect,found:=ui.widget_rect(&ctx,track)
-    if !testing.expect(t,found) {return}
-    for level in 0..=CONTENT_LEVELS {
-        at:=[2]f32{rect.x+6+(rect.w-12)*f32(level)/CONTENT_LEVELS,rect.y+rect.h*0.5}
-        _=content_test_frame(&session,{size={800,600},pointer=at,down={.Left},pressed={.Left},clicks=1})
-        _=content_test_frame(&session,{size={800,600},pointer=at,released={.Left}})
-        testing.expect_value(t,content_level(c.view),level)
-    }
     testing.expect_value(t,ctx.stats.layout_errors,u32(0))
     // A cell without a name under the pointer has its preview, which takes no click.
     c.view.columns,c.view.mode=8,.Grid
@@ -886,11 +880,11 @@ content_hides_the_parts_of_an_import_in_their_folder_and_a_prefab_opens_to_its_v
     lines=content_test_lines(&c,&registry)
     testing.expect_value(t,content_test_names(&c,&registry,lines[:6]),"[Recent] SKM_Robot [Favorites] T_Robot_01_D [Robot] MI_Shared,robot")
     // A filter of families that leaves the owner out shows its parts in their folder.
-    c.categories={.Mesh}
+    c.category=.Mesh
     testing.expect_value(t,content_test_show(&c,&registry),"[Recent] SKM_Robot [Robot] SKM_Robot [Stray] orphan")
-    c.categories={.Mesh,.Prefab}
-    testing.expect_value(t,content_test_show(&c,&registry),"[Recent] SKM_Robot [Robot] robot [Spider] spider [Stray] orphan")
-    c.categories={}
+    c.category=.Prefab
+    testing.expect_value(t,content_test_show(&c,&registry),"[Robot] robot [Spider] spider")
+    c.category=.None
     c.marks={}
     c.revision+=1
     // Show parts of imports lists them in their folders too.
@@ -1012,7 +1006,7 @@ content_shows_empty_folders_and_the_line_of_create :: proc(t:^testing.T) {
     c.filter_length=copy(c.filter[:],"box")
     testing.expect_value(t,content_test_show(&c,&registry),"box")
     c.filter_length=0
-    c.categories={.Mesh}
+    c.category=.Mesh
     testing.expect_value(t,content_test_show(&c,&registry),"[Meshes] box,sphere")
 }
 
@@ -1131,13 +1125,13 @@ content_navigation_falls_to_what_the_registry_still_has :: proc(t:^testing.T) {
     n:Content_Navigation
     copy(n.place[:],"Meshes/gone/deeper")
     copy(n.at[:],"Meshes/nested/gone")
-    n.categories={.Mesh,.Texture}
+    n.category=.Mesh
     content_navigation_set(&c,&n)
     content_registry_read(&c,&registry,{CONTENT_TEST_PLUGIN_KIND})
     content_navigation_restore(&c,&registry)
     testing.expect_value(t,string(c.place[:c.place_length]),"Meshes")
     testing.expect_value(t,string(c.at.folder[:c.at.length]),"Meshes/nested")
-    testing.expect_value(t,c.categories,Content_Categories{.Mesh,.Texture})
+    testing.expect_value(t,c.category,Content_Category.Mesh)
     testing.expect_value(t,content_test_show(&c,&registry),"sphere")
     // Nothing of it is left: the root.
     n.place,n.at={},{}

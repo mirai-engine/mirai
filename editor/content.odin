@@ -13,27 +13,22 @@ import "mirai:std/base"
 import "mirai:editor/kit"
 import "mirai:ui"
 
-// The families of the kinds the filters of the browser take: those of the
-// strip under the search first, then those of its menu.
-Content_Category :: enum u8 {Prefab,Mesh,Material,Scene,Plugin,Texture,Animation,Sound,Ui}
-Content_Categories :: bit_set[Content_Category;u16]
+// The families of the kinds the filters of the browser take, one at a time;
+// None: all of them.
+Content_Category :: enum u8 {None,Prefab,Mesh,Material,Scene,Plugin,Texture,Animation,Sound,Ui}
 
-CONTENT_STRIP_CATEGORIES :: [?]Content_Category{.Prefab,.Mesh,.Material,.Scene,.Plugin}
-CONTENT_MENU_CATEGORIES :: [?]Content_Category{.Texture,.Animation,.Sound,.Ui}
-CONTENT_CATEGORY_LABELS :: [Content_Category]string{.Prefab="Prefab",.Mesh="Model",.Material="Material",.Scene="Scene",.Plugin="Plugins",.Texture="Texture",.Animation="Animation",.Sound="Sound",.Ui="UI"}
+// The filters of the strip under the search, in its order.
+CONTENT_STRIP_CATEGORIES :: [?]Content_Category{.Prefab,.Mesh,.Material,.Scene,.Texture,.Animation,.Sound,.Ui,.Plugin}
+CONTENT_CATEGORY_LABELS :: [Content_Category]string{.None="",.Prefab="Prefab",.Mesh="Model",.Material="Material",.Scene="Scene",.Plugin="Plugins",.Texture="Texture",.Animation="Animation",.Sound="Sound",.Ui="UI"}
 // The kind whose glyph and color a filter carries; the Plugins and Prefab filters have their own.
-CONTENT_CATEGORY_KINDS :: [Content_Category]asset.Fourcc{.Prefab=0,.Mesh=asset.KIND_MESH,.Material=asset.KIND_MATERIAL,.Scene=asset.KIND_SCENE,.Plugin=0,.Texture=asset.KIND_TEXTURE,.Animation=asset.KIND_ANIMATION,.Sound=asset.KIND_SOUND,.Ui=asset.KIND_UI}
+CONTENT_CATEGORY_KINDS :: [Content_Category]asset.Fourcc{.None=0,.Prefab=0,.Mesh=asset.KIND_MESH,.Material=asset.KIND_MATERIAL,.Scene=asset.KIND_SCENE,.Plugin=0,.Texture=asset.KIND_TEXTURE,.Animation=asset.KIND_ANIMATION,.Sound=asset.KIND_SOUND,.Ui=asset.KIND_UI}
 CONTENT_PLUGIN_COLOR :: ui.Color{214,107,255,255} // of every kind of a plugin
 PREFAB_ASSET_COLOR :: ui.Color{63,126,255,255}    // of a .scene whose header says Prefab, as Unreal draws a Blueprint
 
 CONTENT_ROW :: f32(28)        // a row of the list
 CONTENT_CONTROL :: f32(28)    // the row of the search and its buttons
-CONTENT_STRIP_ROW :: f32(22)  // the row of the filters of kinds and the zoom
-CONTENT_FILTERS_GAP :: f32(4) // around the button that clears them
-CONTENT_FILTERS :: f32(22)    // the button of the menu of filters
-CONTENT_FILTERS_CLEAR :: f32(22) // the room of the button that clears them
-CONTENT_ZOOM_WIDTH :: f32(64)
-CONTENT_RAIL_GAP :: f32(8)    // between the strip, the filters and the zoom
+CONTENT_STRIP_ROW :: f32(22)  // the row of the filters of kinds
+CONTENT_FILTERS_GAP :: f32(4) // between them and before the button that clears them
 CONTENT_PANEL_GAP :: f32(6)   // between the rows of the browser
 CONTENT_BACK_ROW :: f32(24)   // the back arrow and the breadcrumb
 CONTENT_HEADER :: f32(26)     // the name of a folder the wall stays under
@@ -64,6 +59,7 @@ CONTENT_FAVORITES :: 64
 CONTENT_HISTORY :: 64         // places Back goes through
 CONTENT_TAB :: f32(22)        // a chip of a folder
 CONTENT_TAB_PADDING :: f32(8)
+CONTENT_TAB_ICON :: f32(12)   // the glyph of a chip of a virtual folder
 CONTENT_TAB_GAP :: f32(2)
 CONTENT_TAB_ROW_GAP :: f32(3)
 CONTENT_TAB_ROW_MAX :: f32(74) // of a row of chips that wraps: more scrolls
@@ -241,7 +237,7 @@ Content_Navigation :: struct {
     place:[API_PATH_BYTES]u8 `mirai:"text"`, // Content.place
     at:[API_PATH_BYTES]u8 `mirai:"text"`,    // Content.at
     virtual:Content_Virtual,
-    categories:Content_Categories,
+    category:Content_Category,
     unused:bool,
     folded:[CONTENT_FOLDED_KEPT]u64, // Content.folded; a zero ends them
 }
@@ -313,7 +309,7 @@ Content_Build :: struct {
 Content :: struct {
     filter:[64]u8,
     filter_length:int,
-    categories:Content_Categories, // none: all of them
+    category:Content_Category,     // the filter of kinds; None: all of them
     unused:bool,                   // only the assets nothing references
     selection_only:bool,           // only what the selection of the viewport uses
     view:Content_View,
@@ -350,6 +346,8 @@ Content :: struct {
     focus_asset:base.Asset_Id,     // the asset of card_focus; zero for a clip of a library
     reveal:base.Asset_Id,          // shown, selected and focused on the next frame
     menu:base.Asset_Id,            // the asset whose card opened the menu
+    clipboard:[dynamic]base.Asset_Id, // what Copy or Cut took for Paste
+    clipboard_cut:bool,            // Paste moves them instead of copying them
     place:[API_PATH_BYTES]u8,      // the folder of what was clicked last: where the + of Create makes what it makes
     place_length:int,
     create_into:[API_PATH_BYTES]u8, // the folder the menu of Create makes in
@@ -562,7 +560,7 @@ content_clip_found :: proc(name,filter:string) -> bool {
 // Whether the filters of kinds take a file.
 @(private)
 content_file_taken :: proc(c:^Content,file:^asset.Registry_File) -> bool {
-    return c.categories=={} || content_file_category(file) in c.categories
+    return c.category==.None || content_file_category(file)==c.category
 }
 
 // Whether the browser lists a file: an asset of a kind of the engine, or of a
@@ -786,7 +784,7 @@ content_clip_matches :: proc(c:^Content,library:base.Asset_Id,filter:string) -> 
 @(private)
 content_matches :: proc(c:^Content,b:^Content_Build,file:^asset.Registry_File,marked:bool=false) -> bool {
     if !content_listed(c,file,b.opened) || c.unused && content_referenced(c,file) {return false}
-    if b.filter=="" && .Plugin not_in c.categories && slice.contains(b.scene_kinds,file.kind) {return false}
+    if b.filter=="" && c.category!=.Plugin && slice.contains(b.scene_kinds,file.kind) {return false}
     if c.selection_only && !content_selection_uses(c,b.registry,file) {return false}
     if b.filter=="" {
         if marked || c.selection_only || c.view.show_parts || !content_part(b.registry,file) {return true}
@@ -1096,7 +1094,7 @@ content_relations_add :: proc(c:^Content,b:^Content_Build) {
 content_lines :: proc(c:^Content,registry:^asset.Registry,width:f32,opened:[]asset.Fourcc=nil,scene_kinds:[]asset.Fourcc=nil,font:^ui.Font=nil,name_size:f32=0) -> []Content_Line {
     filter:=strings.trim_space(string(c.filter[:c.filter_length]))
     v:=c.view
-    key:=[9]u64{u64(uintptr(raw_data(registry.files))),u64(len(registry.files)),registry.revision,base.hash64(transmute([]u8)filter),u64(transmute(u16)c.categories)|u64(c.unused)<<16|u64(c.selection_only)<<17|u64(v.arrangement)<<18|u64(v.mode)<<20|u64(v.show_parts)<<21,c.revision,u64(content_columns(v)),u64(transmute(u32)width),u64(len(opened))|u64(len(scene_kinds))<<32}
+    key:=[9]u64{u64(uintptr(raw_data(registry.files))),u64(len(registry.files)),registry.revision,base.hash64(transmute([]u8)filter),u64(c.category)|u64(c.unused)<<16|u64(c.selection_only)<<17|u64(v.arrangement)<<18|u64(v.mode)<<20|u64(v.show_parts)<<21,c.revision,u64(content_columns(v)),u64(transmute(u32)width),u64(len(opened))|u64(len(scene_kinds))<<32}
     if key==c.key {return c.lines[:]}
     c.key=key
     clear(&c.lines)
@@ -1111,7 +1109,7 @@ content_lines :: proc(c:^Content,registry:^asset.Registry,width:f32,opened:[]ass
     for &file,index in registry.files {
         if content_matches(c,b,&file) {append(&entries,Content_Entry{file.path,i32(index)})}
     }
-    filtering:=filter!="" || c.categories!={} || c.unused || c.selection_only
+    filtering:=filter!="" || c.category!=.None || c.unused || c.selection_only
     // The folders of the project show also without files, not while filtering.
     if !filtering && len(registry.folders)>0 {
         for folder in registry.folders {
@@ -1258,7 +1256,7 @@ content_relations_open :: proc(c:^Content,id:base.Asset_Id) {
 content_navigation :: proc(c:^Content) -> (n:Content_Navigation) {
     copy(n.place[:],c.place[:c.place_length])
     copy(n.at[:],c.at.folder[:c.at.length])
-    n.virtual,n.categories,n.unused=c.at.virtual,c.categories,c.unused
+    n.virtual,n.category,n.unused=c.at.virtual,c.category,c.unused
     copy(n.folded[:],c.folded[:])
     return
 }
@@ -1269,7 +1267,7 @@ content_navigation_set :: proc(c:^Content,n:^Content_Navigation) {
     content_place_set(c,base.text_get(n.place[:]))
     c.at.virtual=n.virtual
     c.at.length=copy(c.at.folder[:],base.text_get(n.at[:]))
-    c.categories,c.unused=n.categories,n.unused
+    c.category,c.unused=n.category,n.unused
     clear(&c.folded)
     for group in n.folded {
         if group==0 {break}
@@ -1350,6 +1348,8 @@ content_create_items :: proc(s:^Session,folder:string) {
     ctx:=s.gui.ctx
     disabled:=asset_create_refusal(s)!=""
     for kind,i in asset_create_kinds(s) {
+        // Fonts come from the files dropped in, and texts from the API.
+        if kind==asset.KIND_FONT || kind==asset.KIND_STRINGS {continue}
         icon,color:=content_create_icon(s,kind)
         // A table of game data is of a type of the code: one entry for each.
         if kind==asset.KIND_RECORDS {
@@ -1378,9 +1378,10 @@ content_create_menu :: proc(s:^Session) {
         folder:=string(c.create_into[:c.create_into_length])
         ui.menu_header(ctx,fmt.tprintf("Create in %s",asset_name(folder) if folder!="" else "Assets"))
         content_create_items(s,folder)
+        ui.menu_separator(ctx)
+        off:=asset_create_refusal(s)!=""
+        if ui.menu_item(ctx,ui.id(ctx,"paste"),command_label(s,"asset_paste"),{icon=command_icon(s,"asset_paste"),disabled=off || len(c.clipboard)==0}) {content_paste(s,folder)}
         if c.create_on_folder {
-            ui.menu_separator(ctx)
-            off:=asset_create_refusal(s)!=""
             if ui.menu_item(ctx,ui.id(ctx,"rename"),command_label(s,"asset_rename"),{icon=command_icon(s,"asset_rename"),disabled=off}) {content_rename_begin(s,{},folder)}
             if ui.menu_item(ctx,ui.id(ctx,"duplicate"),command_label(s,"asset_duplicate"),{icon=command_icon(s,"asset_duplicate"),disabled=off}) {
                 if _,message:=asset_folder_duplicate(s,folder);message!="" {notify(s,message)}
@@ -1437,6 +1438,56 @@ content_duplicate :: proc(s:^Session,id:base.Asset_Id) {
     if _,_,message:=asset_duplicate(s,id);message!="" {notify(s,message)}
 }
 
+// Copy, or Cut, takes the asset id for Paste, with the rest of the selection
+// when id is in it.
+content_clipboard_set :: proc(c:^Content,id:base.Asset_Id,cut:bool) {
+    if c==nil || id=={} {return}
+    clear(&c.clipboard)
+    c.clipboard_cut=cut
+    append(&c.clipboard,id)
+    if !content_selected(c,id) {return}
+    if c.selected!={} && c.selected!=id {append(&c.clipboard,c.selected)}
+    for picked in c.picked {
+        if !slice.contains(c.clipboard[:],picked) {append(&c.clipboard,picked)}
+    }
+}
+
+// Paste into folder: copies of what Copy took, with free names, or what Cut
+// took moved there with its references, after which it is let go.
+content_paste :: proc(s:^Session,folder:string) {
+    c:=s.content
+    if c==nil || len(c.clipboard)==0 {return}
+    r:=files_registry(s)
+    if r==nil {return}
+    // Each copy or move scans the registry again, whose paths folder may be of.
+    into:=strings.clone(folder,context.temp_allocator)
+    failed:string
+    for id in slice.clone(c.clipboard[:],context.temp_allocator) {
+        message:string
+        if c.clipboard_cut {
+            file,found:=asset.registry_find(r,id)
+            if !found || content_folder_of(file.path)==into {continue}
+            _,message=asset_move(s,id,into,"")
+        } else {
+            _,_,message=asset_duplicate(s,id,into,"")
+        }
+        if message!="" && failed=="" {failed=message}
+    }
+    if failed!="" {
+        notify(s,failed)
+    } else if c.clipboard_cut {
+        clear(&c.clipboard)
+        c.clipboard_cut=false
+    }
+}
+
+// Paste into the folder of the card that has the keyboard.
+content_paste_focused :: proc(s:^Session) {
+    r:=files_registry(s)
+    if r==nil {return}
+    if file,found:=asset.registry_find(r,card_focused(s));found {content_paste(s,content_folder_of(file.path))}
+}
+
 // The line of Create names the asset id, or the folder when id is zero, to
 // type its new name over the one it has: Enter or a click elsewhere renames
 // it, Escape leaves it.
@@ -1461,7 +1512,7 @@ content_rename_begin :: proc(s:^Session,id:base.Asset_Id,folder:="") {
     c.create_folder_length=copy(c.create_folder[:],parent)
     c.creating,c.create_kind,c.create_edit=true,kind,true
     c.rename_length,c.renaming=copy(c.rename[:],path),id
-    c.filter_length,c.categories,c.unused=0,{},false
+    c.filter_length,c.category,c.unused=0,.None,false
     c.revision+=1
     content_place_set(c,parent)
 }
@@ -1497,7 +1548,7 @@ content_create_begin :: proc(s:^Session,kind:asset.Fourcc,folder:string) {
     c.create_folder_length=copy(c.create_folder[:],folder)
     c.creating,c.create_kind,c.create_edit=true,kind,true
     c.rename_length,c.renaming=0,{}
-    c.filter_length,c.categories,c.unused=0,{},false
+    c.filter_length,c.category,c.unused=0,.None,false
     c.revision+=1
     content_place_set(c,folder)
 }
@@ -1633,7 +1684,7 @@ content_settings_build :: proc(s:^Session,content_view:bool) {
                 c.scroll=0
             }
         } else {
-            // The browser has its own slider, under its search.
+            // The browser sizes its cells with Ctrl+wheel only.
             if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"control")),padding={6,0,6,0},gap=7,align_y=.Center}) {
                 ui.label(ctx,"Size",ui.metric(ctx,"font_small"),ui.tone(ctx,"text"),32)
                 level:=f64(content_level(c.view))
@@ -2105,36 +2156,6 @@ content_folder_take :: proc(s:^Session,act:^Content_Actions,id:ui.Id,it:ui.Inter
 }
 
 @(private)
-content_more_popup :: proc(g:^Editor_Ui) -> ui.Id {return shell_id(g,"content_more")}
-
-// The kinds the strip has no room for: its swatch, its name and a check. A
-// click keeps the menu open.
-@(private)
-content_more_menu :: proc(s:^Session) {
-    c:=s.content
-    ctx:=s.gui.ctx
-    popup:=content_more_popup(s.gui)
-    if ui.popup(ctx,popup,{min_width=150}) {
-        ui.id_push(ctx,popup)
-        defer ui.id_pop(ctx)
-        labels:=CONTENT_CATEGORY_LABELS
-        for category in CONTENT_MENU_CATEGORIES {
-            id:=ui.id(ctx,"category",int(category)+1)
-            it:=ui.interact(ctx,id,{.Focusable})
-            if ui.box(ctx,{id=id,width=ui.GROW,height=ui.fixed(ui.metric(ctx,"control")),padding={8,0,8,0},gap=8,align_y=.Center,fill=ui.color_hover(ctx) if it.hot else {},radius=ui.metric(ctx,"radius_control")}) {
-                ui.icon(ctx,content_category_icon(category),content_category_color(category),13)
-                ui.label(ctx,labels[category],ui.metric(ctx,"font"),ui.tone(ctx,"text"),0)
-                if category in c.categories {ui.icon(ctx,.Check,ui.tone(ctx,"text_muted"),10)}
-            }
-            if it.clicked {
-                c.categories~={category}
-                c.scroll=0
-            }
-        }
-    }
-}
-
-@(private)
 content_category_color :: proc "contextless" (category:Content_Category) -> ui.Color {
     kinds:=CONTENT_CATEGORY_KINDS
     #partial switch category {
@@ -2180,58 +2201,37 @@ content_search_row :: proc(s:^Session,filter_id:ui.Id) -> (take_first:bool) {
 // Takes off the filters of kinds and that of the selection of the viewport.
 @(private)
 content_filters_clear :: proc(c:^Content) {
-    c.categories,c.selection_only={},false
+    c.category,c.selection_only=.None,false
     c.scroll=0
     c.revision+=1
 }
 
-// The strip of the filters of kinds, the menu of the others and the zoom.
+// The strip of the filters of kinds, one at a time: another takes the place of
+// the one on, which turns off when clicked again.
 @(private)
 content_strip_row :: proc(s:^Session) {
     c:=s.content
     ctx:=s.gui.ctx
-    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(CONTENT_STRIP_ROW),gap=CONTENT_RAIL_GAP,align_y=.Center}) {
+    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(CONTENT_STRIP_ROW),gap=CONTENT_FILTERS_GAP,align_y=.Center}) {
         labels:=CONTENT_CATEGORY_LABELS
-        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(CONTENT_STRIP_ROW),gap=CONTENT_FILTERS_GAP}) {
-            for category in CONTENT_STRIP_CATEGORIES {
-                on:=category in c.categories
-                // Each in the color of its kind; while some are on, the others fade.
-                color:=ui.color_alpha(content_category_color(category),255 if on || c.categories=={} else 80)
-                if ui.button(ctx,ui.id(ctx,"content_category",int(category)+1),{icon=content_category_icon(category),icon_size=14,icon_color=color,tip=labels[category],variant="toggle",active=on,width=CONTENT_STRIP_ROW+4,height=CONTENT_STRIP_ROW}).clicked {
-                    c.categories~={category}
-                    c.scroll=0
-                }
+        for category in CONTENT_STRIP_CATEGORIES {
+            on:=c.category==category
+            // Each in the color of its kind; while one is on, the others fade.
+            color:=ui.color_alpha(content_category_color(category),255 if on || c.category==.None else 80)
+            if ui.button(ctx,ui.id(ctx,"content_category",int(category)+1),{icon=content_category_icon(category),icon_size=14,icon_color=color,tip=labels[category],variant="toggle",active=on,width=CONTENT_STRIP_ROW+4,height=CONTENT_STRIP_ROW}).clicked {
+                c.category=.None if on else category
+                c.scroll=0
             }
         }
-        popup:=content_more_popup(s.gui)
-        opened:=ui.popup_is_open(ctx,popup)
-        id:=ui.id(ctx,"content_more_open")
-        it:=ui.interact(ctx,id,{.Focusable})
-        lit:=c.categories&{.Texture,.Animation,.Sound,.Ui}!={}
-        if ui.box(ctx,{width=ui.fixed(CONTENT_FILTERS+CONTENT_FILTERS_CLEAR+2*CONTENT_FILTERS_GAP),height=ui.fixed(CONTENT_STRIP_ROW),padding={0,0,CONTENT_FILTERS_GAP,0},gap=CONTENT_FILTERS_GAP}) {
-            if ui.box(ctx,{id=id,width=ui.fixed(CONTENT_FILTERS),height=ui.fixed(CONTENT_STRIP_ROW),align_x=.Center,align_y=.Center,fill=ui.tone(ctx,"text") if lit else (ui.tone(ctx,"field") if it.hot || opened else {}),radius=2}) {
-                ui.icon(ctx,.Filter,ui.tone(ctx,"panel") if lit else ui.tone(ctx,"text_muted"),12)
-            }
-            if c.categories!={} || c.selection_only {
-                if ui.button(ctx,ui.id(ctx,"content_filters_clear"),{icon=.Cross,icon_size=12,icon_color=ui.tone(ctx,"text_muted"),tip="Clear filters",variant="ghost",width=CONTENT_FILTERS_CLEAR,height=CONTENT_STRIP_ROW}).clicked {content_filters_clear(c)}
-            }
-        }
-        if it.hot {ui.tooltip(ctx,"More filters")}
-        if it.clicked && !opened {
-            anchor,_:=ui.widget_rect(ctx,id)
-            ui.popup_open(ctx,popup,anchor)
-        }
-        level:=f64(content_level(c.view))
-        zoom:=ui.id(ctx,"content_size")
-        if kit.slider_field(ctx,zoom,&level,{width=ui.fixed(CONTENT_ZOOM_WIDTH),height=CONTENT_STRIP_ROW,min=0,max=CONTENT_LEVELS,has_min=true,has_max=true,integer=true,bare=true}).changed {
-            content_level_set(&c.view,int(level))
-            c.scroll=0
+        if c.category!=.None || c.selection_only {
+            if ui.button(ctx,ui.id(ctx,"content_filters_clear"),{icon=.Cross,icon_size=12,icon_color=ui.tone(ctx,"text_muted"),tip="Clear filters",variant="ghost",width=CONTENT_STRIP_ROW,height=CONTENT_STRIP_ROW}).clicked {content_filters_clear(c)}
         }
     }
 }
 
-// The chips of Tabs: All, the virtual folders and the first-level folders, and
-// rows under them with the folders of the one chosen. Returns their height.
+// The chips of Tabs: All, the virtual folders as their glyphs and the
+// first-level folders, and rows under them with the folders of the one
+// chosen. Returns their height.
 @(private)
 content_tabs_build :: proc(s:^Session,act:^Content_Actions,width:f32) -> (height:f32) {
     c:=s.content
@@ -2243,7 +2243,10 @@ content_tabs_build :: proc(s:^Session,act:^Content_Actions,width:f32) -> (height
     for virtual in ([3]Content_Virtual{.Recent,.Scene,.Favorites}) {append(&chips,Chip{virtual=virtual,label=labels[virtual]})}
     for tab in c.tabs {append(&chips,Chip{label=tab.name,path=tab.path,row=tab.row})}
     at:=string(c.at.folder[:c.at.length])
-    chip_width :: proc(ctx:^ui.Context,text:string) -> f32 {return ui.text_width(&ctx.font,text,ui.metric(ctx,"font"))+2*CONTENT_TAB_PADDING+1}
+    chip_width :: proc(ctx:^ui.Context,chip:Chip) -> f32 {
+        if chip.virtual!=.None {return CONTENT_TAB_ICON+2*CONTENT_TAB_PADDING}
+        return ui.text_width(&ctx.font,chip.label,ui.metric(ctx,"font"))+2*CONTENT_TAB_PADDING+1
+    }
     rows:=0
     for i:=0;i<len(chips); {
         row:=chips[i].row
@@ -2254,7 +2257,7 @@ content_tabs_build :: proc(s:^Session,act:^Content_Actions,width:f32) -> (height
         for at_chip:=i;at_chip<j; {
             used:=f32(0)
             for at_chip<j {
-                w:=chip_width(ctx,chips[at_chip].label)
+                w:=chip_width(ctx,chips[at_chip])
                 if used>0 && used+CONTENT_TAB_GAP+w>width {break}
                 used+=(CONTENT_TAB_GAP if used>0 else 0)+w
                 at_chip+=1
@@ -2277,11 +2280,12 @@ content_tabs_build :: proc(s:^Session,act:^Content_Actions,width:f32) -> (height
                     id:=ui.id(ctx,"content_folder",int(group))
                     it:=ui.interact(ctx,id,{.Focusable})
                     switch {
-                    case chip.virtual!=.None: on:=c.at.virtual==chip.virtual;content_tab_draw(ctx,id,chip.label,on,it,false)
+                    case chip.virtual!=.None: on:=c.at.virtual==chip.virtual;content_tab_draw(ctx,id,"",on,it,false,content_folder_icon(chip.virtual))
                     case chip.path=="":       content_tab_draw(ctx,id,chip.label,c.at.virtual==.None && at=="",it,content_folder_marked(s,id,.None,""))
                     case:                     content_tab_draw(ctx,id,chip.label,c.at.virtual==.None && (at==chip.path || asset_path_inside(at,chip.path)),it,content_folder_marked(s,id,.None,chip.path))
                     }
                     if it.hot && chip.path!="" {ui.tooltip(ctx,chip.path)}
+                    if it.hot && chip.virtual!=.None {ui.tooltip(ctx,chip.label)}
                     content_folder_take(s,act,id,it,chip.virtual,chip.path,reset=true)
                 }
             }
@@ -2297,10 +2301,11 @@ content_tabs_build :: proc(s:^Session,act:^Content_Actions,width:f32) -> (height
 }
 
 @(private)
-content_tab_draw :: proc(ctx:^ui.Context,id:ui.Id,label:string,on:bool,it:ui.Interaction,marked:bool) {
+content_tab_draw :: proc(ctx:^ui.Context,id:ui.Id,label:string,on:bool,it:ui.Interaction,marked:bool,icon:ui.Icon=.None) {
     fill:=ui.tone(ctx,"accent_soft") if marked else (ui.tone(ctx,"text") if on else (ui.tone(ctx,"field_hover") if it.hot else ui.tone(ctx,"field")))
+    ink:=ui.tone(ctx,"panel") if on else ui.tone(ctx,"text_muted")
     if ui.box(ctx,{id=id,width=ui.FIT,height=ui.fixed(CONTENT_TAB),padding={CONTENT_TAB_PADDING,0,CONTENT_TAB_PADDING,0},align_y=.Center,fill=fill,radius=3}) {
-        ui.label(ctx,label,ui.metric(ctx,"font"),ui.tone(ctx,"panel") if on else ui.tone(ctx,"text_muted"))
+        if icon!=.None {ui.icon(ctx,icon,ink,CONTENT_TAB_ICON)} else {ui.label(ctx,label,ui.metric(ctx,"font"),ink)}
     }
 }
 
@@ -2315,11 +2320,12 @@ content_crumb :: proc(ctx:^ui.Context,id:ui.Id,name:string,last,slash,marked:boo
     return
 }
 
-// Whether the row of the back arrow shows: in the relations of an asset, and
-// inside a folder but in Tabs, whose chips say where it is.
+// Whether the row of the back arrow shows: in the relations of an asset,
+// always in Cards, so that it does not come and go, and inside a folder but
+// in Tabs, whose chips say where it is.
 @(private)
 content_back_shown :: proc(c:^Content) -> bool {
-    return len(c.trail)>0 || c.view.arrangement!=.Tabs && (c.at.length>0 || c.at.virtual!=.None)
+    return len(c.trail)>0 || c.view.arrangement==.Cards || c.view.arrangement!=.Tabs && (c.at.length>0 || c.at.virtual!=.None)
 }
 
 // The back arrow and the breadcrumb: Project and the folders on the way down,
@@ -2329,7 +2335,8 @@ content_crumbs_build :: proc(s:^Session,act:^Content_Actions) {
     c:=s.content
     ctx:=s.gui.ctx
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(CONTENT_BACK_ROW),gap=4,align_y=.Center,clip_x=true}) {
-        if ui.button(ctx,ui.id(ctx,"content_back"),{icon=ui.icon_user(u8(User_Icon.Back)),icon_color=ui.tone(ctx,"text"),icon_size=13,tip="Back",variant="ghost",width=CONTENT_BACK_ROW,height=CONTENT_BACK_ROW}).clicked {act.back=true}
+        root_shown:=len(c.trail)==0 && len(c.history)==0 && c.at.length==0 && c.at.virtual==.None
+        if ui.button(ctx,ui.id(ctx,"content_back"),{icon=ui.icon_user(u8(User_Icon.Back)),icon_color=ui.tone(ctx,"text"),icon_size=13,tip="Back",variant="ghost",width=CONTENT_BACK_ROW,height=CONTENT_BACK_ROW,disabled=root_shown}).clicked {act.back=true}
         registry:=&s.app.assets.registry
         if len(c.trail)>0 {
             for id,i in c.trail {
@@ -2344,7 +2351,7 @@ content_crumbs_build :: proc(s:^Session,act:^Content_Actions) {
                 labels:=CONTENT_VIRTUAL_LABELS
                 ui.label(ctx,"/",ui.metric(ctx,"font"),ui.tone(ctx,"text_faint"))
                 ui.label(ctx,labels[c.at.virtual],ui.metric(ctx,"font"),ui.tone(ctx,"text"))
-            } else {
+            } else if folder!="" {
                 start,index:=0,1
                 for i in 0..=len(folder) {
                     if i<len(folder) && folder[i]!='/' {continue}
@@ -2523,6 +2530,9 @@ content_menu :: proc(s:^Session,w:core.World_Ref) -> (open:string) {
         id:=file.id
         off:=asset_create_refusal(s)!=""
         if ui.menu_item(ctx,ui.id(ctx,"rename"),command_label(s,"asset_rename"),{icon=command_icon(s,"asset_rename"),shortcut=command_shortcut_text(s,"asset_rename"),disabled=off}) {content_rename_begin(s,id)}
+        if ui.menu_item(ctx,ui.id(ctx,"copy"),command_label(s,"asset_copy"),{icon=command_icon(s,"asset_copy"),shortcut=command_shortcut_text(s,"asset_copy")}) {content_clipboard_set(c,id,false)}
+        if ui.menu_item(ctx,ui.id(ctx,"cut"),command_label(s,"asset_cut"),{icon=command_icon(s,"asset_cut"),shortcut=command_shortcut_text(s,"asset_cut"),disabled=off}) {content_clipboard_set(c,id,true)}
+        if ui.menu_item(ctx,ui.id(ctx,"paste"),command_label(s,"asset_paste"),{icon=command_icon(s,"asset_paste"),shortcut=command_shortcut_text(s,"asset_paste"),disabled=off || len(c.clipboard)==0}) {content_paste(s,content_folder_of(file.path))}
         if ui.menu_item(ctx,ui.id(ctx,"duplicate"),command_label(s,"asset_duplicate"),{icon=command_icon(s,"asset_duplicate"),shortcut=command_shortcut_text(s,"asset_duplicate"),disabled=off}) {content_duplicate(s,id)}
         if ui.submenu(ctx,ui.id(ctx,"move"),"Move to",{icon=ui.icon_user(u8(User_Icon.Folder)),disabled=off}) {content_move_items(s,id,"")}
         if ui.menu_item(ctx,ui.id(ctx,"delete"),command_label(s,"asset_delete"),{icon=command_icon(s,"asset_delete"),shortcut=command_shortcut_text(s,"asset_delete"),danger=true,disabled=s.mode!=.Edit || watching(s)}) {asset_delete_ask(s,id)}
@@ -2549,7 +2559,7 @@ content_typing :: proc(c:^Content,ctx:^ui.Context) -> bool {
 @(private)
 content_reveal_begin :: proc(c:^Content,id:base.Asset_Id) {
     c.reveal=id
-    c.filter_length,c.categories,c.unused,c.selection_only=0,{},false,false
+    c.filter_length,c.category,c.unused,c.selection_only=0,.None,false,false
     c.revision+=1
     clear(&c.picked)
 }
@@ -2780,7 +2790,6 @@ content_build :: proc(s:^Session,w:core.World_Ref,height:f32,width:f32=CONTENT_W
         if act.dropped {content_drop(s,act.drop)}
         if path:=content_menu(s,w);path!="" {act.open=path}
         content_create_menu(s)
-        content_more_menu(s)
         if act.open!="" {file_open_path(s,act.open)}
         host.assets_commit(a)
     }

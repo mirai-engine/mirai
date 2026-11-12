@@ -494,8 +494,8 @@ The Content Browser tab shows the registry of the assets of the project and its 
 - What a scene makes of itself (`Asset_Kind.scene_data`: foliage, terrain, navmesh bakes) shows only
   with the Plugins filter or a search. Every kind of a plugin has the same color; each keeps its
   icon. The type of an asset is written nowhere but in a tooltip.
-- The zoom beside the strip (and Ctrl+wheel over the list, one notch per step) walks the counts of
-  columns and, past the most, the list; with few columns cells carry their names, with more a
+- Ctrl+wheel over the list, one notch per step, is the zoom: it walks the counts of columns and,
+  past the most, the list; with few columns cells carry their names, with more a
   floating preview names the asset under the pointer.
 
 **List** (`content_lines`, `ui.rows_begin`): lines of different heights, of which the visible ones
@@ -509,9 +509,10 @@ are built; it is rebuilt when the registry, the filters, the marks or the place 
   first-level folder's name sticky over what it holds, a thin name on subfolders of at least a full
   row and the smaller ones flowing together, and at the root one row of each virtual folder. A
   name enters its folder and its arrow folds it in place.
-  **Tabs** has chips of the first-level folders and rows of those of the chosen one over a grid of
-  what it holds and everything under it. **Cards** shows folders as cells of an asset, with Recent
-  open at the top of the root. No level is indented.
+  **Tabs** has chips of the first-level folders, after Recent, Current scene and Favorites as
+  their glyphs, and rows of those of the chosen one over a grid of what it holds and everything
+  under it. **Cards** shows folders as cells of an asset, with Recent open at the top of the root,
+  and its back row and breadcrumb always, from Project at the root too. No level is indented.
 - **Recent** (what was placed, opened or assigned recently, `content_used`) and **Favorites** belong
   to each user and project (`Content_Marks`, [preferences](#preferences)). **Current scene** is what
   the open scene references, read from the registry transitively and cached by its revision.
@@ -552,6 +553,11 @@ documents follow the asset; the selection passes to it (`Content.reveal`).
   lists the project's folders; dropping it on the name, chip or cell of a folder moves it there. The
   shortcuts look at `content_focused`, like Del. A folder: its right click adds Rename, Duplicate
   and Move to to the Create menu.
+- **Copy, Cut and Paste** (the card's menu, Ctrl+C, Ctrl+X and Ctrl+V with a focused card) keep
+  the ids of the asset and, when it is selected, of the rest of the selection, in the browser
+  (`Content.clipboard`), not in the system's clipboard. Paste, in the menu of a card (its folder),
+  of a folder or of an empty place (`Content.place`), duplicates them there with free names, or
+  moves what was cut, which is then let go.
 - The Create line and what is dropped on a folder act after building the lines: their names are
   registry paths that the scan replaces.
 - **Parts and imports.** An asset moves with the parts it owns; each keeps its place relative to

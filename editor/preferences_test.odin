@@ -150,7 +150,7 @@ the_navigation_of_the_browser_is_kept_in_the_project :: proc(t:^testing.T) {
     f.s.project_root=project
     preferences_open(&f.s,{})
     content_place_set(&f.c,"Meshes/nested")
-    f.c.categories,f.c.unused={.Mesh},true
+    f.c.category,f.c.unused=.Mesh,true
     content_enter(&f.c,.None,"Meshes/nested")
     f.c.filter_length=copy(f.c.filter[:],"box")
     preferences_save(&f.s)
@@ -166,7 +166,7 @@ the_navigation_of_the_browser_is_kept_in_the_project :: proc(t:^testing.T) {
     expect_kept :: proc(t:^testing.T,c:^Content) {
         testing.expect_value(t,string(c.place[:c.place_length]),"Meshes/nested")
         testing.expect_value(t,string(c.at.folder[:c.at.length]),"Meshes/nested")
-        testing.expect(t,c.categories=={.Mesh} && c.unused && c.filter_length==0)
+        testing.expect(t,c.category==.Mesh && c.unused && c.filter_length==0)
     }
     expect_kept(t,&f.c)
     testing.expect(t,f.c.restore)

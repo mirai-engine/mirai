@@ -75,7 +75,7 @@ COMMANDS_OF_THE_ACTIONS :: [?]string{
     "find","import","ai_chat","source_control","graphics","settings","projects",
     "prefab_create","prefab_apply","prefab_revert","prefab_unlink","prefab_apply_base",
     "camera_preview","camera_keep","camera_discard",
-    "asset_delete","asset_rename","asset_duplicate",
+    "asset_delete","asset_rename","asset_duplicate","asset_copy","asset_cut","asset_paste",
 }
 
 @(test)
