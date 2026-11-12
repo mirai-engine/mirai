@@ -314,16 +314,22 @@ list_end :: proc(ctx:^Context,id:Id,count,last:int,row_height:f32) {
 }
 
 // Opens an area of rows of different heights, one per entry of heights, that
-// shows `height` units of them with a bar. Build the rows first..<last at
-// their heights and call rows_end: only they become elements, with room above
-// and below that keeps the scroll range. An offset past the end shows the last
-// rows.
-rows_begin :: proc(ctx:^Context,id:Id,offset:^f32,heights:[]f32,width:Size,height:f32,step:f32=0,bar_room:f32=0) -> (first,last:int) {
+// shows `height` of them with a bar: a fixed height, or one the layout gives,
+// whose rows in sight are those of the height it had the last frame (the whole
+// context before it was placed). Build the rows first..<last at their heights
+// and call rows_end: only they become elements, with room above and below
+// that keeps the scroll range. An offset past the end shows the last rows.
+rows_begin :: proc(ctx:^Context,id:Id,offset:^f32,heights:[]f32,width:Size,height:Size,step:f32=0,bar_room:f32=0) -> (first,last:int) {
     total:f32
     for h in heights {total+=h}
+    visible:=height.value
+    if height.kind!=.Fixed {
+        view,found:=widget_rect(ctx,id)
+        visible=view.h if found else ctx.size.y
+    }
     moved:=[2]f32{0,offset^}
-    scroll_move(ctx,id,&moved,{false,true},step,{0,height},{0,total})
-    offset^=clamp(moved.y,0,max(total-height,0))
+    scroll_move(ctx,id,&moved,{false,true},step,{0,visible},{0,total})
+    offset^=clamp(moved.y,0,max(total-visible,0))
     top:f32
     first=len(heights)
     for h,i in heights {
@@ -332,8 +338,8 @@ rows_begin :: proc(ctx:^Context,id:Id,offset:^f32,heights:[]f32,width:Size,heigh
     }
     bottom:=top
     last=first
-    for last<len(heights) && bottom<offset^+height {bottom+=heights[last];last+=1}
-    box_begin(ctx,{id=id,width=width,height=fixed(height),direction=.Column,clip_y=true,scroll={0,offset^}})
+    for last<len(heights) && bottom<offset^+visible {bottom+=heights[last];last+=1}
+    box_begin(ctx,{id=id,width=width,height=height,direction=.Column,clip_y=true,scroll={0,offset^}})
     scroll_clip_mark(ctx,id)
     widget_add(ctx,id,{.Passive,.Scroll})
     box_begin(ctx,{id=scroll_content_id(ctx,id),width=GROW,height=FIT,direction=.Column,padding={0,0,bar_room,0},track=true})

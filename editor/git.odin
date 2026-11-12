@@ -36,7 +36,7 @@ Git :: struct {
     warned:bool,                // a headless editor said its project is no repository
     history_scroll:[2]f32,
     history_drag:[2]f32,        // the height of the history and the pointer when its edge was pressed
-    scroll:[2]f32,         // of the list of changes
+    scroll:f32,            // of the list of changes
     merge:Git_Merge,
     entities:Git_Entities,
     refreshed:f64,         // platform clock of the last refresh
