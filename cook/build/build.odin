@@ -233,20 +233,9 @@ job_start :: proc(desc:Desc) -> ^Job {
         }
         return job_fail(job,.Write_Failed)
     }
-    // A check and a build of tests read the code of the project with its tests, and so its test worlds.
-    if desc.action!=.Build {
-        folders:=make([dynamic]string,context.temp_allocator)
-        names:=project.FOLDER_NAMES
-        append(&folders,project.path(p.root,names[.Game],allocator=context.temp_allocator),project.path(p.root,names[.Editor],allocator=context.temp_allocator))
-        for plugin in p.plugins {
-            if plugin.origin==.Engine {continue}
-            for part in project.PART_NAMES {append(&folders,project.path(plugin.folder,part,allocator=context.temp_allocator))}
-        }
-        if desc.test_package!="" {append(&folders,desc.test_package)}
-        if errors:=test_worlds_write(p.engine_root,p.root,folders[:],false,project.path(project_tests_folder(p.root,context.temp_allocator),"worlds.stamp",allocator=context.temp_allocator),context.temp_allocator);len(errors)>0 {
-            job.result.text=strings.join(errors,"\n",a)
-            return job_fail(job,.Generate)
-        }
+    if errors:=build_test_worlds_write(p,desc.action,desc.target,desc.test_package);len(errors)>0 {
+        job.result.text=strings.join(errors,"\n",a)
+        return job_fail(job,.Generate)
     }
     job.published=target_output(p,desc.target,desc.output,a,desc.server)
     if desc.target==.Game && project.path_same(job.published[:strings.last_index_byte(job.published,'/')],p.root) {return job_fail(job,.Output_Invalid)}
@@ -290,6 +279,31 @@ job_start :: proc(desc:Desc) -> ^Job {
         if failure:=job_plugins_plan(job,p,desc);failure!=.None {return job_fail(job,failure)}
     }
     return job_schedule(job)
+}
+
+// Writes the test worlds of what a build reads: the compiler reads the tests
+// of every package it reads. A check and a build of tests read the code of the
+// project with its tests; the game also the engine and its plugins from their
+// sources, which an installed engine ships without tests. The generated world
+// of the game is where it reads them from.
+@(private)
+build_test_worlds_write :: proc(p:^project.Project,action:Action,target:Target,test_package:string) -> []string {
+    temp:=context.temp_allocator
+    folders:=make([dynamic]string,temp)
+    if action==.Build {
+        if target!=.Game {return nil}
+        append(&folders,generated_folder(p.root,.Game,temp),project.path(generated_root(p.root,temp),"shipped_world",allocator=temp))
+        stamp:=project.path(project.folder_path(p.root,.Generated,temp),"build","game.worlds.stamp",allocator=temp)
+        return test_worlds_write(p.engine_root,p.root,folders[:],!project.engine_installed(p.engine_root),stamp,temp)
+    }
+    names:=project.FOLDER_NAMES
+    append(&folders,project.path(p.root,names[.Game],allocator=temp),project.path(p.root,names[.Editor],allocator=temp))
+    for plugin in p.plugins {
+        if plugin.origin==.Engine {continue}
+        for part in project.PART_NAMES {append(&folders,project.path(plugin.folder,part,allocator=temp))}
+    }
+    if test_package!="" {append(&folders,test_package)}
+    return test_worlds_write(p.engine_root,p.root,folders[:],false,project.path(project_tests_folder(p.root,temp),"worlds.stamp",allocator=temp),temp)
 }
 
 // Declares the plugin libraries that do not stand and queues their compiles,

@@ -235,9 +235,10 @@ sources and their sidecars ([sync](../../mirai-imports/references/imports.md#syn
   its active plugins once its target stands (`job_imports`, `build.imports_sync`): the editor,
   the game, the server, `mirai play` and the builds the editor starts. It uses the engine's import
   program, since the tool builds without the importers, which reads the formats the plugins of
-  the project add from its editor library. A source that does not import fails the build naming
-  it (`Import_Failed`). There is no other step: a checkout that was just cloned runs after any
-  build.
+  the project add from its editor library; the game, compiled from the engine's sources,
+  builds those binaries too when its project has assets. A source that does not import fails
+  the build naming it (`Import_Failed`). There is no other step: a checkout that was just cloned
+  runs after any build.
 - **What ships.** A game has no imported folder and no sources: the cook writes every asset it
   reaches at its path in the assets of the game, whichever of the two folders it came from.
 - **The installed engine** carries the imported folder of each of its plugins, built when it is
@@ -332,7 +333,8 @@ and the development plugins. If there is any, the job fails with `Engine_Time_Co
 publish. A new engine-time folder of the engine is added there.
 
 The compiler also reads the `_test.odin` files of every package the game imports, with their
-imports: a test of a runtime package does not import an engine-time one. A GPU test of a plugin
+imports: a test of a runtime package does not import an engine-time one, and the build writes the
+test worlds they declare from the generated world, as a check does. A GPU test of a plugin
 loads the shaders that `mirai test` generates for it (`package_test_shaders`) instead of generating
 them with `cook/shaders`.
 
