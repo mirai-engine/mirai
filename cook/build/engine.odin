@@ -410,9 +410,15 @@ engine_plan :: proc(root,compiler:string,mode:Engine_Mode,paths:Engine_Paths,lib
         loads:[]string
         if slice.contains(libraries[which].packages,ENGINE_EMBEDS_SHADERS) {loads=embedded[:] if mode==.Release else embedded[:1]}
         sources:=slice.clone_to_dynamic(engine_sources(root,libraries[which].packages,..loads),context.temp_allocator)
+        // A loaded file leaves the stage as it was: what the library embeds compiles it again.
+        embeds:=make([dynamic]string,context.temp_allocator)
+        for source in sources {
+            if strings.has_suffix(source,".odin") || (mode==.Dev && project.path_same(source,embedded[2])) {continue}
+            append(&embeds,source)
+        }
         append(&sources,..compressor)
         library.sources,_=fingerprint(root,compiler,flags[:],sources[:])
-        library.tools,_=fingerprint(root,compiler,flags[:],loads)
+        library.tools,_=fingerprint(root,compiler,flags[:],embeds[:])
     }
     previous,stamped:=engine_stamp_read(paths.stamp,libraries)
     // Without the declarations nothing compiles against what stands.
@@ -425,7 +431,7 @@ engine_plan :: proc(root,compiler:string,mode:Engine_Mode,paths:Engine_Paths,lib
     // Sources that are the ones of the stamp declare what they did: what each library names stands too.
     plan.current=previous.programs==plan.programs
     for library,which in plan.libraries {
-        plan.current&&=previous.libraries[which].sources==library.sources && library_present(engine_library_files(paths,libraries[which],context.temp_allocator))
+        plan.current&&=previous.libraries[which].sources==library.sources && previous.libraries[which].tools==library.tools && library_present(engine_library_files(paths,libraries[which],context.temp_allocator))
     }
     for program in engine_programs(paths) {plan.current&&=os.is_file(program)}
     return
@@ -665,7 +671,7 @@ engine_build_parts :: proc(desc:Engine_Desc,done:^Engine_Result,compiled:^[dynam
     for library,which in libraries {
         present:=library_present(engine_library_files(paths,library,context.temp_allocator))
         was:=stamp.libraries[which]
-        if !desc.force && present && was.sources==plan.libraries[which].sources {continue}
+        if !desc.force && present && was.sources==plan.libraries[which].sources && was.tools==plan.libraries[which].tools {continue}
         stamp.libraries[which]={}
         changed,failed,ok:=stage(root,paths,library)
         if !ok {
