@@ -190,6 +190,12 @@ Exposure :: struct {
 // Sunny 16 for Manual; for Auto, starlight to snow under the sun.
 EXPOSURE_DEFAULT :: Exposure{mode=.Auto,aperture=16,shutter=1.0/125,iso=100,min_ev100=-6,max_ev100=18,adaptation=1}
 
+// The EV100 at which a luminance, in nits, becomes one scene-linear unit
+// before the bias of the display transform: the exposure that shows it white.
+ev100_white :: proc "contextless" (luminance:f32) -> f32 {
+    return math.log2(max(luminance,1e-6)*gpu.MIDDLE_GRAY*100/gpu.LIGHT_METER_K)
+}
+
 // The exposure of the view through a camera.
 exposure_of :: proc "contextless" (e:Exposure) -> core.View_Exposure {
     if e.mode==.Manual {return {mode=.Manual,ev100=gpu.ev100_of(e.aperture,e.shutter,e.iso),compensation=e.compensation,own=true}}
