@@ -1,27 +1,32 @@
+//! mirai constant IMPOSTOR_NONE uint ../runtime/far.odin
 // The far foliage drawn as octahedral impostors (foliage.Impostor_Row and
 // Impostor_Instance; render.impostor_capture made their frames), in the
-// Gbuffer stage. An instance is drawn on a quad that faces the eye and holds
-// the sphere of its type; the fragment blends the three frames nearest the
-// direction it is seen from, each moved by the depth it keeps (Ryan Brucks,
-// shaderbits 2018), and writes the surface it finds where the leaves are.
+// Gbuffer stage. A dispatch keeps the instances a view sees
+// (foliage_impostor_cull.comp), and one draw puts each on a quad that faces
+// the eye and holds the sphere of its type; the fragment blends the three
+// frames nearest the direction it is seen from, each moved by the depth it
+// keeps (Ryan Brucks, shaderbits 2018), and writes the surface it finds
+// where the leaves are.
 #ifndef FOLIAGE_IMPOSTOR_SLANG
 #define FOLIAGE_IMPOSTOR_SLANG
 #include "native.slang"
 #include "scene.slang"
+#include <constants/plugins/foliage.slang>
 
 // A type of foliage of a Foliage seen as an impostor: its frames and where
 // its mesh gives way to them, which fades them in with the pattern of the
 // batches (box_faded over the same box), and where they fade out.
 struct Impostor_Row {
-    float4 sphere; // the centre of the frames in the space of the type, and their radius
-    float4 low;    // xyz: the box of its mesh; w: from the eye, where its mesh starts to fade out
-    float4 high;   // xyz; w: where its mesh is gone
-    uint4 frames;  // x: the texture of color and coverage, y: of normal and depth (texture_index); z: frames a side; w: pixels a side of a frame
-    float4 far;    // x: where the impostor starts to fade out, y: where it is gone (0: never)
+    float4 sphere;       // the centre of the frames in the space of the type, and their radius
+    float4 low;          // xyz: the box of its mesh; w: from the eye, where its mesh starts to fade out
+    float4 high;         // xyz; w: where its mesh is gone
+    uint4 frames;        // the textures (texture_index) x: of color and coverage, y: of normal and depth, z: of roughness, metallic, occlusion and diffuse transmission; w: frames a side | pixels a side of a frame << 16
+    float4 far;          // x: where the impostor starts to fade out, y: where it is gone (0: never)
+    float4 transmission; // rgb: the color of the light its leaves let through
 };
 
 // An instance, as a Batch_Instance holds it, relative to the anchor of the
-// instances, and the row of its type.
+// instances, and its row: the slot of its Foliage << 16 | its type.
 struct Impostor_Instance {
     float3 position;
     uint rotation;
@@ -31,6 +36,7 @@ struct Impostor_Instance {
 
 struct Impostor_Params {
     float4 anchor; // xyz: where the positions of the instances are from, relative to the origin
+    uint4 count;   // x: the instances of the buffer
 };
 
 // What the vertices of an instance give its fragments, in the space of its type.
@@ -47,8 +53,36 @@ struct Impostor_Varyings {
 };
 
 [[vk::binding(SLOT_PASS0, 0)]] StructuredBuffer<Impostor_Instance> impostor_instances : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);
-[[vk::binding(SLOT_PASS1, 0)]] StructuredBuffer<Impostor_Row> impostor_rows : register(MIRAI_REGISTER(t, SLOT_PASS1), space0);
+[[vk::binding(SLOT_PASS3, 0)]] StructuredBuffer<Impostor_Row> impostor_rows : register(MIRAI_REGISTER(t, SLOT_PASS3), space0);
+// The first row of each slot of a Foliage.
+[[vk::binding(SLOT_PASS4, 0)]] StructuredBuffer<uint> impostor_bases : register(MIRAI_REGISTER(t, SLOT_PASS4), space0);
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Impostor_Params> impostor_params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
+
+uint impostor_row_index(uint row) { return impostor_bases[row >> 16u] + (row & 0xffffu); }
+
+// Where an instance is drawn, and how much of it shows.
+struct Impostor_Shape {
+    float4 world[3];
+    float4 inverse[3];
+    float3 center; // of its sphere
+    float radius;
+    float appear;  // where its mesh fades out, by its distance or its size on the screen, as the mesh does
+    float gone;    // where it fades out far
+};
+
+// The shape of an instance; false where nothing of it is drawn: its mesh is
+// whole there, or it is gone, or its type has no frames.
+bool impostor_shape(Impostor_Instance inst, Impostor_Row row, out Impostor_Shape s) {
+    batch_instance_placement(inst.position + impostor_params.anchor.xyz, inst.rotation, inst.scale, s.world, s.inverse);
+    float3 low, high;
+    box_transformed(s.world, row.low.xyz, row.high.xyz, low, high);
+    s.appear = max(box_faded(low, high, row.low.w, row.high.w), box_small_faded(low, high));
+    s.gone = box_faded(low, high, row.far.x, row.far.y);
+    s.center = transform_point(s.world, row.sphere.xyz);
+    float scale = max(length(float3(s.world[0].x, s.world[1].x, s.world[2].x)), length(float3(s.world[0].y, s.world[1].y, s.world[2].y)));
+    s.radius = row.sphere.w * scale;
+    return (row.frames.w & 0xffffu) >= 2u && s.appear > 0.0 && s.gone < 1.0;
+}
 
 // The frames, as render.impostor_unfold, impostor_fold and impostor_axes
 // make them: the square of the grid, corner to corner from -1 to 1, folded on

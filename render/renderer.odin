@@ -1072,7 +1072,7 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
     })
     graphics(list, r, .Impostor, {
         vertex = &r.shader_codes[.Thumbnail_Vert], fragment = &r.shader_codes[.Thumbnail_Impostor_Frag],
-        color_formats = {0 = .RGBA8_Srgb, 1 = .RGBA8_Unorm}, color_count = 2,
+        color_formats = {0 = .RGBA8_Srgb, 1 = .RGBA8_Unorm, 2 = .RGBA8_Unorm, 3 = .RGBA8_Unorm}, color_count = 4,
         depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Greater, cull = .None,
         name = "impostor capture",
     })

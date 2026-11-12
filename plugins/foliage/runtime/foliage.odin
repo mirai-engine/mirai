@@ -87,8 +87,9 @@ Resident_Owner :: struct {
     sources:u64,  // the revision of the streaming sources its cells were chosen by
     removed:u64,  // the hash of the instances taken out of it then (Removed_Owner)
     cells:[dynamic]Resident_Cell, // in the order of the cells of the source
-    kinds:[dynamic]base.Asset_Id, // the far forms its types show
+    kinds:[dynamic]Kind_Key,      // by type: the far form it shows; none for a type without one
     winds:[dynamic]Wind_Key,      // the variants its types sway with
+    slot:u32,                     // of no other owner: where the rows of its types start (Impostor_Draw.bases)
     built:bool,   // its cells are those of its source, transform and ground
     pending:bool, // some of its cells, or the far forms of its types, wait for the budget of a frame
     far_only:bool, // of a section that is not loaded (scene.Far_Kept): only the far forms of its types
@@ -107,7 +108,7 @@ Resident_Cell :: struct {
     far:bool,           // past CELL_CROWN_REACH times the reach of its meshes: rays meet one crown of the cell
     crown:base.Asset_Id, // that crown, generated; none while its crowns are those of its instances
     batches:[dynamic]Resident_Batch,
-    impostors:[dynamic]Impostor_Placed,
+    impostors:u32, // its block of Impostor_Draw.blocks, plus one; 0: none
 }
 // A batch of a cell, a type, a part of it (0 for a type with a mesh) and a role.
 Resident_Batch :: struct {
@@ -193,13 +194,14 @@ Build_Work :: struct {
     bands:[dynamic]scene.Sources_Near, // by type: the sources as far as its mesh reaches
     cell_band:scene.Sources_Near,      // the sources as far as the crowns of instances reach
     crowns:[dynamic]Crown_Triangles,   // by type: those of its far form, while a cell crown is made
+    impostors:[dynamic]Impostor_Instance, // of the cell being built, in the world
 }
 
 build_work_destroy :: proc(w:^Build_Work) {
     expand_scratch_destroy(&w.expand)
     delete(w.placed);delete(w.orphans);delete(w.instances)
     delete(w.types);delete(w.parts);delete(w.ids);delete(w.order);delete(w.firsts);delete(w.cursor)
-    delete(w.batches);delete(w.cells);delete(w.resident);delete(w.bands);delete(w.crowns)
+    delete(w.batches);delete(w.cells);delete(w.resident);delete(w.bands);delete(w.crowns);delete(w.impostors)
     w^={}
 }
 
@@ -208,9 +210,9 @@ resident_cell_free :: proc(resident:^Foliage_Resident,cell:^Resident_Cell) {
     if resident.app!=nil {for b in cell.batches {render.batch_remove(resident.app.renderer,b.handle)}}
     crown_release(resident,cell.crown)
     cell.crown={}
-    if len(cell.impostors)>0 {resident.impostors.dirty=true}
-    delete(cell.batches);delete(cell.impostors);delete(cell.near)
-    cell.batches,cell.impostors,cell.near=nil,nil,nil
+    impostors_free(&resident.impostors,&cell.impostors)
+    delete(cell.batches);delete(cell.near)
+    cell.batches,cell.near=nil,nil
 }
 
 @(private)
@@ -227,7 +229,7 @@ resident_sweep :: proc(resident:^Foliage_Resident,all:=false) {
     app:=resident.app
     for i:=len(resident.kinds)-1;i>=0;i-=1 {
         used:=false
-        if !all {for owner in resident.owners {for id in owner.kinds {used||=id==resident.kinds[i].id}}}
+        if !all {for owner in resident.owners {for key in owner.kinds {used||=key==resident.kinds[i].key}}}
         if used {continue}
         kind_free(app,&resident.kinds[i])
         unordered_remove(&resident.kinds,i)
@@ -246,7 +248,9 @@ foliage_resident_free :: proc(resident:^Foliage_Resident) {
     for &owner in resident.owners {resident_owner_free(resident,&owner)}
     clear(&resident.owners)
     resident_sweep(resident,true)
-    if resident.app!=nil {render.buffer_release(resident.app.renderer,resident.world,IMPOSTOR_BUFFER)}
+    if resident.app!=nil {
+        for name in ([]string{IMPOSTOR_BUFFER,IMPOSTOR_VISIBLE,IMPOSTOR_DRAW}) {render.buffer_release(resident.app.renderer,resident.world,name)}
+    }
     for &prefab in resident.prefabs {delete(prefab.parts)}
     delete(resident.owners);delete(resident.prefabs);delete(resident.kinds);delete(resident.winds);delete(resident.crowns)
     impostor_draw_destroy(&resident.impostors)
@@ -432,12 +436,12 @@ foliage_render :: proc(resident:^Foliage_Resident,data:core.Ref(Foliage_Data),gr
     if resident.epoch!=render.batches_epoch(app.renderer) {
         // The renderer forgot them, and every mesh with them: their handles name nothing.
         for &owner in resident.owners {
-            for &cell in owner.cells {delete(cell.batches);delete(cell.impostors);delete(cell.near)}
+            for &cell in owner.cells {delete(cell.batches);delete(cell.near)}
             delete(owner.cells)
             owner.cells,owner.built=nil,false
         }
         clear(&resident.winds)
-        resident.impostors.dirty=true
+        impostor_draw_clear(&resident.impostors)
         resident.epoch=render.batches_epoch(app.renderer)
     }
     if resident.structure!=a.structure {
@@ -485,7 +489,19 @@ foliage_render :: proc(resident:^Foliage_Resident,data:core.Ref(Foliage_Data),gr
         owner:^Resident_Owner
         for &held in resident.owners {if held.entity==e {owner=&held;break}}
         if owner==nil {
-            if _,err:=append(&resident.owners,Resident_Owner{entity=e,source=f.source});err!=nil {
+            // The first slot no other owner holds.
+            slot:=u32(0)
+            for {
+                taken:=false
+                for &held in resident.owners {taken||=held.slot==slot}
+                if !taken {break}
+                slot+=1
+            }
+            if slot>0xFFFF {
+                core.report(problems,e,"foliage.owners","this Foliage is not drawn: a world draws at most 65536 Foliage at once; join foliage of the same place into one source")
+                continue
+            }
+            if _,err:=append(&resident.owners,Resident_Owner{entity=e,source=f.source,slot=slot});err!=nil {
                 memory_problem(problems,e,"this Foliage, which is not drawn")
                 continue
             }
@@ -504,8 +520,10 @@ foliage_render :: proc(resident:^Foliage_Resident,data:core.Ref(Foliage_Data),gr
         owner_publish(resident,owner,entry,world.transform,ground,gone,sources.ptr,id,app,problems)
         changed=true
     }
-    if changed {resident_sweep(resident)}
-    if resident.impostors.dirty {impostors_build(resident,data.ptr)}
+    if changed {
+        resident_sweep(resident)
+        impostor_rows_build(resident,data.ptr)
+    }
 }
 
 // The parts of a prefab, read once while the assets keep it; nil without memory.
@@ -576,10 +594,11 @@ types_draw :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,entry:^Data_
             append(&work.parts,part)
         }
         draw.count=len(work.parts)-draw.first
+        key:Kind_Key
         if type_far(t) && draw.count>0 {
-            id:=t.mesh if t.mesh!={} else t.prefab
-            draw.kind=kind_ensure(resident,assets,renderer,job_system,allocator,id,work.parts[draw.first:][:draw.count],problems,owner.entity)
-            append(&owner.kinds,id)
+            parts:=work.parts[draw.first:][:draw.count]
+            key={t.mesh if t.mesh!={} else t.prefab,kind_frame(renderer,t,parts)}
+            draw.kind=kind_ensure(resident,assets,renderer,job_system,allocator,key,parts,problems,owner.entity)
             if draw.kind>=0 && kind_ready(&resident.kinds[draw.kind]) {
                 draw.far=true
                 fade,cull=mesh_distances(t,true)
@@ -587,6 +606,7 @@ types_draw :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,entry:^Data_
                 for &part in work.parts[draw.first:][:draw.count] {part.desc.fade_distance,part.desc.cull_distance=fade,cull}
             }
         }
+        append(&owner.kinds,key)
         append(&work.types,draw)
     }
 }
@@ -770,8 +790,7 @@ cell_publish :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,held:^Resi
     }
     owner_matrix:=mm.transform_matrix(transform)
     clear(&work.batches)
-    if len(held.impostors)>0 {resident.impostors.dirty=true}
-    clear(&held.impostors)
+    clear(&work.impostors)
     publish :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,held:^Resident_Cell,coord:[2]i32,t:^Foliage_Type,part:u32,role:Batch_Role,desc:render.Batch_Desc,id:core.World_Id,app:^host.App,problems:^core.Problems) {
         work:=&resident.work
         if len(work.instances)==0 {return}
@@ -830,18 +849,25 @@ cell_publish :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,held:^Resi
         }
         if !draw.far || draw.kind<0 {continue}
         kind:=&resident.kinds[draw.kind]
-        for at in order {append(&held.impostors,Impostor_Placed{instance=batch_instance_of(work.placed[at],transform),type=u32(i)})}
-        resident.impostors.dirty=true
+        for at in order {
+            b:=batch_instance_of(work.placed[at],transform)
+            append(&work.impostors,Impostor_Instance{position=b.position,rotation=b.rotation,scale=b.scale,row=owner.slot<<16 | u32(i)})
+        }
         // Past its mesh, rays meet its crown in place of its leaves; past
         // the crowns of its instances, the crown of the cell.
-        if near || !t.casts_shadow || kind.crown=={} || held.far {continue}
+        if near || !(t.casts_shadow || t.ray_visible) || kind.crown=={} || held.far {continue}
         desc,ok:=render.batch_desc(app.assets,{mesh=kind.crown})
         if !ok {continue}
-        desc.flags={.Casts_Shadow,.Rays_Only}
+        desc.flags=crown_flags(t)
+        desc.tint=kind.albedo
         desc.object_id=u64(owner.entity)
         clear(&work.instances)
         for at in order {append(&work.instances,batch_instance_of(work.placed[at],transform))}
         publish(resident,owner,held,cell.coord,t,0,ROLE_CROWN,desc,id,app,problems)
+    }
+    if !impostors_set(&resident.impostors,&held.impostors,work.impostors[:]) {
+        memory_problem(problems,owner.entity,"the impostors of a cell of this Foliage, which keeps what it showed")
+        held.stale,owner.pending=true,true
     }
     previous:=held.crown
     held.crown={}
@@ -893,14 +919,22 @@ cell_crown_publish :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,held
         held.stale,owner.pending=true,true
         return
     }
-    any:=false
+    // What rays meet of each of its types, in the mean color of their instances.
+    flags:render.Batch_Flags
+    tint:[3]f32
+    weight:f32
     for draw,i in work.types {
-        if !draw.far || draw.kind<0 || !s.types[i].casts_shadow || i<len(held.near) && held.near[i] {continue}
+        t:=&s.types[i]
+        if !draw.far || draw.kind<0 || !(t.casts_shadow || t.ray_visible) || i<len(held.near) && held.near[i] {continue}
         kind:=&resident.kinds[draw.kind]
         work.crowns[i]={kind.crown_positions,kind.crown_indices}
-        any||=len(kind.crown_indices)>0
+        if len(kind.crown_indices)==0 {continue}
+        flags+=crown_flags(t)
+        count:=f32(work.firsts[i+1]-work.firsts[i])
+        tint+=kind.albedo*count
+        weight+=count
     }
-    if !any {return}
+    if flags=={} || weight<=0 {return}
     crown:base.Asset_Id
     for &c in resident.crowns {
         if c.source==owner.source && c.coord==held.coord && c.version==held.version && c.removed==held.removed {
@@ -930,7 +964,8 @@ cell_crown_publish :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,held
     held.crown=crown
     desc,ok:=render.batch_desc(assets,{mesh=crown})
     if !ok {return}
-    desc.flags={.Casts_Shadow,.Rays_Only}
+    desc.flags=flags
+    desc.tint=tint/weight
     desc.object_id=u64(owner.entity)
     handle:render.Batch_Handle
     for &b in held.batches {if b.role==ROLE_CELL_CROWN && b.handle!=0 {handle,b.handle=b.handle,0;break}}
