@@ -304,9 +304,8 @@ open `std/compressor`; `compressor_open` is always the open one. The script `mir
 same way to build the tool. A project's `build.compression` empty is `Best` only where its engine
 has the private one: a game built from an installed engine, which carries no sources of it,
 reads only the open formats. The fingerprints of the libraries of the engine take the folder and
-the sources of the collection. The release workflow clones the private repository into `ext/`
-with the secret `MIRAI_COMPRESSION_TOKEN` before it packages: the binaries carry it compiled,
-and `PACKAGE_TRACKED` never takes `ext/`.
+the sources of the collection. A release is packaged with the open one: its binaries carry no
+private compressor, and `PACKAGE_TRACKED` never takes `ext/`.
 - Every other asset is written again compressed for shipping (`asset.document_repack` with
   `SHIP`, [compression](../../mirai-assets/references/formats.md#compression)), and so are the
   textures it writes in blocks; a file that is not an asset is copied byte by byte.
