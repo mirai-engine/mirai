@@ -10,8 +10,9 @@ import mm "mirai:std/math"
 
 // What a plugin that imports a source whole writes with Outputs: the root and
 // the parts are the assets the sidecar of the source lists by kind and name,
-// each in the folder its kind goes to, a part renamed in the source is
-// another, and a run that fails leaves the sidecar as it was.
+// each in the folder its kind goes to, a part asked for twice is one, a part
+// renamed in the source is another, and a run that fails leaves the sidecar as
+// it was.
 @(test)
 the_outputs_of_a_source_are_the_assets_its_sidecar_lists :: proc(t:^testing.T) {
     root,assets:=test_assets(t,"outputs")
@@ -33,6 +34,10 @@ the_outputs_of_a_source_are_the_assets_its_sidecar_lists :: proc(t:^testing.T) {
             if at<len(p.materials) {p.materials[at]=id}
             testing.expectf(t,strings.contains(paths[at],"/assets/level/materials/"),"%s goes to the folder asked for",paths[at])
         }
+        floor,floor_path:=output_part(&o,asset.KIND_MESH,"Floor",0,".mesh")
+        twice,twice_paths:=output_parts(&o,asset.KIND_MATERIAL,names,0,".mat",fmt.tprintf("%s/assets/level/materials",root))
+        for id,at in ids {testing.expect(t,twice[at]==id && twice_paths[at]==paths[at],"a document asked for again is the same")}
+        testing.expect(t,floor==p.floor && floor_path==p.floor_path,"a part of the cache asked for again is the same")
         info:=output_info(&o,"Floor",0)
         testing.expect(t,base.text_get(info.source[:])=="assets/level.map" && info.source_hash==base.hash64(transmute([]u8)bytes),"an output names the source by its place in the root")
         output_written(&o,p.scene,asset.KIND_SCENE,"level",p.scene_path,false)
