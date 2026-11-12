@@ -347,7 +347,8 @@ choosing_the_pieces_of_a_large_terrain_looks_at_what_is_near_not_at_every_node :
 // while it stands in, so neither the view nor a body lacks ground, and what
 // the ground under the body needs to show. Its other pieces come from jobs
 // over the ticks that follow, and in every tick the terrain covers its
-// region once.
+// region once. While the world plays, only a build with a collider is waited
+// for by the next tick.
 @(test)
 a_terrain_that_opens_builds_its_root_and_the_ground_under_bodies_at_once_and_the_rest_in_jobs :: proc(t:^testing.T) {
     root:=base.test_folder(t,"terrain")
@@ -380,6 +381,11 @@ a_terrain_that_opens_builds_its_root_and_the_ground_under_bodies_at_once_and_the
     testing.expect(t,ok && piece_depth(&w,hit)>=0 && abs(hit.point.y)<1,"the body has ground in the first tick")
     first:=resident.stats.built
     testing.expectf(t,first<16,"the rest comes from jobs: %d pieces built in the first tick",first)
+    // While the world plays the next tick waits for a collider, so when it collides does not
+    // depend on the threads; no tick waits for what only shows.
+    for slot in w.data.work {
+        if slot.kind==.Build && !slot.urgent {testing.expect(t,slot.waits==slot.key.collision,"a build waits only for its collider")}
+    }
     for _ in 0..<32 {
         quad_tick(&w,&resident,&app,settings,view)
         holes,overlaps=quad_coverage(&resident.owners[0])

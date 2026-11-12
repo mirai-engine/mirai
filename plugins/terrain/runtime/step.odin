@@ -414,7 +414,7 @@ terrain_schedule :: proc(data:^Terrain_Data,resident:^Terrain_Resident,entry:^Da
             }
             edges:[4]Edge_Read
             if owner:=resident_owner_find(resident,source.owner,source.id);owner!=nil && s.kind==.Heightfield {edges=owner_edges(resident,data,owner)}
-            if !work_build(data,slot,entry,source.owner,i,chunk.wanted,urgent,phase,host.assets_limits(resident.assets),border,&source.join,edges) {
+            if !work_build(data,slot,entry,source.owner,i,chunk.wanted,urgent,phase,host.assets_limits(resident.assets),border,&source.join,edges,!resident.picking) {
                 name:[base.ASSET_ID_TEXT]u8
                 core.report(problems,source.owner,"terrain.memory","out of memory for the border of a piece of terrain source %s; it is built in a later frame: free memory, or make the source smaller",host.assets_name(resident.assets,entry.id,&name))
                 keep=true

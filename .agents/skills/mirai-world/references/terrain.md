@@ -692,9 +692,11 @@ Construction in jobs:
 - Each job stores the data's epoch, the source, the chunk, the key (level and collider) and the
   source change it read (`Data_Source.change`); a result whose chunk changed while it ran is
   dropped and built again.
-- A result is published in the next `terrain_update` call of the phase that asked for it, which
-  waits for it if it did not finish: when it is seen does not depend on the threads, and a tick
-  that edits shows the new chunk in the next one, with the previous version in between.
+- A piece with a collider while the world plays is published in the next `terrain_update` call
+  of the phase that asked for it, which waits for it if it did not finish: when it collides does
+  not depend on the threads, and a tick that edits shows the new chunk in the next one, with the
+  previous version in between. What only shows, and everything out of Play, is published once its
+  job ended: no frame waits for it.
 - Built and published in the same call (urgent) is only what the simulation and the first
   frame need: a piece with a collider within `GROUND_REACH` of a simulation source
   (`scene.Simulation_Sources`: the bodies the seats drive, the marks) or of a body that moves or a

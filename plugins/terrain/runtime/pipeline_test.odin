@@ -101,7 +101,8 @@ rebuilt_chunks_show_in_the_next_tick_whatever_the_threads_and_stale_results_are_
         pipeline_tick(&w,&resident,&app,phase=.Frame,playing=false)
         pipeline_tick(&w,&resident,&app,playing=false)
         testing.expect_value(t,resident.stats.stale,stale+1)
-        for _ in 0..<2 {pipeline_tick(&w,&resident,&app,playing=false)}
+        // Out of Play no call waits for a build: it is taken once its job ended.
+        for _ in 0..<2 {work_wait(&w.data,nil);pipeline_tick(&w,&resident,&app,playing=false)}
         hit,ok=phys.raycast({&w.state},{-12,20,-12},{0,-1,0})
         testing.expect(t,ok && abs(hit.point.y-3)<1e-4,"the chunk shows both edits once its stale build is done again")
         calls,built,version:=counter.requests,resident.stats.built,w.statics.version
@@ -239,8 +240,8 @@ letting_go_of_an_excavated_zone_and_reading_it_again_keeps_its_edits :: proc(t:^
         // The viewer leaves: the zone lets go of its chunks and pages.
         far:=[3]f32{100,0,100}
         source_place(&w,far)
-        // What it showed stays until the nodes that replace it are built.
-        for _ in 0..<8 {pipeline_tick(&w,&resident,&app,settings)}
+        // What it showed stays until the nodes that replace it are built; what only shows is taken once its job ended.
+        for _ in 0..<8 {work_wait(&w.data,nil);pipeline_tick(&w,&resident,&app,settings)}
         s=&w.data.entries[0].source
         hit,ok=phys.raycast({&w.state},near+{0,20,0},{0,-1,0})
         testing.expect(t,ok && piece_depth(&w,hit)>0,"the zone let go of its chunk colliders: its node collides")
