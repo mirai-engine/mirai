@@ -106,7 +106,7 @@ shared_terrain_chunks_remain_visible_after_duplicate_copy_and_preview_retirement
             outlines:core.Table(render.Outline);defer core.table_destroy(&outlines)
             outline_styles:=render.OUTLINE_STYLES_DEFAULT
             lives:core.Table(render.Material_Live);defer core.table_destroy(&lives)
-            render.render_sync(&sync,app,{},core.FRAME_TIME_DEFAULT,{},&poses[current],&w.statics,&w.looks,&lives,&hidden,&elsewhere,&w.parents,{},&suns,&points,&spots,&rects,&emissions,&skies,&posts,{},&highlights,&outlines,{&outline_styles},&offsets,&layers,{},{},{},{},nil)
+            render.render_sync(&sync,app,{},core.FRAME_TIME_DEFAULT,{},core.read(&poses[current]),core.read(&w.statics),core.read(&w.looks),core.read(&lives),core.read(&hidden),core.read(&elsewhere),core.read(&w.parents),{},core.read(&suns),core.read(&points),core.read(&spots),core.read(&rects),core.read(&emissions),core.read(&skies),core.read(&posts),{},{},{},core.read(&highlights),core.read(&outlines),{&outline_styles},core.read(&offsets),core.read(&layers),{},{},{},{},nil)
             host.app_frame_end(app)
         }
         if pass==4 {continue}

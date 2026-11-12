@@ -35,9 +35,10 @@ float4 projected(Mirai_Surface_Context ctx, uint index, Projection p, float scal
 }
 
 // The base color (its alpha the height) and the normal map of a layer along
-// a projection at one scale. With detile a slow noise of the world, a
-// feature every few repeats, picks two shifts of the repeats and blends them
-// where their colors differ least: no repeat lines up with the next.
+// a projection at one scale. With detile, a slow noise of the world (a
+// feature every few repeats) runs through bands, each with a shift of the
+// repeats of its own; a point blends the shifts of the two bands it lies
+// between, the higher texel (alpha) first: no repeat lines up with the next.
 void tiled(Mirai_Surface_Context ctx, Terrain_Layer l, Projection p, float scale, out float4 c, out float4 n) {
     if (l.detile <= 0.0) {
         c = projected(ctx, l.color, p, scale, float2(0.0));
@@ -45,11 +46,11 @@ void tiled(Mirai_Surface_Context ctx, Terrain_Layer l, Projection p, float scale
         return;
     }
     float k = mirai_noise(ctx, 4.0 / scale) * 8.0;
-    float i = floor(k);
-    float2 a = sin(float2(3.0, 7.0) * i) * l.detile, b = sin(float2(3.0, 7.0) * (i + 1.0)) * l.detile;
+    int band = int(floor(k));
+    float2 a = float2(mirai_cell_value(int3(band, 1, 0)), mirai_cell_value(int3(band, 2, 0))) * l.detile;
+    float2 b = float2(mirai_cell_value(int3(band + 1, 1, 0)), mirai_cell_value(int3(band + 1, 2, 0))) * l.detile;
     float4 ca = projected(ctx, l.color, p, scale, a), cb = projected(ctx, l.color, p, scale, b);
-    float3 d = ca.rgb - cb.rgb;
-    float t = smoothstep(0.2, 0.8, k - i - 0.1 * (d.x + d.y + d.z));
+    float t = smoothstep(0.2, 0.8, k - float(band) + 0.5 * (cb.a - ca.a));
     c = lerp(ca, cb, t);
     n = l.normal_strength > 0.0 ? lerp(projected(ctx, l.normal, p, scale, a), projected(ctx, l.normal, p, scale, b), t) : float4(0.5, 0.5, 1.0, 1.0);
 }

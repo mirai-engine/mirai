@@ -189,6 +189,33 @@ a_piece_shows_the_weights_and_normals_of_every_sample_at_any_level :: proc(t:^te
     testing.expect(t,weights_float(Weights(fine.maps.control[3*9+3]))[2]>0.99)
 }
 
+// Tint and Roughness paint a Heightfield toward their color and roughness,
+// the maps of its pieces show it, and its file keeps it; a Volume has none.
+@(test)
+color_and_roughness_painted_over_the_layers_reach_the_maps_and_the_file :: proc(t:^testing.T) {
+    s,loaded:Source;defer source_destroy(&s);defer source_destroy(&loaded)
+    testing.expect(t,source_make(&s,.Heightfield,{17,1,17},1,8))
+    testing.expect(t,grid_none(&s.paint),"nothing painted holds no pages")
+    for _ in 0..<12 {testing.expect(t,source_edit(&s,{kind=.Tint,center={},radius=2,amount=0.5,color={1,0,0},falloff=.Constant}).error==.None)}
+    testing.expect_value(t,grid_get(&s.paint,8,8),Paint{255,0,0,PAINT_ROUGHNESS_NEUTRAL})
+    testing.expect_value(t,grid_get(&s.paint,2,2),PAINT_NEUTRAL)
+    for _ in 0..<12 {source_edit(&s,{kind=.Roughness,center={},radius=2,amount=0.5,target=0,falloff=.Constant})}
+    testing.expect_value(t,grid_get(&s.paint,8,8),Paint{255,0,0,0})
+    testing.expect_value(t,source_edit(&s,{kind=.Tint,center={},radius=2,amount=1,color={2,0,0}}).error,Edit_Error.Color)
+    testing.expect_value(t,source_edit(&s,{kind=.Roughness,center={},radius=2,amount=1,target=-1}).error,Edit_Error.Target)
+    mesh:Chunk_Mesh;chunk_mesh_init(&mesh);defer chunk_mesh_destroy(&mesh)
+    testing.expect(t,chunk_build(&s,{1,0,1},&mesh,false))
+    testing.expect_value(t,mesh.maps.paint[0],Paint{255,0,0,0})
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    path:=fmt.tprintf("%s/paint.terrain",base.test_folder(t,"terrain"))
+    testing.expect_value(t,source_save(&s,path,{61,62},&types),asset.Error.None)
+    _,ok:=source_load(&loaded,path,&types)
+    testing.expect(t,ok && grid_equal(&loaded.paint,&s.paint))
+    volume:Source;defer source_destroy(&volume)
+    testing.expect(t,source_make(&volume,.Volume,{9,9,9},1,4))
+    testing.expect_value(t,source_edit(&volume,{kind=.Tint,center={},radius=1,amount=1,color={1,1,1}}).error,Edit_Error.Kind)
+}
+
 @(private)
 slice_equal :: proc(a,b:[]$T) -> bool {
     if len(a)!=len(b) {return false}
