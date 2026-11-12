@@ -9,17 +9,17 @@ import "mirai:asset"
 import "mirai:std/jobs"
 
 // What a Heightfield of a world keeps of its samples so that what is far
-// needs no page: its heights and the weights of its layers every COARSE
-// samples and at its last row and column, and of each piece of its quadtree
-// the heights its samples reach and the errors of its levels. Between the
-// points of the grid a point takes the bilinear blend of the four around it
-// (coarse_height). The nodes of the quadtree are built from it, and every
-// border whose level reaches COARSE_LEVEL, so that the pieces that share a
-// border build it alike whatever pages are in memory. Its file stores it
-// (coarse_put), so reading a source decodes no page for it; edits keep it,
-// and its grids are in pages shared with the copies of the source, as its
-// samples are. Without one (a source of the editor) the same values come
-// from the samples.
+// needs no page: its heights, the weights of its layers and what is painted
+// every COARSE samples and at its last row and column, the share of each of
+// its cells that is holes, and of each piece of its quadtree the heights its
+// samples reach and the errors of its levels. Between the points of the grid
+// a point takes the bilinear blend of the four around it (coarse_height). The
+// nodes of the quadtree are built from it, and every border whose level
+// reaches COARSE_LEVEL, so that the pieces that share a border build it alike
+// whatever pages are in memory. Its file stores it (coarse_put), so reading a
+// source decodes no page for it; edits keep it, and its grids are in pages
+// shared with the copies of the source, as its samples are. Without one (a
+// source of the editor) the same values come from the samples.
 COARSE_LEVEL :: 3
 COARSE :: 1<<COARSE_LEVEL
 
@@ -27,6 +27,8 @@ Coarse :: struct {
     size:[2]int,
     heights:Grid(f32),
     weights:Grid(Weights),
+    holes:Grid(u8),      // of each cell, by its lowest point (the last row and column hold none): from 0 none to 255 all holes; none while the source has no holes
+    paint:Grid(Paint),   // none while the source has no paint
     ranges:[][2]f32,     // of each piece, chunks first: the lowest and highest of its samples
     errors:[]Lod_Errors, // of each piece
 }
@@ -36,7 +38,7 @@ coarse_position :: #force_inline proc "contextless" (i,samples:int) -> int {retu
 
 @(private)
 coarse_destroy :: proc(c:^Coarse,allocator:runtime.Allocator) {
-    grid_destroy(&c.heights,allocator);grid_destroy(&c.weights,allocator)
+    grid_destroy(&c.heights,allocator);grid_destroy(&c.weights,allocator);grid_destroy(&c.holes,allocator);grid_destroy(&c.paint,allocator)
     delete(c.ranges,allocator);delete(c.errors,allocator)
     c^={}
 }
@@ -52,7 +54,7 @@ coarse_copy :: proc(dst,src:^Coarse,allocator:runtime.Allocator) -> bool {
         copy(dst^,src)
         return true
     }
-    if !grid_copy(&dst.heights,&src.heights,allocator) || !grid_copy(&dst.weights,&src.weights,allocator) {return false}
+    if !grid_copy(&dst.heights,&src.heights,allocator) || !grid_copy(&dst.weights,&src.weights,allocator) || !grid_copy(&dst.holes,&src.holes,allocator) || !grid_copy(&dst.paint,&src.paint,allocator) {return false}
     if !same(&dst.ranges,src.ranges,allocator) || !same(&dst.errors,src.errors,allocator) {return false}
     dst.size=src.size
     return true
@@ -75,15 +77,22 @@ coarse_put :: proc(document:^asset.Document,types:^asset.Types,c:^Coarse) -> ass
     count:=c.size.x*c.size.y
     heights,e0:=make([]f32,count,context.temp_allocator)
     weights,e1:=make([]Weights,count,context.temp_allocator)
-    if e0!=nil || e1!=nil {return .Out_Of_Memory}
+    holes,e2:=make([]u8,count,context.temp_allocator)
+    paint,e3:=make([]Paint,count,context.temp_allocator)
+    if e0!=nil || e1!=nil || e2!=nil || e3!=nil {return .Out_Of_Memory}
     for j in 0..<c.size.y {for i in 0..<c.size.x {
-        heights[i+c.size.x*j]=height_quantize(grid_get(&c.heights,i,j))
-        weights[i+c.size.x*j]=grid_get(&c.weights,i,j)
+        at:=i+c.size.x*j
+        heights[at]=height_quantize(grid_get(&c.heights,i,j))
+        weights[at]=grid_get(&c.weights,i,j)
+        holes[at]=grid_none(&c.holes)?0:grid_get(&c.holes,i,j)
+        paint[at]=grid_none(&c.paint)?PAINT_NEUTRAL:grid_get(&c.paint,i,j)
     }}
     grid:=asset.document_table_add(document,COARSE_TABLE) or_return
     asset.document_resize(document,grid,count) or_return
     asset.document_column_put(document,types,grid,"heights",heights,{},.Stream) or_return
     asset.document_column_put(document,types,grid,"weights",weights,{},.Stream) or_return
+    asset.document_column_put(document,types,grid,"holes",holes,{},.Stream) or_return
+    asset.document_column_put(document,types,grid,"paint",paint,{},.Stream) or_return
     pieces:=asset.document_table_add(document,PIECES_TABLE) or_return
     asset.document_resize(document,pieces,len(c.errors)) or_return
     asset.document_column_put(document,types,pieces,"ranges",c.ranges,{},.Stream) or_return
@@ -91,8 +100,9 @@ coarse_put :: proc(document:^asset.Document,types:^asset.Types,c:^Coarse) -> ass
     return .None
 }
 
-// Reads the coarse data of a Heightfield from its file into s; false when the
-// file lacks it, holds it of another shape or holds a value out of range.
+// Reads the coarse data of a Heightfield from its file into s, after its
+// holes and paint; false when the file lacks it, holds it of another shape or
+// holds a value out of range.
 @(private)
 coarse_read :: proc(s:^Source,file:^asset.Asset,types:^asset.Types) -> bool {
     if s.kind!=.Heightfield {return true}
@@ -102,21 +112,28 @@ coarse_read :: proc(s:^Source,file:^asset.Asset,types:^asset.Types) -> bool {
     weights,e1:=asset.asset_rows(file,types,COARSE_TABLE,"weights",Weights)
     ranges,e2:=asset.asset_rows(file,types,PIECES_TABLE,"ranges",[2]f32)
     errors,e3:=asset.asset_rows(file,types,PIECES_TABLE,"errors",Lod_Errors)
-    if e0!=.None || e1!=.None || e2!=.None || e3!=.None {return false}
-    if len(heights)!=size.x*size.y || len(weights)!=len(heights) || len(ranges)!=quad_total(&q) || len(errors)!=len(ranges) {return false}
+    holes,e4:=asset.asset_rows(file,types,COARSE_TABLE,"holes",u8)
+    paint,e5:=asset.asset_rows(file,types,COARSE_TABLE,"paint",Paint)
+    if e0!=.None || e1!=.None || e2!=.None || e3!=.None || e4!=.None || e5!=.None {return false}
+    if len(heights)!=size.x*size.y || len(weights)!=len(heights) || len(holes)!=len(heights) || len(paint)!=len(heights) || len(ranges)!=quad_total(&q) || len(errors)!=len(ranges) {return false}
     if !values_within(heights,HEIGHT_LIMIT) || !page_valid(weights,weights_full) {return false}
     for range in ranges {if !(range.x>=-HEIGHT_LIMIT && range.x<=range.y && range.y<=HEIGHT_LIMIT) {return false}}
     for &e in errors {
-        if !(e.coarse>=0 && e.coarse<=2*HEIGHT_LIMIT) {return false}
+        if !(e.coarse>=0 && e.coarse<=2*HEIGHT_LIMIT) || !(e.below>=0 && e.below<=4*HEIGHT_LIMIT) {return false}
         for level in e.levels {if !(level>=0 && level<=2*HEIGHT_LIMIT) {return false}}
     }
     next:=Coarse{size=size}
     ok:=false
     defer if !ok {coarse_destroy(&next,s.allocator)}
     if !coarse_grid(&next.heights,size,s.allocator) || !coarse_grid(&next.weights,size,s.allocator) {return false}
+    holed,painted:=!grid_none(&s.holes),!grid_none(&s.paint)
+    if holed && !coarse_grid(&next.holes,size,s.allocator) || painted && !coarse_grid(&next.paint,size,s.allocator) {return false}
     for j in 0..<size.y {for i in 0..<size.x {
-        grid_set(&next.heights,i,j,heights[i+size.x*j])
-        grid_set(&next.weights,i,j,weights[i+size.x*j])
+        at:=i+size.x*j
+        grid_set(&next.heights,i,j,heights[at])
+        grid_set(&next.weights,i,j,weights[at])
+        if holed {grid_set(&next.holes,i,j,holes[at])}
+        if painted {grid_set(&next.paint,i,j,paint[at])}
     }}
     error:runtime.Allocator_Error
     if next.ranges,error=slice.clone(ranges,s.allocator);error!=nil {return false}
@@ -141,9 +158,15 @@ coarse_value :: #force_inline proc "contextless" (s:^Source,i,j:int) -> f32 {
 }
 
 @(private)
-coarse_weight :: #force_inline proc "contextless" (s:^Source,i,j:int) -> [4]f32 {
+coarse_weight :: #force_inline proc "contextless" (s:^Source,i,j:int) -> Layer_Mix {
     if !grid_none(&s.coarse.weights) {return weights_float(grid_get(&s.coarse.weights,i,j))}
     return weights_float(grid_get(&s.weights,coarse_position(i,int(s.samples.x)),coarse_position(j,int(s.samples.z))))
+}
+
+@(private)
+coarse_paint_value :: #force_inline proc "contextless" (s:^Source,i,j:int) -> [4]f32 {
+    p:=grid_none(&s.coarse.paint)?grid_get(&s.paint,coarse_position(i,int(s.samples.x)),coarse_position(j,int(s.samples.z))):grid_get(&s.coarse.paint,i,j)
+    return {f32(p.r),f32(p.g),f32(p.b),f32(p.a)}
 }
 
 // The cell of the coarse grid along an axis of samples that holds p, and where in it.
@@ -165,7 +188,7 @@ coarse_height :: proc "contextless" (s:^Source,x,z:int) -> f32 {
 }
 
 @(private)
-coarse_weights :: proc "contextless" (s:^Source,x,z:int) -> [4]f32 {
+coarse_weights :: proc "contextless" (s:^Source,x,z:int) -> Layer_Mix {
     i,u:=coarse_cell(x,int(s.samples.x))
     j,v:=coarse_cell(z,int(s.samples.z))
     a,b:=coarse_weight(s,i,j),coarse_weight(s,i+1,j)
@@ -173,23 +196,86 @@ coarse_weights :: proc "contextless" (s:^Source,x,z:int) -> [4]f32 {
     return (a*(1-u)+b*u)*(1-v)+(c*(1-u)+d*u)*v
 }
 
+// The paint of the coarse grid at sample x,z, of a source with paint.
+@(private)
+coarse_paint :: proc "contextless" (s:^Source,x,z:int) -> Paint {
+    i,u:=coarse_cell(x,int(s.samples.x))
+    j,v:=coarse_cell(z,int(s.samples.z))
+    a,b:=coarse_paint_value(s,i,j),coarse_paint_value(s,i+1,j)
+    c,d:=coarse_paint_value(s,i,j+1),coarse_paint_value(s,i+1,j+1)
+    p:=(a*(1-u)+b*u)*(1-v)+(c*(1-u)+d*u)*v
+    return {u8(p.r+0.5),u8(p.g+0.5),u8(p.b+0.5),u8(p.a+0.5)}
+}
+
+// What share of the cells low to before high of a Heightfield are holes, as
+// its coarse grid holds them: each of its cells by how much of it the region
+// covers. From the samples without a coarse grid.
+@(private)
+coarse_hole_share :: proc "contextless" (s:^Source,low,high:[2]int) -> f32 {
+    if grid_none(&s.holes) {return 0}
+    c:=&s.coarse.holes
+    if grid_none(c) {return source_hole_share(s,low,high)}
+    total,covered:=f32(0),f32(0)
+    nx,nz:=int(s.samples.x),int(s.samples.z)
+    for j in low.y/COARSE..=min((high.y-1)/COARSE,c.size.z-1) {
+        z0,z1:=max(low.y,j*COARSE),min(high.y,min(j*COARSE+COARSE,nz-1))
+        for i in low.x/COARSE..=min((high.x-1)/COARSE,c.size.x-1) {
+            x0,x1:=max(low.x,i*COARSE),min(high.x,min(i*COARSE+COARSE,nx-1))
+            if x1<=x0 || z1<=z0 {continue}
+            area:=f32((x1-x0)*(z1-z0))
+            covered+=area
+            total+=area*f32(grid_get(c,i,j))/255
+        }
+    }
+    return covered>0?total/covered:0
+}
+
+// The share of holes of coarse cell i,j, from the samples.
+@(private)
+coarse_hole_cell :: proc "contextless" (s:^Source,i,j:int) -> u8 {
+    nx,nz:=int(s.samples.x),int(s.samples.z)
+    share:=source_hole_share(s,{i*COARSE,j*COARSE},{min(i*COARSE+COARSE,nx-1),min(j*COARSE+COARSE,nz-1)})
+    return u8(share*255+0.5)
+}
+
 // As heightfield_normal, over the coarse grid.
-coarse_normal :: proc "contextless" (s:^Source,x,z,step:int) -> [3]f32 {
+coarse_normal :: proc "contextless" (s:^Source,x,z,step:int,edges:^[4]Edge_Read=nil) -> [3]f32 {
     nx,nz:=int(s.samples.x),int(s.samples.z)
     x0,x1,z0,z1:=max(x-step,0),min(x+step,nx-1),max(z-step,0),min(z+step,nz-1)
-    west,east:=coarse_height(s,x0,z),coarse_height(s,x1,z)
-    north,south:=coarse_height(s,x,z0),coarse_height(s,x,z1)
+    if edge_has(s,edges,x-step,z) {x0=x-step}
+    if edge_has(s,edges,x+step,z) {x1=x+step}
+    if edge_has(s,edges,x,z-step) {z0=z-step}
+    if edge_has(s,edges,x,z+step) {z1=z+step}
+    west,east:=coarse_edge_height(s,edges,x0,z),coarse_edge_height(s,edges,x1,z)
+    north,south:=coarse_edge_height(s,edges,x,z0),coarse_edge_height(s,edges,x,z1)
     return linalg.normalize0([3]f32{(west-east)/(f32(x1-x0)*s.cell),1,(north-south)/(f32(z1-z0)*s.cell)})
+}
+
+// As edge_height, over the coarse grids.
+@(private)
+coarse_edge_height :: proc "contextless" (s:^Source,edges:^[4]Edge_Read,x,z:int) -> f32 {
+    if edges!=nil {
+        read :: proc "contextless" (e:Edge_Read,x,z:int) -> (h:f32,ok:bool) {
+            if e.s==nil {return}
+            p:=[2]int{x,z}-e.offset
+            if p.x<0 || p.y<0 || p.x>=int(e.s.samples.x) || p.y>=int(e.s.samples.z) {return}
+            return coarse_height(e.s,p.x,p.y)+e.dy,true
+        }
+        if side:=edge_beyond(s,x,z);side>=0 {
+            if h,ok:=read(edges[side],x,z);ok {return h}
+        } else {
+            for e,i in edges {if e.owns && edge_on(s,i,x,z) {if h,ok:=read(e,x,z);ok {return h}}}
+        }
+    }
+    return coarse_height(s,clamp(x,0,int(s.samples.x)-1),clamp(z,0,int(s.samples.z)-1))
 }
 
 // As heightfield_vertex, over the coarse grid.
 @(private)
-coarse_vertex :: proc "contextless" (s:^Source,x,z,step:int) -> (position,normal:[3]f32,uv,uv1:[2]f32) {
+coarse_vertex :: proc "contextless" (s:^Source,x,z,step:int,edges:^[4]Edge_Read=nil) -> (position,normal:[3]f32) {
     position=source_origin(s)+[3]f32{f32(x),0,f32(z)}*s.cell
-    position.y=coarse_height(s,x,z)
-    normal=coarse_normal(s,x,z,step)
-    w:=layers_vertex(s,coarse_weights(s,x,z),coarse_normal(s,x,z,LAYER_RULE_SAMPLES),position.y)
-    return position,normal,{w[0],w[1]},{w[2],w[3]}
+    position.y=coarse_edge_height(s,edges,x,z)
+    return position,coarse_normal(s,x,z,step,edges)
 }
 
 // The values of page i of a grid, from memory or read from its block into
@@ -212,6 +298,7 @@ LOD_ERRORS :: LOD_LEVELS_MAX+QUAD_DEPTH_MAX+1
 Lod_Errors :: struct {
     levels:[LOD_ERRORS]f32,
     coarse:f32,
+    below:f32, // of a node: the largest error a node under it shows at its finest level, what a walk from the roots goes down for (resident_lod)
 }
 
 // Measures the coarse data of a Heightfield from every sample, reading the
@@ -241,7 +328,7 @@ source_coarse_build :: proc(s:^Source,js:^jobs.Job_System=nil,worker:=jobs.OWNER
     read:Page_Reader
     if !page_reader_init(&read,context.temp_allocator) {return false}
     defer page_reader_destroy(&read,context.temp_allocator)
-    if !coarse_grid(&next.weights,size,s.allocator) || !coarse_weights_fill(s,&next,&read) {return false}
+    if !coarse_grid(&next.weights,size,s.allocator) || !coarse_weights_fill(s,&next,&read) || !coarse_extras_fill(s,&next,&read) {return false}
     coarse_destroy(&s.coarse,s.allocator)
     s.coarse=next
     ok=true
@@ -359,6 +446,43 @@ coarse_weights_fill :: proc(s:^Source,c:^Coarse,read:^Page_Reader) -> bool {
     return true
 }
 
+// The share of holes of each cell of the coarse grid and what is painted at
+// its samples, of a source that has them, reading each page once.
+@(private)
+coarse_extras_fill :: proc(s:^Source,c:^Coarse,read:^Page_Reader) -> bool {
+    nx,nz:=int(s.samples.x),int(s.samples.z)
+    if !grid_none(&s.paint) {
+        paint,error:=make([]Paint,PAGE*PAGE,context.temp_allocator)
+        if error!=nil || !coarse_grid(&c.paint,c.size,s.allocator) {return false}
+        for j in 0..<c.size.y {for i in 0..<c.size.x {
+            page,at:=grid_page_at(&s.paint,{coarse_position(i,nx),0,coarse_position(j,nz)})
+            values,fill,ok:=coarse_page(&s.paint,page,s.file,read,paint)
+            if !ok {return false}
+            grid_set(&c.paint,i,j,values==nil?fill:values[at])
+        }}
+    }
+    if grid_none(&s.holes) {return true}
+    if !coarse_grid(&c.holes,c.size,s.allocator) {return false}
+    holes,error:=make([]u8,PAGE*PAGE,context.temp_allocator)
+    if error!=nil {return false}
+    g:=&s.holes
+    // A cell of the coarse grid lies within a page of holes: COARSE divides PAGE.
+    #assert(PAGE%COARSE==0)
+    for j in 0..<c.size.y-1 {for i in 0..<c.size.x-1 {
+        page,_:=grid_page_at(g,{i*COARSE,0,j*COARSE})
+        values,fill,ok:=coarse_page(g,page,s.file,read,holes)
+        if !ok {return false}
+        if values==nil {grid_set(&c.holes,i,j,fill!=0?255:0);continue}
+        first,_:=grid_page_region(g,page)
+        width:=min(PAGE,g.size.x-first.x)
+        count:=0
+        x1,z1:=min(i*COARSE+COARSE,nx-1),min(j*COARSE+COARSE,nz-1)
+        for z in j*COARSE..<z1 {for x in i*COARSE..<x1 {if values[x-first.x+width*(z-first.z)]!=0 {count+=1}}}
+        grid_set(&c.holes,i,j,u8(f32(count)/f32(max((x1-i*COARSE)*(z1-j*COARSE),1))*255+0.5))
+    }}
+    return true
+}
+
 // The weights of the coarse grid again, after the layers of a source changed.
 source_coarse_weights :: proc(s:^Source) -> bool {
     if grid_none(&s.coarse.heights) {return true}
@@ -393,6 +517,31 @@ source_coarse_update :: proc(s:^Source,low,high:[3]int) -> bool {
                 grid_set(&c.heights,i,j,grid_get(&s.field,x,z))
                 if !grid_none(&c.weights) {grid_set(&c.weights,i,j,grid_get(&s.weights,x,z))}
             }
+        }
+    }
+    // What is painted or holed since the coarse grid was made takes grids of its own.
+    if !grid_none(&s.paint) {
+        if grid_none(&c.paint) {
+            read:Page_Reader
+            if !page_reader_init(&read,context.temp_allocator) {return false}
+            defer page_reader_destroy(&read,context.temp_allocator)
+            if !coarse_extras_fill(s,c,&read) {return false}
+        } else if first.x<=last.x && first.y<=last.y {
+            if !grid_prepare(&c.paint,{first.x,0,first.y},{last.x,0,last.y},s.allocator) {return false}
+            for j in first.y..=last.y {for i in first.x..=last.x {
+                x,z:=coarse_position(i,nx),coarse_position(j,nz)
+                if x>=low.x && x<=high.x && z>=low.z && z<=high.z {grid_set(&c.paint,i,j,grid_get(&s.paint,x,z))}
+            }}
+        }
+    }
+    if !grid_none(&s.holes) {
+        if grid_none(&c.holes) && !coarse_grid(&c.holes,c.size,s.allocator) {return false}
+        // The cells of the coarse grid the region touches.
+        a:=[2]int{max(low.x-1,0)/COARSE,max(low.z-1,0)/COARSE}
+        b:=[2]int{min(high.x/COARSE,c.size.x-2),min(high.z/COARSE,c.size.y-2)}
+        if a.x<=b.x && a.y<=b.y {
+            if !grid_prepare(&c.holes,{a.x,0,a.y},{b.x,0,b.y},s.allocator) {return false}
+            for j in a.y..=b.y {for i in a.x..=b.x {grid_set(&c.holes,i,j,coarse_hole_cell(s,i,j))}}
         }
     }
     if len(ranges)==0 {return true}
@@ -499,8 +648,12 @@ node_errors_measure :: proc(s:^Source,q:^Quad,errors:[]Lod_Errors,i:int,within:=
     whole:=within[0].x==min(int)
     e:=&errors[i]
     if whole {e^={}}
-    e.coarse=0
-    for child in quad_children(q,i) {if child>=0 {e.coarse=max(e.coarse,errors[child].coarse)}}
+    e.coarse,e.below=0,0
+    for child in quad_children(q,i) {
+        if child<0 {continue}
+        e.coarse=max(e.coarse,errors[child].coarse)
+        if child>=q.first[1] {e.below=max(e.below,errors[child].below,lod_error(errors,q,child,int(node_lod_min(s,q,child))))}
+    }
     for level in int(node_lod_min(s,q,i))..=min(int(node_lod_max(s,q,i)),LOD_ERRORS-1) {
         step:=1<<uint(level)
         worst:=e.levels[level]

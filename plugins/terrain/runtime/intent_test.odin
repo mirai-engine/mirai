@@ -83,7 +83,7 @@ a_wrong_brush_is_an_error_that_says_what_failed_and_changes_nothing :: proc(t:^t
         {"a blend below zero",{kind=.Carve,center={},radius=3,amount=1,blend=-1},.Blend,"blend"},
         {"a hardness of one",{kind=.Raise,center={},radius=3,amount=1,hardness=1},.Falloff,"hardness"},
         {"a shape that is none",{kind=.Carve,shape=Brush_Shape(9),center={},radius=3,amount=1},.Falloff,"shape"},
-        {"a kind that is none",{kind=Brush_Kind(200),center={},radius=3,amount=1},.Kind,"Raise to Thermal"},
+        {"a kind that is none",{kind=Brush_Kind(200),center={},radius=3,amount=1},.Kind,"Raise to Roughness"},
         {"a layer the source lacks",{kind=.Paint,center={},radius=3,amount=1,layer=3},.Layer,"layer"},
         {"a terrace without steps",{kind=.Terrace,center={},radius=3,amount=1},.Terrace,"interval"},
         {"noise without a scale",{kind=.Noise,center={},radius=3,amount=1},.Noise,"scale"},

@@ -61,7 +61,7 @@ a_mirrored_heightfield_meets_itself_at_the_plane :: proc(t:^testing.T) {
             if entry.blend==0 && x<16 {symmetric&&=grid_get(&source.field,x,z)==shape(x,z)}
         }}
         testing.expectf(t,symmetric,"%v: each sample has its image across the plane",entry)
-        testing.expect(t,grid_get(&source.weights,28,entry.rotate?28:4)[1]>200,"the layers go over too")
+        testing.expect(t,weights_float(grid_get(&source.weights,28,entry.rotate?28:4))[1]>200.0/255,"the layers go over too")
     }
     source:Source;region_source(t,&source);defer source_destroy(&source)
     testing.expect_value(t,source_mirror(&source,2,16).error,Edit_Error.Invalid)

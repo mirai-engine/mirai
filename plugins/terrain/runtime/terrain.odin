@@ -253,15 +253,19 @@ Terrain_Resident :: struct {
     focus:Terrain_Focus,  // then
     room:Collider_Room,
     cut:bool,               // what the owners show is to be chosen again: the cuts or what is built changed
-    splits:[dynamic]Split,  // room for a node of every owner: the order of the budget and of the colliders
-    places:[dynamic]Lod_Place, // room for every owner, and spans for its nodes: how resident_lod measures them
-    spans:[dynamic][3]int,
+    splits:[dynamic]Split,  // the nodes an evaluation looks at: the order of the budget and of the colliders
+    places:[dynamic]Lod_Place, // of each owner: what resident_lod sees it from
+    lod_pass:u32,           // the evaluations of levels so far: the one that last looked at a node (Owner_Node.visit)
+    stack:[dynamic]u32,     // the nodes an owner's walk is still to look at
+    near:[dynamic]Lod_Near, // the pieces the walk for colliders is still to look at, nearest first
+    side_levels:[dynamic]Side_Level, // of the chunks on the shared edges, while their levels meet
     border:Piece_Border,    // of a node, while its pages are looked for
     picking:bool,           // chunks without a collider keep their triangles on the CPU: while the world does not play, for the picking of the editor
 }
 // stale: results of jobs whose chunk changed while they ran; starved: chunks
 // shown without the collider Physics_Settings had no slot for.
-Terrain_Resident_Stats :: struct {built,reused,released,stale,starved,evicted:u64,meshes:u32}
+// visited: the nodes the last evaluation of levels looked at.
+Terrain_Resident_Stats :: struct {built,reused,released,stale,starved,evicted:u64,meshes,visited:u32}
 Resident_Chunk :: struct {
     mesh:base.Asset_Id,
     revision:u32,
@@ -274,6 +278,8 @@ Resident_Chunk :: struct {
     urgent:bool,            // an owner wants it where nothing shows
     shown:bool,             // what it built is published: a mesh, or none for an empty chunk
     working:bool,           // a job builds it
+    maps:Piece_Maps,        // the textures of the maps of its mesh (surface.odin)
+    shape:Piece_Shape,
 }
 // A piece is built again when its level, its border or its collider changes.
 // border: a hash of the levels of the border of a node (Piece_Border).
@@ -292,6 +298,8 @@ Resident_Source :: struct {
     override:render.Material_Values, // of its layers
     override_info:Source_Info,         // the layers it was made from
     override_assets:[2]u64,            // and the revision and structure of the assets
+    table:base.Asset_Id,               // the texture of the table of its layers (layers_table) in override
+    table_pixels:[4*LAYERS_TEXELS*LAYERS_MAX]u8, // what it holds
     join:Terrain_Join,
 }
 Resident_Owner :: struct {
@@ -301,6 +309,9 @@ Resident_Owner :: struct {
     chunks:[]core.Entity, // by node: the entity that shows it, NONE while it does not
     nodes:[]Owner_Node,   // by node: what this terrain wants and shows of it
     changed:[dynamic]u32, // nodes it began or stopped showing since it last published
+    visit:[dynamic]u32,   // the nodes the last evaluation looked at, by index: those the walk from its roots reached, with what holds a state
+    kept:[dynamic]u32,
+    sides:[4]Owner_Side,  // the Heightfields beside it (adjacency.odin)
     materials:[render.MATERIAL_SLOTS]base.Asset_Id, // its chunks show, chunk_materials
     tint:render.Material_Values,     // the color and the light of its entity, which its chunks take
     override:render.Material_Values, // of its layers: what its chunks show over them
@@ -327,6 +338,7 @@ Owner_Node :: struct {
     can:bool,           // what it covers can show as wanted
     collide:bool,       // a chunk that takes a collider
     pass:u32,           // of the call that last showed it: once a call
+    visit:u32,          // of the evaluation of levels that last looked at it (Terrain_Resident.lod_pass)
 }
 // Something an owner may open, or a chunk that may collide, in order.
 @(private)
@@ -762,6 +774,11 @@ source_compare :: proc(next,s:^Source) -> (change:Change,ok:bool) {
     } else if low,high,differ=grid_take(&next.holes,&s.holes,&writer,false);differ {
         widen(&change,low,high+{1,0,1})
     }
+    if grid_none(&next.paint)!=grid_none(&s.paint) {
+        widen(&change,{},{last.x,0,last.z})
+    } else if low,high,differ=grid_take(&next.paint,&s.paint,&writer,false);differ {
+        widen(&change,low,high)
+    }
     if layers_reshape(next.info,s.info) {
         widen(&change,{},last)
     } else if low,high,differ=grid_take(&next.weights,&s.weights,&writer,false);differ {
@@ -783,21 +800,22 @@ terrain_release :: proc(resident:^Terrain_Resident,allocator:runtime.Allocator) 
 terrain_resident_free :: proc(resident:^Terrain_Resident) {
     for &source in resident.sources {resident_source_free(resident,&source)}
     for &owner in resident.owners {resident_owner_free(&owner)}
-    delete(resident.sources);delete(resident.owners);delete(resident.splits);delete(resident.places);delete(resident.spans)
+    delete(resident.sources);delete(resident.owners);delete(resident.splits);delete(resident.places);delete(resident.stack);delete(resident.near);delete(resident.side_levels)
     piece_border_destroy(&resident.border)
     resident^={}
 }
 @(private)
 resident_owner_free :: proc(owner:^Resident_Owner) {
-    delete(owner.chunks);delete(owner.nodes);delete(owner.changed)
+    delete(owner.chunks);delete(owner.nodes);delete(owner.changed);delete(owner.visit);delete(owner.kept)
 }
 @(private)
 resident_source_free :: proc(resident:^Terrain_Resident,source:^Resident_Source) {
-    for chunk in source.chunks {
-        if chunk.mesh=={} || resident.assets==nil {continue}
-        host.assets_mesh_release(resident.assets,chunk.mesh)
-        resident.stats.released+=1;resident.stats.meshes-=1
+    for &chunk in source.chunks {
+        if resident.assets==nil {continue}
+        if chunk.mesh!={} {resident.stats.released+=1;resident.stats.meshes-=1}
+        piece_release(resident.assets,&chunk)
     }
+    if source.table!={} && resident.assets!=nil {host.assets_texture_release(resident.assets,source.table)}
     delete(source.chunks);delete(source.levels);delete(source.deep);delete(source.changed);delete(source.dirty);delete(source.pending)
     delete(source.join.cuts)
     source^={}

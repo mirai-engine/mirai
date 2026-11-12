@@ -27,17 +27,20 @@ $P terrain.layer '{"entity":"Hills","material":"hills/rock.mat","automatic":true
 - Brushes of `terrain.edit`, the same on both kinds: `raise`, `lower`, `smooth`, `flatten`,
   `set_height`, `noise`, `paint` and `erase` (a layer), and `add` and `carve`, which join or take
   out a `shape` (`sphere`, `capsule` to `to`, `box`). Of a heightfield alone: `ramp` (from `at` to
-  `to`), `terrace`, `erode`, `hole`, `fill`. A stroke goes from `at` to `to`; `radius`,
+  `to`), `terrace`, `erode`, `hole`, `fill`, and `tint` (`color`) and `roughness` (0 smooth, 0.5
+  as the layers are, 1 rough), painted over the layers. A stroke goes from `at` to `to`; `radius`,
   `strength`, `falloff`, `passes` shape it. A brush the kind lacks or a value out of range
   answers what failed and what to use.
 - In game code one call digs whatever ground is under it:
   `terrain.dig(requests, {kind=.Carve, center=point, radius=2, amount=1})` returns what is wrong
   with the brush (`terrain.edit_error_fix` says how to fix it), and what it took out comes in
   `Terrain_Digs`.
-- `terrain.layer` adds a material layer (up to four) or changes the one named `layer` by its
+- `terrain.layer` adds a material layer (up to 32) or changes the one named `layer` by its
   material (its path or stem; `default` is one without a material); an `automatic` layer covers
   where the slope (degrees) and `height` (metres) are in its ranges, so rock lands on steep faces
-  and grass on flat ones with no painting. Layer materials are `.mat`
+  and grass on flat ones with no painting. `detile` (0 to 1) breaks the repeats of a large flat
+  layer, `variation` (0 to 1) darkens and brightens it slowly over the world and `far_tiling`
+  repeats it larger far away. Layer materials are `.mat`
   assets: import a PBR texture set ([assets](../assets.md)) and give their paths.
 - `terrain.sample {entity,at}` reads what is under a point; `terrain.heightmap` imports or exports a
   16-bit PNG; `terrain.resize` changes the samples.

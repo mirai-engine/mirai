@@ -205,9 +205,9 @@ a_dig_raises_the_dust_of_the_material_of_each_layer_it_took_wherever_the_layer_i
     core.add(&w.dusts,dusty,dust)
     test_world_settle(&w)
     // The same dig with its layers in another order: each material keeps its dust.
-    core.push(&w.digs.digs,Terrain_Dig{owner=dusty,center={1,2,3},volume=1,layers={0.5,0.25,0,0.25},materials={soil,gravel,{},ore}})
-    core.push(&w.digs.digs,Terrain_Dig{owner=dusty,center={1,2,3},volume=1,layers={0.25,0.25,0.5,0},materials={ore,gravel,soil,{}}})
-    core.push(&w.digs.digs,Terrain_Dig{owner=bare,volume=1,layers={1,0,0,0},materials={soil,{},{},{}}})
+    core.push(&w.digs.digs,Terrain_Dig{owner=dusty,center={1,2,3},volume=1,layers={0=0.5,1=0.25,3=0.25},materials={0=soil,1=gravel,3=ore}})
+    core.push(&w.digs.digs,Terrain_Dig{owner=dusty,center={1,2,3},volume=1,layers={0=0.25,1=0.25,2=0.5},materials={0=ore,1=gravel,2=soil}})
+    core.push(&w.digs.digs,Terrain_Dig{owner=bare,volume=1,layers={0=1},materials={0=soil}})
     terrain_dust(core.ref(&w.digs),core.read(&w.dusts),&w.births)
     births:=w.births.queue.items[:]
     if !testing.expect_value(t,len(births),4) {return}

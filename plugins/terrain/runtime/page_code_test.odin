@@ -48,7 +48,7 @@ coded_pages_keep_heights_within_half_a_step_and_other_values_exactly :: proc(t:^
     }
     // Values of other grids come back as they were.
     weights:[PAGE_VALUES]Weights
-    for &w,k in weights {w={u8(k),u8(k>>8),u8(255-k),0}}
+    for &w,k in weights {w=Weights(u32(k)*0x9e3779b1)}
     out:[PAGE_VALUES]Weights
     testing.expect(t,page_uncode(page_code(weights[:],PAGE,true,coded[:]),mem.slice_to_bytes(out[:])))
     testing.expect(t,out==weights)

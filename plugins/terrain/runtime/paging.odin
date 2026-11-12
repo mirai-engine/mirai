@@ -10,7 +10,7 @@ import "mirai:std/base"
 // was. The grids of a source share its pages: they come and go together.
 
 // The grids of a source, which paging, the network, residency and saves go through alike.
-Grid_Kind :: enum u8 {Field,Weights,Holes}
+Grid_Kind :: enum u8 {Field,Weights,Holes,Paint}
 
 // The samples a build of a Volume chunk reads past its own along each axis:
 // its gradients, and the cells its collider looks at across its faces.
@@ -87,7 +87,7 @@ grid_within :: proc(g:^Grid(f32),limit:f32) -> bool {
 
 // Whether every page of the grids of a source over the inclusive region of samples is in memory.
 source_region_held :: proc "contextless" (s:^Source,low,high:[3]int) -> bool {
-    return !grid_region_absent(&s.field,low,high) && !grid_region_absent(&s.weights,low,high) && !grid_region_absent(&s.holes,low,high)
+    return !grid_region_absent(&s.field,low,high) && !grid_region_absent(&s.weights,low,high) && !grid_region_absent(&s.holes,low,high) && !grid_region_absent(&s.paint,low,high)
 }
 
 // A page whose values are in its block, into memory: false when the block
@@ -161,7 +161,7 @@ source_region_read :: proc(s:^Source,low,high:[3]int,entry:^Data_Source=nil) -> 
         }}}
         return true
     }
-    return read(&s.field,low,high,s.file,value_finite,s.allocator,entry,field_limit(s.info)) && read(&s.weights,low,high,s.file,weights_full,s.allocator,entry) && read(&s.holes,low,high,s.file,hole_valid,s.allocator,entry)
+    return read(&s.field,low,high,s.file,value_finite,s.allocator,entry,field_limit(s.info)) && read(&s.weights,low,high,s.file,weights_full,s.allocator,entry) && read(&s.holes,low,high,s.file,hole_valid,s.allocator,entry) && read(&s.paint,low,high,s.file,paint_valid,s.allocator,entry)
 }
 
 // What chunks read of the samples low..high came into memory: the chunks
@@ -284,7 +284,7 @@ source_pages_leave :: proc(s:^Source) -> (left:int) {
         }
         return
     }
-    return leave(&s.field,s.allocator)+leave(&s.weights,s.allocator)+leave(&s.holes,s.allocator)
+    return leave(&s.field,s.allocator)+leave(&s.weights,s.allocator)+leave(&s.holes,s.allocator)+leave(&s.paint,s.allocator)
 }
 
 // Marks the pages of the grids of a source a build of chunk index reads, for
@@ -307,7 +307,7 @@ region_pages_mark :: proc(s:^Source,low,high:[3]int) {
             if slot,_:=grid_find(g,{px,py,pz});slot>=0 {g.pages[slot].kept=true}
         }}}
     }
-    mark(&s.field,low,high);mark(&s.weights,low,high);mark(&s.holes,low,high)
+    mark(&s.field,low,high);mark(&s.weights,low,high);mark(&s.holes,low,high);mark(&s.paint,low,high)
 }
 
 // What differs between next, read again, and g of the same size: next takes

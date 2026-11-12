@@ -175,7 +175,7 @@ weightmap_export :: proc(s:^editor.Session,tool:^Terrain_Tool,path:string,layer:
     width,height:=int(source.samples.x),int(source.samples.z)
     values,error:=make([]f32,width*height,context.temp_allocator)
     if error!=nil {editor.notify(s,"There is not enough memory for the weightmap");return false}
-    for z in 0..<height {for x in 0..<width {values[x+width*z]=f32(terrain.grid_get(&source.weights,x,z)[layer])/terrain.WEIGHT_FULL}}
+    for z in 0..<height {for x in 0..<width {values[x+width*z]=terrain.weights_float(terrain.grid_get(&source.weights,x,z))[layer]}}
     file:=heightmap_write(s,path,values,width,height,format) or_return
     editor.notify(s,fmt.tprintf("Weightmap written: %s",filepath.base(file)))
     return true
@@ -198,7 +198,7 @@ weightmap_import :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_R
         x,z:=i%width,i/width
         old:=terrain.grid_get(weights,x,z)
         target:=clamp(value-value==0?value:0,0,1)
-        current:=f32(old[layer])/terrain.WEIGHT_FULL
+        current:=terrain.weights_float(old)[layer]
         amount:=target>current?(target-current)/max(1-current,1e-6):-(current-target)/max(current,1e-6)
         terrain.grid_set(weights,x,z,terrain.weights_paint(old,layer,amount,count))
     }

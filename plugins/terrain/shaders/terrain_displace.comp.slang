@@ -1,12 +1,15 @@
+//! mirai constant LAYERS_MAX int ../runtime/layers.odin
 // The vertices of a displaced Heightfield chunk (terrain.Terrain_Displacement):
 // those of its mesh at rest moved along their normals by the height its
 // layers blend there, as Terrain_Layers blends them, centred on the middle
 // of each height. Towards a side it shares with a chunk that is not displaced
-// it fades out within a cell, so the two meet where the samples are.
+// it fades out within a cell, so the two meet where the samples are; and it
+// fades out with the distance from the place it is measured from.
 #include "native.slang"
 #include "common.slang"
 #include "origin.slang"
 #include "terrain_projection.slang"
+#include <constants/plugins/terrain.slang>
 #define MIRAI_GROUP_X 64
 #define MIRAI_GROUP_Y 1
 #define MIRAI_GROUP_Z 1
@@ -23,18 +26,22 @@ struct Params_Block {
     uint written;  // the vertices of the copy (words of the vertex pool, Posed_Vertex each)
     uint rest;     // those of the mesh at rest
     uint count;
-    uint mesh;     // the row of the mesh at rest in the mesh table: its weights are its uvs
+    uint mesh;     // the row of the mesh at rest in the mesh table: its uv0 is its place over the weights
     float4 row0;   // the chunk into the world, relative to the origin
     float4 row1;
     float4 row2;
     int4 origin;   // in steps of ORIGIN_STEP
+    float4 anchor; // where the relief is measured from, relative to the origin
     float2 size;   // of the chunk, in its space
+    float2 reach;  // from where the relief fades out, to where it is gone, in metres
     float fade;    // in its space: a cell
     uint pinned;   // the sides (-X, +X, -Z, +Z) it shares with a chunk that is not displaced
-    float spacing; // metres between its vertices
+    float spacing; // metres between the vertices of the finest detail
     uint layer_count;
+    uint control;  // the texture of its weights (terrain.Surface_Maps.control)
+    uint map_size; // its texels across and, from bit 16, down
     uint2 pad;
-    Layer layers[4];
+    Layer layers[LAYERS_MAX];
 };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 [[vk::binding(SLOT_MESHES, 0)]] StructuredBuffer<Mesh> meshes : register(MIRAI_REGISTER(t, SLOT_MESHES), space0);
@@ -43,6 +50,9 @@ struct Params_Block {
 [[vk::binding(MATERIAL_TEXTURE_SLOT, 1)]] Texture2D<float4> material_textures[] : register(MIRAI_REGISTER(t, MATERIAL_TEXTURE_SLOT), space1);
 #define MIRAI_POSED_STORE
 #include "geometry.slang"
+// The Geometry stage binds no sampler: a texel of a map is loaded.
+#define TERRAIN_TEXEL(texture, texel, size) material_textures[mirai_nonuniform(texture)].Load(int3(texel, 0))
+#include "terrain_surface.slang"
 
 // The cluster of the first level that holds vertex: the last whose first
 // vertex is not past it.
@@ -57,8 +67,7 @@ Cluster vertex_cluster(Mesh mesh, uint vertex) {
     return mesh_cluster(mesh, low);
 }
 
-// The alpha of an image at uv, repeating, between the texels of a level: the
-// Geometry stage binds no sampler.
+// The alpha of an image at uv, repeating, between the texels of a level.
 float texel_alpha(Texture2D<float4> image, float2 uv, uint level, uint2 size) {
     float2 at = frac(uv) * float2(size) - 0.5;
     int2 low = int2(floor(at));
@@ -102,29 +111,37 @@ void main(uint3 id : SV_DispatchThreadID) {
     Mesh mesh = meshes[params.mesh];
     Cluster c = vertex_cluster(mesh, id.x);
     Mesh_Point point = cluster_point_at(mesh, c, id.x - c.vertex_first, INVALID);
-    float4 w = max(float4(point.uv, point.uv1), float4(0.0));
-    float total = w.x + w.y + w.z + w.w;
-    w = total > 0.0 ? w / total : float4(1.0, 0.0, 0.0, 0.0);
+    Terrain_Mix mix;
+    if (params.control != INVALID) {
+        bool hole;
+        mix = terrain_weights_at(params.control, float2(float(params.map_size & 0xffffu), float(params.map_size >> 16u)), point.uv, hole);
+    } else {
+        for (int i = 0; i < 4; i++) { mix.layers[i] = 0u; mix.weights[i] = i == 0 ? 1.0 : 0.0; }
+    }
     float3 local_normal = unpack_normal(v.normal);
     float3 world = float3(dot(params.row0.xyz, v.position) + params.row0.w, dot(params.row1.xyz, v.position) + params.row1.w, dot(params.row2.xyz, v.position) + params.row2.w);
     float3 normal = normalize(float3(dot(params.row0.xyz, local_normal), dot(params.row1.xyz, local_normal), dot(params.row2.xyz, local_normal)));
     float4 blend = float4(0.0);
     float4 heights = float4(0.0);
-    for (uint i = 0u; i < params.layer_count && i < 4u; i++) {
-        if (w[i] <= 0.0) continue;
-        heights[i] = layer_height(params.layers[i], world, normal);
-        blend[i] = w[i] * exp2(5.0 * params.layers[i].blend * heights[i]);
+    for (uint i = 0u; i < 4u; i++) {
+        if (mix.weights[i] <= 0.0 || mix.layers[i] >= params.layer_count) continue;
+        Layer layer = params.layers[mix.layers[i]];
+        heights[i] = layer_height(layer, world, normal);
+        blend[i] = mix.weights[i] * exp2(5.0 * layer.blend * heights[i]);
     }
     float sum = blend.x + blend.y + blend.z + blend.w;
-    blend = sum > 0.0 ? blend / sum : w;
     float offset = 0.0;
-    for (uint i = 0u; i < params.layer_count && i < 4u; i++) {offset += blend[i] * (heights[i] - 0.5) * params.layers[i].displacement;}
+    for (uint i = 0u; i < 4u; i++) {
+        if (blend[i] <= 0.0) continue;
+        offset += blend[i] / sum * (heights[i] - 0.5) * params.layers[mix.layers[i]].displacement;
+    }
     float edge = 1e30;
     if ((params.pinned & 1u) != 0u) edge = min(edge, v.position.x);
     if ((params.pinned & 2u) != 0u) edge = min(edge, params.size.x - v.position.x);
     if ((params.pinned & 4u) != 0u) edge = min(edge, v.position.z);
     if ((params.pinned & 8u) != 0u) edge = min(edge, params.size.y - v.position.z);
     offset *= smoothstep(0.0, params.fade, edge);
+    offset *= 1.0 - smoothstep(params.reach.x, params.reach.y, length(world - params.anchor.xyz));
     // The offset is in metres of the world; the mesh may be scaled.
     float stretch = length(float3(params.row0.y, params.row1.y, params.row2.y));
     v.position += local_normal * offset / max(stretch, 1e-6);

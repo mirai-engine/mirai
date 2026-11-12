@@ -86,7 +86,7 @@ splines_conform_a_bed_that_paints_follows_the_ground_and_gives_back_what_was_und
     for z in 0..<33 {mean+=grid_get(&base_field,16,z)/33}
     testing.expectf(t,abs(bed-(mean-1))<1e-3,"the bed lies a metre under the mean of the ground of its middle: %v, not %v",mean-1,bed)
     testing.expect_value(t,grid_get(&s.field,30,10),grid_get(&base_field,30,10))
-    testing.expect(t,grid_get(&s.weights,16,10)[1]==WEIGHT_FULL,"it paints its layer")
+    testing.expect(t,weights_float(grid_get(&s.weights,16,10))[1]==1,"it paints its layer")
     // Sculpting under it raises the ground its bed follows the next time.
     testing.expect(t,source_edit(&s,{kind=.Raise,center={},radius=40,amount=2,falloff=.Constant}).changed)
     testing.expect(t,source_conform(&s,paths[:]).changed)
@@ -97,7 +97,7 @@ splines_conform_a_bed_that_paints_follows_the_ground_and_gives_back_what_was_und
     testing.expect(t,source_conform(&s,paths[:]).changed)
     testing.expect(t,abs(grid_get(&s.field,16,10)-grid_get(&base_field,16,10))<1e-4)
     testing.expect_value(t,grid_get(&s.weights,16,10),base_weights)
-    testing.expect(t,grid_get(&s.weights,24,10)[1]==WEIGHT_FULL)
+    testing.expect(t,weights_float(grid_get(&s.weights,24,10))[1]==1)
     // Without splines the ground is the base again, with its weights, and the layer is gone.
     testing.expect(t,source_conform(&s,nil).changed)
     testing.expect(t,fields_near(&s,&base_field,1e-4))

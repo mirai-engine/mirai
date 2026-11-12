@@ -385,7 +385,7 @@ a_paged_heightfield_reads_its_coarse_data_and_loses_a_layer_without_holding_its_
         for z in 0..<97 {for x in 0..<129 {
             testing.expect(t,source_set(&source,{x,0,z},pipeline_bump(x,z)))
             a:=u8((x*7+z*3)%150)
-            testing.expect(t,grid_put(&source.weights,{x,0,z},Weights{255-a-u8(z),a,u8(z),0},source.allocator))
+            testing.expect(t,grid_put(&source.weights,{x,0,z},weights_quantize(Layer_Mix{0=f32(255-a-u8(z)),1=f32(a),2=f32(z)},3),source.allocator))
         }}
         testing.expect_value(t,source_save(&source,fmt.tprintf("%s/source.terrain",root),id,&types),asset.Error.None)
     }

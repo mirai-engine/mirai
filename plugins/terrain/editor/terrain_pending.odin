@@ -135,5 +135,6 @@ pending_apply :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,
     stroke:=&tool.stroke
     label:=stroke.pending.kind==.Ramp?"Ramp":"Shape"
     pending_preview(s,tool,world)
+    if stroke.pending.shown {stroke_brush_keep(tool,stroke.pending.brush)}
     stroke_end(s,tool,world,assets,label=label,layered=true)
 }

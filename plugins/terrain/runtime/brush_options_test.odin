@@ -142,10 +142,10 @@ paint_toward_a_target_stops_at_its_weight :: proc(t:^testing.T) {
     source:Source;grid_source(t,&source);defer source_destroy(&source)
     testing.expect(t,source_layer_set(&source,0,LAYER_DEFAULT) && source_layer_set(&source,1,LAYER_DEFAULT))
     for _ in 0..<20 {source_paint(&source,{kind=.Paint,center={},radius=10,amount=0.5,layer=1,toward=true,target=0.5,falloff=.Constant})}
-    w:=grid_get(&source.weights,16,16)
-    testing.expect(t,abs(int(w[1])-WEIGHT_FULL/2)<=2,"half of the sample goes to the layer and no more")
+    w:=weights_float(grid_get(&source.weights,16,16))
+    testing.expect(t,abs(w[1]-0.5)<=2.0/WEIGHT_FULL,"half of the sample goes to the layer and no more")
     for _ in 0..<20 {source_paint(&source,{kind=.Paint,center={},radius=10,amount=0.5,layer=1,toward=true,target=0.2,falloff=.Constant})}
-    testing.expect(t,abs(int(grid_get(&source.weights,16,16)[1])-51)<=2,"a lower target takes the layer back down")
+    testing.expect(t,abs(weights_float(grid_get(&source.weights,16,16))[1]-0.2)<=2.0/WEIGHT_FULL,"a lower target takes the layer back down")
 }
 
 @(test)

@@ -22,7 +22,7 @@ an_automatic_slope_rule_fades_over_several_samples :: proc(t:^testing.T) {
     testing.expect(t,source_layer_set(&s,0,LAYER_DEFAULT) && source_layer_set(&s,1,rock))
     mesh:Chunk_Mesh;chunk_mesh_init(&mesh);defer chunk_mesh_destroy(&mesh)
     testing.expect(t,chunk_build(&s,{0,0,0},&mesh,false))
-    cover:=proc(m:^Chunk_Mesh,x,z:int) -> f32 {return m.geometry.uvs[z*65+x].y}
+    cover:=proc(m:^Chunk_Mesh,x,z:int) -> f32 {return weights_float(Weights(m.maps.control[z*65+x]&~WEIGHT_HOLE))[1]}
     steepest,between:=f32(0),0
     for z in 0..<65 {for x in 0..<64 {
         steepest=max(steepest,abs(cover(&mesh,x+1,z)-cover(&mesh,x,z)),abs(cover(&mesh,z,x+1)-cover(&mesh,z,x)))

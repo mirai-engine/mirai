@@ -158,7 +158,7 @@ view_probe :: proc(g:^Terrain_Ground,view:^Ground_View,origin,down:[3]f32) -> (h
     c,r:=clamp(int(middle.x),0,int(s.samples.x)-2),clamp(int(middle.z),0,int(s.samples.z)-2)
     if g.stroke.stroke && g.stroke.source==view.id && middle.x*s.cell+origin_s.x>=g.stroke.low.x && middle.x*s.cell+origin_s.x<=g.stroke.high.x && middle.z*s.cell+origin_s.z>=g.stroke.low.y && middle.z*s.cell+origin_s.z<=g.stroke.high.y {return {},.Empty}
     local,normal:[3]f32
-    weights:Weights
+    weights:Layer_Mix
     if s.kind==.Heightfield && d.y< -0.9999 {
         // Straight down a Heightfield: from its coarse grid where its pages are not in memory.
         held:=cell_held(s,c,r)
@@ -170,7 +170,7 @@ view_probe :: proc(g:^Terrain_Ground,view:^Ground_View,origin,down:[3]f32) -> (h
         } else {
             height,coarse_normal,shown,known:=source_coarse_at(s,o.x,o.z)
             if !known {return {},.Empty}
-            local,normal,weights={o.x,height,o.z},coarse_normal,weights_quantize(shown,int(s.layer_count))
+            local,normal,weights={o.x,height,o.z},coarse_normal,shown
         }
     } else {
         ok:bool
@@ -185,33 +185,31 @@ view_probe :: proc(g:^Terrain_Ground,view:^Ground_View,origin,down:[3]f32) -> (h
     }
     hit.point=mm.mat4_point(view.to_world,local)
     hit.normal=linalg.normalize0((view.to_world*[4]f32{normal.x,normal.y,normal.z,0}).xyz)
-    hit.weights=weights
-    for i in 0..<min(int(s.layer_count),LAYERS_MAX) {hit.layers[i]=s.layers[i].material}
+    hit.weights,hit.layers=layers_dominant(s,weights)
     return hit,.Ground
 }
 
 // The weights of the layers a source shows at a point of its surface, in its
 // space: those painted with its automatic layers over them, at the slope and
-// height there. A Heightfield as its chunks show it: over the triangle of its
-// cell, from the weights of its samples, each with the rule at the slope and
-// the height of its own.
-shown_weights :: proc "contextless" (s:^Source,local,normal:[3]f32) -> Weights {
+// height there. A Heightfield as its pieces show it: bilinear between the
+// weights of the four samples around, each with the rule at the slope and the
+// height of its own, as its maps hold them.
+shown_weights :: proc "contextless" (s:^Source,local,normal:[3]f32) -> Layer_Mix {
     count:=int(s.layer_count)
     if s.kind!=.Heightfield {
-        return weights_quantize(layers_vertex(s,source_weights_at(s,local),normal,local.y),count)
+        return weights_float(weights_quantize(layers_vertex(s,source_weights_at(s,local),normal,local.y),count))
     }
-    at :: proc "contextless" (s:^Source,x,z:int) -> [4]f32 {
+    at :: proc "contextless" (s:^Source,x,z,count:int) -> Layer_Mix {
         p:=source_point(s,{x,0,z})
-        return layers_vertex(s,source_weights_at(s,p),heightfield_normal(s,x,z,LAYER_RULE_SAMPLES),p.y)
+        return weights_float(weights_quantize(layers_vertex(s,weights_float(grid_get(&s.weights,x,z)),heightfield_normal(s,x,z,LAYER_RULE_SAMPLES),p.y),count))
     }
     origin:=source_origin(s)
     column,row:=clamp((local.x-origin.x)/s.cell,0,f32(s.samples.x-1)),clamp((local.z-origin.z)/s.cell,0,f32(s.samples.z-1))
     c,r:=min(int(column),int(s.samples.x)-2),min(int(row),int(s.samples.z)-2)
     u,v:=column-f32(c),row-f32(r)
-    a,b,d:=at(s,c,r),at(s,c+1,r),at(s,c,r+1)
-    w:=a+(b-a)*u+(d-a)*v
-    if u+v>1 {e:=at(s,c+1,r+1);w=e+(d-e)*(1-u)+(b-e)*(1-v)}
-    return weights_quantize(w,count)
+    a,b:=at(s,c,r,count),at(s,c+1,r,count)
+    d,e:=at(s,c,r+1,count),at(s,c+1,r+1,count)
+    return (a*(1-u)+b*u)*(1-v)+(d*(1-u)+e*u)*v
 }
 
 // Where the collision of the terrains is not loaded, for navigation: the

@@ -215,7 +215,7 @@ create_test_plane :: proc(t:^testing.T,kind:terrain.Source_Kind) {
     testing.expect_value(t,source.kind,kind)
     // Every kind starts with one layer that covers all of it.
     testing.expect_value(t,source.layer_count,u32(1))
-    testing.expect_value(t,terrain.source_weights_at(&source,terrain.source_origin(&source)),[4]f32{1,0,0,0})
+    testing.expect_value(t,terrain.source_weights_at(&source,terrain.source_origin(&source)),terrain.Layer_Mix{0=1})
     if kind==.Volume {testing.expect_value(t,source.field.size,[3]int{5,5,5})} else {testing.expect_value(t,source.field.size,[3]int{5,1,5})}
     testing.expect(t,history.undo(&edits,ref,&selection))
     testing.expect_value(t,len(world.terrains.values),0)

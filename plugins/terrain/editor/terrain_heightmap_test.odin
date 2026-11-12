@@ -83,7 +83,8 @@ heights_and_weightmaps_go_out_and_come_back_in_each_format :: proc(t:^testing.T)
     if !prepare(t,&s,&tool,&world,owner) {return}
     for z in 0..<9 {for x in 0..<9 {
         got,want:=terrain.grid_get(&tool.stroke.source.weights,x,z),terrain.grid_get(&before.weights,x,z)
-        testing.expectf(t,abs(int(got[1])-int(want[1]))<=1 && int(got[0])+int(got[1])+int(got[2])+int(got[3])==terrain.WEIGHT_FULL,"weight %v at %d,%d, not %v",got,x,z,want)
+        g,w:=terrain.weights_float(got),terrain.weights_float(want)
+        testing.expectf(t,abs(g[1]-w[1])<=1.5/terrain.WEIGHT_FULL && abs(g[0]+g[1]+g[2]-1)<1e-5,"weight %v at %d,%d, not %v",got,x,z,want)
     }}
     // A weightmap of another size, or a file of an unknown kind, changes nothing.
     testing.expect(t,!weightmap_import(&s,&tool,ref,app.assets,fmt.tprintf("%s/ground.txt",root),1))
