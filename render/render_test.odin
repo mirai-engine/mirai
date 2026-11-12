@@ -568,6 +568,45 @@ render_a_low_sun_draws_out_the_end_of_a_shadow :: proc(t: ^testing.T) {
 	expect_clean(t, f.device)
 }
 
+// Where a point covers more of the ground than the penumbra at it, the sun
+// tells the share of the point that is lit. A scene that reaches high
+// towards the sun widens the search for blockers far past a narrow shadow:
+// the inside of that shadow stays dark, with no part of the wide search
+// lighting it.
+@(test)
+render_a_narrow_shadow_stays_dark_under_a_tall_scene :: proc(t: ^testing.T) {
+	f: Cube_Fixture
+	settings := test_settings()
+	settings.gi_enabled = false
+	settings.taa = false
+	if !cube_fixture_init(t, &f, 192, 128, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	elevation := f32(38) * math.RAD_PER_DEG
+	instances := []Instance_Desc{
+		{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {40, 0.2, 40}), tint = {0.8, 0.7, 0.5}},
+		{object_id = 2, mesh = f.cube, transform = trs({0, 0.75, 0}, {0.4, 1.5, 0.4}), tint = {0.8, 0.6, 0.4}},
+		// High towards the sun, its shadow far off the floor.
+		{object_id = 3, mesh = f.cube, transform = trs({0, 150, -60}, {1, 1, 1}), tint = {0.5, 0.5, 0.5}},
+	}
+	sun := Sun_Desc{direction = {0, math.sin(elevation), -math.cos(elevation)}, color = {1, 1, 1}, illuminance = 3 * math.PI, enabled = true}
+	scene_given(r, instances, nil, sun, {sky = {0.2, 0.25, 0.35}})
+	camera := Camera{position = {0, 3, 9}, forward = {0, -3, -8}, up = {0, 1, 0}, fov_y = 55, near = 0.05, far = 300, exposure = UNIT_EXPOSURE}
+	for _ in 0 ..< 8 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	rhi.device_wait_idle(f.device)
+	pixels, w, _, ok := golden_capture(r)
+	testing.expect(t, ok, r.error)
+	if !ok {return}
+	defer delete(pixels)
+	// Along the middle of the shadow of the post, and the floor beside it.
+	lit := pixel(pixels, w, project(r, camera, {1.5, 0.001, 1.5}))
+	for along in ([?]f32{0.6, 1.0, 1.4}) {
+		shadow := pixel(pixels, w, project(r, camera, {0, 0.001, 0.2 + along}))
+		testing.expectf(t, shadow[0] < 0.5 * lit[0], "the inside of the shadow %v m along it is %v, the lit floor %v", along, shadow, lit)
+	}
+	expect_clean(t, f.device)
+}
+
 // A light with a size blurs the shadow of a wall where the shadow falls far
 // from it, and a light with none leaves it sharp.
 @(test)
