@@ -2738,7 +2738,7 @@ content_build :: proc(s:^Session,w:core.World_Ref,height:f32,width:f32=CONTENT_W
         if background.right {content_create_open(s,string(c.place[:c.place_length]),{ctx.pointer.x,ctx.pointer.y,0,0})}
         if background.clicked && ctx.input.modifiers&{.Primary,.Shift}=={} {content_select_clear(c)}
         ui.box_begin(ctx,{id=area,width=ui.GROW,height=ui.fixed(room),direction=.Column})
-        first,last:=ui.rows_begin(ctx,list,&c.scroll,c.heights[:],ui.GROW,room)
+        first,last:=ui.rows_begin(ctx,list,&c.scroll,c.heights[:],ui.GROW,ui.fixed(room))
         top:f32
         for h in c.heights[:first] {top+=h}
         if len(lines)==0 {ui.label(ctx,"No results",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"))}
