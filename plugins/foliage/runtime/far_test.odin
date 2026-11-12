@@ -70,13 +70,16 @@ a_crown_is_the_closed_surface_of_the_voxels_dense_with_leaves :: proc(t:^testing
 
 // An instance takes the variant whose turn is nearest its own, and the wind
 // turned into the space of that variant is the wind of the world once the
-// instance turns it back: downwind within half a step of turn.
+// instance turns it back: downwind within half a step of turn. Of that turn
+// it takes the phase of the band of the gust wave it stands in, whose middle
+// is within half a band of the wave where it stands: neighbours along the
+// wave sway in other phases.
 @(test)
 an_instance_sways_with_the_variant_of_its_turn_and_downwind :: proc(t:^testing.T) {
     count:=u32(4)
     for degrees in ([]f32{0,40,50,89,91,180,-100,359}) {
         q:=mm.quat_axis_angle({0,1,0},degrees*math.PI/180)
-        k:=wind_variant(q,count)
+        k:=wind_variant(q,{},count)
         turn:=wind_variant_turn(k,count)*180/math.PI
         off:=math.mod(abs(turn-math.mod(degrees+360,360))+180,360)-180
         testing.expectf(t,abs(off)<=45+1e-3,"%v degrees takes variant %d of %v degrees",degrees,k,turn)
@@ -85,7 +88,20 @@ an_instance_sways_with_the_variant_of_its_turn_and_downwind :: proc(t:^testing.T
         testing.expect(t,linalg.dot(linalg.normalize(swayed),linalg.normalize(wind))>=math.cos(f32(math.PI/4))-1e-4,"within half a step of turn of the wind")
         if degrees==0 {testing.expect(t,linalg.length(swayed-wind)<1e-4)}
     }
-    testing.expect_value(t,wind_variant(mm.quat_axis_angle({0,1,0},2),1),u32(0))
+    testing.expect_value(t,wind_variant(mm.quat_axis_angle({0,1,0},2),{},1),u32(0))
+    // Eight variants: four turns of two phases, by the place along the wave.
+    count=8
+    q:=mm.quat_axis_angle({0,1,0},0.3)
+    phases:=[2]bool{}
+    for x in 0..<16 {
+        at:=[3]f32{f32(x)*0.9+12345,0,-678}
+        k:=wind_variant(q,at,count)
+        testing.expect_value(t,wind_variant_turn(k,count),wind_variant_turn(wind_variant(q,{},4),4))
+        phases[k/WIND_TURNS]=true
+        off:=math.mod(abs(f64(wind_variant_phase(k,count))-wind_wave(at))+math.PI,math.TAU)-math.PI
+        testing.expectf(t,abs(off)<=math.PI/2+1e-3,"the wave at %v is %v radians from the phase of its variant",at,off)
+    }
+    testing.expect(t,phases[0] && phases[1],"instances along the wave take both phases")
     // The box of the variants holds the farthest point swayed by the strongest wind.
     t_type:=FOLIAGE_TYPE_DEFAULT
     t_type.casts_shadow=true
@@ -94,6 +110,10 @@ an_instance_sways_with_the_variant_of_its_turn_and_downwind :: proc(t:^testing.T
     farthest:=linalg.length([3]f32{1,10,1})*amount*WIND_SPEED_MAX
     testing.expect(t,high.x>=1+farthest-1e-4 && low.y<=-farthest+1e-4)
     testing.expect_value(t,wind_variants(t_type),u32(WIND_VARIANTS))
+    for asked in ([][2]u32{{2,2},{4,4},{6,4},{12,12},{16,16}}) {
+        t_type.wind_variants=asked[0]
+        testing.expectf(t,wind_variants(t_type)==asked[1],"%d variants asked are %d",asked[0],wind_variants(t_type))
+    }
     t_type.casts_shadow=false
     testing.expect_value(t,wind_variants(t_type),u32(0))
 }
@@ -108,10 +128,10 @@ the_instance_of_a_variant_is_found_among_those_of_its_type :: proc(t:^testing.T)
         {rotation=mm.quat_axis_angle({0,1,0},math.PI*0.5)},
     }
     order:=[4]u32{0,1,2,3}
-    testing.expect_value(t,role_instance(ROLE_MESH,4,1,placed[:],order[:],2),2)
-    testing.expect_value(t,role_instance(ROLE_VARIANT,4,1,placed[:],order[:],1),2)
-    testing.expect_value(t,role_instance(ROLE_VARIANT+2,4,1,placed[:],order[:],0),1)
-    testing.expect_value(t,role_instance(ROLE_VARIANT+2,4,1,placed[:],order[:],1),-1)
+    testing.expect_value(t,role_instance(ROLE_MESH,4,mm.TRANSFORM_IDENTITY,placed[:],order[:],2),2)
+    testing.expect_value(t,role_instance(ROLE_VARIANT,4,mm.TRANSFORM_IDENTITY,placed[:],order[:],1),2)
+    testing.expect_value(t,role_instance(ROLE_VARIANT+2,4,mm.TRANSFORM_IDENTITY,placed[:],order[:],0),1)
+    testing.expect_value(t,role_instance(ROLE_VARIANT+2,4,mm.TRANSFORM_IDENTITY,placed[:],order[:],1),-1)
 }
 
 // The mesh of a type with an impostor gives way to it at its distance, and

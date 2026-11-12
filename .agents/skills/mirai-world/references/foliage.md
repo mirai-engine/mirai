@@ -259,34 +259,49 @@ the first time a type shows it and again when the mesh changes, like any cook:
 
 ## Wind
 
-The wind is the `Wind` of [volume](../../mirai-gameplay/references/libraries.md#volume); a point
-tilts with it `sway_amount` meters per m/s and meter of height above its instance's origin, by the
-red of its vertex color (white: all), as `foliage_sway.slang` says. There are two paths with that
-same function:
+The wind is the `Wind` of [volume](../../mirai-gameplay/references/libraries.md#volume). A plant
+bends about its instance's origin, as `foliage_sway.slang` says: what stands over the origin turns
+toward the wind by `sway_amount` radians per m/s, by the red of its vertex color (white: all), and
+what spreads level does not move, so stalks keep their length and wide bushes do not slide. The
+gusts oscillate with the phase of a fixed wave of the world (`WIND_WAVE`), so neighbours sway
+together and the phase changes across a field or a forest. There are three paths with that same
+function:
 
 - **Type that casts a shadow: variants** (`wind.odin`). `wind_variants` deformable copies of each
   mesh, with their levels (`render.deformable_create`), which `foliage_sway.comp` writes in the
-  `Geometry` stage and whose BLAS the renderer refits. Variant k turns the wind by its turn
-  (2πk/n) and oscillates with its phase; each instance takes the one whose turn is nearest to its
-  own (`wind_variant`), and tilts with the wind within half a step. Raster and shadow rays see the
-  same variant; reflections, GI and probes see the rest mesh (`Ray_Visible` and `Rays_Only`
-  batch). The wind is that of the first streaming source, up to `WIND_SPEED_MAX`: the variants' box
-  contains it, so a frame of wind changes no boxes and marks no light, and the direct light is
-  not reset by it. Without wind the variants stay still without writing.
+  `Geometry` stage and whose BLAS the renderer refits. They are up to `WIND_TURNS` turns about up
+  and, past them, phases of each turn (`wind_turns`): an instance takes the turn nearest its own
+  and tilts with the wind within half a step, and the phase of the band of the gust wave its place
+  is in (`wind_variant`). Raster and shadow rays see the same variant; reflections, GI and probes
+  see the rest mesh (`Ray_Visible` and `Rays_Only` batch). Sets of variants are per zone of wind:
+  a cell takes those of the `Wind` on top at the middle of its instances (`wind_zone_at`, over a
+  `volume.Index` of the zones), and each set sways with the wind of its zone, so a calm valley
+  stays calm whatever blows at the view. Where the zones are (not their values) has a revision:
+  when it changes, the cells whose zone changed are published again. The wind is held to
+  `WIND_SPEED_MAX`: the variants' box contains it, so a frame of wind changes no boxes and marks
+  no light, and the direct light is not reset by it. Without wind the variants stay still
+  without writing.
 - **Type without shadow: hook.** `foliage_vertex.slang` is the [vertex hook][hook] of its batches,
   with the wind of its place (`//! mirai frame Foliage_Wind_Frame foliage_wind`, written from the
-  `Mask` stage relative to the origin of each view) and a phase per instance, from the world
-  place. No ray sees it move.
-- **Bending by bodies.** A `Foliage_Bender` tilts what moves in the hook (types without shadow:
-  grass) away from its entity, `lean` radians at its center and nothing at half the largest side
-  of the box its [`Volume`](../../mirai-gameplay/references/libraries.md#volume) is in, any shape
-  (without one, as far as a bender reaches), rotated
-  around the plant's place and by the red of its vertex color, like the wind. The `BENDERS` nearest
-  to the first streaming source go in the constants of each view with where they were the previous
-  frame, for the motion vectors. Radius and lean have a cap (`BEND_RADIUS_MAX`, `BEND_LEAN_MAX`):
-  the hook batches carry in `Batch_Desc.reach` the most that the wind and a bender move a point
-  (`hook_reach`), and the views cull them with those grown boxes. Types with shadow are not bent:
-  their variants are shared by all the instances.
+  `Mask` stage relative to the origin of each view) and the gust wave of its place. No ray sees it
+  move. The hook moves only the batches of foliage (`Batch_Desc.vertex.y`); `vertex.x` is the
+  sway of a type that sways in it.
+- **Impostors.** The quad of an impostor leans whole about its instance's origin by the lean of
+  the top of its mesh in the wind of its place (`Impostor_Row.far.z`), so the crossfade does not
+  go from swaying to still.
+- **Bending by bodies.** Every `Foliage_Bender` tramples a field (`Foliage_Trample`) of
+  `TRAMPLE_SIDE` texels of `TRAMPLE_TEXEL` around the first streaming source, which follows it in
+  place and whose entering texels enter standing: `lean` radians at its center and nothing at
+  half the largest side of the box its
+  [`Volume`](../../mirai-gameplay/references/libraries.md#volume) is in, along x and z, each
+  texel keeping the strongest lean and the height of what leaned it.
+  What it trampled stays after it leaves and stands back up by 1/e every `TRAMPLE_RECOVER`
+  seconds; the field is written only while it changes. The hook reads it for every batch of
+  foliage, variants included, by the red of the vertex color, unless what leaned it passed far
+  above or below the plant; the motion vectors read the field of the frame before. Rays see the
+  variants of a type with shadow unbent where it is trampled. Radius and lean have a cap
+  (`BEND_RADIUS_MAX`, `BEND_LEAN_MAX`): the batches carry in `Batch_Desc.reach` the most that the
+  wind and a bender move a point (`hook_reach`), and the views cull them with those grown boxes.
 
 [hook]: ../../mirai-rendering/references/views.md#extension-hooks-and-constants
 
@@ -483,7 +498,11 @@ the registry's memory as a file of the undo step that creates it.
   `what_the_renderer_forgets_takes_the_crowns_and_far_forms_with_it`), impostors
   (`a_cell_writes_only_its_block_of_impostors`) and wind
   (`an_instance_sways_with_the_variant_of_its_turn_and_downwind`,
-  `the_instance_of_a_variant_is_found_among_those_of_its_type`).
+  `the_instance_of_a_variant_is_found_among_those_of_its_type`), trampling
+  (`every_bender_tramples_the_foliage_and_it_stands_back_up_over_time`), zones of wind
+  (`the_variants_of_a_calm_valley_stay_still_whatever_blows_at_the_view`); on the GPU, with
+  validation: `a_stalk_leans_away_from_where_a_bender_trampled_the_field` and
+  `a_variant_leans_downwind_about_its_place`.
 - Ids of the manual ones: `a_manual_instance_keeps_its_id_through_the_edits_of_its_cell`.
 - Resident cap: `past_their_budget_the_nearest_cells_stay_resident`.
 - Streaming: `the_cells_near_the_sources_are_found_by_rows_and_every_one_they_keep`,

@@ -11,6 +11,7 @@
 #define FOLIAGE_IMPOSTOR_SLANG
 #include "native.slang"
 #include "scene.slang"
+#include "foliage_sway.slang"
 #include <constants/plugins/foliage.slang>
 
 // A type of foliage of a Foliage seen as an impostor: its frames and where
@@ -21,7 +22,7 @@ struct Impostor_Row {
     float4 low;          // xyz: the box of its mesh; w: from the eye, where its mesh starts to fade out
     float4 high;         // xyz; w: where its mesh is gone
     uint4 frames;        // the textures (texture_index) x: of color and coverage, y: of normal and depth, z: of roughness, metallic, occlusion and diffuse transmission; w: frames a side | pixels a side of a frame << 16
-    float4 far;          // x: where the impostor starts to fade out, y: where it is gone (0: never)
+    float4 far;          // x: where the impostor starts to fade out, y: where it is gone (0: never); z: the sway of its type (foliage.sway_amount)
     float4 transmission; // rgb: the color of the light its leaves let through
 };
 
@@ -72,14 +73,42 @@ struct Impostor_Shape {
     float gone;    // where it fades out far
 };
 
+// A placement turned about its place so that its up leans by `lean`, radians
+// along x and z of the world.
+void impostor_lean(float2 lean, inout float4 world[3], inout float4 inverse[3]) {
+    float angle = length(lean);
+    if (!(angle > 1e-5)) return;
+    float3 k = float3(lean.y, 0.0, -lean.x) / angle;
+    float c = cos(angle), s = sin(angle), t = 1.0 - c;
+    float3x3 r = float3x3(t * k.x * k.x + c, t * k.x * k.y - s * k.z, t * k.x * k.z + s * k.y,
+                          t * k.x * k.y + s * k.z, t * k.y * k.y + c, t * k.y * k.z - s * k.x,
+                          t * k.x * k.z - s * k.y, t * k.y * k.z + s * k.x, t * k.z * k.z + c);
+    float3 a0 = world[0].xyz, a1 = world[1].xyz, a2 = world[2].xyz;
+    world[0].xyz = r[0].x * a0 + r[0].y * a1 + r[0].z * a2;
+    world[1].xyz = r[1].x * a0 + r[1].y * a1 + r[1].z * a2;
+    world[2].xyz = r[2].x * a0 + r[2].y * a1 + r[2].z * a2;
+    float3 place = float3(world[0].w, world[1].w, world[2].w);
+    for (uint i = 0u; i < 3u; i++) {
+        inverse[i].xyz = mul(r, inverse[i].xyz);
+        inverse[i].w = -dot(inverse[i].xyz, place);
+    }
+}
+
 // The shape of an instance; false where nothing of it is drawn: its mesh is
-// whole there, or it is gone, or its type has no frames.
+// whole there, or it is gone, or its type has no frames. It leans whole about
+// where it stands, as the top of its mesh leans in the wind there, for the
+// cull and the draw alike.
 bool impostor_shape(Impostor_Instance inst, Impostor_Row row, out Impostor_Shape s) {
     batch_instance_placement(inst.position + impostor_params.anchor.xyz, inst.rotation, inst.scale, s.world, s.inverse);
     float3 low, high;
     box_transformed(s.world, row.low.xyz, row.high.xyz, low, high);
     s.appear = max(box_faded(low, high, row.low.w, row.high.w), box_small_faded(low, high));
     s.gone = box_faded(low, high, row.far.x, row.far.y);
+    if (row.far.z > 0.0) {
+        float3 pivot = float3(s.world[0].w, s.world[1].w, s.world[2].w);
+        float4 wind = wind_at(frame.foliage_wind.wind, pivot);
+        impostor_lean(foliage_wind_lean(wind.xyz, wind.w, 1.0, row.far.z, foliage_wave(pivot, frame.origin.xyz), frame.time.x), s.world, s.inverse);
+    }
     s.center = transform_point(s.world, row.sphere.xyz);
     float scale = max(max(length(float3(s.world[0].x, s.world[1].x, s.world[2].x)), length(float3(s.world[0].y, s.world[1].y, s.world[2].y))), length(float3(s.world[0].z, s.world[1].z, s.world[2].z)));
     s.radius = row.sphere.w * scale;

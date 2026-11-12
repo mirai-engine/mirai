@@ -317,7 +317,7 @@ Impostor_Row :: struct {
     sphere:[4]f32,
     low,high:[4]f32,     // w: where the mesh fades out, and where it is gone
     frames:[4]u32,       // the textures of color, of normal and of surface; frames a side | pixels a side of a frame << 16
-    far:[4]f32,          // where the impostor fades out, and where it is gone (0: never)
+    far:[4]f32,          // where the impostor fades out, and where it is gone (0: never); z: the sway of its type (sway_amount)
     transmission:[4]f32, // the color of the light its leaves let through
 }
 
@@ -431,7 +431,7 @@ impostor_row :: proc(resident:^Foliage_Resident,t:^Foliage_Type,key:Kind_Key) ->
     row.low={kind.low.x,kind.low.y,kind.low.z,fade*distance}
     row.high={kind.high.x,kind.high.y,kind.high.z,cull*distance}
     row.frames={render.texture_index(kind.color),render.texture_index(kind.normal),render.texture_index(kind.surface),IMPOSTOR_GRID | key.frame<<16}
-    row.far={t.fade_distance*distance,t.cull_distance*distance,0,0}
+    row.far={t.fade_distance*distance,t.cull_distance*distance,sway_amount(t^),0}
     row.transmission={kind.transmission.x,kind.transmission.y,kind.transmission.z,0}
     return
 }

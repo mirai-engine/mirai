@@ -131,7 +131,7 @@ Instance_Ref :: struct {
 // The instance of a cell that the k-th instance of a batch of a type shows:
 // the batches of a cell hold the instances of each type in the order the
 // cell places them.
-instance_of_batch :: proc(s:^foliage.Source,ground:^foliage.Ground_Owner,coord:[2]i32,type:u32,k:int,work:^foliage.Build_Work,role:=foliage.ROLE_MESH,owner:=mm.Quat(1)) -> (ref:Instance_Ref,placed:foliage.Placed,found:bool) {
+instance_of_batch :: proc(s:^foliage.Source,ground:^foliage.Ground_Owner,coord:[2]i32,type:u32,k:int,work:^foliage.Build_Work,role:=foliage.ROLE_MESH,owner:=mm.TRANSFORM_IDENTITY) -> (ref:Instance_Ref,placed:foliage.Placed,found:bool) {
     cell:=foliage.source_cell(s,coord)
     if cell==nil {return}
     if !foliage.cell_build(s,cell,ground_of(ground,coord),work) || !foliage.placed_group(s,work) {return}

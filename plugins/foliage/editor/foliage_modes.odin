@@ -561,7 +561,7 @@ select_frame :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,e
     if hit.batch==0 || hit.entity!=e {return}
     entity,coord,type,_,role,found:=foliage.resident_batch_find(resident,hit.batch)
     if !found || entity!=e {return}
-    ref,placed,known:=instance_of_batch(source,ground,coord,type,hit.instance,&tool.work,role,owner.rotation)
+    ref,placed,known:=instance_of_batch(source,ground,coord,type,hit.instance,&tool.work,role,owner)
     if !known {return}
     if toggle && selected_find(sel,ref)>=0 {selected_remove(tool,ref)} else {selected_add(tool,e,ref,placed.type)}
     type_reveal(tool,placed.type)

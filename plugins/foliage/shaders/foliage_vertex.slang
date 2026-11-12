@@ -1,48 +1,39 @@
 //! mirai hook vertex foliage_sway
-// How the wind moves a vertex of an instance of foliage drawn by its batch
-// alone, which no ray meets swaying (a type without shadows): along the wind
-// where the instance stands, all of it (on a planet the wind is not level),
-// more the farther it is from its place, which on any ground is how high it
-// grows. params.x is the sway of its type (Batch_Desc.vertex). Each instance
-// sways in a phase of its own, of the place of the world. The benders near it
-// lean it away from them about its place, by the red of its vertex color as
-// the wind does: grass where a body passes.
+// How a vertex of an instance of a batch of foliage moves (params.y 1; the
+// batches of anything else are left alone): bent about the place of its
+// instance, by the red of its vertex color, by the wind where it stands with
+// the phase of the gust wave there, if its batch sways in the hook (params.x,
+// the sway of its type: Batch_Desc.vertex; a type without shadows, which no
+// ray meets swaying), and by the field of trampled foliage, which leans every
+// batch of foliage away from where bodies passed (foliage.Foliage_Trample).
 #include "foliage_sway.slang"
 
-// The lean of the benders at a plant standing at pivot: along x and z of the
-// world, radians long. The call for the motion vectors (time of the frame
-// before) takes where they were then.
-float2 foliage_bend(float3 pivot, float time) {
-    bool before = time != frame.time.x;
-    float2 lean = float2(0.0);
-    uint count = min(frame.foliage_wind.count.x, uint(FOLIAGE_BENDERS));
-    for (uint i = 0u; i < count; i++) {
-        Foliage_Bender_Frame b = frame.foliage_wind.benders[i];
-        float3 away = pivot - (before ? b.previous : b.position);
-        float reach = 1.0 - smoothstep(0.4 * b.radius, b.radius, length(away));
-        if (!(reach > 0.0)) continue;
-        float across = length(away.xz);
-        float2 side = across > 1e-4 ? away.xz / across : float2(1.0, 0.0);
-        lean += side * (b.lean * reach);
-    }
-    float angle = length(lean);
-    return angle > FOLIAGE_BEND_LEAN_MAX ? lean * (FOLIAGE_BEND_LEAN_MAX / angle) : lean;
+// The lean the field keeps at a plant standing at pivot, radians along x and
+// z of the world: none outside the field, fading at its edge, nor where what
+// leaned it passed far above or below the plant. The call for the motion
+// vectors (time of the frame before) reads the field of the frame before.
+float2 foliage_trampled(float3 pivot, float time) {
+    uint texture = time != frame.time.x ? frame.foliage_wind.textures.y : frame.foliage_wind.textures.x;
+    if (texture == 0xffffffffu) return float2(0.0);
+    float4 field = frame.foliage_wind.trample;
+    float2 from = abs(pivot.xz - field.xy) / (0.5 * field.w);
+    float edge = 1.0 - smoothstep(0.8, 1.0, max(from.x, from.y));
+    if (!(edge > 0.0)) return float2(0.0);
+    // Texel i of the world is kept at i modulo the side, which the repeating sampler wraps.
+    float2 wrap = origin_wrap(frame.origin.xyz, float3(field.w, 1.0, field.w)).xz;
+    float4 v = mirai_sample_texture_level(texture, (pivot.xz + wrap) / field.w, 0.0);
+    if (!(v.w > 1e-3)) return float2(0.0);
+    float above = pivot.y - (field.z + v.z / v.w);
+    float near = 1.0 - smoothstep(0.5, 1.0, max(-above, 2.0 * above) / FOLIAGE_BEND_RADIUS_MAX);
+    return v.xy * (edge * near);
 }
 
 float3 foliage_sway(float3 world, float3 pivot, float4 color, float4 params, float time) {
-    float4 wind = wind_at(frame.foliage_wind.wind, pivot);
-    // The phase of the place of the world, whose two waves repeat together every 20 pi radians: what the origin adds to it.
-    float shift = origin_phase(frame.origin.xyz, float3(0.37, 0.0, 0.71) / 62.831853) * 62.831853;
-    float phase = shift + dot(pivot.xz, float2(0.37, 0.71));
-    float3 offset = world - pivot;
-    float3 moved = world + foliage_sway_offset(wind.xyz, wind.w, length(offset), color.r, params.x, phase, time);
-    float2 lean = foliage_bend(pivot, time) * color.r;
-    float angle = length(lean);
-    if (angle > 1e-4) {
-        // Turned about the place of the plant, away from the benders: what stands up leans and comes down.
-        float height = max(offset.y, 0.0);
-        float2 side = lean / angle;
-        moved += float3(side.x * sin(angle), cos(angle) - 1.0, side.y * sin(angle)) * height;
+    if (!(params.y > 0.0)) return world;
+    float2 lean = foliage_trampled(pivot, time);
+    if (params.x > 0.0) {
+        float4 wind = wind_at(frame.foliage_wind.wind, pivot);
+        lean += foliage_wind_lean(wind.xyz, wind.w, 1.0, params.x, foliage_wave(pivot, frame.origin.xyz), time);
     }
-    return moved;
+    return pivot + foliage_bend(world - pivot, lean * color.r);
 }
