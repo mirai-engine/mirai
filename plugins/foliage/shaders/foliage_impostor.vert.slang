@@ -1,9 +1,32 @@
 // A quad facing the eye a far instance of foliage is drawn on, and what its
 // fragments need: the three frames of its type to blend, and how much of it
-// shows where its mesh fades out and where it fades out itself.
+// shows where its mesh fades out and where it fades out itself. It leans in
+// the wind as its mesh does.
 #include "foliage_impostor.slang"
+#include "foliage_sway.slang"
 
 static const float2 IMPOSTOR_CORNERS[6] = {float2(-1.0, -1.0), float2(1.0, -1.0), float2(1.0, 1.0), float2(-1.0, -1.0), float2(1.0, 1.0), float2(-1.0, 1.0)};
+
+// A placement turned about its place so that its up leans by `lean`, radians
+// along x and z of the world.
+void impostor_lean(float2 lean, inout float4 world[3], inout float4 inverse[3]) {
+    float angle = length(lean);
+    if (!(angle > 1e-5)) return;
+    float3 k = float3(lean.y, 0.0, -lean.x) / angle;
+    float c = cos(angle), s = sin(angle), t = 1.0 - c;
+    float3x3 r = float3x3(t * k.x * k.x + c, t * k.x * k.y - s * k.z, t * k.x * k.z + s * k.y,
+                          t * k.x * k.y + s * k.z, t * k.y * k.y + c, t * k.y * k.z - s * k.x,
+                          t * k.x * k.z - s * k.y, t * k.y * k.z + s * k.x, t * k.z * k.z + c);
+    float3 a0 = world[0].xyz, a1 = world[1].xyz, a2 = world[2].xyz;
+    world[0].xyz = r[0].x * a0 + r[0].y * a1 + r[0].z * a2;
+    world[1].xyz = r[1].x * a0 + r[1].y * a1 + r[1].z * a2;
+    world[2].xyz = r[2].x * a0 + r[2].y * a1 + r[2].z * a2;
+    float3 place = float3(world[0].w, world[1].w, world[2].w);
+    for (uint i = 0u; i < 3u; i++) {
+        inverse[i].xyz = mul(r, inverse[i].xyz);
+        inverse[i].w = -dot(inverse[i].xyz, place);
+    }
+}
 
 [shader("vertex")]
 Impostor_Varyings main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_VulkanInstanceID) {
@@ -19,6 +42,12 @@ Impostor_Varyings main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV
     // Where its mesh is whole, or past where it is gone, nothing is drawn.
     o.position = float4(2.0, 2.0, 2.0, 1.0);
     if (appear <= 0.0 || gone >= 1.0) return o;
+    // It leans whole about where it stands, as the top of its mesh leans in the wind there.
+    if (row.far.z > 0.0) {
+        float3 pivot = float3(world[0].w, world[1].w, world[2].w);
+        float4 wind = wind_at(frame.foliage_wind.wind, pivot);
+        impostor_lean(foliage_wind_lean(wind.xyz, wind.w, 1.0, row.far.z, foliage_wave(pivot, frame.origin.xyz), frame.time.x), world, inverse);
+    }
     float3 center = transform_point(world, row.sphere.xyz);
     float scale = max(length(float3(world[0].x, world[1].x, world[2].x)), length(float3(world[0].y, world[1].y, world[2].y)));
     float radius = row.sphere.w * scale;

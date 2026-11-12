@@ -69,8 +69,7 @@ Foliage_Resident :: struct {
     structure:u64, // of the assets, when the meshes of the batches were resolved
     wind:volume.Gpu_Wind, // what the frame gives the shaders of the wind (foliage_wind.slang), in the world: each view takes it relative to its origin
     sway:[4]f32,          // the wind the variants sway with in this frame: its velocity, m/s, and its gusts
-    benders:[BENDERS]Bender_Shown, // nearest the first streaming source first
-    bender_count:int,
+    trample:Foliage_Trample,
     impostors:Impostor_Draw,
     cells_left,kinds_left:int, // of this frame: the cells it may build, by their cost, and the far forms it may make
     work:Build_Work,
@@ -250,6 +249,7 @@ foliage_resident_free :: proc(resident:^Foliage_Resident) {
     for &prefab in resident.prefabs {delete(prefab.parts)}
     delete(resident.owners);delete(resident.prefabs);delete(resident.kinds);delete(resident.winds);delete(resident.crowns)
     impostor_draw_destroy(&resident.impostors)
+    trample_free(resident)
     build_work_destroy(&resident.work)
     resident^={}
 }
@@ -564,14 +564,13 @@ types_draw :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,entry:^Data_
                 part.wind=wind_set(resident,renderer,desc.mesh,variants,amount)
                 append(&owner.winds,Wind_Key{desc.mesh,variants,amount})
             }
-            // What sways in the hook and not in variants.
-            if part.wind<0 && t.wind>0 {
-                part.desc.vertex={amount,0,0,0}
-                // The views cull it by boxes that hold how far the wind and the benders move it.
-                if low,high,known:=render.mesh_bounds(renderer,desc.mesh);known {
-                    corner:=linalg.max(linalg.abs(low),linalg.abs(high))
-                    part.desc.reach=hook_reach(amount,linalg.length(corner)*t.scale[1]*max(t.height[1],1))
-                }
+            // The hook bends every part where bodies trampled it (y), and
+            // sways in the wind what does not sway in variants (x); the views
+            // cull it by boxes that hold how far both move it.
+            part.desc.vertex={amount if part.wind<0 && t.wind>0 else 0,1,0,0}
+            if low,high,known:=render.mesh_bounds(renderer,desc.mesh);known {
+                corner:=linalg.max(linalg.abs(low),linalg.abs(high))
+                part.desc.reach=hook_reach(part.desc.vertex.x,linalg.length(corner)*t.scale[1]*max(t.height[1],1))
             }
             append(&work.parts,part)
         }
@@ -742,12 +741,12 @@ PREFAB_ERROR :: f32(0.01)
 // The instance of a type order[k] gives, of the batch of a role: the index
 // of instance j of that batch among the instances of its type, in their
 // order. A variant holds those of its turn; the others hold them all.
-role_instance :: proc(role:Batch_Role,variants:u32,owner:mm.Quat,placed:[]Placed,order:[]u32,j:int) -> int {
+role_instance :: proc(role:Batch_Role,variants:u32,owner:mm.Transform,placed:[]Placed,order:[]u32,j:int) -> int {
     if role<ROLE_VARIANT {return j}
     v:=u32(role-ROLE_VARIANT)
     seen:=0
     for at,k in order {
-        if wind_variant(owner*placed[at].rotation,variants)!=v {continue}
+        if wind_variant_of(owner,placed[at],variants)!=v {continue}
         if seen==j {return k}
         seen+=1
     }
@@ -820,7 +819,7 @@ cell_publish :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,held:^Resi
             for v in 0..<set.count {
                 clear(&work.instances)
                 for instance,n in all {
-                    if wind_variant(transform.rotation*work.placed[order[n]].rotation,set.count)==v {append(&work.instances,instance)}
+                    if wind_variant_of(transform,work.placed[order[n]],set.count)==v {append(&work.instances,instance)}
                 }
                 variant:=part.desc
                 variant.mesh=set.variants[v]

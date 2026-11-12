@@ -17,7 +17,7 @@ struct Impostor_Row {
     float4 low;    // xyz: the box of its mesh; w: from the eye, where its mesh starts to fade out
     float4 high;   // xyz; w: where its mesh is gone
     uint4 frames;  // x: the texture of color and coverage, y: of normal and depth (texture_index); z: frames a side; w: pixels a side of a frame
-    float4 far;    // x: where the impostor starts to fade out, y: where it is gone (0: never)
+    float4 far;    // x: where the impostor starts to fade out, y: where it is gone (0: never); z: the sway of its type (foliage.sway_amount)
 };
 
 // An instance, as a Batch_Instance holds it, relative to the anchor of the

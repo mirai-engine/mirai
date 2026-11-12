@@ -255,7 +255,7 @@ Impostor_Row :: struct {
     sphere:[4]f32,
     low,high:[4]f32, // w: where the mesh fades out, and where it is gone
     frames:[4]u32,   // the textures of color and of normal, frames a side, pixels a side of a frame
-    far:[4]f32,      // where the impostor fades out, and where it is gone (0: never)
+    far:[4]f32,      // where the impostor fades out, and where it is gone (0: never); z: the sway of its type (sway_amount)
 }
 
 // The impostors of the world: the rows of every type of every Foliage, the
@@ -287,7 +287,7 @@ impostor_row :: proc(resident:^Foliage_Resident,t:^Foliage_Type) -> (row:Imposto
     row.low={kind.low.x,kind.low.y,kind.low.z,fade}
     row.high={kind.high.x,kind.high.y,kind.high.z,cull}
     row.frames={render.texture_index(kind.color),render.texture_index(kind.normal),IMPOSTOR_GRID,IMPOSTOR_FRAME}
-    row.far={t.fade_distance,t.cull_distance,0,0}
+    row.far={t.fade_distance,t.cull_distance,sway_amount(t^),0}
     return
 }
 
