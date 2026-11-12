@@ -3,6 +3,7 @@ package terrain
 import "core:math"
 import "core:math/linalg"
 import "core:slice"
+import "mirai:host"
 import "mirai:core"
 import camera "mirai:engine/camera"
 import scene "mirai:engine/scene"
@@ -265,20 +266,30 @@ resident_cut :: proc(resident:^Terrain_Resident,data:^Terrain_Data) {
     }
 }
 
-// The views the levels are chosen for: that of the frame and each local view
-// of a split screen, with its own size and field. A piece shows what the
-// nearest of them needs.
-LOD_VIEWS :: 1+len(camera.Local_Views{}.items)
+// The views the levels are chosen for: that of the frame and, on a split
+// screen, that of each local slot, with the pose its camera draws from and
+// the size of its part of the screen. A piece shows what the nearest of them
+// needs.
+LOD_VIEWS :: 1+len(camera.Camera_Views{}.slots)
 Lod_Views :: struct {
     items:[LOD_VIEWS]core.View,
     count:int,
 }
 
-lod_views_of :: proc "contextless" (view:core.View,locals:core.Ref(camera.Local_Views)) -> (views:Lod_Views) {
+lod_views_of :: proc(view:core.View,slots:core.Ref(camera.Camera_Views),app:^host.App) -> (views:Lod_Views) {
     views.items[0],views.count=view,1
-    if locals.ptr==nil {return}
-    for local,slot in locals.items {
-        if int(local.slot)!=slot+1 || local.camera==core.NONE {continue}
+    if slots.ptr==nil || app==nil {return}
+    // The slots in play: those up to the last with a camera.
+    count:=0
+    for seen,slot in slots.slots {if seen.camera!=core.NONE {count=slot+1}}
+    if count<2 {return}
+    for seen,slot in slots.slots[:count] {
+        if seen.camera==core.NONE {continue}
+        rect:=host.app_player_rect(app,slot,count)
+        local:=core.VIEW_DEFAULT
+        local.camera,local.position,local.rotation=seen.camera,seen.pose.position,seen.pose.rotation
+        local.fov,local.height,local.size=seen.pose.fov,seen.pose.height,{f32(rect.z),f32(rect.w)}
+        local.projection=seen.pose.projection==.Orthographic && seen.pose.height>0?.Orthographic:.Perspective
         views.items[views.count]=local
         views.count+=1
     }

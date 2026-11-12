@@ -689,7 +689,7 @@ terrain_update :: proc(
     locals:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),ids:^core.Table(core.Id,.Read),colliders:^core.Table(phys.Collider),
     meshes:^core.Table(render.Mesh_Renderer),looks:^core.Table(render.Material_Values),
     data:^Terrain_Data,resident:^Terrain_Resident,requests:^Terrain_Requests,digs:^Terrain_Digs,settings:Terrain_Settings,app:^host.App,time:core.Time,frame:core.Frame_Time,
-    view:core.View,local_views:core.Ref(camera.Local_Views),worlds:^core.Table(core.World_Transform,.Read),sources:core.Ref(scene.Streaming_Sources),kept:^core.Table(scene.Far_Kept,.Read),physics:phys.Physics_Settings,
+    view:core.View,camera_views:core.Ref(camera.Camera_Views),worlds:^core.Table(core.World_Transform,.Read),sources:core.Ref(scene.Streaming_Sources),kept:^core.Table(scene.Far_Kept,.Read),physics:phys.Physics_Settings,
     loads:core.Ref(scene.Section_Loads),waits:^scene.Load_Waits,problems:^core.Problems,focus:Terrain_Focus,queries:^core.Ground_Queries,ground:^Terrain_Ground,
 ) {
     c:=Chunk_Tables{commands,chunks,locals,parents,ids,colliders,meshes,looks}
@@ -823,7 +823,7 @@ terrain_update :: proc(
         // What stands for a section that is not loaded collides with nothing.
         for &owner in resident.owners {owner.far=kept!=nil && core.has(kept,owner.entity)}
         resident_joins(resident,data,terrains,ids,worlds,locals,problems)
-        resident_lod(resident,data,worlds,lod_views_of(view,local_views),sources,settings,terrains,&c,physics,problems,changed || first,focus)
+        resident_lod(resident,data,worlds,lod_views_of(view,camera_views,app),sources,settings,terrains,&c,physics,problems,changed || first,focus)
         resident_cut(resident,data)
         stream:=settings.resident_distance>0
         // A piece that is wanted where nothing shows is built in this call.

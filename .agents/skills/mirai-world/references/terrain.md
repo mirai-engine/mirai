@@ -155,11 +155,10 @@ Levels of detail:
   about `LOD_PIXELS` of the view from its terrain, and never finer than samples at
   `LOD_SPACING_PIXELS` pixels, which at a grazing angle come closer (`LOD_GRAZING`): the detail
   between samples that a pixel covers is not seen, however large its error. The pixels come from
-  the height and field of each view (`core.View` and the local views of a split screen,
-  `camera.Local_Views`), with hysteresis: a piece is one mesh for every view, so it shows what the
-  view that sees it finest needs. With a positive
-  `Terrain_Settings.lod_distance` the level comes from the distance to the box, never coarser
-  than its error allows.
+  the height and field of each view (`core.View` and, on a split screen, the slot of each local
+  player in `camera.Camera_Views`), with hysteresis: a piece is one mesh for every view, so it
+  shows what the view that sees it finest needs. With a positive `Terrain_Settings.lod_distance`
+  the level comes from the distance to the box, never coarser than its error allows.
 - Two Heightfield chunks that touch, by a side or a corner, are at most one level apart
   (`lod_levels_balance` refines the coarser one): a fine edge stitched to an interior several
   levels coarser folds.

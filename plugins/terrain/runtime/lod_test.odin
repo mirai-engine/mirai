@@ -177,14 +177,16 @@ far_chunks_show_coarser_levels_while_colliders_keep_every_sample :: proc(t:^test
     testing.expect(t,resident.stats.built>built && resident.stats.built<built+64)
     // A second player at the first corner, in its half of a split screen: the
     // chunks near each view are as fine as that view needs.
-    locals:camera.Local_Views
-    locals.items[1]=view
-    locals.items[1].position,locals.items[1].slot,locals.items[1].camera={-60,5,-60},2,owner
+    locals:camera.Camera_Views
+    for &slot,i in locals.slots[:2] {
+        slot.camera,slot.pose.fov=owner,view.fov
+        slot.pose.position=i==0?view.position:{-60,5,-60}
+    }
     terrain_test_update(&w,&resident,&app,view=view,settings=settings,locals=core.ref(&locals))
     testing.expect(t,chunks[far].built.lod.level==0 && chunks[0].built.lod.level==0,"each view sees its own chunks at level 0")
     apart(t,s,chunks[:64])
     // Back to one player: what only the other view needed coarsens again.
-    locals.items[1].slot=0
+    locals.slots[1].camera=core.NONE
     terrain_test_update(&w,&resident,&app,view=view,settings=settings,locals=core.ref(&locals))
     testing.expect(t,chunks[far].built.lod.level==0 && chunks[0].built.lod.level>=2)
     hit,ok=phys.raycast({&w.state},{57,20,57},{0,-1,0})

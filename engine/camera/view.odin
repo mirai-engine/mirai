@@ -249,8 +249,6 @@ camera_local_views :: proc(
     view_volumes:^core.Table(render.View_Volume,.Read),volumes:^core.Table(volume.Volume,.Read),parents:^core.Table(core.Parent,.Read),sections:^core.Table(scene.Scene_Reference,.Read),splines:^core.Table(volume.Spline,.Read),
 ) {
     n:=seat_state.local_count
-    // A slot that is not drawn this frame is no local view.
-    for &item,slot in views.items {if n<2 || slot>=n {item.slot=0}}
     if n<2 {return}
     rects:[input.LOCAL_CAPACITY][4]i32
     for slot in 0..<n {
