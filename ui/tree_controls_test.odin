@@ -297,6 +297,41 @@ a_transition_carries_the_colors_of_a_node_between_its_states :: proc(t:^testing.
     testing.expect(t,back[0]<200 && back[0]>150)
 }
 
+// The look of a Button comes whole from its style: italic text leans its glyphs, a gradient goes
+// the way the style says and a ui program colors the fill instead.
+@(test)
+a_button_takes_italics_the_gradient_and_the_program_of_its_style :: proc(t:^testing.T) {
+    s:Test_Shop
+    test_shop_init(t,&s)
+    defer test_shop_destroy(&s)
+    left,right:=Color{10,20,30,255},Color{200,100,50,255}
+    flat,_:=tree_style(&s.tree,{fill=left,fill2=right,gradient=.Right,text={size=14,color={255,255,255,255},italic=true}})
+    cut,_:=tree_style(&s.tree,{fill=left,program_values={0.3,0,0,0},text={size=14,color={255,255,255,255}}})
+    tree_node(&s.tree,-1,{kind=.Box,name="column",layout={direction=.Column}})
+    tree_node(&s.tree,0,{kind=.Button,name="flat",style=flat,text="Go",layout={width=fixed(60),height=fixed(20)}})
+    tree_node(&s.tree,0,{kind=.Button,name="cut",style=cut,text="Go",layout={width=fixed(60),height=fixed(20)}})
+    tree_programs_set(&s.tree,{0,9})
+    testing.expect(t,test_shop_instance(&s))
+    ctx:Context
+    test_shop_context(t,&ctx,font=true)
+    defer context_destroy(&ctx)
+    input:=test_input()
+    frame:=test_frame(&ctx,&input,test_shop_build,&s)
+    leaning:=0
+    v:=frame.vertices
+    for i:=0;i+6<=len(v);i+=6 {
+        if quad_kind(v[i].quad)==.Glyph && v[i].position.x>v[i+5].position.x+0.5 {leaning+=1}
+    }
+    testing.expect(t,leaning>0,"the glyphs of an italic style lean")
+    horizontal,program:=false,false
+    for shape in frame.shapes {
+        if shape.params[3]==f32(Gradient.Horizontal) && shape.fill2[0]>shape.fill[0] {horizontal=true}
+        if transmute(u32)shape.stroke[0]==9 && shape.params[0]==0.3 {program=true}
+    }
+    testing.expect(t,horizontal,"the gradient of the style goes right")
+    testing.expect(t,program,"the program of the style colors the fill of the button, with its values")
+}
+
 // The layout transition of a style carries the rectangle of its node to a new layout: from where
 // it was drawn, through rectangles between both, to exactly where the layout puts it; a layout
 // that changes on the way starts again from where it is. A new size too, which the layout around

@@ -517,7 +517,7 @@ float4 evaluate(Mirai_Ui_Context ctx,Parameters p) {
     testing.expect(t,found && pulse.domain==.Ui && pulse.size==16 && len(pulse.parameters)==3)
     if !found {return}
     testing.expect(t,pulse.parameters[2].name=="center" && pulse.parameters[2].offset==8)
-    for name in ([]string{"Ui_Radial_Wipe","Ui_Dissolve","Ui_Shine","Ui_Gradient_Sweep"}) {
+    for name in ([]string{"Ui_Radial_Wipe","Ui_Dissolve","Ui_Shine","Ui_Gradient_Sweep","Ui_Slant"}) {
         builtin,listed:=program_named(catalog,name)
         testing.expectf(t,listed && builtin.domain==.Ui && builtin.size<=16,"%s is a built-in ui program of at most four floats",name)
     }

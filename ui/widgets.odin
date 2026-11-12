@@ -57,6 +57,7 @@ Button :: struct {
     // and padding: without a size it fits its label.
     layout:^Layout,
     image:Node_Image, // behind it instead of its fill, which tints it
+    program:u32,      // a ui program that colors the fill instead, given that of its look: see draw_program
     block:bool,       // the label takes the lines, the outline and the shadow of the text of its look, centered
 }
 
@@ -108,9 +109,9 @@ button :: proc(ctx:^Context,id:Id,b:Button) -> Interaction {
     if !b.block {style.wrap=.None}
     fill:=look.fill
     if b.image.quad.kind!=.Solid && fill=={} {fill={255,255,255,255}}
-    paint:=paint_add(ctx,{kind=.Box,fill=fill,fill2=look.fill2,stroke=look.stroke,corners=look.radius,stroke_width=look.stroke_width,
+    paint:=paint_add(ctx,{kind=.Box,fill=fill,fill2=look.fill2,gradient=look.gradient,stroke=look.stroke,corners=look.radius,stroke_width=look.stroke_width,
         shadow=look.shadow,shadow_color=look.shadow_color,shadow_blur=look.shadow_blur,shadow_offset=look.shadow_offset,
-        quad2=b.image.quad,border=b.image.border,border_uv=b.image.border_uv})
+        program=b.program,program_values=look.program_values,quad2=b.image.quad,border=b.image.border,border_uv=b.image.border_uv})
     if element_open(ctx,{id=id,layout={width=width,height=height,padding=padding,gap=box_gap(b.label,b.detail),align_y=.Center},custom=paint}) {
         detail:=color_alpha(tone(ctx,"on_accent"),170) if text_color==tone(ctx,"on_accent") else tone(ctx,"text_faint")
         box_content(ctx,{label=b.label,detail=b.detail,style=style,detail_color=detail,icon=b.icon,icon_color=icon_color,icon_size=icon_size,icon_after=b.icon_after,
@@ -190,7 +191,7 @@ checkbox :: proc(ctx:^Context,id:Id,value:^bool,disabled:bool=false,look:^Node_S
     w:=width if width!={} else fixed(line)
     h:=height if height!={} else fixed(line)
     side:=line if h==fixed(line) else control_height(ctx,id,h,line)
-    paint:=paint_add(ctx,{kind=.Box,fill=look.fill,fill2=look.fill2,stroke=look.stroke,stroke_width=look.stroke_width,corners=look.radius,
+    paint:=paint_add(ctx,{kind=.Box,fill=look.fill,fill2=look.fill2,gradient=look.gradient,stroke=look.stroke,stroke_width=look.stroke_width,corners=look.radius,
         shadow=look.shadow,shadow_color=look.shadow_color,shadow_blur=look.shadow_blur,shadow_offset=look.shadow_offset})
     if element_open(ctx,{id=id,layout={width=w,height=h,align_x=.Center,align_y=.Center},custom=paint}) && on {icon(ctx,.Check,look.mark,side*0.75)}
     element_close(ctx)

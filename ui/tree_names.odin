@@ -20,6 +20,7 @@ Style_Key :: enum u8 {
     Text_Align_X, Text_Align_Y, Text_Wrap, Ellipsis, Line_Height,
     Fill_Mode, Program, Program_Values, Sounds, Transition, Layout_Transition, Blur,
     Width, Height, Direction, Padding, Gap, Align_X, Align_Y, Columns, Span, Self_X, Self_Y, Aspect,
+    Italic, Gradient,
 }
 Style_Keys :: bit_set[Style_Key;u64]
 
@@ -107,6 +108,8 @@ STYLE_KEYS := [Style_Key]Style_Key_Info{
     .Self_X={name="self_x",kind=.Enum,place=.Layout,offset=u16(offset_of(Layout,self_x)),size=size_of(Self_Align),type=Self_Align},
     .Self_Y={name="self_y",kind=.Enum,place=.Layout,offset=u16(offset_of(Layout,self_y)),size=size_of(Self_Align),type=Self_Align},
     .Aspect={name="aspect",kind=.Number,place=.Layout,offset=u16(offset_of(Layout,aspect)),size=size_of(f32)},
+    .Italic={name="italic",kind=.Flag,offset=u16(offset_of(Node_Style,text)+offset_of(Text_Style,italic)),size=size_of(bool)},
+    .Gradient={name="gradient",kind=.Enum,offset=u16(offset_of(Node_Style,gradient)),size=size_of(Fill_Gradient),type=Fill_Gradient},
 }
 
 // The bytes of a value of a style; none for a key of its layout or its blur.

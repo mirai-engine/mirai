@@ -195,8 +195,9 @@
   floats and the rest stays zero, without the catalog defaults (which serve to initialize the
   node's values). A parameter that is not a float reads the bits of that float. The engine ones
   (`shaders/materials/ui_*.slang`) are `Ui_Radial_Wipe` (the sector of a cooldown), `Ui_Dissolve`
-  (the node dissolves into noise), `Ui_Shine` (a stripe of brightness crosses it) and
-  `Ui_Gradient_Sweep` (a gradient toward another color that shifts). Selector and registration:
+  (the node dissolves into noise), `Ui_Shine` (a stripe of brightness crosses it),
+  `Ui_Gradient_Sweep` (a gradient toward another color that shifts) and `Ui_Slant` (the fill cut to
+  a parallelogram). Selector and registration:
   [UI](ui.md#ui-world-panels-and-debug-lines).
 
 ## Programs and stages

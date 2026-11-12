@@ -88,7 +88,8 @@ Box :: struct {
     scroll:[2]f32,   // how far the content is moved up and left inside its clip
     // Background; nothing is drawn while fill and stroke are transparent.
     fill,stroke:Color,
-    fill2:Color,     // when set: a vertical gradient from fill down to it, over a line of stroke
+    fill2:Color,     // when set: a gradient from fill to it, over a line of stroke
+    gradient:Fill_Gradient,
     radius:f32,
     shadow:bool,
     stroke_width:f32,
@@ -137,7 +138,7 @@ box_begin :: proc(ctx:^Context,b:Box) {
     if b.image.kind!=.Solid {
         paint=image_paint({quad=b.image,tint=b.fill,border=b.image_border,border_uv=b.image_border_uv,fit=b.image_fit,size=b.image_size})
     } else {
-        paint={kind=.Bar if b.fill2[3]>0 && b.radius==0 && b.corners=={} && b.stroke_width==0 && !b.shadow else .Panel if b.stroke[3]>0 || b.shadow else .Rect,fill=b.fill,fill2=b.fill2,stroke=b.stroke,radius=b.radius,corners=b.corners,shadow=b.shadow,stroke_width=b.stroke_width,shadow_color=b.shadow_color,shadow_blur=b.shadow_blur,shadow_offset=b.shadow_offset,
+        paint={kind=.Bar if b.fill2[3]>0 && b.radius==0 && b.corners=={} && b.stroke_width==0 && !b.shadow else .Panel if b.stroke[3]>0 || b.shadow else .Rect,fill=b.fill,fill2=b.fill2,gradient=b.gradient,stroke=b.stroke,radius=b.radius,corners=b.corners,shadow=b.shadow,stroke_width=b.stroke_width,shadow_color=b.shadow_color,shadow_blur=b.shadow_blur,shadow_offset=b.shadow_offset,
             program=b.program,program_values=b.program_values}
     }
     pp:^Paint

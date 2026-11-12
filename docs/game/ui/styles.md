@@ -10,18 +10,17 @@ The template's `assets/menu/theme.ui` is the example of tokens and styles, and i
 
 ```json
 {
-  "tokens": {"ink": "#3a1d4f", "sun": "#ffb238", "round": 20},
+  "tokens": {"accent": "#7050f0", "glass": "#ffffff1a", "text": "#f2f2f5"},
   "styles": {
-    "base": {"stroke": "ink", "border": 4, "radius": "round", "size": 24, "color": "ink",
-      "font": "semibold"},
-    "button": {"extends": "base", "fill": "#ff8fa9", "fill2": "#f0467f",
-      "shadow": {"color": "ink", "y": 7}, "transition": 0.09, "width": 300, "height": 60,
+    "base": {"font": "semibold", "size": 22, "color": "text", "italic": true},
+    "button": {"extends": "base", "fill": "glass", "program": "Ui_Slant",
+      "program_values": [0.32, 0, 0, 0], "transition": 0.08, "width": 360, "height": 56,
       "text_x": "center", "text_y": "center",
-      "hover": {"fill": "sun", "move_y": -3, "shadow": {"y": 10}},
-      "focus": {"extends": "hover", "stroke": "#46dfc4", "border": 6},
-      "pressed": {"move_y": 5, "shadow": {"y": 2}, "scale": 0.98},
-      "disabled": {"fill": "#b5acc4", "color": "#ece6f4"}},
-    "dim": {"fill": "#2c163f8c", "blur": 6}
+      "hover": {"fill": "accent"},
+      "focus": {"extends": "hover", "move_x": 4},
+      "pressed": {"scale": 0.97},
+      "disabled": {"fill": "#ffffff0d", "color": "#ffffff59"}},
+    "dim": {"fill": "#0e0e10e6", "fill2": "#0e0e1040", "gradient": "right", "blur": 4}
   }
 }
 ```
@@ -31,6 +30,12 @@ The template's `assets/menu/theme.ui` is the example of tokens and styles, and i
 - Values: a color is `#rrggbb` or `#rrggbbaa`, a size a number; the name of a token instead of
   either. `shadow` and `text_shadow` are `{color, blur, x, y}` and a state lists only the parts it
   changes. A hard shadow has no blur: it is an edge of the shape.
+- `fill2` makes the fill a gradient from `fill`, downward, or toward the right with
+  `"gradient": "right"`. `"italic": true` leans the glyphs of the text.
+- `program` names a UI program that colors the fill instead, and `program_values` are its first
+  four parameters; the node does not take their defaults. The engine ones: `Ui_Slant` (the fill cut
+  to a parallelogram, `lean` times its height), `Ui_Shine`, `Ui_Gradient_Sweep`, `Ui_Dissolve` and
+  `Ui_Radial_Wipe`.
 - States: `hover`, `focus`, `pressed`, `disabled`, `selected`, `over`. Each lists what differs;
   `extends` makes one start from another (`"focus": {"extends": "hover", ...}`). `focus` is the
   ring of keys and gamepad: give it a look that is not `hover`.

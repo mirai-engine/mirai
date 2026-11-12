@@ -197,7 +197,7 @@ control_step :: proc(ctx:^Context,focused:bool) -> (step:int) {
 }
 @(private)
 game_background :: proc(style:^Node_Style) -> Paint {
-    return {kind=.Rect,fill=style.fill,fill2=style.fill2,stroke=style.stroke,stroke_width=style.stroke_width,corners=style.radius,
+    return {kind=.Rect,fill=style.fill,fill2=style.fill2,gradient=style.gradient,stroke=style.stroke,stroke_width=style.stroke_width,corners=style.radius,
         shadow=style.shadow,shadow_color=style.shadow_color,shadow_blur=style.shadow_blur,shadow_offset=style.shadow_offset}
 }
 // An arrow of a control: as wide as the control is tall, it steps the control when clicked.

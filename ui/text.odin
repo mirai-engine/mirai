@@ -219,7 +219,9 @@ text_chars_before :: proc(t:^Layout_Tree,text:^Layout_Text,piece:^Layout_Piece) 
 text_piece_style :: #force_inline proc(p:^Paint,s:^Layout_Span) -> (style:Text_Style,decoration:Text_Decorations) {
     style=p.style
     style.font,style.size,style.color=s.font,s.size,s.color
-    return style,p.decoration+s.decoration
+    decoration=p.decoration+s.decoration
+    if style.italic {decoration+={.Italic}}
+    return
 }
 
 // Draws a line of a text where the layout placed it.
@@ -274,7 +276,7 @@ text_draw_line :: proc(ctx:^Context,n:^Layout_Node,index:i32) {
             d.fade={r.x+r.w-TEXT_FADE,r.x+r.w}
             clip_push(ctx,r)
         } else {
-            margin:=p.style.outline+max(abs(p.style.shadow.x),abs(p.style.shadow.y))+(p.style.size*TEXT_ITALIC if .Italic in p.decoration else 0)
+            margin:=p.style.outline+max(abs(p.style.shadow.x),abs(p.style.shadow.y))+(p.style.size*TEXT_ITALIC if .Italic in p.decoration || p.style.italic else 0)
             clip_push(ctx,{r.x-margin,r.y-margin,r.w+2*margin,r.h+2*margin})
         }
     }
