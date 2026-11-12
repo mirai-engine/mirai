@@ -323,6 +323,20 @@ a_source_read_again_keeps_the_version_of_the_cells_that_did_not_change :: proc(t
         case:             testing.expect_value(t,cell.version,old.version)
         }
     }
+    // A type drawn otherwise keeps every cell and raises the look.
+    look:=u32(0)
+    kept:=versions
+    drawn:Source
+    defer source_destroy(&drawn)
+    sample(&drawn)
+    for &cell,i in drawn.cells {cell.version=u32(i+1)}
+    drawn_after:Source
+    defer source_destroy(&drawn_after)
+    sample(&drawn_after)
+    drawn_after.types[0].cull_distance,drawn_after.types[0].casts_shadow,drawn_after.types[0].mesh=77,true,{9,9}
+    cells_version(&drawn_after,&drawn,&versions,&look)
+    testing.expect(t,look==1 && versions==kept)
+    for cell,i in drawn_after.cells {testing.expect_value(t,cell.version,u32(i+1))}
     // Other types change every cell.
     previous:=versions
     after.types[0].density=0.2

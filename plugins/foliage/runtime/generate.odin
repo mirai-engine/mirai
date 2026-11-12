@@ -37,12 +37,37 @@ room :: proc(array:^[dynamic]$T,more:int) -> bool {
     return needed<=cap(array) || reserve(array,max(needed,2*cap(array)))==nil
 }
 
-// The points of one type in a cell, appended to out. False, with none
+// The most points the generator makes in a cell, of all its types: past it
+// every type keeps the same share of its points (generated_share), and the
+// cell is the foliage.cell_instances problem of whoever shows it.
+CELL_GENERATED_MAX :: 1 << 18
+
+// The share of the points of each type the generator makes in every cell of a
+// source: 1, or less when their densities give more than CELL_GENERATED_MAX.
+generated_share :: proc "contextless" (s:^Source) -> f32 {
+    total:=f64(0)
+    for t in s.types {total+=f64(t.density)*f64(CELL_SIZE)*f64(CELL_SIZE)}
+    return total>CELL_GENERATED_MAX?f32(CELL_GENERATED_MAX/total):1
+}
+
+// The share of the points of a type a cell keeps: that of its source, times
+// thin for a type without collision (what a lower detail draws of it).
+type_share :: proc "contextless" (t:Foliage_Type,share,thin:f32) -> f32 {
+    return t.collision==.None?share*clamp(thin,0,1):share
+}
+
+// The points of a type in a cell, scatter makes at most.
+scatter_max :: proc "contextless" (t:Foliage_Type,share:f32) -> int {
+    return int(f64(t.density)*f64(CELL_SIZE)*f64(CELL_SIZE)*f64(share))+1
+}
+
+// The points of one type in a cell, appended to out: of share, the first of
+// its points, which a lower share leaves where they were. False, with none
 // appended, without memory for them.
-scatter :: proc(seed:u32,coord:[2]i32,t:Foliage_Type,out:^[dynamic]Generated) -> bool {
+scatter :: proc(seed:u32,coord:[2]i32,t:Foliage_Type,out:^[dynamic]Generated,share:=f32(1)) -> bool {
     key:=scatter_key(seed,coord,t.id)
     counter:=mm.rng_make(key)
-    expected:=f64(t.density)*f64(CELL_SIZE)*f64(CELL_SIZE)
+    expected:=f64(t.density)*f64(CELL_SIZE)*f64(CELL_SIZE)*f64(share)
     count:=u32(expected)
     if f64(mm.random_f32(&counter))<expected-f64(count) {count+=1}
     if !room(out,int(count)) {return false}
@@ -197,10 +222,12 @@ placed_grounded :: proc "contextless" (s:^Source,coord:[2]i32,b:Foliage_Instance
 // and point, as the points of a type are: each type walks its own range of
 // them once. The ids in removed (in order: those taken out in play,
 // Foliage_Removed) are not there; one that names nothing of the cell takes
-// nothing out. False, with nothing appended, without memory: each part
-// takes the room of all it appends before it writes.
-cell_expand :: proc(s:^Source,cell:^Cell,ground:Ground_Cell,out:^[dynamic]Placed,orphans:^[dynamic]int,scratch:^Expand_Scratch,removed:[]u64={}) -> bool {
+// nothing out. thin: the share of the generated points of the types without
+// collision it keeps (type_share). False, with nothing appended, without
+// memory: each part takes the room of all it appends before it writes.
+cell_expand :: proc(s:^Source,cell:^Cell,ground:Ground_Cell,out:^[dynamic]Placed,orphans:^[dynamic]int,scratch:^Expand_Scratch,removed:[]u64={},thin:=f32(1)) -> bool {
     first:=len(out)
+    share:=generated_share(s)
     clear(&scratch.matched)
     if !room(out,len(cell.manual)) || !room(orphans,len(cell.overrides)) || resize(&scratch.matched,len(cell.overrides))!=nil {return false}
     for b in cell.manual {append(out,placed_grounded(s,cell.coord,b,b.type,MANUAL | u64(b.id),ground))}
@@ -208,7 +235,7 @@ cell_expand :: proc(s:^Source,cell:^Cell,ground:Ground_Cell,out:^[dynamic]Placed
         for t in s.types {
             clear(&scratch.points)
             // A point gives one instance at most.
-            if !scatter(s.info.seed,cell.coord,t,&scratch.points) || !room(out,len(scratch.points)) {
+            if !scatter(s.info.seed,cell.coord,t,&scratch.points,type_share(t,share,thin)) || !room(out,len(scratch.points)) {
                 base.truncate(out,first)
                 return false
             }

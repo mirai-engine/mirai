@@ -77,7 +77,7 @@ kind_ensure :: proc(resident:^Foliage_Resident,assets:^host.Assets,renderer:^ren
     if resident.kinds_left<=0 {return -1}
     // Drawing its frames is the work of a frame: no cell is built with it.
     resident.kinds_left-=1
-    resident.cells_left=0
+    resident.instances_left=0
     if _,error:=append(&resident.kinds,Resident_Kind{id=id});error!=nil {memory_problem(problems,e,"the far form of a type");return -1}
     kind:=&resident.kinds[len(resident.kinds)-1]
     if !kind_make(kind,assets,renderer,job_system,parts) {
@@ -276,18 +276,20 @@ impostor_draw_destroy :: proc(d:^Impostor_Draw) {
 }
 
 // The row of a type of a Foliage: its frames and the distances that fade
-// them in and out. Zero, and never drawn, for a type without them.
+// them in and out, scaled as the meshes are (Foliage_Resident.detail). Zero,
+// and never drawn, for a type without them.
 impostor_row :: proc(resident:^Foliage_Resident,t:^Foliage_Type) -> (row:Impostor_Row) {
     if !type_far(t^) {return}
     id:=t.mesh if t.mesh!={} else t.prefab
     kind:=kind_find(resident,id)
     if !kind_ready(kind) {return}
+    distance:=resident.detail[1]
     fade,cull:=mesh_distances(t^,true)
     row.sphere=kind.sphere
-    row.low={kind.low.x,kind.low.y,kind.low.z,fade}
-    row.high={kind.high.x,kind.high.y,kind.high.z,cull}
+    row.low={kind.low.x,kind.low.y,kind.low.z,fade*distance}
+    row.high={kind.high.x,kind.high.y,kind.high.z,cull*distance}
     row.frames={render.texture_index(kind.color),render.texture_index(kind.normal),IMPOSTOR_GRID,IMPOSTOR_FRAME}
-    row.far={t.fade_distance,t.cull_distance,0,0}
+    row.far={t.fade_distance*distance,t.cull_distance*distance,0,0}
     return
 }
 

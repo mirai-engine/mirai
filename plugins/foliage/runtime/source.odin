@@ -354,6 +354,23 @@ instance_valid :: proc "contextless" (b:Foliage_Instance) -> bool {
 }
 
 // Whether a source can be saved and shown: what source_read checks of a file.
+// Whether a cell is valid in its source, but for the ids its manual
+// instances share with those of other cells.
+cell_valid :: proc "contextless" (s:^Source,cell:^Cell) -> bool {
+    if abs(cell.coord.x)>COORD_MAX || abs(cell.coord.y)>COORD_MAX {return false}
+    for b in cell.manual {
+        if !instance_valid(b) || b.id==0 || b.id>s.info.instances {return false}
+        if t,_:=source_type(s,b.type);t==nil {return false}
+    }
+    for o,k in cell.overrides {
+        if o.kind>max(Override_Kind) || o.type>=s.info.next_type || o.instance.id!=0 {return false}
+        if k>0 && !override_before(cell.overrides[k-1],o.type,o.point) {return false}
+        if o.kind!=.Deleted && !instance_valid(o.instance) {return false}
+        if o.kind==.Replaced {if t,_:=source_type(s,o.instance.type);t==nil {return false}}
+    }
+    return true
+}
+
 source_valid :: proc (s:^Source) -> bool {
     if len(s.types)>TYPES_MAX || len(s.cells)>CELLS_MAX {return false}
     for t,i in s.types {
@@ -361,19 +378,9 @@ source_valid :: proc (s:^Source) -> bool {
         for other in s.types[:i] {if other.id==t.id {return false}}
     }
     manual,overrides:=0,0
-    for cell,i in s.cells {
-        if abs(cell.coord.x)>COORD_MAX || abs(cell.coord.y)>COORD_MAX {return false}
+    for &cell,i in s.cells {
         if i>0 && !coord_before(s.cells[i-1].coord,cell.coord) {return false}
-        for b in cell.manual {
-            if !instance_valid(b) || b.id==0 || b.id>s.info.instances {return false}
-            if t,_:=source_type(s,b.type);t==nil {return false}
-        }
-        for o,k in cell.overrides {
-            if o.kind>max(Override_Kind) || o.type>=s.info.next_type || o.instance.id!=0 {return false}
-            if k>0 && !override_before(cell.overrides[k-1],o.type,o.point) {return false}
-            if o.kind!=.Deleted && !instance_valid(o.instance) {return false}
-            if o.kind==.Replaced {if t,_:=source_type(s,o.instance.type);t==nil {return false}}
-        }
+        if !cell_valid(s,&cell) {return false}
         manual+=len(cell.manual)
         overrides+=len(cell.overrides)
     }

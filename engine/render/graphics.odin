@@ -20,7 +20,8 @@ Indirect_Light :: enum u8 {
 Light_Probes :: enum u8 {Low,Medium,High}
 // The largest side of a texture: GRAPHICS_TEXTURE_SIZES.
 Textures :: enum u8 {Low,Medium,High,Ultra}
-// How far meshes keep their detail: GRAPHICS_DETAIL_PIXELS.
+// How far meshes keep their detail (GRAPHICS_DETAIL_PIXELS), and how far and dense a
+// plugin draws the scattered detail of a scene (foliage).
 Detail :: enum u8 {Low,Medium,High,Ultra}
 
 @(storage,shared,setting="machine")

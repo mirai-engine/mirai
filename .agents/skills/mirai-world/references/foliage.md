@@ -18,8 +18,10 @@ and stands it on the [ground](#ground) of the world.
   `foliage.source_unread` problem of its entity. `Foliage_Data` is copied with the world (Play,
   rollback).
 - Each cell in memory has a version: reading the source again keeps that of the equal cells
-  (`cells_version`) and gives the next one to those that changed; another seed or other types
-  change all of them. What is built per cell compares that version.
+  (`cells_version`) and gives the next one to those that changed; another seed, or types that
+  place or collide otherwise, change all of them. A type that changes only in how it is drawn
+  (mesh, materials, distances, wind, shadow, rays) keeps them and raises the `look` of the entry,
+  which rebuilds the batches and crowns alone. What is built per cell compares that version.
 
 ## Format
 
@@ -69,6 +71,9 @@ to the overrides).
   A point does not depend on how many there are (lowering the density removes the last ones and
   leaves the others where they were), and it only uses arithmetic, square root and the
   deterministic sine of std/math: it gives the same on every machine.
+- A cell generates at most `CELL_GENERATED_MAX` points of all its types: past it every type keeps
+  the same share of its points, the first ones (`generated_share`), and the cell is the
+  `foliage.cell_instances` problem of its entity.
 - Points and overrides come out in order, so each type walks its stretch once. An override whose
   id the generator no longer makes stays in the source as an orphan (problem `foliage.orphans`).
 - A generated one stands on the [ground](#ground) and aligns with its normal according to
@@ -111,8 +116,11 @@ to the overrides).
   sources move.
 - It reads again only the cells under the boxes the ground announced since it last ran
   (`Ground_Queries.changed`), or all those of a `Foliage` that moves or arrives. The cells to read
-  wait in a queue and are read `GROUND_TILES` per call, in jobs: a world that loads much ground and
-  many `Foliage` at once keeps responding. A grid (heights and weights) equal to the previous one
+  wait in a queue, each once, and are read `GROUND_TILES` per call, in jobs, those the editor asks
+  for first and then the nearest a source (`queue_order`, again when the sources move): a world
+  that loads much ground and many `Foliage` at once keeps responding and fills in around the
+  sources. When only the sources move, only the fine tiles and the coarse ones near a source are
+  looked at. A grid (heights and weights) equal to the previous one
   does not raise its revision, and a frame without changes reads nothing.
 
 ## Drawing
@@ -143,7 +151,15 @@ to the overrides).
   `cull_distance` of its types as its reach; a type that is never culled leaves all of them
   resident. One that stops being so releases its batches and its impostors. A `Foliage` has at
   most `RESIDENT_CELLS` resident, the nearest ones in reaches of their types; those that stay
-  outside within reach are the `foliage.resident_cells` problem.
+  outside within reach are the `foliage.resident_cells` problem. When only the sources, the ground
+  or what was taken out change, it looks at the cells that were resident and those a source comes
+  near (`coords_near`, by rows of cells), not at every cell.
+- Cells are built nearest a source first, `INSTANCES_A_FRAME` a frame by the most each shows
+  (`cell_bound`, at least `CELL_COST_MIN`), expanded in jobs with the room taken beforehand; the
+  rest wait for the next frames.
+- The `detail` of the [graphics settings](../../mirai-rendering/SKILL.md) scales the distances of
+  every type and the density of the types without collision (`FOLIAGE_DETAIL`, the first points of
+  each): what collides is the same at every detail.
 
 ## Far: impostor and crown
 
@@ -224,7 +240,8 @@ same function:
 
 - `foliage_physics` (between `physics_prepare` and `physics_places`) makes one static body per
   resident cell with one shape per instance of a type with collision, in the entity's pose and on
-  its ground, and rebuilds only the cells that changed or changed residency. The body's
+  its ground, and rebuilds only the cells that changed or changed residency, nearest a source
+  first and `PHYSICS_INSTANCES_A_TICK` a tick, expanding only the types that collide. The body's
   `user_data` is the entity and the shape's the instance id.
 - **Residency.** That of the streaming sources, like drawing, with `collision_reach`: the farthest
   that a type with collision is drawn with its mesh, and no more than `COLLISION_REACH`, also for a
@@ -314,9 +331,10 @@ the registry's memory as a file of the undo step that creates it.
   swaps Paint for Erase. The ring follows the foliage ground where it knows it, yellow when
   placing, blue when removing and white when changing what is there.
 - The brushes touch up to `BRUSH_RATE` times per second, like those of the terrain, and a fast drag
-  also touches between two touches, every half radius. During the stroke the source is written in
-  the registry's memory and the runtime rebuilds the touched cells; releasing confirms it as one
-  step and Escape gives it back.
+  also touches between two touches, every half radius. During the stroke each touch hands the
+  runtime only the cells it changed (`Foliage_Stroke`, which `foliage_load` shows over the file);
+  releasing writes the file as one step and Escape gives it back, and the runtime reads the file
+  again.
 - **Select** takes with a click the instance of the batch that the picker gives (`batches=true`):
   alone, with Shift added and with Ctrl removed or added; a drag adds those of the selected types
   under the ring (with Ctrl, removes them), and **Select all of the types** takes all. The gizmo
@@ -378,13 +396,19 @@ the registry's memory as a file of the undo step that creates it.
   `the_instance_of_a_variant_is_found_among_those_of_its_type`).
 - Ids of the manual ones: `a_manual_instance_keeps_its_id_through_the_edits_of_its_cell`.
 - Resident cap: `past_their_budget_the_nearest_cells_stay_resident`.
+- Streaming: `the_cells_near_the_sources_are_found_by_rows_and_every_one_they_keep`,
+  `cells_are_built_nearest_first_within_the_instances_of_a_frame`,
+  `a_cell_generates_at_most_its_cap_and_thin_keeps_the_first_points_of_what_does_not_collide`,
+  `the_collision_of_the_nearest_cells_is_built_first_within_its_budget` and
+  `the_cells_of_a_stroke_show_over_its_file_until_it_is_cleared`.
 - Instances removed (`plugins/foliage/runtime`):
   `instances_taken_out_are_one_entity_for_each_cell_that_the_cell_leaves_out`,
   `thousands_of_instances_taken_out_of_a_few_cells_are_a_few_entities` and
   `a_saved_game_takes_out_the_same_instance_after_its_source_is_edited` and
   `an_instance_taken_out_later_sends_a_small_part_of_its_cell`; that they reach a client:
   `an_entity_with_a_replicated_object_component_reaches_a_client` in `plugins/multiplayer/runtime`.
-- Ground (`plugins/foliage/runtime`): `the_ground_of_foliage_is_read_where_the_ground_changed`.
+- Ground (`plugins/foliage/runtime`): `the_ground_of_foliage_is_read_where_the_ground_changed` and
+  `the_ground_is_read_nearest_the_sources_first_and_each_tile_once`.
 - `mirai test plugins/foliage/editor -collection:plugins=<root>/plugins`:
   `foliage_strokes_and_selections_are_steps_of_undo_written_at_the_flush`,
   `a_move_of_an_imported_foliage_is_undone_back_to_revision_zero`,
