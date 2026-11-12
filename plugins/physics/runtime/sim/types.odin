@@ -167,6 +167,18 @@ Push_Rule :: struct {
 }
 PUSH_RULE_CAPACITY :: 16
 
+// What a caller names a kind of surface by (a material): the cells of a heightfield each name one. Zero is
+// the surface of the shape itself, its friction and restitution.
+Surface :: distinct [2]u64
+
+// How a surface meets what touches it, in place of the friction and restitution of the shape that shows it:
+// they mix with those of the other shape as two shapes do.
+Surface_Rule :: struct {
+    surface:Surface,
+    friction,restitution:f32,
+}
+SURFACE_RULE_CAPACITY :: 64
+
 Shape_Flag :: enum u32 {
     Moved,   // needs new pairs at the next step: it is in the list of the moved shapes
     One_Way, // blocks only what comes from the side its local +Y faces
@@ -236,6 +248,7 @@ Contact_Flags :: bit_set[Contact_Flag;u32]
 // geometry of its last narrow phase, in the frame of shape A, that a contact that barely moved reuses.
 Manifold_State :: struct {
     count:i32,
+    surface:u32, // of the triangles of shape A it is on: the index of their surface in its heightfield; 0 for others
     ids:[MANIFOLD_MAX_POINTS]u32,
     points:[MANIFOLD_MAX_POINTS]Vec3, // midway between the surfaces
     separations:[MANIFOLD_MAX_POINTS]f32,
@@ -266,14 +279,14 @@ Contact :: struct {
     relative:Transform,
     sat:Sat_Cache,
 }
-#assert(size_of(Contact)==236)
+#assert(size_of(Contact)==240)
 
 // Geometry of a manifold, recomputed every step for awake contacts. Anchors are relative to the centers of
 // mass of the bodies, in world axes.
 // `impulse` is the normal impulse of the last step and `approach` the speed in m/s at which the surfaces
 // closed in before it, both zero until the contact is solved.
 Manifold_Point :: struct {anchor_a,anchor_b,point:Vec3,separation,impulse,approach:f32}
-Manifold :: struct {normal:Vec3,count:i32,points:[MANIFOLD_MAX_POINTS]Manifold_Point}
+Manifold :: struct {normal:Vec3,count:i32,surface:u32,points:[MANIFOLD_MAX_POINTS]Manifold_Point} // surface: as Manifold_State
 
 EXTRA_MANIFOLDS :: 3
 Manifold_Block :: struct {manifolds:[EXTRA_MANIFOLDS]Manifold_State,next_free:i32}
@@ -286,6 +299,7 @@ Contact_Begin_Event :: struct {
     body_a,body_b:Body_Handle,
     point,normal:Vec3, // normal from A to B
     impulse:f32,       // N s, normal impulse applied in the step
+    surface:Surface,   // of shape A where it touched: that of a cell of a heightfield, zero for one surface
     users:Event_Users,
 }
 Contact_End_Event :: struct {shape_a,shape_b:Shape_Handle,body_a,body_b:Body_Handle,users:Event_Users}
@@ -299,6 +313,7 @@ Contact_Hit_Event :: struct {
     shape_a,shape_b:Shape_Handle,
     point,normal:Vec3, // mean of those points; normal from A to B
     impulse:f32,       // N s, normal impulse of those points in the step
+    surface:Surface,   // of shape A, as Contact_Begin_Event
 }
 
 // Events of the last step. The slices belong to the world and last until the next step or restore.

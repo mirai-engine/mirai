@@ -3,11 +3,14 @@ package foliage
 import "core:testing"
 import "mirai:core"
 import scene "mirai:engine/scene"
+import volume "mirai:engine/volume"
 import mm "mirai:std/math"
+import physics "plugins:physics/runtime"
 
 // A ground that is the plane y = height over x and z from -32 to 32 m, with
 // no surface over x and z from 4 to 8 m, as a provider of core.Ground_Queries
-// gives it.
+// gives it: two terrains of one material, its second layer over x >= 0 and
+// its first below.
 @(private)
 @(test_world)
 Ground_World :: struct {
@@ -19,6 +22,10 @@ Ground_World :: struct {
     requests:Foliage_Ground_Requests,
     streaming:scene.Streaming_Sources,
     queries:core.Ground_Queries,
+    keeps:core.Table(Foliage_Keep_Out),
+    volumes:core.Table(volume.Volume),
+    splines:core.Table(volume.Spline),
+    colliders:core.Table(physics.Collider),
 }
 
 @(private="file")
@@ -39,6 +46,7 @@ ground_test_open :: proc(w:core.World_Ref) -> (core.Ground_Query,bool) {
         if origin.x>4 && origin.x<8 && origin.z>4 && origin.z<8 {return {},.Empty}
         height:=f.height
         if f.curved {height+=0.02*origin.x*origin.x+0.3*origin.z}
+        if origin.x<0 {return {point={origin.x,height,origin.z},normal={0,1,0},weights={255,0,0,0},layers={0={7,7}}},.Ground}
         return {point={origin.x,height,origin.z},normal={0,1,0},weights={0,255,0,0},layers={1={7,7}}},.Ground
     }
     return {user=f,probe=probe,spacing=1},true
@@ -46,7 +54,7 @@ ground_test_open :: proc(w:core.World_Ref) -> (core.Ground_Query,bool) {
 
 @(private="file")
 ground_test_step :: proc(f:^Ground_Test) {
-    foliage_ground(&f.ground,&f.requests,core.ref(&f.data),core.read(&f.foliages),core.read(&f.worlds),core.ref(&f.streaming),core.ref(&f.queries),{data=f},nil,&f.problems)
+    foliage_ground(&f.ground,&f.requests,core.ref(&f.data),core.read(&f.foliages),core.read(&f.worlds),core.ref(&f.streaming),core.ref(&f.queries),core.read(&f.keeps),core.read(&f.volumes),core.read(&f.splines),core.read(&f.colliders),{data=f},nil,&f.problems)
     clear(&f.queries.changed.items)
 }
 
@@ -91,8 +99,14 @@ the_ground_of_foliage_is_read_where_the_ground_changed :: proc(t:^testing.T) {
     testing.expect(t,ok && height==2)
     _,_,ok=ground_at(tile,6,6)
     testing.expect(t,!ok,"no ground where it shows no surface")
-    weights,_:=ground_weights_at(tile,16,16)
-    testing.expect(t,weights=={0,1,0,0} && owner.layers[1]=={7,7} && owner.layer_count==1)
+    // Each terrain keeps its own order of layers, and a rule finds the material on both.
+    testing.expect_value(t,len(owner.layers),2)
+    mask:=layer_mask({layers={{7,7},{},{},{}}},owner.layers[:])
+    for coord in ([2][2]i32{{0,0},{-1,-1}}) {
+        cell,_:=ground_cell(owner,coord)
+        weight,known:=ground_layer_weight(cell,&mask,16,16)
+        testing.expectf(t,known && weight==1,"%v: %v",coord,weight)
+    }
     // A stable call reads nothing.
     revision:=owner.revision
     ground_test_step(&f)
@@ -122,6 +136,95 @@ the_ground_of_foliage_is_read_where_the_ground_changed :: proc(t:^testing.T) {
     test_world_settle(&f.w)
     for _ in 0..<2 {ground_test_step(&f)}
     testing.expect_value(t,len(owner.tiles),0)
+}
+
+// Where foliage is kept out, as the tiles of ground mark it: in a Volume,
+// along the width of a Spline and in a Collider, each with its margin; a
+// keep-out that changes or goes reads the tiles under it again.
+@(test)
+foliage_is_kept_out_of_volumes_splines_and_colliders :: proc(t:^testing.T) {
+    f:Ground_Test
+    if !test_world_init(t,&f.w) {return}
+    defer test_world_destroy(&f.w)
+    f.queries.open=ground_test_open
+    f.plant=core.create(&f.entities)
+    core.add(&f.foliages,f.plant,Foliage{source={4,4}})
+    core.add(&f.worlds,f.plant,core.World_Transform{transform={rotation=1,scale={1,1,1}}})
+    place :: proc(f:^Ground_Test,position:[3]f32,margin:f32) -> core.Entity {
+        e:=core.create(&f.entities)
+        core.add(&f.worlds,e,core.World_Transform{transform={position=position,rotation=1,scale={1,1,1}}})
+        core.add(&f.keeps,e,Foliage_Keep_Out{margin=margin})
+        return e
+    }
+    house:=place(&f,{16,2,16},0)
+    core.add(&f.volumes,house,volume.box({2,3,2}))
+    road:=place(&f,{0,2,28},0.5)
+    core.add(&f.splines,road,volume.Spline{count=2,points={0={position={0,0,0},width=2},1={position={32,0,0},width=2}}})
+    rock:=place(&f,{28,0,4},1)
+    core.add(&f.colliders,rock,physics.collider_sphere(1))
+    nothing:=place(&f,{8,0,8},0)
+    test_world_settle(&f.w)
+    plants:Source
+    source_cell(&plants,{0,0},true).generate=true
+    append(&f.data.entries,Data_Entry{id={4,4},epoch=1,loads=1,source=plants})
+    f.data.made=1
+    ground_test_step(&f)
+    owner:=ground_owner(&f.ground,f.plant)
+    if !testing.expect(t,owner!=nil) {return}
+    tile,_:=ground_cell(owner,{0,0})
+    Case :: struct {at:[2]f32,kept:bool,name:string}
+    cases:=[]Case{
+        {{16,16},true,"inside the box"},{{19,16},false,"past the box"},
+        {{10,28},true,"on the road"},{{10,29.4},true,"within its margin"},{{10,30},false,"past its margin"},
+        {{29.8,4},true,"within the margin of the sphere"},{{28,7},false,"past it"},
+        {{8,8},false,"a keep-out with nothing that says where"},
+    }
+    for c in cases {testing.expectf(t,kept_out(tile,c.at.x,c.at.y)==c.kept,"%s at %v",c.name,c.at)}
+    reported:=false
+    for p in f.problems.entries[:f.problems.count] {reported||=p.entity==nothing}
+    testing.expect(t,reported,"a keep-out without a region says so")
+    revision:=tile_revision(owner,{0,0})
+    ground_test_step(&f)
+    testing.expect_value(t,tile_revision(owner,{0,0}),revision)
+    core.remove(&f.keeps,house)
+    test_world_settle(&f.w)
+    ground_test_step(&f)
+    tile,_=ground_cell(owner,{0,0})
+    testing.expect(t,tile_revision(owner,{0,0})>revision && !kept_out(tile,16,16) && kept_out(tile,10,28),"one that goes reads its tiles again")
+    core.edit(&f.worlds,road).transform.position.z=20
+    test_world_settle(&f.w)
+    ground_test_step(&f)
+    tile,_=ground_cell(owner,{0,0})
+    testing.expect(t,kept_out(tile,10,20) && !kept_out(tile,10,28),"one that moves is kept out of where it is now")
+}
+
+// The tiles to read are read once each: those the editor asks for first,
+// then the nearest a source, whatever order they were asked in.
+@(test)
+the_ground_is_read_nearest_the_sources_first_and_each_tile_once :: proc(t:^testing.T) {
+    f:Ground_Test
+    if !test_world_init(t,&f.w) {return}
+    defer test_world_destroy(&f.w)
+    f.plant=core.create(&f.entities)
+    core.add(&f.foliages,f.plant,Foliage{source={4,4}})
+    core.add(&f.worlds,f.plant,core.World_Transform{transform={rotation=1,scale={1,1,1}}})
+    test_world_settle(&f.w)
+    plants:Source
+    for x in 0..<40 {source_cell(&plants,{i32(x),0},true).generate=true}
+    append(&f.data.entries,Data_Entry{id={4,4},epoch=1,loads=1,source=plants})
+    f.data.made=1
+    far:=[3]f32{39*CELL_SIZE+16,0,16}
+    f.streaming.items[0]={position=far,ahead=far}
+    f.streaming.count=1
+    for x in 0..<40 {ground_ask(&f.ground,f.plant,{i32(x),0})}
+    ground_ask(&f.ground,f.plant,{5,0})
+    ground_ask(&f.ground,f.plant,{1,0},true)
+    queue_order(&f.ground,&f.data,core.read(&f.foliages),core.read(&f.worlds),&f.streaming)
+    queue:=f.ground.queue[:]
+    if !testing.expect_value(t,len(queue),40) {return}
+    testing.expect(t,queue[39].coord==[2]i32{1,0} && queue[39].fine,"what the editor asks for is read first")
+    testing.expect(t,queue[38].coord==[2]i32{39,0},"then the nearest a source")
+    for i in 1..<39 {testing.expect(t,queue[i-1].near>=queue[i].near && queue[i].coord!=queue[i-1].coord)}
 }
 
 // Far from the sources a tile keeps only the samples around the instances of

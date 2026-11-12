@@ -21,6 +21,7 @@ Removal_World :: struct {
     foliages:core.Table(Foliage),
     removed:core.Table(Foliage_Removed),
     data:Foliage_Data,
+    ground:Foliage_Ground,
     removals:Foliage_Removals,
     requests:Foliage_Requests,
     network:core.Network,
@@ -59,7 +60,7 @@ removal_foliage :: proc(r:^Removal_Test,id:base.Entity_Id) -> core.Entity {
 @(private="file")
 removal_step :: proc(r:^Removal_Test) {
     w:=&r.w
-    foliage_removals(&r.removals,&r.requests,&w.removed,core.read(&w.foliages),core.read(&w.ids),core.ref(&r.data),core.ref(&r.network),core.commands(w,test_world_info(w)),r.app.allocator,&r.problems)
+    foliage_removals(&r.removals,&r.requests,&w.removed,core.read(&w.foliages),core.read(&w.ids),core.ref(&r.data),core.ref(&r.ground),core.ref(&r.network),core.commands(w,test_world_info(w)),r.app.allocator,&r.problems)
     test_world_settle(w)
 }
 
@@ -162,6 +163,38 @@ instances_taken_out_are_one_entity_for_each_cell_that_the_cell_leaves_out :: pro
     testing.expect(t,gone!=nil && len(gone.items)==2)
     ids,_=removed_cell(gone,coord)
     testing.expect_value(t,len(ids),0)
+}
+
+// What the game takes out is what the cell shows on its ground: a type that
+// stands only on ground from 5 to 15 m high has its instances taken out of
+// a ground 10 m high.
+@(test)
+an_instance_is_taken_out_of_what_its_cell_shows_on_its_ground :: proc(t:^testing.T) {
+    r:Removal_Test
+    defer removal_destroy(&r)
+    s:=removal_init(t,&r,{63,64})
+    if s==nil {return}
+    s.info.seed=3
+    tree:=source_type_add(s,"tree",{2,2})
+    tree.density,tree.rule=0.01,{enabled=true,slope={0,1.5},height={5,15}}
+    source_cell(s,{0,0},true).generate=true
+    for &cell,i in s.cells {cell.version=u32(i+1)}
+    wood:=removal_foliage(&r,700)
+    append(&r.ground.owners,Ground_Owner{entity=wood,samples=5})
+    heights,_,tile:=ground_tile(&r.ground.owners[0],{0,0})
+    if !testing.expect(t,tile!=nil) {return}
+    for &h in heights {h=10}
+    ground,_:=ground_cell(&r.ground.owners[0],{0,0})
+    work:Build_Work
+    defer build_work_destroy(&work)
+    cell_build(s,source_cell(s,{0,0}),ground,&work)
+    if !testing.expect(t,len(work.placed)>0) {return}
+    foliage_remove(&r.requests,{wood,{0,0},work.placed[0].id})
+    removal_step(&r)
+    removed:=&r.w.removed
+    if !testing.expect_value(t,core.count(removed),1) {return}
+    page:=core.at(removed,0)
+    testing.expect(t,page.count==1 && page.instances[0].id==work.placed[0].id)
 }
 
 // A game that takes out thousands of instances of a few cells holds them in

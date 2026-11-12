@@ -16,8 +16,8 @@ blocks_volume :: proc(t:^testing.T,s:^Source) -> bool {
 @(private="file")
 blocks_same :: proc(t:^testing.T,a,b:^Source,low,high:[3]int) -> bool {
     for z in low.z..=high.z {for y in low.y..=high.y {for x in low.x..=high.x {
-        if source_value(a,{x,y,z})!=source_value(b,{x,y,z}) {
-            testing.expectf(t,false,"sample %v: %v and %v",[3]int{x,y,z},source_value(a,{x,y,z}),source_value(b,{x,y,z}))
+        if (source_value(a,{x,y,z}) or_else 0)!=(source_value(b,{x,y,z}) or_else 0) {
+            testing.expectf(t,false,"sample %v: %v and %v",[3]int{x,y,z},source_value(a,{x,y,z}) or_else 0,source_value(b,{x,y,z}) or_else 0)
             return false
         }
     }}}
@@ -60,7 +60,7 @@ volume_blocks_all_air_or_all_solid_hold_no_values_through_brushes_and_the_file :
     change:=source_edit(&source,{kind=.Carve,center=BLOCKS_CENTER,radius=20,amount=1})
     testing.expect(t,change.changed)
     testing.expect(t,grid_page(g,BLOCKS_DEEP).values==nil && grid_page(g,BLOCKS_DEEP).fill==band,"the carved block is all air and holds no values")
-    testing.expect(t,source_value(&source,{40,24,40})==band)
+    testing.expect(t,(source_value(&source,{40,24,40}) or_else 0)==band)
     neighbor:=BLOCKS_DEEP+1
     testing.expect(t,grid_page(g,neighbor).values!=nil,"a block the surface of the cavity crosses holds its values")
     // The file keeps a uniform block as its value and every other one as its own block.
@@ -175,18 +175,20 @@ a_volume_read_by_pages_holds_only_the_blocks_it_reads_and_a_block_that_leaves_ke
     // An edit stays in a block of its own when its block leaves, and comes back with it.
     at:=[3]int{40,46,40}
     testing.expect(t,source_edit(&paged,{kind=.Carve,center=[3]f32{40,46,40}-48,radius=1.5,amount=1}).changed)
-    edited:=source_value(&paged,at)
-    testing.expect(t,edited>source_value(&source,at))
+    edited:=source_value(&paged,at) or_else 0
+    testing.expect(t,edited>(source_value(&source,at) or_else 0))
     testing.expect(t,source_pages_leave(&paged)>0)
     testing.expect_value(t,grid_dense(g),0)
     testing.expect_value(t,grid_dense(&paged.weights),0)
     block,_:=grid_page_at(g,at)
     testing.expect(t,grid_absent(g,block) && grid_block(g,block).own!=nil,"the edited block keeps its edits in a block of its own")
+    _,read:=source_value(&paged,at)
+    testing.expect(t,!read && !source_set(&paged,at,0),"a sample whose block is not in memory is not read or written")
     testing.expect(t,source_region_read(&paged,low,high))
-    testing.expect_value(t,source_value(&paged,at),edited)
+    testing.expect_value(t,source_value(&paged,at) or_else 0,edited)
     testing.expect_value(t,grid_value(&paged.weights,{40,48,40}),grid_value(&source.weights,{40,48,40}))
     // The copy did not see the edit.
-    testing.expect_value(t,source_value(&copied,at),source_value(&source,at))
+    testing.expect_value(t,source_value(&copied,at) or_else 0,source_value(&source,at) or_else 0)
 }
 
 @(test)
@@ -206,5 +208,5 @@ volume_snapshots_hold_only_their_blocks_and_give_back_each_stroke :: proc(t:^tes
     blocks_same(t,&source,&before,{},{96,96,96})
     testing.expect(t,data_source_copy(&source,&after))
     blocks_same(t,&source,&after,{},{96,96,96})
-    testing.expect(t,source_value(&source,{40,24,40})<0 && source_value(&source,{40,10,40})>0)
+    testing.expect(t,(source_value(&source,{40,24,40}) or_else 0)<0 && (source_value(&source,{40,10,40}) or_else 0)>0)
 }

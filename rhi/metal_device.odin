@@ -1066,6 +1066,14 @@ mtl_swapchain_create :: proc(d: ^Device, surface: Surface_Desc) -> bool {
 	return true
 }
 
+// Gives a device made without a window the swapchain of one, between frames.
+// False, with device_error, when it already has one; the device goes on
+// drawing without it.
+swapchain_attach :: proc(d: ^Device, surface: Surface_Desc) -> bool {
+	if d.has_swapchain || d.in_frame {set_error(d, "swapchain_attach on a device that has a swapchain or is recording a frame"); return false}
+	return mtl_swapchain_create(d, surface)
+}
+
 swapchain_resize :: proc(d: ^Device, width, height: u32) {
 	if !d.has_swapchain {return}
 	sc := &d.swapchain

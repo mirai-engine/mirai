@@ -78,11 +78,11 @@ heightfield_levels :: proc(entry:^Data_Source,source:^Resident_Source,settings:T
         joined:=source.join.ground!={} && join_side_chunk(s,i) || join_cut_key(s,source.join.cuts[:],i)!=0
         if settings.lod_distance>=0 && !chunk_holed(s,i) && !joined {
             maximum:=chunk_lod_max(s,chunk_coord(s,i))
-            next=lod_level_error(entry.errors,q,i,0,maximum,chunk.pixels,chunk.spacing,s.cell,level)
+            next=lod_level_error(entry.source.coarse.errors,q,i,0,maximum,chunk.pixels,chunk.spacing,s.cell,level)
             // The distance makes a chunk coarser only as far as its error lets it be.
             if !by_error {
                 distant:=lod_level(chunk.distance,base,maximum,level)
-                next=len(entry.errors)==quad_total(q)?min(distant,next):distant
+                next=len(entry.source.coarse.errors)==quad_total(q)?min(distant,next):distant
             }
         }
         level=next

@@ -379,9 +379,9 @@ grid_page_range :: proc "contextless" (g:^Grid($T),low,high:[3]int) -> (from,to:
     return from,to,true
 }
 
-// A value of an X/Z grid.
+// A value of an X/Z grid; zero outside it.
 grid_get :: #force_inline proc "contextless" (g:^Grid($T),x,z:int) -> T #no_bounds_check {
-    if grid_none(g) {return {}}
+    if uint(x)>=uint(g.size.x) || uint(z)>=uint(g.size.z) {return {}}
     px,pz:=x/PAGE,z/PAGE
     page:=&g.pages[px+g.counts.x*pz]
     if page.values==nil {return page.fill}
@@ -395,9 +395,9 @@ grid_set :: #force_inline proc "contextless" (g:^Grid($T),x,z:int,value:T) #no_b
     page.values[x-px*PAGE+min(PAGE,g.size.x-px*PAGE)*(z-pz*PAGE)]=value
 }
 
-// A value of a grid in blocks.
+// A value of a grid in blocks; zero outside it.
 block_get :: #force_inline proc "contextless" (g:^Grid($T),p:[3]int) -> T #no_bounds_check {
-    if grid_none(g) {return {}}
+    if !grid_inside(g,p) {return {}}
     q:=p/BLOCK
     slot,fill:=grid_find(g,q)
     if slot<0 {return fill}
@@ -443,9 +443,14 @@ grid_page_extent :: #force_inline proc "contextless" (g:^Grid($T),id:int) -> (ex
     return extent,extent.x*extent.y*extent.z
 }
 
-// A value of a grid of either shape.
+// Whether sample p is one of a grid.
+grid_inside :: #force_inline proc "contextless" (g:^Grid($T),p:[3]int) -> bool {
+    return uint(p.x)<uint(g.size.x) && uint(p.y)<uint(g.size.y) && uint(p.z)<uint(g.size.z)
+}
+
+// A value of a grid of either shape; zero outside it.
 grid_value :: proc "contextless" (g:^Grid($T),p:[3]int) -> T #no_bounds_check {
-    if grid_none(g) {return {}}
+    if !grid_inside(g,p) {return {}}
     _,at:=grid_page_at(g,p)
     slot,fill:=grid_find(g,p/g.side)
     if slot<0 {return fill}
@@ -531,8 +536,12 @@ grid_prepare :: proc(g:^Grid($T),low,high:[3]int,allocator:runtime.Allocator) ->
     return true
 }
 
-// Writes one value, giving its page its own values when needed.
+// Writes one value, giving its page its own values when needed; false
+// outside the grid, where its page is not in memory (grid_absent) or
+// without memory.
 grid_put :: proc(g:^Grid($T),p:[3]int,value:T,allocator:runtime.Allocator) -> bool {
+    if !grid_inside(g,p) {return false}
+    if id,_:=grid_page_at(g,p);grid_absent(g,id) {return false}
     if grid_value(g,p)==value {return true}
     if !grid_prepare(g,p,p,allocator) {return false}
     grid_write(g,p,value)

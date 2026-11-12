@@ -138,7 +138,7 @@ editor_end :: proc(s:^Session,g:^Editor_Ui,v:^Viewport,selection:^history.Select
     host.extras_ui_layer_add(&app.extras,layer)
     for panel in g.panels[:panel_count] {host.extras_world_panel_add(&app.extras,panel)}
     if v.lines.count>0 {host.extras_debug_lines_add(&app.extras,v.lines)}
-    if edits.commit {sections_sync(s)}
+    if edits.commit {edits_follow(s)}
     history.edits_flush(edits,world,selection)
     history.edits_select(edits,world,selection)
     preferences_update(s,ctx,frame.dt)

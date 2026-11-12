@@ -78,10 +78,12 @@ a_wrong_brush_is_an_error_that_says_what_failed_and_changes_nothing :: proc(t:^t
         {"a target that is not a number",{kind=.Flatten,center={},radius=3,amount=1,target=nan},.Target,"target"},
         {"a delta that is not a number",{kind=.Add,shape=.Capsule,center={},delta={0,nan,0},radius=3,amount=1},.Delta,"delta"},
         {"a box without a side",{kind=.Carve,shape=.Box,center={},extent={1,0,1},amount=1},.Extent,"extent"},
+        {"a rotation that scales the box",{kind=.Carve,shape=.Box,center={},extent=1,amount=1,rotation=2},.Rotation,"rotation"},
+        {"a rotation that is not a number",{kind=.Raise,center={},radius=3,amount=1,rotation=quaternion(w=nan,x=0,y=0,z=0)},.Rotation,"rotation"},
         {"a blend below zero",{kind=.Carve,center={},radius=3,amount=1,blend=-1},.Blend,"blend"},
         {"a hardness of one",{kind=.Raise,center={},radius=3,amount=1,hardness=1},.Falloff,"hardness"},
         {"a shape that is none",{kind=.Carve,shape=Brush_Shape(9),center={},radius=3,amount=1},.Falloff,"shape"},
-        {"a kind that is none",{kind=Brush_Kind(200),center={},radius=3,amount=1},.Kind,"Raise to Erode"},
+        {"a kind that is none",{kind=Brush_Kind(200),center={},radius=3,amount=1},.Kind,"Raise to Thermal"},
         {"a layer the source lacks",{kind=.Paint,center={},radius=3,amount=1,layer=3},.Layer,"layer"},
         {"a terrace without steps",{kind=.Terrace,center={},radius=3,amount=1},.Terrace,"interval"},
         {"noise without a scale",{kind=.Noise,center={},radius=3,amount=1},.Noise,"scale"},
@@ -98,7 +100,7 @@ a_wrong_brush_is_an_error_that_says_what_failed_and_changes_nothing :: proc(t:^t
             testing.expectf(t,strings.contains(fix,c.says),"%s: %q does not name %q",c.name,fix,c.says)
         }
         same:=true
-        for z in 0..<int(s.samples.z) {for y in 0..<int(s.samples.y) {for x in 0..<int(s.samples.x) {same&&=source_value(&s,{x,y,z})==source_value(&before,{x,y,z})}}}
+        for z in 0..<int(s.samples.z) {for y in 0..<int(s.samples.y) {for x in 0..<int(s.samples.x) {same&&=(source_value(&s,{x,y,z}) or_else 0)==(source_value(&before,{x,y,z}) or_else 0)}}}
         testing.expectf(t,same,"a refused brush changed a %v",kind)
         // A brush that touches nothing is no error.
         away:=good;away.center={1000,0,1000}
@@ -113,6 +115,7 @@ a_wrong_brush_is_an_error_that_says_what_failed_and_changes_nothing :: proc(t:^t
         {{kind=.Ramp,center={},delta={4,1,0},radius=2,amount=1},"Add with a Capsule"},
         {{kind=.Terrace,center={},radius=2,amount=1,interval=1},"Flatten"},
         {{kind=.Erode,center={},radius=2,amount=1},"Smooth or Noise"},
+        {{kind=.Thermal,center={},radius=2,amount=1,talus=0.5},"Thermal is of a Heightfield"},
     }
     for c in lacks {
         change:=source_edit(&volume,c.brush)
@@ -155,7 +158,7 @@ a_wrong_brush_is_an_error_that_says_what_failed_and_changes_nothing :: proc(t:^t
             if change.error!=.None {testing.expectf(t,!change.changed,"%v changed the source with error %v",b.kind,change.error)}
         }
         for z in 0..<int(s.samples.z) {for y in 0..<int(s.samples.y) {for x in 0..<int(s.samples.x) {
-            value:=source_value(&s,{x,y,z})
+            value:=source_value(&s,{x,y,z}) or_else 0
             if !(abs(value)<=limit) {testing.expectf(t,false,"a %v holds %v at %v after random brushes",kind,value,[3]int{x,y,z});return}
         }}}
     }

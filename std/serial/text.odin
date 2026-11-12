@@ -687,39 +687,48 @@ text_hex4 :: proc(r:^Text_Reader) -> (value:rune,ok:bool) {
     return rune(parsed),true
 }
 
-text_string :: proc(r:^Text_Reader) -> (value:string,ok:bool) {
+text_string :: proc(r:^Text_Reader) -> (value:string,ok:bool) {return text_string_read(r,true)}
+
+// A string read past without its value: text_skip checks one without memory.
+@(private)
+text_string_read :: proc(r:^Text_Reader,keep:bool) -> (value:string,ok:bool) {
     if r.error.code!=.None {return "",false}
     if text_peek(r)!='"' {return "",text_fail(r,.Expected_String)}
     start:=r.offset
     r.offset+=1
     begin:=r.offset
     escaped:=false
-    clear(&r.scratch)
+    if keep {clear(&r.scratch)}
     for {
         if r.offset>=len(r.text) {return "",text_fail(r,.Syntax,start)}
         c:=r.text[r.offset]
         if c=='"' {break}
         if c<0x20 {return "",text_fail(r,.Syntax)}
         if c!='\\' {
-            if escaped {append(&r.scratch,c)}
+            if escaped && keep {append(&r.scratch,c)}
             r.offset+=1
             continue
         }
         if !escaped {
             escaped=true
-            append(&r.scratch,r.text[begin:r.offset])
+            if keep {append(&r.scratch,r.text[begin:r.offset])}
         }
         r.offset+=1
         if r.offset>=len(r.text) {return "",text_fail(r,.Syntax,start)}
         code:=r.text[r.offset]
         r.offset+=1
         switch code {
-        case '"','\\','/': append(&r.scratch,code)
-        case 'b': append(&r.scratch,'\b')
-        case 'f': append(&r.scratch,'\f')
-        case 'n': append(&r.scratch,'\n')
-        case 'r': append(&r.scratch,'\r')
-        case 't': append(&r.scratch,'\t')
+        case '"','\\','/','b','f','n','r','t':
+            if !keep {break}
+            decoded:=code
+            switch code {
+            case 'b': decoded='\b'
+            case 'f': decoded='\f'
+            case 'n': decoded='\n'
+            case 'r': decoded='\r'
+            case 't': decoded='\t'
+            }
+            append(&r.scratch,decoded)
         case 'u':
             point,valid:=text_hex4(r)
             if !valid {return "",text_fail(r,.Syntax)}
@@ -733,12 +742,12 @@ text_string :: proc(r:^Text_Reader) -> (value:string,ok:bool) {
                 return "",text_fail(r,.Syntax)
             }
             encoded,size:=utf8.encode_rune(point)
-            append(&r.scratch,..encoded[:size])
+            if keep {append(&r.scratch,..encoded[:size])}
         case:
             return "",text_fail(r,.Syntax,r.offset-2)
         }
     }
-    value=escaped?string(r.scratch[:]):r.text[begin:r.offset]
+    value=escaped && keep?string(r.scratch[:]):r.text[begin:r.offset]
     r.offset+=1
     return value,true
 }
@@ -785,7 +794,7 @@ text_integer :: proc(r:^Text_Reader) -> (negative:bool,magnitude:u64,ok:bool) {
     return negative,magnitude,true
 }
 
-// Skips one value of any kind.
+// Skips one value of any kind, without memory.
 text_skip :: proc(r:^Text_Reader,depth:=0) -> bool {
     depth:=max(depth,0)
     if r.error.code!=.None {return false}
@@ -795,7 +804,7 @@ text_skip :: proc(r:^Text_Reader,depth:=0) -> bool {
         r.offset+=1
         if text_accept(r,'}') {return true}
         for {
-            text_string(r) or_return
+            text_string_read(r,false) or_return
             text_expect(r,':') or_return
             text_skip(r,depth+1) or_return
             if text_accept(r,',') {continue}
@@ -810,7 +819,7 @@ text_skip :: proc(r:^Text_Reader,depth:=0) -> bool {
             return text_expect(r,']')
         }
     case '"':
-        _,ok:=text_string(r)
+        _,ok:=text_string_read(r,false)
         return ok
     case 't': return text_keyword(r,"true") || text_fail(r,.Syntax)
     case 'f': return text_keyword(r,"false") || text_fail(r,.Syntax)

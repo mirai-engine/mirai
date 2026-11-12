@@ -126,7 +126,7 @@ mode_color :: proc "contextless" (mode:Foliage_Mode) -> ui.Color {
 // while the button is held, a touch at most BRUSH_RATE times a second, the
 // first when it is pressed; a fast drag also touches between two of them.
 @(private)
-brush_frame :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,e:core.Entity,owner:mm.Transform,ground:^foliage.Ground_Owner,requests:^foliage.Foliage_Ground_Requests,assets:^host.Assets,input:core.Input,frame:core.Frame_Time) {
+brush_frame :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,e:core.Entity,owner:mm.Transform,ground:^foliage.Ground_Owner,requests:^foliage.Foliage_Ground_Requests,shown:^foliage.Foliage_Stroke,assets:^host.Assets,input:core.Input,frame:core.Frame_Time) {
     stroke:=&tool.stroke
     if tool.adjust.active {
         mode:=mode_held(tool,s.gui.ctx.input.modifiers)
@@ -176,16 +176,22 @@ brush_frame :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,e:
     count:=clamp(int(math.ceil(linalg.length(step)/(tool.radius*STROKE_SPACING))),1,STROKE_TOUCHES_MAX)
     up:=linalg.normalize0(hit.normal)
     changed:=false
+    // The cells the touches may change: those within twice the radius, as a
+    // ray down a slope places an instance off the ring's disc.
+    near_low,near_high:=cells_around(center,2*radius)
     for i in 1..<count {
         point:=from+step*(f32(i)/f32(count))
         under:=editor.pick_ray(s,world,mm.Ray{point+up*tool.radius,-up},tool.radius*2)
-        if under.entity!=core.NONE {changed|=brush_touch(s,tool,world,owner,to_local,ground,under.position,under.normal)}
+        if under.entity==core.NONE {continue}
+        changed|=brush_touch(s,tool,world,owner,to_local,ground,under.position,under.normal)
+        a,b:=cells_around(mm.mat4_point(to_local,under.position),2*radius)
+        near_low,near_high={min(near_low.x,a.x),min(near_low.y,a.y)},{max(near_high.x,b.x),max(near_high.y,b.y)}
     }
     changed|=brush_touch(s,tool,world,owner,to_local,ground,hit.position,hit.normal)
     stroke.last=hit.position
     if changed {
         stroke.changed=true
-        edit_preview(s,tool,assets)
+        edit_show(tool,shown,near_low,near_high)
     }
 }
 
@@ -253,8 +259,9 @@ stands :: proc(tool:^Foliage_Tool,t:^foliage.Foliage_Type,ground:^foliage.Ground
     h,_,known:=foliage.ground_at(cell,in_cell.x,in_cell.z)
     if tool.ground_only && (!known || abs(local.y-h)>GROUND_SNAP) {return false}
     if !t.rule.enabled {return true}
-    weights,weights_known:=foliage.ground_weights_at(cell,in_cell.x,in_cell.z)
-    return foliage.rule_allows(t^,known?h:local.y,up,weights,weights_known)
+    mask:=foliage.layer_mask(t.rule,cell.layers)
+    weight,weight_known:=foliage.ground_layer_weight(cell,&mask,in_cell.x,in_cell.z)
+    return foliage.rule_allows(t^,known?h:local.y,up,weight,weight_known)
 }
 
 // The outlines of the cells near the ring, those that generate in green.
