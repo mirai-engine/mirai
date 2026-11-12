@@ -78,6 +78,11 @@ shown_touched :: proc "contextless" (terrains:^core.Table(Terrain),c:^Chunk_Tabl
 @(private)
 collider_kind :: #force_inline proc "contextless" (kind:Source_Kind) -> phys.Collider_Kind {return kind==.Heightfield?.Heightfield:.Mesh}
 
+// What piece i of a source collides with: a chunk of a Heightfield its
+// heightfield, a node or a piece of a Volume the triangles it shows.
+@(private)
+piece_collider_kind :: #force_inline proc "contextless" (s:^Source,chunks,i:int) -> phys.Collider_Kind {return i<chunks?collider_kind(s.kind):.Mesh}
+
 // The slots of Physics_Settings the colliders of a source take: 0 for heightfields, 1 for meshes.
 @(private)
 collider_slot :: #force_inline proc "contextless" (kind:Source_Kind) -> int {return collider_room_slot(collider_kind(kind))}
@@ -518,7 +523,7 @@ owner_chunk_show :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,owner:^Resid
         owner.chunks[index]=e
         created=true
     }
-    kind:=collider_kind(s.kind)
+    kind:=piece_collider_kind(s,q.first[1],index)
     wants:=owner.solid && chunk.built.collision && node.collide && chunk.mesh!={}
     old,has_old:=core.get(c.chunks,e)
     held,_:=core.get(c.meshes,e)
@@ -546,7 +551,7 @@ owner_chunk_show :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,owner:^Resid
     core.add(c.looks,e,look)
     if wants {
         made:=phys.COLLIDER_DEFAULT
-        made.kind=collider_kind(s.kind)
+        made.kind=kind
         core.add(c.colliders,e,made)
     } else if has {core.remove(c.colliders,e);room_give(resident,collider.kind)}
 }

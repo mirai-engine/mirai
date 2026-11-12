@@ -151,8 +151,8 @@ resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:^core.
             // A streamed terrain keeps its open nodes and its roots too: they stand in
             // for what they cover while it comes (owner_cut), and show when all else goes.
             chunk.resident=node.cut || stream && (node.open || i>=q.first[q.depth])
-            if i>=chunks {continue}
             chunk.wanted.collision=node.cut && node.collide
+            if i>=chunks {continue}
             if node.cut && (!stream || node.reach<=DEEP_REACH) {source.deep[i]=true}
         }
         by_error:=lod_by_error(entry,settings)
@@ -181,7 +181,6 @@ resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:^core.
                 case: level=lod_level(chunk.distance,base,maximum,level)
                 }
                 key.lod=Chunk_Lod{level=clamp(level,minimum,maximum)}
-                key.collision=false
                 // A node of a joined Volume blends the ground under its chunks of the band as they do.
                 key.join=source.join.ground!={}?source.join.hash:0
                 if s.kind==.Heightfield {
@@ -195,32 +194,34 @@ resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:^core.
     }
 }
 
-// Which chunks the terrains show with a collider: the nearest that
-// Physics_Settings has room for beside the colliders of everything else, and
-// of those, with Terrain_Settings.collision_distance, the ones within it.
+// Which pieces the terrains show with a collider: the chunks, and past them
+// the nodes with the triangles they show, so that far ground still stops
+// rays and bodies; the nearest that Physics_Settings has room for beside the
+// colliders of everything else, every chunk before any node, and of those,
+// with Terrain_Settings.collision_distance, the ones within it.
 @(private)
 resident_colliders :: proc(resident:^Terrain_Resident,data:^Terrain_Data,terrains:^core.Table(Terrain,$A),c:^Chunk_Tables,settings:Terrain_Settings,physics:phys.Physics_Settings) {
     defer {for &owner in resident.owners {
         // A piece it shows whose collider comes or goes shows again.
-        for &node,i in owner.nodes[:min(owner.quad.first[1],len(owner.nodes))] {if node.visible && node.collide!=node.can {append(&owner.changed,u32(i))}}}
+        for &node,i in owner.nodes {if node.visible && node.collide!=node.can {append(&owner.changed,u32(i))}}}
     }
     clear(&resident.splits)
     for &owner,o in resident.owners {
         marker,known:=core.get(terrains,owner.entity)
         entry:=data_find(data,owner.source)
-        kind:=entry!=nil?collider_slot(entry.source.kind):1
         source:=resident_source_find(resident,owner.source,owner.entity)
         chunks:=owner.quad.first[1]
-        for &node,i in owner.nodes[:min(chunks,len(owner.nodes))] {
+        for &node,i in owner.nodes {
             // What it had, until owner_cut takes can again.
             node.can=node.collide
             node.collide=false
-            if !known || !marker.solid || owner.far || !node.cut {continue}
-            // A chunk built empty takes no slot.
+            if !known || entry==nil || !marker.solid || owner.far || !node.cut {continue}
+            // A piece built empty takes no slot.
             if source!=nil && i<len(source.chunks) && source.chunks[i].shown && source.chunks[i].mesh=={} {continue}
             if settings.collision_distance>0 && node.distance>settings.collision_distance {continue}
             node.collide=true
-            append(&resident.splits,Split{node.distance,node.distance,i32(kind),u32(o),u32(i)})
+            kind:=collider_room_slot(piece_collider_kind(&entry.source,chunks,i))
+            append(&resident.splits,Split{f32(i<chunks?0:1),node.distance,i32(kind),u32(o),u32(i)})
         }
     }
     // What the colliders of other entities take stays theirs.

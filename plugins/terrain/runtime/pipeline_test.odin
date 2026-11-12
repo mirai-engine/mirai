@@ -209,8 +209,8 @@ letting_go_of_an_excavated_zone_and_reading_it_again_keeps_its_edits :: proc(t:^
         testing.expect(t,w.data.stats.pages_read>0,"the chunks farther from the viewer read their pages in jobs")
         hit,ok:=phys.raycast({&w.state},near+{0,20,0},{0,-1,0})
         testing.expect(t,ok && abs(hit.point.y)<1e-4)
-        _,ok=phys.raycast({&w.state},{100,20,100},{0,-1,0})
-        testing.expect(t,!ok,"far from the viewer there is no collider")
+        hit,ok=phys.raycast({&w.state},{100,20,100},{0,-1,0})
+        testing.expect(t,ok && piece_depth(&w,hit)>0,"far from the viewer the ground collides with its node")
         // Excavate near the viewer.
         dig(&w.terrain_requests,{kind=.Lower,center=near,radius=0.4,amount=2},owner)
         for _ in 0..<2 {pipeline_tick(&w,&resident,&app,settings)}
@@ -228,8 +228,8 @@ letting_go_of_an_excavated_zone_and_reading_it_again_keeps_its_edits :: proc(t:^
         // What it showed stays until the nodes that replace it are built.
         for _ in 0..<8 {pipeline_tick(&w,&resident,&app,settings)}
         s=&w.data.entries[0].source
-        _,ok=phys.raycast({&w.state},near+{0,20,0},{0,-1,0})
-        testing.expect(t,!ok,"the zone let go of its colliders")
+        hit,ok=phys.raycast({&w.state},near+{0,20,0},{0,-1,0})
+        testing.expect(t,ok && piece_depth(&w,hit)>0,"the zone let go of its chunk colliders: its node collides")
         _,known=terrain_height({&w.data},id,near.x,near.z)
         testing.expect(t,!known,"and of its pages")
         testing.expect(t,w.data.stats.pages_left>0)
@@ -309,8 +309,8 @@ a_volume_lets_go_of_the_blocks_far_from_its_viewers_and_reading_them_again_keeps
         // The node over the zone is built from its blocks before they leave; a node is taken when its job ends.
         for _ in 0..<48 {work_wait(&w.data,nil);pipeline_tick(&w,&resident,&app,settings)}
         s=&w.data.entries[0].source
-        _,ok=phys.raycast({&w.state},near+{0,20,0},{0,-1,0})
-        testing.expect(t,!ok,"the zone let go of its colliders")
+        hit,ok=phys.raycast({&w.state},near+{0,20,0},{0,-1,0})
+        testing.expect(t,ok && piece_depth(&w,hit)>0,"the zone let go of its chunk colliders: its node collides")
         // What is far shows as a node of the octree: one mesh for the surface of its chunks, with the excavation.
         zone:=core.NONE
         for chunk,row in w.chunks.values[:core.count(&w.chunks)] {

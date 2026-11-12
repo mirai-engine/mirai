@@ -3,6 +3,7 @@ package terrain
 import "base:runtime"
 import "core:fmt"
 import "core:math"
+import "core:math/linalg"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
@@ -114,8 +115,8 @@ a_streamed_terrain_never_disappears_far_away_and_covers_itself_once_as_the_viewe
     testing.expect(t,grid_dense(&s.field)<len(s.field.pages)*PAGE*PAGE/2,"the pages far from the viewer are not in memory")
     hit,ok:=phys.raycast({&w.state},corner+{0,20,0},{0,-1,0})
     testing.expect(t,ok && abs(hit.point.y)<1)
-    _,ok=phys.raycast({&w.state},{110,20,110},{0,-1,0})
-    testing.expect(t,!ok,"a node has no collider")
+    hit,ok=phys.raycast({&w.state},{110,20,110},{0,-1,0})
+    testing.expect(t,ok && piece_depth(&w,hit)>0,"far ground collides with its node")
     // A frame that changes nothing builds and allocates nothing.
     calls,built:=counter.requests,resident.stats.built
     for _ in 0..<5 {quad_tick(&w,&resident,&app,settings)}
@@ -134,8 +135,8 @@ a_streamed_terrain_never_disappears_far_away_and_covers_itself_once_as_the_viewe
     quad_settle(&w,&resident,&app,settings)
     hit,ok=phys.raycast({&w.state},{110,20,110},{0,-1,0})
     testing.expect(t,ok,"the chunks near the viewer collide")
-    _,ok=phys.raycast({&w.state},corner+{0,20,0},{0,-1,0})
-    testing.expect(t,!ok)
+    hit,ok=phys.raycast({&w.state},corner+{0,20,0},{0,-1,0})
+    testing.expect(t,ok && piece_depth(&w,hit)>0,"the corner it left collides with its node")
     testing.expect_value(t,w.problems.count,0)
 }
 
@@ -193,6 +194,9 @@ past_the_chunk_budget_far_chunks_show_as_nodes_by_distance_not_by_index :: proc(
     testing.expect(t,o.nodes[63].visible,"the nearest chunk shows")
     testing.expect(t,!o.nodes[0].visible,"the farthest shows in a node")
     testing.expect_value(t,len(w.statics.values),visible)
+    // The far ground collides with the triangles its node shows: a long ray from the view stops on it.
+    hit,ok:=phys.raycast({&w.state},view.position,linalg.normalize([3]f32{-57,0,-57}-view.position),400)
+    testing.expectf(t,ok && piece_depth(&w,hit)>0 && hit.point.x<-30 && hit.point.y>-0.01 && hit.point.y<0.51,"the ray hits the node of the far corner: %v",hit.point)
     testing.expect(t,core.problem_find(&w.problems,owner,"terrain.chunks_full")==nil)
     // The view moves to the other corner: the nodes open there.
     view.position={-60,5,-60}
