@@ -80,7 +80,8 @@ output_input :: proc(o:^Outputs,file:string) -> Error {
 
 // The file and id of another output of kind: the one the sidecar of the
 // source lists with that name (the same index first), else a new one, a
-// document in folder ("": that of the import).
+// document in folder ("": that of the import). Asked for again with the same
+// name and index, it is the same.
 output_part :: proc(o:^Outputs,kind:asset.Fourcc,name:string,index:int,extension:string,folder:="") -> (id:base.Asset_Id,path:string) {
     caller:=context.temp_allocator
     context.temp_allocator=base.dynamic_arena_allocator(&o.scratch)

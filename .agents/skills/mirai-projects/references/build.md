@@ -238,7 +238,8 @@ sources and their sidecars ([sync](../../mirai-imports/references/imports.md#syn
   the project add from its editor library; the game, compiled from the engine's sources,
   builds those binaries too when its project has assets. A source that does not import fails
   the build naming it (`Import_Failed`). There is no other step: a checkout that was just cloned
-  runs after any build.
+  runs after any build. Only a build that cooks (and `mirai package engine`) encodes textures
+  Final; the others build them Fast, as the editor imports them, and take Final where it is.
 - **What ships.** A game has no imported folder and no sources: the cook writes every asset it
   reaches at its path in the assets of the game, whichever of the two folders it came from.
 - **The installed engine** carries the imported folder of each of its plugins, built when it is
@@ -279,8 +280,9 @@ texture cache of the project; a failure is `Cook_Failed` with `Result.cook.error
   `content_hash` of the `.tex`
   ([texture cache](../../mirai-imports/references/imports.md#texture-cache)).
 - **Fast textures.** A texture the editor imported Fast ships Final, whatever `"textures"` says:
-  the [sync](#imported-sources) a game build starts with builds it again from its source, with the
-  id it has, and fills the texture cache, so the editor takes that Final from then on. A cook that
+  the [sync](#imported-sources) a game build that cooks starts with builds it again from its source,
+  with the id it has, and fills the texture cache, so the editor takes that Final from then on; the
+  sync of an editor build keeps textures Fast, so a session never waits for RDO. A cook that
   finds one still Fast fails with `Source_Failed` and says so.
 - **Animations.** An `.anim` is written cooked: its clips sampled as the runtime plays them
   (`asset.animation_compress`, [storage](../../mirai-std/references/anim-storage.md)).

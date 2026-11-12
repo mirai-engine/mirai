@@ -287,7 +287,9 @@ that was just cloned, a worktree that was just made or a branch that changed a s
   by the key of what the import builds from now (`importer.import_key`): the bytes of the source and
   of every file it read (the buffers and images of a glTF, the material library of an OBJ, the
   images of a pack of prompts), its settings, the versions of the importer and of what it writes and
-  the block encoders of the program, with textures Final. One notion of current, the bytes: a source
+  the block encoders of the program, with textures Final. A sync with `fast_textures` (`--fast`,
+  what a build that does not cook runs) also takes outputs built Fast as current and imports with
+  Fast textures; Final stays current there. One notion of current, the bytes: a source
   that only moved is not imported, and one whose `.bin` or image changed is. The hash of a file
   whose size and modification time are those the cache of the root keeps for it
   (`importer.Source_Hashes`, in `.mirai/cache/sources`) is taken from there, so a build reads only
@@ -352,7 +354,8 @@ shares it.
 - With `Import_Options.fast_textures` (the editor's imports) a texture of the cache takes the Final
   the texture cache keeps for its key; without one it is built Fast under the key of Fast settings,
   and a texture kept Fast is written again as soon as the cache holds its Final, or by the
-  [sync](#sync) of a build. `Import_Info.settings_hash` says which of the two the file holds.
+  [sync](#sync) of a build that cooks. `Import_Info.settings_hash` says which of the two the file
+  holds.
 - [Cooking](../../mirai-projects/references/build.md#asset-cooking) stores there the blocks of
   an RGBA8 texture by `textures.cache_key_blocks`.
 - A key names what made the blocks (`textures.external_id`): the encoders of the program or the
