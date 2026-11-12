@@ -3,6 +3,7 @@ package foliage
 import "base:runtime"
 import "core:math"
 import "core:math/linalg"
+import "core:slice"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
@@ -72,6 +73,8 @@ a_foliage_asset_comes_back_as_it_was_written_and_damage_is_refused :: proc(t:^te
     shuffled.manual[5].position.y=-0.0
     shuffled.manual[7],shuffled.manual[40]=shuffled.manual[40],shuffled.manual[7]
     source_override_set(&s,{2,-1},{type=1,point=900,kind=.Moved,instance={type=1,position={31.99,-4,0},rotation=max(u32),scale={3,3},flags=INSTANCE_GROUNDED,ground=-0.0}})
+    s.types[1].radius=2
+    source_generate_area(&s,{-20,0,-10},9,true,0.5)
     data,error:=source_bytes(&s,{5,6},&types)
     defer delete(data)
     if !testing.expect_value(t,error,asset.Error.None) {return}
@@ -88,7 +91,7 @@ a_foliage_asset_comes_back_as_it_was_written_and_damage_is_refused :: proc(t:^te
     testing.expect_value(t,len(back.cells),len(s.cells))
     for cell,i in s.cells {
         other:=back.cells[i]
-        testing.expect(t,other.coord==cell.coord && other.generate==cell.generate)
+        testing.expect(t,other.coord==cell.coord && other.generate==cell.generate && slice.equal(other.density[:],cell.density[:]))
         testing.expect(t,same_rows(other.manual[:],cell.manual[:]),"manual instances come back bit for bit, in their order")
         testing.expect(t,same_rows(other.overrides[:],cell.overrides[:]),"overrides come back bit for bit")
     }
@@ -102,10 +105,10 @@ a_foliage_asset_comes_back_as_it_was_written_and_damage_is_refused :: proc(t:^te
     }
     testing.expect_value(t,len(back.cells),len(s.cells))
     // What does not validate is not written.
-    s.cells[0].manual[0].scale={0,1}
+    source_cell(&s,{2,-1}).manual[0].scale={0,1}
     _,invalid:=source_bytes(&s,{5,6},&types)
     testing.expect_value(t,invalid,asset.Error.Invalid)
-    s.cells[0].manual[0].scale={1,1}
+    source_cell(&s,{2,-1}).manual[0].scale={1,1}
     // A cell is no farther from its entity than POSITION_MAX.
     testing.expect(t,f32(COORD_MAX+1)*CELL_SIZE<=POSITION_MAX+CELL_SIZE && source_valid(&s))
     source_cell(&s,{COORD_MAX+1,0},true)
@@ -845,4 +848,135 @@ foliage_calls_without_memory_are_refused :: proc(t:^testing.T) {
         core.value_free(&fp,type_info_of(Foliage_Physics))
         physics.state_destroy(&w)
     }
+}
+
+// The points of a type cover their cell evenly: 256 of them put one in each
+// square of 2 m, as no points at random do.
+@(test)
+generated_points_cover_their_cell_with_one_in_each_square :: proc(t:^testing.T) {
+    kind:=FOLIAGE_TYPE_DEFAULT
+    kind.id,kind.density=5,0.25
+    for coord in ([?][2]i32{{0,0},{-3,7}}) {
+        points:[dynamic]Generated
+        defer delete(points)
+        scatter(21,coord,kind,&points)
+        if !testing.expect_value(t,len(points),256) {return}
+        squares:[256]int
+        for g in points {squares[int(g.position.y/2)*16+int(g.position.x/2)]+=1}
+        for n,k in squares {testing.expectf(t,n==1,"square %d holds %d points",k,n)}
+    }
+}
+
+// Types with a radius keep their instances apart, of one type and of two,
+// within a cell and across the borders of cells, the same each time; one
+// without a radius stands anywhere.
+@(test)
+instances_with_a_radius_keep_apart_within_and_across_cells :: proc(t:^testing.T) {
+    s:Source
+    defer source_destroy(&s)
+    s.info.seed=3
+    tree:=source_type_add(&s,"tree",{1,1})
+    tree.density,tree.radius=0.3,1.5
+    bush:=source_type_add(&s,"bush",{2,2})
+    bush.density,bush.radius=1,0.5
+    grass:=source_type_add(&s,"grass",{3,3})
+    grass.density=0.2
+    for z in i32(0)..<2 {for x in i32(0)..<2 {source_cell(&s,{x,z},true).generate=true}}
+    testing.expect(t,source_valid(&s))
+    work:Build_Work
+    defer build_work_destroy(&work)
+    placed:[dynamic]Placed
+    defer delete(placed)
+    for &cell in s.cells {
+        if !testing.expect(t,cell_build(&s,&cell,{},&work)) {return}
+        append(&placed,..work.placed[:])
+        again:=make([]Placed,len(work.placed))
+        defer delete(again)
+        copy(again,work.placed[:])
+        cell_build(&s,&cell,{},&work)
+        testing.expect(t,slice.equal(again,work.placed[:]),"the same each time")
+    }
+    radius:=[3]f32{1.5,0.5,0}
+    counts:[3]int
+    for a,i in placed {
+        counts[a.type]+=1
+        for b in placed[i+1:] {
+            if radius[a.type]==0 || radius[b.type]==0 {continue}
+            d:=a.position.xz-b.position.xz
+            reach:=radius[a.type]*a.scale[0]+radius[b.type]*b.scale[0]
+            testing.expectf(t,d.x*d.x+d.y*d.y>=reach*reach*(1-1e-5),"types %d and %d %v apart, nearer than %v",a.type,b.type,linalg.length(d),reach)
+        }
+    }
+    points:[dynamic]Generated
+    defer delete(points)
+    for &cell in s.cells {scatter(s.info.seed,cell.coord,s.types[2],&points)}
+    testing.expect_value(t,counts[2],len(points))
+    testing.expect(t,counts[0]>100 && counts[1]>100,"spaced types still fill the cells")
+}
+
+// The density of a cell and what keeps foliage out of it take its generated
+// instances away and leave the others with their ids.
+@(test)
+the_density_of_a_cell_and_what_keeps_foliage_out_thin_its_instances :: proc(t:^testing.T) {
+    s:Source
+    defer source_destroy(&s)
+    s.info.seed=5
+    grass:=source_type_add(&s,"grass",{1,1})
+    grass.density=0.5
+    cell:=source_cell(&s,{0,0},true)
+    cell.generate=true
+    all:Build_Work
+    defer build_work_destroy(&all)
+    cell_build(&s,cell,{},&all)
+    n:=DENSITY_SAMPLES
+    resize(&cell.density,n*n)
+    for z in 0..<n {for x in 0..<n {cell.density[z*n+x]=x<n/2?255:0}}
+    testing.expect(t,source_valid(&s))
+    work:Build_Work
+    defer build_work_destroy(&work)
+    cell_build(&s,cell,{},&work)
+    left:=0
+    for p in work.placed {
+        testing.expect(t,p.position.x<16,"none where it generates none")
+        original,found:=placed_by_id(all.placed[:],p.id)
+        testing.expect(t,found && original==p,"the others keep their id and place")
+        if p.position.x<14 {left+=1}
+    }
+    full:=0
+    for p in all.placed {if p.position.x<14 {full+=1}}
+    testing.expect_value(t,left,full)
+    // Squares kept out over x and z from 8 to 12 m take what stands there.
+    clear(&cell.density)
+    heights:=make([]f32,9*9)
+    defer delete(heights)
+    kept:[KEEP_OUT_WORDS]u64
+    step:=CELL_SIZE/KEEP_OUT_SIDE
+    for k in 0..<KEEP_OUT_SIDE*KEEP_OUT_SIDE {
+        x,z:=(f32(k%KEEP_OUT_SIDE)+0.5)*step,(f32(k/KEEP_OUT_SIDE)+0.5)*step
+        if x>8 && x<12 && z>8 && z<12 {kept[k>>6]|=1<<(uint(k)&63)}
+    }
+    cell_build(&s,cell,{samples=9,heights=heights,kept=kept[:]},&work)
+    testing.expect(t,len(work.placed)>0 && len(work.placed)<len(all.placed))
+    for p in work.placed {testing.expect(t,!(p.position.x>8 && p.position.x<12 && p.position.z>8 && p.position.z<12),"none where foliage is kept out")}
+}
+
+// The Generate brush raises the density of the cells under it, fading toward
+// its border, lowers it again with off, and keeps no grid where all of it is.
+@(test)
+the_generate_brush_paints_the_density_of_the_cells_under_it :: proc(t:^testing.T) {
+    s:Source
+    defer source_destroy(&s)
+    testing.expect(t,source_generate_area(&s,{16,0,16},6,true,0.5))
+    cell:=source_cell(&s,{0,0})
+    if !testing.expect(t,cell!=nil && cell.generate && len(cell.density)==DENSITY_SAMPLES*DENSITY_SAMPLES) {return}
+    testing.expect(t,source_valid(&s))
+    testing.expect(t,cell_density_at(cell,16,16)==1 && cell_density_at(cell,0,0)==0,"all of it at the centre, none away from it")
+    soft:=cell_density_at(cell,21,16)
+    testing.expect(t,soft>0 && soft<1,"less of it toward its border")
+    testing.expect(t,!source_generate_area(&s,{16,0,16},6,true,0.5),"again it changes nothing")
+    testing.expect(t,source_generate_area(&s,{16,0,16},60,true,0.5) && len(source_cell(&s,{0,0}).density)==0,"all of it everywhere keeps no grid")
+    testing.expect(t,source_generate_area(&s,{16,0,16},6,false,0.5))
+    cell=source_cell(&s,{0,0})
+    testing.expect(t,cell.generate && cell_density_at(cell,16,16)==0 && cell_density_at(cell,0,0)==1)
+    testing.expect(t,source_generate_area(&s,{16,0,16},60,false,0.5) && source_cell(&s,{0,0})==nil,"none of it takes out the cell that holds nothing else")
 }

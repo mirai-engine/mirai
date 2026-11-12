@@ -4,13 +4,17 @@ import "core:math"
 import "core:slice"
 import "mirai:core"
 import scene "mirai:engine/scene"
+import volume "mirai:engine/volume"
+import physics "plugins:physics/runtime"
 import "mirai:std/jobs"
 import mm "mirai:std/math"
 
 // foliage_ground reads again the tiles over what the ground announces changed,
 // the cells a Foliage gains and those the editor asks for, GROUND_TILES a call
-// in jobs. A tile is fine near the streaming sources, within the reach of the
-// meshes of its types, and where the editor asks; coarse farther.
+// in jobs, with where foliage is kept out of them. A keep-out that comes,
+// goes or changes is a change of the ground under its old and new boxes. A
+// tile is fine near the streaming sources, within the reach of the meshes of
+// its types, and where the editor asks; coarse farther.
 
 GROUND_TILES :: 24 // tiles of ground read in a call (the step runs in the frame and in each tick)
 GROUND_REACH :: f32(512) // m from a source past which a tile is coarse, for the meshes of every type
@@ -36,6 +40,7 @@ Tile_Work :: struct {
     heights:[]f32,
     weights:[]Layer_Weights, // their layers index those of the tile
     layers:Tile_Layers,
+    kept:[]u64,
     any:bool,
 }
 
@@ -51,18 +56,31 @@ Tile_Layers :: struct {
 foliage_ground :: proc(
     ground:^Foliage_Ground,requests:^Foliage_Ground_Requests,data:core.Ref(Foliage_Data),foliages:^core.Table(Foliage,.Read),
     worlds:^core.Table(core.World_Transform,.Read),sources:core.Ref(scene.Streaming_Sources),queries:core.Ref(core.Ground_Queries),
+    keeps:^core.Table(Foliage_Keep_Out,.Read),volumes:^core.Table(volume.Volume,.Read),splines:^core.Table(volume.Spline,.Read),colliders:^core.Table(physics.Collider,.Read),
     world:core.World_Ref,job_system:^jobs.Job_System,problems:^core.Problems,
 ) {
     asked:=core.take(&requests.cells)
     q:=core.ground_query(world,queries)
     if q.probe==nil || data.ptr==nil {return}
-    defer ground_read(ground,&q,data,foliages,worlds,sources.ptr,job_system,problems)
     foliage_now:=[2]u64{data.made,data.stats.loads}
     moved:=core.touched(foliages,&ground.seen[0]) | core.touched(worlds,&ground.seen[1])
+    regions:=make([dynamic]Keep_Out,context.temp_allocator)
+    changes:=make([dynamic]mm.Aabb,context.temp_allocator)
+    append(&changes,..queries.changed.items[:])
+    kept_moved:=core.touched(keeps,&ground.keep_seen[0]) | core.touched(volumes,&ground.keep_seen[1]) | core.touched(splines,&ground.keep_seen[2]) | core.touched(colliders,&ground.keep_seen[3])
+    at:=volume.Where{volumes=volumes,worlds=worlds,splines=splines}
+    gathered:=kept_moved || moved
+    if gathered {
+        keep_outs_gather(keeps,at,colliders,&regions,problems)
+        keep_outs_changed(regions[:],&ground.keep_outs,&changes)
+    }
+    defer {
+        if !gathered && len(ground.queue)>0 {keep_outs_gather(keeps,at,colliders,&regions,problems)}
+        ground_read(ground,&q,data,foliages,worlds,sources.ptr,regions[:],job_system,problems)
+    }
     streamed:=sources.ptr!=nil?sources.ptr.revision:0
     sources_moved:=streamed!=ground.streamed
     ground.streamed=streamed
-    changes:=queries.changed.items[:]
     if len(changes)==0 && foliage_now==ground.foliage && !moved && !sources_moved && len(asked)==0 && core.count(foliages)==len(ground.owners) {return}
     ground.foliage=foliage_now
     for i:=len(ground.owners)-1;i>=0;i-=1 {
@@ -217,11 +235,11 @@ tile_sample :: proc(q:^core.Ground_Query,owner_world,owner_local:mm.Mat4,coord:[
 // Reads GROUND_TILES tiles of the queue, in jobs, fine or coarse by where the
 // sources are then, and writes them in the order they were asked.
 @(private)
-ground_read :: proc(ground:^Foliage_Ground,q:^core.Ground_Query,data:core.Ref(Foliage_Data),foliages:^core.Table(Foliage,$A),worlds:^core.Table(core.World_Transform,$B),sources:^scene.Streaming_Sources,job_system:^jobs.Job_System,problems:^core.Problems) {
+ground_read :: proc(ground:^Foliage_Ground,q:^core.Ground_Query,data:core.Ref(Foliage_Data),foliages:^core.Table(Foliage,$A),worlds:^core.Table(core.World_Transform,$B),sources:^scene.Streaming_Sources,keeps:[]Keep_Out,job_system:^jobs.Job_System,problems:^core.Problems) {
     if len(ground.queue)==0 {return}
-    Reading :: struct {q:^core.Ground_Query,work:[dynamic]Tile_Work}
+    Reading :: struct {q:^core.Ground_Query,keeps:[]Keep_Out,work:[dynamic]Tile_Work}
     // Temporary like the slices it holds: kept in the storage, the world would free them.
-    reading:=Reading{q,make([dynamic]Tile_Work,0,GROUND_TILES,context.temp_allocator)}
+    reading:=Reading{q,keeps,make([dynamic]Tile_Work,0,GROUND_TILES,context.temp_allocator)}
     taken:=0
     for taken<len(ground.queue) && len(reading.work)<GROUND_TILES {
         task:=ground.queue[taken]
@@ -243,11 +261,14 @@ ground_read :: proc(ground:^Foliage_Ground,q:^core.Ground_Query,data:core.Ref(Fo
         coarse:=!task.fine && !tile_fine(&near,task.coord,was!=0 && was!=COARSE_SAMPLES)
         n:=coarse?COARSE_SAMPLES:int(owner.samples)
         cell:=source_cell(&entry.source,task.coord)
-        append(&reading.work,Tile_Work{task=task,owner_world=owner_world,owner_local=owner_local,samples=n,coarse=coarse,generates=cell!=nil && cell.generate,heights=make([]f32,n*n,context.temp_allocator),weights=make([]Layer_Weights,n*n,context.temp_allocator)})
+        append(&reading.work,Tile_Work{task=task,owner_world=owner_world,owner_local=owner_local,samples=n,coarse=coarse,generates=cell!=nil && cell.generate,heights=make([]f32,n*n,context.temp_allocator),weights=make([]Layer_Weights,n*n,context.temp_allocator),kept=make([]u64,KEEP_OUT_WORDS,context.temp_allocator)})
     }
     remove_range(&ground.queue,0,taken)
     sample :: proc(reading:^Reading,first,last:int,worker:int) {
-        for &w in reading.work[first:last] {w.layers,w.any=tile_sample(reading.q,w.owner_world,w.owner_local,w.task.coord,w.samples,w.heights,w.weights,w.coarse)}
+        for &w in reading.work[first:last] {
+            w.layers,w.any=tile_sample(reading.q,w.owner_world,w.owner_local,w.task.coord,w.samples,w.heights,w.weights,w.coarse)
+            if w.any {tile_keep_out(reading.keeps,w.owner_world,w.task.coord,{samples=w.samples,heights=w.heights},w.kept)}
+        }
     }
     if job_system!=nil && jobs.worker_count(job_system)>1 && len(reading.work)>1 {
         jobs.parallel_for(job_system,jobs.OWNER,len(reading.work),1,sample,&reading)
@@ -276,9 +297,11 @@ ground_read :: proc(ground:^Foliage_Ground,q:^core.Ground_Query,data:core.Ref(Fo
         same:=at>=0 && int(ground_tile_samples(owner,w.task.coord))==w.samples
         heights,weights,tile:=ground_tile(owner,w.task.coord,u32(w.samples))
         if tile==nil {continue}
-        if same && same_heights(heights,w.heights) && slice.equal(weights,w.weights) {continue}
+        kept:=ground_tile_kept(owner,ground_tile_find(owner,w.task.coord))
+        if same && same_heights(heights,w.heights) && slice.equal(weights,w.weights) && slice.equal(kept,w.kept) {continue}
         copy(heights,w.heights)
         copy(weights,w.weights)
+        copy(kept,w.kept)
         owner.revision+=1
         tile.revision=owner.revision
     }

@@ -25,8 +25,13 @@ and stands it on the [ground](#ground) of the world.
 
 [Assets](../../mirai-assets/references/formats.md) container, Fourcc `FOLI`, with the rows of
 `source.odin`: `foliage` (seed, revision, next type id, ids given to manual instances), `types`,
-`cells` of `CELL_SIZE` in x and z, and in packed bulk `manual` and `overrides`, by ranges of each
-cell.
+`cells` of `CELL_SIZE` in x and z, and in packed bulk `manual`, `overrides` and `density`, by
+ranges of each cell.
+
+- `density` is the grid (`DENSITY_SAMPLES` per side, borders included) of how much of the density
+  of its types a cell that generates makes where; a cell without one makes all of it everywhere,
+  and one whose grid is all 0 does not generate. `source_generate_area` (the Generate brush) and
+  `cell_density_set` are its writers.
 
 - `manual` and `overrides` are the byte planes of their records (byte j of every record, then
   j+1), each 4-byte word coded by its `Code`: the id from the one before it, the position and the
@@ -67,8 +72,22 @@ to the overrides).
 
 - The generator (`scatter`) makes the points of each type from the seed, the cell and the type id.
   A point does not depend on how many there are (lowering the density removes the last ones and
-  leaves the others where they were), and it only uses arithmetic, square root and the
-  deterministic sine of std/math: it gives the same on every machine.
+  leaves the others where they were), and it only uses integer arithmetic, square root and the
+  deterministic sine of std/math: it gives the same on every machine. Their places are the
+  points of an Owen-scrambled (0,2) sequence in base 2, scrambled by the cell and the type:
+  any first n of them are stratified like a jittered grid, without the clumps and gaps of points
+  at random.
+- **Radius**: the points of the types with a `radius` (times their scale across) keep apart by
+  both radii (`spaced_stand`). The types go from the widest radius; within a type, a point keeps
+  apart from the earlier ones of its cell and, across a border, from those of the neighbour that
+  come before it (lower index, then the cell first in z and x): both cells decide each pair the
+  same way from the seed alone, without the ground of the other. Then a point that stands keeps
+  away from those that stand of the wider types; whether a neighbour's point stands is told by
+  the ground, density and keep-outs of this cell at its nearest border. A type without a radius
+  stands anywhere. `RADIUS_MAX` bounds a radius so that everything a cell needs is in the 3 by 3
+  cells around it.
+- **Density**: each point has a `chance` from its stream; it stands where the chance is under
+  the density of its cell there and, with a rule of layers, under the weight of those layers.
 - Points and overrides come out in order, so each type walks its stretch once. An override whose
   id the generator no longer makes stays in the source as an orphan (problem `foliage.orphans`).
 - A generated one stands on the [ground](#ground) and aligns with its normal according to
@@ -82,9 +101,10 @@ to the overrides).
 - **Placement rule** (`Foliage_Rule`, like `GroundSlopeAngle`, `Height` and the layers of an
   Unreal `UFoliageType`): on, `rule_allows` admits the ground whose slope (from the normal) and
   height fall in its ranges and, with `layers` (materials), whose layers of those materials add
-  up to at least `weight`, whatever the order of the layers of each terrain. Where it does not
-  meet it, the generated one is absent, as in a hole: the ids of the others do
-  not change. Without known weights (without terrain ground, or a terrain without layers) a rule
+  up to at least `weight`, whatever the order of the layers of each terrain; above it, the
+  generated ones are as dense as those layers are there, so the edge of a painted layer fades
+  out. Where it does not meet it, the generated one is absent, as in a hole: the ids of the others
+  do not change. Without known weights (without terrain ground, or a terrain without layers) a rule
   with layers admits nothing.
 
 ## Ground
@@ -106,6 +126,13 @@ to the overrides).
   entity. Each sample names which `Ground_Layers` of its owner (the materials of the four weights
   of the ground there) its weights are of: a `Foliage` over terrains with other layers, or in
   another order, keeps them apart, up to `LAYERS_MAX`.
+- **Keep-outs** (`keep_out.odin`): an entity with `Foliage_Keep_Out` keeps generated foliage out
+  of its `Volume`, else the width of its `Spline` (a road, a path, a river), else its box,
+  sphere, capsule or cylinder `Collider`, and `margin` metres around it; one with neither is the
+  `foliage.keep_out` problem. Each tile marks the squares (`KEEP_OUT_SIDE` per side) whose centre,
+  on its ground, a keep-out holds (`Ground_Cell.kept`), at the same resolution near and far. A
+  keep-out that comes, goes or changes is a change of the ground under its old and new boxes, so
+  the cells under it are built again; without a ground in the world nothing is kept out.
 - **Fine near, coarse far**: the grid of a cell is fine (the samples per side follow the spacing of
   the ground, `Ground_Query.spacing`, up to `SAMPLES_MAX`) near the [streaming sources][sources],
   with their hysteresis, up to where the meshes of their types are drawn and no more than
@@ -313,7 +340,9 @@ the registry's memory as a file of the undo step that creates it.
   the selected types, in turn, where it is clicked. **Reapply** gives the instances under the ring
   the scale, turn and offset of their type again (whatever their checkboxes mark), each one once
   per stroke. **Generate** turns on the generator of the cells whose square touches the ring and
-  with Ctrl turns it off; turning it off removes the cell that has nothing else
+  with Ctrl turns it off: it raises the density of the cells under the ring to all of it within
+  `GENERATE_HARDNESS` of its radius, less toward its border, and Ctrl takes away what the same
+  ring gave; a cell left with none stops generating and goes when it has nothing else
   (`source_cell_generate`). It draws the nearby cells, in green those that generate.
 - Keys like those of the [terrain](terrain.md#tool) (`editor.brush_adjust_*`, the same
   adjustment): `[` and `]` and F change the radius, Shift F the density of Paint or Erase, Ctrl
@@ -362,6 +391,10 @@ the registry's memory as a file of the undo step that creates it.
   (`cells_take_the_points_of_their_32_metres_including_negative_coordinates`), format
   (`a_foliage_asset_comes_back_as_it_was_written_and_damage_is_refused`), generator and overrides
   (`the_generator_makes_the_same_points_with_the_same_ids`,
+  `generated_points_cover_their_cell_with_one_in_each_square`,
+  `instances_with_a_radius_keep_apart_within_and_across_cells`,
+  `the_density_of_a_cell_and_what_keeps_foliage_out_thin_its_instances`,
+  `the_generate_brush_paints_the_density_of_the_cells_under_it`,
   `overrides_change_their_generated_instance_and_orphans_are_kept`,
   `overrides_keep_the_order_of_type_and_point_and_are_found_by_it`), versions
   (`a_source_read_again_keeps_the_version_of_the_cells_that_did_not_change`), ground
@@ -393,7 +426,8 @@ the registry's memory as a file of the undo step that creates it.
   `a_saved_game_takes_out_the_same_instance_after_its_source_is_edited` and
   `an_instance_taken_out_later_sends_a_small_part_of_its_cell`; that they reach a client:
   `an_entity_with_a_replicated_object_component_reaches_a_client` in `plugins/multiplayer/runtime`.
-- Ground (`plugins/foliage/runtime`): `the_ground_of_foliage_is_read_where_the_ground_changed`.
+- Ground (`plugins/foliage/runtime`): `the_ground_of_foliage_is_read_where_the_ground_changed`
+  and `foliage_is_kept_out_of_volumes_splines_and_colliders`.
 - `mirai test plugins/foliage/editor -collection:plugins=<root>/plugins`:
   `foliage_strokes_and_selections_are_steps_of_undo_written_at_the_flush`,
   `a_move_of_an_imported_foliage_is_undone_back_to_revision_zero`,

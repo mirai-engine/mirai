@@ -319,7 +319,7 @@ cells_version :: proc(next,previous:^Source,versions:^u32) {
         for j<len(previous.cells) && coord_before(previous.cells[j].coord,cell.coord) {j+=1}
         if types_same && j<len(previous.cells) && previous.cells[j].coord==cell.coord {
             old:=&previous.cells[j]
-            if old.generate==cell.generate && same_rows(old.manual[:],cell.manual[:]) && same_rows(old.overrides[:],cell.overrides[:]) {
+            if old.generate==cell.generate && same_rows(old.manual[:],cell.manual[:]) && same_rows(old.overrides[:],cell.overrides[:]) && slice.equal(old.density[:],cell.density[:]) {
                 cell.version=old.version
                 continue
             }

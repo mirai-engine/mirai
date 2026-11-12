@@ -75,12 +75,13 @@ rules of [the plugin system](../mirai-plugins/SKILL.md). Layout, manifests and b
     [ground](references/terrain.md#ground)
   - Quadtree of a Heightfield and octree of a Volume, far nodes, coarse grid and piece budget:
     [tree](references/terrain.md#tree-and-nodes)
-- `foliage` (`.foliage`, cells, generator, overrides and orphans, ground read from
-  `core.Ground_Queries`, per-cell batches, types from prefabs, octahedral impostors and canopy in
-  rays, wind by variants and by hook, bending by `Foliage_Bender`, collision by resident cells,
-  brush and instance selection): [source](references/foliage.md#entity-and-source),
-  [format](references/foliage.md#format), [cells](references/foliage.md#layers-of-a-cell),
-  [ground](references/foliage.md#ground), [drawing](references/foliage.md#drawing),
+- `foliage` (`.foliage`, cells, generator with radius, density and keep-outs, overrides and
+  orphans, ground read from `core.Ground_Queries`, per-cell batches, types from prefabs,
+  octahedral impostors and canopy in rays, wind by variants and by hook, bending by
+  `Foliage_Bender`, collision by resident cells, brush and instance selection):
+  [source](references/foliage.md#entity-and-source), [format](references/foliage.md#format),
+  [cells](references/foliage.md#layers-of-a-cell), [ground](references/foliage.md#ground),
+  [drawing](references/foliage.md#drawing),
   [impostor and crown](references/foliage.md#far-impostor-and-crown),
   [wind](references/foliage.md#wind), [collision](references/foliage.md#collision),
   [removed in play](references/foliage.md#instances-removed-in-play) and
