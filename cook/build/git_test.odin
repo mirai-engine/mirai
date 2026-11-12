@@ -166,3 +166,43 @@ git_setup_wires_a_clone_once_and_again_for_another_engine_or_plugin :: proc(t:^t
     testing.expect(t,read && len(held)==1 && held[0]==Git_Kind{".held",false,false})
     free_all(context.temp_allocator)
 }
+
+// A worktree of the engine is the engine of its main checkout: opening a
+// project from it, or from a session copy under the project, leaves the
+// configuration the main checkout wrote as it was, so deleting the worktree
+// leaves no driver that names it.
+@(test)
+a_worktree_or_a_copy_leaves_the_drivers_of_the_main_checkout_as_they_were :: proc(t:^testing.T) {
+    if _,_,_,missing:=subprocess.exec({command={"git","--version"}},context.temp_allocator);missing!=nil {log.warn("git is not installed: the drivers of a worktree are not tested");return}
+    root:=base.test_folder(t,"git_worktree")
+    if root=="" {return}
+    join :: proc(parts:..string) -> string {return project.path(..parts,allocator=context.temp_allocator)}
+    main,side,clone:=join(root,"main"),join(root,"side"),join(root,"clone")
+    copy:=join(clone,".mirai/tmp/session-copy-x")
+    // Git writes the gitdir of a worktree with forward slashes on every system.
+    tree:=join(main,".git/worktrees/side")
+    for folder in ([]string{tree,join(main,"plugins"),join(side,"plugins"),copy}) {testing.expect(t,os.make_directory_all(folder)==nil)}
+    testing.expect(t,os.write_entire_file(join(tree,"commondir"),"../..\n")==nil)
+    testing.expect(t,os.write_entire_file(join(side,".git"),strings.concatenate({"gitdir: ",tree,"\n"},context.temp_allocator))==nil)
+    for folder in ([]string{clone,copy}) {testing.expect(t,os.write_entire_file(join(folder,project.PROJECT_FILE),`{"name": "G"}`)==nil)}
+    _,initialized:=git(clone,"init","-q")
+    if !testing.expect(t,initialized) {return}
+
+    _,error:=git_setup(main,clone,context.temp_allocator)
+    testing.expect_value(t,error,Git_Setup_Error.None)
+    config:=join(clone,".git/config")
+    before,_:=os.read_entire_file(config,context.temp_allocator)
+    for folder in ([]string{clone,copy}) {
+        state,_,_:=git_wiring(side,folder,context.temp_allocator)
+        testing.expectf(t,state==.Wired,"%s from the worktree: %v",folder,state)
+        done:Git_Setup
+        done,error=git_setup(side,folder,context.temp_allocator)
+        testing.expectf(t,error==.None && done.settings==0,"%s from the worktree wrote %d settings",folder,done.settings)
+    }
+    after,_:=os.read_entire_file(config,context.temp_allocator)
+    testing.expect(t,string(after)==string(before),"the configuration stays as the main checkout wrote it")
+    for setting in git_settings(side,clone,context.temp_allocator) {
+        testing.expectf(t,!strings.contains(setting.value,side),"%s = %s names the worktree",setting.key,setting.value)
+    }
+    free_all(context.temp_allocator)
+}

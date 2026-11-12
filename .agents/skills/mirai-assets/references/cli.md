@@ -140,8 +140,13 @@ makes is kept whole.
   `mirai doctor` says so.
 - A driver names the tool as `./mirai` in a checkout of the engine, whose launcher is at the top
   git runs drivers from: one line serves every clone and worktree. In another repository it is the
-  absolute path of the engine, so after moving the engine `mirai setup git` runs again; the editor
-  does the same on each state read.
+  absolute path of the launcher of the engine's main checkout (`project.shared_root`), or of the
+  tool of an installed engine: every worktree of the engine, and a session copy of the project,
+  writes the same line, so none of them rewrites the configuration or leaves it naming a deleted
+  worktree. After moving the engine `mirai setup git` runs again; the editor does the same on each
+  state read.
+- Git writes the configuration of a clone itself (`git config`, a lock file then a rename): the
+  engine never writes `.git/config`, and a `git config` cut at any moment leaves it whole.
 - `dump --textconv` of a scene or a `.ui` is its document, so a diff reads as what agents write.
   It never builds the engine: without the author program, the project or the library of its game
   it prints the one line of a file it cannot show. Of the other kinds it differs from `dump` in a
