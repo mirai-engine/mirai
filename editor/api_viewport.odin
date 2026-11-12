@@ -171,7 +171,7 @@ api_capture :: proc(s:^Session,call:^api.Call) {
 api_capture_textures_settle :: proc(s:^Session,dt:f32,wait:time.Duration) {
     started:=time.tick_now()
     waited:=false
-    for gpu.textures_update(s.app.renderer)+host.app_textures_arriving(s.app)>0 && time.tick_since(started)<wait && !s.quit {
+    for gpu.textures_update(s.app.renderer)+host.app_assets_arriving(s.app)>0 && time.tick_since(started)<wait && !s.quit {
         api_frames(s,1,dt)
         waited=true
     }

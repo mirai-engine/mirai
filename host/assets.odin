@@ -79,6 +79,7 @@ Assets_Mesh :: struct {
     morphs:u32,     // morph targets its file holds
     failed:bool,    // the stand-in of an asset that did not load
     generated:bool, // made by assets_mesh_generate: it has no file
+    arriving:bool,  // what draws it asked for it and a job reads it (Assets.arrivals): no handle yet
     collision:geom.Mesh,
     disabled_edges:[]u8,
     hull_points:[]geom.Vec3, // the convex pieces of a generated mesh, as Mesh_Generate_Options gives them
@@ -227,11 +228,12 @@ Assets :: struct {
     appearance:u64, // the round of derived rows: assets_appearance_begin opens one
     loads:Load_Budget,
     texture_assets:[dynamic]base.Asset_Id, // by handle - 1 of a texture of the renderer: the asset given it, as last given
-    // The textures a material asks for arrive in jobs over frames instead of
-    // loading in the call (app_textures_stream): set by an application with
-    // job workers and a renderer.
+    // The textures a material asks for and the meshes render sync draws
+    // arrive in jobs over frames instead of loading in the call
+    // (app_textures_stream): set by an application with job workers and a
+    // renderer.
     arrive:bool,
-    arrivals:[dynamic]base.Asset_Id, // arriving textures no job reads yet, in the order they were asked for
+    arrivals:[dynamic]base.Asset_Id, // arriving textures and meshes no job reads yet, in the order they were asked for
     arrived:bool,                    // an arriving texture was given since assets_arrivals_settle
     stats:Assets_Stats,
     load_profile:^Load_Profile, // of the application, which counts the assets that load; nil: nobody counts
@@ -658,6 +660,10 @@ assets_mesh_install :: proc(a:^Assets,view:asset.Mesh_View,entry:^Assets_Mesh,re
 // The entry of a mesh that loads now, in the index; nil without room, with the error in the list.
 @(private="file")
 assets_mesh_entry :: proc(a:^Assets,id:base.Asset_Id) -> ^Assets_Mesh {
+    if ref,known:=a.index[id];known && ref.kind==.Mesh && a.meshes[ref.index].arriving {
+        a.meshes[ref.index]={handle=ASSETS_MESH_NONE}
+        return &a.meshes[ref.index]
+    }
     at,room:=assets_slot(&a.meshes,&a.free_meshes,&a.regions[0])
     if !room {
         assets_fail(a,id,.Mesh,.Capacity)
@@ -673,7 +679,7 @@ assets_mesh_entry :: proc(a:^Assets,id:base.Asset_Id) -> ^Assets_Mesh {
 // valid while the Assets lives; ask again after a.revision changes.
 assets_mesh :: proc(a:^Assets,id:base.Asset_Id) -> ^Assets_Mesh {
     if id=={} {return nil}
-    if ref,known:=a.index[id];known {
+    if ref,known:=a.index[id];known && !(ref.kind==.Mesh && a.meshes[ref.index].arriving) {
         if ref.kind==.Mesh {return &a.meshes[ref.index]}
         assets_fail(a,id,.Mesh,.Wrong_Kind)
         return assets_missing_mesh(a)
@@ -688,6 +694,26 @@ assets_mesh :: proc(a:^Assets,id:base.Asset_Id) -> ^Assets_Mesh {
     }
     load_asset_end(a.load_profile,scope,id,.Mesh,assets_file_bytes(a,id),!ok)
     return entry
+}
+
+// The mesh what draws an entity shows: as assets_mesh, but one that is not
+// loaded arrives over frames when the assets let it (arrive): nil while it
+// does. Whoever asks again once a.structure names its id draws it.
+assets_mesh_shown :: proc(a:^Assets,id:base.Asset_Id) -> ^Assets_Mesh {
+    if id=={} {return nil}
+    ref,known:=a.index[id]
+    if !known && a.arrive && a.renderer!=nil {
+        record,found:=asset.registry_find(&a.registry,id)
+        if found && record.kind==asset.KIND_MESH && append(&a.arrivals,id)==1 {
+            if entry:=assets_mesh_entry(a,id);entry!=nil {
+                entry.handle,entry.arriving=ASSETS_MESH_NONE,true
+                return nil
+            }
+            pop(&a.arrivals)
+        }
+    }
+    if known && ref.kind==.Mesh && a.meshes[ref.index].arriving {return nil}
+    return assets_mesh(a,id)
 }
 
 // The bytes of the file of an asset; 0 for one the registry does not have.
@@ -1985,7 +2011,7 @@ assets_reload :: proc(a:^Assets,id:base.Asset_Id) -> bool {
     ref,known:=a.index[id]
     if !known || ref.kind==.Mesh && a.meshes[ref.index].generated || ref.kind==.Texture && a.textures[ref.index].generated {return false}
     // What arrives reads the file as it is when its job runs.
-    if ref.kind==.Texture && a.textures[ref.index].arriving {return true}
+    if assets_arriving(a,id) {return true}
     assets_errors_forget(a,id)
     problem:Assets_Problem
     detail:asset.Error
@@ -2129,14 +2155,20 @@ assets_scope_ids :: proc(a:^Assets,scope:Assets_Scope) -> []base.Asset_Id {
 
 // Whether the asset is loaded: something asked for it and it was not unloaded since.
 assets_loaded :: proc(a:^Assets,id:base.Asset_Id) -> bool {
-    ref,known:=a.index[id]
-    return known && !(ref.kind==.Texture && a.textures[ref.index].arriving)
+    _,known:=a.index[id]
+    return known && !assets_arriving(a,id)
 }
 
-// Whether a texture is arriving: a material asked for it and a job reads it.
-assets_texture_arriving :: proc(a:^Assets,id:base.Asset_Id) -> bool {
+// Whether an asset is arriving: a material asked for its texture, or what
+// draws an entity for its mesh, and a job reads it.
+assets_arriving :: proc(a:^Assets,id:base.Asset_Id) -> bool {
     ref,known:=a.index[id]
-    return known && ref.kind==.Texture && a.textures[ref.index].arriving
+    if !known {return false}
+    #partial switch ref.kind {
+    case .Texture: return a.textures[ref.index].arriving
+    case .Mesh:    return a.meshes[ref.index].arriving
+    }
+    return false
 }
 
 // Unloads every loaded asset that no scope reaches: the ones no scope

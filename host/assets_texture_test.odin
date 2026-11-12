@@ -407,9 +407,10 @@ a_cube_loads_whole_and_a_material_does_not_sample_it :: proc(t:^testing.T) {
 // A texture a material names arrives: the material loads without reading it,
 // its row leaves it out, and once a job read its levels of side
 // render.TEXTURE_TAIL and the assets took them, the row takes the texture.
-// Asked for directly while it arrives, it loads whole in the call.
+// A mesh what draws an entity asks for arrives the same way. Asked for
+// directly while it arrives, an asset loads whole in the call.
 @(test)
-a_texture_a_material_names_arrives_with_its_small_levels :: proc(t:^testing.T) {
+textures_materials_name_and_meshes_drawn_arrive_from_jobs :: proc(t:^testing.T) {
     device:=shared_device.take_or_skip(t,hardware_rt=false)
     if device==nil {return}
     r:=new(render.Renderer);defer free(r)
@@ -440,7 +441,7 @@ a_texture_a_material_names_arrives_with_its_small_levels :: proc(t:^testing.T) {
     a.arrive=true
 
     row:=assets_material_row(&a,material)
-    testing.expect(t,row!=0 && assets_texture_arriving(&a,stone) && assets_texture_arriving(&a,bark),"the material loads, its textures arrive")
+    testing.expect(t,row!=0 && assets_arriving(&a,stone) && assets_arriving(&a,bark),"the material loads, its textures arrive")
     testing.expect(t,!assets_loaded(&a,stone) && len(a.arrivals)==2)
     testing.expect_value(t,assets_material_values(&a,row).textures[.Base_Color],render.Texture_Handle(0))
 
@@ -453,7 +454,7 @@ a_texture_a_material_names_arrives_with_its_small_levels :: proc(t:^testing.T) {
     defer assets_prepared_free(&prepared)
     testing.expect_value(t,assets_take(&a,&prepared),Assets_Take.Taken)
     texture:=assets_texture(&a,stone)
-    if !testing.expect(t,texture!=nil && !texture.failed && texture.handle!=0 && !assets_texture_arriving(&a,stone)) {return}
+    if !testing.expect(t,texture!=nil && !texture.failed && texture.handle!=0 && !assets_arriving(&a,stone)) {return}
     testing.expect_value(t,rhi.texture_desc(r.device,r.textures.textures[texture.handle-1]).width,u32(render.TEXTURE_TAIL))
     testing.expect(t,assets_arrivals_settle(&a),"the row that waited changes")
     testing.expect_value(t,assets_material_values(&a,row).textures[.Base_Color],texture.handle)
@@ -461,10 +462,28 @@ a_texture_a_material_names_arrives_with_its_small_levels :: proc(t:^testing.T) {
 
     // Asked for directly, an arriving texture loads whole now.
     whole:=assets_texture(&a,bark)
-    if !testing.expect(t,whole!=nil && whole.handle!=0 && !assets_texture_arriving(&a,bark)) {return}
+    if !testing.expect(t,whole!=nil && whole.handle!=0 && !assets_arriving(&a,bark)) {return}
     testing.expect_value(t,rhi.texture_desc(r.device,r.textures.textures[whole.handle-1]).width,u32(SIZE))
     testing.expect(t,assets_arrivals_settle(&a))
     testing.expect_value(t,assets_material_values(&a,row).textures[.Normal],whole.handle)
     testing.expect(t,!assets_material(&a,material).waiting)
+
+    vertices:=[3]asset.Vertex{{position={0,0,0},normal=mm.normal_pack({0,1,0})},{position={1,0,0},normal=mm.normal_pack({0,1,0})},{position={0,0,1},normal=mm.normal_pack({0,1,0})}}
+    rock,pebble:=base.Asset_Id{6,6},base.Asset_Id{5,5}
+    testing.expect_value(t,mesh_save_test(fmt.tprintf("%s/rock.mesh",root),&types,rock,vertices[:],{0,2,1}),asset.Error.None)
+    testing.expect_value(t,mesh_save_test(fmt.tprintf("%s/pebble.mesh",root),&types,pebble,vertices[:],{0,2,1}),asset.Error.None)
+    testing.expect(t,assets_scan(&a))
+    testing.expect(t,assets_mesh_shown(&a,rock)==nil && assets_arriving(&a,rock) && !assets_loaded(&a,rock),"a mesh drawn arrives")
+    testing.expect(t,assets_mesh_shown(&a,pebble)==nil)
+    shape:Assets_Prepared
+    shape.source,found=assets_source(&a,rock,context.allocator)
+    if !testing.expect(t,found) {return}
+    assets_prepare(&shape,assets_limits(&a,tail=true),&types)
+    defer assets_prepared_free(&shape)
+    testing.expect(t,assets_take(&a,&shape,over_frames=true)!=.Wait)
+    loaded:=assets_mesh_shown(&a,rock)
+    testing.expect(t,loaded!=nil && loaded.handle!=ASSETS_MESH_NONE && !assets_arriving(&a,rock) && loaded.index_count==3)
+    direct:=assets_mesh(&a,pebble)
+    testing.expect(t,direct!=nil && direct.handle!=ASSETS_MESH_NONE && !assets_arriving(&a,pebble),"asked for directly, it loads now")
     testing.expectf(t,rhi.device_validation_errors(device)==0,"validation: %s",rhi.device_validation_message(device))
 }

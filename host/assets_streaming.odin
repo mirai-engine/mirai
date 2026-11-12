@@ -19,14 +19,16 @@ import "mirai:std/jobs"
 //
 // A texture a material asks for arrives the same way (Assets.arrive): the
 // material shows without it, a job reads its levels of side TEXTURE_TAIL,
-// TEXTURE_ARRIVALS at once, and the frames give them to the renderer before
-// the levels of others, in the same part of the frame; the rows of the
-// materials that waited take it (assets_arrivals_settle) and what the GPU
-// samples asks for its larger levels. No frame reads, decodes or uploads a
-// whole texture for a material.
+// ASSET_ARRIVALS at once with the meshes, and the frames give them to the
+// renderer before the levels of others, in the same part of the frame; the
+// rows of the materials that waited take it (assets_arrivals_settle) and what
+// the GPU samples asks for its larger levels. A mesh render sync draws
+// arrives so too, its geometry over frames when it is large, and a structure
+// change names it to what waited. No frame reads, decodes or uploads a whole
+// texture for a material or a mesh for what draws it.
 
 TEXTURE_READS :: 8
-TEXTURE_ARRIVALS :: 32
+ASSET_ARRIVALS :: 32
 
 Texture_Read :: struct {
     request:render.Texture_Request,
@@ -39,7 +41,7 @@ Texture_Read :: struct {
 
 Texture_Streaming :: struct {
     reads:[TEXTURE_READS]Texture_Read,
-    arrivals:[TEXTURE_ARRIVALS]Texture_Read, // of arriving textures: no request, their small levels
+    arrivals:[ASSET_ARRIVALS]Texture_Read, // of arriving textures and meshes: no request; of a texture its small levels
     arrived:int,                             // of Assets.arrivals, those given to a read
     counter:jobs.Counter,
     load:u64, // its id in the budget of the loads while it has levels to give
@@ -50,7 +52,7 @@ Texture_Streaming :: struct {
 // next. Nothing without assets or renderer, or while nothing changes.
 app_textures_stream :: proc(app:^App) {
     a,r:=app.assets,app.renderer
-    if a==nil || r==nil || len(a.texture_assets)==0 && len(a.arrivals)==0 {return}
+    if a==nil || r==nil || len(a.texture_assets)==0 && app_assets_arriving(app)==0 {return}
     st:=&app.texture_streaming
     start:=time.tick_now()
     for &read in st.reads {
@@ -72,10 +74,15 @@ app_textures_stream :: proc(app:^App) {
                 break
             }
             id:=read.prepared.source.id
-            if assets_texture_arriving(a,id) {
-                app_assets_take(app,&read.prepared)
+            mesh:=read.prepared.kind==.Mesh
+            if assets_arriving(a,id) {
+                // A large mesh waits for room in the uploads of the renderer.
+                if !app_assets_take(app,&read.prepared,over_frames=mesh) {break}
+                if assets_loaded(a,id) && mesh {assets_structure_changed(a,id)}
                 // Its file changed after the job read it: it is read again.
-                if assets_texture_arriving(a,id) && append(&a.arrivals,id)!=1 {_=assets_texture(a,id)}
+                if assets_arriving(a,id) && append(&a.arrivals,id)!=1 {
+                    if mesh {_=assets_mesh(a,id)} else {_=assets_texture(a,id)}
+                }
             } else {
                 app_assets_release(app,&read.prepared)
             }
@@ -168,9 +175,8 @@ texture_reads_ready :: proc(st:^Texture_Streaming) -> bool {
     return false
 }
 
-// Textures still arriving: asked for by a material, their first levels not
-// given yet.
-app_textures_arriving :: proc(app:^App) -> int {
+// Textures and meshes still arriving: asked for and not given yet.
+app_assets_arriving :: proc(app:^App) -> int {
     if app.assets==nil {return 0}
     st:=&app.texture_streaming
     count:=len(app.assets.arrivals)-st.arrived
@@ -178,8 +184,8 @@ app_textures_arriving :: proc(app:^App) -> int {
     return count
 }
 
-// Starts reading the arriving textures the free reads take, in the order they
-// were asked for. Without job threads one a frame, here.
+// Starts reading the arriving textures and meshes the free reads take, in
+// the order they were asked for. Without job threads one a frame, here.
 @(private="file")
 arrivals_read :: proc(app:^App,st:^Texture_Streaming) {
     a:=app.assets
@@ -191,13 +197,13 @@ arrivals_read :: proc(app:^App,st:^Texture_Streaming) {
         for st.arrived<len(a.arrivals) && id=={} {
             next:=a.arrivals[st.arrived]
             st.arrived+=1
-            if assets_texture_arriving(a,next) {id=next}
+            if assets_arriving(a,next) {id=next}
         }
         if id=={} {break}
         source,found:=assets_source(a,id,runtime.heap_allocator())
         if !found {
             // The registry lost its file: it loads here, and fails as it would.
-            _=assets_texture(a,id)
+            if ref,_:=a.index[id];ref.kind==.Mesh {_=assets_mesh(a,id)} else {_=assets_texture(a,id)}
             continue
         }
         read={prepared={source=source},limits=limits,busy=true}

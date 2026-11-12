@@ -371,15 +371,18 @@ of pieces) is not a fixed cap, and a frame that does not load does not allocate.
     textures, and without room in the queue it waits a frame. A far mesh made in memory
     (`assets_mesh_publish`) does not go through here and goes whole in its frame, with what its job
     did (`assets_render_geometry_rays`).
-- **Textures of materials arrive** (`assets_streaming.odin`). In an application with job workers
-  and a renderer (`Assets.arrive`), a material that names a texture that is not loaded does not
-  read it: its row goes without it, a job reads its levels of side `TEXTURE_TAIL`
-  (`TEXTURE_ARRIVALS` at once) and the frames give them to the renderer in the part of the load
-  budget, before more levels of others; the rows of the materials that waited take it
-  (`assets_arrivals_settle`) and what the GPU samples asks for its larger levels. No frame
-  reads, decodes or uploads a whole texture for a material. `assets_texture` of an arriving
-  texture loads it whole in the call. While `app_textures_arriving` counts any, a load is not
-  resident and a capture that waits for its textures waits.
+- **Textures of materials and meshes that draw arrive** (`assets_streaming.odin`). In an
+  application with job workers and a renderer (`Assets.arrive`), a material that names a texture
+  that is not loaded does not read it: its row goes without it, a job reads its levels of side
+  `TEXTURE_TAIL` (`ASSET_ARRIVALS` reads at once) and the frames give them to the renderer in
+  the part of the load budget, before more levels of others; the rows of the materials that
+  waited take it (`assets_arrivals_settle`) and what the GPU samples asks for its larger levels.
+  A mesh render sync draws arrives so too (`assets_mesh_shown`), its geometry over frames when
+  it is large; a structure change names it, and only the entities that waited for it are drawn
+  again. No frame reads, decodes or uploads a whole texture for a material or a mesh for what
+  draws it. `assets_texture` and `assets_mesh` of an arriving asset load it whole in the call
+  (`assets_arriving`). While `app_assets_arriving` counts any, a load is not resident and a
+  capture that waits for its textures waits.
 - **What was read is released in jobs** (`assets_release.odin`): `app_assets_take` installs and
   keeps what was prepared, and `app_assets_release` and `app_assets_release_file` receive what
   nobody takes; between frames (`app_assets_releases_step`, in `app_frame_begin`) one job at a time

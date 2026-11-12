@@ -380,6 +380,7 @@ Render_Sync :: struct {
     world:core.World_Id, // the one the scene of the renderer holds
     drawn:core.Entity_Map(Drawn), // by entity whose mesh the renderer draws
     mesh_users:map[base.Asset_Id][dynamic]core.Entity, // the entities drawn with each mesh asset
+    arriving:map[base.Asset_Id][dynamic]core.Entity,   // the entities that wait for their mesh to arrive (host.assets_mesh_shown)
     seen:Sync_Seen,
     changed:[dynamic]core.Entity, // scratch: what may come, go or be made again in the frame
     under:[dynamic]core.Entity,   // scratch: the entities a table changed, and what hangs from them
@@ -638,6 +639,12 @@ render_sync :: proc(
         clear(&posed.changed)
     }
     for change in releases {
+        // A mesh that arrived: what waited for it is drawn.
+        if waiting,known:=sync.arriving[change.id];known {
+            for e in waiting {entity_changed(sync,e)}
+            delete(waiting)
+            delete_key(&sync.arriving,change.id)
+        }
         if users,known:=sync.mesh_users[change.id];known {
             for e in users {instance_changed(sync,e)}
             continue
@@ -650,11 +657,11 @@ render_sync :: proc(
 
     // What is no longer drawn goes first, so that what follows finds every instance where it stays.
     for e in sync.changed {
-        if at:=instance_of(sync,e);at>=0 && !instance_wanted(a,t,e) && !instance_remove(sync,a,r,t,at,frame) {sync_fail(sync,r);return}
+        if at:=instance_of(sync,e);at>=0 && !instance_wanted(sync,a,t,e) && !instance_remove(sync,a,r,t,at,frame) {sync_fail(sync,r);return}
     }
     // What starts being drawn comes after those of the world, and is made with what changed.
     for e in sync.changed {
-        if instance_of(sync,e)>=0 || !instance_wanted(a,t,e) {continue}
+        if instance_of(sync,e)>=0 || !instance_wanted(sync,a,t,e) {continue}
         if _,kept:=core.entity_map_put(&sync.drawn,e,Drawn{changed=true});!kept {sync_fail(sync,r);return}
     }
     // The mesh a visual instance starts or stops replacing is made again, hidden or shown.
@@ -832,6 +839,8 @@ sync_forget :: proc(sync:^Render_Sync,r:^gpu.Renderer) {
     core.entity_map_clear(&sync.drawn)
     for _,users in sync.mesh_users {delete(users)}
     clear(&sync.mesh_users)
+    for _,waiting in sync.arriving {delete(waiting)}
+    clear(&sync.arriving)
     clear(&sync.changed);clear(&sync.lerping);clear(&sync.deriving);clear(&sync.replaced)
     clear(&sync.light_owners)
     for &lit in sync.lit {core.entity_map_clear(&lit)}
@@ -936,11 +945,18 @@ body_owner :: proc(t:Sync_Tables,e:core.Entity) -> u8 {
 }
 
 // Whether the mesh of an entity is drawn: on, placed, not drawn by another
-// library, and with a mesh the renderer has.
+// library, and with a mesh the renderer has. One whose mesh arrives waits
+// for it in sync.arriving.
 @(private)
-instance_wanted :: proc(a:^host.Assets,t:Sync_Tables,e:core.Entity) -> bool {
+instance_wanted :: proc(sync:^Render_Sync,a:^host.Assets,t:Sync_Tables,e:core.Entity) -> bool {
     static,has_mesh:=core.get(t.meshes,e)
     if !has_mesh || !core.has(t.worlds,e) || core.has(t.elsewhere,e) {return false}
+    if static.mesh!={} && host.assets_mesh_shown(a,static.mesh)==nil && host.assets_arriving(a,static.mesh) {
+        waiting:=sync.arriving[static.mesh]
+        // Without memory for the note it is drawn once anything makes it change.
+        if append(&waiting,e)==1 {sync.arriving[static.mesh]=waiting}
+        return false
+    }
     _,known:=mesh_handle(a,static)
     return known
 }
@@ -1625,6 +1641,8 @@ render_release :: proc(sync:^Render_Sync,id:core.World_Id,renderer:^Renderer) {
 sync_free :: proc(sync:^Render_Sync) {
     for _,users in sync.mesh_users {delete(users)}
     delete(sync.mesh_users)
+    for _,waiting in sync.arriving {delete(waiting)}
+    delete(sync.arriving)
     sync.mesh_users=nil
     core.value_free(sync,type_info_of(Render_Sync))
 }
