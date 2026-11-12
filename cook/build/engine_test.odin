@@ -923,29 +923,46 @@ named_of :: proc(source:string) -> map[string]bool {
 
 // What a library loads with #load is part of what it is built from, and a
 // declaration made of a loaded file changes with it: changing only the loaded
-// file builds again the library that loads it and what names that declaration.
+// file leaves the stage as it was and builds the library that loads it again,
+// from the file itself, and what names that declaration.
 @(test)
 a_loaded_file_is_part_of_what_loads_it :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
     root:=base.test_folder(t,"declare-load")
     if root=="" {return}
-    source_write(t,root,"kit","kit.odin","package kit\n\nTHEME :: #load(\"theme.ui\")\n\nFONTS :: #load_directory(\"fonts\")\n")
-    source_write(t,root,"kit/fonts","a.txt","first")
-    desc:=describe(root,[]string{"kit"})
-    desc.names=true
-    key :: proc(t:^testing.T,root:string,desc:Declare_Desc,theme,font:string) -> (library,declaration:u64) {
-        testing.expect(t,os.write_entire_file(project.path(root,"kit","theme.ui"),theme)==nil)
-        testing.expect(t,os.write_entire_file(project.path(root,"kit","fonts","a.txt"),font)==nil)
-        library,_=fingerprint(root,"",nil,engine_sources(root,{"kit"}))
-        errors,changed:=declaring(desc)
-        declared_ok(t,errors)
-        return library,changed.declared
+    source_write(t,root,"editor/kit","kit.odin","package kit\n\nTHEME :: #load(\"theme.ui\")\n\nFONTS :: #load_directory(\"fonts\")\n")
+    source_write(t,root,"editor/kit/fonts","a.txt","first")
+    libraries:=engine_libraries(.Dev)
+    parts:=-1
+    for library,which in libraries {
+        if slice.contains(library.packages,"editor/kit") {parts=which}
     }
-    library,declaration:=key(t,root,desc,"one","first")
+    if !testing.expect(t,parts>=0) {return}
+    // The library of the editor with that package alone.
+    library:=libraries[parts]
+    library.packages={"editor/kit"}
+    paths:=engine_paths(root,.Dev)
+    Key :: struct {sources,tools,declaration:u64,stage:bool}
+    key :: proc(t:^testing.T,root:string,paths:Engine_Paths,library:Engine_Library,theme,font:string) -> Key {
+        testing.expect(t,os.write_entire_file(project.path(root,"editor/kit","theme.ui"),theme)==nil)
+        testing.expect(t,os.write_entire_file(project.path(root,"editor/kit","fonts","a.txt"),font)==nil)
+        plan:=engine_plan(root,"",.Dev,paths,{library})
+        previous:=context.allocator
+        context.allocator=context.temp_allocator
+        errors,changed,_:=engine_library_stage(root,paths,library)
+        context.allocator=previous
+        declared_ok(t,errors)
+        return {plan.libraries[0].sources,plan.libraries[0].tools,changed.declared,changed.stage}
+    }
+    was:=key(t,root,paths,library,"one","first")
+    staged,_:=os.read_entire_file(project.path(paths.stage,"editor/kit","kit.odin"),context.temp_allocator)
+    loaded:=slashes(project.path(root,"editor/kit","theme.ui"),context.temp_allocator)
+    testing.expectf(t,strings.contains(string(staged),fmt.tprintf("#load(%q)",loaded)),"the stage loads the file itself: %s",staged)
     for c in ([]struct{what,theme,font:string}{{"the loaded file","two","first"},{"a file of the loaded folder","two","second"}}) {
-        now_library,now_declaration:=key(t,root,desc,c.theme,c.font)
-        testing.expectf(t,now_library!=library,"%s builds the library again",c.what)
-        testing.expectf(t,now_declaration!=declaration,"%s moves the declaration",c.what)
-        library,declaration=now_library,now_declaration
+        now:=key(t,root,paths,library,c.theme,c.font)
+        testing.expectf(t,!now.stage,"%s leaves the stage as it was",c.what)
+        testing.expectf(t,now.sources!=was.sources && now.tools!=was.tools,"%s builds the library again",c.what)
+        testing.expectf(t,now.declaration!=was.declaration,"%s moves the declaration",c.what)
+        was=now
     }
 }
