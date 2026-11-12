@@ -14,11 +14,46 @@ float instance_scale(Instance inst) {
     return max(length(c0), max(length(c1), length(c2)));
 }
 
+// Where the detail of a cut is chosen from: the eye and the nearest it looks
+// (w), how wide a pixel is there and per metre farther, and the axis distance
+// runs along (zero: from the eye whichever way). A view chooses from its eye
+// (view_detail); a map of the shadows from its light (shadow_map_detail).
+struct Detail {
+    float4 eye;
+    float2 footprint;
+    float3 axis;
+};
+
+Detail view_detail() {
+    Detail d;
+    d.eye = frame.detail_eye;
+    d.footprint = frame.detail_footprint.xy;
+    d.axis = float3(0.0);
+    return d;
+}
+
+// The nearest and the farthest a box lies from the eye of a detail.
+float2 detail_span(Detail d, float3 low, float3 high) {
+    float3 eye = d.eye.xyz;
+    if (any(d.axis != 0.0)) {
+        float along = dot(0.5 * (low + high) - eye, d.axis);
+        float extent = dot(0.5 * (high - low), abs(d.axis));
+        return float2(along - extent, along + extent);
+    }
+    return float2(length(eye - clamp(eye, low, high)), length(select(eye * 2.0 < low + high, high, low) - eye));
+}
+
+// How wide a pixel of a detail is at a distance from its eye.
+float detail_width(Detail d, float distance) {
+    return max(d.footprint.x + d.footprint.y * max(distance, d.eye.w), 1e-9);
+}
+
 // The pixels an error of the world spans at the point of a sphere nearest the
 // eye the detail is chosen from.
-float lod_pixels(float3 center, float radius, float error) {
-    float distance = max(length(center - frame.detail_eye.xyz) - radius, frame.detail_eye.w);
-    return error / max(frame.detail_footprint.x + frame.detail_footprint.y * distance, 1e-9);
+float lod_pixels(Detail d, float3 center, float radius, float error) {
+    float3 v = center - d.eye.xyz;
+    float distance = (any(d.axis != 0.0) ? dot(v, d.axis) : length(v)) - radius;
+    return error / detail_width(d, distance);
 }
 
 // What the cut of a view does with a cluster: whether it draws it, and
@@ -37,7 +72,7 @@ struct Cluster_Cut {
 // there; then it asks for that page. Every page a cluster of the pools names
 // as its parent's is there too (pages.odin), so the clusters drawn cover the
 // mesh once. A level-0 pose stays at level 0.
-Cluster_Cut cluster_cut(Instance inst, float scale, Mesh mesh, Cluster c, float threshold) {
+Cluster_Cut cluster_cut(Detail d, Instance inst, float scale, Mesh mesh, Cluster c, float threshold) {
     Cluster_Cut cut;
     cut.request = false;
     cut.pixels = 0.0;
@@ -45,9 +80,9 @@ Cluster_Cut cluster_cut(Instance inst, float scale, Mesh mesh, Cluster c, float 
         cut.drawn = c.error == 0.0;
         return cut;
     }
-    cut.pixels = lod_pixels(transform_point(inst.world, c.lod.xyz), c.lod.w * scale, c.error * scale);
+    cut.pixels = lod_pixels(d, transform_point(inst.world, c.lod.xyz), c.lod.w * scale, c.error * scale);
     bool within = cut.pixels <= threshold;
-    bool parent = lod_pixels(transform_point(inst.world, c.parent.xyz), c.parent.w * scale, c.parent_error * scale) <= threshold;
+    bool parent = lod_pixels(d, transform_point(inst.world, c.parent.xyz), c.parent.w * scale, c.parent_error * scale) <= threshold;
     if ((mesh.flags & MESH_FLAG_STREAMED) == 0u) {
         cut.drawn = within && !parent;
         return cut;
@@ -57,8 +92,8 @@ Cluster_Cut cluster_cut(Instance inst, float scale, Mesh mesh, Cluster c, float 
     cut.request = cut.drawn && !within && c.child_page != INVALID;
     return cut;
 }
-bool cluster_in_cut(Instance inst, float scale, Mesh mesh, Cluster c, float threshold) {
-    return cluster_cut(inst, scale, mesh, c, threshold).drawn;
+bool cluster_in_cut(Detail d, Instance inst, float scale, Mesh mesh, Cluster c, float threshold) {
+    return cluster_cut(d, inst, scale, mesh, c, threshold).drawn;
 }
 // The instance passes of a cull (cull.comp, shadow_maps.comp) hand the
 // clusters of an instance to their cluster passes in chunks of up to
@@ -70,16 +105,13 @@ bool cluster_in_cut(Instance inst, float scale, Mesh mesh, Cluster c, float thre
 // its box, and whose greatest parent error none spans at the near side. Of a
 // streamed mesh, up to its coarsest level: a coarser cluster stands for
 // children whose page is not in the pools.
-uint2 instance_clusters(Instance inst, Mesh mesh) {
+uint2 instance_clusters(Detail d, Instance inst, Mesh mesh) {
     if ((mesh.flags & MESH_FLAG_LEVEL0) != 0u) return mesh_level_clusters(mesh, 0u);
     float scale = instance_scale(inst);
-    float3 eye = frame.detail_eye.xyz;
-    float3 low = inst.bounds_min.xyz, high = inst.bounds_max.xyz;
-    float near = max(length(eye - clamp(eye, low, high)) - mesh.lod_reach * scale, frame.detail_eye.w);
-    float far = length(select(eye * 2.0 < low + high, high, low) - eye);
+    float2 span = detail_span(d, inst.bounds_min.xyz, inst.bounds_max.xyz);
     float threshold = frame.cut.x;
-    float least = threshold * (frame.detail_footprint.x + frame.detail_footprint.y * near) / scale * 0.999;
-    float most = threshold * (frame.detail_footprint.x + frame.detail_footprint.y * far) / scale * 1.001;
+    float least = threshold * detail_width(d, span.x - mesh.lod_reach * scale) / scale * 0.999;
+    float most = threshold * detail_width(d, span.y) / scale * 1.001;
     uint first = mesh.level_count, last = 0u;
     for (uint level = 0u; level < mesh.level_count; level++) {
         float2 errors = mesh_level_errors(mesh, level);

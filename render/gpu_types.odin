@@ -412,15 +412,15 @@ Gpu_Cull_State :: struct {
 #assert(size_of(Gpu_Cull_State) == 88)
 
 // What the cull of the clusters the maps of the shadows draw counts
-// (shadow_cull.slang): the draws of those that hide whole and of those of
-// masked or blended materials, the groups of its cluster pass over the chunks
-// and how many chunks its instance pass handed over.
+// (shadow_cull.slang): the draws of those that hide whole, of those of masked
+// materials and of those of glass, the groups of its cluster pass over the
+// chunks and how many chunks its instance pass handed over.
 Gpu_Shadow_State :: struct {
-	draws:            [2]Gpu_Draw,
+	draws:            [SHADOW_DRAWS]Gpu_Draw,
 	cluster_dispatch: [3]u32,
 	chunk_count:      u32,
 }
-#assert(size_of(Gpu_Shadow_State) == 48)
+#assert(size_of(Gpu_Shadow_State) == 64)
 
 Gpu_Cull_Stats :: struct {
 	visible_instances, visible_triangles, culled_instances, occluded_instances: u32,

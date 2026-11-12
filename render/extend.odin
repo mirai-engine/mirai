@@ -576,7 +576,7 @@ pass_surface_read :: proc(s: ^Stage_Pass, slot: u32, source: Surface_Source) {
 	instance := t.instance if t.instance != 0 && s.pass.r.frame_layout.instance_ids else s.pass.r.dummy_layers
 	glass := t.glass[0].depth if s.glass != .All && t.glass[0].depth != 0 else s.pass.r.dummy_texture
 	maps, dummy := s.pass.frame.sun_maps, s.pass.r.dummy_texture
-	shadows := t.shadow_atlas if maps.z != 0 else dummy
+	shadows := t.shadow_raster.atlas if maps.z != 0 else dummy
 	tint := t.shadow_tint if maps.w != 0 else dummy
 	nearest := t.shadow_glass if maps.w != 0 else dummy
 	textures := [Surface_Source]rhi.Texture{.Linear_Depth = t.linear_depth, .Motion = t.motion, .Albedo = t.albedo, .Normal = t.normal, .Emission = t.emission, .Instance = instance, .Glass_Depth = glass, .Direct = t.direct, .Shadow_Atlas = shadows, .Shadow_Tint = tint, .Shadow_Glass = nearest}
