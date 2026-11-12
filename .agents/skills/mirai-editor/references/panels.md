@@ -917,6 +917,10 @@ plugins and the game, with the Details rows.
   block a shade lighter than the panel. `advanced` fields go at the end of their part, under an
   Advanced fold that starts closed and that the search opens; the API and the files do not
   distinguish them.
+- The list on the left: group names in caption type, their categories set in under them and the
+  sections of an unfolded category further in, smaller and dimmer. A click on a category shows
+  it; only its arrow folds it. A section is never the selected item: its click glides the cards
+  to its card and the category stays the selected one.
 - Editor goes first in both layers: it is not of the project but of the machine
   [preferences](#preferences). Its Panels card gives the mode of each side panel and that of each
   document type ([Floating or Docked](#layout)); it is written like the rest of the

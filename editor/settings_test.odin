@@ -241,6 +241,92 @@ advanced_settings_go_last_under_a_fold_the_search_opens :: proc(t:^testing.T) {
     testing.expect(t,shown(&s,POOL) && !shown(&s,BUDGET),"the fold keeps that it was opened")
 }
 
+// In the list, a click on a category shows it without folding it, and only
+// its arrow folds it; a section is never selected: its click glides the
+// cards to its card, easing out, while the category stays the one shown.
+@(test)
+settings_list_folds_by_the_arrow_and_a_section_glides_to_its_card :: proc(t:^testing.T) {
+    ctx:ui.Context
+    if !testing.expect(t,test_ui_init(&ctx,{})) {return}
+    defer ui.context_destroy(&ctx)
+    world:Advanced_World
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    g:=Editor_Ui{ctx=&ctx,layout=LAYOUT_DEFAULT}
+    inspector:Inspector
+    defer core.value_free(&inspector,type_info_of(Inspector))
+    app:host.App
+    s:=Session{gui=&g,info=test_world_info(&world),edit_world=&world,app=&app,inspector=&inspector}
+    d:=&s.settings_dialog
+    d.jump=-1
+    frame :: proc(t:^testing.T,s:^Session,input:ui.Input) {
+        ctx:=s.gui.ctx
+        categories:=settings_categories(s)
+        shown:=0
+        for c,i in categories {
+            if c.storage==s.settings_dialog.current {shown=i}
+        }
+        ui.frame_begin(ctx,input)
+        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(500)}) {
+            settings_nav(s,categories,shown,"",500)
+            settings_cards(s,categories[shown],"",60)
+        }
+        output:=ui.frame_end(ctx)
+        testing.expect(t,!output.overflow)
+        testing.expect_value(t,ctx.stats.layout_errors,u32(0))
+    }
+    click :: proc(t:^testing.T,s:^Session,id:ui.Id) {
+        r,found:=ui.widget_rect(s.gui.ctx,id)
+        testing.expect(t,found)
+        for phase in 0..<3 {
+            input:=ui.Input{size={1200,900},pointer=ui.rect_center(r)}
+            if phase==1 {input.down,input.pressed={.Left},{.Left}}
+            if phase==2 {input.released={.Left}}
+            frame(t,s,input)
+        }
+    }
+    categories:=settings_categories(&s)
+    at,editor:=-1,-1
+    for c,i in categories {
+        if c.storage==0 {at=i}
+        if c.storage==SETTINGS_CATEGORY_EDITOR {editor=i}
+    }
+    if !testing.expect(t,at>=0 && editor>=0 && len(categories[at].sections)==2) {return}
+    still:=ui.Input{size={1200,900},pointer_absent=true}
+    d.current=SETTINGS_CATEGORY_EDITOR
+    frame(t,&s,still)
+    frame(t,&s,still)
+    fold:=settings_fold_slot(0)
+    click(t,&s,shell_id(&g,"settings_category",at+1))
+    testing.expect_value(t,d.current,0)
+    testing.expect(t,!d.unfolded[fold],"a click on the row shows the category and does not unfold it")
+    click(t,&s,shell_id(&g,"settings_category",at+1))
+    testing.expect(t,!d.unfolded[fold],"nor a second one")
+    click(t,&s,shell_id(&g,"settings_fold",at+1))
+    testing.expect(t,d.unfolded[fold],"the arrow unfolds it")
+    frame(t,&s,still)
+
+    click(t,&s,shell_id(&g,"settings_section",(at+1)*64+1))
+    frame(t,&s,still)
+    to:=d.glide_to
+    testing.expect(t,d.glide_at>0 && to>0,"the card of the section starts gliding to the top")
+    frame(t,&s,ui.Input{size={1200,900},pointer_absent=true,dt=SETTINGS_GLIDE/3})
+    testing.expect(t,d.scroll.y>to*0.3 && d.scroll.y<to,"easing out, it has gone more than a third of the way in a third of the time")
+    frame(t,&s,ui.Input{size={1200,900},pointer_absent=true,dt=SETTINGS_GLIDE})
+    testing.expect_value(t,d.scroll.y,to)
+    testing.expect_value(t,d.glide_at,0)
+    testing.expect_value(t,d.current,0)
+    testing.expect(t,d.unfolded[fold],"a section keeps the fold of its category")
+
+    // A section of another category shows that one and glides to its card.
+    click(t,&s,shell_id(&g,"settings_category",editor+1))
+    testing.expect(t,d.current==SETTINGS_CATEGORY_EDITOR && d.scroll.y==0)
+    click(t,&s,shell_id(&g,"settings_section",(at+1)*64+1))
+    testing.expect_value(t,d.current,0)
+    for _ in 0..<3 {frame(t,&s,ui.Input{size={1200,900},pointer_absent=true,dt=SETTINGS_GLIDE})}
+    testing.expect_value(t,d.scroll.y,to)
+}
+
 // settings.set with a preset answers the section it changed, which its params do not name.
 @(test)
 settings_touched_counts_what_a_preset_changes :: proc(t:^testing.T) {

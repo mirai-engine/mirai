@@ -887,7 +887,7 @@ settings_show :: proc(s:^Session) {
     g:=s.gui
     ui.popup_close(g.ctx)
     g.modal,g.modal_scroll=.Settings,0
-    s.settings_dialog.scroll,s.settings_dialog.jump=0,-1
+    s.settings_dialog.scroll,s.settings_dialog.jump,s.settings_dialog.glide_at=0,-1,0
     settings_layer_set(s,.Project)
     settings_engine_load(s)
     settings_plugins_load(s)
