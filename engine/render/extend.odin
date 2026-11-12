@@ -470,6 +470,7 @@ BATCH_INDICES_MAX :: gpu.BATCH_INDICES_MAX
 batch_instance :: gpu.batch_instance
 batch_instance_unpack :: gpu.batch_instance_unpack
 batch_color :: gpu.batch_color
+BATCH_COLOR_PLAIN :: gpu.BATCH_COLOR_PLAIN
 
 // The key the renderer knows a world by (gpu.scene_world): the frames draw
 // the batches of the world shown.

@@ -153,6 +153,8 @@ Placed :: struct {
     rotation:mm.Quat,
     scale:[2]f32,
     id:u64,
+    color:u32, // with colored, its tint and wetness (render.batch_color), painted or given in play
+    colored:bool,
 }
 MANUAL :: u64(1) << 63
 
@@ -160,7 +162,7 @@ generated_id :: proc "contextless" (type,point:u32) -> u64 {return u64(type)<<32
 
 @(private)
 placed_of :: proc "contextless" (coord:[2]i32,b:Foliage_Instance,type:u32,id:u64) -> Placed {
-    return {type=type,position=cell_corner(coord)+b.position,rotation=mm.quat_unpack(u64(b.rotation),10),scale=b.scale,id=id}
+    return {type=type,position=cell_corner(coord)+b.position,rotation=mm.quat_unpack(u64(b.rotation),10),scale=b.scale,id=id,color=b.color,colored=b.flags&INSTANCE_COLORED!=0}
 }
 
 // Scratch of cell_expand, kept by whoever expands many cells.

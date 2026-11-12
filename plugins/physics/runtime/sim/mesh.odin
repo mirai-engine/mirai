@@ -541,9 +541,10 @@ shape_aabb_at :: proc "contextless" (w:^World,shape:^Shape,xf:Transform) -> Aabb
 mesh_collide :: proc(w:^World,mesh:^Mesh,shape:^Shape,xf:Transform,speculative:f32,out:^[1+EXTRA_MANIFOLDS]Local_Manifold) -> int #no_bounds_check {
     box:=math.aabb_expand(shape_aabb_at(w,shape,xf),speculative)
     storage:Box_Hull=---
+    scaled:Scaled_Hull=---
     points:[8]Vec3=---
     body:Convex=---
-    if shape.type>=.Box {body=convex_of(w,shape,&points,&storage)}
+    if shape.type>=.Box {body=convex_of(w,shape,&points,&storage,&scaled)}
     collector:Triangle_Collector=---
     collector.count,collector.flat_count=0,0
     query:=spatial.bvh_query(&mesh.bvh,box)
@@ -574,9 +575,10 @@ heightfield_collide :: proc(w:^World,field:^Heightfield,shape:^Shape,xf:Transfor
     column0,column1,row0,row1,ok:=heightfield_cells(field,box)
     if !ok {return 0}
     storage:Box_Hull=---
+    scaled:Scaled_Hull=---
     points:[8]Vec3=---
     body:Convex=---
-    if shape.type>=.Box {body=convex_of(w,shape,&points,&storage)}
+    if shape.type>=.Box {body=convex_of(w,shape,&points,&storage,&scaled)}
     collector:Triangle_Collector=---
     collector.count,collector.flat_count=0,0
     for row in row0..=row1 {

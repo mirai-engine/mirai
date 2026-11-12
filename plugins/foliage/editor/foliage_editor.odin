@@ -29,7 +29,7 @@ import "base:runtime"
 
 PANEL_SCOPE :: ui.Id(0x666f6c69)
 FIELD_WIDTH :: f32(84) // of the number fields of the panel: a value and its unit
-@(rodata) KEY_NAMES := [6]string{"1","2","3","4","5","6"}
+@(rodata) KEY_NAMES := [7]string{"1","2","3","4","5","6","7"}
 TOOL :: "foliage"
 RING_SEGMENTS :: 64
 SCROLL_GUTTER :: ui.SCROLL_BAR+4 // the bar of the scroll area floats over the right edge of its content
@@ -53,7 +53,7 @@ Foliage_Tool :: struct {
     using prefs:Foliage_Preferences,
     list_hovered:bool, // the pointer is over the list of types: Delete takes them out
     adjust:editor.Brush_Adjust,
-    reapplied:[dynamic]u64, // the instances a stroke of Reapply changed, each once
+    reapplied:[dynamic]u64, // the instances a stroke of Reapply or Tint changed, each once
     place_next:int,         // the selected type Place puts after the last
     edit:Edit,
     stroke:Stroke,
@@ -282,7 +282,7 @@ foliage_tool :: proc(
     ground:=foliage.ground_owner(grounds.ptr,e)
     if !tool.stroke.active && !tool.adjust.active && !tool.gizmo.drag.active {tool_keys_frame(s,tool,assets,input)}
     switch tool.mode {
-    case .Paint,.Erase,.Reapply,.Generate: brush_frame(s,tool,world,e,owner,ground,requests,assets,input,frame)
+    case .Paint,.Erase,.Reapply,.Generate,.Tint: brush_frame(s,tool,world,e,owner,ground,requests,assets,input,frame)
     case .Select: select_frame(s,tool,world,e,owner,ground,resident.ptr,assets,input,frame)
     case .Place:  place_frame(s,tool,world,owner,ground,assets,input)
     }
@@ -317,10 +317,10 @@ panel_rows :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,fol
     }
     source:=&tool.edit.source
     kit.section(ctx,editor.entity_label(world,e),"",80)
-    // The modes in two rows of three, each with its number key.
-    for row in 0..<2 {
+    // The modes in rows of three, each with its number key.
+    for row in 0..<(len(Foliage_Mode)+2)/3 {
         if kit.segments(ctx,ui.GROW,ui.metric(ctx,"control")) {
-            for i in row*3..<row*3+3 {
+            for i in row*3..<min(row*3+3,len(Foliage_Mode)) {
                 mode:=Foliage_Mode(i)
                 if ui.button(ctx,ui.id(ctx,"mode",i+1),{label=MODE_NAMES[mode],detail=KEY_NAMES[i],variant="tab",active=tool.mode==mode,width=-1,height=ui.metric(ctx,"control")-4,size=ui.metric(ctx,"font_small")}).clicked {mode_set(s,tool,assets,mode)}
             }
@@ -329,7 +329,7 @@ panel_rows :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,fol
     ground:=foliage.ground_owner(grounds.ptr,e)
     placed,has_place:=core.get(worlds,e)
     switch tool.mode {
-    case .Paint,.Erase,.Reapply,.Generate:
+    case .Paint,.Erase,.Reapply,.Generate,.Tint:
         radius:=f64(tool.radius)
         if kit.property(ctx,"Radius") {
             if ui.number_field(ctx,ui.id(ctx,"radius"),&radius,{width=ui.fixed(FIELD_WIDTH),min=f64(RADIUS_MIN),max=f64(RADIUS_MAX),has_min=true,has_max=true,speed=0.05,unit="m"}).changed {tool.radius=f32(radius)}
@@ -348,6 +348,13 @@ panel_rows :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,fol
             if kit.property(ctx,"Scale") {ui.checkbox(ctx,ui.id(ctx,"reapply_scale"),&tool.reapply_scale)}
             if kit.property(ctx,"Turn") {ui.checkbox(ctx,ui.id(ctx,"reapply_turn"),&tool.reapply_turn)}
             if kit.property(ctx,"Offset") {ui.checkbox(ctx,ui.id(ctx,"reapply_offset"),&tool.reapply_offset)}
+        }
+        if tool.mode==.Tint {
+            if kit.property(ctx,"Tint") {kit.color_field(ctx,ui.id(ctx,"tint"),&tool.tint)}
+            wet:=f64(tool.wet)*100
+            if kit.property(ctx,"Wet") {
+                if ui.number_field(ctx,ui.id(ctx,"wet"),&wet,{width=ui.fixed(FIELD_WIDTH),min=0,max=100,has_min=true,has_max=true,speed=0.5,unit="%",integer=true}).changed {tool.wet=f32(wet/100)}
+            }
         }
     case .Place:
         if kit.property(ctx,"Ground only") {ui.checkbox(ctx,ui.id(ctx,"ground_only"),&tool.ground_only)}

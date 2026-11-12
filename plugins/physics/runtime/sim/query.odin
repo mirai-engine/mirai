@@ -117,8 +117,9 @@ ray_cylinder :: proc "contextless" (o,d:Vec3,radius,half_height,max_fraction:f32
 @(private)
 ray_rounded :: proc(w:^World,shape:^Shape,o,d:Vec3,max_fraction:f32) -> (t:f32,normal:Vec3,hit:bool) {
     storage:[8]Vec3=---
+    scaled:Scaled_Hull=---
     origin:=[1]Vec3{}
-    out:=gjk_cast(shape_proxy(w,shape,&storage),{origin[:],0,0},{o,QUAT_IDENTITY},d,max_fraction)
+    out:=gjk_cast(shape_proxy(w,shape,&storage,&scaled),{origin[:],0,0},{o,QUAT_IDENTITY},d,max_fraction)
     return out.fraction,out.normal,out.hit
 }
 
@@ -245,7 +246,11 @@ shape_ray :: proc(w:^World,shape:^Shape,o,d:Vec3,max_fraction:f32) -> (t:f32,nor
     case .Capsule: return ray_capsule(o,d,shape.size.x,shape.size.y,max_fraction)
     case .Box: return ray_box(o,d,shape.size,max_fraction)
     case .Cylinder: return ray_cylinder(o,d,shape.size.x,shape.size.y,max_fraction)
-    case .Hull: return ray_hull(&w.hulls[shape.resource].hull,o,d,max_fraction)
+    case .Hull:
+        // In the space of the hull before its scale the ray keeps its fractions; the normal goes by the inverse.
+        scale:=shape.size
+        t,normal,hit=ray_hull(&w.hulls[shape.resource].hull,o/scale,d/scale,max_fraction)
+        return t,normalize(normal/scale),hit
     case .Mesh: return ray_mesh(&w.meshes[shape.resource].mesh,o,d,max_fraction)
     case .Heightfield: return ray_heightfield(&w.heightfields[shape.resource].field,o,d,max_fraction)
     }
@@ -437,7 +442,8 @@ cast_triangle :: proc(data:rawptr,a,b,c:Vec3) -> bool {
 shape_cast_local :: proc(w:^World,shape:^Shape,proxy:Proxy,xf:Transform,translation:Vec3,max_fraction:f32) -> Cast_Output {
     if shape.type<.Mesh {
         storage:[8]Vec3=---
-        return gjk_cast(shape_proxy(w,shape,&storage),proxy,xf,translation,max_fraction)
+        scaled:Scaled_Hull=---
+        return gjk_cast(shape_proxy(w,shape,&storage,&scaled),proxy,xf,translation,max_fraction)
     }
     visit:=Cast_Visit{proxy=proxy,xf=xf,translation=translation}
     triangles_visit(w,shape,proxy_aabb(proxy,xf),translation,&visit,cast_triangle)
@@ -507,7 +513,8 @@ distance_triangle :: proc(data:rawptr,a,b,c:Vec3) -> bool {
 shape_distance_local :: proc(w:^World,shape:^Shape,proxy:Proxy,xf:Transform,limit:f32) -> (Gjk_Output,bool) {
     if shape.type<.Mesh {
         storage:[8]Vec3=---
-        out:=gjk_distance(shape_proxy(w,shape,&storage),proxy,xf,nil,true)
+        scaled:Scaled_Hull=---
+        out:=gjk_distance(shape_proxy(w,shape,&storage,&scaled),proxy,xf,nil,true)
         return out,out.distance<=limit
     }
     visit:=Distance_Visit{proxy=proxy,xf=xf,limit=limit}

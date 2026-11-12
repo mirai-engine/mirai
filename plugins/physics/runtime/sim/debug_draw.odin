@@ -262,7 +262,8 @@ debug_shape :: proc(w:^World,out:^Debug_Draw,shape:^Shape,body:^Body,kind:Debug_
         debug_arc(out,q,u,v,r,1,kind)
         for side in ([4]Vec3{u,-u,v,-v}) {debug_line(out,p+r*side,q+r*side,kind)}
     case .Hull:
-        debug_hull(out,&w.hulls[shape.resource].hull,xf,kind)
+        scaled:Scaled_Hull=---
+        debug_hull(out,shape_hull_of(w,shape,false,&scaled),xf,kind)
     case .Mesh:
         mesh:=&w.meshes[shape.resource].mesh
         for t,index in mesh.triangles {

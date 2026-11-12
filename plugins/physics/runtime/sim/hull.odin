@@ -220,6 +220,50 @@ hull_free :: proc(hull:^Hull,allocator:mem.Allocator) {
 @(private)
 hull_core :: #force_inline proc "contextless" (hull:^Hull) -> ^Hull {return hull.core!=nil?hull.core:hull}
 
+// Where a hull scaled along its axes is made while it is used: the same topology, its points and planes here.
+Scaled_Hull :: struct {
+    vertices:[HULL_MAX_VERTICES]Vec3,
+    planes:[HULL_MAX_FACES]Plane,
+    hull:Hull,
+}
+
+// A hull scaled along its own axes, each scale above 0: hull itself at scale 1, otherwise made in out.
+// Its convex radius scales by the least of them, so the rounded hull stays within the scaled one; its core
+// is not made (scale hull_core(hull) for it).
+@(private)
+hull_scaled :: proc "contextless" (hull:^Hull,scale:Vec3,out:^Scaled_Hull) -> ^Hull #no_bounds_check {
+    if scale=={1,1,1} {return hull}
+    h:=&out.hull
+    h^=hull^
+    h.vertices,h.planes,h.core=out.vertices[:len(hull.vertices)],out.planes[:len(hull.planes)],nil
+    for v,i in hull.vertices {h.vertices[i]=v*scale}
+    inverse:=1/scale
+    for plane,i in hull.planes {
+        n:=normalize(plane.n*inverse)
+        h.planes[i]={n,dot(n,h.vertices[hull.edges[hull.face_edges[i]].origin])}
+    }
+    // Inertia about the center from its covariance, which a scale takes to S C S times the change of volume.
+    det:=scale.x*scale.y*scale.z
+    i:=hull.inertia
+    half:=0.5*(i[0,0]+i[1,1]+i[2,2])
+    s:=mat3_diagonal(scale)
+    covariance:=det*(s*(mat3_diagonal({half,half,half})-i)*s)
+    trace:=covariance[0,0]+covariance[1,1]+covariance[2,2]
+    h.inertia=mat3_diagonal({trace,trace,trace})-covariance
+    h.center,h.volume=hull.center*scale,hull.volume*det
+    h.aabb={hull.aabb.min*scale,hull.aabb.max*scale}
+    least:=min(scale.x,scale.y,scale.z)
+    h.inner_radius,h.convex_radius=hull.inner_radius*least,hull.convex_radius*least
+    return h
+}
+
+// The hull of a shape of type Hull at its scale, or its core with core: hull of the world itself, or made in out.
+@(private)
+shape_hull_of :: #force_inline proc "contextless" (w:^World,shape:^Shape,core:bool,out:^Scaled_Hull) -> ^Hull {
+    hull:=&w.hulls[shape.resource].hull
+    return hull_scaled(core?hull_core(hull):hull,shape.size,out)
+}
+
 @(private) hull_proxy :: #force_inline proc "contextless" (hull:^Hull) -> Proxy {return {hull.vertices,0,0}}
 
 @(private)

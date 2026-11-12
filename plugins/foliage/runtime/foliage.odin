@@ -86,6 +86,7 @@ Resident_Owner :: struct {
     ground:u32,   // the revision of its ground then
     sources:u64,  // the revision of the streaming sources its cells were chosen by
     removed:u64,  // the hash of the instances taken out of it then (Removed_Owner)
+    marked:u64,   // the hash of the marks of its instances then (Marked_Owner)
     cells:[dynamic]Resident_Cell, // in the order of the cells of the source
     kinds:[dynamic]base.Asset_Id, // the far forms its types show
     winds:[dynamic]Wind_Key,      // the variants its types sway with
@@ -100,6 +101,7 @@ Resident_Cell :: struct {
     version:u32,
     ground:u32,
     removed:u64,   // the hash of the instances taken out of it (removed_cell)
+    marked:u64,    // the hash of the marks of its instances (marked_cell)
     built:bool,
     stale:bool,    // it waits for the budget of a frame to be built again
     resident:bool, // near a streaming source
@@ -181,6 +183,7 @@ Build_Work :: struct {
     placed:[dynamic]Placed,
     orphans:[dynamic]int,
     instances:[dynamic]render.Batch_Instance,
+    colors:[dynamic]u32,      // of each of instances, what it shows of its own (render.batch_color)
     types:[dynamic]Type_Draw, // by index of the type in its source
     parts:[dynamic]Part_Draw,
     ids:[dynamic][2]u32,      // id and index of each type of the source, by id
@@ -197,7 +200,7 @@ Build_Work :: struct {
 
 build_work_destroy :: proc(w:^Build_Work) {
     expand_scratch_destroy(&w.expand)
-    delete(w.placed);delete(w.orphans);delete(w.instances)
+    delete(w.placed);delete(w.orphans);delete(w.instances);delete(w.colors)
     delete(w.types);delete(w.parts);delete(w.ids);delete(w.order);delete(w.firsts);delete(w.cursor)
     delete(w.batches);delete(w.cells);delete(w.resident);delete(w.bands);delete(w.crowns)
     w^={}
@@ -423,7 +426,7 @@ orphans_report :: proc(problems:^core.Problems,e:core.Entity,a:^host.Assets,id:b
 // cells of a Foliage are resident, and in which band each type of them is,
 // is chosen again when the streaming sources move.
 @(step="late",loops="game editor",stage="end")
-foliage_render :: proc(resident:^Foliage_Resident,data:core.Ref(Foliage_Data),grounds:core.Ref(Foliage_Ground),removals:core.Ref(Foliage_Removals),foliages:^core.Table(Foliage,.Read),worlds:^core.Table(core.World_Transform,.Read),kept:^core.Table(scene.Far_Kept,.Read),sources:core.Ref(scene.Streaming_Sources),id:core.World_Id,app:^host.App,problems:^core.Problems) {
+foliage_render :: proc(resident:^Foliage_Resident,data:core.Ref(Foliage_Data),grounds:core.Ref(Foliage_Ground),removals:core.Ref(Foliage_Removals),marks:core.Ref(Foliage_Marks),foliages:^core.Table(Foliage,.Read),worlds:^core.Table(core.World_Transform,.Read),kept:^core.Table(scene.Far_Kept,.Read),sources:core.Ref(scene.Streaming_Sources),id:core.World_Id,app:^host.App,problems:^core.Problems) {
     if resident==nil || data.ptr==nil || app.renderer==nil || app.assets==nil {return}
     a:=app.assets
     context.allocator=app.allocator
@@ -497,11 +500,13 @@ foliage_render :: proc(resident:^Foliage_Resident,data:core.Ref(Foliage_Data),gr
         far_only:=(kept!=nil && core.has(kept,e))
         gone:=removed_owner(removals.ptr,e)
         removed:=gone!=nil?gone.hash:0
+        looks:=marked_owner(marks.ptr,e)
+        marked:=looks!=nil?looks.hash:0
         if owner.far_only!=far_only {owner.built=false}
-        if owner.built && !owner.pending && owner.epoch==entry.epoch && owner.loads==entry.loads && owner.transform==world.transform && owner.ground==revision && owner.sources==streamed && owner.removed==removed {continue}
+        if owner.built && !owner.pending && owner.epoch==entry.epoch && owner.loads==entry.loads && owner.transform==world.transform && owner.ground==revision && owner.sources==streamed && owner.removed==removed && owner.marked==marked {continue}
         if resident.cells_left<=0 && owner.built {continue}
         owner.far_only=far_only
-        owner_publish(resident,owner,entry,world.transform,ground,gone,sources.ptr,id,app,problems)
+        owner_publish(resident,owner,entry,world.transform,ground,gone,looks,sources.ptr,id,app,problems)
         changed=true
     }
     if changed {resident_sweep(resident)}
@@ -607,11 +612,12 @@ source_reach :: proc(s:^Source) -> f32 {
 // whose types changed band, or of all of them; a cell that stops being
 // resident lets go of its batches and its impostors.
 @(private)
-owner_publish :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,entry:^Data_Entry,transform:mm.Transform,ground:^Ground_Owner,gone:^Removed_Owner,sources:^scene.Streaming_Sources,id:core.World_Id,app:^host.App,problems:^core.Problems) {
+owner_publish :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,entry:^Data_Entry,transform:mm.Transform,ground:^Ground_Owner,gone:^Removed_Owner,looks:^Marked_Owner,sources:^scene.Streaming_Sources,id:core.World_Id,app:^host.App,problems:^core.Problems) {
     all:=!owner.built || owner.epoch!=entry.epoch || owner.transform!=transform
     owner.epoch,owner.loads,owner.transform,owner.source=entry.epoch,entry.loads,transform,entry.id
     owner.ground=ground!=nil?ground.revision:0
     owner.removed=gone!=nil?gone.hash:0
+    owner.marked=looks!=nil?looks.hash:0
     owner.sources=sources!=nil?sources.revision:0
     s:=&entry.source
     work:=&resident.work
@@ -687,7 +693,8 @@ owner_publish :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,entry:^Da
         banded||=held.far!=was_far
         tile,revision:=ground_cell(ground,cell.coord)
         removed,removed_hash:=removed_cell(gone,cell.coord)
-        if all || banded || held.stale || !held.built || held.version!=cell.version || held.ground!=revision || held.removed!=removed_hash {
+        marks,marked_hash:=marked_cell(looks,cell.coord)
+        if all || banded || held.stale || !held.built || held.version!=cell.version || held.ground!=revision || held.removed!=removed_hash || held.marked!=marked_hash {
             // What stands for a section that is not loaded publishes no batches: it costs less.
             cost:=owner.far_only?1:CELL_COST
             if resident.cells_left<cost {
@@ -695,8 +702,8 @@ owner_publish :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,entry:^Da
                 owner.pending=true
             } else {
                 resident.cells_left-=cost
-                held.version,held.ground,held.removed,held.built,held.stale=cell.version,revision,removed_hash,true,false
-                cell_publish(resident,owner,held,s,&cell,tile,removed,transform,id,app,problems)
+                held.version,held.ground,held.removed,held.marked,held.built,held.stale=cell.version,revision,removed_hash,marked_hash,true,false
+                cell_publish(resident,owner,held,s,&cell,tile,removed,marks,transform,id,app,problems)
             }
         }
     }
@@ -708,7 +715,7 @@ owner_publish :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,entry:^Da
         if draw.error<=PREFAB_ERROR {continue}
         t:=&s.types[i]
         name:[base.ASSET_ID_TEXT]u8
-        core.report(problems,owner.entity,"foliage.prefab_transform","the parts of prefab %s of foliage type '%s' are drawn with up to %d%% of their transform left out: an instance of a batch holds one scale across x and z and one along y, without shear; give the parts of the prefab, and the Foliage entity, the same scale along x and z, and no scale under a rotation of their parents",host.assets_name(app.assets,t.prefab,&name),base.text_get(t.name[:]),int(draw.error*100+0.5))
+        core.report(problems,owner.entity,"foliage.prefab_transform","the parts of prefab %s of foliage type '%s' are drawn with up to %d%% of their transform left out: an instance of a batch holds a scale along each of its axes, without shear or mirror; give the parts of the prefab, and the Foliage entity, no scale under a rotation of their parents and no negative scale",host.assets_name(app.assets,t.prefab,&name),base.text_get(t.name[:]),int(draw.error*100+0.5))
     }
 }
 
@@ -759,10 +766,13 @@ role_instance :: proc(role:Batch_Role,variants:u32,owner:mm.Quat,placed:[]Placed
 // that; and the impostors of its types with a far form. It reuses the
 // handles the cell had for the same roles.
 @(private)
-cell_publish :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,held:^Resident_Cell,s:^Source,cell:^Cell,ground:Ground_Cell,removed:[]u64,transform:mm.Transform,id:core.World_Id,app:^host.App,problems:^core.Problems) {
+cell_publish :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,held:^Resident_Cell,s:^Source,cell:^Cell,ground:Ground_Cell,removed:[]u64,marks:[]Marked,transform:mm.Transform,id:core.World_Id,app:^host.App,problems:^core.Problems) {
     work:=&resident.work
     built:=cell_build(s,cell,ground,work,removed)
-    if built {orphans_report(problems,owner.entity,app.assets,owner.source,cell,work.orphans[:])}
+    if built {
+        orphans_report(problems,owner.entity,app.assets,owner.source,cell,work.orphans[:])
+        marks_apply(work.placed[:],marks)
+    }
     if !built || !placed_group(s,work) {
         memory_problem(problems,owner.entity,"a cell of this Foliage, which keeps what it showed")
         held.stale,owner.pending=true,true
@@ -777,7 +787,10 @@ cell_publish :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,held:^Resi
         if len(work.instances)==0 {return}
         handle:render.Batch_Handle
         for &b in held.batches {if b.type==t.id && b.part==part && b.role==role && b.handle!=0 {handle,b.handle=b.handle,0;break}}
-        next,error:=render.batch_set(app.renderer,id,handle,desc,work.instances[:])
+        // Colors only for a batch where some instance has a look of its own.
+        colors:[]u32
+        for color in work.colors {if color!=render.BATCH_COLOR_PLAIN {colors=work.colors[:];break}}
+        next,error:=render.batch_set(app.renderer,id,handle,desc,work.instances[:],colors)
         if error!="" {
             if handle!=0 {render.batch_remove(app.renderer,handle)}
             core.report(problems,owner.entity,"foliage.batch","the foliage of cell %v, type '%s', is not drawn: %s",coord,base.text_get(t.name[:]),error)
@@ -797,8 +810,10 @@ cell_publish :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,held:^Resi
         for &part,k in work.parts[draw.first:][:draw.count] {
             if !near {break}
             clear(&work.instances)
+            clear(&work.colors)
             for at in order {
                 p:=work.placed[at]
+                append(&work.colors,p.color if p.colored else render.BATCH_COLOR_PLAIN)
                 if part.identity {append(&work.instances,batch_instance_of(p,transform));continue}
                 instance,error:=part_instance(p,owner_matrix,part.placement)
                 draw.error=max(draw.error,error)
@@ -816,11 +831,14 @@ cell_publish :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,held:^Resi
                 publish(resident,owner,held,cell.coord,t,u32(k),ROLE_REST,rest,id,app,problems)
             }
             all:=make([]render.Batch_Instance,len(work.instances),context.temp_allocator)
+            all_colors:=make([]u32,len(work.colors),context.temp_allocator)
             copy(all,work.instances[:])
+            copy(all_colors,work.colors[:])
             for v in 0..<set.count {
                 clear(&work.instances)
+                clear(&work.colors)
                 for instance,n in all {
-                    if wind_variant(transform.rotation*work.placed[order[n]].rotation,set.count)==v {append(&work.instances,instance)}
+                    if wind_variant(transform.rotation*work.placed[order[n]].rotation,set.count)==v {append(&work.instances,instance);append(&work.colors,all_colors[n])}
                 }
                 variant:=part.desc
                 variant.mesh=set.variants[v]
@@ -840,6 +858,7 @@ cell_publish :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,held:^Resi
         desc.flags={.Casts_Shadow,.Rays_Only}
         desc.object_id=u64(owner.entity)
         clear(&work.instances)
+        clear(&work.colors)
         for at in order {append(&work.instances,batch_instance_of(work.placed[at],transform))}
         publish(resident,owner,held,cell.coord,t,0,ROLE_CROWN,desc,id,app,problems)
     }

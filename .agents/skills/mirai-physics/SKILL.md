@@ -210,7 +210,8 @@ tables and is the only package that imports it. The game and the other plugins, 
   - Solver: `ccd*`, `contact_rules`, `joint`, `six_dof`, `radial`, `character`,
     `mesh`, `query`, `static` (triangles and change log of static collision),
     `debug_draw`, `world` (stacks and pyramid), `snapshot`, `snapshot_fuzz`, `fluid`,
-    `collide`, `gjk`, `cylinder` and `convex_radius` (shapes and rounding); `solver` (overflowed
+    `collide`, `gjk`, `cylinder`, `hull` (a hull scaled along its axes) and `convex_radius` (shapes
+    and rounding); `solver` (overflowed
     pairs, inertia, islands, uncolored constraints); `far` (the same scene 20 km from the origin);
     `breakable`, `breakable_damage`, `breakable_state` and `breakable_world` (what a step, a
     snapshot and a copy do with what breaks).

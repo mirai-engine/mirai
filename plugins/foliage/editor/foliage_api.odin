@@ -80,7 +80,7 @@ Type_Remove_Params :: struct {
 
 Paint_Params :: struct {
     entity:editor.Api_Entity_Text `mirai:"text,entity,label=The entity of the Foliage"`,
-    mode:[16]u8 `mirai:"text,label=paint or erase or reapply or generate or ungenerate"`,
+    mode:[16]u8 `mirai:"text,label=paint or erase or reapply or tint or generate or ungenerate"`,
     at:[3]f32 `mirai:"label=Where the brush touches in the world: the surface under it"`,
     to:[3]f32 `mirai:"optional,label=Where the stroke goes on to touching every half radius"`,
     radius:f32 `mirai:"optional,min=0.1,max=500,unit=m"`,
@@ -88,6 +88,8 @@ Paint_Params :: struct {
     density:f32 `mirai:"optional,min=0.01,max=1,label=Of paint: of the density of each type"`,
     erase_density:f32 `mirai:"optional,min=0,max=1,label=Of erase: of the density of each type it leaves"`,
     ground_only:bool `mirai:"optional,label=Of paint: only on the ground of the foliage (a terrain)"`,
+    tint:[3]f32 `mirai:"optional,min=0,max=1,label=Of tint: what multiplies the colors of the instances; white and dry: their own look"`,
+    wet:f32 `mirai:"optional,min=0,max=1,label=Of tint: how wet they are, 0 dry to 1 soaked"`,
 }
 
 Place_Params :: struct {
@@ -139,13 +141,13 @@ Foliage_Query_Result :: struct {
 @(private)
 foliage_api_register :: proc(s:^editor.Session) {
     editor.tool_entry(s,TOOL,"Foliage",.Edit,{key=.G,set=true})
-    paint_defaults:=Paint_Params{radius=3,density=1}
+    paint_defaults:=Paint_Params{radius=3,density=1,tint={1,1,1}}
     query_defaults:=Query_Params{limit=256}
     editor.api_method_register(s,{name="foliage.create",summary="Makes a Foliage in the edited scene, with a new .foliage of no types; one step of undo takes it and its file away.",params=type_info_of(Create_Params),result=type_info_of(Foliage_Create_Result),run=api_create})
     editor.api_method_register(s,{name="foliage.type_add",summary="Adds a type of foliage that shows a mesh with the values it is given, as one step of undo; the name it answers names it in the other methods.",params=type_info_of(Type_Add_Params),result=type_info_of(Type_Result),run=api_type_add})
     editor.api_method_register(s,{name="foliage.type_set",summary="Changes the values of a type of foliage it is given, as one step of undo; the others stay: its mesh, how dense, large, turned and leaned it is, its offset, its rule of slope, height and terrain layers, its distances, wind and shadow.",params=type_info_of(Type_Set_Params),result=type_info_of(Type_Result),run=api_type_set})
     editor.api_method_register(s,{name="foliage.type_remove",summary="Takes a type of foliage out with its instances, as one step of undo.",params=type_info_of(Type_Remove_Params),flags={.Destructive},result=type_info_of(Type_Result),run=api_type_remove})
-    editor.api_method_register(s,{name="foliage.paint",summary="One stroke of the foliage brush from at to to (or at alone), as one step of undo: paint fills the ring to the density of each type under its rules, erase leaves erase_density of it, reapply gives the instances the scale, turn and offset of their type again, generate and ungenerate turn the generator of the cells under the ring on or off.",params=type_info_of(Paint_Params),defaults=&paint_defaults,result=type_info_of(Foliage_Paint_Result),run=api_paint})
+    editor.api_method_register(s,{name="foliage.paint",summary="One stroke of the foliage brush from at to to (or at alone), as one step of undo: paint fills the ring to the density of each type under its rules, erase leaves erase_density of it, reapply gives the instances the scale, turn and offset of their type again, tint gives them a tint and a wetness the source keeps, generate and ungenerate turn the generator of the cells under the ring on or off.",params=type_info_of(Paint_Params),defaults=&paint_defaults,result=type_info_of(Foliage_Paint_Result),run=api_paint})
     editor.api_method_register(s,{name="foliage.place",summary="Puts one instance of a type on the surface under a point, with the scale, turn and offset of its type at random, as one step of undo.",params=type_info_of(Place_Params),result=type_info_of(Type_Result),run=api_place})
     editor.api_method_register(s,{name="foliage.query",summary="The types of a Foliage with how many instances each shows, and the instances inside a box of the world: type, where they are, their scale and whether they are manual or generated.",params=type_info_of(Query_Params),defaults=&query_defaults,flags={.Read_Only},result=type_info_of(Foliage_Query_Result),run=api_query})
 }
@@ -395,9 +397,10 @@ api_paint :: proc(s:^editor.Session,call:^api.Call) {
     case "paint":      mode=.Paint
     case "erase":      mode=.Erase
     case "reapply":    mode=.Reapply
+    case "tint":       mode=.Tint
     case "generate":   mode=.Generate
     case "ungenerate": mode,generate=.Generate,false
-    case: api.call_fail(call,api.INVALID_PARAMS,"mode is paint, erase, reapply, generate or ungenerate");return
+    case: api.call_fail(call,api.INVALID_PARAMS,"mode is paint, erase, reapply, tint, generate or ungenerate");return
     }
     tool,world,e,owner,ground,ok:=api_foliage(s,call,p.entity[:])
     if !ok {return}
@@ -429,6 +432,7 @@ api_paint :: proc(s:^editor.Session,call:^api.Call) {
     if len(tool.painted)==0 {for t in source.types {append(&tool.painted,t.id)}}
     if len(tool.painted)==0 && mode!=.Generate {api.call_fail(call,api.INVALID_PARAMS,"The foliage has no type: foliage.type_add adds one");return}
     tool.radius,tool.paint_density,tool.erase_density,tool.ground_only=clamp(p.radius,RADIUS_MIN,RADIUS_MAX),clamp(p.density,0.01,1),clamp(p.erase_density,0,1),p.ground_only
+    tool.tint,tool.wet=linalg.clamp(p.tint,0,1),clamp(p.wet,0,1)
     tool.stroke={active=true,mode=mode,generate=generate}
     edit_baseline(tool)
     step:=to-from
@@ -444,9 +448,8 @@ api_paint :: proc(s:^editor.Session,call:^api.Call) {
         changed|=brush_touch(s,tool,world,owner,to_local,ground,at,normal)
     }
     if !changed {changed_write(call,false);return}
-    labels:=[Foliage_Mode]string{.Paint="Paint foliage",.Erase="Erase foliage",.Select="",.Place="",.Reapply="Reapply foliage",.Generate="Generate foliage"}
     s.toast_length=0
-    if !edit_commit(s,tool,world,s.app.assets,labels[mode]) {editor.tool_call_fail(s,call,"The stroke could not be kept");return}
+    if !edit_commit(s,tool,world,s.app.assets,STROKE_LABELS[mode]) {editor.tool_call_fail(s,call,"The stroke could not be kept");return}
     changed_write(call,true)
 }
 

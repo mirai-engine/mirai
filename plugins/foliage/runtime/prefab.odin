@@ -19,18 +19,19 @@ Prefab_Part :: struct {
 }
 
 // A Collider of a prefab, as a type of Prefab collision collides, and where
-// it is from the root.
+// it is from the root; for a Hull, what its entity shows.
 Prefab_Collider :: struct {
     collider:physics.Collider,
     placement:mm.Mat4,
+    renderer:render.Mesh_Renderer,
 }
 
 // The parts of an open prefab, appended to out: its entities with a
 // Mesh_Renderer that is on and not hidden, under its root; and with
-// colliders, its Colliders that are on, of a kind an owned body holds (Box,
-// Sphere, Capsule, Cylinder) and block, appended there: left_out counts the
-// others. False when it is not a prefab this reads (no single root, a parent
-// that is not there).
+// colliders, its Colliders that are on, block and are of a kind an instance
+// has (Box, Sphere, Capsule, Cylinder, or Hull of an entity that shows a
+// mesh), appended there: left_out counts the others. False when it is not a
+// prefab this reads (no single root, a parent that is not there).
 prefab_parts :: proc(file:^asset.Asset,types:^asset.Types,out:^[dynamic]Prefab_Part,colliders:^[dynamic]Prefab_Collider=nil) -> (ok:bool,left_out:int) {
     view,error:=asset.scene_view(file,types)
     if error!=.None {return}
@@ -99,8 +100,11 @@ prefab_parts :: proc(file:^asset.Asset,types:^asset.Types,out:^[dynamic]Prefab_P
         if row>=count || is_off(view,row,"Collider") {continue}
         placement,_,walked:=placed(view,locals,hidden,root,row)
         if !walked {return}
+        shown:render.Mesh_Renderer
+        for renderer,j in renderers[:min(len(renderers),len(renderer_rows))] {if int(renderer_rows[j])==row {shown=renderer}}
         #partial switch shape.kind {
-        case .Box,.Sphere,.Capsule,.Cylinder: if !shape.sensor {append(colliders,Prefab_Collider{shape,placement});continue}
+        case .Box,.Sphere,.Capsule,.Cylinder: if !shape.sensor {append(colliders,Prefab_Collider{shape,placement,{}});continue}
+        case .Hull: if !shape.sensor && (shown.mesh!={} || shown.shape!=.None) {append(colliders,Prefab_Collider{shape,placement,shown});continue}
         }
         left_out+=1
     }

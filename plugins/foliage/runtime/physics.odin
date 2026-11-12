@@ -1,7 +1,9 @@
 package foliage
 
+import "core:slice"
 import "mirai:core"
 import "mirai:host"
+import render "mirai:engine/render"
 import "mirai:std/base"
 import scene "mirai:engine/scene"
 import mm "mirai:std/math"
@@ -25,6 +27,7 @@ Foliage_Physics :: struct {
     owners:[dynamic]Physics_Owner,
     cells:[dynamic]Physics_Cell,
     shapes:[dynamic]Physics_Shape, // by cell, in the order of its instances
+    hulls:[dynamic]physics.Hull_Handle, // asked of physics (owned_hulls), each once, until no shape uses it
     stats:Foliage_Physics_Stats,
 }
 Foliage_Physics_Stats :: struct {bodies,shapes,removed:u64}
@@ -64,25 +67,41 @@ Type_Shape :: struct {
     type:u32,
     collider:physics.Collider,
     placement:mm.Mat4,
+    hull:physics.Hull_Handle, // of a Hull collider, which every instance scales
 }
 
 // The shapes of the types of a source that collide, appended to out in the
-// order of the types: its capsule or box, standing on the instance, or the
-// colliders of its prefab. left_out: the types of Prefab collision without
-// a prefab, and the colliders of prefabs an instance cannot have (a Hull, a
-// Mesh, a sensor). Without assets a prefab gives none.
-type_shapes :: proc(s:^Source,assets:^host.Assets,out:^[dynamic]Type_Shape) -> (left_out:int) {
+// order of the types: its capsule or box, standing on the instance, the
+// colliders of its prefab, or the convex hulls of its meshes, asked of
+// physics once for every instance and kept in fp.hulls. left_out: the types
+// of Prefab or Hull collision without what they collide as (no prefab, a
+// mesh without collision geometry, no room for hulls) and the colliders of
+// prefabs an instance cannot have (a Mesh, a sensor). Without assets a
+// prefab gives none.
+type_shapes :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,s:^Source,assets:^host.Assets,out:^[dynamic]Type_Shape) -> (left_out:int) {
+    // The hulls of what a renderer shows, each a shape of the collider placed as the renderer is.
+    hulls_of :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,assets:^host.Assets,renderer:render.Mesh_Renderer,type:u32,collider:physics.Collider,placement:mm.Mat4,out:^[dynamic]Type_Shape) -> bool {
+        made:=make([dynamic]physics.Hull_Handle,context.temp_allocator)
+        if !physics.owned_hulls(state,assets,renderer,&made) {return false}
+        for hull in made {
+            append(out,Type_Shape{type,collider,placement,hull})
+            if !slice.contains(fp.hulls[:],hull) {append(&fp.hulls,hull)}
+        }
+        return true
+    }
     for t in s.types {
+        hull:=physics.collider_hull()
+        hull.preset=physics.Collision_Preset(t.preset)
         switch t.collision {
         case .None:
         case .Capsule:
             c:=physics.collider_capsule(t.size.x,max(t.size.y*0.5-t.size.x,0))
             c.center.y,c.preset=max(t.size.y*0.5,t.size.x),physics.Collision_Preset(t.preset)
-            append(out,Type_Shape{t.id,c,1})
+            append(out,Type_Shape{t.id,c,1,{}})
         case .Box:
             c:=physics.collider_box(t.size*0.5)
             c.center.y,c.preset=t.size.y*0.5,physics.Collision_Preset(t.preset)
-            append(out,Type_Shape{t.id,c,1})
+            append(out,Type_Shape{t.id,c,1,{}})
         case .Prefab:
             file:=assets!=nil && t.prefab!={} ? host.assets_scene(assets,t.prefab) : nil
             if file==nil {
@@ -93,7 +112,25 @@ type_shapes :: proc(s:^Source,assets:^host.Assets,out:^[dynamic]Type_Shape) -> (
             colliders:=make([dynamic]Prefab_Collider,context.temp_allocator)
             _,skipped:=prefab_parts(file,&assets.types,&parts,&colliders)
             left_out+=skipped
-            for c in colliders {append(out,Type_Shape{t.id,c.collider,c.placement})}
+            for c in colliders {
+                if c.collider.kind!=.Hull {append(out,Type_Shape{t.id,c.collider,c.placement,{}});continue}
+                if !hulls_of(fp,state,assets,c.renderer,t.id,c.collider,c.placement,out) {left_out+=1}
+            }
+        case .Hull:
+            if t.mesh!={} {
+                if !hulls_of(fp,state,assets,{mesh=t.mesh},t.id,hull,1,out) {left_out+=1}
+                continue
+            }
+            file:=assets!=nil && t.prefab!={} ? host.assets_scene(assets,t.prefab) : nil
+            if file==nil {
+                if t.prefab=={} {left_out+=1}
+                continue
+            }
+            parts:=make([dynamic]Prefab_Part,context.temp_allocator)
+            prefab_parts(file,&assets.types,&parts)
+            for part in parts {
+                if !hulls_of(fp,state,assets,part.renderer,t.id,hull,part.placement,out) {left_out+=1}
+            }
         }
     }
     return
@@ -125,7 +162,12 @@ instance_shape :: proc "contextless" (shape:Type_Shape,p:Placed,coord:[2]i32,own
     at:=(p.position-cell_corner(coord))*owner.scale
     m:=mm.transform_matrix({position=at,rotation=p.rotation,scale=s})*shape.placement*mm.transform_matrix({position=shape.collider.center,rotation=1,scale=1})
     position,rotation,scale,_:=matrix_pose(m)
-    made.collider=collider_scaled(shape.collider,scale) or_return
+    if shape.collider.kind==.Hull {
+        made.collider,made.hull,made.scale=shape.collider,shape.hull,scale
+        made.collider.center=0
+    } else {
+        made.collider=collider_scaled(shape.collider,scale) or_return
+    }
     made.position,made.rotation,made.user=position,rotation,p.id
     return made,true
 }
@@ -267,6 +309,13 @@ cell_take_out :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,index:int
     }
 }
 
+// Gives back to physics the hulls no shape uses any more.
+hulls_sweep :: proc(fp:^Foliage_Physics,state:^physics.Physics_State) {
+    for i:=len(fp.hulls)-1;i>=0;i-=1 {
+        if physics.owned_hull_release(state,fp.hulls[i]) {unordered_remove(&fp.hulls,i)}
+    }
+}
+
 // The instance of a Foliage a hit of physics met; false for anything else.
 hit_of :: proc(state:core.Ref(physics.Physics_State),hit:physics.Hit) -> (found:Foliage_Plant,ok:bool) {
     return shape_instance(state.ptr,hit.body,hit.shape)
@@ -288,6 +337,8 @@ foliage_physics :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,collisi
     // Without settings every preset is the Default category, colliding with all.
     defaults:physics.Collision_Settings
     settings:=collision.ptr if collision.ptr!=nil else &defaults
+    built:=false
+    defer if built {hulls_sweep(fp,state)}
     for i:=len(fp.owners)-1;i>=0;i-=1 {
         owner:=fp.owners[i]
         f,shown:=core.get(foliages,owner.entity)
@@ -295,6 +346,7 @@ foliage_physics :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,collisi
         if shown && f.source==owner.source && !(kept!=nil && core.has(kept,owner.entity)) {continue}
         physics_owner_clear(fp,state,owner.entity)
         unordered_remove(&fp.owners,i)
+        built=true
     }
     placed:=core.join(foliages,worlds)
     for e,f,world in core.each_joined(&placed) {
@@ -317,10 +369,11 @@ foliage_physics :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,collisi
         all:=owner.epoch!=entry.epoch || owner.transform!=world.transform
         owner.epoch,owner.loads,owner.ground,owner.transform,owner.source,owner.removed=entry.epoch,entry.loads,revision,world.transform,f.source,removed
         shapes:=make([dynamic]Type_Shape,context.temp_allocator)
-        if type_shapes(&entry.source,assets,&shapes)>0 {
-            core.report(problems,e,"foliage.collision","a type of its foliage collides as its prefab but has no prefab, or its prefab has colliders an instance cannot have (Hull, Mesh, sensor): give the type a prefab whose colliders are boxes, spheres, capsules or cylinders")
+        if type_shapes(fp,state,&entry.source,assets,&shapes)>0 {
+            core.report(problems,e,"foliage.collision","a type of its foliage collides as its prefab or its hulls but has nothing it can collide as: give a Prefab type a prefab whose colliders are boxes, spheres, capsules, cylinders or hulls; give a Hull type a mesh with collision geometry; or raise the hulls of Physics_Settings")
         }
         complete,enough:=physics_owner_build(fp,state,settings,e,&entry.source,world.transform,shapes[:],ground,all,gone)
+        built=true
         if !enough {
             owner.loads=0
             memory_problem(problems,e,"the collision of its foliage: some cells do not collide")

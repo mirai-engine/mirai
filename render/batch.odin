@@ -88,6 +88,8 @@ batch_instance_rows :: proc "contextless" (b: Batch_Instance) -> [3]Vec4 {
 // What an instance of a batch shows of its own (batch_set): a tint, which
 // multiplies that of its batch, and how wet it is, 0 dry to 1 soaked, as an
 // instance of the scene is (scene_set_instance_wet); a byte each.
+BATCH_COLOR_PLAIN :: u32(0x00ffffff) // batch_color({1, 1, 1}, 0): the tint of its batch alone, dry
+
 batch_color :: proc "contextless" (tint: Vec3, wet: f32) -> u32 {
 	unorm :: proc "contextless" (v: f32) -> u32 {return u32(clamp(v, 0, 1) * 255 + 0.5)}
 	return unorm(tint.x) | unorm(tint.y) << 8 | unorm(tint.z) << 16 | unorm(wet) << 24

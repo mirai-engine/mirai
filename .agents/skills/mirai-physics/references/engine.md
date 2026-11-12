@@ -649,6 +649,14 @@ cells, makes static bodies of its own in the simulation (`owned.odin`) instead o
   hits name and its own index of the body, and each shape with `owned_shape_create` from a
   primitive `Collider`, a pose in the frame of the body and its own index of the shape. What is
   not made says why: no room in `Physics_Settings`, or no memory.
+- A `Hull` shape takes one of `owned_hulls` (the convex pieces of what a mesh shows, at scale 1,
+  shared with every collider made from that mesh at scale 1) and a scale along its axes: many
+  shapes of many sizes share one hull slot. The owner gives each hull to `owned_hull_release`
+  once its shapes are gone; the slot stays while any shape uses it.
+- **Scaled hulls** (`sim`): `Shape_Desc.scale` scales a hull shape along its own axes; the solver
+  sees it scaled where it reads it (`shape_hull_of`: contacts, GJK proxies, rays, mass, bounds,
+  buoyancy, the triangles of the static collision) and its convex radius by the least scale, so
+  the rounded hull stays inside the scaled one.
 - It keeps the handles in a storage of the world, so a copy for Play or a rollback carries them
   with the simulation, and moves and ends them itself (`owned_body_place`, `owned_body_destroy`,
   `owned_shape_destroy`): physics never makes, moves or ends an owned body.

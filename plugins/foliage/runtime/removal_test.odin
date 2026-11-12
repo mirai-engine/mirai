@@ -8,6 +8,7 @@ import "mirai:host"
 import wire "mirai:net"
 import "mirai:std/base"
 import mm "mirai:std/math"
+import render "mirai:engine/render"
 import "mirai:std/serial"
 import physics "plugins:physics/runtime"
 
@@ -21,8 +22,10 @@ Removal_World :: struct {
     foliages:core.Table(Foliage),
     worlds:core.Table(core.World_Transform),
     removed:core.Table(Foliage_Removed),
+    marked:core.Table(Foliage_Marked),
     data:Foliage_Data,
     removals:Foliage_Removals,
+    marks:Foliage_Marks,
     requests:Foliage_Requests,
     network:core.Network,
 }
@@ -142,7 +145,7 @@ instances_taken_out_are_one_entity_for_each_cell_that_the_cell_leaves_out :: pro
     defer core.value_free(&fp,type_info_of(Foliage_Physics))
     collision:physics.Collision_Settings
     types:=make([dynamic]Type_Shape,context.temp_allocator)
-    type_shapes(s,nil,&types)
+    type_shapes(nil,nil,s,nil,&types)
     {complete,enough:=physics_owner_build(&fp,&simulation,&collision,wood,s,{scale={1,1,1},rotation=1},types[:]);testing.expect(t,complete && enough)}
     shapes:=int(simulation.world.shape_count)
     body:physics.Body_Handle
@@ -369,4 +372,56 @@ an_instance_taken_out_later_sends_a_small_part_of_its_cell :: proc(t:^testing.T)
         sent:=int(desc.bit_max_bits[count_bit])+int(desc.bit_max_bits[bit])
         if !testing.expect(t,sent*16<desc.max_bits,"one id taken out sends a sixteenth of the cell at most") {return}
     }
+}
+
+@(private="file")
+marks_step :: proc(r:^Removal_Test) {
+    w:=&r.w
+    foliage_marks(&r.marks,&r.requests,&w.marked,core.read(&w.foliages),core.read(&w.ids),core.ref(&r.network),core.commands(w,test_world_info(w)),r.app.allocator,&r.problems)
+    test_world_settle(w)
+}
+
+// The game marks instances in play (burnt, wet): the end that decides keeps
+// each mark of a cell in one entity, a later mark of an instance changes its
+// entry, the cell shows them over its own look, and taking the entity away
+// gives them their look back. A client asks nothing.
+@(test)
+marks_of_play_are_one_entry_for_each_instance_of_their_cell :: proc(t:^testing.T) {
+    r:Removal_Test
+    defer removal_destroy(&r)
+    s:=removal_init(t,&r,{65,66})
+    if s==nil {return}
+    tree:=source_type_add(s,"tree",{2,2})
+    coord,manual:=source_instance_add(s,tree.id,{40,0,5},u32(mm.quat_pack(1,10)),{1,1})
+    source_instance_add(s,tree.id,{45,0,5},u32(mm.quat_pack(1,10)),{1,1})
+    wood:=removal_foliage(&r,800)
+    plant:=Foliage_Plant{wood,coord,MANUAL|u64(manual)}
+    r.network.role=.Client
+    foliage_mark(&r.requests,plant,{0.1,0.1,0.1},0)
+    marks_step(&r)
+    testing.expect_value(t,core.count(&r.w.marked),0)
+    r.network.role=.Server
+    foliage_mark(&r.requests,plant,{0.1,0.1,0.1},0)
+    marks_step(&r)
+    foliage_mark(&r.requests,plant,{0.2,0.2,0.2},1)
+    marks_step(&r)
+    marks_step(&r)
+    testing.expect_value(t,core.count(&r.w.marked),1)
+    page:=core.at(&r.w.marked,0)
+    testing.expect(t,page.foliage==800 && page.coord==coord && page.count==1,"one entry, changed in place")
+    wet:=render.batch_color({0.2,0.2,0.2},1)
+    testing.expect_value(t,page.instances[0].color,wet)
+    marks,hash:=marked_cell(marked_owner(&r.marks,wood),coord)
+    testing.expect(t,len(marks)==1 && hash!=0)
+    work:Build_Work
+    defer build_work_destroy(&work)
+    cell_build(s,source_cell(s,coord),{},&work)
+    marks_apply(work.placed[:],marks)
+    for p in work.placed {testing.expect(t,p.colored==(p.id==plant.instance) && (!p.colored || p.color==wet),"only the marked one")}
+    // Without the entity, the cell has no marks.
+    core.destroy(&r.w.entities,core.entity_at(&r.w.marked,0))
+    test_world_settle(&r.w)
+    marks_step(&r)
+    marks,hash=marked_cell(marked_owner(&r.marks,wood),coord)
+    testing.expect(t,len(marks)==0 && hash==0)
 }
