@@ -22,6 +22,8 @@ Chunk_Mesh :: struct {
     cell:[3]f32,
     remap:[dynamic]i32,
     holes:[dynamic]u8, // of the cells of a Heightfield collider
+    materials:[dynamic]base.Asset_Id, // what the cells of a Heightfield collider show
+    surfaces:[dynamic]u8, // of each of those cells, its index in materials; none with one material
     samples:[dynamic]f32, // of a Volume: the window of samples a build reads
     locked:[dynamic]bool, // of a node of a Volume, by vertex: on a side of its region another piece shares, where its levels keep it
     render:host.Mesh_Render_Geometry, // what the renderer takes of geometry, made by the job that built it
@@ -45,6 +47,8 @@ chunk_mesh_init :: proc(mesh:^Chunk_Mesh,allocator:=context.allocator) {
     mesh.heights=make([dynamic]f32,allocator)
     mesh.remap=make([dynamic]i32,allocator)
     mesh.holes=make([dynamic]u8,allocator)
+    mesh.materials=make([dynamic]base.Asset_Id,allocator)
+    mesh.surfaces=make([dynamic]u8,allocator)
     mesh.samples=make([dynamic]f32,allocator)
     mesh.locked=make([dynamic]bool,allocator)
     host.assets_render_geometry_init(&mesh.render,allocator)
@@ -63,6 +67,7 @@ chunk_mesh_destroy :: proc(mesh:^Chunk_Mesh) {
     delete(mesh.uv1s);delete(mesh.heights)
     delete(mesh.remap)
     delete(mesh.holes);delete(mesh.samples)
+    delete(mesh.materials);delete(mesh.surfaces)
     delete(mesh.locked)
     host.assets_render_geometry_destroy(&mesh.render)
     piece_border_destroy(&mesh.border)
@@ -187,6 +192,7 @@ chunk_mesh_clear :: proc(mesh:^Chunk_Mesh) {
     mesh.render_ready,mesh.grid=false,false
     geom.mesh_buffer_clear(&mesh.geometry)
     clear(&mesh.uv1s);clear(&mesh.heights);clear(&mesh.disabled_edges);clear(&mesh.disabled_borders);clear(&mesh.holes);clear(&mesh.locked)
+    clear(&mesh.materials);clear(&mesh.surfaces)
     mesh.columns,mesh.rows=0,0
     mesh.origin,mesh.cell={},{}
 }
@@ -260,7 +266,42 @@ chunk_build_terrain :: proc(s:^Source,coord:[3]i32,mesh:^Chunk_Mesh,collision:=t
     }
     mesh.columns,mesh.rows=columns,rows
     mesh.cell={s.cell,1,s.cell}
+    if !chunk_cell_materials(s,low.xz,columns,rows,mesh) {return false}
     return chunk_heightfield_borders(s,low,high,mesh,join.cuts)
+}
+
+// The material each cell of a Heightfield collider shows: the one whose
+// layers cover most of the cell, by the weights its four corners show added
+// up by material, the first material on a tie. With one material the cells
+// name none.
+@(private)
+chunk_cell_materials :: proc(s:^Source,low:[2]int,columns,rows:int,mesh:^Chunk_Mesh) -> bool {
+    of_layer:[LAYERS_MAX]int
+    for layer,i in s.layers[:s.layer_count] {
+        of_layer[i]=-1
+        for material,at in mesh.materials {if material==layer.material {of_layer[i]=at}}
+        if of_layer[i]<0 {
+            of_layer[i]=len(mesh.materials)
+            if append(&mesh.materials,layer.material)!=1 {return false}
+        }
+    }
+    if len(mesh.materials)<2 {return true}
+    shown,error:=make([][LAYERS_MAX]f32,columns*rows,context.temp_allocator)
+    if error!=nil || resize(&mesh.surfaces,(columns-1)*(rows-1))!=nil {return false}
+    for row in 0..<rows {for column in 0..<columns {
+        x,z:=low.x+column,low.y+row
+        shown[row*columns+column]=heightfield_weights(s,x,z,source_point(s,{x,0,z}).y)
+    }}
+    for row in 0..<rows-1 {for column in 0..<columns-1 {
+        at:=row*columns+column
+        corners:=shown[at]+shown[at+1]+shown[at+columns]+shown[at+columns+1]
+        cover:[LAYERS_MAX]f32
+        for layer in 0..<int(s.layer_count) {cover[of_layer[layer]]+=corners[layer]}
+        best:=0
+        for material in 1..<len(mesh.materials) {if cover[material]>cover[best] {best=material}}
+        mesh.surfaces[row*(columns-1)+column]=u8(best)
+    }}
+    return true
 }
 
 // The attributes of the vertex of a Heightfield sample, in the space of the
@@ -271,8 +312,15 @@ chunk_build_terrain :: proc(s:^Source,coord:[3]i32,mesh:^Chunk_Mesh,collision:=t
 heightfield_vertex :: proc "contextless" (s:^Source,x,z,step:int) -> (position,normal:[3]f32,uv,uv1:[2]f32) {
     position=source_point(s,{x,0,z})
     normal=heightfield_normal(s,x,z,step)
-    w:=layers_vertex(s,weights_float(grid_get(&s.weights,x,z)),heightfield_normal(s,x,z,LAYER_RULE_SAMPLES),position.y)
+    w:=heightfield_weights(s,x,z,position.y)
     return position,normal,{w[0],w[1]},{w[2],w[3]}
+}
+
+// The weights of the layers a Heightfield sample shows: those painted, under
+// the automatic layers.
+@(private)
+heightfield_weights :: proc "contextless" (s:^Source,x,z:int,height:f32) -> [4]f32 {
+    return layers_vertex(s,weights_float(grid_get(&s.weights,x,z)),heightfield_normal(s,x,z,LAYER_RULE_SAMPLES),height)
 }
 
 // A vertex inside the cell whose lowest sample is at, a step of 2^detail per
@@ -463,7 +511,7 @@ chunk_publish :: proc(a:^host.Assets,mesh:^Chunk_Mesh,collision:=true,picking:=f
     heightfield:host.Assets_Heightfield
     if mesh.grid && collision && mesh.columns>0 {
         // In the space of the chunk, whose first sample is its origin.
-        heightfield={heights=mesh.heights[:],columns=mesh.columns,rows=mesh.rows,cell=mesh.cell,disabled_borders=mesh.disabled_borders[:],holes=mesh.holes[:]}
+        heightfield={heights=mesh.heights[:],columns=mesh.columns,rows=mesh.rows,cell=mesh.cell,disabled_borders=mesh.disabled_borders[:],holes=mesh.holes[:],materials=mesh.materials[:],surfaces=mesh.surfaces[:]}
         options.heightfield=&heightfield
     }
     slots:=[1]base.Asset_Id{}

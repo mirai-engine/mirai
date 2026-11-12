@@ -138,6 +138,28 @@ chunks_carry_the_layer_weights_in_their_uvs :: proc(t:^testing.T) {
 }
 
 @(test)
+each_collider_cell_shows_the_material_that_covers_most_of_it :: proc(t:^testing.T) {
+    height:Source;defer source_destroy(&height)
+    layers_fixture(t,&height,.Heightfield)
+    rock:=height.layers[1].material
+    _=source_edit(&height,{kind=.Paint,center=source_origin(&height)+{4,0,4},radius=3,amount=1,layer=1})
+    // Rock is the layer that covers most of cell (0,0), but layers 0 and 2 share a material that covers more.
+    testing.expect(t,grid_prepare(&height.weights,{0,0,0},{1,0,1},height.allocator))
+    for x in 0..=1 {for z in 0..=1 {grid_set(&height.weights,x,z,Weights{75,105,75,0})}}
+    mesh:Chunk_Mesh;chunk_mesh_init(&mesh);defer chunk_mesh_destroy(&mesh)
+    testing.expect(t,chunk_build(&height,{0,0,0},&mesh,true))
+    if !testing.expect(t,len(mesh.materials)==2 && mesh.materials[0]=={} && mesh.materials[1]==rock && len(mesh.surfaces)==8*8) {return}
+    testing.expect(t,mesh.surfaces[4*8+4]==1 && mesh.surfaces[3*8+3]==1)
+    testing.expect_value(t,mesh.surfaces[0],u8(0))
+    testing.expect_value(t,mesh.surfaces[7*8+7],u8(0))
+    // One material: the cells name none.
+    fresh:Source;defer source_destroy(&fresh)
+    testing.expect(t,source_make(&fresh,.Heightfield,{9,1,9},1,8))
+    testing.expect(t,chunk_build(&fresh,{0,0,0},&mesh,true))
+    testing.expect(t,len(mesh.materials)==1 && len(mesh.surfaces)==0)
+}
+
+@(test)
 layer_materials_fill_the_textures_and_values_of_the_layered_program :: proc(t:^testing.T) {
     source:Source;defer source_destroy(&source)
     layers_fixture(t,&source,.Heightfield)

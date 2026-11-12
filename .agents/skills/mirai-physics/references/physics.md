@@ -83,6 +83,13 @@ constants and parameters: `types.odin` and the comments of each file.
   `cell × (column, height, row)` and the diagonal between `(column+1,row)` and `(column,row+1)`;
   contacts and queries walk the nearby cells without storing triangles. `holes` cells have no
   surface for contacts, rays, sweeps or drawing, and their edges with the neighbors stay active.
+- A heightfield may name its `surfaces` (`Surface`, the caller's 128-bit name of a material) and the
+  one each cell shows (`cell_surfaces`). Rays, sweeps (`Ray_Hit.surface`), contact events and hits
+  name the surface of shape A where they touched: a cluster of triangles takes the one of its
+  deepest triangle, and a manifold keeps it in its state, so a carried manifold keeps it too.
+- `world_set_surface_rules` (state, as the push rules) gives a surface its friction and restitution,
+  which replace those of the heightfield shape in each manifold on it and mix with shape B as two
+  shapes do. A surface without a rule is the shape's.
 - `Mesh_Desc.disabled_edges` and `Heightfield_Desc.disabled_borders` only deactivate seams that the
   neighbor makes flat or concave (`mesh_edge_active` is the criterion): they do not suppress convex
   ridges or real borders.
