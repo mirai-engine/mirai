@@ -21,6 +21,18 @@ pipeline_tick :: proc(w:^Terrain_Test_World,resident:^Terrain_Resident,app:^host
     test_world_settle(&w.w)
 }
 
+// Ticks until what the terrain wants is built: the first shows its roots and
+// the ground near bodies, the others what comes from the jobs.
+@(private="file")
+pipeline_settle :: proc(w:^Terrain_Test_World,resident:^Terrain_Resident,app:^host.App,settings:=TERRAIN_TEST_SETTINGS,view:=core.View{},ticks:=32) {
+    for _ in 0..<ticks {
+        pipeline_tick(w,resident,app,settings,view)
+        idle:=!work_busy(&w.data,nil)
+        for &source in resident.sources {if len(source.pending)>0 {idle=false}}
+        if idle {break}
+    }
+}
+
 @(private="file")
 pipeline_source :: proc(t:^testing.T,root:string,kind:Source_Kind,samples:[3]int,cells:int,id:base.Asset_Id,bumpy:=false) -> string {
     source:Source;testing.expect(t,source_make(&source,kind,samples,1,cells));defer source_destroy(&source)
@@ -63,7 +75,7 @@ rebuilt_chunks_show_in_the_next_tick_whatever_the_threads_and_stale_results_are_
         defer terrain_test_world_free(&w)
         resident:Terrain_Resident;defer terrain_resident_free(&resident)
         owner:=pipeline_owner(&w,id)
-        pipeline_tick(&w,&resident,&app)
+        pipeline_settle(&w,&resident,&app)
         testing.expect_value(t,len(w.chunks.values),16)
         testing.expect_value(t,len(w.colliders.values),16)
         testing.expect_value(t,resident.stats.built,u64(16))
@@ -89,7 +101,8 @@ rebuilt_chunks_show_in_the_next_tick_whatever_the_threads_and_stale_results_are_
         pipeline_tick(&w,&resident,&app,phase=.Frame,playing=false)
         pipeline_tick(&w,&resident,&app,playing=false)
         testing.expect_value(t,resident.stats.stale,stale+1)
-        for _ in 0..<2 {pipeline_tick(&w,&resident,&app,playing=false)}
+        // Out of Play no call waits for a build: it is taken once its job ended.
+        for _ in 0..<2 {work_wait(&w.data,nil);pipeline_tick(&w,&resident,&app,playing=false)}
         hit,ok=phys.raycast({&w.state},{-12,20,-12},{0,-1,0})
         testing.expect(t,ok && abs(hit.point.y-3)<1e-4,"the chunk shows both edits once its stale build is done again")
         calls,built,version:=counter.requests,resident.stats.built,w.statics.version
@@ -116,7 +129,7 @@ chunks_without_a_slot_for_their_collider_still_show_their_ground_and_the_nearest
     owner:=pipeline_owner(&w,id)
     view:=core.VIEW_DEFAULT
     view.position,view.size={-14,5,-14},{64,64}
-    for _ in 0..<2 {pipeline_tick(&w,&resident,&app,view=view)}
+    pipeline_settle(&w,&resident,&app,view=view)
     // Every chunk shows its ground; Physics_Settings has room for six colliders: the nearest take them.
     testing.expect_value(t,len(w.statics.values),16)
     testing.expect_value(t,len(w.colliders.values),6)
@@ -177,6 +190,8 @@ source_place :: proc(w:^Terrain_Test_World,position:[3]f32) {
     w.streaming.items[0]={position,position,0}
     w.streaming.count=1
     w.streaming.revision+=1
+    // A body stands there: the simulation needs its ground.
+    w.simulation.items[0],w.simulation.count=w.streaming.items[0],1
 }
 
 @(test)
@@ -225,8 +240,8 @@ letting_go_of_an_excavated_zone_and_reading_it_again_keeps_its_edits :: proc(t:^
         // The viewer leaves: the zone lets go of its chunks and pages.
         far:=[3]f32{100,0,100}
         source_place(&w,far)
-        // What it showed stays until the nodes that replace it are built.
-        for _ in 0..<8 {pipeline_tick(&w,&resident,&app,settings)}
+        // What it showed stays until the nodes that replace it are built; what only shows is taken once its job ended.
+        for _ in 0..<8 {work_wait(&w.data,nil);pipeline_tick(&w,&resident,&app,settings)}
         s=&w.data.entries[0].source
         hit,ok=phys.raycast({&w.state},near+{0,20,0},{0,-1,0})
         testing.expect(t,ok && piece_depth(&w,hit)>0,"the zone let go of its chunk colliders: its node collides")

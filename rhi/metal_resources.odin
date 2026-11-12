@@ -621,7 +621,7 @@ buffer_upload :: proc(d: ^Device, buffer: Buffer, offset: u64, data: []u8) -> bo
 	cmd := immediate_begin(d)
 	if cmd == nil {return false}
 	cmd_copy_buffer(cmd, staging, 0, buffer, start, size)
-	return immediate_end(d, cmd)
+	return mtl_immediate_end(d, cmd, false)
 }
 
 // Writes a region of a mip (texture_region_resolve) of every layer, whose
@@ -646,7 +646,7 @@ texture_upload :: proc(d: ^Device, texture: Texture, data: []u8, bytes_per_row: 
 	cmd := immediate_begin(d)
 	if cmd == nil {return false}
 	cmd_copy_buffer_to_texture(cmd, staging, 0, texture, mip, area)
-	return immediate_end(d, cmd)
+	return mtl_immediate_end(d, cmd, false)
 }
 
 // The levels of a texture from its mip 0, tightly packed, in one transaction:
@@ -677,7 +677,7 @@ texture_upload_levels :: proc(d: ^Device, texture: Texture, levels: [][]u8) -> b
 		cmd_copy_buffer_to_texture(cmd, staging, at, texture, u32(mip))
 		at += size
 	}
-	return immediate_end(d, cmd)
+	return mtl_immediate_end(d, cmd, false)
 }
 
 // Blocking readback of a whole buffer range into out. The copy is queued after

@@ -182,32 +182,30 @@ vk_release_buffer_now :: proc(d: ^Device, buffer: Buffer) {
 	vk_memory_unbind(d, b.memory)
 }
 
-// The buffer the uploads of a transaction copy from, in the memory of the
-// host. An upload ends before the next one begins, so one buffer serves them
-// all: it stays between uploads, grown to the largest so far, and an upload
-// of more than VK_STAGING_KEPT_BYTES takes one for itself.
-VK_STAGING_FIRST_BYTES :: u64(1) << 20
-VK_STAGING_KEPT_BYTES :: VK_MEMORY_BLOCK_BYTES / 2
+// The buffer the upload of the next transaction copies from, in the memory
+// of the host: that of its slot (vk_immediate_slot), which stays for its next
+// uploads grown to the largest so far, or for more than VK_STAGING_KEPT_BYTES
+// one for this upload alone. The GPU reads it after the call returns: it is
+// the slot's until its fence signals.
+VK_STAGING_FIRST_BYTES :: u64(256) << 10
+VK_STAGING_KEPT_BYTES :: u64(1) << 20
 
 @(private)
 vk_staging_take :: proc(d: ^Device, size: u64) -> (staging: Buffer, bytes: [^]u8) {
+	if !vk_immediate_slot(d) {return}
+	at := d.immediate_at
 	if size > VK_STAGING_KEPT_BYTES {
 		staging = vk_create_buffer(d, {size = size, memory = .Staging, name = "upload staging"}, zero = false)
+		d.staging_once[at] = staging
 		return staging, cast([^]u8)buffer_mapped(d, staging)
 	}
-	if d.staging == 0 || d.staging_size < size {
-		if d.staging != 0 {vk_release_buffer_now(d, d.staging)}
+	if d.staging[at] == 0 || buffer_size(d, d.staging[at]) < size {
+		if d.staging[at] != 0 {vk_release_buffer_now(d, d.staging[at])}
 		grown := VK_STAGING_FIRST_BYTES
 		for grown < size {grown *= 2}
-		d.staging = vk_create_buffer(d, {size = grown, memory = .Staging, name = "upload staging"}, zero = false)
-		d.staging_size = grown if d.staging != 0 else 0
+		d.staging[at] = vk_create_buffer(d, {size = grown, memory = .Staging, name = "upload staging"}, zero = false)
 	}
-	return d.staging, cast([^]u8)buffer_mapped(d, d.staging)
-}
-
-@(private)
-vk_staging_give :: proc(d: ^Device, staging: Buffer) {
-	if staging != d.staging {vk_release_buffer_now(d, staging)}
+	return d.staging[at], cast([^]u8)buffer_mapped(d, d.staging[at])
 }
 
 buffer_destroy :: proc(d: ^Device, buffer: Buffer) {
@@ -812,12 +810,11 @@ buffer_upload :: proc(d: ^Device, buffer: Buffer, offset: u64, data: []u8) -> bo
 	b.fresh &&= !whole
 	staging, bytes := vk_staging_take(d, u64(len(data)))
 	if staging == 0 {b.fresh ||= whole; return false}
-	defer vk_staging_give(d, staging)
 	mem.copy(bytes, raw_data(data), len(data))
 	cmd := immediate_begin(d)
 	if cmd == nil {b.fresh ||= whole; return false}
 	cmd_copy_buffer(cmd, staging, 0, buffer, offset, u64(len(data)))
-	return immediate_end(d, cmd)
+	return vk_immediate_end(d, cmd, false)
 }
 
 // Writes a region of a mip (texture_region_resolve) of every layer, whose
@@ -837,7 +834,6 @@ texture_upload :: proc(d: ^Device, texture: Texture, data: []u8, bytes_per_row: 
 	}
 	staging, dst := vk_staging_take(d, row * rows)
 	if staging == 0 {return false}
-	defer vk_staging_give(d, staging)
 	for y in 0 ..< rows {
 		mem.copy(&dst[y * row], &data[y * u64(bytes_per_row)], int(row))
 	}
@@ -845,7 +841,7 @@ texture_upload :: proc(d: ^Device, texture: Texture, data: []u8, bytes_per_row: 
 	if cmd == nil {return false}
 	cmd_copy_buffer_to_texture(cmd, staging, 0, texture, mip, area)
 	if .Sampled in t.desc.usage {cmd_barrier_texture(cmd, texture, .Shader_Read)}
-	return immediate_end(d, cmd)
+	return vk_immediate_end(d, cmd, false)
 }
 
 // The levels of a texture from its mip 0, tightly packed, in one transaction:
@@ -864,7 +860,6 @@ texture_upload_levels :: proc(d: ^Device, texture: Texture, levels: [][]u8) -> b
 	}
 	staging, dst := vk_staging_take(d, total)
 	if staging == 0 {return false}
-	defer vk_staging_give(d, staging)
 	cmd := immediate_begin(d)
 	if cmd == nil {return false}
 	at: u64
@@ -876,7 +871,7 @@ texture_upload_levels :: proc(d: ^Device, texture: Texture, levels: [][]u8) -> b
 		at += size
 	}
 	if .Sampled in t.desc.usage {cmd_barrier_texture(cmd, texture, .Shader_Read)}
-	return immediate_end(d, cmd)
+	return vk_immediate_end(d, cmd, false)
 }
 
 // Blocking readback of a whole buffer range into out.

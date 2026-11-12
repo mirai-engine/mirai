@@ -21,6 +21,7 @@ Test_Terrain :: struct {
     chunks:core.Table(Terrain_Chunk),
     looks:core.Table(render.Material_Values),
     streaming:scene.Streaming_Sources,
+    simulation:scene.Simulation_Sources,
     data:Terrain_Data,
     terrain_requests:Terrain_Requests,
     digs:Terrain_Digs,
@@ -39,7 +40,7 @@ test_step :: proc(g:^Test_Terrain,commands:core.Commands,resident:^Terrain_Resid
     terrain_update(
         commands,&g.terrains,&g.chunks,core.read(&g.transforms),core.read(&g.parents),core.read(&g.ids),&g.colliders,
         &g.statics,&g.looks,&g.data,resident,&g.terrain_requests,&g.digs,settings,app,time,frame,
-        view,locals,core.read(&g.worlds),core.ref(&g.streaming),{},g.settings,{},nil,problems,{},&g.ground_queries,&g.terrain_ground,
+        view,locals,core.read(&g.worlds),core.ref(&g.streaming),core.ref(&g.simulation),{},g.settings,{},nil,problems,{},&g.ground_queries,&g.terrain_ground,core.read(&g.rigids),core.read(&g.characters),
     )
 }
 

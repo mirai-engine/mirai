@@ -692,14 +692,19 @@ Construction in jobs:
 - Each job stores the data's epoch, the source, the chunk, the key (level and collider) and the
   source change it read (`Data_Source.change`); a result whose chunk changed while it ran is
   dropped and built again.
-- A result is published in the next `terrain_update` call of the phase that asked for it, which
-  waits for it if it did not finish: when it is seen does not depend on the threads, and a tick
-  that edits shows the new chunk in the next one, with the previous version in between.
-- A piece that shows nothing and is needed is built and published in the same call: a chunk
-  without residency or with a viewer very close, a node where its terrain shows nothing, and what
-  prevents opening the node that is shown over a chunk next to a viewer (its siblings and the nodes
-  that replace it in the meantime). Loading a scene, Play, a rollback or a teleport do not leave a
-  tick without ground under a viewer. Those jobs can use all the slots; the others, half.
+- A piece with a collider while the world plays is published in the next `terrain_update` call
+  of the phase that asked for it, which waits for it if it did not finish: when it collides does
+  not depend on the threads, and a tick that edits shows the new chunk in the next one, with the
+  previous version in between. What only shows, and everything out of Play, is published once its
+  job ended: no frame waits for it.
+- Built and published in the same call (urgent) is only what the simulation and the first
+  frame need: a piece with a collider within `GROUND_REACH` of a simulation source
+  (`scene.Simulation_Sources`: the bodies the seats drive, the marks) or of a body that moves or a
+  character, with what keeps the node shown over it from opening; and where a view looks and a
+  Heightfield shows nothing, its root, which the coarse grid of its file builds, stands in for
+  what it covers and collides until that is built. Everything else arrives from jobs over the
+  ticks. Loading a scene, Play, a rollback or a teleport do not leave a tick without ground under
+  a view or a body. Urgent jobs can use all the slots; the others, half.
 - Changing level, border or collider publishes the piece and the neighbors whose sides change in
   the same call.
 - A source is read whole in a job (`data_load_begin`): its file and its coarse data, in memory of
@@ -727,9 +732,9 @@ build.
 colliders (`Resident_Owner.far`, with `scene.Far_Kept`: it chooses its pieces as a solid one, but
 none carries a collider or is urgent, they are built in jobs), and far from the sources it shows
 its nodes ([what is unloaded](../../mirai-gameplay/references/libraries.md#scene-references)).
-A node where nothing is shown is urgent only near a viewer (`URGENT_REACH`);
-farther away it waits for its job. While there are pieces to build, residency is chosen again once
-per frame (in the first call); what the data changes, in each call.
+A Volume, without a coarse grid, builds at once the nodes it wants where it shows nothing near a
+viewer (`URGENT_REACH`); farther away they wait for their jobs. While there are pieces to build,
+residency is chosen again once per frame (in the first call); what the data changes, in each call.
 
 - Each terrain (owner) chooses which pieces it wants: from its roots, it opens the nodes under which
   it needs a chunk, or, in a Heightfield, whose finest level is still coarse for the view (a node
@@ -878,6 +883,8 @@ physics, saving, stability and world copy.
 - `displaced_chunks_split_their_cells_on_the_collider_and_join_their_neighbors`: the relief
   subdivides over the collider, stitches the sides and respects the holes; its image needs a GPU
   capture.
+- What a terrain builds at once and what arrives from jobs:
+  `a_terrain_that_opens_builds_its_root_and_the_ground_under_bodies_at_once_and_the_rest_in_jobs`.
 - Levels: `chunks_of_mixed_levels_join_without_cracks_or_overlaps`,
   `balanced_levels_are_the_coarsest_one_apart_from_their_neighbors` and
   `far_chunks_show_coarser_levels_while_colliders_keep_every_sample` (also a second local view).

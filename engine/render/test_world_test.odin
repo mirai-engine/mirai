@@ -58,9 +58,9 @@ Sync_Fixture :: struct {
 }
 
 @(private)
-sync_fixture_init :: proc(t:^testing.T,f:^Sync_Fixture) -> bool {
+sync_fixture_init :: proc(t:^testing.T,f:^Sync_Fixture,root:="assets") -> bool {
     f.renderer.allocator=context.allocator
-    if !testing.expect(t,gpu.scene_init(&f.renderer) && host.assets_init(&f.assets,{root="assets",capacity=64,renderer=&f.renderer})) {return false}
+    if !testing.expect(t,gpu.scene_init(&f.renderer) && host.assets_init(&f.assets,{root=root,capacity=64,renderer=&f.renderer})) {return false}
     f.app.assets,f.app.renderer=&f.assets,&f.renderer
     // Every shape is a triangle of its own: making the real ones asks the device what it takes.
     corners:=[3]gpu.Mesh_Vertex{{position={0,0,0},normal={0,1,0}},{position={1,0,0},normal={0,1,0}},{position={0,0,1},normal={0,1,0}}}

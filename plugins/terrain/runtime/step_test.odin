@@ -434,10 +434,16 @@ a_brush_reads_the_scale_of_its_terrain_across_and_up :: proc(t:^testing.T) {
 }
 
 terrain_test_update :: proc(w:^Terrain_Test_World,resident:^Terrain_Resident,app:^host.App,time:core.Time={},view:=core.View{},settings:=TERRAIN_TEST_SETTINGS,locals:=core.Ref(camera.Camera_Views){}) {
-    // A tick, and those that take what its jobs built: a rebuilt chunk shows in the tick after it changed.
+    // A tick, and those that take what its jobs built: a rebuilt chunk shows in the tick after it changed,
+    // and what no simulation source needs at once comes from jobs over the ticks after.
     terrain_test_tick(w,resident,app,time,view,settings,locals)
     for _ in 0..<8 {
-        if !work_busy(&w.data,nil) {break}
+        idle:=!work_busy(&w.data,nil) && !resident.cut
+        for &source in resident.sources {
+            if len(source.pending)>0 {idle=false}
+            for chunk in source.chunks {if chunk.resident && !chunk.shown {idle=false}}
+        }
+        if idle {break}
         terrain_test_tick(w,resident,app,{},view,settings,locals)
     }
 }

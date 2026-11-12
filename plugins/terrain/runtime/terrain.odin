@@ -6,6 +6,7 @@ import "core:slice"
 import "mirai:asset"
 import "mirai:core"
 import render "mirai:engine/render"
+import scene "mirai:engine/scene"
 import "mirai:host"
 import "mirai:std/base"
 import "mirai:std/jobs"
@@ -247,6 +248,8 @@ Terrain_Resident :: struct {
     lod_views:[LOD_VIEWS][3]f32, // where the views were at the last evaluation of levels
     lod_view_count:int,
     lod_stamp:[3]u64, // the revision of the streaming sources, the count of owners, marks
+    lod_simulation:[scene.SOURCES_MAX]scene.Source, // the simulation sources at the last evaluation
+    lod_simulation_count:int,
     lod_seen:[2]core.Seen, // the transforms and the colliders
     marks:u64,        // advances when what the levels or the unloaded ground are chosen from changes: a page, a source, an owner, a chunk that empties, fills or goes
     lod_distances:[3]f32, // of Terrain_Settings then
@@ -258,6 +261,7 @@ Terrain_Resident :: struct {
     lod_pass:u32,           // the evaluations of levels so far: the one that last looked at a node (Owner_Node.visit)
     stack:[dynamic]u32,     // the nodes an owner's walk is still to look at
     near:[dynamic]Lod_Near, // the pieces the walk for colliders is still to look at, nearest first
+    bodies:[dynamic][3]f32, // where the bodies that move and the characters are, in the world, at the last call
     side_levels:[dynamic]Side_Level, // of the chunks on the shared edges, while their levels meet
     border:Piece_Border,    // of a node, while its pages are looked for
     picking:bool,           // chunks without a collider keep their triangles on the CPU: while the world does not play, for the picking of the editor
@@ -275,7 +279,7 @@ Resident_Chunk :: struct {
     pixels,spacing:f32,     // of the view a metre of its error, and between its samples, covers (Owner_Node)
     resident:bool,          // a piece an owner wants, or a root of a streamed source: wanted with a mesh
     visible:bool,           // an owner shows it
-    urgent:bool,            // an owner wants it where nothing shows
+    urgent:bool,            // built in the call that wants it (resident_cut): a root where nothing shows, or ground near a simulation source
     shown:bool,             // what it built is published: a mesh, or none for an empty chunk
     working:bool,           // a job builds it
     maps:Piece_Maps,        // the textures of the maps of its mesh (surface.odin)
@@ -326,6 +330,7 @@ Resident_Owner :: struct {
 // until all that replaces it is.
 Owner_Node :: struct {
     distance,reach:f32, // from its views and viewers, as Resident_Chunk
+    ground:f32,         // from the nearest simulation source, in chunk widths: its collider is built at once within GROUND_REACH
     pixels:f32,         // of the view a metre of its error covers
     spacing:f32,        // of the view a metre between its samples covers, at the angle it is seen
     resident:bool,      // a chunk it needs as a chunk: near its viewers, or with a collider (resident_needed)
@@ -800,7 +805,7 @@ terrain_release :: proc(resident:^Terrain_Resident,allocator:runtime.Allocator) 
 terrain_resident_free :: proc(resident:^Terrain_Resident) {
     for &source in resident.sources {resident_source_free(resident,&source)}
     for &owner in resident.owners {resident_owner_free(&owner)}
-    delete(resident.sources);delete(resident.owners);delete(resident.splits);delete(resident.places);delete(resident.stack);delete(resident.near);delete(resident.side_levels)
+    delete(resident.sources);delete(resident.owners);delete(resident.splits);delete(resident.places);delete(resident.stack);delete(resident.near);delete(resident.side_levels);delete(resident.bodies)
     piece_border_destroy(&resident.border)
     resident^={}
 }

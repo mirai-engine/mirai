@@ -249,6 +249,12 @@ Overlaps:
 - `Collider_Meshes` (host) stores the collision geometry per mesh, built once per application. The
   retained CPU geometry of generated meshes admits `Mesh`; the cache removes its entries on freeing
   the asset, when the asset structure changes.
+- **A tick reads no mesh file and builds no tree of one.** The collision a `.mesh` gives a `Hull` or
+  `Mesh` collider is read once per application in a job, and the tree of a `Mesh` collider at each
+  scale is built in another; the body waits for them in the reconciliations of later ticks, as it
+  was, and the load stays busy as `Physics`. A tick that resimulates waits for the job instead.
+  What a generated mesh or a primitive gives comes from memory in the tick. A shape of a mesh file
+  is made again only when that file changes (its size and time), not when another asset does.
 
 `physics_prepare` (`fixed`, before `physics_places` and `physics_step`) creates the simulation if it
 does not exist, so that whatever asks something of its bodies in the tick already finds them, and

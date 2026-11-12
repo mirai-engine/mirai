@@ -612,13 +612,14 @@ float3 material_ray_normal(Material m, Instance inst, float3 normal, float3 w, M
     return tangent_frame_normal(normal, hit_tangent(inst, w, t), material_map_normal(m, uv, uv1, lod, true));
 }
 // Sampling follows the evaluated surface's explicit context, including a
-// ray hit reconstructed inside a fragment shader.
-// A program keeps every level of the textures it samples: its uv and levels are its own.
+// ray hit reconstructed inside a fragment shader. A sample of a program
+// reports the level it reads, from its uv and its bias or gradients, as a
+// map does; one that names a level, or asks for the size, keeps every level
+// of the texture: the levels it names count from the largest one held.
 float4 mirai_sample_texture_at(uint index, float2 uv, float lod, bool ray) {
     if (!material_has(index)) return float4(1.0);
-    texture_feedback(index, -FLT_MAX);
 #ifdef MATERIAL_RASTER
-    if (!ray) return material_textures[mirai_nonuniform(index)].SampleBias(material_sampler, uv, lod);
+    if (!ray) return material_texel(index, uv, lod);
 #endif
     return material_texel_at(index, uv, lod);
 }
@@ -648,7 +649,14 @@ float4 mirai_sample_texture_level(uint index, float2 uv, float level) {
 }
 float4 mirai_sample_texture_grad(uint index, float2 uv, float2 dx, float2 dy) {
     if (!material_has(index)) return float4(1);
-    texture_feedback(index, -FLT_MAX);
+#ifdef MIRAI_TEXTURE_FEEDBACK
+    // As material_texel: the level anisotropic filtering reads of these gradients.
+    float2 size = float2(texture_size(material_textures[mirai_nonuniform(index)], 0));
+    float2 across2 = abs(dx * size), down2 = abs(dy * size);
+    float across = max(across2.x, across2.y), down = max(down2.x, down2.y);
+    float longer = max(across, down);
+    if (longer > 0.0) texture_feedback(index, log2(max(min(across, down), longer / MATERIAL_ANISOTROPY)) - log2(size.x));
+#endif
     return material_textures[mirai_nonuniform(index)].SampleGrad(material_sampler, uv, dx, dy);
 }
 float2 mirai_texture_size(uint index) {

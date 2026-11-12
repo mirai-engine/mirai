@@ -71,6 +71,7 @@ Sync :: struct {
     written:core.Changes,    // of Transform since the last tick: what another function wrote
     budget:int,   // what the tick may still make or let go
     waiting:bool, // something waits for the next tick
+    resimulating:bool, // the tick ran before: what a job prepares is waited for here (Collider_Meshes)
     unmade:bool,  // a body or character could not be made
 }
 
@@ -113,7 +114,7 @@ physics_step :: proc(
     }
     state.pass+=1
     s:=Sync{
-        state=state,app=app,meshes=meshes,playing=time.playing && time.dt>0,dt=time.dt,
+        state=state,app=app,meshes=meshes,playing=time.playing && time.dt>0,dt=time.dt,resimulating=time.resimulating,
         rigids=rigids,colliders=colliders,characters=characters,volumes=volumes,splines=splines,statics=statics,parents=parents,hierarchy=hierarchy,names=names,
         transforms=transforms,motions=motions,targets=targets,character_states=character_states,jumps=jumps,problems=problems,
         budget=BODIES_PER_TICK,
@@ -533,13 +534,16 @@ entity_sync :: proc(s:^Sync,e:core.Entity) {
     if l==nil || l.kind==.Proxy {return}
     at:=link_index(state,l)
     if at>=len(state.visited) && resize(&state.visited,len(state.links.values))!=nil || state.visited[at]==state.pass {return}
-    if l.kind==.None {
+    charged:=l.kind==.None
+    if charged {
         if s.budget==0 {
             s.waiting=true
             return
         }
         s.budget-=1
     }
+    // What it did not make, as a body that waits for its geometry, takes nothing of the budget.
+    defer if charged && l.kind==.None {s.budget+=1}
     state.visited[at]=state.pass
     link_touch(state,l)
     was:=l^
@@ -577,6 +581,11 @@ body_sync :: proc(s:^Sync,e:core.Entity,l:^Link,rigid:Rigid_Body,has_rigid,rigid
     world:=world_pose(s,e)
     pose:=sim.Transform{world.position,world.rotation}
     scale:=world.scale
+    // Its shape waits for its geometry: the body stays as it is until then.
+    if has_collider && collider_geometry_waits(s,e,collider,scale) {
+        s.waiting=true
+        return
+    }
     type:=has_rigid?rigid.type:Body_Type.Static
     created,mass_changed:=false,false
     if l.kind!=.Body || !sim.body_valid(w,l.body) {
@@ -743,6 +752,10 @@ compound_sync :: proc(s:^Sync,e:core.Entity,l:^Link,collider:Collider,owner:core
     }
     relative,sheared:=compound_relative(s,e,owner)
     scale:=relative.scale
+    if collider_geometry_waits(s,e,collider,scale) {
+        s.waiting=true
+        return
+    }
     shown:=shown_of(s,e,collider)
     filter:=collision_of(s,e,collider,collider_changed)
     key:=shape_key(collider,scale,relative,shown)
@@ -773,9 +786,9 @@ shown_of :: proc(s:^Sync,e:core.Entity,collider:Collider) -> (shown:Shown) {
     if collider.kind!=.Hull && collider.kind!=.Mesh && collider.kind!=.Heightfield {return}
     if static,has:=core.get(s.statics,e);has {shown.mesh,shown.shape=static.mesh,static.shape}
     if s.app.assets==nil {return}
-    _,file:=asset.registry_find(&s.app.assets.registry,shown.mesh)
+    record,file:=asset.registry_find(&s.app.assets.registry,shown.mesh)
     shown.generated=host.assets_mesh_generated(s.app.assets,shown.mesh) || shown.mesh!={} && !file
-    if !shown.generated {shown.revision=s.app.assets.revision}
+    if file && !shown.generated {shown.size,shown.time=record.size,record.time}
     return
 }
 

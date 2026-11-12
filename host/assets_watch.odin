@@ -3,6 +3,7 @@ package host
 import "core:strings"
 import "mirai:asset"
 import "mirai:platform"
+import "mirai:std/jobs"
 
 @(private)
 app_assets_create :: proc(app:^App,root,cache:string,mounts:[]asset.Registry_Mount=nil,imported:="") -> App_Error {
@@ -17,6 +18,8 @@ app_assets_create :: proc(app:^App,root,cache:string,mounts:[]asset.Registry_Mou
     // compressor.
     if app.engine_root!="" {assets.types.codecs=asset.project_codecs(app.root,app.engine_root)}
     assets.load_profile=&app.load_profile
+    // A frame never reads a texture for a material: it arrives in jobs (app_textures_stream).
+    assets.arrive=app.renderer!=nil && jobs.worker_count(&app.jobs)>1
     // Without a watch nothing reloads; the application still runs.
     app.assets_watch.watch,_=platform.watch_create(app.platform,{path=root,recursive=true})
     return .None

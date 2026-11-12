@@ -135,7 +135,7 @@ a_path_is_inside_a_folder_only_past_a_separator :: proc(t:^testing.T) {
     }
 }
 
-// A copy for a session takes the sources, the assets and the caches, never
+// A copy for a session takes the sources, the assets, the caches and what the imports built, never
 // the files of the editor that holds the project; stop knows it by its place.
 @(test)
 a_session_copy_takes_the_project_and_its_caches_without_the_files_of_its_editor :: proc(t:^testing.T) {
@@ -143,7 +143,7 @@ a_session_copy_takes_the_project_and_its_caches_without_the_files_of_its_editor 
     folder:=base.test_folder(t,"copy")
     if folder=="" {return}
     kept:=[]string{project.PROJECT_FILE,"assets/scenes/main.scene","game/game.odin","assets/props/art.fbx",
-        ".mirai/cache/registry/index",".mirai/thumbs/main.png"}
+        ".mirai/cache/registry/index",".mirai/thumbs/main.png",".mirai/imported/props/art.mesh"}
     left:=[]string{".git/HEAD",".mirai/api.json",".mirai/session.json",".mirai/session.lock",
         ".mirai/session.log",".mirai/editor.dll",".mirai/editor-live-12-0.dll",".mirai/gen/world.odin",
         ".mirai/tmp/probe.scene",".mirai/cache/textures.lock"}

@@ -219,8 +219,10 @@ A texture of an asset resides with the levels the GPU samples of it
   anisotropic filtering reads from its uv derivatives and bias, each axis the shortest a device may
   take: the levels kept are never coarser than what the sampler reads, and the image is that of the
   whole texture. A ray reports the level its cone reads at the hit, so a texture seen only in a
-  reflection or by the probes loads. A program reports every level of the textures it samples: its
-  uv and levels are its own.
+  reflection or by the probes loads. A sample of a program reports the level its uv and bias or
+  gradients read, as a map does; one that names its level (`mirai_sample_texture_level`) or asks
+  for the size (`mirai_texture_size`) keeps every level of the texture, since a level it names
+  counts from the largest one held.
 - **Which frames.** Those the window shows; an offscreen frame only when it waits for its textures
   (`Frame_Desc.streamed`). The stages of extensions (decals, particles), the sky and the UI do not
   report: what only they show keeps the levels it has unless the pool asks for them. Nothing asks
@@ -254,8 +256,10 @@ A texture of an asset resides with the levels the GPU samples of it
   its entry between frames (`texture_uploads_install`). Fewer levels need no read: the renderer
   copies them from those it holds through the same queue (`textures_shrink`). What the job read
   stays while `texture_upload_pending`; a large level does not stall a frame.
-- What a section load brings arrives with the levels of side `TEXTURE_TAIL` and the frames that
-  sample it ask for the others; the main scene and direct loads arrive whole.
+- What a section load brings, and a texture a material asks for that is not loaded
+  ([arrivals](../../mirai-core/references/host.md#loaded-assets)), arrives with the levels of
+  side `TEXTURE_TAIL` and the frames that sample it ask for the others; the main scene and direct
+  loads arrive whole.
 - A texture that a load gives over several frames (`texture_add_over_frames`) enters with its
   levels of side `TEXTURE_TAIL` or less and the larger ones go through the same queue: until all
   were uploaded the small ones are shown, never a half level. Those that the pool has no room for
