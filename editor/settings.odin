@@ -649,7 +649,7 @@ settings_nav :: proc(s:^Session,categories:[]Settings_Category,shown:int,needle:
                 id:=shell_id(g,"settings_category",i+1)
                 it:=ui.interact(ctx,id,{.Focusable})
                 if ui.box(ctx,{id=id,width=ui.GROW,height=ui.fixed(row),padding={9,0,2,0},align_y=.Center,fill=current?ui.tone(ctx,"accent_soft"):it.hot?ui.tone(ctx,"field_hover"):ui.Color{},radius=ui.metric(ctx,"radius_control")}) {
-                    ui.label(ctx,c.name,ui.metric(ctx,"font"),ui.tone(ctx,"text"),-1,font=current?ui.FONT_SEMIBOLD:ui.FONT_REGULAR)
+                    ui.label(ctx,c.name,ui.metric(ctx,"font"),ui.tone(ctx,"text"),0,font=current?ui.FONT_SEMIBOLD:ui.FONT_REGULAR)
                     if len(c.sections)>1 {
                         side:=row-4
                         if ui.button(ctx,shell_id(g,"settings_fold",i+1),{icon=open?.Chevron_Down:.Chevron_Right,icon_size=11,icon_color=ui.tone(ctx,"text_muted"),variant="ghost",width=side,height=side,center=true,disabled=needle!=""}).clicked {

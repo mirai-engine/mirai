@@ -120,7 +120,7 @@ content_test_lines :: proc(c:^Content,registry:^asset.Registry,width:f32=CONTENT
 
 // The rows of the virtual folders on top of Folders while nothing is marked.
 @(private)
-CONTENT_TEST_MARKS :: "[Recent] [Current scene] [Favorites] "
+CONTENT_TEST_MARKS :: "[Recent] [Favorites] [Current scene] "
 
 @(private)
 content_test_show :: proc(c:^Content,registry:^asset.Registry,opened:[]asset.Fourcc=nil,scene_kinds:[]asset.Fourcc=nil) -> string {
@@ -257,16 +257,16 @@ content_virtual_folders_are_entered_and_current_scene_is_what_the_scene_referenc
     content_scene_read(&c,&registry,registry.files[6].id)
     used:=raw_data(c.scene_used)
     testing.expect_value(t,len(c.scene_used),2)
-    testing.expect_value(t,content_test_show(&c,&registry),"[Recent] .rock [Current scene] .barrel .crate [Favorites] .crate [Castle] .[Props] ..barrel ..crate ..torch ..wall .[Towers] ..big .gate [Levels] .one rock")
+    testing.expect_value(t,content_test_show(&c,&registry),"[Recent] .rock [Favorites] .crate [Current scene] .barrel .crate [Castle] .[Props] ..barrel ..crate ..torch ..wall .[Towers] ..big .gate [Levels] .one rock")
     // Each holds all of it, and folds to its row.
     content_favorite_toggle(&c,{4,3})
     content_favorite_toggle(&c,{4,4})
     content_favorite_toggle(&c,{4,5})
     lines:=content_test_lines(&c,&registry)
-    testing.expect_value(t,content_test_names(&c,&registry,lines[5:10]),"[Favorites] .crate .torch .wall .big")
-    testing.expect(t,lines[6].parent==5 && lines[6].group==CONTENT_FAVORITES_GROUP)
+    testing.expect_value(t,content_test_names(&c,&registry,lines[2:7]),"[Favorites] .crate .torch .wall .big")
+    testing.expect(t,lines[3].parent==2 && lines[3].group==CONTENT_FAVORITES_GROUP)
     content_fold_flip(&c,CONTENT_FAVORITES_GROUP)
-    testing.expect_value(t,content_test_names(&c,&registry,content_test_lines(&c,&registry)[5:7]),"[Favorites] [Castle]")
+    testing.expect_value(t,content_test_names(&c,&registry,content_test_lines(&c,&registry)[2:4]),"[Favorites] [Current scene]")
     content_fold_flip(&c,CONTENT_FAVORITES_GROUP)
     // Reading again without a change neither rebuilds nor moves the list.
     revision:=c.revision
@@ -943,7 +943,7 @@ content_hides_the_parts_of_an_import_in_their_folder_and_a_prefab_opens_to_its_v
     content_used(&session,registry.files[2].id)
     content_favorite_toggle(&c,registry.files[4].id)
     lines=content_test_lines(&c,&registry)
-    testing.expect_value(t,content_test_names(&c,&registry,lines[:8]),"[Recent] .SKM_Robot [Current scene] [Favorites] .T_Robot_01_D [Robot] .MI_Shared .robot")
+    testing.expect_value(t,content_test_names(&c,&registry,lines[:8]),"[Recent] .SKM_Robot [Favorites] .T_Robot_01_D [Current scene] [Robot] .MI_Shared .robot")
     // A filter of families that leaves the owner out shows its parts in their folder.
     c.category=.Mesh
     testing.expect_value(t,content_test_show(&c,&registry),"[Recent] .SKM_Robot [Robot] .SKM_Robot [Stray] .orphan")

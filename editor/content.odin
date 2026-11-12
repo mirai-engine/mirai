@@ -954,7 +954,7 @@ content_tree_rows_add :: proc(c:^Content,first,depth:int,group:u64=0,parent:i32=
 content_tree_add :: proc(c:^Content,b:^Content_Build,entries:[]Content_Entry) {
     labels:=CONTENT_VIRTUAL_LABELS
     filtering:=c.category!=.None || c.unused || c.selection_only
-    for virtual in ([3]Content_Virtual{.Recent,.Scene,.Favorites}) {
+    for virtual in ([3]Content_Virtual{.Recent,.Favorites,.Scene}) {
         files:=content_virtual_files(c,b,virtual)
         if len(files)==0 && filtering {continue}
         group:=content_virtual_group(virtual)
@@ -2253,7 +2253,7 @@ content_tabs_build :: proc(s:^Session,act:^Content_Actions,width:f32) -> (height
     chips:=make([dynamic]Chip,context.temp_allocator)
     labels:=CONTENT_VIRTUAL_LABELS
     append(&chips,Chip{label="All"})
-    for virtual in ([3]Content_Virtual{.Recent,.Scene,.Favorites}) {append(&chips,Chip{virtual=virtual,label=labels[virtual]})}
+    for virtual in ([3]Content_Virtual{.Recent,.Favorites,.Scene}) {append(&chips,Chip{virtual=virtual,label=labels[virtual]})}
     for tab in c.tabs {append(&chips,Chip{label=tab.name,path=tab.path,row=tab.row})}
     at:=string(c.at.folder[:c.at.length])
     chip_width :: proc(ctx:^ui.Context,chip:Chip) -> f32 {
