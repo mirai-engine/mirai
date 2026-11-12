@@ -37,7 +37,7 @@ import "mirai:ui"
 // its address on its network and on its router, and the token of the session.
 
 COLLAB_PORT :: 7950
-COLLAB_VERSION :: 6 // of the messages: an editor of another one has another version of the project
+COLLAB_VERSION :: 7 // of the messages: an editor of another one has another version of the project
 COLLAB_PEERS :: 8 // the host and seven guests
 COLLAB_NAME_BYTES :: 32
 COLLAB_SELECTION :: 16
@@ -1344,7 +1344,7 @@ collab_draw :: proc(s:^Session) {
             gpu.debug_circle(lines,center,{0,1,0},max(high.x-low.x,high.z-low.z)*0.6,{rgba.x,rgba.y,rgba.z,0.65},32)
         }
     }
-    collab_agents_draw(s,st,now)
+    collab_agents_draw(s,st,w,now)
     host.assets_commit(s.app.assets)
 }
 
