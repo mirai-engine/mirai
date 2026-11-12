@@ -81,7 +81,7 @@ continuous_destroy :: proc(c:^Continuous,a:mem.Allocator) {
 @(private) Toi_Visit :: struct {proxy:Proxy,sweep,other:Sweep,start:Vec3,best:^f32,keep,core:f32}
 
 @(private)
-toi_triangle :: proc(data:rawptr,a,b,c:Vec3) -> bool {
+toi_triangle :: proc(data:rawptr,a,b,c:Vec3,_:Surface) -> bool {
     visit:=(^Toi_Visit)(data)
     // One-sided, as the contacts of meshes: a bullet that starts behind a face goes through it.
     if dot(cross(b-a,c-a),visit.start-a)<0 {return true}
