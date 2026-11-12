@@ -1001,7 +1001,13 @@ immediate_begin :: proc(d: ^Device) -> ^Command_List {
 	return &d.immediate
 }
 
-immediate_end :: proc(d: ^Device, cmd: ^Command_List) -> bool {
+immediate_end :: proc(d: ^Device, cmd: ^Command_List) -> bool {return mtl_immediate_end(d, cmd, true)}
+
+// Submits an immediate list; wait: until the GPU ran it. An upload does not
+// wait: the queue runs it before the frames that follow, the hazards it
+// tracks order them, and its command buffer keeps what it reads alive.
+@(private)
+mtl_immediate_end :: proc(d: ^Device, cmd: ^Command_List, wait: bool) -> bool {
 	if cmd != &d.immediate {
 		if cmd != nil {set_error(d, "immediate_end of a list immediate_begin did not give")}
 		return false
@@ -1012,7 +1018,7 @@ immediate_end :: proc(d: ^Device, cmd: ^Command_List) -> bool {
 	ok := cmd.cmd != nil && d.failure == .None
 	if ok {
 		MTL.CommandBuffer_commit(cmd.cmd)
-		ok = mtl_wait(d, cmd.cmd, "immediate")
+		if wait {ok = mtl_wait(d, cmd.cmd, "immediate")}
 		if ok && device_lose_take(d) {
 			device_fail(d, .Lost, "the immediate command buffer failed: the GPU device was lost")
 			ok = false

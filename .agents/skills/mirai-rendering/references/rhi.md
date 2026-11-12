@@ -100,8 +100,12 @@ compile time with build tags, without virtual dispatch. `render` does not see na
   table that grew) reaches the GPU in the frame that asks for it; only a size past
   `max_storage_range`, or more of them in a frame than `MAX_FRAME_OVERSIZED`, is refused and adds
   to `device_stats().exhausted`.
-- **Blocking transactions** (immediate uploads, initial BLAS builds, readback and capture): only
-  between frames.
+- **Transactions** (immediate lists, uploads, initial BLAS builds, readback and capture): only
+  between frames. `buffer_upload`, `texture_upload` and `texture_upload_levels` do not wait for
+  the GPU: the queue runs them before the frames and lists that follow, whose barriers cover
+  them, and their staging lives until the GPU read it. A load of many textures between two
+  frames does not wait once per texture for the frame the GPU runs. The other immediate lists
+  (`immediate_end`), BLAS builds and reads block.
 - **Presentation on Metal.** A thread acquires at most one drawable ahead. With VSync,
   `frame_begin` waits for the delivery; without VSync, a frame with no free image renders
   offscreen (`swapchain_texture` zero) and keeps its LDR for capture.
