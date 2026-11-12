@@ -1,6 +1,7 @@
 package host
 
 import "core:testing"
+import "mirai:std/base"
 import "mirai:std/geom"
 
 @(test)
@@ -13,7 +14,9 @@ generated_collision_and_heightfield_survive_source_changes_and_retire_together :
     uvs:=[4]geom.Vec2{{0,0},{1,0},{0,1},{1,1}}
     heights:=[4]f32{0,1,2,3}
     borders:=[4]u8{1,0,1,0}
-    field:=Assets_Heightfield{heights[:],2,2,{1,1,1},{-1,2,-3},borders[:],nil}
+    materials:=[2]base.Asset_Id{{1,0},{2,0}}
+    surfaces:=[1]u8{1}
+    field:=Assets_Heightfield{heights[:],2,2,{1,1,1},{-1,2,-3},borders[:],nil,materials[:],surfaces[:]}
     edges:=[2]u8{1,4}
     mesh:=geom.Mesh{positions=positions[:],indices=indices[:],uvs=uvs[:]}
     id,created:=assets_mesh_generate(&assets,mesh,options={collision=true,heightfield=&field,no_lods=true,disabled_edges=edges[:]})
@@ -21,11 +24,13 @@ generated_collision_and_heightfield_survive_source_changes_and_retire_together :
     positions[0],indices[0],uvs[0],heights[0]={9,9,9},3,{9,9},9
     edges[0]=0
     borders[0]=0
+    materials[1],surfaces[0]={},0
     held,found:=assets_heightfield(&assets,id)
     testing.expect(t,found)
     testing.expect_value(t,held.heights[0],f32(0))
     testing.expect_value(t,held.origin,[3]f32{-1,2,-3})
     testing.expect_value(t,held.disabled_borders[0],u8(1))
+    testing.expect(t,len(held.materials)==2 && held.materials[1]==base.Asset_Id{2,0} && len(held.surfaces)==1 && held.surfaces[0]==1,"the material of each cell is the generator's copy")
     testing.expect_value(t,assets_mesh_disabled_edges(&assets,id)[0],u8(1))
     buffer:geom.Mesh_Buffer
     geom.mesh_buffer_init(&buffer)
@@ -63,22 +68,26 @@ generated_heightfield_rejects_invalid_samples_without_registering_an_asset :: pr
     mesh:=geom.Mesh{positions={{0,0,0},{1,0,0},{0,0,1}},indices={0,2,1}}
     heights:=[4]f32{0,0,0,0}
     cases:=[?]Assets_Heightfield{
-        {heights[:],1,4,{1,1,1},{},nil,nil},
-        {heights[:],2,3,{1,1,1},{},nil,nil},
-        {heights[:],max(int),2,{1,1,1},{},nil,nil},
-        {heights[:],2,2,{1,0,1},{},nil,nil},
-        {heights[:],2,2,{1,1,1},{transmute(f32)u32(0x7f800000),0,0},nil,nil},
-        {heights[:],2,2,{1,1,1},{},{0,0},nil},
-        {heights[:],2,2,{1,1,1},{},{0,2,0,0},nil},
-        {heights[:],2,2,{1,1,1},{},nil,{0,0}},
-        {heights[:],2,2,{1,1,1},{},nil,{2}},
+        {heights[:],1,4,{1,1,1},{},nil,nil,nil,nil},
+        {heights[:],2,3,{1,1,1},{},nil,nil,nil,nil},
+        {heights[:],max(int),2,{1,1,1},{},nil,nil,nil,nil},
+        {heights[:],2,2,{1,0,1},{},nil,nil,nil,nil},
+        {heights[:],2,2,{1,1,1},{transmute(f32)u32(0x7f800000),0,0},nil,nil,nil,nil},
+        {heights[:],2,2,{1,1,1},{},{0,0},nil,nil,nil},
+        {heights[:],2,2,{1,1,1},{},{0,2,0,0},nil,nil,nil},
+        {heights[:],2,2,{1,1,1},{},nil,{0,0},nil,nil},
+        {heights[:],2,2,{1,1,1},{},nil,{2},nil,nil},
+
+        {heights[:],2,2,{1,1,1},{},nil,nil,nil,{0}},
+        {heights[:],2,2,{1,1,1},{},nil,nil,{base.Asset_Id{1,0},base.Asset_Id{2,0}},{2}},
+        {heights[:],2,2,{1,1,1},{},nil,nil,{base.Asset_Id{1,0}},{0,0}},
     }
     for &field in cases {
         _,created:=assets_mesh_generate(&assets,mesh,options={heightfield=&field})
         testing.expect(t,!created)
     }
     heights[1]=transmute(f32)u32(0x7fc00000)
-    field:=Assets_Heightfield{heights[:],2,2,{1,1,1},{},nil,nil}
+    field:=Assets_Heightfield{heights[:],2,2,{1,1,1},{},nil,nil,nil,nil}
     _,created:=assets_mesh_generate(&assets,mesh,options={heightfield=&field})
     testing.expect(t,!created)
     testing.expect_value(t,assets.stats.generated,0)

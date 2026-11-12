@@ -397,7 +397,7 @@ a_spline_samples_only_valid_points_and_lies_on_the_ground :: proc(t:^testing.T) 
     }
     place:=mm.Transform{{1,2,3},mm.QUAT_IDENTITY,{1,1,1}}
     testing.expect_value(t,spline_lay({},place,{0,5,0},0.5),[3]f32{1,7.5,3})
-    flat :: proc(user:rawptr,origin,down:[3]f32,coarse:bool) -> (core.Ground_Hit,core.Ground_Found) {return {point={origin.x,-1,origin.z}},.Ground}
+    flat :: proc(user:rawptr,origin,down:[3]f32) -> (core.Ground_Hit,core.Ground_Found) {return {point={origin.x,-1,origin.z}},.Ground}
     testing.expect_value(t,spline_lay({probe=flat},place,{0,5,0},0.5),[3]f32{1,-0.5,3})
 }
 

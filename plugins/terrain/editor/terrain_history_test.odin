@@ -70,13 +70,13 @@ a_stroke_keeps_the_pages_it_changed_and_undo_and_redo_trade_them :: proc(t:^test
     }
     walk(t,&s,&tool,&world,&app,true)
     held:=test_held(t,&assets,relative);testing.expect(t,string(held)==string(first));delete(held)
-    testing.expect_value(t,terrain.source_value(&tool.stroke.source,{218,0,218}),terrain.source_value(&source,{218,0,218}))
+    testing.expect_value(t,terrain.source_value(&tool.stroke.source,{218,0,218}) or_else 0,terrain.source_value(&source,{218,0,218}) or_else 0)
     walk(t,&s,&tool,&world,&app,true)
     held=test_held(t,&assets,relative);testing.expect(t,string(held)==string(disk));delete(held)
     walk(t,&s,&tool,&world,&app,false)
     walk(t,&s,&tool,&world,&app,false)
     held=test_held(t,&assets,relative);testing.expect(t,string(held)==string(second));delete(held)
-    testing.expect(t,terrain.source_value(&tool.stroke.source,{218,0,218})<terrain.source_value(&source,{218,0,218}),"the source the tool edits follows its head")
+    testing.expect(t,(terrain.source_value(&tool.stroke.source,{218,0,218}) or_else 0)<(terrain.source_value(&source,{218,0,218}) or_else 0),"the source the tool edits follows its head")
     // A stroke after an undo replaces the history it undid.
     walk(t,&s,&tool,&world,&app,true)
     stroke(t,&s,&tool,ref,&world,owner,{kind=.Raise,center={0,0,0},radius=3,amount=1})

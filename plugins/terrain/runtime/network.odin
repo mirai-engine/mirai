@@ -159,7 +159,7 @@ data_edit :: proc(data:^Terrain_Data,entry:^Data_Source,brush:Brush) -> (change:
     previous_cost=source_cost(&entry.source)
     change=source_edit(&entry.source,brush)
     if change.error!=.None || !change.changed {return}
-    if !source_coarse_update(&entry.source,change.low,change.high,entry.ranges[:entry.quad.first[1]]) {return {error=.Out_Of_Memory}}
+    if !source_coarse_update(&entry.source,change.low,change.high) {return {error=.Out_Of_Memory}}
     data_errors_edit(entry,change.low,change.high)
     data.samples=u32(int(data.samples)-previous_cost+source_cost(&entry.source))
     data_mark(entry,change)
@@ -281,7 +281,7 @@ replay_page :: proc(data:^Terrain_Data,entry:^Data_Source,replay:Replay) -> (cha
     if !ok {return {error=.Invalid}}
     if high.x<low.x {return}
     change={changed=true,low=low,high=high}
-    if !source_coarse_update(s,low,high,entry.ranges[:entry.quad.first[1]]) {return {error=.Out_Of_Memory}}
+    if !source_coarse_update(s,low,high) {return {error=.Out_Of_Memory}}
     data_errors_edit(entry,low,high)
     data_mark(entry,change)
     return
@@ -324,11 +324,11 @@ terrain_replay :: proc(replays:^Terrain_Replays,events:^Terrain_Replay_Events,di
     }
     if !routed {return}
     for asked_edit in core.take(&requests.edits) {
-        request:=edit_resolve(asked_edit,data,terrains,worlds) or_continue
+        request,scaled:=edit_resolve(asked_edit,data,terrains,worlds) or_continue
         result:=Replay_Result{request=true,owner=request.owner,brush=request.brush}
         entry:=request_source(data,terrains,request.owner,"an edit",problems,assets) or_continue
         result.source,result.loaded=entry.id,true
-        change:=data_edit(data,entry,request.brush)
+        change:=scaled==.None?data_edit(data,entry,request.brush):Change{error=scaled}
         result.error,result.changed=change.error,change.changed
         if change.error!=.None {
             edit_report(problems,request.owner,assets,entry,request.brush,change.error)

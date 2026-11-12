@@ -122,13 +122,13 @@ ground_change :: proc(changed:^core.Events(mm.Aabb),view:^Ground_View,low,high:[
 }
 
 @(private)
-ground_probe :: proc(user:rawptr,origin,down:[3]f32,coarse:bool) -> (best:core.Ground_Hit,found:core.Ground_Found) {
+ground_probe :: proc(user:rawptr,origin,down:[3]f32) -> (best:core.Ground_Hit,found:core.Ground_Found) {
     g:=cast(^Terrain_Ground)user
     up:=-linalg.normalize0(down)
     if up=={} || linalg.is_nan(up.x) || !(abs(origin.x)<max(f32) && abs(origin.y)<max(f32) && abs(origin.z)<max(f32)) {return}
     top:f32
     for &view in g.views {
-        hit,state:=view_probe(g,&view,origin,-up,coarse)
+        hit,state:=view_probe(g,&view,origin,-up)
         if state==.Ground {
             height:=linalg.dot(hit.point,up)
             if found!=.Ground || height>top {best,found,top=hit,.Ground,height}
@@ -139,7 +139,7 @@ ground_probe :: proc(user:rawptr,origin,down:[3]f32,coarse:bool) -> (best:core.G
 
 // The ground of one terrain along the line, from above it.
 @(private)
-view_probe :: proc(g:^Terrain_Ground,view:^Ground_View,origin,down:[3]f32,coarse:bool) -> (hit:core.Ground_Hit,found:core.Ground_Found) {
+view_probe :: proc(g:^Terrain_Ground,view:^Ground_View,origin,down:[3]f32) -> (hit:core.Ground_Hit,found:core.Ground_Found) {
     s:=view.source
     o:=mm.mat4_point(view.to_local,origin)
     d:=linalg.normalize0((view.to_local*[4]f32{down.x,down.y,down.z,0}).xyz)
@@ -160,8 +160,8 @@ view_probe :: proc(g:^Terrain_Ground,view:^Ground_View,origin,down:[3]f32,coarse
     local,normal:[3]f32
     weights:Layer_Mix
     if s.kind==.Heightfield && d.y< -0.9999 {
-        // Straight down a Heightfield: from its coarse grid when asked or where its pages are not in memory.
-        held:=!coarse && cell_held(s,c,r)
+        // Straight down a Heightfield: from its coarse grid where its pages are not in memory.
+        held:=cell_held(s,c,r)
         if held && source_hole(s,c,r) {return {},.Empty}
         if held {
             local={o.x,source_height(s,o.x,o.z),o.z}

@@ -28,6 +28,9 @@ import ft "mirai:third_party/freetype"
 FONT_INTER          :: #load("../assets/fonts/Inter-Regular.ttf")
 FONT_INTER_MEDIUM   :: #load("../assets/fonts/Inter-Medium.ttf")
 FONT_INTER_SEMIBOLD :: #load("../assets/fonts/Inter-SemiBold.ttf")
+FONT_INTER_ITALIC          :: #load("../assets/fonts/Inter-Italic.ttf")
+FONT_INTER_MEDIUM_ITALIC   :: #load("../assets/fonts/Inter-MediumItalic.ttf")
+FONT_INTER_SEMIBOLD_ITALIC :: #load("../assets/fonts/Inter-SemiBoldItalic.ttf")
 // JetBrains Mono 2.304 (SIL OFL, assets/fonts): code.
 FONT_JETBRAINS_MONO :: #load("../assets/fonts/JetBrainsMono-Regular.ttf")
 // The fonts of a context created without fonts of its own, by index.
@@ -35,7 +38,10 @@ FONT_REGULAR  :: 0
 FONT_MEDIUM   :: 1
 FONT_SEMIBOLD :: 2
 FONT_MONO     :: 3
-FONT_DEFAULTS :: 4 // how many
+FONT_ITALIC          :: 4
+FONT_MEDIUM_ITALIC   :: 5
+FONT_SEMIBOLD_ITALIC :: 6
+FONT_DEFAULTS :: 7 // how many
 
 // The characters of the atlas: runs of code points, each with its glyphs
 // from index on, and the symbols of FONT_EXTRA. Latin glyphs are their code
@@ -95,6 +101,7 @@ Font_Metrics :: struct {
 Font :: struct {
     data:[FONT_CAPACITY][]byte, // borrowed: must outlive the font (font_add, font_replace)
     font_count:int,
+    italics:[FONT_CAPACITY]u8,  // of each font, the one that draws it in italics; 0: none, its glyphs lean (TEXT_ITALIC)
     metrics:[]Font_Metrics,     // one per font
     faces:[]Face,
     // Glyphs drawn before they were rasterized, a bit per face*FONT_GLYPHS+glyph:
@@ -120,8 +127,8 @@ Font :: struct {
 // FONT_MONO included. It grows by doubling, between frames.
 FONT_ROWS_START :: 288
 
-// fonts: TrueType or OpenType files; Inter Regular, Medium and SemiBold and
-// JetBrains Mono when empty.
+// fonts: TrueType or OpenType files; Inter Regular, Medium and SemiBold, their
+// italics and JetBrains Mono when empty.
 // sizes: em sizes every font gets a face of; when empty and fonts too, the
 // faces of the editor (FONT_FACES_EDITOR), otherwise 9 to 18. on_demand:
 // rasterizes nothing until glyphs are asked for (font_update).
@@ -131,6 +138,8 @@ font_init :: proc(font:^Font,fonts:[][]byte,sizes:[]i32,density:f32,allocator:=c
     if len(fonts)==0 {
         font.data[FONT_REGULAR],font.data[FONT_MEDIUM],font.data[FONT_SEMIBOLD]=FONT_INTER,FONT_INTER_MEDIUM,FONT_INTER_SEMIBOLD
         font.data[FONT_MONO]=FONT_JETBRAINS_MONO
+        font.data[FONT_ITALIC],font.data[FONT_MEDIUM_ITALIC],font.data[FONT_SEMIBOLD_ITALIC]=FONT_INTER_ITALIC,FONT_INTER_MEDIUM_ITALIC,FONT_INTER_SEMIBOLD_ITALIC
+        font.italics[FONT_REGULAR],font.italics[FONT_MEDIUM],font.italics[FONT_SEMIBOLD]=FONT_ITALIC,FONT_MEDIUM_ITALIC,FONT_SEMIBOLD_ITALIC
         font.font_count=FONT_DEFAULTS
     } else {
         for data,i in fonts {font.data[i]=data}

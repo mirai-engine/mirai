@@ -223,6 +223,28 @@ slice_equal :: proc(a,b:[]$T) -> bool {
     return true
 }
 
+@(test)
+each_collider_cell_shows_the_material_that_covers_most_of_it :: proc(t:^testing.T) {
+    height:Source;defer source_destroy(&height)
+    layers_fixture(t,&height,.Heightfield)
+    rock:=height.layers[1].material
+    _=source_edit(&height,{kind=.Paint,center=source_origin(&height)+{4,0,4},radius=3,amount=1,layer=1})
+    // Rock is the layer that covers most of cell (0,0), but layers 0 and 2 share a material that covers more.
+    testing.expect(t,grid_prepare(&height.weights,{0,0,0},{1,0,1},height.allocator))
+    for x in 0..=1 {for z in 0..=1 {grid_set(&height.weights,x,z,weights_pack({1,0,2},{105,75,75}))}}
+    mesh:Chunk_Mesh;chunk_mesh_init(&mesh);defer chunk_mesh_destroy(&mesh)
+    testing.expect(t,chunk_build(&height,{0,0,0},&mesh,true))
+    if !testing.expect(t,len(mesh.materials)==2 && mesh.materials[0]=={} && mesh.materials[1]==rock && len(mesh.surfaces)==8*8) {return}
+    testing.expect(t,mesh.surfaces[4*8+4]==1 && mesh.surfaces[3*8+3]==1)
+    testing.expect_value(t,mesh.surfaces[0],u8(0))
+    testing.expect_value(t,mesh.surfaces[7*8+7],u8(0))
+    // One material: the cells name none.
+    fresh:Source;defer source_destroy(&fresh)
+    testing.expect(t,source_make(&fresh,.Heightfield,{9,1,9},1,8))
+    testing.expect(t,chunk_build(&fresh,{0,0,0},&mesh,true))
+    testing.expect(t,len(mesh.materials)==1 && len(mesh.surfaces)==0)
+}
+
 // The table of the layers the program reads holds every layer, past four,
 // each value where terrain_surface.slang reads it.
 @(test)
@@ -284,9 +306,14 @@ layered_terrains_show_the_layered_material_and_repaint_only_touched_chunks :: pr
     request_layer(&w.terrain_requests,owner,0,grass)
     request_layer(&w.terrain_requests,owner,1,rock)
     request_layer(&w.terrain_requests,owner,3,rock)
+    // An index no layer has is refused, not taken as the first.
+    request_layer(&w.terrain_requests,owner,-1,rock)
+    request_layer_remove(&w.terrain_requests,owner,min(int))
+    testing.expect_value(t,w.terrain_requests.layers.refused,2)
     terrain_test_update(&w,&resident,&app)
     testing.expect(t,core.problem_find(&w.problems,owner,"terrain.layer_invalid")!=nil)
     testing.expect_value(t,w.data.entries[0].source.layer_count,u32(2))
+    testing.expect_value(t,w.data.entries[0].source.layers[0],grass)
     testing.expect_value(t,layered_chunks(&w),16)
     for row in 0..<core.count(&w.statics) {
         e:=w.statics.entities[row]

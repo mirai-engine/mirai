@@ -519,12 +519,21 @@ their picking.
 - A turn appears when it has something in the scene: the context selected on sending or a change.
   Once it appeared (`figure_shown`), it continues in the conversation's next turns until the agent
   finishes, and a message without new context does not move it.
-- It is placed next to the gizmo of what the turn works on, outside its handles and the context's
-  bounds, and looks toward it; without a selection it uses the camera target. Each attributed
-  transaction relocates it next to the last live entity of its record or where the last one it
-  deleted was ([review](ai-review.md#finish-revert-and-retry)): the position is recomputed in those
-  transactions, not in stable frames; a turn in Play places it by the live player, and it shows
-  once the game stops ([figures](editor.md#figures-of-whoever-works)).
+- It stands beside what the turn works on, along the axis that is more horizontal on screen,
+  outside its bounds; the handles of the gizmo are kept clear only when the gizmo is drawn there
+  (what it works on is selected), else it stands at the level of its bottom. Without a selection it
+  uses the camera target. Each attributed transaction relocates it beside the live entities of the
+  transaction (`AI_SCENE_TARGETS` latest) or where the last one it deleted was
+  ([review](ai-review.md#finish-revert-and-retry)): the position is recomputed the next time it is
+  drawn after those transactions, once the bodies of the world took them, not in stable frames; a
+  turn in Play places it by the live player, and it shows once the game stops
+  ([figures](editor.md#figures-of-whoever-works)).
+- Wherever it is, also on its way, it looks at the middle of what it works on (`Ai_Task.look`,
+  which travels to the others of a shared session).
+- Its place is in no body of what collides in the scene
+  ([figures](editor.md#figures-of-whoever-works)) and, among the free ones, one the camera sees
+  whole enough (`presence_free_place`): the other side, the sides, further out, then on what
+  stands there.
 - The other editors of a shared session see the figures and the outlines of what changed
   ([collaboration](collaboration.md#what-travels)).
 

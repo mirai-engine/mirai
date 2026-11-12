@@ -39,27 +39,30 @@ Impostor_Part :: struct {
 
 // The frames of an impostor: grid by grid of them, frame pixels a side each.
 // color: base color in sRGB and coverage (0 or 255); normal: the normal of
-// the space of the impostor as xyz * 0.5 + 0.5, and the depth along the frame.
+// the space of the impostor as xyz * 0.5 + 0.5, and the depth along the frame;
+// surface: the roughness, metallic, occlusion and diffuse transmission of the
+// material there.
 Impostor_Images :: struct {
-	grid, frame:   u32,
-	center:        Vec3, // of the sphere every frame sees, in the space of the impostor
-	radius:        f32,
-	color, normal: []u8, // RGBA8, (grid * frame) pixels a side, rows from the top
+	grid, frame:            u32,
+	center:                 Vec3, // of the sphere every frame sees, in the space of the impostor
+	radius:                 f32,
+	color, normal, surface: []u8, // RGBA8, (grid * frame) pixels a side, rows from the top
+	transmission:           Vec3, // the color of the light its materials let through, by how much they do
 }
 
 // What the captures keep on the GPU from one to the next, which the renderer holds.
 @(private)
 Impostor_GPU :: struct {
-	vertices, materials, frames: rhi.Buffer,
-	color, normal, depth:        rhi.Texture,
-	side:                        u32,
+	vertices, materials, frames:                     rhi.Buffer,
+	color, normal, surface, transmitted, depth:      rhi.Texture,
+	side:                                            u32,
 }
 
 @(private)
 impostor_gpu_destroy :: proc(device: ^rhi.Device, state: ^Impostor_GPU) {
 	if device != nil {
 		for buffer in ([]rhi.Buffer{state.vertices, state.materials, state.frames}) {if buffer != 0 {rhi.buffer_destroy(device, buffer)}}
-		for texture in ([]rhi.Texture{state.color, state.normal, state.depth}) {if texture != 0 {rhi.texture_destroy(device, texture)}}
+		for texture in ([]rhi.Texture{state.color, state.normal, state.surface, state.transmitted, state.depth}) {if texture != 0 {rhi.texture_destroy(device, texture)}}
 	}
 	state^ = {}
 }
@@ -67,6 +70,7 @@ impostor_gpu_destroy :: proc(device: ^rhi.Device, state: ^Impostor_GPU) {
 impostor_images_destroy :: proc(images: ^Impostor_Images, allocator := context.allocator) {
 	delete(images.color, allocator)
 	delete(images.normal, allocator)
+	delete(images.surface, allocator)
 	images^ = {}
 }
 
@@ -236,14 +240,16 @@ impostor_capture :: proc(r: ^Renderer, parts: []Impostor_Part, grid, frame: u32,
 	}) {
 		if good, _ := ensure_buffer(r, target.buffer, target.size, target.usage, target.name); !good {return}
 	}
-	if state.side != side || state.color == 0 || state.normal == 0 || state.depth == 0 {
-		for texture in ([]rhi.Texture{state.color, state.normal, state.depth}) {if texture != 0 {rhi.texture_destroy(device, texture)}}
+	if state.side != side || state.color == 0 || state.normal == 0 || state.surface == 0 || state.transmitted == 0 || state.depth == 0 {
+		for texture in ([]rhi.Texture{state.color, state.normal, state.surface, state.transmitted, state.depth}) {if texture != 0 {rhi.texture_destroy(device, texture)}}
 		state.color = rhi.texture_create(device, {width = side, height = side, format = .RGBA8_Srgb, usage = {.Color_Target, .Transfer_Src}, name = "impostor color"})
 		state.normal = rhi.texture_create(device, {width = side, height = side, format = .RGBA8_Unorm, usage = {.Color_Target, .Transfer_Src}, name = "impostor normal"})
+		state.surface = rhi.texture_create(device, {width = side, height = side, format = .RGBA8_Unorm, usage = {.Color_Target, .Transfer_Src}, name = "impostor surface"})
+		state.transmitted = rhi.texture_create(device, {width = side, height = side, format = .RGBA8_Unorm, usage = {.Color_Target, .Transfer_Src}, name = "impostor transmission"})
 		state.depth = rhi.texture_create(device, {width = side, height = side, format = .D32_Float, usage = {.Depth_Target}, name = "impostor depth"})
 		state.side = side
 	}
-	if state.color == 0 || state.normal == 0 || state.depth == 0 {return}
+	if state.color == 0 || state.normal == 0 || state.surface == 0 || state.transmitted == 0 || state.depth == 0 {return}
 	rows := s.materials[:] if len(s.materials) > 0 else []Gpu_Material_Row{{}}
 	if !rhi.buffer_upload(device, state.vertices, 0, slice_bytes(vertices)) || !rhi.buffer_upload(device, state.materials, 0, slice_bytes(rows)) || !rhi.buffer_upload(device, state.frames, 0, frames) {return}
 	cmd := rhi.immediate_begin(device)
@@ -252,9 +258,11 @@ impostor_capture :: proc(r: ^Renderer, parts: []Impostor_Part, grid, frame: u32,
 	rhi.cmd_bind_buffer(cmd, SLOT_MATERIALS, state.materials)
 	rhi.cmd_bind_sampler(cmd, SLOT_MATERIAL_SAMPLER, r.material_sampler)
 	rhi.cmd_bind_sampler(cmd, SLOT_LINEAR_SAMPLER, r.linear_sampler)
-	pass := rhi.Render_Pass_Desc{color_count = 2, name = "impostor capture"}
+	pass := rhi.Render_Pass_Desc{color_count = 4, name = "impostor capture"}
 	pass.colors[0] = {texture = state.color, load = .Clear, store = .Store}
 	pass.colors[1] = {texture = state.normal, load = .Clear, store = .Store}
+	pass.colors[2] = {texture = state.surface, load = .Clear, store = .Store}
+	pass.colors[3] = {texture = state.transmitted, load = .Clear, store = .Store}
 	pass.depth = {texture = state.depth, load = .Clear, store = .Dont_Care, clear = 0}
 	rhi.cmd_begin_render_pass(cmd, &pass)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS5, r.display_lut)
@@ -269,30 +277,50 @@ impostor_capture :: proc(r: ^Renderer, parts: []Impostor_Part, grid, frame: u32,
 	rhi.cmd_end_render_pass(cmd)
 	if !rhi.immediate_end(device, cmd) {return}
 	images = {grid = grid, frame = frame, center = center, radius = radius}
-	color_error, normal_error: mem.Allocator_Error
-	images.color, color_error = make([]u8, int(side) * int(side) * 4, allocator)
-	images.normal, normal_error = make([]u8, int(side) * int(side) * 4, allocator)
-	if color_error != nil || normal_error != nil {
+	texels := int(side) * int(side) * 4
+	color_error, normal_error, surface_error, transmitted_error: mem.Allocator_Error
+	transmitted: []u8
+	images.color, color_error = make([]u8, texels, allocator)
+	images.normal, normal_error = make([]u8, texels, allocator)
+	images.surface, surface_error = make([]u8, texels, allocator)
+	transmitted, transmitted_error = make([]u8, texels, context.temp_allocator)
+	if color_error != nil || normal_error != nil || surface_error != nil || transmitted_error != nil {
 		set_error(r, "impostor capture: out of memory for %dx%d images", side, side)
 		impostor_images_destroy(&images, allocator)
 		return {}, false
 	}
-	if !rhi.texture_read(device, state.color, images.color) || !rhi.texture_read(device, state.normal, images.normal) {
+	if !rhi.texture_read(device, state.color, images.color) || !rhi.texture_read(device, state.normal, images.normal) || !rhi.texture_read(device, state.surface, images.surface) || !rhi.texture_read(device, state.transmitted, transmitted) {
 		impostor_images_destroy(&images, allocator)
 		return {}, false
 	}
+	images.transmission = impostor_transmission(images.surface, transmitted)
 	return images, true
 }
 
-// Gives each uncovered texel of a frame the color, normal and depth of the
-// covered texel of the frame nearest it, its coverage still 0: what filtering
-// and the levels of the textures blend at the edges of the leaves is their
-// own color and not the cleared black. A frame without a covered texel stays
-// cleared.
+// The color of the light the covered texels of a capture let through, each
+// by how much it does (the alpha of surface); white where none does.
+impostor_transmission :: proc "contextless" (surface, transmitted: []u8) -> Vec3 {
+	sum: [3]f64
+	weight: f64
+	for i := 0; i + 3 < len(surface) && i + 3 < len(transmitted); i += 4 {
+		w := f64(surface[i + 3]) / 255
+		if w <= 0 {continue}
+		for c in 0 ..< 3 {sum[c] += w * f64(transmitted[i + c]) / 255}
+		weight += w
+	}
+	if weight <= 0 {return {1, 1, 1}}
+	return {f32(sum[0] / weight), f32(sum[1] / weight), f32(sum[2] / weight)}
+}
+
+// Gives each uncovered texel of a frame the color, normal, depth and surface
+// of the covered texel of the frame nearest it, its coverage still 0: what
+// filtering and the levels of the textures blend at the edges of the leaves
+// is their own and not the cleared black. A frame without a covered texel
+// stays cleared.
 impostor_dilate :: proc(images: ^Impostor_Images) {
 	side := int(images.grid * images.frame)
 	frame := int(images.frame)
-	if side == 0 || len(images.color) < side * side * 4 || len(images.normal) < side * side * 4 {return}
+	if side == 0 || len(images.color) < side * side * 4 || len(images.normal) < side * side * 4 || len(images.surface) < side * side * 4 {return}
 	filled := make([]bool, side * side, context.temp_allocator)
 	queue := make([]u32, side * side, context.temp_allocator)
 	head, tail := 0, 0
@@ -314,7 +342,10 @@ impostor_dilate :: proc(images: ^Impostor_Images) {
 			if filled[next] {continue}
 			filled[next] = true
 			for c in 0 ..< 3 {images.color[next * 4 + c] = images.color[at * 4 + c]}
-			for c in 0 ..< 4 {images.normal[next * 4 + c] = images.normal[at * 4 + c]}
+			for c in 0 ..< 4 {
+				images.normal[next * 4 + c] = images.normal[at * 4 + c]
+				images.surface[next * 4 + c] = images.surface[at * 4 + c]
+			}
 			queue[tail] = u32(next)
 			tail += 1
 		}

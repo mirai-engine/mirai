@@ -1,5 +1,6 @@
 package terrain_editor
 
+import volume "mirai:engine/volume"
 import "core:fmt"
 import "core:mem"
 import "core:os"
@@ -32,6 +33,8 @@ Create_Test_World :: struct {
     terrains:core.Table(terrain.Terrain),
     worlds:core.Table(core.World_Transform),
     overrides:core.Table(erender.Material_Values),
+    splines:core.Table(volume.Spline),
+    conforms:core.Table(terrain.Terrain_Conform),
 }
 
 @(test)
@@ -47,9 +50,9 @@ a_canceled_stroke_takes_back_its_head_and_keeps_the_history :: proc(t:^testing.T
     change:=terrain.source_edit(&tool.stroke.source,{kind=.Raise,center={0,0,0},radius=1,amount=2})
     testing.expect(t,change.changed)
     stroke_changed(&tool.stroke,change)
-    testing.expect_value(t,terrain.source_value(head,{1,0,1}),f32(0))
+    testing.expect_value(t,terrain.source_value(head,{1,0,1}) or_else 0,f32(0))
     stroke_cancel(&tool)
-    testing.expect_value(t,terrain.source_value(&tool.stroke.source,{1,0,1}),f32(0))
+    testing.expect_value(t,terrain.source_value(&tool.stroke.source,{1,0,1}) or_else 0,f32(0))
     testing.expect(t,tool.stroke.id!={} && !tool.stroke.dirty_any,"the source stays, as its file holds it")
     testing.expect_value(t,len(tool.steps),editor.REVISION_STEPS_CAPACITY)
     for &step,i in tool.steps {testing.expect_value(t,step.source,base.Asset_Id{u64(i+1),0})}
@@ -317,7 +320,7 @@ a_volume_created_on_a_heightfield_is_filled_with_its_ground :: proc(t:^testing.T
     volume:terrain.Source;defer terrain.source_destroy(&volume)
     if !testing.expect(t,terrain.terrain_read(&volume,&assets,marker.source)) {return}
     for z in 0..<17 {for y in 0..<9 {for x in 0..<17 {
-        value:=terrain.source_value(&volume,{x,y,z})
+        value:=terrain.source_value(&volume,{x,y,z}) or_else 0
         if !testing.expectf(t,y<4?value<0:y>4?value>0:value==0,"the sample %v of the Volume is %v, the ground at the sample 4 along y",[3]int{x,y,z},value) {return}
     }}}
 }
@@ -400,7 +403,7 @@ create_test_heightmap :: proc(t:^testing.T,kind:terrain.Source_Kind) {
     values:=[6]u16{0,1,255,256,32768,65535}
     testing.expect_value(t,source.samples,[3]u32{3,1,2})
     // Its file keeps them to the step of its heights, finer than 8 bits.
-    for value,i in values {testing.expect_value(t,terrain.source_value(&source,{i%3,0,i/3}),terrain.height_quantize(f32(value)/65535*20-3))}
+    for value,i in values {testing.expect_value(t,terrain.source_value(&source,{i%3,0,i/3}) or_else 0,terrain.height_quantize(f32(value)/65535*20-3))}
     testing.expect(t,history.undo(&edits,ref,&selection))
     testing.expect_value(t,len(world.terrains.values),0)
     testing.expect(t,!editor.file_exists(&s,saved))
@@ -462,7 +465,7 @@ failed_terrain_save_preserves_redo_snapshot_scene_and_committed_bytes :: proc(t:
     testing.expect(t,string(committed)!=string(original))
     testing.expect(t,!os.exists(saved))
     redo_values:[25]f32
-    for &value,i in redo_values {value=terrain.source_value(&tool.stroke.source,{i%5,0,i/5})}
+    for &value,i in redo_values {value=terrain.source_value(&tool.stroke.source,{i%5,0,i/5}) or_else 0}
     if !testing.expect(t,history.undo(&edits,ref,&selection)) {return}
     terrain_sync(&s,&tool,core.read(&world.terrains),app.assets)
     restored:=test_held(t,&assets,relative)

@@ -27,12 +27,21 @@ Image :: struct {
     border_uv:[4]f32,    // the same borders as a fraction of the image
     fit:Image_Fit,       // how it takes its rectangle, keeping size
     size:[2]f32,         // of the part shown, in texels; zero: unknown, it stretches
+    // Its shadow, corners and stroke, and the values of program, as a Box takes
+    // them from its look; nil: none.
+    look:^Node_Style,
+    program:u32,         // a ui program that colors it, with the image as the color of the node
 }
 @(private)
 image_paint :: proc(i:Image) -> Paint {
     tint:=i.tint if i.tint!={} else Color{255,255,255,255}
-    if i.border!={} {return {kind=.Nine_Slice,quad=i.quad,fill=tint,border=i.border,border_uv=i.border_uv}}
-    return {kind=.Image,quad=i.quad,fill=tint,fit=i.fit,image_size=i.size}
+    p:=Paint{kind=.Image,quad=i.quad,fill=tint,fit=i.fit,image_size=i.size,program=i.program}
+    if i.border!={} {p.kind,p.border,p.border_uv=.Nine_Slice,i.border,i.border_uv}
+    if l:=i.look;l!=nil {
+        p.corners,p.stroke,p.stroke_width,p.program_values=l.radius,l.stroke,l.stroke_width,l.program_values
+        p.shadow,p.shadow_color,p.shadow_blur,p.shadow_offset=l.shadow,l.shadow_color,l.shadow_blur,l.shadow_offset
+    }
+    return p
 }
 
 // The frame of a sheet of sprites an image shows: its columns by rows count

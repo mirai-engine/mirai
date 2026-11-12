@@ -170,6 +170,9 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
 - `edited_world` is the document (undo, scenes, Build); `shown_world` is that of the Play while it
   runs or what is watched in `Watch`. UI edits during a Play go to the Play's world and are not
   written; the edit API always writes to the document.
+- A project has one editor per folder of binaries: the user who opens the editor on a project an
+  agent's session drives gets that editor with a window
+  ([arguments](references/editor.md#arguments)).
 - What is watched is not edited
   ([watching another run](references/editor.md#watching-another-run)).
 - The editor has no network logic: networked play is provided by `multiplayer` through its

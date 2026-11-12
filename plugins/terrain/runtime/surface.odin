@@ -78,7 +78,7 @@ surface_maps_build :: proc(s:^Source,low,high:[2]int,spacing:int,coarse:bool,cut
             if painted {m.paint[at]=coarse_paint(s,x,z)}
         } else {
             normal=heightfield_normal(s,x,z,1)
-            mix=layers_vertex(s,weights_float(grid_get(&s.weights,x,z)),heightfield_normal(s,x,z,LAYER_RULE_SAMPLES),grid_get(&s.field,x,z))
+            mix=heightfield_weights(s,x,z,grid_get(&s.field,x,z))
             if painted {m.paint[at]=grid_get(&s.paint,x,z)}
         }
         control:=u32(weights_quantize(mix,layers))

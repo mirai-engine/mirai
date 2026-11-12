@@ -20,7 +20,8 @@ Indirect_Light :: enum u8 {
 Light_Probes :: enum u8 {Low,Medium,High}
 // The largest side of a texture: GRAPHICS_TEXTURE_SIZES.
 Textures :: enum u8 {Low,Medium,High,Ultra}
-// How far meshes keep their detail: GRAPHICS_DETAIL_PIXELS.
+// How far meshes keep their detail (GRAPHICS_DETAIL_PIXELS), and how far and dense a
+// plugin draws the scattered detail of a scene (foliage).
 Detail :: enum u8 {Low,Medium,High,Ultra}
 
 @(storage,shared,setting="machine")
@@ -158,7 +159,7 @@ graphics_render_settings :: proc(settings:gpu.Settings,quality:Graphics_Settings
 @(step="render",loops="game editor",before="render_sync")
 graphics_apply :: proc(settings:core.Ref(Graphics_Settings),sync:^Render_Sync,app:^host.App) {
     graphics:=settings.ptr^
-    if sync.graphics_applied && sync.graphics==graphics {return}
+    if sync.graphics_applied && sync.graphics==graphics && sync.paced==app.paced {return}
     r:=app.renderer
     if r!=nil && rhi.device_info(r.device).type!=.CPU {
         before:=r.settings
@@ -171,6 +172,6 @@ graphics_apply :: proc(settings:core.Ref(Graphics_Settings),sync:^Render_Sync,ap
         if app.device!=nil && pacing.vsync!=platform.pacing(app.platform).vsync {rhi.swapchain_set_vsync(app.device,pacing.vsync)}
         platform.set_pacing(app.platform,pacing)
     }
-    sync.graphics=graphics
+    sync.graphics,sync.paced=graphics,app.paced
     sync.graphics_applied=true
 }

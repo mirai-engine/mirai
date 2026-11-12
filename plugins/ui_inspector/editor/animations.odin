@@ -440,7 +440,7 @@ override_rows :: proc(p:^Pane,a:^host.Assets,o:^ui.Tree_Override,field:ui.Node_F
     case .Block:
         edit(u,"Override",value_row(p,"Blocks pointer",Flag_Value,&v.block,false,"The pointer over it does not reach what is behind it"))
     case .Values:
-        edit(u,"Override",value_row(p,"Index",Count_Value,&v.index,d.index,"What a Switcher or a Tabs shows"))
+        edit(u,"Override",value_row(p,"Index",Count_Value,&v.index,d.index,"What a Switcher shows"))
         edit(u,"Override",value_row(p,"Elements",Count_Value,&v.count,d.count,"How many times a List builds its node"))
         edit(u,"Override",value_row(p,"Writes",Count_Value,&v.choice,d.choice,"What a Radio writes"))
         edit(u,"Override",value_row(p,"Range",Range_Value,&v.range,d.range,"Of a Slider or a Number: least, most and step"))

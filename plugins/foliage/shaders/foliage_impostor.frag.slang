@@ -6,8 +6,6 @@
 #include "foliage_impostor.slang"
 #include "gbuffer.slang"
 
-#define IMPOSTOR_ROUGHNESS 0.8
-
 struct Stage_Output {
     [[vk::location(0)]] float4 g_albedo : SV_Target0;
     [[vk::location(1)]] float4 g_normal : SV_Target1;
@@ -44,12 +42,13 @@ Stage_Output main(Impostor_Varyings input, float4 pixel_position : SV_Position) 
     float3 dir = input.eye.w > 0.5 ? normalize(input.local - input.eye.xyz) : input.eye.xyz;
     float radius = row.sphere.w;
     float3 center = row.sphere.xyz;
-    uint n = max(row.frames.z, 2u);
+    uint n = max(row.frames.w & 0xffffu, 2u);
     float lod = input.weights.w;
     float covered = 0.0;
     float3 color = float3(0.0);
     float3 normal = float3(0.0);
     float3 surface = float3(0.0);
+    float4 terms = float4(0.0); // roughness, metallic, occlusion, diffuse transmission
     for (uint k = 0u; k < 3u; k++) {
         float weight = input.weights[k];
         if (weight <= 0.0) continue;
@@ -72,15 +71,20 @@ Stage_Output main(Impostor_Varyings input, float4 pixel_position : SV_Position) 
         atlas = (float2(at) + uv) / float(n);
         float4 albedo = material_textures[mirai_nonuniform(row.frames.x)].SampleLevel(material_sampler, atlas, lod);
         float4 shape = material_textures[mirai_nonuniform(row.frames.y)].SampleLevel(material_sampler, atlas, lod);
+        float4 material = material_textures[mirai_nonuniform(row.frames.z)].SampleLevel(material_sampler, atlas, lod);
         float share = weight * albedo.a;
         covered += share;
         color += albedo.rgb * share;
         normal += (shape.rgb * 2.0 - 1.0) * share;
         surface += p * share;
+        terms += material * share;
     }
     if (covered < 0.5) discard;
     color /= covered;
     surface /= covered;
+    terms /= covered;
+    float roughness = terms.x;
+    float metallic = terms.y;
     float4 world[3] = {input.world0, input.world1, input.world2};
     float3 place = transform_point(world, surface);
     // Normals go by the inverse transpose: the axes divided by their squared scales.
@@ -90,18 +94,27 @@ Stage_Output main(Impostor_Varyings input, float4 pixel_position : SV_Position) 
     float3 turned = axis_x * (normal.x / max(dot(axis_x, axis_x), 1e-12)) + axis_y * (normal.y / max(dot(axis_y, axis_y), 1e-12)) + axis_z * (normal.z / max(dot(axis_z, axis_z), 1e-12));
     turned = dot(turned, turned) > 1e-12 ? normalize(turned) : to_eye(place);
     Stage_Output output;
-    output.g_albedo = float4(saturate(color), 0.0);
-    output.g_normal = gbuffer_normal_pack(turned, IMPOSTOR_ROUGHNESS, 0u);
-    output.g_emission = float4(0.0, 0.0, 0.0, 1.0);
+    uint bits = 0u;
+#ifdef MIRAI_GBUFFER_LAYERS
+    // The light its leaves let through, in the color its materials give it.
+    Material_Layers layers = material_layers_none();
+    if (terms.w > 0.0) {
+        layers.bits = MATERIAL_LAYER_DIFFUSE_TRANSMISSION;
+        layers.diffuse_transmission = terms.w;
+        layers.diffuse_transmission_color = row.transmission.rgb;
+    }
+    bits = layers.bits;
+    output.g_layers = gbuffer_layers_pack(layers);
+#endif
+    output.g_albedo = float4(saturate(color), metallic);
+    output.g_normal = gbuffer_normal_pack(turned, roughness, bits);
+    output.g_emission = float4(0.0, 0.0, 0.0, terms.z);
     float4 current = view_clip_unjittered(place);
     float4 previous = view_clip_previous(place);
-    output.g_motion = float4((previous.xy / previous.w - current.xy / current.w) * float2(0.5, -0.5), IMPOSTOR_ROUGHNESS, 1.0);
+    output.g_motion = float4((previous.xy / previous.w - current.xy / current.w) * float2(0.5, -0.5), roughness, 1.0);
     output.g_depth = dot(place - frame.camera_position.xyz, frame.camera_forward.xyz);
 #ifndef MIRAI_GBUFFER_PLAIN
-    output.g_specular = specular_pack(float3(0.04, 0.04, 0.04), 1.0);
-#endif
-#ifdef MIRAI_GBUFFER_LAYERS
-    output.g_layers = gbuffer_layers_pack(material_layers_none());
+    output.g_specular = specular_pack(lerp(float3(0.04, 0.04, 0.04), saturate(color), metallic), 1.0);
 #endif
 #ifdef MIRAI_INSTANCE_IDS
     output.g_instance = 0u;

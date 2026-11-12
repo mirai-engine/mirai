@@ -32,7 +32,7 @@ terrain_copy_expect :: proc(t:^testing.T,dst,src:^Terrain_Data) {
         testing.expect_value(t,mem.compare(mem.slice_to_bytes(copy.versions),mem.slice_to_bytes(entry.versions)),0)
         testing.expect_value(t,len(copy.pending),len(entry.dirty))
         testing.expect(t,copy.quad==entry.quad && len(copy.dirty)==quad_total(&entry.quad))
-        testing.expect_value(t,mem.compare(mem.slice_to_bytes(copy.ranges),mem.slice_to_bytes(entry.ranges)),0)
+        testing.expect_value(t,mem.compare(mem.slice_to_bytes(copy.source.coarse.ranges),mem.slice_to_bytes(entry.source.coarse.ranges)),0)
         testing.expect(t,copy.source.coarse.size==entry.source.coarse.size && grid_equal(&copy.source.coarse.heights,&entry.source.coarse.heights) && grid_equal(&copy.source.coarse.weights,&entry.source.coarse.weights))
         for dirty,j in copy.dirty {testing.expect(t,dirty && copy.pending[j]==u32(j))}
         if entry.source.kind==.Heightfield {

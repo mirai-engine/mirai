@@ -83,11 +83,9 @@ Data_Source :: struct {
     versions:[]u32, // of each chunk: the change it last took
     quad:Quad,
     nodes:[]u32,     // of each node of the quadtree above the chunks: the last change of a chunk it covers
-    ranges:[][2]f32, // of each chunk and node: the lowest and highest point of its samples or sections
-    errors:[]Lod_Errors, // of each chunk and node of a Heightfield: how far each level is from its samples
     dirty:[]bool,    // by chunk and node
     pending:[dynamic]u32,
-    allocator:runtime.Allocator, // of versions, nodes, ranges, errors and dirty
+    allocator:runtime.Allocator, // of versions, nodes and dirty
 }
 
 // Where the editor brushes a source, in its space: the chunks of its terrains
@@ -117,13 +115,17 @@ dig :: proc(requests:^Terrain_Requests,brush:Brush,owner:=core.NONE) -> Edit_Err
     core.offer(&requests.edits,Edit_Request{owner,brush})
     return .None
 }
-// Sets layer index of the source of a terrain, or adds one with index equal to its count.
+// Sets layer index of the source of a terrain, or adds one with index equal
+// to its count. An index below 0 or from LAYERS_MAX is refused.
 request_layer :: proc(requests:^Terrain_Requests,owner:core.Entity,index:int,layer:Terrain_Layer) {
-    core.offer(&requests.layers,Layer_Request{owner,{index=u32(max(index,0)),layer=layer}})
+    if index<0 || index>=LAYERS_MAX {core.refuse(&requests.layers);return}
+    core.offer(&requests.layers,Layer_Request{owner,{index=u32(index),layer=layer}})
 }
-// Takes layer index away from the source of a terrain; what it covered goes to the others.
+// Takes layer index away from the source of a terrain; what it covered goes
+// to the others. An index below 0 or from LAYERS_MAX is refused.
 request_layer_remove :: proc(requests:^Terrain_Requests,owner:core.Entity,index:int) {
-    core.offer(&requests.layers,Layer_Request{owner,{index=u32(max(index,0)),remove=true}})
+    if index<0 || index>=LAYERS_MAX {core.refuse(&requests.layers);return}
+    core.offer(&requests.layers,Layer_Request{owner,{index=u32(index),remove=true}})
 }
 request_save :: proc(requests:^Terrain_Requests,owner:core.Entity,path:string="") {
     if len(path)>=512 {core.refuse(&requests.saves);return}
@@ -137,32 +139,54 @@ request_save :: proc(requests:^Terrain_Requests,owner:core.Entity,path:string=""
 terrain_requests_serve :: proc(requests:^Terrain_Requests,settings:Terrain_Settings,problems:^core.Problems) {
     capacity,setting:=int(settings.requests),"Terrain_Settings.requests"
     core.queue_serve(&requests.edits,capacity,problems,"terrain.requests","terrain edits",setting)
-    core.queue_serve(&requests.layers,capacity,problems,"terrain.requests","terrain layer changes",setting)
+    core.queue_serve(&requests.layers,capacity,problems,"terrain.requests","terrain layer changes",setting,"a layer change names a layer from 0 to below LAYERS_MAX")
     core.queue_serve(&requests.saves,capacity,problems,"terrain.requests","terrain saves",setting,"a save names a path shorter than 512 bytes")
 }
 
-// A brush of the world as the terrain at place reads it, and the other way.
-brush_local :: proc(brush:Brush,place:mm.Transform) -> Brush {
-    return brush_placed(brush,linalg.inverse(mm.transform_matrix(place)),mm.quat_inverse(place.rotation),1/max(abs(place.scale.x),1e-6))
+// The metres of the world in one of a terrain whose axes it scales by scale
+// (each above 0), for a brush of kind on a source of a kind: across x and z,
+// which a disc over them needs equal, and up y, which a shape of Add and
+// Carve and any brush of a Volume, which measure in three dimensions, need
+// equal to them too. Scale when they are not; across and up are then still
+// those of x and y.
+brush_scale :: proc "contextless" (scale:[3]f32,source:Source_Kind,kind:Brush_Kind) -> (across,up:f32,error:Edit_Error) {
+    equal :: proc "contextless" (a,b:f32) -> bool {return abs(a-b)<=max(a,b)*SCALE_TOLERANCE}
+    across,up=max(scale.x,1e-6),max(scale.y,1e-6)
+    solid:=source==.Volume || kind==.Add || kind==.Carve
+    if !(scale.x>0 && scale.y>0 && scale.z>0) || !equal(scale.x,scale.z) || solid && !equal(scale.x,scale.y) {error=.Scale}
+    return
 }
-brush_world :: proc(brush:Brush,place:mm.Transform) -> Brush {
-    return brush_placed(brush,mm.transform_matrix(place),place.rotation,max(abs(place.scale.x),1e-6))
+// How far apart two scales of a terrain may be, as a part of the larger, to be one.
+SCALE_TOLERANCE :: f32(1e-4)
+
+// A brush of the world as the terrain at place, of a source of kind, reads
+// it, and the other way: lengths across by its scale across, the metres
+// Raise, Lower and Noise move the surface and the steps of a Terrace by its
+// scale up (brush_scale, whose error it returns).
+brush_local :: proc(brush:Brush,place:mm.Transform,kind:Source_Kind) -> (Brush,Edit_Error) {
+    across,up,error:=brush_scale(linalg.abs(place.scale),kind,brush.kind)
+    return brush_placed(brush,linalg.inverse(mm.transform_matrix(place)),mm.quat_inverse(place.rotation),1/across,1/up),error
+}
+brush_world :: proc(brush:Brush,place:mm.Transform,kind:Source_Kind) -> (Brush,Edit_Error) {
+    across,up,error:=brush_scale(linalg.abs(place.scale),kind,brush.kind)
+    return brush_placed(brush,mm.transform_matrix(place),place.rotation,across,up),error
 }
 @(private)
-brush_placed :: proc(brush:Brush,to:matrix[4,4]f32,rotation:quaternion128,factor:f32) -> (moved:Brush) {
+brush_placed :: proc(brush:Brush,to:matrix[4,4]f32,rotation:quaternion128,across,up:f32) -> (moved:Brush) {
     moved=brush
     c,d:=brush.center,brush.delta
     moved.center=(to*[4]f32{c.x,c.y,c.z,1}).xyz
     moved.delta=(to*[4]f32{d.x,d.y,d.z,0}).xyz
-    moved.target=(to*[4]f32{c.x,brush.target,c.z,1}).y
-    moved.rotation=rotation*brush.rotation
-    moved.radius*=factor
-    moved.extent*=factor
-    moved.blend*=factor
-    moved.interval*=factor
-    moved.scale*=factor
+    // That of Paint is a weight.
+    if brush.kind!=.Paint {moved.target=(to*[4]f32{c.x,brush.target,c.z,1}).y}
+    moved.rotation=rotation*(brush.rotation==0?1:brush.rotation)
+    moved.radius*=across
+    moved.extent*=across
+    moved.blend*=across
+    moved.scale*=across
+    moved.interval*=up
     #partial switch brush.kind {
-    case .Raise,.Lower,.Noise: moved.amount*=factor
+    case .Raise,.Lower,.Noise: moved.amount*=up
     }
     return
 }
@@ -220,7 +244,8 @@ Terrain_Resident :: struct {
     gc_parents:core.Seen,
     shown:[2]core.Seen, // Terrain and Material_Values after the owners last showed their chunks
     stats:Terrain_Resident_Stats,
-    lod_view:[3]f32,  // where the view was at the last evaluation of levels
+    lod_views:[LOD_VIEWS][3]f32, // where the views were at the last evaluation of levels
+    lod_view_count:int,
     lod_stamp:[3]u64, // the revision of the streaming sources, the count of owners, marks
     lod_seen:[2]core.Seen, // the transforms and the colliders
     marks:u64,        // advances when what the levels or the unloaded ground are chosen from changes: a page, a source, an owner, a chunk that empties, fills or goes
@@ -229,6 +254,8 @@ Terrain_Resident :: struct {
     room:Collider_Room,
     cut:bool,               // what the owners show is to be chosen again: the cuts or what is built changed
     splits:[dynamic]Split,  // room for a node of every owner: the order of the budget and of the colliders
+    places:[dynamic]Lod_Place, // room for every owner, and spans for its nodes: how resident_lod measures them
+    spans:[dynamic][3]int,
     border:Piece_Border,    // of a node, while its pages are looked for
     picking:bool,           // chunks without a collider keep their triangles on the CPU: while the world does not play, for the picking of the editor
 }
@@ -327,8 +354,9 @@ terrain_file :: proc(a:^host.Assets,id:base.Asset_Id,allocator:=context.temp_all
 
 // Reads the source of a terrain as the registry of the assets holds it: what
 // its memory holds until the file is written, or the file. paged leaves the pages of a
-// Heightfield or Volume on disk in the file, read when needed; one only the
-// memory of the registry holds is read whole.
+// Heightfield or Volume on disk in the file, read when needed, and reads the
+// coarse data a world keeps; one only the memory of the registry holds is
+// read whole.
 terrain_read :: proc(s:^Source,a:^host.Assets,id:base.Asset_Id,allocator:=context.allocator,paged:=false) -> bool {
     if paged {
         record,found:=asset.registry_find(&a.registry,id)
@@ -338,14 +366,14 @@ terrain_read :: proc(s:^Source,a:^host.Assets,id:base.Asset_Id,allocator:=contex
             front:asset.Asset
             if asset.asset_load_front(&front,path,a.allocator)!=.None {return false}
             defer asset.asset_close(&front)
-            loaded,ok:=source_read(s,&front,&a.types,allocator,path)
+            loaded,ok:=source_read(s,&front,&a.types,allocator,path,coarse=true)
             return ok && loaded==id
         }
     }
     file:asset.Asset
     if host.assets_file(a,id,TERRAIN_KIND,&file)!=.None {return false}
     defer asset.asset_close(&file)
-    loaded,ok:=source_read(s,&file,&a.types,allocator)
+    loaded,ok:=source_read(s,&file,&a.types,allocator,coarse=paged)
     return ok && loaded==id
 }
 terrain_source :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id) -> ^Source {
@@ -406,7 +434,7 @@ data_find :: proc(data:^Terrain_Data,id:base.Asset_Id) -> ^Data_Source {
 data_entry_free :: proc(entry:^Data_Source) {
     source_destroy(&entry.source)
     allocator:=entry.allocator if entry.allocator.procedure!=nil else context.allocator
-    delete(entry.versions,allocator);delete(entry.nodes,allocator);delete(entry.ranges,allocator);delete(entry.errors,allocator);delete(entry.dirty,allocator);delete(entry.pending)
+    delete(entry.versions,allocator);delete(entry.nodes,allocator);delete(entry.dirty,allocator);delete(entry.pending)
     entry^={}
 }
 terrain_data_free :: proc(data:^Terrain_Data) {
@@ -452,8 +480,8 @@ terrain_data_swap :: proc(a,b:^Terrain_Data) {
     a.epoch,b.epoch=epoch,epoch
 }
 // The chunks and nodes of the quadtree of the source of entry, every one
-// pending, and the heights each reaches: a Heightfield reads every page once
-// for them and for its coarse grid.
+// pending. A Heightfield its file did not give its coarse data to (one made
+// in memory) measures it reading every page once.
 @(private)
 data_chunks_allocate :: proc(entry:^Data_Source,allocator:runtime.Allocator,js:^jobs.Job_System=nil,worker:=jobs.OWNER) -> bool {
     entry.allocator=allocator
@@ -464,10 +492,6 @@ data_chunks_allocate :: proc(entry:^Data_Source,allocator:runtime.Allocator,js:^
     if error!=nil {return false}
     entry.nodes,error=make([]u32,total-chunks,allocator)
     if error!=nil {return false}
-    entry.ranges,error=make([][2]f32,total,allocator)
-    if error!=nil {return false}
-    entry.errors,error=make([]Lod_Errors,entry.source.kind==.Heightfield?total:0,allocator)
-    if error!=nil {return false}
     entry.dirty,error=make([]bool,total,allocator)
     if error!=nil {return false}
     entry.pending,error=make([dynamic]u32,0,total,allocator)
@@ -475,10 +499,7 @@ data_chunks_allocate :: proc(entry:^Data_Source,allocator:runtime.Allocator,js:^
     for &version in entry.versions {version=entry.change}
     for &version in entry.nodes {version=entry.change}
     for i in 0..<total {entry.dirty[i]=true;append(&entry.pending,u32(i))}
-    if !source_coarse_build(&entry.source,entry.ranges[:chunks],entry.errors[:min(chunks,len(entry.errors))],js,worker) {return false}
-    data_ranges(entry)
-    data_errors(entry)
-    return true
+    return entry.source.kind!=.Heightfield || coarse_ready(&entry.source) || source_coarse_build(&entry.source,js,worker)
 }
 
 // Starts reading a source in a job: nil when it is not a file the job can
@@ -517,7 +538,7 @@ source_load_job :: proc(load:^Source_Load,worker:int) {
     front:asset.Asset
     if asset.asset_load_front(&front,load.path,context.allocator)!=.None {return}
     defer asset.asset_close(&front)
-    id,read:=source_read(&load.entry.source,&front,&load.types,context.allocator,load.path)
+    id,read:=source_read(&load.entry.source,&front,&load.types,context.allocator,load.path,coarse=true)
     if !read || id!=load.id {return}
     load.entry.id,load.entry.stamp,load.entry.change=load.id,load.stamp,1
     load.ok=data_chunks_allocate(&load.entry,context.allocator,load.js,worker)
@@ -571,14 +592,6 @@ data_version :: #force_inline proc "contextless" (entry:^Data_Source,i:int) -> u
     return i<chunks?entry.versions[i]:entry.nodes[i-chunks]
 }
 
-// The errors of the nodes of a Heightfield, from the chunks up.
-@(private)
-data_errors :: proc(entry:^Data_Source) {
-    q:=&entry.quad
-    if len(entry.errors)!=quad_total(q) {return}
-    for d in 1..=q.depth {for i in q.first[d]..<q.first[d+1] {node_errors_measure(&entry.source,q,entry.errors,i)}}
-}
-
 // After an edit of the inclusive region of samples low..high: the chunks it
 // touched measure their levels again where their pages are in memory, and
 // the errors of the nodes above grow with what changed.
@@ -586,33 +599,20 @@ data_errors :: proc(entry:^Data_Source) {
 data_errors_edit :: proc(entry:^Data_Source,low,high:[3]int) {
     s:=&entry.source
     q:=&entry.quad
-    if len(entry.errors)!=quad_total(q) {return}
+    errors:=s.coarse.errors
+    if len(errors)!=quad_total(q) {return}
     first,last:=chunk_range(s,{changed=true,low=low,high=high})
     for z in first.z..=last.z {for x in first.x..=last.x {
         index:=chunk_index(s,{i32(x),0,i32(z)})
         a,b,ok:=chunk_region(s,{i32(x),0,i32(z)})
         if index<0 || !ok || !source_region_held(s,a,b) {continue}
-        chunk_errors_measure(s,{s=s},{x,z},&entry.errors[index])
+        chunk_errors_measure(s,{s=s},{x,z},&errors[index])
     }}
     for d in 1..=q.depth {
         for z in first.z>>uint(d)..=last.z>>uint(d) {for x in first.x>>uint(d)..=last.x>>uint(d) {
-            if node:=quad_index(q,d,{x,z});node>=0 {node_errors_measure(s,q,entry.errors,node,{low.xz,high.xz})}
+            if node:=quad_index(q,d,{x,z});node>=0 {node_errors_measure(s,q,errors,node,{low.xz,high.xz})}
         }}
     }
-}
-
-// The ranges of the nodes from those of their children; a Volume chunk spans
-// its region.
-@(private)
-data_ranges :: proc(entry:^Data_Source) {
-    s:=&entry.source
-    q:=&entry.quad
-    if s.kind==.Volume {for &range in entry.ranges {range={-HEIGHT_LIMIT,HEIGHT_LIMIT}}}
-    for d in 1..=q.depth {for i in q.first[d]..<q.first[d+1] {
-        range:=[2]f32{max(f32),-max(f32)}
-        for c in quad_children(q,i) {if c>=0 {range={min(range.x,entry.ranges[c].x),max(range.y,entry.ranges[c].y)}}}
-        entry.ranges[i]=range
-    }}
 }
 @(private)
 data_ready :: proc(data:^Terrain_Data,settings:Terrain_Settings,allocator:=context.allocator) -> bool {
@@ -628,8 +628,7 @@ data_ready :: proc(data:^Terrain_Data,settings:Terrain_Settings,allocator:=conte
 }
 // Every chunk of the inclusive region of samples of change takes the next
 // change of the source.
-// The nodes above take it too, and the heights the chunks and nodes reach
-// follow the samples.
+// The nodes above take it too.
 @(private)
 data_mark :: proc(entry:^Data_Source,change:Change) {
     entry.change+=1
@@ -637,7 +636,6 @@ data_mark :: proc(entry:^Data_Source,change:Change) {
     for z in low.z..=high.z {for y in low.y..=high.y {for x in low.x..=high.x {
         if index:=chunk_index(&entry.source,{i32(x),i32(y),i32(z)});index>=0 {data_mark_chunk(entry,index);data_mark_nodes(entry,index)}
     }}}
-    data_ranges(entry)
 }
 // A chunk takes the change of the source: a page that came into memory marks
 // only the chunks, whose build reads it.
@@ -737,11 +735,6 @@ data_reload :: proc(data:^Terrain_Data,entry:^Data_Source,a:^host.Assets,problem
         data_entry_free(entry);entry^=replacement
     } else {
         source_destroy(&entry.source);entry.source=next
-        // A page that does not read leaves its part of the coarse grid as the samples it holds.
-        chunks:=entry.quad.first[1]
-        if !source_coarse_build(&entry.source,entry.ranges[:chunks],entry.errors[:min(chunks,len(entry.errors))],data.jobs) {source_unread(problems,owner,a,entry.id)}
-        data_ranges(entry)
-        data_errors(entry)
         if change.changed {data_mark(entry,change)}
     }
     data.samples=u32(int(data.samples)-before+source_cost(&entry.source))
@@ -799,7 +792,7 @@ terrain_release :: proc(resident:^Terrain_Resident,allocator:runtime.Allocator) 
 terrain_resident_free :: proc(resident:^Terrain_Resident) {
     for &source in resident.sources {resident_source_free(resident,&source)}
     for &owner in resident.owners {resident_owner_free(&owner)}
-    delete(resident.sources);delete(resident.owners);delete(resident.splits)
+    delete(resident.sources);delete(resident.owners);delete(resident.splits);delete(resident.places);delete(resident.spans)
     piece_border_destroy(&resident.border)
     resident^={}
 }

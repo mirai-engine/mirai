@@ -11,7 +11,7 @@ Node_Kind :: enum u8 {
     Text,
     Image,
     Progress, // shows its bound value, 0 to 1
-    Button,   // reports Clicked; one that binds a value writes choice there when clicked
+    Button,   // reports Clicked; one that binds a value writes choice there when clicked and is selected while it holds choice; what it holds follows its text
     Checkbox, // edits its bound bool and reports Changed
     Spacer,
     Component, // authoring only: expanded into a Box subtree at load
@@ -29,7 +29,6 @@ Node_Kind :: enum u8 {
     View,     // what the camera its bound entity is sees
     Action_Bar, // the prompts and texts of the buttons of its tree that an action clicks
     Number,   // edits its bound number in a field with arrows, between range[0] and range[1], in steps of range[2]
-    Tabs,     // a container with a strip of tabs, one per node it holds, and the page of the one chosen
     Popup,    // a container that floats from its parent while its bound value, or its parent clicked, opens it
     Modal,    // a container centered over a backdrop that takes all input while it is shown
     Context_Menu, // a container that opens at the pointer when its parent is clicked with the right button
@@ -42,8 +41,8 @@ Node_Kinds :: bit_set[Node_Kind;u32]
 // The kinds that hold other nodes.
 node_kind_holds :: #force_inline proc "contextless" (kind:Node_Kind) -> bool {
     switch kind {
-    case .Box,.Scroll,.Switcher,.List,.Tooltip,.Tabs,.Popup,.Modal,.Context_Menu,.Radial: return true
-    case .Text,.Image,.Progress,.Button,.Checkbox,.Spacer,.Component,.Prompt,.Slider,.Field,.Selector,.Dropdown,.Radio,.Rich_Text,.View,.Action_Bar,.Number,.Particles,.Draw:
+    case .Box,.Button,.Scroll,.Switcher,.List,.Tooltip,.Popup,.Modal,.Context_Menu,.Radial: return true
+    case .Text,.Image,.Progress,.Checkbox,.Spacer,.Component,.Prompt,.Slider,.Field,.Selector,.Dropdown,.Radio,.Rich_Text,.View,.Action_Bar,.Number,.Particles,.Draw:
     }
     return false
 }

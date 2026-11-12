@@ -2,8 +2,11 @@ package foliage
 
 import "core:math"
 import "core:math/linalg"
+import "core:slice"
 import "core:testing"
 import "mirai:core"
+import render "mirai:engine/render"
+import "mirai:std/base"
 import scene "mirai:engine/scene"
 import "mirai:std/geom"
 import mm "mirai:std/math"
@@ -53,6 +56,16 @@ a_crown_is_the_closed_surface_of_the_voxels_dense_with_leaves :: proc(t:^testing
     // Sparse leaves alone make no crown.
     sparse:=[8][3]f32{{0,0,0},{0.1,0,0},{0.1,0,0.1},{0,0,0.1},{7.9,0,7.9},{8,0,7.9},{8,0,8},{7.9,0,8}}
     testing.expect(t,!crown_build(sparse[:],{0,1,2,0,2,3,4,5,6,4,6,7},&shape))
+    // Rays meet it as they meet its type: its shadow, and in reflections and
+    // indirect light in the mean linear color of the frames it covers.
+    tree:=FOLIAGE_TYPE_DEFAULT
+    tree.casts_shadow,tree.ray_visible=true,false
+    testing.expect_value(t,crown_flags(&tree),render.Batch_Flags{.Casts_Shadow,.Rays_Only})
+    tree.casts_shadow,tree.ray_visible=false,true
+    testing.expect_value(t,crown_flags(&tree),render.Batch_Flags{.Ray_Visible,.Rays_Only})
+    frames:=[12]u8{255,0,188,255, 0,0,188,255, 9,9,9,0}
+    albedo:=frames_albedo(frames[:])
+    testing.expectf(t,abs(albedo.x-0.5)<1e-3 && albedo.y==0 && abs(albedo.z-0.5)<5e-3,"%v",albedo)
 }
 
 // An instance takes the variant whose turn is nearest its own, and the wind
@@ -116,6 +129,15 @@ a_type_with_an_impostor_draws_its_mesh_up_to_its_distance :: proc(t:^testing.T) 
     testing.expect(t,!type_far(tree))
     tree.impostor_distance,tree.cull_distance=100,0
     testing.expect(t,type_far(tree),"a type never culled keeps its impostor to any distance")
+    // Its frames are as sharp as the mesh it replaces: a tree of 10 m at 100 m spans 125
+    // pixels, and so does one of 20 m at 200 m; a bush of 1 m, few.
+    tree.scale,tree.height={1,1},{1,1}
+    testing.expect_value(t,impostor_frame(tree,10),u32(128))
+    tree.impostor_distance=200
+    testing.expect_value(t,impostor_frame(tree,20),u32(128))
+    testing.expect_value(t,impostor_frame(tree,1),u32(IMPOSTOR_FRAME_MIN))
+    testing.expect_value(t,impostor_frame(tree,1000),u32(IMPOSTOR_FRAME_MAX))
+    tree.impostor_distance=100
     // A type collides as far as its mesh is drawn.
     s:Source
     defer source_destroy(&s)
@@ -132,42 +154,95 @@ a_type_with_an_impostor_draws_its_mesh_up_to_its_distance :: proc(t:^testing.T) 
     testing.expect(t,!source_valid(&s))
 }
 
-// A cell collides while a streaming source is within the reach of the types
-// that collide, and lets go of its body once every source has gone past it.
+// A cell that changes writes only its block of the impostors: in its room
+// while they fit, else in a free block or at the end, and the room of the
+// blocks freed at the end goes.
+@(test)
+a_cell_writes_only_its_block_of_impostors :: proc(t:^testing.T) {
+    d:Impostor_Draw
+    defer impostor_draw_destroy(&d)
+    some :: proc(n:int,x:f32) -> []Impostor_Instance {
+        out:=make([]Impostor_Instance,n,context.temp_allocator)
+        for &i,k in out {i={position={3000+x,10,f32(k)},row=1<<16 | u32(k)}}
+        return out
+    }
+    a,b,c:u32
+    testing.expect(t,impostors_set(&d,&a,some(3,0)) && impostors_set(&d,&b,some(5,1)))
+    testing.expect(t,d.count==8 && len(d.instances)==8)
+    testing.expect_value(t,d.instances[3].position+d.anchor,[3]f32{3001,10,0})
+    clear(&d.writes)
+    // Fewer: in its room, the rest of which draws nothing.
+    testing.expect(t,impostors_set(&d,&b,some(2,1)))
+    testing.expect_value(t,len(d.writes),1)
+    testing.expect_value(t,d.writes[0],[2]u32{3,5})
+    testing.expect(t,d.instances[5].row==IMPOSTOR_NONE && d.instances[7].row==IMPOSTOR_NONE && d.count==5)
+    clear(&d.writes)
+    // More than its room: at the end, and the room it leaves draws nothing until another cell takes it.
+    testing.expect(t,impostors_set(&d,&a,some(4,2)))
+    testing.expect(t,d.blocks[a-1].first==8 && d.instances[0].row==IMPOSTOR_NONE && d.count==6)
+    testing.expect(t,impostors_set(&d,&c,some(2,3)))
+    testing.expect(t,d.blocks[c-1].first==0 && len(d.instances)==12 && d.count==8)
+    // The blocks freed at the end give their room back.
+    impostors_free(&d,&a)
+    testing.expect(t,a==0 && len(d.instances)==8 && d.count==4)
+}
+
+@(private)
+@(test_world)
+Collision_World :: struct {
+    using world:Test_World,
+    foliages:core.Table(Foliage),
+    worlds:core.Table(core.World_Transform),
+    kept:core.Table(scene.Far_Kept),
+    data:Foliage_Data,
+    sources:scene.Simulation_Sources,
+}
+
+// A cell collides while a source of the simulation (a body a seat drives, a
+// mark) is within the reach of the types that collide, whatever the view,
+// and lets go of its body once every source has gone past it; without
+// sources every cell collides.
 @(test)
 the_cells_of_foliage_collide_while_they_are_resident :: proc(t:^testing.T) {
-    w:physics.Physics_State
-    if !testing.expect(t,physics.test_state_make(&w)) {return}
-    defer physics.state_destroy(&w)
-    s:Source
-    defer source_destroy(&s)
-    tree:=source_type_add(&s,"tree",{2,2})
+    w:Collision_World
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    state:physics.Physics_State
+    if !testing.expect(t,physics.test_state_make(&state)) {return}
+    defer physics.state_destroy(&state)
+    append(&w.data.entries,Data_Entry{id={9,9},epoch=1,loads=1})
+    s:=&w.data.entries[0].source
+    tree:=source_type_add(s,"tree",{2,2})
     tree.collision,tree.size,tree.cull_distance,tree.fade_distance=.Capsule,{0.3,4,0},40,30
-    for x in 0..<4 {source_instance_add(&s,tree.id,{f32(x)*CELL_SIZE*4+5,0,5},u32(mm.quat_pack(1,10)),{1,1})}
+    for x in 0..<4 {source_instance_add(s,tree.id,{f32(x)*CELL_SIZE*4+5,0,5},u32(mm.quat_pack(1,10)),{1,1})}
     for &cell,i in s.cells {cell.version=u32(i+1)}
+    testing.expect_value(t,collision_reach(s),f32(40))
+    e:=core.create(&w.entities)
+    core.add(&w.foliages,e,Foliage{source={9,9}})
+    core.add(&w.worlds,e,core.World_Transform{transform={rotation=1,scale={1,1,1}}})
+    test_world_settle(&w)
     fp:Foliage_Physics
     defer core.value_free(&fp,type_info_of(Foliage_Physics))
-    collision:physics.Collision_Settings
-    e:=core.Entity(7)
-    sources:scene.Streaming_Sources
-    sources.items[0]={position={5,0,5},ahead={5,0,5}}
-    sources.count=1
-    reach:=collision_reach(&s)
-    testing.expect_value(t,reach,f32(40))
-    near:=scene.sources_near(&sources,mm.MAT4_IDENTITY,reach)
-    {complete,enough:=physics_owner_build(&fp,&w,&collision,e,&s,{scale={1,1,1},rotation=1},nil,true,&near,reach);testing.expect(t,complete && enough)}
+    problems:core.Problems
+    step :: proc(w:^Collision_World,fp:^Foliage_Physics,state:^physics.Physics_State,problems:^core.Problems) {
+        foliage_physics(fp,state,{},core.ref(&w.data),{},{},core.read(&w.foliages),core.read(&w.worlds),core.read(&w.kept),core.ref(&w.sources),{},problems)
+    }
+    w.sources.items[0]={position={5,0,5},ahead={5,0,5}}
+    w.sources.count=1
+    step(&w,&fp,&state,&problems)
     testing.expect_value(t,len(fp.cells),4)
-    testing.expect_value(t,int(w.world.body_count),1)
+    testing.expect_value(t,int(state.world.body_count),1)
     testing.expect(t,fp.cells[0].resident && fp.cells[0].body!={} && !fp.cells[1].resident && fp.cells[1].body=={})
     // The source moves to the second tree: its cell collides, the first lets go.
-    sources.items[0]={position={CELL_SIZE*4+5,0,5},ahead={CELL_SIZE*4+5,0,5}}
-    near=scene.sources_near(&sources,mm.MAT4_IDENTITY,reach)
-    {complete,enough:=physics_owner_build(&fp,&w,&collision,e,&s,{scale={1,1,1},rotation=1},nil,false,&near,reach);testing.expect(t,complete && enough)}
-    testing.expect_value(t,int(w.world.body_count),1)
+    w.sources.items[0]={position={CELL_SIZE*4+5,0,5},ahead={CELL_SIZE*4+5,0,5}}
+    step(&w,&fp,&state,&problems)
+    testing.expect_value(t,int(state.world.body_count),1)
     testing.expect(t,!fp.cells[0].resident && fp.cells[1].resident && fp.cells[1].body!={})
     // Without sources every cell collides.
-    {complete,enough:=physics_owner_build(&fp,&w,&collision,e,&s,{scale={1,1,1},rotation=1},nil,true);testing.expect(t,complete && enough)}
-    testing.expect_value(t,int(w.world.body_count),4)
+    w.sources.count=0
+    step(&w,&fp,&state,&problems)
+    testing.expect_value(t,int(state.world.body_count),4)
+    testing.expect_value(t,problems.count,0)
 }
 
 // The crown of a cell of a wood: the crowns of its trees, each a box of 4 m,
@@ -200,6 +275,16 @@ the_crown_of_a_cell_covers_its_trees_with_fewer_triangles_than_theirs :: proc(t:
     if !testing.expect(t,cell_crown_build(tall[:],crowns[:],&cell)) {return}
     low,high=geom.mesh_bounds(cell.positions[:])
     testing.expectf(t,high.y-low.y>2*(high.x-low.x),"%v %v",low,high)
+    // Cells share a crown when they are made of the same: the same trees on
+    // another ground, or with a type near enough to draw its mesh, are not.
+    wood:=placed[:100]
+    key:=crown_key(wood,crowns[:])
+    same:=slice.clone(wood,context.temp_allocator)
+    testing.expect_value(t,crown_key(same,crowns[:]),key)
+    same[7].position.y+=0.5
+    testing.expect(t,crown_key(same,crowns[:])!=key,"a ground sculpted under one tree")
+    none:=[2]Crown_Triangles{}
+    testing.expect(t,crown_key(nil,none[:])!=key,"the type near: its trees give no crown")
 }
 
 // Past RESIDENT_CELLS a Foliage keeps the nearest resident cells; those
@@ -214,4 +299,24 @@ past_their_budget_the_nearest_cells_stay_resident :: proc(t:^testing.T) {
     testing.expect(t,cells[3].resident && cells[1].resident,"the nearest stay")
     testing.expect(t,!cells[4].resident && !cells[0].resident && !cells[2].resident,"the farthest go")
     testing.expect_value(t,left_out,1)
+}
+
+// When the renderer forgets its batches and meshes, the cells let go of the
+// crowns they share, and those and the far forms are made again: none is
+// kept for a cell that no longer traces it.
+@(test)
+what_the_renderer_forgets_takes_the_crowns_and_far_forms_with_it :: proc(t:^testing.T) {
+    resident:Foliage_Resident
+    defer foliage_resident_free(&resident)
+    crown:=base.Asset_Id{5,5}
+    owner:Resident_Owner
+    for coord in ([2][2]i32{{0,0},{1,0}}) {append(&owner.cells,Resident_Cell{coord=coord,crown=crown,built=true})}
+    append(&owner.kinds,Kind_Key{{6,6},64})
+    append(&resident.owners,owner)
+    append(&resident.crowns,Shared_Crown{coord={0,0},mesh=crown,users=2})
+    append(&resident.kinds,Resident_Kind{key={{6,6},64},made=true})
+    resident_forget(&resident)
+    testing.expect_value(t,len(resident.crowns),0)
+    testing.expect_value(t,len(resident.kinds),0)
+    testing.expect(t,len(resident.owners[0].cells)==0 && !resident.owners[0].built && len(resident.owners[0].kinds)==0)
 }

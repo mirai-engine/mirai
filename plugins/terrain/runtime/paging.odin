@@ -185,16 +185,58 @@ data_pages_arrived :: proc(entry:^Data_Source,low,high:[3]int) {
     }}}
 }
 
-// Every page of the weights of a source into memory, as taking a layer away needs.
+// A page of a grid read by pages, rewritten without coming into memory: a
+// block of its own, or none when it turned uniform, and its fill.
 @(private)
-source_weights_read_all :: proc(s:^Source) -> bool {
-    g:=&s.weights
+Away_Page :: struct($T:typeid) {slot:int,block:Page_Block,fill:T}
+
+// Rewrites by change the values of every page of g that is in its block, one
+// page in memory at a time, into blocks of their own for grid_away_install:
+// g does not change. False when a page cannot be read or without memory.
+@(private)
+grid_away_map :: proc(g:^Grid($T),file:string,valid:proc "contextless" (value:T) -> bool,user:rawptr,change:proc(user:rawptr,value:T) -> T,out:^[dynamic]Away_Page(T),allocator:runtime.Allocator) -> bool {
     if !g.paged {return true}
+    read:Page_Reader
+    if !page_reader_init(&read,context.temp_allocator) {return false}
+    defer page_reader_destroy(&read,context.temp_allocator)
+    writer:Page_Writer
+    if !page_writer_init(&writer,context.temp_allocator) {return false}
+    defer page_writer_destroy(&writer)
+    scratch,error:=make([]T,PAGE_VALUES,context.temp_allocator)
+    if error!=nil {return false}
     for slot in 0..<len(g.pages) {
-        if id:=grid_id(g,slot);id>=0 && !grid_page_read(g,id,s.file,weights_full,s.allocator) {return false}
+        id:=grid_id(g,slot)
+        if id<0 || !grid_absent(g,id) {continue}
+        extent,count:=grid_page_extent(g,id)
+        values:=scratch[:count]
+        if !page_load(g.blocks[slot],file,&read,mem.slice_to_bytes(values)) || !page_valid(values,valid) {return false}
+        for &value in values {value=change(user,value)}
+        away:=Away_Page(T){slot=slot,fill=values[0]}
+        if !page_uniform(values) {
+            encoded,ok:=page_encode(&writer,values,extent.x,false)
+            if !ok {return false}
+            own,made:=shared_make(u8,len(encoded),allocator)
+            if !made {return false}
+            copy(own,encoded)
+            away.block={size=u32(len(encoded)),hash=base.hash64(own),own=own}
+        }
+        if _,append_error:=append(out,away);append_error!=nil {shared_free(away.block.own);return false}
     }
     return true
 }
+
+// Puts in place what grid_away_map made.
+@(private)
+grid_away_install :: proc(g:^Grid($T),away:[]Away_Page(T)) {
+    for page in away {
+        shared_free(g.blocks[page.slot].own)
+        g.blocks[page.slot]=page.block
+        g.pages[page.slot].fill=page.fill
+    }
+}
+
+@(private)
+grid_away_free :: proc(away:[]Away_Page($T)) {for page in away {shared_free(page.block.own)}}
 
 // Lets go of the values of the page a slot holds: with edits, they stay in a
 // block of its own first. False without memory, with the page as it was.

@@ -3,7 +3,9 @@ package terrain
 import "core:math"
 import "core:math/linalg"
 import "core:slice"
+import "mirai:host"
 import "mirai:core"
+import camera "mirai:engine/camera"
 import scene "mirai:engine/scene"
 import phys "plugins:physics/runtime"
 import "mirai:std/jobs"
@@ -35,32 +37,40 @@ split_before :: proc(a,b:Split) -> bool {
 // pieces whose mesh shows something else. Each terrain opens, from its roots,
 // the nodes under which a chunk is near a viewer, or nearer than their finest
 // level reaches; within Terrain_Settings.chunks, the nearest open first, so
-// past it the farthest show coarser nodes and nothing goes. Runs when the
-// view, the transforms, the sources, the colliders or the chunks change; while
-// pieces wait to be built, again once a frame (once_more: the first call of a
-// frame).
+// past it the farthest show coarser nodes and nothing goes. Runs when a view
+// or the transform of a terrain moves, or the sources, the colliders or the
+// chunks change; while pieces wait to be built, again once a frame
+// (once_more: the first call of a frame).
 @(private)
-resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:^core.Table(core.World_Transform,.Read),view:core.View,sources:core.Ref(scene.Streaming_Sources),settings:Terrain_Settings,terrains:^core.Table(Terrain,$A),c:^Chunk_Tables,physics:phys.Physics_Settings,problems:^core.Problems,once_more:=true,focus:=Terrain_Focus{}) {
-    moved:=core.touched(worlds,&resident.lod_seen[0]) | core.touched(c.colliders,&resident.lod_seen[1])
+resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:^core.Table(core.World_Transform,.Read),views:Lod_Views,sources:core.Ref(scene.Streaming_Sources),settings:Terrain_Settings,terrains:^core.Table(Terrain,$A),c:^Chunk_Tables,physics:phys.Physics_Settings,problems:^core.Problems,once_more:=true,focus:=Terrain_Focus{}) {
+    views:=views
+    // Only the places of the terrains move their pieces: what else moves in the world does not.
+    placed:=core.changes(worlds,&resident.lod_seen[0])
+    moved:=placed.all
+    if placed.written && !moved {for &owner in resident.owners {
+        if row:=core.row_of(worlds,owner.entity);row>=0 && core.changed(worlds,placed,row) || slice.contains(placed.gone,owner.entity) {moved=true;break}
+    }}
+    moved|=core.touched(c.colliders,&resident.lod_seen[1])
     stamp:=[3]u64{sources.ptr!=nil?sources.ptr.revision:0,u64(len(resident.owners)),resident.marks}
     pending:=false
     if once_more {for &source in resident.sources {if len(source.pending)>0 {pending=true;break}}}
-    offset:=view.position-resident.lod_view
+    still:=views.count==resident.lod_view_count
+    for view,v in views.items[:views.count] {
+        offset:=view.position-resident.lod_views[v]
+        still&&=linalg.dot(offset,offset)<LOD_MOVE*LOD_MOVE
+    }
     distances:=[3]f32{settings.lod_distance,settings.collision_distance,settings.resident_distance}
     // Where the brush is chooses pieces; what its stroke changed does not.
     brush:=Terrain_Focus{source=focus.source,center=focus.center,radius=focus.radius}
-    if !pending && !moved && stamp==resident.lod_stamp && distances==resident.lod_distances && brush==resident.focus && linalg.dot(offset,offset)<LOD_MOVE*LOD_MOVE {return}
-    resident.lod_view,resident.lod_stamp,resident.lod_distances,resident.focus=view.position,stamp,distances,brush
+    if !pending && !moved && stamp==resident.lod_stamp && distances==resident.lod_distances && brush==resident.focus && still {return}
+    for view,v in views.items[:views.count] {resident.lod_views[v]=view.position}
+    resident.lod_view_count,resident.lod_stamp,resident.lod_distances,resident.focus=views.count,stamp,distances,brush
     resident.cut=true
     stream:=settings.resident_distance>0
     clear(&resident.splits)
     roots:=0
-    // The distances of every piece from its terrain, and the pixels a metre
-    // of error covers there: each terrain apart, in jobs.
-    distances_work:=Lod_Distances{resident,data,worlds,view,sources,settings.resident_distance,stream,view_pixels(view)}
-    if data.jobs!=nil && jobs.worker_count(data.jobs)>1 && len(resident.owners)>1 {
-        jobs.parallel_for(data.jobs,jobs.OWNER,len(resident.owners),1,lod_distances,&distances_work)
-    } else {lod_distances(&distances_work,0,len(resident.owners),jobs.OWNER)}
+    // The distances of every piece from its terrain, and the pixels a metre of error covers there.
+    lod_measure(resident,data,worlds,views,sources,settings.resident_distance,stream)
     resident_needed(resident,data,terrains,c,settings,physics,focus)
     joins_resident(resident,data)
     // What each terrain would open.
@@ -89,7 +99,7 @@ resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:^core.
                 case settings.lod_distance<0: node.want=true
                 case by_error:
                     slack:=f32(node.open?1/LOD_HYSTERESIS:1)
-                    node.want=lod_error(entry.errors,q,i,int(minimum))*node.pixels>LOD_PIXELS*slack && lod_spacing_level(node.spacing/slack,s.cell)<minimum
+                    node.want=lod_error(entry.source.coarse.errors,q,i,int(minimum))*node.pixels>LOD_PIXELS*slack && lod_spacing_level(node.spacing/slack,s.cell)<minimum
                 case minimum>0:
                     reach:=base*f32(u64(1)<<uint(minimum-1))
                     node.want=node.distance<reach/LOD_HYSTERESIS || node.open && node.distance<reach*LOD_HYSTERESIS
@@ -142,8 +152,8 @@ resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:^core.
             // A streamed terrain keeps its open nodes and its roots too: they stand in
             // for what they cover while it comes (owner_cut), and show when all else goes.
             chunk.resident=node.cut || stream && (node.open || i>=q.first[q.depth])
-            if i>=chunks {continue}
             chunk.wanted.collision=node.cut && node.collide
+            if i>=chunks {continue}
             if node.cut && (!stream || node.reach<=DEEP_REACH) {source.deep[i]=true}
         }
         by_error:=lod_by_error(entry,settings)
@@ -168,11 +178,10 @@ resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:^core.
                 level:=chunk.wanted.lod.level
                 switch {
                 case settings.lod_distance<0: level=minimum
-                case by_error: level=lod_level_error(entry.errors,q,i,minimum,maximum,chunk.pixels,chunk.spacing,s.cell,level)
+                case by_error: level=lod_level_error(entry.source.coarse.errors,q,i,minimum,maximum,chunk.pixels,chunk.spacing,s.cell,level)
                 case: level=lod_level(chunk.distance,base,maximum,level)
                 }
                 key.lod=Chunk_Lod{level=clamp(level,minimum,maximum)}
-                key.collision=false
                 // A node of a joined Volume blends the ground under its chunks of the band as they do.
                 key.join=source.join.ground!={}?source.join.hash:0
                 if s.kind==.Heightfield {
@@ -188,32 +197,34 @@ resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:^core.
     }
 }
 
-// Which chunks the terrains show with a collider: the nearest that
-// Physics_Settings has room for beside the colliders of everything else, and
-// of those, with Terrain_Settings.collision_distance, the ones within it.
+// Which pieces the terrains show with a collider: the chunks, and past them
+// the nodes with the triangles they show, so that far ground still stops
+// rays and bodies; the nearest that Physics_Settings has room for beside the
+// colliders of everything else, every chunk before any node, and of those,
+// with Terrain_Settings.collision_distance, the ones within it.
 @(private)
 resident_colliders :: proc(resident:^Terrain_Resident,data:^Terrain_Data,terrains:^core.Table(Terrain,$A),c:^Chunk_Tables,settings:Terrain_Settings,physics:phys.Physics_Settings) {
     defer {for &owner in resident.owners {
         // A piece it shows whose collider comes or goes shows again.
-        for &node,i in owner.nodes[:min(owner.quad.first[1],len(owner.nodes))] {if node.visible && node.collide!=node.can {append(&owner.changed,u32(i))}}}
+        for &node,i in owner.nodes {if node.visible && node.collide!=node.can {append(&owner.changed,u32(i))}}}
     }
     clear(&resident.splits)
     for &owner,o in resident.owners {
         marker,known:=core.get(terrains,owner.entity)
         entry:=data_find(data,owner.source)
-        kind:=entry!=nil?collider_slot(entry.source.kind):1
         source:=resident_source_find(resident,owner.source,owner.entity)
         chunks:=owner.quad.first[1]
-        for &node,i in owner.nodes[:min(chunks,len(owner.nodes))] {
+        for &node,i in owner.nodes {
             // What it had, until owner_cut takes can again.
             node.can=node.collide
             node.collide=false
-            if !known || !marker.solid || owner.far || !node.cut {continue}
-            // A chunk built empty takes no slot.
+            if !known || entry==nil || !marker.solid || owner.far || !node.cut {continue}
+            // A piece built empty takes no slot.
             if source!=nil && i<len(source.chunks) && source.chunks[i].shown && source.chunks[i].mesh=={} {continue}
             if settings.collision_distance>0 && node.distance>settings.collision_distance {continue}
             node.collide=true
-            append(&resident.splits,Split{node.distance,node.distance,i32(kind),u32(o),u32(i)})
+            kind:=collider_room_slot(piece_collider_kind(&entry.source,chunks,i))
+            append(&resident.splits,Split{f32(i<chunks?0:1),node.distance,i32(kind),u32(o),u32(i)})
         }
     }
     // What the colliders of other entities take stays theirs.
@@ -257,45 +268,118 @@ resident_cut :: proc(resident:^Terrain_Resident,data:^Terrain_Data) {
     }
 }
 
+// The views the levels are chosen for: that of the frame and, on a split
+// screen, that of each local slot, with the pose its camera draws from and
+// the size of its part of the screen. A piece shows what the nearest of them
+// needs.
+LOD_VIEWS :: 1+len(camera.Camera_Views{}.slots)
+Lod_Views :: struct {
+    items:[LOD_VIEWS]core.View,
+    count:int,
+}
+
+lod_views_of :: proc(view:core.View,slots:core.Ref(camera.Camera_Views),app:^host.App) -> (views:Lod_Views) {
+    views.items[0],views.count=view,1
+    if slots.ptr==nil || app==nil {return}
+    // The slots in play: those up to the last with a camera.
+    count:=0
+    for seen,slot in slots.slots {if seen.camera!=core.NONE {count=slot+1}}
+    if count<2 {return}
+    for seen,slot in slots.slots[:count] {
+        if seen.camera==core.NONE {continue}
+        rect:=host.app_player_rect(app,slot,count)
+        local:=core.VIEW_DEFAULT
+        local.camera,local.position,local.rotation=seen.camera,seen.pose.position,seen.pose.rotation
+        local.fov,local.height,local.size=seen.pose.fov,seen.pose.height,{f32(rect.z),f32(rect.w)}
+        local.projection=seen.pose.projection==.Orthographic && seen.pose.height>0?.Orthographic:.Perspective
+        views.items[views.count]=local
+        views.count+=1
+    }
+    return
+}
+
+// Nodes measured by one job of lod_distances at least.
+@(private) LOD_SPAN :: 1024
+
+// What an owner is seen from, in the space of its source.
+@(private)
+Lod_Place :: struct {
+    owner:int,
+    s:^Source,
+    q:^Quad,
+    chunks:[]Resident_Chunk,
+    views:[LOD_VIEWS][3]f32,
+    pixels:[LOD_VIEWS]f32,
+    scale:f32,
+    near:scene.Sources_Near,
+}
+
 @(private)
 Lod_Distances :: struct {
     resident:^Terrain_Resident,
-    data:^Terrain_Data,
-    worlds:^core.Table(core.World_Transform,.Read),
-    view:core.View,
-    sources:core.Ref(scene.Streaming_Sources),
-    resident_distance:f32,
+    places:[]Lod_Place,
+    spans:[][3]int, // place, first and last node
+    count:int,      // of views
     stream:bool,
-    pixels:f32,
 }
 
-// Owners first..<last of resident_lod: what each of their pieces is from the view and the viewers.
+// What the pieces of every owner are from its views and viewers: the places
+// of the owners first, then the nodes in spans, in jobs, so a large terrain
+// spreads over the workers.
 @(private)
-lod_distances :: proc(work:^Lod_Distances,first,last:int,worker:int) {
-    resident,data,view:=work.resident,work.data,work.view
-    for &owner in resident.owners[first:last] {
+lod_measure :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:^core.Table(core.World_Transform,.Read),views:Lod_Views,sources:core.Ref(scene.Streaming_Sources),resident_distance:f32,stream:bool) {
+    views:=views
+    places,spans:=&resident.places,&resident.spans
+    clear(places);clear(spans)
+    for &owner,o in resident.owners {
         entry:=data_find(data,owner.source)
         source:=entry!=nil?resident_source_find(resident,owner.source,owner.entity):nil
         if source==nil || len(source.chunks)!=len(entry.dirty) || len(owner.nodes)!=len(source.chunks) {continue}
-        s:=&entry.source
-        q:=&source.quad
         placed:=mm.MAT4_IDENTITY
-        if world,known:=core.get(work.worlds,owner.entity);known {placed=mm.transform_matrix(world.transform)}
+        if world,known:=core.get(worlds,owner.entity);known {placed=mm.transform_matrix(world.transform)}
         inverse:=linalg.inverse(placed)
-        local:=(inverse*[4]f32{view.position.x,view.position.y,view.position.z,1}).xyz
-        scale:=max(linalg.length(placed[0].xyz),linalg.length(placed[1].xyz),linalg.length(placed[2].xyz))
-        near:scene.Sources_Near
-        if work.stream {near=scene.sources_near(work.sources.ptr,placed,work.resident_distance)}
-        for &node,i in owner.nodes {
-            low,high:=node_box(s,q,entry.ranges,i)
-            at:=scene.box_distance(low,high,local)
-            node.distance=at*scale
-            node.reach=work.stream?scene.box_near(&near,low,high):0
-            // Errors are in the space of the source, as at.
-            node.pixels=work.pixels/max(at,1e-3)
-            // Seen at a grazing angle, its spacing shrinks along the view.
-            node.spacing=node.pixels*math.sqrt(clamp((local.y-high.y)/max(at,1e-3),LOD_GRAZING,1))
-            chunk:=&source.chunks[i]
+        place:=Lod_Place{owner=o,s=&entry.source,q=&source.quad,chunks=source.chunks}
+        place.scale=max(linalg.length(placed[0].xyz),linalg.length(placed[1].xyz),linalg.length(placed[2].xyz))
+        for view,v in views.items[:views.count] {
+            place.views[v]=(inverse*[4]f32{view.position.x,view.position.y,view.position.z,1}).xyz
+            place.pixels[v]=view_pixels(view)
+        }
+        if stream {place.near=scene.sources_near(sources.ptr,placed,resident_distance)}
+        // Room for both is made with the owner (resident_owner).
+        if append(places,place)!=1 {return}
+        for first:=0;first<len(owner.nodes);first+=LOD_SPAN {append(spans,[3]int{len(places)-1,first,min(first+LOD_SPAN,len(owner.nodes))})}
+    }
+    work:=Lod_Distances{resident,places[:],spans[:],views.count,stream}
+    if data.jobs!=nil && jobs.worker_count(data.jobs)>1 && len(spans)>1 {
+        jobs.parallel_for(data.jobs,jobs.OWNER,len(spans),1,lod_distances,&work)
+    } else {lod_distances(&work,0,len(spans),jobs.OWNER)}
+}
+
+// Spans first..<last of lod_measure: what each of their pieces is from the views and the viewers.
+@(private)
+lod_distances :: proc(work:^Lod_Distances,first,last:int,worker:int) {
+    for span in work.spans[first:last] {
+        place:=&work.places[span[0]]
+        owner:=&work.resident.owners[place.owner]
+        s,q:=place.s,place.q
+        for i in span[1]..<span[2] {
+            node:=&owner.nodes[i]
+            low,high:=node_box(s,q,s.coarse.ranges,i)
+            // Of the nearest view; the pixels and spacing of the view that sees it finest.
+            nearest,pixels,spacing:=max(f32),f32(0),f32(0)
+            for local,v in place.views[:work.count] {
+                at:=scene.box_distance(low,high,local)
+                nearest=min(nearest,at)
+                // Errors are in the space of the source, as at.
+                seen:=place.pixels[v]/max(at,1e-3)
+                pixels=max(pixels,seen)
+                // Seen at a grazing angle, its spacing shrinks along the view.
+                spacing=max(spacing,seen*math.sqrt(clamp((local.y-high.y)/max(at,1e-3),LOD_GRAZING,1)))
+            }
+            node.distance=nearest*place.scale
+            node.reach=work.stream?scene.box_near(&place.near,low,high):0
+            node.pixels,node.spacing=pixels,spacing
+            chunk:=&place.chunks[i]
             chunk.distance,chunk.reach,chunk.pixels,chunk.spacing=node.distance,node.reach,node.pixels,node.spacing
         }
     }
@@ -385,7 +469,7 @@ view_pixels :: proc "contextless" (view:core.View) -> f32 {
 // (Terrain_Settings.lod_distance 0, a Heightfield, which measures them).
 @(private)
 lod_by_error :: #force_inline proc "contextless" (entry:^Data_Source,settings:Terrain_Settings) -> bool {
-    return settings.lod_distance==0 && len(entry.errors)==quad_total(&entry.quad)
+    return settings.lod_distance==0 && len(entry.source.coarse.errors)==quad_total(&entry.quad)
 }
 
 // The coarsest level of piece i between minimum and maximum whose error
@@ -409,22 +493,27 @@ lod_level_error :: proc "contextless" (errors:[]Lod_Errors,q:^Quad,i:int,minimum
 // side or a corner, are one level apart at most: a border sews a chunk only
 // to a neighbor of the next level, whose interior lies near its samples. A
 // Volume needs none: each face of its chunks is built at its neighbor's level.
+// Each level ends as the least of every level plus how many chunks away it
+// is, counting a corner as one: two sweeps, each taking the neighbors it
+// already passed, give it.
 @(private)
 lod_levels_balance :: proc "contextless" (s:^Source,levels:[]u8) {
     n:=chunk_counts(s)
-    if n.x*n.y*n.z!=len(levels) {return}
-    for changed:=true;changed; {
-        changed=false
-        for &level,i in levels {
-            coord:=chunk_coord(s,i)
-            for dz in i32(-1)..=1 {for dy in i32(-1)..=1 {for dx in i32(-1)..=1 {
-                j:=chunk_index(s,coord+{dx,dy,dz})
-                if j<0 || level<=levels[j]+1 {continue}
-                level=levels[j]+1
-                changed=true
-            }}}
-        }
+    if n.y!=1 || n.x*n.z!=len(levels) {return}
+    w,h:=n.x,n.z
+    take :: #force_inline proc "contextless" (levels:[]u8,w,h,x,z:int,level:^u8) {
+        if x>=0 && z>=0 && x<w && z<h {level^=min(level^,levels[x+w*z]+1)}
     }
+    for z in 0..<h {for x in 0..<w {
+        level:=&levels[x+w*z]
+        take(levels,w,h,x-1,z,level)
+        for dx in -1..=1 {take(levels,w,h,x+dx,z-1,level)}
+    }}
+    for z:=h-1;z>=0;z-=1 {for x:=w-1;x>=0;x-=1 {
+        level:=&levels[x+w*z]
+        take(levels,w,h,x+1,z,level)
+        for dx in -1..=1 {take(levels,w,h,x+dx,z+1,level)}
+    }}
 }
 
 // The chunks each terrain needs as chunks, whatever the view asks of them:

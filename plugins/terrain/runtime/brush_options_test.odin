@@ -90,6 +90,32 @@ erosion_carries_ground_down_a_slope_into_a_basin_and_stays_near_the_disc :: proc
 }
 
 @(test)
+thermal_erosion_slides_a_cliff_down_to_its_talus_and_keeps_its_ground :: proc(t:^testing.T) {
+    source:Source;grid_source(t,&source,65);defer source_destroy(&source)
+    // A cliff of 20 m between two flats, across x at the center.
+    for x in 0..<65 {for z in 0..<65 {grid_set(&source.field,x,z,x<32?f32(20):0)}}
+    talus:=math.to_radians(f32(30))
+    weigh :: proc(s:^Source) -> (total:f64) {for z in 0..<65 {for x in 0..<65 {total+=f64(grid_get(&s.field,x,z))}};return}
+    before:=weigh(&source)
+    for _ in 0..<200 {
+        change:=source_edit(&source,{kind=.Thermal,center={},radius=12,amount=1,falloff=.Constant,talus=talus})
+        if !change.changed {break}
+        testing.expect(t,change.error==.None)
+    }
+    testing.expect(t,abs(weigh(&source)-before)<1e-2,"what slides down stays on the ground")
+    steepest:=f32(0)
+    for x in 26..<38 {steepest=max(steepest,grid_get(&source.field,x,32)-grid_get(&source.field,x+1,32))}
+    testing.expectf(t,steepest<=math.tan(talus)*1.1,"the slope settles at its talus, not %v",math.atan(steepest))
+    testing.expect_value(t,grid_get(&source.field,10,32),f32(20))
+    testing.expect_value(t,grid_get(&source.field,31,5),grid_get(&source.field,32,5)+20)
+    cases:=[2]struct {brush:Brush,error:Edit_Error}{
+        {{kind=.Thermal,center={},radius=4,amount=1},.Talus},
+        {{kind=.Thermal,center={},radius=4,amount=1,talus=math.PI/2},.Talus},
+    }
+    for entry in cases {testing.expect_value(t,source_edit(&source,entry.brush).error,entry.error)}
+}
+
+@(test)
 the_slope_filter_and_an_alpha_choose_what_a_brush_touches :: proc(t:^testing.T) {
     source:Source;grid_source(t,&source);defer source_destroy(&source)
     // Flat on the left, a 45 degree slope on the right.

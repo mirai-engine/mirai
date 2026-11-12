@@ -132,9 +132,7 @@ far_nodes_and_the_coarse_ground_keep_the_holes_the_coarse_grid_holds :: proc(t:^
     // A pit of 24 cells a side from cell 40, and one cell alone at 100.
     for z in 40..<64 {for x in 40..<64 {testing.expect(t,source_edit(&s,{kind=.Hole,center=source_point(&s,{x,0,z})+{0.5,0,0.5},radius=0.4}).changed)}}
     testing.expect(t,source_edit(&s,{kind=.Hole,center=source_point(&s,{100,0,100})+{0.5,0,0.5},radius=0.4}).changed)
-    counts:=chunk_counts(&s)
-    ranges:=make([][2]f32,counts.x*counts.z);defer delete(ranges)
-    testing.expect(t,source_coarse_build(&s,ranges))
+    testing.expect(t,source_coarse_build(&s))
     testing.expect_value(t,grid_get(&s.coarse.holes,5,5),u8(255))
     testing.expect_value(t,grid_get(&s.coarse.holes,4,4),u8(0))
     testing.expect_value(t,grid_get(&s.coarse.holes,12,12),u8(4))
@@ -158,6 +156,22 @@ far_nodes_and_the_coarse_ground_keep_the_holes_the_coarse_grid_holds :: proc(t:^
     _,_,_,ok:=source_coarse_at(&s,inside.x,inside.z)
     testing.expect(t,!ok,"the ground over the pit is no surface")
     testing.expect(t,!source_hole(&s,30,30))
+    // The file keeps the share of holes and the paint of the coarse grid: a source read
+    // by pages has them without reading one.
+    testing.expect(t,source_edit(&s,{kind=.Tint,center=source_point(&s,{8,0,8}),radius=2,amount=1,color={0,0,1}}).changed)
+    testing.expect(t,source_coarse_update(&s,{0,0,0},{16,0,16}))
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    path:=fmt.tprintf("%s/coarse.terrain",base.test_folder(t,"terrain"))
+    testing.expect_value(t,source_save(&s,path,{63,64},&types),asset.Error.None)
+    file:asset.Asset
+    if !testing.expect_value(t,asset.asset_load_front(&file,path),asset.Error.None) {return}
+    defer asset.asset_close(&file)
+    read:Source;defer source_destroy(&read)
+    _,loaded:=source_read(&read,&file,&types,pages=path,coarse=true)
+    if !testing.expect(t,loaded) {return}
+    testing.expect_value(t,grid_get(&read.coarse.holes,5,5),u8(255))
+    testing.expect_value(t,grid_get(&read.coarse.holes,12,12),u8(4))
+    testing.expect_value(t,grid_get(&read.coarse.paint,1,1),Paint{0,0,255,PAINT_ROUGHNESS_NEUTRAL})
 }
 
 // The tangents a Heightfield chunk gives its vertices are those MikkTSpace

@@ -96,7 +96,7 @@ ai_review_record :: proc(s:^Session,task:^Ai_Task,serial_before:u64) {
     append(&review.transactions,transaction)
     ai_provenance_record(s,task,&review.transactions[len(review.transactions)-1])
     review.pending=true;task.review_finished=false;s.ai.scene_serial+=1
-    ai_scene_follow(s,task,w,transaction.rows[:])
+    task.follows=true
 }
 
 ai_task_finish :: proc(s:^Session,m:^Ai,task:^Ai_Task) -> bool {

@@ -57,13 +57,18 @@ $P foliage.paint '{"entity":"Woods","mode":"generate","at":[256,0,256],"radius":
 
 - `foliage.type_add` makes a type from a `.mesh` with the settings given (its name, by default that
   of the mesh, names it in the other methods); `type_set` changes only the fields it names
-  (`describe` lists them): how dense, how large, turned and leaned it is, a `rule` that confines
-  it by slope, height and terrain layers, its distances, `wind` and shadow.
-- `mode`: `generate` turns on the generator of the cells under the ring (large radii cover a
-  whole terrain; `ungenerate` off), `paint` and `erase` place or remove manual instances (a
-  `ground_only` paint stays on the terrain), `reapply` redoes scale and turn. `foliage.place` puts
-  one instance, `foliage.query` lists types and instances.
+  (`describe` lists them): how dense, how large, turned and leaned it is, a `radius` that keeps
+  its generated instances apart from each other and from other types with one (trees off rocks),
+  a `rule` that confines it by slope, height and terrain layers (as dense as the layers are),
+  its distances, `wind` and shadow.
+- `mode`: `generate` paints where the generator places instances, fading at the border of the
+  ring (large radii cover a whole terrain; `ungenerate` takes it away), `paint` and `erase`
+  place or remove manual instances (a `ground_only` paint stays on the terrain), `reapply` redoes
+  scale and turn. `foliage.place` puts one instance, `foliage.query` lists types and instances.
 - Foliage stands on the terrain by itself and follows it when it is sculpted.
+- A `Foliage_Keep_Out` (`foliage "plugins:foliage/runtime"`, with a `margin`) on a house with a
+  `Volume` or a box `Collider`, or on a road's `Spline`, keeps generated foliage out of it,
+  also when it moves.
   Far away it becomes impostors; collision is per type.
 - A `Wind` component (`volume "mirai:engine/volume"`) on any entity makes foliage sway; `wind` on
   a type scales it.

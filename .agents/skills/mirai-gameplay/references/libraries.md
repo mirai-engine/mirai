@@ -230,10 +230,12 @@ library gives), `resident` leaves it resident within one and up to `RESIDENT_KEE
 was, and `residents_past` leaves, out of a budget, the closest ones.
 
 The simulation never reads the view: what decides by distance (minds, avoidance, the order of the
-navmesh builds) reads `Simulation_Sources`, which `scene_simulation_sources` (`fixed`) gathers
-from the same bodies and marks with the code the residency shares, so a world decides the same
-headless, in the editor, with the camera anywhere and at any frame rate. `sources_distance` gives
-the metres from a box to the nearest of them, past the `distance` of each.
+navmesh builds, the cells of foliage that collide) reads `Simulation_Sources`, which
+`scene_simulation_sources` (`fixed`) gathers from the same bodies and marks with the code the
+residency shares, so a world decides the same headless, in the editor, with the camera anywhere
+and at any frame rate. `sources_distance` gives the metres from a box to the nearest of them, past
+the `distance` of each; `sources_near_of` puts them in the frame of what is placed and
+`sources_moved` says when they moved enough to look again.
 
 ## Plugin `streaming`
 

@@ -172,7 +172,7 @@ Exposure_Mode :: enum u8 {
 // How Auto comes to the exposure it meters (exposure_adapt.comp).
 Exposure_Adaptation :: enum u8 {
 	Time,  // exponentially: 95 % of any change in adaptation seconds when the light falls, half of that when it grows
-	Speed, // adaptation seconds for each EV the light falls, a third of that for each it grows, and exponentially within 1.5 EV (Unreal, Bevy)
+	Speed, // adaptation seconds for each EV the light falls, a third of that for each it grows, and exponentially within 1.5 EV (Bevy)
 }
 
 // How a camera turns the luminance it sees into the scene-linear values of the
@@ -195,8 +195,8 @@ AUTO_EXPOSURE_RANGE :: [2]f32{-6, 18}
 // The calibration of a reflected-light meter, cd/m^2 at ISO 100 and EV 0 times 100.
 LIGHT_METER_K :: f32(12.5)
 MIDDLE_GRAY :: abi.MIDDLE_GRAY
-// EV a view is exposed above what its meter or its camera gives under ACES 2.0, as Unreal's default
-// exposure bias: ACES 2.0 shows a middle gray at the meter's value dim on an SDR display. Another
+// EV a view is exposed above what its meter or its camera gives under ACES 2.0, a bias
+// of the middle gray: ACES 2.0 shows a middle gray at the meter's value dim on an SDR display. Another
 // transform calibrates to it (display_exposure_bias).
 EXPOSURE_BIAS :: f32(1)
 
@@ -1072,7 +1072,7 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
     })
     graphics(list, r, .Impostor, {
         vertex = &r.shader_codes[.Thumbnail_Vert], fragment = &r.shader_codes[.Thumbnail_Impostor_Frag],
-        color_formats = {0 = .RGBA8_Srgb, 1 = .RGBA8_Unorm}, color_count = 2,
+        color_formats = {0 = .RGBA8_Srgb, 1 = .RGBA8_Unorm, 2 = .RGBA8_Unorm, 3 = .RGBA8_Unorm}, color_count = 4,
         depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Greater, cull = .None,
         name = "impostor capture",
     })

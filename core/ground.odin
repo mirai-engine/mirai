@@ -23,9 +23,8 @@ Ground_Hit :: struct {
 
 Ground_Query :: struct {
     user:rawptr,
-    // The highest ground along the line through origin along down. coarse:
-    // an answer from what stays in memory wherever the ground is, cheaper.
-    probe:proc(user:rawptr,origin,down:[3]f32,coarse:bool) -> (Ground_Hit,Ground_Found),
+    // The highest ground along the line through origin along down.
+    probe:proc(user:rawptr,origin,down:[3]f32) -> (Ground_Hit,Ground_Found),
     spacing:f32,        // m between the finest samples of the ground: what samples it without missing any
     unloaded:[]mm.Aabb, // where ground is but its collision is not loaded
 }

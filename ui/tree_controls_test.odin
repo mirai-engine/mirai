@@ -1,5 +1,6 @@
 package ui
 
+import "core:math"
 import "core:strings"
 import "core:testing"
 import "mirai:std/base"
@@ -112,32 +113,6 @@ options_come_from_an_array_of_texts_or_of_enums :: proc(t:^testing.T) {
     tree_node(&s.tree,root,{kind=.Selector,name="bad",bind_items="Test.coins"})
     testing.expect(t,!tree_instance_init(&other,&s.tree,&s.host.host))
     testing.expect(t,other.failure.node==3 && other.failure.binding==.Items)
-}
-
-@(test)
-a_tab_shows_its_option_or_the_text_the_name_or_the_number_of_its_node :: proc(t:^testing.T) {
-    s:Test_Shop
-    test_shop_init(t,&s)
-    defer test_shop_destroy(&s)
-    style,_:=tree_style(&s.tree,{text={size=12,color={255,255,255,255}}})
-    root:=tree_node(&s.tree,-1,{kind=.Box,name="shop",layout={direction=.Column,gap=4}})
-    bound:=tree_node(&s.tree,root,{kind=.Tabs,name="bound",style=style,bind_items="Test.names"})
-    for name in ([4]string{"bag","purse","journal",""}) {tree_node(&s.tree,bound,{kind=.Box,name=name,text="Notes" if name=="purse" else ""})}
-    joined:=tree_node(&s.tree,root,{kind=.Tabs,name="joined",style=style,text="Swords|Bows"})
-    for name in ([2]string{"swords","bows"}) {tree_node(&s.tree,joined,{kind=.Box,name=name})}
-    testing.expect(t,test_shop_instance(&s))
-    copy(s.values.names[0][:],"Bread");copy(s.values.names[1][:],"Milk")
-    ctx:Context
-    test_shop_context(t,&ctx)
-    defer context_destroy(&ctx)
-    input:=test_input()
-    test_frame(&ctx,&input,test_shop_build,&s)
-    testing.expect(t,test_paint(&ctx,"Bread")!=nil && test_paint(&ctx,"Milk")!=nil,"A tab shows the text of the array its Tabs binds")
-    testing.expect(t,test_paint(&ctx,"Notes")==nil,"An option comes before the text of the node")
-    testing.expect(t,test_paint(&ctx,"journal")!=nil,"Past the options, a node without text shows its name")
-    testing.expect(t,test_paint(&ctx,"4")!=nil,"and one without a name, its number")
-    testing.expect(t,test_paint(&ctx,"Swords")!=nil && test_paint(&ctx,"Bows")!=nil,"The text of a Tabs separated by | names its tabs")
-    testing.expect(t,test_paint(&ctx,"swords")==nil)
 }
 
 @(test)
@@ -297,19 +272,22 @@ a_transition_carries_the_colors_of_a_node_between_its_states :: proc(t:^testing.
     testing.expect(t,back[0]<200 && back[0]>150)
 }
 
-// The look of a Button comes whole from its style: italic text leans its glyphs, a gradient goes
-// the way the style says and a ui program colors the fill instead.
+// The look of a Button comes whole from its style: italic text takes the italic face, a gradient goes
+// the way the style says, color2 takes the glyphs down to it and a ui program colors the fill
+// instead.
 @(test)
-a_button_takes_italics_the_gradient_and_the_program_of_its_style :: proc(t:^testing.T) {
+a_button_takes_italics_the_gradients_and_the_program_of_its_style :: proc(t:^testing.T) {
     s:Test_Shop
     test_shop_init(t,&s)
     defer test_shop_destroy(&s)
     left,right:=Color{10,20,30,255},Color{200,100,50,255}
     flat,_:=tree_style(&s.tree,{fill=left,fill2=right,gradient=.Right,text={size=14,color={255,255,255,255},italic=true}})
     cut,_:=tree_style(&s.tree,{fill=left,program_values={0.3,0,0,0},text={size=14,color={255,255,255,255}}})
+    gold,_:=tree_style(&s.tree,{text={size=14,color={255,255,0,255},color2={255,0,0,255}}})
     tree_node(&s.tree,-1,{kind=.Box,name="column",layout={direction=.Column}})
     tree_node(&s.tree,0,{kind=.Button,name="flat",style=flat,text="Go",layout={width=fixed(60),height=fixed(20)}})
     tree_node(&s.tree,0,{kind=.Button,name="cut",style=cut,text="Go",layout={width=fixed(60),height=fixed(20)}})
+    tree_node(&s.tree,0,{kind=.Button,name="gold",style=gold,text="Go",layout={width=fixed(60),height=fixed(20)}})
     tree_programs_set(&s.tree,{0,9})
     testing.expect(t,test_shop_instance(&s))
     ctx:Context
@@ -317,12 +295,14 @@ a_button_takes_italics_the_gradient_and_the_program_of_its_style :: proc(t:^test
     defer context_destroy(&ctx)
     input:=test_input()
     frame:=test_frame(&ctx,&input,test_shop_build,&s)
-    leaning:=0
+    go:=test_paint(&ctx,"Go")
+    testing.expect(t,go!=nil && go.style.font==FONT_ITALIC && go.decoration=={},"an italic style draws with the italic face of its font")
+    graded:=0
     v:=frame.vertices
     for i:=0;i+6<=len(v);i+=6 {
-        if quad_kind(v[i].quad)==.Glyph && v[i].position.x>v[i+5].position.x+0.5 {leaning+=1}
+        if quad_kind(v[i].quad)==.Glyph && v[i].color.g>v[i+5].color.g+0.05 && v[i+5].color.r==1 {graded+=1}
     }
-    testing.expect(t,leaning>0,"the glyphs of an italic style lean")
+    testing.expect(t,graded>0,"the glyphs of a style with color2 go down to it")
     horizontal,program:=false,false
     for shape in frame.shapes {
         if shape.params[3]==f32(Gradient.Horizontal) && shape.fill2[0]>shape.fill[0] {horizontal=true}
@@ -330,6 +310,42 @@ a_button_takes_italics_the_gradient_and_the_program_of_its_style :: proc(t:^test
     }
     testing.expect(t,horizontal,"the gradient of the style goes right")
     testing.expect(t,program,"the program of the style colors the fill of the button, with its values")
+}
+
+// A style turns and leans what its node draws around its center, and the pointer finds the node
+// where it is drawn.
+@(test)
+a_style_turns_and_leans_its_node_and_the_pointer_follows :: proc(t:^testing.T) {
+    s:Test_Shop
+    test_shop_init(t,&s)
+    defer test_shop_destroy(&s)
+    tree_style(&s.tree,{})
+    turned,_:=tree_style(&s.tree,{fill={200,0,0,255},rotate=math.PI*0.5})
+    leaning,_:=tree_style(&s.tree,{fill={0,200,0,255},skew=0.5})
+    tree_node(&s.tree,-1,{kind=.Box,name="column",layout={direction=.Column,gap=40,padding={40,40,40,40}}})
+    tree_node(&s.tree,0,{kind=.Button,name="turned",style=turned,layout={width=fixed(60),height=fixed(20)}})
+    tree_node(&s.tree,0,{kind=.Box,name="banner",style=leaning,layout={width=fixed(60),height=fixed(20)}})
+    testing.expect(t,test_shop_instance(&s))
+    ctx:Context
+    test_shop_context(t,&ctx)
+    defer context_destroy(&ctx)
+    input:=test_input()
+    test_frame(&ctx,&input,test_shop_build,&s)
+    frame:=test_frame(&ctx,&input,test_shop_build,&s)
+    button:=tree_element_id(&ctx,"turned")
+    r:=test_rect(t,&ctx,button)
+    // Below the rectangle the layout gave it, inside the one it is drawn in.
+    input.pointer={r.x+r.w*0.5,r.y+r.h+15}
+    test_frame(&ctx,&input,test_shop_build,&s)
+    testing.expect(t,ctx.hot==button,"the pointer finds a turned node where it is drawn")
+    banner:=test_rect(t,&ctx,tree_element_id(&ctx,"banner"))
+    leans:=false
+    v:=frame.vertices
+    for i:=0;i+6<=len(v);i+=6 {
+        top,bottom:=v[i].position,v[i+5].position
+        if quad_kind(v[i].quad)==.Shape && top.y<bottom.y-1 && test_near(top.x-bottom.x,(bottom.y-top.y)*0.5,0.5) && top.y>banner.y-12 {leans=true}
+    }
+    testing.expect(t,leans,"a leaning node goes right half a unit per unit up")
 }
 
 // The layout transition of a style carries the rectangle of its node to a new layout: from where
@@ -631,7 +647,7 @@ rich_text_takes_italics_rules_links_and_images :: proc(t:^testing.T) {
     heavy.font=FONT_SEMIBOLD
     count,_=rich_parse("<b>x</b>",heavy,spans[:])
     testing.expect(t,spans[0].decoration=={.Bold} && spans[0].style.font==FONT_SEMIBOLD,"A font without a heavier face of its own draws a synthetic bold")
-    Test_Rich :: struct {clicked:u64,text:string}
+    Test_Rich :: struct {clicked:u64,text:string,font:u8}
     ctx:Context
     testing.expect(t,test_context_init(&ctx,TEST_FONT))
     defer context_destroy(&ctx)
@@ -640,12 +656,12 @@ rich_text_takes_italics_rules_links_and_images :: proc(t:^testing.T) {
     build :: proc(ctx:^Context,user:rawptr) {
         r:=cast(^Test_Rich)user
         images:=[1]Node_Image{{name=base.name_hash("coin"),quad={.Image,3,{0,0,1,1}},size={32,16}}}
-        if link:=rich_text(ctx,id(ctx,"rich"),r.text,{size=12,color={255,255,255,255}},{width=fixed(300)},images[:],{255,0,0,255});link!=0 {r.clicked=link}
+        if link:=rich_text(ctx,id(ctx,"rich"),r.text,{font=r.font,size=12,color={255,255,255,255}},{width=fixed(300)},images[:],{255,0,0,255});link!=0 {r.clicked=link}
     }
     r:=Test_Rich{text="Buy <link=shop>more <i>gold</i></link> <img=coin>"}
     test_frame(&ctx,&input,build,&r)
     gold:=test_paint(&ctx,"gold")
-    testing.expect(t,gold!=nil && gold.style.color==Color{255,0,0,255} && gold.decoration=={.Italic},"A link takes its color and keeps its decorations")
+    testing.expect(t,gold!=nil && gold.style.color==Color{255,0,0,255} && gold.style.font==FONT_ITALIC && gold.decoration=={},"A link takes its color and keeps its italics")
     coin:^Paint
     for &p in ctx.paints[:ctx.paint_count] {if p.kind==.Image {coin=&p}}
     testing.expect(t,coin!=nil && coin.quad.data==3,"An image of the tree goes in the line")
@@ -658,8 +674,8 @@ rich_text_takes_italics_rules_links_and_images :: proc(t:^testing.T) {
     test_press(&input);test_release(&input)
     test_frame(&ctx,&input,build,&r)
     testing.expect_value(t,r.clicked,base.name_hash("shop"))
-    // Italics lean the glyphs: their tops are to the right of their bottoms.
-    r.text="<i>Italic</i>"
+    // Italics of a font without an italic face lean its glyphs: their tops are to the right of their bottoms.
+    r.text,r.font="<i>Italic</i>",FONT_MONO
     frame:=test_frame(&ctx,&input,build,&r)
     leaning:=0
     v:=frame.vertices
@@ -667,6 +683,7 @@ rich_text_takes_italics_rules_links_and_images :: proc(t:^testing.T) {
         if quad_kind(v[i].quad)==.Glyph && v[i].position.x>v[i+5].position.x+0.5 {leaning+=1}
     }
     testing.expect(t,leaning>0)
+    r.font=FONT_REGULAR
     // Spans past the capacity are left out and counted.
     builder:=strings.builder_make(context.temp_allocator)
     for _ in 0..<RICH_SPANS+4 {strings.write_string(&builder,"<b>x</b>")}
