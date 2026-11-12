@@ -5,7 +5,6 @@ import "core:fmt"
 import "mirai:asset"
 import anim "mirai:std/anim"
 import "mirai:std/base"
-import "mirai:std/codec"
 import "mirai:ui"
 
 // The .ui asset: the records of ui.Tree_Data in the tables asset/ui.odin
@@ -32,7 +31,7 @@ ui_tree_document :: proc(doc:^asset.Document,types:^asset.Types,id:base.Asset_Id
 
 @(private)
 ui_tree_tables :: proc(doc:^asset.Document,types:^asset.Types,data:ui.Tree_Data) -> asset.Error {
-    asset.document_put(doc,types,asset.UI_TABLE_NODES,data.nodes,{},.LZ) or_return
+    asset.document_put(doc,types,asset.UI_TABLE_NODES,data.nodes,{},.Stream) or_return
     asset.document_put(doc,types,asset.UI_TABLE_STYLES,data.styles) or_return
     asset.document_put(doc,types,asset.UI_TABLE_VARIANTS,data.variants) or_return
     asset.document_put(doc,types,asset.UI_TABLE_COMPONENTS,data.components) or_return
@@ -49,7 +48,7 @@ ui_tree_tables :: proc(doc:^asset.Document,types:^asset.Types,data:ui.Tree_Data)
     asset.document_put(doc,types,asset.UI_TABLE_TOKENS,data.tokens) or_return
     asset.document_put(doc,types,asset.UI_TABLE_TOKEN_USES,data.token_uses) or_return
     asset.document_put(doc,types,asset.UI_TABLE_PARAMS,data.params) or_return
-    asset.document_put(doc,types,asset.UI_TABLE_TEXT,data.text,{.Bulk},.LZ) or_return
+    asset.document_put(doc,types,asset.UI_TABLE_TEXT,data.text,{.Bulk},.Stream) or_return
     return .None
 }
 
@@ -105,18 +104,18 @@ ui_tree_view :: proc(a:^asset.Asset,types:^asset.Types) -> (data:ui.Tree_Data,er
 // transaction: false when a widget is missing, is not a .ui, does not read,
 // or names through others a file that names it.
 ui_tree_imports :: proc(a:^Assets,data:ui.Tree_Data,files:^[dynamic]Content_Stamp=nil,allocator:=context.temp_allocator) -> (imports:[]ui.Tree_Data,ok:bool) {
-    return ui_tree_imports_in(&a.registry,&a.types,data,files,allocator,a.codecs)
+    return ui_tree_imports_in(&a.registry,&a.types,data,files,allocator)
 }
 
 // ui_tree_imports for whoever has the registry of a project and the types of
 // its assets without the assets of an application.
-ui_tree_imports_in :: proc(registry:^asset.Registry,types:^asset.Types,data:ui.Tree_Data,files:^[dynamic]Content_Stamp=nil,allocator:=context.temp_allocator,codecs:^codec.Table=nil) -> (imports:[]ui.Tree_Data,ok:bool) {
+ui_tree_imports_in :: proc(registry:^asset.Registry,types:^asset.Types,data:ui.Tree_Data,files:^[dynamic]Content_Stamp=nil,allocator:=context.temp_allocator) -> (imports:[]ui.Tree_Data,ok:bool) {
     stack:[ui.TREE_DEPTH]base.Asset_Id
-    return ui_tree_imports_of(registry,types,data,files,&stack,0,allocator,codecs)
+    return ui_tree_imports_of(registry,types,data,files,&stack,0,allocator)
 }
 
 @(private="file")
-ui_tree_imports_of :: proc(registry:^asset.Registry,types:^asset.Types,data:ui.Tree_Data,files:^[dynamic]Content_Stamp,stack:^[ui.TREE_DEPTH]base.Asset_Id,depth:int,allocator:=context.temp_allocator,codecs:^codec.Table=nil) -> (imports:[]ui.Tree_Data,ok:bool) {
+ui_tree_imports_of :: proc(registry:^asset.Registry,types:^asset.Types,data:ui.Tree_Data,files:^[dynamic]Content_Stamp,stack:^[ui.TREE_DEPTH]base.Asset_Id,depth:int,allocator:=context.temp_allocator) -> (imports:[]ui.Tree_Data,ok:bool) {
     widgets:=false
     for component in data.components {widgets|=component.widget!={}}
     if !widgets {return nil,true}
@@ -138,12 +137,12 @@ ui_tree_imports_of :: proc(registry:^asset.Registry,types:^asset.Types,data:ui.T
         bytes,read:=asset.registry_read(registry,record.path,allocator)
         if read!=.None {return nil,false}
         file:asset.Asset
-        if asset.asset_take(&file,bytes,allocator,codecs=codecs)!=.None || file.blob.header.id!=id {return nil,false}
+        if asset.asset_take(&file,bytes,allocator)!=.None || file.blob.header.id!=id {return nil,false}
         widget,error:=ui_tree_view(&file,types)
         if error!=.None {return nil,false}
         if files!=nil {append(files,Content_Stamp{id=id,size=record.size,time=record.time})}
         stack[depth]=id
-        nested:=ui_tree_imports_of(registry,types,widget,files,stack,depth+1,allocator,codecs) or_return
+        nested:=ui_tree_imports_of(registry,types,widget,files,stack,depth+1,allocator) or_return
         imports[row]=ui.tree_link(widget,nested,allocator) or_return
     }
     return imports,true

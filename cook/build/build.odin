@@ -8,6 +8,7 @@ import "core:slice"
 import "core:strconv"
 import "core:strings"
 import "core:time"
+import "mirai:host"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/subprocess"
@@ -123,7 +124,6 @@ Job :: struct {
     copies:[]Copy,              // Game: what goes next to the executable
     settings:string,            // Game: its settings file: those of the engine and of the project merged, since it ships without the engine
     cook:Cook_Desc,             // Game: the assets it ships; without assets, a project that has none
-    compression:Compression_Build, // Game: how the library its cook compresses with is built
     plugin_assets:[dynamic]project.Asset_Folder, // Game: the folders of assets of its active plugins, in cook.plugins
     development:[dynamic]string, // Game: the folders of the active development plugins, which it must not reach
     plugins:[]Plugin_Library,    // the plugin libraries the target links (plugins.odin)
@@ -272,7 +272,7 @@ job_start :: proc(desc:Desc) -> ^Job {
         }
         if assets:=project.folder_path(p.root,.Assets,a);os.is_dir(assets) {
             job.cook={assets=assets,output=project.folder_path(folder,.Assets,a),manifest=project.path(p.root,COOK_FILE,allocator=a),texture_cache=project.content_cache_path(p.root,project.TEXTURE_CACHE,allocator=a),mesh_cache=project.content_cache_path(p.root,project.MESH_CACHE,allocator=a),root=p.root,server=desc.server,quick=desc.dev,keys=project.path(job.work,fmt.tprintf("%s.cook",name),allocator=a),allocator=a}
-            job.cook.compression,job.compression=compression_prepare(p,a,desc.dev)
+            job.cook.codecs=host.codecs_of(project.compression(p.root,p.engine_root))
             job.plugin_assets=make([dynamic]project.Asset_Folder,a)
             for found in project.asset_folders(p,a) {
                 if found.prefix!="" {append(&job.plugin_assets,found)}
@@ -479,7 +479,7 @@ job_plugin_spawn :: proc(job:^Job,index:int) -> bool {
     }
     compile:=Compile{library=index,staged=link_staged(folder,a),folder=folder,streams=streams}
     command:=make([dynamic]string,context.temp_allocator)
-    append(&command,..plugin_command(lib,job.compiler,job.engine_decl,compile.staged,job.plugin_flags,context.temp_allocator))
+    append(&command,..plugin_command(lib,job.compiler,job.engine_root,job.engine_decl,compile.staged,job.plugin_flags,context.temp_allocator))
     keep:=LINK_KEEP_FLAGS
     append(&command,..keep[:])
     return job_spawn(job,compile,command[:])
@@ -553,16 +553,6 @@ job_project_start :: proc(job:^Job) -> ^Job {
         }
     }
     if os.make_directory_all(job.work)!=nil && !os.is_dir(job.work) {return job_fail(job,.Write_Failed)}
-    // What the game embeds has to be there before it compiles.
-    if job.target==.Game {
-        problem:=compression_build(job.compression)
-        if problem=="" {problem=compression_shaders(job.compression)}
-        if problem!="" {
-            job.result.cook.error=Cook_Error.Compression_Failed
-            job.result.cook.detail=strings.clone(problem,job.cook.allocator)
-            return job_fail(job,.Cook_Failed)
-        }
-    }
     compile:=Compile{library=-1,staged=job.staged,streams=job.stream_files}
     command:=make([dynamic]string,context.temp_allocator)
     append(&command,job.compiler)
@@ -787,6 +777,8 @@ target_flags :: proc(p:^project.Project,target:Target,extra:[]string,a:runtime.A
     append(&flags,"build",generated_folder(p.root,target,a))
     // A library sees the engine through its declarations; the game, whole.
     mirai:=target==.Game?p.engine_root:project_engine(p,engine,context.temp_allocator).decl
+    compressor,_:=project.compressor_flags(p.engine_root,a)
+    append(&flags,..compressor[:])
     append(&flags,fmt.aprintf("-collection:mirai=%s",mirai,allocator=a),fmt.aprintf("-collection:project=%s",p.root if target==.Game else project_decl(p.root,plugins_mode(p,dev),context.temp_allocator),allocator=a))
     // A library sees the engine's plugins through the declarations of their libraries; the game, whole.
     plugins:=target==.Game?project.path(p.engine_root,"plugins",allocator=context.temp_allocator):plugins_decl(p.root,plugins_mode(p,dev),context.temp_allocator)
@@ -795,7 +787,6 @@ target_flags :: proc(p:^project.Project,target:Target,extra:[]string,a:runtime.A
     append(&flags,..generated[:])
     if target==.Game {
         append(&flags,dev?"-o:minimal":"-o:speed")
-        compression_flags(p,&flags,dev,a)
     } else {
         append(&flags,"-build-mode:dll")
         // The libraries of the engine's plugins.

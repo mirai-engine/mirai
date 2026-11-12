@@ -37,7 +37,6 @@ net_begin :: proc(world:core.World_Ref,app:^host.App,session:^Net_Session,settin
     defer session.problems=previous
     defer authority_follow(session,world)
     outbox_follow(world)
-    if app!=nil {session.codecs,session.writes=&app.codecs,app.writing}
     if !session.opened {session_start(session,world,app,settings)}
     if !session.host_ready {
         report_update(session,app)

@@ -432,7 +432,7 @@ load_warm_begin :: proc(job:^Load_Job) {
     job.budget=host.assets_load_open(a)
     if job.whole {host.assets_load_whole(a,job.budget)}
     if workers:=jobs.worker_count(&app.jobs);workers>1 {
-        asset.piece_decoders_init(&job.pieces,&app.jobs,runtime.heap_allocator(),&app.codecs)
+        asset.piece_decoders_init(&job.pieces,&app.jobs,runtime.heap_allocator())
         share:=workers if job.whole else max(workers/LOAD_WORKERS_SHARE,1)
         for _ in 0..<min(share,count) {jobs.run(&app.jobs,jobs.OWNER,.Background,load_prepare,job,&job.counter)}
     }
@@ -447,7 +447,7 @@ load_prepare :: proc(job:^Load_Job,worker:int) {
     defer asset.types_destroy(&types)
     decoder,no_decoder:=new(asset.Decoder)
     defer free(decoder)
-    lent:=decoder if no_decoder==nil && asset.decoder_init(decoder,codecs=&job.app.codecs)==.None else nil
+    lent:=decoder if no_decoder==nil && asset.decoder_init(decoder)==.None else nil
     defer if decoder!=nil {asset.decoder_destroy(decoder)}
     if lent!=nil && job.pieces.decoders!=nil {lent.pieces,lent.worker=&job.pieces,worker}
     for {

@@ -213,17 +213,64 @@ compress_block :: proc(t: ^Tables, block: [^]u8, pixels: [^]u8, p: ^Params) -> b
 	}
 
 	if p.force_alpha {
-		handle_alpha_block(t, block, colors, p, &params)
+		alpha_block(t, block, colors, p, &params)
 		return true
 	}
 
 	for i in 0 ..< 16 {
 		if colors[i][3] < 255 {
-			handle_alpha_block(t, block, colors, p, &params)
+			alpha_block(t, block, colors, p, &params)
 			return true
 		}
 	}
 
 	handle_opaque_block(t, block, colors, p, &params)
+	// Mode 6 stores alpha with a p-bit it shares with color: an opaque block may decode 254.
+	decoded: [16]Color_Rgba
+	if p.mode_mask & (1 << 6) != 0 && unpack_bc7(block, &decoded[0][0]) && !alpha_extremes_kept(&decoded, colors) {
+		opaque := p^
+		opaque.mode_mask &~= 1 << 6
+		if opaque.mode_mask != 0 {handle_opaque_block(t, block, colors, &opaque, &params)}
+	}
 	return false
+}
+
+// A block with alpha whose texels of alpha 0 and 255 decode exactly: when the best mode does not
+// keep them, the one of least error among the modes that do. Mode 5, whose alpha endpoints have 8
+// bits and are the extremes of the block, always does.
+@(private = "file")
+alpha_block :: proc(t: ^Tables, block: [^]u8, colors: [^]Color_Rgba, p: ^Params, params: ^Cell_Params) {
+	handle_alpha_block(t, block, colors, p, params)
+	decoded: [16]Color_Rgba
+	if !unpack_bc7(block, &decoded[0][0]) || alpha_extremes_kept(&decoded, colors) {return}
+	best: [BLOCK_SIZE]u8
+	best_err := max(u64)
+	for mode in ([3]u32{6, 7, 5}) {
+		if p.mode_mask & (1 << mode) == 0 {continue}
+		single := p^
+		single.mode_mask = 1 << mode
+		trial: [BLOCK_SIZE]u8
+		handle_alpha_block(t, &trial[0], colors, &single, params)
+		if !unpack_bc7(&trial[0], &decoded[0][0]) || !alpha_extremes_kept(&decoded, colors) {continue}
+		err: u64
+		for i in 0 ..< 16 {
+			for c in 0 ..< 4 {
+				d := i64(decoded[i][c]) - i64(colors[i][c])
+				err += u64(d * d)
+			}
+		}
+		if err < best_err {best_err, best = err, trial}
+	}
+	if best_err != max(u64) {
+		for i in 0 ..< BLOCK_SIZE {block[i] = best[i]}
+	}
+}
+
+@(private = "file")
+alpha_extremes_kept :: proc(decoded: ^[16]Color_Rgba, colors: [^]Color_Rgba) -> bool {
+	for i in 0 ..< 16 {
+		a := colors[i][3]
+		if (a == 0 || a == 255) && decoded[i][3] != a {return false}
+	}
+	return true
 }

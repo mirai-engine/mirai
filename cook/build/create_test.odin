@@ -18,7 +18,7 @@ a_new_project_gets_what_the_templates_share :: proc(t:^testing.T) {
     write(t,join(engine,"templates/common/.claude/x"),"shared")
     write(t,join(engine,"templates/common/x"),"shared")
     write(t,join(engine,"templates/small/x2"),"own")
-    write(t,join(engine,"templates/small",project.PROJECT_FILE),`{"name": "Small", "plugins": ["fx"]}`)
+    write(t,join(engine,"templates/small",project.PROJECT_FILE),`{"name": "Small", "plugins": ["fx"], "build": {"compression": "open"}}`)
     testing.expect(t,os.make_directory_all(join(engine,"plugins/fx"))==nil)
     write(t,join(engine,"plugins/fx",project.PLUGIN_FILE),`{"name": "fx", "version": "1.0.0", "asset_kinds": [{"extension": ".spark", "kind": "SPAR", "merged": true}]}`)
 
@@ -32,6 +32,7 @@ a_new_project_gets_what_the_templates_share :: proc(t:^testing.T) {
     m,read_error:=project.manifest_read(join(folder,project.PROJECT_FILE))
     testing.expect_value(t,read_error.code,project.Error_Code.None)
     testing.expect_value(t,string(m.name[:4]),"Made")
+    testing.expect(t,base.text_get(m.build.compression[:])=="","a new project does not keep the compression of the template")
     attributes,_:=os.read_entire_file(join(folder,".gitattributes"),context.temp_allocator)
     testing.expect(t,strings.contains(string(attributes),"*.scene merge="+GIT_DRIVER) && strings.contains(string(attributes),"*.spark merge="+GIT_DRIVER),"a new project says which of its files git merges through mirai, those of its plugins too")
 }

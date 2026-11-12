@@ -6,8 +6,8 @@ import "core:slice"
 import "core:testing"
 import "core:time"
 import "mirai:std/jobs"
-import "mirai:cook/encoders/rgbcx"
-import "mirai:cook/encoders/bc7enc"
+import "../rgbcx"
+import "../bc7enc"
 
 @(private="file") ALL_FORMATS :: [?]Format{.BC1,.BC3,.BC4,.BC5,.BC7}
 
@@ -303,4 +303,33 @@ output_does_not_depend_on_the_thread_count :: proc(t:^testing.T) {
     }
     // Above the chunking threshold.
     check_threads(t,&js,.BC4,256,256)
+}
+
+// A block RDO rewrites decodes alpha 0 and 255 where the image has them, in each format with
+// alpha, at the strongest lambda.
+@(test)
+rdo_keeps_alpha_0_and_255 :: proc(t:^testing.T) {
+    WIDTH,HEIGHT :: 64,64
+    pixels:=make_image(WIDTH,HEIGHT);defer delete(pixels)
+    for y in 0..<HEIGHT {
+        for x in 0..<WIDTH {pixels[(x+y*WIDTH)*4+3]=0 if x<16 else 255 if x<48 else u8(100+y)}
+    }
+    for format in ([?]Format{.BC3,.BC7}) {
+        p:=test_params()
+        p.rdo_lambda=10
+        out:=make([]u8,out_size(format,WIDTH,HEIGHT));defer delete(out)
+        if !testing.expect(t,encode(format,pixels,WIDTH,HEIGHT,p,out)) {continue}
+        wrong:=0
+        for by in 0..<HEIGHT/4 {
+            for bx in 0..<WIDTH/4 {
+                decoded:[16]Color_Rgba
+                decode_block(format,raw_data(out[(bx+by*WIDTH/4)*bytes_per_block(format):]),&decoded,p)
+                for i in 0..<16 {
+                    source:=pixels[((bx*4+i%4)+(by*4+i/4)*WIDTH)*4+3]
+                    if (source==0 || source==255) && decoded[i][3]!=source {wrong+=1}
+                }
+            }
+        }
+        testing.expectf(t,wrong==0,"%v: %d texels of alpha 0 or 255 decode otherwise",format,wrong)
+    }
 }

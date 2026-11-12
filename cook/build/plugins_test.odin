@@ -115,7 +115,7 @@ a_plugin_library_is_linked_against_an_import_library_made_ahead :: proc(t:^testi
         import_library,read:=os.read_entire_file(lib.linked,context.temp_allocator)
         testing.expect(t,read==nil && strings.contains(string(import_library),"plugin-thing-runtime-minimal-00000001.dll") && strings.contains(string(import_library),"plugins.thing.runtime.answer"),"the import library names the published file and what it exports")
         staged:=project.path(folder,"a folder","staged.dll")
-        command:=plugin_command(&lib,compiler,lib.stage,staged,{"-build-mode:dll","-o:minimal"})
+        command:=plugin_command(&lib,compiler,root,lib.stage,staged,{"-build-mode:dll","-o:minimal"})
         memory,_:=compiler_memory()
         state,_,errors,error:=subprocess.exec({command=command,env=child_environment(root,context.temp_allocator)},context.temp_allocator,{memory=memory})
         if !testing.expectf(t,error==nil && state.exit_code==0,"the library does not link:\n%s",string(errors)) {return}
@@ -161,24 +161,6 @@ plugin_job :: proc(p:^project.Project,compiler:string) -> ^Job {
     job.stream_files={project.path(job.work,"play-test.err",allocator=a),project.path(job.work,"play-test.out",allocator=a)}
     job.compiles=make([dynamic]Compile,a)
     return job
-}
-
-// A plugin that is shipped_only is of the game that ships alone.
-@(test)
-a_plugin_only_a_shipped_game_has_stays_out_of_the_editor_and_the_player :: proc(t:^testing.T) {
-    context.allocator=context.temp_allocator
-    folder:=base.test_folder(t,"plugin-shipped")
-    if folder=="" {return}
-    engine,game:=split_plugin_write(t,folder)
-    manifest:=project.path(engine,"plugins/thing/plugin.mirai",allocator=context.temp_allocator)
-    testing.expect(t,os.write_entire_file(manifest,`{"name": "thing", "version": "1.0.0", "parts": ["Runtime"], "shipped_only": true}`)==nil)
-    p,error:=project.open(game,engine)
-    if !testing.expectf(t,error.code==.None,"the project opens: %v",error) {return}
-    world:=world_generate(&p,context.temp_allocator,true)
-    if !testing.expectf(t,len(world.errors)==0,"%v",world.errors) {return}
-    testing.expect(t,!strings.contains(world.game_world,`"plugins:thing/runtime/sim"`) && !strings.contains(world.editor_world,`"plugins:thing/runtime/sim"`))
-    testing.expect(t,strings.contains(world.shipped_world,`"plugins:thing/runtime/sim"`))
-    for library in plugin_libraries(&p,true) {testing.expect(t,library.name!="thing","no library of the editor or the player is of it")}
 }
 
 // Every folder with sources under a part is a package of its library: it is

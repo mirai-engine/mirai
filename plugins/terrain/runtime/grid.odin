@@ -82,7 +82,7 @@ shared_alone :: #force_inline proc "contextless" (values:[]$T) -> bool {
 // Lets go of the values of a page, as a grid that held it.
 page_free :: proc(page:Page($T)) {shared_free(page.values)}
 
-// Where the values of a page are while they are not in memory: an LZ block
+// Where the values of a page are while they are not in memory: a block
 // of the file of its source, or one of its own with what the page held when
 // it left with edits that file does not have.
 Page_Block :: struct {
@@ -122,12 +122,12 @@ Grid :: struct($T:typeid) {
     slabs:[dynamic][3]i32,         // the place of each slab, in slabs
 }
 
-// The LZ block of a page as it was last written, and the hash of the values
+// The block of a page as it was last written, and the hash of the values
 // it holds: a page that still holds them is not compressed again.
 Page_Encoded :: struct {raw:u64,block:[]u8}
 
 // A run of pages in the order of their ids, as a .terrain stores them: count
-// pages that hold fill alone, or one page with its LZ block.
+// pages that hold fill alone, or one page with its block.
 @(private)
 Page_Run :: asset.Block_Record
 
@@ -717,7 +717,7 @@ grid_items :: proc(g:^Grid($T),items:^[dynamic]Grid_Item) -> bool {
 }
 
 // The pages of a grid as a table of runs in the order of grid_items and a
-// column of the LZ blocks of the pages that are not uniform, stored as they
+// column of the blocks of the pages that are not uniform, stored as they
 // are so that one page is read alone. A run is a page with its block, or the
 // pages that follow one another with one value and none: what a grid holds
 // of pages that read one value does not change its file. A page in its block
@@ -727,7 +727,7 @@ grid_items :: proc(g:^Grid($T),items:^[dynamic]Grid_Item) -> bool {
 // With keep, the grid keeps each block it makes (encoded), and a page that
 // still holds the values of its kept block is not compressed again.
 @(private)
-grid_put_document :: proc(document:^asset.Document,types:^asset.Types,g:^Grid($T),pages_name,blocks_name:string,valid:proc "contextless" (value:T) -> bool,file:string,allocator:runtime.Allocator,keep:=false,quantize:=false,codecs:=Page_Codecs{}) -> asset.Error where size_of(T)<=4 {
+grid_put_document :: proc(document:^asset.Document,types:^asset.Types,g:^Grid($T),pages_name,blocks_name:string,valid:proc "contextless" (value:T) -> bool,file:string,allocator:runtime.Allocator,keep:=false,quantize:=false) -> asset.Error where size_of(T)<=4 {
     if keep && len(g.encoded)!=len(g.pages) {
         if resize(&g.encoded,len(g.pages))!=nil {return .Out_Of_Memory}
     }
@@ -739,10 +739,10 @@ grid_put_document :: proc(document:^asset.Document,types:^asset.Types,g:^Grid($T
     blocks:=make([dynamic]u8,allocator)
     defer delete(blocks)
     reader:Page_Reader
-    if !page_reader_init(&reader,allocator,codecs) {return .Out_Of_Memory}
+    if !page_reader_init(&reader,allocator) {return .Out_Of_Memory}
     defer page_reader_destroy(&reader,allocator)
     writer:Page_Writer
-    if !page_writer_init(&writer,allocator,codecs.writes) {return .Out_Of_Memory}
+    if !page_writer_init(&writer,allocator,types.codecs) {return .Out_Of_Memory}
     defer page_writer_destroy(&writer)
     decoded,decoded_error:=make([]T,PAGE_VALUES,allocator)
     if decoded_error!=nil {return .Out_Of_Memory}
@@ -774,7 +774,8 @@ grid_put_document :: proc(document:^asset.Document,types:^asset.Types,g:^Grid($T
             read,read_ok:=page_block_read(g.blocks[slot],file,reader.block)
             if !read_ok || !page_decode(read,g.blocks[slot].hash,mem.slice_to_bytes(decoded[:count]),&reader.decoder,reader.coded) {return .IO}
             values=decoded[:count]
-            if !quantize || g.blocks[slot].own==nil {block=read}
+            // A block another write compressed otherwise is compressed again.
+            if (!quantize || g.blocks[slot].own==nil) && asset.pack_matches(read,.Fast,types.codecs) {block=read}
         }
         fill:=page.fill
         when T==f32 {
@@ -916,7 +917,7 @@ grid_read_document :: proc(g:^Grid($T),file:^asset.Asset,types:^asset.Types,size
     total:=u64(0)
     for run in runs {
         if run.count==0 || !valid(fill_of(T,run.fill)) {return false}
-        if run.size!=0 && (run.count!=1 || run.offset>stored || run.size>stored-run.offset || run.size>PAGE_BLOCK_MAX) {return false}
+        if run.size!=0 && (run.count!=1 || run.offset>stored || run.size>stored-run.offset || run.size>u64(asset.pack_bound(PAGE_BYTES_MAX))) {return false}
         total+=u64(run.count)
     }
     if total!=u64(counts.x)*u64(counts.y)*u64(counts.z) {return false}

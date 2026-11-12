@@ -322,11 +322,10 @@ texture_round_trips_every_format_and_checks_level_sizes :: proc(t:^testing.T) {
 
 @(test)
 a_read_of_the_small_levels_decodes_only_the_start_of_the_texels :: proc(t:^testing.T) {
-    if !ASSET_LZ {return}
     types:Types;types_init(&types);defer types_destroy(&types)
     // BC1 whose endpoints change slowly and whose indices are noise: as planes
-    // of fields it compresses smaller. Its levels take several blocks of LZ.
-    SIDE :: 1024
+    // of fields it compresses smaller. Its levels take several pieces of a stream.
+    SIDE :: 4096
     count:=texture_mip_count(SIDE,SIDE)
     levels:=make([][]u8,count,context.temp_allocator)
     state:=u64(5)
@@ -360,7 +359,7 @@ a_read_of_the_small_levels_decodes_only_the_start_of_the_texels :: proc(t:^testi
         }
         table,_:=asset_table(&a,"texels")
         entry:=blob_chunk(&a.blob,table.columns[0].chunk)
-        testing.expect(t,entry.compression==COMPRESSION_PACKED && entry.uncompressed_size>u64(len(levels[0])))
+        testing.expect(t,entry.compression==Compression.Stream && entry.uncompressed_size>u64(len(levels[0])))
         asset_close(&a)
 
         // With the end of the stream damaged, the levels at its start still read.

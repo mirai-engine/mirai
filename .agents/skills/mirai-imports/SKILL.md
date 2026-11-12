@@ -169,7 +169,7 @@ the assets.
   sync of a build or of a cook builds a Fast texture again as Final from its source. `mirai import`
   and tools build Final, and so does the editor for a texture that is a document.
 - **One algorithm, once.** Mips, color rules and block compression in `cook/textures` (the
-  encoders are `cook/encoders`); PBR conversions in `cook/import/pbr.odin`; triangulation,
+  encoders are `compressor:blocks`); PBR conversions in `cook/import/pbr.odin`; triangulation,
   simplification, hulls and convex decomposition in `std/geom`; transforms with `std/math`.
 - USD is composed with the prebuilt `usdcat` when it exists; without it only USDA that needs no
   composition is read.

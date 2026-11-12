@@ -15,6 +15,7 @@
     "executable": "",
     "optimization": "Speed",
     "debug": false,
-    "defines": []
+    "defines": [],
+    "compression": "open"
   }
 }

@@ -305,7 +305,7 @@ mesh_stream_start :: proc(r: ^Renderer, stream: ^Mesh_Stream) -> bool {
 		if error != nil {return false}
 		st.scratch.coded = coded
 	}
-	if !st.scratch.decoder.made && asset.stream_decoder_init(&st.scratch.decoder, r.allocator, r.codecs) != .None {return false}
+	if st.scratch.decoder.data == nil && asset.stream_decoder_init(&st.scratch.decoder, r.allocator) != .None {return false}
 	if st.decode_scratch == nil {
 		workers := jobs.worker_count(st.jobs) if st.jobs != nil else 1
 		coded, error := make([]u8, max(workers, 1) * asset.MESH_PAGE_SCRATCH_BYTES, r.allocator)
@@ -313,7 +313,7 @@ mesh_stream_start :: proc(r: ^Renderer, stream: ^Mesh_Stream) -> bool {
 		decoders, decoders_error := make([]asset.Stream_Decoder, max(workers, 1), r.allocator)
 		if decoders_error != nil {delete(coded, r.allocator);return false}
 		for &d in decoders {
-			if asset.stream_decoder_init(&d, r.allocator, r.codecs) == .None {continue}
+			if asset.stream_decoder_init(&d, r.allocator) == .None {continue}
 			for &made in decoders {asset.stream_decoder_destroy(&made)}
 			delete(decoders, r.allocator);delete(coded, r.allocator)
 			return false

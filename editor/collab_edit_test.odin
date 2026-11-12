@@ -99,7 +99,7 @@ a_scene_of_the_host_that_fails_halfway_leaves_the_world_as_it_was :: proc(t:^tes
         if component.name=="Transform" {entry=asset.blob_chunk(&file.blob,component.table.columns[1].chunk)}
     }
     asset.asset_close(&file)
-    if !testing.expect_value(t,entry.compression,asset.COMPRESSION_PACKED) {return}
+    if !testing.expect_value(t,entry.compression,asset.Compression.Stream) {return}
     mem.set(&broken[entry.offset],0xff,int(entry.size))
 
     world:=cast(^Play_Test_World)f.data

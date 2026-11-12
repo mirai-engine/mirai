@@ -268,8 +268,8 @@ texture cache of the project; a failure is `Cook_Failed` with `Result.cook.error
 - **Parallel.** Files are cooked on a job system (`Cook_Desc.worker`, else one of the cook with a
   thread per core), the largest first; what is written and the report are those of a cook on one
   thread, and an error is the first by path. Prefab resolution and texture cache writes take a lock.
-  A dev game is cooked with the pack `QUICK` of `cook/compressor/lz` (`Cook_Desc.quick`), a
-  release one with `SHIP`.
+  A dev game is cooked with the profile `Balanced` (`Cook_Desc.quick`), a release one with
+  `Ultra`.
 - **Scope.** The roots and, transitively, the dependencies each asset declares; the rest goes to
   `dropped`. A dependency that is not any file goes to `missing` and does not stop the cooking.
 - **Textures.** With `"textures": "blocks"` (default), an RGBA8 texture is written in blocks
@@ -291,13 +291,22 @@ texture cache of the project; a failure is `Cook_Failed` with `Result.cook.error
   section references its far mesh, `<scene>.far.mesh` with the id `asset.far_mesh_id` gives
   (`cook/far`): the game shows it and makes none
   ([far shape](../../mirai-gameplay/references/libraries.md#plugin-streaming)).
-- **Compression.** A project that does not ship with LZ writes with `Cook_Desc.compression`: the
-  open codecs of the engine, the Cook part of its plugin (built on its own and loaded by the
-  cook), or nothing. Its textures are written without BC7Split nor planes of fields, and what
-  makes blocks makes those of the RGBA8 textures the cook compresses; a texture that comes in
-  blocks keeps them. The shaders the game embeds are compressed before the game compiles
-  (`ASSET_SHADERS`) when the engine embeds them in another codec, and with `none` they go as they
-  are. What a cook compresses with is part of the key of each file it keeps.
+- **Compression.** A cook writes with the codecs of its project (`Cook_Desc.codecs`, from
+  `project.compression`): every texture is written again with the layouts and planes of fields
+  those codecs take, and with `None` its blocks are made without RDO. What a cook compresses with,
+  and the name of the compressor, are part of the key of each file it keeps.
+
+#### Compressor
+
+The collection `compressor` every compile names (`project.compressor_flags`): the private clone
+in `ext/mirai-compression` of the checkout or of its main checkout (git ignores `ext/`), else the
+open `std/compressor`; `compressor_open` is always the open one. The script `mirai` finds it the
+same way to build the tool. A project's `build.compression` empty is `Best` only where its engine
+has the private one: a game built from an installed engine, which carries no sources of it,
+reads only the open formats. The fingerprints of the libraries of the engine take the folder and
+the sources of the collection. The release workflow clones the private repository into `ext/`
+with the secret `MIRAI_COMPRESSION_TOKEN` before it packages: the binaries carry it compiled,
+and `PACKAGE_TRACKED` never takes `ext/`.
 - Every other asset is written again compressed for shipping (`asset.document_repack` with
   `SHIP`, [compression](../../mirai-assets/references/formats.md#compression)), and so are the
   textures it writes in blocks; a file that is not an asset is copied byte by byte.

@@ -1,4 +1,5 @@
 {
   "name": "Project",
-  "plugins": ["sample", "playtest"]
+  "plugins": ["sample", "playtest"],
+  "build": {"compression": "open"}
 }

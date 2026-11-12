@@ -7,7 +7,6 @@ import "core:os"
 import "core:path/filepath"
 import "core:reflect"
 import "core:strings"
-import "mirai:std/codec"
 import "mirai:asset"
 import "mirai:render/abi"
 import "mirai:rhi"
@@ -46,7 +45,7 @@ shader_assets_destroy :: proc(assets:^Shader_Assets) {
 // code of each (u32, little endian), in the order of SHADERS and then of
 // PROGRAM_SHADERS, before their code packed: the tables say nothing of the
 // code. It allocates bytes alone, and nothing when it fails.
-embedded_shaders_decode :: proc(codes:^[Shader_Id]rhi.Shader_Code,programs:^[len(PROGRAM_SHADERS)]rhi.Shader_Code,allocator:=context.allocator,codecs:^codec.Table=nil)->(bytes:[]u8,error:string) {
+embedded_shaders_decode :: proc(codes:^[Shader_Id]rhi.Shader_Code,programs:^[len(PROGRAM_SHADERS)]rhi.Shader_Code,allocator:=context.allocator)->(bytes:[]u8,error:string) {
     count:=len(Shader_Id)+len(PROGRAM_SHADERS)
     packed:=shaders_packed()
     if len(packed)<4*(count+1) || int(endian.unchecked_get_u32le(packed))!=count {return nil,"the embedded shaders are of other stages than this engine has: build the engine again"}
@@ -57,7 +56,7 @@ embedded_shaders_decode :: proc(codes:^[Shader_Id]rhi.Shader_Code,programs:^[len
         allocation_error:runtime.Allocator_Error
         if bytes,allocation_error=make([]u8,total,allocator);allocation_error!=nil {return nil,"out of memory for the embedded shaders"}
         decoder:asset.Stream_Decoder
-        if asset.stream_decoder_init(&decoder,allocator,codecs)!=.None {delete(bytes,allocator);return nil,"out of memory for the embedded shaders"}
+        if asset.stream_decoder_init(&decoder,allocator)!=.None {delete(bytes,allocator);return nil,"out of memory for the embedded shaders"}
         unpack_error:=asset.unpack(&decoder,sizes[4*count:],bytes)
         asset.stream_decoder_destroy(&decoder)
         if unpack_error!=.None {delete(bytes,allocator);return nil,"the embedded shaders do not decode: build the engine again"}

@@ -29,7 +29,6 @@ import "core:math/linalg"
 import "core:os"
 import "core:reflect"
 import "core:sync"
-import "mirai:std/codec"
 import "mirai:asset"
 import "mirai:std/jobs"
 import mm "mirai:std/math"
@@ -418,7 +417,6 @@ Renderer_Desc :: struct {
 	settings:      Maybe(Settings), // the defaults of the device type when unset
 	shaders:       ^Shader_Assets,  // a loaded generation, which the renderer takes; nil: the embedded one
 	allocator:     runtime.Allocator, // of the scene tables; context.allocator when unset
-	codecs:        ^codec.Table,      // what decodes the mesh pages of a game shipped with a plugin's codec; it outlives the renderer
 	ui_vertex_capacity:    int, // UI vertices of a frame, screen layers and world panels together; 0: UI_VERTEX_CAPACITY
 	ui_shape_capacity:     int, // 0: UI_SHAPE_CAPACITY
 	ui_layer_depth:        int, // 0: UI_LAYER_DEPTH_CAPACITY; maximum 8
@@ -550,7 +548,6 @@ view_camera_cut :: proc(v:^View_State) {
 Renderer :: struct {
 	device:          ^rhi.Device,
 	allocator:       runtime.Allocator,
-	codecs:          ^codec.Table,
 	settings:        Settings,
 	highlight:       Highlight_Style, // the editor's outline levels
 	outlines:        Highlight_Style, // the game's outline styles: none drawn until it sets them
@@ -694,7 +691,6 @@ renderer_init :: proc(r: ^Renderer, desc: Renderer_Desc) -> bool {
 	device, width, height, settings, assets := desc.device, desc.width, desc.height, desc.settings, desc.shaders
 	r.device = device
 	r.allocator = desc.allocator if desc.allocator.procedure != nil else context.allocator
-	r.codecs = desc.codecs
 	scene_ready := scene_init(r)
 	r.scene.pages.jobs = desc.jobs
 	pipeline_thread_start(r)
@@ -704,7 +700,7 @@ renderer_init :: proc(r: ^Renderer, desc: Renderer_Desc) -> bool {
 	if assets!=nil && assets.owned {
 		r.shader_assets=assets^;r.shader_codes=assets.codes;assets^={}
 	} else {
-		embedded,problem:=embedded_shaders_decode(&r.shader_codes,&r.embedded_programs,r.allocator,r.codecs)
+		embedded,problem:=embedded_shaders_decode(&r.shader_codes,&r.embedded_programs,r.allocator)
 		if problem!="" {set_error(r,"%s",problem);return false}
 		r.embedded=embedded
 	}

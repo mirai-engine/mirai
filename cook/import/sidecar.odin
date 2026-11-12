@@ -86,7 +86,7 @@ sidecar_parse :: proc(text:string,allocator:=context.allocator) -> (sidecar:Side
 import_key :: proc(path:string,sidecar:Sidecar,version:u32,fast:bool,hashes:^Source_Hashes=nil) -> u64 {
     key:=base.hash_combine(u64(version)<<1|u64(fast),u64(asset.SOUND_VERSION)<<48|u64(asset.MESH_VERSION)<<32|u64(asset.TEXTURE_VERSION)<<16|u64(textures.BUILD_VERSION))
     key=base.hash_combine(key,base.hash64(transmute([]u8)settings_text(sidecar.settings,context.temp_allocator)))
-    if encoders:=textures.external_id(nil);encoders!=0 {key=base.hash_combine(key,encoders)}
+    key=base.hash_combine(key,textures.encoders_id())
     folder:=filepath.dir(path)
     for at in -1..<len(sidecar.inputs) {
         key=base.hash_combine(key,file_hash(hashes,path if at<0 else fmt.tprintf("%s/%s",folder,sidecar.inputs[at])))

@@ -1,6 +1,5 @@
 package textures
 
-import "base:runtime"
 import "core:fmt"
 import "core:math"
 import "core:os"
@@ -71,18 +70,21 @@ smooth_image :: proc(size:int,alpha:bool) -> []u8 {
     return pixels
 }
 
+// What the file keeps of the blocks, saved with the best codecs and the layouts they have, and
+// what the blocks keep of the image without RDO: the error RDO trades is the encoder's own.
 @(test)
 a_compressed_texture_survives_the_file_within_what_a_block_keeps :: proc(t:^testing.T) {
     SIZE :: 64
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    types.codecs=.Best
     folder:=base.test_folder(t,"bc")
     if folder=="" {return}
     cases:=[?]struct{name:string,options:Build_Options,alpha:bool,format:asset.Texture_Format,channels:int,tolerance:int}{
-        {"color",{srgb=true},false,.BC7,4,12},
-        {"color with alpha",{srgb=true},true,.BC7,4,12},
-        {"data",{},false,.BC1,4,12},
-        {"data with alpha",{},true,.BC3,4,12},
-        {"normal map",{normal_map=true},false,.BC5,2,6},
+        {"color",{srgb=true,rdo_lambda=-1},false,.BC7,4,12},
+        {"color with alpha",{srgb=true,rdo_lambda=-1},true,.BC7,4,12},
+        {"data",{rdo_lambda=-1},false,.BC1,4,12},
+        {"data with alpha",{rdo_lambda=-1},true,.BC3,4,12},
+        {"normal map",{normal_map=true,rdo_lambda=-1},false,.BC5,2,6},
         {"plain",{srgb=true,encoding=.Uncompressed},true,.RGBA8,4,0},
     }
     for entry,index in cases {
@@ -96,7 +98,8 @@ a_compressed_texture_survives_the_file_within_what_a_block_keeps :: proc(t:^test
         for level,i in built.mips {testing.expectf(t,string(level)==string(again.mips[i]),"%s: level %d is not the same in a second build",entry.name,i)}
 
         path:=fmt.tprintf("%s/%d.tex",folder,index)
-        testing.expect_value(t,asset.texture_save(path,&types,built_desc(&built,base.Asset_Id{9,u64(index)+1},nil)),asset.Error.None)
+        desc:=built_desc(&built,base.Asset_Id{9,u64(index)+1},nil,layouts=true)
+        testing.expect_value(t,asset.texture_save(path,&types,desc),asset.Error.None)
         a:asset.Asset
         if !testing.expect_value(t,asset.asset_load(&a,path),asset.Error.None) {continue}
         defer asset.asset_close(&a)
@@ -107,15 +110,15 @@ a_compressed_texture_survives_the_file_within_what_a_block_keeps :: proc(t:^test
             side:=max(SIZE>>uint(level),1)
             testing.expectf(t,same_level(entry.format,asset.texture_mip(view,level),built.mips[level],side,side),"%s: the file holds the built level %d",entry.name,level)
         }
-        _,prepped:=asset.asset_table(&a,asset.TEXTURE_TABLE_BC7SPLIT)
-        testing.expectf(t,prepped==(entry.format==.BC7 && ENCODERS_PRIVATE),"%s: only BC7 stores its blocks as BC7Split",entry.name)
-        // The levels from the third, as a far texture reads them: all of the tail for BC7, whose
-        // stream restores whole.
+        _,laid:=asset.asset_table(&a,asset.TEXTURE_TABLE_LAYOUTS)
+        testing.expectf(t,laid==(len(desc.layouts)>0),"%s: the file keeps the layouts of its blocks",entry.name)
+        // The levels from the third, as a far texture reads them: all of the tail for a layout,
+        // which restores whole.
         far:asset.Asset
         if testing.expect_value(t,asset.asset_load(&far,path),asset.Error.None) {
             defer asset.asset_close(&far)
             tail,tail_error:=asset.texture_open(&far,&types)
-            testing.expect(t,tail_error==.None && asset.texture_decode(&far,&types,&tail,2)==.None && tail.first==(0 if entry.format==.BC7 && ENCODERS_PRIVATE else 2))
+            testing.expect(t,tail_error==.None && asset.texture_decode(&far,&types,&tail,2)==.None && tail.first==(0 if laid else 2))
             for level in 2..<int(view.info.mip_count) {
                 side:=max(SIZE>>uint(level),1)
                 testing.expectf(t,same_level(entry.format,asset.texture_mip(tail,level),built.mips[level],side,side),"%s: a read from level 2 holds level %d",entry.name,level)
@@ -142,7 +145,7 @@ a_compressed_texture_survives_the_file_within_what_a_block_keeps :: proc(t:^test
                     for channel in 0..<entry.channels {worst=max(worst,abs(int(decoded[at+channel])-int(plain.mips[level][at+channel])))}
                 }
             }
-            testing.expectf(t,worst<=entry.tolerance+(0 if ENCODERS_PRIVATE else 18),"%s: level %d is off by %d",entry.name,level,worst)
+            testing.expectf(t,worst<=entry.tolerance,"%s: level %d is off by %d",entry.name,level,worst)
         }
         testing.expect(t,!asset.texture_level_rgba8(view.info.format,asset.texture_mip(view,0),SIZE,SIZE,built.mips[1][:0]),"a slice of another size is refused")
     }
@@ -269,13 +272,13 @@ an_odd_sized_level_decodes_every_texel_of_its_last_blocks :: proc(t:^testing.T) 
         decoded:[5*3*4]u8
         testing.expect(t,asset.texture_level_rgba8(format,blocks,5,3,decoded[:]))
         for i in 0..<5*3 {
-            testing.expectf(t,abs(int(decoded[i*4])-90)<=4 && abs(int(decoded[i*4+1])-140)<=4 && decoded[i*4+3]>=(255 if ENCODERS_PRIVATE else 254),"%v texel %d is %v",format,i,decoded[i*4:i*4+4])
+            testing.expectf(t,abs(int(decoded[i*4])-90)<=4 && abs(int(decoded[i*4+1])-140)<=4 && decoded[i*4+3]==255,"%v texel %d is %v",format,i,decoded[i*4:i*4+4])
         }
     }
 }
 
 // A level as a file gives it back: the same bytes, and for BC7 the same
-// texels, as BC7Split restores a solid block as its canonical mode 5 block.
+// texels, as a layout may restore a solid block as another block of its texels.
 @(private)
 same_level :: proc(format:asset.Texture_Format,a,b:[]u8,width,height:int) -> bool {
     if format!=.BC7 {return string(a)==string(b)}
@@ -285,17 +288,19 @@ same_level :: proc(format:asset.Texture_Format,a,b:[]u8,width,height:int) -> boo
     return asset.texture_level_rgba8(format,a,width,height,pa) && asset.texture_level_rgba8(format,b,width,height,pb) && string(pa)==string(pb)
 }
 
+// Of a compressor with layouts of BC7 blocks: the tail restores without the larger levels.
 @(test)
 a_bc7_texture_restores_its_tail_without_its_larger_levels :: proc(t:^testing.T) {
-    if !ENCODERS_PRIVATE {return}
     SIZE :: 2*asset.TEXTURE_TAIL
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    types.codecs=.Best
     pixels:=smooth_image(SIZE,false);defer delete(pixels)
     built,error:=build(rgba8(pixels,SIZE,SIZE),{srgb=true,speed=.Fast})
     defer built_destroy(&built)
     testing.expect(t,error==.None && built.format==.BC7)
-    desc:=built_desc(&built,{9,99},nil)
-    testing.expect(t,len(desc.bc7split)==2 && desc.bc7split[0].level==0 && desc.bc7split[1].level==1,"the level above the tail and the tail, apart")
+    desc:=built_desc(&built,{9,99},nil,layouts=true)
+    if len(desc.layouts)==0 {return}
+    testing.expect(t,len(desc.layouts)==2 && desc.layouts[0].level==0 && desc.layouts[1].level==1,"the level above the tail and the tail, apart")
     doc:asset.Document
     testing.expect_value(t,asset.texture_document(&doc,&types,desc),asset.Error.None)
     bytes,bytes_error:=asset.document_bytes(&doc,context.temp_allocator)
@@ -312,16 +317,4 @@ a_bc7_texture_restores_its_tail_without_its_larger_levels :: proc(t:^testing.T) 
         asset.asset_close(&a)
     }
     free_all(context.temp_allocator)
-}
-
-@(test)
-the_open_encoders_leave_the_temporary_memory_of_who_calls_them :: proc(t:^testing.T) {
-    caller:=runtime.default_context()
-    runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
-    before:=make([]u8,64,caller.temp_allocator)
-    pixels:=[4*4*4]u8{}
-    blocks:[8]u8
-    testing.expect(t,open_external().encode(.BC1,raw_data(pixels[:]),4,4,0,false,raw_data(blocks[:]),len(blocks)))
-    after:=make([]u8,64,caller.temp_allocator)
-    testing.expect(t,raw_data(before)!=raw_data(after),"what the caller holds in its temporary memory stays allocated")
 }

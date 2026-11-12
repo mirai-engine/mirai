@@ -5,7 +5,6 @@ import "core:os"
 import "core:slice"
 import "core:strings"
 import "mirai:std/base"
-import "mirai:std/compressor"
 
 // The standard layout of a project. A plugin has the same shape below its
 // own folder: plugin.mirai, runtime/, editor/, shaders/ and assets/.
@@ -24,13 +23,16 @@ FOLDER_NAMES :: [Folder]string{
 }
 PART_NAMES :: [Plugin_Part]string{.Runtime="runtime",.Editor="editor",.Shaders="shaders",.Assets="assets",.Recipes="recipes",.Cook="cook"}
 
+// What build.compression names besides the default, the best compressor of the engine.
 COMPRESSION_NONE :: "none"
-COMPRESSION_OPEN :: "compression_open"
-COMPRESSION_MIRAI :: "compression_mirai"
+COMPRESSION_OPEN :: "open"
 
-// What a shipped game is compressed with: nothing, the private codec of a checkout that has it,
-// the open codecs of the engine, or a plugin.
-Compression_Kind :: enum u8 {None,Mirai,Open,Plugin}
+// What the assets of a project and the game it ships are compressed with.
+Compression :: enum u8 {
+    Best, // the best compressor the games built with its engine have: the private one where it is there (compressor_folder), else the open one
+    Open, // the open compressor, which every build of the engine reads
+    None, // nothing
+}
 
 // Under the generated folder, beside the libraries of the project: the libraries of the engine's plugins it links.
 PLUGIN_LIBRARIES :: "plugins/lib"
@@ -105,18 +107,9 @@ open :: proc(root:string,engine_root:="",allocator:=context.allocator) -> (p:Pro
         }
         append(&wanted,text)
     }
-    compression:=compression_name(&p.manifest)
-    if compression==COMPRESSION_MIRAI && !compressor.IMPLEMENTED {
+    if compression:=base.text_get(p.manifest.build.compression[:]);compression!="" && compression!=COMPRESSION_NONE && compression!=COMPRESSION_OPEN {
         error=error_about(.Compression_Invalid,compression)
         return
-    }
-    if compression!=COMPRESSION_NONE && compression!=COMPRESSION_OPEN && compression!=COMPRESSION_MIRAI {
-        plugin,known:=plugin_find(found[:],compression)
-        if !known || found[plugin].manifest.compression==.None {
-            error=error_about(.Compression_Invalid,compression)
-            return
-        }
-        if !slice.contains(wanted[:],compression) {append(&wanted,compression)}
     }
     if p.active,error=plugins_order(found[:],wanted[:],allocator);error.code!=.None {return}
     // An automatic plugin joins once all its dependencies are active, after
@@ -454,23 +447,17 @@ asset_folders :: proc(p:^Project,allocator:=context.allocator) -> []Asset_Folder
     return folders[:]
 }
 
-// The name of what a shipped game is compressed with.
-compression_name :: proc(m:^Manifest) -> string {
-    if text:=base.text_get(m.build.compression[:]);text!="" {return text}
-    return COMPRESSION_MIRAI when compressor.IMPLEMENTED else COMPRESSION_OPEN
-}
-
-// What compresses what the project ships; plugin only of .Plugin.
-compression_kind :: proc(p:^Project) -> (kind:Compression_Kind,plugin:^Plugin) {
-    name:=compression_name(&p.manifest)
-    switch name {
-    case COMPRESSION_NONE: return .None,nil
-    case COMPRESSION_OPEN: return .Open,nil
-    case COMPRESSION_MIRAI: return .Mirai,nil
+// What the assets of the project at root, built with the engine at engine_root, are compressed
+// with: Best only where the games of that engine have the private compressor, since what a game
+// does not decode it cannot ship. A folder without a project, as the assets of the engine and of
+// its plugins: Open.
+compression :: proc(root,engine_root:string) -> Compression {
+    m,error:=manifest_read(path(root,PROJECT_FILE,allocator=context.temp_allocator))
+    if error.code!=.None {return .Open}
+    switch base.text_get(m.build.compression[:]) {
+    case COMPRESSION_NONE: return .None
+    case COMPRESSION_OPEN: return .Open
     }
-    for index in p.active {
-        candidate:=&p.plugins[index]
-        if base.text_get(candidate.manifest.name[:])==name {return .Plugin,candidate}
-    }
-    return .None,nil
+    _,private:=compressor_folder(engine_root,context.temp_allocator)
+    return .Best if private else .Open
 }

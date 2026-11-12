@@ -439,7 +439,6 @@ replay_head :: proc(data:^Terrain_Data,entry:^Data_Source,replay:Replay,allocato
     if !source_start(&next.source,&head,allocator) {return result,.Out_Of_Memory}
     if entry==nil && len(data.entries)>=int(data.settings.sources) {source_destroy(&next.source);return result,.Budget}
     next.id=replay.source
-    next.source.codecs=entry.source.codecs if entry!=nil else data.codecs
     if entry!=nil {next.stamp,next.change=entry.stamp,entry.change+1} else {next.change=1}
     if !data_chunks_allocate(&next,allocator,data.jobs) {data_entry_free(&next);return result,.Out_Of_Memory}
     if entry!=nil {
@@ -516,7 +515,7 @@ terrain_grid_pages :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id,kind:Gri
 terrain_page_bytes :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id,kind:Grid_Kind,i:int,out:[]u8) -> (size:int,fill:u32,ok:bool) {
     s:=terrain_source(data,id)
     if s==nil || len(out)<PAGE_BYTES_MAX {return}
-    read :: proc(g:^Grid($T),i:int,file:string,out:[]u8,codecs:Page_Codecs) -> (size:int,fill:u32,ok:bool) {
+    read :: proc(g:^Grid($T),i:int,file:string,out:[]u8) -> (size:int,fill:u32,ok:bool) {
         if grid_none(g) || i<0 || i>=g.counts.x*g.counts.y*g.counts.z {return}
         page:=grid_page(g,i)
         extent,count:=grid_page_extent(g,i)
@@ -532,7 +531,7 @@ terrain_page_bytes :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id,kind:Gri
             return 0,bits,true
         }
         read:Page_Reader
-        read_ok:=page_reader_init(&read,context.temp_allocator,codecs)
+        read_ok:=page_reader_init(&read,context.temp_allocator)
         defer page_reader_destroy(&read,context.temp_allocator)
         if !read_ok {return}
         held:=grid_block(g,i)
@@ -541,9 +540,9 @@ terrain_page_bytes :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id,kind:Gri
         return size,0,true
     }
     switch kind {
-    case .Field:   return read(&s.field,i,s.file,out,s.codecs)
-    case .Holes:   return read(&s.holes,i,s.file,out,s.codecs)
-    case .Weights: return read(&s.weights,i,s.file,out,s.codecs)
+    case .Field:   return read(&s.field,i,s.file,out)
+    case .Holes:   return read(&s.holes,i,s.file,out)
+    case .Weights: return read(&s.weights,i,s.file,out)
     }
     return
 }

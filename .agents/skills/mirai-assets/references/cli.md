@@ -23,10 +23,10 @@ subcommands with their usage.
   of the engine), the one whose assets have its id. A file outside the assets (another version of
   one, as git gives it) reads as the asset with its id. `unpack`, `pack` and `dump --schema`
   refuse them.
-- **`repack`** writes each file again with the codecs of the engine, which every checkout reads
-  ([compression](formats.md#compression)), a texture with its blocks as they are; a file that
-  already is so stays untouched. What a checkout with the private codec wrote goes through it
-  before it is committed.
+- **`repack`** writes each file again compressed as the project that holds it saves
+  (`build.compression`), or open outside a project; a texture with its blocks as they are. A file
+  that already is so stays untouched: what a project that changes its compression runs over its
+  assets.
 - **`verify`** checks container, hash, decompression, schema and tables, that the stored
   dependencies are the derived ones and that each value meets its schema. For the engine's types it
   checks their version (for one the build does not read, the reason is `version_message`, with the

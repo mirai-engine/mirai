@@ -819,7 +819,6 @@ render_base_prepare :: proc(root,ref,relative:string,release:=false) -> (target:
         fmt.eprintfln("mirai render: %s did not move to %s; if it is not a worktree of the repository, remove it with git worktree remove or rm -rf",folder,commit)
         return
     }
-    worktree_files_copy(project.shared_root(root,context.temp_allocator),folder)
     launcher:=join(folder,"mirai")
     if !os.is_file(launcher) {
         fmt.eprintfln("mirai render: %s has no ./mirai; build it by hand and pass its report or its checkout (--checkout)",ref)

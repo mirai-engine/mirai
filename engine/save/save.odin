@@ -540,7 +540,7 @@ restore :: proc(w:core.World_Ref,app:^host.App,data:[]u8,game:^Save_Game=nil) ->
     types:=types_open(app.assets,app.allocator,&local)
     defer if types==&local {asset.types_destroy(&local)}
     file:asset.Asset
-    if asset.asset_open(&file,data[at:][:header.bytes],app.allocator,codecs=&app.codecs)!=.None {return .Corrupt}
+    if asset.asset_open(&file,data[at:][:header.bytes],app.allocator)!=.None {return .Corrupt}
     defer asset.asset_close(&file)
     view,view_error:=asset.scene_view(&file,types)
     if view_error!=.None {return .Corrupt}

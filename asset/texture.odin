@@ -1,22 +1,21 @@
 package asset
 
 import "core:mem"
+import "compressor:data"
+import "compressor:texture"
 import "mirai:std/base"
-import "mirai:std/compressor"
-import "mirai:std/compressor/bc7split"
-import "mirai:std/compressor/lz"
 
 // .tex: an image ready for the GPU.
 //
 //   texture         Texture_Info, one row
 //   mips            Texture_Mip: where each level is inside texels, level 0 first
 //   texels   bulk   bytes of every level, the smallest first, each one starting at
-//                   a multiple of 16, in LZ: the small levels decode from the
-//                   start of the stream without the others (texture_decode)
-//   bc7split         Texture_Bc7split_Stream, of a BC7 texture whose texels are
-//                   BC7Split streams, each of a run of levels: by their largest
-//                   level, level 0 first; in texels the smallest first, one after
-//                   another
+//                   a multiple of 16, a stream: the small levels decode from its
+//                   first pieces without the others (texture_decode)
+//   layouts         Texture_Layout_Run, of a texture whose texels are payloads of
+//                   layouts of the compressor (texture.Layout), each of a run of
+//                   levels: by their largest level, level 0 first; in texels the
+//                   smallest first, one after another
 //
 // A level is half the one above, rounded down, and never smaller than 1. It
 // holds its layers one after another: the images of an array, or the faces
@@ -35,10 +34,6 @@ TEXTURE_BULK_ALIGNMENT :: 16
 // The side of the largest level of the tail: the levels a texture always holds, which every read
 // of its levels takes together.
 TEXTURE_TAIL :: 128
-// The LZ level that compares the two layouts of the blocks of a texture: it picks the one that
-// is smaller at the level a game ships with too in all but a few, which differ by a fraction of a percent, at a small
-// part of its cost.
-TEXTURE_FIELDS_LEVEL :: lz.Level.Fast
 
 Texture_Format :: enum u8 {
     RGBA8,   // rows from the top of the image
@@ -87,23 +82,24 @@ Texture_Desc :: struct {
     alpha_coverage:f32,
     mips:[][]u8,         // level 0 first, each with its layers one after another
     source:^Import_Info,
-    plain:bool, // the blocks as they are, without planes of their fields: for a stream that is not LZ
-    bc7split:[]Texture_Bc7split, // of a BC7 texture, its streams by their largest level, from a writer with the encoder (cook/compressor/bc7split)
+    layouts:[]Texture_Layout, // its runs of levels by their largest level, from blocks.layout_encode of the compressor: only for a document that compresses with the best codecs
 }
 
-// The blocks of a run of levels of a BC7 texture as BC7Split rearranges them
-// so that they compress smaller, stored in place of the blocks: from level
-// down to the one above the level of the next stream, the smallest first.
-// A stream restores only whole, so the levels a read takes together share one.
-Texture_Bc7split :: struct {
-    header:bc7split.Header,
+// The blocks of a run of levels as a layout of the compressor rearranges them so that they
+// compress smaller, stored in place of the blocks: from level down to the one above the level of
+// the next run, the smallest first. A layout restores only whole, so the levels a read takes
+// together share one.
+Texture_Layout :: struct {
+    layout:texture.Layout,
+    header:texture.Layout_Header,
     level:int,
     payload:[]u8,
 }
 
-Texture_Bc7split_Stream :: struct {
-    header:bc7split.Header,
+Texture_Layout_Run :: struct {
+    layout:texture.Layout,
     level:u32,
+    header:texture.Layout_Header,
 }
 
 Texture_View :: struct {
@@ -121,6 +117,15 @@ texture_level_size :: proc "contextless" (format:Texture_Format,width,height:int
     case .RGBA16,.RGBA16F: return width*height*8
     case .BC1: return ((width+3)/4)*((height+3)/4)*8
     case .BC3,.BC5,.BC6H,.BC7: return ((width+3)/4)*((height+3)/4)*16
+    }
+    return 0
+}
+
+// Bytes of a 4x4 block of a block format; 0 for the others.
+texture_block_bytes :: proc "contextless" (format:Texture_Format) -> int {
+    #partial switch format {
+    case .BC1: return 8
+    case .BC3,.BC5,.BC6H,.BC7: return 16
     }
     return 0
 }
@@ -155,16 +160,16 @@ texture_document :: proc(doc:^Document,types:^Types,desc:Texture_Desc,allocator:
         mips[i]={u32(width),u32(height),u32(total),u32(len(level))}
         total+=len(level)
     }
-    if len(desc.bc7split)>0 {
-        if desc.format!=.BC7 || len(desc.bc7split)>len(desc.mips) || desc.bc7split[0].level!=0 {return .Invalid}
+    if len(desc.layouts)>0 {
+        if texture_block_bytes(desc.format)!=16 || len(desc.layouts)>len(desc.mips) || desc.layouts[0].level!=0 {return .Invalid}
         total=0
-        for prep,i in desc.bc7split {
-            last:=desc.bc7split[i+1].level-1 if i+1<len(desc.bc7split) else len(desc.mips)-1
-            if prep.level<0 || prep.level>last || last>=len(desc.mips) {return .Invalid}
-            blocks,size,header_error:=bc7split.header_read(prep.header)
+        for run,i in desc.layouts {
+            last:=desc.layouts[i+1].level-1 if i+1<len(desc.layouts) else len(desc.mips)-1
+            if run.level<0 || run.level>last || last>=len(desc.mips) {return .Invalid}
+            blocks,size,read_error:=texture.layout_read(run.layout,run.header)
             span:=0
-            for level in desc.mips[prep.level:last+1] {span+=len(level)}
-            if header_error!=.None || blocks*16!=span || size!=len(prep.payload) {return .Invalid}
+            for level in desc.mips[run.level:last+1] {span+=len(level)}
+            if read_error!=.None || blocks*16!=span || size!=len(run.payload) {return .Invalid}
             total+=size
         }
     }
@@ -178,81 +183,72 @@ texture_document :: proc(doc:^Document,types:^Types,desc:Texture_Desc,allocator:
 
 @(private="file")
 texture_tables :: proc(doc:^Document,types:^Types,info:^Texture_Info,mips:[]Texture_Mip,total:int,desc:Texture_Desc) -> Error {
-    prepped:=len(desc.bc7split)>0
     texels:=document_table_add(doc,"texels",{.Bulk}) or_return
     document_resize(doc,texels,total) or_return
     byte,_:=document_type(doc,types,u8)
-    column:=document_column_add(doc,texels,"",byte,{},.LZ,TEXTURE_BULK_ALIGNMENT) or_return
-    data:=doc.tables[texels].columns[column].data[:]
-    if prepped {
+    // Layouts restore only with the compressor that wrote them.
+    laid:=len(desc.layouts)>0
+    if laid && doc.codecs!=.Best {return .Invalid}
+    column:=document_column_add(doc,texels,"",byte,{},.Stream,TEXTURE_BULK_ALIGNMENT) or_return
+    bytes:=doc.tables[texels].columns[column].data[:]
+    if laid {
         at:=0
-        #reverse for prep in desc.bc7split {at+=copy(data[at:],prep.payload)}
+        #reverse for run in desc.layouts {at+=copy(bytes[at:],run.payload)}
     } else {
-        for level,i in desc.mips {copy(data[mips[i].offset:],level)}
-        if !desc.plain && texture_fields_format(desc.format) && .Fast not_in desc.flags && (texture_fields_smaller(desc.format,mips,data,doc.allocator) or_return) {
+        for level,i in desc.mips {copy(bytes[mips[i].offset:],level)}
+        if doc.codecs!=.None && texture_fields_format(desc.format) && .Fast not_in desc.flags && (texture_fields_smaller(desc.format,mips,bytes,doc.codecs,doc.allocator) or_return) {
             info.flags+={.Fields}
-            for level,i in desc.mips {texture_fields_split(desc.format,level,data[mips[i].offset:][:mips[i].size])}
+            for level,i in desc.mips {texture_fields_split(desc.format,level,bytes[mips[i].offset:][:mips[i].size])}
         }
     }
     document_put_row(doc,types,"texture",info) or_return
     document_put(doc,types,"mips",mips) or_return
     import_put(doc,types,desc.source) or_return
-    if prepped {
-        streams,alloc_error:=make([]Texture_Bc7split_Stream,len(desc.bc7split),doc.allocator)
+    if laid {
+        runs,alloc_error:=make([]Texture_Layout_Run,len(desc.layouts),doc.allocator)
         if alloc_error!=nil {return .Out_Of_Memory}
-        defer delete(streams,doc.allocator)
-        for prep,i in desc.bc7split {streams[i]={prep.header,u32(prep.level)}}
-        document_put(doc,types,TEXTURE_TABLE_BC7SPLIT,streams) or_return
+        defer delete(runs,doc.allocator)
+        for run,i in desc.layouts {runs[i]={run.layout,u32(run.level),run.header}}
+        document_put(doc,types,TEXTURE_TABLE_LAYOUTS,runs) or_return
     }
     return .None
 }
 
-// Whether the levels of texels, laid out as mips say, compress smaller as
-// planes of their fields at TEXTURE_FIELDS_LEVEL. A tie keeps the blocks.
+// Whether the levels of texels, laid out as mips say, compress smaller as planes of their fields
+// in what an edit with codecs writes, which picks what a cook writes too in all but a few. A tie
+// keeps the blocks.
 @(private="file")
-texture_fields_smaller :: proc(format:Texture_Format,mips:[]Texture_Mip,texels:[]u8,allocator:mem.Allocator) -> (smaller:bool,error:Error) {
+texture_fields_smaller :: proc(format:Texture_Format,mips:[]Texture_Mip,texels:[]u8,codecs:Codecs,allocator:mem.Allocator) -> (smaller:bool,error:Error) {
     if len(texels)==0 {return false,.None}
     split,split_error:=make([]u8,len(texels),allocator)
     if split_error!=nil {return false,.Out_Of_Memory}
     defer delete(split,allocator)
     copy(split,texels)
     for mip in mips {texture_fields_split(format,texels[mip.offset:][:mip.size],split[mip.offset:][:mip.size])}
-    when ASSET_LZ {
-        out,out_error:=make([]u8,pack_bound(len(texels)),allocator)
-        if out_error!=nil {return false,.Out_Of_Memory}
-        defer delete(out,allocator)
-        encoder:lz.Encoder
-        lz.encoder_init(&encoder,allocator)
-        defer lz.encoder_destroy(&encoder)
-        sizes:[2]int
-        for bytes,i in ([2][]u8{texels,split}) {
-            size,compress_error:=lz.compress(&encoder,lz.mode(TEXTURE_FIELDS_LEVEL),bytes,out,PACK_PIECE)
-            switch compress_error {
-            case .None:
-            case .Out_Of_Memory: return false,.Out_Of_Memory
-            case .Output_Too_Small,.Invalid: return false,.Invalid
-            }
-            sizes[i]=size
-        }
-        return sizes[1]<sizes[0],.None
-    } else {
-        return false,.None
-    }
+    out,out_error:=make([]u8,pack_bound(len(texels)),allocator)
+    if out_error!=nil {return false,.Out_Of_Memory}
+    defer delete(out,allocator)
+    encoder:Stream_Encoder
+    stream_encoder_init(&encoder,allocator) or_return
+    defer stream_encoder_destroy(&encoder)
+    sizes:[2]int
+    for bytes,i in ([2][]u8{texels,split}) {sizes[i]=pack(&encoder,.Fast,codecs,bytes,out) or_return}
+    return sizes[1]<sizes[0],.None
 }
 
-texture_save :: proc(path:string,types:^Types,desc:Texture_Desc,allocator:=context.allocator,p:=PACK_EDIT,codecs:^Pack_Codecs=nil) -> Error {
+texture_save :: proc(path:string,types:^Types,desc:Texture_Desc,allocator:=context.allocator,profile:=data.Profile.Fast) -> Error {
     doc:Document
     texture_document(&doc,types,desc,allocator) or_return
     defer document_destroy(&doc)
-    return document_save(&doc,path,p=p,codecs=codecs)
+    return document_save(&doc,path,profile=profile)
 }
 
-// The file of a texture with the blocks it stores as they are, without the BC7Split streams or
-// the planes of fields that only LZ reads smaller, compressed as codecs say: what a program
-// without LZ reads. data is the file it is now.
-texture_plain :: proc(data:[]u8,types:^Types,p:Pack,codecs:^Pack_Codecs,allocator:=context.allocator) -> (plain:[]u8,error:Error) {
+// The file of a texture with its blocks as they are, without layouts of the compressor, the planes
+// of their fields where those compress smaller, compressed with profile as the codecs of types
+// allow. bytes is the file it is now.
+texture_repack :: proc(bytes:[]u8,types:^Types,profile:data.Profile,allocator:=context.allocator) -> (repacked:[]u8,error:Error) {
     file:Asset
-    asset_open(&file,data,context.temp_allocator) or_return
+    asset_open(&file,bytes,context.temp_allocator) or_return
     defer asset_close(&file)
     view:=texture_view(&file,types) or_return
     mips,mips_error:=make([][]u8,len(view.mips),context.temp_allocator)
@@ -260,13 +256,13 @@ texture_plain :: proc(data:[]u8,types:^Types,p:Pack,codecs:^Pack_Codecs,allocato
     for _,level in view.mips {mips[level]=texture_mip(view,level)}
     info:=view.info
     doc:Document
-    texture_document(&doc,types,{id=file.blob.header.id,owner=file.blob.header.owner,width=int(info.width),height=int(info.height),layers=int(info.layers),format=info.format,flags=info.flags,alpha_coverage=info.alpha_coverage,mips=mips,source=view.source,plain=true},context.temp_allocator) or_return
+    texture_document(&doc,types,{id=file.blob.header.id,owner=file.blob.header.owner,width=int(info.width),height=int(info.height),layers=int(info.layers),format=info.format,flags=info.flags,alpha_coverage=info.alpha_coverage,mips=mips,source=view.source},context.temp_allocator) or_return
     defer document_destroy(&doc)
     doc.flags=file.blob.header.flags
-    return document_bytes(&doc,allocator,p,codecs=codecs)
+    return document_bytes(&doc,allocator,profile)
 }
 
-TEXTURE_TABLE_BC7SPLIT :: "bc7split"
+TEXTURE_TABLE_LAYOUTS :: "layouts"
 
 // The texture of an open asset with every level, in memory of the asset.
 texture_view :: proc(a:^Asset,types:^Types) -> (view:Texture_View,error:Error) {
@@ -289,9 +285,9 @@ texture_open :: proc(a:^Asset,types:^Types) -> (view:Texture_View,error:Error) {
 
 // Decodes into memory of the asset the levels of an open texture from the
 // level from to the last, its smallest: those lie at the start of the stream,
-// and only the blocks of LZ that hold them decode. Restores the blocks of
-// their fields and their BC7Split streams, which restore whole: one that holds
-// from restores from its largest level, which becomes view.first.
+// and only the pieces that hold them decode. Restores the blocks of their
+// fields and of their layouts, which restore whole: one that holds from
+// restores from its largest level, which becomes view.first.
 texture_decode :: proc(a:^Asset,types:^Types,view:^Texture_View,from:int) -> Error {
     if !texture_levels_check(view.info,view.mips) {return .Invalid}
     from:=clamp(from,0,len(view.mips)-1)
@@ -307,24 +303,26 @@ texture_decode :: proc(a:^Asset,types:^Types,view:^Texture_View,from:int) -> Err
     end:=0
     for mip in mips[from:] {end=max(end,int(mip.offset)+int(mip.size))}
     stored:=end
-    streams:[]Texture_Bc7split_Stream
-    // Of each stream: where its payload starts in texels and where its blocks start once restored.
-    payloads,restores:[TEXTURE_MAX_MIPS]int
-    if _,prepped:=asset_table(a,TEXTURE_TABLE_BC7SPLIT);prepped {
-        streams=asset_rows(a,types,TEXTURE_TABLE_BC7SPLIT,"",Texture_Bc7split_Stream) or_return
-        if info.format!=.BC7 || .Fields in info.flags || len(streams)==0 || len(streams)>len(mips) || streams[0].level!=0 {return .Corrupt}
+    runs:[]Texture_Layout_Run
+    // Of each run: where its payload starts in texels, its size, and where its blocks start and
+    // how many bytes they take once restored.
+    payloads,sizes,restores,spans:[TEXTURE_MAX_MIPS]int
+    if _,laid:=asset_table(a,TEXTURE_TABLE_LAYOUTS);laid {
+        runs=asset_rows(a,types,TEXTURE_TABLE_LAYOUTS,"",Texture_Layout_Run) or_return
+        if texture_block_bytes(info.format)!=16 || .Fields in info.flags || len(runs)==0 || len(runs)>len(mips) || runs[0].level!=0 {return .Corrupt}
         at:=0
-        #reverse for stream,i in streams {
-            last:=int(streams[i+1].level)-1 if i+1<len(streams) else len(mips)-1
-            if int(stream.level)>last {return .Corrupt}
-            // BC7 levels are whole blocks of 16 bytes: a run of them lies with no gap between.
-            largest,smallest:=mips[stream.level],mips[last]
-            blocks,size,header_error:=bc7split.header_read(stream.header)
-            if header_error!=.None || u64(smallest.offset)+u64(blocks)*16!=u64(largest.offset)+u64(largest.size) {return .Corrupt}
-            payloads[i],restores[i]=at,int(smallest.offset)
+        #reverse for run,i in runs {
+            last:=int(runs[i+1].level)-1 if i+1<len(runs) else len(mips)-1
+            if int(run.level)>last {return .Corrupt}
+            // Levels of blocks of 16 bytes are whole multiples of 16: a run of them lies with no gap between.
+            largest,smallest:=mips[run.level],mips[last]
+            blocks,size,read_error:=texture.layout_read(run.layout,run.header)
+            if read_error==.Unknown_Format {return .Codec_Missing}
+            if read_error!=.None || u64(smallest.offset)+u64(blocks)*16!=u64(largest.offset)+u64(largest.size) {return .Corrupt}
+            payloads[i],sizes[i],restores[i],spans[i]=at,size,int(smallest.offset),blocks*16
             at+=size
-            if int(stream.level)<=from && from<=last {
-                from=int(stream.level)
+            if int(run.level)<=from && from<=last {
+                from=int(run.level)
                 stored,end=at,int(largest.offset)+int(largest.size)
             }
         }
@@ -333,19 +331,19 @@ texture_decode :: proc(a:^Asset,types:^Types,view:^Texture_View,from:int) -> Err
     if .Fields in info.flags && !texture_fields_format(info.format) {return .Corrupt}
     data,owned:=texels_read(a,table,column,stored) or_return
     switch {
-    case streams!=nil:
-        when ASSET_LZ {
-            restored:=asset_alloc(a,end,TEXTURE_BULK_ALIGNMENT) or_return
-            decoder:=asset_decoder(a) or_return
-            for stream,i in streams {
-                if int(stream.level)<from {continue}
-                _,decode_error:=bc7split.decode(decoder.bc7split,stream.header,data[payloads[i]:],restored[restores[i]:],cached_destination=true)
-                if decode_error!=.None {return .Corrupt}
+    case runs!=nil:
+        restored:=asset_alloc(a,end,TEXTURE_BULK_ALIGNMENT) or_return
+        decoder:=asset_decoder(a) or_return
+        for run,i in runs {
+            if int(run.level)<from {continue}
+            switch texture.layout_decode(decoder.layout,run.layout,run.header,data[payloads[i]:][:sizes[i]],restored[restores[i]:][:spans[i]]) {
+            case .None:
+            case .Unknown_Format: return .Codec_Missing
+            case .Out_Of_Memory: return .Out_Of_Memory
+            case .Corrupt: return .Corrupt
             }
-            data=restored
-        } else {
-            return .Codec_Missing
         }
+        data=restored
     case .Fields in info.flags && owned:
         largest:=0
         for mip in mips[from:] {largest=max(largest,int(mip.size))}
@@ -366,9 +364,9 @@ texture_decode :: proc(a:^Asset,types:^Types,view:^Texture_View,from:int) -> Err
     return .None
 }
 
-// The first size bytes of the texels column: when the chunk is LZ and
-// they are fewer than all, only the blocks of its stream that hold them
-// decode. owned: the bytes are memory of the asset that nothing else reads.
+// The first size bytes of the texels column: when the chunk is a stream and
+// they are fewer than all, only the pieces that hold them decode. owned: the
+// bytes are memory of the asset that nothing else reads.
 @(private="file")
 texels_read :: proc(a:^Asset,table:^Asset_Table,column:int,size:int) -> (data:[]u8,owned:bool,error:Error) {
     if size==0 {return nil,false,.None}
@@ -381,16 +379,12 @@ texels_read :: proc(a:^Asset,table:^Asset_Table,column:int,size:int) -> (data:[]
     total:=int(entry.uncompressed_size)
     if total!=table.rows || size>total {return nil,false,.Corrupt}
     decoded:=total
-    // A stream of a codec restores whole pieces; LZ, whole blocks.
-    granule:=PACK_PIECE if entry.compression==.Codec else compressor.BLOCK_LEN
-    if size<total {decoded=min(total,(size+granule-1)/granule*granule)}
+    // A stream restores whole pieces.
+    if size<total {decoded=min(total,(size+PACK_PIECE-1)/PACK_PIECE*PACK_PIECE)}
     data=asset_alloc(a,decoded,TEXTURE_BULK_ALIGNMENT) or_return
     decoder:=asset_decoder(a) or_return
-    switch {
-    case decoded==total: blob_read(&a.blob,entry,data,decoder) or_return
-    case entry.compression==.Codec: stream_unpack(&decoder.stream,blob_stored(&a.blob,entry),data,total) or_return
-    case: unpack(&decoder.stream,blob_stored(&a.blob,entry),data) or_return
-    }
+    if decoded==total {blob_read(&a.blob,entry,data,decoder) or_return}
+    else {stream_unpack(&decoder.stream,blob_stored(&a.blob,entry),data,total) or_return}
     return data[:size],true,.None
 }
 

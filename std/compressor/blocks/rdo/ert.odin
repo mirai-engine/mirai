@@ -22,6 +22,7 @@ Reduce_Entropy_Params :: struct {
     try_two_matches:bool,
     allow_relative_movement:bool,
     skip_zero_mse_blocks:bool,
+    keep_extremes:bit_set[0..<4], // components whose 0 and 255 a rewritten block decodes exactly: the alpha of a block that has it
 }
 
 reduce_entropy_params_default :: proc() -> Reduce_Entropy_Params {
@@ -121,6 +122,7 @@ Block_Eval :: struct {
     block_index:u32,
     unpack:Unpack_Block_Proc,
     user:rawptr,
+    keep_extremes:bit_set[0..<4],
 }
 
 @(private="file")
@@ -136,9 +138,18 @@ block_mse :: #force_inline proc "contextless" (e:^Block_Eval,decoded:[^]Color_Rg
 }
 
 @(private="file")
-block_trial_mse :: #force_inline proc(e:^Block_Eval,block:[^]u8) -> (mse:f32,ok:bool) {
+block_trial_mse :: #force_inline proc(e:^Block_Eval,block:[^]u8,trial:=true) -> (mse:f32,ok:bool) {
     decoded:[MAX_BLOCK_PIXELS]Color_Rgba=---
     if !e.unpack(block,&decoded[0],e.block_index,e.user) {return}
+    // A trial does not lose what the block it replaces keeps.
+    if trial {
+        for i in 0..<e.total_pixels {
+            for c in e.keep_extremes {
+                kept:=e.pixels[i][c]
+                if (kept==0 || kept==255) && decoded[i][c]!=kept {return}
+            }
+        }
+    }
     return block_mse(e,&decoded[0]),true
 }
 
@@ -181,6 +192,7 @@ reduce_entropy :: proc(
         one_over_total_color_weight=1/f32(total_color_weight),
         unpack=unpack,
         user=user,
+        keep_extremes=params.keep_extremes,
     }
 
     #no_bounds_check for block_index in 0..<num_blocks {
@@ -192,7 +204,7 @@ reduce_entropy :: proc(
         eval.pixels=pixels
         eval.block_index=u32(block_index)
 
-        cur_mse,decoded_ok:=block_trial_mse(&eval,&orig_block[0])
+        cur_mse,decoded_ok:=block_trial_mse(&eval,&orig_block[0],trial=false)
         if !decoded_ok {return total_modified,false}
         if params.skip_zero_mse_blocks && cur_mse==0 {continue}
 

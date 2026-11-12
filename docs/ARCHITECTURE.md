@@ -322,12 +322,13 @@ project's world through
 
 Numbered layers; a package only imports lower layers.
 
-- **0** `std/*`: standard library (base, math, serial, compressor, jobs, spatial, geom, anim, ai,
-  input, subprocess, ui_format). It does not depend on the engine. `std/codec` is the shape of a
-  compression plugin, `std/zstd` and `std/lz4` are the codecs of the engine, and `std/compressor`
-  holds placeholders unless a checkout has the real packages copied over them. `std/ui_format` is
-  what the structure of a `.ui` is judged by (node kinds, override fields, limits), which `ui`
-  builds and `asset` checks without importing each other.
+- **0** `std/*`: standard library (base, math, serial, jobs, spatial, geom, anim, ai, input,
+  subprocess, ui_format). It does not depend on the engine. `std/compressor` is not imported as
+  `mirai:`: it is the open implementation of the collection `compressor` (`data`, `texture`,
+  `blocks`, the last engine-time), which every compile names and which the private
+  `ext/mirai-compression` replaces with the same declarations where a checkout holds it.
+  `std/ui_format` is what the structure of a `.ui` is judged by (node kinds, override fields,
+  limits), which `ui` builds and `asset` checks without importing each other.
 - **1** `project`: `project.mirai` and `plugin.mirai` manifests, the layout of a project.
 - **1** `net`, `asset`, `ui`, `audio`, `rhi`: network transport, asset formats, UI, mixer and GPU;
   independent of each other. `rhi/shared_device` is the device the GPU tests share; only tests
@@ -347,8 +348,8 @@ Numbered layers; a package only imports lower layers.
   actions, seats, driving and `Move_Input`), `camera` (each seat's camera and the game view),
   `save`.
 - **6** `cook/*`: engine-time; world generator and project build, `cook/cache` (what is built,
-  stored by what makes it), textures (with the encoders `cook/encoders`, of BC1 to BC7, or the
-  optional `cook/compressor`, placeholders unless a checkout holds it), importers, shaders,
+  stored by what makes it), textures (with the block encoders of `compressor:blocks`), importers,
+  shaders,
   `cook/workspace` (a worktree's main checkout, the dependencies folder, shared cache and locks
   between processes), `cook/image` (PNG to RGBA8, difference, statistics, montage, crop, enlargement
   and pixels of captures), `cook/movie` (the files of a recording: half EXR, 16-bit PNG and WAV) and

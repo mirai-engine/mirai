@@ -198,7 +198,7 @@ sound_round_trips_lossless_and_as_a_file :: proc(t:^testing.T) {
 
     file:=make([]u8,64);defer delete(file)
     copy(file,"RIFF\x38\x00\x00\x00WAVEfmt ")
-    testing.expect_value(t,sound_document(&doc,&types,{id={0x51,1},channels=1,sample_rate=22050,frames=10,file=file,flags={.Stream},compression=.LZ}),Error.None)
+    testing.expect_value(t,sound_document(&doc,&types,{id={0x51,1},channels=1,sample_rate=22050,frames=10,file=file,flags={.Stream},compression=.Stream}),Error.None)
     w:serial.Writer;serial.writer_init(&w);defer serial.writer_destroy(&w)
     testing.expect_value(t,document_write(&doc,&w),Error.None)
     same_through_text(t,&doc)

@@ -12,8 +12,7 @@ WORKTREE_USAGE :: "worktree new <name> [--from <branch or commit>] [--branch <br
 // checkout by default). It needs nothing copied: .deps comes from the main
 // checkout, and the C libraries, the stages of the shaders and the binaries
 // of the engine from the caches every checkout shares (workspace), by the
-// sources they are built from. Its shader tables are generated here. What
-// git ignores and every checkout compiles comes with worktree_files_copy.
+// sources they are built from. Its shader tables are generated here.
 cmd_worktree :: proc(root:string,args:[]string) -> int {
     if len(args)<2 || args[0]!="new" {fmt.eprintfln("Usage: mirai %s",WORKTREE_USAGE);return 2}
     if !positional(args[1]) {return argument_unknown("worktree",args[1])}
@@ -38,7 +37,6 @@ cmd_worktree :: proc(root:string,args:[]string) -> int {
         fmt.eprintfln("mirai worktree: git did not create the worktree; if the branch %s already exists, pass another one with --branch",branch)
         return code
     }
-    worktree_files_copy(shared,folder)
     if !ensure_runtime_dependencies(folder) {fmt.eprintln("mirai worktree: the C libraries will be built on the first build (mirai deps shows why not now)")}
     // The tool of the worktree builds render, which embeds the shader tables
     // git does not keep: this tool generates them so that it can build.
@@ -47,19 +45,4 @@ cmd_worktree :: proc(root:string,args:[]string) -> int {
     fmt.printfln("Worktree %s on the branch %s.",slashed,branch)
     fmt.printfln("  cd \"%s\"; ./mirai build engine",slashed)
     return 0
-}
-
-// Copies into the checkout folder the folders .mirai/worktree-files of the main checkout lists, one
-// per line: code git ignores that every checkout compiles. A folder the commit of that checkout
-// still tracks stays as it is.
-worktree_files_copy :: proc(shared,folder:string) {
-    list,error:=os.read_entire_file(join(shared,".mirai","worktree-files"),context.temp_allocator)
-    if error!=nil {return}
-    text:=string(list)
-    for line in strings.split_lines_iterator(&text) {
-        name:=strings.trim_space(line)
-        if name=="" {continue}
-        if _,ignored:=render_git(folder,"check-ignore","-q",fmt.tprintf("%s/worktree-files-probe",name));!ignored {continue}
-        if os.copy_directory_all(join(folder,name),join(shared,name))!=nil {fmt.eprintfln("mirai worktree: %s could not be copied from %s",name,shared)}
-    }
 }

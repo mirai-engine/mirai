@@ -3,8 +3,6 @@ package asset
 import "core:math/rand"
 import "core:mem"
 import "core:testing"
-import "mirai:std/compressor"
-import "mirai:std/compressor/lz"
 import "mirai:std/serial"
 
 // One page of clusters of the given vertex counts, with words drawn from
@@ -57,22 +55,22 @@ page_coding_gives_back_any_words_bit_for_bit :: proc(t:^testing.T) {
     decoder:Decoder
     testing.expect_value(t,decoder_init(&decoder),Error.None)
     defer decoder_destroy(&decoder)
-    encoder:lz.Encoder
-    lz.encoder_init(&encoder,context.temp_allocator)
+    encoder:Stream_Encoder
+    stream_encoder_init(&encoder,context.temp_allocator)
     coder:=page_coder_make(context.temp_allocator)
     scratch:=make([]u8,MESH_PAGE_SCRATCH_BYTES,context.temp_allocator)
     coded:=make([]u8,MESH_PAGE_SCRATCH_BYTES,context.temp_allocator)
-    packed:=make([]u8,block_bound(nil,MESH_PAGE_SCRATCH_BYTES),context.temp_allocator)
+    packed:=make([]u8,pack_bound(MESH_PAGE_SCRATCH_BYTES),context.temp_allocator)
     same :: proc(a,b:[]u32) -> bool {return mem.compare(mem.slice_to_bytes(a),mem.slice_to_bytes(b))==0}
     for c,at in cases {
         g:=code_geometry(c.flags,c.counts,c.bits,&r)
         if c.untiled {g.clusters[len(g.clusters)-1].vertex_first=0}
         mesh_page_gather(g,g.pages[0],want)
         words:=int(g.pages[0].words)
-        pages,data,error:=pages_compress(g,PACK_EDIT,context.temp_allocator)
+        pages,data,error:=pages_compress(g,.Fast,.Open,context.temp_allocator)
         if !testing.expectf(t,error==.None,"case %d packs",at) {continue}
         testing.expectf(t,mesh_page_decode(g.flags,pages[0],data[:],scratch,block,&decoder.stream) && same(block[:words],want[:words]),"case %d decodes to its words",at)
-        raw,_:=block_pack(&encoder,PACK_EDIT,nil,mem.slice_to_bytes(want[:words]),packed)
+        raw,_:=pack(&encoder,.Fast,.Open,mem.slice_to_bytes(want[:words]),packed)
         testing.expectf(t,int(pages[0].data_bytes)<=raw,"case %d takes %d bytes, no more than its words in LZ, %d",at,pages[0].data_bytes,raw)
         size,ok:=page_code(&coder,g,g.pages[0],want,coded)
         testing.expectf(t,ok && page_decode_coded(g,g.pages[0],coded[:size],packed,scratch,block,&encoder,&decoder.stream) && same(block[:words],want[:words]),"case %d codes back bit for bit",at)
@@ -81,9 +79,9 @@ page_coding_gives_back_any_words_bit_for_bit :: proc(t:^testing.T) {
 
 // The coding of a page through LZ and mesh_page_decode.
 @(private="file")
-page_decode_coded :: proc(g:Mesh_Geometry,page:Mesh_Page,coded,packed,scratch:[]u8,out:[]u32,encoder:^lz.Encoder,decoder:^Stream_Decoder) -> bool {
+page_decode_coded :: proc(g:Mesh_Geometry,page:Mesh_Page,coded,packed,scratch:[]u8,out:[]u32,encoder:^Stream_Encoder,decoder:^Stream_Decoder) -> bool {
     page:=page
-    bytes,_:=block_pack(encoder,PACK_EDIT,nil,coded,packed)
+    bytes,_:=pack(encoder,.Fast,.Open,coded,packed)
     page.data_offset,page.data_bytes,page.coded_bytes=0,u32(bytes),u32(len(coded))
     return mesh_page_decode(g.flags,page,packed[:bytes],scratch,out,decoder)
 }
@@ -103,9 +101,9 @@ hostile_page_codings_are_refused_or_decode_within_the_block :: proc(t:^testing.T
     decoder:Decoder
     testing.expect_value(t,decoder_init(&decoder),Error.None)
     defer decoder_destroy(&decoder)
-    encoder:lz.Encoder
-    lz.encoder_init(&encoder,context.temp_allocator)
-    packed:=make([]u8,block_bound(nil,len(coded)),context.temp_allocator)
+    encoder:Stream_Encoder
+    stream_encoder_init(&encoder,context.temp_allocator)
+    packed:=make([]u8,pack_bound(len(coded)),context.temp_allocator)
     scratch:=make([]u8,MESH_PAGE_SCRATCH_BYTES,context.temp_allocator)
     out:=make([]u32,MESH_PAGE_WORDS,context.temp_allocator)
     decode:=page_decode_coded

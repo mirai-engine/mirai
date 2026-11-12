@@ -71,12 +71,10 @@ keeps its default; one the struct does not have is an error.
   writes from it `kinds_gen.odin` into the package `folder` names (`runtime` without it), with
   `<STEM>_KIND` and `<STEM>_EXTENSION` for each `.stem`; git keeps the file, so the plugin tests
   without a build.
-- `build.compression`: what a shipped game is compressed with: `none`, `compression_open`,
-  `compression_mirai` (only in a checkout that holds it) or the plugin that does; empty is
-  `compression_mirai` where it exists and `compression_open` elsewhere. The plugin it names is
-  activated with the project. `compression: Library` of a plugin says it can be that: the codecs
-  its `Cook` part writes and its `runtime/` decodes.
-- `shipped_only`: only the game that ships compiles the plugin; the editor and the player do not.
+- `build.compression`: what the assets of the project and its game are compressed with: `none`,
+  `open`, or empty for the best its engine has ([compressor](build.md#compressor)). The projects
+  of the repository of the engine (the demo, the templates) declare `open`; a project made from a
+  template does not keep it.
 - `development`: a tool for making the game (`profiler`, `tracy`). It goes into the `editor` and
   `play` libraries; the shipped game is generated with `shipped_world`, the world without them, and
   if its code reaches them the build fails with `Engine_Time_Code`.
@@ -557,9 +555,8 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
   of the running `mirai`, with or without an editor; a project keeps no copy of it.
 - `mirai worktree new` creates `<main>/.worktrees/<name>` on a new branch and prints the `cd` and
   the first build. `.deps` and the caches (engine binaries, C libraries, shader stages) are those
-  of the main checkout ([dependencies](build.md#dependencies-and-worktrees)). It copies only the
-  folders that `.mirai/worktree-files` of the main checkout lists, one per line, from there: code
-  git ignores that every checkout should compile. `mirai render` does the same with its base.
+  of the main checkout ([dependencies](build.md#dependencies-and-worktrees)), and so is the private
+  compressor in its `ext/` ([compressor](build.md#compressor)).
 - `mirai doctor [project]` checks the machine and the project, says how to fix each finding and
   ends with 1 if there are errors. It requires `git config core.symlinks` and `.claude/skills` as a
   symbolic link to `.agents/skills`: without it, the skills do not reach the agents (on Windows

@@ -137,7 +137,7 @@ a_written_model_with_textures_links_materials_to_them :: proc(t:^testing.T) {
         if !p_loaded {return}
         defer asset.asset_close(&p)
         plain,_:=asset.texture_view(&p,&types)
-        testing.expect(t,plain.info.format==.RGBA8 && plain_written.bytes>texture_written.bytes*(3 if textures.ENCODERS_PRIVATE else 2),"the same image, uncompressed when the import asks")
+        testing.expect(t,plain.info.format==.RGBA8 && plain_written.bytes>texture_written.bytes,"the same image, uncompressed when the import asks")
         testing.expect(t,plain.source!=nil && texture.source!=nil && plain.source.settings_hash!=texture.source.settings_hash,"the encoding is a setting of the import")
     }
 

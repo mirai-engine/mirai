@@ -23,8 +23,8 @@ cache_key_build :: proc(bytes:[]u8,made:Source,options:Build_Options) -> u64 {
 }
 
 // The blocks of a texture that stores RGBA8, by the content hash of its file.
-cache_key_blocks :: proc(content_hash:u64,external:^External=nil) -> u64 {
-    return base.hash_combine(base.hash_combine(base.hash_combine(content_hash,u64(BUILD_VERSION)),0x626c6f636b73),external_id(external))|1
+cache_key_blocks :: proc(content_hash:u64,rdo:=true) -> u64 {
+    return base.hash_combine(base.hash_combine(base.hash_combine(content_hash,u64(BUILD_VERSION)),0x626c6f636b73|u64(!rdo)<<48),encoders_id())|1
 }
 
 // Whether the cache keeps a texture under key, without reading it.

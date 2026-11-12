@@ -307,15 +307,6 @@ generator_read :: proc(p:^project.Project) -> (g:Generator) {
 // the game that ships is generated only when shipped is asked for.
 world_generate :: proc(p:^project.Project,allocator:=context.allocator,shipped:=false) -> (out:Generated) {
     context.allocator=allocator
-    // The editor and the player leave out what only a game that ships has.
-    all:=p
-    edited:=p^
-    in_editor:=make([dynamic]int,context.temp_allocator)
-    for index in p.active {
-        if !p.plugins[index].manifest.shipped_only {append(&in_editor,index)}
-    }
-    edited.active=in_editor[:]
-    p:=&edited
     g:=generator_read(p)
     for pkg in g.packages {
         if pkg.plugin>=0 {plugin_imports_check(p.plugins,pkg.plugin,pkg.files,&g.errors)}
@@ -335,11 +326,11 @@ world_generate :: proc(p:^project.Project,allocator:=context.allocator,shipped:=
     out.shipped_world=out.game_world
     // Without the development plugins the world of the game that ships is generated again.
     kept:=make([dynamic]int,context.temp_allocator)
-    for index in all.active {
-        if !all.plugins[index].manifest.development {append(&kept,index)}
+    for index in p.active {
+        if !p.plugins[index].manifest.development {append(&kept,index)}
     }
-    if shipped && (len(kept)<len(all.active) || len(in_editor)<len(all.active)) {
-        q:=all^
+    if shipped && len(kept)<len(p.active) {
+        q:=p^
         q.active=kept[:]
         out.shipped_world=world_generate_world(&q)
     }

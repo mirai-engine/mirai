@@ -115,17 +115,17 @@ are kept here and, where the license asks for it, in the header of the file.
   `plugins/fsr/runtime/framegen.odin`, translated from `ffx_opticalflow.cpp` and
   `ffx_frameinterpolation.cpp`. Game, with the `fsr` plugin.
 - **Zstandard 1.5.7** (BSD-3-Clause; © Meta Platforms, Inc. and affiliates),
-  <https://github.com/facebook/zstd>. `std/zstd`, a translation of its decoder and of three
-  levels of its encoder, as its `UPSTREAM.md` says. Game.
+  <https://github.com/facebook/zstd>. `std/compressor/zstd`, a translation of its decoder and of
+  three levels of its encoder, as its `UPSTREAM.md` says. Game.
 - **LZ4 1.10.0** (BSD-2-Clause; © 2011-2020 Yann Collet), <https://github.com/lz4/lz4>.
-  `std/lz4`, a translation of its block decoder and of its HC encoder, as its `UPSTREAM.md`
-  says. Game.
+  `std/compressor/lz4`, a translation of its block decoder and of its HC encoder, as its
+  `UPSTREAM.md` says. Game.
 - **bc7enc_rdo** (MIT or public domain; © 2020-2021 Richard Geldreich, Jr.),
-  <https://github.com/richgel999/bc7enc_rdo>. `cook/encoders/rgbcx`, `cook/encoders/bc7enc`
-  and `cook/encoders/rdo`, translated. Editor.
+  <https://github.com/richgel999/bc7enc_rdo>. `std/compressor/blocks/rgbcx`, `bc7enc`
+  and `rdo`, translated; a block keeps the alpha 0 and 255 of its texels. Editor.
 - **ISPC Texture Compressor** (MIT; © 2017 Intel Corporation),
   <https://github.com/GameTechDev/ISPCTextureCompressor>. The BC6H encoder of
-  `cook/encoders/bc6h`, translated. Editor.
+  `std/compressor/blocks/bc6h`, translated. Editor.
 
 The files derived from Apache-2.0 work state their changes in their header.
 

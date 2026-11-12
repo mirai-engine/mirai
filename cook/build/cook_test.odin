@@ -8,8 +8,6 @@ import "core:slice"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
-import lz_optimal "mirai:cook/compressor/lz"
-import "mirai:std/codec"
 import anim "mirai:std/anim"
 import mm "mirai:std/math"
 import "mirai:std/base"
@@ -156,7 +154,7 @@ a_cook_ships_what_the_scenes_and_the_roots_reach_as_the_runtime_loads_it :: proc
     // Any other asset is the same document, compressed for shipping.
     source,_:=os.read_entire_file(fmt.tprintf("%s/models/crate.mesh",assets),context.temp_allocator)
     shipped,_:=os.read_entire_file(fmt.tprintf("%s/models/crate.mesh",output),context.temp_allocator)
-    repacked,repack_error:=asset.document_repack(source,lz_optimal.SHIP,context.temp_allocator)
+    repacked,repack_error:=asset.document_repack(source,.Ultra,.Open,context.temp_allocator)
     testing.expect(t,len(source)>0 && repack_error==.None && string(repacked)==string(shipped))
 
     // The index is what a scan of the output finds.
@@ -569,30 +567,8 @@ a_cook_writes_again_only_what_is_made_of_what_changed :: proc(t:^testing.T) {
     }
 }
 
-// A codec that stores: enough to tell what a cook does with one.
-@(private="file")
-store_bound :: proc "c" (size:uint) -> uint {return size+8}
-
-@(private="file")
-store_encode :: proc "c" (level:i32,src:[^]u8,src_bytes:uint,dst:[^]u8,capacity:uint) -> uint {
-    if src_bytes>capacity {return 0}
-    for i in 0..<src_bytes {dst[i]=src[i]}
-    return src_bytes
-}
-
-@(private="file")
-store_decode :: proc "c" (scratch:rawptr,src:[^]u8,src_bytes:uint,dst:[^]u8,dst_bytes:uint) -> bool {
-    if src_bytes!=dst_bytes {return false}
-    for i in 0..<src_bytes {dst[i]=src[i]}
-    return true
-}
-
-@(private="file")
-solid_blocks :: proc "c" (format:codec.Texture_Format,pixels:[^]u8,width,height,lambda:i32,srgb:bool,out:[^]u8,out_bytes:uint) -> bool {
-    for i in 0..<out_bytes {out[i]=0x5a}
-    return true
-}
-
+// What a cook writes is compressed as its project allows and reads back: nothing, or streams of
+// the formats of the codecs it allows, with the layouts of blocks only of the best.
 @(test)
 a_cook_compresses_as_its_project_says_and_what_it_writes_decodes :: proc(t:^testing.T) {
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
@@ -601,34 +577,31 @@ a_cook_compresses_as_its_project_says_and_what_it_writes_decodes :: proc(t:^test
     assets:=fmt.tprintf("%s/project/assets",folder)
     project_write(t,&types,assets)
     manifest:=fmt.tprintf("%s/project/%s",folder,COOK_FILE)
-    id:=codec.id_of("STOR")
-    api:=codec.Cook_Api{version=codec.API_VERSION,id=7,texture=solid_blocks}
-    api.decoders.list[0]={id=id,decode=store_decode}
-    api.decoders.count=1
-    encode:=codec.Encode{id=id,bound=store_bound,encode=store_encode}
-    api.general,api.streamed=encode,encode
-    for none in ([2]bool{false,true}) {
-        output:=fmt.tprintf("%s/ship-%v/assets",folder,none)
-        compression:=Cook_Compression{none=true} if none else Cook_Compression{api=&api}
-        report:=cook_assets({assets=assets,output=output,manifest=manifest,compression=compression,allocator=context.temp_allocator})
+    for codecs in asset.Codecs {
+        output:=fmt.tprintf("%s/ship-%v/assets",folder,codecs)
+        report:=cook_assets({assets=assets,output=output,manifest=manifest,codecs=codecs,allocator=context.temp_allocator})
         testing.expect_value(t,report.error,Cook_Error.None)
         testing.expect(t,report.textures_compressed==2)
+        streams:=0
         for file in report.files {
             if file.id=={} {continue}
             path:=fmt.tprintf("%s/%s",output,file.path)
             a:asset.Asset
-            if !testing.expect_value(t,asset.asset_load(&a,path,codecs=report.codecs),asset.Error.None) {continue}
+            if !testing.expect_value(t,asset.asset_load(&a,path),asset.Error.None) {continue}
             defer asset.asset_close(&a)
             for i in 0..<int(a.blob.header.chunk_count) {
-                testing.expect(t,asset.blob_chunk(&a.blob,i).compression!=.LZ,"nothing is left for LZ")
+                entry:=asset.blob_chunk(&a.blob,i)
+                if entry.compression==.None {continue}
+                streams+=1
+                testing.expectf(t,asset.pack_matches(asset.blob_stored(&a.blob,entry),.Ultra,codecs),"%s is a stream of %v",file.path,codecs)
             }
             if file.kind==asset.KIND_TEXTURE {
-                view,error:=asset.texture_view(&a,&types)
+                _,error:=asset.texture_view(&a,&types)
                 testing.expect_value(t,error,asset.Error.None)
-                _,split:=asset.asset_table(&a,asset.TEXTURE_TABLE_BC7SPLIT)
-                testing.expect(t,!split && .Fields not_in view.info.flags,"no transform of LZ")
-                if !none && view.info.format==.BC7 {testing.expect_value(t,view.texels[0],u8(0x5a))}
+                _,laid:=asset.asset_table(&a,asset.TEXTURE_TABLE_LAYOUTS)
+                testing.expect(t,!laid || codecs==.Best,"layouts only of the best codecs")
             }
         }
+        testing.expect(t,(streams==0)==(codecs==.None),"something compresses unless nothing may")
     }
 }

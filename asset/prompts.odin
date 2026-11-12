@@ -52,7 +52,7 @@ prompts_document :: proc(doc:^Document,types:^Types,desc:Prompts_Desc,allocator:
 
 @(private="file")
 prompts_tables :: proc(doc:^Document,types:^Types,desc:Prompts_Desc) -> Error {
-    document_put(doc,types,"prompts",desc.images,{},.LZ) or_return
+    document_put(doc,types,"prompts",desc.images,{},.Stream) or_return
     return import_put(doc,types,desc.source)
 }
 

@@ -31,10 +31,5 @@ worlds_gen_test.odin
 # La fuente de la figura del editor; se conservan sus ajustes y assets importados.
 editor/assets/presence/source/*.glb
 
-# The private codec, when it is linked into the checkout: only its placeholders are versioned.
-/std/compressor/**
-!/std/compressor/**/
-!/std/compressor/**/placeholder.odin
-/cook/compressor/**
-!/cook/compressor/**/
-!/cook/compressor/**/placeholder.odin
+# A clone of the private compressor (project.COMPRESSOR_PRIVATE), never versioned here.
+/ext/

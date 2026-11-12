@@ -63,7 +63,7 @@ volume_blocks_all_air_or_all_solid_hold_no_values_through_brushes_and_the_file :
     testing.expect(t,source_value(&source,{40,24,40})==band)
     neighbor:=BLOCKS_DEEP+1
     testing.expect(t,grid_page(g,neighbor).values!=nil,"a block the surface of the cavity crosses holds its values")
-    // The file keeps a uniform block as its value and every other one as its own LZ block.
+    // The file keeps a uniform block as its value and every other one as its own block.
     root:=base.test_folder(t,"terrain")
     path:=fmt.tprintf("%s/volume.terrain",root)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
@@ -92,11 +92,10 @@ volume_blocks_all_air_or_all_solid_hold_no_values_through_brushes_and_the_file :
     testing.expect(t,ok && got==id)
     blocks_same(t,&loaded,&source,{},{96,96,96})
     testing.expect_value(t,grid_dense(&loaded.field),grid_dense(g))
-    // A game shipped without LZ stores its blocks as a cook writes them, and reads the same values.
+    // A game shipped without compression stores its blocks as a cook writes them, and reads the same values.
     saved,read_error:=os.read_entire_file(path,context.temp_allocator)
     testing.expect(t,read_error==nil)
-    none:=asset.Pack_Codecs{none=true}
-    cooked,repack_error:=asset.document_repack(saved,asset.PACK_EDIT,context.temp_allocator,codecs=&none)
+    cooked,repack_error:=asset.document_repack(saved,.Ultra,.None,context.temp_allocator)
     testing.expect_value(t,repack_error,asset.Error.None)
     cooked_path:=fmt.tprintf("%s/cooked.terrain",root)
     testing.expect(t,os.write_entire_file(cooked_path,cooked)==nil)

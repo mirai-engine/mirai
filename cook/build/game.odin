@@ -55,11 +55,6 @@ job_ship :: proc(job:^Job) -> Failure {
     folder:=job.published[:strings.last_index_byte(job.published,'/')]
     if os.write_entire_file(project.path(folder,project.SETTINGS_FILE,allocator=context.temp_allocator),job.settings)!=nil {return .Copy_Failed}
     if job.cook.assets=="" {return .None}
-    if problem:=compression_build(job.compression);problem!="" {
-        job.result.cook.error=Cook_Error.Compression_Failed
-        job.result.cook.detail=strings.clone(problem,job.cook.allocator)
-        return .Cook_Failed
-    }
     job.result.cook=cook_assets(job.cook)
     return job.result.cook.error==.None?.None:.Cook_Failed
 }

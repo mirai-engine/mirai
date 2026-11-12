@@ -3,8 +3,8 @@ package rdo
 import "base:runtime"
 import "core:slice"
 import "mirai:std/jobs"
-import "mirai:cook/encoders/bc7enc"
-import "mirai:cook/encoders/rgbcx"
+import "../bc7enc"
+import "../rgbcx"
 
 Format :: enum u8 {BC1,BC3,BC4,BC5,BC7}
 
@@ -393,6 +393,7 @@ postprocess_rdo :: proc(format:Format,source:^Source,params:^Params,out:[]u8,str
     switch format {
     case .BC7:
         if !custom_scale {ert.smooth_block_max_mse_scale=lerpf(15,50,min(1,lambda/4))}
+        ert.keep_extremes={3}
         work.passes[0]={0,16,4,block_pixels,ert,unpack_bc7_block,mse_scales}
         work.pass_count=1
     case .BC5:
@@ -418,6 +419,7 @@ postprocess_rdo :: proc(format:Format,source:^Source,params:^Params,out:[]u8,str
         ert.color_weights[3]=0
         alpha:=ert
         alpha.color_weights={1,0,0,0}
+        alpha.keep_extremes={0}
         if !custom_scale {
             ert.smooth_block_max_mse_scale=lerpf(15,50,min(1,lambda/8))
             alpha.smooth_block_max_mse_scale=lerpf(10,30,min(1,lambda/4))

@@ -6,8 +6,6 @@ import "core:mem"
 import "core:testing"
 import "mirai:std/base"
 import "mirai:std/jobs"
-import "mirai:std/compressor"
-import "mirai:std/compressor/lz"
 import "mirai:std/serial"
 
 @(private)
@@ -33,7 +31,7 @@ sample_document :: proc(doc:^Document,types:^Types) {
     document_put_row(doc,types,"info",&info)
     points:[64]Point
     for &point,i in points {point={{f32(i),0,0},0.5}}
-    document_put(doc,types,"points",points[:],{.Bulk},.LZ,64)
+    document_put(doc,types,"points",points[:],{.Bulk},.Stream,64)
     links:=[3]Link{{{7,7},1},{{3,3},2},{{7,7},3}}
     table,_:=document_table_add(doc,"links")
     document_resize(doc,table,3)
@@ -41,7 +39,7 @@ sample_document :: proc(doc:^Document,types:^Types) {
     rows:=[3]u32{2,0,1}
     document_column_put(doc,types,table,"id",ids[:])
     ref,_:=document_column_put(doc,types,table,"point",rows[:])
-    document_column_put(doc,types,table,"value",links[:],{},.LZ)
+    document_column_put(doc,types,table,"value",links[:],{},.Stream)
     doc.tables[table].key=0
     doc.tables[table].columns[ref].ref=1
     imported:=Info{count=1}
@@ -59,8 +57,8 @@ blob_round_trips_chunks_with_alignment_and_compression :: proc(t:^testing.T) {
     for &b in noise {b=u8(test_random(&state))}
     chunks:=[?]Build_Chunk{
         {tag=fourcc("AAAA"),alignment=1,data=small[:]},
-        {tag=fourcc("BBBB"),index=1,alignment=4096,compression=.LZ,data=zeros},
-        {tag=fourcc("BBBB"),index=2,alignment=64,compression=.LZ,data=noise},
+        {tag=fourcc("BBBB"),index=1,alignment=4096,compression=.Stream,data=zeros},
+        {tag=fourcc("BBBB"),index=2,alignment=64,compression=.Stream,data=noise},
         {tag=fourcc("EMPT"),alignment=8},
     }
     testing.expect_value(t,blob_build(&w,KIND_TEST,7,{1,2},{3,4},{.Cooked},chunks[:],&scratch),Error.None)
@@ -79,7 +77,7 @@ blob_round_trips_chunks_with_alignment_and_compression :: proc(t:^testing.T) {
     first:=blob_chunk(&blob,0)
     testing.expect(t,first.tag==fourcc("AAAA") && first.compression==.None && first.size==3)
     packed:=blob_chunk(&blob,1)
-    testing.expect(t,packed.compression==COMPRESSION_PACKED && packed.size<100 && packed.uncompressed_size==5000 && packed.offset%4096==0)
+    testing.expect(t,packed.compression==Compression.Stream && packed.size<100 && packed.uncompressed_size==5000 && packed.offset%4096==0)
     kept:=blob_chunk(&blob,2)
     testing.expect(t,kept.compression==.None && kept.size==300 && kept.offset%64==0) // noise does not shrink
     at,found:=blob_find(&blob,fourcc("BBBB"),2)
@@ -112,7 +110,7 @@ blob_open_rejects_files_that_contradict_themselves :: proc(t:^testing.T) {
     scratch:[dynamic]u8;defer delete(scratch)
     payload:=make([]u8,400);defer delete(payload)
     for &b,i in payload {b=u8(i%7)}
-    chunks:=[?]Build_Chunk{{tag=fourcc("AAAA"),alignment=16,data=payload[:100]},{tag=fourcc("BBBB"),alignment=8,compression=.LZ,data=payload}}
+    chunks:=[?]Build_Chunk{{tag=fourcc("AAAA"),alignment=16,data=payload[:100]},{tag=fourcc("BBBB"),alignment=8,compression=.Stream,data=payload}}
     blob_build(&w,KIND_TEST,0,{},{},{},chunks[:],&scratch)
     good:=serial.writer_bytes(&w)
     for cut in 0..<len(good) {
@@ -148,10 +146,7 @@ blob_open_rejects_files_that_contradict_themselves :: proc(t:^testing.T) {
     expect(t,work,good,.Corrupt,proc(header:^Header,entries:[^]Chunk_Entry) {entries[0].uncompressed_size+=1})
     expect(t,work,good,.Corrupt,proc(header:^Header,entries:[^]Chunk_Entry) {entries[0].alignment_log2=13})
     expect(t,work,good,.Corrupt,proc(header:^Header,entries:[^]Chunk_Entry) {entries[0].compression=Compression(9)})
-    if ASSET_LZ {
-    expect(t,work,good,.Corrupt,proc(header:^Header,entries:[^]Chunk_Entry) {entries[1].uncompressed_size=pack_reach(entries[1].size)+1})
-        expect(t,work,good,.None,proc(header:^Header,entries:[^]Chunk_Entry) {entries[1].uncompressed_size=pack_reach(entries[1].size)})
-    }
+    expect(t,work,good,.Corrupt,proc(header:^Header,entries:[^]Chunk_Entry) {entries[1].uncompressed_size=PACK_MAX})
 
     // A decompressed size the block does not have is found when the chunk is read.
     copy(work,good)
@@ -195,7 +190,7 @@ document_writes_and_reads_back_the_same_tables :: proc(t:^testing.T) {
         }
     }
     points,_:=document_table(&back,"points")
-    testing.expect_value(t,back.tables[points].columns[0].compression,COMPRESSION_PACKED)
+    testing.expect_value(t,back.tables[points].columns[0].compression,Compression.Stream)
 
     again:serial.Writer;serial.writer_init(&again);defer serial.writer_destroy(&again)
     testing.expect_value(t,document_write(&back,&again),Error.None)
@@ -431,37 +426,39 @@ asset_open_survives_corrupted_files :: proc(t:^testing.T) {
 // once, to the bytes and the errors of a decode on one thread, also when the stream is mutated.
 @(test)
 a_large_chunk_decodes_its_pieces_on_the_job_workers :: proc(t:^testing.T) {
-    if !ASSET_LZ {return}
     data:=make([]u8,2*PACK_PIECE+5000);defer delete(data)
     state:=u64(9)
     for &b,i in data {b=i%7000<3000 ? u8(test_random(&state)>>61) : u8(i>>8)}
     w:serial.Writer;serial.writer_init(&w);defer serial.writer_destroy(&w)
     scratch:[dynamic]u8;defer delete(scratch)
-    chunks:=[?]Build_Chunk{{tag=fourcc("BULK"),alignment=16,compression=.LZ,data=data}}
+    chunks:=[?]Build_Chunk{{tag=fourcc("BULK"),alignment=16,compression=.Stream,data=data}}
     testing.expect_value(t,blob_build(&w,KIND_TEST,0,{},{},{},chunks[:],&scratch),Error.None)
     blob,error:=blob_open(serial.writer_bytes(&w))
     testing.expect_value(t,error,Error.None)
     entry:=blob_chunk(&blob,0)
-    testing.expect_value(t,entry.compression,COMPRESSION_PACKED)
+    testing.expect_value(t,entry.compression,Compression.Stream)
     stored:=blob_stored(&blob,entry)
-    found:[4]compressor.Piece
-    count,_:=compressor.pieces(stored,len(data),found[:])
-    testing.expect_value(t,count,3)
+    s,read:=stream_read(stored,len(data))
+    testing.expect(t,read==.None && s.count==3)
+    // Where each piece starts in the stream.
+    found:[3]int
+    found[0]=s.first
+    for piece in 1..<3 {found[piece]=found[piece-1]+int(u32_read(s.table[(piece-1)*4:]))}
     js:jobs.Job_System
     testing.expect(t,jobs.system_init(&js,{threads=3}))
     defer jobs.system_destroy(&js)
     // Its pieces compressed at once on the workers are the same file, also with a last piece of
     // fewer bytes than the encoder stores raw on its own.
     parallel:serial.Writer;serial.writer_init(&parallel);defer serial.writer_destroy(&parallel)
-    testing.expect_value(t,blob_build(&parallel,KIND_TEST,0,{},{},{},chunks[:],&scratch,PACK_EDIT,{&js,jobs.OWNER,nil}),Error.None)
+    testing.expect_value(t,blob_build(&parallel,KIND_TEST,0,{},{},{},chunks[:],&scratch,.Fast,.Open,{&js,jobs.OWNER,nil}),Error.None)
     testing.expect(t,mem.compare(serial.writer_bytes(&parallel),serial.writer_bytes(&w))==0)
     {
         short:=data[:2*PACK_PIECE+100]
-        e:lz.Encoder;lz.encoder_init(&e);defer lz.encoder_destroy(&e)
+        e:Stream_Encoder;stream_encoder_init(&e);defer stream_encoder_destroy(&e)
         a:=make([]u8,pack_bound(len(short)));defer delete(a)
         b:=make([]u8,pack_bound(len(short)));defer delete(b)
-        na,ea:=pack(&e,PACK_EDIT,short,a)
-        nb,eb:=pack(&e,PACK_EDIT,short,b,{&js,jobs.OWNER,nil})
+        na,ea:=pack(&e,.Fast,.Open,short,a)
+        nb,eb:=pack(&e,.Fast,.Open,short,b,{&js,jobs.OWNER,nil})
         testing.expect(t,ea==.None && eb==.None && na==nb && mem.compare(a[:na],b[:nb])==0)
     }
     pieces:Piece_Decoders
@@ -483,7 +480,7 @@ a_large_chunk_decodes_its_pieces_on_the_job_workers :: proc(t:^testing.T) {
         copy(stored,original)
         // Mostly near the headers of the pieces, where a flip moves or removes a reset.
         for _ in 0..<1+test_random(&state)%3 {
-            at:=round%2==0 ? found[test_random(&state)%3].src+int(test_random(&state)%16) : int(test_random(&state)%u64(len(stored)))
+            at:=round%2==0 ? found[test_random(&state)%3]+int(test_random(&state)%16) : int(test_random(&state)%u64(len(stored)))
             stored[at]~=u8(1)<<(test_random(&state)%8)
         }
         expected:=blob_read(&blob,entry,one,&alone)

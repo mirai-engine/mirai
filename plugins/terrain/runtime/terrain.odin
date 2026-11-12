@@ -3,7 +3,6 @@ package terrain
 import "base:runtime"
 import "core:math/linalg"
 import "core:slice"
-import "mirai:std/codec"
 import "mirai:asset"
 import "mirai:core"
 import render "mirai:engine/render"
@@ -47,7 +46,6 @@ TERRAIN_SETTINGS_DEFAULT :: Terrain_Settings{sources=16,chunks=4096,samples=8*10
 
 @(storage,copy="terrain_data_copy",swap="terrain_data_swap",free="terrain_data_free",reset="terrain_data_reset")
 Terrain_Data :: struct {
-    codecs:Page_Codecs, // of the game: of the sources it loads or receives
     entries:[dynamic]Data_Source,
     settings:Terrain_Settings,
     epoch:u32,
@@ -72,7 +70,6 @@ Source_Load :: struct {
     path:string,
     entry:Data_Source,
     types:asset.Types, // of the job
-    codecs:^codec.Table,
     js:^jobs.Job_System,
     ok:bool,
     counter:jobs.Counter,
@@ -336,7 +333,7 @@ terrain_read :: proc(s:^Source,a:^host.Assets,id:base.Asset_Id,allocator:=contex
         if _,held:=asset.registry_memory_find(&a.registry,record.path);!held {
             path:=asset.registry_file_path(&a.registry,record.path,context.temp_allocator)
             front:asset.Asset
-            if asset.asset_load_front(&front,path,a.allocator,codecs=a.codecs)!=.None {return false}
+            if asset.asset_load_front(&front,path,a.allocator)!=.None {return false}
             defer asset.asset_close(&front)
             loaded,ok:=source_read(s,&front,&a.types,allocator,path)
             return ok && loaded==id
@@ -492,8 +489,7 @@ data_load_begin :: proc(data:^Terrain_Data,a:^host.Assets,id:base.Asset_Id) -> ^
     heap:=runtime.heap_allocator()
     load,allocation_error:=new(Source_Load,heap)
     if allocation_error!=nil {return nil}
-    data.codecs={a.codecs,a.writes}
-    load.id,load.stamp,load.js,load.codecs=id,terrain_stamp(a,id),data.jobs,a.codecs
+    load.id,load.stamp,load.js=id,terrain_stamp(a,id),data.jobs
     load.path=asset.registry_file_path(&a.registry,record.path,heap)
     asset.types_init(&load.types,heap)
     if data.loads==nil {data.loads=make([dynamic]^Source_Load,heap)}
@@ -516,7 +512,7 @@ data_loading :: proc(data:^Terrain_Data,id:base.Asset_Id) -> ^Source_Load {
 source_load_job :: proc(load:^Source_Load,worker:int) {
     context.allocator=runtime.heap_allocator()
     front:asset.Asset
-    if asset.asset_load_front(&front,load.path,context.allocator,codecs=load.codecs)!=.None {return}
+    if asset.asset_load_front(&front,load.path,context.allocator)!=.None {return}
     defer asset.asset_close(&front)
     id,read:=source_read(&load.entry.source,&front,&load.types,context.allocator,load.path)
     if !read || id!=load.id {return}
@@ -539,7 +535,6 @@ data_load_end :: proc(data:^Terrain_Data,load:^Source_Load,a:^host.Assets,proble
         core.report(problems,e,"terrain.sources_full","terrain source %s is not loaded: %d sources are, as many as Terrain_Settings.sources allows; raise it, or share fewer sources among more terrains",host.assets_name(a,load.id,&name),data.settings.sources)
     case !data_fits(data,nil,source_cost(&load.entry.source),problems,e,a,load.id):
     case:
-        load.entry.source.codecs=data.codecs
         if _,err:=append(&data.entries,load.entry);err!=nil {source_memory(problems,e,a,load.id);break}
         data.samples+=u32(source_cost(&load.entry.source))
         load.entry={}
@@ -696,7 +691,6 @@ data_fits :: proc(data:^Terrain_Data,replaced:^Data_Source,cost:int,problems:^co
 
 @(private)
 data_load :: proc(data:^Terrain_Data,a:^host.Assets,id:base.Asset_Id,problems:^core.Problems,e:core.Entity) -> ^Data_Source {
-    data.codecs={a.codecs,a.writes}
     if len(data.entries)>=int(data.settings.sources) {
         name:[base.ASSET_ID_TEXT]u8
         core.report(problems,e,"terrain.sources_full","terrain source %s is not loaded: %d sources are, as many as Terrain_Settings.sources allows; raise it, or share fewer sources among more terrains",host.assets_name(a,id,&name),data.settings.sources)
@@ -706,7 +700,6 @@ data_load :: proc(data:^Terrain_Data,a:^host.Assets,id:base.Asset_Id,problems:^c
     if !terrain_read(&entry.source,a,id,a.allocator,paged=true) {source_destroy(&entry.source);source_unread(problems,e,a,id);return nil}
     if !data_chunks_allocate(&entry,a.allocator,data.jobs) {data_entry_free(&entry);source_memory(problems,e,a,id);return nil}
     if !data_fits(data,nil,source_cost(&entry.source),problems,e,a,id) {data_entry_free(&entry);return nil}
-    entry.source.codecs=data.codecs
     if _,err:=append(&data.entries,entry);err!=nil {data_entry_free(&entry);source_memory(problems,e,a,id);return nil}
     data.samples+=u32(source_cost(&entry.source))
     data.stats.loads+=1
@@ -768,7 +761,7 @@ source_compare :: proc(next,s:^Source) -> (change:Change,ok:bool) {
         change.changed=true
     }
     writer:Page_Writer
-    if !page_writer_init(&writer,context.temp_allocator,s.codecs.writes) {return}
+    if !page_writer_init(&writer,context.temp_allocator) {return}
     defer page_writer_destroy(&writer)
     low,high,differ:=grid_take(&next.field,&s.field,&writer,next.kind==.Heightfield)
     if differ {widen(&change,low,high)}

@@ -5,7 +5,6 @@ import "mirai:asset"
 import "mirai:core"
 import "mirai:engine/scene"
 import wire "mirai:net"
-import "mirai:std/codec"
 
 // A replicated operation journal: what a library that changes by operations
 // something both ends hold (a fracture, a dig) keeps in a host storage of its
@@ -253,10 +252,7 @@ Journal :: struct {
     early:[dynamic]Journal_Arrived,      // client: bytes of parts it has not heard of yet
     raw,packed:[dynamic]u8,
     decoder:asset.Stream_Decoder, // client: of the parts received
-    encoder:asset.Block_Encoder,  // server: of the parts sent
-    encoding:bool,                // encoder was made
-    codecs:^codec.Table,          // of the game (Net_Session): what its parts decode with
-    writes:^asset.Pack_Codecs,    // of the game: what its parts travel compressed with
+    encoder:asset.Stream_Encoder, // server: of the parts sent
     stats:Journal_Stats,
 }
 
@@ -264,7 +260,7 @@ journal_free :: proc(j:^Journal) {
     journal_forget(j)
     delete(j.streams);delete(j.held);delete(j.serves);delete(j.entered);delete(j.predictions);delete(j.refused);delete(j.applying);delete(j.early);delete(j.raw);delete(j.packed)
     asset.stream_decoder_destroy(&j.decoder)
-    if j.encoding {asset.block_encoder_destroy(&j.encoder)}
+    asset.stream_encoder_destroy(&j.encoder)
     j^={}
 }
 
@@ -373,7 +369,6 @@ Journal_Inbox :: struct {
 // within margin. A tick that runs again took its messages the first time.
 journal_receive :: proc(j:^Journal,inbox:Journal_Inbox,server:bool,own:Connection,time:core.Time,rewinds:^Net_Rewinds,rewind_all:bool,margin:i32,problems:^core.Problems) {
     if time.resimulating {return}
-    if inbox.session.ptr!=nil {j.codecs,j.writes=inbox.session.codecs,inbox.session.writes}
     for item in inbox.ops.items {
         op:=item.value
         if op.journal==j.id && !server && op.sequence!=0 {
@@ -438,7 +433,7 @@ log_put :: proc(s:^Journal_Stream,op:Journal_Op) -> (put,enough:bool) {
 @(private)
 part_arrive :: proc(s:^Net_Session,command:^wire.Command) {
     if int(command.channel)!=JOURNAL_CHANNEL {return}
-    if !s.incoming_over && len(s.incoming)+len(command.data)<=size_of(Journal_Part_Head)+asset.block_bound(s.writes,JOURNAL_PART_BYTES,general=true) {
+    if !s.incoming_over && len(s.incoming)+len(command.data)<=size_of(Journal_Part_Head)+asset.pack_bound(JOURNAL_PART_BYTES) {
         if _,error:=append(&s.incoming,..command.data);error!=nil {s.incoming_over=true}
     } else {
         s.incoming_over=true
@@ -464,7 +459,7 @@ part_heard :: proc(j:^Journal,heard:Net_Journal_Part,problems:^core.Problems) {
     s:=journal_stream(j,heard.key,true)
     if s==nil {journal_memory(problems);return}
     part:=Journal_Part{number=heard.number,after=heard.after,first=heard.first,last=heard.last,base=heard.base,whole=heard.whole,raw=heard.raw,total=heard.total}
-    if heard.raw>JOURNAL_PART_BYTES || int(heard.total)>asset.block_bound(j.writes,int(heard.raw),general=true) {part.complete,part.broken=true,true}
+    if heard.raw>JOURNAL_PART_BYTES || int(heard.total)>asset.pack_bound(int(heard.raw)) {part.complete,part.broken=true,true}
     if _,error:=append(&s.parts,part);error!=nil {
         journal_memory(problems)
         return
@@ -492,7 +487,7 @@ part_bytes :: proc(j:^Journal,arrived:Journal_Arrived,problems:^core.Problems) {
             if part.bytes,error=make([]u8,int(part.raw));error!=nil {
                 part.broken=true
                 journal_memory(problems)
-            } else if !j.decoder.made && asset.stream_decoder_init(&j.decoder,context.allocator,j.codecs)!=.None || asset.unpack(&j.decoder,arrived.bytes,part.bytes)!=.None {
+            } else if j.decoder.data==nil && asset.stream_decoder_init(&j.decoder,context.allocator)!=.None || asset.unpack(&j.decoder,arrived.bytes,part.bytes)!=.None {
                 delete(part.bytes)
                 part.bytes,part.broken=nil,true
             }
@@ -893,15 +888,12 @@ journal_part :: proc(j:^Journal,sv:^Journal_Serve,raw:[]u8,last:bool) -> bool {
     s:=journal_stream(j,sv.key,true)
     if s==nil || len(raw)>JOURNAL_PART_BYTES {return false}
     HEAD :: size_of(Journal_Part_Head)
-    if resize(&j.packed,HEAD+asset.block_bound(j.writes,len(raw),general=true))!=nil {return false}
+    if resize(&j.packed,HEAD+asset.pack_bound(len(raw)))!=nil {return false}
     total:=0
     if len(raw)>0 {
         error:asset.Error
-        if !j.encoding {
-            asset.block_encoder_init(&j.encoder,context.allocator,j.writes)
-            j.encoding=true
-        }
-        if total,error=asset.block_encode(&j.encoder,asset.PACK_EDIT,raw,j.packed[HEAD:],general=true);error!=.None {return false}
+        if j.encoder.data==nil && asset.stream_encoder_init(&j.encoder,context.allocator)!=.None {return false}
+        if total,error=asset.pack(&j.encoder,.Fast,.Open,raw,j.packed[HEAD:]);error!=.None {return false}
     }
     message,error:=make([]u8,HEAD+total)
     if error!=nil {return false}

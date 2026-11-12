@@ -1,10 +1,10 @@
 package asset
 
 import "core:mem"
+import "compressor:data"
 import "mirai:std/base"
 import "mirai:std/geom"
 import mm "mirai:std/math"
-import "mirai:std/compressor/lz"
 import "mirai:std/serial"
 
 // .mesh: geometry as the renderer draws and traces it, in clusters, with what
@@ -393,7 +393,7 @@ mesh_document :: proc(doc:^Document,types:^Types,desc:Mesh_Desc,allocator:=conte
 @(private="file")
 mesh_tables :: proc(doc:^Document,types:^Types,info:^Mesh_Info,view:Mesh_View,desc:Mesh_Desc) -> Error {
     bulk :: proc(doc:^Document,types:^Types,name:string,values:[]$T) -> Error {
-        _,error:=document_put(doc,types,name,values,{.Bulk},.LZ,MESH_BULK_ALIGNMENT)
+        _,error:=document_put(doc,types,name,values,{.Bulk},.Stream,MESH_BULK_ALIGNMENT)
         return error
     }
     document_put_row(doc,types,"mesh",info) or_return
@@ -416,9 +416,9 @@ mesh_tables :: proc(doc:^Document,types:^Types,info:^Mesh_Info,view:Mesh_View,de
     if len(view.skin)>0 {
         vertices:=document_table_add(doc,"vertices",{.Bulk}) or_return
         document_resize(doc,vertices,len(view.skin)) or_return
-        document_column_put(doc,types,vertices,"skin",view.skin,{},.LZ,MESH_BULK_ALIGNMENT) or_return
+        document_column_put(doc,types,vertices,"skin",view.skin,{},.Stream,MESH_BULK_ALIGNMENT) or_return
     }
-    pages,data:=pages_compress(view.geometry,PACK_EDIT,doc.allocator,doc.writes) or_return
+    pages,data:=pages_compress(view.geometry,.Fast,doc.codecs,doc.allocator) or_return
     defer {delete(pages,doc.allocator);delete(data)}
     bulk(doc,types,"pages",pages) or_return
     _,error:=document_put(doc,types,"page_data",data[:],{.Bulk},.None,MESH_BULK_ALIGNMENT)
@@ -430,7 +430,7 @@ mesh_tables :: proc(doc:^Document,types:^Types,info:^Mesh_Info,view:Mesh_View,de
 // root is not every page as it does one of a file. In allocator, with
 // scratch from the temporary allocator; false without memory.
 mesh_pages_pack :: proc(g:^Mesh_Geometry,allocator:=context.allocator) -> bool {
-    pages,data,error:=pages_compress(g^,PACK_EDIT,allocator)
+    pages,data,error:=pages_compress(g^,.Fast,.Open,allocator)
     if error!=.None {return false}
     delete(g.pages,allocator)
     g.pages,g.page_data=pages,data[:]
@@ -438,9 +438,10 @@ mesh_pages_pack :: proc(g:^Mesh_Geometry,allocator:=context.allocator) -> bool {
 }
 
 // The page_data of a mesh document with the block of each page compressed
-// again as p says, and its pages pointing into it.
+// again with the profile of what streams for profile, as the codecs of the document allow, and
+// its pages pointing into it.
 @(private)
-mesh_pages_repack :: proc(doc:^Document,p:Pack,codecs:^Pack_Codecs=nil) -> Error {
+mesh_pages_repack :: proc(doc:^Document,profile:data.Profile) -> Error {
     pages_table,has_pages:=document_table(doc,"pages")
     data_table,has_data:=document_table(doc,"page_data")
     if !has_pages || !has_data {return .None}
@@ -456,25 +457,23 @@ mesh_pages_repack :: proc(doc:^Document,p:Pack,codecs:^Pack_Codecs=nil) -> Error
     decoder:Decoder
     decoder_init(&decoder,context.temp_allocator) or_return
     defer decoder_destroy(&decoder)
-    encoder:lz.Encoder
-    when ASSET_LZ {
-        lz.encoder_init(&encoder,context.temp_allocator)
-        defer lz.encoder_destroy(&encoder)
-    }
+    encoder:Stream_Encoder
+    stream_encoder_init(&encoder,context.temp_allocator) or_return
+    defer stream_encoder_destroy(&encoder)
     coder:=page_coder_make(context.temp_allocator)
     defer page_coder_destroy(&coder)
     coded:=make([]u8,MESH_PAGE_SCRATCH_BYTES,context.temp_allocator)
     block:=make([]u32,MESH_PAGE_WORDS,context.temp_allocator)
-    data:=make([dynamic]u8,0,len(data_column.data),context.temp_allocator)
-    if coded==nil || block==nil || data==nil {return .Out_Of_Memory}
+    blocks:=make([dynamic]u8,0,len(data_column.data),context.temp_allocator)
+    if coded==nil || block==nil || blocks==nil {return .Out_Of_Memory}
     old:=data_column.data
     for &page in pages {
         if page.data_bytes==0 {continue}
         if !mesh_page_decode(g.flags,page,old,coded,block,&decoder.stream) || u64(page.first_cluster)+u64(page.cluster_count)>u64(len(g.clusters)) {return .Corrupt}
-        page_pack(&coder,&encoder,g,&page,block,coded,p,&data,codecs) or_return
+        page_pack(&coder,&encoder,g,&page,block,coded,profile_streamed(profile),doc.codecs,&blocks) or_return
     }
-    document_resize(doc,data_table,len(data)) or_return
-    copy(doc.tables[data_table].columns[0].data,data[:])
+    document_resize(doc,data_table,len(blocks)) or_return
+    copy(doc.tables[data_table].columns[0].data,blocks[:])
     return .None
 }
 

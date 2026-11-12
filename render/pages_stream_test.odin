@@ -6,7 +6,6 @@ import "core:mem"
 import "core:testing"
 import "mirai:asset"
 import mm "mirai:std/math"
-import "mirai:std/compressor"
 
 // A bumpy sheet of side cells as a file holds it: a DAG with pages out of
 // its root and the LZ block of each page in page_data.

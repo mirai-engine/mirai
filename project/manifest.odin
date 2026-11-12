@@ -43,7 +43,7 @@ Build_Options :: struct {
     optimization:Optimization,                  // of the module libraries; the shipped game is always built for speed
     debug:bool,                                 // debug information in the libraries editor and play: a crash names their procedures and lines
     defines:[MAX_DEFINES]Define `mirai:"text,trim"`, // NAME or NAME=value, given to every build of the project
-    compression:Name `mirai:"text"`,            // what a shipped game is compressed with: none, compression_open, or the plugin that does. Empty: the best this engine has
+    compression:Name `mirai:"text"`,            // what its assets and its game are compressed with: none, open, or empty for the best its engine has (Compression)
 }
 
 // How the game opens: maximized, on the whole display, or as a window of
@@ -101,9 +101,6 @@ Plugin_Parts :: bit_set[Plugin_Part;u8]
 
 Version :: [32]u8
 
-// What a plugin compresses a shipped game with: nothing, or the codecs of its Cook part.
-Plugin_Compression :: enum u8 {None,Library}
-
 // The versions of the engine a plugin works with, both ends included. Each
 // is major, major.minor or major.minor.patch: what min leaves out is zero and
 // what max leaves out is any number, so {"0.1","0.1"} is every 0.1.x. An
@@ -138,8 +135,6 @@ Plugin_Manifest :: struct {
     parts:Plugin_Parts,                             // the folders it has
     development:bool,                               // a tool for making the game: in the editor and the player, never in a published game
     automatic:bool,                                 // active exactly when all its dependencies are: what joins them; no project names it
-    compression:Plugin_Compression,                 // it can be the compression of a project (Build_Options.compression)
-    shipped_only:bool,                              // only the game that ships compiles it: it does nothing in the editor or the player
     icon:Path `mirai:"text"`,                       // a PNG the lists of plugins of the editor show it with, relative to its folder, with forward slashes, PLUGIN_ICON_MAX wide and tall at most. Empty: the generic one
     asset_kinds:[MAX_ASSET_KINDS]Asset_Kind `mirai:"trim"`, // the kinds of asset it adds: exactly the ones its editor part registers
 }
@@ -180,7 +175,7 @@ Error_Code :: enum u8 {
     Asset_Kind_Invalid, // of the asset kind of the extension subject: the extension is not a dot and lowercase letters, digits and '_', its kind is not four printable letters, its folder is not a relative path, or its extension or kind is there twice
     Schema_Failed,      // std/serial cannot describe the type subject: a defect of the engine, not of the file
     Out_Of_Memory,      // nothing of the files is wrong
-    Compression_Invalid, // subject, the compression of the project, is not none nor a plugin that compresses
+    Compression_Invalid, // subject, the compression of the project, is not none nor open
 }
 
 Error :: struct {
@@ -447,7 +442,7 @@ error_text :: proc(folder:string,error:Error,allocator:=context.allocator) -> st
     case .Dependency_Missing: text=fmt.tprintf("%s: depends on '%s', which exists neither in the project nor in the engine",file,subject)
     case .Dependency_Cycle:   text=fmt.tprintf("%s: depends on '%s', which depends on it",file,subject)
     case .Automatic_Named:    text=fmt.tprintf("%s: enables the plugin '%s', which is automatic: it is enabled by itself when its dependencies are; remove it from plugins",file,subject)
-    case .Compression_Invalid: text=fmt.tprintf("%s: the compression '%s' is not one this engine has: name none, compression_open, or a plugin with compression in its manifest",file,subject)
+    case .Compression_Invalid: text=fmt.tprintf("%s: build.compression '%s' is not one Mirai has: write none, open, or leave it out for the best the engine has",file,subject)
     case .Automatic_Alone:    text=fmt.tprintf("%s: '%s' is automatic and depends on nothing; name in dependencies the plugins it joins or remove automatic",file,subject)
     case .Source_Invalid:     text=fmt.tprintf("%s: the source '%s' has no url or its commit is not a full hash",file,subject)
     case .Asset_Kind_Invalid: text=fmt.tprintf("%s: the asset kind '%s' needs an extension of a dot and lowercase letters, digits and '_', a kind of four printable letters and a folder relative to the plugin, and no other kind with its extension or its letters",file,subject)

@@ -3,16 +3,17 @@ name: mirai-assets
 description: Mirai binary assets (.scene, prefabs, .mat, .mesh, .tex, .anim, .sound, .sound_set,
   .ui, .font, .strings, .prompts, .records and those of plugins, such as .terrain and .foliage),
   their container, the `asset` package, the registry, prefab resolution (`cook/prefab`), the
-  compression of assets (`std/zstd`, `std/lz4`, `std/codec`, `cook/encoders`), `std/serial` and
-  the `mirai asset` tool. Use when reading, creating or editing an asset, adding an asset type or
-  a serialized component, compressing or decoding asset data, or when an asset does not load.
+  compression of assets (the collection `compressor`, `std/compressor`, `ext/mirai-compression`),
+  `std/serial` and the `mirai asset` tool. Use when reading, creating or editing an asset, adding
+  an asset type or a serialized component, compressing or decoding asset data, or when an asset
+  does not load.
 ---
 
 # Mirai assets
 
-The packages are `std/serial` (streams, schemas, migration, paths, JSON), the codecs (`std/zstd`,
-`std/lz4`, and `std/compressor` with `cook/compressor` when a checkout holds them) and `asset`
-(container, compression, typed tables, asset types, scenes and their prefab instances, registry).
+The packages are `std/serial` (streams, schemas, migration, paths, JSON), the collection
+`compressor` (codecs and block encoders) and `asset` (container, compression, typed tables, asset
+types, scenes and their prefab instances, registry).
 
 ## Map
 
@@ -26,9 +27,8 @@ The packages are `std/serial` (streams, schemas, migration, paths, JSON), the co
   [container](references/formats.md#container), [typed tables](references/formats.md#typed-tables),
   [asset types](references/formats.md#asset-types), [versions](references/formats.md#versions),
   [registry](references/formats.md#registry) and [text](references/formats.md#text).
-- Codecs, what a game ships with, packs and decoders:
-  [compression](references/formats.md#compression); what each codec package does:
-  [codec packages](references/formats.md#codec-packages).
+- The collection `compressor`, profiles, codecs, streams and decoders:
+  [compression](references/formats.md#compression).
 - Streams, schemas, migration, paths, text: [serial](references/serial.md#stdserial).
 - Mesh, skeleton, texture, material, fracture, animation, sound, sound set, `.ui`, font, texts,
   prompts and game data tables (`.records`): [mesh](references/kinds.md#mesh),
@@ -104,26 +104,21 @@ The packages are `std/serial` (streams, schemas, migration, paths, JSON), the co
   `asset_open` validate header, directory, schema and tables; each `*_view` validates ranges of its
   type. Code that indexes with file data validates first or uses checked accesses. The decoders
   (`unpack`, `schema_read`, `text_read`) allocate no more than the input backs.
-- **The engine compresses with open codecs of its own**, translated to Odin: Zstandard
-  (`std/zstd`) for what loads once or travels and LZ4 HC (`std/lz4`) for what streams, and
-  `cook/encoders` for the blocks of textures. Every versioned asset is written with them.
-- **`std/compressor` and `cook/compressor` are optional.** A checkout without them compiles the
-  `placeholder.odin` of each package; the real packages, copied over them and ignored by git,
-  turn `compressor.IMPLEMENTED` on, and then LZ with BC7Split is what a write uses (`ASSET_LZ`)
-  with no flag. Nothing outside those folders needs them to compile, and a versioned asset such a
-  checkout wrote goes through `mirai asset repack` before it is committed.
-- **A game chooses what it ships with** (`build.compression`): the default, `compression_open`,
-  `none`, or a plugin's codecs through `std/codec`. What it does not use does not reach its
-  binary (`ASSET_LZ=false`, `ASSET_OPEN=false`), and what it writes while it runs goes through
-  the same choice. A stream says what decodes it: one of a codec the program lacks is
-  `Codec_Missing`.
+- **Every import of compression goes through the collection `compressor`**, never a codec
+  package: `compressor:data`, `compressor:texture` and, engine-time, `compressor:blocks`. The open
+  one (`std/compressor`) is a real implementation; the private one has the same packages and
+  declarations. Its sources are never versioned in the engine nor packaged.
+- **What the repository of the engine versions is open**: its projects declare
+  `build.compression` `open`, and the assets of the engine and its plugins are always written
+  open. A project chooses for itself (`none`, `open`, or the best its engine has).
+- **A stream says what decodes it**: a read needs no profile nor codecs.
 - **Decoders are preallocated.** A `Stream_Decoder` holds all the scratch, allocated once by
   whoever reads; a decode never allocates, and for any input never reads outside `src` nor writes
   outside `dst`.
-- **A game compiles no parser of a cook.** A write says how hard it compresses with its `Pack`:
-  `PACK_EDIT` in a program, the packs of `cook/compressor/lz` in a cook. `asset` never imports
-  `cook`, and every level of a codec is the same stream format.
-- **The encoders are deterministic**: the same input, codec and level give the same bytes.
+- **Types that hold a compressor keep it behind a pointer** (`Stream_Decoder`,
+  `Stream_Encoder`, `Decoder`): binaries of an installed engine built with the private compressor
+  share them with code built against the open one.
+- **The encoders are deterministic**: the same input, profile and codecs give the same bytes.
 - **A block format is described once.** `asset/texture_bc7.odin` and `asset/texture_bc6h.odin`
   hold the modes, partitions, anchors, weights and decode of BC7 and BC6H.
 - `asset.Types` is the context with the schema of the program's types: it is created once and
@@ -176,10 +171,10 @@ The packages are `std/serial` (streams, schemas, migration, paths, JSON), the co
   `hostile_schema_binary` and `hostile_random_schemas_validate` of `std/serial/hostile_test.odin`
   with `--release` and `-define:SERIAL_HOSTILE_ROUNDS=20000`.
 - `.character` is verified in its [plugin](../mirai-animation/SKILL.md).
-- Compression: `asset/codec_stream_test.odin` (streams of a codec, `none`, hostile streams),
-  `asset/container_test.odin` (chunks with alignment and compression) and the pages in
-  `asset/mesh_page_code_test.odin`. Codecs: `mirai test std/zstd`, `std/lz4` and each package of
-  `cook/encoders`. Both ways a checkout compiles (with the real `std/compressor` and
-  `cook/compressor`, whose tests come with them, and with their placeholders) run these.
+- Compression: `asset/compress_test.odin` (every profile and codecs, hostile streams, block
+  tables), `asset/container_test.odin` (chunks with alignment and pieces) and the pages in
+  `asset/mesh_page_code_test.odin`. Codecs: `mirai test` of `std/compressor/zstd`, `lz4` and each
+  package of `std/compressor/blocks`. With and without `ext/mirai-compression`, whose own tests
+  run from its folder (`mirai test ext/mirai-compression/lz`).
 - Benchmark (not routine):
   `mirai test asset scene_file_against_a_file_per_entity --release -define:ASSET_BENCH=true`.

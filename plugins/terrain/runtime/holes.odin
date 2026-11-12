@@ -88,5 +88,5 @@ source_holes_read :: proc(s:^Source,file:^asset.Asset,types:^asset.Types,allocat
 source_holes_put :: proc(document:^asset.Document,types:^asset.Types,s:^Source,keep:=false) -> asset.Error {
     if grid_none(&s.holes) {return .None}
     if s.holes.size!=holes_size(s) {return .Invalid}
-    return grid_put_document(document,types,&s.holes,"hole_pages","hole_blocks",hole_valid,s.file,s.allocator,keep,codecs=s.codecs)
+    return grid_put_document(document,types,&s.holes,"hole_pages","hole_blocks",hole_valid,s.file,s.allocator,keep)
 }
