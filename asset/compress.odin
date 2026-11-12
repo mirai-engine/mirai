@@ -5,6 +5,7 @@ import "base:runtime"
 import "core:mem"
 import "core:strings"
 import "compressor:data"
+import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/jobs"
 
@@ -14,6 +15,21 @@ Codecs :: enum u8 {
     Open, // the formats of the open compressor, which every build reads
     Best, // the best the compressor of this build has
     None, // nothing is compressed
+}
+
+// What the assets of the project at root, built with the engine at engine_root, are compressed
+// with (build.compression): Best only where the games of that engine have the private compressor,
+// since what a game does not decode it cannot ship. A folder without a project, as the assets of
+// the engine and of its plugins: Open.
+project_codecs :: proc(root,engine_root:string) -> Codecs {
+    m,error:=project.manifest_read(project.path(root,project.PROJECT_FILE,allocator=context.temp_allocator))
+    if error.code!=.None {return .Open}
+    switch base.text_get(m.build.compression[:]) {
+    case project.COMPRESSION_NONE: return .None
+    case project.COMPRESSION_OPEN: return .Open
+    }
+    _,private:=project.compressor_folder(engine_root,context.temp_allocator)
+    return .Best if private else .Open
 }
 
 // What a write of what streams while playing compresses with in place of profile.

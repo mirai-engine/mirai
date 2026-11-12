@@ -27,13 +27,6 @@ PART_NAMES :: [Plugin_Part]string{.Runtime="runtime",.Editor="editor",.Shaders="
 COMPRESSION_NONE :: "none"
 COMPRESSION_OPEN :: "open"
 
-// What the assets of a project and the game it ships are compressed with.
-Compression :: enum u8 {
-    Best, // the best compressor the games built with its engine have: the private one where it is there (compressor_folder), else the open one
-    Open, // the open compressor, which every build of the engine reads
-    None, // nothing
-}
-
 // Under the generated folder, beside the libraries of the project: the libraries of the engine's plugins it links.
 PLUGIN_LIBRARIES :: "plugins/lib"
 // Under the generated folder: what the machine that edits a project made from
@@ -447,17 +440,3 @@ asset_folders :: proc(p:^Project,allocator:=context.allocator) -> []Asset_Folder
     return folders[:]
 }
 
-// What the assets of the project at root, built with the engine at engine_root, are compressed
-// with: Best only where the games of that engine have the private compressor, since what a game
-// does not decode it cannot ship. A folder without a project, as the assets of the engine and of
-// its plugins: Open.
-compression :: proc(root,engine_root:string) -> Compression {
-    m,error:=manifest_read(path(root,PROJECT_FILE,allocator=context.temp_allocator))
-    if error.code!=.None {return .Open}
-    switch base.text_get(m.build.compression[:]) {
-    case COMPRESSION_NONE: return .None
-    case COMPRESSION_OPEN: return .Open
-    }
-    _,private:=compressor_folder(engine_root,context.temp_allocator)
-    return .Best if private else .Open
-}

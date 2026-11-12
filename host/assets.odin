@@ -8,7 +8,6 @@ import "core:strings"
 import "core:time"
 import "mirai:asset"
 import render "mirai:render"
-import "mirai:project"
 import "mirai:rhi"
 import "mirai:std/base"
 import "mirai:std/geom"
@@ -2211,14 +2210,4 @@ assets_textures_reload :: proc(a:^Assets,before:render.Settings) {
     a.revision+=1
     assets_structure_changed(a)
     assets_commit(a)
-}
-
-// What a write of the assets of a project with that compression compresses with.
-codecs_of :: proc "contextless" (compression:project.Compression) -> asset.Codecs {
-    switch compression {
-    case .Best: return .Best
-    case .Open: return .Open
-    case .None: return .None
-    }
-    return .Open
 }

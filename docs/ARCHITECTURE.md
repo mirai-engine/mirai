@@ -330,24 +330,25 @@ Numbered layers; a package only imports lower layers.
   `std/ui_format` is what the structure of a `.ui` is judged by (node kinds, override fields,
   limits), which `ui` builds and `asset` checks without importing each other.
 - **1** `project`: `project.mirai` and `plugin.mirai` manifests, the layout of a project.
-- **1** `net`, `asset`, `ui`, `audio`, `rhi`: network transport, asset formats, UI, mixer and GPU;
-  independent of each other. `rhi/shared_device` is the device the GPU tests share; only tests
-  import it, also the GPU tests of `rhi`, in `rhi/tests`.
-- **2** `render`, `platform`: hybrid renderer and SDL3. `render/abi` declares the constants the
+- **2** `net`, `asset`, `ui`, `audio`, `rhi`: network transport, asset formats, UI, mixer and GPU;
+  independent of each other; `asset` reads from `project` what a project's assets compress with.
+  `rhi/shared_device` is the device the GPU tests share; only tests import it, also the GPU tests of
+  `rhi`, in `rhi/tests`.
+- **3** `render`, `platform`: hybrid renderer and SDL3. `render/abi` declares the constants the
   renderer shares with its shaders, on top of `asset` alone: `cook/shaders` imports it to write
   them for the shaders, since the tool cannot import `render`.
-- **3** `core`: entities, tables, queues, owners, transforms and hierarchy, `Time`, `Input`,
+- **4** `core`: entities, tables, queues, owners, transforms and hierarchy, `Time`, `Input`,
   `View`, world reflection, the authority of this end (`Network`, `Remote`, `owned`), the motion
   and pose that another owner requests (`Motion`, `Pose_Target`), the requested places (`Places`,
   `place`, the only way to teleport) and world queries (`World_Queries`).
-- **4** `host`: the application (window, device, renderer, mixer, assets, content, shaders), the
+- **5** `host`: the application (window, device, renderer, mixer, assets, content, shaders), the
   game and editor loops and the player, which does not know the network: it leaves the arguments
   it does not read to the libraries (`Launch`).
-- **5** `engine/*`: the engine libraries `scene`, `volume` (the regions of the world, the per-zone
+- **6** `engine/*`: the engine libraries `scene`, `volume` (the regions of the world, the per-zone
   values in them, how they combine, and wind), `render`, `audio`, `gui`, `input` (devices,
   actions, seats, driving and `Move_Input`), `camera` (each seat's camera and the game view),
   `save`.
-- **6** `cook/*`: engine-time; world generator and project build, `cook/cache` (what is built,
+- **7** `cook/*`: engine-time; world generator and project build, `cook/cache` (what is built,
   stored by what makes it), textures (with the block encoders of `compressor:blocks`), importers,
   shaders,
   `cook/workspace` (a worktree's main checkout, the dependencies folder, shared cache and locks
@@ -360,11 +361,11 @@ Numbered layers; a package only imports lower layers.
   scene is authored with as a nested document, between its text and the file of the asset, on top of
   `asset`, `ui`, `core`, `host` and `engine/*`: the editor's `ui.*` methods and `mirai ui` and
   `mirai scene` go through it, and the presets an entity is made from are there.
-- **6** `editor` and `editor/*`: engine-time; the editor, the JSON-RPC and MCP API,
+- **7** `editor` and `editor/*`: engine-time; the editor, the JSON-RPC and MCP API,
   collaboration, prefabs and AI, whose chat search uses the C library of `third_party/sqlite`.
   `editor/kit` holds the widgets only the editor and its plugins use and reads its theme, a style
   file of the kind a game's interfaces use, so `ui` is what a game contains.
-- **7** `plugins/<name>`: first-party plugins, imported as `plugins:<name>/runtime` and
+- **8** `plugins/<name>`: first-party plugins, imported as `plugins:<name>/runtime` and
   `plugins:<name>/editor`. What only some games use is a plugin and adds nothing to the core, so
   physics, game networking and player spawning are plugins too. A plugin imports the layers below
   and only the plugins in the `dependencies` of its `plugin.mirai`, which the generator enforces;
