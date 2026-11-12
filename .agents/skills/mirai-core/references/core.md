@@ -532,9 +532,15 @@ source of its names, and the data only configure through them.
 
 ## Game data
 
-A catalog (weapons, dialogues, waves, loot tables) is a code struct with `@(record)` and `.records`
-tables that fill it ([format](../../mirai-assets/references/kinds.md#records)): the code declares
-the schema and the editor and the API, the rows.
+A catalog (weapons, dialogues, waves, loot tables) is a `.records` table that declares its type:
+its columns and its rows ([format](../../mirai-assets/references/kinds.md#records)). The editor and
+the API change both; the build generates from the columns the struct of the rows, its
+`NAME_DEFAULT` and the enums of its enum columns into `records_gen.odin` of the package the assets
+go with (`game/`, or `runtime/` of a plugin), which the generator reads back as the record type
+by the attribute it writes on it (`@(record="<the .records>")`). A column of kind `type` holds a
+type the code of that package declares (`World_Info.record_codes` lists them for the editor). A
+table that does not declare holds rows of a type another declares, with its columns: what a game
+does with the record types of a plugin.
 
 - A row is named with `core.Record(T)`: the table (`Asset_Id`) and the `Record_Id` of the row in it,
   never its position. Its zero value names none. The dependencies of an asset that stores it come
@@ -558,9 +564,12 @@ the schema and the editor and the API, the rows.
   from the rows (the texts it shows) is rebuilt only then. A table that does not load is left out
   (`host.app_records_failed`). The demo uses rows for its inventory, a dialogue and the waves of a
   horde ([demo](../../mirai-gameplay/references/demo.md#game-data)).
-- If the struct changes, the rows are read by field name, like every asset: a new field takes the
-  default of the type (`NAME_DEFAULT`) and a renamed one keeps its values only with
-  `mirai:"was=<earlier name>"` ([migration](../../mirai-assets/references/serial.md#stdserial)).
+- The editor edits rows with the layout the columns make, never that of the program, so a new
+  column is editable before the game builds again. A change of the columns rewrites the rows of the
+  declaring file at once; a renamed column keeps the names it had (`was`, also a tag of the
+  generated field), so the rows of any other table and those a game built before read by them
+  ([migration](../../mirai-assets/references/serial.md#stdserial)); a new column starts at its
+  default.
 - `World_Info.records` describes each type; `Record_Info.ref` is the `typeid` of its `Record(T)`,
   because reflection does not know which `T` it is: `core.record_of_ref` gives the type of a field.
 

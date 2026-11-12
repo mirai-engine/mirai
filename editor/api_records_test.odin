@@ -32,7 +32,6 @@ Csv_Weapon :: struct {
 // (small, big) and crates (small).
 @(private="file")
 Csv_Fixture :: struct {
-    schema:serial.Schema,
     refs:[1]Records_Api_Ref_Type,
     pouch_ids:[2]u64,
     pouch_names:[2]asset.Records_Name,
@@ -51,20 +50,22 @@ CRATES :: base.Asset_Id{3,4}
 
 @(private="file")
 csv_fixture :: proc(f:^Csv_Fixture) {
-    serial.schema_init(&f.schema,context.temp_allocator)
-    type,_:=serial.schema_add(&f.schema,Csv_Weapon)
-    f.refs[0]={type=f.schema.lookup[core.Record(Csv_Ammo)],record=0,name="game.Ammo"}
+    f.edit={id={9,9},allocator=context.temp_allocator}
+    serial.schema_init(&f.edit.schema,context.temp_allocator)
+    type,_:=serial.schema_add(&f.edit.schema,Csv_Weapon)
+    f.edit.type=type
+    f.edit.defaults=make([]u8,size_of(Csv_Weapon),context.temp_allocator)
+    f.refs[0]={type=f.edit.schema.lookup[core.Record(Csv_Ammo)],record="Ammo"}
     f.pouch_ids={11,12}
     base.text_set(f.pouch_names[0][:],"small")
     base.text_set(f.pouch_names[1][:],"big")
     f.crate_ids={21}
     base.text_set(f.crate_names[0][:],"small")
-    f.tables[0]={record=0,id=POUCHES,path="data/pouches.records",ids=f.pouch_ids[:],names=f.pouch_names[:]}
-    f.tables[1]={record=0,id=CRATES,path="data/crates.records",ids=f.crate_ids[:],names=f.crate_names[:]}
-    f.edit={id={9,9},info=type_info_of(Csv_Weapon),allocator=context.temp_allocator}
+    f.tables[0]={record="Ammo",id=POUCHES,path="data/pouches.records",ids=f.pouch_ids[:],names=f.pouch_names[:]}
+    f.tables[1]={record="Ammo",id=CRATES,path="data/crates.records",ids=f.crate_ids[:],names=f.crate_names[:]}
     f.edit.ids=make([dynamic]u64,context.temp_allocator)
     f.edit.names=make([dynamic]asset.Records_Name,context.temp_allocator)
-    f.c={schema=&f.schema,type=type,name="game.Weapon",refs=f.refs[:],tables=f.tables[:],edit=&f.edit}
+    f.c={schema=&f.edit.schema,type=type,name="Weapon",refs=f.refs[:],tables=f.tables[:],edit=&f.edit}
 }
 
 @(private="file")
@@ -139,7 +140,7 @@ records_csv_header_names_the_wrong_column :: proc(t:^testing.T) {
     }
     testing.expect_value(t,header(&f,leaves,"name","damage","title.key","lines[1].text.key","tags.Fire","position[1]","ammo"),"")
     unknown:=header(&f,leaves,"name","speed")
-    testing.expectf(t,strings.contains(unknown,`column 2 "speed" is not a field of game.Weapon`) && strings.contains(unknown,"stats.speed") && strings.contains(unknown,"title.key"),"%s",unknown)
+    testing.expectf(t,strings.contains(unknown,`column 2 "speed" is not a field of Weapon`) && strings.contains(unknown,"stats.speed") && strings.contains(unknown,"title.key"),"%s",unknown)
     missing:=header(&f,leaves,"damage")
     testing.expectf(t,strings.contains(missing,"none is name"),"%s",missing)
     twice:=header(&f,leaves,"name","damage","damage")
@@ -182,7 +183,7 @@ whip,,,,,,,nothing,
     pike,_:=csv_row(&f,"pike")
     testing.expect_value(t,spear.ammo,core.Record(Csv_Ammo){POUCHES,11})
     testing.expect_value(t,pike.ammo,core.Record(Csv_Ammo){CRATES,21})
-    reasons:=[?]struct{line:int,part:string}{{3,"column damage"},{4,"column damage"},{5,"Legendary"},{6,"column sharp"},{7,"2 tables"},{10,"no table of game.Ammo"}}
+    reasons:=[?]struct{line:int,part:string}{{3,"column damage"},{4,"column damage"},{5,"Legendary"},{6,"column sharp"},{7,"2 tables"},{10,"no table of Ammo"}}
     testing.expect_value(t,len(rejected),len(reasons))
     for each,i in rejected[:min(len(rejected),len(reasons))] {
         testing.expectf(t,each.line==reasons[i].line && strings.contains(each.reason,reasons[i].part),"line %d: %s",each.line,each.reason)
@@ -228,21 +229,21 @@ records_csv_export_reads_back :: proc(t:^testing.T) {
 records_ref_names_a_row_by_name_or_table_and_name :: proc(t:^testing.T) {
     f:Csv_Fixture
     csv_fixture(&f)
-    big,message:=records_api_ref_parse(&f.c,0,"big")
+    big,message:=records_api_ref_parse(&f.c,"Ammo","big")
     testing.expect(t,message=="" && big==Records_Api_Ref{POUCHES,12})
-    crate,_:=records_api_ref_parse(&f.c,0,"data/crates/small")
+    crate,_:=records_api_ref_parse(&f.c,"Ammo","data/crates/small")
     testing.expect_value(t,crate,Records_Api_Ref{CRATES,21})
-    _,ambiguous:=records_api_ref_parse(&f.c,0,"small")
+    _,ambiguous:=records_api_ref_parse(&f.c,"Ammo","small")
     testing.expectf(t,strings.contains(ambiguous,"2 tables") && strings.contains(ambiguous,"data/pouches/small"),"%s",ambiguous)
-    _,missing:=records_api_ref_parse(&f.c,0,"data/crates/big")
+    _,missing:=records_api_ref_parse(&f.c,"Ammo","data/crates/big")
     testing.expectf(t,strings.contains(missing,"has no row big") && strings.contains(missing,"records.inspect"),"%s",missing)
-    _,table:=records_api_ref_parse(&f.c,0,"boxes/big")
+    _,table:=records_api_ref_parse(&f.c,"Ammo","boxes/big")
     testing.expectf(t,strings.contains(table,"data/pouches, data/crates"),"%s",table)
-    testing.expect_value(t,records_api_ref_text(&f.c,0,big),"big")
-    testing.expect_value(t,records_api_ref_text(&f.c,0,crate),"data/crates/small")
-    testing.expect_value(t,records_api_ref_text(&f.c,0,{}),"")
-    lost:=records_api_ref_text(&f.c,0,{POUCHES,99})
-    back,unread:=records_api_ref_parse(&f.c,0,lost)
+    testing.expect_value(t,records_api_ref_text(&f.c,"Ammo",big),"big")
+    testing.expect_value(t,records_api_ref_text(&f.c,"Ammo",crate),"data/crates/small")
+    testing.expect_value(t,records_api_ref_text(&f.c,"Ammo",{}),"")
+    lost:=records_api_ref_text(&f.c,"Ammo",{POUCHES,99})
+    back,unread:=records_api_ref_parse(&f.c,"Ammo",lost)
     testing.expectf(t,unread=="" && back==Records_Api_Ref{POUCHES,99},"A row no table has keeps its serial form: %s %v %s",lost,back,unread)
 }
 
@@ -297,6 +298,28 @@ records_api_rows_give_their_values :: proc(t:^testing.T) {
     csv_fixture(&f)
     _,_,_,message:=csv_import(&f,"name,damage,title.key\nsword,7,item.sword\naxe,1,\n")
     testing.expect_value(t,message,"")
-    sword:=records_api_row(&f.c,0)
+    sword:=records_api_row(&f.edit,0)
     testing.expectf(t,sword.name=="sword" && strings.contains(string(sword.values),`"title": {"key": "item.sword"}`),"%v",sword)
+}
+
+// A column the methods take reads its kind by name and its bounds as a
+// number or null; what does not fit says what to give instead.
+@(test)
+records_api_columns_read_their_kind_and_options :: proc(t:^testing.T) {
+    e:records.Edit
+    if !testing.expect_value(t,records.create({1,2},"waves.records","","Wave",&e,context.temp_allocator),"") {return}
+    defer records.destroy(&e)
+    c:asset.Records_Column
+    p:=Api_Records_Column_Params{name="delay",kind="Float",min="0",unit="s"}
+    testing.expect_value(t,records_api_column_put(&c,&e,&p,nil,true),"")
+    testing.expect(t,c.kind==.Float && c.has_min && c.min==0 && !c.has_max && serial.text_field(c.unit[:])=="s")
+    rarity:asset.Records_Column
+    q:=Api_Records_Column_Params{name="rarity",kind="enum",values={"Common","Rare"}}
+    testing.expect_value(t,records_api_column_put(&rarity,&e,&q,nil,true),"")
+    testing.expect(t,serial.text_field(rarity.values[:])=="Common Rare" && serial.text_field(rarity.type[:])=="Wave_Rarity")
+    wrong:asset.Records_Column
+    bad:=Api_Records_Column_Params{name="x",kind="number"}
+    testing.expectf(t,strings.contains(records_api_column_put(&wrong,&e,&bad,nil,true),"int, float"),"an unknown kind lists those there are")
+    bound:=Api_Records_Column_Params{name="x",kind="int",max="lots"}
+    testing.expect(t,strings.contains(records_api_column_put(&wrong,&e,&bound,nil,true),"not a number"))
 }

@@ -58,13 +58,6 @@ AI_ARENA_DEFAULT :: AI_Arena{agents=60,place=true}
 HORDE_MOST :: 2000 // zombies the waves of a horde send at most
 HORDE_SENDS :: 64  // zombies the waves of a horde send in a tick at most
 
-@(record,description="A wave of a horde: delay seconds after the wave before it, count zombies interval seconds apart, each at the next spawn point of the game; then the wave next. A wave that names one before it repeats them.")
-Horde_Wave :: struct {
-    delay,interval:f32 `mirai:"min=0,unit=s"`,
-    count:i32 `mirai:"min=0,max=500"`,
-    next:core.Record(Horde_Wave),
-}
-
 @(component,description="Sends more zombies to a horde arena in waves, rows of Horde_Wave: first, then the one each names next. Each zombie is the prefab of the next Spawn_Point without players.")
 Horde_Waves :: struct {
     first:core.Record(Horde_Wave),

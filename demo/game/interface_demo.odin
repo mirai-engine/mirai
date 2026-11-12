@@ -26,31 +26,6 @@ INTERFACE_STYLES :: [3]string{"","minimal","neon"}
 INTERFACE_CHOICES :: 4
 INTERFACE_FLAGS :: 16
 
-Item_Rarity :: enum u8 {Common,Rare,Epic}
-
-@(record,description="An item a slot of the inventory holds: its name, its icon, how rare it is and how many of it a slot holds.")
-Item :: struct {
-    title:core.Text,
-    icon:base.Asset_Id `mirai:"kind=.tex"`,
-    rarity:Item_Rarity,
-    stack:i32 `mirai:"min=1"`, // units a slot holds at most
-}
-ITEM_DEFAULT :: Item{stack=1}
-
-@(record,description="A line of a conversation: who says it and what. The player answers with the Dialogue_Choice rows that name it; without them it goes on to next, and without next the conversation ends.")
-Dialogue_Line :: struct {
-    speaker,text:core.Text,
-    next:core.Record(Dialogue_Line),
-}
-
-@(record,description="An answer to a line: offered while the flag requires is set and refuses is not, it sets the flag sets and goes to the line to; without to, the conversation ends.")
-Dialogue_Choice :: struct {
-    line:core.Record(Dialogue_Line),
-    text:core.Text,
-    to:core.Record(Dialogue_Line),
-    requires,refuses,sets:[16]u8 `mirai:"text"`, // flags by name; empty: none
-}
-
 Interface_Item :: struct {
     item:core.Record(Item), // none: an empty slot
     count:i32,

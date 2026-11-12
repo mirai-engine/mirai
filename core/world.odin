@@ -145,7 +145,8 @@ World_Info :: struct {
     names:[]Name_Info,          // their constants, together by type in the order they are declared
     name_bits:[]Name_Bits_Info, // the types @(name_bits)
     actions:[]Actions_Info,     // the enums @(actions), in the order of their values
-    records:[]Record_Info,      // the types @(record)
+    records:[]Record_Info,      // the types the .records declare
+    record_codes:[]Record_Code, // the types a column of a .records may hold
     draws:[]Draw_Info,          // the procedures @(draw)
     steps:[]Step_Info,
     settles:Settle_Info, // what settle and the procedures of world_data look for in tables and storages

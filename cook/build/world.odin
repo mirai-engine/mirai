@@ -81,13 +81,12 @@ Type :: struct {
     where_:string,    // its file and line, for an error
 }
 
-// A struct of game data, @(record): the row of the tables of .records assets.
+// A struct of game data: the row of the tables of .records assets, which
+// records_gen.odin declares @(record="<the .records that declares it>").
 @(private="file")
 Record_Type :: struct {
     key,name:string,
     pkg:^Package,
-    description:string,
-    fields:[dynamic]core.Field_Description, // the comments on the lines of its fields
     file:^ast.File,
     value:^ast.Expr,
     where_:string,
@@ -385,6 +384,7 @@ PROJECT_INFO_SYMBOL :: "mirai_project_info"
 // out has what was generated, in the temp allocator.
 world_write_files :: proc(p:^project.Project,shipped:=false) -> (out:Generated,ok:bool) {
     if out.errors=kinds_write(p);len(out.errors)>0 {return}
+    if out.errors=records_write(p);len(out.errors)>0 {return}
     out=world_generate(p,context.temp_allocator,shipped)
     if len(out.errors)>0 {return}
     gen:=project.path(project.folder_path(p.root,.Generated,context.temp_allocator),"gen",allocator=context.temp_allocator)
@@ -660,38 +660,64 @@ type_read :: proc(g:^Generator,file:^ast.File,pkg:^Package,decl:^ast.Value_Decl,
 
 @(private="file")
 record_read :: proc(g:^Generator,file:^ast.File,pkg:^Package,decl:^ast.Value_Decl,name:string,options:map[string]string,also:bool) {
-    where_:=fmt.aprintf("%s(%d)",file.fullpath,decl.pos.line)
-    if also {
-        append(&g.errors,fmt.aprintf("%s: %s is a @(record), the row of tables of game data, and also a component, a storage, a message or a @(params): keep @(record) alone, and name its rows from components with core.Record(%s)",where_,name,name))
-        return
-    }
-    if pkg.editor {
-        append(&g.errors,fmt.aprintf("%s: %s is a @(record) in a package of the editor: the game reads its rows, so declare it in a library or in game/",where_,name))
-        return
-    }
-    if _,is_struct:=decl.values[0].derived.(^ast.Struct_Type);!is_struct {
-        append(&g.errors,fmt.aprintf("%s: %s is a @(record) and not a struct: a row of a table is a struct of fields",where_,name))
+    path:=file.fullpath
+    generated:=strings.has_suffix(path,RECORDS_FILE) && len(path)>len(RECORDS_FILE) && (path[len(path)-len(RECORDS_FILE)-1]=='/' || path[len(path)-len(RECORDS_FILE)-1]=='\\')
+    _,is_struct:=decl.values[0].derived.(^ast.Struct_Type)
+    if !generated || also || !is_struct {
+        append(&g.errors,fmt.aprintf("%s(%d): %s is a @(record) in code, and a record type is declared by the columns of its .records now: the build generates its struct into %s. Make the table (records.create, or Create > Record in the content browser), give it the fields of %s as columns, and delete this struct",path,decl.pos.line,name,RECORDS_FILE,name))
         return
     }
     r:=new(Record_Type)
-    r.name,r.pkg,r.where_=name,pkg,where_
+    r.name,r.pkg,r.where_=name,pkg,options["record"] or_else path
     r.key=fmt.aprintf("%s.%s",pkg.path,name)
     r.file,r.value=file,decl.values[0]
-    r.description=options["description"] or_else ""
-    field_comments(&r.fields,decl.values[0])
     for other in g.records {
-        if other.key==r.key {
-            append(&g.errors,fmt.aprintf("%s: %s is declared twice",where_,name))
-            return
-        }
-        if other.name==name && other.pkg.name==pkg.name {
-            append(&g.errors,fmt.aprintf("%s: %s.%s is also a @(record) of %s: a .records names the type of its rows by its package and name, so rename one of them",where_,pkg.name,name,other.where_))
+        if other.name==name {
+            append(&g.errors,fmt.aprintf("%s: %s is also a record type of %s: a .records names the type of its rows by its name alone, so rename the type of one of the tables",r.where_,name,other.where_))
             return
         }
     }
     g.record_by_key[r.key]=r
     append(&g.records,r)
     pkg.used=true
+}
+
+// A type a column of kind Type may hold: one the package of record types declares.
+@(private="file")
+Record_Code_Type :: struct {name,folder:string,pkg:^Package}
+
+// The types the packages that hold record types declare for others to name:
+// structs, enums, bit sets, distinct types and arrays, neither private nor
+// a component, a storage, a message, a bundle or a record. The editor offers
+// those that are plain data.
+@(private="file")
+record_codes :: proc(g:^Generator) -> []Record_Code_Type {
+    out:=make([dynamic]Record_Code_Type,context.temp_allocator)
+    for pkg in g.packages {
+        holds:=false
+        for r in g.records {holds||=r.pkg==pkg}
+        if !holds {continue}
+        folder:=""
+        if plugin:=project.import_plugin(pkg.path);plugin!="" {folder=fmt.tprintf("plugins/%s",plugin)}
+        for file in pkg.files {
+            if strings.has_suffix(file.fullpath,RECORDS_FILE) {continue}
+            for stmt in file.decls {
+                decl,is_value:=stmt.derived.(^ast.Value_Decl)
+                if !is_value || decl.is_mutable || len(decl.names)!=1 || len(decl.values)!=1 {continue}
+                #partial switch v in decl.values[0].derived {
+                case ^ast.Struct_Type: if v.poly_params!=nil {continue}
+                case ^ast.Enum_Type,^ast.Bit_Set_Type,^ast.Distinct_Type,^ast.Array_Type:
+                case: continue
+                }
+                options:=attributes_read(decl.attributes[:])
+                skip:=false
+                for option in ([]string{"private","component","storage","net_message","params","record","actions"}) {skip||=option in options}
+                if skip {continue}
+                append(&out,Record_Code_Type{ident_name(decl.names[0]),folder,pkg})
+            }
+        }
+    }
+    return out[:]
 }
 
 @(private="file")
@@ -2253,14 +2279,10 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
         fmt.sbprintf(w,"action_defaults_%d :: proc(dst:rawptr) {{(cast(^[%s.%s]%s.Action_Bindings)dst)^=%s}}\n",ai,a.pkg.alias,a.name,g.actions_type.pkg.alias,value)
     }
 
-    // What a new row of each record type starts as, and the descriptions of their fields.
+    // What a new row of each record type starts as.
     for r in g.records {
         tag:=fmt.tprintf("%s_%s",snake(r.pkg.name),snake(r.name))
         if value,found:=record_default(r);found {fmt.sbprintf(w,"record_default_%s :: proc(dst:rawptr) {{(cast(^%s.%s)dst)^=%s}}\n",tag,r.pkg.alias,r.name,value)}
-        if len(r.fields)==0 {continue}
-        fmt.sbprintf(w,"@(rodata) record_fields_%s:=[%d]%s.Field_Description{{",tag,len(r.fields),core_alias)
-        for field,k in r.fields {fmt.sbprintf(w,"%s{{%q,%q}}",k>0?",":"",field.name,field.text)}
-        fmt.sbprint(w,"}\n")
     }
     fmt.sbprint(w,"\n")
 
@@ -2353,8 +2375,11 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
         tag:=fmt.tprintf("%s_%s",snake(r.pkg.name),snake(r.name))
         _,has_default:=record_default(r)
         game:=strings.has_prefix(r.pkg.path,"project:") && !strings.has_prefix(r.pkg.path,"project:plugins/")
-        fmt.sbprintf(w,"    records[%d]={{\"%s\",\"%s\",typeid_of(%s.%s),type_info_of(%s.%s),typeid_of(%s.Record(%s.%s)),%s,%q,%s,%v}}\n",ri,r.name,r.pkg.name,r.pkg.alias,r.name,r.pkg.alias,r.name,core_alias,r.pkg.alias,r.name,has_default?fmt.tprintf("record_default_%s",tag):"nil",r.description,len(r.fields)>0?fmt.tprintf("record_fields_%s[:]",tag):"nil",game)
+        fmt.sbprintf(w,"    records[%d]={{\"%s\",\"%s\",typeid_of(%s.%s),type_info_of(%s.%s),typeid_of(%s.Record(%s.%s)),%s,%v}}\n",ri,r.name,r.pkg.name,r.pkg.alias,r.name,r.pkg.alias,r.name,core_alias,r.pkg.alias,r.name,has_default?fmt.tprintf("record_default_%s",tag):"nil",game)
     }
+    codes:=record_codes(g)
+    fmt.sbprintf(w,"    record_codes:=make([]%s.Record_Code,%d)\n",core_alias,len(codes))
+    for c,ci in codes {fmt.sbprintf(w,"    record_codes[%d]={{%q,%q,type_info_of(%s.%s)}}\n",ci,c.name,c.folder,c.pkg.alias,c.name)}
     fmt.sbprintf(w,"    steps:=make([]%s.Step_Info,%d)\n",core_alias,len(kept))
     for s,si in kept {
         phase_set:=strings.builder_make(context.temp_allocator)
@@ -2374,7 +2399,7 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
     fmt.sbprint(w,"    info.entities,info.revisions=offset_of(World,entities),offset_of(World,storage_revisions)\n")
     fmt.sbprint(w,"    info.tables,info.storages,info.messages,info.steps=tables,storages,messages,steps\n")
     fmt.sbprint(w,"    info.named_types,info.names,info.name_bits,info.actions=named_types,names,name_bits,actions\n")
-    fmt.sbprint(w,"    info.records=records\n")
+    fmt.sbprint(w,"    info.records,info.record_codes=records,record_codes\n")
     fmt.sbprint(w,"    info.draws=draws\n")
     if aged {fmt.sbprint(w,"    info.events_age=events_age\n")}
     if cursors[0]>0 {fmt.sbprint(w,"    info.events_rewind=events_rewind\n")}

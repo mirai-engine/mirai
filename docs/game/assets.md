@@ -64,9 +64,9 @@ mirai import assets/player/step.wav     # assets/player/step.sound
   `/`, or id).
 - Texts: every `.strings` is one table of keys, which a node of a `.ui`, a `core.Text` of a row
   and `core.text(texts,"menu.start",language)` show: [texts](ui/texts.md).
-- Game data: a struct tagged `@(record)` is a catalog (items, dialogue, waves) whose rows live in
-  a `.records` file (`records.create`; `records.add`, `records.set`). A
-  `core.Record(T)` field names a row; read it with `core.record(rows,ref,problems,entity)`.
+- Game data: a `.records` declares a catalog (items, dialogue, waves): its columns, from which the
+  build generates the struct, and its rows. A `core.Record(T)` field names a row; read it with
+  `core.record(rows,ref,problems,entity)`: [records](core/records.md).
 
 ## Inspect
 
