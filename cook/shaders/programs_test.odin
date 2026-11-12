@@ -428,6 +428,12 @@ vfx_programs_load_their_attributes_and_dispatch_three_entries :: proc(t:^testing
     testing.expect_value(t,problem,"")
     drift,found:=program_named(catalog,"Drift")
     testing.expect(t,found && drift.domain==.Vfx && drift.attributes==16 && len(drift.parameters)==1)
+    // The catalog names each field of its Attributes, as the editor shows what a particle keeps.
+    testing.expect(t,found && len(drift.attribute_fields)==2)
+    if found && len(drift.attribute_fields)==2 {
+        testing.expect(t,drift.attribute_fields[0]==abi.Program_Attribute{"home",.Float,3,0})
+        testing.expect(t,drift.attribute_fields[1]==abi.Program_Attribute{"hits",.Uint,1,12})
+    }
     include,_:=os.read_entire_file(path_join(f.output,"include",VFX_FOLDER,"Drift",VFX_INCLUDE,allocator=context.temp_allocator),context.temp_allocator)
     text:=string(include)
     testing.expect(t,strings.contains(text,"Drift::Attributes mirai_attributes_load_Drift(uint at)"))

@@ -6,6 +6,7 @@ import "core:math/linalg"
 import "core:mem"
 import "core:os"
 import "core:path/filepath"
+import "core:strings"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
@@ -1933,5 +1934,144 @@ particle_sprites_go_behind_the_fog_of_the_view :: proc(t: ^testing.T) {
 	testing.expectf(t, open[0].r > 40 && open[1].r > 40, "without fog both sprites show: %v", open)
 	testing.expectf(t, misty[0].r < open[0].r * 0.3, "the sprite behind the fog %v is dimmed by it, from %v", misty[0], open[0])
 	testing.expectf(t, abs(misty[1].r - open[1].r) <= 0.1 * open[1].r + 2, "the sprite in front of the fog %v shows as without it %v", misty[1], open[1])
+	expect_clean(t, f.device)
+}
+
+// What a test reads back of the ranges of one emitter (emitter_ranges), in
+// the Simulate stage after the particles.
+@(private = "file")
+Range_Read :: struct {
+	sync:  ^Particle_Sync,
+	id:    u64,
+	count: u32,
+}
+
+@(private = "file")
+RANGE_NAMES :: [3]string{"vfx test particles", "vfx test attributes", "vfx test state"}
+
+@(private = "file")
+range_read_pass :: proc(pass: ^erender.Pass, user: rawptr) {
+	r := cast(^Range_Read)user
+	if pass.world != r.sync.world {return}
+	ranges, ok := emitter_ranges(&r.sync.pool, r.id, r.count)
+	if !ok {return}
+	names := RANGE_NAMES
+	for range, i in ([3]Pool_Range{ranges.particles, ranges.attributes, ranges.state}) {
+		if range.size > 0 {erender.pass_readback(pass, range.buffer, range.offset, {names[i], range.size})}
+	}
+}
+
+// Frames of the emitters of a world with the ranges of one read back, and
+// what came back of them: its particles, their Attributes and its counters.
+@(private = "file")
+range_frames :: proc(t: ^testing.T, f: ^Gpu_Fixture, emitters: []Emitter_Desc, id: u64, count: u32) -> (particles: []Gpu_Particle, words: []u32, state: Gpu_State) {
+	camera := gpu.Camera{position = {0, 1, 4}, forward = {0, -0.7, -4}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
+	read := Range_Read{sync = &f.sync, id = id, count = count}
+	list := make([]Emitter_Desc, len(emitters), context.temp_allocator)
+	copy(list, emitters)
+	for i in 0 ..< 3 + rhi.MAX_FRAMES_IN_FLIGHT {
+		testing.expect(t, frame_emitters(f, &f.sync, list, 1.0 / 60))
+		for &e in list {e.spawns = {}}
+		erender.frame_pass(f.app.renderer, .Simulate, range_read_pass, &read)
+		testing.expect(t, gpu.renderer_frame(&f.renderer, {camera = camera, time = f32(i) / 60}), f.renderer.error)
+	}
+	names := RANGE_NAMES
+	if data, _, ok := gpu.readback(&f.renderer, f.sync.world, names[0]); ok {particles = ([^]Gpu_Particle)(raw_data(data))[:len(data) / size_of(Gpu_Particle)]}
+	if data, _, ok := gpu.readback(&f.renderer, f.sync.world, names[1]); ok {words = ([^]u32)(raw_data(data))[:len(data) / 4]}
+	if data, _, ok := gpu.readback(&f.renderer, f.sync.world, names[2]); ok && len(data) == size_of(Gpu_State) {state = (^Gpu_State)(raw_data(data))^}
+	return
+}
+
+// Each pass of the particles marks the interval the profiler lists by its name.
+@(test)
+particle_passes_mark_the_intervals_the_profiler_lists :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	if !gpu_fixture_init(t, f, 64, 48, test_settings()) {return}
+	defer gpu_fixture_destroy(f)
+	rhi.timestamps_want(f.device, true)
+	defer rhi.timestamps_want(f.device, false)
+	camera := gpu.Camera{position = {0, 1, 4}, forward = {0, -0.7, -4}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
+	emitter := test_emitter(1, {0, 0, 0})
+	emitter.info.lifetime = {5, 5}
+	seen: map[string]int
+	defer delete(seen)
+	for i in 0 ..< 6 {
+		emitter.spawns = test_burst(16) if i == 0 else {}
+		// Long frames take several steps; each kind of pass still marks one interval.
+		testing.expect(t, frame_emitters(f, &f.sync, {emitter}, 0.2))
+		testing.expect(t, gpu.renderer_frame(&f.renderer, {camera = camera, time = f32(i) * 0.2}), f.renderer.error)
+		frame: map[string]int
+		defer delete(frame)
+		for timing in gpu.renderer_stats(&f.renderer).timings {
+			if strings.has_prefix(timing.name, "particle") {frame[timing.name] += 1}
+		}
+		for name, count in frame {
+			seen[strings.clone(name, context.temp_allocator)] = max(seen[name], count)
+		}
+	}
+	for name in ([]string{"particle begin", "particle emit", "particle simulate", "particle steps", "particle finish", "particle lights", "particle sprites"}) {
+		testing.expectf(t, seen[name] == 1, "the profiler lists %q once a frame: %v", name, seen)
+	}
+	expect_clean(t, f.device)
+}
+
+// The ranges of each emitter point at its rows and its counters: as many
+// alive as its rows hold, and the bytes it holds of the pool.
+@(test)
+particle_ranges_point_at_the_rows_and_counters_of_each_emitter :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	if !gpu_fixture_init(t, f, 64, 48, test_settings()) {return}
+	defer gpu_fixture_destroy(f)
+	a, b := test_emitter(1, {0, 0, 0}), test_emitter(2, {1, 0, 0})
+	a.info.lifetime, b.info.lifetime = {5, 5}, {5, 5}
+	b.capacity = 32
+	a.spawns, b.spawns = test_burst(10), test_burst(7)
+	for e in ([]Emitter_Desc{a, b}) {
+		particles, _, state := range_frames(t, f, {a, b}, e.id, e.capacity)
+		a.spawns, b.spawns = {}, {}
+		testing.expect_value(t, len(particles), int(e.capacity))
+		held: u32
+		for p in particles {if p.lifetime > 0 {held += 1}}
+		testing.expect_value(t, held, u32(10) if e.id == 1 else u32(7))
+		testing.expect_value(t, state.alive, held)
+		at := pool_slot_find(&f.sync.pool, e.id)
+		testing.expect(t, at >= 0 && emitter_bytes(&f.sync.pool, at) >= u64(e.capacity) * size_of(Gpu_Particle))
+	}
+	_, missing := emitter_ranges(&f.sync.pool, 99, 1)
+	testing.expect(t, !missing, "no ranges for an emitter the pool does not hold")
+	expect_clean(t, f.device)
+}
+
+// The catalog names the Attributes of a program where its particles keep
+// them: a program that writes NaN into heat and 1 into calm.
+@(test)
+particle_attributes_are_where_the_catalog_names_them :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	if !gpu_fixture_init(t, f, 64, 48, test_settings()) {return}
+	defer gpu_fixture_destroy(f)
+	emitter := test_emitter(1, {0, 0, 0})
+	emitter.info.lifetime = {5, 5}
+	base.text_set(emitter.info.program[:], "Glitch")
+	if !testing.expect_value(t, particle_program_check(&f.assets, &emitter.info, nil, nil, &emitter.program), "") {return}
+	program := erender.program_find(&f.assets, "Glitch", .Vfx)
+	if !testing.expect(t, program != nil && len(program.attribute_fields) == 2) {return}
+	heat, calm := program.attribute_fields[0], program.attribute_fields[1]
+	testing.expect(t, heat.name == "heat" && calm.name == "calm" && heat.kind == .Float && calm.offset == 4)
+	emitter.spawns = test_burst(5)
+	particles, words, _ := range_frames(t, f, {emitter}, emitter.id, emitter.capacity)
+	ranges, _ := emitter_ranges(&f.sync.pool, emitter.id, emitter.capacity)
+	stride := int(ranges.stride / 4)
+	if !testing.expect(t, stride > 0 && len(words) == len(particles) * stride) {return}
+	held := 0
+	for p, slot in particles {
+		if !(p.lifetime > 0) {continue}
+		held += 1
+		testing.expect(t, math.is_nan(transmute(f32)words[slot * stride + int(heat.offset / 4)]))
+		testing.expect_value(t, transmute(f32)words[slot * stride + int(calm.offset / 4)], f32(1))
+	}
+	testing.expect_value(t, held, 5)
 	expect_clean(t, f.device)
 }

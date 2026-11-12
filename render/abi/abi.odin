@@ -300,7 +300,7 @@ Shader_Entry :: struct {
 // by its id and gives it up to PROGRAM_PARAMETER_BYTES of parameters, laid
 // out as the program reflects them.
 SHADER_CATALOG :: "catalog.json"
-SHADER_CATALOG_VERSION :: 2
+SHADER_CATALOG_VERSION :: 3
 
 Shader_Catalog :: struct {
     version:int,
@@ -339,6 +339,7 @@ Program :: struct {
     coverage:bool,                // of a Surface program: its alpha is not that of the default material
     standard:bool,                // of a Surface program: it builds on the standard model of its material (mirai_surface_standard), whose maps it reads
     attributes:int,               // of a Vfx program: bytes of what it keeps of each particle
+    attribute_fields:[]Program_Attribute, // of a Vfx program: the fields of those bytes, in the order it declares them
     resources:[]Program_Resource, // of a Vfx program, in the order it declares them
     stages:[]Program_Stage,       // of a Vfx program, in the order they run
     moves:bool,                   // of a Vfx program: it moves and ages its particles itself
@@ -356,6 +357,15 @@ Program_Parameter :: struct {
     min,max:f64,
     srgb,normal,color:bool,
     group:string, // the section of Details that shows it; empty: the first, without a title
+}
+
+// A field of the Attributes of a Vfx program: a Float, Int, Uint or Bool
+// scalar or vector, at offset bytes of what it keeps of a particle.
+Program_Attribute :: struct {
+    name:string,
+    kind:Program_Kind,
+    components:u8, // 1 to 4
+    offset:u16,
 }
 
 // A resource of a Vfx program, which each emitter binds by its name: its

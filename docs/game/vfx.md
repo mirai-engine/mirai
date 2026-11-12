@@ -77,4 +77,6 @@ first with `trigger` `Trail`, `sub_count` 1; a program may set `particle.ribbon`
   `engine.diagnostics`. An emitter that finds no room in the particle pool reports
   `vfx.capacity`.
 - `destroy_when_done` never fires with `loop` on, unless the emitter is stopped.
+- Particles that hold NaN or Inf report `vfx.nan` while `particle.instance.inspect` looks at
+  their emitter, naming the fields of its program that hold them.
 - Requests go in `fixed`, so a rollback does not draw them twice.

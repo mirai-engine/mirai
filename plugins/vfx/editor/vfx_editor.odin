@@ -26,8 +26,7 @@ Vfx_Editor :: struct {
     ready:bool,
     document:Effect_Document,
     thumbnail:Effect_Preview, // where the thumbnails of effects are drawn
-    watch:u64,                // the emitter of the edited world particle.instance.inspect looks at; 0: none
-    watched:^vfx.Particle_Sync, // of the edited world, in the frame it copies that emitter back
+    watch:Particle_Watch,     // what it reads back of the particles of a world to debug them
 }
 
 vfx_editor_free :: proc(v:^Vfx_Editor) {
