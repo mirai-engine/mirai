@@ -44,6 +44,7 @@ Text_Style :: struct {
     align_x,align_y:Align,
     wrap:Text_Wrap,
     ellipsis:bool,       // text that does not fit ends in an ellipsis
+    italic:bool,         // its glyphs lean as synthetic italics
     line_height:f32,     // in sizes; 0 means TEXT_LINE
     outline:f32,         // width, in layout units
     outline_color:Color,
@@ -55,6 +56,7 @@ Paint :: struct {
     kind:Paint_Kind,
     surface,scope:u16,
     fill,fill2,stroke:Color,
+    gradient:Fill_Gradient,  // of Rect, Panel, Bar and Box: the way fill goes to fill2
     radius,stroke_width:f32,
     corners:[4]f32,          // of Rect and Panel: of each corner instead of radius when any is set
     shadow_color:Color,
@@ -112,7 +114,8 @@ paint_background :: proc(ctx:^Context,r:Rect,p:^Paint) {
         draw_shape(ctx,r,{stroke=p.stroke,radii=radii,stroke_width=p.stroke_width if p.stroke_width>0 else 1})
         return
     }
-    draw_shape(ctx,r,{fill=p.fill,fill2=p.fill2,stroke=p.stroke,radii=radii,stroke_width=p.stroke_width if p.stroke_width>0 else 1,gradient=.Vertical if p.fill2[3]>0 else .Solid})
+    gradient:=Gradient.Solid if p.fill2[3]==0 else .Horizontal if p.gradient==.Right else .Vertical
+    draw_shape(ctx,r,{fill=p.fill,fill2=p.fill2,stroke=p.stroke,radii=radii,stroke_width=p.stroke_width if p.stroke_width>0 else 1,gradient=gradient})
 }
 
 @(private)
@@ -122,7 +125,11 @@ paint_draw :: proc(ctx:^Context,r:Rect,p:^Paint) {
     case .Rect,.Panel:
         paint_background(ctx,r,p)
     case .Bar:
-        if p.program!=0 {draw_program(ctx,r,p.program,p.program_values,p.fill,{})} else {draw_rect_gradient(ctx,r,p.fill,p.fill2)}
+        switch {
+        case p.program!=0:        draw_program(ctx,r,p.program,p.program_values,p.fill,{})
+        case p.gradient==.Right: draw_quad_colors(ctx,{{r.x,r.y},{r.x+r.w,r.y},{r.x+r.w,r.y+r.h},{r.x,r.y+r.h}},{p.fill,p.fill2,p.fill2,p.fill})
+        case:                     draw_rect_gradient(ctx,r,p.fill,p.fill2)
+        }
         draw_rect(ctx,{r.x,r.y+r.h-1,r.w,1},p.stroke)
     case .Box:
         switch {

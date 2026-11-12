@@ -157,8 +157,8 @@ gave it and takes the height of those lines in the same frame, whatever the widt
 - `draw_program` paints a rounded rectangle with a renderer
   [UI program](../../mirai-rendering/references/shaders.md#programs), whose `ui` id it does not
   interpret; the scope tints it by the vertex color, like a shape. With `program` in a `Box`, a
-  `Progress` or a `Paint`, the fill comes from the program instead of the fill and its gradient;
-  shadow, border and track are still shapes.
+  `Button`, a `Progress` or a `Paint`, the fill comes from the program instead of the fill and its
+  gradient; shadow, border and track are still shapes.
 - What does not fit in `max_vertices`, `max_commands` or `max_shapes` is discarded whole and
   counted.
 

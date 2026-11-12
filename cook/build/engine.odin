@@ -390,12 +390,15 @@ ENGINE_EMBEDS_SHADERS :: "render"
 @(private)
 engine_plan :: proc(root,compiler:string,mode:Engine_Mode,paths:Engine_Paths,libraries:[]Engine_Library) -> (plan:Engine_Plan) {
     plan.flags=engine_flags(root,mode==.Dev)
-    // render embeds the code of the shaders of the engine. A release build follows it, encoded to
-    // ship. A dev build follows only its table (render/shaders_gen.odin), which says what the
-    // stages bind and nothing of their code: the code it embeds is that of when it was compiled,
-    // and a generation with newer code loads into it (render.shader_generation_current).
+    // render embeds the code of the shaders of the engine and their catalog of programs. A release
+    // build follows both, the code encoded to ship. A dev build follows the catalog, which names the
+    // programs a style or a material finds, and of the code only its table
+    // (render/shaders_gen.odin), which says what the stages bind: the code it embeds is that of when
+    // it was compiled, and a generation with newer code loads into it
+    // (render.shader_generation_current).
     names:=shaders.EMBEDDED_NAMES
-    embedded:=[2]string{project.path(root,"shaders/build/manifest.json",allocator=context.temp_allocator),project.path(root,"shaders/build",names[shaders.HOST_BACKEND],allocator=context.temp_allocator)}
+    catalog:=project.path(root,"shaders/build/catalog.json",allocator=context.temp_allocator)
+    embedded:=[3]string{catalog,project.path(root,"shaders/build/manifest.json",allocator=context.temp_allocator),project.path(root,"shaders/build",names[shaders.HOST_BACKEND],allocator=context.temp_allocator)}
     plan.programs,_=fingerprint(root,compiler,plan.flags[:],nil)
     compressor:=compressor_sources(root)
     plan.libraries=make([]Library_Stamp,len(libraries),context.temp_allocator)
@@ -404,7 +407,8 @@ engine_plan :: proc(root,compiler:string,mode:Engine_Mode,paths:Engine_Paths,lib
         flags:=slice.clone_to_dynamic(plan.flags[:],context.temp_allocator)
         for define in defines_read(root,libraries[which].packages,paths.defines,context.temp_allocator) {append(&flags,fmt.tprintf("-define:%s",define))}
         plan.library_flags[which]=flags[:]
-        loads:=embedded[:] if mode==.Release && slice.contains(libraries[which].packages,ENGINE_EMBEDS_SHADERS) else nil
+        loads:[]string
+        if slice.contains(libraries[which].packages,ENGINE_EMBEDS_SHADERS) {loads=embedded[:] if mode==.Release else embedded[:1]}
         sources:=slice.clone_to_dynamic(engine_sources(root,libraries[which].packages,..loads),context.temp_allocator)
         append(&sources,..compressor)
         library.sources,_=fingerprint(root,compiler,flags[:],sources[:])

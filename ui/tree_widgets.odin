@@ -73,7 +73,7 @@ tree_build_leaf :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,nod
         }
         progress(ctx,{id=node_id,value=f32(shown),width=node.layout.width,height=node.layout.height,
             fill=style.fill,track=style.track,stroke=style.stroke,corners=style.radius,quad=image_ref.quad,border=image_ref.border,border_uv=image_ref.border_uv,
-            fill_mode=style.fill_mode,stroke_width=style.stroke_width,program=tree.programs[node.style] if int(node.style)<len(tree.programs) else 0,program_values=style.program_values})
+            fill_mode=style.fill_mode,stroke_width=style.stroke_width,program=tree_program(tree,node.style),program_values=style.program_values})
     case .Button:
         tree_button(ctx,b,node,index,slot,node_id,values,item,base_style,style,image_ref,content,selected,disabled)
     case .Checkbox:
@@ -196,7 +196,8 @@ tree_own_text :: proc(b:^Tree_Build,node:^Node,index:int) -> string {
 tree_button :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,node_id:Id,values:rawptr,item:i32,base_style,style:^Node_Style,image_ref:Node_Image,content:string,selected,disabled:bool) {
     instance:=b.instance
     state:=&instance.slot[slot]
-    it:=button(ctx,node_id,{label=content,look=style,layout=&node.layout,image=image_ref,block=true,disabled=disabled})
+    program:=tree_program(b.tree,node.style)
+    it:=button(ctx,node_id,{label=content,look=style,layout=&node.layout,image=image_ref,program=program,block=true,disabled=disabled})
     takes:=node.action!=0 && !b.desc.passive && !disabled
     down,pressed:bool
     if takes && ctx.game.action!=nil {down,pressed=ctx.game.action(ctx.game.user,node.action)}

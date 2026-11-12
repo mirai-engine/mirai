@@ -34,6 +34,8 @@ Node_Flags :: bit_set[Node_Flag;u16]
 
 // How a Progress fills: Right grows from the left edge toward the right.
 Progress_Fill :: enum u8 {Right,Left,Down,Up,Center,Radial}
+// The way a fill goes to its fill2: down from the top edge, or right from the left one.
+Fill_Gradient :: enum u8 {Down,Right}
 
 // When a node plays the sounds of its style.
 Sound_Cue :: enum u8 {
@@ -53,6 +55,7 @@ Node_Style :: struct {
     mark:Color,        // the filled part of a Slider, the dot of a Radio, the tick of a Checkbox, the arrows of a Selector and a Number, the accent of a Dropdown, the bar of a held Button
     radius:[4]f32,     // of the corners: top left, top right, bottom right, bottom left
     fill2:Color,
+    gradient:Fill_Gradient, // the way fill goes to fill2
     stroke_width:f32,
     shadow:bool,
     shadow_color:Color,
@@ -625,7 +628,7 @@ tree_name_id :: proc(ctx:^Context,name:u64) -> Id {
 }
 @(private)
 tree_box :: proc(node:^Node,style:^Node_Style,id:Id) -> Box {
-    return {id=id,layout=node.layout,float=node.float,clip_x=node.clip,clip_y=node.clip,fill=style.fill,fill2=style.fill2,stroke=style.stroke,corners=style.radius,stroke_width=style.stroke_width if style.stroke_width>0 || style.stroke[3]==0 else 1,shadow=style.shadow,shadow_color=style.shadow_color,shadow_blur=style.shadow_blur,shadow_offset=style.shadow_offset,layer=node.layer,block=node.block}
+    return {id=id,layout=node.layout,float=node.float,clip_x=node.clip,clip_y=node.clip,fill=style.fill,fill2=style.fill2,gradient=style.gradient,stroke=style.stroke,corners=style.radius,stroke_width=style.stroke_width if style.stroke_width>0 || style.stroke[3]==0 else 1,shadow=style.shadow,shadow_color=style.shadow_color,shadow_blur=style.shadow_blur,shadow_offset=style.shadow_offset,layer=node.layer,block=node.block}
 }
 
 @(private)
@@ -903,13 +906,19 @@ tree_build_node :: proc(ctx:^Context,b:^Tree_Build,index:int,values:rawptr,copy:
     return next
 }
 
+// The ui program that colors the fill of a style; 0 for none.
+@(private)
+tree_program :: proc "contextless" (tree:^Widget_Tree,style:u16) -> u32 {
+    return tree.programs[style] if int(style)<len(tree.programs) else 0
+}
+
 @(private)
 tree_build_container :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,next,slot:int,node_id:Id,values:rawptr,copy:int,item:i32,style:^Node_Style,image_ref:Node_Image,disabled:bool) {
     tree:=b.tree
     box:=tree_box(node,style,node_id)
     box.float.layer=i16(clamp(b.floor+int(node.float.layer),int(min(i16)),int(max(i16))))
     box.image,box.image_border,box.image_border_uv,box.image_fit,box.image_size=image_ref.quad,image_ref.border,image_ref.border_uv,image_ref.fit,image_ref.size
-    if int(node.style)<len(tree.programs) {box.program,box.program_values=tree.programs[node.style],style.program_values}
+    box.program,box.program_values=tree_program(tree,node.style),style.program_values
     // The rows of the grid tracks of the tree follow those the frame had when it began to build it.
     if box.tracks!=0 {box.tracks=u16(b.tracks+int(box.tracks)) if b.tracks+int(box.tracks)<=b.tracks_end else 0}
     // What wraps the focus, holds a float or takes a drop keeps its rectangle, and so does a Radial.

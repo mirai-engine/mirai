@@ -790,6 +790,31 @@ a_library_of_the_engine_is_shared_by_what_it_is_built_from :: proc(t:^testing.T)
 
 }
 
+// A dev build of render compiles again when the catalog of programs it embeds moves, so a style
+// finds a new program; new code of the shaders alone loads into what it compiled.
+@(test)
+a_dev_build_of_render_follows_the_catalog_of_programs :: proc(t:^testing.T) {
+    context.allocator=context.temp_allocator
+    root:=base.test_folder(t,"engine-catalog")
+    if root=="" {return}
+    source_write(t,root,"render","programs.odin","package render\n\nCATALOG := #load(\"../shaders/build/catalog.json\")\n")
+    source_write(t,root,"shaders/build","catalog.json","{}")
+    source_write(t,root,"shaders/build","shaders.spv.lz","code")
+    libraries:=engine_libraries(.Dev)
+    render:=-1
+    for library,which in libraries {
+        if slice.contains(library.packages,ENGINE_EMBEDS_SHADERS) {render=which}
+    }
+    if !testing.expect(t,render>=0) {return}
+    paths:=engine_paths(root,.Dev)
+    tools :: proc(root:string,paths:Engine_Paths,libraries:[]Engine_Library,which:int) -> u64 {return engine_plan(root,"",.Dev,paths,libraries).libraries[which].tools}
+    before:=tools(root,paths,libraries,render)
+    source_write(t,root,"shaders/build","shaders.spv.lz","newer code")
+    testing.expect_value(t,tools(root,paths,libraries,render),before)
+    source_write(t,root,"shaders/build","catalog.json",`{"programs":[{"name":"Ui_Slant"}]}`)
+    testing.expect(t,tools(root,paths,libraries,render)!=before,"a new catalog compiles render again")
+}
+
 // A define of a project that a #config of the engine reads builds the engine
 // apart, in a folder of those defines: the library whose sources read it
 // compiles with it, the one that names a declaration it changed compiles

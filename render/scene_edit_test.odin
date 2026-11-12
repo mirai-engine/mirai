@@ -359,7 +359,7 @@ program_catalog_names_the_programs_and_packs_their_parameters :: proc(t: ^testin
 	testing.expect_value(t, params[0].xyz, Vec3{0.5, 0.25, 1})
 	testing.expect(t, program_parameter(grid, "nothing") == nil)
 
-	text := `{"version":2,"programs":[{"id":3,"name":"Paint","domain":"Surface","size":24,"parameters":[
+	text := `{"version":3,"programs":[{"id":3,"name":"Paint","domain":"Surface","size":24,"parameters":[
 		{"name":"image","kind":"Texture","components":1,"offset":0,"srgb":true},
 		{"name":"steps","kind":"Int","components":2,"offset":4,"defaults":[-2,5,0,0],"min":-8,"max":8,"group":"Pattern"},
 		{"name":"on","kind":"Bool","components":1,"offset":12,"defaults":[1,0,0,0],"min":0,"max":1},
@@ -395,13 +395,13 @@ program_catalog_keeps_the_ui_programs_apart :: proc(t: ^testing.T) {
 	r:=new(Renderer);defer free(r)
 	r.allocator = context.allocator
 	defer program_catalog_destroy(&r.programs)
-	for name in ([]string{"Ui_Radial_Wipe", "Ui_Dissolve", "Ui_Shine", "Ui_Gradient_Sweep"}) {
+	for name in ([]string{"Ui_Radial_Wipe", "Ui_Dissolve", "Ui_Shine", "Ui_Gradient_Sweep", "Ui_Slant"}) {
 		program := program_find(r, name, .Ui)
 		testing.expectf(t, program != nil && program.size <= 16, "%s is a ui program of the engine", name)
 		testing.expectf(t, program_find(r, name, .Postprocess) == nil && program_find(r, name, .Surface) == nil, "%s is of the ui domain alone", name)
 	}
 	testing.expect(t, program_find(r, "ColorGrade", .Ui) == nil)
-	text := `{"version":2,"programs":[{"id":4,"name":"Wipe","domain":"Ui","size":8,"parameters":[
+	text := `{"version":3,"programs":[{"id":4,"name":"Wipe","domain":"Ui","size":8,"parameters":[
 		{"name":"fill","kind":"Float","components":1,"offset":0,"defaults":[1,0,0,0],"min":0,"max":1},
 		{"name":"start","kind":"Float","components":1,"offset":4,"min":-1,"max":1}]}]}`
 	catalog, parsed := program_catalog_parse(transmute([]u8)text)
@@ -410,7 +410,7 @@ program_catalog_keeps_the_ui_programs_apart :: proc(t: ^testing.T) {
 	wipe := &catalog.programs[0]
 	testing.expect(t, wipe.domain == .Ui && wipe.id == 4 && len(wipe.parameters) == 2)
 	testing.expect_value(t, program_defaults(wipe)[0], Vec4{1, 0, 0, 0})
-	unknown := `{"version":2,"programs":[{"id":1,"name":"Fog","domain":"Volume","size":0,"parameters":[]}]}`
+	unknown := `{"version":3,"programs":[{"id":1,"name":"Fog","domain":"Volume","size":0,"parameters":[]}]}`
 	_, known := program_catalog_parse(transmute([]u8)unknown)
 	testing.expect(t, !known, "a domain the renderer does not know makes the catalog invalid")
 }
