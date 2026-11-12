@@ -631,6 +631,9 @@ commands_register :: proc(s:^Session,st:^Api_State) {
         {name="asset_delete",view=proc(s:^Session) {asset_delete_ask(s,card_focused(s))},label="Delete",icon=user(.Trash),shortcut=key(.Delete),alternate=key(.Backspace),modes=edit,card=true},
         {name="asset_rename",view=proc(s:^Session) {content_rename_begin(s,card_focused(s))},label="Rename",icon=.Edit,shortcut=key(.F2),modes=edit,card=true},
         {name="asset_duplicate",method="asset.move",params=`{"asset":"$card","copy":true}`,label="Duplicate",icon=user(.Copy),shortcut=key(.D,{.Primary}),modes=edit,card=true},
+        {name="asset_copy",view=proc(s:^Session) {content_clipboard_set(s.content,card_focused(s),false)},label="Copy",icon=user(.Copy),shortcut=key(.C,{.Primary}),card=true},
+        {name="asset_cut",view=proc(s:^Session) {content_clipboard_set(s.content,card_focused(s),true)},label="Cut",shortcut=key(.X,{.Primary}),modes=edit,card=true},
+        {name="asset_paste",view=content_paste_focused,label="Paste",shortcut=key(.V,{.Primary}),modes=edit,card=true,state=state_asset_paste},
     }
     for entry in entries {command_bind(s,entry)}
     if s.has_project {tool_entry(s,AI_ANNOTATE_TOOL,"Annotate",ai_annotate_icon())}
@@ -641,6 +644,11 @@ commands_register :: proc(s:^Session,st:^Api_State) {
 // A key is of Play or of Stop: an agent plays again a game that plays, a person stops it.
 @(private="file") state_play :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=s.mode!=.Edit || play_plugin_active(s)}}
 @(private="file") state_stop :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=s.mode==.Edit && !play_plugin_active(s)}}
+
+@(private="file")
+state_asset_paste :: proc(s:^Session,b:^Binding) -> Command_State {
+    return {disabled=s.content==nil || len(s.content.clipboard)==0 || asset_create_refusal(s)!=""}
+}
 
 @(private="file")
 state_build :: proc(s:^Session,b:^Binding) -> (state:Command_State) {
