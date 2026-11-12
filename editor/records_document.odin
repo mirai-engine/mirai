@@ -22,9 +22,9 @@ import "mirai:ui"
 // columns, which change there.
 
 RECORDS_INDEX_WIDTH :: 44  // points of the column of the numbers of the rows
-RECORDS_NAME_WIDTH :: 180  // of the column of the names
+RECORDS_NAME_WIDTH :: 150  // of the column of the names
 RECORDS_ADD_WIDTH :: 36    // of the + after the last column
-RECORDS_DETAILS_WIDTH :: 360
+RECORDS_DETAILS_WIDTH :: 320
 RECORDS_PAD :: 10          // inside a cell, at each side
 @(private) RECORDS_NAME_CELL :: -2 // the cell of the name of the selected row
 @(private) KEY_RECORDS_ROW :: u64(0x7265636f72647372)
@@ -49,7 +49,6 @@ Records_Document :: struct {
     cell:int,         // the column of the selected row a click opened in the grid; -1: none
     reveal:bool,      // scroll to the selected row
     scroll:[2]f32,
-    header_scroll:[2]f32, // follows scroll across: the names of the columns stay on top
     details_scroll:[2]f32,
     problem:[256]u8,  // why the table cannot be shown
 }
@@ -175,12 +174,12 @@ records_hint :: proc(c:^asset.Records_Column) -> string {
 records_width :: proc(ctx:^ui.Context,c:^asset.Records_Column) -> f32 {
     width:f32
     switch c.kind {
-    case .Bool:              width=84
-    case .Int,.Float:        width=112
-    case .Enum:              width=132
-    case .Asset,.Record:     width=164
-    case .Text,.Type:        width=172
-    case .String:            width=clamp(f32(c.length)*5,132,240)
+    case .Bool:              width=72
+    case .Int,.Float:        width=96
+    case .Enum:              width=120
+    case .Asset,.Record:     width=140
+    case .Text,.Type:        width=150
+    case .String:            width=clamp(f32(c.length)*5,120,220)
     }
     header:=ui.text_width(&ctx.font,records.column_name(c),ui.metric(ctx,"font_small"))+ui.text_width(&ctx.font,records_hint(c),ui.metric(ctx,"font_caption"))+2*RECORDS_PAD+10
     return min(max(width,header),320)
@@ -219,14 +218,17 @@ records_grid :: proc(s:^Session,r:^Records_Document,app:^host.App) {
     if e.info.declares {width+=RECORDS_ADD_WIDTH}
     header_height:=ui.metric(ctx,"row")+10
     row_height:=ui.metric(ctx,"row")+6
-    // The names of the columns stay on top while the rows scroll under them.
-    r.header_scroll={r.scroll[0],0}
-    if ui.scroll_area(ctx,ui.id(ctx,"header"),&r.header_scroll,{width=ui.GROW,height=ui.fixed(header_height),axes=.Horizontal}) {
+    area_id:=ui.id(ctx,"rows")
+    area,_:=ui.widget_rect(ctx,area_id)
+    // The names of the columns stay on top while the rows scroll under them,
+    // and move across with them, within the width of the rows.
+    r.scroll[0]=clamp(r.scroll[0],0,max(width-area.w,0))
+    if ui.box(ctx,{id=ui.id(ctx,"header"),width=ui.GROW,height=ui.fixed(header_height),clip_x=true,scroll={r.scroll[0],0}}) {
         if ui.box(ctx,{width=ui.fixed(width),height=ui.fixed(header_height),align_y=.Center,fill=ui.tone(ctx,"card")}) {
             ui.spacer(ctx,RECORDS_INDEX_WIDTH,header_height)
+            // The corner shows the settings of the table, which show when nothing else is chosen.
             corner:=ui.id(ctx,"corner")
-            table:=r.selected<0 && r.column<0
-            if ui.box(ctx,{id=corner,width=ui.fixed(RECORDS_NAME_WIDTH),height=ui.GROW,padding={RECORDS_PAD,0,RECORDS_PAD,0},align_y=.Center,track=true,fill=records_header_fill(ctx,corner,table)}) {
+            if ui.box(ctx,{id=corner,width=ui.fixed(RECORDS_NAME_WIDTH),height=ui.GROW,padding={RECORDS_PAD,0,RECORDS_PAD,0},align_y=.Center,track=true,fill=records_header_fill(ctx,corner,false)}) {
                 ui.text(ctx,"Name",{size=ui.metric(ctx,"font_small"),color=ui.tone(ctx,"text_label"),font=ui.FONT_MEDIUM,align_y=.Center},ui.GROW)
             }
             if records_pressed(ctx,corner) {r.selected,r.column,r.cell=-1,-1,-1}
@@ -239,8 +241,6 @@ records_grid :: proc(s:^Session,r:^Records_Document,app:^host.App) {
         }
     }
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=ui.tone(ctx,"border")}) {}
-    area_id:=ui.id(ctx,"rows")
-    area,_:=ui.widget_rect(ctx,area_id)
     count:=records.row_count(e)
     if r.reveal && r.selected>=0 {
         top:=f32(r.selected)*row_height
@@ -318,7 +318,8 @@ records_grid_row :: proc(s:^Session,r:^Records_Document,app:^host.App,row:int,wi
             }
         }
         if records_pressed(ctx,name) {r.selected,r.column,r.cell=row,-1,RECORDS_NAME_CELL}
-        for &c,at in e.columns {
+        // A column the + of the header added this frame shows from the next one, with its width.
+        for &c,at in e.columns[:min(len(e.columns),len(widths))] {
             cell:=ui.id(ctx,"cell_box",at+1)
             band:=r.column==at ? ui.tone(ctx,"accent_soft") : ui.Color{}
             if ui.box(ctx,{id=cell,width=ui.fixed(widths[at]),height=ui.GROW,padding={4,2,4,2},align_y=.Center,track=true,clip_x=true,fill=band,stroke=ui.tone(ctx,"accent") if selected && r.cell==at else {},stroke_width=1,radius=ui.metric(ctx,"radius_control")}) {
@@ -680,7 +681,7 @@ records_column_panel :: proc(s:^Session,r:^Records_Document,at:int) {
         row_end(ctx)
     }
     count:=f64(c.count)
-    if records_number_row(ctx,ui.id(ctx,"column_count"),"Count",&count,{integer=true,has_min=true,min=0,has_max=true,max=asset.RECORDS_COUNT,speed=0.05}) {
+    if records_number_row(ctx,ui.id(ctx,"column_count"),"Array length",&count,{integer=true,has_min=true,min=0,has_max=true,max=asset.RECORDS_COUNT,speed=0.05}) {
         c.count=u16(clamp(count,0,asset.RECORDS_COUNT))
         changed=true
     }
@@ -707,7 +708,7 @@ records_column_panel :: proc(s:^Session,r:^Records_Document,at:int) {
         if ui.button(ctx,ui.id(ctx,"column_left"),{label="Move left",variant="field",height=control,size=ui.metric(ctx,"font_small"),disabled=at==0}).clicked {records_column_move(s,r,at,at-1)}
         if ui.button(ctx,ui.id(ctx,"column_right"),{label="Move right",variant="field",height=control,size=ui.metric(ctx,"font_small"),disabled=at==len(e.columns)-1}).clicked {records_column_move(s,r,at,at+1)}
         ui.spacer(ctx)
-        if ui.button(ctx,ui.id(ctx,"column_remove"),{label="Delete column",icon=.Cross,variant="danger",height=control,size=ui.metric(ctx,"font_small")}).clicked {
+        if ui.button(ctx,ui.id(ctx,"column_remove"),{label="Delete column",icon=.Cross,variant="field",height=control,size=ui.metric(ctx,"font_small")}).clicked {
             if problem:=records.column_remove(e,s.app.info,at);problem!="" {notify(s,problem)} else {
                 r.column,r.cell,r.changed=min(at,len(e.columns)-1),-1,true
             }
