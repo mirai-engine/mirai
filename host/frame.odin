@@ -749,10 +749,11 @@ split_rect :: proc "contextless" (size:[2]i32,count,index:int) -> [4]i32 {
 // pixels: the tile it was given, or its part of the drawable.
 app_player_rect :: proc "contextless" (app:^App,slot,count:int) -> [4]i32 {
     if slot>=0 && slot<app.player_tile_count {return app.player_tiles[slot]}
-    // What the editor keeps at the side of the view is no player's.
-    left:=max(app.scene.x,0)
-    rect:=split_rect({app.drawable.x-left,app.drawable.y},max(count,1),slot)
-    rect.x+=left
+    // What the editor keeps around the view (its bars and panels) is no player's.
+    area:=[4]i32{0,0,app.drawable.x,app.drawable.y}
+    if app.scene.z>0 && app.scene.w>0 {area=app.scene}
+    rect:=split_rect(area.zw,max(count,1),slot)
+    rect.xy+=area.xy
     return rect
 }
 
