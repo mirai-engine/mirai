@@ -91,7 +91,7 @@ a_written_obj_is_read_back_with_its_material_and_its_dependencies :: proc(t:^tes
     testing.expect_value(t,len(view.slots),1)
     testing.expect_value(t,view.slots[0].material,material_written.id)
     testing.expect(t,slice.contains(a.dependencies,material_written.id),"the mesh depends on its material")
-    testing.expect(t,view.source!=nil && string_of(view.source.importer[:])==importer.IMPORTER_NAME && string_of(view.source.name[:])=="ConcaveL" && view.source.source_hash==model.source_hash && view.source.source_size==model.source_size)
+    testing.expect(t,view.source!=nil && string_of(view.source.importer[:])==importer.IMPORTER_NAME && string_of(view.source.name[:])=="ConcaveL")
 
     m,m_loaded:=read_asset(t,material_written,&types)
     if !m_loaded {return}

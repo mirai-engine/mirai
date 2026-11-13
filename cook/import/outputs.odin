@@ -132,8 +132,9 @@ output_warn :: proc(o:^Outputs,format:string,args:..any) {
 }
 
 // Whether every output of the cache the sidecar lists has its file under the
-// key of what the import builds from: then the writer keeps each, and a model
-// read ahead for it needs nothing cooked (model_cook). It fixes that key:
+// key of what the import builds from, or one under another key it may take:
+// then the writer keeps each or builds it, and a model read ahead for it needs
+// nothing cooked (model_cook). It fixes that key:
 // every input is given (output_input) before.
 outputs_current :: proc(o:^Outputs) -> bool {
     if current,known:=o.current.?;known {return current}

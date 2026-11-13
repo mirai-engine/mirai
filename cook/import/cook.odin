@@ -36,6 +36,7 @@ Cook_Failure :: enum u8 {
 // memory is its arena.
 Cooked_Mesh :: struct {
     settings:u64,
+    content:u64, // mesh_content_hash of what it was built from
     failure:Cook_Failure,
     geometry:asset.Mesh_Geometry,
     collision:Mesh_Collision, // the colliders of the source, as it gives them
@@ -64,11 +65,16 @@ image_build_options :: proc(image:Imported_Image,settings:Import_Settings) -> te
     return {srgb=image.srgb,normal_map=image.normal_map,green_down=image.green_down,alpha_coverage=image.alpha_cutoff,keep_precision=image.keep_precision,encoding=settings.textures,rdo_lambda=settings.rdo_lambda,channels=image.channels}
 }
 
-// What a mesh is made from: its geometry and colliders as read, the settings
-// of its levels and the version of what builds it.
-mesh_cache_key :: proc(mesh:^Imported_Mesh,settings:Import_Settings) -> u64 {
-    key:=base.hash_combine(mesh_settings_hash(settings),MESH_CACHE_VERSION)
-    key=base.hash_combine(key,base.hash64(mem.slice_to_bytes(mesh.vertices)))
+// What a mesh is built with: the settings of its levels and the version of
+// what builds it. What its Import_Info records as its settings.
+mesh_build_hash :: proc(settings:Import_Settings) -> u64 {
+    return base.hash_combine(mesh_settings_hash(settings),MESH_CACHE_VERSION)
+}
+
+// The mesh as the reader gives it: vertices, indices, skin, submeshes, morph
+// targets, colliders and flags.
+mesh_content_hash :: proc(mesh:^Imported_Mesh) -> u64 {
+    key:=base.hash64(mem.slice_to_bytes(mesh.vertices))
     key=base.hash_combine(key,base.hash64(mem.slice_to_bytes(mesh.indices)))
     key=base.hash_combine(key,base.hash64(mem.slice_to_bytes(mesh.skin)))
     key=base.hash_combine(key,base.hash64(mem.slice_to_bytes(mesh.submeshes)))
@@ -78,7 +84,13 @@ mesh_cache_key :: proc(mesh:^Imported_Mesh,settings:Import_Settings) -> u64 {
     key=base.hash_combine(key,base.hash64(mem.slice_to_bytes(mesh.collision.points)))
     key=base.hash_combine(key,base.hash64(mem.slice_to_bytes(mesh.collision.indices)))
     flags:=mesh.flags
-    return base.hash_combine(key,base.hash64(mem.ptr_to_bytes(&flags)))|1
+    return base.hash_combine(key,base.hash64(mem.ptr_to_bytes(&flags)))
+}
+
+// What a mesh is made from: its content as read (mesh_content_hash) and what
+// it is built with (mesh_build_hash).
+mesh_cache_key :: proc(content:u64,settings:Import_Settings) -> u64 {
+    return base.hash_combine(mesh_build_hash(settings),content)|1
 }
 
 // Builds the levels and clusters of a mesh, or reads them from the mesh
@@ -88,6 +100,7 @@ mesh_cook :: proc(mesh:^Imported_Mesh,settings:Import_Settings,options:Import_Op
     mem.dynamic_arena_init(&cooked.arena,parent,parent,block_size=1<<20,out_band_size=1<<20)
     allocator:=base.dynamic_arena_allocator(&cooked.arena)
     cooked.settings=mesh_settings_hash(settings)
+    cooked.content=mesh_content_hash(mesh)
     if !asset.vertices_finite({vertices=mesh.vertices,flags=mesh.flags}) {cooked.failure=.Not_Finite;return}
     types:asset.Types
     asset.types_init(&types,context.temp_allocator)
@@ -95,7 +108,7 @@ mesh_cook :: proc(mesh:^Imported_Mesh,settings:Import_Settings,options:Import_Op
     folder:=options.mesh_cache
     key:u64
     if folder!="" {
-        key=mesh_cache_key(mesh,settings)
+        key=mesh_cache_key(cooked.content,settings)
         file:asset.Asset
         if !options.rebuild && cache.load(folder,key,MESH_CACHE_VERSION,".mesh",&file,allocator) {
             if view,error:=asset.mesh_view(&file,&types);error==.None {
@@ -199,20 +212,22 @@ image_bytes :: proc(image:Imported_Image) -> (bytes:[]u8,made:textures.Source,ok
 }
 
 // Builds ahead the meshes and textures of a model that were not built for
-// the same settings, each a job of the job
+// the same settings, but those whose file the writer keeps (kept, by row of
+// the meshes and of the images; nil, none), each a job of the job
 // system of options.worker (or one after the other without one). Their
 // arenas take their memory from that system, which any thread can call, or
 // from the allocator of the model.
-model_cook :: proc(model:^Imported_Model,options:Import_Options) {
+model_cook :: proc(model:^Imported_Model,options:Import_Options,kept_meshes:[]bool=nil,kept_images:[]bool=nil) {
     settings:=model_settings(model,options)
     mesh_settings:=mesh_settings_hash(settings)
     Item :: struct {mesh,image:int}
     items:=make([dynamic]Item,context.temp_allocator)
     for &mesh,i in model.meshes {
-        if mesh.cooked!=nil && mesh.cooked.settings==mesh_settings {continue}
+        if i<len(kept_meshes) && kept_meshes[i] || mesh.cooked!=nil && mesh.cooked.settings==mesh_settings {continue}
         append(&items,Item{i,-1})
     }
     for &image,i in model.images {
+        if i<len(kept_images) && kept_images[i] {continue}
         build:=image_build_options(image,settings)
         if image.cooked!=nil && (image.cooked.settings==textures.settings_hash(build) || options.fast_textures && image.cooked.settings==fast_settings(build)) {continue}
         // An image file that cannot be read is the writer's to tell.
