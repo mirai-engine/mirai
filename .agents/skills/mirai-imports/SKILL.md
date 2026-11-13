@@ -157,11 +157,14 @@ the assets.
   options of whoever imports (except `ignore_stored`); every import writes it. Everything that
   changes an asset is a setting, also the alpha coverage of a loose image. An unreadable sidecar
   is an error, not the defaults nor new ids.
-- **What is imported is used as is.** Levels of detail and colliders are made on import and stored
-  in the `.mesh`; loading does not recompute them.
-- **Simple collision: the source's wins.** The colliders the source brings are the mesh's
-  collision; the `collision` setting builds them from the geometry only if the source brings
-  none, or with `force_collision` (`--force-collision`).
+- **What is imported is used as is.** Levels of detail are made on import and stored in the
+  `.mesh`; loading does not recompute them.
+- **Collision is the source's, as authored.** The colliders the source brings are the mesh's and
+  the import makes none; a mesh without them collides only through an `Auto` collider, whose
+  geometry physics derives and caches. Decided by the owner.
+- **No limits of size or triangles are settings.** Texture memory is decided by what the view
+  samples (mip streaming); an image above `asset.TEXTURE_MAX_SIZE` is refused, never scaled.
+  Levels of detail are chosen by projected error. Decided by the owner.
 - **Textures in blocks are encoded with a perceptual metric and RDO** at
   `RDO_LAMBDA_DEFAULT` unless the setting `rdo_lambda` says otherwise.
 - **The editor never waits for the final encode** (`textures.Encode_Speed`): its imports take the
@@ -177,7 +180,7 @@ the assets.
 
 ## Verification
 
-- `mirai test cook/import` (source space, PBR, levels, collision, sounds, hand grips),
+- `mirai test cook/import` (source space, PBR, levels, sounds, hand grips),
   `cook/rig` (fit and weights over a body of boxes, each animal stretched by its skin, meshes
   that are neither a person nor an animal), `cook/import/obj`, `cook/import/gltf` (with the rig
   fits of `rig_test.odin` and the decoding of `meshopt_test.odin`), `cook/import/usd`,

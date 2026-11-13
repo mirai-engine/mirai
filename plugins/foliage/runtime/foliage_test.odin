@@ -265,7 +265,8 @@ a_cell_collides_with_one_static_body_and_one_instance_leaves_alone :: proc(t:^te
     e:=core.Entity(42)
     for &cell,i in s.cells {cell.version=u32(i+1)}
     types:=make([dynamic]Type_Shape,context.temp_allocator)
-    testing.expect_value(t,type_shapes(nil,nil,&s,nil,&types),0)
+    left_out,_:=type_shapes(nil,nil,nil,nil,&s,nil,&types)
+    testing.expect_value(t,left_out,0)
     // The entity far from the origin: each body stands at the corner of its cell.
     owner:=mm.Transform{position={20000,0,-30000},rotation=1,scale={1,1,1}}
     {complete,enough:=physics_owner_build(&fp,&w,&collision,e,&s,owner,types[:]);testing.expect(t,complete && enough)}
@@ -336,7 +337,7 @@ rocks_collide_as_one_hull_each_instance_scales :: proc(t:^testing.T) {
     fp:Foliage_Physics
     defer core.value_free(&fp,type_info_of(Foliage_Physics))
     hulls:=make([dynamic]physics.Hull_Handle,context.temp_allocator)
-    if !testing.expect(t,physics.owned_hulls(&w,nil,{shape=.Cube},&hulls) && len(hulls)==1) {return}
+    if made,_:=physics.owned_hulls(&w,nil,nil,{shape=.Cube},&hulls);!testing.expect(t,made && len(hulls)==1) {return}
     append(&fp.hulls,hulls[0])
     types:=[1]Type_Shape{{rock.id,physics.collider_hull(),1,hulls[0]}}
     collision:physics.Collision_Settings
@@ -894,7 +895,7 @@ foliage_calls_without_memory_are_refused :: proc(t:^testing.T) {
     if !testing.expect(t,written==.None && asset.asset_open(&file,data)==.None) {return}
     defer asset.asset_close(&file)
     shapes:=make([dynamic]Type_Shape,context.temp_allocator)
-    type_shapes(nil,nil,&s,nil,&shapes)
+    type_shapes(nil,nil,nil,nil,&s,nil,&shapes)
     Call :: enum {Cell_Build,Placed_Group,Ground_Tile,Collision,Type_Add,Source_Read}
     for call in Call {
         fresh:Source

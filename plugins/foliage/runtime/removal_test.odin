@@ -146,7 +146,7 @@ instances_taken_out_are_one_entity_for_each_cell_that_the_cell_leaves_out :: pro
     defer core.value_free(&fp,type_info_of(Foliage_Physics))
     collision:physics.Collision_Settings
     types:=make([dynamic]Type_Shape,context.temp_allocator)
-    type_shapes(nil,nil,s,nil,&types)
+    type_shapes(nil,nil,nil,nil,s,nil,&types)
     {complete,enough:=physics_owner_build(&fp,&simulation,&collision,wood,s,{scale={1,1,1},rotation=1},types[:]);testing.expect(t,complete && enough)}
     shapes:=int(simulation.world.shape_count)
     body:physics.Body_Handle

@@ -85,17 +85,21 @@ Type_Shape :: struct {
 
 // The shapes of the types of a source that collide, appended to out in the
 // order of the types: its capsule or box, standing on the instance, the
-// colliders of its prefab, or the convex hulls of its meshes, asked of
-// physics once for every instance and kept in fp.hulls. left_out: the types
-// of Prefab or Hull collision without what they collide as (no prefab, a
-// mesh without collision geometry, no room for hulls) and the colliders of
-// prefabs an instance cannot have (a Mesh, a sensor). Without assets a
+// colliders of its prefab, or the convex hulls of its meshes (those of their
+// sources, or else the convex pieces of their triangles: physics.owned_hulls),
+// asked of physics once for every instance and kept in fp.hulls. left_out:
+// the types of Prefab or Hull collision without what they collide as (no
+// prefab, a mesh that cannot be read, no room for hulls) and the colliders of
+// prefabs an instance cannot have (a Mesh, a sensor). waiting: a mesh is
+// still being read, and its hulls are not among them. Without assets a
 // prefab gives none.
-type_shapes :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,s:^Source,assets:^host.Assets,out:^[dynamic]Type_Shape) -> (left_out:int) {
+type_shapes :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,meshes:^physics.Collider_Meshes,app:^host.App,s:^Source,assets:^host.Assets,out:^[dynamic]Type_Shape) -> (left_out:int,waiting:bool) {
     // The hulls of what a renderer shows, each a shape of the collider placed as the renderer is.
-    hulls_of :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,assets:^host.Assets,renderer:render.Mesh_Renderer,type:u32,collider:physics.Collider,placement:mm.Mat4,out:^[dynamic]Type_Shape) -> bool {
+    hulls_of :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,meshes:^physics.Collider_Meshes,app:^host.App,renderer:render.Mesh_Renderer,type:u32,collider:physics.Collider,placement:mm.Mat4,out:^[dynamic]Type_Shape,waiting:^bool) -> bool {
         made:=make([dynamic]physics.Hull_Handle,context.temp_allocator)
-        if !physics.owned_hulls(state,assets,renderer,&made) {return false}
+        ok,wait:=physics.owned_hulls(state,meshes,app,renderer,&made)
+        if wait {waiting^=true;return true}
+        if !ok {return false}
         for hull in made {
             append(out,Type_Shape{type,collider,placement,hull})
             if !slice.contains(fp.hulls[:],hull) {append(&fp.hulls,hull)}
@@ -127,11 +131,11 @@ type_shapes :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,s:^Source,a
             left_out+=skipped
             for c in colliders {
                 if c.collider.kind!=.Hull {append(out,Type_Shape{t.id,c.collider,c.placement,{}});continue}
-                if !hulls_of(fp,state,assets,c.renderer,t.id,c.collider,c.placement,out) {left_out+=1}
+                if !hulls_of(fp,state,meshes,app,c.renderer,t.id,c.collider,c.placement,out,&waiting) {left_out+=1}
             }
         case .Hull:
             if t.mesh!={} {
-                if !hulls_of(fp,state,assets,{mesh=t.mesh},t.id,hull,1,out) {left_out+=1}
+                if !hulls_of(fp,state,meshes,app,{mesh=t.mesh},t.id,hull,1,out,&waiting) {left_out+=1}
                 continue
             }
             file:=assets!=nil && t.prefab!={} ? host.assets_scene(assets,t.prefab) : nil
@@ -142,7 +146,7 @@ type_shapes :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,s:^Source,a
             parts:=make([dynamic]Prefab_Part,context.temp_allocator)
             prefab_parts(file,&assets.types,&parts)
             for part in parts {
-                if !hulls_of(fp,state,assets,part.renderer,t.id,hull,part.placement,out) {left_out+=1}
+                if !hulls_of(fp,state,meshes,app,part.renderer,t.id,hull,part.placement,out,&waiting) {left_out+=1}
             }
         }
     }
@@ -372,7 +376,7 @@ shape_instance :: proc(state:^physics.Physics_State,body:physics.Body_Handle,sha
 // Keeps the bodies of the foliage of the world equal to its sources and the
 // places of their entities, a budget of instances a tick.
 @(step="fixed",loops="game editor",stage="simulate",after="physics_prepare",before="physics_places")
-foliage_physics :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,collision:core.Ref(physics.Collision_Settings),data:core.Ref(Foliage_Data),grounds:core.Ref(Foliage_Ground),removals:core.Ref(Foliage_Removals),foliages:^core.Table(Foliage,.Read),worlds:^core.Table(core.World_Transform,.Read),kept:^core.Table(scene.Far_Kept,.Read),sources:core.Ref(scene.Simulation_Sources),assets:^host.Assets,time:core.Time,problems:^core.Problems) {
+foliage_physics :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,meshes:^physics.Collider_Meshes,app:^host.App,collision:core.Ref(physics.Collision_Settings),data:core.Ref(Foliage_Data),grounds:core.Ref(Foliage_Ground),removals:core.Ref(Foliage_Removals),foliages:^core.Table(Foliage,.Read),worlds:^core.Table(core.World_Transform,.Read),kept:^core.Table(scene.Far_Kept,.Read),sources:core.Ref(scene.Simulation_Sources),assets:^host.Assets,time:core.Time,problems:^core.Problems) {
     if !state.ready || data.ptr==nil || time.resimulating {return}
     // Without settings every preset is the Default category, colliding with all.
     defaults:physics.Collision_Settings
@@ -412,8 +416,15 @@ foliage_physics :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,collisi
         all:=owner.epoch!=entry.epoch || owner.transform!=world.transform
         owner.epoch,owner.loads,owner.ground,owner.transform,owner.source,owner.removed=entry.epoch,entry.loads,revision,world.transform,f.source,removed
         shapes:=make([dynamic]Type_Shape,context.temp_allocator)
-        if type_shapes(fp,state,&entry.source,assets,&shapes)>0 {
-            core.report(problems,e,"foliage.collision","a type of its foliage collides as its prefab or its hulls but has nothing it can collide as: give a Prefab type a prefab whose colliders are boxes, spheres, capsules, cylinders or hulls; give a Hull type a mesh with collision geometry; or raise the hulls of Physics_Settings")
+        left_out,reading:=type_shapes(fp,state,meshes,app,&entry.source,assets,&shapes)
+        if reading {
+            // Its cells are built once the meshes of its hulls are read.
+            owner.pending=true
+            built=true
+            continue
+        }
+        if left_out>0 {
+            core.report(problems,e,"foliage.collision","a type of its foliage collides as its prefab or its hulls but has nothing it can collide as: give a Prefab type a prefab whose colliders are boxes, spheres, capsules, cylinders or hulls; give a Hull type a mesh of the assets that reads; or raise the hulls of Physics_Settings")
         }
         // The nearest cells first, in cells from the sources.
         near:=scene.sources_near_of(now,mm.transform_matrix(world.transform),CELL_SIZE)

@@ -54,15 +54,13 @@ chain_runs_down_to_one_texel_with_halving_sizes :: proc(t:^testing.T) {
 }
 
 @(test)
-images_larger_than_the_maximum_start_at_the_first_level_that_fits :: proc(t:^testing.T) {
-    pixels:=make([]u8,64*32*4);defer delete(pixels)
-    built,error:=build(rgba8(pixels,64,32),{max_size=16,encoding=.Uncompressed})
+an_image_wider_than_a_texture_holds_is_refused :: proc(t:^testing.T) {
+    pixels:=make([]u8,(asset.TEXTURE_MAX_SIZE+1)*4);defer delete(pixels)
+    _,error:=build(rgba8(pixels,asset.TEXTURE_MAX_SIZE+1,1),{encoding=.Uncompressed})
+    testing.expect_value(t,error,Error.Too_Large)
+    built,fits:=build(rgba8(pixels[:asset.TEXTURE_MAX_SIZE*4],asset.TEXTURE_MAX_SIZE,1),{encoding=.Uncompressed})
     defer built_destroy(&built)
-    testing.expect_value(t,error,Error.None)
-    testing.expect_value(t,built.width,16)
-    testing.expect_value(t,built.height,8)
-    testing.expect_value(t,len(built.mips),5)
-    testing.expect_value(t,len(built.mips[0]),16*8*4)
+    testing.expect(t,fits==.None && built.width==asset.TEXTURE_MAX_SIZE,"an image of the largest side is kept whole")
 }
 
 @(test)

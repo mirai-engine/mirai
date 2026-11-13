@@ -442,7 +442,9 @@ and joins them with the engine's.
   another's section shows: without a section of its own, outside the scene API, Paste and Add
   component; `vfx` says it of an emitter's values).
 - An editor storage whose only field is `Component_Provider` defines `added`: what the plugin adds
-  with a component the editor added (the `Collider` of a new `Character`).
+  with a component the editor added (the `Collider` of a new `Character`, or of a mesh that stores
+  colliders), and `start`: the value a component given without one starts with for that entity,
+  over its default (an `Auto` `Collider` where a mesh is shown); the scene API starts from it too.
 - The callbacks are read from the default of the current metadata, without pointers to a reloaded
   library. `Inspector_Context` delivers session, world, table, entities and width.
 - `inspector_fields` draws the generic rows, gestures and resets of the component under its own.

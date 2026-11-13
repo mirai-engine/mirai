@@ -70,13 +70,35 @@ collider_lines_draw :: proc(s:^editor.Session,w:core.World_Ref) {
     host.extras_debug_lines_add(&s.app.extras,faint)
 }
 
-// A Character takes its capsule from a Collider: one that comes without gets it.
+// A Character takes its capsule from a Collider: one that comes without gets
+// it. A mesh placed on an entity without a Collider collides when it stores
+// colliders of its source, with an Auto one that takes them; one without them
+// gives it none.
 @(private)
 collider_companion :: proc(s:^editor.Session,e:core.Entity,t:^core.Table_Info) {
-    if t.type!=phys.Character {return}
-    collider:=phys.collider_character()
+    collider:phys.Collider
+    switch t.type {
+    case phys.Character:
+        collider=phys.collider_character()
+    case erender.Mesh_Renderer:
+        meshes:=core.world_table_of(editor.shown_world(s),erender.Mesh_Renderer)
+        if meshes==nil {return}
+        shown,found:=core.get(meshes,e)
+        if !found || !host.assets_mesh_collides(s.app.assets,shown.mesh) {return}
+        collider=phys.collider_auto()
+    case:
+        return
+    }
     colliders:=editor.component_table(s,"Collider")
     w:=editor.shown_world(s)
     if colliders==nil || core.raw_find(core.world_table_at(w,colliders),colliders.info,e)!=nil {return}
     editor.component_add(s,e,colliders,&collider)
+}
+
+// A Collider given to an entity that shows a mesh starts Auto: what the mesh
+// is made to collide as.
+@(private)
+collider_start :: proc(s:^editor.Session,e:core.Entity,t:^core.Table_Info,value:rawptr) {
+    if t.type!=phys.Collider || !editor.entity_has(editor.shown_world(s),e,erender.Mesh_Renderer) {return}
+    (^phys.Collider)(value).kind=.Auto
 }

@@ -385,7 +385,7 @@ collider_bounds :: proc(physics:core.Ref(Physics_State),e:core.Entity) -> (bound
 geometry_budget :: proc(physics:core.Ref(Physics_State),kind:Collider_Kind) -> (used,capacity:int) {
     if !physics.ready {return}
     switch kind {
-    case .Hull:
+    case .Hull,.Auto:
         capacity=len(physics.world.hulls)
         for slot in physics.world.hulls {if slot.generation&1!=0 {used+=1}}
     case .Mesh:

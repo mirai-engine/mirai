@@ -85,7 +85,7 @@ mirai_import_writes_assets_that_mirai_asset_verifies :: proc(t:^testing.T) {
 
     // A model with a texture in the assets of a project: mesh, three materials, the image of the leaves and the prefab.
     plant:=copy_in(root_folder,DEMO,"gallery/plant.gltf","gallery/leaves_color.png")
-    first:=import_run(plant,"--max-texture","16")
+    first:=import_run(plant,"--uncompressed")
     testing.expectf(t,first.code==0 && first.err=="","import fails: %d\n%s%s",first.code,first.out,first.err)
     paths:=reported_paths(first.out)
     testing.expect_value(t,len(paths),6)
@@ -101,9 +101,9 @@ mirai_import_writes_assets_that_mirai_asset_verifies :: proc(t:^testing.T) {
     testing.expect(t,listing.code==0 && strings.contains(listing.out," gallery/plant/Leaves.mat") && strings.contains(listing.out," gallery/plant/Plant.mesh") && strings.contains(listing.out," gallery/plant/leaves_color.tex"),listing.out)
 
     // Importing again keeps every id, and the mesh and the texture are not built again.
-    again:=import_run(plant,"--max-texture","16")
+    again:=import_run(plant,"--uncompressed")
     testing.expect(t,again.code==0 && strings.contains(again.out,"6 assets, 2 were already up to date") && slice.equal(reported_paths(again.out),paths),again.out)
-    rebuilt:=import_run(plant,"--max-texture","16","--rebuild")
+    rebuilt:=import_run(plant,"--uncompressed","--rebuild")
     testing.expect(t,rebuilt.code==0 && slice.equal(reported_assets(rebuilt.out),reported_assets(first.out)),"--rebuild builds everything again, to the same bytes")
 
     // An image on its own.
@@ -118,34 +118,33 @@ mirai_import_writes_assets_that_mirai_asset_verifies :: proc(t:^testing.T) {
 
     // The sidecar of an import, next to its source, keeps its settings: the options change them, and importing again uses them.
     copy:=copy_in(root_folder,DEMO,"gallery/vase.obj","gallery/vase.mtl","gallery/vase_color.png")
-    hulled:=import_run(copy,"--collision","hull")
-    testing.expectf(t,hulled.code==0 && strings.contains(hulled.out," triangles, 1 hull of ") && strings.contains(hulled.out,"sidecar ") && strings.contains(hulled.out,"vase.obj.import"),"%d: %s%s",hulled.code,hulled.out,hulled.err)
+    turned:=import_run(copy,"--front","x")
+    testing.expectf(t,turned.code==0 && strings.contains(turned.out," triangles") && !strings.contains(turned.out,"hull") && strings.contains(turned.out,"sidecar ") && strings.contains(turned.out,"vase.obj.import"),"%d: %s%s",turned.code,turned.out,turned.err)
     sidecar:=fmt.tprintf("%s.import",copy)
     stored,_:=os.read_entire_file(sidecar,context.temp_allocator)
-    testing.expect(t,strings.contains(string(stored),"\"collision\": \"Hull\""),string(stored))
+    testing.expect(t,strings.contains(string(stored),"\"front\": \"X\""),string(stored))
     ids :: proc(out:string) -> []string {
         found:=make([dynamic]string,context.temp_allocator)
         for line in reported_assets(out) {append(&found,line[:32])}
         return found[:]
     }
     mesh_path:string
-    for line in reported_assets(hulled.out) {if strings.contains(line," mesh ") {mesh_path=reported_paths(line)[0]}}
-    with_hull,_:=os.read_entire_file(mesh_path,context.temp_allocator)
+    for line in reported_assets(turned.out) {if strings.contains(line," mesh ") {mesh_path=reported_paths(line)[0]}}
+    with_front,_:=os.read_entire_file(mesh_path,context.temp_allocator)
     repeated:=import_run(copy)
     same,_:=os.read_entire_file(mesh_path,context.temp_allocator)
-    testing.expect(t,repeated.code==0 && slice.equal(reported_paths(repeated.out),reported_paths(hulled.out)) && string(same)==string(with_hull) && len(same)>0,"importing again without options gives the same assets")
-    bare:=import_run(copy,"--collision","none","--lods","none")
-    testing.expect(t,bare.code==0 && !strings.contains(bare.out,"hull") && slice.equal(ids(bare.out),ids(hulled.out)) && strings.contains(bare.out,"  3232 triangles"),bare.out)
+    testing.expect(t,repeated.code==0 && slice.equal(reported_paths(repeated.out),reported_paths(turned.out)) && string(same)==string(with_front) && len(same)>0,"importing again without options gives the same assets")
+    bare:=import_run(copy,"--front","negative_z","--lods","none")
+    testing.expect(t,bare.code==0 && slice.equal(ids(bare.out),ids(turned.out)) && strings.contains(bare.out,"  3232 triangles"),bare.out)
     _=os.write_entire_file(sidecar,"{\"lods\": \"Never\"}")
     refused:=import_run(copy)
     testing.expect(t,refused.code==1 && strings.contains(refused.err,"vase.obj.import"),refused.err)
 
     // Misuse and failures.
     testing.expect_value(t,import_run(copy,"--lods","some").code,2)
-    testing.expect_value(t,import_run(copy,"--collision","soft").code,2)
-    testing.expect_value(t,import_run(bricks,"--collision","hull").code,2)
+    testing.expect_value(t,import_run(copy,"--front","up").code,2)
+    testing.expect_value(t,import_run(bricks,"--front","x").code,2)
     testing.expect_value(t,import_run().code,2)
-    testing.expect_value(t,import_run(copy,"--max-texture","0").code,2)
     testing.expect_value(t,import_run(copy,"--srgb").code,2)
     testing.expect_value(t,import_run(copy,"--alpha-coverage","0.5").code,2)
     testing.expect_value(t,import_run(bricks,"--alpha-coverage","1.5").code,2)

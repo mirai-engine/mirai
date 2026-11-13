@@ -29,8 +29,8 @@ Prefab_Collider :: struct {
 // The parts of an open prefab, appended to out: its entities with a
 // Mesh_Renderer that is on and not hidden, under its root; and with
 // colliders, its Colliders that are on, block and are of a kind an instance
-// has (Box, Sphere, Capsule, Cylinder, or Hull of an entity that shows a
-// mesh), appended there: left_out counts the others. False when it is not a
+// has (Box, Sphere, Capsule, Cylinder, or Hull or Auto of an entity that shows
+// a mesh, which collide as its hulls), appended there: left_out counts the others. False when it is not a
 // prefab this reads (no single root, a parent that is not there).
 prefab_parts :: proc(file:^asset.Asset,types:^asset.Types,out:^[dynamic]Prefab_Part,colliders:^[dynamic]Prefab_Collider=nil) -> (ok:bool,left_out:int) {
     view,error:=asset.scene_view(file,types)
@@ -104,7 +104,11 @@ prefab_parts :: proc(file:^asset.Asset,types:^asset.Types,out:^[dynamic]Prefab_P
         for renderer,j in renderers[:min(len(renderers),len(renderer_rows))] {if int(renderer_rows[j])==row {shown=renderer}}
         #partial switch shape.kind {
         case .Box,.Sphere,.Capsule,.Cylinder: if !shape.sensor {append(colliders,Prefab_Collider{shape,placement,{}});continue}
-        case .Hull: if !shape.sensor && (shown.mesh!={} || shown.shape!=.None) {append(colliders,Prefab_Collider{shape,placement,shown});continue}
+        case .Hull,.Auto:
+            // An Auto one collides as the hulls of its mesh, as a type of Hull collision does.
+            hull:=shape
+            hull.kind=.Hull
+            if !shape.sensor && (shown.mesh!={} || shown.shape!=.None) {append(colliders,Prefab_Collider{hull,placement,shown});continue}
         }
         left_out+=1
     }

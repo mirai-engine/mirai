@@ -370,6 +370,7 @@ player_run :: proc(info:^core.World_Info,project_root,engine_root:string,args:[]
         assets_root=os.is_directory(assets)?assets:"",
         assets_imported=project.imported_path(root,context.temp_allocator),
         animation_cache=project.cache_path(root,project.ANIMATION_CACHE,allocator=context.temp_allocator),
+        collision_cache=project.content_cache_path(root,project.COLLISION_CACHE,allocator=context.temp_allocator),
         asset_mounts=mounts,
         shaders_root=root,
     })

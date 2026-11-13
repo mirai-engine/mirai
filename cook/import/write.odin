@@ -284,6 +284,10 @@ write_texture :: proc(w:^Writer,job:Texture_Job,id,owner:base.Asset_Id,path,sour
         cooked=&own
     }
     defer if cooked==&own {cooked_texture_destroy(&own)}
+    if cooked.error==.Too_Large {
+        writer_warn(w,"image %s is not used: a side is above the %d texels a texture holds; scale it down in the source",job.name,asset.TEXTURE_MAX_SIZE)
+        return false
+    }
     if cooked.error!=.None {
         writer_warn(w,"image %s is not used: %v",job.name,cooked.error)
         return false
@@ -603,7 +607,6 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
         if writer_kept(w,path,owner,&file) {
             view,view_error:=asset.mesh_view(&file,&w.types)
             if view_error==.None {
-                if chosen.collision!=.None && len(view.colliders)==0 {writer_warn(w,"mesh %s: no %v collider could be made of it",mesh.name,chosen.collision)}
                 record(w,id,asset.KIND_MESH,mesh.name,path,source,true,mesh_detail(view.levels,view.colliders,len(view.collision_points),len(view.collision_indices)),kept=true)
             }
             asset.asset_close(&file)
@@ -627,7 +630,6 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
         case .Not_Finite:return writer_fail(w,.Malformed,"mesh %s has a vertex whose position or texture coordinate is not a number (NaN or infinite); fix it in the source",mesh.name)
         case .Clusters:return writer_fail(w,.Limit,"mesh %s could not be encoded in clusters: there was no memory left for it, or it is larger than a .mesh holds",mesh.name)
         }
-        if !cooked.collides {writer_warn(w,"mesh %s: no %v collider could be made of it",mesh.name,chosen.collision)}
         geometry,collision:=cooked.geometry,cooked.collision
         desc:=asset.Mesh_Desc{
             id=id,owner=owner,geometry=geometry,slots=slots,joints=mesh.joints,skeleton=skeleton,

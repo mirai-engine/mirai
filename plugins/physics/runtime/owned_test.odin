@@ -60,8 +60,10 @@ a_library_makes_and_ends_bodies_of_its_own :: proc(t:^testing.T) {
     // One hull of a cube, shared by shapes at their own scales: 4 m long here, 3 m deep there.
     hulls:[dynamic]Hull_Handle
     defer delete(hulls)
-    testing.expect(t,owned_hulls(&f.state,nil,{shape=.Cube},&hulls) && len(hulls)==1)
-    testing.expect(t,owned_hulls(&f.state,nil,{shape=.Cube},&hulls) && len(hulls)==2 && hulls[1]==hulls[0],"the same hull again")
+    made,_:=owned_hulls(&f.state,nil,nil,{shape=.Cube},&hulls)
+    testing.expect(t,made && len(hulls)==1)
+    again,_:=owned_hulls(&f.state,nil,nil,{shape=.Cube},&hulls)
+    testing.expect(t,again && len(hulls)==2 && hulls[1]==hulls[0],"the same hull again")
     hull:=collider_hull()
     long:=owned_shape_create(&f.state,&f.collision,body,{collider=hull,position={20,0,0},rotation=1,user=10,hull=hulls[0],scale={4,1,1}})
     deep:=owned_shape_create(&f.state,&f.collision,body,{collider=hull,position={-20,0,0},rotation=1,user=11,hull=hulls[0],scale={1,1,3}})

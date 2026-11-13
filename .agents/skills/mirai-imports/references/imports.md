@@ -40,8 +40,8 @@ Packages, all *engine-time*:
   the import already gave is that asset, written once: two models that name the same material
   or texture share it. `output_input` lists a file the import reads in the sidecar and in its
   key; every input comes before the first output of the cache, which fixes the key.
-- For engine-time tools: `mesh_levels` ([levels](#levels-of-detail)), `mesh_collision`
-  ([colliders](#collision)) and the PBR conversions of `pbr.odin`.
+- For engine-time tools: `mesh_levels` ([levels](#levels-of-detail)) and the PBR conversions of
+  `pbr.odin`.
 - `Error` is `{code,message}`; `message` lives in the caller's `temp_allocator`. `Import_Options`
   carries the settings and how they apply: `ignore_stored`, `root` (the project or the plugin
   whose assets folder has the source; `import_source` finds it from the path), `registry` (the
@@ -179,10 +179,9 @@ index, size and hash of what was read (the source, or the image of a texture), v
 - `importer_version` combines `IMPORTER_VERSION` (the writer) with `Format.version`
   (`import_version`); loose images and sounds use format version 0.
 - `settings_hash` is the identity of the settings that make that asset, and of no other: for a
-  mesh, levels, collision, maximum triangles and whether it forces collision
-  (`mesh_settings_hash`); for a texture, its `Build_Options` with `BUILD_VERSION`; for a sound,
-  whether it is `Stream`. Materials, skeletons and clips store 0. Changing a texture setting keeps
-  the meshes, and one of the meshes, the textures.
+  mesh, its levels, front and rig (`mesh_settings_hash`); for a texture, its `Build_Options` with
+  `BUILD_VERSION`; for a sound, whether it is `Stream`. Materials, skeletons and clips store 0.
+  Changing a texture setting keeps the meshes, and one of the meshes, the textures.
 - What is current is decided once, by the name of a file of the cache: `import_write` keeps a mesh
   or a texture whose file under the key of what the import builds from now exists
   (`Written.kept`) and builds nothing ahead when every output of the cache is kept; if only the
@@ -405,8 +404,6 @@ that differ from their default, so it shows what was chosen. What is not obvious
 - `rdo_lambda` is how much error the [encoder](#textures-cooktextures) of textures in blocks
   trades for files that compress smaller: zero is the default lambda and a negative value, which
   `--rdo-lambda 0` writes, the least error.
-- `max_triangles` simplifies a mesh with more triangles down to them as a
-  [level](#levels-of-detail), and that is its level 0.
 - `front` (`--front auto|negative_z|z|x|negative_x`, `front` of `asset.import`) is where a model
   stands facing once imported, for a source that does not face the front its format says and that
   detection does not turn or turns wrong ([front](#front)). It is part of a mesh's settings hash.
@@ -533,8 +530,7 @@ chooses only one ([mesh](../../mirai-assets/references/kinds.md#mesh)). With `lo
 small mesh, level 0 alone is stored. What follows describes those whole levels; the DAG simplifies
 with the same weights and locks.
 
-- **Level 0.** The source's or, with more than `max_triangles`, the one that simplifying it down to
-  them gives; the colliders come from it.
+- **Level 0.** The source's.
 - **How many.** Each level aims at `LOD_SHARE` of the triangles of the previous one; the series
   ends if a level keeps more than `LOD_KEEP` of the previous one or its error exceeds the radius of
   the mesh (that one is not stored: it would be drawn only where the whole mesh fits in a pixel),
@@ -558,8 +554,7 @@ with the same weights and locks.
   subset of the previous one) and enlarges the remaining ones around their center to the area they
   all had, up to `ISLAND_GROW_MAX` times their radius. The rest of the submesh (trunk, body) is
   simplified like any other. Bushes of hundreds of triangles are not small islands: quadrics
-  simplify them with less error than pruning them. Only the levels of `lods=Auto`; level 0 from
-  `max_triangles` is simplified whole.
+  simplify them with less error than pruning them. Only the levels of `lods=Auto`.
 - **How much is pruned.** Each level prunes each class as far as the error that the rest already
   has simplified allows; if that would keep more than `LOD_KEEP` of the previous level, it allows
   the smallest error that prunes one more class, until it does not. The leaves of a tree whose
@@ -575,18 +570,13 @@ with the same weights and locks.
 ## Collision
 
 The colliders that the source brings (`Imported_Mesh.collision`, in the source's space until the
-import moves them to the engine's) are those of the `.mesh`; the settings make them only if the
-source brings none or with `force_collision`. The engine's formats do not bring them; a plugin's
-does.
-
-`collision` adds to the `.mesh` `asset.Collider` rows in the space of the mesh, made from the
-surface welded by position: `Hull`, a convex hull (of a flat surface, its outline); `Pieces`, hulls
-that together cover a non-convex mesh (up to `collision_hulls`); `Mesh`, the simplified triangles
-(`COLLISION_MESH_SHARE`); `Exact` (`--collision exact`), every triangle, for geometry made to
-collide (a clip map of another game), which a simplification would open. A surface from which the
-collider cannot be made is left without colliders with a warning. How they are used:
-[host](../../mirai-core/references/host.md#loaded-assets) and [the physics
-libraries](../../mirai-physics/references/engine.md).
+import moves them to the engine's) are the `asset.Collider` rows of the `.mesh`, as authored; the
+import makes none of its own, and a mesh whose source brings none has none. The engine's formats
+bring none; a plugin's does (`unreal`, from the `BodySetup` of a static mesh). The prefab of a
+model gives an entity an `Auto` `Collider` only when its mesh has them. What a collider of a mesh
+without them is made of (its triangles, or convex pieces of them for a body that moves) is derived
+at run time and cached: [host](../../mirai-core/references/host.md#loaded-assets) and [the physics
+libraries](../../mirai-physics/references/engine.md#collider-fields).
 
 ## Textures (`cook/textures`)
 
@@ -613,7 +603,8 @@ libraries](../../mirai-physics/references/engine.md).
   the channels.
 - **Alpha coverage**: with `alpha_coverage > 0` each level scales its alpha, by bisection, until
   it keeps the proportion of texels above the cutoff that the original image had.
-- **Maximum size**: a larger image starts at the first level that fits.
+- **Size**: a side above `asset.TEXTURE_MAX_SIZE` is `Too_Large`, and the image is not used; the
+  rest is kept whole, and what the view loads is the renderer's.
 - **Format** (`stored_format`), decided by the whole source image before reducing it:
   - `.Uncompressed`, or a 16-bit or float source with `keep_precision`: what the source has,
     `RGBA8`, `RGBA16` or `RGBA16F`.

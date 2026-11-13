@@ -95,10 +95,10 @@ an_import_keeps_what_its_cache_says_is_current_and_builds_again_what_changed :: 
     testing.expect(t,ok && meshes==1 && textures==1 && others==0 && again_path==mesh_path && string(again)==string(built),"an unchanged source keeps its mesh and its texture")
 
     // A setting changes what everything is built from: built again, under a new name, with the same ids.
-    hulled_path:string
-    hulled_id:base.Asset_Id
-    meshes,textures,_,hulled_path,hulled_id,ok=import_kept(t,source,{world=world,collision=.Hull,ignore_stored=true})
-    testing.expect(t,ok && meshes==0 && textures==0 && hulled_id==mesh_id && hulled_path!=mesh_path && !os.exists(mesh_path),"a setting builds again, and the file of before goes")
+    turned_path:string
+    turned_id:base.Asset_Id
+    meshes,textures,_,turned_path,turned_id,ok=import_kept(t,source,{world=world,front=.X,ignore_stored=true})
+    testing.expect(t,ok && meshes==0 && textures==0 && turned_id==mesh_id && turned_path!=mesh_path && !os.exists(mesh_path),"a setting builds again, and the file of before goes")
 
     // --rebuild keeps nothing; with the settings of the first import, it gives its bytes.
     rebuilt_path:string

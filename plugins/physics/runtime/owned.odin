@@ -5,6 +5,7 @@ import "mirai:host"
 import render "mirai:engine/render"
 import "mirai:std/base"
 import "mirai:std/geom"
+import "mirai:std/jobs"
 import mm "mirai:std/math"
 import sim "plugins:physics/runtime/sim"
 
@@ -104,7 +105,7 @@ owned_body_of :: proc(state:^Physics_State,body:Body_Handle) -> (found:Owned_Bod
 owned_shape_create :: proc(state:^Physics_State,collision:^Collision_Settings,body:Body_Handle,shape:Owned_Shape) -> Shape_Handle {
     if owned_find(state,body)==nil {return {}}
     #partial switch shape.collider.kind {
-    case .Mesh,.Heightfield,.External: return {}
+    case .Mesh,.Heightfield,.External,.Auto: return {}
     }
     desc:=collider_desc(shape.collider,{1,1,1},collision_filter(collision,shape.collider),core.NONE)
     if shape.collider.kind==.Hull {desc.geometry,desc.scale=shape.hull,shape.scale}
@@ -116,27 +117,54 @@ owned_shape_create :: proc(state:^Physics_State,collision:^Collision_Settings,bo
 }
 
 // The convex hulls of what a mesh shows, at scale 1, appended to out for owned shapes of Hull colliders to
-// share at their own scales: its convex pieces, or one hull of all its points. A collider of any body made
-// from the same mesh at scale 1 shares them too. Whoever asks for them gives each to owned_hull_release once
-// its shapes are gone. False, with nothing appended, when the mesh has no collision geometry, a piece has
-// no volume, or the simulation has no room for them (Physics_Settings.hulls).
-owned_hulls :: proc(state:^Physics_State,assets:^host.Assets,mesh:render.Mesh_Renderer,out:^[dynamic]Hull_Handle) -> bool {
-    if state==nil || !state.ready {return false}
+// share at their own scales: the shapes its mesh stores from its source; without them, the convex pieces
+// of a decomposition of its triangles (an owned shape is convex), read and decomposed in a job of meshes;
+// or one hull of all its points. A collider of any body made from the same mesh at scale 1 shares them too.
+// Whoever asks for them gives each to owned_hull_release once its shapes are gone. False, with nothing
+// appended, when the mesh cannot be read, a piece has no volume, or the simulation has no room for them
+// (Physics_Settings.hulls); waiting, while the job reads its file: ask again in a later tick.
+owned_hulls :: proc(state:^Physics_State,meshes:^Collider_Meshes,app:^host.App,mesh:render.Mesh_Renderer,out:^[dynamic]Hull_Handle) -> (ok,waiting:bool) {
+    if state==nil || !state.ready {return}
+    assets:=app!=nil?app.assets:nil
     points:=make([dynamic]geom.Vec3,context.temp_allocator)
     sizes:=make([dynamic]u32,context.temp_allocator)
-    if !host.assets_collision_hulls(assets,mesh.mesh,mesh.shape,&points,&sizes) || len(sizes)<2 {
+    decomposed:=false
+    if _,_,is_file:=mesh_file_version(app,mesh.mesh);is_file {
+        inline:=jobs.worker_count(&app.jobs)<=1
+        file:^Mesh_File
+        if file,waiting=mesh_file_of(meshes,app,inline,mesh.mesh,.Hull,false);waiting || file==nil {return}
+        if file.pieces {
+            append(&points,..file.piece_points[:])
+            append(&sizes,..file.piece_sizes[:])
+        } else if file.stored==.None {
+            whole:^Mesh_File
+            if whole,waiting=mesh_file_of(meshes,app,inline,mesh.mesh,.Hull,true);waiting {return}
+            if whole!=nil && whole.pieces {
+                append(&points,..whole.piece_points[:])
+                append(&sizes,..whole.piece_sizes[:])
+                decomposed=true
+            }
+        }
+        if len(sizes)<2 {
+            clear(&points);clear(&sizes)
+            decomposed=false
+            if !file.found || len(file.geometry.positions)==0 {return}
+            append(&points,..file.geometry.positions[:])
+            append(&sizes,u32(len(file.geometry.positions)))
+        }
+    } else if !host.assets_collision_hulls(assets,mesh.mesh,mesh.shape,&points,&sizes) || len(sizes)<2 {
         clear(&points);clear(&sizes)
         buffer:geom.Mesh_Buffer
         geom.mesh_buffer_init(&buffer,context.temp_allocator)
-        if _,found:=host.assets_collision(assets,mesh.mesh,mesh.shape,.Hull,&buffer);!found || len(buffer.positions)==0 {return false}
+        if _,found:=host.assets_collision(assets,mesh.mesh,mesh.shape,.Hull,&buffer);!found || len(buffer.positions)==0 {return}
         append(&points,..buffer.positions[:])
         append(&sizes,u32(len(buffer.positions)))
     }
-    source,shareable:=geometry_source_of(assets,.Hull,mesh,{1,1,1},0)
+    source,shareable:=geometry_source_of(assets,decomposed?.Auto:.Hull,mesh,{1,1,1},0)
     held:=len(out)
     from:=0
     for size,at in sizes {
-        if int(size)>len(points)-from {base.truncate(out,held);return false}
+        if int(size)>len(points)-from {base.truncate(out,held);return}
         piece:=points[from:][:size]
         from+=int(size)
         source.piece=len(sizes)>1?u32(at+1):0
@@ -151,7 +179,7 @@ owned_hulls :: proc(state:^Physics_State,assets:^host.Assets,mesh:render.Mesh_Re
                 if mesh,is_mesh:=made.(sim.Mesh_Handle);is_mesh {sim.mesh_destroy(&state.world,mesh)}
                 for made_hull in out[held:] {sim.hull_destroy(&state.world,made_hull)}
                 base.truncate(out,held)
-                return false
+                return
             }
             if shareable {geometry_remember(state,hull,source)}
         }
@@ -159,10 +187,10 @@ owned_hulls :: proc(state:^Physics_State,assets:^host.Assets,mesh:render.Mesh_Re
             sim.hull_destroy(&state.world,hull)
             for made_hull in out[held:] {sim.hull_destroy(&state.world,made_hull)}
             base.truncate(out,held)
-            return false
+            return
         }
     }
-    return true
+    return true,false
 }
 
 // Frees a hull of owned_hulls once no shape of any body uses it; false while one does, or when it is gone.

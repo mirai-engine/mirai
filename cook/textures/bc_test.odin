@@ -34,24 +34,24 @@ blocks_cover_any_size :: proc(t:^testing.T) {
     testing.expect(t,asset.texture_level_rgba8(.BC5,one,1,1,decoded[:]) && decoded[0]==pixels[0] && decoded[1]==pixels[1])
 
     // A built texture has every level down to one texel, compressed or not.
-    image:[16*8*4]u8
+    image:[8*4*4]u8
     for &b in image {b=255}
-    built,error:=build(rgba8(image[:],16,8),{max_size=8,srgb=true})
+    built,error:=build(rgba8(image[:],8,4),{srgb=true})
     defer built_destroy(&built)
     testing.expect(t,error==.None && built.format==.BC7 && .Srgb in built.flags && built.width==8 && built.height==4)
     testing.expect(t,len(built.mips)==4 && len(built.mips[0])==2*1*16 && len(built.mips[3])==16)
-    data,_:=build(rgba8(image[:],16,8),{max_size=8})
+    data,_:=build(rgba8(image[:],8,4),{})
     defer built_destroy(&data)
     testing.expect(t,data.format==.BC1 && len(data.mips[0])==2*1*8 && len(data.mips[3])==8)
     image[3]=0
-    holed,_:=build(rgba8(image[:],16,8),{max_size=64})
+    holed,_:=build(rgba8(image[:],8,4),{})
     defer built_destroy(&holed)
     testing.expect_value(t,holed.format,asset.Texture_Format.BC3)
-    normals,_:=build(rgba8(image[:],16,8),{max_size=64,normal_map=true})
+    normals,_:=build(rgba8(image[:],8,4),{normal_map=true})
     defer built_destroy(&normals)
-    plain_built,_:=build(rgba8(image[:],16,8),{max_size=64,encoding=.Uncompressed})
+    plain_built,_:=build(rgba8(image[:],8,4),{encoding=.Uncompressed})
     defer built_destroy(&plain_built)
-    testing.expect(t,normals.format==.BC5 && plain_built.format==.RGBA8 && len(plain_built.mips[0])==16*8*4)
+    testing.expect(t,normals.format==.BC5 && plain_built.format==.RGBA8 && len(plain_built.mips[0])==8*4*4)
     testing.expect(t,settings_hash({srgb=true})!=settings_hash({srgb=true,encoding=.Uncompressed}),"the encoding is a setting of the import")
 }
 

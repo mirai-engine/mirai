@@ -9,7 +9,7 @@ import "mirai:std/base"
 import "mirai:std/jobs"
 
 // What writing a model costs most is built apart from writing it: the
-// levels, clusters and colliders of each mesh and the levels of each
+// levels and clusters of each mesh and the levels of each
 // texture. model_cook builds them ahead, in parallel on the job system of the
 // import, and the writer takes them; what was not built ahead, the writer
 // builds when it gets to it. Either way they are the same bytes. An import
@@ -26,7 +26,7 @@ MESH_CACHE_BUDGET :: 4<<30 // bytes of the folder
 // when the writer, the format of .mesh or the key of its settings change.
 MESH_CACHE_VERSION :: u64(MESH_SETTINGS_KEY)<<32|u64(IMPORTER_VERSION)<<16|u64(asset.MESH_VERSION)
 @(private="file")
-MESH_SETTINGS_KEY :: 2 // raise it when mesh_settings_hash hashes otherwise
+MESH_SETTINGS_KEY :: 3 // raise it when mesh_settings_hash hashes otherwise
 
 Cook_Failure :: enum u8 {
     None,
@@ -40,8 +40,7 @@ Cooked_Mesh :: struct {
     settings:u64,
     failure:Cook_Failure,
     geometry:asset.Mesh_Geometry,
-    collision:Mesh_Collision,
-    collides:bool, // a collider of the kind asked could be made
+    collision:Mesh_Collision, // the colliders of the source, as it gives them
     arena:mem.Dynamic_Arena,
 }
 
@@ -64,11 +63,11 @@ model_settings :: proc(model:^Imported_Model,options:Import_Options) -> Import_S
 
 // The options a texture of an image is built with.
 image_build_options :: proc(image:Imported_Image,settings:Import_Settings) -> textures.Build_Options {
-    return {max_size=settings.max_texture_size,srgb=image.srgb,normal_map=image.normal_map,green_down=image.green_down,alpha_coverage=image.alpha_cutoff,keep_precision=image.keep_precision,encoding=settings.textures,rdo_lambda=settings.rdo_lambda,channels=image.channels}
+    return {srgb=image.srgb,normal_map=image.normal_map,green_down=image.green_down,alpha_coverage=image.alpha_cutoff,keep_precision=image.keep_precision,encoding=settings.textures,rdo_lambda=settings.rdo_lambda,channels=image.channels}
 }
 
-// What a mesh is made from: its geometry as read, the settings of its levels
-// and colliders and the version of what builds it.
+// What a mesh is made from: its geometry and colliders as read, the settings
+// of its levels and the version of what builds it.
 mesh_cache_key :: proc(mesh:^Imported_Mesh,settings:Import_Settings) -> u64 {
     key:=base.hash_combine(mesh_settings_hash(settings),MESH_CACHE_VERSION)
     key=base.hash_combine(key,base.hash64(mem.slice_to_bytes(mesh.vertices)))
@@ -84,8 +83,8 @@ mesh_cache_key :: proc(mesh:^Imported_Mesh,settings:Import_Settings) -> u64 {
     return base.hash_combine(key,base.hash64(mem.ptr_to_bytes(&flags)))|1
 }
 
-// Builds the levels, clusters and colliders of a mesh, or reads them from
-// the mesh cache, into the arena of cooked. options gives the cache, rebuild
+// Builds the levels and clusters of a mesh, or reads them from the mesh
+// cache, into the arena of cooked. options gives the cache, rebuild
 // and the worker it runs on.
 mesh_cook :: proc(mesh:^Imported_Mesh,settings:Import_Settings,options:Import_Options,cooked:^Cooked_Mesh,parent:mem.Allocator) {
     mem.dynamic_arena_init(&cooked.arena,parent,parent,block_size=1<<20,out_band_size=1<<20)
@@ -104,23 +103,14 @@ mesh_cook :: proc(mesh:^Imported_Mesh,settings:Import_Settings,options:Import_Op
             if view,error:=asset.mesh_view(&file,&types);error==.None {
                 cooked.geometry=view.geometry
                 cooked.collision={view.colliders,view.collision_points,view.collision_indices}
-                cooked.collides=settings.collision==.None || len(view.colliders)>0 || len(mesh.collision.colliders)>0 && !settings.force_collision
                 return
             }
         }
     }
     levels_zone:=jobs.worker_zone_begin(options.worker,"mesh.levels")
-    levels:=mesh_levels(mesh.vertices,mesh.indices,mesh.skin,mesh.submeshes,settings.lods==.Auto,context.temp_allocator,mesh.morphs,mesh.morph_deltas,settings.max_triangles)
+    levels:=mesh_levels(mesh.vertices,mesh.indices,mesh.skin,mesh.submeshes,settings.lods==.Auto,context.temp_allocator,mesh.morphs,mesh.morph_deltas)
     base.profile_end(levels_zone)
-    level:=levels.lods[0]
-    collision_zone:=jobs.worker_zone_begin(options.worker,"mesh.collision")
-    if len(mesh.collision.colliders)>0 && !settings.force_collision {
-        cooked.collision={slice.clone(mesh.collision.colliders,allocator),slice.clone(mesh.collision.points,allocator),slice.clone(mesh.collision.indices,allocator)}
-        cooked.collides=true
-    } else {
-        cooked.collision,cooked.collides=mesh_collision(levels.vertices[:level.vertex_count],levels.indices[:level.index_count],settings.collision,settings.collision_hulls,allocator)
-    }
-    base.profile_end(collision_zone)
+    cooked.collision={slice.clone(mesh.collision.colliders,allocator),slice.clone(mesh.collision.points,allocator),slice.clone(mesh.collision.indices,allocator)}
     clusters_zone:=jobs.worker_zone_begin(options.worker,"mesh.clusters")
     clustered:=levels_geometry(levels,mesh.flags,&cooked.geometry,allocator)
     base.profile_end(clusters_zone)

@@ -1,9 +1,12 @@
 package host
 
+import "core:fmt"
+import "core:os"
 import "mirai:asset"
 import "mirai:std/base"
 import "mirai:std/geom"
 import mm "mirai:std/math"
+import "mirai:std/serial"
 
 // The primitive a Mesh_Renderer without a mesh asset shows.
 Shape :: enum u8 {None,Cube,Sphere,Cylinder,Cone,Capsule,Plane,Prism,Pyramid}
@@ -206,6 +209,124 @@ assets_collision_file :: proc(file:^asset.Asset,types:^asset.Types,kind:Collisio
         base.truncate(&buffer.indices,indices)
     }
     return false,geometry_of_view(view,buffer)
+}
+
+// What a mesh asset stores of the colliders of its source: nothing, shapes
+// (hulls, boxes, spheres, capsules) or a collision mesh, which wins.
+Stored_Collision :: enum u8 {None,Shapes,Mesh}
+
+assets_collision_stored :: proc(view:asset.Mesh_View) -> (stored:Stored_Collision) {
+    for collider in view.colliders {
+        if collider.kind==.Mesh && collider.index_count>0 {return .Mesh}
+        if collider.kind!=.Mesh && (collider.kind!=.Hull || collider.point_count>=3) {stored=.Shapes}
+    }
+    return
+}
+
+// Whether a mesh asset stores colliders of its source: what a placed mesh
+// collides with. False for a generated mesh, a primitive or a mesh that does
+// not read.
+assets_mesh_collides :: proc(a:^Assets,mesh:base.Asset_Id) -> bool {
+    if a==nil || mesh=={} || assets_mesh_generated(a,mesh) {return false}
+    file:asset.Asset
+    if _,_,opened:=assets_open(a,mesh,.Mesh,&file);!opened {return false}
+    defer asset.asset_close(&file)
+    view,error:=asset.mesh_view(&file,&a.types)
+    return error==.None && asset.mesh_check_indices(view) && assets_collision_stored(view)!=.None
+}
+
+// The convex pieces of a mesh file that stores no colliders, kept in a folder
+// of the cache (App.collision_cache) by the content of the file: a file of
+// this kind and version, whose id is its key.
+COLLISION_PIECES_KIND :: asset.Fourcc(u32('P')|u32('C')<<8|u32('E')<<16|u32('S')<<24)
+COLLISION_PIECES_VERSION :: 1 // raise it when assets_collision_pieces_file gives other pieces for the same mesh
+COLLISION_PIECES_EXTENSION :: ".pieces"
+
+// Appends the convex pieces that a moving body of a mesh file without
+// colliders of its source collides as: a decomposition of the triangles of
+// its finest level (geom.mesh_decompose). points receives the points of each
+// piece one after another, in mesh space, and sizes how many each has. The
+// first time it decomposes, and keeps the pieces in folder ("" keeps them
+// nowhere); then it reads them from there. False, with both as they were,
+// for a mesh that stores colliders or of which no piece can be made.
+assets_collision_pieces_file :: proc(file:^asset.Asset,types:^asset.Types,folder:string,points:^[dynamic]geom.Vec3,sizes:^[dynamic]u32) -> bool {
+    if points==nil || sizes==nil {return false}
+    view,error:=asset.mesh_view(file,types)
+    if error!=.None || !asset.mesh_check_indices(view) || assets_collision_stored(view)!=.None {return false}
+    held_points,held_sizes:=len(points),len(sizes)
+    key:=base.hash_combine(file.blob.header.content_hash,u64(COLLISION_PIECES_VERSION)<<16|u64(asset.MESH_VERSION))|1
+    id:=base.Asset_Id{key,u64(COLLISION_PIECES_VERSION)}
+    path:=folder!=""?fmt.tprintf("%s/%016x%s",folder,key,COLLISION_PIECES_EXTENSION):""
+    if path!="" {
+        cached:asset.Asset
+        if asset.asset_load(&cached,path,context.temp_allocator)==.None {
+            defer asset.asset_close(&cached)
+            header:=cached.blob.header
+            if header.kind==COLLISION_PIECES_KIND && header.kind_version==COLLISION_PIECES_VERSION && header.id==id && asset.blob_verify_hash(&cached.blob) {
+                kept_points,points_error:=asset.asset_rows(&cached,types,"points","",[3]f32)
+                kept_sizes,sizes_error:=asset.asset_rows(&cached,types,"sizes","",u32)
+                total:=0
+                for size in kept_sizes {total+=int(size)}
+                if points_error==.None && sizes_error==.None && total==len(kept_points) {
+                    if append(points,..kept_points)!=len(kept_points) || append(sizes,..kept_sizes)!=len(kept_sizes) {
+                        base.truncate(points,held_points)
+                        base.truncate(sizes,held_sizes)
+                        return false
+                    }
+                    return len(kept_sizes)>0
+                }
+            }
+        }
+    }
+    // The surface alone: the vertices that attributes split are one point.
+    surface:geom.Mesh_Buffer
+    geom.mesh_buffer_init(&surface,context.temp_allocator)
+    made_points:=make([dynamic][3]f32,context.temp_allocator)
+    made_sizes:=make([dynamic]u32,context.temp_allocator)
+    if geometry_of_view(view,&surface) {
+        weld:=make([]u32,len(surface.positions),context.temp_allocator)
+        geom.positions_weld(surface.positions[:],0,weld)
+        row:=make([]u32,len(surface.positions),context.temp_allocator)
+        welded:=make([dynamic]geom.Vec3,0,len(surface.positions),context.temp_allocator)
+        for representative,at in weld {
+            if int(representative)==at {
+                row[at]=u32(len(welded))
+                append(&welded,surface.positions[at])
+            }
+        }
+        triangles:=make([dynamic]u32,0,len(surface.indices),context.temp_allocator)
+        for t in 0..<len(surface.indices)/3 {
+            a,b,c:=row[weld[surface.indices[t*3]]],row[weld[surface.indices[t*3+1]]],row[weld[surface.indices[t*3+2]]]
+            if a!=b && b!=c && c!=a {append(&triangles,a,b,c)}
+        }
+        if len(triangles)>0 {
+            if parts,failed:=geom.mesh_decompose({positions=welded[:],indices=triangles[:]},{},context.temp_allocator);failed==.None {
+                for hull in parts.hulls {
+                    if len(hull.vertices)<3 {continue}
+                    append(&made_points,..hull.vertices)
+                    append(&made_sizes,u32(len(hull.vertices)))
+                }
+            }
+        }
+    }
+    // Kept even without pieces: a mesh of which none can be made is not decomposed again.
+    if path!="" && (os.is_dir(folder) || os.make_directory_all(folder)==nil) {
+        doc:asset.Document
+        asset.document_init(&doc,COLLISION_PIECES_KIND,id,context.temp_allocator)
+        doc.kind_version=COLLISION_PIECES_VERSION
+        _,points_error:=asset.document_put(&doc,types,"points",made_points[:])
+        _,sizes_error:=asset.document_put(&doc,types,"sizes",made_sizes[:])
+        if points_error==.None && sizes_error==.None {
+            if bytes,bytes_error:=asset.document_bytes(&doc,context.temp_allocator);bytes_error==.None {_=serial.file_write_atomic(path,bytes)}
+        }
+    }
+    if len(made_sizes)==0 {return false}
+    if append(points,..made_points[:])!=len(made_points) || append(sizes,..made_sizes[:])!=len(made_sizes) {
+        base.truncate(points,held_points)
+        base.truncate(sizes,held_sizes)
+        return false
+    }
+    return true
 }
 
 COLLIDER_SHAPE_SEGMENTS :: 12

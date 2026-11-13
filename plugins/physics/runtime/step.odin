@@ -560,6 +560,16 @@ entity_sync :: proc(s:^Sync,e:core.Entity) {
     if has_collider && collider.kind==.External {has_collider=false}
     owner:=core.NONE
     if !has_rigid && !has_character && has_collider {owner=compound_owner(s,e)}
+    if has_collider && !has_character && collider.kind==.Auto {
+        moving:=has_rigid && rigid.type!=.Static
+        if held,on:=core.get(s.rigids,owner);owner!=core.NONE && on {moving=held.type!=.Static}
+        kind,waiting:=auto_kind(s,e,moving)
+        if waiting {
+            s.waiting=true
+            return
+        }
+        collider.kind=kind
+    }
     switch {
     case has_character:
         if l.kind!=.Character && l.kind!=.None {link_release(s,l)}
@@ -783,7 +793,7 @@ compound_sync :: proc(s:^Sync,e:core.Entity,l:^Link,collider:Collider,owner:core
 // once its asset is freed: other asset changes do not make its shapes again.
 @(private)
 shown_of :: proc(s:^Sync,e:core.Entity,collider:Collider) -> (shown:Shown) {
-    if collider.kind!=.Hull && collider.kind!=.Mesh && collider.kind!=.Heightfield {return}
+    if collider.kind!=.Hull && collider.kind!=.Mesh && collider.kind!=.Heightfield && collider.kind!=.Auto {return}
     if static,has:=core.get(s.statics,e);has {shown.mesh,shown.shape=static.mesh,static.shape}
     if s.app.assets==nil {return}
     record,file:=asset.registry_find(&s.app.assets.registry,shown.mesh)
@@ -997,7 +1007,7 @@ collider_desc :: proc "contextless" (collider:Collider,scale:[3]f32,filter:sim.F
     desc:=sim.SHAPE_DESC_DEFAULT
     size:=linalg.abs(scale)
     switch collider.kind {
-    case .Hull,.Mesh,.Heightfield,.External:
+    case .Hull,.Mesh,.Heightfield,.External,.Auto:
     case .Box:     desc.geometry=sim.Box{collider.size*size}
     case .Sphere:  desc.geometry=sim.Sphere{collider.size.x*max(size.x,size.y,size.z)}
     case .Capsule: desc.geometry=sim.Capsule{collider.size.x*max(size.x,size.z),collider.size.y*size.y}
@@ -1013,8 +1023,9 @@ collider_desc :: proc "contextless" (collider:Collider,scale:[3]f32,filter:sim.F
 }
 
 // Makes the shapes of a collider on body: one, or one per convex piece of a Hull whose mesh has several, all
-// alike but for their hull. Those of a compound go where relative puts the entity. Nothing stays made when
-// one fails.
+// alike but for their hull. An Auto collider is as auto_kind resolved it: still Auto, the pieces of a
+// decomposition of its mesh, or one hull when it has fewer than two. Those of a compound go where relative
+// puts the entity. Nothing stays made when one fails.
 @(private)
 collider_shapes_make :: proc(s:^Sync,l:^Link,e:core.Entity,body:sim.Body_Handle,collider:Collider,scale:[3]f32,filter:sim.Filter,relative:^mm.Transform=nil) -> Shape_Failure {
     state:=s.state
@@ -1022,13 +1033,13 @@ collider_shapes_make :: proc(s:^Sync,l:^Link,e:core.Entity,body:sim.Body_Handle,
     desc:=collider_desc(collider,scale,filter,e)
     failure:=collider_round_fits(collider,scale)?Shape_Failure.None:.Convex_Radius
     pieces:bool
-    if failure==.None && collider.kind==.Hull {
-        pieces,failure=collider_pieces_make(s,l,e,scale,desc.convex_radius)
+    if failure==.None && (collider.kind==.Hull || collider.kind==.Auto) {
+        pieces,failure=collider_pieces_make(s,l,e,scale,desc.convex_radius,collider.kind==.Auto)
         if pieces {desc.geometry=l.hull}
     }
-    if failure==.None && !pieces && (collider.kind==.Hull || collider.kind==.Mesh || collider.kind==.Heightfield) {
+    if failure==.None && !pieces && (collider.kind==.Hull || collider.kind==.Mesh || collider.kind==.Heightfield || collider.kind==.Auto) {
         origin:[3]f32
-        desc.geometry,origin,failure=collider_geometry(s,l,collider.kind,e,scale,desc.convex_radius)
+        desc.geometry,origin,failure=collider_geometry(s,l,collider.kind==.Auto?.Hull:collider.kind,e,scale,desc.convex_radius)
         desc.transform.p+=origin
     }
     if relative!=nil {desc.transform={relative.position+mm.quat_rotate(relative.rotation,desc.transform.p),relative.rotation}}
