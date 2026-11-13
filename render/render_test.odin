@@ -290,6 +290,69 @@ render_moved_cascades_give_what_whole_ones_give :: proc(t: ^testing.T) {
 	expect_clean(t, f.device)
 }
 
+// A turning sun takes a new projection for one cascade a frame, the one that
+// took its own longest ago; once it stops, the cascades it caught up with
+// give what maps drawn whole give.
+@(test)
+render_a_turning_sun_redraws_one_cascade_a_frame :: proc(t: ^testing.T) {
+	f: Cube_Fixture
+	settings := test_settings()
+	settings.gi_enabled = false
+	settings.taa = false
+	if !cube_fixture_init(t, &f, 192, 128, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	instances: [10]Instance_Desc
+	instances[0] = {object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {40, 0.2, 40}), tint = {0.8, 0.8, 0.8}}
+	for k in 1 ..< len(instances) {
+		instances[k] = {object_id = u64(k + 1), mesh = f.cube, transform = trs({f32(k % 3) * 2.3 - 2.3, 0.8, f32(k / 3) * 2.1 - 3}, {0.3, 1.6, 0.3}), tint = {0.5, 0.5, 0.5}}
+	}
+	sun := Sun_Desc{direction = {0.4, 1, 0.3}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true}
+	environment := Environment{sky = {0, 0, 0}}
+	testing.expect(t, scene_given(r, instances[:], nil, sun, environment))
+	camera := Camera{position = {0, 5, 7}, forward = {0, -5, -7}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	b := &r.main.targets.shadow_raster
+	planned :: proc(b: ^Shadow_Raster) -> (cascades: [SHADOW_MAPS_MAX]u64, count: int) {
+		for h in b.held[:b.held_count] {
+			if h.light >= 0 {continue}
+			cascades[h.face] = h.planned
+			count = max(count, int(h.face) + 1)
+		}
+		return
+	}
+	_, cascades := planned(b)
+	testing.expectf(t, cascades > 1, "the sun takes %d cascades", cascades)
+	for k in 0 ..< 2 * cascades {
+		before, _ := planned(b)
+		sun.direction.x = 0.4 + 0.02 * f32(k + 1)
+		scene_set_environment(r, sun, environment)
+		testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+		after, _ := planned(b)
+		taken := 0
+		for i in 0 ..< cascades {if after[i] != before[i] {taken += 1}}
+		testing.expectf(t, taken == 1, "frame %d of a turning sun took %d new cascades", k, taken)
+	}
+	for _ in 0 ..< cascades {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	read :: proc(t: ^testing.T, f: ^Cube_Fixture) -> []u8 {
+		rhi.device_wait_idle(f.device)
+		pixels, _, _, ok := golden_capture(f.renderer)
+		testing.expect(t, ok, f.renderer.error)
+		return pixels
+	}
+	caught := read(t, &f)
+	defer delete(caught)
+	b.held_count = 0
+	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	whole := read(t, &f)
+	defer delete(whole)
+	if len(caught) != len(whole) || len(caught) == 0 {return}
+	differ := 0
+	for v, k in caught {if abs(int(v) - int(whole[k])) > 2 {differ += 1}}
+	testing.expectf(t, differ * 1000 <= len(caught), "%d of %d values differ from the maps drawn whole", differ, len(caught))
+	expect_clean(t, f.device)
+}
+
 @(test)
 render_diffuse_color_bleeding :: proc(t: ^testing.T) {
 	f: Cube_Fixture

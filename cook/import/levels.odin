@@ -63,7 +63,7 @@ ISLAND_MAX_TRIANGLES :: 64 // a small island has at most this many triangles
 ISLAND_MAX_SHARE :: 16     // and at most 1/16 of the triangles of its submesh
 ISLANDS_MIN :: 16          // small islands a submesh of islands has at least
 ISLAND_CLASSES :: 8        // octaves of radius the small islands of a submesh are split in; smaller ones join the last
-ISLAND_PIXELS :: f32(1)    // of the threshold of the cut, how far the radius of a grown island may span where its level draws it
+ISLAND_PIXELS :: f32(8)    // of the threshold of the cut, how far the radius of a grown island may span where its level draws it
 ISLAND_GROW_MAX :: f32(4)  // the most the islands of a class grow: past it they are not pruned further
 
 // A mesh as its asset stores it: level 0 followed by its simplified levels.

@@ -2271,7 +2271,9 @@ assets_unload :: proc(a:^Assets,gone:[]base.Asset_Id) -> int {
     a.stats.unloads+=len(gone)
     a.materials_dirty=true
     a.revision+=1
-    assets_structure_changed(a)
+    // Each by its id: what no scope reached, which a consumer holding other
+    // assets passes over.
+    for id in gone {assets_structure_changed(a,id)}
     assets_commit(a)
     return len(gone)
 }

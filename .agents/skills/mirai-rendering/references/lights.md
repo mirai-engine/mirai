@@ -187,8 +187,10 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   draw the clusters of the instances of the scene and of the batches that cast shadows at the detail
   a texel of the map asks for where they lie (`shadow_map_detail`), not the eye, and leave out an
   instance smaller than a texel of the map (`shadow_map_unseen`). Those of an instance with masked
-  materials are drawn apart, with their coverage as a shadow ray asks it (`hit_covers`); glass only
-  in the tint. They are culled as the view culls its own: by instance and map, which hands the
+  materials are drawn apart, with their coverage as a shadow ray asks it: a masked material without
+  a program samples its alpha with the derivatives of its uvs, a texel of the map wide, and the
+  others ask `hit_covers`; glass only in the tint. They are culled as the view culls its own: by
+  instance and map, which hands the
   clusters of the levels the cut of the map can take (`instance_clusters`) to a pass by cluster in
   chunks, into lists that count what does not fit and grow, like those of the view.
 - **Cache of the maps.** The cost follows what changed. A map the plan wants the same as the frame
@@ -197,7 +199,10 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   by whole texels across the light keeps its square too: what it held moves with it, and it draws
   only the strips that came in (a job draws a window of a map). It draws a map again, in the same
   frame, only where it is new or what stays changed in its frustum: an instance that came, went or
-  changed its box or pose, a page of its mesh, a masked material. An instance that changes again
+  changed its box or pose, a page of its mesh, a masked material. Of the cascades of the sun that
+  want another projection (the sun turned, the eye jumped), only the one whose projection is the
+  oldest takes it and is drawn whole each frame; the others keep theirs, with what the cache holds,
+  until their turn, so a turning sun costs one cascade a frame. An instance that changes again
   within `SHADOW_MOVER_FRAMES` moves
   (`Shadow_Movers`): the cache leaves it out once, and every frame draws what moves over a copy of
   the cache until it stays that long and joins it again, so a moving body does not throw the cache

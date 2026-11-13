@@ -101,11 +101,12 @@ Shadow_Raster :: struct {
 // A map the cache holds, as it was drawn.
 @(private)
 Shadow_Held :: struct {
-	m:     Gpu_Shadow_Map,
-	light: int,
-	face:  u32,
-	grid:  [3]i32,
-	end:   f32,
+	m:       Gpu_Shadow_Map,
+	light:   int,
+	face:    u32,
+	grid:    [3]i32,
+	end:     f32,
+	planned: u64, // the frame that took its projection
 }
 
 // The instances whose shadows changed lately (Occluder_Changes): one that
@@ -548,25 +549,48 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 	taken: [BLOCKS]bool
 	same: [SHADOW_MAPS_MAX]bool
 	moved: [SHADOW_MAPS_MAX][2]i32
+	planned: [SHADOW_MAPS_MAX]u64
+	for i in 0 ..< count {planned[i] = r.frame}
 	blocks :: proc(side: u32) -> u32 {return (side / SHADOW_MAP_SMALLEST) * (side / SHADOW_MAP_SMALLEST)}
+	take :: proc(taken: ^[BLOCKS]bool, rect: [4]u32) {
+		at: u32
+		for bit in u32(0) ..< 16 {at |= ((rect.x / SHADOW_MAP_SMALLEST >> bit) & 1) << (2 * bit) | ((rect.y / SHADOW_MAP_SMALLEST >> bit) & 1) << (2 * bit + 1)}
+		for k in at ..< at + blocks(rect.z) {taken[k] = true}
+	}
 	if !fresh {
+		// Of the cascades of the sun the cache holds with another projection
+		// than the one wanted (the sun turned, the eye jumped), the one whose
+		// projection was taken longest ago, the nearest of equals, takes the
+		// new one and is drawn whole; the others keep theirs until their turn,
+		// so a turning sun draws one cascade a frame and not all of them.
+		turn := -1
 		for &w, i in wants[:count] {
 			h := held_of(b, w)
 			if h == nil {continue}
 			wanted := w.m
 			wanted.rect.xy = h.m.rect.xy
 			shift := [2]i32{w.grid.x - h.grid.x, w.grid.y - h.grid.y}
+			kept := true
 			if w.light < 0 {
 				reach := i32(w.side / 2)
-				if w.grid.z != h.grid.z || abs(shift.x) >= reach || abs(shift.y) >= reach {continue}
+				if w.grid.z != h.grid.z || abs(shift.x) >= reach || abs(shift.y) >= reach {kept = false}
 				wanted.origin = h.m.origin
 			}
-			if wanted != h.m {continue}
+			if !kept || wanted != h.m {
+				if w.light < 0 && (turn < 0 || h.planned < planned[turn]) {turn, planned[i] = i, h.planned}
+				continue
+			}
 			w.m.rect.xy = h.m.rect.xy
-			w.placed, same[i], moved[i] = true, true, shift
-			at: u32
-			for bit in u32(0) ..< 16 {at |= ((h.m.rect.x / SHADOW_MAP_SMALLEST >> bit) & 1) << (2 * bit) | ((h.m.rect.y / SHADOW_MAP_SMALLEST >> bit) & 1) << (2 * bit + 1)}
-			for k in at ..< at + blocks(w.side) {taken[k] = true}
+			w.placed, same[i], moved[i], planned[i] = true, true, shift, h.planned
+			take(&taken, h.m.rect)
+		}
+		if turn >= 0 {planned[turn] = r.frame}
+		for &w, i in wants[:suns] {
+			h := held_of(b, w)
+			if same[i] || i == turn || h == nil {continue}
+			w.m, w.side, w.grid, w.end = h.m, h.m.rect.z, h.grid, h.end
+			w.placed, same[i], planned[i] = true, true, h.planned
+			take(&taken, h.m.rect)
 		}
 	}
 	order: [SHADOW_MAPS_MAX]int
@@ -690,7 +714,7 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 		all := plan.all_list
 		n := at
 		job(words, all, &n, at, 0, 0, side, side)
-		b.held[b.held_count] = {m = w.m, light = w.light, face = w.face, grid = w.grid, end = w.end}
+		b.held[b.held_count] = {m = w.m, light = w.light, face = w.face, grid = w.grid, end = w.end, planned = planned[i]}
 		b.held_count += 1
 		at += 1
 	}

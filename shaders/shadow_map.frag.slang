@@ -16,6 +16,7 @@
 #ifdef MIRAI_SHADOW_TINT
 #define MIRAI_RAY_FILTERS
 #endif
+#define MATERIAL_RASTER
 #include "trace.slang"
 bool shadow_blended(uint2 place, out bool programmed) {
     Instance inst = scene_instance(place.x);
@@ -41,8 +42,16 @@ void main([[vk::location(0)]] nointerpolation uint2 place : PLACE, [[vk::locatio
     if (!shadow_blended(place, programmed)) discard;
 }
 #else
+// A masked material without a program samples its alpha with the derivatives
+// of its uvs, a texel of the map wide as the footprint hit_covers takes; the
+// others ask hit_covers, which reads the triangle.
 [shader("fragment")]
-void main([[vk::location(0)]] nointerpolation uint2 place : PLACE, [[vk::location(1)]] float2 bary : BARY, [[vk::location(2)]] nointerpolation float reach : REACH, [[vk::location(3)]] float3 toward : TOWARD) {
+void main([[vk::location(0)]] nointerpolation uint2 place : PLACE, [[vk::location(1)]] float2 bary : BARY, [[vk::location(2)]] nointerpolation float reach : REACH, [[vk::location(3)]] float3 toward : TOWARD, [[vk::location(4)]] float2 uv : UV0, [[vk::location(5)]] float2 uv1 : UV1, [[vk::location(6)]] nointerpolation uint2 material : MATERIAL) {
+    Material m = material_row(material.x, material.y);
+    if (m.program_id == 0u && m.alpha_mode == ALPHA_MASK) {
+        if (!material_covers(m, material_base_color(m, uv, uv1, float2(0.0), float3(1.0), false).a)) discard;
+        return;
+    }
     if (!hit_covers(place.x, place.y, bary, reach, BLEND_PASSES)) discard;
 }
 #endif
