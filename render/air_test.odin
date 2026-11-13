@@ -31,7 +31,7 @@ air_fixture :: proc(t: ^testing.T, f: ^Air_Fixture, loc := #caller_location) -> 
 @(private = "file")
 sun_at :: proc(degrees: f32) -> Sun_Desc {
 	e := degrees * math.RAD_PER_DEG
-	return {direction = {0, math.sin(e), -math.cos(e)}, color = {1, 1, 1}, illuminance = 100000, enabled = true}
+	return {direction = {0, math.sin(e), -math.cos(e)}, color = {1, 1, 1}, illuminance = 100000, enabled = true, indirect = 1, scattering = 1}
 }
 
 @(private = "file")
@@ -122,7 +122,7 @@ the_sun_through_the_air_gives_its_illuminance_overhead_and_reddens_low :: proc(t
 	// A white floor, the camera above it looking down.
 	floor := Instance_Desc{object_id = 1, mesh = f.square, transform = linalg.matrix4_rotate_f32(-math.PI / 2, {1, 0, 0}) * linalg.matrix4_scale_f32({40, 40, 1}), material = 1, tint = {1, 1, 1}}
 	down := Camera{position = {0, 3, 0}, forward = {0, -1, 0}, up = {0, 0, -1}, fov_y = 40, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-	overhead := Sun_Desc{direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 100000, enabled = true}
+	overhead := Sun_Desc{direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 100000, enabled = true, indirect = 1, scattering = 1}
 	scene_given(r, {floor}, nil, overhead, {})
 	testing.expect(t, renderer_frame(r, {camera = down}), r.error)
 	bare := nits_at(t, &f, r.targets.direct, 0.5, 0.5)

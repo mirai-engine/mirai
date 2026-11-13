@@ -35,7 +35,7 @@ float4 fog_beyond(float3 a, float3 b, float3 eye_ray, float3 around) {
     float3 sun_dir = frame.sun_direction.xyz;
     bool sun_on = frame.sun_direction.w > 0.5;
     float3 middle = 0.5 * (a + b);
-    float3 sun = sun_on ? sun_light(middle) * fog_shade(middle, sun_dir, DRY_NONE) : float3(0.0);
+    float3 sun = sun_on ? media_sun_light(middle) * fog_shade(middle, sun_dir, DRY_NONE) : float3(0.0);
     float3 ambient = around * fog_shade(middle, float3(0.0, 1.0, 0.0), DRY_NONE);
     float cosine = dot(eye_ray, sun_dir);
     float length = distance(a, b);

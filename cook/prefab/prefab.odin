@@ -207,20 +207,20 @@ Morph_Weights :: struct {
 model_light :: proc(scene:^asset.Scene,info:^core.World_Info,entity:base.Entity_Id,light:importer.Imported_Light,name:string,assets:^importer.Import_Report) -> bool {
     switch light.kind {
     case .Directional:
-        sun:=render.Sun{color=light.color,illuminance=light.intensity,disc=true}
+        sun:=render.Sun{color=light.color,illuminance=light.intensity,disc=true,indirect=1,scattering=1}
         return put(scene,info,entity,"Sun",&sun)==.None
     case .Point:
-        point:=render.Point_Light{color=light.color,intensity=light.intensity,range=light_range(light),radius=light.radius.? or_else render.POINT_LIGHT_DEFAULT.radius}
+        point:=render.Point_Light{color=light.color,intensity=light.intensity,range=light_range(light),radius=light.radius.? or_else render.POINT_LIGHT_DEFAULT.radius,indirect=1,scattering=1}
         return put(scene,info,entity,"Point_Light",&point)==.None
     case .Spot:
         angle:=clamp(light.outer_cone,render.SPOT_MIN,render.SPOT_MAX)
         if angle!=light.outer_cone {
             append(&assets.warnings,fmt.aprintf("the spot of %s has an outer cone of %.1f°, out of 1° to 89°: it was given %.1f°",name,light.outer_cone*mm.DEG_PER_RAD,angle*mm.DEG_PER_RAD,allocator=assets.allocator))
         }
-        spot:=render.Spot_Light{color=light.color,intensity=light.intensity,range=light_range(light),radius=light.radius.? or_else render.SPOT_LIGHT_DEFAULT.radius,angle=angle}
+        spot:=render.Spot_Light{color=light.color,intensity=light.intensity,range=light_range(light),radius=light.radius.? or_else render.SPOT_LIGHT_DEFAULT.radius,angle=angle,indirect=1,scattering=1}
         return put(scene,info,entity,"Spot_Light",&spot)==.None
     case .Rect:
-        rect:=render.Rect_Light{color=light.color,luminance=light.intensity,range=light_range(light)}
+        rect:=render.Rect_Light{color=light.color,luminance=light.intensity,range=light_range(light),indirect=1,scattering=1}
         return put(scene,info,entity,"Rect_Light",&rect)==.None
     }
     return true

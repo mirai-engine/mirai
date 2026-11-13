@@ -102,6 +102,8 @@ Light_Desc :: struct {
 	length:    f32,  // a capsule: of its segment, metres; 0: a sphere
 	size:      Vec2, // a rectangle: its width and height, metres; zero: not one
 	material:  Material_Handle, // a rectangle: the material whose emission colors it across, its texture mapped to it as to a unit quad (0: its color alone)
+	indirect:  f32,  // what of its light the probes gather, and so bounces: 1 all of it, 0 none
+	scattering: f32, // what of its light media scatter (fog, the volumes of particles): 1 all of it
 }
 
 Sun_Desc :: struct {
@@ -110,6 +112,8 @@ Sun_Desc :: struct {
 	illuminance: f32,  // lux, on a surface that faces it
 	enabled:   bool,
 	disc:      bool, // it is seen in the sky
+	indirect:  f32,  // what of its light the probes gather, as Light_Desc.indirect
+	scattering: f32, // what of its light media scatter, as Light_Desc.scattering
 }
 
 Environment :: struct {
@@ -385,6 +389,7 @@ Scene_State :: struct {
 	light_scale:          f32,  // render units per nit (light_scale_of)
 	light_key:            f32,  // what the strongest local light gives a white surface a metre away that faces it, nits
 	exposure:             Exposure, // of the views whose camera has no exposure of its own (Exposure.own)
+	indirect:             f32,      // what multiplies the light of the probe volume where the views take it (scene_set_indirect)
 	changes:              Light_Changes, // where the light of the world changed since the GI last looked
 	occluders:            Occluder_Changes, // what casts shadows and changed since the last frame drew the scene
 	paged:                Occluder_Changes, // the instances of the meshes whose pages came or went since then
@@ -417,6 +422,7 @@ scene_init :: proc(r: ^Renderer) -> bool {
 	s.colors = make([dynamic]Pool_Range,a)
 	s.pages.streamed = make([dynamic]u32, a)
 	s.light_scale, s.lights_scale = 1, 1
+	s.indirect = 1
 	// An empty table has no smooth material.
 	s.smoothest = 1
 	for &ranges in s.pool_free {ranges=make([dynamic]Pool_Range,a)}
@@ -1926,12 +1932,31 @@ light_gives :: proc "contextless" (l: Light_Desc) -> bool {
 	return l.intensity > 0 && luminance_of(l.color) > 0 && l.range > 0
 }
 
+// The shares of the light of a light the probes gather and media scatter, as
+// the GPU keeps them in the w of the axis of its Gpu_Light: two halves, the
+// first in the low bits (light_shares of common.slang).
+light_shares :: proc "contextless" (indirect, scattering: f32) -> f32 {
+	half :: proc "contextless" (share: f32) -> u32 {return u32(transmute(u16)f16(light_share(share)))}
+	return transmute(f32)(half(indirect) | half(scattering) << 16)
+}
+
+// A share as the renderer takes it: from 0 to the largest half, 0 for NaN.
+@(private)
+light_share :: proc "contextless" (share: f32) -> f32 {return clamp(share, 0, 65504) if share == share else 0}
+
+// The shares a light keeps: what the probes gather (x) and media scatter (y).
+light_shares_of :: proc "contextless" (l: Gpu_Light) -> Vec2 {
+	bits := transmute(u32)l.axis.w
+	return {f32(transmute(f16)u16(bits & 0xffff)), f32(transmute(f16)u16(bits >> 16))}
+}
+
 // A local light that gives light in render units.
 @(private = "file")
 gpu_light :: proc(l: Light_Desc, scale: f32) -> Gpu_Light {
 	power := l.intensity / math.PI * scale
 	if l.size.x > 0 && l.size.y > 0 {power *= l.size.x * l.size.y}
-	light := Gpu_Light{position_range = {l.position.x, l.position.y, l.position.z, l.range}, color_intensity = {l.color.x, l.color.y, l.color.z, power}, direction_cone = {0, 0, 0, GPU_LIGHT_POINT}, size = {max(l.radius, 0), 0, 0, 0}}
+	shares := light_shares(l.indirect, l.scattering)
+	light := Gpu_Light{position_range = {l.position.x, l.position.y, l.position.z, l.range}, color_intensity = {l.color.x, l.color.y, l.color.z, power}, direction_cone = {0, 0, 0, GPU_LIGHT_POINT}, size = {max(l.radius, 0), 0, 0, 0}, axis = {0, 0, 0, shares}}
 	facing := linalg.length(l.direction) > 1e-6
 	along := l.axis - linalg.dot(l.axis, l.direction) / max(linalg.dot(l.direction, l.direction), 1e-12) * l.direction
 	switch {
@@ -1939,7 +1964,7 @@ gpu_light :: proc(l: Light_Desc, scale: f32) -> Gpu_Light {
 		normal, width := linalg.normalize(l.direction), linalg.normalize(along)
 		light.direction_cone = {normal.x, normal.y, normal.z, GPU_LIGHT_RECT}
 		light.size = {0, l.size.x * 0.5, l.size.y * 0.5, transmute(f32)u32(l.material)}
-		light.axis = {width.x, width.y, width.z, 0}
+		light.axis = {width.x, width.y, width.z, shares}
 	case l.cone > 0 && facing:
 		direction := linalg.normalize(l.direction)
 		light.direction_cone = {direction.x, direction.y, direction.z, math.cos(clamp(l.cone, 0.001, math.PI * 0.5))}
@@ -1947,7 +1972,7 @@ gpu_light :: proc(l: Light_Desc, scale: f32) -> Gpu_Light {
 	if l.length > 0 && linalg.length(l.axis) > 1e-6 && light.direction_cone.w != GPU_LIGHT_RECT {
 		axis := linalg.normalize(l.axis)
 		light.size.y = l.length * 0.5
-		light.axis = {axis.x, axis.y, axis.z, 0}
+		light.axis = {axis.x, axis.y, axis.z, shares}
 	}
 	return light
 }
@@ -2163,12 +2188,18 @@ scene_light_scale :: proc(r: ^Renderer, sun: Sun_Desc, environment: Environment)
 	return scale
 }
 
+// What multiplies all the indirect light the views and media take: the light
+// of the probe volume, or of the sky that stands for it without GI. The probes
+// gather without it, so a change shows in the frame it is made.
+scene_set_indirect :: proc(r: ^Renderer, scale: f32) {r.scene.indirect = light_share(scale)}
+
 // Changes the view environment without uploading geometry or rebuilding the
 // TLAS. A preview lighting toggle can discard radiance history in-place.
 scene_set_environment :: proc(r:^Renderer,sun:Sun_Desc,environment:Environment,reset_history:bool=false) {
     scene_light_scale(r,sun,environment)
     normalized:=sun
     if linalg.length(normalized.direction)>1e-6 {normalized.direction=linalg.normalize(normalized.direction)} else {normalized.enabled=false}
+    normalized.indirect,normalized.scattering=light_share(sun.indirect),light_share(sun.scattering)
     if r.scene.sun!=normalized || r.scene.environment!=environment {scene_changed(&r.scene)}
     // A sun that turns by less than its radius moves its shadows by less than their penumbra.
     before:=r.scene.sun

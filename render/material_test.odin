@@ -387,7 +387,7 @@ material_gloss_adds_a_highlight_and_metal_tints_it :: proc(t: ^testing.T) {
 	quad := ground_quad(r)
 	// The light, the camera and the floor point between them form a mirror path.
 	camera := Camera{position = {0, 2, 4}, forward = {0, -2, -2}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-	lights := []Light_Desc{{position = {0, 2, 0}, color = {1, 1, 1}, intensity = 4 * math.PI, range = 30}}
+	lights := []Light_Desc{{position = {0, 2, 0}, color = {1, 1, 1}, intensity = 4 * math.PI, range = 30, indirect = 1, scattering = 1}}
 	shot :: proc(t: ^testing.T, f: ^Fixture, quad: Mesh_Handle, lights: []Light_Desc, camera: Camera, material: Material_Handle, world: Vec3) -> [3]f32 {
 		r := f.renderer
 		scene_given(r, {{object_id = 1, mesh = quad, transform = scale_matrix(20), material = material, tint = {1, 1, 1}}}, lights, {}, {})
@@ -519,7 +519,7 @@ material_textures_color_the_bounced_light :: proc(t: ^testing.T) {
 		painted.custom_params = program_defaults(grid)
 		for name in ([]string{"color", "line_color"}) {testing.expect(t, program_parameter_set(&painted.custom_params, program_parameter(grid, name), {1, 0, 0, 0}))}
 		materials_set(r, {black, row, painted})
-		lamp_light := []Light_Desc{{position = {0, 1.5, 0}, color = {1, 1, 1}, intensity = 16 * math.PI, range = 30}}
+		lamp_light := []Light_Desc{{position = {0, 1.5, 0}, color = {1, 1, 1}, intensity = 16 * math.PI, range = 30, indirect = 1, scattering = 1}}
 		floors: [2][3]f32
 		for &floor, k in floors {
 			room: [6]Instance_Desc
@@ -774,7 +774,7 @@ material_program_shows_in_what_a_reflection_finds :: proc(t: ^testing.T) {
 		{object_id = 1, mesh = quad, transform = scale_matrix(20), material = 1, tint = {1, 1, 1}},
 		{object_id = 2, mesh = quad, transform = standing, material = 2, tint = {1, 1, 1}},
 	}
-	sun := Sun_Desc{direction = linalg.normalize(Vec3{0, 0.5, 1}), color = {1, 1, 1}, illuminance = math.PI, enabled = true}
+	sun := Sun_Desc{direction = linalg.normalize(Vec3{0, 0.5, 1}), color = {1, 1, 1}, illuminance = math.PI, enabled = true, indirect = 1, scattering = 1}
 	camera := Camera{position = {0, 2, 2}, forward = {0, -2, -2}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	for binned in ([]bool{false, true}) {
 		// The other program is in a row of the table that no instance takes.
@@ -826,7 +826,7 @@ material_program_draws_as_its_rows_until_its_pipelines_are_made :: proc(t: ^test
 	scene_given(r, {
 		{object_id = 1, mesh = quad, transform = scale_matrix(20), material = 1, tint = {1, 1, 1}},
 		{object_id = 2, mesh = quad, transform = standing, material = 2, tint = {1, 1, 1}},
-	}, nil, {direction = linalg.normalize(Vec3{0, 0.5, 1}), color = {1, 1, 1}, illuminance = math.PI, enabled = true}, {sky = {0, 0, 0.05}})
+	}, nil, {direction = linalg.normalize(Vec3{0, 0.5, 1}), color = {1, 1, 1}, illuminance = math.PI, enabled = true, indirect = 1, scattering = 1}, {sky = {0, 0, 0.05}})
 	camera := Camera{position = {0, 2, 2}, forward = {0, -2, -2}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	look :: proc(t: ^testing.T, f: ^Fixture, camera: Camera) -> (seen, mirrored: [3]f32) {
 		rhi.device_wait_idle(f.device)
@@ -905,7 +905,7 @@ material_program_shows_on_what_the_camera_sees :: proc(t: ^testing.T) {
 	glass.alpha_mode, glass.opacity = .Blend, 0.6
 	materials_set(r, {painted, glass})
 	quad := ground_quad(r)
-	sun := Sun_Desc{direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = math.PI, enabled = true}
+	sun := Sun_Desc{direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = math.PI, enabled = true, indirect = 1, scattering = 1}
 	camera := OVERHEAD
 	camera.position.y = 5
 	scene_given(r, {{object_id = 1, mesh = quad, transform = scale_matrix(20), material = 1, tint = {1, 1, 1}}}, nil, sun, {})
@@ -955,7 +955,7 @@ material_program_moves_the_vertices_the_camera_the_rays_and_the_motion_see :: pr
 	piece, added := mesh_add(r, vertices[:], []u32{0, 2, 1, 0, 3, 2})
 	if !testing.expect(t, added, r.error) {return}
 	floor := ground_quad(r)
-	sun := Sun_Desc{direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = math.PI, enabled = true}
+	sun := Sun_Desc{direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = math.PI, enabled = true, indirect = 1, scattering = 1}
 	instances := []Instance_Desc{
 		{object_id = 1, mesh = floor, transform = scale_matrix(20), tint = {1, 1, 1}},
 		{object_id = 2, mesh = piece, transform = placed(1, 1), material = 1, tint = {1, 1, 1}},
@@ -1051,7 +1051,7 @@ material_mask_cuts_holes_for_the_camera_and_for_rays :: proc(t: ^testing.T) {
 	for c, i in corners {vertices[i] = {position = c, normal = {0, 1, 0}, uv = {0.25, 0.25}, uv1 = {c.x + 0.5, c.z + 0.5}, color = {1, 1, 1}}}
 	secondary, added_mesh := mesh_add(r, vertices[:], []u32{0, 2, 1, 0, 3, 2})
 	testing.expect(t, added_mesh, r.error)
-	sun := Sun_Desc{direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true}
+	sun := Sun_Desc{direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true, indirect = 1, scattering = 1}
 	instances := []Instance_Desc{
 		{object_id = 1, mesh = quad, transform = scale_matrix(20), tint = {1, 1, 1}},
 		{object_id = 2, mesh = quad, transform = placed(2, 1), material = 1, tint = {1, 1, 1}},
@@ -1225,7 +1225,7 @@ material_blend_shows_the_scene_through_and_casts_no_shadow :: proc(t: ^testing.T
 	blue.alpha_mode = .Blend
 	materials_set(r, {red, blue})
 	quad := ground_quad(r)
-	sun := Sun_Desc{direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true}
+	sun := Sun_Desc{direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true, indirect = 1, scattering = 1}
 	floor := Instance_Desc{object_id = 1, mesh = quad, transform = scale_matrix(20), tint = {1, 1, 1}}
 	glass := Instance_Desc{object_id = 2, mesh = quad, transform = placed(2, 1), material = 1, tint = {1, 1, 1}}
 	scene_given(r, {floor, glass}, nil, sun, {})
@@ -1301,8 +1301,8 @@ material_colored_shadows_filter_textures_and_respect_blockers :: proc(t:^testing
     filter:=Instance_Desc{object_id=2,mesh=quad,transform=placed(2,1),material=1,tint={1,1,1}}
     opaque:=Instance_Desc{object_id=3,mesh=quad,transform=placed(2,2),tint={1,1,1}}
     camera:=OVERHEAD;camera.position.y=5
-    sun:=Sun_Desc{direction={0,1,0},color={1,1,1},illuminance=1 * math.PI,enabled=true}
-    spot:=Light_Desc{position={0,4,0},color={1,1,1},intensity=16 * math.PI,range=10,direction={0,-1,0},cone=0.7}
+    sun:=Sun_Desc{direction={0,1,0},color={1,1,1},illuminance=1 * math.PI,enabled=true,indirect=1,scattering=1}
+    spot:=Light_Desc{position={0,4,0},color={1,1,1},intensity=16 * math.PI,range=10,direction={0,-1,0},cone=0.7,indirect=1,scattering=1}
     grid:=program_find(r,"Grid",.Surface)
     if !testing.expect(t,grid!=nil,"the tests have the Grid program") {return}
     for provider in ([]Trace_Mode{.Software,.Hardware}) {
@@ -1408,7 +1408,7 @@ uniform_instance_color_overrides_vertex_colors_in_raster_and_shadow_rays :: proc
     floor:=Instance_Desc{object_id=12,mesh=ground_quad(r),transform=scale_matrix(20),tint={1,1,1}}
     source.transform=placed(2,1);source.material=1;source.tint={1,1,1}
     camera:=OVERHEAD;camera.position.y=5
-    sun:=Sun_Desc{direction={0,1,0},color={1,1,1},illuminance=1 * math.PI,enabled=true}
+    sun:=Sun_Desc{direction={0,1,0},color={1,1,1},illuminance=1 * math.PI,enabled=true,indirect=1,scattering=1}
     for provider in ([]Trace_Mode{.Software,.Hardware}) {
         if provider==.Hardware && !r.hardware_rt_verified {continue}
         settings:=r.settings;settings.trace_mode=provider;settings.colored_shadows=true
@@ -1444,10 +1444,10 @@ material_mirror_lighting_is_exact_with_four_local_lights :: proc(t:^testing.T) {
         {object_id=2,mesh=quad,transform=patch,tint={1,1,1}},
     }
     lights:=[]Light_Desc{
-        {position={0,1,-2},color={1,1,1},intensity=6 * math.PI,range=6,direction={0,1,0},cone=0.7},
-        {position={0,3,-2},color={1,1,1},intensity=6 * math.PI,range=6},
-        {position={10,1,-2},color={1,1,1},intensity=6 * math.PI,range=6},
-        {position={-10,1,-2},color={1,1,1},intensity=6 * math.PI,range=6},
+        {position={0,1,-2},color={1,1,1},intensity=6 * math.PI,range=6,direction={0,1,0},cone=0.7,indirect=1,scattering=1},
+        {position={0,3,-2},color={1,1,1},intensity=6 * math.PI,range=6,indirect=1,scattering=1},
+        {position={10,1,-2},color={1,1,1},intensity=6 * math.PI,range=6,indirect=1,scattering=1},
+        {position={-10,1,-2},color={1,1,1},intensity=6 * math.PI,range=6,indirect=1,scattering=1},
     }
     scene_given(r,instances,lights,{},{})
     camera:=Camera{position={0,2,2},forward={0,-2,-2},up={0,1,0},fov_y=60,near=0.05,far=100,exposure=UNIT_EXPOSURE}
@@ -1467,7 +1467,7 @@ material_mirror_lighting_is_exact_with_four_local_lights :: proc(t:^testing.T) {
         // reflection holds still and shows about the light of them all.
         crowd:[8]Light_Desc
         crowd[0]=lights[0]
-        for &light,i in crowd[1:] {light={position={f32(i%3)-1,3+0.2*f32(i),-2},color={1,1,1},intensity=6 * math.PI,range=6}}
+        for &light,i in crowd[1:] {light={position={f32(i%3)-1,3+0.2*f32(i),-2},color={1,1,1},intensity=6 * math.PI,range=6,indirect=1,scattering=1}}
         scene_lights_given(r,crowd[:],{},{})
         frames(t, &f,camera,4)
         every:=read_light(t,&f,camera,{},r.targets.reflect_raw).r
@@ -1710,7 +1710,7 @@ material_without_specular_keeps_the_whole_diffuse_lobe :: proc(t:^testing.T) {
     material.base_color={1,1,1};material.roughness=1;material.specular_factor=0
     materials_set(r,{material})
     mesh:=ground_quad(r)
-    scene_given(r,{{object_id=1,mesh=mesh,transform=scale_matrix(12),material=1,tint={1,1,1}}},nil,{direction={0,1,0},color={1,1,1},illuminance=1 * math.PI,enabled=true},{})
+    scene_given(r,{{object_id=1,mesh=mesh,transform=scale_matrix(12),material=1,tint={1,1,1}}},nil,{direction={0,1,0},color={1,1,1},illuminance=1 * math.PI,enabled=true,indirect=1,scattering=1},{})
     direct_at_origin :: proc(t:^testing.T,f:^Fixture,camera:Camera)->Vec3 {
         frames(t,f,camera,2)
         rhi.device_wait_idle(f.device)
@@ -1740,7 +1740,7 @@ material_reflectance_target_follows_frustum_and_preserves_plain_shading :: proc(
     offscreen:=scale_matrix(4);offscreen[0,3]=20
     floor:=Instance_Desc{object_id=1,mesh=mesh,transform=scale_matrix(4),material=1,tint={1,1,1}}
     other:=Instance_Desc{object_id=2,mesh=mesh,transform=offscreen,material=2,tint={1,1,1}}
-    scene_given(r,{floor,other},nil,{direction={0,1,0},color={1,1,1},illuminance=1 * math.PI,enabled=true},{})
+    scene_given(r,{floor,other},nil,{direction={0,1,0},color={1,1,1},illuminance=1 * math.PI,enabled=true,indirect=1,scattering=1},{})
     testing.expect_value(t,len(r.scene.reflective),1)
     camera_needs_reflectance :: proc(r:^Renderer,camera:Camera)->bool {
         view,proj,_:=camera_matrices(camera,1)
@@ -1790,7 +1790,7 @@ material_gbuffer_stage_surfaces_ask_for_their_targets :: proc(t:^testing.T) {
     coated.coat.weight=1
     materials_set(r,{plain,reflective,coated})
     mesh:=ground_quad(r)
-    scene_given(r,{{object_id=1,mesh=mesh,transform=scale_matrix(4),material=1,tint={1,1,1}}},nil,{direction={0,1,0},color={1,1,1},illuminance=math.PI,enabled=true},{})
+    scene_given(r,{{object_id=1,mesh=mesh,transform=scale_matrix(4),material=1,tint={1,1,1}}},nil,{direction={0,1,0},color={1,1,1},illuminance=math.PI,enabled=true,indirect=1,scattering=1},{})
     Seen :: struct {reflectance,layered:bool}
     record :: proc(s:^Stage_Pass,user:rawptr) {(^Seen)(user)^={s.pass.reflectance,s.pass.layered}}
     drawn :: proc(t:^testing.T,f:^Fixture,mesh:Mesh_Handle,material:Material_Handle) -> (seen:Seen) {
@@ -1923,7 +1923,7 @@ light_albedo :: proc(t:^testing.T,f:^Fixture,mesh:Mesh_Handle,material:Material_
         angle:=2*math.PI*(f32(i/SIDE)+0.5)/SIDE
         up:=math.sqrt(1-u)
         direction:=Vec3{math.sqrt(u)*math.cos(angle),up,math.sqrt(u)*math.sin(angle)}
-        scene_given(r,{{object_id=1,mesh=mesh,transform=scale_matrix(12),material=material,tint={1,1,1}}},nil,{direction=direction,color={1,1,1},illuminance=math.PI,enabled=true},{})
+        scene_given(r,{{object_id=1,mesh=mesh,transform=scale_matrix(12),material=material,tint={1,1,1}}},nil,{direction=direction,color={1,1,1},illuminance=math.PI,enabled=true,indirect=1,scattering=1},{})
         frames(t, f,camera,2)
         sum+=target_at(t,f,r.targets.direct,camera,{})/up
     }
@@ -1976,7 +1976,7 @@ diffuse_transmission_lets_the_light_of_the_other_side_through :: proc(t:^testing
     quad:=ground_quad(r)
     below:=proc(t:^testing.T,f:^Fixture,quad:Mesh_Handle,material:Material_Handle) -> Vec3 {
         r:=f.renderer
-        scene_given(r,{{object_id=1,mesh=quad,transform=scale_matrix(12),material=material,tint={1,1,1}}},nil,{direction={0,-1,0},color={1,1,1},illuminance=math.PI,enabled=true},{})
+        scene_given(r,{{object_id=1,mesh=quad,transform=scale_matrix(12),material=material,tint={1,1,1}}},nil,{direction={0,-1,0},color={1,1,1},illuminance=math.PI,enabled=true,indirect=1,scattering=1},{})
         frames(t, f,OVERHEAD,2)
         return target_at(t,f,r.targets.direct,OVERHEAD,{})
     }
@@ -2073,7 +2073,7 @@ material_anisotropy_turns_with_its_object :: proc(t:^testing.T) {
     seen :: proc(t:^testing.T,f:^Fixture,quad:Mesh_Handle,turn:mm.Quat,spin:f32,camera:Camera,sun:Vec3) -> f32 {
         transform:=mm.transform_matrix({rotation=turn*mm.quat_axis_angle({0,1,0},spin),scale={12,12,12}})
         direction:=mm.quat_rotate(turn,sun)
-        scene_given(f.renderer,{{object_id=1,mesh=quad,transform=transform,material=1,tint={1,1,1}}},nil,{direction=direction,color={1,1,1},illuminance=math.PI,enabled=true},{})
+        scene_given(f.renderer,{{object_id=1,mesh=quad,transform=transform,material=1,tint={1,1,1}}},nil,{direction=direction,color={1,1,1},illuminance=math.PI,enabled=true,indirect=1,scattering=1},{})
         frames(t,f,camera,2)
         return target_at(t,f,f.renderer.targets.direct,camera,{}).x
     }

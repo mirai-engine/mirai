@@ -222,7 +222,7 @@ place :: proc(position,scale:Vec3) -> Mat4 {
 // A wall across the left half of the view, two metres from the origin towards the camera's far side.
 @(private)
 wall_scene :: proc(f:^Overlay_Fixture) {
-    scene_given(f.renderer,{{object_id=1,mesh=f.cube,transform=place({-2,0,0},{4,6,0.2}),tint={0.2,0.2,0.2}}},nil,{direction={0,0.3,1},color={1,1,1},illuminance=1 * math.PI,enabled=true},{background={0,0,0},use_background=true})
+    scene_given(f.renderer,{{object_id=1,mesh=f.cube,transform=place({-2,0,0},{4,6,0.2}),tint={0.2,0.2,0.2}}},nil,{direction={0,0.3,1},color={1,1,1},illuminance=1 * math.PI,enabled=true,indirect=1,scattering=1},{background={0,0,0},use_background=true})
 }
 
 @(private)

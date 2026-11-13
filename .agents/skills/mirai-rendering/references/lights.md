@@ -13,6 +13,12 @@
 - Their shadows open with their size ([shadows](#shadows)). A soft window turns it off at `range`.
 - A spot lights the cone of half angle `angle` around its -Z, with a soft edge.
 - The color of a light is that of its component, independent of the tint of its entity's mesh.
+- **Shares** (`Light_Desc.indirect` and `scattering`, the sun's in `Sun_Desc`): what of its light
+  the probes gather and what media scatter, 0 to the largest half; the direct light of a view does
+  not read them. They travel as two halves in `Gpu_Light.axis.w` (`light_shares`), and a group
+  of the tree keeps the mean of the `indirect` of its lights weighed by their light
+  (`Light_Node.indirect`). Zero in a `Light_Desc` is a light that neither bounces nor lights a
+  fog.
 - **Lamps.** Shadow rays stop before the box of their light's sphere: a light inside its lamp
   casts no shadow with it.
 - For the rays that gather light (probes and the reference), an emissive instance that contains
@@ -92,6 +98,8 @@ the grid of the lights holds what of the scene they light.
   (`ensure_scene_capacity`): a new or larger region enlarges them before the tree is uploaded.
   The other way around, the copy went past the end of the buffer and the nodes there did not
   exist: a traversal read zeros, groups whose second child is the root.
+- A pass that writes a light gives its shares (`light_shares_bits` of `common.slang`): the
+  particle lights of `vfx` give 1 and 1.
 - What the GI stores of them is not marked as a light change: the probes take them when traced
   ([particles](../../mirai-world/references/vfx.md#particle-lights)).
 

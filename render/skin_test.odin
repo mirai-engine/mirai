@@ -165,7 +165,7 @@ gpu_skin_benchmark_reports_skinning_and_refit_time :: proc(t:^testing.T) {
             transform:=Mat4(1);transform[0,3]=f32(i%4)*2.5-4;transform[2,3]=f32(i/4)*2.5
             instances[i]={object_id=u64(i+1),mesh=skin,transform=transform,tint={1,1,1}}
         }
-        scene_given(&r,instances[:],nil,{direction={0.5,1,0.5},color={1,1,1},illuminance=1 * math.PI,enabled=true},{})
+        scene_given(&r,instances[:],nil,{direction={0.5,1,0.5},color={1,1,1},illuminance=1 * math.PI,enabled=true,indirect=1,scattering=1},{})
         camera:=Camera{position={0,6,10},forward={0,-6,-10},up={0,1,0},fov_y=50,near=0.1,far=100,exposure=UNIT_EXPOSURE}
         for hardware in ([2]bool{false,true}) {
             settings.trace_mode=.Hardware if hardware else .Software
@@ -286,7 +286,7 @@ gpu_skin_preserves_bind_source_motion_normals_bounds_and_refits_both_ray_paths :
             {object_id=1,mesh=floor,transform=Mat4(1),tint={0.7,0.7,0.7}},
             {object_id=2,mesh=skin,transform=Mat4(1),tint={0.8,0.2,0.1}},
         }
-        sun:=Sun_Desc{direction={-0.5,1,0.2},color={1,1,1},illuminance=2 * math.PI,enabled=true}
+        sun:=Sun_Desc{direction={-0.5,1,0.2},color={1,1,1},illuminance=2 * math.PI,enabled=true,indirect=1,scattering=1}
         environment:=Environment{}
         scene_given(r,descs[:],nil,sun,environment)
         camera:=Camera{position={3,4,6},forward={-3,-3.2,-6},up={0,1,0},fov_y=50,near=0.05,far=100,exposure=UNIT_EXPOSURE}

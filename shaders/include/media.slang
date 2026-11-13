@@ -2,7 +2,9 @@
 // one (the fog plugin, the volumes of the vfx plugin): what reaches it from
 // around, from the sun through the scene and from the local lights. A medium
 // takes light from every side: its phase function, not the cosine of a
-// surface, says how much of it goes towards the eye.
+// surface, says how much of it goes towards the eye. Of each light it takes
+// the share media scatter (light_shares, frame.sun_shares), and of the light
+// around what frame.indirect gives.
 #ifndef MIRAI_MEDIA_SLANG
 #define MIRAI_MEDIA_SLANG
 #include "lighting.slang"
@@ -53,7 +55,7 @@ float3 media_local_light(float3 position, float3 eye_ray, float g, float pick, i
     float3 towards = normalize(light.position_range.xyz - position);
     float3 direction;
     float distance;
-    float3 incident = light_contribution(light, position, towards, direction, distance);
+    float3 incident = light_contribution(light, position, towards, direction, distance) * light_shares(light).y;
     if (!(luminance(incident) > light_cutoff())) return float3(0.0);
     float reach = light_reach(light, distance);
     float3 through = float3(1.0);
@@ -83,9 +85,14 @@ float3 media_local_light(float3 position, float3 eye_ray, float g, float pick) {
 // facing up and one facing down.
 float3 media_ambient(float3 position, float3 to_eye_ray) {
     float3 up = float3(0.0, 1.0, 0.0);
-    if (!indirect_cached()) return 0.5 * (sky_irradiance(up) + sky_irradiance(-up));
+    if (!indirect_cached()) return (0.5 * frame.indirect) * (sky_irradiance(up) + sky_irradiance(-up));
     // A point of a medium is on no surface: every probe around it gives it light.
-    return 0.5 * (sample_probes_towards(position, up, to_eye_ray, up, -1.0, false) + sample_probes_towards(position, -up, to_eye_ray, -up, -1.0, false));
+    return (0.5 * frame.indirect) * (sample_probes_towards(position, up, to_eye_ray, up, -1.0, false) + sample_probes_towards(position, -up, to_eye_ray, -up, -1.0, false));
+}
+
+// The light of the sun at a point that media scatter: its share of sun_light.
+float3 media_sun_light(float3 position) {
+    return sun_light(position) * frame.sun_shares.y;
 }
 
 // What reaches a point of a medium from the sun through the scene, times
@@ -108,7 +115,7 @@ float3 media_sun(float3 position, float3 eye_ray, float g, float3 sun_kept, inou
     float3 through = trace_transmission(position, frame.sun_direction.xyz, reach);
 #endif
     changed = changed || (frame.moved.z & MOVED_SUN) != 0u || occluder_changed(position, frame.sun_direction.xyz, reach, INVALID, FLT_MAX);
-    return sun_light(position) * through * sun_kept * media_phase(dot(eye_ray, frame.sun_direction.xyz), g);
+    return media_sun_light(position) * through * sun_kept * media_phase(dot(eye_ray, frame.sun_direction.xyz), g);
 }
 float3 media_sun(float3 position, float3 eye_ray, float g, float3 sun_kept) {
     bool changed = false;
