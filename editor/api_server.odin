@@ -278,7 +278,7 @@ api_registrations :: proc(s:^Session,st:^Api_State) {
     api_schema_free(st)
     api_schema_build(s,st)
     st.server.assets={s,asset_text_resolve}
-    st.server.pause,st.server.transaction,st.server.user=api_server_pause,api_server_transaction,s
+    st.server.transaction,st.server.user=api_server_transaction,s
     api_plugins_set(s,st)
     api_methods_register(s,st)
     commands_register(s,st)
@@ -408,19 +408,6 @@ api_unplaced :: proc(s:^Session,user:rawptr) -> bool {
     return !has || placed.transform!=entity_world(w,e)
 }
 
-// Between two calls of _wait_until the editor goes on as a handler that waits does.
-@(private)
-api_server_pause :: proc(server:^api.Server,seconds:f64) -> bool {
-    s:=(^Session)(server.user)
-    st:=api_state(s)
-    context.temp_allocator=st.poll_temp
-    st.in_call+=1
-    defer st.in_call-=1
-    going_on :: proc(s:^Session,user:rawptr) -> bool {return !s.quit}
-    api_wait(s,seconds,nil,going_on)
-    return !s.quit
-}
-
 // What is on disk when the editor opens, against which api_disk_sync looks.
 @(private)
 api_disk_baseline :: proc(s:^Session) {
@@ -530,7 +517,8 @@ api_trampoline :: proc(call:^api.Call) {
     if task_id!=0 {task=ai_task_find(entry.session.ai,task_id)}
     if task!=nil && base.text_get(task.name[:])!=call.client_tag {task=nil}
     if external_id!=0 {task=ai_task_find(entry.session.ai,external_id)}
-    if task!=nil {ai_tool_note(entry.session,task,call.method.name,target,refs,call.failed?call.error.message:"",time.tick_since(started))}
+    // A wait is one step however many times it is called.
+    if task!=nil && !call.retry {ai_tool_note(entry.session,task,call.method.name,target,refs,call.failed?call.error.message:"",time.tick_since(started))}
     if task!=nil && !call.failed && call.method.flags&{.Read_Only,.As_User}=={} && entry.session.edits!=nil && entry.session.edits.serial!=serial_before {
         ai_review_record(entry.session,task,serial_before)
         ai_task_dirty(task)

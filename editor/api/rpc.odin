@@ -150,7 +150,9 @@ process :: proc(s:^Server,body:string,route:Route,client_tag:string="",plugins:s
         write_error_envelope(base.arena_allocator(&s.scratch),w,"",{INVALID_REQUEST,"a string of the request is too long to read",""})
         return true
     }
-    if serial.text_peek(&r)=='[' {
+    batched:=serial.text_peek(&r)=='['
+    s.wait.allowed=!batched
+    if batched {
         r.offset+=1
         if serial.text_accept(&r,']') {
             s.stats.errors+=1
@@ -197,6 +199,7 @@ process_one :: proc(s:^Server,r:^serial.Text_Reader,route:Route,comma:bool) -> b
     case .Rpc: err,ok=rpc_dispatch(s,&request,w)
     case .Mcp: err,ok=mcp_dispatch(s,&request,w)
     }
+    if s.wait.parked {rewind(w,mark);return false}
     if ok && w.overflow==0 {
         raw(w,"}")
     } else {
@@ -254,6 +257,7 @@ rpc_dispatch :: proc(s:^Server,req:^Request,w:^serial.Writer) -> (Error,bool) {
     }
     start:=w.count
     err,ok,selected,note:=method_call(s,method,req.has_params?req.params:"{}",w)
+    if s.wait.parked {return {},true}
     if ok && selected!="" {
         w.count,w.overflow=start,0
         raw(w,selected)
@@ -349,7 +353,7 @@ method_execute :: proc(s:^Server,method:^Method,params:string,out:^serial.Writer
         if why:=method.can(method.user,raw_data(params_bytes));why!="" {return {NOT_NOW,clone_text(allocator,why),""},false}
     }
     clamped:=s.clamped
-    call:=Call{server=s,method=method,user=method.user,raw=shaped,client_tag=s.client_tag,client_name=s.client_name,measure=s.client_measure,allocator=allocator}
+    call:=Call{server=s,method=method,user=method.user,raw=shaped,client_tag=s.client_tag,client_name=s.client_name,measure=s.client_measure,allocator=allocator,retry=s.wait.retry}
     if params_bytes!=nil {call.params=raw_data(params_bytes)}
     typed:=method.result!=serial.TYPE_NONE && !method.writes_result
     if typed {

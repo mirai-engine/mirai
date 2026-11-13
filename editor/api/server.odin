@@ -136,9 +136,10 @@ server_poll :: proc(s:^Server) -> int {
         case .Draining: conn_drain(s,&conn,now)
         case .Ready:
             if time.tick_diff(conn.started,now)>s.timeout && s.sending!=i {s.stats.timeouts+=1;conn_close(&conn)}
-        case .Free:
+        case .Waiting, .Free:
         }
-        if conn.state==.Ready && s.sending<0 {
+        due:=conn.state==.Ready || conn.state==.Waiting && time.tick_diff(conn.next,now)>=0
+        if due && s.sending<0 {
             conn_answer(s,&conn,i)
             answered+=1
             if s.sending>=0 {send_progress(s,now)}
@@ -161,9 +162,12 @@ server_wait :: proc(s:^Server,timeout:time.Duration) {
     sockets:[WAIT_SOCKETS]net.TCP_Socket
     sockets[0]=s.listener
     count:=1
+    timeout:=timeout
+    now:=time.tick_now()
     for conn in s.conns {
         switch conn.state {
         case .Ready: return
+        case .Waiting: timeout=max(min(timeout,time.tick_diff(now,conn.next)),0)
         case .Reading,.Draining:
             if count<len(sockets) {sockets[count]=conn.socket;count+=1}
         case .Free:
@@ -348,9 +352,21 @@ conn_answer :: proc(s:^Server,conn:^Conn,index:int) {
         write_error_envelope(base.arena_allocator(&s.scratch),&s.out,"",{INVALID_REQUEST,conn.reject_message,""})
     } else {
         body:=string(conn.buffer[conn.head:][:conn.length])
-        s.running={conn=index}
+        retry:=conn.state==.Waiting
+        s.running=retry?conn.running:Running{conn=index}
+        s.wait={retry=retry,started=retry?conn.waited:time.tick_now()}
         has_body=process(s,body,conn.route,base.text_get(conn.client_tag[:]),base.text_get(conn.plugins[:]),base.text_get(conn.client_name[:]),base.text_get(conn.measure[:]))
+        running:=s.running
         running_end(s)
+        wait:=s.wait
+        s.wait={}
+        if wait.parked {
+            serial.writer_reset(&s.out)
+            conn.state,conn.waited,conn.running=.Waiting,wait.started,running
+            conn.next=time.tick_add(time.tick_now(),time.Duration(WAIT_UNTIL_PAUSE*f64(time.Second)))
+            return
+        }
+        conn.state=.Ready
         if !has_body {status=202}
     }
     if s.running.streamed && has_body {
