@@ -54,7 +54,7 @@ a_source_without_colliders_gives_a_mesh_of_levels_without_any :: proc(t:^testing
     testing.expect(t,len(view.levels)>2 && .Levels not_in view.info.flags)
     testing.expect(t,strings.count(written.detail,"/")==len(view.levels)-1,written.detail)
     testing.expect(t,len(view.colliders)==0 && len(view.collision_points)==0,"the import makes no collider the source does not give")
-    testing.expect(t,view.source!=nil && view.source.settings_hash==importer.mesh_settings_hash(model.settings) && view.source.settings_hash!=importer.mesh_settings_hash({}),"the asset names the settings it was made with")
+    testing.expect(t,view.source!=nil && view.source.settings_hash==importer.mesh_build_hash(model.settings) && view.source.settings_hash!=importer.mesh_build_hash({}),"the asset names the settings it was made with")
     testing.expect(t,int(view.info.vertex_count)==len(view.vertices) && view.levels[0].triangle_count<view.info.triangle_count)
 }
 

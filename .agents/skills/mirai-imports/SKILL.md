@@ -118,9 +118,10 @@ the assets.
   ([materials](references/imports.md#what-is-written)).
 - **What an asset was built from is its `Import_Info`**: source (size and hash), writer and format
   version, and only the settings the asset is made from. Whether a file of the cache is current
-  is said once, by its name (the key of what the import builds from); the rest is rebuilt, and a
-  texture of the same image and settings or a mesh of the same geometry and settings comes from
-  the content cache.
+  is said once, by its name (the key of what the import builds from), and a mesh or a texture
+  whose file under another key records what it would be built from now takes that file; the rest
+  is rebuilt, and a texture of the same image and settings or a mesh of the same geometry and
+  settings comes from the content cache.
 - **In parallel, the same bytes.** What is expensive (levels, clusters and colliders of a mesh,
   levels of a texture) is built in jobs; what decides ids and files is written in a single thread,
   in the usual order. Importing with or without the job system gives the same files.
@@ -190,7 +191,9 @@ the assets.
   layers in `layers_test.odin`). The fixtures of `assets/fixtures/` and the models of
   `demo/assets` import (without warnings) and what is written reads back with `asset`.
 - Caches: `cook/textures/cache_test.odin` and `cook/import/sources/cache_test.odin` (a texture or
-  a mesh that another import built is taken from the cache);
+  a mesh that another import built is taken from the cache; one whose file under another key
+  records what it is built from now is taken without writing it, and one that records other
+  encoders or another builder is built again);
   `cook/build/cook_cache_test.odin` (a cook takes the blocks of a texture from the cache of its
   content) and `cook/import/sources/cook_test.odin` (the sync of a cook builds a fast texture
   final from its source; that of a build that does not cook keeps either).

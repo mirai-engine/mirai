@@ -173,19 +173,26 @@ part ([extension](../../mirai-editor/references/extensions.md#importers-of-a-plu
 ## Import cache
 
 The `Import_Info` of each asset says what it was built from: source (relative to `root`), name,
-index, size and hash of what was read (the source, or the image of a texture), version and
-`settings_hash`. It is not what identifies the asset: the [sidecar](#identity-and-reimport) is.
+index, size and hash of what was read (the source; the image of a texture; the mesh as read, with
+its slots, joints and skeleton, of a mesh), version and `settings_hash`. It is not what identifies
+the asset: the [sidecar](#identity-and-reimport) is.
 
 - `importer_version` combines `IMPORTER_VERSION` (the writer) with `Format.version`
   (`import_version`); loose images and sounds use format version 0.
-- `settings_hash` is the identity of the settings that make that asset, and of no other: for a
-  mesh, its levels, front and rig (`mesh_settings_hash`); for a texture, its `Build_Options` with
-  `BUILD_VERSION`; for a sound, whether it is `Stream`. Materials, skeletons and clips store 0.
-  Changing a texture setting keeps the meshes, and one of the meshes, the textures.
+- `settings_hash` is the identity of the settings that make that asset, and of no other, with
+  what builds them: for a mesh, its levels, front and rig with `MESH_CACHE_VERSION`
+  (`mesh_build_hash`); for a texture, its `Build_Options` with `BUILD_VERSION` and the block
+  encoders (`textures.encoders_id`); for a sound, whether it is `Stream`. Materials, skeletons and
+  clips store 0. Changing a texture setting keeps the meshes, and one of the meshes, the textures.
 - What is current is decided once, by the name of a file of the cache: `import_write` keeps a mesh
   or a texture whose file under the key of what the import builds from now exists
   (`Written.kept`) and builds nothing ahead when every output of the cache is kept; if only the
-  `owner` changes, it rewrites the header. Materials, skeletons, clips and prefabs, which are
+  `owner` changes, it rewrites the header. A mesh or a texture with no file under that key takes
+  the file of its id under another key, renamed to it, when that file is of the version its kind
+  is written in and its `Import_Info` is what the import records now: a change of the key that
+  does not reach it (the code of a plugin, a setting of other assets) neither builds nor writes
+  it. A texture of an import of fast textures takes one built Fast only while the texture cache
+  holds no Final of it. Materials, skeletons, clips and prefabs, which are
   cheap, are always written, with what a person changed in them ([what is
   written](#what-is-written)), also with `rebuild`.
 - A change of writer or format version, of the code of the plugin that imports a source whole,
@@ -332,9 +339,10 @@ levels, clusters and colliders of each mesh (`mesh_cook`) and the levels of each
 when it gets to it, with the same functions. Ids, files and parts are decided on a
 single thread and in the usual order: with or without a job system the same bytes are written.
 
-- An import whose outputs of the cache are all current builds nothing beforehand, except with
-  `rebuild`; a whole source that reads its models ahead asks `outputs_current` before cooking
-  them.
+- An import builds beforehand only the meshes and textures whose files it does not keep or take
+  under another key, except with `rebuild`; a whole source that reads its models ahead asks
+  `outputs_current` (every output of the cache has its file, under the key of now or another)
+  before cooking them.
 - `Import_Options.worker` is the worker of the job system that calls (`jobs.Worker_Ref`: the owner,
   or the job that imports); without a system, everything runs on the calling thread. The BC blocks
   of a texture go in parallel rows of the same system, and without it, in one of their own if they
@@ -371,8 +379,8 @@ shares it.
   holds.
 - [Cooking](../../mirai-projects/references/build.md#asset-cooking) stores there the blocks of
   an RGBA8 texture by `textures.cache_key_blocks`.
-- A key names what made the blocks (`textures.external_id`): the encoders of the program or the
-  one a cook was given, so checkouts with other encoders share the folder without sharing entries.
+- A key names what made the blocks (`textures.encoders_id`), so checkouts with other encoders
+  share the folder without sharing entries.
 - `cache_read` checks hash and key: a damaged file or one of another `TEXTURE_VERSION` is a miss and
   is built again. Reading an entry marks it used.
 - An entry belongs to no asset (an old one serves again when switching branch or setting): an
@@ -393,9 +401,10 @@ the texture cache; `Import_Options.mesh_cache`, which the editor, sync and `mira
 pass), one `.mesh` per key with its levels, clusters and colliders, without materials.
 
 - The key (`mesh_cache_key`) is the content of the mesh as the reader gives it (vertices, indices,
-  skin, submeshes, morph targets and flags) with `mesh_settings_hash`; the file's id carries
-  `MESH_CACHE_VERSION`, from `IMPORTER_VERSION`, `MESH_VERSION` and the version of the settings key:
-  a change of the writer, the format or that key does not read what came before.
+  skin, submeshes, morph targets and flags: `mesh_content_hash`) with `mesh_build_hash`; the
+  file's id carries `MESH_CACHE_VERSION`, from `IMPORTER_VERSION`, `MESH_VERSION` and the version
+  of the settings key: a change of the writer, the format or that key does not read what came
+  before.
 - A mesh that is not kept looks for its key; if it is there, it is written with the id, the slots,
   the skeleton and the `Import_Info` of this import, the same bytes as building it. `rebuild` does
   not read the cache and rewrites it.
