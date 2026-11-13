@@ -211,6 +211,8 @@ gui_init :: proc(g:^Editor_Ui,app:^host.App) -> bool {
     if error!=nil {return false}
     desc:=host.app_ui_context_desc(app)
     desc.draw_user=draw_user
+    desc.max_panels=INDICATOR_CAPACITY
+    desc.max_commands+=2*INDICATOR_CAPACITY
     if !ui.context_init(ctx,desc) {
         free(ctx,app.allocator)
         return false
@@ -224,7 +226,7 @@ gui_init :: proc(g:^Editor_Ui,app:^host.App) -> bool {
     g.bar_height=ui.metric(ctx,"bar_height")
     g.preview.parts=make([dynamic]Placement_Part,app.allocator)
     resize(&g.draws,host.UI_COMMAND_CAPACITY)
-    resize(&g.panels,16)
+    resize(&g.panels,2*INDICATOR_CAPACITY)
     g.layout=LAYOUT_DEFAULT
     if app.platform!=nil && platform.window_native(app.platform)!=nil {
         _=platform.window_set_icon(app.platform,mark_icon_pixels(context.temp_allocator),MARK_ICON_SIZE,MARK_ICON_SIZE)

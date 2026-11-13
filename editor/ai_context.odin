@@ -194,8 +194,9 @@ ai_item_rect :: proc(s:^Session,item:Scene_Item) -> (rect:ui.Rect,ok:bool) {
     }
     if !item.body && (!v.show_indicators || !item.indicator) {return}
     p,front:=viewport_screen(v,item.world.position)
-    if !front {return}
-    return {p.x-INDICATOR_RADIUS,p.y-INDICATOR_RADIUS,2*INDICATOR_RADIUS,2*INDICATOR_RADIUS},true
+    radius,_,seen:=indicator_size(v,item.world.position)
+    if !front || !seen {return}
+    return {p.x-radius,p.y-radius,2*radius,2*radius},true
 }
 
 @(private)

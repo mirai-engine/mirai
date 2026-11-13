@@ -8,8 +8,8 @@ import mm "mirai:std/math"
 import "mirai:ui"
 
 // What a point or a rectangle of the window reaches in the scene: the discs
-// of the entities without a body first, since they are drawn over it, then
-// the nearest surface. A ray tests the box of each mesh, from what the assets
+// of the entities without a body first, where the scene in front does not
+// cover them, then the nearest surface. A ray tests the box of each mesh, from what the assets
 // know of it, before the renderer meets the mesh as it draws it
 // (render.mesh_ray): through its software tree, or one it makes the first
 // time a ray reaches the box while rays are traced by hardware, kept until
@@ -111,25 +111,32 @@ entity_author :: proc(w:core.World_Ref,e:core.Entity) -> core.Entity {
 
 // What is under a point of the window; with ghosts, also what is hidden or
 // turned off; with batches, also the instances of the batches of the world
-// (foliage), as their batch and instance.
+// (foliage), as their batch and instance. A disc the surface under the point
+// covers there is not under it, as it is not drawn there.
 pick_point :: proc(s:^Session,w:core.World_Ref,point:[2]f32,ghosts:=false,batches:=false) -> (hit:Pick) {
     v:=s.viewport
     ray:=viewport_ray(v,point)
+    surface:Pick
+    traced:=false
     if v.show_indicators {
-        best_distance,best_depth:=INDICATOR_HIT,f32(1e30)
+        best_distance,best_depth:=max(f32),max(f32)
         items:=scene_items(s,w,ghosts)
         for item in scene_item_next(&items) {
             if !item.indicator {continue}
             screen,front:=viewport_screen(v,item.world.position)
-            if !front {continue}
+            radius,_,seen:=indicator_size(v,item.world.position)
+            if !front || !seen {continue}
             distance,depth:=linalg.distance(screen,point),linalg.distance(item.world.position,ray.origin)
-            if distance<best_distance || distance==best_distance && depth<best_depth {
-                best_distance,best_depth=distance,depth
-                hit={entity=item.entity,distance=depth,position=item.world.position,normal=-ray.direction,indicator=true}
-            }
+            if distance>radius+INDICATOR_HIT || !(distance<best_distance || distance==best_distance && depth<best_depth) {continue}
+            // What covers the scene covers the discs too: the instances of the batches as well.
+            if !traced {surface,traced=pick_ray(s,w,ray,PICK_REACH,ghosts,true),true}
+            if surface.entity!=core.NONE && indicator_covered(v,item.world.position,ray,surface.distance) {continue}
+            best_distance,best_depth=distance,depth
+            hit={entity=item.entity,distance=depth,position=item.world.position,normal=-ray.direction,indicator=true}
         }
         if hit.entity!=core.NONE {return}
     }
+    if traced && (batches || surface.batch==0) {return surface}
     return pick_ray(s,w,ray,PICK_REACH,ghosts,batches)
 }
 
@@ -166,7 +173,8 @@ pick_through :: proc(s:^Session,w:core.World_Ref,point:[2]f32,out:[]Pick,ghosts:
         hit:Pick
         if item.indicator && v.show_indicators {
             screen,front:=viewport_screen(v,item.world.position)
-            if !front || linalg.distance(screen,point)>INDICATOR_HIT {continue}
+            radius,_,seen:=indicator_size(v,item.world.position)
+            if !front || !seen || linalg.distance(screen,point)>radius+INDICATOR_HIT {continue}
             hit={entity=item.entity,distance=linalg.distance(item.world.position,ray.origin),position=item.world.position,normal=-ray.direction,indicator=true}
         } else {
             hit=pick_item(s,w,item,ray,PICK_REACH) or_continue
