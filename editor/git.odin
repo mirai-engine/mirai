@@ -32,7 +32,7 @@ Git :: struct {
     init_later:bool,            // Initialize runs once the check says git is there and the project is no repository
     notice:Git_Notice,          // what Modal.Pending asks about
     told:bool,                  // the pending changes the editor found when it opened were told
-    quits:bool,                 // the editor ends once the changes are kept or discarded
+    asked:Git_Notice,           // Modal.Pending started the operation that runs: its failure is told, and after .Quit the editor ends once it succeeded
     warned:bool,                // a headless editor said its project is no repository
     history_scroll:[2]f32,
     history_drag:[2]f32,        // the height of the history and the pointer when its edge was pressed
@@ -299,10 +299,18 @@ git_ended :: proc(s:^Session) {
     g:=s.git
     finished,failed:=git.ended(g)
     if finished==.None {return}
+    // The first operation that ends after the dialog started one is that one.
+    asked:=g.asked
+    g.asked=.None
+    if failed && asked!=.None {
+        notify(s,base.text_get(g.error[:]))
+        if asked==.Quit {projects_next_cancel(s)}
+    }
     g.refreshed=platform.clock_seconds()
+    // One that failed changed nothing, or read the changes again already: what git said stays.
     #partial switch finished {
     case .Load:
-        git_merge_compute(s)
+        if !failed {git_merge_compute(s)}
     case .Refresh,.Check:
         if g.merging && !g.merge.loaded {git_merge_load_start(s)}
         else if !g.merging && g.merge.loaded {git_merge_clear(g)}
@@ -314,17 +322,17 @@ git_ended :: proc(s:^Session) {
             }
         }
     case .Finish:
-        if !failed {git_merge_finished(s)}
-        git.start(g,git_roots(s),.Refresh)
+        if !failed {
+            git_merge_finished(s)
+            git.start(g,git_roots(s),.Refresh)
+        }
     case .Base:
         git_entities_read(s)
     case .Keep,.Discard:
         if finished==.Discard {git_discarded(s,!failed)}
-        quits:=g.quits && !failed
-        g.quits=false
-        git.start(g,git_roots(s),.Refresh)
-        if quits {documents_quit(s,true,true)}
+        if !failed {git.start(g,git_roots(s),.Refresh)}
+        if asked==.Quit && !failed {documents_quit(s,true,true)}
     case:
-        git.start(g,git_roots(s),.Refresh)
+        if !failed {git.start(g,git_roots(s),.Refresh)}
     }
 }

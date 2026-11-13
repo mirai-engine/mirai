@@ -645,6 +645,46 @@ rhi_texture_upload_writes_a_region_alone :: proc(t: ^testing.T) {
 	expect_clean(t, d)
 }
 
+// Uploads in a row that do not wait for the GPU each arrive whole, those
+// larger than the staging kept between uploads too.
+@(test)
+rhi_uploads_in_a_row_arrive_whole_at_any_size :: proc(t: ^testing.T) {
+	d := test_device(t)
+	if d == nil {return}
+	defer rhi.device_destroy(d)
+	SIZES :: [?]u32{16, 256, 1024, 1024}
+	textures: [len(SIZES)]rhi.Texture
+	for side, i in SIZES {
+		texels := make([]u8, side * side * 4)
+		defer delete(texels)
+		for &b in texels {b = u8(10 + 40 * i)}
+		textures[i] = rhi.texture_create(d, {width = side, height = side, format = .RGBA8_Unorm, usage = {.Sampled, .Transfer_Src}, name = "uploaded"})
+		testing.expect(t, textures[i] != 0 && rhi.texture_upload(d, textures[i], texels, side * 4), rhi.device_error(d))
+	}
+	words := make([]u32, 1 << 20)
+	defer delete(words)
+	for &w, i in words {w = u32(i)}
+	buffer := rhi.buffer_create(d, {size = u64(len(words) * 4), usage = {.Storage}, memory = .GPU, name = "uploaded"})
+	testing.expect(t, buffer != 0 && rhi.buffer_upload_slice(d, buffer, 0, words), rhi.device_error(d))
+	for side, i in SIZES {
+		out := make([]u8, side * side * 4)
+		defer delete(out)
+		testing.expect(t, rhi.texture_read(d, textures[i], out), rhi.device_error(d))
+		wrong := 0
+		for b in out {wrong += int(b != u8(10 + 40 * i))}
+		testing.expectf(t, wrong == 0, "%d of the bytes of the %dx%d texture are not those uploaded", wrong, side, side)
+		rhi.texture_destroy(d, textures[i])
+	}
+	echo := make([]u32, len(words))
+	defer delete(echo)
+	testing.expect(t, rhi.buffer_read_slice(d, buffer, 0, echo), rhi.device_error(d))
+	moved := 0
+	for w, i in echo {moved += int(w != words[i])}
+	testing.expectf(t, moved == 0, "%d of the words of the buffer are not those uploaded", moved)
+	rhi.buffer_destroy(d, buffer)
+	expect_clean(t, d)
+}
+
 // A texture takes on the GPU the bytes of another as they are, into its own
 // sRGB encoding too, each time it is copied; one of another size is refused
 // and keeps what it had, and takes the mip of a chain of its size.
