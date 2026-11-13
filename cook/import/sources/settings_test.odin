@@ -98,17 +98,18 @@ the_sidecar_of_a_source_keeps_its_settings_and_importing_again_uses_them :: proc
 
     // A sidecar nobody wrote is an error, not the defaults nor other ids: settings an import
     // does not know, a text of another version or of none, an output without an id, one id
-    // twice, a part that is not of the cache, a field no sidecar has, a folder out of the one
-    // of the source.
+    // twice, a part that is not of the cache, a record of what was written of an output of
+    // the cache, a field no sidecar has, a folder out of the one of the source.
     ID :: "\"id\": \"00000000000000010000000000000002\""
-    whole :: proc(settings,outputs:string) -> string {return fmt.tprintf("{{\"version\": 3, \"settings\": %s, \"outputs\": [%s]}}",settings,outputs)}
+    whole :: proc(settings,outputs:string) -> string {return fmt.tprintf("{{\"version\": 4, \"settings\": %s, \"outputs\": [%s]}}",settings,outputs)}
     for broken in ([]string{
         whole("{\"lods\": \"Sometimes\"}",""),whole("{\"scale\": 2}",""),"{",whole("{\"rdo_lambda\": 1000}",""),whole("{\"alpha_coverage\": 1.5}",""),whole("{\"alpha_coverage\": \"nan\"}",""),whole("{\"rig\": \"Fox\", \"rig_crotch\": 0.9}",""),
-        "{}","{\"lods\": \"None\"}","{\"version\": 2, \"settings\": {}, \"outputs\": []}",
-        "{\"version\": 3, \"settings\": {}, \"folder\": \"../up\", \"outputs\": []}","{\"version\": 3, \"settings\": {}, \"folder\": \"/root\", \"outputs\": []}",
+        "{}","{\"lods\": \"None\"}","{\"version\": 3, \"settings\": {}, \"outputs\": []}",
+        "{\"version\": 4, \"settings\": {}, \"folder\": \"../up\", \"outputs\": []}","{\"version\": 4, \"settings\": {}, \"folder\": \"/root\", \"outputs\": []}",
         whole("{}","{\"kind\": \"MESH\", \"name\": \"Ball\", \"index\": 0}"),
         whole("{}",fmt.tprintf("{{\"kind\": \"MESH\", \"name\": \"Ball\", \"index\": 0, %s}}, {{\"kind\": \"MAT\", \"name\": \"Skin\", \"index\": 0, %s}}",ID,ID)),
         whole("{}",fmt.tprintf("{{\"kind\": \"MAT\", \"name\": \"Skin\", \"index\": 0, %s, \"part\": true}}",ID)),
+        whole("{}",fmt.tprintf("{{\"kind\": \"MESH\", \"name\": \"Ball\", \"index\": 0, %s, \"written\": \"00000000000000ff\"}}",ID)),
         whole("{}",fmt.tprintf("{{\"kind\": \"MESH\", \"name\": \"Ball\", \"index\": 0, %s, \"path\": \"Ball.mesh\"}}",ID)),
     }) {
         write_text(folder,"ball.obj.import",broken)

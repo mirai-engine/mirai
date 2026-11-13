@@ -18,7 +18,7 @@ import "mirai:std/serial"
 // out of the listing.
 
 SIDECAR_EXTENSION :: ".import"
-SIDECAR_VERSION :: 3
+SIDECAR_VERSION :: 4
 
 // One asset an import gives, by what it is in the source.
 Import_Output :: struct {
@@ -27,6 +27,11 @@ Import_Output :: struct {
     index:int,   // among those of its kind in the source
     id:base.Asset_Id,
     part:bool,   // of the cache: it is a part of the root of the import, decided when it was first imported
+    // Of a document the import writes over: the content_hash of its header
+    // as the import last wrote it, so a file that holds anything else was
+    // changed since. 0: none, for what the import keeps changed itself (a
+    // material follows its source in the fields nobody changed).
+    written:u64,
 }
 
 Sidecar :: struct {
@@ -90,7 +95,14 @@ sidecar_text :: proc(settings:string,sidecar:Sidecar,allocator:=context.allocato
         serial.text_write_int(&w,i64(output.index))
         serial.text_write_raw(&w,", \"id\": \"")
         serial.text_write_asset_id(&w,output.id)
-        serial.text_write_raw(&w,output.part?"\", \"part\": true}":"\"}")
+        serial.text_write_raw(&w,"\"")
+        if output.part {serial.text_write_raw(&w,", \"part\": true")}
+        if output.written!=0 {
+            digits:[16]u8
+            serial.text_write_raw(&w,", \"written\": ")
+            serial.text_write_string(&w,fmt.bprintf(digits[:],"%016x",output.written))
+        }
+        serial.text_write_raw(&w,"}")
     }
     serial.text_write_raw(&w,len(sidecar.outputs)>0?"\n  ]\n}\n":"]\n}\n")
     return string(serial.writer_take(&w))
@@ -98,7 +110,8 @@ sidecar_text :: proc(settings:string,sidecar:Sidecar,allocator:=context.allocato
 
 // False for a text that is not a sidecar of this version: a field or a value
 // it does not know, a folder that leaves the folder of the source, an output
-// without an id or kind, twice the same id or the same output. What it holds
+// without an id or kind, a part or a record of what was written that its
+// kind does not take, twice the same id or the same output. What it holds
 // lives in allocator, an arena: nothing frees it piece by piece; settings is
 // a view of text.
 sidecar_parse :: proc(text:string,allocator:=context.allocator) -> (sidecar:Sidecar,ok:bool) {
@@ -149,7 +162,7 @@ sidecar_parse :: proc(text:string,allocator:=context.allocator) -> (sidecar:Side
     serial.text_end(&r) or_return
     if version!=SIDECAR_VERSION || !folder_valid(sidecar.folder) {return}
     for output,at in sidecar.outputs {
-        if output.id=={} || output.kind==0 || output.part && !import_cached(output.kind) {return}
+        if output.id=={} || output.kind==0 || output.part && !import_cached(output.kind) || output.written!=0 && import_cached(output.kind) {return}
         for other in sidecar.outputs[:at] {
             if other.id==output.id || other.kind==output.kind && other.index==output.index && other.name==output.name {return}
         }
@@ -183,6 +196,11 @@ output_read :: proc(r:^serial.Text_Reader,allocator:=context.allocator) -> (outp
         case "part":
             output.part=serial.text_keyword(r,"true")
             if !output.part && !serial.text_keyword(r,"false") {return}
+        case "written":
+            text:=serial.text_string(r) or_return
+            if len(text)!=16 {return}
+            output.written=serial.text_parse_hex(text) or_return
+            if output.written==0 {return}
         case:
             return
         }

@@ -152,7 +152,8 @@ escape_closes_a_dialog_with_what_it_asks_about :: proc(t:^testing.T) {
     selection:history.Selection
     edits:history.Edits
     s:=Session{gui=&gui,edits=&edits,selection=&selection,viewport=&viewport}
-    for modal in ([]Modal{.Confirm,.Delete_Asset,.Git_Discard}) {
+    defer delete(gui.import_changed)
+    for modal in ([]Modal{.Confirm,.Delete_Asset,.Git_Discard,.Import_Changes}) {
         gui.modal=modal
         if modal==.Confirm {
             gui.pending=.New
@@ -162,8 +163,10 @@ escape_closes_a_dialog_with_what_it_asks_about :: proc(t:^testing.T) {
         }
         gui.delete_asset={1,2}
         base.text_set(gui.discard_path[:],"scenes/a.scene")
+        base.text_set(gui.import_source[:],"assets/hall.gltf")
+        append(&gui.import_changed,base.Asset_Id{3,4})
         escape_run(&s,&gui,&viewport,&selection)
-        testing.expectf(t,gui.modal==.None && gui.delete_asset=={} && base.text_get(gui.discard_path[:])=="","%v",modal)
+        testing.expectf(t,gui.modal==.None && gui.delete_asset=={} && base.text_get(gui.discard_path[:])=="" && base.text_get(gui.import_source[:])=="" && len(gui.import_changed)==0,"%v",modal)
     }
 }
 

@@ -335,7 +335,8 @@ a_humanoid_skeleton_is_written_with_its_body_and_keeps_what_a_person_set :: proc
     rewritten:=asset.skeleton_save(path,&types,{id=id,bones=view.bones,sockets=sockets[:],body=&body,body_parts=parts[:count],source=view.source})
     asset.asset_close(&file)
     testing.expect_value(t,rewritten,asset.Error.None)
-    options.rebuild=true
+    // The file changed since the import wrote it: whoever imports again says to go on.
+    options.rebuild,options.changed=true,.Discard
     again,_,_,kept:=body_of(t,folder,options,&types)
     testing.expect(t,name(bones,again,.Hand_L)=="head_end" && again.manual=={.Hand_L} && name(bones,again,.Hand_R)=="RightHand")
     weapon:=0
@@ -407,7 +408,8 @@ imported_clips_that_move_the_bone_above_the_pelvis_carry_it_as_their_root :: pro
     rewritten:=asset.animation_save(path,&types,{id=id,clips=descs,source=view.source})
     asset.asset_close(&file)
     testing.expect_value(t,rewritten,asset.Error.None)
-    options.rebuild=true
+    // The file changed since the import wrote it: whoever imports again says to go on.
+    options.rebuild,options.changed=true,.Discard
     again,_,_:=roots_of(t,folder,options,&types)
     climb:=again["climb"]
     testing.expectf(t,base.text_get(climb.bone[:])==armature && climb.translation && !climb.rotation,"the root a person set stays: %v",climb)

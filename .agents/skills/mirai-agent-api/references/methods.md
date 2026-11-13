@@ -823,7 +823,9 @@ of an instance" are `-32602`; the rest, `-32000`
   the one it gives). `asset.import_status` gives the same, and whether one runs (`importing`), at
   any moment. While it runs, another import and whatever writes assets fail saying what is being
   imported. Reimporting keeps ids and files, which the sidecar of the source lists
-  ([identity](../../mirai-imports/references/imports.md#identity-and-reimport)).
+  ([identity](../../mirai-imports/references/imports.md#identity-and-reimport)); over a document
+  that changed since it was imported it fails naming it, and `discard_changes` writes over it
+  ([changed documents](../../mirai-imports/references/imports.md#changed-documents)).
   `image` (`color`, `data`, `normal`, `normal_green_down`) says what an image imported on
   its own holds, over its settings and its name (a packed metallic-roughness or a mask is `data`); a
   source in the project keeps the choice in its settings
