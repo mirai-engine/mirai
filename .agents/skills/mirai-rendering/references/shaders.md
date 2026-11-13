@@ -191,6 +191,10 @@
   (`Mirai_Outline`), the style of the [game outline](frame-graph.md#outlines) and whether another
   surface covers it. `Blur` (`shaders/materials/screen_blur.slang`) is the engine one that reads
   around its pixel.
+- `ColorGrade` (`shaders/materials/color_grade.slang`) grades the exposed image before the
+  tonemap: saturation around the luminance and contrast as a power around middle gray (0.18), for
+  the whole image times its shadows, midtones and highlights, weighted by luminance. Its defaults
+  leave the image as it is.
 - A UI program colors the fill of a UI node: `evaluate(Mirai_Ui_Context ctx, Parameters p)` returns
   a display color with straight alpha, which the UI clips to the node's corners and tints with its
   scope. It receives only the node's four values: they fill the first 16 bytes of the parameters as
