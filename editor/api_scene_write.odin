@@ -187,6 +187,7 @@ api_write_component :: proc(a:^Api_Write,reading:^author.Reading,e:core.Entity,t
     size:=t.info.size
     start,bytes:=a.scratch[:size],a.scratch[len(a.scratch)/2:][:size]
     component_start(t,start)
+    if from==nil && a.run==nil {component_start_of(s,e,t,start)}
     copy(start,from)
     current:=core.raw_find(core.world_table_at(w,t),t.info,e)
     r:serial.Text_Reader
@@ -266,6 +267,7 @@ api_write_target :: proc(a:^Api_Write) -> (target:author.Scene_Target,ok:bool) {
             value,start:=a.scratch[:size],a.scratch[len(a.scratch)/2:][:size]
             api_value_out(a.w,t.info,core.raw_find(core.world_table_at(a.w,t),t.info,core.Entity(node)),value,a.run!=nil)
             component_start(t,start)
+            if a.run==nil {component_start_of(a.s,core.Entity(node),t,start)}
             serial.text_write_changed(out,&st.schema,st.types[api_table_index(a.s,t)],value,start,omit_fields={.Transient,.Hidden})
         },
         // A recipe is placed on an entity of its own that goes at once, inside the open edit.

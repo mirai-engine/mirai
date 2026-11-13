@@ -19,7 +19,7 @@ own the `Transform` (`locks="core.Transform"`): the game moves through requests.
   `RIGID_BODY_DYNAMIC|KINEMATIC|STATIC`), `mass` (0: comes from the density of the colliders),
   damping, `gravity_scale`, per-axis `locks` and `bullet`.
 - `Collider`: shape, surface and collision of the entity ([fields](#collider-fields)). Constructors
-  `collider_box|sphere|capsule|cylinder|hull|mesh|heightfield|fracture` and
+  `collider_box|sphere|capsule|cylinder|hull|mesh|heightfield|auto|fracture` and
   `collider_character(radius,height)`.
 - `Character`: moves the entity's `Capsule` `Collider` like the solver's
   [physical character](character.md), which supports itself, climbs steps and pushes.
@@ -106,8 +106,11 @@ own the `Transform` (`locks="core.Transform"`): the game moves through requests.
   friction of the ground does not define how much it slips.
 - `COLLIDER_DEFAULT` (also when adding it from the inspector) uses the `Default` preset without
   group: a door with a new collider blocks everything. The inspector shows all fields, also those
-  that do not correspond to the `kind`. Adding a `Character` (editor or API) adds
-  `collider_character()` if the entity has no collider.
+  that do not correspond to the `kind`; added in the editor or the API to an entity with a
+  `Mesh_Renderer`, its kind is `Auto`. Adding a `Character` (editor or API) adds
+  `collider_character()` if the entity has no collider, and placing a mesh (the browser, the
+  API, the prefab of a model) adds `collider_auto()` only when the mesh stores colliders of its
+  source (`host.assets_mesh_collides`): one without them does not collide.
 - `kind`: `Hull`, `Mesh` and `Heightfield` read the entity's `Mesh_Renderer`; `External` leaves the
   shape to another plugin (`shapes`, for a brush), which takes surface and collision from this
   collider. `Mesh` and `Heightfield` contribute no mass and are for static geometry: nothing rejects
@@ -116,6 +119,15 @@ own the `Transform` (`locks="core.Transform"`): the game moves through requests.
   mesh, or the shapes a `.mesh` stores without a collision mesh) is one shape per piece on the same
   body, with the collider's surface, filter and density; otherwise it is the hull of all the points.
   It fits in the hull budget whole or not at all.
+- `Auto` is decided each time its entity is synchronized (`auto_kind`), by what its mesh stores of
+  the colliders of its source and whether its body moves (its own `Rigid_Body`, or that of the
+  ancestor it is a compound of, not `Static`): a stored collision mesh is a `Mesh`, stored shapes
+  are a `Hull` of one piece each, exactly as authored; without them it is the triangles of the
+  mesh (`Mesh`) while still, and while it moves the convex pieces of a decomposition of them
+  (`host.assets_collision_pieces_file`), made once in a job and kept by the content of the mesh in
+  the collision cache, shared by every entity of that mesh like any geometry slot. A shipped game
+  takes the pieces its cook wrote into the mesh; without them it is the hull of all its points. A
+  mesh that does not read is `physics.collider_mesh_unreadable`.
 - `size` is multiplied by the absolute world scale: the sphere takes the largest; capsule and
   cylinder, the largest of XZ for the radius and Y for the height. A negative axis mirrors the
   collider where it is drawn: its center, and the points of a mesh or hull, whose triangles turn
@@ -303,10 +315,10 @@ Rejections and geometry:
 
 - What the simulation rejects is a [problem](../../mirai-core/references/core.md#problems) of the
   entity, with the cause and the field of `Physics_Settings` that fixes it: `physics.bodies`,
-  `shapes`, `geometry_budget`, `collider_mesh` (without `Mesh_Renderer`), `collider_geometry` (the
-  mesh has no collision geometry), `collider_heightfield`, `collider_hull` and `world` (the
-  simulation could not be created). A rejected shape frees the geometry created for it and is not
-  retried until the collider changes.
+  `shapes`, `geometry_budget`, `collider_mesh` (without `Mesh_Renderer`),
+  `collider_mesh_unreadable` (its mesh is not in the assets or does not read),
+  `collider_heightfield`, `collider_hull` and `world` (the simulation could not be created). A
+  rejected shape frees the geometry created for it and is not retried until the collider changes.
 - Removing or changing the collider releases its physical geometry, which goes away with the last
   shape that uses it; a snapshot has a copy of its own.
 - Generated IDs are immutable: other asset changes do not rebuild their colliders. An already
@@ -745,9 +757,10 @@ Joints over the network:
 `plugins/physics/editor` gives the editor what belongs to physics through its
 [providers](../../mirai-editor/references/extensions.md): the preset of a `Collider` and
 `Collision_Settings` in the inspector, the `physics.collision.*` methods of the API, the `Collider`
-that accompanies a new `Character`, the bodies that Simulate drags with the gizmo, the
-[Simulate limited](../../mirai-editor/references/editor.md#simulate) to some entities that
-`physics.settle`, **Drop to rest** and the **Drop** tool run, the wireframes of
+that accompanies a new `Character` or a placed mesh that stores colliders, the `Auto` kind a
+`Collider` starts with on an entity that shows a mesh, the bodies that Simulate drags with the
+gizmo, the [Simulate limited](../../mirai-editor/references/editor.md#simulate) to some entities
+that `physics.settle`, **Drop to rest** and the **Drop** tool run, the wireframes of
 the selection's colliders, the `collision` and `collision.<category>` view modes, and the fluids of
 the world that is seen (box edges and a grid over the sea), editing and in Play: nothing else shows
 them while no plugin draws them. Without the plugin none of that appears.
@@ -764,8 +777,8 @@ them while no plugin draws them. Without the plugin none of that appears.
   its height and scale, under the pointer and keeps dropping at its speed; what fell is seen
   falling in the document until **Confirm** (one undo step with the meshes and their poses),
   **Cancel**, Escape or another tool, which leave the document as it was. Each dropped mesh gets a
-  `Collider` of kind `Hull`, which stays: in the game it is a
-  static prop that collides.
+  `Collider` of kind `Auto`, which stays: it falls as convex pieces and in the game it is a static
+  prop that collides with its triangles.
 - In a settle, the moving entities are dynamic bodies (their `Rigid_Body` when dynamic) and every
   other body is static and every character the still capsule of its collider; joints act. Only
   physics runs, so an `External` collider is the mesh its entity shows (a hull when it moves).

@@ -43,6 +43,7 @@ Collider_Kind :: enum u8 {
     Mesh, // the triangles of what the Mesh_Renderer shows; no mass, intended for static geometry
     Heightfield, // the compact height grid of a generated Mesh_Renderer; no mass
     External, // another plugin makes its shapes from this surface and collision (shapes, for a brush): physics makes none
+    Auto, // of what the Mesh_Renderer shows: the colliders its mesh stores from its source; without them, its triangles while its body stays still and convex pieces of it while it moves
 }
 
 COLLIDER_HULL_VERTICES :: 32
@@ -50,7 +51,7 @@ COLLIDER_HULL_VERTICES :: 32
 // One shape. With a Rigid_Body it is on the body of the entity; without, on
 // the body of the nearest ancestor that has one, placed where the entity is
 // relative to it, or on a static body of its own when no ancestor has one.
-// The size is multiplied by the world scale of the entity; a Hull, Mesh or Heightfield
+// The size is multiplied by the world scale of the entity; a Hull, Mesh, Heightfield or Auto
 // takes its geometry from the Mesh_Renderer instead of size; an External one, from another plugin.
 // A Character takes its capsule and its collision from it. Shared: the
 // libraries that make entities (terrain chunks, the walls portals cut) write
@@ -105,6 +106,12 @@ collider_hull :: proc "contextless" () -> Collider {
 collider_mesh :: proc "contextless" () -> Collider {
     c:=COLLIDER_DEFAULT
     c.kind=.Mesh
+    return c
+}
+// The collider an entity that shows a mesh is given: Auto.
+collider_auto :: proc "contextless" () -> Collider {
+    c:=COLLIDER_DEFAULT
+    c.kind=.Auto
     return c
 }
 collider_heightfield :: proc "contextless" () -> Collider {

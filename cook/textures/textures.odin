@@ -19,11 +19,10 @@ import mm "mirai:std/math"
 // collection compressor (compressor:blocks) unless the import asks for it
 // uncompressed.
 
-DEFAULT_MAX_SIZE :: 4096
 MAX_SOURCE_SIDE :: 1<<15
 MAX_SOURCE_PIXELS :: 1<<28
 // Changes when build would give other bytes for the same image and options.
-BUILD_VERSION :: 5
+BUILD_VERSION :: 6
 RDO_LAMBDA_DEFAULT :: 30
 RDO_LAMBDA_MAX :: 100
 // Texels of a level from which build encodes its blocks on a job system of
@@ -33,7 +32,7 @@ PARALLEL_TEXELS :: 128*128
 Error :: enum u8 {
     None,
     Unsupported, // not an image stb can decode
-    Too_Large,
+    Too_Large,   // a side above asset.TEXTURE_MAX_SIZE
     Out_Of_Memory,
     Invalid,     // texels that do not fill the size and layers they claim
 }
@@ -230,7 +229,6 @@ Channels :: struct {
 }
 
 Build_Options :: struct {
-    max_size:int,        // 0: DEFAULT_MAX_SIZE. A larger image starts at the first level that fits
     srgb:bool,           // color: averaged as light, stored as sRGB in the formats of 8 bits
     normal_map:bool,     // averaged as vectors and renormalized
     green_down:bool,     // of a normal map whose green points down the image, as DirectX writes them: inverted, so that +Y points up as the renderer reads it
@@ -259,7 +257,7 @@ block_encode :: proc "contextless" (options:Build_Options) -> blocks.Options {
 }
 
 Built :: struct {
-    width,height:int, // of the first level, after max_size
+    width,height:int, // of the first level
     layers:int,       // of every level
     format:asset.Texture_Format,
     flags:asset.Texture_Flags,
@@ -317,9 +315,8 @@ built_desc :: proc(built:^Built,id:base.Asset_Id,source:^asset.Import_Info,layou
 // import records, so a texture is built again when one of them changes. Fast
 // is another hash; Final is the hash of the settings alone.
 settings_hash :: proc(options:Build_Options) -> u64 {
-    limit:=min(max(options.max_size if options.max_size>0 else DEFAULT_MAX_SIZE,1),asset.TEXTURE_MAX_SIZE)
     kind:=u64(options.srgb)|u64(options.normal_map)<<1|u64(options.encoding)<<2|u64(options.green_down)<<4|u64(options.keep_precision)<<5|u64(BUILD_VERSION)<<8
-    hash:=base.hash_combine(base.hash_combine(u64(limit),kind),u64(transmute(u32)options.alpha_coverage))
+    hash:=base.hash_combine(kind,u64(transmute(u32)options.alpha_coverage))
     final:=options
     final.speed=.Final
     hash=base.hash_combine(hash,u64(rdo_lambda(final)))
@@ -373,7 +370,7 @@ build :: proc(source:Source,options:Build_Options,allocator:=context.allocator,w
     flags:=asset.Texture_Flags{}
     if source.cube {flags+={.Cube}}
     if !asset.texture_layers_valid(layers,source.width,source.height,flags) || len(source.texels)<source_bytes(source) {return {},.Invalid}
-    limit:=min(max(options.max_size if options.max_size>0 else DEFAULT_MAX_SIZE,1),asset.TEXTURE_MAX_SIZE)
+    if source.width>asset.TEXTURE_MAX_SIZE || source.height>asset.TEXTURE_MAX_SIZE {return {},.Too_Large}
     transfer:=transfer_make(options.srgb && !source_hdr(source.format))
     level:=source
     level.layers,level.allocator=layers,{}
@@ -425,12 +422,6 @@ build :: proc(source:Source,options:Build_Options,allocator:=context.allocator,w
         reduce(level,reduced,transfer,options.normal_map)
         if options.alpha_coverage>0 {alpha_coverage_keep(reduced,options.alpha_coverage,coverage)}
         return reduced,true
-    }
-    for max(level.width,level.height)>limit {
-        reduced,ok:=next(level,&transfer,options,coverage,allocator)
-        if !ok {return {},fail(&mips,&owned)}
-        source_destroy(&owned)
-        owned,level=reduced,reduced
     }
     built.width,built.height,built.layers=level.width,level.height,layers
     built.format=stored_format(source,options)

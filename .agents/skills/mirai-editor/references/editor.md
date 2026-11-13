@@ -375,7 +375,7 @@ The source `editor/assets/presence/source/pup.glb` is prepared in Blender as a s
 tall, with its origin between the eyes and facing +Z of the file, which the import turns to -Z. Its
 primitives 0 to 5 are fur, harness, stripe, screen, lenses and stars; the following ones keep the
 neutral pieces. The source is not kept in git. `mirai import` with `--root editor/assets` uses the
-settings next to it and writes the assets of the editor, reducing the mesh to `max_triangles`.
+settings next to it and writes the assets of the editor.
 
 ### Pings
 

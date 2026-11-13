@@ -85,42 +85,9 @@ NONE :: max(u32)
 // Each aims at LOD_SHARE of the triangles of the one before; the levels end
 // with the first that cannot remove a share of them, or once one has fewer
 // than LOD_MIN_TRIANGLES. Mesh_Lod.error is how far geom.simplify moved the
-// surface of level 0 (its position error), in meters. With `simplify` false there is level 0 alone. A mesh with
-// more than max_triangles (above 0) is first simplified as a level is, and
-// that is level 0. indices are valid for vertices, and submeshes are ranges of
+// surface of level 0 (its position error), in meters. With `simplify` false there is level 0 alone. indices are valid for vertices, and submeshes are ranges of
 // indices: what asset.mesh_check asks. Everything returned is in `allocator`.
-mesh_levels :: proc(vertices:[]asset.Vertex,indices:[]u32,skin:[]asset.Skin_Vertex,submeshes:[]Submesh,simplify:=true,allocator:=context.allocator,morphs:[]asset.Morph_Target=nil,morph_deltas:[]asset.Morph_Delta=nil,max_triangles:=0) -> (levels:Mesh_Levels) {
-    if max_triangles>0 && len(indices)/3>max_triangles && len(vertices)<1<<24 {
-        temp:=context.temp_allocator
-        reduced_vertices:=make([dynamic]asset.Vertex,temp)
-        reduced_indices:=make([dynamic]u32,temp)
-        reduced_skin:=make([dynamic]asset.Skin_Vertex,temp)
-        reduced_lods:=make([dynamic]Lod,temp)
-        reduced_submeshes:=make([dynamic]Submesh,temp)
-        sources:=make([dynamic]u32,temp)
-        levels_simplify(vertices,indices,skin,submeshes,&reduced_vertices,&reduced_indices,&reduced_skin,&reduced_lods,&reduced_submeshes,&sources if len(morphs)>0 else nil,max_triangles,1)
-        if len(reduced_lods)==1 {
-            reduced_morphs:[]asset.Morph_Target
-            reduced_deltas:[dynamic]asset.Morph_Delta
-            if len(morphs)>0 {
-                // The deltas of the vertices that level took, which come after those of the mesh as given.
-                targets,deltas:=levels_morphs(len(vertices),morphs,morph_deltas,sources[:],temp)
-                reduced_deltas=make([dynamic]asset.Morph_Delta,0,len(deltas),temp)
-                for &target in targets {
-                    first:=u32(len(reduced_deltas))
-                    for delta in deltas[target.first:][:target.count] {
-                        if int(delta.vertex)<len(vertices) {continue}
-                        moved:=delta
-                        moved.vertex-=u32(len(vertices))
-                        append(&reduced_deltas,moved)
-                    }
-                    target.first,target.count=first,u32(len(reduced_deltas))-first
-                }
-                reduced_morphs=targets
-            }
-            return mesh_levels(reduced_vertices[:],reduced_indices[:],reduced_skin[:],reduced_submeshes[:],simplify,allocator,reduced_morphs,reduced_deltas[:])
-        }
-    }
+mesh_levels :: proc(vertices:[]asset.Vertex,indices:[]u32,skin:[]asset.Skin_Vertex,submeshes:[]Submesh,simplify:=true,allocator:=context.allocator,morphs:[]asset.Morph_Target=nil,morph_deltas:[]asset.Morph_Delta=nil) -> (levels:Mesh_Levels) {
     out_vertices:=make([dynamic]asset.Vertex,0,len(vertices),allocator)
     out_indices:=make([dynamic]u32,0,len(indices),allocator)
     out_skin:=make([dynamic]asset.Skin_Vertex,0,len(skin),allocator)

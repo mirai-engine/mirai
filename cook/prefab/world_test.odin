@@ -29,6 +29,11 @@ Game_Morph_Weights :: struct {
     modes:[asset.MORPH_WEIGHTS]Morph_Weight_Mode,
 }
 
+// The Collider of the physics plugin as a game declares it: the import sets its kind by name.
+Game_Collider_Kind :: enum u8 {Box,Sphere,Capsule,Cylinder,Hull,Mesh,Heightfield,External,Auto}
+Game_Collider :: struct {kind:Game_Collider_Kind,size:[3]f32,friction:f32}
+GAME_COLLIDER_DEFAULT :: Game_Collider{size={0.5,0.5,0.5},friction=0.6}
+
 GAME_ANIMATION_DEFAULT :: Game_Animation{speed=1,weight=1,loop=true,playing=true,fade=0.2,event_threshold=.01}
 
 // The world of a game with the animation plugin, whose types the prefab of an
@@ -53,6 +58,7 @@ Import_World :: struct {
     poses:core.Table(Game_Pose_Source) `mirai:"name=Pose_Source"`,
     attachments:core.Table(Game_Bone_Attachment) `mirai:"name=Bone_Attachment"`,
     morphs:core.Table(Game_Morph_Weights) `mirai:"name=Morph_Weights"`,
+    colliders:core.Table(Game_Collider) `mirai:"name=Collider"`,
 }
 
 // Without the animation plugin: its components are left out of a prefab.

@@ -83,7 +83,7 @@ keep_outs_gather :: proc(keeps:^core.Table(Foliage_Keep_Out,$A),at:volume.Where,
             case .Sphere:  k.shape=volume.sphere(collider.size.x)
             case .Capsule: k.kind,k.shape.extents=.Capsule,{collider.size.x*max(scale.x,scale.z),collider.size.y*scale.y,0}
             case .Cylinder:k.kind,k.shape.extents=.Cylinder,{collider.size.x*max(scale.x,scale.z),collider.size.y*scale.y,0}
-            case .Hull,.Mesh,.Heightfield,.External:
+            case .Hull,.Mesh,.Heightfield,.External,.Auto:
             }
             if k.kind==.Volume {
                 k.box=volume.bounds(k.shape,k.pose)

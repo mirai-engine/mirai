@@ -238,7 +238,7 @@ every_cell_of_a_loaded_foliage_collides_wherever_the_sources_are :: proc(t:^test
     // A source by the last tree, 400 m from the first: every tree collides.
     w.sources.items[0]={position={CELL_SIZE*12+5,0,5},ahead={CELL_SIZE*12+5,0,5}}
     w.sources.count=1
-    foliage_physics(&fp,&state,{},core.ref(&w.data),{},{},core.read(&w.foliages),core.read(&w.worlds),core.read(&w.kept),core.ref(&w.sources),nil,{},&problems)
+    foliage_physics(&fp,&state,nil,nil,{},core.ref(&w.data),{},{},core.read(&w.foliages),core.read(&w.worlds),core.read(&w.kept),core.ref(&w.sources),nil,{},&problems)
     testing.expect_value(t,len(fp.cells),4)
     testing.expect_value(t,int(state.world.body_count),4)
     testing.expect_value(t,problems.count,0)

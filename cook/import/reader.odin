@@ -36,6 +36,7 @@ Reader :: struct {
     warnings:[dynamic]string,
     programs:[dynamic]string, // the Surface programs it wrote to the shaders of the project, their files
     files:[dynamic]string,    // the files a format read besides the source: a change of one imports the source again
+    colliders:[dynamic]Source_Collider, // what the format read of the collision the source authors (colliders_resolve)
     degenerate:int,       // faces without area the reader skipped
     // What the procedures of the reader keep.
     image_rows:map[Image_Key]int,

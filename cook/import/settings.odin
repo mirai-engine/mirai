@@ -5,7 +5,6 @@ import "core:mem"
 import "core:strings"
 import "mirai:cook/textures"
 import "mirai:std/base"
-import "mirai:std/geom"
 
 // How a source becomes assets. The settings of a source are kept in its
 // sidecar (sidecar.odin), so importing it again gives the same assets whoever
@@ -70,16 +69,11 @@ rig_from_name :: proc(name:string) -> (rig:Rig,ok:bool) {
 }
 
 Import_Settings :: struct {
-    max_texture_size:int,       // 0: 4096
     textures:textures.Encoding, // .Blocks: BC1, BC3, BC5, BC6H or BC7 by the use of each image; .Uncompressed: RGBA8, RGBA16 or RGBA16F by what it holds
     rdo_lambda:int,             // of textures in blocks, up to textures.RDO_LAMBDA_MAX: how much error their rate-distortion optimization trades for files that compress smaller. 0: textures.RDO_LAMBDA_DEFAULT; below 0: none
     image:Image_Use,            // of an image imported on its own
     alpha_coverage:f32,         // of an image imported on its own, above 0: the cutoff of the masked material that shows it, whose coverage every level keeps
     lods:Lods,
-    max_triangles:int,          // of a model, above 0: a mesh with more is simplified to them, as its levels are
-    collision:Collision,        // of a mesh whose source gives no colliders, unless force_collision
-    force_collision:bool,       // the colliders of collision replace those the source gives
-    collision_hulls:int,        // of Pieces: the most hulls. 0: geom.DECOMPOSE_DEFAULT_HULLS
     parts:Parts,                // of a model: which of its materials and textures are parts of its prefab (parts.odin)
     front:Front,
     rig:Rig,
@@ -89,14 +83,12 @@ Import_Settings :: struct {
 
 // What an asset records in Import_Info.settings_hash is the identity of the
 // settings it is built from, and nothing else: a change of the others keeps
-// it. A mesh is built from its levels and its colliders, turned from the
-// front the settings state (mesh_settings_hash); a texture from its build
-// options (textures.settings_hash); materials, skeletons and clips from none
-// of them, and record 0. A rig other than the source's changes the skin of a
-// mesh, so it is part of the mesh's.
+// it. A mesh is built from its levels, turned from the front the settings
+// state (mesh_settings_hash); a texture from its build options
+// (textures.settings_hash); materials, skeletons and clips from none of them,
+// and record 0. A rig other than the source's changes the skin of a mesh, so
+// it is part of the mesh's.
 mesh_settings_hash :: proc(settings:Import_Settings) -> u64 {
-    hulls:=0
-    if settings.collision==.Pieces {hulls=settings.collision_hulls if settings.collision_hulls>0 else geom.DECOMPOSE_DEFAULT_HULLS}
-    built:=[9]u64{u64(settings.lods),u64(settings.collision),u64(hulls),u64(settings.max_triangles),u64(settings.force_collision),u64(settings.front),u64(settings.rig),u64(transmute(u32)settings.rig_crotch),u64(transmute(u32)settings.rig_neck)}
-    return base.hash64(mem.slice_to_bytes(built[:6] if settings.rig==.Source else built[:]))
+    built:=[5]u64{u64(settings.lods),u64(settings.front),u64(settings.rig),u64(transmute(u32)settings.rig_crotch),u64(transmute(u32)settings.rig_neck)}
+    return base.hash64(mem.slice_to_bytes(built[:2] if settings.rig==.Source else built[:]))
 }

@@ -36,6 +36,7 @@ REGISTRY_CACHE :: "registry"   // in it: what the registry of the assets saw
 TEXTURE_CACHE :: "textures"    // in it: built textures, by image and settings
 MESH_CACHE :: "meshes"         // in it: built meshes, by geometry and settings
 ANIMATION_CACHE :: "animations" // in it: compressed .anim libraries, by asset and inputs
+COLLISION_CACHE :: "collision"  // in it: the convex pieces of meshes, by their content
 FAR_CACHE :: "far"             // in it: the far meshes of scenes the editor made, by what they are made of (asset.far_key)
 FAR_PREFIX :: "mirai-far"      // where the registry of a project that is not cooked mounts the far cache
 THUMBNAIL_FOLDER :: "thumbs"   // beside it: the previews of the editor

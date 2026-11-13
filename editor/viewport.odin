@@ -756,7 +756,9 @@ placement_commit :: proc(s:^Session,w:core.World_Ref,d:Drag,hit:Pick,select:bool
             if source:=core.raw_added(core.raw(t),type_info_of(eaudio.Audio_Source),e);source!=nil {(^eaudio.Audio_Source)(source).sound=d.asset_id}
         }
     } else if d.kind==.Asset {
-        if t:=core.world_table_of(w,erender.Mesh_Renderer);t!=nil {core.add(t,e,erender.Mesh_Renderer{mesh=d.asset_id})}
+        // Through component_add, so a plugin gives it what goes with a mesh (the colliders of its source).
+        shown:=erender.Mesh_Renderer{mesh=d.asset_id}
+        component_add(s,e,component_table(s,"Mesh_Renderer"),&shown)
     }
     if select {history.selection_set(s.selection,{e})}
 }

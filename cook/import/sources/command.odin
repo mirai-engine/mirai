@@ -43,7 +43,7 @@ import "mirai:std/jobs"
 // Exit codes: 0 done, 1 failed, 2 misuse.
 
 @(private="file")
-IMPORT_USAGE :: "Usage: mirai import <file> [--max-texture N] [--uncompressed|--blocks] [--rdo-lambda L] [--srgb|--normal|--normal-green-down|--data] [--alpha-coverage C] [--lods auto|none] [--max-triangles N] [--collision none|hull|pieces|mesh|exact] [--force-collision] [--hulls N] [--parts auto|all|none] [--front auto|negative_z|z|x|negative_x] [--rig source|humanoid|fox|horse|bird|dragon|kaiju|shark|snake|spider] [--rig-crotch M] [--rig-neck M] [--skeleton <id>] [--rebuild] [--fast] [--texture-cache <folder>] [--mesh-cache <folder>] [--profile] [--release]"
+IMPORT_USAGE :: "Usage: mirai import <file> [--uncompressed|--blocks] [--rdo-lambda L] [--srgb|--normal|--normal-green-down|--data] [--alpha-coverage C] [--lods auto|none] [--parts auto|all|none] [--front auto|negative_z|z|x|negative_x] [--rig source|humanoid|fox|horse|bird|dragon|kaiju|shark|snake|spider] [--rig-crotch M] [--rig-neck M] [--skeleton <id>] [--rebuild] [--fast] [--texture-cache <folder>] [--mesh-cache <folder>] [--profile] [--release]"
 
 // library reads the formats and the importers of whole sources the plugins of
 // a project add and the types of its game (in the import program of the
@@ -54,7 +54,7 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
     roots:=make([dynamic]string,context.temp_allocator) // of --sync
     profiled:bool
     // What the options change of the settings the source has.
-    Change :: enum {Max_Texture,Textures,Rdo_Lambda,Image,Alpha_Coverage,Lods,Max_Triangles,Collision,Force_Collision,Hulls,Parts,Front,Rig,Rig_Crotch,Rig_Neck,Skeleton}
+    Change :: enum {Textures,Rdo_Lambda,Image,Alpha_Coverage,Lods,Parts,Front,Rig,Rig_Crotch,Rig_Neck,Skeleton}
     given:importer.Import_Settings
     changed:bit_set[Change]
     at:=0
@@ -76,15 +76,6 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
                 if given.skeleton,parsed=base.asset_id_parse(text);!parsed {fmt.wprintln(errors,"mirai import: --skeleton needs the 32-hex-digit id of a skeleton of the project (32 zeros import the model whole)");return 2}
                 changed+={.Skeleton}
             }
-        case "--max-texture":
-            text:string
-            text,ok=value(args,&at)
-            if ok {
-                size,parsed:=strconv.parse_int(text)
-                if !parsed || size<=0 || size>asset.TEXTURE_MAX_SIZE {fmt.wprintfln(errors,"mirai import: --max-texture needs an integer from 1 to %d",asset.TEXTURE_MAX_SIZE);return 2}
-                given.max_texture_size=size
-                changed+={.Max_Texture}
-            }
         case "--rdo-lambda":
             text:string
             text,ok=value(args,&at)
@@ -93,24 +84,6 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
                 if !parsed || lambda<0 || lambda>textures.RDO_LAMBDA_MAX {fmt.wprintfln(errors,"mirai import: --rdo-lambda needs an integer from 0 (the least error) to %d (the smallest files)",textures.RDO_LAMBDA_MAX);return 2}
                 given.rdo_lambda=lambda if lambda>0 else -1
                 changed+={.Rdo_Lambda}
-            }
-        case "--hulls":
-            text:string
-            text,ok=value(args,&at)
-            if ok {
-                count,parsed:=strconv.parse_int(text)
-                if !parsed || count<1 || count>64 {fmt.wprintln(errors,"mirai import: --hulls needs an integer from 1 to 64");return 2}
-                given.collision_hulls=count
-                changed+={.Hulls}
-            }
-        case "--max-triangles":
-            text:string
-            text,ok=value(args,&at)
-            if ok {
-                count,parsed:=strconv.parse_int(text)
-                if !parsed || count<0 {fmt.wprintln(errors,"mirai import: --max-triangles needs an integer: the most triangles of each mesh, or 0 for those of the source");return 2}
-                given.max_triangles=count
-                changed+={.Max_Triangles}
             }
         case "--alpha-coverage":
             text:string
@@ -121,7 +94,6 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
                 given.alpha_coverage=f32(cutoff)
                 changed+={.Alpha_Coverage}
             }
-        case "--force-collision": given.force_collision=true;changed+={.Force_Collision}
         case "--texture-cache": options.texture_cache,ok=value(args,&at)
         case "--mesh-cache": options.mesh_cache,ok=value(args,&at)
         case "--profile": profiled=true
@@ -147,18 +119,6 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
             case: ok=false
             }
             changed+={.Lods}
-        case "--collision":
-            text:string
-            text,ok=value(args,&at)
-            switch text {
-            case "none":   given.collision=.None
-            case "hull":   given.collision=.Hull
-            case "pieces": given.collision=.Pieces
-            case "mesh":   given.collision=.Mesh
-            case "exact":  given.collision=.Exact
-            case: ok=false
-            }
-            changed+={.Collision}
         case "--parts":
             text:string
             text,ok=value(args,&at)
@@ -226,7 +186,7 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
         if _,claimed:=whole_find(plugins.wholes,file);claimed {kind=.None}
     }
     if changed&{.Image,.Alpha_Coverage}!={} && kind!=.Image {fmt.wprintln(errors,"mirai import: --srgb, --normal, --normal-green-down, --data and --alpha-coverage apply only to images");return 2}
-    if changed&{.Lods,.Max_Triangles,.Collision,.Force_Collision,.Hulls,.Parts,.Front,.Rig,.Rig_Crotch,.Rig_Neck,.Skeleton}!={} && kind!=.Model {fmt.wprintln(errors,"mirai import: --lods, --max-triangles, --collision, --force-collision, --hulls, --parts, --front, --skeleton and the --rig options apply only to models");return 2}
+    if changed&{.Lods,.Parts,.Front,.Rig,.Rig_Crotch,.Rig_Neck,.Skeleton}!={} && kind!=.Model {fmt.wprintln(errors,"mirai import: --lods, --parts, --front, --skeleton and the --rig options apply only to models");return 2}
 
     if kind==.Model || kind==.Image {
         stored,found,settings_error:=importer.settings_load(file)
@@ -237,16 +197,11 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
         options.settings,options.ignore_stored=stored,true
         // An image with no settings yet holds what its name says, as in the editor.
         if kind==.Image && !found {options.image=image_use(file)}
-        if .Max_Texture in changed {options.max_texture_size=given.max_texture_size}
         if .Textures in changed {options.textures=given.textures}
         if .Rdo_Lambda in changed {options.rdo_lambda=given.rdo_lambda}
         if .Image in changed {options.image=given.image}
         if .Alpha_Coverage in changed {options.alpha_coverage=given.alpha_coverage}
         if .Lods in changed {options.lods=given.lods}
-        if .Max_Triangles in changed {options.max_triangles=given.max_triangles}
-        if .Collision in changed {options.collision=given.collision}
-        if .Force_Collision in changed {options.force_collision=given.force_collision}
-        if .Hulls in changed {options.collision_hulls=given.collision_hulls}
         if .Parts in changed {options.parts=given.parts}
         if .Front in changed {options.front=given.front}
         if .Rig in changed {options.rig=given.rig}

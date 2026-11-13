@@ -17,7 +17,7 @@ import mm "mirai:std/math"
 
 IMPORTER_NAME :: "mirai-import"
 // Of the writer: raise it when import_write gives other bytes for the same model.
-IMPORTER_VERSION :: 10
+IMPORTER_VERSION :: 11
 
 // What Import_Info.importer_version holds: the version of the writer in the
 // low 16 bits and the one of the format the source was read with in the high
@@ -135,8 +135,7 @@ Imported_Mesh :: struct {
     skeleton:int,
     flags:asset.Mesh_Flags,
     bounds_min,bounds_max:[3]f32,
-    // The colliders the source gives, in the space of the mesh: they are its
-    // collision unless force_collision makes it of the collision setting.
+    // The colliders the source gives, in the space of the mesh: its collision.
     collision:Mesh_Collision,
     cooked:^Cooked_Mesh, // built ahead by model_cook; nil when not
 }

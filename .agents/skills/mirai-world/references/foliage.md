@@ -315,12 +315,15 @@ function:
   only the types that collide. The body's `user_data` is the entity and the shape's the instance
   id.
 - **Shapes of a type** (`type_shapes`): its `Capsule` or `Box` of `size`, standing on the
-  instance; with `Prefab` the `Box`, `Sphere`, `Capsule`, `Cylinder` and `Hull` colliders of its
-  prefab with their own collision and their transform from its root; with `Hull` the convex hulls
-  of its mesh, or of each mesh of its prefab. A primitive is scaled by the instance and the entity
-  (`collider_scaled`: a capsule keeps its length from end to end); a hull is one slot of physics
-  (`physics.owned_hulls`) that every instance scales and turns, kept in `Foliage_Physics.hulls`
-  and given back once no shape uses it. A Mesh or sensor of the prefab, a type without what it
+  instance; with `Prefab` the `Box`, `Sphere`, `Capsule`, `Cylinder`, `Hull` and `Auto` colliders
+  of its prefab with their own collision and their transform from its root (an `Auto` one as the
+  hulls of its mesh); with `Hull` the convex hulls of its mesh, or of each mesh of its prefab: the
+  shapes the mesh stores from its source, or else the convex pieces of its triangles, which
+  physics decomposes once in a job (the cells of the owner wait for it) and keeps in its cache. A
+  primitive is scaled by the instance and the entity (`collider_scaled`: a capsule keeps its
+  length from end to end); a hull is one slot of physics (`physics.owned_hulls`) that every
+  instance scales and turns, kept in `Foliage_Physics.hulls` and given back once no shape uses
+  it. A Mesh or sensor of the prefab, a type without what it
   collides as, or no room for hulls is the `foliage.collision` problem.
 - **Every cell of a loaded Foliage collides**, however far from the sources: an NPC or a shot on a
   server meets the trees far from every player, and the navmesh, built from the static collision,

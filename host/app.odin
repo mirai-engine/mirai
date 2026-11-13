@@ -63,6 +63,7 @@ App_Desc :: struct {
     assets_imported:string,      // the imported folder that goes with assets_root, of a project that is not shipped; "": none
     assets_cache:string,         // file where the registry of assets_root keeps what it saw; "": none
     animation_cache:string,      // folder where the content keeps the .anim it compressed; "": none
+    collision_cache:string,      // folder where the convex pieces of meshes are kept (assets_collision_pieces_file); "": none
     shaders_root:string,         // folder whose shader generation is loaded; "": the one that holds assets_root
     asset_mounts:[]asset.Registry_Mount,
 }
@@ -149,6 +150,7 @@ App :: struct {
     scratch_mixed:bool, // it holds parts of several Worlds, which a replacement of what changed left: to copy over or to clear, never to run
     root,engine_root,options:string, // those of App_Desc
     animation_cache:string,          // App_Desc.animation_cache
+    collision_cache:string,          // App_Desc.collision_cache
     start_ns:u64,
     seconds:f64, // the frames so far, each as long as its dt: the fixed one in a manual run
     quit:bool,
@@ -249,11 +251,12 @@ app_create :: proc(desc:App_Desc) -> (app:^App,error:App_Error) {
     }
     app.density=1
     app.pixel_density=1
-    texts:[4]runtime.Allocator_Error
+    texts:[5]runtime.Allocator_Error
     app.root,texts[0]=strings.clone(desc.root,allocator)
     app.engine_root,texts[1]=strings.clone(desc.engine_root,allocator)
     app.options,texts[2]=strings.clone(desc.options,allocator)
     app.animation_cache,texts[3]=strings.clone(desc.animation_cache,allocator)
+    app.collision_cache,texts[4]=strings.clone(desc.collision_cache,allocator)
     for text in texts {
         if text!=nil {
             app_destroy(app)
@@ -352,6 +355,7 @@ app_destroy :: proc(app:^App) {
     if app.platform!=nil {platform.destroy(app.platform)}
     delete(app.root,app.allocator);delete(app.engine_root,app.allocator);delete(app.options,app.allocator)
     delete(app.animation_cache,app.allocator)
+    delete(app.collision_cache,app.allocator)
     extras_free(&app.extras)
     free(app,app.allocator)
 }

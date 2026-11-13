@@ -145,7 +145,7 @@ damaged_images_and_settings_are_imported_or_refused :: proc(t:^testing.T) {
     testing.expectf(t,refused>len(png)/2,"%d of %d damaged images are refused",refused,imported+refused)
 
     // The sidecar of a source: any text is the settings and the outputs it says or is refused, and never the defaults or other ids by accident.
-    wanted:=importer.Import_Settings{max_texture_size=256,textures=.Uncompressed,rdo_lambda=30,image=.Color,alpha_coverage=0.25,lods=.None,collision=.Mesh,collision_hulls=3}
+    wanted:=importer.Import_Settings{textures=.Uncompressed,rdo_lambda=30,image=.Color,alpha_coverage=0.25,lods=.None,front=.X}
     listed:=make([dynamic]importer.Output,context.temp_allocator)
     append(&listed,importer.Output{kind=asset.KIND_MESH,name="Crate \"big\"",index=2,id={3,4},part=true},importer.Output{kind=asset.KIND_MATERIAL,name="Wood",id={5,6}},importer.Output{kind=asset.KIND_TEXTURE,name="wood",id={7,8}})
     text:=importer.sidecar_text({settings=wanted,folder="crate",outputs=listed},context.temp_allocator)
@@ -169,7 +169,7 @@ damaged_images_and_settings_are_imported_or_refused :: proc(t:^testing.T) {
             read+=1
             // What is read is settings an import can use, and outputs it can write.
             changed_settings:=changed.settings
-            testing.expect(t,changed_settings.max_texture_size>=0 && changed_settings.collision_hulls>=0 && changed_settings.alpha_coverage>=0 && changed_settings.alpha_coverage<=1 && changed_settings.lods<=max(importer.Lods) && changed_settings.collision<=max(importer.Collision))
+            testing.expect(t,changed_settings.alpha_coverage>=0 && changed_settings.alpha_coverage<=1 && changed_settings.lods<=max(importer.Lods) && changed_settings.front<=max(importer.Front))
             for output in changed.outputs {testing.expect(t,output.id!={} && output.kind!=0,"an output has an id and a kind")}
         } else {rejected+=1}
     }

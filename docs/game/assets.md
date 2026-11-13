@@ -37,8 +37,8 @@ mirai import assets/player/step.wav     # assets/player/step.sound
   it with its source. A part renamed in the source is a new asset.
 - Meshes, textures, sounds and fonts are built into `.mirai/imported/`, never committed: `mirai
   build` makes them again on a fresh clone. Edit their source, not them.
-- Triangle and texture limits and the collision shape are flags too (`mirai import` without
-  arguments prints them); colliders a source brings win unless `--force-collision`.
+- A mesh keeps only the colliders its source brings; placed, it collides only with them. An `Auto`
+  `Collider` without them is its triangles when still, convex pieces of them when it moves.
 - A model without a skeleton that must animate: `--rig` with the template that fits it. Clips of
   another file onto a skeleton the project has: `--skeleton <id>` ([animation](animation.md)).
 - With an editor session: `asset.import` (MCP `asset_import`) answers when it ends, with what it

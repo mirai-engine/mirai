@@ -294,6 +294,10 @@ texture cache of the project; a failure is `Cook_Failed` with `Result.cook.error
   section references its far mesh, `<scene>.far.mesh` with the id `asset.far_mesh_id` gives
   (`cook/far`): the game shows it and makes none
   ([far shape](../../mirai-gameplay/references/libraries.md#plugin-streaming)).
+- **Convex pieces.** A mesh without colliders of its source that a cooked scene or prefab moves
+  with an `Auto` `Collider` (its `Rigid_Body`, or that of its nearest ancestor with one, not
+  `Static`) ships with its convex pieces (`asset.mesh_pieces_put`), decomposed once and kept in the
+  collision cache (`Cook_Desc.collision_cache`): a shipped game reads them and decomposes nothing.
 - **Compression.** A cook writes with the codecs of its project (`Cook_Desc.codecs`, from
   `project.compression`): every texture is written again with the layouts and planes of fields
   those codecs take, and with `None` its blocks are made without RDO. What a cook compresses with,

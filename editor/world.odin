@@ -502,6 +502,7 @@ component_add :: proc(s:^Session,e:core.Entity,t:^core.Table_Info,value:rawptr=n
     if source==nil {
         buffer:=make([]u8,max(t.info.size,1),context.temp_allocator)
         if t.default!=nil {t.default(raw_data(buffer))} else {component_default(t.type,buffer)}
+        component_start_of(s,e,t,buffer)
         source=raw_data(buffer)
     }
     core.raw_add(core.world_table_at(w,t),t.info,e,source)
