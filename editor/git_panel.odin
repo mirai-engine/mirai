@@ -417,13 +417,18 @@ git_pending_modal :: proc(s:^Session) {
             if ui.button(ctx,shell_id(gui,"git_pending_later"),{label=quits?"Cancel":"Later",variant="field",width=90,height=ui.metric(ctx,"control"),center=true}).clicked {closed=true}
             for operation in ([2]git.Operation{.Discard,.Keep}) {
                 keep:=operation==.Keep
-                if ui.button(ctx,shell_id(gui,keep?"git_pending_keep":"git_pending_discard"),{label=keep?"Keep all":"Discard",variant=keep?"accent":"danger",width=100,height=ui.metric(ctx,"control"),center=true,disabled=git.working(g)}).clicked {
-                    gui.modal=.None
-                    if message:=git_changes_run(s,operation,nil);message!="" {notify(s,message)} else {g.quits=quits}
-                }
+                if ui.button(ctx,shell_id(gui,keep?"git_pending_keep":"git_pending_discard"),{label=keep?"Keep all":"Discard",variant=keep?"accent":"danger",width=100,height=ui.metric(ctx,"control"),center=true,disabled=git.working(g)}).clicked {git_pending_take(s,operation)}
             }
         }
     }
+}
+
+// Keeps or discards every pending change, as the dialog of the pending
+// changes asks: before the editor ends, it ends once they are.
+@(private)
+git_pending_take :: proc(s:^Session,operation:git.Operation) {
+    s.gui.modal=.None
+    if message:=git_changes_run(s,operation,nil);message!="" {notify(s,message)} else {s.git.asked=s.git.notice}
 }
 
 // The project is in no repository, or git is not there: the editor edits

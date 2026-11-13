@@ -63,6 +63,8 @@ Repository :: struct {
     step:int,
     process:subprocess.Process,
     out,err:[dynamic]u8,
+    input:[dynamic]u8,     // what the command that runs reads on its stdin: the paths it applies to, each ended by a 0 (input_add)
+    input_sent:int,
     error:[512]u8,         // what the last operation that failed said
     finished:Operation,    // the operation that ended and ended has not given yet
     finished_failed:bool,
@@ -117,6 +119,8 @@ start :: proc(r:^Repository,roots:Roots,operation:Operation) {
 @(private)
 next :: proc(r:^Repository,roots:Roots) {
     for r.operation!=.None {
+        clear(&r.input)
+        r.input_sent=0
         arguments:=command(r,roots,r.operation,r.step)
         if arguments==nil {
             r.step+=1
@@ -141,6 +145,7 @@ next :: proc(r:^Repository,roots:Roots) {
             return
         }
         r.process=process
+        input_send(r)
         return
     }
 }
@@ -210,17 +215,15 @@ command :: proc(r:^Repository,roots:Roots,operation:Operation,step:int) -> []str
         switch step {
         case 0: return status_command(scope)
         case 1:
-            arguments:=make([dynamic]string,a)
-            #partial switch operation {
-            case .Keep:    append(&arguments,"add","-A","--")
-            case .Unkeep:  append(&arguments,"reset","--quiet","--")
-            case .Discard: append(&arguments,"restore","--worktree","--")
-            }
-            named:=len(arguments)
             for &change in r.changes {
-                if takes(r,&change) && (operation!=.Discard || change.tracked) {append(&arguments,strings.clone(base.text_get(change.path[:]),a))}
+                if takes(r,&change) && (operation!=.Discard || change.tracked) {input_add(r,base.text_get(change.path[:]))}
             }
-            if len(arguments)>named {return arguments[:]}
+            if len(r.input)==0 {return nil}
+            #partial switch operation {
+            case .Keep:    return list("add","-A",PATHS_FROM_INPUT,PATHS_NUL)
+            case .Unkeep:  return list("reset","--quiet",PATHS_FROM_INPUT,PATHS_NUL)
+            case .Discard: return list("restore","--worktree",PATHS_FROM_INPUT,PATHS_NUL)
+            }
         }
     case .Push:
         if step==0 {return push_command(r)}
@@ -233,10 +236,8 @@ command :: proc(r:^Repository,roots:Roots,operation:Operation,step:int) -> []str
     case .Finish:
         switch step {
         case 0:
-            arguments:=make([dynamic]string,a)
-            append(&arguments,"add","--")
-            append(&arguments,..r.finish_paths[:])
-            return arguments[:]
+            for path in r.finish_paths {input_add(r,path)}
+            if len(r.input)>0 {return list("add",PATHS_FROM_INPUT,PATHS_NUL)}
         case 1: return list("commit","--no-edit")
         }
     case .Base:
@@ -247,6 +248,28 @@ command :: proc(r:^Repository,roots:Roots,operation:Operation,step:int) -> []str
         return list("show",fmt.tprintf(":%d:%s",step%3+1,r.load_paths[step/3]))
     }
     return nil
+}
+
+// The paths of a command go on its stdin: as many as there are, which its
+// command line could not hold.
+@(private)
+PATHS_FROM_INPUT :: "--pathspec-from-file=-"
+@(private)
+PATHS_NUL :: "--pathspec-file-nul"
+
+@(private)
+input_add :: proc(r:^Repository,path:string) {
+    append(&r.input,..transmute([]u8)path)
+    append(&r.input,0)
+}
+
+// Writes to the command that runs what of its input the pipe takes, and ends
+// its stdin once all of it went.
+@(private)
+input_send :: proc(r:^Repository) {
+    if r.process.stdin==nil {return}
+    r.input_sent+=subprocess.write(&r.process,r.input[r.input_sent:])
+    if r.input_sent>=len(r.input) {subprocess.stdin_close(&r.process)}
 }
 
 @(private)
@@ -297,6 +320,7 @@ push_command :: proc(r:^Repository) -> []string {
 // out and err until advance, which the caller owes it.
 poll :: proc(r:^Repository) -> (exited:bool,code:int) {
     if r.operation==.None || r.process.pid==0 {return}
+    input_send(r)
     buffer:[8192]u8
     for stream in subprocess.Stream {
         into:=stream==.Stdout?&r.out:&r.err
@@ -432,8 +456,8 @@ ended :: proc(r:^Repository) -> (operation:Operation,failed:bool) {
 @(private)
 fail :: proc(r:^Repository,message:string) {
     base.text_set(r.error[:],message)
-    r.operation,r.step=.None,0
     subprocess.release(&r.process)
+    end(r)
 }
 
 // The first line git wrote that says what went wrong, after what the editor says.
