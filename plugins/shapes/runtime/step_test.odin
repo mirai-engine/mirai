@@ -1,7 +1,9 @@
 package shapes
 
+import "core:fmt"
 import "core:mem"
 import "core:testing"
+import "mirai:asset"
 import "mirai:core"
 import render "mirai:engine/render"
 import volume "mirai:engine/volume"
@@ -58,10 +60,10 @@ App :: struct {
 }
 
 @(private="file")
-app_init :: proc(a:^App) -> bool {
+app_init :: proc(a:^App,root:="assets") -> bool {
     a.app.assets,a.app.allocator=&a.assets,context.allocator
     if !jobs.system_init(&a.app.jobs,{threads=0}) {return false}
-    return host.assets_init(&a.assets,{root="assets",capacity=16})
+    return host.assets_init(&a.assets,{root=root,capacity=16})
 }
 
 @(private="file")
@@ -565,4 +567,58 @@ a_bend_draws_and_collides_the_mesh_of_its_entity_bent_through_one_child :: proc(
     world_step(&w)
     _,count=parts_of(&w,e)
     testing.expect(t,count==0 && !core.has(&w.elsewhere,e))
+}
+
+// A strip 2·width wide along -Z, as a reimport writes it.
+@(private="file")
+strip_save :: proc(path:string,types:^asset.Types,id:base.Asset_Id,width:f32) -> bool {
+    n:=mm.normal_pack({0,1,0})
+    vertices:=[4]asset.Vertex{{position={-width,0,0},normal=n},{position={width,0,0},normal=n},{position={width,0,-1},normal=n},{position={-width,0,-1},normal=n}}
+    indices:=[6]u32{0,2,1,0,3,2}
+    g:asset.Mesh_Geometry
+    if !asset.mesh_build({vertices=vertices[:]},indices[:],nil,&g,context.temp_allocator) {return false}
+    return asset.mesh_save(path,types,{id=id,geometry=g})==.None
+}
+
+@(test)
+a_bend_bends_its_mesh_again_when_the_file_of_the_mesh_changes :: proc(t:^testing.T) {
+    defer free_all(context.temp_allocator)
+    root:=base.test_folder(t,"shapes-bend-reimport")
+    if root=="" {return}
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    RAIL :: base.Asset_Id{0x7261696c,1}
+    if !testing.expect(t,strip_save(fmt.tprintf("%s/rail.mesh",root),&types,RAIL,0.1)) {return}
+    a:App
+    if !testing.expect(t,app_init(&a,root)) {return}
+    defer app_destroy(&a)
+    w:Step_Test
+    if !world_init(t,&w,&a.app) {return}
+    defer world_destroy(&w)
+    // Along a quarter of a circle: at its end the width of the strip runs along Z.
+    bend:=BEND_DEFAULT
+    bend.end,bend.start_tangent,bend.end_tangent={2,0,-2},{0,0,-3.3137},{3.3137,0,0}
+    e:=core.create(&w.entities)
+    core.add(&w.meshes,e,render.Mesh_Renderer{mesh=RAIL})
+    core.add(&w.bends,e,bend)
+    world_step(&w)
+    child,_:=parts_of(&w,e)
+    first:=mesh_of(&w,child)
+    lowest :: proc(a:^App,mesh:base.Asset_Id) -> f32 {
+        generated:=host.assets_mesh(&a.assets,mesh)
+        return generated!=nil?generated.bounds_min.z:0
+    }
+    testing.expectf(t,w.problems.count==0 && abs(lowest(&a,first)+2.1)<1e-3,"bent: %v",lowest(&a,first))
+
+    // Another file changes: the mesh of the bend holds the same, and is not bent again.
+    if !testing.expect(t,strip_save(fmt.tprintf("%s/other.mesh",root),&types,{0x6f74686572,1},0.3)) {return}
+    testing.expect_value(t,asset.registry_refresh(&a.assets.registry,{"other.mesh"}),asset.Error.None)
+    world_step(&w)
+    testing.expect(t,mesh_of(&w,child)==first)
+
+    // The mesh is reimported wider: bent again, and the first bent mesh released.
+    if !testing.expect(t,strip_save(fmt.tprintf("%s/rail.mesh",root),&types,RAIL,0.4)) {return}
+    testing.expect_value(t,asset.registry_refresh(&a.assets.registry,{"rail.mesh"}),asset.Error.None)
+    world_step(&w)
+    again:=mesh_of(&w,child)
+    testing.expectf(t,again!=first && !host.assets_mesh_generated(&a.assets,first) && abs(lowest(&a,again)+2.4)<1e-3,"bent again: %v",lowest(&a,again))
 }

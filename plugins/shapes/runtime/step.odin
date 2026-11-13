@@ -1,5 +1,6 @@
 package shapes
 
+import "mirai:asset"
 import "mirai:core"
 import "mirai:host"
 import render "mirai:engine/render"
@@ -24,6 +25,7 @@ Shapes_Cache :: struct {
     entries:core.Entity_Map(Shape_Entry), // by shape, bend or spline entity
     brushes:core.Entity_Map(Brush_Entry), // by brush entity
     shapes_seen,splines_seen,bends_seen,shown_seen,bodies_seen,colliders_seen,tints_seen,brushes_seen,places_seen,parents_seen:core.Seen,
+    files_seen:u64, // the revisions of the files and of the assets when the bends last looked at their meshes
     dirty:[dynamic]core.Entity,
     gathered:[dynamic]Brush,     // the brushes of the solid being looked at, in order
     builds:[dynamic]Shape_Build, // slots kept between passes
@@ -47,6 +49,7 @@ Shape_Entry :: struct {
     pass:u32,           // the last pass that took it
     spline:bool,        // of a Spline without a Shape or a Bend
     bend:bool,          // of a Bend without a Shape: its entity is Drawn_Elsewhere
+    stamp:u64,          // of a bend, mesh_stamp of the mesh it bent
     place:mm.Transform, // of a spline, in the world: where it lies
     laid:u32,           // of a spline, how many changes of the ground under it it was laid again on
 }
@@ -61,6 +64,7 @@ Shape_Build :: struct {
     bent:bool,      // its geometry holds the mesh and the collision of the entity, to bend
     bend:Bend,
     slots:host.Assets_Slots, // of the mesh it bends
+    stamp:u64,               // mesh_stamp of that mesh
     material:base.Asset_Id,
     cut_first:bool, // a brush that cuts comes before the first that adds
     key:u64,
@@ -125,6 +129,10 @@ shapes_update :: proc(
     // children this step gives meshes are all that writes them here.
     bending:=core.count(bends)>0 || len(cn.gone)>0
     cm:=bending?core.changes(meshes,&cache.shown_seen):{}
+    // A reimport or a reload of a mesh a bend shows bends it again: what is
+    // looked at, only when the files or the assets changed, is what the file holds.
+    files:=assets.registry.revision+assets.revision
+    refiled:=bending && files!=cache.files_seen
     cb:=core.changes(rigids,&cache.bodies_seen)
     cc:=core.changes(colliders,&cache.colliders_seen)
     ct:=core.changes(tints,&cache.tints_seen)
@@ -139,7 +147,7 @@ shapes_update :: proc(
     placed:=lying && (core.touched(transforms,&cache.places_seen) | core.touched(parents,&cache.parents_seen))
     under:=lying && ground.ptr!=nil?ground.changed.items[:]:nil
     grounded:=len(under)>0
-    if !all && !following && !placed && !grounded && quiet(cs) && quiet(cp) && quiet(cn) && quiet(cm) && quiet(cb) && quiet(cc) && quiet(ct) {return}
+    if !all && !following && !placed && !grounded && !refiled && quiet(cs) && quiet(cp) && quiet(cn) && quiet(cm) && quiet(cb) && quiet(cc) && quiet(ct) {return}
     context.allocator=allocator
     u:=Update{cache=cache,assets=assets,commands=commands,shapes=shapes,brushes=brushes,parts=parts,rigids=rigids,colliders=colliders,meshes=meshes,tints=tints,transforms=transforms,parents=parents,hierarchy=hierarchy,problems=problems,splines=splines,bends=bends,elsewhere=elsewhere}
 
@@ -193,6 +201,14 @@ shapes_update :: proc(
         }
     }
     if following {brushes_follow(&u,cr)}
+    if refiled {
+        cache.files_seen=files
+        for entry,i in cache.entries.values {
+            e:=cache.entries.entities[i]
+            if !entry.bend {continue}
+            if shown,has:=core.get(meshes,e);has && mesh_stamp(assets,shown.mesh)!=entry.stamp {mark(&u,e)}
+        }
+    }
     if len(cache.dirty)==0 {return}
 
     used:=0
@@ -210,6 +226,7 @@ shapes_update :: proc(
         body,cut_first,collides:=false,false,false
         collider:=physics.COLLIDER_DEFAULT
         shown:render.Mesh_Renderer
+        stamp:u64
         if row>=0 {
             if has_spline && spline.material!={} || has_bend {
                 core.report(problems,e,"shapes.both","the entity has a Shape and a Bend or a Spline with a material, and draws only the Shape: move the Bend or the Spline to an entity of its own")
@@ -247,7 +264,8 @@ shapes_update :: proc(
                     core.report(problems,e,"shapes.bend_collider","the entity has a Bend and a Collider of kind %v, which collides with the mesh unbent: make it External so the bent mesh collides",kind)
                 }
             }
-            what:=struct {bend:Bend,mesh:base.Asset_Id,shape:render.Shape,body,collides:bool} {bend,shown.mesh,shown.shape,body,collides}
+            stamp=mesh_stamp(assets,shown.mesh)
+            what:=struct {bend:Bend,mesh:base.Asset_Id,shape:render.Shape,body,collides:bool,stamp:u64} {bend,shown.mesh,shown.shape,body,collides,stamp}
             key=base.hash64(mem.ptr_to_bytes(&what),0x62656e64)
             // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
             collider=collider_of(&u,e,body)
@@ -287,6 +305,7 @@ shapes_update :: proc(
         // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
         b.collider=collider
         b.collides=collides
+        b.stamp=stamp
         if entry.bend {
             b.bend=bend
             if !bend_read(&u,b,shown) {
@@ -537,7 +556,7 @@ install :: proc(u:^Update,b:^Shape_Build) {
         return
     }
     if entry.mesh!={} {host.assets_mesh_release(u.assets,entry.mesh)}
-    entry.mesh,entry.key=id,b.key
+    entry.mesh,entry.key,entry.stamp=id,b.key,b.stamp
     shown:=shown_of(u,b.entity,id)
     if b.bent && !core.has(u.elsewhere,b.entity) {core.commands_add(u.commands,b.entity,render.Drawn_Elsewhere{})}
     if entry.child==core.NONE {
@@ -626,4 +645,14 @@ show_write :: proc(u:^Update,child:core.Entity,shown:render.Mesh_Renderer) {
     } else if u.meshes.values[row]!=shown {
         core.edit(u.meshes,child)^=shown
     }
+}
+
+// What the file of a mesh holds, by the hash its header keeps; 0 for a
+// primitive or a generated mesh, whose geometry does not change.
+@(private)
+mesh_stamp :: proc(a:^host.Assets,mesh:base.Asset_Id) -> u64 {
+    if mesh=={} {return 0}
+    file,found:=asset.registry_find(&a.registry,mesh)
+    if !found {return 0}
+    return file.content_hash!=0?file.content_hash:base.hash_mix(u64(file.size),u64(file.time))
 }

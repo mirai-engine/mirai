@@ -111,8 +111,9 @@ curve segment ([bends](#bends)), and draws the ribbons of roads and paths along 
   stores, or its triangles), a `Hull` of it with a `Rigid_Body`. A `Collider` of a kind that reads
   the mesh would collide with it unbent and is reported as `shapes.bend_collider`.
 - It is built again only when its `Bend`, the `Mesh_Renderer`, `Rigid_Body`, `Collider` or
-  `Material_Values` of its entity change; a changed mesh asset on disk is not followed until one
-  of them does. `bend_place` gives where a point of the mesh goes.
+  `Material_Values` of its entity change, or what the file of its mesh holds (the hash of its
+  header, looked at only when the registry or the assets advance their revision: a reimport or a
+  reload). `bend_place` gives where a point of the mesh goes.
 
 ## Editing
 
@@ -230,8 +231,8 @@ on the ground as a ribbon without collider and follows the ground and its entity
 (`bend_test.odin`: ends, roll, scale, offset, range and axes in place; normals that agree with the
 bent faces, also stretched, rolled and mirrored; invalid bends refused and degenerate ones finite;
 the step: a child that draws and collides the bent mesh with the materials of the entity, built
-again only on a change, a Collider that reads the mesh reported, and the entity drawn again
-without its `Bend`).
+again only on a change, also of the file of its mesh and not of another file, a Collider that
+reads the mesh reported, and the entity drawn again without its `Bend`).
 
 `mirai test plugins/shapes/editor`: a stroke is one step that undo and redo take back and forth,
 a cut that splits makes a second shape entity and undo restores one, Escape puts back every shape
