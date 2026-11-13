@@ -41,6 +41,7 @@ struct Fog_Volume {
     float4 medium; // rgb what it scatters in a metre, a what it stops; of a variable one, the mean
     float4 params; // x 1 over its wisp size (0: it does not vary), y anisotropy, z falloff, w the height of its base
     float4 carve;  // x priority, y FOG_CARVE_* bits, z 1/m it takes of the light of the sun that crosses it
+    float4 glow;   // rgb the luminance it gives off where it is thick, nits: for each metre of what it stops
     int4 cells[FOG_WISP_OCTAVES];    // xyz the cell of each layer of its wisps at the origin of the render now
     float4 within[FOG_WISP_OCTAVES]; // xyz where in that cell, 0 to 1
 };
@@ -50,6 +51,11 @@ struct Fog_Volume {
 // The glass of its surface takes what it stops of the view (fog.Medium.glass).
 #define FOG_CARVE_GLASS 8u
 bool fog_carve(Fog_Volume v, uint bit) { return (uint(v.carve.y) & bit) != 0u; }
+
+// What the light of a cell is given for each unit of (fog_light.comp): of a
+// medium, rgb what it scatters and a what it stops, a measure of both that
+// grows with its density. A cell sends its light times this of its medium.
+float fog_amount(float4 medium) { return luminance(medium.rgb) + medium.a; }
 
 // The grid of the view: the media of the view it integrates (media_grid.slang).
 Media_Grid fog_grid() {
