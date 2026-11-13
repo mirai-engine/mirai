@@ -238,8 +238,12 @@ mirai rpc describe [plugin|method|prefix|method...] [--project P|--port N]
 The server handles the reserved params. Every method takes `_select` (`"a.b,c[0].d"`), which
 answers only those fields, as an object by their paths. A read-only method (`read_only` in
 `engine.describe`) also takes `_wait_until` (`"phase=Built"`), which calls the method again until
-the condition holds, the editor going on meanwhile, for at most `api.WAIT_UNTIL_SECONDS`, or the
-`_wait_seconds` that `--timeout` sends. A method that changes things refuses both with `-32602`,
+the condition holds, for at most `api.WAIT_UNTIL_SECONDS`, or the `_wait_seconds` that `--timeout`
+sends. The request waits on its connection, not in the server: between its calls the editor goes
+on and answers every other client, so an agent that waits for its subagents never holds them up,
+and its turn records the wait as one step. It waits only in a request of its own: in a batch it is
+`-32602`. A `notifications/cancelled` of its `tools/call` answers it at once with `-32094`. A
+method that changes things refuses both with `-32602`,
 as each call would change them again: it is called once, and the wait goes on a read-only method,
 such as its status method (`build.start`, then `build.status`). Selecting reads the result of a
 call that already ran, so a field that is not there is no error: the answer keeps the fields it

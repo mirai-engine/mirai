@@ -653,6 +653,29 @@ a_cancelled_call_stops_at_its_safe_point_and_says_so :: proc(t:^testing.T) {
     testing.expect_value(t,integer(at(tool_text(t,reply),"error","code")),CANCELLED)
 }
 
+// A tools/call whose _wait_until waits on its connection is cancelled the same way.
+@(test)
+a_cancelled_wait_answers_at_once_that_it_was_cancelled :: proc(t:^testing.T) {
+    f:=new(Fixture);defer free(f)
+    if !fixture_start(f,t,{timeout_ms=5000}) {return}
+    defer fixture_finish(f)
+    Canceller :: struct {port:int}
+    canceller:=Canceller{server_port(&f.server)}
+    cancel :: proc(c:^Canceller) {
+        time.sleep(300*time.Millisecond)
+        client_post(c.port,"/mcp",`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":7}}`,3000,context.temp_allocator)
+    }
+    th:=thread.create_and_start_with_poly_data(&canceller,cancel)
+    defer {thread.join(th);thread.destroy(th)}
+    began:=time.tick_now()
+    waits:=`{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"test_add","arguments":{"a":1,"b":1,"_wait_until":"sum<0","_wait_seconds":3}}}`
+    status,bytes,err:=client_post(canceller.port,"/mcp",waits,5000,context.temp_allocator)
+    testing.expectf(t,err.code==0 && status==200,"%d %v",status,err)
+    testing.expect(t,time.duration_seconds(time.tick_since(began))<1,"it did not wait to its end")
+    reply:=parse_json(t,string(bytes))
+    testing.expect_value(t,integer(at(tool_text(t,reply),"error","code")),CANCELLED)
+}
+
 // What a handler that waits and a request that arrives meanwhile leave of their order.
 @(private="file")
 Wait_Order :: struct {

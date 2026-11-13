@@ -21,7 +21,8 @@ import "mirai:std/serial"
 @(private) STREAM_HEAD :: "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n"
 @(private) STREAM_DATA :: "event: message\ndata: "
 
-// The call that runs, while its handler holds the server.
+// The tools/call that runs, while its handler holds the server; a wait keeps it
+// on its connection between calls.
 Running :: struct {
     active:bool,
     conn:int,
@@ -37,6 +38,8 @@ Running :: struct {
 // Starts the call of a tools/call: its id, and its token when it streams.
 @(private)
 running_begin :: proc(s:^Server,req:^Request) {
+    // A wait called again goes on with what its first call began.
+    if s.wait.retry {return}
     r:=&s.running
     conn:=r.conn
     r^={conn=conn}
@@ -121,8 +124,23 @@ cancel_take :: proc(s:^Server,conn:^Conn) {
     if method,_:=string_value(context.temp_allocator,values[0]);method!="notifications/cancelled" {return}
     id:[1]string
     if object_values(context.temp_allocator,values[1],{"requestId"},id[:]) && id[0]==base.text_get(s.running.id[:]) {s.running.stopped=true}
+    wait_cancel(s,values[1])
     stream_send(conn,transmute([]u8)string("HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"))
     conn_close(conn)
+}
+
+// A notifications/cancelled of a tools/call that waits on its connection: its
+// next call answers CANCELLED, now.
+@(private)
+wait_cancel :: proc(s:^Server,params:string) {
+    id:[1]string
+    if !object_values(context.temp_allocator,params,{"requestId"},id[:]) || id[0]=="" {return}
+    for &conn in s.conns {
+        if conn.state==.Waiting && conn.running.active && id[0]==base.text_get(conn.running.id[:]) {
+            conn.running.stopped=true
+            conn.next=time.tick_now()
+        }
+    }
 }
 
 // What the server did for the running call once it ended: connections read
