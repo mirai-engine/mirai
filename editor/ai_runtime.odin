@@ -68,6 +68,7 @@ ai_initialize :: proc(s:^Session) {
     if message:=ai_store.open(&m.store,s.project_root);message!="" {notify(s,message);return}
     ai_memory_scan(s)
     if message:=ai_history_refresh(m);message!="" {notify(s,message)}
+    resume:=ai_build_restart_take(s,m)
     if saved:=ai_store.main_conversation(&m.store);saved!=nil {
         conversation:=saved^
         if task:=ai_conversation_restore(s,&conversation);task!=nil {
@@ -75,10 +76,10 @@ ai_initialize :: proc(s:^Session) {
             m.stick=true
             base.text_set(m.agent[:],base.text_get(task.agent[:]))
             ai_held_count(&m.store,task)
-            ai_main_reopen(s,m,task)
+            ai_main_reopen(s,m,task,resume)
         }
     }
-    ai_agents_interrupted_restore(s,m)
+    ai_agents_interrupted_restore(s,m,resume!="")
 }
 
 // The messages a chat kept for its next turn when the editor closed.
