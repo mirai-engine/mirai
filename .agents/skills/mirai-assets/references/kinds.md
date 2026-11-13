@@ -73,7 +73,10 @@ model that consumes it (hulls, hierarchy and limits) belongs to
   and a `physics` plugin `Collider` `Hull`, `Mesh` or `Auto` uses them instead of the geometry that
   is drawn. `piece_points` and `piece_sizes` are the convex pieces of a mesh without them that a
   cooked game moves: only a cook writes them
-  ([cooking](../../mirai-projects/references/build.md#asset-cooking)).
+  ([cooking](../../mirai-projects/references/build.md#asset-cooking)). `mesh_collision_pieces`
+  gives those, or else decomposes its level 0 (`geom.mesh_decompose`) once and keeps the pieces by
+  the content of the file in a folder of the cache (`project.COLLISION_CACHE`); without that
+  folder, as a shipped game, it decomposes nothing.
 - Morph targets (`asset/morph.odin`): a delta names a cluster vertex and what the target at weight
   1 adds to its position, normal and tangent, before skin. `mesh_build` receives deltas of the
   source's vertices and copies them to each cluster that uses the vertex. An entity sets weights by
