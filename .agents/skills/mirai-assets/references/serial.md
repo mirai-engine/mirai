@@ -66,7 +66,11 @@ copied as a block or used in place.
   names are in the binary schema (a struct with renames, or with renamed fields, carries them;
   any other is written as if there were none), so a source that had the destination's name
   pairs too: a file of a newer layout reads into an older one. `path_resolve` takes them as well.
-- One without a source keeps the default given by whoever reads (zero if none is given). One
+- One without a source keeps the default given by whoever reads, or else the one its struct
+  carries (`Type.default`, `schema_default_set`), and zero without either. The schema of a world
+  gives each component, persist storage and record type its `NAME_DEFAULT` saved as a value is; an
+  import and the binary schema carry it, so a prefab saved before a field existed reads it as the
+  component starts when it is flattened into a scene written since. One
   without a destination is lost, and `Migration.removed` lists it by its path, as
   `Migration.incompatible` lists the fields whose shapes do not convert; whoever reads a document
   reports both (scene loads: `engine/scene` `Stored`).
