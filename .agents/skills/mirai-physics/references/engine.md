@@ -125,8 +125,9 @@ own the `Transform` (`locks="core.Transform"`): the game moves through requests.
   are a `Hull` of one piece each, exactly as authored; without them it is the triangles of the
   mesh (`Mesh`) while still, and while it moves the convex pieces of a decomposition of them
   (`host.assets_collision_pieces_file`), made once in a job and kept by the content of the mesh in
-  the collision cache, shared by every entity of that mesh like any geometry slot. A mesh that
-  does not read is `physics.collider_mesh_unreadable`.
+  the collision cache, shared by every entity of that mesh like any geometry slot. A shipped game
+  takes the pieces its cook wrote into the mesh; without them it is the hull of all its points. A
+  mesh that does not read is `physics.collider_mesh_unreadable`.
 - `size` is multiplied by the absolute world scale: the sphere takes the largest; capsule and
   cylinder, the largest of XZ for the radius and Y for the height. A negative axis mirrors the
   collider where it is drawn: its center, and the points of a mesh or hull, whose triangles turn

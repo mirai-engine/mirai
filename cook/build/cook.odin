@@ -16,6 +16,8 @@ import "mirai:asset"
 import "mirai:cook/far"
 import anim "mirai:std/anim"
 import "mirai:cook/textures"
+import render "mirai:engine/render"
+import "mirai:host"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/jobs"
@@ -38,7 +40,11 @@ import "mirai:std/subprocess"
 // instance is written with its instances brought up to date, so a shipped
 // game loads them as they are; every other file is copied byte for byte.
 // With far, every scene a section references gets its far mesh beside it
-// (cook/far), which the game shows while the section is not loaded. The
+// (cook/far), which the game shows while the section is not loaded. A mesh
+// without colliders of its source that a scene or prefab moves with an Auto
+// Collider is written with the convex pieces it collides as
+// (host.assets_collision_pieces_file, kept in the collision cache), which a
+// shipped game reads and never makes. The
 // folder gets a packed index, so the game does not look at its files to
 // know what they are, and everything written is read back and checked.
 
@@ -56,6 +62,7 @@ Cook_Desc :: struct {
     plugins:[]project.Asset_Folder, // the assets of active plugins: every file a root, cooked under its prefix
     texture_cache:string, // folder of compressed textures kept by content (textures.cache_read); "": none
     mesh_cache:string,    // folder of the meshes an import keeps (cook/import Import_Options); "": none
+    collision_cache:string, // folder of the convex pieces of meshes kept by content (host.assets_collision_pieces_file); "": none
     codecs:asset.Codecs, // what the project ships with (build.compression)
     root:string,          // of the project: the sources of imported assets are named relative to it. "": the folder of assets
     worker:jobs.Worker_Ref, // where the files are cooked, in parallel on its system. No system: a system of the cook, a thread per core
@@ -278,7 +285,7 @@ cook_run :: proc(desc:Cook_Desc) -> (report:Cook_Report) {
     }
     defer if on.system==&own {jobs.system_destroy(&own)}
     work:=Cook_Work{
-        desc=desc,registry=&registry,files=files,textures=manifest.textures,drawn=drawn,shown=shown,
+        desc=desc,registry=&registry,files=files,textures=manifest.textures,drawn=drawn,shown=shown,pieces=pieces_wanted(&registry,reached,left,temp),
         on=on,allocator=on.system.allocator,first_error=len(files),
         results=make([]Cook_Result,len(files),temp),
         types=make([]asset.Types,jobs.worker_count(on.system),temp),
@@ -362,6 +369,7 @@ Cook_Work :: struct {
     files:[]asset.Registry_File,
     textures:Cook_Textures,
     drawn,shown:[]bool,
+    pieces:[]bool, // a mesh written with the convex pieces a moving body collides as
     on:jobs.Worker_Ref,
     allocator:runtime.Allocator, // of the job system: every worker can call it
     order:[]Cook_Order,    // the files to write
@@ -503,6 +511,11 @@ file_cook :: proc(work:^Cook_Work,at:int,worker:int,entry:^Cook_File) -> (error:
             if !resolve_ok {return .Resolve_Failed,work_text(work,"%s",file.path)}
             if resolved!=nil {data,entry.resolved=resolved,true}
         }
+        if file.state==.Asset && file.kind==asset.KIND_MESH && work.pieces[at] {
+            pieced,made:=mesh_pieces_cook(work,source,data,types)
+            if !made {return .Write_Failed,work_text(work,"%s: its convex pieces could not be written",file.path)}
+            data=pieced
+        }
         if file.state==.Asset {
             repacked,repack_error:=asset.document_repack(data,cook_profile(work.desc),work.desc.codecs,context.temp_allocator,jobs.worker_ref_at(work.on,worker))
             if repack_error!=.None {return .Write_Failed,work_text(work,"%s",file.path)}
@@ -536,7 +549,7 @@ Cook_Key :: struct {key:u64,bytes,time:i64,compressed,resolved:bool}
 @(private="file")
 cook_key :: proc(work:^Cook_Work,at:int,closure:^[dynamic]u32,far:=false) -> u64 {
     file:=&work.files[at]
-    key:=base.hash_combine(COOK_KEYS_VERSION,u64(work.desc.quick)|u64(work.textures)<<1|u64(work.drawn[at])<<8|u64(work.shown[at])<<9|u64(far)<<10)
+    key:=base.hash_combine(COOK_KEYS_VERSION,u64(work.desc.quick)|u64(work.textures)<<1|u64(work.drawn[at])<<8|u64(work.shown[at])<<9|u64(far)<<10|u64(work.pieces[at])<<11)
     key=base.hash_combine(key,base.hash_combine(u64(work.desc.codecs),base.hash_combine(base.name_hash(data.NAME),base.name_hash(blocks.NAME))))
     if file.state!=.Asset {return base.hash_combine(base.hash_combine(key,u64(file.size)),u64(file.time))}
     key=base.hash_combine(key,file.content_hash)
@@ -808,4 +821,80 @@ animation_cook :: proc(work:^Cook_Work,source,target:string,types:^asset.Types) 
     defer asset.document_destroy(&doc)
     doc.flags=file.blob.header.flags
     return true,asset.document_save(&doc,target,profile=cook_profile(work.desc))==.None
+}
+
+// The Collider and Rigid_Body of the physics plugin as a cook reads them from
+// a scene: by the names of their fields and of the values of their enums.
+@(private="file")
+Cooked_Collider :: struct {kind:enum u8 {Box,Sphere,Capsule,Cylinder,Hull,Mesh,Heightfield,External,Auto}}
+@(private="file")
+Cooked_Body :: struct {type:enum u32 {Static,Kinematic,Dynamic}}
+
+// The meshes, by file, that a reached scene or prefab moves with an Auto
+// Collider: the Collider of an entity that shows the mesh, whose own
+// Rigid_Body, or that of the nearest ancestor with one, is not Static.
+@(private="file")
+pieces_wanted :: proc(registry:^asset.Registry,reached,left:[]bool,allocator:runtime.Allocator) -> []bool {
+    wanted:=make([]bool,len(registry.files),allocator)
+    types:asset.Types
+    asset.types_init(&types,context.temp_allocator)
+    defer asset.types_destroy(&types)
+    for file,at in registry.files {
+        if !reached[at] || left[at] || file.state!=.Asset || file.kind!=asset.KIND_SCENE {continue}
+        scene:asset.Asset
+        if asset.asset_load(&scene,asset.registry_file_path(registry,file.path,context.temp_allocator),context.temp_allocator)!=.None {continue}
+        defer asset.asset_close(&scene)
+        view,error:=asset.scene_view(&scene,&types)
+        if error!=.None {continue}
+        rows_of :: proc(scene:^asset.Asset,types:^asset.Types,name:string,$T:typeid,count:int) -> []^T {
+            out:=make([]^T,count,context.temp_allocator)
+            entities,entities_error:=asset.asset_rows(scene,types,name,asset.COLUMN_ENTITY,u32)
+            values,values_error:=asset.asset_rows(scene,types,name,asset.COLUMN_VALUE,T)
+            if entities_error!=.None || values_error!=.None {return out}
+            for &value,k in values[:min(len(values),len(entities))] {
+                if int(entities[k])<count {out[entities[k]]=&value}
+            }
+            return out
+        }
+        count:=len(view.ids)
+        colliders:=rows_of(&scene,&types,"Collider",Cooked_Collider,count)
+        bodies:=rows_of(&scene,&types,"Rigid_Body",Cooked_Body,count)
+        shown:=rows_of(&scene,&types,"Mesh_Renderer",render.Mesh_Renderer,count)
+        row_of:=make(map[base.Entity_Id]int,context.temp_allocator)
+        for id,row in view.ids {row_of[id]=row}
+        for collider,row in colliders {
+            if collider==nil || collider.kind!=.Auto || shown[row]==nil || shown[row].mesh=={} {continue}
+            moving:=false
+            for at,steps:=row,0;at>=0 && steps<=count;steps+=1 {
+                if body:=bodies[at];body!=nil {
+                    moving=body.type!=.Static
+                    break
+                }
+                parent,found:=row_of[view.parents[at]]
+                at=parent if found else -1
+            }
+            if !moving {continue}
+            if mesh,known:=registry.by_id[shown[row].mesh];known {wanted[mesh]=true}
+        }
+    }
+    return wanted
+}
+
+// A mesh file with the convex pieces a moving body collides as: what the
+// collision cache keeps of it, or a decomposition of it that it keeps. The
+// file as it is when it stores colliders or no piece is had.
+@(private="file")
+mesh_pieces_cook :: proc(work:^Cook_Work,source:string,data:[]u8,types:^asset.Types) -> (out:[]u8,ok:bool) {
+    file:asset.Asset
+    if asset.asset_load(&file,source,context.temp_allocator)!=.None {return}
+    defer asset.asset_close(&file)
+    points:=make([dynamic][3]f32,context.temp_allocator)
+    sizes:=make([dynamic]u32,context.temp_allocator)
+    if !host.assets_collision_pieces_file(&file,types,work.desc.collision_cache,&points,&sizes) {return data,true}
+    doc:asset.Document
+    if asset.document_from_asset(&doc,&file,context.temp_allocator)!=.None {return}
+    defer asset.document_destroy(&doc)
+    if asset.mesh_pieces_put(&doc,types,points[:],sizes[:])!=.None {return}
+    bytes,error:=asset.document_bytes(&doc,context.temp_allocator)
+    return bytes,error==.None
 }

@@ -245,19 +245,29 @@ COLLISION_PIECES_EXTENSION :: ".pieces"
 // Appends the convex pieces that a moving body of a mesh file without
 // colliders of its source collides as: a decomposition of the triangles of
 // its finest level (geom.mesh_decompose). points receives the points of each
-// piece one after another, in mesh space, and sizes how many each has. The
-// first time it decomposes, and keeps the pieces in folder ("" keeps them
-// nowhere); then it reads them from there. False, with both as they were,
-// for a mesh that stores colliders or of which no piece can be made.
+// piece one after another, in mesh space, and sizes how many each has. A
+// cooked mesh carries them (Mesh_View.piece_points); else the first time it
+// decomposes, and keeps the pieces in folder, then reads them from there.
+// Without a folder (a shipped game) nothing is decomposed. False, with both
+// as they were, for a mesh that stores colliders or of which no piece is had.
 assets_collision_pieces_file :: proc(file:^asset.Asset,types:^asset.Types,folder:string,points:^[dynamic]geom.Vec3,sizes:^[dynamic]u32) -> bool {
     if points==nil || sizes==nil {return false}
     view,error:=asset.mesh_view(file,types)
     if error!=.None || !asset.mesh_check_indices(view) || assets_collision_stored(view)!=.None {return false}
     held_points,held_sizes:=len(points),len(sizes)
+    if len(view.piece_sizes)>0 {
+        if append(points,..view.piece_points)!=len(view.piece_points) || append(sizes,..view.piece_sizes)!=len(view.piece_sizes) {
+            base.truncate(points,held_points)
+            base.truncate(sizes,held_sizes)
+            return false
+        }
+        return true
+    }
+    if folder=="" {return false}
     key:=base.hash_combine(file.blob.header.content_hash,u64(COLLISION_PIECES_VERSION)<<16|u64(asset.MESH_VERSION))|1
     id:=base.Asset_Id{key,u64(COLLISION_PIECES_VERSION)}
-    path:=folder!=""?fmt.tprintf("%s/%016x%s",folder,key,COLLISION_PIECES_EXTENSION):""
-    if path!="" {
+    path:=fmt.tprintf("%s/%016x%s",folder,key,COLLISION_PIECES_EXTENSION)
+    {
         cached:asset.Asset
         if asset.asset_load(&cached,path,context.temp_allocator)==.None {
             defer asset.asset_close(&cached)
@@ -310,7 +320,7 @@ assets_collision_pieces_file :: proc(file:^asset.Asset,types:^asset.Types,folder
         }
     }
     // Kept even without pieces: a mesh of which none can be made is not decomposed again.
-    if path!="" && (os.is_dir(folder) || os.make_directory_all(folder)==nil) {
+    if os.is_dir(folder) || os.make_directory_all(folder)==nil {
         doc:asset.Document
         asset.document_init(&doc,COLLISION_PIECES_KIND,id,context.temp_allocator)
         doc.kind_version=COLLISION_PIECES_VERSION

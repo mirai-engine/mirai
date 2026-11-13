@@ -40,7 +40,7 @@ sniff :: proc(head:[]u8) -> importer.Sniff {
     return .Content if strings.contains(text,`"asset"`) else .Extension
 }
 
-@(private="file")
+@(private)
 Gltf :: struct {
     r:^importer.Reader,
     data:^cg.data,
@@ -51,6 +51,7 @@ Gltf :: struct {
     used_image_names:map[string]bool,
     paths:[]string,
     skin_rows:map[^cg.skin]int,
+    physics:Gltf_Physics,
 }
 
 @(private="file")
@@ -95,6 +96,7 @@ read :: proc(r:^importer.Reader,bytes:[]u8) -> bool {
     g.skin_rows.allocator=context.temp_allocator
     g.paths=make([]string,len(data.nodes),context.temp_allocator)
     if !gltf_paths(&g) {return false}
+    if !physics_shapes(&g) {return false}
     selected:=data.scene
     if selected==nil && len(data.scenes)>0 {selected=&data.scenes[0]}
     if selected!=nil {
@@ -102,6 +104,7 @@ read :: proc(r:^importer.Reader,bytes:[]u8) -> bool {
     } else {
         for &node in data.nodes {if node.parent==nil && !gltf_node(&g,&node,-1) {return false}}
     }
+    physics_report(&g)
     // A skin no mesh uses, as in a file of clips, still gives its skeleton.
     for &skin in data.skins {
         if &skin in g.skin_rows {continue}
@@ -155,7 +158,7 @@ gltf_paths :: proc(g:^Gltf) -> bool {
     return true
 }
 
-@(private="file")
+@(private)
 node_label :: proc(node:^cg.node) -> string {
     if node.name!=nil && string(node.name)!="" {return string(node.name)}
     if node.skin!=nil {return "Skeleton"}
@@ -234,6 +237,7 @@ gltf_node :: proc(g:^Gltf,node:^cg.node,parent:int,depth:=0) -> bool {
     } else if node.skin!=nil {
         if _,ok:=gltf_rig(g,node);!ok {return false}
     }
+    if !physics_node(g,node,row) {return false}
     for child in node.children {
         if !gltf_node(g,child,row,depth+1) {return false}
     }
@@ -672,7 +676,7 @@ gltf_rig :: proc(g:^Gltf,mesh_node:^cg.node) -> (pose:Gltf_Rig,ok:bool) {
     return pose,true
 }
 
-@(private="file")
+@(private)
 gltf_mesh :: proc(g:^Gltf,mesh:^cg.mesh,skin:^cg.skin,node:^cg.node) -> (row:int,ok:bool) {
     r:=g.r
     pose:Gltf_Rig

@@ -194,6 +194,7 @@ a_mesh_without_colliders_is_decomposed_once_into_pieces_the_cache_keeps :: proc(
     }
     points:=make([dynamic]geom.Vec3,context.temp_allocator)
     sizes:=make([dynamic]u32,context.temp_allocator)
+    testing.expect(t,!pieces(&assets,bare,"",&points,&sizes) && len(sizes)==0,"without a cache, as a shipped game, nothing is decomposed")
     if !testing.expect(t,pieces(&assets,bare,folder,&points,&sizes) && len(sizes)>=2,"an L is two convex pieces or more") {return}
     total:=0
     for size in sizes {total+=int(size)}
@@ -217,6 +218,14 @@ a_mesh_without_colliders_is_decomposed_once_into_pieces_the_cache_keeps :: proc(
     testing.expect(t,pieces(&assets,bare,folder,&points,&sizes) && len(sizes)==1 && sizes[0]==4 && points[1]==geom.Vec3{1,0,0},"the pieces come from the cache")
     clear(&points);clear(&sizes)
     testing.expect(t,!pieces(&assets,boxed,folder,&points,&sizes) && len(points)==0,"a mesh that stores colliders is not decomposed")
+    // A cooked mesh carries its pieces: they are read without a cache.
+    cooked:=base.Asset_Id{0x636f6f6b6564,1}
+    testing.expect_value(t,asset.mesh_save(fmt.tprintf("%s/cooked.mesh",root),&types,{id=cooked,geometry=g,piece_points=tetra[:],piece_sizes=one[:]}),asset.Error.None)
+    shipped:Assets
+    if !testing.expect(t,assets_init(&shipped,{root=root,capacity=4})) {return}
+    defer assets_destroy(&shipped)
+    clear(&points);clear(&sizes)
+    testing.expect(t,pieces(&shipped,cooked,"",&points,&sizes) && len(sizes)==1 && points[3]==geom.Vec3{0,0,1},"a cooked mesh gives the pieces it carries")
 }
 
 // The convex pieces of a generated mesh are checked and copied when it is made, and go with it.

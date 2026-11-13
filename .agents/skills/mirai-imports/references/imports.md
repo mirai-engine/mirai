@@ -569,13 +569,34 @@ with the same weights and locks.
 
 ## Collision
 
-The colliders that the source brings (`Imported_Mesh.collision`, in the source's space until the
-import moves them to the engine's) are the `asset.Collider` rows of the `.mesh`, as authored; the
-import makes none of its own, and a mesh whose source brings none has none. The engine's formats
-bring none; a plugin's does (`unreal`, from the `BodySetup` of a static mesh). The prefab of a
-model gives an entity an `Auto` `Collider` only when its mesh has them. What a collider of a mesh
-without them is made of (its triangles, or convex pieces of them for a body that moves) is derived
-at run time and cached: [host](../../mirai-core/references/host.md#loaded-assets) and [the physics
+The colliders that the source authors are the `asset.Collider` rows of the `.mesh`, in the space
+of the mesh it collides for; the import makes none of its own, and a mesh whose source authors none
+has none. A format reads what it holds into `Reader.colliders` (`Source_Collider`, in the space of
+the node it is at) and `colliders_resolve`, after the read and before the source space is baked,
+adds what the names of nodes say, places each in the space of its mesh and takes the nodes that
+are collision only, and the meshes only they show, out of the model:
+
+- Names, in every format: `UCX_<mesh>[_n]` a hull of each piece of its geometry that shares no
+  position with the rest, `UBX_` the box it is (three pairs of parallel faces), `USP_` the sphere
+  it is, `UCP_` the capsule around it (along its two farthest points); a fit that fails is its hull,
+  with a warning. The mesh is named without case, whole or without what follows its last `_` or
+  `.`; with one drawn mesh, that one. `-colonly`/`-convcolonly` (also after `_` or `$`) are the
+  triangles or hulls of a node for the nearest mesh, `-col`/`-convcol` those of its own mesh, which
+  stays drawn.
+- glTF: `KHR_physics_rigid_bodies` colliders with `KHR_implicit_shapes`, and `OMI_physics_body`
+  with `OMI_physics_shape`; a mesh geometry is a hull with `convexHull`, else triangles. A tapered
+  capsule and a cylinder are hulls of their points; planes, triggers and motion are warnings.
+- USD: a prim with `PhysicsCollisionAPI`: a `Mesh` as its `physics:approximation` says (triangles
+  without one, `convexDecomposition` a decomposition the source asks for), collision only with
+  purpose `guide` or invisible; `Cube`, `Sphere`, `Capsule`, `Cylinder` and `Cone` as that shape.
+- A plugin's format fills `Imported_Mesh.collision` itself (`unreal`, from the `BodySetup`).
+- A collider with no named mesh is for that of its node, the only one below it, or the nearest
+  ancestor's; one that finds none is a warning.
+
+The prefab of a model gives an entity an `Auto` `Collider` only when its mesh has them. What a
+collider of a mesh without them is made of (its triangles, or convex pieces of them for a body that
+moves) is derived at run time and cached, or by the cook:
+[host](../../mirai-core/references/host.md#loaded-assets) and [the physics
 libraries](../../mirai-physics/references/engine.md#collider-fields).
 
 ## Textures (`cook/textures`)

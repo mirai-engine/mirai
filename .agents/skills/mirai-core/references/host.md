@@ -330,7 +330,8 @@ of pieces) is not a fixed cap, and a frame that does not load does not allocate.
   collides with. `assets_collision_pieces_file`: the convex pieces of a mesh file that stores none
   (`geom.mesh_decompose` of its level 0), made once and kept by the content of the file in
   `App.collision_cache` (`project.COLLISION_CACHE`, a content cache); physics asks for them in a
-  job.
+  job. A cooked mesh carries them (`piece_points`) and a game without the cache, as a shipped one,
+  decomposes nothing.
 - `assets_file(a,id,kind,&Asset)`: transactional load of any type by Fourcc, validating identity and
   hash; the caller closes with `asset_close`. It serves plugin formats without adding them to the
   GPU caches. It reads with `registry_read`: what the registry has in memory before the disk
