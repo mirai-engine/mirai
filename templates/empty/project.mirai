@@ -1,5 +1,6 @@
 {
   "name": "Project",
+  "start_scene": "main.scene",
   "plugins": ["sample", "playtest"],
   "build": {"compression": "open"}
 }
