@@ -81,6 +81,14 @@ ai_connections_of_codex_and_claude_belong_to_the_machine_and_stay_lazy :: proc(t
     ai_agent_announced(&s,AI_CLAUDE,&client,announced)
     c:=&m.connections[AI_CLAUDE]
     testing.expect(t,c.known_capabilities=={.Resume,.Image,.Rename} && base.text_get(c.version[:])=="0.80.0")
+    // The models a session of Claude offered are listed by the next editor before its first session.
+    offered,_:=json.parse_string(`{"configOptions":[{"category":"model","options":[{"value":"default","name":"Default (recommended)"},{"value":"sonnet","name":"Sonnet 5.5"}]}]}`,allocator=context.temp_allocator)
+    ai_model_choices(&s,AI_CLAUDE,offered)
+    listed:=new(Ai);defer free(listed);ai_connections_reset(listed)
+    base.text_set(listed.agents_home[:],home)
+    ai_agents_read(listed)
+    testing.expect_value(t,listed.model_counts[AI_CLAUDE],2)
+    testing.expect_value(t,ai_model_name(listed,AI_CLAUDE,"sonnet"),"Sonnet 5.5")
     versions:=AI_AGENT_VERSIONS
     testing.expect_value(t,base.text_get(c.latest[:]),versions[.Claude])
     testing.expect(t,strings.has_prefix(ai_update_command(c,versions[.Claude]),"npm install -g @agentclientprotocol/claude-agent-acp@"))
