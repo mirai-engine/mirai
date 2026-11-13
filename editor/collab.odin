@@ -1,6 +1,7 @@
 package editor
 
 import "core:crypto"
+import "core:fmt"
 import "core:log"
 import "core:mem"
 import "core:slice"
@@ -693,8 +694,7 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
         collab_begin(&w,.Welcome)
         serial.write_scalar(&w,u8(from))
         collab_queue(peer,serial.writer_bytes(&w))
-        collab_snapshot_send(s,st,peer)
-        collab_files_join(s,st,peer)
+        if collab_snapshot_send(s,st,peer) {collab_files_join(s,st,peer)}
     case .Welcome:
         if st.role!=.Guest {return}
         id:=serial.read_u8(&r)
@@ -833,20 +833,33 @@ collab_roster_send :: proc(st:^Collab_State) {
 // ---------------------------------------------------------------- the scene
 
 @(private)
-collab_snapshot_send :: proc(s:^Session,st:^Collab_State,peer:^Collab_Peer) {
+collab_snapshot_send :: proc(s:^Session,st:^Collab_State,peer:^Collab_Peer) -> bool {
     a:=s.app.assets
     w:=edited_world(s)
     core.world_settle(w)
     d:=s.document
     cap:asset.Scene
-    if _,error:=scene.capture(w,&cap,&a.types,{previous=d.previous,id=d.id});error!=.None {return}
+    if _,error:=scene.capture(w,&cap,&a.types,{previous=d.previous,id=d.id});error!=.None {collab_snapshot_refused(s,st,peer,error);return false}
     defer asset.scene_destroy(&cap)
     cap.doc.flags-={.Prefab}
     if d.prefab {cap.doc.flags+={.Prefab}}
+    // An asset is built from the start of its own buffer: the message is its kind and those bytes.
+    bytes,error:=asset.scene_bytes(&cap,context.temp_allocator)
+    if error!=.None {collab_snapshot_refused(s,st,peer,error);return false}
     out:serial.Writer
-    collab_begin(&out,.Snapshot,0)
-    if asset.scene_write(&cap,&out)!=.None {return}
+    collab_begin(&out,.Snapshot,len(bytes)+1)
+    serial.write_bytes(&out,bytes)
     collab_queue(peer,serial.writer_bytes(&out))
+    return true
+}
+
+// A guest the scene could not be sent to does not wait for it: it is let go, and the host says why.
+@(private)
+collab_snapshot_refused :: proc(s:^Session,st:^Collab_State,peer:^Collab_Peer,error:any) {
+    notify(s,fmt.tprintf("The scene could not be shared with %s: %v",string(peer.name[:peer.name_length]),error))
+    if peer.connection!=0 {wire.host_disconnect(&st.host,peer.connection,.Closed)}
+    collab_peer_free(peer)
+    collab_roster_send(st)
 }
 
 // Replaces the World by the scene of the host, all of it or nothing.
