@@ -2,8 +2,8 @@
 
 `shapes` (`Runtime` and `Editor`; depends on `physics`) makes editable shapes for any game: level
 blockout, games where players stamp squares, circles, stars and other shapes onto flat polygons
-to add or cut material, drag vertices, and make pieces static or physical, and draws the ribbons of
-roads and paths along a `volume.Spline`
+to add or cut material, drag vertices, and make pieces static or physical, bends meshes along a
+curve segment ([bends](#bends)), and draws the ribbons of roads and paths along a `volume.Spline`
 ([Spline](../../mirai-gameplay/references/libraries.md#volume); what an author writes:
 [splines](../../../../docs/game/world/splines.md)).
 
@@ -89,6 +89,30 @@ roads and paths along a `volume.Spline`
   box of `core.Ground_Queries.changed` overlaps its reach (`volume.spline_under`); a tick without
   changes probes nothing. With no spline it does not look at places or the ground. An entity with
   both a `Shape` and a drawn `Spline` draws the `Shape` and reports `shapes.both`.
+
+## Bends
+
+- A `Bend` on an entity with a `Mesh_Renderer` lays what it shows (its mesh asset or its
+  primitive) along a cubic Hermite segment from `start` to `end` with their tangents, in the space
+  of the entity. The share of the mesh along `forward` (its bounds, or `range`) is the share
+  of the curve; the mesh goes out from the curve along the right of the curve (its direction ×
+  `up`) as it lies along `forward × mesh_up`, and along the up of the curve (right × direction)
+  as it lies along `mesh_up`. `roll`, `scale` and `offset` go from their start to their end values
+  evenly, or easing with `smooth`; past the ends of a `range` wider than the mesh the curve goes
+  straight along its tangent.
+- The source stays the `Bend` and the `Mesh_Renderer` of the entity; the bent mesh is generated
+  on a `Shape_Part` child, as a `Shape` is, with the materials of the `Mesh_Renderer` and its
+  `Material_Values`, and the entity is `Drawn_Elsewhere` while it has one. Normals follow the
+  derivative of the bend, tangents are made again over the bent surface, the second UV set is
+  kept, and a triangle the bend mirrors (a negative scale) is wound the other way. The bounds are
+  those of the bent mesh.
+- It collides only with a `Collider` of kind `External` on the entity, which gives the surface
+  and filtering of the child's: a `Mesh` of the bent collision of the asset (the shapes it
+  stores, or its triangles), a `Hull` of it with a `Rigid_Body`. A `Collider` of a kind that reads
+  the mesh would collide with it unbent and is reported as `shapes.bend_collider`.
+- It is built again only when its `Bend`, the `Mesh_Renderer`, `Rigid_Body`, `Collider` or
+  `Material_Values` of its entity change; a changed mesh asset on disk is not followed until one
+  of them does. `bend_place` gives where a point of the mesh goes.
 
 ## Editing
 
@@ -202,7 +226,12 @@ refused; bevel 0 ignores the profile; the key follows the bevel), convex pieces 
 step (one child without `Id`, regeneration and release, a copied world, removal; a Solid of brush
 children with a hole that follows a moved, reordered and removed brush; a piece per added brush;
 polygons that neither build nor allocate while nothing changes; a spline with a material that lies
-on the ground as a ribbon without collider and follows the ground and its entity).
+on the ground as a ribbon without collider and follows the ground and its entity), and bends
+(`bend_test.odin`: ends, roll, scale, offset, range and axes in place; normals that agree with the
+bent faces, also stretched, rolled and mirrored; invalid bends refused and degenerate ones finite;
+the step: a child that draws and collides the bent mesh with the materials of the entity, built
+again only on a change, a Collider that reads the mesh reported, and the entity drawn again
+without its `Bend`).
 
 `mirai test plugins/shapes/editor`: a stroke is one step that undo and redo take back and forth,
 a cut that splits makes a second shape entity and undo restores one, Escape puts back every shape

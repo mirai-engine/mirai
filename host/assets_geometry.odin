@@ -30,9 +30,11 @@ Assets_Slots :: struct {
 // attributes, also the normal, UV and color of every vertex and the material
 // slot of every triangle, for a buffer that holds nothing or holds them
 // already. slots, when given, receives the slots of the mesh asset (none for
-// a primitive), without loading the mesh. a may be nil for a primitive.
+// a primitive), without loading the mesh. uv1s, when given, receives the
+// second UV of every vertex appended when the mesh asset has a set of its
+// own, and nothing otherwise. a may be nil for a primitive.
 // False, with the buffer as it was, when there is no geometry to give.
-assets_geometry :: proc(a:^Assets,mesh:base.Asset_Id,shape:Shape,buffer:^geom.Mesh_Buffer,attributes:=false,slots:^Assets_Slots=nil) -> bool {
+assets_geometry :: proc(a:^Assets,mesh:base.Asset_Id,shape:Shape,buffer:^geom.Mesh_Buffer,attributes:=false,slots:^Assets_Slots=nil,uv1s:^[dynamic]geom.Vec2=nil) -> bool {
     if buffer==nil {return false}
     if slots!=nil {slots^={}}
     if mesh=={} {
@@ -79,19 +81,23 @@ assets_geometry :: proc(a:^Assets,mesh:base.Asset_Id,shape:Shape,buffer:^geom.Me
     defer asset.asset_close(&file)
     view,error:=asset.mesh_view(&file,&a.types)
     if error!=.None || !asset.mesh_check_indices(view) {return false}
-    return geometry_of_view(view,buffer,attributes,slots)
+    return geometry_of_view(view,buffer,attributes,slots,uv1s)
 }
 
 // The finest level of a mesh file, as assets_geometry gives it.
 @(private="file")
-geometry_of_view :: proc(view:asset.Mesh_View,buffer:^geom.Mesh_Buffer,attributes:=false,slots:^Assets_Slots=nil) -> bool {
+geometry_of_view :: proc(view:asset.Mesh_View,buffer:^geom.Mesh_Buffer,attributes:=false,slots:^Assets_Slots=nil,uv1s:^[dynamic]geom.Vec2=nil) -> bool {
     vertices:=make([dynamic]asset.Vertex,context.temp_allocator)
     indices:=make([dynamic]u32,context.temp_allocator)
     if !asset.mesh_level_decode(view.geometry,0,&vertices,&indices) || len(indices)==0 {return false}
     if !assets_geometry_reserve(buffer,len(vertices),len(indices),attributes) {return false}
+    if uv1s!=nil && .Has_Uv1 in view.info.flags && reserve(uv1s,len(uv1s)+len(vertices))!=nil {return false}
     first:=u32(len(buffer.positions))
     for vertex in vertices {append(&buffer.positions,vertex.position)}
     for index in indices {append(&buffer.indices,first+index)}
+    if uv1s!=nil && .Has_Uv1 in view.info.flags {
+        for vertex in vertices {append(uv1s,vertex.uv1)}
+    }
     if attributes {
         for vertex in vertices {
             append(&buffer.normals,mm.normal_unpack(vertex.normal))

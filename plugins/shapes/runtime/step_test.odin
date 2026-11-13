@@ -27,6 +27,8 @@ Step_World :: struct {
     transforms:core.Table(core.Transform),
     ids:core.Table(core.Id),
     splines:core.Table(volume.Spline),
+    bends:core.Table(Bend),
+    elsewhere:core.Table(render.Drawn_Elsewhere),
     hierarchy:core.Hierarchy,
     ground:core.Ground_Queries,
 }
@@ -94,7 +96,7 @@ world_step :: proc(w:^Step_Test) {
     core.events_read(&ground.changed,&w.ground_seen)
     shapes_update(&w.cache,w.app.assets,&w.app.jobs,w.app.allocator,core.commands(&w.rows,test_world_info(&w.rows)),core.read(&w.shapes),core.read(&w.brushes),core.read(&w.parts),core.read(&w.rigids),
         &w.colliders,&w.meshes,&w.tints,core.read(&w.transforms),core.read(&w.parents),core.ref(&w.hierarchy),&w.problems,
-        core.read(&w.splines),core.ref(&ground),test_world_ref(&w.rows))
+        core.read(&w.splines),core.ref(&ground),test_world_ref(&w.rows),core.read(&w.bends),core.read(&w.elsewhere))
     world_settle(w)
 }
 
@@ -505,4 +507,62 @@ a_ribbon_lies_again_only_where_the_ground_changed_under_it :: proc(t:^testing.T)
     }
     dug:=host.assets_mesh(&a.assets,mesh_of(&w,child))
     testing.expect(t,mesh_of(&w,child)!=first && dug!=nil && abs(dug.bounds_min.y-(-2+0.05))<1e-3,"the road lies on the bottom of the pit")
+}
+
+@(test)
+a_bend_draws_and_collides_the_mesh_of_its_entity_bent_through_one_child :: proc(t:^testing.T) {
+    defer free_all(context.temp_allocator)
+    a:App
+    if !testing.expect(t,app_init(&a)) {return}
+    defer app_destroy(&a)
+    w:Step_Test
+    if !world_init(t,&w,&a.app) {return}
+    defer world_destroy(&w)
+    // A cube of one metre laid along a quarter of a circle of radius 2 in XZ.
+    bend:=BEND_DEFAULT
+    bend.end,bend.start_tangent,bend.end_tangent={2,0,-2},{0,0,-3.3137},{3.3137,0,0}
+    e:=core.create(&w.entities)
+    core.add(&w.meshes,e,render.Mesh_Renderer{shape=.Cube,materials={0=base.Asset_Id{1,2}}})
+    core.add(&w.bends,e,bend)
+    surface:=physics.COLLIDER_DEFAULT
+    surface.kind,surface.friction=.External,0.1
+    core.add(&w.colliders,e,surface)
+    world_step(&w)
+    testing.expect_value(t,w.problems.count,0)
+    child,count:=parts_of(&w,e)
+    if !testing.expect_value(t,count,1) {return}
+    testing.expect(t,!core.has(&w.ids,child) && core.has(&w.elsewhere,e),"an unsaved child draws it, and the entity no more")
+    shown,_:=core.get(&w.meshes,child)
+    testing.expect(t,shown.materials[0]==base.Asset_Id{1,2},"with the materials of the entity")
+    generated:=host.assets_mesh(&a.assets,shown.mesh)
+    if !testing.expect(t,generated!=nil && generated.generated) {return}
+    // The bounds of the bent cube, not of the straight one: its back across start, its front across end.
+    testing.expectf(t,abs(generated.bounds_max.x-2)<1e-3 && abs(generated.bounds_min.z+2.5)<1e-3 && abs(generated.bounds_max.z)<1e-3,"bounds %v %v",generated.bounds_min,generated.bounds_max)
+    collider,collides:=core.get(&w.colliders,child)
+    testing.expect(t,collides && collider.kind==.Mesh && collider.friction==0.1,"it collides with the bent mesh, with the surface of the entity")
+    lowest:=f32(0)
+    for p in generated.collision.positions {lowest=min(lowest,p.z)}
+    testing.expectf(t,lowest<-2.4,"what collides is bent: %v",lowest)
+
+    // Nothing changed: the same mesh. A new curve: a new mesh on the same child.
+    first:=shown.mesh
+    world_step(&w)
+    testing.expect(t,mesh_of(&w,child)==first)
+    core.edit(&w.bends,e).end_roll=1
+    world_step(&w)
+    testing.expect(t,mesh_of(&w,child)!=first && !host.assets_mesh_generated(&a.assets,first))
+
+    // A Collider that reads the mesh unbent says so; without one the child does not collide.
+    core.edit(&w.colliders,e).kind=.Mesh
+    world_step(&w)
+    testing.expect(t,w.problems.count==1 && !core.has(&w.colliders,child))
+    core.remove(&w.colliders,e)
+    world_step(&w)
+    testing.expect(t,!core.has(&w.colliders,child))
+
+    // Without the Bend the entity draws its own mesh again.
+    core.remove(&w.bends,e)
+    world_step(&w)
+    _,count=parts_of(&w,e)
+    testing.expect(t,count==0 && !core.has(&w.elsewhere,e))
 }
