@@ -27,6 +27,7 @@ Gpu_Light_Node :: struct {
 	spread:        f32,  // root of the mean square of how far their light lies from the center, their sizes included
 	child:         u32,  // a leaf: its light; a group: its second child
 	flags:         u32,  // GPU_LIGHT_NODE_*, and the number of its lights from GPU_LIGHT_NODE_COUNT_SHIFT
+	indirect:      f32,  // what of their light the probes gather, the mean of their shares weighed by how bright each is
 }
 GPU_LIGHT_NODE_LEAF :: abi.GPU_LIGHT_NODE_LEAF
 GPU_LIGHT_NODE_SPOT :: abi.GPU_LIGHT_NODE_SPOT // it is a spot or holds one: it opens before the others, and stands for its spots by the cone of their directions
@@ -219,6 +220,7 @@ light_tree_leaf :: proc(l: Gpu_Light, light: u32) -> Gpu_Light_Node {
 		spread = spread,
 		child = light,
 		flags = GPU_LIGHT_NODE_LEAF | (GPU_LIGHT_NODE_SPOT if light_directed(l) else 0) | 1 << GPU_LIGHT_NODE_COUNT_SHIFT,
+		indirect = light_shares_of(l).x,
 	}
 }
 
@@ -238,6 +240,7 @@ light_tree_group :: proc(a, b: Gpu_Light_Node, second: u32) -> Gpu_Light_Node {
 		spread = math.sqrt(share * (da * da + a.spread * a.spread) + (1 - share) * (db * db + b.spread * b.spread)),
 		child = second,
 		flags = (a.flags | b.flags) & GPU_LIGHT_NODE_SPOT | (a.flags >> GPU_LIGHT_NODE_COUNT_SHIFT + b.flags >> GPU_LIGHT_NODE_COUNT_SHIFT) << GPU_LIGHT_NODE_COUNT_SHIFT,
+		indirect = share * a.indirect + (1 - share) * b.indirect,
 	}
 }
 

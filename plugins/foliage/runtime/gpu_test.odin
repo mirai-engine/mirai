@@ -88,7 +88,7 @@ stalk_frames :: proc(t: ^testing.T, f: ^Gpu_Fixture) -> (pixels: []u8, ok: bool)
 		}
 		if len(f.resident.winds) > 0 {render.frame_pass(&f.renderer, .Geometry, foliage_sway_record, &f.resident)}
 		floor := gpu.Instance_Desc{object_id = 1, mesh = f.cube, transform = mm.transform_matrix({{0, -0.5, 0}, mm.QUAT_IDENTITY, {40, 1, 40}}), tint = {0.05, 0.05, 0.05}}
-		gpu.scene_set_environment(&f.renderer, {direction = {0.3, -1, 0.2}, color = {1, 1, 1}, illuminance = 3}, {sky = {0.4, 0.5, 0.6}})
+		gpu.scene_set_environment(&f.renderer, {direction = {0.3, -1, 0.2}, color = {1, 1, 1}, illuminance = 3, indirect = 1, scattering = 1}, {sky = {0.4, 0.5, 0.6}})
 		testing.expect(t, gpu.scene_update(&f.renderer, 0, {floor}, true), f.renderer.error)
 		testing.expect(t, gpu.renderer_frame(&f.renderer, {camera = camera}), f.renderer.error)
 	}

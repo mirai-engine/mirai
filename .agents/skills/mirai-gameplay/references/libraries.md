@@ -304,7 +304,9 @@ Components that describe the scene and `render_sync`, which carries it to the re
 - **Lights**: `Sun`, `Point_Light`, `Spot_Light` and `Rect_Light`, with their initial values in
   `SUN_DEFAULT`, `POINT_LIGHT_DEFAULT`, `SPOT_LIGHT_DEFAULT` and `RECT_LIGHT_DEFAULT`. All four
   shine toward -Z of their entity, as a camera looks; their units are those of
-  `KHR_lights_punctual` ([units](../../mirai-rendering/references/display.md#units)).
+  `KHR_lights_punctual` ([units](../../mirai-rendering/references/display.md#units)). Each one's
+  `indirect` multiplies the part of its light that bounces and `scattering` the part a fog
+  scatters, 1 by default; what it lights directly does not change.
   - `Sun`: `color`, `illuminance` (lux) and `disc` (seen in the sky). It is
     `@(component,single)` ([one at a time](../../mirai-core/references/generator.md#attributes)):
     turning one on turns off the one that was on, and the renderer uses the one that is on if it is
@@ -321,6 +323,10 @@ Components that describe the scene and `render_sync`, which carries it to the re
     square (x by y according to its scale). Its size opens its shadows and widens its glow; a
     larger one gives more light. Inside its lamp it does not shade it. See [local
     lights](../../mirai-rendering/references/lights.md#local-lights).
+- **`Bounce_Light`** (`@(component,single)`): `scale` multiplies all the indirect light of the
+  world, that of every light, the sky and emission; without one it is 1. It is of the world and
+  not of a `View_Volume`: the light does not change as the camera moves
+  ([GI](../../mirai-rendering/references/gi.md#lighting-techniques-and-optimization)).
 - **`Light_Emission`**: on the entity of a `Rect_Light` with a mesh, its light takes across its
   width the color of the emission of the material with which the mesh is drawn in `slot` (also the
   one a plugin sets, like the screen of `monitors`), with its texture as on the -Z face of a Cube;

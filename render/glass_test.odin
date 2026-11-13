@@ -135,7 +135,7 @@ glass_material :: proc(color: Vec3, opacity: f32, roughness: f32 = 0.3) -> Mater
 }
 
 @(private = "file")
-SUN :: Sun_Desc{direction = {1, 1, 0}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true}
+SUN :: Sun_Desc{direction = {1, 1, 0}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true, indirect = 1, scattering = 1}
 
 @(test)
 glass_filters_the_scene_where_a_coat_covers_it :: proc(t: ^testing.T) {
@@ -278,7 +278,7 @@ glass_solid_filters_once_absorbs_and_shades_colored_shadows :: proc(t: ^testing.
 	// The light under the block: untouched without colored shadows, and with
 	// them filtered once by the solid, which reflects at each of its two faces.
 	side := Camera{position = {0, 3, 6}, forward = {0, -3, -6}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-	sun := Sun_Desc{direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true}
+	sun := Sun_Desc{direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true, indirect = 1, scattering = 1}
 	under := glass_pixel(r, side, {0, 0, 0.5})
 	for provider in ([]Trace_Mode{.Software, .Hardware}) {
 		if provider == .Hardware && !r.hardware_rt_verified || provider == .Software && !SOFTWARE_TRACER {continue}
@@ -511,7 +511,7 @@ glass_and_gloss_show_in_sharp_reflections :: proc(t: ^testing.T) {
 	pane := Instance_Desc{object_id = 2, mesh = sheet, transform = placed({0, 3, 0}, {30, 1, 30}), material = 2, tint = {1, 1, 1}}
 	lamp := Instance_Desc{object_id = 3, mesh = sheet, transform = placed({0, 4, 0}, {30, 1, 30}), tint = {0, 0, 0}, emission = {2, 2, 2}}
 	ceiling := Instance_Desc{object_id = 3, mesh = sheet, transform = placed({0, 4, 0}, {30, 1, 30}), material = 3, tint = {1, 1, 1}}
-	light := Light_Desc{position = {4, 2, -8}, color = {1, 1, 1}, intensity = 40 * math.PI, range = 12}
+	light := Light_Desc{position = {4, 2, -8}, color = {1, 1, 1}, intensity = 40 * math.PI, range = 12, indirect = 1, scattering = 1}
 	camera := Camera{position = {0, 2, 5}, forward = {0, -2, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	for provider in ([]Trace_Mode{.Software, .Hardware}) {
 		if provider == .Hardware && !r.hardware_rt_verified || provider == .Software && !SOFTWARE_TRACER {continue}
@@ -633,7 +633,7 @@ glass_frames_stay_allocation_free :: proc(t: ^testing.T) {
 		{object_id = 3, mesh = sheet, transform = placed({0, 2, 0}, {2, 1, 2}), material = 2, tint = {1, 1, 1}},
 		{object_id = 4, mesh = sheet, transform = placed({0, 0.5, 0}, {2, 1, 2}), material = 2, tint = {1, 1, 1}},
 	}
-	scene_given(r, instances, []Light_Desc{{position = {1, 3, 1}, color = {1, 1, 1}, intensity = 8 * math.PI, range = 10}}, SUN, {})
+	scene_given(r, instances, []Light_Desc{{position = {1, 3, 1}, color = {1, 1, 1}, intensity = 8 * math.PI, range = 10, indirect = 1, scattering = 1}}, SUN, {})
 	camera := Camera{position = {0, 5, 0.5}, forward = {0, -5, -0.5}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	for _ in 0 ..< 4 {testing.expect(t, fixture_frame(&f, {camera = camera}), r.error)}
 	targets := [3]rhi.Texture{r.targets.glass_scene, r.targets.glass[1].depth, r.targets.glass_reflections}

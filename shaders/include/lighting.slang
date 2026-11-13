@@ -483,8 +483,9 @@ float lights_estimate(float3 position, float3 normal, uint root = 0u) {
 // nothing in their way: the tree opened as far as the point needs. `total`
 // is roughly how much light reaches it, what a group may err against;
 // without it the tree says. `root`: the tree of the lights with shadows (0)
-// or that of those without (shadowless_lighting).
-float3 local_lighting(Shading s, float total, uint root = 0u) {
+// or that of those without (shadowless_lighting). `bounced`: each by the
+// share of its light the probes gather (Light_Node.indirect).
+float3 local_lighting(Shading s, float total, uint root = 0u, bool bounced = false) {
     float3 result = float3(0.0);
     if (frame.light_nodes == 0u) return result;
     if (!(total > 0.0)) total = lights_estimate(s.position, s.normal, root);
@@ -503,8 +504,9 @@ float3 local_lighting(Shading s, float total, uint root = 0u) {
             float distance;
             float opened = 1.0;
             float3 irradiance = float3(0.0);
+            float share = bounced ? node.indirect : 1.0;
             if ((node.flags & LIGHT_NODE_LEAF) != 0u) {
-                result += light_radiance(lights[node.child], s, direction, distance) * weight;
+                result += light_radiance(lights[node.child], s, direction, distance) * (weight * share);
                 opened = 0.0;
             } else if ((node.flags & LIGHT_NODE_SPOT) == 0u) {
                 opened = smoothstep(GROUP_NEAR, GROUP_INSIDE, node.center_radius.w * rsqrt(max(distance_squared, 1e-12)));
@@ -519,7 +521,7 @@ float3 local_lighting(Shading s, float total, uint root = 0u) {
                     irradiance *= 1.0 + node.spread * node.spread / max(distance * distance, 1e-8);
                 }
             }
-            if (opened < 1.0 && luminance(irradiance) > 0.0) result += irradiance * shading_response(s, direction, distance, node.spread) * (weight * (1.0 - opened));
+            if (opened < 1.0 && luminance(irradiance) > 0.0) result += irradiance * shading_response(s, direction, distance, node.spread) * (weight * (1.0 - opened) * share);
             if (opened > 0.0 && depth < LIGHT_TREE_DEPTH && light_node_opens(node, at)) {
                 weight *= opened;
                 pending[depth] = node.child;
@@ -540,11 +542,12 @@ float3 local_lighting(Shading s, float total, uint root = 0u) {
 // The light the local lights that cast no shadows send from the point
 // towards its viewer: whatever stands in their way, with no rays and out of
 // the budgets of shadows. `total`: roughly how much light of the others
-// reaches it; what a group may err against adds theirs.
-float3 shadowless_lighting(Shading s, float total) {
+// reaches it; what a group may err against adds theirs. `bounced`: as for
+// local_lighting.
+float3 shadowless_lighting(Shading s, float total, bool bounced = false) {
     uint root = frame.shadowless_lights.x;
     if (root == 0u) return float3(0.0);
-    return local_lighting(s, max(total, 0.0) + lights_estimate(s.position, s.normal, root), root);
+    return local_lighting(s, max(total, 0.0) + lights_estimate(s.position, s.normal, root), root, bounced);
 }
 
 // Whether a node is one of the lights that cast no shadows.
@@ -788,7 +791,8 @@ struct Extension_Light {
     // A light of one of the kinds of the scene, where the surface sees it, and
     // the share of it the extension lets through: its lobes are those of
     // light_lobes, as on its own side. Without it (the sun behind a portal),
-    // irradiance and direction.
+    // irradiance and direction. Shaped or not, the light_shares of shape are
+    // those of the light.
     bool shaped;
     Light shape;
     float share;
@@ -820,11 +824,14 @@ float3 extension_radiance(Shading s, Extension_Light light) {
 }
 #endif
 
-// The lights direct_lighting adds up.
+// The lights direct_lighting adds up, and LIGHTS_BOUNCED: each by the share
+// of its light the probes gather (frame.sun_shares, Light_Node.indirect, and
+// light_shares of the shape of a light of extensions).
 #define LIGHTS_SUN 1u
 #define LIGHTS_LOCAL 2u
 #define LIGHTS_EXTENSION 4u
 #define LIGHTS_ALL 7u
+#define LIGHTS_BOUNCED 8u
 
 // The direct light a point reflects towards its viewer: the sun, the local
 // lights and those of extensions, each through its shadow ray. The local
@@ -849,6 +856,7 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which = LIGHTS_A
 #endif
     float3 sun = float3(0.0);
     float3 local = float3(0.0);
+    bool bounced = (which & LIGHTS_BOUNCED) != 0u;
     // Item 0 is the sun; the local lights follow, then those of extensions.
     for (uint item = (which & LIGHTS_SUN) != 0u ? 0u : 1u; item < items; item++) {
         float3 radiance = float3(0.0);
@@ -860,6 +868,7 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which = LIGHTS_A
             float cosine = dot(s.normal, frame.sun_direction.xyz);
             if (cosine <= 0.0) continue;
             radiance = sun_light(s.position) * cosine * shading_response(s, frame.sun_direction.xyz);
+            if (bounced) radiance *= frame.sun_shares.x;
             if (luminance(radiance) <= light_cutoff()) continue;
             direction = frame.sun_direction.xyz;
             reach = sun_reach(origin, direction);
@@ -874,6 +883,7 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which = LIGHTS_A
             Light_Node node = light_nodes[cut[item - 1u]];
             float distance;
             radiance = node_radiance(node, s, direction, distance);
+            if (bounced) radiance *= node.indirect;
             if (luminance(radiance) <= light_cutoff()) continue;
             if ((node.flags & LIGHT_NODE_LEAF) == 0u) {
                 // A group: the ray goes to the light in the middle of its share.
@@ -908,6 +918,7 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which = LIGHTS_A
             if (!mirai_extension_light(item - 1u - local_items, origin, s.normal, extension_point, light)) continue;
             // A point asked for is a point of the light: its own response, as the reference takes it.
             radiance = extension_point.x >= 0.0 ? light.irradiance * shading_response(s, light.direction) : extension_radiance(s, light);
+            if (bounced) radiance *= light_shares(light.shape).x;
             if (luminance(radiance) <= light_cutoff()) continue;
             direction = light.direction;
             reach = light.reach;
@@ -941,7 +952,7 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which = LIGHTS_A
         if (item == 0u) sun = radiance * through;
         else local += radiance * through;
     }
-    if ((which & LIGHTS_LOCAL) != 0u) local += shadowless_lighting(s, 0.0);
+    if ((which & LIGHTS_LOCAL) != 0u) local += shadowless_lighting(s, 0.0, bounced);
 #ifdef MIRAI_HOOK_LIGHTS
     return sun + local + extension;
 #else
@@ -960,16 +971,20 @@ float3 hit_normal(Surface s, float3 ray_dir) {
 
 // Radiance leaving a hit point towards the ray origin: emission plus diffuse
 // reflection of the sun, the local lights of its cut and the probe volume
-// (the remaining bounces).
-float3 shade_hit(Surface s, float3 ray_dir, float hit_distance, uint light_budget) {
+// (the remaining bounces). `gathered`: as a probe gathers it, each light by
+// the share of it the probes gather and the volume as it holds it; else as a
+// view sees it, the volume by frame.indirect.
+float3 shade_hit(Surface s, float3 ray_dir, float hit_distance, uint light_budget, bool gathered = false) {
     float3 n = hit_normal(s, ray_dir);
+    uint which = gathered ? LIGHTS_ALL | LIGHTS_BOUNCED : LIGHTS_ALL;
+    float around = gathered ? 1.0 : frame.indirect;
     Shading point = shading_diffuse(s.position, n, s.albedo);
-    float3 radiance = s.emission + direct_lighting(point, hit_bias(hit_distance), light_budget) + s.albedo * sample_probes(s.position, n, -ray_dir, hit_distance);
+    float3 radiance = s.emission + direct_lighting(point, hit_bias(hit_distance), light_budget, which) + s.albedo * (sample_probes(s.position, n, -ray_dir, hit_distance) * around);
     // A thin surface that lets light through: the light of its other side.
     float3 through = surface_transmit(s);
     if (max(through.r, max(through.g, through.b)) > 0.0) {
         Shading back = shading_diffuse(s.position, -n, through);
-        radiance += direct_lighting(back, hit_bias(hit_distance), light_budget) + through * sample_probes(s.position, -n, -ray_dir, hit_distance);
+        radiance += direct_lighting(back, hit_bias(hit_distance), light_budget, which) + through * (sample_probes(s.position, -n, -ray_dir, hit_distance) * around);
     }
     return radiance;
 }
@@ -978,9 +993,9 @@ float3 shade_hit(Surface s, float3 ray_dir, float hit_distance, uint light_budge
 // of the surfaces around too: no shadow rays, and no sharp shadows either.
 float3 shade_hit_cached(Surface s, float3 ray_dir, float hit_distance) {
     float3 n = hit_normal(s, ray_dir);
-    float3 radiance = s.emission + s.albedo * sample_probes(s.position, n, -ray_dir, hit_distance);
+    float3 radiance = s.emission + s.albedo * (sample_probes(s.position, n, -ray_dir, hit_distance) * frame.indirect);
     float3 through = surface_transmit(s);
-    if (max(through.r, max(through.g, through.b)) > 0.0) radiance += through * sample_probes(s.position, -n, -ray_dir, hit_distance);
+    if (max(through.r, max(through.g, through.b)) > 0.0) radiance += through * (sample_probes(s.position, -n, -ray_dir, hit_distance) * frame.indirect);
     return radiance;
 }
 
@@ -1005,7 +1020,7 @@ float3 shade_hit_glossy(Surface s, float3 ray_dir, float hit_distance, uint ligh
     if (shading_transmits(point)) {
         Shading back = shading_back(point);
         if (lights) radiance += direct_lighting(back, hit_bias(hit_distance), light_budget);
-        radiance += point.transmit * sample_probes(s.position, -n, -ray_dir, hit_distance);
+        radiance += point.transmit * (sample_probes(s.position, -n, -ray_dir, hit_distance) * frame.indirect);
     }
     // What a surface that reflects little would add is not worth the lookup;
     // it comes in gradually, so no edge shows where a floor starts to shine.
@@ -1022,8 +1037,8 @@ float3 shade_hit_glossy(Surface s, float3 ray_dir, float hit_distance, uint ligh
     }
     float4 around[PROBE_READS];
     sample_probes_around(s.position, n, -ray_dir, directions, around, hit_distance);
-    Indirect light = indirect_make(around[PROBE_DIFFUSE].rgb, probe_specular(around[PROBE_SPECULAR], directions.at[PROBE_SPECULAR], point.roughness) * shown, 1.0);
-    light.coat_radiance = probe_specular(around[PROBE_COAT], directions.at[PROBE_COAT], point.coat_roughness) * shown;
+    Indirect light = indirect_make(around[PROBE_DIFFUSE].rgb * frame.indirect, probe_specular(around[PROBE_SPECULAR], directions.at[PROBE_SPECULAR], point.roughness) * (shown * frame.indirect), 1.0);
+    light.coat_radiance = probe_specular(around[PROBE_COAT], directions.at[PROBE_COAT], point.coat_roughness) * (shown * frame.indirect);
     return radiance + indirect_compose(point, light);
 }
 

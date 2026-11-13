@@ -127,9 +127,9 @@ area_lights_give_what_their_points_give :: proc(t: ^testing.T) {
 	if !area_init(t, &f) {return}
 	defer fixture_destroy(&f)
 	cases := [?]struct {name: string, light: Light_Desc, worst, mean: f32}{
-		{"rectangle above", {position = {0.3, 1.2, 0}, color = {1, 1, 1}, intensity = 3 * math.PI / 2, range = 20, direction = {0, -1, 0}, axis = {1, 0, 0}, size = {2, 1}}, 0.06, 0.03},
-		{"tilted rectangle", {position = {0, 0.5, 0}, color = {1, 0.8, 0.6}, intensity = 3 * math.PI / 2.1, range = 20, direction = {0.8, -0.6, 0}, axis = {0, 0, 1}, size = {1.5, 1.4}}, 0.06, 0.03},
-		{"capsule", {position = {0, 0.8, 0.2}, color = {0.7, 0.9, 1}, intensity = 3 * math.PI, range = 20, axis = {1, 0, 0.3}, length = 2.5, radius = 0.05}, 0.06, 0.03},
+		{"rectangle above", {position = {0.3, 1.2, 0}, color = {1, 1, 1}, intensity = 3 * math.PI / 2, range = 20, direction = {0, -1, 0}, axis = {1, 0, 0}, size = {2, 1}, indirect = 1, scattering = 1}, 0.06, 0.03},
+		{"tilted rectangle", {position = {0, 0.5, 0}, color = {1, 0.8, 0.6}, intensity = 3 * math.PI / 2.1, range = 20, direction = {0.8, -0.6, 0}, axis = {0, 0, 1}, size = {1.5, 1.4}, indirect = 1, scattering = 1}, 0.06, 0.03},
+		{"capsule", {position = {0, 0.8, 0.2}, color = {0.7, 0.9, 1}, intensity = 3 * math.PI, range = 20, axis = {1, 0, 0.3}, length = 2.5, radius = 0.05, indirect = 1, scattering = 1}, 0.06, 0.03},
 	}
 	for c in cases {
 		area_scene(&f, []Light_Desc{c.light})
@@ -151,14 +151,14 @@ rectangles_light_one_side_and_far_away_are_points :: proc(t: ^testing.T) {
 	f: Area_Fixture
 	if !area_init(t, &f) {return}
 	defer fixture_destroy(&f)
-	area_scene(&f, []Light_Desc{{position = {0, 1.5, 0}, color = {1, 1, 1}, intensity = 5 * math.PI / 4, range = 20, direction = {0, 1, 0}, axis = {1, 0, 0}, size = {2, 2}}})
+	area_scene(&f, []Light_Desc{{position = {0, 1.5, 0}, color = {1, 1, 1}, intensity = 5 * math.PI / 4, range = 20, direction = {0, 1, 0}, axis = {1, 0, 0}, size = {2, 2}, indirect = 1, scattering = 1}})
 	brightest: f32
 	for value in area_direct(t, &f, 2, false) {brightest = max(brightest, area_luminance(value))}
 	testing.expectf(t, brightest == 0, "a rectangle facing up lights the floor under it: %v", brightest)
 
-	area_scene(&f, []Light_Desc{{position = {0, 3, 0}, color = {1, 1, 1}, intensity = 5 * math.PI / 0.0016, range = 20, direction = {0, -1, 0}, axis = {1, 0, 0}, size = {0.04, 0.04}}})
+	area_scene(&f, []Light_Desc{{position = {0, 3, 0}, color = {1, 1, 1}, intensity = 5 * math.PI / 0.0016, range = 20, direction = {0, -1, 0}, axis = {1, 0, 0}, size = {0.04, 0.04}, indirect = 1, scattering = 1}})
 	rectangle := area_direct(t, &f, 2, false)
-	area_scene(&f, []Light_Desc{{position = {0, 3, 0}, color = {1, 1, 1}, intensity = 5 * math.PI, range = 20, radius = 0.01}})
+	area_scene(&f, []Light_Desc{{position = {0, 3, 0}, color = {1, 1, 1}, intensity = 5 * math.PI, range = 20, radius = 0.01, indirect = 1, scattering = 1}})
 	sphere := area_direct(t, &f, 2, false)
 	worst, lit, _, _ := area_compare(&f, rectangle, sphere)
 	testing.expect(t, lit > 20)
@@ -192,7 +192,7 @@ rectangles_show_the_emission_of_their_material :: proc(t: ^testing.T) {
 	screen.emission = {1, 1, 1}
 	screen.textures[.Emission] = texture
 	materials_set(r, {screen})
-	light := Light_Desc{position = {0, 0.6, 0}, color = {1, 1, 1}, intensity = 3 * math.PI / 2.4, range = 20, direction = {0, -1, 0}, axis = {1, 0, 0}, size = {2.4, 1}, material = 1}
+	light := Light_Desc{position = {0, 0.6, 0}, color = {1, 1, 1}, intensity = 3 * math.PI / 2.4, range = 20, direction = {0, -1, 0}, axis = {1, 0, 0}, size = {2.4, 1}, material = 1, indirect = 1, scattering = 1}
 	area_scene(&f, []Light_Desc{light})
 	direct := area_direct(t, &f, 2, false)
 	reference := area_direct(t, &f, 48, true)

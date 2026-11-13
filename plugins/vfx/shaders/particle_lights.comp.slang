@@ -50,7 +50,7 @@ Light light_none() {
     l.color_intensity = float4(0.0);
     l.direction_cone = float4(0.0, 0.0, 0.0, LIGHT_POINT);
     l.size = float4(0.0);
-    l.axis = float4(0.0);
+    l.axis = float4(0.0, 0.0, 0.0, light_shares_bits(1.0, 1.0));
     return l;
 }
 
@@ -111,6 +111,7 @@ Light_Node node_leaf(Light l, uint light) {
     n.spread = n.center_radius.w;
     n.child = light;
     n.flags = LIGHT_NODE_LEAF | ((lit ? 1u : 0u) << LIGHT_NODE_COUNT_SHIFT);
+    n.indirect = light_shares(l).x;
     return n;
 }
 
@@ -138,6 +139,7 @@ Light_Node node_group(Light_Node a, Light_Node b, uint second) {
     n.spread = sqrt(share * (da * da + a.spread * a.spread) + (1.0 - share) * (db * db + b.spread * b.spread));
     n.child = second;
     n.flags = spot | ((node_count(a) + node_count(b)) << LIGHT_NODE_COUNT_SHIFT);
+    n.indirect = share * a.indirect + (1.0 - share) * b.indirect;
     return n;
 }
 

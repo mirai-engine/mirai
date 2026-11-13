@@ -57,7 +57,8 @@ Drawn_Elsewhere :: struct {}
 // Every light shines toward -Z of its entity, as a camera looks, and its
 // shape follows the scale of its entity, as a mesh does. Units are those of
 // KHR_lights_punctual: an intensity in candela is what it gives a point far
-// along its axis whatever its size.
+// along its axis whatever its size. Its indirect and scattering leave what it
+// lights directly as it is.
 
 // The renderer takes the first one on that is not hidden.
 @(component,single,replicated,description="Lights the whole scene from one direction, as the sun. Only one shines: turning one on turns off the one that shone, which shines again when it goes off.")
@@ -65,10 +66,12 @@ Sun :: struct {
     color:[3]f32 `mirai:"color"`,
     illuminance:f32 `mirai:"min=0,unit=lx"`,
     disc:bool, // the sun is seen in the sky
+    indirect:f32 `mirai:"min=0"`,   // multiplies the part of its light that bounces (the GI): 1 as it gives it
+    scattering:f32 `mirai:"min=0"`, // multiplies the part of its light a fog scatters
     height_fade:Sun_Height_Fade `mirai:"section=Height"`,
 }
 
-SUN_DEFAULT :: Sun{color={1,0.96,0.9},illuminance=100000,disc=true} // a clear noon
+SUN_DEFAULT :: Sun{color={1,0.96,0.9},illuminance=100000,disc=true,indirect=1,scattering=1} // a clear noon
 
 // A choice of art for a vertical world: the sun dims with the height of the
 // view, from its illuminance at start to minimum times it at end and past it.
@@ -98,9 +101,11 @@ Point_Light :: struct {
     intensity:f32 `mirai:"min=0,unit=cd"`,
     range:f32 `mirai:"min=0,unit=m"`,
     radius:f32 `mirai:"min=0,unit=m"`, // of the sphere that glows at scale 1; it softens shadows and widens highlights
+    indirect:f32 `mirai:"min=0"`,   // multiplies the part of its light that bounces (the GI): 1 as it gives it
+    scattering:f32 `mirai:"min=0"`, // multiplies the part of its light a fog scatters
 }
 
-POINT_LIGHT_DEFAULT :: Point_Light{color={1,0.92,0.8},intensity=1000,range=20,radius=0.05} // a 1000 W bulb
+POINT_LIGHT_DEFAULT :: Point_Light{color={1,0.92,0.8},intensity=1000,range=20,radius=0.05,indirect=1,scattering=1} // a 1000 W bulb
 
 // A point light that lights a cone around -Z of its entity.
 @(component,description="Lights a cone in front of it. Stretching its entity makes a tube.")
@@ -110,9 +115,11 @@ Spot_Light :: struct {
     range:f32 `mirai:"min=0,unit=m"`,
     radius:f32 `mirai:"min=0,unit=m"`, // of the sphere that glows at scale 1; it softens shadows and widens highlights
     angle:f32 `mirai:"angle,min=0.0174532,max=1.5533431"`, // from its axis to the edge, 1° to 89°; it fades out over the last fifth
+    indirect:f32 `mirai:"min=0"`,   // multiplies the part of its light that bounces (the GI): 1 as it gives it
+    scattering:f32 `mirai:"min=0"`, // multiplies the part of its light a fog scatters
 }
 
-SPOT_LIGHT_DEFAULT :: Spot_Light{color={1,0.92,0.8},intensity=5000,range=20,radius=0.05,angle=mm.PI/6}
+SPOT_LIGHT_DEFAULT :: Spot_Light{color={1,0.92,0.8},intensity=5000,range=20,radius=0.05,angle=mm.PI/6,indirect=1,scattering=1}
 
 // The unit square of its entity, x by y; it lights the side its -z faces, so
 // a larger one gives more light.
@@ -121,9 +128,11 @@ Rect_Light :: struct {
     color:[3]f32 `mirai:"color"`,
     luminance:f32 `mirai:"min=0,unit=nit"`,
     range:f32 `mirai:"min=0,unit=m"`,
+    indirect:f32 `mirai:"min=0"`,   // multiplies the part of its light that bounces (the GI): 1 as it gives it
+    scattering:f32 `mirai:"min=0"`, // multiplies the part of its light a fog scatters
 }
 
-RECT_LIGHT_DEFAULT :: Rect_Light{color={1,0.92,0.8},luminance=5000,range=20} // a bright LED panel
+RECT_LIGHT_DEFAULT :: Rect_Light{color={1,0.92,0.8},luminance=5000,range=20,indirect=1,scattering=1} // a bright LED panel
 
 // A rectangle that shows an image: the Rect_Light of its entity takes its
 // color, across it, from the emission of the material its mesh is drawn with
@@ -132,6 +141,23 @@ RECT_LIGHT_DEFAULT :: Rect_Light{color={1,0.92,0.8},luminance=5000,range=20} // 
 @(component,description="Lights with the image a rectangular light's mesh shows: the emission of the material in a slot, as a screen lights a room.")
 Light_Emission :: struct {
     slot:u8,
+}
+
+// The same for every place and camera: the light of a world does not change
+// as the camera moves.
+@(component,single,replicated,description="Multiplies all the indirect light (GI) of the world, the light that bounces from every light, the sky and what glows: 1 leaves it as the lights give it. Without one, 1. The world uses one at a time: turning one on turns off the one that was on.")
+Bounce_Light :: struct {
+    scale:f32 `mirai:"min=0"`,
+}
+
+BOUNCE_LIGHT_DEFAULT :: Bounce_Light{scale=1}
+
+// What multiplies the indirect light of the world: that of the first
+// Bounce_Light not hidden, or 1.
+@(private)
+bounce_scale :: proc(bounces:^core.Table(Bounce_Light,$A),hidden:^core.Table(Hidden,$B),parents:^core.Table(core.Parent,$C)) -> f32 {
+    if bounces==nil || core.count(bounces)==0 || is_hidden(hidden,parents,core.entity_at(bounces,0)) {return 1}
+    return core.at(bounces,0).scale
 }
 
 Camera_Projection :: enum u8 {Perspective,Orthographic}
@@ -569,7 +595,7 @@ render_sync :: proc(
     sync:^Render_Sync,app:^host.App,id:core.World_Id,frame:core.Frame_Time,view:core.View,
     worlds:^core.Table(core.World_Transform,.Read),meshes:^core.Table(Mesh_Renderer,.Read),values:^core.Table(Material_Values,.Read),lives:^core.Table(Material_Live,.Read),
     hidden:^core.Table(Hidden,.Read),elsewhere:^core.Table(Drawn_Elsewhere,.Read),parents:^core.Table(core.Parent,.Read),hierarchy:core.Ref(core.Hierarchy),
-    suns:^core.Table(Sun,.Read),points:^core.Table(Point_Light,.Read),spots:^core.Table(Spot_Light,.Read),rects:^core.Table(Rect_Light,.Read),emissions:^core.Table(Light_Emission,.Read),skies:^core.Table(Sky,.Read),view_volumes:^core.Table(View_Volume,.Read),volumes:^core.Table(volume.Volume,.Read),sections:^core.Table(scene.Scene_Reference,.Read),splines:^core.Table(volume.Spline,.Read),
+    suns:^core.Table(Sun,.Read),points:^core.Table(Point_Light,.Read),spots:^core.Table(Spot_Light,.Read),rects:^core.Table(Rect_Light,.Read),emissions:^core.Table(Light_Emission,.Read),skies:^core.Table(Sky,.Read),bounces:^core.Table(Bounce_Light,.Read),view_volumes:^core.Table(View_Volume,.Read),volumes:^core.Table(volume.Volume,.Read),sections:^core.Table(scene.Scene_Reference,.Read),splines:^core.Table(volume.Spline,.Read),
     highlights:^core.Table(Highlight,.Read),outlines:^core.Table(Outline,.Read),outline_styles:core.Ref(Outline_Styles),
     offsets:^core.Table(Draw_Offset,.Read),layers:^core.Table(Layers,.Read),bodies:core.Ref(View_Bodies),preview:core.Ref(Environment_Preview),
     locals:^core.Table(core.Transform,.Read),cameras:^core.Table(Camera,.Read),posed:^Posed_Meshes,
@@ -751,7 +777,7 @@ render_sync :: proc(
     own:gpu.Sun_Desc
     fade:Sun_Height_Fade
     if sun,direction,found:=sun_on(worlds,suns,preview.ptr!=nil?preview.ptr.sun:core.NONE,hidden,parents);found {
-        own={direction=direction,color=sun.color,illuminance=sun.illuminance,enabled=true,disc=sun.disc}
+        own={direction=direction,color=sun.color,illuminance=sun.illuminance,enabled=true,disc=sun.disc,indirect=sun.indirect,scattering=sun.scattering}
         fade=sun.height_fade
     }
     sky_entity,sky,sky_found:=sky_previewed(skies,preview)
@@ -763,6 +789,7 @@ render_sync :: proc(
     if given!=sync.sun || environment!=sync.environment {gpu.scene_set_environment(r,given,environment)}
     sync.sun=given
     sync.environment=environment
+    gpu.scene_set_indirect(r,bounce_scale(bounces,hidden,parents))
 
     looked:=view.position
     if preview.ptr!=nil && preview.section!=core.NONE {
@@ -1247,13 +1274,12 @@ light_settle :: proc(sync:^Render_Sync,a:^host.Assets,r:^gpu.Renderer,t:Sync_Tab
     switch kind {
     case .Point:
         if point,has:=core.get(t.points,e);has && placed {
-            desc=sphere_desc(world,point.color,point.intensity,point.range,point.radius)
+            desc=point_desc(world,point)
             on=true
         }
     case .Spot:
         if spot,has:=core.get(t.spots,e);has && placed {
-            desc=sphere_desc(world,spot.color,spot.intensity,spot.range,spot.radius)
-            desc.direction,desc.cone=mm.quat_forward(world.rotation),spot.angle
+            desc=spot_desc(world,spot)
             on=true
         }
     case .Rect:
@@ -1310,11 +1336,22 @@ lights_settle :: proc(sync:^Render_Sync,a:^host.Assets,r:^gpu.Renderer,t:Sync_Ta
     for at in sync.tinted {light_settle(sync,a,r,t,extras,sync.drawn.entities[at],.Rect)}
 }
 
-// A point or a spot in the world: a sphere the scale of its entity draws
-// out, as thick as the axes it stretches less, as long as the one it
-// stretches most. A spot adds where it points and its cone.
-sphere_desc :: proc(world:core.World_Transform,color:[3]f32,intensity,range,radius:f32) -> (desc:gpu.Light_Desc) {
-    desc={position=world.position,color=color,intensity=intensity,range=range}
+// A point light in the world: a sphere the scale of its entity draws out, as
+// thick as the axes it stretches less, as long as the one it stretches most.
+point_desc :: proc(world:core.World_Transform,point:Point_Light) -> gpu.Light_Desc {
+    return sphere_desc(world,point.color,point.intensity,point.range,point.radius,point.indirect,point.scattering)
+}
+
+// A spot in the world: the sphere of a point light, where it points and its cone.
+spot_desc :: proc(world:core.World_Transform,spot:Spot_Light) -> (desc:gpu.Light_Desc) {
+    desc=sphere_desc(world,spot.color,spot.intensity,spot.range,spot.radius,spot.indirect,spot.scattering)
+    desc.direction,desc.cone=mm.quat_forward(world.rotation),spot.angle
+    return
+}
+
+@(private)
+sphere_desc :: proc(world:core.World_Transform,color:[3]f32,intensity,range,radius,indirect,scattering:f32) -> (desc:gpu.Light_Desc) {
+    desc={position=world.position,color=color,intensity=intensity,range=range,indirect=indirect,scattering=scattering}
     scale:=[3]f32{abs(world.scale.x),abs(world.scale.y),abs(world.scale.z)}
     longest:=0
     for axis in 1..<3 {if scale[axis]>scale[longest] {longest=axis}}
@@ -1333,7 +1370,7 @@ sphere_desc :: proc(world:core.World_Transform,color:[3]f32,intensity,range,radi
 // -Z faces. Its width runs along -X: seen from that side, its right.
 rect_desc :: proc(world:core.World_Transform,rect:Rect_Light) -> gpu.Light_Desc {
     return {
-        position=world.position,color=rect.color,intensity=rect.luminance,range=rect.range,
+        position=world.position,color=rect.color,intensity=rect.luminance,range=rect.range,indirect=rect.indirect,scattering=rect.scattering,
         direction=mm.quat_forward(world.rotation),axis=mm.quat_rotate(world.rotation,[3]f32{-1,0,0}),
         size={abs(world.scale.x),abs(world.scale.y)},
     }

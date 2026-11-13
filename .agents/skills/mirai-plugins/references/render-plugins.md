@@ -290,7 +290,9 @@ boxes.
   once). The light is weighted with the mean medium of each
   volume, not that of this frame: it does not depend on where the wisps are. Where there is a medium
   that scatters, it lights it with the light of the engine's media (`shaders/include/media.slang`,
-  the same as the volumes of [`vfx`](../../mirai-world/references/vfx.md#volumes)):
+  the same as the volumes of [`vfx`](../../mirai-world/references/vfx.md#volumes)), each light by
+  its `scattering` share ([shares](../../mirai-rendering/references/lights.md#local-lights)) and
+  the ambient by the indirect scale of the world:
   - the sun, `sun_light` of the place, at four places of the cell, each by the
     [maps of the sun](../../mirai-rendering/references/lights.md#direct-light-of-a-view) of the
     view where one holds it (the glass on the way still colors it) and with a shadow ray
@@ -350,8 +352,7 @@ from a pixel without glass brings its whole fog. Beyond `DISTANCE` there are no 
 local lights or wisps: the medium continues with its mean density, lit by the sun without shadows
 and by the ambient at the end of the grid, and the soft edge of a volume is hard. The shaft has the
 size of the froxel, a light that moves leaves a short trail and the sun is traced as a point,
-without penumbra. Extension lights (those of the portals) do not light the medium, and a light does
-not have a scattering factor of its own.
+without penumbra. Extension lights (those of the portals) do not light the medium.
 
 ## FSR
 

@@ -264,7 +264,7 @@ the_light_tree_is_refit_while_each_light_keeps_its_kind :: proc(t: ^testing.T) {
 	defer scene_destroy(r)
 	s := &r.scene
 	lights: [100]Light_Desc
-	for &light, i in lights {light = {position = {f32(i % 10) * 2, 1, f32(i / 10) * 2}, color = {1, 1, 1}, intensity = 10, range = 4, radius = 0.05}}
+	for &light, i in lights {light = {position = {f32(i % 10) * 2, 1, f32(i / 10) * 2}, color = {1, 1, 1}, intensity = 10, range = 4, radius = 0.05, indirect = 1, scattering = 1}}
 	uploaded :: proc(s: ^Scene_State) {
 		s.lights_dirty = false
 		clear(&s.light_ranges)
@@ -349,7 +349,7 @@ light_update_benchmark_reports_the_time_of_moving_one_light :: proc(t: ^testing.
 			defer scene_destroy(&r)
 			lights := make([]Light_Desc, count)
 			defer delete(lights)
-			for &light, i in lights {light = {position = {f32(i % 64) - 32, 1, f32(i / 64) - 32}, color = {1, 1, 1}, intensity = 100, range = 4, radius = 0.05}}
+			for &light, i in lights {light = {position = {f32(i % 64) - 32, 1, f32(i / 64) - 32}, color = {1, 1, 1}, intensity = 100, range = 4, radius = 0.05, indirect = 1, scattering = 1}}
 			scene_lights_given(&r, lights, {}, {})
 			started := time.tick_now()
 			for _ in 0 ..< 200 {

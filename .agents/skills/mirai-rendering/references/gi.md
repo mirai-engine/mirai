@@ -7,7 +7,14 @@
   queries answer. Both return instance, primitive, distance and barycentrics; the surface
   attributes are rebuilt from the same geometry pool.
 - Diffuse indirect comes from the [probe volume](#probe-volume), with all the bounces, darkened at
-  contact by the [contact occlusion](#contact-occlusion). Nothing in the indirect samples
+  contact by the [contact occlusion](#contact-occlusion).
+- **Scale of the indirect light.** The hits of the probes take each light by its `indirect` share
+  (`LIGHTS_BOUNCED` of `direct_lighting`, [shares](lights.md#local-lights)), so that a share
+  scales all the bounces of that light. `scene_set_indirect` (the `Bounce_Light` of the world)
+  multiplies what the probe volume gives, or the sky that stands for it without GI, where a view
+  takes it (diffuse and specular, the probes read by reflection hits) and where media take it;
+  the probes gather without it, so it shows in the frame it changes. It is of the world: the
+  light of a `View_Volume` would change as the camera moves. Nothing in the indirect samples
   directions or lights per frame: what the scene does not change gives the same every frame, and
   there is no boiling for a filter to hide.
 

@@ -684,6 +684,7 @@ frame_sun_sky :: proc(f: ^Gpu_Frame, sun: Sun_Desc, environment: Environment, sc
 		if air && environment.sky_atmosphere {light *= air_overhead(environment.air)}
 		f.sun_direction = {sun.direction.x, sun.direction.y, sun.direction.z, 1 if shadows else SUN_UNSHADOWED}
 		f.sun_color = {light.x, light.y, light.z, disc if sun.disc else 0}
+		f.sun_shares = {sun.indirect, sun.scattering, 0, 0}
 	}
 	sky := environment.sky * scale
 	f.sky_color = {sky.x, sky.y, sky.z, scale}
@@ -755,7 +756,7 @@ view_begin :: proc(p: ^Pass) -> bool {
 		cut = {settings.lod_error_pixels, settings.batch_min_pixels if settings.lod_error_pixels > 0 else 0, 0, 0},
 		batches = {s.batch.slots, s.batch.groups.first, u32(len(s.batch.drawn)), u32(len(s.batch.traced))},
 		debug_view = DEBUG_VIEW_EXTENSION if p.inspection.mode == .None && p.inspection.record != nil else u32(p.inspection.mode),
-		gi_strength = settings.gi_strength,
+		indirect = s.indirect,
 		exposure = view_exposure(p),
 		// Rendering below the output resolution samples the mips the output would use.
 		texturing = {clamp(math.log2(f32(t.width) / f32(t.output_width)), -2, 0), settings.reflection_roughness if p.use_reflections else 0, f32(s.tlas_node_count), f32(s.glass_node_count)},

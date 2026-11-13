@@ -127,7 +127,7 @@ fog_goes_on_past_the_grid_without_a_seam :: proc(t: ^testing.T) {
 	if !gpu_fixture_init(t, f) {return}
 	defer gpu_fixture_destroy(f)
 	r := &f.renderer
-	gpu.scene_set_environment(r,{direction = linalg.normalize([3]f32{0.4, 0.5, 0.6}), color = {1, 1, 1}, illuminance = 2 * math.PI, enabled = true},{sky = {0.3, 0.4, 0.6}})
+	gpu.scene_set_environment(r,{direction = linalg.normalize([3]f32{0.4, 0.5, 0.6}), color = {1, 1, 1}, illuminance = 2 * math.PI, enabled = true, indirect = 1, scattering = 1},{sky = {0.3, 0.4, 0.6}})
 	gpu.scene_update(r,0,{{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, -2000}, {8000, 0.2, 8000}), tint = {0.02, 0.02, 0.02}}},true)
 	HIGH :: f32(40)
 	forward := linalg.normalize([3]f32{0, -0.3, -1})
@@ -220,7 +220,7 @@ fog_in_an_outline_fills_its_loop_and_not_its_box :: proc(t: ^testing.T) {
 	if !gpu_fixture_init(t, f) {return}
 	defer gpu_fixture_destroy(f)
 	r := &f.renderer
-	gpu.scene_set_environment(r,{direction = linalg.normalize([3]f32{0.4, 0.5, 0.6}), color = {1, 1, 1}, illuminance = 2 * math.PI, enabled = true},{sky = {0.3, 0.4, 0.6}})
+	gpu.scene_set_environment(r,{direction = linalg.normalize([3]f32{0.4, 0.5, 0.6}), color = {1, 1, 1}, illuminance = 2 * math.PI, enabled = true, indirect = 1, scattering = 1},{sky = {0.3, 0.4, 0.6}})
 	gpu.scene_update(r,0,{{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {200, 0.2, 200}), tint = {0.02, 0.02, 0.02}}},true)
 	HIGH :: f32(30)
 	camera := gpu.Camera{position = {0, HIGH, 0}, forward = {0, -1, 0}, up = {0, 0, -1}, fov_y = 60, near = 0.1, exposure = gpu.UNIT_EXPOSURE}
@@ -285,7 +285,7 @@ fog_wisps_vary_drift_and_leave_no_trail :: proc(t: ^testing.T) {
 	if !gpu_fixture_init(t, f) {return}
 	defer gpu_fixture_destroy(f)
 	r := &f.renderer
-	gpu.scene_set_environment(r,{direction = linalg.normalize([3]f32{0.5, 0.6, 0.4}), color = {1, 1, 1}, illuminance = 3 * math.PI, enabled = true},{sky = {0.05, 0.06, 0.08}})
+	gpu.scene_set_environment(r,{direction = linalg.normalize([3]f32{0.5, 0.6, 0.4}), color = {1, 1, 1}, illuminance = 3 * math.PI, enabled = true, indirect = 1, scattering = 1},{sky = {0.05, 0.06, 0.08}})
 	gpu.scene_update(r,0,{
 		{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {80, 0.2, 80}), tint = {0.05, 0.05, 0.05}},
 		{object_id = 2, mesh = f.cube, transform = trs({0, 6, -14}, {40, 12, 0.5}), tint = {0.02, 0.02, 0.02}},
@@ -361,7 +361,7 @@ fog_in_front_of_glass_goes_over_it :: proc(t: ^testing.T) {
 	gpu.materials_set(r, {blue})
 	wall := gpu.Instance_Desc{object_id = 1, mesh = f.cube, transform = trs({0, 0, -30}, {200, 200, 1}), tint = {0, 0, 0}}
 	pane := gpu.Instance_Desc{object_id = 2, mesh = f.cube, transform = trs({0, 0, -6}, {4, 4, 0.05}), material = 1, tint = {1, 1, 1}}
-	gpu.scene_set_environment(r,{direction = linalg.normalize([3]f32{0.6, 0.5, 0.3}), color = {1, 1, 1}, illuminance = 3 * math.PI, enabled = true},{sky = {0.02, 0.02, 0.02}})
+	gpu.scene_set_environment(r,{direction = linalg.normalize([3]f32{0.6, 0.5, 0.3}), color = {1, 1, 1}, illuminance = 3 * math.PI, enabled = true, indirect = 1, scattering = 1},{sky = {0.02, 0.02, 0.02}})
 	gpu.scene_update(r,0,{wall, pane},true)
 	camera := gpu.Camera{position = {0, 0, 0}, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.1, far = 200, exposure = gpu.UNIT_EXPOSURE}
 	haze := Fog_Volume{density = 0.25, color = {1, 1, 1}}
@@ -383,6 +383,47 @@ fog_in_front_of_glass_goes_over_it :: proc(t: ^testing.T) {
 		} else {
 			testing.expectf(t, through.r < 0.25 * beside.r && through.b > 2 * through.r, "the fog behind the glass comes through its filter: %v through, %v beside", through, beside)
 		}
+	}
+	expect_clean(t, f.device)
+}
+
+// A fog in front of a black wall shows what of the light of the sun and of a
+// lamp it scatters by the share of each that media scatter: none of a light
+// whose share is 0, more of one whose share is 2 than of one whose share is 1.
+@(test)
+fog_scatters_the_share_of_each_light :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	if !gpu_fixture_init(t, f) {return}
+	defer gpu_fixture_destroy(f)
+	r := &f.renderer
+	wall := gpu.Instance_Desc{object_id = 1, mesh = f.cube, transform = trs({0, 0, -30}, {200, 200, 1}), tint = {0, 0, 0}}
+	gpu.scene_update(r, 0, {wall}, true)
+	camera := gpu.Camera{position = {0, 0, 0}, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.1, far = 200, exposure = gpu.UNIT_EXPOSURE}
+	haze := Fog_Volume{density = 0.25, color = {1, 1, 1}}
+	places := []volume.Volume{{shape = .Box, extents = {0.5, 0.5, 0.5}}}
+	poses := []mm.Transform{{position = {0, 0, -6}, rotation = 1, scale = {60, 60, 8}}}
+	low, high := [2]int{WIDTH / 2 - 12, HEIGHT / 2 - 12}, [2]int{WIDTH / 2 + 12, HEIGHT / 2 + 12}
+	for lamp in ([]bool{false, true}) {
+		seen: [3]f32
+		for share, i in ([3]f32{0, 1, 2}) {
+			sun := gpu.Sun_Desc{direction = linalg.normalize([3]f32{0.6, 0.5, 0.3}), color = {1, 1, 1}, illuminance = 2 * math.PI, enabled = !lamp, indirect = 1, scattering = share}
+			gpu.scene_set_environment(r, sun, {sky = {0.002, 0.002, 0.002}})
+			if lamp {
+				gpu.scene_light_update(r, 0, {position = {0, 0, -6}, color = {1, 1, 1}, intensity = 6 * math.PI, range = 20, radius = 0.05, indirect = 1, scattering = share})
+			} else if len(r.scene.lights) > 0 {
+				gpu.scene_light_remove(r, 0)
+			}
+			for frame in 0 ..< 20 {fog_frame(t, f, camera, f32(frame) / 60, {haze}, places, poses, cut = frame == 0)}
+			image, ok := capture(t, f)
+			if !ok {return}
+			c := channels(image, low, high)
+			delete(image.pixels)
+			seen[i] = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
+		}
+		what := "the lamp" if lamp else "the sun"
+		testing.expectf(t, seen[1] > 30 && seen[0] < 0.2 * seen[1], "%s lights the fog by its share: %.1f with none, %.1f with all", what, seen[0], seen[1])
+		testing.expectf(t, seen[2] > seen[1] + 5, "%s lights the fog more with twice its share: %.1f, not above %.1f", what, seen[2], seen[1])
 	}
 	expect_clean(t, f.device)
 }

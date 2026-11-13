@@ -32,7 +32,7 @@ Gpu_Frame :: struct {
 	light_nodes:     u32,
 	instance_count:  u32,
 	debug_view:      u32,
-	gi_strength:     f32,
+	indirect:        f32,  // what multiplies the light of the probe volume, or of the sky without GI, where a view or a medium takes it (scene_set_indirect)
 	exposure:        f32,  // the scene-linear value of one render unit, as a frame before exposed the view
 	own:             u32,  // bits 0-7: 1 + the local slot whose body (INSTANCE_FLAG_OWNED) is the view's own, 0: none; bits 16-31: how much of it the view fades out, unorm
 	flags:           u32,
@@ -69,6 +69,7 @@ Gpu_Frame :: struct {
 	moved:            [4]u32, // what casts shadows and changed since the frame before (Occluder_Changes): x the boxes of moved_boxes, y the lights of moved_lights, z MOVED_* bits
 	moved_boxes:      [OCCLUDER_CHANGES_MAX][2]Vec4, // low (w: the instance, as bits; OCCLUDERS_MANY: several) and high, relative to the origin
 	moved_lights:     [LIGHT_MOVES_MAX / 4][4]u32,
+	sun_shares:       Vec4, // x what of the light of the sun the probes gather, y what of it media scatter (Sun_Desc.indirect and scattering); zw 0
 	sun_maps:         [4]u32, // x the maps of the shadows of the sun the view drew this frame, the nearest cascade first (shadow_maps_pass), 0: none; y where the rows of the maps start in their buffer; z the side of their atlas, texels, while the view drew maps, else 0; w 1 while they keep the tint of glass
 	sun_map_rows:     [abi.SUN_MAP_ROWS][4]u32,
 }
@@ -368,7 +369,7 @@ Gpu_Light :: struct {
 	color_intensity: Vec4,
 	direction_cone:  Vec4, // spot: direction and cos(half-angle); a rectangle: the side it lights, w = GPU_LIGHT_RECT; w = GPU_LIGHT_POINT for the others
 	size:            Vec4, // x the radius of the sphere or the capsule, metres; y half the segment of a capsule, or half the width of a rectangle; z half its height; w the bits of the material row whose emission a rectangle shows (0: none)
-	axis:            Vec4, // xyz along the segment of a capsule, or the width of a rectangle
+	axis:            Vec4, // xyz along the segment of a capsule, or the width of a rectangle; w the shares of its light (light_shares)
 }
 GPU_LIGHT_POINT :: abi.GPU_LIGHT_POINT
 GPU_LIGHT_RECT :: abi.GPU_LIGHT_RECT

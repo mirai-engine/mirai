@@ -100,6 +100,7 @@ thumbnail_view :: proc(r:^Renderer,vertices:[]Thumbnail_Vertex,materials:int,wid
 // render units as nits and exposes them itself.
 @(private)
 preview_lighting :: proc(f:^Gpu_Frame,light:Preview_Light) {
+    f.indirect=1
     if !light.outdoor {
         f.flags|=FRAME_FLAG_STUDIO
         f.exposure,f.sky_color.w=1,1

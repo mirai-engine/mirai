@@ -75,7 +75,7 @@ struct Frame_Data {
     uint light_nodes;       // of the light tree; 0: no local light
     uint instance_count;
     uint debug_view;
-    float gi_strength;
+    float indirect;         // what multiplies the light of the probe volume, or of the sky that stands for it without GI, where a view or a medium takes it (render.scene_set_indirect); the probes gather without it
     float exposure;         // the scene-linear value of one render unit, as a frame before exposed the view
     uint own;               // bits 0-7: 1 + the local slot whose body (INSTANCE_FLAG_OWNED) is the view's own, 0: none; bits 16-31: how much of it the view fades out, unorm
     uint flags;             // FRAME_FLAG_*
@@ -117,6 +117,7 @@ struct Frame_Data {
     uint4 moved;             // what casts shadows and changed since the frame before (occluder_changed of trace.slang): x the boxes of moved_boxes, y the lights of moved_lights, z MOVED_* bits
     float4 moved_boxes[OCCLUDER_CHANGES_MAX * 2]; // low (w: the instance, as bits; OCCLUDERS_MANY: several), then high, relative to the origin
     uint4 moved_lights[LIGHT_MOVES_MAX / 4];
+    float4 sun_shares;       // x what of the light of the sun the probes gather, y what of it media scatter (Sun_Desc.indirect and scattering); zw 0
     uint4 sun_maps;          // x the maps of the shadows of the sun the view drew this frame, the nearest cascade first (sun_shadow_seen of shadow_maps.slang), 0: none; y where the rows of the maps start in their buffer; z the side of their atlas, texels, while the view drew maps, else 0; w 1 while they keep the tint of glass
     uint4 sun_map_rows[SUN_MAP_ROWS];
 #ifdef MIRAI_FRAME_NESTED
@@ -295,7 +296,7 @@ struct Light {
     float4 color_intensity;  // rgb color, w intensity
     float4 direction_cone;   // spot: xyz direction, w cos(half-angle); a rectangle: xyz the side it lights, w LIGHT_RECT; w LIGHT_POINT for the others
     float4 size;             // x the radius of the sphere, or of the capsule, metres; y half the segment of a capsule along axis, or half the width of a rectangle; z half its height; w the material row whose emission a rectangle shows, as uint bits (0: none)
-    float4 axis;             // xyz along the segment of a capsule, or the width of a rectangle
+    float4 axis;             // xyz along the segment of a capsule, or the width of a rectangle; w the bits of two halves: what of its light the probes gather (low) and what media scatter (high), light_shares
 };
 
 // A node of the tree of the local lights (render/light_tree.odin): a leaf is
@@ -310,6 +311,7 @@ struct Light_Node {
     float spread;         // root of the mean square of how far their light lies from the center, their sizes included
     uint child;           // a leaf: its light; a group: its second child
     uint flags;           // LIGHT_NODE_*, and the number of its lights
+    float indirect;       // what of their light the probes gather, the mean of their shares weighed by how bright each is
 };
 
 struct Bvh_Node {
@@ -452,6 +454,17 @@ float half_value(uint bits) {
     if (exponent == 0u) return asfloat(sign | asuint(float(mantissa) * 5.9604645e-8));
     if (exponent == 31u) return asfloat(sign | 0x7F800000u | (mantissa << 13u));
     return asfloat(sign | ((exponent + 112u) << 23u) | (mantissa << 13u));
+}
+
+// What of the light of a light the probes gather (x) and media scatter (y),
+// from the halves in its axis.w (render.light_shares); a pass that writes a
+// light gives them with light_shares_bits.
+float2 light_shares(Light light) {
+    uint bits = asuint(light.axis.w);
+    return float2(half_value(bits & 0xffffu), half_value(bits >> 16u));
+}
+float light_shares_bits(float indirect, float scattering) {
+    return asfloat(half_bits(max(indirect, 0.0)) | (half_bits(max(scattering, 0.0)) << 16u));
 }
 // Luma and two chroma axes, where a box around colors keeps their hue.
 float3 to_ycocg(float3 c) { return float3(dot(c, float3(0.25, 0.5, 0.25)), dot(c, float3(0.5, 0.0, -0.5)), dot(c, float3(-0.25, 0.5, -0.25))); }
