@@ -8,7 +8,6 @@ import "core:slice"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
-import "mirai:host"
 import anim "mirai:std/anim"
 import mm "mirai:std/math"
 import "mirai:std/base"
@@ -664,7 +663,7 @@ a_cook_ships_the_convex_pieces_of_a_mesh_a_body_moves :: proc(t:^testing.T) {
             testing.expectf(t,len(view.piece_sizes)>=2,"the mesh a body moves ships its pieces: %d",len(view.piece_sizes))
             points:=make([dynamic][3]f32,context.temp_allocator)
             sizes:=make([dynamic]u32,context.temp_allocator)
-            testing.expect(t,host.assets_collision_pieces_file(&cooked,&types,"",&points,&sizes) && len(sizes)==len(view.piece_sizes),"a game without a cache reads them")
+            testing.expect(t,asset.mesh_collision_pieces(&cooked,&types,"",&points,&sizes) && len(sizes)==len(view.piece_sizes),"a game without a cache reads them")
         } else {
             testing.expect_value(t,len(view.piece_sizes),0)
         }

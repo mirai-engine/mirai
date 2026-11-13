@@ -3,7 +3,6 @@ package host
 import "base:runtime"
 import "core:fmt"
 import "core:math/linalg"
-import "core:os"
 import "core:testing"
 import "mirai:asset"
 import "mirai:std/base"
@@ -157,75 +156,28 @@ stored_boxes_spheres_and_capsules_are_the_convex_pieces_of_a_collider_of_their_m
     testing.expect(t,stored && ok && len(surface.indices)>=3*3*4,"each shape is a hull of triangles")
 }
 
-// A mesh file that stores no colliders is decomposed into convex pieces once: the cache keeps them by the
-// content of the file, and what it keeps is what is given after. One that stores colliders is not
-// decomposed, and is what a placed mesh collides with.
+// A placed mesh collides with what its file stores of the colliders of its source: one that stores
+// none does not collide as placed.
 @(test)
-a_mesh_without_colliders_is_decomposed_once_into_pieces_the_cache_keeps :: proc(t:^testing.T) {
-    root:=base.test_folder(t,"host-pieces")
+only_a_mesh_that_stores_colliders_collides_as_placed :: proc(t:^testing.T) {
+    root:=base.test_folder(t,"host-collides")
     if root=="" {return}
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    box:geom.Mesh_Buffer
+    geom.mesh_buffer_init(&box,context.temp_allocator)
+    geom.cube_build(&box,{1,1,1})
     vertices:=make([dynamic]asset.Vertex,context.temp_allocator)
-    order:=make([dynamic]u32,context.temp_allocator)
-    for part in 0..<2 {
-        box:geom.Mesh_Buffer
-        geom.mesh_buffer_init(&box,context.temp_allocator)
-        geom.cube_build(&box,part==0?geom.Vec3{3,1,1}:geom.Vec3{1,3,1})
-        first:=u32(len(vertices))
-        for position in box.positions {append(&vertices,asset.Vertex{position=position+(part==0?geom.Vec3{1,0,0}:geom.Vec3{0,2,0})})}
-        for index in box.indices {append(&order,first+index)}
-    }
+    for position in box.positions {append(&vertices,asset.Vertex{position=position})}
     g:asset.Mesh_Geometry
-    if !testing.expect(t,asset.mesh_build({vertices=vertices[:]},order[:],nil,&g,context.temp_allocator)) {return}
+    if !testing.expect(t,asset.mesh_build({vertices=vertices[:]},box.indices[:],nil,&g,context.temp_allocator)) {return}
     bare,boxed:=base.Asset_Id{0x62617265,1},base.Asset_Id{0x626f786564,1}
-    box:=[1]asset.Collider{{kind=.Box,rotation=1,size={1,1,1}}}
+    shape:=[1]asset.Collider{{kind=.Box,rotation=1,size={1,1,1}}}
     testing.expect_value(t,asset.mesh_save(fmt.tprintf("%s/bare.mesh",root),&types,{id=bare,geometry=g}),asset.Error.None)
-    testing.expect_value(t,asset.mesh_save(fmt.tprintf("%s/boxed.mesh",root),&types,{id=boxed,geometry=g,colliders=box[:]}),asset.Error.None)
+    testing.expect_value(t,asset.mesh_save(fmt.tprintf("%s/boxed.mesh",root),&types,{id=boxed,geometry=g,colliders=shape[:]}),asset.Error.None)
     assets:Assets
     if !testing.expect(t,assets_init(&assets,{root=root,capacity=4})) {return}
     defer assets_destroy(&assets)
     testing.expect(t,!assets_mesh_collides(&assets,bare) && assets_mesh_collides(&assets,boxed) && !assets_mesh_collides(&assets,{}),"only the mesh that stores colliders collides as placed")
-    folder:=fmt.tprintf("%s/cache",root)
-    pieces :: proc(assets:^Assets,id:base.Asset_Id,folder:string,points:^[dynamic]geom.Vec3,sizes:^[dynamic]u32) -> bool {
-        file:asset.Asset
-        if _,_,opened:=assets_open(assets,id,.Mesh,&file);!opened {return false}
-        defer asset.asset_close(&file)
-        return assets_collision_pieces_file(&file,&assets.types,folder,points,sizes)
-    }
-    points:=make([dynamic]geom.Vec3,context.temp_allocator)
-    sizes:=make([dynamic]u32,context.temp_allocator)
-    testing.expect(t,!pieces(&assets,bare,"",&points,&sizes) && len(sizes)==0,"without a cache, as a shipped game, nothing is decomposed")
-    if !testing.expect(t,pieces(&assets,bare,folder,&points,&sizes) && len(sizes)>=2,"an L is two convex pieces or more") {return}
-    total:=0
-    for size in sizes {total+=int(size)}
-    testing.expect_value(t,total,len(points))
-    kept,_:=os.read_all_directory_by_path(folder,context.temp_allocator)
-    if !testing.expect_value(t,len(kept),1) {return}
-    // A file put in its place with one piece is what is given next: it is not decomposed again.
-    held:asset.Asset
-    if !testing.expect_value(t,asset.asset_load(&held,kept[0].fullpath,context.temp_allocator),asset.Error.None) {return}
-    header:=held.blob.header
-    asset.asset_close(&held)
-    tetra:=[4][3]f32{{0,0,0},{1,0,0},{0,1,0},{0,0,1}}
-    one:=[1]u32{4}
-    doc:asset.Document
-    asset.document_init(&doc,COLLISION_PIECES_KIND,header.id,context.temp_allocator)
-    doc.kind_version=COLLISION_PIECES_VERSION
-    asset.document_put(&doc,&types,"points",tetra[:])
-    asset.document_put(&doc,&types,"sizes",one[:])
-    testing.expect_value(t,asset.document_save(&doc,kept[0].fullpath),asset.Error.None)
-    clear(&points);clear(&sizes)
-    testing.expect(t,pieces(&assets,bare,folder,&points,&sizes) && len(sizes)==1 && sizes[0]==4 && points[1]==geom.Vec3{1,0,0},"the pieces come from the cache")
-    clear(&points);clear(&sizes)
-    testing.expect(t,!pieces(&assets,boxed,folder,&points,&sizes) && len(points)==0,"a mesh that stores colliders is not decomposed")
-    // A cooked mesh carries its pieces: they are read without a cache.
-    cooked:=base.Asset_Id{0x636f6f6b6564,1}
-    testing.expect_value(t,asset.mesh_save(fmt.tprintf("%s/cooked.mesh",root),&types,{id=cooked,geometry=g,piece_points=tetra[:],piece_sizes=one[:]}),asset.Error.None)
-    shipped:Assets
-    if !testing.expect(t,assets_init(&shipped,{root=root,capacity=4})) {return}
-    defer assets_destroy(&shipped)
-    clear(&points);clear(&sizes)
-    testing.expect(t,pieces(&shipped,cooked,"",&points,&sizes) && len(sizes)==1 && points[3]==geom.Vec3{0,0,1},"a cooked mesh gives the pieces it carries")
 }
 
 // The convex pieces of a generated mesh are checked and copied when it is made, and go with it.

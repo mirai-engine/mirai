@@ -63,7 +63,7 @@ App_Desc :: struct {
     assets_imported:string,      // the imported folder that goes with assets_root, of a project that is not shipped; "": none
     assets_cache:string,         // file where the registry of assets_root keeps what it saw; "": none
     animation_cache:string,      // folder where the content keeps the .anim it compressed; "": none
-    collision_cache:string,      // folder where the convex pieces of meshes are kept (assets_collision_pieces_file); "": none
+    collision_cache:string,      // folder where the convex pieces of meshes are kept (asset.mesh_collision_pieces); "": none
     shaders_root:string,         // folder whose shader generation is loaded; "": the one that holds assets_root
     asset_mounts:[]asset.Registry_Mount,
 }
