@@ -7,6 +7,7 @@ import erender "mirai:engine/render"
 import "mirai:host"
 import gpu "mirai:render"
 import "mirai:rhi/shared_device"
+import "mirai:std/base"
 import mm "mirai:std/math"
 
 @(private)
@@ -161,4 +162,64 @@ a_ray_through_the_scene_lists_what_it_crosses_nearest_first :: proc(t:^testing.T
     testing.expect(t,picks[0].distance<picks[1].distance && picks[1].distance<picks[2].distance)
     count=pick_through(&session,ref,point,picks[:2])
     testing.expect(t,count==2 && picks[0].entity==near && picks[1].entity==middle,"the farthest are left out")
+}
+
+@(test)
+a_disc_the_scene_covers_is_not_picked_through_it :: proc(t:^testing.T) {
+    world:Pick_Test_World
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    ref:=test_world_ref(&world)
+    wall:=core.create(&world.entities)
+    core.add(&world.transforms,wall,core.Transform{position={0,0,0},rotation=1,scale={4,4,1}})
+    core.add(&world.meshes,wall,{shape=.Cube})
+    // Behind the wall, beside it and in front of it.
+    places:=[3][3]f32{{0.5,0.5,-3},{5,0,-3},{-0.5,-0.5,3}}
+    lights:[len(places)]core.Entity
+    for place,i in places {
+        lights[i]=core.create(&world.entities)
+        core.add(&world.ids,lights[i],core.Id{value=base.Entity_Id(i+1)})
+        core.add(&world.transforms,lights[i],core.Transform{position=place,rotation=1,scale={1,1,1}})
+        core.add(&world.points,lights[i],erender.Point_Light{})
+    }
+    test_world_settle(&world)
+    eye:=[3]f32{0,0,10}
+    viewport:=Viewport{size={800,600},show_indicators=true}
+    defer viewport_free(&viewport)
+    viewport.camera={position=eye,forward={0,0,-1},up={0,1,0},fov_y=VIEW_FOV,near=VIEW_NEAR}
+    viewport.view_matrix=mm.look_at(eye,{},{0,1,0})
+    viewport.projection=mm.perspective_infinite(VIEW_FOV*mm.RAD_PER_DEG,800.0/600,VIEW_NEAR)
+    viewport.view_projection=viewport.projection*viewport.view_matrix
+    device:=new(Pick_Device);defer free(device)
+    if !pick_device_open(t,device) {return}
+    defer pick_device_close(device)
+    selection:history.Selection
+    defer delete(selection.entities)
+    app:=host.App{assets=&device.assets,renderer=&device.renderer}
+    session:=Session{app=&app,viewport=&viewport,selection=&selection}
+    for selected in ([2]bool{false,true}) {
+        if selected {history.selection_set(&selection,{lights[0]})}
+        for place,i in places {
+            point,_:=viewport_screen(&viewport,place)
+            hit:=pick_point(&session,ref,point)
+            if i==0 {
+                testing.expectf(t,hit.entity==wall && !hit.indicator,"selected %v: the wall covers the disc behind it, not %v",selected,hit.entity)
+            } else {
+                testing.expectf(t,hit.entity==lights[i] && hit.indicator,"selected %v: light %d is picked, not %v",selected,i,hit.entity)
+            }
+        }
+    }
+    // What the scene covers is neither in the menu of the point, nor in the AI context, nor in a rectangle.
+    picks:[4]Pick
+    point,_:=viewport_screen(&viewport,places[0])
+    count:=pick_through(&session,ref,point,picks[:])
+    testing.expect(t,count==1 && picks[0].entity==wall,"the menu of the point has the wall alone")
+    items:=scene_items(&session,ref)
+    for item in scene_item_next(&items) {
+        if !item.indicator {continue}
+        _,ok:=ai_item_rect(&session,ref,item)
+        testing.expectf(t,ok==(item.entity!=lights[0]),"the AI context takes %v: %v",item.entity,ok)
+    }
+    marquee_select(&session,ref,{0,0,800,600},false)
+    testing.expect(t,len(selection.entities)==3 && !history.selection_has(&selection,lights[0]),"a rectangle does not take the covered disc")
 }

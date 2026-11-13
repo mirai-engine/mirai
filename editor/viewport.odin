@@ -75,13 +75,19 @@ SUN_ARROW_HEAD :: f32(0.16)
 SPOT_CONE_LINES :: 8 // from a selected spot to the edge of its cone
 GRID_MAJOR :: 10
 LINE_CAPACITY :: 4096         // vertices of the lines the editor draws in a frame
+// A disc is an object of the world: INDICATOR_SIZE m of radius, which the scene in front of it
+// covers, and which takes less of the screen the farther it is; nearer than where that would take
+// more than INDICATOR_RADIUS points, it keeps that (indicator_size).
 INDICATOR_RADIUS :: f32(11)
-INDICATOR_HIT :: f32(14)
+INDICATOR_SIZE :: f32(0.12)
+INDICATOR_HALO :: f32(6)       // points of INDICATOR_RADIUS around an outlined disc
+INDICATOR_HIT :: f32(3)        // points past its disc that a click still takes it
+INDICATOR_CAPACITY :: 512      // discs drawn in a frame: the nearest ones
 INDICATOR_EXTENT :: f32(0.35) // m: half the box an entity without a body counts for when framed
 // m from the camera, at VIEW_FOV, where a disc starts to fade and where it is gone: no farther is it
 // drawn or picked, unless it is selected or outlined (indicator_shade).
-INDICATOR_FADE :: f32(30)
-INDICATOR_REACH :: f32(50)
+INDICATOR_FADE :: f32(32)
+INDICATOR_REACH :: f32(40)
 HIGHLIGHT_SELECTED :: u8(1)
 HIGHLIGHT_DESCENDANT :: u8(2)
 
@@ -154,6 +160,7 @@ Viewport :: struct {
     indicators_key:[2]u64,           // the world and the hierarchy the indicators were found in, and whether ghosts counted
     indicators_seen:[3]core.Seen,    // the meshes, the parents and Disabled then
     indicators_shapes:[3]core.Shape, // the transforms, Hidden and the ids then
+    indicators_cutoff:f32,           // m from the camera of the farthest disc drawn when more than INDICATOR_CAPACITY were in view; 0: all were
     levels:[dynamic]u8,              // highlight by entity index, as last written
     levels_key:Highlight_Key,
     levels_seen:[6]core.Seen,        // the parents, the ids, and in a box the transforms, the poses, Hidden and the meshes
@@ -830,44 +837,100 @@ level_color :: proc "contextless" (level:u8) -> ui.Color {
     return {u8(clamp(c.x,0,1)*255),u8(clamp(c.y,0,1)*255),u8(clamp(c.z,0,1)*255),255}
 }
 
+// Each disc is a panel of the world facing the camera, in points of INDICATOR_RADIUS, that the
+// renderer hides where the scene is in front of it; the stroke of a spot, a line of the scene.
 @(private)
 indicators_draw :: proc(s:^Session,w:core.World_Ref) {
     v:=s.viewport
     ctx:=s.gui.ctx
     indicators_sync(s,w,ghosts_shown(s))
-    margin:=INDICATOR_RADIUS+8
     spots:=core.world_table_of(w,erender.Spot_Light)
     es:=core.world_entities(w)
     zoom:=indicator_zoom(v)
+    // A selected or outlined disc goes before the rest: it ranks as the nearest.
+    Shown :: struct {entity:core.Entity,world:mm.Transform,shade,distance,rank,points,meters:f32}
+    shown:[INDICATOR_CAPACITY]Shown
+    count:=0
+    left_out:=false
     for e in v.indicators {
         world:=entity_world(w,e)
         shade:=indicator_shade(s,e,world.position,zoom)
         if !(shade>0) {continue}
-        p,front:=viewport_screen(v,world.position)
-        if !front || p.x<v.origin.x-margin || p.y<v.origin.y-margin || p.x>v.origin.x+v.size.x+margin || p.y>v.origin.y+v.size.y+margin {continue}
+        points,meters,front:=indicator_size(v,world.position)
+        if !front {continue}
+        p,_:=viewport_screen(v,world.position)
+        margin:=points+INDICATOR_HALO*points/INDICATOR_RADIUS
+        if p.x<v.origin.x-margin || p.y<v.origin.y-margin || p.x>v.origin.x+v.size.x+margin || p.y>v.origin.y+v.size.y+margin {continue}
+        distance:=linalg.distance(world.position,v.camera.position)
+        item:=Shown{e,world,shade,distance,indicator_kept(s,e)?0:distance,points,meters}
+        if count<len(shown) {
+            shown[count]=item
+            count+=1
+            continue
+        }
+        left_out=true
+        farthest:=0
+        for other,i in shown {if other.rank>shown[farthest].rank {farthest=i}}
+        if item.rank<shown[farthest].rank {shown[farthest]=item}
+    }
+    // What is not drawn is not picked either (indicator_drawn).
+    v.indicators_cutoff=0
+    if left_out {
+        v.indicators_cutoff=1e-6
+        for item in shown {if item.rank>0 {v.indicators_cutoff=max(v.indicators_cutoff,item.distance)}}
+    }
+    density:=ctx.scale*ctx.font.density
+    outer:=INDICATOR_RADIUS+INDICATOR_HALO
+    for item in shown[:count] {
+        e,world,shade,points,meters:=item.entity,item.world,item.shade,item.points,item.meters
+        unit:=meters/INDICATOR_RADIUS
         icon,base_color:=entity_icon(s,w,e)
         hidden:=entity_hidden(w,e) || core.entity_off(es,e)
-        radius:=INDICATOR_RADIUS
         if spots!=nil && core.has(spots,e) {
-            tip,tip_front:=viewport_screen(v,world.position+mm.quat_forward(world.rotation))
-            if length:=linalg.distance(tip,p);tip_front && length>radius {
-                direction:=(tip-p)/length
-                ui.draw_line(ctx,p+direction*radius,p+direction*min(length,radius+48),1.6,ui.color_alpha(base_color,indicator_alpha(hidden?110:200,shade)))
-            }
+            forward:=mm.quat_forward(world.rotation)
+            color:=ui.color_alpha(base_color,indicator_alpha(hidden?110:200,shade))
+            gpu.debug_line(&v.lines,world.position+forward*meters,world.position+forward*(meters+48*unit),[4]f32{f32(color[0]),f32(color[1]),f32(color[2]),f32(color[3])}/255)
         }
-        glyph:=ui.color_alpha(base_color,indicator_alpha(hidden?130:255,shade))
         level:=entity_level(v,e)
+        panel:=ui.World_Panel{
+            position=world.position,size={2*outer,2*outer},facing=.Billboard,unit=unit,pivot=.Center,
+            density=density*points/INDICATOR_RADIUS,depth_test=true,passive=true,align_x=.Center,align_y=.Center,
+        }
+        disc:=ui.Box{width=ui.fixed(2*INDICATOR_RADIUS),height=ui.fixed(2*INDICATOR_RADIUS),align_x=.Center,align_y=.Center,radius=INDICATOR_RADIUS}
         if level!=0 {
             color:=level_color(level)
-            ui.draw_circle(ctx,p,radius+6,ui.color_alpha(color,45))
-            ui.draw_circle(ctx,p,radius,ui.color_alpha(ui.tone(ctx,"panel"),200))
-            ui.draw_ring(ctx,p,radius,2.2,color)
+            panel.fill,panel.radius=ui.color_alpha(color,45),outer
+            disc.fill,disc.stroke,disc.stroke_width=ui.color_alpha(ui.tone(ctx,"panel"),200),color,2.2
         } else {
-            ui.draw_circle(ctx,p,radius,ui.color_alpha(ui.tone(ctx,"panel"),indicator_alpha(hidden?110:165,shade)))
-            ui.draw_ring(ctx,p,radius,1.4,ui.color_alpha(base_color,indicator_alpha(hidden?110:210,shade)))
+            disc.fill=ui.color_alpha(ui.tone(ctx,"panel"),indicator_alpha(hidden?110:165,shade))
+            disc.stroke,disc.stroke_width=ui.color_alpha(base_color,indicator_alpha(hidden?110:210,shade)),1.4
         }
-        ui.draw_icon(ctx,icon,{p.x-7,p.y-7,14,14},glyph)
+        if ui.world_panel(ctx,ui.id(ctx,"indicator",int(core.entity_index(e))+1),panel) {
+            if ui.box(ctx,disc) {ui.icon(ctx,icon,ui.color_alpha(base_color,indicator_alpha(hidden?130:255,shade)),14)}
+        }
     }
+}
+
+// The disc of a place as the camera sees it, of INDICATOR_SIZE in the world up to where it would
+// take more than INDICATOR_RADIUS on the screen: its radius in points and in m. front is false
+// when the place is not in front of the camera.
+indicator_size :: proc(v:^Viewport,position:[3]f32) -> (points,meters:f32,front:bool) {
+    orthographic:=v.projection[3,3]==1
+    depth:=-mm.mat4_point(v.view_matrix,position).z
+    if !orthographic && !(depth>0) {return}
+    per_meter:=v.projection[1,1]*v.size.y*0.5
+    if !orthographic {per_meter/=depth}
+    if !(per_meter>0) {return}
+    meters=min(INDICATOR_SIZE,INDICATOR_RADIUS/per_meter)
+    return meters*per_meter,meters,true
+}
+
+// Whether a surface a ray meets at a distance covers there the disc of a place, as the renderer
+// tests it against the depth of the scene: the disc faces the screen at the depth of its place.
+indicator_covered :: proc(v:^Viewport,position:[3]f32,ray:mm.Ray,distance:f32) -> bool {
+    disc:=-mm.mat4_point(v.view_matrix,position).z
+    surface:=-mm.mat4_point(v.view_matrix,ray.origin+ray.direction*distance).z
+    return disc>surface*1.01+0.02
 }
 
 // How much nearer the field of view of the camera brings what it sees than VIEW_FOV does: the
@@ -885,8 +948,20 @@ indicator_shade :: proc(s:^Session,e:core.Entity,position:[3]f32,zoom:f32) -> f3
     v:=s.viewport
     distance:=linalg.distance(position,v.camera.position)/zoom
     shade:=clamp((INDICATOR_REACH-distance)/(INDICATOR_REACH-INDICATOR_FADE),0,1)
-    if shade<1 && (entity_level(v,e)!=0 || s.selection!=nil && history.selection_has(s.selection,e)) {return 1}
+    if shade<1 && indicator_kept(s,e) {return 1}
     return shade
+}
+
+// A selected or outlined disc, which shows at any distance.
+indicator_kept :: proc(s:^Session,e:core.Entity) -> bool {
+    return entity_level(s.viewport,e)!=0 || s.selection!=nil && history.selection_has(s.selection,e)
+}
+
+// Whether the last frame drew the disc of an entity at a place, as far as how many it could
+// draw decides: the INDICATOR_CAPACITY nearest, the kept ones first.
+indicator_drawn :: proc(s:^Session,e:core.Entity,position:[3]f32) -> bool {
+    v:=s.viewport
+    return v.indicators_cutoff==0 || linalg.distance(position,v.camera.position)<=v.indicators_cutoff || indicator_kept(s,e)
 }
 
 @(private)

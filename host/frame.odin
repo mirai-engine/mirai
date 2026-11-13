@@ -29,7 +29,7 @@ import stbi "vendor:stb/image"
 // frame (layers, panels, lines, the camera) lasts for that frame.
 
 FRAME_LAYER_CAPACITY :: 16
-FRAME_PANEL_CAPACITY :: 512
+FRAME_PANEL_CAPACITY :: 1024
 FRAME_DEBUG_CAPACITY :: 8
 // Room made once for the instances of a frame; there may be more, and the list grows.
 FRAME_INSTANCE_RESERVE :: 256

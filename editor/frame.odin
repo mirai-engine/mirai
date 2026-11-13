@@ -122,8 +122,8 @@ editor_end :: proc(s:^Session,g:^Editor_Ui,v:^Viewport,selection:^history.Select
     // What is drawn over the scene waits while an asset document covers it.
     if !scene_covered(s) {
         highlight_sync(s,world)
-        overlays_draw(s,world)
         grid_lines(s)
+        overlays_draw(s,world)
         output_frame_draw(s)
         ai_scene_draw(s,world)
         collab_draw(s)
