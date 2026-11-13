@@ -29,7 +29,7 @@
 #define MIRAI_GROUP_Y 4
 #define MIRAI_GROUP_Z 4
 
-// rgb the light towards the eye for each metre of what the medium scatters
+// rgb the light towards the eye for each unit of fog_amount of the medium
 // there, times a: 1 where there is a medium, 0 where none.
 [[vk::binding(SLOT_PASS0, 0)]] [[vk::image_format("rgba16f")]] RWTexture3D<float4> light_now : register(MIRAI_REGISTER(u, SLOT_PASS0), space0);
 [[vk::binding(SLOT_PASS1, 0)]] Texture3D<float4> light_before : register(MIRAI_REGISTER(t, SLOT_PASS1), space0);
@@ -42,10 +42,12 @@
 // (taken, fog_dry_at), for a cell footprint metres across: rgb what they
 // scatter in a metre, a what they stop. mean: the same by the mean density
 // of each, what the light of the point is weighed by; mean_sun_only, what
-// of it the volumes the sun alone lights scatter; g, their anisotropy.
-float4 fog_medium(float3 position, float taken, float footprint, out float4 mean, out float3 mean_sun_only, out float g) {
+// of it the volumes the sun alone lights scatter; glow, what the mean gives
+// off on its own in a metre; g, their anisotropy.
+float4 fog_medium(float3 position, float taken, float footprint, out float4 mean, out float3 mean_sun_only, out float3 glow, out float g) {
     float4 sum = float4(0.0);
     float3 sun_only = float3(0.0);
+    float4 given = float4(0.0);
     float turned = 0.0;
     mean = float4(0.0);
     mean_sun_only = float3(0.0);
@@ -77,9 +79,11 @@ float4 fog_medium(float3 position, float taken, float footprint, out float4 mean
         }
         sum = volume_mix(sum, varied, w, v.volume);
         mean = volume_mix(mean, medium, w, v.volume);
+        given = volume_mix(given, float4(v.glow.rgb * medium.a, 0.0), w, v.volume);
         turned = v.volume.kind.y != 0u ? turned + t * w : lerp(turned, t, w);
     }
     g = turned / max(luminance(mean.rgb + mean_sun_only), 1e-8);
+    glow = given.rgb;
     return float4(sum.rgb + sun_only, sum.a);
 }
 
@@ -164,20 +168,22 @@ void main(uint3 id : SV_DispatchThreadID) {
     float g;
     float4 mean;
     float3 mean_sun_only;
+    float3 glow;
     float taken = fog_dry_at(position);
-    float4 medium = fog_medium(position, taken, footprint, mean, mean_sun_only, g);
+    float4 medium = fog_medium(position, taken, footprint, mean, mean_sun_only, glow, g);
     medium_now[id] = float4(finite_or_zero(medium.rgb), isfinite(medium.a) ? max(medium.a, 0.0) : 0.0);
     float3 scattered = mean.rgb + mean_sun_only;
-    if (!(luminance(scattered) > 0.0)) {
+    float amount = fog_amount(float4(scattered, mean.a));
+    if (!(amount > 0.0)) {
         light_now[id] = float4(0.0);
         return;
     }
     bool changed = false;
     // The volumes that take the light of the sun dim what reaches the point from above and from the sun.
     float3 sun = frame.sun_direction.w > 0.5 ? fog_cell_sun(id, position, eye_ray, g, taken, changed) : float3(0.0);
-    float3 light = sun * mean_sun_only;
+    float3 light = sun * mean_sun_only + render_units(glow);
     if (luminance(mean.rgb) > 0.0) light += mean.rgb * (media_ambient(position, -eye_ray) * fog_shade(position, float3(0.0, 1.0, 0.0), taken) + media_local_light(position, eye_ray, g, local_pick.y, changed) + sun);
-    float4 now = float4(light / max(scattered, float3(1e-12)), 1.0);
+    float4 now = float4(light / amount, 1.0);
     float4 before;
     if (!changed && fog_before(id, before)) now = lerp(now, before, fog.history);
     light_now[id] = float4(finite_or_zero(now.rgb), saturate(now.a));

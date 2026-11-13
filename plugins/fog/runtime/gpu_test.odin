@@ -177,6 +177,40 @@ fog_goes_on_past_the_grid_without_a_seam :: proc(t: ^testing.T) {
 	expect_clean(t, f.device)
 }
 
+// With no light at all, a fog that absorbs everything it stops shows its
+// glow where it is thick, in the grid and past it, with the hue of its glow;
+// without a glow it is black.
+@(test)
+a_fog_shows_its_glow_without_any_light :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	if !gpu_fixture_init(t, f) {return}
+	defer gpu_fixture_destroy(f)
+	r := &f.renderer
+	gpu.scene_set_environment(r, {}, {})
+	gpu.scene_update(r, 0, {{object_id = 1, mesh = f.cube, transform = trs({0, 0, -400}, {800, 800, 1}), tint = {0, 0, 0}}}, true)
+	camera := gpu.Camera{position = {0, 0, 0}, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.1, exposure = gpu.UNIT_EXPOSURE}
+	places := []volume.Volume{volume.box({300, 300, 250})}
+	poses := []mm.Transform{{position = {0, 0, -150}, rotation = 1, scale = 1}}
+	centre :: proc(image: Image, x, y: int) -> [3]f32 {
+		i := (y * image.width + x) * 4
+		return {f32(image.pixels[i]), f32(image.pixels[i + 1]), f32(image.pixels[i + 2])}
+	}
+	shown: [2][3]f32
+	for glow, k in ([2][3]f32{{0.2, 0, 1}, {}}) {
+		fogs := []Fog_Volume{{density = 0.02, glow = glow}}
+		for i in 0 ..< 30 {fog_frame(t, f, camera, f32(i) / 60, fogs, places, poses, cut = i == 0)}
+		image, ok := capture(t, f)
+		if !ok {return}
+		defer delete(image.pixels)
+		shown[k] = centre(image, WIDTH / 2, HEIGHT / 2)
+	}
+	lit := shown[0]
+	testing.expectf(t, lit.b > 60 && lit.b > lit.r + 20 && lit.r > lit.g + 10, "the glow shows with its hue, blue over red over green: %v", lit)
+	testing.expectf(t, max(shown[1].r, shown[1].g, shown[1].b) < 3, "without a glow the fog shows nothing: %v", shown[1])
+	expect_clean(t, f.device)
+}
+
 // Looking down at a dark ground through a fog in an L outline: the L is fogged, its notch, inside the
 // box of the outline, is as clear as the ground without the fog.
 @(test)
