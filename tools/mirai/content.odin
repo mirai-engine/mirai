@@ -47,6 +47,8 @@ cmd_content :: proc(root:string,args:[]string) -> int {
         fmt.eprintfln("mirai content: %s has no content tool: its tools/content is a program that writes its assets",owner)
         return 1
     }
+    // The compiler reads the tests of the packages the tool imports, which name their test worlds.
+    if !test_worlds(root,tool) {return 1}
     command:=content_command(root,owner,tool,first,arguments)
     return run_with(working,command[:],os.stdout)
 }
