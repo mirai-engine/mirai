@@ -465,6 +465,10 @@ ai_send_task_prompt :: proc(s:^Session,worker:^Ai_Worker,task:^Ai_Task) {
 
 ai_model_choices :: proc(s:^Session,provider:Ai_Provider,value:json.Value) {
     m:=s.ai
+    before,count_before:=m.models[provider],m.model_counts[provider]
+    defer if m.connections[provider].agent==.Claude && (m.model_counts[provider]!=count_before || m.models[provider]!=before) && !ai_agents_write(m) {
+        notify(s,"The models the agent offered could not be saved")
+    }
     options,_:=acp.at(value,"configOptions").(json.Array)
     for option in options {
         if acp.text(acp.at(option,"category"))!="model" {continue}
