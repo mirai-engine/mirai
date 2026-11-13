@@ -12,8 +12,6 @@ import "mirai:std/base"
 // the same RGBA8 texture, read the levels instead of making them again. Its
 // files are textures built by BUILD_VERSION.
 
-CACHE_BUDGET :: 1<<30 // bytes of the folder
-
 // An image built with options: its bytes, encoded, or the texels of made
 // (whose width is 0 for encoded bytes).
 cache_key_build :: proc(bytes:[]u8,made:Source,options:Build_Options) -> u64 {
@@ -49,9 +47,9 @@ cache_read :: proc(folder:string,key:u64,types:^asset.Types,allocator:=context.a
 
 // Keeps built under key; false when it cannot be written, which costs only
 // the time of building it the next time.
-cache_write :: proc(folder:string,key:u64,types:^asset.Types,built:^Built,budget:=i64(CACHE_BUDGET)) -> bool {
+cache_write :: proc(folder:string,key:u64,types:^asset.Types,built:^Built) -> bool {
     if !cache.ready(folder) {return false}
     if asset.texture_save(cache.file_path(folder,key,".tex"),types,built_desc(built,cache.id(key,BUILD_VERSION),nil))!=.None {return false}
-    cache.trim(folder,budget)
+    cache.written(folder)
     return true
 }

@@ -1,10 +1,12 @@
 package sources
 
 import "core:fmt"
+import "core:io"
 import "core:mem"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
+import "core:time"
 import "mirai:asset"
 import "mirai:core"
 import importer "mirai:cook/import"
@@ -55,6 +57,9 @@ Sync_Options :: struct {
     fast_textures:bool,
     worker:jobs.Worker_Ref,
     library:Library,                 // nil: the formats of the engine alone, and no model imports
+    // Where it says, as it goes, each source it imports, why and how far it
+    // is (importer.Progress); nil: nowhere.
+    progress:io.Writer,
 }
 
 Sync_Report :: struct {
@@ -106,6 +111,9 @@ sync :: proc(root:string,options:Sync_Options={},allocator:=context.allocator) -
     listed:=make(map[string]struct{},context.temp_allocator) // the files of the imported folder the sidecars list
     versions:=kind_versions(top,context.temp_allocator)
     complete:=true
+    // The sources to import, found first so that each line says how many there are.
+    Pending :: struct {source:string,formats:[]importer.Format,wholes:[]Whole_Source,kind:Source_Kind,version:u32,code:u64,why:string}
+    pending:=make([dynamic]Pending,context.temp_allocator)
     todo:=make([dynamic]string,context.temp_allocator)
     append(&todo,assets)
     for next:=0;next<len(todo);next+=1 {
@@ -157,23 +165,47 @@ sync :: proc(root:string,options:Sync_Options={},allocator:=context.allocator) -
                 if outputs_held(sidecar,imported,fast) {key,current=fast,true}
             }
             report.sources+=1
-            if !current || !documents_read(sidecar,&registry,versions) || options.rebuild {
-                if kind==.Model {library_read(&library,options,top,&import_options)}
-                written,import_error:=import_source(source,import_options,formats,wholes,allocator)
-                if import_error.code!=.None {
-                    append(&report.failures,fmt.aprintf("%s: %s",source,import_error.message,allocator=allocator))
-                    complete=false
-                    continue
-                }
-                report.imported+=1
-                for warning in written.warnings {append(&report.warnings,fmt.aprintf("%s: %s",source,warning,allocator=allocator))}
-                importer.report_destroy(&written)
-                // What the import gives now: a part the source gained, or lost.
-                if sidecar,_,error=importer.sidecar_load(source,context.temp_allocator);error.code!=.None {complete=false;continue}
-                key=importer.import_key(source,sidecar,version,code,options.fast_textures,&hashes)
+            why:string
+            switch {
+            case options.rebuild:why="everything is built again"
+            case !current:why="what it is built from changed"
+            case !documents_read(sidecar,&registry,versions):why="a document of it is of a version this build does not read"
+            case:
+                for file in outputs_files(sidecar,imported,key) {listed[filepath.base(file)]={}}
+                continue
             }
-            for file in outputs_files(sidecar,imported,key) {listed[filepath.base(file)]={}}
+            append(&pending,Pending{source,formats,wholes,kind,version,code,why})
         }
+    }
+    for p,at in pending {
+        named:=strings.trim_prefix(p.source,fmt.tprintf("%s/",assets))
+        if options.progress.procedure!=nil {fmt.wprintfln(options.progress,"importing %s (%d of %d): %s",named,at+1,len(pending),p.why)}
+        started:=time.tick_now()
+        if p.kind==.Model {library_read(&library,options,top,&import_options)}
+        progress:importer.Progress
+        source_options:=import_options
+        if options.progress.procedure!=nil {
+            importer.progress_begin(&progress,options.progress,named)
+            source_options.progress=&progress
+        }
+        written,import_error:=import_source(p.source,source_options,p.formats,p.wholes,allocator)
+        if import_error.code!=.None {
+            if options.progress.procedure!=nil {fmt.wprintfln(options.progress,"  %s failed after %.1f s",named,time.duration_seconds(time.tick_since(started)))}
+            append(&report.failures,fmt.aprintf("%s: %s",p.source,import_error.message,allocator=allocator))
+            complete=false
+            continue
+        }
+        report.imported+=1
+        kept:=0
+        for asset in written.assets {kept+=int(asset.kept)}
+        if options.progress.procedure!=nil {fmt.wprintfln(options.progress,"  %s: %d assets (%d kept), %d warnings, %.1f s",named,len(written.assets),kept,len(written.warnings),time.duration_seconds(time.tick_since(started)))}
+        for warning in written.warnings {append(&report.warnings,fmt.aprintf("%s: %s",p.source,warning,allocator=allocator))}
+        importer.report_destroy(&written)
+        // What the import gives now: a part the source gained, or lost.
+        sidecar,_,error:=importer.sidecar_load(p.source,context.temp_allocator)
+        if error.code!=.None {complete=false;continue}
+        key:=importer.import_key(p.source,sidecar,p.version,p.code,options.fast_textures,&hashes)
+        for file in outputs_files(sidecar,imported,key) {listed[filepath.base(file)]={}}
     }
     if !complete {return}
     entries,_:=os.read_all_directory_by_path(imported,context.temp_allocator)

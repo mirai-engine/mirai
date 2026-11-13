@@ -140,6 +140,17 @@ image_embedded :: proc(r:^Reader,key,name:string,data:[]u8,srgb,normal_map:bool)
     return len(r.images)-1
 }
 
+// An image only the format decodes: make makes its texels of data when the
+// texture cache does not keep its texture; the same data gives the same
+// texels. key tells it apart from the other images of the source.
+image_made :: proc(r:^Reader,key,name:string,data:[]u8,make:Image_Make,srgb,normal_map:bool,keep_precision:=false) -> int {
+    k:=Image_Key{key,srgb,normal_map}
+    if row,found:=r.image_rows[k];found {return row}
+    append(&r.images,Imported_Image{name=own(r,name),data=own_slice(r,data),make=make,srgb=srgb,normal_map=normal_map,keep_precision=keep_precision})
+    r.image_rows[Image_Key{own(r,key),srgb,normal_map}]=len(r.images)-1
+    return len(r.images)-1
+}
+
 // An image a format made itself from its texels: a conversion of other
 // images, or a texture of an engine with its layers and the precision of its
 // source. key tells it apart from the other images of the source.

@@ -20,8 +20,6 @@ import "mirai:std/jobs"
 // texture cache: building the same geometry with the same settings again
 // reads it.
 
-MESH_CACHE_BUDGET :: 4<<30 // bytes of the folder
-
 // The version of what builds a mesh: its file of the cache is built again
 // when the writer, the format of .mesh or the key of its settings change.
 MESH_CACHE_VERSION :: u64(MESH_SETTINGS_KEY)<<32|u64(IMPORTER_VERSION)<<16|u64(asset.MESH_VERSION)
@@ -123,16 +121,16 @@ mesh_cook :: proc(mesh:^Imported_Mesh,settings:Import_Settings,options:Import_Op
             id=cache.id(key,MESH_CACHE_VERSION),geometry=cooked.geometry,slots=slots,joints=mesh.joints,
             colliders=cooked.collision.colliders,collision_points=cooked.collision.points,collision_indices=cooked.collision.indices,
         }
-        if asset.mesh_save(cache.file_path(folder,key,".mesh"),&types,desc)==.None {cache.trim(folder,MESH_CACHE_BUDGET)}
+        if asset.mesh_save(cache.file_path(folder,key,".mesh"),&types,desc)==.None {cache.written(folder)}
     }
 }
 
 // Builds the levels of a texture, or reads them from the texture cache, into
-// the arena of cooked. bytes are the encoded image, or the texels of made
-// when its width is not 0; decoded, when given, the RGBA8 pixels of encoded
-// bytes that were decoded already, which an image of more than 8 bits does
-// not build from.
-texture_cook :: proc(bytes:[]u8,made:textures.Source,decoded:textures.Image,build:textures.Build_Options,options:Import_Options,cooked:^Cooked_Texture,parent:mem.Allocator) {
+// the arena of cooked. bytes are the encoded image, the texels of made when
+// its width is not 0, or what make makes the texels of; decoded, when given,
+// the RGBA8 pixels of encoded bytes that were decoded already, which an image
+// of more than 8 bits does not build from.
+texture_cook :: proc(bytes:[]u8,made:textures.Source,decoded:textures.Image,build:textures.Build_Options,options:Import_Options,cooked:^Cooked_Texture,parent:mem.Allocator,make:Image_Make=nil) {
     build:=build
     mem.dynamic_arena_init(&cooked.arena,parent,parent,block_size=1<<20,out_band_size=1<<20)
     allocator:=base.dynamic_arena_allocator(&cooked.arena)
@@ -162,6 +160,12 @@ texture_cook :: proc(bytes:[]u8,made:textures.Source,decoded:textures.Image,buil
     }
     jobs.worker_zone(options.worker,"texture.build")
     switch {
+    case make!=nil && decoded.pixels!=nil:
+        cooked.built,cooked.error=textures.build(textures.rgba8(decoded.pixels,decoded.width,decoded.height),build,allocator,options.worker)
+    case make!=nil:
+        source,ok:=make(bytes,context.temp_allocator)
+        if !ok {cooked.error=.Unsupported;return}
+        cooked.built,cooked.error=textures.build(source,build,allocator,options.worker)
     case made.width>0:
         cooked.built,cooked.error=textures.build(made,build,allocator,options.worker)
     case decoded.pixels!=nil && !textures.source_wide(bytes):
@@ -181,8 +185,9 @@ fast_settings :: proc(build:textures.Build_Options) -> u64 {
 }
 
 // The bytes a texture of an image is built from: the image file, the encoded
-// image inside the source or the texels the format made (made, of width
-// above 0). In the temp allocator.
+// image inside the source, what the format makes the texels of (Image_Make)
+// or the texels the format made (made, of width above 0). In the temp
+// allocator.
 @(private)
 image_bytes :: proc(image:Imported_Image) -> (bytes:[]u8,made:textures.Source,ok:bool) {
     if image.path!="" {
@@ -240,7 +245,7 @@ model_cook :: proc(model:^Imported_Model,options:Import_Options) {
             } else {
                 image:=work.model.images[item.image]
                 bytes,made,_:=image_bytes(image)
-                texture_cook(bytes,made,{},image_build_options(image,work.settings),options,image.cooked,work.parent)
+                texture_cook(bytes,made,{},image_build_options(image,work.settings),options,image.cooked,work.parent,image.make)
             }
         }
     }

@@ -74,6 +74,7 @@ Import_Options :: struct {
     // job system, or the job that imports), which runs its builds in
     // parallel on that system, and records zones in its profile.
     worker:jobs.Worker_Ref,
+    progress:^Progress, // where it says how far it is as it writes; nil: nowhere
 }
 
 // A zone of the import that base.profile_end ends.
@@ -94,7 +95,11 @@ material_map :: #force_inline proc(info:^asset.Material_Info,slot:asset.Material
 Imported_Image :: struct {
     name:string,         // file name without extension; for an embedded image, its name in the model
     path:string,         // absolute path of the file; "" when the image is inside the model
-    data:[]u8,           // the encoded image, when it is inside the model
+    data:[]u8,           // the encoded image, when it is inside the model; with make, what its format makes the texels from
+    // Makes the texels of data, for an image only its format decodes: the
+    // texture cache keeps its texture by data, so a texture built before is
+    // taken without making them. nil for an encoded image or file.
+    make:Image_Make,
     made:textures.Source, // the texels, when the format made the image itself (a conversion, a texture of an engine); width 0 when not
     srgb:bool,
     normal_map:bool,
@@ -104,6 +109,10 @@ Imported_Image :: struct {
     channels:textures.Channels, // what each channel of its texture is made of (a gloss map turned into roughness); the zero value keeps them
     cooked:^Cooked_Texture, // built ahead by model_cook; nil when not
 }
+
+// The texels a format makes of the data of one of its images, in allocator;
+// false when it cannot. Called from any thread, and more than once.
+Image_Make :: #type proc(data:[]u8,allocator:mem.Allocator) -> (made:textures.Source,ok:bool)
 
 Imported_Material :: struct {
     name:string,

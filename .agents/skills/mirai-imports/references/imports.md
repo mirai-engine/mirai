@@ -306,6 +306,11 @@ that was just cloned, a worktree that was just made or a branch that changed a s
   but tests, with the plugins it holds, as `Whole_Source.code` and
   `Import_Options.importer_code`), so a change of that code imports it again with no version to
   raise; its importer reads the settings its sidecar keeps, as every import does.
+- It finds what to import first, then imports it, saying as it goes (`Sync_Options.progress`) a
+  line per source with why and how many of the sources it is, and under it, every
+  `importer.PROGRESS_EVERY`, the assets written of those its sidecar listed
+  (`Import_Options.progress`). `mirai import` passes its output, and the build shows the lines of
+  the import program as it prints them.
 - A file of the imported folder that no sidecar with its source next to it lists under its
   current key is removed. A source that does not import is a failure of the report that names it:
   the others are imported, and nothing is removed.
@@ -328,7 +333,8 @@ when it gets to it, with the same functions. Ids, files and parts are decided on
 single thread and in the usual order: with or without a job system the same bytes are written.
 
 - An import whose outputs of the cache are all current builds nothing beforehand, except with
-  `rebuild`.
+  `rebuild`; a whole source that reads its models ahead asks `outputs_current` before cooking
+  them.
 - `Import_Options.worker` is the worker of the job system that calls (`jobs.Worker_Ref`: the owner,
   or the job that imports); without a system, everything runs on the calling thread. The BC blocks
   of a texture go in parallel rows of the same system, and without it, in one of their own if they
@@ -369,10 +375,15 @@ shares it.
   one a cook was given, so checkouts with other encoders share the folder without sharing entries.
 - `cache_read` checks hash and key: a damaged file or one of another `TEXTURE_VERSION` is a miss and
   is built again. Reading an entry marks it used.
-- An entry belongs to no asset (an old one serves again when switching branch or setting): that is
-  why it is bounded by size, `CACHE_BUDGET`, and `cache.trim` deletes the ones used longest ago.
-  Deleting the folder only costs time. The mechanism (file per key, key id and version, read that
-  marks use, budget) is `cook/cache`, the same as the mesh cache.
+- An entry belongs to no asset (an old one serves again when switching branch or setting): an
+  entry no build used for `cache.UNUSED_AGE` is deleted (`cache.trim`, at most once per
+  `cache.TRIM_EVERY` after a write), never one by size, so a project larger than any budget keeps
+  what its next import reads. Deleting the folder only costs time. The mechanism (file per key,
+  key id and version, read that marks use, age) is `cook/cache`, the same as the mesh cache.
+- An image only its format decodes (`Imported_Image.make`, added with `importer.image_made`) is
+  keyed by its `data`, what the format makes the texels of: a texture the cache keeps for it is
+  written without decoding it, and the format raises a version inside its data when the same data
+  would make other texels.
 
 ### Mesh cache
 
@@ -388,8 +399,8 @@ pass), one `.mesh` per key with its levels, clusters and colliders, without mate
 - A mesh that is not kept looks for its key; if it is there, it is written with the id, the slots,
   the skeleton and the `Import_Info` of this import, the same bytes as building it. `rebuild` does
   not read the cache and rewrites it.
-- It saves simplifying, the cluster DAG and the pages; reading the source, no. It is bounded by
-  `MESH_CACHE_BUDGET`.
+- It saves simplifying, the cluster DAG and the pages; reading the source, no. Its entries go by
+  age, as those of the texture cache.
 
 ## Settings of a source
 

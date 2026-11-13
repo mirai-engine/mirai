@@ -224,6 +224,11 @@ job_pixels :: proc(job:^Texture_Job) -> (pixels:[]u8,width,height:int) {
         if job.made.format!=.RGBA8 || job.made.layers>1 {return nil,0,0}
         return job.bytes,job.made.width,job.made.height
     }
+    if job.decoded.pixels==nil && job.make!=nil {
+        made,ok:=job.make(job.bytes,context.temp_allocator)
+        if !ok || made.format!=.RGBA8 || made.layers>1 {return nil,0,0}
+        job.decoded={pixels=made.texels,width=made.width,height=made.height}
+    }
     if job.decoded.pixels==nil {
         image,error:=textures.image_decode(job.bytes,context.temp_allocator)
         if error!=.None {return nil,0,0}
