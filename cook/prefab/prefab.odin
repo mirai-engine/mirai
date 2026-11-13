@@ -295,6 +295,7 @@ model_write :: proc(model:^importer.Imported_Model,path:string,options:importer.
     types:asset.Types
     asset.types_init(&types)
     defer asset.types_destroy(&types)
+    if options.world.schema!=nil {types.defaults=&options.world.schema.schema}
     prefab_zone:=importer.zone_begin(options,"prefab.save")
     built,prefab_error:=model_prefab(model,&report,&types,options.world,id,name,target,&report.prefab_info,allocator)
     base.profile_end(prefab_zone)
