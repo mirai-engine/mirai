@@ -115,7 +115,10 @@ the assets.
   explicitly, in `mirai build`; the editor never imports by itself.
 - **Reimporting keeps what a person changed.** A material stores what the source gave and the next
   import rewrites only that: fields changed afterwards stay, like the overrides of a prefab
-  ([materials](references/imports.md#what-is-written)).
+  ([materials](references/imports.md#what-is-written)). Any other document it writes over is
+  never written over unasked: one changed since the import wrote it stops the import, which names
+  it, and only `discard_changes` writes over it; a sync leaves it as it is and warns
+  ([changed documents](references/imports.md#changed-documents)).
 - **What an asset was built from is its `Import_Info`**: source (size and hash), writer and format
   version, and only the settings the asset is made from. Whether a file of the cache is current
   is said once, by its name (the key of what the import builds from), and a mesh or a texture
@@ -220,9 +223,12 @@ the assets.
   `asset/registry_test.odin` (the listing of the cache by where the sidecar is, never by the order
   of a scan), `cook/import/sources/settings_test.odin` (a sidecar that is not one is refused) and
   `cook/import/sources/write_test.odin` (importing again keeps what was changed in a material and
-  takes the rest from the source). After changing what an import writes, prove it on the demo:
-  delete `demo/.mirai/imported`, `mirai build editor demo`, and `git status` shows no sidecar
-  or document changed.
+  takes the rest from the source); a document changed since its import wrote it:
+  `an_import_does_not_write_over_a_document_changed_since_it_wrote_it` and the whole source of
+  `sync_imports_again_a_whole_source_when_what_it_is_built_from_changes` (reimport tests), the
+  question of the editor in `editor/import_api_test.odin`. After changing what an import writes,
+  prove it on the demo: delete `demo/.mirai/imported`, `mirai build editor demo`, and
+  `git status` shows no sidecar or document changed.
 - `cook/import/sources/cli_test.odin` needs `MIRAI_ROOT` (defined by `mirai test`); run it when
   touching `cook/import/sources/command.odin`. It imports in-process with `command`; the whole
   path (`mirai import` → `mirai-import`) needs the built engine.

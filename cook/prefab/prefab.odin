@@ -286,6 +286,8 @@ model_write :: proc(model:^importer.Imported_Model,path:string,options:importer.
     name:=filepath.stem(path)
     source:=importer.source_path(options,path)
     id,target:=report.prefab,report.prefab_path
+    // A prefab changed since the import wrote it, which the import keeps (Changed.Keep).
+    if target=="" {return report,{}}
     if options.world==nil {
         importer.report_destroy(&report)
         return {},importer.error_make(.Write,"the prefab %s is written in the types of the game, which the library of the project's editor has: %s",target,author.BUILD_FIX)
@@ -299,6 +301,10 @@ model_write :: proc(model:^importer.Imported_Model,path:string,options:importer.
     if prefab_error!=.None {
         importer.report_destroy(&report)
         return {},importer.error_make(.Write,"the prefab %s could not be written: %v",target,prefab_error)
+    }
+    if !importer.output_recorded(path,id,target) {
+        importer.report_destroy(&report)
+        return {},importer.error_make(.Write,"%s%s, which records what the import wrote, could not be written",path,importer.SIDECAR_EXTENSION)
     }
     size:int
     if info,stat_error:=os.stat(target,context.temp_allocator);stat_error==nil {size=int(info.size)}

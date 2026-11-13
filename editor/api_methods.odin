@@ -298,7 +298,7 @@ Api_Editor_Camera :: struct {
 }
 Api_Editor_Interactions :: struct {
     captured_by:string `mirai:"label=What holds the pointer in the viewport: look pan select or gizmo; empty when nothing does"`,
-    modal:string `mirai:"label=The dialog that blocks the editor: confirm shortcuts settings delete_asset or git_discard; empty when none does"`,
+    modal:string `mirai:"label=The dialog that blocks the editor: confirm shortcuts settings delete_asset git_discard or import_changes; empty when none does"`,
     popups:int `mirai:"label=Popups open"`,
     editing_text:bool `mirai:"label=Whether a text field takes the keys"`,
     dialog_pending:bool `mirai:"label=Whether a file dialog of the system waits for an answer"`,

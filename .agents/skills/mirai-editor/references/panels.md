@@ -872,6 +872,10 @@ output folders in [importers](../../mirai-imports/SKILL.md).
   which `mirai import` applies too); `asset.import {image}` chooses it.
 - The sidecar of a source (`<source>.import`) keeps its settings and the id of each asset;
   reimporting writes the same assets with their ids where they are and keeps what did not change.
+  Over a document changed since its import wrote it, the dialog and a file dropped ask first
+  (`Modal.Import_Changes`, with what changed: discard and import, or cancel), and `asset.import`
+  fails naming it
+  ([changed documents](../../mirai-imports/references/imports.md#changed-documents)).
   Textures with
   the same image and settings and meshes with the same geometry and settings come from their caches
   ([textures](../../mirai-imports/references/imports.md#texture-cache),

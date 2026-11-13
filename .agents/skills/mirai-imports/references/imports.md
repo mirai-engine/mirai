@@ -252,6 +252,26 @@ source, the engine's or a plugin's:
 - **The textures of a model** name the model as source and the image as name, with the size and
   hash of the image.
 
+### Changed documents
+
+An import never writes over a change it did not make without being told to. The sidecar records,
+for each document the import writes over, the `content_hash` of its header as the import last
+wrote it (`written`); the registry already has the hash of each file, so finding what changed
+reads no document. A change of owner alone (`asset.detach`) is none. A material records nothing:
+the import follows its source only where nobody changed it.
+
+- `Import_Options.changed` says what an import does with a changed document: `Refuse` (the
+  default) writes nothing and fails with `Error_Code.Changed`, naming the files and how to go on;
+  `Discard` writes over them, with what its writer keeps of a person's (the body parts and sockets
+  of a skeleton, the roots of clips); `Keep` leaves them as they are, imports the rest and warns of
+  each.
+  `discard_changes` of `asset.import`, `--discard-changes` of `mirai import` and the question of
+  the editor are `Discard`; [sync](#sync) is `Keep`, so a build never loses an edit and still
+  builds the cache.
+- What a writer gives of a kept document goes to a file of the imported folder that the import
+  removes when it ends, so a plugin that imports a whole source keeps the same calls; the prefab of
+  a model it keeps has no `prefab_path`.
+
 ### Parts
 
 The `owner` of an output says that the content browser shows it inside the model's prefab. Only
@@ -303,6 +323,8 @@ that was just cloned, a worktree that was just made or a branch that changed a s
   keeps for it (`importer.Source_Hashes`, in `.mirai/cache/sources`) is taken from there, so a
   build reads only the files that changed. A USD is composed by `usdcat`, which does not say which
   layers it read: after changing one alone, import the stage.
+- A document changed since its import wrote it is left as it is, with a warning that names it
+  ([changed documents](#changed-documents)): the rest of the import is written.
 - It also imports a source with a document of a version of its kind this build does not read (the
   engine's in `asset.KINDS`, a plugin's in the `version` of its `asset_kinds`): the import writes
   it again in the current version, with its id and what was kept of it.

@@ -146,7 +146,11 @@ import_place :: proc(s:^Session) -> string {
 // skeleton, when not zero, is the skeleton of the project the clips of a model
 // play on (Import_Settings.skeleton), kept the same way; so is front, when
 // given, where a model stands facing (Import_Settings.front).
-import_file :: proc(s:^Session,source:string,folder:="",profiled:=false,rig:Maybe(importer.Import_Settings)=nil,image:Maybe(importer.Image_Use)=nil,skeleton:base.Asset_Id={},front:Maybe(importer.Front)=nil) -> bool {
+// A source whose import wrote documents that changed since (the entities
+// added to the scene of a map) is not imported unless discard writes over
+// them: ask opens the question (Modal.Import_Changes), else it fails naming
+// them.
+import_file :: proc(s:^Session,source:string,folder:="",profiled:=false,rig:Maybe(importer.Import_Settings)=nil,image:Maybe(importer.Image_Use)=nil,skeleton:base.Asset_Id={},front:Maybe(importer.Front)=nil,discard:=false,ask:=false) -> bool {
     a:=s.app.assets
     if a==nil || a.registry.root=="" {
         import_say(s,"There is no asset folder to import into")
@@ -191,6 +195,24 @@ import_file :: proc(s:^Session,source:string,folder:="",profiled:=false,rig:Mayb
             source=copied
         }
     }
+    if changed:=import_changed(s,source);len(changed)>0 && !discard {
+        if ask && s.gui!=nil {
+            modal_close(s.gui)
+            base.text_set(s.gui.import_source[:],source)
+            append(&s.gui.import_changed,..changed)
+            s.gui.modal=.Import_Changes
+            return false
+        }
+        paths:=make([]string,len(changed),context.temp_allocator)
+        for id,at in changed {
+            file,_:=asset.registry_find(&a.registry,id)
+            paths[at]=file.path
+        }
+        one:=len(changed)==1
+        import_say(s,"%s: %s changed since it was last imported, and importing it again writes over %s: import with discard_changes to write over %s, or leave it as it is to keep %s",
+            name,strings.join(paths,", ",context.temp_allocator),one?"it":"them",one?"that change":"those changes",one?"it":"them")
+        return false
+    }
     root,_:=sources.source_root(source,context.temp_allocator)
     allocator:=runtime.heap_allocator()
     options:=importer.Import_Options{
@@ -199,6 +221,7 @@ import_file :: proc(s:^Session,source:string,folder:="",profiled:=false,rig:Mayb
         texture_cache=project.content_cache_path(s.project_root,project.TEXTURE_CACHE,allocator=allocator),
         mesh_cache=project.content_cache_path(s.project_root,project.MESH_CACHE,allocator=allocator),
         fast_textures=true,
+        changed=.Discard if discard else .Refuse,
     }
     formats:=import_formats(s)
     kind:=sources.Source_Kind.None if claimed else sources.source_kind(source,formats)
@@ -401,6 +424,46 @@ import_poll :: proc(s:^Session) {
     }
     base.text_set(status.message[:],string(s.importer.message[:s.importer.message_length]))
     for warning in report.warnings {log.warn(warning)}
+}
+
+// The documents the import of a source wrote that changed since it wrote
+// them (importer.outputs_changed), in the temp allocator; none for a source
+// never imported, or whose sidecar the import itself refuses.
+@(private)
+import_changed :: proc(s:^Session,source:string) -> []base.Asset_Id {
+    sidecar,found,error:=importer.sidecar_load(source,context.temp_allocator)
+    if !found || error.code!=.None {return nil}
+    return importer.outputs_changed(sidecar.outputs[:],&s.app.assets.registry,context.temp_allocator)
+}
+
+// Asks before importing a source again over documents of it that changed
+// since its import wrote them: they go back to what the source gives.
+@(private)
+import_changes_modal :: proc(s:^Session) {
+    g:=s.gui;ctx:=g.ctx
+    r:=files_registry(s)
+    closed:=false
+    defer if closed {modal_close(g)}
+    if ui.modal(ctx,shell_id(g,"import_changes"),{width=420,padding=16,gap=12,close=&closed}) {
+        source:=strings.clone(base.text_get(g.import_source[:]),context.temp_allocator)
+        changed:=len(g.import_changed)
+        ui.label(ctx,changed==1?"Discard a change?":fmt.tprintf("Discard %d changes?",changed),ui.metric(ctx,"font_heading"),ui.tone(ctx,"text"),font=ui.FONT_SEMIBOLD)
+        if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=2}) {
+            ui.label(ctx,fmt.tprintf("Changed since %s was imported",filepath.base(source)),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
+            for id in g.import_changed[:min(changed,GIT_DISCARD_ROWS)] {
+                if r==nil {break}
+                if file,found:=asset.registry_find(r,id);found {modal_asset_row(s,ctx,file)}
+            }
+            if changed>GIT_DISCARD_ROWS {ui.label(ctx,fmt.tprintf("and %d more",changed-GIT_DISCARD_ROWS),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))}
+        }
+        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"control")),gap=8,align_x=.End,align_y=.Center}) {
+            if ui.button(ctx,shell_id(g,"import_changes_cancel"),{label="Cancel",variant="field",width=90,height=ui.metric(ctx,"control"),center=true}).clicked {closed=true}
+            if ui.button(ctx,shell_id(g,"import_changes_confirm"),{label="Discard and import",variant="danger",width=150,height=ui.metric(ctx,"control"),center=true}).clicked {
+                modal_close(g)
+                import_file(s,source,discard=true)
+            }
+        }
+    }
 }
 
 // The sidecar of the import an asset is the root of (the prefab of a model,
@@ -676,7 +739,7 @@ import_frame :: proc(s:^Session) {
     p:=s.app.platform
     if p==nil || s.app.assets==nil {return}
     answer:=platform.dialog_result(p)
-    if answer.tag==DIALOG_IMPORT && answer.state==.Accepted {import_file(s,answer.path,folder=import_place(s))}
+    if answer.tag==DIALOG_IMPORT && answer.state==.Accepted {import_file(s,answer.path,folder=import_place(s),ask=true)}
     if answer.tag==DIALOG_AI_REFERENCE && answer.state==.Accepted {ai_reference_add(s,answer.path)}
     for event in platform.input_events(p) {
         if drop,dropped:=event.(platform.Drop_Event);dropped {
@@ -687,7 +750,7 @@ import_frame :: proc(s:^Session) {
                 ai_reference_add(s,path)
                 continue
             }
-            import_file(s,path,folder=import_place(s))
+            import_file(s,path,folder=import_place(s),ask=true)
         }
     }
 }

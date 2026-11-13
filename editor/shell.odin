@@ -58,7 +58,7 @@ DOCUMENT_LIBRARY_TABS :: [Document_Type]Library_Tabs{
     .Asset={.Content,.Ai,.Git},
 }
 Bottom_Tab :: enum u8 {Console,Build}
-Modal :: enum u8 {None,Confirm,Shortcuts,Settings,Delete_Asset,Git_Discard,Pending,No_Repository}
+Modal :: enum u8 {None,Confirm,Shortcuts,Settings,Delete_Asset,Git_Discard,Pending,No_Repository,Import_Changes}
 
 Splitter :: enum u8 {None,Bottom,Right}
 
@@ -138,6 +138,8 @@ Editor_Ui :: struct {
     pending:Pending,
     delete_asset:base.Asset_Id,     // what Modal.Delete_Asset asks about
     discard_path:[git.PATH_BYTES]u8, // what Modal.Git_Discard asks about; empty: every change
+    import_source:[API_PATH_BYTES]u8,   // what Modal.Import_Changes asks about: a source to import again
+    import_changed:[dynamic]base.Asset_Id, // its documents that changed since its import wrote them
     drag:Drag,
     placement:Placement,
     preview:Placement_Preview,
@@ -1607,6 +1609,7 @@ modal_build :: proc(s:^Session) {
     case .Settings: settings_modal(s)
     case .Delete_Asset: asset_delete_modal(s)
     case .Git_Discard:  git_discard_modal(s)
+    case .Import_Changes: import_changes_modal(s)
     case .Pending:      git_pending_modal(s)
     case .No_Repository: git_missing_modal(s)
     }

@@ -8,6 +8,7 @@ import "core:strings"
 import "mirai:asset"
 import "mirai:project"
 import "mirai:std/base"
+import "mirai:std/serial"
 
 // Which asset each part of a source is and where its file is. The sidecar of
 // the source says the asset: the output of its kind and name (of its kind for
@@ -116,9 +117,10 @@ parts_plan :: proc(w:^Writer,parts:[]Part) {
             if p.only || output.index==p.index {break}
         }
         p.id=writer_id(w)
+        written:u64
         if entry>=0 {
             w.taken[entry]=true
-            p.id=w.sidecar.outputs[entry].id
+            p.id,written=w.sidecar.outputs[entry].id,w.sidecar.outputs[entry].written
         }
         switch {
         case asset.import_cached(p.kind):
@@ -132,10 +134,12 @@ parts_plan :: proc(w:^Writer,parts:[]Part) {
             } else {
                 p.path=fresh_path(w,fmt.tprintf("%s%s",asset.safe_path(p.name),p.extension))
             }
+            // What is written of a document the import keeps goes nowhere.
+            if kept,keeping:=w.keeping[p.id];keeping {p.path=kept}
         }
         if folder:=filepath.dir(p.path);!os.is_dir(folder) {_=os.make_directory_all(folder)}
         p.output=len(w.outputs)
-        append(&w.outputs,Output{kind=p.kind,name=strings.clone(p.name,w.keep),index=p.index,id=p.id})
+        append(&w.outputs,Output{kind=p.kind,name=strings.clone(p.name,w.keep),index=p.index,id=p.id,written=written})
         append(&w.paths,strings.clone(p.path,w.keep))
     }
 }
@@ -156,6 +160,78 @@ parts_record :: proc(w:^Writer,parts:[]Part) {
     for &p in parts {
         if asset.import_cached(p.kind) && !p.given {w.outputs[p.output].part=p.owner!={}}
     }
+}
+
+// The documents among outputs that an import writes over and that changed
+// since it last wrote them: the file of each in registry (the assets of their
+// root) holds other content than the sidecar records (Output.written). A
+// change of owner alone (asset.detach) is no change. Their ids, in allocator.
+outputs_changed :: proc(outputs:[]Output,registry:^asset.Registry,allocator:=context.allocator) -> []base.Asset_Id {
+    changed:=make([dynamic]base.Asset_Id,allocator)
+    for output in outputs {
+        if output.written==0 || asset.import_cached(output.kind) {continue}
+        if file,found:=asset.registry_find(registry,output.id);found && file.kind==output.kind && file.imported==0 && file.content_hash!=output.written {append(&changed,output.id)}
+    }
+    return changed[:]
+}
+
+// Applies Import_Options.changed to the documents of the import that changed
+// since it last wrote them: Refuse fails naming them, Keep sends what would be
+// written of each to a file of the imported folder that goes when the import
+// ends, and warns of it.
+@(private)
+writer_changed :: proc(w:^Writer) -> bool {
+    if w.options.changed==.Discard {return true}
+    changed:=outputs_changed(w.sidecar.outputs[:],w.registry,context.temp_allocator)
+    if len(changed)==0 {return true}
+    names:=project.FOLDER_NAMES
+    paths:=make([]string,len(changed),context.temp_allocator)
+    for id,at in changed {
+        file,_:=asset.registry_find(w.registry,id)
+        paths[at]=fmt.tprintf("%s/%s",names[.Assets],file.path)
+    }
+    switch w.options.changed {
+    case .Refuse:
+        one:=len(changed)==1
+        return writer_fail(w,.Changed,"%s changed since %s was last imported, and importing it again writes over %s: import with discard_changes to write over %s, or leave it as it is to keep %s",
+            strings.join(paths,", ",context.temp_allocator),w.source,one?"it":"them",one?"that change":"those changes",one?"it":"them")
+    case .Keep:
+        w.keeping=make(map[base.Asset_Id]string,context.temp_allocator)
+        buffer:[base.ASSET_ID_TEXT]u8
+        for id,at in changed {
+            file,_:=asset.registry_find(w.registry,id)
+            info,_:=asset.kind_info(file.kind)
+            w.keeping[id]=fmt.tprintf("%s/%s.kept%s",w.imported,base.asset_id_format(id,buffer[:]),info.extension)
+            writer_warn(w,"%s changed since its import last wrote it and was left as it is: import %s with discard_changes to write over it",paths[at],w.source)
+        }
+    case .Discard:
+    }
+    return true
+}
+
+// What the file of a document holds: the content_hash of its header; 0 when
+// it is not an asset.
+@(private)
+written_hash :: proc(file:string) -> u64 {
+    head:[asset.HEADER_SIZE]u8
+    bytes,_,read_error:=serial.file_read_head(file,head[:])
+    if read_error!=.None {return 0}
+    header,header_error:=asset.header_read(bytes)
+    return header.content_hash if header_error==.None else 0
+}
+
+// Records in the sidecar of the source at source what the document id its
+// import wrote at file holds (Output.written): for one written once the import
+// ended, the prefab of a model.
+output_recorded :: proc(source:string,id:base.Asset_Id,file:string) -> bool {
+    sidecar,found,error:=sidecar_load(source,context.temp_allocator)
+    if !found || error.code!=.None {return false}
+    for &output in sidecar.outputs {
+        if output.id!=id {continue}
+        output.written=written_hash(file)
+        return sidecar_save(source,sidecar)
+    }
+    return false
 }
 
 // Ends the outputs of an import that wrote its assets: what its sidecar
@@ -189,6 +265,7 @@ writer_finish :: proc(w:^Writer) -> bool {
         id,_,named:=asset.imported_name(entry.name)
         if name,listed:=current[id];named && listed && name!=entry.name {os.remove(entry.fullpath)}
     }
+    for _,kept in w.keeping {os.remove(kept)}
     slice.sort(w.inputs[:])
     if !sidecar_save(w.path,{settings=w.report.settings,folder=w.sidecar.folder,inputs=w.inputs,outputs=w.outputs}) {
         return writer_fail(w,.Write,"%s%s, which keeps the ids of the import, could not be written",w.path,SIDECAR_EXTENSION)
