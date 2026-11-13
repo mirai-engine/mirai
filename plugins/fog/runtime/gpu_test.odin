@@ -410,7 +410,7 @@ fog_scatters_the_share_of_each_light :: proc(t: ^testing.T) {
 			sun := gpu.Sun_Desc{direction = linalg.normalize([3]f32{0.6, 0.5, 0.3}), color = {1, 1, 1}, illuminance = 2 * math.PI, enabled = !lamp, indirect = 1, scattering = share}
 			gpu.scene_set_environment(r, sun, {sky = {0.002, 0.002, 0.002}})
 			if lamp {
-				gpu.scene_light_update(r, 0, {position = {0, 0, -6}, color = {1, 1, 1}, intensity = 40 * math.PI, range = 20, radius = 0.05, indirect = 1, scattering = share})
+				gpu.scene_light_update(r, 0, {position = {0, 0, -6}, color = {1, 1, 1}, intensity = 6 * math.PI, range = 20, radius = 0.05, indirect = 1, scattering = share})
 			} else if len(r.scene.lights) > 0 {
 				gpu.scene_light_remove(r, 0)
 			}
