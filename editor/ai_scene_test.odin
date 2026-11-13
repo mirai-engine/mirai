@@ -3,6 +3,7 @@ package editor
 import "core:math"
 import "core:mem"
 import "core:testing"
+import "core:time"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:editor/history"
@@ -203,6 +204,14 @@ ai_scene_figures_render_as_transient_geometry_and_reuse_descriptors :: proc(t:^t
     gpu.scene_set_environment(renderer,{direction={0.3,0.8,0.6},color={1,1,1},illuminance=math.PI,enabled=true},{background={},use_background=true})
     gpu.scene_update(renderer,0,instances[:],true)
     camera:=gpu.Camera{position={0.375,0.5,2.4},forward={0,-0.05,-2.4},up={0,1,0},fov_y=45,near=0.05,far=100}
+    // The textures of its materials arrive in jobs over frames, as the editor's frames take them.
+    started:=time.tick_now()
+    for host.app_assets_arriving(app)>0 && time.tick_since(started)<10*time.Second {
+        app.stats.frames+=1
+        host.app_textures_stream(app)
+        if !testing.expect(t,gpu.renderer_frame(renderer,{camera=camera}),renderer.error) {return}
+    }
+    testing.expect_value(t,host.app_assets_arriving(app),0)
     for _ in 0..<4 {testing.expect(t,gpu.renderer_frame(renderer,{camera=camera}),renderer.error)}
     rhi.device_wait_idle(app.device)
     pixels,width,height,ok:=gpu.renderer_capture(renderer)
