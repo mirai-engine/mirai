@@ -48,6 +48,7 @@ Type_Add_Params :: struct {
     weight:f32 `mirai:"optional,min=0,max=1,label=Of those layers together at least"`,
     fade_distance:f32 `mirai:"optional,min=0,unit=m"`,
     cull_distance:f32 `mirai:"optional,min=0,unit=m"`,
+    impostor_distance:f32 `mirai:"optional,min=0,unit=m,label=From the eye, where its mesh gives way to its impostor and its shadows to its crown; 0: none"`,
     wind:f32 `mirai:"optional,min=0"`,
     casts_shadow:bool `mirai:"optional"`,
 }
@@ -72,6 +73,7 @@ Type_Set_Params :: struct {
     weight:f32 `mirai:"optional,min=0,max=1,label=Of those layers together at least"`,
     fade_distance:f32 `mirai:"optional,min=0,unit=m"`,
     cull_distance:f32 `mirai:"optional,min=0,unit=m"`,
+    impostor_distance:f32 `mirai:"optional,min=0,unit=m,label=From the eye, where its mesh gives way to its impostor and its shadows to its crown; 0: none"`,
     wind:f32 `mirai:"optional,min=0"`,
     casts_shadow:bool `mirai:"optional"`,
 }
@@ -322,6 +324,7 @@ type_values :: proc(call:^api.Call,t:^foliage.Foliage_Type,p:^$T,layers:[foliage
     if editor.tool_call_given(call,"weight") {t.rule.weight=p.weight}
     if editor.tool_call_given(call,"fade_distance") {t.fade_distance=p.fade_distance}
     if editor.tool_call_given(call,"cull_distance") {t.cull_distance=p.cull_distance}
+    if editor.tool_call_given(call,"impostor_distance") {t.impostor_distance=p.impostor_distance}
     if editor.tool_call_given(call,"wind") {t.wind=p.wind}
     if editor.tool_call_given(call,"casts_shadow") {t.casts_shadow=p.casts_shadow}
 }
