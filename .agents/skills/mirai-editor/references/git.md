@@ -64,8 +64,10 @@ file has changes.
 - Ctrl+S keeps the document in front and the files its steps wrote (`git_keep_front`);
   Ctrl+Shift+S keeps everything.
 - The editor lists the pending changes it finds when it opens, to keep or discard them before
-  starting, and again before it ends (`git_read`, `git_quit_ask`, `Modal.Pending`). The API ends
-  the editor without asking: what is pending stays pending.
+  starting, and again before it ends (`git_read`, `git_quit_ask`, `Modal.Pending`); the editor
+  ends once what the dialog asked succeeded, and what git refused is told and the editor stays.
+  The API ends the editor without asking: what is pending stays pending.
+- The paths of a command go to git on its stdin, never on its command line, which holds few.
 - **A project in no repository edits nothing**: a window shows Initialize repository or Quit
   (`Modal.No_Repository`), a headless editor says so once on stderr, and the methods that edit
   fail saying `git.init` (`git_missing`).

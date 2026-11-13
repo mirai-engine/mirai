@@ -91,7 +91,7 @@ a_written_obj_is_read_back_with_its_material_and_its_dependencies :: proc(t:^tes
     testing.expect_value(t,len(view.slots),1)
     testing.expect_value(t,view.slots[0].material,material_written.id)
     testing.expect(t,slice.contains(a.dependencies,material_written.id),"the mesh depends on its material")
-    testing.expect(t,view.source!=nil && string_of(view.source.importer[:])==importer.IMPORTER_NAME && string_of(view.source.name[:])=="ConcaveL" && view.source.source_hash==model.source_hash && view.source.source_size==model.source_size)
+    testing.expect(t,view.source!=nil && string_of(view.source.importer[:])==importer.IMPORTER_NAME && string_of(view.source.name[:])=="ConcaveL")
 
     m,m_loaded:=read_asset(t,material_written,&types)
     if !m_loaded {return}
@@ -283,7 +283,7 @@ a_humanoid_skeleton_is_written_with_its_body_and_keeps_what_a_person_set :: proc
     _,folder:=test_project(t,"write-body")
     if folder=="" {return}
     options:=importer.Import_Options{ignore_stored=true}
-    options.max_texture_size=4
+    options.textures=.Uncompressed
     body_of :: proc(t:^testing.T,folder:string,options:importer.Import_Options,types:^asset.Types) -> (map_:anim.Body_Map,bones:[]asset.Skeleton_Bone,path:string,sockets:[]asset.Skeleton_Socket) {
         model,ok:=import_ok(t,DEMO+"characters/mirai/mirai.glb",options)
         if !ok {return}
@@ -351,7 +351,7 @@ imported_clips_that_move_the_bone_above_the_pelvis_carry_it_as_their_root :: pro
     _,folder:=test_project(t,"write-root")
     if folder=="" {return}
     options:=importer.Import_Options{ignore_stored=true}
-    options.max_texture_size=4
+    options.textures=.Uncompressed
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     roots_of :: proc(t:^testing.T,folder:string,options:importer.Import_Options,types:^asset.Types) -> (roots:map[string]asset.Animation_Root,path:string,armature:string) {
         model,ok:=import_ok(t,DEMO+"characters/mirai/mirai.glb",options)
@@ -425,7 +425,7 @@ importing_again_keeps_what_was_changed_in_a_material_and_takes_the_rest_from_the
     texture,_=strings.replace_all(texture,"\\","/",context.temp_allocator)
     gltf,_:=strings.replace_all(string(text),"../textures/leaves_color.png",texture,context.temp_allocator)
     if !testing.expect(t,os.write_entire_file(source,transmute([]u8)gltf)==nil) {return}
-    options:=importer.Import_Options{ignore_stored=true,max_texture_size=4}
+    options:=importer.Import_Options{ignore_stored=true,textures=.Uncompressed}
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     import_once :: proc(t:^testing.T,source,folder:string,options:importer.Import_Options,types:^asset.Types) -> string {
         model,ok:=import_ok(t,source,options);if !ok {return ""}
@@ -537,7 +537,7 @@ images_that_are_missing_or_not_images_leave_a_warning_and_no_reference :: proc(t
 }
 
 @(test)
-embedded_images_and_the_maximum_texture_size_are_honored :: proc(t:^testing.T) {
+an_embedded_image_is_a_texture_of_its_whole_size :: proc(t:^testing.T) {
     _,folder:=test_project(t,"write-embedded")
     if folder=="" {return}
     encoded,_:=base64.encode(png_bytes(64,32,{200,100,50}),allocator=context.temp_allocator)
@@ -556,7 +556,7 @@ embedded_images_and_the_maximum_texture_size_are_honored :: proc(t:^testing.T) {
     defer importer.model_destroy(&model)
     testing.expect_value(t,len(model.images),1)
     testing.expect(t,model.images[0].path=="" && len(model.images[0].data)>0 && model.images[0].name=="wood")
-    report,error:=write_into(&model,fmt.tprintf("%s/out",folder),{max_texture_size=16})
+    report,error:=write_into(&model,fmt.tprintf("%s/out",folder),{textures=.Uncompressed})
     defer importer.report_destroy(&report)
     testing.expect_value(t,error.code,importer.Error_Code.None)
     testing.expect_value(t,len(report.warnings),0)
@@ -568,7 +568,7 @@ embedded_images_and_the_maximum_texture_size_are_honored :: proc(t:^testing.T) {
     if !loaded {return}
     defer asset.asset_close(&a)
     texture,_:=asset.texture_view(&a,&types)
-    testing.expect(t,texture.info.width==16 && texture.info.height==8 && texture.info.mip_count==5,"the largest size is capped and the chain is rebuilt")
+    testing.expect(t,texture.info.width==64 && texture.info.height==32 && texture.info.mip_count==7,"the image is kept whole, with every level")
 }
 
 @(test)

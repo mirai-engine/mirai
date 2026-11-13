@@ -57,6 +57,25 @@ a_library_makes_and_ends_bodies_of_its_own :: proc(t:^testing.T) {
     owned,is_owned=owned_body_of(&copied,body)
     testing.expect(t,is_owned && owned.user==42 && simulation_replaced(&copied,&seen) && !simulation_replaced(&copied,&seen))
 
+    // One hull of a cube, shared by shapes at their own scales: 4 m long here, 3 m deep there.
+    hulls:[dynamic]Hull_Handle
+    defer delete(hulls)
+    made,_:=owned_hulls(&f.state,nil,nil,{shape=.Cube},&hulls)
+    testing.expect(t,made && len(hulls)==1)
+    again,_:=owned_hulls(&f.state,nil,nil,{shape=.Cube},&hulls)
+    testing.expect(t,again && len(hulls)==2 && hulls[1]==hulls[0],"the same hull again")
+    hull:=collider_hull()
+    long:=owned_shape_create(&f.state,&f.collision,body,{collider=hull,position={20,0,0},rotation=1,user=10,hull=hulls[0],scale={4,1,1}})
+    deep:=owned_shape_create(&f.state,&f.collision,body,{collider=hull,position={-20,0,0},rotation=1,user=11,hull=hulls[0],scale={1,1,3}})
+    testing.expect(t,long!={} && deep!={})
+    end,_:=raycast(core.ref(&f.state),{30,-1,0},{-1,0,0},20)
+    testing.expect(t,end.shape==long && abs(end.distance-8)<1e-3,"2 m from its centre along x")
+    side,_:=raycast(core.ref(&f.state),{-20,-1,10},{0,0,-1},20)
+    testing.expect(t,side.shape==deep && abs(side.distance-8.5)<1e-3,"1.5 m from its centre along z")
+    testing.expect(t,!owned_hull_release(&f.state,hulls[0]),"kept while a shape uses it")
+    testing.expect(t,owned_shape_destroy(&f.state,long) && owned_shape_destroy(&f.state,deep))
+    testing.expect(t,owned_hull_release(&f.state,hulls[0]) && !owned_hull_release(&f.state,hulls[0]))
+
     testing.expect(t,owned_shape_destroy(&f.state,shape) && !owned_shape_destroy(&f.state,shape))
     testing.expect(t,owned_body_destroy(&f.state,body) && !owned_body_destroy(&f.state,body))
     _,is_owned=owned_body_of(&f.state,body)

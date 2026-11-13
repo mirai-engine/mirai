@@ -47,7 +47,7 @@ import "mirai:std/serial"
 // Skin vertices are immutable bind-space geometry. The palette transforms them
 // by inverse(mesh_node_world) * joint_world * inverse_bind.
 
-MESH_VERSION :: 11
+MESH_VERSION :: 13
 MESH_MAX_SLOTS :: 32
 MESH_MAX_LEVELS :: 32
 MESH_RAY_LEVELS :: 4 // the level 0 rays trace near, and up to three coarser cuts of the DAG for far away
@@ -231,6 +231,11 @@ Mesh_Desc :: struct {
     colliders:[]Collider,
     collision_points:[][3]f32,
     collision_indices:[]u32,
+    // Of a mesh without colliders that a cooked game moves with an Auto
+    // collider: the convex pieces of its finest level, the points of each one
+    // after another and how many each has. What a cook adds; an import, none.
+    piece_points:[][3]f32,
+    piece_sizes:[]u32,
     source:^Import_Info,
 }
 
@@ -242,6 +247,8 @@ Mesh_View :: struct {
     colliders:[]Collider,
     collision_points:[][3]f32,
     collision_indices:[]u32,
+    piece_points:[][3]f32,
+    piece_sizes:[]u32,
     source:^Import_Info,
 }
 
@@ -379,7 +386,7 @@ mesh_document :: proc(doc:^Document,types:^Types,desc:Mesh_Desc,allocator:=conte
     }
     for c in g.clusters {info.triangle_count+=cluster_triangle_count(c)}
     if len(desc.joints)>0 {info.flags+={.Skinned}}
-    view:=Mesh_View{info=&info,geometry=g,slots=desc.slots,joints=desc.joints,colliders=desc.colliders,collision_points=desc.collision_points,collision_indices=desc.collision_indices}
+    view:=Mesh_View{info=&info,geometry=g,slots=desc.slots,joints=desc.joints,colliders=desc.colliders,collision_points=desc.collision_points,collision_indices=desc.collision_indices,piece_points=desc.piece_points,piece_sizes=desc.piece_sizes}
     if !mesh_check(view) || !mesh_check_indices(view) {return .Invalid}
 
     document_init(doc,KIND_MESH,desc.id,allocator)
@@ -412,6 +419,7 @@ mesh_tables :: proc(doc:^Document,types:^Types,info:^Mesh_Info,view:Mesh_View,de
         bulk(doc,types,"collision_points",view.collision_points) or_return
         bulk(doc,types,"collision_indices",view.collision_indices) or_return
     }
+    if len(view.piece_sizes)>0 {mesh_pieces_put(doc,types,view.piece_points,view.piece_sizes) or_return}
     import_put(doc,types,desc.source) or_return
     if len(view.skin)>0 {
         vertices:=document_table_add(doc,"vertices",{.Bulk}) or_return
@@ -477,6 +485,24 @@ mesh_pages_repack :: proc(doc:^Document,profile:data.Profile) -> Error {
     return .None
 }
 
+// Gives a mesh document the convex pieces a cooked game moves it with
+// (Mesh_Desc.piece_points), in place of those it had.
+mesh_pieces_put :: proc(doc:^Document,types:^Types,points:[][3]f32,sizes:[]u32) -> Error {
+    total:=0
+    for size in sizes {
+        if size<3 {return .Invalid}
+        total+=int(size)
+    }
+    if total!=len(points) {return .Invalid}
+    for name in ([]string{"piece_points","piece_sizes"}) {
+        if table,found:=document_table(doc,name);found {document_table_remove(doc,table)}
+    }
+    if len(sizes)==0 {return .None}
+    document_put(doc,types,"piece_points",points,{.Bulk},.Stream,MESH_BULK_ALIGNMENT) or_return
+    _,error:=document_put(doc,types,"piece_sizes",sizes)
+    return error
+}
+
 mesh_save :: proc(path:string,types:^Types,desc:Mesh_Desc,allocator:=context.allocator) -> Error {
     doc:Document
     mesh_document(&doc,types,desc,allocator) or_return
@@ -502,6 +528,8 @@ mesh_view :: proc(a:^Asset,types:^Types) -> (view:Mesh_View,error:Error) {
     view.colliders=table_rows(a,types,"colliders",Collider) or_return
     view.collision_points=table_rows(a,types,"collision_points",[3]f32) or_return
     view.collision_indices=table_rows(a,types,"collision_indices",u32) or_return
+    view.piece_points=table_rows(a,types,"piece_points",[3]f32) or_return
+    view.piece_sizes=table_rows(a,types,"piece_sizes",u32) or_return
     view.source=import_info(a,types) or_return
     info:=view.info
     view.bounds_min,view.bounds_max,view.flags=info.bounds_min,info.bounds_max,info.flags
@@ -595,6 +623,12 @@ mesh_check :: proc(view:Mesh_View) -> bool {
         triangles+=count
     }
     if triangles!=info.triangle_count {return false}
+    pieced:=0
+    for size in view.piece_sizes {
+        if size<3 {return false}
+        pieced+=int(size)
+    }
+    if pieced!=len(view.piece_points) {return false}
     next:u32
     for level,at in view.levels {
         if level.first_cluster!=next || level.cluster_count==0 || !range_inside(level.first_cluster,level.cluster_count,len(view.clusters)) {return false}

@@ -8,11 +8,11 @@ editor (inspector, document, thumbnails and `particle.*`) is in [its reference](
 
 ## Format
 
-`plugins/vfx/runtime/effect` (`effect.KIND` `PART`, `.particle`, `effect.VERSION` 4; another
-version asks to write it again). An effect is like a material: entities name it
-(`vfx.Particle_Emitter`) and give it values of their own (`vfx.Particle_Override`, fields and
-program parameters alike). Tables: `particle` (`Particle_Info`), `parameters`
-(`Particle_Parameter`) and `hidden` (`Particle_Field`).
+`plugins/vfx/runtime/effect` (`effect.PARTICLE_KIND` `PART`, `.particle`,
+`effect.PARTICLE_VERSION` as the manifest declares it; another version asks to write it again).
+An effect is like a material: entities name it (`vfx.Particle_Emitter`) and give it values of
+their own (`vfx.Particle_Override`, fields and program parameters alike). Tables: `particle`
+(`Particle_Info`), `parameters` (`Particle_Parameter`) and `hidden` (`Particle_Field`).
 
 - `Particle_Info` is the destination of what is imported from other engines; its fields and
   their units are in `effect.odin`. Besides them:

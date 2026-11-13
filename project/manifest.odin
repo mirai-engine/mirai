@@ -118,6 +118,7 @@ Engine_Range :: struct {
 Asset_Kind :: struct {
     extension:[32]u8 `mirai:"text"`, // with the dot, in lowercase: ".particle"
     kind:[5]u8 `mirai:"text"`,       // the four letters its files begin with (asset.Fourcc)
+    version:u16,                     // of its files, which the plugin writes and reads alone (asset.kind_check); raised when what the kind stores changes
     merged:bool,                     // a document of rows that are edited, which git merges row by row and diffs by value through mirai, as asset.Kind_Info.merged says of a kind of the engine; false: bulk that an import, a bake or a recording makes, a whole file to git
     folder:[64]u8 `mirai:"text"`,    // of the package its constants are generated in, relative to the plugin; empty: runtime
     label:[32]u8 `mirai:"text"`,     // the kind as the content browser says it and the name of its filter; empty: the browser does not list it
@@ -175,7 +176,7 @@ Error_Code :: enum u8 {
     Automatic_Alone,    // subject is automatic and depends on nothing
     Source_Invalid,     // the source subject has no url, or its commit is not the full hash of one
     Import_Source_Invalid, // the extension subject of import_sources is not a dot and lowercase letters, digits and '_', or it is there twice
-    Asset_Kind_Invalid, // of the asset kind of the extension subject: the extension is not a dot and lowercase letters, digits and '_', its kind is not four printable letters, its folder is not a relative path, or its extension or kind is there twice
+    Asset_Kind_Invalid, // of the asset kind of the extension subject: the extension is not a dot and lowercase letters, digits and '_', its kind is not four printable letters, it has no version, its folder is not a relative path, or its extension or kind is there twice
     Schema_Failed,      // std/serial cannot describe the type subject: a defect of the engine, not of the file
     Out_Of_Memory,      // nothing of the files is wrong
     Compression_Invalid, // subject, the compression of the project, is not none nor open
@@ -323,7 +324,7 @@ plugin_validate :: proc(m:^Plugin_Manifest) -> Error {
             continue
         }
         if extension[0]!='.' || !name_valid(extension[1:]) {return error_about(.Asset_Kind_Invalid,extension)}
-        if base.text_len(kind.kind[:])!=4 {return error_about(.Asset_Kind_Invalid,extension)}
+        if base.text_len(kind.kind[:])!=4 || kind.version==0 {return error_about(.Asset_Kind_Invalid,extension)}
         for letter in kind.kind[:4] {
             if letter<=' ' || letter>'~' {return error_about(.Asset_Kind_Invalid,extension)}
         }

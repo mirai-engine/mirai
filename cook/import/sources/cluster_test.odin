@@ -19,7 +19,7 @@ demo_level0 :: proc(t:^testing.T,folder,relative:string,file:^asset.Asset,types:
     source,name:=filepath.dir(relative),filepath.base(relative)
     copied:=copy_in(folder,DEMO,source)
     if filepath.ext(source)==".obj" {copy_in(folder,DEMO,"gallery/vase.mtl","gallery/vase_color.png")}
-    report,import_error:=import_source(copied,{world=prefab.import_world(t),textures=.Uncompressed,max_texture_size=4})
+    report,import_error:=import_source(copied,{world=prefab.import_world(t),textures=.Uncompressed})
     if !testing.expectf(t,import_error.code==.None,"%s: %s",source,import_error.message) {return}
     defer importer.report_destroy(&report)
     written,found:=written_of(&report,asset.KIND_MESH,name)

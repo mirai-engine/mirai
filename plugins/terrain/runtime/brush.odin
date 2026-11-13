@@ -9,9 +9,11 @@ import mm "mirai:std/math"
 // game asks to carve a sphere and the terrain under it, a Heightfield or a
 // Volume, takes it out. Add and Carve join or take the shape of the brush;
 // Raise and Lower move the surface by amount metres; Smooth, Flatten and Noise
-// take it a part of the way; Paint and Erase change the weight of a layer.
-// Hole, Fill, Ramp, Terrace and Erode are of a Heightfield alone.
-Brush_Kind :: enum u8 {Raise,Lower,Smooth,Flatten,Add,Carve,Paint,Erase,Hole,Fill,Ramp,Terrace,Noise,Erode}
+// take it a part of the way; Paint and Erase change the weight of a layer;
+// Tint and Roughness take the color or the roughness painted over the layers
+// toward color or target (paint.odin).
+// Hole, Fill, Ramp, Terrace, Erode, Thermal, Tint and Roughness are of a Heightfield alone.
+Brush_Kind :: enum u8 {Raise,Lower,Smooth,Flatten,Add,Carve,Paint,Erase,Hole,Fill,Ramp,Terrace,Noise,Erode,Thermal,Tint,Roughness}
 
 // Which way a brush may move a sample: Up never lowers one, Down never raises one.
 Brush_Way :: enum u8 {Both,Up,Down}
@@ -41,13 +43,18 @@ Brush :: struct {
     interval:f32,       // Terrace: metres between its steps, from target
     riser:f32,          // Terrace: the part of each step that rises, from 0 (a cliff) to 1
     scale:f32,          // Noise: metres across its features
+    talus:f32,          // Thermal: radians from horizontal the ground stands at; steeper slides down
     seed:u32,           // Noise and Erode
     slope:[2]f32,       // radians from horizontal of the Heightfield it touches; zero: any
     slope_invert:bool,  // it touches outside slope instead
     toward:bool,        // Paint takes the weight of its layer toward target, from 0 to 1, in place of adding
+    color:[3]f32,       // Tint: the color the layers are tinted toward, sRGB from 0 to 1; white shows them as they are
     alpha:^Brush_Alpha, // nil: the whole disc
     turn:f32,           // radians the alpha turns around y
 }
+
+// How far from 1 the squared length of Brush.rotation may be.
+ROTATION_TOLERANCE :: f32(1e-3)
 
 // Smooth averages a box of this part of its radius, from one sample to
 // SMOOTH_SAMPLES_MAX on each side.
@@ -58,7 +65,8 @@ SMOOTH_SAMPLES_MAX :: 8
 // the source lacks. edit_error_fix says how to fix each.
 // Invalid and Budget are of what a replay or a layer change asks: bytes or
 // a layer that do not fit the source, and no room for another source.
-Edit_Error :: enum u8 {None,Kind,Center,Radius,Amount,Target,Delta,Extent,Blend,Falloff,Layer,Alpha,Slope,Terrace,Noise,Unloaded,Out_Of_Memory,Invalid,Budget}
+// Scale is of the terrain the brush of the world edits (brush_local).
+Edit_Error :: enum u8 {None,Kind,Center,Radius,Amount,Target,Delta,Extent,Rotation,Blend,Falloff,Layer,Alpha,Slope,Terrace,Noise,Color,Scale,Talus,Unloaded,Out_Of_Memory,Invalid,Budget}
 
 Change :: struct {
     changed:bool,
@@ -77,14 +85,17 @@ edit_error_fix :: proc "contextless" (error:Edit_Error,kind:Brush_Kind) -> strin
         case .Ramp:       return "a Ramp is of a Heightfield: on a Volume use Add with a Capsule or a Box"
         case .Terrace:    return "Terrace is of a Heightfield: on a Volume use Flatten at the height of each step"
         case .Erode:      return "Erode is of a Heightfield: on a Volume use Smooth or Noise"
+        case .Thermal:    return "Thermal is of a Heightfield: on a Volume use Smooth"
+        case .Tint,.Roughness: return "a Volume has no painted color or roughness: Paint a layer of the material wanted"
         }
-        return "kind is not a brush: name one from Raise to Erode"
+        return "kind is not a brush: name one from Raise to Roughness"
     case .Center:  return "center has a value that is not a number: give the point to edit"
     case .Radius:  return "radius is not above 0 or passes 100000 m: give the reach of the brush in metres"
     case .Amount:  return "amount is not above 0, is not a number or, for Add and Carve, passes 1: metres for Raise, Lower and Noise, a part from 0 to 1 for the others (1 takes or adds the whole shape)"
-    case .Target:  return "target is not a number within 100000 m, or for a Paint toward a weight is not from 0 to 1"
+    case .Target:  return "target is not a number within 100000 m, or for a Paint toward a weight or a Roughness is not from 0 to 1"
     case .Delta:   return "delta has a value that is not a number or passes 200000 m: give the way from center to the other end of a Capsule or a Ramp"
     case .Extent:  return "extent of a Box has a side that is not above 0 or passes 100000 m: give its half sizes in metres"
+    case .Rotation: return "rotation is not a quaternion of length 1: give the turn of the Box as a unit quaternion, or 0 for none"
     case .Blend:   return "blend is below 0, not a number or passes 100000 m: give the metres over which the shape joins the ground, or 0"
     case .Falloff: return "falloff, shape or way is not one of its values, or hardness is not from 0 to below 1"
     case .Layer:   return "layer is not a layer of the source: name one below its layer count, or add the layer first"
@@ -92,6 +103,9 @@ edit_error_fix :: proc "contextless" (error:Edit_Error,kind:Brush_Kind) -> strin
     case .Slope:   return "slope is not an ordered range from 0 to a quarter turn, or turn is not a number"
     case .Terrace: return "interval of a Terrace is not above 0 or its riser is not from 0 to 1"
     case .Noise:   return "scale of a Noise is not above 0 or passes 100000 m"
+    case .Color:   return "color of a Tint has a channel that is not from 0 to 1: give the sRGB color to tint toward, white to take the tint away"
+    case .Scale:   return "the terrain is scaled by 0 or unevenly: a brush needs the same scale on its x and z, and a shape of Add or Carve, or any brush of a Volume, the same on all three axes; give the terrain such a scale"
+    case .Talus:   return "talus of a Thermal is not above 0 and below a quarter turn: give the angle in radians the ground stands at"
     case .Unloaded: return "the source holds no samples there: it is not loaded, or its pages could not be read"
     case .Out_Of_Memory: return "out of memory and nothing changed: free memory, or use a smaller brush"
     case .Invalid: return "what it brings does not fit the source: its shape, its pages or its layers are of another one"
@@ -110,6 +124,8 @@ brush_check :: proc "contextless" (brush:Brush) -> Edit_Error {
     if !finite3(brush.center) {return .Center}
     if !finite3(brush.delta) || max(abs(brush.delta.x),abs(brush.delta.y),abs(brush.delta.z))>HEIGHT_LIMIT*2 {return .Delta}
     if !finite(brush.target) || abs(brush.target)>HEIGHT_LIMIT {return .Target}
+    // Zero is no turn.
+    if q:=brush.rotation;q!=0 && !(abs(q.x*q.x+q.y*q.y+q.z*q.z+q.w*q.w-1)<=ROTATION_TOLERANCE) {return .Rotation}
     shaped:=brush.kind==.Add || brush.kind==.Carve
     if shaped && brush.shape==.Box {
         if !finite3(brush.extent) || !(brush.extent.x>0 && brush.extent.y>0 && brush.extent.z>0) || max(brush.extent.x,brush.extent.y,brush.extent.z)>HEIGHT_LIMIT {return .Extent}
@@ -124,7 +140,10 @@ brush_check :: proc "contextless" (brush:Brush) -> Edit_Error {
     #partial switch brush.kind {
     case .Terrace: if !(brush.interval>0 && brush.interval<=HEIGHT_LIMIT && brush.riser>=0 && brush.riser<=1) {return .Terrace}
     case .Noise:   if !(brush.scale>0 && brush.scale<=HEIGHT_LIMIT) {return .Noise}
+    case .Thermal: if !(brush.talus>0 && brush.talus<math.PI/2) {return .Talus}
     case .Paint:   if brush.toward && !(brush.target>=0 && brush.target<=1) {return .Target}
+    case .Roughness: if !(brush.target>=0 && brush.target<=1) {return .Target}
+    case .Tint:    if !(brush.color.r>=0 && brush.color.r<=1 && brush.color.g>=0 && brush.color.g<=1 && brush.color.b>=0 && brush.color.b<=1) {return .Color}
     }
     return .None
 }
@@ -142,22 +161,20 @@ source_edit :: proc(s:^Source,brush:Brush) -> (change:Change) {
     if brush.kind==.Paint || brush.kind==.Erase {return source_paint(s,brush)}
     if volume {
         #partial switch brush.kind {
-        case .Hole,.Fill,.Ramp,.Terrace,.Erode: return Change{error=.Kind}
+        case .Hole,.Fill,.Ramp,.Terrace,.Erode,.Thermal,.Tint,.Roughness: return Change{error=.Kind}
         case .Add,.Carve: return source_volume_shape(s,brush)
         }
     }
     if brush.kind==.Hole || brush.kind==.Fill {return source_holes_edit(s,brush)}
+    if brush.kind==.Tint || brush.kind==.Roughness {return source_paint_edit(s,brush)}
     shaped:=brush.kind==.Add || brush.kind==.Carve
     segment:=brush.kind==.Ramp
-    reach:=brush.radius
-    // The water of Erode runs past the disc and leaves there what it carries.
-    if brush.kind==.Erode {reach*=EROSION_REACH}
+    reach:=brush_reach(brush)
+    // What slides leaves the disc for the samples around it.
+    if brush.kind==.Thermal {reach+=s.cell*1.5}
     origin:=source_origin(s)
-    span_low,span_high:=brush.center-reach,brush.center+reach
-    if segment {
-        end:=brush.center+brush.delta
-        span_low,span_high=linalg.min(brush.center,end)-reach,linalg.max(brush.center,end)+reach
-    }
+    span_low,span_high:=brush_bounds(brush)
+    // A Heightfield moves its columns to the shape, without blend.
     if shaped {span_low,span_high=brush_shape_bounds(brush)}
     low,high:[3]int
     for axis in 0..<3 {
@@ -171,6 +188,7 @@ source_edit :: proc(s:^Source,brush:Brush) -> (change:Change) {
     }
     if !grid_prepare(&s.field,low,high,s.allocator) {return Change{error=.Out_Of_Memory}}
     if brush.kind==.Erode {return source_erode(s,brush,low,high)}
+    if brush.kind==.Thermal {return source_thermal(s,brush,low,high)}
     // Smooth reads the region as it was, with a halo as wide as its box, and
     // so does the slope filter: what the brush raises before a sample does not
     // change whether it touches it.
@@ -197,7 +215,7 @@ source_edit :: proc(s:^Source,brush:Brush) -> (change:Change) {
         a,b:=s.scratch[:n],s.scratch[n:2*n]
         for z in from.z..=to.z {for y in from.y..=to.y {for x in from.x..=to.x {
             p:=[3]int{x,y,z}-from
-            a[p.x+size.x*(p.y+size.y*p.z)]=source_value(s,{x,y,z})
+            a[p.x+size.x*(p.y+size.y*p.z)]=grid_value(&s.field,{x,y,z})
         }}}
         for axis in 0..<3 {
             if size[axis]==1 {continue}
@@ -212,7 +230,7 @@ source_edit :: proc(s:^Source,brush:Brush) -> (change:Change) {
     for z in low.z..=high.z {for y in low.y..=high.y {for x in low.x..=high.x {
         p:=[3]int{x,y,z}
         point:=origin+[3]f32{f32(x),f32(y),f32(z)}*s.cell
-        old:=source_value(s,p)
+        old:=grid_value(&s.field,p)
         value:=old
         if shaped {
             // A Heightfield holds one height over each sample: Carve takes the
@@ -272,7 +290,7 @@ source_edit :: proc(s:^Source,brush:Brush) -> (change:Change) {
                 if n<2 {continue}
                 mean:=blurred[at.x+size.x*(at.y+size.y*at.z)]
                 value=math.lerp(old,(mean*f32(n)-old)/f32(n-1),min(brush.amount*weight,1))
-            case .Add,.Carve,.Paint,.Erase,.Hole,.Fill,.Erode:
+            case .Add,.Carve,.Paint,.Erase,.Hole,.Fill,.Erode,.Thermal,.Tint,.Roughness:
             }
             value=brush_way_keep(brush.way,volume,old,value)
         }
@@ -415,6 +433,27 @@ brush_shape_distance :: proc(brush:Brush,p:[3]f32) -> f32 {
     return 0
 }
 
+// How far from center, or from the segment of a Ramp, a brush that is not a
+// shape touches: the water of Erode runs past its disc and leaves there what
+// it carries.
+@(private)
+brush_reach :: proc "contextless" (brush:Brush) -> f32 {return brush.kind==.Erode?brush.radius*EROSION_REACH:brush.radius}
+
+// The box of the space of a brush that it may change: about its center, along
+// a Ramp, or around the shape of Add and Carve with the blend that joins it.
+brush_bounds :: proc(brush:Brush) -> (low,high:[3]f32) {
+    reach:=brush_reach(brush)
+    #partial switch brush.kind {
+    case .Add,.Carve:
+        low,high=brush_shape_bounds(brush)
+        return low-brush.blend,high+brush.blend
+    case .Ramp:
+        end:=brush.center+brush.delta
+        return linalg.min(brush.center,end)-reach,linalg.max(brush.center,end)+reach
+    }
+    return brush.center-reach,brush.center+reach
+}
+
 // The box around the shape of a brush.
 brush_shape_bounds :: proc(brush:Brush) -> (low,high:[3]f32) {
     switch brush.shape {
@@ -446,12 +485,11 @@ smooth_min :: proc "contextless" (a,b,k:f32) -> f32 {
 @(private)
 source_volume_shape :: proc(s:^Source,brush:Brush) -> (change:Change) {
     band:=s.cell*SDF_BAND_CELLS
-    shape_low,shape_high:=brush_shape_bounds(brush)
-    margin:=brush.blend+band
+    shape_low,shape_high:=brush_bounds(brush)
     origin:=source_origin(s)
     low,high:[3]int
     for axis in 0..<3 {
-        lo,hi:=math.ceil((shape_low[axis]-margin-origin[axis])/s.cell),math.floor((shape_high[axis]+margin-origin[axis])/s.cell)
+        lo,hi:=math.ceil((shape_low[axis]-band-origin[axis])/s.cell),math.floor((shape_high[axis]+band-origin[axis])/s.cell)
         first,last:=f32(1),f32(s.samples[axis]-2)
         if hi<first || lo>last {return}
         low[axis],high[axis]=int(clamp(lo,first,last)),int(clamp(hi,first,last))
@@ -465,7 +503,7 @@ source_volume_shape :: proc(s:^Source,brush:Brush) -> (change:Change) {
     for z in low.z..=high.z {for y in low.y..=high.y {for x in low.x..=high.x {
         p:=[3]int{x,y,z}
         d:=brush_shape_distance(brush,origin+[3]f32{f32(x),f32(y),f32(z)}*s.cell)
-        old:=source_value(s,p)
+        old:=grid_value(&s.field,p)
         target:=brush.kind==.Add?smooth_min(old,d,brush.blend):-smooth_min(-old,d,brush.blend)
         value:=clamp(math.lerp(old,target,brush.amount),-band,band)
         if value==old {continue}

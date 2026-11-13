@@ -35,15 +35,17 @@ batch_instances_keep_their_rotation_and_scale_within_their_precision :: proc(t: 
 		mm.quat_axis_angle({1, 0, 0}, math.PI * 0.5),
 	}
 	for q in rotations {
-		packed := batch_instance({12.5, -3, 1000}, q, 0.8, 1.6)
-		back, across, along := batch_instance_unpack(packed)
+		packed := batch_instance({12.5, -3, 1000}, q, {0.8, 1.6, 3.2})
+		back, scale := batch_instance_unpack(packed)
 		testing.expect(t, mm.quat_angle(q, back) < 0.3 * math.PI / 180, "the rotation comes back within 0.3 degrees")
-		testing.expect(t, abs(across - 0.8) < 1e-3 && abs(along - 1.6) < 1e-3, "the scales come back as half floats")
-		// The rows are the rotation of the scaled axes and the position, as batch_placement makes them.
+		testing.expect(t, linalg.length(scale - Vec3{0.8, 1.6, 3.2}) < 2e-3, "each scale comes back as a half float")
+		// The rows are the rotation of each axis scaled by its own scale and the position, as batch_placement makes them.
 		rows := batch_instance_rows(packed)
-		x := mm.quat_rotate(back, {0.8 * across / 0.8, 0, 0})
-		y := mm.quat_rotate(back, {0, along, 0})
-		testing.expect(t, linalg.length(Vec3{rows[0].x, rows[1].x, rows[2].x} - x) < 1e-4 && linalg.length(Vec3{rows[0].y, rows[1].y, rows[2].y} - y) < 1e-4)
+		for axis in 0 ..< 3 {
+			unit: Vec3
+			unit[axis] = scale[axis]
+			testing.expect(t, linalg.length(Vec3{rows[0][axis], rows[1][axis], rows[2][axis]} - mm.quat_rotate(back, unit)) < 1e-4)
+		}
 		testing.expect(t, rows[0].w == 12.5 && rows[1].w == -3 && rows[2].w == 1000)
 	}
 }
@@ -56,7 +58,7 @@ a_batch_keeps_its_handle_and_reuses_its_words_and_a_wrong_one_changes_nothing ::
 	defer scene_destroy(r)
 	mesh := batch_box(r)
 	pool := len(r.scene.indices)
-	instances := [3]Batch_Instance{batch_instance({0, 0, 0}, 1, 1, 1), batch_instance({4, 0, 0}, 1, 1, 2), batch_instance({8, 0, 0}, 1, 2, 1)}
+	instances := [3]Batch_Instance{batch_instance({0, 0, 0}, 1, {1, 1, 1}), batch_instance({4, 0, 0}, 1, {1, 2, 1}), batch_instance({8, 0, 0}, 1, {2, 1, 2})}
 	handle, error := batch_set(r, 0, 0, {mesh = mesh, tint = 1}, instances[:])
 	if !testing.expect_value(t, error, "") {return}
 	testing.expect_value(t, len(r.scene.indices), pool + 3 * BATCH_WORDS)
@@ -66,12 +68,11 @@ a_batch_keeps_its_handle_and_reuses_its_words_and_a_wrong_one_changes_nothing ::
 	again, replaced := batch_set(r, handle, 0, {mesh = mesh, tint = 1}, instances[:2])
 	testing.expect(t, replaced == "" && again == handle)
 	testing.expect_value(t, len(r.scene.indices), pool + 2 * BATCH_WORDS)
-	words := r.scene.indices[r.scene.batch.records[0].words:][:BATCH_WORDS]
-	testing.expect_value(t, transmute(Batch_Instance)[BATCH_WORDS]u32{words[0], words[1], words[2], words[3], words[4]}, instances[0])
+	testing.expect_value(t, batch_instance_at(&r.scene, &r.scene.batch.records[0], 0), instances[0])
 	// Wrong input says what is wrong and leaves the batch as it was.
-	bad_scale := [1]Batch_Instance{batch_instance({0, 0, 0}, 1, 0, 1)}
+	bad_scale := [1]Batch_Instance{batch_instance({0, 0, 0}, 1, {0, 1, 0})}
 	infinite := math.inf_f32(1)
-	bad_position := [1]Batch_Instance{batch_instance({infinite, 0, 0}, 1, 1, 1)}
+	bad_position := [1]Batch_Instance{batch_instance({infinite, 0, 0}, 1, {1, 1, 1})}
 	_, refused := batch_set(r, handle, 0, {mesh = mesh}, bad_scale[:])
 	testing.expect(t, refused != "")
 	_, refused = batch_set(r, handle, 0, {mesh = mesh}, bad_position[:])
@@ -89,6 +90,20 @@ a_batch_keeps_its_handle_and_reuses_its_words_and_a_wrong_one_changes_nothing ::
 	testing.expect(t, refused != "", "a removed handle is refused")
 	next, _ := batch_set(r, 0, 0, {mesh = mesh}, instances[:])
 	testing.expect(t, next != handle, "the record comes back with another generation")
+	// What each instance shows of its own is a word of each, which the row names; a color for each instance, or none.
+	colors := [3]u32{batch_color({1, 0.5, 0.25}, 1), batch_color(1, 0), batch_color(0, 0.5)}
+	_, refused = batch_set(r, next, 0, {mesh = mesh}, instances[:], colors[:2])
+	testing.expect(t, refused != "")
+	_, colored := batch_set(r, next, 0, {mesh = mesh, tint = 1}, instances[:], colors[:])
+	testing.expect_value(t, colored, "")
+	index, _ := batch_index(&r.scene, next)
+	record := &r.scene.batch.records[index]
+	testing.expect(t, record.colored && r.scene.indices[record.colors] == 0xff4080ff && r.scene.indices[record.colors + 1] == 0x00ffffff)
+	batches_build(r)
+	testing.expect_value(t, transmute(u32)r.scene.batch.rows[0].world_inv[2].x, record.colors + 1)
+	_, _ = batch_set(r, next, 0, {mesh = mesh, tint = 1}, instances[:])
+	batches_build(r)
+	testing.expect(t, !record.colored && r.scene.batch.rows[0].world_inv[2].x == 0, "set again without them, it has none")
 }
 
 @(test)
@@ -100,7 +115,7 @@ the_tables_of_the_batches_drawn_follow_the_world_shown_and_the_instances :: proc
 	mesh := batch_box(r)
 	many := make([]Batch_Instance, 70)
 	defer delete(many)
-	for &b, i in many {b = batch_instance({f32(i) * 2, 0, 0}, 1, 1, 1)}
+	for &b, i in many {b = batch_instance({f32(i) * 2, 0, 0}, 1, {1, 1, 1})}
 	shown, _ := batch_set(r, 0, 7, {mesh = mesh, cull_distance = 50, fade_distance = 40}, many[:])
 	_, _ = batch_set(r, 0, 8, {mesh = mesh}, many[:3])
 	traced, _ := batch_set(r, 0, 7, {mesh = mesh, flags = {.Casts_Shadow, .Ray_Visible}}, many[:3])
@@ -167,7 +182,7 @@ batches_rays_meet_change_the_light_and_others_do_not :: proc(t: ^testing.T) {
 	scene_init(r)
 	defer scene_destroy(r)
 	mesh := batch_box(r)
-	instances := [2]Batch_Instance{batch_instance({0, 0, 0}, 1, 1, 1), batch_instance({30, 0, 0}, 1, 1, 1)}
+	instances := [2]Batch_Instance{batch_instance({0, 0, 0}, 1, {1, 1, 1}), batch_instance({30, 0, 0}, 1, {1, 1, 1})}
 	r.scene.changes = {}
 	raster, _ := batch_set(r, 0, 0, {mesh = mesh}, instances[:])
 	testing.expect(t, r.scene.changes.count == 0 && !r.scene.changes.all, "what no ray meets changes no light")
@@ -193,7 +208,7 @@ meshes_clear_forgets_every_batch_and_says_so :: proc(t: ^testing.T) {
 	scene_init(r)
 	defer scene_destroy(r)
 	mesh := batch_box(r)
-	instances := [1]Batch_Instance{batch_instance({0, 0, 0}, 1, 1, 1)}
+	instances := [1]Batch_Instance{batch_instance({0, 0, 0}, 1, {1, 1, 1})}
 	handle, _ := batch_set(r, 0, 0, {mesh = mesh}, instances[:])
 	epoch := batches_epoch(r)
 	meshes_clear(r)
@@ -212,7 +227,7 @@ the_tree_of_a_traced_batch_is_built_for_rays_traced_by_software_alone :: proc(t:
 	mesh := batch_box(r)
 	instances := make([]Batch_Instance, 37)
 	defer delete(instances)
-	for &b, i in instances {b = batch_instance({f32(i % 6) * 3, 0, f32(i / 6) * 3}, 1, 1, 1)}
+	for &b, i in instances {b = batch_instance({f32(i % 6) * 3, 0, f32(i / 6) * 3}, 1, {1, 1, 1})}
 	r.hardware_rt = true
 	handle, _ := batch_set(r, 0, 0, {mesh = mesh, flags = {.Casts_Shadow}}, instances[:])
 	record := &r.scene.batch.records[0]
@@ -250,7 +265,7 @@ a_batch_says_what_it_is_and_its_revision_moves_when_it_is_set_again :: proc(t: ^
 	scene_init(r)
 	defer scene_destroy(r)
 	mesh := batch_box(r)
-	instances := [2]Batch_Instance{batch_instance({0, 0, 0}, 1, 1, 1), batch_instance({3, 0, 0}, 1, 1, 1)}
+	instances := [2]Batch_Instance{batch_instance({0, 0, 0}, 1, {1, 1, 1}), batch_instance({3, 0, 0}, 1, {1, 1, 1})}
 	handle, _ := batch_set(r, 0, 0, {mesh = mesh, object_id = 42}, instances[:])
 	revision := batches_revision(r)
 	info, ok := batch_info(r, 0)
@@ -269,7 +284,7 @@ a_ray_finds_the_instance_of_a_batch_it_meets_first :: proc(t: ^testing.T) {
 	scene_init(r)
 	defer scene_destroy(r)
 	mesh := batch_box(r)
-	instances := [3]Batch_Instance{batch_instance({0, 0, 0}, 1, 1, 1), batch_instance({4, 0, 0}, 1, 1, 3), batch_instance({8, 0, 0}, 1, 2, 1)}
+	instances := [3]Batch_Instance{batch_instance({0, 0, 0}, 1, {1, 1, 1}), batch_instance({4, 0, 0}, 1, {1, 3, 1}), batch_instance({8, 0, 0}, 1, {2, 1, 2})}
 	handle, _ := batch_set(r, 0, 5, {mesh = mesh, object_id = 9}, instances[:])
 	other, _ := batch_set(r, 0, 6, {mesh = mesh}, instances[:])
 	hit, found := batch_ray(r, 5, {4, 10, 0}, {0, -1, 0}, 100)
@@ -298,7 +313,7 @@ a_batch_only_rays_meet_is_in_no_layer_and_the_picker_does_not_find_it :: proc(t:
 	scene_init(r)
 	defer scene_destroy(r)
 	mesh := batch_box(r)
-	instances := [2]Batch_Instance{batch_instance({0, 0, 0}, 1, 1, 1), batch_instance({4, 0, 0}, 1, 1, 1)}
+	instances := [2]Batch_Instance{batch_instance({0, 0, 0}, 1, {1, 1, 1}), batch_instance({4, 0, 0}, 1, {1, 1, 1})}
 	_, refused := batch_set(r, 0, 0, {mesh = mesh, flags = {.Rays_Only}}, instances[:])
 	testing.expect(t, refused != "", "no ray meets a batch of Rays_Only alone")
 	crown, error := batch_set(r, 0, 0, {mesh = mesh, flags = {.Casts_Shadow, .Rays_Only}}, instances[:])
@@ -327,7 +342,7 @@ a_jump_of_the_origin_moves_the_row_of_a_batch_and_not_its_instances :: proc(t: ^
 	defer scene_destroy(r)
 	mesh := batch_box(r)
 	far := Vec3{15003.25, 2, -12001.5}
-	instances := [3]Batch_Instance{batch_instance(far, 1, 1, 1), batch_instance(far + {4, 0, 0}, 1, 1, 2), batch_instance(far + {0, 0, 9}, 1, 2, 1)}
+	instances := [3]Batch_Instance{batch_instance(far, 1, {1, 1, 1}), batch_instance(far + {4, 0, 0}, 1, {1, 2, 1}), batch_instance(far + {0, 0, 9}, 1, {2, 1, 2})}
 	handle, _ := batch_set(r, 0, 0, {mesh = mesh, flags = {.Casts_Shadow, .Ray_Visible}}, instances[:])
 	batches_build(r)
 	record := &r.scene.batch.records[0]
@@ -350,7 +365,7 @@ a_jump_of_the_origin_moves_the_row_of_a_batch_and_not_its_instances :: proc(t: ^
 	row := r.scene.batch.rows[0]
 	offset := row.world_inv[1].xyz
 	testing.expect_value(t, offset, Vec3{0, 0, -1024})
-	rows := batch_instance_rows(transmute(Batch_Instance)[BATCH_WORDS]u32{words[5], words[6], words[7], words[8], words[9]})
+	rows := batch_instance_rows(batch_instance_at(&r.scene, record, 1))
 	place := Vec3{rows[0].w, rows[1].w, rows[2].w} + offset
 	testing.expect_value(t, place, origin_point(far + {4, 0, 0}, renderer_origin(r)))
 	testing.expect(t, row.bounds_min.x <= place.x - 0.5 && row.bounds_max.z >= origin_point(far, renderer_origin(r)).z + 9.5)

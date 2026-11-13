@@ -127,15 +127,14 @@ source_interior_apply :: proc(s:^Source) -> bool {
     if tops_error!=nil {return false}
     for z in 0..<size.z {for x in 0..<size.x {tops[x+size.x*z]=volume_column_top(s,x,z)}}
     next:Grid(Weights)
-    if !grid_init(&next,size,Weights{WEIGHT_FULL,0,0,0},s.allocator) {return false}
+    if !grid_init(&next,size,WEIGHTS_FIRST,s.allocator) {return false}
     Columns :: struct {s:^Source,tops:[]f32,width:int}
     page :: proc(user:rawptr,first,extent:[3]int,values:[]Weights) -> (fill:Weights,uniform:bool) {
         c:=(^Columns)(user)
         for z in 0..<extent.z {for y in 0..<extent.y {for x in 0..<extent.x {
             q:=first+{x,y,z}
             p:=source_point(c.s,q)
-            w:Weights
-            w[interior_layer(&c.s.interior,p,c.tops[q.x+c.width*q.z]-p.y)]=WEIGHT_FULL
+            w:=weights_pack({int(interior_layer(&c.s.interior,p,c.tops[q.x+c.width*q.z]-p.y)),0,0},{WEIGHT_FULL,0,0})
             values[x+extent.x*(y+extent.y*z)]=w
         }}}
         return
@@ -160,7 +159,7 @@ weights_grow :: proc "contextless" (w:Weights,layer,count:int,old,new:f32) -> We
     if !(new>old) {return w}
     f:=weights_float(w)*old
     f[layer]+=new-old
-    return weights_quantize(f,count)
+    return weights_quantize(f,count,layer)
 }
 
 // What the last edit of a source took out (source_edit): its cubic metres,

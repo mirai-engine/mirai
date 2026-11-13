@@ -311,7 +311,8 @@ int2 reflect_block_pixel(int2 cell) {
 // A row keeps in its transforms, which none of its instances has, where they
 // are and how they are drawn. An instance is BATCH_WORDS words of the pool:
 // its position, its rotation (quat_pack of std/math, 10 bits) and its scale
-// across (x and z) and along y, two half floats.
+// along x, y and z, half floats; a batch with colors has a word more of
+// each in the pool (render.batch_color).
 
 bool instance_batched(uint index) { return index >= frame.instance_count; }
 uint batch_of(uint index) { return indices[frame.batches.y + (index - frame.instance_count) / BATCH_GROUP]; }
@@ -330,12 +331,13 @@ uint batch_classes(Instance row) { return asuint(row.world[2].w); }  // of rays 
 float4 batch_vertex(Instance row) { return row.world_inv[0]; }       // what the vertex hook of the generation reads of it
 float3 batch_anchor(Instance row) { return row.world_inv[1].xyz; }   // what its instances in the pool, its tree and its box are relative to, relative to the origin
 float batch_reach(Instance row) { return row.world_inv[1].w; }       // metres the vertex hook moves a point of its instances at most
+uint batch_colors(Instance row) { return asuint(row.world_inv[2].x); } // 1 + the word of the color of its first instance in the pool; 0: none
 
 // The transform of the instance of a batch whose words start at `words`,
 // moved by the anchor of its batch, and its inverse.
 void batch_placement(uint words, float3 anchor, out float4 world[3], out float4 inverse[3]) {
     float3 p = asfloat(uint3(indices[words], indices[words + 1u], indices[words + 2u])) + anchor;
-    batch_instance_placement(p, indices[words + 3u], indices[words + 4u], world, inverse);
+    batch_instance_placement(p, indices[words + 3u], uint2(indices[words + 4u], indices[words + 5u]), world, inverse);
 }
 
 // The box in the world of a box of its own space under a transform.
@@ -359,12 +361,19 @@ uint scene_mesh_word(uint index) {
 }
 
 // The instance an index names, of the scene or of a batch: that of a batch
-// is the row of its batch with its own transforms and box, and at rest.
+// is the row of its batch with its own transforms and box, at rest, and its
+// own tint and wetness when its batch has colors.
 Instance scene_instance(uint index) {
     if (!instance_batched(index)) return instances[index];
     Instance inst = batch_row(batch_of(index));
-    uint words = batch_records(inst) + (index - frame.instance_count - batch_first(inst)) * BATCH_WORDS;
-    batch_placement(words, batch_anchor(inst), inst.world, inst.world_inv);
+    uint k = index - frame.instance_count - batch_first(inst);
+    uint colors = batch_colors(inst);
+    if (colors != 0u) {
+        uint c = indices[colors - 1u + k];
+        inst.tint.rgb *= float3(float(c & 255u), float((c >> 8u) & 255u), float((c >> 16u) & 255u)) / 255.0;
+        inst.wet = float(c >> 24u) / 255.0;
+    }
+    batch_placement(batch_records(inst) + k * BATCH_WORDS, batch_anchor(inst), inst.world, inst.world_inv);
     inst.prev_world = inst.world;
     float3 low, high;
     transformed_bounds(inst.world, meshes[instance_mesh(inst)], low, high);
@@ -603,13 +612,14 @@ float3 material_ray_normal(Material m, Instance inst, float3 normal, float3 w, M
     return tangent_frame_normal(normal, hit_tangent(inst, w, t), material_map_normal(m, uv, uv1, lod, true));
 }
 // Sampling follows the evaluated surface's explicit context, including a
-// ray hit reconstructed inside a fragment shader.
-// A program keeps every level of the textures it samples: its uv and levels are its own.
+// ray hit reconstructed inside a fragment shader. A sample of a program
+// reports the level it reads, from its uv and its bias or gradients, as a
+// map does; one that names a level, or asks for the size, keeps every level
+// of the texture: the levels it names count from the largest one held.
 float4 mirai_sample_texture_at(uint index, float2 uv, float lod, bool ray) {
     if (!material_has(index)) return float4(1.0);
-    texture_feedback(index, -FLT_MAX);
 #ifdef MATERIAL_RASTER
-    if (!ray) return material_textures[mirai_nonuniform(index)].SampleBias(material_sampler, uv, lod);
+    if (!ray) return material_texel(index, uv, lod);
 #endif
     return material_texel_at(index, uv, lod);
 }
@@ -639,7 +649,14 @@ float4 mirai_sample_texture_level(uint index, float2 uv, float level) {
 }
 float4 mirai_sample_texture_grad(uint index, float2 uv, float2 dx, float2 dy) {
     if (!material_has(index)) return float4(1);
-    texture_feedback(index, -FLT_MAX);
+#ifdef MIRAI_TEXTURE_FEEDBACK
+    // As material_texel: the level anisotropic filtering reads of these gradients.
+    float2 size = float2(texture_size(material_textures[mirai_nonuniform(index)], 0));
+    float2 across2 = abs(dx * size), down2 = abs(dy * size);
+    float across = max(across2.x, across2.y), down = max(down2.x, down2.y);
+    float longer = max(across, down);
+    if (longer > 0.0) texture_feedback(index, log2(max(min(across, down), longer / MATERIAL_ANISOTROPY)) - log2(size.x));
+#endif
     return material_textures[mirai_nonuniform(index)].SampleGrad(material_sampler, uv, dx, dy);
 }
 float2 mirai_texture_size(uint index) {
@@ -928,13 +945,17 @@ bool material_program(Material m, Mirai_Surface_Context ctx, float3 tint, float3
 #define WET_DARKEST 0.2        // of the base color of a porous dielectric soaked
 #define WET_FILM_ROUGHNESS 0.05
 #define WET_FILM_COVER 0.3
-void material_wet_apply(inout Material_Sample s, Material m, float wet) {
-    if (!(wet > 0.0) || m.transmission > 0.0 || (s.layers.bits & MATERIAL_LAYER_UNLIT) != 0u) return;
-    float porosity = saturate((s.roughness - 0.5) / 0.4);
-    float factor = lerp(1.0, WET_DARKEST, (1.0 - s.metallic) * porosity);
-    s.base_color *= lerp(1.0, factor, wet);
+void surface_wet(inout float3 base_color, inout float roughness, float metallic, float wet) {
+    if (!(wet > 0.0)) return;
+    float porosity = saturate((roughness - 0.5) / 0.4);
+    float factor = lerp(1.0, WET_DARKEST, (1.0 - metallic) * porosity);
+    base_color *= lerp(1.0, factor, wet);
     float film = wet * max(0.5 * (1.0 - factor), WET_FILM_COVER);
-    s.roughness = clamp(lerp(s.roughness, min(s.roughness, WET_FILM_ROUGHNESS), film), MIN_ROUGHNESS, 1.0);
+    roughness = clamp(lerp(roughness, min(roughness, WET_FILM_ROUGHNESS), film), MIN_ROUGHNESS, 1.0);
+}
+void material_wet_apply(inout Material_Sample s, Material m, float wet) {
+    if (m.transmission > 0.0 || (s.layers.bits & MATERIAL_LAYER_UNLIT) != 0u) return;
+    surface_wet(s.base_color, s.roughness, s.metallic, wet);
 }
 
 // A Surface program replaces the shared PBR values. Resolve it before sampling

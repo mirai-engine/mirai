@@ -96,6 +96,13 @@ exec_returns_stdout_stderr_and_the_exit_code :: proc(t:^testing.T) {
     testing.expect_value(t,state.exit_code,3)
     testing.expect_value(t,string(stdout),"out")
     testing.expect_value(t,string(stderr),"err")
+
+    // With echo, stdout goes there as the child writes it.
+    echoed:strings.Builder
+    strings.builder_init(&echoed,context.temp_allocator)
+    _,stdout,stderr,error=exec({command=probe_command("streams")},context.temp_allocator,echo=strings.to_writer(&echoed))
+    testing.expect(t,error==nil && len(stdout)==0 && string(stderr)=="err")
+    testing.expect_value(t,strings.to_string(echoed),"out")
 }
 
 // A child bounded in memory cannot allocate past the bound; without it, it can.

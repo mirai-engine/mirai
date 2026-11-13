@@ -139,7 +139,9 @@ shape_create :: proc(w:^World,body_handle:Body_Handle,desc:Shape_Desc,update_mas
     case Hull_Handle:
         slot,index:=hull_slot(w,g)
         if slot==nil {return {}}
-        type=.Hull;resource=index;radius=slot.hull.convex_radius
+        scale:=desc.scale=={} ? Vec3{1,1,1} : desc.scale
+        if !(scale.x>0 && scale.y>0 && scale.z>0) || !finite(scale) {return {}}
+        type=.Hull;resource=index;size=scale;radius=slot.hull.convex_radius*min(scale.x,scale.y,scale.z)
     case Mesh_Handle:
         slot,index:=mesh_slot(w,g)
         if slot==nil {return {}}
@@ -265,8 +267,9 @@ shape_volume :: proc "contextless" (w:^World,shape:^Shape) -> (volume:f32,center
     case .Cylinder:
         volume=2*PI*shape.size.x*shape.size.x*shape.size.y
     case .Hull:
+        scale:=shape.size
         hull:=&w.hulls[shape.resource].hull
-        volume,center=hull.volume,hull.center
+        volume,center=hull.volume*scale.x*scale.y*scale.z,hull.center*scale
     case .Mesh,.Heightfield:
     }
     return
@@ -302,7 +305,8 @@ shape_mass :: proc "contextless" (w:^World,shape:^Shape) -> (m:Shape_Mass) {
         local_inertia=mat3_diagonal({side,0.5*volume*r*r,side})
         m.inner_radius=min(r,h)
     case .Hull:
-        hull:=&w.hulls[shape.resource].hull
+        scaled:Scaled_Hull=---
+        hull:=shape_hull_of(w,shape,false,&scaled)
         local_inertia=hull.inertia
         m.inner_radius=hull.inner_radius
     case .Mesh,.Heightfield:
@@ -317,7 +321,9 @@ shape_mass :: proc "contextless" (w:^World,shape:^Shape) -> (m:Shape_Mass) {
 @(private)
 resource_aabb :: #force_inline proc "contextless" (w:^World,shape:^Shape) -> Aabb {
     #partial switch shape.type {
-    case .Hull: return w.hulls[shape.resource].hull.aabb
+    case .Hull:
+        box:=w.hulls[shape.resource].hull.aabb
+        return {box.min*shape.size,box.max*shape.size}
     case .Mesh: return w.meshes[shape.resource].mesh.aabb
     case .Heightfield: return w.heightfields[shape.resource].field.aabb
     }
@@ -386,9 +392,9 @@ disc_extent :: #force_inline proc "contextless" (axis:Vec3) -> Vec3 {
 }
 
 // Convex shape for GJK: its core as a point set, inflated by its radius. `storage` holds the points of
-// spheres, capsules, boxes and cylinders.
+// spheres, capsules, boxes and cylinders, and `scaled` those of a hull its shape scales.
 @(private)
-shape_proxy :: proc "contextless" (w:^World,shape:^Shape,storage:^[8]Vec3) -> Proxy #no_bounds_check {
+shape_proxy :: proc "contextless" (w:^World,shape:^Shape,storage:^[8]Vec3,scaled:^Scaled_Hull) -> Proxy #no_bounds_check {
     #partial switch shape.type {
     case .Sphere:
         storage[0]={}
@@ -406,8 +412,7 @@ shape_proxy :: proc "contextless" (w:^World,shape:^Shape,storage:^[8]Vec3) -> Pr
         storage[1]={0,shape.size.y-shape.radius,0}
         return {storage[:2],shape.radius,shape.size.x-shape.radius}
     case .Hull:
-        hull:=&w.hulls[shape.resource].hull
-        return {hull_core(hull).vertices,hull.convex_radius,0}
+        return {shape_hull_of(w,shape,true,scaled).vertices,shape.radius,0}
     }
     return {}
 }

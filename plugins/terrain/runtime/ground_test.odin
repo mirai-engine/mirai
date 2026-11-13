@@ -29,9 +29,7 @@ ground_step :: proc(w:^Ground_World,resident:^Terrain_Resident,focus:=Terrain_Fo
 @(private="file")
 ground_entry :: proc(w:^Ground_World,id:base.Asset_Id,s:Source,at:[3]f32) -> core.Entity {
     entry:=Data_Source{id=id,source=s,change=1}
-    n:=chunk_counts(&entry.source)
-    entry.versions=make([]u32,n.x*n.y*n.z)
-    for &version in entry.versions {version=1}
+    data_chunks_allocate(&entry,context.allocator)
     append(&w.data.entries,entry)
     e:=core.create(&w.entities)
     core.add(&w.terrains,e,Terrain{source=id,solid=true})
@@ -52,7 +50,7 @@ the_ground_answers_each_line_as_its_terrain_has_it :: proc(t:^testing.T) {
     defer terrain_resident_free(&resident)
     // Without terrains no line has ground.
     q:=ground_step(&w,&resident)
-    _,found:=q.probe(q.user,{0,10,0},{0,-1,0},false)
+    _,found:=q.probe(q.user,{0,10,0},{0,-1,0})
     testing.expect_value(t,found,core.Ground_Found.None)
     hill:Source
     if !testing.expect(t,source_make(&hill,.Heightfield,{65,1,65},1,16)) {return}
@@ -76,24 +74,23 @@ the_ground_answers_each_line_as_its_terrain_has_it :: proc(t:^testing.T) {
     coarse,_,_,_:=source_coarse_at(s,-20,-16)
     testing.expect(t,abs(coarse-source_height(s,-20,-16))>1e-2,"the coarse grid is not the samples there")
     testing.expect_value(t,q.spacing,f32(1))
-    Case :: struct {origin:[3]f32,coarse:bool,found:core.Ground_Found,height:f32,why:string}
+    Case :: struct {origin:[3]f32,found:core.Ground_Found,height:f32,why:string}
     cases:=[]Case{
-        {{-16,50,-16},false,.Ground,source_height(s,-16,-16),"the samples of the Heightfield"},
-        {{-20,50,-16},true,.Ground,coarse,"its coarse grid, asked far from the viewers"},
-        {{16.5,50,-16.5},false,.Empty,0,"a hole"},
-        {{200,50,0},false,.None,0,"off every terrain"},
-        {{492,90,-8},false,.Ground,0,"the top of the Volume where its blocks are in memory"},
-        {{530,90,30},false,.Unloaded,0,"where they are not"},
-        {{math.nan_f32(),50,0},false,.None,0,"a line that is not a number"},
+        {{-16,50,-16},.Ground,source_height(s,-16,-16),"the samples of the Heightfield"},
+        {{16.5,50,-16.5},.Empty,0,"a hole"},
+        {{200,50,0},.None,0,"off every terrain"},
+        {{492,90,-8},.Ground,0,"the top of the Volume where its blocks are in memory"},
+        {{530,90,30},.Unloaded,0,"where they are not"},
+        {{math.nan_f32(),50,0},.None,0,"a line that is not a number"},
     }
     for c in cases {
-        hit,found:=q.probe(q.user,c.origin,{0,-1,0},c.coarse)
+        hit,found:=q.probe(q.user,c.origin,{0,-1,0})
         testing.expectf(t,found==c.found,"%s: %v",c.why,found)
         if found!=.Ground {continue}
         testing.expectf(t,abs(hit.point.y-c.height)<0.6 && abs(hit.point.x-c.origin.x)+abs(hit.point.z-c.origin.z)<1e-3,"%s: %v, not %v",c.why,hit.point,c.height)
         testing.expect(t,hit.weights=={255,0,0,0} && hit.layers[0]==LAYER_DEFAULT.material && hit.normal.y>0.9)
     }
-    _,found=q.probe(q.user,{0,10,0},{0,0,0},false)
+    _,found=q.probe(q.user,{0,10,0},{0,0,0})
     testing.expect_value(t,found,core.Ground_Found.None)
     changed:=&w.ground_queries.changed.items
     // A call where nothing changed announces nothing.
@@ -102,19 +99,17 @@ the_ground_answers_each_line_as_its_terrain_has_it :: proc(t:^testing.T) {
     // A stroke held over (12, 12) leaves its region without surface until it ends, announced both times.
     held:=Terrain_Focus{source={3,3},center={12,0,12},radius=2,stroke=true,low={10,10},high={14,14}}
     q=ground_step(&w,&resident,held)
-    _,found=q.probe(q.user,{12,50,12},{0,-1,0},false)
+    _,found=q.probe(q.user,{12,50,12},{0,-1,0})
     testing.expect(t,found==.Empty && len(changed)==1)
     q=ground_step(&w,&resident)
-    _,found=q.probe(q.user,{12,50,12},{0,-1,0},false)
+    _,found=q.probe(q.user,{12,50,12},{0,-1,0})
     testing.expect(t,found==.Ground && len(changed)==1)
-    // An edit announces the box of its chunks, and a terrain that moves all it covered and covers.
-    change:=source_edit(s,{kind=.Raise,center={20,0,20},radius=3,amount=1.5})
-    low,high:=chunk_range(s,change)
-    w.data.entries[0].change=2
-    for z in low.z..=high.z {for x in low.x..=high.x {w.data.entries[0].versions[chunk_index(s,{i32(x),0,i32(z)})]=2}}
+    // An edit announces the columns over the samples it changed, not over its chunk (from 16 to
+    // 32 m), and a terrain that moves all it covered and covers.
+    data_mark(&w.data.entries[0],source_edit(s,{kind=.Raise,center={20,0,20},radius=3,amount=1.5}))
     q=ground_step(&w,&resident)
-    testing.expect(t,len(changed)==1 && mm.aabb_contains(changed[0],{{20,0,20},{20,0,20}}) && !mm.aabb_contains(changed[0],{{-16,0,-16},{-16,0,-16}}))
-    hit,_:=q.probe(q.user,{20,50,20},{0,-1,0},false)
+    testing.expect(t,len(changed)==1 && mm.aabb_contains(changed[0],{{20,-1e3,20},{20,1e3,20}}) && !mm.aabb_contains(changed[0],{{30,0,30},{30,0,30}}))
+    hit,_:=q.probe(q.user,{20,50,20},{0,-1,0})
     testing.expect(t,hit.point.y>1)
     core.edit(&w.worlds,land).transform.position={0,0,100}
     test_world_settle(&w)
@@ -125,6 +120,46 @@ the_ground_answers_each_line_as_its_terrain_has_it :: proc(t:^testing.T) {
     terrain_resident_free(&resident)
     q=ground_step(&w,&resident)
     testing.expect_value(t,len(changed),2)
+    q=ground_step(&w,&resident)
+    testing.expect_value(t,len(changed),0)
+}
+
+// A Heightfield of 256 m read by pages, in chunks of 32 m: a page that
+// comes announces the columns over its samples, not over the chunks whose
+// build reads it (their halo is half a chunk), and the next call nothing.
+@(test)
+a_page_that_comes_announces_only_the_ground_over_it :: proc(t:^testing.T) {
+    w:Ground_World
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    resident:Terrain_Resident
+    defer terrain_resident_free(&resident)
+    hill,paged:Source
+    if !testing.expect(t,source_make(&hill,.Heightfield,{257,1,257},1,32)) {return}
+    testing.expect(t,source_edit(&hill,{kind=.Raise,center={-32,0,-32},radius=30,amount=4}).changed)
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    path:=fmt.tprintf("%s/paged.terrain",base.test_folder(t,"terrain"))
+    testing.expect_value(t,source_save(&hill,path,{7,7},&types),asset.Error.None)
+    source_destroy(&hill)
+    front:asset.Asset
+    if !testing.expect_value(t,asset.asset_load_front(&front,path),asset.Error.None) {return}
+    _,read:=source_read(&paged,&front,&types,pages=path,coarse=true)
+    asset.asset_close(&front)
+    if !testing.expect(t,read) {return}
+    ground_entry(&w,{7,7},paged,{})
+    q:=ground_step(&w,&resident)
+    changed:=&w.ground_queries.changed.items
+    testing.expect_value(t,len(changed),1)
+    entry:=&w.data.entries[0]
+    // The page of the samples 64 to 127 along x and z, from -64 to -1 m.
+    if !testing.expect(t,source_region_read(&entry.source,{64,0,64},{127,0,127},entry)) {return}
+    q=ground_step(&w,&resident)
+    if !testing.expect_value(t,len(changed),1) {return}
+    box:=changed[0]
+    testing.expect(t,mm.aabb_contains(box,{{-64,-1e3,-64},{-1,1e3,-1}}),"the columns over the page")
+    testing.expectf(t,box.min.x> -70 && box.min.z> -70 && box.max.x<5 && box.max.z<5,"not the chunks that read it: %v",box)
+    hit,found:=q.probe(q.user,{-32,50,-32},{0,-1,0})
+    testing.expect(t,found==.Ground && abs(hit.point.y-source_height(&entry.source,-32,-32))<1e-3)
     q=ground_step(&w,&resident)
     testing.expect_value(t,len(changed),0)
 }
@@ -193,22 +228,32 @@ Dust_World :: struct {
 }
 
 @(test)
-a_dig_raises_dust_of_each_layer_it_took_on_its_channel :: proc(t:^testing.T) {
+a_dig_raises_the_dust_of_the_material_of_each_layer_it_took_wherever_the_layer_is :: proc(t:^testing.T) {
     w:Dust_World
     if !test_world_init(t,&w) {return}
     defer test_world_destroy(&w)
     dusty,bare:=core.create(&w.entities),core.create(&w.entities)
+    soil,gravel,ore:=base.Asset_Id{1,0},base.Asset_Id{2,0},base.Asset_Id{3,0}
     dust:=TERRAIN_DUST_DEFAULT
-    dust.layers[1].color={1,0,0,1}
-    base.text_set(dust.layers[1].channel[:],"gravel")
-    dust.layers[3].channel={}
+    dust.materials[1]={material=gravel,color={1,0,0,1}}
+    base.text_set(dust.materials[1].channel[:],"gravel")
+    dust.materials[2]={material=ore}
     core.add(&w.dusts,dusty,dust)
     test_world_settle(&w)
-    core.push(&w.digs.digs,Terrain_Dig{owner=dusty,center={1,2,3},volume=1,layers={0.5,0.25,0,0.25}})
-    core.push(&w.digs.digs,Terrain_Dig{owner=bare,volume=1,layers={1,0,0,0}})
+    // The same dig with its layers in another order: each material keeps its dust.
+    core.push(&w.digs.digs,Terrain_Dig{owner=dusty,center={1,2,3},volume=1,layers={0=0.5,1=0.25,3=0.25},materials={0=soil,1=gravel,3=ore}})
+    core.push(&w.digs.digs,Terrain_Dig{owner=dusty,center={1,2,3},volume=1,layers={0=0.25,1=0.25,2=0.5},materials={0=ore,1=gravel,2=soil}})
+    core.push(&w.digs.digs,Terrain_Dig{owner=bare,volume=1,layers={0=1},materials={0=soil}})
     terrain_dust(core.ref(&w.digs),core.read(&w.dusts),&w.births)
     births:=w.births.queue.items[:]
-    if !testing.expect_value(t,len(births),2) {return}
-    testing.expect(t,births[0].channel==core.birth_channel(CHANNEL_DUST) && births[0].count==20 && births[0].position==[3]f32{1,2,3})
-    testing.expect(t,births[1].channel==core.birth_channel("gravel") && births[1].count==10 && births[1].color==[4]f32{1,0,0,1})
+    if !testing.expect_value(t,len(births),4) {return}
+    for dig in 0..<2 {
+        soil_birth,gravel_birth:core.Birth
+        for birth in births[2*dig:][:2] {
+            if birth.channel==core.birth_channel(CHANNEL_DUST) {soil_birth=birth}
+            if birth.channel==core.birth_channel("gravel") {gravel_birth=birth}
+        }
+        testing.expect(t,soil_birth.count==20 && soil_birth.position==[3]f32{1,2,3},"a material no entry names takes the entry without one")
+        testing.expect(t,gravel_birth.count==10 && gravel_birth.color==[4]f32{1,0,0,1},"a layer takes the entry of its material")
+    }
 }

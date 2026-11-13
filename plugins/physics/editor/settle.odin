@@ -83,7 +83,7 @@ simulation_limit :: proc(w:core.World_Ref,app:^host.App,moving:[]core.Entity) ->
     for e,i in moving {
         collider,found:=core.get(colliders,e)
         if !found {return i,"has no Collider: give it one with scene.write, so it has a shape to fall with"}
-        if collider.kind==.Mesh || collider.kind==.Heightfield {return i,"has a Collider of kind Mesh or Heightfield, which has no mass: give it a Box, Sphere, Capsule, Cylinder or Hull"}
+        if collider.kind==.Mesh || collider.kind==.Heightfield {return i,"has a Collider of kind Mesh or Heightfield, which has no mass: give it a Box, Sphere, Capsule, Cylinder, Hull or Auto"}
     }
     if requests:=core.world_storage_of(w,phys.Body_Requests);requests!=nil {core.queue_clear(&requests.queue)}
     if characters:=core.world_table_of(w,phys.Character);characters!=nil {

@@ -46,6 +46,9 @@ Step :: struct {
     field:Grid_Swap(f32),
     holes:Grid_Swap(u8),
     weights:Grid_Swap(terrain.Weights),
+    paint:Grid_Swap(terrain.Paint),
+    edits:[terrain.EDITS_MAX]Grid_Swap(f32),
+    under:Grid_Swap(terrain.Weights),
 }
 
 @(private)
@@ -62,6 +65,9 @@ step_destroy :: proc(step:^Step) {
     grid_swap_destroy(&step.field,allocator)
     grid_swap_destroy(&step.holes,allocator)
     grid_swap_destroy(&step.weights,allocator)
+    grid_swap_destroy(&step.paint,allocator)
+    for &g in step.edits {grid_swap_destroy(&g,allocator)}
+    grid_swap_destroy(&step.under,allocator)
     step^={}
 }
 
@@ -147,6 +153,9 @@ step_make :: proc(step:^Step,head,edited:^terrain.Source,low,high:[2]int,all:boo
     if !grid_step(&step.field,&head.field,&edited.field,from,to,all,allocator) {step_revert(step,head);return false}
     if !grid_step(&step.holes,&head.holes,&edited.holes,from-{1,0,1},to,all,allocator) {step_revert(step,head);return false}
     if !grid_step(&step.weights,&head.weights,&edited.weights,from,to,all,allocator) {step_revert(step,head);return false}
+    if !grid_step(&step.paint,&head.paint,&edited.paint,from,to,all,allocator) {step_revert(step,head);return false}
+    for i in 0..<terrain.EDITS_MAX {if !grid_step(&step.edits[i],&head.edit_heights[i],&edited.edit_heights[i],from,to,all,allocator) {step_revert(step,head);return false}}
+    if !grid_step(&step.under,&head.edit_under,&edited.edit_under,from,to,all,allocator) {step_revert(step,head);return false}
     step.info,head.info=head.info,edited.info
     return true
 }
@@ -172,6 +181,9 @@ step_apply :: proc(step:^Step,head:^terrain.Source) {
     grid_apply(&step.field,&head.field)
     grid_apply(&step.holes,&head.holes)
     grid_apply(&step.weights,&head.weights)
+    grid_apply(&step.paint,&head.paint)
+    for i in 0..<terrain.EDITS_MAX {grid_apply(&step.edits[i],&head.edit_heights[i])}
+    grid_apply(&step.under,&head.edit_under)
     step.info,head.info=head.info,step.info
 }
 
@@ -189,7 +201,9 @@ grid_follow :: proc(g:^Grid_Swap($T),edit,head:^terrain.Grid(T),allocator:runtim
 step_follow :: proc(step:^Step,edit,head:^terrain.Source) -> bool {
     if step.whole || !step_shaped(edit,head) {return terrain.source_clone(edit,head,edit.allocator)}
     allocator:=edit.allocator
-    if !grid_follow(&step.field,&edit.field,&head.field,allocator) || !grid_follow(&step.holes,&edit.holes,&head.holes,allocator) || !grid_follow(&step.weights,&edit.weights,&head.weights,allocator) {return false}
+    if !grid_follow(&step.field,&edit.field,&head.field,allocator) || !grid_follow(&step.holes,&edit.holes,&head.holes,allocator) || !grid_follow(&step.weights,&edit.weights,&head.weights,allocator) || !grid_follow(&step.paint,&edit.paint,&head.paint,allocator) {return false}
+    for i in 0..<terrain.EDITS_MAX {if !grid_follow(&step.edits[i],&edit.edit_heights[i],&head.edit_heights[i],allocator) {return false}}
+    if !grid_follow(&step.under,&edit.edit_under,&head.edit_under,allocator) {return false}
     edit.info=head.info
     return true
 }
@@ -211,7 +225,9 @@ source_take_back :: proc(edit,head:^terrain.Source,low,high:[2]int) -> bool {
     }
     allocator:=edit.allocator
     from,to:=region(low,high)
-    if !back(&edit.field,&head.field,from,to,allocator) || !back(&edit.holes,&head.holes,from-{1,0,1},to,allocator) || !back(&edit.weights,&head.weights,from,to,allocator) {return false}
+    if !back(&edit.field,&head.field,from,to,allocator) || !back(&edit.holes,&head.holes,from-{1,0,1},to,allocator) || !back(&edit.weights,&head.weights,from,to,allocator) || !back(&edit.paint,&head.paint,from,to,allocator) {return false}
+    for i in 0..<terrain.EDITS_MAX {if !back(&edit.edit_heights[i],&head.edit_heights[i],from,to,allocator) {return false}}
+    if !back(&edit.edit_under,&head.edit_under,from,to,allocator) {return false}
     edit.info=head.info
     return true
 }
@@ -240,7 +256,9 @@ steps_rebase :: proc(steps:^[dynamic]Step,id:base.Asset_Id,revision:u32,head,fre
             step.allocator,step.source,step.from,step.to,step.whole=allocator,id,from,revision,true
             continue
         }
-        if !rebase_grid(&step.field,&head.field,&fresh.field,allocator) || !rebase_grid(&step.holes,&head.holes,&fresh.holes,allocator) || !rebase_grid(&step.weights,&head.weights,&fresh.weights,allocator) {
+        rebased:=rebase_grid(&step.field,&head.field,&fresh.field,allocator) && rebase_grid(&step.holes,&head.holes,&fresh.holes,allocator) && rebase_grid(&step.weights,&head.weights,&fresh.weights,allocator) && rebase_grid(&step.paint,&head.paint,&fresh.paint,allocator) && rebase_grid(&step.under,&head.edit_under,&fresh.edit_under,allocator)
+        for i in 0..<terrain.EDITS_MAX {rebased=rebased && rebase_grid(&step.edits[i],&head.edit_heights[i],&fresh.edit_heights[i],allocator)}
+        if !rebased {
             step_destroy(step);ordered_remove(steps,i);continue
         }
     }

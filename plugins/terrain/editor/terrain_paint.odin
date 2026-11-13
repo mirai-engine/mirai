@@ -13,7 +13,7 @@ import "mirai:editor/kit"
 import "mirai:ui"
 
 @(private)
-tool_painting :: proc "contextless" (t:^Terrain_Tool) -> bool {return t.brush==.Paint || t.brush==.Erase}
+tool_painting :: proc "contextless" (t:^Terrain_Tool) -> bool {return t.brush==.Paint || t.brush==.Erase || t.brush==.Tint || t.brush==.Roughness}
 @(private)
 tool_holing :: proc "contextless" (t:^Terrain_Tool) -> bool {return t.brush==.Hole || t.brush==.Fill}
 
@@ -31,7 +31,8 @@ terrain_holes_panel :: proc(s:^editor.Session,tool:^Terrain_Tool) {
 // under the list what the chosen one has; the brush paints it. The program that blends
 // them shows only when it is not the one of the plugin.
 @(private)
-terrain_paint_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,assets:^host.Assets) {
+terrain_paint_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,app:^host.App) {
+    assets:=app.assets
     ctx:=s.gui.ctx
     source:=&tool.stroke.source
     count:=int(source.layer_count)
@@ -50,9 +51,25 @@ terrain_paint_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.Worl
     if layer_fields(s,tool,&layer) {terrain_layer_commit(s,tool,world,assets,tool.layer,layer,false)}
     if source.kind==.Volume {terrain_interior_panel(s,tool,world,assets)}
     kit.section(ctx,"Brush","",80)
-    selected:=-1 if editor.tool_aside(s,"terrain") else 1 if tool.brush==.Erase else 0
-    if kit.tabs(ctx,ui.id(ctx,"paint"),{"Paint","Erase"},&selected) {tool.brush=selected==1?.Erase:.Paint;editor.tool_take(s,"terrain")}
+    // A Heightfield takes a color and a roughness painted over its layers too.
+    KINDS :: [4]terrain.Brush_Kind{.Paint,.Erase,.Tint,.Roughness}
+    kinds:=KINDS
+    tabs:=source.kind==.Heightfield?4:2
+    if tabs==2 && (tool.brush==.Tint || tool.brush==.Roughness) {tool.brush=.Paint}
+    selected:=-1
+    if !editor.tool_aside(s,"terrain") {for kind,i in kinds[:tabs] {if tool.brush==kind {selected=i}}}
+    NAMES :: [4]string{"Paint","Erase","Tint","Roughness"}
+    names:=NAMES
+    if kit.tabs(ctx,ui.id(ctx,"paint"),names[:tabs],&selected) {tool.brush=kinds[selected];editor.tool_take(s,"terrain")}
     brush_fields(s,tool,true,true,true)
+    if tool.brush==.Tint {
+        defaults:=TERRAIN_PREFERENCES_DEFAULT
+        editor.held_field_row(s,{key=u64(PANEL_SCOPE)<<32|0x400,info=type_info_of(Terrain_Preferences),value=&tool.prefs,defaults=&defaults},"tint","Color")
+    }
+    if tool.brush==.Roughness {
+        roughness:=f64(tool.roughness)
+        if kit.property(ctx,"Roughness") {if ui.number_field(ctx,ui.id(ctx,"roughness"),&roughness,{width=ui.fixed(FIELD_WIDTH),min=0,max=1,has_min=true,has_max=true,speed=0.01}).changed {tool.roughness=f32(roughness)}}
+    }
     if tool.brush==.Paint {
         if kit.property(ctx,"Up to a weight") {ui.checkbox(ctx,ui.id(ctx,"toward"),&tool.toward)}
         if tool.toward {
@@ -60,7 +77,13 @@ terrain_paint_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.Worl
             if kit.property(ctx,"Weight") {if ui.number_field(ctx,ui.id(ctx,"target"),&percent,{width=ui.fixed(FIELD_WIDTH),min=0,max=100,has_min=true,has_max=true,speed=0.5,decimals=0,unit="%"}).changed {tool.target=f32(percent/100)}}
         }
     }
-    if tool.stroke.source.kind==.Heightfield {slope_fields(s,tool)}
+    if tool.stroke.source.kind!=.Heightfield {return}
+    slope_fields(s,tool)
+    kit.section(ctx,"Weightmap","",80)
+    if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=4}) {
+        if ui.button(ctx,ui.id(ctx,"weights_import"),{label="Import",variant="field",width=-1,center=true}).clicked {heightmap_dialog(s,tool,app,WEIGHTS_IMPORT_DIALOG)}
+        if ui.button(ctx,ui.id(ctx,"weights_export"),{label="Export",variant="field",width=-1,center=true}).clicked {heightmap_dialog(s,tool,app,WEIGHTS_EXPORT_DIALOG)}
+    }
 }
 
 // The heading of the layers, as a section: how many of the most it has, and
@@ -114,6 +137,19 @@ layer_fields :: proc(s:^editor.Session,tool:^Terrain_Tool,layer:^terrain.Terrain
     if kit.property(ctx,"Height blend") {
         result:=ui.number_field(ctx,ui.id(ctx,"blend"),&blend,{min=0,max=1,has_min=true,has_max=true,speed=0.01})
         if result.changed {layer.height_blend=f32(blend)}
+        changed|=settled(result)
+    }
+    looks:=[3]f64{f64(layer.detile),f64(layer.variation),f64(layer.far_tiling)}
+    for label,i in ([3]string{"Detile","Variation","Far tiling"}) {
+        if !kit.property(ctx,label) {continue}
+        result:=ui.number_field(ctx,ui.id(ctx,"look",i+1),&looks[i],{min=0,max=i==2?10000:1,has_min=true,has_max=true,speed=i==2?0.05:0.01,unit=i==2?"m":""})
+        if result.changed {
+            switch i {
+            case 0: layer.detile=f32(looks[i])
+            case 1: layer.variation=f32(looks[i])
+            case 2: layer.far_tiling=f32(looks[i])
+            }
+        }
         changed|=settled(result)
     }
     if tool.stroke.source.kind==.Heightfield {

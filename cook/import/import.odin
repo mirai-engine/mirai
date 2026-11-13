@@ -39,6 +39,7 @@ import_model :: proc(path:string,formats:[]Format,options:Import_Options={},allo
     r.nodes.allocator=context.temp_allocator;r.warnings.allocator=context.temp_allocator;r.image_rows.allocator=context.temp_allocator
     r.programs.allocator=context.temp_allocator
     r.files.allocator=context.temp_allocator
+    r.colliders.allocator=context.temp_allocator
     r.animations.allocator=context.temp_allocator
     r.skeletons.allocator=context.temp_allocator
     r.material_names.allocator=context.temp_allocator;r.mesh_names.allocator=context.temp_allocator
@@ -140,6 +141,10 @@ read_model :: proc(r:^Reader,formats:[]Format,model:^Imported_Model) -> bool {
     {
         zone(r.options,"import.format")
         if !format.read(r,bytes) {return false}
+    }
+    {
+        zone(r.options,"import.colliders")
+        if !colliders_resolve(r) {return false}
     }
     zone(r.options,"import.space")
     space_bake(r,r.basis)

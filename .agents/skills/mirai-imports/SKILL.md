@@ -118,9 +118,10 @@ the assets.
   ([materials](references/imports.md#what-is-written)).
 - **What an asset was built from is its `Import_Info`**: source (size and hash), writer and format
   version, and only the settings the asset is made from. Whether a file of the cache is current
-  is said once, by its name (the key of what the import builds from); the rest is rebuilt, and a
-  texture of the same image and settings or a mesh of the same geometry and settings comes from
-  the content cache.
+  is said once, by its name (the key of what the import builds from), and a mesh or a texture
+  whose file under another key records what it would be built from now takes that file; the rest
+  is rebuilt, and a texture of the same image and settings or a mesh of the same geometry and
+  settings comes from the content cache.
 - **In parallel, the same bytes.** What is expensive (levels, clusters and colliders of a mesh,
   levels of a texture) is built in jobs; what decides ids and files is written in a single thread,
   in the usual order. Importing with or without the job system gives the same files.
@@ -157,11 +158,14 @@ the assets.
   options of whoever imports (except `ignore_stored`); every import writes it. Everything that
   changes an asset is a setting, also the alpha coverage of a loose image. An unreadable sidecar
   is an error, not the defaults nor new ids.
-- **What is imported is used as is.** Levels of detail and colliders are made on import and stored
-  in the `.mesh`; loading does not recompute them.
-- **Simple collision: the source's wins.** The colliders the source brings are the mesh's
-  collision; the `collision` setting builds them from the geometry only if the source brings
-  none, or with `force_collision` (`--force-collision`).
+- **What is imported is used as is.** Levels of detail are made on import and stored in the
+  `.mesh`; loading does not recompute them.
+- **Collision is the source's, as authored.** The colliders the source brings are the mesh's and
+  the import makes none; a mesh without them collides only through an `Auto` collider, whose
+  geometry physics derives and caches. Decided by the owner.
+- **No limits of size or triangles are settings.** Texture memory is decided by what the view
+  samples (mip streaming); an image above `asset.TEXTURE_MAX_SIZE` is refused, never scaled.
+  Levels of detail are chosen by projected error. Decided by the owner.
 - **Textures in blocks are encoded with a perceptual metric and RDO** at
   `RDO_LAMBDA_DEFAULT` unless the setting `rdo_lambda` says otherwise.
 - **The editor never waits for the final encode** (`textures.Encode_Speed`): its imports take the
@@ -177,7 +181,7 @@ the assets.
 
 ## Verification
 
-- `mirai test cook/import` (source space, PBR, levels, collision, sounds, hand grips),
+- `mirai test cook/import` (source space, PBR, levels, sounds, hand grips),
   `cook/rig` (fit and weights over a body of boxes, each animal stretched by its skin, meshes
   that are neither a person nor an animal), `cook/import/obj`, `cook/import/gltf` (with the rig
   fits of `rig_test.odin` and the decoding of `meshopt_test.odin`), `cook/import/usd`,
@@ -187,7 +191,9 @@ the assets.
   layers in `layers_test.odin`). The fixtures of `assets/fixtures/` and the models of
   `demo/assets` import (without warnings) and what is written reads back with `asset`.
 - Caches: `cook/textures/cache_test.odin` and `cook/import/sources/cache_test.odin` (a texture or
-  a mesh that another import built is taken from the cache);
+  a mesh that another import built is taken from the cache; one whose file under another key
+  records what it is built from now is taken without writing it, and one that records other
+  encoders or another builder is built again);
   `cook/build/cook_cache_test.odin` (a cook takes the blocks of a texture from the cache of its
   content) and `cook/import/sources/cook_test.odin` (the sync of a cook builds a fast texture
   final from its source; that of a build that does not cook keeps either).

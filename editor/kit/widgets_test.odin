@@ -309,3 +309,27 @@ a_scaled_button_inside_a_clipped_box_takes_the_pointer :: proc(t:^testing.T) {
     }
     testing.expect(t,hit,"The pointer reaches the button where the scaled box draws it")
 }
+
+// A button that fills itself with a color draws its text in the tone made to
+// read on that color, legible at rest (WCAG AA: a contrast of 4.5).
+@(test)
+filled_buttons_draw_their_text_in_the_tone_on_their_fill :: proc(t:^testing.T) {
+    ctx:ui.Context
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
+    defer ui.context_destroy(&ctx)
+    relative :: proc(c:ui.Color) -> f32 {
+        lum:[3]f32
+        for i in 0..<3 {
+            v:=f32(c[i])/255
+            lum[i]=v/12.92 if v<=0.04045 else math.pow((v+0.055)/1.055,2.4)
+        }
+        return 0.2126*lum[0]+0.7152*lum[1]+0.0722*lum[2]
+    }
+    Case :: struct {variant,fill,text:string}
+    for c in ([]Case{{"accent","accent","on_accent"},{"danger","danger_fill","on_danger"}}) {
+        look:=ui.sheet_look(&ctx,"button",c.variant,{})
+        testing.expectf(t,look.fill==ui.tone(&ctx,c.fill) && look.text.color==ui.tone(&ctx,c.text),"%s: %v on %v",c.variant,look.text.color,look.fill)
+        a,b:=relative(look.text.color),relative(look.fill)
+        testing.expectf(t,(max(a,b)+0.05)/(min(a,b)+0.05)>=4.5,"%s: its text reads on its fill",c.variant)
+    }
+}

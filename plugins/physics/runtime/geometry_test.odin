@@ -1,14 +1,18 @@
 package physics
 
+import "core:fmt"
+import "core:os"
 import "core:strings"
 import "core:testing"
 import "core:math/linalg"
+import "mirai:asset"
 import "mirai:core"
 import "mirai:host"
 import render "mirai:engine/render"
 import sim "plugins:physics/runtime/sim"
 import "mirai:std/base"
 import "mirai:std/geom"
+import "mirai:std/jobs"
 import mm "mirai:std/math"
 
 // A physics world whose application holds the assets its colliders are made from.
@@ -45,12 +49,12 @@ geometry_test_step :: proc(g:^Geometry_Test) {
 }
 
 @(private)
-geometry_test_mesh :: proc(g:^Geometry_Test,heights:[]f32=nil,origin:[3]f32={},cell:[3]f32={1,1,1},disabled_borders:[]u8=nil) -> (base.Asset_Id,bool) {
+geometry_test_mesh :: proc(g:^Geometry_Test,heights:[]f32=nil,origin:[3]f32={},cell:[3]f32={1,1,1},disabled_borders:[]u8=nil,materials:[]base.Asset_Id=nil) -> (base.Asset_Id,bool) {
     positions:=[4]geom.Vec3{origin,origin+{cell.x,0,0},origin+{0,0,cell.z},origin+{cell.x,0,cell.z}}
     for &p,index in positions {if len(heights)==4 {p.y+=heights[index]*cell.y}}
     indices:=[6]u32{0,2,1,1,2,3}
     options:=host.Mesh_Generate_Options{no_lods=true,collision=len(heights)==0}
-    field:=host.Assets_Heightfield{heights=heights,columns=2,rows=2,cell=cell,origin=origin,disabled_borders=disabled_borders}
+    field:=host.Assets_Heightfield{heights=heights,columns=2,rows=2,cell=cell,origin=origin,disabled_borders=disabled_borders,materials=materials}
     if len(heights)>0 {options.heightfield=&field}
     return host.assets_mesh_generate(&g.assets,{positions=positions[:],indices=indices[:]},options=options)
 }
@@ -145,6 +149,127 @@ a_compound_heightfield_rotates_its_grid_origin_and_ignores_unrelated_asset_chang
     testing.expect_value(t,g.state.stats.shapes_created,u64(1))
 }
 
+// A tick reads no mesh file and builds no tree: a body whose Mesh or Hull
+// collider shows a mesh file that a job still reads or builds waits for a
+// later tick, and is made from what the job prepared. A change of another
+// asset leaves its shapes as they are.
+@(test)
+a_collider_of_a_mesh_file_waits_for_its_job_and_keeps_its_shape_when_other_assets_change :: proc(t:^testing.T) {
+    root:=base.test_folder(t,"physics-file-mesh")
+    if root=="" {return}
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    vertices:=[4]asset.Vertex{{position={-1,0,-1}},{position={1,0,-1}},{position={-1,0,1}},{position={1,0,1}}}
+    order:=[6]u32{0,2,1,1,2,3}
+    floor:asset.Mesh_Geometry
+    if !testing.expect(t,asset.mesh_build({vertices=vertices[:]},order[:],nil,&floor,context.temp_allocator)) {return}
+    ID :: base.Asset_Id{0x666c6f6f72,1}
+    testing.expect_value(t,asset.mesh_save(fmt.tprintf("%s/floor.mesh",root),&types,{id=ID,geometry=floor}),asset.Error.None)
+    g:Geometry_Test
+    if !physics_test_init(t,&g.f) {return}
+    g.settings={bodies=8,shapes=8,contacts=32,joints=1,characters=1,hulls=2,meshes=2,heightfields=2}
+    g.whole=true
+    g.app.assets=&g.assets
+    defer host.assets_destroy(&g.assets)
+    if !testing.expect(t,host.assets_init(&g.assets,{root=root,capacity=8})) {return}
+    if !testing.expect(t,jobs.system_init(&g.app.jobs,{threads=2})) {return}
+    defer jobs.system_destroy(&g.app.jobs)
+    defer physics_test_destroy(&g.f)
+    surface,hull:=core.create(&g.entities),core.create(&g.entities)
+    for e,at in ([2]core.Entity{surface,hull}) {
+        core.add(&g.transforms,e,core.Transform{position={f32(at)*10,0,0},rotation=1,scale={2,1,2}})
+        core.add(&g.statics,e,render.Mesh_Renderer{mesh=ID})
+    }
+    core.add(&g.colliders,surface,collider_mesh())
+    core.add(&g.colliders,hull,collider_hull())
+    geometry_test_step(&g)
+    testing.expect_value(t,g.state.stats.bodies_created,u64(0))
+    for jobs.pending(&g.meshes.counter) {jobs.wait(&g.app.jobs,jobs.OWNER,&g.meshes.counter)}
+    // The tree of the Mesh collider at its scale is a job of its own, after the file.
+    for tick:=0;tick<4 && g.state.stats.bodies_created<2;tick+=1 {
+        geometry_test_step(&g)
+        for jobs.pending(&g.meshes.counter) {jobs.wait(&g.app.jobs,jobs.OWNER,&g.meshes.counter)}
+    }
+    testing.expect_value(t,g.state.stats.bodies_created,u64(2))
+    testing.expect_value(t,g.problems.count,0)
+    hit,hit_ok:=raycast({&g.state},{1.5,5,0},{0,-1,0})
+    testing.expectf(t,hit_ok && hit.entity==surface && abs(hit.point.y)<1e-3,"a ray down meets the floor at its scale: %v",hit)
+    l:=link_find(&g.state,hull)
+    testing.expect(t,l!=nil && sim.shape_valid(&g.state.world,l.shape),"the Hull collider has its shape")
+    shapes:=g.state.stats.shapes_created
+    g.assets.revision+=1
+    g.assets.structure+=1
+    geometry_test_step(&g)
+    testing.expect_value(t,g.state.stats.shapes_created,shapes)
+}
+
+// An Auto collider of a mesh file without colliders of its source is its triangles while its body stays
+// still and convex pieces of them while it moves: a file of the cache holds them, decomposed once in a job
+// for every entity that moves with that mesh.
+@(test)
+an_auto_collider_is_the_triangles_of_a_still_mesh_and_the_pieces_of_a_moving_one :: proc(t:^testing.T) {
+    root:=base.test_folder(t,"physics-auto")
+    if root=="" {return}
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    // An L of two boxes that share a face: not convex.
+    vertices:=make([dynamic]asset.Vertex,context.temp_allocator)
+    order:=make([dynamic]u32,context.temp_allocator)
+    for part in 0..<2 {
+        box:geom.Mesh_Buffer
+        geom.mesh_buffer_init(&box,context.temp_allocator)
+        geom.cube_build(&box,part==0?geom.Vec3{3,1,1}:geom.Vec3{1,3,1})
+        first:=u32(len(vertices))
+        for position in box.positions {append(&vertices,asset.Vertex{position=position+(part==0?geom.Vec3{1,0,0}:geom.Vec3{0,2,0})})}
+        for index in box.indices {append(&order,first+index)}
+    }
+    angle:asset.Mesh_Geometry
+    if !testing.expect(t,asset.mesh_build({vertices=vertices[:]},order[:],nil,&angle,context.temp_allocator)) {return}
+    ID :: base.Asset_Id{0x616e676c65,1}
+    testing.expect_value(t,asset.mesh_save(fmt.tprintf("%s/angle.mesh",root),&types,{id=ID,geometry=angle}),asset.Error.None)
+    g:Geometry_Test
+    if !physics_test_init(t,&g.f) {return}
+    g.settings={bodies=8,shapes=32,contacts=64,joints=1,characters=1,hulls=16,meshes=2,heightfields=1}
+    g.whole=true
+    g.app.assets=&g.assets
+    cache:=fmt.tprintf("%s/cache",root)
+    g.app.collision_cache=cache
+    defer host.assets_destroy(&g.assets)
+    if !testing.expect(t,host.assets_init(&g.assets,{root=root,capacity=8})) {return}
+    if !testing.expect(t,jobs.system_init(&g.app.jobs,{threads=2})) {return}
+    defer jobs.system_destroy(&g.app.jobs)
+    defer physics_test_destroy(&g.f)
+    still,moving,other:=core.create(&g.entities),core.create(&g.entities),core.create(&g.entities)
+    for e,at in ([3]core.Entity{still,moving,other}) {
+        core.add(&g.transforms,e,core.Transform{position={f32(at)*10,0,0},rotation=1,scale={1,1,1}})
+        core.add(&g.statics,e,render.Mesh_Renderer{mesh=ID})
+        core.add(&g.colliders,e,collider_auto())
+    }
+    body:=RIGID_BODY_DYNAMIC
+    body.gravity_scale=0
+    core.add(&g.rigids,moving,body)
+    core.add(&g.rigids,other,body)
+    for tick:=0;tick<8 && g.state.stats.bodies_created<3;tick+=1 {
+        geometry_test_step(&g)
+        for jobs.pending(&g.meshes.counter) {jobs.wait(&g.app.jobs,jobs.OWNER,&g.meshes.counter)}
+    }
+    testing.expect_value(t,g.state.stats.bodies_created,u64(3))
+    testing.expect_value(t,g.problems.count,0)
+    l:=link_find(&g.state,still)
+    testing.expect(t,l!=nil && l.mesh!={} && l.hull=={} && l.pieces.count==0,"a still body collides with the triangles of its mesh")
+    a,b:=link_find(&g.state,moving),link_find(&g.state,other)
+    if !testing.expect(t,a!=nil && b!=nil && a.hull!={} && a.mesh=={} && a.pieces.count>=1,"a moving one with two convex pieces or more") {return}
+    testing.expect(t,b.hull==a.hull && b.pieces.count==a.pieces.count,"the pieces of the same mesh are made once and shared")
+    decomposed:=0
+    for key in g.meshes.files {if key.decomposed {decomposed+=1}}
+    testing.expect_value(t,decomposed,1)
+    kept,_:=os.read_all_directory_by_path(cache,context.temp_allocator)
+    testing.expect(t,len(kept)==1 && strings.has_suffix(kept[0].name,host.COLLISION_PIECES_EXTENSION),"the pieces are kept in the cache")
+    // Made static, the body takes the triangles of its mesh.
+    core.add(&g.rigids,moving,RIGID_BODY_STATIC)
+    geometry_test_step(&g)
+    l=link_find(&g.state,moving)
+    testing.expect(t,l!=nil && l.mesh!={} && l.pieces.count==0,"a body that stops moving takes the triangles")
+}
+
 @(test)
 copying_physics_replaces_divergent_meshes_and_heightfields_with_equal_generations :: proc(t:^testing.T) {
     worlds:[2]Physics_State
@@ -181,6 +306,30 @@ copying_physics_replaces_divergent_meshes_and_heightfields_with_equal_generation
 }
 
 @(test)
+a_collider_of_one_material_per_cell_names_it_in_hits_and_takes_its_collision_surface :: proc(t:^testing.T) {
+    g:Geometry_Test
+    if !geometry_test_init(t,&g) {return}
+    defer geometry_test_destroy(&g)
+    ice:=base.Asset_Id{7,0}
+    heights:=[4]f32{}
+    mesh,ok:=geometry_test_mesh(&g,heights[:],materials={ice})
+    testing.expect(t,ok)
+    e:=core.create(&g.entities)
+    core.add(&g.colliders,e,collider_heightfield())
+    core.add(&g.statics,e,render.Mesh_Renderer{mesh=mesh})
+    core.add(&g.transforms,e,core.TRANSFORM_IDENTITY)
+    g.collision.surfaces[0]={material=ice,friction=0.05,restitution=0.2}
+    g.collision.surfaces[1]={material=ice,friction=1}
+    g.collision.surfaces[2]={material={8,0},friction=-1}
+    geometry_test_step(&g)
+    hit,hit_ok:=raycast({&g.state},{0.5,3,0.5},{0,-1,0})
+    testing.expect(t,hit_ok && hit.material==ice)
+    rules:=sim.world_surface_rules(&g.state.world)
+    testing.expect(t,len(rules)==1 && rules[0]=={sim.Surface(ice),0.05,0.2},"the simulation takes each valid entry once")
+    testing.expect(t,g.problems.count>0,"a wrong entry is a problem")
+}
+
+@(test)
 copying_physics_gives_the_copy_its_own_heightfield_holes :: proc(t:^testing.T) {
     worlds:[2]Physics_State
     defer for &state in worlds {state_destroy(&state)}
@@ -193,7 +342,9 @@ copying_physics_gives_the_copy_its_own_heightfield_holes :: proc(t:^testing.T) {
         // The same heights and generation, a hole only in the first cell of the source.
         heights:=[6]f32{}
         holes:=[2]u8{index==0?1:0,0}
-        field,ok:=sim.heightfield_create(&state.world,{heights=heights[:],columns=3,rows=2,cell={1,1,1},holes=holes[:]})
+        surfaces:=[2]sim.Surface{{1,0},{2,0}}
+        cells:=[2]u8{0,u8(1-index)}
+        field,ok:=sim.heightfield_create(&state.world,{heights=heights[:],columns=3,rows=2,cell={1,1,1},holes=holes[:],surfaces=surfaces[:],cell_surfaces=cells[:]})
         testing.expect(t,ok)
         body_desc:=sim.BODY_DESC_DEFAULT
         body_desc.type=.Static
@@ -204,8 +355,8 @@ copying_physics_gives_the_copy_its_own_heightfield_holes :: proc(t:^testing.T) {
     state_copy(&worlds[1],&worlds[0])
     state_destroy(&worlds[0])
     _,in_hole:=raycast({&worlds[1]},{0.5,10,0.5},{0,-1,0})
-    _,beside:=raycast({&worlds[1]},{1.5,10,0.5},{0,-1,0})
-    testing.expect(t,!in_hole && beside)
+    hit,beside:=raycast({&worlds[1]},{1.5,10,0.5},{0,-1,0})
+    testing.expect(t,!in_hole && beside && hit.material==base.Asset_Id{2,0},"the copy takes the surfaces of its source")
 }
 
 @(test)

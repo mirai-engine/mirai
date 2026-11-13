@@ -49,7 +49,7 @@ Gbuffer_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vu
     bool drawn = corner < cluster_triangle_count(c) * 3u;
 #ifndef MIRAI_BATCHES
     if (MIRAI_EDITOR_HIGHLIGHT) drawn = drawn && cluster_finest_resident(mesh, c);
-    else drawn = drawn && cluster_in_cut(inst, instance_scale(inst), mesh, c, frame.cut.x);
+    else drawn = drawn && cluster_in_cut(view_detail(), inst, instance_scale(inst), mesh, c, frame.cut.x);
     drawn = drawn && (draw.program == INVALID || materials[material].shared.program_id == draw.program);
 #endif
     if (!drawn) {

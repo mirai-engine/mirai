@@ -30,9 +30,9 @@ Stroke_Axis :: enum u8 {Free,X,Z}
 // A brush of the Sculpt list; Set height is Flatten to a typed height.
 Sculpt_Brush :: struct {kind:terrain.Brush_Kind,level:bool,name:string}
 
-@(rodata) HEIGHTFIELD_BRUSHES := [?]Sculpt_Brush{{.Raise,false,"Raise"},{.Lower,false,"Lower"},{.Smooth,false,"Smooth"},{.Flatten,false,"Flatten"},{.Ramp,false,"Ramp"},{.Flatten,true,"Set height"},{.Terrace,false,"Terrace"},{.Noise,false,"Noise"},{.Erode,false,"Erode"}}
+@(rodata) HEIGHTFIELD_BRUSHES := [?]Sculpt_Brush{{.Raise,false,"Raise"},{.Lower,false,"Lower"},{.Smooth,false,"Smooth"},{.Flatten,false,"Flatten"},{.Ramp,false,"Ramp"},{.Flatten,true,"Set height"},{.Terrace,false,"Terrace"},{.Noise,false,"Noise"},{.Erode,false,"Erode"},{.Thermal,false,"Thermal"}}
 @(rodata) VOLUME_BRUSHES := [?]Sculpt_Brush{{.Add,false,"Add"},{.Carve,false,"Remove"},{.Raise,false,"Raise"},{.Lower,false,"Lower"},{.Smooth,false,"Smooth"},{.Flatten,false,"Flatten"},{.Flatten,true,"Set height"},{.Noise,false,"Noise"}}
-@(rodata) BRUSH_KEYS := [9]core.Key{.One,.Two,.Three,.Four,.Five,.Six,.Seven,.Eight,.Nine}
+@(rodata) BRUSH_KEYS := [10]core.Key{.One,.Two,.Three,.Four,.Five,.Six,.Seven,.Eight,.Nine,.Zero}
 // The keys the tool takes from the shortcuts of the editor while it is on.
 TOOL_KEYS :: core.Keys{.F,.Left_Bracket,.Right_Bracket,.One,.Two,.Three,.Four,.Five,.Six,.Seven,.Eight,.Nine}
 
@@ -237,6 +237,7 @@ stroke_touch :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,k
     }
     change:=terrain.source_edit(&stroke.source,brush)
     if change.error!=.None {edit_error(s,change.error,brush.kind);return}
+    if change.changed {stroke_brush_keep(tool,brush)}
     stroke_changed(stroke,change)
 }
 
@@ -250,6 +251,7 @@ brush_make :: proc(tool:^Terrain_Tool,kind:terrain.Brush_Kind,point,normal:[3]f3
         kind=kind,center=point,radius=b.radius/stroke.scale,target=stroke.target,
         layer=u32(tool.layer),falloff=b.falloff,hardness=clamp(b.hardness,0,0.95),
         way=tool.way,interval=max(tool.interval,0.01)/stroke.scale,riser=clamp(tool.riser,0,1),scale=max(tool.noise_scale,0.1)/stroke.scale,
+        talus=clamp(tool.talus,math.to_radians(f32(1)),math.to_radians(f32(89))),
         seed=u32(stroke.id[0]),turn=b.turn,
     }
     brush.alpha=alpha_of(tool,b)
@@ -259,6 +261,8 @@ brush_make :: proc(tool:^Terrain_Tool,kind:terrain.Brush_Kind,point,normal:[3]f3
         brush.slope,brush.slope_invert={low,max(high,low+1e-6)},b.slope_invert
     }
     if kind==.Paint && tool.toward {brush.toward,brush.target=true,clamp(tool.target,0,1)}
+    if kind==.Tint {brush.color=linalg.clamp(tool.tint,0,1)}
+    if kind==.Roughness {brush.target=clamp(tool.roughness,0,1)}
     // Noise keeps the seed of its source, so a pass deepens one pattern; the
     // drops of Erode start elsewhere at each touch.
     if kind==.Erode {brush.seed=u32(base.hash_u64(tool.touches))}

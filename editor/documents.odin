@@ -235,6 +235,7 @@ Strip_Tab :: struct {
     label:string,
     icon:ui.Icon,
     pending,active:bool, // pending: its file has what is not kept
+    loading:bool,        // its scene loads, until it is resident
     asset:int, // the index of its asset document; -1 for a scene
 }
 
@@ -260,15 +261,31 @@ strip_tab :: proc(s:^Session,index:int) -> (tab:Strip_Tab) {
     if index!=s.active_document && index<len(s.documents) {d=&s.documents[index].document}
     tab.label=document_title(d)
     tab.pending=git_pending(s,document_file(d))
+    tab.loading=index==document_loading_tab(s)
     tab.icon=d.prefab?.Prefab:.Scene
     tab.active=index==s.active_document && !scene_covered(s)
     return
 }
 
+// The tab of the scene that loads, from the frame its open was asked for
+// until it is resident: that of the scene it replaces, or the one in front
+// for a tab of its own; -1 when none loads.
+@(private)
+document_loading_tab :: proc(s:^Session) -> int {
+    if s.open_shown && .Open in s.requests {
+        path:=string(s.open_path[:s.open_length])
+        if scene:=document_scene_tab(s);scene>=0 && !path_is_prefab(s,path) {return scene}
+        return s.active_document
+    }
+    if s.app==nil {return -1}
+    p:=&s.app.load_profile
+    return s.active_document if p.loading && p.current==.Scene else -1
+}
+
 @(private)
 document_tab_width :: proc(s:^Session,tab:Strip_Tab,room:f32) -> f32 {
     width:=ui.text_width(&s.gui.ctx.font,tab.label,ui.metric(s.gui.ctx,"font"))+54
-    if tab.pending {width+=PENDING_DOT+18}
+    if tab.pending || tab.loading {width+=PENDING_DOT+18}
     return clamp(width,90,max(room,90))
 }
 
@@ -346,7 +363,10 @@ documents_build :: proc(s:^Session) {
                             case:              s.document_request=index;s.requests+={.Document_Switch}
                             }
                         }
-                        if tab.pending {
+                        if tab.loading {
+                            pulse_dot(ctx,ui.tone(ctx,"accent"),true,PENDING_DOT)
+                            ui.spacer(ctx,5,1)
+                        } else if tab.pending {
                             if ui.box(ctx,{width=ui.fixed(PENDING_DOT),height=ui.fixed(PENDING_DOT),fill=PENDING_COLOR,radius=PENDING_DOT*0.5}) {}
                             ui.spacer(ctx,5,1)
                         }

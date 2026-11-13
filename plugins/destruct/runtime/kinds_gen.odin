@@ -6,3 +6,4 @@ import "mirai:asset"
 
 FRACTURE_KIND :: asset.Fourcc(u32('F')|u32('R')<<8|u32('A')<<16|u32('C')<<24)
 FRACTURE_EXTENSION :: ".fracture"
+FRACTURE_VERSION :: 4

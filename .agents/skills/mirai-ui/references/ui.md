@@ -385,7 +385,8 @@ All take the context, an id and their state by parameter.
   - A `modal` with `close` is dismissed with its cross or a click outside, and whoever opened it
     closes it. The questions (quit, replace the scene) are not dismissed.
 - **Scroll** (`scroll.odin`): the offset belongs to the caller. `list_begin` and `rows_begin` build
-  only the visible rows (equal ones, or of heights that the caller measured once).
+  only the visible rows (equal ones, or of heights that the caller measured once); `rows_begin` in
+  an area whose height the layout gives takes as visible the height it had the last frame.
   - An area that scrolls horizontally leaves its content as wide as it asks, so a paragraph is not
     split.
   - The wheel goes to the innermost area under the pointer that can still move its content that

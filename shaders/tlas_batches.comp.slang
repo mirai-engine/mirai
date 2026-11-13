@@ -45,7 +45,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     float3 p = asfloat(uint3(indices[words], indices[words + 1u], indices[words + 2u])) + b.anchor.xyz;
     float4 world[3];
     float4 inverse[3];
-    batch_instance_placement(p, indices[words + 3u], indices[words + 4u], world, inverse);
+    batch_instance_placement(p, indices[words + 3u], uint2(indices[words + 4u], indices[words + 5u]), world, inverse);
     uint to = i * 16u;
     for (uint row = 0u; row < 3u; row++) {
         instances[to + row * 4u] = asuint(world[row].x);

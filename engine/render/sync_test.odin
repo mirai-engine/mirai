@@ -3,11 +3,15 @@ package render
 import "base:runtime"
 import "core:math/rand"
 import "core:mem"
+import "core:fmt"
 import "core:testing"
+import "mirai:asset"
 import "mirai:core"
 import "mirai:host"
 import gpu "mirai:render"
+import "mirai:rhi/shared_device"
 import "mirai:std/base"
+import mm "mirai:std/math"
 
 // What render_sync gives the renderer is what changed: nothing in a frame
 // where nothing did, the instances that moved, and of the lights only the one
@@ -298,4 +302,53 @@ a_sync_without_memory_leaves_an_empty_scene_until_a_frame_makes_it :: proc(t:^te
     testing.expect(t,done && refused,"refused without memory, and with it it is made")
     testing.expect_value(t,len(f.renderer.scene.instances),len(f.sync.drawn.entities))
     testing.expect(t,len(f.sync.drawn.entities)>15)
+}
+
+// An entity whose mesh arrives is not drawn while a job reads it; once the
+// mesh arrives only that entity is given to the renderer, and the others stay
+// as they were.
+@(test)
+an_entity_whose_mesh_arrives_is_drawn_alone_once_it_arrived :: proc(t:^testing.T) {
+    device:=shared_device.take_or_skip(t,hardware_rt=false)
+    if device==nil {return}
+    root:=base.test_folder(t,"arrivals")
+    if root=="" {return}
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    vertices:=[3]asset.Vertex{{position={0,0,0},normal=mm.normal_pack({0,1,0})},{position={1,0,0},normal=mm.normal_pack({0,1,0})},{position={0,0,1},normal=mm.normal_pack({0,1,0})}}
+    rock:=base.Asset_Id{0x726f636b,1}
+    g:asset.Mesh_Geometry
+    if !testing.expect(t,asset.mesh_build({vertices=vertices[:]},{0,2,1},nil,&g,context.temp_allocator)) {return}
+    testing.expect_value(t,asset.mesh_save(fmt.tprintf("%s/rock.mesh",root),&types,{id=rock,geometry=g}),asset.Error.None)
+    f:=new(Sync_Fixture);defer free(f)
+    if !testing.expect(t,gpu.renderer_init(&f.renderer,{device=device,width=64,height=64}),f.renderer.error) {return}
+    defer gpu.renderer_destroy(&f.renderer)
+    if !testing.expect(t,host.assets_init(&f.assets,{root=root,capacity=64,renderer=&f.renderer})) {return}
+    defer host.assets_destroy(&f.assets)
+    f.app.assets,f.app.renderer=&f.assets,&f.renderer
+    defer host.extras_free(&f.app.extras)
+    if !test_world_init(t,&f.world) {return}
+    defer test_world_destroy(&f.world)
+    defer sync_free(&f.sync)
+    defer host.app_assets_releases_stop(&f.app)
+    defer host.app_textures_stream_stop(&f.app)
+    f.assets.arrive=true
+    cubes:[8]core.Entity
+    for &cube,i in cubes {cube=sync_cube(f,f32(i))}
+    arriving:=core.create(&f.world.entities)
+    core.add(&f.world.worlds,arriving,core.World_Transform{transform={position={-2,0,0},rotation=1,scale=1},previous={position={-2,0,0},rotation=1,scale=1}})
+    core.add(&f.world.meshes,arriving,Mesh_Renderer{mesh=rock})
+    sync_frame(f)
+    s:=&f.renderer.scene
+    testing.expect(t,len(s.instances)==len(cubes) && host.assets_arriving(&f.assets,rock),"the cubes draw while the mesh arrives")
+    // What the application does between frames: a job reads it, and a frame takes it.
+    for _ in 0..<4 {
+        if !host.assets_arriving(&f.assets,rock) {break}
+        f.app.stats.frames+=1
+        host.app_textures_stream(&f.app)
+    }
+    testing.expect(t,!host.assets_arriving(&f.assets,rock),"it arrived")
+    testing.expect_value(t,sync_frame(f),1)
+    testing.expect_value(t,len(s.instances),len(cubes)+1)
+    testing.expect_value(t,len(f.sync.arriving),0)
+    testing.expect_value(t,sync_frame(f),0)
 }

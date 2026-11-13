@@ -313,14 +313,14 @@ rows_of_different_heights_build_only_those_in_sight_and_keep_the_range :: proc(t
     ctx:Context
     testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
-    Test_Rows :: struct {heights:[200]f32,offset:f32,first,last,built:int}
+    Test_Rows :: struct {heights:[200]f32,offset:f32,first,last,built:int,grow:bool}
     s:Test_Rows
     for &h,i in s.heights {h=f32(20+(i%3)*30)} // 20, 50, 80, ...
     build :: proc(ctx:^Context,user:rawptr) {
         s:=cast(^Test_Rows)user
-        if panel(ctx,id(ctx,"panel"),{width=fixed(200),height=FIT,offset={0,0}}) {
+        if panel(ctx,id(ctx,"panel"),{width=fixed(200),height=fixed(300) if s.grow else FIT,offset={0,0}}) {
             area:=id(ctx,"rows")
-            s.first,s.last=rows_begin(ctx,area,&s.offset,s.heights[:],GROW,300)
+            s.first,s.last=rows_begin(ctx,area,&s.offset,s.heights[:],GROW,GROW if s.grow else fixed(300))
             s.built=0
             for i in s.first..<s.last {
                 if box(ctx,{id=id(ctx,"row",i+1),width=GROW,height=fixed(s.heights[i]),track=true}) {}
@@ -348,4 +348,9 @@ rows_of_different_heights_build_only_those_in_sight_and_keep_the_range :: proc(t
     test_frame(&ctx,&input,build,&s)
     test_frame(&ctx,&input,build,&s)
     testing.expect(t,s.offset<content.h-300,"the wheel moves it back")
+    // An area whose height the layout gives shows what fits in the height it had.
+    s.grow,s.offset,input.wheel=true,100,{}
+    test_frame(&ctx,&input,build,&s)
+    test_frame(&ctx,&input,build,&s)
+    testing.expect(t,s.first==2 && s.last==9 && test_near(test_rect(t,&ctx,id(&ctx,"rows")).h,300))
 }

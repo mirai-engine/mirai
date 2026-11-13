@@ -6,6 +6,7 @@ import "core:testing"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:editor/history"
+import "mirai:host"
 import "mirai:platform"
 import "mirai:std/base"
 import "mirai:ui"
@@ -245,4 +246,31 @@ a_document_reads_its_file_again_when_it_changed_outside :: proc(t:^testing.T) {
     testing.expect_value(t,entity_name(w,api_entity(w,id)),"Boulder")
     testing.expect_value(t,len(f.edits.steps),0)
     testing.expect(t,documents_test_has(f,file,"Boulder"))
+}
+
+// A scene asked to open shows its tab loading on the frame after the request,
+// before it is read, and until a frame drew it resident.
+@(test)
+the_tab_of_a_scene_that_opens_loads_from_the_first_frame_until_it_is_resident :: proc(t:^testing.T) {
+    f:=new(Prefab_Fixture);defer free(f)
+    if !testing.expect(t,prefab_fixture_init(t,f,"document-loading")) {return}
+    defer prefab_fixture_destroy(f)
+    s:=&f.s
+    entity_create(s,{name="Rock",named=true})
+    core.world_settle(edited_world(s))
+    prefab_fixture_step(f)
+    if !testing.expect_value(t,test_document_write(s,"level.scene"),Document_Error.None) {return}
+    file:=document_file(s.document)
+    scene_new(s)
+    testing.expect_value(t,document_loading_tab(s),-1)
+    file_open_path(s,"level.scene")
+    requests_run(s)
+    defer documents_free(s)
+    testing.expect(t,document_file(s.document)!=file && .Open in s.requests,"the scene is read at the end of the next frame")
+    testing.expect_value(t,document_loading_tab(s),s.active_document)
+    requests_run(s)
+    testing.expect(t,document_file(s.document)==file && .Open not_in s.requests)
+    testing.expect_value(t,document_loading_tab(s),s.active_document)
+    host.load_profile_frame(&f.app,true)
+    testing.expect_value(t,document_loading_tab(s),-1)
 }

@@ -36,6 +36,7 @@ Reader :: struct {
     warnings:[dynamic]string,
     programs:[dynamic]string, // the Surface programs it wrote to the shaders of the project, their files
     files:[dynamic]string,    // the files a format read besides the source: a change of one imports the source again
+    colliders:[dynamic]Source_Collider, // what the format read of the collision the source authors (colliders_resolve)
     degenerate:int,       // faces without area the reader skipped
     // What the procedures of the reader keep.
     image_rows:map[Image_Key]int,
@@ -135,6 +136,17 @@ image_embedded :: proc(r:^Reader,key,name:string,data:[]u8,srgb,normal_map:bool)
     k:=Image_Key{key,srgb,normal_map}
     if row,found:=r.image_rows[k];found {return row}
     append(&r.images,Imported_Image{name=own(r,name),data=own_slice(r,data),srgb=srgb,normal_map=normal_map})
+    r.image_rows[Image_Key{own(r,key),srgb,normal_map}]=len(r.images)-1
+    return len(r.images)-1
+}
+
+// An image only the format decodes: make makes its texels of data when the
+// texture cache does not keep its texture; the same data gives the same
+// texels. key tells it apart from the other images of the source.
+image_made :: proc(r:^Reader,key,name:string,data:[]u8,make:Image_Make,srgb,normal_map:bool,keep_precision:=false) -> int {
+    k:=Image_Key{key,srgb,normal_map}
+    if row,found:=r.image_rows[k];found {return row}
+    append(&r.images,Imported_Image{name=own(r,name),data=own_slice(r,data),make=make,srgb=srgb,normal_map=normal_map,keep_precision=keep_precision})
     r.image_rows[Image_Key{own(r,key),srgb,normal_map}]=len(r.images)-1
     return len(r.images)-1
 }

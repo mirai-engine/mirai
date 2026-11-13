@@ -65,12 +65,13 @@ keeps its default; one the struct does not have is an error.
   activated with it
   ([imports](../../mirai-plugins/references/plugins.md#dependencies-and-compatibility)).
 - `asset_kinds`: the kinds of asset a plugin adds, its one declaration of them: each by its
-  extension, the four letters its files begin with (`kind`), whether it is a document git merges
-  and diffs ([git and assets](../../mirai-assets/references/cli.md#git)) and how the editor shows
-  it ([asset types](../../mirai-editor/references/extensions.md#asset-types-of-a-plugin)). A build
-  writes from it `kinds_gen.odin` into the package `folder` names (`runtime` without it), with
-  `<STEM>_KIND` and `<STEM>_EXTENSION` for each `.stem`; git keeps the file, so the plugin tests
-  without a build.
+  extension, the four letters its files begin with (`kind`), the `version` of its files
+  ([versions](../../mirai-assets/references/formats.md#versions)), whether it is a document git
+  merges and diffs ([git and assets](../../mirai-assets/references/cli.md#git)) and how the editor
+  shows it ([asset types](../../mirai-editor/references/extensions.md#asset-types-of-a-plugin)). A
+  build writes from it `kinds_gen.odin` into the package `folder` names (`runtime` without it),
+  with `<STEM>_KIND`, `<STEM>_EXTENSION` and `<STEM>_VERSION` for each `.stem`; git keeps the
+  file, so the plugin tests without a build.
 - `import_sources`: the extensions of the files the importers of a plugin read (`.umap`): a
   repository with LFS keeps them in it as it keeps the sources of the engine's formats
   ([git and assets](../../mirai-assets/references/cli.md#git)).

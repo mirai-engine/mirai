@@ -183,9 +183,10 @@ ai_entity_id_text :: proc(w:core.World_Ref,e:core.Entity) -> string {
     return strings.clone(base.entity_id_format(id.value,buffer[:]),context.temp_allocator)
 }
 
-// The rectangle of the window an item takes: its box when it has a body, the disc of its origin otherwise.
+// The rectangle of the window an item takes: its box when it has a body, the disc of its origin
+// otherwise, unless the scene covers it.
 @(private)
-ai_item_rect :: proc(s:^Session,item:Scene_Item) -> (rect:ui.Rect,ok:bool) {
+ai_item_rect :: proc(s:^Session,w:core.World_Ref,item:Scene_Item) -> (rect:ui.Rect,ok:bool) {
     v:=s.viewport
     if item.body {
         if low,high,known:=mesh_bounds(s.app.assets,item.mesh);known {
@@ -194,8 +195,9 @@ ai_item_rect :: proc(s:^Session,item:Scene_Item) -> (rect:ui.Rect,ok:bool) {
     }
     if !item.body && (!v.show_indicators || !item.indicator) {return}
     p,front:=viewport_screen(v,item.world.position)
-    if !front {return}
-    return {p.x-INDICATOR_RADIUS,p.y-INDICATOR_RADIUS,2*INDICATOR_RADIUS,2*INDICATOR_RADIUS},true
+    radius,_,seen:=indicator_size(v,item.world.position)
+    if !front || !seen || !item.body && indicator_hidden(s,w,item.world.position,false) {return}
+    return {p.x-radius,p.y-radius,2*radius,2*radius},true
 }
 
 @(private)
@@ -239,7 +241,7 @@ ai_entities_gather :: proc(s:^Session,task:^Ai_Task) -> []Ai_Entity {
     items:=scene_items(s,w)
     for item in scene_item_next(&items) {
         if item.hidden {continue}
-        rect,ok:=ai_item_rect(s,item)
+        rect,ok:=ai_item_rect(s,w,item)
         if !ok {continue}
         owner:=entity_author(w,item.entity)
         if at,known:=by_entity[owner];known {

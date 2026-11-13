@@ -1,6 +1,10 @@
 package physics
 
+import "base:intrinsics"
+import "base:runtime"
 import "core:math/linalg"
+import "core:mem"
+import "core:strings"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:host"
@@ -9,6 +13,7 @@ import volume "mirai:engine/volume"
 import sim "plugins:physics/runtime/sim"
 import "mirai:std/base"
 import "mirai:std/geom"
+import "mirai:std/jobs"
 import mm "mirai:std/math"
 
 collision_edge_active :: proc "contextless" (normal,a,b,opposite:[3]f32) -> bool {
@@ -29,18 +34,26 @@ collider_geometry_unchanged :: proc(s:^Sync,l:^Link,e:core.Entity,collider:Colli
     #partial switch collider.kind {
     case .Mesh:
         actual:=sim.mesh_geometry(w,l.mesh)
-        built:=mesh_cached(s.app,s.meshes,static.mesh,static.shape,scale)
+        built,_:=mesh_cached(s,static.mesh,static.shape,scale)
         if actual==nil || built==nil || !mesh_geometry_equal(actual^,built^) {return false}
     case .Heightfield:
         actual:=sim.heightfield_geometry(w,l.heightfield)
         field,found:=host.assets_heightfield(s.app.assets,static.mesh)
         if actual==nil || !found || actual.columns!=field.columns || actual.rows!=field.rows || actual.cell!=field.cell*scale || !sliced_equal(actual.heights,field.heights) || !sliced_equal(actual.disabled_borders,field.disabled_borders) || !sliced_equal(actual.holes,field.holes) {return false}
+        if !sliced_equal(actual.surfaces,heightfield_surfaces(field)) || !sliced_equal(actual.cell_surfaces,field.surfaces) {return false}
         origin+=field.origin*scale
     case:
         return false
     }
     return !pose_differs(sim.shape_local_transform(w,l.shape),{relative.position+mm.quat_rotate(relative.rotation,origin),relative.rotation})
 }
+
+// The surfaces of the simulation are the materials of the cells: the material is what a hit names.
+@(private)
+heightfield_surfaces :: proc "contextless" (field:host.Assets_Heightfield) -> []sim.Surface {
+    return transmute([]sim.Surface)field.materials
+}
+#assert(size_of(sim.Surface)==size_of(base.Asset_Id))
 
 // The convex radius of a collider at the scale of its entity: the smallest axis of the scale shrinks it.
 @(private)
@@ -71,24 +84,68 @@ collider_round_fits :: proc "contextless" (collider:Collider,scale:[3]f32) -> bo
     return !(smallest>0) || round<smallest
 }
 
-// The triangles of what a Mesh_Renderer shows at a scale, built for the
-// simulation. The application builds each one once and every world that needs
-// it copies it into its simulation.
-@(storage,host,free="collider_meshes_destroy")
+// What colliders are made from, shared by every world of the application:
+// the collision a mesh file gives each kind of collider (Hull or Mesh, and
+// the convex pieces of an Auto one that moves), read once, and the trees of
+// Mesh colliders at each scale. The libraries whose owned bodies collide as
+// meshes (foliage) ask it too (owned_hulls). A file is read and its
+// trees are built in jobs (a tick reads no file and builds no tree of a file):
+// the bodies that wait for them are made in a later tick. What a generated
+// mesh or a primitive gives comes from memory, in the tick that asks.
+// Plain shared data: no world holds it, so a rollback or a copy reads the
+// same; a tick that resimulates waits for the job instead of waiting a tick.
+@(storage,host,shared,free="collider_meshes_destroy")
 Collider_Meshes :: struct {
-    entries:[dynamic]Collider_Mesh,
+    entries:map[Collider_Mesh_Key]^Collider_Mesh,
+    files:map[Mesh_File_Key]^Mesh_File,
     built:u64,
     structure:u64,
+    js:^jobs.Job_System, // of the jobs it started
+    counter:jobs.Counter,
+}
+
+@(private)
+Collider_Mesh_Key :: struct {
+    mesh:base.Asset_Id,
+    shape:host.Shape,
+    scale:[3]f32,
 }
 
 @(private)
 Collider_Mesh :: struct {
-    mesh:base.Asset_Id,
-    shape:host.Shape,
     scale:[3]f32,
     size,time:i64, // of the file of the mesh when it was read
     generated:bool,
+    from:^Mesh_File, // of a mesh file: what its job builds from
+    ready:bool,      // built: written by its job
     built:sim.Mesh,
+    allocator:mem.Allocator,
+}
+
+@(private)
+Mesh_File_Key :: struct {
+    mesh:base.Asset_Id,
+    kind:host.Collision, // Hull or Mesh
+    decomposed:bool,     // of a Hull: the pieces of assets_collision_pieces_file
+}
+
+// The collision of a mesh file for a kind of collider, as assets_collision and
+// assets_collision_hulls give it, unscaled; decomposed, the convex pieces of
+// assets_collision_pieces_file instead.
+@(private)
+Mesh_File :: struct {
+    size,time:i64, // of the file when it was asked for
+    kind:host.Collision,
+    decomposed:bool,
+    cache:string, // App.collision_cache, of a decomposed one
+    source:host.Assets_Source,
+    ready:bool, // the job is done: written by it
+    stored:host.Stored_Collision, // what the file stores of the colliders of its source
+    found:bool, // geometry holds what assets_collision gives
+    geometry:geom.Mesh_Buffer,
+    pieces:bool, // a Hull: piece_points and piece_sizes hold the convex pieces of assets_collision_hulls, or of assets_collision_pieces_file when decomposed
+    piece_points:[dynamic]geom.Vec3,
+    piece_sizes:[dynamic]u32,
 }
 
 @(private)
@@ -96,63 +153,294 @@ collider_meshes_prune :: proc(meshes:^Collider_Meshes,assets:^host.Assets) {
     structure:=assets!=nil?assets.structure:0
     if meshes.structure==structure {return}
     meshes.structure=structure
-    for index:=len(meshes.entries)-1;index>=0;index-=1 {
-        entry:=&meshes.entries[index]
-        if !entry.generated || host.assets_mesh_generated(assets,entry.mesh) {continue}
-        sim.mesh_release(&entry.built,context.allocator)
-        ordered_remove(&meshes.entries,index)
+    gone:=make([dynamic]Collider_Mesh_Key,context.temp_allocator)
+    for key,entry in meshes.entries {
+        if entry.generated && !host.assets_mesh_generated(assets,key.mesh) {append(&gone,key)}
+    }
+    for key in gone {
+        collider_mesh_free(meshes.entries[key])
+        delete_key(&meshes.entries,key)
     }
 }
 
-// Frees the meshes. The generated world has no destructor for a storage, so whoever owns the application calls it.
+// Frees the meshes, once the jobs under way end. The generated world has no destructor for a storage, so
+// whoever owns the application calls it.
 collider_meshes_destroy :: proc(meshes:^Collider_Meshes) {
-    for &entry in meshes.entries {sim.mesh_release(&entry.built,context.allocator)}
+    if meshes.js!=nil && jobs.pending(&meshes.counter) {jobs.wait(meshes.js,jobs.OWNER,&meshes.counter)}
+    for _,entry in meshes.entries {collider_mesh_free(entry)}
+    for _,file in meshes.files {mesh_file_free(file)}
     delete(meshes.entries)
+    delete(meshes.files)
     meshes^={}
 }
 
-// The built mesh of a collider, made now when the application does not have
-// it or its file changed. nil when it cannot be made: the caller builds one of its own.
+@(private="file")
+collider_mesh_free :: proc(entry:^Collider_Mesh) {
+    sim.mesh_release(&entry.built,entry.allocator)
+    free(entry,runtime.heap_allocator())
+}
+
+@(private="file")
+mesh_file_free :: proc(file:^Mesh_File) {
+    host.assets_source_free(&file.source)
+    delete(file.cache,runtime.heap_allocator())
+    geom.mesh_buffer_destroy(&file.geometry)
+    delete(file.piece_points)
+    delete(file.piece_sizes)
+    free(file,runtime.heap_allocator())
+}
+
+// The size and time of the file of a mesh asset; false for one that is not a file: a generated mesh, a
+// primitive or an id the registry does not have.
 @(private)
-mesh_cached :: proc(app:^host.App,meshes:^Collider_Meshes,mesh:base.Asset_Id,shape:host.Shape,scale:[3]f32) -> ^sim.Mesh {
-    size,time:i64
-    generated:=host.assets_mesh_generated(app.assets,mesh)
-    if mesh!={} {
-        if app.assets==nil {return nil}
-        if !generated {
-            file,found:=asset.registry_find(&app.assets.registry,mesh)
-            if !found {return nil}
-            size,time=file.size,file.time
+mesh_file_version :: proc(app:^host.App,mesh:base.Asset_Id) -> (size,time:i64,ok:bool) {
+    if app==nil || app.assets==nil || mesh=={} || host.assets_mesh_generated(app.assets,mesh) {return}
+    file:=asset.registry_find(&app.assets.registry,mesh) or_return
+    return file.size,file.time,true
+}
+
+// Whether a job runs where it is asked for: without job threads, and while the tick resimulates.
+@(private="file")
+jobs_inline :: proc(s:^Sync) -> bool {return s.resimulating || jobs.worker_count(&s.app.jobs)<=1}
+
+// The collision a mesh file gives a kind of collider, read in a job the first
+// time and again when its file changes. waiting: the job has not ended; nil
+// without waiting when it is no file or cannot be read.
+@(private)
+mesh_file :: proc(s:^Sync,mesh:base.Asset_Id,kind:host.Collision,decomposed:=false) -> (file:^Mesh_File,waiting:bool) {
+    return mesh_file_of(s.meshes,s.app,jobs_inline(s),mesh,kind,decomposed)
+}
+
+// mesh_file for whoever steps without a Sync; inline: the job runs where it is asked for.
+@(private)
+mesh_file_of :: proc(meshes:^Collider_Meshes,app:^host.App,inline:bool,mesh:base.Asset_Id,kind:host.Collision,decomposed:bool) -> (file:^Mesh_File,waiting:bool) {
+    if meshes==nil || app==nil {return}
+    size,time,is_file:=mesh_file_version(app,mesh)
+    if !is_file {return}
+    key:=Mesh_File_Key{mesh,kind,decomposed}
+    if known,found:=meshes.files[key];found {
+        if !intrinsics.atomic_load(&known.ready) {
+            if !inline {return nil,true}
+            jobs.wait(meshes.js,jobs.OWNER,&meshes.counter)
+        }
+        if known.size==size && known.time==time {return known,false}
+        // A tree may still be built from it.
+        if jobs.pending(&meshes.counter) {
+            if !inline {return nil,true}
+            jobs.wait(meshes.js,jobs.OWNER,&meshes.counter)
+        }
+        mesh_file_free(known)
+        delete_key(&meshes.files,key)
+    }
+    made,error:=new(Mesh_File,runtime.heap_allocator())
+    if error!=nil {return}
+    made.size,made.time,made.kind,made.decomposed=size,time,kind,decomposed
+    if decomposed {
+        cloned:runtime.Allocator_Error
+        if made.cache,cloned=strings.clone(app.collision_cache,runtime.heap_allocator());cloned!=nil {
+            free(made,runtime.heap_allocator())
+            return
         }
     }
-    shape:=mesh=={}?shape:host.Shape.None
-    entry:^Collider_Mesh
-    for &known in meshes.entries {
-        if known.mesh!=mesh || known.shape!=shape || known.scale!=scale {continue}
-        if known.size==size && known.time==time {return known.built.triangles!=nil?&known.built:nil}
-        sim.mesh_release(&known.built,context.allocator)
-        entry=&known
-        break
+    source,found:=host.assets_source(app.assets,mesh,runtime.heap_allocator())
+    if !found {
+        delete(made.cache,runtime.heap_allocator())
+        free(made,runtime.heap_allocator())
+        return
     }
-    if entry==nil {
-        if append(&meshes.entries,Collider_Mesh{})!=1 {return nil}
-        entry=&meshes.entries[len(meshes.entries)-1]
+    made.source=source
+    if _,error=map_insert(&meshes.files,key,made);error!=nil {
+        mesh_file_free(made)
+        return
     }
-    entry^={mesh=mesh,shape=shape,scale=scale,size=size,time=time,generated=generated}
-    building:=host.load_phase_begin(app,.Collision,host.LOAD_NO_ZONE)
-    defer host.load_phase_end(app,building,1)
-    buffer:geom.Mesh_Buffer
-    geom.mesh_buffer_init(&buffer,context.temp_allocator)
-    _,found:=host.assets_collision(app.assets,mesh,shape,.Mesh,&buffer)
-    for &position in buffer.positions {position*=scale}
-    disabled:=host.assets_mesh_disabled_edges(app.assets,mesh)
-    if !found || !sim.mesh_build(&entry.built,{buffer.positions[:],buffer.indices[:],disabled,inside_out(scale)},context.allocator) {
-        // Kept empty: what cannot be built is not tried again for every entity that shows it.
-        entry.built={}
-        return nil
+    if inline {
+        mesh_file_read(made,jobs.OWNER)
+        return made,false
     }
+    meshes.js=&app.jobs
+    jobs.run(meshes.js,jobs.OWNER,.Background,mesh_file_read,made,&meshes.counter)
+    return nil,true
+}
+
+// A job: reads the collision of a mesh file.
+@(private="file")
+mesh_file_read :: proc(file:^Mesh_File,worker:int) {
+    context.allocator=runtime.heap_allocator()
+    runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+    defer intrinsics.atomic_store(&file.ready,true)
+    types:asset.Types
+    asset.types_init(&types)
+    defer asset.types_destroy(&types)
+    opened:asset.Asset
+    if host.assets_source_open(&file.source,&opened)!=.None {return}
+    defer asset.asset_close(&opened)
+    if view,error:=asset.mesh_view(&opened,&types);error==.None {file.stored=host.assets_collision_stored(view)}
+    geom.mesh_buffer_init(&file.geometry)
+    if file.decomposed {
+        file.piece_points=make([dynamic]geom.Vec3)
+        file.piece_sizes=make([dynamic]u32)
+        file.pieces=host.assets_collision_pieces_file(&opened,&types,file.cache,&file.piece_points,&file.piece_sizes)
+        return
+    }
+    _,file.found=host.assets_collision_file(&opened,&types,file.kind,&file.geometry)
+    // A Hull keeps only the points its hull is made of: any scale maps the
+    // hull of the points to the hull of the scaled points, and the tick that
+    // builds it at a scale goes through fewer.
+    if file.kind==.Hull && file.found {
+        // Without memory for it, every point stays.
+        if hull,error:=geom.hull_build(file.geometry.positions[:],{},context.temp_allocator);error==.None && !geom.hull_is_flat(hull) {
+            if kept,no_memory:=make([dynamic]geom.Vec3,0,len(hull.sources));no_memory==nil {
+                for source in hull.sources {append(&kept,file.geometry.positions[source])}
+                delete(file.geometry.positions)
+                file.geometry.positions=kept
+            }
+        }
+    }
+    if file.kind==.Hull {
+        file.piece_points=make([dynamic]geom.Vec3)
+        file.piece_sizes=make([dynamic]u32)
+        file.pieces=host.assets_collision_hulls_file(&opened,&types,&file.piece_points,&file.piece_sizes)
+    }
+}
+
+// Appends the geometry a collider of one kind is made of, as host.assets_collision gives it: of a mesh
+// file, what its job read. False when there is none, or its file is still being read.
+@(private)
+collision_geometry :: proc(s:^Sync,mesh:base.Asset_Id,shape:host.Shape,kind:host.Collision,buffer:^geom.Mesh_Buffer) -> bool {
+    file,waiting:=mesh_file(s,mesh,kind)
+    if waiting {return false}
+    if file==nil {
+        _,found:=host.assets_collision(s.app.assets,mesh,shape,kind,buffer)
+        return found
+    }
+    if !file.found {return false}
+    first:=u32(len(buffer.positions))
+    if append(&buffer.positions,..file.geometry.positions[:])!=len(file.geometry.positions) || reserve(&buffer.indices,len(buffer.indices)+len(file.geometry.indices))!=nil {return false}
+    for index in file.geometry.indices {append(&buffer.indices,first+index)}
+    return true
+}
+
+// Appends the convex pieces of a Hull collider, as host.assets_collision_hulls gives them, or decomposed,
+// as host.assets_collision_pieces_file does: of a mesh file, what its job read. False when it has none, or
+// its file is still being read.
+@(private)
+collision_hulls :: proc(s:^Sync,mesh:base.Asset_Id,shape:host.Shape,points:^[dynamic]geom.Vec3,sizes:^[dynamic]u32,decomposed:=false) -> bool {
+    file,waiting:=mesh_file(s,mesh,.Hull,decomposed)
+    if waiting {return false}
+    if file==nil {return host.assets_collision_hulls(s.app.assets,mesh,shape,points,sizes)}
+    if !file.pieces {return false}
+    return append(points,..file.piece_points[:])==len(file.piece_points) && append(sizes,..file.piece_sizes[:])==len(file.piece_sizes)
+}
+
+// What an Auto collider of an entity is made as, by what its mesh stores of the colliders of its source and
+// whether its body moves: Mesh for a collision mesh it stores, Hull for the shapes it stores (one piece
+// each), else Mesh for its own triangles while it stays still and, while it moves, Auto: the convex pieces
+// of a decomposition of them (collision_hulls decomposed). A generated mesh or a primitive that moves is a
+// Hull: of its pieces, or of all its points. waiting: the file of its mesh is still being read.
+@(private)
+auto_kind :: proc(s:^Sync,e:core.Entity,moving:bool) -> (kind:Collider_Kind,waiting:bool) {
+    static,has_mesh:=core.get(s.statics,e)
+    if !has_mesh {return .Hull,false}
+    file:^Mesh_File
+    if file,waiting=mesh_file(s,static.mesh,.Hull);waiting {return}
+    stored:=file!=nil?file.stored:host.Stored_Collision.None
+    if file==nil && static.mesh!={} {
+        // The pieces a generated mesh was given are its shapes.
+        points:=make([dynamic]geom.Vec3,context.temp_allocator)
+        sizes:=make([dynamic]u32,context.temp_allocator)
+        if host.assets_collision_hulls(s.app.assets,static.mesh,static.shape,&points,&sizes) {stored=.Shapes}
+    }
+    switch {
+    case stored==.Mesh:  return .Mesh,false
+    case stored==.Shapes:return .Hull,false
+    case !moving:        return .Mesh,false
+    case file!=nil:      return .Auto,false
+    }
+    return .Hull,false
+}
+
+// Whether a Hull, Mesh or Auto collider of an entity waits for what a job reads or builds of its mesh file:
+// its body is made, or made again, in a later tick. It asks for what is missing. An Auto one is as auto_kind
+// resolved it: still Auto, the convex pieces of its mesh.
+@(private)
+collider_geometry_waits :: proc(s:^Sync,e:core.Entity,collider:Collider,scale:[3]f32) -> bool {
+    if collider.kind!=.Hull && collider.kind!=.Mesh && collider.kind!=.Auto || !core.has(s.colliders,e) {return false}
+    static,has_mesh:=core.get(s.statics,e)
+    if !has_mesh || static.mesh=={} {return false}
+    file,waiting:=mesh_file(s,static.mesh,collider.kind==.Mesh?.Mesh:.Hull,collider.kind==.Auto)
+    if waiting || file==nil || collider.kind!=.Mesh || !file.found {return waiting}
+    _,waiting=mesh_cached(s,static.mesh,static.shape,scale)
+    return waiting
+}
+
+// The built mesh of a Mesh collider at a scale: of a mesh file, built in a
+// job from what its job read; of a generated mesh or a primitive, made now.
+// nil when it cannot be made, or while it waits for a job: then waiting.
+@(private)
+mesh_cached :: proc(s:^Sync,mesh:base.Asset_Id,shape:host.Shape,scale:[3]f32) -> (built:^sim.Mesh,waiting:bool) {
+    meshes:=s.meshes
+    file:^Mesh_File
+    size,time,is_file:=mesh_file_version(s.app,mesh)
+    generated:=host.assets_mesh_generated(s.app.assets,mesh)
+    if mesh!={} {
+        if s.app.assets==nil || !generated && !is_file {return}
+        if is_file {
+            file,waiting=mesh_file(s,mesh,.Mesh)
+            if waiting || file==nil || !file.found {return}
+        }
+    }
+    key:=Collider_Mesh_Key{mesh,mesh=={}?shape:host.Shape.None,scale}
+    if known,found:=meshes.entries[key];found {
+        if !intrinsics.atomic_load(&known.ready) {
+            if !jobs_inline(s) {return nil,true}
+            jobs.wait(meshes.js,jobs.OWNER,&meshes.counter)
+        }
+        if known.size==size && known.time==time {return known.built.triangles!=nil?&known.built:nil,false}
+        collider_mesh_free(known)
+        delete_key(&meshes.entries,key)
+    }
+    entry,error:=new(Collider_Mesh,runtime.heap_allocator())
+    if error!=nil {return}
+    entry^={scale=scale,size=size,time=time,generated=generated,from=file,allocator=context.allocator}
+    if _,error=map_insert(&meshes.entries,key,entry);error!=nil {
+        free(entry,runtime.heap_allocator())
+        return
+    }
+    building:=host.load_phase_begin(s.app,.Collision,host.LOAD_NO_ZONE)
+    defer host.load_phase_end(s.app,building,1)
     meshes.built+=1
-    return &entry.built
+    if file!=nil {
+        entry.allocator=runtime.heap_allocator()
+        if !jobs_inline(s) {
+            meshes.js=&s.app.jobs
+            jobs.run(meshes.js,jobs.OWNER,.Background,collider_mesh_build,entry,&meshes.counter)
+            return nil,true
+        }
+        collider_mesh_build(entry,jobs.OWNER)
+    } else {
+        buffer:geom.Mesh_Buffer
+        geom.mesh_buffer_init(&buffer,context.temp_allocator)
+        _,found:=host.assets_collision(s.app.assets,mesh,shape,.Mesh,&buffer)
+        for &position in buffer.positions {position*=scale}
+        disabled:=host.assets_mesh_disabled_edges(s.app.assets,mesh)
+        // Kept empty when it cannot be built: it is not tried again for every entity that shows it.
+        if !found || !sim.mesh_build(&entry.built,{buffer.positions[:],buffer.indices[:],disabled,inside_out(scale)},entry.allocator) {entry.built={}}
+        entry.ready=true
+    }
+    return entry.built.triangles!=nil?&entry.built:nil,false
+}
+
+// A job: builds the tree of a Mesh collider of a mesh file at the scale of its key.
+@(private="file")
+collider_mesh_build :: proc(entry:^Collider_Mesh,worker:int) {
+    context.allocator=runtime.heap_allocator()
+    runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+    defer intrinsics.atomic_store(&entry.ready,true)
+    scale:=entry.scale
+    from:=entry.from.geometry
+    positions:=make([]geom.Vec3,len(from.positions),context.temp_allocator)
+    for position,at in from.positions {positions[at]=position*scale}
+    if !sim.mesh_build(&entry.built,{positions,from.indices[:],nil,inside_out(scale)},entry.allocator) {entry.built={}}
 }
 
 // What a slot of geometry of the simulation was made from. Colliders made from the same (kind, mesh or
@@ -178,11 +466,11 @@ geometry_source_same :: proc "contextless" (a,b:Geometry_Source) -> bool {
 // What the geometry of a collider is made from. False when the file of its mesh is unknown: then it is not
 // shared.
 @(private)
-geometry_source_of :: proc(s:^Sync,kind:Collider_Kind,static:render.Mesh_Renderer,scale:[3]f32,round:f32) -> (source:Geometry_Source,ok:bool) {
+geometry_source_of :: proc(assets:^host.Assets,kind:Collider_Kind,static:render.Mesh_Renderer,scale:[3]f32,round:f32) -> (source:Geometry_Source,ok:bool) {
     source={kind=kind,shape=static.mesh=={}?static.shape:.None,mesh=static.mesh,scale=scale,round=round}
-    if static.mesh!={} && !host.assets_mesh_generated(s.app.assets,static.mesh) {
-        if s.app.assets==nil {return}
-        file,found:=asset.registry_find(&s.app.assets.registry,static.mesh)
+    if static.mesh!={} && !host.assets_mesh_generated(assets,static.mesh) {
+        if assets==nil {return}
+        file,found:=asset.registry_find(&assets.registry,static.mesh)
         if !found {return}
         source.size,source.time=file.size,file.time
     }
@@ -192,10 +480,10 @@ geometry_source_of :: proc(s:^Sync,kind:Collider_Kind,static:render.Mesh_Rendere
 // A live slot made from the same source: hulls, then meshes (a flat hull is one), then heightfields, in the
 // order of Physics_State.geometry.
 @(private)
-geometry_shared :: proc(s:^Sync,source:Geometry_Source) -> (geometry:sim.Geometry,ok:bool) {
-    w:=&s.state.world
+geometry_shared :: proc(state:^Physics_State,source:Geometry_Source) -> (geometry:sim.Geometry,ok:bool) {
+    w:=&state.world
     hulls,meshes:=len(w.hulls),len(w.meshes)
-    for &known,at in s.state.sources {
+    for &known,at in state.sources {
         if known.generation==0 || !geometry_source_same(known,source) {continue}
         switch {
         case at<hulls:
@@ -214,8 +502,7 @@ geometry_shared :: proc(s:^Sync,source:Geometry_Source) -> (geometry:sim.Geometr
 
 // Writes down what a slot was made from. Without memory the slot is only not shared.
 @(private)
-geometry_remember :: proc(s:^Sync,geometry:sim.Geometry,source:Geometry_Source) {
-    state:=s.state
+geometry_remember :: proc(state:^Physics_State,geometry:sim.Geometry,source:Geometry_Source) {
     w:=&state.world
     total:=len(w.hulls)+len(w.meshes)+len(w.heightfields)
     if len(state.sources)!=total && (resize(&state.sources,total)!=nil || resize(&state.source_stamps,base.chunks_of(total))!=nil) {return}
@@ -239,7 +526,7 @@ geometry_remember :: proc(s:^Sync,geometry:sim.Geometry,source:Geometry_Source) 
 collider_geometry :: proc(s:^Sync,l:^Link,kind:Collider_Kind,e:core.Entity,scale:[3]f32,round:f32) -> (geometry:sim.Geometry,origin:[3]f32,failure:Shape_Failure) {
     static,has_mesh:=core.get(s.statics,e)
     if !has_mesh {return {},{},.No_Mesh}
-    source,shareable:=geometry_source_of(s,kind,static,scale,round)
+    source,shareable:=geometry_source_of(s.app.assets,kind,static,scale,round)
     if kind==.Heightfield {
         field,found:=host.assets_heightfield(s.app.assets,static.mesh)
         if !found {return {},{},.No_Heightfield}
@@ -248,7 +535,7 @@ collider_geometry :: proc(s:^Sync,l:^Link,kind:Collider_Kind,e:core.Entity,scale
         for value in origin {if value-value!=0 {return {},{},.No_Heightfield}}
     }
     if shareable {
-        if shared,found:=geometry_shared(s,source);found {
+        if shared,found:=geometry_shared(s.state,source);found {
             #partial switch g in shared {
             case sim.Hull_Handle:        l.hull=g
             case sim.Mesh_Handle:        l.mesh=g
@@ -258,16 +545,17 @@ collider_geometry :: proc(s:^Sync,l:^Link,kind:Collider_Kind,e:core.Entity,scale
         }
     }
     geometry,failure=collider_geometry_make(s,l,kind,static,scale,round)
-    if failure==.None && shareable {geometry_remember(s,geometry,source)}
+    if failure==.None && shareable {geometry_remember(s.state,geometry,source)}
     return geometry,origin,failure
 }
 
 // Makes the hulls of a Hull collider whose mesh has several convex pieces, or of the sensor of an outline
 // (zone_collider): the first in l.hull, the others in a run of Physics_State.pieces, each of a mesh shared as
-// a whole collider is. pieces is false when the mesh has fewer than two: the collider is then one hull of all
-// its points. On a failure the caller releases what was made.
+// a whole collider is; decomposed, the pieces of collision_hulls decomposed (an Auto collider that moves).
+// pieces is false when the mesh has fewer than two: the collider is then one hull of all its points. On a
+// failure the caller releases what was made.
 @(private)
-collider_pieces_make :: proc(s:^Sync,l:^Link,e:core.Entity,scale:[3]f32,round:f32) -> (pieces:bool,failure:Shape_Failure) {
+collider_pieces_make :: proc(s:^Sync,l:^Link,e:core.Entity,scale:[3]f32,round:f32,decomposed:=false) -> (pieces:bool,failure:Shape_Failure) {
     points:=make([dynamic]geom.Vec3,context.temp_allocator)
     sizes:=make([dynamic]u32,context.temp_allocator)
     static,has_mesh:=core.get(s.statics,e)
@@ -278,8 +566,8 @@ collider_pieces_make :: proc(s:^Sync,l:^Link,e:core.Entity,scale:[3]f32,round:f3
         zone,_:=core.get(s.volumes,e)
         if !zone_pieces(volume.spline_outline(s.splines,e),zone.extents.y,&points,&sizes) {return true,.Hull}
     } else {
-        if !has_mesh || !host.assets_collision_hulls(s.app.assets,static.mesh,static.shape,&points,&sizes) || len(sizes)<2 {return}
-        source,shareable=geometry_source_of(s,.Hull,static,scale,round)
+        if !has_mesh || !collision_hulls(s,static.mesh,static.shape,&points,&sizes,decomposed) || len(sizes)<2 {return}
+        source,shareable=geometry_source_of(s.app.assets,decomposed?.Auto:.Hull,static,scale,round)
     }
     run,taken:=pieces_take(s.state,len(sizes)-1)
     if !taken {return true,.Geometry_Budget}
@@ -292,7 +580,7 @@ collider_pieces_make :: proc(s:^Sync,l:^Link,e:core.Entity,scale:[3]f32,round:f3
         source.piece=u32(at+1)
         hull:sim.Hull_Handle
         if shareable {
-            if shared,found:=geometry_shared(s,source);found {hull,_=shared.(sim.Hull_Handle)}
+            if shared,found:=geometry_shared(s.state,source);found {hull,_=shared.(sim.Hull_Handle)}
         }
         if hull=={} {
             for &point in piece {point*=scale}
@@ -304,7 +592,7 @@ collider_pieces_make :: proc(s:^Sync,l:^Link,e:core.Entity,scale:[3]f32,round:f3
                 if mesh,is_mesh:=made.(sim.Mesh_Handle);is_mesh {sim.mesh_destroy(&s.state.world,mesh)}
                 return true,.Hull
             }
-            if shareable {geometry_remember(s,hull,source)}
+            if shareable {geometry_remember(s.state,hull,source)}
         }
         if at==0 {l.hull=hull} else {s.state.pieces[run.first+u32(at)-1].hull=hull}
     }
@@ -341,12 +629,12 @@ collider_geometry_make :: proc(s:^Sync,l:^Link,kind:Collider_Kind,static:render.
     made:bool
     if kind==.Heightfield {
         field,_:=host.assets_heightfield(s.app.assets,static.mesh)
-        l.heightfield,made=sim.heightfield_create(w,{field.heights,field.columns,field.rows,field.cell*scale,field.disabled_borders,field.holes})
+        l.heightfield,made=sim.heightfield_create(w,{field.heights,field.columns,field.rows,field.cell*scale,field.disabled_borders,field.holes,heightfield_surfaces(field),field.surfaces})
         if !made {return {},.Geometry_Budget}
         return l.heightfield,.None
     }
     if kind==.Mesh {
-        if built:=mesh_cached(s.app,s.meshes,static.mesh,static.shape,scale);built!=nil {
+        if built,_:=mesh_cached(s,static.mesh,static.shape,scale);built!=nil {
             l.mesh,made=sim.mesh_create_copy(w,built)
             if !made {return {},.Geometry_Budget}
             return l.mesh,.None
@@ -354,7 +642,7 @@ collider_geometry_make :: proc(s:^Sync,l:^Link,kind:Collider_Kind,static:render.
     }
     buffer:geom.Mesh_Buffer
     geom.mesh_buffer_init(&buffer,context.temp_allocator)
-    if _,found:=host.assets_collision(s.app.assets,static.mesh,static.shape,kind==.Mesh?.Mesh:.Hull,&buffer);!found {return {},.No_Geometry}
+    if !collision_geometry(s,static.mesh,static.shape,kind==.Mesh?.Mesh:.Hull,&buffer) {return {},.Mesh_Unreadable}
     for &position in buffer.positions {position*=scale}
     if kind==.Mesh {
         l.mesh,made=sim.mesh_create(w,{buffer.positions[:],buffer.indices[:],host.assets_mesh_disabled_edges(s.app.assets,static.mesh),inside_out(scale)})

@@ -260,7 +260,7 @@ job_start :: proc(desc:Desc) -> ^Job {
             if p.plugins[index].manifest.development {append(&job.development,strings.clone(p.plugins[index].folder,a))}
         }
         if assets:=project.folder_path(p.root,.Assets,a);os.is_dir(assets) {
-            job.cook={assets=assets,output=project.folder_path(folder,.Assets,a),manifest=project.path(p.root,COOK_FILE,allocator=a),texture_cache=project.content_cache_path(p.root,project.TEXTURE_CACHE,allocator=a),mesh_cache=project.content_cache_path(p.root,project.MESH_CACHE,allocator=a),root=p.root,server=desc.server,quick=desc.dev,keys=project.path(job.work,fmt.tprintf("%s.cook",name),allocator=a),allocator=a}
+            job.cook={assets=assets,output=project.folder_path(folder,.Assets,a),manifest=project.path(p.root,COOK_FILE,allocator=a),texture_cache=project.content_cache_path(p.root,project.TEXTURE_CACHE,allocator=a),mesh_cache=project.content_cache_path(p.root,project.MESH_CACHE,allocator=a),collision_cache=project.content_cache_path(p.root,project.COLLISION_CACHE,allocator=a),root=p.root,server=desc.server,quick=desc.dev,keys=project.path(job.work,fmt.tprintf("%s.cook",name),allocator=a),allocator=a}
             job.cook.codecs=asset.project_codecs(p.root,p.engine_root)
             job.plugin_assets=make([dynamic]project.Asset_Folder,a)
             for found in project.asset_folders(p,a) {
@@ -891,7 +891,6 @@ job_imports :: proc(job:^Job) -> bool {
         job_fail(job,.Import_Failed)
         return false
     }
-    if message!="" {fmt.println(message)}
     return true
 }
 

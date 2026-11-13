@@ -74,7 +74,7 @@ writer_source :: proc(w:^Writer,path,folder:string) -> bool {
 imported_file :: proc(w:^Writer,id:base.Asset_Id,extension:string) -> string {
     if w.key==0 {
         slice.sort(w.inputs[:])
-        w.key=import_key(w.path,{settings=w.report.settings,inputs=w.inputs},w.version,w.options.fast_textures)
+        w.key=import_key(w.path,{settings=w.report.settings,inputs=w.inputs},w.version,w.options.importer_code,w.options.fast_textures)
     }
     return asset.imported_file(w.imported,id,w.key,extension,context.temp_allocator)
 }
@@ -162,13 +162,18 @@ parts_record :: proc(w:^Writer,parts:[]Part) {
 // listed and the source no longer gives leaves it (a document stays, a plain
 // asset from then on), the files of the imported folder its outputs had under
 // another key go, and the sidecar is written with the settings the source was
-// imported with.
+// imported with. An import of documents alone leaves its stamp (STAMP_EXTENSION).
 @(private)
 writer_finish :: proc(w:^Writer) -> bool {
     current:=make(map[base.Asset_Id]string,context.temp_allocator)
     for output in w.outputs {
         info,known:=asset.kind_info(output.kind)
         if known && asset.import_cached(output.kind) {current[output.id]=filepath.base(imported_file(w,output.id,info.extension))}
+    }
+    stamp:=""
+    if len(current)==0 && len(w.outputs)>0 {
+        stamp=imported_file(w,w.outputs[0].id,STAMP_EXTENSION)
+        current[w.outputs[0].id]=filepath.base(stamp)
     }
     for output,at in w.sidecar.outputs {
         if w.taken[at] {continue}
@@ -189,6 +194,11 @@ writer_finish :: proc(w:^Writer) -> bool {
         return writer_fail(w,.Write,"%s%s, which keeps the ids of the import, could not be written",w.path,SIDECAR_EXTENSION)
     }
     w.report.saved=strings.concatenate({w.path,SIDECAR_EXTENSION},w.allocator)
+    // Without it the next sync imports the source again: nothing is lost.
+    if stamp!="" {
+        _=os.make_directory_all(w.imported)
+        _=os.write_entire_file(stamp,nil)
+    }
     return true
 }
 

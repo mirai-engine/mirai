@@ -8,6 +8,7 @@ import "core:slice"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
+import "mirai:host"
 import anim "mirai:std/anim"
 import mm "mirai:std/math"
 import "mirai:std/base"
@@ -603,5 +604,69 @@ a_cook_compresses_as_its_project_says_and_what_it_writes_decodes :: proc(t:^test
             }
         }
         testing.expect(t,(streams==0)==(codecs==.None),"something compresses unless nothing may")
+    }
+}
+
+@(private="file") Pieces_Test_Renderer :: struct {mesh:base.Asset_Id}
+@(private="file") Pieces_Test_Collider :: struct {kind:enum u8 {Box,Sphere,Capsule,Cylinder,Hull,Mesh,Heightfield,External,Auto}}
+@(private="file") Pieces_Test_Body :: struct {type:enum u32 {Static,Kinematic,Dynamic}}
+
+// A mesh without colliders of its source that a scene moves with an Auto
+// Collider ships with the convex pieces it collides as, which a game without
+// a cache reads; one only a still body shows ships as it is.
+@(test)
+a_cook_ships_the_convex_pieces_of_a_mesh_a_body_moves :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"cook-pieces")
+    if folder=="" {return}
+    LEVEL :: base.Asset_Id{0xc0,0x10}
+    MOVED :: base.Asset_Id{0xc0,0x11}
+    STILL :: base.Asset_Id{0xc0,0x12}
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    assets:=fmt.tprintf("%s/assets",folder)
+    testing.expect(t,os.make_directory_all(assets)==nil)
+    // An L of two boxes: not convex.
+    vertices:=make([dynamic]asset.Vertex,context.temp_allocator)
+    indices:=make([dynamic]u32,context.temp_allocator)
+    for part in 0..<2 {
+        low:=part==0?[3]f32{0,0,0}:[3]f32{0,1,0}
+        high:=part==0?[3]f32{3,1,1}:[3]f32{1,3,1}
+        first:=u32(len(vertices))
+        for corner in 0..<8 {append(&vertices,asset.Vertex{position={corner&1!=0?high.x:low.x,corner&2!=0?high.y:low.y,corner&4!=0?high.z:low.z},color=0xffffffff})}
+        faces:=[36]u32{0,2,1,1,2,3, 4,5,6,5,7,6, 0,1,4,1,5,4, 2,6,3,3,6,7, 0,4,2,2,4,6, 1,3,5,3,7,5}
+        for index in faces {append(&indices,first+index)}
+    }
+    g:asset.Mesh_Geometry
+    if !testing.expect(t,asset.mesh_build({vertices=vertices[:]},indices[:],nil,&g,context.temp_allocator)) {return}
+    for id,name in ([2]base.Asset_Id{MOVED,STILL}) {
+        testing.expect_value(t,asset.mesh_save(fmt.tprintf("%s/%s.mesh",assets,name==0?"moved":"still"),&types,{id=id,geometry=g}),asset.Error.None)
+    }
+    level:asset.Scene;asset.scene_init(&level,&types,LEVEL)
+    for mesh,at in ([2]base.Asset_Id{MOVED,STILL}) {
+        e:=base.Entity_Id(at+1)
+        asset.scene_entity_add(&level,e,0,"Prop")
+        asset.scene_set(&level,e,"Mesh_Renderer",&Pieces_Test_Renderer{mesh})
+        asset.scene_set(&level,e,"Collider",&Pieces_Test_Collider{.Auto})
+    }
+    asset.scene_set(&level,1,"Rigid_Body",&Pieces_Test_Body{.Dynamic})
+    testing.expect_value(t,asset.scene_save(&level,fmt.tprintf("%s/level.scene",assets)),asset.Error.None)
+    asset.scene_destroy(&level)
+
+    output:=fmt.tprintf("%s/game/assets",folder)
+    report:=cook_assets({assets=assets,output=output,quick=true,collision_cache=fmt.tprintf("%s/collision",folder),allocator=context.temp_allocator})
+    if !testing.expect_value(t,report.error,Cook_Error.None) {return}
+    for name,at in ([2]string{"moved","still"}) {
+        cooked:asset.Asset
+        if !testing.expect_value(t,asset.asset_load(&cooked,fmt.tprintf("%s/%s.mesh",output,name)),asset.Error.None) {return}
+        defer asset.asset_close(&cooked)
+        view,error:=asset.mesh_view(&cooked,&types)
+        testing.expect_value(t,error,asset.Error.None)
+        if at==0 {
+            testing.expectf(t,len(view.piece_sizes)>=2,"the mesh a body moves ships its pieces: %d",len(view.piece_sizes))
+            points:=make([dynamic][3]f32,context.temp_allocator)
+            sizes:=make([dynamic]u32,context.temp_allocator)
+            testing.expect(t,host.assets_collision_pieces_file(&cooked,&types,"",&points,&sizes) && len(sizes)==len(view.piece_sizes),"a game without a cache reads them")
+        } else {
+            testing.expect_value(t,len(view.piece_sizes),0)
+        }
     }
 }

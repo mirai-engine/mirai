@@ -29,7 +29,7 @@ import stbi "vendor:stb/image"
 // frame (layers, panels, lines, the camera) lasts for that frame.
 
 FRAME_LAYER_CAPACITY :: 16
-FRAME_PANEL_CAPACITY :: 512
+FRAME_PANEL_CAPACITY :: 1024
 FRAME_DEBUG_CAPACITY :: 8
 // Room made once for the instances of a frame; there may be more, and the list grows.
 FRAME_INSTANCE_RESERVE :: 256
@@ -877,7 +877,7 @@ app_capture_world :: proc(app:^App,world:rawptr,frames:=8,size:=[2]i32{},editor:
         app.inspection={}
         app.view_count=0
         if !drawn {break}
-        if wait>0 {count=capture_frames_streaming(count,frame,max(frames,1),render.textures_update(r),time.tick_since(started),wait)}
+        if wait>0 {count=capture_frames_streaming(count,frame,max(frames,1),render.textures_update(r)+app_assets_arriving(app),time.tick_since(started),wait)}
         // The last frame drew a program as its rows while its pipelines were made: one more with them.
         if frame==count-1 && render.renderer_pipelines_pending(r) {
             render.renderer_pipelines_wait(r)

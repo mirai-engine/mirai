@@ -39,7 +39,7 @@ particle_effects_keep_their_values_parameters_hidden_fields_and_assets :: proc(t
     found:=particle_parameter_find(view.parameters,"pattern")
     testing.expect(t,found!=nil && found.texture==base.Asset_Id{9,10})
     testing.expect_value(t,len(a.dependencies),3) // its material, its sub particle and the texture of a parameter
-    testing.expect_value(t,a.blob.header.kind_version,u16(VERSION))
+    testing.expect_value(t,a.blob.header.kind_version,u16(PARTICLE_VERSION))
 
     bad:=info
     bad.rate=math.nan_f32()
@@ -52,7 +52,7 @@ an_effect_of_another_version_asks_to_be_written_again :: proc(t:^testing.T) {
     doc:asset.Document
     info:=PARTICLE_DEFAULTS
     testing.expect_value(t,particle_document(&doc,&types,{id={1,2},info=info}),asset.Error.None)
-    doc.kind_version=VERSION-1
+    doc.kind_version=PARTICLE_VERSION-1
     path:=fmt.tprintf("%s/old.particle",base.test_folder(t,"effect"))
     testing.expect_value(t,asset.document_save(&doc,path),asset.Error.None)
     asset.document_destroy(&doc)
@@ -75,7 +75,7 @@ particle_lights_cast_shadows_only_when_the_effect_asks :: proc(t:^testing.T) {
     before:=Before{rate=30,lights=4,light_intensity=10,light_range=2}
     doc:asset.Document
     asset.document_init(&doc,PARTICLE_KIND,{1,2})
-    doc.kind_version=VERSION
+    doc.kind_version=PARTICLE_VERSION
     _,error:=asset.document_put_row(&doc,&types,"particle",&before)
     testing.expect_value(t,error,asset.Error.None)
     testing.expect_value(t,asset.document_save(&doc,path),asset.Error.None)

@@ -366,6 +366,11 @@ ended. What it keeps of a run goes in a storage of its own, keyed by `Run.id`. `
 with an `Api_Step_Input` drives a run, and `editor.play_ui_screen` says what its screen on top shows
 ([`playtest`](../../mirai-plugins/references/plugins.md#first-party-plugins)).
 
+An Editor storage whose only field is `editor.Edit_Follow_Provider` derives what follows a gesture
+of the edited scene right before the history records it (`edits_follow`, with the sections): what
+its `follow(s)` changes joins that step, so one undo takes both back, and undo itself follows
+nothing (`terrain` remakes the bed of a moved spline).
+
 What steers or watches a body in those runs asks the plugin that moves it, never a component by
 its name: an Editor storage whose only field is `editor.Body_Provider` answers for the bodies of
 its plugin (`physics`, whether a character stands; `locomotion`, how a walker measures), and
@@ -437,7 +442,9 @@ and joins them with the engine's.
   another's section shows: without a section of its own, outside the scene API, Paste and Add
   component; `vfx` says it of an emitter's values).
 - An editor storage whose only field is `Component_Provider` defines `added`: what the plugin adds
-  with a component the editor added (the `Collider` of a new `Character`).
+  with a component the editor added (the `Collider` of a new `Character`, or of a mesh that stores
+  colliders), and `start`: the value a component given without one starts with for that entity,
+  over its default (an `Auto` `Collider` where a mesh is shown); the scene API starts from it too.
 - The callbacks are read from the default of the current metadata, without pointers to a reloaded
   library. `Inspector_Context` delivers session, world, table, entities and width.
 - `inspector_fields` draws the generic rows, gestures and resets of the component under its own.

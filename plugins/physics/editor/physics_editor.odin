@@ -33,7 +33,7 @@ api_register :: proc(s:^editor.Session) {
 @(storage)
 Physics_Components :: struct {provider:editor.Component_Provider}
 
-PHYSICS_COMPONENTS_DEFAULT :: Physics_Components{provider={added=collider_companion}}
+PHYSICS_COMPONENTS_DEFAULT :: Physics_Components{provider={added=collider_companion,start=collider_start}}
 
 @(storage)
 Physics_Simulation :: struct {provider:editor.Simulation_Provider}

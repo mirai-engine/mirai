@@ -534,7 +534,7 @@ ai_transcript_draw :: proc(s:^Session,m:^Ai,task:^Ai_Task,height,width:f32,size:
     for h,index in t.heights[:t.count] {rows[index]=abs(h)}
     copy(rows[t.count:],extra_heights[:extra_count])
     note:=ai_note_size(ctx,size)
-    first,last:=ui.rows_begin(ctx,area,&m.scroll,rows,ui.fixed(width+AI_THREAD_MARGIN),height,bar_room=AI_THREAD_MARGIN)
+    first,last:=ui.rows_begin(ctx,area,&m.scroll,rows,ui.fixed(width+AI_THREAD_MARGIN),ui.fixed(height),bar_room=AI_THREAD_MARGIN)
     for index in first..<last {
         if index>=t.count {
             switch extras[index-t.count] {

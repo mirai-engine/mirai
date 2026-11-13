@@ -1,10 +1,12 @@
 package importer
 
 import "core:fmt"
+import "core:mem"
 import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
+import "mirai:cook/textures"
 import "mirai:std/base"
 import mm "mirai:std/math"
 
@@ -174,7 +176,61 @@ the_models_of_an_import_share_their_parts_by_name :: proc(t:^testing.T) {
 
     // An input that changed changes what the cache is built from.
     sidecar,_,_:=sidecar_load(source,context.temp_allocator)
-    before:=import_key(source,sidecar,import_version(0),false)
+    before:=import_key(source,sidecar,import_version(0),0,false)
     testing.expect(t,os.write_entire_file(package_file,"other props")==nil)
-    testing.expect(t,len(sidecar.inputs)==1 && sidecar.inputs[0]=="props.pkg" && import_key(source,sidecar,import_version(0),false)!=before,"the input is listed and counts in the key")
+    testing.expect(t,len(sidecar.inputs)==1 && sidecar.inputs[0]=="props.pkg" && import_key(source,sidecar,import_version(0),0,false)!=before,"the input is listed and counts in the key")
+}
+
+// An image only its format decodes is keyed by its data: a texture the
+// texture cache keeps for that data is written without making its texels.
+@(test)
+an_image_only_its_format_decodes_is_taken_from_the_cache_without_decoding :: proc(t:^testing.T) {
+    root,assets:=test_assets(t,"outputs-made")
+    if root=="" {return}
+    cache:=fmt.tprintf("%s/cache",root)
+    texels_of :: proc(data:[]u8,allocator:mem.Allocator) -> (made:textures.Source,ok:bool) {
+        texels:=make([]u8,4*4*4,allocator)
+        for &texel,at in texels {texel=u8(at*7)+data[0]}
+        return {texels=texels,width=4,height=4,format=.RGBA8},true
+    }
+    refused :: proc(data:[]u8,allocator:mem.Allocator) -> (made:textures.Source,ok:bool) {return}
+    written :: proc(t:^testing.T,root,assets,name:string,make:Image_Make,cache:string) -> (texels:string) {
+        source:=fmt.tprintf("%s/%s.map",assets,name)
+        testing.expect(t,os.write_entire_file(source,name)==nil)
+        o:Outputs
+        error:=outputs_begin(&o,source,name,u64(len(name)),base.hash64(transmute([]u8)name),import_version(0),{root=root,textures=.Uncompressed,texture_cache=cache})
+        if !testing.expectf(t,error.code==.None,"%s",error.message) {return}
+        model:=model_of("Crate","SM_Crate","T_Wood","M_Wood")
+        model.images[0]={name="T_Wood",data=transmute([]u8)string("packed"),make=make,srgb=true}
+        _,error=output_model(&o,&model,context.temp_allocator)
+        testing.expectf(t,error.code==.None,"%s",error.message)
+        report:=outputs_end(&o,false)
+        defer report_destroy(&report)
+        for w in report.assets {
+            if w.kind!=asset.KIND_TEXTURE {continue}
+            types:asset.Types;asset.types_init(&types,context.temp_allocator)
+            a:asset.Asset
+            if asset.asset_load(&a,w.path,context.temp_allocator)!=.None {return}
+            view,view_error:=asset.texture_view(&a,&types)
+            if view_error==.None {texels=strings.clone(string(asset.texture_mip(view,0)),context.temp_allocator)}
+        }
+        return
+    }
+    first:=written(t,root,assets,"first",texels_of,cache)
+    testing.expect(t,len(first)==4*4*4,"its format makes the texels")
+    testing.expect(t,written(t,root,assets,"second",refused,cache)==first,"the cache gives the texture of the same data")
+    testing.expect(t,written(t,root,assets,"third",refused,"")=="","without the cache the texels are made, and here they cannot be")
+
+    // Imported again unchanged, its outputs are current: a model read ahead for it cooks nothing.
+    current :: proc(root,assets:string) -> bool {
+        o:Outputs
+        source:=fmt.tprintf("%s/first.map",assets)
+        if outputs_begin(&o,source,"first",5,base.hash64(transmute([]u8)string("first")),import_version(0),{root=root,textures=.Uncompressed}).code!=.None {return false}
+        defer outputs_end(&o,true)
+        return outputs_current(&o)
+    }
+    testing.expect(t,current(root,assets),"nothing changed")
+    entries,_:=os.read_all_directory_by_path(fmt.tprintf("%s/.mirai/imported",root),context.temp_allocator)
+    for entry in entries {_=os.remove(entry.fullpath)}
+    testing.expect(t,!current(root,assets),"its files are gone")
 }

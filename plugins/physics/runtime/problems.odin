@@ -6,7 +6,7 @@ import "mirai:std/base"
 
 // Why a collider has no shape in the simulation.
 @(private)
-Shape_Failure :: enum u8 {None,No_Mesh,No_Geometry,No_Heightfield,Mirrored_Heightfield,Hull,Geometry_Budget,Shapes,Convex_Radius,Sheared}
+Shape_Failure :: enum u8 {None,No_Mesh,Mesh_Unreadable,No_Heightfield,Mirrored_Heightfield,Hull,Geometry_Budget,Shapes,Convex_Radius,Sheared}
 
 @(private)
 shape_problem :: proc(s:^Sync,e:core.Entity,collider:Collider,failure:Shape_Failure) {
@@ -18,8 +18,8 @@ shape_problem :: proc(s:^Sync,e:core.Entity,collider:Collider,failure:Shape_Fail
     case .None:
     case .No_Mesh:
         core.report(s.problems,e,"physics.collider_mesh","its Collider is a %v, which takes its shape from the Mesh_Renderer of the entity, and it has none; add a Mesh_Renderer, or make the Collider a Box, Sphere, Capsule or Cylinder",collider.kind)
-    case .No_Geometry:
-        core.report(s.problems,e,"physics.collider_geometry","its %v Collider takes its shape from mesh %s, which has no collision geometry: the mesh is missing, or a generated mesh was freed; give Mesh_Renderer.mesh a mesh of the assets, or use another Collider kind",collider.kind,mesh)
+    case .Mesh_Unreadable:
+        core.report(s.problems,e,"physics.collider_mesh_unreadable","its %v Collider takes its shape from mesh %s, which cannot be read: it is not in the assets, its file is damaged or of another version, or a generated mesh was freed; give Mesh_Renderer.mesh a mesh of the assets, or import its source again",collider.kind,mesh)
     case .No_Heightfield:
         core.report(s.problems,e,"physics.collider_heightfield","its Heightfield Collider takes its shape from mesh %s, which is not a valid heightfield; give it the mesh of a terrain, or use another Collider kind",mesh)
     case .Mirrored_Heightfield:
@@ -30,7 +30,7 @@ shape_problem :: proc(s:^Sync,e:core.Entity,collider:Collider,failure:Shape_Fail
         core.report(s.problems,e,"physics.collider_hull","the convex hull of mesh %s could not be built for its Hull Collider: its points are degenerate, or the hull needs more than 255 faces or vertices; use a simpler mesh, or a Mesh or Box Collider",mesh)
     case .Geometry_Budget:
         used,capacity:=geometry_budget({s.state},collider.kind)
-        field:=collider.kind==.Hull?"hulls":collider.kind==.Mesh?"meshes":"heightfields"
+        field:=collider.kind==.Hull || collider.kind==.Auto?"hulls":collider.kind==.Mesh?"meshes":"heightfields"
         core.report(s.problems,e,"physics.geometry_budget","the simulation refused the %v geometry of mesh %s: %d of the %d of Physics_Settings.%s are in use, or its triangles are not valid; raise %s, or use fewer of them",collider.kind,mesh,used,capacity,field,field)
     case .Convex_Radius:
         core.report(s.problems,e,"physics.convex_radius","its %v Collider has a convex_radius of %v m, which leaves its shape no core: at the scale of the entity it must be below the smallest half extent of a Box, the radius and half height of a Cylinder, or the distance from the center of a Hull to its nearest face; lower convex_radius",collider.kind,collider.convex_radius)

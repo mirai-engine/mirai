@@ -93,7 +93,7 @@ keeping_makes_the_index_the_base_a_discard_puts_back :: proc(t:^testing.T) {
     r:Repository
     defer {
         for path in r.paths {delete(path)}
-        delete(r.paths);delete(r.changes);delete(r.history);delete(r.out);delete(r.err)
+        delete(r.paths);delete(r.changes);delete(r.history);delete(r.out);delete(r.err);delete(r.input)
     }
     roots:=Roots{engine=root,project=root}
     test_run(t,&r,roots,.Check)
@@ -127,6 +127,17 @@ keeping_makes_the_index_the_base_a_discard_puts_back :: proc(t:^testing.T) {
     change=test_change(&r,"a.txt")
     testing.expect(t,change.pending && !change.kept,"out of what is kept, it is pending again")
     testing.expect_value(t,read(file),"one")
+
+    // More paths than a command line holds are kept all the same.
+    folder:=fmt.tprintf("%s/a_folder_whose_name_is_long_enough_that_its_files_fill_a_command_line",root)
+    testing.expect(t,os.make_directory(folder)==nil)
+    MANY :: 600
+    for i in 0..<MANY {write(t,fmt.tprintf("%s/the_file_number_%d_of_the_many.txt",folder,i),"many")}
+    test_run(t,&r,roots,.Keep)
+    test_run(t,&r,roots,.Refresh)
+    kept:=0
+    for &change in r.changes {kept+=int(change.kept && !change.pending)}
+    testing.expectf(t,kept>=MANY,"%d of the %d new files are kept",kept,MANY)
 }
 
 // Until git said whether the project is in a repository, nothing is known of it: an edit that

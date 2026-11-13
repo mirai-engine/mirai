@@ -73,7 +73,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     InterlockedAdd(stats[0].visible_instances, 1u);
     InterlockedAdd(stats[0].kinds[cull_kind(batched, mesh) * 3u], 1u);
     if (params.phase != 0u) InterlockedAdd(stats[0].late[0], 1u);
-    uint2 clusters = instance_clusters(inst, mesh);
+    uint2 clusters = instance_clusters(view_detail(), inst, mesh);
     uint count = (clusters.y + CULL_CHUNK - 1u) / CULL_CHUNK;
     uint base;
     InterlockedAdd(cull_state[CULL_CHUNK_COUNT], count, base);

@@ -20,8 +20,6 @@ import phys "plugins:physics/runtime"
 // meshes of the edited scene change (nav.bake makes it the first time), and
 // saving the scene saves it.
 
-BAKE_VERSION :: 3
-
 // The navigation meshes the scene saves, on an entity of the scene; none:
 // built when it loads. Each one in the world, of the scene or of a section,
 // puts in the meshes what they do not have when it comes.
@@ -171,7 +169,7 @@ bake_bytes :: proc(n:^Navigation,id:base.Asset_Id,types:^asset.Types,filter:=BAK
     document:asset.Document
     asset.document_init(&document,NAVMESH_KIND,id,allocator)
     defer asset.document_destroy(&document)
-    document.kind_version=BAKE_VERSION
+    document.kind_version=NAVMESH_VERSION
     asset.document_put(&document,types,"classes",classes[:]) or_return
     asset.document_put(&document,types,"tiles",tiles[:]) or_return
     asset.document_put(&document,types,"links",links[:]) or_return
@@ -209,7 +207,7 @@ bake_rows :: proc(file:^asset.Asset,types:^asset.Types,name:string,$T:typeid) ->
 // zones; false when the file is not one this version reads, leaving the
 // meshes as they were.
 bake_read :: proc(n:^Navigation,file:^asset.Asset,types:^asset.Types,only:Bake_Keys=nil) -> (count:int,ok:bool) {
-    if asset.kind_check(file,NAVMESH_KIND,BAKE_VERSION)!=.None {return}
+    if asset.kind_check(file,NAVMESH_KIND,NAVMESH_VERSION)!=.None {return}
     classes:=bake_rows(file,types,"classes",Bake_Class) or_return
     tiles:=bake_rows(file,types,"tiles",Bake_Tile) or_return
     links:=bake_rows(file,types,"links",Bake_Link) or_return

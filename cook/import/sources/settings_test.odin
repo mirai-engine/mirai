@@ -28,21 +28,21 @@ sphere_obj :: proc(folder:string) -> string {
 }
 
 @(test)
-an_import_stores_levels_and_colliders_and_reports_them :: proc(t:^testing.T) {
+a_source_without_colliders_gives_a_mesh_of_levels_without_any :: proc(t:^testing.T) {
     _,folder:=test_project(t,"levels")
     if folder=="" {return}
     source:=sphere_obj(folder)
-    model,ok:=import_ok(t,source,{collision=.Hull})
+    model,ok:=import_ok(t,source,{front=.X})
     if !ok {return}
     defer importer.model_destroy(&model)
-    testing.expect(t,model.settings.collision==.Hull && !model.stored)
-    report,error:=write_into(&model,fmt.tprintf("%s/out",folder),{collision=.Hull})
+    testing.expect(t,model.settings.front==.X && !model.stored)
+    report,error:=write_into(&model,fmt.tprintf("%s/out",folder),{front=.X})
     defer importer.report_destroy(&report)
     testing.expect_value(t,error.code,importer.Error_Code.None)
     if error.code!=.None || len(report.assets)==0 {return}
     written:=report.assets[len(report.assets)-1]
     testing.expect_value(t,written.kind,asset.KIND_MESH)
-    testing.expect(t,strings.contains(written.detail," triangles, 1 hull of "),written.detail)
+    testing.expect(t,strings.has_suffix(written.detail," triangles"),written.detail)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     a:asset.Asset
     if !testing.expect_value(t,asset.asset_load(&a,written.path),asset.Error.None) {return}
@@ -53,8 +53,8 @@ an_import_stores_levels_and_colliders_and_reports_them :: proc(t:^testing.T) {
     // A static mesh is a DAG: the detail names the triangles of each of its levels.
     testing.expect(t,len(view.levels)>2 && .Levels not_in view.info.flags)
     testing.expect(t,strings.count(written.detail,"/")==len(view.levels)-1,written.detail)
-    testing.expect(t,len(view.colliders)==1 && view.colliders[0].kind==.Hull && len(view.collision_points)==int(view.colliders[0].point_count))
-    testing.expect(t,view.source!=nil && view.source.settings_hash==importer.mesh_settings_hash(model.settings) && view.source.settings_hash!=importer.mesh_settings_hash({}),"the asset names the settings it was made with")
+    testing.expect(t,len(view.colliders)==0 && len(view.collision_points)==0,"the import makes no collider the source does not give")
+    testing.expect(t,view.source!=nil && view.source.settings_hash==importer.mesh_build_hash(model.settings) && view.source.settings_hash!=importer.mesh_build_hash({}),"the asset names the settings it was made with")
     testing.expect(t,int(view.info.vertex_count)==len(view.vertices) && view.levels[0].triangle_count<view.info.triangle_count)
 }
 
@@ -66,10 +66,10 @@ the_sidecar_of_a_source_keeps_its_settings_and_importing_again_uses_them :: proc
     file:=fmt.tprintf("%s.import",source)
     stored,found,load_error:=importer.settings_load(source)
     testing.expect(t,!found && load_error.code==.None && stored=={},"a source without a sidecar has the defaults")
-    wanted:=importer.Import_Settings{max_texture_size=512,textures=.Uncompressed,rdo_lambda=-1,image=.Normal,alpha_coverage=0.5,lods=.None,collision=.Pieces,collision_hulls=4,rig=.Spider}
+    wanted:=importer.Import_Settings{textures=.Uncompressed,rdo_lambda=-1,image=.Normal,alpha_coverage=0.5,lods=.None,rig=.Spider}
     testing.expect(t,importer.sidecar_save(source,{settings=wanted}))
     text,_:=os.read_entire_file(file,context.temp_allocator)
-    testing.expect(t,strings.contains(string(text),"\"lods\": \"None\"") && strings.contains(string(text),"\"collision\": \"Pieces\"") && strings.contains(string(text),"\"max_texture_size\": 512") && strings.contains(string(text),"\"alpha_coverage\": 0.5") && strings.contains(string(text),"\"rdo_lambda\": -1"),string(text))
+    testing.expect(t,strings.contains(string(text),"\"lods\": \"None\"") && strings.contains(string(text),"\"rig\": \"Spider\"") && strings.contains(string(text),"\"textures\": \"Uncompressed\"") && strings.contains(string(text),"\"alpha_coverage\": 0.5") && strings.contains(string(text),"\"rdo_lambda\": -1"),string(text))
     stored,found,load_error=importer.settings_load(source)
     testing.expect(t,found && load_error.code==.None && stored==wanted)
     // The same sidecar is not written again.
@@ -79,21 +79,21 @@ the_sidecar_of_a_source_keeps_its_settings_and_importing_again_uses_them :: proc
     testing.expect_value(t,after,before)
 
     // The stored settings are the ones of the import, whatever the options say.
-    model,ok:=import_ok(t,source,{collision=.Hull})
+    model,ok:=import_ok(t,source,{front=.X})
     if !ok {return}
     testing.expect_value(t,model.settings,wanted)
-    report,error:=write_into(&model,root,{collision=.Hull})
+    report,error:=write_into(&model,root,{front=.X})
     testing.expect_value(t,error.code,importer.Error_Code.None)
     if error.code==.None {
         detail:=report.assets[len(report.assets)-1].detail
-        testing.expect(t,!strings.contains(detail,"/") && strings.contains(detail,"hull"),detail)
+        testing.expect(t,!strings.contains(detail,"/"),detail)
         importer.report_destroy(&report)
     }
     importer.model_destroy(&model)
     // Unless whoever imports sets them now.
-    model,ok=import_ok(t,source,{collision=.Hull,ignore_stored=true})
+    model,ok=import_ok(t,source,{front=.X,ignore_stored=true})
     if !ok {return}
-    testing.expect_value(t,model.settings,importer.Import_Settings{collision=.Hull})
+    testing.expect_value(t,model.settings,importer.Import_Settings{front=.X})
     importer.model_destroy(&model)
 
     // A sidecar nobody wrote is an error, not the defaults nor other ids: settings an import
@@ -103,7 +103,7 @@ the_sidecar_of_a_source_keeps_its_settings_and_importing_again_uses_them :: proc
     ID :: "\"id\": \"00000000000000010000000000000002\""
     whole :: proc(settings,outputs:string) -> string {return fmt.tprintf("{{\"version\": 3, \"settings\": %s, \"outputs\": [%s]}}",settings,outputs)}
     for broken in ([]string{
-        whole("{\"lods\": \"Sometimes\"}",""),whole("{\"scale\": 2}",""),"{",whole("{\"max_texture_size\": -1}",""),whole("{\"alpha_coverage\": 1.5}",""),whole("{\"alpha_coverage\": \"nan\"}",""),whole("{\"rig\": \"Fox\", \"rig_crotch\": 0.9}",""),
+        whole("{\"lods\": \"Sometimes\"}",""),whole("{\"scale\": 2}",""),"{",whole("{\"rdo_lambda\": 1000}",""),whole("{\"alpha_coverage\": 1.5}",""),whole("{\"alpha_coverage\": \"nan\"}",""),whole("{\"rig\": \"Fox\", \"rig_crotch\": 0.9}",""),
         "{}","{\"lods\": \"None\"}","{\"version\": 2, \"settings\": {}, \"outputs\": []}",
         "{\"version\": 3, \"settings\": {}, \"folder\": \"../up\", \"outputs\": []}","{\"version\": 3, \"settings\": {}, \"folder\": \"/root\", \"outputs\": []}",
         whole("{}","{\"kind\": \"MESH\", \"name\": \"Ball\", \"index\": 0}"),
@@ -125,13 +125,8 @@ the_sidecar_of_a_source_keeps_its_settings_and_importing_again_uses_them :: proc
 @(test)
 a_mesh_records_only_the_settings_it_is_built_from :: proc(t:^testing.T) {
     hash:=importer.mesh_settings_hash
-    testing.expect(t,hash({max_texture_size=512,textures=.Uncompressed,image=.Normal,alpha_coverage=0.5})==hash({}),"the settings of textures and images do not build a mesh")
-    testing.expect(t,hash({lods=.None})!=hash({}) && hash({collision=.Hull})!=hash({}) && hash({collision=.Mesh})!=hash({collision=.Hull}),"levels and colliders do")
-    testing.expect(t,hash({collision=.Pieces,collision_hulls=4})!=hash({collision=.Pieces}),"so does the number of hulls of Pieces")
-    testing.expect(t,hash({collision=.Pieces,collision_hulls=geom.DECOMPOSE_DEFAULT_HULLS})==hash({collision=.Pieces}),"0 hulls is the default number")
-    testing.expect(t,hash({collision=.Hull,collision_hulls=4})==hash({collision=.Hull}),"hulls mean nothing to another collider")
-    testing.expect(t,hash({max_triangles=5000})!=hash({}) && hash({max_triangles=5000})!=hash({max_triangles=6000}),"so does the most triangles of a mesh")
-    testing.expect(t,hash({force_collision=true})!=hash({}),"and forcing a collider")
+    testing.expect(t,hash({textures=.Uncompressed,image=.Normal,alpha_coverage=0.5})==hash({}),"the settings of textures and images do not build a mesh")
+    testing.expect(t,hash({lods=.None})!=hash({}) && hash({front=.X})!=hash({}),"levels and the front do")
     testing.expect(t,hash({rig=.Humanoid})!=hash({}) && hash({rig=.Humanoid,rig_crotch=0.9})!=hash({rig=.Humanoid}),"and a rig that weights it, with what it is told of the body")
     testing.expect(t,hash({rig=.Fox})!=hash({rig=.Humanoid}) && hash({rig=.Fox})!=hash({rig=.Horse}),"each template its own")
     testing.expect(t,hash({rig=.Source,rig_crotch=0.9})==hash({}),"which means nothing to the rig of the source")
@@ -143,16 +138,16 @@ a_standalone_image_takes_its_use_from_its_settings :: proc(t:^testing.T) {
     if folder=="" {return}
     path:=fmt.tprintf("%s/normal.png",folder)
     _=os.write_entire_file(path,png_bytes(8,8,{128,128,255}))
-    testing.expect(t,importer.sidecar_save(path,{settings={image=.Normal,max_texture_size=4}}))
+    testing.expect(t,importer.sidecar_save(path,{settings={image=.Normal,textures=.Uncompressed}}))
     report,error:=importer.import_texture(path,{root=root,image=.Color})
     defer importer.report_destroy(&report)
     testing.expect_value(t,error.code,importer.Error_Code.None)
     if error.code!=.None {return}
     testing.expect(t,report.assets[0].id!={})
-    testing.expect(t,strings.contains(report.assets[0].detail,"4x4"),report.assets[0].detail)
-    testing.expect_value(t,report.settings,importer.Import_Settings{image=.Normal,max_texture_size=4})
+    testing.expect(t,strings.contains(report.assets[0].detail,"8x8"),report.assets[0].detail)
+    testing.expect_value(t,report.settings,importer.Import_Settings{image=.Normal,textures=.Uncompressed})
     text,_:=os.read_entire_file(fmt.tprintf("%s%s",path,importer.SIDECAR_EXTENSION),context.temp_allocator)
-    testing.expect(t,strings.contains(string(text),`"image": "Normal"`) && strings.contains(string(text),`"max_texture_size": 4`) && !strings.contains(string(text),"max_triangles"),string(text))
+    testing.expect(t,strings.contains(string(text),`"image": "Normal"`) && strings.contains(string(text),`"textures": "Uncompressed"`) && !strings.contains(string(text),"lods"),string(text))
 }
 
 @(test)

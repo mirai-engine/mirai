@@ -27,11 +27,13 @@ World_State :: struct {
     twin_count:i32,
     push_rules:[PUSH_RULE_CAPACITY]Push_Rule,
     cut_count:i32,
+    surface_rule_count:i32,
+    surface_rules:[SURFACE_RULE_CAPACITY]Surface_Rule,
     twins:[TWIN_CAPACITY]Twin,
     cuts:[CUT_CAPACITY]Cut,
     awake_head,moved_head:i32, // the lists of the awake bodies and of the moved shapes
 }
-#assert(size_of(World_State)==2680)
+#assert(size_of(World_State)==4224)
 
 @(private) Hull_Slot :: struct {hull:Hull,generation:u32,refs:i32,revision:u32} // revision: rebuilds under its handle
 @(private) Mesh_Slot :: struct {mesh:Mesh,generation:u32,refs:i32}
@@ -242,6 +244,22 @@ world_set_push_rules :: proc(w:^World,rules:[]Push_Rule) -> bool {
     return true
 }
 world_push_rules :: proc(w:^World) -> []Push_Rule {return w.push_rules[:w.push_rule_count]}
+
+// Replaces the surface rules of the world. False, changing nothing, for more than SURFACE_RULE_CAPACITY
+// rules, a rule of surface zero or of a surface another rule has, a friction that is not finite and at
+// least zero or a restitution outside 0..1.
+world_set_surface_rules :: proc(w:^World,rules:[]Surface_Rule) -> bool {
+    if len(rules)>SURFACE_RULE_CAPACITY {return false}
+    for rule,i in rules {
+        if rule.surface=={} || !(rule.friction>=0 && rule.friction<=max(f32)) || !(rule.restitution>=0 && rule.restitution<=1) {return false}
+        for other in rules[:i] {if other.surface==rule.surface {return false}}
+    }
+    w.surface_rules={}
+    copy(w.surface_rules[:],rules)
+    w.surface_rule_count=i32(len(rules))
+    return true
+}
+world_surface_rules :: proc(w:^World) -> []Surface_Rule {return w.surface_rules[:w.surface_rule_count]}
 
 // The force a contact between two dynamic shapes of these layers pushes with at most: the smallest of the
 // rules that pair them, zero when none does.

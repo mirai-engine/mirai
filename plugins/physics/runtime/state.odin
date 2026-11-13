@@ -67,7 +67,7 @@ Physics_State :: struct {
     touched:[dynamic]u32,
     touched_all:bool,
     collision:Collision_Settings, // those the filters of the shapes were made with
-    pushes_set:bool, // the simulation has the push rules of collision
+    pushes_set:bool, // the simulation has the push and surface rules of collision
     own_gravity:bool, // the bodies fall with the gravity of their place (gravity_apply)
     gravity:Gravity_Fields, // what they fall with; not copied, made again from the tables of its world
     targets_seen:core.Seen, // of core.Pose_Target, by physics_pose_targets
@@ -142,7 +142,7 @@ Held :: struct {
 Shown :: struct {
     mesh:base.Asset_Id,
     shape:host.Shape,
-    revision:u64, // asset revision; zero for immutable generated IDs
+    size,time:i64, // of the file of a mesh asset, as Geometry_Source; zero for an immutable generated id
     generated:bool,
 }
 
@@ -268,6 +268,7 @@ Contact_Begin :: struct {
     collider_a,collider_b:core.Entity,
     point,normal:[3]f32, // normal from a to b
     impulse:f32,         // N s applied in the step
+    material:base.Asset_Id, // what collider_a shows where they touched when it shows one per place (Hit.material)
 }
 Contact_End :: struct {a,b,collider_a,collider_b:core.Entity}
 // One for each side of a pair that overlaps: entity is the body and collider the collider of that side.
@@ -384,7 +385,7 @@ collider_bounds :: proc(physics:core.Ref(Physics_State),e:core.Entity) -> (bound
 geometry_budget :: proc(physics:core.Ref(Physics_State),kind:Collider_Kind) -> (used,capacity:int) {
     if !physics.ready {return}
     switch kind {
-    case .Hull:
+    case .Hull,.Auto:
         capacity=len(physics.world.hulls)
         for slot in physics.world.hulls {if slot.generation&1!=0 {used+=1}}
     case .Mesh:
@@ -418,12 +419,14 @@ manipulation_owner :: proc(physics:core.Ref(Physics_State),e:core.Entity) -> cor
 
 // entity is the body that was hit and collider the entity of its collider, another one when the collider
 // is a child of the body. overlap: the shape does not block the query. A query that starts inside a shape
-// reports distance zero and a zero normal.
+// reports distance zero and a zero normal. material: what the collider shows where it was hit when it
+// shows one per place, as a terrain does by cell; zero for a collider of one surface.
 Hit :: struct {
     entity,collider:core.Entity,
     point,normal:[3]f32,
     distance:f32,
     overlap:bool,
+    material:base.Asset_Id,
     body:sim.Body_Handle,
     shape:sim.Shape_Handle,
 }
@@ -436,7 +439,7 @@ OVERLAP_CAPACITY :: 256
 hit_of :: proc(world:^sim.World,found:sim.Ray_Hit,max_distance:f32) -> Hit {
     return {
         entity=core.Entity(sim.body_user_data(world,found.body)),collider=core.Entity(sim.shape_user_data(world,found.shape)),
-        point=found.point,normal=found.normal,distance=found.fraction*max_distance,overlap=found.overlap,body=found.body,shape=found.shape,
+        point=found.point,normal=found.normal,distance=found.fraction*max_distance,overlap=found.overlap,material=base.Asset_Id(found.surface),body=found.body,shape=found.shape,
     }
 }
 
@@ -752,15 +755,16 @@ geometry_copy :: proc(dst_state,src_state:^Physics_State) -> bool {
         if live && d.generation==s.generation && dst_state.geometry[len(dst.hulls)+len(dst.meshes)+i]==src_state.geometry[hulls+meshes+i] {continue}
         next:sim.Heightfield
         if live {
-            next=s.field;next.heights=nil;next.disabled_borders=nil;next.holes=nil
+            next=s.field;next.heights=nil;next.disabled_borders=nil;next.holes=nil;next.surfaces=nil;next.cell_surfaces=nil
             ok:bool
-            next.heights,ok=cloned(s.field.heights,a);if !ok {return false}
-            next.disabled_borders,ok=cloned(s.field.disabled_borders,a);if !ok {delete(next.heights,a);return false}
-            next.holes,ok=cloned(s.field.holes,a);if !ok {delete(next.heights,a);delete(next.disabled_borders,a);return false}
+            next.heights,ok=cloned(s.field.heights,a)
+            if ok {next.disabled_borders,ok=cloned(s.field.disabled_borders,a)}
+            if ok {next.holes,ok=cloned(s.field.holes,a)}
+            if ok {next.surfaces,ok=cloned(s.field.surfaces,a)}
+            if ok {next.cell_surfaces,ok=cloned(s.field.cell_surfaces,a)}
+            if !ok {sim.heightfield_free(&next,a);return false}
         }
-        delete(d.field.heights,a)
-        delete(d.field.disabled_borders,a)
-        delete(d.field.holes,a)
+        sim.heightfield_free(&d.field,a)
         d.field=next
         d.generation=s.generation
         dst_state.geometry[len(dst.hulls)+len(dst.meshes)+i]=src_state.geometry[hulls+meshes+i]
@@ -796,7 +800,7 @@ geometry_marks :: proc(state:^Physics_State) -> bool {
         if mark.generation==slot.generation {continue}
         f:=&slot.field
         shape:=[5]i64{i64(f.columns),i64(f.rows),i64(transmute(u32)f.cell.x),i64(transmute(u32)f.cell.y),i64(transmute(u32)f.cell.z)}
-        mark^={generation=slot.generation,hash=geometry_hash(f.heights,geometry_hash(f.disabled_borders,geometry_hash(f.holes,geometry_hash(shape[:],0))))}
+        mark^={generation=slot.generation,hash=geometry_hash(f.heights,geometry_hash(f.disabled_borders,geometry_hash(f.holes,geometry_hash(f.surfaces,geometry_hash(f.cell_surfaces,geometry_hash(shape[:],0))))))}
     }
     return true
 }

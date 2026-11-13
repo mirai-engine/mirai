@@ -6,3 +6,4 @@ import "mirai:asset"
 
 PHYSICS_CACHE_KIND :: asset.Fourcc(u32('P')|u32('C')<<8|u32('A')<<16|u32('C')<<24)
 PHYSICS_CACHE_EXTENSION :: ".physics_cache"
+PHYSICS_CACHE_VERSION :: 2

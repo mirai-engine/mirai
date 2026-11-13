@@ -6,3 +6,4 @@ import "mirai:asset"
 
 CHARACTER_KIND :: asset.Fourcc(u32('C')|u32('H')<<8|u32('A')<<16|u32('R')<<24)
 CHARACTER_EXTENSION :: ".character"
+CHARACTER_VERSION :: 5

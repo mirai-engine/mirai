@@ -91,10 +91,7 @@ git_changes_build :: proc(s:^Session,width,room:f32) {
     history:=len(g.history)>0
     l:=&s.gui.layout
     history_height:=l.git_history>0?l.git_history:GIT_HISTORY_DEFAULT
-    if ui.scroll_area(ctx,ui.id(ctx,"git_changes"),&g.scroll,{width=ui.GROW,height=ui.GROW,gap=1}) {
-        git_changes_rows(s,false,busy)
-        git_changes_rows(s,true,busy)
-    }
+    git_changes_list(s,busy)
     ui.text_field(ctx,ui.id(ctx,"git_message"),g.message[:],&g.message_length,{placeholder="Commit message",multiline=true,rows=3,live=true,disabled=busy})
     if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=6}) {
         empty:=len(g.changes)==0 || g.message_length==0
@@ -133,20 +130,89 @@ git_changes_build :: proc(s:^Session,width,room:f32) {
     }
 }
 
-// The changes that are pending, or with kept those the next commit takes,
-// under their head: what acts on all of them shows while the pointer is on
-// the head, and what acts on one while it is on its row.
+GIT_HEAD :: 22    // the height of the heads of the changes pending and of those kept
+GIT_ROW_PAD :: 4  // between the edges of the list and what its rows hold
+
 @(private)
-git_changes_rows :: proc(s:^Session,kept:bool,busy:bool) {
+Git_Row_Kind :: enum u8 {Head,Change,Entity}
+
+// A row of the list of changes: a head, a change of g.changes or an entity
+// of g.entities.rows under the change of the scene unfolded.
+@(private)
+Git_Row :: struct {kind:Git_Row_Kind,kept:bool,change,entity:int}
+
+// The changes that are pending, then those kept for the next commit, each
+// under its head; a pending scene unfolds into its entities. Only the rows in
+// sight are built.
+@(private)
+git_changes_list :: proc(s:^Session,busy:bool) {
     g:=s.git;ctx:=s.gui.ctx
-    count:=0
-    for change in g.changes {count+=int(kept?change.kept:change.pending || change.status=='U')}
-    if kept && count==0 {return}
-    ui.id_push(ctx,ui.id(ctx,kept?"git_kept":"git_pending"))
-    defer ui.id_pop(ctx)
+    git_entities_update(s)
+    unfolded:=base.text_get(g.entities.path[:])
+    rows:=make([dynamic]Git_Row,context.temp_allocator)
+    heights:=make([dynamic]f32,context.temp_allocator)
+    row:=ui.metric(ctx,"row")
+    counts:[2]int
+    for kept in ([2]bool{false,true}) {
+        head:=len(rows)
+        append(&rows,Git_Row{kind=.Head,kept=kept})
+        append(&heights,GIT_HEAD)
+        for &change,i in g.changes {
+            if !(kept?change.kept:change.pending || change.status=='U') {continue}
+            counts[int(kept)]+=1
+            append(&rows,Git_Row{kind=.Change,kept=kept,change=i})
+            append(&heights,row)
+            if kept || unfolded!=base.text_get(change.path[:]) {continue}
+            for _,e in g.entities.rows {
+                append(&rows,Git_Row{kind=.Entity,change=i,entity=e})
+                append(&heights,row)
+            }
+        }
+        // Nothing kept: no head for it.
+        if kept && counts[1]==0 {
+            resize(&rows,head)
+            resize(&heights,head)
+        }
+    }
+    area:=ui.id(ctx,"git_changes")
+    view,_:=ui.widget_rect(ctx,area)
+    total:f32
+    for h in heights {total+=h}
+    // Rows taller than the area leave its bar a column of its own.
+    bar:=ui.SCROLL_GUTTER if total>view.h+0.5 else 0
+    first,last:=ui.rows_begin(ctx,area,&g.scroll,heights[:],ui.GROW,ui.GROW,bar_room=bar)
+    registry:=files_registry(s)
+    reverted:base.Entity_Id
+    for r in rows[first:last] {
+        ui.id_push(ctx,ui.id(ctx,r.kept?"git_kept":"git_pending"))
+        switch r.kind {
+        case .Head: git_changes_head(s,r.kept,counts[int(r.kept)],busy)
+        case .Change:
+            ui.id_push(ctx,ui.id(ctx,"change",r.change))
+            git_change_row(s,registry,&g.changes[r.change],r.kept,busy)
+            ui.id_pop(ctx)
+        case .Entity:
+            ui.id_push(ctx,ui.id(ctx,"change",r.change))
+            if id:=git_entity_row(s,r.entity);id!=0 {reverted=id}
+            ui.id_pop(ctx)
+        }
+        ui.id_pop(ctx)
+    }
+    ui.rows_end(ctx,area,&g.scroll,heights[:],last)
+    if reverted!=0 {
+        ids:=[1]base.Entity_Id{reverted}
+        if _,message:=git_entities_revert(s,ids[:],true);message!="" {notify(s,message)}
+    }
+}
+
+// The head of the changes pending or kept, with their count: what acts on
+// all of them shows while the pointer is on it.
+@(private)
+git_changes_head :: proc(s:^Session,kept:bool,count:int,busy:bool) {
+    g:=s.git;ctx:=s.gui.ctx
     header:=ui.id(ctx,"head")
     _=ui.interact(ctx,header,{.Passive})
-    if ui.box(ctx,{id=header,width=ui.GROW,height=ui.fixed(22),gap=4,align_y=.Center,padding={0,0,12,0}}) {
+    if ui.box(ctx,{id=header,width=ui.GROW,height=ui.fixed(GIT_HEAD),gap=4,align_y=.Center,padding={0,0,GIT_ROW_PAD,0}}) {
         ui.label(ctx,kept?"KEPT":"CHANGES",ui.metric(ctx,"font_caption"),ui.tone(ctx,"text_caption"))
         ui.spacer(ctx)
         if ai_pointer_on(ctx,header) && count>0 {
@@ -160,82 +226,80 @@ git_changes_rows :: proc(s:^Session,kept:bool,busy:bool) {
         text:[16]u8
         ui.label(ctx,fmt.bprintf(text[:],"%d",count),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"))
     }
-    registry:=files_registry(s)
-    for &change,i in g.changes {
-        if !(kept?change.kept:change.pending || change.status=='U') {continue}
-        ui.id_push(ctx,ui.id(ctx,"change",i))
-        row:=ui.id(ctx,"row")
-        _=ui.interact(ctx,row,{.Passive})
-        if ui.box(ctx,{id=row,width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=8,align_y=.Center,padding={4,0,12,0},fill=ai_pointer_on(ctx,row)?ui.tone(ctx,"chip"):{},radius=ui.metric(ctx,"radius_control")}) {
-            path:=git.change_path(g,&change)
-            slash:=strings.last_index_byte(path,'/')
-            // A pending scene unfolds into its entities that differ from what is kept.
-            if !kept && change.status!='U' && strings.has_suffix(path,SCENE_EXTENSION) {
-                open:=base.text_get(g.entities.path[:])==base.text_get(change.path[:])
-                if ui.button(ctx,ui.id(ctx,"unfold"),{icon=open?.Chevron_Down:.Chevron_Right,icon_color=ui.tone(ctx,"text_muted"),variant="ghost",width=14,height=18,icon_size=10,disabled=busy && !open}).clicked {
-                    if message:=git_entities_show(s,open?"":base.text_get(change.path[:]));message!="" {notify(s,message)}
-                }
+}
+
+// A changed file: its name and its folder, cut where the row ends, and what
+// acts on it while the pointer is on the row.
+@(private)
+git_change_row :: proc(s:^Session,registry:^asset.Registry,change:^git.Change,kept:bool,busy:bool) {
+    g:=s.git;ctx:=s.gui.ctx
+    row:=ui.id(ctx,"row")
+    _=ui.interact(ctx,row,{.Passive})
+    if ui.box(ctx,{id=row,width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=8,align_y=.Center,padding={GIT_ROW_PAD,0,GIT_ROW_PAD,0},fill=ai_pointer_on(ctx,row)?ui.tone(ctx,"chip"):{},radius=ui.metric(ctx,"radius_control")}) {
+        path:=git.change_path(g,change)
+        slash:=strings.last_index_byte(path,'/')
+        // A pending scene unfolds into its entities that differ from what is kept.
+        if !kept && change.status!='U' && strings.has_suffix(path,SCENE_EXTENSION) {
+            open:=base.text_get(g.entities.path[:])==base.text_get(change.path[:])
+            if ui.button(ctx,ui.id(ctx,"unfold"),{icon=open?.Chevron_Down:.Chevron_Right,icon_color=ui.tone(ctx,"text_muted"),variant="ghost",width=14,height=18,icon_size=10,disabled=busy && !open}).clicked {
+                if message:=git_entities_show(s,open?"":base.text_get(change.path[:]));message!="" {notify(s,message)}
             }
-            icon,color:=git_change_icon(s,registry,path)
-            ui.icon(ctx,icon,color,14)
-            if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=8,align_y=.Center,clip_x=true}) {
-                ui.label(ctx,path[slash+1:],ui.metric(ctx,"font_small"),ui.tone(ctx,"text"))
-                if slash>0 {ui.label(ctx,path[:slash],ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"),0)}
-            }
-            if change.status!='U' && ai_pointer_on(ctx,row) {
-                full:=base.text_get(change.path[:])
-                if kept {
-                    if git_row_button(ctx,"unkeep",.Cross,"Take out of what is kept",busy) {git_run(s,.Unkeep,full)}
-                } else {
-                    if git_row_button(ctx,"keep",.Check,"Keep",busy) {git_run(s,.Keep,full)}
-                    if git_row_button(ctx,"discard",.Revert,"Discard changes",busy) {git_discard_ask(s,full)}
-                }
-            }
-            letter:=[1]u8{change.status}
-            status:=ui.tone(ctx,"text_muted")
-            switch change.status {
-            case 'A': status=ui.tone(ctx,"success")
-            case 'D','U': status=ui.tone(ctx,"danger")
-            }
-            ui.label(ctx,string(letter[:]),ui.metric(ctx,"font_small"),status)
         }
-        if !kept && base.text_get(g.entities.path[:])==base.text_get(change.path[:]) {git_entities_rows(s)}
-        ui.id_pop(ctx)
+        icon,color:=git_change_icon(s,registry,path)
+        ui.icon(ctx,icon,color,14)
+        git_row_names(ctx,path[slash+1:],slash>0?path[:slash]:"",ui.tone(ctx,"text"))
+        if change.status!='U' && ai_pointer_on(ctx,row) {
+            full:=base.text_get(change.path[:])
+            if kept {
+                if git_row_button(ctx,"unkeep",.Cross,"Take out of what is kept",busy) {git_run(s,.Unkeep,full)}
+            } else {
+                if git_row_button(ctx,"keep",.Check,"Keep",busy) {git_run(s,.Keep,full)}
+                if git_row_button(ctx,"discard",.Revert,"Discard changes",busy) {git_discard_ask(s,full)}
+            }
+        }
+        letter:=[1]u8{change.status}
+        status:=ui.tone(ctx,"text_muted")
+        switch change.status {
+        case 'A': status=ui.tone(ctx,"success")
+        case 'D','U': status=ui.tone(ctx,"danger")
+        }
+        ui.label(ctx,string(letter[:]),ui.metric(ctx,"font_small"),status)
     }
 }
 
-// The entities of the scene unfolded that differ from what git keeps, under
-// those they hang from: a click selects one, and reverting it puts it back
-// as kept with what hangs from it.
+// A name and what follows it, faint, in the room a row leaves them: what
+// does not fit ends in an ellipsis.
 @(private)
-git_entities_rows :: proc(s:^Session) {
+git_row_names :: proc(ctx:^ui.Context,name,rest:string,color:ui.Color) {
+    if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=8,align_y=.Center}) {
+        size:=ui.metric(ctx,"font_small")
+        ui.text(ctx,name,{size=size,color=color,align_y=.Center,ellipsis=true},height=ui.fixed(size+6))
+        if rest!="" {ui.text(ctx,rest,{size=size,color=ui.tone(ctx,"text_faint"),align_y=.Center,ellipsis=true},ui.GROW,ui.fixed(size+6))}
+    }
+}
+
+// An entity of the scene unfolded that differs from what git keeps, under
+// those it hangs from: a click selects it, and reverting it puts it back as
+// kept with what hangs from it. The entity to revert, or 0.
+@(private)
+git_entity_row :: proc(s:^Session,index:int) -> (reverted:base.Entity_Id) {
     g:=s.git;ctx:=s.gui.ctx
-    git_entities_update(s)
-    n:=&g.entities
-    reverted:base.Entity_Id
-    for &entity,i in n.rows {
-        ui.id_push(ctx,ui.id(ctx,"entity",i))
-        row:=ui.id(ctx,"row")
-        it:=ui.interact(ctx,row,{.Focusable})
-        on:=ai_pointer_on(ctx,row)
-        if ui.box(ctx,{id=row,width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=8,align_y=.Center,padding={22+f32(entity.depth)*12,0,12,0},fill=on?ui.tone(ctx,"chip"):{},radius=ui.metric(ctx,"radius_control")}) {
-            same:=entity.change==.Same
-            if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=8,align_y=.Center,clip_x=true}) {
-                ui.label(ctx,base.text_get(entity.name[:]),ui.metric(ctx,"font_small"),same?ui.tone(ctx,"text_muted"):ui.tone(ctx,"text"))
-                if what:=base.text_get(entity.components[:]);what!="" {ui.label(ctx,what,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"),0)}
-            }
-            if on && git_row_button(ctx,"revert",.Revert,same?"Revert what hangs from it":"Revert",git.working(g)) {reverted=entity.id}
-            letters:=[Git_Entity_Change]string{.Same="",.Added="A",.Changed="M",.Removed="D"}
-            tones:=[Git_Entity_Change]string{.Same="text_muted",.Added="success",.Changed="text_muted",.Removed="danger"}
-            ui.label(ctx,letters[entity.change],ui.metric(ctx,"font_small"),ui.tone(ctx,tones[entity.change]))
-        }
-        if it.clicked {git_select(s,entity.id)}
-        ui.id_pop(ctx)
+    entity:=&g.entities.rows[index]
+    ui.id_push(ctx,ui.id(ctx,"entity",index))
+    defer ui.id_pop(ctx)
+    row:=ui.id(ctx,"row")
+    it:=ui.interact(ctx,row,{.Focusable})
+    on:=ai_pointer_on(ctx,row)
+    if ui.box(ctx,{id=row,width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=8,align_y=.Center,padding={22+f32(entity.depth)*12,0,GIT_ROW_PAD,0},fill=on?ui.tone(ctx,"chip"):{},radius=ui.metric(ctx,"radius_control")}) {
+        same:=entity.change==.Same
+        git_row_names(ctx,base.text_get(entity.name[:]),base.text_get(entity.components[:]),same?ui.tone(ctx,"text_muted"):ui.tone(ctx,"text"))
+        if on && git_row_button(ctx,"revert",.Revert,same?"Revert what hangs from it":"Revert",git.working(g)) {reverted=entity.id}
+        letters:=[Git_Entity_Change]string{.Same="",.Added="A",.Changed="M",.Removed="D"}
+        tones:=[Git_Entity_Change]string{.Same="text_muted",.Added="success",.Changed="text_muted",.Removed="danger"}
+        ui.label(ctx,letters[entity.change],ui.metric(ctx,"font_small"),ui.tone(ctx,tones[entity.change]))
     }
-    if reverted!=0 {
-        ids:=[1]base.Entity_Id{reverted}
-        if _,message:=git_entities_revert(s,ids[:],true);message!="" {notify(s,message)}
-    }
+    if it.clicked {git_select(s,entity.id)}
+    return
 }
 
 @(private)
@@ -353,13 +417,18 @@ git_pending_modal :: proc(s:^Session) {
             if ui.button(ctx,shell_id(gui,"git_pending_later"),{label=quits?"Cancel":"Later",variant="field",width=90,height=ui.metric(ctx,"control"),center=true}).clicked {closed=true}
             for operation in ([2]git.Operation{.Discard,.Keep}) {
                 keep:=operation==.Keep
-                if ui.button(ctx,shell_id(gui,keep?"git_pending_keep":"git_pending_discard"),{label=keep?"Keep all":"Discard all",variant=keep?"accent":"danger",width=100,height=ui.metric(ctx,"control"),center=true,disabled=git.working(g)}).clicked {
-                    gui.modal=.None
-                    if message:=git_changes_run(s,operation,nil);message!="" {notify(s,message)} else {g.quits=quits}
-                }
+                if ui.button(ctx,shell_id(gui,keep?"git_pending_keep":"git_pending_discard"),{label=keep?"Keep all":"Discard",variant=keep?"accent":"danger",width=100,height=ui.metric(ctx,"control"),center=true,disabled=git.working(g)}).clicked {git_pending_take(s,operation)}
             }
         }
     }
+}
+
+// Keeps or discards every pending change, as the dialog of the pending
+// changes asks: before the editor ends, it ends once they are.
+@(private)
+git_pending_take :: proc(s:^Session,operation:git.Operation) {
+    s.gui.modal=.None
+    if message:=git_changes_run(s,operation,nil);message!="" {notify(s,message)} else {s.git.asked=s.git.notice}
 }
 
 // The project is in no repository, or git is not there: the editor edits

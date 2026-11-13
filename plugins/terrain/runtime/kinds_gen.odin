@@ -6,3 +6,4 @@ import "mirai:asset"
 
 TERRAIN_KIND :: asset.Fourcc(u32('T')|u32('E')<<8|u32('R')<<16|u32('R')<<24)
 TERRAIN_EXTENSION :: ".terrain"
+TERRAIN_VERSION :: 13

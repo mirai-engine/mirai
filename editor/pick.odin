@@ -8,8 +8,8 @@ import mm "mirai:std/math"
 import "mirai:ui"
 
 // What a point or a rectangle of the window reaches in the scene: the discs
-// of the entities without a body first, since they are drawn over it, then
-// the nearest surface. A ray tests the box of each mesh, from what the assets
+// of the entities without a body first, where the scene in front does not
+// cover them, then the nearest surface. A ray tests the box of each mesh, from what the assets
 // know of it, before the renderer meets the mesh as it draws it
 // (render.mesh_ray): through its software tree, or one it makes the first
 // time a ray reaches the box while rays are traced by hardware, kept until
@@ -48,7 +48,7 @@ Scene_Item :: struct {
     mesh:erender.Mesh_Renderer,
     hidden:bool,               // itself or an ancestor, hidden or turned off
     body:bool,                 // the renderer draws something for it, or its ghost does
-    indicator:bool,            // it shows a disc, within the reach of the discs unless the iteration is far
+    indicator:bool,            // it shows a disc, within the reach of the discs and drawn unless the iteration is far
 }
 
 Scene_Iter :: struct {
@@ -88,7 +88,7 @@ scene_item_next :: proc(it:^Scene_Iter) -> (item:Scene_Item,ok:bool) {
     item.hidden||=core.entity_off(core.world_entities(it.w),e)
     shown:=!item.hidden || it.ghosts
     item.body=shown && has_mesh && (item.mesh.mesh!={} || item.mesh.shape!=.None)
-    item.indicator=shown && !has_mesh && entity_author(it.w,e)==e && (it.far || indicator_shade(it.s,e,item.world.position,it.zoom)>0) && entity_marked(it.s,it.w,e)
+    item.indicator=shown && !has_mesh && entity_author(it.w,e)==e && (it.far || indicator_shade(it.s,e,item.world.position,it.zoom)>0 && indicator_drawn(it.s,e,item.world.position)) && entity_marked(it.s,it.w,e)
     return item,true
 }
 
@@ -111,25 +111,32 @@ entity_author :: proc(w:core.World_Ref,e:core.Entity) -> core.Entity {
 
 // What is under a point of the window; with ghosts, also what is hidden or
 // turned off; with batches, also the instances of the batches of the world
-// (foliage), as their batch and instance.
+// (foliage), as their batch and instance. A disc the surface under the point
+// covers there is not under it, as it is not drawn there.
 pick_point :: proc(s:^Session,w:core.World_Ref,point:[2]f32,ghosts:=false,batches:=false) -> (hit:Pick) {
     v:=s.viewport
     ray:=viewport_ray(v,point)
+    surface:Pick
+    traced:=false
     if v.show_indicators {
-        best_distance,best_depth:=INDICATOR_HIT,f32(1e30)
+        best_distance,best_depth:=max(f32),max(f32)
         items:=scene_items(s,w,ghosts)
         for item in scene_item_next(&items) {
             if !item.indicator {continue}
             screen,front:=viewport_screen(v,item.world.position)
-            if !front {continue}
+            radius,_,seen:=indicator_size(v,item.world.position)
+            if !front || !seen {continue}
             distance,depth:=linalg.distance(screen,point),linalg.distance(item.world.position,ray.origin)
-            if distance<best_distance || distance==best_distance && depth<best_depth {
-                best_distance,best_depth=distance,depth
-                hit={entity=item.entity,distance=depth,position=item.world.position,normal=-ray.direction,indicator=true}
-            }
+            if distance>radius+INDICATOR_HIT || !(distance<best_distance || distance==best_distance && depth<best_depth) {continue}
+            // What covers the scene covers the discs too: the instances of the batches as well.
+            if !traced {surface,traced=pick_ray(s,w,ray,PICK_REACH,ghosts,true),true}
+            if surface.entity!=core.NONE && indicator_covered(v,item.world.position,ray,surface.distance) {continue}
+            best_distance,best_depth=distance,depth
+            hit={entity=item.entity,distance=depth,position=item.world.position,normal=-ray.direction,indicator=true}
         }
         if hit.entity!=core.NONE {return}
     }
+    if traced && (batches || surface.batch==0) {return surface}
     return pick_ray(s,w,ray,PICK_REACH,ghosts,batches)
 }
 
@@ -156,17 +163,22 @@ pick_ray :: proc(s:^Session,w:core.World_Ref,ray:mm.Ray,reach:f32=PICK_REACH,gho
 
 // What the ray under a point of the window goes through within reach,
 // nearest first and each entity once: the bodies it crosses and the discs
-// under the point. Returns how many it wrote; the farthest are left out.
+// under the point that the scene does not cover there. Returns how many it wrote; the farthest are left out.
 pick_through :: proc(s:^Session,w:core.World_Ref,point:[2]f32,out:[]Pick,ghosts:=false) -> int {
     v:=s.viewport
     ray:=viewport_ray(v,point)
     count:=0
+    surface:Pick
+    traced:=false
     items:=scene_items(s,w,ghosts)
     for item in scene_item_next(&items) {
         hit:Pick
         if item.indicator && v.show_indicators {
             screen,front:=viewport_screen(v,item.world.position)
-            if !front || linalg.distance(screen,point)>INDICATOR_HIT {continue}
+            radius,_,seen:=indicator_size(v,item.world.position)
+            if !front || !seen || linalg.distance(screen,point)>radius+INDICATOR_HIT {continue}
+            if !traced {surface,traced=pick_ray(s,w,ray,PICK_REACH,ghosts,true),true}
+            if surface.entity!=core.NONE && indicator_covered(v,item.world.position,ray,surface.distance) {continue}
             hit={entity=item.entity,distance=linalg.distance(item.world.position,ray.origin),position=item.world.position,normal=-ray.direction,indicator=true}
         } else {
             hit=pick_item(s,w,item,ray,PICK_REACH) or_continue
@@ -218,13 +230,27 @@ pick_item :: proc(s:^Session,w:core.World_Ref,item:Scene_Item,ray:mm.Ray,nearest
     return {entity=entity_author(w,item.entity),distance=t,position=ray.origin+ray.direction*t,normal=normal},true
 }
 
+// Whether the scene covers the disc of a place at its center, as the draw
+// tests it against the depth: what a ray from the camera toward it meets
+// first is in front of it. Behind the camera it is hidden.
+indicator_hidden :: proc(s:^Session,w:core.World_Ref,position:[3]f32,ghosts:bool) -> bool {
+    v:=s.viewport
+    screen,front:=viewport_screen(v,position)
+    if !front {return true}
+    ray:=viewport_ray(v,screen)
+    surface:=pick_ray(s,w,ray,linalg.distance(ray.origin,position)*1.01+1,ghosts,true)
+    return surface.entity!=core.NONE && indicator_covered(v,position,ray,surface.distance)
+}
+
 // Whether a rectangle of the window takes an item: its origin inside, or
-// the whole box of its body. ok is false when it shows nothing of it.
+// the whole box of its body. ok is false when it shows nothing of it: a
+// disc the scene covers.
 @(private)
 item_in_rect :: proc(s:^Session,w:core.World_Ref,item:Scene_Item,rect:ui.Rect) -> (inside,ok:bool) {
     v:=s.viewport
     if !item.body && (!v.show_indicators || !item.indicator) {return}
     pivot,front:=viewport_screen(v,item.world.position)
+    if !item.body && front && indicator_hidden(s,w,item.world.position,ghosts_shown(s)) {return}
     if front && ui.rect_contains(rect,pivot) {return true,true}
     if !item.body {return false,front}
     low,high,known:=mesh_bounds(s.app.assets,item.mesh)

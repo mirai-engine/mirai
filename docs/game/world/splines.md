@@ -40,6 +40,11 @@ $P scene.write '{"entities":[
   mode of the Shapes tool (key K, then 2) drags, inserts (double click on the line) and removes
   (Ctrl click) them; the width and height of each point are in the inspector. Through the API,
   `shapes.corner` does the same at world points.
+- A `Terrain_Conform` on the entity shapes the Heightfield under it: a level bed across its width
+  that follows the ground along its middle, `depth` under it (a river channel; negative raises an
+  embankment), meeting the ground over `sides` and painted with the layer of its `paint`. The
+  terrain follows it by itself, in a layer of its own: a road that moves gives back the ground
+  where it was, and undoing the move undoes its bed.
 
 ## Pitfalls that fail silently
 

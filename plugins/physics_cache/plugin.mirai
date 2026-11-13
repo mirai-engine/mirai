@@ -3,5 +3,5 @@
   "version": "0.1.0",
   "dependencies": [],
   "parts": ["Runtime"],
-  "asset_kinds": [{"extension": ".physics_cache", "kind": "PCAC", "label": "Physics cache", "color": [255, 127, 40], "icon": "History"}]
+  "asset_kinds": [{"extension": ".physics_cache", "kind": "PCAC", "version": 2, "label": "Physics cache", "color": [255, 127, 40], "icon": "History"}]
 }

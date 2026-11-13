@@ -51,7 +51,7 @@ benchmark_a_frame_of_a_long_transcript :: proc(t:^testing.T) {
     build :: proc(ctx:^ui.Context,user:rawptr) {
         s:=cast(^Transcript)user
         area:=ui.id(ctx,"transcript")
-        first,last:=ui.rows_begin(ctx,area,&s.offset,s.heights[:],ui.fixed(300),600)
+        first,last:=ui.rows_begin(ctx,area,&s.offset,s.heights[:],ui.fixed(300),ui.fixed(600))
         for i in first..<last {
             if ui.box(ctx,{id=ui.id(ctx,"message",i+1),width=ui.GROW,height=ui.fixed(s.heights[i]),direction=.Column}) {ui.text(ctx,MESSAGE,ui.prose(ctx))}
         }

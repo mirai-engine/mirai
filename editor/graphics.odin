@@ -23,7 +23,7 @@ import "mirai:ui"
 // choice is written to the edited World and to the settings at once, and
 // changes neither the document nor its history.
 
-GRAPHICS_WIDTH :: f32(520)
+GRAPHICS_WIDTH :: f32(420)
 GRAPHICS_LABEL_GAP :: f32(16) // from the widest name of a row to its choices
 GRAPHICS_QUALITY_LABELS :: [erender.Graphics_Quality]string{.Low="Low",.Medium="Medium",.High="High",.Ultra="Ultra",.Custom="Custom"}
 // The section of Graphics_Settings whose rows go to the Frame rate card.
@@ -114,7 +114,7 @@ graphics_build :: proc(s:^Session) {
     label_width:=ui.metric(ctx,"label_width")
     label_width=max(label_width,ui.text_width(&ctx.font,"Preset",ui.metric(ctx,"font_small"))+GRAPHICS_LABEL_GAP)
     for each in rows {label_width=max(label_width,ui.text_width(&ctx.font,each.label,ui.metric(ctx,"font_small"))+GRAPHICS_LABEL_GAP)}
-    row_height:=ui.metric(ctx,"control")
+    row_height:=ui.metric(ctx,"row")
     row:=ui.Box{width=ui.GROW,height=ui.fixed(row_height),gap=8,align_y=.Center}
     segment:=ui.Button{variant="tab",width=-1,height=ui.metric(ctx,"row")-4,size=ui.metric(ctx,"font_small"),center=true,padding=2}
     if ui.popup(ctx,popup,{width=GRAPHICS_WIDTH,align_right=true,flush=true}) {

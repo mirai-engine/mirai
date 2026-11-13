@@ -17,7 +17,7 @@ import mm "mirai:std/math"
 
 IMPORTER_NAME :: "mirai-import"
 // Of the writer: raise it when import_write gives other bytes for the same model.
-IMPORTER_VERSION :: 10
+IMPORTER_VERSION :: 11
 
 // What Import_Info.importer_version holds: the version of the writer in the
 // low 16 bits and the one of the format the source was read with in the high
@@ -65,11 +65,16 @@ Import_Options :: struct {
     // encodes again as Final. False: Final, what tools and the CLI build.
     fast_textures:bool,
     mesh_cache:string,    // folder of meshes built before, kept by geometry and settings (mesh_cook); "": none
+    // The identity of the code of the plugin that imports the source whole
+    // (sources.code_identity), 0 for the engine's: part of what its outputs
+    // are built from (import_key).
+    importer_code:u64,
     material_index:int,   // the index of the first material among those of the source: imports that write its materials apart give each its own
     // Where the import cooks: the worker that calls it (the owner of its
     // job system, or the job that imports), which runs its builds in
     // parallel on that system, and records zones in its profile.
     worker:jobs.Worker_Ref,
+    progress:^Progress, // where it says how far it is as it writes; nil: nowhere
 }
 
 // A zone of the import that base.profile_end ends.
@@ -90,7 +95,11 @@ material_map :: #force_inline proc(info:^asset.Material_Info,slot:asset.Material
 Imported_Image :: struct {
     name:string,         // file name without extension; for an embedded image, its name in the model
     path:string,         // absolute path of the file; "" when the image is inside the model
-    data:[]u8,           // the encoded image, when it is inside the model
+    data:[]u8,           // the encoded image, when it is inside the model; with make, what its format makes the texels from
+    // Makes the texels of data, for an image only its format decodes: the
+    // texture cache keeps its texture by data, so a texture built before is
+    // taken without making them. nil for an encoded image or file.
+    make:Image_Make,
     made:textures.Source, // the texels, when the format made the image itself (a conversion, a texture of an engine); width 0 when not
     srgb:bool,
     normal_map:bool,
@@ -100,6 +109,10 @@ Imported_Image :: struct {
     channels:textures.Channels, // what each channel of its texture is made of (a gloss map turned into roughness); the zero value keeps them
     cooked:^Cooked_Texture, // built ahead by model_cook; nil when not
 }
+
+// The texels a format makes of the data of one of its images, in allocator;
+// false when it cannot. Called from any thread, and more than once.
+Image_Make :: #type proc(data:[]u8,allocator:mem.Allocator) -> (made:textures.Source,ok:bool)
 
 Imported_Material :: struct {
     name:string,
@@ -131,8 +144,7 @@ Imported_Mesh :: struct {
     skeleton:int,
     flags:asset.Mesh_Flags,
     bounds_min,bounds_max:[3]f32,
-    // The colliders the source gives, in the space of the mesh: they are its
-    // collision unless force_collision makes it of the collision setting.
+    // The colliders the source gives, in the space of the mesh: its collision.
     collision:Mesh_Collision,
     cooked:^Cooked_Mesh, // built ahead by model_cook; nil when not
 }

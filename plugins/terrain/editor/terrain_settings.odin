@@ -36,8 +36,11 @@ Terrain_Preferences :: struct {
     interval:f32 `mirai:"min=0.01,unit=m"`, // of Terrace
     riser:f32 `mirai:"min=0,max=1"`,
     noise_scale:f32 `mirai:"min=0.1,unit=m"`,
+    talus:f32 `mirai:"angle"`, // of Thermal
     toward:bool,              // Paint takes the weight of its layer toward target
     target:f32 `mirai:"min=0,max=1"`,
+    tint:[3]f32 `mirai:"color"`,          // what Tint takes the layers toward
+    roughness:f32 `mirai:"min=0,max=1"`,  // what Roughness takes them toward: 0.5 as they are
     ramp_sides:f32 `mirai:"min=0,unit=m"`,
     blend:f32 `mirai:"min=0,unit=m"`,
     height_scale:f32 `mirai:"unit=m"`,
@@ -50,7 +53,7 @@ Terrain_Preferences :: struct {
 BRUSH_DEFAULT :: Brush_Settings{radius=4,strength=0.5,slope={0,math.PI/4}}
 TERRAIN_PREFERENCES_DEFAULT :: Terrain_Preferences{
     brushes={.Sculpt=BRUSH_DEFAULT,.Holes=BRUSH_DEFAULT,.Shapes=BRUSH_DEFAULT,.Paint=BRUSH_DEFAULT},
-    interval=2,riser=0.25,noise_scale=8,target=1,
+    interval=2,riser=0.25,noise_scale=8,talus=math.PI*35/180,target=1,tint={0.55,0.45,0.35},roughness=0.25,
     ramp_sides=2,blend=0.5,height_scale=32,
     create_kind=.Heightfield,samples=65,depth=17,chunk_cells=32,cell=1,
 }

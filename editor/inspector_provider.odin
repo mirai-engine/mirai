@@ -27,10 +27,13 @@ Inspector_Provider :: struct {
     within:proc(type:typeid) -> bool,
 }
 
-// What a plugin adds with a component the editor adds: the Collider a
-// Character takes its capsule from.
+// What a plugin adds with a component the editor adds (the Collider a
+// Character takes its capsule from, or one of the colliders of a mesh), and
+// the value a component given to an entity without one starts with, over its
+// default (an Auto Collider on an entity that shows a mesh).
 Component_Provider :: struct {
     added:proc(s:^Session,e:core.Entity,t:^core.Table_Info),
+    start:proc(s:^Session,e:core.Entity,t:^core.Table_Info,value:rawptr),
 }
 
 @(private)
@@ -83,6 +86,15 @@ setting_problem :: proc(s:^Session,info:^runtime.Type_Info,value:rawptr) -> stri
 component_companions :: proc(s:^Session,e:core.Entity,t:^core.Table_Info) {
     for &p in providers(s).components[:providers(s).component_count] {
         if p.added!=nil {p.added(s,e,t)}
+    }
+}
+
+// The value a component given to e starts with: its default, and what the
+// plugins make of it for that entity.
+@(private)
+component_start_of :: proc(s:^Session,e:core.Entity,t:^core.Table_Info,value:[]u8) {
+    for &p in providers(s).components[:providers(s).component_count] {
+        if p.start!=nil {p.start(s,e,t,raw_data(value))}
     }
 }
 

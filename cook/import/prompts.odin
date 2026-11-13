@@ -219,7 +219,7 @@ import_prompts :: proc(path:string,options:Import_Options={},allocator:=context.
     report_init(&report,allocator)
     w:Writer
     ok:=writer_init(&w,path,"",options,&report,allocator)
-    w.options.textures,w.options.max_texture_size=.Uncompressed,PROMPTS_ATLAS_MAX
+    w.options.textures=.Uncompressed
     defer asset.types_destroy(&w.types)
     if ok {
         for file in files {writer_input(&w,file)}

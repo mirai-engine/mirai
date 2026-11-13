@@ -199,8 +199,8 @@ Device :: struct {
 	swapchain_ext:     bool,
 	scratch_alignment: u64,
 	memory:            Vk_Memory_Pools,  // where buffers and textures live
-	staging:           Buffer,           // what uploads copy from (vk_staging_take)
-	staging_size:      u64,
+	staging:           [VK_IMMEDIATE_SLOTS]Buffer, // what the uploads of each slot copy from (vk_staging_take), kept for its next ones
+	staging_once:      [VK_IMMEDIATE_SLOTS]Buffer, // of an upload larger than VK_STAGING_KEPT_BYTES: released once it ended
 	fresh:             [dynamic]Buffer,  // of GPU memory, made between lists: the next list zeroes them (vk_zero_new)
 	immediate_open:    bool,             // between immediate_begin and immediate_end
 	accel_arena:       Arena,            // where acceleration structures live
@@ -223,8 +223,12 @@ Device :: struct {
 	pipelines:         Pool(Vk_Pipeline),
 	accels:            Pool(Vk_Accel),
 	immediate_pool:    vk.CommandPool,
-	immediate_fence:   vk.Fence,
+	immediate_cmds:    [VK_IMMEDIATE_SLOTS]vk.CommandBuffer,
+	immediate_fences:  [VK_IMMEDIATE_SLOTS]vk.Fence,
+	immediate_busy:    [VK_IMMEDIATE_SLOTS]bool, // the GPU may still run the upload the slot submitted
+	immediate_at:      int,                      // the slot of the next transaction
 	immediate:         Command_List,
+	unframed:          [dynamic]Vk_Deferred,     // deleted between frames after an upload: they wait for the next frame (vk_defer)
 	scratch:           Buffer,
 	scratch_size:      u64,
 	anisotropy:        bool, // samplerAnisotropy is enabled
@@ -400,9 +404,10 @@ vk_create_pools :: proc(d: ^Device) -> bool {
 		f.list.commands, err = make([]Pass_Command, PASS_COMMAND_CAPACITY, d.allocator)
 		ok &&= err == nil
 	}
-	commands_error: runtime.Allocator_Error
+	commands_error, unframed_error: runtime.Allocator_Error
 	d.immediate.commands, commands_error = make([]Pass_Command, PASS_COMMAND_CAPACITY, d.allocator)
-	ok &&= commands_error == nil
+	d.unframed, unframed_error = make([dynamic]Vk_Deferred, 0, c.deletions, d.allocator)
+	ok &&= commands_error == nil && unframed_error == nil
 	images_error, present_error: runtime.Allocator_Error
 	d.swapchain.images, images_error = make([dynamic]Texture, 0, 8, d.allocator)
 	d.swapchain.present, present_error = make([dynamic]vk.Semaphore, 0, 8, d.allocator)
@@ -917,12 +922,15 @@ vk_create_frames :: proc(d: ^Device, desc: Device_Desc) -> bool {
 	}
 	pool_info := vk.CommandPoolCreateInfo{sType = .COMMAND_POOL_CREATE_INFO, flags = {.RESET_COMMAND_BUFFER}, queueFamilyIndex = d.queue_family}
 	if !vk_check(d, d.dvk.CreateCommandPool(d.handle, &pool_info, nil, &d.immediate_pool), "immediate pool") {return false}
-	alloc := vk.CommandBufferAllocateInfo{sType = .COMMAND_BUFFER_ALLOCATE_INFO, commandPool = d.immediate_pool, level = .PRIMARY, commandBufferCount = 1}
-	if !vk_check(d, d.dvk.AllocateCommandBuffers(d.handle, &alloc, &d.immediate.cmd), "immediate command buffer") {return false}
+	alloc := vk.CommandBufferAllocateInfo{sType = .COMMAND_BUFFER_ALLOCATE_INFO, commandPool = d.immediate_pool, level = .PRIMARY, commandBufferCount = VK_IMMEDIATE_SLOTS}
+	if !vk_check(d, d.dvk.AllocateCommandBuffers(d.handle, &alloc, &d.immediate_cmds[0]), "immediate command buffers") {return false}
 	d.immediate.device = d
 	d.immediate.immediate = true
 	fence_info := vk.FenceCreateInfo{sType = .FENCE_CREATE_INFO}
-	return vk_check(d, d.dvk.CreateFence(d.handle, &fence_info, nil, &d.immediate_fence), "immediate fence")
+	for &fence in d.immediate_fences {
+		if !vk_check(d, d.dvk.CreateFence(d.handle, &fence_info, nil, &fence), "immediate fence") {return false}
+	}
+	return true
 }
 
 device_destroy :: proc(d: ^Device) {
@@ -969,7 +977,8 @@ device_destroy :: proc(d: ^Device) {
 			if f.queries != 0 {d.dvk.DestroyQueryPool(d.handle, f.queries, nil)}
 		}
 		if d.immediate_pool != 0 {d.dvk.DestroyCommandPool(d.handle, d.immediate_pool, nil)}
-		if d.immediate_fence != 0 {d.dvk.DestroyFence(d.handle, d.immediate_fence, nil)}
+		for fence in d.immediate_fences {if fence != 0 {d.dvk.DestroyFence(d.handle, fence, nil)}}
+		for &e in d.unframed {vk_release_deferred(d, &e)}
 		if d.timeline != 0 {d.dvk.DestroySemaphore(d.handle, d.timeline, nil)}
 		vk_memory_shutdown(d, true)
 		if d.store_path_len > 0 {_ = pipeline_store_save(&d.pipelines_kept, string(d.store_path[:d.store_path_len]))}
@@ -989,6 +998,7 @@ device_destroy :: proc(d: ^Device) {
 	delete(d.fresh)
 	for &f in d.frames {delete(f.deletions); delete(f.list.commands, d.allocator)}
 	delete(d.immediate.commands, d.allocator)
+	delete(d.unframed)
 	delete(d.swapchain.images)
 	delete(d.swapchain.present)
 	pool_destroy(&d.buffers, d.allocator)
@@ -1043,7 +1053,8 @@ device_own :: proc(d: ^Device) -> (buffers, textures, pipelines: int) {
 	for f in d.frames {buffers += int(f.upload != 0) + int(f.marks.buffer != 0) + f.oversized_count}
 	for block in d.accel_blocks {if block != 0 {buffers += 1}}
 	if d.scratch != 0 {buffers += 1}
-	if d.staging != 0 {buffers += 1}
+	for staging in d.staging {if staging != 0 {buffers += 1}}
+	for staging in d.staging_once {if staging != 0 {buffers += 1}}
 	if d.table_default != 0 {textures += 1}
 	if d.tlas_translator != 0 {pipelines += 1}
 	return
@@ -1096,6 +1107,20 @@ vk_defer :: proc(d: ^Device, e: Vk_Deferred) {
 	// covers anything recorded later in this frame. Between frames d.slot
 	// already names the next slot, whose wait does not cover the most recent
 	// submission, so the object waits for the previous slot instead.
+	// An upload sent since the last frame (vk_upload_end) is not covered by
+	// the wait of any slot: what goes after it waits for the next frame.
+	if !d.in_frame && vk_uploads_busy(d) {
+		// Full, without frames (a headless load): once the GPU is idle all of them go.
+		if len(d.unframed) == cap(d.unframed) && vk_idle(d) {
+			for &f in d.frames {vk_flush_deletions(d, &f)}
+			for &waiting in d.unframed {vk_release_deferred(d, &waiting)}
+			clear(&d.unframed)
+		}
+		if len(d.unframed) < cap(d.unframed) {
+			append(&d.unframed, e)
+			return
+		}
+	}
 	slot := d.slot if d.in_frame else (d.slot + MAX_FRAMES_IN_FLIGHT - 1) % MAX_FRAMES_IN_FLIGHT
 	list := &d.frames[slot].deletions
 	if len(list) == cap(list) {
@@ -1184,6 +1209,13 @@ frame_begin :: proc(d: ^Device, present := true) -> (cmd: ^Command_List, ok: boo
 	vk_table_take(d, table_copy(false, d.slot))
 	vk_collect_timestamps(d, f)
 	vk_flush_deletions(d, f)
+	// What waited for the uploads sent since the last frame waits for this one, which follows them.
+	if len(d.unframed) > 0 {
+		if _, err := append(&f.deletions, ..d.unframed[:]); err != nil && vk_idle(d) {
+			for &e in d.unframed {vk_release_deferred(d, &e)}
+		}
+		clear(&d.unframed)
+	}
 	f.upload_used = 0
 	f.acquired = false
 	f.paced = false
@@ -1304,7 +1336,9 @@ frame_number :: proc(d: ^Device) -> u64 {return d.frame_number}
 // recorded: immediate_end of it fails.
 immediate_begin :: proc(d: ^Device) -> ^Command_List {
 	if d.in_frame {set_error(d, "immediate_begin while a frame is being recorded: a load transaction runs between frame_end and frame_begin"); return nil}
+	if !vk_immediate_slot(d) {return nil}
 	vk_table_take(d, table_copy(true, 0))
+	d.immediate.cmd = d.immediate_cmds[d.immediate_at]
 	d.dvk.ResetCommandBuffer(d.immediate.cmd, {})
 	begin := vk.CommandBufferBeginInfo{sType = .COMMAND_BUFFER_BEGIN_INFO, flags = {.ONE_TIME_SUBMIT}}
 	d.dvk.BeginCommandBuffer(d.immediate.cmd, &begin)
@@ -1314,7 +1348,47 @@ immediate_begin :: proc(d: ^Device) -> ^Command_List {
 	return &d.immediate
 }
 
-immediate_end :: proc(d: ^Device, cmd: ^Command_List) -> bool {
+immediate_end :: proc(d: ^Device, cmd: ^Command_List) -> bool {return vk_immediate_end(d, cmd, true)}
+
+// Uploads between frames do not wait for the GPU: the queue runs them before
+// the frames that follow, whose barriers cover them. VK_IMMEDIATE_SLOTS of
+// them may run at once, each with its command buffer, its fence and its
+// staging, which the next transaction of the slot takes again once its fence
+// signaled: the uploads of a load between two frames do not wait for the
+// frame the GPU runs. What is deleted after one waits for the next frame
+// (vk_defer).
+VK_IMMEDIATE_SLOTS :: 32
+
+// Frees the slot of the next transaction: waits for the upload it ran, if
+// the GPU still runs it, and releases its staging of one upload.
+@(private)
+vk_immediate_slot :: proc(d: ^Device) -> bool {
+	at := d.immediate_at
+	if d.immediate_busy[at] {
+		if !vk_waited(d, d.dvk.WaitForFences(d.handle, 1, &d.immediate_fences[at], true, GPU_WAIT_LIMIT_NS), "upload wait") {return false}
+		d.immediate_busy[at] = false
+	}
+	if d.staging_once[at] != 0 {
+		vk_release_buffer_now(d, d.staging_once[at])
+		d.staging_once[at] = 0
+	}
+	return true
+}
+
+// Whether an upload sent without waiting may still run.
+@(private)
+vk_uploads_busy :: proc(d: ^Device) -> bool {
+	for &busy, at in d.immediate_busy {
+		if busy && d.dvk.GetFenceStatus(d.handle, d.immediate_fences[at]) == .SUCCESS {busy = false}
+	}
+	for busy in d.immediate_busy {if busy {return true}}
+	return false
+}
+
+// Submits an immediate list; wait: until the GPU ran it, otherwise it is an
+// upload that goes on while the CPU does (immediate_slot).
+@(private)
+vk_immediate_end :: proc(d: ^Device, cmd: ^Command_List, wait: bool) -> bool {
 	if cmd != &d.immediate {
 		if cmd != nil {set_error(d, "immediate_end of a list immediate_begin did not give")}
 		return false
@@ -1326,12 +1400,19 @@ immediate_end :: proc(d: ^Device, cmd: ^Command_List) -> bool {
 	info := vk.CommandBufferSubmitInfo{sType = .COMMAND_BUFFER_SUBMIT_INFO, commandBuffer = cmd.cmd}
 	submit := vk.SubmitInfo2{sType = .SUBMIT_INFO_2, commandBufferInfoCount = 1, pCommandBufferInfos = &info}
 	if d.failure != .None {return false}
-	d.dvk.ResetFences(d.handle, 1, &d.immediate_fence)
+	at := d.immediate_at
+	fence := d.immediate_fences[at]
+	d.dvk.ResetFences(d.handle, 1, &fence)
 	sync.mutex_lock(&d.queue_lock)
-	submitted := vk_check(d, d.dvk.QueueSubmit2(d.queue, 1, &submit, d.immediate_fence), "immediate submit")
+	submitted := vk_check(d, d.dvk.QueueSubmit2(d.queue, 1, &submit, fence), "immediate submit")
 	sync.mutex_unlock(&d.queue_lock)
 	if !submitted {return false}
-	if !vk_waited(d, d.dvk.WaitForFences(d.handle, 1, &d.immediate_fence, true, GPU_WAIT_LIMIT_NS), "immediate wait") {return false}
+	if wait {
+		if !vk_waited(d, d.dvk.WaitForFences(d.handle, 1, &fence, true, GPU_WAIT_LIMIT_NS), "immediate wait") {return false}
+	} else {
+		d.immediate_busy[at] = true
+		d.immediate_at = (at + 1) % VK_IMMEDIATE_SLOTS
+	}
 	return !device_lose_take(d) || vk_check(d, .ERROR_DEVICE_LOST, "immediate submit")
 }
 

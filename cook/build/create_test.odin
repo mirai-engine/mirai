@@ -20,7 +20,7 @@ a_new_project_gets_what_the_templates_share :: proc(t:^testing.T) {
     write(t,join(engine,"templates/small/x2"),"own")
     write(t,join(engine,"templates/small",project.PROJECT_FILE),`{"name": "Small", "plugins": ["fx"], "build": {"compression": "open"}}`)
     testing.expect(t,os.make_directory_all(join(engine,"plugins/fx"))==nil)
-    write(t,join(engine,"plugins/fx",project.PLUGIN_FILE),`{"name": "fx", "version": "1.0.0", "asset_kinds": [{"extension": ".spark", "kind": "SPAR", "merged": true}]}`)
+    write(t,join(engine,"plugins/fx",project.PLUGIN_FILE),`{"name": "fx", "version": "1.0.0", "asset_kinds": [{"extension": ".spark", "kind": "SPAR", "version": 1, "merged": true}]}`)
 
     listed:=templates_list(engine,context.temp_allocator)
     testing.expect_value(t,len(listed),1)

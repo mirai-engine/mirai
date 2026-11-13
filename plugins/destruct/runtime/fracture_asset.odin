@@ -7,7 +7,7 @@ import "mirai:std/geom"
 import mm "mirai:std/math"
 
 // A .fracture: the pieces of a mesh, their connections and clusters, authored or baked.
-FRACTURE_VERSION :: 4
+
 FRACTURE_CLUSTER_POINTS :: 64 // most points kept of the hull of a cluster
 
 Fracture_Info :: struct {source_mesh:base.Asset_Id}

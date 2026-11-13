@@ -193,6 +193,7 @@ Session :: struct {
     gpu_failure:Gpu_Failure_Reaction, // what the editor did once its GPU stopped working (gpu_failure.odin)
     open_path:[1024]u8,open_length:int,
     open_confirmed:bool, // the scene of open_path replaces the open one: the question was answered
+    open_shown:bool,     // a frame drew the tab of open_path loading: the open runs at the end of the next
     new_prefab:bool,     // what New makes: a prefab, or a scene
     new_path:[DOCUMENT_PATH_BYTES]u8, // the file New was given
     new_length:int,
@@ -424,6 +425,7 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
         audio=windowed || !options.no_gpu?.Device:.None,audio_driver=windowed?"":"dummy",
         assets_root=os.is_dir(assets)?assets:"",assets_imported=project.imported_path(root,context.temp_allocator),assets_cache=project.cache_path(root,project.REGISTRY_CACHE,allocator=context.temp_allocator),
         animation_cache=project.cache_path(root,project.ANIMATION_CACHE,allocator=context.temp_allocator),
+        collision_cache=project.content_cache_path(root,project.COLLISION_CACHE,allocator=context.temp_allocator),
         asset_mounts=mounts[:],shaders_root=root,
     })
     if app==nil {
@@ -785,6 +787,13 @@ open_run :: proc(s:^Session) {
             return
         }
     }
+    // A frame shows the tab loading before the open, which reads the scene at once.
+    if !s.open_shown && !document_holds_file(s,path) {
+        s.open_shown=true
+        s.requests+={.Open}
+        return
+    }
+    s.open_shown=false
     s.open_confirmed=false
     if replaces && !collab_can_open(s) {collab_leave(s)}
     runs_stop(s)

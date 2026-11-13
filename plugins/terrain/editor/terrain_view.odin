@@ -157,8 +157,9 @@ terrain_overlay :: proc(s:^editor.Session,view:^Terrain_View,tool:^Terrain_Tool,
         static,has_static:=core.get(statics,e)
         if !has_static || static.mesh=={} {continue}
         static.materials[0]=WEIGHTS_MATERIAL
+        // The maps of the piece, which Terrain_Weights reads as Terrain_Layers does.
         look:=erender.MATERIAL_VALUES_DEFAULT
-        if looks!=nil {if value,ok:=core.get(core.read(looks),e);ok {look.color,look.emission=value.color,value.emission}}
+        if looks!=nil {if value,ok:=core.get(core.read(looks),e);ok {look=value}}
         weights_values(&look,view.overlay,tool.layer)
         if instance,ok:=erender.mesh_instance(a,static,mm.transform_matrix(placed.transform),look);ok {
             instance.object_id,instance.copy_owner,instance.copy_variant=u64(e),PREVIEW_OWNER,2

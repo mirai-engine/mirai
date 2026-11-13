@@ -104,10 +104,12 @@ a_plugin_manifest_round_trips_as_json :: proc(t:^testing.T) {
     base.text_set(m.icon[:],"art/icon.png")
     base.text_set(m.asset_kinds[0].extension[:],".terrain")
     base.text_set(m.asset_kinds[0].kind[:],"TERR")
+    m.asset_kinds[0].version=13
     base.text_set(m.asset_kinds[0].label[:],"Terrain")
     m.asset_kinds[0].color={168,124,72}
     base.text_set(m.asset_kinds[1].extension[:],".biome")
     base.text_set(m.asset_kinds[1].kind[:],"BIOM")
+    m.asset_kinds[1].version=1
     base.text_set(m.asset_kinds[1].folder[:],"runtime/biome")
     m.asset_kinds[1].merged=true
     text:=plugin_text(&m,context.temp_allocator)
@@ -232,8 +234,9 @@ a_bad_plugin_manifest_is_refused_with_what_and_where :: proc(t:^testing.T) {
         {`{"name": "a", "version": "1.0.0", "asset_kinds": [{"extension": ".biome"}, {"extension": ".biome", "merged": true}]}`,.Asset_Kind_Invalid,.None,".biome"},
         {`{"name": "a", "version": "1.0.0", "asset_kinds": [{"merged": true}]}`,.Asset_Kind_Invalid,.None,""},
         {`{"name": "a", "version": "1.0.0", "asset_kinds": [{"extension": ".biome"}]}`,.Asset_Kind_Invalid,.None,".biome"},
-        {`{"name": "a", "version": "1.0.0", "asset_kinds": [{"extension": ".biome", "kind": "BIOM"}, {"extension": ".zone", "kind": "BIOM"}]}`,.Asset_Kind_Invalid,.None,".zone"},
-        {`{"name": "a", "version": "1.0.0", "asset_kinds": [{"extension": ".biome", "kind": "BIOM", "folder": "../elsewhere"}]}`,.Asset_Kind_Invalid,.None,".biome"},
+        {`{"name": "a", "version": "1.0.0", "asset_kinds": [{"extension": ".biome", "kind": "BIOM"}]}`,.Asset_Kind_Invalid,.None,".biome"},
+        {`{"name": "a", "version": "1.0.0", "asset_kinds": [{"extension": ".biome", "kind": "BIOM", "version": 1}, {"extension": ".zone", "kind": "BIOM", "version": 1}]}`,.Asset_Kind_Invalid,.None,".zone"},
+        {`{"name": "a", "version": "1.0.0", "asset_kinds": [{"extension": ".biome", "kind": "BIOM", "version": 1, "folder": "../elsewhere"}]}`,.Asset_Kind_Invalid,.None,".biome"},
         {`{"name": "a", "version": "1.0.0", "import_sources": ["umap"]}`,.Import_Source_Invalid,.None,"umap"},
         {`{"name": "a", "version": "1.0.0", "import_sources": [".umap", ".umap"]}`,.Import_Source_Invalid,.None,".umap"},
     }

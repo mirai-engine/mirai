@@ -3,12 +3,14 @@ package terrain
 import "base:intrinsics"
 import "base:runtime"
 import "core:fmt"
+import "core:math/linalg"
 import "core:os"
 import "core:strings"
 import "core:testing"
 import "core:mem"
 import "mirai:asset"
 import "mirai:core"
+import camera "mirai:engine/camera"
 import phys "plugins:physics/runtime"
 import render "mirai:engine/render"
 import "mirai:host"
@@ -106,7 +108,7 @@ shared_terrain_chunks_remain_visible_after_duplicate_copy_and_preview_retirement
             outlines:core.Table(render.Outline);defer core.table_destroy(&outlines)
             outline_styles:=render.OUTLINE_STYLES_DEFAULT
             lives:core.Table(render.Material_Live);defer core.table_destroy(&lives)
-            render.render_sync(&sync,app,{},core.FRAME_TIME_DEFAULT,{},&poses[current],&w.statics,&w.looks,&lives,&hidden,&elsewhere,&w.parents,{},&suns,&points,&spots,&rects,&emissions,&skies,&posts,{},&highlights,&outlines,{&outline_styles},&offsets,&layers,{},{},{},{},nil)
+            render.render_sync(&sync,app,{},core.FRAME_TIME_DEFAULT,{},core.read(&poses[current]),core.read(&w.statics),core.read(&w.looks),core.read(&lives),core.read(&hidden),core.read(&elsewhere),core.read(&w.parents),{},core.read(&suns),core.read(&points),core.read(&spots),core.read(&rects),core.read(&emissions),core.read(&skies),core.read(&posts),{},{},{},core.read(&highlights),core.read(&outlines),{&outline_styles},core.read(&offsets),core.read(&layers),{},{},{},{},nil)
             host.app_frame_end(app)
         }
         if pass==4 {continue}
@@ -383,30 +385,78 @@ a_dig_finds_the_terrain_it_touches_and_reads_in_its_space :: proc(t:^testing.T) 
     }
     test_world_settle(&w)
     brush:=Brush{kind=.Raise,center={510,1,6},radius=4,amount=1,rotation=1}
-    resolved,ok:=edit_resolve(Edit_Request{brush=brush},&w.data,core.read(&w.terrains),core.read(&w.worlds))
-    testing.expect(t,ok && resolved.owner==far)
+    resolved,scaled,ok:=edit_resolve(Edit_Request{brush=brush},&w.data,core.read(&w.terrains),core.read(&w.worlds))
+    testing.expect(t,ok && scaled==.None && resolved.owner==far)
     testing.expect_value(t,resolved.brush.center,[3]f32{5,0.5,3})
     testing.expect_value(t,resolved.brush.radius,f32(2))
     testing.expect_value(t,resolved.brush.amount,f32(0.5))
     brush.center={1000,0,6}
-    _,ok=edit_resolve(Edit_Request{brush=brush},&w.data,core.read(&w.terrains),core.read(&w.worlds))
+    _,_,ok=edit_resolve(Edit_Request{brush=brush},&w.data,core.read(&w.terrains),core.read(&w.worlds))
     testing.expect(t,!ok,"a dig that touches no terrain asks nothing")
-    resolved,ok=edit_resolve(Edit_Request{brush=brush,owner=near},&w.data,core.read(&w.terrains),core.read(&w.worlds))
+    resolved,_,ok=edit_resolve(Edit_Request{brush=brush,owner=near},&w.data,core.read(&w.terrains),core.read(&w.worlds))
     testing.expect(t,ok && resolved.owner==near,"a dig that names its terrain is not searched for")
 }
 
-terrain_test_update :: proc(w:^Terrain_Test_World,resident:^Terrain_Resident,app:^host.App,time:core.Time={},view:=core.View{},settings:=TERRAIN_TEST_SETTINGS) {
-    // A tick, and those that take what its jobs built: a rebuilt chunk shows in the tick after it changed.
-    terrain_test_tick(w,resident,app,time,view,settings)
+// A brush of the world takes the scale of its terrain: lengths across x and z,
+// the metres it moves the ground along y; a scale it cannot take is an error.
+@(test)
+a_brush_reads_the_scale_of_its_terrain_across_and_up :: proc(t:^testing.T) {
+    nan:=transmute(f32)u32(0x7fc00000)
+    Case :: struct {name:string,kind:Source_Kind,scale:[3]f32,brush:Brush,error:Edit_Error,radius,amount,interval:f32}
+    raise:=Brush{kind=.Raise,radius=4,amount=1}
+    terrace:=Brush{kind=.Terrace,radius=4,amount=1,interval=2,riser=0.5}
+    carve:=Brush{kind=.Carve,radius=4,amount=1}
+    cases:=[?]Case{
+        {"a Heightfield taller than wide",.Heightfield,{2,4,2},raise,.None,2,0.25,0},
+        {"the steps of a Terrace go up",.Heightfield,{2,4,-2},terrace,.None,2,1,0.5},
+        {"a disc over x and z needs one scale there",.Heightfield,{2,1,3},raise,.Scale,0,0,0},
+        {"a shape measures in three dimensions",.Heightfield,{2,4,2},carve,.Scale,0,0,0},
+        {"so does any brush of a Volume",.Volume,{2,4,2},raise,.Scale,0,0,0},
+        {"a Volume scaled evenly",.Volume,{2,2,2},raise,.None,2,0.5,0},
+        {"no scale",.Heightfield,{0,1,0},raise,.Scale,0,0,0},
+        {"a scale that is not a number",.Heightfield,{nan,1,nan},raise,.Scale,0,0,0},
+    }
+    for c in cases {
+        place:=mm.Transform{position={3,10,-2},rotation=1,scale=c.scale}
+        local,error:=brush_local(c.brush,place,c.kind)
+        testing.expectf(t,error==c.error,"%s: %v",c.name,error)
+        if c.error!=.None {continue}
+        testing.expectf(t,local.radius==c.radius && local.amount==c.amount && local.interval==c.interval,"%s: %v",c.name,local)
+        back,_:=brush_world(local,place,c.kind)
+        testing.expectf(t,abs(back.radius-c.brush.radius)<1e-5 && abs(back.amount-c.brush.amount)<1e-5,"%s: the world brush comes back",c.name)
+    }
+    // The weight Paint takes toward is no height, and a box with no turn turns with its terrain.
+    turned:=mm.Transform{position={0,10,0},rotation=linalg.quaternion_angle_axis_f32(0.5,{0,1,0}),scale=1}
+    paint,_:=brush_local({kind=.Paint,radius=1,amount=1,toward=true,target=0.5},turned,.Heightfield)
+    testing.expect_value(t,paint.target,f32(0.5))
+    box,_:=brush_local({kind=.Carve,shape=.Box,extent=1,amount=1},turned,.Volume)
+    testing.expect(t,abs(real(box.rotation*turned.rotation)-1)<1e-5)
+}
+
+terrain_test_update :: proc(w:^Terrain_Test_World,resident:^Terrain_Resident,app:^host.App,time:core.Time={},view:=core.View{},settings:=TERRAIN_TEST_SETTINGS,locals:=core.Ref(camera.Camera_Views){}) {
+    // A tick, and those that take what its jobs built: a rebuilt chunk shows in the tick after it changed,
+    // and what no simulation source needs at once comes from jobs over the ticks after.
+    terrain_test_tick(w,resident,app,time,view,settings,locals)
     for _ in 0..<8 {
-        if !work_busy(&w.data,nil) {break}
-        terrain_test_tick(w,resident,app,{},view,settings)
+        idle:=!work_busy(&w.data,nil) && !resident.cut
+        for &source in resident.sources {
+            if len(source.pending)>0 {idle=false}
+            for chunk in source.chunks {if chunk.resident && !chunk.shown {idle=false}}
+        }
+        if idle {break}
+        terrain_test_tick(w,resident,app,{},view,settings,locals)
     }
 }
 
-terrain_test_tick :: proc(w:^Terrain_Test_World,resident:^Terrain_Resident,app:^host.App,time:core.Time={},view:=core.View{},settings:=TERRAIN_TEST_SETTINGS) {
+// The depth of the piece of a terrain a hit is on: 0 a chunk, above that a node; -1 none.
+piece_depth :: proc(w:^Terrain_Test_World,hit:phys.Hit) -> int {
+    piece,is_piece:=core.get(&w.chunks,hit.entity)
+    return is_piece?int(piece.depth):-1
+}
+
+terrain_test_tick :: proc(w:^Terrain_Test_World,resident:^Terrain_Resident,app:^host.App,time:core.Time={},view:=core.View{},settings:=TERRAIN_TEST_SETTINGS,locals:=core.Ref(camera.Camera_Views){}) {
     if w.settings=={} {w.settings={bodies=64,shapes=64,contacts=64,joints=1,characters=1,hulls=1,meshes=64,heightfields=64}}
-    test_step(&w.terrain,core.commands_of(test_world_ref(&w.w)),resident,app,&w.problems,settings,view=view)
+    test_step(&w.terrain,core.commands_of(test_world_ref(&w.w)),resident,app,&w.problems,settings,view=view,locals=locals)
     test_world_settle(&w.w)
     terrain_test_physics(w,app,time)
     test_world_settle(&w.w)
@@ -513,7 +563,7 @@ terrain_runtime_publishes_only_dirty_chunks_and_copies_play_and_rollback_with_co
     testing.expect(t,hit_ok && abs(hit.point.y-5)<1e-4)
     disk:Source;defer source_destroy(&disk)
     _,loaded:=source_load(&disk,path,&types);testing.expect(t,loaded)
-    testing.expect_value(t,source_value(&disk,{2,0,2}),f32(0))
+    testing.expect_value(t,source_value(&disk,{2,0,2}) or_else 0,f32(0))
     calls,temps:=allocator.requests,temporary.requests
     version,structure,built:=w.statics.version,assets.structure,resident.stats.built
     for _ in 0..<10 {terrain_test_update(w,&resident,&app)}
@@ -525,7 +575,7 @@ terrain_runtime_publishes_only_dirty_chunks_and_copies_play_and_rollback_with_co
     test_world_copy(&copy_world.w,&w.w)
     dig(&copy_world.terrain_requests,{kind=.Raise,center={-6,0,-6},radius=0.4,amount=1},owner)
     terrain_test_update(copy_world,&resident,&app)
-    testing.expect_value(t,source_value(&w.data.entries[0].source,{2,0,2}),f32(1))
+    testing.expect_value(t,source_value(&w.data.entries[0].source,{2,0,2}) or_else 0,f32(1))
     hit,hit_ok=phys.raycast({&copy_world.state},{4,20,14},{0,-1,0})
     testing.expect(t,hit_ok && abs(hit.point.y-6)<1e-4)
     test_world_copy(&copy_world.w,&w.w)
@@ -535,7 +585,7 @@ terrain_runtime_publishes_only_dirty_chunks_and_copies_play_and_rollback_with_co
     request_save(&copy_world.terrain_requests,owner)
     terrain_test_update(copy_world,&resident,&app)
     _,loaded=source_load(&disk,path,&types);testing.expect(t,loaded)
-    testing.expect_value(t,source_value(&disk,{2,0,2}),f32(1))
+    testing.expect_value(t,source_value(&disk,{2,0,2}) or_else 0,f32(1))
     testing.expect_value(t,copy_world.data.stats.saves,u64(1))
     testing.expect_value(t,w.problems.count+copy_world.problems.count,0)
     testing.expect_value(t,copy_world.problems.count,0)
@@ -621,7 +671,7 @@ terrain_runtime_reads_sources_the_registry_holds_and_follows_them_without_reload
     core.edit(&w.terrains,owner).revision=2
     for _ in 0..<4 {terrain_test_update(&w,&resident,&app)}
     testing.expect_value(t,w.data.stats.loads,u64(2))
-    testing.expect_value(t,source_value(&w.data.entries[0].source,middle),f32(3))
+    testing.expect_value(t,source_value(&w.data.entries[0].source,middle) or_else 0,f32(3))
     // A source that only the memory of the registry holds, as a new terrain.
     terrain_test_write(t,&assets,"terrain/new.terrain",&source,fresh)
     testing.expect(t,!os.exists(fmt.tprintf("%s/terrain/new.terrain",root)))
@@ -638,7 +688,7 @@ terrain_runtime_reads_sources_the_registry_holds_and_follows_them_without_reload
     testing.expect_value(t,w.data.stats.loads,u64(4))
     entry:=data_find(&w.data,id)
     if !testing.expect(t,entry!=nil) {return}
-    testing.expect_value(t,source_value(&entry.source,middle),f32(0))
+    testing.expect_value(t,source_value(&entry.source,middle) or_else 0,f32(0))
     testing.expect_value(t,entry.source.revision,u32(1))
     testing.expect_value(t,core.at(&w.terrains,core.row_of(&w.terrains,owner)).revision,u32(2))
     testing.expect_value(t,w.problems.count,0)

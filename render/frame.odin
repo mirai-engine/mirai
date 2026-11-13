@@ -347,7 +347,7 @@ reflect_pass :: proc(p: ^Pass, normal, depth, albedo, filtered: rhi.Texture, sto
 @(private)
 bind_light_maps :: proc(p: ^Pass, maps: bool) {
 	r, cmd, t := p.r, p.cmd, p.t
-	rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.shadow_atlas if maps else r.dummy_texture)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.shadow_raster.atlas if maps else r.dummy_texture)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.shadow_tint if maps && p.frame.sun_maps.w != 0 else r.dummy_texture)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS8, r.shadow_buffers.table if maps else r.dummy_buffer)
 }
@@ -466,6 +466,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     read_stats(r,slot)
     points_read(r,slot)
     pages_update(r,slot)
+    if !frame.ui_only {shadow_movers_update(r)}
     textures_feedback_read(r,slot)
     extension_counters_begin(r,cmd,slot)
     // A frame none of whose views culls reports no counts, not those of the last one that did.
@@ -1248,7 +1249,7 @@ pass_direct :: proc(p: ^Pass) -> bool {
 	}
 	points := [2]u32{(t.width + scale - 1) / scale, (t.height + scale - 1) / scale}
 	params.shadow = shadow_maps_pass(p)
-	atlas := t.shadow_atlas if params.shadow.on != 0 else r.dummy_texture
+	atlas := t.shadow_raster.atlas if params.shadow.on != 0 else r.dummy_texture
 	table := r.shadow_buffers.table if params.shadow.on != 0 else r.dummy_buffer
 	grid := or_dummy(r, s.light_grid_buffer)
 	unlayered := rhi.Shader_Constants{} if p.layered else {DIRECT_MAPS_COMP_UNLAYERED}

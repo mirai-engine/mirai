@@ -40,8 +40,8 @@ Packages, all *engine-time*:
   the import already gave is that asset, written once: two models that name the same material
   or texture share it. `output_input` lists a file the import reads in the sidecar and in its
   key; every input comes before the first output of the cache, which fixes the key.
-- For engine-time tools: `mesh_levels` ([levels](#levels-of-detail)), `mesh_collision`
-  ([colliders](#collision)) and the PBR conversions of `pbr.odin`.
+- For engine-time tools: `mesh_levels` ([levels](#levels-of-detail)) and the PBR conversions of
+  `pbr.odin`.
 - `Error` is `{code,message}`; `message` lives in the caller's `temp_allocator`. `Import_Options`
   carries the settings and how they apply: `ignore_stored`, `root` (the project or the plugin
   whose assets folder has the source; `import_source` finds it from the path), `registry` (the
@@ -173,23 +173,30 @@ part ([extension](../../mirai-editor/references/extensions.md#importers-of-a-plu
 ## Import cache
 
 The `Import_Info` of each asset says what it was built from: source (relative to `root`), name,
-index, size and hash of what was read (the source, or the image of a texture), version and
-`settings_hash`. It is not what identifies the asset: the [sidecar](#identity-and-reimport) is.
+index, size and hash of what was read (the source; the image of a texture; the mesh as read, with
+its slots, joints and skeleton, of a mesh), version and `settings_hash`. It is not what identifies
+the asset: the [sidecar](#identity-and-reimport) is.
 
 - `importer_version` combines `IMPORTER_VERSION` (the writer) with `Format.version`
   (`import_version`); loose images and sounds use format version 0.
-- `settings_hash` is the identity of the settings that make that asset, and of no other: for a
-  mesh, levels, collision, maximum triangles and whether it forces collision
-  (`mesh_settings_hash`); for a texture, its `Build_Options` with `BUILD_VERSION`; for a sound,
-  whether it is `Stream`. Materials, skeletons and clips store 0. Changing a texture setting keeps
-  the meshes, and one of the meshes, the textures.
+- `settings_hash` is the identity of the settings that make that asset, and of no other, with
+  what builds them: for a mesh, its levels, front and rig with `MESH_CACHE_VERSION`
+  (`mesh_build_hash`); for a texture, its `Build_Options` with `BUILD_VERSION` and the block
+  encoders (`textures.encoders_id`); for a sound, whether it is `Stream`. Materials, skeletons and
+  clips store 0. Changing a texture setting keeps the meshes, and one of the meshes, the textures.
 - What is current is decided once, by the name of a file of the cache: `import_write` keeps a mesh
   or a texture whose file under the key of what the import builds from now exists
   (`Written.kept`) and builds nothing ahead when every output of the cache is kept; if only the
-  `owner` changes, it rewrites the header. Materials, skeletons, clips and prefabs, which are
+  `owner` changes, it rewrites the header. A mesh or a texture with no file under that key takes
+  the file of its id under another key, renamed to it, when that file is of the version its kind
+  is written in and its `Import_Info` is what the import records now: a change of the key that
+  does not reach it (the code of a plugin, a setting of other assets) neither builds nor writes
+  it. A texture of an import of fast textures takes one built Fast only while the texture cache
+  holds no Final of it. Materials, skeletons, clips and prefabs, which are
   cheap, are always written, with what a person changed in them ([what is
   written](#what-is-written)), also with `rebuild`.
-- A change of writer or format version, of the settings or of `kind_version`
+- A change of writer or format version, of the code of the plugin that imports a source whole,
+  of the settings or of `kind_version` of a kind of the cache
   ([version rule](../../mirai-assets/references/formats.md#versions)) changes the key and
   rebuilds; `rebuild` (`mirai import --rebuild`) rebuilds everything.
 
@@ -283,22 +290,34 @@ what surely belongs to that model is a part; what is doubtful stays independent 
 the sources of its assets folder (`cook/import/sources/sync.odin`): it is what makes a checkout
 that was just cloned, a worktree that was just made or a branch that changed a source run.
 
-- It imports each source whose sidecar lists outputs of the cache when one of them has no file named
-  by the key of what the import builds from now (`importer.import_key`): the bytes of the source and
-  of every file it read (the buffers and images of a glTF, the material library of an OBJ, the
-  images of a pack of prompts), its settings, the versions of the importer and of what it writes and
-  the block encoders of the program, with textures Final. A sync with `fast_textures` (`--fast`,
-  what a build that does not cook runs) also takes outputs built Fast as current and imports with
-  Fast textures; Final stays current there. One notion of current, the bytes: a source
-  that only moved is not imported, and one whose `.bin` or image changed is. The hash of a file
-  whose size and modification time are those the cache of the root keeps for it
-  (`importer.Source_Hashes`, in `.mirai/cache/sources`) is taken from there, so a build reads only
-  the files that changed. A USD is composed by `usdcat`, which does not say which layers it read:
-  after changing one alone, import the stage.
+- It imports each source whose sidecar lists an output of the cache with no file named by the key
+  of what the import builds from now (`importer.import_key`): the bytes of the source and of every
+  file it read (the buffers and images of a glTF, the material library of an OBJ, the images of a
+  pack of prompts), its settings, the versions of the importer and of what it writes and the block
+  encoders of the program, with textures Final. An import of documents alone (clips of a glTF
+  without meshes) leaves instead an empty stamp named the same way (`importer.STAMP_EXTENSION`).
+  A sync with `fast_textures` (`--fast`, what a build that does not cook runs) also takes outputs
+  built Fast as current and imports with Fast textures; Final stays current there. One notion of
+  current, the bytes: a source that only moved is not imported, and one whose `.bin` or image
+  changed is. The hash of a file whose size and modification time are those the cache of the root
+  keeps for it (`importer.Source_Hashes`, in `.mirai/cache/sources`) is taken from there, so a
+  build reads only the files that changed. A USD is composed by `usdcat`, which does not say which
+  layers it read: after changing one alone, import the stage.
+- It also imports a source with a document of a version of its kind this build does not read (the
+  engine's in `asset.KINDS`, a plugin's in the `version` of its `asset_kinds`): the import writes
+  it again in the current version, with its id and what was kept of it.
 - A source no format of the engine reads goes to the importer of a plugin that claims it whole,
   else to the formats the plugins add (`Sync_Options.library`); one nothing reads is a failure
-  that says so. A whole source is keyed like any source of no format (`import_version(0)`), and
-  its importer reads the settings its sidecar keeps, as every import does.
+  that says so. A whole source is keyed like any source of no format (`import_version(0)`) plus
+  the code of the plugin that claims it (`sources.code_identity` of its folder: its Odin sources
+  but tests, with the plugins it holds, as `Whole_Source.code` and
+  `Import_Options.importer_code`), so a change of that code imports it again with no version to
+  raise; its importer reads the settings its sidecar keeps, as every import does.
+- It finds what to import first, then imports it, saying as it goes (`Sync_Options.progress`) a
+  line per source with why and how many of the sources it is, and under it, every
+  `importer.PROGRESS_EVERY`, the assets written of those its sidecar listed
+  (`Import_Options.progress`). `mirai import` passes its output, and the build shows the lines of
+  the import program as it prints them.
 - A file of the imported folder that no sidecar with its source next to it lists under its
   current key is removed. A source that does not import is a failure of the report that names it:
   the others are imported, and nothing is removed.
@@ -320,8 +339,10 @@ levels, clusters and colliders of each mesh (`mesh_cook`) and the levels of each
 when it gets to it, with the same functions. Ids, files and parts are decided on a
 single thread and in the usual order: with or without a job system the same bytes are written.
 
-- An import whose outputs of the cache are all current builds nothing beforehand, except with
-  `rebuild`.
+- An import builds beforehand only the meshes and textures whose files it does not keep or take
+  under another key, except with `rebuild`; a whole source that reads its models ahead asks
+  `outputs_current` (every output of the cache has its file, under the key of now or another)
+  before cooking them.
 - `Import_Options.worker` is the worker of the job system that calls (`jobs.Worker_Ref`: the owner,
   or the job that imports); without a system, everything runs on the calling thread. The BC blocks
   of a texture go in parallel rows of the same system, and without it, in one of their own if they
@@ -358,14 +379,19 @@ shares it.
   holds.
 - [Cooking](../../mirai-projects/references/build.md#asset-cooking) stores there the blocks of
   an RGBA8 texture by `textures.cache_key_blocks`.
-- A key names what made the blocks (`textures.external_id`): the encoders of the program or the
-  one a cook was given, so checkouts with other encoders share the folder without sharing entries.
+- A key names what made the blocks (`textures.encoders_id`), so checkouts with other encoders
+  share the folder without sharing entries.
 - `cache_read` checks hash and key: a damaged file or one of another `TEXTURE_VERSION` is a miss and
   is built again. Reading an entry marks it used.
-- An entry belongs to no asset (an old one serves again when switching branch or setting): that is
-  why it is bounded by size, `CACHE_BUDGET`, and `cache.trim` deletes the ones used longest ago.
-  Deleting the folder only costs time. The mechanism (file per key, key id and version, read that
-  marks use, budget) is `cook/cache`, the same as the mesh cache.
+- An entry belongs to no asset (an old one serves again when switching branch or setting): an
+  entry no build used for `cache.UNUSED_AGE` is deleted (`cache.trim`, at most once per
+  `cache.TRIM_EVERY` after a write), never one by size, so a project larger than any budget keeps
+  what its next import reads. Deleting the folder only costs time. The mechanism (file per key,
+  key id and version, read that marks use, age) is `cook/cache`, the same as the mesh cache.
+- An image only its format decodes (`Imported_Image.make`, added with `importer.image_made`) is
+  keyed by its `data`, what the format makes the texels of: a texture the cache keeps for it is
+  written without decoding it, and the format raises a version inside its data when the same data
+  would make other texels.
 
 ### Mesh cache
 
@@ -375,14 +401,15 @@ the texture cache; `Import_Options.mesh_cache`, which the editor, sync and `mira
 pass), one `.mesh` per key with its levels, clusters and colliders, without materials.
 
 - The key (`mesh_cache_key`) is the content of the mesh as the reader gives it (vertices, indices,
-  skin, submeshes, morph targets and flags) with `mesh_settings_hash`; the file's id carries
-  `MESH_CACHE_VERSION`, from `IMPORTER_VERSION`, `MESH_VERSION` and the version of the settings key:
-  a change of the writer, the format or that key does not read what came before.
+  skin, submeshes, morph targets and flags: `mesh_content_hash`) with `mesh_build_hash`; the
+  file's id carries `MESH_CACHE_VERSION`, from `IMPORTER_VERSION`, `MESH_VERSION` and the version
+  of the settings key: a change of the writer, the format or that key does not read what came
+  before.
 - A mesh that is not kept looks for its key; if it is there, it is written with the id, the slots,
   the skeleton and the `Import_Info` of this import, the same bytes as building it. `rebuild` does
   not read the cache and rewrites it.
-- It saves simplifying, the cluster DAG and the pages; reading the source, no. It is bounded by
-  `MESH_CACHE_BUDGET`.
+- It saves simplifying, the cluster DAG and the pages; reading the source, no. Its entries go by
+  age, as those of the texture cache.
 
 ## Settings of a source
 
@@ -397,8 +424,6 @@ that differ from their default, so it shows what was chosen. What is not obvious
 - `rdo_lambda` is how much error the [encoder](#textures-cooktextures) of textures in blocks
   trades for files that compress smaller: zero is the default lambda and a negative value, which
   `--rdo-lambda 0` writes, the least error.
-- `max_triangles` simplifies a mesh with more triangles down to them as a
-  [level](#levels-of-detail), and that is its level 0.
 - `front` (`--front auto|negative_z|z|x|negative_x`, `front` of `asset.import`) is where a model
   stands facing once imported, for a source that does not face the front its format says and that
   detection does not turn or turns wrong ([front](#front)). It is part of a mesh's settings hash.
@@ -525,8 +550,7 @@ chooses only one ([mesh](../../mirai-assets/references/kinds.md#mesh)). With `lo
 small mesh, level 0 alone is stored. What follows describes those whole levels; the DAG simplifies
 with the same weights and locks.
 
-- **Level 0.** The source's or, with more than `max_triangles`, the one that simplifying it down to
-  them gives; the colliders come from it.
+- **Level 0.** The source's.
 - **How many.** Each level aims at `LOD_SHARE` of the triangles of the previous one; the series
   ends if a level keeps more than `LOD_KEEP` of the previous one or its error exceeds the radius of
   the mesh (that one is not stored: it would be drawn only where the whole mesh fits in a pixel),
@@ -550,8 +574,7 @@ with the same weights and locks.
   subset of the previous one) and enlarges the remaining ones around their center to the area they
   all had, up to `ISLAND_GROW_MAX` times their radius. The rest of the submesh (trunk, body) is
   simplified like any other. Bushes of hundreds of triangles are not small islands: quadrics
-  simplify them with less error than pruning them. Only the levels of `lods=Auto`; level 0 from
-  `max_triangles` is simplified whole.
+  simplify them with less error than pruning them. Only the levels of `lods=Auto`.
 - **How much is pruned.** Each level prunes each class as far as the error that the rest already
   has simplified allows; if that would keep more than `LOD_KEEP` of the previous level, it allows
   the smallest error that prunes one more class, until it does not. The leaves of a tree whose
@@ -566,19 +589,35 @@ with the same weights and locks.
 
 ## Collision
 
-The colliders that the source brings (`Imported_Mesh.collision`, in the source's space until the
-import moves them to the engine's) are those of the `.mesh`; the settings make them only if the
-source brings none or with `force_collision`. The engine's formats do not bring them; a plugin's
-does.
+The colliders that the source authors are the `asset.Collider` rows of the `.mesh`, in the space
+of the mesh it collides for; the import makes none of its own, and a mesh whose source authors none
+has none. A format reads what it holds into `Reader.colliders` (`Source_Collider`, in the space of
+the node it is at) and `colliders_resolve`, after the read and before the source space is baked,
+adds what the names of nodes say, places each in the space of its mesh and takes the nodes that
+are collision only, and the meshes only they show, out of the model:
 
-`collision` adds to the `.mesh` `asset.Collider` rows in the space of the mesh, made from the
-surface welded by position: `Hull`, a convex hull (of a flat surface, its outline); `Pieces`, hulls
-that together cover a non-convex mesh (up to `collision_hulls`); `Mesh`, the simplified triangles
-(`COLLISION_MESH_SHARE`); `Exact` (`--collision exact`), every triangle, for geometry made to
-collide (a clip map of another game), which a simplification would open. A surface from which the
-collider cannot be made is left without colliders with a warning. How they are used:
+- Names, in every format: `UCX_<mesh>[_n]` a hull of each piece of its geometry that shares no
+  position with the rest, `UBX_` the box it is (three pairs of parallel faces), `USP_` the sphere
+  it is, `UCP_` the capsule around it (along its two farthest points); a fit that fails is its hull,
+  with a warning. The mesh is named without case, whole or without what follows its last `_` or
+  `.`; with one drawn mesh, that one. `-colonly`/`-convcolonly` (also after `_` or `$`) are the
+  triangles or hulls of a node for the nearest mesh, `-col`/`-convcol` those of its own mesh, which
+  stays drawn.
+- glTF: `KHR_physics_rigid_bodies` colliders with `KHR_implicit_shapes`, and `OMI_physics_body`
+  with `OMI_physics_shape`; a mesh geometry is a hull with `convexHull`, else triangles. A tapered
+  capsule and a cylinder are hulls of their points; planes, triggers and motion are warnings.
+- USD: a prim with `PhysicsCollisionAPI`: a `Mesh` as its `physics:approximation` says (triangles
+  without one, `convexDecomposition` a decomposition the source asks for), collision only with
+  purpose `guide` or invisible; `Cube`, `Sphere`, `Capsule`, `Cylinder` and `Cone` as that shape.
+- A plugin's format fills `Imported_Mesh.collision` itself (`unreal`, from the `BodySetup`).
+- A collider with no named mesh is for that of its node, the only one below it, or the nearest
+  ancestor's; one that finds none is a warning.
+
+The prefab of a model gives an entity an `Auto` `Collider` only when its mesh has them. What a
+collider of a mesh without them is made of (its triangles, or convex pieces of them for a body that
+moves) is derived at run time and cached, or by the cook:
 [host](../../mirai-core/references/host.md#loaded-assets) and [the physics
-libraries](../../mirai-physics/references/engine.md).
+libraries](../../mirai-physics/references/engine.md#collider-fields).
 
 ## Textures (`cook/textures`)
 
@@ -605,7 +644,8 @@ libraries](../../mirai-physics/references/engine.md).
   the channels.
 - **Alpha coverage**: with `alpha_coverage > 0` each level scales its alpha, by bisection, until
   it keeps the proportion of texels above the cutoff that the original image had.
-- **Maximum size**: a larger image starts at the first level that fits.
+- **Size**: a side above `asset.TEXTURE_MAX_SIZE` is `Too_Large`, and the image is not used; the
+  rest is kept whole, and what the view loads is the renderer's.
 - **Format** (`stored_format`), decided by the whole source image before reducing it:
   - `.Uncompressed`, or a 16-bit or float source with `keep_precision`: what the source has,
     `RGBA8`, `RGBA16` or `RGBA16F`.

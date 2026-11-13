@@ -326,6 +326,12 @@ of pieces) is not a fixed cap, and a frame that does not load does not allocate.
   boxes, spheres and capsules as their hulls, or their geometry). Of a `.mesh` it is its level 0
   decoded from the clusters (`asset.mesh_level_decode`): a vertex that two clusters share comes once
   per cluster.
+- `assets_mesh_collides`: whether a mesh asset stores colliders of its source, what a placed mesh
+  collides with. `assets_collision_pieces_file`: the convex pieces of a mesh file that stores none
+  (`geom.mesh_decompose` of its level 0), made once and kept by the content of the file in
+  `App.collision_cache` (`project.COLLISION_CACHE`, a content cache); physics asks for them in a
+  job. A cooked mesh carries them (`piece_points`) and a game without the cache, as a shipped one,
+  decomposes nothing.
 - `assets_file(a,id,kind,&Asset)`: transactional load of any type by Fourcc, validating identity and
   hash; the caller closes with `asset_close`. It serves plugin formats without adding them to the
   GPU caches. It reads with `registry_read`: what the registry has in memory before the disk
@@ -371,6 +377,18 @@ of pieces) is not a fixed cap, and a frame that does not load does not allocate.
     textures, and without room in the queue it waits a frame. A far mesh made in memory
     (`assets_mesh_publish`) does not go through here and goes whole in its frame, with what its job
     did (`assets_render_geometry_rays`).
+- **Textures of materials and meshes that draw arrive** (`assets_streaming.odin`). In an
+  application with job workers and a renderer (`Assets.arrive`), a material that names a texture
+  that is not loaded does not read it: its row goes without it, a job reads its levels of side
+  `TEXTURE_TAIL` (`ASSET_ARRIVALS` reads at once) and the frames give them to the renderer in
+  the part of the load budget, before more levels of others; the rows of the materials that
+  waited take it (`assets_arrivals_settle`) and what the GPU samples asks for its larger levels.
+  A mesh render sync draws arrives so too (`assets_mesh_shown`), its geometry over frames when
+  it is large; a structure change names it, and only the entities that waited for it are drawn
+  again. No frame reads, decodes or uploads a whole texture for a material or a mesh for what
+  draws it. `assets_texture` and `assets_mesh` of an arriving asset load it whole in the call
+  (`assets_arriving`). While `app_assets_arriving` counts any, a load is not resident and a
+  capture that waits for its textures waits.
 - **What was read is released in jobs** (`assets_release.odin`): `app_assets_take` installs and
   keeps what was prepared, and `app_assets_release` and `app_assets_release_file` receive what
   nobody takes; between frames (`app_assets_releases_step`, in `app_frame_begin`) one job at a time

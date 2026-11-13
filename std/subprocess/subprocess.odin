@@ -1,6 +1,7 @@
 package subprocess
 
 import "base:runtime"
+import "core:io"
 import "core:os"
 import "core:strings"
 import "core:time"
@@ -167,8 +168,9 @@ process_alive :: proc(pid:int) -> bool {
 
 // Runs the command to its end and returns what it wrote to stdout and to
 // stderr, in allocator, also when error is not nil. The stdout and stderr
-// of desc are replaced by the captured ones.
-exec :: proc(desc:os.Process_Desc,allocator:runtime.Allocator,limits:=Limits{}) -> (state:os.Process_State,stdout,stderr:[]byte,error:os.Error) {
+// of desc are replaced by the captured ones. With echo, what the child
+// writes to stdout goes there as it writes it instead of being returned.
+exec :: proc(desc:os.Process_Desc,allocator:runtime.Allocator,limits:=Limits{},echo:io.Writer={}) -> (state:os.Process_State,stdout,stderr:[]byte,error:os.Error) {
     captured:=desc
     captured.stdout,captured.stderr=nil,nil
     process:=start(captured,limits,.Separate) or_return
@@ -189,6 +191,10 @@ exec :: proc(desc:os.Process_Desc,allocator:runtime.Allocator,limits:=Limits{}) 
             count,_:=read(&process,stream,buffer[:])
             if count==0 {continue}
             idle=false
+            if stream==.Stdout && echo.procedure!=nil {
+                _,_=io.write(echo,buffer[:count])
+                continue
+            }
             _,error=append(&out if stream==.Stdout else &errs,..buffer[:count])
         }
         if !idle {quiet=false;continue}

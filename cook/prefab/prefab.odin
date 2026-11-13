@@ -70,6 +70,7 @@ model_prefab :: proc(model:^importer.Imported_Model,assets:^importer.Import_Repo
         rig_shows[s],shown_by_rig[i]=true,true
         shown:=render.Mesh_Renderer{mesh=assets.mesh_ids[node.mesh]}
         if put(&scene,info,rig_ids[s],"Mesh_Renderer",&shown)!=.None {return report,.Write}
+        if !model_collider(&scene,info,rig_ids[s],model.meshes[node.mesh]) {return report,.Write}
         if !model_morphs(&scene,info,rig_ids[s],node,model.meshes[node.mesh],true) {return report,.Write}
         if !node.visible {
             hidden:=render.Hidden{}
@@ -109,6 +110,7 @@ model_prefab :: proc(model:^importer.Imported_Model,assets:^importer.Import_Repo
         if node.mesh>=0 && node.mesh<len(assets.mesh_ids) {
             shown:=render.Mesh_Renderer{mesh=assets.mesh_ids[node.mesh]}
             if put(&scene,info,own,"Mesh_Renderer",&shown)!=.None {return report,.Write}
+            if !model_collider(&scene,info,own,model.meshes[node.mesh]) {return report,.Write}
             if !model_morphs(&scene,info,own,node,model.meshes[node.mesh],bone_rig[i]>=0) {return report,.Write}
             if skinned {
                 mesh:=model.meshes[node.mesh]
@@ -165,6 +167,20 @@ put :: proc(scene:^asset.Scene,info:^core.World_Info,id:base.Entity_Id,name:stri
     if _,declared:=core.world_table_index_of_hash(core.world_ref(nil,info),base.name_hash(name));!declared {return .None}
     return asset.scene_set(scene,id,name,value)
 }
+
+// An entity that shows a mesh with colliders of its source collides with
+// them: an Auto Collider of the physics plugin, by the name of its kind. A
+// mesh without them gives the entity none.
+@(private="file")
+model_collider :: proc(scene:^asset.Scene,info:^core.World_Info,entity:base.Entity_Id,mesh:importer.Imported_Mesh) -> bool {
+    if len(mesh.collision.colliders)==0 {return true}
+    collider:=Collider{kind=.Auto}
+    return put(scene,info,entity,"Collider",&collider)==.None
+}
+@(private="file")
+Collider_Kind :: enum u8 {Auto}
+@(private="file")
+Collider :: struct {kind:Collider_Kind}
 
 // The fields of the components of the animation plugin the import sets.
 @(private="file")
