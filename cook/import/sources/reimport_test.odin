@@ -371,10 +371,21 @@ a_checkout_without_its_imported_folder_gets_the_same_assets_from_its_sources :: 
     current:=sync(root,caches,context.temp_allocator)
     testing.expectf(t,current.sources==3 && current.imported==0 && current.removed==0 && len(current.failures)==0,"%v",current)
 
-    // What a clone has: no imported folder.
+    // What a clone has: no imported folder. Each source it imports is said as it starts, with how many there are.
     testing.expect(t,base.remove_all(fmt.tprintf("%s/.mirai",root))==nil)
-    cloned:=sync(root,caches,context.temp_allocator)
+    said:strings.Builder
+    strings.builder_init(&said,context.temp_allocator)
+    told:=caches
+    told.progress=strings.to_writer(&said)
+    cloned:=sync(root,told,context.temp_allocator)
     testing.expectf(t,cloned.sources==3 && cloned.imported==3 && len(cloned.failures)==0 && len(cloned.warnings)==0,"%v",cloned)
+    for source in sources {
+        line:=""
+        for text in strings.split_lines(strings.to_string(said),context.temp_allocator) {
+            if strings.has_prefix(text,"importing ") && strings.contains(text,filepath.base(source)) {line=text}
+        }
+        testing.expectf(t,strings.contains(line," of 3): "),"a line says %s and how far the sync is: %q",source,strings.to_string(said))
+    }
     for file in built {
         bytes,read_error:=os.read_entire_file(file.path,context.temp_allocator)
         testing.expectf(t,read_error==nil && header_of(file.path).id==file.id && slice.equal(bytes,file.bytes),"%s is the asset it was, byte for byte",file.path)

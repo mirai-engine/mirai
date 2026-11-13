@@ -31,7 +31,7 @@ PARALLEL_TEXELS :: 128*128
 
 Error :: enum u8 {
     None,
-    Unsupported, // not an image stb can decode
+    Unsupported, // not an image that can be decoded
     Too_Large,   // a side above asset.TEXTURE_MAX_SIZE
     Out_Of_Memory,
     Invalid,     // texels that do not fill the size and layers they claim

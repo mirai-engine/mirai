@@ -3,6 +3,7 @@ package sources
 import "base:runtime"
 import "core:fmt"
 import "core:io"
+import "core:path/filepath"
 import "core:strconv"
 import "core:strings"
 import "core:time"
@@ -35,7 +36,9 @@ import "mirai:std/jobs"
 // keeps them Final: what a build that does not cook takes.
 // The report goes to output, one asset per line: id, kind, bytes and path, and
 // under it, indented, what the asset holds; then the settings file and the
-// warnings. A failure goes to errors as "mirai import: <file>: <reason>".
+// warnings. How far a long import is goes to errors while it runs, and a
+// failure as "mirai import: <file>: <reason>". A sync says each source it
+// imports, and how far it is, in output.
 // --profile adds the seconds each zone of the import took, summed over the
 // threads that cooked it and on the thread that imports, and the time no zone
 // of that thread covers.
@@ -218,6 +221,9 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
     started:=time.tick_now()
     if profiled && !importer.profile_begin(&profile,&options) {fmt.wprintln(errors,"mirai import: no memory for --profile");return 1}
     defer if profiled {profile_print(&profile,started,output);base.profile_destroy(&profile)}
+    progress:importer.Progress
+    importer.progress_begin(&progress,errors,filepath.base(file))
+    options.progress=&progress
     report,error:=import_source(file,options,formats,plugins.wholes)
     if error.code!=.None {
         fmt.wprintfln(errors,"mirai import: %s: %s",file,error.message)
@@ -236,7 +242,7 @@ sync_command :: proc(roots:[]string,options:importer.Import_Options,library:Libr
     code:=0
     for root in roots {
         started:=time.tick_now()
-        report:=sync(root,{texture_cache=options.texture_cache,mesh_cache=options.mesh_cache,rebuild=options.rebuild,fast_textures=options.fast_textures,worker=options.worker,library=library})
+        report:=sync(root,{texture_cache=options.texture_cache,mesh_cache=options.mesh_cache,rebuild=options.rebuild,fast_textures=options.fast_textures,worker=options.worker,library=library,progress=output})
         defer sync_report_destroy(&report)
         for warning in report.warnings {fmt.wprintfln(output,"warning: %s",warning)}
         for failure in report.failures {fmt.wprintfln(errors,"mirai import: %s",failure)}

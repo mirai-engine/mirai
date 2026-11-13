@@ -43,30 +43,24 @@ built_textures_are_kept_by_image_and_settings_and_read_back_whole :: proc(t:^tes
     _,no_folder:=cache_read("",key,&types,context.temp_allocator)
     testing.expect(t,!no_folder && !cache_write("",key,&types,&built))
 
-    // Above its budget the cache keeps what was used last: a read counts as a use.
+    // A file no build used for UNUSED_AGE goes, however small the folder; a read is a use.
     trimmed:=base.test_folder(t,"textures-trim")
     if trimmed=="" {return}
-    keys:[3]u64
+    keys:[2]u64
+    long_ago:=time.time_add(time.now(),-cache.UNUSED_AGE-time.Hour)
     for &key_of,at in keys {
         other[0]=u8(at)
         key_of=cache_key_build(other,rgba8(other,16,16),options)
-        if at==2 {break}
         level_built,_:=build(rgba8(other,16,16),options,context.temp_allocator)
         testing.expect(t,cache_write(trimmed,key_of,&types,&level_built))
-        time.sleep(20*time.Millisecond)
+        testing.expect(t,os.change_times(fmt.tprintf("%s/%016x.tex",trimmed,key_of),long_ago,long_ago)==nil)
     }
-    entry,_:=os.stat(fmt.tprintf("%s/%016x.tex",trimmed,keys[0]),context.temp_allocator)
     _,first_read:=cache_read(trimmed,keys[0],&types,context.temp_allocator)
-    testing.expect(t,first_read && entry.size>0)
-    time.sleep(20*time.Millisecond)
-    other[0]=2
-    third,_:=build(rgba8(other,16,16),options,context.temp_allocator)
-    testing.expect(t,cache_write(trimmed,keys[2],&types,&third,budget=entry.size*28/10))
+    testing.expect(t,first_read)
+    testing.expect_value(t,cache.trim(trimmed),1)
     _,kept_first:=cache_read(trimmed,keys[0],&types,context.temp_allocator)
     _,kept_second:=cache_read(trimmed,keys[1],&types,context.temp_allocator)
-    _,kept_third:=cache_read(trimmed,keys[2],&types,context.temp_allocator)
-    testing.expect(t,kept_first && !kept_second && kept_third,"the one used longest ago goes")
-    testing.expect_value(t,cache.trim(trimmed,entry.size*28/10),0)
+    testing.expect(t,kept_first && !kept_second,"the one read lately stays and the one unused for long goes")
 
     // A file of the cache that does not read back whole is no texture.
     path:=fmt.tprintf("%s/%016x.tex",folder,key)

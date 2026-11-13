@@ -131,6 +131,16 @@ output_warn :: proc(o:^Outputs,format:string,args:..any) {
     append(&o.report.warnings,fmt.aprintf(format,..args,allocator=o.report.allocator))
 }
 
+// Whether every output of the cache the sidecar lists has its file under the
+// key of what the import builds from: then the writer keeps each, and a model
+// read ahead for it needs nothing cooked (model_cook). It fixes that key:
+// every input is given (output_input) before.
+outputs_current :: proc(o:^Outputs) -> bool {
+    if current,known:=o.current.?;known {return current}
+    o.current=writer_current(&o.w)
+    return o.current.?
+}
+
 // Ends the outputs: writes the sidecar of the source and gives the report,
 // with a warning for each output the sidecar listed that none took. failed
 // removes the files the outputs created, leaves the sidecar as it was and

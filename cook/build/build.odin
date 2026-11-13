@@ -891,7 +891,6 @@ job_imports :: proc(job:^Job) -> bool {
         job_fail(job,.Import_Failed)
         return false
     }
-    if message!="" {fmt.println(message)}
     return true
 }
 

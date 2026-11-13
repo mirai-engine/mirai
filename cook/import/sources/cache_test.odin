@@ -131,7 +131,7 @@ an_import_takes_a_texture_that_another_import_built_from_the_texture_cache :: pr
     options:=importer.Import_Options{texture_cache=cache}
     format,mips,first,_:=imported(t,&types,folder,"a",bytes,options)
     testing.expect(t,format==.BC1 && mips==5)
-    entries,_:=os.read_all_directory_by_path(cache,context.temp_allocator)
+    entries:=cached_files(cache,".tex")
     if !testing.expect_value(t,len(entries),1) {return}
 
     // Another import of the same image has the same levels, made from the cache.
@@ -188,7 +188,7 @@ an_import_takes_a_mesh_that_another_import_built_from_the_mesh_cache :: proc(t:^
     mesh_path,ok:=imported(t,source,options)
     if !ok {return}
     built,_:=os.read_entire_file(mesh_path,context.temp_allocator)
-    entries,_:=os.read_all_directory_by_path(options.mesh_cache,context.temp_allocator)
+    entries:=cached_files(options.mesh_cache,".mesh")
     if !testing.expect_value(t,len(entries),1) {return}
 
     // A mesh whose file is gone is built from the cache, to the same bytes.
@@ -219,4 +219,13 @@ an_import_takes_a_mesh_that_another_import_built_from_the_mesh_cache :: proc(t:^
     if _,ok=imported(t,source,options);!ok {return}
     last,_:=os.read_entire_file(mesh_path,context.temp_allocator)
     testing.expect(t,string(last)==string(built))
+}
+
+// The files of a cache folder that hold what was built, of extension.
+@(private="file")
+cached_files :: proc(folder,extension:string) -> []os.File_Info {
+    entries,_:=os.read_all_directory_by_path(folder,context.temp_allocator)
+    files:=make([dynamic]os.File_Info,context.temp_allocator)
+    for entry in entries {if strings.has_suffix(entry.name,extension) {append(&files,entry)}}
+    return files[:]
 }
