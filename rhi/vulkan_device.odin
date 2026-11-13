@@ -979,7 +979,6 @@ device_destroy :: proc(d: ^Device) {
 		if d.immediate_pool != 0 {d.dvk.DestroyCommandPool(d.handle, d.immediate_pool, nil)}
 		for fence in d.immediate_fences {if fence != 0 {d.dvk.DestroyFence(d.handle, fence, nil)}}
 		for &e in d.unframed {vk_release_deferred(d, &e)}
-		delete(d.unframed)
 		if d.timeline != 0 {d.dvk.DestroySemaphore(d.handle, d.timeline, nil)}
 		vk_memory_shutdown(d, true)
 		if d.store_path_len > 0 {_ = pipeline_store_save(&d.pipelines_kept, string(d.store_path[:d.store_path_len]))}
@@ -999,6 +998,7 @@ device_destroy :: proc(d: ^Device) {
 	delete(d.fresh)
 	for &f in d.frames {delete(f.deletions); delete(f.list.commands, d.allocator)}
 	delete(d.immediate.commands, d.allocator)
+	delete(d.unframed)
 	delete(d.swapchain.images)
 	delete(d.swapchain.present)
 	pool_destroy(&d.buffers, d.allocator)

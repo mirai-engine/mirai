@@ -182,17 +182,17 @@ vk_release_buffer_now :: proc(d: ^Device, buffer: Buffer) {
 	vk_memory_unbind(d, b.memory)
 }
 
-// The buffer the upload of the next transaction copies from, in the memory
-// of the host: that of its slot (vk_immediate_slot), which stays for its next
-// uploads grown to the largest so far, or for more than VK_STAGING_KEPT_BYTES
-// one for this upload alone. The GPU reads it after the call returns: it is
+// The buffer the upload of the open transaction copies from, in the memory
+// of the host: that of its slot, which immediate_begin freed and which stays
+// for its next uploads grown to the largest so far, or for more than
+// VK_STAGING_KEPT_BYTES one for this upload alone, which the slot releases
+// when it is freed again. The GPU reads it after the transaction ends: it is
 // the slot's until its fence signals.
 VK_STAGING_FIRST_BYTES :: u64(256) << 10
 VK_STAGING_KEPT_BYTES :: u64(1) << 20
 
 @(private)
 vk_staging_take :: proc(d: ^Device, size: u64) -> (staging: Buffer, bytes: [^]u8) {
-	if !vk_immediate_slot(d) {return}
 	at := d.immediate_at
 	if size > VK_STAGING_KEPT_BYTES {
 		staging = vk_create_buffer(d, {size = size, memory = .Staging, name = "upload staging"}, zero = false)
@@ -808,11 +808,11 @@ buffer_upload :: proc(d: ^Device, buffer: Buffer, offset: u64, data: []u8) -> bo
 	// An upload that writes all of it leaves nothing to zero.
 	whole := b.fresh && offset == 0 && u64(len(data)) == b.size
 	b.fresh &&= !whole
-	staging, bytes := vk_staging_take(d, u64(len(data)))
-	if staging == 0 {b.fresh ||= whole; return false}
-	mem.copy(bytes, raw_data(data), len(data))
 	cmd := immediate_begin(d)
 	if cmd == nil {b.fresh ||= whole; return false}
+	staging, bytes := vk_staging_take(d, u64(len(data)))
+	if staging == 0 {b.fresh ||= whole; vk_immediate_end(d, cmd, false); return false}
+	mem.copy(bytes, raw_data(data), len(data))
 	cmd_copy_buffer(cmd, staging, 0, buffer, offset, u64(len(data)))
 	return vk_immediate_end(d, cmd, false)
 }
@@ -832,13 +832,13 @@ texture_upload :: proc(d: ^Device, texture: Texture, data: []u8, bytes_per_row: 
 		set_error(d, "texture_upload: %d bytes do not cover %d layers of %dx%d", len(data), max(t.desc.layers, 1), area.width, area.height)
 		return false
 	}
+	cmd := immediate_begin(d)
+	if cmd == nil {return false}
 	staging, dst := vk_staging_take(d, row * rows)
-	if staging == 0 {return false}
+	if staging == 0 {vk_immediate_end(d, cmd, false); return false}
 	for y in 0 ..< rows {
 		mem.copy(&dst[y * row], &data[y * u64(bytes_per_row)], int(row))
 	}
-	cmd := immediate_begin(d)
-	if cmd == nil {return false}
 	cmd_copy_buffer_to_texture(cmd, staging, 0, texture, mip, area)
 	if .Sampled in t.desc.usage {cmd_barrier_texture(cmd, texture, .Shader_Read)}
 	return vk_immediate_end(d, cmd, false)
@@ -858,10 +858,10 @@ texture_upload_levels :: proc(d: ^Device, texture: Texture, levels: [][]u8) -> b
 		if u64(len(level)) < size {set_error(d, "texture_upload_levels: %d bytes do not cover mip %d", len(level), mip); return false}
 		total = align_up(total, 16) + size
 	}
-	staging, dst := vk_staging_take(d, total)
-	if staging == 0 {return false}
 	cmd := immediate_begin(d)
 	if cmd == nil {return false}
+	staging, dst := vk_staging_take(d, total)
+	if staging == 0 {vk_immediate_end(d, cmd, false); return false}
 	at: u64
 	for level, mip in levels {
 		at = align_up(at, 16)
