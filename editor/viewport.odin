@@ -160,6 +160,7 @@ Viewport :: struct {
     indicators_key:[2]u64,           // the world and the hierarchy the indicators were found in, and whether ghosts counted
     indicators_seen:[3]core.Seen,    // the meshes, the parents and Disabled then
     indicators_shapes:[3]core.Shape, // the transforms, Hidden and the ids then
+    indicators_cutoff:f32,           // m from the camera of the farthest disc drawn when more than INDICATOR_CAPACITY were in view; 0: all were
     levels:[dynamic]u8,              // highlight by entity index, as last written
     levels_key:Highlight_Key,
     levels_seen:[6]core.Seen,        // the parents, the ids, and in a box the transforms, the poses, Hidden and the meshes
@@ -846,9 +847,11 @@ indicators_draw :: proc(s:^Session,w:core.World_Ref) {
     spots:=core.world_table_of(w,erender.Spot_Light)
     es:=core.world_entities(w)
     zoom:=indicator_zoom(v)
-    Shown :: struct {entity:core.Entity,world:mm.Transform,shade,distance,points,meters:f32}
+    // A selected or outlined disc goes before the rest: it ranks as the nearest.
+    Shown :: struct {entity:core.Entity,world:mm.Transform,shade,distance,rank,points,meters:f32}
     shown:[INDICATOR_CAPACITY]Shown
     count:=0
+    left_out:=false
     for e in v.indicators {
         world:=entity_world(w,e)
         shade:=indicator_shade(s,e,world.position,zoom)
@@ -858,15 +861,23 @@ indicators_draw :: proc(s:^Session,w:core.World_Ref) {
         p,_:=viewport_screen(v,world.position)
         margin:=points+INDICATOR_HALO*points/INDICATOR_RADIUS
         if p.x<v.origin.x-margin || p.y<v.origin.y-margin || p.x>v.origin.x+v.size.x+margin || p.y>v.origin.y+v.size.y+margin {continue}
-        item:=Shown{e,world,shade,linalg.distance(world.position,v.camera.position),points,meters}
+        distance:=linalg.distance(world.position,v.camera.position)
+        item:=Shown{e,world,shade,distance,indicator_kept(s,e)?0:distance,points,meters}
         if count<len(shown) {
             shown[count]=item
             count+=1
             continue
         }
+        left_out=true
         farthest:=0
-        for other,i in shown {if other.distance>shown[farthest].distance {farthest=i}}
-        if item.distance<shown[farthest].distance {shown[farthest]=item}
+        for other,i in shown {if other.rank>shown[farthest].rank {farthest=i}}
+        if item.rank<shown[farthest].rank {shown[farthest]=item}
+    }
+    // What is not drawn is not picked either (indicator_drawn).
+    v.indicators_cutoff=0
+    if left_out {
+        v.indicators_cutoff=1e-6
+        for item in shown {if item.rank>0 {v.indicators_cutoff=max(v.indicators_cutoff,item.distance)}}
     }
     density:=ctx.scale*ctx.font.density
     outer:=INDICATOR_RADIUS+INDICATOR_HALO
@@ -937,8 +948,20 @@ indicator_shade :: proc(s:^Session,e:core.Entity,position:[3]f32,zoom:f32) -> f3
     v:=s.viewport
     distance:=linalg.distance(position,v.camera.position)/zoom
     shade:=clamp((INDICATOR_REACH-distance)/(INDICATOR_REACH-INDICATOR_FADE),0,1)
-    if shade<1 && (entity_level(v,e)!=0 || s.selection!=nil && history.selection_has(s.selection,e)) {return 1}
+    if shade<1 && indicator_kept(s,e) {return 1}
     return shade
+}
+
+// A selected or outlined disc, which shows at any distance.
+indicator_kept :: proc(s:^Session,e:core.Entity) -> bool {
+    return entity_level(s.viewport,e)!=0 || s.selection!=nil && history.selection_has(s.selection,e)
+}
+
+// Whether the last frame drew the disc of an entity at a place, as far as how many it could
+// draw decides: the INDICATOR_CAPACITY nearest, the kept ones first.
+indicator_drawn :: proc(s:^Session,e:core.Entity,position:[3]f32) -> bool {
+    v:=s.viewport
+    return v.indicators_cutoff==0 || linalg.distance(position,v.camera.position)<=v.indicators_cutoff || indicator_kept(s,e)
 }
 
 @(private)

@@ -231,3 +231,58 @@ discs_shrink_with_distance_up_to_a_cap_near_and_are_drawn_behind_the_scene :: pr
     history.selection_set(&selection,{lights[3]})
     testing.expect_value(t,drawn(t,&session,ref,view,lights[:],meters[:]),4)
 }
+
+@(test)
+a_disc_left_out_of_the_frame_is_not_picked :: proc(t:^testing.T) {
+    world:Pick_Test_World
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    ref:=test_world_ref(&world)
+    eye:=[3]f32{0,0,10}
+    // More discs at 10 m than a frame draws, and one farther, apart on the screen.
+    lights:[INDICATOR_CAPACITY+1]core.Entity
+    places:[len(lights)][3]f32
+    for i in 0..<INDICATOR_CAPACITY {places[i]={-4+f32(i%32)*0.3,-2.5+f32(i/32)*0.3,0}}
+    far:=len(lights)-1
+    places[far]={0,7,-10}
+    for place,i in places {
+        lights[i]=core.create(&world.entities)
+        core.add(&world.ids,lights[i],core.Id{value=base.Entity_Id(i+1)})
+        core.add(&world.transforms,lights[i],core.Transform{position=place,rotation=1,scale={1,1,1}})
+        core.add(&world.points,lights[i],erender.Point_Light{})
+    }
+    test_world_settle(&world)
+    viewport:=Viewport{size={800,600},show_indicators=true}
+    defer viewport_free(&viewport)
+    viewport.camera={position=eye,forward={0,0,-1},up={0,1,0},fov_y=VIEW_FOV,near=VIEW_NEAR}
+    viewport.view_matrix=mm.look_at(eye,{},{0,1,0})
+    viewport.projection=mm.perspective_infinite(VIEW_FOV*mm.RAD_PER_DEG,800.0/600,VIEW_NEAR)
+    viewport.view_projection=viewport.projection*viewport.view_matrix
+    ctx:ui.Context
+    if !testing.expect(t,test_ui_init(&ctx,{max_panels=INDICATOR_CAPACITY,max_commands=4*INDICATOR_CAPACITY})) {return}
+    defer ui.context_destroy(&ctx)
+    g:=Editor_Ui{ctx=&ctx}
+    selection:history.Selection
+    defer delete(selection.entities)
+    app:=host.App{}
+    session:=Session{app=&app,viewport=&viewport,selection=&selection,gui=&g}
+    view:=ui.World_View{position=eye,rotation=1,fov_y=VIEW_FOV*mm.RAD_PER_DEG,viewport_height=600}
+    draw :: proc(s:^Session,w:core.World_Ref,view:ui.World_View,place:[3]f32) -> (count:int,placed:bool) {
+        ui.frame_begin(s.gui.ctx,{size={800,600},view=view,pointer_absent=true})
+        indicators_draw(s,w)
+        frame:=ui.frame_end(s.gui.ctx)
+        for p in frame.placements {placed||=p.position==place}
+        return len(frame.placements),placed
+    }
+    point,_:=viewport_screen(&viewport,places[far])
+    count,placed:=draw(&session,ref,view,places[far])
+    testing.expect(t,count==INDICATOR_CAPACITY && !placed,"the farthest is left out of the frame")
+    testing.expect_value(t,pick_point(&session,ref,point).entity,core.NONE)
+    marquee_select(&session,ref,{0,0,800,600},false)
+    testing.expect(t,len(selection.entities)==INDICATOR_CAPACITY && !history.selection_has(&selection,lights[far]),"a rectangle takes only what is drawn")
+    // Selected, it goes before the rest.
+    history.selection_set(&selection,{lights[far]})
+    count,placed=draw(&session,ref,view,places[far])
+    testing.expect(t,count==INDICATOR_CAPACITY && placed)
+    testing.expect_value(t,pick_point(&session,ref,point).entity,lights[far])
+}

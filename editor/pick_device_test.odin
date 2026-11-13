@@ -209,4 +209,17 @@ a_disc_the_scene_covers_is_not_picked_through_it :: proc(t:^testing.T) {
             }
         }
     }
+    // What the scene covers is neither in the menu of the point, nor in the AI context, nor in a rectangle.
+    picks:[4]Pick
+    point,_:=viewport_screen(&viewport,places[0])
+    count:=pick_through(&session,ref,point,picks[:])
+    testing.expect(t,count==1 && picks[0].entity==wall,"the menu of the point has the wall alone")
+    items:=scene_items(&session,ref)
+    for item in scene_item_next(&items) {
+        if !item.indicator {continue}
+        _,ok:=ai_item_rect(&session,ref,item)
+        testing.expectf(t,ok==(item.entity!=lights[0]),"the AI context takes %v: %v",item.entity,ok)
+    }
+    marquee_select(&session,ref,{0,0,800,600},false)
+    testing.expect(t,len(selection.entities)==3 && !history.selection_has(&selection,lights[0]),"a rectangle does not take the covered disc")
 }
