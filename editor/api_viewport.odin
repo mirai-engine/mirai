@@ -225,6 +225,8 @@ api_pixels_scale :: proc(pixels:[]u8,width,height:int,size:[2]i32,allocator:runt
 // Play of the user as the next frames of the window. wait: as app_capture_world, off the screen.
 @(private)
 api_play_pixels :: proc(s:^Session,r:^Run,frames:int,window:=false,wait:=time.Duration(0)) -> (pixels:[]u8,width,height:int,drawn:bool) {
+    // Its frames settle with every pipeline in place.
+    gpu.renderer_pipelines_wait(s.app.renderer,all=true)
     if r.owner==0 && window {
         before:=s.app.stats.frames_drawn
         api_frames(s,frames,0)

@@ -1037,6 +1037,8 @@ api_capture_size :: proc "contextless" (window:[2]i32,width,height:int) -> [2]i3
 @(private)
 api_capture_image :: proc(s:^Session,ui:bool,size:[2]i32,generated:=false,wait:=time.Duration(0)) -> (pixels:[]u8,width,height:int,ok:bool) {
     if ui {return host.app_capture_pixels(s.app,s.app.allocator,generated)}
+    // Its frames settle with every pipeline in place.
+    gpu.renderer_pipelines_wait(s.app.renderer,all=true)
     return host.app_capture_world(s.app,shown_world(s).data,API_CAPTURE_SETTLE,size,s.editor_world,s.app.allocator,wait)
 }
 

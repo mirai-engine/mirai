@@ -784,7 +784,7 @@ poses_refit :: proc(r:^Renderer,cmd:^rhi.Command_List)->bool {
             triangles+=mesh.rays[0].triangle_count;at+=1
         }
         params:=Skin_Jobs_Params{0,u32(refit),triangles,0}
-        rhi.cmd_bind_pipeline(cmd,r.pipelines[.Skin_Triangles])
+        rhi.cmd_bind_pipeline(cmd,pipeline_of(r,.Skin_Triangles)^)
         rhi.cmd_bind_buffer(cmd,SLOT_PASS0,bytes.buffer,bytes.offset,size)
         rhi.cmd_bind_buffer(cmd,SLOT_MESHES,s.mesh_buffer)
         rhi.cmd_bind_buffer(cmd,SLOT_VERTICES,s.vertex_buffer)
@@ -793,7 +793,7 @@ poses_refit :: proc(r:^Renderer,cmd:^rhi.Command_List)->bool {
         set_params(cmd,&params)
         rhi.cmd_dispatch(cmd,groups(triangles,64),1)
         // From the deepest level up: a node reads the boxes the level below wrote.
-        rhi.cmd_bind_pipeline(cmd,r.pipelines[.Skin_Refit])
+        rhi.cmd_bind_pipeline(cmd,pipeline_of(r,.Skin_Refit)^)
         rhi.cmd_bind_buffer(cmd,SLOT_PASS0,bytes.buffer,bytes.offset,size)
         rhi.cmd_bind_buffer(cmd,SLOT_BLAS_TRIANGLES,s.blas_triangle_buffer)
         rhi.cmd_bind_buffer(cmd,SLOT_BLAS_NODES,s.blas_node_buffer)

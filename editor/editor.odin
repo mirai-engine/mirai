@@ -17,6 +17,7 @@ import scene "mirai:engine/scene"
 import "mirai:host"
 import "mirai:platform"
 import "mirai:project"
+import gpu "mirai:render"
 import "mirai:std/base"
 import "mirai:std/jobs"
 import "mirai:std/subprocess"
@@ -426,7 +427,7 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
         assets_root=os.is_dir(assets)?assets:"",assets_imported=project.imported_path(root,context.temp_allocator),assets_cache=project.cache_path(root,project.REGISTRY_CACHE,allocator=context.temp_allocator),
         animation_cache=project.cache_path(root,project.ANIMATION_CACHE,allocator=context.temp_allocator),
         collision_cache=project.content_cache_path(root,project.COLLISION_CACHE,allocator=context.temp_allocator),
-        asset_mounts=mounts[:],shaders_root=root,
+        asset_mounts=mounts[:],shaders_root=root,tracer_later=true,
     })
     if app==nil {
         fmt.eprintfln("mirai: the editor could not start: %v",app_error)
@@ -495,6 +496,8 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
 advance :: proc(s:^Session) -> bool {
     app:=s.app
     if api_idle(s) {return !s.quit}
+    // --capture writes the last frame: the frames before it settle with every pipeline in place.
+    if s.capture!="" && s.frames>0 && int(s.frame)==max(s.frames-API_CAPTURE_SETTLE,0) {gpu.renderer_pipelines_wait(app.renderer,all=true)}
     // Behind other windows, out of Play and without an agent driving it, the editor runs slow.
     background:=u32(0) if playing(s) || api_active(s) else EDITOR_BACKGROUND_FPS
     if app.platform.background!=background {platform.set_background(app.platform,background)}

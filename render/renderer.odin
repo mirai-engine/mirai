@@ -428,6 +428,11 @@ Renderer_Desc :: struct {
 	// rows until its pipelines are made (pipeline_thread.odin). False: they
 	// are made in the frame that first asks for them.
 	pipeline_thread:       bool,
+	// The stages of rays traced by software are made on that thread after the
+	// renderer starts: until they are in place the frames draw no world, and
+	// those of a renderer without pipeline_thread wait for them. For the
+	// editor, which opens without waiting for the driver; never for a game.
+	tracer_later:          bool,
 }
 
 // What one frame draws besides the scene.
@@ -551,11 +556,14 @@ Renderer :: struct {
 	settings:        Settings,
 	highlight:       Highlight_Style, // the editor's outline levels
 	outlines:        Highlight_Style, // the game's outline styles: none drawn until it sets them
-	pipelines:       [Pipeline_Id]rhi.Pipeline, // of each stage that traces no rays, without constants
+	pipelines:       [Pipeline_Id]rhi.Pipeline, // of each stage of no tracer, without constants
 	variants:        [PIPELINE_VARIANTS]Pipeline_Variant, // the others (pipeline_of)
 	variant_count:   int,
 	variants_wanted: bool, // the variants a scene may ask for are asked of the pipeline thread before the next frame
 	pipeline_waiting: string, // the stage whose pass the frame skipped while its pipeline is made (Stats.problem)
+	tracer_later:    bool,   // Renderer_Desc.tracer_later
+	tracer_waiting:  bool,   // with it, a stage of rays traced by software may not be in place (tracer_later_missing)
+	tracer_missed:   string, // the one whose absence kept the frame from drawing the world (Stats.problem)
 	pipeline_problem: string, // the variants the device refused, in pipeline_problem_buffer
 	pipeline_problem_buffer: [256]u8,
 	shader_codes:    [Shader_Id]rhi.Shader_Code,
@@ -697,6 +705,7 @@ renderer_init :: proc(r: ^Renderer, desc: Renderer_Desc) -> bool {
 	r.scene.pages.jobs = desc.jobs
 	pipeline_thread_start(r)
 	r.pipelines_async = desc.pipeline_thread
+	r.tracer_later = desc.tracer_later
 	textures_init(r)
 	if !scene_ready {set_error(r, "scene tables: out of memory");return false}
 	if assets!=nil && assets.owned {
@@ -755,7 +764,9 @@ renderer_init :: proc(r: ^Renderer, desc: Renderer_Desc) -> bool {
 			return false
 		}
 	}
-	if !create_pipelines(r, {.Any, tracer_wanted(r, r.settings)}) || !pipelines_init(r) || !dfg_build(r) || !display_build(r, DISPLAY_SDR) {return false}
+	rays: bit_set[Pipeline_Rays] = {.Any}
+	if tracer := tracer_wanted(r, r.settings); tracer == .Hardware || !r.tracer_later {rays += {tracer}}
+	if !create_pipelines(r, rays) || !pipelines_init(r) || !dfg_build(r) || !display_build(r, DISPLAY_SDR) {return false}
 	hardware, made := tracer_settle(r, r.settings, retry = false)
 	if !made {return false}
 	r.hardware_rt = hardware
@@ -883,15 +894,15 @@ Pipeline_List :: struct {
 @(private)
 pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	list.count = 0
-	// A stage that traces rays has a shader for each tracer (`//! variant hw`),
-	// whose pipelines are kept as variants; one that only a tracer runs, in r.pipelines.
-	compute :: proc(list: ^Pipeline_List, r: ^Renderer, id: Pipeline_Id, shader: Shader_Id, rays := Pipeline_Rays.Any, required := true, twin := false) {
-		pipeline_listed(list, {id = id, target = pipeline_slot(r, id, rays if twin else .Any), shaders = {shader, shader}, name = reflect.enum_string(id),
+	// The pipelines of a stage of one tracer are kept as variants; a stage
+	// that traces rays has a shader for each (`//! variant hw`).
+	compute :: proc(list: ^Pipeline_List, r: ^Renderer, id: Pipeline_Id, shader: Shader_Id, rays := Pipeline_Rays.Any, required := true) {
+		pipeline_listed(list, {id = id, target = pipeline_slot(r, id, rays), shaders = {shader, shader}, name = reflect.enum_string(id),
 			rays = rays, required = required})
 	}
 	traced :: proc(list: ^Pipeline_List, r: ^Renderer, id: Pipeline_Id, software, hardware: Shader_Id) {
-		compute(list, r, id, software, .Software, twin = true)
-		compute(list, r, id, hardware, .Hardware, twin = true)
+		compute(list, r, id, software, .Software)
+		compute(list, r, id, hardware, .Hardware)
 	}
 	graphics :: proc(list: ^Pipeline_List, r: ^Renderer, id: Pipeline_Id, desc: rhi.Graphics_Pipeline_Desc, rays := Pipeline_Rays.Any) {
 		clip := pipeline_uses_clip_distance(id)
@@ -1224,19 +1235,23 @@ variants_listed :: proc(r: ^Renderer, list: ^Pipeline_List, selected: bool) {
 }
 
 // The variants of the tracer in use that are not made, asked of the pipeline
-// thread behind what frames ask for: the renderer made those the settings
-// select when it started (create_pipelines). One past the jobs of the thread
-// is asked before a later frame.
+// thread behind what frames ask for, its stages without constants first: the
+// renderer made those and the variants the settings select when it started
+// (create_pipelines), unless they are of a tracer it makes later
+// (Renderer_Desc.tracer_later). One past the jobs of the thread is asked
+// before a later frame.
 @(private)
 pipeline_variants_ask :: proc(r: ^Renderer) {
 	r.variants_wanted = false
 	tracer := Pipeline_Rays.Hardware if r.hardware_rt else .Software
 	list: Pipeline_List
+	pipelines_list(r, &list)
 	variants_listed(r, &list, true)
 	variants_listed(r, &list, false)
+	info := rhi.device_info(r.device)
 	for item in list.items[:list.count] {
 		v := variant_of(r, item.target)
-		if item.rays != .Any && item.rays != tracer || v.state != .None {continue}
+		if v == nil || item.rays != .Any && item.rays != tracer || v.state != .None || !pipeline_possible(info, item) {continue}
 		graphics, compute := pipeline_desc(r, item)
 		if pipeline_make(r, item.target, graphics, compute, early = true) {v.state = .Asked} else {r.variants_wanted = true}
 	}
@@ -1348,8 +1363,10 @@ tracer_wanted :: proc(r: ^Renderer, settings: Settings) -> Pipeline_Rays {
 // Makes the pipelines of the tracer settings ask for that r lacks: a
 // transaction that may allocate. Rays are traced by hardware when it is wanted and its pipelines
 // are made, and otherwise by software; then r.hardware_rt_note says why.
-// retry: the hardware ones that were refused are asked for again. False, with
-// r.error, when the software ones are not made.
+// With r.tracer_later the software ones are asked of the pipeline thread
+// instead (pipeline_variants_ask), and the frames wait for them
+// (tracer_later_missing). retry: the hardware ones that were refused are
+// asked for again. False, with r.error, when the software ones are not made.
 @(private)
 tracer_settle :: proc(r: ^Renderer, settings: Settings, retry: bool) -> (hardware: bool, ok: bool) {
 	if tracer_wanted(r, settings) == .Hardware {
@@ -1364,11 +1381,43 @@ tracer_settle :: proc(r: ^Renderer, settings: Settings, retry: bool) -> (hardwar
 		return false, false
 	}
 	if tracer_missing(r, .Software) == "" {return false, true}
+	if r.tracer_later {
+		r.tracer_waiting, r.variants_wanted = true, true
+		return false, true
+	}
 	if !create_pipelines(r, {.Software}) || tracer_missing(r, .Software) != "" {
 		set_error(r, "the pipeline %s of rays traced by software was not made (%s). Freeing GPU memory or a newer GPU driver may make it", tracer_missing(r, .Software), rhi.device_error(r.device))
 		return false, false
 	}
 	return false, true
+}
+
+// With r.tracer_later, the name of a stage of rays traced by software that is
+// not in place, "" when all are: the frame draws no world without it. A frame
+// needs it, so the pipeline thread makes it before what was asked ahead of
+// time, and a renderer without pipelines_async waits for it here. One the
+// device refused is reported once and stays out until the shaders change.
+@(private)
+tracer_later_missing :: proc(r: ^Renderer) -> string {
+	if !r.tracer_waiting {return ""}
+	if r.hardware_rt {r.tracer_waiting = false; return ""}
+	list: Pipeline_List
+	pipelines_list(r, &list)
+	info := rhi.device_info(r.device)
+	for item in list.items[:list.count] {
+		if item.rays != .Software || !item.required || item.target == nil || item.target^ != 0 || !pipeline_possible(info, item) {continue}
+		pipeline_urgent(r, item.target)
+		if !r.pipelines_async {renderer_pipelines_wait(r, item.target)}
+		if item.target^ != 0 {continue}
+		if v := variant_of(r, item.target); v != nil && v.state == .Asked && !pipeline_asked(r, item.target) {
+			v.state = .Refused
+			r.pipeline_problem = fmt.bprintf(r.pipeline_problem_buffer[:], "the device refused the pipeline %s of rays traced by software (%s): the world is not drawn until the shaders change; freeing GPU memory or a newer GPU driver may make it", pipeline_name(r, item), rhi.device_error(r.device))
+			set_error(r, "%s", r.pipeline_problem)
+		}
+		return pipeline_name(r, item)
+	}
+	r.tracer_waiting = false
+	return ""
 }
 
 // The stages of r that none of the pipelines its frames run now is made of:

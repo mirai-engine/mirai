@@ -621,7 +621,7 @@ tlas_instances_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> int {
 		at += record.count
 	}
 	params := Tlas_Batches_Params{jobs = u32(len(rows)), first = u32(scene), total = u32(s.batch.hw_count)}
-	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Tlas_Batches])
+	rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Tlas_Batches)^)
 	rhi.cmd_bind_transient(cmd, SLOT_PASS0, jobs)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS1, s.tlas_instance_buffer)
 	rhi.cmd_bind_buffer(cmd, SLOT_INDICES, s.index_buffer)

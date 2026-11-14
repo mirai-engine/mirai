@@ -5,6 +5,7 @@ import "core:mem"
 import "core:strings"
 import "core:testing"
 import "mirai:rhi"
+import "mirai:rhi/shared_device"
 
 @(private = "file", rodata)
 PASS_BINDINGS := [?]rhi.Binding_Info{
@@ -225,4 +226,34 @@ variants_are_made_as_the_settings_select_and_a_refused_one_once :: proc(t: ^test
 	testing.expectf(t, rhi.device_refused_pipelines(f.device) == 1, "the refused variant was asked for %d times in 100 frames", rhi.device_refused_pipelines(f.device))
 	testing.expectf(t, strings.contains(renderer_stats(r).problem, "refused the pipeline Composite"), "the frames say it: %s", renderer_stats(r).problem)
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
+}
+
+// With tracer_later the renderer starts without the stages of rays traced by
+// software, which the pipeline thread makes. A capture waits for every
+// pipeline asked, those asked ahead of time too, and one the device refuses
+// does not keep it waiting: it is asked for once and the frames say which.
+@(test)
+a_tracer_made_later_is_waited_for_and_a_refused_stage_does_not_block :: proc(t: ^testing.T) {
+	settings := DEFAULT_SETTINGS
+	settings.trace_mode, settings.colored_shadows = .Software, false
+	device := shared_device.take_or_skip(t)
+	if device == nil {return}
+	// Refused before the renderer starts: one that made it then would not start.
+	rhi.device_refuse_pipeline(device, "contact.comp", {})
+	defer rhi.device_refuse_pipeline(device, "", {})
+	f: Fixture
+	if !fixture_init(t, &f, 64, 48, settings, desc = {pipeline_thread = true, tracer_later = true}) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	camera := Camera{position = {0, 2, 2}, forward = {0, -2, -2}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	renderer_pipelines_wait(r, all = true)
+	testing.expect(t, pipeline_slot(r, .Contact, .Software)^ == 0, "the device refused it")
+	testing.expect(t, pipeline_slot(r, .Direct_Rays, .Software)^ != 0 && pipeline_slot(r, .Skin_Refit, .Software)^ != 0, "the wait puts the others in place")
+	testing.expect(t, pipeline_slot(r, .Direct_Samples, .Software, {DIRECT_SAMPLES_COMP_COLOR})^ != 0, "and those asked ahead of time")
+	for _ in 0 ..< 20 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	renderer_pipelines_wait(r, all = true)
+	testing.expectf(t, rhi.device_refused_pipelines(device) == 1, "the refused stage was asked for %d times", rhi.device_refused_pipelines(device))
+	testing.expectf(t, strings.contains(renderer_stats(r).problem, "refused the pipeline Contact"), "the frames say it: %s", renderer_stats(r).problem)
+	testing.expectf(t, rhi.device_validation_errors(device) == 0, "validation: %s", rhi.device_validation_message(device))
 }

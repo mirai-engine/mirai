@@ -122,6 +122,7 @@ app_gpu_create :: proc(app:^App,desc:App_Desc) -> App_Error {
         // A window or a surface shows each frame to someone, who would see one
         // wait for the driver; without them, what a frame draws does not depend on that time.
         pipeline_thread=desc.window || desc.shown,
+        tracer_later=desc.tracer_later,
     }) {
         log.errorf("renderer: %s",renderer.error)
         return .Renderer_Failed
