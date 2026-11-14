@@ -80,11 +80,12 @@
   other sets go to the pipeline thread behind what frames ask for. A frame does not wait for one
   being made (unless the renderer has no `pipeline_thread`): it takes the stage without the
   constants that only spare work or degrade (`optional`: `unlayered`, `color`), or skips the
-  pass, with `Stats.problem`. One the device refuses is not asked for again until the shaders
+  pass, with `Stats.problem`. A frame no window shows (`Frame_Desc.offscreen`: captures,
+  `play.capture`, recordings) waits instead for every pipeline it draws with, so its image never
+  depends on driver time. One the device refuses is not asked for again until the shaders
   change and is reported once. The editor's renderer (`Renderer_Desc.tracer_later`) starts
   without the stages of rays traced by software, which go to that thread first: until they are in
-  place its frames draw no world, or wait for them without `pipeline_thread`. A game never starts
-  so. The stage includes
+  place its frames draw no world, or wait for them where they wait. A game never starts so. The stage includes
   `native.slang`, which declares them; a source shared with stages that do not declare the
   constant asks `#ifdef DEFINE` before reading it. What the
   constants of a stage read is bound for every pipeline of it (a stand-in where it is off).

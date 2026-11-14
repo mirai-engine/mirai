@@ -259,7 +259,7 @@ renderer_shader_reload_begin :: proc(r:^Renderer,assets:^Shader_Assets,stop:^boo
     candidate,candidate_error:=new(Renderer,r.allocator)
     if candidate_error!=nil {set_error(r,"shader reload: out of memory for its renderer");return nil}
     candidate^=r^
-    candidate.shader_codes=assets.codes;candidate.pipelines={};candidate.variant_count=0;candidate.overlay_pipelines={};candidate.overlay_hw_pipelines={};candidate.program_graphics={};candidate.pipeline_thread=nil
+    candidate.shader_codes=assets.codes;candidate.pipelines={};candidate.variant_count=0;candidate.program_graphics={};candidate.pipeline_thread=nil
     candidate.reload_stop=stop
     candidate.frame_layout=frame_layout_of(assets)
     return candidate
@@ -277,8 +277,6 @@ renderer_shader_reload_build :: proc(candidate:^Renderer)->bool {
 renderer_abort_shader_reload :: proc(candidate:^Renderer) {
     if candidate==nil {return}
     pipelines_destroy(candidate)
-    for p in candidate.overlay_pipelines {if p!=0 {rhi.pipeline_destroy(candidate.device,p)}}
-    for p in candidate.overlay_hw_pipelines {if p!=0 {rhi.pipeline_destroy(candidate.device,p)}}
     free(candidate,candidate.allocator)
 }
 // The stages only the previews of assets draw with: a generation that changes
@@ -308,8 +306,6 @@ renderer_publish_shader_reload :: proc(r:^Renderer,assets:^Shader_Assets,candida
     rhi.device_wait_idle(r.device)
     pipelines_drop(r)
     pipelines_destroy(r)
-    for p in r.overlay_pipelines {if p!=0 {rhi.pipeline_destroy(r.device,p)}}
-    for p in r.overlay_hw_pipelines {if p!=0 {rhi.pipeline_destroy(r.device,p)}}
     shader_assets_destroy(&r.shader_assets)
     r.shader_assets=assets^;assets^={}
     r.frame_layout=frame_layout_of(&r.shader_assets)
@@ -317,10 +313,9 @@ renderer_publish_shader_reload :: proc(r:^Renderer,assets:^Shader_Assets,candida
     points_pipelines_destroy(r)
     program_graphics_destroy(r)
     program_catalog_destroy(&r.programs)
-    r.shader_codes=candidate.shader_codes;r.pipelines=candidate.pipelines;r.overlay_pipelines=candidate.overlay_pipelines
+    r.shader_codes=candidate.shader_codes;r.pipelines=candidate.pipelines
     r.variants,r.variant_count=candidate.variants,candidate.variant_count
-    r.overlay_hw_pipelines=candidate.overlay_hw_pipelines
-    candidate.pipelines={};candidate.overlay_pipelines={};candidate.overlay_hw_pipelines={};candidate.variant_count=0
+    candidate.pipelines={};candidate.variant_count=0
     if !scene {return true}
     r.targets.taa_valid=false;r.targets.glass_valid=false
     renderer_camera_cut(r)

@@ -41,8 +41,6 @@ World_Recording :: struct {
 app_recording_begin :: proc(app:^App,rec:^World_Recording,size:[2]i32,wide:render.View_Wide,audio_:bool) -> bool {
     rec^={size=size,wide=wide}
     if app.renderer==nil || size.x<=0 || size.y<=0 || wide==.None {return false}
-    // Its frames are of the settled world: not one of them is drawn without a pipeline.
-    render.renderer_pipelines_wait(app.renderer,all=true)
     texture,made:=render.view_texture_add(app.renderer,u32(size.x),u32(size.y),"recording")
     if !made {return false}
     rec.texture=texture

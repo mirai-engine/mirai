@@ -400,9 +400,9 @@ tests: the pieces of a mesh, numbered in UV1, fly in with a turn as its `progres
 - Without either of the two (headless sessions, tests, captures) the pipeline is made where it is
   requested: what a frame draws does not depend on driver time.
 - A thumbnail, a material capture or an impostor, which are read right away, wait for the pipeline.
-  `capture` without `ui`, `play.capture`, a recording and the editor's `--capture` first wait for
-  every pipeline asked, ahead of time too (`renderer_pipelines_wait` with `all`), then draw the
-  frames that let them settle.
+  The frames of `capture` without `ui`, `play.capture` and a recording are offscreen: they wait
+  for the stages they draw with ([variants](shaders.md#compilation)), so their settling frames run with
+  them. The editor's `--capture` waits for what its frames asked for before its last ones.
   `capture` and `app_capture_world` draw one more frame if the last one drew a program as
   its row (`renderer_pipelines_pending`, `renderer_pipelines_wait`); the editor images are drawn
   again when pipelines arrive (`renderer_pipelines_made`).
