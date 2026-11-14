@@ -225,12 +225,16 @@ the first time a type shows it and again when the mesh changes, like any cook:
   cell that changes writes only its block, the next draw takes the change and until then the
   buffer shows what it held; the room of a freed block is taken by the next cell that fits. In
   the `Gbuffer` stage of each view a dispatch (`foliage_impostor_cull.comp`) keeps the instances
-  of the band of their type whose sphere is in the frustum, and one indirect draw makes a quad of
-  each toward the eye, with a fragment of its own (`foliage_impostor.frag`): it blends the three
-  neighboring frames of the direction, each moved by its depth, and writes color, normal, the
-  terms of the material and the depth of the leaves (`SV_Depth`), so it is lit and shaded like
-  the scene. An instance names its row by the slot of its `Foliage` (`Resident_Owner.slot`) and
-  its type, so other `Foliage` coming and going rewrite nothing. Nested views do not draw it.
+  of the band of their type whose sphere is in the frustum and that the depth pyramid of the scene
+  does not hide, in two phases like the scene: the first draws those the pyramid of the previous
+  frame does not hide either, the pyramid is rebuilt with them, and the second draws those that
+  waited and that it shows, so they hide one another without popping. Each indirect draw makes a
+  quad of each toward the eye, with a fragment of its own (`foliage_impostor.frag`): it blends
+  the three neighboring frames of the direction, each moved by its depth, and writes color,
+  normal, the terms of the material and the depth of the leaves (`SV_Depth`), so it is lit and
+  shaded like the scene. An instance names its row by the slot of its `Foliage`
+  (`Resident_Owner.slot`) and its type, so other `Foliage` coming and going rewrite nothing.
+  Nested views do not draw it.
 - **Rays.** Per cell and type, according to the distance to the sources (`scene.resident`, with
   its hysteresis): near, the mesh batches; far, the crown (`crown_build`: the surface of the
   voxels dense in triangles, `CROWN_INSET` inside) as a `Rays_Only` batch that casts shadows if

@@ -175,3 +175,73 @@ a_variant_leans_downwind_about_its_place :: proc(t: ^testing.T) {
 	testing.expect(t, !differs(pixel_at(pixels, {-6, 0}), floor), "and not upwind")
 	testing.expect(t, differs(pixel_at(pixels, {-2.7, 0}), floor), "what is below its place stays")
 }
+
+// Copies the arguments of the two draws of the impostors of the frame to a
+// readback, after their pass.
+@(private = "file")
+impostor_draws_read :: proc(pass: ^render.Pass, user: rawptr) {
+	render.pass_readback(pass, {name = IMPOSTOR_DRAW, size = 32}, 0, {name = "test impostor draws", size = 32})
+}
+
+// Two impostors on the line of sight: the near one hides the far one, which
+// neither draw makes, and when the near one moves away the far one shows in
+// that same frame.
+@(test)
+an_impostor_another_hides_is_not_drawn_and_shows_when_it_moves :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	if !gpu_fixture_init(t, f) {return}
+	defer gpu_fixture_destroy(f)
+	d := &f.resident.impostors
+	defer impostor_draw_destroy(d)
+	// A grid of 2 frames a side of 4 pixels, covered and white, the leaves on
+	// the plane through the centre of the sphere.
+	frames: [3]u32
+	texels := [3][4]u8{{255, 255, 255, 255}, {128, 255, 128, 128}, {200, 0, 255, 0}}
+	for &texel, i in texels {
+		pixels: [8 * 8 * 4]u8
+		for k in 0 ..< 64 {copy(pixels[k * 4:], texel[:])}
+		texture, ok := render.texture_add(&f.renderer, {pixels = pixels[:], width = 8, height = 8, srgb = i == 0, name = "test impostor"})
+		if !testing.expect(t, ok, f.renderer.error) {return}
+		frames[i] = render.texture_index(texture)
+	}
+	append(&d.rows, Impostor_Row{sphere = {0, 0, 0, 1}, low = {-1, -1, -1, 0}, high = {1, 1, 1, 1e-3}, frames = {frames[0], frames[1], frames[2], 2 | 4 << 16}})
+	append(&d.bases, 0)
+	placed :: proc(at: [3]f32, size: f32, tint: [3]f32) -> Impostor_Instance {
+		b := render.batch_instance(at, 1, size)
+		return {position = b.position, rotation = b.rotation, scale = b.scale, color = render.batch_color(tint, 0)}
+	}
+	far := placed({0, 1, -6}, 1, {1, 0, 0})
+	block: u32
+	camera := gpu.Camera{position = {0, 1, 6}, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
+	center := proc(t: ^testing.T, f: ^Gpu_Fixture, camera: gpu.Camera, frames: int) -> (color: [3]i32, ok: bool) {
+		for _ in 0 ..< frames {
+			render.frame_pass(&f.renderer, .Gbuffer, foliage_impostors_record, &f.resident)
+			render.frame_pass(&f.renderer, .Gbuffer, impostor_draws_read)
+			floor := gpu.Instance_Desc{object_id = 1, mesh = f.cube, transform = mm.transform_matrix({{0, -0.5, 0}, mm.QUAT_IDENTITY, {40, 1, 40}}), tint = {0.05, 0.05, 0.05}}
+			gpu.scene_set_environment(&f.renderer, {direction = {0.3, -1, -0.6}, color = {1, 1, 1}, illuminance = 3}, {sky = {0.4, 0.5, 0.6}})
+			testing.expect(t, gpu.scene_update(&f.renderer, 0, {floor}, true), f.renderer.error)
+			testing.expect(t, gpu.renderer_frame(&f.renderer, {camera = camera}), f.renderer.error)
+		}
+		rhi.device_wait_idle(f.device)
+		pixels, _, _, captured := gpu.renderer_capture(&f.renderer)
+		if !testing.expect(t, captured, f.renderer.error) {return}
+		defer delete(pixels)
+		i := (HEIGHT / 2 * WIDTH + WIDTH / 2) * 4
+		return {i32(pixels[i]), i32(pixels[i + 1]), i32(pixels[i + 2])}, true
+	}
+	if !testing.expect(t, impostors_set(d, &block, {placed({0, 1, 0}, 2, {0, 1, 0}), far})) {return}
+	hidden, shown: [3]i32
+	ok: bool
+	if hidden, ok = center(t, f, camera, 8); !ok {return}
+	testing.expectf(t, hidden.g > hidden.r + 20, "the near one is in front, got %v", hidden)
+	data, _, read := render.readback(&f.renderer, f.resident.world, "test impostor draws")
+	if testing.expect(t, read && len(data) == 32, "the draws were read back") {
+		draws := (^[8]u32)(raw_data(data))^
+		testing.expectf(t, draws[1] == 1 && draws[5] == 0, "the far one is drawn neither first nor late: %v", draws)
+	}
+	if !testing.expect(t, impostors_set(d, &block, {placed({12, 1, 0}, 2, {0, 1, 0}), far})) {return}
+	if shown, ok = center(t, f, camera, 1); !ok {return}
+	testing.expectf(t, shown.r > shown.g + 20, "the far one shows in the frame the near one left, got %v", shown)
+	testing.expect(t, render.readback_release(&f.renderer, f.resident.world, "test impostor draws"))
+}

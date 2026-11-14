@@ -2206,6 +2206,7 @@ Stages_Seen :: struct {
 	written:       bool,    // rows went into it
 	sides:         [Glass_Side]int,
 	gbuffer:       bool,    // a pass over the G-buffer began and ended
+	pyramid:       bool,    // the Gbuffer pass built the depth pyramid and bound it, with no previous one in the first frame; no other stage binds it
 	counters:      bool,    // the counters of a name were bound
 	effect:        Texture_Handle, // the texture of the effect view the Effect pass drew
 	effect_size:   [2]u32,
@@ -2252,6 +2253,8 @@ render_stages_run_once_a_frame_and_for_its_view :: proc(t: ^testing.T) {
 			refused, _ := pass_texture(s, 4, {name = "test depth", format = .D32_Float, width = 8, height = 2})
 			seen.textures = (at == 0 || seen.textures) && kept_ok && previous_ok && flat_ok
 			seen.refused = !refused
+			_, pyramid := pass_depth_pyramid(s, 5)
+			seen.pyramid &&= !pyramid && !pass_depth_pyramid_build(s)
 			if at < len(seen.kept) {seen.kept[at] = kept}
 		case .Simulate:
 			at := seen.runs[.Simulate] - 1
@@ -2267,6 +2270,10 @@ render_stages_run_once_a_frame_and_for_its_view :: proc(t: ^testing.T) {
 			pass_gbuffer_begin(s, "test gbuffer")
 			pass_end(s)
 			seen.gbuffer = true
+			_, before := pass_depth_pyramid(s, 1, previous = true)
+			built := pass_depth_pyramid_build(s)
+			levels, now := pass_depth_pyramid(s, 0)
+			seen.pyramid = !before && built && now && levels == s.pass.t.hiz_levels
 		case .Blend:
 			seen.sides[s.glass] += 1
 			pass_blend_begin(s, "test blend")
@@ -2313,7 +2320,7 @@ render_stages_run_once_a_frame_and_for_its_view :: proc(t: ^testing.T) {
 	// The buffer of a world is made once and kept for it.
 	testing.expect_value(t, seen.worlds, [2]u64{r.world_key, r.world_key})
 	testing.expect_value(t, seen.made, [2]bool{true, false})
-	testing.expect(t, seen.written && seen.gbuffer && seen.counters)
+	testing.expect(t, seen.written && seen.gbuffer && seen.counters && seen.pyramid)
 	testing.expect_value(t, seen.sides, [Glass_Side]int{.All = 1, .Behind = 0, .Front = 0})
 	values, counted := renderer_counters(r, "test counters")
 	testing.expect(t, counted && values == {})

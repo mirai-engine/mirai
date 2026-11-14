@@ -206,6 +206,8 @@ pass_rows :: gpu.pass_rows
 pass_counters :: gpu.pass_counters
 pass_readback :: gpu.pass_readback
 pass_gbuffer_begin :: gpu.pass_gbuffer_begin
+pass_depth_pyramid :: gpu.pass_depth_pyramid
+pass_depth_pyramid_build :: gpu.pass_depth_pyramid_build
 // The next frame draws a mesh with a material (0: those of the mesh) in its
 // Gbuffer stage: each view keeps what they reflect and their layers.
 frame_gbuffer_mesh :: proc(renderer:^Renderer,mesh:Mesh_Handle,material:Material_Handle) {

@@ -33,6 +33,7 @@ IMPOSTOR_BLEND :: f32(0.1) // of the impostor distance: how far past it the mesh
 IMPOSTOR_BUFFER :: "foliage impostors"
 IMPOSTOR_VISIBLE :: "foliage impostors visible"
 IMPOSTOR_DRAW :: "foliage impostors draw"
+IMPOSTOR_WAITING :: "foliage impostors waiting"
 IMPOSTOR_SLOTS_MIN :: 4096 // instances the buffer holds at least
 IMPOSTOR_NONE :: 0xFFFFFFFF // the row of a place of the buffer that holds no instance
 
@@ -450,8 +451,11 @@ impostor_rows_build :: proc(resident:^Foliage_Resident,data:^Foliage_Data) {
 }
 
 // The impostors of the world into the G-buffer of each view: what changed
-// goes to the buffer, a dispatch keeps those in the band of their type and
-// in the view, and one draw makes a quad of each.
+// goes to the buffer, and a quad of each in the band of its type that the
+// view sees, in two phases as the scene is drawn: a dispatch keeps those the
+// depth pyramids of the view do not hide and one draw makes them, the
+// pyramid takes them, and a second dispatch and draw those of the first
+// that only the pyramid of the frame before hid (foliage_impostor_cull.comp).
 @(private)
 foliage_impostors_record :: proc(pass:^render.Pass,user:rawptr) {
     resident:=cast(^Foliage_Resident)user
@@ -469,7 +473,8 @@ foliage_impostors_record :: proc(pass:^render.Pass,user:rawptr) {
     }
     instances:=render.Buffer_Desc{name=IMPOSTOR_BUFFER,size=d.capacity}
     visible:=render.Buffer_Desc{name=IMPOSTOR_VISIBLE,size=slots*4}
-    args:=render.Buffer_Desc{name=IMPOSTOR_DRAW,size=16}
+    args:=render.Buffer_Desc{name=IMPOSTOR_DRAW,size=32}
+    waiting:=render.Buffer_Desc{name=IMPOSTOR_WAITING,size=16+slots*4}
     ok,made:=render.pass_buffer(pass,0,instances)
     if !ok {return}
     if made {
@@ -492,29 +497,60 @@ foliage_impostors_record :: proc(pass:^render.Pass,user:rawptr) {
     }
     base.truncate(&d.writes,kept)
     if d.whole {return}
+    // Two draws of 6 vertices, and none waiting: a dispatch of no groups.
+    start:=[8]u32{6,0,0,0,6,0,0,0}
+    none:=[4]u32{0,1,1,0}
     seen,_:=render.pass_buffer(pass,1,visible)
     counted,_:=render.pass_buffer(pass,2,args)
-    start:=[4]u32{6,0,0,0}
-    if !seen || !counted || !render.pass_buffer_write(pass,args,0,&start,size_of(start)) {return}
+    waits,_:=render.pass_buffer(pass,7,waiting)
+    if !seen || !counted || !waits || !render.pass_buffer_write(pass,args,0,&start,size_of(start)) || !render.pass_buffer_write(pass,waiting,0,&none,size_of(none)) {return}
     rows,uploaded:=render.pass_rows_upload(pass,raw_data(d.rows),len(d.rows)*size_of(Impostor_Row))
     bases,based:=render.pass_rows_upload(pass,raw_data(d.bases),len(d.bases)*size_of(u32))
     if !uploaded || !based {return}
     anchor:=render.origin_point(d.anchor,pass.origin)
-    Params :: struct {anchor:[4]f32,count:[4]u32}
-    params:=Params{anchor={anchor.x,anchor.y,anchor.z,0},count={u32(held),0,0,0}}
-    render.pass_pipeline(pass,cull)
-    render.pass_rows(pass,3,rows)
-    render.pass_rows(pass,4,bases)
-    if !render.pass_params(pass,&params,size_of(params)) {return}
-    render.pass_dispatch(pass,(u32(held)+63)/64)
-    render.pass_gbuffer_begin(pass,"foliage impostors")
-    render.pass_pipeline(pass,draw)
-    render.pass_buffer(pass,0,instances)
-    render.pass_buffer(pass,1,visible)
-    render.pass_rows(pass,3,rows)
-    render.pass_rows(pass,4,bases)
-    if render.pass_params(pass,&params,size_of(params)) {render.pass_draw_indirect(pass,args,0)}
+    v:=Impostor_View{cull=cull,draw=draw,instances=instances,visible=visible,args=args,waiting=waiting,rows=rows,bases=bases}
+    v.params.anchor,v.params.count.x={anchor.x,anchor.y,anchor.z,0},u32(held)
+    // What waits is tested against the pyramid with the first ones in it,
+    // which the frame after tests against too.
+    waited:=impostors_phase(pass,&v,false)
+    if render.pass_depth_pyramid_build(pass) && waited {impostors_phase(pass,&v,true)}
+}
+
+// What a view culls and draws its impostors with.
+@(private)
+Impostor_View :: struct {
+    cull,draw:render.Pipeline,
+    instances,visible,args,waiting:render.Buffer_Desc,
+    rows,bases:render.Pass_Rows,
+    params:struct {anchor:[4]f32,count:[4]u32}, // foliage_impostor.slang Impostor_Params
+}
+
+// A phase of the cull of the impostors of a view and its draw: the first, or
+// the late one of those it left waiting. waited: the first tested the
+// pyramid of the frame before, and those it hid wait for the late one.
+@(private)
+impostors_phase :: proc(pass:^render.Pass,v:^Impostor_View,late:bool) -> (waited:bool) {
+    render.pass_pipeline(pass,v.cull)
+    render.pass_buffer(pass,0,v.instances)
+    render.pass_buffer(pass,1,v.visible)
+    render.pass_buffer(pass,2,v.args)
+    render.pass_buffer(pass,7,v.waiting)
+    render.pass_rows(pass,3,v.rows)
+    render.pass_rows(pass,4,v.bases)
+    levels,now:=render.pass_depth_pyramid(pass,5)
+    levels_before,before:=render.pass_depth_pyramid(pass,6,previous=true)
+    v.params.count[1],v.params.count[2],v.params.count[3]=late?1:0,max(levels,levels_before),(now?1:0)|(before?2:0)
+    if !render.pass_params(pass,&v.params,size_of(v.params)) {return}
+    if late {render.pass_dispatch_indirect(pass,v.waiting,0)} else {render.pass_dispatch(pass,(v.params.count.x+63)/64)}
+    render.pass_gbuffer_begin(pass,late?"foliage impostors late":"foliage impostors")
+    render.pass_pipeline(pass,v.draw)
+    render.pass_buffer(pass,0,v.instances)
+    render.pass_buffer(pass,1,v.visible)
+    render.pass_rows(pass,3,v.rows)
+    render.pass_rows(pass,4,v.bases)
+    if render.pass_params(pass,&v.params,size_of(v.params)) {render.pass_draw_indirect(pass,v.args,late?16:0)}
     render.pass_end(pass)
+    return before && !late
 }
 
 // Past CELL_CROWN_REACH times the reach of the meshes of its types, a cell
