@@ -762,9 +762,11 @@ types_draw :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,entry:^Data_
         }
         variants:=wind_variants(t)
         amount:=sway_amount(t)
+        settled:=true
         fade,cull:=mesh_distances(t,false)
         fade,cull=fade*distance,cull*distance
         for piece in pieces {
+            settled&&=render.mesh_renderer_settled(assets,piece.renderer)
             desc,ok:=render.batch_desc(assets,piece.renderer)
             if !ok {
                 core.report(problems,owner.entity,"foliage.mesh","foliage type '%s' of source %s shows mesh %s, which is not loaded; give the type a .mesh of the assets",base.text_get(t.name[:]),host.assets_name(assets,entry.id,&name),host.assets_name(assets,piece.renderer.mesh,&other))
@@ -796,7 +798,7 @@ types_draw :: proc(resident:^Foliage_Resident,owner:^Resident_Owner,entry:^Data_
         if type_far(t) && draw.count>0 {
             parts:=owner.parts[draw.first:][:draw.count]
             key={t.mesh if t.mesh!={} else t.prefab,kind_frame(renderer,t,parts)}
-            draw.kind=kind_ensure(resident,assets,renderer,job_system,allocator,key,parts,problems,owner.entity)
+            draw.kind=kind_ensure(resident,assets,renderer,job_system,allocator,key,parts,settled,problems,owner.entity)
             if draw.kind>=0 && kind_ready(&resident.kinds[draw.kind]) {
                 draw.far=true
                 fade,cull=mesh_distances(t,true)

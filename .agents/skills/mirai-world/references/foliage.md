@@ -206,7 +206,10 @@ to the overrides).
 
 A type with `impostor_distance` less than its `cull_distance` (or without it) has a far shape
 (`far.odin`), one per asset it shows (mesh or prefab), frame size and world (`Kind_Key`), made
-the first time a type shows it and again when the mesh changes, like any cook:
+the first time a type shows it and again when the mesh changes, like any cook. Its frames are
+drawn once what its parts show is settled (`render.mesh_renderer_settled`: the mesh loaded, no
+texture of its materials arriving and their rows with the renderer), so they show the materials
+as they stay:
 
 - **Octahedral impostor** (Brucks): `render.impostor_capture` draws with the thumbnail renderer
   `IMPOSTOR_GRID`² frames of the upper half of the sphere, unlit: base color and coverage, normal

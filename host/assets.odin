@@ -1818,6 +1818,20 @@ assets_material_row :: proc(a:^Assets,id:base.Asset_Id) -> u32 {
     return material!=nil?material.row:0
 }
 
+// Whether the renderer draws a material loaded before as its file says: no
+// texture it shows is still arriving and its row went with assets_commit.
+// What captures an image of it once (an impostor) waits for that. One that
+// failed is drawn as it will stay; one never asked for is not drawn. True
+// without a renderer: nothing is drawn.
+assets_material_settled :: proc(a:^Assets,id:base.Asset_Id) -> bool {
+    if id=={} || a.renderer==nil {return true}
+    ref,known:=a.index[id]
+    if !known || ref.kind!=.Material {return false}
+    material:=&a.materials[ref.index]
+    if material.failed {return true}
+    return !material.waiting && !a.materials_dirty && !slice.contains(a.rows_dirty[:],material.row)
+}
+
 // --------------------------------------------------------------- derived rows
 
 @(private="file")

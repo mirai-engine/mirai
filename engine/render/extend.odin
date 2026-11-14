@@ -6,6 +6,7 @@ import "mirai:core"
 import "mirai:host"
 import gpu "mirai:render"
 import "mirai:rhi"
+import "mirai:std/base"
 
 // What a plugin extends the renderer with. Its runtime imports neither the
 // renderer nor the RHI: all it does to a frame is here.
@@ -528,6 +529,22 @@ batch_ray :: proc(renderer:^Renderer,world:core.World_Id,origin,direction:[3]f32
 batch_desc :: proc(a:^host.Assets,static:Mesh_Renderer) -> (desc:Batch_Desc,ok:bool) {
     instance:=mesh_instance(a,static,1) or_return
     return {mesh=instance.mesh,material=instance.material,slot_materials=instance.slot_materials,tint=instance.tint},true
+}
+
+// Whether the renderer draws what a Mesh_Renderer shows as its assets say:
+// its mesh loaded and each material it shows settled
+// (host.assets_material_settled), as mesh_instance takes them. What captures
+// an image of it once (an impostor) waits for that.
+mesh_renderer_settled :: proc(a:^host.Assets,static:Mesh_Renderer) -> bool {
+    if a==nil || a.renderer==nil {return true}
+    mesh:=static.mesh!={}?host.assets_mesh(a,static.mesh):host.assets_shape(a,static.shape)
+    if mesh==nil || mesh.handle==host.ASSETS_MESH_NONE {return false}
+    if mesh.slot_count==0 {return host.assets_material_settled(a,static.materials[0])}
+    for slot in 0..<mesh.slot_count {
+        material:=slot<MATERIAL_SLOTS?static.materials[slot]:base.Asset_Id{}
+        if !host.assets_material_settled(a,material!={}?material:mesh.slot_materials[slot]) {return false}
+    }
+    return true
 }
 
 Impostor_Part :: gpu.Impostor_Part

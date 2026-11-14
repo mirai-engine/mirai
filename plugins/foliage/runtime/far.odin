@@ -105,8 +105,10 @@ kind_find :: proc(resident:^Foliage_Resident,key:Kind_Key) -> ^Resident_Kind {
 // transaction that draws its frames and takes its triangles in a frame, and
 // fills out the frames, builds their levels and the crown in a job, given to
 // the renderer in a later frame. KINDS_A_FRAME of those steps a frame; -1
-// while it waits for one, or for its job.
-kind_ensure :: proc(resident:^Foliage_Resident,assets:^host.Assets,renderer:^render.Renderer,job_system:^jobs.Job_System,allocator:runtime.Allocator,key:Kind_Key,parts:[]Part_Draw,problems:^core.Problems,e:core.Entity) -> int {
+// while it waits for one, for its job, or, not made yet, until what its
+// parts show is settled (render.mesh_renderer_settled): its frames are
+// drawn once, as it will stay.
+kind_ensure :: proc(resident:^Foliage_Resident,assets:^host.Assets,renderer:^render.Renderer,job_system:^jobs.Job_System,allocator:runtime.Allocator,key:Kind_Key,parts:[]Part_Draw,settled:bool,problems:^core.Problems,e:core.Entity) -> int {
     for &kind,i in resident.kinds {
         if kind.key!=key {continue}
         if kind.bake==nil {return i}
@@ -115,7 +117,7 @@ kind_ensure :: proc(resident:^Foliage_Resident,assets:^host.Assets,renderer:^ren
         if !kind_finish(assets,renderer,allocator,&kind) {memory_problem(problems,e,"the crown of the far form of a type: its cells cast no shadow from afar")}
         return i
     }
-    if resident.kinds_left<=0 {return -1}
+    if resident.kinds_left<=0 || !settled {return -1}
     // Drawing its frames is the work of a frame: no cell is built with it.
     resident.kinds_left-=1
     resident.instances_left=0
