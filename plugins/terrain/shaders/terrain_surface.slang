@@ -31,57 +31,66 @@ struct Terrain_Mix {
     float weights[4];
 };
 
-// Adds the weight of a layer to what eight slots hold: to its own slot, or
-// in place of the lightest when it weighs more.
-void terrain_mix_add(inout uint layers[8], inout float weights[8], uint layer, float weight) {
-    if (weight <= 0.0) return;
-    int lightest = 0;
-    for (int i = 0; i < 8; i++) {
-        if (weights[i] > 0.0 && layers[i] == layer) { weights[i] += weight; return; }
-        if (weights[i] < weights[lightest]) lightest = i;
-    }
-    if (weight > weights[lightest]) { layers[lightest] = layer; weights[lightest] = weight; }
-}
-
-// The four heaviest of eight slots, normalized.
-Terrain_Mix terrain_mix_top(uint layers[8], float weights[8]) {
-    Terrain_Mix m;
-    float total = 0.0;
-    for (int slot = 0; slot < 4; slot++) {
-        int best = 0;
-        for (int i = 1; i < 8; i++) {if (weights[i] > weights[best]) best = i;}
-        m.layers[slot] = layers[best];
-        m.weights[slot] = max(weights[best], 0.0);
-        total += m.weights[slot];
-        weights[best] = -1.0;
-    }
-    for (int slot = 0; slot < 4; slot++) m.weights[slot] = total > 0.0 ? m.weights[slot] / total : (slot == 0 ? 1.0 : 0.0);
-    return m;
-}
-
 // The weights of the layers at texel coordinates at over a control map of
 // size texels, bilinear between its four texels around, and whether the cell
-// at is in is a hole.
+// at is in is a hole. The three layers of each texel are twelve candidates;
+// each takes the weight of the later ones of its layer, then the four
+// heaviest are kept. Every index is a constant once the loops unroll, so the
+// candidates stay in registers.
 Terrain_Mix terrain_weights_at(uint control, float2 size, float2 at, out bool hole) {
     float2 p = clamp(at, float2(0.0), size - 1.0);
     int2 low = int2(min(floor(p), max(size - 2.0, float2(0.0))));
     float2 f = p - float2(low);
-    uint layers[8];
-    float weights[8];
-    for (int i = 0; i < 8; i++) { layers[i] = 0u; weights[i] = 0.0; }
+    uint layers[12];
+    float weights[12];
+    uint mask = (1u << uint(WEIGHT_LAYER_BITS)) - 1u;
     hole = false;
+    [ForceUnroll]
     for (int corner = 0; corner < 4; corner++) {
         int2 offset = int2(corner & 1, corner >> 1);
-        float share = (offset.x == 1 ? f.x : 1.0 - f.x) * (offset.y == 1 ? f.y : 1.0 - f.y);
+        float share = (offset.x == 1 ? f.x : 1.0 - f.x) * (offset.y == 1 ? f.y : 1.0 - f.y) / float(WEIGHT_FULL);
         uint word = terrain_word(TERRAIN_TEXEL(control, min(low + offset, int2(size) - 1), size));
         if (corner == 0) hole = (word >> uint(WEIGHT_HOLE_BIT) & 1u) != 0u;
-        uint mask = (1u << uint(WEIGHT_LAYER_BITS)) - 1u;
         float first = float(word >> uint(WEIGHT_VALUES_SHIFT) & 255u), second = float(word >> uint(WEIGHT_VALUES_SHIFT + 8) & 255u);
-        terrain_mix_add(layers, weights, word & mask, share * first / float(WEIGHT_FULL));
-        terrain_mix_add(layers, weights, word >> uint(WEIGHT_LAYER_BITS) & mask, share * second / float(WEIGHT_FULL));
-        terrain_mix_add(layers, weights, word >> uint(2 * WEIGHT_LAYER_BITS) & mask, share * (float(WEIGHT_FULL) - first - second) / float(WEIGHT_FULL));
+        layers[3 * corner] = word & mask;
+        layers[3 * corner + 1] = word >> uint(WEIGHT_LAYER_BITS) & mask;
+        layers[3 * corner + 2] = word >> uint(2 * WEIGHT_LAYER_BITS) & mask;
+        weights[3 * corner] = share * first;
+        weights[3 * corner + 1] = share * second;
+        weights[3 * corner + 2] = share * max(float(WEIGHT_FULL) - first - second, 0.0);
     }
-    return terrain_mix_top(layers, weights);
+    [ForceUnroll]
+    for (int i = 0; i < 11; i++) {
+        [ForceUnroll]
+        for (int j = i + 1; j < 12; j++) {
+            bool same = layers[j] == layers[i] && weights[i] > 0.0;
+            weights[i] += same ? weights[j] : 0.0;
+            weights[j] = same ? 0.0 : weights[j];
+        }
+    }
+    Terrain_Mix m;
+    float total = 0.0;
+    [ForceUnroll]
+    for (int slot = 0; slot < 4; slot++) {
+        float best = -1.0;
+        uint layer = 0u;
+        int pick = 0;
+        [ForceUnroll]
+        for (int i = 0; i < 12; i++) {
+            bool heavier = weights[i] > best;
+            best = heavier ? weights[i] : best;
+            layer = heavier ? layers[i] : layer;
+            pick = heavier ? i : pick;
+        }
+        [ForceUnroll]
+        for (int i = 0; i < 12; i++) weights[i] = pick == i ? -1.0 : weights[i];
+        m.layers[slot] = layer;
+        m.weights[slot] = max(best, 0.0);
+        total += m.weights[slot];
+    }
+    [ForceUnroll]
+    for (int slot = 0; slot < 4; slot++) m.weights[slot] = total > 0.0 ? m.weights[slot] / total : (slot == 0 ? 1.0 : 0.0);
+    return m;
 }
 
 // A layer of the table of its source (terrain.layers_table).
