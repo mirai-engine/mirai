@@ -73,8 +73,6 @@ $P scene.write '{"entities":[{"name":"Valley mist","position":[0,0,0],"component
 - `variable` makes wisps and banks that drift and change by themselves; `density` is their mean.
 - `glow` (nits) is light the fog gives off on its own: where it is thick it shows that luminance
   over the light it scatters, as a haze lit from nowhere (a magic mist, the glow of a cave).
-  `glow_start` keeps it that many metres from the eye: a distant haze that leaves the near air
-  clear of it.
 
 ## Pitfalls that fail silently
 

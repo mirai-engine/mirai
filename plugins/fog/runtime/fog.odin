@@ -37,7 +37,6 @@ Fog_Volume :: struct {
     density:f32 `mirai:"min=0,unit=1/m"`,        // of the light that crosses a metre of it, about the share it stops
     color:[3]f32 `mirai:"color"`,                // of what it stops, the share it scatters; it absorbs the rest
     glow:[3]f32 `mirai:"min=0,unit=nit"`,        // the light it gives off on its own: where it is thick it shows this luminance, besides the light it scatters
-    glow_start:f32 `mirai:"min=0,unit=m"`,       // how far from the eye its glow begins: nearer it only scatters and stops light
     anisotropy:f32 `mirai:"min=-0.95,max=0.95"`, // above 0 it scatters forward, and a shaft glows more seen towards its light; below 0, back
     falloff:f32 `mirai:"min=0,unit=1/m"`,        // it thins with the height over its base: by e every 1/falloff metres
     base:f32 `mirai:"unit=m"`,                   // its base, where it has its density, over the bottom of its Volume or its entity: under it, it holds that density
@@ -80,7 +79,7 @@ Gpu_Volume :: struct {
     medium:[4]f32, // rgb what it scatters in a metre, a what it stops; of a variable one, the mean
     params:[4]f32, // x 1 over its wisp size (0: it does not vary), y anisotropy, z falloff, w the height of its base
     carve:[4]f32,  // x priority, y CARVE_* bits, z 1/m it takes of the light of the sun that crosses it
-    glow:[4]f32,   // rgb the luminance it gives off where it is thick, nits: for each metre of what it stops; w metres from the eye where it begins
+    glow:[4]f32,   // rgb the luminance it gives off where it is thick, nits: for each metre of what it stops
     cells:[WISP_OCTAVES][4]i32,  // xyz the cell of each layer of its wisps at the origin of the render now
     within:[WISP_OCTAVES][4]f32, // xyz where in that cell, 0 to 1
 }
@@ -224,7 +223,7 @@ volume_gpu :: proc(state:^Fog_Gpu,fog:Fog_Volume,place:volume.Volume,at:mm.Trans
         volume=volume.gpu_volume(place,at,fog.zone,outline,&state.outlines),
         medium={color.r*fog.density,color.g*fog.density,color.b*fog.density,fog.density},
         params={fog.variable?1/max(fog.wisp_size,0.1):0,clamp(fog.anisotropy,-0.95,0.95),max(fog.falloff,0),at.position.y},
-        glow={max(fog.glow.r,0),max(fog.glow.g,0),max(fog.glow.b,0),max(fog.glow_start,0)},
+        glow={max(fog.glow.r,0),max(fog.glow.g,0),max(fog.glow.b,0),0},
     }
     // The base is over the lowest point of a box, a sphere or an outline.
     if place.shape==.Box || place.shape==.Sphere || place.shape==.Outline {entry.params.w=volume.bounds(place,at,outline).min.y}
