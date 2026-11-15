@@ -55,7 +55,7 @@ Settings :: struct {
 	gi_enabled:           bool,
 	gi_strength:          f32,
 	trace_mode:           Trace_Mode,
-	resolution:           u32,    // the lines the views of the window aim for together, as a fraction of the lines they span, never above one pixel per point nor under RENDER_SCALE_MIN of one: the cost per pixel does not grow with the output
+	resolution:           u32,    // the lines the views of the window aim for together, as a fraction of the lines they span, never above one pixel per point nor under RENDER_SCALE_MIN of one: the cost per pixel does not grow with the output; 0, native: the lines they span
 	taa:                  bool,   // temporal anti-aliasing / upscaling to the window resolution
 	lod_error_pixels:     f32,    // raster LOD switch threshold (0 = always full detail)
 	batch_min_pixels:     f32,    // an instance of a batch whose box is fewer pixels across is not rasterized, and fades out from twice that; rays still meet it. 0: every one is drawn
@@ -103,7 +103,7 @@ DEFAULT_HIGHLIGHT_STYLE :: Highlight_Style{
 }
 
 DEFAULT_SETTINGS :: Settings{
-	gi_enabled = true, gi_strength = 1, trace_mode = .Auto, resolution = 1080, taa = true, lod_error_pixels = 1, batch_min_pixels = 1,
+	gi_enabled = true, gi_strength = 1, trace_mode = .Auto, taa = true, lod_error_pixels = 1, batch_min_pixels = 1,
 	probe_spacing = 1.0, probe_grid = 16, probe_cascades = 5, probe_rays = 128, probe_budget = 512,
 	gi_max_distance = 1e4, sun_shadows = true, light_budget = 8, direct_samples = 15,
 	firefly_clamp = 20, texture_max_size = 2048,
@@ -1487,7 +1487,7 @@ renderer_set_thumbnails :: proc(r: ^Renderer, pixels: []u8, width, height: int, 
 // what was made with the fields that changed: histories, probes and targets
 // that do not depend on them stay.
 renderer_apply_settings :: proc(r: ^Renderer, settings: Settings) -> bool {
-	if settings.resolution == 0 || settings.gi_strength < 0 || settings.probe_spacing <= 0 {return false}
+	if settings.gi_strength < 0 || settings.probe_spacing <= 0 {return false}
 	if settings.probe_grid < 4 || settings.probe_grid > PROBE_GRID_MAX || settings.probe_grid % 2 != 0 || settings.probe_cascades < 1 || settings.probe_cascades > VOLUME_CASCADES_MAX {return false}
 	if !(settings.reflection_roughness >= 0 && settings.reflection_roughness <= 1) {return false}
 	if settings.light_budget > LIGHT_CUT_MAX || settings.reflection_light_budget > LIGHT_CUT_MAX || settings.glass_layers < 1 || settings.glass_layers > GLASS_LAYERS_MAX {return false}
@@ -1817,9 +1817,9 @@ window_render_scale :: proc(r: ^Renderer, height: f32) -> f32 {
 }
 
 // Of the device pixels of views that span `height` of them, what a target of
-// lines draws the scene at.
+// lines draws the scene at; 0 lines, native: a pixel per point.
 views_render_scale :: proc "contextless" (lines: u32, height, density: f32) -> f32 {
-	if height <= 0 {return 1 / density}
+	if height <= 0 || lines == 0 {return 1 / density}
 	return min(max(f32(lines) / height, RENDER_SCALE_MIN / density), 1 / density)
 }
 

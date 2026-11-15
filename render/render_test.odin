@@ -987,8 +987,13 @@ a_target_of_lines_scales_the_views_of_the_window_together :: proc(t:^testing.T) 
     renderer_resize(r,200,100,2,2)
     testing.expect(t,renderer_frame(r,{camera=camera}),r.error)
     testing.expect(t,r.targets.width==100 && r.targets.height==50)
-    settings.resolution=0
-    testing.expect(t,!renderer_apply_settings(r,settings),"no lines is refused")
+    // Native, 0 lines: those the views span, a pixel per point.
+    target(t,r,&settings,20)
+    testing.expect(t,renderer_frame(r,{camera=camera}),r.error)
+    testing.expect(t,r.targets.height==20)
+    target(t,r,&settings,0)
+    testing.expect(t,renderer_frame(r,{camera=camera}),r.error)
+    testing.expect(t,r.targets.width==100 && r.targets.height==50)
 }
 
 // A settings change starts again only what was made with the fields that
