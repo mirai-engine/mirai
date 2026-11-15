@@ -1,6 +1,7 @@
 package mirai_render
 
 import "core:math"
+import "core:math/bits"
 import "core:math/linalg"
 import "mirai:render/abi"
 import "mirai:rhi"
@@ -30,9 +31,13 @@ SHADOW_MAPS_MAX :: 96
 SHADOW_MAP_ROWS :: abi.SHADOW_MAP_ROWS
 SHADOW_DRAWS :: 3 // the clusters that hide whole, those of masked materials and those of glass (shadow_cull.slang)
 SHADOW_GROUP :: u32(256) // the threads of a group of shadow_maps.comp
-SHADOW_PAGE :: u32(128) // texels a side of a page of a map: what the cache draws again is counted in them
+// A map is drawn by pages of SHADOW_PAGE texels a side: a change draws again
+// the pages its box covers alone.
+SHADOW_PAGE :: abi.SHADOW_PAGE
 SHADOW_MAP_SMALLEST :: SHADOW_PAGE
-SHADOW_MAP_LARGEST :: u32(2048)
+SHADOW_MAP_LARGEST :: SHADOW_PAGE * abi.SHADOW_MAP_PAGES
+SHADOW_MAP_PAGES :: abi.SHADOW_MAP_PAGES
+SHADOW_MASK_WORDS :: SHADOW_MAP_PAGES * SHADOW_MAP_PAGES / 32 // a bit for each page of a map
 SHADOW_LIGHT_FACES :: abi.SHADOW_LIGHT_FACES
 SHADOW_SPOT_FACE :: abi.SHADOW_SPOT_FACE
 // The cosine of the half angle of the widest spot that takes one map along
@@ -477,12 +482,17 @@ shadow_movers_update :: proc(r: ^Renderer) {
 @(private)
 Shadow_Plan :: struct {
 	using shadow: Shadow_Maps,
-	jobs:         u32, // what the cache draws again: windows of maps, two words each from word jobs_list
-	pages:        u32, // the pages those windows touch
+	// What the cache draws again: the maps with pages to draw, a word each from
+	// word jobs_list, and a bit for each page of each map from word
+	// jobs_masks (SHADOW_MASK_WORDS a map); every map from all_list, every
+	// page of each from all_masks, for the round of what moves.
+	jobs:         u32,
 	jobs_list:    u32,
-	all_list:     u32, // a job of each whole map, from this word
-	cleared:      u32, // the squares the cache clears, a word each from word squares_list
-	shifted:      u32, // and after them those whose texels move with their map
+	jobs_masks:   u32,
+	all_list:     u32,
+	all_masks:    u32,
+	pages:        u32, // the pages the cache draws again, which it clears first: a word each from word squares_list (shadow_page_word)
+	shifted:      u32, // after them, the squares whose texels move with their map
 	squares_list: u32,
 	moving:       bool, // what moves reaches a map
 	movers:       u32, // words of the bits of what moves, and after them
@@ -667,17 +677,28 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 			if w.light < 0 {snap(w)}
 		}
 	}
-	// What the cache holds the same and in which nothing that stays changed
-	// it keeps; the others it draws again this frame.
+	// What the cache holds the same it keeps, but for the pages that what
+	// stays changed in and those a moved cascade took in; the others it draws
+	// again whole this frame.
 	stale := &b.stale
-	redraw: [SHADOW_MAPS_MAX]bool
+	dirty: [SHADOW_MAPS_MAX]Shadow_Mask
 	for w, i in wants[:count] {
 		if !w.placed {continue}
-		redraw[i] = !same[i] || stale.covers
-		for box in stale.boxes[:stale.count] {
-			if redraw[i] {break}
-			redraw[i] = shadow_change_reaches(w.m, box)
+		n := w.side / SHADOW_PAGE
+		if !same[i] || stale.covers {
+			mask_rect(&dirty[i], {0, 0, n - 1, n - 1})
+			continue
 		}
+		for box in stale.boxes[:stale.count] {
+			if !shadow_change_reaches(w.m, box) {continue}
+			if rect, ok := shadow_page_rect(w.m, box.low, box.high); ok {mask_rect(&dirty[i], rect)}
+		}
+		// What came in: the columns past those it held and the rows above or below them.
+		dx, dy := moved[i].x, moved[i].y
+		if dx > 0 {mask_rect(&dirty[i], {(w.side - u32(dx)) / SHADOW_PAGE, 0, n - 1, n - 1})}
+		if dx < 0 {mask_rect(&dirty[i], {0, 0, (u32(-dx) - 1) / SHADOW_PAGE, n - 1})}
+		if dy > 0 {mask_rect(&dirty[i], {0, 0, n - 1, (u32(dy) - 1) / SHADOW_PAGE})}
+		if dy < 0 {mask_rect(&dirty[i], {0, (w.side - u32(-dy)) / SHADOW_PAGE, n - 1, n - 1})}
 	}
 	b.stale = {}
 	// The bits of what moves: the instances, then the batches drawn, after
@@ -738,28 +759,26 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 	}
 	// The buffer of this frame: a word for each light of the scene, then the
 	// maps placed, those of a light together in the order of its faces, then
-	// the jobs of what stays, a job of each whole map, and the squares the
-	// cache clears and those whose texels move.
+	// the maps and the pages of what stays, every map and every page of each,
+	// the pages the cache clears and the squares whose texels move.
 	all_lights := u32(lights + light_region_lights(s.light_region))
 	plan.rows = (all_lights + 3) / 4
-	placed := 0
-	for w in wants[:count] {if w.placed {placed += 1}}
-	tail := (2 * (2 * placed) + 2 * placed + placed + 3) / 4 * 4
+	placed, cleared := 0, 0
+	for w, i in wants[:count] {
+		if !w.placed {continue}
+		placed += 1
+		for word in dirty[i] {cleared += int(bits.count_ones(word))}
+	}
+	tail := (2 * placed + 2 * placed * SHADOW_MASK_WORDS + cleared + placed + 3) / 4 * 4
 	words, data := rhi.frame_alloc_typed(r.device, u32, int(plan.rows) * 4 + placed * SHADOW_MAP_ROWS * 4 + tail)
 	if words == nil {set_error(r, "transient ring exhausted with %d shadow maps", placed); return plan, false}
 	for &word in words {word = 0}
 	plan.jobs_list = plan.rows * 4 + u32(placed * SHADOW_MAP_ROWS * 4)
-	plan.all_list = plan.jobs_list + u32(2 * 2 * placed)
-	plan.squares_list = plan.all_list + u32(2 * placed)
-	job :: proc(words: []u32, list: u32, n: ^u32, map_index, x0, y0, x1, y1: u32) {
-		words[list + 2 * n^] = map_index | x0 << 8 | y0 << 20
-		words[list + 2 * n^ + 1] = x1 | y1 << 16
-		n^ += 1
-	}
-	pages :: proc(x0, y0, x1, y1: u32) -> u32 {return ((x1 + SHADOW_PAGE - 1) / SHADOW_PAGE - x0 / SHADOW_PAGE) * ((y1 + SHADOW_PAGE - 1) / SHADOW_PAGE - y0 / SHADOW_PAGE)}
+	plan.all_list = plan.jobs_list + u32(placed)
+	plan.jobs_masks = plan.all_list + u32(placed)
+	plan.all_masks = plan.jobs_masks + u32(placed * SHADOW_MASK_WORDS)
+	plan.squares_list = plan.all_masks + u32(placed * SHADOW_MASK_WORDS)
 	square :: proc(map_index: u32, shift: [2]i32) -> u32 {return map_index | u32(shift.x + 2048) << 8 | u32(shift.y + 2048) << 20}
-	redraws: u32
-	for w, i in wants[:count] {if w.placed && redraw[i] {redraws += 1}}
 	b.held_count = 0
 	at := u32(0)
 	for w, i in wants[:count] {
@@ -777,28 +796,33 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 			word^ |= 1 << (SHADOW_LIGHT_FACES + w.face)
 		}
 		(cast(^Gpu_Shadow_Map)&words[plan.rows * 4 + at * SHADOW_MAP_ROWS * 4])^ = w.m
-		side := w.side
-		dx, dy := moved[i].x, moved[i].y
-		if redraw[i] {
-			job(words, plan.jobs_list, &plan.jobs, at, 0, 0, side, side)
-			plan.pages += pages(0, 0, side, side)
-			words[plan.squares_list + plan.cleared] = square(at, {})
-			plan.cleared += 1
-		} else if moved[i] != {} {
-			// What came in: the columns past those it held and the rows above or below them.
-			if dx > 0 {job(words, plan.jobs_list, &plan.jobs, at, side - u32(dx), 0, side, side); plan.pages += pages(side - u32(dx), 0, side, side)}
-			if dx < 0 {job(words, plan.jobs_list, &plan.jobs, at, 0, 0, u32(-dx), side); plan.pages += pages(0, 0, u32(-dx), side)}
-			if dy > 0 {job(words, plan.jobs_list, &plan.jobs, at, 0, 0, side, u32(dy)); plan.pages += pages(0, 0, side, u32(dy))}
-			if dy < 0 {job(words, plan.jobs_list, &plan.jobs, at, 0, side - u32(-dy), side, side); plan.pages += pages(0, side - u32(-dy), side, side)}
-			words[plan.squares_list + redraws + plan.shifted] = square(at, moved[i])
-			plan.shifted += 1
+		n := w.side / SHADOW_PAGE
+		mask := (^Shadow_Mask)(&words[plan.jobs_masks + at * SHADOW_MASK_WORDS])
+		mask^ = dirty[i]
+		every := (^Shadow_Mask)(&words[plan.all_masks + at * SHADOW_MASK_WORDS])
+		mask_rect(every, {0, 0, n - 1, n - 1})
+		words[plan.all_list + at] = at
+		if dirty[i] != {} {
+			words[plan.jobs_list + plan.jobs] = at
+			plan.jobs += 1
+			for page in 0 ..< n * n {
+				x, y := page % n, page / n
+				if !mask_has(dirty[i], {x, y}) {continue}
+				words[plan.squares_list + plan.pages] = shadow_page_word(at, {x, y})
+				plan.pages += 1
+			}
 		}
-		all := plan.all_list
-		n := at
-		job(words, all, &n, at, 0, 0, side, side)
 		b.held[b.held_count] = {m = w.m, light = w.light, face = w.face, grid = w.grid, end = w.end, planned = planned[i]}
 		b.held_count += 1
 		at += 1
+	}
+	// The squares whose texels move, which the cache draws before it clears its pages.
+	for w, i in wants[:count] {
+		if !w.placed || !same[i] || moved[i] == {} {continue}
+		index := u32(0)
+		for v in wants[:i] {if v.placed {index += 1}}
+		words[plan.squares_list + plan.pages + plan.shifted] = square(index, moved[i])
+		plan.shifted += 1
 	}
 	plan.maps = at
 	plan.on = 1 if at > 0 else 0
@@ -806,19 +830,74 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 	return plan, true
 }
 
+// A bit for each page of a map, row by row of SHADOW_MAP_PAGES.
+@(private)
+Shadow_Mask :: [SHADOW_MASK_WORDS]u32
+
+@(private)
+mask_has :: proc "contextless" (mask: Shadow_Mask, page: [2]u32) -> bool {
+	bit := page.y * SHADOW_MAP_PAGES + page.x
+	return mask[bit / 32] & (1 << (bit % 32)) != 0
+}
+
+// Sets the pages from rect.xy to rect.zw, both included.
+@(private)
+mask_rect :: proc "contextless" (mask: ^Shadow_Mask, rect: [4]u32) {
+	for y in rect.y ..= min(rect.w, SHADOW_MAP_PAGES - 1) {
+		for x in rect.x ..= min(rect.z, SHADOW_MAP_PAGES - 1) {
+			bit := y * SHADOW_MAP_PAGES + x
+			mask[bit / 32] |= 1 << (bit % 32)
+		}
+	}
+}
+
+// A page of a map as the draws of the cache name it: the map, its column and
+// its row (shadow_page_word of shadow_cull.slang).
+@(private)
+shadow_page_word :: proc "contextless" (map_index: u32, page: [2]u32) -> u32 {return map_index | page.x << 8 | page.y << 16}
+
+// The pages of a map a box of the world covers from the light, the first
+// column and row then the last, as shadow_page_rect of shadow_cull.slang;
+// false where it covers none. A box that reaches the plane of a perspective
+// one covers all.
+@(private)
+shadow_page_rect :: proc "contextless" (m: Gpu_Shadow_Map, low, high: Vec3) -> (rect: [4]u32, ok: bool) {
+	side := f32(m.rect.z)
+	last := m.rect.z / SHADOW_PAGE - 1
+	lo, hi := Vec2{max(f32), max(f32)}, Vec2{-max(f32), -max(f32)}
+	for corner in 0 ..< 8 {
+		p := Vec3{high.x if corner & 1 != 0 else low.x, high.y if corner & 2 != 0 else low.y, high.z if corner & 4 != 0 else low.z} - m.origin
+		local := Vec3{linalg.dot(p, m.right), linalg.dot(p, m.up), linalg.dot(p, m.forward)}
+		at := local.xy
+		if m.kind != SHADOW_MAP_ORTHOGRAPHIC {
+			if local.z <= m.near * 0.5 {return {0, 0, last, last}, true}
+			at /= local.z
+		}
+		lo, hi = linalg.min(lo, at), linalg.max(hi, at)
+	}
+	// Texels from the corner of the square, row 0 at the top.
+	x0 := (lo.x - m.span.x) / (m.span.z - m.span.x) * side
+	x1 := (hi.x - m.span.x) / (m.span.z - m.span.x) * side
+	y0 := (m.span.w - hi.y) / (m.span.w - m.span.y) * side
+	y1 := (m.span.w - lo.y) / (m.span.w - m.span.y) * side
+	if x1 < 0 || y1 < 0 || x0 >= side || y0 >= side {return}
+	page :: proc "contextless" (texel: f32, last: u32) -> u32 {return u32(clamp(texel, 0, f32(last + 1) * f32(SHADOW_PAGE) - 1)) / SHADOW_PAGE}
+	return {page(x0, last), page(y0, last), page(x1, last), page(y1, last)}, true
+}
+
 // shadow_cull.slang Params_Block.
 @(private)
-Shadow_Params :: struct {instances, maps, rows, glass, chunk_capacity, entry_capacity, list, moving, movers, listed, ranges, pad2: u32}
+Shadow_Params :: struct {instances, maps, rows, glass, chunk_capacity, entry_capacity, list, moving, movers, listed, ranges, masks: u32}
 
 // The parameters of a round of the maps: the casters that stay into the jobs
 // of a list, or those that move and the glass into all the maps. Without
 // glass, the round of what moves culls the ranges of the movers that reach a
 // map alone.
 @(private)
-shadow_params :: proc(p: ^Pass, plan: Shadow_Plan, list, maps: u32, moving, glass: bool) -> Shadow_Params {
+shadow_params :: proc(p: ^Pass, plan: Shadow_Plan, list, masks, maps: u32, moving, glass: bool) -> Shadow_Params {
 	s := &p.r.scene
 	params := Shadow_Params{
-		instances = p.instance_count + p.batch_slots, maps = maps, rows = plan.rows, glass = 1 if glass else 0, list = list,
+		instances = p.instance_count + p.batch_slots, maps = maps, rows = plan.rows, glass = 1 if glass else 0, list = list, masks = masks,
 		chunk_capacity = s.cull_capacity[.Shadow_Chunks], entry_capacity = s.cull_capacity[.Shadow_Entries],
 		moving = 1 if moving else 0, movers = plan.movers,
 	}
@@ -856,8 +935,9 @@ shadow_cull :: proc(p: ^Pass, plan: Shadow_Plan, params: Shadow_Params) {
 }
 
 // The depth a round culled into an atlas: the clusters that hide whole and
-// those of masked materials. Of the cache, first the squares it clears and
-// those whose texels move, from what held holds (a copy of it).
+// those of masked materials. Of the cache, first the squares whose texels
+// move, from what held holds (a copy of it), then the pages it draws again,
+// cleared.
 @(private)
 shadow_draw :: proc(p: ^Pass, plan: Shadow_Plan, params: Shadow_Params, atlas: rhi.Texture, name: string, cache := false, held: rhi.Texture = 0) {
 	r, cmd := p.r, p.cmd
@@ -868,11 +948,12 @@ shadow_draw :: proc(p: ^Pass, plan: Shadow_Plan, params: Shadow_Params, atlas: r
 	pass := rhi.Render_Pass_Desc{name = name}
 	pass.depth = {texture = atlas, load = .Load, store = .Store}
 	rhi.cmd_begin_render_pass(cmd, &pass)
-	squares := [2]struct {pipeline: Pipeline_Id, first, count: u32}{{.Shadow_Map_Clear, 0, plan.cleared}, {.Shadow_Map_Moved, plan.cleared, plan.shifted}}
+	squares := [2]struct {pipeline: Pipeline_Id, first, count: u32}{{.Shadow_Map_Moved, plan.pages, plan.shifted}, {.Shadow_Map_Clear, 0, plan.pages}}
 	for kind in squares {
 		if !cache || kind.count == 0 {continue}
 		square := params
 		square.list, square.maps = plan.squares_list + kind.first, kind.count
+		square.moving = 1 if kind.pipeline == .Shadow_Map_Moved else 0
 		rhi.cmd_bind_pipeline(cmd, r.pipelines[kind.pipeline])
 		set_params(cmd, &square)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.shadow_entries)
@@ -927,7 +1008,7 @@ shadow_maps_pass :: proc(p: ^Pass) -> (maps: Shadow_Maps) {
 	r.stats.shadow_pages_drawn += plan.pages
 	r.stats.shadow_movers += plan.moving_threads
 	if plan.jobs > 0 {
-		params := shadow_params(p, plan, plan.jobs_list, plan.jobs, false, false)
+		params := shadow_params(p, plan, plan.jobs_list, plan.jobs_masks, plan.jobs, false, false)
 		rhi.cmd_timestamp(cmd, "shadow cull")
 		shadow_cull(p, plan, params)
 		rhi.cmd_timestamp(cmd, "shadow cache")
@@ -936,7 +1017,7 @@ shadow_maps_pass :: proc(p: ^Pass) -> (maps: Shadow_Maps) {
 	}
 	// What moves, over a copy of the cache, and the glass.
 	b.atlas = b.cache
-	params := shadow_params(p, plan, plan.all_list, plan.maps, true, tinted)
+	params := shadow_params(p, plan, plan.all_list, plan.all_masks, plan.maps, true, tinted)
 	if plan.moving || tinted {
 		rhi.cmd_timestamp(cmd, "shadow cull moving")
 		shadow_cull(p, plan, params)
