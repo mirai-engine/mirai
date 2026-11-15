@@ -224,6 +224,8 @@ haze of the whole world is the air of the sky, not a fog: one without a bounded 
 - `glow` (nits): the light it gives off on its own, for each meter of what it stops: where it is
   thick it shows this luminance over its scattered light, whatever its `color` and with no light in
   the scene. It is a luminance and enters the frame by its light scale (`render_units`).
+  `glow_start` (meters from the eye, along each ray) is where it begins: nearer, the medium only
+  scatters and stops; a cell of the grid or a slice past it glows by its part beyond that.
 - `anisotropy`: greater than 0 scatters forward, and a shaft shines more looked at toward its
   light; less than 0, backward (Henyey-Greenstein, up to ±0.95).
 - `falloff` (per meter): it thins with the height above its base (the lowest point of its

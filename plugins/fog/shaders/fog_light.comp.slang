@@ -49,8 +49,9 @@
 // scatter in a metre, a what they stop. mean: the same by the mean density
 // of each, what the light of the point is weighed by; mean_sun_only, what
 // of it the volumes the sun alone lights scatter; glow, what the mean gives
-// off on its own in a metre; g, their anisotropy.
-float4 fog_medium(float3 position, float taken, float footprint, out float4 mean, out float3 mean_sun_only, out float3 glow, out float g) {
+// off on its own in a metre over the cell, which reaches span metres from the
+// eye; g, their anisotropy.
+float4 fog_medium(float3 position, float taken, float footprint, float2 span, out float4 mean, out float3 mean_sun_only, out float3 glow, out float g) {
     float4 sum = float4(0.0);
     float3 sun_only = float3(0.0);
     float4 given = float4(0.0);
@@ -85,7 +86,7 @@ float4 fog_medium(float3 position, float taken, float footprint, out float4 mean
         }
         sum = volume_mix(sum, varied, w, v.volume);
         mean = volume_mix(mean, medium, w, v.volume);
-        given = volume_mix(given, float4(v.glow.rgb * medium.a, 0.0), w, v.volume);
+        given = volume_mix(given, float4(v.glow.rgb * (medium.a * fog_glow_share(v, span.x, span.y)), 0.0), w, v.volume);
         turned = v.volume.kind.y != 0u ? turned + t * w : lerp(turned, t, w);
     }
     g = turned / max(luminance(mean.rgb + mean_sun_only), 1e-8);
@@ -222,7 +223,8 @@ void main(uint3 id : SV_DispatchThreadID) {
     float3 mean_sun_only;
     float3 glow;
     float taken = fog_dry_at(position);
-    float4 medium = fog_medium(position, taken, footprint, mean, mean_sun_only, glow, g);
+    float2 span = float2(fog_slice_depth(float(id.z)), fog_slice_depth(float(id.z + 1u))) * length(view_ray(uv));
+    float4 medium = fog_medium(position, taken, footprint, span, mean, mean_sun_only, glow, g);
     medium_now[id] = float4(finite_or_zero(medium.rgb), isfinite(medium.a) ? max(medium.a, 0.0) : 0.0);
     float3 scattered = mean.rgb + mean_sun_only;
     float amount = fog_amount(float4(scattered, mean.a));
