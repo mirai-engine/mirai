@@ -216,18 +216,19 @@ A texture of an asset resides with the levels the GPU samples of it
 
 - **Source.** `Texture_Data.source` and `level` say which chain their levels belong to; `host` gives
   that of the `.tex`, which it reads again to give others.
-- **Feedback.** The stages that shade surfaces (`MIRAI_TEXTURE_FEEDBACK`: the G-buffer with its
-  nested views and programs, the glass layers, traced reflections, the probe rays and the material
-  points of programs) write, per texture, the finest level they read with an atomic minimum into a
-  buffer of the frame, which comes back like the page requests. A raster sample reports the level
-  anisotropic filtering reads from its uv derivatives and bias, each axis the shortest a device may
-  take: the levels kept are never coarser than what the sampler reads, and the image is that of the
-  whole texture. A ray reports the level its cone reads at the hit, so a texture seen only in a
-  reflection or by the probes loads. A sample of a program reports the level its uv and bias or
-  gradients read, as a map does; one that names its level (`mirai_sample_texture_level`) or asks
-  for the size (`mirai_texture_size`) keeps every level of the texture, since a level it names
-  counts from the largest one held. A loaded texel (`mirai_load_texture`) reports nothing: data
-  that does not stream would pay a read of the buffer at each pixel for no level.
+- **Feedback.** The stages that shade surfaces (`MIRAI_TEXTURE_FEEDBACK`: the resolve of the
+  G-buffer with its nested views and programs, the `Gbuffer` stage of extensions, the glass layers,
+  traced reflections, the probe rays and the material points of programs) write, per texture, the
+  finest level they read with an atomic minimum into a buffer of the frame, which comes back like
+  the page requests. A raster sample reports the level anisotropic filtering reads from its uv
+  derivatives and bias, each axis the shortest a device may take: the levels kept are never coarser
+  than what the sampler reads, and the image is that of the whole texture. A ray reports the level
+  its cone reads at the hit, so a texture seen only in a reflection or by the probes loads. A sample
+  of a program reports the level its uv and bias or gradients read, as a map does; one that names
+  its level (`mirai_sample_texture_level`) or asks for the size (`mirai_texture_size`) keeps every
+  level of the texture, since a level it names counts from the largest one held. A loaded texel
+  (`mirai_load_texture`) reports nothing: data that does not stream would pay a read of the buffer
+  at each pixel for no level.
 - **Which frames.** Those the window shows; an offscreen frame only when it waits for its textures
   (`Frame_Desc.streamed`). The stages of extensions (decals, particles), the sky and the UI do not
   report: what only they show keeps the levels it has unless the pool asks for them. Nothing asks
@@ -320,10 +321,14 @@ No engine stage evaluates a Surface program except its own, compiled once per pr
 stages.
 
 - **Raster.** A program's pipeline is that of the stage with the program's fragment
-  (`program_graphics`, `program_stages.odin`). The cull distributes the visible clusters of
-  materials with a program per program (`cull_programs.comp`: count, prefix with the draw
-  arguments and distribution, over `include/bins.slang`) and the G-buffer emits one indirect draw
-  per program in use and phase. A draw of the clusters of an instance (glass layers and filter,
+  (`program_graphics`, `program_stages.odin`). The G-buffer is resolved once per visible pixel
+  from the visibility target, one draw per program the cull saw, at the depth of the program
+  (`vis_resolve.frag`, [frame graph](frame-graph.md#passes)). The maps of a row take the exact
+  gradients of the uv of the triangle; what a program computes itself takes its derivatives
+  across the 2x2 pixels of a quad, where a pixel of another program is given the triangle of a
+  neighbor at its own place, and a quad whose triangles do not continue one another (a
+  silhouette, a seam of the uv, another material) evaluates again with the triangle of each of
+  its pixels in all four. A draw of the clusters of an instance (glass layers and filter,
   translucents, overlays, highlight) is made once per program of its materials, which it names to
   `gbuffer.vert` (`SLOT_DRAW`): the vertex shader collapses the clusters of the others. Thumbnails
   and impostors name the program as the first instance of the draw; the UI splits its triangles
@@ -396,7 +401,7 @@ tests: the pieces of a mesh, numbered in UV1, fly in with a turn as its `progres
 - With a window, or with a surface that another process shows (the `--surface` player of a network
   Play, `App_Desc.shown`), the host creates the renderer with `pipeline_thread`
   (`pipeline_thread.odin`, a thread a core but one): when a program first gets rows in the scene
-  the pipelines of the stages its rows are drawn with on the camera (the three G-buffers, or the
+  the pipelines of the stages its rows are drawn with on the camera (the three resolves, or the
   glass layer and filter) and of its points are asked for ahead of time (`programs_ask`); the
   first draw or resolve that needs one puts it before those, and a frame does not wait for the
   driver. Until a frame finds

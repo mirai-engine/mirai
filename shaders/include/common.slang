@@ -290,7 +290,6 @@ struct Material_Row {
 #define RASTER_HIGHLIGHT_MASK 31u // outline level
 #define RASTER_FLAG_BACK 32u      // the fragment shows the back of its triangle: its stage sets it from its facing (raster_facing)
 #define RASTER_FLAG_FADING 64u    // what fades out by the unorm16 of bits 16-31: the body the view fades out (view_body_fade), or an instance of a batch near its cull distance
-#define RASTER_FLAG_ONE_SIDED 128u // of a material not seen from behind: the G-buffer leaves its back faces out
 #define RASTER_FADE_SHIFT 16u
 
 struct Light {

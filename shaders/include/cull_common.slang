@@ -10,12 +10,12 @@ struct Params_Block {
     uint phase;
     uint occlusion;          // 1: depth pyramid test enabled for this phase
     uint hiz_levels;
-    uint programs;           // bins of the clusters of Surface programs: the largest program id, plus one (0: none)
+    uint programs;           // the Surface programs whose resolve draws a cluster turns on: the largest program id, plus one (0: none)
     uint4 glass_groups;      // dispatch size of the glass passes: xy at render resolution, zw at half
     uint chunk_capacity;
     uint visible_capacity;   // of the visible list, both phases together
     uint candidate_capacity; // of the clusters phase 0 found hidden
-    uint program_capacity;   // of the clusters of Surface programs, both phases together
+    uint pad;
     // The slots of the pages of streamed meshes (render.Pages_State): x their
     // first word in the vertex pool, y how many (0: none), z the stamp of the
     // frame, w the capacity of the list of requests (0: none).
@@ -23,15 +23,8 @@ struct Params_Block {
 };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 
-// Words of render.Gpu_Cull_State.
-#define CULL_DRAW0 0u               // the draw of phase 0: vertices, instances (its visible clusters), first vertex, first instance
-#define CULL_DRAW1 4u               // that of phase 1, whose first instance follows those of phase 0
-#define CULL_CHUNK_DISPATCH 8u
-#define CULL_CHUNK_COUNT 11u
-#define CULL_CANDIDATE_DISPATCH 12u
-#define CULL_CANDIDATE_COUNT 15u
-#define CULL_VISIBLE_COUNT 16u      // of each phase, before its capacity
-#define CULL_DROPPED 18u            // chunks, visible clusters, candidates and clusters of programs past their capacities
+// The words of render.Gpu_Cull_State: CULL_* of the shared constants.
+#include "cull_bins.slang"
 [[vk::binding(SLOT_PASS0, 0)]] RWStructuredBuffer<uint> cull_state : register(MIRAI_REGISTER(u, SLOT_PASS0), space0);
 #include "cull_stats.slang"
 // What an instance is, for the counts of the frame: of the scene with a mesh
