@@ -606,13 +606,43 @@ simplifies with the same weights and locks, and crosses seams where they stop it
   the smallest error that prunes one more class, until it does not. The leaves of a tree whose
   trunk is simplified with little error go away when they are small, and a few large islands (a
   vine, the large piece of a panel) stay in their class without holding back the others.
+- **Cards cut to outlines.** A card of a masked material (see [masked cards](#masked-cards)) is
+  one island whatever its outline holds, and its class steps through the coarser outlines of its
+  cards (`Mesh_Outlines`) before it is pruned: each level takes the coarsest outline whose error
+  (the largest of its cards) the error allowed lets it, and pruning starts at the last. The
+  survivors of a pruned class of outlines grow to the area all of them drew in level 0, the area
+  of what their masks keep.
 - **Error.** `Mesh_Lod.error` is how far the simplifier moved the surface of level 0 (its position
   error, and that of the attributes where it crossed seams), in object units; with islands, the
-  larger of that and, of each pruned class, the radius of its largest island already enlarged over
-  `ISLAND_PIXELS`. The renderer takes a level where its projection falls within
-  `lod_error_pixels` and that of the next does not
+  larger of that, of each class of cards the error of the outline it draws, and of each pruned
+  class the radius of its largest island already enlarged over `ISLAND_PIXELS`. The renderer
+  takes a level where its projection falls within `lod_error_pixels` and that of the next does not
   ([cut](../../mirai-rendering/references/scene.md#scene-and-instances)).
 - The triangles of a level are grouped by submesh of level 0, with its slot and its box.
+
+### Masked cards
+
+A masked card is drawn opaque, cut to the outline of its mask, when it is read
+(`cook/import/cutout.odin`, `cook/import/outline.odin`), for every format; no setting turns it off.
+
+- **A card** is a small island of a submesh of islands of a static mesh without morph targets,
+  whose material is `Mask` with no program and a base color image, every corner of it opaque in
+  its color, inside its map, laid on the image without folding. Programs (the Unreal plugin's
+  materials) keep their mask: the import does not know what their alpha reads.
+- **Outlines.** Of the rectangle of the image a card covers, the texels whose alpha times the
+  opacity reaches the cutoff; conservative outlines of them from `OUTLINE_FINEST` texels to a
+  convex quadrilateral, each with its measured error (the farthest texel it draws from one the mask
+  keeps). Cards on the same rectangle share them. An outline is laid on the card through its
+  triangles, one facet per flat run of them, so a bent card stays bent.
+- **Leaf or cluster**, from the mask: a card whose outline needs at most `OUTLINE_TRIANGLES` to
+  draw at most `1/OUTLINE_COVERAGE` of what the mask keeps is a leaf, drawn as its finest outline in
+  level 0 and its coarser ones in the [levels](#levels-of-detail); any other keeps its mask on its
+  tightest convex outline of up to eight corners. A card whose rectangle keeps nothing is dropped.
+- **Materials.** Cut cards are seen from both sides (`two_sided`). A material all of whose
+  triangles became outlines is `Opaque`; one that also keeps masked triangles stays as it is and
+  lends an opaque copy, `<name> outline`, to a slot of the outlines (`CUTOUT_SLOT` added to the id
+  of the slot). The base color image of the outlines fills what the mask left empty with the color
+  of the nearest texel it keeps (`Build_Options.alpha_fill`), so no dark rim shows at their edge.
 
 ## Collision
 

@@ -62,7 +62,7 @@ model_settings :: proc(model:^Imported_Model,options:Import_Options) -> Import_S
 
 // The options a texture of an image is built with.
 image_build_options :: proc(image:Imported_Image,settings:Import_Settings) -> textures.Build_Options {
-    return {srgb=image.srgb,normal_map=image.normal_map,green_down=image.green_down,alpha_coverage=image.alpha_cutoff,keep_precision=image.keep_precision,encoding=settings.textures,rdo_lambda=settings.rdo_lambda,channels=image.channels}
+    return {srgb=image.srgb,normal_map=image.normal_map,green_down=image.green_down,alpha_coverage=image.alpha_cutoff,alpha_fill=image.alpha_fill,keep_precision=image.keep_precision,encoding=settings.textures,rdo_lambda=settings.rdo_lambda,channels=image.channels}
 }
 
 // What a mesh is built with: the settings of its levels and the version of
@@ -72,7 +72,7 @@ mesh_build_hash :: proc(settings:Import_Settings) -> u64 {
 }
 
 // The mesh as the reader gives it: vertices, indices, skin, submeshes, morph
-// targets, colliders and flags.
+// targets, colliders, outlines and flags.
 mesh_content_hash :: proc(mesh:^Imported_Mesh) -> u64 {
     key:=base.hash64(mem.slice_to_bytes(mesh.vertices))
     key=base.hash_combine(key,base.hash64(mem.slice_to_bytes(mesh.indices)))
@@ -83,6 +83,10 @@ mesh_content_hash :: proc(mesh:^Imported_Mesh) -> u64 {
     key=base.hash_combine(key,base.hash64(mem.slice_to_bytes(mesh.collision.colliders)))
     key=base.hash_combine(key,base.hash64(mem.slice_to_bytes(mesh.collision.points)))
     key=base.hash_combine(key,base.hash64(mem.slice_to_bytes(mesh.collision.indices)))
+    key=base.hash_combine(key,base.hash64(mem.slice_to_bytes(mesh.outlines.cards)))
+    key=base.hash_combine(key,base.hash64(mem.slice_to_bytes(mesh.outlines.rungs)))
+    key=base.hash_combine(key,base.hash64(mem.slice_to_bytes(mesh.outlines.vertices)))
+    key=base.hash_combine(key,base.hash64(mem.slice_to_bytes(mesh.outlines.indices)))
     flags:=mesh.flags
     return base.hash_combine(key,base.hash64(mem.ptr_to_bytes(&flags)))
 }
@@ -119,7 +123,7 @@ mesh_cook :: proc(mesh:^Imported_Mesh,settings:Import_Settings,options:Import_Op
         }
     }
     levels_zone:=jobs.worker_zone_begin(options.worker,"mesh.levels")
-    levels:=mesh_levels(mesh.vertices,mesh.indices,mesh.skin,mesh.submeshes,settings.lods==.Auto,context.temp_allocator,mesh.morphs,mesh.morph_deltas)
+    levels:=mesh_levels(mesh.vertices,mesh.indices,mesh.skin,mesh.submeshes,settings.lods==.Auto,context.temp_allocator,mesh.morphs,mesh.morph_deltas,mesh.outlines)
     base.profile_end(levels_zone)
     cooked.collision={slice.clone(mesh.collision.colliders,allocator),slice.clone(mesh.collision.points,allocator),slice.clone(mesh.collision.indices,allocator)}
     clusters_zone:=jobs.worker_zone_begin(options.worker,"mesh.clusters")
