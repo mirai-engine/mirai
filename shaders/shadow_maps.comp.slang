@@ -24,7 +24,8 @@
 [[vk::binding(SLOT_PASS1, 0)]] RWStructuredBuffer<uint4> chunks : register(MIRAI_REGISTER(u, SLOT_PASS1), space0);
 [[vk::binding(SLOT_PASS2, 0)]] RWStructuredBuffer<uint> shadow_state : register(MIRAI_REGISTER(u, SLOT_PASS2), space0);
 [[vk::binding(SLOT_PASS3, 0)]] RWStructuredBuffer<Stats_Block> stats : register(MIRAI_REGISTER(u, SLOT_PASS3), space0);
-// A bit for each instance that moves.
+// A bit for each instance that moves, then the list of those a round of
+// what moves culls (Params_Block.listed).
 [[vk::binding(SLOT_PASS5, 0)]] StructuredBuffer<uint> movers : register(MIRAI_REGISTER(t, SLOT_PASS5), space0);
 
 // The surface of a body of a medium: an open sheet of a solid such as water,
@@ -44,6 +45,7 @@ bool instance_moves(uint instance) {
 void main(uint3 id : SV_DispatchThreadID) {
     uint instance = id.x, job = id.y;
     if (instance >= params.instances || job >= params.maps) return;
+    if (params.listed != 0u) instance = movers[params.movers + instance];
     float reach = 0.0;
     if (instance_batched(instance)) {
         Instance row = batch_row(batch_of(instance));
