@@ -43,8 +43,8 @@ program_graphics_entry :: proc(r: ^Renderer, target: ^rhi.Pipeline, program: u32
 // The pipeline that draws the materials of a Surface program for the stage
 // whose pipeline is target^; target^ until it is made, or while the shaders
 // in use have no stage of that program. now: a draw that is read back at once
-// (a thumbnail) waits for it, as a frame that waits (Renderer.frame_waits)
-// does. early: asked ahead of time, before a draw needs it, which raises it.
+// (a thumbnail) waits for it. early: asked ahead of time, before a draw needs
+// it, which raises it.
 @(private)
 program_graphics :: proc(r: ^Renderer, target: ^rhi.Pipeline, program: u32, now := false, early := false) -> rhi.Pipeline {
 	if program == 0 || program == GPU_NONE {return target^}
@@ -56,12 +56,11 @@ program_graphics :: proc(r: ^Renderer, target: ^rhi.Pipeline, program: u32, now 
 			if entry.code = program_stage(r, desc.fragment, program); entry.code != nil {
 				desc.fragment, desc.name = entry.code, entry.code.name
 				if !pipeline_make(r, &entry.pipeline, graphics = desc, now = now, early = early) {entry^ = {}}
-				else if r.frame_waits && !early {renderer_pipelines_wait(r, &entry.pipeline)}
 			}
 		}
 	} else if entry.pipeline == 0 && entry.code != nil && !early {
 		pipeline_urgent(r, &entry.pipeline)
-		if now || r.frame_waits {renderer_pipelines_wait(r, &entry.pipeline)}
+		if now {renderer_pipelines_wait(r, &entry.pipeline)}
 	}
 	return entry.pipeline if entry.pipeline != 0 else target^
 }

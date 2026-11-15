@@ -1,5 +1,6 @@
 package host
 
+import "core:time"
 import audio "mirai:audio"
 import "mirai:core"
 import "mirai:platform"
@@ -61,29 +62,36 @@ app_recording_begin :: proc(app:^App,rec:^World_Recording,size:[2]i32,wide:rende
 
 // Draws the next frame of the recording from the render phase of the game of
 // world and reads it into out (RGBA 32-bit float, size.x*size.y*4, rows from
-// the top). The first frame starts the histories of the view. Between frames.
-app_recording_frame :: proc(app:^App,rec:^World_Recording,world:rawptr,out:[]f32) -> bool {
+// the top). The first frame starts the histories of the view. A frame drawn
+// without a stage being made is drawn again, up to wait; false when it is
+// still partial then (app_draw_problem says why). Between frames.
+app_recording_frame :: proc(app:^App,rec:^World_Recording,world:rawptr,out:[]f32,wait:time.Duration) -> bool {
     r:=app.renderer
     if r==nil || world==nil || rec.texture==0 {return false}
     ui_only:=app.ui_only
     app.ui_only=false
     defer app.ui_only=ui_only
-    run_phase(app,.Game,.Render,{.Render},world,nil)
-    cut:=rec.frames==0
-    extras:=&app.extras
-    seen:=[1]render.Frame_View{{camera=app.camera,camera_cut=cut,rect={0,0,rec.size.x,rec.size.y},texture=rec.texture,inspection=app.inspection,wide=rec.wide}}
-    drawn:=render.renderer_frame(r,{
-        camera=app.camera,camera_cut=cut,inspection=app.inspection,time=app.time,views=seen[:],
-        ui_textures=extras.ui_textures[:extras.ui_texture_count],effect_views=extras.effect_views[:extras.effect_view_count],
-        offscreen=true,
-    })
-    extras.layer_count,extras.panel_count,extras.debug_count=0,0,0
-    clear(&extras.instances)
-    extras.ui_texture_count,extras.effect_view_count,extras.probe_count=0,0,0
-    app.camera_cut=false
-    app.inspection={}
-    app.view_count=0
-    if !drawn {return false}
+    started:=time.tick_now()
+    for {
+        run_phase(app,.Game,.Render,{.Render},world,nil)
+        cut:=rec.frames==0
+        extras:=&app.extras
+        seen:=[1]render.Frame_View{{camera=app.camera,camera_cut=cut,rect={0,0,rec.size.x,rec.size.y},texture=rec.texture,inspection=app.inspection,wide=rec.wide}}
+        drawn:=render.renderer_frame(r,{
+            camera=app.camera,camera_cut=cut,inspection=app.inspection,time=app.time,views=seen[:],
+            ui_textures=extras.ui_textures[:extras.ui_texture_count],effect_views=extras.effect_views[:extras.effect_view_count],
+            offscreen=true,
+        })
+        extras.layer_count,extras.panel_count,extras.debug_count=0,0,0
+        clear(&extras.instances)
+        extras.ui_texture_count,extras.effect_view_count,extras.probe_count=0,0,0
+        app.camera_cut=false
+        app.inspection={}
+        app.view_count=0
+        if !drawn {return false}
+        if !render.renderer_frame_partial(r) {break}
+        if !render.renderer_pipelines_pending(r) || time.tick_since(started)>=wait {return false}
+    }
     rec.frames+=1
     return render.view_texture_wide(r,rec.texture,out)
 }

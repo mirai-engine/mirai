@@ -830,8 +830,10 @@ app_capture :: proc(app:^App,path:string) -> bool {
 // no screen UI, world panels, debug lines or outlines. editor is the World of
 // the editor when its loop is the one that draws world, as the window does.
 // wait above 0: its frames stream the textures of what it sees and it goes on
-// past frames, up to that long, while one is pending, then frames more for
-// them to settle. False: app_draw_problem says why. Between frames.
+// past frames, up to that long, while one is pending or a frame drew without
+// a stage being made (render.renderer_frame_partial), then frames more for
+// them to settle; no frame waits for the driver. False, also for an image
+// still partial: app_draw_problem says why. Between frames.
 app_capture_world :: proc(app:^App,world:rawptr,frames:=8,size:=[2]i32{},editor:rawptr=nil,allocator:=context.allocator,wait:=time.Duration(0)) -> (pixels:[]u8,width,height:int,ok:bool) {
     r:=app.renderer
     if r==nil || world==nil || app.drawable.x<=0 || app.drawable.y<=0 || size.x<0 || size.y<0 {return}
@@ -880,21 +882,21 @@ app_capture_world :: proc(app:^App,world:rawptr,frames:=8,size:=[2]i32{},editor:
         app.inspection={}
         app.view_count=0
         if !drawn {break}
-        if wait>0 {count=capture_frames_streaming(count,frame,max(frames,1),render.textures_update(r)+app_assets_arriving(app),time.tick_since(started),wait)}
-        // The last frame drew a program as its rows while its pipelines were made: one more with them.
-        if frame==count-1 && render.renderer_pipelines_pending(r) {
-            render.renderer_pipelines_wait(r)
-            count+=1
-        }
+        // Textures that stream, or a frame drawn without a stage being made: the
+        // frames that settle it are counted again from the next one.
+        pending:=render.textures_update(r)+app_assets_arriving(app) if wait>0 else 0
+        if render.renderer_frame_partial(r) && render.renderer_pipelines_pending(r) {pending+=1}
+        count=capture_frames_streaming(count,frame,max(frames,1),pending,time.tick_since(started),wait)
     }
     render.renderer_camera_cut(r)
-    if !drawn {return}
+    // One drawn without a stage the device refused, or still made when the wait ran out: app_draw_problem says which.
+    if !drawn || render.renderer_frame_partial(r) {return}
     if alone {return render.view_texture_capture(r,texture,allocator)}
     return render.renderer_capture(r,allocator)
 }
 
 // The frames a capture draws in all after frame: settle more after the last
-// that still found textures pending, while its wait lasts.
+// that still found textures or stages pending, while its wait lasts.
 @(private)
 capture_frames_streaming :: proc "contextless" (count,frame,settle,pending:int,waited,wait:time.Duration) -> int {
     if pending==0 || waited>=wait {return count}
@@ -910,6 +912,7 @@ app_draw_problem :: proc(app:^App) -> string {
         return "the window is minimized or has no size, so nothing is drawn"
     }
     if app.renderer.error!="" {return app.renderer.error}
+    if render.renderer_frame_partial(app.renderer) {return render.renderer_stats(app.renderer).problem}
     return "the renderer skipped the frame without saying why"
 }
 
@@ -950,7 +953,8 @@ app_world_draw :: proc(app:^App,world,editor:rawptr,texture:render.Texture_Handl
         extras.ui_texture_count,extras.effect_view_count,extras.probe_count=0,0,0
         if !drawn {return}
     }
-    return
+    // Drawn without a stage being made: the caller draws it again later.
+    return !render.renderer_frame_partial(r)
 }
 
 // A PNG a job of the application writes: compressing it takes long enough

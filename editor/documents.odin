@@ -7,6 +7,7 @@ import "mirai:asset"
 import "mirai:core"
 import "mirai:editor/history"
 import "mirai:host"
+import gpu "mirai:render"
 import "mirai:ui"
 
 // The active tab lives in the editor storages; the other tabs own their parked state.
@@ -235,7 +236,7 @@ Strip_Tab :: struct {
     label:string,
     icon:ui.Icon,
     pending,active:bool, // pending: its file has what is not kept
-    loading:bool,        // its scene loads, until it is resident
+    loading:bool,        // its scene loads, until it is resident and drawn whole
     asset:int, // the index of its asset document; -1 for a scene
 }
 
@@ -269,7 +270,8 @@ strip_tab :: proc(s:^Session,index:int) -> (tab:Strip_Tab) {
 
 // The tab of the scene that loads, from the frame its open was asked for
 // until it is resident: that of the scene it replaces, or the one in front
-// for a tab of its own; -1 when none loads.
+// for a tab of its own, or while the viewport draws without a stage being made;
+// -1 when none loads.
 @(private)
 document_loading_tab :: proc(s:^Session) -> int {
     if s.open_shown && .Open in s.requests {
@@ -279,7 +281,7 @@ document_loading_tab :: proc(s:^Session) -> int {
     }
     if s.app==nil {return -1}
     p:=&s.app.load_profile
-    return s.active_document if p.loading && p.current==.Scene else -1
+    return s.active_document if p.loading && p.current==.Scene || gpu.renderer_frame_partial(s.app.renderer) else -1
 }
 
 @(private)

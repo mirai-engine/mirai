@@ -257,7 +257,7 @@ api_play_record :: proc(s:^Session,call:^api.Call) {
         w:=&writes[frame%2]
         jobs.wait(&s.app.jobs,jobs.OWNER,&w.counter)
         if w.error!=.None {failure=fmt.tprintf("%s: %s",w.path,movie.error_message(w.error));break}
-        if !host.app_recording_frame(s.app,&rec,r.world,w.pixels) {failure="the frame could not be drawn";break}
+        if !host.app_recording_frame(s.app,&rec,r.world,w.pixels,API_CAPTURE_TEXTURES_WAIT) {failure=fmt.tprintf("the frame could not be drawn: %s",host.app_draw_problem(s.app));break}
         delete(w.path,s.app.allocator)
         w.path=project.path(folder,fmt.tprintf("frame_%06d.%s",frame,extension),allocator=s.app.allocator)
         shot:=Record_Manifest_Frame{frame=frame,tile=tiles>0?img.sheet_tile(frame,tiles,frames):-1}

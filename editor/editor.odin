@@ -496,8 +496,6 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
 advance :: proc(s:^Session) -> bool {
     app:=s.app
     if api_idle(s) {return !s.quit}
-    // --capture writes the last frame: the frames before it settle with the pipelines they asked for in place.
-    if s.capture!="" && s.frames>0 && int(s.frame)==max(s.frames-API_CAPTURE_SETTLE,0) {gpu.renderer_pipelines_wait(app.renderer)}
     // Behind other windows, out of Play and without an agent driving it, the editor runs slow.
     background:=u32(0) if playing(s) || api_active(s) else EDITOR_BACKGROUND_FPS
     if app.platform.background!=background {platform.set_background(app.platform,background)}
@@ -546,8 +544,9 @@ advance :: proc(s:^Session) -> bool {
 // application. Returns the exit code.
 close :: proc(s:^Session) -> int {
     code:=EDITOR_OK
-    if s.capture!="" && !host.app_capture(s.app,s.capture) {
-        fmt.eprintfln("mirai: could not write %s",s.capture)
+    // A last frame drawn without a stage being made is not written either.
+    if s.capture!="" && (gpu.renderer_frame_partial(s.app.renderer) || !host.app_capture(s.app,s.capture)) {
+        fmt.eprintfln("mirai: could not write %s: %s",s.capture,host.app_draw_problem(s.app))
         code=EDITOR_CAPTURE
     }
     if s.gpu_failure==.Ended {code=EDITOR_GPU_LOST}

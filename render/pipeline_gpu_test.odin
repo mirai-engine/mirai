@@ -229,11 +229,30 @@ variants_are_made_as_the_settings_select_and_a_refused_one_once :: proc(t: ^test
 }
 
 // With tracer_later the renderer starts without the stages of rays traced by
-// software, which the pipeline thread makes. A frame no window shows, as a
-// capture's, waits for every stage it draws with, and one the device refuses
-// does not keep it waiting: it is asked for once and the frames say which.
+// software, which the pipeline thread makes. No frame waits for them, not
+// even one no window shows: it draws no world, and renderer_frame_partial
+// says so to what reads it back, until every stage is in place.
 @(test)
-a_tracer_made_later_is_waited_for_by_a_capture_and_a_refused_stage_does_not_block :: proc(t: ^testing.T) {
+a_frame_drawn_while_the_tracer_is_made_does_not_wait_and_is_partial :: proc(t: ^testing.T) {
+	settings := DEFAULT_SETTINGS
+	settings.trace_mode = .Software
+	f: Fixture
+	if !fixture_init(t, &f, 64, 48, settings, desc = {pipeline_thread = true, tracer_later = true}) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	camera := Camera{position = {0, 2, 2}, forward = {0, -2, -2}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	testing.expect(t, renderer_frame(r, {camera = camera, offscreen = true}), r.error)
+	testing.expectf(t, renderer_frame_partial(r) && r.tracer_missed != "", "the first frame did not wait for the tracer: %q", r.tracer_missed)
+	renderer_pipelines_wait(r, all = true)
+	testing.expect(t, renderer_frame(r, {camera = camera, offscreen = true}), r.error)
+	testing.expectf(t, !renderer_frame_partial(r), "with every stage in place it is whole: %q %q", r.tracer_missed, r.pipeline_waiting)
+}
+
+// A stage of that tracer the device refuses is asked for once and leaves the
+// frames partial with nothing being made, so what reads them back fails with
+// the reason the frames give, until the shaders change.
+@(test)
+a_refused_stage_of_the_tracer_made_later_leaves_the_frames_partial :: proc(t: ^testing.T) {
 	settings := DEFAULT_SETTINGS
 	settings.trace_mode = .Software
 	device := shared_device.take_or_skip(t)
@@ -246,38 +265,17 @@ a_tracer_made_later_is_waited_for_by_a_capture_and_a_refused_stage_does_not_bloc
 	defer fixture_destroy(&f)
 	r := f.renderer
 	camera := Camera{position = {0, 2, 2}, forward = {0, -2, -2}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-	testing.expect(t, renderer_frame(r, {camera = camera, offscreen = true}), r.error)
-	testing.expect(t, pipeline_slot(r, .Direct_Rays, .Software)^ != 0 && pipeline_slot(r, .Skin_Refit, .Software)^ != 0, "the frame waited for the stages it draws with")
-	testing.expect(t, pipeline_slot(r, .Contact, .Software)^ == 0, "the device refused one")
-	problem := renderer_stats(r).problem
-	testing.expectf(t, strings.contains(problem, "refused the pipeline Contact") && !strings.contains(problem, "while its pipeline is made"), "it drew with every other one in place: %s", problem)
-	for _ in 0 ..< 20 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
 	renderer_pipelines_wait(r, all = true)
+	for _ in 0 ..< 20 {testing.expect(t, renderer_frame(r, {camera = camera, offscreen = true}), r.error)}
+	testing.expect(t, renderer_frame_partial(r) && !renderer_pipelines_pending(r), "partial, and nothing it lacks is being made")
 	testing.expectf(t, rhi.device_refused_pipelines(device) == 1, "the refused stage was asked for %d times", rhi.device_refused_pipelines(device))
 	testing.expectf(t, strings.contains(renderer_stats(r).problem, "refused the pipeline Contact"), "the frames say it: %s", renderer_stats(r).problem)
-	// Once the shaders change it is asked for again, and with every stage in place the frame draws the world.
+	// Once the shaders change it is asked for again, and with it the frames draw the world.
 	rhi.device_refuse_pipeline(device, "", {})
 	pipelines_drop(r)
-	testing.expect(t, renderer_frame(r, {camera = camera, offscreen = true}), r.error)
-	testing.expectf(t, r.tracer_missed == "", "the world is drawn, not missing %s", r.tracer_missed)
-	testing.expectf(t, rhi.device_validation_errors(device) == 0, "validation: %s", rhi.device_validation_message(device))
-}
-
-// A frame a window shows does not wait: while a stage of the tracer made
-// later is missing it draws no world, and renderer_frame_partial says so, as
-// what reads such a frame back (a thumbnail) asks before it does.
-@(test)
-a_frame_drawn_without_a_stage_being_made_is_partial :: proc(t: ^testing.T) {
-	settings := DEFAULT_SETTINGS
-	settings.trace_mode = .Software
-	f: Fixture
-	if !fixture_init(t, &f, 64, 48, settings, desc = {pipeline_thread = true, tracer_later = true}) {return}
-	defer fixture_destroy(&f)
-	r := f.renderer
-	camera := Camera{position = {0, 2, 2}, forward = {0, -2, -2}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
-	testing.expectf(t, renderer_frame_partial(r), "the first frame drew without the tracer: %q %q", r.tracer_missed, r.pipeline_waiting)
 	renderer_pipelines_wait(r, all = true)
 	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
-	testing.expectf(t, !renderer_frame_partial(r), "with every stage in place it is whole: %q %q", r.tracer_missed, r.pipeline_waiting)
+	testing.expectf(t, !renderer_frame_partial(r), "the world is drawn, not missing %q", r.tracer_missed)
+	testing.expectf(t, rhi.device_validation_errors(device) == 0, "validation: %s", rhi.device_validation_message(device))
 }

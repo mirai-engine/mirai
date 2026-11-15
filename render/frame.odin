@@ -393,7 +393,6 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     d:=r.device
     r.error=""
     r.pipeline_waiting=""
-    r.frame_waits=!r.pipelines_async || frame.offscreen
     started:=time.tick_now()
     texture_uploads_install(r)
     geometry_uploads_install(r)

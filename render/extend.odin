@@ -292,16 +292,17 @@ STAGE_PIPELINE_CAPACITY :: 1024 // a stage of each Vfx program is a pipeline of 
 @(private)
 Stage_Pipeline :: struct {
 	key:      u64,
-	pipeline: rhi.Pipeline, // 0: the shaders in use have no such stages, or that of a program is not made yet
+	pipeline: rhi.Pipeline, // 0: not made yet, or the shaders in use have no such stages
 	asked:    bool,
 	program:  u32, // the Surface program whose fragment stage it draws with (pipeline_thread.odin)
 	code:     ^rhi.Shader_Code, // and that stage
 }
 
 // The pipeline of a description. The renderer makes it the first time it is
-// asked for and keeps it until the shaders change, so an extension asks for it
-// in every frame it draws and owns nothing. 0 while the shaders in use do not
-// have its stages, or without room for another one. With a program, that of
+// asked for, on the pipeline thread (pipeline_make), and keeps it until the
+// shaders change, so an extension asks for it in every frame it draws and owns
+// nothing. 0 until it is made, while the shaders in use do not have its
+// stages, or without room for another one. With a program, that of
 // the description without it until the one of the program is made
 // (pipeline_thread.odin): the materials of the program are drawn as their rows.
 stage_pipeline :: proc(r: ^Renderer, desc: Stage_Pipeline_Desc) -> rhi.Pipeline {
@@ -333,7 +334,7 @@ stage_pipeline :: proc(r: ^Renderer, desc: Stage_Pipeline_Desc) -> rhi.Pipeline 
 			if code := extension_shader(r, fmt.bprintf(names[0][:], "%s%s.comp", desc.shader, variant)); code != nil {
 				constants: rhi.Shader_Constants
 				if colored {constants, _ = rhi.shader_constant(code, "color")}
-				free.pipeline = rhi.pipeline_create_compute(r.device, {shader = code, constants = constants, name = desc.name})
+				if !pipeline_make(r, &free.pipeline, compute = {shader = code, constants = constants, name = desc.name}) {free^ = {}}
 				break
 			}
 		}
@@ -358,7 +359,7 @@ stage_pipeline :: proc(r: ^Renderer, desc: Stage_Pipeline_Desc) -> rhi.Pipeline 
 			}
 		}
 		if program == 0 {
-			free.pipeline = rhi.pipeline_create_graphics(r.device, made)
+			if !pipeline_make(r, &free.pipeline, graphics = made) {free^ = {}}
 			break
 		}
 		free.program, free.code = program, program_stage(r, fragment, program)

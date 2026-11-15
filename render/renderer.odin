@@ -431,8 +431,7 @@ Renderer_Desc :: struct {
 	pipeline_thread:       bool,
 	// The stages of rays traced by software are made on that thread after the
 	// renderer starts: until they are in place the frames draw no world, and
-	// those that wait for what they draw (Frame_Desc.offscreen, or a renderer
-	// without pipeline_thread) wait for them. For the
+	// none waits for them (renderer_frame_partial). For the
 	// editor, which opens without waiting for the driver; never for a game.
 	tracer_later:          bool,
 }
@@ -464,7 +463,7 @@ Frame_Desc :: struct {
 	debug:  []Debug_Lines, // line batches, over the panels and under the screen UI
 	// Drawn only into the image renderer_capture reads, for a world that is
 	// not shown: nothing reaches the window, and the probe volume keeps the
-	// light of the world that is. It waits for the pipelines it draws with.
+	// light of the world that is.
 	offscreen: bool,
 	// With offscreen: textures stream for what this frame sees, as for the
 	// views of the window, until the next frame the window shows.
@@ -632,7 +631,6 @@ Renderer :: struct {
 	program_graphics:     [PROGRAM_GRAPHICS_CAPACITY]Program_Graphics, // the raster stages of Surface programs (program_stages.odin)
 	pipeline_thread:      ^Pipeline_Thread, // makes the variants of the stages, and the pipelines of programs with pipelines_async; nil: where they are asked for
 	pipelines_async:      bool, // Renderer_Desc.pipeline_thread
-	frame_waits:          bool, // the frame draws with every stage it asks for, waiting for those being made: without pipelines_async, or one no window shows (Frame_Desc.offscreen)
 	stats_readback:  [rhi.MAX_FRAMES_IN_FLIGHT]rhi.Buffer,
 	ui_offscreen:    Ui_Offscreen_State,
 	using main:      View_State, // the view of a frame that has one
@@ -706,7 +704,6 @@ renderer_init :: proc(r: ^Renderer, desc: Renderer_Desc) -> bool {
 	r.scene.pages.jobs = desc.jobs
 	pipeline_thread_start(r)
 	r.pipelines_async = desc.pipeline_thread
-	r.frame_waits = !r.pipelines_async
 	r.tracer_later = desc.tracer_later
 	textures_init(r)
 	if !scene_ready {set_error(r, "scene tables: out of memory");return false}
@@ -1141,7 +1138,7 @@ pipeline_slot :: proc(r: ^Renderer, id: Pipeline_Id, rays: Pipeline_Rays, consta
 
 // Where the pipeline a frame runs for a stage with constants is kept, for the
 // tracer in use when the stage traces rays. A frame does not wait for one the
-// pipeline thread makes, unless it waits (r.frame_waits): while it
+// pipeline thread makes, unless the renderer has no pipelines_async: while it
 // is made the pass takes the stage without the constants of `optional` (those
 // that only spare work), or skips, with Stats.problem. One the device refused
 // holds 0 until the shaders change, and the refusal is reported once.
@@ -1169,7 +1166,7 @@ pipeline_of :: proc(r: ^Renderer, id: Pipeline_Id, constants: rhi.Shader_Constan
 		}
 		if v.state == .Asked && target^ == 0 {
 			pipeline_urgent(r, target)
-			if r.frame_waits {renderer_pipelines_wait(r, target)}
+			if !r.pipelines_async {renderer_pipelines_wait(r, target)}
 			if target^ == 0 && !pipeline_asked(r, target) {
 				v.state = .Refused
 				names: [rhi.MAX_SHADER_CONSTANTS]string
@@ -1393,26 +1390,20 @@ tracer_settle :: proc(r: ^Renderer, settings: Settings, retry: bool) -> (hardwar
 }
 
 // With r.tracer_later, the name of a stage of rays traced by software that is
-// not in place, "" when all are: the frame draws no world without them. A
-// frame needs them, so the pipeline thread makes them before what was asked
-// ahead of time, and a frame that waits (r.frame_waits) waits for them here.
-// One the device refused is reported once and stays out until the shaders
-// change.
+// not in place, "" when all are: the frame draws no world without it. A frame
+// needs it, so the pipeline thread makes it before what was asked ahead of
+// time. One the device refused is reported once and stays out until the
+// shaders change.
 @(private)
-tracer_later_missing :: proc(r: ^Renderer) -> string {
+tracer_later_missing :: proc(r: ^Renderer) -> (missing: string) {
 	if !r.tracer_waiting {return ""}
 	if r.hardware_rt {r.tracer_waiting = false; return ""}
 	list: Pipeline_List
 	pipelines_list(r, &list)
 	info := rhi.device_info(r.device)
-	needed :: proc(info: ^rhi.Device_Info, item: Pipeline_Make) -> bool {
-		return item.rays == .Software && item.required && item.target != nil && item.target^ == 0 && pipeline_possible(info, item)
-	}
-	for item in list.items[:list.count] {if needed(info, item) {pipeline_urgent(r, item.target)}}
-	if r.frame_waits {renderer_pipelines_wait(r)}
-	missing := ""
 	for item in list.items[:list.count] {
-		if !needed(info, item) {continue}
+		if item.rays != .Software || !item.required || item.target == nil || item.target^ != 0 || !pipeline_possible(info, item) {continue}
+		pipeline_urgent(r, item.target)
 		if v := variant_of(r, item.target); v != nil && v.state == .Asked && !pipeline_asked(r, item.target) {
 			v.state = .Refused
 			r.pipeline_problem = fmt.bprintf(r.pipeline_problem_buffer[:], "the device refused the pipeline %s of rays traced by software (%s): the world is not drawn until the shaders change; freeing GPU memory or a newer GPU driver may make it", pipeline_name(r, item), rhi.device_error(r.device))
@@ -1421,7 +1412,7 @@ tracer_later_missing :: proc(r: ^Renderer) -> string {
 		if missing == "" {missing = pipeline_name(r, item)}
 	}
 	if missing == "" {r.tracer_waiting = false}
-	return missing
+	return
 }
 
 // The stages of r that none of the pipelines its frames run now is made of:

@@ -135,13 +135,8 @@ api_capture :: proc(s:^Session,call:^api.Call) {
         drawn:=s.app.stats.frames_drawn
         if p.seconds>=0 {s.app.seconds=p.seconds}
         api_frames(s,max(p.frames,1),p.dt)
-        // A frame that drew a program as its rows while its pipelines were made: one more with them.
-        for gpu.renderer_pipelines_pending(s.app.renderer) {
-            gpu.renderer_pipelines_wait(s.app.renderer)
-            api_frames(s,1,p.dt)
-        }
         if s.app.stats.frames_drawn==drawn {api.call_failf(call,api.SERVER_ERROR,"The renderer could not draw the frame: %s",host.app_draw_problem(s.app));return}
-        if p.ui && wait>0 {api_capture_textures_settle(s,p.dt,wait)}
+        if p.ui {api_capture_textures_settle(s,p.dt,wait)}
         if p.generated && !gpu.renderer_stats(s.app.renderer).generated {
             api.call_fail(call,api.SERVER_ERROR,"The last frame showed no generated image: frame generation needs FSR 3.1 as the antialiasing, frame_generation on in Graphics_Settings and a frame with history")
             return
@@ -165,13 +160,14 @@ api_capture :: proc(s:^Session,call:^api.Call) {
     api_capture_answer(s,call,path,pixels,width,height,given=="",seen)
 }
 
-// Window frames until no texture of what the window shows is pending or the
-// wait runs out, then enough for what builds up over frames to settle with them.
+// Window frames until no texture of what the window shows is pending, nor a
+// stage a frame drew without, or the wait runs out, then enough for what
+// builds up over frames to settle with them. None waits for the driver.
 @(private)
 api_capture_textures_settle :: proc(s:^Session,dt:f32,wait:time.Duration) {
     started:=time.tick_now()
     waited:=false
-    for gpu.textures_update(s.app.renderer)+host.app_assets_arriving(s.app)>0 && time.tick_since(started)<wait && !s.quit {
+    for (gpu.textures_update(s.app.renderer)+host.app_assets_arriving(s.app)>0 || gpu.renderer_frame_partial(s.app.renderer) && gpu.renderer_pipelines_pending(s.app.renderer)) && time.tick_since(started)<wait && !s.quit {
         api_frames(s,1,dt)
         waited=true
     }
