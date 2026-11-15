@@ -103,7 +103,7 @@ DEFAULT_HIGHLIGHT_STYLE :: Highlight_Style{
 
 DEFAULT_SETTINGS :: Settings{
 	gi_enabled = true, trace_mode = .Auto, resolution = 1080, taa = true, lod_error_pixels = 1, batch_min_pixels = 1,
-	probe_spacing = 1.0, probe_grid = 16, probe_cascades = 5, probe_rays = 128, probe_budget = 512,
+	probe_spacing = 1.0, probe_grid = 16, probe_cascades = 6, probe_rays = 128, probe_budget = 512,
 	gi_max_distance = 1e4, sun_shadows = true, light_budget = 8, direct_samples = 15,
 	firefly_clamp = 20, texture_max_size = 2048,
 	texture_pool_megabytes = 1024, page_pool_bytes = 256 << 20,
