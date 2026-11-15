@@ -68,8 +68,12 @@ Media_Grid fog_grid() {
     return g;
 }
 float fog_slice_depth(float s) { return media_slice_depth(fog_grid(), s); }
-float fog_depth_slice(float depth) { return media_depth_slice(fog_grid(), depth); }
 float fog_far_depth(uint j) { return media_far_depth(fog_grid(), j); }
+// Of the cells of the grid and those past it (fog_light.comp keeps the light of both).
+float fog_cell_depth(float s) { return media_cell_depth(fog_grid(), s); }
+
+// Metres along the view taken for without end: what a medium there lets through is none.
+static const float FOG_ENDLESS = 1e7;
 
 // fog.WISP_SIZES; what each layer adds to the wisps, which sum to 1.
 static const float FOG_WISP_SIZES[FOG_WISP_OCTAVES] = { 1.0, 0.47, 0.22 };

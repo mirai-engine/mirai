@@ -427,3 +427,47 @@ fog_scatters_the_share_of_each_light :: proc(t: ^testing.T) {
 	}
 	expect_clean(t, f.device)
 }
+
+// A closed hall far longer than the grid, with the sun outside and a fog
+// inside: the fog past the grid scatters none of the sun the roof hides, as
+// the fog in it, and looks as it does with a sun media do not scatter; with
+// the roof off, the same fog past the grid shows the sun.
+@(test)
+fog_past_the_grid_scatters_no_sun_the_scene_hides :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	if !gpu_fixture_init(t, f) {return}
+	defer gpu_fixture_destroy(f)
+	r := &f.renderer
+	LONG :: f32(400)
+	dark := [3]f32{0, 0, 0}
+	walls := [6]gpu.Instance_Desc{
+		{object_id = 1, mesh = f.cube, transform = trs({0, -0.5, -LONG / 2}, {44, 1, LONG + 14}), tint = dark},
+		{object_id = 2, mesh = f.cube, transform = trs({-20.5, 15, -LONG / 2}, {1, 32, LONG + 14}), tint = dark},
+		{object_id = 3, mesh = f.cube, transform = trs({20.5, 15, -LONG / 2}, {1, 32, LONG + 14}), tint = dark},
+		{object_id = 4, mesh = f.cube, transform = trs({0, 15, -LONG - 0.5}, {44, 32, 1}), tint = dark},
+		{object_id = 5, mesh = f.cube, transform = trs({0, 15, 5.5}, {44, 32, 1}), tint = dark},
+		{object_id = 6, mesh = f.cube, transform = trs({0, 30.5, -LONG / 2}, {44, 1, LONG + 14}), tint = dark},
+	}
+	camera := gpu.Camera{position = {0, 15, 0}, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.1, far = 1000, exposure = gpu.UNIT_EXPOSURE}
+	haze := Fog_Volume{density = 0.004, color = {1, 1, 1}}
+	places := []volume.Volume{volume.box({0.5, 0.5, 0.5})}
+	poses := []mm.Transform{{position = {0, 15, -LONG / 2 + 2.5}, rotation = 1, scale = {39.8, 29.8, LONG + 4.8}}}
+	low, high := [2]int{WIDTH / 2 - 6, HEIGHT / 2 - 6}, [2]int{WIDTH / 2 + 6, HEIGHT / 2 + 6}
+	// Under the roof with the sun, under it with a sun media do not scatter, and open with the sun.
+	cases := [3]struct {roofed: bool, share: f32}{{true, 1}, {true, 0}, {false, 1}}
+	seen: [3]f32
+	for c, k in cases {
+		gpu.scene_set_environment(r,{direction = linalg.normalize([3]f32{0.3, 0.9, 0.2}), color = {1, 1, 1}, illuminance = 3 * math.PI, enabled = true, indirect = 1, scattering = c.share},{})
+		gpu.scene_update(r, 0, walls[:c.roofed ? 6 : 5], true)
+		for i in 0 ..< 30 {fog_frame(t, f, camera, f32(i) / 60, {haze}, places, poses, cut = i == 0)}
+		image, ok := capture(t, f)
+		if !ok {return}
+		seen[k] = block(image, low, high)
+		delete(image.pixels)
+	}
+	shown := seen[2] - seen[1]
+	testing.expectf(t, shown > 30, "with the roof off, the fog down the hall shows the sun: %.1f, %.1f without it", seen[2], seen[1])
+	testing.expectf(t, abs(seen[0] - seen[1]) < 0.03 * shown, "under the roof, the fog down the hall past the grid scatters no sun: %.1f, %.1f without it, open %.1f", seen[0], seen[1], seen[2])
+	expect_clean(t, f.device)
+}
