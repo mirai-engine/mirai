@@ -1366,14 +1366,14 @@ float probe_distance_limit(uint cascade) { return 1.5 * probe_spacing(cascade); 
 // goes to the irradiance as it widens.
 #define PROBE_GLOSS_POWER 48.0
 #define PROBE_GLOSS_ROUGHNESS 0.45
-// The first texel of the tile of the narrow lobes of a probe.
-float2 probe_gloss_origin(uint index) {
+// The row of texels the tiles of the narrow lobes start at, and the first
+// texel of that of a probe from its tile of the irradiance (probe_atlas_tile):
+// they keep its row and column.
+uint probe_gloss_under() {
     uint per_row = max(frame.volume_atlas.x, 1u);
-    uint total = probe_cascade_size() * probe_cascades();
-    uint under = (total + per_row - 1u) / per_row * frame.volume_atlas.y;
-    uint across = max(per_row * frame.volume_atlas.y / PROBE_GLOSS_TILE, 1u);
-    return float2(float(index % across * PROBE_GLOSS_TILE), float(under + index / across * PROBE_GLOSS_TILE));
+    return (probe_cascade_size() * probe_cascades() + per_row - 1u) / per_row * frame.volume_atlas.y;
 }
+float2 probe_gloss_origin(float2 tile, uint under) { return tile * float(PROBE_GLOSS_TILE) + float2(0.0, float(under)); }
 
 // The directions one read of the probe volume gives the light around, at
 // most: those of the diffuse lobe, the specular lobe and the coat of a point.
@@ -1385,7 +1385,7 @@ float2 probe_gloss_origin(uint index) {
 // What a read of the probe volume gives the light around: at[d] for each bit
 // d of `wants`. The probes around a point and their weights depend only on the
 // point, so each direction costs only its irradiance.
-// rough[d]: the roughness of the lobe around at[d]; 1, the irradiance.
+// rough[d]: the roughness of the lobe around at[d], for the lobes other than the diffuse; 1, the irradiance.
 struct Probe_Directions {
     float3 at[PROBE_READS];
     float rough[PROBE_READS];
@@ -1440,6 +1440,7 @@ float probe_cascade_read(uint cascade, float3 position, float3 normal, float3 vi
     float2 dist_size = float2(texture_size(distance_atlas, 0));
     float2 toward[PROBE_READS];
     float gloss[PROBE_READS];
+    uint gloss_under = probe_gloss_under();
     float4 sum[PROBE_READS];
     [ForceUnroll]
     for (int d = 0; d < PROBE_READS; d++) {
@@ -1501,8 +1502,10 @@ float probe_cascade_read(uint cascade, float3 position, float3 normal, float3 vi
             if (!probe_wants(directions, d)) continue;
             float4 stored = gloss[d] < 1.0 ? irradiance_atlas.SampleLevel(linear_sampler, probe_atlas_texel(tile, toward[d], frame.volume_atlas.y, irr_size), 0.0) : float4(0.0);
             float4 root = float4(probe_light_root(stored.rgb), stored.a);
-            if (gloss[d] > 0.0) {
-                float4 narrow = irradiance_atlas.SampleLevel(linear_sampler, (probe_gloss_origin(index) + 1.0 + toward[d] * float(PROBE_GLOSS_TILE - 2u)) / irr_size, 0.0);
+            // The diffuse lobe is the irradiance: it pays nothing of the narrow ones.
+            [branch]
+            if (d != PROBE_DIFFUSE && gloss[d] > 0.0) {
+                float4 narrow = irradiance_atlas.SampleLevel(linear_sampler, (probe_gloss_origin(tile, gloss_under) + 1.0 + toward[d] * float(PROBE_GLOSS_TILE - 2u)) / irr_size, 0.0);
                 root = lerp(root, float4(probe_light_root(narrow.rgb), narrow.a), gloss[d]);
             }
             root *= weight;

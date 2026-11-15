@@ -141,7 +141,7 @@ void main(uint3 group_id : SV_GroupID, uint3 local_id : SV_GroupThreadID, uint l
     float light = 0.0, moved = 0.0;
     float4 stored = irradiance[origin + local];
     float4 before = float4(probe_light_decode(stored.rgb), stored.a);
-    int2 gloss_origin = int2(probe_gloss_origin(probe));
+    int2 gloss_origin = int2(probe_gloss_origin(float2(origin / TILE), probe_gloss_under()));
     int across = GLOSS - 2;
     for (int j = int(local_index); j < across * across; j += THREADS) {
         int2 inside = int2(j % across, j / across);
@@ -151,7 +151,10 @@ void main(uint3 group_id : SV_GroupID, uint3 local_id : SV_GroupThreadID, uint l
         for (uint r = 0u; r < rays; r++) {
             float4 sample_value = ray_values[r];
             if (sample_value.a < 0.0) continue;
-            float n = pow(max(0.0, dot(lobe_dir, ray_dirs[r])), PROBE_GLOSS_POWER);
+            // Past this cosine a ray weighs nothing against those of the lobe.
+            float along = dot(lobe_dir, ray_dirs[r]);
+            if (along < 0.8) continue;
+            float n = pow(along, PROBE_GLOSS_POWER);
             narrow_sum += float4(sample_value.rgb, sample_value.a >= params.max_distance ? 1.0 : 0.0) * n;
             narrow_weight += n;
         }
