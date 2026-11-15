@@ -2033,7 +2033,7 @@ scene_light_update :: proc(r: ^Renderer, index: u32, desc: Light_Desc) -> bool {
 		if transmute(Bits)before == transmute(Bits)light && s.light_shadowless[index] == desc.shadowless {return true}
 		scene_changed_near(s, before.position_range.xyz, before.position_range.w)
 		s.lights[index] = light
-		s.lights_stale ||= light_directed(before) != light_directed(light) || light_placed(before) != light_placed(light) || s.light_shadowless[index] != desc.shadowless
+		s.lights_stale ||= light_directed(before) != light_directed(light) || light_reach_class(before) != light_reach_class(light) || light_placed(before) != light_placed(light) || s.light_shadowless[index] != desc.shadowless
 		s.light_shadowless[index] = desc.shadowless
 		if !s.lights_stale {
 			if !light_placed_same(before, light) {occluder_light_moved(s, index)}

@@ -307,13 +307,15 @@ float3 light_point(Light light, float3 position, float k, float spin) {
 // The same for a group of the tree: one sphere as bright as its lights
 // together, at their center and as wide as they spread. Its lights lie
 // nearer and farther than its center, where the window of their range
-// bends: the mean of the window at two points a deviation either side.
+// bends: the mean of the window at two points a deviation either side, each
+// halfway between the windows of its shortest and its longest range.
 // `doubt` bounds how far that may be from the light of its lights: the
 // curvature of the falloff and the cosine across their spread; all of it
 // where they straddle the horizon of the surface, whose side each of them is
 // on the group does not know; and how much the window changes between its
-// nearest and farthest light, which can be all of the light of a group whose
-// center is beyond the range of its lights and its nearest light is not.
+// nearest light by its longest range and its farthest by its shortest, which
+// can be all of the light of a group whose center is beyond the range of
+// some of its lights and not of others.
 // How much of the light of a node reaches a point by the directions its
 // lights face: 1 within the cone that holds them, past it fading out over
 // how far beyond it they shine, and 0 beyond that (Conty Estevez and Kulla
@@ -332,6 +334,14 @@ float node_aim(Light_Node node, float3 position) {
     return cos(beyond * (0.5 * PI) / max(node.emission, 1e-4));
 }
 
+float node_window(Light_Node node, float distance) {
+    return 0.5 * (light_window(distance, node.range_low) + light_window(distance, node.range_high));
+}
+// How much the window of a group changes from its nearest light by its
+// longest range to its farthest by its shortest, from 0 to 1.
+float node_bend(Light_Node node, float distance) {
+    return light_window(distance - node.center_radius.w, node.range_high) - light_window(distance + node.center_radius.w, node.range_low);
+}
 float3 group_contribution(Light_Node node, float3 position, float3 normal, out float3 direction, out float distance, out float doubt) {
     float3 delta = node.center_radius.xyz - position;
     distance = length(delta);
@@ -339,10 +349,10 @@ float3 group_contribution(Light_Node node, float3 position, float3 normal, out f
     float aim = node_aim(node, position);
     float cosine = dot(normal, normal) > 0.5 ? dot(normal, direction) : 1.0;
     float deviation = node.spread * 0.57735027;
-    float window = 0.5 * (light_window(distance - deviation, node.range) + light_window(distance + deviation, node.range));
+    float window = 0.5 * (node_window(node, distance - deviation) + node_window(node, distance + deviation));
     float3 light = node.power_reach.rgb * (aim * sphere_irradiance(cosine, distance, node.spread));
     float spread = node.spread / max(distance, 1e-6);
-    float bend = light_window(distance - node.center_radius.w, node.range) - light_window(distance + node.center_radius.w, node.range);
+    float bend = node_bend(node, distance);
     float horizon = saturate(1.0 - abs(cosine) / max(spread, 1e-6));
     doubt = luminance(light) * ((3.0 * spread * spread + horizon) * window + 0.5 * bend);
     return light * window;
@@ -448,7 +458,8 @@ static const float GROUP_INSIDE = 1.0;
 // The light the local lights give a point, roughly: groups smaller than
 // ESTIMATE_GROUPED of their distance stand for their lights, larger than
 // ESTIMATE_OPENED their children do, and in between both, so that it changes
-// smoothly from a point to the next. It sets how much a group of the finer
+// smoothly from a point to the next; so too by how much their window bends
+// (node_bend), where some of their lights reach the point and others not. It sets how much a group of the finer
 // sum may err. `root`: the tree it walks, that of the lights with shadows
 // (0) or one of those without (frame.shadowless_lights.x or z).
 static const float ESTIMATE_GROUPED = 0.5;
@@ -465,7 +476,7 @@ float lights_estimate(float3 position, float3 normal, uint root = 0u) {
         Light_Node node = light_nodes[at];
         float distance_squared;
         if (node_reaches(node, position, normal, distance_squared)) {
-            float opened = (node.flags & LIGHT_NODE_LEAF) != 0u ? 0.0 : smoothstep(ESTIMATE_GROUPED, ESTIMATE_OPENED, node.center_radius.w * rsqrt(max(distance_squared, 1e-12)));
+            float opened = (node.flags & LIGHT_NODE_LEAF) != 0u ? 0.0 : smoothstep(ESTIMATE_GROUPED, ESTIMATE_OPENED, max(node.center_radius.w * rsqrt(max(distance_squared, 1e-12)), node_bend(node, sqrt(distance_squared))));
             if (opened < 1.0) {
                 float3 direction;
                 float distance;
@@ -611,7 +622,7 @@ uint light_cut(float3 position, float3 normal, uint budget, inout uint cut[LIGHT
                 if ((node.flags & LIGHT_NODE_LEAF) == 0u) {
                     float radius = node.center_radius.w;
                     float distance = sqrt(distance_squared);
-                    if (distance + radius <= 0.9 * node.range && dot(node.center_radius.xyz - position, normal) >= radius) {
+                    if (distance + radius <= 0.9 * node.range_low && dot(node.center_radius.xyz - position, normal) >= radius) {
                         known += node.flags >> LIGHT_NODE_COUNT_SHIFT;
                         if (count + known > budget) {
                             fits = false;
@@ -742,7 +753,7 @@ float node_weight(Light_Node node, float3 position, float3 normal) {
     float3 delta = node.center_radius.xyz - position;
     float distance = length(delta);
     float rising = dot(normal, normal) > 0.5 ? saturate((dot(delta, normal) + node.center_radius.w) / max(distance, 1e-6)) : 1.0;
-    return luminance(node.power_reach.rgb) * node_aim(node, position) * rising * light_window(distance, node.range + node.center_radius.w) / max(distance * distance, node.spread * node.spread + 1e-4);
+    return luminance(node.power_reach.rgb) * node_aim(node, position) * rising * light_window(distance, node.range_high + node.center_radius.w) / max(distance * distance, node.spread * node.spread + 1e-4);
 }
 uint node_light(uint at, float pick, float3 position, float3 normal, out float chance_of) {
     chance_of = 1.0;
