@@ -118,6 +118,8 @@ Step_Info :: struct {
     phases:Phases,
     loops:Loops,
     call:Step_Proc, // the function as its loops call it: its binding, its settle and its time
+    plugin:string,  // the plugin whose package declares it; empty for the engine and the project
+    game:bool,      // the game of the project declares it, not the engine or a plugin
 }
 
 // A procedure @(draw="name") of the game: what draws the Draw nodes of the
