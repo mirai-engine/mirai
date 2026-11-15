@@ -153,7 +153,7 @@ bool fog_hidden(uint3 id) {
 // FOG_SUN_POINTS places of the cell, each along the part of its ray in the
 // slice that the volumes with a medium hold.
 float4 fog_far_sun(uint3 id, inout bool changed) {
-    if (frame.sun_direction.w < 0.5) return float4(0.0);
+    if (frame.sun_direction.w < 0.5 || !(frame.sun_shares.y > 0.0)) return float4(0.0);
     float near = fog_cell_depth(float(id.z));
     bool last = id.z + 1u >= fog.grid.z + fog.far;
     float3 through = float3(0.0);

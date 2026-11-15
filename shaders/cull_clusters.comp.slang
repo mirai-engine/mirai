@@ -4,7 +4,7 @@
 //! constant candidates MIRAI_CULL_CANDIDATES
 // The clusters of the chunks the instance pass (cull.comp) handed over, a
 // group a chunk: those of the cut of the view (cut.slang) in the frustum, not
-// seen only from behind (a closed mesh) and not hidden by the depth pyramid
+// seen only from behind (of a material not two-sided) and not hidden by the depth pyramid
 // go to the visible list the draws of the phase read, an instance of a draw a
 // cluster. Phase 0 tests against last frame's pyramid and lists the clusters
 // it hides as candidates of phase 1; phase 1 against this frame's. A posed
@@ -158,9 +158,10 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID, uint3 dispatc
         float scale = instance_scale(inst);
         Cluster_Cut cut = cluster_cut(view_detail(), inst, scale, mesh, c, frame.cut.x);
         if (!cut.drawn) return;
-        if (material_row(material_of(inst, cluster_material(mesh, c)), inst.material_values).alpha_mode == ALPHA_BLEND) return;
+        Material m = material_row(material_of(inst, cluster_material(mesh, c)), inst.material_values);
+        if (m.alpha_mode == ALPHA_BLEND) return;
         if (boxed) {
-            bool away = posed ? pose.cone && cone_backfacing(inst, scale, mesh, pose.axis, pose.cutoff, low, high) : cluster_backfacing(inst, scale, mesh, c, low, high);
+            bool away = m.two_sided == 0u && (posed ? pose.cone && cone_backfacing(inst, scale, pose.axis, pose.cutoff, low, high) : cluster_backfacing(inst, scale, c, low, high));
             if (!frustum_visible(low, high) || away) return;
             // What the depth pyramid hides asks too: it shows once what hides it moves.
             if (!posed && cut.request) page_request(instance_mesh(inst), mesh, c.child_page, cut.pixels);

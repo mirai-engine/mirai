@@ -112,7 +112,7 @@ HIGHLIGHT_LEVELS            :: 15
 OUTLINE_STYLES              :: 15
 
 // Gpu_Mesh.flags.
-MESH_FLAG_CLOSED   :: 1
+MESH_FLAG_CLOSED   :: 1 // asset.Mesh_Flag.Closed: it bounds a solid (glass walks inside it)
 MESH_FLAG_LEVEL0   :: 2
 MESH_FLAG_SURFACE  :: 4
 MESH_FLAG_UV1      :: 8
@@ -257,7 +257,7 @@ INSTANCE_ROW_WORDS     :: 1 + MATERIAL_WORDS + MATERIAL_BLOCK_WORDS + PROGRAM_PA
 // The words of a row of the material table (render.Gpu_Material_Row): the
 // values shading holds, then the blocks of its layers, and from
 // MATERIAL_PARAMETERS_WORD the parameters of its program.
-MATERIAL_WORDS           :: 28 + len(asset.Material_Map_Kind)
+MATERIAL_WORDS           :: 29 + len(asset.Material_Map_Kind)
 MATERIAL_BLOCK_WORDS     :: 19
 MATERIAL_PARAMETERS_WORD :: MATERIAL_WORDS + MATERIAL_BLOCK_WORDS + 4 + 8 * len(asset.Material_Map_Kind)
 

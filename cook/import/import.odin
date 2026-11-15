@@ -156,8 +156,12 @@ read_model :: proc(r:^Reader,formats:[]Format,model:^Imported_Model) -> bool {
 model_finish :: proc(r:^Reader,model:^Imported_Model) -> bool {
     // A model of textures alone (a package of textures) is those textures.
     if len(r.meshes)==0 && len(r.animations)==0 && len(r.skeletons)==0 && (len(r.images)==0 || len(r.materials)>0) {return fail(r,.Malformed,"%s has no polygon geometry, skeleton, animation clips or images",r.file_name)}
+    for &material in r.materials {space_material(r.space,&material.info)}
+    {
+        zone(r.options,"import.cutouts")
+        model_cutouts(r)
+    }
     for &material in r.materials {
-        space_material(r.space,&material.info)
         // Masked materials ask their base color image to keep its coverage.
         image:=material.images[.Base_Color]
         if image>=0 && material.info.alpha_mode==.Mask && r.images[image].alpha_cutoff==0 {r.images[image].alpha_cutoff=material.info.alpha_cutoff}

@@ -22,11 +22,11 @@ or interleave its own passes.
      distant object whose root already suffices delivers only the root. One that is hidden stays
      a candidate for phase 1.
    - One thread per cluster of the chunks: the level cut (`cut.slang`, projected error against
-     `lod_error_pixels`), frustum, normal cone (closed meshes only) and the pyramid. A visible one
-     enters the visible list (instance, cluster) and counts in the instance count of the phase's
-     draw; one that the pyramid hides stays a candidate for phase 1. One of a material with a
-     Surface program goes to the program list, which `cull_programs.comp` distributes per program
-     with one indirect draw per program and phase.
+     `lod_error_pixels`), frustum, normal cone (of a material that is not two-sided) and the
+     pyramid. A visible one enters the visible list (instance, cluster) and counts in the instance
+     count of the phase's draw; one that the pyramid hides stays a candidate for phase 1. One of a
+     material with a Surface program goes to the program list, which `cull_programs.comp`
+     distributes per program with one indirect draw per program and phase.
    - An instance with all its blend materials is not drawn here; one with blend triangles that
      passes the tests (in any phase) turns on the glass passes with their dispatch sizes.
 3. **gbuffer**

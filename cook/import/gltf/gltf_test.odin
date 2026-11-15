@@ -72,6 +72,7 @@ the_plant_of_the_demo_has_slots_per_primitive_and_a_masked_texture :: proc(t:^te
     testing.expect_value(t,len(model.materials),3)
     leaves:=&model.materials[2]
     testing.expect(t,leaves.name=="Leaves" && leaves.info.alpha_mode==.Mask && leaves.info.alpha_cutoff==0.5)
+    testing.expect(t,leaves.info.two_sided && !model.materials[0].info.two_sided,"doubleSided is two_sided; a material without it is one-sided")
     image:=leaves.images[.Base_Color]
     testing.expect(t,image>=0 && model.images[image].srgb && model.images[image].alpha_cutoff==0.5 && strings.has_suffix(model.images[image].path,"/demo/assets/gallery/leaves_color.png"),"a masked material asks its image to keep its coverage")
     testing.expect(t,.Has_Colors not_in mesh.flags && .Has_Uv1 not_in mesh.flags && mesh.bounds_max.y>mesh.bounds_min.y)
