@@ -274,6 +274,8 @@ Stats :: struct {
 	cpu_record_ms:     f32, // uploads and the commands of every pass
 	cpu_end_ms:        f32, // rhi.frame_end: submit and present
 	generated:         bool, // the frame drew an image the window shows before its own (frame generation)
+	shadow_pages_drawn:     u32, // of the last frame: the pages of SHADOW_PAGE texels a side the caches of the maps of the shadows drew again, of every view
+	shadow_movers:          u32, // of the last frame: the movers the maps drew, which their caches leave out
 	ui_vertices_dropped:    u32, // of the last frame: UI vertices beyond the capacity
 	ui_shapes_dropped:      u32,
 	ui_layers_dropped:      u32,
@@ -632,7 +634,6 @@ Renderer :: struct {
 	texture_view_bytes: u64, // what their targets held of the GPU when the last frame ended (texture_views_count)
 	shared_targets:  [SHARED_TARGET_CAPACITY]Shared_Target, // the targets of a frame of the views (targets_frame)
 	shadow_buffers:  Shadow_Buffers,
-	shadow_movers:   Shadow_Movers, // the casters that move, which the caches of the maps leave out
 	passes:          [FRAME_PASS_CAPACITY]Frame_Pass, // what extensions record in the next frame
 	pass_count:      int,
 	plans:           [RENDER_PIPELINE_CAPACITY]Render_Plan, // of the pipelines asked for

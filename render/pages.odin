@@ -363,7 +363,7 @@ page_entry_write :: proc(s: ^Scene_State, m: Mesh_Record, page, base: u32) {
 		if !instance_casts(inst) {continue}
 		low, high = linalg.min(low, inst.bounds_min.xyz), linalg.max(high, inst.bounds_max.xyz)
 	}
-	occluder_add(&s.paged, OCCLUDERS_MANY, low, high)
+	occluder_add(&s.shadow_stale, OCCLUDERS_MANY, low, high)
 }
 
 // Whether a ray cut an instance traced within RAY_CUT_KEEP frames takes clusters of a page.

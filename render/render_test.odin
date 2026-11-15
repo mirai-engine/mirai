@@ -289,6 +289,38 @@ render_shadow_maps_follow_what_moves_in_its_frame :: proc(t: ^testing.T) {
 	light.position = {-1, 3, 0}
 	testing.expect(t, scene_light_update(r, 0, light))
 	expect_shadow(t, &f, camera, 3, -5, "the light moved")
+	// More casters move than the samples keep boxes of and than the maps once
+	// followed: each is drawn over the cache, which draws nothing again, and
+	// the image is that of maps drawn whole.
+	many: [301]Instance_Desc
+	many[0] = instances[0]
+	place :: proc(k: int, shift: f32) -> Mat4 {return trs({f32(k % 20) * 0.4 - 3.8 + shift, 1.2, f32(k / 20) * 0.4 - 3}, {0.15, 0.1, 0.15})}
+	for k in 1 ..< len(many) {many[k] = {object_id = u64(k + 1), mesh = f.cube, transform = place(k - 1, 0), tint = {0.5, 0.5, 0.5}}}
+	light.position = {0, 3, 0}
+	testing.expect(t, scene_given(r, many[:], []Light_Desc{light}, {}, {}))
+	indices: [300]u32
+	moves: [300]Mat4
+	for k in 0 ..< 4 {
+		for &index, i in indices {index, moves[i] = u32(i + 1), place(i, 0.05 * f32(k % 2))}
+		testing.expect(t, scene_move(r, indices[:], moves[:]))
+		testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	}
+	testing.expectf(t, r.stats.shadow_movers == 300 && r.stats.shadow_pages_drawn == 0, "300 moving casters: %d drawn as movers, %d pages of the cache drawn again", r.stats.shadow_movers, r.stats.shadow_pages_drawn)
+	read :: proc(t: ^testing.T, f: ^Cube_Fixture) -> []u8 {
+		rhi.device_wait_idle(f.device)
+		pixels, _, _, ok := golden_capture(f.renderer)
+		testing.expect(t, ok, f.renderer.error)
+		return pixels
+	}
+	cached := read(t, &f)
+	defer delete(cached)
+	r.main.targets.shadow_raster.held_count = 0
+	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	whole := read(t, &f)
+	defer delete(whole)
+	differ := 0
+	for v, k in cached {if k < len(whole) && abs(int(v) - int(whole[k])) > 2 {differ += 1}}
+	testing.expectf(t, len(cached) == len(whole) && differ * 1000 <= len(cached), "%d of %d values differ from the maps drawn whole", differ, len(cached))
 	expect_clean(t, f.device)
 }
 

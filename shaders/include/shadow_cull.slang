@@ -14,8 +14,9 @@
 // nearest glass; chunk_capacity, entry_capacity: of the lists of the chunks
 // and of the clusters (render.Cull_List); moving: the round of the casters
 // that move (render.shadow_maps_pass), 0 that of those that stay; movers:
-// words of the bits of the instances that move.
-struct Params_Block { uint instances; uint maps; uint rows; uint glass; uint chunk_capacity; uint entry_capacity; uint list; uint moving; uint movers; uint pad0; uint pad1; uint pad2; };
+// words of the bits of the instances that move; listed: 1 while the round
+// culls the list of the movers after those words, instances long.
+struct Params_Block { uint instances; uint maps; uint rows; uint glass; uint chunk_capacity; uint entry_capacity; uint list; uint moving; uint movers; uint listed; uint pad1; uint pad2; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 // The draws: of the clusters that hide whole, of those of masked materials,
 // and of those of glass for the tint and the nearest glass.

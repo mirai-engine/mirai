@@ -160,6 +160,8 @@ renderer_origin_set :: proc(r: ^Renderer, origin: Vec3) {
 	for &sphere in r.frame_changes.spheres[:r.frame_changes.count] {sphere.xyz -= d}
 	for &box in s.occluders.boxes[:s.occluders.count] {box.low -= d; box.high -= d}
 	for &box in r.frame_occluders.boxes[:r.frame_occluders.count] {box.low -= d; box.high -= d}
+	for &box in s.shadow_changes {box.low -= d; box.high -= d}
+	for &box in s.shadow_stale.boxes[:s.shadow_stale.count] {box.low -= d; box.high -= d}
 	s.batch.built = false
 	// Each view takes its last frame as seen from the new origin: its eye moves by -d.
 	// What its maps of the shadows hold was measured from the old origin: they draw again.
