@@ -308,11 +308,13 @@ struct Light_Node {
     float4 power_reach;   // rgb the sum of their colors times their intensities; w how far from the center the farthest of them reaches
     float4 cone;          // xyz the axis of the directions they face; w the half-angle around it that holds those directions, radians; PI: any
     float emission;       // the half-angle beyond the directions they face that their light goes, radians: a spot its cone, a rectangle a quarter turn
-    float range;          // of a group, the mean of their ranges weighed by how bright each is
+    float range_low;      // the shortest of their ranges
+    float range_high;     // the longest of their ranges
     float spread;         // root of the mean square of how far their light lies from the center, their sizes included
     uint child;           // a leaf: its light; a group: its second child
     uint flags;           // LIGHT_NODE_*, and the number of its lights
-    float indirect;       // what of their light the probes gather, the mean of their shares weighed by how bright each is
+    float indirect;       // what of their light the probes gather, the mean of their shares weighed by how bright each is; 0 only if none of it
+    float scattering;     // what of their light media scatter, the same way
 };
 
 struct Bvh_Node {

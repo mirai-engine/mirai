@@ -10,6 +10,7 @@ import "compressor:blocks"
 import "compressor:texture"
 import "mirai:asset"
 import "mirai:std/base"
+import "mirai:std/geom"
 import "mirai:std/jobs"
 import mm "mirai:std/math"
 
@@ -233,6 +234,11 @@ Build_Options :: struct {
     normal_map:bool,     // averaged as vectors and renormalized
     green_down:bool,     // of a normal map whose green points down the image, as DirectX writes them: inverted, so that +Y points up as the renderer reads it
     alpha_coverage:f32,  // above 0: the cutoff of a masked material whose coverage every level keeps
+    // Above 0: texels whose alpha is below it take the color of the nearest
+    // texel of their layer whose alpha is not, their alpha as it was: the
+    // color an opaque outline of what a mask kept shows where the mask was
+    // empty, and what the levels average at its edge.
+    alpha_fill:f32,
     keep_precision:bool, // a source of 16 bits or floats is stored uncompressed whatever the encoding: heights, displacement, data floats
     encoding:Encoding,
     rdo_lambda:int,      // of blocks, up to RDO_LAMBDA_MAX: how much error the rate-distortion optimization trades for blocks that compress smaller. 0: RDO_LAMBDA_DEFAULT; below 0: none, the least error
@@ -317,6 +323,7 @@ built_desc :: proc(built:^Built,id:base.Asset_Id,source:^asset.Import_Info,layou
 settings_hash :: proc(options:Build_Options) -> u64 {
     kind:=u64(options.srgb)|u64(options.normal_map)<<1|u64(options.encoding)<<2|u64(options.green_down)<<4|u64(options.keep_precision)<<5|u64(BUILD_VERSION)<<8
     hash:=base.hash_combine(kind,u64(transmute(u32)options.alpha_coverage))
+    if options.alpha_fill>0 {hash=base.hash_combine(hash,u64(transmute(u32)options.alpha_fill)|1<<32)}
     final:=options
     final.speed=.Final
     hash=base.hash_combine(hash,u64(rdo_lambda(final)))
@@ -366,7 +373,7 @@ stored_format :: proc(source:Source,options:Build_Options) -> asset.Texture_Form
 // their own.
 build :: proc(source:Source,options:Build_Options,allocator:=context.allocator,worker:=jobs.Worker_Ref{}) -> (built:Built,error:Error) {
     layers:=max(source.layers,1)
-    if source.width<=0 || source.height<=0 || source.layers<0 || source.format>max(Source_Format) || !(options.alpha_coverage>=0 && options.alpha_coverage<=1) || options.rdo_lambda>RDO_LAMBDA_MAX || options.speed>max(Encode_Speed) {return {},.Invalid}
+    if source.width<=0 || source.height<=0 || source.layers<0 || source.format>max(Source_Format) || !(options.alpha_coverage>=0 && options.alpha_coverage<=1) || !(options.alpha_fill>=0 && options.alpha_fill<=1) || options.rdo_lambda>RDO_LAMBDA_MAX || options.speed>max(Encode_Speed) {return {},.Invalid}
     flags:=asset.Texture_Flags{}
     if source.cube {flags+={.Cube}}
     if !asset.texture_layers_valid(layers,source.width,source.height,flags) || len(source.texels)<source_bytes(source) {return {},.Invalid}
@@ -397,6 +404,12 @@ build :: proc(source:Source,options:Build_Options,allocator:=context.allocator,w
             value:=channels_apply(options.channels,texel_read(level.texels,level.format,at,&linear))
             texel_write(owned.texels,owned.format,at,value,&linear)
         }
+        level=owned
+    }
+    if options.alpha_fill>0 {
+        previous:=owned
+        defer source_destroy(&previous)
+        if !alpha_fill(&owned,level,options.alpha_fill,allocator) {return {},fail(&mips,&owned)}
         level=owned
     }
     if options.green_down {
@@ -628,6 +641,39 @@ reduce :: proc(src,dst:Source,transfer:^Transfer,normal_map:bool) {
             }
         }
     }
+}
+
+// Into owned, a copy of level whose texels below cutoff in alpha have the
+// color of the nearest of their layer that are not (Build_Options.alpha_fill).
+// False without memory.
+@(private="file")
+alpha_fill :: proc(owned:^Source,level:Source,cutoff:f32,allocator:mem.Allocator) -> bool {
+    owned^=level
+    owned.allocator=allocator
+    alloc_error:mem.Allocator_Error
+    if owned.texels,alloc_error=make([]u8,len(level.texels),allocator);alloc_error!=nil {
+        owned^={}
+        return false
+    }
+    copy(owned.texels,level.texels)
+    sizes:=SOURCE_TEXEL_BYTES
+    texel:=sizes[level.format]
+    color:=texel*3/4
+    cells:=level.width*level.height
+    covered,no_covered:=make([]bool,cells,context.temp_allocator)
+    nearest,no_nearest:=make([]u32,cells,context.temp_allocator)
+    if no_covered!=nil || no_nearest!=nil {return false}
+    linear:=transfer_make(false)
+    for layer in 0..<max(level.layers,1) {
+        first:=layer*cells
+        for &cover,at in covered {cover=texel_read(level.texels,level.format,first+at,&linear).a>=cutoff}
+        if !geom.grid_nearest(covered,level.width,level.height,0,nearest) {return false}
+        for from,at in nearest {
+            if covered[at] || from==max(u32) {continue}
+            copy(owned.texels[(first+at)*texel:][:color],level.texels[(first+int(from))*texel:][:color])
+        }
+    }
+    return true
 }
 
 // Share of the texels of every layer whose alpha, scaled, reaches the cutoff.
