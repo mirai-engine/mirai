@@ -85,10 +85,11 @@ variants_are_the_source_and_its_variant_lines :: proc(t:^testing.T) {
 }
 
 // The source itself of a stage with the variant hw, or one that says so,
-// serves only the rays traced by software: Metal gets no code of it.
+// serves only the rays traced by software, and one that says it needs 64-bit
+// atomics is of the visibility buffer: Metal gets no code of either.
 @(test)
-a_stage_of_the_software_tracer_is_the_source_of_a_variant_hw_or_says_so :: proc(t:^testing.T) {
-    Case :: struct {text:string,variant:Variant,software:bool}
+a_stage_metal_lacks_serves_the_software_tracer_or_needs_64_bit_atomics :: proc(t:^testing.T) {
+    Case :: struct {text:string,variant:Variant,lacks:bool}
     cases:=[?]Case{
         {"//! variant hw MIRAI_HW_RT=1\n",{},true},
         {"//! variant hw MIRAI_HW_RT=1\n",{name="hw"},false},
@@ -96,9 +97,11 @@ a_stage_of_the_software_tracer_is_the_source_of_a_variant_hw_or_says_so :: proc(
         {"//!variant hw A\n",{},true},
         {"//! variant clip MIRAI_CLIP=1\n",{},false},
         {"// ! software rays\n",{},false},
+        {"#include \"native.slang\"\n//! atomics 64\n",{},true},
+        {"//! variant plain A=1\n//! atomics 64\n",{name="plain"},true},
         {"",{},false},
     }
-    for c in cases {testing.expectf(t,software_rays(c.text,c.variant)==c.software,"%q of the variant %q",c.text,c.variant.name)}
+    for c in cases {testing.expectf(t,metal_lacks(c.text,c.variant)==c.lacks,"%q of the variant %q",c.text,c.variant.name)}
 }
 
 @(test)

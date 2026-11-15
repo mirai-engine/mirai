@@ -176,26 +176,98 @@ gbuffer_targets :: proc(p: ^Pass) -> (targets: [8]rhi.Texture, count: int) {
 	return
 }
 
+// The G-buffer of a phase. Through the visibility buffer, the clusters
+// without a program are rasterized into it and their depth given to the
+// depth targets before the pass, and their material runs once per pixel in
+// the pass of the last phase (`last`); the clusters of programs are drawn
+// as fragments either way, tested against that depth.
 @(private)
-gbuffer_pass :: proc(p: ^Pass, phase: u32, clear, keep_depth: bool) {
+gbuffer_pass :: proc(p: ^Pass, phase: u32, clear, keep_depth, last: bool) {
 	r, cmd, t := p.r, p.cmd, p.t
 	s := &r.scene
+	if p.draw && visibility_drawn(p) {rhi.cmd_timestamp(cmd, "visibility" if clear else "visibility late")}
+	visibility := p.draw && visibility_drawn(p) && visibility_raster(p, phase, clear)
+	rhi.cmd_timestamp(cmd, "gbuffer" if clear else "gbuffer late")
 	load: rhi.Load_Op = .Clear if clear else .Load
 	targets, count := gbuffer_targets(p)
 	pass := rhi.Render_Pass_Desc{color_count = count, name = "gbuffer" if clear else "gbuffer late"}
 	for target, i in targets[:count] {pass.colors[i] = {texture = target, load = load, store = .Store}}
-	pass.depth = {texture = t.depth, load = load, store = .Store if keep_depth else .Dont_Care, clear = 0}
+	pass.depth = {texture = t.depth, load = load, store = .Store if keep_depth || visibility else .Dont_Care, clear = 0}
+	if visibility {
+		// The linear depth and the depth hold what the visibility buffer gave them.
+		pass.colors[4].load, pass.depth.load = .Load, .Load
+	}
 	rhi.cmd_begin_render_pass(cmd, &pass)
 	if p.draw {
 		target := &r.pipelines[.Gbuffer_Layers if p.layered else .Gbuffer if p.reflectance else .Gbuffer_Plain]
 		if clipped := &r.pipelines[.Gbuffer_Layers_Clip if p.layered else .Gbuffer_Clip if p.reflectance else .Gbuffer_Plain_Clip]; p.camera.clip_plane != {} && clipped^ != 0 {target = clipped}
-		rhi.cmd_bind_pipeline(cmd, target^)
-		rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.visible_buffer)
 		textures_feedback_bind(r, cmd)
-		rhi.cmd_draw_indirect(cmd, s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, draws)) + u64(phase) * size_of(Gpu_Draw), 1, size_of(Gpu_Draw))
+		if visibility {
+			if last {
+				rhi.cmd_bind_pipeline(cmd, r.pipelines[.Vis_Resolve_Layers if p.layered else .Vis_Resolve if p.reflectance else .Vis_Resolve_Plain])
+				rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.visible_buffer)
+				rhi.cmd_bind_buffer(cmd, SLOT_PASS1, r.visibility)
+				rhi.cmd_draw(cmd, 3, 1, 0, 0)
+			}
+		} else {
+			rhi.cmd_bind_pipeline(cmd, target^)
+			rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.visible_buffer)
+			rhi.cmd_draw_indirect(cmd, s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, draws)) + u64(phase) * size_of(Gpu_Draw), 1, size_of(Gpu_Draw))
+		}
 		gbuffer_programs_draw(p, target, phase)
 	}
 	rhi.cmd_end_render_pass(cmd)
+}
+
+// Whether the clusters without a program of a view go through the visibility
+// buffer: the setting asks for it, the device made its pipelines, and the
+// view has no clip plane (its raster would need its own).
+@(private)
+visibility_drawn :: proc(p: ^Pass) -> bool {
+	r := p.r
+	return r.settings.visibility_buffer && p.camera.clip_plane == {} && r.pipelines[.Vis_Raster] != 0 && r.pipelines[.Vis_Depth] != 0 &&
+		r.pipelines[.Vis_Resolve] != 0 && r.pipelines[.Vis_Resolve_Plain] != 0 && r.pipelines[.Vis_Resolve_Layers] != 0
+}
+
+// A visibility buffer for a view of width x height pixels: the one of the
+// renderer, made larger when the view needs more.
+@(private)
+visibility_reserve :: proc(r: ^Renderer, width, height: u32) -> bool {
+	bytes := u64(width) * u64(height) * 8
+	if r.visibility != 0 && r.visibility_bytes >= bytes {return true}
+	if r.visibility != 0 {rhi.buffer_destroy(r.device, r.visibility)}
+	r.visibility = rhi.buffer_create(r.device, {size = bytes, usage = {.Storage, .Transfer_Dst}, name = "visibility"})
+	r.visibility_bytes = bytes if r.visibility != 0 else 0
+	if r.visibility == 0 {set_error(r, "visibility buffer of %dx%d: %s", width, height, rhi.device_error(r.device))}
+	return r.visibility != 0
+}
+
+// The raster of a phase into the visibility buffer (cleared by the first),
+// then its depth into the depth and the linear depth of the G-buffer, so the
+// pyramid of the occlusion and the fragments drawn after see it.
+@(private)
+visibility_raster :: proc(p: ^Pass, phase: u32, clear: bool) -> bool {
+	r, cmd, t := p.r, p.cmd, p.t
+	s := &r.scene
+	if !visibility_reserve(r, t.width, t.height) {return false}
+	if clear {rhi.cmd_fill_buffer(cmd, r.visibility, 0, u64(t.width) * u64(t.height) * 8, 0)}
+	raster := rhi.Render_Pass_Desc{area = {t.width, t.height}, name = "visibility" if clear else "visibility late"}
+	rhi.cmd_begin_render_pass(cmd, &raster)
+	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Vis_Raster])
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.visible_buffer)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS1, r.visibility)
+	rhi.cmd_draw_indirect(cmd, s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, draws)) + u64(phase) * size_of(Gpu_Draw), 1, size_of(Gpu_Draw))
+	rhi.cmd_end_render_pass(cmd)
+	load: rhi.Load_Op = .Clear if clear else .Load
+	depth := rhi.Render_Pass_Desc{color_count = 1, name = "visibility depth"}
+	depth.colors[0] = {texture = t.linear_depth, load = load, store = .Store}
+	depth.depth = {texture = t.depth, load = load, store = .Store, clear = 0}
+	rhi.cmd_begin_render_pass(cmd, &depth)
+	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Vis_Depth])
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS1, r.visibility)
+	rhi.cmd_draw(cmd, 3, 1, 0, 0)
+	rhi.cmd_end_render_pass(cmd)
+	return true
 }
 
 // Draws the clusters of an instance whose mesh is in the pools, for a pass of
@@ -1025,8 +1097,7 @@ pass_gbuffer :: proc(p: ^Pass) -> bool {
 		cull_record(p, {phase = 0, occlusion = 1 if occlusion && t.hiz_valid else 0, hiz_levels = t.hiz_levels, glass_groups = glass_groups}, t.hiz[p.previous], r.stats_buffer, p.view.glass_dispatch)
 	}
 	cull_programs_bin(p, 0)
-	rhi.cmd_timestamp(cmd, "gbuffer")
-	gbuffer_pass(p, 0, true, occlusion || keep_depth)
+	gbuffer_pass(p, 0, true, occlusion || keep_depth, last = !(occlusion && p.draw))
 	if occlusion && p.draw {
 		rhi.cmd_timestamp(cmd, "occlusion")
 		build_depth_pyramid(p, t.hiz[p.current])
@@ -1043,10 +1114,9 @@ pass_gbuffer :: proc(p: ^Pass) -> bool {
 			rhi.cmd_dispatch_indirect(cmd, s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, candidate_dispatch)))
 		}
 		cull_programs_bin(p, 1)
-		rhi.cmd_timestamp(cmd, "gbuffer late")
 		draw1 := u64(offset_of(Gpu_Cull_State, draws)) + size_of(Gpu_Draw)
 		rhi.cmd_copy_buffer(cmd, s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, draws)) + u64(offset_of(Gpu_Draw, instance_count)), s.cull_state_buffer, draw1 + u64(offset_of(Gpu_Draw, first_instance)), size_of(u32))
-		gbuffer_pass(p, 1, false, keep_depth)
+		gbuffer_pass(p, 1, false, keep_depth, last = true)
 		// The pyramid the next frame tests against holds what both phases drew:
 		// what phase 1 rescued hides what is behind it from the next phase 0.
 		rhi.cmd_timestamp(cmd, "depth pyramid")

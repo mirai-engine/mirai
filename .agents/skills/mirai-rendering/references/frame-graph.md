@@ -36,7 +36,18 @@ or interleave its own passes.
      its pipeline ([programs](materials.md#surface-programs-in-rays-and-raster)). The fragment
      shader reads the material row of the cluster's slot and its textures from the table, without
      binds per material or per object. Mask: discards below the threshold; blend: not drawn here.
-     The same on Vulkan and Metal, without mesh shaders or 64-bit atomics.
+     Without mesh shaders.
+   - **Visibility buffer** (`Settings.visibility_buffer`, devices with 64-bit atomics on storage
+     buffers; not Metal): the draw of each phase writes no target. `vis_raster.frag` tests what
+     fades and the alpha of a mask and keeps, per pixel, the nearest depth and its triangle (entry
+     of the visible list and triangle) with an atomic maximum (`visibility.slang`);
+     `vis_depth.frag` gives that depth to the depth and the linear depth, for the pyramid and the
+     draws after it. The pass of the last phase runs `vis_resolve.frag`: the triangle again with
+     the vertex function of `gbuffer.vert` (`gbuffer_build.slang`), barycentrics and screen
+     gradients from its clip corners, the material once per pixel with those gradients
+     (`MATERIAL_GRADIENTS`) and the targets of `gbuffer.frag` (`gbuffer_output.slang`), tested
+     greater-or-equal so the Surface programs and extensions drawn as fragments keep what is
+     nearer. A view with a clip plane draws as fragments.
    - The targets are encoded by `gbuffer.frag` and the passes read them only with
      `include/gbuffer.slang` (`gbuffer_read`, `gbuffer_normal`, `gbuffer_shading`).
    - A reflectance target exists only while a visible instance has an opaque material that does

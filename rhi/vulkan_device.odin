@@ -804,6 +804,7 @@ vk_create_logical_device :: proc(d: ^Device, desc: Device_Desc) -> bool {
 		shaderSampledImageArrayNonUniformIndexing = true,
 		runtimeDescriptorArray = true,
 		descriptorBindingVariableDescriptorCount = true,
+		shaderBufferInt64Atomics = v12.shaderBufferInt64Atomics && supported.features.shaderInt64,
 	}
 	enable_v11 := vk.PhysicalDeviceVulkan11Features{sType = .PHYSICAL_DEVICE_VULKAN_1_1_FEATURES, pNext = &enable_v12, shaderDrawParameters = v11.shaderDrawParameters}
 	enable_as := vk.PhysicalDeviceAccelerationStructureFeaturesKHR{sType = .PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR, accelerationStructure = true}
@@ -863,6 +864,7 @@ vk_create_logical_device :: proc(d: ^Device, desc: Device_Desc) -> bool {
 	d.info.features.ray_query = ray_query
 	d.info.features.clip_distance = bool(supported.features.shaderClipDistance)
 	d.info.features.draw_indirect_count = bool(v12.drawIndirectCount)
+	d.info.features.atomics_64 = bool(enable_v12.shaderBufferInt64Atomics)
 	family_count: u32
 	d.ivk.GetPhysicalDeviceQueueFamilyProperties(d.physical, &family_count, nil)
 	families := make([]vk.QueueFamilyProperties, family_count, context.temp_allocator)

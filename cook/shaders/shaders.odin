@@ -221,7 +221,7 @@ Job :: struct {
     bases:    []Base,
     out,staging:string,
     reduced:  bool, // compiled with -O1 instead of SLANG_OPTIMIZATION: a SPIRV-Tools bug needs it
-    backends: Backends, // of the generation, without Metal for a stage of the rays traced by software (software_rays)
+    backends: Backends, // of the generation, without Metal for a stage it lacks the means of (metal_lacks)
     prior:    Shader, // the stage as the previous output has it
     has_prior:bool,
     engine:   Shader, // the stage as the build of the engine has it: what first_write shows of a stage the output lacks
@@ -282,11 +282,13 @@ variants :: proc(text:string,allocator:=context.allocator) -> []Variant {
     return found[:]
 }
 
-// Whether a stage serves only the rays traced by software: the source itself
-// of one with the variant hw, or one that says so (`//! software rays`).
-// Metal traces rays by hardware alone, so it gets no code of these.
+// Whether Metal gets no code of a stage: one that serves only the rays traced
+// by software (the source itself of one with the variant hw, or one that says
+// `//! software rays`), as Metal traces rays by hardware alone; or one of the
+// visibility buffer (`//! atomics 64`), whose 64-bit atomics MSL lacks.
 @(private)
-software_rays :: proc(text:string,variant:Variant) -> bool {
+metal_lacks :: proc(text:string,variant:Variant) -> bool {
+    if strings.contains(text,"//! atomics 64") {return true}
     if variant.name!="" {return false}
     for other in variants(text,context.temp_allocator) {if other.name=="hw" {return true}}
     return strings.contains(text,"//! software rays")
@@ -750,7 +752,7 @@ jobs_collect :: proc(g:^Generation,jobs:^[dynamic]Job,source_dir,out,staging:str
             append(&defines,..variant.defines)
             append(&defines,..constant_defines)
             job:=Job{source=source,name=name,stage=itself,defines=defines[:],constants=constant_names,includes=includes,bases=g.bases,out=out,staging=staging,reduced=shader_reduced(name),backends=g.backends}
-            if software_rays(text,variant) {job.backends-={.Metal}}
+            if metal_lacks(text,variant) {job.backends-={.Metal}}
             if problem!="" {job.error=fmt.aprintf("%s: %s",name,problem,allocator=allocator)}
             for &built in engine {
                 if built.name!=name {continue}

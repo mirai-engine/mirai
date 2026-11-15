@@ -300,7 +300,7 @@ cmd_begin_render_pass :: proc(c: ^Command_List, desc: ^Render_Pass_Desc) {
 		width = min(width, size.x)
 		height = min(height, size.y)
 	}
-	if width == max(u32) {width, height = 1, 1}
+	if width == max(u32) {width, height = max(desc.area.x, 1), max(desc.area.y, 1)}
 	c.pass_extent = {width, height}
 }
 

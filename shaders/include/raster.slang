@@ -20,6 +20,9 @@ struct Raster_Input {
     [[vk::location(11)]] float4 in_tangent : TEXCOORD11; // xyz in the world, w the sign of the bitangent
     [[vk::location(12)]] nointerpolation uint in_surface : TEXCOORD12; // of a far mesh: its roughness and metallic
     [[vk::location(13)]] float4 in_vertex_color : TEXCOORD13; // of the mesh, as data for a program; in_color has it for the others
+#ifdef MIRAI_VISIBILITY
+    [[vk::location(14)]] nointerpolation uint in_entry : TEXCOORD14; // the triangle as the visibility buffer names it (visibility_entry)
+#endif
 };
 
 float fragment_depth(Raster_Input input) { return dot(input.in_world - frame.camera_position.xyz, frame.camera_forward.xyz); }
@@ -49,7 +52,11 @@ float3 fragment_surface_normal(Raster_Input input, Material material, float3 to_
 // The footprint of a fragment in the world. A quad is of one primitive, so a
 // branch on its material keeps the derivatives.
 Mirai_Surface_Context fragment_footprint(Mirai_Surface_Context ctx, Raster_Input input) {
+#ifdef MATERIAL_GRADIENTS
+    ctx.position_dx = material_world_gradients[0]; ctx.position_dy = material_world_gradients[1];
+#else
     ctx.position_dx = ddx(input.in_world); ctx.position_dy = ddy(input.in_world);
+#endif
     return ctx;
 }
 

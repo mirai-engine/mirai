@@ -504,6 +504,7 @@ Render_Pass_Desc :: struct {
 	colors:      [MAX_COLOR_TARGETS]Color_Attachment,
 	color_count: int,
 	depth:       Depth_Attachment, // texture 0 = no depth
+	area:        [2]u32,           // of a pass without targets, whose shaders only write storage: the pixels it rasterizes
 	name:        string,
 }
 
@@ -607,6 +608,7 @@ Features :: struct {
 	validation:          bool, // API validation is active
 	clip_distance:       bool, // a vertex shader can clip by planes of its own
 	stop_place:          bool, // a loss names where the GPU stopped (device_failure); Vulkan with VK_AMD_buffer_marker
+	atomics_64:          bool, // 64-bit integer atomic minimum and maximum on storage buffers (the visibility buffer)
 }
 
 Device_Type :: enum u8 {Other, Integrated, Discrete, Virtual, CPU}

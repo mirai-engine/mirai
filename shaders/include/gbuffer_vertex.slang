@@ -22,6 +22,9 @@ struct Gbuffer_Vertex {
     [[vk::location(11)]] float4 out_tangent : TEXCOORD11; // xyz in the world, w the sign of the bitangent there
     [[vk::location(12)]] nointerpolation uint out_surface : TEXCOORD12; // of a far mesh (Mesh_Point.surface.x); 0 for the others
     [[vk::location(13)]] float4 out_vertex_color : TEXCOORD13; // of the mesh, white without one: a program reads it as data
+#ifdef MIRAI_VISIBILITY
+    [[vk::location(14)]] nointerpolation uint out_entry : TEXCOORD14; // the triangle as the visibility buffer names it (visibility_entry)
+#endif
 #ifdef MIRAI_CLIP_PLANE
     float clip : SV_ClipDistance0;
 #endif

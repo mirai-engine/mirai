@@ -276,9 +276,9 @@ cmd_begin_render_pass :: proc(c: ^Command_List, desc: ^Render_Pass_Desc) {
 	}
 	if width == max(u32) {
 		// No attachments: Metal needs an explicit render target size.
-		width, height = 1, 1
-		MTL.RenderPassDescriptor_setRenderTargetWidth(rpd, 1)
-		MTL.RenderPassDescriptor_setRenderTargetHeight(rpd, 1)
+		width, height = max(desc.area.x, 1), max(desc.area.y, 1)
+		MTL.RenderPassDescriptor_setRenderTargetWidth(rpd, NS.UInteger(width))
+		MTL.RenderPassDescriptor_setRenderTargetHeight(rpd, NS.UInteger(height))
 		MTL.RenderPassDescriptor_setDefaultRasterSampleCount(rpd, 1)
 	}
 	if buffer, index, sampled := mtl_sample_slot(c); sampled {

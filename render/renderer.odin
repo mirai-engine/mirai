@@ -58,6 +58,7 @@ Settings :: struct {
 	resolution:           u32,    // the lines the views of the window aim for together, as a fraction of the lines they span, never above one pixel per point nor under RENDER_SCALE_MIN of one: the cost per pixel does not grow with the output; 0, native: the lines they span
 	taa:                  bool,   // temporal anti-aliasing / upscaling to the window resolution
 	lod_error_pixels:     f32,    // raster LOD switch threshold (0 = always full detail)
+	visibility_buffer:    bool,   // clusters without a program are drawn through the visibility buffer where the device has 64-bit atomics (docs/PLAN_VISIBILITY_BUFFER.md); else each fragment runs its material
 	batch_min_pixels:     f32,    // an instance of a batch whose box is fewer pixels across is not rasterized, and fades out from twice that; rays still meet it. 0: every one is drawn
 	probe_spacing:        f32,    // metres between the probes of the first cascade; each next one doubles it
 	probe_grid:           u32,    // probes of a cascade along x and z (half that along y), even, 4 to PROBE_GRID_MAX
@@ -103,7 +104,7 @@ DEFAULT_HIGHLIGHT_STYLE :: Highlight_Style{
 }
 
 DEFAULT_SETTINGS :: Settings{
-	gi_enabled = true, gi_strength = 1, trace_mode = .Auto, taa = true, lod_error_pixels = 1, batch_min_pixels = 1,
+	gi_enabled = true, gi_strength = 1, trace_mode = .Auto, taa = true, lod_error_pixels = 1, batch_min_pixels = 1, visibility_buffer = true,
 	probe_spacing = 1.0, probe_grid = 16, probe_cascades = 5, probe_rays = 128, probe_budget = 512,
 	gi_max_distance = 1e4, sun_shadows = true, light_budget = 8, direct_samples = 15,
 	firefly_clamp = 20, texture_max_size = 2048,
@@ -307,6 +308,7 @@ Pipeline_Id :: enum {
 	Air_Transmittance, Air_Scattering, Air_Sky, Air_Aerial,
 	Depth_Probe, Ui_Particles,
 	Points,
+	Vis_Raster, Vis_Depth, Vis_Resolve, Vis_Resolve_Plain, Vis_Resolve_Layers, // the visibility buffer: its raster, its depth and the material of its pixels (docs/PLAN_VISIBILITY_BUFFER.md)
 }
 
 // A pipeline of a stage that traces rays, or of one with constants: the
@@ -602,6 +604,8 @@ Renderer :: struct {
 	debug_capacity:  int,
 	stats_buffer:    rhi.Buffer,
 	scratch_buffer:  rhi.Buffer, // what a pass writes and nobody reads
+	visibility:      rhi.Buffer, // the visibility buffer of the view drawn, a word of 64 bits per pixel, as large as the largest view asked (visibility_reserve)
+	visibility_bytes: u64,
 	light_changes:        rhi.Buffer, // Scene_State.changes of the frame, for the probes
 	frame_changes:        Light_Changes, // those of this frame, for the views after the first
 	frame_occluders:      Occluder_Changes, // Scene_State.occluders of this frame, for every view
@@ -802,7 +806,7 @@ renderer_destroy :: proc(r: ^Renderer) {
 	for b in r.debug_buffers {if b != 0 {rhi.buffer_destroy(d, b)}}
 	for b in r.font_staging {if b != 0 {rhi.buffer_destroy(d, b)}}
 	for b in r.stats_readback {if b != 0 {rhi.buffer_destroy(d, b)}}
-	for b in ([]rhi.Buffer{r.stats_buffer, r.scratch_buffer, r.glass_dispatch, r.dispatch_start, r.dummy_buffer, r.shadow_buffers.state, r.shadow_buffers.table}) {if b != 0 {rhi.buffer_destroy(d, b)}}
+	for b in ([]rhi.Buffer{r.visibility, r.stats_buffer, r.scratch_buffer, r.glass_dispatch, r.dispatch_start, r.dummy_buffer, r.shadow_buffers.state, r.shadow_buffers.table}) {if b != 0 {rhi.buffer_destroy(d, b)}}
 	if r.light_changes != 0 {rhi.buffer_destroy(d, r.light_changes)}
 	for t in ([]rhi.Texture{r.dummy_texture, r.dummy_layers, r.dfg, r.display_lut, r.font, r.thumbnails}) {if t != 0 {rhi.texture_destroy(d, t)}}
 	air_destroy(r)
@@ -865,6 +869,7 @@ Pipeline_Make :: struct {
 	name:     string, // of a compute one
 	rays:     Pipeline_Rays,
 	clip:     bool, // it needs a device that clips by a plane
+	atomics:  bool, // it needs 64-bit atomics on storage buffers (the visibility buffer)
 	required: bool, // the renderer fails without it
 	graphics: bool,
 	desc:     rhi.Graphics_Pipeline_Desc,
@@ -893,9 +898,9 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 		compute(list, r, id, hardware, .Hardware, twin = true)
 	}
 	graphics :: proc(list: ^Pipeline_List, r: ^Renderer, id: Pipeline_Id, desc: rhi.Graphics_Pipeline_Desc, rays := Pipeline_Rays.Any) {
-		clip := pipeline_uses_clip_distance(id)
+		clip, atomics := pipeline_uses_clip_distance(id), pipeline_uses_atomics_64(id)
 		pipeline_listed(list, {id = id, target = pipeline_slot(r, id, rays), shaders = {shader_of(r, desc.vertex), shader_of(r, desc.fragment)}, rays = rays,
-			clip = clip, required = id != .Blit && !clip, graphics = true, desc = desc})
+			clip = clip, atomics = atomics, required = id != .Blit && !clip && !atomics, graphics = true, desc = desc})
 	}
 	compute(list, r, .Cull, .Cull_Comp)
 	compute(list, r, .Cull_Clusters, .Cull_Clusters_Comp)
@@ -976,6 +981,21 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	clipped_layered.fragment_constants = {GBUFFER_FRAG_NESTED}
 	clipped_layered.name = "gbuffer of a nested view, with layers"
 	graphics(list, r, .Gbuffer_Nested_Layers, gbuffer_ids(clipped_layered, ids))
+	graphics(list, r, .Vis_Raster, {
+		vertex = &r.shader_codes[.Gbuffer_Visibility_Vert], fragment = &r.shader_codes[.Vis_Raster_Frag], cull = .None, name = "visibility raster",
+	})
+	graphics(list, r, .Vis_Depth, {
+		vertex = &r.shader_codes[.Fullscreen_Vert], fragment = &r.shader_codes[.Vis_Depth_Frag], color_formats = {0 = .R32_Float}, color_count = 1,
+		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Greater_Equal, name = "visibility depth",
+	})
+	resolve := gbuffer
+	resolve.vertex, resolve.fragment = &r.shader_codes[.Fullscreen_Vert], &r.shader_codes[.Vis_Resolve_Frag]
+	resolve.depth_write, resolve.depth_compare, resolve.name = false, .Greater_Equal, "visibility resolve"
+	graphics(list, r, .Vis_Resolve, gbuffer_ids(resolve, ids))
+	resolve.fragment, resolve.color_count, resolve.name = &r.shader_codes[.Vis_Resolve_Plain_Frag], 5, "visibility resolve without reflectance"
+	graphics(list, r, .Vis_Resolve_Plain, gbuffer_ids(resolve, ids))
+	resolve.fragment, resolve.color_formats[6], resolve.color_count, resolve.name = &r.shader_codes[.Vis_Resolve_Layers_Frag], .RGBA32_Uint, 7, "visibility resolve with layers"
+	graphics(list, r, .Vis_Resolve_Layers, gbuffer_ids(resolve, ids))
 	graphics(list, r, .Nested_Prime, {
 		vertex = &r.shader_codes[.Fullscreen_Vert], fragment = &r.shader_codes[.Nested_Prime_Frag],
 		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Always, name = "nested view pixels",
@@ -1251,7 +1271,8 @@ pipelines_destroy :: proc(r: ^Renderer) {
 
 @(private)
 pipeline_possible :: proc(info: ^rhi.Device_Info, item: Pipeline_Make) -> bool {
-	return (item.rays != .Hardware || info.features.ray_query) && (item.rays != .Software || SOFTWARE_TRACER) && (!item.clip || info.features.clip_distance)
+	return (item.rays != .Hardware || info.features.ray_query) && (item.rays != .Software || SOFTWARE_TRACER) && (!item.clip || info.features.clip_distance) &&
+		(!item.atomics || info.features.atomics_64)
 }
 
 // Makes the pipelines of r of the rays in make that it lacks and the device
@@ -1389,6 +1410,15 @@ renderer_shaders_idle :: proc(r: ^Renderer) -> (idle: [Shader_Id]bool) {
 	}
 	for id in Shader_Id {idle[id] &&= !busy[id]}
 	return
+}
+
+// These need 64-bit atomics on storage buffers: the visibility buffer.
+@(private)
+pipeline_uses_atomics_64 :: proc(id: Pipeline_Id) -> bool {
+	#partial switch id {
+	case .Vis_Raster, .Vis_Depth, .Vis_Resolve, .Vis_Resolve_Plain, .Vis_Resolve_Layers: return true
+	}
+	return false
 }
 
 // These need a device that clips by a plane a vertex shader writes.
