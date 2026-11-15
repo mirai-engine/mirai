@@ -1,4 +1,3 @@
-//! mirai constant LAYERS_TEXELS int ../runtime/layers.odin
 //! mirai constant WEIGHT_FULL int ../runtime/layers.odin
 //! mirai constant WEIGHT_LAYER_BITS int ../runtime/layers.odin
 //! mirai constant WEIGHT_VALUES_SHIFT int ../runtime/layers.odin
@@ -9,13 +8,13 @@
 // cell, read texel by texel and blended between the four around a point, and
 // the table of the layers of its source (terrain.layers_table), a row of
 // LAYERS_TEXELS texels each. Terrain_Layers, Terrain_Weights and
-// terrain_displace.comp read them alike; a stage without a sampler defines
-// TERRAIN_TEXEL with a load.
+// terrain_displace.comp load them texel by texel alike; a stage without the
+// program API defines TERRAIN_TEXEL.
 #ifndef TERRAIN_SURFACE_SLANG
 #define TERRAIN_SURFACE_SLANG
 #include <constants/plugins/terrain.slang>
 #ifndef TERRAIN_TEXEL
-#define TERRAIN_TEXEL(texture, texel, size) mirai_sample_texture_level(texture, (float2(texel) + 0.5) / (size), 0.0)
+#define TERRAIN_TEXEL(texture, texel) mirai_load_texture(texture, texel)
 #endif
 
 // The four bytes of a texel of a map, as the terrain wrote them.
@@ -49,7 +48,7 @@ Terrain_Mix terrain_weights_at(uint control, float2 size, float2 at, out bool ho
     for (int corner = 0; corner < 4; corner++) {
         int2 offset = int2(corner & 1, corner >> 1);
         float share = (offset.x == 1 ? f.x : 1.0 - f.x) * (offset.y == 1 ? f.y : 1.0 - f.y) / float(WEIGHT_FULL);
-        uint word = terrain_word(TERRAIN_TEXEL(control, min(low + offset, int2(size) - 1), size));
+        uint word = terrain_word(TERRAIN_TEXEL(control, min(low + offset, int2(size) - 1)));
         if (corner == 0) hole = (word >> uint(WEIGHT_HOLE_BIT) & 1u) != 0u;
         float first = float(word >> uint(WEIGHT_VALUES_SHIFT) & 255u), second = float(word >> uint(WEIGHT_VALUES_SHIFT + 8) & 255u);
         layers[3 * corner] = word & mask;
@@ -108,21 +107,20 @@ struct Terrain_Layer {
     float normal_strength; // 0 without a normal map
     float displacement;    // metres from its lowest texel to its highest
 };
-Terrain_Layer terrain_layer(uint table, uint layer, float rows) {
-    float2 size = float2(float(LAYERS_TEXELS), max(rows, 1.0));
+Terrain_Layer terrain_layer(uint table, uint layer) {
     int y = int(layer);
     Terrain_Layer l;
-    l.color = terrain_word(TERRAIN_TEXEL(table, int2(0, y), size));
-    l.normal = terrain_word(TERRAIN_TEXEL(table, int2(1, y), size));
-    float4 values = TERRAIN_TEXEL(table, int2(2, y), size);
+    l.color = terrain_word(TERRAIN_TEXEL(table, int2(0, y)));
+    l.normal = terrain_word(TERRAIN_TEXEL(table, int2(1, y)));
+    float4 values = TERRAIN_TEXEL(table, int2(2, y));
     l.tint = values.rgb;
     l.roughness = values.a;
-    float4 more = TERRAIN_TEXEL(table, int2(3, y), size);
+    float4 more = TERRAIN_TEXEL(table, int2(3, y));
     l.metallic = more.x; l.height_blend = more.y; l.detile = more.z; l.variation = more.w;
-    l.tiling = asfloat(terrain_word(TERRAIN_TEXEL(table, int2(4, y), size)));
-    l.far_tiling = asfloat(terrain_word(TERRAIN_TEXEL(table, int2(5, y), size)));
-    l.normal_strength = asfloat(terrain_word(TERRAIN_TEXEL(table, int2(6, y), size)));
-    l.displacement = asfloat(terrain_word(TERRAIN_TEXEL(table, int2(7, y), size)));
+    l.tiling = asfloat(terrain_word(TERRAIN_TEXEL(table, int2(4, y))));
+    l.far_tiling = asfloat(terrain_word(TERRAIN_TEXEL(table, int2(5, y))));
+    l.normal_strength = asfloat(terrain_word(TERRAIN_TEXEL(table, int2(6, y))));
+    l.displacement = asfloat(terrain_word(TERRAIN_TEXEL(table, int2(7, y))));
     return l;
 }
 #endif

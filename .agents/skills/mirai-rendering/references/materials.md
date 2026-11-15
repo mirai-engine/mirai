@@ -222,7 +222,8 @@ A texture of an asset resides with the levels the GPU samples of it
   reflection or by the probes loads. A sample of a program reports the level its uv and bias or
   gradients read, as a map does; one that names its level (`mirai_sample_texture_level`) or asks
   for the size (`mirai_texture_size`) keeps every level of the texture, since a level it names
-  counts from the largest one held.
+  counts from the largest one held. A loaded texel (`mirai_load_texture`) reports nothing: data
+  that does not stream would pay a read of the buffer at each pixel for no level.
 - **Which frames.** Those the window shows; an offscreen frame only when it waits for its textures
   (`Frame_Desc.streamed`). The stages of extensions (decals, particles), the sky and the UI do not
   report: what only they show keeps the levels it has unless the pool asks for them. Nothing asks
