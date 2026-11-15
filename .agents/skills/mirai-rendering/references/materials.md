@@ -220,15 +220,16 @@ A texture of an asset resides with the levels the GPU samples of it
   G-buffer with its nested views and programs, the `Gbuffer` stage of extensions, the glass layers,
   traced reflections, the probe rays and the material points of programs) write, per texture, the
   finest level they read with an atomic minimum into a buffer of the frame, which comes back like
-  the page requests. A raster sample reports the level anisotropic filtering reads from its uv
-  derivatives and bias, each axis the shortest a device may take: the levels kept are never coarser
-  than what the sampler reads, and the image is that of the whole texture. A ray reports the level
-  its cone reads at the hit, so a texture seen only in a reflection or by the probes loads. A sample
-  of a program reports the level its uv and bias or gradients read, as a map does; one that names
-  its level (`mirai_sample_texture_level`) or asks for the size (`mirai_texture_size`) keeps every
-  level of the texture, since a level it names counts from the largest one held. A loaded texel
-  (`mirai_load_texture`) reports nothing: data that does not stream would pay a read of the buffer
-  at each pixel for no level.
+  the page requests: one atomic for the lanes of a wave that sample one texture, none from a helper
+  of a quad, whose writes are dropped. A raster sample reports the level anisotropic filtering reads
+  from its uv derivatives and bias, each axis the shortest a device may take: the levels kept are
+  never coarser than what the sampler reads, and the image is that of the whole texture. A ray
+  reports the level its cone reads at the hit, so a texture seen only in a reflection or by the
+  probes loads. A sample of a program reports the level its uv and bias or gradients read, as a map
+  does; one that names its level (`mirai_sample_texture_level`) or asks for the size
+  (`mirai_texture_size`) keeps every level of the texture, since a level it names counts from the
+  largest one held. A loaded texel (`mirai_load_texture`) reports nothing: data that does not stream
+  would pay a read of the buffer at each pixel for no level.
 - **Which frames.** Those the window shows; an offscreen frame only when it waits for its textures
   (`Frame_Desc.streamed`). The stages of extensions (decals, particles), the sky and the UI do not
   report: what only they show keeps the levels it has unless the pool asks for them. Nothing asks

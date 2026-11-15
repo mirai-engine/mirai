@@ -796,7 +796,8 @@ vk_create_logical_device :: proc(d: ^Device, desc: Device_Desc) -> bool {
 	rt_env := env_flag("MIRAI_RT")
 	ray_query := rt_exts_present && bool(rq_features.rayQuery) && bool(as_features.accelerationStructure) && bool(v12.bufferDeviceAddress) && desc.allow_hardware_ray_tracing && rt_env != "software" && rt_env != "0"
 
-	enable_v13 := vk.PhysicalDeviceVulkan13Features{sType = .PHYSICAL_DEVICE_VULKAN_1_3_FEATURES, dynamicRendering = true, synchronization2 = true, maintenance4 = v13.maintenance4}
+	// Demote to helper: what a fragment stage asks of whether it is a helper of its quad (IsHelperLane).
+	enable_v13 := vk.PhysicalDeviceVulkan13Features{sType = .PHYSICAL_DEVICE_VULKAN_1_3_FEATURES, dynamicRendering = true, synchronization2 = true, maintenance4 = v13.maintenance4, shaderDemoteToHelperInvocation = v13.shaderDemoteToHelperInvocation}
 	enable_v12 := vk.PhysicalDeviceVulkan12Features{
 		sType = .PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, pNext = &enable_v13,
 		timelineSemaphore = true,
