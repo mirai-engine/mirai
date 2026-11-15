@@ -1,10 +1,10 @@
 #include "native.slang"
 // The first pass of the cull of the clusters the maps of the shadows draw in
 // a round (shadow_maps.slang, shadow_cull.slang): a thread for each instance,
-// of the scene or of a batch, and each job of the round, a window of a map.
-// The round of what stays draws into the windows it lists the casters that
-// do not move; that of what moves, into every map, those that do, and the
-// glass of the tint. An instance that may cast a shadow into the window, and
+// of the scene or of a batch, and each map of the round, where it draws the
+// pages its mask names. The round of what stays draws into them the casters
+// that do not move; that of what moves, those that do, and the glass of the
+// tint. An instance that may cast a shadow into the window, and
 // covers a texel of its map, hands the clusters of the cut of the map that its levels can
 // take (instance_clusters) to shadow_clusters.comp in chunks, as cull.comp
 // hands those the view draws to cull_clusters.comp. Chunks past the capacity
@@ -46,6 +46,7 @@ bool instance_moves(uint instance) {
 void main(uint3 id : SV_DispatchThreadID) {
     uint instance = id.x, job = id.y;
     if (instance >= params.instances || job >= params.maps) return;
+    uint map = shadow_word(shadow_data, params.list + job);
     if (params.listed != 0u) {
         // The range of the thread: the last whose first thread is not past it.
         uint low = 0u, high = params.ranges;
@@ -71,10 +72,11 @@ void main(uint3 id : SV_DispatchThreadID) {
     bool glass = params.moving != 0u && params.glass != 0u && (inst.meta.w & (INSTANCE_FLAG_TRANSLUCENT | INSTANCE_FLAG_BLENDED)) != 0u
         && !instance_batched(instance) && !(all_glass && glass_sheet(inst));
     if (all_glass && !glass) return;
-    Shadow_Job work = shadow_job(shadow_data, job);
-    Shadow_Map m = shadow_map_at(shadow_data, params.rows, work.map);
+    Shadow_Map m = shadow_map_at(shadow_data, params.rows, map);
     float3 low = inst.bounds_min.xyz - reach, high = inst.bounds_max.xyz + reach;
-    if (!shadow_map_reaches(shadow_map_window(m, work.window), low, high) || shadow_map_unseen(m, low, high)) return;
+    uint4 pages;
+    if (!shadow_map_reaches(m, low, high) || shadow_map_unseen(m, low, high) || !shadow_page_rect(m, low, high, pages)
+        || !shadow_pages_drawn(shadow_data, map, pages)) return;
     Mesh mesh = meshes[instance_mesh(inst)];
     if (mesh.vertex_count == 0u || mesh.cluster_count == 0u) return;
     // A batch of a deformable sways as far as its mesh says (render.batch_sway):
@@ -95,7 +97,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     InterlockedAdd(shadow_state[SHADOW_CHUNK_COUNT], count, base);
     uint kept = base >= params.chunk_capacity ? 0u : min(count, params.chunk_capacity - base);
     if (kept < count) InterlockedAdd(stats[0].dropped[CULL_LIST_SHADOW_CHUNKS], count - kept);
-    uint what = job | (depth ? SHADOW_CHUNK_DEPTH : 0u) | (glass ? SHADOW_CHUNK_GLASS : 0u) | (rest ? SHADOW_CHUNK_REST : 0u);
+    uint what = map | (depth ? SHADOW_CHUNK_DEPTH : 0u) | (glass ? SHADOW_CHUNK_GLASS : 0u) | (rest ? SHADOW_CHUNK_REST : 0u);
     for (uint k = 0u; k < kept; k++) {
         uint first = k * CULL_CHUNK;
         chunks[base + k] = uint4(instance, what, clusters.x + first, min(CULL_CHUNK, clusters.y - first));

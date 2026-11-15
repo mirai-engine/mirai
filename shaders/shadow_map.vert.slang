@@ -2,17 +2,18 @@
 // tested: the clusters of the instances with masked or blended materials,
 // which shadow_map.frag draws only where their material is there.
 //! variant tested MIRAI_SHADOW_TESTED=1
-// square: the square of each map of a list from word params.list, a word
-// each: the map, and how many texels its cache moves along x and y plus 2048
-// (render.shadow_square), for shadow_map.frag to clear or move.
+// square: of each word of a list from params.list, a page of a map to clear
+// (shadow_page_word), or with params.moving the square of a map, and how many
+// texels its cache moves along x and y plus 2048, for shadow_map.frag to
+// move.
 //! variant square MIRAI_SHADOW_SQUARE=1
 // The depth of the scene from a light into the square of one of its maps in
-// the atlas (shadow_maps.slang): an instance for each cluster a job of a map
-// takes (shadow_maps.comp). The clip distances keep its triangles in the
-// window of the job, which the atlas maps to its part of the square.
+// the atlas (shadow_maps.slang): an instance for each page of a map a
+// cluster covers (shadow_clusters.comp). The clip distances keep its
+// triangles in the page, which the atlas maps to its part of the square.
 #include "gbuffer_vertex.slang"
 #include "shadow_maps.slang"
-// The clusters to draw: the instance, the cluster, the job, and 1 for one at rest.
+// The clusters to draw: the instance, the cluster, the page (shadow_page_word), and 1 for one at rest.
 [[vk::binding(SLOT_PASS0, 0)]] StructuredBuffer<uint4> entries : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);
 [[vk::binding(SLOT_PASS1, 0)]] StructuredBuffer<uint4> shadow_data : register(MIRAI_REGISTER(t, SLOT_PASS1), space0);
 // The tested variant draws the clusters of masked materials, and those of
@@ -55,11 +56,11 @@ Shadow_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vul
     if (instance_id >= params.maps || vertex_id >= 6u) return output;
     uint word = shadow_word(shadow_data, params.list + instance_id);
     Shadow_Map square = shadow_map_at(shadow_data, params.rows, word & 0xFFu);
-    float2 at = float2(vertex_id == 1u || vertex_id >= 4u ? 1.0 : -1.0, vertex_id == 2u || vertex_id == 3u || vertex_id == 5u ? 1.0 : -1.0);
-    float extent = float(square.rect.z) / float(frame.sun_maps.z);
-    float2 low = float2(square.rect.xy) / float(frame.sun_maps.z);
+    float2 at = float2(vertex_id == 1u || vertex_id >= 4u ? 1.0 : 0.0, vertex_id == 2u || vertex_id == 3u || vertex_id == 5u ? 0.0 : 1.0);
+    uint4 window = params.moving != 0u ? uint4(0u, 0u, square.rect.zz) : shadow_page_window(square, shadow_page_of(word));
+    float2 texel = float2(square.rect.xy) + lerp(float2(window.xy), float2(window.zw), at);
     for (uint i = 0u; i < 4u; i++) output.clip[i] = 1.0;
-    output.position = float4(2.0 * low.x + extent - 1.0 + extent * at.x, 1.0 - 2.0 * low.y - extent + extent * at.y, 0.0, 1.0);
+    output.position = float4(2.0 * texel.x / float(frame.sun_maps.z) - 1.0, 1.0 - 2.0 * texel.y / float(frame.sun_maps.z), 0.0, 1.0);
     output.square = int4(square.rect.xy, int((word >> 8u) & 0xFFFu) - 2048, int(word >> 20u) - 2048);
     output.side = square.rect.z;
     return output;
@@ -84,13 +85,13 @@ Shadow_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vul
     if (vertex_id >= cluster_triangle_count(c) * 3u) return output;
     // At rest (entry.w, shadow_clusters.comp), the vertices of its clusters.
     Mesh_Point v = cluster_point_at(mesh, c, cluster_corner(mesh, c, vertex_id), entry.w != 0u ? INVALID : mesh.posed_word);
-    Shadow_Job job = shadow_job(shadow_data, entry.z);
-    Shadow_Map m = shadow_map_at(shadow_data, params.rows, job.map);
+    Shadow_Map m = shadow_map_at(shadow_data, params.rows, shadow_page_map(entry.z));
+    uint4 page = shadow_page_window(m, shadow_page_of(entry.z));
     float3 world = transform_point(inst.world, v.position);
     float3 local = shadow_map_local(m, world);
     float4 clip = shadow_map_clip(m, local);
-    // The window of the job over the map, from -1 to 1, y up.
-    float4 window = float4(job.window) / float(max(m.rect.z, 1u));
+    // The page over the map, from -1 to 1, y up.
+    float4 window = float4(page) / float(max(m.rect.z, 1u));
     float4 edges = float4(2.0 * window.x - 1.0, 1.0 - 2.0 * window.w, 2.0 * window.z - 1.0, 1.0 - 2.0 * window.y);
     output.clip[0] = clip.x - edges.x * clip.w;
     output.clip[1] = edges.z * clip.w - clip.x;

@@ -431,6 +431,22 @@ render_moved_cascades_give_what_whole_ones_give :: proc(t: ^testing.T) {
 	differ := 0
 	for v, k in moved {if abs(int(v) - int(whole[k])) > 2 {differ += 1}}
 	testing.expectf(t, differ * 1000 <= len(moved), "%d of %d values differ from the maps drawn whole", differ, len(moved))
+	// A post that moves a little draws again the pages of each cascade its
+	// boxes cover, no more than four, and gives what maps drawn whole give.
+	testing.expect(t, scene_move(r, {5}, {trs({f32(5 % 3) * 2.3 - 2.25, 0.8, f32(5 / 3) * 2.1 - 3}, {0.3, 1.6, 0.3})}))
+	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	cascades := 0
+	for h in r.main.targets.shadow_raster.held[:r.main.targets.shadow_raster.held_count] {if h.light < 0 {cascades += 1}}
+	testing.expectf(t, r.stats.shadow_pages_drawn > 0 && int(r.stats.shadow_pages_drawn) <= 4 * cascades, "a post that moved drew again %d pages of %d cascades", r.stats.shadow_pages_drawn, cascades)
+	paged := read(t, &f)
+	defer delete(paged)
+	r.main.targets.shadow_raster.held_count = 0
+	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	again := read(t, &f)
+	defer delete(again)
+	differ = 0
+	for v, k in paged {if k < len(again) && abs(int(v) - int(again[k])) > 2 {differ += 1}}
+	testing.expectf(t, len(paged) == len(again) && differ * 1000 <= len(paged), "%d of %d values differ from the maps drawn whole after a page", differ, len(paged))
 	expect_clean(t, f.device)
 }
 

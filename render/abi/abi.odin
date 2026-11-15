@@ -177,6 +177,9 @@ SHADOW_LIGHT_FACES         :: 16
 // The face of a spot whose one map lies along its cone, after the six of the cube.
 SHADOW_SPOT_FACE           :: 6
 SHADOW_MAP_ORTHOGRAPHIC    :: 1
+// The side of a page of a map, texels, and the most pages along a side of one.
+SHADOW_PAGE                :: u32(128)
+SHADOW_MAP_PAGES           :: 16
 SHADOW_SUN_MAPS            :: 6
 SUN_MAP_ROWS               :: SHADOW_SUN_MAPS * SHADOW_MAP_ROWS
 REFLECTION_SHARED_ROUGHNESS :: f32(0.15)
