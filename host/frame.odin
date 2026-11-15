@@ -255,6 +255,7 @@ app_game_frame :: proc(app:^App,world:rawptr,phases:=ALL_PHASES,step:=false,dt:=
     defer app.stats.game_ms=f32(time.duration_milliseconds(time.tick_since(started)))
     zone:=profile_part(app,"game")
     defer base.profile_end(zone)
+    app.profiler.memory_world=world
     loop:=core.Loop.Game
     frame:=platform.input_frame(app.platform)
     ref:=app_world_ref(app,world)
@@ -417,6 +418,7 @@ app_editor_frame :: proc(app:^App,world,editor:rawptr,played:=false) {
     started:=time.tick_now()
     defer app.stats.editor_ms=f32(time.duration_milliseconds(time.tick_since(started)))
     zone:=profile_part(app,"editor")
+    if !played && app.profiler.memory_world==nil {app.profiler.memory_world=world}
     defer base.profile_end(zone)
     loop:=core.Loop.Editor
     if played {

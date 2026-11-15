@@ -267,9 +267,11 @@ For a renderer that generates frames (`rhi/present.odin`):
   dictionary of megabytes).
 - The file belongs to one device, driver and cache UUID, and is read whole or not at all: another
   device, another version or a file that does not read back exactly is ignored and replaced.
-- It is rewritten in one rename each time the run added a part of its limit
-  (`PIPELINE_STORE_SAVE_PARTS`), from the thread that compiled, and when the device is destroyed:
-  a run that crashes, is killed or loses its device keeps what it compiled. A write holds the
+- It is rewritten in one rename once what the driver took to compile the pipelines added since the
+  last write (`VkPipelineCreationFeedback`) passes `PIPELINE_STORE_SAVE_SHARE` times what that
+  write took, from the thread that compiled, and when the device is destroyed: a run that
+  crashes, is killed or loses its device loses little compiling, and cheap pipelines do not
+  rewrite the file. A write holds the
   blobs this run used, the last used first, then those of earlier runs that are still young; a
   pipeline no run asks for (its shader changed) ages out, and nothing past `PIPELINE_STORE_BYTES`
   goes in. Several processes share the file: a write first takes in the entries another process

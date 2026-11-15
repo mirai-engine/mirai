@@ -39,8 +39,9 @@ recording_fixture :: proc(a_ms:i64) -> host.Profile_Recording {
         )
     }
     frames:=make([]host.Profile_Frame,2,context.temp_allocator)
-    frames[0]={number=5,drawn=true,render_wait_ms=0.5,gpu_ms=3}
-    frames[1]={number=6,drawn=true,render_wait_ms=0.5,gpu_ms=3}
+    // The second submitted twice and only one came back.
+    frames[0]={number=5,drawn=true,render_wait_ms=0.5,gpu_ms=3,device_first=1,device_end=2,gpu_submissions=1}
+    frames[1]={number=6,drawn=true,render_wait_ms=0.5,gpu_ms=1,device_first=2,device_end=4,gpu_submissions=1}
     return {frames=frames,zones=zones[:],threads=2,complete=true}
 }
 
@@ -102,6 +103,8 @@ the_summary_ranks_zones_by_their_own_time_and_reads_what_bounds_the_frames :: pr
     for part in summary.parts {parts[part.name]=true}
     testing.expect(t,parts["editor"] && parts["pacing"] && parts["other"] && parts["between"],"the parts of the frame, what they leave and what runs between frames")
     testing.expect_value(t,summary.frame.bound.cpu,2)
+    testing.expect_value(t,summary.frame.gpu_frames,1)
+    testing.expect_value(t,summary.frame.gpu_ms,3.0) // the partial frame is left out
     testing.expect_value(t,summary.workers.threads,1)
     testing.expect_value(t,summary.workers.busy_ms,2.0)
     testing.expect(t,len(summary.notes)>0,"two frames are too few for percentiles")

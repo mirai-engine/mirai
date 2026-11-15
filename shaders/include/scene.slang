@@ -511,11 +511,17 @@ void material_parameters(uint row, uint block, out float4 parameters[16]) {
 [[vk::binding(TEXTURE_FEEDBACK_SLOT, 0)]] RWStructuredBuffer<uint> texture_feedback_words : register(MIRAI_REGISTER(u, TEXTURE_FEEDBACK_SLOT), space0);
 #endif
 
+// While true, samples record nothing: the alpha of a program inside a
+// traversal (hit_alpha) reads its maps for whether a ray goes on, and a
+// write of each of them would keep the whole program in every traversal of
+// the stage, its colors and normals too, which no ray reads there.
+static bool texture_feedback_quiet = false;
 // That a texture was sampled at `level`: log2 of the texels across its width
 // a sample spans at the level it reads, less log2 of that width, which no
 // level held changes; -FLT_MAX for every level.
 void texture_feedback(uint texture_index, float level) {
 #ifdef MIRAI_TEXTURE_FEEDBACK
+    if (texture_feedback_quiet) return;
     uint entry = texture_index - TEXTURE_TABLE_RESERVED;
     if (entry >= texture_feedback_words[0] || isnan(level)) return;
     uint code = uint(clamp(floor((level - TEXTURE_FEEDBACK_LOW) * TEXTURE_FEEDBACK_STEPS), 0.0, float(TEXTURE_FEEDBACK_CODES - 1u)));

@@ -265,7 +265,7 @@ Stats :: struct {
 	probes_per_frame:  u32,
 	probes_traced:     u32, // in the frame two frames ago
 	rays_per_frame:    u64,
-	gpu_ms:            f32,
+	gpu_ms:            f32, // of the last frame the GPU finished
 	ev100:             f32, // the main view is exposed at, before its compensation: what its meter took, as read back, or what its camera gives
 	timings:           []rhi.Gpu_Timing,
 	// Time of the calling thread in the parts of the last frame, in ms.
@@ -668,6 +668,7 @@ Renderer :: struct {
 	pixel_density:   f32, // device pixels per native window coordinate
 	frame:           u64,
 	stats:           Stats,
+	submissions:     Gpu_Submissions,
 	error_buffer:    [512]u8,
 	error:           string,
 	problem_buffer:  [1024]u8, // of Stats.problem

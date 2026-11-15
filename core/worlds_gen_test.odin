@@ -441,6 +441,25 @@ test_info_rewound_world :: proc(allocator:=context.allocator) -> (info:World_Inf
 }
 
 @(private="file")
+test_info_mem_world :: proc(allocator:=context.allocator) -> (info:World_Info,ok:bool) {
+    context.allocator=allocator
+    tables,tables_error:=make([]Table_Info,1)
+    storages,storages_error:=make([]Storage_Info,1)
+    if tables_error!=nil || storages_error!=nil {
+        delete(tables);delete(storages)
+        return
+    }
+    tables[0]={name="values",library="",type=typeid_of(type_of((^Mem_World)(nil).values.values[0])),info=type_info_of(type_of((^Mem_World)(nil).values.values[0])),offset=offset_of(Mem_World,values),place=.World,shared=false,replicated=.None,game=false,default=nil,description="",fields=nil,single=false,far=false,derived=false,was="",base=false,locks=nil}
+    storages[0]={name="Mem_Pools",library="core",type=typeid_of(Mem_Pools),info=type_info_of(Mem_Pools),offset=offset_of(Mem_World,pools),place=.World,setting=.None,default=nil,by_world=false,for_device=nil,persist=false,keep=false,plugin="",game=false,local=false,procs={}}
+    info.sizes={.World=size_of(Mem_World),.Shared=1,.Editor=1}
+    info.aligns={.World=align_of(Mem_World),.Shared=1,.Editor=1}
+    info.entities,info.revisions=offset_of(Mem_World,entities),offset_of(Mem_World,storage_revisions)
+    info.tables,info.storages=tables,storages
+    world_info_index(&info)
+    return info,true
+}
+
+@(private="file")
 test_info_run_world :: proc(allocator:=context.allocator) -> (info:World_Info,ok:bool) {
     context.allocator=allocator
     tables,tables_error:=make([]Table_Info,0)
@@ -544,6 +563,7 @@ test_info :: proc(t:^testing.T,$W:typeid,allocator:=context.allocator,loc:=#call
     else when W==Rev_World {info,ok=test_info_rev_world(allocator)}
     else when W==Roll_World {info,ok=test_info_roll_world(allocator)}
     else when W==Rewound_World {info,ok=test_info_rewound_world(allocator)}
+    else when W==Mem_World {info,ok=test_info_mem_world(allocator)}
     else when W==Run_World {info,ok=test_info_run_world(allocator)}
     else when W==Run_Kept_World {info,ok=test_info_run_kept_world(allocator)}
     else when W==Indexed_World {info,ok=test_info_indexed_world(allocator)}

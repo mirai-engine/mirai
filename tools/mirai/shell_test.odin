@@ -47,3 +47,15 @@ a_content_tool_runs_with_its_collections_and_its_arguments :: proc(t:^testing.T)
     testing.expect(t,!slice.contains(alone[:],"--"),"nothing after it")
     testing.expect_value(t,alone[2],"C:/game/tools/content")
 }
+
+// Git Bash is found from the root git --exec-path names, also through a shim such as Scoop's,
+// whose git reports the folder it was installed in.
+@(test)
+git_bash_is_found_from_the_exec_path_of_git :: proc(t:^testing.T) {
+    context.allocator=context.temp_allocator
+    cases:=[?]struct{exec:string,root:string}{
+        {"C:/Program Files/Git/mingw64/libexec/git-core","C:/Program Files/Git"},
+        {"C:/Users/u/scoop/apps/git/current/mingw64/libexec/git-core","C:/Users/u/scoop/apps/git/current"},
+    }
+    for c in cases {testing.expect_value(t,git_bash(c.exec),join(c.root,"bin","bash.exe"))}
+}

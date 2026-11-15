@@ -157,7 +157,7 @@ read_stats :: proc(r: ^Renderer, slot: int) {
 		r.stats.occluded_instances = stats.occluded_instances
 		r.stats.probes_traced = stats.probes_traced
 	}
-	r.stats.timings = rhi.frame_timings(r.device)
+	r.stats.timings, _, _ = rhi.frame_timings(r.device)
 	total: f32
 	for t in r.stats.timings {total += t.ms}
 	r.stats.gpu_ms = total
@@ -457,6 +457,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     }
     prepared:=time.tick_now()
     cmd,began:=rhi.frame_begin(d,!frame.offscreen)
+    gpu_submission_keep(r)
     if !began {
         set_error(r,"the device gave no frame to draw: %s",rhi.device_error(d)!=""?rhi.device_error(d):"the window is being resized or its image is not ready")
         return false
@@ -1765,6 +1766,52 @@ update_stats :: proc(r: ^Renderer) {
 }
 
 renderer_stats :: proc(r: ^Renderer) -> ^Stats {return &r.stats}
+
+RENDER_GPU_SUBMISSIONS :: 8   // whose timings wait between two renderer_gpu_clear
+RENDER_GPU_TIMINGS :: 1024
+
+// The GPU timings of one submission of the device, copied out of it, which
+// reuses its own at the next frame.
+Gpu_Submission :: struct {
+	frame:   u64, // the rhi.frame_number it was
+	timings: []rhi.Gpu_Timing,
+}
+
+Gpu_Submissions :: struct {
+	list:         [RENDER_GPU_SUBMISSIONS]Gpu_Submission,
+	count:        int,
+	timings:      [RENDER_GPU_TIMINGS]rhi.Gpu_Timing,
+	names:        [RENDER_GPU_TIMINGS][rhi.MAX_TIMESTAMP_NAME_BYTES]u8,
+	timing_count: int,
+	kept_end:     u64, // one past the rhi frame of the last submission seen
+}
+
+// The submissions whose GPU timings came back since renderer_gpu_clear, in
+// the order they were submitted. A host frame may submit several (captures,
+// thumbnails); whoever accounts for each one takes them every frame and
+// clears them. A submission that does not fit is left out.
+renderer_gpu_submissions :: proc(r: ^Renderer) -> []Gpu_Submission {return r.submissions.list[:r.submissions.count]}
+
+renderer_gpu_clear :: proc(r: ^Renderer) {r.submissions.count, r.submissions.timing_count = 0, 0}
+
+@(private)
+gpu_submission_keep :: proc(r: ^Renderer) {
+	timings, frame, measured := rhi.frame_timings(r.device)
+	g := &r.submissions
+	// A frame_begin that fails before the device collects leaves the timings of the one before.
+	if !measured || frame < g.kept_end {return}
+	g.kept_end = frame + 1
+	if g.count >= len(g.list) || g.timing_count + len(timings) > len(g.timings) {return}
+	first := g.timing_count
+	for timing, i in timings {
+		k := first + i
+		g.timings[k] = timing
+		g.timings[k].name = string(g.names[k][:copy(g.names[k][:], timing.name)])
+	}
+	g.timing_count += len(timings)
+	g.list[g.count] = {frame, g.timings[first:g.timing_count]}
+	g.count += 1
+}
 
 // Stats with the counters of the last frame, which it reads back by the time
 // a later frame needs its slot: for whoever has just read an image of that

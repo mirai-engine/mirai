@@ -223,6 +223,9 @@ or interleave its own passes.
   of `tick_now` (QPC on Windows, `CLOCK_MONOTONIC_RAW` on Linux). Without the extension, Vulkan
   places the last timestamp of the frame at the moment it collects it: it keeps the durations but
   arrives late;
+- `renderer_gpu_submissions`: a copy of the timings of each submission since
+  `renderer_gpu_clear`, with the `rhi` frame it was (`rhi.frame_timings`), for whoever accounts for
+  every submission of a host frame; `Stats.timings` is only the last one the GPU finished;
 - visible, culled and occluded instances, probes and estimated rays per frame;
 - what was discarded by capacity ([UI limits](ui.md#capacities));
 - materials, textures, their memory, reduced textures and compression

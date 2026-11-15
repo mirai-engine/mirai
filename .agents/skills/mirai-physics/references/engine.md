@@ -124,7 +124,7 @@ own the `Transform` (`locks="core.Transform"`): the game moves through requests.
   ancestor it is a compound of, not `Static`): a stored collision mesh is a `Mesh`, stored shapes
   are a `Hull` of one piece each, exactly as authored; without them it is the triangles of the
   mesh (`Mesh`) while still, and while it moves the convex pieces of a decomposition of them
-  (`host.assets_collision_pieces_file`), made once in a job and kept by the content of the mesh in
+  (`asset.mesh_collision_pieces`), made once in a job and kept by the content of the mesh in
   the collision cache, shared by every entity of that mesh like any geometry slot. A shipped game
   takes the pieces its cook wrote into the mesh; without them it is the hull of all its points. A
   mesh that does not read is `physics.collider_mesh_unreadable`.

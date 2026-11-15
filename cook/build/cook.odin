@@ -16,8 +16,6 @@ import "mirai:asset"
 import "mirai:cook/far"
 import anim "mirai:std/anim"
 import "mirai:cook/textures"
-import render "mirai:engine/render"
-import "mirai:host"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/jobs"
@@ -43,7 +41,7 @@ import "mirai:std/subprocess"
 // (cook/far), which the game shows while the section is not loaded. A mesh
 // without colliders of its source that a scene or prefab moves with an Auto
 // Collider is written with the convex pieces it collides as
-// (host.assets_collision_pieces_file, kept in the collision cache), which a
+// (asset.mesh_collision_pieces, kept in the collision cache), which a
 // shipped game reads and never makes. The
 // folder gets a packed index, so the game does not look at its files to
 // know what they are, and everything written is read back and checked.
@@ -62,7 +60,7 @@ Cook_Desc :: struct {
     plugins:[]project.Asset_Folder, // the assets of active plugins: every file a root, cooked under its prefix
     texture_cache:string, // folder of compressed textures kept by content (textures.cache_read); "": none
     mesh_cache:string,    // folder of the meshes an import keeps (cook/import Import_Options); "": none
-    collision_cache:string, // folder of the convex pieces of meshes kept by content (host.assets_collision_pieces_file); "": none
+    collision_cache:string, // folder of the convex pieces of meshes kept by content (asset.mesh_collision_pieces); "": none
     codecs:asset.Codecs, // what the project ships with (build.compression)
     root:string,          // of the project: the sources of imported assets are named relative to it. "": the folder of assets
     worker:jobs.Worker_Ref, // where the files are cooked, in parallel on its system. No system: a system of the cook, a thread per core
@@ -823,8 +821,11 @@ animation_cook :: proc(work:^Cook_Work,source,target:string,types:^asset.Types) 
     return true,asset.document_save(&doc,target,profile=cook_profile(work.desc))==.None
 }
 
-// The Collider and Rigid_Body of the physics plugin as a cook reads them from
-// a scene: by the names of their fields and of the values of their enums.
+// The Mesh_Renderer of engine/render and the Collider and Rigid_Body of the
+// physics plugin as a cook reads them from a scene: by the names of their
+// fields and of the values of their enums.
+@(private="file")
+Cooked_Shown :: struct {mesh:base.Asset_Id}
 @(private="file")
 Cooked_Collider :: struct {kind:enum u8 {Box,Sphere,Capsule,Cylinder,Hull,Mesh,Heightfield,External,Auto}}
 @(private="file")
@@ -859,7 +860,7 @@ pieces_wanted :: proc(registry:^asset.Registry,reached,left:[]bool,allocator:run
         count:=len(view.ids)
         colliders:=rows_of(&scene,&types,"Collider",Cooked_Collider,count)
         bodies:=rows_of(&scene,&types,"Rigid_Body",Cooked_Body,count)
-        shown:=rows_of(&scene,&types,"Mesh_Renderer",render.Mesh_Renderer,count)
+        shown:=rows_of(&scene,&types,"Mesh_Renderer",Cooked_Shown,count)
         row_of:=make(map[base.Entity_Id]int,context.temp_allocator)
         for id,row in view.ids {row_of[id]=row}
         for collider,row in colliders {
@@ -890,7 +891,7 @@ mesh_pieces_cook :: proc(work:^Cook_Work,source:string,data:[]u8,types:^asset.Ty
     defer asset.asset_close(&file)
     points:=make([dynamic][3]f32,context.temp_allocator)
     sizes:=make([dynamic]u32,context.temp_allocator)
-    if !host.assets_collision_pieces_file(&file,types,work.desc.collision_cache,&points,&sizes) {return data,true}
+    if !asset.mesh_collision_pieces(&file,types,work.desc.collision_cache,&points,&sizes) {return data,true}
     doc:asset.Document
     if asset.document_from_asset(&doc,&file,context.temp_allocator)!=.None {return}
     defer asset.document_destroy(&doc)

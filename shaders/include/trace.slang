@@ -149,6 +149,9 @@ bool hit_mean(Instance inst, float t) {
 // The alpha a masked material gives a ray at a point: its maps, or the alpha
 // of its program (surface_coverage.slang), which is that of the default
 // material when the program does not change it.
+// The program records no texture feedback (texture_feedback_quiet), so only
+// what its alpha reads stays of it; the hit the ray stops at is shaded, and
+// samples, as it is.
 float hit_alpha(Instance inst, Material m, Mesh_Triangle tri, float3 weights, float2 uv, float2 uv1, float2 lod, float t) {
     if (m.program_id == 0u) return material_base_color(m, uv, uv1, lod, float3(1), true).a;
     float3 normal = transform_normal(inst.world_inv, tri.a.normal * weights.x + tri.b.normal * weights.y + tri.c.normal * weights.z);
@@ -160,7 +163,10 @@ float hit_alpha(Instance inst, Material m, Mesh_Triangle tri, float3 weights, fl
     float alpha;
     float4 parameters[16];
     material_parameters(m.row, inst.material_values, parameters);
-    return mirai_program_alpha(m.program_id, parameters, ctx, alpha) ? alpha : MATERIAL_DEFAULT_OPACITY;
+    texture_feedback_quiet = true;
+    bool given = mirai_program_alpha(m.program_id, parameters, ctx, alpha);
+    texture_feedback_quiet = false;
+    return given ? alpha : MATERIAL_DEFAULT_OPACITY;
 }
 
 // What a ray that finds this triangle at distance t does: stop, or go through

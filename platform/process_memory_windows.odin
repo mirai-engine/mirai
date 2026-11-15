@@ -15,9 +15,9 @@ foreign kernel32 {
     K32GetProcessMemoryInfo :: proc(process:win32.HANDLE,counters:^Process_Memory_Counters,size:u32) -> win32.BOOL ---
 }
 
-// The bytes of memory the process holds: its working set; 0 when the system does not say.
-process_memory_bytes :: proc "contextless" () -> u64 {
+// The working set, and the private commit (pagefile).
+process_memory :: proc "contextless" () -> Process_Memory {
     counters:=Process_Memory_Counters{cb=size_of(Process_Memory_Counters)}
-    if !K32GetProcessMemoryInfo(win32.GetCurrentProcess(),&counters,counters.cb) {return 0}
-    return u64(counters.working_set)
+    if !K32GetProcessMemoryInfo(win32.GetCurrentProcess(),&counters,counters.cb) {return {}}
+    return {u64(counters.working_set),u64(counters.pagefile)}
 }

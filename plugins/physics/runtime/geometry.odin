@@ -126,12 +126,12 @@ Collider_Mesh :: struct {
 Mesh_File_Key :: struct {
     mesh:base.Asset_Id,
     kind:host.Collision, // Hull or Mesh
-    decomposed:bool,     // of a Hull: the pieces of assets_collision_pieces_file
+    decomposed:bool,     // of a Hull: the pieces of asset.mesh_collision_pieces
 }
 
 // The collision of a mesh file for a kind of collider, as assets_collision and
 // assets_collision_hulls give it, unscaled; decomposed, the convex pieces of
-// assets_collision_pieces_file instead.
+// asset.mesh_collision_pieces instead.
 @(private)
 Mesh_File :: struct {
     size,time:i64, // of the file when it was asked for
@@ -140,10 +140,10 @@ Mesh_File :: struct {
     cache:string, // App.collision_cache, of a decomposed one
     source:host.Assets_Source,
     ready:bool, // the job is done: written by it
-    stored:host.Stored_Collision, // what the file stores of the colliders of its source
+    stored:asset.Stored_Collision, // what the file stores of the colliders of its source
     found:bool, // geometry holds what assets_collision gives
     geometry:geom.Mesh_Buffer,
-    pieces:bool, // a Hull: piece_points and piece_sizes hold the convex pieces of assets_collision_hulls, or of assets_collision_pieces_file when decomposed
+    pieces:bool, // a Hull: piece_points and piece_sizes hold the convex pieces of assets_collision_hulls, or of asset.mesh_collision_pieces when decomposed
     piece_points:[dynamic]geom.Vec3,
     piece_sizes:[dynamic]u32,
 }
@@ -274,12 +274,12 @@ mesh_file_read :: proc(file:^Mesh_File,worker:int) {
     opened:asset.Asset
     if host.assets_source_open(&file.source,&opened)!=.None {return}
     defer asset.asset_close(&opened)
-    if view,error:=asset.mesh_view(&opened,&types);error==.None {file.stored=host.assets_collision_stored(view)}
+    if view,error:=asset.mesh_view(&opened,&types);error==.None {file.stored=asset.mesh_collision_stored(view)}
     geom.mesh_buffer_init(&file.geometry)
     if file.decomposed {
         file.piece_points=make([dynamic]geom.Vec3)
         file.piece_sizes=make([dynamic]u32)
-        file.pieces=host.assets_collision_pieces_file(&opened,&types,file.cache,&file.piece_points,&file.piece_sizes)
+        file.pieces=asset.mesh_collision_pieces(&opened,&types,file.cache,&file.piece_points,&file.piece_sizes)
         return
     }
     _,file.found=host.assets_collision_file(&opened,&types,file.kind,&file.geometry)
@@ -321,7 +321,7 @@ collision_geometry :: proc(s:^Sync,mesh:base.Asset_Id,shape:host.Shape,kind:host
 }
 
 // Appends the convex pieces of a Hull collider, as host.assets_collision_hulls gives them, or decomposed,
-// as host.assets_collision_pieces_file does: of a mesh file, what its job read. False when it has none, or
+// as asset.mesh_collision_pieces does: of a mesh file, what its job read. False when it has none, or
 // its file is still being read.
 @(private)
 collision_hulls :: proc(s:^Sync,mesh:base.Asset_Id,shape:host.Shape,points:^[dynamic]geom.Vec3,sizes:^[dynamic]u32,decomposed:=false) -> bool {
@@ -343,7 +343,7 @@ auto_kind :: proc(s:^Sync,e:core.Entity,moving:bool) -> (kind:Collider_Kind,wait
     if !has_mesh {return .Hull,false}
     file:^Mesh_File
     if file,waiting=mesh_file(s,static.mesh,.Hull);waiting {return}
-    stored:=file!=nil?file.stored:host.Stored_Collision.None
+    stored:=file!=nil?file.stored:asset.Stored_Collision.None
     if file==nil && static.mesh!={} {
         // The pieces a generated mesh was given are its shapes.
         points:=make([dynamic]geom.Vec3,context.temp_allocator)

@@ -190,12 +190,24 @@ entities or persistent data.
   always covered, like the editor bars, is not drawn.
 
 **Profiling (`profile.odin`).** `profile_start(app, frames)` records the following frames: zones of
-the main thread, one per loop function, the tasks of each worker and what the renderer
-measures. The first `profile_start` reserves the memory: recording does
-not allocate, without recording a zone costs one branch and what does not fit is counted in `lost`.
-Whoever reads the zones as they happen (a profiling plugin) calls `profile_request` in every frame
-and reads them with its own cursor; without a recording or a request, the device writes no
-per-pass timestamps. The editor exposes it with
+the main thread, one per loop function, the tasks of each worker, what the renderer measures and the
+GPU passes of every submission of the frame (a capture or a thumbnail besides the window). Those
+come back `rhi.MAX_FRAMES_IN_FLIGHT` submissions later, by `rhi` frame number, and go to the frame
+that submitted them; a frame is measured once all of its submissions came back, and a recording runs
+a few frames past its last one, keeping no zones, until they do. The first `profile_start` reserves
+the memory: recording does not allocate, without recording a zone costs one branch and what does not
+fit is counted in `lost`. Whoever reads the zones as they happen (a profiling plugin) calls
+`profile_request` in every frame and reads them with its own cursor; without a recording or a
+request, the device writes no per-pass timestamps. A recording that asks for memory
+(`profile_start(app, frames, memory)`, off by default) samples it at the end of each frame, inside
+the frame as its part `memory`: what the tables and storages of the World that ran last hold
+(`core.world_memory`, the game loop's World, else the editor's), the private and resident memory of
+the process (`platform.process_memory`) and the device memory. `core.world_memory` adds up the
+capacity of the arrays, maps and slices of the tables and storages and of what their elements and
+map values hold, reading the containers that `world_info_index` found once in their types, so a
+sample costs one read per container header, those of every slot of a pool included; the bytes of
+strings are not in it (a string may be a literal or a view), nor what game code allocates outside
+its storages. The editor exposes it with
 [`profile.*`](../../mirai-agent-api/references/methods.md#profiling).
 
 **Loads (`load_profile.odin`).** `app.load_profile` keeps the last load of each kind (scene, Play,
@@ -327,11 +339,10 @@ of pieces) is not a fixed cap, and a frame that does not load does not allocate.
   decoded from the clusters (`asset.mesh_level_decode`): a vertex that two clusters share comes once
   per cluster.
 - `assets_mesh_collides`: whether a mesh asset stores colliders of its source, what a placed mesh
-  collides with. `assets_collision_pieces_file`: the convex pieces of a mesh file that stores none
-  (`geom.mesh_decompose` of its level 0), made once and kept by the content of the file in
-  `App.collision_cache` (`project.COLLISION_CACHE`, a content cache); physics asks for them in a
-  job. A cooked mesh carries them (`piece_points`) and a game without the cache, as a shipped one,
-  decomposes nothing.
+  collides with. `App.collision_cache` is the folder where the convex pieces of a mesh file that
+  stores none are kept
+  ([`asset.mesh_collision_pieces`](../../mirai-assets/references/kinds.md#mesh)); physics asks for
+  them in a job.
 - `assets_file(a,id,kind,&Asset)`: transactional load of any type by Fourcc, validating identity and
   hash; the caller closes with `asset_close`. It serves plugin formats without adding them to the
   GPU caches. It reads with `registry_read`: what the registry has in memory before the disk

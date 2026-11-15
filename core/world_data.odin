@@ -302,3 +302,39 @@ world_detach :: proc(info:^World_Info,world,shared:rawptr) {
         }
     }
 }
+
+// The bytes the tables and storages of a World hold behind their pointers:
+// the capacity of the arrays, maps and slices of each table and storage of
+// the place World, and of its entities, as the ops world_info_index compiled
+// from their types read them. It reads capacities, not the allocator, so
+// what game code allocates outside its storages is not in it. 0 for a
+// World_Info without schema.
+world_memory :: proc(info:^World_Info,data:rawptr) -> (bytes:int) {
+    if info==nil || data==nil || info.schema==nil {return}
+    ws:=info.schema
+    bytes=memory_read(ws.memory,ws.entities,entities_of(info,data))
+    for &t,i in info.tables {
+        if t.place!=.World {continue}
+        table:=table_of(data,&t)
+        bytes+=table_bytes(table,t.info.size)
+        held:=ws.tables[i].held
+        if held[0]==held[1] {continue}
+        for row in 0..<table.values.len {bytes+=memory_read(ws.memory,held,rawptr(uintptr(table.values.data)+uintptr(row*t.info.size)))}
+    }
+    for &s,i in info.storages {
+        if s.place==.World && !s.by_world {bytes+=memory_read(ws.memory,ws.storages[i].held,storage_of(data,&s))}
+    }
+    return
+}
+
+@(private="file")
+table_bytes :: proc(t:^Raw_Table,size:int) -> (bytes:int) {
+    bytes=(t.values.cap+t.added.cap+t.edited.cap)*size
+    bytes+=cap(t.entities)*size_of(Entity)+cap(t.stamps)*size_of(u64)+cap(t.page_stamps)*size_of(u64)
+    bytes+=cap(t.off)*size_of(bool)+cap(t.turns)*size_of(u64)+cap(t.pending)*size_of(Pending)
+    bytes+=cap(t.edits)*size_of(Edit)+cap(t.gone.items)*size_of(Entity)+cap(t.owners)*size_of(Row_Owner)
+    bytes+=len(t.locks)*size_of(Lock)+cap(t.rows)*size_of([]i32)
+    for page in t.rows {bytes+=len(page)*size_of(i32)}
+    when CHECK_WRITES {bytes+=cap(t.settled.values)}
+    return
+}

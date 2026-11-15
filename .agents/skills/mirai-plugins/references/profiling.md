@@ -13,8 +13,10 @@ View > Profiler panel. **Record** records frames into a
 agent see the same captures, and the panel shows the last finished one.
 
 - It shows the capture summary, a chart with one bar per frame colored by what it waited on (CPU,
-  GPU or pacing), the timeline of the chosen frame (main thread zones, one row per worker and the
-  GPU passes) and the most expensive zones per frame.
+  GPU or pacing), and a tab per track for the chosen frame: CPU (main thread zones, one row per
+  worker, the most expensive zones per frame), GPU (its passes where they ran, the most expensive
+  passes) and Memory (the World, the process and the GPU over the frames). Its recordings sample
+  memory; the tabs keep the height of the tallest, so the panel does not move under the pointer.
 - It draws with [`editor.drawing`](../../mirai-editor/references/extensions.md#a-panel); what it
   computes from a capture it computes when it starts showing it.
 

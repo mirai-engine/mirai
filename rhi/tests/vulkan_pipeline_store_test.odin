@@ -4,6 +4,7 @@ package rhi_tests
 import "core:fmt"
 import "core:os"
 import "core:testing"
+import "core:time"
 import "mirai:rhi"
 import "mirai:rhi/shared_device"
 import "mirai:std/base"
@@ -22,8 +23,8 @@ rhi_kept_pipelines_are_read_back_and_do_not_grow :: proc(t: ^testing.T) {
 	for run in 0 ..< len(sizes) {
 		d := shared_device.create_or_skip(t, {on_message = rhi.message_print, app_name = "mirai pipeline store test", validation = true, upload_bytes_per_frame = 1 << 20, pipeline_cache_path = path})
 		if d == nil {return}
-		// As if the run had already added a part of the limit: the next pipeline writes the file.
-		if run == 0 {d.pipelines_kept.unsaved = d.pipelines_kept.limit}
+		// As if the run had already compiled for an hour: the next pipeline writes the file.
+		if run == 0 {d.pipelines_kept.unsaved = time.Hour}
 		compute := rhi.pipeline_create_compute(d, {shader = rhi.test_shader("fill.comp"), name = "fill"})
 		if run == 0 {
 			// A process that ends here, without device_destroy, leaves the store the next one hits.

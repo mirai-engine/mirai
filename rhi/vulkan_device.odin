@@ -128,6 +128,8 @@ Vk_Frame :: struct {
 	acquired:     bool,
 	paced:        bool, // the frame draws into a pair of the presenter
 	begun_ns:     i64,
+	number:       u64,  // the frame_number it submitted
+	submitted:    bool, // until frame_begin collects its timings
 	submitted_ns: i64,
 	marks:        Vk_Marks, // where the GPU went (vulkan_marks.odin)
 }
@@ -247,6 +249,8 @@ Device :: struct {
 	timings:           [MAX_TIMESTAMPS]Gpu_Timing,
 	timing_bytes:      [MAX_TIMESTAMPS][MAX_TIMESTAMP_NAME_BYTES]u8, // the names of timings, kept until the next ones
 	timing_count:      int,
+	timing_frame:      u64,  // the frame_number the timings measured
+	timing_measured:   bool, // the timings are of a submitted frame
 	timestamps_wanted: bool,
 	timestamp_bits:    u32, // timestampValidBits of the queue: a GPU timestamp wraps past them
 	// VK_KHR or VK_EXT_calibrated_timestamps with the device and host domains; nil without them.
@@ -1168,11 +1172,13 @@ vk_collect_timestamps :: proc(d: ^Device, f: ^Vk_Frame) {
 	count := f.query_count
 	f.query_count = 0
 	d.timing_count = 0
+	d.timing_frame, d.timing_measured = f.number, f.submitted && f.queries != 0
+	f.submitted = false
 	if f.queries == 0 || count < 2 {return}
 	values: [MAX_TIMESTAMPS]u64
 	// The slot's submission already completed, so WAIT returns immediately.
 	result := d.dvk.GetQueryPoolResults(d.handle, f.queries, 0, count, size_of(values), &values, size_of(u64), {._64, .WAIT})
-	if result != .SUCCESS {vk_lost(d, result, "vkGetQueryPoolResults"); return}
+	if result != .SUCCESS {d.timing_measured = false; vk_lost(d, result, "vkGetQueryPoolResults"); return}
 	gpu, now := values[count - 1], time.duration_nanoseconds(time.tick_diff({}, time.tick_now()))
 	if d.calibrate != nil {
 		infos := [2]vk.CalibratedTimestampInfoKHR{{sType = .CALIBRATED_TIMESTAMP_INFO_KHR, timeDomain = .DEVICE}, {sType = .CALIBRATED_TIMESTAMP_INFO_KHR, timeDomain = VK_HOST_TIME_DOMAIN}}
@@ -1197,7 +1203,13 @@ vk_collect_timestamps :: proc(d: ^Device, f: ^Vk_Frame) {
 	}
 }
 
-frame_timings :: proc(d: ^Device) -> []Gpu_Timing {return d.timings[:d.timing_count]}
+// The timings the last frame_begin collected and the frame_number of the
+// frame they measured, MAX_FRAMES_IN_FLIGHT before it; measured is false when
+// that slot had submitted nothing since its timings were last collected, or
+// the device could not read its times.
+frame_timings :: proc(d: ^Device) -> (timings: []Gpu_Timing, frame: u64, measured: bool) {
+	return d.timings[:d.timing_count], d.timing_frame, d.timing_measured
+}
 
 // Begins recording a frame. Without present it takes no image of the
 // swapchain: the frame draws only into textures, for a capture.
@@ -1299,6 +1311,7 @@ frame_end :: proc(d: ^Device, cmd: ^Command_List, generated := false) -> bool {
 	f.marks.sent = submitted == .SUCCESS
 	ok := vk_check(d, submitted, "vkQueueSubmit2")
 	f.signal_value = d.timeline_value
+	f.number, f.submitted = d.frame_number, submitted == .SUCCESS
 	f.submitted_ns = present_now_ns()
 	if ok && f.acquired {
 		present := vk.PresentInfoKHR{

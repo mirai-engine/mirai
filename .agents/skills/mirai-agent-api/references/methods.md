@@ -320,6 +320,13 @@ Reading a capture:
   per second, the mean interval between two and its deviation (how even the pace is) and the
   latency from the start of a frame to its image. With generation there are twice as many images as
   frames.
+- **The GPU of a frame.** A frame's `gpu_ms` and passes are those of its own submissions, at the
+  time they ran (`start_ms` since the frame began on the CPU). A frame whose submissions did not all
+  come back says `gpu_measured:false`, and the GPU numbers of the summary and of `profile.compare`
+  leave it out (`gpu_frames`).
+- **Memory.** `profile.capture` with `memory:true` samples it at the end of each frame, as the part
+  `memory` of the frame, and the summary gives `memory`: the World's tables and storages (its peak
+  over the capture and its rise), the process and the GPU. Leave it off to measure cost.
 - **Own time.** `self_ms` excludes the zones inside: a function that waits for its tasks has them
   as children (`job`, `range`); what the workers run appears with `thread:"workers"`.
 - **Conditions.** `notes` warns about what invalidates a reading: engine at `-o:minimal`,

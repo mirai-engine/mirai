@@ -3,18 +3,24 @@ package main
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "mirai:std/subprocess"
 
-// The shell that runs the scripts of the repository: Git Bash on Windows, by the path mirai.cmd
-// uses (the bash of the PATH is usually the one of WSL, which has no odin), sh elsewhere.
+// The shell that runs the scripts of the repository: Git Bash on Windows, found as mirai.cmd finds
+// it, through git --exec-path (the bash of the PATH is usually the one of WSL, which has no odin);
+// sh elsewhere.
 shell_executable :: proc() -> (path:string,found:bool) {
     when ODIN_OS==.Windows {
-        program_files,_:=os.lookup_env("ProgramFiles",context.allocator)
-        bash:=join(program_files,"Git","bin","bash.exe")
+        state,exec,_,error:=subprocess.exec({command={"git","--exec-path"}},context.allocator)
+        if error!=nil || state.exit_code!=0 {return "git --exec-path",false}
+        bash:=git_bash(strings.trim_space(string(exec)))
         return bash,os.is_file(bash)
     } else {
         return "sh",true
     }
 }
+
+// The bash of the Git for Windows whose git --exec-path is exec: <root>/mingw64/libexec/git-core.
+git_bash :: proc(exec:string) -> string {return join(exec,"..","..","..","bin","bash.exe")}
 
 // command with the script it starts run by shell_executable, where the system cannot start one
 // itself: on Windows, a file named with a path that begins with #! (./mirai).
@@ -24,7 +30,7 @@ script_command :: proc(command:[]string) -> (resolved:[]string,ok:bool) {
         if len(command)==0 || !strings.contains_any(command[0],"/\\") || !shebang(command[0]) {return command,true}
         shell,found:=shell_executable()
         if !found {
-            fmt.eprintfln("mirai: %s is an sh script and Git Bash is missing in %s; install Git for Windows",command[0],shell)
+            fmt.eprintfln("mirai: %s is an sh script and no Git Bash was found by %s; install Git for Windows with git on the PATH",command[0],shell)
             return nil,false
         }
         list:=make([dynamic]string,0,len(command)+1)

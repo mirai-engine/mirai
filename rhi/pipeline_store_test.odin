@@ -3,6 +3,7 @@ package rhi
 import "core:fmt"
 import "core:os"
 import "core:testing"
+import "core:time"
 import "mirai:std/base"
 
 @(private = "file")
@@ -155,15 +156,16 @@ pipeline_store_replaces_a_file_it_cannot_read :: proc(t: ^testing.T) {
 	}
 }
 
-// The file is written while a run adds to it, so a process that ends without
-// destroying its device leaves what it compiled; each write takes in what
+// The file is written once what a run compiled since the last write took
+// longer than that write, so a process that ends without destroying its device
+// loses little compiling; each write takes in what
 // another process wrote meanwhile, and one it cannot read is replaced.
 @(test)
-pipeline_store_is_written_as_it_grows_with_what_others_wrote :: proc(t: ^testing.T) {
+pipeline_store_is_written_as_its_compiling_adds_up_with_what_others_wrote :: proc(t: ^testing.T) {
 	folder := base.test_folder(t, "pipeline-store")
 	if folder == "" {return}
 	path := fmt.tprintf("%s/pipelines.bin", folder)
-	limit := PIPELINE_STORE_SAVE_PARTS * 1000
+	limit := 1 << 20
 	ours, theirs: Pipeline_Store
 	pipeline_store_init(&ours, TEST_DEVICE, limit)
 	pipeline_store_init(&theirs, TEST_DEVICE, limit)
@@ -171,15 +173,16 @@ pipeline_store_is_written_as_it_grows_with_what_others_wrote :: proc(t: ^testing
 	defer pipeline_store_destroy(&theirs)
 	pipeline_store_load(&ours, path)
 	pipeline_store_load(&theirs, path)
-	put :: proc(s: ^Pipeline_Store, key: u64) -> bool {return pipeline_store_put(s, key, test_blob(key, 600, nil, context.temp_allocator))}
-	put(&theirs, 10)
+	put :: proc(s: ^Pipeline_Store, key: u64, took: time.Duration) -> bool {return pipeline_store_put(s, key, test_blob(key, 600, nil, context.temp_allocator), took)}
+	put(&theirs, 10, time.Millisecond)
 	testing.expect(t, pipeline_store_save(&theirs, path), "another process writes its own")
-	testing.expect(t, !put(&ours, 1), "a write waits for a part of the limit")
-	testing.expect(t, put(&ours, 2) && pipeline_store_save(&ours, path))
+	ours.save_cost = time.Second
+	testing.expect(t, !put(&ours, 1, time.Second), "a write waits until the compiling it keeps outweighs it")
+	testing.expect(t, put(&ours, 2, PIPELINE_STORE_SAVE_SHARE * time.Second) && pipeline_store_save(&ours, path))
 	testing.expect_value(t, ours.unsaved, 0)
 	read :: proc(path: string, keys: []u64) -> (found: int) {
 		s: Pipeline_Store
-		pipeline_store_init(&s, TEST_DEVICE, PIPELINE_STORE_SAVE_PARTS * 1000)
+		pipeline_store_init(&s, TEST_DEVICE, 1 << 20)
 		defer pipeline_store_destroy(&s)
 		pipeline_store_load(&s, path)
 		for key in keys {
@@ -190,13 +193,13 @@ pipeline_store_is_written_as_it_grows_with_what_others_wrote :: proc(t: ^testing
 		return
 	}
 	testing.expect_value(t, read(path, {1, 2, 10}), 3)
-	put(&theirs, 11)
-	testing.expect(t, put(&theirs, 12) && pipeline_store_save(&theirs, path))
+	put(&theirs, 11, 0)
+	testing.expect(t, put(&theirs, 12, time.Hour) && pipeline_store_save(&theirs, path))
 	testing.expect_value(t, read(path, {1, 2, 10, 11, 12}), 5)
 	garbage := [?]u8{0x4d, 0x49, 0x50, 0x53, 2, 0, 0, 0, 1}
 	testing.expect_value(t, os.write_entire_file(path, garbage[:]), nil)
-	put(&ours, 3)
-	testing.expect(t, put(&ours, 4) && pipeline_store_save(&ours, path), "a file it cannot read is replaced")
+	put(&ours, 3, 0)
+	testing.expect(t, put(&ours, 4, time.Hour) && pipeline_store_save(&ours, path), "a file it cannot read is replaced")
 	testing.expect_value(t, read(path, {1, 2, 3, 4, 10}), 5)
 }
 

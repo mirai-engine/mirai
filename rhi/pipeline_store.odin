@@ -27,7 +27,7 @@ PIPELINE_STORE_MAGIC :: u32(0x5350_494d) // "MIPS"
 PIPELINE_STORE_VERSION :: u32(2)
 PIPELINE_STORE_BYTES :: 256 << 20 // the most a store file holds, and the chunks a run adds in memory
 PIPELINE_STORE_RUNS :: 8          // runs an entry stays in the file without being used
-PIPELINE_STORE_SAVE_PARTS :: 64   // the file is written each time a run added this part of the limit
+PIPELINE_STORE_SAVE_SHARE :: 8    // the file is written once the compiling it would keep took this many times its last write
 PIPELINE_CHUNK_MIN :: 2 << 10
 PIPELINE_CHUNK_MAX :: 64 << 10
 PIPELINE_CHUNK_BITS :: 13         // a cut after PIPELINE_CHUNK_MIN has 1 chance in 2^13 per byte
@@ -62,7 +62,8 @@ Pipeline_Store :: struct {
 	by_id:     base.Hash_Map(u32), // id[0] of a chunk that holds data -> its index
 	entries:   [dynamic]Pipeline_Entry,
 	owned:     int, // bytes of the chunks this run added
-	unsaved:   int, // bytes of the chunks added since the file was written
+	unsaved:   time.Duration, // what the driver took to compile the pipelines added since the file was written
+	save_cost: time.Duration, // what the last write of the file took
 	uses:      u64,
 	gear:      [256]u64, // the value of each byte in the rolling hash that cuts chunks
 	lock:      sync.Mutex, // pipelines are created on several threads
@@ -98,7 +99,7 @@ pipeline_store_clear :: proc(s: ^Pipeline_Store) {
 	delete(s.chunks)
 	delete(s.entries)
 	base.hash_map_destroy(&s.by_id)
-	s.chunks, s.entries, s.owned, s.unsaved = {}, {}, 0, 0
+	s.chunks, s.entries, s.owned, s.unsaved, s.save_cost = {}, {}, 0, 0, 0
 	s.chunks.allocator = s.allocator
 	s.entries.allocator = s.allocator
 }
@@ -215,9 +216,10 @@ pipeline_chunk_length :: proc(gear: ^[256]u64, data: []u8) -> int {
 
 // Keeps a copy of data, the blob of this run for key. Past the limit the
 // pipelines this run used longest ago go first; a blob that does not fit at all
-// is not kept. due: what was added since the file was written calls for
-// pipeline_store_save.
-pipeline_store_put :: proc(s: ^Pipeline_Store, key: u64, data: []u8) -> (due: bool) {
+// is not kept. took: what the driver took to compile it. due: what was added
+// since the file was written took long enough to call for pipeline_store_save,
+// so a process that ends without device_destroy loses little compiling.
+pipeline_store_put :: proc(s: ^Pipeline_Store, key: u64, data: []u8, took: time.Duration = 0) -> (due: bool) {
 	if i := pipeline_store_index(s, key); i >= 0 {pipeline_store_drop(s, i)}
 	if len(data) == 0 || len(data) > s.limit {return}
 	for s.owned + len(data) > s.limit {
@@ -250,7 +252,8 @@ pipeline_store_put :: proc(s: ^Pipeline_Store, key: u64, data: []u8) -> (due: bo
 		delete(chunks, s.allocator)
 		return
 	}
-	return s.unsaved >= s.limit / PIPELINE_STORE_SAVE_PARTS
+	s.unsaved += took
+	return s.unsaved > s.save_cost * PIPELINE_STORE_SAVE_SHARE
 }
 
 @(private = "file")
@@ -282,7 +285,6 @@ pipeline_store_chunk :: proc(s: ^Pipeline_Store, bytes: []u8) -> (index: u32, ok
 	// Another chunk with the same id[0] keeps the slot: this one is only not shared.
 	if !base.hash_map_contains(&s.by_id, id[0]) {base.hash_map_set(&s.by_id, id[0], index)}
 	s.owned += len(data)
-	s.unsaved += len(data)
 	return index, true
 }
 
@@ -379,6 +381,7 @@ pipeline_store_save :: proc(s: ^Pipeline_Store, path: string) -> bool {
 	if _, first := sync.atomic_compare_exchange_strong(&s.saving, false, true); !first {return false}
 	defer sync.atomic_store(&s.saving, false)
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	start := time.tick_now()
 	theirs: Pipeline_Store
 	stamp := pipeline_file_stamp(path, s.allocator)
 	if stamp != s.stamp && stamp != {} {
@@ -403,6 +406,9 @@ pipeline_store_save :: proc(s: ^Pipeline_Store, path: string) -> bool {
 	if data == nil {return os.remove(path) == nil || !os.exists(path)}
 	if serial.file_write_atomic(path, data) != .None {return false}
 	s.stamp = pipeline_file_stamp(path, s.allocator)
+	sync.lock(&s.lock)
+	s.save_cost = time.tick_since(start)
+	sync.unlock(&s.lock)
 	return true
 }
 

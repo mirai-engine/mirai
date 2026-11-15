@@ -48,3 +48,30 @@ a_recording_adds_its_buffers_to_ready_rings :: proc(t:^testing.T) {
     testing.expect_value(t, len(app.profiler.passes), PROFILE_PASSES)
     testing.expect_value(t, len(app.profiler.cursors), 1)
 }
+
+// Memory is sampled only by a recording that asks for it, inside the frame:
+// its zone memory is a part of the frame, not time between frames.
+@(test)
+a_recording_samples_the_memory_only_when_asked_inside_the_frame :: proc(t:^testing.T) {
+    app: App
+    app.allocator = context.allocator
+    defer profile_release(&app)
+    for memory in ([]bool{true, false}) {
+        if !testing.expect(t, profile_start(&app, 2, memory)) {return}
+        for _ in 0 ..< 2 {
+            profile_frame_open(&app)
+            profile_frame_end(&app, false)
+        }
+        recording := profile_recording(&app)
+        testing.expect_value(t, len(recording.frames), 2)
+        sampled := false
+        for zone in recording.zones {
+            if zone.name == "memory" {
+                sampled = true
+                testing.expect_value(t, zone.depth, u16(1))
+            }
+        }
+        testing.expect_value(t, sampled, memory)
+        testing.expect_value(t, recording.frames[1].memory.process.private > 0, memory)
+    }
+}

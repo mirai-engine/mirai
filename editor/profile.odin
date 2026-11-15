@@ -22,7 +22,7 @@ import "mirai:std/jobs"
 PROFILE_CAPTURES :: 8
 PROFILE_DEPTH_MAX :: 64
 // The zones of the frame itself, children of "frame" on the main thread.
-PROFILE_PARTS :: [?]string{"platform","watch","game","editor","audio","render","pacing"}
+PROFILE_PARTS :: [?]string{"platform","watch","game","editor","audio","render","pacing","memory"}
 
 // A GPU that idled runs its first frames at a lower clock, in steps of a few
 // hundred ms, and lowers it again after a second or two without frames: a
@@ -61,7 +61,8 @@ Profile_Frame_Record :: struct {
     start_ns,ns:i64,    // the frame zone, since the first frame began
     between_ns:i64,     // from its end to the start of the next one: what runs between frames
     pacing_ns:i64,
-    wait_ms,gpu_ms:f32, // the wait for a frame slot, and the last frame the GPU finished
+    wait_ms,gpu_ms:f32, // the wait for a frame slot, and the sum of its own GPU passes
+    gpu_measured:bool,  // every submission of the frame gave back its passes
     render_prepare_ms,render_record_ms,render_end_ms:f32,
     drawn:bool,
     generated:bool,     // it drew an image shown before its own
@@ -72,6 +73,7 @@ Profile_Frame_Record :: struct {
     pass_first,pass_count:int,
     worker_ns:i64,      // time of the other threads in jobs
     jobs:int,
+    memory:host.Profile_Memory, // at its end, of a capture with memory
 }
 
 Profile_Zone_Record :: struct {
@@ -79,7 +81,10 @@ Profile_Zone_Record :: struct {
     start_ns,ns,self_ns:i64,
 }
 
-Profile_Pass_Record :: struct {name:int,ms:f32}
+Profile_Pass_Record :: struct {
+    name:int,
+    start_ns,ns:i64, // where it ran on the GPU, on the clock of the zones
+}
 
 Profile_Capture :: struct {
     arena:vmem.Arena,
@@ -87,6 +92,7 @@ Profile_Capture :: struct {
     label:string,
     state:Profile_State,
     requested:int,
+    memory:bool, // it sampled the memory at the end of each frame
     conditions:Profile_Conditions,
     frames:[]Profile_Frame_Record,
     zones:[]Profile_Zone_Record, // the main thread frame by frame, then the other threads
@@ -133,7 +139,7 @@ profile_find :: proc(s:^Session,id:int) -> ^Profile_Capture {
 
 // Starts recording frames into a new capture, which replaces the oldest when
 // all are taken. Fails while another records.
-profile_begin :: proc(s:^Session,frames:int,label:string) -> (c:^Profile_Capture,error:string) {
+profile_begin :: proc(s:^Session,frames:int,label:string,memory:=false) -> (c:^Profile_Capture,error:string) {
     profile_collect(s)
     ps:=&s.profiles
     if ps.recording!=0 {return nil,fmt.tprintf("Capture %d is still recording; profile.stop ends it",ps.recording)}
@@ -145,11 +151,11 @@ profile_begin :: proc(s:^Session,frames:int,label:string) -> (c:^Profile_Capture
     if vmem.arena_init_growing(&c.arena)!=nil {return nil,"No memory for a capture"}
     ps.next_id+=1
     c.id=ps.next_id
-    c.requested=frames
+    c.requested,c.memory=frames,memory
     context.allocator=vmem.arena_allocator(&c.arena)
     c.label=strings.clone(label)
     c.conditions=profile_conditions(s)
-    if !host.profile_start(s.app,frames) {
+    if !host.profile_start(s.app,frames,memory) {
         profile_capture_free(c)
         return nil,"The recorder could not reserve its memory"
     }
@@ -280,19 +286,20 @@ profile_build :: proc(c:^Profile_Capture,recording:host.Profile_Recording,app:^h
             append(&pass_names,strings.clone(host.profile_pass_name(app,pass.name)))
             pass_ids[pass.name]=index
         }
-        c.passes[i]={index,pass.ms}
+        c.passes[i]={index,pass.start_ns-epoch,max(pass.end_ns-pass.start_ns,0)}
     }
     c.pass_names=pass_names[:]
     for frame,i in recording.frames {
         // The size the scene was drawn at is known once a frame drew.
         if c.conditions.render=={} && frame.render_width>0 {c.conditions.render={int(frame.render_width),int(frame.render_height)}}
         record:=&c.frames[i]
-        record.wait_ms,record.gpu_ms=frame.render_wait_ms,frame.gpu_ms
+        record.wait_ms,record.gpu_ms,record.gpu_measured=frame.render_wait_ms,frame.gpu_ms,host.profile_gpu_measured(frame)
         record.render_prepare_ms,record.render_record_ms,record.render_end_ms=frame.render_prepare_ms,frame.render_record_ms,frame.render_end_ms
         record.drawn=frame.drawn
         record.generated,record.presented,record.intervals=frame.generated,int(frame.presented),int(frame.intervals)
         record.interval_total_ms,record.interval_square,record.latency_ms=frame.interval_total_ms,frame.interval_square,frame.latency_ms
         record.pass_first,record.pass_count=frame.pass_first,frame.pass_count
+        record.memory=frame.memory
     }
     // A manual editor waits for the next request between frames: that is not part of a frame.
     if !c.conditions.manual {
@@ -439,13 +446,29 @@ profile_is_part :: proc(name:string) -> bool {
     return false
 }
 
-// The per frame time of each pass of the GPU.
+// The time of each pass of the GPU in each frame whose GPU times came back.
 profile_passes_by_name :: proc(c:^Profile_Capture,allocator:=context.temp_allocator) -> [][]f64 {
     context.allocator=allocator
+    measured:=profile_gpu_frames(c)
     values:=make([][]f64,len(c.pass_names))
-    for &v in values {v=make([]f64,len(c.frames))}
-    for frame,i in c.frames {
-        for pass in c.passes[frame.pass_first:][:frame.pass_count] {values[pass.name][i]+=f64(pass.ms)}
+    for &v in values {v=make([]f64,measured)}
+    i:=0
+    for frame in c.frames {
+        if !frame.gpu_measured {continue}
+        for pass in c.passes[frame.pass_first:][:frame.pass_count] {values[pass.name][i]+=f64(pass.ns)/1e6}
+        i+=1
     }
     return values
+}
+
+profile_gpu_frames :: proc(c:^Profile_Capture) -> (measured:int) {
+    for frame in c.frames {if frame.gpu_measured {measured+=1}}
+    return
+}
+
+// The GPU time of each frame whose GPU times came back.
+profile_gpu_ms :: proc(c:^Profile_Capture,allocator:=context.temp_allocator) -> []f64 {
+    values:=make([dynamic]f64,0,len(c.frames),allocator)
+    for frame in c.frames {if frame.gpu_measured {append(&values,f64(frame.gpu_ms))}}
+    return values[:]
 }

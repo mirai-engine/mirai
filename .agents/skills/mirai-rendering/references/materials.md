@@ -341,6 +341,8 @@ stages.
   continues, so it is evaluated inside the traversal, like an any-hit, from
   `surface_coverage.slang`; nothing is traced again. The stages that trace depend on that compiled
   alpha, not on the rest of the program ([programs and stages](shaders.md#programs-and-stages)).
+  Its samples record no texture feedback (`texture_feedback_quiet`): a write of each would keep
+  the whole program, colors and normals too, in every traversal of every stage that traces.
 - **Deferred filters.** A ray that crosses glass with a program does not wait for its filter: it
   takes the [medium filter](#medium-filter) of the instance and adds the crossing as a filter
   point, chained to the others of its owner (a pixel, a probe ray). The program's stage writes in

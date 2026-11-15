@@ -29,6 +29,7 @@ Api_Profile_Capture_Params :: struct {
     label:[32]u8 `mirai:"optional,text,label=Name to tell the capture by"`,
     top:int `mirai:"optional,min=1,max=64,clamp,label=Zones and GPU passes in the summary"`,
     wait:int `mirai:"optional,min=0,max=900,unit=s,label=With advance: how long to queue for a compilation or another measurement that runs; past it the call fails"`,
+    memory:bool `mirai:"optional,label=Also sample the memory at the end of each frame, in a zone memory of the frame: what the tables and storages of the World hold (the one Play runs, else the scene's), the process and the GPU"`,
     allow_limited:bool `mirai:"optional,label=Measure with VSync or a frame limit or graphics validation on; the call refuses otherwise and says how to turn them off. The summary says comparable:false"`,
 }
 Api_Profile_Id_Params :: struct {
@@ -72,7 +73,8 @@ Api_Profile_Frame_Stats :: struct {
     wait_ms:f32 `mirai:"label=Mean wait for a frame slot of the GPU"`,
     pacing_ms:f32 `mirai:"label=Mean wait for the frame limit or VSync"`,
     between_ms:f32 `mirai:"label=Mean from the end of a frame to the start of the next"`,
-    gpu_ms:f32 `mirai:"label=Mean of the GPU"`,
+    gpu_ms:f32 `mirai:"label=Mean of the GPU over the frames whose GPU times came back"`,
+    gpu_frames:int `mirai:"label=Frames whose every submission gave back its GPU times: gpu_ms and gpu count only them"`,
     bound:Api_Profile_Bounds `mirai:"label=Frames by what they waited for"`,
     spikes:int `mirai:"label=Frames over twice the median"`,
     worst:[]int `mirai:"label=The slowest frames by index; the slowest first"`,
@@ -102,6 +104,18 @@ Api_Profile_Presentation :: struct {
     latency_mean_ms:f32 `mirai:"label=From the start of a frame to its own image going to the display with its GPU work done; without frame generation the GPU is taken to start each frame once it is submitted and the one before is done"`,
     latency_p95_ms:f32,
 }
+// In MB. world: what the tables and storages of the World that ran hold
+// (core.world_memory); what game code allocates outside its storages is not in it.
+Api_Profile_Memory :: struct {
+    world_mb:f32 `mirai:"label=At the end of the last frame"`,
+    world_peak_mb:f32 `mirai:"label=The most at the end of a frame of the capture"`,
+    world_rise_mb:f32 `mirai:"label=From the end of the first frame to that of the last"`,
+    private_mb:f32 `mirai:"label=Of the process: what only it uses, at the end of the last frame"`,
+    private_rise_mb:f32 `mirai:"label=From the end of the first frame to that of the last"`,
+    resident_mb:f32 `mirai:"label=Of the process in physical memory, shared pages included"`,
+    gpu_mb:f32 `mirai:"label=Of the device memory the process holds"`,
+}
+Api_Profile_Frame_Memory :: struct {world_mb,private_mb,gpu_mb:f32}
 Api_Profile_Summary :: struct {
     id:int `mirai:"label=What the id of the other profile methods takes"`,
     label:string,
@@ -116,6 +130,7 @@ Api_Profile_Summary :: struct {
     zones:[]Api_Profile_Zone `mirai:"optional,label=The other zones that cost the most by their own time"`,
     gpu:[]Api_Profile_Stat `mirai:"optional,label=The GPU passes that cost the most"`,
     workers:Api_Profile_Workers `mirai:"optional"`,
+    memory:Api_Profile_Memory `mirai:"optional,label=Of a capture with memory"`,
     lost_zones:u64 `mirai:"optional,label=Zones the recorder had no room for"`,
     notes:[]string `mirai:"optional,label=What to know before reading the numbers"`,
 }
@@ -129,6 +144,7 @@ Api_Profile_Tree :: struct {
 }
 Api_Profile_Pass :: struct {
     name:string,
+    start_ms:f32 `mirai:"label=When it ran on the GPU, since the frame began on the CPU"`,
     ms:f32,
 }
 Api_Profile_Frame :: struct {
@@ -138,13 +154,15 @@ Api_Profile_Frame :: struct {
     wait_ms:f32 `mirai:"label=For a frame slot of the GPU"`,
     pacing_ms:f32 `mirai:"label=For the frame limit or VSync"`,
     between_ms:f32 `mirai:"label=From its end to the start of the next"`,
-    gpu_ms:f32 `mirai:"label=Of the last frame the GPU finished"`,
+    gpu_ms:f32 `mirai:"label=Of its own submissions"`,
+    gpu_measured:bool `mirai:"label=Every submission of the frame gave back its GPU times; without them gpu_ms and gpu are partial"`,
     bound:Profile_Bound `mirai:"label=What it waited for"`,
     workers_busy_ms:f32,
     jobs:int,
     zones:[]Api_Profile_Tree `mirai:"label=Of the main thread by start"`,
     hidden_zones:int `mirai:"label=Deeper or shorter than asked or past the most listed"`,
     gpu:[]Api_Profile_Pass `mirai:"label=The passes that took the longest"`,
+    memory:Api_Profile_Frame_Memory `mirai:"optional,label=At its end, in MB, of a capture with memory"`,
 }
 Api_Profile_Frames :: struct {
     id:int,
@@ -295,7 +313,7 @@ api_profile_capture :: proc(s:^Session,call:^api.Call) {
     profile_collect(s)
     warmup,settled:=0,true
     if p.advance && s.profiles.recording==0 {warmup,settled=profile_settle(s,p.dt)}
-    c,error:=profile_begin(s,p.frames,base.text_get(p.label[:]))
+    c,error:=profile_begin(s,p.frames,base.text_get(p.label[:]),p.memory)
     if c==nil {api.call_fail(call,api.SERVER_ERROR,error);return}
     c.warmup,c.unsettled=warmup,!settled
     if !p.advance {
@@ -303,6 +321,8 @@ api_profile_capture :: proc(s:^Session,call:^api.Call) {
         return
     }
     api_frames(s,p.frames,p.dt)
+    // The GPU times of the last frames come back in the frames after them.
+    for late:=0;s.app.profiler.recording && late<host.PROFILE_GPU_LATE;late+=1 {api_frames(s,1,p.dt)}
     host.profile_stop(s.app)
     profile_collect(s)
     api.call_result(call,Api_Profile_Summary)^=profile_summary(c,p.top)
@@ -360,10 +380,10 @@ profile_summary :: proc(c:^Profile_Capture,top:int) -> (out:Api_Profile_Summary)
         out.notes=notes
         return
     }
-    totals,cpu,wait,pacing,between,gpu:=make([]f64,n),make([]f64,n),make([]f64,n),make([]f64,n),make([]f64,n),make([]f64,n)
+    totals,cpu,wait,pacing,between:=make([]f64,n),make([]f64,n),make([]f64,n),make([]f64,n),make([]f64,n)
     for f,i in c.frames {
         totals[i],cpu[i],wait[i]=profile_frame_ms(f),profile_frame_cpu_ms(f),f64(f.wait_ms)
-        pacing[i],between[i],gpu[i]=f64(f.pacing_ns)/1e6,f64(f.between_ns)/1e6,f64(f.gpu_ms)
+        pacing[i],between[i]=f64(f.pacing_ns)/1e6,f64(f.between_ns)/1e6
         switch profile_frame_bound(f) {
         case .Cpu: out.frame.bound.cpu+=1
         case .Gpu: out.frame.bound.gpu+=1
@@ -377,10 +397,12 @@ profile_summary :: proc(c:^Profile_Capture,top:int) -> (out:Api_Profile_Summary)
     if spread.mean>0 {out.frame.fps=profile_ms(1000/spread.mean)}
     out.frame.cpu_ms,out.frame.wait_ms=profile_ms(profile_spread(cpu).mean),profile_ms(profile_spread(wait).mean)
     out.frame.pacing_ms,out.frame.between_ms=profile_ms(profile_spread(pacing).mean),profile_ms(profile_spread(between).mean)
-    out.frame.gpu_ms=profile_ms(profile_spread(gpu).mean)
+    gpu:=profile_gpu_ms(c)
+    out.frame.gpu_ms,out.frame.gpu_frames=profile_ms(profile_spread(gpu).mean),len(gpu)
     for t in totals {if t>2*spread.p50 {out.frame.spikes+=1}}
     out.frame.worst=profile_worst(c,min(3,n))
     out.presentation=profile_presentation(c,spread.mean*f64(n))
+    if c.memory {out.memory=profile_memory(c)}
 
     aggregates:=profile_aggregate(c)
     parts:=make([dynamic]Api_Profile_Stat)
@@ -527,6 +549,9 @@ profile_notes :: proc(c:^Profile_Capture,out:Api_Profile_Summary) -> []string {
         append(&notes,fmt.tprintf("%d of %d frames wait for the GPU (wait_ms): CPU savings will not shorten them; the gpu passes say where the GPU goes",out.frame.bound.gpu,out.frame.count))
         if k.vsync {append(&notes,"vsync is on: the wait for a frame slot includes the display; with VSync off (settings.set) it is only the GPU")}
     }
+    drawn:=0
+    for f in c.frames {if f.drawn {drawn+=1}}
+    if k.backend!="" && out.frame.gpu_frames<drawn {append(&notes,fmt.tprintf("%d of %d drawn frames lack GPU times (a submission did not come back): gpu_ms and gpu leave them out",drawn-out.frame.gpu_frames,drawn))}
     if len(c.pass_names)==1 && c.pass_names[0]=="frame" {append(&notes,"The GPU of this backend is measured per frame, not per pass: gpu has the whole frame only")}
     if out.frame.spikes>0 {append(&notes,fmt.tprintf("%d frames took more than twice the median: profile.frames shows the worst with their zones",out.frame.spikes))}
     if c.lost>0 {append(&notes,fmt.tprintf("%d zones were lost: record fewer frames for an exact count",c.lost))}
@@ -557,11 +582,26 @@ api_profile_frames :: proc(s:^Session,call:^api.Call) {
     api.call_result(call,Api_Profile_Frames)^=out
 }
 
+profile_mb :: proc(bytes:i64) -> f32 {return f32(math.round(f64(bytes)/(1<<20)*100)/100)}
+
+profile_memory :: proc(c:^Profile_Capture) -> (out:Api_Profile_Memory) {
+    if len(c.frames)==0 {return}
+    first,last:=c.frames[0].memory,c.frames[len(c.frames)-1].memory
+    peak:i64
+    for f in c.frames {peak=max(peak,f.memory.world)}
+    out.world_mb,out.world_peak_mb,out.world_rise_mb=profile_mb(last.world),profile_mb(peak),profile_mb(last.world-first.world)
+    out.private_mb,out.private_rise_mb=profile_mb(i64(last.process.private)),profile_mb(i64(last.process.private)-i64(first.process.private))
+    out.resident_mb,out.gpu_mb=profile_mb(i64(last.process.resident)),profile_mb(i64(last.gpu))
+    return
+}
+
 profile_frame_out :: proc(c:^Profile_Capture,index,depth:int,min_ms:f64) -> (out:Api_Profile_Frame) {
     f:=c.frames[index]
     out.index=index
     out.ms,out.cpu_ms,out.wait_ms=profile_ms(profile_frame_ms(f)),profile_ms(profile_frame_cpu_ms(f)),profile_ms(f64(f.wait_ms))
     out.pacing_ms,out.between_ms,out.gpu_ms=profile_ms(f64(f.pacing_ns)/1e6),profile_ms(f64(f.between_ns)/1e6),profile_ms(f64(f.gpu_ms))
+    out.gpu_measured=f.gpu_measured
+    if c.memory {out.memory={profile_mb(f.memory.world),profile_mb(i64(f.memory.process.private)),profile_mb(i64(f.memory.gpu))}}
     out.bound=profile_frame_bound(f)
     out.workers_busy_ms,out.jobs=profile_ms(f64(f.worker_ns)/1e6),f.jobs
     zones:=make([dynamic]Api_Profile_Tree)
@@ -572,7 +612,7 @@ profile_frame_out :: proc(c:^Profile_Capture,index,depth:int,min_ms:f64) -> (out
     }
     out.zones=zones[:]
     passes:=make([dynamic]Api_Profile_Pass)
-    for pass in c.passes[f.pass_first:][:f.pass_count] {append(&passes,Api_Profile_Pass{c.pass_names[pass.name],profile_ms(f64(pass.ms))})}
+    for pass in c.passes[f.pass_first:][:f.pass_count] {append(&passes,Api_Profile_Pass{c.pass_names[pass.name],profile_ms(f64(pass.start_ns-f.start_ns)/1e6),profile_ms(f64(pass.ns)/1e6)})}
     slice.sort_by(passes[:],proc(a,b:Api_Profile_Pass) -> bool {return a.ms>b.ms})
     out.gpu=passes[:min(len(passes),8)]
     return
@@ -688,7 +728,7 @@ profile_compare :: proc(a,b:^Profile_Capture,top:int) -> (out:Api_Profile_Compar
     fa,fb:=profile_spread(frame_values(a,0)),profile_spread(frame_values(b,0))
     out.mean_ms,out.p95_ms=delta(fa.mean,fb.mean),delta(fa.p95,fb.p95)
     out.cpu_ms=delta(profile_spread(frame_values(a,1)).mean,profile_spread(frame_values(b,1)).mean)
-    out.gpu_ms=delta(profile_spread(frame_values(a,2)).mean,profile_spread(frame_values(b,2)).mean)
+    out.gpu_ms=delta(profile_spread(profile_gpu_ms(a)).mean,profile_spread(profile_gpu_ms(b)).mean)
 
     ma,mb:=means(a),means(b)
     changes:=make([dynamic]Api_Profile_Change)
@@ -735,7 +775,6 @@ frame_values :: proc(c:^Profile_Capture,which:int) -> []f64 {
         switch which {
         case 0: values[i]=profile_frame_ms(f)
         case 1: values[i]=profile_frame_cpu_ms(f)
-        case 2: values[i]=f64(f.gpu_ms)
         }
     }
     return values
@@ -811,7 +850,8 @@ api_profile_export :: proc(s:^Session,call:^api.Call) {
 }
 
 // The capture in the Trace Event Format: a complete event per zone, a thread
-// per ring, and counters with the time of each frame and of the GPU.
+// per ring, one per GPU pass where it ran, and counters with the time of
+// each frame and of the GPU.
 profile_trace :: proc(c:^Profile_Capture) -> (text:string,events:int) {
     b:=strings.builder_make(context.temp_allocator)
     strings.write_string(&b,`{"displayTimeUnit":"ms","traceEvents":[`)
@@ -826,12 +866,30 @@ profile_trace :: proc(c:^Profile_Capture) -> (text:string,events:int) {
         fmt.sbprintf(&b,`{{"name":"thread_name","ph":"M","pid":1,"tid":%d,"args":{{"name":"%s"}}}}`,thread,thread==0?"main":fmt.tprintf("worker %d",thread))
         events+=1
     }
+    gpu_thread:=max(c.threads,1)
+    if len(c.passes)>0 {
+        event(&b,&first)
+        fmt.sbprintf(&b,`{{"name":"thread_name","ph":"M","pid":1,"tid":%d,"args":{{"name":"GPU"}}}}`,gpu_thread)
+        events+=1
+    }
+    for pass in c.passes {
+        event(&b,&first)
+        strings.write_string(&b,`{"name":`)
+        strings.write_string(&b,serial.text_quote(c.pass_names[pass.name]))
+        fmt.sbprintf(&b,`,"ph":"X","pid":1,"tid":%d,"ts":%.3f,"dur":%.3f}}`,gpu_thread,f64(pass.start_ns)/1e3,f64(pass.ns)/1e3)
+        events+=1
+    }
     for f,i in c.frames {
         event(&b,&first)
         fmt.sbprintf(&b,`{{"name":"frame %d","ph":"X","pid":1,"tid":0,"ts":%.3f,"dur":%.3f}}`,i,f64(f.start_ns)/1e3,f64(f.ns)/1e3)
         event(&b,&first)
         fmt.sbprintf(&b,`{{"name":"ms","ph":"C","pid":1,"ts":%.3f,"args":{{"frame":%.3f,"gpu":%.3f,"wait":%.3f}}}}`,f64(f.start_ns)/1e3,profile_frame_ms(f),f64(f.gpu_ms),f64(f.wait_ms))
         events+=2
+        if c.memory {
+            event(&b,&first)
+            fmt.sbprintf(&b,`{{"name":"MB","ph":"C","pid":1,"ts":%.3f,"args":{{"world":%.2f,"private":%.2f,"gpu":%.2f}}}}`,f64(f.start_ns)/1e3,profile_mb(f.memory.world),profile_mb(i64(f.memory.process.private)),profile_mb(i64(f.memory.gpu)))
+            events+=1
+        }
     }
     for zone in c.zones {
         event(&b,&first)

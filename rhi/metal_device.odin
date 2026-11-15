@@ -103,6 +103,8 @@ Mtl_Frame :: struct {
 	query_bytes: [MAX_TIMESTAMPS][MAX_TIMESTAMP_NAME_BYTES]u8,
 	encoder_count: u32,
 	encoder_marks: [MAX_TIMESTAMPS]u16, // of each sampled encoder: the mark it runs after
+	number:        u64,  // the frame_number it committed
+	submitted:     bool, // until frame_begin collects its timings
 	paced:         bool, // the frame draws into a pair of the presenter
 	begun_ns:      i64,
 	submitted_ns:  i64,
@@ -238,6 +240,8 @@ Device :: struct {
 	timings:        [MAX_TIMESTAMPS]Gpu_Timing,
 	timing_bytes:   [MAX_TIMESTAMPS][MAX_TIMESTAMP_NAME_BYTES]u8,
 	timing_count:   int,
+	timing_frame:   u64,  // the frame_number the timings measured
+	timing_measured: bool, // the timings are of a committed frame
 	timestamps_wanted: bool,
 	clock_cpu, clock_gpu: MTL.Timestamp, // sampled together when the device was made: the rate of the GPU clock
 	error_buffer:   [512]u8,
@@ -798,7 +802,13 @@ mtl_flush_ranges :: proc(d: ^Device, f: ^Mtl_Frame) {
 
 // ---------------------------------------------------------------- frames
 
-frame_timings :: proc(d: ^Device) -> []Gpu_Timing {return d.timings[:d.timing_count]}
+// The timings the last frame_begin collected and the frame_number of the
+// frame they measured, MAX_FRAMES_IN_FLIGHT before it; measured is false when
+// that slot had committed nothing since its timings were last collected, or
+// the device could not read its times.
+frame_timings :: proc(d: ^Device) -> (timings: []Gpu_Timing, frame: u64, measured: bool) {
+	return d.timings[:d.timing_count], d.timing_frame, d.timing_measured
+}
 
 // Asks for one timing per cmd_timestamp interval in the frames that begin
 // from now on; without it a frame reports only its whole GPU time.
@@ -878,8 +888,13 @@ frame_begin :: proc(d: ^Device, present := true) -> (cmd: ^Command_List, ok: boo
 	if d.in_frame {set_error(d, "frame_begin while a frame is being recorded: end it with frame_end first"); return nil, false}
 	f := &d.frames[d.slot]
 	d.timing_count = 0
+	d.timing_frame, d.timing_measured = f.number, false
 	if f.cmd != nil {
-		if mtl_wait(d, f.cmd, "frame") {mtl_collect_timestamps(d, f)}
+		if mtl_wait(d, f.cmd, "frame") {
+			mtl_collect_timestamps(d, f)
+			d.timing_measured = f.submitted
+		}
+		f.submitted = false
 		mtl_release(f.cmd)
 		f.cmd = nil
 	}
@@ -961,6 +976,7 @@ frame_end :: proc(d: ^Device, cmd: ^Command_List, generated := false) -> bool {
 	}
 	MTL.CommandBuffer_commit(f.cmd)
 	f.submitted_ns = present_now_ns()
+	f.number, f.submitted = d.frame_number, true
 	if presented {present_count_direct(d)}
 	mtl_release_drawable(d)
 	if f.paced {

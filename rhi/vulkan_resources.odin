@@ -4,6 +4,7 @@ package rhi
 import "core:mem"
 import "core:strings"
 import "core:sync"
+import "core:time"
 import "mirai:std/base"
 import vk "vendor:vulkan"
 
@@ -631,7 +632,8 @@ vk_pipeline_cache_close :: proc(d: ^Device, key: u64, cache: vk.PipelineCache, f
 	if d.dvk.GetPipelineCacheData(d.handle, cache, &size, raw_data(data)) != .SUCCESS || size == 0 {delete(data, d.allocator); return}
 	defer delete(data, d.allocator)
 	sync.lock(&d.pipelines_kept.lock)
-	due := pipeline_store_put(&d.pipelines_kept, key, data[:size])
+	took := time.Duration(feedback.duration) if .VALID in feedback.flags else 0
+	due := pipeline_store_put(&d.pipelines_kept, key, data[:size], took)
 	sync.unlock(&d.pipelines_kept.lock)
 	if due {pipeline_store_save(&d.pipelines_kept, string(d.store_path[:d.store_path_len]))}
 }

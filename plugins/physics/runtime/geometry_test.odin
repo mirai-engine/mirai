@@ -262,7 +262,7 @@ an_auto_collider_is_the_triangles_of_a_still_mesh_and_the_pieces_of_a_moving_one
     for key in g.meshes.files {if key.decomposed {decomposed+=1}}
     testing.expect_value(t,decomposed,1)
     kept,_:=os.read_all_directory_by_path(cache,context.temp_allocator)
-    testing.expect(t,len(kept)==1 && strings.has_suffix(kept[0].name,host.COLLISION_PIECES_EXTENSION),"the pieces are kept in the cache")
+    testing.expect(t,len(kept)==1 && strings.has_suffix(kept[0].name,asset.COLLISION_PIECES_EXTENSION),"the pieces are kept in the cache")
     // Made static, the body takes the triangles of its mesh.
     core.add(&g.rigids,moving,RIGID_BODY_STATIC)
     geometry_test_step(&g)
