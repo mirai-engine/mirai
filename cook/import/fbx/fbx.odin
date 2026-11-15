@@ -555,6 +555,7 @@ fbx_material :: proc(f:^Fbx,material:^ufbx.Material,mesh:^ufbx.Mesh) -> (row:int
     if known,found:=f.materials[material];found {return known,true}
     name:=material.name if material.name!="" else fmt.tprintf("material %d",material.typed_id)
     info:=asset.MATERIAL_DEFAULTS
+    info.two_sided=material.features.double_sided.enabled
     images:[asset.Material_Map_Kind]int
     for &image in images {image=-1}
     // FBX gives emission no unit: as in glTF, 1 is the white of the display.

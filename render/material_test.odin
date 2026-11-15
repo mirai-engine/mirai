@@ -145,6 +145,17 @@ read_normal :: proc(t: ^testing.T, f: ^Fixture, camera: Camera, world: Vec3) -> 
 	return {normal.x, normal.y, normal.z, roughness}
 }
 
+// G-buffer linear depth at a world position: 0 where nothing was drawn.
+@(private = "file")
+read_depth :: proc(t: ^testing.T, f: ^Fixture, camera: Camera, world: Vec3) -> f32 {
+	r := f.renderer
+	rhi.device_wait_idle(f.device)
+	depths := make([]f32, int(r.targets.width * r.targets.height), context.temp_allocator)
+	testing.expect(t, golden_read_texture(f.device, r.targets.linear_depth, mem.slice_data_cast([]u8, depths)), rhi.device_error(f.device))
+	p := target_pixel(r, camera, world)
+	return depths[p.y * int(r.targets.width) + p.x]
+}
+
 @(private = "file")
 near_bytes :: proc(a, b: [4]int, tolerance: int) -> bool {
 	for i in 0 ..< 4 {if abs(a[i] - b[i]) > tolerance {return false}}
@@ -2266,6 +2277,59 @@ material_anisotropy_turns_with_its_object :: proc(t:^testing.T) {
 // Two halves of a quad share their uvs mirrored across x = 0, as a baker lays
 // out a symmetric model. With MikkTSpace tangents a map that tilts up the
 // image tilts both halves alike, and one that tilts along u mirrors.
+// A material that is not two-sided loses the back faces of an open sheet and
+// of a closed box; a two-sided one keeps them, lit by a normal turned to the
+// viewer. An instance that mirrors its mesh still shows its front.
+@(test)
+material_back_faces_show_only_where_the_material_is_two_sided :: proc(t: ^testing.T) {
+	f: Fixture
+	if !fixture_init(t, &f, 64, 64, material_settings(), reference = {.Lights}) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	two := DEFAULT_MATERIAL
+	two.two_sided = true
+	materials_set(r, {DEFAULT_MATERIAL, two})
+	sheet := ground_quad(r)
+	// A box around the origin, its faces wound counter-clockwise from outside.
+	box_vertices: [24]Mesh_Vertex
+	box_indices: [36]u32
+	for n, face in ([6]Vec3{{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}}) {
+		u := Vec3{n.y, n.z, n.x}
+		v := linalg.cross(n, u)
+		for c, i in ([4]Vec3{n - u - v, n + u - v, n + u + v, n - u + v}) {box_vertices[face * 4 + i] = {position = c * 2, normal = n, tangent = {u.x, u.y, u.z, 1}, color = {1, 1, 1}}}
+		base := u32(face * 4)
+		for q, i in ([6]u32{base, base + 1, base + 2, base, base + 2, base + 3}) {box_indices[face * 6 + i] = q}
+	}
+	box, added := mesh_add(r, box_vertices[:], box_indices[:])
+	if !testing.expect(t, added, r.error) {return}
+	UNDER :: Camera{position = {0, -2, 0}, forward = {0, 2, 0}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	INSIDE :: Camera{position = {0, 0, 0}, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	Case :: struct {name: string, mesh: Mesh_Handle, material: Material_Handle, scale: Vec3, camera: Camera, at: Vec3, seen: bool}
+	cases := [?]Case{
+		{"an open sheet from its front", sheet, 1, {1, 1, 1}, OVERHEAD, {0.2, 0, 0.1}, true},
+		{"an open sheet from behind", sheet, 1, {1, 1, 1}, UNDER, {0.2, 0, 0.1}, false},
+		{"a two-sided sheet from behind", sheet, 2, {1, 1, 1}, UNDER, {0.2, 0, 0.1}, true},
+		{"a sheet mirrored along x from its front", sheet, 1, {-1, 1, 1}, OVERHEAD, {0.2, 0, 0.1}, true},
+		{"a sheet mirrored upside down from below, its front", sheet, 1, {1, -1, 1}, UNDER, {0.2, 0, 0.1}, true},
+		{"a sheet mirrored upside down from above, its back", sheet, 1, {1, -1, 1}, OVERHEAD, {0.2, 0, 0.1}, false},
+		{"a closed box from inside", box, 1, {1, 1, 1}, INSIDE, {0.3, 0.2, -2}, false},
+		{"a two-sided box from inside", box, 2, {1, 1, 1}, INSIDE, {0.3, 0.2, -2}, true},
+	}
+	for c in cases {
+		transform := Mat4(1)
+		transform[0, 0], transform[1, 1], transform[2, 2] = c.scale.x, c.scale.y, c.scale.z
+		scene_given(r, {{object_id = 1, mesh = c.mesh, transform = transform, material = c.material, tint = {1, 1, 1}}}, nil, {}, {})
+		frames(t, &f, c.camera, 2)
+		depth := read_depth(t, &f, c.camera, c.at)
+		testing.expectf(t, (depth > 0) == c.seen, "%s: seen %v, depth %v", c.name, c.seen, depth)
+		if !c.seen || depth <= 0 {continue}
+		n := read_normal(t, &f, c.camera, c.at)
+		toward := linalg.normalize(c.camera.position - c.at)
+		testing.expectf(t, linalg.dot(n.xyz, toward) > 0.3, "%s: its normal faces the viewer, %v", c.name, n.xyz)
+	}
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
+}
+
 @(test)
 material_mirrored_uvs_share_their_bitangent :: proc(t:^testing.T) {
     f:Fixture

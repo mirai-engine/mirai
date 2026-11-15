@@ -58,19 +58,24 @@ float3 filter_light(int2 p, float depth, float3 normal, float3 open, float part,
     Pixel pixel = pixel_at(p, (float2(p) + 0.5) * frame.inv_resolution, depth);
     Shading s = gbuffer_shading(gbuffer_read(p), pixel);
     float3 reflectance = max(s.diffuse + specular_albedo(s), float3(0.02));
-    float3 light = open * reflectance * part + shadowless_lighting(s, 0.0);
+    float3 light = open * reflectance * part;
+    // The light that got there, which the lights without shadows err against.
+    float known = luminance(open) * part;
     float cosine = dot(s.normal, frame.sun_direction.xyz);
     if (frame.sun_direction.w > 0.5 && cosine > 0.0) {
-        float3 radiance = sun_light(pixel.position) * cosine * shading_response(s, frame.sun_direction.xyz);
-        if (luminance(radiance) > 0.0) {
+        float3 irradiance = sun_light(pixel.position) * cosine;
+        if (luminance(irradiance) > 0.0) {
             // Where no point of its surface tells, its map does, as it tells the points.
             float seen = sun.part < 0.0 ? sun_shadow_seen(pixel.position, normal, false) : sun.part;
             // The glass on its way: where a map holds the pixel, as its tint says there.
             Shadow_Map held;
             float3 glass = sun_map_of(pixel.position, held) && !shadow_tint_programmed(held, pixel.position) ? shadow_tint(held, pixel.position) : sun.glass;
-            light += radiance * glass * (seen < 0.0 ? 1.0 : seen);
+            irradiance *= glass * (seen < 0.0 ? 1.0 : seen);
+            light += irradiance * shading_response(s, frame.sun_direction.xyz);
+            known += luminance(irradiance);
         }
     }
+    light += shadowless_lighting(s, known);
     float bias = view_bias(pixel.distance);
 #ifdef MIRAI_HOOK_LIGHTS
     light += direct_lighting(s, bias, 0u, LIGHTS_EXTENSION);

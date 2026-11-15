@@ -541,6 +541,7 @@ gpu_material_values :: proc(r: ^Renderer, m: Material_Desc) -> Gpu_Material_Row 
 			transmission = transmission, ior = max(m.ior, 1), thickness = max(m.thickness, 0), attenuation_distance = max(m.attenuation_distance, 0),
 			attenuation_color = {clamp(m.attenuation_color.x, 0, 1), clamp(m.attenuation_color.y, 0, 1), clamp(m.attenuation_color.z, 0, 1)},
 			alpha_mode = u32(mode), emission_mode = u32(m.emission_mode), program_id = m.program_id,
+			two_sided = 1 if m.two_sided else 0,
 		},
 		custom_params = m.custom_params,
 	}
@@ -2150,7 +2151,7 @@ scene_light_update :: proc(r: ^Renderer, index: u32, desc: Light_Desc) -> bool {
 		if transmute(Bits)before == transmute(Bits)light && s.light_shadowless[index] == desc.shadowless {return true}
 		scene_changed_near(s, before.position_range.xyz, before.position_range.w)
 		s.lights[index] = light
-		s.lights_stale ||= light_directed(before) != light_directed(light) || light_placed(before) != light_placed(light) || s.light_shadowless[index] != desc.shadowless
+		s.lights_stale ||= light_directed(before) != light_directed(light) || light_reach_class(before) != light_reach_class(light) || light_placed(before) != light_placed(light) || s.light_shadowless[index] != desc.shadowless
 		s.light_shadowless[index] = desc.shadowless
 		if !s.lights_stale {
 			if !light_placed_same(before, light) {occluder_light_moved(s, index)}

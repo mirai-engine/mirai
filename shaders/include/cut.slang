@@ -155,8 +155,7 @@ void cluster_world_box(Instance inst, Mesh mesh, Cluster c, out float3 low, out 
 
 // As cluster_backfacing (below), for a cone of the normals in the space of the mesh
 // (axis) whose normals spread from it by the sine `cutoff`.
-bool cone_backfacing(Instance inst, float scale, Mesh mesh, float3 cone_axis, float cutoff, float3 low, float3 high) {
-    if ((mesh.flags & MESH_FLAG_CLOSED) == 0u) return false;
+bool cone_backfacing(Instance inst, float scale, float3 cone_axis, float cutoff, float3 low, float3 high) {
     float3 c0 = float3(inst.world[0].x, inst.world[1].x, inst.world[2].x);
     float3 c1 = float3(inst.world[0].y, inst.world[1].y, inst.world[2].y);
     float3 c2 = float3(inst.world[0].z, inst.world[1].z, inst.world[2].z);
@@ -169,13 +168,14 @@ bool cone_backfacing(Instance inst, float scale, Mesh mesh, float3 cone_axis, fl
     return dot(to, axis) >= cutoff * length(to) + radius;
 }
 
-// Whether the eye sees a cluster of a closed mesh only from behind its
-// normals: every direction from the eye to its box is within the cutoff of
-// the cone around its axis. An instance that stretches its mesh unevenly
+// Whether the eye sees a cluster only from behind its normals: every
+// direction from the eye to its box is within the cutoff of the cone around
+// its axis. Its caller asks only of a cluster whose material is not seen from
+// behind (Material.two_sided). An instance that stretches its mesh unevenly
 // turns normals the cone does not hold: it is never left out.
-bool cluster_backfacing(Instance inst, float scale, Mesh mesh, Cluster c, float3 low, float3 high) {
+bool cluster_backfacing(Instance inst, float scale, Cluster c, float3 low, float3 high) {
     if ((c.counts & CLUSTER_CONE) == 0u) return false;
     float2 packed = float2(float(int(c.size_z_cone << 8u) >> 24), float(int(c.size_z_cone) >> 24)) / 127.0;
-    return cone_backfacing(inst, scale, mesh, oct_decode(max(packed, float2(-1.0))), float(int(c.counts) >> 24) / 127.0, low, high);
+    return cone_backfacing(inst, scale, oct_decode(max(packed, float2(-1.0))), float(int(c.counts) >> 24) / 127.0, low, high);
 }
 #endif

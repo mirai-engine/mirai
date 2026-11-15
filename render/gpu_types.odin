@@ -319,6 +319,7 @@ Gpu_Material :: struct {
 	emission_mode:        u32, // asset.Emission_Mode
 	program_id:           u32,
 	textures:             [asset.Material_Map_Kind]u32,
+	two_sided:            u32, // 1: seen from behind too, its normal turned to the viewer; 0: its back faces are not drawn
 	row:                  u32, // shaders write the index they fetched it by; the CPU leaves it zero
 }
 
