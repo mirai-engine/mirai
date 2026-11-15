@@ -2,7 +2,7 @@
   "version": 4,
   "settings": {},
   "outputs": [
-    {"kind": "SCEN", "name": "mirai", "index": 0, "id": "94f640750cf5246f1c0728cc4cd2a07c", "written": "27a50b214026d61e"},
+    {"kind": "SCEN", "name": "mirai", "index": 0, "id": "94f640750cf5246f1c0728cc4cd2a07c", "written": "988f0227dc39d475"},
     {"kind": "TEX", "name": "texture_0", "index": 0, "id": "a3d324f2a5454495463d13c1ebad2c84", "part": true},
     {"kind": "TEX", "name": "texture_0_metallic_roughness", "index": 1, "id": "08abe809e118473bb530ac037696309e", "part": true},
     {"kind": "MAT", "name": "BakedMaterial", "index": 0, "id": "f1d4dfad902a16a7afc56bb3202b1d94"},
