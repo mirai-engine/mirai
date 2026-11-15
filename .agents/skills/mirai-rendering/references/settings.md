@@ -37,19 +37,18 @@
 
 - `Settings.resolution` is a target of lines: the window views draw that fraction of the lines
   they span together, never above one pixel per point (on Retina, half the pixels of the drawable
-  per axis) nor below `RENDER_SCALE_MIN`. The cost per pixel does not grow with the output, and in
-  split screen all take the same scale. TAA brings the image to the drawable resolution. A
-  texture view draws it at the size of the texture.
+  per axis) nor below `RENDER_SCALE_MIN`; 0, native, draws the lines they span. The cost per
+  pixel does not grow with the output, and in split screen all take the same scale. TAA brings
+  the image to the drawable resolution. A texture view draws it at the size of the texture.
 - The UI, panels, lines and outline are drawn after TAA at the drawable resolution: a budget does
   not blur them. Textures are read with a mip bias of `log2` of the scale, which keeps their
   detail.
 - Changing the size, the number of views or the target recreates their targets.
-- `Graphics_Settings.resolution` is that target; each preset writes its own. No setting stores
-  the preset: what names one (a control, `graphics_preset` of `settings.set`, the code of a game)
+- `Graphics_Settings.resolution` is that target, Native (0) unless chosen, and no preset writes
+  it: the quality of a preset does not change the pixels of the window. No setting stores the
+  preset: what names one (a control, `graphics_preset` of `settings.set`, the code of a game)
   writes its fields with `graphics_preset_apply`, before the fields that go on top;
-  `graphics_quality_of` computes the one the fields are at, and `graphics_apply` only reads. At
-  the window of the render check, presets from Medium up stay at one pixel per point, so a check
-  compares the same image with the same cost.
+  `graphics_quality_of` computes the one the fields are at, and `graphics_apply` only reads.
 
 ## Inspection modes
 

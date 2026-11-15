@@ -51,7 +51,7 @@ struct Params_Block {
 #define MIRAI_POSED_STORE
 #include "geometry.slang"
 // The Geometry stage binds no sampler: a texel of a map is loaded.
-#define TERRAIN_TEXEL(texture, texel, size) material_textures[mirai_nonuniform(texture)].Load(int3(texel, 0))
+#define TERRAIN_TEXEL(texture, texel) material_textures[mirai_nonuniform(texture)].Load(int3(texel, 0))
 #include "terrain_surface.slang"
 
 // The cluster of the first level that holds vertex: the last whose first

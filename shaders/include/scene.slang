@@ -665,6 +665,10 @@ float4 mirai_sample_texture_grad(uint index, float2 uv, float2 dx, float2 dy) {
 #endif
     return material_textures[mirai_nonuniform(index)].SampleGrad(material_sampler, uv, dx, dy);
 }
+float4 mirai_load_texture(uint index, int2 texel) {
+    if (!material_has(index)) return float4(1);
+    return material_textures[mirai_nonuniform(index)].Load(int3(texel, 0));
+}
 float2 mirai_texture_size(uint index) {
     if (!material_has(index)) return float2(1);
     texture_feedback(index, -FLT_MAX);

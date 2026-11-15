@@ -57,7 +57,9 @@ or interleave its own passes.
      moves or the camera jumps.
    - Phase 1 tests against the pyramid made with the depth of phase 0; after its G-buffer the
      pyramid is redone with that of both phases, which is the one that phase 0 of the next frame
-     tests: what was rescued occludes from there.
+     tests: what was rescued occludes from there. A pass of the `Gbuffer` stage tests against it
+     and redoes it with what it draws (`pass_depth_pyramid_build`): the next frame's phase 0 sees
+     those surfaces too, and its phase 1 rescues what only they hid.
    - The cull lists (chunks, visible clusters and candidates, and the chunks and clusters of the
      shadow maps) count what does not fit
      (`Stats.cull_dropped`) and grow to that for the following frames: a frame can show holes

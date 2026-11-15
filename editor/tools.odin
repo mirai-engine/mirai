@@ -84,7 +84,7 @@ Graphics_Status :: struct {
     vsync:bool,
     frame_generation:bool `mirai:"label=Asked for: only a technique that offers it (FSR 3.1) generates frames"`,
     generated:bool `mirai:"label=The last frame drew an image shown before its own"`,
-    resolution:u32 `mirai:"label=The lines the views of the window aim for, never above one pixel per point"`,
+    resolution:u32 `mirai:"label=The lines the views of the window aim for, never above one pixel per point; 0, Native: those they span"`,
     antialiasing:[24]u8 `mirai:"text,label=The technique of the setting: off or taa or one a plugin offers"`,
     options:[GRAPHICS_ROWS_CAPACITY]Api_Graphics_Option `mirai:"trim,label=Every option of the popup with its choices"`,
     fps,gpu_ms:f32,

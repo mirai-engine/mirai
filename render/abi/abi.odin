@@ -186,7 +186,7 @@ DISTANCE_TILE :: 16
 PROBE_BUCKETS :: 22
 // Texels across the tile of the narrow lobes of a probe, with its border of one.
 PROBE_GLOSS_TILE :: 12
-CONTACT_RAYS  :: 4
+CONTACT_RAYS  :: 2
 
 // The tables of the lobe and of the air, and the display.
 DFG_SIZE               :: 64

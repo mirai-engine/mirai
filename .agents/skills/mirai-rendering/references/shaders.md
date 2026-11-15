@@ -156,6 +156,8 @@
   - Surface with `ctx.ray` (also hits rebuilt in fragment shaders): LOD of the ray footprint.
   - PostProcess: derivatives and bias.
 - `mirai_sample_texture_level` receives an explicit mip; `mirai_sample_texture_grad`, gradients.
+  `mirai_load_texture(index,texel)` loads a texel of the level 0 of a texture that does not stream
+  (the data a plugin writes: a map of weights, a table) without filtering or reporting it.
 - `ctx.position_dx` and `ctx.position_dy` are the footprint of the point in the world: how much
   the position moves to the next pixel in x and in y (derivatives in raster) or, in a ray, the
   width of its cone along the surface. `mirai_sample_texture_projected(ctx,index,u,v,meters)` reads

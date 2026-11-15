@@ -60,17 +60,14 @@ the_resolution_of_the_settings_is_the_target_of_lines_of_the_renderer :: proc(t:
     settings:=gpu.DEFAULT_SETTINGS
     settings.resolution=360
     s:=graphics_render_settings(settings,g,{type=.Discrete})
-    testing.expect_value(t,s.resolution,u32(1080))
+    // Native unless chosen: the lines the views span.
+    testing.expect_value(t,s.resolution,u32(0))
     g.resolution=720
     s=graphics_render_settings(settings,g,{type=.Discrete})
     testing.expect_value(t,s.resolution,u32(720))
     testing.expect(t,s.sun_shadows)
     g.sun_shadows=false
     testing.expect(t,!graphics_render_settings(settings,g,{type=.Discrete}).sun_shadows)
-    presets:=GRAPHICS_PRESETS
-    for preset in Graphics_Quality {
-        if preset>.Low && preset!=.Custom {testing.expect(t,presets[preset].resolution>=presets[Graphics_Quality(int(preset)-1)].resolution)}
-    }
 }
 
 @(test)
@@ -78,15 +75,15 @@ a_preset_named_moves_the_fields_and_what_they_are_at_is_computed :: proc(t:^test
     presets:=GRAPHICS_PRESETS
     g:=GRAPHICS_SETTINGS_DEFAULT
     testing.expect_value(t,graphics_quality_of(g),Graphics_Quality.High)
-    // A preset named over a resolution set by hand: it takes the target of the preset again.
+    // A resolution set by hand is of no preset: naming one keeps it.
     g.resolution=600
-    testing.expect_value(t,graphics_quality_of(g),Graphics_Quality.Custom)
+    testing.expect_value(t,graphics_quality_of(g),Graphics_Quality.High)
     graphics_preset_apply(&g,.Low)
-    testing.expect(t,g.resolution==presets[.Low].resolution && g.light_samples==presets[.Low].light_samples)
+    testing.expect(t,g.resolution==600 && g.light_samples==presets[.Low].light_samples)
     testing.expect_value(t,graphics_quality_of(g),Graphics_Quality.Low)
     // A field changed by hand leaves the others where the preset put them.
     g.light_samples=31
-    testing.expect(t,g.resolution==presets[.Low].resolution)
+    testing.expect(t,g.textures==presets[.Low].textures)
     testing.expect_value(t,graphics_quality_of(g),Graphics_Quality.Custom)
     // Naming the preset again reaches it.
     graphics_preset_apply(&g,.Low)
@@ -184,13 +181,3 @@ display_settings_left_at_zero_are_the_window_the_project_opened :: proc(t:^testi
     testing.expect_value(t,mode,Display_Mode.Windowed)
 }
 
-@(test)
-a_preset_keeps_a_pixel_per_point_within_the_lines_of_its_target :: proc(t:^testing.T) {
-    presets:=GRAPHICS_PRESETS
-    // At the window of the render check the presets it runs draw every pixel, as before.
-    for preset in ([]Graphics_Quality{.Medium,.High,.Ultra}) {
-        testing.expect_value(t,gpu.views_render_scale(presets[preset].resolution,900,1),f32(1))
-    }
-    testing.expect_value(t,gpu.views_render_scale(presets[.Low].resolution,900,1),f32(0.8))
-    testing.expect_value(t,gpu.views_render_scale(presets[.High].resolution,2160,1),f32(0.5))
-}

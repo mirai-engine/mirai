@@ -204,6 +204,7 @@ float4 mirai_sample_texture_level(uint index, float2 uv, float level) {return fl
 float4 mirai_sample_texture_grad(uint index, float2 uv, float2 dx, float2 dy) {return float4(1);}
 float4 mirai_sample_texture_projected(Mirai_Surface_Context ctx, uint index, float3 u, float3 v, float metres) {return float4(1);}
 float2 mirai_texture_size(uint index) {return float2(1);}
+float4 mirai_load_texture(uint index, int2 texel) {return float4(1);}
 float4 mirai_scene_color(Mirai_PostProcess_Context ctx, float2 uv) {return ctx.color;}
 float mirai_scene_depth(Mirai_PostProcess_Context ctx, float2 uv) {return ctx.depth;}
 float3 mirai_scene_normal(Mirai_PostProcess_Context ctx, float2 uv) {return ctx.normal;}
@@ -220,6 +221,9 @@ float4 mirai_sample_texture_projected(Mirai_Surface_Context ctx, uint index, flo
 // The texels of a texture across and down at its finest resident level: the
 // whole texture, since a program keeps every level of its textures.
 float2 mirai_texture_size(uint index);
+// A texel of the level 0 of a texture that does not stream, as a plugin writes
+// its data (a map of weights, a table), unfiltered: no residency follows it.
+float4 mirai_load_texture(uint index, int2 texel);
 // What an effect reads at any uv of the image, 0 to 1 from the top left
 // corner, as ctx holds it for its own pixel.
 float4 mirai_scene_color(Mirai_PostProcess_Context ctx, float2 uv);

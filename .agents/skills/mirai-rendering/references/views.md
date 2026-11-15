@@ -331,7 +331,11 @@ frame and the current one:
   with `material_vertex_tint`: a program reads the color as data and does not multiply it. With
   `fragment`, `<fragment>.frag` writes the targets instead of the engine, with the `plain` and
   `layers` variants and the packing of `gbuffer.slang`, like the
-  [foliage](../../mirai-world/references/foliage.md#far-impostor-and-crown) impostor. Materials
+  [foliage](../../mirai-world/references/foliage.md#far-impostor-and-crown) impostor. A cull
+  binds the view's depth pyramids with `pass_depth_pyramid` (this frame's, or the previous one's
+  with `previous`) and tests a box with `pyramid_hides` (`include/pyramid.slang`);
+  `pass_depth_pyramid_build`, between its draws, rebuilds this frame's pyramid with what it drew,
+  which its next cull and the next frame see. Materials
   with a Surface program are drawn with their program's fragment: `program` in
   `pass_gbuffer_pipeline` gives that pipeline, `pass_material_program` says the program of a
   material and `pass_mesh_programs` those of what a mesh shows, for a draw per program in which the

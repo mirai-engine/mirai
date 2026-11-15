@@ -26,7 +26,7 @@ Detail :: enum u8 {Low,Medium,High,Ultra}
 
 @(storage,shared,setting="machine")
 Graphics_Settings :: struct {
-    resolution:u32 `mirai:"min=1,max=16384,section=Resolution,graphics=Resolution,choices=720|900|1080|1440|2160"`, // the lines the views of the window aim for together, never above one pixel per point (gpu.Settings.resolution)
+    resolution:u32 `mirai:"min=0,max=16384,section=Resolution,graphics=Resolution,choices=Native:0|720|900|1080|1440|2160"`, // the lines the views of the window aim for together, never above one pixel per point (gpu.Settings.resolution); 0, Native: those they span. No preset changes it
     antialiasing:[gpu.ANTIALIASING_NAME_BYTES]u8 `mirai:"text,graphics=Antialiasing"`, // the technique that resolves the image and upscales it: "off", "taa" or one a plugin offers (antialiasing_offer); one no plugin resolves is the TAA
     indirect_light:Indirect_Light `mirai:"section=Lighting,graphics=Indirect light"`,
     light_probes:Light_Probes `mirai:"graphics=Light probes"`,
@@ -48,7 +48,7 @@ Graphics_Settings :: struct {
 
 // Without a device: the High preset.
 GRAPHICS_SETTINGS_DEFAULT :: Graphics_Settings{
-    resolution=1080,antialiasing={0='t',1='a',2='a'},indirect_light=.Probes,light_probes=.High,
+    antialiasing={0='t',1='a',2='a'},indirect_light=.Probes,light_probes=.High,
     sun_shadows=true,light_samples=15,light_half_resolution=true,glass_shadows=true,glass_layers=1,textures=.High,detail=.High,frame_limit=60,vsync=true,frame_generation=true,show_fps=true,
 }
 
@@ -57,12 +57,13 @@ GRAPHICS_SETTINGS_DEFAULT :: Graphics_Settings{
 // are at is graphics_quality_of.
 Graphics_Quality :: enum u8 {Low,Medium,High,Ultra,Custom}
 // Of each preset only the fields of the quality count: graphics_preset_apply.
-// The technique of antialiasing is not one of them: it is the same in all.
+// The technique of antialiasing and the resolution are not of them: a preset
+// leaves them where they are.
 GRAPHICS_PRESETS :: #partial [Graphics_Quality]Graphics_Settings{
-    .Low   ={resolution=720,sun_shadows=true,indirect_light=.Probes,light_probes=.Low,light_samples=7,light_half_resolution=true,glass_layers=1,textures=.Low,detail=.Low},
-    .Medium={resolution=900,sun_shadows=true,indirect_light=.Probes,light_probes=.Medium,light_samples=15,light_half_resolution=true,glass_layers=1,textures=.Medium,detail=.Medium},
-    .High  ={resolution=1080,sun_shadows=true,indirect_light=.Probes,light_probes=.High,light_samples=15,light_half_resolution=true,glass_shadows=true,glass_layers=1,textures=.High,detail=.High,frame_generation=true},
-    .Ultra ={resolution=1440,sun_shadows=true,indirect_light=.Probes,light_probes=.High,light_samples=31,glass_shadows=true,glass_layers=2,textures=.Ultra,detail=.Ultra,frame_generation=true},
+    .Low   ={sun_shadows=true,indirect_light=.Probes,light_probes=.Low,light_samples=7,light_half_resolution=true,glass_layers=1,textures=.Low,detail=.Low},
+    .Medium={sun_shadows=true,indirect_light=.Probes,light_probes=.Medium,light_samples=15,light_half_resolution=true,glass_layers=1,textures=.Medium,detail=.Medium},
+    .High  ={sun_shadows=true,indirect_light=.Probes,light_probes=.High,light_samples=15,light_half_resolution=true,glass_shadows=true,glass_layers=1,textures=.High,detail=.High,frame_generation=true},
+    .Ultra ={sun_shadows=true,indirect_light=.Probes,light_probes=.High,light_samples=31,glass_shadows=true,glass_layers=2,textures=.Ultra,detail=.Ultra,frame_generation=true},
 }
 
 // The frames per second of its own a game needs under generated ones (AMD's
@@ -87,7 +88,6 @@ graphics_preset_apply :: proc(g:^Graphics_Settings,preset:Graphics_Quality) {
     if preset==.Custom {return}
     presets:=GRAPHICS_PRESETS
     p:=presets[preset]
-    g.resolution=p.resolution
     g.sun_shadows=p.sun_shadows
     g.indirect_light,g.light_probes=p.indirect_light,p.light_probes
     g.light_samples,g.glass_shadows,g.glass_layers=p.light_samples,p.glass_shadows,p.glass_layers
@@ -129,7 +129,7 @@ GRAPHICS_TEXTURE_POOL_MIN :: u32(256)
 graphics_render_settings :: proc(settings:gpu.Settings,quality:Graphics_Settings,device:rhi.Device_Info) -> gpu.Settings {
     s:=settings
     probes,sizes,pixels:=GRAPHICS_PROBES,GRAPHICS_TEXTURE_SIZES,GRAPHICS_DETAIL_PIXELS
-    s.resolution=max(quality.resolution,1)
+    s.resolution=quality.resolution
     // A plugin that resolves the technique replaces the Resolve stage, where the TAA runs, in its pipeline.
     technique:=quality.antialiasing
     s.taa=base.text_get(technique[:])!=gpu.ANTIALIASING_OFF

@@ -5,7 +5,6 @@
 //! parameter layers {"kind":"texture"}
 //! parameter piece {"default":[2,2,0,1],"min":0,"max":100000}
 //! parameter palette {"default":[0,1,2,3],"min":0,"max":31}
-//! parameter rows {"default":[1,0,0,0],"min":0,"max":32}
 #include "terrain_projection.slang"
 #include "terrain_surface.slang"
 namespace Terrain_Layers {
@@ -13,11 +12,11 @@ namespace Terrain_Layers {
 // paint, terrain.Surface_Maps) and piece, their size in texels, 1 in z for a
 // piece of a Volume, which carries the weights of the four layers of its
 // palette in uv0 and uv1 instead, and the metres of a texel in w; layers, the
-// table of the layers of its source, of rows layers. uv0 is the place over
-// the maps, in texels.
+// table of the layers of its source. uv0 is the place over the maps, in
+// texels.
 struct Parameters {
     uint control;uint normal;uint paint;uint layers;
-    float4 piece;float4 palette;float4 rows;
+    float4 piece;float4 palette;
 };
 // A repeat of a layer covers fewer pixels than this where its far tiling has
 // taken over; it begins to over the octave before.
@@ -61,6 +60,12 @@ void tiled(Mirai_Surface_Context ctx, Terrain_Layer l, Projection p, float scale
 void layer_read(Mirai_Surface_Context ctx, Terrain_Layer l, float3 n, float3 weights, out float4 c, out float3 bent) {
     c = float4(0.0);
     bent = float3(0.0);
+    // Without maps every projection reads white and turns no normal.
+    if (l.color == 0xffffffffu && (l.normal_strength <= 0.0 || l.normal == 0xffffffffu)) {
+        c = float4(1.0);
+        bent = n;
+        return;
+    }
     float near = 1.0 / max(l.tiling, 1e-6);
     float footprint = max(length(ctx.position_dx), length(ctx.position_dy));
     float far = l.far_tiling > 0.0 ? saturate(log2(FAR_PIXELS * footprint * near) + 1.0) : 0.0;
@@ -129,7 +134,7 @@ Mirai_Surface evaluate(Mirai_Surface_Context ctx, Parameters p) {
         albedo[i] = float3(0.0);
         bent[i] = n;
         if (mix.weights[i] <= 0.0) continue;
-        layer[i] = terrain_layer(p.layers, mix.layers[i], p.rows.x);
+        layer[i] = terrain_layer(p.layers, mix.layers[i]);
         float4 c;
         layer_read(ctx, layer[i], n, weights, c, bent[i]);
         float shade = 1.0;

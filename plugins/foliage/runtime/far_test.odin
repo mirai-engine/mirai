@@ -318,3 +318,18 @@ what_the_renderer_forgets_takes_the_crowns_and_far_forms_with_it :: proc(t:^test
     testing.expect_value(t,len(resident.kinds),0)
     testing.expect(t,len(resident.owners[0].cells)==0 && !resident.owners[0].built && len(resident.owners[0].kinds)==0)
 }
+
+// The far form of a type is not made, nor the budget of the frame spent on
+// it, while what its parts show is not settled: its frames are drawn once,
+// as they will stay.
+@(test)
+a_far_form_waits_until_what_its_parts_show_is_settled :: proc(t:^testing.T) {
+    resident:Foliage_Resident
+    defer foliage_resident_free(&resident)
+    key:=Kind_Key{{6,6},64}
+    resident.kinds_left=1
+    testing.expect_value(t,kind_ensure(&resident,nil,nil,nil,context.allocator,key,nil,false,nil,{}),-1)
+    testing.expect(t,len(resident.kinds)==0 && resident.kinds_left==1,"nothing is made and the budget stays")
+    testing.expect_value(t,kind_ensure(&resident,nil,nil,nil,context.allocator,key,nil,true,nil,{}),0)
+    testing.expect(t,len(resident.kinds)==1 && resident.kinds[0].made)
+}

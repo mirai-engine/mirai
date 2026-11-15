@@ -70,6 +70,7 @@ Pass :: struct {
 	jitter:    Vec2,
 	jitter_phases: u32, // of the sequence the jitter of the view follows; 0: none
 	use_gi, use_probes, use_reflections: bool,
+	pyramid_previous: bool, // the depth pyramid of the frame before holds what the view drew then (pass_depth_pyramid)
 	reflectance:    bool, // the G-buffer keeps what each pixel reflects
 	layered:        bool, // and the layers of its material (gbuffer.slang)
 	instance_count: u32,
@@ -1017,6 +1018,7 @@ pass_gbuffer :: proc(p: ^Pass) -> bool {
 	occlusion := threads > 0
 	keep_depth := p.draw_translucent || p.draw_overlays || p.blend || stage_asked(r, .Gbuffer) || r.pass_count > 0 && .Nested in p.plan.stages
 	glass_groups := [4]u32{groups(t.width, 8), groups(t.height, 8), groups(t.half_width, 8), groups(t.half_height, 8)}
+	p.pyramid_previous = t.hiz_valid
 	rhi.cmd_timestamp(cmd, "cull")
 	rhi.cmd_fill_buffer(cmd, r.stats_buffer, 0, size_of(Gpu_Cull_Stats), 0)
 	rhi.cmd_fill_buffer(cmd, p.view.glass_dispatch, 0, size_of(Gpu_Glass_Dispatch), 0)
