@@ -16,8 +16,12 @@ import mm "mirai:std/math"
 // that meet at their borders keep meeting at every level. Where the seams of
 // normals stop it short of its target, it is simplified again crossing
 // them (Permissive); the seams of everything else (uvs, colors, materials,
-// the sign of the tangent) keep their outline. Every vertex of a level is a
-// vertex of level 0 as it was, except those of islands.
+// the sign of the tangent) keep their outline. Where those seams still stop
+// it above LOD_KEEP of the level before (faceted pieces, a seam on every
+// edge), it crosses them too, all but the outlines between materials, and
+// its error counts what the attributes lose. Every vertex of a level is a
+// vertex of level 0 as it was, except those of islands. A static mesh without
+// islands has no levels: its clusters are the DAG of level 0.
 //
 // Aggregate detail (leaves, cards, clumps of grass) is pruned instead
 // (Cook, Halstead, Planck and Ryu, Stochastic simplification of aggregate
@@ -76,17 +80,20 @@ Mesh_Levels :: struct {
     morphs:   []asset.Morph_Target,
     morph_deltas:[]asset.Morph_Delta, // a vertex of a level moves with the vertex of level 0 it is
     pruned:bool, // some submesh is of islands, which its levels prune
+    dag:bool,    // static and not pruned: level 0 alone, whose clusters are its DAG
 }
 
 @(private="file")
 NONE :: max(u32)
 
-// Level 0 as given, followed by up to LOD_MAX-1 simplified levels.
-// Each aims at LOD_SHARE of the triangles of the one before; the levels end
-// with the first that cannot remove a share of them, or once one has fewer
-// than LOD_MIN_TRIANGLES. Mesh_Lod.error is how far geom.simplify moved the
-// surface of level 0 (its position error), in meters. With `simplify` false there is level 0 alone. indices are valid for vertices, and submeshes are ranges of
-// indices: what asset.mesh_check asks. Everything returned is in `allocator`.
+// Level 0 as given, followed by up to LOD_MAX-1 simplified levels for a
+// skinned or pruned mesh (a static one is a DAG instead). Each aims at
+// LOD_SHARE of the triangles of the one before; the levels end with the first
+// that cannot remove a share of them, or once one has fewer than
+// LOD_MIN_TRIANGLES. Mesh_Lod.error is how far geom.simplify moved the surface
+// of level 0, in meters. With `simplify` false there is level 0 alone. indices
+// are valid for vertices, and submeshes are ranges of indices: what
+// asset.mesh_check asks. Everything returned is in `allocator`.
 mesh_levels :: proc(vertices:[]asset.Vertex,indices:[]u32,skin:[]asset.Skin_Vertex,submeshes:[]Submesh,simplify:=true,allocator:=context.allocator,morphs:[]asset.Morph_Target=nil,morph_deltas:[]asset.Morph_Delta=nil) -> (levels:Mesh_Levels) {
     out_vertices:=make([dynamic]asset.Vertex,0,len(vertices),allocator)
     out_indices:=make([dynamic]u32,0,len(indices),allocator)
@@ -99,11 +106,11 @@ mesh_levels :: proc(vertices:[]asset.Vertex,indices:[]u32,skin:[]asset.Skin_Vert
     append(&out_skin,..skin)
     append(&out_submeshes,..submeshes)
     append(&out_lods,Lod{index_count=u32(len(indices)),vertex_count=u32(len(vertices)),submesh_count=u32(len(submeshes))})
-    pruned:=false
-    if simplify && len(indices)/3>=LOD_MIN_TRIANGLES && len(vertices)<1<<24 {
-        levels_simplify(vertices,indices,skin,submeshes,&out_vertices,&out_indices,&out_skin,&out_lods,&out_submeshes,&sources if len(morphs)>0 else nil,0,LOD_MAX,&pruned)
+    pruned,dag:=false,false
+    if simplify && len(indices)>0 && len(vertices)<1<<24 {
+        levels_simplify(vertices,indices,skin,submeshes,&out_vertices,&out_indices,&out_skin,&out_lods,&out_submeshes,&sources if len(morphs)>0 else nil,&pruned,&dag)
     }
-    levels={vertices=out_vertices[:],indices=out_indices[:],skin=out_skin[:],lods=out_lods[:],submeshes=out_submeshes[:],pruned=pruned}
+    levels={vertices=out_vertices[:],indices=out_indices[:],skin=out_skin[:],lods=out_lods[:],submeshes=out_submeshes[:],pruned=pruned,dag=dag}
     if len(morphs)>0 {levels.morphs,levels.morph_deltas=levels_morphs(len(vertices),morphs,morph_deltas,sources[:],allocator)}
     return
 }
@@ -114,7 +121,7 @@ mesh_levels :: proc(vertices:[]asset.Vertex,indices:[]u32,skin:[]asset.Skin_Vert
 // streams it keeps. False where the constructor fails.
 levels_geometry :: proc(levels:Mesh_Levels,flags:asset.Mesh_Flags,out:^asset.Mesh_Geometry,allocator:=context.allocator) -> bool {
     source:=asset.Mesh_Source{vertices=levels.vertices,skin=levels.skin,morphs=levels.morphs,morph_deltas=levels.morph_deltas,flags=flags}
-    if len(levels.skin)==0 && !levels.pruned && len(levels.lods)>1 {
+    if levels.dag {
         level0:=levels.lods[0]
         return asset.mesh_build_dag(source,levels.indices[level0.first_index:][:level0.index_count],out,allocator)
     }
@@ -294,12 +301,11 @@ vec_cross :: #force_inline proc "contextless" (a,b:geom.Vec3) -> geom.Vec3 {retu
 @(private="file")
 vec_length :: #force_inline proc "contextless" (a:geom.Vec3) -> f32 {return math.sqrt(a.x*a.x+a.y*a.y+a.z*a.z)}
 
-// Appends levels to out_lods until it holds `limit`. The first aims at
-// `target` triangles when it is above 0, simplifies everything and is kept
-// however many it removes. The others prune the small islands of the
-// submeshes of islands and simplify the rest.
+// Appends levels to out_lods until it holds LOD_MAX, each pruning the small
+// islands of the submeshes of islands and simplifying the rest; of a static
+// mesh without islands, none, and dag is set.
 @(private="file")
-levels_simplify :: proc(vertices:[]asset.Vertex,indices:[]u32,skin:[]asset.Skin_Vertex,submeshes:[]Submesh,out_vertices:^[dynamic]asset.Vertex,out_indices:^[dynamic]u32,out_skin:^[dynamic]asset.Skin_Vertex,out_lods:^[dynamic]Lod,out_submeshes:^[dynamic]Submesh,out_sources:^[dynamic]u32,target:int,limit:int,pruned:^bool=nil) {
+levels_simplify :: proc(vertices:[]asset.Vertex,indices:[]u32,skin:[]asset.Skin_Vertex,submeshes:[]Submesh,out_vertices:^[dynamic]asset.Vertex,out_indices:^[dynamic]u32,out_skin:^[dynamic]asset.Skin_Vertex,out_lods:^[dynamic]Lod,out_submeshes:^[dynamic]Submesh,out_sources:^[dynamic]u32,pruned,dag:^bool) {
     temp:=context.temp_allocator
     positions,attributes,protect:=asset.mesh_simplify_inputs(vertices)
     weights:=asset.MESH_SIMPLIFY_WEIGHTS
@@ -316,16 +322,17 @@ levels_simplify :: proc(vertices:[]asset.Vertex,indices:[]u32,skin:[]asset.Skin_
     classes:[]Island_Class
     island_triangles,island_of:[]u32
     rest:=indices
-    if target==0 {
-        islands,classes,island_triangles,island_of=levels_islands(positions,indices,submeshes,temp)
-        if len(islands)>0 {
-            if pruned!=nil {pruned^=true}
-            others:=make([dynamic]u32,0,len(indices),temp)
-            for i,t in island_of {
-                if i==NONE {append(&others,..indices[t*3:][:3])}
-            }
-            rest=others[:]
+    islands,classes,island_triangles,island_of=levels_islands(positions,indices,submeshes,temp)
+    if len(islands)>0 {
+        pruned^=true
+        others:=make([dynamic]u32,0,len(indices),temp)
+        for i,t in island_of {
+            if i==NONE {append(&others,..indices[t*3:][:3])}
         }
+        rest=others[:]
+    } else if len(skin)==0 {
+        dag^=true
+        return
     }
     // Sums of the areas and triangles of the islands before each, for what a prefix of a class keeps.
     area_before:=make([]f32,len(islands)+1,temp)
@@ -353,22 +360,29 @@ levels_simplify :: proc(vertices:[]asset.Vertex,indices:[]u32,skin:[]asset.Skin_
     order:=make([]u32,len(indices)/3,temp)
     first:=make([]u32,groups+1,temp)
     next:=make([]u32,groups,temp)
+    // protect without the seams of attributes, for the levels they stop.
+    relaxed:[]geom.Simplify_Vertex
     previous,previous_rest:=len(indices)/3,len(rest)/3
-    aimed:=target
-    for k:=1;len(out_lods)<limit && previous>=LOD_MIN_TRIANGLES;k+=1 {
+    for len(out_lods)<LOD_MAX && previous>=LOD_MIN_TRIANGLES {
         clear(&level_corners);clear(&level_islands)
         error:f32
         if len(rest)>0 {
-            aim:=aimed>0?aimed:int(f32(previous_rest)*LOD_SHARE)
+            aim:=int(f32(previous_rest)*LOD_SHARE)
             options:=geom.Simplify_Options{.Lock_Border,.Error_Absolute}
             result,failed:=geom.simplify(simplified,rest,positions,aim*3,max(f32),options,attributes,weights[:],protect)
             if failed==.None && result.index_count>aim*3 {
                 result,failed=geom.simplify(simplified,rest,positions,aim*3,max(f32),options+{.Permissive},attributes,weights[:],protect)
             }
+            error=result.position_error
+            if failed==.None && f32(result.index_count)>LOD_KEEP*f32(previous_rest*3) {
+                if relaxed==nil {relaxed=levels_outlines(vertices,positions)}
+                // Clamped, the error of the attributes reads as a distance, which the cut must see.
+                result,failed=geom.simplify(simplified,rest,positions,aim*3,max(f32),options+{.Permissive,.Error_Clamped},attributes,weights[:],relaxed)
+                error=max(result.result_error,result.position_error)
+            }
             if failed!=.None {break}
             append(&level_corners,..simplified[:result.index_count])
             for _ in 0..<result.index_count/3 {append(&level_islands,NONE)}
-            error=result.position_error
             previous_rest=result.index_count/3
         }
         // Each class goes as deep as the error allowed lets its grown islands; where the level would
@@ -383,7 +397,7 @@ levels_simplify :: proc(vertices:[]asset.Vertex,indices:[]u32,skin:[]asset.Skin_
                 if depth[c]<class_depth_max(class,area_before) {next=min(next,class_error(class,depth[c]+1,area_before))}
             }
             // A class with no finite error (a damaged mesh) allows nothing more: next is not above allowed.
-            if !(next>allowed) || next==max(f32) || aimed>0 || f32(kept)<=LOD_KEEP*f32(previous) {break}
+            if !(next>allowed) || next==max(f32) || f32(kept)<=LOD_KEEP*f32(previous) {break}
             allowed=next
         }
         for class,c in classes {
@@ -399,8 +413,7 @@ levels_simplify :: proc(vertices:[]asset.Vertex,indices:[]u32,skin:[]asset.Skin_
             }
         }
         kept:=len(level_corners)/3
-        if kept==0 || aimed==0 && (f32(kept)>LOD_KEEP*f32(previous) || error>radius) {break}
-        aimed=0
+        if kept==0 || f32(kept)>LOD_KEEP*f32(previous) || error>radius {break}
         previous=kept
         level:=Lod{first_index=u32(len(out_indices)),first_vertex=u32(len(out_vertices)),first_submesh=u32(len(out_submeshes)),error=error}
         for &at in local {at=NONE}
@@ -451,4 +464,20 @@ levels_simplify :: proc(vertices:[]asset.Vertex,indices:[]u32,skin:[]asset.Skin_
         append(out_lods,level)
     }
     return
+}
+
+// Protect where vertices of different materials meet at one place, and
+// nowhere else: what a level stuck on the seams of attributes keeps.
+@(private="file")
+levels_outlines :: proc(vertices:[]asset.Vertex,positions:[]geom.Vec3) -> []geom.Simplify_Vertex {
+    welds:=make([]u32,len(vertices),context.temp_allocator)
+    geom.positions_weld(positions,0,welds)
+    outlines:=make([]geom.Simplify_Vertex,len(vertices),context.temp_allocator)
+    for first,at in welds {
+        if vertices[at].material!=vertices[first].material {
+            outlines[at]={.Protect}
+            outlines[first]={.Protect}
+        }
+    }
+    return outlines
 }
