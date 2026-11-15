@@ -60,6 +60,12 @@ void tiled(Mirai_Surface_Context ctx, Terrain_Layer l, Projection p, float scale
 void layer_read(Mirai_Surface_Context ctx, Terrain_Layer l, float3 n, float3 weights, out float4 c, out float3 bent) {
     c = float4(0.0);
     bent = float3(0.0);
+    // Without maps every projection reads white and turns no normal.
+    if (l.color == 0xffffffffu && (l.normal_strength <= 0.0 || l.normal == 0xffffffffu)) {
+        c = float4(1.0);
+        bent = n;
+        return;
+    }
     float near = 1.0 / max(l.tiling, 1e-6);
     float footprint = max(length(ctx.position_dx), length(ctx.position_dy));
     float far = l.far_tiling > 0.0 ? saturate(log2(FAR_PIXELS * footprint * near) + 1.0) : 0.0;
