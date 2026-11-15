@@ -7,6 +7,11 @@
 //! parameter palette {"default":[0,1,2,3],"min":0,"max":31}
 #include "terrain_projection.slang"
 #include "terrain_surface.slang"
+// A stage that evaluates the layers outside a program (the tests of the
+// plugin) defines TERRAIN_SAMPLE, as it defines TERRAIN_TEXEL.
+#ifndef TERRAIN_SAMPLE
+#define TERRAIN_SAMPLE(index, uv, dx, dy) mirai_sample_texture_grad(index, uv, dx, dy)
+#endif
 namespace Terrain_Layers {
 // The terrain plugin fills these: the maps of each piece (control, normal and
 // paint, terrain.Surface_Maps) and piece, their size in texels, 1 in z for a
@@ -27,7 +32,7 @@ float4 projected(Mirai_Surface_Context ctx, uint index, Projection p, float scal
     float widen = ctx.ray ? scale : scale * exp2(ctx.lod);
     float2 dx = float2(dot(ctx.position_dx, p.u), dot(ctx.position_dx, p.v)) * widen;
     float2 dy = float2(dot(ctx.position_dy, p.u), dot(ctx.position_dy, p.v)) * widen;
-    return mirai_sample_texture_grad(index, uv, dx, dy);
+    return TERRAIN_SAMPLE(index, uv, dx, dy);
 }
 
 // The base color (its alpha the height) and the normal map of a layer along
@@ -118,6 +123,7 @@ Mirai_Surface evaluate(Mirai_Surface_Context ctx, Parameters p) {
     // Over a hole the material cuts the surface (terrain_layers_holed.mat); an opaque one keeps it.
     s.alpha = hole ? 0.0 : 1.0;
     float3 weights = projection_weights(p.piece.z > 0.5 ? ctx.vertex_normal : n, ctx.ray);
+    float4 shown = terrain_heaviest(float4(mix.weights[0], mix.weights[1], mix.weights[2], mix.weights[3]));
     float3 albedo[4];
     float3 bent[4];
     Terrain_Layer layer[4];
@@ -125,7 +131,7 @@ Mirai_Surface evaluate(Mirai_Surface_Context ctx, Parameters p) {
     for (int i = 0; i < 4; i++) {
         albedo[i] = float3(0.0);
         bent[i] = n;
-        if (mix.weights[i] <= 0.0) continue;
+        if (shown[i] <= 0.0) continue;
         layer[i] = terrain_layer(p.layers, mix.layers[i]);
         float4 c;
         layer_read(ctx, layer[i], n, weights, c, bent[i]);
@@ -134,7 +140,7 @@ Mirai_Surface evaluate(Mirai_Surface_Context ctx, Parameters p) {
         albedo[i] = c.rgb * layer[i].tint * shade;
         // The alpha of the base color map is the height of the layer: where
         // layers meet the higher texels show through.
-        blend[i] = mix.weights[i] * exp2(float(HEIGHT_BLEND_POWER) * layer[i].height_blend * c.a);
+        blend[i] = shown[i] * exp2(float(HEIGHT_BLEND_POWER) * layer[i].height_blend * c.a);
     }
     float sum = blend.x + blend.y + blend.z + blend.w;
     blend = sum > 0.0 ? blend / sum : float4(1.0, 0.0, 0.0, 0.0);
@@ -143,7 +149,7 @@ Mirai_Surface evaluate(Mirai_Surface_Context ctx, Parameters p) {
     float roughness = 0.0;
     float metallic = 0.0;
     for (int i = 0; i < 4; i++) {
-        if (blend[i] <= 0.0 || mix.weights[i] <= 0.0) continue;
+        if (blend[i] <= 0.0 || shown[i] <= 0.0) continue;
         color += albedo[i] * blend[i];
         normal += bent[i] * blend[i];
         roughness += layer[i].roughness * blend[i];
