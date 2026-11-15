@@ -12,7 +12,7 @@
 // window of the job, which the atlas maps to its part of the square.
 #include "gbuffer_vertex.slang"
 #include "shadow_maps.slang"
-// The clusters to draw: the instance, the cluster and the job.
+// The clusters to draw: the instance, the cluster, the job, and 1 for one at rest.
 [[vk::binding(SLOT_PASS0, 0)]] StructuredBuffer<uint4> entries : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);
 [[vk::binding(SLOT_PASS1, 0)]] StructuredBuffer<uint4> shadow_data : register(MIRAI_REGISTER(t, SLOT_PASS1), space0);
 // The tested variant draws the clusters of masked materials, and those of
@@ -82,7 +82,8 @@ Shadow_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vul
     Mesh mesh = meshes[instance_mesh(inst)];
     Cluster c = mesh_cluster(mesh, entry.y);
     if (vertex_id >= cluster_triangle_count(c) * 3u) return output;
-    Mesh_Point v = cluster_point_at(mesh, c, cluster_corner(mesh, c, vertex_id), mesh.posed_word);
+    // At rest (entry.w, shadow_clusters.comp), the vertices of its clusters.
+    Mesh_Point v = cluster_point_at(mesh, c, cluster_corner(mesh, c, vertex_id), entry.w != 0u ? INVALID : mesh.posed_word);
     Shadow_Job job = shadow_job(shadow_data, entry.z);
     Shadow_Map m = shadow_map_at(shadow_data, params.rows, job.map);
     float3 world = transform_point(inst.world, v.position);

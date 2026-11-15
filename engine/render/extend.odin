@@ -415,10 +415,12 @@ mesh_uploading :: proc(renderer:^Renderer,mesh:Mesh_Handle) -> bool {
 // A copy of a mesh whose vertices the plugin writes in its Geometry stage, in
 // each frame it asked deformable_update for. levels: it keeps the levels of
 // detail of the mesh, whose vertices the plugin writes too (pass_deformable
-// counts them); rays meet the first. A load transaction.
-deformable_create :: proc(renderer:^Renderer,source:Mesh_Handle,levels:=false) -> (Mesh_Handle,bool) {
+// counts them); rays meet the first. sway: metres in the space of the mesh it
+// moves a vertex at most from where it is at rest; 0 for anywhere in the box
+// deformable_update gives. A load transaction.
+deformable_create :: proc(renderer:^Renderer,source:Mesh_Handle,levels:=false,sway:=f32(0)) -> (Mesh_Handle,bool) {
     if renderer==nil {return 0,false}
-    return gpu.deformable_create(renderer,source,levels)
+    return gpu.deformable_create(renderer,source,levels,sway)
 }
 
 // Says that the next frame writes the vertices of a deformable, and the box

@@ -14,9 +14,10 @@
 // nearest glass; chunk_capacity, entry_capacity: of the lists of the chunks
 // and of the clusters (render.Cull_List); moving: the round of the casters
 // that move (render.shadow_maps_pass), 0 that of those that stay; movers:
-// words of the bits of the instances that move; listed: 1 while the round
-// culls the list of the movers after those words, instances long.
-struct Params_Block { uint instances; uint maps; uint rows; uint glass; uint chunk_capacity; uint entry_capacity; uint list; uint moving; uint movers; uint listed; uint pad1; uint pad2; };
+// words of the bits of what moves, the instances of the scene then the
+// batches drawn; listed: 1 while the round culls the `ranges` ranges of the
+// movers after those words alone, `instances` in all (render.shadow_maps_plan).
+struct Params_Block { uint instances; uint maps; uint rows; uint glass; uint chunk_capacity; uint entry_capacity; uint list; uint moving; uint movers; uint listed; uint ranges; uint pad2; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 // The draws: of the clusters that hide whole, of those of masked materials,
 // and of those of glass for the tint and the nearest glass.
@@ -26,7 +27,9 @@ struct Params_Block { uint instances; uint maps; uint rows; uint glass; uint chu
 #define SHADOW_DRAW_COUNT 1u // the instances of draw d: word d * 4 + 1
 #define SHADOW_CLUSTER_DISPATCH 12u
 #define SHADOW_CHUNK_COUNT 15u
-// Of a chunk, over its map: it draws the depth, and the glass.
+// Of a chunk, over its map: it draws the depth, and the glass; its instance
+// is drawn at rest (a batch that sways less than a texel of the map).
+#define SHADOW_CHUNK_REST 0x20000000u
 #define SHADOW_CHUNK_DEPTH 0x40000000u
 #define SHADOW_CHUNK_GLASS 0x80000000u
 #define SHADOW_CHUNK_MAP 0xFFFFu
