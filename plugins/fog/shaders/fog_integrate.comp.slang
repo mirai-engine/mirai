@@ -43,8 +43,9 @@ float3 fog_tent(uint2 column, uint z) {
 
 // The light of a slice past the grid from a to b, and in a what it stops:
 // each volume by its mean density along the share of the slice in it, the
-// one that replaces what is below taking that share of it. through: what of
-// the sun reaches the slice through the scene.
+// one that replaces what is below taking that share of it, and its glow only
+// past where it begins. through: what of the sun reaches the slice through
+// the scene.
 float4 fog_beyond(float3 a, float3 b, float3 eye_ray, float3 around, float3 through) {
     float3 sun_dir = frame.sun_direction.xyz;
     bool sun_on = frame.sun_direction.w > 0.5;
@@ -53,6 +54,7 @@ float4 fog_beyond(float3 a, float3 b, float3 eye_ray, float3 around, float3 thro
     float3 ambient = around * fog_shade(middle, float3(0.0, 1.0, 0.0), DRY_NONE);
     float cosine = dot(eye_ray, sun_dir);
     float length = distance(a, b);
+    float near = distance(frame.camera_position.xyz, a);
     float depth = 0.0;
     float3 sent = float3(0.0); // what each volume scatters over what it stops, times what it stops
     for (uint i = 0u; i < fog.grid.w; i++) {
@@ -62,10 +64,13 @@ float4 fog_beyond(float3 a, float3 b, float3 eye_ray, float3 around, float3 thro
         fog_volume_segment(v, a, b, start, end);
         if (!(end > start)) continue;
         float stopped = fog_optical_depth(v, lerp(a.y, b.y, start), lerp(a.y, b.y, end), (end - start) * length);
+        // Of what it stops, what lies past where its glow begins.
+        float glows = max(start, 1.0 - fog_glow_share(v, near, near + length));
+        float glowing = glows < end ? fog_optical_depth(v, lerp(a.y, b.y, glows), lerp(a.y, b.y, end), (end - glows) * length) : 0.0;
         float3 light = sun * media_phase(cosine, v.params.y);
         if (!fog_carve(v, FOG_CARVE_SUN_ONLY)) light += ambient;
         // What it sends for each of what it stops: the share it scatters of its light, and its glow.
-        float3 sends = v.medium.rgb / v.medium.a * light + render_units(v.glow.rgb);
+        float3 sends = v.medium.rgb / v.medium.a * light + render_units(v.glow.rgb) * (glows > start ? glowing / max(stopped, 1e-30) : 1.0);
         if (fog_carve(v, FOG_CARVE_GLASS)) {
             // What its glass takes of the view it does not stop: its light, dimmed in it on the way to the eye.
             float3 entry = lerp(a, b, start);

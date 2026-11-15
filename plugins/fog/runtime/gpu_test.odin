@@ -211,6 +211,62 @@ a_fog_shows_its_glow_without_any_light :: proc(t: ^testing.T) {
 	expect_clean(t, f.device)
 }
 
+// Looking over a black ground with no light through a fog that only glows,
+// from a distance in the grid and from one past it: the ground nearer than
+// where its glow begins is black, and from there on the glow grows with the
+// distance, with no step where it begins or where the grid ends.
+@(test)
+fog_glows_from_its_glow_start :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	if !gpu_fixture_init(t, f) {return}
+	defer gpu_fixture_destroy(f)
+	r := &f.renderer
+	gpu.scene_set_environment(r, {}, {})
+	gpu.scene_update(r, 0, {{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, -2000}, {8000, 0.2, 8000}), tint = {0, 0, 0}}}, true)
+	HIGH :: f32(20)
+	forward := linalg.normalize([3]f32{0, -0.25, -1})
+	camera := gpu.Camera{position = {0, HIGH, 0}, forward = forward, up = {0, 1, 0}, fov_y = 60, near = 0.1, exposure = gpu.UNIT_EXPOSURE}
+	places := []volume.Volume{volume.box({3000, 100, 3000})}
+	poses := []mm.Transform{{position = {0, 50, -2000}, rotation = 1, scale = 1}}
+	// The distance from the eye to the ground under each row of the middle column.
+	right := linalg.normalize(linalg.cross(forward, [3]f32{0, 1, 0}))
+	up := linalg.cross(right, forward)
+	focal := 1 / math.tan(math.to_radians(f32(30)))
+	distances: [HEIGHT]f32
+	for y in 0 ..< HEIGHT {
+		ray := forward + up * ((1 - 2 * (f32(y) + 0.5) / HEIGHT) / focal)
+		distances[y] = ray.y < -1e-3 ? HIGH / -ray.y * linalg.length(ray) : max(f32)
+	}
+	for start in ([2]f32{60, 300}) {
+		fogs := []Fog_Volume{{density = 0.01, glow = {2, 2, 2}, glow_start = start}}
+		for i in 0 ..< 30 {fog_frame(t, f, camera, f32(i) / 60, fogs, places, poses, cut = i == 0)}
+		image, ok := capture(t, f)
+		if !ok {return}
+		defer delete(image.pixels)
+		lumas: [HEIGHT]f32
+		for y in 0 ..< HEIGHT {
+			for x in WIDTH / 2 - 2 ..< WIDTH / 2 + 2 {lumas[y] += luma(image, x, y) / 4}
+		}
+		// Rows go up the image from near to far: each step to the row past it.
+		steps: [HEIGHT]f32
+		for y := HEIGHT - 1; y > 0 && distances[y - 1] < max(f32); y -= 1 {
+			steps[y] = lumas[y - 1] - lumas[y]
+			if distances[y] < start * 0.9 {
+				testing.expectf(t, lumas[y] < 2, "start %v: the ground %.0f m away is before the glow: %.1f", start, distances[y], lumas[y])
+			}
+			if distances[y] > start * 1.6 {
+				testing.expectf(t, lumas[y] > 12, "start %v: the ground %.0f m away is past the glow: %.1f", start, distances[y], lumas[y])
+			}
+		}
+		// Each row farther glows as much or more, by a step like those of the rows around it.
+		for y := HEIGHT - 2; y > 1 && distances[y - 2] < max(f32); y -= 1 {
+			testing.expectf(t, steps[y] > -1 && steps[y] <= 1.5 * max(steps[y - 1], steps[y + 1]) + 2, "start %v: the step from %.0f m to %.0f m %.1f, around it %.1f and %.1f", start, distances[y], distances[y - 1], steps[y], steps[y + 1], steps[y - 1])
+		}
+	}
+	expect_clean(t, f.device)
+}
+
 // Looking down at a dark ground through a fog in an L outline: the L is fogged, its notch, inside the
 // box of the outline, is as clear as the ground without the fog.
 @(test)

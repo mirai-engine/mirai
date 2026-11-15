@@ -41,7 +41,7 @@ struct Fog_Volume {
     float4 medium; // rgb what it scatters in a metre, a what it stops; of a variable one, the mean
     float4 params; // x 1 over its wisp size (0: it does not vary), y anisotropy, z falloff, w the height of its base
     float4 carve;  // x priority, y FOG_CARVE_* bits, z 1/m it takes of the light of the sun that crosses it
-    float4 glow;   // rgb the luminance it gives off where it is thick, nits: for each metre of what it stops
+    float4 glow;   // rgb the luminance it gives off where it is thick, nits: for each metre of what it stops; w metres from the eye where it begins
     int4 cells[FOG_WISP_OCTAVES];    // xyz the cell of each layer of its wisps at the origin of the render now
     float4 within[FOG_WISP_OCTAVES]; // xyz where in that cell, 0 to 1
 };
@@ -170,6 +170,13 @@ float fog_optical_depth(Fog_Volume v, float ya, float yb, float length) {
     float x = k * (high - max(low, 0.0));
     float above = (length - below) * exp(-k * max(low, 0.0)) * (x > 1e-4 ? (1.0 - exp(-x)) / x : 1.0 - 0.5 * x);
     return v.medium.a * (below + above);
+}
+
+// The share of the part from metres near to far from the eye along a ray
+// past where the glow of a volume begins.
+float fog_glow_share(Fog_Volume v, float near, float far) {
+    if (!(v.glow.w > near)) return 1.0;
+    return far > near ? saturate((far - v.glow.w) / (far - near)) : 0.0;
 }
 
 // How much of a volume there is at a point: its weight, thinner with the
