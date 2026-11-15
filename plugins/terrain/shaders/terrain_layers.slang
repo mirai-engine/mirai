@@ -18,9 +18,6 @@ struct Parameters {
     uint control;uint normal;uint paint;uint layers;
     float4 piece;float4 palette;
 };
-// A repeat of a layer covers fewer pixels than this where its far tiling has
-// taken over; it begins to over the octave before.
-static const float FAR_PIXELS = 96.0;
 
 // A texture laid along a projection at scale repeats a metre, shifted by
 // offset repeats, filtered by the footprint of the point.
@@ -66,9 +63,8 @@ void layer_read(Mirai_Surface_Context ctx, Terrain_Layer l, float3 n, float3 wei
         bent = n;
         return;
     }
-    float near = 1.0 / max(l.tiling, 1e-6);
     float footprint = max(length(ctx.position_dx), length(ctx.position_dy));
-    float far = l.far_tiling > 0.0 ? saturate(log2(FAR_PIXELS * footprint * near) + 1.0) : 0.0;
+    float far = l.far_scale > 0.0 ? saturate(log2(footprint) + l.far_bias) : 0.0;
     for (int which = 0; which < 3; which++) {
         float w = weights[which];
         if (w <= 0.0) continue;
@@ -76,12 +72,12 @@ void layer_read(Mirai_Surface_Context ctx, Terrain_Layer l, float3 n, float3 wei
         float4 color = float4(0.0), map = float4(0.0);
         if (far < 1.0) {
             float4 a, b;
-            tiled(ctx, l, p, near, a, b);
+            tiled(ctx, l, p, l.scale, a, b);
             color += (1.0 - far) * a; map += (1.0 - far) * b;
         }
         if (far > 0.0) {
             float4 a, b;
-            tiled(ctx, l, p, 1.0 / l.far_tiling, a, b);
+            tiled(ctx, l, p, l.far_scale, a, b);
             color += far * a; map += far * b;
         }
         c += w * color;
@@ -138,7 +134,7 @@ Mirai_Surface evaluate(Mirai_Surface_Context ctx, Parameters p) {
         albedo[i] = c.rgb * layer[i].tint * shade;
         // The alpha of the base color map is the height of the layer: where
         // layers meet the higher texels show through.
-        blend[i] = mix.weights[i] * exp2(5.0 * layer[i].height_blend * c.a);
+        blend[i] = mix.weights[i] * exp2(float(HEIGHT_BLEND_POWER) * layer[i].height_blend * c.a);
     }
     float sum = blend.x + blend.y + blend.z + blend.w;
     blend = sum > 0.0 ? blend / sum : float4(1.0, 0.0, 0.0, 0.0);

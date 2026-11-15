@@ -68,7 +68,7 @@ Displaced :: struct {
 
 // terrain_displace.comp.slang
 @(private)
-Gpu_Displace_Layer :: struct {color:u32,tiling,blend,displacement:f32}
+Gpu_Displace_Layer :: struct {color:u32,scale,blend,displacement:f32}
 @(private)
 Gpu_Displace :: struct {
     written,rest,count,mesh:u32,
@@ -337,7 +337,7 @@ displace_params :: proc(a:^host.Assets,s:^Source,item:^Displaced,finest:u8,ancho
             maps:=asset.material_maps(&material.info.maps)
             if texture:=host.assets_texture(a,maps[.Base_Color].texture);texture!=nil && !texture.failed && texture.handle!=0 {color=render.texture_index(texture.handle)}
         }
-        p.layers[i]={color,layer.tiling,layer.height_blend,layer.displacement}
+        p.layers[i]={color,layer_scale(layer.tiling),f32(HEIGHT_BLEND_POWER)*layer.height_blend,layer.displacement}
     }
     return
 }

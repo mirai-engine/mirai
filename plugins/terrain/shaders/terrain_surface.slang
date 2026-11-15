@@ -3,6 +3,7 @@
 //! mirai constant WEIGHT_VALUES_SHIFT int ../runtime/layers.odin
 //! mirai constant WEIGHT_HOLE_BIT int ../runtime/layers.odin
 //! mirai constant PAINT_ROUGHNESS_NEUTRAL int ../runtime/paint.odin
+//! mirai constant HEIGHT_BLEND_POWER int ../runtime/layers.odin
 // What a piece of a terrain shows between its vertices (terrain.Surface_Maps):
 // the weights of the layers of each of its samples with the hole of each
 // cell, its normal and its paint, read texel by texel and blended between the
@@ -112,7 +113,8 @@ Terrain_Mix terrain_weights_at(uint control, float2 size, float2 at, out bool ho
     return m;
 }
 
-// A layer of the table of its source (terrain.layers_table).
+// A layer of the table of its source (terrain.layers_table), with what a
+// point reads of it already worked out there.
 struct Terrain_Layer {
     uint color;            // its base color map, the alpha its height; INVALID: none
     uint normal;           // its normal map
@@ -122,10 +124,10 @@ struct Terrain_Layer {
     float height_blend;
     float detile;
     float variation;
-    float tiling;          // metres of a repeat
-    float far_tiling;      // far away; 0: tiling
+    float scale;           // repeats a metre
+    float far_scale;       // far away; 0: scale everywhere
     float normal_strength; // 0 without a normal map
-    float displacement;    // metres from its lowest texel to its highest
+    float far_bias;        // how far its far tiling has taken over, less log2 of the footprint in metres
 };
 Terrain_Layer terrain_layer(uint table, uint layer) {
     int y = int(layer);
@@ -137,10 +139,10 @@ Terrain_Layer terrain_layer(uint table, uint layer) {
     l.roughness = values.a;
     float4 more = TERRAIN_TEXEL(table, int2(3, y));
     l.metallic = more.x; l.height_blend = more.y; l.detile = more.z; l.variation = more.w;
-    l.tiling = asfloat(terrain_word(TERRAIN_TEXEL(table, int2(4, y))));
-    l.far_tiling = asfloat(terrain_word(TERRAIN_TEXEL(table, int2(5, y))));
+    l.scale = asfloat(terrain_word(TERRAIN_TEXEL(table, int2(4, y))));
+    l.far_scale = asfloat(terrain_word(TERRAIN_TEXEL(table, int2(5, y))));
     l.normal_strength = asfloat(terrain_word(TERRAIN_TEXEL(table, int2(6, y))));
-    l.displacement = asfloat(terrain_word(TERRAIN_TEXEL(table, int2(7, y))));
+    l.far_bias = asfloat(terrain_word(TERRAIN_TEXEL(table, int2(7, y))));
     return l;
 }
 #endif

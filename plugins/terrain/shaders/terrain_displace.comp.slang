@@ -17,8 +17,8 @@
 // terrain.Gpu_Displace_Layer
 struct Layer {
     uint color;          // the base color texture of its material, its alpha the height; INVALID: none
-    float tiling;        // metres of a repeat
-    float blend;         // height_blend
+    float scale;         // repeats a metre
+    float blend;         // the power of 2 its height raises its weight to, a height of 1
     float displacement;  // metres from its lowest texel to its highest
 };
 // terrain.Gpu_Displace
@@ -88,7 +88,7 @@ float layer_height(Layer layer, float3 world, float3 normal) {
     Texture2D<float4> image = material_textures[mirai_nonuniform(layer.color)];
     uint width, height, levels;
     image.GetDimensions(0u, width, height, levels);
-    float scale = 1.0 / max(layer.tiling, 1e-6);
+    float scale = layer.scale;
     uint level = min(uint(max(log2(params.spacing * scale * float(max(width, height))), 0.0)), levels - 1u);
     uint2 size = max(uint2(width, height) >> level, uint2(1u));
     float3 weights = projection_weights(normal, false);
@@ -127,7 +127,7 @@ void main(uint3 id : SV_DispatchThreadID) {
         if (mix.weights[i] <= 0.0 || mix.layers[i] >= params.layer_count) continue;
         Layer layer = params.layers[mix.layers[i]];
         heights[i] = layer_height(layer, world, normal);
-        blend[i] = mix.weights[i] * exp2(5.0 * layer.blend * heights[i]);
+        blend[i] = mix.weights[i] * exp2(layer.blend * heights[i]);
     }
     float sum = blend.x + blend.y + blend.z + blend.w;
     float offset = 0.0;
