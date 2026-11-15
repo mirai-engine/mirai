@@ -32,6 +32,24 @@ float3 dither(float3 color, float2 pixel) {
     return color + (a + b - 1.0) * (1.0 / 255.0) * room;
 }
 
+// A mode of inspection as it is shown: one of light exposed as the lit image
+// is, so that it is seen under any light scale; a buffer, as it is.
+float3 inspected(float3 value) {
+    switch (frame.debug_view) {
+    case DEBUG_DIRECT:
+    case DEBUG_INDIRECT:
+    case DEBUG_PROBES:
+    case DEBUG_EMISSION:
+    case DEBUG_LIGHTING:
+    case DEBUG_REFLECTIONS:
+    case DEBUG_REFLECTIONS_RAW:
+        value *= exposure[0].exposure;
+        break;
+    default: break;
+    }
+    return linear_to_srgb(clamp(value, 0.0, 1.0));
+}
+
 [shader("fragment")]
 Stage_Output main(Stage_Input input, float4 pixel_position : SV_Position) {
     Stage_Output output;
@@ -42,10 +60,10 @@ Stage_Output main(Stage_Input input, float4 pixel_position : SV_Position) {
         return output;
     }
     if (params.wide.x > 0.5) {
-        output.out_color = float4(frame.debug_view == 0u ? display_encode(hdr * exposure[0].exposure * frame.tint.rgb) : linear_to_srgb(clamp(hdr, 0.0, 1.0)), 1.0);
+        output.out_color = float4(frame.debug_view == 0u ? display_encode(hdr * exposure[0].exposure * frame.tint.rgb) : inspected(hdr), 1.0);
         return output;
     }
-    float3 color = frame.debug_view == 0u ? display_encode(hdr * exposure[0].exposure * frame.tint.rgb) : linear_to_srgb(clamp(hdr, 0.0, 1.0));
+    float3 color = frame.debug_view == 0u ? display_encode(hdr * exposure[0].exposure * frame.tint.rgb) : inspected(hdr);
     if (params.outline.x > 0.5 && all(((input.in_uv) >= (params.bounds.xy))) && all(((input.in_uv) <= (params.bounds.zw)))) {
         float4 coat = highlight_mask.SampleLevel(linear_sampler, input.in_uv, 0.0);
         color = color * (1.0 - coat.a) + coat.rgb;

@@ -59,8 +59,9 @@ Each view chooses what it shows instead of its lit image with `Frame_View.inspec
 
 - `mode` is a `Debug_View`: the G-buffer and light channel ones are resolved in composite; the
   shadow, reflection and local light ones, in the `debug view` pass after composite.
-- An inspected view is shown without exposure or display transform, without glass, overlays or
-  sprites. Changing mode does not recreate targets or cut histories.
+- An inspected view is shown without display transform, glass, overlays or sprites. The modes of
+  light take the exposure of the view, so they show under any light scale; a buffer is shown as it
+  is. Changing mode does not recreate targets or cut histories.
 - `record` and `user`: an extension's mode, which the renderer records only in that view in the
   [`Inspect`](views.md#extension-stages) stage, over the `mode` image.
 - `renderer_debug_view_status` says whether the window views can show a mode with their last
