@@ -289,8 +289,10 @@ A texture of an asset resides with the levels the GPU samples of it
 
 - **Mask (`mask`).** Alpha = `opacity` times the alpha of the color texture. Below `alpha_cutoff`
   the fragment is discarded and the rays go through the triangle at that point: shadows, bounces
-  and reflections see the same holes. Only the instances with some mask or blend material pay for
-  that read in the traversal.
+  and reflections see the same holes. Only the triangles of the slots an instance shows with a mask
+  or blend material pay for that read (`Gpu_Instance.tested`), in the traversal and in the maps of
+  the shadows. The native BLAS of a cut holds the triangles of the slots the mesh's own rows test
+  as a geometry apart; an instance that tests other slots makes every triangle a candidate.
 - The mips of a masked texture keep the proportion of texels that pass the threshold.
 - **Blend (`blend`).** It is drawn over the lit scene. Without transmission it is a layer that
   covers `alpha` of what is behind it: the transparency attenuates its diffuse part, not its

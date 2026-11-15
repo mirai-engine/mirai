@@ -143,7 +143,8 @@ Gpu_Instance :: struct {
 	world_inv:  [3]Vec4,
 	prev_world: [3]Vec4,
 	meta:       [4]u32, // mesh (INSTANCE_MESH_MASK) and the cut rays trace it with (INSTANCE_RAY_SHIFT), material in place of the slots' (GPU_NONE: theirs), object id (low bits), flags
-	bounds_min: Vec4,
+	bounds_min: Vec3,
+	tested:     u32, // the slots of its mesh whose materials rays and the maps of the shadows ask, a bit each (instance_alpha)
 	bounds_max: Vec4,
 	tint:       Vec4,
 	emission:   Vec4,
@@ -223,11 +224,10 @@ TLAS_REF_GLASS :: abi.TLAS_REF_GLASS
 
 // A cut of a mesh rays trace: the root of its tree and its first triangle
 // (Gpu_Bvh_Triangle) by software; with hardware, where the clusters and
-// triangles of the primitives of its BLAS are listed in the index pool. error:
-// that of the cut, in the space of the mesh; 0 for level 0.
+// triangles of the primitives of its BLAS are listed in the index pool, and
+// how many of them lead, the opaque geometry of the BLAS (blas_inputs_add).
 Gpu_Mesh_Ray :: struct {
-	bvh_root, triangle_offset, table_word: u32,
-	error: f32,
+	bvh_root, triangle_offset, table_word, table_opaque: u32,
 }
 
 Gpu_Mesh :: struct {
@@ -390,7 +390,9 @@ Gpu_Bvh_Node :: struct {
 Gpu_Bvh_Triangle :: struct {
 	v0:        Vec3,
 	primitive: u32, // index within the mesh
-	v1, v2:    Vec4, // corners whole, so that one two triangles share is the same in both; w unused
+	v1:        Vec3, // corners whole, so that one two triangles share is the same in both
+	slot:      u32,  // of its cluster among those of the mesh
+	v2:        Vec4, // w unused
 }
 
 Gpu_Probe :: struct {

@@ -158,7 +158,7 @@ Batch_Hw :: struct {
 	record: u32,
 	slot:   u32,
 	mask:   u8,
-	tested: bool,
+	tested: u32, // Gpu_Instance.tested of its rows
 }
 
 @(private)
@@ -488,14 +488,14 @@ batches_build :: proc(r: ^Renderer) {
 		material := u32(desc.material) if desc.material != 0 && int(desc.material) < len(s.materials) else GPU_NONE
 		slots := desc.slot_materials
 		for &row in slots {if row > u32(len(s.materials)) {row = 0}}
-		tested, _, glass, reflectance, layered, _, _ := instance_alpha(s, mesh, material, slots)
+		a := instance_alpha(s, mesh, material, slots)
 		// A batch draws no glass: blended triangles leave the G-buffer, and
 		// one all of glass is neither drawn nor traced.
-		classes := batch_classes(desc.flags, record.small) if !glass else 0
+		classes := batch_classes(desc.flags, record.small) if !a.glass else 0
 		layers := desc.layers & LAYERS_ALL if desc.layers & LAYERS_ALL != 0 else 1
 		// In no layer, no view draws them: rays alone meet a batch of Rays_Only.
 		if .Rays_Only in desc.flags {layers = 0}
-		flags := layers << INSTANCE_LAYERS_SHIFT | alpha_flags(tested, false, glass)
+		flags := layers << INSTANCE_LAYERS_SHIFT | alpha_flags({tested = a.tested, glass = a.glass})
 		record.drawn = i32(drawn)
 		append(&b.drawn, u32(index))
 		offset := batch_offset(r, &record)
@@ -509,7 +509,8 @@ batches_build :: proc(r: ^Renderer) {
 			world_inv = {desc.vertex, {offset.x, offset.y, offset.z, desc.reach}, {bits(record.colors + 1 if record.colored else 0), 0, 0, 0}},
 			// Rays meet the instances of a batch in the cut its mesh always has.
 			meta = {u32(desc.mesh) | (u32(ray_cut_always(s.meshes[desc.mesh])) << INSTANCE_RAY_SHIFT if int(desc.mesh) < len(s.meshes) else 0), material, u32(desc.object_id), flags},
-			bounds_min = {low.x, low.y, low.z, 0},
+			bounds_min = low,
+			tested = a.tested,
 			bounds_max = {high.x, high.y, high.z, 0},
 			tint = {desc.tint.x, desc.tint.y, desc.tint.z, 0},
 			emission = {0, 0, 0, 0},
@@ -517,12 +518,12 @@ batches_build :: proc(r: ^Renderer) {
 		})
 		append(&b.boxes, mm.Aabb{low, high})
 		b.bounds_min, b.bounds_max = linalg.min(b.bounds_min, low), linalg.max(b.bounds_max, high)
-		if reflectance && !glass && layers != 0 {append(&b.reflective, Reflective_Instance{drawn, layered})}
+		if a.reflectance && !a.glass && layers != 0 {append(&b.reflective, Reflective_Instance{drawn, a.layered})}
 		for _ in 0 ..< groups {append(&s.indices, drawn)}
 		if classes != 0 {
 			if record.tree_nodes > 0 {append(&b.traced, drawn)}
 			if r.hardware_rt {
-				append(&b.hw, Batch_Hw{record = u32(index), slot = b.slots, mask = u8(classes), tested = tested})
+				append(&b.hw, Batch_Hw{record = u32(index), slot = b.slots, mask = u8(classes), tested = a.tested})
 				b.hw_count += int(record.count)
 			}
 		}
@@ -568,10 +569,14 @@ batches_upload :: proc(r: ^Renderer, cmd: ^rhi.Command_List, with_instances: boo
 	b.upload = false
 	return true
 }
-// The mask and the flags of an instance of the native TLAS.
+// The mask and the flags of an instance of the native TLAS: tested, the
+// slots whose materials it asks (Gpu_Instance.tested). Those its mesh tests
+// are the masked geometry of each BLAS of the mesh, which decides alone;
+// others make every triangle a candidate, and none every triangle opaque.
 @(private)
-tlas_mask_flags :: #force_inline proc "contextless" (mask: u8, tested: bool) -> u32 {
-	return u32(mask) | (rhi.TLAS_ALPHA_TESTED if tested else 0)
+tlas_mask_flags :: #force_inline proc "contextless" (mask: u8, tested, mesh_tested: u32) -> u32 {
+	if tested == 0 {return u32(mask)}
+	return u32(mask) | (rhi.TLAS_ALPHA_GEOMETRY if tested == mesh_tested else rhi.TLAS_ALPHA_TESTED)
 }
 
 // A batch rays meet, as the compute that writes the instances of the native
@@ -616,7 +621,7 @@ tlas_instances_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> int {
 		offset := batch_offset(r, record)
 		rows[k] = {
 			words = record.words, first = at, custom = first + hw.slot, blas = rhi.accel_id(d, s.meshes[record.desc.mesh].rays[ray_cut_always(s.meshes[record.desc.mesh])].blas),
-			mask_flags = tlas_mask_flags(hw.mask, hw.tested), anchor = {offset.x, offset.y, offset.z, 0},
+			mask_flags = tlas_mask_flags(hw.mask, hw.tested, s.meshes[record.desc.mesh].tested), anchor = {offset.x, offset.y, offset.z, 0},
 		}
 		at += record.count
 	}
