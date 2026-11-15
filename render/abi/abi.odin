@@ -183,7 +183,7 @@ REFLECTION_SHARED_ROUGHNESS :: f32(0.15)
 // The probe volume, and the rays of its contact occlusion at each pixel.
 DISTANCE_TILE :: 16
 PROBE_BUCKETS :: 22
-CONTACT_RAYS  :: 4
+CONTACT_RAYS  :: 2
 
 // The tables of the lobe and of the air, and the display.
 DFG_SIZE               :: 64
