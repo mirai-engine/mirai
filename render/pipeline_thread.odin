@@ -207,6 +207,13 @@ renderer_pipelines_pending :: proc(r: ^Renderer) -> bool {
 	return false
 }
 
+// Whether the last frame drew without a stage it asked for: a pass skipped
+// while its pipeline is made, or no world while a stage of the tracer made
+// later is missing (Renderer_Desc.tracer_later).
+renderer_frame_partial :: proc(r: ^Renderer) -> bool {
+	return r != nil && (r.pipeline_waiting != "" || r.tracer_missed != "")
+}
+
 // Counts the times pipelines of programs went in place: what drew a program
 // as its rows (an image of the editor) draws again when it changes.
 renderer_pipelines_made :: proc(r: ^Renderer) -> u64 {

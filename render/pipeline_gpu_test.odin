@@ -262,3 +262,22 @@ a_tracer_made_later_is_waited_for_by_a_capture_and_a_refused_stage_does_not_bloc
 	testing.expectf(t, r.tracer_missed == "", "the world is drawn, not missing %s", r.tracer_missed)
 	testing.expectf(t, rhi.device_validation_errors(device) == 0, "validation: %s", rhi.device_validation_message(device))
 }
+
+// A frame a window shows does not wait: while a stage of the tracer made
+// later is missing it draws no world, and renderer_frame_partial says so, as
+// what reads such a frame back (a thumbnail) asks before it does.
+@(test)
+a_frame_drawn_without_a_stage_being_made_is_partial :: proc(t: ^testing.T) {
+	settings := DEFAULT_SETTINGS
+	settings.trace_mode = .Software
+	f: Fixture
+	if !fixture_init(t, &f, 64, 48, settings, desc = {pipeline_thread = true, tracer_later = true}) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	camera := Camera{position = {0, 2, 2}, forward = {0, -2, -2}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	testing.expectf(t, renderer_frame_partial(r), "the first frame drew without the tracer: %q %q", r.tracer_missed, r.pipeline_waiting)
+	renderer_pipelines_wait(r, all = true)
+	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	testing.expectf(t, !renderer_frame_partial(r), "with every stage in place it is whole: %q %q", r.tracer_missed, r.pipeline_waiting)
+}
