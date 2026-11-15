@@ -5,19 +5,22 @@ import "core:testing"
 import "mirai:std/base"
 import mm "mirai:std/math"
 
-// A closed torus welded by position, its outer half of submesh 1 with
-// vertices of its own on the outline between the halves, and a uv per
-// vertex: attributes are the normal and the uv.
+// A closed torus welded by position, in two parts its outer half of submesh 1
+// with vertices of its own on the outline between the halves, and a uv per
+// vertex: attributes are the normal and the uv. Faceted, as a crystal: each
+// triangle has vertices of its own with its flat normal and a uv chart of
+// its own, so a protected seam runs along every edge.
 @(private="file")
 Two_Part_Torus :: struct {
     positions:[dynamic]Vec3,
     indices:[dynamic]u32,
     attributes:[dynamic]f32,
     ranges:[2]Cluster_Range,
+    protect:[dynamic]Simplify_Vertex, // Protect on every vertex of a faceted one
 }
 
 @(private="file")
-two_part_torus :: proc(out:^Two_Part_Torus,segments,sides:int) {
+two_part_torus :: proc(out:^Two_Part_Torus,segments,sides:int,faceted:=false,parts:=2) {
     raw:Mesh_Buffer
     mesh_buffer_init(&raw,context.temp_allocator)
     torus_build(&raw,1,0.35,segments,sides)
@@ -27,6 +30,29 @@ two_part_torus :: proc(out:^Two_Part_Torus,segments,sides:int) {
     out.positions=make([dynamic]Vec3,context.temp_allocator)
     out.indices=make([dynamic]u32,context.temp_allocator)
     out.attributes=make([dynamic]f32,context.temp_allocator)
+    out.protect=make([dynamic]Simplify_Vertex,context.temp_allocator)
+    if faceted {
+        for part in 0..<2 {
+            out.ranges[part]={u32(len(out.indices)),0,u32(part)}
+            for t:=0;t<len(welded.indices);t+=3 {
+                p0,p1,p2:=welded.positions[welded.indices[t]],welded.positions[welded.indices[t+1]],welded.positions[welded.indices[t+2]]
+                c:=(p0+p1+p2)/3
+                if (parts==2 && c.x*c.x+c.z*c.z>1)!=(part==1) {continue}
+                e1,e2:=p1-p0,p2-p0
+                n:=Vec3{e1.y*e2.z-e1.z*e2.y,e1.z*e2.x-e1.x*e2.z,e1.x*e2.y-e1.y*e2.x}
+                n*=1/math.sqrt(n.x*n.x+n.y*n.y+n.z*n.z)
+                chart:=f32(t/3%61)
+                for p in ([]Vec3{p0,p1,p2}) {
+                    append(&out.indices,u32(len(out.positions)))
+                    append(&out.positions,p)
+                    append(&out.attributes,n.x,n.y,n.z,p.x*0.25+chart,p.z*0.25)
+                    append(&out.protect,Simplify_Vertex{.Protect})
+                }
+            }
+            out.ranges[part].index_count=u32(len(out.indices))-out.ranges[part].first_index
+        }
+        return
+    }
     // The vertex of each welded one in each part.
     of:=make([][2]u32,len(welded.positions),context.temp_allocator)
     for &o in of {o={NONE,NONE}}
@@ -34,7 +60,7 @@ two_part_torus :: proc(out:^Two_Part_Torus,segments,sides:int) {
         out.ranges[part]={u32(len(out.indices)),0,u32(part)}
         for t:=0;t<len(welded.indices);t+=3 {
             c:=(welded.positions[welded.indices[t]]+welded.positions[welded.indices[t+1]]+welded.positions[welded.indices[t+2]])/3
-            outer:=c.x*c.x+c.z*c.z>1
+            outer:=parts==2 && c.x*c.x+c.z*c.z>1
             if outer!=(part==1) {continue}
             for index in welded.indices[t:t+3] {
                 if of[index][part]==NONE {
@@ -314,29 +340,44 @@ edges_open_equal :: proc(positions:[]Vec3,a,b:[]u32,ends_only:=false) -> bool {
 
 @(test)
 cluster_dag_of_a_closed_mesh_cuts_without_cracks_and_is_deterministic :: proc(t:^testing.T) {
-    torus:Two_Part_Torus
-    two_part_torus(&torus,128,64)
     weights:=[]f32{0.5,0.5,0.5,1,1}
-    source:=Cluster_Source{positions=torus.positions[:],indices=torus.indices[:],ranges=torus.ranges[:],attributes=torus.attributes[:],attribute_weights=weights}
-    dag:Cluster_Dag
-    defer cluster_dag_destroy(&dag)
-    failed:=cluster_dag_build(&dag,source)
-    testing.expect_value(t,failed,Cluster_Error.None)
-    testing.expectf(t,dag.levels>=4,"%d levels",dag.levels)
-    roots:=0
-    root_triangles:=0
-    for c in dag.clusters {
-        if c.parent.error==max(f32) {
-            roots+=1
-            root_triangles+=int(c.triangle_count)
-        }
+    // Smooth, no group stops; faceted, the groups its seams stop cross them.
+    // Each ends in roots of a few clusters, those of two parts with every
+    // place of the outline between them, which stays.
+    cases:=[]struct{name:string,faceted:bool,parts:int,roots:int}{
+        {"smooth",false,2,CLUSTER_MAX_TRIANGLES},
+        {"faceted",true,1,CLUSTER_MAX_TRIANGLES},
+        {"faceted in two parts",true,2,5*CLUSTER_MAX_TRIANGLES},
     }
-    testing.expectf(t,root_triangles<len(torus.indices)/3/16,"the roots have %d triangles of %d",root_triangles,len(torus.indices)/3)
-    dag_check(t,&dag,torus.positions[:],torus.indices[:],torus.ranges[:],true)
+    torus:Two_Part_Torus
+    source:Cluster_Source
+    for c in cases {
+        two_part_torus(&torus,128,64,c.faceted,c.parts)
+        source={positions=torus.positions[:],indices=torus.indices[:],ranges=torus.ranges[:],attributes=torus.attributes[:],attribute_weights=weights,vertex_lock=torus.protect[:]}
+        dag:Cluster_Dag
+        defer cluster_dag_destroy(&dag)
+        failed:=cluster_dag_build(&dag,source)
+        testing.expect_value(t,failed,Cluster_Error.None)
+        testing.expectf(t,dag.levels>=4,"%s: %d levels",c.name,dag.levels)
+        root_triangles,stopped:=0,0
+        for cluster in dag.clusters {
+            if cluster.parent.error==max(f32) {
+                root_triangles+=int(cluster.triangle_count)
+                if cluster.level+1<u32(dag.levels) {stopped+=int(cluster.triangle_count)}
+            }
+        }
+        testing.expectf(t,root_triangles<=c.roots,"%s: the roots have %d triangles of %d",c.name,root_triangles,len(torus.indices)/3)
+        testing.expectf(t,stopped==0,"%s: groups of %d triangles stop below the top level",c.name,stopped)
+        dag_check(t,&dag,torus.positions[:],torus.indices[:],torus.ranges[:],true)
+        again:Cluster_Dag
+        defer cluster_dag_destroy(&again)
+        cluster_dag_build(&again,source)
+        testing.expect(t,bytes_equal(again.clusters[:],dag.clusters[:]) && bytes_equal(again.vertices[:],dag.vertices[:]) && bytes_equal(again.triangles[:],dag.triangles[:]))
+    }
+    two_part_torus(&torus,128,64)
+    source={positions=torus.positions[:],indices=torus.indices[:],ranges=torus.ranges[:],attributes=torus.attributes[:],attribute_weights=weights}
     again:Cluster_Dag
     defer cluster_dag_destroy(&again)
-    cluster_dag_build(&again,source)
-    testing.expect(t,bytes_equal(again.clusters[:],dag.clusters[:]) && bytes_equal(again.vertices[:],dag.vertices[:]) && bytes_equal(again.triangles[:],dag.triangles[:]))
     // Locked vertices stop the groups around them, whose borders stay next to every level above.
     lock:=make([]Simplify_Vertex,len(torus.positions),context.temp_allocator)
     for p,v in torus.positions {if p.x>0.3 {lock[v]={.Lock}}}

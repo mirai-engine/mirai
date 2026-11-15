@@ -568,9 +568,10 @@ their border locked and split again up to the roots, with the cuts that its dist
 with skin, or whose foliage is pruned, stores simplified levels after level 0 (up to `LOD_MAX` in
 total), each with its own vertices, which `asset.mesh_build` encodes as whole levels (flag
 `Levels`, `geom.cluster_levels_build`): clusters that share the sphere of the mesh, so that a view
-chooses only one ([mesh](../../mirai-assets/references/kinds.md#mesh)). With `lods=None` or a
-small mesh, level 0 alone is stored. What follows describes those whole levels; the DAG simplifies
-with the same weights and locks.
+chooses only one ([mesh](../../mirai-assets/references/kinds.md#mesh)). With `lods=None`, level 0
+alone is stored. What follows describes those whole levels; the
+[DAG](../../mirai-std/references/geom.md#clusters-and-dag-clusterodin-partitionodin-cluster_dagodin)
+simplifies with the same weights and locks, and crosses seams where they stop it as they do.
 
 - **Level 0.** The source's.
 - **How many.** Each level aims at `LOD_SHARE` of the triangles of the previous one; the series
@@ -583,7 +584,10 @@ with the same weights and locks.
   modular kit) keep touching at every level. If normal seams stop it before the target, it repeats
   with `Permissive`, protecting the vertices of a location that differ in more than the normal (uv,
   uv1, color, material, tangent sign): the outline between materials and the UV islands are not
-  crossed. `lod_inputs` builds those inputs once for the importer.
+  crossed. If that still keeps more than `LOD_KEEP` of the level before (faceted pieces, a seam on
+  every edge), it runs once more crossing every seam but the outlines between materials, with
+  `Error_Clamped`, and the error of the level counts what its attributes lose.
+  `asset.mesh_simplify_inputs` builds those inputs once for the importer.
 - **Attributes.** Every vertex of a level is a vertex of level 0 as is, with its skin and its morph
   deltas; only pruned islands move.
 - **Foliage pruning** (Cook et al., *Stochastic Simplification of Aggregate Detail*, Pixar 2007).
@@ -603,10 +607,11 @@ with the same weights and locks.
   trunk is simplified with little error go away when they are small, and a few large islands (a
   vine, the large piece of a panel) stay in their class without holding back the others.
 - **Error.** `Mesh_Lod.error` is how far the simplifier moved the surface of level 0 (its position
-  error, without that of the attributes), in object units; with islands, the larger of that and,
-  of each pruned class, the radius of its largest island already enlarged over `ISLAND_PIXELS`. The
-  renderer takes a level where its projection falls within `lod_error_pixels` and that of the next
-  does not ([cut](../../mirai-rendering/references/scene.md#scene-and-instances)).
+  error, and that of the attributes where it crossed seams), in object units; with islands, the
+  larger of that and, of each pruned class, the radius of its largest island already enlarged over
+  `ISLAND_PIXELS`. The renderer takes a level where its projection falls within
+  `lod_error_pixels` and that of the next does not
+  ([cut](../../mirai-rendering/references/scene.md#scene-and-instances)).
 - The triangles of a level are grouped by submesh of level 0, with its slot and its box.
 
 ## Collision

@@ -203,21 +203,25 @@ published mesh without levels and the cluster DAG use it.
   8-bit local indices and up to `CLUSTER_MAX_VERTICES` (256: with seams, 128 triangles need more
   than 128 vertices, and the renderer draws the same corners per cluster whether full or not);
   groups of `CLUSTER_GROUP_SIZE` simplified to half with their border locked, and `Permissive` where
-  seams lock them. A group that does not go below `CLUSTER_SIMPLIFY_STUCK` is a root; its places
-  stay locked in all the levels above, because its clusters are drawn next to any of them.
+  seams lock them. A group still above `CLUSTER_SIMPLIFY_STUCK` (faceted pieces, a seam on every
+  edge) runs once more without the `Protect` of `vertex_lock`, only the outlines between submeshes
+  kept, with `Error_Clamped` and the error of its attributes in its own: what crossing the seams
+  loses reaches the cut. A group stuck after that is a root; its places stay locked in all the
+  levels above, because its clusters are drawn next to any of them.
 - **Cut contract.** Each `Cluster` carries its cull sphere and cone, `own` (sphere and error with
   which it appears: 0 at level 0) and `parent` (those of its group, shared by all its clusters;
   error `max(f32)` on a root), its group, its level and its submesh. It is drawn where `own`
   projects within the threshold and `parent` does not. The errors are of position and do not go down
-  toward the roots, and the sphere of the parent contains its own: every cut is a surface without
-  cracks.
+  toward the roots (a group that crossed seams adds that of its attributes), and the sphere of the
+  parent contains its own: every cut is a surface without cracks.
 - **Submeshes.** A cluster never crosses submeshes: each range of `Cluster_Source.ranges` is
   clustered separately, a vertex of two submeshes is `Invalid_Mesh`, and the outlines between
   submeshes protect themselves.
 - `cluster_levels_build` puts discrete levels (skinned meshes, foliage) in the same format: level k
   is group k, its clusters share the sphere of level 0 with the error of level k as `own` and that
   of k+1 as `parent`, and the same cut chooses a whole level.
-- Without `optimizeMeshlet` or the *sloppy* fallback of `clusterlod`: a locked group is a root.
+- Without `optimizeMeshlet` or the *sloppy* fallback of `clusterlod`: crossing the seams keeps the
+  topology, and only locked places stop a group.
 
 ## Approximate convex decomposition (`decompose.odin`)
 

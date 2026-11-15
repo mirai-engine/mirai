@@ -23,9 +23,9 @@ shape_vertices :: proc(buffer:^geom.Mesh_Buffer,slot:u32=0) -> []asset.Vertex {
 levels_valid :: proc(t:^testing.T,levels:Mesh_Levels,slots:int,loc:=#caller_location) -> bool {
     geometry:asset.Mesh_Geometry
     if !testing.expect(t,levels_geometry(levels,{},&geometry,context.temp_allocator),"the levels make clusters",loc=loc) {return false}
-    if len(levels.skin)==0 && !levels.pruned && len(levels.lods)>1 {
+    if levels.dag {
         // A static mesh keeps level 0 and the DAG of its clusters, whose levels shed triangles.
-        if !testing.expect(t,len(geometry.levels)>1,"the DAG has levels",loc=loc) {return false}
+        testing.expect_value(t,len(levels.lods),1,loc=loc)
         testing.expect_value(t,geometry.levels[0].triangle_count,levels.lods[0].index_count/3,loc=loc)
         for level,at in geometry.levels[1:] {testing.expect(t,level.triangle_count<=geometry.levels[at].triangle_count && level.error>=geometry.levels[at].error,"a coarser level of the DAG",loc=loc)}
     } else {
@@ -55,7 +55,10 @@ a_sphere_gets_levels_that_shed_triangles_and_stay_on_its_surface :: proc(t:^test
     geom.sphere_build(&sphere,1,128,64)
     vertices:=shape_vertices(&sphere)
     whole:=[1]Submesh{{index_count=u32(len(sphere.indices))}}
-    levels:=mesh_levels(vertices,sphere.indices[:],nil,whole[:],allocator=context.temp_allocator)
+    // Skinned, so it keeps whole levels.
+    skin:=make([]asset.Skin_Vertex,len(vertices),context.temp_allocator)
+    for &s in skin {s.weights[0]=255}
+    levels:=mesh_levels(vertices,sphere.indices[:],skin,whole[:],allocator=context.temp_allocator)
     if !levels_valid(t,levels,1) {return}
     testing.expectf(t,len(levels.lods)>=4 && levels.lods[len(levels.lods)-1].index_count/3<LOD_MIN_TRIANGLES,"the levels go on until one has fewer than LOD_MIN_TRIANGLES: %d levels",len(levels.lods))
     testing.expect(t,levels.lods[0].error==0 && int(levels.lods[0].vertex_count)==len(vertices) && int(levels.lods[0].index_count)==len(sphere.indices),"level 0 is the mesh as given")
@@ -137,16 +140,54 @@ a_small_mesh_or_one_told_not_to_keeps_one_level :: proc(t:^testing.T) {
     geom.mesh_buffer_init(&cube,context.temp_allocator)
     geom.cube_build(&cube)
     small:=mesh_levels(shape_vertices(&cube),cube.indices[:],nil,nil,allocator=context.temp_allocator)
-    testing.expect(t,len(small.lods)==1 && len(small.vertices)==len(cube.positions) && len(small.indices)==len(cube.indices))
+    testing.expect(t,len(small.lods)==1 && small.dag && len(small.vertices)==len(cube.positions) && len(small.indices)==len(cube.indices))
     testing.expect(t,levels_valid(t,small,1))
     sphere:geom.Mesh_Buffer
     geom.mesh_buffer_init(&sphere,context.temp_allocator)
     geom.sphere_build(&sphere,1,48,24)
     kept:=mesh_levels(shape_vertices(&sphere),sphere.indices[:],nil,nil,false,context.temp_allocator)
-    testing.expect(t,len(kept.lods)==1 && len(kept.indices)==len(sphere.indices))
+    testing.expect(t,len(kept.lods)==1 && !kept.dag && len(kept.indices)==len(sphere.indices))
     // Without submeshes the levels have none either.
-    plain:=mesh_levels(shape_vertices(&sphere),sphere.indices[:],nil,nil,allocator=context.temp_allocator)
+    skin:=make([]asset.Skin_Vertex,len(sphere.positions),context.temp_allocator)
+    for &s in skin {s.weights[0]=255}
+    plain:=mesh_levels(shape_vertices(&sphere),sphere.indices[:],skin,nil,allocator=context.temp_allocator)
     testing.expect(t,len(plain.lods)>1 && len(plain.submeshes)==0 && levels_valid(t,plain,1))
+}
+
+@(test)
+a_faceted_mesh_with_a_seam_on_every_edge_reaches_a_small_root :: proc(t:^testing.T) {
+    // A crystal: each triangle has vertices of its own, its flat normal and a uv chart of its own.
+    sphere:geom.Mesh_Buffer
+    geom.mesh_buffer_init(&sphere,context.temp_allocator)
+    geom.sphere_build(&sphere,1,64,32)
+    triangles:=len(sphere.indices)/3
+    vertices:=make([]asset.Vertex,triangles*3,context.temp_allocator)
+    indices:=make([]u32,triangles*3,context.temp_allocator)
+    for triangle in 0..<triangles {
+        p:=[3]geom.Vec3{}
+        for k in 0..<3 {p[k]=sphere.positions[sphere.indices[triangle*3+k]]}
+        normal:=linalg.normalize(linalg.cross(p[1]-p[0],p[2]-p[0]))
+        chart:=f32(triangle%61)
+        for k in 0..<3 {
+            vertices[triangle*3+k]=test_vertex(p[k],normal,{p[k].x*0.25+chart,p[k].z*0.25})
+            indices[triangle*3+k]=u32(triangle*3+k)
+        }
+    }
+    skin:=make([]asset.Skin_Vertex,len(vertices),context.temp_allocator)
+    for &s in skin {s.weights[0]=255}
+    // Static as a DAG, skinned as whole levels.
+    cases:=[]struct{name:string,skin:[]asset.Skin_Vertex}{{"static",nil},{"skinned",skin}}
+    for c in cases {
+        levels:=mesh_levels(vertices,indices,c.skin,nil,allocator=context.temp_allocator)
+        if !levels_valid(t,levels,1) {continue}
+        geometry:asset.Mesh_Geometry
+        levels_geometry(levels,{},&geometry,context.temp_allocator)
+        root:=0
+        for cluster in geometry.clusters {
+            if cluster.parent_error==asset.CLUSTER_ROOT {root+=int(asset.cluster_triangle_count(cluster))}
+        }
+        testing.expectf(t,root<LOD_MIN_TRIANGLES,"%s: the roots keep %d of %d triangles",c.name,root,triangles)
+    }
 }
 
 // A sphere in slot 0 and, in slot 1, cards of two triangles at the corners

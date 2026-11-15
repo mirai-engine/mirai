@@ -11,11 +11,14 @@ import "base:runtime"
 // level has more than one cluster, its clusters are partitioned in groups;
 // the triangles of each group are simplified to CLUSTER_SIMPLIFY_RATIO of
 // them with the vertices it shares with other groups locked, and split again
-// in clusters, which make the next level. A group whose simplification
-// keeps more than CLUSTER_SIMPLIFY_STUCK of its triangles stops there. Where
-// the seams of attributes stop the simplifier short of its target, it runs
-// again with Permissive; the outlines between submeshes are protected, and
-// vertex_lock protects the other seams that must stay.
+// in clusters, which make the next level. Where the seams of attributes stop
+// the simplifier short of its target, it runs again with Permissive; the
+// outlines between submeshes are protected, and vertex_lock protects the
+// other seams that must stay. A group that still keeps more than
+// CLUSTER_SIMPLIFY_STUCK of its triangles (faceted pieces, a seam on every
+// edge) runs once more crossing the seams vertex_lock protects, its error
+// that of the attributes it loses too; if that is stuck as well, the group
+// stops there.
 //
 // The error of a group is its own simplification error or that of its
 // clusters, whichever is larger, in a sphere around theirs: both grow from
@@ -244,17 +247,22 @@ cluster_dag_build :: proc(dag:^Cluster_Dag,source:Cluster_Source,allocator:=cont
     // The first vertex at the position of each: the boundaries between groups are found by place.
     remap:=make([]u32,vertex_count,scratch)
     locks:=make([]Simplify_Vertex,vertex_count,scratch)
+    // The outlines between submeshes stay, also where a stuck group crosses seams: no triangle
+    // takes vertices of two.
+    outline:=make([]Simplify_Vertex,vertex_count,scratch)
+    // The locks of a level without the Protect of vertex_lock, for its stuck groups.
+    relaxed:=make([]Simplify_Vertex,vertex_count,scratch)
     b:=Dag_Builder{source=source,dag=dag}
     b.local_of=make([]u32,vertex_count,scratch)
-    if (remap==nil || locks==nil || b.local_of==nil) && vertex_count>0 {return .Out_Of_Memory}
+    if (remap==nil || locks==nil || outline==nil || relaxed==nil || b.local_of==nil) && vertex_count>0 {return .Out_Of_Memory}
     positions_weld(source.positions,0,remap)
-    // The outlines between submeshes stay, also with Permissive: no triangle takes vertices of two.
     for v in 0..<vertex_count {
         if submesh_of[v]!=submesh_of[remap[v]] {
-            locks[v]+={.Protect}
-            locks[remap[v]]+={.Protect}
+            outline[v]={.Protect}
+            outline[remap[v]]={.Protect}
         }
     }
+    copy(locks,outline)
     for &l in b.local_of {l=NONE}
     b.local_positions=make([dynamic]Vec3,scratch)
     b.local_indices=make([dynamic]u32,scratch)
@@ -355,6 +363,7 @@ cluster_dag_build :: proc(dag:^Cluster_Dag,source:Cluster_Source,allocator:=cont
         }
 
         clear(&pending);clear(&pending_indices)
+        relaxed_made:=false
         for g in 0..<group_count {
             group_temp:=runtime.arena_temp_begin(&work)
             defer runtime.arena_temp_end(group_temp)
@@ -372,6 +381,16 @@ cluster_dag_build :: proc(dag:^Cluster_Dag,source:Cluster_Source,allocator:=cont
             if failed==.None && result.index_count>target {
                 result,failed=simplify(simplified[:],merged[:],source.positions,target,max(f32),options+{.Permissive},source.attributes,source.attribute_weights,locks)
             }
+            error:=result.position_error
+            if failed==.None && f32(result.index_count)>f32(len(merged))*CLUSTER_SIMPLIFY_STUCK {
+                if !relaxed_made {
+                    for l,v in locks {relaxed[v]=l-{.Protect}+outline[v]}
+                    relaxed_made=true
+                }
+                // Clamped, the error of the attributes reads as a distance, which the cut must see.
+                result,failed=simplify(simplified[:],merged[:],source.positions,target,max(f32),options+{.Permissive,.Error_Clamped},source.attributes,source.attribute_weights,relaxed)
+                error=max(result.result_error,result.position_error)
+            }
             if failed==.Out_Of_Memory {return .Out_Of_Memory}
             if failed!=.None {return .Invalid_Mesh}
             // Nothing is left empty: a group that loses every triangle keeps its first.
@@ -388,7 +407,7 @@ cluster_dag_build :: proc(dag:^Cluster_Dag,source:Cluster_Source,allocator:=cont
                 if _,written:=group_output(&b,group[:],cluster_indices[:],bounds,depth);!written {return .Out_Of_Memory}
                 continue
             }
-            bounds.error=max(bounds.error,result.position_error)
+            bounds.error=max(bounds.error,error)
             id,written:=group_output(&b,group[:],cluster_indices[:],bounds,depth)
             if !written {return .Out_Of_Memory}
             // The triangles that remain, by submesh, each split in clusters of the next level.
