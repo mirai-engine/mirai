@@ -205,8 +205,8 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   of the cube takes one map along its cone; the cascades of the sun end where the scene ends. They
   draw the clusters of the instances of the scene and of the batches that cast shadows at the detail
   a texel of the map asks for where they lie (`shadow_map_detail`), not the eye, and leave out an
-  instance smaller than a texel of the map (`shadow_map_unseen`). Those of an instance with masked
-  materials are drawn apart, with their coverage as a shadow ray asks it: a masked material without
+  instance smaller than a texel of the map (`shadow_map_unseen`). Those of masked materials are
+  drawn apart, with their coverage as a shadow ray asks it: a masked material without
   a program samples its alpha with the derivatives of its uvs, a texel of the map wide, and the
   others ask `hit_covers`; glass only in the tint. They are culled as the view culls its own: by
   instance and map, which hands the

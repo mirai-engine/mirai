@@ -173,8 +173,8 @@ float hit_alpha(Instance inst, Material m, Mesh_Triangle tri, float3 weights, fl
 }
 
 // What a ray that finds this triangle at distance t does: stop, or go through
-// a hole of a masked material or a blended one. Only instances flagged as
-// alpha tested ask.
+// a hole of a masked material or a blended one. Only the triangles of the
+// slots an instance tests ask (Instance.tested).
 bool hit_covers(uint instance_index, uint primitive, float2 bary, float t, uint ray_blend) {
     Instance inst = scene_instance(instance_index);
     if ((ray_blend & BLEND_LIGHT) != 0u && (inst.meta.x & INSTANCE_UNSHADOWED) != 0u) return false;
@@ -255,24 +255,27 @@ struct Hit {
 #ifdef MIRAI_HW_RT
 [[vk::binding(SLOT_TLAS, 0)]] RaytracingAccelerationStructure scene_tlas : register(MIRAI_REGISTER(t, SLOT_TLAS), space0);
 
-// The cluster and the triangle of a primitive of the BLAS of the cut an
-// instance is traced with: the BLAS lists the triangles of the cut, and its
-// table in the index pool names where each comes from.
-uint hw_primitive(uint instance_index, uint primitive) {
+// The cluster and the triangle of a primitive of a geometry of the BLAS of
+// the cut an instance is traced with: the BLAS lists the triangles of the
+// cut, the opaque ones and then the masked ones, and its table in the index
+// pool names where each comes from.
+uint hw_primitive(uint instance_index, uint geometry, uint primitive) {
     uint mesh_word = scene_mesh_word(instance_index);
-    return indices[meshes[mesh_word & INSTANCE_MESH_MASK].rays[(mesh_word >> INSTANCE_RAY_SHIFT) & 3u].table_word + primitive];
+    Mesh_Ray ray = meshes[mesh_word & INSTANCE_MESH_MASK].rays[(mesh_word >> INSTANCE_RAY_SHIFT) & 3u];
+    return indices[ray.table_word + (geometry != 0u ? ray.table_opaque : 0u) + primitive];
 }
 
 Hit trace_ray_impl(float3 origin, float3 direction, float t_min, float t_max, bool any_hit, uint blend, uint classes) {
     RayQuery<RAY_FLAG_NONE> query;
     uint flags = any_hit ? RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH : 0u;
     RayDesc ray_desc; ray_desc.Origin = origin; ray_desc.TMin = t_min; ray_desc.Direction = direction; ray_desc.TMax = t_max; query.TraceRayInline(scene_tlas, flags, classes, ray_desc);
-    // Opaque instances commit their hits by themselves; the triangles of an
-    // alpha tested one come here as candidates.
+    // Opaque triangles commit their hits by themselves; the masked ones of
+    // an instance that tests the slots of its mesh, and all those of one that
+    // tests others, come here as candidates.
     while (query.Proceed()) {
         if (query.CandidateType() != CANDIDATE_NON_OPAQUE_TRIANGLE) continue;
         uint instance = uint(query.CandidateInstanceID());
-        if (hit_covers(instance, hw_primitive(instance, uint(query.CandidatePrimitiveIndex())),
+        if (hit_covers(instance, hw_primitive(instance, uint(query.CandidateGeometryIndex()), uint(query.CandidatePrimitiveIndex())),
                 query.CandidateTriangleBarycentrics(), query.CandidateTriangleRayT(), blend)) {
             query.CommitNonOpaqueTriangleHit();
         }
@@ -285,7 +288,7 @@ Hit trace_ray_impl(float3 origin, float3 direction, float t_min, float t_max, bo
     if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
         hit.t = query.CommittedRayT();
         hit.instance = uint(query.CommittedInstanceID());
-        hit.primitive = hw_primitive(hit.instance, uint(query.CommittedPrimitiveIndex()));
+        hit.primitive = hw_primitive(hit.instance, uint(query.CommittedGeometryIndex()), uint(query.CommittedPrimitiveIndex()));
         hit.bary = query.CommittedTriangleBarycentrics();
     }
     return hit;
@@ -354,8 +357,9 @@ bool ray_triangle(float3 origin, float3 dir, Bvh_Triangle tri, float t_min, floa
 // Walks the BVH of the cut of a mesh an instance is traced with in object
 // space: mesh_word is the meta.x of the instance, its mesh and its cut. hit.t
 // is groupshared with the caller, so the world-space closest hit shrinks every
-// subsequent box test. A primitive is its cluster and its triangle.
-bool trace_blas(uint mesh_word, float3 origin, float3 dir, float t_min, inout Hit hit, uint instance_index, bool any_hit, bool alpha_tested, uint blend) {
+// subsequent box test. A primitive is its cluster and its triangle. tested:
+// the slots whose triangles ask their material (Instance.tested).
+bool trace_blas(uint mesh_word, float3 origin, float3 dir, float t_min, inout Hit hit, uint instance_index, bool any_hit, uint tested, uint blend) {
     Mesh_Ray ray = meshes[mesh_word & INSTANCE_MESH_MASK].rays[(mesh_word >> INSTANCE_RAY_SHIFT) & 3u];
     float3 inv_dir = safe_inverse(dir);
     uint stack[TRACE_STACK];
@@ -370,7 +374,7 @@ bool trace_blas(uint mesh_word, float3 origin, float3 dir, float t_min, inout Hi
                 float t;
                 float2 bary;
                 if (ray_triangle(origin, dir, tri, t_min, hit.t, t, bary)) {
-                    if (alpha_tested && !hit_covers(instance_index, tri.primitive, bary, t, blend)) continue;
+                    if (((tested >> tri.slot) & 1u) != 0u && !hit_covers(instance_index, tri.primitive, bary, t, blend)) continue;
                     hit.t = t;
                     hit.bary = bary;
                     hit.primitive = tri.primitive;
@@ -417,7 +421,6 @@ bool trace_batch(uint batch, float3 origin, float3 direction, float t_min, inout
     uint words = batch_records(row);
     uint order = batch_order(row);
     uint first = frame.instance_count + batch_first(row);
-    bool tested = (row.meta.w & INSTANCE_FLAG_ALPHA_TESTED) != 0u;
     float3 inv_dir = safe_inverse(direction);
     uint stack[TRACE_STACK];
     uint top = 0u;
@@ -432,7 +435,7 @@ bool trace_batch(uint batch, float3 origin, float3 direction, float t_min, inout
                 uint local = indices[order + node.left_first + i];
                 float4 world[3], inverse[3];
                 batch_placement(words + local * BATCH_WORDS, float3(0.0), world, inverse);
-                if (trace_blas(row.meta.x, transform_point(inverse, origin), transform_vector(inverse, direction), t_min, hit, first + local, any_hit, tested, blend)) {
+                if (trace_blas(row.meta.x, transform_point(inverse, origin), transform_vector(inverse, direction), t_min, hit, first + local, any_hit, row.tested, blend)) {
                     found = true;
                     if (any_hit) return true;
                 }
@@ -500,7 +503,7 @@ Hit trace_ray_impl(float3 origin, float3 direction, float t_min, float t_max, bo
                 // world units across instances.
                 float3 o = transform_point(inst.world_inv, origin);
                 float3 d = transform_vector(inst.world_inv, direction);
-                if (trace_blas(inst.meta.x, o, d, t_min, hit, instance_index, any_hit, (inst.meta.w & INSTANCE_FLAG_ALPHA_TESTED) != 0u, blend) && any_hit) return hit;
+                if (trace_blas(inst.meta.x, o, d, t_min, hit, instance_index, any_hit, inst.tested, blend) && any_hit) return hit;
             }
             if (top == 0u) break;
             node_index = stack[--top];
@@ -547,7 +550,7 @@ Hit trace_instance(uint instance_index, float3 origin, float3 direction) {
     hit.instance = INVALID;
     hit.primitive = INVALID;
     hit.bary = float2(0.0);
-    trace_blas(inst.meta.x, o, d, 0.0, hit, instance_index, false, false, BLEND_STOPS);
+    trace_blas(inst.meta.x, o, d, 0.0, hit, instance_index, false, 0u, BLEND_STOPS);
     if (hit.instance == INVALID) hit.t = -1.0;
     return hit;
 #endif
@@ -681,7 +684,7 @@ float3 trace_glass_filter(float3 origin, float3 direction, float t_max, bool lig
             Bvh_Node box = tlas_nodes[first + i];
             if (ray_box(origin, inv_dir, box.bounds_min, box.bounds_max, 0.0, t_max) == FLT_MAX) continue;
             Instance inst = instances[box.left_first];
-            if (trace_blas(inst.meta.x, transform_point(inst.world_inv, origin), transform_vector(inst.world_inv, direction), 0.0, hit, box.left_first, true, true, blend)) break;
+            if (trace_blas(inst.meta.x, transform_point(inst.world_inv, origin), transform_vector(inst.world_inv, direction), 0.0, hit, box.left_first, true, inst.tested, blend)) break;
         }
         return ray_filter;
     }

@@ -140,9 +140,9 @@ frame_gbuffer_mesh :: proc(r: ^Renderer, mesh: Mesh_Handle, material: Material_H
 	s := &r.scene
 	if int(mesh) >= len(s.meshes) || r.gbuffer_asked == {.Reflectance, .Layers} {return}
 	row := u32(material) if material != 0 && int(material) < len(s.materials) else GPU_NONE
-	_, _, _, reflectance, layered, _, _ := instance_alpha(s, s.meshes[mesh], row, {})
-	if reflectance {r.gbuffer_asked += {.Reflectance}}
-	if layered {r.gbuffer_asked += {.Layers}}
+	a := instance_alpha(s, s.meshes[mesh], row, {})
+	if a.reflectance {r.gbuffer_asked += {.Reflectance}}
+	if a.layered {r.gbuffer_asked += {.Layers}}
 }
 
 // Tells the frame that an extension draws every cluster of level 0 of a mesh

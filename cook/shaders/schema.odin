@@ -181,6 +181,7 @@ shared_constants :: proc(allocator:=context.temp_allocator) -> string {
     u(&b,"RAY_UNSHADOWED",abi.RAY_UNSHADOWED)
     u(&b,"TLAS_REF_GLASS",abi.TLAS_REF_GLASS)
     u(&b,"TLAS_ALPHA_TESTED",rhi.TLAS_ALPHA_TESTED)
+    u(&b,"TLAS_ALPHA_GEOMETRY",rhi.TLAS_ALPHA_GEOMETRY)
     u(&b,"TLAS_TABLE_HEADER",rhi.TLAS_TABLE_HEADER)
     u(&b,"TLAS_DISPATCH_X",rhi.TLAS_DISPATCH_X)
     u(&b,"TLAS_LAYOUT_ROWS",rhi.TLAS_LAYOUT_ROWS)

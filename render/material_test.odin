@@ -1088,6 +1088,22 @@ screen_color :: proc(t: ^testing.T, f: ^Fixture, camera: Camera, world: Vec3) ->
 	return {f32(pixels[i]), f32(pixels[i + 1]), f32(pixels[i + 2])}
 }
 
+// A unit square on the ground of two halves, slot 1 at -X with row left and
+// slot 2 at +X with row right, each with the whole of its uvs.
+@(private = "file")
+halves_quad :: proc(r: ^Renderer, left, right: Material_Handle) -> Mesh_Handle {
+	vertices: [8]Mesh_Vertex
+	indices: [12]u32
+	for half in 0 ..< 2 {
+		x := -0.5 + 0.5 * f32(half)
+		corners := [4]Vec3{{x, 0, -0.5}, {x + 0.5, 0, -0.5}, {x + 0.5, 0, 0.5}, {x, 0, 0.5}}
+		for c, i in corners {vertices[half * 4 + i] = {position = c, normal = {0, 1, 0}, tangent = {1, 0, 0, 1}, uv = {(c.x - x) * 2, c.z + 0.5}, color = {1, 1, 1}, material = left if half == 0 else right, slot = u32(half + 1)}}
+		for corner, i in ([6]u32{0, 2, 1, 0, 3, 2}) {indices[half * 6 + i] = u32(half * 4) + corner}
+	}
+	mesh, _ := mesh_add(r, vertices[:], indices[:])
+	return mesh
+}
+
 @(private = "file")
 placed :: proc(scale: f32, height: f32) -> Mat4 {
 	m := scale_matrix(scale)
@@ -1124,6 +1140,9 @@ material_mask_cuts_holes_for_the_camera_and_for_rays :: proc(t: ^testing.T) {
 	for c, i in corners {vertices[i] = {position = c, normal = {0, 1, 0}, uv = {0.25, 0.25}, uv1 = {c.x + 0.5, c.z + 0.5}, color = {1, 1, 1}}}
 	secondary, added_mesh := mesh_add(r, vertices[:], []u32{0, 2, 1, 0, 3, 2})
 	testing.expect(t, added_mesh, r.error)
+	// Its left half opaque, its right half masked by the half image.
+	mixed := halves_quad(r, 2, 1)
+	solid := DEFAULT_MATERIAL
 	sun := Sun_Desc{direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true, indirect = 1, scattering = 1}
 	instances := []Instance_Desc{
 		{object_id = 1, mesh = quad, transform = scale_matrix(20), tint = {1, 1, 1}},
@@ -1170,7 +1189,89 @@ material_mask_cuts_holes_for_the_camera_and_for_rays :: proc(t: ^testing.T) {
 		frames(t, &f, above, 2)
 		testing.expectf(t, near_bytes(read_albedo(t, &f, above, {0.5, 1, 0}), {255, 0, 0, 0}, 3), "an opaque material has no holes: %v", read_albedo(t, &f, above, {0.5, 1, 0}))
 		testing.expect(t, r.scene.instances[1].meta.w & INSTANCE_FLAG_ALPHA_TESTED == 0)
+		// Of a mesh with an opaque slot and a masked one, the triangles of the masked slot
+		// alone ask their material: the masked BLAS geometry of the mesh, which an instance
+		// that tests other slots overrides.
+		cutout.alpha_mode, cutout.opacity, cutout.maps.base_color.uv_set = .Mask, 1, 0
+		cutout.textures[.Base_Color] = texture
+		materials_set(r, {cutout, solid})
+		Case :: struct {material: Material_Handle, tested, flags: u32}
+		cases := [3]Case{{0, 0b10, rhi.TLAS_ALPHA_GEOMETRY}, {1, 0b11, rhi.TLAS_ALPHA_TESTED}, {2, 0, 0}}
+		for c in cases {
+			instances[1] = {object_id = 2, mesh = mixed, transform = placed(2, 1), material = c.material, tint = {1, 1, 1}}
+			scene_given(r, instances, nil, sun, {})
+			frames(t, &f, above, 2)
+			testing.expectf(t, r.scene.instances[1].tested == c.tested, "%v material %d tests slots %b", provider, c.material, r.scene.instances[1].tested)
+			testing.expectf(t, r.scene.hw_instances[1].mask_flags & (rhi.TLAS_ALPHA_TESTED | rhi.TLAS_ALPHA_GEOMETRY) == c.flags, "%v material %d: TLAS flags %x", provider, c.material, r.scene.hw_instances[1].mask_flags)
+		}
+		instances[1].material = 0
+		scene_given(r, instances, nil, sun, {})
+		m := r.scene.meshes[mixed]
+		testing.expectf(t, m.tested == 0b10, "the mesh tests its masked slot: %b", m.tested)
+		p := record_pooled(&r.scene, m)
+		if provider == .Hardware {
+			frames(t, &f, above, 1)
+			ray := r.scene.meshes[mixed].rays[0]
+			testing.expect_value(t, ray.table_opaque, 2)
+			for primitive, k in r.scene.indices[ray.table_word:][:ray.table_count] {
+				testing.expectf(t, (asset.cluster_slot(p.clusters[primitive >> PRIMITIVE_TRIANGLE_BITS]) == 1) == (u32(k) >= ray.table_opaque), "the opaque triangles lead the table: %d", k)
+			}
+		} else {
+			for tri in r.scene.blas_triangles[m.rays[0].triangle_offset:][:m.rays[0].triangle_count] {
+				testing.expect_value(t, tri.slot, asset.cluster_slot(p.clusters[tri.primitive >> PRIMITIVE_TRIANGLE_BITS]))
+			}
+		}
+		opaque := screen_color(t, &f, side, {-0.5, 0, 0.8})
+		within := screen_color(t, &f, side, {0.25, 0, 0.8})
+		hole := screen_color(t, &f, side, {0.75, 0, 0.8})
+		testing.expectf(t, hole.g > opaque.g + 40 && hole.g > within.g + 40, "%v the opaque half and the solid of the masked half cast, its hole does not: %v %v %v", provider, opaque, within, hole)
+		instances[1] = {object_id = 2, mesh = quad, transform = placed(2, 1), material = 1, tint = {1, 1, 1}}
 	}
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
+}
+
+// The maps of the shadows draw the clusters of an opaque slot of an instance
+// with a masked one as they draw opaque instances, and those of the masked
+// slot with their coverage.
+@(test)
+material_mask_draws_only_masked_clusters_with_their_coverage_into_the_maps :: proc(t: ^testing.T) {
+	f: Fixture
+	if !fixture_init(t, &f, 96, 64, material_settings()) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	cutout := DEFAULT_MATERIAL
+	cutout.alpha_mode, cutout.opacity = .Mask, 0
+	materials_set(r, {cutout, DEFAULT_MATERIAL})
+	quad := ground_quad(r)
+	mixed := halves_quad(r, 2, 1)
+	sun := Sun_Desc{direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true, indirect = 1, scattering = 1}
+	scene_given(r, {{object_id = 1, mesh = quad, transform = scale_matrix(20), tint = {1, 1, 1}}, {object_id = 2, mesh = mixed, transform = placed(2, 1), tint = {1, 1, 1}}}, nil, sun, {})
+	side := Camera{position = {0, 3, 6}, forward = {0, -3, -6}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	s := &r.scene
+	opaque, tested, masked_opaque, opaque_tested := 0, 0, 0, 0
+	for _ in 0 ..< 3 {
+		frames(t, &f, side, 1)
+		rhi.device_wait_idle(f.device)
+		room := s.cull_capacity[.Shadow_Entries]
+		state: [1]Gpu_Shadow_State
+		if !testing.expect(t, rhi.buffer_read_slice(f.device, r.shadow_buffers.state, 0, state[:])) {return}
+		p := record_pooled(s, s.meshes[mixed])
+		for draw in 0 ..< 2 {
+			count := min(state[0].draws[draw].instance_count, room / 2 if draw == 0 else room / 4)
+			if count == 0 {continue}
+			entries := make([][4]u32, count, context.temp_allocator)
+			if !testing.expect(t, rhi.buffer_read_slice(f.device, s.shadow_entries, u64(0 if draw == 0 else room / 2) * size_of([4]u32), entries)) {return}
+			for entry in entries {
+				if entry.x != 1 {continue}
+				masked := asset.cluster_slot(p.clusters[entry.y]) == 1
+				if draw == 0 {opaque += 1;masked_opaque += int(masked)} else {tested += 1;opaque_tested += int(!masked)}
+			}
+		}
+	}
+	testing.expectf(t, opaque > 0 && tested > 0 && masked_opaque == 0 && opaque_tested == 0, "the opaque cluster in the opaque draw (%d, %d masked), the masked one in the tested draw (%d, %d opaque)", opaque, masked_opaque, tested, opaque_tested)
+	shaded := screen_color(t, &f, side, {-0.5, 0, 0.8})
+	lit := screen_color(t, &f, side, {0.5, 0, 0.8})
+	testing.expectf(t, lit.g > shaded.g + 40, "the opaque half casts and the masked half covers nothing: %v vs %v", lit, shaded)
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 

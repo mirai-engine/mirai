@@ -412,6 +412,7 @@ Scene_State :: struct {
 	ray_cut_eye:          Vec3, // where the eye was when the cuts rays trace were chosen (ray_cuts_update)
 	ray_cut_frame:        u64,  // and the frame
 	ray_cuts_stale:       bool, // the instances changed since
+	tested_stale:         bool, // a row changed how rays see it since the meshes were laid out by the slots their rows test (meshes_tested_update)
 	pages:                Pages_State, // the slots of the pages of streamed meshes
 	uploads:              Geometry_Uploads, // meshes whose geometry goes to the GPU over frames (geometry_uploads.odin)
 }
@@ -541,7 +542,8 @@ gpu_material :: proc(r: ^Renderer, m: Material_Desc) -> Gpu_Material_Row {
 // the default material. Vertices and instances name rows, so while meshes are
 // resident the table only grows or changes the values of its rows. Only the
 // rows whose values differ go to the GPU, with the next frame, and they keep
-// the BLASes, the TLAS and the light list (materials_store). False without
+// the TLAS, the light list and the BLASes but those of the meshes whose slots
+// a row starts or stops testing (meshes_tested_update). False without
 // memory for the rows: the table stays as it was.
 materials_set :: proc(r: ^Renderer, materials: []Material_Desc) -> bool {
 	s := &r.scene
@@ -764,7 +766,7 @@ materials_changed :: proc(s: ^Scene_State, changes: Material_Changes) {
 	}
 	// The alpha mode of a material decides how its instances are traced and drawn,
 	// and its program whether they move their vertices.
-	if changes.class {instances_classify(s);s.displaced_stale=true}
+	if changes.class {instances_classify(s);s.displaced_stale=true;s.tested_stale=true;s.geometry_dirty=true}
 	// The rows of the batches take the classes of their materials when they are built.
 	if changes.class {s.batch.built = false}
 }
@@ -777,16 +779,18 @@ instances_classify :: proc(s: ^Scene_State) {
 	clear(&s.reflective)
 	for &inst, i in s.instances {
 		if int(inst.meta.x & INSTANCE_MESH_MASK) >= len(s.meshes) {continue}
-		tested, blended, glass, reflectance, layered, solid, glass_layered := instance_alpha(s, s.meshes[inst.meta.x & INSTANCE_MESH_MASK], inst.meta.y, inst.slot_materials, inst.material_values)
-		flags := (inst.meta.w &~ (INSTANCE_FLAG_ALPHA_TESTED | INSTANCE_FLAG_BLENDED | INSTANCE_FLAG_TRANSLUCENT)) | alpha_flags(tested, blended, glass)
-		if reflectance && flags & INSTANCE_FLAG_HIDDEN == 0 {append(&s.reflective, Reflective_Instance{u32(i), layered})}
-		if flags != inst.meta.w {
-			inst.meta.w = flags
-			s.hw_instances[i].mask_flags = tlas_mask_flags(ray_class(inst.meta.x, flags), tested)
+		mesh := s.meshes[inst.meta.x & INSTANCE_MESH_MASK]
+		a := instance_alpha(s, mesh, inst.meta.y, inst.slot_materials, inst.material_values)
+		flags := (inst.meta.w &~ (INSTANCE_FLAG_ALPHA_TESTED | INSTANCE_FLAG_BLENDED | INSTANCE_FLAG_TRANSLUCENT)) | alpha_flags(a)
+		if a.reflectance && flags & INSTANCE_FLAG_HIDDEN == 0 {append(&s.reflective, Reflective_Instance{u32(i), a.layered})}
+		mask_flags := tlas_mask_flags(ray_class(inst.meta.x, flags), a.tested, mesh.tested)
+		if flags != inst.meta.w || a.tested != inst.tested || mask_flags != s.hw_instances[i].mask_flags {
+			inst.meta.w, inst.tested = flags, a.tested
+			s.hw_instances[i].mask_flags = mask_flags
 			s.instances_dirty = true
 			s.tlas_dirty = true
 		}
-		if blended && flags & INSTANCE_FLAG_HIDDEN == 0 {append(&s.translucent, Translucent{instance = u32(i), solid = solid, layered = glass_layered})}
+		if a.blended && flags & INSTANCE_FLAG_HIDDEN == 0 {append(&s.translucent, Translucent{instance = u32(i), solid = a.solid, layered = a.glass_layered})}
 	}
 	overlay_count_update(s)
 	tlas_refs_classify(s)
@@ -814,44 +818,64 @@ tlas_refs_classify :: proc(s: ^Scene_State) {
 	}
 }
 
-// Whether rays have to ask the materials of an instance, whether some of its
-// triangles are blended, and whether all of them are. material is the row
-// that replaces those of the mesh, or GPU_NONE.
+// What the materials of an instance make of how it is traced and drawn.
+// tested: the slots whose materials rays and the maps of the shadows ask, a
+// bit each (Gpu_Instance.tested); blended: some of its triangles are
+// blended; glass: all of them; reflectance: one of its opaque materials
+// reflects other than the default dielectric, which the albedo and metallic
+// of the G-buffer give by themselves; layered: one of its opaque materials
+// has layers; solid: one of its blended ones has a thickness; glass_layered:
+// one of its blended ones has layers.
 @(private)
-// reflectance: one of its opaque materials reflects other than the default
-// dielectric, which the albedo and metallic of the G-buffer give by themselves.
-// glass_layered: one of its blended materials has layers. given: what the
-// instance gives its rows (Gpu_Instance.material_values).
-instance_alpha :: proc(s: ^Scene_State, mesh: Mesh_Record, material: u32, slots:[32]u32, given: u32 = 0) -> (tested, blended, glass, reflectance, layered, solid, glass_layered: bool) {
+Instance_Alpha :: struct {
+	tested: u32,
+	blended, glass, reflectance, layered, solid, glass_layered: bool,
+}
+
+// material is the row that replaces those of the mesh, or GPU_NONE; given:
+// what the instance gives its rows (Gpu_Instance.material_values).
+@(private)
+instance_alpha :: proc(s: ^Scene_State, mesh: Mesh_Record, material: u32, slots:[32]u32, given: u32 = 0) -> (a: Instance_Alpha) {
     palette:=slots
     defaults:=asset.MATERIAL_DEFAULTS
-    glass = mesh.slot_count > 0
-    for packed in s.indices[mesh.slot_word:][:mesh.slot_count] {
+    a.glass = mesh.slot_count > 0
+    for packed, k in s.indices[mesh.slot_word:][:mesh.slot_count] {
         row:=instance_row(packed,material,&palette)
         m:=asset.Alpha_Mode.Opaque
         if int(row)<len(s.materials) {
             values:=instance_material(s,given,row)
             m=asset.Alpha_Mode(values.alpha_mode)
             departs:=values.program_id!=0 || values.specular_color!=defaults.specular_color || values.specular_factor!=defaults.specular_factor || values.ior!=defaults.ior
-            if m != .Blend && (departs || values.textures[.Specular]!=GPU_NONE || values.textures[.Specular_Color]!=GPU_NONE) {reflectance=true}
+            if m != .Blend && (departs || values.textures[.Specular]!=GPU_NONE || values.textures[.Specular_Color]!=GPU_NONE) {a.reflectance=true}
             lit:=transmute(asset.Material_Layers)values.layers-{.Unlit}
             if card(lit)>0 {
-                if m == .Blend {glass_layered=true} else {layered=true}
+                if m == .Blend {a.glass_layered=true} else {a.layered=true}
             }
-            if m == .Blend {solid ||= values.transmission > 0 && values.thickness > 0}
+            if m == .Blend {a.solid ||= values.transmission > 0 && values.thickness > 0}
         }
-        tested ||= m != .Opaque
-        blended ||= m == .Blend
-        glass &&= m == .Blend
+        if m != .Opaque {a.tested |= 1 << u32(k)}
+        a.blended ||= m == .Blend
+        a.glass &&= m == .Blend
     }
     // The layers of a material reach the G-buffer with its reflectance.
-    reflectance ||= layered
+    a.reflectance ||= a.layered
     return
 }
 
+// The slots of a mesh whose own rows rays ask, a bit each: the BLASes of its
+// cuts hold their triangles apart from the others (table_partition).
 @(private)
-alpha_flags :: proc "contextless" (tested, blended, glass: bool) -> u32 {
-	return (INSTANCE_FLAG_ALPHA_TESTED if tested else 0) | (INSTANCE_FLAG_TRANSLUCENT if blended else 0) | (INSTANCE_FLAG_BLENDED if glass else 0)
+mesh_tested :: proc "contextless" (s: ^Scene_State, m: Mesh_Record) -> (tested: u32) {
+	for packed, k in s.indices[m.slot_word:][:m.slot_count] {
+		row := packed & 0xffffff
+		if int(row) < len(s.materials) && s.materials[row].alpha_mode != u32(asset.Alpha_Mode.Opaque) {tested |= 1 << u32(k)}
+	}
+	return
+}
+
+@(private)
+alpha_flags :: proc "contextless" (a: Instance_Alpha) -> u32 {
+	return (INSTANCE_FLAG_ALPHA_TESTED if a.tested != 0 else 0) | (INSTANCE_FLAG_TRANSLUCENT if a.blended else 0) | (INSTANCE_FLAG_BLENDED if a.glass else 0)
 }
 
 @(private = "file")
@@ -864,8 +888,14 @@ instance_small :: proc "contextless" (low, high: Vec3) -> u32 {
 instance_resized :: proc(s: ^Scene_State, index: int, low, high: Vec3) {
 	inst := &s.instances[index]
 	inst.meta.w = (inst.meta.w & ~u32(INSTANCE_FLAG_SMALL)) | instance_small(low, high)
-	hw := &s.hw_instances[index]
-	hw.mask_flags = tlas_mask_flags(ray_class(inst.meta.x, inst.meta.w), hw.mask_flags & rhi.TLAS_ALPHA_TESTED != 0)
+	s.hw_instances[index].mask_flags = instance_tlas_flags(s, inst^)
+}
+
+// The mask and the flags of an instance of the native TLAS.
+@(private)
+instance_tlas_flags :: proc "contextless" (s: ^Scene_State, inst: Gpu_Instance) -> u32 {
+	mesh := int(inst.meta.x & INSTANCE_MESH_MASK)
+	return tlas_mask_flags(ray_class(inst.meta.x, inst.meta.w), inst.tested, s.meshes[mesh].tested if mesh < len(s.meshes) else 0)
 }
 
 @(private = "file")
@@ -1010,6 +1040,42 @@ geometry_blas_inputs :: proc(r:^Renderer,frame:bool) -> (left:bool) {
 
 BLAS_INPUT_TRIANGLES :: 1<<18 // of the meshes whose native BLAS a frame builds, before the next mesh waits
 
+// The meshes whose rows test other slots than their BLASes hold apart
+// (Mesh_Record.tested) take them, and their BLASes and inputs go, to be built
+// again with them; until then their instances that ask other slots than the
+// mesh make every triangle a candidate. A mesh whose inputs still go to the
+// GPU waits for the publication after.
+@(private)
+meshes_tested_update :: proc(r:^Renderer) {
+    s:=&r.scene
+    if !s.tested_stale {return}
+    s.tested_stale=false
+    changed:=false
+    for &m,index in s.meshes {
+        if m.vertex_count==0 {continue}
+        tested:=mesh_tested(s,m)
+        if tested==m.tested {continue}
+        if inputs_queued(s,u32(index)) {s.tested_stale=true;continue}
+        m.tested=tested
+        for &ray in m.rays[:m.ray_count] {
+            if ray.blas!=0 {
+                rhi.accel_destroy(r.device,ray.blas)
+                ray.blas=0
+                geometry_released(s,u64(ray.table_count)*BLAS_TRIANGLE_BYTES)
+            }
+            if ray.input_vertices>0 {pool_release(&s.vertices,&s.pool_free[.Vertex],ray.input_vertex,ray.input_vertices)}
+            if ray.input_indices>0 {pool_release(&s.indices,&s.pool_free[.Index],ray.input_index,ray.input_indices)}
+            ray.input_vertex,ray.input_vertices,ray.input_index,ray.input_indices=0,0,0,0
+        }
+        range_add(&s.mesh_dirty,{u32(index),1})
+        changed=true
+    }
+    if !changed {return}
+    instances_classify(s)
+    s.batch.built=false
+    s.ray_cuts_stale,s.tlas_dirty=true,true
+}
+
 @(private)
 geometry_blases_prepare :: proc(r:^Renderer,pending:^[dynamic]rhi.Accel) -> bool {
     if !r.hardware_rt {return true}
@@ -1101,6 +1167,7 @@ renderer_commit_geometry :: proc(r: ^Renderer, cmd: ^rhi.Command_List = nil, slo
 	if !dirty && !written && !geometry_uploads_left(s) {return true}
 	d := r.device
 	blas_inputs_release(r)
+	meshes_tested_update(r)
 	left := geometry_blas_inputs(r, cmd != nil)
 	held: [Mesh_Pool]int
 	for pool in Mesh_Pool {
@@ -1303,7 +1370,7 @@ scene_move :: proc(r: ^Renderer, descs: []u32, transforms: []Mat4, anchors: []Ve
 		inst.prev_world = inst.world
 		inst.world = world
 		inst.world_inv = rows_3x4(inverse)
-		inst.bounds_min = {bmin.x, bmin.y, bmin.z, inst.bounds_min.w}
+		inst.bounds_min = bmin
 		inst.bounds_max = {bmax.x, bmax.y, bmax.z, inst.bounds_max.w}
 		if !invertible && inst.meta.w & INSTANCE_FLAG_HIDDEN == 0 {
 			inst.meta.w |= INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_COLLAPSED
@@ -1338,7 +1405,7 @@ instance_uncollapse :: proc(s: ^Scene_State, index: u32) -> bool {
 		inst.meta.w &~= INSTANCE_FLAG_HIDDEN
 		s.hidden_count -= 1
 	}
-	s.hw_instances[index].mask_flags = tlas_mask_flags(ray_class(inst.meta.x, inst.meta.w), inst.meta.w & INSTANCE_FLAG_ALPHA_TESTED != 0)
+	s.hw_instances[index].mask_flags = instance_tlas_flags(s, inst^)
 	return true
 }
 
@@ -1462,12 +1529,9 @@ scene_tint :: proc(r: ^Renderer, descs: []u32, tints, emissions: []Vec3, values:
 		if values != nil {
 			given := values[at]
 			mesh := s.meshes[inst.meta.x & INSTANCE_MESH_MASK]
-			was: [7]bool
-			was[0], was[1], was[2], was[3], was[4], was[5], was[6] = instance_alpha(s, mesh, inst.meta.y, inst.slot_materials, inst.material_values)
+			was := instance_alpha(s, mesh, inst.meta.y, inst.slot_materials, inst.material_values)
 			changed ||= instance_material_values_give(r, inst, &given)
-			now: [7]bool
-			now[0], now[1], now[2], now[3], now[4], now[5], now[6] = instance_alpha(s, mesh, inst.meta.y, inst.slot_materials, inst.material_values)
-			classify ||= now != was
+			classify ||= instance_alpha(s, mesh, inst.meta.y, inst.slot_materials, inst.material_values) != was
 		}
 		if !changed {continue}
 		instance_changed_near(s, inst, glowed || instance_material_values_glow(s, inst.material_values))
@@ -1752,7 +1816,7 @@ instance_write :: proc(r:^Renderer,index:u32,desc:Instance_Desc,previous:Mat4,gi
 			world_inv = rows_3x4(inverse),
 			prev_world = rows_3x4(previous),
 			meta = {u32(desc.mesh) | cut, material, u32(desc.object_id), flags},
-			bounds_min = {bmin.x, bmin.y, bmin.z, 0},
+			bounds_min = bmin,
 			bounds_max = {bmax.x, bmax.y, bmax.z, 0},
 			tint = {desc.tint.x, desc.tint.y, desc.tint.z, 0},
 			emission = {desc.emission.x, desc.emission.y, desc.emission.z, 0},
@@ -1763,11 +1827,11 @@ instance_write :: proc(r:^Renderer,index:u32,desc:Instance_Desc,previous:Mat4,gi
 		// Without room for its values it shows its rows as they are (stats.problem says what is missing).
 		values_given := desc.material_values
 		if instance_material_values_give(r, &s.instances[index], &values_given) && instance_material_values_glow(s, s.instances[index].material_values) {instance_changed_near(s, &s.instances[index], true)}
-		tested, blended, glass, reflectance, layered, solid, glass_layered := instance_alpha(s, mesh, material, slot_materials, s.instances[index].material_values)
-		flags |= alpha_flags(tested, blended, glass)
-		s.instances[index].meta.w = flags
-		if reflectance && !hidden {append(&s.reflective, Reflective_Instance{index, layered})}
-		if blended && !hidden {append(&s.translucent, Translucent{instance = index, solid = solid, layered = glass_layered})}
+		a := instance_alpha(s, mesh, material, slot_materials, s.instances[index].material_values)
+		flags |= alpha_flags(a)
+		s.instances[index].meta.w, s.instances[index].tested = flags, a.tested
+		if a.reflectance && !hidden {append(&s.reflective, Reflective_Instance{index, a.layered})}
+		if a.blended && !hidden {append(&s.translucent, Translucent{instance = index, solid = a.solid, layered = a.glass_layered})}
 		head:=s.meshes[desc.mesh].first_instance
 		s.instance_next[index],s.instance_prev[index]=head,-1
 		if head>=0 {s.instance_prev[head]=i32(index)}
@@ -1776,12 +1840,12 @@ instance_write :: proc(r:^Renderer,index:u32,desc:Instance_Desc,previous:Mat4,gi
 		layers.count=min(layers.count,OVERLAY_CAPACITY)
 		for &layer in layers.entries[:layers.count] {
 			if int(layer.material)>=len(s.materials) || layer.material==0 {layer.enabled=false}
-			if layer.enabled && !hidden && !blended {s.overlay_count+=1}
+			if layer.enabled && !hidden && !a.blended {s.overlay_count+=1}
 		}
 		s.overlays[index]=layers
 		s.instance_keys[index]=key
 		s.tlas_items[index]={bmin, bmax}
-		s.hw_instances[index]=rhi.Tlas_Instance{transform = rows_3x4(desc.transform) if invertible else {}, custom_index = index, mask_flags = tlas_mask_flags(ray_class(cut, flags), tested)}
+		s.hw_instances[index]=rhi.Tlas_Instance{transform = rows_3x4(desc.transform) if invertible else {}, custom_index = index, mask_flags = instance_tlas_flags(s, s.instances[index])}
 		if !hidden {
 			s.bounds_min = linalg.min(s.bounds_min, bmin)
 			s.bounds_max = linalg.max(s.bounds_max, bmax)
@@ -1869,7 +1933,7 @@ scene_update :: proc(r:^Renderer,first:u32,instances:[]Instance_Desc,truncate:bo
         if !instance_shades_same(before,s.instances[index]) {occluder_moved(s,index,before,s.instances[index])}
         changed:=flags~s.instances[index].meta.w
         classification||=changed&(INSTANCE_FLAG_BLENDED|INSTANCE_FLAG_HIDDEN)!=0
-        ray_properties||=classification || changed&INSTANCE_FLAG_ALPHA_TESTED!=0 || (before.meta.x~s.instances[index].meta.x)&INSTANCE_UNSHADOWED!=0
+        ray_properties||=classification || changed&INSTANCE_FLAG_ALPHA_TESTED!=0 || before.tested!=s.instances[index].tested || (before.meta.x~s.instances[index].meta.x)&INSTANCE_UNSHADOWED!=0
         instance_touch(s, index)
     }
     if truncate && end<old {
