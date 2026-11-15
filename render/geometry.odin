@@ -24,6 +24,7 @@ Mesh_Ray_Record :: struct {
 	bvh_root, bvh_node_count:        u32, // none (no nodes) until rays are traced by software
 	triangle_offset, triangle_count: u32,
 	table_word, table_count:         u32, // a word a triangle: its cluster << 7 | its triangle; none until rays are traced by hardware
+	table_opaque:                    u32, // the triangles that lead the table, those of the slots its mesh does not test, as its BLAS inputs ordered them
 	blas:                            rhi.Accel,
 	input_vertex, input_vertices:    u32, // f32 positions in the vertex pool, while its BLAS waits to be built
 	input_index, input_indices:      u32, // u32 indices in the index pool
@@ -40,6 +41,7 @@ Mesh_Record :: struct {
 	level_word, level_count:         u32,
 	vertex_count, vertices_posed:    u32, // of its clusters, and of those a pose moves (level 0, or all)
 	slot_word, slot_count:           u32,
+	tested:                          u32, // the slots whose own rows rays ask, a bit each: the BLASes of its cuts hold their triangles apart (mesh_tested)
 	posed_word, previous_word:       u32, // GPU_NONE: as its clusters
 	part_word, rest_word:            u32, // posed with its part collapsed, and the rest an extension deforms from; GPU_NONE: none
 	bounds_word:                     u32, // of a pose: the box and the cone of each cluster it poses (Gpu_Mesh.bounds_word); GPU_NONE: none
@@ -411,7 +413,8 @@ cut_tree :: proc(g: asset.Mesh_Geometry, cut: ^Mesh_Ray_Cut, allocator: mem.Allo
 	for index, at in order {
 		primitive := cut.primitives[index]
 		a, b, c := primitive_positions(g, primitive)
-		cut.triangles[at] = {v0 = a, primitive = primitive, v1 = {b.x, b.y, b.z, 0}, v2 = {c.x, c.y, c.z, 0}}
+		slot := asset.cluster_slot(g.clusters[primitive >> PRIMITIVE_TRIANGLE_BITS])
+		cut.triangles[at] = {v0 = a, primitive = primitive, v1 = b, slot = u32(slot), v2 = {c.x, c.y, c.z, 0}}
 	}
 	return true
 }
@@ -528,6 +531,7 @@ mesh_register :: proc(r: ^Renderer, g: asset.Mesh_Geometry, given_words: []u32, 
 		append(&s.pages.streamed, u32(handle))
 	}
 	m.slab_axes = ahead.slab_axes if checked else mesh_slab_axes(g, m.bounds_min, m.bounds_max)
+	m.tested = mesh_tested(s, m^)
 	// Cuts made here go now: nothing keeps them for the upload.
 	deferred := later != nil && given == rays
 	if given.software {mesh_rays_publish(r, m, given^, deferred)}
@@ -719,7 +723,7 @@ gpu_mesh :: proc(m: Mesh_Record) -> Gpu_Mesh {
 		position_step = m.position_step, uv_step = m.uv_step, uv1_step = m.uv1_step, lod_reach = m.lod_reach,
 		bounds_min = {m.bounds_min.x, m.bounds_min.y, m.bounds_min.z, 0}, bounds_max = {m.bounds_max.x, m.bounds_max.y, m.bounds_max.z, 0},
 	}
-	for ray, k in m.rays {row.rays[k] = {ray.bvh_root, ray.triangle_offset, ray.table_word, ray.error}}
+	for ray, k in m.rays {row.rays[k] = {ray.bvh_root, ray.triangle_offset, ray.table_word, ray.table_opaque}}
 	// A mesh traces level 0 where it has no coarser cut.
 	for k in m.ray_count ..< asset.MESH_RAY_LEVELS {row.rays[k] = row.rays[0]}
 	return row
@@ -798,8 +802,9 @@ blas_inputs_cost :: proc(r: ^Renderer, m: ^Mesh_Record) -> (triangles: int) {
 }
 
 // The positions and indices of each cut of a mesh that lacks its native BLAS,
-// in the pools for the build: decoded from the clusters at rest, or the posed
-// vertices of a pose, whose indices stay while it is refit. The inputs of a
+// in the pools for the build, in the order table_partition gives its table:
+// decoded from the clusters at rest, or the posed vertices of a pose, whose
+// indices stay while it is refit. The inputs of a
 // mesh at rest go back to the pools at the next publication, once the GPU
 // took them. The clusters and the tables it reads are in the pools it grows:
 // it makes room for all it adds before it reads them, so that no append moves
@@ -821,6 +826,8 @@ blas_inputs_add :: proc(r: ^Renderer, m: ^Mesh_Record, later := false) -> (words
 	p := record_pooled(s, m^)
 	for &ray, k in m.rays[:m.ray_count] {
 		if ray.blas != 0 || ray.table_count == 0 || ray.input_indices > 0 || !ray_cut_wanted(r, m^, k) {continue}
+		ray.table_opaque = table_partition(p, m.tested, s.indices[ray.table_word:][:ray.table_count])
+		range_add(&s.pool_dirty[.Index], {ray.table_word, ray.table_count})
 		if later {
 			// What was reserved holds them: neither take fails.
 			if !posed {ray.input_vertex, _ = pool_take(&s.vertices, &s.pool_free[.Vertex], ray.table_count * 9);ray.input_vertices = ray.table_count * 9}
@@ -843,6 +850,23 @@ blas_inputs_add :: proc(r: ^Renderer, m: ^Mesh_Record, later := false) -> (words
 		ray.input_index = pool_store(&s.indices, &s.pool_free[.Index], &s.pool_dirty[.Index], u32(first))
 	}
 	return vertices + indices, true
+}
+
+// Puts first in the table of a cut the triangles of the slots tested leaves
+// out, the opaque geometry of its BLAS, and after them those of the slots it
+// has: how many lead.
+@(private)
+table_partition :: proc(p: Pooled_Mesh, tested: u32, table: []u32) -> u32 {
+	asks :: proc(p: Pooled_Mesh, tested, primitive: u32) -> bool {
+		return tested >> asset.cluster_slot(p.clusters[primitive >> PRIMITIVE_TRIANGLE_BITS]) & 1 != 0
+	}
+	lead, rest := 0, len(table)
+	for lead < rest {
+		if !asks(p, tested, table[lead]) {lead += 1;continue}
+		rest -= 1
+		table[lead], table[rest] = table[rest], table[lead]
+	}
+	return u32(lead)
 }
 
 // The corners of a primitive as the inputs of a native BLAS hold them: nine floats.
@@ -890,6 +914,7 @@ blas_desc :: proc(r: ^Renderer, m: Mesh_Record, ray: Mesh_Ray_Record) -> rhi.Bla
 		vertex_buffer = s.vertex_buffer, index_buffer = s.index_buffer, index_offset = u64(ray.input_index) * 4,
 		triangle_count = ray.input_indices / 3, name = "mesh blas", deformable = posed, compact = !posed,
 	}
+	desc.masked_count = desc.triangle_count - min(ray.table_opaque, desc.triangle_count)
 	if posed {
 		desc.vertex_offset, desc.vertex_stride, desc.vertex_count = u64(m.posed_word) * 4, size_of(Gpu_Posed_Vertex), m.vertices_posed
 	} else {
