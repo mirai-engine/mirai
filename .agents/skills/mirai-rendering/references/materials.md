@@ -161,6 +161,9 @@ previews studio use it.
   for the requested lobes, and from what the rays traced. The specular uses the DFG table with
   multiple scattering and the specular occlusion of Lagarde and de Rousiers, also over the traced
   reflection.
+- The ambient occlusion of a material darkens the diffuse lobe with the light that bounces
+  within its crevices (`occlusion_bounced`, the fit of Jimenez et al. 2016): a bright surface
+  keeps more of the light around it than the occlusion alone leaves.
 
 ## Textures
 

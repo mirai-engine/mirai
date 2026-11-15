@@ -740,6 +740,42 @@ material_mirror_reads_the_sky_sharp_from_the_probes_and_not_under_a_roof :: proc
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 
+// Beyond the probe volume the light around a surface is the sky's, as much of
+// it as the surface sees: under an open sky all of it, and under a roof, which
+// no probe reaches there either, the little that comes in past its edges.
+@(test)
+beyond_the_probe_volume_a_surface_takes_the_sky_it_sees :: proc(t: ^testing.T) {
+	f: Fixture
+	settings := material_settings()
+	settings.gi_enabled = true
+	settings.reflections = .Off
+	settings.probe_grid, settings.probe_cascades, settings.probe_spacing = 8, 1, 1
+	if !fixture_init(t, &f, 64, 64, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	white := DEFAULT_MATERIAL
+	white.base_color = {0.8, 0.8, 0.8}
+	white.roughness = 1
+	materials_set(r, {white})
+	quad := ground_quad(r)
+	floor := Instance_Desc{object_id = 1, mesh = quad, transform = scale_matrix(60), material = 1, tint = {1, 1, 1}}
+	environment := Environment{sky = {1, 1, 1}}
+	// The eye, and the volume around it, 10 m over the floor it looks at.
+	high := OVERHEAD
+	high.position = {0, 10, 0}
+	scene_given(r, {floor}, nil, {}, environment)
+	frames(t, &f, high, 48)
+	open := screen_color(t, &f, high, {0, 0, 0})
+	testing.expectf(t, open.r > 60, "under an open sky the floor takes its light: %v", open)
+	over := scale_matrix(60)
+	over[1, 1], over[2, 2], over[1, 3] = -60, -60, 12
+	scene_given(r, {floor, {object_id = 2, mesh = quad, transform = over, material = 1, tint = {1, 1, 1}}}, nil, {}, environment)
+	frames(t, &f, high, 48)
+	roofed := screen_color(t, &f, high, {0, 0, 0})
+	testing.expectf(t, roofed.r < open.r * 0.5, "under a roof the floor takes the sky it sees: %v against %v", roofed, open)
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
+}
+
 // A ray that finds a surface with a program shows what the program gives
 // there (points.odin), not the values of its row: no stage of rays runs it.
 // With the program alone in the scene its stage takes the whole window of

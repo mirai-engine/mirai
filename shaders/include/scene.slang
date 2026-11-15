@@ -1550,11 +1550,28 @@ float probe_volume_read(float3 position, float3 normal, float3 view_dir, float v
     return held;
 }
 
+// How much of the light around a point is the sky's alone: 0 inside the
+// cascades and without a volume, 1 beyond them, and between over the last
+// cells of the last one, by the centre of the cascades as one blends into the
+// next.
+float probe_volume_beyond(float3 position) {
+    uint cascades = probe_cascades();
+    if (cascades == 0u) return 0.0;
+    float3 counts = float3(frame.volume_counts.xyz);
+    float spacing = probe_spacing(cascades - 1u);
+    float3 rel = (position - frame.volume_cascades[cascades - 1u].xyz) / spacing;
+    float3 inside = min(rel, counts - 1.0 - rel);
+    if (min(inside.x, min(inside.y, inside.z)) < 0.5) return 1.0;
+    float3 from_center = (counts - 1.0) * 0.5 - abs(position - frame.volume_center.xyz) / spacing;
+    float band = max(0.5, (counts.y - 1.0) * 0.5 - 4.5);
+    return saturate((1.5 + band - min(from_center.x, min(from_center.y, from_center.z))) / band);
+}
+
 // Irradiance (in Lambert-normalized radiance units) arriving around each
 // direction a surface point wants, from the probe volume, or zero when no
 // cache exists (callers add their own ambient floor) or no probe holds light
-// yet; beyond the cascades, the sky's. w is the share of it that comes from
-// the sky. The normal places the lookup and weights the probes; the
+// yet; beyond the cascades, the sky's, which the last one blends into. w is
+// the share of it that comes from the sky. The normal places the lookup and weights the probes; the
 // directions are what the irradiance is read for.
 // `view_dir` points towards the eye or the origin of the ray that found the
 // point, `viewer_distance` away; below 0, the eye of the view.
@@ -1562,10 +1579,11 @@ float probe_volume_read(float3 position, float3 normal, float3 view_dir, float v
 // place beyond the gate, so the light of a point at a gate is the same on both
 // of its sides.
 void probe_volume_light(float3 position, float3 normal, float3 view_dir, float viewer_distance, Probe_Directions directions, bool surface, out float4 light[PROBE_READS]) {
-    if (probe_volume_read(position, normal, view_dir, viewer_distance, directions, surface, light) >= 0.0) return;
+    float beyond = probe_volume_read(position, normal, view_dir, viewer_distance, directions, surface, light) >= 0.0 ? probe_volume_beyond(position) : 1.0;
+    if (beyond <= 0.0) return;
     [ForceUnroll]
     for (int d = 0; d < PROBE_READS; d++) {
-        if (probe_wants(directions, d)) light[d] = float4(sky_irradiance(directions.at[d]), 1.0);
+        if (probe_wants(directions, d)) light[d] = lerp(light[d], float4(sky_irradiance(directions.at[d]), 1.0), beyond);
     }
 }
 

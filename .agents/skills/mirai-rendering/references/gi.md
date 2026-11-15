@@ -126,6 +126,10 @@ other and do not see the corner of a table or the floor under a wardrobe.
   side.
 - The irradiance of the volume is multiplied by it: the indirect shadow is sharp at contact
   and opens with distance, which is what the volume gives far away.
+- **Beyond the volume.** The rays of a point beyond the cascades go as far as rays go and each
+  one that meets something counts whole: they leave of the sky's light what the point sees of
+  the sky. A cave past the volume does not take the light of an open sky; what bounces there is
+  not gathered.
 - **Small things.** An instance smaller than `SMALL_INSTANCE_REACH` is of the ray class
   `RAY_SMALL`: contact occlusion, reflections and direct light see it, and the volume rays
   (`MIRAI_TRACE_NO_SMALL`) do not. What moves at that size does not change the volume light: its
@@ -182,8 +186,10 @@ other and do not see the corner of a table or the floor under a wardrobe.
   (`volume_center`), which moves little by little, and not from the cascade, which jumps one cell
   at a time: measured from the cascade, the light of a bench changed abruptly when advancing.
   Every view (nested, texture, split screen) measures from that center, not from its eye. Where
-  the fine one stores nothing, the next one; beyond, the sky. With a small `probe_grid` the floor
-  already reads a cascade whose probes see through thin walls.
+  the fine one stores nothing, the next one. The last one blends into the light of the sky the
+  same way (`probe_volume_beyond`), and beyond the cascades the light around a point is the
+  sky's, as much of it as the point sees ([contact occlusion](#contact-occlusion)). With a small
+  `probe_grid` the floor already reads a cascade whose probes see through thin walls.
 - `sample_probes_around` gives the light around several directions of a point (normal, specular
   lobe and coat) with a single choice of probes and weights; `sample_probes` reads one.
 - **Specular from the probes.** Each texel of the irradiance atlas also keeps the share of its
