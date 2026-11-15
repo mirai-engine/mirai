@@ -37,7 +37,8 @@ Fog_Volume :: struct {
     color:[3]f32 `mirai:"color"`,                // of what it stops, the share it scatters; it absorbs the rest
     glow:[3]f32 `mirai:"min=0,unit=nit"`,        // the light it gives off on its own: where it is thick it shows this luminance, besides the light it scatters
     anisotropy:f32 `mirai:"min=-0.95,max=0.95"`, // above 0 it scatters forward, and a shaft glows more seen towards its light; below 0, back
-    falloff:f32 `mirai:"min=0,unit=1/m"`,        // it thins with the height over its base, the bottom of its Volume or its entity: by e every 1/falloff metres
+    falloff:f32 `mirai:"min=0,unit=1/m"`,        // it thins with the height over its base: by e every 1/falloff metres
+    base:f32 `mirai:"unit=m"`,                   // its base, where it has its density, over the bottom of its Volume or its entity: under it, it holds that density
     variable:bool,                               // its density varies from place to place, in wisps and banks that drift and change by themselves; density is their mean
     wisp_size:f32 `mirai:"min=0.1,unit=m"`,      // about how big its largest wisps are
     drift:[3]f32 `mirai:"unit=m/s"`,             // how fast its wisps move, and where to
@@ -223,8 +224,9 @@ volume_gpu :: proc(state:^Fog_Gpu,fog:Fog_Volume,place:volume.Volume,at:mm.Trans
         params={fog.variable?1/max(fog.wisp_size,0.1):0,clamp(fog.anisotropy,-0.95,0.95),max(fog.falloff,0),at.position.y},
         glow={max(fog.glow.r,0),max(fog.glow.g,0),max(fog.glow.b,0),0},
     }
-    // The base is the lowest point of a box, a sphere or an outline.
+    // The base is over the lowest point of a box, a sphere or an outline.
     if place.shape==.Box || place.shape==.Sphere || place.shape==.Outline {entry.params.w=volume.bounds(place,at,outline).min.y}
+    entry.params.w+=fog.base
     state.volumes[state.count]=entry
     state.drift[state.count]=fog.drift
     state.count+=1

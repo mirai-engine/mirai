@@ -227,8 +227,9 @@ haze of the whole world is the air of the sky, not a fog: one without a bounded 
 - `anisotropy`: greater than 0 scatters forward, and a shaft shines more looked at toward its
   light; less than 0, backward (Henyey-Greenstein, up to ±0.95).
 - `falloff` (per meter): it thins with the height above its base (the lowest point of its
-  `Volume`, or the entity's height without limits), by e every `1/falloff` meters; below it does
-  not grow.
+  `Volume`, or the entity's height without limits, raised by `base` meters), by e every
+  `1/falloff` meters; below it does not grow. A fog whose density is given at some height, as
+  Unreal's height fog at its actor, has its base there and its `Volume` reaching below it.
 - `variable`: its density varies from place to place in wisps and banks of some `wisp_size` meters
   that move by themselves, without depending on the engine wind. They are layers of value noise
   (`WISP_OCTAVES`), each smaller than the previous, that travel with `drift` by a part of their own
