@@ -476,8 +476,8 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 	}
 	for light, i in s.lights {
 		if orthographic {break}
-		// A light turned off or with no place casts no shadow and takes no room of the atlas.
-		if !light_placed(light) || !(light.color_intensity.w > 0) || !(max(light.color_intensity.x, light.color_intensity.y, light.color_intensity.z) > 0) {continue}
+		// A light turned off, with no place or without shadows casts none and takes no room of the atlas.
+		if s.light_shadowless[i] || !light_placed(light) || !(light.color_intensity.w > 0) || !(max(light.color_intensity.x, light.color_intensity.y, light.color_intensity.z) > 0) {continue}
 		share := shadow_light_share(light, eye, forward, tan_y, aspect, p.frame.frustum)
 		keep := SHADOW_RASTER_KEEP if was(b, i) else SHADOW_RASTER_SHARE
 		if share < keep {continue}
@@ -492,7 +492,7 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 	wants: [SHADOW_MAPS_MAX]Shadow_Want
 	count := 0
 	sun := s.sun
-	if sun.enabled && r.settings.sun_shadows && !orthographic {
+	if sun.enabled && r.settings.sun_shadows && !sun.shadowless && !orthographic {
 		shadow_sun_cascades(&wants, &count, sun.direction, eye, forward, right, up, tan_x, tan_y, near, camera.far, s.bounds_min, s.bounds_max, s.has_bounds, nil if fresh else b.held[:b.held_count])
 	}
 	suns := count

@@ -60,7 +60,7 @@ editor's sun, shining toward its -Z; a `View_Volume` without a `Volume` is the w
   a window shows it, and light with `Point_Light`, `Spot_Light` and `Rect_Light` (`range` in
   metres; spot and rect lights shine toward their -Z). Emission of materials is in nits. A cave
   lit mostly by its bounces raises the `indirect` of its lights, or all of it with a
-  `Bounce_Light`.
+  `Bounce_Light`. A light inside its torch turns off `shadows`: nothing stops it, at no cost.
 - Zones: a `View_Volume` or `Fog_Volume` with a `volume.box(half)` or `volume.sphere(radius)`
   applies only inside it, with its `zone.blend` metres of edge and its `zone.priority`; without a
   `Volume` it is the world's. A `Volume` with `extents` and no `shape` is the

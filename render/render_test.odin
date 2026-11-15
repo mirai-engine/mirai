@@ -846,6 +846,56 @@ render_a_light_with_no_place_takes_no_shadow_map :: proc(t: ^testing.T) {
 	expect_clean(t, f.device)
 }
 
+// A light without shadows lights through the box that holds it, directly and
+// by what the room around bounces, and a sun without them through the box in
+// its way; neither takes a shadow map. With shadows the box keeps the light.
+@(test)
+render_a_light_without_shadows_lights_through_what_holds_it :: proc(t: ^testing.T) {
+	f: Cube_Fixture
+	if !cube_fixture_init(t, &f, 96, 64, test_settings()) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	// A floor and the box, then the ceiling and walls of a room around them. The box is
+	// larger than SMALL_INSTANCE_REACH: the rays of the probes see it.
+	instances := []Instance_Desc{
+		{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {12, 0.2, 12}), tint = {1, 1, 1}},
+		{object_id = 2, mesh = f.cube, transform = trs({0, 1, 0}, {1.6, 1.6, 1.6}), tint = {0.5, 0.5, 0.5}},
+		{object_id = 3, mesh = f.cube, transform = trs({0, 3.1, 0}, {6, 0.2, 6}), tint = {1, 1, 1}},
+		{object_id = 4, mesh = f.cube, transform = trs({-3.1, 1.5, 0}, {0.2, 3.4, 6}), tint = {1, 1, 1}},
+		{object_id = 5, mesh = f.cube, transform = trs({3.1, 1.5, 0}, {0.2, 3.4, 6}), tint = {1, 1, 1}},
+		{object_id = 6, mesh = f.cube, transform = trs({0, 1.5, -3.1}, {6, 3.4, 0.2}), tint = {1, 1, 1}},
+		{object_id = 7, mesh = f.cube, transform = trs({0, 1.5, 3.1}, {6, 3.4, 0.2}), tint = {1, 1, 1}},
+	}
+	lamp := Light_Desc{position = {0, 1, 0}, color = {1, 1, 1}, intensity = 20 * math.PI, range = 10, indirect = 1, scattering = 1}
+	sun := Sun_Desc{direction = {1, 1, 0}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true, indirect = 1, scattering = 1}
+	inside := Camera{position = {0, 2.5, 2.5}, forward = {0, -2.5, -2.5}, up = {0, 1, 0}, fov_y = 70, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	above := Camera{position = {0, 6, 0.01}, forward = {0, -6, -0.01}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	Case :: struct {sun: bool, instances: []Instance_Desc, camera: Camera, at: Vec3}
+	// Beside the box in the room, and in the shadow the box casts away from the sun.
+	for c in ([]Case{{false, instances, inside, {2.4, 0.001, -2.2}}, {true, instances[:2], above, {-1.2, 0.001, 0}}}) {
+		light: [2][2]f32 // with shadows and without: the direct light and the indirect one there
+		maps: [2]int
+		for shadowless, i in ([2]bool{false, true}) {
+			lamp.shadowless, sun.shadowless = shadowless, shadowless
+			testing.expect(t, scene_given(r, c.instances, nil if c.sun else []Light_Desc{lamp}, sun if c.sun else {}, {}), r.error)
+			for mode, k in ([2]Debug_View{.Direct, .Indirect}) {
+				for _ in 0 ..< 16 {testing.expect(t, renderer_frame(r, {camera = c.camera, inspection = {mode = mode}}), r.error)}
+				rhi.device_wait_idle(f.device)
+				pixels, w, _, ok := golden_capture(r)
+				if !testing.expect(t, ok, r.error) {return}
+				light[i][k] = pixel(pixels, w, project(r, c.camera, c.at))[0]
+				delete(pixels)
+			}
+			maps[i] = r.targets.shadow_raster.held_count
+		}
+		testing.expectf(t, light[0][0] < 4 && light[1][0] > 30, "sun %v: the direct light there, with shadows and without: %v", c.sun, light)
+		// The sun lights the floor around both ways: what it bounces is near alike.
+		if !c.sun {testing.expectf(t, light[0][1] < 4 && light[1][1] > 20, "the indirect light of the lamp there, with shadows and without: %v", light)}
+		testing.expectf(t, maps[0] > 0 && maps[1] == 0, "sun %v: the maps with shadows and without: %v", c.sun, maps)
+	}
+	expect_clean(t, f.device)
+}
+
 @(test)
 render_resize_and_settings_changes_stay_valid :: proc(t: ^testing.T) {
 	f: Cube_Fixture

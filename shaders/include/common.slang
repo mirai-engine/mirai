@@ -79,7 +79,7 @@ struct Frame_Data {
     float exposure;         // the scene-linear value of one render unit, as a frame before exposed the view
     uint own;               // bits 0-7: 1 + the local slot whose body (INSTANCE_FLAG_OWNED) is the view's own, 0: none; bits 16-31: how much of it the view fades out, unorm
     uint flags;             // FRAME_FLAG_*
-    uint4 shadowless_lights; // x the root of the tree of the local lights that cast no shadows (render/light_tree.odin), 0: none; y the node after it; zw 0
+    uint4 shadowless_lights; // x the root of the tree of the local lights a pass writes that cast no shadows (render/light_tree.odin), 0: none; y the node after it; zw the same of those of the scene
     float4 jitter;            // xy current TAA jitter in render pixels, zw previous
     float4 texturing;         // x = mip bias of rasterized material textures, y = roughness below which reflections are traced (0: none are), z = first box of a glass instance listed after the TLAS nodes, w = how many
     float4 time; // current, previous simulation time in seconds

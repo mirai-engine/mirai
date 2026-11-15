@@ -23,7 +23,7 @@ float media_phase(float cosine, float g) {
 
 // One local light, picked for what it gives the point, over the chance of
 // picking it: over frames, what all of them give, with its shadow ray if it
-// casts shadows. The tree of the lights without shadows takes its share of
+// casts shadows. Each tree of the lights without shadows takes its share of
 // the picks by what its root gives. changed: also whether the light moved or
 // its ray crossed what casts shadows and changed since the frame before
 // (occluder_changed of trace.slang).
@@ -31,19 +31,29 @@ float3 media_local_light(float3 position, float3 eye_ray, float g, float pick, i
     if (frame.light_nodes == 0u) return float3(0.0);
     uint root = 0u;
     float share = 1.0;
-    uint shadowless = frame.shadowless_lights.x;
-    if (shadowless != 0u) {
-        float cast = node_weight(light_nodes[0], position, float3(0.0));
-        float bare = node_weight(light_nodes[shadowless], position, float3(0.0));
-        float chance = cast + bare > 0.0 ? cast / (cast + bare) : 0.5;
-        if (pick < chance) {
-            pick = pick / max(chance, 1e-6);
-            share = chance;
-        } else {
-            pick = saturate((pick - chance) / max(1.0 - chance, 1e-6));
-            share = 1.0 - chance;
-            root = shadowless;
+    uint roots[3] = { 0u, frame.shadowless_lights.x, frame.shadowless_lights.z };
+    if (roots[1] != 0u || roots[2] != 0u) {
+        float weights[3];
+        float sum = 0.0;
+        uint trees = 0u;
+        for (uint k = 0u; k < 3u; k++) {
+            bool held = k == 0u || roots[k] != 0u;
+            weights[k] = held ? node_weight(light_nodes[roots[k]], position, float3(0.0)) : -1.0;
+            sum += max(weights[k], 0.0);
+            trees += held ? 1u : 0u;
         }
+        // Where none gives anything, each tree as likely.
+        float below = 0.0, start = 0.0;
+        for (uint k = 0u; k < 3u; k++) {
+            float chance = weights[k] < 0.0 ? 0.0 : sum > 0.0 ? weights[k] / sum : 1.0 / float(trees);
+            if (!(chance > 0.0)) continue;
+            root = roots[k];
+            share = chance;
+            start = below;
+            below += chance;
+            if (pick < below) break;
+        }
+        pick = saturate((pick - start) / max(share, 1e-6));
     }
     float chance;
     Light_Node leaf = light_nodes[node_light(root, pick, position, float3(0.0), chance)];

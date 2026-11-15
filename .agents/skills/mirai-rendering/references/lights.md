@@ -21,6 +21,12 @@
   fog.
 - **Lamps.** Shadow rays stop before the box of their light's sphere: a light inside its lamp
   casts no shadow with it.
+- **Without shadows** (`Light_Desc.shadowless`, the `shadows` of its component off): nothing
+  stops its light, and it costs no shadow work: no map, no cell of the grid, no node of a cut, no
+  ray. It goes to the tree of the scene's lights without shadows
+  ([light tree](#light-tree)), which every pass adds as it adds those a pass writes
+  ([GPU lights](#gpu-lights)): the direct light, the probes and the media take it alike. A sun
+  without them (`Sun_Desc.shadowless`) is `SUN_UNSHADOWED`, as with `Settings.sun_shadows` off.
 - For the rays that gather light (probes and the reference), an emissive instance that contains
   the center of a light and whose box is not much larger than its sphere is that light
   (`hit_on_light`): the hit brings nothing. Its emission would count the light twice, and also
@@ -57,7 +63,11 @@
   the group: without the cone, a group of downlights that the cut could not open lit the ceiling.
 - A group that contains a spot opens before the others; when the budget is not enough, it
   represents its spots with their cone.
-- **Changes.** While the lights keep their number and each its class, `scene_light_update` refits
+- **Without shadows.** Those lights form a tree of their own after that of the others
+  (`light_tree_shadowless`), which no traversal from node 0 meets; while every light casts none,
+  the root of those that do is a group of none (`LIGHT_NODE_NONE`), which reaches nothing.
+- **Changes.** While the lights keep their number and each its class (with shadows or without
+  is one), `scene_light_update` refits
   the leaf that changed and the groups above it (`light_tree_refit`), past `LIGHT_REFITS_MAX` in a
   frame the whole tree once, and only the changed ranges go; `scene_lights_settle` rebuilds the
   tree once a frame when it inflates beyond `LIGHT_TREE_REFIT_SLACK`. Another number or another
@@ -82,10 +92,11 @@ the grid of the lights holds what of the scene they light.
   each part, its empty leaf: a group written over unwritten children leads to a leaf. A CPU refit
   rebuilds the root with the scene.
 - The lights without shadows do not enter the cut of a point or trace rays: the frame constants
-  give the root of their tree (`shadowless_lights`) and `shadowless_lighting` adds what they give,
+  give the root of their tree and that of the scene's (`shadowless_lights`, `.xy` and `.zw`) and
+  `shadowless_lighting` adds what both give,
   like the [unshadowed light](#unshadowed-light-of-a-pixel) of the others. The direct filter adds
   it to the pixel as it is, without a shadow; `direct_lighting` (hits, probes, glass, overlays and
-  the points that trace their own rays), without rays; the media choose between the two trees by
+  the points that trace their own rays), without rays; the media choose among the trees by
   what each root gives and do not trace the ray of a light without shadow, nor does the
   reference.
 - `pass_lights` in `Simulate` links lights and nodes to write them and says where each part is
@@ -271,8 +282,9 @@ Tests: the shadow ones of `render/render_test.odin` (`render_sun_shadow_is_ray_t
 `render_a_wider_light_casts_a_softer_shadow`,
 `render_an_edge_takes_no_light_from_the_face_beyond_it` and, for the cache of the maps,
 `render_moved_cascades_give_what_whole_ones_give` and
-`render_shadow_maps_follow_what_moves_in_its_frame`) and, for the grid and the groups of
-lights, `render_many_lights_match_their_reference`,
+`render_shadow_maps_follow_what_moves_in_its_frame`, and for the lights and the sun without
+shadows `render_a_light_without_shadows_lights_through_what_holds_it`) and, for the grid and
+the groups of lights, `render_many_lights_match_their_reference`,
 `render_lights_that_few_reach_at_a_time_are_each_lit` and
 `render_groups_of_lights_give_what_their_lights_give`.
 

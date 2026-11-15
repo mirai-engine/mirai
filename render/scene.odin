@@ -104,6 +104,7 @@ Light_Desc :: struct {
 	material:  Material_Handle, // a rectangle: the material whose emission colors it across, its texture mapped to it as to a unit quad (0: its color alone)
 	indirect:  f32,  // what of its light the probes gather, and so bounces: 1 all of it, 0 none
 	scattering: f32, // what of its light media scatter (fog, the volumes of particles): 1 all of it
+	shadowless: bool, // it casts no shadows: its light goes through everything, with no shadow map or ray
 }
 
 Sun_Desc :: struct {
@@ -114,6 +115,7 @@ Sun_Desc :: struct {
 	disc:      bool, // it is seen in the sky
 	indirect:  f32,  // what of its light the probes gather, as Light_Desc.indirect
 	scattering: f32, // what of its light media scatter, as Light_Desc.scattering
+	shadowless: bool, // it casts no shadows, as Light_Desc.shadowless
 }
 
 Environment :: struct {
@@ -361,6 +363,7 @@ Scene_State :: struct {
 	light_tree:           [dynamic]Gpu_Light_Node, // the lights by groups of neighbors (light_tree.odin)
 	light_keys:           [dynamic]Light_Key,
 	light_leaves:         [dynamic]u32, // of each light, its leaf in light_tree, or LIGHT_TREE_NONE
+	light_shadowless:     [dynamic]bool, // of each light, whether it casts no shadows (Light_Desc.shadowless)
 	light_tree_cost:      f64,          // of the tree now (light_tree_cost)
 	light_tree_built:     f64,          // of the tree when it was built
 	light_capacity:       int,
@@ -451,6 +454,7 @@ scene_init :: proc(r: ^Renderer) -> bool {
 	s.light_tree = make([dynamic]Gpu_Light_Node, a)
 	s.light_keys = make([dynamic]Light_Key, a)
 	s.light_leaves = make([dynamic]u32, a)
+	s.light_shadowless = make([dynamic]bool, a)
 	// A refit adds a path of the tree before the ranges are counted.
 	s.light_ranges, errors[1] = make([dynamic]Pool_Range, 0, LIGHT_RANGES_MAX + LIGHT_TREE_DEPTH + 1, a)
 	s.light_node_ranges, errors[2] = make([dynamic]Pool_Range, 0, LIGHT_RANGES_MAX + LIGHT_TREE_DEPTH + 1, a)
@@ -1995,8 +1999,9 @@ LIGHT_RANGES_MAX :: 64
 // other is replaced. A light keeps its index until it is removed, when the
 // last takes its place (scene_light_remove); while the lights keep their
 // number and each keeps its kind (spot or rectangle, or not; with a place or
-// without one) its path of the tree is refit and it goes to the GPU alone,
-// and scene_lights_settle builds the tree again once a frame otherwise. False
+// without one; with shadows or without) its path of the tree is refit and it
+// goes to the GPU alone, and scene_lights_settle builds the tree again once a
+// frame otherwise. False
 // for an index past the last, a light that gives none (light_gives) or
 // without memory for it: nothing changes.
 scene_light_update :: proc(r: ^Renderer, index: u32, desc: Light_Desc) -> bool {
@@ -2012,14 +2017,16 @@ scene_light_update :: proc(r: ^Renderer, index: u32, desc: Light_Desc) -> bool {
 	light := gpu_light(l, s.lights_scale)
 	if added {
 		append(&s.lights, light)
+		append(&s.light_shadowless, desc.shadowless)
 		s.lights_stale = true
 	} else {
 		before := s.lights[index]
 		Bits :: [size_of(Gpu_Light) / 4]u32
-		if transmute(Bits)before == transmute(Bits)light {return true}
+		if transmute(Bits)before == transmute(Bits)light && s.light_shadowless[index] == desc.shadowless {return true}
 		scene_changed_near(s, before.position_range.xyz, before.position_range.w)
 		s.lights[index] = light
-		s.lights_stale ||= light_directed(before) != light_directed(light) || light_placed(before) != light_placed(light)
+		s.lights_stale ||= light_directed(before) != light_directed(light) || light_placed(before) != light_placed(light) || s.light_shadowless[index] != desc.shadowless
+		s.light_shadowless[index] = desc.shadowless
 		if !s.lights_stale {
 			if !light_placed_same(before, light) {occluder_light_moved(s, index)}
 			// Past LIGHT_REFITS_MAX in a frame the whole tree is refit once (scene_lights_settle).
@@ -2046,6 +2053,7 @@ scene_light_remove :: proc(r: ^Renderer, index: u32) {
 	gone := s.lights[index]
 	scene_changed_near(s, gone.position_range.xyz, gone.position_range.w)
 	unordered_remove(&s.lights, int(index))
+	unordered_remove(&s.light_shadowless, int(index))
 	s.lights_stale, s.lights_changed = true, true
 }
 
@@ -2091,13 +2099,13 @@ scene_lights_settle :: proc(r: ^Renderer) -> bool {
 // run out of memory. False without memory.
 @(private = "file")
 lights_reserve :: proc(s: ^Scene_State, count: int) -> bool {
-	return reserve(&s.lights, count) == nil && light_tree_reserve(&s.light_tree, &s.light_keys, &s.light_leaves, count, s.light_region)
+	return reserve(&s.lights, count) == nil && reserve(&s.light_shadowless, count) == nil && light_tree_reserve(&s.light_tree, &s.light_keys, &s.light_leaves, count, s.light_region)
 }
 
 // Builds the tree of the lights again. False without memory: it stays as it was.
 @(private = "file")
 light_tree_rebuild :: proc(s: ^Scene_State) -> bool {
-	built := light_tree_build(&s.light_tree, &s.light_keys, &s.light_leaves, s.lights[:], s.light_region) or_return
+	built := light_tree_build(&s.light_tree, &s.light_keys, &s.light_leaves, s.lights[:], s.light_region, s.light_shadowless[:]) or_return
 	s.light_tree_built, s.light_tree_cost = built, built
 	return true
 }
@@ -2203,7 +2211,7 @@ scene_set_environment :: proc(r:^Renderer,sun:Sun_Desc,environment:Environment,r
     if r.scene.sun!=normalized || r.scene.environment!=environment {scene_changed(&r.scene)}
     // A sun that turns by less than its radius moves its shadows by less than their penumbra.
     before:=r.scene.sun
-    if normalized.enabled && (!before.enabled || linalg.dot(before.direction,normalized.direction)<math.cos(max(r.settings.sun_radius,SUN_RADIUS))) {r.scene.occluders.sun=true}
+    if normalized.enabled && (!before.enabled || before.shadowless!=normalized.shadowless || linalg.dot(before.direction,normalized.direction)<math.cos(max(r.settings.sun_radius,SUN_RADIUS))) {r.scene.occluders.sun=true}
     r.scene.sun=normalized;r.scene.environment=environment
     if reset_history {
         renderer_reset_history(r)
@@ -2567,6 +2575,7 @@ scene_destroy :: proc(r: ^Renderer) {
 	delete(s.light_tree)
 	delete(s.light_keys)
 	delete(s.light_leaves)
+	delete(s.light_shadowless)
 	delete(s.light_ranges)
 	delete(s.light_node_ranges)
 	s^ = {}
