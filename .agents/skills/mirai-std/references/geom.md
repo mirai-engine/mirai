@@ -217,35 +217,11 @@ published mesh without levels and the cluster DAG use it.
 - **Submeshes.** A cluster never crosses submeshes: each range of `Cluster_Source.ranges` is
   clustered separately, a vertex of two submeshes is `Invalid_Mesh`, and the outlines between
   submeshes protect themselves.
-- `cluster_levels_build` puts discrete levels (skinned meshes) in the same format: level k is
-  group k, its clusters share the sphere of level 0 with the error of level k as `own` (0 for
-  level 0, which a view however near draws) and that of k+1 as `parent`, and the same cut chooses
-  a whole level.
+- `cluster_levels_build` puts discrete levels (skinned meshes, foliage) in the same format: level k
+  is group k, its clusters share the sphere of level 0 with the error of level k as `own` and that
+  of k+1 as `parent`, and the same cut chooses a whole level.
 - Without `optimizeMeshlet` or the *sloppy* fallback of `clusterlod`: crossing the seams keeps the
   topology, and only locked places stop a group.
-
-## Islands (`cluster_islands.odin`)
-
-- Aggregate detail (leaves, cards) is pruned instead of simplified (Cook et al. 2007):
-  `Cluster_Source.islands`, each with its outlines (rungs, the finest first, each with its error)
-  in `island_indices`, a class and a fixed order. They make their own levels in the DAG beside the
-  rest of the mesh, which shares no place with them, and their vertices past level 0 are
-  `Cluster_Dag.made` (copies of a source vertex, moved).
-- `islands_reduce` is the one rule, for a group of the DAG and for a whole level of a skinned mesh:
-  each class first steps its islands to coarser outlines, then is halved keeping the first of its
-  order and growing the survivors about their centers to the area of level 0 they stand for, up to
-  `ISLAND_GROW_MAX`; it goes as far as the error given allows, then by the least more that brings
-  it to its target of triangles. The error of an island is that of its outline times its growth
-  and, once pruned, at least the largest radius of its class grown over `ISLAND_PIXELS`.
-- **Invariants.** An island is never split between clusters (clusters and groups are cut by
-  halving the box of their centers); a group keeps the rules of the cut contract (error the largest
-  of its clusters' and its own, sphere around theirs, a root where it cannot drop to
-  `CLUSTER_SIMPLIFY_STUCK`); every group draws in what it was reduced into the area it drew; a
-  group of one cluster is reduced too, so a far plant keeps shedding leaves.
-- **Transition** (Cook et al. 2007, section 3.5). Every vertex of an island in a cluster is made
-  with where its island goes in the group: the scale to the area it draws in the next level, or 0
-  and its rank among the islands of its class the group drops (the last go first), so the renderer
-  can move it continuously from the cluster to its group.
 
 ## Approximate convex decomposition (`decompose.odin`)
 

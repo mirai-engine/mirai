@@ -268,11 +268,6 @@ MESH_FLAG_COLORS :: abi.MESH_FLAG_COLORS
 // Its pages out of the root come and go in slots (pages.odin): the cull
 // draws what is in the pools and asks for what it lacks.
 MESH_FLAG_STREAMED :: abi.MESH_FLAG_STREAMED
-// Its vertices carry where their islands go as the cut moves between a
-// cluster and its group (asset.Island_Vertex, a stream of two words a vertex
-// after the surfaces): the raster grows and shrinks them so a level of
-// foliage changes without a pop.
-MESH_FLAG_ISLANDS :: abi.MESH_FLAG_ISLANDS
 
 // What an instance gives over the rows of its materials, which the shaders
 // read where they read one of those rows at a point of it. It costs the
@@ -324,7 +319,6 @@ Gpu_Material :: struct {
 	emission_mode:        u32, // asset.Emission_Mode
 	program_id:           u32,
 	textures:             [asset.Material_Map_Kind]u32,
-	two_sided:            u32, // 1: seen from behind too, its normal turned to the viewer; 0: its back faces are not drawn
 	row:                  u32, // shaders write the index they fetched it by; the CPU leaves it zero
 }
 
@@ -412,35 +406,18 @@ Gpu_Draw :: struct {
 }
 #assert(size_of(Gpu_Draw) == 16)
 
-// What the cull passes of a view count, in words of the buffer of its state
-// (CULL_* of render/abi). The draws of each phase and raster bin go first: an
-// instance of a draw is a visible cluster, and those of phase 1 follow those
-// of phase 0 in the visible list.
+// What the cull passes of a view count, in words of the buffer of its state.
+// The draws of its two phases go first: an instance of a draw is a visible
+// cluster, and those of phase 1 follow those of phase 0 in the visible list.
 Gpu_Cull_State :: struct {
-	draws:              [2][RASTER_BINS]Gpu_Draw,
-	chunk_dispatch:     [3]u32, // groups of the cluster pass over the chunks: x, y, 1
-	chunk_count:        u32,
+	draws:            [2]Gpu_Draw,
+	chunk_dispatch:   [3]u32, // groups of the cluster pass over the chunks: x, y, 1
+	chunk_count:      u32,
 	candidate_dispatch: [3]u32, // groups of the pass of phase 1 over the clusters phase 0 found hidden
-	candidate_count:    u32,
-	listed:             [2]u32, // clusters each phase listed, past the capacity too
-	bins_dispatch:      [2][3]u32, // groups of the pass that places the clusters of each phase in their bins
-	bin_counts:         [2][RASTER_BINS]u32,
-	bin_cursors:        [2][RASTER_BINS]u32,
-	dropped:            [Cull_List]u32, // past the capacities of the lists of the cull
+	candidate_count:  u32,
+	dropped:          [Cull_List]u32, // past the capacities of the lists of the cull
 }
-#assert(offset_of(Gpu_Cull_State, draws) == abi.CULL_DRAWS * size_of(u32))
-#assert(offset_of(Gpu_Cull_State, chunk_dispatch) == abi.CULL_CHUNK_DISPATCH * size_of(u32))
-#assert(offset_of(Gpu_Cull_State, chunk_count) == abi.CULL_CHUNK_COUNT * size_of(u32))
-#assert(offset_of(Gpu_Cull_State, candidate_dispatch) == abi.CULL_CANDIDATE_DISPATCH * size_of(u32))
-#assert(offset_of(Gpu_Cull_State, candidate_count) == abi.CULL_CANDIDATE_COUNT * size_of(u32))
-#assert(offset_of(Gpu_Cull_State, listed) == abi.CULL_LISTED * size_of(u32))
-#assert(offset_of(Gpu_Cull_State, bins_dispatch) == abi.CULL_BINS_DISPATCH * size_of(u32))
-#assert(offset_of(Gpu_Cull_State, bin_counts) == abi.CULL_BIN_COUNTS * size_of(u32))
-#assert(offset_of(Gpu_Cull_State, bin_cursors) == abi.CULL_BIN_CURSORS * size_of(u32))
-#assert(offset_of(Gpu_Cull_State, dropped) == abi.CULL_DROPPED * size_of(u32))
-RASTER_BINS :: abi.RASTER_BINS
-RASTER_BIN_TWO_SIDED :: abi.RASTER_BIN_TWO_SIDED
-RASTER_BIN_TESTED :: abi.RASTER_BIN_TESTED
+#assert(size_of(Gpu_Cull_State) == 88)
 
 // What the cull of the clusters the maps of the shadows draw counts
 // (shadow_cull.slang): the draws of those that hide whole, of those of masked
@@ -460,7 +437,6 @@ Gpu_Cull_Stats :: struct {
 	kinds: [3]Visible_Kind, // by Visible_Kind_Id
 	late:  Visible_Kind,    // what phase 1 drew: instances and clusters the pyramid of the frame showed after all
 	dropped: [Cull_List]u32, // past the capacities of the lists of the cull, which grow from them
-	resolved: [3]u32, // of the resolve (vis_resolve.frag): pixels shaded, helper lanes of their quads, quads evaluated again
 }
 // Instances, clusters and triangles that passed the cull of a frame, of one kind.
 Visible_Kind :: struct {instances, clusters, triangles: u32}
@@ -490,7 +466,8 @@ gbuffer_normal_decode :: proc "contextless" (texel: Vec4) -> (normal: Vec3, roug
 // bytes each (shadow_cull.slang). What does not
 // fit is dropped and counted (Gpu_Cull_State.dropped, Gpu_Cull_Stats.dropped),
 // and the renderer grows the list for the frames after: a frame may show
-// holes where a list first overflows, never again at that size. The visible
-// clusters are listed twice: as the cull finds them, and by raster bin.
-Cull_List :: enum {Chunks, Visible, Candidates, Shadow_Chunks, Shadow_Entries}
-CULL_START :: [Cull_List]u32{.Chunks = 1 << 16, .Visible = 1 << 18, .Candidates = 1 << 16, .Shadow_Chunks = 1 << 14, .Shadow_Entries = 1 << 18}
+// holes where a list first overflows, never again at that size.
+// Programs: the visible clusters of materials with a Surface program
+// (Scene_State.program_bins), which the G-buffer draws by program.
+Cull_List :: enum {Chunks, Visible, Candidates, Programs, Shadow_Chunks, Shadow_Entries}
+CULL_START :: [Cull_List]u32{.Chunks = 1 << 16, .Visible = 1 << 18, .Candidates = 1 << 16, .Programs = 1 << 14, .Shadow_Chunks = 1 << 14, .Shadow_Entries = 1 << 18}

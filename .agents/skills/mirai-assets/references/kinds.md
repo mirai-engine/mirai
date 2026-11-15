@@ -37,17 +37,17 @@ model that consumes it (hulls, hierarchy and limits) belongs to
 - Clusters go in pages (`Mesh_Page`): whole groups (the clusters that share a parent) of a single
   level, contiguous, up to `MESH_PAGE_WORDS`; a DAG group never crosses two pages. Their clusters,
   vertices and triangle words are contiguous ranges of the mesh's, from the finest to the coarsest.
-  A page's block (`mesh_page_layout`) is its vertices, uv1, colors, surfaces, islands and triangles,
-  in words the renderer copies as they are; `mesh_page_decode` decodes one on the CPU, bit for bit,
-  with preallocated scratch (`MESH_PAGE_SCRATCH_BYTES`) and without allocating. `page_data` stores
-  each block coded (`asset/mesh_page_code.odin`) when that is smaller: each field split in low and
-  high byte planes, tangent and normal kept as whole records so the repeats of a vertex that
-  clusters share stay for the codec, and triangle bytes relative to the vertices met. Any words
-  code back exactly, and a damaged coding fails, it does not crash. Each
+  A page's block (`mesh_page_layout`) is its vertices, uv1, colors, surfaces and triangles, in words
+  the renderer copies as they are; `mesh_page_decode` decodes one on the CPU, bit for bit, with
+  preallocated scratch (`MESH_PAGE_SCRATCH_BYTES`) and without allocating. `page_data` stores each
+  block coded (`asset/mesh_page_code.odin`) when that is smaller: each field split in low and high
+  byte planes, tangent and normal kept as whole records so the repeats of a vertex that clusters
+  share stay for the codec, and triangle bytes relative to the vertices met. Any words code back
+  exactly, and a damaged coding fails, it does not crash. Each
   cluster names its page (`page`) and that of the group it was simplified from (`child_page`, that
   of its children). The pages from `root_page` are the root, always loaded: the coarsest levels as
   long as they fit in `MESH_ROOT_WORDS`, at least the coarsest, and every cluster nothing replaces;
-  meshes with skin, morphs, islands or `Levels` are entirely root. What `mesh_build` makes has no
+  meshes with skin, morphs or `Levels` are entirely root. What `mesh_build` makes has no
   `page_data` until `mesh_pages_pack` codes its blocks as a file stores them (the far mesh does it
   when its root is not the whole mesh).
 - Every mesh of finite positions and uvs fits in the grids: the step is the smallest power of two
@@ -148,9 +148,6 @@ per bone.
   ([model](../../mirai-rendering/references/materials.md#layers-openpbr)).
 - An empty `program` is the standard model; `parameters` keeps its values and, with nonzero
   `overlay`, those of a layer of `overlays`. `hidden` are the names the editor does not show.
-- `two_sided` (false by default) is a material seen from behind too, a leaf or a sheet: the
-  renderer culls the back faces of the others. Importers take it from what their format says and
-  leave it false where it says nothing.
 - The UVs have one transform, that of each map (`Material_Map`): a material that tiles gives the
   scale to its maps. The index of refraction is 1 or above.
 - `material_view` validates ranges, also those of `imported` and `imported_parameters`.

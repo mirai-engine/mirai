@@ -35,12 +35,6 @@ Layer_Auto :: struct {
     height:[2]f32 `mirai:"unit=m"`,     // local
     softness:[2]f32,                    // how far past each range it fades out: radians of slope, metres of height
 }
-// Where layers meet, a layer's weight doubles this many times from its lowest
-// texel to its highest at a height_blend of 1.
-HEIGHT_BLEND_POWER :: 5
-// A repeat of tiling covers fewer pixels than this where far_tiling has taken
-// over; it begins to over the octave before.
-FAR_PIXELS :: 96
 LAYER_DEFAULT :: Terrain_Layer{tiling=4,auto={slope={0,math.PI/2},height={-HEIGHT_LIMIT,HEIGHT_LIMIT},softness={0.35,2}}}
 // The rule of an automatic layer reads the slope of a Heightfield over this
 // many samples on each side, the same at every level: its cover does not jump
@@ -374,8 +368,7 @@ chunk_materials :: proc "contextless" (s:^Source) -> (materials:[render.MATERIAL
 
 // The table of the layers of a source the Terrain_Layers program reads
 // (terrain_surface.slang): a row of LAYERS_TEXELS texels for each layer,
-// each texel four bytes of a value, those of its tiling as the program reads
-// them, so no point works them out. The textures of a layer are by their
+// each texel four bytes of a value. The textures of a layer are by their
 // place in the texture table of the renderer, INVALID without one.
 LAYERS_TEXELS :: 8
 layers_table :: proc(a:^host.Assets,s:^Source,pixels:[]u8) {
@@ -404,16 +397,12 @@ layers_table :: proc(a:^host.Assets,s:^Source,pixels:[]u8) {
         word(pixels,i,1,normal)
         bytes(pixels,i,2,{info.base_color.r,info.base_color.g,info.base_color.b,info.roughness})
         bytes(pixels,i,3,{info.metallic,layer.height_blend,layer.detile,layer.variation})
-        scale:=layer_scale(layer.tiling)
-        word(pixels,i,4,transmute(u32)scale)
-        word(pixels,i,5,transmute(u32)(layer.far_tiling>0?layer_scale(layer.far_tiling):0))
+        word(pixels,i,4,transmute(u32)layer.tiling)
+        word(pixels,i,5,transmute(u32)layer.far_tiling)
         word(pixels,i,6,transmute(u32)(normal!=max(u32)?info.normal_scale:0))
-        word(pixels,i,7,transmute(u32)(math.log2(f32(FAR_PIXELS)*scale)+1))
+        word(pixels,i,7,transmute(u32)layer.displacement)
     }
 }
-
-// The repeats a metre of a tiling of metres: those of a micrometre at most.
-layer_scale :: proc "contextless" (tiling:f32) -> f32 {return 1/max(tiling,1e-6)}
 
 @(private)
 weights_used :: proc "contextless" (w:Weights,count:u32) -> bool {

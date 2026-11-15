@@ -17,8 +17,8 @@
 // terrain.Gpu_Displace_Layer
 struct Layer {
     uint color;          // the base color texture of its material, its alpha the height; INVALID: none
-    float scale;         // repeats a metre
-    float blend;         // the power of 2 its height raises its weight to, a height of 1
+    float tiling;        // metres of a repeat
+    float blend;         // height_blend
     float displacement;  // metres from its lowest texel to its highest
 };
 // terrain.Gpu_Displace
@@ -88,7 +88,7 @@ float layer_height(Layer layer, float3 world, float3 normal) {
     Texture2D<float4> image = material_textures[mirai_nonuniform(layer.color)];
     uint width, height, levels;
     image.GetDimensions(0u, width, height, levels);
-    float scale = layer.scale;
+    float scale = 1.0 / max(layer.tiling, 1e-6);
     uint level = min(uint(max(log2(params.spacing * scale * float(max(width, height))), 0.0)), levels - 1u);
     uint2 size = max(uint2(width, height) >> level, uint2(1u));
     float3 weights = projection_weights(normal, false);
@@ -121,14 +121,13 @@ void main(uint3 id : SV_DispatchThreadID) {
     float3 local_normal = unpack_normal(v.normal);
     float3 world = float3(dot(params.row0.xyz, v.position) + params.row0.w, dot(params.row1.xyz, v.position) + params.row1.w, dot(params.row2.xyz, v.position) + params.row2.w);
     float3 normal = normalize(float3(dot(params.row0.xyz, local_normal), dot(params.row1.xyz, local_normal), dot(params.row2.xyz, local_normal)));
-    float4 shown = terrain_heaviest(float4(mix.weights[0], mix.weights[1], mix.weights[2], mix.weights[3]));
     float4 blend = float4(0.0);
     float4 heights = float4(0.0);
     for (uint i = 0u; i < 4u; i++) {
-        if (shown[i] <= 0.0 || mix.layers[i] >= params.layer_count) continue;
+        if (mix.weights[i] <= 0.0 || mix.layers[i] >= params.layer_count) continue;
         Layer layer = params.layers[mix.layers[i]];
         heights[i] = layer_height(layer, world, normal);
-        blend[i] = shown[i] * exp2(layer.blend * heights[i]);
+        blend[i] = mix.weights[i] * exp2(5.0 * layer.blend * heights[i]);
     }
     float sum = blend.x + blend.y + blend.z + blend.w;
     float offset = 0.0;

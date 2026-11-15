@@ -387,7 +387,7 @@ stage_pipelines_destroy :: proc(r: ^Renderer) {
 // do not know nested views.
 pass_nested_add :: proc(s: ^Stage_Pass, nested: Nested_View) -> u32 {
 	p := s.pass
-	if p.view == nil || !p.r.frame_layout.nested || p.nested_count >= NESTED_VIEW_CAPACITY || p.r.pipelines[.Resolve_Nested] == 0 {return 0}
+	if p.view == nil || !p.r.frame_layout.nested || p.nested_count >= NESTED_VIEW_CAPACITY || p.r.pipelines[.Gbuffer_Nested] == 0 {return 0}
 	nested := nested
 	nested.to_world = origin_transform(nested.to_world, p.r.origin)
 	nested.previous = origin_transform(nested.previous, p.r.origin)

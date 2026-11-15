@@ -586,19 +586,7 @@ assets_shape :: proc(a:^Assets,shape:Shape) -> ^Assets_Mesh {
     defer assets_render_geometry_destroy(&made)
     added:=false
     if mesh:=geom.mesh_buffer_view(&buffer);assets_render_geometry(mesh,mesh.normals,nil,0,&made,assets_limits(a)) {
-        // A plane is a sheet: without a material of its own it shows the
-        // default one from both sides.
-        words:[1]u32
-        if shape==.Plane {
-            if row,taken:=assets_row_take(a);taken {
-                a.material_descs[row-1]=render.DEFAULT_MATERIAL
-                a.material_descs[row-1].two_sided=true
-                a.row_marks[row-1]=ASSETS_ROW_ASSET
-                assets_row_changed(a,row)
-                words[0]=row|1<<24
-            }
-        }
-        entry.handle,added=render.mesh_add_geometry(a.renderer,made.geometry,words[:],&made.ahead)
+        entry.handle,added=assets_render_geometry_add(a,&made,nil)
     }
     if !added {
         entry.handle,entry.failed=ASSETS_MESH_NONE,true

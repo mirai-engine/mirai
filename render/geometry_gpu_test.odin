@@ -74,10 +74,7 @@ gpu_what_phase_1_rescues_is_drawn_once :: proc(t: ^testing.T) {
 	if !testing.expect(t, added) {return}
 	wall := Mat4(1)
 	wall[0, 0], wall[1, 1], wall[2, 2], wall[2, 3] = 60, 60, 1, 5
-	// And an instance of the scene behind it, which the wall hides as well.
-	hidden := Mat4(1)
-	hidden[2, 3] = 20
-	scene_given(r, {{object_id = 1, mesh = cube, transform = wall, tint = 1}, {object_id = 2, mesh = cube, transform = hidden, tint = 1}}, nil, {}, {})
+	scene_given(r, {{object_id = 1, mesh = cube, transform = wall, tint = 1}}, nil, {}, {})
 	N :: 30
 	field := make([]Batch_Instance, N * N, context.temp_allocator)
 	for &b, i in field {b = batch_instance({f32(i % N) - N / 2, f32(i / N) * 0.7 - 10, 20}, 1, {0.5, 0.5, 0.5})}
@@ -86,7 +83,6 @@ gpu_what_phase_1_rescues_is_drawn_once :: proc(t: ^testing.T) {
 	camera := Camera{position = {0, 0, -10}, forward = {0, 0, 1}, up = {0, 1, 0}, fov_y = 60, near = 0.1, far = 200, exposure = UNIT_EXPOSURE}
 	for _ in 0 ..< 6 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
 	testing.expectf(t, r.stats.visible_kinds[.Batch].clusters == 0, "behind the wall the field is hidden: %v", r.stats.visible_kinds[.Batch])
-	testing.expectf(t, r.stats.visible_kinds[.Single].instances == 1 && r.stats.visible_late.instances == 0, "the wall is drawn in phase 0 and hides the instance behind it: %v, late %v", r.stats.visible_kinds[.Single], r.stats.visible_late)
 	// The wall goes: the pyramid of the frame before still hides the field, phase 1 draws it.
 	scene_given(r, nil, nil, {}, {})
 	most: u32

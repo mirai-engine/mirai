@@ -112,13 +112,12 @@ HIGHLIGHT_LEVELS            :: 15
 OUTLINE_STYLES              :: 15
 
 // Gpu_Mesh.flags.
-MESH_FLAG_CLOSED   :: 1 // asset.Mesh_Flag.Closed: it bounds a solid (glass walks inside it)
+MESH_FLAG_CLOSED   :: 1
 MESH_FLAG_LEVEL0   :: 2
 MESH_FLAG_SURFACE  :: 4
 MESH_FLAG_UV1      :: 8
 MESH_FLAG_COLORS   :: 16
 MESH_FLAG_STREAMED :: 32
-MESH_FLAG_ISLANDS  :: 64
 
 // The geometry pools, in u32 words.
 Gpu_Posed_Vertex :: struct {
@@ -241,25 +240,10 @@ POINT_WORDS        :: 9
 RECORD_WORDS       :: 18
 HEAD_WORDS         :: 8
 
-// The raster bins of the visible clusters (render.Gpu_Cull_State.draws): a
-// cluster of a two-sided material is drawn without leaving its back faces
-// out, and one of a masked material or of an instance that fades is tested
-// by its alpha and its fade before it writes its pixels.
-RASTER_BIN_TWO_SIDED :: 1
-RASTER_BIN_TESTED    :: 2
-RASTER_BINS          :: 4
-
-// The words of render.Gpu_Cull_State.
-CULL_DRAWS              :: 0  // of each phase and raster bin: vertices, instances (its visible clusters), first vertex, first instance
-CULL_CHUNK_DISPATCH     :: 32
-CULL_CHUNK_COUNT        :: 35
-CULL_CANDIDATE_DISPATCH :: 36
-CULL_CANDIDATE_COUNT    :: 39
-CULL_LISTED             :: 40 // of each phase, the clusters the cull listed, past the capacity too
-CULL_BINS_DISPATCH      :: 42 // of each phase, three words: the groups of cull_bins.comp over its clusters
-CULL_BIN_COUNTS         :: 48 // of each phase, the clusters of each raster bin
-CULL_BIN_CURSORS        :: 56
-CULL_DROPPED            :: 64 // of each list of the cull (render.Cull_List)
+// The header of the visible clusters of Surface programs, in words.
+PROGRAMS_COUNT    :: 0 // a word a phase
+PROGRAMS_DISPATCH :: 2 // three words a phase
+PROGRAMS_HEADER   :: 8
 
 // What an instance gives over the rows of its materials, in the index pool:
 // how many rows it shows otherwise than the table holds them, how much it
@@ -273,7 +257,7 @@ INSTANCE_ROW_WORDS     :: 1 + MATERIAL_WORDS + MATERIAL_BLOCK_WORDS + PROGRAM_PA
 // The words of a row of the material table (render.Gpu_Material_Row): the
 // values shading holds, then the blocks of its layers, and from
 // MATERIAL_PARAMETERS_WORD the parameters of its program.
-MATERIAL_WORDS           :: 29 + len(asset.Material_Map_Kind)
+MATERIAL_WORDS           :: 28 + len(asset.Material_Map_Kind)
 MATERIAL_BLOCK_WORDS     :: 19
 MATERIAL_PARAMETERS_WORD :: MATERIAL_WORDS + MATERIAL_BLOCK_WORDS + 4 + 8 * len(asset.Material_Map_Kind)
 

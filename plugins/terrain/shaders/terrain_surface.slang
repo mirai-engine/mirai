@@ -3,15 +3,13 @@
 //! mirai constant WEIGHT_VALUES_SHIFT int ../runtime/layers.odin
 //! mirai constant WEIGHT_HOLE_BIT int ../runtime/layers.odin
 //! mirai constant PAINT_ROUGHNESS_NEUTRAL int ../runtime/paint.odin
-//! mirai constant HEIGHT_BLEND_POWER int ../runtime/layers.odin
 // What a piece of a terrain shows between its vertices (terrain.Surface_Maps):
 // the weights of the layers of each of its samples with the hole of each
-// cell, its normal and its paint, read texel by texel and blended between the
-// four around a point, and the table of the layers of its source
-// (terrain.layers_table), a row of LAYERS_TEXELS texels each. None of them
-// streams: Terrain_Layers, Terrain_Weights and terrain_displace.comp load them
-// texel by texel alike, and a stage without the program API defines
-// TERRAIN_TEXEL.
+// cell, read texel by texel and blended between the four around a point, and
+// the table of the layers of its source (terrain.layers_table), a row of
+// LAYERS_TEXELS texels each. Terrain_Layers, Terrain_Weights and
+// terrain_displace.comp load them texel by texel alike; a stage without the
+// program API defines TERRAIN_TEXEL.
 #ifndef TERRAIN_SURFACE_SLANG
 #define TERRAIN_SURFACE_SLANG
 #include <constants/plugins/terrain.slang>
@@ -32,26 +30,6 @@ struct Terrain_Mix {
     float weights[4];
 };
 
-// The texel of a map of size texels at the low corner of the four around
-// texel coordinates at, and where at lies between them.
-int2 terrain_corner(float2 size, float2 at, out float2 f) {
-    float2 p = clamp(at, float2(0.0), size - 1.0);
-    int2 low = int2(min(floor(p), max(size - 2.0, float2(0.0))));
-    f = p - float2(low);
-    return low;
-}
-
-// A map of a piece of size texels at texel coordinates at, bilinear between
-// its four texels around, as the weights are.
-float4 terrain_map_at(uint map, float2 size, float2 at) {
-    float2 f;
-    int2 low = terrain_corner(size, at, f);
-    int2 last = int2(size) - 1;
-    float4 a = TERRAIN_TEXEL(map, low), b = TERRAIN_TEXEL(map, min(low + int2(1, 0), last));
-    float4 c = TERRAIN_TEXEL(map, min(low + int2(0, 1), last)), d = TERRAIN_TEXEL(map, min(low + 1, last));
-    return lerp(lerp(a, b, f.x), lerp(c, d, f.x), f.y);
-}
-
 // The weights of the layers at texel coordinates at over a control map of
 // size texels, bilinear between its four texels around, and whether the cell
 // at is in is a hole. The three layers of each texel are twelve candidates;
@@ -59,8 +37,9 @@ float4 terrain_map_at(uint map, float2 size, float2 at) {
 // heaviest are kept. Every index is a constant once the loops unroll, so the
 // candidates stay in registers.
 Terrain_Mix terrain_weights_at(uint control, float2 size, float2 at, out bool hole) {
-    float2 f;
-    int2 low = terrain_corner(size, at, f);
+    float2 p = clamp(at, float2(0.0), size - 1.0);
+    int2 low = int2(min(floor(p), max(size - 2.0, float2(0.0))));
+    float2 f = p - float2(low);
     uint layers[12];
     float weights[12];
     uint mask = (1u << uint(WEIGHT_LAYER_BITS)) - 1u;
@@ -113,8 +92,7 @@ Terrain_Mix terrain_weights_at(uint control, float2 size, float2 at, out bool ho
     return m;
 }
 
-// A layer of the table of its source (terrain.layers_table), with what a
-// point reads of it already worked out there.
+// A layer of the table of its source (terrain.layers_table).
 struct Terrain_Layer {
     uint color;            // its base color map, the alpha its height; INVALID: none
     uint normal;           // its normal map
@@ -124,10 +102,10 @@ struct Terrain_Layer {
     float height_blend;
     float detile;
     float variation;
-    float scale;           // repeats a metre
-    float far_scale;       // far away; 0: scale everywhere
+    float tiling;          // metres of a repeat
+    float far_tiling;      // far away; 0: tiling
     float normal_strength; // 0 without a normal map
-    float far_bias;        // how far its far tiling has taken over, less log2 of the footprint in metres
+    float displacement;    // metres from its lowest texel to its highest
 };
 Terrain_Layer terrain_layer(uint table, uint layer) {
     int y = int(layer);
@@ -139,10 +117,10 @@ Terrain_Layer terrain_layer(uint table, uint layer) {
     l.roughness = values.a;
     float4 more = TERRAIN_TEXEL(table, int2(3, y));
     l.metallic = more.x; l.height_blend = more.y; l.detile = more.z; l.variation = more.w;
-    l.scale = asfloat(terrain_word(TERRAIN_TEXEL(table, int2(4, y))));
-    l.far_scale = asfloat(terrain_word(TERRAIN_TEXEL(table, int2(5, y))));
+    l.tiling = asfloat(terrain_word(TERRAIN_TEXEL(table, int2(4, y))));
+    l.far_tiling = asfloat(terrain_word(TERRAIN_TEXEL(table, int2(5, y))));
     l.normal_strength = asfloat(terrain_word(TERRAIN_TEXEL(table, int2(6, y))));
-    l.far_bias = asfloat(terrain_word(TERRAIN_TEXEL(table, int2(7, y))));
+    l.displacement = asfloat(terrain_word(TERRAIN_TEXEL(table, int2(7, y))));
     return l;
 }
 #endif

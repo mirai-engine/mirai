@@ -4,7 +4,6 @@ import "core:fmt"
 import "core:math"
 import "core:math/linalg"
 import "core:mem"
-import "core:slice"
 import "core:testing"
 import "core:time"
 import "mirai:rhi"
@@ -684,11 +683,7 @@ render_lights_that_few_reach_at_a_time_are_each_lit :: proc(t: ^testing.T) {
 	expect_clean(t, f.device)
 }
 
-// Lights that the tree adds up by groups give what they give one by one, the
-// same from one frame to the next: a ring of lights with shadows; lights
-// without them, one dim that reaches far among bright ones that reach a
-// little, which a group of them lost beyond the mean of their ranges; and a
-// crowd of lights without them, more than a walk visits, under the sun.
+// Lights that the tree adds up by groups give what they give one by one.
 @(test)
 render_groups_of_lights_give_what_their_lights_give :: proc(t: ^testing.T) {
 	f: Cube_Fixture
@@ -698,70 +693,32 @@ render_groups_of_lights_give_what_their_lights_give :: proc(t: ^testing.T) {
 	if !cube_fixture_init(t, &f, 64, 48, settings, programs = true) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
-	Case :: enum {Ring, Reaches, Crowd}
-	for c in Case {
-		lights := make([dynamic]Light_Desc, context.temp_allocator)
-		sun: Sun_Desc
-		camera := Camera{position = {0, 6, 0.01}, forward = {0, -6, -0.01}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-		// The part of the floor compared, from a corner to the other.
-		low, high := Vec3{-2, 0, -1.5}, Vec3{2, 0, 1.5}
-		switch c {
-		case .Ring:
-			for i in 0 ..< 24 {
-				angle := f32(i) / 24 * 2 * math.PI
-				radius := f32(1 + i % 3)
-				append(&lights, Light_Desc{position = {math.cos(angle) * radius, 1.2, math.sin(angle) * radius}, color = {0.4 + 0.6 * f32(i % 2), 0.5, 0.4 + 0.6 * f32(i % 3) / 2}, intensity = 0.25 * math.PI, range = 6, indirect = 1, scattering = 1})
-			}
-		case .Reaches:
-			for i in 0 ..< 12 {
-				angle := f32(i) / 12 * 2 * math.PI
-				append(&lights, Light_Desc{position = {-4.5 + 0.4 * math.cos(angle), 0.6, -4.5 + 0.4 * math.sin(angle)}, color = {1, 0.8, 0.6}, intensity = 2000, range = 1.5, indirect = 1, scattering = 1, shadowless = true})
-			}
-			append(&lights, Light_Desc{position = {-4.5, 0.6, -4.5}, color = {1, 0.9, 0.8}, intensity = 150, range = 350, indirect = 1, scattering = 1, shadowless = true})
-			camera = {position = {0, 14, 0.01}, forward = {0, -14, -0.01}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-			low, high = {-1, 0, -1}, {5, 0, 5}
-		case .Crowd:
-			for i in 0 ..< 256 {
-				// Spread through a ball of 1 m by the golden angle.
-				height := 1 - 2 * (f32(i) + 0.5) / 256
-				inside := math.pow((f32(i % 16) + 0.5) / 16, f32(1) / 3)
-				across := math.sqrt(1 - height * height) * inside
-				angle := f32(i) * 2.3999632
-				append(&lights, Light_Desc{position = {across * math.cos(angle), 1.8 + height * inside, across * math.sin(angle)}, color = {0.5 + 0.5 * f32(i % 2), 0.7, 0.5 + 0.5 * f32(i % 3) / 2}, intensity = 0.015 * math.PI, range = 8, radius = 0.02, indirect = 1, scattering = 1, shadowless = true})
-			}
-			sun = {direction = linalg.normalize(Vec3{0.3, 1, 0.2}), color = {1, 0.95, 0.9}, illuminance = 0.5 * math.PI, enabled = true, indirect = 1, scattering = 1}
-		}
-		floor := Instance_Desc{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {12, 0.2, 12}), tint = {1, 1, 1}}
-		scene_given(r, []Instance_Desc{floor}, lights[:], sun, {})
-		exact, ok := reference_image(t, &f, camera, 1, .Direct)
-		if !ok {return}
-		defer delete(exact)
-		renderer_camera_cut(r)
-		for _ in 0 ..< 6 {testing.expect(t, renderer_frame(r, {camera = camera, inspection = {mode = .Direct}}), r.error)}
-		rhi.device_wait_idle(f.device)
-		grouped, w, _, ok2 := golden_capture(r)
-		testing.expect(t, ok2, r.error)
-		if !ok2 {return}
-		defer delete(grouped)
-		testing.expect(t, renderer_frame(r, {camera = camera, inspection = {mode = .Direct}}), r.error)
-		rhi.device_wait_idle(f.device)
-		next, _, _, ok3 := golden_capture(r)
-		testing.expect(t, ok3, r.error)
-		if !ok3 {return}
-		defer delete(next)
-		a, b := project(r, camera, low), project(r, camera, high)
-		x0, y0, x1, y1 := min(a.x, b.x), min(a.y, b.y), max(a.x, b.x), max(a.y, b.y)
-		reference := region_mean(exact, w, x0, y0, x1, y1)
-		estimate := region_mean(grouped, w, x0, y0, x1, y1)
-		testing.expectf(t, reference[0] > 40, "%v: direct light is visible: %v", c, reference)
-		for k in 0 ..< 3 {
-			testing.expectf(t, abs(estimate[k] - reference[k]) <= 0.04 * reference[k] + 2, "%v: channel %d: by groups %v, one by one %v", c, k, estimate, reference)
-		}
-		_, rms := image_error(grouped, exact)
-		testing.expectf(t, rms < 4, "%v: %v of 255 apart", c, rms)
-		testing.expectf(t, slice.equal(next, grouped), "%v: the next frame is the same", c)
-		free_all(context.temp_allocator)
+	lights: [24]Light_Desc
+	for &l, i in lights {
+		angle := f32(i) / 24 * 2 * math.PI
+		radius := f32(1 + i % 3)
+		l = {position = {math.cos(angle) * radius, 1.2, math.sin(angle) * radius}, color = {0.4 + 0.6 * f32(i % 2), 0.5, 0.4 + 0.6 * f32(i % 3) / 2}, intensity = 0.25 * math.PI, range = 6, indirect = 1, scattering = 1}
 	}
+	floor := Instance_Desc{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {12, 0.2, 12}), tint = {1, 1, 1}}
+	scene_given(r, []Instance_Desc{floor}, lights[:], {}, {})
+	camera := Camera{position = {0, 6, 0.01}, forward = {0, -6, -0.01}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	exact, ok := reference_image(t, &f, camera, 1, .Direct)
+	if !ok {return}
+	defer delete(exact)
+	for _ in 0 ..< 6 {testing.expect(t, renderer_frame(r, {camera = camera, inspection = {mode = .Direct}}), r.error)}
+	rhi.device_wait_idle(f.device)
+	grouped, w, _, ok2 := golden_capture(r)
+	testing.expect(t, ok2, r.error)
+	if !ok2 {return}
+	defer delete(grouped)
+	reference := region_mean(exact, w, 16, 12, 48, 36)
+	estimate := region_mean(grouped, w, 16, 12, 48, 36)
+	testing.expectf(t, reference[0] > 40, "direct light is visible: %v", reference)
+	for c in 0 ..< 3 {
+		testing.expectf(t, abs(estimate[c] - reference[c]) <= 0.04 * reference[c] + 2, "channel %d: by groups %v, one by one %v", c, estimate, reference)
+	}
+	_, rms := image_error(grouped, exact)
+	testing.expectf(t, rms < 4, "%v of 255 apart", rms)
 	expect_clean(t, f.device)
 }
 
