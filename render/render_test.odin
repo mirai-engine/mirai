@@ -115,6 +115,51 @@ render_sun_shadow_is_ray_traced :: proc(t: ^testing.T) {
 	expect_clean(t, f.device)
 }
 
+// A slab without shadows is drawn and lets the sun through: the floor under
+// it is lit as without it, by each tracer. It stops casting in a change of
+// the scene, which takes it out of the maps the frames before drew.
+@(test)
+render_a_mesh_without_shadows_lets_the_sun_through :: proc(t: ^testing.T) {
+	f: Cube_Fixture
+	if !cube_fixture_init(t, &f, 192, 128, test_settings()) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	floor := Instance_Desc{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {12, 0.2, 12}), tint = {0.8, 0.8, 0.8}}
+	slab := Instance_Desc{object_id = 2, mesh = f.cube, transform = trs({0, 1.5, 0}, {2, 0.2, 2}), tint = {0.5, 0.5, 0.5}}
+	sun := Sun_Desc{direction = {0.05, 1, 0.02}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true, indirect = 1, scattering = 1}
+	sky := Environment{sky = {0.3, 0.4, 0.6}}
+	camera := Camera{position = {0, 8, 7}, forward = {0, -8, -7}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	under, top := project(r, camera, {0, 0.001, 0.8}), project(r, camera, {0, 1.6, 0})
+	for mode in ([]Trace_Mode{.Software, .Hardware}) {
+		if mode == .Hardware && !r.hardware_rt_verified {continue}
+		applied := r.settings
+		applied.trace_mode = mode
+		testing.expect(t, renderer_apply_settings(r, applied))
+		// Without the slab, with it, and with it given again without shadows.
+		lit, seen: [3]Vec3
+		for k in 0 ..< 3 {
+			switch k {
+			case 0: testing.expect(t, scene_given(r, {floor}, nil, sun, sky), r.error)
+			case 1: testing.expect(t, scene_given(r, {floor, slab}, nil, sun, sky), r.error)
+			case 2:
+				shadowless := slab
+				shadowless.shadowless = true
+				testing.expect(t, scene_update(r, 1, {shadowless}), r.error)
+			}
+			for _ in 0 ..< 12 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+			rhi.device_wait_idle(f.device)
+			pixels, w, _, ok := golden_capture(r)
+			if !testing.expect(t, ok, r.error) {return}
+			lit[k], seen[k] = pixel(pixels, w, under), pixel(pixels, w, top)
+			delete(pixels)
+		}
+		testing.expectf(t, lit[1].x + 40 < lit[0].x, "%v: the slab shades the floor: %v under it, %v without it", mode, lit[1], lit[0])
+		testing.expectf(t, abs(lit[2].x - lit[0].x) < 12, "%v: the slab without shadows lets the sun through: %v under it, %v without it", mode, lit[2], lit[0])
+		testing.expectf(t, abs(seen[2].x - seen[1].x) < 4 && abs(seen[2].x - seen[0].x) > 20, "%v: the slab without shadows is drawn: %v, %v with them, %v without the slab", mode, seen[2], seen[1], seen[0])
+	}
+	expect_clean(t, f.device)
+}
+
 @(test)
 render_soft_shadow_blurs_with_the_distance_to_its_caster :: proc(t: ^testing.T) {
 	f: Cube_Fixture

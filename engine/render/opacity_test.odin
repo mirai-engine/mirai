@@ -29,7 +29,7 @@ a_fade_is_given_to_its_instance_alone_without_a_row_or_an_allocation :: proc(t:^
     for e,i in entities {
         pose:=mm.TRANSFORM_IDENTITY;pose.position.x=f32(i)*2-1
         core.add(&w.worlds,e,core.World_Transform{pose,pose})
-        core.add(&w.meshes,e,Mesh_Renderer{shape=.Cube})
+        core.add(&w.meshes,e,MESH_RENDERER_DEFAULT)
         core.add(&w.values,e,Material_Values{color=i==0?[4]f32{1,0,0,1}:{0,1,0,1},emission=i==0?[3]f32{3,0,0}:{0,3,0}})
     }
     test_world_settle(&w)
@@ -92,7 +92,7 @@ a_fade_is_given_to_its_instance_alone_without_a_row_or_an_allocation :: proc(t:^
     host.app_frame_end(app)
     testing.expect_value(t,len(app.renderer.scene.instances),1)
     testing.expect_value(t,sync.drawn.entities[0],entities[0])
-    core.add(&w.meshes,entities[1],Mesh_Renderer{shape=.Cube});test_world_settle(&w)
+    core.add(&w.meshes,entities[1],MESH_RENDERER_DEFAULT);test_world_settle(&w)
     host.app_frame_begin(app)
     draw(&sync,app,&w)
     host.app_frame_end(app)

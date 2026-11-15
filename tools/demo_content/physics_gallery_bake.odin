@@ -82,7 +82,7 @@ physics_cache_bake :: proc(o:^Out,fracture,mesh:base.Asset_Id) {
     if phys.owned_shape_create(&physics,&collision,floor,{collider=phys.collider_box({4,.25,4}),rotation=1})==0 {o.content.failed=true;return}
     owner:=core.create(&world.entities)
     core.add(&world.transforms,owner,core.Transform{position={0,2,0},rotation=1,scale={1,1,1}})
-    core.add(&world.meshes,owner,render.Mesh_Renderer{mesh=mesh})
+    core.add(&world.meshes,owner,render.Mesh_Renderer{mesh=mesh,shape=.None,shadows=true})
     config:=destruct.destructible();config.fracture=fracture;config.impact_damage=false;config.debris_volume=0
     config.interior=material_id("Cobblestone");core.add(&world.configs,owner,config);dense:=phys.COLLIDER_DEFAULT;dense.density=2000;core.add(&world.colliders,owner,dense)
     physics_bake_settle(&world,nil,nil)

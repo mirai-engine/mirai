@@ -160,6 +160,11 @@ GPU_NONE :: max(u32)
 // Gpu_Mesh.rays: 0 is level 0.
 INSTANCE_MESH_MASK :: abi.INSTANCE_MESH_MASK
 INSTANCE_RAY_SHIFT :: abi.INSTANCE_RAY_SHIFT
+// meta.x bit 26: the instance casts no shadow (Instance_Desc.shadowless). It
+// is of the RAY_UNSHADOWED class, or RAY_GLASS if all glass, whose filter a ray
+// that carries light leaves out (BLEND_LIGHT of trace.slang), and no map of
+// the shadows draws it.
+INSTANCE_UNSHADOWED :: abi.INSTANCE_UNSHADOWED
 INSTANCE_FLAG_HIDDEN :: abi.INSTANCE_FLAG_HIDDEN
 // Hidden only because it cannot be drawn yet: its transform has no inverse
 // (a zero scale, or not finite) or the geometry of its mesh still goes to the
@@ -212,7 +217,7 @@ RAY_SOLID :: abi.RAY_SOLID
 RAY_GLASS :: abi.RAY_GLASS
 RAY_SMALL :: abi.RAY_SMALL // the solid instances of INSTANCE_FLAG_SMALL
 RAY_SHADOW_ONLY :: abi.RAY_SHADOW_ONLY // the instances of a batch that casts shadows and that other rays do not see
-RAY_UNSHADOWED :: abi.RAY_UNSHADOWED // the instances of a batch that rays see and that casts no shadow
+RAY_UNSHADOWED :: abi.RAY_UNSHADOWED // what rays see and casts no shadow: the instances of a batch without Casts_Shadow, and those of INSTANCE_UNSHADOWED
 // Set in the reference of a RAY_GLASS instance in the software TLAS.
 TLAS_REF_GLASS :: abi.TLAS_REF_GLASS
 

@@ -90,7 +90,7 @@ sync_cube :: proc(f:^Sync_Fixture,x:f32) -> core.Entity {
     e:=core.create(&f.world.entities)
     place:=core.World_Transform{transform={position={x,0,0},rotation=1,scale=1},previous={position={x,0,0},rotation=1,scale=1}}
     core.add(&f.world.worlds,e,place)
-    core.add(&f.world.meshes,e,Mesh_Renderer{shape=.Cube})
+    core.add(&f.world.meshes,e,MESH_RENDERER_DEFAULT)
     return e
 }
 

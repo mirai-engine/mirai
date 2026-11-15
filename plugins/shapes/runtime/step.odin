@@ -632,8 +632,8 @@ slot_count :: proc "contextless" (b:^Shape_Build) -> int {
 // Mesh_Renderer of a bend gives its slots.
 @(private)
 shown_of :: proc(u:^Update,e:core.Entity,mesh:base.Asset_Id) -> render.Mesh_Renderer {
-    shown:=render.Mesh_Renderer{mesh=mesh}
-    if source,has:=core.get(u.meshes,e);has && core.has(u.bends,e) && !core.has(u.shapes,e) {shown.materials=source.materials}
+    shown:=render.Mesh_Renderer{mesh=mesh,shape=.None,shadows=true}
+    if source,has:=core.get(u.meshes,e);has && core.has(u.bends,e) && !core.has(u.shapes,e) {shown.materials,shown.shadows=source.materials,source.shadows}
     return shown
 }
 

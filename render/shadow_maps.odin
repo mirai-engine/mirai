@@ -415,7 +415,7 @@ shadow_movers_update :: proc(r: ^Renderer) {
 		if r.frame - mover.frame < SHADOW_MOVER_FRAMES {k += 1;continue}
 		if mover.moving && int(mover.instance) < len(s.instances) {
 			inst := s.instances[mover.instance]
-			if inst.meta.w & (INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_BLENDED) == 0 {occluder_add(&stale, mover.instance, inst.bounds_min.xyz, inst.bounds_max.xyz)}
+			if instance_casts(inst) {occluder_add(&stale, mover.instance, inst.bounds_min.xyz, inst.bounds_max.xyz)}
 		}
 		m.tracked[k] = m.tracked[m.count - 1]
 		m.count -= 1
@@ -625,7 +625,7 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 			bits[mover.instance / 32] |= 1 << (mover.instance % 32)
 			if plan.moving || int(mover.instance) >= len(s.instances) {continue}
 			inst := s.instances[mover.instance]
-			if inst.meta.w & (INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_BLENDED) != 0 {continue}
+			if !instance_casts(inst) {continue}
 			for w in wants[:count] {
 				if w.placed && shadow_map_reaches(w.m, inst.bounds_min.xyz, inst.bounds_max.xyz) {plan.moving = true;break}
 			}
