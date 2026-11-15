@@ -1044,9 +1044,11 @@ float3 shade_hit_glossy(Surface s, float3 ray_dir, float hit_distance, uint ligh
     Probe_Directions directions = probe_directions(n);
     if (shown > 0.0) {
         directions.at[PROBE_SPECULAR] = dominant_direction(point);
+        directions.rough[PROBE_SPECULAR] = point.roughness;
         directions.wants |= 1u << PROBE_SPECULAR;
         if (point.coat > 0.0) {
             directions.at[PROBE_COAT] = coat_dominant_direction(point);
+            directions.rough[PROBE_COAT] = point.coat_roughness;
             directions.wants |= 1u << PROBE_COAT;
         }
     }

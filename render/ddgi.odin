@@ -90,7 +90,8 @@ ddgi_ensure :: proc(r: ^Renderer) -> bool {
 	g.histogram = rhi.buffer_create(d, {size = PROBE_HISTOGRAM_WORDS * 4, usage = {.Storage}, name = "probe histogram"})
 	g.chosen = rhi.buffer_create(d, {size = u64(1 + room) * 4, usage = {.Storage}, name = "chosen probes"})
 	g.dispatch = rhi.buffer_create(d, {size = PROBE_DISPATCH_WORDS * 4, usage = {.Storage, .Indirect}, name = "probe dispatch"})
-	g.irradiance = rhi.texture_create(d, {width = g.per_row * IRRADIANCE_TILE, height = rows * IRRADIANCE_TILE, format = .RGBA16_Float, usage = {.Sampled, .Storage, .Color_Target}, name = "probe irradiance"})
+	// Under the tiles of the irradiance, as many of the light around a narrow lobe (PROBE_GLOSS_POWER).
+	g.irradiance = rhi.texture_create(d, {width = g.per_row * IRRADIANCE_TILE, height = 2 * rows * IRRADIANCE_TILE, format = .RGBA16_Float, usage = {.Sampled, .Storage, .Color_Target}, name = "probe irradiance"})
 	g.kept = rhi.texture_create(d, {width = g.per_row * IRRADIANCE_TILE, height = rows * IRRADIANCE_TILE, format = .RGBA16_Float, usage = {.Sampled, .Storage, .Color_Target}, name = "probe irradiance kept"})
 	g.distance = rhi.texture_create(d, {width = g.per_row * DISTANCE_TILE, height = rows * DISTANCE_TILE, format = .RGBA16_Float, usage = {.Sampled, .Storage, .Color_Target}, name = "probe distance"})
 	g.rays = rhi.texture_create(d, {width = g.rays_per_probe, height = room, format = .RGBA16_Float, usage = {.Sampled, .Storage}, name = "probe rays"})

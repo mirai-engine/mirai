@@ -1358,6 +1358,19 @@ float2 probe_atlas_uv(uint index, float3 dir, uint tile, float2 atlas_size) {
 // half floats at any spacing.
 float probe_distance_limit(uint cascade) { return 1.5 * probe_spacing(cascade); }
 
+// Under the tile of its irradiance in the atlas, a probe keeps the light
+// around a narrow lobe of each direction: the power of the cosine its rays
+// are weighed by there, about as wide as a texel of the tile, and the
+// roughness of the specular lobe that is as wide. A smoother lobe reads it as
+// it is, the most the rays of a probe tell apart; a rougher one goes to the
+// irradiance as it widens.
+#define PROBE_GLOSS_POWER 12.0
+#define PROBE_GLOSS_ROUGHNESS 0.6
+uint probe_atlas_rows() {
+    uint total = probe_cascade_size() * probe_cascades();
+    return (total + frame.volume_atlas.x - 1u) / max(frame.volume_atlas.x, 1u);
+}
+
 // The directions one read of the probe volume gives the light around, at
 // most: those of the diffuse lobe, the specular lobe and the coat of a point.
 #define PROBE_READS 3
@@ -1368,14 +1381,19 @@ float probe_distance_limit(uint cascade) { return 1.5 * probe_spacing(cascade); 
 // What a read of the probe volume gives the light around: at[d] for each bit
 // d of `wants`. The probes around a point and their weights depend only on the
 // point, so each direction costs only its irradiance.
+// rough[d]: the roughness of the lobe around at[d]; 1, the irradiance.
 struct Probe_Directions {
     float3 at[PROBE_READS];
+    float rough[PROBE_READS];
     uint wants;
 };
 Probe_Directions probe_directions(float3 direction) {
     Probe_Directions directions;
     [ForceUnroll]
-    for (int d = 0; d < PROBE_READS; d++) directions.at[d] = direction;
+    for (int d = 0; d < PROBE_READS; d++) {
+        directions.at[d] = direction;
+        directions.rough[d] = 1.0;
+    }
     directions.wants = 1u;
     return directions;
 }
@@ -1417,10 +1435,13 @@ float probe_cascade_read(uint cascade, float3 position, float3 normal, float3 vi
     float2 irr_size = float2(texture_size(irradiance_atlas, 0));
     float2 dist_size = float2(texture_size(distance_atlas, 0));
     float2 toward[PROBE_READS];
+    float gloss[PROBE_READS];
+    float2 gloss_tile = float2(0.0, float(probe_atlas_rows()));
     float4 sum[PROBE_READS];
     [ForceUnroll]
     for (int d = 0; d < PROBE_READS; d++) {
         toward[d] = probe_wants(directions, d) ? probe_atlas_direction(directions.at[d]) : float2(0.0);
+        gloss[d] = saturate((1.0 - directions.rough[d]) / (1.0 - PROBE_GLOSS_ROUGHNESS));
         sum[d] = float4(0.0);
         light[d] = float4(0.0);
     }
@@ -1475,8 +1496,13 @@ float probe_cascade_read(uint cascade, float3 position, float3 normal, float3 vi
         [ForceUnroll]
         for (int d = 0; d < PROBE_READS; d++) {
             if (!probe_wants(directions, d)) continue;
-            float4 stored = irradiance_atlas.SampleLevel(linear_sampler, probe_atlas_texel(tile, toward[d], frame.volume_atlas.y, irr_size), 0.0);
-            float4 root = float4(probe_light_root(stored.rgb), stored.a) * weight;
+            float4 stored = gloss[d] < 1.0 ? irradiance_atlas.SampleLevel(linear_sampler, probe_atlas_texel(tile, toward[d], frame.volume_atlas.y, irr_size), 0.0) : float4(0.0);
+            float4 root = float4(probe_light_root(stored.rgb), stored.a);
+            if (gloss[d] > 0.0) {
+                float4 narrow = irradiance_atlas.SampleLevel(linear_sampler, probe_atlas_texel(tile + gloss_tile, toward[d], frame.volume_atlas.y, irr_size), 0.0);
+                root = lerp(root, float4(probe_light_root(narrow.rgb), narrow.a), gloss[d]);
+            }
+            root *= weight;
             sum[d] += root;
             seen_sum[d] += root * sees;
         }

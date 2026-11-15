@@ -194,11 +194,14 @@ other and do not see the corner of a table or the floor under a wardrobe.
   `probe_grid` the floor already reads a cascade whose probes see through thin walls.
 - `sample_probes_around` gives the light around several directions of a point (normal, specular
   lobe and coat) with a single choice of probes and weights; `sample_probes` reads one.
-- **Specular from the probes.** Each texel of the irradiance atlas also keeps the share of its
-  light that comes from the sky (its rays that meet nothing; beyond the cascades, all of it). A
-  specular lobe takes that share as the sky itself as sharp as its roughness (`probe_specular`),
-  not as the blur of a hemisphere, and a rough lobe keeps what the probes hold: with reflections
-  `Off` a mirror under an open sky shows the sky as without GI, and under a roof it does not.
+- **Specular from the probes.** Under the tile of its irradiance a probe keeps the light around
+  a narrow lobe of each direction (`PROBE_GLOSS_POWER`), about as wide as a texel of the tile:
+  what its rays tell apart. The lobes of the specular and of the coat read it, going to the
+  irradiance as they get rougher than it, so with reflections `Off` a smooth metal shows what is
+  around it blurred, not the mean of a hemisphere. Each texel of both tiles also keeps the share
+  of its light that comes from the sky (its rays that meet nothing; beyond the cascades, all of
+  it), which a lobe takes as the sky itself as sharp as its roughness (`probe_specular`): a
+  mirror under an open sky shows the sky as without GI, and under a roof it does not.
 
 ## Glass in the indirect
 

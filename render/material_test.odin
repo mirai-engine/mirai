@@ -740,6 +740,43 @@ material_mirror_reads_the_sky_sharp_from_the_probes_and_not_under_a_roof :: proc
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 
+// Without traced reflections a smooth metal still shows what is around it, as
+// sharp as the rays of the probes tell it apart: under a panel that glows it
+// is bright, and a few metres aside, where the panel is off its lobe, dark.
+// From the irradiance of the probes alone it showed the mean of a hemisphere:
+// a third as bright under the panel and a glow of it everywhere else.
+@(test)
+material_metal_without_traced_reflections_shows_what_is_around_it :: proc(t: ^testing.T) {
+	f: Fixture
+	settings := material_settings()
+	settings.gi_enabled = true
+	settings.reflections = .Off
+	if !fixture_init(t, &f, 64, 64, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	metal, dark := DEFAULT_MATERIAL, DEFAULT_MATERIAL
+	metal.base_color = {0.9, 0.9, 0.9}
+	metal.metallic = 1
+	metal.roughness = 0.2
+	dark.base_color = {0, 0, 0}
+	materials_set(r, {metal, dark})
+	quad := ground_quad(r)
+	floor := Instance_Desc{object_id = 1, mesh = quad, transform = scale_matrix(30), material = 1, tint = {1, 1, 1}}
+	over := scale_matrix(4)
+	over[1, 1], over[2, 2], over[1, 3] = -4, -4, 4
+	panel := Instance_Desc{object_id = 2, mesh = quad, transform = over, material = 2, tint = {1, 1, 1}, emission = {0.5, 0.5, 0.5}}
+	scene_given(r, {floor, panel}, nil, {}, {})
+	frames(t, &f, OVERHEAD, 64)
+	under := screen_color(t, &f, OVERHEAD, {0, 0, 0})
+	aside := OVERHEAD
+	aside.position = {9, 2, 0}
+	frames(t, &f, aside, 64)
+	away := screen_color(t, &f, aside, {9, 0, 0})
+	testing.expectf(t, under.r > 110, "under the panel the metal shows it: %v", under)
+	testing.expectf(t, away.r * 6 < under.r, "aside of the panel the metal does not: %v against %v", away, under)
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
+}
+
 // Beyond the probe volume the light around a surface is the sky's, as much of
 // it as the surface sees: under an open sky all of it, and under a roof, which
 // no probe reaches there either, the little that comes in past its edges.

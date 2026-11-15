@@ -87,6 +87,9 @@ Indirect indirect_lobes(float3 position, float3 normal, float3 view_dir, Shading
     directions.at[PROBE_DIFFUSE] = normal;
     directions.at[PROBE_SPECULAR] = (wants & INDIRECT_SPECULAR) != 0u ? dominant_direction(s) : normal;
     directions.at[PROBE_COAT] = (wants & INDIRECT_COAT) != 0u ? coat_dominant_direction(s) : normal;
+    directions.rough[PROBE_DIFFUSE] = 1.0;
+    directions.rough[PROBE_SPECULAR] = s.roughness;
+    directions.rough[PROBE_COAT] = s.coat_roughness;
     directions.wants = wants;
     if (!indirect_cached()) {
         if ((wants & INDIRECT_DIFFUSE) != 0u) light.irradiance = sky_irradiance(normal) * frame.indirect;
