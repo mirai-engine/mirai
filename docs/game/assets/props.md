@@ -21,9 +21,9 @@ palm_mesh :: proc(c:^asset.Content) -> base.Asset_Id {
 }
 ```
 
-Put a prop in the scene as a foliage type ([whole-scene.md](whole-scene.md)) or
-on an entity with `render.Mesh_Renderer{mesh=palm_mesh(c)}`. The asset folder is the theme of what
-it belongs to (`assets/island/`), never its kind.
+Put a prop in the scene as a foliage type ([whole-scene.md](whole-scene.md)) or on an entity with
+`render.Mesh_Renderer{mesh=palm_mesh(c),shape=.None,shadows=true}`. The asset folder is the theme
+of what it belongs to (`assets/island/`), never its kind.
 
 | Call | Makes |
 | --- | --- |

@@ -47,6 +47,12 @@
   the game's 15 styles. `Highlight_Style` gives color, fill and what is seen behind for each level,
   and the width of its side. The renderer does not know the selection or the editor tools
   ([outlines](frame-graph.md#outlines)).
+- **Without shadows.** An instance with `Instance_Desc.shadowless` (`Mesh_Renderer.shadows` off)
+  is drawn, takes shadows and is seen by every ray that sees surfaces (reflections, probes,
+  contact occlusion), but no shadow ray meets it and no map of the shadows draws it: it is of the
+  class of a batch without `Casts_Shadow` ([BVH](gi.md#bvh-and-acceleration-structures)), and,
+  all glass, a ray that carries light leaves out its filter. Changing it changes its occluder and
+  the light around it, as a move does.
 - **Pools.** Geometry lives in two pools of u32 words: the vertex one (the block of each page of
   each mesh, with the layout of `asset.mesh_page_layout`: vertices, UV1, colors, surface and
   triangles of the page; and the posed vertices of skins and deformables, by mesh vertex index) and

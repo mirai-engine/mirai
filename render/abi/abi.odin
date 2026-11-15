@@ -95,6 +95,7 @@ FRAME_FLAG_NEUTRAL      :: 128 // the display transform is PBR Neutral, computed
 // Gpu_Instance.meta: the mesh and the cut rays trace in x, the flags in w.
 INSTANCE_MESH_MASK          :: u32(0xffffff)
 INSTANCE_RAY_SHIFT          :: 24
+INSTANCE_UNSHADOWED         :: u32(1) << 26
 INSTANCE_FLAG_HIDDEN        :: 1
 INSTANCE_FLAG_COLLAPSED     :: 2
 INSTANCE_FLAG_SMALL         :: 4

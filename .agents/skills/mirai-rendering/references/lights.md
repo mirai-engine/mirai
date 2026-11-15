@@ -283,7 +283,8 @@ Tests: the shadow ones of `render/render_test.odin` (`render_sun_shadow_is_ray_t
 `render_an_edge_takes_no_light_from_the_face_beyond_it` and, for the cache of the maps,
 `render_moved_cascades_give_what_whole_ones_give` and
 `render_shadow_maps_follow_what_moves_in_its_frame`, and for the lights and the sun without
-shadows `render_a_light_without_shadows_lights_through_what_holds_it`) and, for the grid and
+shadows `render_a_light_without_shadows_lights_through_what_holds_it`, and for a mesh without
+them `render_a_mesh_without_shadows_lets_the_sun_through`) and, for the grid and
 the groups of lights, `render_many_lights_match_their_reference`,
 `render_lights_that_few_reach_at_a_time_are_each_lit` and
 `render_groups_of_lights_give_what_their_lights_give`.

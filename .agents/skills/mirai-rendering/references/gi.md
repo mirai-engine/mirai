@@ -47,8 +47,10 @@ Each technique states its status; what is listed as prepared is not implemented.
   - Blend-only instances are a separate ray class that the other rays do not visit.
   - [Batches](scene.md#instance-batches) that only cast shadow or are only seen have their own
     classes (`RAY_SHADOW_ONLY`, `RAY_UNSHADOWED`), requested by the shadow rays (`RAY_SHADOWS`) and
-    those that see surfaces (`RAY_SEEN`). In software, a TLAS reference after the instances is a
-    batch, whose instance tree leads to the BLAS of its mesh.
+    those that see surfaces (`RAY_SEEN`). An instance
+    [without shadows](scene.md#scene-and-instances) that is not all glass is `RAY_UNSHADOWED`. In
+    software, a TLAS reference after the instances is a batch, whose instance tree leads to the
+    BLAS of its mesh.
 - **Only the structure of the tracer in use.** With hardware RT a mesh has its native BLAS and no
   software BVH (`rays[k].bvh_node_count` 0). When switching to software,
   `renderer_apply_settings` builds the one of each mesh that lacks it (one pose, from its bind

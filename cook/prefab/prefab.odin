@@ -68,7 +68,7 @@ model_prefab :: proc(model:^importer.Imported_Model,assets:^importer.Import_Repo
         s:=model.meshes[node.mesh].skeleton
         if s<0 || s>=len(rig_ids) || rig_shows[s] {continue}
         rig_shows[s],shown_by_rig[i]=true,true
-        shown:=render.Mesh_Renderer{mesh=assets.mesh_ids[node.mesh]}
+        shown:=render.Mesh_Renderer{mesh=assets.mesh_ids[node.mesh],shape=.None,shadows=true}
         if put(&scene,info,rig_ids[s],"Mesh_Renderer",&shown)!=.None {return report,.Write}
         if !model_collider(&scene,info,rig_ids[s],model.meshes[node.mesh]) {return report,.Write}
         if !model_morphs(&scene,info,rig_ids[s],node,model.meshes[node.mesh],true) {return report,.Write}
@@ -108,7 +108,7 @@ model_prefab :: proc(model:^importer.Imported_Model,assets:^importer.Import_Repo
         }
         skinned:=node.mesh>=0 && len(model.meshes[node.mesh].skin)>0
         if node.mesh>=0 && node.mesh<len(assets.mesh_ids) {
-            shown:=render.Mesh_Renderer{mesh=assets.mesh_ids[node.mesh]}
+            shown:=render.Mesh_Renderer{mesh=assets.mesh_ids[node.mesh],shape=.None,shadows=true}
             if put(&scene,info,own,"Mesh_Renderer",&shown)!=.None {return report,.Write}
             if !model_collider(&scene,info,own,model.meshes[node.mesh]) {return report,.Write}
             if !model_morphs(&scene,info,own,node,model.meshes[node.mesh],bone_rig[i]>=0) {return report,.Write}

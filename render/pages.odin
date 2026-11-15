@@ -360,7 +360,7 @@ page_entry_write :: proc(s: ^Scene_State, m: Mesh_Record, page, base: u32) {
 	low, high := Vec3(max(f32)), Vec3(-max(f32))
 	for index := m.first_instance; index >= 0; index = s.instance_next[index] {
 		inst := s.instances[index]
-		if inst.meta.w & (INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_BLENDED) != 0 {continue}
+		if !instance_casts(inst) {continue}
 		low, high = linalg.min(low, inst.bounds_min.xyz), linalg.max(high, inst.bounds_max.xyz)
 	}
 	occluder_add(&s.paged, OCCLUDERS_MANY, low, high)

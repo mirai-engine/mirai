@@ -301,6 +301,9 @@ Components that describe the scene and `render_sync`, which carries it to the re
   ([turned off](../../mirai-core/references/core.md#disabled-entities)).
 - **`Drawn_Elsewhere`**: its mesh is drawn by another library (the pieces of a broken
   destructible).
+- **`Mesh_Renderer`**, with its initial value in `MESH_RENDERER_DEFAULT`: with `shadows` off it is
+  seen and stops no light
+  ([without shadows](../../mirai-rendering/references/scene.md#scene-and-instances)).
 - **Lights**: `Sun`, `Point_Light`, `Spot_Light` and `Rect_Light`, with their initial values in
   `SUN_DEFAULT`, `POINT_LIGHT_DEFAULT`, `SPOT_LIGHT_DEFAULT` and `RECT_LIGHT_DEFAULT`. All four
   shine toward -Z of their entity, as a camera looks; their units are those of

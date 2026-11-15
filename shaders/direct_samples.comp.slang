@@ -178,7 +178,7 @@ float direct_hit(float3 o, float3 w, float reach, uint2 mask) {
 float3 direct_glass(float3 o, float3 w, float reach, float3 plain) {
     if (MIRAI_DIRECT_GLASS) {
         filters_begin();
-        float3 through = trace_glass_filter(o, w, reach);
+        float3 through = trace_glass_filter(o, w, reach, true);
         filters_weigh(plain);
         return through;
     }
@@ -234,7 +234,10 @@ void main(uint3 group : SV_GroupID, uint index : SV_GroupIndex) {
     GroupMemoryBarrierWithGroupSync();
     if (index < frame.moved.x) {
         uint moved = asuint(frame.moved_boxes[2u * index].w);
-        if (moved < frame.instance_count && (scene_instance(moved).meta.w & (INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_BLENDED)) == 0u) list_add(moved);
+        if (moved < frame.instance_count) {
+            Instance mover = scene_instance(moved);
+            if ((mover.meta.w & (INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_BLENDED)) == 0u && (mover.meta.x & INSTANCE_UNSHADOWED) == 0u) list_add(moved);
+        }
     }
     GroupMemoryBarrierWithGroupSync();
 #endif

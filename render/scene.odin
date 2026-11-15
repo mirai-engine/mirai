@@ -74,6 +74,7 @@ Instance_Desc :: struct {
 	outline_only: bool,        // with a highlight: only its outline is drawn, as of something that is not there
 	layers: u32,               // the layers it is in (16 of them), which a view draws or not; 0: the first one alone
 	owner: u8,                 // 1 + the local slot whose body it is: a view of that slot that hides its body fades it out; 0: none
+	shadowless: bool,          // it casts no shadow: the rays that see surfaces meet it, the shadow rays and the maps do not
 }
 
 // An instance whose materials need more of the G-buffer than base color and metallic.
@@ -223,9 +224,14 @@ INSTANCE_ABSENT :: Gpu_Instance{meta = {0, 0, 0, INSTANCE_FLAG_HIDDEN}}
 // An instance that changed what it covers: the box of the frame before, then the one now.
 @(private)
 occluder_moved :: proc(s: ^Scene_State, index: u32, before, after: Gpu_Instance) {
-	shown :: proc "contextless" (inst: Gpu_Instance) -> bool {return inst.meta.w & (INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_BLENDED) == 0}
-	if shown(before) {occluder_changed(s, index, before.bounds_min.xyz, before.bounds_max.xyz)}
-	if shown(after) {occluder_changed(s, index, after.bounds_min.xyz, after.bounds_max.xyz)}
+	if instance_casts(before) {occluder_changed(s, index, before.bounds_min.xyz, before.bounds_max.xyz)}
+	if instance_casts(after) {occluder_changed(s, index, after.bounds_min.xyz, after.bounds_max.xyz)}
+}
+
+// Whether an instance is drawn in the depth of the maps of the shadows and stops their rays.
+@(private)
+instance_casts :: proc "contextless" (inst: Gpu_Instance) -> bool {
+	return inst.meta.w & (INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_BLENDED) == 0 && inst.meta.x & INSTANCE_UNSHADOWED == 0
 }
 
 // A light of the set that moved or changed its shape: what it shades is new.
@@ -776,7 +782,7 @@ instances_classify :: proc(s: ^Scene_State) {
 		if reflectance && flags & INSTANCE_FLAG_HIDDEN == 0 {append(&s.reflective, Reflective_Instance{u32(i), layered})}
 		if flags != inst.meta.w {
 			inst.meta.w = flags
-			s.hw_instances[i].mask_flags = tlas_mask_flags(ray_class(flags), tested)
+			s.hw_instances[i].mask_flags = tlas_mask_flags(ray_class(inst.meta.x, flags), tested)
 			s.instances_dirty = true
 			s.tlas_dirty = true
 		}
@@ -859,13 +865,14 @@ instance_resized :: proc(s: ^Scene_State, index: int, low, high: Vec3) {
 	inst := &s.instances[index]
 	inst.meta.w = (inst.meta.w & ~u32(INSTANCE_FLAG_SMALL)) | instance_small(low, high)
 	hw := &s.hw_instances[index]
-	hw.mask_flags = tlas_mask_flags(ray_class(inst.meta.w), hw.mask_flags & rhi.TLAS_ALPHA_TESTED != 0)
+	hw.mask_flags = tlas_mask_flags(ray_class(inst.meta.x, inst.meta.w), hw.mask_flags & rhi.TLAS_ALPHA_TESTED != 0)
 }
 
 @(private = "file")
-ray_class :: proc "contextless" (flags: u32) -> u8 {
+ray_class :: proc "contextless" (mesh_word, flags: u32) -> u8 {
 	if flags & INSTANCE_FLAG_HIDDEN != 0 {return 0}
 	if flags & INSTANCE_FLAG_BLENDED != 0 {return RAY_GLASS}
+	if mesh_word & INSTANCE_UNSHADOWED != 0 {return RAY_UNSHADOWED}
 	return RAY_SMALL if flags & INSTANCE_FLAG_SMALL != 0 else RAY_SOLID
 }
 
@@ -1331,7 +1338,7 @@ instance_uncollapse :: proc(s: ^Scene_State, index: u32) -> bool {
 		inst.meta.w &~= INSTANCE_FLAG_HIDDEN
 		s.hidden_count -= 1
 	}
-	s.hw_instances[index].mask_flags = tlas_mask_flags(ray_class(inst.meta.w), inst.meta.w & INSTANCE_FLAG_ALPHA_TESTED != 0)
+	s.hw_instances[index].mask_flags = tlas_mask_flags(ray_class(inst.meta.x, inst.meta.w), inst.meta.w & INSTANCE_FLAG_ALPHA_TESTED != 0)
 	return true
 }
 
@@ -1715,9 +1722,10 @@ instance_write :: proc(r:^Renderer,index:u32,desc:Instance_Desc,previous:Mat4,gi
 		mesh := s.meshes[desc.mesh]
 		// The cut rays trace an instance with stays while it shows the same mesh
 		// (ray_cuts_update) and, of a streamed mesh, has its pages in the pools.
-		was := s.instances[index].meta.x >> INSTANCE_RAY_SHIFT
+		was := s.instances[index].meta.x >> INSTANCE_RAY_SHIFT & 3
 		kept := s.instances[index].meta.x & INSTANCE_MESH_MASK == u32(desc.mesh) && int(desc.mesh) < len(s.meshes) && was < max(mesh.ray_count, 1) && (mesh.stream == nil || mesh.stream.cut_missing[was] == 0)
 		cut := was << INSTANCE_RAY_SHIFT if kept else u32(ray_cut_always(mesh)) << INSTANCE_RAY_SHIFT
+		if desc.shadowless {cut |= INSTANCE_UNSHADOWED}
 		reach := pose_reach(mesh)
 		inverse, bmin, bmax, invertible := instance_placement(desc.transform, mesh.bounds_min - reach, mesh.bounds_max + reach)
 		key := Instance_Key{desc.object_id, desc.copy_owner, desc.copy_variant}
@@ -1773,7 +1781,7 @@ instance_write :: proc(r:^Renderer,index:u32,desc:Instance_Desc,previous:Mat4,gi
 		s.overlays[index]=layers
 		s.instance_keys[index]=key
 		s.tlas_items[index]={bmin, bmax}
-		s.hw_instances[index]=rhi.Tlas_Instance{transform = rows_3x4(desc.transform) if invertible else {}, custom_index = index, mask_flags = tlas_mask_flags(ray_class(flags), tested)}
+		s.hw_instances[index]=rhi.Tlas_Instance{transform = rows_3x4(desc.transform) if invertible else {}, custom_index = index, mask_flags = tlas_mask_flags(ray_class(cut, flags), tested)}
 		if !hidden {
 			s.bounds_min = linalg.min(s.bounds_min, bmin)
 			s.bounds_max = linalg.max(s.bounds_max, bmax)
@@ -1861,7 +1869,7 @@ scene_update :: proc(r:^Renderer,first:u32,instances:[]Instance_Desc,truncate:bo
         if !instance_shades_same(before,s.instances[index]) {occluder_moved(s,index,before,s.instances[index])}
         changed:=flags~s.instances[index].meta.w
         classification||=changed&(INSTANCE_FLAG_BLENDED|INSTANCE_FLAG_HIDDEN)!=0
-        ray_properties||=classification || changed&INSTANCE_FLAG_ALPHA_TESTED!=0
+        ray_properties||=classification || changed&INSTANCE_FLAG_ALPHA_TESTED!=0 || (before.meta.x~s.instances[index].meta.x)&INSTANCE_UNSHADOWED!=0
         instance_touch(s, index)
     }
     if truncate && end<old {
@@ -1908,7 +1916,7 @@ instance_shades_same :: proc(a, b: Gpu_Instance) -> bool {
 // changes is drawn over the image and leaves it.
 @(private = "file")
 instance_lit_same :: proc(a, b: Gpu_Instance) -> bool {
-	return a.world == b.world && a.meta.x & INSTANCE_MESH_MASK == b.meta.x & INSTANCE_MESH_MASK && a.meta.y == b.meta.y && a.meta.w &~ INSTANCE_HIGHLIGHT_MASK == b.meta.w &~ INSTANCE_HIGHLIGHT_MASK && a.tint.xyz == b.tint.xyz && a.emission.xyz == b.emission.xyz && a.slot_materials == b.slot_materials
+	return a.world == b.world && a.meta.x & (INSTANCE_MESH_MASK | INSTANCE_UNSHADOWED) == b.meta.x & (INSTANCE_MESH_MASK | INSTANCE_UNSHADOWED) && a.meta.y == b.meta.y && a.meta.w &~ INSTANCE_HIGHLIGHT_MASK == b.meta.w &~ INSTANCE_HIGHLIGHT_MASK && a.tint.xyz == b.tint.xyz && a.emission.xyz == b.emission.xyz && a.slot_materials == b.slot_materials
 }
 
 // Lighting runs in render units: a luminance in nits by the light scale of
