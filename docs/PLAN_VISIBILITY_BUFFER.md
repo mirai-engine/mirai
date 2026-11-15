@@ -53,5 +53,11 @@ The user chose 64-bit atomics knowing that Apple M1 lacks them.
   `gbuffer_pass` in render/frame.odin; `Settings.visibility_buffer` (default on). Against the
   forward G-buffer at High: SSIM 0.999 in the forest, 0.993 in the gallery; the render tests pass
   with validation (but the Catalog one that fails on main).
-- Next: step 4. The raster of the visibility buffer is the larger part of what is left in the
-  forest; measure how much of it is vertices and how much fragments before the software raster.
+- Step 4 measured and set aside: of the 8.2 ms the raster of the visibility buffer takes in the
+  forest at High, about 3.7 are vertices and raster, 3.9 the alpha test of the leaves and 0.6
+  the atomics. A software raster in compute (branch `vis-buffer-soft`: each vertex of a cluster
+  placed once, small triangles rasterized per thread, the rest handed to the hardware) took
+  16.5 ms with a 32-pixel limit and 12.7 ms with 8: the leaves are 5 to 180 pixels, where the
+  hardware raster wins. Writing fewer outputs in the vertex shader of the raster changed nothing
+  (the driver drops the outputs the fragment shader does not read).
+- Next: step 5 (voxel foliage), or cutting the alpha test of the leaves.
