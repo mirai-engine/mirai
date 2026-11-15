@@ -19,8 +19,9 @@ import mm "mirai:std/math"
 // light over frames and lays it over the lit opaque scene; with glass in
 // view, what lies behind its nearest layer before the glass and what lies in
 // front over it. Past the grid the same media go on to the depth of each
-// pixel and to the sky, in closed form, lit by the sun without shadows and by
-// the light around. What it integrates is the media of the view
+// pixel and to the sky, in closed form, lit by the light around and by the
+// sun that reaches them through the scene, which cells past the grid keep as
+// the grid keeps its light. What it integrates is the media of the view
 // (render.MEDIA_TEXTURE): what is blended later, as particles, goes behind
 // the same fog. Its cost depends neither on the resolution of the view nor on
 // how many lights there are.
@@ -281,7 +282,8 @@ fog_record :: proc(pass:^render.Pass,user:rawptr) {
     media:=render.media_grid(pass.width,pass.height)
     grid:=media.cells.xyz
     if grid.x==0 {return}
-    light:=render.Pass_Texture_Desc{name="fog light",format=.RGBA16_Float,width=grid.x,height=grid.y,depth=grid.z,history=true}
+    // Past the grid, its cells keep what of the sun reaches each slice beyond it.
+    light:=render.Pass_Texture_Desc{name="fog light",format=.RGBA16_Float,width=grid.x,height=grid.y,depth=grid.z+media.cells.w,history=true}
     medium:=render.Pass_Texture_Desc{name="fog medium",format=.RGBA16_Float,width=grid.x,height=grid.y,depth=grid.z}
     seen:=render.Pass_Texture_Desc{name=render.MEDIA_TEXTURE,format=.RGBA16_Float,width=grid.x,height=grid.y,depth=grid.z+media.cells.w}
     far:=render.Pass_Texture_Desc{name="fog far",format=.R32_Float,width=grid.x,height=grid.y}
@@ -325,7 +327,7 @@ fog_record :: proc(pass:^render.Pass,user:rawptr) {
     render.pass_pipeline(pass,state.pipelines[2])
     volumes:=volumes_relative(state,pass.origin)
     if !render.pass_params(pass,&params,size_of(params)) || !render.pass_upload(pass,2,&volumes,state.count*size_of(Gpu_Volume)) {return}
-    render.pass_dispatch(pass,(grid.x+3)/4,(grid.y+3)/4,(grid.z+3)/4)
+    render.pass_dispatch(pass,(grid.x+3)/4,(grid.y+3)/4,(grid.z+media.cells.w+3)/4)
     // From the eye along each column, through the grid and past it: the light that reaches it and what is let through.
     render.pass_texture(pass,0,light)
     if ok,_:=render.pass_texture(pass,1,seen);!ok {return}

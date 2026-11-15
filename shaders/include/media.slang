@@ -95,14 +95,12 @@ float3 media_sun_light(float3 position) {
     return sun_light(position) * frame.sun_shares.y;
 }
 
-// What reaches a point of a medium from the sun through the scene, times
-// sun_kept, what the medium itself lets through, and the phase towards the
-// eye; none without a sun. A pass with the maps of the view (SUN_SHADOW_SLOT)
-// takes from them what stops the sun and, from their tint (SHADOW_TINT_SLOT),
-// what the glass on its way lets through, and a ray where no cascade holds
-// the point. changed: as for media_local_light.
-float3 media_sun(float3 position, float3 eye_ray, float g, float3 sun_kept, inout bool changed) {
-    if (frame.sun_direction.w < 0.5) return float3(0.0);
+// What of the sun reaches a point of a medium through the scene: 1 where
+// nothing stops it. A pass with the maps of the view (SUN_SHADOW_SLOT) takes
+// from them what stops the sun and, from their tint (SHADOW_TINT_SLOT), what
+// the glass on its way lets through, and a ray where no cascade holds the
+// point. changed: as for media_local_light.
+float3 media_sun_through(float3 position, inout bool changed) {
     float reach = sun_reach(position, frame.sun_direction.xyz);
 #ifdef SUN_SHADOW_SLOT
     float known = sun_shadow_seen(position, float3(0.0));
@@ -115,6 +113,15 @@ float3 media_sun(float3 position, float3 eye_ray, float g, float3 sun_kept, inou
     float3 through = trace_transmission(position, frame.sun_direction.xyz, reach);
 #endif
     changed = changed || (frame.moved.z & MOVED_SUN) != 0u || occluder_changed(position, frame.sun_direction.xyz, reach, INVALID, FLT_MAX);
+    return through;
+}
+
+// What reaches a point of a medium from the sun through the scene
+// (media_sun_through), times sun_kept, what the medium itself lets through,
+// and the phase towards the eye; none without a sun.
+float3 media_sun(float3 position, float3 eye_ray, float g, float3 sun_kept, inout bool changed) {
+    if (frame.sun_direction.w < 0.5) return float3(0.0);
+    float3 through = media_sun_through(position, changed);
     return media_sun_light(position) * through * sun_kept * media_phase(dot(eye_ray, frame.sun_direction.xyz), g);
 }
 float3 media_sun(float3 position, float3 eye_ray, float g, float3 sun_kept) {
