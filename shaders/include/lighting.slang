@@ -379,19 +379,14 @@ bool light_node_opens(Light_Node node, uint at) {
     return (node.flags & LIGHT_NODE_LEAF) == 0u && node.child > at && node.child < frame.light_nodes;
 }
 
-// Whether a light stands for the emission of an instance: one of the lights
-// lies inside its bounds, which are not much larger than the sphere of that
-// light, as the globe of a lamp around the light that gives its light.
 static const float EMITTER_LIGHT_SIZES = 2.0;
-bool light_stands_for(uint instance) {
-    if (frame.light_nodes == 0u) return false;
-    Instance inst = scene_instance(instance);
-    float3 low = inst.bounds_min.xyz;
-    float3 high = inst.bounds_max.xyz;
-    float extent = 0.5 * max(high.x - low.x, max(high.y - low.y, high.z - low.z));
+
+// One of the lights of the tree from root lies inside the box from low to
+// high, at most `extent` from its center each way.
+bool light_stands_for_under(uint root, float3 low, float3 high, float extent) {
     uint pending[LIGHT_TREE_DEPTH];
     uint depth = 0u;
-    uint at = 0u;
+    uint at = root;
     [loop]
     while (true) {
         Light_Node node = light_nodes[at];
@@ -412,6 +407,20 @@ bool light_stands_for(uint instance) {
         at = pending[depth];
     }
     return false;
+}
+
+// Whether a light stands for the emission of an instance: one of the lights
+// lies inside its bounds, which are not much larger than the sphere of that
+// light, as the globe of a lamp around the light that gives its light.
+bool light_stands_for(uint instance) {
+    if (frame.light_nodes == 0u) return false;
+    Instance inst = scene_instance(instance);
+    float3 low = inst.bounds_min.xyz;
+    float3 high = inst.bounds_max.xyz;
+    float extent = 0.5 * max(high.x - low.x, max(high.y - low.y, high.z - low.z));
+    if (light_stands_for_under(0u, low, high, extent)) return true;
+    if (frame.shadowless_lights.x != 0u && light_stands_for_under(frame.shadowless_lights.x, low, high, extent)) return true;
+    return frame.shadowless_lights.z != 0u && light_stands_for_under(frame.shadowless_lights.z, low, high, extent);
 }
 
 // Whether a ray that gathers light met the globe of a light (light_stands_for
@@ -441,7 +450,7 @@ static const float GROUP_INSIDE = 1.0;
 // ESTIMATE_OPENED their children do, and in between both, so that it changes
 // smoothly from a point to the next. It sets how much a group of the finer
 // sum may err. `root`: the tree it walks, that of the lights with shadows
-// (0) or that of those without (frame.shadowless_lights.x).
+// (0) or one of those without (frame.shadowless_lights.x or z).
 static const float ESTIMATE_GROUPED = 0.5;
 static const float ESTIMATE_OPENED = 1.0;
 float lights_estimate(float3 position, float3 normal, uint root = 0u) {
@@ -540,19 +549,25 @@ float3 local_lighting(Shading s, float total, uint root = 0u, bool bounced = fal
 }
 
 // The light the local lights that cast no shadows send from the point
-// towards its viewer: whatever stands in their way, with no rays and out of
-// the budgets of shadows. `total`: roughly how much light of the others
-// reaches it; what a group may err against adds theirs. `bounced`: as for
-// local_lighting.
+// towards its viewer, those a pass writes and those of the scene: whatever
+// stands in their way, with no rays and out of the budgets of shadows.
+// `total`: roughly how much light of the others reaches it; what a group may
+// err against adds theirs. `bounced`: as for local_lighting.
 float3 shadowless_lighting(Shading s, float total, bool bounced = false) {
-    uint root = frame.shadowless_lights.x;
-    if (root == 0u) return float3(0.0);
-    return local_lighting(s, max(total, 0.0) + lights_estimate(s.position, s.normal, root), root, bounced);
+    uint written = frame.shadowless_lights.x, scene = frame.shadowless_lights.z;
+    if (written == 0u && scene == 0u) return float3(0.0);
+    total = max(total, 0.0);
+    if (written != 0u) total += lights_estimate(s.position, s.normal, written);
+    if (scene != 0u) total += lights_estimate(s.position, s.normal, scene);
+    float3 result = float3(0.0);
+    if (written != 0u) result += local_lighting(s, total, written, bounced);
+    if (scene != 0u) result += local_lighting(s, total, scene, bounced);
+    return result;
 }
 
 // Whether a node is one of the lights that cast no shadows.
 bool light_node_shadowless(uint at) {
-    return at >= frame.shadowless_lights.x && at < frame.shadowless_lights.y;
+    return (at >= frame.shadowless_lights.x && at < frame.shadowless_lights.y) || (at >= frame.shadowless_lights.z && at < frame.shadowless_lights.w);
 }
 
 // How much a node of a cut needs to open to its children: the brighter and

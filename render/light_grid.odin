@@ -48,11 +48,12 @@ Light_Grid_Region :: struct {
 
 // The grid around the ranges of the lights and the box of those of region;
 // `count`, the lights the GPU holds, those that a pass writes on it included,
-// each with its record.
-light_grid_place :: proc(lights: []Gpu_Light, count: int, region: Light_Grid_Region = {}) -> (grid: Light_Grid) {
+// each with its record. The lights of shadowless that are true take no cell:
+// the grid holds the lights whose samples trace rays.
+light_grid_place :: proc(lights: []Gpu_Light, count: int, region: Light_Grid_Region = {}, shadowless: []bool = nil) -> (grid: Light_Grid) {
 	lo, hi := Vec3{max(f32), max(f32), max(f32)}, Vec3{-max(f32), -max(f32), -max(f32)}
-	for l in lights {
-		if !light_placed(l) || !(l.position_range.w > 0) {continue}
+	for l, i in lights {
+		if i < len(shadowless) && shadowless[i] || !light_placed(l) || !(l.position_range.w > 0) {continue}
 		range := min(l.position_range.w, LIGHT_GRID_REACH_MAX)
 		reach := Vec3{range, range, range}
 		lo, hi = linalg.min(lo, l.position_range.xyz - reach), linalg.max(hi, l.position_range.xyz + reach)
@@ -75,8 +76,8 @@ light_grid_place :: proc(lights: []Gpu_Light, count: int, region: Light_Grid_Reg
 		cells := int(grid.size.x) * int(grid.size.y) * int(grid.size.z)
 		grid.rows = cells + LIGHT_GRID_WEIGHT_ROWS * count
 		last := Vec3{f32(grid.size.x - 1), f32(grid.size.y - 1), f32(grid.size.z - 1)}
-		for l in lights {
-			if !light_placed(l) || !(l.position_range.w > 0) {continue}
+		for l, i in lights {
+			if i < len(shadowless) && shadowless[i] || !light_placed(l) || !(l.position_range.w > 0) {continue}
 			range := min(l.position_range.w, LIGHT_GRID_REACH_MAX)
 			a := linalg.clamp(linalg.floor((l.position_range.xyz - range - grid.origin) / grid.cell), Vec3{}, last)
 			b := linalg.clamp(linalg.floor((l.position_range.xyz + range - grid.origin) / grid.cell), Vec3{}, last)
@@ -124,7 +125,7 @@ light_grid_update :: proc(r: ^Renderer) -> bool {
 	s := &r.scene
 	if s.light_grid_stale {
 		region := Light_Grid_Region{s.light_region_box, int(min(s.light_region_asked, s.light_region.lights)), s.light_region_reach}
-		s.light_grid = light_grid_place(s.lights[:], len(s.lights) + light_region_lights(s.light_region), region)
+		s.light_grid = light_grid_place(s.lights[:], len(s.lights) + light_region_lights(s.light_region), region, s.light_shadowless[:])
 		s.light_grid_stale = false
 		s.light_grid_dirty = true
 	}

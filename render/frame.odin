@@ -751,7 +751,7 @@ view_begin :: proc(p: ^Pass) -> bool {
 		time={r.time,r.previous_time,r.delta_time,0},
 		frame_index = u32(p.view.turn),
 		light_nodes = u32(len(s.light_tree)),
-		shadowless_lights = light_region_frame(s.light_region),
+		shadowless_lights = light_shadowless_frame(s.light_tree[:], s.light_region),
 		instance_count = u32(len(s.instances)),
 		cut = {settings.lod_error_pixels, settings.batch_min_pixels if settings.lod_error_pixels > 0 else 0, 0, 0},
 		batches = {s.batch.slots, s.batch.groups.first, u32(len(s.batch.drawn)), u32(len(s.batch.traced))},
@@ -781,7 +781,7 @@ view_begin :: proc(p: ^Pass) -> bool {
 		if length > 1e-8 {f.frustum[5] = camera.clip_plane / length}
 	}
 	scale := s.light_scale if s.light_scale > 0 else 1
-	frame_sun_sky(&f, s.sun, s.environment, scale, max(settings.sun_radius, SUN_RADIUS), r.air.built, settings.sun_shadows)
+	frame_sun_sky(&f, s.sun, s.environment, scale, max(settings.sun_radius, SUN_RADIUS), r.air.built, settings.sun_shadows && !s.sun.shadowless)
 	f.sky_map = sky_map(r, s.environment.sky_texture, s.environment.sky_atmosphere)
 	f.sky_from_map = sky_map(r, s.environment.sky_from_texture, s.environment.sky_from_atmosphere)
 	air_view(p, &f)

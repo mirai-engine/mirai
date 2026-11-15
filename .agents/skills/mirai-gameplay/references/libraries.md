@@ -306,7 +306,9 @@ Components that describe the scene and `render_sync`, which carries it to the re
   shine toward -Z of their entity, as a camera looks; their units are those of
   `KHR_lights_punctual` ([units](../../mirai-rendering/references/display.md#units)). Each one's
   `indirect` multiplies the part of its light that bounces and `scattering` the part a fog
-  scatters, 1 by default; what it lights directly does not change.
+  scatters, 1 by default; what it lights directly does not change. With `shadows` off (on by
+  default) nothing stops its light
+  ([local lights](../../mirai-rendering/references/lights.md#local-lights)).
   - `Sun`: `color`, `illuminance` (lux) and `disc` (seen in the sky). It is
     `@(component,single)` ([one at a time](../../mirai-core/references/generator.md#attributes)):
     turning one on turns off the one that was on, and the renderer uses the one that is on if it is
