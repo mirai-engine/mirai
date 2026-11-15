@@ -98,6 +98,7 @@ Profile_Capture :: struct {
     frames:[]Profile_Frame_Record,
     zones:[]Profile_Zone_Record, // the main thread frame by frame, then the other threads
     names:[]string,
+    owners:[]Profile_Zone_Owner, // by name: who declares the loop function of that name
     passes:[]Profile_Pass_Record,
     pass_names:[]string,
     threads:int,
@@ -283,6 +284,14 @@ profile_build :: proc(c:^Profile_Capture,recording:host.Profile_Recording,app:^h
     copy(c.zones,main[:])
     copy(c.zones[len(main):],workers[:])
     c.names=names[:]
+    c.owners=make([]Profile_Zone_Owner,len(names))
+    if app!=nil && app.info!=nil {
+        // The plugin is kept in the capture: the library that named it may be reloaded.
+        for name,i in names {
+            c.owners[i]=profile_zone_owner(app.info.steps,name)
+            c.owners[i].plugin=strings.clone(c.owners[i].plugin)
+        }
+    }
     for zone,i in main {
         frame:=&c.frames[zone.frame]
         if frame.zone_count==0 {frame.zone_first=i}
@@ -484,4 +493,20 @@ profile_gpu_ms :: proc(c:^Profile_Capture,allocator:=context.temp_allocator) -> 
     values:=make([dynamic]f64,0,len(c.frames),allocator)
     for frame in c.frames {if frame.gpu_measured {append(&values,f64(frame.gpu_ms))}}
     return values[:]
+}
+
+// Who declares what a zone measures: a loop function of the game of the
+// project or of a plugin; any other zone (a part of the frame, a job, an
+// engine function) is the engine's.
+Profile_Owner :: enum u8 {Engine,Game,Plugin}
+Profile_Zone_Owner :: struct {owner:Profile_Owner,plugin:string}
+
+profile_zone_owner :: proc(steps:[]core.Step_Info,name:string) -> Profile_Zone_Owner {
+    for step in steps {
+        if step.name!=name {continue}
+        if step.game {return {owner=.Game}}
+        if step.plugin!="" {return {.Plugin,step.plugin}}
+        break
+    }
+    return {}
 }
