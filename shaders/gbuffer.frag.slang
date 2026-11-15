@@ -47,8 +47,10 @@ struct Stage_Output {
 #endif
 };
 [shader("fragment")]
-Stage_Output main(Raster_Input input, float4 pixel_position : SV_Position) {
+Stage_Output main(Raster_Input input, float4 pixel_position : SV_Position, bool front_facing : SV_IsFrontFace) {
     Stage_Output output;
+    input = raster_facing(input, front_facing);
+    if ((input.in_flags & RASTER_FLAG_ONE_SIDED) != 0u && raster_back(input)) discard;
     if ((input.in_flags & RASTER_FLAG_FADING) != 0u && fade_pixel_left(uint2(pixel_position.xy), float(input.in_flags >> RASTER_FADE_SHIFT) / 65535.0)) discard;
     Fragment f = fragment_evaluate(input);
     // Blended surfaces are drawn after the scene is lit; the holes of a masked one show what is behind.

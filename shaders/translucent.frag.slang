@@ -22,9 +22,10 @@ struct Stage_Output {
 [shader("fragment")]
 Stage_Output main(Raster_Input input, float4 pixel_position : SV_Position, bool front_facing : SV_IsFrontFace) {
     Stage_Output output;
+    input = raster_facing(input, front_facing);
     int2 p = int2(pixel_position.xy);
     float opaque = g_depth.Load(int3(p, 0)).r;
-    if (!fragment_forward(input, front_facing, last_layer_depth.Load(int3(p, 0)).r, opaque)) discard;
+    if (!fragment_forward(input, last_layer_depth.Load(int3(p, 0)).r, opaque)) discard;
     Fragment f = fragment_evaluate(input, opaque);
     // Behind a layer of glass, the few percent a pane reflects of the probes do not show.
     Glass g = fragment_glass(f, input.in_world);

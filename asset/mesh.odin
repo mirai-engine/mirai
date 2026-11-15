@@ -124,7 +124,7 @@ Mesh_Flag :: enum u8 {
     Has_Colors, // some vertex color is not white
     Has_Uv1,    // uv1 is a set of its own, not a copy of uv
     Levels,     // its levels are whole meshes, not a DAG
-    Closed,     // level 0 is closed: no cluster of it is seen from behind its normals
+    Closed,     // level 0 is closed: it bounds a solid, which a ray of glass that enters it leaves
     Has_Surface, // a far mesh: with its colors, its vertices carry roughness, metallic and emission (Surface_Vertex)
 }
 Mesh_Flags :: bit_set[Mesh_Flag;u32]

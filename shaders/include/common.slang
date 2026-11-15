@@ -260,6 +260,7 @@ struct Material {
     uint emission_mode;         // EMISSION_*
     uint program_id;            // Surface program that replaces the values above; 0 for none
     uint textures[MATERIAL_MAPS];
+    uint two_sided;             // 1: seen from behind too (asset.Material_Info.two_sided); 0: its back faces are not drawn
     uint row;                   // of the material table, where the rest of it follows
 };
 // A row of the material table. Shading code holds its Material by value; where
@@ -287,8 +288,9 @@ struct Material_Row {
 
 // What the vertex shader tells the fragment shaders of an instance.
 #define RASTER_HIGHLIGHT_MASK 31u // outline level
-#define RASTER_FLAG_MIRRORED 32u  // its transform turns the winding of its triangles around
+#define RASTER_FLAG_BACK 32u      // the fragment shows the back of its triangle: its stage sets it from its facing (raster_facing)
 #define RASTER_FLAG_FADING 64u    // what fades out by the unorm16 of bits 16-31: the body the view fades out (view_body_fade), or an instance of a batch near its cull distance
+#define RASTER_FLAG_ONE_SIDED 128u // of a material not seen from behind: the G-buffer leaves its back faces out
 #define RASTER_FADE_SHIFT 16u
 
 struct Light {

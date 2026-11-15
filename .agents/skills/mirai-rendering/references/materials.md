@@ -14,7 +14,8 @@ mode.
   `row` is written by the shader with the index through which it read the row; the CPU leaves it
   at zero.
 - Textures follow the channels of glTF and its extensions (tangent-space normal with +Y up) and
-  each one multiplies the value it accompanies. Row 0 is the default material.
+  each one multiplies the value it accompanies. Row 0 is the default material; the Plane shape
+  names a row of its own, the default seen from both sides (`two_sided`).
 - **Overlays** (`overlay.frag.slang`): layers over an instance's opaque base, with the same
   geometry. Alpha covers with the layer's lit surface and Additive adds its light; Multiply
   filters what is below by the layer's base color without lighting it, so it depends neither on
@@ -274,7 +275,7 @@ A texture of an asset resides with the levels the GPU samples of it
 - **MikkTSpace tangent frame.** The pixel uses the interpolated, unnormalized normal and tangent
   and the bitangent `sign * cross(normal, tangent)`, like the baker that wrote the map
   (`tangent_frame_normal` of `scene.slang`, the same in raster and in ray hits). A mirrored
-  instance inverts the sign; the back face inverts the whole frame.
+  instance inverts the sign; the back face of a two-sided material inverts the whole frame.
 - A mesh generated at runtime can bring its tangents per vertex
   (`Mesh_Generate_Options.tangents`), like the terrain Heightfield.
 - The tangents follow the UV that the normal map read on import; the map's transform rotates (and

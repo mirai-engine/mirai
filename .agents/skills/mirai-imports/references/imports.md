@@ -738,11 +738,11 @@ slots of the `.mesh`, one per primitive, reference them.
   `NORMAL`, `TANGENT` (with `NORMAL`), `TEXCOORD_0/1` and `COLOR_0`; triangles without area are
   discarded.
 - **Materials**: metallic-roughness with emission relative to exposure (glTF gives no unit and its
-  viewers show 1 as the display white), `alphaMode`, `KHR_texture_transform` per map and the
-  extensions transmission, ior, volume, specular, clearcoat (a white coat of IOR 1.5), diffuse
-  transmission (from the JSON: cgltf does not read it) and unlit (emits its base color). A material
-  without metallic-roughness is a rough metal; a map that asks for a missing `TEXCOORD` rejects the
-  import.
+  viewers show 1 as the display white), `alphaMode`, `doubleSided` (`two_sided`),
+  `KHR_texture_transform` per map and the extensions transmission, ior, volume, specular, clearcoat
+  (a white coat of IOR 1.5), diffuse transmission (from the JSON: cgltf does not read it) and unlit
+  (emits its base color). A material without metallic-roughness is a rough metal; a map that asks
+  for a missing `TEXCOORD` rejects the import.
   - Specular-glossiness goes through `importer.specular_glossiness`, like the Khronos converter;
     with its texture it becomes a dielectric with a warning. An index of refraction of 0, the
     compatibility mode of `KHR_materials_ior`, is converted the same way
@@ -859,10 +859,11 @@ inherits, variants, sublayers and binary files fail with a `Tool` error that say
   `UsdUVTexture` images (an input with an image leaves its factor at 1) and the mapping of a
   `UsdPrimvarReader_float2` and a `UsdTransform2d`. Metallic and roughness come from a packed image
   (roughness in `g`, metallic in `b`), occlusion from `r` and opacity from the alpha of the color;
-  `opacityThreshold > 0` is `mask` and an opacity below 1, `blend`. `clearcoat` is a white coat
-  with the surface's IOR, as MaterialX builds it. Two materials with the same name: the second is
-  named by its prim path; one without `UsdPreviewSurface` is not imported. Images that `usdcat`
-  does not resolve are searched next to the file.
+  `opacityThreshold > 0` is `mask` and an opacity below 1, `blend`. `doubleSided`, of the mesh,
+  makes its material `two_sided` (a mesh without one gets a default material that is). `clearcoat`
+  is a white coat with the surface's IOR, as MaterialX builds it. Two materials with the same name:
+  the second is named by its prim path; one without `UsdPreviewSurface` is not imported. Images that
+  `usdcat` does not resolve are searched next to the file.
 - **Lights** UsdLux on the node of their prim, in the units of `Imported_Light`
   ([units](../../mirai-rendering/references/display.md#units)). Luminance is
   `intensity · 2^exposure · color`, times the color of `colorTemperature` if enabled, and with
@@ -921,7 +922,8 @@ this path. FBX 6 files are rejected with their version.
   roughness, normal map, occlusion and emission relative to exposure, as glTF. In Lambert and Phong
   transparency is coverage: opacity `1 − factor·color` as in the FBX SDK, and its texture counts
   if it is the base color's (its alpha). The other shaders also give specular, IOR, coat and
-  transmission, by value. Roughness and metalness, which FBX gives as single-channel images, are
+  transmission, by value. The double-sided feature ufbx reads is `two_sided`. Roughness and
+  metalness, which FBX gives as single-channel images, are
   assembled into a `.Metallic_Roughness` image (red of each to green and blue). The texture of a
   Phong that gives roughness is a gloss one and is left out; bump, sheen, subsurface, rotated
   textures and those of specular, coat and transmission leave a warning.
