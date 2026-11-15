@@ -158,11 +158,14 @@ wind_variant_local :: proc "contextless" (wind:[3]f32,k,count:u32) -> [3]f32 {
     return {c*wind.x+s*wind.z,wind.y,-s*wind.x+c*wind.z}
 }
 
-// The box the variants of a mesh with this box stay in: the box at rest
-// grown by the most a point of it moves, at WIND_SPEED_MAX.
+// The most a point of a mesh with this box moves, at WIND_SPEED_MAX, and the
+// box its variants stay in: the box at rest grown by it.
+wind_reach :: proc "contextless" (low,high:[3]f32,amount:f32) -> f32 {
+    return WIND_SPEED_MAX*amount*linalg.length(linalg.max(linalg.abs(low),linalg.abs(high)))
+}
+
 wind_bounds :: proc "contextless" (low,high:[3]f32,amount:f32) -> (grown_low,grown_high:[3]f32) {
-    corner:=linalg.max(linalg.abs(low),linalg.abs(high))
-    reach:=WIND_SPEED_MAX*amount*linalg.length(corner)
+    reach:=wind_reach(low,high,amount)
     return low-reach,high+reach
 }
 
@@ -237,7 +240,7 @@ wind_set :: proc(resident:^Foliage_Resident,renderer:^render.Renderer,source:ren
         set.low,set.high=wind_bounds(low,high,amount)
         set.made=true
         for k in 0..<set.count {
-            mesh,made:=render.deformable_create(renderer,source,true)
+            mesh,made:=render.deformable_create(renderer,source,true,max(wind_reach(low,high,amount),1e-6))
             if !made {set.made=false;break}
             set.variants[k]=mesh
             render.deformable_update(renderer,mesh,set.low,set.high)

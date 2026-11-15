@@ -222,10 +222,12 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   want another projection (the sun turned, the eye jumped), only the one whose projection is the
   oldest takes it and is drawn whole each frame; the others keep theirs, with what the cache holds,
   until their turn, so a turning sun costs one cascade a frame. An instance that changes again
-  within `SHADOW_MOVER_FRAMES` moves
-  (`Shadow_Movers`): the cache leaves it out once, and every frame draws what moves over a copy of
-  the cache until it stays that long and joins it again, so a moving body does not throw the cache
-  away. The glass of the tint is drawn every frame. A light takes each face it
+  within `SHADOW_MOVER_FRAMES` moves (each instance followed on its own, however many,
+  `Scene_State.shadow_changes`): the cache leaves it out once, and every frame draws what moves
+  over a copy of the cache until it stays that long and joins it again, so a moving body does not
+  throw the cache away. A batch of a deformable that sways (the wind) moves so in the maps whose
+  texel is narrower than its sway; the others draw it at rest and keep it. An origin jump lets go
+  of every map. The glass of the tint is drawn every frame. A light takes each face it
   lights what the view sees through whole, since one that takes maps lights much of the view; a
   map holds a point only within its face and range, and samples tell elsewhere. A point under a
   map takes taps around it: all lit, lit; all blocked,

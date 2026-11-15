@@ -36,8 +36,9 @@ bool glass_sheet(Instance inst) {
 }
 
 bool instance_moves(uint instance) {
-    uint word = instance >> 5u;
-    return word < params.movers && (movers[word] & (1u << (instance & 31u))) != 0u;
+    uint bit = instance_batched(instance) ? frame.instance_count + batch_of(instance) : instance;
+    uint word = bit >> 5u;
+    return word < params.movers && (movers[word] & (1u << (bit & 31u))) != 0u;
 }
 
 [shader("compute")]
@@ -45,7 +46,15 @@ bool instance_moves(uint instance) {
 void main(uint3 id : SV_DispatchThreadID) {
     uint instance = id.x, job = id.y;
     if (instance >= params.instances || job >= params.maps) return;
-    if (params.listed != 0u) instance = movers[params.movers + instance];
+    if (params.listed != 0u) {
+        // The range of the thread: the last whose first thread is not past it.
+        uint low = 0u, high = params.ranges;
+        while (high - low > 1u) {
+            uint middle = (low + high) / 2u;
+            if (movers[params.movers + 2u * middle + 1u] <= instance) low = middle; else high = middle;
+        }
+        instance = movers[params.movers + 2u * low] + instance - movers[params.movers + 2u * low + 1u];
+    }
     float reach = 0.0;
     if (instance_batched(instance)) {
         Instance row = batch_row(batch_of(instance));
@@ -57,25 +66,36 @@ void main(uint3 id : SV_DispatchThreadID) {
     Instance inst = scene_instance(instance);
     if ((inst.meta.w & INSTANCE_FLAG_HIDDEN) != 0u || (inst.meta.x & INSTANCE_UNSHADOWED) != 0u) return;
     // Glass casts no shadow: it takes its place only in the tint of the maps,
-    // and not a glass sheet.
+    // and not a glass sheet nor one of a batch.
     bool all_glass = (inst.meta.w & INSTANCE_FLAG_BLENDED) != 0u;
-    bool depth = !all_glass && instance_moves(instance) == (params.moving != 0u);
     bool glass = params.moving != 0u && params.glass != 0u && (inst.meta.w & (INSTANCE_FLAG_TRANSLUCENT | INSTANCE_FLAG_BLENDED)) != 0u
-        && !(all_glass && glass_sheet(inst));
-    if (!depth && !glass) return;
+        && !instance_batched(instance) && !(all_glass && glass_sheet(inst));
+    if (all_glass && !glass) return;
     Shadow_Job work = shadow_job(shadow_data, job);
     Shadow_Map m = shadow_map_at(shadow_data, params.rows, work.map);
     float3 low = inst.bounds_min.xyz - reach, high = inst.bounds_max.xyz + reach;
     if (!shadow_map_reaches(shadow_map_window(m, work.window), low, high) || shadow_map_unseen(m, low, high)) return;
     Mesh mesh = meshes[instance_mesh(inst)];
     if (mesh.vertex_count == 0u || mesh.cluster_count == 0u) return;
+    // A batch of a deformable sways as far as its mesh says (render.batch_sway):
+    // a map whose texel there is wider draws it at rest and keeps it, as what
+    // stays; a finer one draws it as it is, and while it sways, as what moves.
+    bool rest = false;
+    bool moves = instance_moves(instance);
+    if (instance_batched(instance) && mesh.posed_word != INVALID) {
+        float texel = shadow_map_texel(m, max(detail_span(shadow_map_detail(m), low, high).x, m.near));
+        rest = !(mesh.sway * instance_scale(inst) > texel);
+        moves = moves && !rest;
+    }
+    bool depth = !all_glass && moves == (params.moving != 0u);
+    if (!depth && !glass) return;
     uint2 clusters = instance_clusters(shadow_map_detail(m), inst, mesh);
     uint count = (clusters.y + CULL_CHUNK - 1u) / CULL_CHUNK;
     uint base;
     InterlockedAdd(shadow_state[SHADOW_CHUNK_COUNT], count, base);
     uint kept = base >= params.chunk_capacity ? 0u : min(count, params.chunk_capacity - base);
     if (kept < count) InterlockedAdd(stats[0].dropped[CULL_LIST_SHADOW_CHUNKS], count - kept);
-    uint what = job | (depth ? SHADOW_CHUNK_DEPTH : 0u) | (glass ? SHADOW_CHUNK_GLASS : 0u);
+    uint what = job | (depth ? SHADOW_CHUNK_DEPTH : 0u) | (glass ? SHADOW_CHUNK_GLASS : 0u) | (rest ? SHADOW_CHUNK_REST : 0u);
     for (uint k = 0u; k < kept; k++) {
         uint first = k * CULL_CHUNK;
         chunks[base + k] = uint4(instance, what, clusters.x + first, min(CULL_CHUNK, clusters.y - first));

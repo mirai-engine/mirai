@@ -174,6 +174,7 @@ OCCLUDERS_MANY :: abi.OCCLUDERS_MANY
 Occluder_Change :: struct {
 	low, high: Vec3,
 	instance:  u32, // OCCLUDERS_MANY: several, or one that is gone
+	fine:      f32, // of the maps of the shadows, those whose texel there is narrower than this alone (a sway); 0: every map
 }
 Occluder_Changes :: struct {
 	boxes:       [OCCLUDER_CHANGES_MAX]Occluder_Change,
@@ -226,23 +227,25 @@ shadow_changed :: proc(s: ^Scene_State, instance: u32, low, high: Vec3) {
 		occluder_add(&s.shadow_stale, OCCLUDERS_MANY, low, high)
 		return
 	}
-	append(&s.shadow_changes, Occluder_Change{low, high, instance})
+	append(&s.shadow_changes, Occluder_Change{low, high, instance, 0})
 	track.change = i32(len(s.shadow_changes))
 }
 
 // The box of an instance (OCCLUDERS_MANY: of several) joins a list of changes.
+// fine: as Occluder_Change.fine.
 @(private)
-occluder_add :: proc "contextless" (o: ^Occluder_Changes, instance: u32, low, high: Vec3) {
+occluder_add :: proc "contextless" (o: ^Occluder_Changes, instance: u32, low, high: Vec3, fine := f32(0)) {
 	if !(low.x <= high.x && low.y <= high.y && low.z <= high.z) {return}
+	joined :: proc "contextless" (a, b: f32) -> f32 {return 0 if a == 0 || b == 0 else max(a, b)}
 	if instance != OCCLUDERS_MANY {
 		for &box in o.boxes[:o.count] {
 			if box.instance != instance {continue}
-			box.low, box.high = linalg.min(box.low, low), linalg.max(box.high, high)
+			box.low, box.high, box.fine = linalg.min(box.low, low), linalg.max(box.high, high), joined(box.fine, fine)
 			return
 		}
 	}
 	if o.count < OCCLUDER_CHANGES_MAX {
-		o.boxes[o.count] = {low, high, instance}
+		o.boxes[o.count] = {low, high, instance, fine}
 		o.count += 1
 		return
 	}
@@ -253,7 +256,7 @@ occluder_add :: proc "contextless" (o: ^Occluder_Changes, instance: u32, low, hi
 		if grown < growth {best, growth = i, grown}
 	}
 	box := &o.boxes[best]
-	box.low, box.high, box.instance = linalg.min(box.low, low), linalg.max(box.high, high), OCCLUDERS_MANY
+	box.low, box.high, box.instance, box.fine = linalg.min(box.low, low), linalg.max(box.high, high), OCCLUDERS_MANY, joined(box.fine, fine)
 }
 
 // What an instance that came or went covers in the frame it is not there.

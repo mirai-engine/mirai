@@ -324,6 +324,72 @@ render_shadow_maps_follow_what_moves_in_its_frame :: proc(t: ^testing.T) {
 	expect_clean(t, f.device)
 }
 
+// A batch of a deformable that casts shadows and sways (the wind): where its
+// sway is wider than a texel of the maps they draw it as it is each frame it
+// sways; where it is narrower they draw it at rest and keep it, drawing
+// nothing again.
+@(test)
+render_a_swaying_batch_shades_where_it_is :: proc(t: ^testing.T) {
+	f: Cube_Fixture
+	settings := test_settings()
+	settings.gi_enabled = false
+	settings.taa = false
+	if !cube_fixture_init(t, &f, 192, 128, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	floor := Instance_Desc{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {16, 0.2, 16}), tint = {0.8, 0.8, 0.8}}
+	light := Light_Desc{position = {0, 3, 0}, color = {1, 1, 1}, intensity = 30 * math.PI, range = 14, indirect = 1, scattering = 1}
+	testing.expect(t, scene_given(r, {floor}, []Light_Desc{light}, {}, {}))
+	camera := Camera{position = {0, 9, 0.001}, forward = {0, -9, -0.001}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	// The vertices of the slab, at rest under the light, moved along x by sway.
+	Sway :: struct {mesh: Mesh_Handle, x: f32}
+	write :: proc(s: ^Stage_Pass, user: rawptr) {
+		sway := (^Sway)(user)
+		r := s.pass.r
+		written, rest, count, _, known := deformable_vertices(r, sway.mesh)
+		if !known {return}
+		vertices, at := rhi.frame_alloc_typed(r.device, Gpu_Posed_Vertex, int(count))
+		if vertices == nil {return}
+		copy(vertices, ([^]Gpu_Posed_Vertex)(&r.scene.vertices[rest])[:count])
+		for &v in vertices {v.position.x += sway.x}
+		rhi.cmd_copy_buffer(s.pass.cmd, at.buffer, at.offset, r.scene.vertex_buffer, u64(written) * 4, u64(count) * size_of(Gpu_Posed_Vertex))
+	}
+	for wide in ([]bool{true, false}) {
+		// Wide: it sways up to 1.2 m, wider than any texel; narrow, it says it
+		// sways a millimetre, narrower than every texel, and the maps keep it at rest.
+		mesh, made := deformable_create(r, f.cube, false, 1.2 if wide else 0.001)
+		if !testing.expect(t, made) {return}
+		defer mesh_remove(r, mesh)
+		batch, problem := batch_set(r, 0, 0, {mesh = mesh, tint = 0.5, flags = {.Casts_Shadow, .Ray_Visible}}, {batch_instance({0, 1.5, 0}, 1, {1, 0.2, 1})})
+		if !testing.expectf(t, problem == "", "%s", problem) {return}
+		defer batch_remove(r, batch)
+		sway := Sway{mesh = mesh}
+		for k in 0 ..< 8 {
+			sway.x = f32(-1) if k % 2 == 0 else 1
+			low, high, _ := mesh_bounds(r, f.cube)
+			testing.expect(t, deformable_update(r, mesh, low - 1.2, high + 1.2))
+			testing.expect(t, frame_pass(r, .Geometry, write, &sway))
+			testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+			if k < 4 {continue}
+			rhi.device_wait_idle(f.device)
+			pixels, w, _, ok := golden_capture(r)
+			if !testing.expect(t, ok, r.error) {return}
+			defer delete(pixels)
+			at :: proc(r: ^Renderer, pixels: []u8, w: int, camera: Camera, x: f32) -> f32 {return pixel(pixels, w, project(r, camera, {x, 0.001, 0}))[0]}
+			if wide {
+				shaded, open := at(r, pixels, w, camera, 2 * sway.x), at(r, pixels, w, camera, -2 * sway.x)
+				testing.expectf(t, open > 40 && shaded < 0.5 * open, "frame %d: the floor under where it sways has %f against %f where it was", k, shaded, open)
+				testing.expectf(t, r.stats.shadow_movers == 1, "frame %d: the swaying batch is drawn as what moves: %d movers", k, r.stats.shadow_movers)
+			} else {
+				shaded, open := at(r, pixels, w, camera, 0), at(r, pixels, w, camera, 2 * sway.x)
+				testing.expectf(t, open > 40 && shaded < 0.5 * open, "frame %d: the floor under its rest has %f against %f where it sways", k, shaded, open)
+				testing.expectf(t, r.stats.shadow_movers == 0 && r.stats.shadow_pages_drawn == 0, "frame %d: at rest in every map it moves nothing: %d movers, %d pages drawn again", k, r.stats.shadow_movers, r.stats.shadow_pages_drawn)
+			}
+		}
+	}
+	expect_clean(t, f.device)
+}
+
 // A cascade of the sun the eye moves by whole texels keeps what it held where
 // it still holds it and draws what came in: the image is the one of maps
 // drawn whole.

@@ -20,7 +20,8 @@
 [[vk::binding(SLOT_PASS1, 0)]] StructuredBuffer<uint4> chunks : register(MIRAI_REGISTER(t, SLOT_PASS1), space0);
 [[vk::binding(SLOT_PASS2, 0)]] RWStructuredBuffer<uint> shadow_state : register(MIRAI_REGISTER(u, SLOT_PASS2), space0);
 [[vk::binding(SLOT_PASS3, 0)]] RWStructuredBuffer<Stats_Block> stats : register(MIRAI_REGISTER(u, SLOT_PASS3), space0);
-// The clusters to draw: the instance, the cluster and the job.
+// The clusters to draw: the instance, the cluster, the job, and 1 for one
+// drawn at rest.
 [[vk::binding(SLOT_PASS4, 0)]] RWStructuredBuffer<uint4> entries : register(MIRAI_REGISTER(u, SLOT_PASS4), space0);
 
 void shadow_add(uint draw, uint4 entry) {
@@ -49,7 +50,8 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
     if (!cluster_in_cut(shadow_map_detail(whole), inst, instance_scale(inst), mesh, c, frame.cut.x)) return;
     Shadow_Map m = shadow_map_window(whole, drawn.window);
     float3 low, high;
-    if (mesh.posed_word == INVALID) {
+    bool rest = (work.y & SHADOW_CHUNK_REST) != 0u;
+    if (mesh.posed_word == INVALID || rest) {
         cluster_world_box(inst, mesh, c, low, high);
         if (!shadow_map_reaches(m, low, high)) return;
     } else {
@@ -60,6 +62,6 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
         }
     }
     bool tested = ((inst.tested >> cluster_slot(c)) & 1u) != 0u;
-    if ((work.y & SHADOW_CHUNK_DEPTH) != 0u) shadow_add(tested ? SHADOW_DRAW_TESTED : SHADOW_DRAW_OPAQUE, uint4(instance, k, job, 0u));
+    if ((work.y & SHADOW_CHUNK_DEPTH) != 0u) shadow_add(tested ? SHADOW_DRAW_TESTED : SHADOW_DRAW_OPAQUE, uint4(instance, k, job, rest ? 1u : 0u));
     if ((work.y & SHADOW_CHUNK_GLASS) != 0u) shadow_add(SHADOW_DRAW_GLASS, uint4(instance, k, job, 0u));
 }
