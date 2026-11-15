@@ -12,7 +12,8 @@ WORKTREE_USAGE :: "worktree new <name> [--from <branch or commit>] [--branch <br
 // checkout by default). It needs nothing copied: .deps comes from the main
 // checkout, and the C libraries, the stages of the shaders and the binaries
 // of the engine from the caches every checkout shares (workspace), by the
-// sources they are built from. Its shader tables are generated here.
+// sources they are built from. Its shader tables and the test worlds the
+// tool reads are generated here.
 cmd_worktree :: proc(root:string,args:[]string) -> int {
     if len(args)<2 || args[0]!="new" {fmt.eprintfln("Usage: mirai %s",WORKTREE_USAGE);return 2}
     if !positional(args[1]) {return argument_unknown("worktree",args[1])}
@@ -39,8 +40,11 @@ cmd_worktree :: proc(root:string,args:[]string) -> int {
     }
     if !ensure_runtime_dependencies(folder) {fmt.eprintln("mirai worktree: the C libraries will be built on the first build (mirai deps shows why not now)")}
     // The tool of the worktree builds render, which embeds the shader tables
-    // git does not keep: this tool generates them so that it can build.
+    // git does not keep, and reads the tests of the packages it is built from,
+    // whose test worlds git does not keep either: this tool generates both so
+    // that it can build.
     if !engine_shaders(folder) {fmt.eprintfln("mirai worktree: generate them with MIRAI_ROOT=%s and this tool's `shaders` before building",folder)}
+    if !test_worlds(folder,join(folder,"tools","mirai")) {fmt.eprintfln("mirai worktree: generate them with MIRAI_ROOT=%s and this tool's `check tools/mirai` before building",folder)}
     slashed,_:=strings.replace_all(folder,"\\","/",context.temp_allocator)
     fmt.printfln("Worktree %s on the branch %s.",slashed,branch)
     fmt.printfln("  cd \"%s\"; ./mirai build engine",slashed)
