@@ -63,8 +63,11 @@
 [[vk::binding(SLOT_PASS3, 0)]] Texture2D<float4> kept : register(MIRAI_REGISTER(t, SLOT_PASS3), space0);
 
 groupshared float4 tile_values[TILE][TILE];
-// And of the light around the narrow lobe of each texel, which goes under the tile.
-groupshared float4 gloss_values[TILE][TILE];
+// The tile of the light around the narrow lobes: more texels than threads, so a
+// thread takes every one a group of threads apart, by its index.
+#define GLOSS int(PROBE_GLOSS_TILE)
+#define THREADS (MIRAI_GROUP_X * MIRAI_GROUP_Y)
+groupshared float4 gloss_values[GLOSS * GLOSS];
 #define MAX_RAYS 256
 groupshared float4 ray_values[MAX_RAYS];
 groupshared float3 ray_dirs[MAX_RAYS];
@@ -138,26 +141,35 @@ void main(uint3 group_id : SV_GroupID, uint3 local_id : SV_GroupThreadID, uint l
     float light = 0.0, moved = 0.0;
     float4 stored = irradiance[origin + local];
     float4 before = float4(probe_light_decode(stored.rgb), stored.a);
-    int2 under = int2(0, int(probe_atlas_rows()) * TILE);
-    float4 narrow = float4(0.0);
+    int2 gloss_origin = int2(probe_gloss_origin(probe));
+    int across = GLOSS - 2;
+    for (int j = int(local_index); j < across * across; j += THREADS) {
+        int2 inside = int2(j % across, j / across);
+        float3 lobe_dir = oct_decode(((float2(inside) + 0.5) / float(across)) * 2.0 - 1.0);
+        float4 narrow_sum = float4(0.0);
+        float narrow_weight = 0.0;
+        for (uint r = 0u; r < rays; r++) {
+            float4 sample_value = ray_values[r];
+            if (sample_value.a < 0.0) continue;
+            float n = pow(max(0.0, dot(lobe_dir, ray_dirs[r])), PROBE_GLOSS_POWER);
+            narrow_sum += float4(sample_value.rgb, sample_value.a >= params.max_distance ? 1.0 : 0.0) * n;
+            narrow_weight += n;
+        }
+        gloss_values[(inside.y + 1) * GLOSS + inside.x + 1] = narrow_weight > 1e-6 ? float4(finite_or_zero(narrow_sum.rgb / narrow_weight), narrow_sum.a / narrow_weight) : float4(0.0);
+    }
     if (interior) {
         float2 oct = ((float2(local - 1) + 0.5) / float(TILE - 2)) * 2.0 - 1.0;
         float3 texel_dir = oct_decode(oct);
         // With the light, the share of it that comes from the sky: of the rays that meet nothing.
-        float4 sum = float4(0.0), narrow_sum = float4(0.0);
-        float weight_sum = 0.0, narrow_weight = 0.0;
+        float4 sum = float4(0.0);
+        float weight_sum = 0.0;
         for (uint r = 0u; r < rays; r++) {
             float4 sample_value = ray_values[r];
             if (sample_value.a < 0.0) continue;
             float w = max(0.0, dot(texel_dir, ray_dirs[r]));
-            float4 found = float4(sample_value.rgb, sample_value.a >= params.max_distance ? 1.0 : 0.0);
-            sum += found * w;
+            sum += float4(sample_value.rgb, sample_value.a >= params.max_distance ? 1.0 : 0.0) * w;
             weight_sum += w;
-            float n = pow(w, PROBE_GLOSS_POWER);
-            narrow_sum += found * n;
-            narrow_weight += n;
         }
-        narrow = narrow_weight > 1e-4 ? float4(finite_or_zero(narrow_sum.rgb / narrow_weight), narrow_sum.a / narrow_weight) : float4(0.0);
         float4 value = weight_sum > 1e-4 ? float4(finite_or_zero(sum.rgb / weight_sum), sum.a / weight_sum) : float4(0.0);
         float3 self = probe_world_position(probe);
         float filter_weight = 1.0;
@@ -188,17 +200,22 @@ void main(uint3 group_id : SV_GroupID, uint3 local_id : SV_GroupThreadID, uint l
     // Kept awake by a change of the scene, not by its own light moving (frame + 1).
     bool marked = state.frames.z > params.frame_number;
     bool change = !held || marked || share > max(PROBE_SETTLED, PROBE_NOISE_CHANGE * noise);
-    if (interior) {
-        tile_values[local.y][local.x] = lerp(before, tile_values[local.y][local.x], change ? 1.0 : PROBE_BLEND);
-        float4 held_narrow = irradiance[origin + under + local];
-        gloss_values[local.y][local.x] = lerp(float4(probe_light_decode(held_narrow.rgb), held_narrow.a), narrow, change ? 1.0 : PROBE_BLEND);
+    if (interior) tile_values[local.y][local.x] = lerp(before, tile_values[local.y][local.x], change ? 1.0 : PROBE_BLEND);
+    for (int j = int(local_index); j < across * across; j += THREADS) {
+        int2 at = int2(j % across, j / across) + 1;
+        float4 held_narrow = irradiance[gloss_origin + at];
+        gloss_values[at.y * GLOSS + at.x] = lerp(float4(probe_light_decode(held_narrow.rgb), held_narrow.a), gloss_values[at.y * GLOSS + at.x], change ? 1.0 : PROBE_BLEND);
     }
     GroupMemoryBarrierWithGroupSync();
     int2 source = interior ? local : probe_tile_interior(local, TILE);
     float4 value = tile_values[source.y][source.x];
     irradiance[origin + local] = float4(probe_light_encode(value.rgb), value.a);
-    float4 gloss = gloss_values[source.y][source.x];
-    irradiance[origin + under + local] = float4(probe_light_encode(gloss.rgb), gloss.a);
+    for (int k = int(local_index); k < GLOSS * GLOSS; k += THREADS) {
+        int2 at = int2(k % GLOSS, k / GLOSS);
+        int2 from = probe_tile_interior(at, GLOSS);
+        float4 gloss = gloss_values[from.y * GLOSS + from.x];
+        irradiance[gloss_origin + at] = float4(probe_light_encode(gloss.rgb), gloss.a);
+    }
     if (local_index != 0u || buried) return;
     if (held && !marked) probes[probe].frames.w = asuint(lerp(noise, share, PROBE_NOISE_RATE));
     if (held && share <= max(PROBE_SETTLED, PROBE_NOISE_CHANGE * noise)) return;

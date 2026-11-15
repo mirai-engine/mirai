@@ -184,6 +184,8 @@ REFLECTION_SHARED_ROUGHNESS :: f32(0.15)
 // The probe volume, and the rays of its contact occlusion at each pixel.
 DISTANCE_TILE :: 16
 PROBE_BUCKETS :: 22
+// Texels across the tile of the narrow lobes of a probe, with its border of one.
+PROBE_GLOSS_TILE :: 12
 CONTACT_RAYS  :: 4
 
 // The tables of the lobe and of the air, and the display.
