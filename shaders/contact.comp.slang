@@ -47,7 +47,6 @@ float contact_occlusion(int2 q, float3 position, float3 n, float distance) {
     float turn = float(turns[(uint(q.x) & 3u) + 4u * (uint(q.y) & 3u)]) / 16.0 * 6.2831853;
     float3 origin = offset_origin(position, n, bias);
     bool near = beyond < 1.0 && bias < CONTACT_RADIUS;
-    float reach = beyond > 0.0 ? SKY_REACH : CONTACT_RADIUS;
     float hidden = 0.0, covered = 0.0;
     [loop]
     for (uint i = 0u; i < CONTACT_RAYS; i++) {
@@ -55,13 +54,14 @@ float contact_occlusion(int2 q, float3 position, float3 n, float distance) {
         float phi = float(i) * 2.3999632 + turn;
         float r = sqrt(u);
         float3 dir = t * (r * cos(phi)) + b * (r * sin(phi)) + n * sqrt(1.0 - u);
-        Ray_Path path;
-        // Where both count, the nearest: any other could be past the reach of the contact.
-        Hit hit = trace_ray(origin, dir, 0.0, reach, !(near && beyond > 0.0), path);
-        if (hit.instance == INVALID) continue;
-        covered += 1.0;
-        // What stands nearer shadows more, so that the edge of the occlusion fades.
-        if (near && hit.t < CONTACT_RADIUS) hidden += 1.0 - hit.t / CONTACT_RADIUS;
+        if (near) {
+            Ray_Path path;
+            Hit hit = trace_ray(origin, dir, 0.0, CONTACT_RADIUS, true, path);
+            // What stands nearer shadows more, so that the edge of the occlusion fades.
+            if (hit.instance != INVALID) hidden += 1.0 - hit.t / CONTACT_RADIUS;
+        }
+        // The sky is hidden by what casts shadows, as the sun is.
+        if (beyond > 0.0 && !trace_visible(origin, dir, SKY_REACH)) covered += 1.0;
     }
     return lerp(saturate(1.0 - hidden / float(CONTACT_RAYS) * 1.5), 1.0 - covered / float(CONTACT_RAYS), beyond);
 }
