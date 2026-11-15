@@ -162,7 +162,9 @@ renderer_origin_set :: proc(r: ^Renderer, origin: Vec3) {
 	for &box in r.frame_occluders.boxes[:r.frame_occluders.count] {box.low -= d; box.high -= d}
 	s.batch.built = false
 	// Each view takes its last frame as seen from the new origin: its eye moves by -d.
+	// What its maps of the shadows hold was measured from the old origin: they draw again.
 	for view in views_all(r) {
+		view.targets.shadow_raster.held_count = 0
 		if !view.has_previous {continue}
 		view.prev_eye -= d
 		view.prev_depth_plane = origin_plane(view.prev_depth_plane, d)

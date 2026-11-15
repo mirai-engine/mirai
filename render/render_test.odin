@@ -335,6 +335,48 @@ render_moved_cascades_give_what_whole_ones_give :: proc(t: ^testing.T) {
 	expect_clean(t, f.device)
 }
 
+// A jump of the origin keeps no map of the shadows measured from the old one:
+// the far cascades of a wide scene, which the eye would not move out of, give
+// what maps drawn whole give.
+@(test)
+render_an_origin_jump_gives_what_whole_maps_give :: proc(t: ^testing.T) {
+	f: Cube_Fixture
+	settings := test_settings()
+	settings.gi_enabled = false
+	settings.taa = false
+	if !cube_fixture_init(t, &f, 192, 128, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	instances: [7]Instance_Desc
+	instances[0] = {object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {8000, 0.2, 8000}), tint = {0.8, 0.8, 0.8}}
+	for k in 1 ..< len(instances) {
+		instances[k] = {object_id = u64(k + 1), mesh = f.cube, transform = trs({f32(k % 3) * 300 - 300, 150, -500 - f32(k / 3) * 500}, {40, 300, 40}), tint = {0.5, 0.5, 0.5}}
+	}
+	sun := Sun_Desc{direction = {0.4, 1, 0.3}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true}
+	testing.expect(t, scene_given(r, instances[:], nil, sun, {sky = {0, 0, 0}}))
+	camera := Camera{position = {0, 40, 200}, forward = {0, -0.08, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.1, far = 5000, exposure = UNIT_EXPOSURE}
+	read :: proc(t: ^testing.T, f: ^Cube_Fixture) -> []u8 {
+		rhi.device_wait_idle(f.device)
+		pixels, _, _, ok := golden_capture(f.renderer)
+		testing.expect(t, ok, f.renderer.error)
+		return pixels
+	}
+	for _ in 0 ..< 4 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	renderer_origin_set(r, {ORIGIN_STEP, 0, 0})
+	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	jumped := read(t, &f)
+	defer delete(jumped)
+	r.main.targets.shadow_raster.held_count = 0
+	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	whole := read(t, &f)
+	defer delete(whole)
+	if len(jumped) != len(whole) || len(jumped) == 0 {return}
+	differ := 0
+	for v, k in jumped {if abs(int(v) - int(whole[k])) > 2 {differ += 1}}
+	testing.expectf(t, differ * 1000 <= len(jumped), "%d of %d values differ from the maps drawn whole", differ, len(jumped))
+	expect_clean(t, f.device)
+}
+
 // A turning sun takes a new projection for one cascade a frame, the one that
 // took its own longest ago; once it stops, the cascades it caught up with
 // give what maps drawn whole give.
