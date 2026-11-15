@@ -220,7 +220,8 @@ functions_are_called_from_the_loops_and_from_their_order :: proc(t:^testing.T) {
         testing.expect(t,strings.contains(text,"game_fixed :: proc(world,shared,editor:rawptr,app_data:rawptr) {\n    call_clock_read(world,shared,editor,app_data)\n    call_things_move(world,shared,editor,app_data)\n}"),text)
         testing.expect(t,strings.contains(text,"@(rodata) order_game_fixed:=[2]i32{1,0}"),text)
         testing.expect(t,strings.contains(text,"info.loops[.Game][.Late],info.order[.Game][.Late]=game_late,order_game_late[:]"),text)
-        testing.expect(t,strings.contains(text,"steps[0]={\"things_move\",\"core\",{.Fixed,.Late,},{.Game,.Editor,},call_things_move}"),text)
+        step:=step_written(text,"things_move")
+        testing.expect(t,strings.contains(step,"phases={.Fixed,.Late,}") && strings.contains(step,"loops={.Game,.Editor,}"),step)
     }
     defaulted:=`package core
 @(storage) Clock :: struct {tick:u64}
