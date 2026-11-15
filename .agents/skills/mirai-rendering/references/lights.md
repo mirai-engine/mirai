@@ -16,9 +16,10 @@
 - **Shares** (`Light_Desc.indirect` and `scattering`, the sun's in `Sun_Desc`): what of its light
   the probes gather and what media scatter, 0 to the largest half; the direct light of a view does
   not read them. They travel as two halves in `Gpu_Light.axis.w` (`light_shares`), and a group
-  of the tree keeps the mean of the `indirect` of its lights weighed by their light
-  (`Light_Node.indirect`). Zero in a `Light_Desc` is a light that neither bounces nor lights a
-  fog.
+  of the tree keeps the mean of each share of its lights weighed by their light
+  (`Light_Node.indirect` and `scattering`), zero only when all of them are. Zero in a
+  `Light_Desc` is a light that neither bounces nor lights a fog, and costs nothing there: the
+  walks and the cut of a probe hit pass it by, and media never pick it.
 - **Lamps.** Shadow rays stop before the box of their light's sphere: a light inside its lamp
   casts no shadow with it.
 - **Without shadows** (`Light_Desc.shadowless`, the `shadows` of its component off): nothing
@@ -52,8 +53,10 @@
 
 `render/light_tree.odin`:
 
-- `light_tree_build` sorts the lights along a Z curve, point ones before spots, and builds a
-  binary tree split where the curve passes from one half of the space to the other. It travels in
+- `light_tree_build` sorts the lights along a Z curve, point ones before spots and each by its
+  reach class (`light_reach_class`, four times apart), and builds a binary tree split where the
+  curve passes from one half of the space to the other: no group under the splits of the classes
+  mixes them. It travels in
   a buffer (`SLOT_LIGHT_TREE`) in depth order: the two children of a group go after it, and no
   traversal opens a group that does not satisfy this (`light_node_opens`), so none goes back even
   if it reads a malformed tree.
@@ -66,14 +69,15 @@
 - **Without shadows.** Those lights form a tree of their own after that of the others
   (`light_tree_shadowless`), which no traversal from node 0 meets; while every light casts none,
   the root of those that do is a group of none (`LIGHT_NODE_NONE`), which reaches nothing.
-- **Changes.** While the lights keep their number and each its class (with shadows or without
-  is one), `scene_light_update` refits
+- **Changes.** While the lights keep their number and each its class (with shadows or without,
+  directed or not, and its reach class), `scene_light_update` refits
   the leaf that changed and the groups above it (`light_tree_refit`), past `LIGHT_REFITS_MAX` in a
   frame the whole tree once, and only the changed ranges go; `scene_lights_settle` rebuilds the
   tree once a frame when it inflates beyond `LIGHT_TREE_REFIT_SLACK`. Another number or another
   class is another set (`light_revision`): it is rebuilt and uploaded whole.
-- A group that mixes very different reaches reaches as far as its longest-reach light, and the
-  points it reaches traverse more nodes.
+- A group keeps its shortest and longest range. It reaches as far as its longest-reach light,
+  windows its light halfway between both ranges and counts their difference in its error, so it
+  neither loses a light that reaches far among short ones nor lends the short ones its reach.
 
 ### GPU lights
 
@@ -116,17 +120,21 @@ the grid of the lights holds what of the scene they light.
 
 ### Unshadowed light of a pixel
 
-`local_lighting` traverses the tree from the root without entering the groups that do not reach
-it. The pixels of a view's direct light do not use it (they take the
-[grid](#direct-light-of-a-view)); hits, probes, glass, overlays and the points that trace their own
-rays do:
+`local_lighting` and `lights_estimate` walk the tree from the root without entering the groups
+that do not reach it. The pixels of a view's direct light take the lights with shadows from the
+[grid](#direct-light-of-a-view) and those without from it; hits, probes, glass, overlays and the
+points that trace their own rays take both kinds from it:
 
 - A group represents its lights as a sphere while its bounded error is small compared with the
   light that reaches the point: by the curvature of the falloff and of the cosine across its
   lights, by all its light where they are on both sides of the horizon, and by the variation of
   the reach window. Between the represent threshold and the open threshold, group and children add
   in gradual proportions. A group that is near relative to its size always opens.
-- Deterministic: it is the same every frame.
+- The light it errs against includes what the point already has: the sun and the lights with
+  shadows of the pixel (`direct_filter`) or of the hit (`direct_lighting`).
+- A walk visits at most `LIGHT_WALK_MAX` nodes, opening first the group whose light is most at
+  stake; past them, the groups it holds stand for their lights. Its cost does not grow with the
+  lights that reach a point, and it is the same every frame.
 
 ### Cutoff of a point that traces its own rays
 
