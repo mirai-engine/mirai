@@ -116,12 +116,8 @@ Mirai_Surface evaluate(Mirai_Surface_Context ctx, Parameters p) {
     } else {
         float2 size = max(p.piece.xy, float2(1.0));
         mix = terrain_weights_at(p.control, size, ctx.uv0, hole);
-        // The maps along the footprint of the point, in texels of metres piece.w.
-        float2 uv = (ctx.uv0 + 0.5) / size;
-        float2 dx = mirai_object_vector(ctx, ctx.position_dx).xz / (max(p.piece.w, 1e-6) * size);
-        float2 dy = mirai_object_vector(ctx, ctx.position_dy).xz / (max(p.piece.w, 1e-6) * size);
-        n = object_normal(ctx, mirai_sample_texture_grad(p.normal, uv, dx, dy).rgb * 2.0 - 1.0);
-        if (p.paint != 0xffffffffu) paint = mirai_sample_texture_grad(p.paint, uv, dx, dy);
+        n = object_normal(ctx, terrain_map_at(p.normal, size, ctx.uv0).rgb * 2.0 - 1.0);
+        if (p.paint != 0xffffffffu) paint = terrain_map_at(p.paint, size, ctx.uv0);
     }
     // Over a hole the material cuts the surface (terrain_layers_holed.mat); an opaque one keeps it.
     s.alpha = hole ? 0.0 : 1.0;

@@ -5,11 +5,12 @@
 //! mirai constant PAINT_ROUGHNESS_NEUTRAL int ../runtime/paint.odin
 // What a piece of a terrain shows between its vertices (terrain.Surface_Maps):
 // the weights of the layers of each of its samples with the hole of each
-// cell, read texel by texel and blended between the four around a point, and
-// the table of the layers of its source (terrain.layers_table), a row of
-// LAYERS_TEXELS texels each. Terrain_Layers, Terrain_Weights and
-// terrain_displace.comp load them texel by texel alike; a stage without the
-// program API defines TERRAIN_TEXEL.
+// cell, its normal and its paint, read texel by texel and blended between the
+// four around a point, and the table of the layers of its source
+// (terrain.layers_table), a row of LAYERS_TEXELS texels each. None of them
+// streams: Terrain_Layers, Terrain_Weights and terrain_displace.comp load them
+// texel by texel alike, and a stage without the program API defines
+// TERRAIN_TEXEL.
 #ifndef TERRAIN_SURFACE_SLANG
 #define TERRAIN_SURFACE_SLANG
 #include <constants/plugins/terrain.slang>
@@ -30,6 +31,26 @@ struct Terrain_Mix {
     float weights[4];
 };
 
+// The texel of a map of size texels at the low corner of the four around
+// texel coordinates at, and where at lies between them.
+int2 terrain_corner(float2 size, float2 at, out float2 f) {
+    float2 p = clamp(at, float2(0.0), size - 1.0);
+    int2 low = int2(min(floor(p), max(size - 2.0, float2(0.0))));
+    f = p - float2(low);
+    return low;
+}
+
+// A map of a piece of size texels at texel coordinates at, bilinear between
+// its four texels around, as the weights are.
+float4 terrain_map_at(uint map, float2 size, float2 at) {
+    float2 f;
+    int2 low = terrain_corner(size, at, f);
+    int2 last = int2(size) - 1;
+    float4 a = TERRAIN_TEXEL(map, low), b = TERRAIN_TEXEL(map, min(low + int2(1, 0), last));
+    float4 c = TERRAIN_TEXEL(map, min(low + int2(0, 1), last)), d = TERRAIN_TEXEL(map, min(low + 1, last));
+    return lerp(lerp(a, b, f.x), lerp(c, d, f.x), f.y);
+}
+
 // The weights of the layers at texel coordinates at over a control map of
 // size texels, bilinear between its four texels around, and whether the cell
 // at is in is a hole. The three layers of each texel are twelve candidates;
@@ -37,9 +58,8 @@ struct Terrain_Mix {
 // heaviest are kept. Every index is a constant once the loops unroll, so the
 // candidates stay in registers.
 Terrain_Mix terrain_weights_at(uint control, float2 size, float2 at, out bool hole) {
-    float2 p = clamp(at, float2(0.0), size - 1.0);
-    int2 low = int2(min(floor(p), max(size - 2.0, float2(0.0))));
-    float2 f = p - float2(low);
+    float2 f;
+    int2 low = terrain_corner(size, at, f);
     uint layers[12];
     float weights[12];
     uint mask = (1u << uint(WEIGHT_LAYER_BITS)) - 1u;
