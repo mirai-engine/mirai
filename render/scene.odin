@@ -488,6 +488,7 @@ gpu_material_values :: proc(r: ^Renderer, m: Material_Desc) -> Gpu_Material_Row 
 			transmission = transmission, ior = max(m.ior, 1), thickness = max(m.thickness, 0), attenuation_distance = max(m.attenuation_distance, 0),
 			attenuation_color = {clamp(m.attenuation_color.x, 0, 1), clamp(m.attenuation_color.y, 0, 1), clamp(m.attenuation_color.z, 0, 1)},
 			alpha_mode = u32(mode), emission_mode = u32(m.emission_mode), program_id = m.program_id,
+			two_sided = 1 if m.two_sided else 0,
 		},
 		custom_params = m.custom_params,
 	}

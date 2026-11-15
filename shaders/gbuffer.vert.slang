@@ -57,6 +57,9 @@ Gbuffer_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vu
         output.position = float4(2.0, 2.0, 2.0, 1.0);
         return output;
     }
+    // An instance that mirrors its mesh would turn its winding around: its
+    // triangles go the other way round, so the front faces stay front.
+    if (instance_mirrored(inst) && corner % 3u != 0u) corner = corner % 3u == 1u ? corner + 1u : corner - 1u;
     uint local = cluster_corner(mesh, c, corner);
     uint posed = mesh.posed_word, previous = mesh.previous_word;
     // The part of a skinned mesh the view does not draw is drawn collapsed.
@@ -90,7 +93,7 @@ Gbuffer_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vu
     // and metallic replace those of its material.
     output.out_emission = inst.emission.rgb + ((v.surface.x & MESH_SURFACE_SET) != 0u ? surface_emission(v.surface.y) : float3(0.0));
     output.out_surface = v.surface.x;
-    output.out_flags = ((inst.meta.w >> INSTANCE_HIGHLIGHT_SHIFT) & RASTER_HIGHLIGHT_MASK) | (instance_mirrored(inst) ? RASTER_FLAG_MIRRORED : 0u)
+    output.out_flags = ((inst.meta.w >> INSTANCE_HIGHLIGHT_SHIFT) & RASTER_HIGHLIGHT_MASK) | (materials[material].shared.two_sided == 0u ? RASTER_FLAG_ONE_SIDED : 0u)
         | (fade > 0.0 ? RASTER_FLAG_FADING | (uint(saturate(fade) * 65535.0 + 0.5) << RASTER_FADE_SHIFT) : 0u);
     output.out_instance = index;
     output.out_uv = v.uv;

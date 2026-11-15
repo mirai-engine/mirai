@@ -37,13 +37,14 @@ struct Stage_Output {
 [shader("fragment")]
 Stage_Output main(Raster_Input input, float4 pixel_position : SV_Position, bool front_facing : SV_IsFrontFace) {
     Stage_Output output;
+    input = raster_facing(input, front_facing);
     int2 p = int2(pixel_position.xy);
     float depth = fragment_depth(input);
     float opaque = g_depth.Load(int3(p, 0)).r;
     if (!depth_empty(opaque) && depth >= depth_distance(opaque)) discard;
     if (params.peeled != 0u && !behind_layer(depth, nearer_depth.Load(int3(p, 0)).r)) discard;
     uint bits = 0u;
-    if (!fragment_blended(input, front_facing)) {
+    if (!fragment_blended(input)) {
         Material m = fragment_material(input);
         if (params.peeled != 0u || input.in_instance + 1u != params.medium || m.alpha_mode != ALPHA_BLEND || !material_solid(m)) discard;
         bits = GBUFFER_GLASS_EXIT;

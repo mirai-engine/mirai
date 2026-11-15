@@ -28,7 +28,7 @@ import "mirai:std/serial"
 // A source gives the values of the standard model and of the parameters of
 // its program; overlays and hidden names are always the material's own.
 
-MATERIAL_VERSION :: 3
+MATERIAL_VERSION :: 4
 MATERIAL_MAX_PARAMETERS :: 32
 MATERIAL_MAX_OVERLAYS :: 4
 MATERIAL_NAME_BYTES :: 64
@@ -159,6 +159,7 @@ Material_Info :: struct {
     opacity:f32 `mirai:"min=0,max=1"`,
     alpha_mode:Alpha_Mode,
     alpha_cutoff:f32 `mirai:"min=0,max=1"`,
+    two_sided:bool, // seen from behind too, its normal turned to the viewer: a leaf, a sheet; the others lose their back faces
     metallic:f32 `mirai:"min=0,max=1"`,
     roughness:f32 `mirai:"min=0,max=1"`,
     emission:[3]f32 `mirai:"color"`, // by emission_mode: luminance in nits, or the exposed value
