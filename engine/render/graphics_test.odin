@@ -59,8 +59,9 @@ the_resolution_of_the_settings_is_the_target_of_lines_of_the_renderer :: proc(t:
     g:=GRAPHICS_SETTINGS_DEFAULT
     settings:=gpu.DEFAULT_SETTINGS
     settings.resolution=360
+    // Native where chosen: the lines the views span.
+    g.resolution=0
     s:=graphics_render_settings(settings,g,{type=.Discrete})
-    // Native unless chosen: the lines the views span.
     testing.expect_value(t,s.resolution,u32(0))
     g.resolution=720
     s=graphics_render_settings(settings,g,{type=.Discrete})

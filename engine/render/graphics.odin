@@ -46,9 +46,11 @@ Graphics_Settings :: struct {
     geometry_memory:u32 `mirai:"min=0,max=4096,unit=MB,advanced"`, // GPU memory of the pages of streamed meshes, taken when the first one loads: a later change waits until the renderer starts again; 0: that of gpu.DEFAULT_SETTINGS
 }
 
-// Without a device: the High preset.
+// Without a device: the High preset. The views aim for 1080 lines, so a
+// larger display costs what a 1080 one does, and FSR takes them to the display
+// where its plugin is on.
 GRAPHICS_SETTINGS_DEFAULT :: Graphics_Settings{
-    antialiasing={0='t',1='a',2='a'},indirect_light=.Probes,light_probes=.High,
+    resolution=1080,antialiasing={0='f',1='s',2='r',3='3'},indirect_light=.Probes,light_probes=.High,
     sun_shadows=true,light_samples=15,light_half_resolution=true,glass_shadows=true,glass_layers=1,textures=.High,detail=.High,frame_limit=60,vsync=true,frame_generation=true,show_fps=true,
 }
 
