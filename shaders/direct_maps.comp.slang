@@ -131,13 +131,15 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     // A glass with a program in the way of a light a map holds here: the
     // samples take all of the point, through rays that run the program.
     float across = float(scale) * (frame.footprint.x + frame.footprint.y * depth_distance(depth));
+    // The width of a pixel of the view at the point, which picks the level or mip of a map.
+    float pixel_across = frame.footprint.x + frame.footprint.y * depth_distance(depth);
     if (frame.sun_maps.w != 0u) {
         Shadow_Map m;
-        bool programmed = direct_sun_weight(pixel.position, normal) > 0.0 && sun_map_of(pixel.position, m) && sun_map_given(pixel.position, across) && shadow_tint_programmed(m, pixel.position);
+        bool programmed = direct_sun_weight(pixel.position, normal) > 0.0 && sun_map_of(pixel.position, m) && sun_map_given(pixel.position, pixel_across) && shadow_tint_programmed(m, pixel.position);
         for (uint i = 0u; i < count && !programmed; i++) {
             uint item = direct_item(row, i);
             Sun_Pick pick;
-            programmed = item != DIRECT_CELL_TABLE && light_map_given(item, pixel.position, across, m, pick) && shadow_tint_programmed(m, pixel.position);
+            programmed = item != DIRECT_CELL_TABLE && light_map_given(item, pixel.position, pixel_across, m, pick) && shadow_tint_programmed(m, pixel.position);
         }
         if (programmed) {
             out_samples[p] = float4(0.0, 0.0, 0.0, 1.0);
@@ -154,7 +156,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     float sun = direct_sun_weight(pixel.position, normal);
     float sun_part = -1.0, sun_wide = 0.0;
     Sun_Pick pick;
-    if (sun > 0.0 && sun_pick(pixel.position, across, pick)) {
+    if (sun > 0.0 && sun_pick(pixel.position, pixel_across, pick)) {
         // Its level, or the coarser one drawn where its page is not; over the
         // top of the octave of its level, blended into the next.
         Shadow_Map held = sun_level(pick.level);
@@ -183,7 +185,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
         // page is not; over the top of the octave of the mip, blended into the next.
         Shadow_Map m;
         Sun_Pick mip;
-        if (item == DIRECT_CELL_TABLE || !light_map_given(item, pixel.position, across, m, mip)) {
+        if (item == DIRECT_CELL_TABLE || !light_map_given(item, pixel.position, pixel_across, m, mip)) {
             rest = rest || direct_item_weight(row, item, pixel.position, normal) > 0.0;
             continue;
         }

@@ -52,7 +52,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     uint count = direct_items(row);
     // The weights of the items and of the sun, the sun last; none for one a map holds here.
     direct_maps_give = frame.sun_maps.z == 0u || point_depth.Load(int3(p, 0)).y != DIRECT_MAPS_NONE;
-    direct_across = float(scale) * (frame.footprint.x + frame.footprint.y * depth_distance(depth));
+    direct_across = frame.footprint.x + frame.footprint.y * depth_distance(depth);
     float sun = direct_sun_weight(pixel.position, normal);
     Shadow_Map held;
     if (sun > 0.0 && direct_maps_give && sun_map_given(pixel.position, direct_across)) sun = 0.0;
