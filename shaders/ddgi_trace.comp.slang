@@ -35,6 +35,18 @@
 
 [[vk::binding(SLOT_PASS0, 0)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> ray_data : register(MIRAI_REGISTER(u, SLOT_PASS0), space0);
 
+#ifdef MIRAI_HOOK_LIGHTS
+// Whether a light of an extension reaches a hit: nothing says when one changes.
+bool extension_lights_reach(float3 position, float3 normal, float t) {
+    float3 from = offset_origin(position, normal, hit_bias(t));
+    for (uint i = 0u; i < mirai_extension_light_count(); i++) {
+        Extension_Light reaching;
+        if (mirai_extension_light(i, from, normal, float2(-1.0, 0.0), reaching)) return true;
+    }
+    return false;
+}
+#endif
+
 // Adds the lanes of the wave that count to a word of the list of the chosen, once a wave.
 void count(uint word, bool counts) {
     uint lanes = WaveActiveCountBits(counts);
@@ -67,6 +79,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
     Probe_Hit hit = (Probe_Hit)0;
     bool trace = active && !resume;
     bool light = false;
+    bool reached = false; // by a light of an extension
     uint traced = CHOSEN_TRACED;
     if (trace && kept.stands) {
         hit = probe_hit_load(at);
@@ -82,12 +95,9 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
 #endif
 #ifdef MIRAI_HOOK_LIGHTS
         // Nor when a light of an extension changes: a hit one reaches takes its light every update.
-        if (!trace && !light && kind == HIT_SURFACE) {
-            float3 from = offset_origin(origin + direction * hit.t, hit.normal, hit_bias(hit.t));
-            for (uint i = 0u; i < mirai_extension_light_count() && !light; i++) {
-                Extension_Light reaching;
-                light = mirai_extension_light(i, from, hit.normal, float2(-1.0, 0.0), reaching);
-            }
+        if (!trace && kind == HIT_SURFACE) {
+            reached = extension_lights_reach(origin + direction * hit.t, hit.normal, hit.t);
+            light = light || reached;
         }
 #endif
         if (light && (hit.flags & HIT_FIXED) != 0u) trace = true;
@@ -187,6 +197,11 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
     Probe_Hit seen = fresh ? probe_hit_unpack(probe_hit_pack(hit)) : hit;
     uint kind = seen.flags & HIT_KIND;
     float3 position = gated ? s.position : origin + direction * seen.t;
+#ifdef MIRAI_HOOK_LIGHTS
+    if (fresh && kind == HIT_SURFACE) reached = extension_lights_reach(position, seen.normal, seen.t);
+#endif
+    // What changes with nothing that says so keeps its probe traced by turns.
+    if ((seen.flags & HIT_PASSING) != 0u || reached) InterlockedOr(chosen[chosen_traced(slot)], CHOSEN_PASSING);
 
     // Its own direct light, so that a light that moves or turns off reaches the
     // probes in the frame it does.

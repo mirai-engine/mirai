@@ -831,28 +831,47 @@ probe_work_after :: proc(t: ^testing.T, r: ^Renderer, camera: Camera, frames := 
 	return
 }
 
+// No probe is traced while nothing changes, but by turns those whose rays
+// meet a program that reads the time.
 @(test)
 render_probes_trace_and_light_only_what_a_change_crosses :: proc(t: ^testing.T) {
 	f: Cube_Fixture
 	settings := test_settings()
 	settings.taa = false
-	if !cube_fixture_init(t, &f, 96, 64, settings) {return}
+	if !cube_fixture_init(t, &f, 96, 64, settings, programs = true) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	// A floor and a wall, a lamp at one end of them and a box that glows green
 	// away from both; none of their faces on a plane of the probes.
 	instances := []Instance_Desc{
 		{object_id = 1, mesh = f.cube, transform = trs({0, -0.5, 0}, {14, 0.2, 14}), tint = {0.8, 0.8, 0.8}},
-		{object_id = 2, mesh = f.cube, transform = trs({0, 1.1, -3.5}, {14, 3, 0.2}), tint = {0.8, 0.8, 0.8}},
+		{object_id = 2, mesh = f.cube, transform = trs({0, 1.1, -3.5}, {14, 3, 0.2}), tint = {0.8, 0.8, 0.8}, material = 1},
 		{object_id = 3, mesh = f.cube, transform = trs({5.65, 0.35, 4}, {1.5, 1.5, 1.5}), tint = {1, 1, 1}, emission = {0, 4, 0}},
 	}
 	lamp := Light_Desc{position = {-5, 1.1, -1.5}, color = {1, 1, 1}, intensity = 4 * math.PI, range = 3, indirect = 1, scattering = 1}
+	testing.expect(t, materials_set(r, {DEFAULT_MATERIAL}))
 	scene_given(r, instances, {lamp}, {}, {sky = {0.02, 0.02, 0.02}})
 	camera := Camera{position = {2.6, 2.2, 3}, forward = {0.4, -1.6, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	for _ in 0 ..< 96 {testing.expect(t, renderer_frame(r, {camera = camera, inspection = {mode = .Indirect}}), r.error)}
 	rhi.device_wait_idle(f.device)
 	probes, traced, lit := probe_work_after(t, r, camera)
-	testing.expectf(t, probes > 0 && traced == 0 && lit == 0, "with nothing changed %d probes read their bounces again and trace and light nothing: %d rays, %d hits", probes, traced, lit)
+	testing.expectf(t, probes == 0 && traced == 0 && lit == 0, "with nothing changed no probe is traced: %d probes, %d rays, %d hits", probes, traced, lit)
+	rays := r.ddgi.total * r.ddgi.rays_per_probe
+	settle :: proc(t: ^testing.T, r: ^Renderer, camera: Camera) {
+		for _ in 0 ..< 96 {testing.expect(t, renderer_frame(r, {camera = camera, inspection = {mode = .Indirect}}), r.error)}
+		_, traced, lit := probe_work_after(t, r, camera)
+		testing.expectf(t, traced == 0 && lit == 0, "settled again: %d rays, %d hits", traced, lit)
+	}
+
+	// The lamp changes color before anything else changes, which the probes it
+	// wakes would check their rays against: the hits it reaches take their
+	// light again, and no ray is traced.
+	lamp.color = {1, 0.9, 0.8}
+	testing.expect(t, scene_light_update(r, 0, lamp))
+	probes, traced, lit = probe_work_after(t, r, camera)
+	testing.expectf(t, lit > 0 && lit < rays / 2 && traced == 0, "a light that changes lights again the hits it reaches and traces nothing: %d hits, %d rays of %d", lit, traced, rays)
+	settle(t, r, camera)
+
 	before, width, _, ok := golden_capture(r)
 	testing.expect(t, ok, r.error)
 	if !ok {return}
@@ -871,12 +890,6 @@ render_probes_trace_and_light_only_what_a_change_crosses :: proc(t: ^testing.T) 
 		testing.expectf(t, now[1] > was[1] + 20 && now[1] > now[0] * 1.5, "the floor takes the glow of the box in the frame it comes: %v, before %v", now, was)
 		delete(after)
 	}
-	rays := r.ddgi.total * r.ddgi.rays_per_probe
-	settle :: proc(t: ^testing.T, r: ^Renderer, camera: Camera) {
-		for _ in 0 ..< 96 {testing.expect(t, renderer_frame(r, {camera = camera, inspection = {mode = .Indirect}}), r.error)}
-		_, traced, lit := probe_work_after(t, r, camera)
-		testing.expectf(t, traced == 0 && lit == 0, "settled again: %d rays, %d hits", traced, lit)
-	}
 	settle(t, r, camera)
 
 	// It moves half a metre: only the rays that cross where it was and where it is are traced again.
@@ -885,12 +898,18 @@ render_probes_trace_and_light_only_what_a_change_crosses :: proc(t: ^testing.T) 
 	testing.expectf(t, traced > 0 && traced < rays / 4, "a box that moves traces again the rays that cross it: %d of %d", traced, rays)
 	settle(t, r, camera)
 
-	// The lamp changes color, out of reach of the box: the hits it reaches take
-	// their light again, and no ray is traced.
-	lamp.color = {1, 0.9, 0.8}
-	testing.expect(t, scene_light_update(r, 0, lamp))
+	// The wall takes a program that reads the time (Grid, as if it did): once
+	// the change settles, the probes whose rays meet it trace them by turns.
+	grid := program_find(r, "Grid", .Surface)
+	if !testing.expect(t, grid != nil, "the tests have the Grid program") {return}
+	grid.reads += {.Time}
+	timed := DEFAULT_MATERIAL
+	timed.program_id = grid.id
+	timed.custom_params = program_defaults(grid)
+	testing.expect(t, materials_set(r, {timed}))
+	for _ in 0 ..< 96 {testing.expect(t, renderer_frame(r, {camera = camera, inspection = {mode = .Indirect}}), r.error)}
 	probes, traced, lit = probe_work_after(t, r, camera)
-	testing.expectf(t, lit > 0 && lit < rays / 2 && traced == 0, "a light that changes lights again the hits it reaches and traces nothing: %d hits, %d rays of %d", lit, traced, rays)
+	testing.expectf(t, probes > 0 && traced > 0 && traced < rays / 4, "the rays that meet a program that reads the time are traced by turns: %d probes, %d rays of %d", probes, traced, rays)
 	expect_clean(t, f.device)
 }
 

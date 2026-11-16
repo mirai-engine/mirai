@@ -5,12 +5,13 @@
 // reached it, the nearer to it the sooner, or the next frame while its light
 // moves), then the longest untraced against how much pixels use it, finer
 // cascades first. Of what is left of the budget, PROBE_WAITING_SHARE at most
-// keeps tracing those by turns while nothing changes: a probe whose light moves
-// wakes the ones beside it (ddgi_irradiance.comp), so that a change spreads
-// with its bounces, and the turns only catch what that missed; a probe the
-// volume holds the light of gives back the same. The updates that gather the
-// light of a world shown anew take the whole budget (params.whole): each is a
-// bounce more for every probe it reaches.
+// keeps tracing by turns, while nothing changes, only the probes that need it:
+// one whose rays met what changes with nothing that says so (PROBE_PASSING),
+// and one whose kept rays a change everywhere left behind. A probe whose light
+// moves wakes the ones beside it (ddgi_irradiance.comp), so that a change
+// spreads with its bounces; any other gives back the same. The updates that
+// gather the light of a world shown anew take the whole budget (params.whole),
+// over every probe: each is a bounce more for every probe it reaches.
 // A probe that is chosen takes a slot for what it keeps of its rays
 // (probe_slots.slang) where it holds none and one of its two is free or left:
 // its probe was not chosen for PROBE_SLOT_KEEP updates, or for
@@ -47,7 +48,6 @@
 struct Params_Block {
     uint mode;
     uint budget;
-    uint changed_everywhere; // render.Renderer.frame of the last change everywhere
     uint frame_number;
     uint rays_per_probe;
     uint total;
@@ -55,8 +55,11 @@ struct Params_Block {
     uint whole;      // 1: the probes waiting by turns take all that is left of the budget (render.gi_warm)
     uint room;       // probes the list of the chosen has room for: after them, what the update passes write of each and count (probe_update.slang)
     uint slots;      // of what the probes keep of their rays
-    uint pad1;
-    uint pad2;
+    // The update, plus one, in which what rays meet last changed everywhere,
+    // and the one in which the lights did (probe_update.slang).
+    uint seen_everywhere;
+    uint lit_everywhere;
+    uint pad0;
 };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 [[vk::binding(SLOT_PASS0, 0)]] RWStructuredBuffer<uint> buckets : register(MIRAI_REGISTER(u, SLOT_PASS0), space0);
@@ -77,6 +80,8 @@ uint probe_bucket(uint index) {
         uint level = probe.frames.z > params.frame_number ? min(uint(probe.offset.w * float(PROBE_NEAR_LEVELS)), PROBE_NEAR_LEVELS - 1u) : 0u;
         return 2u + 2u * (PROBE_NEAR_LEVELS - 1u - level) + (in_use ? 0u : 1u);
     }
+    bool due = (probe.cell.w & PROBE_PASSING) != 0 || probe.hits.x < params.seen_everywhere || probe.hits.y < params.lit_everywhere;
+    if (!due && params.whole == 0u) return NO_BUCKET;
     float waiting = float(params.frame_number - probe.frames.x) * (in_use ? 4.0 : 1.0) / float(cascade + 1u);
     return PROBE_BUCKETS - 1u - min(uint(log2(max(waiting, 1.0))), PROBE_BUCKETS - 1u - PROBE_WAITING_FIRST);
 }

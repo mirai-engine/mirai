@@ -373,7 +373,7 @@ stages.
 ### Vertex functions
 
 A Surface program that moves the vertices of what shows it declares
-`//! vertex [animated] [reach <metres>|reach <parameter>]` and
+`//! vertex [reach <metres>|reach <parameter>]` and
 `Mirai_Vertex vertex(Mirai_Vertex_Context ctx, Parameters p)` (`mirai_material.slang`), which
 gives where a vertex goes, its normal and tangent, in the space of the object
 ([declaration](shaders.md#programs)). `Pieces` (`render/testdata/pieces.slang`) is that of the
@@ -387,11 +387,10 @@ tests: the pieces of a mesh, numbered in UV1, fly in with a turn as its `progres
   refit like a [skin](scene.md#gpu-skinning)), outlines and motion vectors read the same
   vertices. No other pass moves vertices.
 - **Only what changed runs.** A pose is written again when the transform of its instance, the rows
-  of its materials (their parameters), the values the instance gives over them or, if `animated`,
-  the time change; otherwise its stage does not run. Its previous vertices are those the frame
-  before showed, so the motion of a parameter that moves it is exact. Without `animated`, `ctx.time`
-  is
-  0. Instances without such a program pay nothing.
+  of its materials (their parameters), the values the instance gives over them or, if its function
+  vertex reads the time (`vertex.reads`, [probe](shaders.md#programs)), the time change; otherwise
+  its stage does not run. Its previous vertices are those the frame before showed, so the motion of
+  a parameter that moves it is exact. Instances without such a program pay nothing.
 - **Per instance values** are the values of the instance: a game gives a parameter to an entity
   with `Material_Values` (`material_value`), and the entities share the row.
 - **Reach.** The box of the instance (culling, the tree of instances, the light it changes) grows

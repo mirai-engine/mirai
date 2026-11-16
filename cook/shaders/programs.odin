@@ -34,10 +34,10 @@ import "mirai:std/serial"
 // births gives how many particles its emitter starts each frame. `//! prepare`:
 // its function prepare runs once a frame for each emitter, before the rest.
 // A Surface program that moves the vertices of what shows it says
-// `//! vertex [animated] [reach <metres>|reach <parameter>]` and declares its
-// function vertex (Mirai_Vertex_Context, mirai_material.slang): animated, it
-// reads the time and runs every frame; reach is how far it moves a vertex
-// from its rest, in the space of the mesh, a number or a float parameter.
+// `//! vertex [reach <metres>|reach <parameter>]` and declares its function
+// vertex (Mirai_Vertex_Context, mirai_material.slang): reach is how far it
+// moves a vertex from its rest, in the space of the mesh, a number or a float
+// parameter. What it reads of its context, the probe of the program says.
 
 MAX_PARAMETERS :: 32
 PARAMETER_BYTES :: abi.PROGRAM_PARAMETER_BYTES
@@ -210,18 +210,15 @@ program_stages :: proc(program:string,lines:[][]string,resources:[]abi.Program_R
 }
 
 // The function vertex of a Surface program, from the words of its `//! vertex
-// [animated] [reach <metres>|reach <parameter>]` line and the reflection of
-// its Parameters, or what is wrong with them. Without the line, none.
+// [reach <metres>|reach <parameter>]` line and the reflection of its
+// Parameters, or what is wrong with them. Without the line, none.
 @(private)
 program_vertex :: proc(program:string,words:[]string,parameters:Layout,allocator:=context.allocator) -> (vertex:abi.Program_Vertex,problem:string) {
     if words==nil {return}
     vertex.declared,vertex.reach_offset=true,-1
-    usage:=fmt.tprintf("%s: declare a vertex function as `//! vertex [animated] [reach <metres>|reach <float parameter>]`",program)
+    usage:=fmt.tprintf("%s: declare a vertex function as `//! vertex [reach <metres>|reach <float parameter>]`",program)
     for at:=2;at<len(words);at+=1 {
         switch words[at] {
-        case "animated":
-            if vertex.animated {return {},strings.clone(usage,allocator)}
-            vertex.animated=true
         case "reach":
             if at+1>=len(words) || vertex.reach!=0 || vertex.reach_offset>=0 {return {},strings.clone(usage,allocator)}
             at+=1
@@ -666,7 +663,7 @@ surface_program_source :: proc(b:^strings.Builder,name,relative:string,parameter
 // they evaluate it for every material they are given, which are its own.
 // vertex: it has a function vertex, which mirai_vertex_program calls in the
 // stages marked `//! per vertex program`. derivatives: its evaluation takes
-// derivatives across the pixels of a quad (derivative_probe).
+// derivatives across the pixels of a quad (surface_probe).
 @(private)
 surface_program_include :: proc(name,relative:string,parameters:Layout,vertex:=false,derivatives:=true) -> string {
     own:=strings.builder_make(context.temp_allocator)
@@ -731,7 +728,8 @@ alpha_probe :: proc(runner:^Runner,slangc,root,copied,source_folder,compiled_pat
     strings.write_string(&text,"Mirai_Outline mirai_outline(Mirai_PostProcess_Context ctx,float2 uv) {return (Mirai_Outline)0;}\n")
     fmt.sbprintf(&text,"#include \"%s\"\n",compiled_path)
     fmt.sbprintf(&text,"[[vk::binding(%d,0)]] ConstantBuffer<%s::Parameters> mirai_probe_parameters;\n",PROBE_BINDING+3,name)
-    fmt.sbprintf(&text,"[shader(\"compute\")][numthreads(1,1,1)] void probe_main() {{mirai_probe_alpha[0]=%s::evaluate(mirai_probe_contexts[0],mirai_probe_parameters).alpha;}}\n",name)
+    // A fragment stage, where a program may take derivatives of its own.
+    fmt.sbprintf(&text,"[shader(\"fragment\")] float4 probe_main() : SV_Target {{mirai_probe_alpha[0]=%s::evaluate(mirai_probe_contexts[0],mirai_probe_parameters).alpha;return float4(0.0);}}\n",name)
     if !write_file(wrapper,text.buf[:]) {return}
     command:=make([dynamic]string,context.temp_allocator)
     append(&command,slangc,wrapper)
@@ -754,23 +752,54 @@ alpha_probe :: proc(runner:^Runner,slangc,root,copied,source_folder,compiled_pat
     return coverage,alpha,true
 }
 
-// Whether a Surface program takes derivatives across the pixels of a quad:
-// its evaluation compiled alone in a fragment stage and optimized, where the
-// library samples by a plain uv (mirai_sample_texture with a float2) by the
-// derivatives of the quad and by nothing else (by a dual uv, a level,
-// gradients or the footprint of the point): what is left of a derivative,
-// or of a sample or a level query that takes one, the program asks for. The
-// resolve of one without any evaluates no quad again (vis_resolve.frag).
-// ok: the compiler ran.
+// What the probe of a Surface program reads each class of its context from:
+// the buffer at PROBE_READS plus the class, and plus PROBE_READ_CLASSES for
+// the context of its function vertex.
 @(private)
-derivative_probe :: proc(runner:^Runner,slangc,root,copied,source_folder,compiled_path,name,temporary:string,plugins:[]string=nil,memory:=Memory{}) -> (derivatives,ok:bool) {
-    wrapper:=path_join(temporary,fmt.tprintf("%s.derivatives.slang",name),allocator=context.temp_allocator)
-    compiled:=path_join(temporary,fmt.tprintf("%s.derivatives.spv",name),allocator=context.temp_allocator)
+PROBE_READS :: PROBE_BINDING+6
+@(private)
+PROBE_READ_CLASSES :: len(abi.Program_Read)
+@(private)
+PROBE_READ_NAMES :: [abi.Program_Read]string{.Time="time",.View="view",.Place="place",.Particle="particle"}
+
+// Whether a Surface program takes derivatives across the pixels of a quad,
+// and what it and its function vertex read of their contexts: its evaluation
+// (and its function vertex) compiled alone in a fragment stage and optimized,
+// where the library samples by a plain uv (mirai_sample_texture with a
+// float2) by the derivatives of the quad and by nothing else (by a dual uv, a
+// level, gradients or the footprint of the point): what is left of a
+// derivative, or of a sample or a level query that takes one, the program
+// asks for. The resolve of one without any evaluates no quad again
+// (vis_resolve.frag). Each class of the contexts (abi.Program_Read) comes from
+// a buffer of its own, which the optimized code still reads where the
+// program does. ok: the compiler ran.
+@(private)
+surface_probe :: proc(runner:^Runner,slangc,root,copied,source_folder,compiled_path,name,temporary:string,vertex:bool,plugins:[]string=nil,memory:=Memory{}) -> (derivatives:bool,reads,vertex_reads:abi.Program_Reads,ok:bool) {
+    wrapper:=path_join(temporary,fmt.tprintf("%s.probe.slang",name),allocator=context.temp_allocator)
+    compiled:=path_join(temporary,fmt.tprintf("%s.probe.spv",name),allocator=context.temp_allocator)
     text:=strings.builder_make(context.temp_allocator)
     strings.write_string(&text,"#include \"mirai_material.slang\"\n")
     fmt.sbprintf(&text,"[[vk::binding(%d,0)]] RWStructuredBuffer<Mirai_Surface> mirai_probe_surfaces;\n",PROBE_BINDING)
-    fmt.sbprintf(&text,"[[vk::binding(%d,0)]] RWStructuredBuffer<Mirai_Surface_Context> mirai_probe_contexts;\n",PROBE_BINDING+1)
+    fmt.sbprintf(&text,"[[vk::binding(%d,0)]] StructuredBuffer<float4> mirai_probe_inputs;\n",PROBE_BINDING+1)
     fmt.sbprintf(&text,"[[vk::binding(%d,0)]] Texture2D mirai_probe_texture;\n[[vk::binding(%d,0)]] SamplerState mirai_probe_sampler;\n",PROBE_BINDING+2,PROBE_BINDING+3)
+    fmt.sbprintf(&text,"[[vk::binding(%d,0)]] RWStructuredBuffer<Mirai_Vertex> mirai_probe_vertices;\n",PROBE_BINDING+5)
+    for class_name,class in PROBE_READ_NAMES {
+        fmt.sbprintf(&text,"[[vk::binding(%d,0)]] StructuredBuffer<float4> mirai_probe_%s;\n",PROBE_READS+int(class),class_name)
+        fmt.sbprintf(&text,"[[vk::binding(%d,0)]] StructuredBuffer<float4> mirai_probe_vertex_%s;\n",PROBE_READS+PROBE_READ_CLASSES+int(class),class_name)
+    }
+    strings.write_string(&text,"Mirai_Surface_Context mirai_probe_surface_context() {Mirai_Surface_Context c=(Mirai_Surface_Context)0;\n")
+    strings.write_string(&text,"c.normal=mirai_probe_inputs[0].xyz;c.vertex_normal=mirai_probe_inputs[1].xyz;c.tangent=mirai_probe_inputs[2];c.uv0=mirai_probe_inputs[3].xy;c.uv1=mirai_probe_inputs[3].zw;\n")
+    strings.write_string(&text,"c.lod=mirai_probe_inputs[4].x;c.lod1=mirai_probe_inputs[4].y;c.ray=mirai_probe_inputs[4].z>0.0;c.wet=mirai_probe_inputs[4].w;c.position_dx=mirai_probe_inputs[5].xyz;c.position_dy=mirai_probe_inputs[6].xyz;\n")
+    strings.write_string(&text,"c.vertex_color=mirai_probe_inputs[7];c.material_values=asuint(mirai_probe_inputs[8].x);c.material=asuint(mirai_probe_inputs[8].y);\n")
+    strings.write_string(&text,"c.time=mirai_probe_time[0].x;c.previous_time=mirai_probe_time[0].y;\n")
+    strings.write_string(&text,"c.screen=mirai_probe_view[0].xy;c.screen_size=mirai_probe_view[0].zw;c.depth=mirai_probe_view[1].x;c.scene_depth=mirai_probe_view[1].y;\n")
+    strings.write_string(&text,"c.world_position=mirai_probe_place[0].xyz;c.origin=asint(mirai_probe_place[1].xyz);c.object_position=mirai_probe_place[2].xyz;c.object_x=mirai_probe_place[3].xyz;c.object_y=mirai_probe_place[4].xyz;c.object_z=mirai_probe_place[5].xyz;\n")
+    strings.write_string(&text,"c.object_center=mirai_probe_place[6].xyz;c.object_radius=mirai_probe_place[6].w;c.object_low=mirai_probe_place[7].xyz;c.object_high=mirai_probe_place[8].xyz;\n")
+    strings.write_string(&text,"for (uint i=0u;i<4u;i++) {c.particle_data[i]=mirai_probe_particle[i];}c.particle_given=asuint(mirai_probe_particle[4].x);c.particle_random=mirai_probe_particle[4].y;c.particle_radius=mirai_probe_particle[4].z;\nreturn c;}\n")
+    strings.write_string(&text,"Mirai_Vertex_Context mirai_probe_vertex_context() {Mirai_Vertex_Context c=(Mirai_Vertex_Context)0;\n")
+    strings.write_string(&text,"c.position=mirai_probe_inputs[9].xyz;c.normal=mirai_probe_inputs[10].xyz;c.tangent=mirai_probe_inputs[11];c.uv0=mirai_probe_inputs[12].xy;c.uv1=mirai_probe_inputs[12].zw;c.vertex_color=mirai_probe_inputs[13];\n")
+    strings.write_string(&text,"c.world_position=mirai_probe_vertex_place[0].xyz;c.origin=asint(mirai_probe_vertex_place[1].xyz);c.object_position=mirai_probe_vertex_place[2].xyz;c.object_x=mirai_probe_vertex_place[3].xyz;c.object_y=mirai_probe_vertex_place[4].xyz;c.object_z=mirai_probe_vertex_place[5].xyz;\n")
+    strings.write_string(&text,"c.object_low=mirai_probe_vertex_place[6].xyz;c.object_high=mirai_probe_vertex_place[7].xyz;c.time=mirai_probe_vertex_time[0].x;c.previous_time=mirai_probe_vertex_time[0].y;\nreturn c;}\n")
     strings.write_string(&text,"float4 mirai_probe_level(float2 uv,float level) {return mirai_probe_texture.SampleLevel(mirai_probe_sampler,uv,level);}\n")
     strings.write_string(&text,"float4 mirai_probe_grad(float2 uv,float2 dx,float2 dy) {return mirai_probe_texture.SampleGrad(mirai_probe_sampler,uv,dx,dy);}\n")
     strings.write_string(&text,"Mirai_Surface mirai_surface_default(Mirai_Surface_Context ctx) {Mirai_Surface s=(Mirai_Surface)0;s.normal=ctx.normal;return s;}\n")
@@ -792,7 +821,9 @@ derivative_probe :: proc(runner:^Runner,slangc,root,copied,source_folder,compile
     strings.write_string(&text,"Mirai_Outline mirai_outline(Mirai_PostProcess_Context ctx,float2 uv) {return (Mirai_Outline)0;}\n")
     fmt.sbprintf(&text,"#include \"%s\"\n",compiled_path)
     fmt.sbprintf(&text,"[[vk::binding(%d,0)]] ConstantBuffer<%s::Parameters> mirai_probe_parameters;\n",PROBE_BINDING+4,name)
-    fmt.sbprintf(&text,"[shader(\"fragment\")] float4 probe_main() : SV_Target {{mirai_probe_surfaces[0]=%s::evaluate(mirai_probe_contexts[0],mirai_probe_parameters);return float4(0.0);}}\n",name)
+    fmt.sbprintf(&text,"[shader(\"fragment\")] float4 probe_main() : SV_Target {{mirai_probe_surfaces[0]=%s::evaluate(mirai_probe_surface_context(),mirai_probe_parameters);",name)
+    if vertex {fmt.sbprintf(&text,"mirai_probe_vertices[0]=%s::vertex(mirai_probe_vertex_context(),mirai_probe_parameters);",name)}
+    strings.write_string(&text,"return float4(0.0);}\n")
     if !write_file(wrapper,text.buf[:]) {return}
     command:=make([dynamic]string,context.temp_allocator)
     append(&command,slangc,wrapper)
@@ -805,7 +836,36 @@ derivative_probe :: proc(runner:^Runner,slangc,root,copied,source_folder,compile
     if _,ran:=tool_run(runner,command[:],context.temp_allocator,memory);!ran {return}
     spirv,read_error:=os.read_entire_file(compiled,context.temp_allocator)
     if read_error!=nil {return}
-    return spirv_takes_derivatives(spirv),true
+    return spirv_takes_derivatives(spirv),spirv_reads(spirv,PROBE_READS),spirv_reads(spirv,PROBE_READS+PROBE_READ_CLASSES),true
+}
+
+// The classes whose buffer, at `first` plus the class, the code of a module
+// reads. Anything it does not follow counts as a read of every class.
+@(private)
+spirv_reads :: proc(spirv:[]u8,first:int) -> (reads:abi.Program_Reads) {
+    every:=~abi.Program_Reads{}
+    if len(spirv)<20 || len(spirv)%4!=0 {return every}
+    word :: proc(spirv:[]u8,at:int) -> u32 {value,_:=endian.get_u32(spirv[at*4:],.Little);return value}
+    count:=len(spirv)/4
+    // The decorations come before the code that names their variables.
+    variables:=make(map[u32]abi.Program_Read,context.temp_allocator)
+    at:=5
+    for at<count {
+        instruction:=word(spirv,at)
+        op,length:=instruction&0xffff,int(instruction>>16)
+        if length==0 || at+length>count {return every}
+        switch {
+        case op==71 && length>=4 && word(spirv,at+2)==33: // OpDecorate Binding
+            binding:=int(word(spirv,at+3))-first
+            if binding>=0 && binding<PROBE_READ_CLASSES {variables[word(spirv,at+1)]=abi.Program_Read(binding)}
+        case (op==65 || op==66) && length>=4: // OpAccessChain, OpInBoundsAccessChain
+            if class,read:=variables[word(spirv,at+3)];read {reads+={class}}
+        case op==61 && length>=4: // OpLoad
+            if class,read:=variables[word(spirv,at+3)];read {reads+={class}}
+        }
+        at+=length
+    }
+    return
 }
 
 // Whether a module has an instruction that reads derivatives across a quad:
@@ -951,11 +1011,12 @@ Program_Entry :: struct {
     relative:        string, // below include/programs
     folder:          string,
     fingerprint:     string, // of its layouts in the cache
-    caches:          [4]string, // its files in the cache: the layouts of Parameters and Attributes, why it does not compile, and its coverage and derivatives
+    caches:          [4]string, // its files in the cache: the layouts of Parameters and Attributes, why it does not compile, and what its probes found
     coverage:        bool, // of a Surface program (alpha_probe)
     alpha:           [64]u8, // with coverage, the hash of its alpha compiled alone (alpha_probe)
-    derivatives:     bool, // of a Surface program, it takes derivatives across a quad (derivative_probe)
-    probed:          bool, // its coverage and derivatives are known
+    derivatives:     bool, // of a Surface program, it takes derivatives across a quad (surface_probe)
+    reads,vertex_reads:abi.Program_Reads, // of a Surface program and its function vertex (surface_probe)
+    probed:          bool, // what its probes find is known
     layouts:         [2]Layout,
     cached:          bool, // the cache has its layouts: it is not reflected
     error:           string, // what its reflection said
@@ -991,13 +1052,14 @@ programs_reflect :: proc(r:^Program_Reflection,workers:int) {
             compiled_path:=path_join(r.copied,e.relative,allocator=context.temp_allocator)
             if !e.probed && e.error=="" {
                 coverage,alpha,ran:=alpha_probe(r.runner,r.slangc,r.root,r.copied,e.folder,compiled_path,e.name,temporary,r.plugins,r.memory)
-                derivatives,derived:=derivative_probe(r.runner,r.slangc,r.root,r.copied,e.folder,compiled_path,e.name,temporary,r.plugins,r.memory)
+                derivatives,reads,vertex_reads,derived:=surface_probe(r.runner,r.slangc,r.root,r.copied,e.folder,compiled_path,e.name,temporary,e.said.vertex!=nil,r.plugins,r.memory)
                 if ran {e.coverage,e.alpha=coverage,alpha}
-                // Without its probe a program counts as taking derivatives.
-                e.derivatives=derivatives || !derived
+                // Without its probe a program counts as taking derivatives and reading everything.
+                e.derivatives,e.reads,e.vertex_reads=true,~abi.Program_Reads{},~abi.Program_Reads{}
+                if derived {e.derivatives,e.reads,e.vertex_reads=derivatives,reads,vertex_reads}
                 if ran && derived {
                     e.probed=true
-                    said:=fmt.tprintf("%d %d",int(coverage),int(derivatives))
+                    said:=fmt.tprintf("%d %d %x %x",int(coverage),int(derivatives),transmute(u8)reads,transmute(u8)vertex_reads)
                     write_file_atomic(e.caches[3],transmute([]u8)(fmt.tprintf("%s %s",said,string(alpha[:])) if coverage else said))
                 }
             }
@@ -1165,18 +1227,26 @@ programs_generate :: proc(runner:^Runner,root,project,output,slangc,version,cach
                 cache_touch(entry.caches[2])
             }
         }
-        // Only a Surface program has a coverage and derivatives, and one that does not compile has none.
-        entry.caches[3]=path_join(cache,strings.concatenate({entry.fingerprint,".coverage.txt"},context.temp_allocator),allocator=context.temp_allocator)
+        // Only a Surface program is probed, and one that does not compile is not.
+        entry.caches[3]=path_join(cache,strings.concatenate({entry.fingerprint,".probes.txt"},context.temp_allocator),allocator=context.temp_allocator)
         entry.derivatives=true
         entry.probed=entry.domain!="surface" || entry.error!=""
         if !entry.probed {
-            // "<coverage> <derivatives>", 0 or 1 each, and with coverage the hash of its alpha.
-            said,read_error:=os.read_entire_file(entry.caches[3],context.temp_allocator)
-            flags:=read_error==nil && len(said)>=3 && (said[0]=='0' || said[0]=='1') && said[1]==' ' && (said[2]=='0' || said[2]=='1')
-            if flags && len(said)==(4+len(entry.alpha) if said[0]=='1' else 3) {
-                entry.coverage,entry.derivatives,entry.probed=said[0]=='1',said[2]=='1',true
-                if entry.coverage {copy(entry.alpha[:],said[4:])}
-                cache_touch(entry.caches[3])
+            // "<coverage> <derivatives> <reads> <vertex reads>": 0 or 1, then a hex digit of
+            // the bits of abi.Program_Reads each, and with coverage the hash of its alpha.
+            bits :: proc(said:[]u8) -> (reads:abi.Program_Reads,ok:bool) {
+                value,parsed:=strconv.parse_uint(string(said),16)
+                return transmute(abi.Program_Reads)u8(value),parsed && value<1<<uint(PROBE_READ_CLASSES)
+            }
+            if said,read_error:=os.read_entire_file(entry.caches[3],context.temp_allocator);read_error==nil && len(said)>=7 {
+                reads,read:=bits(said[4:5])
+                vertex_reads,vertex_read:=bits(said[6:7])
+                flags:=(said[0]=='0' || said[0]=='1') && said[1]==' ' && (said[2]=='0' || said[2]=='1') && said[3]==' ' && said[5]==' ' && read && vertex_read
+                if flags && len(said)==(8+len(entry.alpha) if said[0]=='1' else 7) {
+                    entry.coverage,entry.derivatives,entry.reads,entry.vertex_reads,entry.probed=said[0]=='1',said[2]=='1',reads,vertex_reads,true
+                    if entry.coverage {copy(entry.alpha[:],said[8:])}
+                    cache_touch(entry.caches[3])
+                }
             }
         }
     }
@@ -1227,6 +1297,7 @@ programs_generate :: proc(runner:^Runner,root,project,output,slangc,version,cach
         if of==.Surface {
             problem:string
             if vertex,problem=program_vertex(name,e.said.vertex,layout,allocator);problem!="" {append(&refused,problem);continue}
+            if vertex.declared {vertex.reads=e.vertex_reads}
         } else if e.said.vertex!=nil {
             append(&refused,fmt.aprintf("%s: only a Surface program moves vertices (`//! vertex`)",name,allocator=allocator))
             continue
@@ -1268,7 +1339,7 @@ programs_generate :: proc(runner:^Runner,root,project,output,slangc,version,cach
             dispatchers_add(&dispatchers,of,id,name,relative,layout,e.coverage,string(e.alpha[:]) if e.coverage else "")
         }
         moves,births,prepare:=of==.Vfx && e.said.moves,of==.Vfx && e.said.births,of==.Vfx && e.said.prepare
-        append(&programs,abi.Program{id=u32(id),name=strings.clone(name,allocator),domain=of,source=relative,size=layout.size,parameters=parameters,layers=layers,attributes=attributes,attribute_fields=attribute_fields,resources=resources,stages=stages,moves=moves,births=births,prepare=prepare,coverage=e.coverage,standard=of==.Surface && word_in(e.text,"mirai_surface_standard"),timed=of==.Surface && (member_in(e.text,"time") || member_in(e.text,"previous_time")),vertex=vertex})
+        append(&programs,abi.Program{id=u32(id),name=strings.clone(name,allocator),domain=of,source=relative,size=layout.size,parameters=parameters,layers=layers,attributes=attributes,attribute_fields=attribute_fields,resources=resources,stages=stages,moves=moves,births=births,prepare=prepare,coverage=e.coverage,standard=of==.Surface && word_in(e.text,"mirai_surface_standard"),reads=e.reads,vertex=vertex})
     }
     // A project does without a program of its own that fails; nothing does without one of the engine.
     if len(broken)>0 {
@@ -1292,19 +1363,6 @@ catalog_text :: proc(catalog:Catalog) -> []u8 {
 
 // Whether text names word as a whole identifier.
 @(private)
-// Whether text reads the field `field` of something: the word, after a dot.
-member_in :: proc(text,field:string) -> bool {
-    rest,offset:=text,0
-    for {
-        at:=strings.index(rest,field)
-        if at<0 {return false}
-        start,end:=offset+at,offset+at+len(field)
-        if start>0 && text[start-1]=='.' && (end==len(text) || !is_word(text[end])) {return true}
-        rest=rest[at+len(field):]
-        offset=end
-    }
-}
-
 word_in :: proc(text,word:string) -> bool {
     rest,offset:=text,0
     for {

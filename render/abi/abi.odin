@@ -461,7 +461,7 @@ Shader_Entry :: struct {
 // by its id and gives it up to PROGRAM_PARAMETER_BYTES of parameters, laid
 // out as the program reflects them.
 SHADER_CATALOG :: "catalog.json"
-SHADER_CATALOG_VERSION :: 3
+SHADER_CATALOG_VERSION :: 4
 
 Shader_Catalog :: struct {
     version:int,
@@ -499,7 +499,7 @@ Program :: struct {
     layers:asset.Material_Layers, // of a Surface program: those of the OpenPBR model its source writes
     coverage:bool,                // of a Surface program: its alpha is not that of the default material
     standard:bool,                // of a Surface program: it builds on the standard model of its material (mirai_surface_standard), whose maps it reads
-    timed:bool,                   // of a Surface program: its source reads the time of its context, so what it gives a point changes with nothing that says so
+    reads:Program_Reads,          // of a Surface program: what its evaluation reads of its context
     attributes:int,               // of a Vfx program: bytes of what it keeps of each particle
     attribute_fields:[]Program_Attribute, // of a Vfx program: the fields of those bytes, in the order it declares them
     resources:[]Program_Resource, // of a Vfx program, in the order it declares them
@@ -509,6 +509,15 @@ Program :: struct {
     prepare:bool,                 // of a Vfx program: it prepares each frame what its emitter keeps
     vertex:Program_Vertex,        // of a Surface program: its function vertex, which moves the vertices of what shows it
 }
+
+// What a Surface program reads of the context of a point or of a vertex, as
+// the generation finds by compiling it with stand-ins and keeping what the
+// optimizer leaves: a read behind a branch a parameter turns off counts.
+// Time: time, previous_time. View: screen, screen_size, depth, scene_depth.
+// Place: world_position, origin and the object. Particle: what the particle
+// that draws the point gives.
+Program_Read :: enum u8 {Time,View,Place,Particle}
+Program_Reads :: bit_set[Program_Read;u8]
 
 Program_Parameter :: struct {
     name:string,
@@ -553,7 +562,8 @@ Program_Stage :: struct {
 // moves a vertex from its rest, in the space of the mesh; with reach_offset,
 // the float parameter at those bytes gives it instead.
 Program_Vertex :: struct {
-    declared,animated:bool,
+    declared:bool,
+    reads:Program_Reads, // of the context of a vertex
     reach:f32,
     reach_offset:i32, // -1: reach
 }

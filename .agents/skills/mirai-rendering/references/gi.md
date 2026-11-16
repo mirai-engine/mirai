@@ -173,7 +173,7 @@ other and do not see the corner of a table or the floor under a wardrobe.
     every hit again when its probe is chosen, and one of what rays meet everywhere (meshes or
     textures that go, materials past what the scene lists, another world) traces every ray.
   - What changes with nothing that says so is not kept from one update to the next: the hit of
-    a Surface program that reads the time of its context (`abi.Program.timed`), a ray that
+    a Surface program that reads the time of its context (`abi.Program.reads`), a ray that
     went through the gate of an extension, and the light of a hit a light of an extension
     reaches. What a program gives by the view (`screen`, `depth`) stays as the ray found it,
     as does how wet an object is, until its ray is traced again.
@@ -198,16 +198,19 @@ other and do not see the corner of a table or the floor under a wardrobe.
   that has gone longest without being traced relative to how much pixels use it
   (`ddgi_mark.comp`), fine cascades first. A probe whose light moves more than its noise
   (`ddgi_irradiance.comp`) wakes its six neighbors for the next frame, so that a change spreads
-  with its bounces. The probes waiting by turns take a small share of the budget at most, and
-  keep tracing in turns with the scene still: since the rays are the same, a settled probe gives
-  what it gave. A sky that changes without stopping (a sunset with an atmosphere) is followed in
-  turns, with stains of the previous light until it stops.
+  with its bounces. With the scene still a settled probe gives what it gave, and none is traced
+  but, by turns within a small share of the budget, those that need it: one whose rays met what
+  changes with nothing that says so (`PROBE_PASSING`: a program that reads the time, the gate or
+  a light of an extension) and one a change everywhere left behind. A sky that changes without
+  stopping (a sunset with an atmosphere) is followed in turns, with stains of the previous light
+  until it stops.
 - **Relocation** within its cell: a probe inside a wall comes out and one stuck to a surface
-  moves away. A covered one keeps the light it had; one that never had it gives nothing. A probe
-  moves only in an update that traced one of its rays, and a few times at most in its cell until
-  what its rays meet changes: one that can never be far enough from every surface, or out of
-  what buries it, would move with every update, never keep its hits and be traced before every
-  other probe in every frame.
+  moves away. A covered one keeps the light it had; one that never had it gives nothing. One that
+  moved is traced again from where it is, first if it moved far, as one whose light moves if not.
+  A probe moves only in an update that traced one of its rays, and a few times at most in its
+  cell until what its rays meet changes: one that can never be far enough from every surface, or
+  out of what buries it, would move with every update, never keep its hits and be traced before
+  every other probe in every frame.
 - **Reading** (`probe_cascade_read`): DDGI weights (wrapped cosine, Chebyshev without a floor),
   square-root blend (`probe_light_root` of what is stored), bias toward the normal and toward the
   eye that shrinks near the eye or the ray origin. A probe behind the plane of a surface does not
