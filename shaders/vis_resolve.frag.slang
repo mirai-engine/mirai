@@ -47,7 +47,7 @@ Resolve_Triangle resolve_triangle(uint id) {
     Instance inst = scene_instance(entry.x);
     Mesh mesh = meshes[instance_mesh(inst)];
     Cluster cluster = cluster_at(entry.y);
-    Gbuffer_Cluster shared = gbuffer_cluster(entry.x, inst, mesh, cluster);
+    Gbuffer_Cluster shared = gbuffer_cluster(entry.x, inst, mesh, cluster, true);
     uint corner = visibility_triangle(id) * 3u;
     Resolve_Triangle t;
     t.a = gbuffer_corner_build(entry.x, inst, mesh, cluster, shared, corner);

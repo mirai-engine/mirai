@@ -71,12 +71,13 @@ bool page_resident(Mesh mesh, uint page) { return indices[mesh.page_word + page 
 bool cluster_resident(Mesh mesh, Cluster c) { return page_resident(mesh, c.page); }
 // Where each stream of the block of a page starts in the vertex pool, as
 // asset.mesh_page_layout lays it out: its vertices (VERTEX_WORDS each) at its
-// base, then uv1, colors and surfaces (two words) of the streams the mesh
-// has, a vertex each, then the words of its triangles.
+// base, then uv1, colors, surfaces and islands (two words each) of the
+// streams the mesh has, a vertex each, then the words of its triangles.
 struct Page_Layout {
     uint uv1s;
     uint colors;
     uint surfaces;
+    uint islands;
     uint triangles;
 };
 Page_Layout page_layout(Mesh mesh, Mesh_Page p) {
@@ -84,7 +85,8 @@ Page_Layout page_layout(Mesh mesh, Mesh_Page p) {
     l.uv1s = p.base + p.vertex_count * VERTEX_WORDS;
     l.colors = l.uv1s + ((mesh.flags & MESH_FLAG_UV1) != 0u ? p.vertex_count : 0u);
     l.surfaces = l.colors + ((mesh.flags & MESH_FLAG_COLORS) != 0u ? p.vertex_count : 0u);
-    l.triangles = l.surfaces + ((mesh.flags & MESH_FLAG_SURFACE) != 0u ? p.vertex_count * 2u : 0u);
+    l.islands = l.surfaces + ((mesh.flags & MESH_FLAG_SURFACE) != 0u ? p.vertex_count * 2u : 0u);
+    l.triangles = l.islands + ((mesh.flags & MESH_FLAG_ISLANDS) != 0u ? p.vertex_count * 2u : 0u);
     return l;
 }
 
@@ -120,6 +122,7 @@ struct Cluster_Block {
     uint uv1s;
     uint colors;
     uint surfaces;
+    uint islands;
     uint triangles;
 };
 Cluster_Block cluster_block(Mesh mesh, Cluster c) {
@@ -131,6 +134,7 @@ Cluster_Block cluster_block(Mesh mesh, Cluster c) {
     b.uv1s = l.uv1s + local;
     b.colors = l.colors + local;
     b.surfaces = l.surfaces + local * 2u;
+    b.islands = l.islands + local * 2u;
     b.triangles = l.triangles + c.triangle_first - p.first_triangle;
     return b;
 }
@@ -198,6 +202,31 @@ float3 block_rest_position(Mesh mesh, Cluster c, Cluster_Block b, uint local) {
     return float3(c.position + int3(int(xy & 0xffffu), int(xy >> 16u), int(zu & 0xffffu))) * mesh.position_step;
 }
 float3 cluster_rest_position(Mesh mesh, Cluster c, uint local) { return block_rest_position(mesh, c, cluster_block(mesh, c), local); }
+
+// How far a vertex of an island (asset.Island_Vertex) has moved from where
+// it is at rest, `along` of the way from its cluster to its group: a
+// survivor grows to its size in the next level, its area linearly; one its
+// group drops shrinks to nothing in a band of ISLAND_FADE_BAND of the ranks
+// of those dropped, the last first (Cook et al. 2007). Nothing for a mesh
+// without islands or where along is 0.
+float3 island_offset(Mesh mesh, Cluster c, uint local, float along) {
+    if ((mesh.flags & MESH_FLAG_ISLANDS) == 0u || along <= 0.0) return float3(0.0);
+    Cluster_Block b = cluster_block(mesh, c);
+    uint xy = vertex_words[b.islands + local * 2u], z_fate = vertex_words[b.islands + local * 2u + 1u];
+    uint fate = z_fate >> 16u;
+    float scale;
+    if ((fate & ISLAND_DROPPED) != 0u) {
+        float rank = float(fate & (ISLAND_DROPPED - 1u)) / 32768.0;
+        float band = 1.0 + ISLAND_FADE_BAND - along * (1.0 + 2.0 * ISLAND_FADE_BAND);
+        scale = sqrt(saturate((band + ISLAND_FADE_BAND - rank) / (2.0 * ISLAND_FADE_BAND)));
+    } else {
+        float grown = float(fate) / ISLAND_SCALE_ONE;
+        scale = sqrt(max(1.0 + (grown * grown - 1.0) * along, 0.0));
+    }
+    if (scale == 1.0) return float3(0.0);
+    float3 center = float3(c.position + int3(int(xy & 0xffffu), int(xy >> 16u), int(z_fate & 0xffffu))) * mesh.position_step;
+    return (block_rest_position(mesh, c, b, local) - center) * (scale - 1.0);
+}
 
 // A vertex of a cluster: posed at posed_word, or at rest with INVALID.
 Mesh_Point cluster_point_at(Mesh mesh, Cluster c, uint local, uint posed_word) {
