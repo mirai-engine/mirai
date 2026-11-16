@@ -45,16 +45,17 @@ or interleave its own passes.
      (that of a program from `surface_coverage.slang`), without texture feedback. Blend: not
      drawn here. The same on Vulkan and Metal, without mesh shaders or 64-bit atomics.
    - After both phases, `vis_classify.frag` gives each pixel the depth of its Surface program
-     (0 for the rows) from the visible list, in a 16-bit target, and the resolve of the rows and
-     of each program the cull saw draws a triangle over the view at that depth with an equal test
-     before the fragment runs (early tests: a pixel of another program is a helper): the
+     (0 for the rows) from the visible list, in a 16-bit target, and the resolve of the rows draws a
+     triangle over the view, and that of each program the cull saw the rectangle its visible
+     clusters project to, at that depth with an equal test before the fragment runs (early
+     tests: a pixel of another program is a helper): the
      material runs once per visible pixel, with the stage of its program
      ([programs](materials.md#surface-programs-in-rays-and-raster)). It builds the triangle again
      with the function of the raster (`gbuffer_build.slang`), so both place it at the same bits,
      takes its barycentrics at the pixel and the exact gradients of its inputs, reads the material
-     row of the cluster's slot and its textures from the table, without binds per material or per
-     object, and writes the targets with `gbuffer_output.slang`; the passes read them only with
-     `include/gbuffer.slang` (`gbuffer_read`, `gbuffer_normal`, `gbuffer_shading`).
+     row the visible list gives its cluster and its textures from the table, without binds per
+     material or per object, and writes the targets with `gbuffer_output.slang`; the passes read
+     them only with `include/gbuffer.slang` (`gbuffer_read`, `gbuffer_normal`, `gbuffer_shading`).
    - A reflectance target exists only while a visible instance has an opaque material that does
      not reflect like the default one ([materials](materials.md#evaluation)), and a
      [layers](materials.md#layers-openpbr) one only while a visible one has them; without them,

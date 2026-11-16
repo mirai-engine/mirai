@@ -5,6 +5,7 @@ import "core:slice"
 import "core:strings"
 import "core:sync"
 import "mirai:cook/workspace"
+import "mirai:std/base"
 import "mirai:std/subprocess"
 import "mirai:project"
 
@@ -63,6 +64,21 @@ tool_find :: proc(root:string,tool:Tool,allocator:=context.allocator) -> (path:s
 // Tools that run at once: one for each worker of a generation.
 @(private)
 RUNNER_CAPACITY :: 64
+
+// What a compilation of the largest stages can take of memory at its peak.
+@(private)
+SLANGC_PEAK_BYTES :: i64(6) << 30
+
+// The workers of a generation: one per core, as many as the memory the
+// machine has free now holds at the peak of a compilation, at least one.
+// More would page the machine out, or take it down, when several
+// generations run at once.
+@(private)
+shader_workers :: proc() -> int {
+    workers:=max(os.get_processor_core_count(),1)
+    if _,available,ok:=base.memory_stats();ok {workers=clamp(int(available/SLANGC_PEAK_BYTES),1,workers)}
+    return workers
+}
 
 // A runner that is cancelled starts no tool and has killed those that ran.
 @(private)

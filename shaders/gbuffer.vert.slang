@@ -20,10 +20,10 @@
 // mesh, the finest the pools hold), the others all of them, and those out of
 // the cut of the view are collapsed, as the cull leaves them out.
 #include "gbuffer_vertex.slang"
+#include "visibility.slang"
 #ifdef MIRAI_BATCHES
-// The visible clusters of both phases, by raster bin (cull_bins.comp): the
-// instance, the cluster as a word of the index pool and its program.
-[[vk::binding(SLOT_PASS0, 0)]] StructuredBuffer<uint4> visible : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);
+// The visible clusters of both phases, by raster bin (cull_bins.comp).
+[[vk::binding(SLOT_PASS0, 0)]] StructuredBuffer<Visible_Cluster> visible : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);
 #include <extension_vertex.slang>
 #else
 // The Surface program whose clusters a draw of an instance draws
@@ -32,7 +32,6 @@ struct Draw_Block { uint program; uint pad0; uint pad1; uint pad2; };
 [[vk::binding(SLOT_DRAW, 0)]] ConstantBuffer<Draw_Block> draw : register(MIRAI_REGISTER(b, SLOT_DRAW), space0);
 #endif
 #include "gbuffer_build.slang"
-#include "visibility.slang"
 #if defined(MIRAI_VISIBILITY) && !defined(MIRAI_VISIBILITY_TESTED)
 typedef Visibility_Vertex Stage_Vertex;
 #else
@@ -42,11 +41,11 @@ typedef Gbuffer_Vertex Stage_Vertex;
 Stage_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_VulkanInstanceID) {
     Stage_Vertex output = (Stage_Vertex)0;
 #ifdef MIRAI_BATCHES
-    uint4 entry = visible[instance_id];
-    uint index = entry.x;
+    Visible_Cluster entry = visible[instance_id];
+    uint index = entry.instance;
     Instance inst = scene_instance(index);
     Mesh mesh = meshes[instance_mesh(inst)];
-    Cluster c = cluster_at(entry.y);
+    Cluster c = cluster_at(entry.cluster);
     uint corner = vertex_id;
 #else
     uint index = instance_id;
@@ -67,7 +66,7 @@ Stage_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
         return output;
     }
 #ifdef MIRAI_BATCHES
-    Gbuffer_Vertex built = gbuffer_vertex_build(index, inst, mesh, c, corner, true);
+    Gbuffer_Vertex built = gbuffer_corner_build(index, inst, mesh, c, visible_block(mesh, c, entry), gbuffer_cluster_of(index, inst, mesh, entry.material, entry.along), corner);
 #else
     // The highlight draws level 0 as it is.
     Gbuffer_Vertex built = gbuffer_vertex_build(index, inst, mesh, c, corner, !MIRAI_EDITOR_HIGHLIGHT);

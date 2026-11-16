@@ -8,6 +8,32 @@
 #define MIRAI_VISIBILITY_SLANG
 #include "scene.slang"
 
+// An entry of the visible list (cull_bins.comp): the instance, the cluster as
+// a word of the index pool, the Surface program it is resolved by and its
+// material row; then where its vertices and its triangles start in the
+// vertex pool, the word of its page entry, and how far its islands are on
+// their way to the next level (cluster_along). What a cluster gives each of
+// its vertices and pixels alike is found once, by the cull, and not by each
+// of them through the instance, the mesh and the page.
+struct Visible_Cluster {
+    uint instance;
+    uint cluster;
+    uint program;
+    uint material;
+    uint vertices;
+    uint triangles;
+    uint page;
+    float along;
+};
+
+// Where the streams of a visible cluster start in the vertex pool.
+Cluster_Block visible_block(Mesh mesh, Cluster c, Visible_Cluster v) {
+    Cluster_Block b = page_block(mesh, c, page_at_word(v.page));
+    b.vertices = v.vertices;
+    b.triangles = v.triangles;
+    return b;
+}
+
 uint visibility_id(uint entry, uint triangle) { return entry * CLUSTER_TRIANGLES + triangle + 1u; }
 uint visibility_entry(uint id) { return (id - 1u) / CLUSTER_TRIANGLES; }
 uint visibility_triangle(uint id) { return (id - 1u) % CLUSTER_TRIANGLES; }

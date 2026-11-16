@@ -36,11 +36,11 @@ struct Gbuffer_Cluster {
 #endif
 };
 
-// cut: the draw takes the cut of the view, whose islands are on their way to
-// the next level; else level 0 as it is.
-Gbuffer_Cluster gbuffer_cluster(uint index, Instance inst, Mesh mesh, Cluster c, bool cut) {
+// Of the cluster of an instance of a mesh, with its material row and how far
+// its islands are on their way to the next level.
+Gbuffer_Cluster gbuffer_cluster_of(uint index, Instance inst, Mesh mesh, uint material, float along) {
     Gbuffer_Cluster k;
-    k.material = material_of(inst, cluster_material(mesh, c));
+    k.material = material;
     // As instance_color: a program reads the color in its context.
     k.tinted = (inst.meta.w & INSTANCE_FLAG_UNIFORM_COLOR) == 0u && materials[k.material].shared.program_id == 0u;
     k.posed = mesh.posed_word;
@@ -50,7 +50,7 @@ Gbuffer_Cluster gbuffer_cluster(uint index, Instance inst, Mesh mesh, Cluster c,
         k.posed = mesh.part_word;
         k.previous = mesh.part_word + mesh.vertex_count * POSED_WORDS;
     }
-    k.along = cut ? cluster_along(view_detail(), inst, instance_scale(inst), mesh, c, frame.cut.x) : 0.0;
+    k.along = along;
     float fade = instance_fade(index, inst);
     k.flags = ((inst.meta.w >> INSTANCE_HIGHLIGHT_SHIFT) & RASTER_HIGHLIGHT_MASK)
         | (fade > 0.0 ? RASTER_FLAG_FADING | (uint(saturate(fade) * 65535.0 + 0.5) << RASTER_FADE_SHIFT) : 0u);
@@ -62,6 +62,13 @@ Gbuffer_Cluster gbuffer_cluster(uint index, Instance inst, Mesh mesh, Cluster c,
     return k;
 }
 
+// cut: the draw takes the cut of the view, whose islands are on their way to
+// the next level; else level 0 as it is.
+Gbuffer_Cluster gbuffer_cluster(uint index, Instance inst, Mesh mesh, Cluster c, bool cut) {
+    float along = cut ? cluster_along(view_detail(), inst, instance_scale(inst), mesh, c, frame.cut.x) : 0.0;
+    return gbuffer_cluster_of(index, inst, mesh, material_of(inst, cluster_material(mesh, c)), along);
+}
+
 // Where the vertex hook puts a point of the world of an instance at a time.
 float3 gbuffer_hooked(Gbuffer_Cluster k, float3 world, float4 color, float time) {
 #if defined(MIRAI_BATCHES) && defined(MIRAI_HOOK_VERTEX)
@@ -70,13 +77,39 @@ float3 gbuffer_hooked(Gbuffer_Cluster k, float3 world, float4 color, float time)
     return world;
 }
 
-Gbuffer_Vertex gbuffer_corner_build(uint index, Instance inst, Mesh mesh, Cluster c, Gbuffer_Cluster k, uint corner) {
+// A corner of a cluster: its vertex in the space of its mesh with the colors
+// of the instance, its place in the cluster, how far its island has moved and
+// where it is in the world now.
+struct Gbuffer_Corner {
+    Mesh_Point v;
+    uint local;
+    float3 offset;
+    float3 world;
+};
+
+// b: where the streams of the cluster start (cluster_block).
+Gbuffer_Corner gbuffer_corner_place(Instance inst, Mesh mesh, Cluster c, Cluster_Block b, Gbuffer_Cluster k, uint corner) {
+    Gbuffer_Corner p;
+    p.local = block_corner(b, gbuffer_corner(inst, corner));
+    p.v = block_point_at(mesh, c, b, p.local, k.posed);
+    p.v.color = instance_vertex_color(inst, c.vertex_first + p.local, p.v.color);
+    p.offset = k.along != 0.0 ? block_island_offset(mesh, c, b, p.local, k.along) : float3(0.0);
+    p.world = gbuffer_hooked(k, transform_point(inst.world, p.v.position + p.offset), p.v.color, frame.time.x);
+    return p;
+}
+
+// Where the vertex hook puts a corner of an instance in the frame before, in
+// the world: motion vectors see what the hook moves since then.
+float3 gbuffer_corner_world_previous(Instance inst, Mesh mesh, Cluster c, Cluster_Block b, Gbuffer_Cluster k, Gbuffer_Corner p) {
+    float3 before = block_position_previous(mesh, c, b, p.local, k.previous) + p.offset;
+    return gbuffer_hooked(k, transform_point(inst.prev_world, before), p.v.color, frame.time.y);
+}
+
+Gbuffer_Vertex gbuffer_corner_build(uint index, Instance inst, Mesh mesh, Cluster c, Cluster_Block b, Gbuffer_Cluster k, uint corner) {
     Gbuffer_Vertex output = (Gbuffer_Vertex)0;
-    uint local = cluster_corner(mesh, c, gbuffer_corner(inst, corner));
-    Mesh_Point v = cluster_point_at(mesh, c, local, k.posed);
-    v.color = instance_vertex_color(inst, c.vertex_first + local, v.color);
-    float3 offset = k.along != 0.0 ? island_offset(mesh, c, local, k.along) : float3(0.0);
-    float3 world = gbuffer_hooked(k, transform_point(inst.world, v.position + offset), v.color, frame.time.x);
+    Gbuffer_Corner p = gbuffer_corner_place(inst, mesh, c, b, k, corner);
+    Mesh_Point v = p.v;
+    float3 world = p.world;
 #ifdef MIRAI_VISIBILITY
     // The raster of the visibility target: where the corner is now, and of a
     // tested one what its fade and its alpha read; not where it was, nor its
@@ -95,8 +128,7 @@ Gbuffer_Vertex gbuffer_corner_build(uint index, Instance inst, Mesh mesh, Cluste
     gbuffer_vertex_place_now(output, world);
     return output;
 #else
-    // Motion vectors see what the hook moves since the previous frame.
-    float3 prev_world = gbuffer_hooked(k, transform_point(inst.prev_world, cluster_position_previous(mesh, c, local, k.previous) + offset), v.color, frame.time.y);
+    float3 prev_world = gbuffer_corner_world_previous(inst, mesh, c, b, k, p);
     output.out_normal = transform_normal(inst.world_inv, v.normal);
     output.out_tangent = instance_tangent(inst, v.tangent);
     output.out_material = k.material;
@@ -116,6 +148,6 @@ Gbuffer_Vertex gbuffer_corner_build(uint index, Instance inst, Mesh mesh, Cluste
 }
 
 Gbuffer_Vertex gbuffer_vertex_build(uint index, Instance inst, Mesh mesh, Cluster c, uint corner, bool cut) {
-    return gbuffer_corner_build(index, inst, mesh, c, gbuffer_cluster(index, inst, mesh, c, cut), corner);
+    return gbuffer_corner_build(index, inst, mesh, c, cluster_block(mesh, c), gbuffer_cluster(index, inst, mesh, c, cut), corner);
 }
 #endif
