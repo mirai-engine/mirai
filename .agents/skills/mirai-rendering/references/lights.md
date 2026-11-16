@@ -208,54 +208,63 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   [extensions](views.md#extension-hooks-and-constants) each with its hard ray, and the other side
   of a surface that lets light through (`direct_lighting`).
 - **Shadow maps** (`render/shadow_maps.odin`; every renderer draws them). Every frame, from the
-  camera and the lights alone, the lights whose sphere covers a share of the view, and the sun in
-  cascades, get depth maps in one atlas. A light turned off takes none; a spot no wider than a face
-  of the cube takes one map along its cone; the cascades of the sun end where the scene ends. They
-  draw the clusters of the instances of the scene and of the batches that cast shadows at the detail
-  a texel of the map asks for where they lie (`shadow_map_detail`), not the eye, and leave out an
-  instance smaller than a texel of the map (`shadow_map_unseen`). Those of masked materials are
-  drawn apart, with their coverage as a shadow ray asks it: a masked material without
-  a program samples its alpha with the derivatives of its uvs, a texel of the map wide, and the
+  camera and the lights alone, the lights whose sphere covers a share of the view get a map for
+  each face of their cube they light the view through, and the sun one for each of its levels
+  around the eye (each twice as wide as the one before, up to the reach of the scene). A light
+  turned off takes none; a spot no wider than a face of the cube takes one map along its cone.
+  They draw the clusters of the instances of the scene and of the batches that cast shadows at the
+  detail a texel of the map asks for where they lie (`shadow_map_detail`), not the eye, and leave
+  out an instance smaller than a texel of the map (`shadow_map_unseen`). Clusters of masked slots
+  are drawn apart, with their coverage as a shadow ray asks it: a masked material without a
+  program samples its alpha with the derivatives of its uvs, a texel of the map wide, and the
   others ask `hit_covers`; glass only in the tint. They are culled as the view culls its own: by
-  instance and map, which hands the
-  clusters of the levels the cut of the map can take (`instance_clusters`) to a pass by cluster in
-  chunks, into lists that count what does not fit and grow, like those of the view.
-- **Cache of the maps.** The cost follows what changed. A map the plan wants the same as the frame
-  before (a light that did not move or change shape) keeps its square of the atlas, and the cache
-  of the view (`Shadow_Raster.cache`) keeps there the depth of what stays. A cascade the eye moved
-  by whole texels across the light keeps its square too: what it held moves with it, and it draws
-  only the strips that came in (a job draws a window of a map). It draws a map again, in the same
-  frame, only where it is new or what stays changed in its frustum: an instance that came, went or
-  changed its box or pose, a page of its mesh, a masked material. Of the cascades of the sun that
-  want another projection (the sun turned, the eye jumped), only the one whose projection is the
-  oldest takes it and is drawn whole each frame; the others keep theirs, with what the cache holds,
-  until their turn, so a turning sun costs one cascade a frame. An instance that changes again
-  within `SHADOW_MOVER_FRAMES` moves (each instance followed on its own, however many,
-  `Scene_State.shadow_changes`): the cache leaves it out once, and every frame draws what moves
-  over a copy of the cache until it stays that long and joins it again, so a moving body does not
-  throw the cache away. A batch of a deformable that sways (the wind) moves so in the maps whose
-  texel is narrower than its sway; the others draw it at rest and keep it. An origin jump lets go
-  of every map. The glass of the tint is drawn every frame. A light takes each face it
-  lights what the view sees through whole, since one that takes maps lights much of the view; a
-  map holds a point only within its face and range, and samples tell elsewhere. A point under a
-  map takes taps around it: all lit, lit; all blocked,
-  hidden; where they disagree (a penumbra) it takes the hard shadow of the map at the point, and
-  `direct_spread` averages that evenly over the points of its surface within the penumbra width the
-  blockers give, the wider of that of the point and that of each neighbour, so the penumbra is the
-  same seen from either side. A point wider on its surface than its penumbra (far ground seen at a
-  grazing angle) spreads its taps over its width and takes the share of them that is lit, which the
-  jitter of the view does not move; the cascades of the sun reach the horizon of an open scene for
-  that ground. Lights without maps (small on the screen) trace their samples: raster for near and
-  large lights, rays for far ones. Glass with a program keeps only its mean in the tint of the maps:
-  a point with such glass between it and a light a map holds takes all of its light from samples,
-  whose rays run the program. The constants of the view carry the cascades of the sun it drew
-  (`Gpu_Frame.sun_maps`), so that a pass after the direct light takes the shadow of the sun from
-  them and traces only where none holds the point (`sun_shadow_seen`; an extension binds the atlas
-  with `Surface_Source.Shadow_Atlas`): the fog lights its cells so. The atlas with what moves, its
-  tint and the depth of its nearest glass are targets of the frame of a view, like the points and
-  samples of the direct light: the views share them (`targets_frame`), since each draws them before
-  it reads them, and so the buffers of the maps (`Renderer.shadow_buffers`) and the lists of their
-  cull; the cache is each view's own.
+  instance and slot, which hands the clusters of the levels the cut of the map can take
+  (`instance_clusters`) to a pass by cluster in chunks, which hands each to every page of the round
+  it covers, into lists that count what does not fit and grow, like those of the view.
+- **Pages of the maps.** A map lies in a slot: a square of `SHADOW_PAGE` pages, of which only those
+  the points of the view read exist. `shadow_mark.comp` marks, for each point of the direct light,
+  the pages the taps around it reach in the level of the sun and the maps of the lights that hold it
+  (`shadow_map_taps`, the same as `direct_maps` reads); `shadow_pages.comp` gives each marked page a
+  page of the pool of the view (`SHADOW_POOL` texels a side) through the table of the pages, in the
+  same frame, so a page first read is drawn before it is read. A page keeps its place while no point
+  reads it, until another needs it (free ones first), and what stays changing under it still marks
+  it stale, so a page read is always of this frame. The levels of the sun keep a few pages around the
+  eye (`SHADOW_SUN_AROUND`) for what no point marks (the fog, the hits of rays), which take the
+  finest level drawn there (`sun_map_ready`); past it they trace. A level moves with the eye by
+  whole pages and keeps its pages where they are in the world (the table is read turned,
+  `shadow_page_entry`): walking draws the pages that come in. A page asked for past the pool is
+  left out (`SHADOW_COUNT_LEFT`), and its taps read nothing there. The atlas keeps a copy of the
+  table in its last pages, so a pass that binds the atlas reads the maps alone.
+- **What a frame draws.** The cost follows what changed. The cache of the view
+  (`Shadow_Raster.cache`) holds what stays, page by page: a page draws there again only where it is
+  new or what stays changed under it (an instance that came, went or changed its box or pose, a
+  page of its mesh, a masked material), and the atlas (`Shadow_Raster.atlas`), what the passes
+  read, composes the cache and what moves again only in the pages where the cache drew or what
+  moves was or is. An instance that changes again within `SHADOW_MOVER_FRAMES` moves (each followed
+  on its own, however many, `Scene_State.shadow_changes`): the cache leaves it out once, and the
+  atlas draws it in the pages its moves cover until it stays that long and joins the cache again; a
+  mover that stands still costs nothing. A batch of a deformable that sways (the wind) moves so in
+  the maps whose texel is narrower than its sway; the others draw it at rest and keep it. A light
+  or a level of the sun that moves or turns lets go of its pages, so a turning sun draws again the
+  pages read, in the frame it turns; an origin jump lets go of every page. The glass of the tint
+  is drawn every frame in every page ready.
+- **Reading the maps.** A map holds a point only within its face and range, and samples tell
+  elsewhere. A point under a map takes taps around it: all lit, lit; all blocked, hidden; where
+  they disagree (a penumbra) it takes the hard shadow of the map at the point, and `direct_spread`
+  averages that evenly over the points of its surface within the penumbra width the blockers give,
+  the wider of that of the point and that of each neighbour, so the penumbra is the same seen from
+  either side. A point wider on its surface than its penumbra (far ground seen at a grazing angle)
+  spreads its taps over its width and takes the share of them that is lit, which the jitter of the
+  view does not move. Lights without maps (small on the screen) trace their samples: raster for near
+  and large lights, rays for far ones. Glass with a program keeps only its mean in the tint of the
+  maps: a point with such glass between it and a light a map holds takes all of its light from
+  samples, whose rays run the program. The constants of the view carry the levels of the sun it
+  drew (`Gpu_Frame.sun_maps`), so that a pass after the direct light takes the shadow of the sun
+  from them and traces only where none holds the point (`sun_shadow_seen`; an extension binds the
+  atlas with `Surface_Source.Shadow_Atlas`): the fog lights its cells so. The tint and the depth of
+  the nearest glass are targets of the frame of a view, which the views share (`targets_frame`),
+  and so the buffers of the maps (`Renderer.shadow_buffers`) and the lists of their cull; the
+  cache, the atlas and the pages are each view's own.
 - **Skinned meshes.** The skin writes the posed box and normal cone of each cluster, grown by the
   reach of its vertex programs, so that the view cull and the shadow map cull leave posed clusters
   out like static ones.
@@ -296,8 +305,10 @@ Tests: the shadow ones of `render/render_test.odin` (`render_sun_shadow_is_ray_t
 `render_soft_shadow_leaves_with_its_caster`, `render_a_low_sun_draws_out_the_end_of_a_shadow`,
 `render_a_wider_light_casts_a_softer_shadow`,
 `render_an_edge_takes_no_light_from_the_face_beyond_it` and, for the cache of the maps,
-`render_moved_cascades_give_what_whole_ones_give` and
-`render_shadow_maps_follow_what_moves_in_its_frame`, and for the lights and the sun without
+`render_moved_cascades_give_what_whole_ones_give`,
+`render_shadow_maps_follow_what_moves_in_its_frame`, `render_a_swaying_batch_shades_where_it_is`,
+`render_a_page_first_read_is_drawn_in_its_frame`, `render_a_turning_sun_gives_what_whole_maps_give`
+and `render_an_origin_jump_gives_what_whole_maps_give`, and for the lights and the sun without
 shadows `render_a_light_without_shadows_lights_through_what_holds_it`, and for a mesh without
 them `render_a_mesh_without_shadows_lets_the_sun_through`) and, for the grid and
 the groups of lights, `render_many_lights_match_their_reference`,

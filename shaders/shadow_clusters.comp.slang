@@ -10,6 +10,7 @@
 #include "trace.slang"
 #include "cut.slang"
 #include "shadow_maps.slang"
+#define SHADOW_PAGES_SLOT SLOT_PASS6
 #include "shadow_cull.slang"
 #include "cull_stats.slang"
 #define MIRAI_GROUP_X 64
@@ -62,7 +63,7 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
     bool tested = ((inst.tested >> cluster_slot(c)) & 1u) != 0u;
     for (uint y = pages.y; y <= pages.w; y++) {
         for (uint x = pages.x; x <= pages.z; x++) {
-            if (!shadow_page_drawn(shadow_data, map, uint2(x, y))) continue;
+            if (!shadow_page_drawn(map, uint2(x, y))) continue;
             uint page = shadow_page_word(map, uint2(x, y));
             if ((work.y & SHADOW_CHUNK_DEPTH) != 0u) shadow_add(tested ? SHADOW_DRAW_TESTED : SHADOW_DRAW_OPAQUE, uint4(instance, k, page, rest ? 1u : 0u));
             if ((work.y & SHADOW_CHUNK_GLASS) != 0u) shadow_add(SHADOW_DRAW_GLASS, uint4(instance, k, page, 0u));
