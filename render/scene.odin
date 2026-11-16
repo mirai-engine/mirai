@@ -2611,7 +2611,6 @@ upload_scene :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
 			}
 		}
 	}
-	if r.glass_stale {r.glass_changes += 1}
 	if s.materials_dirty {
 		if upload_transient(r, cmd, s.materials[:], s.material_buffer) {
 			s.materials_dirty = false
