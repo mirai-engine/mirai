@@ -84,8 +84,11 @@ or interleave its own passes.
      the next frame's phase 0 sees those surfaces too, and its phase 1 rescues what only they hid.
    - The cull lists (chunks, visible clusters and candidates, and the chunks and clusters of the
      shadow maps) count what does not fit
-     (`Stats.cull_dropped`) and grow to that for the following frames: a frame can show holes
-     where a list fills for the first time, not again at that size.
+     (`Stats.cull_dropped`) and grow to that for the following frames, as the buffer of the
+     material points does. What they asked for in a scene (`Capacity_Marks`) is kept by its id
+     in the cache of the project, which a game ships (`host/capacities.odin`); a scene opened
+     again starts its lists there. A frame shows holes only where a list fills past what any run
+     of that scene asked for, not again at that size; a mark only grows.
    - Then, the `Simulate` extension stages (first window view, or texture view in a
      textures-only frame: what moves on the GPU against this depth, like the
      [particles](../../mirai-world/references/vfx.md)) and `Gbuffer` (each view: surfaces of an
