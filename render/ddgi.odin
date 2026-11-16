@@ -38,18 +38,24 @@ PROBE_WARM_BUDGET :: 2048
 // Seconds a change keeps the probes it reaches traced.
 PROBE_AWAKE :: f32(1)
 
-// What the probes keep of their rays between updates (probe_hits.slang),
-// PROBE_HIT_WORDS a ray of every probe of the volume shown, and the changes
-// of the scene a probe checks it against when it is updated: the newest
-// first, each with the update, plus one, that listed it. A probe last
-// updated before a change that left the list (`lost`) traces all its rays.
+// Bytes what the probes keep of their rays takes at most: where every probe
+// does not fit them, they share the slots (probe_slots.slang).
+PROBE_HITS_BYTES :: 128 << 20
+
+// What the probes of the volume shown keep of their rays between updates
+// (probe_hits.slang): PROBE_HIT_WORDS a ray of the probe that holds each slot,
+// and the changes of the scene a probe checks it against when it is updated,
+// the newest first, each with the update, plus one, that listed it. A probe
+// last updated before a change that left the list (`lost`) traces all its rays.
 Probe_Hits :: struct {
 	records: rhi.Buffer,
+	slots:   rhi.Buffer, // a Probe_Slot each
 	changes: rhi.Buffer,
-	probes:  u32,
-	rays:    u32,
+	count:   u32,        // slots
+	rays:    u32,        // of each
+	clear:   bool,       // the slots were made: no probe holds one
 	listed:  [abi.PROBE_CHANGES_MAX]Probe_Change,
-	count:   int,
+	listed_count: int,
 	lost:    u32,  // the update, plus one, of the newest change that left the list
 	dirty:   bool, // the list is not the one the GPU has
 }
@@ -64,6 +70,11 @@ Probe_Change :: struct {
 	light: Vec4,
 }
 #assert(size_of(Probe_Change) == 48)
+// A slot as the shaders read it (probe_slots.slang).
+Probe_Slot :: struct {
+	owner:      u32, // the probe that holds it, plus one; 0: none
+	kept_until: u32, // the update until which a probe that is chosen leaves it to it
+}
 // Changes of one frame the list takes: with more, it changed everywhere.
 PROBE_CHANGES_FRAME :: abi.PROBE_CHANGES_MAX / 4
 
@@ -158,31 +169,34 @@ ddgi_room :: proc "contextless" (g: ^Ddgi_State) -> u32 {return max(g.budget, mi
 @(private)
 ddgi_counts_offset :: proc "contextless" (g: ^Ddgi_State) -> u64 {return u64(1 + 2 * ddgi_room(g)) * 4}
 
-// Room for what the probes of the volume keep of their rays. It is made again
-// only for a volume of other rays or another number of probes: what it holds
-// of another volume, no probe counts on (Ddgi_State.seen_everywhere).
+// Room for what the probes of the volume keep of their rays: a slot for each
+// while they fit PROBE_HITS_BYTES. It is made again only for a volume of
+// other rays or another number of slots: what it holds of another volume, no
+// probe counts on (Ddgi_State.seen_everywhere).
 @(private)
 probe_hits_ensure :: proc(r: ^Renderer) -> bool {
 	g, h := &r.ddgi, &r.probe_hits
-	if h.records != 0 && h.probes == g.total && h.rays == g.rays_per_probe {return true}
+	bytes := u64(g.rays_per_probe) * abi.PROBE_HIT_WORDS * 4
+	count := u32(min(u64(g.total), PROBE_HITS_BYTES / bytes))
+	if h.records != 0 && h.count == count && h.rays == g.rays_per_probe {return true}
 	probe_hits_release(r)
 	d := r.device
-	h.records = rhi.buffer_create(d, {size = u64(g.total) * u64(g.rays_per_probe) * abi.PROBE_HIT_WORDS * 4, usage = {.Storage}, name = "probe hits"})
+	h.records = rhi.buffer_create(d, {size = u64(count) * bytes, usage = {.Storage}, name = "probe hits"})
+	h.slots = rhi.buffer_create(d, {size = u64(count) * size_of(Probe_Slot), usage = {.Storage}, name = "probe hit slots"})
 	h.changes = rhi.buffer_create(d, {size = abi.PROBE_CHANGES_MAX * size_of(Probe_Change), usage = {.Storage}, name = "probe changes"})
-	if h.records == 0 || h.changes == 0 {
+	if h.records == 0 || h.slots == 0 || h.changes == 0 {
 		probe_hits_release(r)
 		return false
 	}
-	h.probes, h.rays = g.total, g.rays_per_probe
+	h.count, h.rays, h.clear = count, g.rays_per_probe, true
 	return true
 }
 
 @(private)
 probe_hits_release :: proc(r: ^Renderer) {
 	h := &r.probe_hits
-	if h.records != 0 {rhi.buffer_destroy(r.device, h.records)}
-	if h.changes != 0 {rhi.buffer_destroy(r.device, h.changes)}
-	h.records, h.changes, h.probes, h.rays = 0, 0, 0, 0
+	for b in ([]rhi.Buffer{h.records, h.slots, h.changes}) {if b != 0 {rhi.buffer_destroy(r.device, b)}}
+	h.records, h.slots, h.changes, h.count, h.rays = 0, 0, 0, 0, 0
 }
 
 // Lists what changed since the last update for what the probes keep of their
@@ -240,11 +254,11 @@ probe_changes_list :: proc(r: ^Renderer, changes: ^Light_Changes, moved: ^Occlud
 	}
 	if !lit {count = boxes}
 	if count == 0 {return}
-	kept := min(h.count, len(h.listed) - count)
-	if kept < h.count {h.lost = h.listed[kept].stamp}
+	kept := min(h.listed_count, len(h.listed) - count)
+	if kept < h.listed_count {h.lost = h.listed[kept].stamp}
 	copy(h.listed[count:count + kept], h.listed[:kept])
 	copy(h.listed[:count], fresh[:count])
-	h.count = count + kept
+	h.listed_count = count + kept
 	h.dirty = true
 	return
 }
@@ -306,6 +320,10 @@ ddgi_update :: proc(p: ^Pass, warm := false, first := true) -> bool {
 	if changes.all || warm {g.changed_everywhere = frame_number}
 	budget := min(PROBE_WARM_BUDGET, g.total) if warm else g.budget
 	room := ddgi_room(g)
+	if h.clear {
+		rhi.cmd_fill_buffer(cmd, h.slots, 0, u64(h.count) * size_of(Probe_Slot), 0)
+		h.clear = false
+	}
 	if first {
 		stamp := frame_number + 1
 		// The sun that turned gives every caster another shadow.
@@ -318,7 +336,7 @@ ddgi_update :: proc(p: ^Pass, warm := false, first := true) -> bool {
 			if !lit {g.lit_everywhere = stamp}
 		}
 		if h.dirty {
-			if !upload_transient(r, cmd, h.listed[:h.count], h.changes) {return false}
+			if !upload_transient(r, cmd, h.listed[:h.listed_count], h.changes) {return false}
 			h.dirty = false
 		}
 	}
@@ -342,8 +360,8 @@ ddgi_update :: proc(p: ^Pass, warm := false, first := true) -> bool {
 		rhi.cmd_dispatch(cmd, groups(groups(t.width, 8), 8), groups(groups(t.height, 8), 8))
 	}
 	rhi.cmd_fill_buffer(cmd, g.histogram, 0, PROBE_HISTOGRAM_WORDS * 4, 0)
-	Select :: struct {mode, budget, changed_everywhere, frame_number, rays_per_probe, total, awake, whole, room, pad0, pad1, pad2: u32}
-	select := Select{budget = budget, changed_everywhere = g.changed_everywhere, frame_number = frame_number, rays_per_probe = g.rays_per_probe, total = g.total, awake = awake, whole = 1 if warm else 0, room = room}
+	Select :: struct {mode, budget, changed_everywhere, frame_number, rays_per_probe, total, awake, whole, room, slots, pad0, pad1: u32}
+	select := Select{budget = budget, changed_everywhere = g.changed_everywhere, frame_number = frame_number, rays_per_probe = g.rays_per_probe, total = g.total, awake = awake, whole = 1 if warm else 0, room = room, slots = h.count}
 	for mode in u32(0) ..< 4 {
 		select.mode = mode
 		rhi.cmd_bind_pipeline(cmd, r.pipelines[.Ddgi_Select])
@@ -353,12 +371,13 @@ ddgi_update :: proc(p: ^Pass, warm := false, first := true) -> bool {
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS1, g.histogram)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS2, g.chosen)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS3, g.dispatch)
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS4, h.slots)
 		rhi.cmd_dispatch(cmd, groups(g.total, 64) if mode % 2 == 0 else 1)
 	}
-	Update :: struct {rays_per_probe, light_budget: u32, max_distance: f32, frame_number, resume, room, changes, changes_lost, seen_everywhere, lit_everywhere, pad0, pad1: u32}
+	Update :: struct {rays_per_probe, light_budget: u32, max_distance: f32, frame_number, resume, room, changes, changes_lost, seen_everywhere, lit_everywhere, slots, pad0: u32}
 	update := Update{
 		rays_per_probe = g.rays_per_probe, light_budget = min(settings.light_budget, PROBE_LIGHT_BUDGET), max_distance = 1e4, frame_number = frame_number,
-		room = room, changes = u32(h.count), changes_lost = h.lost, seen_everywhere = g.seen_everywhere, lit_everywhere = g.lit_everywhere,
+		room = room, changes = u32(h.listed_count), changes_lost = h.lost, seen_everywhere = g.seen_everywhere, lit_everywhere = g.lit_everywhere, slots = h.count,
 	}
 	// The rays, then what waits for the programs of what they hit.
 	batch := points_begin(p)
@@ -369,6 +388,7 @@ ddgi_update :: proc(p: ^Pass, warm := false, first := true) -> bool {
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS1, h.records)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS2, g.chosen)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS3, h.changes)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS4, h.slots)
 	rhi.cmd_bind_buffer(cmd, SLOT_PROBES, g.probes)
 	points_bind(p)
 	textures_feedback_bind(r, cmd)
@@ -394,6 +414,7 @@ ddgi_update :: proc(p: ^Pass, warm := false, first := true) -> bool {
 	set_params(cmd, &update)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, g.rays)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS2, g.chosen)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS4, h.slots)
 	rhi.cmd_bind_buffer(cmd, SLOT_PROBES, g.probes)
 	rhi.cmd_dispatch_indirect(cmd, g.dispatch, 24)
 	return true

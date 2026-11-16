@@ -11,7 +11,8 @@
 // rays may meet changes: in a gap narrower than what it keeps from surfaces,
 // or buried deeper than its cell, it would go back and forth with every
 // update, traced first every frame before every other probe. One that stays
-// where it was keeps what its rays found (probe_hits.slang).
+// where it was keeps what its rays found, where it holds a slot for it
+// (probe_hits.slang).
 #define PROBES_WRITABLE
 #include "probe_update.slang"
 #define MIRAI_GROUP_X 32
@@ -73,8 +74,8 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     bool moved = any(offset != before);
     int flags = PROBE_VALID;
     if (buried) flags = probe_holds(held, cell) ? (PROBE_VALID | PROBE_BURIED) : PROBE_BURIED;
-    // Where it was, its rays are those it keeps.
-    if (!moved) flags |= PROBE_KEPT;
+    // Where it was, its rays are those its slot keeps.
+    if (!moved && kept.slot != INVALID) flags |= PROBE_KEPT;
     probes[probe].offset = float4(offset, held.offset.w);
     probes[probe].cell = int4(cell, flags | (moves + (moved ? PROBE_MOVE : 0)));
     // A probe that moved is untraced again: the next frame traces it first.

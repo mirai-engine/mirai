@@ -156,12 +156,12 @@ other and do not see the corner of a table or the floor under a wardrobe.
 - Each probe traces `probe_rays` spherical Fibonacci rays rotated by its cell, the same every
   time. Their hits trace the direct light and take the bounces from the volume: each trace adds
   one.
-- **Kept hits** (`Probe_Hits`, `probe_hits.slang`). A probe keeps what each of its rays found:
-  where it ended, what the surface reflects and lets through, and the light it emits and
-  reflects of the lights, apart from the bounces. An update traces a ray again only where what
-  it may meet changed and lights its hit again only where its lights did; of the others it reads
-  the bounces again around what is kept, which is also what an update that traces gives. With
-  nothing changed a probe traces nothing.
+- **Kept hits** (`Probe_Hits`, `probe_hits.slang`). A probe that holds a slot keeps what each of
+  its rays found: where it ended, what the surface reflects and lets through, and the light it
+  emits and reflects of the lights, apart from the bounces. An update traces a ray again only
+  where what it may meet changed and lights its hit again only where its lights did; of the
+  others it reads the bounces again around what is kept, which is also what an update that
+  traces gives. With nothing changed a probe traces nothing.
   - What changed is a list the renderer keeps of the last changes of the scene
     (`probe_changes_list`), which a probe checks from its last update on when it is chosen: the
     boxes of what moved, came, went, took another pose or shows something else (a ray whose way
@@ -177,8 +177,12 @@ other and do not see the corner of a table or the floor under a wardrobe.
     went through the gate of an extension, and the light of a hit a light of an extension
     reaches. What a program gives by the view (`screen`, `depth`) stays as the ray found it,
     as does how wet an object is, until its ray is traced again.
-  - The hits take `PROBE_HIT_WORDS` words a ray of every probe, made with the volume. Those of
-    a world that is not shown are not kept: its probes trace their rays when it returns.
+  - The hits take `PROBE_HIT_WORDS` words a ray, in slots made with the volume: one for each
+    probe while they fit `PROBE_HITS_BYTES`. Past it the probes share them
+    (`probe_slots.slang`): one takes a slot when it is chosen, free or of a probe not chosen
+    for a while, and one without a slot traces all its rays, so the probes updated often (those
+    a change keeps awake, those the pixels use) keep theirs. Those of a world that is not shown
+    are not kept: its probes trace their rays when it returns.
 - A change of its light is followed in full. Between traces it measures how much its light moves
   while the bounces it reads settle (`Probe.frames.w`): a movement within that approaches it
   little by little; only a larger one traces it again.
