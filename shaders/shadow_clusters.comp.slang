@@ -46,7 +46,7 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
     Instance inst = scene_instance(instance);
     Mesh mesh = meshes[instance_mesh(inst)];
     Cluster c = mesh_cluster(mesh, k);
-    Shadow_Map m = shadow_map_at(shadow_data, params.rows, map);
+    Shadow_Map m = shadow_map_mip(shadow_map_at(shadow_data, params.rows, map), (work.y >> SHADOW_CHUNK_MIP) & 7u);
     if (!cluster_in_cut(shadow_map_detail(m), inst, instance_scale(inst), mesh, c, frame.cut.x)) return;
     float3 low, high;
     bool rest = (work.y & SHADOW_CHUNK_REST) != 0u;
@@ -60,11 +60,14 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
         else { low = inst.bounds_min.xyz; high = inst.bounds_max.xyz; }
     }
     if (!shadow_map_reaches(m, low, high) || !shadow_page_rect(m, low, high, pages)) return;
+    uint4 span;
+    if (!shadow_pages_span(m, span)) return;
+    pages = uint4(max(pages.xy, span.xy), min(pages.zw, span.zw));
     bool tested = ((inst.tested >> cluster_slot(c)) & 1u) != 0u;
     for (uint y = pages.y; y <= pages.w; y++) {
         for (uint x = pages.x; x <= pages.z; x++) {
-            if (!shadow_page_drawn(map, uint2(x, y))) continue;
-            uint page = shadow_page_word(map, uint2(x, y));
+            if (!shadow_page_drawn(m, uint2(x, y))) continue;
+            uint page = shadow_page_word(map, shadow_rect_mip(m.rect), uint2(x, y));
             if ((work.y & SHADOW_CHUNK_DEPTH) != 0u) shadow_add(tested ? SHADOW_DRAW_TESTED : SHADOW_DRAW_OPAQUE, uint4(instance, k, page, rest ? 1u : 0u));
             if ((work.y & SHADOW_CHUNK_GLASS) != 0u) shadow_add(SHADOW_DRAW_GLASS, uint4(instance, k, page, 0u));
         }

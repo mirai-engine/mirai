@@ -80,7 +80,7 @@ static bool direct_maps_give = true;
 float direct_sampled_weight(uint4 row, uint item, float3 position, float3 normal) {
 #ifdef SHADOW_DATA_SLOT
     Shadow_Map m;
-    if (direct_maps_give && item != DIRECT_CELL_TABLE && light_map_of(item, position, m)) return 0.0;
+    if (direct_maps_give && item != DIRECT_CELL_TABLE && light_map_of(item, position, m) && shadow_map_held(m, position)) return 0.0;
 #endif
     return direct_item_weight(row, item, position, normal);
 }

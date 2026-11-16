@@ -339,6 +339,33 @@ render_shadow_maps_follow_what_moves_in_its_frame :: proc(t: ^testing.T) {
 	differ := 0
 	for v, k in cached {if k < len(whole) && abs(int(v) - int(whole[k])) > 2 {differ += 1}}
 	testing.expectf(t, len(cached) == len(whole) && differ * 1000 <= len(cached), "%d of %d values differ from the maps drawn whole", differ, len(cached))
+	// What moves under what stays casts nothing the cache does not hide there:
+	// a cube moving under a roof the light shines on gives the round of what
+	// moves no cluster, and the image is that of maps drawn whole.
+	roofed := []Instance_Desc{
+		instances[0],
+		{object_id = 2, mesh = f.cube, transform = trs({0, 2.2, 0}, {6, 0.2, 6}), tint = {0.5, 0.5, 0.5}},
+		{object_id = 3, mesh = f.cube, transform = trs({0.5, 0.5, 0}, {0.4, 0.4, 0.4}), tint = {0.5, 0.5, 0.5}},
+	}
+	testing.expect(t, scene_given(r, roofed, []Light_Desc{light}, {}, {}))
+	for k in 0 ..< 6 {
+		testing.expect(t, scene_move(r, {2}, {trs({0.5 + 0.1 * f32(k % 2), 0.5, 0}, {0.4, 0.4, 0.4})}))
+		testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	}
+	rhi.device_wait_idle(f.device)
+	state: [1]Gpu_Shadow_State
+	testing.expect(t, rhi.buffer_read_slice(f.device, r.shadow_buffers.state, 0, state[:]))
+	entries := state[0].draws[0].instance_count + state[0].draws[1].instance_count
+	testing.expectf(t, r.stats.shadow_movers == 1 && entries == 0, "a cube moving under a roof: %d movers, %d clusters drawn as what moves", r.stats.shadow_movers, entries)
+	hidden := read(t, &f)
+	defer delete(hidden)
+	r.main.targets.shadow_raster.forget = true
+	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	fresh := read(t, &f)
+	defer delete(fresh)
+	differ = 0
+	for v, k in hidden {if k < len(fresh) && abs(int(v) - int(fresh[k])) > 2 {differ += 1}}
+	testing.expectf(t, len(hidden) == len(fresh) && differ * 1000 <= len(hidden), "under a roof %d of %d values differ from the maps drawn whole", differ, len(hidden))
 	expect_clean(t, f.device)
 }
 
@@ -450,7 +477,9 @@ render_moved_cascades_give_what_whole_ones_give :: proc(t: ^testing.T) {
 	for v, k in moved {if abs(int(v) - int(whole[k])) > 2 {differ += 1}}
 	testing.expectf(t, differ * 1000 <= len(moved), "%d of %d values differ from the maps drawn whole", differ, len(moved))
 	// A post that moves a little draws again the pages of each cascade its
-	// boxes cover, no more than four, and gives what maps drawn whole give.
+	// boxes cover, no more than four, and gives what maps drawn whole give;
+	// the frame after maps drawn whole draws their cache first.
+	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
 	testing.expect(t, scene_move(r, {5}, {trs({f32(5 % 3) * 2.3 - 2.25, 0.8, f32(5 / 3) * 2.1 - 3}, {0.3, 1.6, 0.3})}))
 	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
 	levels := 0
@@ -466,6 +495,24 @@ render_moved_cascades_give_what_whole_ones_give :: proc(t: ^testing.T) {
 	differ = 0
 	for v, k in paged {if k < len(again) && abs(int(v) - int(again[k])) > 2 {differ += 1}}
 	testing.expectf(t, len(paged) == len(again) && differ * 1000 <= len(paged), "%d of %d values differ from the maps drawn whole after a page", differ, len(paged))
+	// The frame after maps drawn whole draws the cache of every page read.
+	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	whole_drawn, _, _ := shadow_counts(r)
+	// A post lifted a little above the top of the scene: the levels keep how
+	// far they reach towards the sun, and draw again only where its boxes are.
+	testing.expect(t, scene_move(r, {5}, {trs({f32(5 % 3) * 2.3 - 2.25, 1.7, f32(5 / 3) * 2.1 - 3}, {0.3, 1.6, 0.3})}))
+	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	drawn, _, _ = shadow_counts(r)
+	testing.expectf(t, drawn > 0 && drawn < whole_drawn, "a post lifted above the scene drew %d pages, the maps drawn whole %d", drawn, whole_drawn)
+	lifted := read(t, &f)
+	defer delete(lifted)
+	r.main.targets.shadow_raster.forget = true
+	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	fresh := read(t, &f)
+	defer delete(fresh)
+	differ = 0
+	for v, k in lifted {if k < len(fresh) && abs(int(v) - int(fresh[k])) > 2 {differ += 1}}
+	testing.expectf(t, len(lifted) == len(fresh) && differ * 1000 <= len(lifted), "%d of %d values differ from the maps drawn whole after a lift", differ, len(lifted))
 	expect_clean(t, f.device)
 }
 
@@ -500,8 +547,8 @@ render_a_page_first_read_is_drawn_in_its_frame :: proc(t: ^testing.T) {
 	posts := away
 	posts.position.x = 32
 	testing.expect(t, renderer_frame(r, {camera = posts}), r.error)
-	drawn, _, left := shadow_counts(r)
-	testing.expectf(t, drawn > 0 && left == 0, "the pages first read are drawn: %d, %d left out", drawn, left)
+	_, composed, left := shadow_counts(r)
+	testing.expectf(t, composed > 0 && left == 0, "the pages first read are drawn: %d, %d left out", composed, left)
 	seen := read(t, &f)
 	defer delete(seen)
 	w := int(r.targets.output_width)
@@ -515,10 +562,35 @@ render_a_page_first_read_is_drawn_in_its_frame :: proc(t: ^testing.T) {
 	differ := 0
 	for v, k in seen {if abs(int(v) - int(whole[k])) > 2 {differ += 1}}
 	testing.expectf(t, differ * 1000 <= len(seen), "%d of %d values differ from the maps drawn whole", differ, len(seen))
-	// A still frame draws nothing again.
+	// The frame after maps drawn whole draws their cache, and a still frame
+	// after it draws nothing again.
 	testing.expect(t, renderer_frame(r, {camera = posts}), r.error)
-	drawn, _, _ = shadow_counts(r)
+	testing.expect(t, renderer_frame(r, {camera = posts}), r.error)
+	drawn, _, _ := shadow_counts(r)
 	testing.expectf(t, drawn == 0, "a still frame drew %d pages again", drawn)
+	// A pool smaller than what the points ask for leaves out the finest pages,
+	// the same ones each time the pages are given anew; their points read the
+	// coarser pages drawn, or trace, and a post still shades the ground.
+	b := &r.main.targets.shadow_raster
+	b.pool = 12
+	owners: [2][abi.SHADOW_POOL_PAGES]u32
+	for &owner, k in owners {
+		b.forget = true
+		testing.expect(t, renderer_frame(r, {camera = posts}), r.error)
+		_, _, left = shadow_counts(r)
+		testing.expectf(t, left > 0, "run %d: a small pool leaves pages out: %d", k, left)
+		testing.expect(t, rhi.buffer_read_slice(r.device, b.pages, u64(abi.SHADOW_WORDS_OWNER) * 4, owner[:]))
+	}
+	testing.expect(t, owners[0] == owners[1], "a small pool gives the same pages each time")
+	small := read(t, &f)
+	defer delete(small)
+	testing.expect(t, renderer_frame(r, {camera = posts}), r.error)
+	again := read(t, &f)
+	defer delete(again)
+	testing.expect(t, slice.equal(small, again), "a small pool gives the same image two frames running")
+	shaded, lit = pixel(small, w, project(r, posts, {31.9, 0.001, -3.3}))[0], pixel(small, w, project(r, posts, {36, 0.001, 3}))[0]
+	testing.expectf(t, lit > 40 && shaded < 0.5 * lit, "with a small pool a post shades the ground: %f against %f", shaded, lit)
+	b.pool = 0
 	expect_clean(t, f.device)
 }
 
@@ -565,7 +637,8 @@ render_an_origin_jump_gives_what_whole_maps_give :: proc(t: ^testing.T) {
 }
 
 // A turning sun draws again, in the frame it turns, the pages its levels
-// hold that the points read: each frame gives what maps drawn whole give.
+// hold that the points read, whole into the atlas alone, and the cache the
+// next still frame: each frame gives what maps drawn whole give.
 @(test)
 render_a_turning_sun_gives_what_whole_maps_give :: proc(t: ^testing.T) {
 	f: Cube_Fixture
@@ -591,10 +664,19 @@ render_a_turning_sun_gives_what_whole_maps_give :: proc(t: ^testing.T) {
 		testing.expect(t, ok, f.renderer.error)
 		return pixels
 	}
-	for k in 0 ..< 2 {
-		sun.direction.x = 0.4 + 0.1 * f32(k + 1)
-		scene_set_environment(r, sun, environment)
+	for k in 0 ..< 4 {
+		still := k == 3
+		if !still {
+			sun.direction.x = 0.4 + 0.1 * f32(k + 1)
+			scene_set_environment(r, sun, environment)
+		}
 		testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+		drawn, composed, _ := shadow_counts(r)
+		if still {
+			testing.expectf(t, drawn > 0, "the still frame after the turns draws the cache: %d pages", drawn)
+		} else {
+			testing.expectf(t, drawn == 0 && composed > 0, "turn %d draws the atlas alone: %d pages of the cache, %d of the atlas", k, drawn, composed)
+		}
 		turned := read(t, &f)
 		defer delete(turned)
 		r.main.targets.shadow_raster.forget = true

@@ -43,6 +43,7 @@ SLOT_SURFACE        :: abi.SLOT_SURFACE
 SLOT_VIEWS          :: abi.SLOT_VIEWS
 SLOT_LAYERS         :: abi.SLOT_LAYERS
 SLOT_DISTANCE       :: abi.SLOT_DISTANCE
+SLOT_SHADOW_TABLE   :: abi.SLOT_SHADOW_TABLE
 // Of a draw of the clusters of an instance (gbuffer.vert): the Surface program
 // whose clusters it draws, 0 those without one, GPU_NONE all of them.
 SLOT_DRAW           :: abi.SLOT_DRAW
@@ -113,6 +114,7 @@ bind_scene_table :: proc(p: ^Pass) {
 	rhi.cmd_bind_texture(cmd, SLOT_SURFACE, texture_or_dummy(r, p.t.surface))
 	rhi.cmd_bind_texture(cmd, SLOT_VIEWS, p.t.motion)
 	rhi.cmd_bind_texture(cmd, SLOT_LAYERS, p.t.layers if p.t.layers != 0 else r.dummy_layers)
+	rhi.cmd_bind_texture(cmd, SLOT_SHADOW_TABLE, p.t.shadow_raster.table if p.t.shadow_raster.table != 0 else r.dummy_layers)
 	rhi.cmd_bind_buffer(cmd, SLOT_LIGHTS, or_dummy(r, s.light_buffer))
 	rhi.cmd_bind_buffer(cmd, SLOT_LIGHT_TREE, or_dummy(r, s.light_tree_buffer))
 	rhi.cmd_bind_buffer(cmd, SLOT_BLAS_NODES, or_dummy(r, s.blas_node_buffer))

@@ -4,8 +4,7 @@
 //! variant tested MIRAI_SHADOW_TESTED=1
 // square: of each word of a list of the buffer of the pages from
 // params.list, its page of the pool (shadow_page_word), for shadow_map.frag
-// to clear or copy; with params.moving 2, the table of the pages, which the
-// atlas keeps in its last pages.
+// to clear or copy.
 //! variant square MIRAI_SHADOW_SQUARE=1
 // The depth of the scene from a light into the pages of one of its maps in
 // the pool (shadow_maps.slang): an instance for each page of a map a cluster
@@ -24,6 +23,11 @@
 struct Shadow_Vertex {
     float4 position : SV_Position;
     float clip[4] : SV_ClipDistance0;
+#ifdef MIRAI_SHADOW_SQUARE
+    // 1 where the page of the atlas takes that of the cache, 0 where the cache
+    // holds nothing of it this frame and it is cleared.
+    [[vk::location(0)]] nointerpolation float held : HELD;
+#endif
 #ifdef MIRAI_SHADOW_TESTED
     // The instance and the primitive of the triangle, where on it the point
     // is, and how far a ray that reads its material as coarsely as a texel of
@@ -47,16 +51,15 @@ Shadow_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vul
     for (uint i = 0u; i < 4u; i++) output.clip[i] = -1.0;
     output.position = float4(2.0, 2.0, 2.0, 1.0);
 #ifdef MIRAI_SHADOW_SQUARE
+    output.held = 0.0;
     if (vertex_id >= 6u) return output;
     float2 at = float2(vertex_id == 1u || vertex_id >= 4u ? 1.0 : 0.0, vertex_id == 2u || vertex_id == 3u || vertex_id == 5u ? 0.0 : 1.0);
-    float4 rect = float4(SHADOW_TABLE_X, SHADOW_TABLE_Y, SHADOW_POOL, SHADOW_POOL);
-    if (params.moving != 2u) {
-        uint word = shadow_pages[params.list + instance_id];
-        Shadow_Map square = shadow_map_at(shadow_data, params.rows, shadow_page_map(word));
-        uint2 corner;
-        if (!shadow_page_pool(square, shadow_page_of(word), corner)) return output;
-        rect = float4(float2(corner), float2(corner + SHADOW_PAGE));
-    }
+    uint word = shadow_pages[params.list + instance_id];
+    Shadow_Map square = shadow_map_mip(shadow_map_at(shadow_data, params.rows, shadow_page_map(word)), shadow_page_mip(word));
+    uint2 corner;
+    if (!shadow_page_pool(square, shadow_page_of(word), corner)) return output;
+    output.held = (shadow_table_entry(square.rect.x, shadow_page_entry(square.rect, shadow_page_of(word))) & SHADOW_PAGE_CACHED) != 0u ? 1.0 : 0.0;
+    float4 rect = float4(float2(corner), float2(corner + SHADOW_PAGE));
     float2 texel = lerp(rect.xy, rect.zw, at);
     for (uint i = 0u; i < 4u; i++) output.clip[i] = 1.0;
     output.position = float4(2.0 * texel.x / float(SHADOW_POOL) - 1.0, 1.0 - 2.0 * texel.y / float(SHADOW_POOL), 0.0, 1.0);
@@ -82,7 +85,7 @@ Shadow_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vul
     if (vertex_id >= cluster_triangle_count(c) * 3u) return output;
     // At rest (entry.w, shadow_clusters.comp), the vertices of its clusters.
     Mesh_Point v = cluster_point_at(mesh, c, cluster_corner(mesh, c, vertex_id), entry.w != 0u ? INVALID : mesh.posed_word);
-    Shadow_Map m = shadow_map_at(shadow_data, params.rows, shadow_page_map(entry.z));
+    Shadow_Map m = shadow_map_mip(shadow_map_at(shadow_data, params.rows, shadow_page_map(entry.z)), shadow_page_mip(entry.z));
     uint4 page = shadow_page_window(m, shadow_page_of(entry.z));
     float3 world = transform_point(inst.world, v.position);
     float3 local = shadow_map_local(m, world);
