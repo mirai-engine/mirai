@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:slice"
 import "core:math"
 import "core:math/linalg"
+import "core:mem"
 import "core:testing"
 import "mirai:asset"
 import "mirai:cook/textures"
@@ -433,13 +434,14 @@ mask_source :: proc(kind:Test_Mask,size:int) -> textures.Source {
 mask_of :: proc(source:textures.Source,cutoff:u8) -> Outline_Mask {
     covered:=make([]bool,source.width*source.height,context.temp_allocator)
     for &c,i in covered {c=source.texels[i*4+3]>=cutoff}
-    return {covered,source.width,source.height}
+    return {covered,source.width,source.height,1}
 }
 
 // Every outline of a ladder holds every texel its mask keeps, draws no
-// farther from them than its tolerance allows, and each draws fewer
-// triangles with more error than the one before, none more than
-// OUTLINE_TRIANGLES. The forest's leaf: its quad covers 0.417, and with the
+// farther from them than its tolerance allows nor than its error says
+// (exactly that on a mask cut texel by texel, at most on one wider than
+// OUTLINE_MASK_SIDE, cut on cells), and each draws fewer triangles with more
+// error than the one before, none more than OUTLINE_TRIANGLES. The forest's leaf: its quad covers 0.417, and with the
 // outline each size on screen takes at 1 pixel of error under four triangles
 // a leaf, at least 0.7 of what it draws covered, over 1.3 to 40 m. A
 // single leaf is drawn as its outlines; a cluster of leaves keeps its mask on
@@ -455,6 +457,7 @@ a_masked_card_becomes_the_outlines_its_mask_needs :: proc(t:^testing.T) {
     }
     for c in cases {
         mask:=mask_of(c.source,128)
+        scale:=f32((max(mask.width,mask.height)+OUTLINE_MASK_SIDE-1)/OUTLINE_MASK_SIDE)
         ladder,ok:=outline_ladder(mask,context.temp_allocator)
         if !testing.expectf(t,ok,"%s: a ladder",c.name) {continue}
         testing.expectf(t,ladder.leaf==c.leaf,"%s: drawn as outlines %v",c.name,ladder.leaf)
@@ -481,18 +484,24 @@ a_masked_card_becomes_the_outlines_its_mask_needs :: proc(t:^testing.T) {
                 if mask.covered[at] && !d {testing.expectf(t,false,"%s: outline %d leaves out texel %d the mask keeps",c.name,k,at);break}
             }
             error:=f32(math.sqrt(f64(worst)))
-            testing.expectf(t,abs(error-rung.error)<1e-3,"%s: outline %d draws %f texels out, not %f",c.name,k,error,rung.error)
-            if rung.tolerance>0 {testing.expectf(t,rung.error<=2*rung.tolerance+2,"%s: outline %d cut at %f draws %f out",c.name,k,rung.tolerance,rung.error)}
+            if scale==1 {
+                testing.expectf(t,abs(error-rung.error)<1e-3,"%s: outline %d draws %f texels out, not %f",c.name,k,error,rung.error)
+            } else {
+                testing.expectf(t,error<=rung.error+1e-3,"%s: outline %d draws %f texels out, past its %f",c.name,k,error,rung.error)
+            }
+            if rung.tolerance>0 {testing.expectf(t,rung.error<=2*rung.tolerance+(2+math.SQRT_TWO)*scale,"%s: outline %d cut at %f draws %f out",c.name,k,rung.tolerance,rung.error)}
             testing.expectf(t,rung.triangles<=OUTLINE_TRIANGLES,"%s: outline %d draws %d triangles",c.name,k,rung.triangles)
             if k>0 {
                 finer:=ladder.rungs[k-1]
                 testing.expectf(t,rung.error>=finer.error && rung.triangles<=finer.triangles,"%s: outline %d is not coarser than %d",c.name,k,k-1)
             }
         }
-        quad:=f64(ladder.opaque)/f64(mask.width*mask.height)
+        opaque:=0
+        for covered in mask.covered {if covered {opaque+=1}}
+        quad:=f64(opaque)/f64(mask.width*mask.height)
         if c.quad>0 {testing.expectf(t,abs(quad-c.quad)<0.002,"%s: the quad covers %f",c.name,quad)}
         if !c.leaf {
-            hull:=f64(ladder.opaque)/ladder.hull.area
+            hull:=f64(opaque)/ladder.hull.area
             testing.expectf(t,ladder.hull.triangles<=6 && hull>=1.5*quad,"%s: masked on %d triangles covering %f, the quad %f",c.name,ladder.hull.triangles,hull,quad)
         }
         if c.triangles=={} {continue}
@@ -504,7 +513,7 @@ a_masked_card_becomes_the_outlines_its_mask_needs :: proc(t:^testing.T) {
             pick:=ladder.rungs[0]
             for rung in ladder.rungs {if rung.error<=allowed {pick=rung}}
             triangles+=f64(pick.triangles)*distance
-            coverage+=f64(ladder.opaque)/pick.area*distance
+            coverage+=f64(opaque)/pick.area*distance
             weight+=distance
         }
         triangles/=weight
@@ -688,13 +697,20 @@ the_near_part_of_a_bush_alone_is_fine :: proc(t:^testing.T) {
     side:=[3]f32{g.bounds_max.x,0.5*(g.bounds_min.y+g.bounds_max.y),0}
     near_sum,all_sum:int
     fmt.printf("bush: level 0 %d triangles of leaves; from its side, by the cut (all of it as near):",level0)
-    for distance in ([]f32{0.5,1,2,5,10,15,20,22,25,30,40,60,100}) {
-        near,_:=cut_draws(g,{eye=side+{distance,0,0},slope=SLOPE},1)
-        all,_:=cut_draws(g,{error=SLOPE*distance},1)
+    for step in 1..=200 {
+        distance:=f32(step)*0.5
+        eye:=side+{distance,0,0}
+        near,_:=cut_draws(g,{eye=eye,slope=SLOPE},1)
+        // All of it as near as the nearest of its spheres.
+        nearest:=max(f32)
+        for c in g.clusters {
+            for sphere in ([2][4]f32{c.lod,c.parent}) {nearest=min(nearest,max(linalg.length(sphere.xyz-eye)-sphere.w,1e-3))}
+        }
+        all,_:=cut_draws(g,{error=SLOPE*nearest},1)
         testing.expectf(t,near<=all,"%f m from its side the bush draws %d triangles of leaves; all of it as near, %d",distance,near,all)
         near_sum+=near
         all_sum+=all
-        fmt.printf(" %.1f m %d (%d),",distance,near,all)
+        if slice.contains([]int{1,2,4,10,20,30,40,50,60,80,120,200},step) {fmt.printf(" %.1f m %d (%d),",distance,near,all)}
     }
     fmt.println()
     testing.expectf(t,near_sum<all_sum,"over the distances the bush draws %d triangles of leaves; all of it as near, %d",near_sum,all_sum)
@@ -805,5 +821,108 @@ cards_of_programs_and_of_skinned_and_morphing_meshes_are_cut :: proc(t:^testing.
         levels:=mesh_levels(mesh.vertices,mesh.indices,mesh.skin,mesh.submeshes,allocator=context.temp_allocator,morphs=mesh.morphs,morph_deltas=mesh.morph_deltas,outlines=mesh.outlines)
         testing.expectf(t,levels.pruned && len(levels.islands.islands)+len(levels.lods)>1,"%s: the leaves are pruned",c.name)
         testing.expectf(t,levels_valid(t,levels,3),"%s: the levels make a mesh",c.name)
+    }
+}
+
+// A card over a mask of 8192 texels a side, a disk that keeps every texel
+// whose centre is within its radius, is cut on cells within the memory its
+// side allows: every outline holds every texel the disk keeps and draws none
+// farther from it than its error says.
+@(test)
+a_mask_of_any_size_cuts_within_bounded_memory :: proc(t:^testing.T) {
+    SIDE :: 8192
+    center:=[2]f32{0.5*SIDE,0.48*SIDE}
+    radius:=f32(0.4*SIDE)
+    covered:=make([]bool,SIDE*SIDE,context.temp_allocator)
+    for y in 0..<SIDE {
+        for x in 0..<SIDE {
+            d:=[2]f32{f32(x)+0.5,f32(y)+0.5}-center
+            covered[y*SIDE+x]=d.x*d.x+d.y*d.y<=radius*radius
+        }
+    }
+    ladder,ok:=outline_ladder({covered,SIDE,SIDE,1},context.temp_allocator)
+    if !testing.expect(t,ok && ladder.leaf,"the disk is cut") {return}
+    for rung,k in ladder.rungs {
+        first,loop:=0,0
+        for loops in rung.set.polygon_loops {
+            count:=0
+            for size in rung.set.loop_sizes[loop:][:loops] {count+=size}
+            points:=rung.set.points[first:][:count]
+            indices:[dynamic]u32
+            indices.allocator=context.temp_allocator
+            geom.polygon_triangulate(points,rung.set.loop_sizes[loop:][:loops],&indices)
+            // What it draws of the rectangle, by texels 32 apart, is within its error of the disk; the texels the disk keeps nearest its edge are inside.
+            holds :: proc(points:[]geom.Vec2,indices:[]u32,p:geom.Vec2) -> bool {
+                for i:=0;i+2<len(indices);i+=3 {
+                    a,b,c:=points[indices[i]],points[indices[i+1]],points[indices[i+2]]
+                    e0,e1,e2:=orient(a,b,p),orient(b,c,p),orient(c,a,p)
+                    if e0>=0 && e1>=0 && e2>=0 || e0<=0 && e1<=0 && e2<=0 {return true}
+                }
+                return false
+            }
+            worst:f32
+            for y:=f32(0.5);y<SIDE;y+=32 {
+                for x:=f32(0.5);x<SIDE;x+=32 {
+                    if !holds(points,indices[:],{x,y}) {continue}
+                    d:=[2]f32{x,y}-center
+                    worst=max(worst,math.sqrt(d.x*d.x+d.y*d.y)-radius)
+                }
+            }
+            testing.expectf(t,worst<=rung.error,"outline %d draws %f texels out, past its %f",k,worst,rung.error)
+            for step in 0..<4096 {
+                angle:=f32(step)*math.TAU/4096
+                p:=center+[2]f32{math.cos(angle),math.sin(angle)}*(radius-0.75)
+                texel:=[2]f32{math.floor(p.x)+0.5,math.floor(p.y)+0.5}
+                d:=texel-center
+                if d.x*d.x+d.y*d.y>radius*radius {continue}
+                if !holds(points,indices[:],texel) {testing.expectf(t,false,"outline %d leaves out the texel %v the disk keeps",k,texel);break}
+            }
+            first+=count
+            loop+=loops
+        }
+    }
+}
+
+// An allocator that fails every allocation past its first `room` bytes.
+@(private="file")
+Failing :: struct {arena:mem.Arena,buffer:[]u8}
+
+@(private="file")
+failing_allocator :: proc(f:^Failing,room:int) -> mem.Allocator {
+    f.buffer=make([]u8,room,context.allocator)
+    mem.arena_init(&f.arena,f.buffer)
+    failing :: proc(data:rawptr,mode:mem.Allocator_Mode,size,alignment:int,old_memory:rawptr,old_size:int,loc:=#caller_location) -> ([]byte,mem.Allocator_Error) {
+        f:=(^Failing)(data)
+        if (mode==.Alloc || mode==.Alloc_Non_Zeroed || mode==.Resize || mode==.Resize_Non_Zeroed) && f.arena.offset+size+alignment>len(f.arena.data) {return nil,.Out_Of_Memory}
+        return mem.arena_allocator_proc(&f.arena,mode,size,alignment,old_memory,old_size,loc)
+    }
+    return {failing,f}
+}
+
+// Without the memory to cut them, the cards of a model keep their mask and
+// the import goes on: whatever allocation fails, nothing crashes, and the
+// model is cut whole or not at all.
+@(test)
+cards_without_memory_keep_their_mask :: proc(t:^testing.T) {
+    for room in ([]int{0,1<<10,64<<10,1<<20,8<<20,32<<20,96<<20}) {
+        r:Reader
+        tree_read(&r)
+        mesh:=r.meshes[0]
+        f:Failing
+        failing:=failing_allocator(&f,room)
+        {
+            context.allocator=failing
+            context.temp_allocator=failing
+            r.out=failing
+            model_cutouts(&r)
+        }
+        r.out=context.temp_allocator
+        delete(f.buffer)
+        // All of the model is cut, or nothing of it.
+        if r.materials[1].info.alpha_mode==.Mask {
+            testing.expectf(t,len(r.materials)==3 && len(r.meshes[0].indices)==len(mesh.indices) && len(r.meshes[0].outlines.cards)==0,"%d bytes: the leaves keep their mask and the mesh is as it was",room)
+        } else {
+            testing.expectf(t,len(r.meshes[0].outlines.cards)==48,"%d bytes: the leaves are cut, %d of them",room,len(r.meshes[0].outlines.cards))
+        }
     }
 }

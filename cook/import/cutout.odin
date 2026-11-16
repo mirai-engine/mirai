@@ -79,10 +79,11 @@ Cutout_Material :: struct {
     opaque:int,          // the row of the material outlines are drawn with
 }
 
+// An image a mask is read from: its texels decoded, read where a mask needs them.
 @(private="file")
 Cutout_Alpha :: struct {
-    alpha:[]f32,
-    width,height:int,
+    source:textures.Source,
+    transfer:textures.Transfer,
     state:enum u8 {Unread,Read,Failed},
 }
 
@@ -139,11 +140,28 @@ Cutout :: struct {
     cards:[dynamic]Cutout_Card,
 }
 
+// A mesh with its cards cut, until all of them are and it replaces its own.
+@(private="file")
+Cutout_Mesh :: struct {
+    vertices:[]asset.Vertex,
+    indices:[]u32,
+    submeshes:[]Submesh,
+    slots:[]Imported_Slot,
+    skin:[]asset.Skin_Vertex,
+    morphs:[]asset.Morph_Target,
+    morph_deltas:[]asset.Morph_Delta,
+    outlines:Mesh_Outlines,
+    cut:bool,
+}
+
 // Cuts the masked cards of the meshes of r to their outlines (see above).
+// What it cannot hold in memory keeps its mask: nothing of the model
+// changes unless every mesh is cut, and a warning says so.
 @(private)
 model_cutouts :: proc(r:^Reader) {
     c:=Cutout{r=r}
-    c.materials=make([]Cutout_Material,len(r.materials),context.temp_allocator)
+    error:mem.Allocator_Error
+    if c.materials,error=make([]Cutout_Material,len(r.materials),context.temp_allocator);error!=nil {cutout_warn(r);return}
     any:=false
     for &m,i in r.materials {
         info:=&m.info
@@ -169,15 +187,31 @@ model_cutouts :: proc(r:^Reader) {
         any=true
     }
     if !any {return}
-    c.alphas=make([]Cutout_Alpha,len(r.images),context.temp_allocator)
+    if c.alphas,error=make([]Cutout_Alpha,len(r.images),context.temp_allocator);error!=nil {cutout_warn(r);return}
     c.shapes.allocator=context.temp_allocator
     c.ladders.allocator=context.temp_allocator
     c.layout_keys.allocator=context.temp_allocator
     c.layouts.allocator=context.temp_allocator
     c.cards.allocator=context.temp_allocator
-    for &mesh,at in r.meshes {cutout_mesh(&c,&mesh,at)}
+    for &mesh,at in r.meshes {
+        if !cutout_mesh(&c,&mesh,at) {cutout_warn(r);return}
+    }
     if len(c.cards)==0 {return}
-    // A material whose triangles all became outlines is opaque; one that keeps masked ones lends a copy.
+    // A material whose triangles all became outlines is opaque; one that keeps masked ones lends a copy, in the rows after the materials.
+    copies:=0
+    for &m in c.materials {
+        if m.cut && m.outlined>0 && m.masked>0 {
+            m.opaque=len(r.materials)+copies
+            copies+=1
+        }
+    }
+    meshes:[]Cutout_Mesh
+    if meshes,error=make([]Cutout_Mesh,len(r.meshes),context.temp_allocator);error!=nil {cutout_warn(r);return}
+    for &mesh,at in r.meshes {
+        if !cutout_rebuild(&c,&mesh,at,&meshes[at]) {cutout_warn(r);return}
+    }
+    if reserve(&r.materials,len(r.materials)+copies)!=nil {cutout_warn(r);return}
+    // All of it is cut: the model takes it.
     for &m,i in c.materials {
         if !m.cut {continue}
         r.materials[i].info.two_sided=true
@@ -187,20 +221,43 @@ model_cutouts :: proc(r:^Reader) {
         } else {
             copy:=r.materials[i]
             copy.info.alpha_mode=.Opaque
-            m.opaque=material_add(r,fmt.tprintf("%s outline",copy.name),len(r.materials),copy.info,copy.images)
-            r.materials[m.opaque].parameters=copy.parameters
-            r.materials[m.opaque].parameter_images=copy.parameter_images
+            row:=material_add(r,fmt.tprintf("%s outline",copy.name),len(r.materials),copy.info,copy.images)
+            r.materials[row].parameters=copy.parameters
+            r.materials[row].parameter_images=copy.parameter_images
+            r.materials[row].mask=copy.mask
         }
         image:=&r.images[m.image]
         if image.alpha_fill==0 || m.threshold<image.alpha_fill {image.alpha_fill=m.threshold}
     }
-    for &mesh,at in r.meshes {cutout_rebuild(&c,&mesh,at)}
+    for made,at in meshes {
+        if !made.cut {continue}
+        mesh:=&r.meshes[at]
+        mesh.vertices,mesh.indices,mesh.submeshes,mesh.slots,mesh.outlines=made.vertices,made.indices,made.submeshes,made.slots,made.outlines
+        if len(mesh.skin)>0 {mesh.skin=made.skin}
+        if len(mesh.morphs)>0 {mesh.morphs,mesh.morph_deltas=made.morphs,made.morph_deltas}
+        if len(mesh.vertices)>0 {
+            mesh.bounds_min,mesh.bounds_max=mesh.vertices[0].position,mesh.vertices[0].position
+            for v in mesh.vertices {
+                mesh.bounds_min={min(mesh.bounds_min.x,v.position.x),min(mesh.bounds_min.y,v.position.y),min(mesh.bounds_min.z,v.position.z)}
+                mesh.bounds_max={max(mesh.bounds_max.x,v.position.x),max(mesh.bounds_max.y,v.position.y),max(mesh.bounds_max.z,v.position.z)}
+            }
+        }
+    }
 }
 
-// The cards of a mesh, appended to c.cards, and what of each material it cuts and keeps masked.
+// Says that the masked cards of a model keep their mask: their cut ran out of
+// memory. The warning itself is left out when there is none for it.
 @(private="file")
-cutout_mesh :: proc(c:^Cutout,mesh:^Imported_Mesh,mesh_index:int) {
-    positions:=make([]geom.Vec3,len(mesh.vertices),context.temp_allocator)
+cutout_warn :: proc(r:^Reader) {
+    _,_=append(&r.warnings,"the masked cards keep their mask: there was not the memory to cut them")
+}
+
+// The cards of a mesh, appended to c.cards, and what of each material it
+// cuts and keeps masked. False without memory.
+@(private="file")
+cutout_mesh :: proc(c:^Cutout,mesh:^Imported_Mesh,mesh_index:int) -> bool {
+    positions,no_positions:=make([]geom.Vec3,len(mesh.vertices),context.temp_allocator)
+    if no_positions!=nil {return false}
     for v,i in mesh.vertices {positions[i]=v.position}
     for sub,s in mesh.submeshes {
         if int(sub.slot)>=len(mesh.slots) {continue}
@@ -209,9 +266,11 @@ cutout_mesh :: proc(c:^Cutout,mesh:^Imported_Mesh,mesh_index:int) {
         m:=&c.materials[material]
         triangles:=int(sub.index_count/3)
         indices:=mesh.indices[sub.first_index:][:sub.index_count]
-        labels:=make([]u32,triangles,context.temp_allocator)
+        labels,no_labels:=make([]u32,triangles,context.temp_allocator)
+        if no_labels!=nil {return false}
         count:=geom.mesh_components(positions,indices,labels)
-        sizes:=make([]u32,count,context.temp_allocator)
+        sizes,no_sizes:=make([]u32,count,context.temp_allocator)
+        if no_sizes!=nil {return false}
         for l in labels {if int(l)<count {sizes[l]+=1}}
         small:=0
         for size in sizes {if island_small(size,u32(triangles)) {small+=1}}
@@ -220,17 +279,21 @@ cutout_mesh :: proc(c:^Cutout,mesh:^Imported_Mesh,mesh_index:int) {
             continue
         }
         // The triangles of each small island, in the order of their first.
-        first:=make([]u32,count+1,context.temp_allocator)
+        first,no_first:=make([]u32,count+1,context.temp_allocator)
+        fill,no_fill:=make([]u32,count,context.temp_allocator)
+        seen,no_seen:=make([]bool,count,context.temp_allocator)
+        if no_first!=nil || no_fill!=nil || no_seen!=nil {return false}
         for l in labels {if int(l)<count {first[l+1]+=1}}
         for k in 1..=count {first[k]+=first[k-1]}
-        order:=make([]u32,first[count],context.temp_allocator)
-        fill:=make([]u32,count,context.temp_allocator)
+        order,no_order:=make([]u32,first[count],context.temp_allocator)
+        if no_order!=nil {return false}
         for l,t in labels {
             if int(l)>=count {continue}
             order[first[l]+fill[l]]=sub.first_index/3+u32(t)
             fill[l]+=1
         }
-        seen:=make([]bool,count,context.temp_allocator)
+        // Room for a shape and a layout of each card.
+        if reserve(&c.shapes,len(c.shapes)+small)!=nil || reserve(&c.layout_keys,len(c.layout_keys)+small)!=nil || reserve(&c.cards,len(c.cards)+small)!=nil {return false}
         kept:=triangles
         for l in labels {
             if int(l)>=count || seen[l] || !island_small(sizes[l],u32(triangles)) {continue}
@@ -249,15 +312,26 @@ cutout_mesh :: proc(c:^Cutout,mesh:^Imported_Mesh,mesh_index:int) {
             if card.mesh==mesh_index && card.submesh==s && !card.leaf && card.layout>=0 {m.masked+=len(card.triangles)}
         }
     }
+    return true
 }
 
-// The card of an island of a mesh with the masked material m, if it is one.
+// What decides the texels of a rectangle of an image a mask keeps.
+@(private="file")
+Cutout_Texels :: struct {
+    alpha:^Cutout_Alpha,
+    rect:[4]int,
+    threshold:f32,
+}
+
+// The card of an island of a mesh with the masked material m, if it is one;
+// not one, and it keeps its mask, where there is not the memory to cut it.
 @(private="file")
 cutout_card :: proc(c:^Cutout,mesh:^Imported_Mesh,m:^Cutout_Material,triangles:[]u32) -> (card:Cutout_Card,ok:bool) {
     alpha:=cutout_alpha(c,m.image) or_return
-    w,h:=f32(alpha.width),f32(alpha.height)
+    w,h:=f32(alpha.source.width),f32(alpha.source.height)
     count:=len(triangles)
-    corners:=make([][3]geom.Vec2,count,context.temp_allocator)
+    corners,no_corners:=make([][3]geom.Vec2,count,context.temp_allocator)
+    if no_corners!=nil {return}
     low,high:=geom.Vec2{max(f32),max(f32)},geom.Vec2{-max(f32),-max(f32)}
     sign:f64
     for triangle,t in triangles {
@@ -276,8 +350,8 @@ cutout_card :: proc(c:^Cutout,mesh:^Imported_Mesh,m:^Cutout_Material,triangles:[
         sign=area
     }
     rect:=[4]int{
-        clamp(int(math.floor(low.x)),0,alpha.width),clamp(int(math.floor(low.y)),0,alpha.height),
-        clamp(int(math.ceil(high.x)),0,alpha.width),clamp(int(math.ceil(high.y)),0,alpha.height),
+        clamp(int(math.floor(low.x)),0,alpha.source.width),clamp(int(math.floor(low.y)),0,alpha.source.height),
+        clamp(int(math.ceil(high.x)),0,alpha.source.width),clamp(int(math.ceil(high.y)),0,alpha.source.height),
     }
     if rect[2]<=rect[0] || rect[3]<=rect[1] {return}
     for &tri in corners {
@@ -296,20 +370,24 @@ cutout_card :: proc(c:^Cutout,mesh:^Imported_Mesh,m:^Cutout_Material,triangles:[
         a,b,d:=jx.x*jx.x+jx.y*jx.y+jx.z*jx.z,jx.x*jy.x+jx.y*jy.y+jx.z*jy.z,jy.x*jy.x+jy.y*jy.y+jy.z*jy.z
         card.scale=max(card.scale,f32(math.sqrt(0.5*(a+d)+math.sqrt(0.25*(a-d)*(a-d)+b*b))))
     }
-    facets:=cutout_facets(mesh,triangles,corners)
+    facets:=cutout_facets(mesh,triangles,corners) or_return
     shape:=Cutout_Shape{m.image,m.threshold,rect}
     ladder,found:=c.shapes[shape]
     if !found {
-        rw,rh:=rect[2]-rect[0],rect[3]-rect[1]
-        covered:=make([]bool,rw*rh,context.temp_allocator)
-        for y in 0..<rh {
-            for x in 0..<rw {covered[y*rw+x]=alpha.alpha[(rect[1]+y)*alpha.width+rect[0]+x]>=m.threshold}
+        // Its mask on cells no wider than the outlines can tell apart, read from the texels, in memory given back as it ends.
+        kept :: proc(t:Cutout_Texels,x,y:int) -> bool {
+            source:=t.alpha.source
+            transfer:=t.alpha.transfer
+            return textures.texel_read(source.texels,source.format,(t.rect[1]+y)*source.width+t.rect[0]+x,&transfer).a>=t.threshold
         }
-        made,made_ok:=outline_ladder({covered,rw,rh},context.temp_allocator)
+        mask,reduced:=outline_mask_reduce(rect[2]-rect[0],rect[3]-rect[1],Cutout_Texels{alpha,rect,m.threshold},kept,context.allocator)
+        if !reduced {return}
+        made,made_ok:=outline_ladder(mask,context.temp_allocator)
+        delete(mask.covered,context.allocator)
         ladder=-1
         if made_ok {
-            ladder=len(c.ladders)
-            append(&c.ladders,made)
+            if _,error:=append(&c.ladders,made);error!=nil {return}
+            ladder=len(c.ladders)-1
         }
         c.shapes[shape]=ladder
     }
@@ -317,11 +395,13 @@ cutout_card :: proc(c:^Cutout,mesh:^Imported_Mesh,m:^Cutout_Material,triangles:[
     card.layout=-1
     if ladder<0 {return card,true}
     card.leaf=c.ladders[ladder].leaf
-    card.layout=cutout_layout(c,ladder,corners,facets,sign<0)
+    layout,laid:=cutout_layout(c,ladder,corners,facets,sign<0)
+    if !laid {return}
+    card.layout=layout
     return card,c.layouts[card.layout].valid
 }
 
-// The alpha of image, read once; false where it cannot be.
+// The alpha of image, decoded once; false where it cannot be.
 @(private="file")
 cutout_alpha :: proc(c:^Cutout,image:int) -> (alpha:^Cutout_Alpha,ok:bool) {
     alpha=&c.alphas[image]
@@ -345,21 +425,18 @@ cutout_alpha :: proc(c:^Cutout,image:int) -> (alpha:^Cutout_Alpha,ok:bool) {
         source,error=textures.source_decode(bytes,context.temp_allocator)
         if error!=.None {return alpha,false}
     }
-    cells:=source.width*source.height
-    if cells<=0 || len(source.texels)<textures.source_bytes(source) {return alpha,false}
-    alpha.alpha=make([]f32,cells,context.temp_allocator)
-    linear:=textures.transfer_make(false)
-    for &a,at in alpha.alpha {a=textures.texel_read(source.texels,source.format,at,&linear).a}
-    alpha.width,alpha.height,alpha.state=source.width,source.height,.Read
+    if source.width<=0 || source.height<=0 || len(source.texels)<textures.source_bytes(source) {return alpha,false}
+    alpha.source,alpha.transfer,alpha.state=source,textures.transfer_make(false),.Read
     return alpha,true
 }
 
 // The facet of each triangle of a card: those that share an edge and one
-// affine map from the image to the mesh are one.
+// affine map from the image to the mesh are one. False without memory.
 @(private="file")
-cutout_facets :: proc(mesh:^Imported_Mesh,triangles:[]u32,corners:[][3]geom.Vec2) -> []u32 {
+cutout_facets :: proc(mesh:^Imported_Mesh,triangles:[]u32,corners:[][3]geom.Vec2) -> (facets:[]u32,ok:bool) {
     count:=len(triangles)
-    parent:=make([]u32,count,context.temp_allocator)
+    parent,no_parent:=make([]u32,count,context.temp_allocator)
+    if no_parent!=nil {return}
     for &p,i in parent {p=u32(i)}
     find :: proc(parent:[]u32,i:u32) -> u32 {
         i:=i
@@ -393,9 +470,10 @@ cutout_facets :: proc(mesh:^Imported_Mesh,triangles:[]u32,corners:[][3]geom.Vec2
             parent[find(parent,u32(b))]=find(parent,u32(a))
         }
     }
-    facets:=make([]u32,count,context.temp_allocator)
+    error:mem.Allocator_Error
+    if facets,error=make([]u32,count,context.temp_allocator);error!=nil {return}
     for &f,i in facets {f=find(parent,u32(i))}
-    return facets
+    return facets,true
 }
 
 // The weights of p in a triangle, which add up to one; outside it, some are negative.
@@ -409,18 +487,21 @@ barycentric :: proc "contextless" (t:[3]geom.Vec2,p:geom.Vec2) -> (w:[3]f32) {
 }
 
 // The layout of a card on a shape, made once for cards that lie alike.
+// False without memory.
 @(private="file")
-cutout_layout :: proc(c:^Cutout,ladder:int,corners:[][3]geom.Vec2,facets:[]u32,flip:bool) -> int {
+cutout_layout :: proc(c:^Cutout,ladder:int,corners:[][3]geom.Vec2,facets:[]u32,flip:bool) -> (at:int,ok:bool) {
     key:=base.hash_combine(u64(ladder),base.hash64(mem.slice_to_bytes(corners)))
     key=base.hash_combine(key,base.hash64(mem.slice_to_bytes(facets)))
-    if at,found:=c.layout_keys[key];found {
-        l:=c.layouts[at]
-        if slice.equal(l.corners,corners) && slice.equal(l.facets,facets) {return at}
+    if known,found:=c.layout_keys[key];found {
+        l:=c.layouts[known]
+        if slice.equal(l.corners,corners) && slice.equal(l.facets,facets) {return known,true}
     }
     layout:=Cutout_Layout{shape=ladder,corners=corners,facets=facets,flip=flip}
     // The polygon of each facet: the union of its triangles, each added beside those before.
     facet_sets:=make([dynamic]geom.Polygon_Set,context.temp_allocator)
     facet_of:=make([dynamic]u32,context.temp_allocator)
+    added,no_added:=make([]bool,len(corners),context.temp_allocator)
+    if no_added!=nil {return}
     total,covered:f64
     for &tri in corners {total+=abs(orient(tri[0],tri[1],tri[2]))*0.5}
     layout.valid=true
@@ -428,7 +509,7 @@ cutout_layout :: proc(c:^Cutout,ladder:int,corners:[][3]geom.Vec2,facets:[]u32,f
         if u32(first)!=f {continue}
         set:geom.Polygon_Set
         geom.polygon_set_init(&set,context.temp_allocator)
-        added:=make([]bool,len(corners),context.temp_allocator)
+        for &a in added {a=false}
         for {
             grew:=false
             for g,t in facets {
@@ -436,9 +517,10 @@ cutout_layout :: proc(c:^Cutout,ladder:int,corners:[][3]geom.Vec2,facets:[]u32,f
                 tri:=corners[t]
                 if orient(tri[0],tri[1],tri[2])<0 {tri[1],tri[2]=tri[2],tri[1]}
                 if len(set.points)==0 {
-                    append(&set.points,..tri[:])
-                    append(&set.loop_sizes,3)
-                    append(&set.polygon_loops,1)
+                    _,no_points:=append(&set.points,..tri[:])
+                    _,no_sizes:=append(&set.loop_sizes,3)
+                    _,no_loops:=append(&set.polygon_loops,1)
+                    if no_points!=nil || no_sizes!=nil || no_loops!=nil {return}
                 } else {
                     joined:=false
                     for p in tri {
@@ -465,8 +547,9 @@ cutout_layout :: proc(c:^Cutout,ladder:int,corners:[][3]geom.Vec2,facets:[]u32,f
             for s in set.loop_sizes[:k] {first_point+=s}
             covered+=loop_area(set.points[first_point:][:size])
         }
-        append(&facet_sets,set)
-        append(&facet_of,f)
+        _,no_set:=append(&facet_sets,set)
+        _,no_facet:=append(&facet_of,f)
+        if no_set!=nil || no_facet!=nil {return}
     }
     // Triangles that fold over each other cover less than they add up to.
     if layout.valid && abs(covered-total)>1e-3*total {layout.valid=false}
@@ -492,21 +575,21 @@ cutout_layout :: proc(c:^Cutout,ladder:int,corners:[][3]geom.Vec2,facets:[]u32,f
                     layout.rungs[k]=layout.rungs[k-1]
                     continue
                 }
-                layout.rungs[k]=cutout_place(rung.set,corners,facets,facet_sets[:],facet_of[:])
+                layout.rungs[k]=cutout_place(rung.set,corners,facets,facet_sets[:],facet_of[:]) or_return
             }
         } else {
-            layout.hull=cutout_place(outlines.hull.set,corners,facets,facet_sets[:],facet_of[:])
+            layout.hull=cutout_place(outlines.hull.set,corners,facets,facet_sets[:],facet_of[:]) or_return
         }
     }
-    append(&c.layouts,layout)
+    if _,error:=append(&c.layouts,layout);error!=nil {return}
     c.layout_keys[key]=len(c.layouts)-1
-    return len(c.layouts)-1
+    return len(c.layouts)-1,true
 }
 
 // An outline cut by each facet of a card and triangulated, each corner on
-// the triangle of the facet it lies in.
+// the triangle of the facet it lies in. False without memory.
 @(private="file")
-cutout_place :: proc(outline:geom.Polygon_Set,corners:[][3]geom.Vec2,facets:[]u32,facet_sets:[]geom.Polygon_Set,facet_of:[]u32) -> (placed:Cutout_Placed) {
+cutout_place :: proc(outline:geom.Polygon_Set,corners:[][3]geom.Vec2,facets:[]u32,facet_sets:[]geom.Polygon_Set,facet_of:[]u32) -> (placed:Cutout_Placed,ok:bool) {
     points:=make([dynamic]Cutout_Point,context.temp_allocator)
     indices:=make([dynamic]u32,context.temp_allocator)
     lookup:=make(map[[2]u32]u32,context.temp_allocator)
@@ -526,6 +609,7 @@ cutout_place :: proc(outline:geom.Polygon_Set,corners:[][3]geom.Vec2,facets:[]u3
                     ring:=cut.points[cut_first:][:cut_count]
                     clear(&triangulated)
                     geom.polygon_triangulate(ring,cut.loop_sizes[cut_loop:][:cut_loops],&triangulated)
+                    if reserve(&lookup,len(lookup)+len(triangulated))!=nil {return}
                     for corner in triangulated {
                         p:=ring[corner]
                         key:=[2]u32{transmute(u32)p.x,transmute(u32)p.y}
@@ -542,10 +626,10 @@ cutout_place :: proc(outline:geom.Polygon_Set,corners:[][3]geom.Vec2,facets:[]u3
                             for &w in weights {w=clamp(w,0,1)}
                             sum:=weights[0]+weights[1]+weights[2]
                             at=u32(len(points))
-                            append(&points,Cutout_Point{u32(best_t),weights/max(sum,1e-12)})
+                            if _,error:=append(&points,Cutout_Point{u32(best_t),weights/max(sum,1e-12)});error!=nil {return}
                             lookup[key]=at
                         }
-                        append(&indices,at)
+                        if _,error:=append(&indices,at);error!=nil {return}
                     }
                     cut_first+=cut_count
                     cut_loop+=cut_loops
@@ -555,7 +639,7 @@ cutout_place :: proc(outline:geom.Polygon_Set,corners:[][3]geom.Vec2,facets:[]u3
             loop+=loops
         }
     }
-    return {points[:],indices[:]}
+    return {points[:],indices[:]},true
 }
 
 // Vertices being made and, of each, the vertices of the mesh it is made
@@ -580,11 +664,13 @@ cutout_out :: proc(allocator:=context.allocator) -> (out:Cutout_Out) {
 }
 
 // The influences of the vertices of out, those of what each is made from
-// weighed: the eight strongest, adding up to 255. In allocator.
+// weighed: the eight strongest, adding up to 255. In allocator; false
+// without memory.
 @(private="file")
-cutout_skin :: proc(mesh:^Imported_Mesh,out:Cutout_Out,allocator:=context.allocator) -> []asset.Skin_Vertex {
-    if len(mesh.skin)==0 {return nil}
-    skin:=make([]asset.Skin_Vertex,len(out.from),allocator)
+cutout_skin :: proc(mesh:^Imported_Mesh,out:Cutout_Out,allocator:=context.allocator) -> (skin:[]asset.Skin_Vertex,ok:bool) {
+    if len(mesh.skin)==0 {return nil,true}
+    error:mem.Allocator_Error
+    if skin,error=make([]asset.Skin_Vertex,len(out.from),allocator);error!=nil {return}
     for from,at in out.from {
         if from.corners[0]==from.corners[1] && from.corners[0]==from.corners[2] {
             skin[at]=mesh.skin[from.corners[0]]
@@ -618,17 +704,19 @@ cutout_skin :: proc(mesh:^Imported_Mesh,out:Cutout_Out,allocator:=context.alloca
         }
         if kept>0 {skin[at].weights[0]=u8(i32(skin[at].weights[0])+255-i32(sum))}
     }
-    return skin
+    return skin,true
 }
 
 // The deltas of the targets of the mesh at the vertices of out, those of
-// what each is made from weighed. In allocator.
+// what each is made from weighed. In allocator; false without memory.
 @(private="file")
-cutout_morphs :: proc(mesh:^Imported_Mesh,out:Cutout_Out,allocator:=context.allocator) -> (targets:[]asset.Morph_Target,deltas:[]asset.Morph_Delta) {
-    if len(mesh.morphs)==0 {return}
-    targets=make([]asset.Morph_Target,len(mesh.morphs),allocator)
+cutout_morphs :: proc(mesh:^Imported_Mesh,out:Cutout_Out,allocator:=context.allocator) -> (targets:[]asset.Morph_Target,deltas:[]asset.Morph_Delta,ok:bool) {
+    if len(mesh.morphs)==0 {return nil,nil,true}
+    error:mem.Allocator_Error
+    if targets,error=make([]asset.Morph_Target,len(mesh.morphs),allocator);error!=nil {return}
     made:=make([dynamic]asset.Morph_Delta,allocator)
-    lookup:=make([]i32,len(mesh.vertices),context.temp_allocator)
+    lookup,no_lookup:=make([]i32,len(mesh.vertices),context.temp_allocator)
+    if no_lookup!=nil {return}
     for &l in lookup {l=-1}
     for target,t in mesh.morphs {
         given:=mesh.morph_deltas[target.first:][:target.count]
@@ -647,12 +735,14 @@ cutout_morphs :: proc(mesh:^Imported_Mesh,out:Cutout_Out,allocator:=context.allo
                     moved=true
                 }
             }
-            if moved {append(&made,sum)}
+            if moved {
+                if _,failed:=append(&made,sum);failed!=nil {return}
+            }
         }
         targets[t].count=u32(len(made))-targets[t].first
         for delta in given {if int(delta.vertex)<len(lookup) {lookup[delta.vertex]=-1}}
     }
-    return targets,made[:]
+    return targets,made[:],true
 }
 
 // The vertex of a card at a point: what its triangle has there.
@@ -684,13 +774,17 @@ cutout_vertex :: proc(mesh:^Imported_Mesh,triangle:u32,w:[3]f32,slot:u32) -> (v:
     return
 }
 
-// The mesh with its cards cut: level 0 with the outline or the convex outline
-// of each, and the coarser outlines of those of leaves.
+// A mesh with its cards cut, into made: level 0 with the outline or the
+// convex outline of each, and the coarser outlines of those of leaves.
+// False without memory; made.cut false for a mesh without cards.
 @(private="file")
-cutout_rebuild :: proc(c:^Cutout,mesh:^Imported_Mesh,mesh_index:int) {
+cutout_rebuild :: proc(c:^Cutout,mesh:^Imported_Mesh,mesh_index:int,made:^Cutout_Mesh) -> bool {
     r:=c.r
     // The card of each triangle of the mesh, -1 for none.
-    card_of:=make([]i32,len(mesh.indices)/3,context.temp_allocator)
+    card_of,no_cards:=make([]i32,len(mesh.indices)/3,context.temp_allocator)
+    remap,no_remap:=make([]u32,len(mesh.vertices),context.temp_allocator)
+    done,no_done:=make([]bool,len(c.cards),context.temp_allocator)
+    if no_cards!=nil || no_remap!=nil || no_done!=nil {return false}
     for &k in card_of {k=-1}
     cards:=0
     for card,k in c.cards {
@@ -698,18 +792,18 @@ cutout_rebuild :: proc(c:^Cutout,mesh:^Imported_Mesh,mesh_index:int) {
         for t in card.triangles {card_of[t]=i32(k)}
         cards+=1
     }
-    if cards==0 {return}
-    slots:=make([dynamic]Imported_Slot,0,len(mesh.slots)+1,r.out)
+    if cards==0 {return true}
+    for &v in remap {v=max(u32)}
+    slots,no_slots:=make([dynamic]Imported_Slot,0,len(mesh.slots)+len(mesh.submeshes),r.out)
+    indices,no_indices:=make([dynamic]u32,0,len(mesh.indices),r.out)
+    submeshes,no_submeshes:=make([dynamic]Submesh,0,2*len(mesh.submeshes),r.out)
+    if no_slots!=nil || no_indices!=nil || no_submeshes!=nil {return false}
     append(&slots,..mesh.slots)
     out:=cutout_out(r.out)
-    indices:=make([dynamic]u32,0,len(mesh.indices),r.out)
-    submeshes:=make([dynamic]Submesh,0,len(mesh.submeshes)+1,r.out)
     outline_cards:=make([dynamic]Outline_Card,r.out)
     rungs:=make([dynamic]Outline_Rung,r.out)
     rung_out:=cutout_out(r.out)
     rung_indices:=make([dynamic]u32,r.out)
-    remap:=make([]u32,len(mesh.vertices),context.temp_allocator)
-    for &v in remap {v=max(u32)}
     for sub in mesh.submeshes {
         material:=mesh.slots[sub.slot].material
         m:=c.materials[material] if material>=0 && material<len(c.materials) else Cutout_Material{}
@@ -723,24 +817,24 @@ cutout_rebuild :: proc(c:^Cutout,mesh:^Imported_Mesh,mesh_index:int) {
         // The masked part: its triangles as they were and the convex outlines of clusters.
         masked:=Submesh{first_index=u32(len(indices)),slot=sub.slot}
         first_triangle:=sub.first_index/3
-        done:=make(map[i32]bool,context.temp_allocator)
         for t in first_triangle..<first_triangle+sub.index_count/3 {
             k:=card_of[t]
             if k<0 {
                 for corner in mesh.indices[t*3:][:3] {
                     if remap[corner]==max(u32) {
                         remap[corner]=u32(len(out.vertices))
-                        append(&out.vertices,mesh.vertices[corner])
-                        append(&out.from,Cutout_From{{corner,corner,corner},{1,0,0}})
+                        _,no_vertex:=append(&out.vertices,mesh.vertices[corner])
+                        _,no_from:=append(&out.from,Cutout_From{{corner,corner,corner},{1,0,0}})
+                        if no_vertex!=nil || no_from!=nil {return false}
                     }
-                    append(&indices,remap[corner])
+                    if _,error:=append(&indices,remap[corner]);error!=nil {return false}
                 }
                 continue
             }
             card:=c.cards[k]
             if card.leaf || card.layout<0 || done[k] {continue}
             done[k]=true
-            cutout_emit(mesh,card,c.layouts[card.layout].hull,c.layouts[card.layout].flip,sub.slot,&out,&indices)
+            cutout_emit(mesh,card,c.layouts[card.layout].hull,c.layouts[card.layout].flip,sub.slot,&out,&indices) or_return
         }
         masked.index_count=u32(len(indices))-masked.first_index
         // The outlines of leaves, each one island.
@@ -754,18 +848,18 @@ cutout_rebuild :: proc(c:^Cutout,mesh:^Imported_Mesh,mesh_index:int) {
             layout:=&c.layouts[card.layout]
             ladder:=&c.ladders[layout.shape]
             first:=u32(len(indices))
-            cutout_emit(mesh,card,layout.rungs[0],layout.flip,outline_slot,&out,&indices)
-            append(&outline_cards,Outline_Card{first/3,(u32(len(indices))-first)/3,ladder.rungs[0].error*card.scale})
+            cutout_emit(mesh,card,layout.rungs[0],layout.flip,outline_slot,&out,&indices) or_return
+            if _,error:=append(&outline_cards,Outline_Card{first/3,(u32(len(indices))-first)/3,ladder.rungs[0].error*card.scale});error!=nil {return false}
             for k in 1..<OUTLINE_RUNGS {
                 rung:=Outline_Rung{first_index=u32(len(rung_indices)),error=ladder.rungs[k].error*card.scale}
                 if k>1 && raw_data(layout.rungs[k].indices)==raw_data(layout.rungs[k-1].indices) && raw_data(layout.rungs[k].indices)!=nil {
                     previous:=rungs[len(rungs)-1]
                     rung.first_index,rung.index_count=previous.first_index,previous.index_count
                 } else {
-                    cutout_emit(mesh,card,layout.rungs[k],layout.flip,outline_slot,&rung_out,&rung_indices)
+                    cutout_emit(mesh,card,layout.rungs[k],layout.flip,outline_slot,&rung_out,&rung_indices) or_return
                     rung.index_count=u32(len(rung_indices))-rung.first_index
                 }
-                append(&rungs,rung)
+                if _,error:=append(&rungs,rung);error!=nil {return false}
             }
         }
         opaque.index_count=u32(len(indices))-opaque.first_index
@@ -785,35 +879,31 @@ cutout_rebuild :: proc(c:^Cutout,mesh:^Imported_Mesh,mesh_index:int) {
         }
     }
     // The skin and the targets follow what each vertex is made from.
-    rung_morphs,rung_deltas:=cutout_morphs(mesh,rung_out,r.out)
-    mesh.outlines={outline_cards[:],rungs[:],rung_out.vertices[:],rung_indices[:],cutout_skin(mesh,rung_out,r.out),rung_morphs,rung_deltas}
-    skin:=cutout_skin(mesh,out,r.out)
-    morphs,deltas:=cutout_morphs(mesh,out,r.out)
-    if len(mesh.skin)>0 {mesh.skin=skin}
-    if len(mesh.morphs)>0 {mesh.morphs,mesh.morph_deltas=morphs,deltas}
-    mesh.vertices,mesh.indices,mesh.submeshes,mesh.slots=out.vertices[:],indices[:],submeshes[:],slots[:]
-    if len(mesh.vertices)>0 {
-        mesh.bounds_min,mesh.bounds_max=mesh.vertices[0].position,mesh.vertices[0].position
-        for v in mesh.vertices {
-            mesh.bounds_min={min(mesh.bounds_min.x,v.position.x),min(mesh.bounds_min.y,v.position.y),min(mesh.bounds_min.z,v.position.z)}
-            mesh.bounds_max={max(mesh.bounds_max.x,v.position.x),max(mesh.bounds_max.y,v.position.y),max(mesh.bounds_max.z,v.position.z)}
-        }
-    }
+    rung_skin:=cutout_skin(mesh,rung_out,r.out) or_return
+    rung_morphs,rung_deltas:=cutout_morphs(mesh,rung_out,r.out) or_return
+    made.outlines={outline_cards[:],rungs[:],rung_out.vertices[:],rung_indices[:],rung_skin,rung_morphs,rung_deltas}
+    made.skin=cutout_skin(mesh,out,r.out) or_return
+    made.morphs,made.morph_deltas=cutout_morphs(mesh,out,r.out) or_return
+    made.vertices,made.indices,made.submeshes,made.slots=out.vertices[:],indices[:],submeshes[:],slots[:]
+    made.cut=true
+    return true
 }
 
 // Appends an outline placed on a card: its vertices, of slot, and its
-// triangles, turned as the card turns in the mesh.
+// triangles, turned as the card turns in the mesh. False without memory.
 @(private="file")
-cutout_emit :: proc(mesh:^Imported_Mesh,card:Cutout_Card,placed:Cutout_Placed,flip:bool,slot:u32,out:^Cutout_Out,indices:^[dynamic]u32) {
+cutout_emit :: proc(mesh:^Imported_Mesh,card:Cutout_Card,placed:Cutout_Placed,flip:bool,slot:u32,out:^Cutout_Out,indices:^[dynamic]u32) -> bool {
     first:=u32(len(out.vertices))
     for p in placed.points {
         triangle:=card.triangles[p.triangle]
-        append(&out.vertices,cutout_vertex(mesh,triangle,p.weights,slot))
-        append(&out.from,Cutout_From{{mesh.indices[triangle*3],mesh.indices[triangle*3+1],mesh.indices[triangle*3+2]},p.weights})
+        _,no_vertex:=append(&out.vertices,cutout_vertex(mesh,triangle,p.weights,slot))
+        _,no_from:=append(&out.from,Cutout_From{{mesh.indices[triangle*3],mesh.indices[triangle*3+1],mesh.indices[triangle*3+2]},p.weights})
+        if no_vertex!=nil || no_from!=nil {return false}
     }
     for t:=0;t+2<len(placed.indices);t+=3 {
         a,b,c:=placed.indices[t],placed.indices[t+1],placed.indices[t+2]
         if flip {b,c=c,b}
-        append(indices,first+a,first+b,first+c)
+        if _,error:=append(indices,first+a,first+b,first+c);error!=nil {return false}
     }
+    return true
 }

@@ -125,6 +125,7 @@ mesh_cook :: proc(mesh:^Imported_Mesh,settings:Import_Settings,options:Import_Op
     levels_zone:=jobs.worker_zone_begin(options.worker,"mesh.levels")
     levels:=mesh_levels(mesh.vertices,mesh.indices,mesh.skin,mesh.submeshes,settings.lods==.Auto,context.temp_allocator,mesh.morphs,mesh.morph_deltas,mesh.outlines)
     base.profile_end(levels_zone)
+    if levels.failed {cooked.failure=.Clusters;return}
     cooked.collision={slice.clone(mesh.collision.colliders,allocator),slice.clone(mesh.collision.points,allocator),slice.clone(mesh.collision.indices,allocator)}
     clusters_zone:=jobs.worker_zone_begin(options.worker,"mesh.clusters")
     clustered:=levels_geometry(levels,mesh.flags,&cooked.geometry,allocator)
