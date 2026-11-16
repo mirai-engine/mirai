@@ -185,9 +185,14 @@ float3 light_radiance(Light light, Shading s, out float3 direction, out float di
 // light_radiance in the share of each lobe: what the diffuse responses send
 // and what the specular ones do.
 void light_lobes(Light light, Shading s, out float3 diffuse, out float3 specular, out float3 direction, out float distance) {
+    float3 irradiance = light_contribution(light, s.position, s.normal, direction, distance);
+    light_lobes_of(light, s, irradiance, direction, distance, diffuse, specular);
+}
+// The same from what light_contribution gave the point: the irradiance, the
+// direction and the distance.
+void light_lobes_of(Light light, Shading s, float3 irradiance, float3 direction, float distance, out float3 diffuse, out float3 specular) {
     diffuse = float3(0.0);
     specular = float3(0.0);
-    float3 irradiance = light_contribution(light, s.position, s.normal, direction, distance);
     if (!(luminance(irradiance) > 0.0)) return;
     if (s.medium || (!s.glossy && s.layers == 0u)) {
         diffuse = irradiance * shading_response(s, direction);
@@ -607,18 +612,27 @@ bool light_walk_next(inout Light_Walk walk, out uint at, out float weight) {
 // (LIGHT_SHARE_*).
 static const float ESTIMATE_GROUPED = 0.5;
 static const float ESTIMATE_OPENED = 1.0;
+// How far a group whose center lies that far from a point opens for its estimate.
+float estimate_opened(Light_Node node, float distance_squared) {
+    return smoothstep(ESTIMATE_GROUPED, ESTIMATE_OPENED, max(node.center_radius.w * rsqrt(max(distance_squared, 1e-12)), node_bend(node, sqrt(distance_squared))));
+}
+// What a node adds to the estimate of a point as it stands for its lights,
+// and in `opened` the share of it its children add instead. `stands`: a
+// group that stands for its lights whatever the point makes of it.
+float estimate_node(Light_Node node, float3 position, float3 normal, uint share, bool stands, out float opened, out float distance_squared) {
+    opened = 0.0;
+    if (!node_reaches(node, position, normal, distance_squared, share)) return 0.0;
+    if (!stands && (node.flags & LIGHT_NODE_LEAF) == 0u) opened = estimate_opened(node, distance_squared);
+    if (!(opened < 1.0)) return 0.0;
+    float3 direction;
+    float distance;
+    return luminance(node_contribution(node, position, normal, direction, distance)) * ((1.0 - opened) * node_share(node, share));
+}
 float estimate_visit(inout Light_Walk walk, uint at, float weight, float3 position, float3 normal, uint share) {
     walk.visits++;
     Light_Node node = light_nodes[at];
-    float distance_squared;
-    if (!node_reaches(node, position, normal, distance_squared, share)) return 0.0;
-    float opened = (node.flags & LIGHT_NODE_LEAF) != 0u ? 0.0 : smoothstep(ESTIMATE_GROUPED, ESTIMATE_OPENED, max(node.center_radius.w * rsqrt(max(distance_squared, 1e-12)), node_bend(node, sqrt(distance_squared))));
-    float total = 0.0;
-    if (opened < 1.0) {
-        float3 direction;
-        float distance;
-        total = luminance(node_contribution(node, position, normal, direction, distance)) * (weight * (1.0 - opened) * node_share(node, share));
-    }
+    float opened, distance_squared;
+    float total = weight * estimate_node(node, position, normal, share, false, opened, distance_squared);
     if (opened > 0.0 && light_node_opens(node, at)) light_walk_hold(walk, at, weight * opened, walk.ordered ? weight * opened * node_need(node, distance_squared, position, normal, share) : 0.0);
     return total;
 }
@@ -661,6 +675,10 @@ float3 group_radiance(Light_Node node, Shading s, out float doubt) {
     float3 direction;
     float distance;
     float3 irradiance = group_contribution(node, s.position, s.normal, direction, distance, doubt);
+    return group_radiance_of(node, s, irradiance, direction, distance);
+}
+// The same from what group_contribution gave the point.
+float3 group_radiance_of(Light_Node node, Shading s, float3 irradiance, float3 direction, float distance) {
     if (!(luminance(irradiance) > 0.0)) return float3(0.0);
     irradiance *= 1.0 + node.spread * node.spread / max(distance * distance, 1e-8);
     return irradiance * shading_response(s, direction, distance, node.spread);
@@ -672,26 +690,32 @@ float3 group_radiance(Light_Node node, Shading s, out float doubt) {
 // against; without it the tree says. `root`: the tree of the lights with
 // shadows (0) or that of those without (shadowless_lighting). `share`: each
 // by that share of its light (LIGHT_SHARE_*).
-float3 local_visit(inout Light_Walk walk, uint at, float weight, Shading s, float total, uint share) {
-    walk.visits++;
-    Light_Node node = light_nodes[at];
-    float distance_squared;
+// What a node sends from the point as it stands for its lights, and in
+// `opened` the share of it its children send instead. `stands`: a group
+// that stands for its lights whatever its doubt.
+float3 local_node(Light_Node node, Shading s, float total, uint share, bool stands, out float opened, out float distance_squared) {
+    opened = 0.0;
     if (!node_reaches(node, s.position, s.normal, distance_squared, share)) return float3(0.0);
     float shared = node_share(node, share);
     if ((node.flags & LIGHT_NODE_LEAF) != 0u) {
         float3 direction;
         float distance;
-        return light_radiance(lights[node.child], s, direction, distance) * (weight * shared);
+        return light_radiance(lights[node.child], s, direction, distance) * shared;
     }
-    float3 radiance = float3(0.0);
-    float opened = smoothstep(GROUP_NEAR, GROUP_INSIDE, node.center_radius.w * rsqrt(max(distance_squared, 1e-12)));
-    if (opened < 1.0) {
-        float doubt;
-        radiance = group_radiance(node, s, doubt);
-        opened = max(opened, smoothstep(LIGHTS_GROUPED, LIGHTS_OPENED, doubt / total));
-    }
+    if (!stands) opened = smoothstep(GROUP_NEAR, GROUP_INSIDE, node.center_radius.w * rsqrt(max(distance_squared, 1e-12)));
+    if (!(opened < 1.0)) return float3(0.0);
+    float doubt;
+    float3 radiance = group_radiance(node, s, doubt);
+    if (!stands) opened = max(opened, smoothstep(LIGHTS_GROUPED, LIGHTS_OPENED, doubt / total));
+    return radiance * ((1.0 - opened) * shared);
+}
+float3 local_visit(inout Light_Walk walk, uint at, float weight, Shading s, float total, uint share) {
+    walk.visits++;
+    Light_Node node = light_nodes[at];
+    float opened, distance_squared;
+    float3 radiance = weight * local_node(node, s, total, share, false, opened, distance_squared);
     if (opened > 0.0 && light_node_opens(node, at)) light_walk_hold(walk, at, weight * opened, walk.ordered ? weight * opened * node_need(node, distance_squared, s.position, s.normal, share) : 0.0);
-    return radiance * (weight * (1.0 - opened) * shared);
+    return radiance;
 }
 float3 local_lighting_walk(inout Light_Walk walk, Shading s, float total, uint root, uint share) {
     float3 result = local_visit(walk, root, 1.0, s, total, share);

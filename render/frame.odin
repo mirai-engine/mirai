@@ -44,6 +44,7 @@ SLOT_VIEWS          :: abi.SLOT_VIEWS
 SLOT_LAYERS         :: abi.SLOT_LAYERS
 SLOT_DISTANCE       :: abi.SLOT_DISTANCE
 SLOT_SHADOW_TABLE   :: abi.SLOT_SHADOW_TABLE
+SLOT_LIGHT_LISTS    :: abi.SLOT_LIGHT_LISTS
 // Of a draw of the clusters of an instance (gbuffer.vert): the Surface program
 // whose clusters it draws, 0 those without one, GPU_NONE all of them.
 SLOT_DRAW           :: abi.SLOT_DRAW
@@ -160,6 +161,7 @@ read_stats :: proc(r: ^Renderer, slot: int) {
 		r.stats.occluded_instances = stats.occluded_instances
 		r.stats.probes_traced = stats.probes_traced
 		r.stats.resolved_pixels, r.stats.resolve_helpers, r.stats.resolve_quads_again = stats.resolved[0], stats.resolved[1], stats.resolved[2]
+		r.stats.light_lists = stats.lists
 	}
 	r.stats.timings, _, _ = rhi.frame_timings(r.device)
 	total: f32
@@ -1363,6 +1365,7 @@ pass_direct :: proc(p: ^Pass) -> bool {
 			rhi.cmd_dispatch(cmd, points.x, groups(points.y, 64))
 		}
 	}
+	lists := light_lists_record(p) or_return
 	rhi.cmd_timestamp(cmd, "direct pixels")
 	rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Direct_Filter, unlayered, unlayered)^)
 	set_params(cmd, &params)
@@ -1376,6 +1379,7 @@ pass_direct :: proc(p: ^Pass) -> bool {
 	rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.direct_points)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS8, atlas)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS9, t.shadow_raster.tint if p.frame.sun_maps.w != 0 else r.dummy_texture)
+	rhi.cmd_bind_texture(cmd, SLOT_LIGHT_LISTS, lists)
 	rhi.cmd_dispatch(cmd, groups(t.width, 8), groups(t.height, 8))
 	return true
 }

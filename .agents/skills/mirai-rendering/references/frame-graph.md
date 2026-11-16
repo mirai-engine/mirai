@@ -101,8 +101,8 @@ or interleave its own passes.
      change, the shadow maps of the lights that cover much of the view and of the sun,
      `direct_rays` (one point of each 2×2 traces a sample), `direct_samples`, and `direct_points`,
      `direct_spread` and `direct_filter`, which filter the points, take them to the pixels, where
-     the sun gives its light, and add the lights that cast no shadows
-     ([light tree](lights.md#light-tree)).
+     the sun gives its light, and add the lights that cast no shadows from the
+     [lists](lights.md#lists-of-a-cell) `light_lists` makes of them for the tiles of the screen.
    - The points that trace their own rays (glass, overlays, the back side) use `direct_lighting`.
 6. **reflect**: the pixels smoother than `reflection_roughness` trace a ray from their lobe and a
    second pass filters the rays of the frame; it is omitted while no material of the table can go
