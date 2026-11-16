@@ -19,8 +19,9 @@ Devices: `LICENSE.txt` in this folder and the header of each file.
   operations, RCAS in 32 bits with its denoise, the approximate Lanczos of the upsample, the
   optical flow without `msad4`) and the defaults of the headers is resolved, and the dead
   branches, the macros that only chose between them, the D3D root signatures and pragmas and the
-  files left unincluded (`ffx_core_gpu_common_half.h`, `ffx_opticalflow_resources.h`) are
-  deleted. What stays conditional is the binding of each resource, which each entry point
+  files left unincluded (`ffx_core_gpu_common_half.h`, `ffx_opticalflow_resources.h`,
+  `ffx_frameinterpolation_reconstruct_dilated_velocity_and_previous_depth.h`, whose pass the
+  upscaler's prepared inputs replace) are deleted. What stays conditional is the binding of each resource, which each entry point
   declares, the `sharpen` variant of the accumulation and `FFX_WAVE`.
 - Each resource takes its Vulkan binding (`[[vk::binding(slot, 0)]]`, the slot its entry point
   names) instead of a D3D register, and the implicit conversions Slang warns about are written
@@ -38,9 +39,12 @@ Devices: `LICENSE.txt` in this folder and the header of each file.
     writing, declare their format (`r8ui`, `rg16i`), and so does the flow one that
     `ffx_frameinterpolation_callbacks_hlsl.h` reads: Slang deduces `r32ui` and `rg32i` from the
     type of their elements, which are not those of the textures (`R8_UINT`, `R16G16_SINT`).
+  - In `ffx_fsr3upscaler_callbacks_hlsl.h`, the new locks the accumulation reads and writes in
+    place declare their format (`r8`), that of the texture (`R8_UNORM`).
 - `../fsr3_framegen_mirai.slang` takes the `min16*` types to 32 bits: `ffx_common_types.h` defines
   `FfxFloat16` and `FfxUInt16` with them even without `FFX_HALF`, and Slang emits them as 16-bit,
-  which the device does not enable.
+  which the device does not enable. For the same reason `f32tof16` and `f16tof32` are there the
+  half packing of SPIR-V (`PackHalf2x16`, `UnpackHalf2x16`), which needs no 16-bit type.
 - The entry points are Mirai's (`../fsr3_*.comp.slang`): they name the slot of each resource,
   which `runtime/fsr.odin` and `runtime/framegen.odin` bind. `../fsr3_mirai.slang` and
   `../fsr3_framegen_mirai.slang` fix the compilation options.
