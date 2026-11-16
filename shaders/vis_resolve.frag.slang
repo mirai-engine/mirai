@@ -8,12 +8,15 @@
 // next pixels along x and y give the inputs and their exact screen gradients,
 // and the targets are those gbuffer_output.slang writes.
 //
-// What a program computes itself (its own uv) takes its derivatives across
-// the 2x2 pixels of a quad, as the raster does: a pixel of the quad that is
-// not of this program (a helper) is given the triangle of a neighbor, at its
-// own place. Where the triangles of a quad do not continue one another (a
-// silhouette, a seam of the uv) the quad evaluates again with the triangle
-// of each of its pixels in all four, as a raster quad of that triangle would.
+// A pixel of the quad that is not of this program (a helper) is given the
+// triangle of a neighbor, at its own place, for the derivatives of the
+// shading normal (specular antialiasing). A program that takes derivatives
+// across the quad itself (mirai_program_derivatives: of its own uv, sampled
+// by a plain uv, or ddx) gets them as the raster would: where the triangles
+// of a quad do not continue one another (a silhouette, a seam of the uv) the
+// quad evaluates again with the triangle of each of its pixels in all four.
+// One that carries its derivatives (mirai_dual.slang), and the rows, which
+// take the exact gradients of their uv, evaluate once.
 //
 // plain: without the reflectance target; layers: with the reflectance and the
 // layers targets (as gbuffer.frag). nested: the pixels of a nested view.
@@ -30,7 +33,9 @@
 #include "gbuffer_output.slang"
 #include "visibility.slang"
 
-[[vk::binding(SLOT_PASS0, 0)]] StructuredBuffer<uint2> visible : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);
+// The visible clusters (cull_bins.comp): the instance, the cluster as a word
+// of the index pool and the Surface program it is resolved by.
+[[vk::binding(SLOT_PASS0, 0)]] StructuredBuffer<uint4> visible : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);
 [[vk::binding(SLOT_PASS1, 0)]] Texture2D<uint> visibility : register(MIRAI_REGISTER(t, SLOT_PASS1), space0);
 #include "cull_stats.slang"
 [[vk::binding(SLOT_PASS2, 0)]] RWStructuredBuffer<Stats_Block> resolve_stats : register(MIRAI_REGISTER(u, SLOT_PASS2), space0);
@@ -39,16 +44,18 @@
 
 struct Resolve_Triangle { Gbuffer_Vertex a, b, c; };
 
+// The corners of a triangle, what they share built once.
 Resolve_Triangle resolve_triangle(uint id) {
-    uint2 entry = visible[visibility_entry(id)];
+    uint4 entry = visible[visibility_entry(id)];
     Instance inst = scene_instance(entry.x);
     Mesh mesh = meshes[instance_mesh(inst)];
     Cluster cluster = cluster_at(entry.y);
+    Gbuffer_Cluster shared = gbuffer_cluster(entry.x, inst, mesh, cluster, true);
     uint corner = visibility_triangle(id) * 3u;
     Resolve_Triangle t;
-    t.a = gbuffer_vertex_build(entry.x, inst, mesh, cluster, corner, true);
-    t.b = gbuffer_vertex_build(entry.x, inst, mesh, cluster, corner + 1u, true);
-    t.c = gbuffer_vertex_build(entry.x, inst, mesh, cluster, corner + 2u, true);
+    t.a = gbuffer_corner_build(entry.x, inst, mesh, cluster, shared, corner);
+    t.b = gbuffer_corner_build(entry.x, inst, mesh, cluster, shared, corner + 1u);
+    t.c = gbuffer_corner_build(entry.x, inst, mesh, cluster, shared, corner + 2u);
     return t;
 }
 
@@ -163,7 +170,7 @@ Stage_Output resolve_shade(Resolve_Point s, bool2 steady) {
 // another program fails them, and is a helper of its quad.
 [shader("fragment")]
 [earlydepthstencil]
-Stage_Output main(float4 pixel : SV_Position, [[vk::location(0)]] nointerpolation uint program : TEXCOORD0) {
+Stage_Output main(float4 pixel : SV_Position) {
     // A helper is a pixel of the quad that is not of this program: it gives
     // the others its derivatives and writes nothing, nor reports what it samples.
     bool helper = IsHelperLane();
@@ -187,9 +194,7 @@ Stage_Output main(float4 pixel : SV_Position, [[vk::location(0)]] nointerpolatio
     uint broken = all(steady) ? 0u : 1u;
     broken |= QuadReadAcrossX(broken) | QuadReadAcrossY(broken) | QuadReadAcrossDiagonal(broken);
 
-    // The maps of a row take the exact gradients of their uv: only a program
-    // computes what needs the quad to continue.
-    bool again = broken != 0u && program != 0u;
+    bool again = broken != 0u && mirai_program_derivatives;
     resolve_count(helper, odd, again);
     if (!again) {
         texture_feedback_quiet = helper;
@@ -201,7 +206,9 @@ Stage_Output main(float4 pixel : SV_Position, [[vk::location(0)]] nointerpolatio
         uint leader = quad_first(pending);
         if (leader == 0u) break;
         texture_feedback_quiet = pending != leader;
-        Stage_Output shaded = resolve_shade(resolve_point(resolve_triangle(leader), pixel.xy), bool2(true, true));
+        // The triangle this pixel was built with is not built again.
+        Resolve_Point p = leader == id ? s : resolve_point(resolve_triangle(leader), pixel.xy);
+        Stage_Output shaded = resolve_shade(p, bool2(true, true));
         if (pending == leader) {
             output = shaded;
             pending = 0u;

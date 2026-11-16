@@ -16,18 +16,21 @@ or interleave its own passes.
    row of its sky and its aerial perspective if its eye or the sun moved.
 2. **cull (phase 0)**, per instance and then per cluster (`cull.comp`, `cull_clusters.comp`).
    - One thread per instance, and then one per slot of the drawn
-     [batches](scene.md#instance-batches): frustum and occlusion of its box against the depth
-     pyramid of the previous frame (with the previous camera). One that passes delivers, in
+     [batches](scene.md#instance-batches): frustum and occlusion of its box, under the transform
+     of the previous frame, against the depth pyramid of the previous frame (with the previous
+     camera): what moves is not hidden by where it was. One that passes delivers, in
      chunks of up to 64, the clusters of the levels the cut can take at some point of its box: a
      distant object whose root already suffices delivers only the root. One that is hidden stays
      a candidate for phase 1.
    - One thread per cluster of the chunks: the level cut (`cut.slang`, projected error against
      `lod_error_pixels`), frustum, normal cone (of a material that is not two-sided) and the
      pyramid. A visible one is listed with its raster bin (two-sided or not, tested or not: a
-     masked material or an instance that fades) and counted in it; one that the pyramid hides
-     stays a candidate for phase 1. One of a material with a Surface program turns on the resolve
-     of that program. `cull_bins.comp` places the clusters of the phase in the range of their bin
-     of the visible list, those of phase 1 after those of phase 0, with one indirect draw per bin.
+     masked material or an instance that fades) and its Surface program, and counted in it; one
+     of a tested bin also in a depth bucket of its box. One that the pyramid hides stays a
+     candidate for phase 1. One of a material with a Surface program turns on the resolve of
+     that program. `cull_bins.comp` places the clusters of the phase in the range of their bin of
+     the visible list, those of phase 1 after those of phase 0, those of a tested bin nearest
+     first by their buckets, with one indirect draw per bin.
    - An instance with all its blend materials is not drawn here; one with blend triangles that
      passes the tests (in any phase) turns on the glass passes with their dispatch sizes.
 3. **visibility and resolve**
@@ -42,9 +45,10 @@ or interleave its own passes.
      (that of a program from `surface_coverage.slang`), without texture feedback. Blend: not
      drawn here. The same on Vulkan and Metal, without mesh shaders or 64-bit atomics.
    - After both phases, `vis_classify.frag` gives each pixel the depth of its Surface program
-     (0 for the rows), and the resolve of the rows and of each program the cull saw draws a
-     triangle over the view at that depth with an equal test: the material runs once per visible
-     pixel, with the stage of its program
+     (0 for the rows) from the visible list, in a 16-bit target, and the resolve of the rows and
+     of each program the cull saw draws a triangle over the view at that depth with an equal test
+     before the fragment runs (early tests: a pixel of another program is a helper): the
+     material runs once per visible pixel, with the stage of its program
      ([programs](materials.md#surface-programs-in-rays-and-raster)). It builds the triangle again
      with the function of the raster (`gbuffer_build.slang`), so both place it at the same bits,
      takes its barycentrics at the pixel and the exact gradients of its inputs, reads the material
@@ -67,7 +71,12 @@ or interleave its own passes.
    - Maximum depth pyramid of the frame; phase 1 retests the instances and clusters rejected by
      occlusion and draws the visible ones. An object does not appear late even if the occluder
      moves or the camera jumps.
-   - The pyramid is made from the depth target. Phase 1 tests against the pyramid made with the
+   - The pyramid is made from the depth target, several levels a dispatch: a texel covers the
+     pixels of the view under it (a level as large as it takes to cover the view), with the
+     farthest depth of them, a step farther so a surface does not hide itself. A box is tested
+     at the level where its footprint spans at most 4x4 texels. `Stats.resolved_pixels`,
+     `resolve_helpers` and `resolve_quads_again` count what the resolve shaded.
+   - Phase 1 tests against the pyramid made with the
      depth of phase 0; after its raster the pyramid is redone with that of both phases, which is the
      one that phase 0 of the next frame tests: what was rescued occludes from there. A pass of the
      `Gbuffer` stage tests against it and redoes it with what it draws (`pass_depth_pyramid_build`):
