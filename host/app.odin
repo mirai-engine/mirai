@@ -163,6 +163,7 @@ App :: struct {
     step_ns:[]u64, // the time of each function of info.steps since whoever reads it last cleared it, settle included
     profiler:Profiler, // the frames someone asked to record (profile.odin)
     load_profile:Load_Profile, // what the last loads took (load_profile.odin)
+    capacities:Capacities,     // what the lists of the renderer asked for in each scene (capacities.odin)
 
     tick_dt:f32,
     max_ticks:int,
