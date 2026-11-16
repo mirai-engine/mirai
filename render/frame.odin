@@ -499,8 +499,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     // What changed for the shadows reaches the views of a frame that draws the scene.
     if !frame.ui_only {r.frame_occluders,r.scene.occluders=r.scene.occluders,{}}
     batches_build(r)
-    // The room for the lights of the GPU sizes the light buffers: it is taken before they are made.
-    if !scene_lights_settle(r) || !scene_light_region(r) || !ensure_scene_capacity(r) {return false}
+    if !scene_lights_settle(r) || !ensure_scene_capacity(r) {return false}
     if !frame.offscreen && !frame.ui_only {
         // The cuts rays trace follow the eye of the first view of the window, as the probes.
         eye:=frame.camera.position
@@ -712,8 +711,9 @@ record_view :: proc(r:^Renderer,cmd:^rhi.Command_List,state:^View_State,view:Fra
     handle,plan:=view_plan(r,view.pipeline,view.texture==0)
     if !view_pipeline_prepare(r,state,handle,plan) {return false}
     // The passes after the Output stage generate the image shown before this
-    // one, for a view of a window; with a history, it is shown.
-    generate:=plan.generates && view.texture==0 && !frame.offscreen
+    // one, for a view of a window whose device presents it; with a history, it
+    // is shown. Without a window nobody would see it: they do not run.
+    generate:=plan.generates && view.texture==0 && !frame.offscreen && rhi.swapchain_generated_texture(r.device)!=0
     shown:=generate && state.has_previous && !state.resources_made
     if generate && !ensure_generated_target(r,&state.targets) {return false}
     extension_textures_release(r,state)
@@ -834,7 +834,7 @@ view_begin :: proc(p: ^Pass) -> bool {
 		time={r.time,r.previous_time,r.delta_time,0},
 		frame_index = u32(p.view.turn),
 		light_nodes = u32(len(s.light_tree)),
-		shadowless_lights = light_shadowless_frame(s.light_tree[:], s.light_region),
+		shadowless_lights = light_tree_shadowless(s.light_tree[:]),
 		instance_count = u32(len(s.instances)),
 		cut = {settings.lod_error_pixels, settings.batch_min_pixels if settings.lod_error_pixels > 0 else 0, 0, 0},
 		batches = {s.batch.slots, s.batch.groups.first, u32(len(s.batch.drawn)), u32(len(s.batch.traced))},

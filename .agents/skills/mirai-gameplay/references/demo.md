@@ -65,7 +65,7 @@ Scenes:
 - **`physics`**: gallery of 23 stations.
 - **`vfx`**: gallery of the `vfx` plugin (`game/vfx_gallery.odin`), five exhibits that the camera
   tours in Play (left and right, Home the overview) with their title and explanation in the HUD:
-  particle lights with shadow, particles from the skin and bones of Mirai walking, impacts that the
+  embers that glow, particles from the skin and bones of Mirai walking, impacts that the
   game gives to a channel (E fires a burst), a smoke column in a 3D grid with `Particle_Volume`
   (`shaders/smoke_plume.slang`) and sprite materials. The effects translated from Unreal are in
   the imported-maps project, not in the demo. The `fluids` plugin lives in its own repository,

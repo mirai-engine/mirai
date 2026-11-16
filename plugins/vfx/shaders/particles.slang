@@ -57,8 +57,6 @@ struct Particle_Emitter {
     uint4 spawns[PARTICLE_SPAWNS]; // count, per, birth, age (bits)
     float4 spacing[2];
     uint4 frame;          // in particle_frame: bytes to its resources and stages (INVALID: none), to the births of its channel, how many, to the births of the frame
-    float4 light;         // intensity (cd), range, radius (0: half the size of the particle)
-    uint4 lights;         // its share of the room of the frame: x the first of its lights with shadows, y how many; z, w those without
     uint4 data;           // bytes of particle_data to the Attributes of its range, bytes of those of a particle, its age (bits), particles it started before the frame
     float4 mesh_weights;  // of Mesh particles: the weights of its meshes added up
     uint4 mesh_vertices;  // and the vertices of a draw of each

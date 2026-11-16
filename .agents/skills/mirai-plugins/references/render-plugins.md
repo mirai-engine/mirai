@@ -388,7 +388,9 @@ detail and twice the cost.
   `Generated`
   ([frame generation](../../mirai-rendering/references/views.md#frame-generation)). Without
   FSR as antialiasing it does not generate. The flow's luma has history instead of the pair that
-  AMD alternates; the previous image is a `kept` resource that the last pass copies.
+  AMD alternates; the previous image is a `kept` resource that the last pass copies. The dilated
+  depth and motion and the reconstructed previous depth are the upscaler's, as `ffx_fsr3.cpp`
+  shares them: frame interpolation has no prepare pass of its own.
 - `Fsr_Settings.sharpness` (machine, a Graphics row) chooses the `sharpen` variant of the
   accumulation and RCAS.
 - No FSR 1 or FSR 2.2.

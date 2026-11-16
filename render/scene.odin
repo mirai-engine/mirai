@@ -424,7 +424,7 @@ Scene_State :: struct {
 	shadow_chunks:        rhi.Buffer, // the chunks the instance pass of the cull of the maps of the shadows hands its cluster pass
 	shadow_entries:       rhi.Buffer, // the clusters the maps of the shadows draw (shadow_cull.slang)
 	cull_capacity:        [Cull_List]u32, // of those lists, in entries
-	cull_wanted:          [Cull_List]u32, // what a frame that dropped asked for: they grow to it
+	cull_wanted:          [Cull_List]u32, // what a frame that dropped asked for since the marks were set (renderer_capacity_marks_set): they grow to it
 	candidate_buffer:     rhi.Buffer, // per instance and slot of a batch: rejected by the phase 0 occlusion test
 	batch:                Batch_State,
 	tlas:                 rhi.Accel,
@@ -457,11 +457,6 @@ Scene_State :: struct {
 	light_flux:           f32,  // of the lights the probe volume holds, when they last changed (blackout.odin)
 	flux_seen:            f32,  // of the whole scene in the frame before
 	lights_scale:         f32,  // render units per nit the lights are in: the light scale, or the one before a world started without light
-	light_region:         Light_Region, // lights a pass writes on the GPU, in the room before the tree (light_region_first)
-	light_region_written: bool, // by a pass of the frame before (pass_lights)
-	light_region_box:     [2]Vec3, // what of the scene its lights with shadows light, grown so that they move a little before the grid is placed again; empty: none
-	light_region_reach:   f32,  // the farthest one of them lights, metres
-	light_region_asked:   u32,  // how many of them a pass asked for
 	light_revision:       u64,  // counts the sets of lights: an index means the same light while it holds
 	light_scale:          f32,  // render units per nit (light_scale_of)
 	light_key:            f32,  // what the strongest local light gives a white surface a metre away that faces it, nits
@@ -2200,7 +2195,7 @@ scene_light_update :: proc(r: ^Renderer, index: u32, desc: Light_Desc) -> bool {
 			if s.light_refits > LIGHT_REFITS_MAX {s.lights_dirty = true} else {
 				if !s.lights_dirty {range_add(&s.light_ranges, {index, 1})}
 				if leaf := s.light_leaves[index]; leaf != LIGHT_TREE_NONE {
-					s.light_tree_cost += light_tree_refit(s.light_tree[:], s.lights[:], leaf, nil if s.lights_dirty else &s.light_node_ranges, s.light_region)
+					s.light_tree_cost += light_tree_refit(s.light_tree[:], s.lights[:], leaf, nil if s.lights_dirty else &s.light_node_ranges)
 				}
 				if len(s.light_ranges) > LIGHT_RANGES_MAX || len(s.light_node_ranges) > LIGHT_RANGES_MAX {s.lights_dirty = true}
 			}
@@ -2248,7 +2243,7 @@ scene_lights_settle :: proc(r: ^Renderer) -> bool {
 		r.gi_warm_spread = GI_BLACKOUT_FRAMES
 	}
 	s.flux_seen = flux
-	if s.light_refits > LIGHT_REFITS_MAX && !s.lights_stale {s.light_tree_cost = light_tree_refit_all(s.light_tree[:], s.lights[:], s.light_region)}
+	if s.light_refits > LIGHT_REFITS_MAX && !s.lights_stale {s.light_tree_cost = light_tree_refit_all(s.light_tree[:], s.lights[:])}
 	s.light_refits = 0
 	if s.lights_stale || s.light_tree_cost > s.light_tree_built * LIGHT_TREE_REFIT_SLACK {
 		if !light_tree_rebuild(s) {set_error(r, "light tree of %d lights: out of memory", len(s.lights));return false}
@@ -2267,77 +2262,15 @@ scene_lights_settle :: proc(r: ^Renderer) -> bool {
 // run out of memory. False without memory.
 @(private = "file")
 lights_reserve :: proc(s: ^Scene_State, count: int) -> bool {
-	return reserve(&s.lights, count) == nil && reserve(&s.light_shadowless, count) == nil && light_tree_reserve(&s.light_tree, &s.light_keys, &s.light_leaves, count, s.light_region)
+	return reserve(&s.lights, count) == nil && reserve(&s.light_shadowless, count) == nil && light_tree_reserve(&s.light_tree, &s.light_keys, &s.light_leaves, count)
 }
 
 // Builds the tree of the lights again. False without memory: it stays as it was.
 @(private = "file")
 light_tree_rebuild :: proc(s: ^Scene_State) -> bool {
-	built := light_tree_build(&s.light_tree, &s.light_keys, &s.light_leaves, s.lights[:], s.light_region, s.light_shadowless[:]) or_return
+	built := light_tree_build(&s.light_tree, &s.light_keys, &s.light_leaves, s.lights[:], s.light_shadowless[:]) or_return
 	s.light_tree_built, s.light_tree_cost = built, built
 	return true
-}
-
-// Takes the room for lights on the GPU the extensions asked for since the
-// last frame (lights_ask): another size builds the tree again. A room no pass
-// wrote in the frame before goes back to the root of the scene alone, and
-// its part without shadows to none. False without memory for the tree of
-// another room: the room stays as it was.
-@(private)
-scene_light_region :: proc(r: ^Renderer) -> bool {
-	s := &r.scene
-	asked := light_region_of(r.lights_asked, r.shadowless_asked)
-	scene_light_region_box(s, r.lights_asked, r.lights_asked_box, r.lights_asked_reach)
-	r.lights_asked, r.shadowless_asked = 0, 0
-	if asked != s.light_region {
-		previous := s.light_region
-		s.light_region = asked
-		if !light_tree_rebuild(s) {
-			s.light_region = previous
-			set_error(r, "light tree with room for %d lights of the passes: out of memory", asked.lights + asked.shadowless)
-			return false
-		}
-		s.light_revision += 1
-		s.lights_dirty = true
-		clear(&s.light_ranges)
-		clear(&s.light_node_ranges)
-	} else if s.light_region.lights > 0 && !s.light_region_written && !s.lights_dirty {
-		range_add(&s.light_node_ranges, {0, 2})
-		if root := light_region_shadowless(s.light_region); root > 0 {range_add(&s.light_node_ranges, {root, 1})}
-	}
-	s.light_region_written = false
-	return true
-}
-
-// What of the scene the lights with shadows a pass asked for light: the
-// cells of the grid of the lights they need. The grid is placed again when
-// they leave the box it holds, light farther or are more, or the box is far
-// larger than they need.
-@(private)
-scene_light_region_box :: proc(s: ^Scene_State, count: u32, box: [2]Vec3, reach: f32) {
-	EMPTY :: [2]Vec3{{1, 1, 1}, {-1, -1, -1}}
-	needed := EMPTY
-	if count > 0 && s.has_bounds {
-		needed = {linalg.max(box[0] - reach, s.bounds_min), linalg.min(box[1] + reach, s.bounds_max)}
-		if !(needed[0].x <= needed[1].x && needed[0].y <= needed[1].y && needed[0].z <= needed[1].z) {needed = EMPTY}
-	}
-	held := s.light_region_box
-	if needed == EMPTY {
-		if s.light_region_asked > 0 {
-			s.light_region_box, s.light_region_reach, s.light_region_asked = EMPTY, 0, 0
-			s.light_grid_stale = true
-		}
-		return
-	}
-	span := needed[1] - needed[0]
-	inside := s.light_region_asked > 0 && linalg.min(held[0], needed[0]) == held[0] && linalg.max(held[1], needed[1]) == held[1]
-	held_span := held[1] - held[0]
-	wide := held_span.x > 4 * span.x + 4 || held_span.y > 4 * span.y + 4 || held_span.z > 4 * span.z + 4
-	if inside && !wide && reach <= s.light_region_reach && count <= s.light_region_asked {return}
-	grow := linalg.max(span * 0.25, Vec3{1, 1, 1})
-	s.light_region_box = {linalg.max(needed[0] - grow, s.bounds_min), linalg.min(needed[1] + grow, s.bounds_max)}
-	s.light_region_reach, s.light_region_asked = reach, count
-	s.light_grid_stale = true
 }
 
 // The light scale for the local lights of the scene with a sun and an
@@ -2356,7 +2289,7 @@ scene_light_scale :: proc(r: ^Renderer, sun: Sun_Desc, environment: Environment)
 		for &l in s.lights {l.color_intensity.w *= ratio}
 		s.light_flux *= ratio
 		s.flux_seen *= ratio
-		if !s.lights_stale {s.light_tree_cost = light_tree_refit_all(s.light_tree[:], s.lights[:], s.light_region)}
+		if !s.lights_stale {s.light_tree_cost = light_tree_refit_all(s.light_tree[:], s.lights[:])}
 		s.lights_dirty = true
 	}
 	if s.light_scale > 0 && scale != s.light_scale {r.light_rescale = (r.light_rescale if r.light_rescale > 0 else 1) * scale / s.light_scale}
@@ -2401,6 +2334,32 @@ renderer_reset_history :: proc(r:^Renderer,reset_camera:bool=false) {
 
 @(private)
 highlight_flags :: proc "contextless" (level: u8) -> u32 {return (u32(level) << INSTANCE_HIGHLIGHT_SHIFT) & INSTANCE_HIGHLIGHT_MASK}
+
+// The most the lists that grow asked for (the lists of the cull and the
+// material points): a list that dropped asked for what it held and what it
+// dropped; one that did not, for no more than the mark it started from. The
+// host keeps them by scene, so that a scene seen again starts its lists there
+// and drops nothing the first time.
+Capacity_Marks :: struct {
+	cull:   [Cull_List]u32,
+	points: u32,
+}
+
+// The most a mark asks of a list of the cull, in entries: one read from
+// elsewhere past it is taken at it.
+CULL_MARK_MAX :: 1 << 24
+
+renderer_capacity_marks :: proc "contextless" (r: ^Renderer) -> Capacity_Marks {
+	return {r.scene.cull_wanted, r.points.wanted}
+}
+
+// The lists grow to marks before the next frame, as after a frame that asked
+// for them, and keep what they hold beyond them; what they ask for from now
+// on counts from marks.
+renderer_capacity_marks_set :: proc "contextless" (r: ^Renderer, marks: Capacity_Marks) {
+	for &wanted, list in r.scene.cull_wanted {wanted = min(marks.cull[list], CULL_MARK_MAX)}
+	r.points.wanted = min(marks.points, POINTS_MAX)
+}
 
 // Ensures GPU capacity for the current instance/light sets (between frames).
 @(private)
@@ -2492,7 +2451,7 @@ ensure_scene_capacity :: proc(r: ^Renderer) -> bool {
 		s.tlas_ref_capacity = capacity
 		s.instances_dirty = true
 	}
-	lights := max(len(s.lights) + light_region_lights(s.light_region), 1)
+	lights := max(len(s.lights), 1)
 	if lights > s.light_capacity || s.light_buffer == 0 {
 		capacity := max(lights + lights / 2, 32)
 		if s.light_buffer != 0 {rhi.buffer_destroy(d, s.light_buffer)}
@@ -2666,7 +2625,6 @@ upload_scene :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
 	}
 	if s.lights_dirty || len(s.light_ranges) > 0 {s.light_grid_stale = true}
 	if s.lights_dirty {
-		if s.light_region.lights > 0 {rhi.cmd_fill_buffer(cmd, s.light_buffer, u64(len(s.lights) * size_of(Gpu_Light)), u64(light_region_lights(s.light_region) * size_of(Gpu_Light)), 0)}
 		if upload_transient(r, cmd, s.lights[:], s.light_buffer) && upload_transient(r, cmd, s.light_tree[:], s.light_tree_buffer) {
 			s.lights_dirty = false
 			clear(&s.light_ranges)

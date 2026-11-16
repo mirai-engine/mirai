@@ -111,11 +111,6 @@ Particle_Info :: struct {
     render:Particle_Render `mirai:"section=Look"`,
     blend:Particle_Blend,
     lit:bool,                                 // the sun, the lights and the light probes light it
-    lights:u32,                               // of its particles that light the scene, at most
-    light_shadows:bool,                       // they cast shadows, within the shadow budgets; else they light all in their range
-    light_intensity:f32 `mirai:"min=0,unit=cd"`, // of a particle of full color: its color and opacity tint it
-    light_range:f32 `mirai:"min=0,unit=m"`,
-    light_radius:f32 `mirai:"min=0,unit=m"`,  // of the sphere that glows; 0: half the size of the particle
     sort:bool,                                // blended particles drawn back to front (2048 at most)
     material:base.Asset_Id,                   // its base color texture is the flipbook; none: a soft puff
     meshes:[PARTICLE_MESHES]base.Asset_Id,    // of Mesh particles, each picked by its weight; none: a cube
@@ -140,7 +135,7 @@ PARTICLE_DEFAULTS :: Particle_Info{
     duration=2,rate=20,
     shape=.Cone,shape_size={0.1,0.1,0.1},shape_angle=0.35,
     lifetime={1.5,2},speed={1,2},size={0.2,0.35},colors={{1,1,1,1},{1,1,1,1}},intensity=1,emission_mode=.Relative,
-    blend=.Alpha,lit=true,light_intensity=100,light_range=4,soft=0.3,flipbook={1,1},
+    blend=.Alpha,lit=true,soft=0.3,flipbook={1,1},
     size_over_life={values={0.5,1,1,1,1,1,1,1},times={0,0.3,1,1,1,1,1,1}},
     color_over_life={
         colors={{1,1,1,0},{1,1,1,1},{1,1,1,1},{1,1,1,0},{1,1,1,0},{1,1,1,0},{1,1,1,0},{1,1,1,0}},
@@ -249,7 +244,6 @@ particle_validate :: proc(desc:Particle_Desc) -> Particle_Problem {
     if p.lifetime[0]<0 || p.lifetime[1]<0 {return {"lifetime","Use lifetimes of zero or more seconds"}}
     if p.size[0]<0 || p.size[1]<0 {return {"size","Use sizes of zero or more"}}
     if p.intensity<0 {return {"intensity","Use an intensity of zero or more"}}
-    if p.light_intensity<0 || p.light_range<0 || p.light_radius<0 {return {"light_intensity","Use zero or more for light_intensity, light_range and light_radius"}}
     if p.drag<0 || p.noise_frequency<0 || p.stretch<0 || p.soft<0 || p.flipbook_speed<0 {return {"drag","Use zero or more for drag, noise_frequency, stretch, soft and flipbook_speed"}}
     if p.bounce<0 || p.bounce>1 || p.friction<0 || p.friction>1 || p.collision_life<0 || p.collision_life>1 {return {"bounce","Use values from 0 to 1 for bounce, friction and collision_life"}}
     for burst in p.bursts {

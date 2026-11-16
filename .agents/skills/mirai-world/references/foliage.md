@@ -338,7 +338,8 @@ function:
   server meets the trees far from every player, and the navmesh, built from the static collision,
   has the same obstacles wherever the players are. A `Foliage` kept for a section that is not
   loaded (`scene.Far_Kept`) collides with nothing. Physics_Settings must hold the shapes of every
-  loaded cell; past them it is the `foliage.physics` problem.
+  loaded cell; past them it is the `foliage.physics` problem, and a cell without room keeps what
+  fit and is not built again until it, its ground or its entity changes.
 - **Instances taken out** leave with their shapes alone (`collider_remove`): the body of the cell
   stays unless it has none left, and the navmesh rebuilds only around them. One put back builds
   its cell again.

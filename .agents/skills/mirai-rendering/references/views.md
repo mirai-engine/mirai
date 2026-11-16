@@ -273,8 +273,9 @@ The `Custom` passes after `Output` generate the image that the window shows betw
 frame and the current one:
 
 - They read `Ldr` before `Output` draws over it the scene panels, the debug lines and the screen
-  layers, and write `Generated`, of output size. They run only in the window views of a frame that
-  presents, never in a texture view or in a capture.
+  layers, and write `Generated`, of output size. They run only in the window views of a frame
+  whose device presents the generated image: never in a texture view, in a capture or without a
+  window (a headless editor or player), where nobody would be shown it.
 - Afterwards, `overlays_pass` draws the same over `Ldr` and over `Generated`; the UI vertices are
   uploaded once. In split screen `compose_views` also composes the generated images (a view that
   did not generate puts its own).
@@ -462,11 +463,6 @@ frame and the current one:
   - `pass_dispatch_indirect` and `pass_draw_indexed_indirect` take their arguments from a buffer;
     `pass_indices(pass, .Scene)` binds the scene indices (`mesh_draw_range` gives those of a mesh)
     and `.Quad`, the six of a quad.
-- **Lights.** `lights_ask(renderer, with_shadow, without_shadow, box, reach)` asks for room for
-  lights that a `Simulate` pass writes with `pass_lights(pass, lights, nodes)`: they shine like
-  those of the scene; those of the first part cast shadows, lie within `box` and light up to
-  `reach` metres from it (`LIGHTS_ANYWHERE` when the pass cannot tell), and those of the second
-  trace no rays ([GPU lights](lights.md#gpu-lights)).
 - **Table textures.** `table_texture(renderer, world, Table_Texture_Desc{name, width, height})`,
   between frames, gives the table place of an RGBA16F texture of the world under that name, which
   the extension fills each frame with `pass_table_texture_copy(pass, buffer, offset, desc)` from a
