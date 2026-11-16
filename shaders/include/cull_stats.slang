@@ -2,8 +2,9 @@
 // instances, clusters and triangles drawn of each CULL_KIND_*; late: those
 // phase 1 drew; dropped: what passed the capacity of each list of the cull
 // (render.Cull_List), which the renderer grows from it; resolved: what the
-// resolve of the G-buffer shaded (vis_resolve.frag): pixels, the helpers of
-// their quads, and the quads it evaluated again.
+// resolve of the G-buffer shaded: pixels and the helpers of their quads, as
+// the program depth counts them (vis_classify.frag), and the quads it
+// evaluated again (vis_resolve.frag).
 #ifndef MIRAI_CULL_STATS_SLANG
 #define MIRAI_CULL_STATS_SLANG
 #define CULL_LIST_CHUNKS 0u
