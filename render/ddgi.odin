@@ -1,6 +1,7 @@
 package mirai_render
 
 import "core:math"
+import "core:math/linalg"
 import "mirai:rhi"
 import "mirai:render/abi"
 
@@ -15,6 +16,10 @@ import "mirai:render/abi"
 // gives what it gave, and one that did follows at once. One whose light moved
 // by more than a hundredth is traced again the next frame, until what its
 // rays find (the probes around) settles.
+//
+// A probe keeps what each of its rays found (Probe_Hits): an update traces a
+// ray again only where what it may meet changed and lights its hit again only
+// where its lights did, and of the others it reads the bounces again.
 
 IRRADIANCE_TILE :: 8
 DISTANCE_TILE   :: abi.DISTANCE_TILE
@@ -33,6 +38,35 @@ PROBE_WARM_BUDGET :: 2048
 // Seconds a change keeps the probes it reaches traced.
 PROBE_AWAKE :: f32(1)
 
+// What the probes keep of their rays between updates (probe_hits.slang),
+// PROBE_HIT_WORDS a ray of every probe of the volume shown, and the changes
+// of the scene a probe checks it against when it is updated: the newest
+// first, each with the update, plus one, that listed it. A probe last
+// updated before a change that left the list (`lost`) traces all its rays.
+Probe_Hits :: struct {
+	records: rhi.Buffer,
+	changes: rhi.Buffer,
+	probes:  u32,
+	rays:    u32,
+	listed:  [abi.PROBE_CHANGES_MAX]Probe_Change,
+	count:   int,
+	lost:    u32,  // the update, plus one, of the newest change that left the list
+	dirty:   bool, // the list is not the one the GPU has
+}
+// A change as the shaders read it: a box, low then high, with its kind
+// (abi.PROBE_CHANGE_*) and the update that listed it, plus one; and the light
+// of a shadow, or the sphere of a light that changed (xyz, w its reach).
+Probe_Change :: struct {
+	low:   Vec3,
+	kind:  u32,
+	high:  Vec3,
+	stamp: u32,
+	light: Vec4,
+}
+#assert(size_of(Probe_Change) == 48)
+// Changes of one frame the list takes: with more, it changed everywhere.
+PROBE_CHANGES_FRAME :: abi.PROBE_CHANGES_MAX / 4
+
 Ddgi_State :: struct {
 	counts:             [3]u32, // probes of a cascade along each axis
 	cascades:           u32,
@@ -45,6 +79,11 @@ Ddgi_State :: struct {
 	cells:              [VOLUME_CASCADES_MAX][4]i32, // and its cell of the world
 	center:             Vec3,   // of this frame: where the cascades centre, relative to the origin, off their corners by up to half a cell
 	changed_everywhere: u32,    // frame of the last change everywhere
+	// The update, plus one, in which what rays meet last changed everywhere
+	// and the one in which the lights did: what a probe keeps of its rays
+	// from before is traced or lit again (probe_hits.slang).
+	seen_everywhere:    u32,
+	lit_everywhere:     u32,
 	probes:             rhi.Buffer,
 	buckets:            rhi.Buffer,
 	histogram:          rhi.Buffer,
@@ -88,7 +127,8 @@ ddgi_ensure :: proc(r: ^Renderer) -> bool {
 	g.probes = rhi.buffer_create(d, {size = u64(g.total) * size_of(Gpu_Probe), usage = {.Storage}, name = "probes"})
 	g.buckets = rhi.buffer_create(d, {size = u64(g.total) * 4, usage = {.Storage}, name = "probe buckets"})
 	g.histogram = rhi.buffer_create(d, {size = PROBE_HISTOGRAM_WORDS * 4, usage = {.Storage}, name = "probe histogram"})
-	g.chosen = rhi.buffer_create(d, {size = u64(1 + room) * 4, usage = {.Storage}, name = "chosen probes"})
+	// After the count and the probes: whether each traced a ray, then the rays the update traced and the hits it lit.
+	g.chosen = rhi.buffer_create(d, {size = u64(1 + 2 * room + 2) * 4, usage = {.Storage}, name = "chosen probes"})
 	g.dispatch = rhi.buffer_create(d, {size = PROBE_DISPATCH_WORDS * 4, usage = {.Storage, .Indirect}, name = "probe dispatch"})
 	// Under the tiles of the irradiance, those of the light around the narrow lobes, in the same rows and columns.
 	g.irradiance = rhi.texture_create(d, {width = g.per_row * max(IRRADIANCE_TILE, abi.PROBE_GLOSS_TILE), height = rows * (IRRADIANCE_TILE + abi.PROBE_GLOSS_TILE), format = .RGBA16_Float, usage = {.Sampled, .Storage, .Color_Target}, name = "probe irradiance"})
@@ -99,7 +139,7 @@ ddgi_ensure :: proc(r: ^Renderer) -> bool {
 	initial := make([]Gpu_Probe, g.total, context.temp_allocator)
 	for &p in initial {p.cell = {min(i32), min(i32), min(i32), 0}}
 	ok := g.probes != 0 && g.buckets != 0 && g.histogram != 0 && g.chosen != 0 && g.dispatch != 0 && g.irradiance != 0 && g.kept != 0 && g.distance != 0 && g.rays != 0
-	if !ok || !rhi.buffer_upload(d, g.probes, 0, slice_bytes(initial)) {
+	if !ok || !rhi.buffer_upload(d, g.probes, 0, slice_bytes(initial)) || !probe_hits_ensure(r) {
 		set_error(r, "probe volume: %s", rhi.device_error(d))
 		ddgi_release(r)
 		return false
@@ -108,6 +148,105 @@ ddgi_ensure :: proc(r: ^Renderer) -> bool {
 	g.needs_clear = true
 	g.valid = true
 	return true
+}
+
+// Probes the list of the chosen has room for.
+@(private)
+ddgi_room :: proc "contextless" (g: ^Ddgi_State) -> u32 {return max(g.budget, min(PROBE_WARM_BUDGET, g.total))}
+
+// Where the list of the chosen counts the rays an update traced and the hits it lit, in bytes.
+@(private)
+ddgi_counts_offset :: proc "contextless" (g: ^Ddgi_State) -> u64 {return u64(1 + 2 * ddgi_room(g)) * 4}
+
+// Room for what the probes of the volume keep of their rays. It is made again
+// only for a volume of other rays or another number of probes: what it holds
+// of another volume, no probe counts on (Ddgi_State.seen_everywhere).
+@(private)
+probe_hits_ensure :: proc(r: ^Renderer) -> bool {
+	g, h := &r.ddgi, &r.probe_hits
+	if h.records != 0 && h.probes == g.total && h.rays == g.rays_per_probe {return true}
+	probe_hits_release(r)
+	d := r.device
+	h.records = rhi.buffer_create(d, {size = u64(g.total) * u64(g.rays_per_probe) * abi.PROBE_HIT_WORDS * 4, usage = {.Storage}, name = "probe hits"})
+	h.changes = rhi.buffer_create(d, {size = abi.PROBE_CHANGES_MAX * size_of(Probe_Change), usage = {.Storage}, name = "probe changes"})
+	if h.records == 0 || h.changes == 0 {
+		probe_hits_release(r)
+		return false
+	}
+	h.probes, h.rays = g.total, g.rays_per_probe
+	return true
+}
+
+@(private)
+probe_hits_release :: proc(r: ^Renderer) {
+	h := &r.probe_hits
+	if h.records != 0 {rhi.buffer_destroy(r.device, h.records)}
+	if h.changes != 0 {rhi.buffer_destroy(r.device, h.changes)}
+	h.records, h.changes, h.probes, h.rays = 0, 0, 0, 0
+}
+
+// Lists what changed since the last update for what the probes keep of their
+// rays, with `stamp`: the boxes in which what a ray may meet changed and the
+// spheres of the lights that did (Light_Changes), and what casts shadows and
+// changed (Occluder_Changes), with the shadow the sun gives it and the one
+// each light that reaches it does. The boxes go first: `seen` false when they
+// are more than the list takes of a frame, and what rays meet changed
+// everywhere; `lit` false when the lights and the shadows are, and the lights
+// changed everywhere.
+@(private)
+probe_changes_list :: proc(r: ^Renderer, changes: ^Light_Changes, moved: ^Occluder_Changes, stamp: u32) -> (seen, lit: bool) {
+	h := &r.probe_hits
+	s := &r.scene
+	fresh: [PROBE_CHANGES_FRAME]Probe_Change
+	count := 0
+	add :: proc(fresh: ^[PROBE_CHANGES_FRAME]Probe_Change, count: ^int, change: Probe_Change) -> bool {
+		if count^ == len(fresh) {return false}
+		fresh[count^] = change
+		count^ += 1
+		return true
+	}
+	seen, lit = true, true
+	for box in moved.boxes[:moved.count] {
+		seen &&= add(&fresh, &count, {low = box.low, high = box.high, kind = abi.PROBE_CHANGE_CASTER, stamp = stamp})
+	}
+	each: for i in 0 ..< changes.count {
+		low, high := changes.boxes[i][0].xyz, changes.boxes[i][1].xyz
+		if !(low.x <= high.x && low.y <= high.y && low.z <= high.z) {continue}
+		// What casts shadows and changed is listed with its shadows.
+		for caster in moved.boxes[:moved.count] {
+			if low.x >= caster.low.x && low.y >= caster.low.y && low.z >= caster.low.z && high.x <= caster.high.x && high.y <= caster.high.y && high.z <= caster.high.z {continue each}
+		}
+		seen &&= add(&fresh, &count, {low = low, high = high, kind = abi.PROBE_CHANGE_SEEN, stamp = stamp})
+	}
+	if !seen {return false, false}
+	boxes := count
+	for sphere, i in changes.spheres[:changes.count] {
+		low, high := changes.boxes[i][0].xyz, changes.boxes[i][1].xyz
+		if !changes.all && !(low.x <= high.x && low.y <= high.y && low.z <= high.z) {
+			lit &&= add(&fresh, &count, {kind = abi.PROBE_CHANGE_LIGHT, stamp = stamp, light = sphere})
+		}
+	}
+	shadows: for box in moved.boxes[:moved.count] {
+		for light in s.lights {
+			// The box is within the reach of the light: the rays to it of what it lights may cross the box.
+			reach := light.position_range.w
+			nearest := linalg.clamp(light.position_range.xyz, box.low, box.high)
+			if linalg.length2(nearest - light.position_range.xyz) >= reach * reach {continue}
+			// A ray to a point of a light that has a size passes that far from its center.
+			size := max(light.size.x, light.size.y, light.size.z)
+			lit &&= add(&fresh, &count, {low = box.low - size, high = box.high + size, kind = abi.PROBE_CHANGE_SHADOW, stamp = stamp, light = light.position_range})
+			if !lit {break shadows}
+		}
+	}
+	if !lit {count = boxes}
+	if count == 0 {return}
+	kept := min(h.count, len(h.listed) - count)
+	if kept < h.count {h.lost = h.listed[kept].stamp}
+	copy(h.listed[count:count + kept], h.listed[:kept])
+	copy(h.listed[:count], fresh[:count])
+	h.count = count + kept
+	h.dirty = true
+	return
 }
 
 // The cascades of this frame around center, one spacing of the first cascade
@@ -147,10 +286,13 @@ ddgi_frame_constants :: proc(r: ^Renderer, f: ^Gpu_Frame) {
 // pixels of the view, chosen by priority, traced, and their atlases and
 // places updated. `warm`: one of the updates that gather the light of a world
 // shown anew in one frame, with a larger budget, as after a change everywhere.
+// `first`: the first update of the frame, which takes what changed since the
+// last one.
 @(private)
-ddgi_update :: proc(p: ^Pass, warm := false) -> bool {
+ddgi_update :: proc(p: ^Pass, warm := false, first := true) -> bool {
 	r, cmd, t := p.r, p.cmd, p.t
 	g := &r.ddgi
+	h := &r.probe_hits
 	settings := &r.settings
 	if g.needs_clear {
 		clear_textures(cmd, g.irradiance, g.kept, g.distance)
@@ -163,6 +305,23 @@ ddgi_update :: proc(p: ^Pass, warm := false) -> bool {
 	changes := &r.scene.changes
 	if changes.all || warm {g.changed_everywhere = frame_number}
 	budget := min(PROBE_WARM_BUDGET, g.total) if warm else g.budget
+	room := ddgi_room(g)
+	if first {
+		stamp := frame_number + 1
+		// The sun that turned gives every caster another shadow.
+		if changes.all || r.frame_occluders.sun {g.lit_everywhere = stamp}
+		if changes.all && changes.seen {
+			g.seen_everywhere = stamp
+		} else {
+			seen, lit := probe_changes_list(r, changes, &r.frame_occluders, stamp)
+			if !seen {g.seen_everywhere = stamp}
+			if !lit {g.lit_everywhere = stamp}
+		}
+		if h.dirty {
+			if !upload_transient(r, cmd, h.listed[:h.count], h.changes) {return false}
+			h.dirty = false
+		}
+	}
 	if changes.count > 0 && !changes.all {
 		Params :: struct {count, frame_number, total, awake: u32}
 		params := Params{count = u32(changes.count), frame_number = frame_number, total = g.total, awake = awake}
@@ -183,8 +342,8 @@ ddgi_update :: proc(p: ^Pass, warm := false) -> bool {
 		rhi.cmd_dispatch(cmd, groups(groups(t.width, 8), 8), groups(groups(t.height, 8), 8))
 	}
 	rhi.cmd_fill_buffer(cmd, g.histogram, 0, PROBE_HISTOGRAM_WORDS * 4, 0)
-	Select :: struct {mode, budget, changed_everywhere, frame_number, rays_per_probe, total, awake, whole: u32}
-	select := Select{budget = budget, changed_everywhere = g.changed_everywhere, frame_number = frame_number, rays_per_probe = g.rays_per_probe, total = g.total, awake = awake, whole = 1 if warm else 0}
+	Select :: struct {mode, budget, changed_everywhere, frame_number, rays_per_probe, total, awake, whole, room, pad0, pad1, pad2: u32}
+	select := Select{budget = budget, changed_everywhere = g.changed_everywhere, frame_number = frame_number, rays_per_probe = g.rays_per_probe, total = g.total, awake = awake, whole = 1 if warm else 0, room = room}
 	for mode in u32(0) ..< 4 {
 		select.mode = mode
 		rhi.cmd_bind_pipeline(cmd, r.pipelines[.Ddgi_Select])
@@ -196,15 +355,20 @@ ddgi_update :: proc(p: ^Pass, warm := false) -> bool {
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS3, g.dispatch)
 		rhi.cmd_dispatch(cmd, groups(g.total, 64) if mode % 2 == 0 else 1)
 	}
-	Update :: struct {rays_per_probe, light_budget: u32, max_distance: f32, frame_number, resume, pad0, pad1, pad2: u32}
-	update := Update{rays_per_probe = g.rays_per_probe, light_budget = min(settings.light_budget, PROBE_LIGHT_BUDGET), max_distance = 1e4, frame_number = frame_number}
+	Update :: struct {rays_per_probe, light_budget: u32, max_distance: f32, frame_number, resume, room, changes, changes_lost, seen_everywhere, lit_everywhere, pad0, pad1: u32}
+	update := Update{
+		rays_per_probe = g.rays_per_probe, light_budget = min(settings.light_budget, PROBE_LIGHT_BUDGET), max_distance = 1e4, frame_number = frame_number,
+		room = room, changes = u32(h.count), changes_lost = h.lost, seen_everywhere = g.seen_everywhere, lit_everywhere = g.lit_everywhere,
+	}
 	// The rays, then what waits for the programs of what they hit.
 	batch := points_begin(p)
 	trace := pipeline_of(r, .Ddgi_Trace, {DDGI_TRACE_COMP_COLOR} if shadows_colored(r) else {}, {DDGI_TRACE_COMP_COLOR})^
 	rhi.cmd_bind_pipeline(cmd, trace)
 	set_params(cmd, &update)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, g.rays)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS1, h.records)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS2, g.chosen)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS3, h.changes)
 	rhi.cmd_bind_buffer(cmd, SLOT_PROBES, g.probes)
 	points_bind(p)
 	textures_feedback_bind(r, cmd)

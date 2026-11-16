@@ -271,6 +271,8 @@ Stats :: struct {
 	probes:            u32,
 	probes_per_frame:  u32,
 	probes_traced:     u32, // in the frame two frames ago
+	probe_rays_traced: u32, // rays those probes traced: of one that keeps nothing of its rays, and those a change crossed (probe_hits.slang)
+	probe_hits_lit:    u32, // hits they took the direct light of: of those rays, and where the lights of a kept hit changed
 	rays_per_frame:    u64,
 	gpu_ms:            f32, // of the last frame the GPU finished
 	ev100:             f32, // the main view is exposed at, before its compensation: what its meter took, as read back, or what its camera gives
@@ -611,6 +613,7 @@ Renderer :: struct {
 	stats_buffer:    rhi.Buffer,
 	scratch_buffer:  rhi.Buffer, // what a pass writes and nobody reads
 	light_changes:        rhi.Buffer, // Scene_State.changes of the frame, for the probes
+	probe_hits:           Probe_Hits, // what the probes of ddgi keep of their rays, and the changes they check it against
 	frame_changes:        Light_Changes, // those of this frame, for the views after the first
 	frame_occluders:      Occluder_Changes, // Scene_State.occluders of this frame, for every view
 	gi_warm_spread:       u32, // frames left of the warm updates of a blackout (blackout.odin)
@@ -794,6 +797,7 @@ renderer_destroy :: proc(r: ^Renderer) {
 	textures_clear(r)
 	textures_destroy(r)
 	ddgi_release(r)
+	probe_hits_release(r)
 	world_light_destroy(r)
 	destroy_view_targets(r)
 	for &view in r.texture_views {view_state_destroy(r, &view)}
@@ -1523,7 +1527,7 @@ renderer_apply_settings :: proc(r: ^Renderer, settings: Settings) -> bool {
 	volume ||= old.colored_shadows != settings.colored_shadows || old.sun_shadows != settings.sun_shadows
 	// The light the probes gather, in the volume they have.
 	gathered := old.light_budget != settings.light_budget || old.sun_radius != settings.sun_radius
-	if volume {ddgi_release(r)} else if gathered {scene_changed(&r.scene)}
+	if volume {ddgi_release(r)} else if gathered {scene_relit(&r.scene)}
 	// The worlds not shown kept light gathered with the settings before.
 	if volume || gathered {world_light_destroy(r)}
 	traced := old.colored_shadows != settings.colored_shadows || old.sun_shadows != settings.sun_shadows || old.reflection_light_budget != settings.reflection_light_budget || old.reflections != settings.reflections

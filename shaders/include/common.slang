@@ -272,7 +272,7 @@ struct Material_Coat { float3 color; float weight; float roughness; float ior; f
 struct Material_Fuzz { float3 color; float weight; float roughness; };
 struct Material_Anisotropy { float amount; float2 rotation; }; // rotation: cosine and sine
 struct Material_Diffuse_Transmission { float3 color; float weight; };
-struct Material_Volume { float3 scatter; float pad; }; // what a solid scatters of what it stops
+struct Material_Volume { float3 scatter; uint changing; }; // what a solid scatters of what it stops; 1: what its program gives a point changes with nothing that says so (it reads the time)
 struct Material_Blocks {
     Material_Coat coat;
     Material_Fuzz fuzz;
@@ -334,14 +334,20 @@ struct Bvh_Triangle {
 };
 
 // Probe.cell.w flags: traced for its cell and seeing out of geometry; inside
-// geometry; chosen to be traced this frame (ddgi_select.comp, until ddgi_relocate.comp).
+// geometry; chosen to be traced this frame (ddgi_select.comp, until
+// ddgi_relocate.comp); what is kept of its rays is what they found from where
+// it is (probe_hits.slang); and the times it moved in its cell, PROBE_MOVE each.
 #define PROBE_VALID 1
 #define PROBE_BURIED 2
 #define PROBE_CHOSEN 4
+#define PROBE_KEPT 8
+#define PROBE_MOVE 16
+#define PROBE_MOVES 0x70
 struct Probe {
     float4 offset; // xyz from the center of its cell, metres; w how near it is to the change that keeps it awake, 0 to 1 (ddgi_touch.comp)
     int4 cell;     // xyz the cell of the world it was last traced for, w PROBE_* flags
     uint4 frames;  // x when it was last traced, y last used by a pixel, z last reached by a change
+    uint4 hits;    // of what it keeps of its rays (probe_hits.slang), the update, plus one, that last traced them all (x), lit them all (y) and checked them against the changes of the scene (z)
 };
 
 // ---------------------------------------------------------------- helpers
