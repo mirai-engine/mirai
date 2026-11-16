@@ -115,7 +115,7 @@ read :: proc(process:^Process,stream:Stream,buffer:[]byte) -> (count:int,open:bo
     file:=&process.stdout if stream==.Stdout else &process.stderr
     if file^==nil {return 0,false}
     for count<len(buffer) {
-        ready,error:=os.pipe_has_data(file^)
+        ready,error:=pipe_has_data(file^)
         if error==nil && !ready {return count,true}
         read:=0
         if error==nil {read,error=os.read(file^,buffer[count:])}
@@ -127,6 +127,19 @@ read :: proc(process:^Process,stream:Stream,buffer:[]byte) -> (count:int,open:bo
         count+=read
     }
     return count,true
+}
+
+// Like os.pipe_has_data: whether reading the pipe returns at once with data,
+// and .Broken_Pipe once its write end is closed and nothing is left to read.
+pipe_has_data :: proc(file:^os.File) -> (ready:bool,error:os.Error) {
+    ready,error=os.pipe_has_data(file)
+    when ODIN_OS==.Darwin {
+        // pipe_hup_with_in: macOS polls a pipe whose write end is closed as
+        // readable also when it is empty, and os.pipe_has_data looks at that
+        // before the hang-up (not yet reported upstream).
+        if ready && pipe_unread(file)==0 {return false,.Broken_Pipe}
+    }
+    return
 }
 
 // The pipe never gets more than this in one write: on Windows it holds 4 KB

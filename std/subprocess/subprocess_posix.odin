@@ -18,6 +18,7 @@ when ODIN_OS==.Darwin {
 foreign libc {
     getpriority :: proc(which:c.int,who:u32) -> c.int ---
     setpriority :: proc(which:c.int,who:u32,priority:c.int) -> c.int ---
+    ioctl :: proc(fd:posix.FD,request:c.ulong,#c_vararg args:..rawptr) -> c.int ---
 }
 
 PRIO_PROCESS :: 0
@@ -28,10 +29,19 @@ _start :: proc(desc:os.Process_Desc,limits:Limits) -> (process:Process,error:os.
     process=spawn(desc,limits,false) or_return
     // The watcher joins the group of the child and kills it once this process
     // is gone. Both set the group, so that it is in it whichever runs first.
+    // The watcher is forked with every descriptor of this process; start
+    // returns once it closed them all, which ends this pipe.
+    closed:[2]posix.FD
+    if posix.pipe(&closed)!=.OK {error=os.Platform_Error(posix.errno());release(&process);return}
+    for fd in closed {_=posix.fcntl(fd,.SETFD,posix.FD_CLOEXEC)}
     parent:=posix.getpid()
     watcher:=posix.fork()
     if watcher==0 {watch(posix.pid_t(process.pid),parent)}
+    posix.close(closed[1])
+    defer posix.close(closed[0])
     if watcher<0 {error=os.Platform_Error(posix.errno());release(&process);return}
+    end:u8
+    for posix.read(closed[0],cast([^]byte)&end,1)<0 && posix.errno()==.EINTR {}
     _=posix.setpgid(watcher,posix.pid_t(process.pid))
     process.tree=uintptr(watcher)
     return

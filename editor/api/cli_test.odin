@@ -96,7 +96,7 @@ session_read :: proc(s:^Session,wait:=10*time.Second) -> string {
             }
         }
         if time.tick_diff(deadline,time.tick_now())>wait {return ""}
-        if has,_:=os.pipe_has_data(s.stdout);has {
+        if has,_:=subprocess.pipe_has_data(s.stdout);has {
             n,_:=os.read(s.stdout,chunk[:])
             append(&s.pending,..chunk[:n])
         } else {
