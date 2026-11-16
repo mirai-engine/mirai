@@ -8,11 +8,11 @@ import "core:slice"
 import "core:testing"
 import "core:time"
 
-// Walks a tree and counts what breaks it: children outside the sphere or the
-// reach of their group, power that does not add up, spots under a group that
-// does not say so, and in seen the leaves of each light.
+// Walks a tree and counts what breaks it: children outside the sphere, the
+// reach or the directions of their group, power that does not add up, and in
+// seen the leaves of each light.
 @(private = "file")
-light_tree_faults :: proc(nodes: []Gpu_Light_Node, seen: []int) -> (outside, spots_split, depth_max: int) {
+light_tree_faults :: proc(nodes: []Gpu_Light_Node, seen: []int) -> (outside, depth_max: int) {
 	stack: [dynamic]struct {node, depth: int}
 	defer delete(stack)
 	append(&stack, struct {node, depth: int}{0, 1})
@@ -28,9 +28,9 @@ light_tree_faults :: proc(nodes: []Gpu_Light_Node, seen: []int) -> (outside, spo
 			c := nodes[child]
 			gap := linalg.length(c.center_radius.xyz - n.center_radius.xyz)
 			if gap + c.center_radius.w > n.center_radius.w * 1.0001 + 1e-4 || gap + c.power_reach.w > n.power_reach.w * 1.0001 + 1e-4 {outside += 1}
-			if c.flags & GPU_LIGHT_NODE_SPOT != 0 && n.flags & GPU_LIGHT_NODE_SPOT == 0 {spots_split += 1}
-			// The directions a child faces are within those of its group.
-			if n.cone.w < math.PI && math.acos(clamp(linalg.dot(c.cone.xyz, n.cone.xyz), -1, 1)) + c.cone.w > n.cone.w + 1e-3 || c.emission > n.emission {outside += 1}
+			// The directions a child faces are within those of its group, its
+			// fall-off no wider and the cones of its lights no narrower.
+			if n.cone.w < math.PI && math.acos(clamp(linalg.dot(c.cone.xyz, n.cone.xyz), -1, 1)) + c.cone.w > n.cone.w + 1e-3 || c.widths[0] > n.widths[0] || c.widths[1] < n.widths[1] {outside += 1}
 			append(&stack, struct {node, depth: int}{child, at.depth + 1})
 		}
 		power := nodes[at.node + 1].power_reach.xyz + nodes[n.child].power_reach.xyz
@@ -80,13 +80,12 @@ the_light_tree_holds_every_light_inside_the_bounds_of_its_nodes :: proc(t: ^test
 	testing.expect_value(t, len(nodes), 2 * (len(lights) - 1) - 1)
 	testing.expect(t, cost > 0 && cost == light_tree_cost(nodes[:]))
 	seen: [300]int
-	outside, spots_split, depth_max := light_tree_faults(nodes[:], seen[:])
+	outside, depth_max := light_tree_faults(nodes[:], seen[:])
 	for count, i in seen {
 		testing.expectf(t, count == (0 if i == 11 else 1), "light %d is in %d leaves", i, count)
 		testing.expectf(t, i == 11 ? leaves[i] == LIGHT_TREE_NONE : nodes[leaves[i]].child == u32(i), "the leaf of light %d", i)
 	}
 	testing.expect_value(t, outside, 0)
-	testing.expect_value(t, spots_split, 0)
 	testing.expect_value(t, light_tree_unordered(nodes[:]), 0)
 	testing.expectf(t, depth_max <= LIGHT_TREE_DEPTH, "%d levels", depth_max)
 	// The lights of a reach class and a kind are one subtree: the nodes of one
@@ -119,14 +118,14 @@ a_refit_light_tree_keeps_its_bounds_and_is_the_built_one_where_the_lights_stay :
 	dirty: [dynamic]Pool_Range
 	defer {delete(nodes); delete(built); delete(keys); delete(leaves); delete(built_leaves); delete(dirty)}
 	cost, _ := light_tree_build(&nodes, &keys, &leaves, lights[:])
-	// Other colors, intensities, ranges of their reach class and sizes in the
-	// same places: the tree a build gives.
+	// Other colors as bright and ranges of their reach class in the same
+	// places, which a build splits alike: the tree a build gives.
 	for i := 0; i < len(lights); i += 7 {
-		lights[i].color_intensity = {rand.float32_range(0.1, 1), 0.5, 0.2, rand.float32_range(0.5, 40)}
+		gray := luminance_of(lights[i].color_intensity.xyz)
+		lights[i].color_intensity.xyz = {gray, gray, gray}
 		class := light_reach_class(lights[i])
 		low := f32(0.1) if class == 0 else math.pow(f32(4), f32(class) - 1)
 		lights[i].position_range.w = rand.float32_range(low, 0.99 if class == 0 else 3.9 * low)
-		lights[i].size.x = rand.float32_range(0, 0.6)
 		clear(&dirty)
 		cost += light_tree_refit(nodes[:], lights[:], leaves[i], &dirty)
 		has_root, has_leaf := false, false
@@ -138,17 +137,22 @@ a_refit_light_tree_keeps_its_bounds_and_is_the_built_one_where_the_lights_stay :
 	}
 	light_tree_build(&built, &keys, &built_leaves, lights[:])
 	testing.expect(t, slice.equal(nodes[:], built[:]), "a refit where no light moved is the tree a build gives")
-	testing.expect(t, abs(cost - light_tree_cost(nodes[:])) <= 1e-6 * cost)
-	// Lights that moved far: the refit tree holds them still.
+	testing.expect(t, abs(cost - light_tree_cost(nodes[:])) <= 1e-4 * cost)
+	// Lights that moved far, brightened and grew: the refit tree holds them
+	// still, and costs more.
 	for i := 3; i < len(lights); i += 5 {
 		lights[i].position_range.xyz += {rand.float32_range(-30, 30), rand.float32_range(-3, 3), rand.float32_range(-30, 30)}
-		light_tree_refit(nodes[:], lights[:], leaves[i], nil)
+		lights[i].color_intensity.w *= 3
+		lights[i].size.x = rand.float32_range(0, 0.6)
+		cost += light_tree_refit(nodes[:], lights[:], leaves[i], nil)
 	}
+	testing.expect(t, abs(cost - light_tree_cost(nodes[:])) <= 1e-4 * cost)
+	light_tree_build(&built, &keys, &built_leaves, lights[:])
+	testing.expectf(t, light_tree_cost(built[:]) < cost, "a build of the lights where they are costs less than the refit tree: %v against %v", light_tree_cost(built[:]), cost)
 	seen: [300]int
-	outside, spots_split, _ := light_tree_faults(nodes[:], seen[:])
+	outside, _ := light_tree_faults(nodes[:], seen[:])
 	for count, i in seen {testing.expectf(t, count == 1, "light %d is in %d leaves", i, count)}
 	testing.expect_value(t, outside, 0)
-	testing.expect_value(t, spots_split, 0)
 	// Refitting light by light gives what refitting the whole tree gives.
 	resize(&built, len(nodes))
 	copy(built[:], nodes[:])
@@ -304,7 +308,7 @@ the_light_tree_is_refit_while_each_light_keeps_its_kind :: proc(t: ^testing.T) {
 	testing.expect(t, len(s.light_node_ranges) > 0 && s.light_node_ranges[0].count < u32(len(s.light_tree)), "and the nodes above it")
 	testing.expect_value(t, s.lights[42].position_range.x, lights[42].position.x)
 	seen: [100]int
-	outside, _, _ := light_tree_faults(s.light_tree[:], seen[:])
+	outside, _ := light_tree_faults(s.light_tree[:], seen[:])
 	testing.expect_value(t, outside, 0)
 	uploaded(s)
 	scene_lights_given(r, lights[:], {}, {})
@@ -420,20 +424,61 @@ light_update_benchmark_reports_the_time_of_moving_one_light :: proc(t: ^testing.
 	}
 }
 
+// The tree splits each part where its halves cost least: two crowds far
+// apart are the two children of the root, and two rows of spots, one that
+// looks down and one up, long beside each other, split by what they face
+// before they split along the rows, which a split by place alone would do.
 @(test)
-the_lights_of_a_run_follow_a_curve_that_keeps_neighbors_together :: proc(t: ^testing.T) {
-	point :: proc(p: Vec3) -> Gpu_Light {return {position_range = {p.x, p.y, p.z, 5}, direction_cone = {0, 0, 0, GPU_LIGHT_POINT}}}
-	near := light_curve_place(point({1.1, 2, 3}))
-	testing.expect_value(t, light_curve_place(point({1.2, 2.1, 3.1})), near)
-	testing.expect(t, light_curve_place(point({40, 2, 3})) != near)
-	testing.expect_value(t, light_curve_place(point({transmute(f32)u32(0x7fc00000), 0, 0})), light_curve_place(point({-1e7, 0, 0})))
-	spot := point({1.1, 2, 3})
-	spot.direction_cone = {0, -1, 0, 0.8}
-	testing.expect(t, light_curve_place(spot) > light_curve_place(point({1e6, 1e6, 1e6})))
+the_light_tree_groups_lights_by_place_and_by_what_they_face :: proc(t: ^testing.T) {
+	nodes: [dynamic]Gpu_Light_Node
+	keys: [dynamic]Light_Key
+	leaves: [dynamic]u32
+	defer {delete(nodes); delete(keys); delete(leaves)}
+	crowds: [32]Gpu_Light
+	for &l, i in crowds {
+		x := f32(-20 if i % 2 == 0 else 20) + rand.float32_range(-2, 2)
+		l = {position_range = {x, rand.float32_range(0, 3), rand.float32_range(-2, 2), 6}, color_intensity = {1, 1, 1, rand.float32_range(1, 4)}, direction_cone = {0, 0, 0, GPU_LIGHT_POINT}}
+	}
+	light_tree_build(&nodes, &keys, &leaves, crowds[:])
+	testing.expect(t, light_tree_halves(nodes[:], crowds[:], proc(l: Gpu_Light) -> bool {return l.position_range.x < 0}), "each crowd is a child of the root")
+	rows: [32]Gpu_Light
+	for &l, i in rows {
+		up := i % 2 == 0
+		l = {position_range = {f32(i / 2) * 1.3 - 10, 3, 0.5 if up else -0.5, 6}, color_intensity = {1, 1, 1, 2}, direction_cone = {0, 1 if up else -1, 0, math.cos(f32(0.6))}}
+	}
+	light_tree_build(&nodes, &keys, &leaves, rows[:])
+	testing.expect(t, light_tree_halves(nodes[:], rows[:], proc(l: Gpu_Light) -> bool {return l.direction_cone.y > 0}), "each row is a child of the root")
+	testing.expectf(t, nodes[1].cone.w < 1 && nodes[nodes[0].child].cone.w < 1, "each child faces one way: %v, %v", nodes[1].cone, nodes[nodes[0].child].cone)
+	testing.expect_value(t, light_part(crowds[0]), u32(light_reach_class(crowds[0])))
+	testing.expect_value(t, light_part(rows[0]), LIGHT_REACH_CLASSES + u32(light_reach_class(rows[0])))
+}
+
+// Whether the two children of the root of a tree hold the lights `of` says
+// and the others, each all of one kind.
+@(private = "file")
+light_tree_halves :: proc(nodes: []Gpu_Light_Node, lights: []Gpu_Light, of: proc(l: Gpu_Light) -> bool) -> bool {
+	kinds: [2]int // of each child, +1 for a light `of` says, -1 for another
+	counts: [2]int
+	for child, k in ([2]int{1, int(nodes[0].child)}) {
+		pending := make([dynamic]int, context.temp_allocator)
+		append(&pending, child)
+		for len(pending) > 0 {
+			at := pop(&pending)
+			n := nodes[at]
+			if n.flags & GPU_LIGHT_NODE_LEAF != 0 {
+				kinds[k] += 1 if of(lights[n.child]) else -1
+				counts[k] += 1
+				continue
+			}
+			append(&pending, at + 1, int(n.child))
+		}
+	}
+	return abs(kinds[0]) == counts[0] && abs(kinds[1]) == counts[1] && kinds[0] * kinds[1] < 0
 }
 
 // A group of spots faces what they face: two that look down light nothing
-// above them, and a tilted one widens the cone by half the angle between.
+// above them and keep the cone each shines whole in, and a tilted one widens
+// the cone by half the angle between.
 @(test)
 light_groups_face_the_directions_of_their_lights :: proc(t: ^testing.T) {
 	down := Gpu_Light{position_range = {0, 3, 0, 5}, color_intensity = {1, 1, 1, 2}, direction_cone = {0, -1, 0, math.cos(f32(0.6))}}
@@ -447,20 +492,21 @@ light_groups_face_the_directions_of_their_lights :: proc(t: ^testing.T) {
 	defer delete(leaves)
 	light_tree_build(&nodes, &keys, &leaves, lights[:2])
 	root := nodes[0]
-	testing.expectf(t, abs(root.cone.y + 1) < 1e-5 && root.cone.w < 1e-5 && abs(root.emission - 0.6) < 1e-5, "the cone of two that look down: %v %v", root.cone, root.emission)
+	whole := 0.6 * f32(GPU_LIGHT_SPOT_FULL)
+	testing.expectf(t, abs(root.cone.y + 1) < 1e-5 && abs(root.cone.w - whole) < 1e-5 && abs(f32(root.widths[0]) * LIGHT_WIDTH_STEP - (0.6 - whole)) < 1e-4 && abs(f32(root.widths[1]) * LIGHT_WIDTH_STEP - whole) < 1e-4, "the cone of two that look down: %v %v", root.cone, root.widths)
 	tilt := f32(math.PI / 3)
 	lights[2].position_range.x = 2
 	lights[2].direction_cone.xyz = {math.sin(tilt), -math.cos(tilt), 0}
 	light_tree_build(&nodes, &keys, &leaves, lights[:])
 	root = nodes[0]
-	testing.expectf(t, abs(root.cone.w - tilt / 2) < 1e-4, "a cone of half the angle between: %v", root.cone)
+	testing.expectf(t, abs(root.cone.w - (tilt / 2 + whole)) < 1e-4 && abs(f32(root.widths[1]) * LIGHT_WIDTH_STEP - whole) < 1e-4, "a cone of half the angle between: %v %v", root.cone, root.widths)
 	point := down
 	point.direction_cone = {0, 0, 0, GPU_LIGHT_POINT}
 	lights[2] = point
 	light_tree_build(&nodes, &keys, &leaves, lights[:])
 	testing.expect(t, nodes[0].cone.w >= math.PI, "with a point it faces every way")
 	seen: [3]int
-	outside, _, _ := light_tree_faults(nodes[:], seen[:])
+	outside, _ := light_tree_faults(nodes[:], seen[:])
 	testing.expect_value(t, outside, 0)
 }
 

@@ -1,11 +1,11 @@
 #include "native.slang"
 // The light each cell of each volume (y) receives, from the light of media
 // (media.slang): the sun through the scene, times what the medium lets
-// through over its cells towards the sun, one local light the tree of lights
-// picks by turns, and the light around. rgb keeps what comes from around and
-// from the local lights, a what the sun gives, which the march takes with
-// the phase towards the eye; what the frames before found weighs
-// VOLUME_HISTORY. A cell without density receives nothing.
+// through over its cells towards the sun, the local lights and the light
+// around, the same in every frame for the same scene. rgb keeps what comes
+// from around and from the local lights, a what the sun gives, which the
+// march takes with the phase towards the eye. A cell without density
+// receives nothing.
 //! variant hw MIRAI_HW_RT=1
 #define PARTICLES_WRITABLE
 #include "media.slang"
@@ -15,7 +15,6 @@
 #define MIRAI_GROUP_Y 1
 #define MIRAI_GROUP_Z 1
 #define VOLUME_SUN_STEPS 32u
-#define VOLUME_HISTORY 0.75
 
 struct Params_Block { uint mode; uint emitters; uint count; uint parity; uint step; uint last; uint volumes; uint iteration; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
@@ -49,10 +48,7 @@ void main(uint3 id : SV_DispatchThreadID) {
         }
         sun = luminance(trace_transmission(position, frame.sun_direction.xyz, sun_reach(position, frame.sun_direction.xyz))) * exp(-optical);
     }
-    float pick = float(hash_u32(at * 9781u + frame.frame_index * 26699u) >> 8) / 16777216.0;
     float3 up = float3(0.0, 1.0, 0.0);
-    float4 now = float4(media_ambient(position, up) + media_local_light(position, up, 0.0, pick), sun);
-    float4 before = asfloat(particle_world_bytes.Load4(address));
-    if (all(isfinite(before)) && any(before != float4(0.0))) now = lerp(now, before, VOLUME_HISTORY);
+    float4 now = float4(media_ambient(position, up) + media_local_light(position, up, 0.0), sun);
     particle_world_bytes.Store4(address, asuint(float4(finite_or_zero(now.rgb), isfinite(now.a) ? max(now.a, 0.0) : 0.0)));
 }

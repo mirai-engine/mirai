@@ -6,10 +6,10 @@
 // (fog.fog_record): the medium of the volumes at a point of the cell, the
 // same place in every frame, with the wisps of the variable ones as they are
 // now; and the light that point gets for each metre of what it scatters,
-// from the sun and from one local light the tree of lights picks for what it
-// gives the point, by what the maps of the view hold of their shadows and of
-// the glass on their way (a light without maps has no shadow there), and from
-// around, by the probe volume. No ray. Only the light keeps what the frame before
+// from the sun and from the local lights, the same in every frame
+// (media_local_light), by what the maps of the view hold of their shadows and
+// of the glass on their way, a ray where none holds the point, and from
+// around, by the probe volume. Only the light keeps what the frame before
 // found where the cell was then, by fog.history: wisps that drift through a
 // shaft take its light at once, with no trail. It is not kept where what casts
 // shadows changed since then on the way of its light, or its light
@@ -28,6 +28,7 @@
 #define SHADOW_GLASS_SLOT SLOT_PASS8
 // The cells mark the pages of the maps they read, for the next frame.
 #define SHADOW_MARKS_SLOT SLOT_PASS9
+#define MIRAI_LIGHT_MAPS
 #include "media.slang"
 #include <extension_hooks.slang>
 #define FOG_VOLUMES_SLOT SLOT_PASS2
@@ -215,7 +216,6 @@ void main(uint3 id : SV_DispatchThreadID) {
     float along;
     float3 position = fog_cell_point(id, 0u, uv, along);
     float3 eye_ray = view_direction(uv);
-    float2 local_pick = sequence_point(uint2(id.y + id.z * 3121u, id.x), 13u, 0u);
     // About how far the cell reaches across and along the view.
     float depth = fog_slice_depth(float(id.z) + along);
     float width = depth * length(view_ray(uv + 1.0 / float2(fog.grid.xy)) - view_ray(uv));
@@ -238,7 +238,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     // The volumes that take the light of the sun dim what reaches the point from above and from the sun.
     float3 sun = frame.sun_direction.w > 0.5 ? fog_cell_sun(id, position, eye_ray, g, taken, changed) : float3(0.0);
     float3 light = sun * mean_sun_only + render_units(glow);
-    if (luminance(mean.rgb) > 0.0) light += mean.rgb * (media_ambient(position, -eye_ray) * fog_shade(position, float3(0.0, 1.0, 0.0), taken) + media_local_light(position, eye_ray, g, local_pick.y, changed) + sun);
+    if (luminance(mean.rgb) > 0.0) light += mean.rgb * (media_ambient(position, -eye_ray) * fog_shade(position, float3(0.0, 1.0, 0.0), taken) + media_local_light(position, eye_ray, g, changed) + sun);
     float4 now = float4(light / amount, 1.0);
     float4 before;
     if (!changed && fog_before(id, before)) now = lerp(now, before, fog.history);

@@ -3,6 +3,7 @@ package fog
 import "core:fmt"
 import "core:math"
 import "core:math/linalg"
+import "core:mem"
 import "core:path/filepath"
 import "core:testing"
 import render "mirai:engine/render"
@@ -478,5 +479,91 @@ fog_past_the_grid_scatters_no_sun_the_scene_hides :: proc(t: ^testing.T) {
 	shown := seen[2] - seen[1]
 	testing.expectf(t, shown > 30, "with the roof off, the fog down the hall shows the sun: %.1f, %.1f without it", seen[2], seen[1])
 	testing.expectf(t, abs(seen[0] - seen[1]) < 0.03 * shown, "under the roof, the fog down the hall past the grid scatters no sun: %.1f, %.1f without it, open %.1f", seen[0], seen[1], seen[2])
+	expect_clean(t, f.device)
+}
+
+// The light of the cells of the grid as the last frame left it (fog_light),
+// rgb of each and a, as floats; nil without it.
+@(private = "file")
+fog_light_read :: proc(t: ^testing.T, f: ^Gpu_Fixture) -> [][4]f32 {
+	rhi.device_wait_idle(f.device)
+	key := base.name_hash("fog light") | 1
+	for entry in f.renderer.main.extension_textures {
+		if entry.key != key {continue}
+		halves := make([][4]f16, int(entry.desc.width * entry.desc.height * max(entry.desc.depth, 1)), context.temp_allocator)
+		if !testing.expect(t, rhi.texture_read(f.device, entry.textures[entry.asked % 2], mem.slice_to_bytes(halves)), rhi.device_error(f.device)) {return nil}
+		light := make([][4]f32, len(halves), context.temp_allocator)
+		for h, i in halves {light[i] = {f32(h.x), f32(h.y), f32(h.z), f32(h.w)}}
+		return light
+	}
+	testing.expect(t, false, "the fog has its light")
+	return nil
+}
+
+// A still fog lit by three lamps, with shadows and without, that scatters
+// forward, where each lamp gives a cell more or less by where the eye looks
+// from: from the frame the lamps turn on, within a few frames each cell takes
+// what each lamp gives it alone, added up (no lamp dropped, no light that
+// leaks), and keeps it from frame to frame, with no light that comes and goes.
+@(test)
+fog_cells_take_what_each_light_gives_them_and_hold_it :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	if !gpu_fixture_init(t, f) {return}
+	defer gpu_fixture_destroy(f)
+	r := &f.renderer
+	wall := gpu.Instance_Desc{object_id = 1, mesh = f.cube, transform = trs({0, 0, -30}, {200, 200, 1}), tint = {0, 0, 0}}
+	gpu.scene_update(r, 0, {wall}, true)
+	gpu.scene_set_environment(r, {}, {})
+	camera := gpu.Camera{position = {0, 0, 0}, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.1, far = 200, exposure = gpu.UNIT_EXPOSURE}
+	haze := Fog_Volume{density = 0.1, color = {1, 1, 1}, anisotropy = 0.6}
+	places := []volume.Volume{{shape = .Box, extents = {0.5, 0.5, 0.5}}}
+	poses := []mm.Transform{{position = {0, 0, -6}, rotation = 1, scale = {20, 20, 12}}}
+	lamps := [3][3]f32{{-2, 1, -5}, {2.5, -0.5, -7}, {0.5, 2, -9}}
+	FRAMES :: 40
+	// The most a cell with a medium of a differs from b, against b.
+	apart :: proc(a, b: [][4]f32) -> (worst: f32) {
+		for cell, i in b {
+			if a[i].a < 1 || cell.a < 1 || cell.g < 1e-3 {continue}
+			worst = max(worst, linalg.max(linalg.abs(a[i].rgb - cell.rgb) / cell.rgb))
+		}
+		return
+	}
+	for shadowless in ([2]bool{false, true}) {
+		alone: [3][][4]f32
+		seen: [FRAMES][][4]f32
+		// Each lamp alone, none, then the three, turned on together.
+		for run in 0 ..= 4 {
+			for len(r.scene.lights) > 0 {gpu.scene_light_remove(r, 0)}
+			for lamp, i in lamps {
+				if run == 3 || run < 3 && i != run {continue}
+				gpu.scene_light_update(r, u32(len(r.scene.lights)), {position = lamp, color = {1, 0.9, 0.8}, intensity = 4 * math.PI, range = 12, radius = 0.05, indirect = 1, scattering = 1, shadowless = shadowless})
+			}
+			for frame in 0 ..< FRAMES {
+				fog_frame(t, f, camera, 0, {haze}, places, poses, cut = frame == 0 && run < 4)
+				if run < 4 && frame + 1 < FRAMES {continue}
+				seen[frame] = fog_light_read(t, f)
+				if seen[frame] == nil {return}
+			}
+			if run < 3 {alone[run] = seen[FRAMES - 1]}
+		}
+		sum := make([][4]f32, len(alone[0]), context.temp_allocator)
+		lit := 0
+		for &cell, i in sum {
+			cell = {alone[0][i].r + alone[1][i].r + alone[2][i].r, alone[0][i].g + alone[1][i].g + alone[2][i].g, alone[0][i].b + alone[1][i].b + alone[2][i].b, alone[0][i].a}
+			lit += int(cell.a >= 1 && cell.g >= 1e-3)
+		}
+		what := "without shadows" if shadowless else "with shadows"
+		testing.expectf(t, lit > 1000, "%s: the lamps light %d cells", what, lit)
+		settled := -1
+		for k in 0 ..< FRAMES {
+			if apart(seen[k], sum) < 0.03 {settled = k + 1;break}
+		}
+		testing.expectf(t, settled >= 0 && settled <= 4, "%s: a cell takes what each lamp gives it alone, added up, %d frames after they turn on (%.3f apart then, %.3f at last)", what, settled, apart(seen[0], sum), apart(seen[FRAMES - 1], sum))
+		flicker: f32
+		for k in FRAMES - 10 ..< FRAMES {flicker = max(flicker, apart(seen[k], seen[k - 1]))}
+		testing.expectf(t, flicker < 0.01, "%s: a cell keeps its light from frame to frame, %.4f apart at most", what, flicker)
+		free_all(context.temp_allocator)
+	}
 	expect_clean(t, f.device)
 }

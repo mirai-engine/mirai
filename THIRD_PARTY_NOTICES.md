@@ -104,8 +104,10 @@ are kept here and, where the license asks for it, in the header of the file.
   Game.
 - **pbrt-v4** (Apache-2.0; © 1998-2020 Matt Pharr, Wenzel Jakob and Greg Humphreys),
   <https://github.com/mmp/pbrt-v4>. The watertight test of a ray and a triangle of
-  `shaders/include/trace.slang` and `std/math/ray.odin`, and the union of cones of
-  `render/light_tree.odin`. Game.
+  `shaders/include/trace.slang` and `std/math/ray.odin`; the build of the light tree by
+  the cost of its splits, with the bounds of the directions its lights shine in and the
+  union of their cones, of `render/light_tree.odin`; and the bounds of those directions
+  and the clamped cosine of a difference of `shaders/include/lighting.slang`. Game.
 - **lightyear** (MIT or Apache-2.0; © the lightyear contributors),
   <https://github.com/cBournhonesque/lightyear>. The input delay of `net/clock.odin`. Game.
 - **MaterialX** (Apache-2.0; © Contributors to the MaterialX Project),

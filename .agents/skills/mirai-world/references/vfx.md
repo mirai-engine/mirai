@@ -201,9 +201,9 @@ layer, `x` is the density and `y` how much it glows. A flat grid is not drawn (p
 
 - Once per frame, after the steps, each cell with density takes the light it receives with the
   light of the engine's media (`shaders/include/media.slang`, the same as `fog`): the sun through
-  the scene and through what the medium lets pass cell by cell toward it, a local light in turns
-  and the ambient one. It stores it in the world buffer, added to that of the previous frames: one
-  light per turn gives all.
+  the scene and through what the medium lets pass cell by cell toward it, the local lights as the
+  fog takes them and the ambient one. It stores it in the world buffer, the same in every frame of
+  a still scene, with no history: a light that turns on is whole in the frame it does.
 - In each view, before the sprites, a ray from the camera walks the region in half-cell steps up
   to the scene or the pass's glass: at each step it adds what the medium scatters of that light
   (the sun with the medium's phase toward the eye) and what it glows, behind what the previous
