@@ -9,15 +9,16 @@
 // reflectance and the part of it that got there. The sun gives it its own
 // light, as its normal and its material take it, by the part of the sun that
 // got there: its shape is that of the pixels, not of the points. Then the
-// lights that cast no shadows as they are, those of extensions each through
-// its ray, and the other side of a surface that lets light through by its own
-// rays (direct_lighting). It also leaves 1 where a sample met what changed,
-// for TAA.
+// lights that cast no shadows as they are, from the list of its tile
+// (light_lists.slang), those of extensions each through its ray, and the
+// other side of a surface that lets light through by its own rays
+// (direct_lighting). It also leaves 1 where a sample met what changed, for
+// TAA.
 #define GBUFFER_ALBEDO SLOT_PASS3
 #define GBUFFER_NORMAL SLOT_PASS0
 #define SUN_SHADOW_SLOT SLOT_PASS8
 #define SHADOW_TINT_SLOT SLOT_PASS9
-#include "lighting.slang"
+#include "light_lists.slang"
 #include "shadow_maps.slang"
 #include "gbuffer.slang"
 #include <extension_hooks.slang>
@@ -75,12 +76,13 @@ float3 filter_light(int2 p, float depth, float3 normal, float3 open, float part,
             known += luminance(irradiance);
         }
     }
-    light += shadowless_lighting(s, known);
+    light += light_list_lighting(s, known, light_list_of_pixel(p));
     float bias = view_bias(pixel.distance);
 #ifdef MIRAI_HOOK_LIGHTS
     light += direct_lighting(s, bias, 0u, LIGHTS_EXTENSION);
 #endif
-    if (shading_transmits(s)) light += direct_lighting(shading_back(s), bias, params.hard, LIGHTS_ALL);
+    // Only a layer lets light through: without layers in sight the pass holds no ray of its own.
+    if (!MIRAI_GBUFFER_NO_LAYERS && shading_transmits(s)) light += direct_lighting(shading_back(s), bias, params.hard, LIGHTS_ALL);
     return finite_or_zero(light);
 }
 

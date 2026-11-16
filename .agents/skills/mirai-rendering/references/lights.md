@@ -81,8 +81,9 @@
   do not enter the cut of a point or trace rays: the frame constants give the root of their tree
   (`shadowless_lights`) and `shadowless_lighting` adds what it gives, like the
   [unshadowed light](#unshadowed-light-of-a-pixel) of the others. The direct filter adds it to the
-  pixel as it is, without a shadow; `direct_lighting` (hits, probes, glass, overlays, the points
-  that trace their own rays and the points of media) without rays, and so does the reference.
+  pixel as it is, without a shadow, from the [list](#lists-of-a-cell) of its tile;
+  `direct_lighting` (hits, probes, glass, overlays, the points that trace their own rays and the
+  points of media) without rays, and so does the reference.
 - **Changes.** While the lights keep their number and each its class (with shadows or without,
   directed or not, and its reach class), `scene_light_update` refits
   the leaf that changed and the groups above it (`light_tree_refit`), past `LIGHT_REFITS_MAX` in a
@@ -98,8 +99,9 @@
 
 `local_lighting` and `lights_estimate` walk the tree from the root without entering the groups
 that do not reach it. The pixels of a view's direct light take the lights with shadows from the
-[grid](#direct-light-of-a-view) and those without from it; hits, probes, glass, overlays and the
-points that trace their own rays take both kinds from it:
+[grid](#direct-light-of-a-view) and those without from the [list](#lists-of-a-cell) of their
+tile, which holds what the walks would visit; hits, probes, glass, overlays and the points that
+trace their own rays take both kinds from the tree:
 
 - A group represents its lights as a sphere while its bounded error is small compared with the
   light that reaches the point: by the curvature of the falloff and of the cosine across its
@@ -113,6 +115,35 @@ points that trace their own rays take both kinds from it:
   lights that reach a point, and it is the same every frame. Where the groups to open fit, the
   order does not change the light: the walk opens them last held first, weighing no need, and
   starts again in order only when it is cut short.
+
+### Lists of a cell
+
+`render/light_lists.odin`, `light_lists.comp`, `light_lists.slang`:
+
+- What both walks of the lights without shadows visit is decided once for the points of a cell,
+  and each point sums that list with no walk. The cells of a view are the tiles of its screen,
+  listed again each frame from the box of the points of their pixels and that of their normals.
+- **What a list holds**, in the order of the tree: a light; a group that stands for its lights at
+  every point of the cell; a group that may open at some point, followed by what lies under it.
+  A group no light of which reaches the cell is left out with what lies under it, and one that
+  opens whole at every point is left out alone.
+- **The sum is that of the walk.** A point weighs each entry with the functions the walks weigh
+  a node with (`estimate_node`, `local_node`): its own estimate, its own doubt, its own shares
+  between a group and what lies under it. So a list changes no light: it is the same on both
+  sides of the border of a cell and whichever cell holds the point, and a list may hold more
+  than a point needs, never less. A rule of the walks changes there and nowhere else.
+- **The bounds are loose on the safe side.** A group stands for the cell only where the most it
+  may err over the box stays under `LIGHTS_GROUPED` of the least light the estimate gives the
+  cell; the light of the sun and of the lights with shadows, which a point also errs against,
+  is left out of that least.
+- **A list is bounded**: it keeps as many nodes of each walk as the walk visits at most, so what
+  a walk gives a point fits the list of a cell no wider than the point. A cell that would list
+  more lists none and each of its points walks the tree, so its light is still that of the
+  walk and nothing shows at its border; `Stats.light_lists` counts it (`walked`), and the
+  status of the editor shows it.
+- The lists are those of the whole light of each light (`LIGHT_SHARE_ALL`): a cell for the
+  probes or the media needs its own, since the estimate a group errs against is that of the
+  share.
 
 ### Cutoff of a point that traces its own rays
 
@@ -179,7 +210,7 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   the part of it that got there, and the part of the sun that did, over the points of that window
   within the noise of the samples, and then each spread over the penumbra radius that what hid it
   gives. The pixels take them from the points around them of their surface. The last pass also
-  adds the [lights that cast no shadows](#light-tree) as they are, the lights of
+  adds the [lights that cast no shadows](#lists-of-a-cell) as they are, the lights of
   [extensions](views.md#extension-hooks-and-constants) each with its hard ray, and the other side
   of a surface that lets light through (`direct_lighting`).
 - **Shadow maps** (`render/shadow_maps.odin`; every renderer draws them). Every frame, from the
@@ -310,7 +341,7 @@ Tests: the shadow ones of `render/render_test.odin` (`render_sun_shadow_is_ray_t
 and `render_an_origin_jump_gives_what_whole_maps_give`, and for the lights and the sun without
 shadows `render_a_light_without_shadows_lights_through_what_holds_it`, and for a mesh without
 them `render_a_mesh_without_shadows_lets_the_sun_through`) and, for the grid and
-the groups of lights, `render_many_lights_match_their_reference`,
+the groups of lights and their lists, `render_many_lights_match_their_reference`,
 `render_lights_that_few_reach_at_a_time_are_each_lit` and
 `render_groups_of_lights_give_what_their_lights_give`.
 

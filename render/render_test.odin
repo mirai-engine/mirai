@@ -890,7 +890,7 @@ region_mean :: proc(pixels: []u8, width, x0, y0, x1, y1: int) -> [3]f32 {
 // give the same light whatever their number: the field of the lights scene
 // of the demo.
 @(private = "file")
-lights_field :: proc(f: ^Cube_Fixture, count: int, range: f32, height: f32 = 3.5, radius: f32 = 0) {
+lights_field :: proc(f: ^Cube_Fixture, count: int, range: f32, height: f32 = 3.5, radius: f32 = 0, shadowless := false) {
 	instances: [49]Instance_Desc
 	instances[0] = {object_id = 1, mesh = f.cube, transform = trs({0, -0.15, 0}, {24, 0.3, 20}), tint = {0.4, 0.4, 0.4}}
 	for i in 0 ..< 48 {
@@ -903,9 +903,34 @@ lights_field :: proc(f: ^Cube_Fixture, count: int, range: f32, height: f32 = 3.5
 			x |= ((u32(i) >> (2 * bit)) & 1) << (4 - bit)
 			z |= ((u32(i) >> (2 * bit + 1)) & 1) << (4 - bit)
 		}
-		l = {position = {-9 + 18 * (f32(x) + 0.5) / 32, height, -8 + 16 * (f32(z) + 0.5) / 32}, color = {1, 0.7, 0.4}, intensity = (2 * 256 / f32(count)) * math.PI, range = range, radius = radius, indirect = 1, scattering = 1}
+		l = {position = {-9 + 18 * (f32(x) + 0.5) / 32, height, -8 + 16 * (f32(z) + 0.5) / 32}, color = {1, 0.7, 0.4}, intensity = (2 * 256 / f32(count)) * math.PI, range = range, radius = radius, indirect = 1, scattering = 1, shadowless = shadowless}
 	}
 	scene_given(f.renderer, instances[:], lights, {}, {})
+}
+
+// How much more an image differs from another across the borders of the
+// tiles of the lists of the lights (LIGHT_LIST_TILE pixels a side) than in
+// the middle of them: the mean, over the pairs of neighbours along x and y
+// either image lights, of how far the step from one to the other is from that
+// of the reference, in levels of the 255 of a channel.
+@(private = "file")
+tile_steps :: proc(image, reference: []u8, width, height: int) -> (across, within: f32) {
+	sums: [2]f64
+	counts: [2]int
+	for y in 0 ..< height {for x in 0 ..< width {
+		for axis in 0 ..< 2 {
+			at := x if axis == 0 else y
+			if at == 0 || (at % LIGHT_LIST_TILE != 0 && at % LIGHT_LIST_TILE != LIGHT_LIST_TILE / 2) {continue}
+			a, b := (y * width + x) * 4, (y * width + x - 1) * 4 if axis == 0 else ((y - 1) * width + x) * 4
+			if max(reference[a], reference[a + 1], reference[a + 2], image[a], image[a + 1], image[a + 2]) < 8 {continue}
+			which := 0 if at % LIGHT_LIST_TILE == 0 else 1
+			for c in 0 ..< 3 {
+				sums[which] += abs((f64(image[a + c]) - f64(image[b + c])) - (f64(reference[a + c]) - f64(reference[b + c])))
+			}
+			counts[which] += 3
+		}
+	}}
+	return f32(sums[0] / f64(max(counts[0], 1))), f32(sums[1] / f64(max(counts[1], 1)))
 }
 
 // How far an image is from another, over the pixels either one lights: the
@@ -959,7 +984,10 @@ reference_image :: proc(t: ^testing.T, f: ^Cube_Fixture, camera: Camera, frames:
 
 // Many more lights reach a pixel than it traces, and they have a size: what
 // it shows is what every light gives through rays of its own to every point
-// of it, and the same from a frame to the next.
+// of it, and the same from a frame to the next. Without shadows, many more
+// reach most tiles of the screen than a list holds, over posts whose edges
+// the tiles straddle: the pixels show what every light gives, with no step
+// where a tile ends, whether its pixels sum its list or walk the tree.
 @(test)
 render_many_lights_match_their_reference :: proc(t: ^testing.T) {
 	f: Cube_Fixture
@@ -970,28 +998,36 @@ render_many_lights_match_their_reference :: proc(t: ^testing.T) {
 	defer fixture_destroy(&f)
 	r := f.renderer
 	renderer_set_display_transform(r, .ACES_2)
-	lights_field(&f, 1024, 8, radius = 0.1)
 	camera := Camera{position = {16, 12, 18}, forward = {-16, -12, -18}, up = {0, 1, 0}, fov_y = 50, near = 0.1, far = 100, exposure = UNIT_EXPOSURE}
-	reference, ok := reference_image(t, &f, camera, 8)
-	if !ok {return}
-	defer delete(reference)
-	renderer_camera_cut(r)
-	for _ in 0 ..< 16 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
-	rhi.device_wait_idle(f.device)
-	lit, _, _, ok2 := golden_capture(r)
-	testing.expect(t, ok2, r.error)
-	if !ok2 {return}
-	defer delete(lit)
-	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
-	rhi.device_wait_idle(f.device)
-	next, _, _, ok3 := golden_capture(r)
-	testing.expect(t, ok3, r.error)
-	if !ok3 {return}
-	defer delete(next)
-	bias, rms := image_error(lit, reference)
-	_, flicker := image_error(next, lit)
-	testing.expectf(t, abs(bias) < 1.5 && rms < 8, "a few rays give what every light gives: %v brighter, %v apart, of 255", bias, rms)
-	testing.expectf(t, flicker < 1.5, "and the same from a frame to the next: %v of 255", flicker)
+	for shadowless in ([2]bool{false, true}) {
+		lights_field(&f, 1024, 8, radius = 0.1, shadowless = shadowless)
+		reference, ok := reference_image(t, &f, camera, 8)
+		if !ok {return}
+		defer delete(reference)
+		renderer_camera_cut(r)
+		for _ in 0 ..< 16 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+		rhi.device_wait_idle(f.device)
+		lit, w, h, ok2 := golden_capture(r)
+		testing.expect(t, ok2, r.error)
+		if !ok2 {return}
+		defer delete(lit)
+		testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+		rhi.device_wait_idle(f.device)
+		next, _, _, ok3 := golden_capture(r)
+		testing.expect(t, ok3, r.error)
+		if !ok3 {return}
+		defer delete(next)
+		bias, rms := image_error(lit, reference)
+		_, flicker := image_error(next, lit)
+		testing.expectf(t, abs(bias) < 1.5 && rms < 8, "without shadows %v: a few rays give what every light gives: %v brighter, %v apart, of 255", shadowless, bias, rms)
+		testing.expectf(t, flicker < 1.5, "without shadows %v: and the same from a frame to the next: %v of 255", shadowless, flicker)
+		if shadowless {
+			lists := r.stats.light_lists
+			testing.expectf(t, lists.walked > 0 && lists.walked < lists.cells && lists.longest > 0 && lists.longest < abi.LIGHT_LIST_WORDS, "some tiles list the lights and others walk them: %v", lists)
+			across, within := tile_steps(lit, reference, w, h)
+			testing.expectf(t, across < 1.25 * within + 0.5, "the steps across the borders of the tiles are %v of 255 from those of the reference, within the tiles %v", across, within)
+		}
+	}
 	expect_clean(t, f.device)
 }
 
@@ -1037,7 +1073,13 @@ render_lights_that_few_reach_at_a_time_are_each_lit :: proc(t: ^testing.T) {
 // little, which a group of them lost beyond the mean of their ranges; a
 // crowd of lights without them, more than a walk visits, under the sun; and
 // a ceiling of downlights without them, of two widths, more than a walk
-// visits, whose groups stand for them by the cones they shine in.
+// visits, whose groups stand for them by the cones they shine in; and a few
+// downlights without them. Those without shadows also from a view across
+// the floor, whose tiles span far and near ground and, where a post stands,
+// the edges of it: the tiles give what the lights give, with no step where
+// one ends. The few lights fit the lists of the tiles, which their pixels
+// sum; the many downlights are more than a list holds, and the pixels of
+// those tiles walk the tree (Stats.light_lists counts them).
 @(test)
 render_groups_of_lights_give_what_their_lights_give :: proc(t: ^testing.T) {
 	f: Cube_Fixture
@@ -1047,11 +1089,14 @@ render_groups_of_lights_give_what_their_lights_give :: proc(t: ^testing.T) {
 	if !cube_fixture_init(t, &f, 64, 48, settings, programs = true) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
-	Case :: enum {Ring, Reaches, Crowd, Spots}
+	Case :: enum {Ring, Reaches, Crowd, Spots, Lamps}
 	for c in Case {
 		lights := make([dynamic]Light_Desc, context.temp_allocator)
 		sun: Sun_Desc
 		camera := Camera{position = {0, 6, 0.01}, forward = {0, -6, -0.01}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+		// The view across the floor, and where its post stands; no post under the sun, whose shadow is not what is compared.
+		across := Camera{position = {4, 1.2, 3}, forward = {-4, -1, -3}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+		post := Vec3{1.2, 0.6, 0.6}
 		// The part of the floor compared, from a corner to the other.
 		low, high := Vec3{-2, 0, -1.5}, Vec3{2, 0, 1.5}
 		switch c {
@@ -1068,6 +1113,8 @@ render_groups_of_lights_give_what_their_lights_give :: proc(t: ^testing.T) {
 			}
 			append(&lights, Light_Desc{position = {-4.5, 0.6, -4.5}, color = {1, 0.9, 0.8}, intensity = 150, range = 350, indirect = 1, scattering = 1, shadowless = true})
 			camera = {position = {0, 14, 0.01}, forward = {0, -14, -0.01}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+			across = {position = {5, 2.5, 5}, forward = {-9.5, -2.2, -9.5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+			post = {1.5, 0.6, 1.5}
 			low, high = {-1, 0, -1}, {5, 0, 5}
 		case .Crowd:
 			for i in 0 ..< 256 {
@@ -1085,37 +1132,63 @@ render_groups_of_lights_give_what_their_lights_give :: proc(t: ^testing.T) {
 				x, z := f32(i % 16) - 7.5 + 0.1 * math.sin(f32(i) * 1.7), f32(i / 16) - 7.5 + 0.1 * math.cos(f32(i) * 2.3)
 				append(&lights, Light_Desc{position = {x, 2.2 + 0.2 * f32(i % 3), z}, color = {0.5 + 0.5 * f32(i % 2), 0.7, 0.5 + 0.5 * f32(i % 3) / 2}, intensity = 0.1 * math.PI, range = 8, radius = 0.02, direction = {0, -1, 0}, cone = 0.55 if i % 2 == 0 else 0.75, indirect = 1, scattering = 1, shadowless = true})
 			}
+		case .Lamps:
+			// Downlights a metre and a half apart, of two widths.
+			for i in 0 ..< 16 {
+				x, z := (f32(i % 4) - 1.5) * 1.5 + 0.1 * math.sin(f32(i) * 1.7), (f32(i / 4) - 1.5) * 1.5 + 0.1 * math.cos(f32(i) * 2.3)
+				append(&lights, Light_Desc{position = {x, 2.2 + 0.2 * f32(i % 3), z}, color = {0.5 + 0.5 * f32(i % 2), 0.7, 0.5 + 0.5 * f32(i % 3) / 2}, intensity = 0.4 * math.PI, range = 8, radius = 0.02, direction = {0, -1, 0}, cone = 0.55 if i % 2 == 0 else 0.75, indirect = 1, scattering = 1, shadowless = true})
+			}
 		}
-		floor := Instance_Desc{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {12, 0.2, 12}), tint = {1, 1, 1}}
-		scene_given(r, []Instance_Desc{floor}, lights[:], sun, {})
-		exact, ok := reference_image(t, &f, camera, 1, .Direct)
-		if !ok {return}
-		defer delete(exact)
-		renderer_camera_cut(r)
-		for _ in 0 ..< 6 {testing.expect(t, renderer_frame(r, {camera = camera, inspection = {mode = .Direct}}), r.error)}
-		rhi.device_wait_idle(f.device)
-		grouped, w, _, ok2 := golden_capture(r)
-		testing.expect(t, ok2, r.error)
-		if !ok2 {return}
-		defer delete(grouped)
-		testing.expect(t, renderer_frame(r, {camera = camera, inspection = {mode = .Direct}}), r.error)
-		rhi.device_wait_idle(f.device)
-		next, _, _, ok3 := golden_capture(r)
-		testing.expect(t, ok3, r.error)
-		if !ok3 {return}
-		defer delete(next)
-		a, b := project(r, camera, low), project(r, camera, high)
-		x0, y0, x1, y1 := min(a.x, b.x), min(a.y, b.y), max(a.x, b.x), max(a.y, b.y)
-		reference := region_mean(exact, w, x0, y0, x1, y1)
-		estimate := region_mean(grouped, w, x0, y0, x1, y1)
-		testing.expectf(t, reference[0] > 40, "%v: direct light is visible: %v", c, reference)
-		for k in 0 ..< 3 {
-			testing.expectf(t, abs(estimate[k] - reference[k]) <= 0.04 * reference[k] + 2, "%v: channel %d: by groups %v, one by one %v", c, k, estimate, reference)
+		instances := [2]Instance_Desc {
+			{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {12, 0.2, 12}), tint = {1, 1, 1}},
+			{object_id = 2, mesh = f.cube, transform = trs(post, {0.8, 1.2, 0.8}), tint = {1, 1, 1}},
 		}
-		_, rms := image_error(grouped, exact)
-		// The groups of downlights the walk keeps blur the edges of their cones on the floor.
-		testing.expectf(t, rms < (5 if c == .Spots else 4), "%v: %v of 255 apart", c, rms)
-		testing.expectf(t, slice.equal(next, grouped), "%v: the next frame is the same", c)
+		scene_given(r, instances[:1 if c == .Ring || c == .Crowd else 2], lights[:], sun, {})
+		views := [2]Camera{camera, across}
+		for view, v in views[:1 if c == .Ring else 2] {
+			exact, ok := reference_image(t, &f, view, 1, .Direct)
+			if !ok {return}
+			defer delete(exact)
+			renderer_camera_cut(r)
+			for _ in 0 ..< 6 {testing.expect(t, renderer_frame(r, {camera = view, inspection = {mode = .Direct}}), r.error)}
+			rhi.device_wait_idle(f.device)
+			grouped, w, h, ok2 := golden_capture(r)
+			testing.expect(t, ok2, r.error)
+			if !ok2 {return}
+			defer delete(grouped)
+			testing.expect(t, renderer_frame(r, {camera = view, inspection = {mode = .Direct}}), r.error)
+			rhi.device_wait_idle(f.device)
+			next, _, _, ok3 := golden_capture(r)
+			testing.expect(t, ok3, r.error)
+			if !ok3 {return}
+			defer delete(next)
+			if v == 0 {
+				a, b := project(r, view, low), project(r, view, high)
+				x0, y0, x1, y1 := min(a.x, b.x), min(a.y, b.y), max(a.x, b.x), max(a.y, b.y)
+				reference := region_mean(exact, w, x0, y0, x1, y1)
+				estimate := region_mean(grouped, w, x0, y0, x1, y1)
+				testing.expectf(t, reference[0] > 40, "%v: direct light is visible: %v", c, reference)
+				for k in 0 ..< 3 {
+					testing.expectf(t, abs(estimate[k] - reference[k]) <= 0.04 * reference[k] + 2, "%v: channel %d: by groups %v, one by one %v", c, k, estimate, reference)
+				}
+			} else {
+				steps, within := tile_steps(grouped, exact, w, h)
+				testing.expectf(t, steps < 1.25 * within + 0.5, "%v: the steps across the borders of the tiles are %v of 255 from those of the reference, within the tiles %v", c, steps, within)
+			}
+			_, rms := image_error(grouped, exact)
+			// The groups of downlights the walk keeps blur the edges of their cones on the floor.
+			testing.expectf(t, rms < (5 if c == .Spots || c == .Lamps else 4), "%v, view %d: %v of 255 apart", c, v, rms)
+			testing.expectf(t, slice.equal(next, grouped), "%v, view %d: the next frame is the same", c, v)
+			lists := r.stats.light_lists
+			#partial switch c {
+			case .Reaches, .Lamps:
+				testing.expectf(t, lists.walked == 0 && lists.longest > 0 && lists.longest < abi.LIGHT_LIST_WORDS, "%v, view %d: every tile lists its lights: %v", c, v, lists)
+			case .Crowd:
+				testing.expectf(t, lists.walked < lists.cells && lists.longest > 0 && lists.longest < abi.LIGHT_LIST_WORDS, "%v, view %d: tiles list their lights: %v", c, v, lists)
+			case .Spots:
+				testing.expectf(t, lists.walked > 0 && lists.longest < abi.LIGHT_LIST_WORDS, "%v, view %d: tiles with more lights than a list holds are counted: %v", c, v, lists)
+			}
+		}
 		free_all(context.temp_allocator)
 	}
 	expect_clean(t, f.device)
