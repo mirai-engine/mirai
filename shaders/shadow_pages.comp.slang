@@ -12,7 +12,7 @@
 // - Invalidate, a thread for each box of what changed and each slot: the
 //   entries its pages cover, at each mip, where what stays or what moves
 //   changed (render.Shadow_Plan boxes);
-// - Entries, a thread for each entry of each slot: lets go of the page of
+// - Entries, a thread for each entry of each slot in use: lets go of the page of
 //   the pool of what the plan says (render.Shadow_Slot_Plan), forgets what
 //   stays or what moves where they changed, and of a page a point reads, the
 //   frame before read late, or the safety net keeps: asks for a page of the
@@ -27,7 +27,7 @@
 // - Allocate, a thread for each word of the ranks: each page asked for takes
 //   the page of the pool of its rank, which its entry lets go of; past them it
 //   is left out;
-// - Propagate, a thread for each entry: where its page is not drawn, how many
+// - Propagate, a thread for each entry of each slot in use: where its page is not drawn, how many
 //   levels of the sun or mips coarser the nearest one drawn lies;
 // - Finish: the arguments of the culls and the draws of the rounds.
 // The pages listed take their bits in the masks of each round, by their
@@ -48,8 +48,11 @@ void table_set(uint slot, uint entry, uint e) { table[int2(int(entry), int(slot)
 // the boxes of what changed start at, boxes and levels of the sun of them;
 // pool: the pages of the pool it may give; groups of the cull of each round;
 // fresh: the table holds nothing yet; full: the view, a light or a caster
-// changed, and the masks were cleared before the marks.
-struct Params_Block { uint step; uint frame; uint rows; uint plan; uint boxes; uint box_count; uint sun; uint pool; uint groups_stays; uint groups_moves; uint groups_glass; uint fresh; uint full; uint pad0; uint pad1; uint pad2; };
+// changed, and the masks were cleared before the marks; slots: the word of
+// the buffer of the maps the slots in use start at, slot_count of them (those
+// with a map or that let go of their pages: the others hold no page),
+// every slot while the table holds nothing yet (fresh).
+struct Params_Block { uint step; uint frame; uint rows; uint plan; uint boxes; uint box_count; uint sun; uint pool; uint groups_stays; uint groups_moves; uint groups_glass; uint fresh; uint full; uint slots; uint slot_count; uint pad0; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 [[vk::binding(SLOT_PASS0, 0)]] StructuredBuffer<uint4> shadow_data : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);
 [[vk::binding(SLOT_PASS2, 0)]] RWStructuredBuffer<uint> pages : register(MIRAI_REGISTER(u, SLOT_PASS2), space0);
@@ -87,6 +90,9 @@ void step_args(uint step, uint threads) {
 }
 
 uint data_word(uint word) { return shadow_data[word >> 2u][word & 3u]; }
+// The slots in use, and the k-th of them: every slot while the table holds nothing yet.
+uint slots_in_use() { return params.fresh != 0u ? SHADOW_SLOTS : params.slot_count; }
+uint slot_in_use(uint k) { return params.fresh != 0u ? k : data_word(params.slots + k); }
 uint4 slot_plan(uint slot) { return shadow_data[(params.plan >> 2u) + slot]; }
 bool mask_bit(uint region, uint slot, uint entry) { return ((pages[region + slot * SHADOW_MASK_WORDS + (entry >> 5u)] >> (entry & 31u)) & 1u) != 0u; }
 void mask_set(uint region, uint slot, uint entry) {
@@ -178,7 +184,7 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
         bool run = params.full != 0u || pages[SHADOW_STEP_NEW] != 0u;
         pages[SHADOW_STEP_NEW] = 0u;
         if (run) pages[SHADOW_STEP_RUNS] += 1u;
-        uint all = run ? SHADOW_SLOTS * SHADOW_SLOT_ENTRIES : 0u;
+        uint all = run ? slots_in_use() * SHADOW_SLOT_ENTRIES : 0u;
         step_args(STEP_CLEAR, run && params.full == 0u ? CLEAR_WORDS : 0u);
         step_args(STEP_INVALIDATE, run ? params.box_count * SHADOW_SLOTS : 0u);
         step_args(STEP_ENTRIES, all);
@@ -198,6 +204,7 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
             pages[SHADOW_WORDS_ARGS + SHADOW_ARGS_DRAW + 4u * round + 1u] = 0u;
         }
         pages[SHADOW_WORDS_ARGS + SHADOW_ARGS_HIZ] = 0u;
+        pages[SHADOW_WORDS_ARGS + SHADOW_ARGS_TINT] = 0u;
     } else if (params.step == STEP_CLEAR) {
         if (i < CLEAR_WORDS) pages[SHADOW_WORDS_STALE + i] = 0u;
     } else if (params.step == STEP_INVALIDATE) {
@@ -226,8 +233,8 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
             }
         }
     } else if (params.step == STEP_ENTRIES) {
-        if (i >= SHADOW_SLOTS * SHADOW_SLOT_ENTRIES) return;
-        uint slot = i / SHADOW_SLOT_ENTRIES, entry = i % SHADOW_SLOT_ENTRIES;
+        if (i >= slots_in_use() * SHADOW_SLOT_ENTRIES) return;
+        uint slot = slot_in_use(i / SHADOW_SLOT_ENTRIES), entry = i % SHADOW_SLOT_ENTRIES;
         Shadow_Map m = shadow_map_at(shadow_data, params.rows, slot);
         uint4 plan = slot_plan(slot);
         // What the table held of the frame before, without where it pointed coarser.
@@ -359,8 +366,8 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
             listed(ROUND_READY, w.y, entry, page, 0u);
         }
     } else if (params.step == STEP_PROPAGATE) {
-        if (i >= SHADOW_SLOTS * SHADOW_SLOT_ENTRIES) return;
-        uint slot = i / SHADOW_SLOT_ENTRIES, entry = i % SHADOW_SLOT_ENTRIES;
+        if (i >= slots_in_use() * SHADOW_SLOT_ENTRIES) return;
+        uint slot = slot_in_use(i / SHADOW_SLOT_ENTRIES), entry = i % SHADOW_SLOT_ENTRIES;
         uint e = shadow_table_entry(slot, entry);
         if (shadow_entry_ready(e)) return;
         Shadow_Map m = shadow_map_at(shadow_data, params.rows, slot);
@@ -394,6 +401,11 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
             pages[at + 1u] = slots;
             pages[at + 2u] = 1u;
         }
+        // The glass into the pages the atlas composes, which the tint draws again there.
+        uint tint = SHADOW_WORDS_ARGS + SHADOW_ARGS_TINT, composed = pages[SHADOW_WORDS_COUNTS + SHADOW_COUNT_SLOTS + ROUND_MOVES];
+        pages[tint] = composed > 0u ? params.groups_glass : 0u;
+        pages[tint + 1u] = composed;
+        pages[tint + 2u] = 1u;
         uint hiz = SHADOW_WORDS_ARGS + SHADOW_ARGS_HIZ;
         pages[hiz] = min(pages[SHADOW_WORDS_COUNTS + SHADOW_COUNT_DRAWN], SHADOW_POOL_PAGES);
         pages[hiz + 1u] = 1u;
