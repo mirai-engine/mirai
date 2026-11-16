@@ -243,7 +243,7 @@ Device :: struct {
 	table_taken:       []u32, // as long as the table: what a copy takes
 	table_limit:       int,   // the most entries the table grows to on this device
 	table_default:     Texture,
-	pipelines_kept:    Pipeline_Store, // with a path, read when created and written as it grows and when destroyed
+	pipelines_kept:    Pipeline_Store, // what every renderer of the device compiled; with a path, read when created and written as it grows and when destroyed
 	store_path:        [512]u8,
 	store_path_len:    int,
 	timings:           [MAX_TIMESTAMPS]Gpu_Timing,
@@ -894,11 +894,9 @@ vk_create_logical_device :: proc(d: ^Device, desc: Device_Desc) -> bool {
 	}
 	// A path that does not fit, cut, would name another file: nothing is kept.
 	if len(desc.pipeline_cache_path) <= len(d.store_path) {d.store_path_len = copy(d.store_path[:], desc.pipeline_cache_path)}
-	if d.store_path_len > 0 {
-		p := d.properties
-		pipeline_store_init(&d.pipelines_kept, {vendor = p.vendorID, device = p.deviceID, driver = p.driverVersion, uuid = p.pipelineCacheUUID}, allocator = d.allocator)
-		pipeline_store_load(&d.pipelines_kept, desc.pipeline_cache_path)
-	}
+	p := d.properties
+	pipeline_store_init(&d.pipelines_kept, {vendor = p.vendorID, device = p.deviceID, driver = p.driverVersion, uuid = p.pipelineCacheUUID}, allocator = d.allocator)
+	if d.store_path_len > 0 {pipeline_store_load(&d.pipelines_kept, desc.pipeline_cache_path)}
 	return true
 }
 
