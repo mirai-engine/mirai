@@ -2,6 +2,7 @@
 #+private
 package subprocess
 
+import "core:c"
 import "core:os"
 import "core:sys/darwin"
 import "core:sys/kqueue"
@@ -44,6 +45,16 @@ _memory_held :: proc(pid:int) -> (now,peak:i64,ok:bool) {
     usage:Rusage_Info_V4
     if darwin.proc_pid_rusage(posix.pid_t(pid),.V4,&usage)!=0 || usage.proc_exit_abstime!=0 {return}
     return i64(usage.phys_footprint),i64(usage.lifetime_max_phys_footprint),true
+}
+
+// _IOR('f',127,int) of sys/filio.h.
+FIONREAD :: 0x4004667f
+
+// The bytes a pipe holds to be read; -1 when it cannot tell.
+pipe_unread :: proc(file:^os.File) -> int {
+    count:c.int
+    if ioctl(posix.FD(os.fd(file)),FIONREAD,&count)==-1 {return -1}
+    return int(count)
 }
 
 descriptors_close :: proc() {
