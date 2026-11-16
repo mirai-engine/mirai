@@ -932,11 +932,14 @@ material_program_draws_as_its_rows_until_its_pipelines_are_made :: proc(t: ^test
 		return at(f.renderer, pixels, w, camera, {0, 0.3, -3}), at(f.renderer, pixels, w, camera, {0, 0, 0})
 	}
 	testing.expect(t, fixture_frame(&f, {camera = camera}), r.error)
-	testing.expect(t, renderer_pipelines_pending(r), "the frame asked the thread for the pipelines of the program")
+	// What a capture waits for until it is 0: the pipelines the frame drew without.
+	asked := renderer_pipelines_pending(r)
+	testing.expectf(t, asked >= 1, "the frame asked the thread for the pipelines of the program: %d pending", asked)
 	seen, mirrored := look(t, &f, camera)
 	testing.expectf(t, seen.b > seen.r + 40 && mirrored.b > mirrored.r + 40, "until they are made the wall is its row: %v, in the mirror %v", seen, mirrored)
-	for renderer_pipelines_pending(r) {
+	for renderer_pipelines_pending(r) > 0 {
 		renderer_pipelines_wait(r)
+		testing.expect_value(t, renderer_pipelines_pending(r), 0)
 		renderer_reset_history(r)
 		frames(t, &f, camera, 3)
 	}
