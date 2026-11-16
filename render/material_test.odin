@@ -363,9 +363,7 @@ material_normal_map_tilts_towards_its_axes :: proc(t: ^testing.T) {
 	tilt_up.textures[.Normal] = up_texture
 	flat.textures[.Normal] = right_texture
 	flat.normal_scale = 0
-	two_sided := tilt_right
-	two_sided.two_sided = true
-	materials_set(r, {tilt_right, tilt_up, flat, two_sided})
+	materials_set(r, {tilt_right, tilt_up, flat})
 	quad := ground_quad(r)
 	expected := [3]Vec3{{0.5, 0.866, 0}, {0, 0.866, -0.5}, {0, 1, 0}}
 	for want, i in expected {
@@ -374,16 +372,12 @@ material_normal_map_tilts_towards_its_axes :: proc(t: ^testing.T) {
 		n := read_normal(t, &f, OVERHEAD, {0.2, 0, 0.1})
 		testing.expectf(t, abs(n.x - want.x) < 0.03 && abs(n.y - want.y) < 0.03 && abs(n.z - want.z) < 0.03, "material %d: normal %v, expected %v", i + 1, n.xyz, want)
 	}
-	// Seen from below, a two-sided sheet is the same surface: its normal is the
-	// opposite of the front one. A one-sided one shows nothing from there.
+	// Seen from below, the sheet is the same surface: its normal is the opposite of the front one.
 	below := Camera{position = {0, -2, 0}, forward = {0, 2, 0}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-	scene_given(r, {{object_id = 1, mesh = quad, transform = Mat4(1), material = 4, tint = {1, 1, 1}}}, nil, {}, {})
+	scene_given(r, {{object_id = 1, mesh = quad, transform = Mat4(1), material = 1, tint = {1, 1, 1}}}, nil, {}, {})
 	frames(t, &f, below, 2)
 	n := read_normal(t, &f, below, {0.2, 0, 0.1})
 	testing.expectf(t, abs(n.x + 0.5) < 0.03 && abs(n.y + 0.866) < 0.03 && abs(n.z) < 0.03, "back face: normal %v", n.xyz)
-	scene_given(r, {{object_id = 1, mesh = quad, transform = Mat4(1), material = 1, tint = {1, 1, 1}}}, nil, {}, {})
-	frames(t, &f, below, 2)
-	testing.expectf(t, read_depth(t, &f, below, {0.2, 0, 0.1}) == 0, "a one-sided sheet shows nothing from behind")
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 
@@ -1008,40 +1002,6 @@ material_program_shows_on_what_the_camera_sees :: proc(t: ^testing.T) {
 	}, nil, sun, {})
 	through := screen_color(t, &f, camera, {})
 	testing.expectf(t, through.r > 2 * through.b, "the glass shows its program: %v", through)
-	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
-}
-
-// The resolve shades each pixel of a triangle once, whichever program it is
-// of, and runs the other pixels of its quads only as helpers: with the sky
-// and several programs in view, the draw of a program does not shade the
-// pixels of the others nor those where nothing is.
-@(test)
-material_program_resolve_shades_each_pixel_once :: proc(t: ^testing.T) {
-	f: Fixture
-	if !fixture_init(t, &f, 64, 64, material_settings(), programs = true) {return}
-	defer fixture_destroy(&f)
-	r := f.renderer
-	grid, sampled := program_find(r, "Grid", .Surface), program_find(r, "Sampled", .Surface)
-	if !testing.expect(t, grid != nil && sampled != nil, "the tests have the Grid and Sampled programs") {return}
-	lined, imaged := DEFAULT_MATERIAL, DEFAULT_MATERIAL
-	lined.program_id, lined.custom_params = grid.id, program_defaults(grid)
-	imaged.program_id, imaged.custom_params = sampled.id, program_defaults(sampled)
-	materials_set(r, {lined, imaged, DEFAULT_MATERIAL})
-	quad := ground_quad(r)
-	// Three squares under the camera, each of its own material, and the sky around them.
-	instances: [3]Instance_Desc
-	for &instance, i in instances {
-		transform := scale_matrix(0.5)
-		transform[0, 3] = f32(i - 1) * 0.6
-		instance = {object_id = u64(i + 1), mesh = quad, transform = transform, material = Material_Handle(i + 1), tint = {1, 1, 1}}
-	}
-	scene_given(r, instances[:], nil, {}, {})
-	testing.expect(t, renderer_frame(r, {}), r.error)
-	renderer_pipelines_wait(r)
-	frames(t, &f, OVERHEAD, 4)
-	pixels := r.targets.width * r.targets.height
-	testing.expectf(t, r.stats.resolved_pixels > 0 && r.stats.resolved_pixels < pixels / 2, "the resolve shades the pixels of the squares once: %d of %d", r.stats.resolved_pixels, pixels)
-	testing.expectf(t, r.stats.resolve_helpers <= 3 * r.stats.resolved_pixels, "and only the quads of those as helpers: %d", r.stats.resolve_helpers)
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 

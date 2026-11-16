@@ -267,8 +267,8 @@ Construction and publishing:
 - Of those weights two show, each less the third (`terrain_heaviest`, `terrain_blend.slang`): a
   layer comes in and goes at no weight, so nothing pops or draws a line, and only where three
   weigh about alike does the third show too, so the three meet without a step; a fourth never
-  shows and what barely weighs is not read. The projections of a layer follow the same rule, and
-  the inspection of the weights and the relief show what it gives.
+  shows and what barely weighs is not read. The inspection of the weights and the relief show what
+  it gives.
 - **Holes**: a piece whose triangles span holes and ground shows `LAYERS_HOLED_MATERIAL`, the same
   program in a masked material, whose alpha is the hole of the cell under the point: only those
   pieces pay for the alpha in raster and rays. A node takes as a hole a texel at least half holes
@@ -281,8 +281,10 @@ Construction and publishing:
   blending the two bands it lies between, the higher texel first; `variation` darkens and
   brightens it by a slow noise; `far_tiling` takes over from `tiling` where one repeat shrinks to
   a few pixels.
-- `Terrain_Layers` projects the textures from the three axes, each by how much the surface faces
-  it, sharpened: flat ground reads only the top one and a cliff those of its sides. A layer or a
+- `Terrain_Layers` projects the textures from the axes the surface faces most (biplanar mapping):
+  each by how far past the diagonal 1/sqrt(3) the surface faces it, so two at most show and the
+  second fades out at nothing where it swaps with the third; flat ground reads only the top one.
+  Only around a normal that faces the three axes alike do the two turn fast. A layer or a
   projection that does not show is not read, nor are the maps of a layer without them, and a ray
   reads the dominant projection. Each projection rotates its normal map over the surface
   (whiteout) in a frame that does not mirror the texture.

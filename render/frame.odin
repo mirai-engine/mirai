@@ -157,7 +157,6 @@ read_stats :: proc(r: ^Renderer, slot: int) {
 		r.stats.culled_instances = stats.culled_instances
 		r.stats.occluded_instances = stats.occluded_instances
 		r.stats.probes_traced = stats.probes_traced
-		r.stats.resolved_pixels, r.stats.resolve_helpers, r.stats.resolve_quads_again = stats.resolved[0], stats.resolved[1], stats.resolved[2]
 	}
 	r.stats.timings, _, _ = rhi.frame_timings(r.device)
 	total: f32
@@ -229,11 +228,12 @@ resolve_pass :: proc(p: ^Pass, nested: bool) {
 		variant := 2 if p.layered else 1 if p.reflectance else 0
 		ids := [2][3]Pipeline_Id{{.Resolve_Plain, .Resolve, .Resolve_Layers}, {.Resolve_Nested_Plain, .Resolve_Nested, .Resolve_Nested_Layers}}
 		id := ids[1 if nested else 0][variant]
+		Params :: struct {programs, pad0, pad1, pad2: u32}
+		params := Params{programs = r.points.programs}
 		rhi.cmd_bind_pipeline(cmd, r.pipelines[id])
+		set_params(cmd, &params)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.visible_buffer)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.visibility)
-		// A nested view counts with its cull, apart.
-		rhi.cmd_bind_buffer(cmd, SLOT_PASS2, r.scratch_buffer if nested else r.stats_buffer)
 		textures_feedback_bind(r, cmd)
 		resolve_programs_draw(r, cmd, &r.pipelines[id])
 	}

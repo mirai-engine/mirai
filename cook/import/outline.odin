@@ -20,10 +20,8 @@ import "mirai:std/geom"
 // whose neighbours meet adding the least area removed down to
 // OUTLINE_HULL_EDGES, then the k of those edges whose lines close the least
 // area, tried all). The ladder keeps
-// those of at most OUTLINE_TRIANGLES that draw fewer triangles, or as many
-// and less area, than every one of less error: what a level whose error
-// allows it takes. A finer outline would draw more triangles than its leaf
-// shows wherever it is near: level 0 takes the first, with its error.
+// those that draw fewer triangles, or as many and less area, than every one
+// of less error: what a level whose error allows it takes.
 //
 // Whether a card is drawn as its outlines is decided by what its mask costs
 // to cut out: the fewest triangles an outline needs to draw at most
@@ -37,7 +35,7 @@ OUTLINE_COARSEST :: f32(0.25)    // of the side of a card: the coarsest toleranc
 OUTLINE_STEPS :: 22              // tolerances at most, each √2 coarser than the one before
 OUTLINE_RUNGS :: OUTLINE_STEPS+5 // with the convex outlines of eight corners down to four
 OUTLINE_COVERAGE :: f64(0.75)    // of what an outline draws, the share the mask keeps that the rule of a leaf asks for
-OUTLINE_TRIANGLES :: 16          // the most triangles a leaf needs to reach OUTLINE_COVERAGE, and an outline of the ladder draws
+OUTLINE_TRIANGLES :: 16          // the most triangles a leaf needs to reach OUTLINE_COVERAGE
 OUTLINE_HULL_SLACK :: f64(0.05)
 OUTLINE_HULL_EDGES :: 24         // of the convex hull, kept to choose the convex outlines from
 
@@ -126,7 +124,6 @@ outline_ladder :: proc(mask:Outline_Mask,allocator:=context.allocator) -> (ladde
     count:=0
     for o in order {
         c:=candidates[o]
-        if c.triangles>OUTLINE_TRIANGLES {continue}
         if count>0 {
             last:=ladder.rungs[count-1]
             if !(c.triangles<last.triangles || c.triangles==last.triangles && c.area<last.area) {continue}

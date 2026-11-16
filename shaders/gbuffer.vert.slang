@@ -66,12 +66,7 @@ Stage_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
         output.position = float4(2.0, 2.0, 2.0, 1.0);
         return output;
     }
-#ifdef MIRAI_BATCHES
-    Gbuffer_Vertex built = gbuffer_vertex_build(index, inst, mesh, c, corner, true);
-#else
-    // The highlight draws level 0 as it is.
-    Gbuffer_Vertex built = gbuffer_vertex_build(index, inst, mesh, c, corner, !MIRAI_EDITOR_HIGHLIGHT);
-#endif
+    Gbuffer_Vertex built = gbuffer_vertex_build(index, inst, mesh, c, corner);
 #if defined(MIRAI_VISIBILITY) && !defined(MIRAI_VISIBILITY_TESTED)
     output.position = built.position;
 #ifdef MIRAI_CLIP_PLANE

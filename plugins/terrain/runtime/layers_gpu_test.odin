@@ -138,11 +138,11 @@ largest_step :: proc(results: [][4]f32, second: bool) -> (largest: f32) {
 	return
 }
 
-// Where layers or projections meet, two of them show: the heaviest two, each
-// less the third, so across a cell where three layers meet, and around a
-// normal that faces the three axes alike, no point steps from the next, and
-// a third shows only where three weigh about alike. Each layer shown samples
-// its two maps in each projection shown; a layer without maps samples none.
+// Where layers or projections meet, two of them show. Of layers, the heaviest
+// two, each less the third, so across a cell where three layers meet no point
+// steps from the next, and a third shows only where three weigh about alike;
+// of projections, two at most everywhere. Each layer shown samples its two
+// maps in each projection shown; a layer without maps samples none.
 // The same points give the same result at any time.
 @(test)
 terrain_layers_blend_two_at_a_time_without_a_step :: proc(t: ^testing.T) {
@@ -215,8 +215,13 @@ terrain_layers_blend_two_at_a_time_without_a_step :: proc(t: ^testing.T) {
 		testing.expect(t, green > 0, "the layer without maps shows")
 	}
 
-	// A Volume of one layer turning its normal around the direction that
-	// faces the three axes alike (testdata/terrain_layers_test.comp).
+	// A Volume of one layer whose normal sweeps an eighth of the sphere and
+	// past its borders, a degree from point to point, through the direction
+	// that faces the three axes alike (testdata/terrain_layers_test.comp):
+	// two projections show at most, each sampling the two maps, and a normal
+	// a twentieth of a degree away weighs them about alike. Only within two
+	// degrees of that direction may they turn fast: two of three cannot go
+	// round it without passing through each pair.
 	turn := new(Layers_Run)
 	defer free(turn)
 	layers_table_texels(turn, -1)
@@ -225,16 +230,17 @@ terrain_layers_blend_two_at_a_time_without_a_step :: proc(t: ^testing.T) {
 	if results, read := layers_run(t, r, turn); read {
 		for y in 0 ..< SIDE {
 			for x in 0 ..< SIDE {
-				p := results[2 * (y * SIDE + x)]
-				f := [2]f32{(f32(x) + 0.5) / SIDE, (f32(y) + 0.5) / SIDE}
-				n := [3]f32{1 + (f.x - 0.5) * 0.6, 1, 1 + (f.y - 0.5) * 0.6}
-				w := [3]f32{math.pow(n.x, 8), math.pow(n.y, 8), math.pow(n.z, 8)}
-				w /= w.x + w.y + w.z
-				testing.expectf(t, p.a == 2 || p.a == 4 || p.a == 6, "(%d, %d): each projection shown samples the two maps: %v", x, y, p.a)
-				testing.expectf(t, p.a <= 4 || spread(w) < 0.3, "(%d, %d): %v maps sampled of projections %v", x, y, p.a, w)
+				w, next := results[2 * (y * SIDE + x)], results[2 * (y * SIDE + x) + 1]
+				shown := int(w.x > 0) + int(w.y > 0) + int(w.z > 0)
+				testing.expectf(t, shown <= 2 && abs(w.x + w.y + w.z - 1) < 1e-4, "(%d, %d): two projections show at most, adding up to 1: %v", x, y, w)
+				testing.expectf(t, w.a == f32(2 * shown), "(%d, %d): %d projections shown sample %v maps", x, y, shown, w.a)
+				lat, lon := f64(y - 3) * math.RAD_PER_DEG, f64(x - 3) * math.RAD_PER_DEG
+				n := [3]f64{abs(math.cos(lat) * math.cos(lon)), abs(math.sin(lat)), abs(math.cos(lat) * math.sin(lon))}
+				if math.acos(min((n.x + n.y + n.z) / math.sqrt(f64(3)), 1)) * math.DEG_PER_RAD < 2 {continue}
+				step := max(abs(w.x - next.x), abs(w.y - next.y), abs(w.z - next.z))
+				testing.expectf(t, step <= 0.05, "(%d, %d): the weights %v step to %v a twentieth of a degree away", x, y, w.xyz, next.xyz)
 			}
 		}
-		testing.expectf(t, largest_step(results, true) < 0.12, "no normal steps from the next: %v", largest_step(results, true))
 	}
 	testing.expectf(t, rhi.device_validation_errors(device) == 0, "validation: %s", rhi.device_validation_message(device))
 }

@@ -104,16 +104,6 @@ Cluster_Cut cluster_cut(Detail d, Instance inst, float scale, Mesh mesh, Cluster
 bool cluster_in_cut(Detail d, Instance inst, float scale, Mesh mesh, Cluster c, float threshold) {
     return cluster_cut(d, inst, scale, mesh, c, threshold).drawn;
 }
-// How far a cut has gone from the error of a cluster it draws to that of its
-// parent, 0 to 1: at 1 the cut takes the parent, whose clusters the islands
-// of this one have grown and shrunk into (island_offset). 0 for a mesh
-// without islands and a pose that stays at level 0.
-float cluster_along(Detail d, Instance inst, float scale, Mesh mesh, Cluster c, float threshold) {
-    if ((mesh.flags & MESH_FLAG_ISLANDS) == 0u || (mesh.flags & MESH_FLAG_LEVEL0) != 0u || c.parent_error >= FLT_MAX) return 0.0;
-    float own = lod_pixels(d, transform_point(inst.world, c.lod.xyz), c.lod.w * scale, c.error * scale);
-    float parent = lod_pixels(d, transform_point(inst.world, c.parent.xyz), c.parent.w * scale, c.parent_error * scale);
-    return parent > own ? saturate((threshold - own) / (parent - own)) : 0.0;
-}
 // The instance passes of a cull (cull.comp, shadow_maps.comp) hand the
 // clusters of an instance to their cluster passes in chunks of up to
 // CULL_CHUNK, a group each, in rows of CULL_DISPATCH_X groups.
