@@ -1985,7 +1985,7 @@ particle_sprites_go_behind_the_fog_of_the_view :: proc(t: ^testing.T) {
 	// Two metres of a medium that stops 1.5 of each metre and scatters nothing: it lets through e^-3.
 	medium := fog.Medium{box = {position = {0, 0, -6}, rotation = 1, scale = {6, 6, 2}}, density = 1.5}
 	state := fog.Fog_Gpu{}
-	settings_fog := fog.Fog_Settings{hidden = .Every_Frame}
+	settings_fog := fog.Fog_Settings{turns = .Every_Frame}
 	media: fog.Fog_Media
 	defer delete(media.queue.items)
 	volumes: core.Table(fog.Fog_Volume)
