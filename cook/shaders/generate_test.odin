@@ -9,6 +9,7 @@ import "core:slice"
 import "core:strings"
 import "core:testing"
 import "mirai:std/base"
+import "mirai:std/serial"
 
 @(private="file")
 FILL :: `#include "native.slang"
@@ -456,12 +457,14 @@ program_reaches_only_the_stages_of_its_domain_and_a_project_gets_the_code_of_its
     testing.expect(t,mini_read(&mini,strings.concatenate({"game/",PROJECT_OUTPUT,"/post.frag",host},context.temp_allocator))!=mini_read(&mini,strings.concatenate({"shaders/build/post.frag",host},context.temp_allocator)))
 
     // Both backends, asked for: every stage is compiled again with the other,
-    // and the code of this system is the same bytes.
+    // and the code of this system is the same bytes. A stage of the rays traced
+    // by software joins them, for Vulkan alone.
     shade=mini_read(&mini,strings.concatenate({"game/",PROJECT_OUTPUT,"/shade.frag",host},context.temp_allocator))
+    fixture_write(t,mini.root,"shaders/trace.comp.slang",TRACE)
     options.backends={.Vulkan,.Metal}
     both:=mini_generate(t,&mini,options)
     testing.expect_value(t,both.error,"")
-    testing.expect_value(t,both.compiled,7+surfaces)
+    testing.expect_value(t,both.compiled,8+surfaces)
     testing.expect_value(t,both.reused,0)
     testing.expect(t,os.is_file(path_join(output,"shade.frag.metal",allocator=context.temp_allocator)) && os.is_file(path_join(output,"fill.comp.metal",allocator=context.temp_allocator)))
     testing.expect(t,mini_read(&mini,strings.concatenate({"game/",PROJECT_OUTPUT,"/shade.frag",host},context.temp_allocator))==shade,"a backend compiles the same with or without the other")
@@ -475,13 +478,44 @@ program_reaches_only_the_stages_of_its_domain_and_a_project_gets_the_code_of_its
     base.remove_all(path_join(mini.root,".mirai/cache",CACHE_NAME,CACHE_STAGES,allocator=context.temp_allocator))
     alone:=mini_generate(t,&mini,options)
     testing.expect_value(t,alone.error,"")
-    testing.expect_value(t,alone.compiled,7+surfaces)
+    testing.expect_value(t,alone.compiled,8+surfaces)
     testing.expect(t,mini_read(&mini,"metal-only/shade.frag.metal")==metal && len(metal)>0,"Metal compiles the same without Vulkan")
     testing.expect(t,!os.exists(path_join(options.output,"shade.frag.spv",allocator=context.temp_allocator)))
     manifest:=mini_read(&mini,"metal-only/manifest.json")
     testing.expect(t,strings.contains(manifest,"\"spv\": \"\"") && strings.contains(manifest,"\"msl\": \"shade.frag.metal\"") && !strings.contains(manifest,".spv\""),"a manifest names the code it has")
     testing.expect(t,strings.contains(manifest,"\"kind\": \"Uniform_Buffer\""),"the bindings are reflected from the backend that was compiled")
+    // Metal takes no code of the stage of the rays traced by software: it is
+    // compiled only to be reflected, without the optimizer, and its entry is the
+    // one the generation that took its code wrote.
+    traced:=[2]Shader{}
+    for folder,i in ([]string{output,options.output}) {
+        for entry in manifest_read(folder,context.temp_allocator).shaders {
+            if entry.name=="trace.comp" {traced[i]=shader_trim(entry,{})}
+        }
+    }
+    taken,_:=serial.text_encode(traced[0],.Pretty,context.temp_allocator)
+    reflected,_:=serial.text_encode(traced[1],.Pretty,context.temp_allocator)
+    testing.expect(t,traced[0].name=="trace.comp" && len(traced[1].bindings)==2,"both generations have the stage")
+    testing.expect_value(t,string(reflected),string(taken))
+    testing.expect(t,!strings.contains(manifest,"trace.comp.metal"))
+    apart:=false
+    for file in files_in(path_join(mini.root,".mirai/cache",CACHE_NAME,CACHE_STAGES,allocator=context.temp_allocator)) {apart||=strings.has_suffix(file.name,REFLECTED+".json")}
+    testing.expect(t,apart,"what was compiled only to be reflected is kept apart in the shared cache")
 }
+
+@(private="file")
+TRACE :: `#include "native.slang"
+//! software rays
+[[vk::binding(0, 0)]] StructuredBuffer<float> rays : register(t0, space0);
+[[vk::binding(1, 0)]] RWStructuredBuffer<float> hits : register(u1, space0);
+[shader("compute")]
+[numthreads(32, 1, 1)]
+void main(uint3 id : SV_DispatchThreadID) {
+    float distance = rays[id.x];
+    for (uint i = 0; i < 4; i++) distance *= 0.5;
+    hits[id.x] = distance;
+}
+`
 
 @(private="file")
 SHADE_EACH :: "//! per surface program\n" + SHADE
