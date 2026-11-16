@@ -337,13 +337,17 @@ struct Bvh_Triangle {
 // Probe.cell.w flags: traced for its cell and seeing out of geometry; inside
 // geometry; chosen to be traced this frame (ddgi_select.comp, until
 // ddgi_relocate.comp); what is kept of its rays is what they found from where
-// it is (probe_hits.slang); and the times it moved in its cell, PROBE_MOVE each.
+// it is (probe_hits.slang); the times it moved in its cell, PROBE_MOVE each;
+// and one of its rays met what changes with nothing that says so (a program
+// that reads the time, the gate or a light of an extension), which keeps it
+// traced by turns.
 #define PROBE_VALID 1
 #define PROBE_BURIED 2
 #define PROBE_CHOSEN 4
 #define PROBE_KEPT 8
 #define PROBE_MOVE 16
 #define PROBE_MOVES 0x70
+#define PROBE_PASSING 0x80
 struct Probe {
     float4 offset; // xyz from the center of its cell, metres; w how near it is to the change that keeps it awake, 0 to 1 (ddgi_touch.comp)
     int4 cell;     // xyz the cell of the world it was last traced for, w PROBE_* flags
