@@ -34,8 +34,8 @@ struct Params_Block { uint2 tiles; uint pad0; uint pad1; };
 [[vk::binding(SLOT_PASS2, 0)]] [[vk::image_format("r32ui")]] RWTexture2D<uint> out_lists : register(MIRAI_REGISTER(u, SLOT_PASS2), space0);
 [[vk::binding(SLOT_PASS3, 0)]] RWStructuredBuffer<Stats_Block> list_stats : register(MIRAI_REGISTER(u, SLOT_PASS3), space0);
 
-// The points a list serves: the box that holds them, the sphere around it,
-// and the box that holds their normals.
+// The points the list of the thread serves: the box that holds them, the
+// sphere around it, and the box that holds their normals.
 struct Cell {
     float3 low;
     float3 high;
@@ -44,6 +44,7 @@ struct Cell {
     float3 normal_low;
     float3 normal_high;
 };
+static Cell cell;
 
 // What a node is to the points of a cell: how near and how far its center
 // lies; the least and the most cosine between their normals and the direction
@@ -60,7 +61,7 @@ struct Span {
     float least;
 };
 
-Span cell_span(Cell cell, Light_Node node) {
+Span cell_span(Light_Node node) {
     Span span;
     float3 center = node.center_radius.xyz;
     span.near = length(clamp(center, cell.low, cell.high) - center);
@@ -159,77 +160,65 @@ uint fine_group(Light_Node node, Span span, float total) {
     return GROUP_MAY_OPEN;
 }
 
-// A walk of the tree over a cell. entries: what it lists, each the node from
-// LIGHT_ENTRY_NODE and its field. It holds the groups it has yet to open: of
-// each, how many listed groups that may open its children lie under.
-struct Refine {
-    uint entries[LIGHT_LIST_FINE];
-    uint count;
-    uint held_at[LIGHT_TREE_DEPTH];
-    uint held_under[LIGHT_TREE_DEPTH];
-    uint held;
-};
+// What the thread keeps of a walk of the tree over its cell: the nodes it
+// lists, in the order of the tree, each the node from LIGHT_ENTRY_NODE and its
+// field; and of each group it is under, its second child and how many listed
+// groups that may open lie over that.
+static uint walk_entries[LIGHT_LIST_FINE];
+static uint walk_count;
+static uint walk_pending[LIGHT_TREE_DEPTH];
+static uint walk_under[LIGHT_TREE_DEPTH];
 
-// Takes a node into the walk; false when the list has no room for it.
-bool refine_visit(inout Refine r, Cell cell, uint at, uint under, bool fine, float total, uint room) {
-    Light_Node node = light_nodes[at];
-    Span span = cell_span(cell, node);
-    if (!span_reaches(node, span)) return true;
-    bool leaf = (node.flags & LIGHT_NODE_LEAF) != 0u;
-    uint group = leaf || !light_node_opens(node, at) ? GROUP_STANDS : fine ? fine_group(node, span, total) : rough_group(node, span);
-    if (group != GROUP_OPENS) {
-        if (r.count >= room) return false;
-        r.entries[r.count] = (at << LIGHT_ENTRY_NODE) | LIGHT_ENTRY_IN | (group == GROUP_STANDS ? LIGHT_ENTRY_STANDS : 0u) | under;
-        r.count++;
-    }
-    if (group == GROUP_STANDS) return true;
-    if (group == GROUP_MAY_OPEN) under++;
-    if (under >= LIGHT_LIST_DEPTH || r.held >= LIGHT_TREE_DEPTH) return false;
-    r.held_at[r.held] = at;
-    r.held_under[r.held] = under;
-    r.held++;
-    return true;
-}
-
-// Lists into r what the walk of the estimate, or with `fine` that of the
-// light, visits for the points of the cell, in the order of the tree. False
-// when they are more than `room`.
-bool refine(inout Refine r, Cell cell, bool fine, float total, uint room) {
-    r.count = 0u;
-    r.held = 0u;
-    if (!refine_visit(r, cell, frame.shadowless_lights, 0u, fine, total, room)) return false;
+// Lists what the walk of the estimate, or with `fine` that of the light,
+// visits for the points of the cell: a group before what lies under it, its
+// first child and what lies under that before its second. False when they
+// are more than `room`.
+bool cell_walk(bool fine, float total, uint room) {
+    walk_count = 0u;
+    uint depth = 0u;
+    uint at = frame.shadowless_lights;
+    uint under = 0u;
     [loop]
-    while (r.held > 0u) {
-        r.held--;
-        uint at = r.held_at[r.held];
-        uint under = r.held_under[r.held];
-        if (!refine_visit(r, cell, at + 1u, under, fine, total, room)) return false;
-        if (!refine_visit(r, cell, light_nodes[at].child, under, fine, total, room)) return false;
-    }
-    // By node: the order of the tree, a group before what lies under it.
-    for (uint i = 1u; i < r.count; i++) {
-        uint entry = r.entries[i];
-        uint j = i;
-        while (j > 0u && r.entries[j - 1u] > entry) {
-            r.entries[j] = r.entries[j - 1u];
-            j--;
+    while (true) {
+        Light_Node node = light_nodes[at];
+        Span span = cell_span(node);
+        if (span_reaches(node, span)) {
+            bool leaf = (node.flags & LIGHT_NODE_LEAF) != 0u;
+            uint group = leaf || !light_node_opens(node, at) ? GROUP_STANDS : fine ? fine_group(node, span, total) : rough_group(node, span);
+            if (group != GROUP_OPENS) {
+                if (walk_count >= room) return false;
+                walk_entries[walk_count] = (at << LIGHT_ENTRY_NODE) | LIGHT_ENTRY_IN | (group == GROUP_STANDS ? LIGHT_ENTRY_STANDS : 0u) | under;
+                walk_count++;
+            }
+            if (group != GROUP_STANDS) {
+                if (group == GROUP_MAY_OPEN) under++;
+                if (under >= LIGHT_LIST_DEPTH || depth >= LIGHT_TREE_DEPTH) return false;
+                walk_pending[depth] = node.child;
+                walk_under[depth] = under;
+                depth++;
+                at++;
+                continue;
+            }
         }
-        r.entries[j] = entry;
+        if (depth == 0u) break;
+        depth--;
+        at = walk_pending[depth];
+        under = walk_under[depth];
     }
     return true;
 }
 
-// The least the estimate gives a point of the cell, from what its walk lists:
-// each node that stands, the least it adds; a group that may open, the lesser
-// of that and what lies under it.
-float rough_least(in Refine r, Cell cell) {
+// The least the estimate gives a point of the cell, from what its walk
+// listed: each node that stands, the least it adds; a group that may open,
+// the lesser of that and what lies under it.
+float rough_least() {
     float sums[LIGHT_LIST_DEPTH + 1];
     for (uint i = 0u; i <= LIGHT_LIST_DEPTH; i++) sums[i] = 0.0;
-    for (uint i = r.count; i > 0u; i--) {
-        uint entry = r.entries[i - 1u];
+    for (uint i = walk_count; i > 0u; i--) {
+        uint entry = walk_entries[i - 1u];
         uint under = entry & LIGHT_ENTRY_UNDER;
         Light_Node node = light_nodes[entry >> LIGHT_ENTRY_NODE];
-        float least = span_least(node, cell_span(cell, node));
+        float least = span_least(node, cell_span(node));
         if ((entry & LIGHT_ENTRY_STANDS) == 0u) least = min(least, sums[under + 1u]);
         sums[under + 1u] = 0.0;
         sums[under] += least;
@@ -244,7 +233,6 @@ void main(uint3 id : SV_DispatchThreadID) {
     int2 block = int2(id.xy) * LIGHT_LIST_BLOCK;
     int2 corner = int2(id.xy) * int(LIGHT_LIST_TILE);
     int2 size = int2(frame.resolution);
-    Cell cell;
     cell.low = float3(FLT_MAX);
     cell.high = float3(-FLT_MAX);
     cell.normal_low = float3(1.0);
@@ -268,13 +256,13 @@ void main(uint3 id : SV_DispatchThreadID) {
     cell.middle = 0.5 * (cell.low + cell.high);
     cell.radius = 0.5 * length(cell.high - cell.low);
 
-    Refine r;
     uint rough[LIGHT_LIST_ROUGH];
-    bool fits = refine(r, cell, false, 0.0, LIGHT_LIST_ROUGH);
-    uint rough_count = r.count;
+    bool fits = cell_walk(false, 0.0, LIGHT_LIST_ROUGH);
+    uint rough_count = walk_count;
     if (fits) {
-        for (uint i = 0u; i < rough_count; i++) rough[i] = r.entries[i];
-        fits = refine(r, cell, true, max(rough_least(r, cell), 1e-8), LIGHT_LIST_FINE);
+        float least = rough_least();
+        for (uint i = 0u; i < rough_count; i++) rough[i] = walk_entries[i];
+        fits = cell_walk(true, max(least, 1e-8), LIGHT_LIST_FINE);
     }
     InterlockedAdd(list_stats[0].lists[0], 1u);
     if (!fits) {
@@ -286,16 +274,16 @@ void main(uint3 id : SV_DispatchThreadID) {
     // Both in one list, in the order of the tree, a node once.
     uint i = 0u, j = 0u, count = 0u;
     [loop]
-    while (i < rough_count || j < r.count) {
+    while (i < rough_count || j < walk_count) {
         uint a = i < rough_count ? rough[i] >> LIGHT_ENTRY_NODE : INVALID;
-        uint b = j < r.count ? r.entries[j] >> LIGHT_ENTRY_NODE : INVALID;
+        uint b = j < walk_count ? walk_entries[j] >> LIGHT_ENTRY_NODE : INVALID;
         uint entry = min(a, b) << LIGHT_ENTRY_NODE;
         if (a <= b) {
             entry |= (rough[i] & ((1u << LIGHT_ENTRY_ROUGH) - 1u)) << LIGHT_ENTRY_ROUGH;
             i++;
         }
         if (b <= a) {
-            entry |= r.entries[j] & ((1u << LIGHT_ENTRY_ROUGH) - 1u);
+            entry |= walk_entries[j] & ((1u << LIGHT_ENTRY_ROUGH) - 1u);
             j++;
         }
         count++;
