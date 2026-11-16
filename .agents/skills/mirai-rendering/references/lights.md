@@ -53,19 +53,24 @@
 
 `render/light_tree.odin`:
 
-- `light_tree_build` sorts the lights along a Z curve, point ones before spots and each by its
-  reach class (`light_reach_class`, four times apart), and builds a binary tree split where the
-  curve passes from one half of the space to the other: no group under the splits of the classes
-  mixes them. It travels in
+- `light_tree_build` splits the lights that light every way from spots and rectangles and each
+  kind by reach class (`light_reach_class`, four times apart): no group mixes two of those parts.
+  Within a part it splits where the two halves cost least by the surface area and orientation
+  heuristic of PBRT-v4 (`light_bounds_cost`: power, the solid angle their light shines through
+  and the area of their box), so lights close together, alike in power and facing alike share a
+  group. It travels in
   a buffer (`SLOT_LIGHT_TREE`) in depth order: the two children of a group go after it, and no
   traversal opens a group that does not satisfy this (`light_node_opens`), so none goes back even
   if it reads a malformed tree.
 - A group stores what its lights give together as a sphere (color, weighted center, radius, reach
-  and spread) and where they shine (Conty Estévez and Kulla 2018, as in PBRT-v4): a cone of their
-  directions and how far beyond their light reaches. A point outside that receives nothing from
-  the group: without the cone, a group of downlights that the cut could not open lit the ceiling.
-- A group that contains a spot opens before the others; when the budget is not enough, it
-  represents its spots with their cone.
+  and spread) and where they shine (Conty Estévez and Kulla 2018, as in PBRT-v4): the cone of the
+  directions they shine whole in, how far past it their light fades out and the narrowest cone
+  each shines whole in around its own axis. A point outside that receives nothing from the group:
+  without the cone, a group of downlights that the cut could not open lit the ceiling.
+- A group of spots or rectangles stands for its lights like any other (`node_aims`): its light
+  is that of one light whose cone lies between the narrowest of theirs and the cone of the group,
+  within the most and the least the cone lets through, and how far it may be from either counts
+  in its error, so it opens where the directions of its lights matter.
 - **Without shadows.** Those lights form a tree of their own after that of the others
   (`light_tree_shadowless`), which no traversal from node 0 meets; while every light casts none,
   the root of those that do is a group of none (`LIGHT_NODE_NONE`), which reaches nothing.
@@ -73,7 +78,8 @@
   directed or not, and its reach class), `scene_light_update` refits
   the leaf that changed and the groups above it (`light_tree_refit`), past `LIGHT_REFITS_MAX` in a
   frame the whole tree once, and only the changed ranges go; `scene_lights_settle` rebuilds the
-  tree once a frame when it inflates beyond `LIGHT_TREE_REFIT_SLACK`. Another number or another
+  tree once a frame when its cost (`light_tree_cost`, that of the build summed over the groups)
+  grows beyond `LIGHT_TREE_REFIT_SLACK`. Another number or another
   class is another set (`light_revision`): it is rebuilt and uploaded whole.
 - A group keeps its shortest and longest range. It reaches as far as its longest-reach light,
   windows its light halfway between both ranges and counts their difference in its error, so it
@@ -100,8 +106,7 @@ the grid of the lights holds what of the scene they light.
   `shadowless_lighting` adds what both give,
   like the [unshadowed light](#unshadowed-light-of-a-pixel) of the others. The direct filter adds
   it to the pixel as it is, without a shadow; `direct_lighting` (hits, probes, glass, overlays and
-  the points that trace their own rays), without rays; the media choose among the trees by
-  what each root gives and do not trace the ray of a light without shadow, nor does the
+  the points that trace their own rays, and the points of media), without rays, nor does the
   reference.
 - `pass_lights` in `Simulate` links lights and nodes to write them and says where each part is
   (`Pass_Lights`); whoever links it writes the whole region and the root, which joins that of the
@@ -134,7 +139,9 @@ points that trace their own rays take both kinds from it:
   shadows of the pixel (`direct_filter`) or of the hit (`direct_lighting`).
 - A walk visits at most `LIGHT_WALK_MAX` nodes, opening first the group whose light is most at
   stake; past them, the groups it holds stand for their lights. Its cost does not grow with the
-  lights that reach a point, and it is the same every frame.
+  lights that reach a point, and it is the same every frame. Where the groups to open fit, the
+  order does not change the light: the walk opens them last held first, weighing no need, and
+  starts again in order only when it is cut short.
 
 ### Cutoff of a point that traces its own rays
 
