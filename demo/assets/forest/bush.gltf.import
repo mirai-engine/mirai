@@ -4,7 +4,7 @@
   "folder": "bush",
   "inputs": ["bush.bin", "leaves_color.png"],
   "outputs": [
-    {"kind": "SCEN", "name": "bush", "index": 0, "id": "48eed1e5335b875bef27025acf93953a", "written": "dc878698af595cd7"},
+    {"kind": "SCEN", "name": "bush", "index": 0, "id": "48eed1e5335b875bef27025acf93953a", "written": "cffb9787c562bad7"},
     {"kind": "TEX", "name": "leaves_color", "index": 0, "id": "33f31fe1b5c654da025e160204ebcd70"},
     {"kind": "MAT", "name": "Bark", "index": 0, "id": "f9bebb3af1fed4d0e8103c0e0387b11a"},
     {"kind": "MAT", "name": "Leaves", "index": 1, "id": "e26eb420ab436a838111b0626b6a8a79"},

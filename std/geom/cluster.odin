@@ -5,8 +5,9 @@ import "core:math"
 
 // Clusters of a triangle mesh and their bounds: a port of the meshlet
 // builder of meshoptimizer 1.3 (meshopt_buildMeshletsFlex in
-// src/clusterizer.cpp and the bounds of src/meshletutils.cpp, MIT, Arseny
-// Kapoulkine), with the same arithmetic and order.
+// src/clusterizer.cpp and the bounds and triangle order of
+// src/meshletutils.cpp, MIT, Arseny Kapoulkine), with the same arithmetic
+// and order.
 //
 // A cluster grows from a seed by the adjacent triangle that adds the fewest
 // vertices, preferring those that would be left dangling, then the nearest
@@ -679,4 +680,97 @@ meshlet_local_indices :: proc "contextless" (vertices:[]u32,triangles:[]u8,indic
         triangles[i]=u8(pos)
     }
     return unique
+}
+
+// Reorders the triangles of a meshlet (local indices into vertices) so each
+// reuses the vertices of the few before it, and renumbers its vertices in
+// their first use: a port of meshopt_optimizeMeshletLevel. From level 1 a
+// triangle prefers vertices of low valence, a few edge matches are weighed
+// before one is taken, and corners turn so new vertices come in sequence;
+// up to 9 weighs more. The winding of each triangle is kept.
+@(private)
+meshlet_optimize :: proc "contextless" (vertices:[]u32,triangles:[]u8,level:int) #no_bounds_check {
+    vertex_count,triangle_count:=len(vertices),len(triangles)/3
+    // When each vertex was last used, in triangles: three apart is still near.
+    CACHE_CUTOFF :: 3
+    cache:[MESHLET_MAX_VERTICES]u8
+    cache_last:=u8(128)
+    // Valence in bytes: an outlier only skews the heuristic.
+    valence:[MESHLET_MAX_VERTICES]u8
+    for corner in triangles[:triangle_count*3] {valence[corner]+=1}
+    for i in 0..<triangle_count {
+        next,next_score,edges:=-1,-1,0
+        for j in i..<triangle_count {
+            a,b,c:=triangles[j*3],triangles[j*3+1],triangles[j*3+2]
+            // Distances in bytes, so the wrap of the stamps does no harm.
+            ad,bd,cd:=cache_last-cache[a],cache_last-cache[b],cache_last-cache[c]
+            match:=int(ad<CACHE_CUTOFF)+int(bd<CACHE_CUTOFF)+int(cd<CACHE_CUTOFF)
+            if level>0 {
+                vmin:=min(valence[a],valence[b],valence[c])
+                score:=match*1024+(1023-int(ad)-int(bd)-int(cd))
+                score=score*256+(255-int(vmin))
+                if score>next_score {next,next_score=j,score}
+                if match>=2 {
+                    edges+=1
+                    if edges>=level {break}
+                }
+            } else {
+                if match>next_score {next,next_score=j,match}
+                // The first edge match: about linear.
+                if match>=2 {break}
+            }
+        }
+        a,b,c:=triangles[next*3],triangles[next*3+1],triangles[next*3+2]
+        // The triangles before it move up one, keeping their order.
+        copy(triangles[(i+1)*3:(next+1)*3],triangles[i*3:next*3])
+        triangles[i*3],triangles[i*3+1],triangles[i*3+2]=a,b,c
+        cache_last+=1
+        cache[a],cache[b],cache[c]=cache_last,cache_last,cache_last
+        valence[a]-=1;valence[b]-=1;valence[c]-=1
+    }
+    if level>=1 {
+        cache={}
+        for i in 0..<triangle_count {
+            a,b,c:=triangles[i*3],triangles[i*3+1],triangles[i*3+2]
+            if cache[a]==0 && cache[b]!=0 && cache[c]==0 {
+                // Only the middle one used: abc -> bca puts the new ones in sequence.
+                a,b,c=b,c,a
+            } else if cache[a]==0 && cache[b]==0 && cache[c]==0 {
+                // Of three new vertices, edge ab is the one the next triangles cannot reuse
+                // in some codings: turn it away when they share bc or ca instead.
+                needab,needbc,needca:bool
+                for j:=i+1;j<triangle_count && j<=i+CACHE_CUTOFF;j+=1 {
+                    oa,ob,oc:=triangles[j*3],triangles[j*3+1],triangles[j*3+2]
+                    // A reused edge runs the other way.
+                    needab||=(oa==b && ob==a) || (ob==b && oc==a) || (oc==b && oa==a)
+                    needbc||=(oa==c && ob==b) || (ob==c && oc==b) || (oc==c && oa==b)
+                    needca||=(oa==a && ob==c) || (ob==a && oc==c) || (oc==a && oa==c)
+                }
+                if needab && !needbc {
+                    a,b,c=b,c,a
+                } else if needab && !needca {
+                    a,b,c=c,a,b
+                } else if !needab && needbc && !needca {
+                    a,b,c=c,a,b
+                }
+            }
+            triangles[i*3],triangles[i*3+1],triangles[i*3+2]=a,b,c
+            cache[a],cache[b],cache[c]=1,1,1
+        }
+    }
+    // The vertices in the order the triangles first use them.
+    order:[MESHLET_MAX_VERTICES]u32
+    remap:[MESHLET_MAX_VERTICES]i16
+    for &r in remap[:vertex_count] {r=-1}
+    offset:=0
+    for &corner in triangles[:triangle_count*3] {
+        r:=&remap[corner]
+        if r^<0 {
+            r^=i16(offset)
+            order[offset]=vertices[corner]
+            offset+=1
+        }
+        corner=u8(r^)
+    }
+    copy(vertices,order[:offset])
 }
