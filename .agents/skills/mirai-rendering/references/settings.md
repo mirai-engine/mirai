@@ -44,8 +44,8 @@
   not blur them. Textures are read with a mip bias of `log2` of the scale, which keeps their
   detail.
 - Changing the size, the number of views or the target recreates their targets.
-- `Graphics_Settings.resolution` is that target, 1080 lines unless chosen (0: Native), and no preset writes
-  it: the quality of a preset does not change the pixels of the window. No setting stores the
+- `Graphics_Settings.resolution` is that target, 1080 lines unless chosen (0: Native), and no
+  preset writes it: the quality of a preset does not change the pixels of the window. No setting stores the
   preset: what names one (a control, `graphics_preset` of `settings.set`, the code of a game)
   writes its fields with `graphics_preset_apply`, before the fields that go on top;
   `graphics_quality_of` computes the one the fields are at, and `graphics_apply` only reads.
