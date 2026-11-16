@@ -194,7 +194,9 @@ the `Project` owns everything it points to.
   [registry](../../mirai-assets/references/formats.md#registry), the
   [textures](../../mirai-imports/references/imports.md#texture-cache), the
   [compressed animations](../../mirai-core/references/host.md#content) and the
-  [previews](../../mirai-editor/references/panels.md#previews) are made again.
+  [previews](../../mirai-editor/references/panels.md#previews) are made again, and the
+  [capacities](../../mirai-rendering/references/frame-graph.md#passes) of the scenes are learned
+  again, with holes the first time a list fills.
 - **A cache never makes a valid asset fail.** An entry is keyed on everything it depends on (the
   formats and versions of what wrote it), and every read checks it against the asset: one that
   does not read or does not match, as one an older build left in a copied project, is made again

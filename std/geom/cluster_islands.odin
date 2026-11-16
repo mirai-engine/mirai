@@ -17,15 +17,26 @@ import "core:slice"
 // order (a prefix spread over the mesh) and growing them about their centers
 // so they draw the area of level 0 that all of them stood for. The error of
 // an island is that of its outline times its growth and, once pruned, at
-// least the largest radius of its class grown over ISLAND_PIXELS of the
-// threshold of the cut; a class is not pruned past ISLAND_GROW_MAX.
+// least the farther of the largest radius of its class grown and of how far
+// the area of a dropped island moved, through the survivors that took it,
+// over ISLAND_PIXELS of the threshold of the cut: what is drawn stays within
+// a few pixels of where level 0 drew it. A class is pruned as far as that
+// error lets the cut take it, down to one island, but never so far that its
+// survivors grow past the cloud of their class (the sphere around its
+// islands at level 0): an island larger than the plant it is part of no
+// longer stands for scattered leaves, draws the plant larger than it is,
+// and the box of the mesh, which culling, the sway of the wind and the far
+// form of foliage take, would grow with it. Where its leaves overlap little
+// a class prunes on to one island; where they overlap much, to the few that
+// fill its cloud. It never drops its last: the rest of a mesh does not stand
+// for the area of its islands.
 //
 // The clusters of islands make their own levels in the DAG, beside those of
 // the rest of the mesh, which share no place with them. Clusters of whole
 // islands and groups of clusters are cut by halving the box of their centers;
 // a group is reduced as far as the error of its clusters allows, then by the
-// least more that brings it to CLUSTER_SIMPLIFY_RATIO of its triangles, and
-// it keeps the rules of the DAG: its error is the largest of its clusters'
+// least more that brings it to CLUSTER_SIMPLIFY_RATIO of its triangles and
+// adds to the error of its clusters, and it keeps the rules of the DAG: its error is the largest of its clusters'
 // and its own, in a sphere around theirs, and a group that cannot lose more
 // than 1-CLUSTER_SIMPLIFY_STUCK of its triangles is a root. A group of one
 // cluster is reduced too, so a plant far away keeps shedding its leaves. So only the near
@@ -41,8 +52,7 @@ import "core:slice"
 // (asset.ISLAND_FADE_BAND), so the area of the group goes over evenly.
 // A step of outline is under the threshold already and has no band.
 
-ISLAND_PIXELS :: f32(8)   // of the threshold of the cut, how far the radius of a grown island may span where its level draws it
-ISLAND_GROW_MAX :: f32(4) // the most the islands of a class grow: past it they are not pruned further
+ISLAND_PIXELS :: f32(8) // of the threshold of the cut, how far a grown island may span, and the area of a dropped one move, where its level draws it
 
 // An island: its outlines are Cluster_Source.island_rungs[first_rung:][:rung_count].
 Cluster_Island :: struct {
@@ -68,6 +78,7 @@ Cluster_Island_State :: struct {
     area:f32,    // of its first outline, that it stands for: its own, and once pruned a share of those dropped
     error:f32,
     pruned:bool, // its class was halved: it stays at its last outline
+    cover:[4]f32, // once pruned, the sphere around the centers of the islands of level 0 it stands for
 }
 
 // A vertex of a DAG past the positions it was built from: a copy of one of
@@ -98,6 +109,31 @@ islands_areas :: proc(positions:[]Vec3,rungs:[]Cluster_Island_Rung,indices:[]u32
     return areas,true
 }
 
+// Of each island, the radius of the cloud of its class: the sphere around
+// the islands of the class; in allocator.
+islands_clouds :: proc(islands:[]Cluster_Island,allocator:=context.allocator) -> (clouds:[]f32,ok:bool) {
+    Pair :: struct {class,at:u32}
+    pairs,no_pairs:=make([]Pair,len(islands),context.temp_allocator)
+    centers,no_centers:=make([]Vec3,len(islands),context.temp_allocator)
+    radii,no_radii:=make([]f32,len(islands),context.temp_allocator)
+    if no_pairs!=nil || no_centers!=nil || no_radii!=nil {return}
+    error:runtime.Allocator_Error
+    if clouds,error=make([]f32,len(islands),allocator);error!=nil {return}
+    for island,at in islands {pairs[at]={island.class,u32(at)}}
+    slice.sort_by(pairs,proc(a,b:Pair) -> bool {return a.class<b.class || a.class==b.class && a.at<b.at})
+    for first:=0;first<len(pairs); {
+        end:=first
+        for end<len(pairs) && pairs[end].class==pairs[first].class {
+            centers[end-first],radii[end-first]=islands[pairs[end].at].center,islands[pairs[end].at].radius
+            end+=1
+        }
+        _,cloud:=spheres_bound(centers[:end-first],radii[:end-first])
+        for p in pairs[first:end] {clouds[p.at]=cloud}
+        first=end
+    }
+    return clouds,true
+}
+
 // The rung an island draws at state s of its class: s or its last.
 @(private="file")
 island_rung :: #force_inline proc "contextless" (island:Cluster_Island,rung:u32) -> u32 {
@@ -116,7 +152,7 @@ Island_Step :: struct {
 }
 
 @(private="file")
-island_step :: proc "contextless" (states:[]Cluster_Island_State,islands:[]Cluster_Island,rungs:[]Cluster_Island_Rung,areas:[]f32) -> (step:Island_Step,ok:bool) #no_bounds_check {
+island_step :: proc "contextless" (states:[]Cluster_Island_State,islands:[]Cluster_Island,rungs:[]Cluster_Island_Rung,areas,clouds:[]f32,covers:[][4]f32) -> (step:Island_Step,ok:bool) #no_bounds_check {
     if len(states)==0 {return}
     count,rung:u32
     pruned:=false
@@ -132,17 +168,22 @@ island_step :: proc "contextless" (states:[]Cluster_Island_State,islands:[]Clust
     }
     if len(states)<2 {return}
     step.keep=(len(states)+1)/2
-    total,kept,largest:f32
+    total,kept,largest,reach:f32
     for s,at in states {
         island:=islands[s.island]
         total+=s.area
         largest=max(largest,island.radius)
         if at<step.keep {kept+=areas[island_rung(island,island.rung_count-1)]}
     }
+    island_covers(states,islands,step.keep,covers)
+    for s,at in states[:step.keep] {
+        d:=covers[at].xyz-islands[s.island].center
+        reach=max(reach,math.sqrt(d.x*d.x+d.y*d.y+d.z*d.z)+covers[at].w)
+    }
     if !(kept>0) {return}
     step.grow=max(math.sqrt(total/kept),1)
-    if !(step.grow<=ISLAND_GROW_MAX) {return}
-    step.error=largest*step.grow/ISLAND_PIXELS
+    if !(largest*step.grow<=clouds[states[0].island]) {return}
+    step.error=max(largest*step.grow,reach)/ISLAND_PIXELS
     for s,at in states {
         step.error=max(step.error,s.error)
         if at<step.keep {step.error=max(step.error,rungs[island_rung(islands[s.island],islands[s.island].rung_count-1)].error*step.grow)}
@@ -150,10 +191,40 @@ island_step :: proc "contextless" (states:[]Cluster_Island_State,islands:[]Clust
     return step,step.error-step.error==0
 }
 
-// Takes a step: the islands a halving drops are left after those it keeps,
-// with area -1.
+// The covers of the first keep of states once a halving drops the others,
+// in covers: each dropped island goes to the survivor nearest to it.
 @(private="file")
-island_apply :: proc "contextless" (states:[]Cluster_Island_State,islands:[]Cluster_Island,rungs:[]Cluster_Island_Rung,areas:[]f32,step:Island_Step) #no_bounds_check {
+island_covers :: proc "contextless" (states:[]Cluster_Island_State,islands:[]Cluster_Island,keep:int,covers:[][4]f32) #no_bounds_check {
+    cover :: proc "contextless" (s:Cluster_Island_State,islands:[]Cluster_Island) -> [4]f32 {
+        if s.pruned {return s.cover}
+        c:=islands[s.island].center
+        return {c.x,c.y,c.z,0}
+    }
+    for s,at in states[:keep] {covers[at]=cover(s,islands)}
+    for s in states[keep:] {
+        center:=islands[s.island].center
+        nearest:=0
+        least:=max(f32)
+        for k,at in states[:keep] {
+            d:=islands[k.island].center-center
+            if l:=d.x*d.x+d.y*d.y+d.z*d.z;l<least {least,nearest=l,at}
+        }
+        // The sphere around both.
+        a,b:=covers[nearest],cover(s,islands)
+        d:=b.xyz-a.xyz
+        l:=math.sqrt(d.x*d.x+d.y*d.y+d.z*d.z)
+        if l+b.w<=a.w {continue}
+        if l+a.w<=b.w {covers[nearest]=b;continue}
+        r:=(l+a.w+b.w)*0.5
+        c:=a.xyz+d*((r-a.w)/l)
+        covers[nearest]={c.x,c.y,c.z,r}
+    }
+}
+
+// Takes a step: the islands a halving drops are left after those it keeps,
+// with area -1, the nearest survivor of each taking where its area lies.
+@(private="file")
+island_apply :: proc "contextless" (states:[]Cluster_Island_State,islands:[]Cluster_Island,rungs:[]Cluster_Island_Rung,areas:[]f32,covers:[][4]f32,step:Island_Step) #no_bounds_check {
     if step.keep==0 {
         for &s in states {
             s.rung=step.rung
@@ -161,6 +232,7 @@ island_apply :: proc "contextless" (states:[]Cluster_Island_State,islands:[]Clus
         }
         return
     }
+    island_covers(states,islands,step.keep,covers)
     for &s,at in states {
         if at>=step.keep {s.area=-1;continue}
         island:=islands[s.island]
@@ -169,7 +241,26 @@ island_apply :: proc "contextless" (states:[]Cluster_Island_State,islands:[]Clus
         s.area=step.grow*step.grow*areas[island_rung(island,s.rung)]
         s.error=step.error
         s.pruned=true
+        s.cover=covers[at]
     }
+}
+
+// Sorts states by class, then order, ties by island. False without memory.
+@(private="file")
+islands_sort :: proc(states:[]Cluster_Island_State,islands:[]Cluster_Island) -> bool {
+    Pair :: struct {class:u32,order:u64,island:u32,at:int}
+    pairs,no_pairs:=make([]Pair,len(states),context.temp_allocator)
+    sorted,no_sorted:=make([]Cluster_Island_State,len(states),context.temp_allocator)
+    if no_pairs!=nil || no_sorted!=nil {return false}
+    for s,at in states {pairs[at]={islands[s.island].class,islands[s.island].order,s.island,at}}
+    slice.sort_by(pairs,proc(a,b:Pair) -> bool {
+        if a.class!=b.class {return a.class<b.class}
+        if a.order!=b.order {return a.order<b.order}
+        return a.island<b.island
+    })
+    for p,at in pairs {sorted[at]=states[p.at]}
+    copy(states,sorted)
+    return true
 }
 
 // Reduces islands, each at its state, as a group of the DAG or a whole level
@@ -179,21 +270,12 @@ island_apply :: proc "contextless" (states:[]Cluster_Island_State,islands:[]Clus
 // how many, the `allowed` it ended at, the largest error among them and the
 // triangles they draw; those it drops follow, each class in its order. ok
 // false without memory, the states as they were.
-islands_reduce :: proc(states:[]Cluster_Island_State,islands:[]Cluster_Island,rungs:[]Cluster_Island_Rung,areas:[]f32,allowed:f32,target:int) -> (kept:int,reached:f32,error:f32,triangles:int,ok:bool) #no_bounds_check {
-    // By class, then order, ties by island.
-    Pair :: struct {class:u32,order:u64,island:u32,at:int}
-    pairs,no_pairs:=make([]Pair,len(states),context.temp_allocator)
+islands_reduce :: proc(states:[]Cluster_Island_State,islands:[]Cluster_Island,rungs:[]Cluster_Island_Rung,areas,clouds:[]f32,allowed:f32,target:int) -> (kept:int,reached:f32,error:f32,triangles:int,ok:bool) #no_bounds_check {
     sorted,no_sorted:=make([]Cluster_Island_State,len(states),context.temp_allocator)
     ordered,no_ordered:=make([]Cluster_Island_State,len(states),context.temp_allocator)
-    if no_pairs!=nil || no_sorted!=nil || no_ordered!=nil {return}
-    for s,at in states {pairs[at]={islands[s.island].class,islands[s.island].order,s.island,at}}
-    slice.sort_by(pairs,proc(a,b:Pair) -> bool {
-        if a.class!=b.class {return a.class<b.class}
-        if a.order!=b.order {return a.order<b.order}
-        return a.island<b.island
-    })
-    for p,at in pairs {sorted[at]=states[p.at]}
-    copy(states,sorted)
+    covers,no_covers:=make([][4]f32,len(states),context.temp_allocator)
+    if no_sorted!=nil || no_ordered!=nil || no_covers!=nil || !islands_sort(states,islands) {return}
+    copy(sorted,states)
     // The classes as runs of states: [first,first+alive) live, the rest dropped.
     Run :: struct {first,alive:int}
     runs:=make([dynamic]Run,context.temp_allocator)
@@ -209,9 +291,9 @@ islands_reduce :: proc(states:[]Cluster_Island_State,islands:[]Cluster_Island,ru
         for &run in runs {
             for {
                 live:=states[run.first:][:run.alive]
-                step,ok:=island_step(live,islands,rungs,areas)
+                step,ok:=island_step(live,islands,rungs,areas,clouds,covers)
                 if !ok || step.error>reached {break}
-                island_apply(live,islands,rungs,areas,step)
+                island_apply(live,islands,rungs,areas,covers,step)
                 if step.keep>0 {run.alive=step.keep}
             }
             for s in states[run.first:][:run.alive] {triangles+=int(rungs[island_rung(islands[s.island],s.rung)].index_count/3)}
@@ -219,7 +301,7 @@ islands_reduce :: proc(states:[]Cluster_Island_State,islands:[]Cluster_Island,ru
         if triangles<=target {break}
         next:=max(f32)
         for run in runs {
-            if step,ok:=island_step(states[run.first:][:run.alive],islands,rungs,areas);ok {next=min(next,step.error)}
+            if step,ok:=island_step(states[run.first:][:run.alive],islands,rungs,areas,clouds,covers);ok {next=min(next,step.error)}
         }
         if next==max(f32) {break}
         reached=max(reached,next)
@@ -311,6 +393,7 @@ Island_Builder :: struct {
     b:^Dag_Builder,
     source:Cluster_Source,
     areas:[]f32,
+    clouds:[]f32, // islands_clouds
     vertices:[]u32, // of each rung, distinct
     positions:[dynamic]Vec3, // those of the source, then those made
     stamp:[]u32,             // of each position of the source: the made one it is in the cluster being output
@@ -394,6 +477,7 @@ islands_dag :: proc(b:^Dag_Builder,source:Cluster_Source) -> Cluster_Error {
     scratch:=context.temp_allocator
     measured:bool
     if ib.areas,measured=islands_areas(source.positions,source.island_rungs,source.island_indices,scratch);!measured {return .Out_Of_Memory}
+    if ib.clouds,measured=islands_clouds(source.islands,scratch);!measured {return .Out_Of_Memory}
     no_vertices,no_stamp,no_scale,no_rank:runtime.Allocator_Error
     ib.vertices,no_vertices=make([]u32,len(source.island_rungs),scratch)
     ib.stamp,no_stamp=make([]u32,len(source.positions),scratch)
@@ -491,8 +575,19 @@ islands_dag :: proc(b:^Dag_Builder,source:Cluster_Source) -> Cluster_Error {
             first=end
             bounds,bounded:=lod_merge(lods,context.temp_allocator)
             if !bounded {return .Out_Of_Memory}
-            kept,_,error,left,reduced:=islands_reduce(members[:],source.islands,source.island_rungs,ib.areas,bounds.error,int(f32(triangles)*CLUSTER_SIMPLIFY_RATIO))
+            kept,_,error,left,reduced:=islands_reduce(members[:],source.islands,source.island_rungs,ib.areas,ib.clouds,bounds.error,int(f32(triangles)*CLUSTER_SIMPLIFY_RATIO))
             if !reduced {return .Out_Of_Memory}
+            // A group that adds no error to that of its clusters is a level the cut never
+            // draws, which those clusters would grow towards: it takes one more step.
+            if !(error>bounds.error) && kept>0 {
+                more,_,more_error,more_left,again:=islands_reduce(members[:kept],source.islands,source.island_rungs,ib.areas,ib.clouds,bounds.error,left-1)
+                if !again {return .Out_Of_Memory}
+                if more_error>bounds.error {
+                    kept,error,left=more,more_error,more_left
+                    // Those dropped, each class in its order again.
+                    if !islands_sort(members[kept:],source.islands) {return .Out_Of_Memory}
+                }
+            }
             stuck:=f32(left)>f32(triangles)*CLUSTER_SIMPLIFY_STUCK
             if !stuck {
                 // Where each island goes: a survivor to the area it draws in the next level,

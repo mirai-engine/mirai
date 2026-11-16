@@ -184,6 +184,8 @@ load_open :: proc(app:^App,kind:Load_Kind,name:string) -> u64 {
     p.current,p.loading=kind,true
     p.children,p.loaded=0,false
     load_steps_start(app)
+    // A scene or a Play of one: the lists of the renderer follow its marks.
+    if kind!=.Section {capacities_open(app,name)}
     return r.id
 }
 

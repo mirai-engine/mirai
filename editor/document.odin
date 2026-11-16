@@ -161,6 +161,8 @@ scene_new :: proc(s:^Session,prefab:=false) {
         return
     }
     ai_document_closed(s,s.edit_world)
+    // No scene file: the lists of the renderer keep no marks for it.
+    host.capacities_open(s.app,"")
     if prefab {
         entity_make(s,w,{name="Prefab",named=true})
     } else {

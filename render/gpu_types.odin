@@ -510,8 +510,9 @@ gbuffer_normal_decode :: proc "contextless" (texel: Vec4) -> (normal: Vec3, roug
 // of its maps of the shadows, its chunks and the clusters the maps draw, of 16
 // bytes each (shadow_cull.slang). What does not
 // fit is dropped and counted (Gpu_Cull_State.dropped, Gpu_Cull_Stats.dropped),
-// and the renderer grows the list for the frames after: a frame may show
-// holes where a list first overflows, never again at that size. The visible
+// and the renderer grows the list for the frames after, and the host keeps
+// what it asked for by scene (Capacity_Marks): a frame may show holes where a
+// list first overflows in a scene, never again at that size. The visible
 // clusters are listed twice: as the cull finds them, and by raster bin.
 Cull_List :: enum {Chunks, Visible, Candidates, Shadow_Chunks, Shadow_Entries}
 CULL_START :: [Cull_List]u32{.Chunks = 1 << 16, .Visible = 1 << 18, .Candidates = 1 << 16, .Shadow_Chunks = 1 << 14, .Shadow_Entries = 1 << 18}
