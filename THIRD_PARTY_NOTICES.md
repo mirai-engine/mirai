@@ -58,8 +58,10 @@ are kept here and, where the license asks for it, in the header of the file.
   `std/geom/delaunay.odin`. Game.
 - **meshoptimizer 1.3** (MIT; © 2016-2026 Arseny Kapoulkine),
   <https://github.com/zeux/meshoptimizer>.
-  `std/geom/simplify.odin`, `cluster.odin`, `partition.odin` and `cluster_dag.odin` (the builder
-  of `demo/clusterlod.h` with the retry of its stuck groups), and its rules for groups (error the
+  `std/geom/simplify.odin`, `cluster.odin` (with the triangle order of
+  `meshopt_optimizeMeshletLevel`), `partition.odin` and `cluster_dag.odin` (the builder of
+  `demo/clusterlod.h` with the retry of its stuck groups and its limit of the error by edge
+  length), and its rules for groups (error the
   largest of the children's and its own, sphere around theirs, a stuck group a root) in the groups
   of islands of `cluster_islands.odin`. Game. That retry where whole levels
   stop in `cook/import/levels.odin`, the vertex codec and the quaternion and exponential filters of
@@ -122,8 +124,8 @@ are kept here and, where the license asks for it, in the header of the file.
   <https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK>. `plugins/fsr/shaders/fsr3` (the
   upscaler, optical flow, frame interpolation and SPD headers, altered: reduced to the one
   configuration Mirai compiles, as their `UPSTREAM.md` says) and the pass sequence of
-  `plugins/fsr/runtime/framegen.odin`, translated from `ffx_opticalflow.cpp` and
-  `ffx_frameinterpolation.cpp`. Game, with the `fsr` plugin.
+  `plugins/fsr/runtime/framegen.odin`, translated from `ffx_opticalflow.cpp`,
+  `ffx_frameinterpolation.cpp` and `ffx_fsr3.cpp`. Game, with the `fsr` plugin.
 - **Zstandard 1.5.7** (BSD-3-Clause; © Meta Platforms, Inc. and affiliates),
   <https://github.com/facebook/zstd>. `std/compressor/zstd`, a translation of its decoder and of
   three levels of its encoder, as its `UPSTREAM.md` says. Game.

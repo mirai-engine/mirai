@@ -206,8 +206,15 @@ published mesh without levels and the cluster DAG use it.
   seams lock them. A group still above `CLUSTER_SIMPLIFY_STUCK` (faceted pieces, a seam on every
   edge) runs once more without the `Protect` of `vertex_lock`, only the outlines between submeshes
   kept, with `Error_Clamped` and the error of its attributes in its own: what crossing the seams
-  loses reaches the cut. A group stuck after that is a root; its places stay locked in all the
-  levels above, because its clusters are drawn next to any of them.
+  loses reaches the cut, though never more than `CLUSTER_ERROR_EDGE_LIMIT` times the longest
+  edge of its triangles (where they are within the threshold, so is what their attributes lose;
+  its position error is never capped). A group stuck after that is a root; its places stay locked
+  in all the levels above, because its clusters are drawn next to any of them.
+- The triangles of each cluster the DAG simplifies come in the order of `meshlet_optimize` (the
+  port of `meshopt_optimizeMeshletLevel`), which names fewer vertices from far back: what the
+  coding of a page and the fetches of a pixel gain. Clusters of islands keep the order of their
+  islands, which share no vertex, and whole levels (`cluster_levels_build`) the order they are
+  given in, which decoding a level gives back.
 - **Cut contract.** Each `Cluster` carries its cull sphere and cone, `own` (sphere and error with
   which it appears: 0 at level 0) and `parent` (those of its group, shared by all its clusters;
   error `max(f32)` on a root), its group, its level and its submesh. It is drawn where `own`
@@ -221,8 +228,8 @@ published mesh without levels and the cluster DAG use it.
   group k, its clusters share the sphere of level 0 with the error of level k as `own` (0 for
   level 0, which a view however near draws) and that of k+1 as `parent`, and the same cut chooses
   a whole level.
-- Without `optimizeMeshlet` or the *sloppy* fallback of `clusterlod`: crossing the seams keeps the
-  topology, and only locked places stop a group.
+- Without the *sloppy* fallback of `clusterlod`: crossing the seams keeps the topology, and only
+  locked places stop a group, which joining cells cannot move either.
 
 ## Islands (`cluster_islands.odin`)
 
@@ -270,8 +277,7 @@ published mesh without levels and the cluster DAG use it.
 ## Outside the package
 
 Not implemented: grid-based *sloppy* simplification, the optimal vertex placement of a collapse
-(`meshopt_simplifyWithUpdate`), cluster reordering (`optimizeMeshlet`) and oblique cut planes in the
-decomposition.
+(`meshopt_simplifyWithUpdate`) and oblique cut planes in the decomposition.
 
 ## Verification
 
@@ -293,8 +299,9 @@ decomposition.
   `simplify_of_a_sparse_part_is_that_of_the_part_alone`. When touching a port, repeat the
   byte-for-byte comparison with meshoptimizer.
 - `cluster_dag_of_a_closed_mesh_cuts_without_cracks_and_is_deterministic` (random cuts without odd
-  edges and intact group borders, also with locked groups), `cluster_levels_cut_one_whole_level`
-  and, on demo meshes,
+  edges and intact group borders, also with locked groups; the edge limit on faceted ones),
+  `meshlet_optimize_keeps_each_triangle_and_reuses_vertices_sooner`,
+  `cluster_levels_cut_one_whole_level` and, on demo meshes,
   `the_cluster_dag_of_demo_meshes_cuts_without_cracks_with_errors_that_grow` (`cook/import`).
 - `surface_edit_test.odin` and `boolean_test.odin`: run their cases in minimal and in speed when
   changing the kernel (the boolean one covers the failure of each allocation with its own temporary

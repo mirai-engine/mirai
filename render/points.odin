@@ -30,7 +30,7 @@ Material_Points :: struct {
 	buffer:    rhi.Buffer,
 	capacity:  u32, // points a batch holds at once
 	programs:  u32, // bins: the largest Surface program id of the catalog, plus one
-	wanted:    u32, // the most points a batch asked for, read back: the buffer grows to it
+	wanted:    u32, // the most points a batch asked for since the marks were set (renderer_capacity_marks_set), read back: the buffer grows to it
 	readback:  [rhi.MAX_FRAMES_IN_FLIGHT]rhi.Buffer,
 	using stages: Program_Computes, // of surface_points__<program>.comp
 	started:   bool, // a batch started this frame: the next one keeps what it asked for
