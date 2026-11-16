@@ -1,0 +1,7 @@
+{
+  "name": "terrain_multiplayer",
+  "version": "0.1.0",
+  "dependencies": ["terrain", "multiplayer"],
+  "parts": ["Runtime"],
+  "automatic": true
+}

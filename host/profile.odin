@@ -1,0 +1,397 @@
+package host
+
+import "base:runtime"
+import "core:time"
+import "mirai:core"
+import "mirai:platform"
+import render "mirai:render"
+import "mirai:rhi"
+import "mirai:std/base"
+import "mirai:std/jobs"
+
+// A recording of frames for whoever measures the application (the profile.*
+// methods of the editor): on the main thread a zone for the frame and one for
+// each of its parts, and one for each function of the loops, which the world
+// opens with profile_step_begin; on the ring of each worker of the job
+// system its jobs; and per frame what the zones do not carry, the times of
+// the renderer and the GPU passes of every submission of the frame, which
+// come back rhi.MAX_FRAMES_IN_FLIGHT submissions later. Rings are drained at
+// the end of every frame, so a ring only has to hold one frame. While nothing records a zone costs a
+// branch and the GPU reports only its whole frame. The first profile_start
+// reserves the memory; a recording allocates nothing. Whoever reads the zones
+// as they happen (a profiler plugin) asks for them every frame with
+// profile_request and reads the rings with profile_read.
+
+PROFILE_RING :: 1<<13          // zones one thread can finish within a frame
+PROFILE_ZONES :: 1<<18         // zones of a whole recording
+PROFILE_FRAMES_MAX :: 3600
+PROFILE_PASSES :: 1<<17        // GPU pass times of a whole recording
+PROFILE_PASS_NAMES :: 128      // the last one names every pass that did not fit
+PROFILE_PASS_NAME_BYTES :: 32
+PROFILE_MAIN :: jobs.OWNER     // the ring of the main thread, worker 0 of the job system
+PROFILE_GPU_LATE :: rhi.MAX_FRAMES_IN_FLIGHT+2 // frames a recording runs past its last one for the GPU times of that one
+
+Profile_Frame :: struct {
+    number:u32,       // the frame of base.Profile that the zones of this frame carry
+    drawn:bool,
+    render_prepare_ms:f32, // of the renderer, when it drew
+    render_wait_ms:f32,    // the wait for a frame slot of the GPU (and for the display with vsync)
+    render_record_ms:f32,
+    render_end_ms:f32,
+    gpu_ms:f32,            // the sum of its own passes
+    device_first,device_end:u64, // the rhi frames it submitted, [first,end)
+    gpu_submissions:u32,   // of them, those whose passes came back
+    render_width,render_height:u32,
+    generated:bool,        // it drew an image shown before its own (frame generation)
+    presented:u32,         // images given to the display since the frame before
+    intervals:u32,         // between them, with their sum and the sum of their squares, in ms
+    interval_total_ms,interval_square:f64,
+    latency_ms:f32,        // from the start of the last frame shown to its image going to the display
+    pass_first,pass_count:int,
+    memory:Profile_Memory, // of a recording with memory
+}
+
+// The memory at the end of a frame, in bytes. world: what the tables and
+// storages of the World that ran last in the frame hold (the game loop's,
+// else the editor's), as core.world_memory measures it.
+Profile_Memory :: struct {
+    world:i64,
+    process:platform.Process_Memory,
+    gpu:u64, // of the device, as its driver says
+}
+
+Profile_Pass :: struct {
+    name:int, // into the names of the pass of the Profiler
+    start_ns,end_ns:i64, // on the clock of the zones
+}
+
+// Whether every submission of the frame gave back its GPU passes.
+profile_gpu_measured :: proc "contextless" (f:Profile_Frame) -> bool {
+    return f.device_end>f.device_first && u64(f.gpu_submissions)==f.device_end-f.device_first
+}
+
+Profiler :: struct {
+    profile:base.Profile,
+    rings_ready:bool, // the base.Profile rings, which profile_request needs without the recording buffers
+    reserved:bool,    // the recording buffers below
+    recording:bool,
+    memory:bool,      // the recording samples the memory at the end of each frame, in the zone memory
+    memory_world:rawptr, // the World of the frame that ran last
+    late:int,         // >0: the frames asked for were recorded and the recording waits for the GPU times of the last ones, this many frames at most
+    requested:u8,     // frames profile_request keeps the zones and the GPU passes on
+    wanted:int,                // frames the recording ends after
+    frames:[]Profile_Frame,
+    frame_count:int,
+    zones:[]base.Profile_Zone, // in nanoseconds since the Profile was made
+    zone_count:int,
+    lost:u64,                  // zones overwritten in a ring or that did not fit in zones
+    cursors:[]u64,             // per ring: the next zone to drain
+    passes:[]Profile_Pass,
+    pass_count:int,
+    gpu_next:int,              // the first frame that may still get GPU passes
+    device_first:u64,          // rhi.frame_number when the frame being recorded began
+    pass_names:[][PROFILE_PASS_NAME_BYTES]u8, // the GPU reuses the memory of its names every frame
+    pass_name_lengths:[]u8,
+    pass_name_count:int,
+    frame_zone:base.Profile_Scope,
+    presented:rhi.Present_Stats, // as the frame before left them
+}
+
+// What a recording left, until the next profile_start. Zones of the main
+// thread end in the order of the frame, inner zones before the one around them.
+Profile_Recording :: struct {
+    frames:[]Profile_Frame,
+    zones:[]base.Profile_Zone,
+    passes:[]Profile_Pass,
+    threads:int,
+    lost:u64,
+    complete:bool, // it reached the frames asked for
+}
+
+// Starts recording the next frames, at most PROFILE_FRAMES_MAX, and with
+// memory what they hold at their end. False while another recording runs,
+// or when the memory cannot be reserved.
+profile_start :: proc(app:^App,frames:int,memory:=false) -> bool {
+    p:=&app.profiler
+    if p.recording || frames<=0 {return false}
+    if !p.reserved && !profile_reserve(app) {return false}
+    p.wanted=min(frames,PROFILE_FRAMES_MAX)
+    p.memory=memory
+    p.frame_count,p.zone_count,p.pass_count,p.lost,p.gpu_next,p.late=0,0,0,0,0,0
+    p.frame_zone={}
+    if app.device!=nil {p.presented=rhi.present_stats(app.device)}
+    out:[0]base.Profile_Zone
+    for &cursor,thread in p.cursors {_,cursor,_=base.profile_read_since(&p.profile,thread,0,out[:])}
+    p.recording=true
+    base.profile_set_enabled(&p.profile,true)
+    return true
+}
+
+// Ends a recording before its last frame. Between frames.
+profile_stop :: proc(app:^App) {
+    p:=&app.profiler
+    if !p.recording {return}
+    base.profile_set_enabled(&p.profile,false)
+    p.recording,p.late=false,0
+}
+
+profile_recording :: proc(app:^App) -> Profile_Recording {
+    p:=&app.profiler
+    return {
+        frames=p.frames[:p.frame_count],zones=p.zones[:p.zone_count],passes=p.passes[:p.pass_count],
+        threads=len(p.cursors),lost=p.lost,complete=!p.recording && p.wanted>0 && p.frame_count>=p.wanted,
+    }
+}
+
+// Keeps the zones of the threads and the GPU timings of the passes recorded
+// through the next frame: call it every frame while reading them. The first
+// call reserves the rings; false without memory.
+profile_request :: proc(app:^App) -> bool {
+    p:=&app.profiler
+    if !profile_reserve_rings(app) {return false}
+    p.requested=2
+    return true
+}
+
+// Whether the zones and the GPU passes are being recorded.
+profile_active :: proc "contextless" (app:^App) -> bool {
+    p:=&app.profiler
+    return p.rings_ready && ((p.recording && p.late==0) || p.requested>0)
+}
+
+// The rings: one per thread, the main one first.
+profile_threads :: proc(app:^App) -> int {return len(app.profiler.profile.threads)}
+
+// The zones a thread finished since the cursor since, oldest first, with
+// their times in nanoseconds since profile_epoch_ns; as base.profile_read_since.
+// The editor recording reads the same rings with cursors of its own.
+profile_read :: proc(app:^App,thread:int,since:u64,out:[]base.Profile_Zone) -> (count:int,next:u64,lost:u64) {
+    p:=&app.profiler
+    if !p.rings_ready {return 0,since,0}
+    return base.profile_read_since(&p.profile,thread,since,out)
+}
+
+// The time of time.tick_now, in nanoseconds, the times of the zones count from.
+profile_epoch_ns :: proc(app:^App) -> i64 {
+    return time.duration_nanoseconds(time.tick_diff({},app.profiler.profile.epoch_tick))
+}
+
+profile_pass_name :: proc(app:^App,index:int) -> string {
+    p:=&app.profiler
+    if index<0 || index>=p.pass_name_count {return ""}
+    return string(p.pass_names[index][:p.pass_name_lengths[index]])
+}
+
+// The zone of a function of the loops, by its index in info.steps: the world
+// opens one around each call, on the thread of the loop.
+profile_step_begin :: #force_inline proc "contextless" (app:^App,index:int) -> base.Profile_Scope {
+    if !profile_active(app) {return {}}
+    return profile_step_open(app,index)
+}
+profile_step_end :: #force_inline proc "contextless" (zone:base.Profile_Scope) {
+    base.profile_end(zone)
+}
+profile_step_open :: proc "contextless" (app:^App,index:int) -> base.Profile_Scope {
+    if app.info==nil || index<0 || index>=len(app.info.steps) {return {}}
+    return base.profile_begin(&app.profiler.profile,PROFILE_MAIN,app.info.steps[index].name)
+}
+
+// A zone of the main thread named by a literal, for a part of the frame.
+@(private)
+profile_part :: #force_inline proc "contextless" (app:^App,name:string) -> base.Profile_Scope {
+    if !profile_active(app) {return {}}
+    return base.profile_begin(&app.profiler.profile,PROFILE_MAIN,name)
+}
+
+@(private)
+profile_frame_open :: proc(app:^App) {
+    p:=&app.profiler
+    active:=profile_active(app)
+    if p.rings_ready {base.profile_set_enabled(&p.profile,active)}
+    p.memory_world=nil
+    if !active {return}
+    if app.device!=nil {p.device_first=rhi.frame_number(app.device)}
+    base.profile_frame(&p.profile)
+    p.frame_zone=base.profile_begin(&p.profile,PROFILE_MAIN,"frame")
+}
+
+@(private)
+profile_frame_close :: proc(app:^App) {
+    p:=&app.profiler
+    base.profile_end(p.frame_zone)
+    p.frame_zone={}
+}
+
+// Whether the frame about to be drawn records the GPU time of each pass.
+@(private)
+profile_gpu_want :: proc(app:^App) {
+    if app.device!=nil {rhi.timestamps_want(app.device,profile_active(app))}
+}
+
+// Closes the frame, keeps what the renderer measured and drains the rings.
+@(private)
+profile_frame_end :: proc(app:^App,drawn:bool) {
+    load_profile_frame(app,drawn)
+    p:=&app.profiler
+    opened:=p.frame_zone.profile!=nil
+    sample:Profile_Memory
+    if opened && p.recording && p.late==0 && p.memory {
+        zone:=profile_part(app,"memory")
+        sample=profile_memory_sample(app)
+        base.profile_end(zone)
+    }
+    if opened {profile_frame_close(app)}
+    if p.requested>0 {p.requested-=1}
+    if !p.recording {
+        if app.renderer!=nil {render.renderer_gpu_clear(app.renderer)}
+        return
+    }
+    if opened && p.late==0 && p.frame_count<len(p.frames) {
+        frame:=&p.frames[p.frame_count]
+        frame^={number=p.profile.frame,drawn=drawn,pass_first=p.pass_count,memory=sample}
+        if app.device!=nil {
+            frame.device_first,frame.device_end=p.device_first,rhi.frame_number(app.device)
+            shown:=rhi.present_stats(app.device)
+            frame.presented,frame.intervals=u32(shown.presented-p.presented.presented),u32(shown.intervals-p.presented.intervals)
+            frame.interval_total_ms=shown.interval_total_ms-p.presented.interval_total_ms
+            frame.interval_square=shown.interval_square-p.presented.interval_square
+            frame.latency_ms=shown.latency_ms
+            p.presented=shown
+        }
+        if r:=app.renderer;r!=nil {
+            stats:=render.renderer_stats(r)
+            frame.generated=stats.generated
+            frame.render_width,frame.render_height=stats.render_width,stats.render_height
+            if drawn {
+                frame.render_prepare_ms,frame.render_wait_ms=stats.cpu_prepare_ms,stats.cpu_begin_ms
+                frame.render_record_ms,frame.render_end_ms=stats.cpu_record_ms,stats.cpu_end_ms
+            }
+        }
+        p.frame_count+=1
+    }
+    if r:=app.renderer;r!=nil {
+        epoch:=profile_epoch_ns(app)
+        for submission in render.renderer_gpu_submissions(r) {profile_gpu_add(p,submission.frame,submission.timings,epoch)}
+        render.renderer_gpu_clear(r)
+    }
+    for &cursor,thread in p.cursors {
+        if p.late>0 {
+            out:[0]base.Profile_Zone
+            _,cursor,_=base.profile_read_since(&p.profile,thread,0,out[:])
+            continue
+        }
+        count,next,lost:=base.profile_read_since(&p.profile,thread,cursor,p.zones[p.zone_count:])
+        p.zone_count+=count
+        p.lost+=lost
+        cursor=next
+    }
+    if p.frame_count<p.wanted {return}
+    // The last frames get their GPU passes once the GPU reused their slots: a
+    // later batch, or none within PROFILE_GPU_LATE frames, ends the wait.
+    waiting:=false
+    if app.renderer!=nil {
+        for f in p.frames[p.gpu_next:p.frame_count] {
+            if f.device_end>f.device_first && !profile_gpu_measured(f) {waiting=true;break}
+        }
+    }
+    if !waiting || p.late>=PROFILE_GPU_LATE {profile_stop(app);return}
+    p.late+=1
+}
+
+@(private)
+profile_memory_sample :: proc(app:^App) -> (m:Profile_Memory) {
+    if world:=app.profiler.memory_world;world!=nil && app.info!=nil {
+        m.world=i64(core.world_memory(app.info,world))
+    }
+    m.process=platform.process_memory()
+    if app.device!=nil {m.gpu,_=rhi.device_memory(app.device)}
+    return
+}
+
+// Gives the GPU timings of the rhi frame to the recorded frame that
+// submitted it. Batches come in the order they were submitted, so the passes
+// of a frame stay together; those of a submission between frames, or of
+// one before the recording, belong to no frame and are left out.
+profile_gpu_add :: proc(p:^Profiler,frame:u64,timings:[]rhi.Gpu_Timing,epoch_ns:i64) {
+    for p.gpu_next<p.frame_count {
+        f:=&p.frames[p.gpu_next]
+        if frame<f.device_first {return}
+        if frame>=f.device_end {p.gpu_next+=1;continue}
+        if f.gpu_submissions==0 {f.pass_first=p.pass_count}
+        for timing in timings {
+            if p.pass_count>=len(p.passes) {break}
+            p.passes[p.pass_count]={profile_pass_intern(p,timing.name),timing.start_ns-epoch_ns,timing.end_ns-epoch_ns}
+            p.pass_count+=1
+            f.gpu_ms+=timing.ms
+        }
+        f.pass_count=p.pass_count-f.pass_first
+        f.gpu_submissions+=1
+        return
+    }
+}
+
+@(private)
+profile_pass_intern :: proc(p:^Profiler,name:string) -> int {
+    for i in 0..<p.pass_name_count {
+        if string(p.pass_names[i][:p.pass_name_lengths[i]])==name {return i}
+    }
+    if len(p.pass_names)<PROFILE_PASS_NAMES {return 0}
+    if p.pass_name_count==PROFILE_PASS_NAMES-1 {
+        other:=PROFILE_PASS_NAMES-1
+        p.pass_name_lengths[other]=u8(copy(p.pass_names[other][:],"other"))
+        return other
+    }
+    if p.pass_name_count>=PROFILE_PASS_NAMES {return PROFILE_PASS_NAMES-1}
+    index:=p.pass_name_count
+    p.pass_name_lengths[index]=u8(copy(p.pass_names[index][:],name))
+    p.pass_name_count+=1
+    return index
+}
+
+// The rings are all profile_request needs: the recording buffers below
+// (about 13 MB) are only for an editor recording. Idempotent.
+@(private)
+profile_reserve_rings :: proc(app:^App) -> bool {
+    p:=&app.profiler
+    if p.rings_ready {return true}
+    threads:=max(jobs.worker_count(&app.jobs),1)
+    if !base.profile_init(&p.profile,{threads=threads,zones_per_thread=PROFILE_RING,allocator=app.allocator}) {return false}
+    base.profile_set_enabled(&p.profile,false)
+    p.rings_ready=true
+    if jobs.worker_count(&app.jobs)>0 {jobs.system_profile_set(&app.jobs,&p.profile)}
+    return true
+}
+
+@(private)
+profile_reserve :: proc(app:^App) -> bool {
+    p:=&app.profiler
+    if !profile_reserve_rings(app) {return false}
+    threads:=max(jobs.worker_count(&app.jobs),1)
+    error:runtime.Allocator_Error
+    p.frames,error=make([]Profile_Frame,PROFILE_FRAMES_MAX,app.allocator)
+    if error==nil {p.zones,error=make([]base.Profile_Zone,PROFILE_ZONES,app.allocator)}
+    if error==nil {p.cursors,error=make([]u64,threads,app.allocator)}
+    if error==nil {p.passes,error=make([]Profile_Pass,PROFILE_PASSES,app.allocator)}
+    if error==nil {p.pass_names,error=make([][PROFILE_PASS_NAME_BYTES]u8,PROFILE_PASS_NAMES,app.allocator)}
+    if error==nil {p.pass_name_lengths,error=make([]u8,PROFILE_PASS_NAMES,app.allocator)}
+    if error!=nil {
+        profile_release(app)
+        return false
+    }
+    p.reserved=true
+    return true
+}
+
+// After the job system stopped: no worker records any more.
+@(private)
+profile_release :: proc(app:^App) {
+    p:=&app.profiler
+    delete(p.frames,app.allocator)
+    delete(p.zones,app.allocator)
+    delete(p.cursors,app.allocator)
+    delete(p.passes,app.allocator)
+    delete(p.pass_names,app.allocator)
+    delete(p.pass_name_lengths,app.allocator)
+    if p.rings_ready {base.profile_destroy(&p.profile)}
+    p^={}
+}

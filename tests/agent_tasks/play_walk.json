@@ -1,0 +1,8 @@
+{
+  "project": "game",
+  "prompt": "Play this game as a person would: start it, get past its main menu into the game, and walk the character forward for about a second with the W key. Then let go of the keys and leave the game running, without stopping it.",
+  "checks": [
+    {"play": [{"storage": "Shell", "field": "page", "compare": "Equal", "text": "Playing"}, {"entity": "Player", "field": "world_position.2", "compare": "Below", "number": 4.5}]},
+    {"unchanged": {}}
+  ]
+}

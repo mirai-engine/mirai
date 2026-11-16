@@ -1,0 +1,20 @@
+{
+  "project": "empty",
+  "scene": "town",
+  "prompt": "Create a new group named Arena at position [40, 0, 0]. Inside it: a floor named Floor (a cube scaled [20, 0.5, 20]); four walls named Wall north, Wall south, Wall east and Wall west (cubes 20 long, 3 high and 0.5 thick, standing on the four edges of the floor); a pillar at each corner named Pillar 1 to Pillar 4 (cylinders scaled [1, 4, 1]); and two point lights named Arena light 1 and Arena light 2 with intensity 60, 5 units above the floor.",
+  "checks": [
+    {"entity": "Arena", "position": [40, 0, 0]},
+    {"entity": "Arena/Floor", "scale": [20, 0.5, 20], "components": {"Mesh_Renderer": {"shape": "Cube"}}},
+    {"entity": "Arena/Wall north", "scale": [20, 3, 0.5], "position": [null, {"min": 1.4, "max": 1.85}, null], "components": {"Mesh_Renderer": {"shape": "Cube"}}},
+    {"entity": "Arena/Wall south", "scale": [20, 3, 0.5], "position": [null, {"min": 1.4, "max": 1.85}, null], "components": {"Mesh_Renderer": {"shape": "Cube"}}},
+    {"entity": "Arena/Wall east", "scale": [0.5, 3, 20], "position": [null, {"min": 1.4, "max": 1.85}, null], "components": {"Mesh_Renderer": {"shape": "Cube"}}},
+    {"entity": "Arena/Wall west", "scale": [0.5, 3, 20], "position": [null, {"min": 1.4, "max": 1.85}, null], "components": {"Mesh_Renderer": {"shape": "Cube"}}},
+    {"spread": ["Arena/Wall north", "Arena/Wall south"], "axes": [0, 2], "points": [[0, 9.875], [0, -9.875]], "tolerance": 0.15},
+    {"spread": ["Arena/Wall east", "Arena/Wall west"], "axes": [0, 2], "points": [[9.875, 0], [-9.875, 0]], "tolerance": 0.15},
+    {"repeat": 4, "entity": "Arena/Pillar {n}", "scale": [1, 4, 1], "position": [null, {"min": 1.9, "max": 2.35}, null], "components": {"Mesh_Renderer": {"shape": "Cylinder"}}},
+    {"spread": ["Arena/Pillar 1", "Arena/Pillar 2", "Arena/Pillar 3", "Arena/Pillar 4"], "axes": [0, 2], "points": [[9.75, 9.75], [9.75, -9.75], [-9.75, 9.75], [-9.75, -9.75]], "tolerance": 0.3},
+    {"repeat": 2, "entity": "Arena/Arena light {n}", "position": [null, {"min": 4.75, "max": 5.5}, null], "components": {"Point_Light": {"intensity": 60}}},
+    {"count": {}, "equals": 75},
+    {"unchanged": {}}
+  ]
+}

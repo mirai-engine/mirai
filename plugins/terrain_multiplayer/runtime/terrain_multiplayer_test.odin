@@ -1,0 +1,735 @@
+package terrain_multiplayer
+
+import "core:fmt"
+import "core:log"
+import "core:mem"
+import "core:strings"
+import "core:testing"
+import "mirai:asset"
+import "mirai:core"
+import input "mirai:engine/input"
+import "mirai:engine/scene"
+import "mirai:host"
+import "mirai:std/base"
+import multiplayer "plugins:multiplayer/runtime"
+import terrain "plugins:terrain/runtime"
+
+// One end of a session over one Heightfield of 2 by 2 pages: its tables, its
+// terrain data and what this library keeps, stepped as the fixed loop steps
+// them. The messages go from one end to another by hand, as the network
+// would deliver them, in the order a test chooses.
+@(private)
+@(test_world)
+End_World :: struct {
+    using world:Test_World,
+    using ground:terrain.Test_Terrain,
+    seats:core.Table(input.Seat),
+    replays:terrain.Terrain_Replays,
+    replayed:terrain.Terrain_Replay_Events,
+    net_settings:Terrain_Net_Settings,
+    authority:core.Network,
+    inbox:Heard,
+    outbox:multiplayer.Net_Outbox,
+    connections:multiplayer.Net_Connections,
+    rewinds:multiplayer.Net_Rewinds,
+    root:scene.Scene_Root,
+}
+
+// The messages of the journals an end heard, until its step receives them.
+@(private)
+Heard :: struct {
+    ops:[dynamic]core.Message(multiplayer.Net_Journal_Op),
+    parts:[dynamic]core.Message(multiplayer.Net_Journal_Part),
+    refused:[dynamic]core.Message(multiplayer.Net_Journal_Refused),
+    asks:[dynamic]core.Message(multiplayer.Net_Journal_Ask),
+    resyncs:[dynamic]core.Message(multiplayer.Net_Journal_Resync),
+}
+
+// What an outbox queued, as an end hears it from sender.
+@(private="file")
+hear :: proc(e:^End,outbox:^multiplayer.Net_Outbox,item:multiplayer.Outgoing,sender:multiplayer.Connection=0) {
+    heard :: proc(list:^[dynamic]core.Message($T),outbox:^multiplayer.Net_Outbox,item:multiplayer.Outgoing,sender:multiplayer.Connection) {
+        if item.type!=T {return}
+        m:=core.Message(T){sender=u64(sender)}
+        mem.copy(&m.value,&outbox.bytes[item.at],size_of(T))
+        append(list,m)
+    }
+    heard(&e.inbox.ops,outbox,item,sender);heard(&e.inbox.parts,outbox,item,sender);heard(&e.inbox.refused,outbox,item,sender)
+    heard(&e.inbox.asks,outbox,item,sender);heard(&e.inbox.resyncs,outbox,item,sender)
+}
+
+@(private="file")
+End :: struct {
+    using w:End_World,
+    resident:terrain.Terrain_Resident, // of its application, as net, session and problems
+    net:Terrain_Net,
+    session:multiplayer.Net_Session,
+    problems:core.Problems,
+    owner:core.Entity,
+    connection:multiplayer.Connection, // client: its own
+    tick:u64,
+    fixture:^Fixture, // its assets
+}
+
+@(private="file")
+Fixture :: struct {
+    folder:string,
+    types:asset.Types,
+    assets:host.Assets,
+    app:host.App,
+}
+
+@(private="file")
+SOURCE :: base.Asset_Id{0x7e77a1,0x5e55}
+
+// The assets of an end, with the source as a file: of kind, raised over a
+// corner when raise is not 0, or no file when not written.
+@(private="file")
+fixture_init :: proc(t:^testing.T,f:^Fixture,name:string,kind:=terrain.Source_Kind.Heightfield,raise:f32=0,written:=true) -> bool {
+    f.folder=base.test_folder(t,name)
+    if f.folder=="" {return false}
+    asset.types_init(&f.types)
+    s:terrain.Source
+    defer terrain.source_destroy(&s)
+    if !terrain.source_make(&s,kind,kind==.Volume?[3]int{65,33,65}:[3]int{97,1,97},1,16) {return false}
+    if raise!=0 {terrain.source_edit(&s,{kind=.Raise,center=terrain.source_origin(&s)+{20,0,20},radius=12,amount=raise,hardness=0.5})}
+    if written && !testing.expect_value(t,terrain.source_save(&s,fmt.tprintf("%s/ground.terrain",f.folder),SOURCE,&f.types),asset.Error.None) {return false}
+    if !host.assets_init(&f.assets,{root=f.folder,capacity=16}) {return false}
+    f.app={assets=&f.assets,allocator=context.allocator}
+    return true
+}
+
+@(private="file")
+fixture_destroy :: proc(f:^Fixture) {
+    host.assets_destroy(&f.assets);asset.types_destroy(&f.types)
+}
+
+// A call of terrain_update in a tick of a world that plays: it loads the
+// sources and applies the requests of a tick that is not routed.
+@(private="file")
+end_update :: proc(e:^End,f:^Fixture) {
+    terrain.test_step(&e.ground,core.commands(&e.w,test_world_info(&e.w)),&e.resident,&f.app,&e.problems)
+    test_world_settle(&e.w)
+}
+
+// An end with its terrain loaded, as the first tick of terrain_update leaves
+// it; or, not loaded, that cannot read it.
+@(private="file")
+end_init :: proc(t:^testing.T,e:^End,f:^Fixture,role:core.Network_Role,connection:multiplayer.Connection=0,loaded:=true) -> bool {
+    e.fixture=f
+    if !test_world_init(t,&e.w) {return false}
+    e.authority.role=role
+    e.connection=connection
+    if role==.Client {
+        e.session.host_ready,e.session.mode,e.session.status=true,.Client,.Connected
+        e.session.client.connection=connection
+    } else {
+        // The clients of the tests are in its world: what it sends reaches them.
+        for c in 1..=3 {core.push(&e.connections.events,multiplayer.Connection_Event{kind=.Entered,connection=multiplayer.Connection(c)})}
+    }
+    e.owner=core.create(&e.entities)
+    core.add(&e.transforms,e.owner,core.TRANSFORM_IDENTITY)
+    core.add(&e.terrains,e.owner,terrain.Terrain{source=SOURCE,solid=false})
+    test_world_settle(&e.w)
+    end_update(e,f)
+    if !loaded {return testing.expect(t,terrain.terrain_unread(core.ref(&e.data),&e.fixture.assets,SOURCE),"an end without the file of the source cannot read it")}
+    return testing.expectf(t,terrain.terrain_source(core.ref(&e.data),SOURCE)!=nil,"the source loads: %v",core.problems_list(&e.problems))
+}
+
+@(private="file")
+end_destroy :: proc(e:^End) {
+    terrain.terrain_resident_free(&e.resident);net_free(&e.net)
+    parts_forget(e)
+    delete(e.session.parts);e.session.parts=nil
+    for part in e.outbox.parts {delete(part.bytes)}
+    delete(e.outbox.parts);e.outbox.parts=nil
+    test_world_destroy(&e.w)
+}
+
+// What the parts the session of a client held for its tick were.
+@(private="file")
+parts_forget :: proc(e:^End) {
+    for part in e.session.parts {delete(part.bytes)}
+    clear(&e.session.parts)
+}
+
+// A seat of the server for the player of a connection.
+@(private="file")
+end_seat :: proc(e:^End,connection:multiplayer.Connection) {
+    seat:=core.create(&e.entities)
+    core.add(&e.seats,seat,input.Seat{peer=u64(connection)})
+    test_world_settle(&e.w)
+}
+
+// The messages an end is about to receive this frame, and the step of the input phase.
+@(private="file")
+end_receive :: proc(e:^End) {
+    h:=&e.inbox
+    terrain_net_receive({{h.ops[:]},{h.parts[:]},core.ref(&e.session),{h.refused[:]},{h.asks[:]},{h.resyncs[:]}},core.ref(&e.authority),&e.net,core.ref(&e.session),{dt=1.0/60,tick=e.tick+1},&e.rewinds,core.ref(&e.root),&e.problems)
+    clear(&h.ops);clear(&h.parts);clear(&h.refused);clear(&h.asks);clear(&h.resyncs)
+    parts_forget(e)
+}
+
+// A tick of the fixed loop: this library, terrain and this library again.
+@(private="file")
+end_tick :: proc(e:^End,_:^Fixture,resimulating:=false) {
+    f:=e.fixture
+    e.tick+=1
+    time:=core.Time{dt=1.0/60,playing=true,tick=e.tick,resimulating=resimulating}
+    e.outbox.replaying=resimulating // as a correction of the network leaves it
+    terrain_net_follow(core.ref(&e.authority),&e.net,time,&e.replays,&e.outbox,core.ref(&e.session),core.ref(&e.data),core.read(&e.terrains),
+        core.read(&e.seats),core.read(&e.worlds),e.net_settings,core.ref(&e.root),f.app.assets,&e.problems)
+    clear(&e.replayed.results.items);clear(&e.digs.digs.items) // the logs of a tick, as their readers are handed them
+    terrain.terrain_replay(&e.replays,&e.replayed,&e.digs,&e.terrain_requests,&e.data,core.read(&e.terrains),core.read(&e.worlds),f.app.assets,&e.problems)
+    terrain_net_send(core.ref(&e.authority),&e.net,time,&e.outbox,core.ref(&e.connections),core.ref(&e.replayed),core.ref(&e.data),core.ref(&e.session),core.ref(&e.root))
+    clear(&e.connections.events.items)
+}
+
+// What a server sent, to each client it is for. keep: the items stay to be
+// delivered again, as to a client that comes later.
+@(private="file")
+server_deliver :: proc(server:^End,clients:..^End) {
+    for item in server.outbox.queue.items {
+        for c in clients {
+            if item.to!=0 && item.to!=c.connection {continue}
+            hear(c,&server.outbox,item)
+        }
+    }
+    clear(&server.outbox.queue.items)
+    HEAD :: size_of(multiplayer.Journal_Part_Head)
+    for part in server.outbox.parts {
+        for c in clients {
+            if part.to!=c.connection {continue}
+            arrived:=multiplayer.Journal_Arrived{bytes=make([]u8,len(part.bytes)-HEAD)}
+            mem.copy(&arrived.head,raw_data(part.bytes),HEAD)
+            copy(arrived.bytes,part.bytes[HEAD:])
+            append(&c.session.parts,arrived)
+        }
+        delete(part.bytes)
+    }
+    clear(&server.outbox.parts)
+}
+
+// What a client sent, to the server, from its connection.
+@(private="file")
+client_deliver :: proc(client,server:^End) {
+    for item in client.outbox.queue.items {
+        hear(server,&client.outbox,item,client.connection)
+    }
+    clear(&client.outbox.queue.items)
+}
+
+// A round of the session: every client sends, the server receives and runs a
+// tick, and every client receives and runs its tick.
+@(private="file")
+round :: proc(f:^Fixture,server:^End,clients:..^End) {
+    for c in clients {client_deliver(c,server)}
+    end_receive(server)
+    end_tick(server,f)
+    server_deliver(server,..clients)
+    for c in clients {
+        end_receive(c)
+        end_tick(c,f)
+    }
+}
+
+// The edits of the source the World of an end holds: those applied in their
+// order and those a base it applied stands for.
+@(private="file")
+applied :: proc(e:^End) -> (through:u32) {
+    for &s in e.net.journal.streams {
+        if base.Asset_Id(s.key)!=SOURCE {continue}
+        through=s.floor
+        for {
+            at:=int(through+1)-int(s.first)
+            if at>=0 && at<len(s.log) && s.log[at].op.sequence==through+1 && s.log[at].done!=0 {through+=1;continue}
+            moved:=false
+            for part in s.parts {if part.done!=0 && part.base && part.after>through {through,moved=part.after,true}}
+            if !moved {return}
+        }
+    }
+    return
+}
+
+// Whether two ends hold the same heights everywhere.
+@(private="file")
+same_ground :: proc(a,b:^End) -> (same:bool,differ:int) {
+    sa,sb:=terrain.terrain_source(core.ref(&a.data),SOURCE),terrain.terrain_source(core.ref(&b.data),SOURCE)
+    if sa==nil || sb==nil {return}
+    if sa.kind!=sb.kind || sa.samples!=sb.samples {return}
+    // What no chunk shows left the memory of each end.
+    last:=[3]int{int(sa.samples.x)-1,int(sa.samples.y)-1,int(sa.samples.z)-1}
+    if !terrain.source_region_read(sa,{},last) || !terrain.source_region_read(sb,{},last) {return}
+    for z in 0..<int(sa.samples.z) {for y in 0..<int(sa.samples.y) {for x in 0..<int(sa.samples.x) {
+        if (terrain.source_value(sa,{x,y,z}) or_else 0)!=(terrain.source_value(sb,{x,y,z}) or_else 0) {differ+=1}
+    }}}
+    return differ==0,differ
+}
+
+@(private="file")
+height :: proc(e:^End,x,z:int) -> f32 {
+    s:=terrain.terrain_source(core.ref(&e.data),SOURCE)
+    return (terrain.source_value(s,{x,0,z}) or_else 0)
+}
+
+// A brush over sample x,z of the source.
+@(private="file")
+brush_at :: proc(e:^End,kind:terrain.Brush_Kind,x,z:int,radius,amount:f32,target:f32=0) -> terrain.Brush {
+    s:=terrain.terrain_source(core.ref(&e.data),SOURCE)
+    origin:=terrain.source_origin(s)
+    return {kind=kind,center=origin+{f32(x)*s.cell,0,f32(z)*s.cell},radius=radius,amount=amount,target=target,hardness=0.5}
+}
+
+@(test)
+an_edit_a_client_asks_for_is_applied_by_the_server_and_seen_by_another_client :: proc(t:^testing.T) {
+    defer free_all(context.temp_allocator)
+    f:Fixture
+    if !testing.expect(t,fixture_init(t,&f,"seen")) {return}
+    defer fixture_destroy(&f)
+    s,a,b:End
+    defer end_destroy(&s);defer end_destroy(&a);defer end_destroy(&b)
+    if !end_init(t,&s,&f,.Server) || !end_init(t,&a,&f,.Client,1) || !end_init(t,&b,&f,.Client,2) {return}
+    end_seat(&s,1);end_seat(&s,2)
+    terrain.dig(&a.terrain_requests,brush_at(&a,.Raise,40,40,4,1),a.owner)
+    // The client predicts at once: its ground rises in its tick.
+    end_tick(&a,&f)
+    testing.expect(t,height(&a,40,40)>0.5,"the prediction is applied in the tick it was asked")
+    testing.expect_value(t,u32(len(a.net.journal.predictions)),u32(1))
+    s.tick,b.tick=a.tick-1,a.tick-1
+    end_tick(&b,&f)
+    round(&f,&s,&a,&b)
+    testing.expect_value(t,s.net.journal.stats.sent,u64(1))
+    testing.expect(t,height(&s,40,40)>0.5,"the server applies what the client asked")
+    for e in ([]^End{&a,&b}) {
+        same,differ:=same_ground(e,&s)
+        testing.expectf(t,same,"a client holds the ground of the server: %d samples differ",differ)
+    }
+    testing.expect_value(t,a.net.journal.stats.absorbed,u64(1))
+    testing.expect_value(t,u32(len(a.net.journal.predictions)),u32(0))
+    testing.expect_value(t,a.net.journal.stats.desyncs,u64(0))
+    testing.expect_value(t,b.net.journal.stats.desyncs,u64(0))
+    testing.expect_value(t,applied(&a),u32(1))
+    testing.expect_value(t,applied(&b),u32(1))
+}
+
+@(test)
+two_edits_of_one_region_end_in_the_order_of_the_server_on_every_client :: proc(t:^testing.T) {
+    defer free_all(context.temp_allocator)
+    f:Fixture
+    if !testing.expect(t,fixture_init(t,&f,"concurrent")) {return}
+    defer fixture_destroy(&f)
+    s,a,b:End
+    defer end_destroy(&s);defer end_destroy(&a);defer end_destroy(&b)
+    if !end_init(t,&s,&f,.Server) || !end_init(t,&a,&f,.Client,1) || !end_init(t,&b,&f,.Client,2) {return}
+    end_seat(&s,1);end_seat(&s,2)
+    // Each predicts its own over the same samples: a flattens to 2, b raises by 1. Their order changes what is left.
+    terrain.dig(&a.terrain_requests,brush_at(&a,.Flatten,30,30,6,1,2),a.owner)
+    terrain.dig(&b.terrain_requests,brush_at(&b,.Raise,32,30,6,1),b.owner)
+    end_tick(&a,&f);end_tick(&b,&f)
+    s.tick=a.tick-1
+    // The server hears b first.
+    client_deliver(&b,&s);client_deliver(&a,&s)
+    end_receive(&s)
+    end_tick(&s,&f)
+    testing.expect_value(t,s.net.journal.stats.sent,u64(2))
+    server_deliver(&s,&a,&b)
+    end_receive(&a);end_receive(&b)
+    // An edit of another over what a client predicts, for a tick it simulated, asks to go back to that tick.
+    testing.expect_value(t,len(a.rewinds.queue.items),1)
+    if len(a.rewinds.queue.items)==1 {testing.expect_value(t,a.rewinds.queue.items[0],u32(s.tick))}
+    end_tick(&a,&f);end_tick(&b,&f)
+    // Without going back the order here was not the server's: what differs asks for the pages, and converges.
+    for _ in 0..<8 {round(&f,&s,&a,&b)}
+    for e in ([]^End{&a,&b}) {
+        same,differ:=same_ground(e,&s)
+        testing.expectf(t,same,"a client holds the ground of the server: %d samples differ",differ)
+        testing.expect_value(t,u32(len(e.net.journal.predictions)),u32(0))
+    }
+    testing.expect(t,a.net.journal.stats.resyncs>0,"a client whose order was not the server's asks for the pages")
+    testing.expect(t,s.net.journal.stats.parts_sent>0)
+}
+
+@(test)
+edits_that_arrive_out_of_order_wait_for_their_turn_and_a_lost_one_brings_a_base :: proc(t:^testing.T) {
+    defer free_all(context.temp_allocator)
+    f:Fixture
+    if !testing.expect(t,fixture_init(t,&f,"order")) {return}
+    defer fixture_destroy(&f)
+    s,a,b:End
+    defer end_destroy(&s);defer end_destroy(&a);defer end_destroy(&b)
+    if !end_init(t,&s,&f,.Server) || !end_init(t,&a,&f,.Client,1) || !end_init(t,&b,&f,.Client,2) {return}
+    // Three edits of the server's game, one a tick, over one region.
+    sent:[3][dynamic]multiplayer.Outgoing
+    defer for &items in sent {delete(items)}
+    for i in 0..<3 {
+        terrain.dig(&s.terrain_requests,brush_at(&s,i==1?.Smooth:.Raise,50+i,50,5,0.7),s.owner)
+        end_tick(&s,&f)
+        append(&sent[i],..s.outbox.queue.items[:])
+        clear(&s.outbox.queue.items)
+    }
+    a.tick,b.tick=s.tick,s.tick
+    deliver :: proc(e,from:^End,items:[]multiplayer.Outgoing) {
+        for item in items {hear(e,&from.outbox,item)}
+    }
+    // a hears the second and the third first: it waits for the first.
+    deliver(&a,&s,sent[1][:]);deliver(&a,&s,sent[2][:])
+    end_receive(&a);end_tick(&a,&f)
+    testing.expect_value(t,applied(&a),u32(0))
+    deliver(&a,&s,sent[0][:])
+    end_receive(&a);end_tick(&a,&f)
+    testing.expect_value(t,applied(&a),u32(3))
+    same,differ:=same_ground(&a,&s)
+    testing.expectf(t,same,"edits applied in their order leave the ground of the server: %d samples differ",differ)
+    testing.expect_value(t,a.net.journal.stats.desyncs,u64(0))
+    // b never hears the second: after a while it asks for a base, and the pages bring it.
+    deliver(&b,&s,sent[0][:]);deliver(&b,&s,sent[2][:])
+    end_receive(&b)
+    for _ in 0..<multiplayer.JOURNAL_ASK_TICKS+2 {end_tick(&b,&f)}
+    testing.expect_value(t,applied(&b),u32(1))
+    // The base it asks for as it loads the source, and one for the lost edit.
+    testing.expect_value(t,b.net.journal.stats.resyncs,u64(2))
+    s.tick=b.tick
+    for _ in 0..<8 {round(&f,&s,&b)}
+    same,differ=same_ground(&b,&s)
+    testing.expectf(t,same,"a base after a lost edit leaves the ground of the server: %d samples differ",differ)
+    testing.expect_value(t,applied(&b),u32(3))
+}
+
+@(test)
+a_client_that_enters_late_gets_the_pages_the_edits_touched_and_converges :: proc(t:^testing.T) {
+    defer free_all(context.temp_allocator)
+    f:Fixture
+    if !testing.expect(t,fixture_init(t,&f,"late")) {return}
+    defer fixture_destroy(&f)
+    s,c:End
+    defer end_destroy(&s);defer end_destroy(&c)
+    if !end_init(t,&s,&f,.Server) || !end_init(t,&c,&f,.Client,3) {return}
+    for i in 0..<6 {
+        terrain.dig(&s.terrain_requests,brush_at(&s,.Raise,10+i*15,20+i*12,6,1.5),s.owner)
+        end_tick(&s,&f)
+    }
+    clear(&s.outbox.queue.items)
+    // It enters the world of the server: a base of the source, without the history.
+    core.push(&s.connections.events,multiplayer.Connection_Event{kind=.Entered,connection=3})
+    c.tick=s.tick
+    round(&f,&s,&c)
+    clear(&s.connections.events.items)
+    for _ in 0..<16 {round(&f,&s,&c)}
+    same,differ:=same_ground(&c,&s)
+    testing.expectf(t,same,"a client that came late holds the ground of the server: %d samples differ",differ)
+    testing.expect_value(t,applied(&c),u32(6))
+    testing.expect_value(t,c.net.journal.stats.received,u64(0))
+    // The head and the end of the base, and the pages the edits touched.
+    testing.expect(t,s.net.journal.stats.parts_sent>2 && s.net.journal.stats.parts_sent<=2+4,"only the pages the edits touched travel")
+    // An edit after it comes as any other.
+    terrain.dig(&s.terrain_requests,brush_at(&s,.Lower,70,70,4,1),s.owner)
+    round(&f,&s,&c);round(&f,&s,&c)
+    same,differ=same_ground(&c,&s)
+    testing.expectf(t,same,"an edit after the base: %d samples differ",differ)
+    testing.expect_value(t,c.net.journal.stats.desyncs,u64(0))
+}
+
+@(test)
+an_edit_the_server_does_not_allow_is_refused_with_what_failed_and_taken_back :: proc(t:^testing.T) {
+    defer free_all(context.temp_allocator)
+    f:Fixture
+    if !testing.expect(t,fixture_init(t,&f,"refused")) {return}
+    defer fixture_destroy(&f)
+    s,a,b:End
+    defer end_destroy(&s);defer end_destroy(&a);defer end_destroy(&b)
+    if !end_init(t,&s,&f,.Server) || !end_init(t,&a,&f,.Client,1) || !end_init(t,&b,&f,.Client,2) {return}
+    // a has a seat; b does not.
+    end_seat(&s,1)
+    s.net_settings.radius=3
+    // A box of radius 1 that reaches 20 m: the radius is not what the server bounds.
+    wide:=brush_at(&a,.Add,40,40,1,1)
+    wide.shape,wide.extent=.Box,{20,2,20}
+    testing.expect_value(t,terrain.dig(&a.terrain_requests,wide,a.owner),terrain.Edit_Error.None)
+    terrain.dig(&b.terrain_requests,brush_at(&b,.Raise,60,60,2,1),b.owner)
+    end_tick(&a,&f);end_tick(&b,&f)
+    testing.expect(t,height(&a,40,40)>0.5 && height(&b,60,60)>0.5,"each predicts its edit")
+    s.tick=a.tick-1
+    for _ in 0..<6 {round(&f,&s,&a,&b)}
+    testing.expect_value(t,s.net.journal.stats.sent,u64(0))
+    testing.expect_value(t,s.net.journal.stats.refused,u64(2))
+    expect_refusal :: proc(t:^testing.T,e:^End,words:string) {
+        p:=core.problem_find(&e.problems,e.owner,"terrain.net_refused")
+        if !testing.expect(t,p!=nil,"a refused edit is a problem of the terrain it was for") {return}
+        testing.expectf(t,strings.contains(base.text_get(p.text[:]),words),"the problem says what failed: %s",base.text_get(p.text[:]))
+    }
+    expect_refusal(t,&a,"Terrain_Net_Settings.radius")
+    expect_refusal(t,&b,"no seat")
+    for e in ([]^End{&a,&b}) {
+        testing.expect_value(t,u32(len(e.net.journal.predictions)),u32(0))
+        same,differ:=same_ground(e,&s)
+        testing.expectf(t,same,"a refused prediction is taken back by the pages of the server: %d samples differ",differ)
+    }
+}
+
+// The size a server bounds is of all a brush may change and how far it moves the ground.
+@(test)
+a_brush_is_as_large_as_what_it_may_change :: proc(t:^testing.T) {
+    turn:=quaternion128(quaternion(w=0.9238795,x=0,y=0.38268343,z=0)) // an eighth of a turn about y
+    cases:=[?]struct {brush:terrain.Brush,size:f32}{
+        {{kind=.Raise,radius=2,amount=1},2},
+        {{kind=.Raise,radius=2,amount=9},9},
+        {{kind=.Erode,radius=2,amount=1},3},
+        {{kind=.Ramp,radius=1,amount=1,delta={10,0,0}},6},
+        {{kind=.Flatten,center={0,1,0},radius=1,amount=1,target=7},6},
+        {{kind=.Carve,radius=1,amount=1,blend=3},4},
+        {{kind=.Add,shape=.Box,radius=1,amount=1,extent={20,1,1}},20},
+        {{kind=.Add,shape=.Box,radius=1,amount=1,extent={1,1,1},rotation=turn},1.4142135},
+    }
+    for c in cases {
+        size:=brush_size(c.brush)
+        testing.expectf(t,abs(size-c.size)<1e-4,"%v: %v, not %v",c.brush.kind,size,c.size)
+    }
+}
+
+// What a correction brings back of an end: its terrain data at the tick it was saved.
+@(private="file")
+Saved :: struct {
+    data:terrain.Terrain_Data,
+    tick:u64,
+}
+
+@(private="file")
+end_save :: proc(saved:^Saved,e:^End) -> bool {
+    saved.tick=e.tick
+    return terrain.terrain_data_copy(&saved.data,&e.data)
+}
+
+@(private="file")
+end_restore :: proc(e:^End,saved:^Saved) -> bool {
+    e.tick=saved.tick
+    return terrain.terrain_data_copy(&e.data,&saved.data)
+}
+
+@(test)
+a_correction_that_goes_back_applies_the_edits_of_the_server_and_the_predictions_again_at_their_ticks :: proc(t:^testing.T) {
+    defer free_all(context.temp_allocator)
+    f:Fixture
+    if !testing.expect(t,fixture_init(t,&f,"again")) {return}
+    defer fixture_destroy(&f)
+    s,a:End
+    defer end_destroy(&s);defer end_destroy(&a)
+    if !end_init(t,&s,&f,.Server) || !end_init(t,&a,&f,.Client,1) {return}
+    end_seat(&s,1)
+    saved:Saved
+    defer terrain.terrain_data_free(&saved.data)
+    testing.expect(t,end_save(&saved,&a))
+    // The server edits; the client predicts one of its own two ticks later.
+    terrain.dig(&s.terrain_requests,brush_at(&s,.Raise,20,20,5,1),s.owner)
+    own:=brush_at(&a,.Lower,60,60,5,1)
+    asked:=a.tick+3
+    for _ in 0..<8 {
+        if a.tick+1==asked {terrain.dig(&a.terrain_requests,own,a.owner)}
+        round(&f,&s,&a)
+    }
+    same,differ:=same_ground(&a,&s)
+    testing.expectf(t,same,"the client holds the ground of the server: %d samples differ",differ)
+    testing.expect_value(t,a.net.journal.stats.absorbed,u64(1))
+    end:=a.tick
+    present:=len(a.net.journal.predictions)
+    // Back to before both, and every tick again: the game asks its edit again at its tick.
+    testing.expect(t,end_restore(&a,&saved))
+    for a.tick<end {
+        if a.tick+1==asked {terrain.dig(&a.terrain_requests,own,a.owner)}
+        end_tick(&a,&f,true)
+    }
+    same,differ=same_ground(&a,&s)
+    testing.expectf(t,same,"after going back the client holds the ground of the server: %d samples differ",differ)
+    testing.expect_value(t,len(a.net.journal.predictions),present)
+    testing.expect_value(t,a.net.journal.stats.desyncs,u64(0))
+    testing.expect_value(t,len(a.outbox.queue.items),0)
+}
+
+// A brush travels as its bytes, and bytes that are not a brush are refused.
+@(test)
+a_brush_travels_as_its_bytes_and_bytes_that_are_not_one_are_refused :: proc(t:^testing.T) {
+    brush:=terrain.Brush{kind=.Terrace,center={1,2,3},radius=4,amount=0.5,interval=2,riser=0.25,way=.Up,capped=true,falloff=.Linear,rotation=1}
+    read,ok:=terrain.brush_of_bytes(terrain.brush_bytes(brush))
+    testing.expect(t,ok)
+    testing.expect_value(t,read,brush)
+    bad:=terrain.brush_bytes(brush)
+    bad[offset_of(terrain.Brush,kind)]=200
+    _,ok=terrain.brush_of_bytes(bad)
+    testing.expect(t,!ok,"an enum out of its values")
+    bad=terrain.brush_bytes(brush)
+    bad[offset_of(terrain.Brush,capped)]=2
+    _,ok=terrain.brush_of_bytes(bad)
+    testing.expect(t,!ok,"a bool that is not 0 or 1")
+    nan:=brush
+    nan.radius=transmute(f32)u32(0x7fc00000)
+    _,ok=terrain.brush_of_bytes(terrain.brush_bytes(nan))
+    testing.expect(t,!ok,"a value that is not finite")
+}
+
+// Whether two ends hold the same layers and weights.
+@(private="file")
+same_layers :: proc(a,b:^End) -> bool {
+    sa,sb:=terrain.terrain_source(core.ref(&a.data),SOURCE),terrain.terrain_source(core.ref(&b.data),SOURCE)
+    if sa==nil || sb==nil || sa.layer_count!=sb.layer_count || sa.layers!=sb.layers {return false}
+    _,_,counts,ok:=terrain.terrain_grid_pages(core.ref(&a.data),SOURCE,.Weights,{},{-1,-1,-1})
+    if !ok {return sa.layer_count==0}
+    ra,rb:=make([]u8,terrain.PAGE_BYTES_MAX,context.temp_allocator),make([]u8,terrain.PAGE_BYTES_MAX,context.temp_allocator)
+    for i in 0..<counts.x*counts.y*counts.z {
+        size_a,fill_a,read_a:=terrain.terrain_page_bytes(core.ref(&a.data),SOURCE,.Weights,i,ra)
+        size_b,fill_b,read_b:=terrain.terrain_page_bytes(core.ref(&b.data),SOURCE,.Weights,i,rb)
+        if !read_a || !read_b || size_a!=size_b || fill_a!=fill_b || string(ra[:size_a])!=string(rb[:size_b]) {return false}
+    }
+    return true
+}
+
+// A dig of a Volume travels as the same edit a Heightfield takes: a client
+// that holds other ground there gets the blocks of the server, and one that
+// comes late its base.
+@(test)
+a_volume_dig_that_differs_on_a_client_comes_back_as_its_blocks_and_a_late_client_gets_them :: proc(t:^testing.T) {
+    defer free_all(context.temp_allocator)
+    f:Fixture
+    if !testing.expect(t,fixture_init(t,&f,"volume",.Volume)) {return}
+    defer fixture_destroy(&f)
+    s,a,c:End
+    defer end_destroy(&s);defer end_destroy(&a);defer end_destroy(&c)
+    if !end_init(t,&s,&f,.Server) || !end_init(t,&a,&f,.Client,1) {return}
+    a.tick=s.tick
+    // The base of the client as it loads the source comes and ends first.
+    for _ in 0..<4 {round(&f,&s,&a)}
+    // Where the server digs, the client holds other ground, as another architecture could leave it.
+    // The top of the ground of a new Volume is the middle of its box.
+    // A pocket beside the dig of the server, inside the box it changes and out of its ball.
+    other,dig:=brush_at(&a,.Carve,39,39,2,1),brush_at(&s,.Carve,32,32,6,1)
+    other.center.y,dig.center.y=-2,0
+    testing.expect(t,terrain.source_region_read(terrain.terrain_source(core.ref(&a.data),SOURCE),{32,8,32},{46,24,46}))
+    testing.expect_value(t,terrain.source_edit(terrain.terrain_source(core.ref(&a.data),SOURCE),other).error,terrain.Edit_Error.None)
+    testing.expect_value(t,terrain.dig(&s.terrain_requests,dig,s.owner),terrain.Edit_Error.None)
+    for _ in 0..<60 {round(&f,&s,&a)}
+    testing.expect(t,a.net.journal.stats.desyncs>0,"the dig of the server left other ground on the client")
+    dug:=terrain.terrain_source(core.ref(&s.data),SOURCE)
+    testing.expect(t,(terrain.source_value(dug,{32,14,32}) or_else 0)>0 && (terrain.source_value(dug,{32,8,32}) or_else 0)<0,"the server dug a bowl under its surface")
+    same,differ:=same_ground(&a,&s)
+    testing.expectf(t,same,"the blocks of the server repair the client: %d samples differ",differ)
+    // One that comes late gets the blocks the server changed.
+    if !end_init(t,&c,&f,.Client,3) {return}
+    c.tick=s.tick
+    for _ in 0..<60 {round(&f,&s,&a,&c)}
+    same,differ=same_ground(&c,&s)
+    testing.expectf(t,same,"a client that came late holds the ground of the server: %d samples differ",differ)
+}
+
+@(test)
+layer_changes_travel_in_the_order_of_the_edits_and_a_paint_of_them_lands_the_same :: proc(t:^testing.T) {
+    defer free_all(context.temp_allocator)
+    f:Fixture
+    if !testing.expect(t,fixture_init(t,&f,"layers")) {return}
+    defer fixture_destroy(&f)
+    s,a:End
+    defer end_destroy(&s);defer end_destroy(&a)
+    if !end_init(t,&s,&f,.Server) || !end_init(t,&a,&f,.Client,1) {return}
+    end_seat(&s,1)
+    a.tick=s.tick
+    round(&f,&s,&a)
+    rock,grass,sand:=terrain.LAYER_DEFAULT,terrain.LAYER_DEFAULT,terrain.LAYER_DEFAULT
+    rock.tiling,grass.tiling,sand.tiling=2,3,5
+    // The server adds two layers and paints the second in one tick.
+    terrain.request_layer(&s.terrain_requests,s.owner,0,rock)
+    terrain.request_layer(&s.terrain_requests,s.owner,1,grass)
+    paint:=brush_at(&s,.Paint,30,30,8,0.6);paint.layer=1
+    terrain.dig(&s.terrain_requests,paint,s.owner)
+    for _ in 0..<4 {round(&f,&s,&a)}
+    testing.expect_value(t,terrain.terrain_source(core.ref(&a.data),SOURCE).layer_count,u32(2))
+    testing.expect(t,same_layers(&a,&s),"the layers and the paint of the server reach the client")
+    // The client asks for a third: it is applied when the server sends it back, and a paint of it after.
+    terrain.request_layer(&a.terrain_requests,a.owner,2,sand)
+    end_tick(&a,&f)
+    testing.expect_value(t,terrain.terrain_source(core.ref(&a.data),SOURCE).layer_count,u32(2))
+    s.tick=a.tick-1
+    for _ in 0..<4 {round(&f,&s,&a)}
+    testing.expect_value(t,terrain.terrain_source(core.ref(&s.data),SOURCE).layer_count,u32(3))
+    testing.expect_value(t,terrain.terrain_source(core.ref(&a.data),SOURCE).layer_count,u32(3))
+    paint=brush_at(&a,.Paint,50,50,8,0.8);paint.layer=2
+    terrain.dig(&a.terrain_requests,paint,a.owner)
+    // The server takes the first away: every weight is rewritten, in its order with the paint.
+    terrain.request_layer_remove(&s.terrain_requests,s.owner,0)
+    for _ in 0..<8 {round(&f,&s,&a)}
+    testing.expect_value(t,terrain.terrain_source(core.ref(&a.data),SOURCE).layer_count,u32(2))
+    testing.expect(t,same_layers(&a,&s),"after a layer taken away the client holds the layers and weights of the server")
+    testing.expect_value(t,s.net.journal.stats.refused,u64(0))
+}
+
+@(test)
+a_base_brings_what_was_edited_before_the_session_and_a_source_the_client_has_otherwise_or_not_at_all :: proc(t:^testing.T) {
+    defer free_all(context.temp_allocator)
+    // Three sets of assets do not fit in the stack of a test.
+    fixtures:=new([3]Fixture)
+    defer free(fixtures)
+    f,g,h:=&fixtures[0],&fixtures[1],&fixtures[2]
+    if !testing.expect(t,fixture_init(t,f,"before")) || !testing.expect(t,fixture_init(t,g,"other",raise=3)) || !testing.expect(t,fixture_init(t,h,"none",written=false)) {return}
+    defer fixture_destroy(f);defer fixture_destroy(g);defer fixture_destroy(h)
+    s,a,b,c:End
+    defer end_destroy(&s);defer end_destroy(&a);defer end_destroy(&b);defer end_destroy(&c)
+    if !end_init(t,&s,f,.Server) {return}
+    // Before the session the server edits, saves to its file, and edits and paints again.
+    s.authority.role=.Standalone
+    terrain.dig(&s.terrain_requests,brush_at(&s,.Raise,30,30,6,2),s.owner)
+    end_update(&s,f)
+    terrain.request_save(&s.terrain_requests,s.owner)
+    end_update(&s,f)
+    terrain.dig(&s.terrain_requests,brush_at(&s,.Lower,70,60,5,1),s.owner)
+    terrain.request_layer(&s.terrain_requests,s.owner,0,terrain.LAYER_DEFAULT)
+    terrain.request_layer(&s.terrain_requests,s.owner,1,terrain.LAYER_DEFAULT)
+    end_update(&s,f)
+    paint:=brush_at(&s,.Paint,70,60,6,0.7);paint.layer=1
+    terrain.dig(&s.terrain_requests,paint,s.owner)
+    end_update(&s,f)
+    s.authority.role=.Server
+    // c has the file the server saved, a another source of the same id, b none.
+    if !end_init(t,&c,f,.Client,3) || !end_init(t,&a,g,.Client,1) || !end_init(t,&b,h,.Client,2,loaded=false) {return}
+    a.tick,b.tick,c.tick=s.tick,s.tick,s.tick
+    for _ in 0..<80 {round(f,&s,&a,&b,&c)}
+    for e in ([]^End{&a,&b,&c}) {
+        same,differ:=same_ground(e,&s)
+        testing.expectf(t,same,"client %d holds the ground of the server: %d samples differ",e.connection,differ)
+        testing.expectf(t,same_layers(e,&s),"client %d holds the layers and weights of the server",e.connection)
+    }
+    testing.expect(t,c.net.journal.stats.parts_applied<a.net.journal.stats.parts_applied,"a client with the file of the server gets only what was written since")
+}
+
+TERRAIN_NET_BENCHMARK :: #config(TERRAIN_NET_BENCHMARK,false)
+
+// The traffic of a long stroke of the server: STROKE touches, one a tick,
+// to a client that leaves each the same and to one where each leaves
+// another check, as another architecture could.
+@(test)
+traffic_of_a_long_stroke :: proc(t:^testing.T) {
+    when !TERRAIN_NET_BENCHMARK {return}
+    STROKE :: 240
+    defer free_all(context.temp_allocator)
+    f:Fixture
+    if !testing.expect(t,fixture_init(t,&f,"stroke")) {return}
+    defer fixture_destroy(&f)
+    for differs in ([]bool{false,true}) {
+        s,c:End
+        if !end_init(t,&s,&f,.Server) || !end_init(t,&c,&f,.Client,1) {end_destroy(&s);end_destroy(&c);return}
+        c.tick=s.tick
+        for _ in 0..<4 {round(&f,&s,&c)}
+        base_sent,base_bytes:=s.net.journal.stats.parts_sent,s.net.journal.stats.bytes_sent
+        for i in 0..<STROKE {
+            x:=8+f32(i)*0.33
+            terrain.dig(&s.terrain_requests,brush_at(&s,.Raise,int(x),48,4,0.3),s.owner)
+            if differs {
+                source:=terrain.terrain_source(core.ref(&c.data),SOURCE)
+                terrain.source_edit(source,brush_at(&c,.Raise,int(x),48,1,0.001))
+            }
+            round(&f,&s,&c)
+        }
+        for _ in 0..<120 {round(&f,&s,&c)}
+        same,differ:=same_ground(&c,&s)
+        testing.expectf(t,same,"the client holds the ground of the server after the stroke: %d samples differ",differ)
+        log.infof("stroke of %d touches, the client %s: %d edits sent of %d bytes each; %d parts (%d LZ bytes) after the base; %d resyncs; %d desyncs",
+            STROKE,differs?"otherwise":"the same",s.net.journal.stats.sent,size_of(multiplayer.Net_Journal_Op),s.net.journal.stats.parts_sent-base_sent,s.net.journal.stats.bytes_sent-base_bytes,c.net.journal.stats.resyncs,c.net.journal.stats.desyncs)
+        end_destroy(&s);end_destroy(&c)
+    }
+}
+

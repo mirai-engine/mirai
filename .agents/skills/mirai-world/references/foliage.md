@@ -1,0 +1,563 @@
+# Foliage
+
+Plugin `foliage` (`Runtime`, `Editor`, `Shaders`; depends on `physics`). It shows the foliage of a
+scene without one entity per instance: it draws it with [instance batches][batches] and, far away,
+with [impostors](#far-impostor-and-crown), makes it collide with one static body per resident cell
+and stands it on the [ground](#ground) of the world.
+
+[batches]: ../../mirai-rendering/references/scene.md#instance-batches
+
+## Entity and source
+
+- `Foliage{source, revision}` shows a `.foliage` asset in the entity's space; one asset per scene,
+  like that of a [terrain](terrain.md). `revision` (read-only) is the key of the
+  [tool](#tool)'s history, its sole writer: the runtime does not touch it, so undoing to revision 0
+  of an imported level restores the source of that revision.
+- `foliage_load` reads the sources through `host.assets_file` (with what the registry holds) and
+  reads them again when the stamp of their file changes; one that cannot be read is the
+  `foliage.source_unread` problem of its entity. `Foliage_Data` is copied with the world (Play,
+  rollback).
+- Each cell in memory has a version: reading the source again keeps that of the equal cells
+  (`cells_version`) and gives the next one to those that changed; another seed, or types that
+  place or collide otherwise, change all of them. A type that changes only in how it is drawn
+  (mesh, materials, distances, wind, shadow, rays) keeps them and raises the `look` of the entry,
+  which rebuilds the batches and crowns alone. What is built per cell compares that version.
+
+## Format
+
+[Assets](../../mirai-assets/references/formats.md) container, Fourcc `FOLI`, with the rows of
+`source.odin`: `foliage` (seed, revision, next type id, ids given to manual instances), `types`,
+`cells` of `CELL_SIZE` in x and z, and in packed bulk `manual`, `overrides` and `density`, by
+ranges of each cell.
+
+- `density` is the grid (`DENSITY_SAMPLES` per side, borders included) of how much of the density
+  of its types a cell that generates makes where; a cell without one makes all of it everywhere,
+  and one whose grid is all 0 does not generate. `source_generate_area` (the Generate brush) and
+  `cell_density_set` are its writers.
+
+- `manual` and `overrides` are the byte planes of their records (byte j of every record, then
+  j+1), each 4-byte word coded by its `Code`: the id from the one before it, the position and the
+  point from the one before in its cell, the rotation with the low bytes of its components apart.
+  Every bit comes back as it was, in the same order; `source_bytes` and `source_read` are the only
+  writer and reader.
+
+- A type has a stable `id` that is never reused and names a `.mesh` (with the materials of its
+  slots that it changes, or those of the mesh) or a prefab, without converting them.
+  `impostor_distance` (0: none) gives it a [far shape](#far-impostor-and-crown) and
+  `wind_variants` (0: `WIND_VARIANTS`) the [wind variants](#wind) of one that casts a shadow.
+  `offset` sinks or raises it and `rule` says where it stands ([layers](#layers-of-a-cell)). A file
+  without those fields reads them as zero: no offset and with the rule off.
+- A manual instance has an `id` of its own, from 1, unique in the source and never given again
+  (`Foliage_Info.instances` counts those given): deleting or adding another in its cell does not
+  change it, and it keeps it when moving to another cell. `source_instance_add` gives it,
+  `manual_find` looks it up in its cell and `source_instance_remove` removes by it. The instance of
+  an override carries 0; two with the same id, or one that the source did not give, are damage.
+- A manual instance with `INSTANCE_GROUNDED` stores in `ground` its height above the ground where
+  it was put, to reproject it when the ground changes. With `INSTANCE_ALIGNED` (only together with
+  the other) its rotation is from the ground: it tilts with it according to the `align` of its
+  type, also when it changes.
+- An instance with `INSTANCE_COLORED` (manual, or of an override `Moved` or `Replaced`) stores in
+  `color` its tint and wetness as `render.batch_color` packs them, which the Tint brush paints;
+  without the flag `color` is 0. The batches of a cell carry the colors only where some instance
+  has one ([batch colors](../../mirai-rendering/references/scene.md#instance-batches)); its
+  impostor tints and wets its frames the same way (`Impostor_Instance.color`).
+- An override changes a generated instance by its id (type and point in its cell): `Deleted`,
+  `Moved` or `Replaced`. In each cell they go in type and point order, without repeating:
+  `source_override_set` inserts them in place, `source_read` sorts those of a file and
+  `source_valid` rejects any other order.
+- `source_read` validates everything before replacing the source; `source_bytes` writes only a
+  valid source.
+
+## Layers of a cell
+
+`cell_expand` gives the instances of a cell: the manual ones; the generated ones if the cell has
+`generate`; and over them the overrides, by id. The id of each one (`Placed.id`) names it in its
+cell while the source has it: that of a manual is `MANUAL` and its own id; that of a generated
+one, its type and its point (`generated_id`), stable while the seed and the type are the same
+(lowering the density removes the last ids; another seed gives the same ids to other points, as
+to the overrides).
+
+- The generator (`scatter`) makes the points of each type from the seed, the cell and the type id.
+  A point does not depend on how many there are (lowering the density removes the last ones and
+  leaves the others where they were), and it only uses integer arithmetic, square root and the
+  deterministic sine of std/math: it gives the same on every machine. Their places are the
+  points of an Owen-scrambled (0,2) sequence in base 2, scrambled by the cell and the type:
+  any first n of them are stratified like a jittered grid, without the clumps and gaps of points
+  at random.
+- A cell generates at most `CELL_GENERATED_MAX` points of all its types: past it every type keeps
+  the same share of its points, the first ones (`generated_share`), and the cell is the
+  `foliage.cell_instances` problem of its entity.
+- **Radius**: the points of the types with a `radius` (times their scale across) keep apart by
+  both radii (`spaced_stand`). The types go from the widest radius; within a type, a point keeps
+  apart from the earlier ones of its cell and, across a border, from those of the neighbour that
+  come before it (lower index, then the cell first in z and x): both cells decide each pair the
+  same way from the seed alone, without the ground of the other. Then a point that stands keeps
+  away from those that stand of the wider types; whether a neighbour's point stands is told by
+  the ground, density and keep-outs of this cell at its nearest border. A type without a radius
+  stands anywhere. `RADIUS_MAX` bounds a radius so that everything a cell needs is in the 3 by 3
+  cells around it.
+- **Density**: each point has a `chance` from its stream; it stands where the chance is under
+  the density of its cell there and, with a rule of layers, under the weight of those layers.
+- Points and overrides come out in order, so each type walks its stretch once. An override whose
+  id the generator no longer makes stays in the source as an orphan (problem `foliage.orphans`).
+- A generated one stands on the [ground](#ground) and aligns with its normal according to
+  `align`; where the ground is known and there is none (a hole), it is absent. From its stream,
+  after the other values, it takes an `offset` in the range of its type along its y. A manual one
+  (or a `Moved` or `Replaced`) with `INSTANCE_GROUNDED` stays `ground` meters above it and keeps
+  its rotation, unless with `INSTANCE_ALIGNED` it tilts with the normal of the current ground like
+  a generated one; without the mark or without ground it stays where it was put. In a world
+  without ground the entity's y = 0 plane is the ground; in one with ground, a cell whose ground is
+  not read yet or covers none of it shows no generated instance.
+- **Placement rule** (`Foliage_Rule`, like `GroundSlopeAngle`, `Height` and the layers of an
+  Unreal `UFoliageType`): on, `rule_allows` admits the ground whose slope (from the normal) and
+  height fall in its ranges and, with `layers` (materials), whose layers of those materials add
+  up to at least `weight`, whatever the order of the layers of each terrain; above it, the
+  generated ones are as dense as those layers are there, so the edge of a painted layer fades
+  out. Where it does not meet it, the generated one is absent, as in a hole: the ids of the others
+  do not change. Without known weights (without terrain ground, or a terrain without layers) a rule
+  with layers admits nothing.
+
+## Ground
+
+- `Foliage_Ground` (`World` storage) stores per `Foliage` a grid of heights per cell in its space
+  (`Ground_Tile`, NaN where there is no ground) with its revision, and parallel to it the weights
+  of the terrain layers at each sample (they add up to 255; all 0 where there is no ground or
+  layers). Each grid has its samples per side; those of the same size share a `Ground_Pool`, from
+  which a grid that changes size leaves by giving its place to the last one. `foliage_ground`
+  writes it from [`core.Ground_Queries`](../../mirai-core/references/core.md#ground), without
+  knowing who gives the ground (terrain), and raises the revision of what changes.
+  `Foliage_Ground_Requests` carries the cells that someone needs before having instances there
+  (the editor requests those of the brush). Without a ground provider no grid is written and the
+  plane y = 0 of each `Foliage` is its ground.
+- Each sample asks the probe along the down of the `Foliage` for the highest ground: `Ground` is a
+  height and the weights of the layers there; `Empty` (a hole, a stroke the editor holds) and
+  `Unloaded` (far from every viewer) leave it without ground, NaN; a grid where no sample is
+  covered is removed, and a cell that generates there is the `foliage.no_ground` problem of its
+  entity. Each sample names which `Ground_Layers` of its owner (the materials of the four weights
+  of the ground there) its weights are of: a `Foliage` over terrains with other layers, or in
+  another order, keeps them apart, up to `LAYERS_MAX`.
+- **Keep-outs** (`keep_out.odin`): an entity with `Foliage_Keep_Out` keeps generated foliage out
+  of its `Volume`, else the width of its `Spline` (a road, a path, a river), else its box,
+  sphere, capsule or cylinder `Collider`, and `margin` metres around it; one with neither is the
+  `foliage.keep_out` problem. Each tile marks the squares (`KEEP_OUT_SIDE` per side) whose centre,
+  on its ground, a keep-out holds (`Ground_Cell.kept`), at the same resolution near and far. A
+  keep-out that comes, goes or changes is a change of the ground under its old and new boxes, so
+  the cells under it are built again; without a ground in the world nothing is kept out.
+- **Whole near, sparse far, one grid**: the grid of a cell has the samples per side that follow
+  the spacing of the ground (`Ground_Query.spacing`, up to `SAMPLES_MAX`). Near the
+  [streaming sources][sources], with their hysteresis, up to where the meshes of their types are
+  drawn and no more than `GROUND_REACH`, and where the editor requests it, a tile holds all of
+  them; farther it is sparse (`Sparse_Tile`): only the four samples of the same grid around each
+  point that may show there (`sparse_keys`: the instances of the types seen past that reach,
+  generated or grounded, and with one of them spaced, the points of every spaced type around
+  the cell) and under the centre of its square of keep-out, and those around the centre of the
+  cell. An instance stands, leans, keeps apart and passes its rule and its keep-outs on a sparse
+  tile exactly as on the whole one: where it is does not depend on how far it is seen from.
+  Without sources all are whole. Those that cross the limit, and the sparse ones of a source read
+  again, are read again.
+- It reads again only the cells under the boxes the ground announced since it last ran
+  (`Ground_Queries.changed`), or all those of a `Foliage` that moves or arrives. The cells to read
+  wait in a queue, each once, and are read `GROUND_TILES` per call, in jobs, those the editor asks
+  for first and then the nearest a source (`queue_order`, again when the sources move): a world
+  that loads much ground and many `Foliage` at once keeps responding and fills in around the
+  sources. When only the sources move, only the whole tiles and the sparse ones near a source are
+  looked at. A grid (heights and weights) equal to the previous one
+  does not raise its revision, and a frame without changes reads nothing.
+
+## Drawing
+
+- `foliage_render` (`late`, after `transforms_propagate`) publishes one batch per cell and type
+  with `render.batch_set` in the function's world, and stores them in `Foliage_Resident` (`host`,
+  `by_world`), which removes them when the world is freed (`foliage_release`).
+- Per cell (`Resident_Cell`): it rebuilds the batches of a cell when its version or the revision of
+  its ground changes, and reuses its handles (`batch_set` on the same one); those of the others
+  stay. It rebuilds all those of a `Foliage` when its entity moves or its source is another entry,
+  and all of them when the renderer forgets the batches (`batches_epoch`) or a mesh, a material or
+  a prefab that they show changes. A stable frame publishes nothing.
+- The instances of a cell are grouped by type in one pass (`placed_group`, by count).
+- The type gives mesh and materials (`render.batch_desc`), the distances, the ray flags and in
+  `Batch_Desc.vertex.x` the hook's sway (`sway_amount`); `object_id` is the entity. Each batch has
+  a role (`Batch_Role`): the mesh, a wind variant, the rest mesh for the rays that do not see the
+  variants, or the crown. `resident_batch_find` returns it and `role_instance` translates the
+  instance of a variant to its order in the type, for the picker.
+- **Type built from a prefab** (no mesh): each `Mesh_Renderer` of the prefab that is on and not
+  hidden, with its transform from the root (`prefab_parts`; the root's place is that of the
+  instance), is a batch per cell, type and part with the composed transforms (`part_instance`).
+  What `Batch_Instance` does not have (a shear, a mirror) is approximated; if it leaves out more
+  than `PREFAB_ERROR` of the transform it is the `foliage.prefab_transform` problem, which says
+  how to fix it. A prefab that cannot be read or has no meshes is `foliage.prefab`. With
+  `Prefab` collision it also collides as its prefab ([collision](#collision)).
+- A cell is drawn while it is resident through the [residency of the streaming
+  sources](../../mirai-gameplay/references/libraries.md#sources-and-residency), with the farthest
+  `cull_distance` of its types as its reach; a type that is never culled leaves all of them
+  resident. One that stops being so releases its batches and its impostors. A `Foliage` has at
+  most `RESIDENT_CELLS` resident, the nearest ones in reaches of their types; those that stay
+  outside within reach are the `foliage.resident_cells` problem. When only the sources, the ground
+  or what was taken out change, it looks at the cells that were resident and those a source comes
+  near (`coords_near`, by rows of cells), not at every cell.
+- Cells are built nearest a source first, `INSTANCES_A_FRAME` a frame by the most each shows
+  (`cell_bound`, at least `CELL_COST_MIN`), expanded in jobs with the room taken beforehand; the
+  rest wait for the next frames.
+- The `detail` of the [graphics settings](../../mirai-rendering/SKILL.md) scales the distances of
+  every type and the density of the types without collision (`FOLIAGE_DETAIL`, the first points of
+  each): what collides is the same at every detail.
+
+## Far: impostor and crown
+
+A type with `impostor_distance` less than its `cull_distance` (or without it) has a far shape
+(`far.odin`), one per asset it shows (mesh or prefab), frame size and world (`Kind_Key`), made
+the first time a type shows it and again when the mesh changes, like any cook. Its frames are
+drawn once what its parts show is settled (`render.mesh_renderer_settled`: the mesh loaded, no
+texture of its materials arriving and their rows with the renderer), so they show the materials
+as they stay:
+
+- **Octahedral impostor** (Brucks): `render.impostor_capture` draws with the thumbnail renderer
+  `IMPOSTOR_GRID`² frames of the upper half of the sphere, unlit: base color and coverage, normal
+  and depth, and the roughness, metallic, occlusion and diffuse transmission of the material;
+  three textures of the table with levels (`alpha_coverage` in the color), the color of the light
+  the leaves let through and the mean color of the frames. A frame has the pixels its largest
+  instance spans at `impostor_distance` (`impostor_frame`), so a tree near its impostor distance
+  is as sharp as its mesh and a bush costs little. While it could not be made, the type is drawn
+  with its mesh up to its `cull_distance`.
+- **Bands.** The mesh fades between `impostor_distance` and `IMPOSTOR_BLEND` beyond it, and when
+  it is small on the screen; the impostor appears where it fades, by the same two terms, with the
+  complement of the same pattern over the same box (`box_faded`, `box_small_faded`): the instance
+  stays whole, without pop or hole. Far away the impostor fades with the type's `fade_distance`
+  and `cull_distance`.
+- **Drawing.** The impostors are in one world buffer by blocks, one per cell (`Impostor_Draw`): a
+  cell that changes writes only its block, the next draw takes the change and until then the
+  buffer shows what it held; the room of a freed block is taken by the next cell that fits. In
+  the `Gbuffer` stage of each view a dispatch (`foliage_impostor_cull.comp`) keeps the instances
+  of the band of their type whose sphere is in the frustum and that the depth pyramid of the scene
+  does not hide, in two phases like the scene: the first draws those the pyramid of the previous
+  frame does not hide either, the pyramid is rebuilt with them, and the second draws those that
+  waited and that it shows, so they hide one another without popping. Each indirect draw makes a
+  quad of each toward the eye, with a fragment of its own (`foliage_impostor.frag`): it blends
+  the three neighboring frames of the direction, each moved by its depth, and writes color,
+  normal, the terms of the material and the depth of the leaves (`SV_Depth`), so it is lit and
+  shaded like the scene. An instance names its row by the slot of its `Foliage`
+  (`Resident_Owner.slot`) and its type, so other `Foliage` coming and going rewrite nothing.
+  Nested views do not draw it.
+- **Rays.** Per cell and type, according to the distance to the sources (`scene.resident`, with
+  its hysteresis): near, the mesh batches; far, the crown (`crown_build`: the surface of the
+  voxels dense in triangles, `CROWN_INSET` inside) as a `Rays_Only` batch that casts shadows if
+  the type does and that reflections, probes and indirect light see if they see the type
+  (`ray_visible`), in the mean color of its frames (`crown_flags`, `Batch_Desc.tint`). The
+  impostor enters no ray structure.
+- **Cell crown.** Past `CELL_CROWN_REACH` times the reach of the meshes of its types, a cell gives
+  the rays a single crown instead of one per instance: `cell_crown_build` makes with `crown_build`
+  the crown of the crowns of its instances that rays meet far, in the `Foliage` space, as a
+  generated mesh of a one-instance batch, with what rays meet of its types and their mean color
+  by instance. One entry of the ray structure per cell; the impostors remain per instance.
+- `Foliage` is `@(component,far)`: when its section is not loaded it stays with these far shapes
+  ([what is unloaded](../../mirai-gameplay/references/libraries.md#scene-references)). With
+  `scene.Far_Kept` it draws only the types with a far shape and only that shape (impostors and
+  crowns, never the mesh), without physics bodies. The crown of a cell is one per source, cell and
+  what it is made of (`Shared_Crown`, `crown_key`: its instances where they stand on the ground
+  and the crowns of their types): the `Foliage`s of the same source on the same ground trace the
+  same mesh, each with its transform. When the renderer forgets its meshes (`batches_epoch`) the
+  cells let go of them, and crowns and far forms are made again.
+- **Budget.** A frame builds cells by `CELLS_A_FRAME` of cost (`CELL_COST` the one that publishes
+  batches, 1 that of a `Foliage` that is not loaded) and takes `KINDS_A_FRAME` steps of far
+  shapes: drawing the frames of an impostor (that frame builds no cells), or giving the renderer
+  what its job made: the extended frames and their levels, and the crown with its geometry
+  (`Kind_Bake`). The rest waits for the following frames (`Resident_Cell.stale`,
+  `Resident_Owner.pending`), and the cells of a `Foliage` wait for the far shapes of their types.
+
+## Wind
+
+The wind is the `Wind` of [volume](../../mirai-gameplay/references/libraries.md#volume). A plant
+bends about its instance's origin, as `foliage_sway.slang` says: what stands over the origin turns
+toward the wind by `sway_amount` radians per m/s, by the red of its vertex color (white: all), and
+what spreads level does not move, so stalks keep their length and wide bushes do not slide. The
+gusts oscillate with the phase of a fixed wave of the world (`WIND_WAVE`), so neighbours sway
+together and the phase changes across a field or a forest. There are three paths with that same
+function:
+
+- **Type that casts a shadow: variants** (`wind.odin`). `wind_variants` deformable copies of each
+  mesh, with their levels (`render.deformable_create`), which `foliage_sway.comp` writes in the
+  `Geometry` stage and whose BLAS the renderer refits. They are up to `WIND_TURNS` turns about up
+  and, past them, phases of each turn (`wind_turns`): an instance takes the turn nearest its own
+  and tilts with the wind within half a step, and the phase of the band of the gust wave its place
+  is in (`wind_variant`). Raster and shadow rays see the same variant; reflections, GI and probes
+  see the rest mesh (`Ray_Visible` and `Rays_Only` batch). Sets of variants are per zone of wind:
+  a cell takes those of the `Wind` on top at the middle of its instances (`wind_zone_at`, over a
+  `volume.Index` of the zones), and each set sways with the wind of its zone, so a calm valley
+  stays calm whatever blows at the view. Where the zones are (not their values) has a revision:
+  when it changes, the cells whose zone changed are published again. The wind is held to
+  `WIND_SPEED_MAX`: the variants' box contains it, so a frame of wind changes no boxes and marks
+  no light, and the direct light is not reset by it. Without wind the variants stay still
+  without writing.
+- **Type without shadow: hook.** `foliage_vertex.slang` is the [vertex hook][hook] of its batches,
+  with the wind of its place (`//! mirai frame Foliage_Wind_Frame foliage_wind`, written from the
+  `Mask` stage relative to the origin of each view) and the gust wave of its place. No ray sees it
+  move. The hook moves only the batches of foliage (`Batch_Desc.vertex.y`); `vertex.x` is the
+  sway of a type that sways in it.
+- **Impostors.** The quad of an impostor leans whole about its instance's origin by the lean of
+  the top of its mesh in the wind of its place (`Impostor_Row.far.z`), so the crossfade does not
+  go from swaying to still.
+- **Bending by bodies.** Every `Foliage_Bender` tramples a field (`Foliage_Trample`) of
+  `TRAMPLE_SIDE` texels of `TRAMPLE_TEXEL` around the first streaming source, which follows it in
+  place and whose entering texels enter standing: `lean` radians at its center and nothing at
+  half the largest side of the box its
+  [`Volume`](../../mirai-gameplay/references/libraries.md#volume) is in, along x and z, each
+  texel keeping the strongest lean and the height of what leaned it.
+  What it trampled stays after it leaves and stands back up by 1/e every `TRAMPLE_RECOVER`
+  seconds; the field is written only while it changes. The hook reads it for every batch of
+  foliage, variants included, by the red of the vertex color, unless what leaned it passed far
+  above or below the plant; the motion vectors read the field of the frame before. Rays see the
+  variants of a type with shadow unbent where it is trampled. Radius and lean have a cap
+  (`BEND_RADIUS_MAX`, `BEND_LEAN_MAX`): the batches carry in `Batch_Desc.reach` the most that the
+  wind and a bender move a point (`hook_reach`), and the views cull them with those grown boxes.
+
+[hook]: ../../mirai-rendering/references/views.md#extension-hooks-and-constants
+
+## Collision
+
+- `foliage_physics` (between `physics_prepare` and `physics_places`) makes one static body per
+  cell of each loaded `Foliage`, at the corner of the cell in the entity's pose, with the shapes of
+  each instance of a type with collision on its ground, and rebuilds only the cells whose content
+  or ground changed, nearest a simulation source (`scene.Simulation_Sources`: the bodies the seats
+  drive and the marks, never the view) first and `PHYSICS_INSTANCES_A_TICK` a tick, expanding
+  only the types that collide. The body's `user_data` is the entity and the shape's the instance
+  id.
+- **Shapes of a type** (`type_shapes`): its `Capsule` or `Box` of `size`, standing on the
+  instance; with `Prefab` the `Box`, `Sphere`, `Capsule`, `Cylinder`, `Hull` and `Auto` colliders
+  of its prefab with their own collision and their transform from its root (an `Auto` one as the
+  hulls of its mesh); with `Hull` the convex hulls of its mesh, or of each mesh of its prefab: the
+  shapes the mesh stores from its source, or else the convex pieces of its triangles, which
+  physics decomposes once in a job (the cells of the owner wait for it) and keeps in its cache. A
+  primitive is scaled by the instance and the entity (`collider_scaled`: a capsule keeps its
+  length from end to end); a hull is one slot of physics (`physics.owned_hulls`) that every
+  instance scales and turns, kept in `Foliage_Physics.hulls` and given back once no shape uses
+  it. A Mesh or sensor of the prefab, a type without what it
+  collides as, or no room for hulls is the `foliage.collision` problem.
+- **Every cell of a loaded Foliage collides**, however far from the sources: an NPC or a shot on a
+  server meets the trees far from every player, and the navmesh, built from the static collision,
+  has the same obstacles wherever the players are. A `Foliage` kept for a section that is not
+  loaded (`scene.Far_Kept`) collides with nothing. Physics_Settings must hold the shapes of every
+  loaded cell; past them it is the `foliage.physics` problem.
+- **Instances taken out** leave with their shapes alone (`collider_remove`): the body of the cell
+  stays unless it has none left, and the navmesh rebuilds only around them. One put back builds
+  its cell again.
+- `Foliage_Physics` stores bodies and shapes with the world: a Play copy or a rollback carries
+  both together. They are [owned bodies](../../mirai-physics/references/engine.md#owned-bodies) of
+  physics. It does not run in a resimulated tick.
+
+## Instances removed in play
+
+What the game removes (felled, harvested, burned) does not change the source: it is world state,
+like the [tombstones](../../mirai-gameplay/references/libraries.md#scene-references) of what
+is destroyed in a section (`removal.odin`).
+
+- `foliage_remove(requests, plant)` requests it with a `Foliage_Plant` (its Foliage, cell and id,
+  `Placed.id`), as a pick of its batches gives it, `hit_of(physics, hit)` from a `physics.Hit`,
+  or a query of the game (`query.odin`): `foliage_in_sphere` and `foliage_in_box` give the
+  instances whose place is in an area of the world and `foliage_plant` where one stands and of
+  which type, as the world shows them (on their ground, without what was taken out), with
+  collision or not and however far from the players.
+- `foliage_removals` fulfills it at the end that decides (alone, or the server; a client requests
+  nothing), once per instance that the cell shows on its ground, grouped **by cell**: an entity with
+  `Foliage_Removed` (`replicated`) hanging from the `Foliage` stores the cell, the count and the
+  ids of up to `REMOVED_PAGE` instances removed from it, in the order in which they left. What is
+  new in a cell goes to its entity with room, and what does not fit, to another. It names the
+  `Foliage` by its `Id`, the same at each end and in each save: one without an `Id` removes
+  nothing (`foliage.remove`). A tick without requests does not write the table.
+- They are plain-data entities: the save stores them, Play and rollback copy them and a `Foliage`
+  that stays for an unloaded section (`scene.Far_Kept`) keeps them with what hangs from it.
+  Removing the entity returns its instances.
+- **An id that the cell no longer has** (the source deleted that instance, or a manual one moved
+  to another cell) removes nothing and is kept: it is what the game did, it costs nothing and it is
+  not a problem, because changing the level under a saved game is expected. If the source restores
+  it (an undo), it is left out again. A manual one moved to another cell in the source is seen
+  again.
+- `Foliage_Removals` orders them by `Foliage` and cell when the `Foliage_Removed` or `Foliage`
+  tables change; drawing, impostors, crowns and collision rebuild only the cells whose removed
+  instances changed (`removed_cell`), and the shared crown of a cell distinguishes what was
+  removed from each `Foliage`.
+- **Network**: `Foliage_Removed` is `replicated="object"`, so the server replicates each entity with
+  `Simulation.Server` and `Audience.Always` without a `Replicate` of its own: one object per entity,
+  not per instance, which reaches all connections. Its component is a [fragment][fragments] whose
+  entries (`Removed_Instance` structs) have their own change bits: removing one more instance sends
+  the count and its entries, and a connection that arrives later receives the whole cell with the
+  creation, in parts if it does not fit in a datagram; an array of loose ids would be a single
+  field, which is resent whole. The client makes it with its component and its foliage leaves it
+  out. Each `REMOVED_PAGE` instances of a cell occupy one object of `Net_Settings.max_objects`.
+- **Marks** (`marks.odin`): what play changes of how instances look (burnt, wet) is world state
+  the same way. `foliage_mark(requests, plant, tint, wet)` asks it; `foliage_marks`, at the end
+  that decides, keeps each instance once in an entity `Foliage_Marked` of its cell (up to
+  `MARKED_PAGE`), changing its entry when it is marked again, so the network sends that entry
+  alone. Saves, Play, rollback and `Far_Kept` keep them as removals; removing the entity gives the
+  instances their look back. `Foliage_Marks` orders them by cell (`marked_cell`) and only the cells
+  whose marks changed are drawn again; a mark goes over what the source paints. An id the cell
+  does not show colors nothing and is kept.
+
+[fragments]: ../../mirai-networking/references/networking.md#protocol-and-descriptors
+
+## Tool
+
+`Editor` part (`foliage_editor`), with G or its entry in the Tools menu, outside Play. It edits the
+selected `Foliage`; without one it offers those of the scene and **New foliage**, a `.foliage` in
+the registry's memory as a file of the undo step that creates it.
+
+- **Types**: one card per type with its thumbnail and its instances, filtered by the search (part
+  of the name, case-insensitive). The selected ones are those that Paint and Erase paint, as in
+  Terrain3D (`types_click`): a click takes only one, Ctrl (Cmd) adds or removes leaving one, Shift
+  takes the stretch of the list from the last one taken alone or added. The one clicked shows all
+  its values (name, mesh, density, scale, turn, offset, rule, distances, wind, shadow and
+  collision). Dropping a `.mesh` onto the types, or **Add to** in the menu of a browser mesh, adds
+  one; dropping it onto a card changes the mesh of that type and keeps its instances. **Remove
+  type**, or Delete with the pointer over the list, takes the selected ones with their manual
+  instances and the overrides of their generated ones (`source_type_remove`), in one step.
+- **Instances per type** (`Counts`): those shown by the edited `Foliage`, counted per cell over
+  the source that `foliage_load` read, with its ground. Only the cells whose version or whose
+  ground (for those that generate) changed are counted again, up to `COUNT_CELLS` per frame, and
+  the total appears when none is left; a frame without changes counts nothing.
+- **Live info** (folded at the start, as in Terrain3D): under the brush, place, cell and its
+  instances, height of the surface and of the foliage ground, and slope.
+- Modes (`foliage_modes.odin`), with keys 1 to 7. **Paint** puts under the ring manual instances
+  of each selected type up to its density by Paint density (counting those already there and
+  separated by half a step from it), lowered to the surface that the picker finds, where the type's
+  [rule](#layers-of-a-cell) takes them, with the offset of their type, and `INSTANCE_GROUNDED` and
+  `INSTANCE_ALIGNED` if they fall on known ground: the ground tilts them like the generated ones
+  and realigns them when it changes. With **Ground only**, only on the ground (a terrain).
+  **Erase** leaves of the selected types Erase density of their density, at random: manual ones
+  leave their cell and generated ones with a `Deleted` override. **Place** puts one instance of
+  the selected types, in turn, where it is clicked. **Reapply** gives the instances under the ring
+  the scale, turn and offset of their type again (whatever their checkboxes mark), each one once
+  per stroke. **Tint** gives them the tint and wetness of the panel, which the source keeps
+  (`INSTANCE_COLORED`; a generated one by a `Moved` override where it stands); white and dry gives
+  them their own look again. **Generate** turns on the generator of the cells whose square
+  touches the ring and with Ctrl turns it off: it raises the density of the cells under the ring
+  to all of it within `GENERATE_HARDNESS` of its radius, less toward its border, and Ctrl takes
+  away what the same ring gave; a cell left with none stops generating and goes when it has
+  nothing else
+  (`source_cell_generate`). It draws the nearby cells, in green those that generate.
+- Keys like those of the [terrain](terrain.md#tool) (`editor.brush_adjust_*`, the same
+  adjustment): `[` and `]` and F change the radius, Shift F the density of Paint or Erase, Ctrl
+  swaps Paint for Erase. The ring follows the foliage ground where it knows it, yellow when
+  placing, blue when removing and white when changing what is there.
+- The brushes touch up to `BRUSH_RATE` times per second, like those of the terrain, and a fast drag
+  also touches between two touches, every half radius. During the stroke each touch hands the
+  runtime only the cells it changed (`Foliage_Stroke`, which `foliage_load` shows over the file);
+  releasing writes the file as one step and Escape gives it back, and the runtime reads the file
+  again.
+- **Select** takes with a click the instance of the batch that the picker gives (`batches=true`):
+  alone, with Shift added and with Ctrl removed or added; a drag adds those of the selected types
+  under the ring (with Ctrl, removes them), and **Select all of the types** takes all. The gizmo
+  moves, rotates and scales the group around its center, or the single instance: a manual one
+  changes in its cell or passes to another, with its id; a generated one becomes `Moved`
+  (`Replaced` with another type), or `Deleted` and a manual one in another cell. What stays on the
+  ground keeps its rotation from it (`INSTANCE_ALIGNED`): it looks as the gizmo left it and
+  follows the ground. Delete removes them, End or **Stand on ground** stands them on the ground
+  and **Type** gives them another type; each thing, one step. The type of the one taken with a
+  click is left alone selected in the list and in view, even if the search had hidden it.
+- **Undo**: the step stores the revision of the `Foliage`s; as in the terrain
+  ([history](terrain.md#tool)), the tool stores the head of each source and each step only the
+  cells, types and info that changed (`foliage_history.odin`); undo and redo change them with the
+  head and `foliage_sync` writes it with `editor.file_set`. The file is rewritten when the step
+  ends; one changed outside the tool (git, another tool) is taken as the current revision, without
+  redo bringing back what it replaced.
+- Radius, densities, Ground only and the Reapply checkboxes are stored in the editor preferences
+  (`Foliage_Tool`).
+- `foliage_cells` inspection mode (Advanced → Foliage): the outline of each cell near the view over
+  its ground, green the one that generates and yellow the one that only has manual instances.
+- **API** (`foliage_api.odin`): `foliage.create` (with `name`, for its entity and file beside the
+  scene), `foliage.type_add` (a type by its mesh with
+  the values it receives; its name is unique), `foliage.type_set` (the type by its name, the
+  values it receives; the others stay; a rule's `layers` are materials of the layers of the
+  terrains under it), `foliage.type_remove`, `foliage.paint` (a paint, erase,
+  reapply, generate or ungenerate stroke from `at` to `to`), `foliage.place` and `foliage.query`
+  (types with their instances and instances inside a box), each change an undo step. They read
+  the place and the ground of the `Foliage` as they are now: a manual editor runs the frames that
+  read them.
+- In the content browser, `Foliage_Kinds` and `Foliage_Thumbnails` list the `.foliage` and show
+  them with a mesh of their types
+  ([content browser](../../mirai-editor/references/panels.md#content-browser)).
+
+## Verification
+
+- `mirai test plugins/foliage/runtime` (CPU): cells
+  (`cells_take_the_points_of_their_32_metres_including_negative_coordinates`), format
+  (`a_foliage_asset_comes_back_as_it_was_written_and_damage_is_refused`), generator and overrides
+  (`the_generator_makes_the_same_points_with_the_same_ids`,
+  `generated_points_cover_their_cell_with_one_in_each_square`,
+  `instances_with_a_radius_keep_apart_within_and_across_cells`,
+  `the_density_of_a_cell_and_what_keeps_foliage_out_thin_its_instances`,
+  `the_generate_brush_paints_the_density_of_the_cells_under_it`,
+  `overrides_change_their_generated_instance_and_orphans_are_kept`,
+  `overrides_keep_the_order_of_type_and_point_and_are_found_by_it`), versions
+  (`a_source_read_again_keeps_the_version_of_the_cells_that_did_not_change`), ground
+  (`instances_stand_on_their_ground_and_generated_ones_leave_where_it_has_none`,
+  `a_manual_instance_aligned_with_its_ground_leans_with_the_ground_that_changes`), rules and offset
+  (`a_rule_of_slope_and_height_takes_out_the_generated_points_off_it_and_keeps_the_ids_of_the_rest`,
+  `a_rule_of_layers_takes_its_materials_in_any_order_and_nothing_unknown`,
+  `a_generated_point_takes_an_offset_of_its_type_and_keeps_its_other_values`,
+  `a_foliage_file_written_before_the_rules_reads_them_off_and_bad_rules_are_refused`), batches and
+  prefabs (`batch_instances_carry_the_transform_of_their_entity`,
+  `placed_instances_group_by_type_keeping_their_order`,
+  `a_part_of_a_prefab_composes_with_its_instance_and_says_what_it_leaves_out`,
+  `the_parts_of_a_prefab_are_its_shown_meshes_placed_from_its_root`), collision
+  (`a_cell_collides_with_one_static_body_and_one_instance_leaves_alone`,
+  `rocks_collide_as_one_hull_each_instance_scales`; the colliders of a prefab in
+  `the_parts_of_a_prefab_are_its_shown_meshes_placed_from_its_root`), types
+  (`a_removed_type_takes_its_instances_and_overrides_with_it`,
+  `a_type_with_an_impostor_draws_its_mesh_up_to_its_distance`), crown
+  (`a_crown_is_the_closed_surface_of_the_voxels_dense_with_leaves`,
+  `the_crown_of_a_cell_covers_its_trees_with_fewer_triangles_than_theirs`,
+  `what_the_renderer_forgets_takes_the_crowns_and_far_forms_with_it`), impostors
+  (`a_cell_writes_only_its_block_of_impostors`) and wind
+  (`an_instance_sways_with_the_variant_of_its_turn_and_downwind`,
+  `the_instance_of_a_variant_is_found_among_those_of_its_type`), trampling
+  (`every_bender_tramples_the_foliage_and_it_stands_back_up_over_time`), zones of wind
+  (`the_variants_of_a_calm_valley_stay_still_whatever_blows_at_the_view`); on the GPU, with
+  validation: `a_stalk_leans_away_from_where_a_bender_trampled_the_field` and
+  `a_variant_leans_downwind_about_its_place`.
+- Ids of the manual ones: `a_manual_instance_keeps_its_id_through_the_edits_of_its_cell`.
+- Resident cap: `past_their_budget_the_nearest_cells_stay_resident`.
+- Streaming: `the_cells_near_the_sources_are_found_by_rows_and_every_one_they_keep`,
+  `cells_are_built_nearest_first_within_the_instances_of_a_frame`,
+  `a_cell_generates_at_most_its_cap_and_thin_keeps_the_first_points_of_what_does_not_collide`,
+  `the_collision_of_the_nearest_cells_is_built_first_within_its_budget` and
+  `the_cells_of_a_stroke_show_over_its_file_until_it_is_cleared`.
+- Instances removed (`plugins/foliage/runtime`):
+  `instances_taken_out_are_one_entity_for_each_cell_that_the_cell_leaves_out`,
+  `an_instance_is_taken_out_of_what_its_cell_shows_on_its_ground`,
+  `thousands_of_instances_taken_out_of_a_few_cells_are_a_few_entities` and
+  `a_saved_game_takes_out_the_same_instance_after_its_source_is_edited` and
+  `an_instance_taken_out_later_sends_a_small_part_of_its_cell`; what a game finds:
+  `the_instances_a_game_finds_are_those_the_world_shows`; marks:
+  `marks_of_play_are_one_entry_for_each_instance_of_their_cell`; that they reach a client:
+  `an_entity_with_a_replicated_object_component_reaches_a_client` in `plugins/multiplayer/runtime`.
+- Ground (`plugins/foliage/runtime`): `the_ground_of_foliage_is_read_where_the_ground_changed`,
+  `foliage_is_kept_out_of_volumes_splines_and_colliders`,
+  `the_ground_is_read_nearest_the_sources_first_and_each_tile_once` and
+  `far_trees_stand_where_they_stand_near`.
+- `mirai test plugins/foliage/editor -collection:plugins=<root>/plugins`:
+  `foliage_strokes_and_selections_are_steps_of_undo_written_at_the_flush`,
+  `a_move_of_an_imported_foliage_is_undone_back_to_revision_zero`,
+  `a_canceled_stroke_puts_back_what_the_file_held`,
+  `the_brush_fills_to_its_density_with_spacing_and_stands_on_the_ground`,
+  `the_generate_brush_turns_on_the_cells_under_it_and_off_again`,
+  `instances_placed_on_the_ground_lean_with_it_when_it_changes`,
+  `the_search_finds_types_by_any_part_of_their_name`,
+  `a_click_takes_one_type_ctrl_adds_or_takes_out_and_shift_takes_a_range`,
+  `the_type_of_a_selected_instance_is_taken_alone_and_removed_types_leave_the_selection`,
+  `instances_are_counted_by_cell_and_again_only_where_a_cell_or_its_ground_changed`,
+  `erase_leaves_the_density_it_is_given_and_none_at_zero`,
+  `generate_turns_on_the_cells_under_the_ring_and_ctrl_turns_them_off`,
+  `a_step_keeps_the_cells_it_changed_and_trades_them_back`,
+  `a_group_moves_together_and_an_instance_that_leaves_its_cell_keeps_the_others_named`,
+  `reapply_gives_the_instances_the_scale_of_their_type_once_a_stroke`,
+  `tint_paints_the_instances_under_the_ring_into_the_source`,
+  `a_point_past_what_a_foliage_holds_fails_naming_its_field`.
+  Gestures (strokes, clicks, the gizmo) are tested by the user.
+- `mirai test render` (CPU): `impostor_frames_cover_the_upper_hemisphere_and_fold_back`,
+  `impostor_frames_spread_their_color_into_what_they_do_not_cover`,
+  `a_batch_only_rays_meet_is_in_no_layer_and_the_picker_does_not_find_it` and
+  `a_deformable_with_levels_keeps_the_levels_of_its_source_in_its_own_vertices`; GPU:
+  `gpu_impostor_frames_keep_the_surface_of_their_material`.
+- What is seen (batches, fade into the impostor, wind, crown shadows) is verified in the editor of
+  a project that enables the plugin (alien-planet), with GPU validation: the tests of the
+  [batches](../../mirai-rendering/SKILL.md) and captures from close up and from more than 1 km.
+  The plugin's shaders are compiled with `mirai shaders --project <project with foliage>`.

@@ -1,0 +1,31 @@
+#include "native.slang"
+//! per surface program
+// What the Gbuffer stage of an extension draws into the G-buffer with its own
+// vertices (render.pass_gbuffer_pipeline), a fragment each: the scene is
+// resolved once per pixel from the visibility target (vis_resolve.frag).
+// plain: without the reflectance target, for a scene of default dielectrics
+// (pixel_reflectance in scene.slang). layers: with the reflectance and the
+// layers targets, while an instance whose materials have layers is in sight;
+// the others keep only the unlit bit of the layers.
+//! variant plain MIRAI_GBUFFER_PLAIN=1
+//! variant layers MIRAI_GBUFFER_LAYERS=1
+// Both are variants: a stage declares its targets, and a pipeline has them all.
+// Behind a constant, Vulkan warns of a write to an absent target at each draw,
+// and the Metal source, made once, writes a color the pipeline has no target for.
+#ifndef MIRAI_GBUFFER_LAYERS
+// Without the layers target no instance with layers is in sight.
+#define MIRAI_MATERIAL_NO_LAYERS true
+#endif
+// It reports the levels it samples of each texture (texture_feedback in scene.slang).
+#define MIRAI_TEXTURE_FEEDBACK
+#include "gbuffer_output.slang"
+
+[shader("fragment")]
+Stage_Output main(Raster_Input input, float4 pixel_position : SV_Position, bool front_facing : SV_IsFrontFace) {
+    input = raster_facing(input, front_facing);
+    if ((input.in_flags & RASTER_FLAG_FADING) != 0u && fade_pixel_left(uint2(pixel_position.xy), float(input.in_flags >> RASTER_FADE_SHIFT) / 65535.0)) discard;
+    Fragment f = fragment_evaluate(input);
+    // Blended surfaces are drawn after the scene is lit; the holes of a masked one show what is behind.
+    if (!material_covers(f.material, f.values.alpha)) discard;
+    return gbuffer_output(input, f);
+}

@@ -1,0 +1,6 @@
+{
+  "name": "ragdoll",
+  "version": "0.1.0",
+  "dependencies": ["animation", "physics"],
+  "parts": ["Runtime", "Editor"]
+}

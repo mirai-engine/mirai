@@ -1,0 +1,17 @@
+{
+  "project": "empty",
+  "scene": "town",
+  "prompt": "Create a new group named Village at position [0, 0, 60] with 12 houses inside it, named House 1 to House 12, in a row along X, 8 units apart, starting at X 0. Each house is a group holding: Base (a cube scaled [4, 3, 4] at Y 1.5), Roof (a pyramid scaled [4.5, 2, 4.5] at Y 4), Door (a cube scaled [1, 2, 0.2] at [0, 1, 2.1]), Window left and Window right (cubes scaled [0.8, 0.8, 0.1] at [-1.2, 2, 2.05] and [1.2, 2, 2.05]) and Lamp (a point light with intensity 30 at Y 6).",
+  "checks": [
+    {"entity": "Village", "position": [0, 0, 60]},
+    {"repeat": 12, "entity": "Village/House {n}", "position": ["=8*(n-1)", 0, 0]},
+    {"repeat": 12, "entity": "Village/House {n}/Base", "position": [0, 1.5, 0], "scale": [4, 3, 4], "components": {"Mesh_Renderer": {"shape": "Cube"}}},
+    {"repeat": 12, "entity": "Village/House {n}/Roof", "position": [0, 4, 0], "scale": [4.5, 2, 4.5], "components": {"Mesh_Renderer": {"shape": "Pyramid"}}},
+    {"repeat": 12, "entity": "Village/House {n}/Door", "position": [0, 1, 2.1], "scale": [1, 2, 0.2], "components": {"Mesh_Renderer": {"shape": "Cube"}}},
+    {"repeat": 12, "entity": "Village/House {n}/Window left", "position": [-1.2, 2, 2.05], "scale": [0.8, 0.8, 0.1], "components": {"Mesh_Renderer": {"shape": "Cube"}}},
+    {"repeat": 12, "entity": "Village/House {n}/Window right", "position": [1.2, 2, 2.05], "scale": [0.8, 0.8, 0.1], "components": {"Mesh_Renderer": {"shape": "Cube"}}},
+    {"repeat": 12, "entity": "Village/House {n}/Lamp", "position": [0, 6, 0], "components": {"Point_Light": {"intensity": 30}}},
+    {"count": {}, "equals": 148},
+    {"unchanged": {}}
+  ]
+}

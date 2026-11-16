@@ -1,0 +1,39 @@
+package animation_editor
+
+import "core:fmt"
+import "mirai:editor/api"
+import "mirai:std/base"
+import "mirai:std/serial"
+
+Authoring_Write_Result :: struct {
+    asset:base.Asset_Id,
+    path:string,
+    dry_run:bool `mirai:"optional,label=Only on a dry run: nothing was written"`,
+    replaced:bool `mirai:"optional,label=The path already held one: it was replaced whole, keeping its id"`,
+}
+Authoring_Page :: struct($T:typeid) {index:u32,value:T}
+
+
+@(private)
+// Fails a call with where (path), what (code), what was expected and found,
+// and how to correct it: fix, or the usual correction of the code.
+authoring_failure :: proc(call:^api.Call,path,code,expected,actual,message:string,rpc_code:=api.INVALID_PARAMS,fix:="") {
+    Failure :: struct {path,code,expected,actual,fix:string}
+    data,_:=serial.text_encode(Failure{path,code,expected,actual,fix if fix!="" else authoring_fix(code,path,expected)},.Line,call.allocator)
+    api.call_fail(call,rpc_code,message,api.json_compact(string(data)))
+}
+
+// The usual correction of an error code.
+@(private)
+authoring_fix :: proc(code,path,expected:string) -> string {
+    switch code {
+    case "Runtime_Required": return "Start Play or Simulation, or use animation.preview on a copy"
+    case "Missing_Entity": return "Use an id from scene.inspect"
+    case "Missing_Component": return "Assign playback first with animation.play"
+    case "Invalid_Asset","Missing_Asset": return "Use the path or the id of an asset of the expected kind"
+    case "Already_Exists": return "Choose another path, or edit the existing asset"
+    case "Missing_Part": return "Detect the body with skeleton.body.detect or set the part with skeleton.body.set"
+    case "Missing_Clip": return "Use a clip name from animation.asset.inspect with section clips"
+    }
+    return fmt.tprintf("Pass %s at %s",expected,path)
+}

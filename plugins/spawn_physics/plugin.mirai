@@ -1,0 +1,7 @@
+{
+  "name": "spawn_physics",
+  "version": "0.1.0",
+  "dependencies": ["spawn", "physics"],
+  "parts": ["Runtime"],
+  "automatic": true
+}

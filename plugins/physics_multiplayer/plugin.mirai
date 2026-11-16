@@ -1,0 +1,7 @@
+{
+  "name": "physics_multiplayer",
+  "version": "0.1.0",
+  "dependencies": ["physics", "multiplayer"],
+  "parts": ["Runtime"],
+  "automatic": true
+}

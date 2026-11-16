@@ -1,0 +1,11 @@
+# Two different meshes in one source file exercise scene persistence.
+o Near
+v 0 0 0
+v 1 0 0
+v 0 1 0
+f 1 2 3
+o Far
+v 10 0 0
+v 11 0 0
+v 10 1 0
+f 4 5 6

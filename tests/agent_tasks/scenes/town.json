@@ -1,0 +1,82 @@
+{"entities": [
+  {"name": "Market", "position": [0, 0, -20], "children": [
+    {"name": "Bread stall", "preset": "cube", "position": [12, 0.75, 0], "scale": [2, 1.5, 1.5]},
+    {"name": "Cloth stall 1", "preset": "cube", "position": [15, 0.75, 0], "scale": [2, 1.5, 1.5]},
+    {"name": "Cloth stall 2", "preset": "cube", "position": [18, 0.75, 0], "scale": [2, 1.5, 1.5]},
+    {"name": "Fish stall", "preset": "cube", "position": [9, 0.75, 0], "scale": [2, 1.5, 1.5]},
+    {"name": "Fruit stall 1", "preset": "cube", "position": [0, 0.75, 0], "scale": [2, 1.5, 1.5]},
+    {"name": "Fruit stall 2", "preset": "cube", "position": [3, 0.75, 0], "scale": [2, 1.5, 1.5]},
+    {"name": "Fruit stall 3", "preset": "cube", "position": [6, 0.75, 0], "scale": [2, 1.5, 1.5]},
+    {"name": "Market light 1", "preset": "point_light", "position": [0, 4, 2], "components": {"Point_Light": {"color": [1, 1, 1], "intensity": 40, "range": 20, "radius": 0.05}}},
+    {"name": "Market light 2", "preset": "point_light", "position": [7, 4, 2], "components": {"Point_Light": {"color": [1, 1, 1], "intensity": 40, "range": 20, "radius": 0.05}}},
+    {"name": "Market light 3", "preset": "point_light", "position": [14, 4, 2], "components": {"Point_Light": {"color": [1, 1, 1], "intensity": 40, "range": 20, "radius": 0.05}}},
+    {"name": "Old stall", "preset": "cube", "position": [0, 0.75, 6], "scale": [2, 1.5, 1.5], "children": [
+      {"name": "Old crate", "preset": "cube", "position": [0.3, 0.6, 0], "scale": [0.3, 0.3, 0.3]},
+      {"name": "Old sign", "preset": "cube", "position": [0, 1, 0], "scale": [0.5, 0.3, 0.05]}
+    ]}
+  ]},
+  {"name": "Park", "position": [0, 0, 20], "children": [
+    {"name": "Bench 1", "preset": "cube", "position": [0, 0.4, 0], "scale": [1.5, 0.4, 0.5]},
+    {"name": "Bench 2", "preset": "cube", "position": [4, 0.4, 0], "scale": [1.5, 0.4, 0.5]},
+    {"name": "Bench 3", "preset": "cube", "position": [8, 0.4, 0], "scale": [1.5, 0.4, 0.5]},
+    {"name": "Bench 4", "preset": "cube", "position": [12, 0.4, 0], "scale": [1.5, 0.4, 0.5]},
+    {"name": "Bench 5", "preset": "cube", "position": [16, 0.4, 0], "scale": [1.5, 0.4, 0.5]},
+    {"name": "Bench 6", "preset": "cube", "position": [20, 0.4, 0], "scale": [1.5, 0.4, 0.5]},
+    {"name": "Bench 7", "preset": "cube", "position": [0, 0.4, 8], "scale": [1.5, 0.4, 0.5]},
+    {"name": "Bench 8", "preset": "cube", "position": [4, 0.4, 8], "scale": [1.5, 0.4, 0.5]},
+    {"name": "Bench 9", "preset": "cube", "position": [8, 0.4, 8], "scale": [1.5, 0.4, 0.5]},
+    {"name": "Bench 10", "preset": "cube", "position": [12, 0.4, 8], "scale": [1.5, 0.4, 0.5]},
+    {"name": "Bench 11", "preset": "cube", "position": [16, 0.4, 8], "scale": [1.5, 0.4, 0.5]},
+    {"name": "Bench 12", "preset": "cube", "position": [20, 0.4, 8], "scale": [1.5, 0.4, 0.5]},
+    {"name": "Fountain", "preset": "cylinder", "position": [10, 0.5, 12], "scale": [3, 1, 3]},
+    {"name": "Park light 1", "preset": "point_light", "position": [0, 5, 6], "components": {"Point_Light": {"color": [1, 1, 1], "intensity": 40, "range": 20, "radius": 0.05}}},
+    {"name": "Park light 2", "preset": "point_light", "position": [8, 5, 6], "components": {"Point_Light": {"color": [1, 1, 1], "intensity": 40, "range": 20, "radius": 0.05}}},
+    {"name": "Park light 3", "preset": "point_light", "position": [16, 5, 6], "components": {"Point_Light": {"color": [1, 1, 1], "intensity": 40, "range": 20, "radius": 0.05}}},
+    {"name": "Park light 4", "preset": "point_light", "position": [24, 5, 6], "components": {"Point_Light": {"color": [1, 1, 1], "intensity": 40, "range": 20, "radius": 0.05}}},
+    {"name": "Tree 1", "preset": "cylinder", "position": [-2, 1.5, 4], "scale": [0.4, 3, 0.4], "children": [
+      {"name": "Crown", "preset": "sphere", "position": [0, 0.6, 0], "scale": [5, 0.6, 5]}
+    ]},
+    {"name": "Tree 2", "preset": "cylinder", "position": [2, 1.5, 4], "scale": [0.4, 3, 0.4], "children": [
+      {"name": "Crown", "preset": "sphere", "position": [0, 0.6, 0], "scale": [5, 0.6, 5]}
+    ]},
+    {"name": "Tree 3", "preset": "cylinder", "position": [6, 1.5, 4], "scale": [0.4, 3, 0.4], "children": [
+      {"name": "Crown", "preset": "sphere", "position": [0, 0.6, 0], "scale": [5, 0.6, 5]}
+    ]},
+    {"name": "Tree 4", "preset": "cylinder", "position": [10, 1.5, 4], "scale": [0.4, 3, 0.4], "children": [
+      {"name": "Crown", "preset": "sphere", "position": [0, 0.6, 0], "scale": [5, 0.6, 5]}
+    ]},
+    {"name": "Tree 5", "preset": "cylinder", "position": [14, 1.5, 4], "scale": [0.4, 3, 0.4], "children": [
+      {"name": "Crown", "preset": "sphere", "position": [0, 0.6, 0], "scale": [5, 0.6, 5]}
+    ]},
+    {"name": "Tree 6", "preset": "cylinder", "position": [18, 1.5, 4], "scale": [0.4, 3, 0.4], "children": [
+      {"name": "Crown", "preset": "sphere", "position": [0, 0.6, 0], "scale": [5, 0.6, 5]}
+    ]},
+    {"name": "Tree 7", "preset": "cylinder", "position": [22, 1.5, 4], "scale": [0.4, 3, 0.4], "children": [
+      {"name": "Crown", "preset": "sphere", "position": [0, 0.6, 0], "scale": [5, 0.6, 5]}
+    ]},
+    {"name": "Tree 8", "preset": "cylinder", "position": [-2, 1.5, 12], "scale": [0.4, 3, 0.4], "children": [
+      {"name": "Crown", "preset": "sphere", "position": [0, 0.6, 0], "scale": [5, 0.6, 5]}
+    ]},
+    {"name": "Tree 9", "preset": "cylinder", "position": [2, 1.5, 12], "scale": [0.4, 3, 0.4], "children": [
+      {"name": "Crown", "preset": "sphere", "position": [0, 0.6, 0], "scale": [5, 0.6, 5]}
+    ]},
+    {"name": "Tree 10", "preset": "cylinder", "position": [6, 1.5, 12], "scale": [0.4, 3, 0.4], "children": [
+      {"name": "Crown", "preset": "sphere", "position": [0, 0.6, 0], "scale": [5, 0.6, 5]}
+    ]},
+    {"name": "Tree 11", "preset": "cylinder", "position": [10, 1.5, 12], "scale": [0.4, 3, 0.4], "children": [
+      {"name": "Crown", "preset": "sphere", "position": [0, 0.6, 0], "scale": [5, 0.6, 5]}
+    ]},
+    {"name": "Tree 12", "preset": "cylinder", "position": [14, 1.5, 12], "scale": [0.4, 3, 0.4], "children": [
+      {"name": "Crown", "preset": "sphere", "position": [0, 0.6, 0], "scale": [5, 0.6, 5]}
+    ]},
+    {"name": "Tree 13", "preset": "cylinder", "position": [18, 1.5, 12], "scale": [0.4, 3, 0.4], "children": [
+      {"name": "Crown", "preset": "sphere", "position": [0, 0.6, 0], "scale": [5, 0.6, 5]}
+    ]},
+    {"name": "Tree 14", "preset": "cylinder", "position": [22, 1.5, 12], "scale": [0.4, 3, 0.4], "children": [
+      {"name": "Crown", "preset": "sphere", "position": [0, 0.6, 0], "scale": [5, 0.6, 5]}
+    ]}
+  ]},
+  {"name": "Street light 1", "preset": "point_light", "position": [-10, 6, -10], "components": {"Point_Light": {"color": [1, 1, 1], "intensity": 40, "range": 20, "radius": 0.05}}},
+  {"name": "Street light 2", "preset": "point_light", "position": [-10, 6, 0], "components": {"Point_Light": {"color": [1, 1, 1], "intensity": 40, "range": 20, "radius": 0.05}}},
+  {"name": "Street light 3", "preset": "point_light", "position": [-10, 6, 10], "components": {"Point_Light": {"color": [1, 1, 1], "intensity": 40, "range": 20, "radius": 0.05}}}
+]}

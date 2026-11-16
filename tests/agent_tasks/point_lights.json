@@ -1,0 +1,11 @@
+{
+  "project": "empty",
+  "scene": "town",
+  "prompt": "Set the intensity of every point light in the scene to 25 and its color to [1, 0.8, 0.6].",
+  "checks": [
+    {"count": {"component": "Point_Light"}, "equals": 10},
+    {"each": {"component": "Point_Light"}, "components": {"Point_Light": {"intensity": 25, "color": [1, 0.8, 0.6]}}},
+    {"count": {}, "equals": 63},
+    {"unchanged": {"except_component": "Point_Light"}}
+  ]
+}

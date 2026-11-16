@@ -1,0 +1,73 @@
+# A pull request to main: the types of every package and the tests that need
+# no GPU, on Windows. Nothing is kept from the run.
+name: checks
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  ODIN_RELEASE: dev-2026-11
+  ODIN_ARCHIVE: odin-windows-amd64-dev-2026-11.zip
+  ODIN_SHA256: 259effedf2997293c8fa4a5e497496f8ebce9f826652d9dd353a9dd2113c31fd
+  VULKAN_SDK_VERSION: 1.4.363.0
+  MIRAI_ALLOW_GPU_SKIP: "1"
+
+jobs:
+  checks:
+    runs-on: windows-2025
+    timeout-minutes: 240
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Odin ${{ env.ODIN_RELEASE }}
+        run: |
+          archive="$RUNNER_TEMP/$ODIN_ARCHIVE"
+          curl -fsSL -o "$archive" "https://github.com/odin-lang/Odin/releases/download/$ODIN_RELEASE/$ODIN_ARCHIVE"
+          (cd "$RUNNER_TEMP" && echo "$ODIN_SHA256  $ODIN_ARCHIVE" | sha256sum -c -)
+          mkdir -p "$RUNNER_TEMP/odin" .deps/odin
+          7z x -bd -o"$RUNNER_TEMP/odin" "$archive" > /dev/null
+          compiler=$(find "$RUNNER_TEMP/odin" -maxdepth 3 -type f -name odin.exe | head -n 1)
+          mv "$(dirname "$compiler")" .deps/odin/dist
+          .deps/odin/dist/odin version
+
+      - name: Tools of SPIR-V
+        run: |
+          installer="$RUNNER_TEMP/vulkansdk.exe"
+          curl -fsSL -A mirai-setup -o "$installer" "https://sdk.lunarg.com/sdk/download/$VULKAN_SDK_VERSION/windows/vulkansdk-windows-X64-$VULKAN_SDK_VERSION.exe"
+          "$installer" --root "$(cygpath -w "$PWD/.deps/vulkan-sdk-windows")" --accept-licenses --default-answer --confirm-command install
+
+      - name: Slang
+        run: ./mirai setup slang
+
+      # Every folder with Odin sources of the engine, its tools and its plugins.
+      - name: Check every package
+        run: |
+          failed=0
+          for package in $(git ls-files '*.odin' | grep -v -e '^third_party/' -e '^templates/' | xargs -n1 dirname | sort -u); do
+            echo "::group::mirai check $package"
+            if ! ./mirai check "$package"; then failed=1; echo "::error::mirai check $package failed"; fi
+            echo "::endgroup::"
+          done
+          exit $failed
+
+      # The suites of the packages that run on the CPU alone, each a folder with
+      # sources and tests of its own: a name with no folder behind it is taken
+      # for a test of the package before it, which stops the step before it
+      # compiles.
+      - name: Tests without a GPU
+        run: |
+          ./mirai test \
+            std/base std/jobs std/math std/anim std/ai std/input std/geom std/spatial std/serial std/subprocess \
+            core net project rhi cook/image cook/textures cook/shaders \
+            plugins/physics/runtime/sim

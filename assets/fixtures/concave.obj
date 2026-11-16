@@ -1,0 +1,11 @@
+# A concave L, area 3. Negative indices exercise OBJ indexing.
+mtllib concave.mtl
+o ConcaveL
+v 0 0 0 1 0 0
+v 2 0 0 1 0 0
+v 2 1 0 1 0 0
+v 1 1 0 1 0 0
+v 1 2 0 1 0 0
+v 0 2 0 1 0 0
+usemtl red
+f -6 -5 -4 -3 -2 -1

@@ -1,0 +1,11 @@
+{
+  "project": "empty",
+  "scene": "town",
+  "prompt": "In the group Park, raise Bench 7 by 2 units (add 2 to its Y position) and delete Tree 12 with what hangs from it.",
+  "checks": [
+    {"entity": "Park/Bench 7", "position": [0, 2.4, 8]},
+    {"gone": "Park/Tree 12"},
+    {"count": {}, "equals": 61},
+    {"unchanged": {"except": ["Park/Bench 7", "Park/Tree 12"]}}
+  ]
+}

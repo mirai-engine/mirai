@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "mockup",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "5199",
+        "--directory",
+        "C:/Users/tzbk/AppData/Local/Temp/claude/C--Users-tzbk-CODIGOS-mirai/29296cfc-eb36-44d9-b17e-3e8d1b71892a/scratchpad"
+      ],
+      "port": 5199
+    }
+  ]
+}

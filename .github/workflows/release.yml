@@ -1,0 +1,163 @@
+# The engine as a package for whoever builds projects and not the engine: a tag
+# v<ENGINE_VERSION> builds it on each platform, tries it unpacked away from the
+# checkout and attaches it to a draft release of the tag. Run by hand, the
+# packages stay as artifacts of the run. What each package carries:
+# .agents/skills/mirai-projects/references/projects.md#installed-engine
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  ODIN_RELEASE: dev-2026-11
+  VULKAN_SDK_VERSION: 1.4.363.0
+
+jobs:
+  package:
+    name: package ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-amd64
+            runner: windows-2025
+            odin: odin-windows-amd64-dev-2026-11.zip
+            odin_sha256: 259effedf2997293c8fa4a5e497496f8ebce9f826652d9dd353a9dd2113c31fd
+          - platform: linux-amd64
+            runner: ubuntu-24.04
+            odin: odin-linux-amd64-dev-2026-11.tar.gz
+            odin_sha256: 65c9f6e97d6f8a30930e151f270ce5aeaa98fe8b2ba49fe067394e2af04f7618
+          - platform: macos-arm64
+            runner: macos-15
+            odin: odin-macos-arm64-dev-2026-11.tar.gz
+            odin_sha256: fa10eee280c8786758e3ff0b8fdd9355e1c9447b1f0b8c72764e25ee4ebc3e22
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 240
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Name the package
+        id: package
+        run: |
+          version=$(sed -n 's/^ENGINE_VERSION :: "\(.*\)"$/\1/p' project/manifest.odin)
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::the tag $GITHUB_REF_NAME is not v$version, the ENGINE_VERSION of project/manifest.odin"
+            exit 1
+          fi
+          echo "name=mirai-$version-${{ matrix.platform }}" >> "$GITHUB_OUTPUT"
+
+      - name: Odin ${{ env.ODIN_RELEASE }}
+        run: |
+          archive="$RUNNER_TEMP/${{ matrix.odin }}"
+          curl -fsSL -o "$archive" "https://github.com/odin-lang/Odin/releases/download/$ODIN_RELEASE/${{ matrix.odin }}"
+          sum=$(command -v sha256sum || echo "shasum -a 256")
+          (cd "$RUNNER_TEMP" && echo "${{ matrix.odin_sha256 }}  ${{ matrix.odin }}" | $sum -c -)
+          mkdir -p "$RUNNER_TEMP/odin" .deps/odin
+          if [ "$RUNNER_OS" = Windows ]; then 7z x -bd -o"$RUNNER_TEMP/odin" "$archive" > /dev/null; else tar -xzf "$archive" -C "$RUNNER_TEMP/odin"; fi
+          compiler=$(find "$RUNNER_TEMP/odin" -maxdepth 3 -type f \( -name odin -o -name odin.exe \) | head -n 1)
+          mv "$(dirname "$compiler")" .deps/odin/dist
+          .deps/odin/dist/odin version
+
+      - name: Packages of Ubuntu
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang cmake ninja-build pkg-config \
+            libx11-dev libxext-dev libxcursor-dev libxi-dev libxrandr-dev libxfixes-dev libxss-dev libxtst-dev libxkbcommon-dev \
+            libasound2-dev libpulse-dev libudev-dev libdbus-1-dev
+
+      - uses: astral-sh/setup-uv@v6
+        if: runner.os != 'Windows'
+
+      - name: SDL3, the C libraries of Odin and the tools of SPIR-V (Linux)
+        if: runner.os == 'Linux'
+        env:
+          MIRAI_ODIN: ${{ github.workspace }}/.deps/odin/dist/odin
+        run: uv run scripts/setup_linux_deps.py
+
+      - name: SDL3 and the tools of SPIR-V (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install sdl3 spirv-tools spirv-cross
+          uv run scripts/setup_macos_deps.py
+
+      - name: Tools of SPIR-V (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          installer="$RUNNER_TEMP/vulkansdk.exe"
+          curl -fsSL -A mirai-setup -o "$installer" "https://sdk.lunarg.com/sdk/download/$VULKAN_SDK_VERSION/windows/vulkansdk-windows-X64-$VULKAN_SDK_VERSION.exe"
+          "$installer" --root "$(cygpath -w "$PWD/.deps/vulkan-sdk-windows")" --accept-licenses --default-answer --confirm-command install
+
+      - name: Slang
+        run: ./mirai setup slang
+
+      - name: Package
+        run: ./mirai package engine --out "$RUNNER_TEMP/package/${{ steps.package.outputs.name }}"
+
+      - name: Archive
+        working-directory: ${{ runner.temp }}/package
+        run: |
+          name="${{ steps.package.outputs.name }}"
+          if [ "$RUNNER_OS" = Windows ]; then 7z a -bd -tzip -mx=7 "$name.zip" "$name" > /dev/null; else tar -czf "$name.tar.gz" "$name"; fi
+          ls -l
+
+      # A new project built with the package unpacked elsewhere: the plugins come
+      # built with it, so none compiles.
+      - name: Try the package unpacked
+        working-directory: ${{ runner.temp }}
+        run: |
+          name="${{ steps.package.outputs.name }}"
+          mkdir unpacked projects
+          if [ "$RUNNER_OS" = Windows ]; then 7z x -bd -ounpacked "package/$name.zip" > /dev/null; else tar -xzf "package/$name.tar.gz" -C unpacked; fi
+          mirai="unpacked/$name/bin/mirai"
+          "$mirai" doctor || true
+          for template in game empty; do
+            "$mirai" new "projects/$template" --template "$template"
+            "$mirai" build editor "projects/$template" | tee "projects/$template.log"
+            if grep -q "plugin libraries built" "projects/$template.log"; then
+              echo "::error::the $template template compiled plugin libraries the package should bring"
+              exit 1
+            fi
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.name }}
+          path: ${{ runner.temp }}/package/${{ steps.package.outputs.name }}.*
+          compression-level: 0
+          if-no-files-found: error
+
+  release:
+    needs: package
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: packages
+          merge-multiple: true
+
+      - name: Draft the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md <<'EOF'
+          Mirai prebuilt for Windows x64, Linux x64 and macOS ARM64: the editor, the player, the `mirai` CLI (with `mirai mcp` and `mirai rpc`), the Odin compiler, Slang and the engine plugins.
+
+          1. Unzip the package of your platform into a folder you can write to: the machine settings and the caches live there.
+          2. `bin/mirai setup path` puts `mirai` on the PATH.
+          3. `mirai new <folder> --template game` creates a project and `mirai edit <folder>` builds it and opens the editor.
+
+          Building the game code needs the system linker: Visual Studio Build Tools with C++ on Windows, clang on Linux, the Xcode Command Line Tools on macOS. `mirai doctor` checks the machine. On macOS the binaries are not signed: `xattr -dr com.apple.quarantine <folder>`.
+          EOF
+          gh release create "$GITHUB_REF_NAME" packages/* --repo "$GITHUB_REPOSITORY" --draft --title "Mirai $GITHUB_REF_NAME" --notes-file notes.md

@@ -1,0 +1,6 @@
+{
+  "name": "previews",
+  "version": "0.1.0",
+  "dependencies": ["animation"],
+  "parts": ["Editor"]
+}

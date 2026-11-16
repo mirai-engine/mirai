@@ -1,0 +1,9 @@
+{
+  "UI_Settings": {
+    "prompts": "81aa127badfbdbeb988b5d3a1c12ab30"
+  },
+  "Graphics_Settings": {
+    "glass_shadows": true,
+    "glass_layers": 2
+  }
+}

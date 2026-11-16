@@ -1,0 +1,6 @@
+{
+  "name": "tracy",
+  "version": "0.1.0",
+  "parts": ["Runtime"],
+  "development": true
+}

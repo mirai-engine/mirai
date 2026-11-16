@@ -1,0 +1,76 @@
+# Splines: roads, paths, rivers and bent meshes
+
+A road, a path and a river are one thing: a `Spline` (`engine/volume`), a line of points that
+lies on the ground. What it is comes from what its entity has, as a `Volume` is a region and
+what happens in it is another component:
+
+| It is | The entity has |
+| --- | --- |
+| A road, a path, a trail | `Spline` with the `material` of its surface (plugin `shapes` draws it) |
+| A river, a stream | `Spline` and a `Fluid` (plugin `physics`); `water` draws it |
+| A route that nothing draws (a patrol) | `Spline` alone, named by the `Patrol` of who walks it ([ai](../ai.md)) |
+
+```sh
+P="mirai rpc --project ."
+$P scene.write '{"entities":[
+  {"name":"Road","components":{"Spline":{"material":"surfaces/cobblestone/Cobblestone.mat","count":3,
+    "points":[{"position":[0,0,0],"width":3,"height":0.04},{"position":[8,0,-10],"width":3,"height":0.04},
+      {"position":[0,0,-24],"width":4,"height":0.04}]}}},
+  {"name":"Creek","position":[30,0,0],"components":{"Fluid":{},
+    "Spline":{"count":3,"points":[{"position":[0,0,0],"width":3,"height":1,"speed":1.5},
+      {"position":[6,0,-10],"width":3,"height":1,"speed":2.5},
+      {"position":[0,0,-20],"width":4,"height":1.2,"speed":1}]}}}]}'
+```
+
+- `points` are in the frame of the entity; the curve goes through each of them, smooth, and ends
+  at the first and the last. `count` is how many.
+- Each point has a width (in metres from side to side), a height: how far over the ground that
+  point lies, and a speed: of what goes along it there toward the last point. A road lies a few
+  centimetres over it; a river is that deep and flows that fast.
+- The spline lies on the ground under it (the terrain); where there is none, where its points
+  are. It lies again by itself when the ground or the entity moves.
+- A road follows the ground across too, and does not collide: what walks on it walks on the
+  ground. Its texture runs along it in metres; the `uv_scale` of its material sets how often it
+  repeats.
+- A river is level across, flows along at the speed of its points (a pool slow, a rapid fast),
+  and floats and drifts what falls in it: [water](water-fog.md#water). Its surface follows the
+  curve between its points and never rises from the first to the last, however the ground goes:
+  add a point where it must follow a dip. Give it no `material`.
+- In the editor: Create has a Spline card, a selected spline shows its points, and the Corners
+  mode of the Shapes tool (key K, then 2) drags, inserts (double click on the line) and removes
+  (Ctrl click) them; the width and height of each point are in the inspector. Through the API,
+  `shapes.corner` does the same at world points.
+- A `Terrain_Conform` on the entity shapes the Heightfield under it: a level bed across its width
+  that follows the ground along its middle, `depth` under it (a river channel; negative raises an
+  embankment), meeting the ground over `sides` and painted with the layer of its `paint`. The
+  terrain follows it by itself, in a layer of its own: a road that moves gives back the ground
+  where it was, and undoing the move undoes its bed.
+
+## A mesh along a curve
+
+A rail, a chain, a pipe or a rope is a mesh bent along a curve: a `Bend` (plugin `shapes`) on an
+entity with the `Mesh_Renderer` of the straight mesh. Its curve goes from `start` to `end`, in
+the frame of the entity, leaving and reaching them along their tangents (the longer, the further
+it keeps their direction); `forward` is the axis of the mesh that runs along it and `mesh_up` the
+one that goes along `up`. Roll, scale and offset change from their start to their end values. A
+long rail is several entities, the end and end tangent of each the start of the next.
+
+```sh
+$P scene.write '{"entities":[{"name":"Rail","components":{
+  "Mesh_Renderer":{"mesh":"props/rail/Rail.mesh"},
+  "Bend":{"end":[4,0,-4],"start_tangent":[0,0,-6.6],"end_tangent":[6.6,0,0]},
+  "Collider":{"kind":"External"}}}]}'
+```
+
+- What collides is bent too when its `Collider` is `External`; another kind that reads the mesh
+  would collide with it straight, and says so in the problem `shapes.bend_collider`.
+
+## Pitfalls that fail silently
+
+- A spline of one point, or a point without width: no road is drawn, the problem
+  `shapes.invalid`; no river is made, the problem `physics.fluid_path`.
+- A spline without a material and without a `Fluid` draws nothing: it is a route for code.
+- A spline or a `Bend` on an entity that also has a `Shape` is not drawn: the problem
+  `shapes.both`.
+- A spline with its entity far under or over the terrain still lies on it: the entity places
+  only where it is seen from above.

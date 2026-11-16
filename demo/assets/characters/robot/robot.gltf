@@ -1,0 +1,567 @@
+{
+  "asset": {
+    "version": "2.0",
+    "generator": "Mirai original skeletal robot generator"
+  },
+  "buffers": [
+    {
+      "byteLength": 210448,
+      "uri": "robot.bin"
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 7296
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 7296,
+      "byteLength": 7296
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 14592,
+      "byteLength": 4864
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 19456,
+      "byteLength": 9728
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 29184,
+      "byteLength": 5448
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 34632,
+      "byteLength": 7584
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 42216,
+      "byteLength": 7584
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 49800,
+      "byteLength": 5056
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 54856,
+      "byteLength": 10112
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 64968,
+      "byteLength": 5520
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 70488,
+      "byteLength": 28104
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 98592,
+      "byteLength": 28104
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 126696,
+      "byteLength": 18736
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 145432,
+      "byteLength": 37472
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 182904,
+      "byteLength": 21192
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 204096,
+      "byteLength": 1212
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 205308,
+      "byteLength": 1212
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 206520,
+      "byteLength": 808
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 207328,
+      "byteLength": 1616
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 208944,
+      "byteLength": 672
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 209616,
+      "byteLength": 832
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 608,
+      "type": "VEC3",
+      "min": [
+        -0.574431759635201,
+        0.45,
+        -0.12
+      ],
+      "max": [
+        0.574431759635201,
+        1.43,
+        0.12
+      ]
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 608,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 2,
+      "componentType": 5123,
+      "count": 608,
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 3,
+      "componentType": 5126,
+      "count": 608,
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 4,
+      "componentType": 5123,
+      "count": 2724,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 5,
+      "componentType": 5126,
+      "count": 632,
+      "type": "VEC3",
+      "min": [
+        -0.706656316014456,
+        0.12,
+        -0.145
+      ],
+      "max": [
+        0.706656316014456,
+        1.7750000000000001,
+        0.145
+      ]
+    },
+    {
+      "bufferView": 6,
+      "componentType": 5126,
+      "count": 632,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 7,
+      "componentType": 5123,
+      "count": 632,
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 8,
+      "componentType": 5126,
+      "count": 632,
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 9,
+      "componentType": 5123,
+      "count": 2760,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 10,
+      "componentType": 5126,
+      "count": 2342,
+      "type": "VEC3",
+      "min": [
+        -0.7483069233026723,
+        0.0,
+        -0.125
+      ],
+      "max": [
+        0.7483069233026723,
+        1.85,
+        0.195
+      ]
+    },
+    {
+      "bufferView": 11,
+      "componentType": 5126,
+      "count": 2342,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 12,
+      "componentType": 5123,
+      "count": 2342,
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 13,
+      "componentType": 5126,
+      "count": 2342,
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 14,
+      "componentType": 5123,
+      "count": 10596,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 15,
+      "componentType": 5126,
+      "count": 101,
+      "type": "VEC3",
+      "min": [
+        -0.11,
+        1.5975,
+        -0.02853169548885461
+      ],
+      "max": [
+        0.11,
+        1.9000000000000001,
+        0.16949999999999998
+      ]
+    },
+    {
+      "bufferView": 16,
+      "componentType": 5126,
+      "count": 101,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 17,
+      "componentType": 5123,
+      "count": 101,
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 18,
+      "componentType": 5126,
+      "count": 101,
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 19,
+      "componentType": 5123,
+      "count": 336,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 20,
+      "componentType": 5126,
+      "count": 13,
+      "type": "MAT4"
+    }
+  ],
+  "materials": [
+    {
+      "name": "robot blue",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.03,
+          0.12,
+          0.42,
+          1
+        ],
+        "metallicFactor": 0,
+        "roughnessFactor": 0.42
+      }
+    },
+    {
+      "name": "robot gold",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.85,
+          0.47,
+          0.07,
+          1
+        ],
+        "metallicFactor": 0,
+        "roughnessFactor": 0.36
+      }
+    },
+    {
+      "name": "robot joints",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.03,
+          0.034,
+          0.045,
+          1
+        ],
+        "metallicFactor": 0,
+        "roughnessFactor": 0.55
+      }
+    },
+    {
+      "name": "robot visor",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.02,
+          0.05,
+          0.05,
+          1
+        ],
+        "metallicFactor": 0,
+        "roughnessFactor": 0.2
+      },
+      "emissiveFactor": [
+        0.1,
+        1,
+        0.85
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "name": "Mirai robot",
+      "mesh": 0,
+      "skin": 0
+    },
+    {
+      "name": "hips",
+      "translation": [
+        0,
+        0.85,
+        0
+      ],
+      "children": [
+        2,
+        10,
+        12
+      ]
+    },
+    {
+      "name": "chest",
+      "translation": [
+        0,
+        0.37,
+        0
+      ],
+      "children": [
+        3,
+        4,
+        7
+      ]
+    },
+    {
+      "name": "head",
+      "translation": [
+        0,
+        0.3500000000000001,
+        0
+      ]
+    },
+    {
+      "name": "left shoulder",
+      "translation": [
+        -0.25,
+        0.14000000000000012,
+        0
+      ],
+      "children": [
+        5
+      ]
+    },
+    {
+      "name": "left elbow",
+      "translation": [
+        -0.28,
+        -0.2300000000000002,
+        0
+      ],
+      "children": [
+        6
+      ]
+    },
+    {
+      "name": "left wrist",
+      "translation": [
+        -0.12,
+        -0.2699999999999999,
+        0
+      ]
+    },
+    {
+      "name": "right shoulder",
+      "translation": [
+        0.25,
+        0.14000000000000012,
+        0
+      ],
+      "children": [
+        8
+      ]
+    },
+    {
+      "name": "right elbow",
+      "translation": [
+        0.28,
+        -0.2300000000000002,
+        0
+      ],
+      "children": [
+        9
+      ]
+    },
+    {
+      "name": "right wrist",
+      "translation": [
+        0.12,
+        -0.2699999999999999,
+        0
+      ]
+    },
+    {
+      "name": "left hip",
+      "translation": [
+        -0.15,
+        -0.020000000000000018,
+        0
+      ],
+      "children": [
+        11
+      ]
+    },
+    {
+      "name": "left knee",
+      "translation": [
+        0.0,
+        -0.37999999999999995,
+        0
+      ]
+    },
+    {
+      "name": "right hip",
+      "translation": [
+        0.15,
+        -0.020000000000000018,
+        0
+      ],
+      "children": [
+        13
+      ]
+    },
+    {
+      "name": "right knee",
+      "translation": [
+        0.0,
+        -0.37999999999999995,
+        0
+      ]
+    }
+  ],
+  "meshes": [
+    {
+      "name": "Mirai robot",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "JOINTS_0": 2,
+            "WEIGHTS_0": 3
+          },
+          "indices": 4,
+          "material": 0,
+          "mode": 4
+        },
+        {
+          "attributes": {
+            "POSITION": 5,
+            "NORMAL": 6,
+            "JOINTS_0": 7,
+            "WEIGHTS_0": 8
+          },
+          "indices": 9,
+          "material": 1,
+          "mode": 4
+        },
+        {
+          "attributes": {
+            "POSITION": 10,
+            "NORMAL": 11,
+            "JOINTS_0": 12,
+            "WEIGHTS_0": 13
+          },
+          "indices": 14,
+          "material": 2,
+          "mode": 4
+        },
+        {
+          "attributes": {
+            "POSITION": 15,
+            "NORMAL": 16,
+            "JOINTS_0": 17,
+            "WEIGHTS_0": 18
+          },
+          "indices": 19,
+          "material": 3,
+          "mode": 4
+        }
+      ]
+    }
+  ],
+  "skins": [
+    {
+      "name": "13 joint robot rig",
+      "joints": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13
+      ],
+      "skeleton": 1,
+      "inverseBindMatrices": 20
+    }
+  ],
+  "scene": 0,
+  "scenes": [
+    {
+      "nodes": [
+        0,
+        1
+      ]
+    }
+  ]
+}

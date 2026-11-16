@@ -1,0 +1,131 @@
+; FBX 7.4.0 project file
+
+FBXHeaderExtension:  {
+	FBXHeaderVersion: 1003
+	FBXVersion: 7400
+	Creator: "Mirai fixtures"
+}
+GlobalSettings:  {
+	Version: 1000
+	Properties70:  {
+		P: "UpAxis", "int", "", "A", 2
+		P: "UpAxisSign", "int", "", "A", 1
+		P: "FrontAxis", "int", "", "A", 1
+		P: "FrontAxisSign", "int", "", "A", -1
+		P: "CoordAxis", "int", "", "A", 0
+		P: "CoordAxisSign", "int", "", "A", 1
+		P: "UnitScaleFactor", "double", "", "A", 1.0
+		P: "TimeMode", "enum", "", "A", 6
+		P: "CustomFrameRate", "double", "", "A", 30.0
+	}
+}
+Objects:  {
+	Model: 100, "Model::Parent", "Null" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A", 100.0, 0.0, 0.0
+			P: "Lcl Rotation", "Lcl Rotation", "", "A", 0.0, 0.0, 90.0
+		}
+	}
+	Model: 101, "Model::Quad", "Mesh" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A", 0.0, 0.0, 50.0
+		}
+	}
+	Model: 102, "Model::Offset", "Mesh" {
+		Version: 232
+		Properties70:  {
+			P: "GeometricTranslation", "Vector3D", "", "A", 0.0, 0.0, 10.0
+		}
+	}
+	Geometry: 200, "Geometry::Shape", "Mesh" {
+		Vertices: *15 {
+			a: 0.0,0.0,0.0,10.0,0.0,0.0,10.0,10.0,0.0,0.0,10.0,0.0,20.0,0.0,0.0
+		}
+		PolygonVertexIndex: *7 {
+			a: 0,1,2,-4,1,4,-3
+		}
+		GeometryVersion: 124
+		LayerElementNormal: 0 {
+			Version: 101
+			Name: ""
+			MappingInformationType: "ByPolygonVertex"
+			ReferenceInformationType: "Direct"
+			Normals: *21 {
+				a: 0.0,0.0,1.0,0.0,0.0,1.0,0.0,0.0,1.0,0.0,0.0,1.0,0.0,0.0,1.0,0.0,0.0,1.0,0.0,0.0,1.0
+			}
+		}
+		LayerElementUV: 0 {
+			Version: 101
+			Name: "UVMap"
+			MappingInformationType: "ByPolygonVertex"
+			ReferenceInformationType: "IndexToDirect"
+			UV: *10 {
+				a: 0.0,0.0,1.0,0.0,1.0,1.0,0.0,1.0,2.0,0.0
+			}
+			UVIndex: *7 {
+				a: 0,1,2,3,1,4,2
+			}
+		}
+		LayerElementMaterial: 0 {
+			Version: 101
+			Name: ""
+			MappingInformationType: "ByPolygon"
+			ReferenceInformationType: "IndexToDirect"
+			Materials: *2 {
+				a: 0,1
+			}
+		}
+		Layer: 0 {
+			Version: 100
+			LayerElement:  {
+				Type: "LayerElementNormal"
+				TypedIndex: 0
+			}
+			LayerElement:  {
+				Type: "LayerElementUV"
+				TypedIndex: 0
+			}
+			LayerElement:  {
+				Type: "LayerElementMaterial"
+				TypedIndex: 0
+			}
+		}
+	}
+	Material: 300, "Material::Red", "" {
+		Version: 102
+		ShadingModel: "lambert"
+		Properties70:  {
+			P: "DiffuseColor", "Color", "", "A", 1.0, 0.0, 0.0
+		}
+	}
+	Material: 301, "Material::Glass", "" {
+		Version: 102
+		ShadingModel: "phong"
+		Properties70:  {
+			P: "DiffuseColor", "Color", "", "A", 0.0, 0.0, 1.0
+			P: "TransparentColor", "Color", "", "A", 1.0, 1.0, 1.0
+			P: "TransparencyFactor", "double", "", "A", 0.5
+		}
+	}
+	Texture: 400, "Texture::red", "" {
+		Type: "TextureVideoClip"
+		Version: 202
+		TextureName: "Texture::red"
+		FileName: "red.png"
+		RelativeFilename: "red.png"
+	}
+}
+Connections:  {
+	C: "OO", 100, 0
+	C: "OO", 101, 100
+	C: "OO", 102, 0
+	C: "OO", 200, 101
+	C: "OO", 200, 102
+	C: "OO", 300, 101
+	C: "OO", 301, 101
+	C: "OO", 300, 102
+	C: "OO", 301, 102
+	C: "OP", 400, 300, "DiffuseColor"
+}

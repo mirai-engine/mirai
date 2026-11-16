@@ -1,0 +1,6 @@
+{
+  "name": "terrain_debris",
+  "version": "0.1.0",
+  "dependencies": ["terrain", "physics"],
+  "parts": ["Runtime"]
+}

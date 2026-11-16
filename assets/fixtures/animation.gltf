@@ -1,0 +1,12 @@
+{
+  "asset":{"version":"2.0"},
+  "buffers":[{"byteLength":200,"uri":"data:application/octet-stream;base64,AAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAIA/AACAPwAAgD8AAEBAAABAQAAAQEA="}],
+  "bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":8},{"buffer":0,"byteOffset":8,"byteLength":72},{"buffer":0,"byteOffset":80,"byteLength":96},{"buffer":0,"byteOffset":176,"byteLength":24}],
+  "accessors":[{"bufferView":0,"componentType":5126,"count":2,"type":"SCALAR","min":[0],"max":[2]},{"bufferView":1,"componentType":5126,"count":6,"type":"VEC3"},{"bufferView":2,"componentType":5126,"count":6,"type":"VEC4"},{"bufferView":3,"componentType":5126,"count":2,"type":"VEC3"}],
+  "nodes":[{"name":"Bone","children":[1]},{"name":"Bone"}],
+  "scenes":[{"nodes":[0]}],"scene":0,
+  "animations":[
+    {"name":"move","samplers":[{"input":0,"output":1,"interpolation":"CUBICSPLINE"},{"input":0,"output":2,"interpolation":"CUBICSPLINE"},{"input":0,"output":3,"interpolation":"STEP"}],"channels":[{"sampler":0,"target":{"node":0,"path":"translation"}},{"sampler":1,"target":{"node":0,"path":"rotation"}},{"sampler":2,"target":{"node":1,"path":"scale"}}]},
+    {"name":"move","samplers":[{"input":0,"output":3,"interpolation":"LINEAR"}],"channels":[{"sampler":0,"target":{"node":1,"path":"translation"}}]}
+  ]
+}

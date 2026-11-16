@@ -1,0 +1,162 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+def Xform "World"
+{
+    def Scope "Looks"
+    {
+        def Material "Paint"
+        {
+            token outputs:surface.connect = </World/Looks/Paint/Surface.outputs:surface>
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor.connect = </World/Looks/Paint/Color.outputs:rgb>
+                normal3f inputs:normal.connect = </World/Looks/Paint/Normal.outputs:rgb>
+                float inputs:metallic = 0.25
+                float inputs:roughness = 0.4
+                color3f inputs:emissiveColor = (0.1, 0.2, 0)
+                token outputs:surface
+            }
+            def Shader "Color"
+            {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file = @textures/paint color.png@
+                token inputs:sourceColorSpace = "sRGB"
+                float2 inputs:st.connect = </World/Looks/Paint/Coordinates.outputs:result>
+                float3 outputs:rgb
+            }
+            def Shader "Normal"
+            {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file = @textures/paint_normal.png@
+                token inputs:sourceColorSpace = "raw"
+                float4 inputs:scale = (2, 2, 2, 1)
+                float4 inputs:bias = (-1, -1, -1, 0)
+                float2 inputs:st.connect = </World/Looks/Paint/Coordinates.outputs:result>
+                float3 outputs:rgb
+            }
+            def Shader "Coordinates"
+            {
+                uniform token info:id = "UsdPrimvarReader_float2"
+                string inputs:varname = "st"
+                float2 outputs:result
+            }
+        }
+        def Material "Leaf"
+        {
+            token outputs:surface.connect = </World/Looks/Leaf/Surface.outputs:surface>
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor.connect = </World/Looks/Leaf/Color.outputs:rgb>
+                float inputs:opacity.connect = </World/Looks/Leaf/Color.outputs:a>
+                float inputs:opacityThreshold = 0.3
+                float inputs:roughness.connect = </World/Looks/Leaf/Surfacing.outputs:g>
+                float inputs:metallic.connect = </World/Looks/Leaf/Surfacing.outputs:b>
+                float inputs:occlusion.connect = </World/Looks/Leaf/Surfacing.outputs:r>
+                token outputs:surface
+            }
+            def Shader "Color"
+            {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file = @textures/leaf.png@
+                float3 outputs:rgb
+                float outputs:a
+            }
+            def Shader "Surfacing"
+            {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file = @textures/leaf_orm.png@
+                float outputs:r
+                float outputs:g
+                float outputs:b
+            }
+        }
+        def Material "Glass"
+        {
+            color3f inputs:tint = (0.2, 0.4, 0.6)
+            token outputs:surface.connect = </World/Looks/Glass/Surface.outputs:surface>
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor.connect = </World/Looks/Glass.inputs:tint>
+                float inputs:opacity = 0.5
+                float inputs:roughness.connect = </World/Looks/Glass/Gloss.outputs:r>
+                token outputs:surface
+            }
+            def Shader "Gloss"
+            {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file = @textures/glass_roughness.png@
+                float outputs:r
+            }
+        }
+    }
+    def Xform "Painted" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </World/Looks/Paint>
+        def Mesh "Wall"
+        {
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            uniform token subdivisionScheme = "none"
+            normal3f[] normals = [(0, 0, -1)] (
+                interpolation = "uniform"
+            )
+            normal3f[] primvars:normals = [(0, 0, 1), (1, 0, 1)] (
+                interpolation = "faceVarying"
+            )
+            int[] primvars:normals:indices = [0, 1, 0, 0]
+            texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+                interpolation = "faceVarying"
+            )
+            int[] primvars:st:indices = [0, 1, 2, 3]
+            color3f[] primvars:displayColor = [(1, 0, 0)]
+        }
+    }
+    def Mesh "Leaf" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </World/Looks/Leaf>
+        uniform bool doubleSided = 1
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 0, -1)]
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        uniform token subdivisionScheme = "none"
+        normal3f[] normals = [(0, 1, 0), (0, 0, 0), (0, 3, 4)] (
+            interpolation = "vertex"
+        )
+        float2[] primvars:st = [(0, 0), (1, 0), (0.25, 0.75)] (
+            interpolation = "vertex"
+        )
+    }
+    def Mesh "Pane" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </World/Looks/Glass>
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        int[] faceVertexCounts = [3, 3]
+        int[] faceVertexIndices = [0, 1, 2, 0, 2, 3]
+        uniform token subdivisionScheme = "none"
+        normal3f[] normals = [(0, 0, 1), (0, 1, 0)] (
+            interpolation = "uniform"
+        )
+    }
+    def Mesh "Plain"
+    {
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        uniform token subdivisionScheme = "none"
+        color3f[] primvars:displayColor = [(0.2, 0.8, 0.4)]
+    }
+}

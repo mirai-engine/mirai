@@ -1,0 +1,10 @@
+{
+  "project": "game",
+  "prompt": "Add a reusable widget to this game, the file hud/stat.ui of its assets: a box named stat that holds a text named name and a text named amount, with two parameters, label, which gives the text of name, and value, which gives the data amount shows. Then use it in the HUD of the game, hud/hud.ui: inside its node lines add a use of that widget named hit_stat, with label Hits and value the hits of the Status component of the game. Keep everything the HUD already shows, and save both files.",
+  "checks": [
+    {"file": "assets/hud/stat.ui"},
+    {"ui": "hud/stat.ui", "document": {"params": {"label": "name.text", "value": "amount.bind_text"}}, "nodes": {"stat": {"kind": "Box", "parent": ""}, "name": {"kind": "Text", "parent": "stat"}, "amount": {"kind": "Text", "parent": "stat"}}},
+    {"ui": "hud/hud.ui", "nodes": {"hit_stat": {"kind": "stat", "label": "Hits", "value": "Status.hits", "parent": "lines"}, "message": {"kind": "Text", "bind_text": "Status.message", "parent": "lines"}, "hits": {"kind": "Text", "bind_text": "Status.hits", "parent": "count"}, "badge": {"kind": "Image", "parent": "panel"}}},
+    {"unchanged": {}}
+  ]
+}

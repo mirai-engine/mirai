@@ -1,0 +1,188 @@
+; FBX 7.4.0 project file
+
+FBXHeaderExtension:  {
+	FBXHeaderVersion: 1003
+	FBXVersion: 7400
+	Creator: "Mirai fixtures"
+}
+GlobalSettings:  {
+	Version: 1000
+	Properties70:  {
+		P: "UpAxis", "int", "", "A", 1
+		P: "UpAxisSign", "int", "", "A", 1
+		P: "FrontAxis", "int", "", "A", 2
+		P: "FrontAxisSign", "int", "", "A", 1
+		P: "CoordAxis", "int", "", "A", 0
+		P: "CoordAxisSign", "int", "", "A", 1
+		P: "UnitScaleFactor", "double", "", "A", 100.0
+		P: "TimeMode", "enum", "", "A", 6
+		P: "CustomFrameRate", "double", "", "A", 30.0
+	}
+}
+Objects:  {
+	Model: 100, "Model::Stretch", "LimbNode" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A", 1.0, 0.0, 0.0
+			P: "Lcl Rotation", "Lcl Rotation", "", "A", 0.0, 0.0, 90.0
+			P: "Lcl Scaling", "Lcl Scaling", "", "A", 1.0, 0.5, 1.0
+		}
+	}
+	Model: 101, "Model::Segment", "LimbNode" {
+		Version: 232
+		Properties70:  {
+			P: "InheritType", "enum", "", "A", 2
+			P: "Lcl Translation", "Lcl Translation", "", "A", 0.0, 1.0, 0.0
+		}
+	}
+	Model: 102, "Model::Leaf", "Null" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A", 0.0, 1.0, 0.0
+		}
+	}
+	Model: 103, "Model::Still", "Null" {
+		Version: 232
+		Properties70:  {
+			P: "InheritType", "enum", "", "A", 2
+			P: "Lcl Translation", "Lcl Translation", "", "A", 1.0, 0.0, 0.0
+			P: "Lcl Scaling", "Lcl Scaling", "", "A", 2.0, 2.0, 2.0
+		}
+	}
+	Model: 104, "Model::Blend", "Null" {
+		Version: 232
+		Properties70:  {
+			P: "InheritType", "enum", "", "A", 0
+			P: "Lcl Translation", "Lcl Translation", "", "A", 0.0, 0.0, 1.0
+		}
+	}
+	Model: 105, "Model::Body", "Mesh" {
+		Version: 232
+		Properties70: 
+	}
+	Geometry: 200, "Geometry::BodyMesh", "Mesh" {
+		Vertices: *9 {
+			a: 0.0,0.0,0.0,0.1,0.0,0.0,0.0,0.1,0.0
+		}
+		PolygonVertexIndex: *3 {
+			a: 0,1,-3
+		}
+		GeometryVersion: 124
+	}
+	Deformer: 300, "Deformer::Skin", "Skin" {
+		Version: 101
+	}
+	Deformer: 301, "SubDeformer::Segment", "Cluster" {
+		Version: 100
+		Indexes: *3 {
+			a: 0,1,2
+		}
+		Weights: *3 {
+			a: 1.0,1.0,1.0
+		}
+		Transform: *16 {
+			a: 1.0,0.0,0.0,0.0,0.0,1.0,0.0,0.0,0.0,0.0,1.0,0.0,0.0,0.0,0.0,1.0
+		}
+		TransformLink: *16 {
+			a: 0.0,1.0,0.0,0.0,-1.0,0.0,0.0,0.0,0.0,0.0,1.0,0.0,0.5,0.0,0.0,1.0
+		}
+	}
+	AnimationStack: 500, "AnimStack::Squash", "" {
+		Properties70:  {
+			P: "LocalStop", "KTime", "", "A", 46186158000
+			P: "ReferenceStop", "KTime", "", "A", 46186158000
+		}
+	}
+	AnimationLayer: 501, "AnimLayer::BaseLayer", ""
+	AnimationCurveNode: 510, "AnimCurveNode::S", "" {
+		Properties70:  {
+			P: "d|X", "Number", "", "A", 1.0
+			P: "d|Y", "Number", "", "A", 0.5
+			P: "d|Z", "Number", "", "A", 1.0
+		}
+	}
+	AnimationCurve: 511, "AnimCurve::", "" {
+		Default: 1.0
+		KeyVer: 4009
+		KeyTime: *2 {
+			a: 0,46186158000
+		}
+		KeyValueFloat: *2 {
+			a: 1.0,3.0
+		}
+		KeyAttrFlags: *1 {
+			a: 4
+		}
+		KeyAttrDataFloat: *4 {
+			a: 0.0,0.0,0.0,0.0
+		}
+		KeyAttrRefCount: *1 {
+			a: 2
+		}
+	}
+	AnimationCurve: 514, "AnimCurve::", "" {
+		Default: 1.0
+		KeyVer: 4009
+		KeyTime: *2 {
+			a: 0,23093079000
+		}
+		KeyValueFloat: *2 {
+			a: 1.0,2.0
+		}
+		KeyAttrFlags: *2 {
+			a: 2,4
+		}
+		KeyAttrDataFloat: *8 {
+			a: 0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+		}
+		KeyAttrRefCount: *2 {
+			a: 1,1
+		}
+	}
+	AnimationCurveNode: 512, "AnimCurveNode::S", "" {
+		Properties70:  {
+			P: "d|X", "Number", "", "A", 1.0
+			P: "d|Y", "Number", "", "A", 1.0
+			P: "d|Z", "Number", "", "A", 1.0
+		}
+	}
+	AnimationCurve: 513, "AnimCurve::", "" {
+		Default: 1.0
+		KeyVer: 4009
+		KeyTime: *2 {
+			a: 0,46186158000
+		}
+		KeyValueFloat: *2 {
+			a: 1.0,2.0
+		}
+		KeyAttrFlags: *1 {
+			a: 4
+		}
+		KeyAttrDataFloat: *4 {
+			a: 0.0,0.0,0.0,0.0
+		}
+		KeyAttrRefCount: *1 {
+			a: 2
+		}
+	}
+}
+Connections:  {
+	C: "OO", 100, 0
+	C: "OO", 101, 100
+	C: "OO", 102, 101
+	C: "OO", 103, 100
+	C: "OO", 104, 100
+	C: "OO", 105, 0
+	C: "OO", 200, 105
+	C: "OO", 300, 200
+	C: "OO", 301, 300
+	C: "OO", 101, 301
+	C: "OO", 501, 500
+	C: "OO", 510, 501
+	C: "OP", 510, 100, "Lcl Scaling"
+	C: "OP", 511, 510, "d|X"
+	C: "OP", 514, 510, "d|Z"
+	C: "OO", 512, 501
+	C: "OP", 512, 101, "Lcl Scaling"
+	C: "OP", 513, 512, "d|Y"
+}

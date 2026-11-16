@@ -1,0 +1,244 @@
+# Shapes
+
+`shapes` (`Runtime` and `Editor`; depends on `physics`) makes editable shapes for any game: level
+blockout, games where players stamp squares, circles, stars and other shapes onto flat polygons
+to add or cut material, drag vertices, and make pieces static or physical, bends meshes along a
+curve segment ([bends](#bends)), and draws the ribbons of roads and paths along a `volume.Spline`
+([Spline](../../mirai-gameplay/references/libraries.md#volume); what an author writes:
+[splines](../../../../docs/game/world/splines.md)).
+
+## Source and derived
+
+- The `Shape` of an entity is the source and the only thing a scene saves. It is a **solid** made
+  of brushes in order, each added to, cut from or intersected with what the ones before it made:
+  its own **polygon** first, when it has points (a polygon with holes in the local XY plane of the
+  entity, its outline first and then its holes, extruded along local Z by `depth` and centered on
+  the entity), then the brushes of its children.
+- The texture is anchored in the local plane: caps by position, and each side and bevel band
+  along its own direction, so an edit elsewhere on the outline does not slide what it kept.
+- A **bevel** (`bevel`, `bevel_profile`) rounds or cuts the front and back rims of the polygon:
+  its caps are inset by `bevel` and its rims fall by `bevel` along Z, following a Round
+  (tangent to the cap and the side), Chamfer or Points profile (a polyline from the cap to the side
+  that never turns back). Each loop is inset along the bisectors of its corners, with a miter
+  limit. Where a corner, an edge, a gap across the shape or the depth is smaller than the bevel,
+  the inset there is clamped so the cap keeps part of it; a band that would turn over or cap edges
+  that would meet halve the insets of their points, and a bevel that still does not fit is left
+  out, never drawn crossed. The fall is the same along the whole rim, so where an inset is
+  clamped the profile is steeper. A bevel of 0 builds the shape as without one.
+- A **brush** is an entity with `Shape_Brush` (kind and `op`: union, subtract or intersect) and
+  `core.Id`, a direct child
+  of the Solid: source saved with the scene, so selection, the gizmo, undo, the inspector, the
+  outliner, prefabs and the API work on it as on any entity. Its local `Transform` places, turns
+  and scales a primitive of one meter in the frame of the solid (a box of side 1, a sphere and a
+  cylinder of diameter 1, the cylinder 1 tall along Y): its scale is its full size and must be
+  positive. Brushes apply in sibling order after the polygon; what cuts or intersects before the
+  polygon or a brush that adds has nothing to work on, is left out and reported as
+  `shapes.first_brush`. A brush has no mesh or
+  collider of its own, and a `Shape_Brush` that is not under a Solid does nothing.
+- The mesh and the collider live on one derived child with `Shape_Part`, a `core.Parent` to the
+  shape, `Mesh_Renderer` and `physics.Collider`, and no `core.Id`: `scene.capture` leaves it out
+  and the step makes it again. The step finds that child among the children of the shape, creates
+  it with `core.Commands` when it is missing, destroys any second one, and destroys it when the
+  `Shape` goes.
+- `shapes_update` (`fixed frame`, game and editor loops, before `physics_prepare`) rebuilds only
+  the shapes whose `Shape`, `Rigid_Body` or `Collider` changed, or one of whose brushes changed,
+  came, went or moved among its siblings, all of them in parallel in `std/jobs`, and generates
+  their meshes between the jobs and the end of the step.
+- Brush changes are found by comparing every brush with what the cache kept of it (its parent,
+  the brush before it among the siblings, kind, `op` and local `Transform`), not by reading
+  the `Transform` changes of the world: the work is per brush, and with the `Shape_Brush` table
+  and the cache empty there is none. A world of polygons in which nothing changed returns before
+  any work or allocation; the key of what each mesh was made from includes the brushes in order,
+  so a mark that changes nothing builds nothing.
+- `Shapes_Cache` is `@(storage,host,by_world)`: each world keeps the ids of the meshes it
+  generated and releases one when its shape changes or goes, and all of them in
+  `@(step="release")`. A copied world (Play, rollback) finds the children of its shapes, makes its
+  own meshes and never releases those of another world. A rollback that brings back an older
+  source is caught by the key of the source each mesh was made from.
+- A shape that cannot be built reports a `shapes.<cause>` problem that says what failed and how to
+  fix it, and keeps the mesh it had.
+
+## Static and dynamic
+
+- Without a `Rigid_Body` on the shape entity the child collides as a `Mesh` collider over the
+  generated mesh, joined by position, with the edges between coplanar triangles disabled so a
+  character does not catch on the seams of a flat face.
+- The bevel is drawn only: what collides is the unbeveled prism of a polygon alone, in both cases.
+  Its flat faces keep their seams disabled and its convex pieces stay those of the polygon, and a
+  look of the rims changes nothing in the simulation.
+- With a `Rigid_Body` the child's collider is a `Hull` made of convex pieces, each a shape of that
+  body (`Mesh_Generate_Options.hull_points`): when every brush adds, the convex partition of the
+  polygon extruded into prisms and each brush placed, else an approximate decomposition of its
+  mesh. `shape_pieces_build` computes them.
+- A `physics.Collider` the game puts on the shape entity gives every field of the derived collider
+  but `kind`, `size` and `center` (a preview shape that must not collide is a sensor that meets
+  nothing) when it is of kind `External`. Of any other kind it collides in place of the shape (a
+  blockout box is a Solid of one box brush with a box `Collider`), and the child only draws.
+- The child shows the `Material_Values` of its source, so a tint on the shape tints what it draws.
+- `uv_scale` is the repeats per metre along u and along v: a material whose maps scale u and v
+  apart still shows square.
+
+## Splines
+
+- A `volume.Spline` with a `material` is a ribbon on a derived child, as a `Shape` is: rows of
+  points along the samples of `spline_sample`, as many across as the spacing of the ground asks,
+  each laid with `spline_lay`, u across and v along in metres (the material repeats them). It has no
+  collider: what stands on it stands on the ground. Without a material nothing here draws it (a
+  river, which the water draws, or a route).
+- The step lays it again when its `Spline` or its place (`Transform`, `Parent`) changes, or when a
+  box of `core.Ground_Queries.changed` overlaps its reach (`volume.spline_under`); a tick without
+  changes probes nothing. With no spline it does not look at places or the ground. An entity with
+  both a `Shape` and a drawn `Spline` draws the `Shape` and reports `shapes.both`.
+
+## Bends
+
+- A `Bend` on an entity with a `Mesh_Renderer` lays what it shows (its mesh asset or its
+  primitive) along a cubic Hermite segment from `start` to `end` with their tangents, in the space
+  of the entity. The share of the mesh along `forward` (its bounds, or `range`) is the share
+  of the curve; the mesh goes out from the curve along the right of the curve (its direction ×
+  `up`) as it lies along `forward × mesh_up`, and along the up of the curve (right × direction)
+  as it lies along `mesh_up`. `roll`, `scale` and `offset` go from their start to their end values
+  evenly, or easing with `smooth`; past the ends of a `range` wider than the mesh the curve goes
+  straight along its tangent.
+- The source stays the `Bend` and the `Mesh_Renderer` of the entity; the bent mesh is generated
+  on a `Shape_Part` child, as a `Shape` is, with the materials of the `Mesh_Renderer` and its
+  `Material_Values`, and the entity is `Drawn_Elsewhere` while it has one. Normals follow the
+  derivative of the bend, tangents are made again over the bent surface, the second UV set is
+  kept, and a triangle the bend mirrors (a negative scale) is wound the other way. The bounds are
+  those of the bent mesh.
+- It collides only with a `Collider` of kind `External` on the entity, which gives the surface
+  and filtering of the child's: a `Mesh` of the bent collision of the asset (the shapes it
+  stores, or its triangles), a `Hull` of it with a `Rigid_Body`. A `Collider` of a kind that reads
+  the mesh would collide with it unbent and is reported as `shapes.bend_collider`.
+- It is built again only when its `Bend`, the `Mesh_Renderer`, `Rigid_Body`, `Collider` or
+  `Material_Values` of its entity change, or what the file of its mesh holds (the hash of its
+  header, looked at only when the registry or the assets advance their revision: a reimport or a
+  reload). `bend_place` gives where a point of the mesh goes.
+
+## Editing
+
+- The editing procedures work in the local XY of the shape and change only the `Shape` they get,
+  and only when they succeed. The caller decides the entities: when a stamp splits a shape, it
+  makes a shape entity for each other polygon of the set with `shape_outline_set`.
+- `shape_outline_set`, `shape_combine` and `shape_stamp` (`shape_combine` with one loop)
+  leave the outline counter-clockwise and the holes clockwise, and drop only repeated points and
+  points exactly on the line of their neighbors. A polygon that still has more points or loops
+  than a `Shape` holds is refused with `Too_Many_Points` or `Too_Many_Loops` and the shape keeps
+  its value: nothing is simplified behind the caller.
+- `shape_combine` puts the polygon of largest area first in its set and makes the shape that
+  one; with no polygon left the shape is gone and keeps its value; it fails before changing the
+  shape when some polygon would not fit.
+
+### Strokes
+
+- A drag is one `Shape_Stroke`: the brush (a simple loop around 0, convex or not) swept along the
+  path of the pointer, its area one polygon with holes in the units of the plane
+  (`shape_stroke_begin`, `shape_stroke_to`, `shape_stroke_area`).
+- The path is simplified as it comes: a point nearer than the tolerance to the last one kept is
+  left out, and a kept point becomes a corner only when no line from the last corner passes
+  within the tolerance of every point kept since (a sleeve fit). The caller gives the tolerance as
+  a few pixels of the screen in plane units at the current zoom, so the shake of a hand goes
+  where it happens; the same path read at any rate gives the same area within the tolerance.
+- The area is the union of the convex hulls of each convex piece of the brush at both ends of each
+  segment, so a concave brush keeps its dents. The segments before the last corner stay united,
+  so a point costs two booleans per piece at most.
+- **Edits.** `Shape_Edit` applies a stroke to the polygons of the Solids of a plane, without
+  entities of its own, so the editor tool and a game share it: the caller begins it with the stamp,
+  the plane, add or cut and what a new shape starts from (`shape_edit_begin`), gives it the shapes
+  it may change as pieces with their entity and world placement (`shape_edit_piece`, refused off the
+  plane), moves it with each point (`shape_edit_to`), and writes the pieces that changed
+  (`shape_edit_next`): it makes an entity for a piece without one (a copy of `from` when it split
+  from a given shape), takes away the entity of a piece that is `gone` and writes the `Shape` of the
+  others.
+- **Base snapshot.** Each change of the area combines the shape of a piece as it was given with
+  the whole area: a shape never gathers the junctions of the pieces of a drag, its vertices
+  outside the area stay as they were, and the result does not depend on the frame rate. Adding
+  goes into the first given piece the area joins at the first point, or a new piece there; cutting
+  goes out of every given piece it has reached. The polygons past the first of a result go, in
+  order, to the pieces split from it, which keep their entities while the edit lasts.
+- A combination past capacity is refused: the pieces keep the last result that fit, the stroke
+  stops growing there, and the caller tells the player.
+- Craters, digging and many hits during play belong to a `Volume` terrain or to `destruct`, not
+  to Solid brushes: each brush rebuilds the whole Solid.
+- Vertices are indices into the points of all loops, and an edge is named by its first vertex. A
+  vertex move, insertion or removal that would make edges cross or touch, take a hole out of the
+  outline or into another, or turn a loop inside out is refused with `Self_Intersecting`; a loop
+  keeps at least three points.
+
+## Shapes tool
+
+Editor tool (shortcut **K**, `plugins/shapes/editor/`). The camera stays free; the tool works on
+the plane of the shape selected last (its local XY at z = 0) or, with no shape selected, on the
+plane z = 0 of the world. W, E and R lend the scene to the gizmo and the selection; a mode takes
+it back.
+
+- **Stamp** (1): a kind of `Stamp_Kind` (square, circle, triangle, star, heart...), size, angle, Add
+  or Cut (X) and the material of new
+  shapes. A press and its drag are one stroke, its tolerance two points of the window on the plane
+  under the pointer. The stroke is a `Shape_Edit` given the polygons of the plane when it
+  begins, and writes what changed each frame through the edits of the step. Adding joins the first
+  of them the
+  stamp touches at the press, the selected one first, or makes a shape entity there (`Id`,
+  `Transform` at the press, `Shape` of `depth` 1); the whole stroke goes into that shape.
+  Cutting takes the area out of every polygon of the plane it reaches: each other polygon
+  of a split is a copy of its entity (`entities_duplicate`) with that outline, and a shape cut
+  away whole is deleted.
+- **Corners** (2): one tool over the corners of an entity (`Corners`): the polygon of its `Shape`,
+  else the points of its `Spline` (in its local XZ, open, at their height; a point inserted takes
+  the width and height in proportion and the path keeps two). With a `Volume` `Outline` they are a
+  loop at its top, edited as the loop of a `Shape` is: its closing edge takes a corner, a move that
+  makes edges cross does not apply, and it keeps three. The selected entity shows its loops
+
+  or path and corners. A drag moves a corner on its plane, a double click on an edge inserts
+  one, Ctrl+click or Delete removes the one under the pointer; a click elsewhere selects the shape
+  under it. An edit the shape refuses does not apply. The width and height of each point of a
+  spline are fields of the `Spline` in the inspector. Create has a Spline card.
+- **Brush** (3): a box, sphere or cylinder brush, added, cut or intersected (X), shown as lines on
+  the surface
+  under the pointer (`editor.pick_point`), its Y along the normal and turned by the angle around
+  it: an added brush rests on the surface and the others are centered on it; over nothing, on the
+  plane of the selected Solid or the plane z = 0 of the world. A click makes it the last child of
+  the Solid hit, else of the selected one (or of the Solid of a selected brush); with neither, an
+  added brush makes a Solid entity at the point with it. **Alt** shows the brush of the Solid under
+  the pointer that makes the surface there, and Alt+click selects it: W, E and R then move, turn
+  and scale it with the editor's gizmo, and 3 goes back to placing.
+- Undo: a press-drag-release, a corner drag, an insertion, a removal and a brush (with the Solid
+  it makes) are one step each, opened by their first change; Escape cancels a stroke or a drag.
+- `shapes.stamp` (world points of a stroke, kept with no tolerance, the plane of a shape or of
+  the world) and
+  `shapes.corner` (move, insert or remove at world points, of a spline seen from above) are the
+  same edits by API, one step
+  per call; an error leaves nothing. Brushes are entities: the scene methods add, place and remove
+  them.
+
+## Verification
+
+`mirai test plugins/shapes/runtime`: stamping (merge, hole, split, vanish, a long drag that stays
+within capacity, a polygon past capacity refused), strokes (`stroke_test.odin`: a shaky straight
+drag is one segment, the area does not depend on how often the pointer is read, hostile brushes,
+points, planes and pieces; edits: an add outside every shape makes one new piece, vertices
+outside the area stay, a cut splits into pieces that keep their entities, a covered shape is gone,
+a piece given late is cut by the whole area, a stroke past capacity keeps the last result;
+`bench_stroke_combine` with `--release -define:SHAPES_BENCH=true`), vertex edits that are
+refused, closed meshes that face out with their seams disabled, bevels (a square with holes, a
+triangle, a circle, an L, thin and shallow shapes and random stars: closed, normals that agree,
+within the unbeveled collider, front faces that neither turn over nor overlap; invalid profiles
+refused; bevel 0 ignores the profile; the key follows the bevel), convex pieces of bodies, and the
+step (one child without `Id`, regeneration and release, a copied world, removal; a Solid of brush
+children with a hole that follows a moved, reordered and removed brush; a piece per added brush;
+polygons that neither build nor allocate while nothing changes; a spline with a material that lies
+on the ground as a ribbon without collider and follows the ground and its entity), and bends
+(`bend_test.odin`: ends, roll, scale, offset, range and axes in place; normals that agree with the
+bent faces, also stretched, rolled and mirrored; invalid bends refused and degenerate ones finite;
+the step: a child that draws and collides the bent mesh with the materials of the entity, built
+again only on a change, also of the file of its mesh and not of another file, a Collider that
+reads the mesh reported, and the entity drawn again without its `Bend`).
+
+`mirai test plugins/shapes/editor`: a stroke is one step that undo and redo take back and forth,
+a cut that splits makes a second shape entity and undo restores one, Escape puts back every shape
+a cut stroke changed, a corner drag is
+one step and a crossing move does not apply, `shapes.stamp` and `shapes.corner` as steps, the
+points of a spline edited from above, a brush
+placed on a surface as one step and a child with `Id` (and a new Solid with it), and where a ray
+meets each brush primitive.
+Gestures with the pointer are tested by the user.

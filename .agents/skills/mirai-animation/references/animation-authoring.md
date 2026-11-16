@@ -1,0 +1,344 @@
+# Animation authoring by code and API
+
+The plugin builds, requests and edits animation through JSON-RPC/MCP methods, without a visual
+window (the dedicated window is pending). Methods and common errors: [API](animation-api.md); fields
+and defaults: `mirai rpc describe animation.`; transport, ids and errors:
+[agent API](../../mirai-agent-api/references/api.md); evaluation: [animation](animation.md).
+
+## Intent first
+
+Whoever does not know animation declares what they want; keys and tables are left for fine work.
+
+1. `skeleton.body.detect`: the body of the skeleton (correct it with `skeleton.body.set`).
+2. `animation.character.setup`: locomotion, look-at, feet, hands and gestures from that body.
+3. `animation.request`: `locomote`, `look`, `reach`, `gesture` and any per-instance control.
+4. `animation.preview` tests the same fields on a copy; `animation.capture` shows it in images.
+5. `animation.clip.edit` changes whole clips with verbs; `animation.analyze` measures them and
+   proposes fixes as verbs.
+
+Intent works on the clips that exist: it does not generate or capture motion or search clip
+libraries.
+
+## Files and history
+
+- `dry_run` (in every `create`, `set`, `patch`, bake and edit) validates and answers without
+  writing.
+- `path` is relative to the assets folder. `create` does not overwrite; `set` on a path that has one
+  replaces it keeping its id (`replaced:true`) and validates the whole definition before publishing.
+  The files use the [asset
+  container](../../mirai-assets/references/formats.md), without opaque JSON.
+- A `set` over an existing asset replaces the whole file and the last one wins
+  ([concurrency](../../mirai-agent-api/references/api.md#concurrency-transactions-and-undo)). The
+  response is built before writing; if it does not fit, nothing is written.
+- Each write is a step of the [editor history](../../mirai-editor/SKILL.md) with the rest of the
+  call (`character.setup` writes assets and components in a single one): `history.undo/redo` apply
+  it only if the file is still as the step left it, and the review of an AI turn lists it in
+  `changed_files` and reverts it.
+- Publishing writes the asset when the step ends, and a created one (also by `character.setup`,
+  `request`, a clip verb or a bake) is a file from then on. Runtime, preview, Play and inspectors
+  read it through the registry. Editing a shared asset affects its consumers when they reload;
+  what is requested in Play/Simulation is not written.
+- A validation fails with `data.path/code/expected/actual/fix`, and `fix` says how to correct it
+  (which method creates what is missing, which values the field admits). The parser rejects unknown
+  fields, arrays out of capacity and non-finite values before the handler; an unknown enum or bit
+  set lists its members.
+
+## Skeleton body
+
+- `skeleton.body.detect` stores in the `.skeleton` the parts and the up of the body
+  ([detection](../../mirai-std/references/anim-body.md#body-map-bodyodin)) and returns the
+  confidence of each part, those that are missing and a `fix`. Import already detects it. Without
+  one stored, `animation.clip.edit`, `animation.analyze`, `animation.character.setup` and
+  `ragdoll.setup` detect it in memory for the call and leave the `.skeleton` as it is.
+- `skeleton.body.set` sets parts by hand: they stay `manual` and survive detection and reimport.
+  A rig faces -Z and the `.skeleton` stores no forward: the import turns a rig whose body faces
+  another axis, and `front` of `asset.import` states it for one the import does not turn
+  ([front](../../mirai-imports/references/imports.md#front)). An unknown bone suggests those with
+  a similar name.
+
+## Clips: verbs and metrics
+
+- `animation.analyze` measures a clip (travel, contacts, sliding, penetration, jerk, seam, limits)
+  and proposes `fixes`, each with the verb that fixes it
+  ([metrics](../../mirai-std/references/anim-body.md#metrics-metricsodin)).
+- `animation.clip.edit` applies verbs in order
+  ([contracts](../../mirai-std/references/anim-body.md#editing-verbs-editodin-edit_bodyodin))
+  and writes a new clip with the metrics before and after. It resamples to `rate` and keeps curves,
+  root and markers, which the time verbs move; `loop` `Auto` decides by the seam whether it is a
+  cycle. Without edits it copies the clip with its keys as they are.
+- The clip goes into `asset` (named with ` edited`), or into the `.anim` at `path`: a new one, or
+  an existing one whose bone tracks name bones of the same skeleton (`Other_Skeleton` otherwise),
+  keeping its name; `replace` overwrites a clip of the same name. That is how a library is built
+  from clips chosen from another, without importing the source again.
+- A verb without what it needs fails with the path of the field (`edits[0].direction`) and its
+  `fix`.
+
+## Character
+
+`animation.character.setup` builds a character from the body stored in the skeleton of its rig (or a
+detected one that is not stored) and a clip library (by default, the one it plays). With `skeleton`
+instead of `entity` it needs `library`, only writes the assets and returns them, and changes no
+entity.
+
+- It classifies the clips by the words of their name: idle, stand, walk, jog, run and sprint serve
+  the walking mode (with start, stop, turn or pivot they do not loop); fall, air or a looping jump,
+  falling; jump or takeoff are the entry of falling and land that of walking; swim and fly or hover
+  serve swimming and flying. The number of each mode comes from the project's `Locomotion_Mode`
+  type with names: without the physics plugin it fails with `Missing_Plugin`; a clip whose mode the
+  project lacks is named in the detail. In-place clips that are neither locomotion nor jumps are
+  gestures.
+- `clips` limits the classification to the clips it names. More locomotion clips or gestures than
+  a `.character` takes fail with `Capacity`, their counts and a `fix`:
+  no clip is left out silently.
+- A clip travels at the speed measured from its feet
+  ([metrics](../../mirai-std/references/anim-body.md#metrics-metricsodin)); `speeds` sets that of a
+  locomotion clip by hand and the set keeps it.
+- `blends` puts [blends](animation.md#locomotion-by-motion-matching) in the match of the set: 2 to
+  `MATCH_BLEND` looping locomotion clips of one mode in phase, of any durations, as the eight
+  directions of a set, and samples, each with `MATCH_BLEND` `weights` (one per clip in order, 0
+  past them, a positive sum) and an optional `speed`. Its clips leave the match as clips of their
+  own, and the result lists each blend with its mode and samples. A clip that is not locomotion, a
+  size, sum or weight out of place or no samples fail with their path and a `fix`.
+- `min_rate`, `max_rate` and `trajectory_direction`, when given, replace those defaults of the
+  set: the rates a clip plays at to follow the body, and the weight of where the trajectory
+  faces (0 for a body that never turns, as one that walks sideways). `rates` (per clip) and the
+  `min_rate` and `max_rate` of a blend replace those rates for that source: a crouch authored at
+  1.5 m/s and played at 2.25 m/s needs up to 1.5, which would let a jog beat the sprint.
+  `landing_marker` (empty: no landing) and `landing_rates` replace those of the
+  [landing](animation.md#landing).
+- It writes one `.character` with what the capabilities (`want`) ask for: locomotion (match clips
+  and the warp of the pose; the `Animation` stays `In_Place` when a clip of its library has a root
+  and `animation_physics` moves it; its loops keep their phase and a body that does not move, also
+  against a wall, plays the loops that do not travel), look-at and hands (off until requested), feet
+  (grounding: needs physics) and gestures (layers over the upper body and one per arm, and an action
+  per gesture). The IK pole of each arm is a fixed point of the world: with the character turned the
+  elbows do not follow it. Idle and walk are enough: the locomotion is `Ready`, and beyond the walk
+  velocity the warping stretches the stride.
+- It sets the set as `Animation.asset` of the rig; an existing file asks for `replace`, which keeps
+  its id. With locomotion, `Animation` is left without a clip or
+  previous parameters.
+- A clip turned sideways inside (a root joint rotated about up, as a 2.5D game does) travels to the
+  side; `animation.clip.edit` with `Face_Rest` turns it back to the rest facing of the body, which
+  the `Character` then turns. The body faces where the joint that carries the pelvis does, so a
+  turn split between it and the joints above (a stop that turns toward a camera) goes whole.
+- With the body stored in the `.skeleton`, the assets name [parts and
+  regions](animation.md#components-and-shared-data) (`@head`, `@upper_body`) and serve another
+  skeleton with a body; with a detected one that is not stored they name bones. Legs, pelvis and the
+  warped spine are never named: they are read from the body.
+- It returns the state of each capability (`Ready`, `Partial`, `Missing`) with its `fix` and the
+  chosen clips with their velocities.
+
+## Clips and timeline
+
+- `animation.clip.create` adds a clip to the `.anim` at `path`, new or not. Its result gives the id
+  that the following calls use; duplicate names are rejected.
+  `clip.set` changes name and root without touching tracks or markers.
+- `animation.track.set` creates, replaces or removes a whole track by `(target,property,slot)`, with
+  the clip by name and the destination by canonical path or curve name. `key.set` replaces
+  the key of a track at `time` or inserts one in order, moves it with `to` (replacing one already
+  there) or removes it; a field of `key` left out keeps what the key holds, so only a new key needs
+  `value`. `marker.set` changes a marker by `name` and `target` (`at` the time among several, `add`
+  one more); a `duration` makes it a span, which sections, action windows and warp windows name; a
+  `target` puts it on an entity, a shot or an action of a
+  [cinematic](../../mirai-gameplay/references/cinematics.md#shots-and-actions).
+  Both work on tracks longer than the capacity of `track.set`.
+- `animation.key.capture` keys at `time` every track of the clip of an `Animation` that moves an
+  entity with what the entity has now (its local transform, the fields of its `@field` tracks): one
+  step for all of them. A track names an entity as the runtime binds it: the entity of the
+  `Animation` by an empty target, one below it by its name, an actor by the path of its
+  `Animation_Target`.
+- Times in seconds; keys and markers keep the order of the clip. `Rotation` is a finite, non-zero
+  XYZW quaternion
+  ([tracks](../../mirai-std/references/anim.md#tracks-keys-and-clips-trackodin-clipodin)). Curves
+  are tracks over a name, without ECS components.
+
+### Tracks tool
+
+The one editor of the keys of any clip (a door, a light, a camera move, a cinematic), in
+`plugins/animation/editor/tracks.odin`: Tools > Tracks (`editor.tool` with `tracks`; in Edit
+`animation.request` with `seek` moves its
+head on the clip of an entity), on the clip of
+the `Animation` of the selection or of the entity whose clip moves it. Its panel lists the tracks by
+target and field, the key chosen (interpolation, ease) and what adds a track for a value of the
+selected entity; the strip at the bottom has a lane of keys per track in view and, after them, a
+lane of markers for each target they are on (the clip's own, the shots of a camera, the actions of
+an actor), whose marks a drag moves and the right button deletes.
+
+- It keeps only its view (head, zoom, range, the track and key chosen, the `.anim` it reads): every
+  edit is a call of `animation.key.set`, `animation.track.set`, `animation.marker.set` or
+  `animation.key.capture` through `editor.command_call`, one step of undo.
+- The scene shows the clip at the head because the tool seeks it there, as the preview of an
+  `Animation`; turning it off takes the clip back to its start. A new key at the head takes the
+  value the track has there.
+- While it is on, the scene is lent to the selection and the gizmo: letting go of an entity the
+  clip moves with Position, Rotation or Scale tracks keys it at the head with
+  `animation.key.capture`, in the step of the move: one undo takes back both.
+- Another tool shows it on an entity of its own in place of its panel: its frame step calls
+  `tracks_open` while it is on and its panel draws `tracks_rows` (Cinematics).
+
+## Inspection
+
+- `animation.asset.inspect` reads any definition (`.anim`, `.skeleton`, `.character`) by sections
+  and paged tables.
+- `animation.inspect` reads an instance by parts (rig with the mirrored pair of each bone,
+  matching, modifiers, actions with the parameters of the set, motion and morphs; `diagnostics`
+  adds solver and fades). A part that does not apply answers `{available:false, code, reason}`
+  without failing the call; a set that does not evaluate gives `Program_Error`. `entity`
+  also takes, in Play or Simulate, the handle `scene.inspect` of the game gives, the only name of
+  an entity the game made.
+- `animation.inspect` part `Match` lists the clips of the database and the candidates of its last
+  search with their costs per feature, then the best row of each clip it left out with its
+  `reason`: why a jump or a start chose its clip, or never picks one, is read there. The tick keeps
+  only that search's request; inspect searches it again to note them.
+- `animation.inspect` part `Pose` (only when asked, with `names`) places bones and sockets in the
+  world and in the space of the entity from a pose of the last tick of its rig: `Finished`, the one
+  it ended with, or `Sampled`, the one before its modifiers. A pose, socket, root-motion or
+  modifier problem is read as numbers, in a paused Play after `play.step`, instead of by captures.
+  A bone is named by path, by a name no other bone has or as a part of its body (`@hand_r`), and a
+  socket by its name; a name the skeleton lacks fails the call.
+- `animation.history` reads a rig across the ticks the run keeps, as `play.history` does: it plays
+  them again on the World of the run and puts it back after, and reads each row with the code of
+  the parts `Match` and `Pose`, so a search is read one way. No recorder: the runtime keeps
+  nothing for it. `searched` and `jumped` compare the counters of the matching with the tick
+  before; a tick the rig lacks is a row with its `code`.
+
+## Skeletons, sockets and profiles
+
+- The skeleton defines paths, hierarchy, reference, sockets and body. The skin is the static link of
+  the mesh ([assets](../../mirai-assets/references/formats.md#asset-types)): these methods do not
+  edit joints or weights.
+- `skeleton.create` asks for parents before children, by canonical path (empty is a root;
+  identity TRS if omitted); `skeleton.bone.set` addresses a bone by `path`.
+  `skeleton.bone.set` changes name and reference, not path or parent. `skeleton.bone.add` adds a
+  bone under a parent (by path) after the others, so meshes and indices keep theirs; with `clips`,
+  the tracks of those `.anim` whose target ends in a node of the bone's name under another path take
+  its path and drive it (a bone the clips of another skeleton animate, such as a weapon attach bone
+  the body does not weight). Removing or reparenting a bone is creating another skeleton.
+- Sockets belong to the shared skeleton, not to a clip or to the equipped entity, which carries
+  `Bone_Attachment` with its own offset.
+- `animation.modifier.set` replaces or appends the row of a modifier table of a `.character` with
+  the key of its value (bone, name, curve and
+  bone, from and to: `engine.describe` lists them per table), or removes it. Targets are written
+  as `Spatial_Target` without an entity (`{"position":[x,y,z]}`,
+  `{"kind":"Socket","socket":"grip"}`); the entity arrives with the `goals` of `animation.request`.
+  The definition stores bones and configuration; targets and fades belong to the instance. The
+  quantities come from the lists, without counters or padding. Types: [rigs](animation-rigs.md) and
+  [grounding](animation-grounding.md).
+- `animation.modifier.poses` makes the `curve_poses` of a face from a clip with a frame per pose (as
+  faces and pose assets are exported): each pose is the frame at its time measured from `base`, a
+  row per bone that moves past `tolerance`, and replaces the rows of its curve; with `full` each
+  row keeps the frame of its bone. Without `poses`, each marker of the clip is a pose of its name.
+  A Float curve of the clip with a value at the frame of a pose is a drive from the pose's curve to
+  it (what a pose asset carries, such as the ARKit remap), and replaces the drives from that pose.
+  Other drives and curve materials are rows of `animation.modifier.set`
+  ([curve poses](animation-rigs.md#curve-poses-and-drives)).
+- `animation.retarget.bake` bakes a new `.anim` from animation, source and destination skeletons
+  and, for another topology, the `.character` of the destination with its chains
+  ([bake](animation-rigs.md#bake)).
+
+## Motion matching and additive spaces
+
+- The match of a set is written by `animation.character.setup` ([character](#character));
+  `animation.asset.inspect` describes it with its clips, the names of its modes and its entry, the
+  clips and samples of each blend, and
+  for each already loaded skeleton the rows, the bytes and the error of its database.
+- `animation.space.set` adds, replaces or removes a space of a `.character` by its name, an aim
+  offset or additive from axes and samples; `animation.space.sample` gives clips and weights at a
+  position without advancing the world. Each clip exists in the `.anim` of its sample or of the
+  set; two axes with the same name, duplicate positions and degenerate geometry are rejected. A
+  layer names it in its `space` with `animation.action.set`
+  ([actions](animation-actions.md#profile-and-authoring)).
+- Semantics and evaluation limits: [locomotion](animation.md#locomotion-by-motion-matching),
+  [additive spaces](animation.md#additive-spaces) and
+  [the layer stack](animation-actions.md#the-layer-stack).
+
+## Per-instance control and preview
+
+`animation.play` assigns the playback (asset and clip) and adds `Animation` if missing; a clip the
+asset lacks is `Missing_Clip`. Everything else that is asked of an instance is
+`animation.request`, with the fields of `animation.preview`:
+
+- Controls: stop and seek, parameters, `actions` (a play or a stop of an action of its set, with a
+  section), targets and controls of modifiers, targets of warping windows, locomotion and
+  distance.
+- Intents, which write to those same queues:
+  - `locomote`: the forward velocity of the orientation and stride warping of the set
+    and, with root motion, the target of the `locomote` window. It does not move the body, which
+    belongs to its controller (root delta or `Move_Input`), nor does it plan paths.
+  - `look` and `reach`: target and fade of the head's Look or of the IK that ends at the hand;
+    requesting them turns the operation on even if the set stores it off.
+  - `gesture`: plays or stops the action of a gesture.
+- In Edit only `stop` is valid, as an undo step;
+  everything else asks for Play or Simulation and the `fix` proposes `animation.preview` with the
+  same fields.
+- What an intent lacks (no Look in the set, no gesture) fails with the method that creates it.
+  The result lists what was applied.
+- A parameter is the name of a layer of its set (its weight, from 0 to 1) or of an axis of
+  the space of one, within its range (case-sensitive); another name fails with the ones the set
+  declares. `Animation.library` changes the library that `inspect` and `preview` also use.
+
+`goals` and `controls`:
+
+- A control does not change targets or contact: `weight` is a multiplier independent of the
+  definition, the target and the component, and `enabled=false` with a fade fades out before turning
+  off. `Limit`, `Twist`, `Chain_Retarget` and `Corrective` have only controls.
+- A goal of IK, Look, Chain/Multi/Spline IK or Follow requires `target` in the space of what it
+  names (`World` by default; `Entity`, `Bone` or `Socket` with its `entity`, the rig for bones and
+  sockets); Multi IK names its effector and Spline IK its control. A field that does not correspond
+  to the kind is rejected with its path.
+- Operations are named as `animation.inspect` part `Modifiers` lists them: IK by the path of `end`,
+  Look and Limit by `bone`, Grounding by `body`, the others by their name. An ambiguous name fails
+  without enqueuing; the target follows its operation if the set is read again.
+- Every operation is a row of the set the rig plays; Chain_Retarget applies to the sampled pose
+  its `Pose_Source` of stage `Sampled` takes. In Edit the defaults are edited with
+  `animation.modifier.set`.
+- The Grounding diagnostic gives residual and angular error against the active targets of the final
+  pose, locked legs and `reached`; it does not consider the thickness of the mesh.
+- Solvers: [rigs](animation-rigs.md); actions: [actions](animation-actions.md); warping and
+  distance: [motion](animation-motion.md).
+
+`animation.preview` clones the world and applies the fields of `request`, with `time`, `ticks` and
+`dt` instead of stop and seek; `plays` and actions can be scheduled per tick. It returns
+paged local poses, the program and, with `trace`, per tick the leaves and layers with their
+effective weights, markers, curves, root, what the matching touches, actions, problems and the last
+modifier request that did not find its destination; `trace_truncated` says whether pages remained
+or the budget ran out. `program` and `trace` are always present. Everything is released with the
+copy: it touches no document, renderer or displayed world. `animation.capture`
+([previews](../../mirai-plugins/references/previews.md)) shows the same copy in images.
+
+`animation.pose.bake` bakes the final pose of an entity between `start` and `end` into a clip:
+
+- It runs like `preview`, on a copy without gameplay or physics and with its fields: an intent (a
+  `look`) ends up baked. The last interval falls at `end`.
+- Each animated bone or node gives position, rotation and scale tracks even if no source animates
+  it; also the composed curves, the correctives and the weights of [morphs](animation-morphs.md)
+  (`"<path>/@morph/<target>"`). Crossed markers fall where they were crossed.
+- `root_motion` `Preserve` stores the root and its metadata; `In_Place` fixes it at its reference. A
+  change of root bone in the range, or a problem of the evaluation, fails without publishing, with
+  its code.
+
+A prop moved over time is a clip: `animation.clip.create` and `animation.track.set` write it (an
+empty `target` is the entity that plays it, `@field/Component.field` one of its fields) and
+`animation.play` gives it to the entity ([timelines](animation-timeline.md)).
+
+## Verification
+
+The authoring tests invoke `api.method_execute` with real files and typed schemas, in
+`plugins/animation/editor` (with `-collection:plugins=<root>/plugins`):
+
+- `body_api_test.odin`, `clip_edit_test.odin`, `setup_test.odin`, `request_test.odin` and
+  `inspect_test.odin`: body, verbs with metrics, character recipe, intents and inspectors, over a
+  rig with mesh and body.
+- `program_api_test.odin`: blend spaces, and parameters, actions and controls through
+  `animation.request`.
+- `tracks_test.odin`: `animation.key.set` adds, moves, eases and deletes a key in one step each,
+  undone and redone; `animation.key.capture` keys the tracks of an entity from its transform and
+  fields; the Tools entry of the Tracks tool runs `editor.tool`, and the gizmo letting go of an
+  entity of the clip keys it.
+- `authoring_actions_test.odin`, `authoring_constraints_test.odin`, `preview_trace_test.odin`,
+  `pose_bake_test.odin` and `morph_api_test.odin`.
+- The file history is tested in the editor (`editor/edits_files_test.odin`).
+
+In an open build: `engine.describe`, create sources in a test folder, inspect them with
+`mirai asset` and evaluate a copy with `animation.preview` or `animation.capture`. CPU tests do not
+prove the image: graphics paths require a build, a run and validation of the GPU API.

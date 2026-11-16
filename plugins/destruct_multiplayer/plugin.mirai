@@ -1,0 +1,7 @@
+{
+  "name": "destruct_multiplayer",
+  "version": "0.1.0",
+  "dependencies": ["destruct", "multiplayer", "physics"],
+  "parts": ["Runtime"],
+  "automatic": true
+}
