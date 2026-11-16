@@ -18,8 +18,10 @@ import "core:math"
 // other seams that must stay. A group that still keeps more than
 // CLUSTER_SIMPLIFY_STUCK of its triangles (faceted pieces, a seam on every
 // edge) runs once more crossing the seams vertex_lock protects, its error
-// that of the attributes it loses too; if that is stuck as well, the group
-// stops there.
+// that of the attributes it loses too, though no more than
+// CLUSTER_ERROR_EDGE_LIMIT times its longest edge: where its triangles are
+// within the threshold, what their attributes lose is too. If that is stuck
+// as well, the group stops there.
 //
 // The error of a group is its own simplification error or that of its
 // clusters, whichever is larger, in a sphere around theirs: both grow from
@@ -40,6 +42,12 @@ CLUSTER_SPLIT_FACTOR :: 2                       // far: beyond this many expecte
 CLUSTER_GROUP_SIZE :: 16                        // clusters a group aims at; it may have a third more
 CLUSTER_SIMPLIFY_RATIO :: 0.5
 CLUSTER_SIMPLIFY_STUCK :: 0.85
+// Of the longest edge of the triangles of a group (the short edge of each, or
+// half its long one for a sliver), the most its attributes add to its error.
+CLUSTER_ERROR_EDGE_LIMIT :: 1
+// The order of the triangles of a cluster: how many edge matches
+// meshlet_optimize weighs before it takes one.
+CLUSTER_OPTIMIZE_LEVEL :: 1
 
 // A sphere and the error of the geometry it bounds, both in the units of
 // the positions: the cull projects the error at the nearest point of the
@@ -123,6 +131,9 @@ Dag_Builder :: struct {
     meshlets:[dynamic]Meshlet,
     meshlet_vertices:[dynamic]u32,
     meshlet_triangles:[dynamic]u8,
+    // The triangles of a cluster in the order of meshlet_optimize; whole levels keep the order
+    // they are given in, which decoding a level gives back.
+    reorder:bool,
 }
 
 // Splits the triangles of indices (all of submesh) in clusters appended to
@@ -149,6 +160,8 @@ clusterize :: proc(b:^Dag_Builder,indices:[]u32,submesh:u32,own:Cluster_Lod,gene
     if failed==.Out_Of_Memory {return .Out_Of_Memory}
     if failed!=.None {return .Invalid_Mesh}
     for meshlet in b.meshlets[:count] {
+        // In an order that reuses vertices: what the coding of its page and the fetches of its pixels gain.
+        if b.reorder {meshlet_optimize(b.meshlet_vertices[meshlet.vertex_offset:][:meshlet.vertex_count],b.meshlet_triangles[meshlet.triangle_offset:][:meshlet.triangle_count*3],CLUSTER_OPTIMIZE_LEVEL)}
         offset:=u32(len(cluster_indices))
         for k in 0..<meshlet.triangle_count*3 {
             local:=b.meshlet_vertices[meshlet.vertex_offset+u32(b.meshlet_triangles[meshlet.triangle_offset+k])]
@@ -269,7 +282,7 @@ cluster_dag_build :: proc(dag:^Cluster_Dag,source:Cluster_Source,allocator:=cont
     outline:=make([]Simplify_Vertex,vertex_count,scratch)
     // The locks of a level without the Protect of vertex_lock, for its stuck groups.
     relaxed:=make([]Simplify_Vertex,vertex_count,scratch)
-    b:=Dag_Builder{source=source,dag=dag}
+    b:=Dag_Builder{source=source,dag=dag,reorder=true}
     b.local_of=make([]u32,vertex_count,scratch)
     if (remap==nil || locks==nil || outline==nil || relaxed==nil || b.local_of==nil) && vertex_count>0 {return .Out_Of_Memory}
     positions_weld(source.positions,0,remap)
@@ -408,7 +421,7 @@ cluster_dag_build :: proc(dag:^Cluster_Dag,source:Cluster_Source,allocator:=cont
                 }
                 // Clamped, the error of the attributes reads as a distance, which the cut must see.
                 result,failed=simplify(simplified[:],merged[:],source.positions,target,max(f32),options+{.Permissive,.Error_Clamped},source.attributes,source.attribute_weights,relaxed)
-                error=max(result.result_error,result.position_error)
+                error=max(result.position_error,min(result.result_error,group_edge(merged[:],source.positions)*CLUSTER_ERROR_EDGE_LIMIT))
             }
             if failed==.Out_Of_Memory {return .Out_Of_Memory}
             if failed!=.None {return .Invalid_Mesh}
@@ -463,6 +476,20 @@ cluster_dag_build :: proc(dag:^Cluster_Dag,source:Cluster_Source,allocator:=cont
         if _,written:=group_output(&b,clusters[:],cluster_indices[:],source.positions,root,depth);!written {return .Out_Of_Memory}
     }
     return islands_dag(&b,source)
+}
+
+// The longest edge of the triangles of indices, of each its shortest, or
+// half its longest where that is more (a sliver keeps its length).
+@(private)
+group_edge :: proc "contextless" (indices:[]u32,positions:[]Vec3) -> f32 #no_bounds_check {
+    longest:f32
+    for t:=0;t+2<len(indices);t+=3 {
+        a,b,c:=positions[indices[t]],positions[indices[t+1]],positions[indices[t+2]]
+        ab,ac,bc:=b-a,c-a,c-b
+        eab,eac,ebc:=ab.x*ab.x+ab.y*ab.y+ab.z*ab.z,ac.x*ac.x+ac.y*ac.y+ac.z*ac.z,bc.x*bc.x+bc.y*bc.y+bc.z*bc.z
+        longest=max(longest,min(eab,eac,ebc),max(eab,eac,ebc)/4)
+    }
+    return math.sqrt(longest)
 }
 
 // The largest triangle of indices, which a group that would lose every one
