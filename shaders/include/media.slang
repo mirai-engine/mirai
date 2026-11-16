@@ -12,6 +12,11 @@
 #ifdef SUN_SHADOW_SLOT
 #include "shadow_maps.slang"
 #endif
+// How wide the place of a medium the pass lights is, metres: it reads the
+// level of the sun and the mip of a light whose texel is about as wide.
+static float media_across = 0.0;
+#ifdef SUN_SHADOW_SLOT
+#endif
 
 // Henyey-Greenstein times pi: what the Lambert-normalized light of the frame
 // is multiplied by. cosine: between where the light goes and the eye; g, the
@@ -73,7 +78,7 @@ float3 media_local_light(float3 position, float3 eye_ray, float g, float pick, i
 #ifdef SHADOW_DATA_SLOT
         // From its maps; where none holds the point, a ray.
         Shadow_Map m;
-        float seen = light_shadow_seen(index, position, float3(0.0), light_extent(light));
+        float seen = light_shadow_seen(index, position, float3(0.0), light_extent(light), media_across);
         through = seen >= 0.0 ? float3(seen) : trace_transmission(position, direction, reach);
 #ifdef SHADOW_TINT_SLOT
         if (seen > 0.0 && light_map_of(index, position, m)) through *= shadow_tint(m, position);
@@ -113,7 +118,7 @@ float3 media_sun_light(float3 position) {
 float3 media_sun_through(float3 position, inout bool changed) {
     float reach = sun_reach(position, frame.sun_direction.xyz);
 #ifdef SUN_SHADOW_SLOT
-    float known = sun_shadow_seen(position, float3(0.0));
+    float known = sun_shadow_seen(position, float3(0.0), media_across);
     float3 through = known < 0.0 ? trace_transmission(position, frame.sun_direction.xyz, reach) : float3(known);
 #ifdef SHADOW_TINT_SLOT
     Shadow_Map m;

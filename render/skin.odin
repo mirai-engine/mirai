@@ -85,6 +85,7 @@ POSED_BOUNDS_WORDS :: abi.POSED_BOUNDS_WORDS
     fresh:bool,     // displaced and not written yet: its previous vertices take the first ones too
     source:Mesh_Handle, // of a displaced one
     reach:f32,      // how far those programs move a vertex, in its own space: the boxes of its instances grow by it
+    sway:f32,       // of an external one, how far it moves a vertex from where it is at rest, in its own space; 0: anywhere in its box
     inputs:u64,     // what its vertices were last moved from (displaced_prepare)
     allocator:mem.Allocator,
 }
@@ -454,17 +455,20 @@ pose_store :: proc(r:^Renderer,original:Mesh_Record,posed:u32,streams:int,skin:^
 // triangles and its native BLAS up to those vertices, for raster and for rays
 // alike. levels: the copy keeps the levels of the source, whose vertices the
 // extension writes too, and the GPU keeps choosing among them; without, it is
-// drawn at level 0. Rays meet level 0. The source may be retired after this load
-// transaction.
-deformable_create :: proc(r:^Renderer,source:Mesh_Handle,levels:=false)->(Mesh_Handle,bool) {
+// drawn at level 0. Rays meet level 0. sway: how far the extension moves a
+// vertex from where it is at rest, in the space of the mesh, 0 for anywhere in
+// the box it gives: the maps of the shadows whose texel is wider draw the
+// copy of a batch at rest, and keep it. The source may be retired after this
+// load transaction.
+deformable_create :: proc(r:^Renderer,source:Mesh_Handle,levels:=false,sway:=f32(0))->(Mesh_Handle,bool) {
     s:=&r.scene
-    if int(source)>=len(s.meshes) {return 0,false}
+    if int(source)>=len(s.meshes) || !(sway>=0) || math.is_inf(sway) {return 0,false}
     mesh_filled(s,u32(source))
     original:=s.meshes[source]
     if original.skin!=nil || original.vertex_count==0 {return 0,false}
     skin,error:=new(Skin_State,r.allocator)
     if error!=nil {return 0,false}
-    skin.allocator,skin.external=r.allocator,true
+    skin.allocator,skin.external,skin.sway=r.allocator,true,sway
     skin.binding,error=new(Skin_Binding,r.allocator)
     if error!=nil {free(skin,r.allocator);return 0,false}
     skin.binding.allocator,skin.binding.references=r.allocator,1

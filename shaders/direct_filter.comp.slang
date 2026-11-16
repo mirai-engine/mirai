@@ -66,7 +66,7 @@ float3 filter_light(int2 p, float depth, float3 normal, float3 open, float part,
         float3 irradiance = sun_light(pixel.position) * cosine;
         if (luminance(irradiance) > 0.0) {
             // Where no point of its surface tells, its map does, as it tells the points.
-            float seen = sun.part < 0.0 ? sun_shadow_seen(pixel.position, normal, false) : sun.part;
+            float seen = sun.part < 0.0 ? sun_shadow_seen(pixel.position, normal, frame.footprint.x + frame.footprint.y * pixel.distance, false) : sun.part;
             // The glass on its way: where a map holds the pixel, as its tint says there.
             Shadow_Map held;
             float3 glass = sun_map_of(pixel.position, held) && !shadow_tint_programmed(held, pixel.position) ? shadow_tint(held, pixel.position) : sun.glass;

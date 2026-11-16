@@ -618,6 +618,14 @@ pass_shadow_data :: proc(s: ^Stage_Pass, slot: u32) {
 	if slot <= SLOT_PASS9 - SLOT_PASS0 {rhi.cmd_bind_buffer(s.pass.cmd, SLOT_PASS0 + slot, data)}
 }
 
+// Binds the buffer of the pages of the maps of the view at SLOT_PASS0 +
+// slot, in which a pass of the Lit stage marks the pages it reads
+// (SHADOW_MARKS_SLOT of shadow_maps.slang), which the next frame draws.
+pass_shadow_marks :: proc(s: ^Stage_Pass, slot: u32) {
+	pages := s.pass.t.shadow_raster.pages if s.pass.frame.sun_maps.z != 0 else s.pass.r.dummy_buffer
+	if slot <= SLOT_PASS9 - SLOT_PASS0 {rhi.cmd_bind_buffer(s.pass.cmd, SLOT_PASS0 + slot, pages)}
+}
+
 pass_end :: proc(s: ^Stage_Pass) {rhi.cmd_end_render_pass(s.pass.cmd)}
 
 // Begins the dispatches with which an extension writes the vertices of its
