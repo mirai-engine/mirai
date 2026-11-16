@@ -170,16 +170,22 @@ two_captures_compare_zone_by_zone_and_say_when_they_were_measured_apart :: proc(
 }
 
 // A window paces its frames as the graphics settings say and a headless
-// editor paces none; validation inflates both. The refusal says how to lift each.
+// editor paces none; validation inflates both, and frames that draw stand-ins
+// for what is being made are not those of the scene. The refusal says how to
+// lift each.
 @(test)
 a_capture_refuses_what_keeps_the_frame_time_from_being_the_cost :: proc(t:^testing.T) {
     testing.expect_value(t,profile_limits({vsync=true,frame_limit=60}),Profile_Limits{.Vsync,.Frame_Limit})
     testing.expect_value(t,profile_limits({headless=true,vsync=true,frame_limit=60}),Profile_Limits{})
     testing.expect_value(t,profile_limits({headless=true,validation=true}),Profile_Limits{.Validation})
-    refusal:=profile_refusal({.Vsync,.Frame_Limit,.Validation})
+    for pending in ([]host.App_Pending{{programs=1},{pipelines=2},{assets=3}}) {
+        testing.expect_value(t,profile_limits({headless=true,pending=pending}),Profile_Limits{.Pending})
+    }
+    refusal:=profile_refusal({.Vsync,.Frame_Limit,.Validation,.Pending})
     testing.expect(t,strings.contains(refusal,`"vsync":false`),refusal)
     testing.expect(t,strings.contains(refusal,`"frame_limit":0`),refusal)
     testing.expect(t,strings.contains(refusal,"--validation"),refusal)
+    testing.expect(t,strings.contains(refusal,"engine.status"),refusal)
     testing.expect(t,strings.contains(refusal,"allow_limited"),refusal)
     testing.expect_value(t,profile_refusal({}),"")
 }
@@ -198,6 +204,12 @@ a_capture_measured_with_limits_is_not_comparable :: proc(t:^testing.T) {
 
     testing.expect(t,profile_summary(&free,4).comparable)
     testing.expect(t,!profile_summary(&limited,4).comparable)
+    // One whose frames drew stand-ins says so in its conditions and its notes.
+    free.conditions.pending={pipelines=1}
+    drew:=profile_summary(&free,4)
+    testing.expect(t,!drew.comparable && drew.conditions.pending.pipelines==1)
+    testing.expect(t,strings.contains(strings.join(drew.notes,"\n",context.temp_allocator),"stand-ins"))
+    free.conditions.pending={}
     result:=profile_compare(&limited,&other,8)
     testing.expect_value(t,len(result.differences),0)
     testing.expect(t,!result.comparable,"both waited for the display")

@@ -70,7 +70,16 @@ programs_drawing :: proc(s:^Session) -> bool {
     p:=&s.build.programs
     if p.again || (p.job!=nil && p.running==0) {return true}
     if s.app.renderer==nil {return false}
-    return host.app_shaders_loading(s.app,p.running!=0?p.running:p.whole) || gpu.renderer_pipelines_pending(s.app.renderer)
+    return host.app_shaders_loading(s.app,p.running!=0?p.running:p.whole) || gpu.renderer_pipelines_pending(s.app.renderer)>0
+}
+
+// What the frames of the editor wait for now (host.App_Pending), with the
+// publication of the programs that runs or waits to run.
+view_pending :: proc(s:^Session) -> (pending:host.App_Pending) {
+    if s.app==nil || s.app.renderer==nil {return}
+    pending=host.app_pending(s.app)
+    if s.build!=nil && (s.build.programs.job!=nil || s.build.programs.again) {pending.programs+=1}
+    return
 }
 
 @(private)

@@ -818,6 +818,27 @@ app_capture :: proc(app:^App,path:string) -> bool {
     return stbi.write_png(file,c.int(width),c.int(height),4,raw_data(pixels),c.int(width*4))!=0
 }
 
+// What the frames draw a stand-in for because it is still being made or
+// loaded: the materials of a program as their rows, a pass without its
+// pipeline, a material without its texture, a mesh not at all. An image or a
+// measurement taken meanwhile is not that of the scene. The levels of a
+// texture finer than those it has are not in it: Stats.textures_pending.
+App_Pending :: struct {
+    programs:int `mirai:"label=Shaders of the material programs of the project being compiled or made, by generation; their materials draw as their rows until they are in place"`,
+    pipelines:int `mirai:"label=Pipelines frames asked for that are being made; meanwhile their programs draw as their rows or their passes without them"`,
+    assets:int `mirai:"label=Meshes and textures frames asked for that are arriving or still going to the GPU; meanwhile a mesh is not drawn and a material shows without its texture"`,
+}
+
+// What the frames of the application wait for now. The editor adds the
+// programs it compiles itself.
+app_pending :: proc(app:^App) -> (pending:App_Pending) {
+    if app.renderer==nil {return}
+    pending.programs=len(app.shaders.loads)
+    pending.pipelines=render.renderer_pipelines_pending(app.renderer)
+    pending.assets=app_assets_arriving(app)+len(app.asset_releases.uploading)
+    return
+}
+
 // Draws a world the window does not show, with the camera and the UI its
 // game gives it, into the image of the renderer without presenting it, and
 // reads that image back (RGBA8; the caller frees it). frames are drawn so that what builds up over
@@ -883,7 +904,7 @@ app_capture_world :: proc(app:^App,world:rawptr,frames:=8,size:=[2]i32{},editor:
         if !drawn {break}
         if wait>0 {count=capture_frames_streaming(count,frame,max(frames,1),render.textures_update(r)+app_assets_arriving(app),time.tick_since(started),wait)}
         // The last frame drew a program as its rows while its pipelines were made: one more with them.
-        if frame==count-1 && render.renderer_pipelines_pending(r) {
+        if frame==count-1 && render.renderer_pipelines_pending(r)>0 {
             render.renderer_pipelines_wait(r)
             count+=1
         }

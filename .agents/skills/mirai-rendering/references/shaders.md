@@ -145,12 +145,12 @@
   grid `(Mirai_Vfx_Cell, Parameters)`. The generation dispatches them in
   `mirai_vfx_particle_stage` and `mirai_vfx_cell_stage` and the catalog lists them in `stages`; the
   [plugin](../../mirai-world/references/vfx.md#grids-and-stages) runs them.
-- A Surface program that moves vertices says `//! vertex [animated] [reach <metres>|reach
-  <parameter>]` and declares `vertex` ([vertex functions](materials.md#vertex-functions)): reach is
-  a number from 0 or a parameter of one float; another word, a reach of another type or the line
-  in another domain leave the program out, and the check asks for `vertex` with its signature. The
-  catalog gives it in `vertex` (`animated`, `reach` in metres or `reach_offset`, the bytes of
-  the parameter that gives it).
+- A Surface program that moves vertices says `//! vertex [reach <metres>|reach <parameter>]` and
+  declares `vertex` ([vertex functions](materials.md#vertex-functions)): reach is a number from 0
+  or a parameter of one float; another word, a reach of another type or the line in another domain
+  leave the program out, and the check asks for `vertex` with its signature. The catalog gives it
+  in `vertex` (what it reads, `reach` in metres or `reach_offset`, the bytes of the parameter that
+  gives it).
 - `mirai_sample_texture(ctx,index,uv,lod)` receives the explicit context:
   - Surface in raster: derivatives and bias.
   - Surface with `ctx.ray` (also hits rebuilt in fragment shaders): LOD of the ray footprint.
@@ -161,12 +161,18 @@
   vectors of them): `mirai_uv0(ctx)`, `mirai_uv1(ctx)`, `mirai_world_position(ctx)` and
   `mirai_vertex_normal(ctx)` give its inputs with their derivatives (in a ray, the width of its
   cone), and `mirai_sample_texture(ctx,index,dual_uv)` filters by them with the bias of the
-  view, in any branch. The generation probes each Surface program (`derivative_probe`: its
-  evaluation compiled alone in a fragment stage, a plain-uv sample by implicit level, the other
-  samples by none) and writes in its include `mirai_program_derivatives`, true where anything
-  of the optimized code reads a derivative across a quad; the resolve of one without
-  evaluates no quad again ([programs](materials.md#surface-programs-in-rays-and-raster)). The
-  cache of its coverage keeps it.
+  view, in any branch. The generation probes each Surface program (`surface_probe`: its
+  evaluation and its function vertex compiled alone in a fragment stage, a plain-uv sample by
+  implicit level, the other samples by none) and writes in its include
+  `mirai_program_derivatives`, true where anything of the optimized code reads a derivative
+  across a quad; the resolve of one without evaluates no quad again
+  ([programs](materials.md#surface-programs-in-rays-and-raster)).
+- The same probe gives what a Surface program and its function vertex read of their contexts
+  (`abi.Program_Reads`: time, view, place, particle): each class comes from a buffer of its own,
+  and a class counts where the optimized code still reads its buffer, also behind a branch a
+  parameter turns off. The catalog gives them in `reads` and `vertex.reads`; the renderer takes
+  what changes with the time from them, never from the text of the source. A program whose probe
+  does not compile reads everything. The cache of the probes keeps it.
 - `mirai_sample_texture_level` receives an explicit mip; `mirai_sample_texture_grad`, gradients.
   `mirai_load_texture(index,texel)` loads a texel of the level 0 of a texture that does not stream
   (the data a plugin writes: a map of weights, a table) without filtering or reporting it.
@@ -305,7 +311,9 @@
   - `reflection/<fingerprint>.json` and `<fingerprint>.attributes.json`: the reflection of the
     `Parameters` and of the `Attributes` of a program;
   - `embedded/<digest>.edit.spv.lz`, `.ship.spv.lz` and their `.metal.lz`: the stream
-    `render` embeds, by the hashes of the code it holds, taken only if it decodes to that code.
+    `render` embeds, by the hashes of the code it holds, taken only if it decodes to that code;
+  - `peaks/<stage>` and `compiling`: what compilations held at their peak, and those that run
+    (Memory, below).
 - Each file is written separately and renamed into place (process- and thread-own temporary), and
   the stage's `.json` last. Whoever reads takes an entry only if all its hashes match; if not, it
   compiles and stores it again. An entry without the code of a requested backend is completed
@@ -357,9 +365,18 @@
   slowest ones (`Result.reflection`, `compiling` and `slowest`).
 - One worker per logical processor by default (`--workers`, at most 64). Process starts are
   serialized so each tool inherits only its pipe.
-- The workers take the stages with the most code first (the size of the one the output has, or the
-  engine build; a stage without previous code goes to the front): the compilation of a large stage
-  is not left for the end ([early stages](#early-stages-and-cancellation)).
+- **Memory.** Each Slang compilation, of a stage or of the reflection of the programs, is charged
+  the peak it held the last time (`peaks/<stage>` of the shared cache, written when it succeeds),
+  or the largest peak known for one never compiled, or `SLANGC_PEAK_BYTES` with none known. It
+  starts only while the memory free now, less `MEMORY_RESERVE` and less what each compilation
+  that runs has not taken yet of its charge, holds it (`admits`); otherwise it waits and looks
+  again, and the others of its generation wait behind it in order. The compilations that run in
+  every process are listed in `compiling` of the shared cache under its lock, so generations of
+  several processes see what the others admitted and has not reached its peak. A generation always
+  runs one. `mirai shaders` reports the most that ran at once.
+- The workers take the stages by the peak of their memory, the largest first and one never
+  compiled before them: the large stages are the long ones, so they are not left for the end and
+  the small ones fill the room beside them ([early stages](#early-stages-and-cancellation)).
 - A stage that fails does not stop the others: what compiles stays in the cache for the next
   generation.
 

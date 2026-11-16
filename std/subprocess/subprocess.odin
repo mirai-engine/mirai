@@ -22,6 +22,7 @@ Process :: struct {
     // The ends of the pipes this process holds, nil for a stream that is not one.
     stdin,stdout,stderr:^os.File,
     state:os.Process_State, // the exit, once state.exited
+    peak:i64, // once state.exited, the most memory the child held at once (memory_held); 0 when the system did not say
 }
 
 // Pipes that start gives back: stdout and stderr each, or both through
@@ -74,13 +75,16 @@ start :: proc(desc:os.Process_Desc,limits:=Limits{},pipes:=Pipes.None) -> (proce
     return started,nil
 }
 
-// Like os.process_wait, and the state stays in process. Once the child
-// exited, what it left running is ended. A timeout that passes is the error
-// .Timeout.
+// Like os.process_wait, and the state stays in process, with the peak of its
+// memory. Once the child exited, what it left running is ended. A timeout
+// that passes is the error .Timeout.
 wait :: proc(process:^Process,timeout:=os.TIMEOUT_INFINITE) -> (state:os.Process_State,error:os.Error) {
     if process.pid==0 {return {},.Not_Exist}
     if process.state.exited {return process.state,nil}
-    state=os.process_wait({pid=process.pid,handle=process.handle},timeout) or_return
+    // The exit is taken only after its peak is read: the system forgets it then.
+    _exited(process,timeout) or_return
+    process.peak=_exit_peak(process)
+    state=os.process_wait({pid=process.pid,handle=process.handle},0) or_return
     process.state,process.handle=state,0
     _tree_close(process)
     return
@@ -111,7 +115,7 @@ read :: proc(process:^Process,stream:Stream,buffer:[]byte) -> (count:int,open:bo
     file:=&process.stdout if stream==.Stdout else &process.stderr
     if file^==nil {return 0,false}
     for count<len(buffer) {
-        ready,error:=os.pipe_has_data(file^)
+        ready,error:=pipe_has_data(file^)
         if error==nil && !ready {return count,true}
         read:=0
         if error==nil {read,error=os.read(file^,buffer[count:])}
@@ -123,6 +127,19 @@ read :: proc(process:^Process,stream:Stream,buffer:[]byte) -> (count:int,open:bo
         count+=read
     }
     return count,true
+}
+
+// Like os.pipe_has_data: whether reading the pipe returns at once with data,
+// and .Broken_Pipe once its write end is closed and nothing is left to read.
+pipe_has_data :: proc(file:^os.File) -> (ready:bool,error:os.Error) {
+    ready,error=os.pipe_has_data(file)
+    when ODIN_OS==.Darwin {
+        // pipe_hup_with_in: macOS polls a pipe whose write end is closed as
+        // readable also when it is empty, and os.pipe_has_data looks at that
+        // before the hang-up (not yet reported upstream).
+        if ready && pipe_unread(file)==0 {return false,.Broken_Pipe}
+    }
+    return
 }
 
 // The pipe never gets more than this in one write: on Windows it holds 4 KB
@@ -164,6 +181,15 @@ process_alive :: proc(pid:int) -> bool {
     // process_wait leaves the process open only when it is still running.
     if wait_error==os.General_Error.Timeout {process_close(process)}
     return !state.exited
+}
+
+// The memory the process with that pid holds now and the most it has held at
+// once, in bytes: its working set on Windows, its resident set on Linux and
+// its footprint on macOS. ok is false when it is gone or the system does not
+// say.
+memory_held :: proc(pid:int) -> (now,peak:i64,ok:bool) {
+    if pid<=0 {return}
+    return _memory_held(pid)
 }
 
 // Runs the command to its end and returns what it wrote to stdout and to
