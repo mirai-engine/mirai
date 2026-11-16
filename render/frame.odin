@@ -703,8 +703,9 @@ record_view :: proc(r:^Renderer,cmd:^rhi.Command_List,state:^View_State,view:Fra
     handle,plan:=view_plan(r,view.pipeline,view.texture==0)
     if !view_pipeline_prepare(r,state,handle,plan) {return false}
     // The passes after the Output stage generate the image shown before this
-    // one, for a view of a window; with a history, it is shown.
-    generate:=plan.generates && view.texture==0 && !frame.offscreen
+    // one, for a view of a window whose device presents it; with a history, it
+    // is shown. Without a window nobody would see it: they do not run.
+    generate:=plan.generates && view.texture==0 && !frame.offscreen && rhi.swapchain_generated_texture(r.device)!=0
     shown:=generate && state.has_previous && !state.resources_made
     if generate && !ensure_generated_target(r,&state.targets) {return false}
     extension_textures_release(r,state)
