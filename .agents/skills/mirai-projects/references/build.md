@@ -207,8 +207,10 @@ icon it names if it exists, `settings.mirai` with the
 [combined](projects.md#project-settings) settings, `assets/` with what was
 [cooked](#asset-cooking) of the project and of each active plugin that declares `Assets` (in
 `assets/plugins/<name>/`), `shaders/` with the manifest, the catalog and the code of this system of
-the published generation (no Slang sources; `mirai build game` generates the shaders first) and
-SDL3 if the system does not provide it.
+the published generation (no Slang sources; `mirai build game` generates the shaders first),
+SDL3 if the system does not provide it, and the
+[capacities](../../mirai-rendering/references/frame-graph.md#passes) the runs of the project
+reached in each scene, in its `.mirai/cache`, where the game goes on filling them.
 
 The copy replaces files and merges folders without deleting anything from the destination, except
 `assets/`, which ends up exactly with what was cooked, without the sources and sidecars among the
