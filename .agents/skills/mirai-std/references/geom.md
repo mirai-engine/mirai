@@ -242,6 +242,10 @@ published mesh without levels and the cluster DAG use it.
   of its clusters' and its own, sphere around theirs, a root where it cannot drop to
   `CLUSTER_SIMPLIFY_STUCK`); every group draws in what it was reduced into the area it drew; a
   group of one cluster is reduced too, so a far plant keeps shedding leaves.
+- **Transition** (Cook et al. 2007, section 3.5). Every vertex of an island in a cluster is made
+  with where its island goes in the group: the scale to the area it draws in the next level, or 0
+  and its rank among the islands of its class the group drops (the last go first), so the renderer
+  can move it continuously from the cluster to its group.
 
 ## Approximate convex decomposition (`decompose.odin`)
 

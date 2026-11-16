@@ -31,6 +31,15 @@ import "core:slice"
 // cluster is reduced too, so a plant far away keeps shedding its leaves. So only the near
 // clusters of a plant draw its finest outlines, and a level changes one
 // group at a time.
+//
+// And it changes without a pop (Cook et al. 2007, section 3.5): every vertex
+// of an island in a cluster carries where its island goes as the cut moves
+// from the error of the cluster to that of its group (Cluster_Made.scale,
+// rank). A survivor grows to the area it draws in the next level, linearly;
+// those its group drops shrink to nothing one after another in the order
+// they were dropped in, the last first, each over a band of the way
+// (asset.ISLAND_FADE_BAND), so the area of the group goes over evenly.
+// A step of outline is under the threshold already and has no band.
 
 ISLAND_PIXELS :: f32(8)   // of the threshold of the cut, how far the radius of a grown island may span where its level draws it
 ISLAND_GROW_MAX :: f32(4) // the most the islands of a class grow: past it they are not pruned further
@@ -62,10 +71,14 @@ Cluster_Island_State :: struct {
 }
 
 // A vertex of a DAG past the positions it was built from: a copy of one of
-// them, moved.
+// them, moved, and where it goes as its cluster gives way to its group. It
+// keeps its place about center where scale is 1.
 Cluster_Made :: struct {
     vertex:u32,
     position:Vec3,
+    center:Vec3, // of its island
+    scale:f32,   // how much its island grows by in the next level; 0: it is dropped
+    rank:f32,    // of a dropped island, where it is among those of its class its group drops, 0 to 1: the last go first
 }
 
 // The area each outline of islands draws, in allocator.
@@ -164,7 +177,7 @@ island_apply :: proc "contextless" (states:[]Cluster_Island_State,islands:[]Clus
 // to the least that moves one more class while they draw more than `target`
 // triangles. The states that remain come first, by class and order; returns
 // how many, the `allowed` it ended at, the largest error among them and the
-// triangles they draw.
+// triangles they draw; those it drops follow, each class in its order.
 islands_reduce :: proc(states:[]Cluster_Island_State,islands:[]Cluster_Island,rungs:[]Cluster_Island_Rung,areas:[]f32,allowed:f32,target:int) -> (kept:int,reached:f32,error:f32,triangles:int) #no_bounds_check {
     // By class, then order, ties by island.
     Pair :: struct {class:u32,order:u64,island:u32,at:int}
@@ -208,13 +221,23 @@ islands_reduce :: proc(states:[]Cluster_Island_State,islands:[]Cluster_Island,ru
         if next==max(f32) {break}
         reached=max(reached,next)
     }
+    // The survivors first, then those dropped, each in the order of its class.
+    ordered:=make([]Cluster_Island_State,len(states),context.temp_allocator)
+    at:=0
     for run in runs {
         for s in states[run.first:][:run.alive] {
-            states[kept]=s
+            ordered[at]=s
             error=max(error,s.error)
-            kept+=1
+            at+=1
         }
     }
+    kept=at
+    for run in runs {
+        end:=run.first+1
+        for end<len(states) && islands[states[end].island].class==islands[states[run.first].island].class {end+=1}
+        for s in states[run.first+run.alive:end] {ordered[at]=s;at+=1}
+    }
+    copy(states,ordered)
     return
 }
 
@@ -286,6 +309,8 @@ Island_Builder :: struct {
     vertices:[]u32, // of each rung, distinct
     positions:[dynamic]Vec3, // those of the source, then those made
     stamp:[]u32,             // of each position of the source: the made one it is in the cluster being output
+    // Of each island, where it goes in the group being output: its scale and rank (Cluster_Made).
+    scale,rank:[]f32,
 }
 
 // Splits states (all of one submesh) in clusters of whole islands appended
@@ -331,7 +356,7 @@ islands_triangles :: proc(ib:^Island_Builder,states:[]Cluster_Island_State,indic
                 p:=island.center+(ib.source.positions[index]-island.center)*s.grow
                 ib.stamp[index]=u32(len(ib.positions))
                 _,no_position:=append(&ib.positions,p)
-                _,no_made:=append(&dag.made,Cluster_Made{index,p})
+                _,no_made:=append(&dag.made,Cluster_Made{index,p,island.center,ib.scale[s.island],ib.rank[s.island]})
                 if no_position!=nil || no_made!=nil {return .Out_Of_Memory}
             }
             if _,error:=append(indices,ib.stamp[index]);error!=nil {return .Out_Of_Memory}
@@ -366,6 +391,10 @@ islands_dag :: proc(b:^Dag_Builder,source:Cluster_Source) -> Cluster_Error {
     if ib.areas,measured=islands_areas(source.positions,source.island_rungs,source.island_indices,scratch);!measured {return .Out_Of_Memory}
     ib.vertices=make([]u32,len(source.island_rungs),scratch)
     ib.stamp=make([]u32,len(source.positions),scratch)
+    ib.scale=make([]f32,len(source.islands),scratch)
+    ib.rank=make([]f32,len(source.islands),scratch)
+    if ib.scale==nil || ib.rank==nil {return .Out_Of_Memory}
+    for &k in ib.scale {k=1}
     ib.positions=make([dynamic]Vec3,0,len(source.positions),scratch)
     if ib.vertices==nil || ib.stamp==nil && len(source.positions)>0 {return .Out_Of_Memory}
     if _,error:=append(&ib.positions,..source.positions);error!=nil {return .Out_Of_Memory}
@@ -456,7 +485,33 @@ islands_dag :: proc(b:^Dag_Builder,source:Cluster_Source) -> Cluster_Error {
             bounds,bounded:=lod_merge(lods,context.temp_allocator)
             if !bounded {return .Out_Of_Memory}
             kept,_,error,left:=islands_reduce(members[:],source.islands,source.island_rungs,ib.areas,bounds.error,int(f32(triangles)*CLUSTER_SIMPLIFY_RATIO))
-            if f32(left)>f32(triangles)*CLUSTER_SIMPLIFY_STUCK {
+            stuck:=f32(left)>f32(triangles)*CLUSTER_SIMPLIFY_STUCK
+            if !stuck {
+                // Where each island goes: a survivor to the area it draws in the next level,
+                // its outline and growth there; those dropped, by their rank among the
+                // dropped of their class.
+                drawn :: proc(ib:^Island_Builder,s:Cluster_Island_State) -> f32 {
+                    return s.grow*s.grow*ib.areas[island_rung(ib.source.islands[s.island],s.rung)]
+                }
+                for s in group_states {ib.scale[s.island]=drawn(&ib,s)}
+                for s in members[:kept] {
+                    before:=ib.scale[s.island]
+                    ib.scale[s.island]=math.sqrt(drawn(&ib,s)/before) if before>0 else 1
+                }
+                dropped:=members[kept:]
+                for at:=0;at<len(dropped); {
+                    end:=at+1
+                    class:=source.islands[dropped[at].island].class
+                    for end<len(dropped) && source.islands[dropped[end].island].class==class {end+=1}
+                    for s,k in dropped[at:end] {
+                        ib.scale[s.island]=0
+                        ib.rank[s.island]=(f32(k)+0.5)/f32(end-at)
+                    }
+                    at=end
+                }
+            }
+            defer for s in group_states {ib.scale[s.island],ib.rank[s.island]=1,0}
+            if stuck {
                 // Stuck: the group is a root.
                 bounds.error=max(f32)
                 islands_output(&ib,group,group_states[:],bounds,depth) or_return

@@ -57,9 +57,9 @@ Resolve_Triangle resolve_triangle(uint id) {
     Cluster cluster = cluster_at(entry.y);
     uint corner = visibility_triangle(id) * 3u;
     Resolve_Triangle t;
-    t.a = gbuffer_vertex_build(entry.x, inst, mesh, cluster, corner);
-    t.b = gbuffer_vertex_build(entry.x, inst, mesh, cluster, corner + 1u);
-    t.c = gbuffer_vertex_build(entry.x, inst, mesh, cluster, corner + 2u);
+    t.a = gbuffer_vertex_build(entry.x, inst, mesh, cluster, corner, true);
+    t.b = gbuffer_vertex_build(entry.x, inst, mesh, cluster, corner + 1u, true);
+    t.c = gbuffer_vertex_build(entry.x, inst, mesh, cluster, corner + 2u, true);
     return t;
 }
 

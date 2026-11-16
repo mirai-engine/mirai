@@ -96,6 +96,7 @@ mesh_stream_flags :: proc "contextless" (flags: asset.Mesh_Flags) -> (bits: u32)
 	if .Has_Uv1 in flags {bits |= MESH_FLAG_UV1}
 	if .Has_Colors in flags {bits |= MESH_FLAG_COLORS}
 	if .Has_Surface in flags {bits |= MESH_FLAG_SURFACE}
+	if .Has_Islands in flags {bits |= MESH_FLAG_ISLANDS}
 	return
 }
 @(private)
@@ -103,6 +104,7 @@ mesh_streams :: proc "contextless" (bits: u32) -> (flags: asset.Mesh_Flags) {
 	if bits & MESH_FLAG_UV1 != 0 {flags += {.Has_Uv1}}
 	if bits & MESH_FLAG_COLORS != 0 {flags += {.Has_Colors}}
 	if bits & MESH_FLAG_SURFACE != 0 {flags += {.Has_Surface}}
+	if bits & MESH_FLAG_ISLANDS != 0 {flags += {.Has_Islands}}
 	return
 }
 
@@ -139,7 +141,8 @@ pooled_cluster :: proc(p: Pooled_Mesh, ordinal: u32) -> (g: asset.Mesh_Geometry,
 	g.vertices = mem.slice_data_cast([]asset.Cluster_Vertex, block[:layout.uv1s])
 	if .Has_Uv1 in p.flags {g.uv1s = block[layout.uv1s:layout.colors]}
 	if .Has_Colors in p.flags {g.colors = block[layout.colors:layout.surfaces]}
-	if .Has_Surface in p.flags {g.surfaces = mem.slice_data_cast([]asset.Surface_Vertex, block[layout.surfaces:layout.triangles])}
+	if .Has_Surface in p.flags {g.surfaces = mem.slice_data_cast([]asset.Surface_Vertex, block[layout.surfaces:layout.islands])}
+	if .Has_Islands in p.flags {g.islands = mem.slice_data_cast([]asset.Island_Vertex, block[layout.islands:layout.triangles])}
 	g.triangles = block[layout.triangles:]
 	g.flags = p.flags
 	g.position_step, g.uv_step, g.uv1_step = p.position_step, p.uv_step, p.uv1_step
@@ -175,6 +178,7 @@ record_decode :: proc(s: ^Scene_State, m: Mesh_Record, allocator: mem.Allocator)
 	if .Has_Uv1 in p.flags {if g.uv1s, error = make([]u32, m.vertex_count, allocator); error != nil {return}}
 	if .Has_Colors in p.flags {if g.colors, error = make([]u32, m.vertex_count, allocator); error != nil {return}}
 	if .Has_Surface in p.flags {if g.surfaces, error = make([]asset.Surface_Vertex, m.vertex_count, allocator); error != nil {return}}
+	if .Has_Islands in p.flags {if g.islands, error = make([]asset.Island_Vertex, m.vertex_count, allocator); error != nil {return}}
 	copy(g.clusters, p.clusters)
 	copy(g.levels, p.levels)
 	for whole, ordinal in p.clusters {
@@ -185,6 +189,7 @@ record_decode :: proc(s: ^Scene_State, m: Mesh_Record, allocator: mem.Allocator)
 		if len(g.uv1s) > 0 {copy(g.uv1s[whole.vertex_first:][:count], page.uv1s[c.vertex_first:][:count])}
 		if len(g.colors) > 0 {copy(g.colors[whole.vertex_first:][:count], page.colors[c.vertex_first:][:count])}
 		if len(g.surfaces) > 0 {copy(g.surfaces[whole.vertex_first:][:count], page.surfaces[c.vertex_first:][:count])}
+		if len(g.islands) > 0 {copy(g.islands[whole.vertex_first:][:count], page.islands[c.vertex_first:][:count])}
 		copy(g.triangles[whole.triangle_first:][:held], page.triangles[c.triangle_first:][:held])
 	}
 	g.flags = p.flags
@@ -197,7 +202,7 @@ record_decode :: proc(s: ^Scene_State, m: Mesh_Record, allocator: mem.Allocator)
 @(private)
 geometry_decoded_free :: proc(g: ^asset.Mesh_Geometry, allocator: mem.Allocator) {
 	delete(g.clusters, allocator);delete(g.levels, allocator);delete(g.vertices, allocator);delete(g.triangles, allocator)
-	delete(g.uv1s, allocator);delete(g.colors, allocator);delete(g.surfaces, allocator)
+	delete(g.uv1s, allocator);delete(g.colors, allocator);delete(g.surfaces, allocator);delete(g.islands, allocator)
 	g^ = {}
 }
 

@@ -260,6 +260,33 @@ cut_draws :: proc(g:asset.Mesh_Geometry,cut:Cut,slot:u32) -> (triangles:int,area
     return
 }
 
+// How far a cut has gone from the error of a cluster to that of its parent,
+// as the raster takes it (cluster_along of cut.slang).
+@(private="file")
+cut_along :: proc(cut:Cut,c:asset.Cluster) -> f32 {
+    if c.parent_error==asset.CLUSTER_ROOT {return 0}
+    own,parent:=c.error/cut_allows(cut,c.lod),c.parent_error/cut_allows(cut,c.parent)
+    return clamp((1-own)/(parent-own),0,1) if parent>own else 0
+}
+
+// What a cut draws of a slot with its islands on their way to the next
+// level: the area of its triangles in cubes of `cell` metres.
+@(private="file")
+cut_coverage :: proc(g:asset.Mesh_Geometry,cut:Cut,slot:u32,cell:f32) -> map[[3]i32]f32 {
+    out:=make(map[[3]i32]f32,context.temp_allocator)
+    for c in g.clusters {
+        if asset.cluster_slot(c)!=slot || !cut_takes(cut,c) {continue}
+        along:=cut_along(cut,c)
+        for t in 0..<asset.cluster_triangle_count(c) {
+            p:[3][3]f32
+            for corner,k in asset.cluster_triangle(g.triangles,c,t) {p[k]=asset.cluster_position(g,c,corner)+asset.cluster_island_offset(g,c,corner,along)}
+            middle:=(p[0]+p[1]+p[2])/3
+            out[{i32(math.floor(middle.x/cell)),i32(math.floor(middle.y/cell)),i32(math.floor(middle.z/cell))}]+=0.5*linalg.length(linalg.cross(p[1]-p[0],p[2]-p[0]))
+        }
+    }
+    return out
+}
+
 // The cards of two triangles of slot 1 a cut draws, by their centers in
 // millimetres, with the side of each.
 @(private="file")
@@ -642,7 +669,9 @@ bush_read :: proc(r:^Reader) {
 // The cut of the forest bush draws its finer leaves only where they are
 // near: from every distance of the eye to its side, no more triangles than
 // with all of it as near as its nearest part, as whole levels drew it, and
-// fewer where its far side can be coarser. Its leaves cover the area level 0 does at every cut.
+// fewer where its far side can be coarser. Its leaves cover the area level
+// 0 does at every cut, and where a group gives way to the next level they
+// cover the same on both sides of it: no pop.
 @(test)
 the_near_part_of_a_bush_alone_is_fine :: proc(t:^testing.T) {
     r:Reader
@@ -669,8 +698,20 @@ the_near_part_of_a_bush_alone_is_fine :: proc(t:^testing.T) {
     }
     fmt.println()
     testing.expectf(t,near_sum<all_sum,"over the distances the bush draws %d triangles of leaves; all of it as near, %d",near_sum,all_sum)
+    // Where a group gives way to the next level, what is drawn on either side covers the same:
+    // its islands have grown and shrunk into those of the next level.
+    worst:f32
     for e in cut_errors(g) {
         _,cut_area:=cut_draws(g,{error=e},1)
         testing.expectf(t,cut_area>=0.98*area && cut_area<=1.6*area,"the cut at %f covers %f of the leaves, level 0 %f",e,cut_area,area)
+        before,after:=cut_coverage(g,{error=e*(1-1e-5)},1,0.5),cut_coverage(g,{error=e},1,0.5)
+        moved,changing:f32
+        for cell,a in before {
+            moved+=abs(a-after[cell])
+            if a!=after[cell] {changing+=a}
+        }
+        for cell,a in after {if cell not_in before {moved+=a}}
+        if changing>0 {worst=max(worst,moved/changing)}
     }
+    testing.expectf(t,worst<0.1,"a group that gives way to the next level moves %f of what it covers",worst)
 }
