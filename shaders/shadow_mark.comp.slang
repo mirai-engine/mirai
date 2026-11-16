@@ -28,9 +28,9 @@ struct Params_Block { uint pad0; uint samples; float sun_radius; uint scale; uin
 // The pages of map m the taps around a point read: where they go does not
 // depend on the way to the light, which shadow_map_seen takes only to tell a
 // point that turns from it (here, as one that faces it).
-void shadow_mark(Shadow_Map m, bool sun, float3 position, float3 n, float radius, float across) {
+void shadow_mark(Shadow_Map m, bool sun, float3 position, float3 n, float radius, float across, float grow) {
     Shadow_Taps t;
-    if (!shadow_map_taps(m, sun, n, position, n, radius, across, t)) return;
+    if (!shadow_map_taps(m, sun, n, position, n, radius, across, grow, t)) return;
     float reach = shadow_taps_reach(t);
     int last = int(m.rect.z) - 1;
     int2 low = clamp(int2(floor(t.texel - reach)), 0, last), high = clamp(int2(floor(t.texel + reach)), 0, last);
@@ -58,14 +58,16 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     float3 normal = gbuffer_normal(source);
     float across = float(scale) * (frame.footprint.x + frame.footprint.y * depth_distance(depth));
     Shadow_Map m;
-    if (direct_sun_weight(pixel.position, normal) > 0.0 && sun_map_of(pixel.position, m)) {
-        shadow_mark(m, true, pixel.position, normal, params.sun_radius, across);
+    Sun_Pick pick;
+    if (direct_sun_weight(pixel.position, normal) > 0.0 && sun_pick(pixel.position, across, pick)) {
+        shadow_mark(sun_level(pick.level), true, pixel.position, normal, params.sun_radius, across, pick.grow);
+        if (pick.blend > 0.0) shadow_mark(sun_level(pick.level + 1u), true, pixel.position, normal, params.sun_radius, across, 1.0);
     }
     uint4 row = direct_cell(pixel.position);
     uint count = direct_items(row);
     for (uint i = 0u; i < count; i++) {
         uint item = direct_item(row, i);
         if (item == DIRECT_CELL_TABLE || !light_map_of(item, pixel.position, m)) continue;
-        shadow_mark(m, false, pixel.position, normal, light_extent(lights[item]), across);
+        shadow_mark(m, false, pixel.position, normal, light_extent(lights[item]), across, 1.0);
     }
 }

@@ -113,7 +113,7 @@ float3 media_sun_light(float3 position) {
 float3 media_sun_through(float3 position, inout bool changed) {
     float reach = sun_reach(position, frame.sun_direction.xyz);
 #ifdef SUN_SHADOW_SLOT
-    float known = sun_shadow_seen(position, float3(0.0));
+    float known = sun_shadow_seen(position, float3(0.0), 0.0);
     float3 through = known < 0.0 ? trace_transmission(position, frame.sun_direction.xyz, reach) : float3(known);
 #ifdef SHADOW_TINT_SLOT
     Shadow_Map m;

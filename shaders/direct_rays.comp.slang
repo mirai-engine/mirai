@@ -54,7 +54,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     direct_maps_give = frame.sun_maps.z == 0u || point_depth.Load(int3(p, 0)).y != DIRECT_MAPS_NONE;
     float sun = direct_sun_weight(pixel.position, normal);
     Shadow_Map held;
-    if (sun > 0.0 && direct_maps_give && sun_map_of(pixel.position, held)) sun = 0.0;
+    if (sun > 0.0 && direct_maps_give && sun_map_given(pixel.position, float(scale) * (frame.footprint.x + frame.footprint.y * depth_distance(depth)))) sun = 0.0;
     float total = sun;
     for (uint i = 0u; i < count; i++) {
         total += direct_sampled_weight(row, direct_item(row, i), pixel.position, normal);

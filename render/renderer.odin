@@ -294,7 +294,7 @@ Pipeline_Id :: enum {
 	Ddgi_Trace, Ddgi_Irradiance, Ddgi_Distance, Ddgi_Keep,
 	Ddgi_Relocate, Ddgi_Select, Ddgi_Touch, Ddgi_Mark, Contact, Contact_Light, Contact_Pixels, Composite, Taa, Hiz,
 	Exposure_Histogram, Exposure_Adapt, Tonemap, Tonemap_Wide, Ui, Thumbnail, Thumbnail_Values, Impostor, Preview_Backdrop, Blit, Highlight, Highlight_Filter, Reflect, Translucent, Reflect_Resolve,
-	Shadow_Maps, Shadow_Clusters, Shadow_Map, Shadow_Map_Tested, Shadow_Map_Tint, Shadow_Map_Glass, Shadow_Map_Clear, Shadow_Map_Copy, Shadow_Map_Table, Shadow_Mark, Shadow_Pages, // the cull of the maps of the shadows by instance and by cluster, their draws by what each writes, the pages of the cache they clear and the atlas copies, the table of the pages, the marks of the points and the table
+	Shadow_Maps, Shadow_Clusters, Shadow_Map, Shadow_Map_Tested, Shadow_Map_Tint, Shadow_Map_Glass, Shadow_Map_Clear, Shadow_Map_Copy, Shadow_Mark, Shadow_Pages, // the cull of the maps of the shadows by instance and by cluster, their draws by what each writes, the pages of the cache they clear and the atlas copies, the marks of the points and the table of the pages
 	Glass_Layer, Glass_Layer_Layers, Glass_Filter, Glass, Glass_Light, Glass_Levels, Glass_Mean, Glass_Inside,
 	// The raster of the visibility target by raster bin (RASTER_BIN_*), then the same of a view with a clip plane.
 	Visibility, Visibility_Two_Sided, Visibility_Tested, Visibility_Tested_Two_Sided,
@@ -1053,10 +1053,6 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 		vertex = &r.shader_codes[.Shadow_Map_Square_Vert], fragment = &r.shader_codes[.Shadow_Map_Copy_Frag],
 		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Always, cull = .None, name = "shadow map pages copied",
 	})
-	graphics(list, r, .Shadow_Map_Table, {
-		vertex = &r.shader_codes[.Shadow_Map_Square_Vert], fragment = &r.shader_codes[.Shadow_Map_Table_Frag],
-		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Always, cull = .None, name = "shadow map table",
-	})
 	compute(list, r, .Shadow_Mark, .Shadow_Mark_Comp)
 	compute(list, r, .Shadow_Pages, .Shadow_Pages_Comp)
 	compute(list, r, .Shadow_Maps, .Shadow_Maps_Comp)
@@ -1612,7 +1608,7 @@ targets_textures :: proc(t: ^Targets) -> (all: [TARGET_TEXTURES]rhi.Texture) {
 	fixed := [?]rhi.Texture{
 		t.taa[0], t.taa[1], t.taa_frames[0], t.taa_frames[1], t.hiz[0], t.hiz[1], t.ldr, t.generated,
 		t.highlight, t.highlight_depth, t.highlight_filtered, t.gi_given, t.reactive, t.aerial, t.ui_blur[0], t.ui_blur[1],
-		t.shadow_raster.cache, t.shadow_raster.atlas,
+		t.shadow_raster.cache, t.shadow_raster.atlas, t.shadow_raster.table,
 	}
 	#assert(len(fixed) + UI_LAYER_DEPTH_CAPACITY <= TARGET_TEXTURES)
 	copy(all[:], fixed[:])

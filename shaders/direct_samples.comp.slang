@@ -275,7 +275,7 @@ void main(uint3 group : SV_GroupID, uint index : SV_GroupIndex) {
     direct_maps_give = !maps || out_depth[p].y != DIRECT_MAPS_NONE;
     if (sun > 0.0) {
         Shadow_Map held;
-        sun_given = direct_maps_give && sun_map_of(pixel.position, held);
+        sun_given = direct_maps_give && sun_map_given(pixel.position, float(scale) * (frame.footprint.x + frame.footprint.y * depth_distance(depth)));
         if (!sun_given) sun_glass = direct_glass(origin, frame.sun_direction.xyz, 1e5, float3(1.0));
         sun_chain = filter_chain;
         filter_chain = INVALID;

@@ -2,13 +2,14 @@
 // The first pass of the cull of the clusters the maps of the shadows draw in
 // a round (shadow_maps.slang, shadow_cull.slang): a thread for each instance,
 // of the scene or of a batch, and each map of the round, where it draws the
-// pages its mask names. The round of what stays draws into them the casters
+// pages its mask names, at each mip of the map it draws pages of. The round of what stays draws into them the casters
 // that do not move; that of what moves, those that do, and the glass of the
 // tint. An instance that may cast a shadow into the window, and
 // covers a texel of its map, hands the clusters of the cut of the map that its levels can
 // take (instance_clusters) to shadow_clusters.comp in chunks, as cull.comp
-// hands those the view draws to cull_clusters.comp. Chunks past the capacity
-// of their list are counted, and it grows for the frames after.
+// hands those the view draws to cull_clusters.comp, at the detail of each
+// mip. Chunks past the capacity of their list are counted, and it grows for
+// the frames after.
 #include "trace.slang"
 #include "cut.slang"
 #include "shadow_maps.slang"
@@ -73,39 +74,44 @@ void main(uint3 id : SV_DispatchThreadID) {
     bool glass = params.moving == 2u && params.glass != 0u && (inst.meta.w & (INSTANCE_FLAG_TRANSLUCENT | INSTANCE_FLAG_BLENDED)) != 0u
         && !instance_batched(instance) && !(all_glass && glass_sheet(inst));
     if (all_glass && !glass) return;
-    Shadow_Map m = shadow_map_at(shadow_data, params.rows, map);
+    Shadow_Map whole = shadow_map_at(shadow_data, params.rows, map);
     float3 low = inst.bounds_min.xyz - reach, high = inst.bounds_max.xyz + reach;
-    uint4 pages;
-    if (!shadow_map_reaches(m, low, high) || shadow_map_unseen(m, low, high) || !shadow_page_rect(m, low, high, pages)
-        || !shadow_pages_drawn(map, pages)) return;
+    if (!shadow_map_reaches(whole, low, high)) return;
     Mesh mesh = meshes[instance_mesh(inst)];
     if (mesh.vertex_count == 0u || mesh.cluster_count == 0u) return;
-    // A batch of a deformable sways as far as its mesh says (render.batch_sway):
-    // a map whose texel there is wider draws it at rest and keeps it, as what
-    // stays; a finer one draws it as it is, and while it sways, as what moves.
-    bool rest = false;
-    bool moves = instance_moves(instance);
-    if (instance_batched(instance) && mesh.posed_word != INVALID) {
-        float texel = shadow_map_texel(m, max(detail_span(shadow_map_detail(m), low, high).x, m.near));
-        rest = !(mesh.sway * instance_scale(inst) > texel);
-        moves = moves && !rest;
-    }
-    bool depth = !all_glass && params.moving != 2u && moves == (params.moving != 0u);
-    if (!depth && !glass) return;
-    uint2 clusters = instance_clusters(shadow_map_detail(m), inst, mesh);
-    uint count = (clusters.y + CULL_CHUNK - 1u) / CULL_CHUNK;
-    uint base;
-    InterlockedAdd(shadow_state[SHADOW_CHUNK_COUNT], count, base);
-    uint kept = base >= params.chunk_capacity ? 0u : min(count, params.chunk_capacity - base);
-    if (kept < count) InterlockedAdd(stats[0].dropped[CULL_LIST_SHADOW_CHUNKS], count - kept);
-    uint what = map | (depth ? SHADOW_CHUNK_DEPTH : 0u) | (glass ? SHADOW_CHUNK_GLASS : 0u) | (rest ? SHADOW_CHUNK_REST : 0u);
-    for (uint k = 0u; k < kept; k++) {
-        uint first = k * CULL_CHUNK;
-        chunks[base + k] = uint4(instance, what, clusters.x + first, min(CULL_CHUNK, clusters.y - first));
-    }
-    if (kept > 0u) {
-        uint total = base + kept;
-        InterlockedMax(shadow_state[SHADOW_CLUSTER_DISPATCH], min(total, CULL_DISPATCH_X));
-        InterlockedMax(shadow_state[SHADOW_CLUSTER_DISPATCH + 1u], (total + CULL_DISPATCH_X - 1u) / CULL_DISPATCH_X);
+    for (uint mip = 0u; mip < shadow_slot_mips(map); mip++) {
+        Shadow_Map m = shadow_map_mip(whole, mip);
+        uint4 pages;
+        if (shadow_map_unseen(m, low, high) || !shadow_page_rect(m, low, high, pages) || !shadow_pages_drawn(m, pages)) continue;
+        // A batch of a deformable sways as far as its mesh says (render.batch_sway):
+        // a map whose texel there is wider draws it at rest and keeps it, as what
+        // stays; a finer one draws it as it is, and while it sways, as what moves.
+        bool rest = false;
+        bool moves = instance_moves(instance);
+        if (instance_batched(instance) && mesh.posed_word != INVALID) {
+            float texel = shadow_map_texel(m, max(detail_span(shadow_map_detail(m), low, high).x, m.near));
+            rest = !(mesh.sway * instance_scale(inst) > texel);
+            moves = moves && !rest;
+        }
+        // A slot that let go of every page draws what stays too into the atlas, in the round of what moves.
+    bool whole = params.moving == 1u && (shadow_data[(params.plan >> 2u) + map].x & SHADOW_PLAN_RESET) != 0u;
+    bool depth = !all_glass && params.moving != 2u && (whole || moves == (params.moving != 0u));
+        if (!depth && !glass) continue;
+        uint2 clusters = instance_clusters(shadow_map_detail(m), inst, mesh);
+        uint count = (clusters.y + CULL_CHUNK - 1u) / CULL_CHUNK;
+        uint base;
+        InterlockedAdd(shadow_state[SHADOW_CHUNK_COUNT], count, base);
+        uint kept = base >= params.chunk_capacity ? 0u : min(count, params.chunk_capacity - base);
+        if (kept < count) InterlockedAdd(stats[0].dropped[CULL_LIST_SHADOW_CHUNKS], count - kept);
+        uint what = map | mip << SHADOW_CHUNK_MIP | (depth ? SHADOW_CHUNK_DEPTH : 0u) | (glass ? SHADOW_CHUNK_GLASS : 0u) | (rest ? SHADOW_CHUNK_REST : 0u);
+        for (uint k = 0u; k < kept; k++) {
+            uint first = k * CULL_CHUNK;
+            chunks[base + k] = uint4(instance, what, clusters.x + first, min(CULL_CHUNK, clusters.y - first));
+        }
+        if (kept > 0u) {
+            uint total = base + kept;
+            InterlockedMax(shadow_state[SHADOW_CLUSTER_DISPATCH], min(total, CULL_DISPATCH_X));
+            InterlockedMax(shadow_state[SHADOW_CLUSTER_DISPATCH + 1u], (total + CULL_DISPATCH_X - 1u) / CULL_DISPATCH_X);
+        }
     }
 }

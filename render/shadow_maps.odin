@@ -15,11 +15,13 @@ import "mirai:std/base"
 // screen, trace rays (shadow_maps.slang, shadow_maps.comp, shadow_map.vert,
 // direct_samples.comp).
 //
-// A map is a square of pages of SHADOW_PAGE texels. Only the pages the points
-// of the view read are drawn (shadow_mark.comp marks them, with the taps
-// around each point): each takes a page of the pool of the view, its atlas,
-// through the table of the pages (shadow_pages.comp), in the frame a point
-// first reads it. A page keeps its place while it is not needed, until
+// A map is a square of pages of SHADOW_PAGE texels at each of its mips. Only
+// the pages the points of the view read are drawn (shadow_mark.comp marks
+// them, with the taps around each point): each takes a page of the pool of the
+// view, its atlas, through the table of the pages (shadow_pages.comp), in the
+// frame a point first reads it, in one order every frame, the coarsest first,
+// so that where the pool runs out the finest pages are left out, the same
+// every frame, and their points read the nearest coarser page drawn. A page keeps its place while it is not needed, until
 // another page needs it, and it is drawn again while what stays changes
 // under it even then, so that a page a point reads is always that of this
 // frame. The cost follows what changed: a page draws again in the cache only
@@ -34,10 +36,9 @@ SHADOW_MAP_ROWS :: abi.SHADOW_MAP_ROWS
 SHADOW_DRAWS :: 3 // the clusters that hide whole, those of masked materials and those of glass (shadow_cull.slang)
 SHADOW_GROUP :: u32(256) // the threads of a group of shadow_maps.comp
 SHADOW_PAGE :: abi.SHADOW_PAGE
-SHADOW_MAP_SMALLEST :: SHADOW_PAGE
-SHADOW_MAP_LARGEST :: SHADOW_PAGE * abi.SHADOW_MAP_PAGES
 SHADOW_MAP_PAGES :: abi.SHADOW_MAP_PAGES
-SHADOW_MASK_WORDS :: abi.SHADOW_MASK_WORDS
+SHADOW_MAP_SIDE :: abi.SHADOW_MAP_SIDE
+SHADOW_MIPS :: abi.SHADOW_MIPS
 SHADOW_LIGHT_FACES :: abi.SHADOW_LIGHT_FACES
 SHADOW_SPOT_FACE :: abi.SHADOW_SPOT_FACE
 // The cosine of the half angle of the widest spot that takes one map along
@@ -48,16 +49,14 @@ SHADOW_RASTER_KEEP :: f32(0.01)
 SHADOW_RASTER_LIGHTS :: abi.SHADOW_RASTER_LIGHTS // the most lights rasterized in a frame, those that light most of the view
 // The half width of the first level of the sun, metres: each level after it
 // is twice as wide, a texel of its map as many times wider, and a point takes
-// the finest that holds it with the room of its taps.
-SHADOW_SUN_FIRST :: f32(8)
+// the one whose texel is about as wide as it (sun_pick of shadow_maps.slang),
+// the first serving what lies nearest the eye.
+SHADOW_SUN_FIRST :: f32(1)
 SHADOW_SUN_LEVELS :: abi.SHADOW_SUN_MAPS
 SHADOW_MAP_ORTHOGRAPHIC :: abi.SHADOW_MAP_ORTHOGRAPHIC
 // The frames after its last change an instance whose shadow changed twice
 // within them keeps moving (shadow_movers_update).
 SHADOW_MOVER_FRAMES :: u64(30)
-// The pages around the eye every level of the sun keeps, each way: what holds
-// the points no point of the view marks (the fog, the hits of rays).
-SHADOW_SUN_AROUND :: 1
 
 Gpu_Shadow_Map :: struct {
 	origin:  Vec3,
@@ -71,8 +70,8 @@ Gpu_Shadow_Map :: struct {
 	span:    Vec4,
 	// Its slot; the column and the row of the table its first page lies at
 	// (the scroll of a level of the sun, which keeps its pages where they are
-	// in the world), a byte each; its side, texels (0: no map); its light
-	// (max(u32): the sun).
+	// in the world), a byte each, and the mip it is read at << 16; its side at
+	// that mip, texels (0: no map); its light (max(u32): the sun).
 	rect:    [4]u32,
 }
 #assert(size_of(Gpu_Shadow_Map) == SHADOW_MAP_ROWS * 16)
@@ -98,13 +97,16 @@ Shadow_Buffers :: struct {
 // What the maps of a view keep: the light of each block of slots (the margin
 // between SHADOW_RASTER_KEEP and SHADOW_RASTER_SHARE keeps a light from going
 // back and forth), the map each slot held, the cache of what stays and the
-// atlas of what is read, a page of the pool each, and the buffer of the pages.
+// atlas of what is read, a page of the pool each, the table of the pages and
+// the buffer of the pages.
 Shadow_Raster :: struct {
 	raster:   [SHADOW_RASTER_LIGHTS]i32, // the light of each block + 1, 0: none
 	data:     rhi.Transient, // of this frame
 	cache:    rhi.Texture,   // the depth of what stays, by pages of the pool
-	atlas:    rhi.Texture,   // the cache with what moves, and the table of the pages in its last pages
+	atlas:    rhi.Texture,   // the cache with what moves
+	table:    rhi.Texture,   // an entry for each page of each slot (abi.SHADOW_PAGE_*)
 	pages:    rhi.Buffer,    // abi.SHADOW_WORDS_*
+	pool:     u32,           // the pages of the pool it gives, 0: all of them
 	held:     [SHADOW_SLOTS]Shadow_Held,
 	forget:   bool, // every page is let go of in the next frame
 	cut:      f32,  // the threshold of the cut the cache was drawn with
@@ -275,7 +277,9 @@ shadow_light_faces :: proc(wants: ^[abi.SHADOW_LIGHT_SLOTS]Shadow_Want, light: G
 // the table and the pool while it stays in the square, so walking draws only
 // the pages that come in. Along the light it reaches from the scene towards
 // the sun to two radii past its own point, which goes by steps of the radius
-// and stays while the eye does not leave its reach. As many levels as reach
+// and stays while the eye does not leave its reach; towards the sun it keeps
+// how far it reaches while the scene stays within that, so that the scene
+// rising a little or shrinking draws nothing again. As many levels as reach
 // as far as the scene from the eye, and the camera.
 @(private)
 shadow_sun_levels :: proc(wants: ^[SHADOW_SLOTS]Shadow_Want, toward: Vec3, eye: Vec3, camera_far: f32, scene_low, scene_high: Vec3, has_bounds: bool, held: []Shadow_Held) -> (levels: int) {
@@ -304,13 +308,15 @@ shadow_sun_levels :: proc(wants: ^[SHADOW_SLOTS]Shadow_Want, toward: Vec3, eye: 
 		h := held[k]
 		if h.m.rect.z != 0 && h.m.far == CASCADE_FAR * radius && at >= f32(h.grid.z - 1) * radius && at <= f32(h.grid.z + 2) * radius {grid.z = h.grid.z}
 		along := f32(grid.z) * radius
-		lo := -3 * radius
+		lo, top := -3 * radius, -3 * radius
 		if has_bounds {
 			for i in 0 ..< 8 {
 				p := Vec3{scene_high.x if i & 1 != 0 else scene_low.x, scene_high.y if i & 2 != 0 else scene_low.y, scene_high.z if i & 4 != 0 else scene_low.z}
+				top = min(top, linalg.dot(p, axis) - along)
 				lo = min(lo, math.floor((linalg.dot(p, axis) - 1 - along) / radius) * radius)
 			}
 		}
+		if h.m.rect.z != 0 && grid.z == h.grid.z && h.m.near <= top {lo = h.m.near}
 		x0, y0 := grid.x - HALF, grid.y - HALF
 		// The column and row of the table of the first page: its place on the grid, rows down.
 		ox, oy := u32(x0) % SHADOW_MAP_PAGES, u32(-(grid.y + HALF)) % SHADOW_MAP_PAGES
@@ -318,7 +324,7 @@ shadow_sun_levels :: proc(wants: ^[SHADOW_SLOTS]Shadow_Want, toward: Vec3, eye: 
 			m = {
 				origin = axis * along, right = sr, up = su, forward = axis, near = lo, far = CASCADE_FAR * radius, skip = lo, kind = SHADOW_MAP_ORTHOGRAPHIC,
 				span = {f32(x0) * page, f32(y0) * page, f32(x0 + SHADOW_MAP_PAGES) * page, f32(y0 + SHADOW_MAP_PAGES) * page},
-				rect = {u32(k), ox | oy << 8, SHADOW_MAP_LARGEST, max(u32)},
+				rect = {u32(k), ox | oy << 8, SHADOW_MAP_SIDE, max(u32)},
 			},
 			weight = 1, grid = grid,
 		}
@@ -463,19 +469,36 @@ shadow_movers_update :: proc(r: ^Renderer) {
 @(private)
 Shadow_Plan :: struct {
 	using shadow:   Shadow_Maps,
-	masks:          u32, // the word of the buffer of the maps the masks of the slots start at (Shadow_Slot_Masks)
+	plan:           u32, // the word of the buffer of the maps the plans of the slots start at (Shadow_Slot_Plan)
+	boxes:          u32, // and the boxes of what changed (Shadow_Box)
+	box_count:      u32,
 	movers:         u32, // words of the bits of what moves, and after them
 	moving_count:   u32, // the ranges of it that reach a map
 	moving_threads: u32, // the instances of those ranges
+	whole:          bool, // a slot lets go of every page: the round of what moves draws what stays too there
 	bits:           rhi.Transient,
 }
 
-// What the plan tells the pages of a slot this frame, a bit for each entry
-// of its table: let go of, what stays changed there, what moves was or is
-// there, and kept while no point reads it (the pages around the eye).
+// What the plan tells the pages of a slot this frame (shadow_pages.comp):
+// abi.SHADOW_PLAN_*; of a level of the sun, by how many pages it moved since
+// the frame before, the columns and rows that came in letting go of what they
+// held; and the pages of its safety net, the 2x2 nearest the eye, their first
+// and last column and row a byte each.
 @(private)
-Shadow_Slot_Masks :: struct {
-	reset, stale, moved, kept: Shadow_Mask,
+Shadow_Slot_Plan :: struct {
+	flags: u32,
+	shift: [2]i32,
+	net:   u32,
+}
+
+// A box of what changed for the maps (Occluder_Change), as the pages read it:
+// fine, then whether what moves changed there rather than what stays.
+@(private)
+Shadow_Box :: struct {
+	low:   Vec3,
+	fine:  f32,
+	high:  Vec3,
+	moved: u32,
 }
 
 // The maps of this frame: which lights, their faces and the levels of the
@@ -544,13 +567,13 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 		}
 	}
 	b.raster = blocks
-	// The faces of each light, the side of the map of each by how much of the
+	// The faces of each light, the mip each is read at by how much of the
 	// view it serves, no more than its points need: a map keeps the side it
 	// was held at while what it would take stays within a quarter of a step.
 	pixels := f32(t.width * t.height)
 	side_of :: proc(texels: f32) -> u32 {
-		side := SHADOW_MAP_SMALLEST
-		for side * 2 <= min(u32(math.sqrt(max(texels, 0))), SHADOW_MAP_LARGEST) {side *= 2}
+		side := SHADOW_PAGE
+		for side * 2 <= min(u32(math.sqrt(max(texels, 0))), SHADOW_MAP_SIDE) {side *= 2}
 		return side
 	}
 	for held_light, block in b.raster {
@@ -567,21 +590,22 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 			side := side_of(texels)
 			h := b.held[slot].m
 			if h.rect.z != 0 && h.rect.w == u32(light) && h.rect.z >= side_of(texels / 1.5625) && h.rect.z <= side_of(texels * 1.5625) {side = h.rect.z}
-			w.m.rect = {u32(slot), 0, side, u32(light)}
+			mip := u32(0)
+			for SHADOW_MAP_SIDE >> mip > side {mip += 1}
+			w.m.rect = {u32(slot), mip << 16, side, u32(light)}
 			wants[slot] = w
 		}
 	}
-	// What each slot lets go of, keeps, and where what stays and what moves
-	// changed in what it keeps; the pages around the eye of each level of the sun.
-	masks: [SHADOW_SLOTS]Shadow_Slot_Masks
-	stale, moved := &b.stale, &b.moved
+	// What each slot lets go of and the pages of the safety net of each; where
+	// what stays and what moves changed, the boxes do (shadow_pages.comp).
+	plans: [SHADOW_SLOTS]Shadow_Slot_Plan
 	for &w, slot in wants {
 		h := &b.held[slot]
-		ms := &masks[slot]
+		sp := &plans[slot]
 		// Forgotten, every page lets go of what it held.
-		if forget {ms.reset = SHADOW_MASK_ALL}
+		if forget {sp.flags |= abi.SHADOW_PLAN_RESET}
 		if w.m.rect.z == 0 {
-			if h.m.rect.z != 0 {ms.reset = SHADOW_MASK_ALL}
+			if h.m.rect.z != 0 {sp.flags |= abi.SHADOW_PLAN_RESET}
 			h^ = {}
 			continue
 		}
@@ -590,38 +614,30 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 			// A level that moved by whole pages keeps those that stay in it.
 			was, now := h.m, w.m
 			was.span, now.span, was.rect.y, now.rect.y = {}, {}, 0, 0
-			shift := [2]i32{w.grid.x - h.grid.x, w.grid.y - h.grid.y}
-			kept = was == now && w.grid.z == h.grid.z && abs(shift.x) < SHADOW_MAP_PAGES && abs(shift.y) < SHADOW_MAP_PAGES
-			if kept {
-				// The columns and the rows that came in, which held pages that left.
-				for page in 0 ..< SHADOW_MAP_PAGES * SHADOW_MAP_PAGES {
-					x, y := i32(page % SHADOW_MAP_PAGES), i32(page / SHADOW_MAP_PAGES)
-					in_x := shift.x > 0 ? x >= SHADOW_MAP_PAGES - shift.x : x < -shift.x
-					in_y := shift.y > 0 ? y < shift.y : y >= SHADOW_MAP_PAGES + shift.y
-					if in_x || in_y {mask_set(&ms.reset, shadow_page_entry(w.m, {u32(x), u32(y)}))}
-				}
-			}
+			sp.shift = {w.grid.x - h.grid.x, w.grid.y - h.grid.y}
+			kept = was == now && w.grid.z == h.grid.z && abs(sp.shift.x) < SHADOW_MAP_PAGES && abs(sp.shift.y) < SHADOW_MAP_PAGES
 		} else if kept {
-			kept = h.m == w.m
+			was, now := h.m, w.m
+			was.rect.y, was.rect.z, now.rect.y, now.rect.z = 0, 0, 0, 0
+			kept = was == now
 		}
-		if !kept {
-			if h.m.rect.z != 0 {ms.reset = SHADOW_MASK_ALL}
-		}
-		if stale.covers {ms.stale = SHADOW_MASK_ALL}
-		for box in stale.boxes[:stale.count] {
-			if !shadow_change_reaches(w.m, box) {continue}
-			if rect, ok := shadow_page_rect(w.m, box.low, box.high); ok {mask_pages(&ms.stale, w.m, rect)}
-		}
-		for box in moved.boxes[:moved.count] {
-			if !shadow_change_reaches(w.m, box) {continue}
-			if rect, ok := shadow_page_rect(w.m, box.low, box.high); ok {mask_pages(&ms.moved, w.m, rect)}
-		}
+		// A map new or changed whole (a light that turned or moved) draws its
+		// pages whole into the atlas alone this frame, and the cache the next.
+		if !kept {sp.flags |= abi.SHADOW_PLAN_RESET}
+		if sp.flags & abi.SHADOW_PLAN_RESET != 0 {plan.whole = true}
+		if b.stale.covers {sp.flags |= abi.SHADOW_PLAN_STALE}
+		sp.flags |= abi.SHADOW_PLAN_NET
 		if slot < SHADOW_SUN_LEVELS {
-			c := SHADOW_MAP_PAGES / 2
-			mask_pages(&ms.kept, w.m, {u32(c - 1 - SHADOW_SUN_AROUND), u32(c - 1 - SHADOW_SUN_AROUND), u32(c + SHADOW_SUN_AROUND), u32(c + SHADOW_SUN_AROUND)})
+			// The 2x2 pages nearest the point of the eye, in pages of the level.
+			page := (w.m.span.z - w.m.span.x) / SHADOW_MAP_PAGES
+			at := Vec2{(linalg.dot(eye, w.m.right) - w.m.span.x) / page, (w.m.span.w - linalg.dot(eye, w.m.up)) / page} - 0.5
+			low := linalg.clamp(linalg.floor(at), 0, SHADOW_MAP_PAGES - 1)
+			high := linalg.clamp(linalg.ceil(at), 0, SHADOW_MAP_PAGES - 1)
+			sp.net = u32(low.x) | u32(low.y) << 8 | u32(high.x) << 16 | u32(high.y) << 24
 		}
 		h^ = {m = w.m, grid = w.grid}
 	}
+	stale, moved := b.stale, b.moved
 	b.stale, b.moved = {}, {}
 	// The bits of what moves: the instances, then the batches drawn, after
 	// those of the scene; then the ranges of instances that reach a map, which
@@ -680,17 +696,19 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 	}
 	// The buffer of this frame: a word for each light of the scene (its first
 	// slot + 1, and from bit SHADOW_LIGHT_FACES the faces it has), the map of
-	// each slot and the masks of each.
+	// each slot, the plan of each, and the boxes of what changed.
 	all_lights := u32(len(s.lights) + light_region_lights(s.light_region))
 	plan.rows = (all_lights + 3) / 4
-	plan.masks = plan.rows * 4 + SHADOW_SLOTS * SHADOW_MAP_ROWS * 4
-	words, data := rhi.frame_alloc_typed(r.device, u32, int(plan.masks) + SHADOW_SLOTS * size_of(Shadow_Slot_Masks) / 4)
+	plan.plan = plan.rows * 4 + SHADOW_SLOTS * SHADOW_MAP_ROWS * 4
+	plan.boxes = plan.plan + SHADOW_SLOTS * size_of(Shadow_Slot_Plan) / 4
+	plan.box_count = u32(stale.count + moved.count)
+	words, data := rhi.frame_alloc_typed(r.device, u32, int(plan.boxes + plan.box_count * size_of(Shadow_Box) / 4))
 	if words == nil {set_error(r, "transient ring exhausted with the shadow maps"); return plan, false}
 	for &word in words[:plan.rows * 4] {word = 0}
 	any := false
 	for w, slot in wants {
 		(cast(^Gpu_Shadow_Map)&words[plan.rows * 4 + u32(slot) * SHADOW_MAP_ROWS * 4])^ = w.m
-		(cast(^Shadow_Slot_Masks)&words[plan.masks + u32(slot) * size_of(Shadow_Slot_Masks) / 4])^ = masks[slot]
+		(cast(^Shadow_Slot_Plan)&words[plan.plan + u32(slot) * size_of(Shadow_Slot_Plan) / 4])^ = plans[slot]
 		if w.m.rect.z == 0 {continue}
 		any = true
 		if slot < SHADOW_SUN_LEVELS {continue}
@@ -698,76 +716,18 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 		block := (u32(slot) - SHADOW_SUN_LEVELS) / abi.SHADOW_LIGHT_SLOTS
 		words[light] |= (SHADOW_SUN_LEVELS + block * abi.SHADOW_LIGHT_SLOTS + 1) | 1 << (SHADOW_LIGHT_FACES + (u32(slot) - SHADOW_SUN_LEVELS) % abi.SHADOW_LIGHT_SLOTS)
 	}
+	boxes := ([^]Shadow_Box)(raw_data(words[plan.boxes:]))[:plan.box_count]
+	for box, i in stale.boxes[:stale.count] {boxes[i] = {low = box.low, fine = box.fine, high = box.high}}
+	for box, i in moved.boxes[:moved.count] {boxes[stale.count + i] = {low = box.low, fine = box.fine, high = box.high, moved = 1}}
 	plan.maps = SHADOW_SLOTS
 	plan.on = 1 if any else 0
 	b.data = data
 	return plan, true
 }
 
-// A bit for each entry of the table of a slot, or for each page of its map
-// by row of SHADOW_MAP_PAGES: their order is the same but for the scroll of
-// a level of the sun (shadow_page_entry).
-@(private)
-Shadow_Mask :: [SHADOW_MASK_WORDS]u32
-@(private)
-SHADOW_MASK_ALL :: Shadow_Mask{0 ..< SHADOW_MASK_WORDS = max(u32)}
-
-@(private)
-mask_set :: proc "contextless" (mask: ^Shadow_Mask, bit: u32) {mask[bit / 32] |= 1 << (bit % 32)}
-
-// The entry of the table of its slot a page of a map lies at, as
-// shadow_page_entry of shadow_pages.slang.
-@(private)
-shadow_page_entry :: proc "contextless" (m: Gpu_Shadow_Map, page: [2]u32) -> u32 {
-	ox, oy := m.rect.y & 0xFF, (m.rect.y >> 8) & 0xFF
-	return ((page.y + oy) % SHADOW_MAP_PAGES) * SHADOW_MAP_PAGES + (page.x + ox) % SHADOW_MAP_PAGES
-}
-
-// Sets the entries of the pages of a map from rect.xy to rect.zw, both included.
-@(private)
-mask_pages :: proc "contextless" (mask: ^Shadow_Mask, m: Gpu_Shadow_Map, rect: [4]u32) {
-	for y in rect.y ..= min(rect.w, SHADOW_MAP_PAGES - 1) {
-		for x in rect.x ..= min(rect.z, SHADOW_MAP_PAGES - 1) {mask_set(mask, shadow_page_entry(m, {x, y}))}
-	}
-}
-
-// A page of a map as the draws of the cache name it: the map, its column and
-// its row (shadow_page_word of shadow_cull.slang).
-@(private)
-shadow_page_word :: proc "contextless" (map_index: u32, page: [2]u32) -> u32 {return map_index | page.x << 8 | page.y << 16}
-
-// The pages of a map a box of the world covers from the light, the first
-// column and row then the last, as shadow_page_rect of shadow_cull.slang;
-// false where it covers none. A box that reaches the plane of a perspective
-// one covers all.
-@(private)
-shadow_page_rect :: proc "contextless" (m: Gpu_Shadow_Map, low, high: Vec3) -> (rect: [4]u32, ok: bool) {
-	side := f32(m.rect.z)
-	last := m.rect.z / SHADOW_PAGE - 1
-	lo, hi := Vec2{max(f32), max(f32)}, Vec2{-max(f32), -max(f32)}
-	for corner in 0 ..< 8 {
-		p := Vec3{high.x if corner & 1 != 0 else low.x, high.y if corner & 2 != 0 else low.y, high.z if corner & 4 != 0 else low.z} - m.origin
-		local := Vec3{linalg.dot(p, m.right), linalg.dot(p, m.up), linalg.dot(p, m.forward)}
-		at := local.xy
-		if m.kind != SHADOW_MAP_ORTHOGRAPHIC {
-			if local.z <= m.near * 0.5 {return {0, 0, last, last}, true}
-			at /= local.z
-		}
-		lo, hi = linalg.min(lo, at), linalg.max(hi, at)
-	}
-	// Texels from the corner of the square, row 0 at the top.
-	x0 := (lo.x - m.span.x) / (m.span.z - m.span.x) * side
-	x1 := (hi.x - m.span.x) / (m.span.z - m.span.x) * side
-	y0 := (m.span.w - hi.y) / (m.span.w - m.span.y) * side
-	y1 := (m.span.w - lo.y) / (m.span.w - m.span.y) * side
-	if x1 < 0 || y1 < 0 || x0 >= side || y0 >= side {return}
-	page :: proc "contextless" (texel: f32, last: u32) -> u32 {return u32(clamp(texel, 0, f32(last + 1) * f32(SHADOW_PAGE) - 1)) / SHADOW_PAGE}
-	return {page(x0, last), page(y0, last), page(x1, last), page(y1, last)}, true
-}
-
 // shadow_cull.slang Params_Block.
 @(private)
-Shadow_Params :: struct {instances, maps, rows, glass, chunk_capacity, entry_capacity, list, moving, movers, listed, ranges, masks: u32}
+Shadow_Params :: struct {instances, maps, rows, glass, chunk_capacity, entry_capacity, list, moving, movers, listed, ranges, masks, plan, pad0, pad1, pad2: u32}
 
 // The rounds of the cull: what stays, into the pages the cache draws; what
 // moves, into the pages the atlas composes; the glass, into every page ready.
@@ -785,9 +745,11 @@ shadow_params :: proc(p: ^Pass, plan: Shadow_Plan, round: Shadow_Round) -> Shado
 		instances = p.instance_count + p.batch_slots, maps = SHADOW_SLOTS, rows = plan.rows, glass = 1 if round == .Glass else 0,
 		list = abi.SHADOW_WORDS_SLOTS + u32(round) * SHADOW_SLOTS, masks = masks[round],
 		chunk_capacity = s.cull_capacity[.Shadow_Chunks], entry_capacity = s.cull_capacity[.Shadow_Entries],
-		moving = u32(round), movers = plan.movers,
+		moving = u32(round), movers = plan.movers, plan = plan.plan,
 	}
-	if round == .Moves {params.instances, params.listed, params.ranges = plan.moving_threads, 1, plan.moving_count}
+	// The round of what moves culls the movers alone, but in a frame a slot
+	// draws whole into the atlas.
+	if round == .Moves && !plan.whole {params.instances, params.listed, params.ranges = plan.moving_threads, 1, plan.moving_count}
 	return params
 }
 
@@ -825,7 +787,7 @@ shadow_cull :: proc(p: ^Pass, plan: Shadow_Plan, params: Shadow_Params, round: S
 
 // The depth a round culled into the cache or the atlas: of the cache, first
 // the pages it draws, cleared; of the atlas, first the pages it composes,
-// from the cache (held), and then the table of the pages into its last pages.
+// from the cache (held).
 @(private)
 shadow_draw :: proc(p: ^Pass, plan: Shadow_Plan, params: Shadow_Params, atlas: rhi.Texture, name: string, cache := false, held: rhi.Texture = 0) {
 	r, cmd, t := p.r, p.cmd, p.t
@@ -864,20 +826,16 @@ shadow_draw :: proc(p: ^Pass, plan: Shadow_Plan, params: Shadow_Params, atlas: r
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS3, pages)
 		rhi.cmd_draw_indirect(cmd, d.state, u64(i) * size_of(Gpu_Draw), 1)
 	}
-	if !cache {
-		square(p, params, .Shadow_Map_Table, 0, 2, 0)
-		rhi.cmd_draw(cmd, 6, 1)
-	}
 	rhi.cmd_end_render_pass(cmd)
 }
 
 // The steps of shadow_pages.comp, and what each dispatches over.
 @(private)
-Shadow_Pages_Step :: enum u32 {Entries, Pool, Allocate, Finish}
+Shadow_Pages_Step :: enum u32 {Invalidate, Entries, Rank, Sums, Pool, Allocate, Propagate, Finish}
 
 // shadow_pages.comp Params_Block.
 @(private)
-Shadow_Pages_Params :: struct {step, frame, rows, masks, groups_stays, groups_moves, groups_glass, pad: u32}
+Shadow_Pages_Params :: struct {step, frame, rows, plan, boxes, box_count, sun, pool, groups_stays, groups_moves, groups_glass, fresh: u32}
 
 // The maps of the view this frame, drawn where its points read them. mark:
 // the parameters of the direct light (direct_maps.comp), which the marks of
@@ -893,9 +851,10 @@ shadow_maps_pass :: proc(p: ^Pass, mark: ^$T, scale: u32, grid: rhi.Buffer) -> (
 	fresh := b.cache == 0 || b.cut != r.settings.lod_error_pixels
 	plan, ok := shadow_maps_plan(p, fresh)
 	if !ok || plan.on == 0 {return}
-	made := b.pages == 0
+	made := b.pages == 0 || b.table == 0
 	good := target(r, cmd, &b.cache, SHADOW_POOL, SHADOW_POOL, .D32_Float, {.Depth_Target, .Sampled}, "shadow cache") &&
-	        target(r, cmd, &b.atlas, SHADOW_POOL, SHADOW_POOL, .D32_Float, {.Depth_Target, .Sampled}, "shadow atlas")
+	        target(r, cmd, &b.atlas, SHADOW_POOL, SHADOW_POOL, .D32_Float, {.Depth_Target, .Sampled}, "shadow atlas") &&
+	        target(r, cmd, &b.table, abi.SHADOW_SLOT_ENTRIES, SHADOW_SLOTS, .R32_Uint, {.Storage, .Sampled}, "shadow table")
 	pages_ok, _ := ensure_buffer(r, &b.pages, u64(abi.SHADOW_WORDS) * 4, {.Storage, .Indirect, .Transfer_Dst, .Transfer_Src}, "shadow pages")
 	state_ok, _ := ensure_buffer(r, &d.state, size_of(Gpu_Shadow_State), {.Storage, .Indirect, .Transfer_Dst}, "shadow map state")
 	table_ok, _ := ensure_buffer(r, &d.table, b.data.size, {.Storage, .Transfer_Dst}, "shadow maps")
@@ -930,6 +889,8 @@ shadow_maps_pass :: proc(p: ^Pass, mark: ^$T, scale: u32, grid: rhi.Buffer) -> (
 	rhi.cmd_timestamp(cmd, "shadow pages")
 	if made {rhi.cmd_fill_buffer(cmd, b.pages, 0, u64(abi.SHADOW_WORDS) * 4, 0)}
 	rhi.cmd_fill_buffer(cmd, b.pages, u64(abi.SHADOW_WORDS_NEEDED) * 4, u64(abi.SHADOW_WORDS_SLOTS - abi.SHADOW_WORDS_NEEDED) * 4, 0)
+	// The table is written in the steps of the pages and read after them.
+	rhi.cmd_bind_texture(cmd, SLOT_SHADOW_TABLE, r.dummy_layers)
 	points := [2]u32{(t.width + scale - 1) / scale, (t.height + scale - 1) / scale}
 	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Shadow_Mark])
 	set_params(cmd, mark)
@@ -940,8 +901,9 @@ shadow_maps_pass :: proc(p: ^Pass, mark: ^$T, scale: u32, grid: rhi.Buffer) -> (
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS9, d.table)
 	rhi.cmd_dispatch(cmd, groups(points.x, 8), groups(points.y, 8))
 	steps := Shadow_Pages_Params{
-		frame = b.frame, rows = plan.rows, masks = plan.masks,
-		groups_stays = groups(p.instance_count + p.batch_slots, SHADOW_GROUP), groups_moves = groups(plan.moving_threads, SHADOW_GROUP),
+		frame = b.frame, rows = plan.rows, plan = plan.plan, boxes = plan.boxes, box_count = plan.box_count, sun = plan.sun >> 16,
+		pool = b.pool if b.pool != 0 else abi.SHADOW_POOL_PAGES, fresh = 1 if made else 0,
+		groups_stays = groups(p.instance_count + p.batch_slots, SHADOW_GROUP), groups_moves = groups(p.instance_count + p.batch_slots if plan.whole else plan.moving_threads, SHADOW_GROUP),
 		groups_glass = groups(p.instance_count + p.batch_slots, SHADOW_GROUP),
 	}
 	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Shadow_Pages])
@@ -950,9 +912,14 @@ shadow_maps_pass :: proc(p: ^Pass, mark: ^$T, scale: u32, grid: rhi.Buffer) -> (
 		set_params(cmd, &steps)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS0, d.table)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS2, b.pages)
-		threads := [Shadow_Pages_Step]u32{.Entries = SHADOW_SLOTS * abi.SHADOW_SLOT_PAGES, .Pool = abi.SHADOW_POOL_PAGES, .Allocate = abi.SHADOW_REQUESTS, .Finish = 1}
-		rhi.cmd_dispatch(cmd, groups(threads[step], 64), 1)
+		rhi.cmd_bind_texture(cmd, SLOT_PASS3, b.table)
+		threads := [Shadow_Pages_Step]u32{
+			.Invalidate = plan.box_count * SHADOW_SLOTS, .Entries = SHADOW_SLOTS * abi.SHADOW_SLOT_ENTRIES, .Rank = abi.SHADOW_RANK_WORDS, .Sums = 1,
+			.Pool = 1, .Allocate = abi.SHADOW_RANK_WORDS, .Propagate = SHADOW_SLOTS * abi.SHADOW_SLOT_ENTRIES, .Finish = 1,
+		}
+		if threads[step] > 0 {rhi.cmd_dispatch(cmd, groups(threads[step], abi.SHADOW_RANK_GROUP), 1)}
 	}
+	rhi.cmd_bind_texture(cmd, SLOT_SHADOW_TABLE, b.table)
 	r.stats.shadow_movers += plan.moving_threads
 	// What stays, into the pages of the cache it draws.
 	rhi.cmd_timestamp(cmd, "shadow cull")
@@ -997,6 +964,7 @@ destroy_shadow_maps :: proc(r: ^Renderer, t: ^Targets) {
 	shared_targets_release(r, targets_frame(&t.shadow_targets))
 	if t.shadow_raster.cache != 0 {rhi.texture_destroy(r.device, t.shadow_raster.cache)}
 	if t.shadow_raster.atlas != 0 {rhi.texture_destroy(r.device, t.shadow_raster.atlas)}
+	if t.shadow_raster.table != 0 {rhi.texture_destroy(r.device, t.shadow_raster.table)}
 	if t.shadow_raster.pages != 0 {rhi.buffer_destroy(r.device, t.shadow_raster.pages)}
 	t.shadow_raster = {}
 }
