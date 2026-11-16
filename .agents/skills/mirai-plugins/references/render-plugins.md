@@ -280,16 +280,17 @@ boxes.
 - `fog_far.comp` stores the farthest depth that each column sees (one group per column over its
   pixels; what has no surface is seen without end) and `fog_reach.comp`, that of that
   column and the two on each side: up to there the integration filter and the interpolation of
-  `fog_apply` read the grid. A cell whose previous slice starts farther is hidden: it holds no
-  medium. With `Every_Frame` they do not run.
+  `fog_apply` read the grid. A cell whose previous slice starts farther, in the grid or past it,
+  is hidden: it holds no medium and no light and runs nothing else, and the frame it is shown,
+  with no light to keep, it is lit whole. With `Every_Frame` they do not run.
 - `fog_light.comp` takes at each froxel a fixed point of the cell and writes two textures: the
   medium of the volumes there, with the wisps of the variable ones as they are now, and the light
   that point sends for each unit of `fog_amount` of its medium, a measure of what it scatters and
   stops that grows with its density, so that a medium that only glows, black, also has its light
   (a cell out of its turn copies its reprojected light, unless what it gets changed or it had no
-  medium, and one without history is lit at once). The light is weighted with the mean medium
-  of each
-  volume, not that of this frame: it does not depend on where the wisps are. Where there is a medium
+  medium or was hidden, and one without history is lit at once). The light is weighted with the
+  mean medium of each volume, not that of this frame: it does not depend on where the wisps are.
+  Where there is a medium
   that scatters, it lights it with the light of the engine's media (`shaders/include/media.slang`,
   the same as the volumes of [`vfx`](../../mirai-world/references/vfx.md#volumes)), each light by
   its `scattering` share ([shares](../../mirai-rendering/references/lights.md#local-lights)) and

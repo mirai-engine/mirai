@@ -505,6 +505,7 @@ fog_light_read :: proc(t: ^testing.T, f: ^Gpu_Fixture) -> [][4]f32 {
 // from: from the frame the lamps turn on, within a few frames each cell takes
 // what each lamp gives it alone, added up (no lamp dropped, no light that
 // leaks), and keeps it from frame to frame, with no light that comes and goes.
+// A cell a wall hides holds no light, and takes it the frame the wall goes.
 @(test)
 fog_cells_take_what_each_light_gives_them_and_hold_it :: proc(t: ^testing.T) {
 	f := new(Gpu_Fixture)
@@ -563,6 +564,23 @@ fog_cells_take_what_each_light_gives_them_and_hold_it :: proc(t: ^testing.T) {
 		flicker: f32
 		for k in FRAMES - 10 ..< FRAMES {flicker = max(flicker, apart(seen[k], seen[k - 1]))}
 		testing.expectf(t, flicker < 0.01, "%s: a cell keeps its light from frame to frame, %.4f apart at most", what, flicker)
+		// A wall just inside the fog over the left of the view, then gone.
+		near := gpu.Instance_Desc{object_id = 2, mesh = f.cube, transform = trs({-25, 0, -2}, {50, 50, 0.1}), tint = {0, 0, 0}}
+		gpu.scene_update(r, 0, {wall, near}, true)
+		for _ in 0 ..< 8 {fog_frame(t, f, camera, 0, {haze}, places, poses)}
+		hiding := fog_light_read(t, f)
+		gpu.scene_update(r, 0, {wall}, true)
+		fog_frame(t, f, camera, 0, {haze}, places, poses)
+		shown := fog_light_read(t, f)
+		if hiding == nil || shown == nil {return}
+		hidden, unlit := 0, 0
+		for cell, i in sum {
+			if cell.a < 1 || cell.g < 1e-3 {continue}
+			hidden += int(hiding[i].a == 0)
+			unlit += int(shown[i].a < 1)
+		}
+		testing.expectf(t, hidden > 100, "%s: the cells behind the wall hold no light, %d of them", what, hidden)
+		testing.expectf(t, unlit == 0 && apart(shown, sum) < 0.03, "%s: the frame the wall goes, each cell has its light: %d without, %.3f apart", what, unlit, apart(shown, sum))
 		free_all(context.temp_allocator)
 	}
 	expect_clean(t, f.device)
