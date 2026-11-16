@@ -8,6 +8,7 @@
 #include "native.slang"
 #include "common.slang"
 #include "origin.slang"
+#include "terrain_blend.slang"
 #include "terrain_projection.slang"
 #include <constants/plugins/terrain.slang>
 #define MIRAI_GROUP_X 64

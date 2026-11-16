@@ -1,8 +1,7 @@
 #ifndef TERRAIN_BLEND_SLANG
 #define TERRAIN_BLEND_SLANG
-// What of the weights at a point shows: of its layers (Terrain_Layers, the
-// relief of terrain_displace.comp) and of the projections of a layer
-// (terrain_projection.slang). Each weight shows less that of the third
+// What of the weights of the layers at a point shows (Terrain_Layers, the
+// relief of terrain_displace.comp). Each weight shows less that of the third
 // heaviest, so the two heaviest show and a layer comes in and goes where it
 // weighs as much as the third, at nothing: no pair hands over with a step.
 // Where the three weigh within TERRAIN_THIRD_BAND of each other, two would

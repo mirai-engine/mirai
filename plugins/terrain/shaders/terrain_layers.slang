@@ -5,6 +5,7 @@
 //! parameter layers {"kind":"texture"}
 //! parameter piece {"default":[2,2,0,1],"min":0,"max":100000}
 //! parameter palette {"default":[0,1,2,3],"min":0,"max":31}
+#include "terrain_blend.slang"
 #include "terrain_projection.slang"
 #include "terrain_surface.slang"
 // A stage that evaluates the layers outside a program (the tests of the
