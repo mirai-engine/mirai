@@ -512,6 +512,7 @@ app_frame_end :: proc(app:^App) {
     profile_gpu_want(app)
     drawn:=app_draw(app,frame.window)
     app_gpu_failure_check(app)
+    capacities_frame(app)
     base.profile_end(zone)
     app.extras.layer_count,app.extras.panel_count,app.extras.debug_count=0,0,0
     clear(&app.extras.instances)

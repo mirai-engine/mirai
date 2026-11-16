@@ -400,7 +400,7 @@ Scene_State :: struct {
 	shadow_chunks:        rhi.Buffer, // the chunks the instance pass of the cull of the maps of the shadows hands its cluster pass
 	shadow_entries:       rhi.Buffer, // the clusters the maps of the shadows draw (shadow_cull.slang)
 	cull_capacity:        [Cull_List]u32, // of those lists, in entries
-	cull_wanted:          [Cull_List]u32, // what a frame that dropped asked for: they grow to it
+	cull_wanted:          [Cull_List]u32, // what a frame that dropped asked for since the marks were set (renderer_capacity_marks_set): they grow to it
 	candidate_buffer:     rhi.Buffer, // per instance and slot of a batch: rejected by the phase 0 occlusion test
 	batch:                Batch_State,
 	tlas:                 rhi.Accel,
@@ -2308,6 +2308,32 @@ renderer_reset_history :: proc(r:^Renderer,reset_camera:bool=false) {
 
 @(private)
 highlight_flags :: proc "contextless" (level: u8) -> u32 {return (u32(level) << INSTANCE_HIGHLIGHT_SHIFT) & INSTANCE_HIGHLIGHT_MASK}
+
+// The most the lists that grow asked for (the lists of the cull and the
+// material points): a list that dropped asked for what it held and what it
+// dropped; one that did not, for no more than the mark it started from. The
+// host keeps them by scene, so that a scene seen again starts its lists there
+// and drops nothing the first time.
+Capacity_Marks :: struct {
+	cull:   [Cull_List]u32,
+	points: u32,
+}
+
+// The most a mark asks of a list of the cull, in entries: one read from
+// elsewhere past it is taken at it.
+CULL_MARK_MAX :: 1 << 24
+
+renderer_capacity_marks :: proc "contextless" (r: ^Renderer) -> Capacity_Marks {
+	return {r.scene.cull_wanted, r.points.wanted}
+}
+
+// The lists grow to marks before the next frame, as after a frame that asked
+// for them, and keep what they hold beyond them; what they ask for from now
+// on counts from marks.
+renderer_capacity_marks_set :: proc "contextless" (r: ^Renderer, marks: Capacity_Marks) {
+	for &wanted, list in r.scene.cull_wanted {wanted = min(marks.cull[list], CULL_MARK_MAX)}
+	r.points.wanted = min(marks.points, POINTS_MAX)
+}
 
 // Ensures GPU capacity for the current instance/light sets (between frames).
 @(private)
