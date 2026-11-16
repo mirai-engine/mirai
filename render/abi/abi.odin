@@ -222,6 +222,11 @@ SHADOW_PLAN_RESET          :: u32(1)
 SHADOW_PLAN_STALE          :: u32(2)
 SHADOW_PLAN_NET            :: u32(4)
 SHADOW_BOX_ROWS            :: 2
+// The farthest depth the cache holds over blocks of each page of its pool
+// (render.Shadow_Raster.hiz): SHADOW_HIZ_BLOCK texels a side at its first
+// mip, each mip after twice as wide, the last the whole page.
+SHADOW_HIZ_BLOCK           :: u32(8)
+SHADOW_HIZ_MIPS            :: 5
 // The words of the buffer of the pages of a view (render.Shadow_Raster.pages):
 // the slot and entry each page of the pool holds + 1, the frame it was last
 // read in, and a bit for each entry of each slot (SHADOW_MASK_WORDS a slot)
@@ -285,9 +290,11 @@ SHADOW_COUNT_LEFT          :: 5
 SHADOW_COUNT_SLOTS         :: 6 // three
 // The arguments: the dispatches of the cull of the cache, of the atlas and of
 // the glass, three words each, then the draws of the pages the cache clears
-// and the atlas copies from it, four each.
+// and the atlas copies from it, four each, and the dispatch of the farthest
+// depth of the pages the cache drew.
 SHADOW_ARGS_DISPATCH       :: 0
 SHADOW_ARGS_DRAW           :: 9
+SHADOW_ARGS_HIZ            :: 17
 REFLECTION_SHARED_ROUGHNESS :: f32(0.15)
 
 // The probe volume, and the rays of its contact occlusion at each pixel.

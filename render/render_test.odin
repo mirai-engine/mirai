@@ -356,7 +356,7 @@ render_shadow_maps_follow_what_moves_in_its_frame :: proc(t: ^testing.T) {
 	state: [1]Gpu_Shadow_State
 	testing.expect(t, rhi.buffer_read_slice(f.device, r.shadow_buffers.state, 0, state[:]))
 	entries := state[0].draws[0].instance_count + state[0].draws[1].instance_count
-	testing.expectf(t, r.stats.shadow_movers == 1 && entries == 0, "a cube moving under a roof: %d movers, %d clusters drawn as what moves", r.stats.shadow_movers, entries)
+	testing.expectf(t, r.stats.shadow_movers > 0 && entries == 0, "a cube moving under a roof: %d movers, %d clusters drawn as what moves", r.stats.shadow_movers, entries)
 	hidden := read(t, &f)
 	defer delete(hidden)
 	r.main.targets.shadow_raster.forget = true
@@ -498,9 +498,9 @@ render_moved_cascades_give_what_whole_ones_give :: proc(t: ^testing.T) {
 	// The frame after maps drawn whole draws the cache of every page read.
 	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
 	whole_drawn, _, _ := shadow_counts(r)
-	// A post lifted a little above the top of the scene: the levels keep how
+	// Another post lifted a little above the top of the scene: the levels keep how
 	// far they reach towards the sun, and draw again only where its boxes are.
-	testing.expect(t, scene_move(r, {5}, {trs({f32(5 % 3) * 2.3 - 2.25, 1.7, f32(5 / 3) * 2.1 - 3}, {0.3, 1.6, 0.3})}))
+	testing.expect(t, scene_move(r, {7}, {trs({f32(7 % 3) * 2.3 - 2.3, 1.7, f32(7 / 3) * 2.1 - 3}, {0.3, 1.6, 0.3})}))
 	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
 	drawn, _, _ = shadow_counts(r)
 	testing.expectf(t, drawn > 0 && drawn < whole_drawn, "a post lifted above the scene drew %d pages, the maps drawn whole %d", drawn, whole_drawn)

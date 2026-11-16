@@ -45,6 +45,10 @@ struct Params_Block { uint step; uint frame; uint rows; uint plan; uint boxes; u
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 [[vk::binding(SLOT_PASS0, 0)]] StructuredBuffer<uint4> shadow_data : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);
 [[vk::binding(SLOT_PASS2, 0)]] RWStructuredBuffer<uint> pages : register(MIRAI_REGISTER(u, SLOT_PASS2), space0);
+// The farthest depth the cache held over the blocks of each page of the pool
+// before this frame drew it (shadow_hiz.comp), its mips.
+[[vk::binding(SLOT_PASS4, 0)]] Texture2D<float4> hiz : register(MIRAI_REGISTER(t, SLOT_PASS4), space0);
+#include "shadow_hidden.slang"
 
 #define STEP_INVALIDATE 0u
 #define STEP_ENTRIES 1u
@@ -68,15 +72,6 @@ void mask_set(uint region, uint slot, uint entry) {
     uint word = region + slot * SHADOW_MASK_WORDS + (entry >> 5u), bit = 1u << (entry & 31u);
     if ((pages[word] & bit) == 0u) InterlockedOr(pages[word], bit);
 }
-// The bits of entries first to last of a slot, both included.
-void mask_run(uint region, uint slot, uint first, uint last) {
-    for (uint word = first >> 5u; word <= last >> 5u; word++) {
-        uint low = word == first >> 5u ? first & 31u : 0u, high = word == last >> 5u ? last & 31u : 31u;
-        uint bits = (high == 31u ? 0xFFFFFFFFu : (1u << (high + 1u)) - 1u) & ~((1u << low) - 1u);
-        InterlockedOr(pages[region + slot * SHADOW_MASK_WORDS + word], bits);
-    }
-}
-
 // The narrowest texel of a map over a box of the world, metres
 // (render.shadow_map_finest).
 float shadow_map_finest(Shadow_Map m, float3 low, float3 high) {
@@ -88,9 +83,10 @@ float shadow_map_finest(Shadow_Map m, float3 low, float3 high) {
 }
 
 // A page of a slot in a round: its bit, its slot listed once, the pages of
-// each of its mips it spans, and of the cache and the atlas, the page listed
-// to draw.
-void listed(uint round, uint slot, uint entry, uint2 page) {
+// each of its mips it spans, and of the cache and the atlas, its page of the
+// pool listed to draw, of the atlas with SHADOW_JOB_HELD where the cache holds
+// it this frame.
+void listed(uint round, uint slot, uint entry, uint2 page, uint job) {
     uint masks[3] = {SHADOW_WORDS_DRAWN, SHADOW_WORDS_COMPOSE, SHADOW_WORDS_READY};
     InterlockedOr(pages[masks[round] + slot * SHADOW_MASK_WORDS + (entry >> 5u)], 1u << (entry & 31u));
     uint mip = shadow_entry_mip(entry);
@@ -109,11 +105,8 @@ void listed(uint round, uint slot, uint entry, uint2 page) {
     if (round == ROUND_READY) return;
     uint at;
     InterlockedAdd(pages[SHADOW_WORDS_COUNTS + (round == ROUND_STAYS ? SHADOW_COUNT_DRAWN : SHADOW_COUNT_COMPOSED)], 1u, at);
-    if (at < SHADOW_POOL_PAGES) pages[SHADOW_WORDS_JOBS + round * SHADOW_POOL_PAGES + at] = shadow_page_word(slot, mip, page);
+    if (at < SHADOW_POOL_PAGES) pages[SHADOW_WORDS_JOBS + round * SHADOW_POOL_PAGES + at] = job;
 }
-
-// A page of a map as a word: the map, its column, its row and its mip (shadow_cull.slang).
-uint shadow_page_word(uint map, uint mip, uint2 page) { return map | page.x << 8u | page.y << 15u | mip << 22u; }
 
 // The word of the masks of the pages asked for of rank word v
 // (SHADOW_RANK_WORDS): its mask, slot and word.
@@ -175,15 +168,12 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
             uint4 rect;
             if (fine > 0.0 && !(shadow_map_finest(m, low, high) < fine)) continue;
             if (!shadow_page_rect(m, low, high, rect)) continue;
-            uint n = shadow_mip_pages(mip);
             for (uint y = rect.y; y <= rect.w; y++) {
-                uint first = shadow_page_entry(m.rect, uint2(rect.x, y)), last = shadow_page_entry(m.rect, uint2(rect.z, y));
-                if (first <= last) {
-                    mask_run(region, slot, first, last);
-                } else {
-                    uint row = first - (first - shadow_mip_base(mip)) % n;
-                    mask_run(region, slot, first, row + n - 1u);
-                    mask_run(region, slot, row, last);
+                for (uint x = rect.x; x <= rect.z; x++) {
+                    // Where the cache holds the page and hides the box, the change shows nowhere in it.
+                    uint entry = shadow_page_entry(m.rect, uint2(x, y)), e = shadow_table_entry(slot, entry);
+                    if ((e & SHADOW_PAGE_CACHED) != 0u && shadow_box_hidden(hiz, m, uint2(x, y), (e & SHADOW_ENTRY_POOL) - 1u, low, high)) continue;
+                    mask_set(region, slot, entry);
                 }
             }
         }
@@ -223,13 +213,14 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
         if (needed && e == 0u) {
             mask_set(net ? SHADOW_WORDS_FIRST : SHADOW_WORDS_ASKED, slot, entry);
         } else if (needed) {
-            pages[SHADOW_WORDS_AGE + (e & SHADOW_ENTRY_POOL) - 1u] = params.frame;
+            uint pool = (e & SHADOW_ENTRY_POOL) - 1u;
+            pages[SHADOW_WORDS_AGE + pool] = params.frame;
             bool draw = (e & SHADOW_PAGE_CACHED) == 0u;
-            if (draw) listed(ROUND_STAYS, slot, entry, page);
-            if (draw || (e & SHADOW_PAGE_COMPOSED) == 0u) listed(ROUND_MOVES, slot, entry, page);
+            if (draw) listed(ROUND_STAYS, slot, entry, page, pool);
+            if (draw || (e & SHADOW_PAGE_COMPOSED) == 0u) listed(ROUND_MOVES, slot, entry, page, pool | SHADOW_JOB_HELD);
             e |= SHADOW_PAGE_READY;
         }
-        if (inside && shadow_entry_ready(e)) listed(ROUND_READY, slot, entry, page);
+        if (inside && shadow_entry_ready(e)) listed(ROUND_READY, slot, entry, page, 0u);
         table_set(slot, entry, e);
     } else if (params.step == STEP_RANK) {
         // Within each group, the requests of the rank words before each.
@@ -308,9 +299,9 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
             // A slot that let go of every page draws it whole into the atlas alone.
             bool whole = (slot_plan(w.y).x & SHADOW_PLAN_RESET) != 0u;
             table_set(w.y, entry, (pool + 1u) | (whole ? SHADOW_PAGE_COMPOSED : SHADOW_PAGE_READY));
-            if (!whole) listed(ROUND_STAYS, w.y, entry, page);
-            listed(ROUND_MOVES, w.y, entry, page);
-            listed(ROUND_READY, w.y, entry, page);
+            if (!whole) listed(ROUND_STAYS, w.y, entry, page, pool);
+            listed(ROUND_MOVES, w.y, entry, page, pool | (whole ? 0u : SHADOW_JOB_HELD));
+            listed(ROUND_READY, w.y, entry, page, 0u);
         }
     } else if (params.step == STEP_PROPAGATE) {
         if (i >= SHADOW_SLOTS * SHADOW_SLOT_ENTRIES) return;
@@ -348,6 +339,10 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
             pages[at + 1u] = slots;
             pages[at + 2u] = 1u;
         }
+        uint hiz = SHADOW_WORDS_ARGS + SHADOW_ARGS_HIZ;
+        pages[hiz] = min(pages[SHADOW_WORDS_COUNTS + SHADOW_COUNT_DRAWN], SHADOW_POOL_PAGES);
+        pages[hiz + 1u] = 1u;
+        pages[hiz + 2u] = 1u;
         for (uint round = 0u; round < 2u; round++) {
             uint at = SHADOW_WORDS_ARGS + SHADOW_ARGS_DRAW + 4u * round;
             pages[at] = 6u;
