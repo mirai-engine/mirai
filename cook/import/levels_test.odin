@@ -318,38 +318,67 @@ cut_errors :: proc(g:asset.Mesh_Geometry) -> []f32 {
     return out[:]
 }
 
+// A field of cards apart, pruned on to one card, and a crown of cards that
+// overlap, to the few that grown fill its cloud: no card grows past the cloud
+// of its class, and wherever a card of level 0 was, a cut draws one within
+// ISLAND_PIXELS of its error.
 @(test)
 a_submesh_of_cards_drops_half_of_them_where_its_error_allows_and_keeps_its_area :: proc(t:^testing.T) {
+    Case :: struct {name:string,spacing:f32,layers:int,most:int}
+    cases:=[]Case{{"a field",0.3,1,1},{"a crown",0.08,4,8}}
+    for test in cases {cards_pruned(t,test.name,test.spacing,test.layers,test.most)}
+}
+
+@(private="file")
+cards_pruned :: proc(t:^testing.T,name:string,spacing:f32,layers:int,most:int) {
     CARDS :: 256
     SIZE :: f32(0.1)
     c:=cards_build(64)
-    for card in 0..<CARDS {cards_add(&c,{f32(card%16)*0.3-2.4,1.5,f32(card/16)*0.3-2.4},SIZE)}
+    per_layer:=CARDS/layers
+    side:=int(math.sqrt(f32(per_layer)))
+    centers:=make([dynamic][3]f32,context.temp_allocator)
+    for card in 0..<CARDS {
+        k:=card%per_layer
+        center:=geom.Vec3{(f32(k%side)-f32(side)*0.5)*spacing,1.5+f32(card/per_layer)*spacing,(f32(k/side)-f32(side)*0.5)*spacing}
+        cards_add(&c,center,SIZE)
+        append(&centers,center)
+    }
     submeshes:=[2]Submesh{{index_count=u32(c.sphere),slot=0},{first_index=u32(c.sphere),index_count=CARDS*6,slot=1}}
     levels:=mesh_levels(c.vertices[:],c.indices[:],nil,submeshes[:],allocator=context.temp_allocator)
     if !levels_valid(t,levels,2) {return}
-    testing.expect(t,levels.dag && levels.pruned && len(levels.islands.islands)==CARDS,"the cards are islands of the DAG")
+    testing.expectf(t,levels.dag && levels.pruned && len(levels.islands.islands)==CARDS,"%s: the cards are islands of the DAG",name)
     g:asset.Mesh_Geometry
     if !testing.expect(t,levels_geometry(levels,{},&g,context.temp_allocator)) {return}
     radius:=SIZE*math.SQRT_TWO/2
-    // Where a cluster draws cards grown, its error covers the radius they grew to.
+    clouds,_:=geom.islands_clouds(levels.islands.islands,context.temp_allocator)
+    // Where a cluster draws cards grown, its error covers the radius they grew to, within their cloud.
     for cluster in g.clusters {
         if asset.cluster_slot(cluster)!=1 {continue}
         p:=cluster_corners(g,cluster,0)
         grow:=linalg.length(p[0]-p[2])/SIZE
-        if grow>1.001 {testing.expectf(t,cluster.error>=radius*grow/geom.ISLAND_PIXELS*0.999,"cards grown %f with an error of %f",grow,cluster.error)}
+        testing.expectf(t,radius*grow<=clouds[0]*1.001,"%s: cards grown %f past their cloud of %f",name,grow,clouds[0])
+        if grow>1.001 {testing.expectf(t,cluster.error>=radius*grow/geom.ISLAND_PIXELS*0.999,"%s: cards grown %f with an error of %f",name,grow,cluster.error)}
     }
-    // Every cut draws the area of the cards; a coarser one keeps some of the cards a finer one keeps.
+    // Every cut draws the area of the cards; a coarser one keeps some of the cards a finer one keeps,
+    // and one near every card of level 0.
     previous:map[[3]i32]f32
     whole:=f32(CARDS)*SIZE*SIZE
     for e,k in cut_errors(g) {
         cut:=Cut{error=e}
         _,area:=cut_draws(g,cut,1)
-        testing.expectf(t,abs(area-whole)<whole*1e-3,"the cut at %f draws %f of the cards",e,area)
+        testing.expectf(t,abs(area-whole)<whole*1e-3,"%s: the cut at %f draws %f of the cards",name,e,area)
         cards:=cut_cards(g,cut)
         if k>0 {
             testing.expect(t,len(cards)<=len(previous))
-            for center in cards {testing.expect(t,center in previous,"a cut keeps a card the finer one dropped")}
+            for center in cards {testing.expectf(t,center in previous,"%s: a cut keeps a card the finer one dropped",name)}
         }
+        far:f32
+        for p in centers {
+            nearest:=max(f32)
+            for key in cards {nearest=min(nearest,linalg.length([3]f32{f32(key.x),f32(key.y),f32(key.z)}/1000-p))}
+            far=max(far,nearest)
+        }
+        testing.expectf(t,far<=e*geom.ISLAND_PIXELS*1.001+1e-3,"%s: the cut at %f draws no card within %f of a card of level 0",name,e,far)
         previous=cards
         // The sphere is simplified, and its vertices stay on it.
         for cluster in g.clusters {
@@ -359,9 +388,9 @@ a_submesh_of_cards_drops_half_of_them_where_its_error_allows_and_keeps_its_area 
             }
         }
     }
-    // Below the radius of a card over ISLAND_PIXELS every card is kept; the coarsest cut drops cards.
+    // Below the radius of a card over ISLAND_PIXELS every card is kept; the coarsest cut keeps a handful.
     testing.expect_value(t,len(cut_cards(g,{error=0.99*radius/geom.ISLAND_PIXELS})),CARDS)
-    testing.expectf(t,len(previous)<CARDS/4,"the coarsest cut keeps %d cards",len(previous))
+    testing.expectf(t,len(previous)<=most,"%s: the coarsest cut keeps %d cards",name,len(previous))
 }
 
 @(test)
@@ -377,18 +406,17 @@ a_few_large_islands_do_not_hold_back_the_small_ones :: proc(t:^testing.T) {
     g:asset.Mesh_Geometry
     if !testing.expect(t,levels_geometry(levels,{},&g,context.temp_allocator)) {return}
     large_radius:=f32(2)*math.SQRT_TWO/2
-    pruned_small:=false
+    // The first cut that drops small cards keeps every large one, below what dropping one takes.
     for e in cut_errors(g) {
         large,small:=0,0
         for center in cut_cards(g,{error=e}) {
             if abs(f32(center.y)/1000-3)<1e-2 {large+=1} else {small+=1}
         }
-        if large==LARGE && small<SMALL {
-            pruned_small=true
-            testing.expectf(t,e<large_radius/geom.ISLAND_PIXELS,"a cut at %f drops small cards with an error above what dropping a large one takes",e)
-        }
+        if small==SMALL {continue}
+        testing.expectf(t,large==LARGE && e<large_radius/geom.ISLAND_PIXELS,"the first cut that drops small cards, at %f, keeps %d large ones",e,large)
+        return
     }
-    testing.expect(t,pruned_small,"a cut drops small cards and keeps every large one")
+    testing.expect(t,false,"no cut drops small cards")
 }
 
 // A mask of size² texels: a serrated leaf with a stem, or a cluster of

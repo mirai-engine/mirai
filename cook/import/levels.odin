@@ -374,10 +374,11 @@ levels_simplify :: proc(vertices:[]asset.Vertex,indices:[]u32,skin:[]asset.Skin_
         }
         rest=others[:]
     }
-    // What each outline draws, and where each island is.
+    // What each outline draws, how far each island may grow, and where each island is.
     areas,measured:=geom.islands_areas(positions,islands.rungs,islands.indices,temp)
+    clouds,bounded:=geom.islands_clouds(islands.islands,temp)
     states,no_states:=make([]geom.Cluster_Island_State,len(islands.islands),temp)
-    if !measured || no_states!=nil {levels.failed=true;return}
+    if !measured || !bounded || no_states!=nil {levels.failed=true;return}
     allowed:f32
     for island,at in islands.islands {
         first:=islands.rungs[island.first_rung]
@@ -448,7 +449,7 @@ levels_simplify :: proc(vertices:[]asset.Vertex,indices:[]u32,skin:[]asset.Skin_
         // The islands go as far as the error allowed lets them; where the level would keep too much
         // of the one before, they are allowed the least more that moves one more class.
         allowed=max(allowed,error)
-        kept_islands,reached,islands_error,_,reduced:=geom.islands_reduce(states[:alive],islands.islands,islands.rungs,areas,allowed,int(LOD_KEEP*f32(previous))-len(level_corners)/3)
+        kept_islands,reached,islands_error,_,reduced:=geom.islands_reduce(states[:alive],islands.islands,islands.rungs,areas,clouds,allowed,int(LOD_KEEP*f32(previous))-len(level_corners)/3)
         if !reduced {levels.failed=true;return}
         alive,allowed=kept_islands,reached
         error=max(error,islands_error)
