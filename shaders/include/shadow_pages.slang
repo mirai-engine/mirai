@@ -53,6 +53,10 @@ uint2 shadow_pool_corner(uint pool) { return uint2(pool % SHADOW_POOL_ROW, pool 
 // drawn whole straight into it (SHADOW_PLAN_RESET).
 bool shadow_entry_ready(uint e) { return (e & SHADOW_ENTRY_POOL) != 0u && (e & SHADOW_PAGE_COMPOSED) != 0u; }
 
+// Whether a point that reads an entry asks for its page: not drawn, nor left
+// out of the pool the last time the pages were given.
+bool shadow_entry_asks(uint e) { return !shadow_entry_ready(e) && (e & SHADOW_PAGE_LEFT) == 0u; }
+
 // The table of the pages of the view (render.Shadow_Raster.table): a texel
 // for each entry, a row for each slot.
 #ifndef SHADOW_TABLE_WRITTEN

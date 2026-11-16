@@ -128,6 +128,7 @@ light_grid_update :: proc(r: ^Renderer) -> bool {
 		s.light_grid = light_grid_place(s.lights[:], len(s.lights) + light_region_lights(s.light_region), region, s.light_shadowless[:])
 		s.light_grid_stale = false
 		s.light_grid_dirty = true
+		s.light_grid_placed += 1
 	}
 	if s.light_grid.rows == 0 {return true}
 	ok, recreated := ensure_buffer(r, &s.light_grid_buffer, u64(s.light_grid.rows * size_of([4]u32)), {.Storage}, "light grid")

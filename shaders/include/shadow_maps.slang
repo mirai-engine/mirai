@@ -391,6 +391,42 @@ bool shadow_texel(Shadow_Map m, int2 texel, out int2 at, out Shadow_Map held, ou
     return true;
 }
 
+// The entries of the table of the 2x2 pages of map m from the page of a texel
+// less reach, looked up once for the taps of a point (shadow_texel_near).
+struct Shadow_Near {
+    int2 first; // the first page of the 2x2
+    uint4 e;    // their entries, row by row; 0 past the square of the map
+};
+Shadow_Near shadow_near(Shadow_Map m, float2 texel, float reach) {
+    Shadow_Near n;
+    int pages = int(m.rect.z / SHADOW_PAGE);
+    n.first = clamp(int2(floor(texel - reach)) / int(SHADOW_PAGE), 0, max(pages - 2, 0));
+    uint e[4];
+    for (uint i = 0u; i < 4u; i++) {
+        int2 page = n.first + int2(int(i & 1u), int(i >> 1u));
+        e[i] = all(page < pages) ? shadow_table_entry(m.rect.x, shadow_page_entry(m.rect, uint2(page))) : 0u;
+    }
+    n.e = uint4(e[0], e[1], e[2], e[3]);
+    return n;
+}
+
+// shadow_texel through the entries of the pages around a point: a texel of
+// one of them drawn this frame lies in its page at once; the others, as
+// shadow_texel finds them.
+bool shadow_texel_near(Shadow_Map m, Shadow_Near n, int2 texel, out int2 at, out Shadow_Map held, out uint coarser) {
+    if (all(texel >= 0) && all(texel < int(m.rect.z))) {
+        int2 k = texel / int(SHADOW_PAGE) - n.first;
+        uint e = k.y == 0 ? (k.x == 0 ? n.e.x : n.e.y) : (k.x == 0 ? n.e.z : n.e.w);
+        if (all(k >= 0) && all(k <= 1) && shadow_entry_ready(e)) {
+            at = int2(shadow_pool_corner((e & SHADOW_ENTRY_POOL) - 1u)) + (texel & int(SHADOW_PAGE - 1u));
+            held = m;
+            coarser = 0u;
+            return true;
+        }
+    }
+    return shadow_texel(m, texel, at, held, coarser);
+}
+
 // The map that holds a point at its texel: m where its page is drawn this
 // frame, else the coarser one the table names; false where none is, and the
 // light of the point is then traced.
@@ -408,7 +444,8 @@ bool shadow_map_held(inout Shadow_Map m, float3 position) {
 #ifdef SHADOW_MARKS_SLOT
 // The buffer of the pages of the view (render.pass_shadow_marks), for a pass
 // after the maps to mark the pages it reads: the next frame draws them, and
-// until then it reads the coarser pages drawn there or traces.
+// until then it reads the coarser pages drawn there or traces. A page newly
+// marked that is not drawn asks the steps of the pages to run then.
 [[vk::binding(SHADOW_MARKS_SLOT, 0)]] RWStructuredBuffer<uint> view_shadow_marks : register(MIRAI_REGISTER(u, SHADOW_MARKS_SLOT), space0);
 
 // Marks the pages of map m at its mip the 2x2 texels around a point read.
@@ -422,7 +459,10 @@ void shadow_mark_late(Shadow_Map m, float3 position) {
         for (uint x = first.x; x <= end.x; x++) {
             uint entry = shadow_page_entry(m.rect, uint2(x, y));
             uint word = SHADOW_WORDS_LATE + m.rect.x * SHADOW_MASK_WORDS + (entry >> 5u), bit = 1u << (entry & 31u);
-            if ((view_shadow_marks[word] & bit) == 0u) InterlockedOr(view_shadow_marks[word], bit);
+            if ((view_shadow_marks[word] & bit) != 0u) continue;
+            uint before;
+            InterlockedOr(view_shadow_marks[word], bit, before);
+            if ((before & bit) == 0u && shadow_entry_asks(shadow_table_entry(m.rect.x, entry))) view_shadow_marks[SHADOW_STEP_NEW] = 1u;
         }
     }
 }
@@ -434,9 +474,10 @@ void shadow_mark_late(Shadow_Map m, float3 position) {
 [[vk::binding(SUN_SHADOW_SLOT, 0)]] Texture2D<float4> view_shadow_atlas : register(MIRAI_REGISTER(t, SUN_SHADOW_SLOT), space0);
 
 // How far along map m the blocker a texel of it holds lies, through the page
-// that holds it (shadow_texel); coarser: how many levels or mips coarser that
-// page is. False where no page holds it: the texel tells nothing.
-bool shadow_blocker(Shadow_Map m, int2 texel, out float b, out uint coarser) {
+// that holds it (shadow_texel_near, n: the pages around the point); coarser:
+// how many levels or mips coarser that page is. False where no page holds it:
+// the texel tells nothing.
+bool shadow_blocker(Shadow_Map m, Shadow_Near n, int2 texel, out float b, out uint coarser) {
     b = 0.0;
     int2 at;
     Shadow_Map held;
@@ -444,14 +485,14 @@ bool shadow_blocker(Shadow_Map m, int2 texel, out float b, out uint coarser) {
     // Past a face of the cube of a light, the face next to it holds the texel.
     if (m.rect.w != INVALID && (any(texel < 0) || any(texel >= int(m.rect.z)))) return shadow_beside(m, texel, b, coarser);
 #endif
-    if (!shadow_texel(m, texel, at, held, coarser)) return false;
+    if (!shadow_texel_near(m, n, texel, at, held, coarser)) return false;
     b = shadow_map_distance(held, view_shadow_atlas.Load(int3(at, 0)).r) + dot(held.origin - m.origin, m.forward);
     return true;
 }
 
 // Whether the center of the light sees a point past what the 2x2 texels
 // around its texel hold (shadow_map_point), blended between those a page holds.
-float shadow_hard_seen(Shadow_Map m, Shadow_Taps t) {
+float shadow_hard_seen(Shadow_Map m, Shadow_Near n, Shadow_Taps t) {
     float2 corner = t.texel - 0.5;
     float2 first = floor(corner), f = corner - first;
     float seen = 0.0, total = 0.0;
@@ -459,7 +500,7 @@ float shadow_hard_seen(Shadow_Map m, Shadow_Taps t) {
         float2 at = first + float2(i & 1u, i >> 1u);
         float b;
         uint coarser;
-        if (!shadow_blocker(m, int2(at), b, coarser)) continue;
+        if (!shadow_blocker(m, n, int2(at), b, coarser)) continue;
         float weight = ((i & 1u) != 0u ? f.x : 1.0 - f.x) * ((i >> 1u) != 0u ? f.y : 1.0 - f.y);
         // Read at the middle of the texel, where the map holds the surface.
         seen += shadow_blocks(t, b, at + 0.5 - t.texel, coarser) ? 0.0 : weight;
@@ -485,10 +526,11 @@ float sun_shadow_seen(float3 position, float3 n, float across, bool blended = tr
     Shadow_Taps t;
     if (!shadow_map_held(m, position)) return -1.0;
     if (!shadow_map_point(m, true, frame.sun_direction.xyz, position, n, 0.0, m.rect.x == pick.level ? pick.grow : 1.0, t)) return 1.0;
-    if (blended) return shadow_hard_seen(m, t);
+    Shadow_Near near = shadow_near(m, t.texel, 1.0);
+    if (blended) return shadow_hard_seen(m, near, t);
     float b;
     uint coarser;
-    if (!shadow_blocker(m, int2(floor(t.texel)), b, coarser)) return -1.0;
+    if (!shadow_blocker(m, near, int2(floor(t.texel)), b, coarser)) return -1.0;
     return shadow_blocks(t, b, float2(0.0), coarser) ? 0.0 : 1.0;
 }
 #endif
@@ -575,7 +617,7 @@ float light_shadow_seen(uint light, float3 position, float3 n, float radius, flo
     if (!shadow_map_point(m, false, normalize(lights[light].position_range.xyz - position), position, n, radius, shadow_rect_mip(m.rect) == pick.level ? pick.grow : 1.0, t)) return 1.0;
     // Past its far plane a map holds nothing: an empty texel would read as a blocker there.
     if (any(t.texel <= 0.0) || any(t.texel >= float(m.rect.z)) || t.d <= m.near || t.d >= m.far) return -1.0;
-    return shadow_hard_seen(m, t);
+    return shadow_hard_seen(m, shadow_near(m, t.texel, 1.0), t);
 }
 #endif
 #endif
@@ -609,39 +651,49 @@ bool shadow_glass_before(Shadow_Map m, int2 at, float z) {
 #endif
 }
 
-// What the glass between the light of map m and a point lets through; 1 while
-// the maps keep no tint (Frame.sun_maps.w), or where its page is not drawn.
-float3 shadow_tint(Shadow_Map m, float3 position) {
-    if (frame.sun_maps.w == 0u) return float3(1.0);
+// What the glass between the light of map m and a point lets through, and
+// in alpha 0 where a glass whose program gives its color stands in the way:
+// its tint keeps only the mean of the program, and the rays of the samples of
+// the direct light run the program instead. White while the maps keep no
+// tint (Frame.sun_maps.w), or where its page is not drawn. n: the pages
+// around the point (shadow_near).
+float4 shadow_tint_near(Shadow_Map m, Shadow_Near n, float3 position) {
+    if (frame.sun_maps.w == 0u) return float4(1.0);
     float3 local;
     float2 texel = shadow_tint_texel(m, position, local);
     int2 at;
     Shadow_Map held;
     uint coarser;
-    if (!shadow_texel(m, int2(floor(texel)), at, held, coarser) || !shadow_glass_before(held, at, local.z - dot(held.origin - m.origin, m.forward))) return float3(1.0);
+    if (!shadow_texel_near(m, n, int2(floor(texel)), at, held, coarser) || !shadow_glass_before(held, at, local.z - dot(held.origin - m.origin, m.forward))) return float4(1.0);
+    float programmed = view_shadow_tint.Load(int3(at, 0)).a < 0.5 ? 0.0 : 1.0;
     // Between the texels around it, each from its own page.
     float2 corner = texel - 0.5;
     float2 first = floor(corner), f = corner - first;
     float3 tint[4];
     for (uint i = 0u; i < 4u; i++) {
         int2 near_at;
-        tint[i] = shadow_texel(m, int2(first) + int2(i & 1u, i >> 1u), near_at, held, coarser) ? view_shadow_tint.Load(int3(near_at, 0)).rgb : float3(1.0);
+        tint[i] = shadow_texel_near(m, n, int2(first) + int2(i & 1u, i >> 1u), near_at, held, coarser) ? view_shadow_tint.Load(int3(near_at, 0)).rgb : float3(1.0);
     }
-    return lerp(lerp(tint[0], tint[1], f.x), lerp(tint[2], tint[3], f.x), f.y);
+    return float4(lerp(lerp(tint[0], tint[1], f.x), lerp(tint[2], tint[3], f.x), f.y), programmed);
+}
+
+// The pages around the texel of map m a point lies in, for its tint.
+Shadow_Near shadow_tint_pages(Shadow_Map m, float3 position) {
+    float3 local;
+    return shadow_near(m, shadow_tint_texel(m, position, local), 1.0);
+}
+
+// What the glass between the light of map m and a point lets through (shadow_tint_near).
+float3 shadow_tint(Shadow_Map m, float3 position) {
+    if (frame.sun_maps.w == 0u) return float3(1.0);
+    return shadow_tint_near(m, shadow_tint_pages(m, position), position).rgb;
 }
 
 // Whether a glass whose program gives its color stands in the way of the
-// light of map m to position: its tint keeps only the mean of the program,
-// and the rays of the samples of the direct light run the program instead.
+// light of map m to position (shadow_tint_near).
 bool shadow_tint_programmed(Shadow_Map m, float3 position) {
     if (frame.sun_maps.w == 0u) return false;
-    float3 local;
-    float2 texel = shadow_tint_texel(m, position, local);
-    int2 at;
-    Shadow_Map held;
-    uint coarser;
-    if (!shadow_texel(m, int2(floor(texel)), at, held, coarser) || !shadow_glass_before(held, at, local.z - dot(held.origin - m.origin, m.forward))) return false;
-    return view_shadow_tint.Load(int3(at, 0)).a < 0.5;
+    return shadow_tint_near(m, shadow_tint_pages(m, position), position).a < 0.5;
 }
 #endif
 #endif
