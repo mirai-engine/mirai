@@ -61,7 +61,7 @@ Shadow_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vul
     float2 texel = float2(square.rect.xy) + lerp(float2(window.xy), float2(window.zw), at);
     for (uint i = 0u; i < 4u; i++) output.clip[i] = 1.0;
     output.position = float4(2.0 * texel.x / float(frame.sun_maps.z) - 1.0, 1.0 - 2.0 * texel.y / float(frame.sun_maps.z), 0.0, 1.0);
-    output.square = int4(square.rect.xy, int((word >> 8u) & 0xFFFu) - 2048, int(word >> 20u) - 2048);
+    output.square = int4(square.rect.xy, params.moving != 0u ? int2(int((word >> 8u) & 0xFFFu) - 2048, int(word >> 20u) - 2048) : int2(0));
     output.side = square.rect.z;
     return output;
 #else

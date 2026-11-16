@@ -69,7 +69,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     // Glass casts no shadow: it takes its place only in the tint of the maps,
     // and not a glass sheet nor one of a batch.
     bool all_glass = (inst.meta.w & INSTANCE_FLAG_BLENDED) != 0u;
-    bool glass = params.moving != 0u && params.glass != 0u && (inst.meta.w & (INSTANCE_FLAG_TRANSLUCENT | INSTANCE_FLAG_BLENDED)) != 0u
+    bool glass = params.moving == 2u && params.glass != 0u && (inst.meta.w & (INSTANCE_FLAG_TRANSLUCENT | INSTANCE_FLAG_BLENDED)) != 0u
         && !instance_batched(instance) && !(all_glass && glass_sheet(inst));
     if (all_glass && !glass) return;
     Shadow_Map m = shadow_map_at(shadow_data, params.rows, map);
@@ -89,7 +89,7 @@ void main(uint3 id : SV_DispatchThreadID) {
         rest = !(mesh.sway * instance_scale(inst) > texel);
         moves = moves && !rest;
     }
-    bool depth = !all_glass && moves == (params.moving != 0u);
+    bool depth = !all_glass && params.moving != 2u && moves == (params.moving != 0u);
     if (!depth && !glass) return;
     uint2 clusters = instance_clusters(shadow_map_detail(m), inst, mesh);
     uint count = (clusters.y + CULL_CHUNK - 1u) / CULL_CHUNK;

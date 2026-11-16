@@ -307,6 +307,9 @@ render_shadow_maps_follow_what_moves_in_its_frame :: proc(t: ^testing.T) {
 		testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
 	}
 	testing.expectf(t, r.stats.shadow_movers == 300 && r.stats.shadow_pages_drawn == 0, "300 moving casters: %d drawn as movers, %d pages of the cache drawn again", r.stats.shadow_movers, r.stats.shadow_pages_drawn)
+	// Still for a frame, they compose no page of the atlas again.
+	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	testing.expectf(t, r.stats.shadow_pages_composed == 0 && r.stats.shadow_pages_drawn == 0, "300 still movers: %d pages composed, %d drawn again", r.stats.shadow_pages_composed, r.stats.shadow_pages_drawn)
 	read :: proc(t: ^testing.T, f: ^Cube_Fixture) -> []u8 {
 		rhi.device_wait_idle(f.device)
 		pixels, _, _, ok := golden_capture(f.renderer)
