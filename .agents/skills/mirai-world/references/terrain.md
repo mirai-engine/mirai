@@ -292,7 +292,8 @@ Construction and publishing:
   program reads it, and the relief its own.
 - It filters with the point's footprint (`mirai_sample_texture_projected`): the mips are correct in
   raster and in rays. A layer's height is the alpha of its base color, and `height_blend` makes
-  the highest texels show where the layers blend.
+  the highest texels show where the layers blend, each height scaled by its weight
+  (`terrain_height_blend`): a layer shows about what it weighs, however high its texels.
 
 ### Volume interior
 

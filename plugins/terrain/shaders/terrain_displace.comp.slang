@@ -19,7 +19,7 @@
 struct Layer {
     uint color;          // the base color texture of its material, its alpha the height; INVALID: none
     float scale;         // repeats a metre
-    float blend;         // the power of 2 its height raises its weight to, a height of 1
+    float height_blend;  // that of terrain.Terrain_Layer
     float displacement;  // metres from its lowest texel to its highest
 };
 // terrain.Gpu_Displace
@@ -123,19 +123,20 @@ void main(uint3 id : SV_DispatchThreadID) {
     float3 world = float3(dot(params.row0.xyz, v.position) + params.row0.w, dot(params.row1.xyz, v.position) + params.row1.w, dot(params.row2.xyz, v.position) + params.row2.w);
     float3 normal = normalize(float3(dot(params.row0.xyz, local_normal), dot(params.row1.xyz, local_normal), dot(params.row2.xyz, local_normal)));
     float4 shown = terrain_heaviest(float4(mix.weights[0], mix.weights[1], mix.weights[2], mix.weights[3]));
-    float4 blend = float4(0.0);
     float4 heights = float4(0.0);
+    float4 height_blend = float4(0.0);
     for (uint i = 0u; i < 4u; i++) {
-        if (shown[i] <= 0.0 || mix.layers[i] >= params.layer_count) continue;
+        if (mix.layers[i] >= params.layer_count) shown[i] = 0.0;
+        if (shown[i] <= 0.0) continue;
         Layer layer = params.layers[mix.layers[i]];
         heights[i] = layer_height(layer, world, normal);
-        blend[i] = shown[i] * exp2(layer.blend * heights[i]);
+        height_blend[i] = layer.height_blend;
     }
-    float sum = blend.x + blend.y + blend.z + blend.w;
+    float4 blend = terrain_height_blend(shown, heights, height_blend);
     float offset = 0.0;
     for (uint i = 0u; i < 4u; i++) {
-        if (blend[i] <= 0.0) continue;
-        offset += blend[i] / sum * (heights[i] - 0.5) * params.layers[mix.layers[i]].displacement;
+        if (shown[i] <= 0.0 || blend[i] <= 0.0) continue;
+        offset += blend[i] * (heights[i] - 0.5) * params.layers[mix.layers[i]].displacement;
     }
     float edge = 1e30;
     if ((params.pinned & 1u) != 0u) edge = min(edge, v.position.x);
