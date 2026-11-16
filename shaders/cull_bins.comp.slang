@@ -15,10 +15,11 @@
 struct Params_Block { uint mode; uint phase; uint programs; uint capacity; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 [[vk::binding(SLOT_PASS0, 0)]] RWStructuredBuffer<uint> cull_state : register(MIRAI_REGISTER(u, SLOT_PASS0), space0);
-// The clusters as the cull listed them: the instance, the cluster as a word of the index pool and its bin.
+// The clusters as the cull listed them: the instance, the cluster as a word
+// of the index pool, its bin and its Surface program.
 [[vk::binding(SLOT_PASS1, 0)]] StructuredBuffer<uint4> listed : register(MIRAI_REGISTER(t, SLOT_PASS1), space0);
-// The same by bin: the instance and the cluster.
-[[vk::binding(SLOT_PASS2, 0)]] RWStructuredBuffer<uint2> visible : register(MIRAI_REGISTER(u, SLOT_PASS2), space0);
+// The same by bin: the instance, the cluster and the program.
+[[vk::binding(SLOT_PASS2, 0)]] RWStructuredBuffer<uint4> visible : register(MIRAI_REGISTER(u, SLOT_PASS2), space0);
 // The draws of the resolve of each Surface program (render.Gpu_Draw): three
 // vertices, and the program as its first instance (vis_resolve.vert).
 [[vk::binding(SLOT_PASS3, 0)]] RWStructuredBuffer<uint> program_draws : register(MIRAI_REGISTER(u, SLOT_PASS3), space0);
@@ -65,5 +66,5 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
         first = WaveReadLaneFirst(first);
         if (mine) place = offsets[bin] + first + WavePrefixCountBits(mine);
     }
-    if (valid) visible[place] = entry.xy;
+    if (valid) visible[place] = uint4(entry.xyw, 0u);
 }

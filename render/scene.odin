@@ -350,7 +350,7 @@ Scene_State :: struct {
 	tlas_ref_buffer:      rhi.Buffer,
 	cull_state_buffer:    rhi.Buffer, // Gpu_Cull_State of the view being culled: the draws of its phases and what its passes count
 	chunk_buffer:         rhi.Buffer, // the chunks the instance pass hands the cluster pass
-	visible_buffer:       rhi.Buffer, // the visible clusters of both phases by raster bin, which their draws read
+	visible_buffer:       rhi.Buffer, // the visible clusters of both phases by raster bin, which their draws read, with their programs
 	listed_buffer:        rhi.Buffer, // and as the cull listed them, with their bins
 	cluster_candidate_buffer: rhi.Buffer, // the clusters phase 0 found hidden
 	program_draws:        rhi.Buffer, // Gpu_Draw of the resolve of each Surface program, POINTS_PROGRAM_CAPACITY of them
@@ -2348,7 +2348,7 @@ ensure_scene_capacity :: proc(r: ^Renderer) -> bool {
 		capacity := max(wanted + wanted / 2, start[list], s.cull_capacity[list])
 		if buffer^ != 0 {rhi.buffer_destroy(d, buffer^)}
 		names := [Cull_List]string{.Chunks = "cull chunks", .Visible = "visible clusters", .Candidates = "cluster occlusion candidates", .Shadow_Chunks = "shadow map chunks", .Shadow_Entries = "shadow map clusters"}
-		entry := u64(size_of([4]u32) if list >= .Shadow_Chunks else size_of([2]u32))
+		entry := u64(size_of([4]u32) if list >= .Shadow_Chunks || list == .Visible else size_of([2]u32))
 		buffer^ = rhi.buffer_create(d, {size = u64(capacity) * entry, usage = {.Storage}, name = names[list]})
 		made := buffer^ != 0
 		if list == .Visible {
