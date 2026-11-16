@@ -47,10 +47,9 @@ Graphics_Settings :: struct {
 }
 
 // Without a device: the High preset. The views aim for 1080 lines, so a
-// larger display costs what a 1080 one does, and FSR takes them to the display
-// where its plugin is on.
+// larger display costs what a 1080 one does, and the TAA takes them to it.
 GRAPHICS_SETTINGS_DEFAULT :: Graphics_Settings{
-    resolution=1080,antialiasing={0='f',1='s',2='r',3='3'},indirect_light=.Probes,light_probes=.High,
+    resolution=1080,antialiasing={0='t',1='a',2='a'},indirect_light=.Probes,light_probes=.High,
     sun_shadows=true,light_samples=15,light_half_resolution=true,glass_shadows=true,glass_layers=1,textures=.High,detail=.High,frame_limit=60,vsync=true,frame_generation=true,show_fps=true,
 }
 
