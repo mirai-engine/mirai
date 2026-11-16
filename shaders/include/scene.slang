@@ -1632,18 +1632,22 @@ float probe_volume_read(float3 position, float3 normal, float3 view_dir, float v
 // How much of the light around a point is the sky's alone: 0 inside the
 // cascades and without a volume, 1 beyond them, and between over the last
 // cells of the last one, by the centre of the cascades as one blends into the
-// next.
+// next. Along an axis with too few cells to keep any of them whole that way,
+// by the cells of the cascade themselves: the cascade holds the point up to
+// its last one.
 float probe_volume_beyond(float3 position) {
     uint cascades = probe_cascades();
     if (cascades == 0u) return 0.0;
     float3 counts = float3(frame.volume_counts.xyz);
     float spacing = probe_spacing(cascades - 1u);
     float3 rel = (position - frame.volume_cascades[cascades - 1u].xyz) / spacing;
-    float3 inside = min(rel, counts - 1.0 - rel);
-    if (min(inside.x, min(inside.y, inside.z)) < 0.5) return 1.0;
-    float3 from_center = (counts - 1.0) * 0.5 - abs(position - frame.volume_center.xyz) / spacing;
-    float band = max(0.5, (counts.y - 1.0) * 0.5 - 4.5);
-    return saturate((1.5 + band - min(from_center.x, min(from_center.y, from_center.z))) / band);
+    float3 inside = min(rel, counts - 1.0 - rel) - 0.5;
+    if (min(inside.x, min(inside.y, inside.z)) < 0.0) return 1.0;
+    float3 half = (counts - 1.0) * 0.5;
+    float band = max(0.5, half.y - 4.5);
+    float3 from_center = half - abs(position - frame.volume_center.xyz) / spacing - 1.5;
+    float3 left = select(half >= 1.5 + 2.0 * band, from_center, inside);
+    return saturate(1.0 - min(left.x, min(left.y, left.z)) / band);
 }
 
 // Irradiance (in Lambert-normalized radiance units) arriving around each
