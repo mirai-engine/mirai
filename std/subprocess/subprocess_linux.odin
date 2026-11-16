@@ -28,19 +28,22 @@ _exit_peak :: proc(process:^Process) -> i64 {
     return i64(usage.maxrss_word)*1024
 }
 
-// VmHWM of /proc/<pid>/status, in kB.
-_memory_peak :: proc(pid:int) -> (bytes:i64,ok:bool) {
-    path:=fmt.tprintf("/proc/%d/status",pid)
-    data,error:=os.read_entire_file(path,context.temp_allocator)
+// VmRSS and VmHWM of /proc/<pid>/status, in kB; an ended process has neither.
+_memory_held :: proc(pid:int) -> (now,peak:i64,ok:bool) {
+    data,error:=os.read_entire_file(fmt.tprintf("/proc/%d/status",pid),context.temp_allocator)
     if error!=nil {return}
+    found:[2]bool
     text:=string(data)
     for line in strings.split_lines_iterator(&text) {
-        if !strings.has_prefix(line,"VmHWM:") {continue}
-        value:=strings.trim_space(strings.trim_suffix(strings.trim_space(line[len("VmHWM:"):]),"kB"))
-        kilobytes,parsed:=strconv.parse_i64(value)
-        return kilobytes*1024,parsed
+        for name,i in ([2]string{"VmRSS:","VmHWM:"}) {
+            if !strings.has_prefix(line,name) {continue}
+            kilobytes,parsed:=strconv.parse_i64(strings.trim_space(strings.trim_suffix(strings.trim_space(line[len(name):]),"kB")))
+            if !parsed {return}
+            if i==0 {now=kilobytes*1024} else {peak=kilobytes*1024}
+            found[i]=true
+        }
     }
-    return
+    return now,peak,found[0] && found[1]
 }
 
 descriptors_close :: proc() {_=linux.close_range(0,max(linux.Fd),{})}

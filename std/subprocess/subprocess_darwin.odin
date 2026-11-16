@@ -20,25 +20,30 @@ parent_wait :: proc(parent:posix.pid_t) {
     }
 }
 
-// The flavor 4 of proc_pid_rusage up to its lifetime peak footprint, the
-// first field after it standing for those that follow.
+// The flavor 4 of proc_pid_rusage, with only the fields read named.
 Rusage_Info_V4 :: struct {
     uuid:[16]u8,
-    before:[28]u64, // times, wakeups, sizes, its children's, disk, QoS times, billed and serviced, logical writes
+    times:[6]u64, // user and system, idle and interrupt wakeups, pageins, wired size
+    resident_size,phys_footprint:u64,
+    proc_start_abstime,proc_exit_abstime:u64,
+    later:[18]u64, // those of its children, disk, QoS times, billed and serviced, logical writes
     lifetime_max_phys_footprint:u64,
-    after:[6]u64,
+    last:[6]u64,
 }
+#assert(size_of(Rusage_Info_V4)==296)
 
 // A child that exited and was not reaped keeps its usage.
 _exit_peak :: proc(process:^Process) -> i64 {
-    peak,_:=_memory_peak(process.pid)
-    return peak
+    usage:Rusage_Info_V4
+    if darwin.proc_pid_rusage(posix.pid_t(process.pid),.V4,&usage)!=0 {return 0}
+    return i64(usage.lifetime_max_phys_footprint)
 }
 
-_memory_peak :: proc(pid:int) -> (bytes:i64,ok:bool) {
+// An ended process that is not reaped still answers: it holds nothing.
+_memory_held :: proc(pid:int) -> (now,peak:i64,ok:bool) {
     usage:Rusage_Info_V4
-    if darwin.proc_pid_rusage(posix.pid_t(pid),.V4,&usage)!=0 {return}
-    return i64(usage.lifetime_max_phys_footprint),true
+    if darwin.proc_pid_rusage(posix.pid_t(pid),.V4,&usage)!=0 || usage.proc_exit_abstime!=0 {return}
+    return i64(usage.phys_footprint),i64(usage.lifetime_max_phys_footprint),true
 }
 
 descriptors_close :: proc() {

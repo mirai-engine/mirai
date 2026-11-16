@@ -130,9 +130,9 @@ a_memory_limit_bounds_what_the_child_allocates :: proc(t:^testing.T) {
     testing.expect_value(t,string(stdout),"allocated")
 }
 
-// The peak of what a child holds reads while it runs and stays once it exited.
+// What a child holds reads while it runs, and its peak stays once it exited.
 @(test)
-the_peak_memory_of_a_child_reads_while_it_runs_and_after_it_exits :: proc(t:^testing.T) {
+the_memory_a_child_holds_reads_while_it_runs_and_its_peak_after_it_exits :: proc(t:^testing.T) {
     HELD :: 256<<20
     process,error:=start({command=probe_command("hold","256")},pipes=.Separate)
     if !testing.expectf(t,error==nil,"start: %v",error) {return}
@@ -145,8 +145,8 @@ the_peak_memory_of_a_child_reads_while_it_runs_and_after_it_exits :: proc(t:^tes
         count+=read
     }
     testing.expect_value(t,string(said[:count]),"held")
-    running,known:=memory_peak(process.pid)
-    testing.expectf(t,known && running>=HELD,"peak while it runs: %d of %d",running,HELD)
+    now,running,known:=memory_held(process.pid)
+    testing.expectf(t,known && now>=HELD && running>=now,"while it runs: %d now and %d at its peak, of %d",now,running,HELD)
     stdin_close(&process)
     state,wait_error:=wait(&process)
     testing.expectf(t,wait_error==nil && state.exited && state.exit_code==1,"wait: %v %v",wait_error,state)

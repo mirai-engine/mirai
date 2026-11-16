@@ -112,22 +112,24 @@ _exited :: proc(process:^Process,timeout:time.Duration) -> os.Error {
 
 // Its handle keeps an exited child readable.
 _exit_peak :: proc(process:^Process) -> i64 {
-    peak,_:=handle_peak(win.HANDLE(process.handle))
+    _,peak,_:=handle_memory(win.HANDLE(process.handle))
     return peak
 }
 
-_memory_peak :: proc(pid:int) -> (bytes:i64,ok:bool) {
-    handle:=win.OpenProcess(win.PROCESS_QUERY_LIMITED_INFORMATION,false,win.DWORD(pid))
+_memory_held :: proc(pid:int) -> (now,peak:i64,ok:bool) {
+    handle:=win.OpenProcess(win.PROCESS_QUERY_LIMITED_INFORMATION|win.SYNCHRONIZE,false,win.DWORD(pid))
     if handle==nil {return}
     defer win.CloseHandle(handle)
-    return handle_peak(handle)
+    // A process that ended holds nothing, though its handles keep it readable.
+    if win.WaitForSingleObject(handle,0)==win.WAIT_OBJECT_0 {return}
+    return handle_memory(handle)
 }
 
-handle_peak :: proc(handle:win.HANDLE) -> (bytes:i64,ok:bool) {
+handle_memory :: proc(handle:win.HANDLE) -> (now,peak:i64,ok:bool) {
     counters:win.PROCESS_MEMORY_COUNTERS
     counters.cb=size_of(counters)
     if !win.GetProcessMemoryInfo(handle,&counters,size_of(counters)) {return}
-    return i64(counters.PeakWorkingSetSize),true
+    return i64(counters.WorkingSetSize),i64(counters.PeakWorkingSetSize),true
 }
 
 // The job kills what is still in it as its handle closes.
