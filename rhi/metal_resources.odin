@@ -42,6 +42,7 @@ mtl_format :: proc "contextless" (f: Format) -> MTL.PixelFormat {
 	case .BC7_Srgb:      return .BC7_RGBAUnorm_sRGB
 	case .BC6H_Ufloat:   return .BC6H_RGBUfloat
 	case .RGBA16_Unorm:  return .RGBA16Unorm
+	case .D16_Unorm:     return .Depth16Unorm
 	}
 	return .Invalid
 }

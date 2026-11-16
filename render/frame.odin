@@ -203,6 +203,7 @@ visibility_pass :: proc(p: ^Pass, phase: u32, ids, depth: rhi.Load_Op, depth_tar
 // of each pixel, then the resolve of each program the cull saw a cluster of,
 // which runs where that depth is its own. A nested view resolves its own
 // pixels over those of its view.
+#assert(POINTS_PROGRAM_CAPACITY < 65534, "the 16-bit program depth holds a step for each program and one for none")
 @(private)
 resolve_pass :: proc(p: ^Pass, nested: bool) {
 	r, cmd, t := p.r, p.cmd, p.t
@@ -211,10 +212,7 @@ resolve_pass :: proc(p: ^Pass, nested: bool) {
 	classify.depth = {texture = t.program_depth, load = .Clear, store = .Store, clear = 0}
 	rhi.cmd_begin_render_pass(cmd, &classify)
 	if p.draw {
-		Params :: struct {programs, pad0, pad1, pad2: u32}
-		params := Params{programs = r.points.programs}
 		rhi.cmd_bind_pipeline(cmd, r.pipelines[.Program_Depth])
-		set_params(cmd, &params)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.visible_buffer)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.visibility)
 		rhi.cmd_draw(cmd, 3)
@@ -412,11 +410,13 @@ bind_light_maps :: proc(p: ^Pass, maps: bool) {
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS8, r.shadow_buffers.table if maps else r.dummy_buffer)
 }
 
-// Farthest-depth mip chain of the linear depth of the depth target.
+// Farthest-depth mip chain of the linear depth of the depth target, up to
+// DEPTH_PYRAMID_BATCH levels a dispatch (hiz.comp), each from the last level
+// of the one before.
 @(private)
 build_depth_pyramid :: proc(p: ^Pass, pyramid: rhi.Texture) {
 	r, cmd, t := p.r, p.cmd, p.t
-	Params :: struct {source_size: [2]i32, from_depth, pad: u32, along, by: Vec4}
+	Params :: struct {source_size: [2]i32, from_depth, levels: u32, along, by: Vec4}
 	// A point of the depth target, (ndc, depth, 1), is at inv_view_proj of it
 	// from the eye, and at the linear depth of that along the forward axis.
 	m, forward := p.frame.inv_view_proj, p.frame.camera_forward.xyz
@@ -424,15 +424,17 @@ build_depth_pyramid :: proc(p: ^Pass, pyramid: rhi.Texture) {
 	for i in 0 ..< 3 {along += forward[i] * Vec4{m[i, 0], m[i, 1], m[i, 2], m[i, 3]}}
 	by := Vec4{m[3, 0], m[3, 1], m[3, 2], m[3, 3]}
 	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Hiz])
-	width, height := t.width, t.height
-	for level in 0 ..< t.hiz_levels {
-		params := Params{source_size = {i32(width), i32(height)}, from_depth = 1 if level == 0 else 0, along = along, by = by}
+	source := [2]u32{t.width, t.height}
+	for first: u32 = 0; first < t.hiz_levels; first += DEPTH_PYRAMID_BATCH {
+		count := min(DEPTH_PYRAMID_BATCH, t.hiz_levels - first)
+		params := Params{source_size = {i32(source.x), i32(source.y)}, from_depth = 1 if first == 0 else 0, levels = count, along = along, by = by}
 		set_params(cmd, &params)
-		if level == 0 {rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.depth)} else {rhi.cmd_bind_texture(cmd, SLOT_PASS0, pyramid, i32(level - 1))}
-		rhi.cmd_bind_texture(cmd, SLOT_PASS1, pyramid, i32(level))
-		width = max(t.hiz_width >> level, 1)
-		height = max(t.hiz_height >> level, 1)
-		rhi.cmd_dispatch(cmd, groups(width, 8), groups(height, 8))
+		if first == 0 {rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.depth)} else {rhi.cmd_bind_texture(cmd, SLOT_PASS0, pyramid, i32(first - 1))}
+		// The targets past the last level are bound to it, and not written.
+		for k in 0 ..< u32(DEPTH_PYRAMID_BATCH) {rhi.cmd_bind_texture(cmd, SLOT_PASS1 + k, pyramid, i32(first + min(k, count - 1)))}
+		top := [2]u32{(source.x + 1) / 2, (source.y + 1) / 2}
+		rhi.cmd_dispatch(cmd, groups(top.x, 8), groups(top.y, 8))
+		for &extent in source {extent = (extent + (1 << count) - 1) >> count}
 	}
 }
 
@@ -967,12 +969,17 @@ Cull_Params :: struct {
 cull_reset :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
 	start := [1]Gpu_Cull_State{{chunk_dispatch = {0, 0, 1}, candidate_dispatch = {0, 1, 1}, bins_dispatch = {{0, 1, 1}, {0, 1, 1}}}}
 	for &phase in start[0].draws {for &draw in phase {draw.vertex_count = CLUSTER_DRAW_VERTICES}}
+	rhi.cmd_fill_buffer(cmd, r.scene.depth_buckets, 0, DEPTH_BUCKET_WORDS * size_of(u32), 0)
 	cull_bins_dispatch(r, cmd, 0, 0)
 	return upload_transient(r, cmd, start[:], r.scene.cull_state_buffer)
 }
 
+// Of each phase and tested raster bin, a word per depth bucket.
+DEPTH_BUCKET_WORDS :: 2 * 2 * RASTER_DEPTH_BUCKETS
+
 // A pass of cull_bins.comp: mode 0 starts the draws of the resolve of the
-// programs; mode 1 places the clusters the cull of a phase listed in their
+// programs; after the cull of a phase, mode 2 gives the depth buckets of its
+// tested bins their places and mode 1 places the clusters it listed in their
 // raster bins, the list the draws of the phase read.
 @(private)
 cull_bins_dispatch :: proc(r: ^Renderer, cmd: ^rhi.Command_List, mode, phase: u32) {
@@ -985,10 +992,13 @@ cull_bins_dispatch :: proc(r: ^Renderer, cmd: ^rhi.Command_List, mode, phase: u3
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS1, s.listed_buffer)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS2, s.visible_buffer)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS3, s.program_draws)
-	if mode == 0 {
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS4, s.depth_buckets)
+	switch mode {
+	case 0: rhi.cmd_dispatch(cmd, 1)
+	case 1: rhi.cmd_dispatch_indirect(cmd, s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, bins_dispatch)) + u64(phase) * size_of([3]u32))
+	case:
 		rhi.cmd_dispatch(cmd, 1)
-	} else {
-		rhi.cmd_dispatch_indirect(cmd, s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, bins_dispatch)) + u64(phase) * size_of([3]u32))
+		cull_bins_dispatch(r, cmd, 1, phase)
 	}
 }
 
@@ -1026,6 +1036,7 @@ cull_record :: proc(p: ^Pass, params: Cull_Params, hiz: rhi.Texture, stats, glas
 	cull_bind(p, params, hiz, stats, glass)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS3, s.cluster_candidate_buffer)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS6, s.listed_buffer)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS4, s.depth_buckets)
 	rhi.cmd_dispatch_indirect(cmd, s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, chunk_dispatch)))
 }
 
@@ -1052,7 +1063,7 @@ pass_gbuffer :: proc(p: ^Pass) -> bool {
 	if threads > 0 {
 		cull_record(p, {phase = 0, occlusion = 1 if occlusion && t.hiz_valid else 0, hiz_levels = t.hiz_levels, glass_groups = glass_groups}, t.hiz[p.previous], r.stats_buffer, p.view.glass_dispatch)
 	}
-	cull_bins_dispatch(r, cmd, 1, 0)
+	cull_bins_dispatch(r, cmd, 2, 0)
 	rhi.cmd_timestamp(cmd, "visibility")
 	visibility_pass(p, 0, .Clear, .Clear, t.depth, keep_depth, clip)
 	if occlusion && p.draw {
@@ -1070,7 +1081,7 @@ pass_gbuffer :: proc(p: ^Pass) -> bool {
 			cull_bind(p, params, t.hiz[p.current], r.stats_buffer, p.view.glass_dispatch)
 			rhi.cmd_dispatch_indirect(cmd, s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, candidate_dispatch)))
 		}
-		cull_bins_dispatch(r, cmd, 1, 1)
+		cull_bins_dispatch(r, cmd, 2, 1)
 		rhi.cmd_timestamp(cmd, "visibility late")
 		visibility_pass(p, 1, .Load, .Load, t.depth, keep_depth, clip)
 		// The pyramid the next frame tests against holds what both phases drew:
@@ -1203,7 +1214,7 @@ nested_views_record :: proc(p: ^Pass) -> bool {
 		// What the nested camera sees, without the pyramid of the view: its depths are of another camera.
 		if !cull_reset(r, cmd) {return false}
 		cull_record(p, {phase = 0, hiz_levels = t.hiz_levels}, t.hiz[p.previous], r.scratch_buffer, r.scratch_buffer)
-		cull_bins_dispatch(r, cmd, 1, 0)
+		cull_bins_dispatch(r, cmd, 2, 0)
 
 		// Its pixels alone pass the depth test of its draws: the farthest depth where the mask named it, the nearest elsewhere.
 		prime := rhi.Render_Pass_Desc{name = "nested view pixels"}

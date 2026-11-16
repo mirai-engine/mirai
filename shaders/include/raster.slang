@@ -146,6 +146,11 @@ Mirai_Surface_Context fragment_context(Raster_Input input, Material material, fl
     if (raster_back(input)) {
         vertex_normal = -vertex_normal;
         tangent = -tangent;
+#ifdef MATERIAL_GRADIENTS
+        // The derivatives of the normal turn with it (mirai_vertex_normal).
+        material_normal_gradients[0] = -material_normal_gradients[0];
+        material_normal_gradients[1] = -material_normal_gradients[1];
+#endif
     }
     return fragment_footprint(fragment_instance(material_context(input.in_world, normal, vertex_normal, tangent, input.in_uv, input.in_uv1, float2(bias), false), input), input);
 }

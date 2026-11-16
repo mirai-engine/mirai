@@ -246,6 +246,8 @@ shared_constants :: proc(allocator:=context.temp_allocator) -> string {
     u(&b,"RASTER_BIN_TWO_SIDED",abi.RASTER_BIN_TWO_SIDED)
     u(&b,"RASTER_BIN_TESTED",abi.RASTER_BIN_TESTED)
     u(&b,"RASTER_BINS",abi.RASTER_BINS)
+    u(&b,"RASTER_DEPTH_BUCKETS",abi.RASTER_DEPTH_BUCKETS)
+    u(&b,"DEPTH_PYRAMID_BATCH",abi.DEPTH_PYRAMID_BATCH)
     u(&b,"CULL_DRAWS",abi.CULL_DRAWS)
     u(&b,"CULL_CHUNK_DISPATCH",abi.CULL_CHUNK_DISPATCH)
     u(&b,"CULL_CHUNK_COUNT",abi.CULL_CHUNK_COUNT)

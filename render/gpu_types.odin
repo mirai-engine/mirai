@@ -439,6 +439,8 @@ Gpu_Cull_State :: struct {
 #assert(offset_of(Gpu_Cull_State, bin_cursors) == abi.CULL_BIN_CURSORS * size_of(u32))
 #assert(offset_of(Gpu_Cull_State, dropped) == abi.CULL_DROPPED * size_of(u32))
 RASTER_BINS :: abi.RASTER_BINS
+RASTER_DEPTH_BUCKETS :: abi.RASTER_DEPTH_BUCKETS
+DEPTH_PYRAMID_BATCH :: abi.DEPTH_PYRAMID_BATCH
 RASTER_BIN_TWO_SIDED :: abi.RASTER_BIN_TWO_SIDED
 RASTER_BIN_TESTED :: abi.RASTER_BIN_TESTED
 
