@@ -90,27 +90,11 @@ Gbuffer_Corner gbuffer_corner_place(Instance inst, Mesh mesh, Cluster c, Gbuffer
     return p;
 }
 
-// Where a corner was in the frame before, in the space of its mesh, before
-// the vertex hook: a mesh that is not posed does not move in it.
-float3 gbuffer_corner_previous(Mesh mesh, Cluster c, Gbuffer_Cluster k, Gbuffer_Corner p) {
-    float3 before = k.posed == INVALID ? p.v.position : cluster_position_previous(mesh, c, p.local, k.previous);
-    return before + p.offset;
-}
-
-// Where the vertex hook puts a corner of an instance in the frame before, in the world.
+// Where the vertex hook puts a corner of an instance in the frame before, in
+// the world: motion vectors see what the hook moves since then.
 float3 gbuffer_corner_world_previous(Instance inst, Mesh mesh, Cluster c, Gbuffer_Cluster k, Gbuffer_Corner p) {
-    return gbuffer_hooked(k, transform_point(inst.prev_world, gbuffer_corner_previous(mesh, c, k, p)), p.v.color, frame.time.y);
-}
-
-// Whether the vertex hook moves the corners of a cluster: the place of a
-// point of one of its triangles in the frame before is then that of its
-// corners, not that of the point in the space of its mesh.
-bool gbuffer_cluster_hooked(Gbuffer_Cluster k) {
-#if defined(MIRAI_BATCHES) && defined(MIRAI_HOOK_VERTEX)
-    return k.batched;
-#else
-    return false;
-#endif
+    float3 before = cluster_position_previous(mesh, c, p.local, k.previous) + p.offset;
+    return gbuffer_hooked(k, transform_point(inst.prev_world, before), p.v.color, frame.time.y);
 }
 
 Gbuffer_Vertex gbuffer_corner_build(uint index, Instance inst, Mesh mesh, Cluster c, Gbuffer_Cluster k, uint corner) {
@@ -136,7 +120,6 @@ Gbuffer_Vertex gbuffer_corner_build(uint index, Instance inst, Mesh mesh, Cluste
     gbuffer_vertex_place_now(output, world);
     return output;
 #else
-    // Motion vectors see what the hook moves since the previous frame.
     float3 prev_world = gbuffer_corner_world_previous(inst, mesh, c, k, p);
     output.out_normal = transform_normal(inst.world_inv, v.normal);
     output.out_tangent = instance_tangent(inst, v.tangent);
