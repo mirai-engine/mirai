@@ -42,43 +42,66 @@
 #include <extension_vertex.slang>
 #include "gbuffer_build.slang"
 
-// A triangle as the raster placed it, with what its corners give a point of
-// it: what is linear in the space of the mesh is mixed there and taken to the
-// world once a pixel; the normals and tangents, which each corner gives as a
-// unit, are taken there a corner each.
+// A corner of the triangle a pixel shows, as the raster placed it, with what
+// it gives a point of the triangle.
+struct Resolve_Corner {
+    float4 position; // jittered clip
+    float3 world;
+    float3 before;   // in the world, in the frame before
+    float3 normal;   // a unit, in the world
+    float4 tangent;
+    float2 uv, uv1;
+    float4 color;    // of the vertex, with the colors of the instance
+    uint2 surface;   // of a far mesh (Mesh_Point.surface)
+};
+
+Resolve_Corner resolve_corner(Instance inst, Mesh mesh, Cluster c, Gbuffer_Cluster k, uint corner) {
+    Gbuffer_Corner p = gbuffer_corner_place(inst, mesh, c, k, corner);
+    Resolve_Corner r;
+    r.position = view_clip(p.world);
+    r.world = p.world;
+    r.before = gbuffer_corner_world_previous(inst, mesh, c, k, p);
+    r.normal = transform_normal(inst.world_inv, p.v.normal);
+    r.tangent = instance_tangent(inst, p.v.tangent);
+    r.uv = p.v.uv;
+    r.uv1 = p.v.uv1;
+    r.color = p.v.color;
+    r.surface = p.v.surface;
+    return r;
+}
+
+// A triangle as the raster placed it: its corners, and what they share.
 struct Resolve_Triangle {
-    Gbuffer_Corner a, b, c;
-    float4 position_a, position_b, position_c; // jittered clip, as the raster had them
-    float3 normal_a, normal_b, normal_c;
-    float4 tangent_a, tangent_b, tangent_c;
-    Instance inst;
-    Mesh mesh;
-    Cluster cluster;
-    Gbuffer_Cluster shared;
-    uint index;
+    Resolve_Corner a, b, c;
+    float3 tint;     // of the base color: the instance's, and the color of the vertices where it tints the row
+    bool tinted;
+    float3 emission;
+    uint surface;
+    uint flags;
+    uint material;
+    uint instance;
 };
 
 Resolve_Triangle resolve_triangle(uint id) {
     uint4 entry = visible[visibility_entry(id)];
-    Resolve_Triangle t;
-    t.index = entry.x;
-    t.inst = scene_instance(entry.x);
-    t.mesh = meshes[instance_mesh(t.inst)];
-    t.cluster = cluster_at(entry.y);
-    t.shared = gbuffer_cluster(entry.x, t.inst, t.mesh, t.cluster, true);
+    Instance inst = scene_instance(entry.x);
+    Mesh mesh = meshes[instance_mesh(inst)];
+    Cluster cluster = cluster_at(entry.y);
+    Gbuffer_Cluster k = gbuffer_cluster(entry.x, inst, mesh, cluster, true);
     uint corner = visibility_triangle(id) * 3u;
-    t.a = gbuffer_corner_place(t.inst, t.mesh, t.cluster, t.shared, corner);
-    t.b = gbuffer_corner_place(t.inst, t.mesh, t.cluster, t.shared, corner + 1u);
-    t.c = gbuffer_corner_place(t.inst, t.mesh, t.cluster, t.shared, corner + 2u);
-    t.position_a = view_clip(t.a.world);
-    t.position_b = view_clip(t.b.world);
-    t.position_c = view_clip(t.c.world);
-    t.normal_a = transform_normal(t.inst.world_inv, t.a.v.normal);
-    t.normal_b = transform_normal(t.inst.world_inv, t.b.v.normal);
-    t.normal_c = transform_normal(t.inst.world_inv, t.c.v.normal);
-    t.tangent_a = instance_tangent(t.inst, t.a.v.tangent);
-    t.tangent_b = instance_tangent(t.inst, t.b.v.tangent);
-    t.tangent_c = instance_tangent(t.inst, t.c.v.tangent);
+    Resolve_Triangle t;
+    t.a = resolve_corner(inst, mesh, cluster, k, corner);
+    t.b = resolve_corner(inst, mesh, cluster, k, corner + 1u);
+    t.c = resolve_corner(inst, mesh, cluster, k, corner + 2u);
+    t.tint = inst.tint.rgb;
+    t.tinted = k.tinted;
+    // A far mesh: its emission joins that of the instance, and its roughness
+    // and metallic replace those of its material, as its first corner says.
+    t.emission = inst.emission.rgb + ((t.a.surface.x & MESH_SURFACE_SET) != 0u ? surface_emission(t.a.surface.y) : float3(0.0));
+    t.surface = t.a.surface.x;
+    t.flags = k.flags;
+    t.material = k.material;
+    t.instance = entry.x;
     return t;
 }
 
@@ -109,49 +132,37 @@ struct Resolve_Point {
 };
 
 Resolve_Point resolve_point(Resolve_Triangle t, float2 pixel) {
-    float4 a = t.position_a, b = t.position_b, c = t.position_c;
+    float4 a = t.a.position, b = t.b.position, c = t.c.position;
     float3 w = resolve_barycentrics(a, b, c, pixel);
     float3 wx = resolve_barycentrics(a, b, c, pixel + float2(1.0, 0.0));
     float3 wy = resolve_barycentrics(a, b, c, pixel + float2(0.0, 1.0));
-    Gbuffer_Cluster k = t.shared;
     Resolve_Point s;
-    s.input.in_normal = resolve_mix(t.normal_a, t.normal_b, t.normal_c, w);
-    s.input.in_vertex_color = resolve_mix(t.a.v.color, t.b.v.color, t.c.v.color, w);
-    s.input.in_color = (k.tinted ? s.input.in_vertex_color.rgb : float3(1.0)) * t.inst.tint.rgb;
-    // A far mesh: its emission joins that of the instance, and its roughness
-    // and metallic replace those of its material.
-    s.input.in_emission = t.inst.emission.rgb + ((t.a.v.surface.x & MESH_SURFACE_SET) != 0u ? surface_emission(t.a.v.surface.y) : float3(0.0));
-    s.input.in_surface = t.a.v.surface.x;
+    s.input.in_normal = resolve_mix(t.a.normal, t.b.normal, t.c.normal, w);
+    s.input.in_vertex_color = resolve_mix(t.a.color, t.b.color, t.c.color, w);
+    s.input.in_color = (t.tinted ? s.input.in_vertex_color.rgb : float3(1.0)) * t.tint;
+    s.input.in_emission = t.emission;
+    s.input.in_surface = t.surface;
     s.input.in_world = resolve_mix(t.a.world, t.b.world, t.c.world, w);
+    // What is linear in the triangle is taken to the clip spaces once.
     s.input.in_clip = view_clip_unjittered(s.input.in_world);
-    // Motion vectors see what the hook moves since the previous frame.
-    float3 before;
-    if (gbuffer_cluster_hooked(k)) {
-        before = resolve_mix(gbuffer_corner_world_previous(t.inst, t.mesh, t.cluster, k, t.a),
-            gbuffer_corner_world_previous(t.inst, t.mesh, t.cluster, k, t.b), gbuffer_corner_world_previous(t.inst, t.mesh, t.cluster, k, t.c), w);
-    } else {
-        float3 local = resolve_mix(gbuffer_corner_previous(t.mesh, t.cluster, k, t.a), gbuffer_corner_previous(t.mesh, t.cluster, k, t.b),
-            gbuffer_corner_previous(t.mesh, t.cluster, k, t.c), w);
-        before = transform_point(t.inst.prev_world, local);
-    }
-    s.input.in_prev_clip = view_clip_previous(before);
-    s.input.in_flags = k.flags;
-    s.input.in_uv = resolve_mix(t.a.v.uv, t.b.v.uv, t.c.v.uv, w);
-    s.input.in_material = k.material;
-    s.input.in_instance = t.index;
-    s.input.in_uv1 = resolve_mix(t.a.v.uv1, t.b.v.uv1, t.c.v.uv1, w);
-    s.input.in_tangent = resolve_mix(t.tangent_a, t.tangent_b, t.tangent_c, w);
+    s.input.in_prev_clip = view_clip_previous(resolve_mix(t.a.before, t.b.before, t.c.before, w));
+    s.input.in_flags = t.flags;
+    s.input.in_uv = resolve_mix(t.a.uv, t.b.uv, t.c.uv, w);
+    s.input.in_material = t.material;
+    s.input.in_instance = t.instance;
+    s.input.in_uv1 = resolve_mix(t.a.uv1, t.b.uv1, t.c.uv1, w);
+    s.input.in_tangent = resolve_mix(t.a.tangent, t.b.tangent, t.c.tangent, w);
     // Counter-clockwise on the screen is the front, as the raster takes it;
     // the sign of the homogeneous determinant holds behind the eye too.
     float3 ra = float3(a.x, a.y, a.w), rb = float3(b.x, b.y, b.w), rc = float3(c.x, c.y, c.w);
     s.input = raster_facing(s.input, dot(ra, cross(rb, rc)) > 0.0);
-    s.uv_gradients = float4(resolve_mix(t.a.v.uv, t.b.v.uv, t.c.v.uv, wx) - s.input.in_uv, resolve_mix(t.a.v.uv, t.b.v.uv, t.c.v.uv, wy) - s.input.in_uv);
-    s.uv1_gradients = float4(resolve_mix(t.a.v.uv1, t.b.v.uv1, t.c.v.uv1, wx) - s.input.in_uv1, resolve_mix(t.a.v.uv1, t.b.v.uv1, t.c.v.uv1, wy) - s.input.in_uv1);
+    s.uv_gradients = float4(resolve_mix(t.a.uv, t.b.uv, t.c.uv, wx) - s.input.in_uv, resolve_mix(t.a.uv, t.b.uv, t.c.uv, wy) - s.input.in_uv);
+    s.uv1_gradients = float4(resolve_mix(t.a.uv1, t.b.uv1, t.c.uv1, wx) - s.input.in_uv1, resolve_mix(t.a.uv1, t.b.uv1, t.c.uv1, wy) - s.input.in_uv1);
     s.world_dx = resolve_mix(t.a.world, t.b.world, t.c.world, wx) - s.input.in_world;
     s.world_dy = resolve_mix(t.a.world, t.b.world, t.c.world, wy) - s.input.in_world;
     float3 n = normalize(s.input.in_normal);
-    s.normal_dx = normalize(resolve_mix(t.normal_a, t.normal_b, t.normal_c, wx)) - n;
-    s.normal_dy = normalize(resolve_mix(t.normal_a, t.normal_b, t.normal_c, wy)) - n;
+    s.normal_dx = normalize(resolve_mix(t.a.normal, t.b.normal, t.c.normal, wx)) - n;
+    s.normal_dy = normalize(resolve_mix(t.a.normal, t.b.normal, t.c.normal, wy)) - n;
     return s;
 }
 
