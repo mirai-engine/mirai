@@ -90,6 +90,8 @@ Memory :: struct {
     charge:i64,    // the most it is expected to hold at once; 0 starts at once
     ledger:string, // the file of the compilations that run (CACHE_LEDGER); "" counts those of the runner
     record:string, // where its peak is kept once it succeeds (CACHE_PEAKS); "" keeps none
+    turn:  int,    // of those of the runner that wait for room, the lowest goes first; the same turn, the first that asked
+    waited:^time.Duration, // nil or what is added the time it waited for room
 }
 
 // A compilation that runs: what it was charged and what it holds now.
@@ -123,13 +125,18 @@ charge_of :: proc(peaks:map[string]i64,key:string) -> i64 {
 @(private)
 Runner :: struct {
     lock:     sync.Mutex,
-    admission:sync.Mutex, // held by the compilation that waits for room: the others ask after it, in order
+    turned:   sync.Cond, // a compilation ended, or the one that waits first changed
+    waiting:  [RUNNER_CAPACITY]Turn, // the compilations that wait for room (guarded by lock)
+    waiting_count,tickets:int,
     runs:     int,  // tools run since the runner was made (guarded by lock)
     cancelled:bool, // guarded by lock
     running:  [RUNNER_CAPACITY]Running, // the tools started and not yet waited for (guarded by lock)
     running_count:int,
     most:     int, // the most compilations with a charge that ran at once (guarded by lock)
 }
+
+@(private)
+Turn :: struct {turn,ticket:int}
 
 @(private)
 Running :: struct {
@@ -165,6 +172,7 @@ tool_run :: proc(runner:^Runner,command:[]string,allocator:=context.allocator,me
             runner.running[i]=runner.running[runner.running_count]
             break
         }
+        sync.cond_broadcast(&runner.turned)
     }
     state,wait_error:=subprocess.wait(&process)
     if memory.charge>0 && memory.ledger!="" {
@@ -198,41 +206,57 @@ tool_start :: proc(runner:^Runner,command:[]string,charge:i64,allocator:runtime.
 
 // Starts a compilation once the machine has room for it, and lists it in the
 // ledger while its lock is held, so that no other process takes that room.
+// The compilations of a runner ask one at a time, by their turns.
 @(private)
 tool_admit :: proc(runner:^Runner,command:[]string,memory:Memory,allocator:runtime.Allocator) -> (process:subprocess.Process,problem:string) {
-    sync.guard(&runner.admission)
+    asked:=time.tick_now()
+    defer if memory.waited!=nil {memory.waited^+=time.tick_since(asked)}
+    sync.lock(&runner.lock)
+    me:=Turn{memory.turn,runner.tickets}
+    runner.tickets+=1
+    if runner.waiting_count<RUNNER_CAPACITY {
+        runner.waiting[runner.waiting_count]=me
+        runner.waiting_count+=1
+    }
     for {
-        if runner_cancelled(runner) {return {},strings.clone("the generation was cancelled",allocator)}
+        if runner.cancelled {problem=strings.clone("the generation was cancelled",allocator);break}
+        first:=true
+        for other in runner.waiting[:runner.waiting_count] {first&&=!(other.turn<me.turn || other.turn==me.turn && other.ticket<me.ticket)}
+        if !first {sync.cond_wait(&runner.turned,&runner.lock);continue}
+        own:=runner_compiling(runner)
         running:=make([dynamic]Admitted,context.temp_allocator)
+        for each in runner.running[:runner.running_count] {
+            if each.charge==0 {continue}
+            held,_,_:=subprocess.memory_held(each.process.pid)
+            append(&running,Admitted{each.charge,held})
+        }
+        sync.unlock(&runner.lock)
         lock,listed:=ledger_lock(memory.ledger)
         if listed {
+            clear(&running)
             ledger_update(memory.ledger,&running)
-        } else {
-            sync.guard(&runner.lock)
-            for each in runner.running[:runner.running_count] {
-                if each.charge==0 {continue}
-                held,_,_:=subprocess.memory_held(each.process.pid)
-                append(&running,Admitted{each.charge,held})
-            }
-        }
-        own:int
-        {
-            sync.guard(&runner.lock)
-            own=runner_compiling(runner)
         }
         // A machine that does not say what is free has room for one.
         _,free,_:=base.memory_stats()
-        if admits(free,running[:],own,memory.charge) {
+        admitted:=admits(free,running[:],own,memory.charge)
+        if admitted {
             process,problem=tool_start(runner,command,memory.charge,allocator)
-            if listed {
-                if problem=="" {ledger_update(memory.ledger,nil,add=fmt.tprintf("%d %d %d\n",os.get_pid(),process.pid,memory.charge))}
-                workspace.lock_release(&lock)
-            }
-            return
+            if listed && problem=="" {ledger_update(memory.ledger,nil,add=fmt.tprintf("%d %d %d\n",os.get_pid(),process.pid,memory.charge))}
         }
         if listed {workspace.lock_release(&lock)}
-        time.sleep(ROOM_POLL)
+        sync.lock(&runner.lock)
+        if admitted {break}
+        sync.cond_wait_with_timeout(&runner.turned,&runner.lock,ROOM_POLL)
     }
+    for each,i in runner.waiting[:runner.waiting_count] {
+        if each!=me {continue}
+        runner.waiting_count-=1
+        runner.waiting[i]=runner.waiting[runner.waiting_count]
+        break
+    }
+    sync.cond_broadcast(&runner.turned)
+    sync.unlock(&runner.lock)
+    return
 }
 
 // The compilations with a charge the runner runs (lock held).
@@ -293,6 +317,7 @@ ledger_update :: proc(path:string,running:^[dynamic]Admitted,leave:=0,add:="") {
 runner_cancel :: proc(runner:^Runner) {
     sync.guard(&runner.lock)
     runner.cancelled=true
+    sync.cond_broadcast(&runner.turned)
     for &each in runner.running[:runner.running_count] {_=subprocess.terminate(&each.process,force=true)}
 }
 
