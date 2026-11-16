@@ -6,6 +6,7 @@ import "core:c"
 import "core:os"
 import "core:strings"
 import "core:sys/posix"
+import "core:time"
 
 when ODIN_OS==.Darwin {
     foreign import libc "system:System"
@@ -45,6 +46,24 @@ _detached :: proc(desc:os.Process_Desc) -> (process:Process,error:os.Error) {
 _terminate :: proc(process:^Process,force:bool) -> os.Error {
     if posix.killpg(posix.pid_t(process.pid),.SIGKILL if force else .SIGTERM)!=.OK {return os.Platform_Error(posix.errno())}
     return nil
+}
+
+// Waits for the child to exit, without taking its exit. Within a timeout it
+// looks every millisecond.
+_exited :: proc(process:^Process,timeout:time.Duration) -> os.Error {
+    flags:=posix.Wait_Flags{.EXITED,.NOWAIT}
+    if timeout>=0 {flags+={.NOHANG}}
+    start:=time.tick_now()
+    for {
+        info:posix.siginfo_t
+        if posix.waitid(.P_PID,posix.id_t(process.pid),&info,flags)==-1 {
+            if errno:=posix.errno();errno!=.EINTR {return os.Platform_Error(errno)}
+            continue
+        }
+        if info.si_signo!=nil {return nil}
+        if time.tick_since(start)>=timeout {return os.General_Error.Timeout}
+        time.sleep(time.Millisecond)
+    }
 }
 
 // Ends what the child left in its group and reaps the watcher.
