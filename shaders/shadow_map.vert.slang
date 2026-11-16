@@ -3,8 +3,8 @@
 // which shadow_map.frag draws only where their material is there.
 //! variant tested MIRAI_SHADOW_TESTED=1
 // square: of each word of a list of the buffer of the pages from
-// params.list, its page of the pool (shadow_page_word), for shadow_map.frag
-// to clear or copy.
+// params.list, its page of the pool (with SHADOW_JOB_HELD where the cache
+// holds it this frame), for shadow_map.frag to clear or copy.
 //! variant square MIRAI_SHADOW_SQUARE=1
 // The depth of the scene from a light into the pages of one of its maps in
 // the pool (shadow_maps.slang): an instance for each page of a map a cluster
@@ -55,10 +55,8 @@ Shadow_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vul
     if (vertex_id >= 6u) return output;
     float2 at = float2(vertex_id == 1u || vertex_id >= 4u ? 1.0 : 0.0, vertex_id == 2u || vertex_id == 3u || vertex_id == 5u ? 0.0 : 1.0);
     uint word = shadow_pages[params.list + instance_id];
-    Shadow_Map square = shadow_map_mip(shadow_map_at(shadow_data, params.rows, shadow_page_map(word)), shadow_page_mip(word));
-    uint2 corner;
-    if (!shadow_page_pool(square, shadow_page_of(word), corner)) return output;
-    output.held = (shadow_table_entry(square.rect.x, shadow_page_entry(square.rect, shadow_page_of(word))) & SHADOW_PAGE_CACHED) != 0u ? 1.0 : 0.0;
+    uint2 corner = shadow_pool_corner(word & SHADOW_ENTRY_POOL);
+    output.held = (word & SHADOW_JOB_HELD) != 0u ? 1.0 : 0.0;
     float4 rect = float4(float2(corner), float2(corner + SHADOW_PAGE));
     float2 texel = lerp(rect.xy, rect.zw, at);
     for (uint i = 0u; i < 4u; i++) output.clip[i] = 1.0;

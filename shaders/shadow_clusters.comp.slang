@@ -24,6 +24,9 @@
 // The clusters to draw: the instance, the cluster, the page (shadow_page_word),
 // and 1 for one drawn at rest.
 [[vk::binding(SLOT_PASS4, 0)]] RWStructuredBuffer<uint4> entries : register(MIRAI_REGISTER(u, SLOT_PASS4), space0);
+// The farthest depth the cache holds over the blocks of each page of the pool (shadow_hiz.comp).
+[[vk::binding(SLOT_PASS7, 0)]] Texture2D<float4> hiz : register(MIRAI_REGISTER(t, SLOT_PASS7), space0);
+#include "shadow_hidden.slang"
 
 void shadow_add(uint draw, uint4 entry) {
     uint slot;
@@ -67,6 +70,9 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
     for (uint y = pages.y; y <= pages.w; y++) {
         for (uint x = pages.x; x <= pages.z; x++) {
             if (!shadow_page_drawn(m, uint2(x, y))) continue;
+            // In the round of what moves, where the cache holds the page and hides the cluster there.
+            uint held = shadow_table_entry(m.rect.x, shadow_page_entry(m.rect, uint2(x, y)));
+            if (params.moving == 1u && (held & SHADOW_PAGE_CACHED) != 0u && shadow_box_hidden(hiz, m, uint2(x, y), (held & SHADOW_ENTRY_POOL) - 1u, low, high)) continue;
             uint page = shadow_page_word(map, shadow_rect_mip(m.rect), uint2(x, y));
             if ((work.y & SHADOW_CHUNK_DEPTH) != 0u) shadow_add(tested ? SHADOW_DRAW_TESTED : SHADOW_DRAW_OPAQUE, uint4(instance, k, page, rest ? 1u : 0u));
             if ((work.y & SHADOW_CHUNK_GLASS) != 0u) shadow_add(SHADOW_DRAW_GLASS, uint4(instance, k, page, 0u));

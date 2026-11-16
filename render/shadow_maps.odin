@@ -105,6 +105,7 @@ Shadow_Raster :: struct {
 	cache:    rhi.Texture,   // the depth of what stays, by pages of the pool
 	atlas:    rhi.Texture,   // the cache with what moves
 	table:    rhi.Texture,   // an entry for each page of each slot (abi.SHADOW_PAGE_*)
+	hiz:      rhi.Texture,   // the farthest depth of the cache over blocks of each page of the pool (shadow_hiz.comp)
 	pages:    rhi.Buffer,    // abi.SHADOW_WORDS_*
 	pool:     u32,           // the pages of the pool it gives, 0: all of them
 	held:     [SHADOW_SLOTS]Shadow_Held,
@@ -776,6 +777,7 @@ shadow_cull :: proc(p: ^Pass, plan: Shadow_Plan, params: Shadow_Params, round: S
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS3, r.stats_buffer)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS4, s.shadow_entries)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS6, t.shadow_raster.pages)
+		rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.shadow_raster.hiz)
 		if pipeline == .Shadow_Maps {
 			if plan.movers > 0 {rhi.cmd_bind_transient(cmd, SLOT_PASS5, plan.bits)} else {rhi.cmd_bind_buffer(cmd, SLOT_PASS5, r.dummy_buffer)}
 			rhi.cmd_dispatch_indirect(cmd, t.shadow_raster.pages, u64(abi.SHADOW_WORDS_ARGS + abi.SHADOW_ARGS_DISPATCH + 3 * u32(round)) * 4)
@@ -851,7 +853,11 @@ shadow_maps_pass :: proc(p: ^Pass, mark: ^$T, scale: u32, grid: rhi.Buffer) -> (
 	fresh := b.cache == 0 || b.cut != r.settings.lod_error_pixels
 	plan, ok := shadow_maps_plan(p, fresh)
 	if !ok || plan.on == 0 {return}
-	made := b.pages == 0 || b.table == 0
+	made := b.pages == 0 || b.table == 0 || b.hiz == 0
+	if b.hiz == 0 {
+		b.hiz = rhi.texture_create(r.device, {width = SHADOW_POOL / abi.SHADOW_HIZ_BLOCK, height = SHADOW_POOL / abi.SHADOW_HIZ_BLOCK, mip_levels = abi.SHADOW_HIZ_MIPS, format = .R32_Float, usage = {.Storage, .Sampled}, name = "shadow hiz"})
+		if b.hiz == 0 {set_error(r, "shadow hiz: %s", rhi.device_error(r.device)); b.forget = true; return}
+	}
 	good := target(r, cmd, &b.cache, SHADOW_POOL, SHADOW_POOL, .D32_Float, {.Depth_Target, .Sampled}, "shadow cache") &&
 	        target(r, cmd, &b.atlas, SHADOW_POOL, SHADOW_POOL, .D32_Float, {.Depth_Target, .Sampled}, "shadow atlas") &&
 	        target(r, cmd, &b.table, abi.SHADOW_SLOT_ENTRIES, SHADOW_SLOTS, .R32_Uint, {.Storage, .Sampled}, "shadow table")
@@ -913,6 +919,7 @@ shadow_maps_pass :: proc(p: ^Pass, mark: ^$T, scale: u32, grid: rhi.Buffer) -> (
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS0, d.table)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS2, b.pages)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS3, b.table)
+		rhi.cmd_bind_texture(cmd, SLOT_PASS4, b.hiz)
 		threads := [Shadow_Pages_Step]u32{
 			.Invalidate = plan.box_count * SHADOW_SLOTS, .Entries = SHADOW_SLOTS * abi.SHADOW_SLOT_ENTRIES, .Rank = abi.SHADOW_RANK_WORDS, .Sums = 1,
 			.Pool = 1, .Allocate = abi.SHADOW_RANK_WORDS, .Propagate = SHADOW_SLOTS * abi.SHADOW_SLOT_ENTRIES, .Finish = 1,
@@ -927,6 +934,13 @@ shadow_maps_pass :: proc(p: ^Pass, mark: ^$T, scale: u32, grid: rhi.Buffer) -> (
 	shadow_cull(p, plan, params, .Stays)
 	rhi.cmd_timestamp(cmd, "shadow cache")
 	shadow_draw(p, plan, params, b.cache, "shadow cache", cache = true)
+	// The farthest depth of the pages the cache drew, which what moves is culled against.
+	rhi.cmd_timestamp(cmd, "shadow hiz")
+	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Shadow_Hiz])
+	rhi.cmd_bind_texture(cmd, SLOT_PASS0, b.cache)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS1, b.pages)
+	for mip in 0 ..< abi.SHADOW_HIZ_MIPS {rhi.cmd_bind_texture(cmd, SLOT_PASS2 + u32(mip), b.hiz, i32(mip))}
+	rhi.cmd_dispatch_indirect(cmd, b.pages, u64(abi.SHADOW_WORDS_ARGS + abi.SHADOW_ARGS_HIZ) * 4)
 	// The pages of the atlas where the cache drew or what moves changed: the
 	// cache, then what moves over it.
 	rhi.cmd_timestamp(cmd, "shadow cull moving")
@@ -965,6 +979,7 @@ destroy_shadow_maps :: proc(r: ^Renderer, t: ^Targets) {
 	if t.shadow_raster.cache != 0 {rhi.texture_destroy(r.device, t.shadow_raster.cache)}
 	if t.shadow_raster.atlas != 0 {rhi.texture_destroy(r.device, t.shadow_raster.atlas)}
 	if t.shadow_raster.table != 0 {rhi.texture_destroy(r.device, t.shadow_raster.table)}
+	if t.shadow_raster.hiz != 0 {rhi.texture_destroy(r.device, t.shadow_raster.hiz)}
 	if t.shadow_raster.pages != 0 {rhi.buffer_destroy(r.device, t.shadow_raster.pages)}
 	t.shadow_raster = {}
 }
