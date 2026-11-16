@@ -687,8 +687,10 @@ render_lights_that_few_reach_at_a_time_are_each_lit :: proc(t: ^testing.T) {
 // Lights that the tree adds up by groups give what they give one by one, the
 // same from one frame to the next: a ring of lights with shadows; lights
 // without them, one dim that reaches far among bright ones that reach a
-// little, which a group of them lost beyond the mean of their ranges; and a
-// crowd of lights without them, more than a walk visits, under the sun.
+// little, which a group of them lost beyond the mean of their ranges; a
+// crowd of lights without them, more than a walk visits, under the sun; and
+// a ceiling of downlights without them, of two widths, more than a walk
+// visits, whose groups stand for them by the cones they shine in.
 @(test)
 render_groups_of_lights_give_what_their_lights_give :: proc(t: ^testing.T) {
 	f: Cube_Fixture
@@ -698,7 +700,7 @@ render_groups_of_lights_give_what_their_lights_give :: proc(t: ^testing.T) {
 	if !cube_fixture_init(t, &f, 64, 48, settings, programs = true) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
-	Case :: enum {Ring, Reaches, Crowd}
+	Case :: enum {Ring, Reaches, Crowd, Spots}
 	for c in Case {
 		lights := make([dynamic]Light_Desc, context.temp_allocator)
 		sun: Sun_Desc
@@ -730,6 +732,12 @@ render_groups_of_lights_give_what_their_lights_give :: proc(t: ^testing.T) {
 				append(&lights, Light_Desc{position = {across * math.cos(angle), 1.8 + height * inside, across * math.sin(angle)}, color = {0.5 + 0.5 * f32(i % 2), 0.7, 0.5 + 0.5 * f32(i % 3) / 2}, intensity = 0.015 * math.PI, range = 8, radius = 0.02, indirect = 1, scattering = 1, shadowless = true})
 			}
 			sun = {direction = linalg.normalize(Vec3{0.3, 1, 0.2}), color = {1, 0.95, 0.9}, illuminance = 0.5 * math.PI, enabled = true, indirect = 1, scattering = 1}
+		case .Spots:
+			// Downlights a metre apart over a ceiling of 15 by 15 m, of two widths.
+			for i in 0 ..< 256 {
+				x, z := f32(i % 16) - 7.5 + 0.1 * math.sin(f32(i) * 1.7), f32(i / 16) - 7.5 + 0.1 * math.cos(f32(i) * 2.3)
+				append(&lights, Light_Desc{position = {x, 2.2 + 0.2 * f32(i % 3), z}, color = {0.5 + 0.5 * f32(i % 2), 0.7, 0.5 + 0.5 * f32(i % 3) / 2}, intensity = 0.1 * math.PI, range = 8, radius = 0.02, direction = {0, -1, 0}, cone = 0.55 if i % 2 == 0 else 0.75, indirect = 1, scattering = 1, shadowless = true})
+			}
 		}
 		floor := Instance_Desc{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {12, 0.2, 12}), tint = {1, 1, 1}}
 		scene_given(r, []Instance_Desc{floor}, lights[:], sun, {})
@@ -758,7 +766,8 @@ render_groups_of_lights_give_what_their_lights_give :: proc(t: ^testing.T) {
 			testing.expectf(t, abs(estimate[k] - reference[k]) <= 0.04 * reference[k] + 2, "%v: channel %d: by groups %v, one by one %v", c, k, estimate, reference)
 		}
 		_, rms := image_error(grouped, exact)
-		testing.expectf(t, rms < 4, "%v: %v of 255 apart", c, rms)
+		// The groups of downlights the walk keeps blur the edges of their cones on the floor.
+		testing.expectf(t, rms < (5 if c == .Spots else 4), "%v: %v of 255 apart", c, rms)
 		testing.expectf(t, slice.equal(next, grouped), "%v: the next frame is the same", c)
 		free_all(context.temp_allocator)
 	}

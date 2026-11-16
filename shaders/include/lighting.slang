@@ -159,9 +159,9 @@ float3 light_contribution(Light light, float3 position, float3 normal, out float
     }
     float cone = 1.0;
     if (light.direction_cone.w > -1.5) {
-        // Spot lights fade out between 80% of the half-angle and its edge.
+        // Spot lights fade out between LIGHT_SPOT_FULL of the half-angle and its edge.
         float cos_outer = light.direction_cone.w;
-        float cos_inner = cos(acos(cos_outer) * 0.8);
+        float cos_inner = cos(acos(cos_outer) * LIGHT_SPOT_FULL);
         cone = smoothstep(cos_outer, cos_inner, dot(-direction, light.direction_cone.xyz));
         if (cone <= 0.0) return float3(0.0);
     }
@@ -315,13 +315,26 @@ float3 light_point(Light light, float3 position, float k, float spin) {
 // on the group does not know; and how much the window changes between its
 // nearest light by its longest range and its farthest by its shortest, which
 // can be all of the light of a group whose center is beyond the range of
-// some of its lights and not of others.
+// some of its lights and not of others. By the directions they face, it is
+// node_aims, and may err as far as the most or the least it could be: a
+// group of spots that face alike, seen from well within or well outside of
+// their cones, stands for them.
+// The widths of a node (Gpu_Light_Node.widths): how far past its cone its
+// light fades out, and how far around its own axis each of its lights shines
+// whole.
+float node_falloff(Light_Node node) { return float(node.widths & 0xFFFFu) * (PI / 65535.0); }
+float node_inner(Light_Node node) { return float(node.widths >> 16u) * (PI / 65535.0); }
+
 // How much of the light of a node reaches a point by the directions its
-// lights face: 1 within the cone that holds them, past it fading out over
-// how far beyond it they shine, and 0 beyond that (Conty Estevez and Kulla
-// 2018), with the angle the sphere of the node spans from the point taken in
-// its favor. A spot fades so to the edge of its cone; a rectangle as a
-// cosine; a point lights every way.
+// lights face, at most: 1 within the cone they shine whole in, past it
+// fading out as a cosine over node_falloff, and 0 beyond that (Conty
+// Estevez and Kulla 2018; pbrt-v4), with the angle the sphere of the node
+// spans from the point taken in its favor. A spot fades so to the edge of
+// its cone; a rectangle as a cosine; a point lights every way.
+float node_aim_past(float beyond, float falloff) {
+    if (beyond >= falloff) return 0.0;
+    return cos(beyond * (0.5 * PI) / max(falloff, 1e-4));
+}
 float node_aim(Light_Node node, float3 position) {
     if (node.cone.w >= PI - 1e-3) return 1.0;
     float3 away = position - node.center_radius.xyz;
@@ -329,9 +342,52 @@ float node_aim(Light_Node node, float3 position) {
     float radius = node.center_radius.w;
     if (distance <= radius) return 1.0;
     float theta = acos(clamp(dot(node.cone.xyz, away / distance), -1.0, 1.0));
-    float beyond = max(theta - node.cone.w - asin(radius / distance), 0.0);
-    if (beyond >= node.emission) return 0.0;
-    return cos(beyond * (0.5 * PI) / max(node.emission, 1e-4));
+    return node_aim_past(max(theta - node.cone.w - asin(radius / distance), 0.0), node_falloff(node));
+}
+// What of the light of a group reaches a point by the directions its lights
+// face, as node_aim gives it at most (`most`) and at least (`least`): the
+// axis of each of its lights lies within the cone less the narrowest
+// half-angle they shine whole in (node_inner), and each shines whole within
+// that of its own axis, with the angle the sphere spans taken against it;
+// inside the sphere, none. Returns it as a light whose cone lies halfway
+// between the narrowest and the cone of the group, fading out over what
+// lies between them too, seen from the root mean square of the angles to
+// its lights, within those bounds.
+float node_aims(Light_Node node, float3 position, out float most, out float least) {
+    most = 1.0;
+    least = 1.0;
+    float inner = min(node_inner(node), node.cone.w);
+    if (node.cone.w >= PI - 1e-3 && inner >= PI - 1e-2) return 1.0;
+    float3 away = position - node.center_radius.xyz;
+    float distance = length(away);
+    float radius = node.center_radius.w;
+    float falloff = node_falloff(node);
+    if (distance <= radius) {
+        least = 0.0;
+        return 0.5;
+    }
+    float theta = acos(clamp(dot(node.cone.xyz, away / distance), -1.0, 1.0));
+    float sphere = asin(radius / distance);
+    if (node.cone.w < PI - 1e-3) most = node_aim_past(max(theta - node.cone.w - sphere, 0.0), falloff);
+    least = node_aim_past(max(theta + sphere + node.cone.w - 2.0 * inner, 0.0), falloff);
+    // Its lights lie around the direction of its center by about the angle of their spread.
+    float around = asin(min(node.spread / distance, 1.0));
+    float middle = node_aim_past(max(sqrt(theta * theta + around * around) - 0.5 * (node.cone.w + inner), 0.0), falloff + (node.cone.w - inner));
+    return clamp(middle, least, most);
+}
+
+// What of a sphere of `radius` whose center lies `distance` along `delta`
+// rises above the horizon of the normal, at most: all of it while the
+// normal lies within its angle, else the cosine of the angle from the normal
+// to the sphere less the angle the sphere spans (the clamped cosine of a
+// difference of pbrt-v4). A normal of zero, a point of a medium: all of it.
+float node_rising(float3 normal, float3 delta, float distance, float radius) {
+    if (dot(normal, normal) < 0.5) return 1.0;
+    float cosine = dot(delta, normal) / max(distance, 1e-6);
+    float sine_sphere = min(radius / max(distance, 1e-6), 1.0);
+    float cosine_sphere = sqrt(1.0 - sine_sphere * sine_sphere);
+    if (cosine > cosine_sphere) return 1.0;
+    return saturate(cosine * cosine_sphere + sqrt(saturate(1.0 - cosine * cosine)) * sine_sphere);
 }
 
 float node_window(Light_Node node, float distance) {
@@ -346,15 +402,17 @@ float3 group_contribution(Light_Node node, float3 position, float3 normal, out f
     float3 delta = node.center_radius.xyz - position;
     distance = length(delta);
     direction = delta / max(distance, 1e-6);
-    float aim = node_aim(node, position);
+    float most, least;
+    float aim = node_aims(node, position, most, least);
     float cosine = dot(normal, normal) > 0.5 ? dot(normal, direction) : 1.0;
     float deviation = node.spread * 0.57735027;
     float window = 0.5 * (node_window(node, distance - deviation) + node_window(node, distance + deviation));
-    float3 light = node.power_reach.rgb * (aim * sphere_irradiance(cosine, distance, node.spread));
+    float3 unaimed = node.power_reach.rgb * sphere_irradiance(cosine, distance, node.spread);
+    float3 light = unaimed * aim;
     float spread = node.spread / max(distance, 1e-6);
     float bend = node_bend(node, distance);
     float horizon = saturate(1.0 - abs(cosine) / max(spread, 1e-6));
-    doubt = luminance(light) * ((3.0 * spread * spread + horizon) * window + 0.5 * bend);
+    doubt = luminance(light) * ((3.0 * spread * spread + horizon) * window + 0.5 * bend) + luminance(unaimed) * max(most - aim, aim - least) * window;
     return light * window;
 }
 
@@ -466,40 +524,49 @@ static const float GROUP_NEAR = 0.6;
 static const float GROUP_INSIDE = 1.0;
 
 // How much a group that reaches a point needs to open to its children: the
-// brighter and the wider as the point sees it, the more; one that holds a
-// spot, first. `share`: by that share of its light (LIGHT_SHARE_*).
+// brighter and the wider as the point sees it, the more. `share`: by that
+// share of its light (LIGHT_SHARE_*).
 float node_need(Light_Node node, float distance_squared, float3 position, float3 normal, uint share) {
-    if ((node.flags & LIGHT_NODE_SPOT) != 0u) return 3e38;
     float distance = sqrt(distance_squared);
     float radius = node.center_radius.w;
-    float rising = saturate((dot(node.center_radius.xyz - position, normal) + radius) / max(distance, 1e-6));
+    float rising = node_rising(normal, node.center_radius.xyz - position, distance, radius);
     return luminance(node.power_reach.rgb) * node_share(node, share) * node_aim(node, position) * rising / max(distance_squared, radius * radius) * min(radius / max(distance, 1e-6), 1.0);
 }
 
 // A walk of the tree visits at most LIGHT_WALK_MAX nodes. It holds the
-// groups it means to open and opens first the one whose light is most at
-// stake (node_need by what of it is left to its children); once it would
-// pass that many, each group it holds stands for its lights. Its cost then
-// stops growing with how many lights reach a point, and what it gives a
-// point depends on nothing but the lights and the point. Each group it opens
-// visits two nodes for the one it held, so it never holds more than half.
+// groups it means to open; `ordered`, it opens first the one whose light is
+// most at stake (node_need by what of it is left to its children), and once
+// it would pass that many, each group it holds stands for its lights. Its
+// cost then stops growing with how many lights reach a point, and what it
+// gives a point depends on nothing but the lights and the point. Each group
+// it opens visits two nodes for the one it held, so it never holds more than
+// half. Where few lights reach a point the order does not matter, as every
+// group it holds opens: a walk first opens the last group it held, with no
+// needs to weigh, and only one cut short (`cut`) starts again in order.
 static const uint LIGHT_WALK_MAX = 64u;
 static const uint LIGHT_WALK_HELD = LIGHT_WALK_MAX / 2u;
 struct Light_Walk {
     uint at[LIGHT_WALK_HELD];
     float weight[LIGHT_WALK_HELD]; // what of the light of the group is left to its children
-    float need[LIGHT_WALK_HELD];
+    float need[LIGHT_WALK_HELD];   // ordered only
     uint held;
     uint visits;
+    bool ordered;
+    bool cut; // it had more to open than it could
 };
-Light_Walk light_walk_begin() {
+Light_Walk light_walk_begin(bool ordered) {
     Light_Walk walk;
     walk.held = 0u;
     walk.visits = 0u;
+    walk.ordered = ordered;
+    walk.cut = false;
     return walk;
 }
 void light_walk_hold(inout Light_Walk walk, uint at, float weight, float need) {
-    if (walk.held >= LIGHT_WALK_HELD) return;
+    if (walk.held >= LIGHT_WALK_HELD) {
+        walk.cut = true;
+        return;
+    }
     walk.at[walk.held] = at;
     walk.weight[walk.held] = weight;
     walk.need[walk.held] = need;
@@ -510,10 +577,16 @@ void light_walk_hold(inout Light_Walk walk, uint at, float weight, float need) {
 bool light_walk_next(inout Light_Walk walk, out uint at, out float weight) {
     at = 0u;
     weight = 0.0;
-    if (walk.held == 0u || walk.visits + 2u > LIGHT_WALK_MAX) return false;
-    uint neediest = 0u;
-    for (uint i = 1u; i < walk.held; i++) {
-        if (walk.need[i] > walk.need[neediest]) neediest = i;
+    if (walk.held == 0u) return false;
+    if (walk.visits + 2u > LIGHT_WALK_MAX) {
+        walk.cut = true;
+        return false;
+    }
+    uint neediest = walk.held - 1u;
+    if (walk.ordered) {
+        for (uint i = 0u; i + 1u < walk.held; i++) {
+            if (walk.need[i] > walk.need[neediest]) neediest = i;
+        }
     }
     at = walk.at[neediest];
     weight = walk.weight[neediest];
@@ -547,11 +620,10 @@ float estimate_visit(inout Light_Walk walk, uint at, float weight, float3 positi
         float distance;
         total = luminance(node_contribution(node, position, normal, direction, distance)) * (weight * (1.0 - opened) * node_share(node, share));
     }
-    if (opened > 0.0 && light_node_opens(node, at)) light_walk_hold(walk, at, weight * opened, weight * opened * node_need(node, distance_squared, position, normal, share));
+    if (opened > 0.0 && light_node_opens(node, at)) light_walk_hold(walk, at, weight * opened, walk.ordered ? weight * opened * node_need(node, distance_squared, position, normal, share) : 0.0);
     return total;
 }
-float lights_estimate(float3 position, float3 normal, uint root = 0u, uint share = LIGHT_SHARE_ALL) {
-    Light_Walk walk = light_walk_begin();
+float lights_estimate_walk(inout Light_Walk walk, float3 position, float3 normal, uint root, uint share) {
     float total = estimate_visit(walk, root, 1.0, position, normal, share);
     uint at;
     float weight;
@@ -560,6 +632,7 @@ float lights_estimate(float3 position, float3 normal, uint root = 0u, uint share
         total += estimate_visit(walk, at + 1u, weight, position, normal, share);
         total += estimate_visit(walk, light_nodes[at].child, weight, position, normal, share);
     }
+    if (!walk.ordered) return total;
     for (uint i = 0u; i < walk.held; i++) {
         Light_Node node = light_nodes[walk.at[i]];
         float3 direction;
@@ -567,6 +640,13 @@ float lights_estimate(float3 position, float3 normal, uint root = 0u, uint share
         total += luminance(node_contribution(node, position, normal, direction, distance)) * (walk.weight[i] * node_share(node, share));
     }
     return total;
+}
+float lights_estimate(float3 position, float3 normal, uint root = 0u, uint share = LIGHT_SHARE_ALL) {
+    Light_Walk walk = light_walk_begin(false);
+    float total = lights_estimate_walk(walk, position, normal, root, share);
+    if (!walk.cut) return total;
+    walk = light_walk_begin(true);
+    return lights_estimate_walk(walk, position, normal, root, share);
 }
 
 // What a group sends from the point towards its viewer as one light, and
@@ -600,26 +680,18 @@ float3 local_visit(inout Light_Walk walk, uint at, float weight, Shading s, floa
         float distance;
         return light_radiance(lights[node.child], s, direction, distance) * (weight * shared);
     }
-    float opened = 1.0;
     float3 radiance = float3(0.0);
-    if ((node.flags & LIGHT_NODE_SPOT) == 0u) {
-        opened = smoothstep(GROUP_NEAR, GROUP_INSIDE, node.center_radius.w * rsqrt(max(distance_squared, 1e-12)));
-        if (opened < 1.0) {
-            float doubt;
-            radiance = group_radiance(node, s, doubt);
-            opened = max(opened, smoothstep(LIGHTS_GROUPED, LIGHTS_OPENED, doubt / total));
-        }
+    float opened = smoothstep(GROUP_NEAR, GROUP_INSIDE, node.center_radius.w * rsqrt(max(distance_squared, 1e-12)));
+    if (opened < 1.0) {
+        float doubt;
+        radiance = group_radiance(node, s, doubt);
+        opened = max(opened, smoothstep(LIGHTS_GROUPED, LIGHTS_OPENED, doubt / total));
     }
-    if (opened > 0.0 && light_node_opens(node, at)) light_walk_hold(walk, at, weight * opened, weight * opened * node_need(node, distance_squared, s.position, s.normal, share));
+    if (opened > 0.0 && light_node_opens(node, at)) light_walk_hold(walk, at, weight * opened, walk.ordered ? weight * opened * node_need(node, distance_squared, s.position, s.normal, share) : 0.0);
     return radiance * (weight * (1.0 - opened) * shared);
 }
-float3 local_lighting(Shading s, float total, uint root = 0u, uint share = LIGHT_SHARE_ALL) {
-    float3 result = float3(0.0);
-    if (frame.light_nodes == 0u) return result;
-    if (!(total > 0.0)) total = lights_estimate(s.position, s.normal, root, share);
-    total = max(total, 1e-8);
-    Light_Walk walk = light_walk_begin();
-    result += local_visit(walk, root, 1.0, s, total, share);
+float3 local_lighting_walk(inout Light_Walk walk, Shading s, float total, uint root, uint share) {
+    float3 result = local_visit(walk, root, 1.0, s, total, share);
     uint at;
     float weight;
     [loop]
@@ -627,12 +699,23 @@ float3 local_lighting(Shading s, float total, uint root = 0u, uint share = LIGHT
         result += local_visit(walk, at + 1u, weight, s, total, share);
         result += local_visit(walk, light_nodes[at].child, weight, s, total, share);
     }
+    if (!walk.ordered) return result;
     for (uint i = 0u; i < walk.held; i++) {
         Light_Node node = light_nodes[walk.at[i]];
         float doubt;
         result += group_radiance(node, s, doubt) * (walk.weight[i] * node_share(node, share));
     }
     return result;
+}
+float3 local_lighting(Shading s, float total, uint root = 0u, uint share = LIGHT_SHARE_ALL) {
+    if (frame.light_nodes == 0u) return float3(0.0);
+    if (!(total > 0.0)) total = lights_estimate(s.position, s.normal, root, share);
+    total = max(total, 1e-8);
+    Light_Walk walk = light_walk_begin(false);
+    float3 result = local_lighting_walk(walk, s, total, root, share);
+    if (!walk.cut) return result;
+    walk = light_walk_begin(true);
+    return local_lighting_walk(walk, s, total, root, share);
 }
 
 // The light the local lights that cast no shadows send from the point
@@ -804,12 +887,12 @@ float light_weight_at(float3 center, float range, float power, float extent, uin
     return power * facing * shown * light_window(d2 * inverse, range) / max(d2, extent * extent);
 }
 
-// light_weight_at of a light: a spot fades from 0.8 of its angle out, as its
+// light_weight_at of a light: a spot fades from LIGHT_SPOT_FULL of its angle out, as its
 // light does (light_contribution).
 float light_weight_of(Light l, float3 position, float3 normal) {
     bool rect = light_is_rect(l);
     bool spot = !rect && l.direction_cone.w > 0.5 * LIGHT_POINT;
-    float2 cosines = spot ? float2(l.direction_cone.w, cos(acos(l.direction_cone.w) * 0.8)) : float2(0.0);
+    float2 cosines = spot ? float2(l.direction_cone.w, cos(acos(l.direction_cone.w) * LIGHT_SPOT_FULL)) : float2(0.0);
     uint cone = rect ? LIGHT_CONE_RECT : spot ? LIGHT_CONE_SPOT : LIGHT_CONE_NONE;
     return light_weight_at(l.position_range.xyz, l.position_range.w, luminance(l.color_intensity.rgb) * l.color_intensity.w, light_extent(l), cone, l.direction_cone.xyz, cosines, position, normal);
 }
@@ -829,7 +912,7 @@ float node_weight(Light_Node node, float3 position, float3 normal, uint share = 
     if ((node.flags & LIGHT_NODE_LEAF) != 0u) return light_weight_of(lights[node.child], position, normal) * shared;
     float3 delta = node.center_radius.xyz - position;
     float distance = length(delta);
-    float rising = dot(normal, normal) > 0.5 ? saturate((dot(delta, normal) + node.center_radius.w) / max(distance, 1e-6)) : 1.0;
+    float rising = node_rising(normal, delta, distance, node.center_radius.w);
     return luminance(node.power_reach.rgb) * shared * node_aim(node, position) * rising * light_window(distance, node.range_high + node.center_radius.w) / max(distance * distance, node.spread * node.spread + 1e-4);
 }
 uint node_light(uint at, float pick, float3 position, float3 normal, out float chance_of, uint share = LIGHT_SHARE_ALL) {
