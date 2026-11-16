@@ -5,8 +5,12 @@
 #ifndef MIRAI_CULL_BINS_SLANG
 #define MIRAI_CULL_BINS_SLANG
 #define CULL_BINS_GROUP 64u
-// The word of the buckets of a phase and a tested bin (two-sided or not) a bucket counts in.
+// The word of the buckets of a phase and a tested bin (two-sided or not) a
+// bucket counts its clusters in; past those of both phases, the cursor its
+// clusters take their places with.
 uint cull_depth_word(uint phase, uint sided, uint bucket) { return (phase * 2u + sided) * RASTER_DEPTH_BUCKETS + bucket; }
+#define CULL_DEPTH_COUNTS (2u * 2u * RASTER_DEPTH_BUCKETS)
+#define CULL_DEPTH_WORDS (2u * CULL_DEPTH_COUNTS)
 // The bin and the depth bucket a listed cluster has, in one word.
 uint cull_listed_word(uint bin, uint bucket) { return bin | (bucket << 8u); }
 uint cull_listed_bin(uint word) { return word & 0xffu; }
