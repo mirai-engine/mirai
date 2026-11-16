@@ -5,6 +5,7 @@
 #ifndef MIRAI_PROBE_UPDATE_SLANG
 #define MIRAI_PROBE_UPDATE_SLANG
 #include "scene.slang"
+#include "probe_slots.slang"
 
 #ifdef CHOSEN_WRITABLE
 [[vk::binding(SLOT_PASS2, 0)]] RWStructuredBuffer<uint> chosen : register(MIRAI_REGISTER(u, SLOT_PASS2), space0);
@@ -27,8 +28,8 @@ struct Params_Block {
     uint changes_lost;
     uint seen_everywhere;
     uint lit_everywhere;
+    uint slots;        // of what the probes keep of their rays (probe_slots.slang)
     uint pad0;
-    uint pad1;
 };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 
@@ -42,11 +43,13 @@ uint chosen_traced(uint slot) { return 1u + params.room + slot; }
 uint chosen_rays() { return 1u + 2u * params.room; }
 uint chosen_lit() { return 2u + 2u * params.room; }
 
-// What a probe keeps of its rays as an update finds it: whether it is what
-// they found from where it is, with what they may meet as it was but for the
-// changes listed since it last checked them (`checked`, an update plus one);
-// and whether its hits were lit before the lights last changed everywhere.
+// What a probe keeps of its rays as an update finds it: the slot it holds for
+// it (INVALID: none); whether it is what they found from where it is, with
+// what they may meet as it was but for the changes listed since it last
+// checked them (`checked`, an update plus one); and whether its hits were lit
+// before the lights last changed everywhere.
 struct Probe_Kept {
+    uint slot;
     bool stands;
     bool unlit;
     uint checked;
@@ -56,8 +59,9 @@ Probe_Kept probe_kept(uint index) {
     uint cascade;
     int3 cell = probe_slot_cell(index, cascade);
     Probe_Kept kept;
+    kept.slot = probe_slot_held(index, params.slots);
     kept.checked = probe.hits.z;
-    kept.stands = all(probe.cell.xyz == cell) && (probe.cell.w & PROBE_KEPT) != 0 && probe.hits.x >= params.seen_everywhere && probe.hits.z >= params.changes_lost;
+    kept.stands = kept.slot != INVALID && all(probe.cell.xyz == cell) && (probe.cell.w & PROBE_KEPT) != 0 && probe.hits.x >= params.seen_everywhere && probe.hits.z >= params.changes_lost;
     kept.unlit = probe.hits.y < params.lit_everywhere;
     return kept;
 }

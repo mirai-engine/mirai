@@ -10,8 +10,8 @@
 // marks the probe as seeing the inside of geometry with a negative distance.
 // The radiance of a ray is stored encoded (probe_light_encode).
 //
-// A probe keeps what each ray found (probe_hits.slang): a ray is traced only
-// where its probe keeps nothing of it or what it may meet changed, and its hit
+// A probe that holds a slot keeps what each ray found (probe_hits.slang): a ray
+// is traced only where its probe keeps nothing of it or what it may meet changed, and its hit
 // takes its light only then or where its lights changed. The others read the
 // bounces around what is kept, which is what an update that traces gives too:
 // it reads back what it keeps.
@@ -61,7 +61,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
         origin = probe_world_position(probe);
         direction = probe_ray_direction(probe, ray, params.rays_per_probe);
     }
-    uint at = probe_hit_at(probe, ray);
+    uint at = kept.slot != INVALID ? probe_hit_at(kept.slot, ray) : INVALID;
 
     // What is kept of the ray, and what the changes since ask of it.
     Probe_Hit hit = (Probe_Hit)0;
@@ -205,7 +205,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
         hit.direct = direct * glass;
         seen = probe_hit_unpack(probe_hit_pack(hit));
     }
-    if (fresh || light) probe_hit_store(at, probe_hit_pack(hit));
+    if (at != INVALID && (fresh || light)) probe_hit_store(at, probe_hit_pack(hit));
 
     if (kind == HIT_SKY) {
         // A ray that meets the sky stores the whole distance, which no hit reaches.

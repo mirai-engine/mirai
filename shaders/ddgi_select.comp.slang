@@ -11,13 +11,19 @@
 // volume holds the light of gives back the same. The updates that gather the
 // light of a world shown anew take the whole budget (params.whole): each is a
 // bounce more for every probe it reaches.
+// A probe that is chosen takes a slot for what it keeps of its rays
+// (probe_slots.slang) where it holds none and one of its two is free or left:
+// its probe was not chosen for PROBE_SLOT_KEEP updates, or for
+// PROBE_SLOT_KEEP_USED if pixels used it then. What the slot held is not its own.
 // In the order of params.mode, over one dispatch each:
 //  0. per probe: its bucket (buckets[probe]) and the count of each bucket;
 //  1. one thread: the last bucket that fits and how many of it fit;
 //  2. per probe: the chosen ones, into chosen (count, then slots);
 //  3. one thread: the sizes of the indirect dispatches of the update passes.
 #define PROBES_WRITABLE
+#define PROBE_SLOTS_WRITABLE
 #include "scene.slang"
+#include "probe_slots.slang"
 #define MIRAI_GROUP_X 64
 #define MIRAI_GROUP_Y 1
 #define MIRAI_GROUP_Z 1
@@ -32,6 +38,11 @@
 #define PROBE_WAITING_SHARE 8u
 // Frames since a pixel used a probe for it to count as in use.
 #define PROBE_IN_USE 8u
+// Updates a probe that is not chosen keeps its slot from another that is. One a
+// change keeps awake is chosen again within a few; one the pixels use, which
+// waits by turns, comes back after hundreds, and the others long after.
+#define PROBE_SLOT_KEEP 16u
+#define PROBE_SLOT_KEEP_USED 1024u
 
 struct Params_Block {
     uint mode;
@@ -43,7 +54,7 @@ struct Params_Block {
     uint awake;      // frames a change keeps the probes it reaches traced
     uint whole;      // 1: the probes waiting by turns take all that is left of the budget (render.gi_warm)
     uint room;       // probes the list of the chosen has room for: after them, what the update passes write of each and count (probe_update.slang)
-    uint pad0;
+    uint slots;      // of what the probes keep of their rays
     uint pad1;
     uint pad2;
 };
@@ -113,6 +124,20 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
         if (at >= params.budget) return;
         chosen[1u + at] = index;
         chosen[1u + params.room + at] = 0u;
+        uint held = probe_slot_held(index, params.slots);
+        uint2 slots = probe_slots_of(index, params.slots);
+        for (uint k = 0u; k < 2u && held == INVALID && params.slots != 0u; k++) {
+            uint word = slots[k] * PROBE_SLOT_WORDS;
+            uint owner = probe_slots[word];
+            if (owner != 0u && params.frame_number <= probe_slots[word + 1u]) continue;
+            uint was;
+            InterlockedCompareExchange(probe_slots[word], owner, index + 1u, was);
+            if (was != owner) continue;
+            held = slots[k];
+            probes[index].cell.w &= ~PROBE_KEPT;
+        }
+        bool used = params.frame_number - probes[index].frames.y < PROBE_IN_USE;
+        if (held != INVALID) probe_slots[held * PROBE_SLOT_WORDS + 1u] = params.frame_number + (used ? PROBE_SLOT_KEEP_USED : PROBE_SLOT_KEEP);
         probes[index].cell.w |= PROBE_CHOSEN;
     } else {
         if (index != 0u) return;

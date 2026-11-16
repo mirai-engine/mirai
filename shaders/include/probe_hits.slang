@@ -1,7 +1,8 @@
 // What the rays of the probes found (render.Probe_Hits). A probe traces the
-// same rays every update, so it keeps, of each, where it ended and what was
-// there, with the light the hit emits and reflects of the lights apart from
-// the bounces it reads of the volume. An update traces a ray again only where
+// same rays every update, so one that holds a slot (probe_slots.slang) keeps,
+// of each, where it ended and what was there, with the light the hit emits
+// and reflects of the lights apart from the bounces it reads of the volume.
+// An update traces a ray again only where
 // what it may meet changed, and lights its hit again only where its lights
 // did; of the others it only reads the bounces again.
 //
@@ -12,7 +13,7 @@
 #define MIRAI_PROBE_HITS_SLANG
 #include "probe_update.slang"
 
-// PROBE_HIT_WORDS words a ray, the rays of a probe one after another.
+// PROBE_HIT_WORDS words a ray, the rays of a slot one after another.
 [[vk::binding(PROBE_HITS_SLOT, 0)]] RWStructuredBuffer<uint> probe_hits : register(MIRAI_REGISTER(u, PROBE_HITS_SLOT), space0);
 
 // A change of the scene (render.Probe_Change): a box, with its kind
@@ -91,8 +92,8 @@ Probe_Hit probe_hit_unpack(Probe_Hit_Words words) {
     return hit;
 }
 
-// Where the hit of a ray of a probe is kept.
-uint probe_hit_at(uint probe, uint ray) { return (probe * params.rays_per_probe + ray) * PROBE_HIT_WORDS; }
+// Where the hit of a ray of the probe that holds a slot is kept.
+uint probe_hit_at(uint slot, uint ray) { return (slot * params.rays_per_probe + ray) * PROBE_HIT_WORDS; }
 Probe_Hit probe_hit_load(uint at) {
     Probe_Hit_Words words;
     [ForceUnroll]
