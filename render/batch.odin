@@ -227,8 +227,7 @@ rows_bounds :: proc "contextless" (rows: [3]Vec4, low, high: Vec3) -> (Vec3, Vec
 batch_changed_near :: proc(r: ^Renderer, record: ^Batch_Record) {
 	if batch_classes(record.desc.flags, record.small) == 0 || record.count == 0 || record.world != r.world_key {return}
 	offset := batch_offset(r, record)
-	radius := linalg.length(record.bounds_max - record.bounds_min) * 0.5
-	scene_changed_near(&r.scene, (record.bounds_min + record.bounds_max) * 0.5 + offset, radius + min(LIGHT_CHANGE_REACH, LIGHT_CHANGE_SIZES * record.reach))
+	scene_changed_seen(&r.scene, record.bounds_min + offset, record.bounds_max + offset, min(LIGHT_CHANGE_REACH, LIGHT_CHANGE_SIZES * record.reach))
 	if .Casts_Shadow in record.desc.flags {occluder_changed(&r.scene, OCCLUDERS_MANY, record.bounds_min + offset, record.bounds_max + offset)}
 }
 

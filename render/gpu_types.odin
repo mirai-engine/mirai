@@ -351,8 +351,8 @@ Gpu_Material_Diffuse_Transmission :: struct {
 }
 // What a solid of glass scatters of what it stops (asset.Material_Info.scatter_color).
 Gpu_Material_Volume :: struct {
-	scatter: Vec3,
-	_:       f32,
+	scatter:  Vec3,
+	changing: u32, // 1: what its program gives a point changes with nothing that says so (abi.Program.timed): no pass keeps what a ray found of it
 }
 
 Gpu_Material_Blocks :: struct {
@@ -404,6 +404,7 @@ Gpu_Probe :: struct {
 	offset: Vec4,   // xyz from the center of its cell, metres; w how near it is to the change that keeps it awake, 0 to 1 (ddgi_touch.comp)
 	cell:   [4]i32, // xyz the cell of the world it was last traced for, w PROBE_* flags
 	frames: [4]u32, // x when it was last traced, y last used by a pixel, z last reached by a change
+	hits:   [4]u32, // of what it keeps of its rays (probe_hits.slang), the update, plus one, that last traced them all (x), lit them all (y) and checked them against the changes of the scene (z)
 }
 
 // The arguments of a draw indirect without indices, as Vulkan and Metal read them.
@@ -480,6 +481,7 @@ Gpu_Cull_Stats :: struct {
 	late:  Visible_Kind,    // what phase 1 drew: instances and clusters the pyramid of the frame showed after all
 	dropped: [Cull_List]u32, // past the capacities of the lists of the cull, which grow from them
 	resolved: [3]u32, // of the resolve (vis_resolve.frag): pixels shaded, helper lanes of their quads, quads evaluated again
+	probe_rays: [2]u32, // the rays the probes traced and the hits they lit, copied at the end of the frame from the list of the probe volume
 }
 // Instances, clusters and triangles that passed the cull of a frame, of one kind.
 Visible_Kind :: struct {instances, clusters, triangles: u32}

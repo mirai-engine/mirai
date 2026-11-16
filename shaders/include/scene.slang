@@ -1375,6 +1375,9 @@ Surface surface_from_hit(Hit_Point h, bool given, Mirai_Surface program) {
     s.f90 = material.f90;
     return s;
 }
+// Whether what a material gives a point changes with nothing that says so:
+// its program reads the time. A pass that keeps what a ray found does not keep it.
+bool material_changing(Material m) { return m.program_id != 0u && materials[m.row].volume.changing != 0u; }
 Surface surface_from_triangle(uint instance_index, uint primitive, float2 bary, float footprint) {
     return surface_from_hit(hit_point(instance_index, primitive, bary, footprint), false, (Mirai_Surface)0);
 }

@@ -156,6 +156,29 @@ other and do not see the corner of a table or the floor under a wardrobe.
 - Each probe traces `probe_rays` spherical Fibonacci rays rotated by its cell, the same every
   time. Their hits trace the direct light and take the bounces from the volume: each trace adds
   one.
+- **Kept hits** (`Probe_Hits`, `probe_hits.slang`). A probe keeps what each of its rays found:
+  where it ended, what the surface reflects and lets through, and the light it emits and
+  reflects of the lights, apart from the bounces. An update traces a ray again only where what
+  it may meet changed and lights its hit again only where its lights did; of the others it reads
+  the bounces again around what is kept, which is also what an update that traces gives. With
+  nothing changed a probe traces nothing.
+  - What changed is a list the renderer keeps of the last changes of the scene
+    (`probe_changes_list`), which a probe checks from its last update on when it is chosen: the
+    boxes of what moved, came, went, took another pose or shows something else (a ray whose way
+    to what it met crosses one is traced), the spheres of the lights that changed (a hit inside
+    one is lit), and the boxes of what casts shadows with the sun and with each light that
+    reaches them (a hit whose way to that light crosses one is lit). A probe updated before the
+    oldest change the list still has traces all its rays.
+  - A change of the lights everywhere (the sun, the sky, a blackout, the light scale) lights
+    every hit again when its probe is chosen, and one of what rays meet everywhere (meshes or
+    textures that go, materials past what the scene lists, another world) traces every ray.
+  - What changes with nothing that says so is not kept from one update to the next: the hit of
+    a Surface program that reads the time of its context (`abi.Program.timed`), a ray that
+    went through the gate of an extension, and the light of a hit a light of an extension
+    reaches. What a program gives by the view (`screen`, `depth`) stays as the ray found it,
+    as does how wet an object is, until its ray is traced again.
+  - The hits take `PROBE_HIT_WORDS` words a ray of every probe, made with the volume. Those of
+    a world that is not shown are not kept: its probes trace their rays when it returns.
 - A change of its light is followed in full. Between traces it measures how much its light moves
   while the bounces it reads settle (`Probe.frames.w`): a movement within that approaches it
   little by little; only a larger one traces it again.
@@ -176,7 +199,11 @@ other and do not see the corner of a table or the floor under a wardrobe.
   what it gave. A sky that changes without stopping (a sunset with an atmosphere) is followed in
   turns, with stains of the previous light until it stops.
 - **Relocation** within its cell: a probe inside a wall comes out and one stuck to a surface
-  moves away. A covered one keeps the light it had; one that never had it gives nothing.
+  moves away. A covered one keeps the light it had; one that never had it gives nothing. A probe
+  moves only in an update that traced one of its rays, and a few times at most in its cell until
+  what its rays meet changes: one that can never be far enough from every surface, or out of
+  what buries it, would move with every update, never keep its hits and be traced before every
+  other probe in every frame.
 - **Reading** (`probe_cascade_read`): DDGI weights (wrapped cosine, Chebyshev without a floor),
   square-root blend (`probe_light_root` of what is stored), bias toward the normal and toward the
   eye that shrinks near the eye or the ray origin. A probe behind the plane of a surface does not

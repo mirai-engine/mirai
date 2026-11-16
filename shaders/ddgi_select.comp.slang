@@ -42,6 +42,10 @@ struct Params_Block {
     uint total;
     uint awake;      // frames a change keeps the probes it reaches traced
     uint whole;      // 1: the probes waiting by turns take all that is left of the budget (render.gi_warm)
+    uint room;       // probes the list of the chosen has room for: after them, what the update passes write of each and count (probe_update.slang)
+    uint pad0;
+    uint pad1;
+    uint pad2;
 };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 [[vk::binding(SLOT_PASS0, 0)]] RWStructuredBuffer<uint> buckets : register(MIRAI_REGISTER(u, SLOT_PASS0), space0);
@@ -91,6 +95,8 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
         histogram[PROBE_BUCKETS + 1u] = room;
         histogram[PROBE_BUCKETS + 2u] = 0u;
         chosen[0] = 0u;
+        chosen[1u + 2u * params.room] = 0u;
+        chosen[2u + 2u * params.room] = 0u;
     } else if (params.mode == 2u) {
         if (index >= params.total) return;
         uint bucket = buckets[index];
@@ -106,6 +112,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
         InterlockedAdd(chosen[0], 1u, at);
         if (at >= params.budget) return;
         chosen[1u + at] = index;
+        chosen[1u + params.room + at] = 0u;
         probes[index].cell.w |= PROBE_CHOSEN;
     } else {
         if (index != 0u) return;
