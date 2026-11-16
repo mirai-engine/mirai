@@ -145,12 +145,12 @@
   grid `(Mirai_Vfx_Cell, Parameters)`. The generation dispatches them in
   `mirai_vfx_particle_stage` and `mirai_vfx_cell_stage` and the catalog lists them in `stages`; the
   [plugin](../../mirai-world/references/vfx.md#grids-and-stages) runs them.
-- A Surface program that moves vertices says `//! vertex [animated] [reach <metres>|reach
-  <parameter>]` and declares `vertex` ([vertex functions](materials.md#vertex-functions)): reach is
-  a number from 0 or a parameter of one float; another word, a reach of another type or the line
-  in another domain leave the program out, and the check asks for `vertex` with its signature. The
-  catalog gives it in `vertex` (`animated`, `reach` in metres or `reach_offset`, the bytes of
-  the parameter that gives it).
+- A Surface program that moves vertices says `//! vertex [reach <metres>|reach <parameter>]` and
+  declares `vertex` ([vertex functions](materials.md#vertex-functions)): reach is a number from 0
+  or a parameter of one float; another word, a reach of another type or the line in another domain
+  leave the program out, and the check asks for `vertex` with its signature. The catalog gives it
+  in `vertex` (what it reads, `reach` in metres or `reach_offset`, the bytes of the parameter that
+  gives it).
 - `mirai_sample_texture(ctx,index,uv,lod)` receives the explicit context:
   - Surface in raster: derivatives and bias.
   - Surface with `ctx.ray` (also hits rebuilt in fragment shaders): LOD of the ray footprint.
@@ -161,12 +161,18 @@
   vectors of them): `mirai_uv0(ctx)`, `mirai_uv1(ctx)`, `mirai_world_position(ctx)` and
   `mirai_vertex_normal(ctx)` give its inputs with their derivatives (in a ray, the width of its
   cone), and `mirai_sample_texture(ctx,index,dual_uv)` filters by them with the bias of the
-  view, in any branch. The generation probes each Surface program (`derivative_probe`: its
-  evaluation compiled alone in a fragment stage, a plain-uv sample by implicit level, the other
-  samples by none) and writes in its include `mirai_program_derivatives`, true where anything
-  of the optimized code reads a derivative across a quad; the resolve of one without
-  evaluates no quad again ([programs](materials.md#surface-programs-in-rays-and-raster)). The
-  cache of its coverage keeps it.
+  view, in any branch. The generation probes each Surface program (`surface_probe`: its
+  evaluation and its function vertex compiled alone in a fragment stage, a plain-uv sample by
+  implicit level, the other samples by none) and writes in its include
+  `mirai_program_derivatives`, true where anything of the optimized code reads a derivative
+  across a quad; the resolve of one without evaluates no quad again
+  ([programs](materials.md#surface-programs-in-rays-and-raster)).
+- The same probe gives what a Surface program and its function vertex read of their contexts
+  (`abi.Program_Reads`: time, view, place, particle): each class comes from a buffer of its own,
+  and a class counts where the optimized code still reads its buffer, also behind a branch a
+  parameter turns off. The catalog gives them in `reads` and `vertex.reads`; the renderer takes
+  what changes with the time from them, never from the text of the source. A program whose probe
+  does not compile reads everything. The cache of the probes keeps it.
 - `mirai_sample_texture_level` receives an explicit mip; `mirai_sample_texture_grad`, gradients.
   `mirai_load_texture(index,texel)` loads a texel of the level 0 of a texture that does not stream
   (the data a plugin writes: a map of weights, a table) without filtering or reporting it.

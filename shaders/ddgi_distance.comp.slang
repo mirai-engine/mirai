@@ -26,7 +26,7 @@ groupshared uint backfaces;
 void main(uint3 group_id : SV_GroupID, uint3 local_id : SV_GroupThreadID, uint local_index : SV_GroupIndex) {
     uint slot = group_id.x;
     if (slot >= chosen[0]) return;
-    if (chosen[chosen_traced(slot)] == 0u) return;
+    if ((chosen[chosen_traced(slot)] & CHOSEN_TRACED) == 0u) return;
     uint probe = chosen[1u + slot];
     uint rays = min(params.rays_per_probe, uint(MAX_RAYS));
     if (local_index == 0u) backfaces = 0u;
