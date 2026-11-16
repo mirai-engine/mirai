@@ -1267,7 +1267,7 @@ programs_generate :: proc(runner:^Runner,root,project,output,slangc,version,cach
             dispatchers_add(&dispatchers,of,id,name,relative,layout,e.coverage,string(e.alpha[:]) if e.coverage else "")
         }
         moves,births,prepare:=of==.Vfx && e.said.moves,of==.Vfx && e.said.births,of==.Vfx && e.said.prepare
-        append(&programs,abi.Program{id=u32(id),name=strings.clone(name,allocator),domain=of,source=relative,size=layout.size,parameters=parameters,layers=layers,attributes=attributes,attribute_fields=attribute_fields,resources=resources,stages=stages,moves=moves,births=births,prepare=prepare,coverage=e.coverage,standard=of==.Surface && word_in(e.text,"mirai_surface_standard"),vertex=vertex})
+        append(&programs,abi.Program{id=u32(id),name=strings.clone(name,allocator),domain=of,source=relative,size=layout.size,parameters=parameters,layers=layers,attributes=attributes,attribute_fields=attribute_fields,resources=resources,stages=stages,moves=moves,births=births,prepare=prepare,coverage=e.coverage,standard=of==.Surface && word_in(e.text,"mirai_surface_standard"),timed=of==.Surface && (member_in(e.text,"time") || member_in(e.text,"previous_time")),vertex=vertex})
     }
     // A project does without a program of its own that fails; nothing does without one of the engine.
     if len(broken)>0 {
@@ -1291,6 +1291,19 @@ catalog_text :: proc(catalog:Catalog) -> []u8 {
 
 // Whether text names word as a whole identifier.
 @(private)
+// Whether text reads the field `field` of something: the word, after a dot.
+member_in :: proc(text,field:string) -> bool {
+    rest,offset:=text,0
+    for {
+        at:=strings.index(rest,field)
+        if at<0 {return false}
+        start,end:=offset+at,offset+at+len(field)
+        if start>0 && text[start-1]=='.' && (end==len(text) || !is_word(text[end])) {return true}
+        rest=rest[at+len(field):]
+        offset=end
+    }
+}
+
 word_in :: proc(text,word:string) -> bool {
     rest,offset:=text,0
     for {

@@ -157,6 +157,7 @@ renderer_origin_set :: proc(r: ^Renderer, origin: Vec3) {
 		for &corner in w.ddgi.corners[:w.ddgi.cascades] {corner.xyz -= d}
 	}
 	for &sphere in s.changes.spheres[:s.changes.count] {sphere.xyz -= d}
+	for &box in s.changes.boxes[:s.changes.count] {box[0].xyz -= d; box[1].xyz -= d}
 	for &sphere in r.frame_changes.spheres[:r.frame_changes.count] {sphere.xyz -= d}
 	for &box in s.occluders.boxes[:s.occluders.count] {box.low -= d; box.high -= d}
 	for &box in r.frame_occluders.boxes[:r.frame_occluders.count] {box.low -= d; box.high -= d}

@@ -148,13 +148,20 @@ Translucent :: struct {
 
 // Where the light of the world changed since the GI last looked: spheres
 // (center, radius), or everywhere. The probe volume traces again the probes
-// they reach.
+// they reach. With each, the box in which what a ray may meet changed (low,
+// then high; low above high: none, only lights changed there): what the
+// probes keep of the rays that cross it is traced again, and of the hits a
+// sphere without a box holds, lit again (probe_changes_list).
 LIGHT_CHANGES_MAX :: 64
 Light_Changes :: struct {
 	spheres: [LIGHT_CHANGES_MAX]Vec4,
+	boxes:   [LIGHT_CHANGES_MAX][2]Vec4,
 	count:   int,
 	all:     bool,
+	seen:    bool, // with all: what rays meet changed everywhere too, not only the lights
 }
+@(private)
+LIGHT_CHANGE_NO_BOX :: [2]Vec4{{1, 1, 1, 0}, {-1, -1, -1, 0}}
 // How far around an instance a change of its glow changes the light, metres;
 // what it changes otherwise, by its shadow and the light it reflects, falls
 // with the square of the distance over its size: LIGHT_CHANGE_SIZES of its
@@ -296,19 +303,36 @@ frame_occluders :: proc(f: ^Gpu_Frame, o: ^Occluder_Changes) {
 	for light, i in o.lights[:lights] {f.moved_lights[i / 4][i % 4] = light}
 }
 
-scene_changed :: proc(s: ^Scene_State) {s.changes.all = true}
+// The light changed everywhere, and what rays meet with it.
+scene_changed :: proc(s: ^Scene_State) {s.changes.all, s.changes.seen = true, true}
 
-// The light changed within `radius` of `center`; past the capacity, everywhere.
+// The lights changed everywhere (the sun, the sky, how the probes gather
+// them): what rays meet is where it was.
+scene_relit :: proc(s: ^Scene_State) {s.changes.all = true}
+
+// The lights changed within `radius` of `center`; past the capacity, everywhere.
 scene_changed_near :: proc(s: ^Scene_State, center: Vec3, radius: f32) {
 	if s.changes.all {return}
 	if s.changes.count == LIGHT_CHANGES_MAX {s.changes.all = true; return}
 	s.changes.spheres[s.changes.count] = {center.x, center.y, center.z, radius}
+	s.changes.boxes[s.changes.count] = LIGHT_CHANGE_NO_BOX
 	s.changes.count += 1
 }
 
-scene_changed_box :: proc(s: ^Scene_State, low, high: Vec3) {
-	scene_changed_near(s, (low + high) * 0.5, linalg.length(high - low) * 0.5)
+// What a ray may meet changed in the box low to high, and the light with it
+// as far as `reach` around the box; past the capacity, everywhere. A box is
+// listed also once the lights changed everywhere.
+scene_changed_seen :: proc(s: ^Scene_State, low, high: Vec3, reach: f32) {
+	c := &s.changes
+	if c.all && c.seen {return}
+	if c.count == LIGHT_CHANGES_MAX {c.all, c.seen = true, true; return}
+	center := (low + high) * 0.5
+	c.spheres[c.count] = {center.x, center.y, center.z, linalg.length(high - low) * 0.5 + reach}
+	c.boxes[c.count] = {{low.x, low.y, low.z, 0}, {high.x, high.y, high.z, 0}}
+	c.count += 1
 }
+
+scene_changed_box :: proc(s: ^Scene_State, low, high: Vec3) {scene_changed_seen(s, low, high, 0)}
 
 Scene_State :: struct {
 	vertices:             [dynamic]u32, // the vertex pool (gpu_types.odin)
@@ -553,7 +577,9 @@ gpu_material_values :: proc(r: ^Renderer, m: Material_Desc) -> Gpu_Material_Row 
 	// of those it does not.
 	if m.program_id != 0 {
 		for program in renderer_programs(r) {
-			if program.id == m.program_id && program.domain == .Surface {layers += program.layers}
+			if program.id != m.program_id || program.domain != .Surface {continue}
+			layers += program.layers
+			result.volume.changing = u32(program.timed)
 		}
 	}
 	result.layers = transmute(u32)layers
@@ -739,8 +765,8 @@ materials_lit :: proc(s: ^Scene_State, rows: []u32) {
 			if layer.enabled && shows(rows, u32(layer.material)) {found = true}
 		}
 		if !found {continue}
-		scene_changed_near(s, (inst.bounds_min.xyz + inst.bounds_max.xyz) * 0.5, linalg.length(inst.bounds_max.xyz - inst.bounds_min.xyz) * 0.5 + LIGHT_CHANGE_REACH)
-		if s.changes.all {return}
+		scene_changed_seen(s, inst.bounds_min.xyz, inst.bounds_max.xyz, LIGHT_CHANGE_REACH)
+		if s.changes.all && s.changes.seen {return}
 	}
 	for light in s.lights {
 		if light.direction_cone.w == GPU_LIGHT_RECT && shows(rows, transmute(u32)light.size.w) {scene_changed_near(s, light.position_range.xyz, light.position_range.w)}
@@ -2028,7 +2054,7 @@ instance_changed_near :: proc(s: ^Scene_State, inst: ^Gpu_Instance, glowed := fa
 	radius := linalg.length(inst.bounds_max.xyz - inst.bounds_min.xyz) * 0.5
 	glows := glowed || inst.emission.xyz != {}
 	reach := LIGHT_CHANGE_REACH if glows else min(LIGHT_CHANGE_REACH, LIGHT_CHANGE_SIZES * radius)
-	scene_changed_near(s, (inst.bounds_min.xyz + inst.bounds_max.xyz) * 0.5, radius + reach)
+	scene_changed_seen(s, inst.bounds_min.xyz, inst.bounds_max.xyz, reach)
 }
 
 // Whether two instances cast the same shadows.
@@ -2213,7 +2239,7 @@ scene_lights_settle :: proc(r: ^Renderer) -> bool {
 	// A blackout: how much the light of the whole scene changed since the frame before, as a sum.
 	flux := sky_flux(s.sun, s.environment, s.lights_scale) + s.light_flux
 	if abs(flux - s.flux_seen) > GI_BLACKOUT_SHARE * max(flux, s.flux_seen) {
-		scene_changed(s)
+		scene_relit(s)
 		r.gi_warm_spread = GI_BLACKOUT_FRAMES
 	}
 	s.flux_seen = flux
@@ -2283,7 +2309,7 @@ scene_set_environment :: proc(r:^Renderer,sun:Sun_Desc,environment:Environment,r
     normalized:=sun
     if linalg.length(normalized.direction)>1e-6 {normalized.direction=linalg.normalize(normalized.direction)} else {normalized.enabled=false}
     normalized.indirect,normalized.scattering=light_share(sun.indirect),light_share(sun.scattering)
-    if r.scene.sun!=normalized || r.scene.environment!=environment {scene_changed(&r.scene)}
+    if r.scene.sun!=normalized || r.scene.environment!=environment {scene_relit(&r.scene)}
     // A sun that turns by less than its radius moves its shadows by less than their penumbra.
     before:=r.scene.sun
     if normalized.enabled && (!before.enabled || before.shadowless!=normalized.shadowless || linalg.dot(before.direction,normalized.direction)<math.cos(max(r.settings.sun_radius,SUN_RADIUS))) {r.scene.occluders.sun=true}
