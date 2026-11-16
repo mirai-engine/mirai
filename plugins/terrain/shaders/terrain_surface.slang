@@ -3,7 +3,6 @@
 //! mirai constant WEIGHT_VALUES_SHIFT int ../runtime/layers.odin
 //! mirai constant WEIGHT_HOLE_BIT int ../runtime/layers.odin
 //! mirai constant PAINT_ROUGHNESS_NEUTRAL int ../runtime/paint.odin
-//! mirai constant HEIGHT_BLEND_POWER int ../runtime/layers.odin
 // What a piece of a terrain shows between its vertices (terrain.Surface_Maps):
 // the weights of the layers of each of its samples with the hole of each
 // cell, its normal and its paint, read texel by texel and blended between the

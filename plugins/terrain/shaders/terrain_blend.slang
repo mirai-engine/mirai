@@ -1,8 +1,9 @@
+//! mirai constant HEIGHT_BLEND_WINDOW float ../runtime/layers.odin
 #ifndef TERRAIN_BLEND_SLANG
 #define TERRAIN_BLEND_SLANG
-// What of the weights at a point shows: of its layers (Terrain_Layers, the
-// relief of terrain_displace.comp) and of the projections of a layer
-// (terrain_projection.slang). Each weight shows less that of the third
+#include <constants/plugins/terrain.slang>
+// What of the weights of the layers at a point shows (Terrain_Layers, the
+// relief of terrain_displace.comp). Each weight shows less that of the third
 // heaviest, so the two heaviest show and a layer comes in and goes where it
 // weighs as much as the third, at nothing: no pair hands over with a step.
 // Where the three weigh within TERRAIN_THIRD_BAND of each other, two would
@@ -23,5 +24,17 @@ float4 terrain_heaviest(float4 w) {
     float4 shown = max(w - under, float4(0.0));
     float sum = shown.x + shown.y + shown.z + shown.w;
     return sum > 0.0 ? shown / sum : float4(1.0, 0.0, 0.0, 0.0);
+}
+// Where layers meet, the higher texels show: each layer's height (0 to 1)
+// scaled by what shows of it, and each layer shown by that share within a
+// window under the highest of those heights, HEIGHT_BLEND_WINDOW wide at a
+// height_blend of 1 and without end at 0, its share alone. A layer shows
+// about what it weighs, and of layers that weigh alike the higher texel.
+float4 terrain_height_blend(float4 shown, float4 height, float4 height_blend) {
+    float4 h = height * shown;
+    float top = max(max(h.x, h.y), max(h.z, h.w));
+    float4 b = shown * saturate(1.0 - height_blend * (top - h) / HEIGHT_BLEND_WINDOW);
+    float sum = b.x + b.y + b.z + b.w;
+    return sum > 0.0 ? b / sum : float4(1.0, 0.0, 0.0, 0.0);
 }
 #endif

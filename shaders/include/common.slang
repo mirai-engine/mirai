@@ -307,8 +307,8 @@ struct Light {
 struct Light_Node {
     float4 center_radius; // xyz the center of its lights, weighed by how bright each is; w the radius of the sphere around it that holds them
     float4 power_reach;   // rgb the sum of their colors times their intensities; w how far from the center the farthest of them reaches
-    float4 cone;          // xyz the axis of the directions they face; w the half-angle around it that holds those directions, radians; PI: any
-    float emission;       // the half-angle beyond the directions they face that their light goes, radians: a spot its cone, a rectangle a quarter turn
+    float4 cone;          // xyz the axis of the directions they face; w the half-angle around it that holds the directions they shine whole, radians; PI: any
+    uint widths;          // two 16-bit steps of PI / 65535: how far past the cone their light fades out, and how far around its own axis each shines whole (node_falloff, node_inner)
     float range_low;      // the shortest of their ranges
     float range_high;     // the longest of their ranges
     float spread;         // root of the mean square of how far their light lies from the center, their sizes included

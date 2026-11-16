@@ -106,7 +106,7 @@ Light_Node node_leaf(Light l, uint light) {
     n.center_radius = float4(l.position_range.xyz, lit ? max(l.size.x, 0.0) : 0.0);
     n.power_reach = float4(l.color_intensity.rgb * l.color_intensity.w, l.position_range.w);
     n.cone = float4(0.0, 1.0, 0.0, PI);
-    n.emission = 0.5 * PI;
+    n.widths = 32768u | (65535u << 16u);
     n.range_low = l.position_range.w;
     n.range_high = l.position_range.w;
     n.spread = n.center_radius.w;
@@ -122,11 +122,10 @@ Light_Node node_leaf(Light l, uint light) {
 // adds nothing, and its place is not one of their places.
 Light_Node node_group(Light_Node a, Light_Node b, uint second) {
     Light_Node n;
-    uint spot = (a.flags | b.flags) & LIGHT_NODE_SPOT;
     if (node_count(b) == 0u || node_count(a) == 0u) {
         n = node_count(b) == 0u ? a : b;
         n.child = second;
-        n.flags = spot | ((node_count(a) + node_count(b)) << LIGHT_NODE_COUNT_SHIFT);
+        n.flags = (node_count(a) + node_count(b)) << LIGHT_NODE_COUNT_SHIFT;
         return n;
     }
     float wa = luminance(a.power_reach.rgb), wb = luminance(b.power_reach.rgb);
@@ -137,12 +136,12 @@ Light_Node node_group(Light_Node a, Light_Node b, uint second) {
     n.power_reach = float4(a.power_reach.rgb + b.power_reach.rgb, max(da + a.power_reach.w, db + b.power_reach.w));
     // The lights of particles face every way: so does a group that holds one.
     n.cone = float4(0.0, 1.0, 0.0, PI);
-    n.emission = max(a.emission, b.emission);
+    n.widths = max(a.widths & 0xFFFFu, b.widths & 0xFFFFu) | (min(a.widths >> 16u, b.widths >> 16u) << 16u);
     n.range_low = min(a.range_low, b.range_low);
     n.range_high = max(a.range_high, b.range_high);
     n.spread = sqrt(share * (da * da + a.spread * a.spread) + (1.0 - share) * (db * db + b.spread * b.spread));
     n.child = second;
-    n.flags = spot | ((node_count(a) + node_count(b)) << LIGHT_NODE_COUNT_SHIFT);
+    n.flags = (node_count(a) + node_count(b)) << LIGHT_NODE_COUNT_SHIFT;
     n.indirect = share * a.indirect + (1.0 - share) * b.indirect;
     n.scattering = share * a.scattering + (1.0 - share) * b.scattering;
     return n;

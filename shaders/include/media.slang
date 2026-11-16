@@ -18,82 +18,25 @@ static float media_across = 0.0;
 #ifdef SUN_SHADOW_SLOT
 #endif
 
-// Henyey-Greenstein times pi: what the Lambert-normalized light of the frame
-// is multiplied by. cosine: between where the light goes and the eye; g, the
-// anisotropy of the medium, forward above 0.
-float media_phase(float cosine, float g) {
-    float g2 = g * g;
-    return 0.25 * (1.0 - g2) / pow(max(1.0 + g2 - 2.0 * g * cosine, 1e-4), 1.5);
-}
+// The most nodes of the tree of the lights with shadows a point of a medium
+// takes through a shadow ray each (light_cut): past it, groups stand for
+// their lights.
+#define MEDIA_LIGHT_BUDGET 4u
 
-// One local light, picked for what of it media scatter at the point, over
-// the chance of picking it: over frames, what all of them give, with its shadow ray if it
-// casts shadows. Each tree of the lights without shadows takes its share of
-// the picks by what its root gives. changed: also whether the light moved or
-// its ray crossed what casts shadows and changed since the frame before
-// (occluder_changed of trace.slang).
-float3 media_local_light(float3 position, float3 eye_ray, float g, float pick, inout bool changed) {
+// What the local lights give a point of a medium towards the eye, of the
+// share of their light media scatter, as direct_lighting gives a surface the
+// same in every frame: those with shadows through their maps or a ray each
+// while they fit in MEDIA_LIGHT_BUDGET and groups that stand for them past
+// it, those without by the walks of their trees. changed: also whether a
+// light that reaches the point moved, or what casts shadows changed on the
+// way of a ray, since the frame before (occluder_changed of trace.slang).
+float3 media_local_light(float3 position, float3 eye_ray, float g, inout bool changed) {
     if (frame.light_nodes == 0u) return float3(0.0);
-    uint root = 0u;
-    float share = 1.0;
-    uint roots[3] = { 0u, frame.shadowless_lights.x, frame.shadowless_lights.z };
-    if (roots[1] != 0u || roots[2] != 0u) {
-        float weights[3];
-        float sum = 0.0;
-        uint trees = 0u;
-        for (uint k = 0u; k < 3u; k++) {
-            bool held = k == 0u || roots[k] != 0u;
-            weights[k] = held ? node_weight(light_nodes[roots[k]], position, float3(0.0), LIGHT_SHARE_SCATTERED) : -1.0;
-            sum += max(weights[k], 0.0);
-            trees += held ? 1u : 0u;
-        }
-        // Where none gives anything, each tree as likely.
-        float below = 0.0, start = 0.0;
-        for (uint k = 0u; k < 3u; k++) {
-            float chance = weights[k] < 0.0 ? 0.0 : sum > 0.0 ? weights[k] / sum : 1.0 / float(trees);
-            if (!(chance > 0.0)) continue;
-            root = roots[k];
-            share = chance;
-            start = below;
-            below += chance;
-            if (pick < below) break;
-        }
-        pick = saturate((pick - start) / max(share, 1e-6));
-    }
-    float chance;
-    Light_Node leaf = light_nodes[node_light(root, pick, position, float3(0.0), chance, LIGHT_SHARE_SCATTERED)];
-    if ((leaf.flags & LIGHT_NODE_LEAF) == 0u || !(leaf.scattering > 0.0)) return float3(0.0);
-    uint index = leaf.child;
-    Light light = lights[index];
-    chance *= share;
-    if (!(chance > 0.0)) return float3(0.0);
-    float3 towards = normalize(light.position_range.xyz - position);
-    float3 direction;
-    float distance;
-    float3 incident = light_contribution(light, position, towards, direction, distance) * leaf.scattering;
-    if (!(luminance(incident) > light_cutoff())) return float3(0.0);
-    float reach = light_reach(light, distance);
-    float3 through = float3(1.0);
-    if (root == 0u) {
-#ifdef SHADOW_DATA_SLOT
-        // From its maps; where none holds the point, a ray.
-        Shadow_Map m;
-        float seen = light_shadow_seen(index, position, float3(0.0), light_extent(light), media_across);
-        through = seen >= 0.0 ? float3(seen) : trace_transmission(position, direction, reach);
-#ifdef SHADOW_TINT_SLOT
-        if (seen > 0.0 && light_map_of(index, position, m)) through *= shadow_tint(m, position);
-#endif
-#else
-        through = trace_transmission(position, direction, reach);
-#endif
-        changed = changed || occluder_changed(position, direction, reach, INVALID, FLT_MAX);
-    }
-    changed = changed || light_moved(index);
-    return incident * through * (media_phase(dot(eye_ray, direction), g) / chance);
+    return direct_lighting(shading_medium(position, -eye_ray, g, media_across), 0.0, MEDIA_LIGHT_BUDGET, LIGHTS_LOCAL | LIGHTS_SCATTERED | LIGHTS_CHANGES, float2(-1.0, 0.0), changed);
 }
-float3 media_local_light(float3 position, float3 eye_ray, float g, float pick) {
+float3 media_local_light(float3 position, float3 eye_ray, float g) {
     bool changed = false;
-    return media_local_light(position, eye_ray, g, pick, changed);
+    return media_local_light(position, eye_ray, g, changed);
 }
 
 // The light around a point of a medium: the mean of what reaches a surface

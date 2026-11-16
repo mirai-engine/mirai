@@ -162,9 +162,10 @@ TLAS_REF_GLASS  :: u32(1) << 31
 // Local lights and their tree.
 GPU_LIGHT_POINT            :: -2.0
 GPU_LIGHT_RECT             :: -3.0
+// A spot shines whole out to this share of its half-angle and fades out past it.
+GPU_LIGHT_SPOT_FULL        :: 0.8
 GPU_LIGHT_NODE_LEAF        :: 1
-GPU_LIGHT_NODE_SPOT        :: 2
-GPU_LIGHT_NODE_COUNT_SHIFT :: 2
+GPU_LIGHT_NODE_COUNT_SHIFT :: 1
 LIGHT_TREE_DEPTH           :: 48
 LIGHT_CUT_MAX              :: 32
 // The rows of the grid of the lights a light keeps for a pixel to weigh it by.

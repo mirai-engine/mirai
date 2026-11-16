@@ -5,6 +5,7 @@
 //! parameter layers {"kind":"texture"}
 //! parameter piece {"default":[2,2,0,1],"min":0,"max":100000}
 //! parameter palette {"default":[0,1,2,3],"min":0,"max":31}
+#include "terrain_blend.slang"
 #include "terrain_projection.slang"
 #include "terrain_surface.slang"
 // A stage that evaluates the layers outside a program (the tests of the
@@ -127,7 +128,8 @@ Mirai_Surface evaluate(Mirai_Surface_Context ctx, Parameters p) {
     float3 albedo[4];
     float3 bent[4];
     Terrain_Layer layer[4];
-    float4 blend = float4(0.0);
+    float4 heights = float4(0.0);
+    float4 height_blend = float4(0.0);
     for (int i = 0; i < 4; i++) {
         albedo[i] = float3(0.0);
         bent[i] = n;
@@ -138,12 +140,11 @@ Mirai_Surface evaluate(Mirai_Surface_Context ctx, Parameters p) {
         float shade = 1.0;
         if (layer[i].variation > 0.0) shade = lerp(1.0, 0.75 + 0.5 * (0.6 * mirai_noise(ctx, 31.0) + 0.4 * mirai_noise(ctx, 97.0)), layer[i].variation);
         albedo[i] = c.rgb * layer[i].tint * shade;
-        // The alpha of the base color map is the height of the layer: where
-        // layers meet the higher texels show through.
-        blend[i] = shown[i] * exp2(float(HEIGHT_BLEND_POWER) * layer[i].height_blend * c.a);
+        // The alpha of the base color map is the height of the layer.
+        heights[i] = c.a;
+        height_blend[i] = layer[i].height_blend;
     }
-    float sum = blend.x + blend.y + blend.z + blend.w;
-    blend = sum > 0.0 ? blend / sum : float4(1.0, 0.0, 0.0, 0.0);
+    float4 blend = terrain_height_blend(shown, heights, height_blend);
     float3 color = float3(0.0);
     float3 normal = float3(0.0);
     float roughness = 0.0;

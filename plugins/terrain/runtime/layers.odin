@@ -35,9 +35,10 @@ Layer_Auto :: struct {
     height:[2]f32 `mirai:"unit=m"`,     // local
     softness:[2]f32,                    // how far past each range it fades out: radians of slope, metres of height
 }
-// Where layers meet, a layer's weight doubles this many times from its lowest
-// texel to its highest at a height_blend of 1.
-HEIGHT_BLEND_POWER :: 5
+// Where layers meet at a height_blend of 1, a layer fades out as its height
+// times its weight falls this far under the highest of them
+// (terrain_height_blend, terrain_blend.slang).
+HEIGHT_BLEND_WINDOW :: 0.2
 // A repeat of tiling covers fewer pixels than this where far_tiling has taken
 // over; it begins to over the octave before.
 FAR_PIXELS :: 96
