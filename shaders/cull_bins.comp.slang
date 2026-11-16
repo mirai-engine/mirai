@@ -4,8 +4,10 @@
 // the visible list, those of phase 1 after those of phase 0, and each bin of
 // the phase gets its draw, an instance a cluster. A tested bin draws nearest
 // first: its clusters go to the range of their depth bucket, which each group
-// finds from the counts of the buckets alone.
-#include "scene.slang"
+// finds from the counts of the buckets alone. Each entry takes what its
+// cluster gives every vertex and pixel of it (Visible_Cluster).
+#include "visibility.slang"
+#include "cut.slang"
 #include "cull_bins.slang"
 #define MIRAI_GROUP_X CULL_BINS_GROUP
 #define MIRAI_GROUP_Y 1
@@ -19,8 +21,8 @@ struct Params_Block { uint phase; uint capacity; uint pad0; uint pad1; };
 // of the index pool, its bin and depth bucket (cull_listed_bin) and its
 // Surface program.
 [[vk::binding(SLOT_PASS1, 0)]] StructuredBuffer<uint4> listed : register(MIRAI_REGISTER(t, SLOT_PASS1), space0);
-// The same by bin: the instance, the cluster and the program.
-[[vk::binding(SLOT_PASS2, 0)]] RWStructuredBuffer<uint4> visible : register(MIRAI_REGISTER(u, SLOT_PASS2), space0);
+// The same by bin.
+[[vk::binding(SLOT_PASS2, 0)]] RWStructuredBuffer<Visible_Cluster> visible : register(MIRAI_REGISTER(u, SLOT_PASS2), space0);
 // Of each phase and tested bin, the clusters of each depth bucket, then the cursors of the buckets (cull_depth_word).
 [[vk::binding(SLOT_PASS4, 0)]] RWStructuredBuffer<uint> depth_buckets : register(MIRAI_REGISTER(u, SLOT_PASS4), space0);
 
@@ -90,5 +92,19 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 lane : SV_GroupThreadID
         at = WaveReadLaneFirst(at);
         if (mine) place = offsets[untested] + at + WavePrefixCountBits(mine);
     }
-    if (valid) visible[place] = uint4(entry.xyw, 0u);
+    if (!valid) return;
+    Instance inst = scene_instance(entry.x);
+    Mesh mesh = meshes[instance_mesh(inst)];
+    Cluster c = cluster_at(entry.y);
+    Visible_Cluster v;
+    v.instance = entry.x;
+    v.cluster = entry.y;
+    v.program = entry.w;
+    v.material = material_of(inst, cluster_material(mesh, c));
+    v.page = cluster_page_word(mesh, c);
+    Cluster_Block b = page_block(mesh, c, page_at_word(v.page));
+    v.vertices = b.vertices;
+    v.triangles = b.triangles;
+    v.along = cluster_along(view_detail(), inst, instance_scale(inst), mesh, c, frame.cut.x);
+    visible[place] = v;
 }

@@ -412,6 +412,14 @@ Gpu_Draw :: struct {
 }
 #assert(size_of(Gpu_Draw) == 16)
 
+// An entry of the visible list (Visible_Cluster of visibility.slang).
+Gpu_Visible_Cluster :: struct {
+	instance, cluster_word, program, material: u32,
+	vertices, triangles, page_word: u32,
+	along: f32,
+}
+#assert(size_of(Gpu_Visible_Cluster) == 32)
+
 // The resolve draw of a Surface program (vis_resolve.vert): its draw, and the
 // rectangle of the pixels its clusters cover, from the lowest x and y to past
 // the highest (cull_clusters.comp).
