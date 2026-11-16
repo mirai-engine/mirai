@@ -368,9 +368,9 @@
   every process are listed in `compiling` of the shared cache under its lock, so generations of
   several processes see what the others admitted and has not reached its peak. A generation always
   runs one. `mirai shaders` reports the most that ran at once.
-- The workers take the stages with the most code first (the size of the one the output has, or the
-  engine build; a stage without previous code goes to the front): the compilation of a large stage
-  is not left for the end ([early stages](#early-stages-and-cancellation)).
+- The workers take the stages by the peak of their memory, the largest first and one never
+  compiled before them: the large stages are the long ones, so they are not left for the end and
+  the small ones fill the room beside them ([early stages](#early-stages-and-cancellation)).
 - A stage that fails does not stop the others: what compiles stays in the cache for the next
   generation.
 

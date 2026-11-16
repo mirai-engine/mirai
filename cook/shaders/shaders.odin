@@ -859,8 +859,10 @@ jobs_tailor :: proc(g:^Generation,extensions:Extensions,staging:string,allocator
 }
 
 // The jobs by when they run: the first stages, the others that are not idle,
-// the idle ones and the tests. In each the costliest go first, by the bytes
-// of the code of the stage the last time: the generation ends sooner.
+// the idle ones and the tests. In each the largest go first, by the peak of
+// their memory the last time, and one never compiled before them: they are
+// the longest too, and the small ones fill the room beside them instead of
+// the large ones ending the generation alone.
 @(private)
 jobs_order :: proc(g:^Generation,allocator:runtime.Allocator) -> []int {
     Ranked :: struct {job:int,cost:i64}
@@ -873,7 +875,7 @@ jobs_order :: proc(g:^Generation,allocator:runtime.Allocator) -> []int {
         return 3
     }
     ranked:=make([]Ranked,len(g.jobs),context.temp_allocator)
-    for &job,i in g.jobs {ranked[i]={i,job_cost(g,&job)}}
+    for job,i in g.jobs {ranked[i]={i,g.peaks[job.name] or_else max(i64)}}
     slice.stable_sort_by(ranked,proc(a,b:Ranked) -> bool {return a.cost>b.cost})
     order:=make([]int,len(g.jobs),allocator)
     at:=0
@@ -883,19 +885,6 @@ jobs_order :: proc(g:^Generation,allocator:runtime.Allocator) -> []int {
         }
     }
     return order
-}
-
-// The bytes of the code of a stage as the output, or the build of the engine,
-// has it; the most for one that neither has.
-@(private)
-job_cost :: proc(g:^Generation,job:^Job) -> i64 {
-    entry,folder:=job.prior,job.out
-    if !job.has_prior {entry,folder=job.engine,g.engine_build}
-    name:=entry.spv if .Vulkan in job.backends else entry.msl
-    if !job.has_prior && !job.has_engine || folder=="" || name=="" {return max(i64)}
-    info,error:=os.stat(path_join(folder,name,allocator=context.temp_allocator),context.temp_allocator)
-    if error!=nil {return max(i64)}
-    return info.size
 }
 
 // The stages a job system compiles, in their order: each worker keeps what it
