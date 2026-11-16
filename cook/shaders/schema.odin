@@ -244,6 +244,7 @@ shared_constants :: proc(allocator:=context.temp_allocator) -> string {
     u(&b,"SHADOW_WORDS_GROUPS",abi.SHADOW_WORDS_GROUPS)
     u(&b,"SHADOW_WORDS_VICTIMS",abi.SHADOW_WORDS_VICTIMS)
     u(&b,"SHADOW_WORDS_STEPS",abi.SHADOW_WORDS_STEPS)
+    u(&b,"SHADOW_ARGS_TINT",abi.SHADOW_ARGS_TINT)
     u(&b,"SHADOW_STEP_NEW",abi.SHADOW_STEP_NEW)
     u(&b,"SHADOW_STEP_RUNS",abi.SHADOW_STEP_RUNS)
     u(&b,"SHADOW_SUN_WORD",abi.SHADOW_SUN_WORD)

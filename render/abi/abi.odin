@@ -264,7 +264,7 @@ SHADOW_WORDS_HAS           :: SHADOW_WORDS_READY + SHADOW_MASKS
 SHADOW_WORDS_BOUNDS        :: SHADOW_WORDS_HAS + 3 * SHADOW_SLOTS
 SHADOW_WORDS_COUNTS        :: SHADOW_WORDS_BOUNDS + 3 * SHADOW_SLOTS * SHADOW_MIPS * 4
 SHADOW_WORDS_ARGS          :: SHADOW_WORDS_COUNTS + 16
-SHADOW_WORDS_SLOTS         :: SHADOW_WORDS_ARGS + 20
+SHADOW_WORDS_SLOTS         :: SHADOW_WORDS_ARGS + 23
 SHADOW_WORDS_JOBS          :: SHADOW_WORDS_SLOTS + 3 * SHADOW_SLOTS
 SHADOW_WORDS_RANK          :: SHADOW_WORDS_JOBS + 2 * SHADOW_POOL_PAGES
 SHADOW_WORDS_GROUPS        :: SHADOW_WORDS_RANK + SHADOW_RANK_WORDS
@@ -301,10 +301,12 @@ SHADOW_COUNT_SLOTS         :: 6 // three
 // The arguments: the dispatches of the cull of the cache, of the atlas and of
 // the glass, three words each, then the draws of the pages the cache clears
 // and the atlas copies from it, four each, and the dispatch of the farthest
-// depth of the pages the cache drew.
+// depth of the pages the cache drew, and that of the cull of the glass into
+// the pages the atlas composes.
 SHADOW_ARGS_DISPATCH       :: 0
 SHADOW_ARGS_DRAW           :: 9
 SHADOW_ARGS_HIZ            :: 17
+SHADOW_ARGS_TINT           :: 20
 REFLECTION_SHARED_ROUGHNESS :: f32(0.15)
 
 // The levels of the depth pyramid a dispatch of hiz.comp makes.
