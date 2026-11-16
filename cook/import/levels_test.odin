@@ -733,20 +733,41 @@ the_near_part_of_a_bush_alone_is_fine :: proc(t:^testing.T) {
 }
 
 // The cards of a material with a program that names its mask, of a skinned
-// mesh and of a morphing one are cut as those of the row material are. A
-// vertex of an outline takes the influences and the deltas of the corners of
-// the card where it lies: those of a rigid card exactly, those of a card
-// between two bones a blend of both, and the deltas of a card that moves.
+// mesh, of a morphing one, of a submesh of a few of them and of uvs a period
+// away or across the edge of the image, which repeats, are cut as those of
+// the row material are. A vertex of an outline takes the influences and the
+// deltas of the corners of the card where it lies: those of a rigid card
+// exactly, those of a card between two bones a blend of both, and the deltas
+// of a card that moves.
 @(test)
-cards_of_programs_and_of_skinned_and_morphing_meshes_are_cut :: proc(t:^testing.T) {
-    Case :: struct {name:string,program,skinned,morphing:bool}
-    cases:=[]Case{{"row",false,false,false},{"program",true,false,false},{"skinned",false,true,false},{"morphing",false,false,true}}
+cards_are_cut_alike_whatever_their_material_mesh_siblings_or_period :: proc(t:^testing.T) {
+    Case :: struct {name:string,program,skinned,morphing:bool,leaves:int,shift:f32}
+    cases:=[]Case{
+        {"row",false,false,false,48,0},{"program",true,false,false,48,0},{"skinned",false,true,false,48,0},{"morphing",false,false,true,48,0},
+        {"a few",false,false,false,4,0},{"a period over",false,false,false,48,1},{"across the edge",false,false,false,48,-0.25},
+    }
     reference:int
     for c in cases {
         r:Reader
         tree_read(&r)
         mesh:=&r.meshes[0]
         leaf_vertex :: proc(mesh:^Imported_Mesh,leaf,row,column:int) -> u32 {return mesh.indices[int(mesh.submeshes[1].first_index)+leaf*12]+u32(row*2+column)}
+        if c.leaves<48 {
+            // The first leaves alone in their submesh.
+            leaves:=mesh.submeshes[1]
+            dropped:=int(leaves.index_count)-c.leaves*12
+            indices:=make([dynamic]u32,0,len(mesh.indices)-dropped,context.temp_allocator)
+            append(&indices,..mesh.indices[:int(leaves.first_index)+c.leaves*12])
+            append(&indices,..mesh.indices[int(leaves.first_index+leaves.index_count):])
+            mesh.indices=indices[:]
+            mesh.submeshes[1].index_count=u32(c.leaves*12)
+            mesh.submeshes[2].first_index-=u32(dropped)
+        }
+        if c.shift!=0 {
+            for leaf in 0..<48 {
+                for k in 0..<6 {mesh.vertices[leaf_vertex(mesh,leaf,k/2,k%2)].uv.x+=c.shift}
+            }
+        }
         if c.program {
             leaves:=&r.materials[1]
             asset.text_set(leaves.info.program[:],"Leaf")
@@ -780,12 +801,12 @@ cards_of_programs_and_of_skinned_and_morphing_meshes_are_cut :: proc(t:^testing.
             mesh.morphs,mesh.morph_deltas=targets,deltas[:]
         }
         model_cutouts(&r)
-        testing.expectf(t,len(mesh.outlines.cards)==48 && r.materials[1].info.alpha_mode==.Opaque,"%s: %d leaves cut",c.name,len(mesh.outlines.cards))
-        if len(mesh.outlines.cards)!=48 {continue}
+        testing.expectf(t,len(mesh.outlines.cards)==c.leaves && r.materials[1].info.alpha_mode==.Opaque,"%s: %d leaves cut",c.name,len(mesh.outlines.cards))
+        if len(mesh.outlines.cards)!=c.leaves {continue}
         triangles:=0
         for card in mesh.outlines.cards {triangles+=int(card.triangle_count)}
         if c.name=="row" {reference=triangles}
-        testing.expectf(t,triangles==reference,"%s: the leaves draw %d triangles, the row material's %d",c.name,triangles,reference)
+        testing.expectf(t,triangles*48==reference*c.leaves,"%s: the leaves draw %d triangles, those of the row material %d",c.name,triangles,reference*c.leaves/48)
         if c.skinned {
             testing.expect_value(t,len(mesh.skin),len(mesh.vertices))
             testing.expect_value(t,len(mesh.outlines.skin),len(mesh.outlines.vertices))
