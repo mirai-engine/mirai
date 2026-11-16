@@ -363,7 +363,9 @@ material_normal_map_tilts_towards_its_axes :: proc(t: ^testing.T) {
 	tilt_up.textures[.Normal] = up_texture
 	flat.textures[.Normal] = right_texture
 	flat.normal_scale = 0
-	materials_set(r, {tilt_right, tilt_up, flat})
+	two_sided := tilt_right
+	two_sided.two_sided = true
+	materials_set(r, {tilt_right, tilt_up, flat, two_sided})
 	quad := ground_quad(r)
 	expected := [3]Vec3{{0.5, 0.866, 0}, {0, 0.866, -0.5}, {0, 1, 0}}
 	for want, i in expected {
@@ -372,12 +374,16 @@ material_normal_map_tilts_towards_its_axes :: proc(t: ^testing.T) {
 		n := read_normal(t, &f, OVERHEAD, {0.2, 0, 0.1})
 		testing.expectf(t, abs(n.x - want.x) < 0.03 && abs(n.y - want.y) < 0.03 && abs(n.z - want.z) < 0.03, "material %d: normal %v, expected %v", i + 1, n.xyz, want)
 	}
-	// Seen from below, the sheet is the same surface: its normal is the opposite of the front one.
+	// Seen from below, a two-sided sheet is the same surface: its normal is the
+	// opposite of the front one. A one-sided one shows nothing from there.
 	below := Camera{position = {0, -2, 0}, forward = {0, 2, 0}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-	scene_given(r, {{object_id = 1, mesh = quad, transform = Mat4(1), material = 1, tint = {1, 1, 1}}}, nil, {}, {})
+	scene_given(r, {{object_id = 1, mesh = quad, transform = Mat4(1), material = 4, tint = {1, 1, 1}}}, nil, {}, {})
 	frames(t, &f, below, 2)
 	n := read_normal(t, &f, below, {0.2, 0, 0.1})
 	testing.expectf(t, abs(n.x + 0.5) < 0.03 && abs(n.y + 0.866) < 0.03 && abs(n.z) < 0.03, "back face: normal %v", n.xyz)
+	scene_given(r, {{object_id = 1, mesh = quad, transform = Mat4(1), material = 1, tint = {1, 1, 1}}}, nil, {}, {})
+	frames(t, &f, below, 2)
+	testing.expectf(t, read_depth(t, &f, below, {0.2, 0, 0.1}) == 0, "a one-sided sheet shows nothing from behind")
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 
