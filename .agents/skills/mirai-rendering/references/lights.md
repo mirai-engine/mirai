@@ -224,11 +224,12 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
 - **Pages of the maps.** A map lies in a slot: each of its mips a square of `SHADOW_PAGE` pages
   half as wide as the one before (a level of the sun has its finest alone), of which only those the
   points of the view read exist. `shadow_mark.comp` marks, for each point of the direct light, the
-  pages the taps around it reach in the level of the sun and the mip of each face of a light whose
-  texel is about as wide as the point (`sun_pick`, `light_pick`; a face no finer than its widest
-  penumbra over the search of the taps); over the top of each octave the point blends into the
-  next level or mip, whose pages it marks too, and its texel-based constants grow to meet those of
-  the next. The first level of the sun is a metre wide, each after it twice as wide.
+  pages the taps around it reach in the level of the sun and the mip of each face of a light with
+  one or two texels to a pixel of the view there (`sun_pick`, `light_pick`; a face no finer than
+  its widest penumbra over the search of the taps); over the top of each octave the point blends
+  into the next level or mip, whose pages it marks too, and its texel-based constants grow to meet
+  those of the next. The first level of the sun is a metre wide, each after it twice as wide, and
+  the grid of the pages and texels of every level lies on the world, not on the origin of the frame.
   `shadow_pages.comp` gives each marked page a page of the pool of the view through the table of
   the pages (`Shadow_Raster.table`, at `SLOT_SHADOW_TABLE`), in the same frame, so a page first
   read is drawn before it is read. Pages are given in one order every frame: the safety net first

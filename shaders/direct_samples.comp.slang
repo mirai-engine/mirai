@@ -273,7 +273,7 @@ void main(uint3 group : SV_GroupID, uint index : SV_GroupIndex) {
     uint sun_chain = INVALID;
     bool sun_given = false;
     direct_maps_give = !maps || out_depth[p].y != DIRECT_MAPS_NONE;
-    direct_across = float(scale) * (frame.footprint.x + frame.footprint.y * depth_distance(depth));
+    direct_across = frame.footprint.x + frame.footprint.y * depth_distance(depth);
     if (sun > 0.0) {
         Shadow_Map held;
         sun_given = direct_maps_give && sun_map_given(pixel.position, direct_across);

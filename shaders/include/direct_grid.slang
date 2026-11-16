@@ -71,8 +71,8 @@ void direct_ray(uint light, float3 position, float3 origin, float point, float s
 
 // Whether the maps of the view give the point the light they hold:
 // direct_maps.comp leaves to the samples, with no map, a point some glass with
-// a program stands in front of (shadow_tint_programmed); and the width of the
-// point across the view, metres, which picks the mip of a map it reads. Each
+// a program stands in front of (shadow_tint_programmed); and the width of a
+// pixel of the view at the point, metres, which picks the mip of a map it reads. Each
 // pass sets them for its point.
 static bool direct_maps_give = true;
 static float direct_across = 0.0;

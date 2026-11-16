@@ -281,13 +281,26 @@ shadow_light_faces :: proc(wants: ^[abi.SHADOW_LIGHT_SLOTS]Shadow_Want, light: G
 // and stays while the eye does not leave its reach; towards the sun it keeps
 // how far it reaches while the scene stays within that, so that the scene
 // rising a little or shrinking draws nothing again. As many levels as reach
-// as far as the scene from the eye, and the camera.
+// as far as the scene from the eye, and the camera. The grid of the pages and
+// the texels of every level lies on the world, not on the origin the frame
+// draws from (origin): a scene shows the same shadows wherever it lies.
 @(private)
-shadow_sun_levels :: proc(wants: ^[SHADOW_SLOTS]Shadow_Want, toward: Vec3, eye: Vec3, camera_far: f32, scene_low, scene_high: Vec3, has_bounds: bool, held: []Shadow_Held) -> (levels: int) {
+shadow_sun_levels :: proc(wants: ^[SHADOW_SLOTS]Shadow_Want, toward: Vec3, eye, origin: Vec3, camera_far: f32, scene_low, scene_high: Vec3, has_bounds: bool, held: []Shadow_Held) -> (levels: int) {
 	axis := -linalg.normalize(toward)
 	reference := Vec3{0, 1, 0} if abs(axis.y) < 0.99 else Vec3{1, 0, 0}
 	sr := linalg.normalize(linalg.cross(reference, axis))
 	su := linalg.cross(axis, sr)
+	// Where the origin lies on the axes of the light, past a whole number of the
+	// pages of the widest level: the pages of each level, which divide it, lie
+	// on the world from it.
+	WIDEST :: f64(SHADOW_SUN_FIRST) * f64(u32(1) << (SHADOW_SUN_LEVELS - 1)) / f64(SHADOW_MAP_PAGES / 2)
+	phase :: proc(origin, along: Vec3) -> f32 {
+		at := f64(origin.x) * f64(along.x) + f64(origin.y) * f64(along.y) + f64(origin.z) * f64(along.z)
+		return f32(at - math.floor(at / WIDEST) * WIDEST)
+	}
+	shift := Vec3{phase(origin, sr), phase(origin, su), phase(origin, axis)}
+	// The eye on the axes of the light from that grid.
+	place := Vec3{linalg.dot(eye, sr), linalg.dot(eye, su), linalg.dot(eye, axis)} + shift
 	extent := f32(math.F32_MAX)
 	if has_bounds {
 		extent = 0
@@ -304,8 +317,8 @@ shadow_sun_levels :: proc(wants: ^[SHADOW_SLOTS]Shadow_Want, toward: Vec3, eye: 
 	for k in 0 ..< SHADOW_SUN_LEVELS {
 		radius := SHADOW_SUN_FIRST * f32(u32(1) << u32(k))
 		page := radius / HALF
-		at := linalg.dot(eye, axis)
-		grid := [3]i32{i32(math.floor(linalg.dot(eye, sr) / page)), i32(math.floor(linalg.dot(eye, su) / page)), i32(math.floor(at / radius))}
+		at := place.z
+		grid := [3]i32{i32(math.floor(place.x / page)), i32(math.floor(place.y / page)), i32(math.floor(at / radius))}
 		h := held[k]
 		if h.m.rect.z != 0 && h.m.far == CASCADE_FAR * radius && at >= f32(h.grid.z - 1) * radius && at <= f32(h.grid.z + 2) * radius {grid.z = h.grid.z}
 		along := f32(grid.z) * radius
@@ -313,8 +326,8 @@ shadow_sun_levels :: proc(wants: ^[SHADOW_SLOTS]Shadow_Want, toward: Vec3, eye: 
 		if has_bounds {
 			for i in 0 ..< 8 {
 				p := Vec3{scene_high.x if i & 1 != 0 else scene_low.x, scene_high.y if i & 2 != 0 else scene_low.y, scene_high.z if i & 4 != 0 else scene_low.z}
-				top = min(top, linalg.dot(p, axis) - along)
-				lo = min(lo, math.floor((linalg.dot(p, axis) - 1 - along) / radius) * radius)
+				top = min(top, linalg.dot(p, axis) + shift.z - along)
+				lo = min(lo, math.floor((linalg.dot(p, axis) + shift.z - 1 - along) / radius) * radius)
 			}
 		}
 		if h.m.rect.z != 0 && grid.z == h.grid.z && h.m.near <= top {lo = h.m.near}
@@ -323,7 +336,7 @@ shadow_sun_levels :: proc(wants: ^[SHADOW_SLOTS]Shadow_Want, toward: Vec3, eye: 
 		ox, oy := u32(x0) % SHADOW_MAP_PAGES, u32(-(grid.y + HALF)) % SHADOW_MAP_PAGES
 		wants[k] = {
 			m = {
-				origin = axis * along, right = sr, up = su, forward = axis, near = lo, far = CASCADE_FAR * radius, skip = lo, kind = SHADOW_MAP_ORTHOGRAPHIC,
+				origin = axis * (along - shift.z) - sr * shift.x - su * shift.y, right = sr, up = su, forward = axis, near = lo, far = CASCADE_FAR * radius, skip = lo, kind = SHADOW_MAP_ORTHOGRAPHIC,
 				span = {f32(x0) * page, f32(y0) * page, f32(x0 + SHADOW_MAP_PAGES) * page, f32(y0 + SHADOW_MAP_PAGES) * page},
 				rect = {u32(k), ox | oy << 8, SHADOW_MAP_SIDE, max(u32)},
 			},
@@ -553,7 +566,7 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 	sun := s.sun
 	levels := 0
 	if sun.enabled && r.settings.sun_shadows && !sun.shadowless && !orthographic {
-		levels = shadow_sun_levels(&wants, sun.direction, eye, camera.far, s.bounds_min, s.bounds_max, s.has_bounds, b.held[:SHADOW_SUN_LEVELS])
+		levels = shadow_sun_levels(&wants, sun.direction, eye, r.origin, camera.far, s.bounds_min, s.bounds_max, s.has_bounds, b.held[:SHADOW_SUN_LEVELS])
 		plan.sun = u32(levels) << 16
 	}
 	// The lights that light most of the view, the most first; a light keeps
@@ -640,7 +653,7 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 		if slot < SHADOW_SUN_LEVELS {
 			// The 2x2 pages nearest the point of the eye, in pages of the level.
 			page := (w.m.span.z - w.m.span.x) / SHADOW_MAP_PAGES
-			at := Vec2{(linalg.dot(eye, w.m.right) - w.m.span.x) / page, (w.m.span.w - linalg.dot(eye, w.m.up)) / page} - 0.5
+			at := Vec2{(linalg.dot(eye - w.m.origin, w.m.right) - w.m.span.x) / page, (w.m.span.w - linalg.dot(eye - w.m.origin, w.m.up)) / page} - 0.5
 			low := linalg.clamp(linalg.floor(at), 0, SHADOW_MAP_PAGES - 1)
 			high := linalg.clamp(linalg.ceil(at), 0, SHADOW_MAP_PAGES - 1)
 			sp.net = u32(low.x) | u32(low.y) << 8 | u32(high.x) << 16 | u32(high.y) << 24
