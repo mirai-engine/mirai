@@ -13,10 +13,11 @@ import mm "mirai:std/math"
 // The masked cards of a model cut to the outlines of their masks once it is
 // read (outline.odin): leaves drawn opaque instead of alpha tested.
 //
-// A card is a small island (levels.odin) of a submesh of islands of a mesh
-// whose material is masked, its mask an image read by a map that keeps the
-// card inside it, every corner of the card opaque in its color, and its
-// triangles laid on that image without folding over each other. The mask of a
+// A card is an island (levels.odin) of at most ISLAND_MAX_TRIANGLES of a
+// submesh whose material is masked, its mask an image that the map lays the
+// card on over at most two periods (the image repeats, as it is sampled),
+// every corner of the card opaque in its color, and its triangles laid on
+// that image without folding over each other. The mask of a
 // material without a program is its base color image, the texels whose
 // alpha, times its opacity, reaches its cutoff; one with a program names its
 // own (Imported_Material.mask), and without one keeps its mask. Cards that
@@ -272,13 +273,10 @@ cutout_mesh :: proc(c:^Cutout,mesh:^Imported_Mesh,mesh_index:int) -> bool {
         sizes,no_sizes:=make([]u32,count,context.temp_allocator)
         if no_sizes!=nil {return false}
         for l in labels {if int(l)<count {sizes[l]+=1}}
+        // Every island of at most ISLAND_MAX_TRIANGLES may be a card, however few the submesh has.
         small:=0
-        for size in sizes {if island_small(size,u32(triangles)) {small+=1}}
-        if small<ISLANDS_MIN {
-            m.masked+=triangles
-            continue
-        }
-        // The triangles of each small island, in the order of their first.
+        for size in sizes {if size<=ISLAND_MAX_TRIANGLES {small+=1}}
+        // The triangles of each island, in the order of their first.
         first,no_first:=make([]u32,count+1,context.temp_allocator)
         fill,no_fill:=make([]u32,count,context.temp_allocator)
         seen,no_seen:=make([]bool,count,context.temp_allocator)
@@ -296,7 +294,7 @@ cutout_mesh :: proc(c:^Cutout,mesh:^Imported_Mesh,mesh_index:int) -> bool {
         if reserve(&c.shapes,len(c.shapes)+small)!=nil || reserve(&c.layout_keys,len(c.layout_keys)+small)!=nil || reserve(&c.cards,len(c.cards)+small)!=nil {return false}
         kept:=triangles
         for l in labels {
-            if int(l)>=count || seen[l] || !island_small(sizes[l],u32(triangles)) {continue}
+            if int(l)>=count || seen[l] || sizes[l]>ISLAND_MAX_TRIANGLES {continue}
             seen[l]=true
             card,ok:=cutout_card(c,mesh,m,order[first[l]:first[l+1]])
             if !ok {continue}
@@ -340,7 +338,7 @@ cutout_card :: proc(c:^Cutout,mesh:^Imported_Mesh,m:^Cutout_Material,triangles:[
             if v.color>>24!=255 {return}
             uv:=v.uv1 if m.uv_set==1 else v.uv
             mapped:=geom.Vec2{m.linear.x*uv.x+m.linear.y*uv.y+m.offset.x,m.linear.z*uv.x+m.linear.w*uv.y+m.offset.y}
-            if !(mapped.x>=-1e-3 && mapped.x<=1+1e-3 && mapped.y>=-1e-3 && mapped.y<=1+1e-3) {return}
+            if !(abs(mapped.x)<=max(f32) && abs(mapped.y)<=max(f32)) {return}
             p:=geom.Vec2{mapped.x*w,mapped.y*h}
             corners[t][k]=p
             low,high={min(low.x,p.x),min(low.y,p.y)},{max(high.x,p.x),max(high.y,p.y)}
@@ -349,13 +347,15 @@ cutout_card :: proc(c:^Cutout,mesh:^Imported_Mesh,m:^Cutout_Material,triangles:[
         if !(abs(area)>1e-9) || sign!=0 && (area>0)!=(sign>0) {return}
         sign=area
     }
-    rect:=[4]int{
-        clamp(int(math.floor(low.x)),0,alpha.source.width),clamp(int(math.floor(low.y)),0,alpha.source.height),
-        clamp(int(math.ceil(high.x)),0,alpha.source.width),clamp(int(math.ceil(high.y)),0,alpha.source.height),
-    }
+    // The sampler repeats the image: a card reads it over at most two periods, from the first.
+    if !(high.x-low.x<=2*w && high.y-low.y<=2*h) {return}
+    period:=geom.Vec2{math.floor(low.x/w)*w,math.floor(low.y/h)*h}
+    low,high=low-period,high-period
+    if !(low.x>=0 && low.y>=0 && high.x<=3*w && high.y<=3*h) {return}
+    rect:=[4]int{int(math.floor(low.x)),int(math.floor(low.y)),int(math.ceil(high.x)),int(math.ceil(high.y))}
     if rect[2]<=rect[0] || rect[3]<=rect[1] {return}
     for &tri in corners {
-        for &p in tri {p-={f32(rect[0]),f32(rect[1])}}
+        for &p in tri {p-=period+{f32(rect[0]),f32(rect[1])}}
     }
     // The most a texel spans on the card, and the triangles that share one map from the image.
     for triangle,t in triangles {
@@ -378,7 +378,7 @@ cutout_card :: proc(c:^Cutout,mesh:^Imported_Mesh,m:^Cutout_Material,triangles:[
         kept :: proc(t:Cutout_Texels,x,y:int) -> bool {
             source:=t.alpha.source
             transfer:=t.alpha.transfer
-            return textures.texel_read(source.texels,source.format,(t.rect[1]+y)*source.width+t.rect[0]+x,&transfer).a>=t.threshold
+            return textures.texel_read(source.texels,source.format,(t.rect[1]+y)%source.height*source.width+(t.rect[0]+x)%source.width,&transfer).a>=t.threshold
         }
         mask,reduced:=outline_mask_reduce(rect[2]-rect[0],rect[3]-rect[1],Cutout_Texels{alpha,rect,m.threshold},kept,context.allocator)
         if !reduced {return}
