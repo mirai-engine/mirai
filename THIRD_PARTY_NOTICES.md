@@ -122,8 +122,8 @@ are kept here and, where the license asks for it, in the header of the file.
   <https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK>. `plugins/fsr/shaders/fsr3` (the
   upscaler, optical flow, frame interpolation and SPD headers, altered: reduced to the one
   configuration Mirai compiles, as their `UPSTREAM.md` says) and the pass sequence of
-  `plugins/fsr/runtime/framegen.odin`, translated from `ffx_opticalflow.cpp` and
-  `ffx_frameinterpolation.cpp`. Game, with the `fsr` plugin.
+  `plugins/fsr/runtime/framegen.odin`, translated from `ffx_opticalflow.cpp`,
+  `ffx_frameinterpolation.cpp` and `ffx_fsr3.cpp`. Game, with the `fsr` plugin.
 - **Zstandard 1.5.7** (BSD-3-Clause; © Meta Platforms, Inc. and affiliates),
   <https://github.com/facebook/zstd>. `std/compressor/zstd`, a translation of its decoder and of
   three levels of its encoder, as its `UPSTREAM.md` says. Game.
