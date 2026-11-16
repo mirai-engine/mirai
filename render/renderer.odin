@@ -626,7 +626,6 @@ Renderer :: struct {
 	kept:                 [WORLDS_MAX - 1]World_Light, // the light of the worlds not shown
 	kept_count:           int,
 	glass_stale:          bool, // Gpu_Instance.glass waits for glass_mean.comp: instances, materials or geometry went up since it last ran
-	glass_changes:        u64,  // counts the frames in which glass may have changed (glass_stale), which the tints of the shadows draw again whole
 	points:               Material_Points, // where the passes of a frame need a material program evaluated (points.odin)
 	vertex_stages:        Program_Computes, // of surface_vertices__<program>.comp, which move the vertices of instances (displace.odin)
 	program_graphics:     [PROGRAM_GRAPHICS_CAPACITY]Program_Graphics, // the raster stages of Surface programs (program_stages.odin)
@@ -1618,7 +1617,7 @@ targets_textures :: proc(t: ^Targets) -> (all: [TARGET_TEXTURES]rhi.Texture) {
 	fixed := [?]rhi.Texture{
 		t.taa[0], t.taa[1], t.taa_frames[0], t.taa_frames[1], t.hiz[0], t.hiz[1], t.ldr, t.generated,
 		t.highlight, t.highlight_depth, t.highlight_filtered, t.gi_given, t.reactive, t.aerial, t.ui_blur[0], t.ui_blur[1],
-		t.shadow_raster.cache, t.shadow_raster.atlas, t.shadow_raster.table, t.shadow_raster.hiz,
+		t.shadow_raster.cache, t.shadow_raster.atlas, t.shadow_raster.table, t.shadow_raster.hiz, t.shadow_raster.tint, t.shadow_raster.glass,
 	}
 	#assert(len(fixed) + UI_LAYER_DEPTH_CAPACITY <= TARGET_TEXTURES)
 	copy(all[:], fixed[:])

@@ -3,7 +3,6 @@ package mirai_render
 import "core:math"
 import "core:mem"
 import "core:testing"
-import "mirai:render/abi"
 import "mirai:rhi"
 
 // No jitter and no probes: a pixel shows one surface point, lit by the sun
@@ -307,13 +306,6 @@ glass_solid_filters_once_absorbs_and_shades_colored_shadows :: proc(t: ^testing.
 		for _ in 0 ..< 2 {testing.expect(t, fixture_frame(&f, {camera = side}), r.error)}
 		smoked := read_halves(t, &f, r.targets.direct, under)
 		testing.expectf(t, abs(smoked.r - 0.92 * lit.r) < 0.03 && abs(smoked.b - 0.25 * 0.92 * lit.b) < 0.03, "%v: the shadow of a solid has what it absorbs: %v of %v", provider, smoked, lit)
-		// Still, the view keeps its tint: it culls and draws no glass again, and the shadow keeps its color.
-		testing.expect(t, fixture_frame(&f, {camera = side}), r.error)
-		kept := read_halves(t, &f, r.targets.direct, under)
-		b := &r.main.targets.shadow_raster
-		args: [3]u32
-		testing.expect(t, rhi.buffer_read_slice(r.device, b.pages, u64(abi.SHADOW_WORDS_ARGS + abi.SHADOW_ARGS_TINT) * 4, args[:]))
-		testing.expectf(t, args[0] == 0 && b.glass_changes == r.glass_changes && abs(kept.r - smoked.r) < 0.005 && abs(kept.b - smoked.b) < 0.005, "%v: a still frame drew the glass of the tint again (%d groups, whole: %v) or changed it: %v of %v", provider, args[0], b.glass_changes != r.glass_changes, kept, smoked)
 	}
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }

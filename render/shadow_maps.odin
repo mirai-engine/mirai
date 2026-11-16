@@ -3,6 +3,7 @@ package mirai_render
 import "core:hash"
 import "core:math"
 import "core:math/linalg"
+import "core:mem"
 import "mirai:render/abi"
 import "mirai:rhi"
 import "mirai:std/base"
@@ -124,7 +125,8 @@ Shadow_Raster :: struct {
 	tint:     rhi.Texture, // what the glass in front of the depth of each texel of the atlas lets through of its light
 	glass:    rhi.Texture, // the depth of the nearest of that glass
 	tinted:   bool, // the frame before drew the tint
-	glass_changes: u64, // Renderer.glass_changes when the tint was drawn
+	tint_whole: bool, // and drew it whole
+	glass_key: u64,  // what the tint was drawn from (shadow_glass_key)
 }
 
 // What the marks of the points of a view depend on besides the maps and the
@@ -524,6 +526,22 @@ shadow_movers_update :: proc(r: ^Renderer) {
 	give(&r.main.targets.shadow_raster, &stale, &moved)
 	for &view in r.views {give(&view.targets.shadow_raster, &stale, &moved)}
 	for &view in r.texture_views {if view.texture != 0 {give(&view.targets.shadow_raster, &stale, &moved)}}
+}
+
+// What the tint of the maps is drawn from besides the pages: the instances
+// with glass and the values of the rows of the materials; moving: one of
+// them changes its vertices this frame.
+@(private)
+shadow_glass_key :: proc(s: ^Scene_State) -> (key: u64, moving: bool) {
+	key = hash.fnv64a(mem.slice_to_bytes(s.material_versions[:]))
+	for entry in s.translucent {
+		if int(entry.instance) >= len(s.instances) {continue}
+		inst := s.instances[entry.instance]
+		key = hash.fnv64a(mem.ptr_to_bytes(&inst), key)
+		mesh := inst.meta.x & INSTANCE_MESH_MASK
+		if int(mesh) < len(s.meshes) && s.meshes[mesh].skin != nil && s.meshes[mesh].skin.dirty {moving = true}
+	}
+	return
 }
 
 // The maps of this frame and what a frame draws of them.
@@ -938,13 +956,14 @@ shadow_maps_pass :: proc(p: ^Pass, mark: ^$T, scale: u32, grid: rhi.Buffer) -> (
 	// shadow_maps.slang). The view keeps them: drawn whole where the glass
 	// changed, else again only in the pages the atlas composes.
 	tinted := r.settings.colored_shadows && len(s.translucent) > 0
-	tint_whole := made || !b.tinted || b.tint == 0 || b.glass == 0 || b.glass_changes != r.glass_changes
+	glass_key, glass_moving := shadow_glass_key(s)
+	tint_whole := made || !b.tinted || b.tint == 0 || b.glass == 0 || glass_moving || glass_key != b.glass_key
 	if tinted {
 		tint_ok := target(r, cmd, &b.tint, SHADOW_POOL, SHADOW_POOL, .RGBA8_Unorm, {.Color_Target, .Sampled}, "shadow tint")
 		glass_ok := target(r, cmd, &b.glass, SHADOW_POOL, SHADOW_POOL, .D32_Float, {.Depth_Target, .Sampled}, "shadow glass")
 		tinted = tint_ok && glass_ok
 	}
-	b.tinted, b.glass_changes = tinted, r.glass_changes
+	b.tinted, b.tint_whole, b.glass_key = tinted, tinted && tint_whole, glass_key
 	// What the passes after this one read of the maps (sun_shadow_seen,
 	// media.slang) and the marks: the constants of the view are read when the
 	// frame runs.
