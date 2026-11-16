@@ -403,8 +403,8 @@ render_a_swaying_batch_shades_where_it_is :: proc(t: ^testing.T) {
 	}
 	for wide in ([]bool{true, false}) {
 		// Wide: it sways up to 1.2 m, wider than any texel; narrow, it says it
-		// sways a millimetre, narrower than every texel, and the maps keep it at rest.
-		mesh, made := deformable_create(r, f.cube, false, 1.2 if wide else 0.001)
+		// sways a tenth of a millimetre, narrower than every texel, and the maps keep it at rest.
+		mesh, made := deformable_create(r, f.cube, false, 1.2 if wide else 0.0001)
 		if !testing.expect(t, made) {return}
 		defer mesh_remove(r, mesh)
 		batch, problem := batch_set(r, 0, 0, {mesh = mesh, tint = 0.5, flags = {.Casts_Shadow, .Ray_Visible}}, {batch_instance({0, 1.5, 0}, 1, {1, 0.2, 1})})

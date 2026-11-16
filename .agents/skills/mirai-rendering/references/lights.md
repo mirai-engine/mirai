@@ -221,35 +221,50 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   instance and slot, which hands the clusters of the levels the cut of the map can take
   (`instance_clusters`) to a pass by cluster in chunks, which hands each to every page of the round
   it covers, into lists that count what does not fit and grow, like those of the view.
-- **Pages of the maps.** A map lies in a slot: a square of `SHADOW_PAGE` pages, of which only those
-  the points of the view read exist. `shadow_mark.comp` marks, for each point of the direct light,
-  the pages the taps around it reach in the level of the sun and the maps of the lights that hold it
-  (`shadow_map_taps`, the same as `direct_maps` reads); `shadow_pages.comp` gives each marked page a
-  page of the pool of the view (`SHADOW_POOL` texels a side) through the table of the pages, in the
-  same frame, so a page first read is drawn before it is read. A page keeps its place while no point
-  reads it, until another needs it (free ones first), and what stays changing under it still marks
-  it stale, so a page read is always of this frame. The levels of the sun keep a few pages around
-  the eye (`SHADOW_SUN_AROUND`) for what no point marks (the fog, the hits of rays), which take the
-  finest level drawn there (`sun_map_ready`); past it they trace. A level moves with the eye by
-  whole pages and keeps its pages where they are in the world (the table is read turned,
-  `shadow_page_entry`): walking draws the pages that come in. A page asked for past the pool is
-  left out (`SHADOW_COUNT_LEFT`), and its taps read nothing there. The atlas keeps a copy of the
-  table in its last pages, so a pass that binds the atlas reads the maps alone.
+- **Pages of the maps.** A map lies in a slot: each of its mips a square of `SHADOW_PAGE` pages
+  half as wide as the one before (a level of the sun has its finest alone), of which only those the
+  points of the view read exist. `shadow_mark.comp` marks, for each point of the direct light, the
+  pages the taps around it reach in the level of the sun and the mip of each face of a light whose
+  texel is about as wide as the point (`sun_pick`, `light_pick`; a face no finer than its widest
+  penumbra over the search of the taps); over the top of each octave the point blends into the
+  next level or mip, whose pages it marks too, and its texel-based constants grow to meet those of
+  the next. The first level of the sun is a metre wide, each after it twice as wide.
+  `shadow_pages.comp` gives each marked page a page of the pool of the view through the table of
+  the pages (`Shadow_Raster.table`, at `SLOT_SHADOW_TABLE`), in the same frame, so a page first
+  read is drawn before it is read. Pages are given in one order every frame: the safety net first
+  (the 2x2 pages of each level of the sun nearest the eye, the coarsest page of each face), then
+  from the coarsest level or mip to the finest; past the pool the finest are left out
+  (`SHADOW_COUNT_LEFT`), the same every frame. A page keeps its place while no point reads it,
+  until another needs it: free pages first, then those unread the longest. What stays changing
+  under it still marks it stale, so a page read is always of this frame. Where a page is not drawn
+  its entry names the nearest coarser level or mip drawn there (`SHADOW_ENTRY_COARSER`), which its
+  points read; where none is, they trace. A pass after the maps that reads them (the fog) marks
+  the pages it reads for the next frame (`pass_shadow_marks`). A level moves with the eye by whole
+  pages and keeps its pages where they are in the world (`shadow_page_entry`): walking draws the
+  pages that come in; along the light it keeps how far it reaches towards the sun while the scene
+  stays within it. A face reaches past its side of the cube by `SHADOW_FACE_GUARD`, so the taps of
+  a point near its border read it.
 - **What a frame draws.** The cost follows what changed. The cache of the view
   (`Shadow_Raster.cache`) holds what stays, page by page: a page draws there again only where it is
   new or what stays changed under it (an instance that came, went or changed its box or pose, a
   page of its mesh, a masked material), and the atlas (`Shadow_Raster.atlas`), what the passes
   read, composes the cache and what moves again only in the pages where the cache drew or what
-  moves was or is. An instance that changes again within `SHADOW_MOVER_FRAMES` moves (each followed
-  on its own, however many, `Scene_State.shadow_changes`): the cache leaves it out once, and the
-  atlas draws it in the pages its moves cover until it stays that long and joins the cache again; a
-  mover that stands still costs nothing. A batch of a deformable that sways (the wind) moves so in
-  the maps whose texel is narrower than its sway; the others draw it at rest and keep it. A light
-  or a level of the sun that moves or turns lets go of its pages, so a turning sun draws again the
-  pages read, in the frame it turns; an origin jump lets go of every page. The glass of the tint
-  is drawn every frame in every page ready.
+  moves was or is. The boxes of what changed mark their pages on the GPU, but where the cache hides
+  them: the cache keeps the farthest depth over blocks of each page it drew (`Shadow_Raster.hiz`),
+  and what moves is not drawn where it lies past that. An instance that changes again within
+  `SHADOW_MOVER_FRAMES` moves (each followed on its own, however many,
+  `Scene_State.shadow_changes`): the cache leaves it out once, and the atlas draws it in the pages
+  its moves cover until it stays that long and joins the cache again; a mover that stands still
+  costs nothing. A batch of a deformable that sways (the wind) moves so in the maps whose texel is
+  narrower than its sway; the others draw it at rest and keep it. A light or a level of the sun
+  that moves or turns lets go of its pages and draws those read whole into the atlas alone that
+  frame, and the cache the next still frame; an origin jump lets go of every page. The glass of
+  the tint is drawn every frame in every page ready.
 - **Reading the maps.** A map holds a point only within its face and range, and samples tell
-  elsewhere. A point under a map takes taps around it: all lit, lit; all blocked, hidden; where
+  elsewhere. A tap compares a blocker with the plane of the surface of the point where the tap
+  falls, less twice what the plane rises from there to the middle of its texel (scaled to the texel
+  of a coarser page it reads), so a surface never shades itself; a tap no page holds tells nothing.
+  A point under a map takes taps around it: all lit, lit; all blocked, hidden; where
   they disagree (a penumbra) it takes the hard shadow of the map at the point, and `direct_spread`
   averages that evenly over the points of its surface within the penumbra width the blockers give,
   the wider of that of the point and that of each neighbour, so the penumbra is the same seen from

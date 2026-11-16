@@ -9,6 +9,7 @@ import render "mirai:engine/render"
 import volume "mirai:engine/volume"
 import "mirai:host"
 import gpu "mirai:render"
+import "mirai:render/abi"
 import "mirai:rhi"
 import "mirai:rhi/shared_device"
 import "mirai:std/base"
@@ -465,6 +466,14 @@ fog_past_the_grid_scatters_no_sun_the_scene_hides :: proc(t: ^testing.T) {
 		if !ok {return}
 		seen[k] = block(image, low, high)
 		delete(image.pixels)
+		// Its cells marked the pages of the maps of the sun they read, which the next frame draws.
+		if c.share > 0 {
+			marks := make([]u32, abi.SHADOW_SUN_MAPS * abi.SHADOW_MASK_WORDS, context.temp_allocator)
+			testing.expect(t, rhi.buffer_read_slice(f.device, r.main.targets.shadow_raster.pages, u64(abi.SHADOW_WORDS_LATE) * 4, marks))
+			marked := 0
+			for word in marks {marked += int(word != 0)}
+			testing.expectf(t, marked > 0, "case %d: the fog marks the pages of the sun it reads", k)
+		}
 	}
 	shown := seen[2] - seen[1]
 	testing.expectf(t, shown > 30, "with the roof off, the fog down the hall shows the sun: %.1f, %.1f without it", seen[2], seen[1])

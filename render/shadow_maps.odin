@@ -900,8 +900,10 @@ shadow_maps_pass :: proc(p: ^Pass, mark: ^$T, scale: u32, grid: rhi.Buffer) -> (
 		groups_stays = groups(p.instance_count + p.batch_slots, SHADOW_GROUP), groups_moves = groups(p.instance_count + p.batch_slots if plan.whole else plan.moving_threads, SHADOW_GROUP),
 		groups_glass = groups(p.instance_count + p.batch_slots, SHADOW_GROUP),
 	}
-	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Shadow_Pages])
 	for step in Shadow_Pages_Step {
+		// What the passes after the maps marked the frame before is read; this frame's marks start anew.
+		if step == .Rank {rhi.cmd_fill_buffer(cmd, b.pages, u64(abi.SHADOW_WORDS_LATE) * 4, u64(abi.SHADOW_MASKS) * 4, 0)}
+		rhi.cmd_bind_pipeline(cmd, r.pipelines[.Shadow_Pages])
 		steps.step = u32(step)
 		set_params(cmd, &steps)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS0, d.table)
