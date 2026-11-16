@@ -408,7 +408,8 @@ bool shadow_map_held(inout Shadow_Map m, float3 position) {
 #ifdef SHADOW_MARKS_SLOT
 // The buffer of the pages of the view (render.pass_shadow_marks), for a pass
 // after the maps to mark the pages it reads: the next frame draws them, and
-// until then it reads the coarser pages drawn there or traces.
+// until then it reads the coarser pages drawn there or traces. A page newly
+// marked that is not drawn asks the steps of the pages to run then.
 [[vk::binding(SHADOW_MARKS_SLOT, 0)]] RWStructuredBuffer<uint> view_shadow_marks : register(MIRAI_REGISTER(u, SHADOW_MARKS_SLOT), space0);
 
 // Marks the pages of map m at its mip the 2x2 texels around a point read.
@@ -422,7 +423,10 @@ void shadow_mark_late(Shadow_Map m, float3 position) {
         for (uint x = first.x; x <= end.x; x++) {
             uint entry = shadow_page_entry(m.rect, uint2(x, y));
             uint word = SHADOW_WORDS_LATE + m.rect.x * SHADOW_MASK_WORDS + (entry >> 5u), bit = 1u << (entry & 31u);
-            if ((view_shadow_marks[word] & bit) == 0u) InterlockedOr(view_shadow_marks[word], bit);
+            if ((view_shadow_marks[word] & bit) != 0u) continue;
+            uint before;
+            InterlockedOr(view_shadow_marks[word], bit, before);
+            if ((before & bit) == 0u && shadow_entry_asks(shadow_table_entry(m.rect.x, entry))) view_shadow_marks[SHADOW_STEP_NEW] = 1u;
         }
     }
 }

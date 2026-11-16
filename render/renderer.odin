@@ -282,6 +282,7 @@ Stats :: struct {
 	cpu_end_ms:        f32, // rhi.frame_end: submit and present
 	generated:         bool, // the frame drew an image the window shows before its own (frame generation)
 	shadow_movers:          u32, // of the last frame: the movers the maps drew, which their caches leave out
+	shadow_marked:          u32, // of the last frame: the views whose points marked the pages of the maps they read
 	ui_vertices_dropped:    u32, // of the last frame: UI vertices beyond the capacity
 	ui_shapes_dropped:      u32,
 	ui_layers_dropped:      u32,

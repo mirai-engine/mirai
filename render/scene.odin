@@ -422,6 +422,7 @@ Scene_State :: struct {
 	light_grid:           Light_Grid,
 	light_grid_buffer:    rhi.Buffer,
 	light_grid_stale:     bool, // a light changed since the grid was placed
+	light_grid_placed:    u64,  // counts the times the grid was placed
 	light_grid_dirty:     bool, // the grid was placed again and the GPU fills it in the next frame (light_grid_record)
 	lights_dirty:         bool,               // every light and node goes to the GPU
 	light_ranges:         [dynamic]Pool_Range, // else the lights that changed since the last upload

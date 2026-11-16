@@ -214,6 +214,8 @@ SHADOW_FINEST_ENTRY        :: SHADOW_SLOT_ENTRIES - SHADOW_MAP_PAGES * SHADOW_MA
 // page drawn this frame lies, where its own is not (0: none).
 SHADOW_PAGE_CACHED         :: u32(1) << 16
 SHADOW_PAGE_COMPOSED       :: u32(1) << 17
+// Of an entry asked for that the pool could not give, until the pages are given again.
+SHADOW_PAGE_LEFT           :: u32(1) << 18
 SHADOW_ENTRY_COARSER       :: 20
 // What the plan tells a slot (render.Shadow_Slot_Plan.flags): every page lets
 // go of what it held; what stays changed everywhere in it; it keeps the
@@ -241,7 +243,10 @@ SHADOW_HIZ_MIPS            :: 5
 // draws (SHADOW_ARGS_*); then the slots of each of the last three, the pages
 // the cache draws and the atlas composes, the rank of the first request of
 // each word of SHADOW_RANK_WORDS and of each group of them, and the pages of
-// the pool in the order they are given.
+// the pool in the order they are given; then the arguments of the steps of
+// the pages (render.Shadow_Pages_Step) after the first, three words each,
+// whether a point asked for a page not drawn since they last ran, and how many
+// times they ran.
 SHADOW_MASK_WORDS          :: (SHADOW_SLOT_ENTRIES + 31) / 32
 SHADOW_MASKS               :: SHADOW_SLOTS * SHADOW_MASK_WORDS
 SHADOW_WORDS_OWNER         :: 0
@@ -264,7 +269,11 @@ SHADOW_WORDS_JOBS          :: SHADOW_WORDS_SLOTS + 3 * SHADOW_SLOTS
 SHADOW_WORDS_RANK          :: SHADOW_WORDS_JOBS + 2 * SHADOW_POOL_PAGES
 SHADOW_WORDS_GROUPS        :: SHADOW_WORDS_RANK + SHADOW_RANK_WORDS
 SHADOW_WORDS_VICTIMS       :: SHADOW_WORDS_GROUPS + SHADOW_RANK_GROUPS
-SHADOW_WORDS               :: SHADOW_WORDS_VICTIMS + SHADOW_POOL_PAGES
+SHADOW_WORDS_STEPS         :: SHADOW_WORDS_VICTIMS + SHADOW_POOL_PAGES
+SHADOW_STEPS               :: 10
+SHADOW_STEP_NEW            :: SHADOW_WORDS_STEPS + 3 * SHADOW_STEPS
+SHADOW_STEP_RUNS           :: SHADOW_STEP_NEW + 1
+SHADOW_WORDS               :: SHADOW_STEP_RUNS + 1
 // The words of the masks of the pages asked for, in the order their pages are
 // given: those of the safety net, the levels of the sun from the coarsest
 // (the words of their finest mip alone, from SHADOW_SUN_WORD) then the first

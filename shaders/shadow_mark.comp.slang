@@ -3,7 +3,9 @@
 // view read (render.shadow_maps_pass), before they are drawn: for each point
 // (direct_maps.comp), the level of the sun and the map of each light of its
 // cell that hold it, and every page the taps around it reach there
-// (shadow_map_taps), a bit for each entry of the table of its slot.
+// (shadow_map_taps), a bit for each entry of the table of its slot. A still
+// view keeps the marks of the frames before, and a page newly marked that is
+// not drawn asks the steps of the pages to run (SHADOW_STEP_NEW).
 #define GBUFFER_NORMAL SLOT_PASS0
 #define SHADOW_DATA_SLOT SLOT_PASS9
 #include "lighting.slang"
@@ -39,7 +41,10 @@ void shadow_mark(Shadow_Map m, bool sun, float3 position, float3 n, float radius
         for (uint x = first.x; x <= end.x; x++) {
             uint entry = shadow_page_entry(m.rect, uint2(x, y));
             uint word = SHADOW_WORDS_NEEDED + m.rect.x * SHADOW_MASK_WORDS + (entry >> 5u), bit = 1u << (entry & 31u);
-            if ((pages[word] & bit) == 0u) InterlockedOr(pages[word], bit);
+            if ((pages[word] & bit) != 0u) continue;
+            uint before;
+            InterlockedOr(pages[word], bit, before);
+            if ((before & bit) == 0u && shadow_entry_asks(shadow_table_entry(m.rect.x, entry))) pages[SHADOW_STEP_NEW] = 1u;
         }
     }
 }
