@@ -22,7 +22,7 @@ Process :: struct {
     // The ends of the pipes this process holds, nil for a stream that is not one.
     stdin,stdout,stderr:^os.File,
     state:os.Process_State, // the exit, once state.exited
-    peak:i64, // once state.exited, the most memory the child held at once (memory_peak); 0 when the system did not say
+    peak:i64, // once state.exited, the most memory the child held at once (memory_held); 0 when the system did not say
 }
 
 // Pipes that start gives back: stdout and stderr each, or both through
@@ -170,13 +170,13 @@ process_alive :: proc(pid:int) -> bool {
     return !state.exited
 }
 
-// The most memory the process with that pid has held at once so far, in
-// bytes: its peak working set on Windows, the high-water mark of its resident
-// set on Linux and its lifetime peak footprint on macOS. ok is false when it
-// is gone or the system does not say.
-memory_peak :: proc(pid:int) -> (bytes:i64,ok:bool) {
+// The memory the process with that pid holds now and the most it has held at
+// once, in bytes: its working set on Windows, its resident set on Linux and
+// its footprint on macOS. ok is false when it is gone or the system does not
+// say.
+memory_held :: proc(pid:int) -> (now,peak:i64,ok:bool) {
     if pid<=0 {return}
-    return _memory_peak(pid)
+    return _memory_held(pid)
 }
 
 // Runs the command to its end and returns what it wrote to stdout and to
