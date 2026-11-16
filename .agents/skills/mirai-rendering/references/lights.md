@@ -228,8 +228,8 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   page of the pool of the view (`SHADOW_POOL` texels a side) through the table of the pages, in the
   same frame, so a page first read is drawn before it is read. A page keeps its place while no point
   reads it, until another needs it (free ones first), and what stays changing under it still marks
-  it stale, so a page read is always of this frame. The levels of the sun keep a few pages around the
-  eye (`SHADOW_SUN_AROUND`) for what no point marks (the fog, the hits of rays), which take the
+  it stale, so a page read is always of this frame. The levels of the sun keep a few pages around
+  the eye (`SHADOW_SUN_AROUND`) for what no point marks (the fog, the hits of rays), which take the
   finest level drawn there (`sun_map_ready`); past it they trace. A level moves with the eye by
   whole pages and keeps its pages where they are in the world (the table is read turned,
   `shadow_page_entry`): walking draws the pages that come in. A page asked for past the pool is
