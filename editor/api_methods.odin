@@ -92,6 +92,8 @@ Api_Status :: struct {
     visible_triangles:int `mirai:"label=Of the instances that passed culling two frames ago"`,
     visible_kinds:Api_Visible_Kinds `mirai:"label=What passed culling two frames ago, by kind of instance"`,
     probes_traced:int `mirai:"label=Two frames ago"`,
+    probe_rays_traced:int `mirai:"label=Rays those probes traced: of the ones that keep nothing of their rays or that a change crossed"`,
+    probe_hits_lit:int `mirai:"label=Hits they took the direct light of"`,
     light_lists:Api_Light_Lists `mirai:"label=The lists of the lights without shadows of the tiles of the last view two frames ago"`,
     gpu_timings:[API_TIMINGS]Api_Timing `mirai:"trim,label=By pass in the order of the frame"`,
     counters:[API_COUNTERS]Api_Counter `mirai:"trim,label=What the passes of extensions counted two frames ago by name"`,
@@ -543,6 +545,7 @@ api_status :: proc(s:^Session,call:^api.Call) {
         for dropped,k in stats.cull_dropped {r.visible_kinds.dropped[k]=int(dropped)}
         r.gpu_ms,r.ev100=stats.gpu_ms,stats.ev100
         r.probes_traced=int(stats.probes_traced)
+        r.probe_rays_traced,r.probe_hits_lit=int(stats.probe_rays_traced),int(stats.probe_hits_lit)
         r.light_lists={int(stats.light_lists.cells),int(stats.light_lists.entries),int(stats.light_lists.longest),int(stats.light_lists.walked)}
         r.textures.bytes,r.textures.view_bytes=stats.texture_bytes,stats.view_target_bytes
         r.textures.pending,r.textures.reduced=int(stats.textures_pending),int(stats.textures_reduced)
