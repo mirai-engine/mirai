@@ -232,7 +232,9 @@ Job :: struct {
     has_engine:bool,
     result:   Shader,
     reused:   bool,
-    seconds:  f64, // what compiling it took
+    seconds:  f64, // what compiling it took, without waiting for memory
+    turn:     int, // its place in order, from 1: of the compilations that wait for memory, the earliest goes first
+    waited:   time.Duration, // what it waited for memory
     error:    string,
     diagnostics:[]Diagnostic,
 }
@@ -479,8 +481,10 @@ PROGRAMS_KEY :: "programs"
 
 // What a compilation of the generation is charged, and where its peak is kept.
 @(private)
-compilation_memory :: proc(g:^Generation,key:string,allocator:=context.temp_allocator) -> Memory {
-    return {charge=charge_of(g.peaks,key),ledger=g.ledger,record=peak_path(g.shared,key,allocator)}
+compilation_memory :: proc(g:^Generation,key:string,allocator:=context.temp_allocator,job:^Job=nil) -> Memory {
+    memory:=Memory{charge=charge_of(g.peaks,key),ledger=g.ledger,record=peak_path(g.shared,key,allocator)}
+    if job!=nil {memory.turn,memory.waited=job.turn,&job.waited}
+    return memory
 }
 
 @(private)
@@ -555,7 +559,7 @@ job_run :: proc(g:^Generation,job:^Job,allocator:runtime.Allocator) {
         for define in job.defines {append(&command,strings.concatenate({"-D",define},context.temp_allocator))}
         append(&command,..SPIRV_FLAGS)
         append(&command,"-o",output,"-reflection-json",reflection)
-        said,compiled:=tool_run(g.runner,command[:],context.temp_allocator,compilation_memory(g,job.name))
+        said,compiled:=tool_run(g.runner,command[:],context.temp_allocator,compilation_memory(g,job.name,job=job))
         diagnostics:=slang_diagnostics(said,context.temp_allocator)
         diagnostics_place(diagnostics,g.copies,{g.project,g.root},context.temp_allocator)
         if !compiled {
@@ -913,8 +917,9 @@ stages_run :: proc(work:^Stages_Work,first,last:int,worker:int) {
         if runner_cancelled(g.runner) {return}
         job:=&g.jobs[g.order[at]]
         started:=time.tick_now()
+        job.turn=at+1
         job_run(g,job,allocator)
-        job.seconds=time.duration_seconds(time.tick_since(started))
+        job.seconds=time.duration_seconds(time.tick_since(started)-job.waited)
         if job.first && sync.atomic_sub(&g.first_left,1)==1 && g.first_output!="" {early_write(g,g.first_output,&g.progress.first,false)}
         if job.active && sync.atomic_sub(&g.active_left,1)==1 && g.active_output!="" {early_write(g,g.active_output,&g.progress.active,true)}
     }
