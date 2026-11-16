@@ -331,8 +331,8 @@ program_declaration_and_metadata_lines_are_recognized :: proc(t:^testing.T) {
     testing.expect(t,said.name=="Swarm" && len(said.metadata)==1 && said.metadata[0][0]=="speed" && said.metadata[0][1]=="{\"default\":1}")
     testing.expect(t,len(said.resources)==1 && said.resources[0][2]=="ground" && len(said.stages)==1 && said.stages[0][2]=="settle")
     testing.expect(t,said.moves && said.births && !said.prepare && said.vertex==nil)
-    said=program_directives("//! mirai surface Sway\n//! vertex animated reach 0.5\n")
-    testing.expect(t,len(said.vertex)==5 && said.vertex[2]=="animated" && said.vertex[4]=="0.5")
+    said=program_directives("//! mirai surface Sway\n//! vertex reach 0.5\n")
+    testing.expect(t,len(said.vertex)==4 && said.vertex[2]=="reach" && said.vertex[3]=="0.5")
     field,value,found:=parameter_metadata("//! parameter tint {\"default\":[1,1,1]}  ")
     testing.expect(t,found && field=="tint" && value=="{\"default\":[1,1,1]}")
     for line in ([]string{"//! parameter tint","//! parameter tint [1]","//!parameter tint {}","// parameter tint {}","//! parameter {}"}) {
@@ -345,7 +345,7 @@ program_declaration_and_metadata_lines_are_recognized :: proc(t:^testing.T) {
 // program, and one more for the Attributes of a Vfx one.
 @(private="file")
 // The compilations of a cold reflection: a Surface program has its alpha
-// and its derivatives probed too (alpha_probe, derivative_probe), unless the
+// and its derivatives and reads probed too (alpha_probe, surface_probe), unless the
 // cache has them.
 reflections :: proc(catalog:Catalog,probes:=true) -> (runs:int) {
     for program in catalog.programs {runs+=program.domain==.Vfx?2:probes && program.domain==.Surface?3:1}
@@ -395,32 +395,52 @@ surface_coverage_holds_the_programs_whose_alpha_is_not_the_default :: proc(t:^te
     testing.expect(t,mapped.coverage)
 }
 
-// The include of a Surface program says whether its evaluation takes
-// derivatives across the pixels of a quad: a sample by a plain uv or a
-// derivative of its own does; one by a dual uv, by the footprint of the
-// point or by the standard model of its material does not.
+// The probe of a Surface program says whether its evaluation takes
+// derivatives across the pixels of a quad (in its include): a sample by a
+// plain uv or a derivative of its own does; one by a dual uv, by the
+// footprint of the point or by the standard model of its material does not.
+// And what it and its function vertex read of their contexts, a read behind a
+// branch a parameter turns off included; the cache keeps both.
 @(test)
-surface_program_include_says_whether_it_takes_quad_derivatives :: proc(t:^testing.T) {
+the_probe_of_a_surface_program_says_its_derivatives_and_what_it_reads :: proc(t:^testing.T) {
     f:Programs_Fixture
     if !programs_fixture(t,&f) {return}
-    Case :: struct {name,body:string,derivatives:bool}
+    Case :: struct {name,body,vertex:string,derivatives:bool,reads,vertex_reads:abi.Program_Reads}
     cases:=[]Case{
-        {"Implicit","s.base_color=mirai_sample_texture(ctx,p.map,ctx.uv0*4.0,ctx.lod).rgb;",true},
-        {"Differenced","s.roughness=length(ddx(ctx.world_position));",true},
-        {"Dual","Mirai_Dual2 uv=mirai_uv0(ctx)*4.0+sin(mirai_uv1(ctx));if (p.tint.x>0.5) {s.base_color=mirai_sample_texture(ctx,p.map,uv).rgb;}",false},
-        {"Projected","s.base_color=mirai_sample_triplanar(ctx,p.map,2.0,4.0).rgb;",false},
-        {"Standard","s=mirai_surface_standard(ctx);s.emission+=p.tint;",false},
-        {"Plain","s.base_color=p.tint;",false},
+        {"Implicit","s.base_color=mirai_sample_texture(ctx,p.map,ctx.uv0*4.0,ctx.lod).rgb;","",true,{},{}},
+        {"Differenced","s.roughness=length(ddx(ctx.world_position));","",true,{.Place},{}},
+        {"Dual","Mirai_Dual2 uv=mirai_uv0(ctx)*4.0+sin(mirai_uv1(ctx));if (p.tint.x>0.5) {s.base_color=mirai_sample_texture(ctx,p.map,uv).rgb;}","",false,{},{}},
+        {"Projected","s.base_color=mirai_sample_triplanar(ctx,p.map,2.0,4.0).rgb;","",false,{.Place},{}},
+        {"Standard","s=mirai_surface_standard(ctx);s.emission+=p.tint;","",false,{},{}},
+        {"Plain","s.base_color=p.tint;","",false,{},{}},
+        {"Pulse","if (p.tint.x>2.0) {s.emission=p.tint*sin(ctx.time);}","",false,{.Time},{}},
+        {"Faded","s.alpha=saturate((ctx.scene_depth-ctx.depth)*p.tint.x);","",false,{.View},{}},
+        {"Sized","s.base_color=p.tint*mirai_object_scale(ctx).x;","",false,{.Place},{}},
+        {"Sparked","s.emission=ctx.particle_data[0].rgb*ctx.particle_random;","",false,{.Particle},{}},
+        {"Sway","s.base_color=p.tint;","v.position.x+=sin(ctx.time)*0.1;",false,{},{.Time}},
+        {"Spread","s.base_color=p.tint;","v.position+=v.normal*mirai_noise(ctx,1.0)*0.1;",false,{},{.Place}},
     }
     for c in cases {
-        fixture_write(t,f.project,fmt.tprintf("shaders/%s.slang",c.name),fmt.tprintf("//! mirai surface %s\nnamespace %s {{struct Parameters {{float3 tint;uint map;}}; Mirai_Surface evaluate(Mirai_Surface_Context ctx,Parameters p) {{Mirai_Surface s=mirai_surface_default(ctx);%sreturn s;}}}}\n",c.name,c.name,c.body))
+        vertex,line:="",""
+        if c.vertex!="" {
+            line="//! vertex reach 0.1\n"
+            vertex=fmt.tprintf("Mirai_Vertex vertex(Mirai_Vertex_Context ctx,Parameters p) {{Mirai_Vertex v=mirai_vertex_default(ctx);%sreturn v;}} ",c.vertex)
+        }
+        fixture_write(t,f.project,fmt.tprintf("shaders/%s.slang",c.name),fmt.tprintf("//! mirai surface %s\n%snamespace %s {{struct Parameters {{float3 tint;uint map;}}; %sMirai_Surface evaluate(Mirai_Surface_Context ctx,Parameters p) {{Mirai_Surface s=mirai_surface_default(ctx);%sreturn s;}}}}\n",c.name,line,c.name,vertex,c.body))
     }
-    _,problem:=programs_of(&f)
+    catalog,problem:=programs_of(&f)
     testing.expect_value(t,problem,"")
+    f.runner.runs=0
+    warm,_:=programs_of(&f)
+    testing.expect_value(t,f.runner.runs,0)
     for c in cases {
         own,_:=os.read_entire_file(path_join(f.output,"include",SURFACE_FOLDER,c.name,SURFACE_INCLUDE,allocator=context.temp_allocator),context.temp_allocator)
         said:=fmt.tprintf("mirai_program_derivatives = %v;",c.derivatives)
         testing.expectf(t,strings.contains(string(own),said),"%s: its include says %s",c.name,said)
+        for read in ([]Catalog{catalog,warm}) {
+            program,found:=program_named(read,c.name)
+            testing.expectf(t,found && program.reads==c.reads && program.vertex.reads==c.vertex_reads,"%s reads %v and its vertex %v, not %v and %v",c.name,c.reads,c.vertex_reads,program.reads,program.vertex.reads)
+        }
     }
 }
 
@@ -613,7 +633,7 @@ programs_leave_out_one_that_fails_and_publish_the_others :: proc(t:^testing.T) {
 }
 
 // A Surface program that says `//! vertex` has its function vertex called in
-// its own include, says in the catalog whether it is animated and how far it
+// its own include, says in the catalog what it reads and how far it
 // reaches, a number or a float parameter, and is listed for the stages
 // compiled per vertex program; a wrong line leaves it out, saying why.
 @(test)
@@ -623,7 +643,7 @@ programs_that_move_vertices_declare_their_function_and_reach :: proc(t:^testing.
     program :: proc(name,line,fields:string) -> string {
         return fmt.tprintf("//! mirai surface %s\n%s\nnamespace %s {{struct Parameters {{%s}}; Mirai_Vertex vertex(Mirai_Vertex_Context ctx,Parameters p) {{Mirai_Vertex v=mirai_vertex_default(ctx);v.position.y+=sin(ctx.time);return v;}} Mirai_Surface evaluate(Mirai_Surface_Context ctx,Parameters p) {{return mirai_surface_default(ctx);}}}}\n",name,line,name,fields)
     }
-    fixture_write(t,f.project,"shaders/sway.slang",program("Sway","//! vertex animated reach 0.25","float strength;"))
+    fixture_write(t,f.project,"shaders/sway.slang",program("Sway","//! vertex reach 0.25","float strength;"))
     fixture_write(t,f.project,"shaders/spread.slang",program("Spread","//! vertex reach distance","float3 color;float distance;"))
     fixture_write(t,f.project,"shaders/still.slang","//! mirai surface Still\nnamespace Still {struct Parameters {float amount;}; Mirai_Surface evaluate(Mirai_Surface_Context ctx,Parameters p) {return mirai_surface_default(ctx);}}\n")
     catalog,problem:=programs_of(&f)
@@ -632,10 +652,9 @@ programs_that_move_vertices_declare_their_function_and_reach :: proc(t:^testing.
     spread,has_spread:=program_named(catalog,"Spread")
     still,has_still:=program_named(catalog,"Still")
     if !testing.expect(t,has_sway && has_spread && has_still) {return}
-    testing.expect(t,sway.vertex.declared && sway.vertex.animated && sway.vertex.reach==0.25 && sway.vertex.reach_offset<0)
-    testing.expect(t,spread.vertex.declared && !spread.vertex.animated && spread.vertex.reach_offset==12)
+    testing.expect(t,sway.vertex.declared && sway.vertex.reads=={.Time} && sway.vertex.reach==0.25 && sway.vertex.reach_offset<0)
+    testing.expect(t,spread.vertex.declared && spread.vertex.reach_offset==12)
     testing.expect(t,!still.vertex.declared,"a program without the line moves no vertices")
-    testing.expect(t,sway.timed && !still.timed,"a program whose source reads the time gives what changes with it")
     listed :: proc(names:[]string,name:string) -> bool {
         for n in names {if n==name {return true}}
         return false
@@ -651,7 +670,7 @@ programs_that_move_vertices_declare_their_function_and_reach :: proc(t:^testing.
         {"//! vertex reach color","float3 color;","one float"},
         {"//! vertex reach far","float amount;","neither a number nor a parameter"},
         {"//! vertex reach -1","float amount;","reach is metres"},
-        {"//! vertex wobbly","float amount;","declare a vertex function"},
+        {"//! vertex animated","float amount;","declare a vertex function"},
     }
     os.remove(path_join(f.project,"shaders/sway.slang",allocator=context.temp_allocator))
     os.remove(path_join(f.project,"shaders/spread.slang",allocator=context.temp_allocator))

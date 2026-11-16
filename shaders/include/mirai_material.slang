@@ -77,8 +77,8 @@ float3 mirai_object_scale(Mirai_Surface_Context ctx) { return float3(length(ctx.
 // A vertex of what shows a Surface program that moves vertices (`//! vertex`),
 // as its function vertex receives it: where the vertex is at rest, or as its
 // skin poses it, in the space of the object, with what the mesh gives it, and
-// the object in the world as Mirai_Surface_Context has it. time and
-// previous_time are 0 unless the program says `//! vertex animated`.
+// the object in the world as Mirai_Surface_Context has it. A function that
+// reads the time moves the vertices again every frame.
 struct Mirai_Vertex_Context {
     float3 position;
     float3 normal;        // unit
