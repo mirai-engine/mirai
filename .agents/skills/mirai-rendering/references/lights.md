@@ -276,7 +276,7 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   that moves or turns lets go of its pages and draws those read whole into the atlas alone that
   frame, and the cache the next still frame; an origin jump lets go of every page. The tint keeps
   its glass too: it draws it again only in the pages the atlas composes, and whole in every page
-  ready in a frame glass may have changed (`Renderer.glass_changes`).
+  ready in a frame an instance with glass or a material changed (`shadow_glass_key`).
 - **Reading the maps.** A map holds a point only within its face and range, and samples tell
   elsewhere. A tap compares a blocker with the plane of the surface of the point where the tap
   falls, less twice what the plane rises from there to the middle of its texel (scaled to the texel
