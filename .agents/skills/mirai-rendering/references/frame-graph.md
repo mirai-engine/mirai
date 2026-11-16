@@ -23,21 +23,33 @@ or interleave its own passes.
      a candidate for phase 1.
    - One thread per cluster of the chunks: the level cut (`cut.slang`, projected error against
      `lod_error_pixels`), frustum, normal cone (of a material that is not two-sided) and the
-     pyramid. A visible one enters the visible list (instance, cluster) and counts in the instance
-     count of the phase's draw; one that the pyramid hides stays a candidate for phase 1. One of a
-     material with a Surface program goes to the program list, which `cull_programs.comp`
-     distributes per program with one indirect draw per program and phase.
+     pyramid. A visible one is listed with its raster bin (two-sided or not, tested or not: a
+     masked material or an instance that fades) and counted in it; one that the pyramid hides
+     stays a candidate for phase 1. One of a material with a Surface program turns on the resolve
+     of that program. `cull_bins.comp` places the clusters of the phase in the range of their bin
+     of the visible list, those of phase 1 after those of phase 0, with one indirect draw per bin.
    - An instance with all its blend materials is not drawn here; one with blend triangles that
      passes the tests (in any phase) turns on the glass passes with their dispatch sizes.
-3. **gbuffer**
-   - One non-indexed indirect draw per phase, 384 vertices per instance and one instance per
-     visible cluster: the vertex shader reads the cluster from the list and its triangle per
-     vertex (the triangles that do not pass collapse). Then, one per Surface program in use, with
-     its pipeline ([programs](materials.md#surface-programs-in-rays-and-raster)). The fragment
-     shader reads the material row of the cluster's slot and its textures from the table, without
-     binds per material or per object. Mask: discards below the threshold; blend: not drawn here.
-     The same on Vulkan and Metal, without mesh shaders or 64-bit atomics.
-   - The targets are encoded by `gbuffer.frag` and the passes read them only with
+3. **visibility and resolve**
+   - Each phase rasters its clusters into the visibility target (`visibility.slang`: the entry
+     of the visible list and the triangle, one word a pixel) with the hardware depth: one
+     non-indexed indirect draw per raster bin, 384 vertices per instance and one instance per
+     visible cluster; the vertex shader reads the cluster from the list and its triangle per
+     vertex (the triangles that do not pass collapse). The back faces of a material that is not
+     two-sided are left out by the raster (an instance that mirrors its mesh turns its winding
+     back). The untested bins write the id alone, without discard, so hidden fragments are
+     rejected before they run; the tested ones decide a pixel by the fade and the alpha alone
+     (that of a program from `surface_coverage.slang`), without texture feedback. Blend: not
+     drawn here. The same on Vulkan and Metal, without mesh shaders or 64-bit atomics.
+   - After both phases, `vis_classify.frag` gives each pixel the depth of its Surface program
+     (0 for the rows), and the resolve of the rows and of each program the cull saw draws a
+     triangle over the view at that depth with an equal test: the material runs once per visible
+     pixel, with the stage of its program
+     ([programs](materials.md#surface-programs-in-rays-and-raster)). It builds the triangle again
+     with the function of the raster (`gbuffer_build.slang`), so both place it at the same bits,
+     takes its barycentrics at the pixel and the exact gradients of its inputs, reads the material
+     row of the cluster's slot and its textures from the table, without binds per material or per
+     object, and writes the targets with `gbuffer_output.slang`; the passes read them only with
      `include/gbuffer.slang` (`gbuffer_read`, `gbuffer_normal`, `gbuffer_shading`).
    - A reflectance target exists only while a visible instance has an opaque material that does
      not reflect like the default one ([materials](materials.md#evaluation)), and a
@@ -55,11 +67,11 @@ or interleave its own passes.
    - Maximum depth pyramid of the frame; phase 1 retests the instances and clusters rejected by
      occlusion and draws the visible ones. An object does not appear late even if the occluder
      moves or the camera jumps.
-   - Phase 1 tests against the pyramid made with the depth of phase 0; after its G-buffer the
-     pyramid is redone with that of both phases, which is the one that phase 0 of the next frame
-     tests: what was rescued occludes from there. A pass of the `Gbuffer` stage tests against it
-     and redoes it with what it draws (`pass_depth_pyramid_build`): the next frame's phase 0 sees
-     those surfaces too, and its phase 1 rescues what only they hid.
+   - The pyramid is made from the depth target. Phase 1 tests against the pyramid made with the
+     depth of phase 0; after its raster the pyramid is redone with that of both phases, which is the
+     one that phase 0 of the next frame tests: what was rescued occludes from there. A pass of the
+     `Gbuffer` stage tests against it and redoes it with what it draws (`pass_depth_pyramid_build`):
+     the next frame's phase 0 sees those surfaces too, and its phase 1 rescues what only they hid.
    - The cull lists (chunks, visible clusters and candidates, and the chunks and clusters of the
      shadow maps) count what does not fit
      (`Stats.cull_dropped`) and grow to that for the following frames: a frame can show holes

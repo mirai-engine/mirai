@@ -7,8 +7,7 @@
 #define CULL_LIST_CHUNKS 0u
 #define CULL_LIST_VISIBLE 1u
 #define CULL_LIST_CANDIDATES 2u
-#define CULL_LIST_PROGRAMS 3u
-#define CULL_LIST_SHADOW_CHUNKS 4u
-#define CULL_LIST_SHADOW_ENTRIES 5u
-struct Stats_Block { uint visible_instances; uint visible_triangles; uint culled_instances; uint occluded_instances; uint probes_traced; uint visible_clusters; uint kinds[9]; uint late[3]; uint dropped[6]; };
+#define CULL_LIST_SHADOW_CHUNKS 3u
+#define CULL_LIST_SHADOW_ENTRIES 4u
+struct Stats_Block { uint visible_instances; uint visible_triangles; uint culled_instances; uint occluded_instances; uint probes_traced; uint visible_clusters; uint kinds[9]; uint late[3]; uint dropped[5]; };
 #endif

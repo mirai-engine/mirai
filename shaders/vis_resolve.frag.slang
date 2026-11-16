@@ -1,0 +1,200 @@
+#include "native.slang"
+//! per surface program
+// The material of each pixel of the visibility target (visibility.slang),
+// once: a draw of each Surface program covers the view at the depth its
+// pixels were classified at (vis_resolve.vert, vis_classify.frag), so only
+// they run it. The triangle a pixel shows is built again with the function of
+// the raster (gbuffer_build.slang), its barycentrics at the pixel and at the
+// next pixels along x and y give the inputs and their exact screen gradients,
+// and the targets are those gbuffer_output.slang writes.
+//
+// What a program computes itself (its own uv) takes its derivatives across
+// the 2x2 pixels of a quad, as the raster does: a pixel of the quad that is
+// not of this program (a helper) is given the triangle of a neighbor, at its
+// own place. Where the triangles of a quad do not continue one another (a
+// silhouette, a seam of the uv) the quad evaluates again with the triangle
+// of each of its pixels in all four, as a raster quad of that triangle would.
+//
+// plain: without the reflectance target; layers: with the reflectance and the
+// layers targets (as gbuffer.frag). nested: the pixels of a nested view.
+//! variant plain MIRAI_GBUFFER_PLAIN=1
+//! variant layers MIRAI_GBUFFER_LAYERS=1
+//! constant nested MIRAI_NESTED_PIXELS
+#ifndef MIRAI_GBUFFER_LAYERS
+// Without the layers target no instance with layers is in sight.
+#define MIRAI_MATERIAL_NO_LAYERS true
+#endif
+#define MIRAI_TEXTURE_FEEDBACK
+#define MATERIAL_GRADIENTS
+#define MIRAI_BATCHES
+#include "gbuffer_output.slang"
+#include "visibility.slang"
+
+// programs: the Surface programs the renderer has, plus one, as vis_classify.frag takes them.
+struct Params_Block { uint programs; uint pad0; uint pad1; uint pad2; };
+[[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
+[[vk::binding(SLOT_PASS0, 0)]] StructuredBuffer<uint2> visible : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);
+[[vk::binding(SLOT_PASS1, 0)]] Texture2D<uint> visibility : register(MIRAI_REGISTER(t, SLOT_PASS1), space0);
+#include <extension_vertex.slang>
+#include "gbuffer_build.slang"
+
+struct Resolve_Triangle { Gbuffer_Vertex a, b, c; };
+
+// The program a pixel of the visibility target is resolved by, as
+// vis_classify.frag classified it; INVALID for a pixel without a triangle.
+uint resolve_program(uint id) {
+    if (id == 0u) return INVALID;
+    uint2 entry = visible[visibility_entry(id)];
+    Instance inst = scene_instance(entry.x);
+    uint program = materials[material_of(inst, cluster_material(meshes[instance_mesh(inst)], cluster_at(entry.y)))].shared.program_id;
+    return program < params.programs ? program : 0u;
+}
+
+Resolve_Triangle resolve_triangle(uint id) {
+    uint2 entry = visible[visibility_entry(id)];
+    Instance inst = scene_instance(entry.x);
+    Mesh mesh = meshes[instance_mesh(inst)];
+    Cluster cluster = cluster_at(entry.y);
+    uint corner = visibility_triangle(id) * 3u;
+    Resolve_Triangle t;
+    t.a = gbuffer_vertex_build(entry.x, inst, mesh, cluster, corner);
+    t.b = gbuffer_vertex_build(entry.x, inst, mesh, cluster, corner + 1u);
+    t.c = gbuffer_vertex_build(entry.x, inst, mesh, cluster, corner + 2u);
+    return t;
+}
+
+// The barycentrics of the point of a triangle a pixel center shows, from the
+// clip positions of its corners as the raster had them: the weights whose sum
+// of the corners projects to the pixel, which hold for corners behind the eye
+// too (homogeneous rasterization, Olano and Greer 1997), and for a pixel off
+// the triangle, along its plane.
+float3 resolve_barycentrics(float4 a, float4 b, float4 c, float2 pixel) {
+    float3 p = float3(pixel.x * frame.inv_resolution.x * 2.0 - 1.0, 1.0 - pixel.y * frame.inv_resolution.y * 2.0, 1.0);
+    float3 ra = float3(a.x, a.y, a.w), rb = float3(b.x, b.y, b.w), rc = float3(c.x, c.y, c.w);
+    float3 w = float3(dot(cross(rb, rc), p), dot(cross(rc, ra), p), dot(cross(ra, rb), p));
+    float sum = w.x + w.y + w.z;
+    return abs(sum) > 1e-30 ? w / sum : float3(1.0, 0.0, 0.0);
+}
+
+float2 resolve_mix(float2 a, float2 b, float2 c, float3 w) { return a * w.x + b * w.y + c * w.z; }
+float3 resolve_mix(float3 a, float3 b, float3 c, float3 w) { return a * w.x + b * w.y + c * w.z; }
+float4 resolve_mix(float4 a, float4 b, float4 c, float3 w) { return a * w.x + b * w.y + c * w.z; }
+
+// A point of a triangle at a pixel, with the screen gradients of its inputs.
+struct Resolve_Point {
+    Raster_Input input;
+    float4 uv_gradients;  // of uv0: xy along x, zw along y
+    float4 uv1_gradients;
+    float3 world_dx, world_dy;
+    float3 normal_dx, normal_dy; // of the interpolated normal, normalized
+};
+
+Resolve_Point resolve_point(Resolve_Triangle t, float2 pixel) {
+    float4 a = t.a.position, b = t.b.position, c = t.c.position;
+    float3 w = resolve_barycentrics(a, b, c, pixel);
+    float3 wx = resolve_barycentrics(a, b, c, pixel + float2(1.0, 0.0));
+    float3 wy = resolve_barycentrics(a, b, c, pixel + float2(0.0, 1.0));
+    Resolve_Point s;
+    s.input.in_normal = resolve_mix(t.a.out_normal, t.b.out_normal, t.c.out_normal, w);
+    s.input.in_color = resolve_mix(t.a.out_color, t.b.out_color, t.c.out_color, w);
+    s.input.in_emission = t.a.out_emission;
+    s.input.in_clip = resolve_mix(t.a.out_clip, t.b.out_clip, t.c.out_clip, w);
+    s.input.in_prev_clip = resolve_mix(t.a.out_prev_clip, t.b.out_prev_clip, t.c.out_prev_clip, w);
+    s.input.in_world = resolve_mix(t.a.out_world, t.b.out_world, t.c.out_world, w);
+    s.input.in_flags = t.a.out_flags;
+    s.input.in_uv = resolve_mix(t.a.out_uv, t.b.out_uv, t.c.out_uv, w);
+    s.input.in_material = t.a.out_material;
+    s.input.in_instance = t.a.out_instance;
+    s.input.in_uv1 = resolve_mix(t.a.out_uv1, t.b.out_uv1, t.c.out_uv1, w);
+    s.input.in_tangent = resolve_mix(t.a.out_tangent, t.b.out_tangent, t.c.out_tangent, w);
+    s.input.in_surface = t.a.out_surface;
+    s.input.in_vertex_color = resolve_mix(t.a.out_vertex_color, t.b.out_vertex_color, t.c.out_vertex_color, w);
+    // Counter-clockwise on the screen is the front, as the raster takes it;
+    // the sign of the homogeneous determinant holds behind the eye too.
+    float3 ra = float3(a.x, a.y, a.w), rb = float3(b.x, b.y, b.w), rc = float3(c.x, c.y, c.w);
+    s.input = raster_facing(s.input, dot(ra, cross(rb, rc)) > 0.0);
+    s.uv_gradients = float4(resolve_mix(t.a.out_uv, t.b.out_uv, t.c.out_uv, wx) - s.input.in_uv, resolve_mix(t.a.out_uv, t.b.out_uv, t.c.out_uv, wy) - s.input.in_uv);
+    s.uv1_gradients = float4(resolve_mix(t.a.out_uv1, t.b.out_uv1, t.c.out_uv1, wx) - s.input.in_uv1, resolve_mix(t.a.out_uv1, t.b.out_uv1, t.c.out_uv1, wy) - s.input.in_uv1);
+    s.world_dx = resolve_mix(t.a.out_world, t.b.out_world, t.c.out_world, wx) - s.input.in_world;
+    s.world_dy = resolve_mix(t.a.out_world, t.b.out_world, t.c.out_world, wy) - s.input.in_world;
+    float3 n = normalize(s.input.in_normal);
+    s.normal_dx = normalize(resolve_mix(t.a.out_normal, t.b.out_normal, t.c.out_normal, wx)) - n;
+    s.normal_dy = normalize(resolve_mix(t.a.out_normal, t.b.out_normal, t.c.out_normal, wy)) - n;
+    return s;
+}
+
+// Whether the point a neighbor of the quad shows, `step` pixels along an
+// axis, continues the surface of this one (of the same material): its place and uv are where the
+// plane of this triangle puts them, but for what the bend of a smooth surface
+// moves in a pixel. False across a silhouette or a seam of the uv.
+bool resolve_continues(Resolve_Point s, float step, float3 world_d, float2 uv_d, float2 uv1_d, float3 world, float2 uv, float2 uv1) {
+    float3 off_world = world - (s.input.in_world + world_d * step);
+    float2 off_uv = uv - (s.input.in_uv + uv_d * step), off_uv1 = uv1 - (s.input.in_uv1 + uv1_d * step);
+    return length(off_world) <= 0.5 * length(world_d) + 1e-6 * abs(fragment_depth(s.input))
+        && length(off_uv) <= 0.5 * length(uv_d) + 1e-7 && length(off_uv1) <= 0.5 * length(uv1_d) + 1e-7;
+}
+
+// The first nonzero value of the four pixels of a quad, the same in all four.
+uint quad_first(uint value) {
+    uint l0 = QuadReadLaneAt(value, 0u), l1 = QuadReadLaneAt(value, 1u), l2 = QuadReadLaneAt(value, 2u), l3 = QuadReadLaneAt(value, 3u);
+    return l0 != 0u ? l0 : l1 != 0u ? l1 : l2 != 0u ? l2 : l3;
+}
+
+Stage_Output resolve_shade(Resolve_Point s, bool2 steady) {
+    material_uv_gradients[0] = s.uv_gradients;
+    material_uv_gradients[1] = s.uv1_gradients;
+    material_world_gradients[0] = s.world_dx;
+    material_world_gradients[1] = s.world_dy;
+    material_normal_gradients[0] = s.normal_dx;
+    material_normal_gradients[1] = s.normal_dy;
+    material_steady = steady;
+    Fragment f = fragment_evaluate(s.input);
+    Stage_Output output = gbuffer_output(s.input, f);
+    if (MIRAI_NESTED_PIXELS) output = gbuffer_output_nested(output);
+    return output;
+}
+
+[shader("fragment")]
+Stage_Output main(float4 pixel : SV_Position, [[vk::location(0)]] nointerpolation uint program : TEXCOORD0) {
+    // A helper is a pixel of the quad that is not of this program: it gives
+    // the others its derivatives and writes nothing, nor reports what it samples.
+    uint own = visibility.Load(int3(int2(pixel.xy), 0));
+    bool helper = resolve_program(own) != program;
+    if (helper) own = 0u;
+    uint across_x = QuadReadAcrossX(own), across_y = QuadReadAcrossY(own), across_d = QuadReadAcrossDiagonal(own);
+    uint id = own != 0u ? own : across_x != 0u ? across_x : across_y != 0u ? across_y : across_d;
+    Resolve_Point s = resolve_point(resolve_triangle(id), pixel.xy);
+
+    // What each neighbor shows, against what this triangle says it shows.
+    uint2 odd = uint2(pixel.xy) & 1u;
+    float2 step = float2(odd.x == 0u ? 1.0 : -1.0, odd.y == 0u ? 1.0 : -1.0);
+    float3 world = s.input.in_world;
+    float2 uv = s.input.in_uv, uv1 = s.input.in_uv1;
+    uint material = s.input.in_material;
+    bool2 steady;
+    steady.x = QuadReadAcrossX(material) == material && resolve_continues(s, step.x, s.world_dx, s.uv_gradients.xy, s.uv1_gradients.xy, QuadReadAcrossX(world), QuadReadAcrossX(uv), QuadReadAcrossX(uv1));
+    steady.y = QuadReadAcrossY(material) == material && resolve_continues(s, step.y, s.world_dy, s.uv_gradients.zw, s.uv1_gradients.zw, QuadReadAcrossY(world), QuadReadAcrossY(uv), QuadReadAcrossY(uv1));
+    uint broken = all(steady) ? 0u : 1u;
+    broken |= QuadReadAcrossX(broken) | QuadReadAcrossY(broken) | QuadReadAcrossDiagonal(broken);
+
+    // The maps of a row take the exact gradients of their uv: only a program
+    // computes what needs the quad to continue.
+    if (broken == 0u || program == 0u) {
+        texture_feedback_quiet = helper;
+        return resolve_shade(s, steady);
+    }
+    Stage_Output output = (Stage_Output)0;
+    uint pending = own;
+    for (uint round = 0u; round < 4u; round++) {
+        uint leader = quad_first(pending);
+        if (leader == 0u) break;
+        texture_feedback_quiet = pending != leader;
+        Stage_Output shaded = resolve_shade(resolve_point(resolve_triangle(leader), pixel.xy), bool2(true, true));
+        if (pending == leader) {
+            output = shaded;
+            pending = 0u;
+        }
+    }
+    texture_feedback_quiet = false;
+    return output;
+}
