@@ -240,15 +240,22 @@ published mesh without levels and the cluster DAG use it.
   `Cluster_Dag.made` (copies of a source vertex, moved).
 - `islands_reduce` is the one rule, for a group of the DAG and for a whole level of a skinned mesh:
   each class first steps its islands to coarser outlines, then is halved keeping the first of its
-  order and growing the survivors about their centers to the area of level 0 they stand for, up to
-  `ISLAND_GROW_MAX`; it goes as far as the error given allows, then by the least more that brings
-  it to its target of triangles. The error of an island is that of its outline times its growth
-  and, once pruned, at least the largest radius of its class grown over `ISLAND_PIXELS`.
+  order and growing the survivors about their centers to the area of level 0 they stand for; it
+  goes as far as the error given allows, then by the least more that brings it to its target of
+  triangles. The error of an island is that of its outline times its growth and, once pruned, at
+  least the farther of the largest radius of its class grown and of how far the area of a dropped
+  island moved (the sphere a survivor stands for), over `ISLAND_PIXELS`.
+- **What bounds the pruning** is that error, down to one island a class, and the cloud of the class
+  (`islands_clouds`): a survivor never grows past it, since an island larger than its plant draws
+  the plant larger and grows the box of the mesh. Sparse leaves prune to one island, overlapping
+  ones to the few that fill their cloud; the last island of a class is never dropped.
 - **Invariants.** An island is never split between clusters (clusters and groups are cut by
   halving the box of their centers); a group keeps the rules of the cut contract (error the largest
   of its clusters' and its own, sphere around theirs, a root where it cannot drop to
-  `CLUSTER_SIMPLIFY_STUCK`); every group draws in what it was reduced into the area it drew; a
-  group of one cluster is reduced too, so a far plant keeps shedding leaves.
+  `CLUSTER_SIMPLIFY_STUCK`); every group draws in what it was reduced into the area it drew, and
+  adds error to its clusters' (else the cut would never draw it and the islands would grow
+  towards a level it skips); a group of one cluster is reduced too, so a far plant keeps shedding
+  leaves.
 - **Transition** (Cook et al. 2007, section 3.5). Every vertex of an island in a cluster is made
   with where its island goes in the group: the scale to the area it draws in the next level, or 0
   and its rank among the islands of its class the group drops (the last go first), so the renderer
