@@ -213,7 +213,8 @@ published mesh without levels and the cluster DAG use it.
 - The triangles of each cluster the DAG simplifies come in the order of `meshlet_optimize` (the
   port of `meshopt_optimizeMeshletLevel`), which names fewer vertices from far back: what the
   coding of a page and the fetches of a pixel gain. Clusters of islands keep the order of their
-  islands, which share no vertex.
+  islands, which share no vertex, and whole levels (`cluster_levels_build`) the order they are
+  given in, which decoding a level gives back.
 - **Cut contract.** Each `Cluster` carries its cull sphere and cone, `own` (sphere and error with
   which it appears: 0 at level 0) and `parent` (those of its group, shared by all its clusters;
   error `max(f32)` on a root), its group, its level and its submesh. It is drawn where `own`
