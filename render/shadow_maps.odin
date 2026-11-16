@@ -1,5 +1,6 @@
 package mirai_render
 
+import "core:hash"
 import "core:math"
 import "core:math/linalg"
 import "mirai:render/abi"
@@ -29,7 +30,10 @@ import "mirai:std/base"
 // cache and what moves (shadow_movers_update) only in the pages where the
 // cache drew or what moves was or is. What a map draws is chosen by its
 // texels, not by the eye: its detail (shadow_map_detail) and the casters too
-// small for a texel of it (shadow_map_unseen).
+// small for a texel of it (shadow_map_unseen). A still view does none of
+// this: while the view, its lights and the casters stay, it keeps the marks and
+// the table of the frames before, and the pages are given again only where a
+// point asks for one not drawn (shadow_pages.comp).
 SHADOW_POOL :: abi.SHADOW_POOL
 SHADOW_SLOTS :: abi.SHADOW_SLOTS
 SHADOW_MAP_ROWS :: abi.SHADOW_MAP_ROWS
@@ -114,6 +118,21 @@ Shadow_Raster :: struct {
 	stale:    Occluder_Changes, // what stays and changed since the maps were last drawn
 	moved:    Occluder_Changes, // where what moves was and is since then
 	frame:    u32,  // counts the frames the pages were drawn in
+	seen:     Shadow_Seen, // what the points marked the pages from
+	settle:   u32,  // the frames the points still mark the pages in after the view changed: a cycle of its jitter
+	whole:    bool, // a slot drew its pages whole into the atlas alone the frame before: the cache draws them now
+}
+
+// What the marks of the points of a view depend on besides the maps and the
+// casters: its camera, size and parameters, and the lights.
+@(private)
+Shadow_Seen :: struct {
+	view:   Mat4,
+	eye:    Vec3,
+	size:   [3]u32,
+	params: u64,
+	lights: u64,
+	pool:   u32,
 }
 
 // The map a slot holds, as it was drawn; side 0: none.
@@ -514,6 +533,7 @@ Shadow_Plan :: struct {
 	moving_count:   u32, // the ranges of it that reach a map
 	moving_threads: u32, // the instances of those ranges
 	whole:          bool, // a slot lets go of every page: the round of what moves draws what stays too there
+	changed:        bool, // a level of the sun moved, or what stays changed everywhere in a slot
 	bits:           rhi.Transient,
 }
 
@@ -649,6 +669,7 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 		if !kept {sp.flags |= abi.SHADOW_PLAN_RESET}
 		if sp.flags & abi.SHADOW_PLAN_RESET != 0 {plan.whole = true}
 		if b.stale.covers {sp.flags |= abi.SHADOW_PLAN_STALE}
+		if b.stale.covers || sp.shift != {} {plan.changed = true}
 		sp.flags |= abi.SHADOW_PLAN_NET
 		if slot < SHADOW_SUN_LEVELS {
 			// The 2x2 pages nearest the point of the eye, in pages of the level.
@@ -855,11 +876,12 @@ shadow_draw :: proc(p: ^Pass, plan: Shadow_Plan, params: Shadow_Params, atlas: r
 
 // The steps of shadow_pages.comp, and what each dispatches over.
 @(private)
-Shadow_Pages_Step :: enum u32 {Invalidate, Entries, Rank, Sums, Pool, Allocate, Propagate, Finish}
+Shadow_Pages_Step :: enum u32 {Gate, Clear, Invalidate, Entries, Rank, Sums, Pool, Allocate, Propagate, Finish}
+#assert(len(Shadow_Pages_Step) == abi.SHADOW_STEPS)
 
 // shadow_pages.comp Params_Block.
 @(private)
-Shadow_Pages_Params :: struct {step, frame, rows, plan, boxes, box_count, sun, pool, groups_stays, groups_moves, groups_glass, fresh: u32}
+Shadow_Pages_Params :: struct {step, frame, rows, plan, boxes, box_count, sun, pool, groups_stays, groups_moves, groups_glass, fresh, full, pad0, pad1, pad2: u32}
 
 // The maps of the view this frame, drawn where its points read them. mark:
 // the parameters of the direct light (direct_maps.comp), which the marks of
@@ -913,30 +935,44 @@ shadow_maps_pass :: proc(p: ^Pass, mark: ^$T, scale: u32, grid: rhi.Buffer) -> (
 	constants := (^Gpu_Frame)(p.constants.ptr)
 	constants.sun_maps, constants.sun_map_rows = p.frame.sun_maps, p.frame.sun_map_rows
 	rhi.cmd_copy_buffer(cmd, b.data.buffer, b.data.offset, d.table, 0, b.data.size)
-	// The pages the points read: marked, then each in the pool.
+	// The pages the points read: marked, then each in the pool. Where the
+	// view, a light or a caster changed, the marks start anew and the points
+	// mark the pages they read for a cycle of the jitter of the view; a still
+	// view keeps them, and the steps run only where a point asked for a page
+	// not drawn (shadow_pages.comp).
+	seen := Shadow_Seen{view = p.unjittered, eye = p.frame.camera_position.xyz, size = {t.width, t.height, scale}, params = hash.fnv64a(([^]u8)(mark)[:size_of(T)]), lights = s.light_grid_placed, pool = b.pool}
+	full := made || plan.whole || b.whole || plan.changed || plan.box_count > 0 || seen != b.seen
+	b.seen, b.whole = seen, plan.whole
+	if full {b.settle = max(p.jitter_phases, 1)}
+	marking := b.settle > 0
+	if marking {b.settle -= 1}
 	rhi.cmd_timestamp(cmd, "shadow pages")
 	if made {rhi.cmd_fill_buffer(cmd, b.pages, 0, u64(abi.SHADOW_WORDS) * 4, 0)}
-	rhi.cmd_fill_buffer(cmd, b.pages, u64(abi.SHADOW_WORDS_NEEDED) * 4, u64(abi.SHADOW_WORDS_SLOTS - abi.SHADOW_WORDS_NEEDED) * 4, 0)
+	if full {rhi.cmd_fill_buffer(cmd, b.pages, u64(abi.SHADOW_WORDS_NEEDED) * 4, u64(abi.SHADOW_WORDS_SLOTS - abi.SHADOW_WORDS_NEEDED) * 4, 0)}
+	if marking {
+		r.stats.shadow_marked += 1
+		points := [2]u32{(t.width + scale - 1) / scale, (t.height + scale - 1) / scale}
+		rhi.cmd_bind_texture(cmd, SLOT_SHADOW_TABLE, b.table)
+		rhi.cmd_bind_pipeline(cmd, r.pipelines[.Shadow_Mark])
+		set_params(cmd, mark)
+		rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
+		rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS2, b.pages)
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS6, grid)
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS9, d.table)
+		rhi.cmd_dispatch(cmd, groups(points.x, 8), groups(points.y, 8))
+	}
 	// The table is written in the steps of the pages and read after them.
 	rhi.cmd_bind_texture(cmd, SLOT_SHADOW_TABLE, r.dummy_layers)
-	points := [2]u32{(t.width + scale - 1) / scale, (t.height + scale - 1) / scale}
-	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Shadow_Mark])
-	set_params(cmd, mark)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
-	rhi.cmd_bind_buffer(cmd, SLOT_PASS2, b.pages)
-	rhi.cmd_bind_buffer(cmd, SLOT_PASS6, grid)
-	rhi.cmd_bind_buffer(cmd, SLOT_PASS9, d.table)
-	rhi.cmd_dispatch(cmd, groups(points.x, 8), groups(points.y, 8))
 	steps := Shadow_Pages_Params{
 		frame = b.frame, rows = plan.rows, plan = plan.plan, boxes = plan.boxes, box_count = plan.box_count, sun = plan.sun >> 16,
-		pool = b.pool if b.pool != 0 else abi.SHADOW_POOL_PAGES, fresh = 1 if made else 0,
+		pool = b.pool if b.pool != 0 else abi.SHADOW_POOL_PAGES, fresh = 1 if made else 0, full = 1 if full else 0,
 		groups_stays = groups(p.instance_count + p.batch_slots, SHADOW_GROUP), groups_moves = groups(p.instance_count + p.batch_slots if plan.whole else plan.moving_threads, SHADOW_GROUP),
 		groups_glass = groups(p.instance_count + p.batch_slots, SHADOW_GROUP),
 	}
 	for step in Shadow_Pages_Step {
-		// What the passes after the maps marked the frame before is read; this frame's marks start anew.
-		if step == .Rank {rhi.cmd_fill_buffer(cmd, b.pages, u64(abi.SHADOW_WORDS_LATE) * 4, u64(abi.SHADOW_MASKS) * 4, 0)}
+		// What the passes after the maps marked the frame before is read; after a change this frame's marks start anew.
+		if step == .Rank && full {rhi.cmd_fill_buffer(cmd, b.pages, u64(abi.SHADOW_WORDS_LATE) * 4, u64(abi.SHADOW_MASKS) * 4, 0)}
 		rhi.cmd_bind_pipeline(cmd, r.pipelines[.Shadow_Pages])
 		steps.step = u32(step)
 		set_params(cmd, &steps)
@@ -944,11 +980,7 @@ shadow_maps_pass :: proc(p: ^Pass, mark: ^$T, scale: u32, grid: rhi.Buffer) -> (
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS2, b.pages)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS3, b.table)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS4, b.hiz)
-		threads := [Shadow_Pages_Step]u32{
-			.Invalidate = plan.box_count * SHADOW_SLOTS, .Entries = SHADOW_SLOTS * abi.SHADOW_SLOT_ENTRIES, .Rank = abi.SHADOW_RANK_WORDS, .Sums = 1,
-			.Pool = 1, .Allocate = abi.SHADOW_RANK_WORDS, .Propagate = SHADOW_SLOTS * abi.SHADOW_SLOT_ENTRIES, .Finish = 1,
-		}
-		if threads[step] > 0 {rhi.cmd_dispatch(cmd, groups(threads[step], abi.SHADOW_RANK_GROUP), 1)}
+		if step == .Gate {rhi.cmd_dispatch(cmd, 1, 1)} else {rhi.cmd_dispatch_indirect(cmd, b.pages, u64(abi.SHADOW_WORDS_STEPS + 3 * u32(step)) * 4)}
 	}
 	rhi.cmd_bind_texture(cmd, SLOT_SHADOW_TABLE, b.table)
 	r.stats.shadow_movers += plan.moving_threads

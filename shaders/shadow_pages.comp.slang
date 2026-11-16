@@ -1,7 +1,14 @@
 #include "native.slang"
 // The table of the pages of the maps of the shadows of a view, each frame
 // after the marks of its points (shadow_mark.comp, render.shadow_maps_pass),
-// in steps (Params_Block.step, render.Shadow_Pages_Step):
+// in steps (Params_Block.step, render.Shadow_Pages_Step), each after the
+// first dispatched by the arguments it writes:
+// - Gate, one thread: the steps run where the view, a light or a caster
+//   changed (Params_Block.full), else only where a point asked for a page not
+//   drawn since they last ran (SHADOW_STEP_NEW); a still view keeps the
+//   requests and the table of the frame before, and its rounds draw nothing;
+// - Clear, where they run without a change: what each run writes again, the
+//   masks of the points and of the passes after the maps kept;
 // - Invalidate, a thread for each box of what changed and each slot: the
 //   entries its pages cover, at each mip, where what stays or what moves
 //   changed (render.Shadow_Plan boxes);
@@ -15,7 +22,7 @@
 //   them whole into the atlas alone that frame, and the cache the next;
 // - Rank and Sums: the rank of each page asked for, in one order every frame
 //   (SHADOW_RANK_WORDS: the safety net first, the coarsest first);
-// - Pool, one group: the pages of the pool that can be given, free first,
+// - Pool, one group while a page was asked for: the pages of the pool that can be given, free first,
 //   then those no point read this frame, the longest unread first;
 // - Allocate, a thread for each word of the ranks: each page asked for takes
 //   the page of the pool of its rank, which its entry lets go of; past them it
@@ -40,8 +47,9 @@ void table_set(uint slot, uint entry, uint e) { table[int2(int(entry), int(slot)
 // buffer of the maps; plan, boxes: the words of it the plans of the slots and
 // the boxes of what changed start at, boxes and levels of the sun of them;
 // pool: the pages of the pool it may give; groups of the cull of each round;
-// fresh: the table holds nothing yet.
-struct Params_Block { uint step; uint frame; uint rows; uint plan; uint boxes; uint box_count; uint sun; uint pool; uint groups_stays; uint groups_moves; uint groups_glass; uint fresh; };
+// fresh: the table holds nothing yet; full: the view, a light or a caster
+// changed, and the masks were cleared before the marks.
+struct Params_Block { uint step; uint frame; uint rows; uint plan; uint boxes; uint box_count; uint sun; uint pool; uint groups_stays; uint groups_moves; uint groups_glass; uint fresh; uint full; uint pad0; uint pad1; uint pad2; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 [[vk::binding(SLOT_PASS0, 0)]] StructuredBuffer<uint4> shadow_data : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);
 [[vk::binding(SLOT_PASS2, 0)]] RWStructuredBuffer<uint> pages : register(MIRAI_REGISTER(u, SLOT_PASS2), space0);
@@ -50,13 +58,18 @@ struct Params_Block { uint step; uint frame; uint rows; uint plan; uint boxes; u
 [[vk::binding(SLOT_PASS4, 0)]] Texture2D<float4> hiz : register(MIRAI_REGISTER(t, SLOT_PASS4), space0);
 #include "shadow_hidden.slang"
 
-#define STEP_INVALIDATE 0u
-#define STEP_ENTRIES 1u
-#define STEP_RANK 2u
-#define STEP_SUMS 3u
-#define STEP_POOL 4u
-#define STEP_ALLOCATE 5u
-#define STEP_PROPAGATE 6u
+#define STEP_GATE 0u
+#define STEP_CLEAR 1u
+#define STEP_INVALIDATE 2u
+#define STEP_ENTRIES 3u
+#define STEP_RANK 4u
+#define STEP_SUMS 5u
+#define STEP_POOL 6u
+#define STEP_ALLOCATE 7u
+#define STEP_PROPAGATE 8u
+#define STEP_FINISH 9u
+// What the steps write again each time they run without a change, the masks of the marks kept.
+#define CLEAR_WORDS (SHADOW_WORDS_SLOTS - SHADOW_WORDS_STALE)
 #define ROUND_STAYS 0u
 #define ROUND_MOVES 1u
 #define ROUND_READY 2u
@@ -64,6 +77,14 @@ struct Params_Block { uint step; uint frame; uint rows; uint plan; uint boxes; u
 #define POOL_GROUP 1024u
 
 groupshared uint shared_words[POOL_GROUP];
+
+// The arguments of the dispatch of a step over a number of threads.
+void step_args(uint step, uint threads) {
+    uint at = SHADOW_WORDS_STEPS + 3u * step;
+    pages[at] = (threads + ROUND_GROUP - 1u) / ROUND_GROUP;
+    pages[at + 1u] = 1u;
+    pages[at + 2u] = 1u;
+}
 
 uint data_word(uint word) { return shadow_data[word >> 2u][word & 3u]; }
 uint4 slot_plan(uint slot) { return shadow_data[(params.plan >> 2u) + slot]; }
@@ -152,7 +173,34 @@ int2 sun_first_page(Shadow_Map m) {
 [numthreads(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z)]
 void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 group : SV_GroupID) {
     uint i = id.x, lane = lane3.x;
-    if (params.step == STEP_INVALIDATE) {
+    if (params.step == STEP_GATE) {
+        if (i != 0u) return;
+        bool run = params.full != 0u || pages[SHADOW_STEP_NEW] != 0u;
+        pages[SHADOW_STEP_NEW] = 0u;
+        if (run) pages[SHADOW_STEP_RUNS] += 1u;
+        uint all = run ? SHADOW_SLOTS * SHADOW_SLOT_ENTRIES : 0u;
+        step_args(STEP_CLEAR, run && params.full == 0u ? CLEAR_WORDS : 0u);
+        step_args(STEP_INVALIDATE, run ? params.box_count * SHADOW_SLOTS : 0u);
+        step_args(STEP_ENTRIES, all);
+        step_args(STEP_RANK, run ? SHADOW_RANK_WORDS : 0u);
+        step_args(STEP_SUMS, run ? 1u : 0u);
+        step_args(STEP_POOL, 0u);
+        step_args(STEP_ALLOCATE, 0u);
+        step_args(STEP_PROPAGATE, all);
+        step_args(STEP_FINISH, run ? 1u : 0u);
+        if (run) return;
+        // A still view: the rounds of what stays and of what moves draw nothing;
+        // that of the glass keeps the pages ready of the last run.
+        uint counts[4] = {SHADOW_COUNT_DRAWN, SHADOW_COUNT_COMPOSED, SHADOW_COUNT_REQUESTS, SHADOW_COUNT_LEFT};
+        for (uint k = 0u; k < 4u; k++) pages[SHADOW_WORDS_COUNTS + counts[k]] = 0u;
+        for (uint round = 0u; round < 2u; round++) {
+            pages[SHADOW_WORDS_ARGS + SHADOW_ARGS_DISPATCH + 3u * round] = 0u;
+            pages[SHADOW_WORDS_ARGS + SHADOW_ARGS_DRAW + 4u * round + 1u] = 0u;
+        }
+        pages[SHADOW_WORDS_ARGS + SHADOW_ARGS_HIZ] = 0u;
+    } else if (params.step == STEP_CLEAR) {
+        if (i < CLEAR_WORDS) pages[SHADOW_WORDS_STALE + i] = 0u;
+    } else if (params.step == STEP_INVALIDATE) {
         uint box = i / SHADOW_SLOTS, slot = i % SHADOW_SLOTS;
         if (box >= params.box_count) return;
         Shadow_Map whole = shadow_map_at(shadow_data, params.rows, slot);
@@ -183,7 +231,7 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
         Shadow_Map m = shadow_map_at(shadow_data, params.rows, slot);
         uint4 plan = slot_plan(slot);
         // What the table held of the frame before, without where it pointed coarser.
-        uint e = params.fresh != 0u ? 0u : shadow_table_entry(slot, entry) & ~(0xFu << SHADOW_ENTRY_COARSER);
+        uint e = params.fresh != 0u ? 0u : shadow_table_entry(slot, entry) & ~((0xFu << SHADOW_ENTRY_COARSER) | SHADOW_PAGE_LEFT);
         uint mip = shadow_entry_mip(entry), n = shadow_mip_pages(mip);
         bool inside = m.rect.z != 0u && mip < (slot < SHADOW_SUN_MAPS ? 1u : SHADOW_MIPS);
         uint2 page = shadow_entry_page(m.rect, entry);
@@ -237,7 +285,13 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
         GroupMemoryBarrierWithGroupSync();
         group_scan(lane, ROUND_GROUP);
         if (lane < SHADOW_RANK_GROUPS) pages[SHADOW_WORDS_GROUPS + lane] = shared_words[lane] - total;
-        if (lane == ROUND_GROUP - 1u) pages[SHADOW_WORDS_COUNTS + SHADOW_COUNT_REQUESTS] = shared_words[lane];
+        if (lane == ROUND_GROUP - 1u) {
+            uint requests = shared_words[lane];
+            pages[SHADOW_WORDS_COUNTS + SHADOW_COUNT_REQUESTS] = requests;
+            // The pool is sorted and given only while a page was asked for.
+            step_args(STEP_POOL, requests > 0u ? 1u : 0u);
+            step_args(STEP_ALLOCATE, requests > 0u ? SHADOW_RANK_WORDS : 0u);
+        }
     } else if (params.step == STEP_POOL) {
         // One group: each page of the pool by when it may be given, free
         // first, then by how many frames ago a point last read it in powers of
@@ -288,6 +342,7 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
             uint entry = w.z * 32u + firstbitlow(bits);
             if (rank >= given) {
                 InterlockedAdd(pages[SHADOW_WORDS_COUNTS + SHADOW_COUNT_LEFT], 1u);
+                table_set(w.y, entry, SHADOW_PAGE_LEFT);
                 continue;
             }
             uint pool = pages[SHADOW_WORDS_VICTIMS + rank];

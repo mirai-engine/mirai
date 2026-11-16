@@ -60,6 +60,15 @@ shadow_counts :: proc(r: ^Renderer) -> (drawn, composed, left: u32) {
 	return counts[abi.SHADOW_COUNT_DRAWN], counts[abi.SHADOW_COUNT_COMPOSED], counts[abi.SHADOW_COUNT_LEFT]
 }
 
+// How many times the steps of the pages of the main view gave them (shadow_pages.comp).
+@(private = "file")
+shadow_page_runs :: proc(r: ^Renderer) -> u32 {
+	rhi.device_wait_idle(r.device)
+	runs: [1]u32
+	if r.main.targets.shadow_raster.pages == 0 || !rhi.buffer_read_slice(r.device, r.main.targets.shadow_raster.pages, u64(abi.SHADOW_STEP_RUNS) * 4, runs[:]) {return max(u32)}
+	return runs[0]
+}
+
 @(private = "file")
 project :: proc(r: ^Renderer, c: Camera, p: Vec3) -> [2]int {
 	view, proj, _ := camera_matrices(c, f32(r.targets.width) / f32(r.targets.height))
@@ -570,6 +579,10 @@ render_a_page_first_read_is_drawn_in_its_frame :: proc(t: ^testing.T) {
 	testing.expect(t, renderer_frame(r, {camera = posts}), r.error)
 	drawn, _, _ := shadow_counts(r)
 	testing.expectf(t, drawn == 0, "a still frame drew %d pages again", drawn)
+	// Still frames mark no page and give none again.
+	runs := shadow_page_runs(r)
+	for _ in 0 ..< 3 {testing.expect(t, renderer_frame(r, {camera = posts}), r.error)}
+	testing.expectf(t, r.stats.shadow_marked == 0 && shadow_page_runs(r) == runs, "still frames marked %d views and gave the pages %d times", r.stats.shadow_marked, shadow_page_runs(r) - runs)
 	// A pool smaller than what the points ask for leaves out the finest pages,
 	// the same ones each time the pages are given anew; their points read the
 	// coarser pages drawn, or trace, and a post still shades the ground.
