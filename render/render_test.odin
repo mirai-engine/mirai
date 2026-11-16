@@ -819,6 +819,81 @@ render_probes_keep_rough_metal_lighting_when_a_wall_moves :: proc(t:^testing.T) 
     expect_clean(t,f.device)
 }
 
+// What the probes trace and light in the frames after the one given, at most
+// in one of them: the counts come back two frames late.
+@(private = "file")
+probe_work_after :: proc(t: ^testing.T, r: ^Renderer, camera: Camera, frames := 4) -> (probes, traced, lit: u32) {
+	for _ in 0 ..< frames {
+		testing.expect(t, renderer_frame(r, {camera = camera, inspection = {mode = .Indirect}}), r.error)
+		rhi.device_wait_idle(r.device)
+		probes, traced, lit = max(probes, r.stats.probes_traced), max(traced, r.stats.probe_rays_traced), max(lit, r.stats.probe_hits_lit)
+	}
+	return
+}
+
+@(test)
+render_probes_trace_and_light_only_what_a_change_crosses :: proc(t: ^testing.T) {
+	f: Cube_Fixture
+	settings := test_settings()
+	settings.taa = false
+	if !cube_fixture_init(t, &f, 96, 64, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	// A floor and a wall, a lamp at one end of them and a box that glows green
+	// away from both; none of their faces on a plane of the probes.
+	instances := []Instance_Desc{
+		{object_id = 1, mesh = f.cube, transform = trs({0, -0.5, 0}, {14, 0.2, 14}), tint = {0.8, 0.8, 0.8}},
+		{object_id = 2, mesh = f.cube, transform = trs({0, 1.1, -3.5}, {14, 3, 0.2}), tint = {0.8, 0.8, 0.8}},
+		{object_id = 3, mesh = f.cube, transform = trs({5.65, 0.35, 4}, {1.5, 1.5, 1.5}), tint = {1, 1, 1}, emission = {0, 4, 0}},
+	}
+	lamp := Light_Desc{position = {-5, 1.1, -1.5}, color = {1, 1, 1}, intensity = 4 * math.PI, range = 3, indirect = 1, scattering = 1}
+	scene_given(r, instances, {lamp}, {}, {sky = {0.02, 0.02, 0.02}})
+	camera := Camera{position = {2.6, 2.2, 3}, forward = {0.4, -1.6, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	for _ in 0 ..< 96 {testing.expect(t, renderer_frame(r, {camera = camera, inspection = {mode = .Indirect}}), r.error)}
+	rhi.device_wait_idle(f.device)
+	probes, traced, lit := probe_work_after(t, r, camera)
+	testing.expectf(t, probes > 0 && traced == 0 && lit == 0, "with nothing changed %d probes read their bounces again and trace and light nothing: %d rays, %d hits", probes, traced, lit)
+	before, width, _, ok := golden_capture(r)
+	testing.expect(t, ok, r.error)
+	if !ok {return}
+	defer delete(before)
+	beside := project(r, camera, {4.2, -0.39, -2})
+	was := pixel(before, width, beside)
+
+	// The box comes before the wall: the frame that follows shows its glow on the floor beside it.
+	testing.expect(t, scene_move(r, {2}, {trs({2.65, 0.35, -2}, {1.5, 1.5, 1.5})}))
+	testing.expect(t, renderer_frame(r, {camera = camera, inspection = {mode = .Indirect}}), r.error)
+	rhi.device_wait_idle(f.device)
+	after, _, _, captured := golden_capture(r)
+	testing.expect(t, captured, r.error)
+	if captured {
+		now := pixel(after, width, beside)
+		testing.expectf(t, now[1] > was[1] + 20 && now[1] > now[0] * 1.5, "the floor takes the glow of the box in the frame it comes: %v, before %v", now, was)
+		delete(after)
+	}
+	rays := r.ddgi.total * r.ddgi.rays_per_probe
+	settle :: proc(t: ^testing.T, r: ^Renderer, camera: Camera) {
+		for _ in 0 ..< 96 {testing.expect(t, renderer_frame(r, {camera = camera, inspection = {mode = .Indirect}}), r.error)}
+		_, traced, lit := probe_work_after(t, r, camera)
+		testing.expectf(t, traced == 0 && lit == 0, "settled again: %d rays, %d hits", traced, lit)
+	}
+	settle(t, r, camera)
+
+	// It moves half a metre: only the rays that cross where it was and where it is are traced again.
+	testing.expect(t, scene_move(r, {2}, {trs({3.15, 0.35, -2}, {1.5, 1.5, 1.5})}))
+	probes, traced, lit = probe_work_after(t, r, camera)
+	testing.expectf(t, traced > 0 && traced < rays / 4, "a box that moves traces again the rays that cross it: %d of %d", traced, rays)
+	settle(t, r, camera)
+
+	// The lamp changes color, out of reach of the box: the hits it reaches take
+	// their light again, and no ray is traced.
+	lamp.color = {1, 0.9, 0.8}
+	testing.expect(t, scene_light_update(r, 0, lamp))
+	probes, traced, lit = probe_work_after(t, r, camera)
+	testing.expectf(t, lit > 0 && lit < rays / 2 && traced == 0, "a light that changes lights again the hits it reaches and traces nothing: %d hits, %d rays of %d", lit, traced, rays)
+	expect_clean(t, f.device)
+}
+
 @(test)
 render_culls_and_keeps_steady_frames_allocation_free :: proc(t: ^testing.T) {
 	f: Cube_Fixture

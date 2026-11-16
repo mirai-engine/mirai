@@ -324,6 +324,15 @@ DISTANCE_TILE :: 16
 PROBE_BUCKETS :: 22
 // Texels across the tile of the narrow lobes of a probe, with its border of one.
 PROBE_GLOSS_TILE :: 12
+// What the probes keep of their rays (probe_hits.slang): the words of a ray,
+// and the changes of the scene they check it against (render.Probe_Changes):
+// how many it lists, the newest first, and what each is.
+PROBE_HIT_WORDS      :: 5
+PROBE_CHANGES_MAX    :: 1024
+PROBE_CHANGE_SEEN    :: 0 // a box in which what a ray may meet changed
+PROBE_CHANGE_CASTER  :: 1 // one of what casts shadows: also the shadow the sun gives it
+PROBE_CHANGE_SHADOW  :: 2 // one of what casts shadows, and a light that reaches it: the shadow that light gives it
+PROBE_CHANGE_LIGHT   :: 3 // a sphere in which a light changed what it gives
 CONTACT_RAYS  :: 2
 
 // The tables of the lobe and of the air, and the display.
@@ -497,6 +506,7 @@ Program :: struct {
     layers:asset.Material_Layers, // of a Surface program: those of the OpenPBR model its source writes
     coverage:bool,                // of a Surface program: its alpha is not that of the default material
     standard:bool,                // of a Surface program: it builds on the standard model of its material (mirai_surface_standard), whose maps it reads
+    timed:bool,                   // of a Surface program: its source reads the time of its context, so what it gives a point changes with nothing that says so
     attributes:int,               // of a Vfx program: bytes of what it keeps of each particle
     attribute_fields:[]Program_Attribute, // of a Vfx program: the fields of those bytes, in the order it declares them
     resources:[]Program_Resource, // of a Vfx program, in the order it declares them

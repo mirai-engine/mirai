@@ -160,6 +160,7 @@ read_stats :: proc(r: ^Renderer, slot: int) {
 		r.stats.culled_instances = stats.culled_instances
 		r.stats.occluded_instances = stats.occluded_instances
 		r.stats.probes_traced = stats.probes_traced
+		r.stats.probe_rays_traced, r.stats.probe_hits_lit = stats.probe_rays[0], stats.probe_rays[1]
 		r.stats.resolved_pixels, r.stats.resolve_helpers, r.stats.resolve_quads_again = stats.resolved[0], stats.resolved[1], stats.resolved[2]
 		r.stats.light_lists = stats.lists
 	}
@@ -513,7 +514,10 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
         focus:=camera_focus(frame.camera)
         for view in frame.views {if view.texture==0 && !view.disabled {focus=camera_focus(view.camera);break}}
         if ddgi_ensure(r) {ddgi_place(r,focus)}
-    } else if !r.settings.gi_enabled && r.ddgi.valid {ddgi_release(r)}
+    } else if !r.settings.gi_enabled && r.ddgi.valid {
+        ddgi_release(r)
+        probe_hits_release(r)
+    }
     if r.main.targets.ldr==0 && !create_targets(r,&r.main,r.window_width,r.window_height,window_render_scale(r,f32(r.window_height)),true) {return false}
     // A frame no window shows that draws only into textures leaves the views
     // of the window as they are: it records those alone.
@@ -634,7 +638,10 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
 	}
     if recorded_ok {
         if r.settings.gi_enabled {
-            if r.ddgi.valid {rhi.cmd_copy_buffer(cmd,r.ddgi.chosen,0,r.stats_buffer,u64(offset_of(Gpu_Cull_Stats,probes_traced)),4)}
+            if r.ddgi.valid {
+                rhi.cmd_copy_buffer(cmd,r.ddgi.chosen,0,r.stats_buffer,u64(offset_of(Gpu_Cull_Stats,probes_traced)),4)
+                rhi.cmd_copy_buffer(cmd,r.ddgi.chosen,ddgi_counts_offset(&r.ddgi),r.stats_buffer,u64(offset_of(Gpu_Cull_Stats,probe_rays)),8)
+            }
         }
         rhi.cmd_copy_buffer(cmd,r.stats_buffer,0,r.stats_readback[slot],0,size_of(Gpu_Cull_Stats))
         rhi.cmd_barrier_buffer(cmd,r.stats_readback[slot],.Host_Read)
@@ -679,6 +686,8 @@ histories_rescale :: proc(r: ^Renderer, cmd: ^rhi.Command_List) {
 	if r.ddgi.valid {
 		set_params(cmd, &params)
 		scale(r, cmd, r.ddgi.irradiance);scale(r, cmd, r.ddgi.kept)
+		// What the probes keep of the light of their hits is in the units before: they take it again.
+		r.ddgi.lit_everywhere = u32(r.light_frame) + 1
 	}
 	params.encoded = 0
 	set_params(cmd, &params)
@@ -1424,7 +1433,7 @@ pass_world_lighting :: proc(p: ^Pass) -> bool {
 			warm := update < updates - 1 || (spread > 1 && updates > 1)
 			if p.use_probes && g.valid {
 				rhi.cmd_timestamp(cmd, "ddgi")
-				if !ddgi_update(p, warm) {return false}
+				if !ddgi_update(p, warm, update == 0) {return false}
 			}
 			r.light_frame += 1
 		}
@@ -1781,8 +1790,8 @@ update_stats :: proc(r: ^Renderer) {
 	samples := u64(clamp(r.settings.direct_samples, 1, DIRECT_SAMPLES_MAX))
 	rays := points(t, t.direct_scale) * (4 * samples + 1) / 4
 	if r.settings.gi_enabled {
-		// A probe ray traces the sun and the lights of its cut where it hits.
-		rays += u64(s.probes_traced) * u64(r.ddgi.rays_per_probe) * u64(2 + min(s.lights, PROBE_LIGHT_BUDGET))
+		// The rays the probes traced, and the sun and the lights of its cut at each hit they lit.
+		rays += u64(s.probe_rays_traced) + u64(s.probe_hits_lit) * u64(1 + min(s.lights, PROBE_LIGHT_BUDGET))
 		// The contact occlusion: CONTACT_RAYS short rays of each point.
 		rays += points(t, t.contact_scale) * CONTACT_RAYS
 	}
