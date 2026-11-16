@@ -111,9 +111,9 @@
   clusters that share a vertex place it at the same spot. The shaders read vertices, triangles and
   posed vertices only in `geometry.slang` and `posed.slang`; the CPU, with the `asset` decoders
   (`cluster_vertex`, `mesh_level_decode`) over each page.
-- **Levels.** A static mesh is a DAG of clusters; one with skin or pruned foliage, whole levels
-  whose clusters share the mesh sphere. Both are drawn with the same cut (`cut.slang`,
-  `cluster_in_cut` on the CPU): a cluster enters when its projected error is within
+- **Levels.** A static mesh is a DAG of clusters, its foliage pruned group by group; one with
+  skin, whole levels whose clusters share the mesh sphere. Both are drawn with the same cut
+  (`cut.slang`, `cluster_in_cut` on the CPU): a cluster enters when its projected error is within
   `lod_error_pixels` and that of what replaces it is not.
 - **Detail of another camera.** The error is projected from `Gpu_Frame.detail_eye`, the eye of
   the view unless `Frame_Desc.detail` holds a camera: then the views of the window take from it

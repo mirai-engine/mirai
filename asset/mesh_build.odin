@@ -109,7 +109,7 @@ dag_sources :: proc(dag:^geom.Cluster_Dag,clusters:^[dynamic]Cluster_Source,indi
 }
 
 // The geometry of a mesh of whole levels (geom.cluster_levels_build): level
-// 0 alone, or several (Levels: a skinned mesh, foliage pruned by islands)
+// 0 alone, or several (Levels: a skinned mesh)
 // whose clusters share the sphere of the mesh, so a view picks one of them.
 // Every triangle is of the slot its first vertex names. What it returns is in
 // allocator; false for indices outside the vertices or without memory.
@@ -145,15 +145,27 @@ mesh_build :: proc(source:Mesh_Source,indices:[]u32,levels:[]Level_Source,out:^M
     return mesh_encode(flagged,clusters[:],cluster_indices[:],out,allocator)
 }
 
+// The islands of a mesh its DAG prunes instead of simplifying
+// (geom.Cluster_Island): leaves, cards, clumps of grass.
+Mesh_Islands :: struct {
+    islands:[]geom.Cluster_Island, // their submesh is set to the slot of their first vertex
+    rungs:[]geom.Cluster_Island_Rung,
+    indices:[]u32, // of the rungs, into Mesh_Source.vertices
+}
+
 // The geometry of a static mesh as a DAG of clusters (geom.cluster_dag_build):
 // level 0 in clusters, groups of them simplified with their borders locked
 // and split again, up to the roots, and the cuts its rays trace far away
-// (mesh_ray_errors). Every triangle is of the slot its first vertex names,
-// and a vertex is of one slot. What it returns is in allocator; false for
-// indices outside the vertices, a vertex of two slots or without memory.
-mesh_build_dag :: proc(source:Mesh_Source,indices:[]u32,out:^Mesh_Geometry,allocator:=context.allocator) -> bool {
-    if len(indices)==0 || len(indices)%3!=0 {return false}
+// (mesh_ray_errors). indices are the triangles simplified; those of islands
+// are their first outlines, and their levels prune them. A mesh with islands
+// is whole, without pages out of its root, and rays meet its level 0. Every
+// triangle is of the slot its first vertex names, and a vertex is of one
+// slot. What it returns is in allocator; false for indices outside the
+// vertices, a vertex of two slots or without memory.
+mesh_build_dag :: proc(source:Mesh_Source,indices:[]u32,out:^Mesh_Geometry,allocator:=context.allocator,islands:=Mesh_Islands{}) -> bool {
+    if len(indices)==0 && len(islands.islands)==0 || len(indices)%3!=0 {return false}
     for index in indices {if int(index)>=len(source.vertices) {return false}}
+    for index in islands.indices {if int(index)>=len(source.vertices) {return false}}
     for v in source.vertices {if v.material>=MESH_MAX_SLOTS {return false}}
     if !vertices_finite(source) {return false}
     scratch:=context.temp_allocator
@@ -165,17 +177,93 @@ mesh_build_dag :: proc(source:Mesh_Source,indices:[]u32,out:^Mesh_Geometry,alloc
         for locked,at in source.locked {if locked {protect[at]+={.Lock}}}
     }
     weights:=MESH_SIMPLIFY_WEIGHTS
+    given:=make([]geom.Cluster_Island,len(islands.islands),scratch)
+    for island,at in islands.islands {
+        given[at]=island
+        if int(island.first_rung)>=len(islands.rungs) || int(islands.rungs[island.first_rung].first_index)>=len(islands.indices) {return false}
+        given[at].submesh=source.vertices[islands.indices[islands.rungs[island.first_rung].first_index]].material
+    }
     dag:geom.Cluster_Dag
     defer geom.cluster_dag_destroy(&dag)
-    built:=geom.cluster_dag_build(&dag,{positions=positions,indices=ordered[:],ranges=ranges[:],attributes=attributes,attribute_weights=weights[:],vertex_lock=protect},scratch)
+    built:=geom.cluster_dag_build(&dag,{
+        positions=positions,indices=ordered[:],ranges=ranges[:],attributes=attributes,attribute_weights=weights[:],vertex_lock=protect,
+        islands=given,island_rungs=islands.rungs,island_indices=islands.indices,
+    },scratch)
     if built!=.None || dag.levels>MESH_MAX_LEVELS {return false}
     clusters:=make([dynamic]Cluster_Source,scratch)
     cluster_indices:=make([dynamic]u32,scratch)
     dag_sources(&dag,&clusters,&cluster_indices)
     flagged:=source
     flagged.flags-={.Levels}
-    if !mesh_encode(flagged,clusters[:],cluster_indices[:],out,allocator) {return false}
-    mesh_ray_errors(out)
+    if len(dag.made)>0 && !mesh_made_append(&flagged,dag.made[:]) {return false}
+    whole:=len(islands.islands)>0
+    if !mesh_encode(flagged,clusters[:],cluster_indices[:],out,allocator,whole) {return false}
+    if !whole {mesh_ray_errors(out)}
+    return true
+}
+
+// The vertices a DAG made past those of source, appended to them in the
+// scratch allocator, each a copy of the one it was made from at its place,
+// with its skin, surface and the deltas of its targets.
+@(private="file")
+mesh_made_append :: proc(source:^Mesh_Source,made:[]geom.Cluster_Made) -> bool {
+    scratch:=context.temp_allocator
+    count:=len(source.vertices)
+    vertices,no_vertices:=make([]Vertex,count+len(made),scratch)
+    if no_vertices!=nil {return false}
+    copy(vertices,source.vertices)
+    for m,at in made {
+        vertices[count+at]=source.vertices[m.vertex]
+        vertices[count+at].position=m.position
+    }
+    if len(source.skin)==count {
+        skin,error:=make([]Skin_Vertex,len(vertices),scratch)
+        if error!=nil {return false}
+        copy(skin,source.skin)
+        for m,at in made {skin[count+at]=source.skin[m.vertex]}
+        source.skin=skin
+    }
+    if len(source.surfaces)==count {
+        surfaces,error:=make([]Surface_Vertex,len(vertices),scratch)
+        if error!=nil {return false}
+        copy(surfaces,source.surfaces)
+        for m,at in made {surfaces[count+at]=source.surfaces[m.vertex]}
+        source.surfaces=surfaces
+    }
+    if len(source.morphs)>0 {
+        // Of each vertex, the made ones that copy it: order[firsts[v]:firsts[v+1]].
+        firsts,no_firsts:=make([]u32,count+1,scratch)
+        fill,no_fill:=make([]u32,count+1,scratch)
+        order,no_order:=make([]u32,len(made),scratch)
+        targets,no_targets:=make([]Morph_Target,len(source.morphs),scratch)
+        deltas,no_deltas:=make([dynamic]Morph_Delta,0,len(source.morph_deltas),scratch)
+        if no_firsts!=nil || no_fill!=nil || no_order!=nil || no_targets!=nil || no_deltas!=nil {return false}
+        for m in made {firsts[m.vertex+1]+=1}
+        for v in 0..<count {firsts[v+1]+=firsts[v]}
+        for m,at in made {
+            order[firsts[m.vertex]+fill[m.vertex]]=u32(at)
+            fill[m.vertex]+=1
+        }
+        for target,t in source.morphs {
+            if u64(target.first)+u64(target.count)>u64(len(source.morph_deltas)) {return false}
+            given:=source.morph_deltas[target.first:][:target.count]
+            targets[t]=target
+            targets[t].first=u32(len(deltas))
+            if _,error:=append(&deltas,..given);error!=nil {return false}
+            for delta in given {
+                if int(delta.vertex)>=count {return false}
+                for at in order[firsts[delta.vertex]:firsts[delta.vertex+1]] {
+                    moved:=delta
+                    moved.vertex=u32(count)+at
+                    if _,error:=append(&deltas,moved);error!=nil {return false}
+                }
+            }
+            targets[t].count=u32(len(deltas))-targets[t].first
+        }
+        source.morphs,source.morph_deltas=targets,deltas[:]
+    }
+    source.vertices=vertices
+    source.locked=nil
     return true
 }
 
@@ -209,9 +297,10 @@ on_grid :: proc "contextless" (value,step:f32) -> i32 {
 // and CLUSTER_VERTICES vertices, the clusters of a group contiguous. Their
 // vertices are copied into each cluster that names them, on grids of the
 // whole mesh; their skin and the deltas of their targets go with them. The
-// clusters go in pages (mesh_pages_assign). What it returns is in allocator;
-// false for clusters out of those bounds or without memory.
-mesh_encode :: proc(source:Mesh_Source,clusters:[]Cluster_Source,indices:[]u32,out:^Mesh_Geometry,allocator:=context.allocator) -> bool {
+// clusters go in pages (mesh_pages_assign), all in the root when whole. What
+// it returns is in allocator; false for clusters out of those bounds or
+// without memory.
+mesh_encode :: proc(source:Mesh_Source,clusters:[]Cluster_Source,indices:[]u32,out:^Mesh_Geometry,allocator:=context.allocator,whole:=false) -> bool {
     scratch:=context.temp_allocator
     count:=len(source.vertices)
     if len(clusters)==0 || len(source.skin)!=0 && len(source.skin)!=count || len(source.surfaces)!=0 && len(source.surfaces)!=count {return false}
@@ -352,7 +441,7 @@ mesh_encode :: proc(source:Mesh_Source,clusters:[]Cluster_Source,indices:[]u32,o
         g.bounds_min,g.bounds_max=linalg.min(g.bounds_min,low),linalg.max(g.bounds_max,high)
     }
     if !mesh_levels_count(&g,clusters,allocator) || !mesh_morphs_follow(&g,source,origins[:],allocator) {return false}
-    whole:=len(source.skin)>0 || len(source.morphs)>0 || .Levels in g.flags
+    whole:=whole || len(source.skin)>0 || len(source.morphs)>0 || .Levels in g.flags
     if !mesh_pages_assign(&g,clusters,whole,allocator) {return false}
     if mesh_closed(g) {g.flags+={.Closed}}
     out^=g

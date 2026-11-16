@@ -47,7 +47,7 @@ model that consumes it (hulls, hierarchy and limits) belongs to
   cluster names its page (`page`) and that of the group it was simplified from (`child_page`, that
   of its children). The pages from `root_page` are the root, always loaded: the coarsest levels as
   long as they fit in `MESH_ROOT_WORDS`, at least the coarsest, and every cluster nothing replaces;
-  meshes with skin, morphs or `Levels` are entirely root. What `mesh_build` makes has no
+  meshes with skin, morphs, islands or `Levels` are entirely root. What `mesh_build` makes has no
   `page_data` until `mesh_pages_pack` codes its blocks as a file stores them (the far mesh does it
   when its root is not the whole mesh).
 - Every mesh of finite positions and uvs fits in the grids: the step is the smallest power of two

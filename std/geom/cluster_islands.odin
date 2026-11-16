@@ -1,0 +1,482 @@
+package geom
+
+import "base:runtime"
+import "core:math"
+import "core:slice"
+
+// Aggregate detail in the DAG of clusters: islands (leaves, cards, clumps of
+// grass) that the coarser levels prune instead of simplifying (Cook,
+// Halstead, Planck and Ryu, Stochastic simplification of aggregate detail,
+// Pixar 2007). Simplifying each leaf by quadrics shrinks it to nothing and
+// leaves a bare tree with metres of error.
+//
+// An island draws one of its outlines (rungs), the finest first, and is never
+// split between clusters. Its islands of one class (an octave of radius of
+// one submesh) are reduced together: first each steps to a coarser outline,
+// then the class is halved, keeping the first of its islands in their fixed
+// order (a prefix spread over the mesh) and growing them about their centers
+// so they draw the area of level 0 that all of them stood for. The error of
+// an island is that of its outline times its growth and, once pruned, at
+// least the largest radius of its class grown over ISLAND_PIXELS of the
+// threshold of the cut; a class is not pruned past ISLAND_GROW_MAX.
+//
+// The clusters of islands make their own levels in the DAG, beside those of
+// the rest of the mesh, which share no place with them. Clusters of whole
+// islands and groups of clusters are cut by halving the box of their centers;
+// a group is reduced as far as the error of its clusters allows, then by the
+// least more that brings it to CLUSTER_SIMPLIFY_RATIO of its triangles, and
+// it keeps the rules of the DAG: its error is the largest of its clusters'
+// and its own, in a sphere around theirs, and a group that cannot lose more
+// than 1-CLUSTER_SIMPLIFY_STUCK of its triangles is a root. A group of one
+// cluster is reduced too, so a plant far away keeps shedding its leaves. So only the near
+// clusters of a plant draw its finest outlines, and a level changes one
+// group at a time.
+
+ISLAND_PIXELS :: f32(8)   // of the threshold of the cut, how far the radius of a grown island may span where its level draws it
+ISLAND_GROW_MAX :: f32(4) // the most the islands of a class grow: past it they are not pruned further
+
+// An island: its outlines are Cluster_Source.island_rungs[first_rung:][:rung_count].
+Cluster_Island :: struct {
+    first_rung,rung_count:u32,
+    submesh:u32,
+    class:u32,   // islands of one class are pruned together
+    center:Vec3, // what it grows around
+    radius:f32,  // around center, of its first outline
+    order:u64,   // where it comes in the order a class is pruned in: the first are kept
+}
+
+// An outline of an island: Cluster_Source.island_indices[first_index:][:index_count].
+Cluster_Island_Rung :: struct {
+    first_index,index_count:u32,
+    error:f32, // how far it draws from what the island stands for, in the units of the positions
+}
+
+// What an island draws at a level.
+Cluster_Island_State :: struct {
+    island:u32,
+    rung:u32,    // of its outlines
+    grow:f32,    // about its center
+    area:f32,    // of its first outline, that it stands for: its own, and once pruned a share of those dropped
+    error:f32,
+    pruned:bool, // its class was halved: it stays at its last outline
+}
+
+// A vertex of a DAG past the positions it was built from: a copy of one of
+// them, moved.
+Cluster_Made :: struct {
+    vertex:u32,
+    position:Vec3,
+}
+
+// The area each outline of islands draws, in allocator.
+islands_areas :: proc(positions:[]Vec3,rungs:[]Cluster_Island_Rung,indices:[]u32,allocator:=context.allocator) -> (areas:[]f32,ok:bool) {
+    error:runtime.Allocator_Error
+    if areas,error=make([]f32,len(rungs),allocator);error!=nil {return}
+    for rung,at in rungs {
+        sum:f32
+        for t:=u32(0);t+2<rung.index_count;t+=3 {
+            p0,p1,p2:=positions[indices[rung.first_index+t]],positions[indices[rung.first_index+t+1]],positions[indices[rung.first_index+t+2]]
+            a,b:=p1-p0,p2-p0
+            c:=Vec3{a.y*b.z-a.z*b.y,a.z*b.x-a.x*b.z,a.x*b.y-a.y*b.x}
+            sum+=0.5*math.sqrt(c.x*c.x+c.y*c.y+c.z*c.z)
+        }
+        areas[at]=sum
+    }
+    return areas,true
+}
+
+// The rung an island draws at state s of its class: s or its last.
+@(private="file")
+island_rung :: #force_inline proc "contextless" (island:Cluster_Island,rung:u32) -> u32 {
+    return island.first_rung+min(rung,island.rung_count-1)
+}
+
+// The next step of a class whose islands are states, which come in their
+// order: the rung all of them step to, or how many it keeps halved and how
+// much they grow; ok false where it cannot take one.
+@(private="file")
+Island_Step :: struct {
+    rung:u32,
+    keep:int, // 0: a step of outline
+    grow:f32,
+    error:f32,
+}
+
+@(private="file")
+island_step :: proc "contextless" (states:[]Cluster_Island_State,islands:[]Cluster_Island,rungs:[]Cluster_Island_Rung,areas:[]f32) -> (step:Island_Step,ok:bool) #no_bounds_check {
+    if len(states)==0 {return}
+    count,rung:u32
+    pruned:=false
+    for s in states {
+        count=max(count,islands[s.island].rung_count)
+        rung=max(rung,s.rung)
+        pruned||=s.pruned
+    }
+    if !pruned && rung+1<count {
+        step.rung=rung+1
+        for s in states {step.error=max(step.error,s.error,rungs[island_rung(islands[s.island],step.rung)].error*s.grow)}
+        return step,step.error-step.error==0
+    }
+    if len(states)<2 {return}
+    step.keep=(len(states)+1)/2
+    total,kept,largest:f32
+    for s,at in states {
+        island:=islands[s.island]
+        total+=s.area
+        largest=max(largest,island.radius)
+        if at<step.keep {kept+=areas[island_rung(island,island.rung_count-1)]}
+    }
+    if !(kept>0) {return}
+    step.grow=max(math.sqrt(total/kept),1)
+    if !(step.grow<=ISLAND_GROW_MAX) {return}
+    step.error=largest*step.grow/ISLAND_PIXELS
+    for s,at in states {
+        step.error=max(step.error,s.error)
+        if at<step.keep {step.error=max(step.error,rungs[island_rung(islands[s.island],islands[s.island].rung_count-1)].error*step.grow)}
+    }
+    return step,step.error-step.error==0
+}
+
+// Takes a step: the islands a halving drops are left after those it keeps,
+// with area -1.
+@(private="file")
+island_apply :: proc "contextless" (states:[]Cluster_Island_State,islands:[]Cluster_Island,rungs:[]Cluster_Island_Rung,areas:[]f32,step:Island_Step) #no_bounds_check {
+    if step.keep==0 {
+        for &s in states {
+            s.rung=step.rung
+            s.error=max(s.error,rungs[island_rung(islands[s.island],s.rung)].error*s.grow)
+        }
+        return
+    }
+    for &s,at in states {
+        if at>=step.keep {s.area=-1;continue}
+        island:=islands[s.island]
+        s.rung=island.rung_count-1
+        s.grow=step.grow
+        s.area=step.grow*step.grow*areas[island_rung(island,s.rung)]
+        s.error=step.error
+        s.pruned=true
+    }
+}
+
+// Reduces islands, each at its state, as a group of the DAG or a whole level
+// does: every class goes as far as `allowed` lets it, then `allowed` rises
+// to the least that moves one more class while they draw more than `target`
+// triangles. The states that remain come first, by class and order; returns
+// how many, the `allowed` it ended at, the largest error among them and the
+// triangles they draw.
+islands_reduce :: proc(states:[]Cluster_Island_State,islands:[]Cluster_Island,rungs:[]Cluster_Island_Rung,areas:[]f32,allowed:f32,target:int) -> (kept:int,reached:f32,error:f32,triangles:int) #no_bounds_check {
+    // By class, then order, ties by island.
+    Pair :: struct {class:u32,order:u64,island:u32,at:int}
+    pairs:=make([]Pair,len(states),context.temp_allocator)
+    for s,at in states {pairs[at]={islands[s.island].class,islands[s.island].order,s.island,at}}
+    slice.sort_by(pairs,proc(a,b:Pair) -> bool {
+        if a.class!=b.class {return a.class<b.class}
+        if a.order!=b.order {return a.order<b.order}
+        return a.island<b.island
+    })
+    sorted:=make([]Cluster_Island_State,len(states),context.temp_allocator)
+    for p,at in pairs {sorted[at]=states[p.at]}
+    copy(states,sorted)
+    // The classes as runs of states: [first,first+alive) live, the rest dropped.
+    Run :: struct {first,alive:int}
+    runs:=make([dynamic]Run,context.temp_allocator)
+    for at:=0;at<len(states); {
+        end:=at+1
+        for end<len(states) && islands[states[end].island].class==islands[states[at].island].class {end+=1}
+        append(&runs,Run{at,end-at})
+        at=end
+    }
+    reached=allowed
+    for {
+        triangles=0
+        for &run in runs {
+            for {
+                live:=states[run.first:][:run.alive]
+                step,ok:=island_step(live,islands,rungs,areas)
+                if !ok || step.error>reached {break}
+                island_apply(live,islands,rungs,areas,step)
+                if step.keep>0 {run.alive=step.keep}
+            }
+            for s in states[run.first:][:run.alive] {triangles+=int(rungs[island_rung(islands[s.island],s.rung)].index_count/3)}
+        }
+        if triangles<=target {break}
+        next:=max(f32)
+        for run in runs {
+            if step,ok:=island_step(states[run.first:][:run.alive],islands,rungs,areas);ok {next=min(next,step.error)}
+        }
+        if next==max(f32) {break}
+        reached=max(reached,next)
+    }
+    for run in runs {
+        for s in states[run.first:][:run.alive] {
+            states[kept]=s
+            error=max(error,s.error)
+            kept+=1
+        }
+    }
+    return
+}
+
+// Halves items along the longest side of the box of their centers until a
+// part fits limit (in each of the two sizes of an item), each cut where the
+// part before holds as many whole parts as it can: order is rewritten so
+// each part is a run, and the end of each run appended to ends.
+@(private)
+spatial_runs :: proc(centers:[]Vec3,sizes:[][2]u32,limit:[2]u32,order:[]u32,ends:^[dynamic]u32) -> bool {
+    Part :: struct {first,count:int}
+    stack:=make([dynamic]Part,context.temp_allocator)
+    Keyed :: struct {key:f32,item:u32}
+    keyed:=make([dynamic]Keyed,context.temp_allocator)
+    if _,error:=append(&stack,Part{0,len(order)});error!=nil {return false}
+    for len(stack)>0 {
+        part:=pop(&stack)
+        items:=order[part.first:][:part.count]
+        total:[2]u32
+        low,high:=Vec3{max(f32),max(f32),max(f32)},Vec3{-max(f32),-max(f32),-max(f32)}
+        for item in items {
+            total+=sizes[item]
+            c:=centers[item]
+            low,high={min(low.x,c.x),min(low.y,c.y),min(low.z,c.z)},{max(high.x,c.x),max(high.y,c.y),max(high.z,c.z)}
+        }
+        parts:=max((total[0]+limit[0]-1)/limit[0],(total[1]+limit[1]-1)/limit[1])
+        if parts<=1 || len(items)==1 {
+            if _,error:=append(ends,u32(part.first+part.count));error!=nil {return false}
+            continue
+        }
+        side:=high-low
+        axis:=0
+        if side.y>side[axis] {axis=1}
+        if side.z>side[axis] {axis=2}
+        clear(&keyed)
+        for item in items {append(&keyed,Keyed{centers[item][axis],item})}
+        slice.sort_by(keyed[:],proc(a,b:Keyed) -> bool {return a.key<b.key || a.key==b.key && a.item<b.item})
+        for k,at in keyed {items[at]=k.item}
+        // The part before takes ceil(parts/2) parts' worth, and one item at least.
+        room:=limit*((parts+1)/2)
+        split:=1
+        sum:=sizes[items[0]]
+        for split<len(items)-1 {
+            next:=sum+sizes[items[split]]
+            if next[0]>room[0] || next[1]>room[1] {break}
+            sum=next
+            split+=1
+        }
+        // Later parts go first on the stack: the runs come in order.
+        if _,error:=append(&stack,Part{part.first+split,part.count-split},Part{part.first,split});error!=nil {return false}
+    }
+    return true
+}
+
+// A cluster of islands being built: its states are those of
+// Island_Builder.states[first:][:count].
+@(private="file")
+Island_Pending :: struct {
+    first,count:u32,
+    own:Cluster_Lod,
+    generator:u32,
+    submesh:u32,
+}
+
+@(private="file")
+Island_Builder :: struct {
+    b:^Dag_Builder,
+    source:Cluster_Source,
+    areas:[]f32,
+    vertices:[]u32, // of each rung, distinct
+    positions:[dynamic]Vec3, // those of the source, then those made
+    stamp:[]u32,             // of each position of the source: the made one it is in the cluster being output
+}
+
+// Splits states (all of one submesh) in clusters of whole islands appended
+// to out, their states to states.
+@(private="file")
+islands_clusterize :: proc(ib:^Island_Builder,given:[]Cluster_Island_State,submesh:u32,own:Cluster_Lod,generator:u32,out:^[dynamic]Island_Pending,states:^[dynamic]Cluster_Island_State) -> Cluster_Error {
+    if len(given)==0 {return .None}
+    centers:=make([]Vec3,len(given),context.temp_allocator)
+    sizes:=make([][2]u32,len(given),context.temp_allocator)
+    order:=make([]u32,len(given),context.temp_allocator)
+    if centers==nil || sizes==nil || order==nil {return .Out_Of_Memory}
+    for s,at in given {
+        island:=ib.source.islands[s.island]
+        r:=island_rung(island,s.rung)
+        centers[at]=island.center
+        sizes[at]={ib.source.island_rungs[r].index_count/3,ib.vertices[r]}
+        order[at]=u32(at)
+    }
+    ends:=make([dynamic]u32,context.temp_allocator)
+    if !spatial_runs(centers,sizes,{CLUSTER_MAX_TRIANGLES,CLUSTER_MAX_VERTICES},order,&ends) {return .Out_Of_Memory}
+    first:u32
+    for end in ends {
+        cluster:=Island_Pending{first=u32(len(states)),count=end-first,own=own,generator=generator,submesh=submesh}
+        for at in order[first:end] {
+            if _,error:=append(states,given[at]);error!=nil {return .Out_Of_Memory}
+        }
+        if _,error:=append(out,cluster);error!=nil {return .Out_Of_Memory}
+        first=end
+    }
+    return .None
+}
+
+// The triangles of a cluster of islands, as made vertices, appended to indices.
+@(private="file")
+islands_triangles :: proc(ib:^Island_Builder,states:[]Cluster_Island_State,indices:^[dynamic]u32) -> Cluster_Error {
+    dag:=ib.b.dag
+    for s in states {
+        island:=ib.source.islands[s.island]
+        rung:=ib.source.island_rungs[island_rung(island,s.rung)]
+        corners:=ib.source.island_indices[rung.first_index:][:rung.index_count]
+        for index in corners {
+            if ib.stamp[index]==NONE {
+                p:=island.center+(ib.source.positions[index]-island.center)*s.grow
+                ib.stamp[index]=u32(len(ib.positions))
+                _,no_position:=append(&ib.positions,p)
+                _,no_made:=append(&dag.made,Cluster_Made{index,p})
+                if no_position!=nil || no_made!=nil {return .Out_Of_Memory}
+            }
+            if _,error:=append(indices,ib.stamp[index]);error!=nil {return .Out_Of_Memory}
+        }
+        for index in corners {ib.stamp[index]=NONE}
+    }
+    return .None
+}
+
+// Appends the clusters of a group of islands to the DAG; returns its index.
+@(private="file")
+islands_output :: proc(ib:^Island_Builder,clusters:[]Island_Pending,states:[]Cluster_Island_State,parent:Cluster_Lod,level:int) -> (group:u32,error:Cluster_Error) {
+    pending:=make([dynamic]Pending,0,len(clusters),context.temp_allocator)
+    indices:=make([dynamic]u32,context.temp_allocator)
+    for c in clusters {
+        first:=u32(len(indices))
+        islands_triangles(ib,states[c.first:][:c.count],&indices) or_return
+        if _,failed:=append(&pending,Pending{first,u32(len(indices))-first,c.own,c.generator,c.submesh});failed!=nil {return 0,.Out_Of_Memory}
+    }
+    written:bool
+    group,written=group_output(ib.b,pending[:],indices[:],ib.positions[:],parent,level)
+    return group,.None if written else .Out_Of_Memory
+}
+
+// The levels of the islands of source in the DAG of b (see above).
+@(private)
+islands_dag :: proc(b:^Dag_Builder,source:Cluster_Source) -> Cluster_Error {
+    if len(source.islands)==0 {return .None}
+    ib:=Island_Builder{b=b,source=source}
+    scratch:=context.temp_allocator
+    measured:bool
+    if ib.areas,measured=islands_areas(source.positions,source.island_rungs,source.island_indices,scratch);!measured {return .Out_Of_Memory}
+    ib.vertices=make([]u32,len(source.island_rungs),scratch)
+    ib.stamp=make([]u32,len(source.positions),scratch)
+    ib.positions=make([dynamic]Vec3,0,len(source.positions),scratch)
+    if ib.vertices==nil || ib.stamp==nil && len(source.positions)>0 {return .Out_Of_Memory}
+    if _,error:=append(&ib.positions,..source.positions);error!=nil {return .Out_Of_Memory}
+    for &s in ib.stamp {s=NONE}
+    for rung,at in source.island_rungs {
+        for index in source.island_indices[rung.first_index:][:rung.index_count] {
+            if ib.stamp[index]==NONE {ib.vertices[at]+=1;ib.stamp[index]=0}
+        }
+        for index in source.island_indices[rung.first_index:][:rung.index_count] {ib.stamp[index]=NONE}
+        if rung.index_count/3>CLUSTER_MAX_TRIANGLES || ib.vertices[at]>CLUSTER_MAX_VERTICES {return .Invalid_Mesh}
+    }
+    // Level 0: the islands of each submesh at their first outline, measured exactly.
+    clusters:=make([dynamic]Island_Pending,scratch)
+    states:=make([dynamic]Cluster_Island_State,scratch)
+    next_clusters:=make([dynamic]Island_Pending,scratch)
+    next_states:=make([dynamic]Cluster_Island_State,scratch)
+    given:=make([dynamic]Cluster_Island_State,scratch)
+    submeshes:=make([dynamic]u32,scratch)
+    for island in source.islands {
+        if !slice.contains(submeshes[:],island.submesh) {append(&submeshes,island.submesh)}
+    }
+    slice.sort(submeshes[:])
+    for submesh in submeshes {
+        clear(&given)
+        for island,at in source.islands {
+            if island.submesh!=submesh {continue}
+            first:=island.first_rung
+            append(&given,Cluster_Island_State{island=u32(at),grow=1,area=ib.areas[first],error=source.island_rungs[first].error})
+        }
+        islands_clusterize(&ib,given[:],submesh,{},NONE,&clusters,&states) or_return
+    }
+    corners:=make([dynamic]u32,scratch)
+    for &c in clusters {
+        clear(&corners)
+        for s in states[c.first:][:c.count] {
+            rung:=source.island_rungs[island_rung(source.islands[s.island],s.rung)]
+            if _,error:=append(&corners,..source.island_indices[rung.first_index:][:rung.index_count]);error!=nil {return .Out_Of_Memory}
+        }
+        bounds:=cluster_bounds(corners[:],source.positions)
+        c.own={bounds.center,bounds.radius,0}
+    }
+    work:runtime.Arena
+    defer runtime.arena_destroy(&work)
+    depth:=0
+    // A group of one cluster too: a far plant still sheds its leaves, down to a root that cannot.
+    for len(clusters)>0 {
+        level_temp:=runtime.arena_temp_begin(&work)
+        defer runtime.arena_temp_end(level_temp)
+        context.temp_allocator=runtime.arena_allocator(&work)
+        // The groups: runs of order.
+        order:=make([]u32,len(clusters),context.temp_allocator)
+        ends:=make([dynamic]u32,context.temp_allocator)
+        if order==nil {return .Out_Of_Memory}
+        for &o,at in order {o=u32(at)}
+        if len(clusters)>CLUSTER_GROUP_SIZE {
+            centers:=make([]Vec3,len(clusters),context.temp_allocator)
+            sizes:=make([][2]u32,len(clusters),context.temp_allocator)
+            if centers==nil || sizes==nil {return .Out_Of_Memory}
+            for c,at in clusters {centers[at],sizes[at]=c.own.center,{1,0}}
+            if !spatial_runs(centers,sizes,{CLUSTER_GROUP_SIZE,1},order,&ends) {return .Out_Of_Memory}
+        } else {
+            append(&ends,u32(len(clusters)))
+        }
+        clear(&next_clusters);clear(&next_states)
+        first:u32
+        for end in ends {
+            group_temp:=runtime.arena_temp_begin(&work)
+            defer runtime.arena_temp_end(group_temp)
+            group:=make([]Island_Pending,end-first,context.temp_allocator)
+            lods:=make([]Cluster_Lod,end-first,context.temp_allocator)
+            members:=make([dynamic]Cluster_Island_State,context.temp_allocator)
+            group_states:=make([dynamic]Cluster_Island_State,context.temp_allocator)
+            if group==nil || lods==nil {return .Out_Of_Memory}
+            triangles:=0
+            for at,k in order[first:end] {
+                c:=clusters[at]
+                // The clusters of the group with their states apart, as they are output.
+                group[k]=c
+                group[k].first=u32(len(group_states))
+                lods[k]=c.own
+                for s in states[c.first:][:c.count] {
+                    append(&group_states,s)
+                    append(&members,s)
+                    triangles+=int(source.island_rungs[island_rung(source.islands[s.island],s.rung)].index_count/3)
+                }
+            }
+            first=end
+            bounds,bounded:=lod_merge(lods,context.temp_allocator)
+            if !bounded {return .Out_Of_Memory}
+            kept,_,error,left:=islands_reduce(members[:],source.islands,source.island_rungs,ib.areas,bounds.error,int(f32(triangles)*CLUSTER_SIMPLIFY_RATIO))
+            if f32(left)>f32(triangles)*CLUSTER_SIMPLIFY_STUCK {
+                // Stuck: the group is a root.
+                bounds.error=max(f32)
+                islands_output(&ib,group,group_states[:],bounds,depth) or_return
+                continue
+            }
+            bounds.error=max(bounds.error,error)
+            id:=islands_output(&ib,group,group_states[:],bounds,depth) or_return
+            // What remains, by submesh, split in clusters of the next level.
+            survivors:=members[:kept]
+            for submesh in submeshes {
+                clear(&given)
+                for s in survivors {
+                    if source.islands[s.island].submesh==submesh {append(&given,s)}
+                }
+                islands_clusterize(&ib,given[:],submesh,bounds,id,&next_clusters,&next_states) or_return
+            }
+        }
+        clusters,next_clusters=next_clusters,clusters
+        states,next_states=next_states,states
+        depth+=1
+    }
+    return .None
+}

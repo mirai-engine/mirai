@@ -24,9 +24,9 @@ import "mirai:std/serial"
 // The levels of a static mesh are a DAG: a cluster of a level is replaced by
 // clusters of the next one wherever its error is small enough, and a view
 // draws the clusters whose own error is within its threshold and whose
-// parent's is not. The levels of a skinned mesh, or of foliage pruned by
-// islands, are whole meshes (Levels) whose clusters share one sphere, so the
-// same test picks one of them. Every bulk column is LZ but page_data, whose
+// parent's is not; its islands (foliage) are pruned group by group. The
+// levels of a skinned mesh are whole meshes (Levels) whose clusters share one
+// sphere, so the same test picks one of them. Every bulk column is LZ but page_data, whose
 // pages are coded and LZ one by one.
 //
 // A page holds whole groups of one level (the clusters that share a parent)
@@ -37,7 +37,8 @@ import "mirai:std/serial"
 // holds its children. Pages [root_page, page count) are the root: whole
 // levels from the coarsest while they fit in MESH_ROOT_WORDS, and every
 // cluster nothing replaces, so the coarsest cut is always there. Skinned,
-// deformed (morphs) and whole-level (Levels) meshes are root whole.
+// deformed (morphs), pruned (islands) and whole-level (Levels) meshes are
+// root whole.
 //
 // Positions and texture coordinates are integers of grids of the whole mesh
 // (position_step, uv_step, uv1_step), stored in each cluster from its lowest

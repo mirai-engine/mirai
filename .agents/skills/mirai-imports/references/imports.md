@@ -564,16 +564,18 @@ which animal it is.
 
 With `lods=Auto` a static mesh is stored as the cluster DAG of its level 0
 (`asset.mesh_build_dag` on top of `geom.cluster_dag_build`): groups of simplified clusters with
-their border locked and split again up to the roots, with the cuts that its distant rays trace. One
-with skin, or whose foliage is pruned, stores simplified levels after level 0 (up to `LOD_MAX` in
-total), each with its own vertices, which `asset.mesh_build` encodes as whole levels (flag
-`Levels`, `geom.cluster_levels_build`): clusters that share the sphere of the mesh, so that a view
-chooses only one ([mesh](../../mirai-assets/references/kinds.md#mesh)). With `lods=None`, level 0
-alone is stored. What follows describes those whole levels; the
+their border locked and split again up to the roots, with the cuts that its distant rays trace. Its
+foliage is pruned in the DAG too (below). One with skin stores simplified levels after level 0 (up
+to `LOD_MAX` in total), each with its own vertices, which `asset.mesh_build` encodes as whole
+levels (flag `Levels`, `geom.cluster_levels_build`): clusters that share the sphere of the mesh, so
+that a view chooses only one ([mesh](../../mirai-assets/references/kinds.md#mesh)). With
+`lods=None`, level 0 alone is stored. What follows describes those whole levels; the
 [DAG](../../mirai-std/references/geom.md#clusters-and-dag-clusterodin-partitionodin-cluster_dagodin)
 simplifies with the same weights and locks, and crosses seams where they stop it as they do.
 
-- **Level 0.** The source's.
+- **Level 0.** The source's. Its error (`Mesh_Lod.error` of level 0) is how far the outlines of
+  its cards draw from what their masks keep; its clusters keep an own error of 0, so a view however
+  near draws it.
 - **How many.** Each level aims at `LOD_SHARE` of the triangles of the previous one; the series
   ends if a level keeps more than `LOD_KEEP` of the previous one or its error exceeds the radius of
   the mesh (that one is not stored: it would be drawn only where the whole mesh fits in a pixel),
@@ -595,28 +597,21 @@ simplifies with the same weights and locks, and crosses seams where they stop it
   if it has at least `ISLANDS_MIN` small islands: leaves and cards, of up to `ISLAND_MAX_TRIANGLES`
   and of `1/ISLAND_MAX_SHARE` of its triangles. Those islands are not simplified by quadrics, which
   shrink them to nothing: they are split into classes by octave of radius below the largest of
-  their submesh (up to `ISLAND_CLASSES`), and a class pruned j times keeps the first 1/2^j of its
-  islands in a fixed order (a hash of its first triangle, spread over the submesh; each level is a
-  subset of the previous one) and enlarges the remaining ones around their center to the area they
-  all had, up to `ISLAND_GROW_MAX` times their radius. The rest of the submesh (trunk, body) is
-  simplified like any other. Bushes of hundreds of triangles are not small islands: quadrics
-  simplify them with less error than pruning them. Only the levels of `lods=Auto`.
-- **How much is pruned.** Each level prunes each class as far as the error that the rest already
-  has simplified allows; if that would keep more than `LOD_KEEP` of the previous level, it allows
-  the smallest error that prunes one more class, until it does not. The leaves of a tree whose
-  trunk is simplified with little error go away when they are small, and a few large islands (a
-  vine, the large piece of a panel) stay in their class without holding back the others.
+  their submesh (up to `ISLAND_CLASSES`), in a fixed order (a hash of its first triangle, spread
+  over the submesh), and `geom.islands_reduce` prunes them
+  ([islands](../../mirai-std/references/geom.md#islands-cluster_islandsodin)): of a static mesh
+  group by group of its DAG, of a skinned one all of them at each level, which it takes as far as
+  the error that the rest already has simplified allows, and further while the level would keep
+  more than `LOD_KEEP` of the previous one. The rest of the submesh (trunk, body) is simplified
+  like any other. Bushes of hundreds of triangles are not small islands: quadrics simplify them
+  with less error than pruning them. Only the levels of `lods=Auto`.
 - **Cards cut to outlines.** A card of a masked material (see [masked cards](#masked-cards)) is
-  one island whatever its outline holds, and its class steps through the coarser outlines of its
-  cards (`Mesh_Outlines`) before it is pruned: each level takes the coarsest outline whose error
-  (the largest of its cards) the error allowed lets it, and pruning starts at the last. The
-  survivors of a pruned class of outlines grow to the area all of them drew in level 0, the area
-  of what their masks keep.
+  one island whatever its outline holds; its rungs are the outline level 0 draws and the coarser
+  ones of its cards (`Mesh_Outlines`), which it steps through before it is pruned.
 - **Error.** `Mesh_Lod.error` is how far the simplifier moved the surface of level 0 (its position
   error, and that of the attributes where it crossed seams), in object units; with islands, the
-  larger of that, of each class of cards the error of the outline it draws, and of each pruned
-  class the radius of its largest island already enlarged over `ISLAND_PIXELS`. The renderer
-  takes a level where its projection falls within `lod_error_pixels` and that of the next does not
+  larger of that and of the errors of its islands. The renderer takes a level where its projection
+  falls within `lod_error_pixels` and that of the next does not
   ([cut](../../mirai-rendering/references/scene.md#scene-and-instances)).
 - The triangles of a level are grouped by submesh of level 0, with its slot and its box.
 
@@ -635,9 +630,10 @@ A masked card is drawn opaque, cut to the outline of its mask, when it is read
   keeps). Cards on the same rectangle share them. An outline is laid on the card through its
   triangles, one facet per flat run of them, so a bent card stays bent.
 - **Leaf or cluster**, from the mask: a card whose outline needs at most `OUTLINE_TRIANGLES` to
-  draw at most `1/OUTLINE_COVERAGE` of what the mask keeps is a leaf, drawn as its finest outline in
-  level 0 and its coarser ones in the [levels](#levels-of-detail); any other keeps its mask on its
-  tightest convex outline of up to eight corners. A card whose rectangle keeps nothing is dropped.
+  draw at most `1/OUTLINE_COVERAGE` of what the mask keeps is a leaf; any other keeps its mask on
+  its tightest convex outline of up to eight corners. A card whose rectangle keeps nothing is
+  dropped. The outlines of a leaf draw at most `OUTLINE_TRIANGLES` each: level 0 draws the finest
+  of them with its error, and the [levels](#levels-of-detail) the coarser ones.
 - **Materials.** Cut cards are seen from both sides (`two_sided`). A material all of whose
   triangles became outlines is `Opaque`; one that also keeps masked triangles stays as it is and
   lends an opaque copy, `<name> outline`, to a slot of the outlines (`CUTOUT_SLOT` added to the id
