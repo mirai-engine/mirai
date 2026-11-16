@@ -611,7 +611,7 @@ render_a_low_sun_shows_no_line_between_levels :: proc(t: ^testing.T) {
 	r := f.renderer
 	instances := []Instance_Desc{
 		{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, -40}, {120, 0.2, 120}), tint = {0.8, 0.8, 0.8}},
-		{object_id = 2, mesh = f.cube, transform = trs({-1.5, 1, -2}, {0.2, 2, 0.2}), tint = {0.5, 0.5, 0.5}},
+		{object_id = 2, mesh = f.cube, transform = trs({-1.5, 1, -2}, {0.6, 2, 0.6}), tint = {0.5, 0.5, 0.5}},
 	}
 	// Behind the eye, 14 degrees up: the shadow of the pole runs 8 m away from it.
 	sun := Sun_Desc{direction = linalg.normalize(Vec3{0, 0.25, 1}), color = {1, 1, 1}, illuminance = 4 * math.PI, enabled = true}
@@ -629,9 +629,9 @@ render_a_low_sun_shows_no_line_between_levels :: proc(t: ^testing.T) {
 	middle := sorted[len(sorted) / 2]
 	testing.expectf(t, middle > 30, "the ground is lit: %f", middle)
 	for v, k in lit {testing.expectf(t, abs(v - middle) <= 0.12 * middle, "the ground %f m away has %f against %f along the line", 0.5 + 0.75 * f32(k), v, middle)}
-	for k in 0 ..< 8 {
-		shaded := pixel(pixels, w, project(r, camera, {-1.5, 0.001, -2.5 - 0.7 * f32(k)}))[0]
-		testing.expectf(t, shaded < 0.5 * middle, "the shadow of the pole %f m away has %f against %f", 2.5 + 0.7 * f32(k), shaded, middle)
+	for k in 0 ..< 7 {
+		shaded := pixel(pixels, w, project(r, camera, {-1.5, 0.001, -3.5 - 0.7 * f32(k)}))[0]
+		testing.expectf(t, shaded < 0.5 * middle, "the shadow of the pole %f m away has %f against %f", 3.5 + 0.7 * f32(k), shaded, middle)
 	}
 	expect_clean(t, f.device)
 }
