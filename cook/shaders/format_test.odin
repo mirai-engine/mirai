@@ -194,8 +194,10 @@ paths_sort_by_component_and_relate_with_slashes :: proc(t:^testing.T) {
 }
 
 @(private="file")
+// The reflection a text holds; TABLE in it stands for the slot of the texture table.
 reflection :: proc(t:^testing.T,text:string) -> json.Object {
-    value,err:=json.parse_string(text,parse_integers=true,allocator=context.temp_allocator)
+    slotted,_:=strings.replace_all(text,"TABLE",fmt.tprint(TABLE_SLOT),context.temp_allocator)
+    value,err:=json.parse_string(slotted,parse_integers=true,allocator=context.temp_allocator)
     testing.expect_value(t,err,json.Error.None)
     return value.(json.Object)
 }
@@ -205,7 +207,7 @@ resources_are_the_used_parameters_sorted_by_slot :: proc(t:^testing.T) {
     data:=reflection(t,`{"parameters":[
         {"name":"results","binding":{"kind":"descriptorTableSlot","index":4},"type":{"kind":"resource","baseShape":"structuredBuffer","access":"readWrite"}},
         {"name":"unused","binding":{"kind":"descriptorTableSlot","index":9},"type":{"kind":"resource","baseShape":"texture2D"}},
-        {"name":"table","binding":{"kind":"descriptorTableSlot","space":1,"index":35},"type":{"kind":"array","elementCount":0,"elementType":{"kind":"resource","baseShape":"texture2D"}}},
+        {"name":"table","binding":{"kind":"descriptorTableSlot","space":1,"index":TABLE},"type":{"kind":"array","elementCount":0,"elementType":{"kind":"resource","baseShape":"texture2D"}}},
         {"name":"params","binding":{"kind":"descriptorTableSlot","index":1},"type":{"kind":"constantBuffer"}},
         {"name":"image","binding":{"kind":"descriptorTableSlot","index":20},"type":{"kind":"resource","baseShape":"texture2D","access":"readWrite"}},
         {"name":"scene","binding":{"kind":"descriptorTableSlot","index":29},"type":{"kind":"resource","baseShape":"accelerationStructure"}},
@@ -213,20 +215,20 @@ resources_are_the_used_parameters_sorted_by_slot :: proc(t:^testing.T) {
       "entryPoints":[{"name":"main","bindings":[
         {"name":"results","binding":{"kind":"descriptorTableSlot","index":4,"used":1}},
         {"name":"unused","binding":{"kind":"descriptorTableSlot","index":9,"used":0}},
-        {"name":"table","binding":{"kind":"descriptorTableSlot","space":1,"index":35,"used":1}},
+        {"name":"table","binding":{"kind":"descriptorTableSlot","space":1,"index":TABLE,"used":1}},
         {"name":"params","binding":{"kind":"descriptorTableSlot","index":1,"used":true}},
         {"name":"image","binding":{"kind":"descriptorTableSlot","index":20,"used":1}},
         {"name":"scene","binding":{"kind":"descriptorTableSlot","index":29,"used":1}},
         {"name":"filter","binding":{"kind":"descriptorTableSlot","index":2,"used":1}}]}]}`)
     resources,problem:=reflected_resources(data,context.temp_allocator)
     testing.expect_value(t,problem,"")
-    expected:=[]Binding{{1,"Uniform_Buffer"},{2,"Sampler"},{4,"Storage_Buffer_RW"},{20,"Storage_Texture"},{29,"Accel"},{35,"Texture_Table"}}
+    expected:=[]Binding{{1,"Uniform_Buffer"},{2,"Sampler"},{4,"Storage_Buffer_RW"},{20,"Storage_Texture"},{29,"Accel"},{TABLE_SLOT,"Texture_Table"}}
     testing.expect_value(t,len(resources),len(expected))
     for binding,i in expected {if i<len(resources) {testing.expect_value(t,resources[i],binding)}}
     // A table with a size is not the one of the RHI, which grows.
     sized:=reflection(t,`{"parameters":[
-        {"name":"table","binding":{"kind":"descriptorTableSlot","space":1,"index":35},"type":{"kind":"array","elementCount":1024,"elementType":{"kind":"resource","baseShape":"texture2D"}}}],
-      "entryPoints":[{"name":"main","bindings":[{"name":"table","binding":{"kind":"descriptorTableSlot","space":1,"index":35,"used":1}}]}]}`)
+        {"name":"table","binding":{"kind":"descriptorTableSlot","space":1,"index":TABLE},"type":{"kind":"array","elementCount":1024,"elementType":{"kind":"resource","baseShape":"texture2D"}}}],
+      "entryPoints":[{"name":"main","bindings":[{"name":"table","binding":{"kind":"descriptorTableSlot","space":1,"index":TABLE,"used":1}}]}]}`)
     _,problem=reflected_resources(sized,context.temp_allocator)
     testing.expect(t,strings.contains(problem,"texture table"),problem)
 }
@@ -237,10 +239,10 @@ resources_outside_the_portable_binding_abi_are_rejected :: proc(t:^testing.T) {
     cases:=[]Case{
         {`"binding":{"kind":"descriptorTableSlot","index":30},"type":{"kind":"constantBuffer"}`,"exceeds the 30 portable slots"},
         {`"binding":{"kind":"descriptorTableSlot","index":16},"type":{"kind":"samplerState"}`,"exceeds 16 Metal indices"},
-        {`"binding":{"kind":"descriptorTableSlot","index":35},"type":{"kind":"resource","baseShape":"texture2D"}`,"overlaps the texture table"},
+        {`"binding":{"kind":"descriptorTableSlot","index":TABLE},"type":{"kind":"resource","baseShape":"texture2D"}`,"overlaps the texture table"},
         {`"binding":{"kind":"descriptorTableSlot","index":3},"type":{"kind":"array","elementCount":4,"elementType":{"kind":"resource","baseShape":"texture2D"}}`,"only set 0 scalar resources"},
         {`"binding":{"kind":"descriptorTableSlot","space":2,"index":3},"type":{"kind":"constantBuffer"}`,"only set 0 scalar resources"},
-        {`"binding":{"kind":"descriptorTableSlot","space":1,"index":35},"type":{"kind":"array","elementCount":0,"elementType":{"kind":"resource","baseShape":"textureCube"}}`,"must be Texture2D"},
+        {`"binding":{"kind":"descriptorTableSlot","space":1,"index":TABLE},"type":{"kind":"array","elementCount":0,"elementType":{"kind":"resource","baseShape":"textureCube"}}`,"must be Texture2D"},
         {`"binding":{"kind":"uniform","offset":0},"type":{"kind":"scalar"}`,"explicit descriptor binding"},
         {`"binding":{"kind":"descriptorTableSlot","index":3},"type":{"kind":"resource","baseShape":"textureCube"}`,"unsupported resource type"},
         {`"binding":{"kind":"descriptorTableSlot","index":3},"type":{"kind":"struct"}`,"unsupported parameter type"},
