@@ -273,8 +273,9 @@ The `Custom` passes after `Output` generate the image that the window shows betw
 frame and the current one:
 
 - They read `Ldr` before `Output` draws over it the scene panels, the debug lines and the screen
-  layers, and write `Generated`, of output size. They run only in the window views of a frame that
-  presents, never in a texture view or in a capture.
+  layers, and write `Generated`, of output size. They run only in the window views of a frame
+  whose device presents the generated image: never in a texture view, in a capture or without a
+  window (a headless editor or player), where nobody would be shown it.
 - Afterwards, `overlays_pass` draws the same over `Ldr` and over `Generated`; the UI vertices are
   uploaded once. In split screen `compose_views` also composes the generated images (a view that
   did not generate puts its own).
