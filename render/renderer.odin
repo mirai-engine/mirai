@@ -394,7 +394,6 @@ Targets :: struct {
 	taa_frames:              [2]rhi.Texture, // the frames the history of each of its pixels holds
 	taa_valid:               bool,
 	hiz:                     [2]rhi.Texture, // depth pyramids: this frame / last frame
-	hiz_width, hiz_height:   u32,
 	hiz_levels:              u32,
 	hiz_valid:               bool, // the previous pyramid holds last frame's depth
 	contact_scale:           u32, // the pixels across a point of contact_points
@@ -1880,12 +1879,15 @@ create_targets :: proc(r: ^Renderer, v: ^View_State, width, height: u32, scale: 
 	for i in 0 ..< 2 {t.taa[i] = rhi.texture_create(d, {width = t.output_width, height = t.output_height, format = .RGBA16_Float, usage = HISTORY_USAGE, name = "taa history"})}
 	for i in 0 ..< 2 {t.taa_frames[i] = rhi.texture_create(d, {width = t.output_width, height = t.output_height, format = .R16_Float, usage = HISTORY_USAGE, name = "taa frames"})}
 	t.taa_valid = false
-	t.hiz_width = max(t.width / 2, 1)
-	t.hiz_height = max(t.height / 2, 1)
+	// Level 0 covers the view in texels of 2x2 pixels, each level above it
+	// those of the one below, to a single texel (hiz.comp): levels of powers
+	// of two hold each of them.
+	side := [2]u32{1, 1}
+	for &extent, axis in side {for extent < (([2]u32{t.width, t.height}[axis] + 1) / 2) {extent *= 2}}
 	levels: u32 = 1
-	for (max(t.hiz_width, t.hiz_height) >> levels) > 0 && levels < rhi.MAX_TEXTURE_MIPS {levels += 1}
+	for (max(side.x, side.y) >> levels) > 0 && levels < rhi.MAX_TEXTURE_MIPS {levels += 1}
 	t.hiz_levels = levels
-	for i in 0 ..< 2 {t.hiz[i] = rhi.texture_create(d, {width = t.hiz_width, height = t.hiz_height, mip_levels = levels, format = .R32_Float, usage = {.Sampled, .Storage}, name = "depth pyramid"})}
+	for i in 0 ..< 2 {t.hiz[i] = rhi.texture_create(d, {width = side.x, height = side.y, mip_levels = levels, format = .R32_Float, usage = {.Sampled, .Storage}, name = "depth pyramid"})}
 	t.hiz_valid = false
 	t.ldr = rhi.texture_create(d, {width = t.output_width, height = t.output_height, format = .RGBA8_Unorm, usage = {.Color_Target, .Sampled, .Transfer_Src}, name = "ldr"})
 	if main && !ui_layer_targets(r, t.ui_layers[:], t.ui_blur[:], t.output_width, t.output_height) {return false}

@@ -170,7 +170,9 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID, uint3 dispatc
             if (!posed && cut.request) page_request(instance_mesh(inst), mesh, c.child_page, cut.pixels);
             if (params.occlusion != 0u) {
                 if (params.phase == 0u) {
-                    if (occluded(low, high, frame.prev_view_proj, frame.prev_eye.xyz, frame.prev_depth_plane)) {
+                    float3 before_low, before_high;
+                    box_before(inst, low, high, before_low, before_high);
+                    if (occluded(before_low, before_high, frame.prev_view_proj, frame.prev_eye.xyz, frame.prev_depth_plane)) {
                         uint slot;
                         InterlockedAdd(cull_state[CULL_CANDIDATE_COUNT], 1u, slot);
                         if (slot < params.candidate_capacity) {

@@ -103,6 +103,40 @@ gpu_what_phase_1_rescues_is_drawn_once :: proc(t: ^testing.T) {
 	testing.expectf(t, rhi.device_validation_errors(device) == 0, "validation: %s", rhi.device_validation_message(device))
 }
 
+// Phase 0 tests an instance where it was against the pyramid of the frame
+// before, which drew it there: one that moves away behind where it was is
+// drawn in phase 0, not hidden by itself and left to phase 1.
+@(test)
+gpu_what_moves_away_is_drawn_in_phase_0 :: proc(t: ^testing.T) {
+	f: Fixture
+	if !skin_fixture(t, &f, false) {return}
+	defer fixture_destroy(&f)
+	r, device := f.renderer, f.device
+	box := [8]Mesh_Vertex{}
+	for &v, i in box {v = {position = {f32(i & 1) - 0.5, f32(i >> 1 & 1) - 0.5, f32(i >> 2) - 0.5}, normal = {0, 1, 0}, color = 1, tangent = {1, 0, 0, 1}}}
+	indices := [36]u32{0, 2, 1, 1, 2, 3, 4, 5, 6, 5, 7, 6, 0, 1, 4, 1, 5, 4, 2, 6, 3, 3, 6, 7, 0, 4, 2, 2, 4, 6, 1, 3, 5, 3, 7, 5}
+	cube, added := mesh_add(r, box[:], indices[:])
+	if !testing.expect(t, added) {return}
+	at :: proc(z: f32) -> (m: Mat4) {
+		m = Mat4(1)
+		m[0, 0], m[1, 1], m[2, 2], m[2, 3] = 3, 3, 3, z
+		return
+	}
+	scene_given(r, {{object_id = 1, mesh = cube, transform = at(-4), tint = 1}}, nil, {}, {})
+	camera := Camera{position = {0, 0, 0}, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.1, far = 200, exposure = UNIT_EXPOSURE}
+	for _ in 0 ..< 4 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	late: Visible_Kind
+	for step in 0 ..< 8 {
+		testing.expect(t, scene_move(r, {0}, {at(-4 - 2 * f32(step + 1))}))
+		testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+		late.instances = max(late.instances, r.stats.visible_late.instances)
+		late.clusters = max(late.clusters, r.stats.visible_late.clusters)
+	}
+	testing.expectf(t, r.stats.visible_kinds[.Single].instances == 1, "the cube is drawn: %v", r.stats.visible_kinds[.Single])
+	testing.expectf(t, late.instances == 0 && late.clusters == 0, "phase 1 drew none of it: %v", late)
+	testing.expectf(t, rhi.device_validation_errors(device) == 0, "validation: %s", rhi.device_validation_message(device))
+}
+
 // The clusters whose pixels their alpha decides are drawn nearest first: the
 // visible list holds them by the depth of their boxes, whatever order the
 // cull found them in, so the depth test turns away what they hide before
