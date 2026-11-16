@@ -2,6 +2,8 @@
 //! variant hw MIRAI_HW_RT=1
 // unlayered: while no instance with layers is in sight (gbuffer.slang).
 //! constant unlayered MIRAI_GBUFFER_NO_LAYERS
+// unlisted: while no light is without shadows, and no tile has a list (light_lists.slang).
+//! constant unlisted MIRAI_NO_LIGHT_LISTS
 // The last pass of the direct light of a view (direct_samples.slang): each
 // pixel takes what its points hold (direct_points.comp, direct_spread.comp),
 // with a point for each 2x2 pixels from the four around it of its surface.
@@ -76,7 +78,7 @@ float3 filter_light(int2 p, float depth, float3 normal, float3 open, float part,
             known += luminance(irradiance);
         }
     }
-    light += light_list_lighting(s, known, light_list_of_pixel(p));
+    if (!MIRAI_NO_LIGHT_LISTS) light += light_list_lighting(s, known, light_list_of_pixel(p));
     float bias = view_bias(pixel.distance);
 #ifdef MIRAI_HOOK_LIGHTS
     light += direct_lighting(s, bias, 0u, LIGHTS_EXTENSION);

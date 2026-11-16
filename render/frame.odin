@@ -1376,7 +1376,8 @@ pass_direct :: proc(p: ^Pass) -> bool {
 	}
 	lists := light_lists_record(p) or_return
 	rhi.cmd_timestamp(cmd, "direct pixels")
-	rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Direct_Filter, unlayered, unlayered)^)
+	filter := unlayered + ({DIRECT_FILTER_COMP_UNLISTED} if p.frame.shadowless_lights == 0 else {})
+	rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Direct_Filter, filter, {DIRECT_FILTER_COMP_UNLAYERED, DIRECT_FILTER_COMP_UNLISTED})^)
 	set_params(cmd, &params)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
