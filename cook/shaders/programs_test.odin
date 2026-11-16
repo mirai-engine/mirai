@@ -245,7 +245,7 @@ programs_reuse_a_warm_reflection_and_reflect_again_only_what_changed :: proc(t:^
     fixture_write(t,f.project,"shaders/helper.slang","float helper() {return 2;}\n")
     _,problem=programs_of(&f)
     testing.expect_value(t,problem,"")
-    testing.expect_value(t,f.runner.runs,2)
+    testing.expect_value(t,f.runner.runs,3)
     // A cache file that is not what its hash says is reflected again.
     f.runner.runs=0
     entries,_:=os.read_all_directory_by_path(f.cache,context.temp_allocator)
@@ -345,9 +345,10 @@ program_declaration_and_metadata_lines_are_recognized :: proc(t:^testing.T) {
 // program, and one more for the Attributes of a Vfx one.
 @(private="file")
 // The compilations of a cold reflection: a Surface program has its alpha
-// probed too (alpha_probe), unless the cache has it.
+// and its derivatives probed too (alpha_probe, derivative_probe), unless the
+// cache has them.
 reflections :: proc(catalog:Catalog,probes:=true) -> (runs:int) {
-    for program in catalog.programs {runs+=program.domain==.Vfx || probes && program.domain==.Surface?2:1}
+    for program in catalog.programs {runs+=program.domain==.Vfx?2:probes && program.domain==.Surface?3:1}
     return
 }
 
@@ -392,6 +393,35 @@ surface_coverage_holds_the_programs_whose_alpha_is_not_the_default :: proc(t:^te
     testing.expect_value(t,f.runner.runs,0)
     mapped,_:=program_named(warm,"Mapped")
     testing.expect(t,mapped.coverage)
+}
+
+// The include of a Surface program says whether its evaluation takes
+// derivatives across the pixels of a quad: a sample by a plain uv or a
+// derivative of its own does; one by a dual uv, by the footprint of the
+// point or by the standard model of its material does not.
+@(test)
+surface_program_include_says_whether_it_takes_quad_derivatives :: proc(t:^testing.T) {
+    f:Programs_Fixture
+    if !programs_fixture(t,&f) {return}
+    Case :: struct {name,body:string,derivatives:bool}
+    cases:=[]Case{
+        {"Implicit","s.base_color=mirai_sample_texture(ctx,p.map,ctx.uv0*4.0,ctx.lod).rgb;",true},
+        {"Differenced","s.roughness=length(ddx(ctx.world_position));",true},
+        {"Dual","Mirai_Dual2 uv=mirai_uv0(ctx)*4.0+sin(mirai_uv1(ctx));if (p.tint.x>0.5) {s.base_color=mirai_sample_texture(ctx,p.map,uv).rgb;}",false},
+        {"Projected","s.base_color=mirai_sample_triplanar(ctx,p.map,2.0,4.0).rgb;",false},
+        {"Standard","s=mirai_surface_standard(ctx);s.emission+=p.tint;",false},
+        {"Plain","s.base_color=p.tint;",false},
+    }
+    for c in cases {
+        fixture_write(t,f.project,fmt.tprintf("shaders/%s.slang",c.name),fmt.tprintf("//! mirai surface %s\nnamespace %s {{struct Parameters {{float3 tint;uint map;}}; Mirai_Surface evaluate(Mirai_Surface_Context ctx,Parameters p) {{Mirai_Surface s=mirai_surface_default(ctx);%sreturn s;}}}}\n",c.name,c.name,c.body))
+    }
+    _,problem:=programs_of(&f)
+    testing.expect_value(t,problem,"")
+    for c in cases {
+        own,_:=os.read_entire_file(path_join(f.output,"include",SURFACE_FOLDER,c.name,SURFACE_INCLUDE,allocator=context.temp_allocator),context.temp_allocator)
+        said:=fmt.tprintf("mirai_program_derivatives = %v;",c.derivatives)
+        testing.expectf(t,strings.contains(string(own),said),"%s: its include says %s",c.name,said)
+    }
 }
 
 // The stages that trace include a program with coverage for its alpha alone:

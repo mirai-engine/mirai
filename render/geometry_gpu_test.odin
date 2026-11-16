@@ -74,7 +74,10 @@ gpu_what_phase_1_rescues_is_drawn_once :: proc(t: ^testing.T) {
 	if !testing.expect(t, added) {return}
 	wall := Mat4(1)
 	wall[0, 0], wall[1, 1], wall[2, 2], wall[2, 3] = 60, 60, 1, 5
-	scene_given(r, {{object_id = 1, mesh = cube, transform = wall, tint = 1}}, nil, {}, {})
+	// And an instance of the scene behind it, which the wall hides as well.
+	hidden := Mat4(1)
+	hidden[2, 3] = 20
+	scene_given(r, {{object_id = 1, mesh = cube, transform = wall, tint = 1}, {object_id = 2, mesh = cube, transform = hidden, tint = 1}}, nil, {}, {})
 	N :: 30
 	field := make([]Batch_Instance, N * N, context.temp_allocator)
 	for &b, i in field {b = batch_instance({f32(i % N) - N / 2, f32(i / N) * 0.7 - 10, 20}, 1, {0.5, 0.5, 0.5})}
@@ -83,6 +86,7 @@ gpu_what_phase_1_rescues_is_drawn_once :: proc(t: ^testing.T) {
 	camera := Camera{position = {0, 0, -10}, forward = {0, 0, 1}, up = {0, 1, 0}, fov_y = 60, near = 0.1, far = 200, exposure = UNIT_EXPOSURE}
 	for _ in 0 ..< 6 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
 	testing.expectf(t, r.stats.visible_kinds[.Batch].clusters == 0, "behind the wall the field is hidden: %v", r.stats.visible_kinds[.Batch])
+	testing.expectf(t, r.stats.visible_kinds[.Single].instances == 1 && r.stats.visible_late.instances == 0, "the wall is drawn in phase 0 and hides the instance behind it: %v, late %v", r.stats.visible_kinds[.Single], r.stats.visible_late)
 	// The wall goes: the pyramid of the frame before still hides the field, phase 1 draws it.
 	scene_given(r, nil, nil, {}, {})
 	most: u32
@@ -96,6 +100,86 @@ gpu_what_phase_1_rescues_is_drawn_once :: proc(t: ^testing.T) {
 	testing.expect(t, late > 0, "phase 1 rescued the field")
 	testing.expectf(t, steady > 0 && most == steady, "drawn once: at most %d clusters, %d once it settles", most, steady)
 	testing.expect_value(t, r.stats.visible_late.clusters, u32(0))
+	testing.expectf(t, rhi.device_validation_errors(device) == 0, "validation: %s", rhi.device_validation_message(device))
+}
+
+// Phase 0 tests an instance where it was against the pyramid of the frame
+// before, which drew it there: one that moves away behind where it was is
+// drawn in phase 0, not hidden by itself and left to phase 1.
+@(test)
+gpu_what_moves_away_is_drawn_in_phase_0 :: proc(t: ^testing.T) {
+	f: Fixture
+	if !skin_fixture(t, &f, false) {return}
+	defer fixture_destroy(&f)
+	r, device := f.renderer, f.device
+	box := [8]Mesh_Vertex{}
+	for &v, i in box {v = {position = {f32(i & 1) - 0.5, f32(i >> 1 & 1) - 0.5, f32(i >> 2) - 0.5}, normal = {0, 1, 0}, color = 1, tangent = {1, 0, 0, 1}}}
+	indices := [36]u32{0, 2, 1, 1, 2, 3, 4, 5, 6, 5, 7, 6, 0, 1, 4, 1, 5, 4, 2, 6, 3, 3, 6, 7, 0, 4, 2, 2, 4, 6, 1, 3, 5, 3, 7, 5}
+	cube, added := mesh_add(r, box[:], indices[:])
+	if !testing.expect(t, added) {return}
+	at :: proc(z: f32) -> (m: Mat4) {
+		m = Mat4(1)
+		m[0, 0], m[1, 1], m[2, 2], m[2, 3] = 3, 3, 3, z
+		return
+	}
+	scene_given(r, {{object_id = 1, mesh = cube, transform = at(-4), tint = 1}}, nil, {}, {})
+	camera := Camera{position = {0, 0, 0}, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.1, far = 200, exposure = UNIT_EXPOSURE}
+	for _ in 0 ..< 4 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	late: Visible_Kind
+	for step in 0 ..< 8 {
+		testing.expect(t, scene_move(r, {0}, {at(-4 - 2 * f32(step + 1))}))
+		testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+		late.instances = max(late.instances, r.stats.visible_late.instances)
+		late.clusters = max(late.clusters, r.stats.visible_late.clusters)
+	}
+	testing.expectf(t, r.stats.visible_kinds[.Single].instances == 1, "the cube is drawn: %v", r.stats.visible_kinds[.Single])
+	testing.expectf(t, late.instances == 0 && late.clusters == 0, "phase 1 drew none of it: %v", late)
+	testing.expectf(t, rhi.device_validation_errors(device) == 0, "validation: %s", rhi.device_validation_message(device))
+}
+
+// The clusters whose pixels their alpha decides are drawn nearest first: the
+// visible list holds them by the depth of their boxes, whatever order the
+// cull found them in, so the depth test turns away what they hide before
+// their alpha runs.
+@(test)
+gpu_masked_clusters_are_drawn_nearest_first :: proc(t: ^testing.T) {
+	f: Fixture
+	if !skin_fixture(t, &f, false) {return}
+	defer fixture_destroy(&f)
+	r, device := f.renderer, f.device
+	box := [8]Mesh_Vertex{}
+	for &v, i in box {v = {position = {f32(i & 1) - 0.5, f32(i >> 1 & 1) - 0.5, f32(i >> 2) - 0.5}, normal = {0, 1, 0}, color = 1, tangent = {1, 0, 0, 1}}}
+	indices := [36]u32{0, 2, 1, 1, 2, 3, 4, 5, 6, 5, 7, 6, 0, 1, 4, 1, 5, 4, 2, 6, 3, 3, 6, 7, 0, 4, 2, 2, 4, 6, 1, 3, 5, 3, 7, 5}
+	cube, added := mesh_add(r, box[:], indices[:])
+	if !testing.expect(t, added) {return}
+	masked := DEFAULT_MATERIAL
+	masked.alpha_mode = .Mask
+	materials_set(r, {masked})
+	// Farthest first, side by side so none hides another.
+	N :: 8
+	instances: [N]Instance_Desc
+	for &instance, i in instances {
+		transform := Mat4(1)
+		transform[0, 3], transform[2, 3] = f32(i % 2) * 2 - 1, -4 - 6 * f32(N - 1 - i)
+		instance = {object_id = u64(i + 1), mesh = cube, transform = transform, material = 1, tint = 1}
+	}
+	scene_given(r, instances[:], nil, {}, {})
+	camera := Camera{position = {0, 0, 0}, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.1, far = 200, exposure = UNIT_EXPOSURE}
+	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	rhi.device_wait_idle(device)
+	state: [1]Gpu_Cull_State
+	if !testing.expect(t, rhi.buffer_read_slice(device, r.scene.cull_state_buffer, 0, state[:])) {return}
+	draw := state[0].draws[0][RASTER_BIN_TESTED]
+	if !testing.expectf(t, draw.instance_count == N, "every cube is drawn tested in phase 0: %v", draw) {return}
+	visible: [N][4]u32
+	if !testing.expect(t, rhi.buffer_read_slice(device, r.scene.visible_buffer, u64(draw.first_instance) * size_of([4]u32), visible[:])) {return}
+	last := f32(0)
+	for entry, k in visible {
+		inst := r.scene.instances[entry[0]]
+		depth := -(inst.bounds_min.z + inst.bounds_max.z) * 0.5
+		testing.expectf(t, depth >= last, "entry %d at %v m is not behind the one before, at %v m", k, depth, last)
+		last = depth
+	}
 	testing.expectf(t, rhi.device_validation_errors(device) == 0, "validation: %s", rhi.device_validation_message(device))
 }
 

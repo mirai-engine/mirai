@@ -155,6 +155,18 @@
   - Surface in raster: derivatives and bias.
   - Surface with `ctx.ray` (also hits rebuilt in fragment shaders): LOD of the ray footprint.
   - PostProcess: derivatives and bias.
+- A Surface program carries exact screen derivatives through what it computes with the dual
+  numbers of `mirai_dual.slang` (`Mirai_Dual`, `Mirai_Dual2` to `4`: value, `dx`, `dy`; the
+  arithmetic and the functions of shaders, `mirai_dual` from plain values, components and
+  vectors of them): `mirai_uv0(ctx)`, `mirai_uv1(ctx)`, `mirai_world_position(ctx)` and
+  `mirai_vertex_normal(ctx)` give its inputs with their derivatives (in a ray, the width of its
+  cone), and `mirai_sample_texture(ctx,index,dual_uv)` filters by them with the bias of the
+  view, in any branch. The generation probes each Surface program (`derivative_probe`: its
+  evaluation compiled alone in a fragment stage, a plain-uv sample by implicit level, the other
+  samples by none) and writes in its include `mirai_program_derivatives`, true where anything
+  of the optimized code reads a derivative across a quad; the resolve of one without
+  evaluates no quad again ([programs](materials.md#surface-programs-in-rays-and-raster)). The
+  cache of its coverage keeps it.
 - `mirai_sample_texture_level` receives an explicit mip; `mirai_sample_texture_grad`, gradients.
   `mirai_load_texture(index,texel)` loads a texel of the level 0 of a texture that does not stream
   (the data a plugin writes: a map of weights, a table) without filtering or reporting it.

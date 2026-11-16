@@ -100,7 +100,8 @@ feedback_image :: proc(t: ^testing.T, r: ^Renderer, camera: Camera) -> []u8 {
 // The levels the feedback keeps are never coarser than the sampler reads:
 // over a set of views (near, far, grazing) the image is the one every level
 // gives, byte for byte, and a far view keeps fewer levels; the same whether a
-// map of the material or a program (testdata/sampled.slang) samples it.
+// map of the material, a program by a plain uv (testdata/sampled.slang) or
+// one by a uv with its derivatives (testdata/tiled.slang) samples it.
 @(test)
 texture_feedback_keeps_every_level_the_image_reads :: proc(t: ^testing.T) {
 	f: Fixture
@@ -110,21 +111,21 @@ texture_feedback_keeps_every_level_the_image_reads :: proc(t: ^testing.T) {
 	SIDE :: 1024
 	quad := feedback_quad(r)
 	floor := scaled(4)
-	sampled := program_find(r, "Sampled", .Surface)
-	if !testing.expect(t, sampled != nil, "the tests have the Sampled program") {return}
+	sampled, tiled := program_find(r, "Sampled", .Surface), program_find(r, "Tiled", .Surface)
+	if !testing.expect(t, sampled != nil && tiled != nil, "the tests have the Sampled and Tiled programs") {return}
 	// A texture each: the feedback of the frames before the next one does not reach it.
-	wholes: [2]Texture_Data
-	handles: [2]Texture_Handle
+	wholes: [3]Texture_Data
+	handles: [3]Texture_Handle
 	defer for &whole in wholes {texture_data_destroy(&whole)}
-	for by_program, at in ([]bool{false, true}) {
-		sampler := "program" if by_program else "map"
+	for program, at in ([]^Program{nil, sampled, tiled}) {
+		sampler := "map" if program == nil else program.name
 		handles[at], wholes[at] = noise_texture(t, r, SIDE, SIDE)
 		texture, whole := handles[at], wholes[at]
 		material := DEFAULT_MATERIAL
-		if by_program {
-			material.program_id = sampled.id
-			material.custom_params = program_defaults(sampled)
-			testing.expect(t, program_parameter_set_texture(r, &material.custom_params, program_parameter(sampled, "image"), texture))
+		if program != nil {
+			material.program_id = program.id
+			material.custom_params = program_defaults(program)
+			testing.expect(t, program_parameter_set_texture(r, &material.custom_params, program_parameter(program, "image"), texture))
 		} else {
 			material.textures[.Base_Color] = texture
 		}

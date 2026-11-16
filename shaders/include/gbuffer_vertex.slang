@@ -30,16 +30,22 @@ struct Gbuffer_Vertex {
 #endif
 };
 
-// A vertex at world in this frame and at prev_world in the frame before: its
-// motion vectors compare unjittered positions, and it is rasterized jittered.
-void gbuffer_vertex_place(inout Gbuffer_Vertex output, float3 world, float3 prev_world) {
+// A vertex at world in this frame, rasterized jittered: what the raster of
+// the visibility target places.
+void gbuffer_vertex_place_now(inout Gbuffer_Vertex output, float3 world) {
     output.out_world = world;
 #ifdef MIRAI_CLIP_PLANE
     output.clip = dot(frame.clip_plane.xyz, world) + frame.clip_plane.w;
 #endif
+    output.position = view_clip(world);
+}
+
+// A vertex at world in this frame and at prev_world in the frame before: its
+// motion vectors compare unjittered positions, and it is rasterized jittered.
+void gbuffer_vertex_place(inout Gbuffer_Vertex output, float3 world, float3 prev_world) {
+    gbuffer_vertex_place_now(output, world);
     output.out_clip = view_clip_unjittered(world);
     output.out_prev_clip = view_clip_previous(prev_world);
-    output.position = view_clip(world);
 #ifdef MIRAI_EDITOR_HIGHLIGHT
     if (MIRAI_EDITOR_HIGHLIGHT) output.position = output.out_clip;
 #endif

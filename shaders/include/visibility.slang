@@ -13,9 +13,12 @@ uint visibility_entry(uint id) { return (id - 1u) / CLUSTER_TRIANGLES; }
 uint visibility_triangle(uint id) { return (id - 1u) % CLUSTER_TRIANGLES; }
 
 // The depth a pixel of a Surface program (0: of none) is classified at, in
-// the program depth target, which the resolve of that program tests for
-// equality: a value f32 holds exactly, and 0 where nothing is.
-float visibility_program_depth(uint program) { return float(program + 1u) * (1.0 / 65536.0); }
+// the 16-bit program depth target, which the resolve of that program tests
+// for equality; 0 where nothing is. A quarter of a step past the step of the
+// program: a device that rounds to the nearest step and one that truncates
+// store the same one, from the depth the classify writes and from the one
+// the resolve interpolates, whatever the last bit of either.
+float visibility_program_depth(uint program) { return (float(program + 1u) + 0.25) * (1.0 / 65535.0); }
 
 // The vertex of the raster of the visibility target that is not tested.
 struct Visibility_Vertex {
