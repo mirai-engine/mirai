@@ -217,8 +217,6 @@ resolve_pass :: proc(p: ^Pass, nested: bool) {
 		rhi.cmd_bind_pipeline(cmd, r.pipelines[.Program_Depth])
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.visible_buffer)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.visibility)
-		// A nested view counts with its cull, apart.
-		rhi.cmd_bind_buffer(cmd, SLOT_PASS2, r.scratch_buffer if nested else r.stats_buffer)
 		rhi.cmd_draw(cmd, 3)
 	}
 	rhi.cmd_end_render_pass(cmd)
