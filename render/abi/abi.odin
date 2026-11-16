@@ -247,6 +247,9 @@ HEAD_WORDS         :: 8
 RASTER_BIN_TWO_SIDED :: 1
 RASTER_BIN_TESTED    :: 2
 RASTER_BINS          :: 4
+// The tested bins draw their clusters nearest first: by buckets of the
+// logarithm of their depth from the near plane of the view to its far one.
+RASTER_DEPTH_BUCKETS :: 256
 
 // The words of render.Gpu_Cull_State.
 CULL_DRAWS              :: 0  // of each phase and raster bin: vertices, instances (its visible clusters), first vertex, first instance

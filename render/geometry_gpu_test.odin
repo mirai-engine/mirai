@@ -103,6 +103,52 @@ gpu_what_phase_1_rescues_is_drawn_once :: proc(t: ^testing.T) {
 	testing.expectf(t, rhi.device_validation_errors(device) == 0, "validation: %s", rhi.device_validation_message(device))
 }
 
+// The clusters whose pixels their alpha decides are drawn nearest first: the
+// visible list holds them by the depth of their boxes, whatever order the
+// cull found them in, so the depth test turns away what they hide before
+// their alpha runs.
+@(test)
+gpu_masked_clusters_are_drawn_nearest_first :: proc(t: ^testing.T) {
+	f: Fixture
+	if !skin_fixture(t, &f, false) {return}
+	defer fixture_destroy(&f)
+	r, device := f.renderer, f.device
+	box := [8]Mesh_Vertex{}
+	for &v, i in box {v = {position = {f32(i & 1) - 0.5, f32(i >> 1 & 1) - 0.5, f32(i >> 2) - 0.5}, normal = {0, 1, 0}, color = 1, tangent = {1, 0, 0, 1}}}
+	indices := [36]u32{0, 2, 1, 1, 2, 3, 4, 5, 6, 5, 7, 6, 0, 1, 4, 1, 5, 4, 2, 6, 3, 3, 6, 7, 0, 4, 2, 2, 4, 6, 1, 3, 5, 3, 7, 5}
+	cube, added := mesh_add(r, box[:], indices[:])
+	if !testing.expect(t, added) {return}
+	masked := DEFAULT_MATERIAL
+	masked.alpha_mode = .Mask
+	materials_set(r, {masked})
+	// Farthest first, side by side so none hides another.
+	N :: 8
+	instances: [N]Instance_Desc
+	for &instance, i in instances {
+		transform := Mat4(1)
+		transform[0, 3], transform[2, 3] = f32(i % 2) * 2 - 1, -4 - 6 * f32(N - 1 - i)
+		instance = {object_id = u64(i + 1), mesh = cube, transform = transform, material = 1, tint = 1}
+	}
+	scene_given(r, instances[:], nil, {}, {})
+	camera := Camera{position = {0, 0, 0}, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.1, far = 200, exposure = UNIT_EXPOSURE}
+	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	rhi.device_wait_idle(device)
+	state: [1]Gpu_Cull_State
+	if !testing.expect(t, rhi.buffer_read_slice(device, r.scene.cull_state_buffer, 0, state[:])) {return}
+	draw := state[0].draws[0][RASTER_BIN_TESTED]
+	if !testing.expectf(t, draw.instance_count == N, "every cube is drawn tested in phase 0: %v", draw) {return}
+	visible: [N][4]u32
+	if !testing.expect(t, rhi.buffer_read_slice(device, r.scene.visible_buffer, u64(draw.first_instance) * size_of([4]u32), visible[:])) {return}
+	last := f32(0)
+	for entry, k in visible {
+		inst := r.scene.instances[entry[0]]
+		depth := -(inst.bounds_min.z + inst.bounds_max.z) * 0.5
+		testing.expectf(t, depth >= last, "entry %d at %v m is not behind the one before, at %v m", k, depth, last)
+		last = depth
+	}
+	testing.expectf(t, rhi.device_validation_errors(device) == 0, "validation: %s", rhi.device_validation_message(device))
+}
+
 // An instance of a batch smaller on the screen than Settings.batch_min_pixels
 // is not rasterized; one twice as large is, and without the setting every one.
 @(test)
