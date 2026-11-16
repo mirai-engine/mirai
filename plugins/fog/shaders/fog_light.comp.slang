@@ -15,8 +15,9 @@
 // turns, and takes what it had by fog.history; in the others it keeps it. One
 // where what casts shadows changed since then on the way of its light, or its
 // light moved, is lit at once and keeps nothing: a shaft of light that a
-// moving thing cuts shows at once. A cell behind everything its column and
-// those around it see has no medium: once the camera shows it, it has its light.
+// moving thing cuts shows at once. No pixel reads a cell behind everything
+// its column and those around it see: it holds no medium and no light, and
+// the frame the camera shows it, with nothing to keep, it is lit whole.
 // Past the grid, in fog.far cells more along each column, the same light
 // keeps what of the sun reaches the media of each slice through the scene,
 // by the same maps and rays, history and turns: fog_integrate lights the
@@ -230,10 +231,16 @@ bool fog_turn(uint3 id) {
 void main(uint3 id : SV_DispatchThreadID) {
     if (any(id.xy >= fog.grid.xy) || id.z >= fog.grid.z + fog.far) return;
     bool past = id.z >= fog.grid.z;
+    if (fog.turns != 1u && fog_hidden(id)) {
+        if (!past) medium_now[id] = float4(0.0);
+        light_now[id] = float4(0.0);
+        return;
+    }
     float4 before;
-    bool held = fog_before(id, before);
-    // Out of its turn a cell keeps its light, unless it changed or had no medium.
-    bool keep = held && before.a >= 0.5 && !fog_turn(id) && !fog_cell_changed(id, past);
+    // Where the frame before held no medium, or the cell was hidden, there is no light to keep.
+    bool held = fog_before(id, before) && before.a >= 0.5;
+    // Out of its turn a cell keeps its light, unless it changed.
+    bool keep = held && !fog_turn(id) && !fog_cell_changed(id, past);
     if (past) {
         if (keep) {
             light_now[id] = before;
@@ -244,15 +251,6 @@ void main(uint3 id : SV_DispatchThreadID) {
         if (!moved && held) sun = lerp(sun, before, fog.history);
         light_now[id] = float4(finite_or_zero(sun.rgb), saturate(sun.a));
         return;
-    }
-    // No pixel reads the medium behind all that its column and those around it see.
-    bool hidden = fog.turns != 1u && fog_hidden(id);
-    if (hidden) {
-        medium_now[id] = float4(0.0);
-        if (keep) {
-            light_now[id] = before;
-            return;
-        }
     }
     // Where in the cell the light is taken: another place for each cell and the same in every
     // frame. A place that moved from frame to frame changed what the shafts of light through a
@@ -272,7 +270,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     float3 glow;
     float taken = fog_dry_at(position);
     float4 medium = fog_medium(position, taken, footprint, mean, mean_sun_only, glow, g);
-    if (!hidden) medium_now[id] = float4(finite_or_zero(medium.rgb), isfinite(medium.a) ? max(medium.a, 0.0) : 0.0);
+    medium_now[id] = float4(finite_or_zero(medium.rgb), isfinite(medium.a) ? max(medium.a, 0.0) : 0.0);
     float3 scattered = mean.rgb + mean_sun_only;
     float amount = fog_amount(float4(scattered, mean.a));
     if (!(amount > 0.0)) {
