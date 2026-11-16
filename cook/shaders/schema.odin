@@ -157,6 +157,10 @@ shared_constants :: proc(allocator:=context.temp_allocator) -> string {
     u(&b,"MESH_FLAG_UV1",abi.MESH_FLAG_UV1)
     u(&b,"MESH_FLAG_COLORS",abi.MESH_FLAG_COLORS)
     u(&b,"MESH_FLAG_STREAMED",abi.MESH_FLAG_STREAMED)
+    u(&b,"MESH_FLAG_ISLANDS",abi.MESH_FLAG_ISLANDS)
+    u(&b,"ISLAND_DROPPED",asset.ISLAND_DROPPED)
+    f(&b,"ISLAND_SCALE_ONE",asset.ISLAND_SCALE_ONE)
+    f(&b,"ISLAND_FADE_BAND",asset.ISLAND_FADE_BAND)
 
     u(&b,"CLUSTER_WORDS",abi.CLUSTER_WORDS)
     u(&b,"VERTEX_WORDS",abi.VERTEX_WORDS)

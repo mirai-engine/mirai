@@ -241,6 +241,13 @@ Stats :: struct {
 	visible_kinds:     [Visible_Kind_Id]Visible_Kind, // of the frame two frames ago, by kind of instance
 	visible_late:      Visible_Kind, // of those, what phase 1 of the occlusion drew
 	cull_dropped:      [Cull_List]u32, // what passed the capacities of the lists of the cull, which then grow
+	// What the resolve of the G-buffer of the last view culled shaded: each
+	// pixel of a triangle once, the lanes of their quads that ran only for
+	// derivatives, and the quads whose triangles do not continue one another
+	// that a program evaluated again, once per triangle.
+	resolved_pixels:   u32,
+	resolve_helpers:   u32,
+	resolve_quads_again: u32,
 	meshes:            u32,
 	triangles:         u64,
 	materials:         u32,
