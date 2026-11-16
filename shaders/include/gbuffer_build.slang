@@ -70,13 +70,54 @@ float3 gbuffer_hooked(Gbuffer_Cluster k, float3 world, float4 color, float time)
     return world;
 }
 
+// A corner of a cluster: its vertex in the space of its mesh with the colors
+// of the instance, its place in the cluster, how far its island has moved and
+// where it is in the world now.
+struct Gbuffer_Corner {
+    Mesh_Point v;
+    uint local;
+    float3 offset;
+    float3 world;
+};
+
+Gbuffer_Corner gbuffer_corner_place(Instance inst, Mesh mesh, Cluster c, Gbuffer_Cluster k, uint corner) {
+    Gbuffer_Corner p;
+    p.local = cluster_corner(mesh, c, gbuffer_corner(inst, corner));
+    p.v = cluster_point_at(mesh, c, p.local, k.posed);
+    p.v.color = instance_vertex_color(inst, c.vertex_first + p.local, p.v.color);
+    p.offset = k.along != 0.0 ? island_offset(mesh, c, p.local, k.along) : float3(0.0);
+    p.world = gbuffer_hooked(k, transform_point(inst.world, p.v.position + p.offset), p.v.color, frame.time.x);
+    return p;
+}
+
+// Where a corner was in the frame before, in the space of its mesh, before
+// the vertex hook: a mesh that is not posed does not move in it.
+float3 gbuffer_corner_previous(Mesh mesh, Cluster c, Gbuffer_Cluster k, Gbuffer_Corner p) {
+    float3 before = k.posed == INVALID ? p.v.position : cluster_position_previous(mesh, c, p.local, k.previous);
+    return before + p.offset;
+}
+
+// Where the vertex hook puts a corner of an instance in the frame before, in the world.
+float3 gbuffer_corner_world_previous(Instance inst, Mesh mesh, Cluster c, Gbuffer_Cluster k, Gbuffer_Corner p) {
+    return gbuffer_hooked(k, transform_point(inst.prev_world, gbuffer_corner_previous(mesh, c, k, p)), p.v.color, frame.time.y);
+}
+
+// Whether the vertex hook moves the corners of a cluster: the place of a
+// point of one of its triangles in the frame before is then that of its
+// corners, not that of the point in the space of its mesh.
+bool gbuffer_cluster_hooked(Gbuffer_Cluster k) {
+#if defined(MIRAI_BATCHES) && defined(MIRAI_HOOK_VERTEX)
+    return k.batched;
+#else
+    return false;
+#endif
+}
+
 Gbuffer_Vertex gbuffer_corner_build(uint index, Instance inst, Mesh mesh, Cluster c, Gbuffer_Cluster k, uint corner) {
     Gbuffer_Vertex output = (Gbuffer_Vertex)0;
-    uint local = cluster_corner(mesh, c, gbuffer_corner(inst, corner));
-    Mesh_Point v = cluster_point_at(mesh, c, local, k.posed);
-    v.color = instance_vertex_color(inst, c.vertex_first + local, v.color);
-    float3 offset = k.along != 0.0 ? island_offset(mesh, c, local, k.along) : float3(0.0);
-    float3 world = gbuffer_hooked(k, transform_point(inst.world, v.position + offset), v.color, frame.time.x);
+    Gbuffer_Corner p = gbuffer_corner_place(inst, mesh, c, k, corner);
+    Mesh_Point v = p.v;
+    float3 world = p.world;
 #ifdef MIRAI_VISIBILITY
     // The raster of the visibility target: where the corner is now, and of a
     // tested one what its fade and its alpha read; not where it was, nor its
@@ -96,7 +137,7 @@ Gbuffer_Vertex gbuffer_corner_build(uint index, Instance inst, Mesh mesh, Cluste
     return output;
 #else
     // Motion vectors see what the hook moves since the previous frame.
-    float3 prev_world = gbuffer_hooked(k, transform_point(inst.prev_world, cluster_position_previous(mesh, c, local, k.previous) + offset), v.color, frame.time.y);
+    float3 prev_world = gbuffer_corner_world_previous(inst, mesh, c, k, p);
     output.out_normal = transform_normal(inst.world_inv, v.normal);
     output.out_tangent = instance_tangent(inst, v.tangent);
     output.out_material = k.material;
