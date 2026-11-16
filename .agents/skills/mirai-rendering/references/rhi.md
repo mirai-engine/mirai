@@ -265,6 +265,8 @@ For a renderer that generates frames (`rhi/present.odin`):
   returns every entry it was ever given and grows without end. Blobs are stored as chunks cut by
   their content, each once: a driver repeats in every blob what they all share (NVIDIA a
   dictionary of megabytes).
+- Without a path the store lives in memory only: every renderer of one device (the GPU tests of a
+  process, which share theirs) compiles each pipeline once, whatever the driver's own cache keeps.
 - The file belongs to one device, driver and cache UUID, and is read whole or not at all: another
   device, another version or a file that does not read back exactly is ignored and replaced.
 - It is rewritten in one rename once the time the pipelines added since the last write took to
