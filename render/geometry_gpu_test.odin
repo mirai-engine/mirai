@@ -171,11 +171,11 @@ gpu_masked_clusters_are_drawn_nearest_first :: proc(t: ^testing.T) {
 	if !testing.expect(t, rhi.buffer_read_slice(device, r.scene.cull_state_buffer, 0, state[:])) {return}
 	draw := state[0].draws[0][RASTER_BIN_TESTED]
 	if !testing.expectf(t, draw.instance_count == N, "every cube is drawn tested in phase 0: %v", draw) {return}
-	visible: [N][4]u32
-	if !testing.expect(t, rhi.buffer_read_slice(device, r.scene.visible_buffer, u64(draw.first_instance) * size_of([4]u32), visible[:])) {return}
+	visible: [N]Gpu_Visible_Cluster
+	if !testing.expect(t, rhi.buffer_read_slice(device, r.scene.visible_buffer, u64(draw.first_instance) * size_of(Gpu_Visible_Cluster), visible[:])) {return}
 	last := f32(0)
 	for entry, k in visible {
-		inst := r.scene.instances[entry[0]]
+		inst := r.scene.instances[entry.instance]
 		depth := -(inst.bounds_min.z + inst.bounds_max.z) * 0.5
 		testing.expectf(t, depth >= last, "entry %d at %v m is not behind the one before, at %v m", k, depth, last)
 		last = depth

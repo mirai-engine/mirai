@@ -33,29 +33,75 @@
 #include "gbuffer_output.slang"
 #include "visibility.slang"
 
-// The visible clusters (cull_bins.comp): the instance, the cluster as a word
-// of the index pool and the Surface program it is resolved by.
-[[vk::binding(SLOT_PASS0, 0)]] StructuredBuffer<uint4> visible : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);
+// The visible clusters (cull_bins.comp).
+[[vk::binding(SLOT_PASS0, 0)]] StructuredBuffer<Visible_Cluster> visible : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);
 [[vk::binding(SLOT_PASS1, 0)]] Texture2D<uint> visibility : register(MIRAI_REGISTER(t, SLOT_PASS1), space0);
 #include "cull_stats.slang"
 [[vk::binding(SLOT_PASS2, 0)]] RWStructuredBuffer<Stats_Block> resolve_stats : register(MIRAI_REGISTER(u, SLOT_PASS2), space0);
 #include <extension_vertex.slang>
 #include "gbuffer_build.slang"
 
-struct Resolve_Triangle { Gbuffer_Vertex a, b, c; };
+// A corner of the triangle a pixel shows, as the raster placed it, with what
+// it gives a point of the triangle.
+struct Resolve_Corner {
+    float4 position; // jittered clip
+    float3 world;
+    float3 before;   // in the world, in the frame before
+    float3 normal;   // a unit, in the world
+    float4 tangent;
+    float2 uv, uv1;
+    float4 color;    // of the vertex, with the colors of the instance
+    uint2 surface;   // of a far mesh (Mesh_Point.surface)
+};
 
-// The corners of a triangle, what they share built once.
+Resolve_Corner resolve_corner(Instance inst, Mesh mesh, Cluster c, Cluster_Block b, Gbuffer_Cluster k, uint corner) {
+    Gbuffer_Corner p = gbuffer_corner_place(inst, mesh, c, b, k, corner);
+    Resolve_Corner r;
+    r.position = view_clip(p.world);
+    r.world = p.world;
+    r.before = gbuffer_corner_world_previous(inst, mesh, c, b, k, p);
+    r.normal = transform_normal(inst.world_inv, p.v.normal);
+    r.tangent = instance_tangent(inst, p.v.tangent);
+    r.uv = p.v.uv;
+    r.uv1 = p.v.uv1;
+    r.color = p.v.color;
+    r.surface = p.v.surface;
+    return r;
+}
+
+// A triangle as the raster placed it: its corners, and what they share.
+struct Resolve_Triangle {
+    Resolve_Corner a, b, c;
+    float3 tint;     // of the base color: the instance's, and the color of the vertices where it tints the row
+    bool tinted;
+    float3 emission;
+    uint surface;
+    uint flags;
+    uint material;
+    uint instance;
+};
+
 Resolve_Triangle resolve_triangle(uint id) {
-    uint4 entry = visible[visibility_entry(id)];
-    Instance inst = scene_instance(entry.x);
+    Visible_Cluster entry = visible[visibility_entry(id)];
+    Instance inst = scene_instance(entry.instance);
     Mesh mesh = meshes[instance_mesh(inst)];
-    Cluster cluster = cluster_at(entry.y);
-    Gbuffer_Cluster shared = gbuffer_cluster(entry.x, inst, mesh, cluster, true);
+    Cluster cluster = cluster_at(entry.cluster);
+    Cluster_Block block = visible_block(mesh, cluster, entry);
+    Gbuffer_Cluster k = gbuffer_cluster_of(entry.instance, inst, mesh, entry.material, entry.along);
     uint corner = visibility_triangle(id) * 3u;
     Resolve_Triangle t;
-    t.a = gbuffer_corner_build(entry.x, inst, mesh, cluster, shared, corner);
-    t.b = gbuffer_corner_build(entry.x, inst, mesh, cluster, shared, corner + 1u);
-    t.c = gbuffer_corner_build(entry.x, inst, mesh, cluster, shared, corner + 2u);
+    t.a = resolve_corner(inst, mesh, cluster, block, k, corner);
+    t.b = resolve_corner(inst, mesh, cluster, block, k, corner + 1u);
+    t.c = resolve_corner(inst, mesh, cluster, block, k, corner + 2u);
+    t.tint = inst.tint.rgb;
+    t.tinted = k.tinted;
+    // A far mesh: its emission joins that of the instance, and its roughness
+    // and metallic replace those of its material, as its first corner says.
+    t.emission = inst.emission.rgb + ((t.a.surface.x & MESH_SURFACE_SET) != 0u ? surface_emission(t.a.surface.y) : float3(0.0));
+    t.surface = t.a.surface.x;
+    t.flags = k.flags;
+    t.material = k.material;
+    t.instance = entry.instance;
     return t;
 }
 
@@ -91,31 +137,32 @@ Resolve_Point resolve_point(Resolve_Triangle t, float2 pixel) {
     float3 wx = resolve_barycentrics(a, b, c, pixel + float2(1.0, 0.0));
     float3 wy = resolve_barycentrics(a, b, c, pixel + float2(0.0, 1.0));
     Resolve_Point s;
-    s.input.in_normal = resolve_mix(t.a.out_normal, t.b.out_normal, t.c.out_normal, w);
-    s.input.in_color = resolve_mix(t.a.out_color, t.b.out_color, t.c.out_color, w);
-    s.input.in_emission = t.a.out_emission;
-    s.input.in_clip = resolve_mix(t.a.out_clip, t.b.out_clip, t.c.out_clip, w);
-    s.input.in_prev_clip = resolve_mix(t.a.out_prev_clip, t.b.out_prev_clip, t.c.out_prev_clip, w);
-    s.input.in_world = resolve_mix(t.a.out_world, t.b.out_world, t.c.out_world, w);
-    s.input.in_flags = t.a.out_flags;
-    s.input.in_uv = resolve_mix(t.a.out_uv, t.b.out_uv, t.c.out_uv, w);
-    s.input.in_material = t.a.out_material;
-    s.input.in_instance = t.a.out_instance;
-    s.input.in_uv1 = resolve_mix(t.a.out_uv1, t.b.out_uv1, t.c.out_uv1, w);
-    s.input.in_tangent = resolve_mix(t.a.out_tangent, t.b.out_tangent, t.c.out_tangent, w);
-    s.input.in_surface = t.a.out_surface;
-    s.input.in_vertex_color = resolve_mix(t.a.out_vertex_color, t.b.out_vertex_color, t.c.out_vertex_color, w);
+    s.input.in_normal = resolve_mix(t.a.normal, t.b.normal, t.c.normal, w);
+    s.input.in_vertex_color = resolve_mix(t.a.color, t.b.color, t.c.color, w);
+    s.input.in_color = (t.tinted ? s.input.in_vertex_color.rgb : float3(1.0)) * t.tint;
+    s.input.in_emission = t.emission;
+    s.input.in_surface = t.surface;
+    s.input.in_world = resolve_mix(t.a.world, t.b.world, t.c.world, w);
+    // What is linear in the triangle is taken to the clip spaces once.
+    s.input.in_clip = view_clip_unjittered(s.input.in_world);
+    s.input.in_prev_clip = view_clip_previous(resolve_mix(t.a.before, t.b.before, t.c.before, w));
+    s.input.in_flags = t.flags;
+    s.input.in_uv = resolve_mix(t.a.uv, t.b.uv, t.c.uv, w);
+    s.input.in_material = t.material;
+    s.input.in_instance = t.instance;
+    s.input.in_uv1 = resolve_mix(t.a.uv1, t.b.uv1, t.c.uv1, w);
+    s.input.in_tangent = resolve_mix(t.a.tangent, t.b.tangent, t.c.tangent, w);
     // Counter-clockwise on the screen is the front, as the raster takes it;
     // the sign of the homogeneous determinant holds behind the eye too.
     float3 ra = float3(a.x, a.y, a.w), rb = float3(b.x, b.y, b.w), rc = float3(c.x, c.y, c.w);
     s.input = raster_facing(s.input, dot(ra, cross(rb, rc)) > 0.0);
-    s.uv_gradients = float4(resolve_mix(t.a.out_uv, t.b.out_uv, t.c.out_uv, wx) - s.input.in_uv, resolve_mix(t.a.out_uv, t.b.out_uv, t.c.out_uv, wy) - s.input.in_uv);
-    s.uv1_gradients = float4(resolve_mix(t.a.out_uv1, t.b.out_uv1, t.c.out_uv1, wx) - s.input.in_uv1, resolve_mix(t.a.out_uv1, t.b.out_uv1, t.c.out_uv1, wy) - s.input.in_uv1);
-    s.world_dx = resolve_mix(t.a.out_world, t.b.out_world, t.c.out_world, wx) - s.input.in_world;
-    s.world_dy = resolve_mix(t.a.out_world, t.b.out_world, t.c.out_world, wy) - s.input.in_world;
+    s.uv_gradients = float4(resolve_mix(t.a.uv, t.b.uv, t.c.uv, wx) - s.input.in_uv, resolve_mix(t.a.uv, t.b.uv, t.c.uv, wy) - s.input.in_uv);
+    s.uv1_gradients = float4(resolve_mix(t.a.uv1, t.b.uv1, t.c.uv1, wx) - s.input.in_uv1, resolve_mix(t.a.uv1, t.b.uv1, t.c.uv1, wy) - s.input.in_uv1);
+    s.world_dx = resolve_mix(t.a.world, t.b.world, t.c.world, wx) - s.input.in_world;
+    s.world_dy = resolve_mix(t.a.world, t.b.world, t.c.world, wy) - s.input.in_world;
     float3 n = normalize(s.input.in_normal);
-    s.normal_dx = normalize(resolve_mix(t.a.out_normal, t.b.out_normal, t.c.out_normal, wx)) - n;
-    s.normal_dy = normalize(resolve_mix(t.a.out_normal, t.b.out_normal, t.c.out_normal, wy)) - n;
+    s.normal_dx = normalize(resolve_mix(t.a.normal, t.b.normal, t.c.normal, wx)) - n;
+    s.normal_dy = normalize(resolve_mix(t.a.normal, t.b.normal, t.c.normal, wy)) - n;
     return s;
 }
 
@@ -196,19 +243,26 @@ Stage_Output main(float4 pixel : SV_Position) {
 
     bool again = broken != 0u && mirai_program_derivatives;
     resolve_count(helper, odd, again);
-    if (!again) {
-        texture_feedback_quiet = helper;
-        return resolve_shade(s, steady);
-    }
+    // Once, or, where the quad evaluates again, once a triangle of its pixels,
+    // each pixel keeping the round of its own: the material is inlined once.
     Stage_Output output = (Stage_Output)0;
-    uint pending = own;
+    uint pending = own, built = id;
+    texture_feedback_quiet = helper;
     for (uint round = 0u; round < 4u; round++) {
-        uint leader = quad_first(pending);
-        if (leader == 0u) break;
-        texture_feedback_quiet = pending != leader;
-        // The triangle this pixel was built with is not built again.
-        Resolve_Point p = leader == id ? s : resolve_point(resolve_triangle(leader), pixel.xy);
-        Stage_Output shaded = resolve_shade(p, bool2(true, true));
+        uint leader = id;
+        if (again) {
+            leader = quad_first(pending);
+            if (leader == 0u) break;
+            texture_feedback_quiet = pending != leader;
+            // A triangle already built is not built again.
+            if (leader != built) {
+                s = resolve_point(resolve_triangle(leader), pixel.xy);
+                built = leader;
+            }
+            steady = bool2(true, true);
+        }
+        Stage_Output shaded = resolve_shade(s, steady);
+        if (!again) return shaded;
         if (pending == leader) {
             output = shaded;
             pending = 0u;

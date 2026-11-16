@@ -396,7 +396,7 @@ Scene_State :: struct {
 	depth_buckets:        rhi.Buffer, // of each phase and tested raster bin, its clusters of each depth bucket, then where they start (cull_bins.comp)
 	listed_buffer:        rhi.Buffer, // and as the cull listed them, with their bins
 	cluster_candidate_buffer: rhi.Buffer, // the clusters phase 0 found hidden
-	program_draws:        rhi.Buffer, // Gpu_Draw of the resolve of each Surface program, POINTS_PROGRAM_CAPACITY of them
+	program_draws:        rhi.Buffer, // Gpu_Program_Draw of the resolve of each Surface program, POINTS_PROGRAM_CAPACITY of them
 	shadow_chunks:        rhi.Buffer, // the chunks the instance pass of the cull of the maps of the shadows hands its cluster pass
 	shadow_entries:       rhi.Buffer, // the clusters the maps of the shadows draw (shadow_cull.slang)
 	cull_capacity:        [Cull_List]u32, // of those lists, in entries
@@ -2410,7 +2410,7 @@ ensure_scene_capacity :: proc(r: ^Renderer) -> bool {
 		s.depth_buckets = rhi.buffer_create(d, {size = DEPTH_BUCKET_WORDS * size_of(u32), usage = {.Storage}, name = "depth buckets of the tested bins"})
 	}
 	if s.program_draws == 0 {
-		s.program_draws = rhi.buffer_create(d, {size = POINTS_PROGRAM_CAPACITY * size_of(Gpu_Draw), usage = {.Storage, .Indirect}, name = "resolve draws of programs"})
+		s.program_draws = rhi.buffer_create(d, {size = POINTS_PROGRAM_CAPACITY * size_of(Gpu_Program_Draw), usage = {.Storage, .Indirect}, name = "resolve draws of programs"})
 	}
 	start := CULL_START
 	for list in Cull_List {
@@ -2420,7 +2420,7 @@ ensure_scene_capacity :: proc(r: ^Renderer) -> bool {
 		capacity := max(wanted + wanted / 2, start[list], s.cull_capacity[list])
 		if buffer^ != 0 {rhi.buffer_destroy(d, buffer^)}
 		names := [Cull_List]string{.Chunks = "cull chunks", .Visible = "visible clusters", .Candidates = "cluster occlusion candidates", .Shadow_Chunks = "shadow map chunks", .Shadow_Entries = "shadow map clusters"}
-		entry := u64(size_of([4]u32) if list >= .Shadow_Chunks || list == .Visible else size_of([2]u32))
+		entry := u64(size_of(Gpu_Visible_Cluster) if list == .Visible else size_of([4]u32) if list >= .Shadow_Chunks else size_of([2]u32))
 		buffer^ = rhi.buffer_create(d, {size = u64(capacity) * entry, usage = {.Storage}, name = names[list]})
 		made := buffer^ != 0
 		if list == .Visible {

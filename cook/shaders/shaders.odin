@@ -1098,7 +1098,7 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
     } else {
         g.tools[.Slangc],g.version=compiler,compiler_version
     }
-    workers:=min(options.workers if options.workers>0 else max(os.get_processor_core_count(),1),RUNNER_CAPACITY)
+    workers:=min(options.workers if options.workers>0 else shader_workers(),RUNNER_CAPACITY)
     // A generation asked to ship goes on when the code it embeds was not encoded so.
     if stamp,is_current:=stamp_current(g,request,scratch);is_current && (stamp.shipped || !options.ship || !odin) {
         result.shaders,result.tests,result.programs=stamp.shaders,stamp.tests,stamp.programs
