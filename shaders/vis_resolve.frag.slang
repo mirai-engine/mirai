@@ -166,20 +166,15 @@ bool resolve_continues(Resolve_Point s, float step, float3 world_d, float2 uv_d,
         && length(off_uv) <= 0.5 * length(uv_d) + 1e-7 && length(off_uv1) <= 0.5 * length(uv1_d) + 1e-7;
 }
 
-// Counts what the resolve shades (Stats_Block.resolved): the pixels, and of
-// each quad, by its first pixel that is not a helper, its helpers and whether
-// it evaluates again; one atomic of each per wave.
-void resolve_count(bool helper, uint2 odd, bool again) {
+// Counts the quads the resolve evaluates again (Stats_Block.resolved; the
+// program depth counts the rest), by the first pixel of each that is not a
+// helper; one atomic per wave.
+void resolve_count_again(bool helper, uint2 odd) {
     uint live = helper ? 0u : 1u;
     uint lives = QuadReadLaneAt(live, 0u) | (QuadReadLaneAt(live, 1u) << 1u) | (QuadReadLaneAt(live, 2u) << 2u) | (QuadReadLaneAt(live, 3u) << 3u);
     if (helper) return;
-    bool first = firstbitlow(lives) == odd.y * 2u + odd.x;
-    uint3 counted = WaveActiveSum(uint3(1u, first ? 4u - countbits(lives) : 0u, first && again ? 1u : 0u));
-    if (WaveIsFirstLane()) {
-        InterlockedAdd(resolve_stats[0].resolved[0], counted.x);
-        if (counted.y != 0u) InterlockedAdd(resolve_stats[0].resolved[1], counted.y);
-        if (counted.z != 0u) InterlockedAdd(resolve_stats[0].resolved[2], counted.z);
-    }
+    uint counted = WaveActiveCountBits(firstbitlow(lives) == odd.y * 2u + odd.x);
+    if (WaveIsFirstLane() && counted != 0u) InterlockedAdd(resolve_stats[0].resolved[2], counted);
 }
 
 // The first nonzero value of the four pixels of a quad, the same in all four.
@@ -231,7 +226,7 @@ Stage_Output main(float4 pixel : SV_Position) {
     broken |= QuadReadAcrossX(broken) | QuadReadAcrossY(broken) | QuadReadAcrossDiagonal(broken);
 
     bool again = broken != 0u && mirai_program_derivatives;
-    resolve_count(helper, odd, again);
+    if (again) resolve_count_again(helper, odd);
     // Once, or, where the quad evaluates again, once a triangle of its pixels,
     // each pixel keeping the round of its own: the material is inlined once.
     Stage_Output output = (Stage_Output)0;
