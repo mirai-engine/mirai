@@ -5,6 +5,7 @@ package subprocess
 import "core:os"
 import "core:strings"
 import win "core:sys/windows"
+import "core:time"
 
 // core:sys/windows does not declare these.
 foreign import kernel32 "system:Kernel32.lib"
@@ -97,6 +98,38 @@ _terminate :: proc(process:^Process,force:bool) -> os.Error {
     if process.tree==0 {return os.process_kill({pid=process.pid,handle=process.handle})}
     if !TerminateJobObject(win.HANDLE(process.tree),1) {return last_error()}
     return nil
+}
+
+// Waits for the child to exit, without taking its exit.
+_exited :: proc(process:^Process,timeout:time.Duration) -> os.Error {
+    milliseconds:=win.INFINITE if timeout<0 else win.DWORD(min(timeout/time.Millisecond,time.Duration(win.INFINITE-1)))
+    switch win.WaitForSingleObject(win.HANDLE(process.handle),milliseconds) {
+    case win.WAIT_OBJECT_0: return nil
+    case win.WAIT_TIMEOUT:  return os.General_Error.Timeout
+    }
+    return last_error()
+}
+
+// Its handle keeps an exited child readable.
+_exit_peak :: proc(process:^Process) -> i64 {
+    _,peak,_:=handle_memory(win.HANDLE(process.handle))
+    return peak
+}
+
+_memory_held :: proc(pid:int) -> (now,peak:i64,ok:bool) {
+    handle:=win.OpenProcess(win.PROCESS_QUERY_LIMITED_INFORMATION|win.SYNCHRONIZE,false,win.DWORD(pid))
+    if handle==nil {return}
+    defer win.CloseHandle(handle)
+    // A process that ended holds nothing, though its handles keep it readable.
+    if win.WaitForSingleObject(handle,0)==win.WAIT_OBJECT_0 {return}
+    return handle_memory(handle)
+}
+
+handle_memory :: proc(handle:win.HANDLE) -> (now,peak:i64,ok:bool) {
+    counters:win.PROCESS_MEMORY_COUNTERS
+    counters.cb=size_of(counters)
+    if !win.GetProcessMemoryInfo(handle,&counters,size_of(counters)) {return}
+    return i64(counters.WorkingSetSize),i64(counters.PeakWorkingSetSize),true
 }
 
 // The job kills what is still in it as its handle closes.

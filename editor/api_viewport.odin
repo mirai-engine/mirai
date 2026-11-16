@@ -3,6 +3,7 @@ package editor
 import "base:runtime"
 import "core:fmt"
 import "core:os"
+import "core:strings"
 import "core:time"
 import img "mirai:cook/image"
 import "mirai:editor/api"
@@ -46,6 +47,10 @@ API_CAPTURE_GAME_FRAMES :: 120
 
 // The longest a capture of automatic frames waits for textures to stream in.
 API_CAPTURE_TEXTURES_WAIT :: 10*time.Second
+
+// The longest a capture waits for what its frames draw to be made (api_view_wait).
+API_VIEW_WAIT :: API_SHADERS_SECONDS*time.Second
+API_VIEW_POLL :: 20*time.Millisecond
 
 // What the renderer counted of the image it drew last.
 Api_Capture_Seen :: struct {
@@ -110,6 +115,7 @@ api_capture :: proc(s:^Session,call:^api.Call) {
         region={int(q.x),int(q.y),int(q.z),int(q.w)}
     }
     if s.app==nil || s.app.renderer==nil {api.call_fail(call,api.SERVER_ERROR,"capture requires a GPU; start without --no-gpu");return}
+    started:=time.tick_now()
     given:=base.text_get(p.path[:])
     // Relative to the project, its folder made. The frames drawn below free the temporary memory.
     name:="editor.png"
@@ -117,14 +123,26 @@ api_capture :: proc(s:^Session,call:^api.Call) {
     path,writable:=api_capture_file(s,call,given,name,s.app.allocator)
     if !writable {return}
     defer delete(path,s.app.allocator)
+    // Nothing is drawn while a compilation of programs makes the first frames draw stand-ins.
+    if ok,_:=api_view_wait(s,call,p.dt,started,window_frames=!game && strip==nil);!ok {return}
     if strip!=nil {api_filmstrip_run(s,call,strip,path,given=="");return}
     pixels:[]u8
     width,height:int
     wait:=p.frames==0?API_CAPTURE_TEXTURES_WAIT:time.Duration(0)
     if game {
-        drawn:bool
-        pixels,width,height,drawn=api_play_pixels(s,r,p.frames>0?p.frames:API_CAPTURE_SETTLE,wait=wait)
-        if !drawn {api.call_failf(call,api.SERVER_ERROR,"The game could not be drawn: %s",host.app_draw_problem(s.app));return}
+        frames:=p.frames>0?p.frames:API_CAPTURE_SETTLE
+        for {
+            drawn:bool
+            pixels,width,height,drawn=api_play_pixels(s,r,frames,wait=wait)
+            if !drawn {api.call_failf(call,api.SERVER_ERROR,"The game could not be drawn: %s",host.app_draw_problem(s.app));return}
+            // What those frames found being made: drawn again once it is, its own frames
+            // streaming what arrives, without stepping the game.
+            ok,changed:=api_view_wait(s,call,p.dt,started,window_frames=false)
+            if ok && !changed {break}
+            delete(pixels,s.app.allocator)
+            if !ok {return}
+            frames,wait=API_CAPTURE_SETTLE,API_CAPTURE_TEXTURES_WAIT
+        }
         if size:=api_capture_size({i32(width),i32(height)},p.width,p.height);int(size.x)!=width || int(size.y)!=height {
             scaled,made:=api_pixels_scale(pixels,width,height,size,s.app.allocator)
             delete(pixels,s.app.allocator)
@@ -135,10 +153,12 @@ api_capture :: proc(s:^Session,call:^api.Call) {
         drawn:=s.app.stats.frames_drawn
         if p.seconds>=0 {s.app.seconds=p.seconds}
         api_frames(s,max(p.frames,1),p.dt)
-        // A frame that drew a program as its rows while its pipelines were made: one more with them.
-        for gpu.renderer_pipelines_pending(s.app.renderer) {
-            gpu.renderer_pipelines_wait(s.app.renderer)
-            api_frames(s,1,p.dt)
+        // What those frames found being made (a program's pipelines, a mesh arriving): frames more once it is.
+        for {
+            ok,changed:=api_view_wait(s,call,p.dt,started)
+            if !ok {return}
+            if !changed {break}
+            api_frames(s,API_CAPTURE_SETTLE,p.dt)
         }
         if s.app.stats.frames_drawn==drawn {api.call_failf(call,api.SERVER_ERROR,"The renderer could not draw the frame: %s",host.app_draw_problem(s.app));return}
         if p.ui && wait>0 {api_capture_textures_settle(s,p.dt,wait)}
@@ -176,6 +196,51 @@ api_capture_textures_settle :: proc(s:^Session,dt:f32,wait:time.Duration) {
         waited=true
     }
     if waited {api_frames(s,API_CAPTURE_SETTLE,dt)}
+}
+
+// Until nothing the frames draw is being made (view_pending), for at most
+// wait since the call started: the programs of the project are followed, the
+// pipelines frames asked for awaited and, while meshes or textures arrive,
+// frames of the window drawn. A window draws frames meanwhile anyway; a
+// manual editor draws none for the programs alone, so its clock stays, and
+// none at all without window_frames (it would step a Play): it returns while
+// meshes or textures arrive, for the caller to draw what streams them.
+// changed: the frames would draw otherwise than those before, which are drawn
+// again. False with the call failed, saying what was still pending and how
+// long it waited.
+@(private)
+api_view_wait :: proc(s:^Session,call:^api.Call,dt:f32,started:time.Tick,wait:=API_VIEW_WAIT,window_frames:=true) -> (ok,changed:bool) {
+    manual:=true
+    if st:=api_state(s);st!=nil {manual=st.manual}
+    for {
+        if s.build!=nil {programs_poll(s)}
+        if s.app.renderer!=nil {host.app_shaders_poll(s.app)}
+        pending:=view_pending(s)
+        if pending=={} {return true,changed}
+        waited:=time.tick_since(started)
+        if waited>wait || s.quit {
+            api.call_failf(call,api.SERVER_ERROR,"After %.0f s the frames still draw stand-ins for what is being made: %s. engine.status gives it as pending; call %s again once it is 0",time.duration_seconds(waited),api_pending_text(pending),call.method.name)
+            return false,changed
+        }
+        changed=true
+        if pending.pipelines>0 {
+            gpu.renderer_pipelines_wait(s.app.renderer)
+            continue
+        }
+        if manual && !window_frames && pending.assets>0 {return true,changed}
+        if (!manual || pending.assets>0) && api_frames(s,1,dt)>0 {continue}
+        time.sleep(API_VIEW_POLL)
+    }
+}
+
+// What view_pending counted, in words.
+@(private)
+api_pending_text :: proc(pending:host.App_Pending) -> string {
+    parts:=make([dynamic]string,context.temp_allocator)
+    if pending.programs>0 {append(&parts,fmt.tprintf("%d compilation(s) of the material programs of the project",pending.programs))}
+    if pending.pipelines>0 {append(&parts,fmt.tprintf("%d pipeline(s) of programs or passes",pending.pipelines))}
+    if pending.assets>0 {append(&parts,fmt.tprintf("%d mesh(es) or texture(s) arriving",pending.assets))}
+    return strings.join(parts[:],", ",context.temp_allocator)
 }
 
 // What the renderer counted of the image just read from it.

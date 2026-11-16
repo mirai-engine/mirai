@@ -184,8 +184,8 @@ pipeline_asked :: proc(r: ^Renderer, owner: ^rhi.Pipeline) -> bool {
 }
 
 // A frame needs the pipeline of owner: when the threads have not begun it,
-// they make it before those asked ahead of time; until it is in place it is
-// pending (renderer_pipelines_pending) even when they had begun it.
+// they make it before those asked ahead of time; until it is in place it
+// counts in renderer_pipelines_pending even when they had begun it.
 @(private)
 pipeline_urgent :: proc(r: ^Renderer, owner: ^rhi.Pipeline) {
 	t := r.pipeline_thread
@@ -195,16 +195,16 @@ pipeline_urgent :: proc(r: ^Renderer, owner: ^rhi.Pipeline) {
 	for &job in t.jobs {if job.state != .Free && job.owner == owner {job.urgent = true}}
 }
 
-// Whether a pipeline a frame asked for is not in place: the frames draw the
-// materials of its program as their rows, or its pass without it, meanwhile.
-// Those asked ahead of time do not count.
-renderer_pipelines_pending :: proc(r: ^Renderer) -> bool {
+// The pipelines frames asked for that are not in place: the frames draw the
+// materials of their programs as their rows, or their passes without them,
+// meanwhile. Those asked ahead of time do not count.
+renderer_pipelines_pending :: proc(r: ^Renderer) -> (pending: int) {
 	t := r.pipeline_thread if r != nil else nil
-	if t == nil || sync.atomic_load(&t.busy) == 0 {return false}
+	if t == nil || sync.atomic_load(&t.busy) == 0 {return}
 	sync.mutex_lock(&t.mutex)
 	defer sync.mutex_unlock(&t.mutex)
-	for job in t.jobs {if job.state != .Free && job.urgent {return true}}
-	return false
+	for job in t.jobs {if job.state != .Free && job.urgent {pending += 1}}
+	return
 }
 
 // Counts the times pipelines of programs went in place: what drew a program
@@ -216,7 +216,7 @@ renderer_pipelines_made :: proc(r: ^Renderer) -> u64 {
 // Waits for the pipelines frames asked for (all: those asked ahead of time
 // too), or for that of owner, and puts them in place: the next frame draws
 // with them. What reads an image back (a capture)
-// draws again after it when renderer_pipelines_pending said so.
+// draws again after it when renderer_pipelines_pending counted some.
 renderer_pipelines_wait :: proc(r: ^Renderer, owner: ^rhi.Pipeline = nil, all := false) {
 	t := r.pipeline_thread if r != nil else nil
 	if t == nil {return}

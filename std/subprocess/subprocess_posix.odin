@@ -6,6 +6,7 @@ import "core:c"
 import "core:os"
 import "core:strings"
 import "core:sys/posix"
+import "core:time"
 
 when ODIN_OS==.Darwin {
     foreign import libc "system:System"
@@ -17,6 +18,7 @@ when ODIN_OS==.Darwin {
 foreign libc {
     getpriority :: proc(which:c.int,who:u32) -> c.int ---
     setpriority :: proc(which:c.int,who:u32,priority:c.int) -> c.int ---
+    ioctl :: proc(fd:posix.FD,request:c.ulong,#c_vararg args:..rawptr) -> c.int ---
 }
 
 PRIO_PROCESS :: 0
@@ -27,10 +29,19 @@ _start :: proc(desc:os.Process_Desc,limits:Limits) -> (process:Process,error:os.
     process=spawn(desc,limits,false) or_return
     // The watcher joins the group of the child and kills it once this process
     // is gone. Both set the group, so that it is in it whichever runs first.
+    // The watcher is forked with every descriptor of this process; start
+    // returns once it closed them all, which ends this pipe.
+    closed:[2]posix.FD
+    if posix.pipe(&closed)!=.OK {error=os.Platform_Error(posix.errno());release(&process);return}
+    for fd in closed {_=posix.fcntl(fd,.SETFD,posix.FD_CLOEXEC)}
     parent:=posix.getpid()
     watcher:=posix.fork()
     if watcher==0 {watch(posix.pid_t(process.pid),parent)}
+    posix.close(closed[1])
+    defer posix.close(closed[0])
     if watcher<0 {error=os.Platform_Error(posix.errno());release(&process);return}
+    end:u8
+    for posix.read(closed[0],cast([^]byte)&end,1)<0 && posix.errno()==.EINTR {}
     _=posix.setpgid(watcher,posix.pid_t(process.pid))
     process.tree=uintptr(watcher)
     return
@@ -45,6 +56,24 @@ _detached :: proc(desc:os.Process_Desc) -> (process:Process,error:os.Error) {
 _terminate :: proc(process:^Process,force:bool) -> os.Error {
     if posix.killpg(posix.pid_t(process.pid),.SIGKILL if force else .SIGTERM)!=.OK {return os.Platform_Error(posix.errno())}
     return nil
+}
+
+// Waits for the child to exit, without taking its exit. Within a timeout it
+// looks every millisecond.
+_exited :: proc(process:^Process,timeout:time.Duration) -> os.Error {
+    flags:=posix.Wait_Flags{.EXITED,.NOWAIT}
+    if timeout>=0 {flags+={.NOHANG}}
+    start:=time.tick_now()
+    for {
+        info:posix.siginfo_t
+        if posix.waitid(.P_PID,posix.id_t(process.pid),&info,flags)==-1 {
+            if errno:=posix.errno();errno!=.EINTR {return os.Platform_Error(errno)}
+            continue
+        }
+        if info.si_signo!=nil {return nil}
+        if time.tick_since(start)>=timeout {return os.General_Error.Timeout}
+        time.sleep(time.Millisecond)
+    }
 }
 
 // Ends what the child left in its group and reaps the watcher.

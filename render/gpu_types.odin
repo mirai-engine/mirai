@@ -353,7 +353,7 @@ Gpu_Material_Diffuse_Transmission :: struct {
 // What a solid of glass scatters of what it stops (asset.Material_Info.scatter_color).
 Gpu_Material_Volume :: struct {
 	scatter:  Vec3,
-	changing: u32, // 1: what its program gives a point changes with nothing that says so (abi.Program.timed): no pass keeps what a ray found of it
+	changing: u32, // 1: what its program gives a point changes with nothing that says so (it reads the time, abi.Program.reads): no pass keeps what a ray found of it
 }
 
 Gpu_Material_Blocks :: struct {

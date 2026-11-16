@@ -69,7 +69,7 @@ cmd_shaders :: proc(root:string,args:[]string) -> int {
         fmt.printfln("shaders: up to date (%d Slang programs, %d tests, %d material programs)",result.shaders,result.tests,result.programs)
     } else {
         fmt.printfln("shaders: %d Slang programs, %d tests, %d material programs (%d compiled, %d reused)",result.shaders,result.tests,result.programs,result.compiled,result.reused)
-        fmt.printfln("shaders: programs reflected in %.1f s, stages compiled in %.1f s added up",result.reflection,result.compiling)
+        fmt.printfln("shaders: programs reflected in %.1f s, stages compiled in %.1f s added up, at most %d at once",result.reflection,result.compiling,result.at_once)
         for each in result.slowest {
             if each.seconds>0 {fmt.printfln("  %.1f s  %s",each.seconds,each.name)}
         }

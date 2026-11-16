@@ -6,7 +6,6 @@ import "core:slice"
 import "core:strings"
 import "core:time"
 import "mirai:core"
-import render "mirai:render"
 import "mirai:std/base"
 
 // What the last loads of the application took, for whoever asks where their
@@ -398,8 +397,9 @@ load_profile_frame :: proc(app:^App,drawn:bool) {
     load_steps_add(app)
     busy:=p.reports
     if loaded {busy+={.Assets}}
-    if app_assets_uploading(app) || app_assets_arriving(app)>0 {busy+={.Uploads}}
-    if render.renderer_pipelines_pending(app.renderer) || len(app.shaders.loads)>0 {busy+={.Pipelines}}
+    pending:=app_pending(app)
+    if pending.assets>0 {busy+={.Uploads}}
+    if pending.programs+pending.pipelines>0 {busy+={.Pipelines}}
     if load_animations_pending(app) {busy+={.Animations}}
     now:=time.duration_nanoseconds(time.tick_since(r.started))
     for b in busy {
