@@ -243,12 +243,12 @@ haze of the whole world is the air of the sky, not a fog: one without a bounded 
 - Up to `CAPACITY` (16) visible volumes counting the media of other plugins, which keep their
   place: the lowest world priorities are left over first.
 
-`Fog_Settings.hidden` (machine) says how often a cell that is behind everything its column sees is
-lit:
+`Fog_Settings.turns` (machine) says how often a cell whose light nothing changed is lit:
 
-- `Every_Frame`: like those that are seen.
-- `Every_Fourth` (default): one frame in four, in turns; in the others it keeps its reprojected
-  light. When the camera shows it, it already has its light settled.
+- `Every_Frame`.
+- `Every_Fourth` (default): one frame in four, in turns of its group of cells; in the others it
+  keeps its reprojected light. A cell whose lights, what casts their shadows or the sun moved is
+  lit in that frame: a change shows at once.
 
 ### Media from other plugins
 
@@ -280,15 +280,15 @@ boxes.
 - `fog_far.comp` stores the farthest depth that each column sees (one group per column over its
   pixels; what has no surface is seen without end) and `fog_reach.comp`, that of that
   column and the two on each side: up to there the integration filter and the interpolation of
-  `fog_apply` read the grid. A cell whose previous slice starts farther is hidden. With
-  `Every_Frame` they do not run.
+  `fog_apply` read the grid. A cell whose previous slice starts farther is hidden: it holds no
+  medium. With `Every_Frame` they do not run.
 - `fog_light.comp` takes at each froxel a fixed point of the cell and writes two textures: the
   medium of the volumes there, with the wisps of the variable ones as they are now, and the light
   that point sends for each unit of `fog_amount` of its medium, a measure of what it scatters and
   stops that grows with its density, so that a medium that only glows, black, also has its light
-  (except a hidden cell out of its turn,
-  which copies its reprojected light and leaves the medium empty; one without history is lit at
-  once). The light is weighted with the mean medium of each
+  (a cell out of its turn copies its reprojected light, unless what it gets changed or it had no
+  medium, and one without history is lit at once). The light is weighted with the mean medium
+  of each
   volume, not that of this frame: it does not depend on where the wisps are. Where there is a medium
   that scatters, it lights it with the light of the engine's media (`shaders/include/media.slang`,
   the same as the volumes of [`vfx`](../../mirai-world/references/vfx.md#volumes)), each light by
@@ -308,12 +308,13 @@ boxes.
   Past the grid the same texture has one more cell along each column for each far slice, which
   keeps what of the sun reaches the media of that slice through the scene: the mean of four
   places of the cell, each on the part of its ray in the slice that the volumes with a medium
-  hold, by the same maps, rays, history, turns of hidden cells and marks of what changed as the
+  hold, by the same maps, rays, history, turns and marks of what changed as the
   sun of the grid (`media_sun_through`).
 - The rays are those of the direct light's shadows: with `colored_shadows` and glass in the scene,
   a shaft that crosses a stained glass window takes its color.
 - Only the froxel's light is blended with that of the previous frame where its center was, if the
-  view keeps it (`pass_texture` gives `kept`): a camera cut starts again. The medium is always
+  view keeps it (`pass_texture` gives `kept`), by `HISTORY` for each frame its turn skipped: a
+  camera cut starts again. The medium is always
   that of this frame, so wisps that cross a shaft take its light at once, without a trail and
   without reprojecting the field. The light stores in `a` whether there was a medium (1) or not
   (0), multiplied by the light: blended with a frame without medium, `rgb / a` is still the

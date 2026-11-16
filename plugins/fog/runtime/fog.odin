@@ -30,7 +30,7 @@ import mm "mirai:std/math"
 // dry boxes that take it out.
 
 CAPACITY :: 16      // volumes a frame takes
-HISTORY :: f32(0.9)   // the weight of what the frames before found
+HISTORY :: f32(0.9)   // the weight of what the frames before found, in each frame
 
 @(component,description="A medium that dims what is behind it and shows the light that crosses it, with the shafts of the sun and the lights. Fills the Volume of its entity, a box, a sphere or everything under a plane, over what is below it or added to it. The haze of the whole world is the Mie of the air of the Sky.")
 Fog_Volume :: struct {
@@ -58,19 +58,19 @@ WISP_OCTAVES :: 3
 @(private) WISP_DRIFT :: [WISP_OCTAVES]f32{1,1.2,1.45}
 @(private) WISP_CHANGE :: [WISP_OCTAVES][3]f32{{0,0.015,0.01},{0.04,-0.02,-0.03},{-0.05,0.03,0.06}}
 
-// How often a cell behind everything a view sees is lit: it does not show,
-// but it has its light when the camera moves and shows it.
-Fog_Hidden :: enum u8 {
-    Every_Frame,  // as the cells that show
-    Every_Fourth, // one frame in four, by turns, keeping what it had in the others: what moving shows is as settled
+// How often a cell whose light nothing changed is lit: one whose lights,
+// what casts their shadows or the sun moved is lit in that frame.
+Fog_Turns :: enum u8 {
+    Every_Frame,
+    Every_Fourth, // one frame in four, by turns, keeping what it had in the others
 }
 
 @(storage,setting="machine")
 Fog_Settings :: struct {
-    hidden:Fog_Hidden,
+    turns:Fog_Turns,
 }
 
-FOG_SETTINGS_DEFAULT :: Fog_Settings{hidden=.Every_Fourth}
+FOG_SETTINGS_DEFAULT :: Fog_Settings{turns=.Every_Fourth}
 
 // fog.slang Fog_Volume.
 @(private)
@@ -152,8 +152,8 @@ Gpu_Params :: struct {
     kept:u32,    // the light of the frame before is there
     distance:f32,
     scale:f32,
-    history:f32,
-    hidden:u32,  // a cell behind everything seen is lit one frame in this many
+    history:f32, // of a cell lit by its turn
+    turns:u32,   // a cell whose light nothing changed is lit one frame in this many
     dry:u32,     // some volume is a dry box
     shade:u32,   // some volume takes the light of the sun
     far:u32,     // slices past the grid
@@ -171,7 +171,7 @@ Fog_Gpu :: struct {
     volumes:[CAPACITY]Gpu_Volume,
     drift:[CAPACITY][3]f32, // of the wisps of each variable volume, m/s
     count:int,
-    hidden:u32,
+    turns:u32,
     time:f64,   // seconds of the world the frame shows
     dry:bool,   // some volume of the frame is a dry box
     shade:bool, // some volume of the frame takes the light of the sun
@@ -194,7 +194,7 @@ fog_render :: proc(
 ) {
     zones:=volume.Where{places,worlds,parents,sections,splines}
     state.count,state.dry,state.shade,state.outlines.count=0,false,false,{}
-    state.hidden=settings.hidden==.Every_Fourth?4:1
+    state.turns=settings.turns==.Every_Fourth?4:1
     added:=core.take(&media.queue)
     if app.renderer==nil || core.count(volumes)==0 && len(added)==0 {return}
     // The media keep their room: the lowest priorities of the world are left out first.
@@ -288,7 +288,7 @@ fog_record :: proc(pass:^render.Pass,user:rawptr) {
     seen:=render.Pass_Texture_Desc{name=render.MEDIA_TEXTURE,format=.RGBA16_Float,width=grid.x,height=grid.y,depth=grid.z+media.cells.w}
     far:=render.Pass_Texture_Desc{name="fog far",format=.R32_Float,width=grid.x,height=grid.y}
     reach:=render.Pass_Texture_Desc{name="fog reach",format=.R32_Float,width=grid.x,height=grid.y}
-    params:=Gpu_Params{grid={grid.x,grid.y,grid.z,u32(state.count)},distance=media.distance,scale=media.scale,history=HISTORY,hidden=state.hidden,dry=state.dry?1:0,shade=state.shade?1:0,far=media.cells.w,reach=media.reach,side=u32(pass.glass),outlines=state.outlines}
+    params:=Gpu_Params{grid={grid.x,grid.y,grid.z,u32(state.count)},distance=media.distance,scale=media.scale,history=math.pow(HISTORY,f32(state.turns)),turns=state.turns,dry=state.dry?1:0,shade=state.shade?1:0,far=media.cells.w,reach=media.reach,side=u32(pass.glass),outlines=state.outlines}
     // In front of glass the grid of the view is lit already: the fog from the eye to the glass goes over it.
     if pass.glass==.Front {
         volumes:=volumes_relative(state,pass.origin)
@@ -296,7 +296,7 @@ fog_record :: proc(pass:^render.Pass,user:rawptr) {
         return
     }
     // How far each column sees, and the columns around it: what lies behind is not seen.
-    if state.hidden!=1 {
+    if state.turns!=1 {
         render.pass_timestamp(pass,"fog far")
         render.pass_surface_read(pass,0,.Linear_Depth)
         if ok,_:=render.pass_texture(pass,1,far);!ok {return}
