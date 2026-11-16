@@ -631,7 +631,10 @@ A masked card is drawn opaque, cut to the outline of its mask, when it is read
   opacity reaches the cutoff; conservative outlines of them from `OUTLINE_FINEST` texels to a
   convex quadrilateral, each with its measured error (the farthest texel it draws from one the mask
   keeps). Cards on the same rectangle share them. An outline is laid on the card through its
-  triangles, one facet per flat run of them, so a bent card stays bent.
+  triangles, one facet per flat run of them, so a bent card stays bent. A rectangle wider than
+  `OUTLINE_MASK_SIDE` is cut on cells of several texels, each kept where any of its texels is,
+  its error grown by a cell; the cut works in at most `OUTLINE_WORK_BYTES` a cell, given back as
+  it ends. Without that memory a card keeps its mask, and the model is cut whole or not at all.
 - **Leaf or cluster**, from the mask: a card whose outline needs at most `OUTLINE_TRIANGLES` to
   draw at most `1/OUTLINE_COVERAGE` of what the mask keeps is a leaf; any other keeps its mask on
   its tightest convex outline of up to eight corners. A card whose rectangle keeps nothing is

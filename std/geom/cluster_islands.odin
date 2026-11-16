@@ -177,18 +177,21 @@ island_apply :: proc "contextless" (states:[]Cluster_Island_State,islands:[]Clus
 // to the least that moves one more class while they draw more than `target`
 // triangles. The states that remain come first, by class and order; returns
 // how many, the `allowed` it ended at, the largest error among them and the
-// triangles they draw; those it drops follow, each class in its order.
-islands_reduce :: proc(states:[]Cluster_Island_State,islands:[]Cluster_Island,rungs:[]Cluster_Island_Rung,areas:[]f32,allowed:f32,target:int) -> (kept:int,reached:f32,error:f32,triangles:int) #no_bounds_check {
+// triangles they draw; those it drops follow, each class in its order. ok
+// false without memory, the states as they were.
+islands_reduce :: proc(states:[]Cluster_Island_State,islands:[]Cluster_Island,rungs:[]Cluster_Island_Rung,areas:[]f32,allowed:f32,target:int) -> (kept:int,reached:f32,error:f32,triangles:int,ok:bool) #no_bounds_check {
     // By class, then order, ties by island.
     Pair :: struct {class:u32,order:u64,island:u32,at:int}
-    pairs:=make([]Pair,len(states),context.temp_allocator)
+    pairs,no_pairs:=make([]Pair,len(states),context.temp_allocator)
+    sorted,no_sorted:=make([]Cluster_Island_State,len(states),context.temp_allocator)
+    ordered,no_ordered:=make([]Cluster_Island_State,len(states),context.temp_allocator)
+    if no_pairs!=nil || no_sorted!=nil || no_ordered!=nil {return}
     for s,at in states {pairs[at]={islands[s.island].class,islands[s.island].order,s.island,at}}
     slice.sort_by(pairs,proc(a,b:Pair) -> bool {
         if a.class!=b.class {return a.class<b.class}
         if a.order!=b.order {return a.order<b.order}
         return a.island<b.island
     })
-    sorted:=make([]Cluster_Island_State,len(states),context.temp_allocator)
     for p,at in pairs {sorted[at]=states[p.at]}
     copy(states,sorted)
     // The classes as runs of states: [first,first+alive) live, the rest dropped.
@@ -197,7 +200,7 @@ islands_reduce :: proc(states:[]Cluster_Island_State,islands:[]Cluster_Island,ru
     for at:=0;at<len(states); {
         end:=at+1
         for end<len(states) && islands[states[end].island].class==islands[states[at].island].class {end+=1}
-        append(&runs,Run{at,end-at})
+        if _,failed:=append(&runs,Run{at,end-at});failed!=nil {copy(states,sorted);return}
         at=end
     }
     reached=allowed
@@ -222,7 +225,6 @@ islands_reduce :: proc(states:[]Cluster_Island_State,islands:[]Cluster_Island,ru
         reached=max(reached,next)
     }
     // The survivors first, then those dropped, each in the order of its class.
-    ordered:=make([]Cluster_Island_State,len(states),context.temp_allocator)
     at:=0
     for run in runs {
         for s in states[run.first:][:run.alive] {
@@ -238,6 +240,7 @@ islands_reduce :: proc(states:[]Cluster_Island_State,islands:[]Cluster_Island,ru
         for s in states[run.first+run.alive:end] {ordered[at]=s;at+=1}
     }
     copy(states,ordered)
+    ok=true
     return
 }
 
@@ -272,7 +275,9 @@ spatial_runs :: proc(centers:[]Vec3,sizes:[][2]u32,limit:[2]u32,order:[]u32,ends
         if side.y>side[axis] {axis=1}
         if side.z>side[axis] {axis=2}
         clear(&keyed)
-        for item in items {append(&keyed,Keyed{centers[item][axis],item})}
+        for item in items {
+            if _,error:=append(&keyed,Keyed{centers[item][axis],item});error!=nil {return false}
+        }
         slice.sort_by(keyed[:],proc(a,b:Keyed) -> bool {return a.key<b.key || a.key==b.key && a.item<b.item})
         for k,at in keyed {items[at]=k.item}
         // The part before takes ceil(parts/2) parts' worth, and one item at least.
@@ -318,10 +323,10 @@ Island_Builder :: struct {
 @(private="file")
 islands_clusterize :: proc(ib:^Island_Builder,given:[]Cluster_Island_State,submesh:u32,own:Cluster_Lod,generator:u32,out:^[dynamic]Island_Pending,states:^[dynamic]Cluster_Island_State) -> Cluster_Error {
     if len(given)==0 {return .None}
-    centers:=make([]Vec3,len(given),context.temp_allocator)
-    sizes:=make([][2]u32,len(given),context.temp_allocator)
-    order:=make([]u32,len(given),context.temp_allocator)
-    if centers==nil || sizes==nil || order==nil {return .Out_Of_Memory}
+    centers,no_centers:=make([]Vec3,len(given),context.temp_allocator)
+    sizes,no_sizes:=make([][2]u32,len(given),context.temp_allocator)
+    order,no_order:=make([]u32,len(given),context.temp_allocator)
+    if no_centers!=nil || no_sizes!=nil || no_order!=nil {return .Out_Of_Memory}
     for s,at in given {
         island:=ib.source.islands[s.island]
         r:=island_rung(island,s.rung)
@@ -389,14 +394,14 @@ islands_dag :: proc(b:^Dag_Builder,source:Cluster_Source) -> Cluster_Error {
     scratch:=context.temp_allocator
     measured:bool
     if ib.areas,measured=islands_areas(source.positions,source.island_rungs,source.island_indices,scratch);!measured {return .Out_Of_Memory}
-    ib.vertices=make([]u32,len(source.island_rungs),scratch)
-    ib.stamp=make([]u32,len(source.positions),scratch)
-    ib.scale=make([]f32,len(source.islands),scratch)
-    ib.rank=make([]f32,len(source.islands),scratch)
-    if ib.scale==nil || ib.rank==nil {return .Out_Of_Memory}
+    no_vertices,no_stamp,no_scale,no_rank:runtime.Allocator_Error
+    ib.vertices,no_vertices=make([]u32,len(source.island_rungs),scratch)
+    ib.stamp,no_stamp=make([]u32,len(source.positions),scratch)
+    ib.scale,no_scale=make([]f32,len(source.islands),scratch)
+    ib.rank,no_rank=make([]f32,len(source.islands),scratch)
+    if no_vertices!=nil || no_stamp!=nil || no_scale!=nil || no_rank!=nil {return .Out_Of_Memory}
     for &k in ib.scale {k=1}
-    ib.positions=make([dynamic]Vec3,0,len(source.positions),scratch)
-    if ib.vertices==nil || ib.stamp==nil && len(source.positions)>0 {return .Out_Of_Memory}
+    ib.positions=make([dynamic]Vec3,scratch)
     if _,error:=append(&ib.positions,..source.positions);error!=nil {return .Out_Of_Memory}
     for &s in ib.stamp {s=NONE}
     for rung,at in source.island_rungs {
@@ -414,7 +419,8 @@ islands_dag :: proc(b:^Dag_Builder,source:Cluster_Source) -> Cluster_Error {
     given:=make([dynamic]Cluster_Island_State,scratch)
     submeshes:=make([dynamic]u32,scratch)
     for island in source.islands {
-        if !slice.contains(submeshes[:],island.submesh) {append(&submeshes,island.submesh)}
+        if slice.contains(submeshes[:],island.submesh) {continue}
+        if _,error:=append(&submeshes,island.submesh);error!=nil {return .Out_Of_Memory}
     }
     slice.sort(submeshes[:])
     for submesh in submeshes {
@@ -422,7 +428,7 @@ islands_dag :: proc(b:^Dag_Builder,source:Cluster_Source) -> Cluster_Error {
         for island,at in source.islands {
             if island.submesh!=submesh {continue}
             first:=island.first_rung
-            append(&given,Cluster_Island_State{island=u32(at),grow=1,area=ib.areas[first],error=source.island_rungs[first].error})
+            if _,error:=append(&given,Cluster_Island_State{island=u32(at),grow=1,area=ib.areas[first],error=source.island_rungs[first].error});error!=nil {return .Out_Of_Memory}
         }
         islands_clusterize(&ib,given[:],submesh,{},NONE,&clusters,&states) or_return
     }
@@ -445,29 +451,29 @@ islands_dag :: proc(b:^Dag_Builder,source:Cluster_Source) -> Cluster_Error {
         defer runtime.arena_temp_end(level_temp)
         context.temp_allocator=runtime.arena_allocator(&work)
         // The groups: runs of order.
-        order:=make([]u32,len(clusters),context.temp_allocator)
+        order,no_order:=make([]u32,len(clusters),context.temp_allocator)
         ends:=make([dynamic]u32,context.temp_allocator)
-        if order==nil {return .Out_Of_Memory}
+        if no_order!=nil {return .Out_Of_Memory}
         for &o,at in order {o=u32(at)}
         if len(clusters)>CLUSTER_GROUP_SIZE {
-            centers:=make([]Vec3,len(clusters),context.temp_allocator)
-            sizes:=make([][2]u32,len(clusters),context.temp_allocator)
-            if centers==nil || sizes==nil {return .Out_Of_Memory}
+            centers,no_centers:=make([]Vec3,len(clusters),context.temp_allocator)
+            sizes,no_sizes:=make([][2]u32,len(clusters),context.temp_allocator)
+            if no_centers!=nil || no_sizes!=nil {return .Out_Of_Memory}
             for c,at in clusters {centers[at],sizes[at]=c.own.center,{1,0}}
             if !spatial_runs(centers,sizes,{CLUSTER_GROUP_SIZE,1},order,&ends) {return .Out_Of_Memory}
         } else {
-            append(&ends,u32(len(clusters)))
+            if _,error:=append(&ends,u32(len(clusters)));error!=nil {return .Out_Of_Memory}
         }
         clear(&next_clusters);clear(&next_states)
         first:u32
         for end in ends {
             group_temp:=runtime.arena_temp_begin(&work)
             defer runtime.arena_temp_end(group_temp)
-            group:=make([]Island_Pending,end-first,context.temp_allocator)
-            lods:=make([]Cluster_Lod,end-first,context.temp_allocator)
+            group,no_group:=make([]Island_Pending,end-first,context.temp_allocator)
+            lods,no_lods:=make([]Cluster_Lod,end-first,context.temp_allocator)
             members:=make([dynamic]Cluster_Island_State,context.temp_allocator)
             group_states:=make([dynamic]Cluster_Island_State,context.temp_allocator)
-            if group==nil || lods==nil {return .Out_Of_Memory}
+            if no_group!=nil || no_lods!=nil {return .Out_Of_Memory}
             triangles:=0
             for at,k in order[first:end] {
                 c:=clusters[at]
@@ -476,15 +482,17 @@ islands_dag :: proc(b:^Dag_Builder,source:Cluster_Source) -> Cluster_Error {
                 group[k].first=u32(len(group_states))
                 lods[k]=c.own
                 for s in states[c.first:][:c.count] {
-                    append(&group_states,s)
-                    append(&members,s)
+                    _,no_state:=append(&group_states,s)
+                    _,no_member:=append(&members,s)
+                    if no_state!=nil || no_member!=nil {return .Out_Of_Memory}
                     triangles+=int(source.island_rungs[island_rung(source.islands[s.island],s.rung)].index_count/3)
                 }
             }
             first=end
             bounds,bounded:=lod_merge(lods,context.temp_allocator)
             if !bounded {return .Out_Of_Memory}
-            kept,_,error,left:=islands_reduce(members[:],source.islands,source.island_rungs,ib.areas,bounds.error,int(f32(triangles)*CLUSTER_SIMPLIFY_RATIO))
+            kept,_,error,left,reduced:=islands_reduce(members[:],source.islands,source.island_rungs,ib.areas,bounds.error,int(f32(triangles)*CLUSTER_SIMPLIFY_RATIO))
+            if !reduced {return .Out_Of_Memory}
             stuck:=f32(left)>f32(triangles)*CLUSTER_SIMPLIFY_STUCK
             if !stuck {
                 // Where each island goes: a survivor to the area it draws in the next level,
@@ -524,7 +532,8 @@ islands_dag :: proc(b:^Dag_Builder,source:Cluster_Source) -> Cluster_Error {
             for submesh in submeshes {
                 clear(&given)
                 for s in survivors {
-                    if source.islands[s.island].submesh==submesh {append(&given,s)}
+                    if source.islands[s.island].submesh!=submesh {continue}
+                    if _,failed:=append(&given,s);failed!=nil {return .Out_Of_Memory}
                 }
                 islands_clusterize(&ib,given[:],submesh,bounds,id,&next_clusters,&next_states) or_return
             }

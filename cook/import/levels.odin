@@ -1,6 +1,7 @@
 package importer
 
 import "core:math"
+import "core:mem"
 import "core:slice"
 import "mirai:asset"
 import "mirai:std/base"
@@ -85,6 +86,7 @@ Mesh_Levels :: struct {
     pruned:bool, // some submesh is of islands, which its levels prune
     dag:bool,    // static: level 0 alone, whose clusters are its DAG
     rest:[]u32,  // of a DAG, the triangles of level 0 it simplifies: all but those of islands
+    failed:bool, // there was not the memory for its islands: it is not to be built
     islands:asset.Mesh_Islands, // of a DAG, those it prunes
 }
 
@@ -121,8 +123,11 @@ mesh_levels :: proc(vertices:[]asset.Vertex,indices:[]u32,skin:[]asset.Skin_Vert
         // The deltas of the outlines after those of level 0, as their vertices come after.
         targets,deltas:=morphs,morph_deltas
         if len(outlines.vertices)>0 {
-            targets=make([]asset.Morph_Target,len(morphs),context.temp_allocator)
-            merged:=make([dynamic]asset.Morph_Delta,0,len(morph_deltas)+len(outlines.morph_deltas),context.temp_allocator)
+            no_targets:mem.Allocator_Error
+            targets,no_targets=make([]asset.Morph_Target,len(morphs),context.temp_allocator)
+            merged,no_merged:=make([dynamic]asset.Morph_Delta,0,len(morph_deltas)+len(outlines.morph_deltas),context.temp_allocator)
+            if no_targets!=nil || no_merged!=nil {levels.failed=true;return}
+            // Within its capacity.
             for target,t in morphs {
                 targets[t]=target
                 targets[t].first=u32(len(merged))
@@ -191,10 +196,12 @@ levels_morphs :: proc(count,every:int,morphs:[]asset.Morph_Target,deltas:[]asset
 // whose vertices come after those of level 0, from `offset`). island is the
 // island of each triangle of level 0, NONE outside them. The triangles of
 // each card are one small island, and a submesh with a card is of islands.
+// False without memory.
 @(private="file")
-levels_islands :: proc(positions:[]geom.Vec3,indices:[]u32,submeshes:[]Submesh,outlines:Mesh_Outlines,offset:u32,allocator:=context.allocator) -> (islands:asset.Mesh_Islands,island:[]u32) {
+levels_islands :: proc(positions:[]geom.Vec3,indices:[]u32,submeshes:[]Submesh,outlines:Mesh_Outlines,offset:u32,allocator:=context.allocator) -> (islands:asset.Mesh_Islands,island:[]u32,ok:bool) {
     cards:=outlines.cards
-    card_of:=make([]u32,len(indices)/3,context.temp_allocator)
+    card_of,no_cards:=make([]u32,len(indices)/3,context.temp_allocator)
+    if no_cards!=nil {return}
     for &c in card_of {c=NONE}
     for card,at in cards {
         for t in card.first_triangle..<card.first_triangle+card.triangle_count {
@@ -205,17 +212,20 @@ levels_islands :: proc(positions:[]geom.Vec3,indices:[]u32,submeshes:[]Submesh,o
     Found :: struct {first,count:u32,card:u32,order:u64,center:geom.Vec3,radius:f32,class:u32}
     found:=make([dynamic]Found,context.temp_allocator)
     triangle_list:=make([dynamic]u32,context.temp_allocator)
-    island=make([]u32,len(indices)/3,allocator)
+    no_island:mem.Allocator_Error
+    if island,no_island=make([]u32,len(indices)/3,allocator);no_island!=nil {return}
     for &i in island {i=NONE}
     class_count:u32
     for submesh in submeshes {
         sub:=indices[submesh.first_index:][:submesh.index_count]
         first_triangle:=submesh.first_index/3
         sub_triangles:=u32(len(sub)/3)
-        labels:=make([]u32,sub_triangles,context.temp_allocator)
+        labels,no_labels:=make([]u32,sub_triangles,context.temp_allocator)
+        if no_labels!=nil {return}
         count:=geom.mesh_components(positions,sub,labels)
         // A card is the island of its own label, after those of the components.
-        given:=make([dynamic]u32,count,context.temp_allocator)
+        given,no_given:=make([dynamic]u32,count,context.temp_allocator)
+        if no_given!=nil {return}
         for &g in given {g=NONE}
         first_card:=u32(count)
         for t in 0..<sub_triangles {
@@ -225,12 +235,15 @@ levels_islands :: proc(positions:[]geom.Vec3,indices:[]u32,submeshes:[]Submesh,o
             card:=card_of[first_triangle+t]
             if card==NONE {continue}
             label:=u32(count)+card-first_card
-            for int(label)>=len(given) {append(&given,NONE)}
+            for int(label)>=len(given) {
+                if _,error:=append(&given,NONE);error!=nil {return}
+            }
             given[label]=card
             labels[t]=label
         }
         count=len(given)
-        sizes:=make([]u32,count,context.temp_allocator)
+        sizes,no_sizes:=make([]u32,count,context.temp_allocator)
+        if no_sizes!=nil {return}
         for l in labels {if l!=NONE {sizes[l]+=1}}
         small,carded:=0,false
         for size,l in sizes {
@@ -240,20 +253,22 @@ levels_islands :: proc(positions:[]geom.Vec3,indices:[]u32,submeshes:[]Submesh,o
         island_first:=u32(len(found))
         if small<ISLANDS_MIN && !carded {continue}
         // The small islands in the order of their first triangle, and the triangles of each.
-        number:=make([]u32,count,context.temp_allocator)
+        number,no_number:=make([]u32,count,context.temp_allocator)
+        starts,no_starts:=make([dynamic]u32,0,small+1,context.temp_allocator)
+        if no_number!=nil || no_starts!=nil {return}
         for &n in number {n=NONE}
-        starts:=make([dynamic]u32,0,small+1,context.temp_allocator)
         append(&starts,0)
         for l,t in labels {
             if l==NONE || sizes[l]==0 || given[l]==NONE && !island_small(sizes[l],sub_triangles) || number[l]!=NONE {continue}
             number[l]=u32(len(found))-island_first
             order:=u64(first_triangle)+u64(t)
-            append(&found,Found{order=base.splitmix_next(&order),card=given[l]})
-            append(&starts,starts[len(starts)-1]+sizes[l])
+            _,no_found:=append(&found,Found{order=base.splitmix_next(&order),card=given[l]})
+            _,no_start:=append(&starts,starts[len(starts)-1]+sizes[l])
+            if no_found!=nil || no_start!=nil {return}
         }
         base_triangle:=u32(len(triangle_list))
-        resize(&triangle_list,int(base_triangle+starts[len(starts)-1]))
-        fill:=make([]u32,len(starts)-1,context.temp_allocator)
+        fill,no_fill:=make([]u32,len(starts)-1,context.temp_allocator)
+        if no_fill!=nil || resize(&triangle_list,int(base_triangle+starts[len(starts)-1]))!=nil {return}
         for l,t in labels {
             if l==NONE || number[l]==NONE {continue}
             k:=number[l]
@@ -297,20 +312,22 @@ levels_islands :: proc(positions:[]geom.Vec3,indices:[]u32,submeshes:[]Submesh,o
         first:=u32(len(rung_indices))
         for triangle in triangle_list[i.first:][:i.count] {
             island[triangle]=u32(k)
-            append(&rung_indices,..indices[triangle*3:][:3])
+            if _,error:=append(&rung_indices,..indices[triangle*3:][:3]);error!=nil {return}
         }
-        append(&rungs,geom.Cluster_Island_Rung{first,u32(len(rung_indices))-first,cards[i.card].error if i.card!=NONE else 0})
+        if _,error:=append(&rungs,geom.Cluster_Island_Rung{first,u32(len(rung_indices))-first,cards[i.card].error if i.card!=NONE else 0});error!=nil {return}
         if i.card!=NONE && len(outlines.rungs)==len(cards)*(OUTLINE_RUNGS-1) {
             for r in outlines.rungs[int(i.card)*(OUTLINE_RUNGS-1):][:OUTLINE_RUNGS-1] {
                 first=u32(len(rung_indices))
-                for index in outlines.indices[r.first_index:][:r.index_count] {append(&rung_indices,offset+index)}
-                append(&rungs,geom.Cluster_Island_Rung{first,r.index_count,r.error})
+                for index in outlines.indices[r.first_index:][:r.index_count] {
+                    if _,error:=append(&rung_indices,offset+index);error!=nil {return}
+                }
+                if _,error:=append(&rungs,geom.Cluster_Island_Rung{first,r.index_count,r.error});error!=nil {return}
             }
         }
         made.rung_count=u32(len(rungs))-made.first_rung
-        append(&out,made)
+        if _,error:=append(&out,made);error!=nil {return}
     }
-    return {out[:],rungs[:],rung_indices[:]},island
+    return {out[:],rungs[:],rung_indices[:]},island,true
 }
 
 @(private)
@@ -330,11 +347,12 @@ levels_simplify :: proc(vertices:[]asset.Vertex,indices:[]u32,skin:[]asset.Skin_
     // The vertices of level 0 followed by those of the coarser outlines of its cards, with their skin.
     every,every_skin:=vertices,skin
     if len(outlines.cards)>0 {
-        every=make([]asset.Vertex,len(vertices)+len(outlines.vertices),temp)
+        error:mem.Allocator_Error
+        if every,error=make([]asset.Vertex,len(vertices)+len(outlines.vertices),temp);error!=nil {levels.failed=true;return}
         copy(every,vertices)
         copy(every[len(vertices):],outlines.vertices)
         if len(skin)>0 {
-            every_skin=make([]asset.Skin_Vertex,len(every),temp)
+            if every_skin,error=make([]asset.Skin_Vertex,len(every),temp);error!=nil {levels.failed=true;return}
             copy(every_skin,skin)
             copy(every_skin[len(skin):],outlines.skin)
         }
@@ -343,19 +361,23 @@ levels_simplify :: proc(vertices:[]asset.Vertex,indices:[]u32,skin:[]asset.Skin_
     positions,attributes,protect:=asset.mesh_simplify_inputs(every)
     weights:=asset.MESH_SIMPLIFY_WEIGHTS
     // The islands that are pruned, and the triangles that are simplified.
-    islands,island_of:=levels_islands(positions[:len(vertices)],indices,submeshes,outlines,offset,allocator if len(skin)==0 else temp)
+    islands,island_of,found:=levels_islands(positions[:len(vertices)],indices,submeshes,outlines,offset,allocator if len(skin)==0 else temp)
+    if !found {levels.failed=true;return}
     rest:=indices
     if len(islands.islands)>0 {
         levels.pruned=true
-        others:=make([dynamic]u32,0,len(indices),allocator if len(skin)==0 else temp)
+        others,no_others:=make([dynamic]u32,0,len(indices),allocator if len(skin)==0 else temp)
+        if no_others!=nil {levels.failed=true;return}
+        // Within its capacity.
         for i,t in island_of {
             if i==NONE {append(&others,..indices[t*3:][:3])}
         }
         rest=others[:]
     }
     // What each outline draws, and where each island is.
-    areas,_:=geom.islands_areas(positions,islands.rungs,islands.indices,temp)
-    states:=make([]geom.Cluster_Island_State,len(islands.islands),temp)
+    areas,measured:=geom.islands_areas(positions,islands.rungs,islands.indices,temp)
+    states,no_states:=make([]geom.Cluster_Island_State,len(islands.islands),temp)
+    if !measured || no_states!=nil {levels.failed=true;return}
     allowed:f32
     for island,at in islands.islands {
         first:=islands.rungs[island.first_rung]
@@ -368,7 +390,9 @@ levels_simplify :: proc(vertices:[]asset.Vertex,indices:[]u32,skin:[]asset.Skin_
         levels.dag=true
         levels.rest=rest
         levels.islands=islands
-        if len(outlines.vertices)>0 {append(out_vertices,..outlines.vertices)}
+        if len(outlines.vertices)>0 {
+            if _,error:=append(out_vertices,..outlines.vertices);error!=nil {levels.failed=true}
+        }
         return
     }
     alive:=len(states)
@@ -424,7 +448,8 @@ levels_simplify :: proc(vertices:[]asset.Vertex,indices:[]u32,skin:[]asset.Skin_
         // The islands go as far as the error allowed lets them; where the level would keep too much
         // of the one before, they are allowed the least more that moves one more class.
         allowed=max(allowed,error)
-        kept_islands,reached,islands_error,_:=geom.islands_reduce(states[:alive],islands.islands,islands.rungs,areas,allowed,int(LOD_KEEP*f32(previous))-len(level_corners)/3)
+        kept_islands,reached,islands_error,_,reduced:=geom.islands_reduce(states[:alive],islands.islands,islands.rungs,areas,allowed,int(LOD_KEEP*f32(previous))-len(level_corners)/3)
+        if !reduced {levels.failed=true;return}
         alive,allowed=kept_islands,reached
         error=max(error,islands_error)
         for s in states[:alive] {
