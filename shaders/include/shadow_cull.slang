@@ -20,8 +20,10 @@
 // words of the bits of what moves, the instances of the scene then the
 // batches drawn; listed: 1 while the round culls the `ranges` ranges of the
 // movers after those words alone, `instances` in all (render.shadow_maps_plan);
-// plan: the word of the buffer of the maps the plans of the slots start at.
-struct Params_Block { uint instances; uint maps; uint rows; uint glass; uint chunk_capacity; uint entry_capacity; uint list; uint moving; uint movers; uint listed; uint ranges; uint masks; uint plan; uint pad0; uint pad1; uint pad2; };
+// plan: the word of the buffer of the maps the plans of the slots start at;
+// span: the round whose pages span SHADOW_WORDS_BOUNDS for this one (that of
+// the atlas for the glass drawn again only where it composed).
+struct Params_Block { uint instances; uint maps; uint rows; uint glass; uint chunk_capacity; uint entry_capacity; uint list; uint moving; uint movers; uint listed; uint ranges; uint masks; uint plan; uint span; uint pad1; uint pad2; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 // The draws: of the clusters that hide whole, of those of masked materials,
 // and of those of glass for the tint and the nearest glass.
@@ -81,7 +83,7 @@ uint4 shadow_page_window(Shadow_Map m, uint2 page) {
 
 // The pages of a map at its mip the round draws lie within: false where it draws none there.
 bool shadow_pages_span(Shadow_Map m, out uint4 span) {
-    uint at = SHADOW_WORDS_BOUNDS + ((params.moving * SHADOW_SLOTS + m.rect.x) * SHADOW_MIPS + shadow_rect_mip(m.rect)) * 4u;
+    uint at = SHADOW_WORDS_BOUNDS + ((params.span * SHADOW_SLOTS + m.rect.x) * SHADOW_MIPS + shadow_rect_mip(m.rect)) * 4u;
     uint4 words = uint4(shadow_pages[at], shadow_pages[at + 1u], shadow_pages[at + 2u], shadow_pages[at + 3u]);
     span = uint4(SHADOW_MAP_PAGES - words.x, SHADOW_MAP_PAGES - words.y, words.z - 1u, words.w - 1u);
     return words.x != 0u;

@@ -3,6 +3,7 @@
 //! variant tint MIRAI_SHADOW_TESTED=1 MIRAI_SHADOW_TINT=1
 //! variant glass MIRAI_SHADOW_TESTED=1 MIRAI_SHADOW_GLASS=1
 //! variant copy MIRAI_SHADOW_COPY=1
+//! variant blank MIRAI_SHADOW_BLANK=1
 // The depth alone of shadow_map.vert. tested: of a masked or blended
 // material, only where it is there, as a shadow ray asks it (hit_covers).
 // tint: what each face of a blended material in front of the depth of the
@@ -10,7 +11,8 @@
 // the alpha of a face whose program gives its color 0 (shadow_tint_programmed);
 // glass: the depth of the nearest of those faces (shadow_tint of
 // shadow_maps.slang). copy: a page of the cache into the atlas
-// (shadow_map.vert square, its texture bound as held).
+// (shadow_map.vert square, its texture bound as held). blank: a page of the
+// tint that lets all light through, before the glass of a page is drawn again.
 #ifdef MIRAI_SHADOW_TESTED
 #ifdef MIRAI_SHADOW_TINT
 #define MIRAI_RAY_FILTERS
@@ -54,6 +56,9 @@ void main([[vk::location(0)]] nointerpolation uint2 place : PLACE, [[vk::locatio
     if (!hit_covers(place.x, place.y, bary, reach, BLEND_PASSES)) discard;
 }
 #endif
+#elif defined(MIRAI_SHADOW_BLANK)
+[shader("fragment")]
+float4 main() : SV_Target0 { return float4(1.0); }
 #elif defined(MIRAI_SHADOW_COPY)
 #include "common.slang"
 [[vk::binding(SLOT_PASS2, 0)]] Texture2D<float4> held : register(MIRAI_REGISTER(t, SLOT_PASS2), space0);

@@ -282,6 +282,7 @@ Stats :: struct {
 	cpu_end_ms:        f32, // rhi.frame_end: submit and present
 	generated:         bool, // the frame drew an image the window shows before its own (frame generation)
 	shadow_movers:          u32, // of the last frame: the movers the maps drew, which their caches leave out
+	shadow_marked:          u32, // of the last frame: the views whose points marked the pages of the maps they read
 	ui_vertices_dropped:    u32, // of the last frame: UI vertices beyond the capacity
 	ui_shapes_dropped:      u32,
 	ui_layers_dropped:      u32,
@@ -301,7 +302,7 @@ Pipeline_Id :: enum {
 	Ddgi_Trace, Ddgi_Irradiance, Ddgi_Distance, Ddgi_Keep,
 	Ddgi_Relocate, Ddgi_Select, Ddgi_Touch, Ddgi_Mark, Contact, Contact_Light, Contact_Pixels, Composite, Taa, Hiz,
 	Exposure_Histogram, Exposure_Adapt, Tonemap, Tonemap_Wide, Ui, Thumbnail, Thumbnail_Values, Impostor, Preview_Backdrop, Blit, Highlight, Highlight_Filter, Reflect, Translucent, Reflect_Resolve,
-	Shadow_Maps, Shadow_Clusters, Shadow_Map, Shadow_Map_Tested, Shadow_Map_Tint, Shadow_Map_Glass, Shadow_Map_Clear, Shadow_Map_Copy, Shadow_Mark, Shadow_Pages, Shadow_Hiz, // the cull of the maps of the shadows by instance and by cluster, their draws by what each writes, the pages of the cache they clear and the atlas copies, the marks of the points, the table of the pages and the farthest depth of the cache
+	Shadow_Maps, Shadow_Clusters, Shadow_Map, Shadow_Map_Tested, Shadow_Map_Tint, Shadow_Map_Glass, Shadow_Map_Clear, Shadow_Map_Blank, Shadow_Map_Copy, Shadow_Mark, Shadow_Pages, Shadow_Hiz, // the cull of the maps of the shadows by instance and by cluster, their draws by what each writes, the pages of the cache and of the nearest glass they clear, the pages of the tint they clear, and the atlas copies, the marks of the points, the table of the pages and the farthest depth of the cache
 	Glass_Layer, Glass_Layer_Layers, Glass_Filter, Glass, Glass_Light, Glass_Levels, Glass_Mean, Glass_Inside,
 	// The raster of the visibility target by raster bin (RASTER_BIN_*), then the same of a view with a clip plane.
 	Visibility, Visibility_Two_Sided, Visibility_Tested, Visibility_Tested_Two_Sided,
@@ -377,10 +378,6 @@ Frame_Targets :: struct {
 		direct_sun_points:       rhi.Texture, // the same of the part of the sun
 		direct_spread:           rhi.Texture, // those parts spread along the rows (direct_spread.comp)
 		direct_marks:            rhi.Texture, // 1 where a sample of the direct light met what changed, for TAA
-	},
-	using shadow_targets: struct {
-		shadow_tint:             rhi.Texture, // what the glass in front of it lets through of the light of each texel, while glass colors light
-		shadow_glass:            rhi.Texture, // the depth of the nearest of that glass
 	},
 }
 
@@ -1055,6 +1052,11 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 		vertex = &r.shader_codes[.Shadow_Map_Square_Vert], fragment = &r.shader_codes[.Shadow_Map_Frag],
 		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Always, cull = .None, name = "shadow map squares",
 	})
+	graphics(list, r, .Shadow_Map_Blank, {
+		vertex = &r.shader_codes[.Shadow_Map_Square_Vert], fragment = &r.shader_codes[.Shadow_Map_Blank_Frag],
+		color_formats = {0 = .RGBA8_Unorm}, color_count = 1,
+		depth_format = .D32_Float, depth_test = false, depth_write = false, cull = .None, name = "shadow tint squares",
+	})
 	graphics(list, r, .Shadow_Map_Copy, {
 		vertex = &r.shader_codes[.Shadow_Map_Square_Vert], fragment = &r.shader_codes[.Shadow_Map_Copy_Frag],
 		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Always, cull = .None, name = "shadow map pages copied",
@@ -1615,7 +1617,7 @@ targets_textures :: proc(t: ^Targets) -> (all: [TARGET_TEXTURES]rhi.Texture) {
 	fixed := [?]rhi.Texture{
 		t.taa[0], t.taa[1], t.taa_frames[0], t.taa_frames[1], t.hiz[0], t.hiz[1], t.ldr, t.generated,
 		t.highlight, t.highlight_depth, t.highlight_filtered, t.gi_given, t.reactive, t.aerial, t.ui_blur[0], t.ui_blur[1],
-		t.shadow_raster.cache, t.shadow_raster.atlas, t.shadow_raster.table, t.shadow_raster.hiz,
+		t.shadow_raster.cache, t.shadow_raster.atlas, t.shadow_raster.table, t.shadow_raster.hiz, t.shadow_raster.tint, t.shadow_raster.glass,
 	}
 	#assert(len(fixed) + UI_LAYER_DEPTH_CAPACITY <= TARGET_TEXTURES)
 	copy(all[:], fixed[:])
