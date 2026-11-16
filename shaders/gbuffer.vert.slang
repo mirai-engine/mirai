@@ -22,8 +22,8 @@
 #include "gbuffer_vertex.slang"
 #ifdef MIRAI_BATCHES
 // The visible clusters of both phases, by raster bin (cull_bins.comp): the
-// instance, and the cluster as a word of the index pool.
-[[vk::binding(SLOT_PASS0, 0)]] StructuredBuffer<uint2> visible : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);
+// instance, the cluster as a word of the index pool and its program.
+[[vk::binding(SLOT_PASS0, 0)]] StructuredBuffer<uint4> visible : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);
 #include <extension_vertex.slang>
 #else
 // The Surface program whose clusters a draw of an instance draws
@@ -42,7 +42,7 @@ typedef Gbuffer_Vertex Stage_Vertex;
 Stage_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_VulkanInstanceID) {
     Stage_Vertex output = (Stage_Vertex)0;
 #ifdef MIRAI_BATCHES
-    uint2 entry = visible[instance_id];
+    uint4 entry = visible[instance_id];
     uint index = entry.x;
     Instance inst = scene_instance(index);
     Mesh mesh = meshes[instance_mesh(inst)];
@@ -66,12 +66,7 @@ Stage_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
         output.position = float4(2.0, 2.0, 2.0, 1.0);
         return output;
     }
-#ifdef MIRAI_BATCHES
-    Gbuffer_Vertex built = gbuffer_vertex_build(index, inst, mesh, c, corner, true);
-#else
-    // The highlight draws level 0 as it is.
-    Gbuffer_Vertex built = gbuffer_vertex_build(index, inst, mesh, c, corner, !MIRAI_EDITOR_HIGHLIGHT);
-#endif
+    Gbuffer_Vertex built = gbuffer_vertex_build(index, inst, mesh, c, corner);
 #if defined(MIRAI_VISIBILITY) && !defined(MIRAI_VISIBILITY_TESTED)
     output.position = built.position;
 #ifdef MIRAI_CLIP_PLANE

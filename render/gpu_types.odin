@@ -268,11 +268,6 @@ MESH_FLAG_COLORS :: abi.MESH_FLAG_COLORS
 // Its pages out of the root come and go in slots (pages.odin): the cull
 // draws what is in the pools and asks for what it lacks.
 MESH_FLAG_STREAMED :: abi.MESH_FLAG_STREAMED
-// Its vertices carry where their islands go as the cut moves between a
-// cluster and its group (asset.Island_Vertex, a stream of two words a vertex
-// after the surfaces): the raster grows and shrinks them so a level of
-// foliage changes without a pop.
-MESH_FLAG_ISLANDS :: abi.MESH_FLAG_ISLANDS
 
 // What an instance gives over the rows of its materials, which the shaders
 // read where they read one of those rows at a point of it. It costs the

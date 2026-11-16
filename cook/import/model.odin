@@ -17,7 +17,7 @@ import mm "mirai:std/math"
 
 IMPORTER_NAME :: "mirai-import"
 // Of the writer: raise it when import_write gives other bytes for the same model.
-IMPORTER_VERSION :: 14
+IMPORTER_VERSION :: 13
 
 // What Import_Info.importer_version holds: the version of the writer in the
 // low 16 bits and the one of the format the source was read with in the high
@@ -132,17 +132,6 @@ Imported_Material :: struct {
     // the texture of one of kind Texture is the image parameter_images names.
     parameters:[]asset.Material_Parameter,
     parameter_images:[]int,         // by parameter: row of the model's images, -1 for none
-    // Of a masked material with a program, what its mask keeps, which its
-    // cards are cut to (cutout.odin); without, they keep their mask.
-    mask:Maybe(Imported_Mask),
-}
-
-// The mask of a material whose program decides its alpha: the texels of an
-// image whose alpha reaches cutoff, read through mapping (its texture unused).
-Imported_Mask :: struct {
-    image:int, // row of the model's images
-    mapping:asset.Material_Map,
-    cutoff:f32,
 }
 
 Imported_Slot :: struct {

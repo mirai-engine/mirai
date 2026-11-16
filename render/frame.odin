@@ -203,6 +203,7 @@ visibility_pass :: proc(p: ^Pass, phase: u32, ids, depth: rhi.Load_Op, depth_tar
 // of each pixel, then the resolve of each program the cull saw a cluster of,
 // which runs where that depth is its own. A nested view resolves its own
 // pixels over those of its view.
+#assert(POINTS_PROGRAM_CAPACITY < 65534, "the 16-bit program depth holds a step for each program and one for none")
 @(private)
 resolve_pass :: proc(p: ^Pass, nested: bool) {
 	r, cmd, t := p.r, p.cmd, p.t
@@ -211,10 +212,7 @@ resolve_pass :: proc(p: ^Pass, nested: bool) {
 	classify.depth = {texture = t.program_depth, load = .Clear, store = .Store, clear = 0}
 	rhi.cmd_begin_render_pass(cmd, &classify)
 	if p.draw {
-		Params :: struct {programs, pad0, pad1, pad2: u32}
-		params := Params{programs = r.points.programs}
 		rhi.cmd_bind_pipeline(cmd, r.pipelines[.Program_Depth])
-		set_params(cmd, &params)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.visible_buffer)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.visibility)
 		rhi.cmd_draw(cmd, 3)

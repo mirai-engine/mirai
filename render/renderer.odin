@@ -972,13 +972,13 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	}
 	graphics(list, r, .Program_Depth, {
 		vertex = &r.shader_codes[.Fullscreen_Vert], fragment = &r.shader_codes[.Vis_Classify_Frag],
-		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Always, name = "program depth",
+		depth_format = .D16_Unorm, depth_test = true, depth_write = true, depth_compare = .Always, name = "program depth",
 	})
 	// The G-buffer each program resolves where the program depth is its own.
 	gbuffer := rhi.Graphics_Pipeline_Desc{
 		vertex = &r.shader_codes[.Vis_Resolve_Vert], fragment = &r.shader_codes[.Vis_Resolve_Frag],
 		color_formats = {0 = .RGBA8_Srgb, 1 = .RGBA16_Float, 2 = .RGBA16_Float, 3 = .RGBA16_Float, 4 = .R32_Float, 5 = .RGBA8_Srgb}, color_count = 6,
-		depth_format = .D32_Float, depth_test = true, depth_write = false, depth_compare = .Equal,
+		depth_format = .D16_Unorm, depth_test = true, depth_write = false, depth_compare = .Equal,
 		name = "resolve",
 	}
 	plain := gbuffer
@@ -1868,7 +1868,7 @@ create_targets :: proc(r: ^Renderer, v: ^View_State, width, height: u32, scale: 
 	ok := full(r, t, &t.depth, .D32_Float, {.Depth_Target, .Sampled}, "depth") // sampled: a custom pass of a pipeline reads it
 	// sRGB keeps dark base colors free of banding in 8 bits; its alpha (metallic) stays linear.
 	ok &&= full(r, t, &t.visibility, .R32_Uint, attachment, "visibility")
-	ok &&= full(r, t, &t.program_depth, .D32_Float, {.Depth_Target}, "program depth")
+	ok &&= full(r, t, &t.program_depth, .D16_Unorm, {.Depth_Target}, "program depth")
 	ok &&= full(r, t, &t.albedo, .RGBA8_Srgb, attachment, "gbuffer albedo")
 	ok &&= full(r, t, &t.normal, .RGBA16_Float, attachment, "gbuffer normal")
 	ok &&= full(r, t, &t.emission, .RGBA16_Float, attachment, "gbuffer emission")

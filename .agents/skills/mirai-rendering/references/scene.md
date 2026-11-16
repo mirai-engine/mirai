@@ -111,17 +111,10 @@
   clusters that share a vertex place it at the same spot. The shaders read vertices, triangles and
   posed vertices only in `geometry.slang` and `posed.slang`; the CPU, with the `asset` decoders
   (`cluster_vertex`, `mesh_level_decode`) over each page.
-- **Levels.** A static mesh is a DAG of clusters, its foliage pruned group by group; one with
-  skin, whole levels whose clusters share the mesh sphere. Both are drawn with the same cut
-  (`cut.slang`, `cluster_in_cut` on the CPU): a cluster enters when its projected error is within
+- **Levels.** A static mesh is a DAG of clusters; one with skin or pruned foliage, whole levels
+  whose clusters share the mesh sphere. Both are drawn with the same cut (`cut.slang`,
+  `cluster_in_cut` on the CPU): a cluster enters when its projected error is within
   `lod_error_pixels` and that of what replaces it is not.
-- **Foliage changes level without a pop.** A mesh with islands (`MESH_FLAG_ISLANDS`) carries in
-  each vertex where its island goes as the cut moves from the error of its cluster to that of its
-  group (`asset.Island_Vertex`): the G-buffer and the shadow maps move it by how far their own cut
-  has gone (`cluster_along`, `island_offset` of `geometry.slang`), survivors growing and the islands
-  the group drops shrinking one after another, so at the switch the cluster draws what its group
-  does. The same vertex of every draw of a view moves alike; rays meet level 0 at rest. Its boxes
-  hold the islands grown.
 - **Detail of another camera.** The error is projected from `Gpu_Frame.detail_eye`, the eye of
   the view unless `Frame_Desc.detail` holds a camera: then the views of the window take from it
   the levels of the meshes, the cuts rays trace and the levels of the textures, while visibility

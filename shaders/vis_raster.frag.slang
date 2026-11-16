@@ -50,6 +50,7 @@ struct Stage_Input {
 };
 
 [shader("fragment")]
+[earlydepthstencil]
 uint main(Stage_Input input) : SV_Target0 {
     return input.in_id;
 }

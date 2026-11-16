@@ -30,7 +30,9 @@
 #include "gbuffer_output.slang"
 #include "visibility.slang"
 
-[[vk::binding(SLOT_PASS0, 0)]] StructuredBuffer<uint2> visible : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);
+// The visible clusters (cull_bins.comp): the instance, the cluster as a word
+// of the index pool and the Surface program it is resolved by.
+[[vk::binding(SLOT_PASS0, 0)]] StructuredBuffer<uint4> visible : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);
 [[vk::binding(SLOT_PASS1, 0)]] Texture2D<uint> visibility : register(MIRAI_REGISTER(t, SLOT_PASS1), space0);
 #include "cull_stats.slang"
 [[vk::binding(SLOT_PASS2, 0)]] RWStructuredBuffer<Stats_Block> resolve_stats : register(MIRAI_REGISTER(u, SLOT_PASS2), space0);
@@ -39,16 +41,18 @@
 
 struct Resolve_Triangle { Gbuffer_Vertex a, b, c; };
 
+// The corners of a triangle, what they share built once.
 Resolve_Triangle resolve_triangle(uint id) {
-    uint2 entry = visible[visibility_entry(id)];
+    uint4 entry = visible[visibility_entry(id)];
     Instance inst = scene_instance(entry.x);
     Mesh mesh = meshes[instance_mesh(inst)];
     Cluster cluster = cluster_at(entry.y);
+    Gbuffer_Cluster shared = gbuffer_cluster(entry.x, inst, mesh, cluster);
     uint corner = visibility_triangle(id) * 3u;
     Resolve_Triangle t;
-    t.a = gbuffer_vertex_build(entry.x, inst, mesh, cluster, corner, true);
-    t.b = gbuffer_vertex_build(entry.x, inst, mesh, cluster, corner + 1u, true);
-    t.c = gbuffer_vertex_build(entry.x, inst, mesh, cluster, corner + 2u, true);
+    t.a = gbuffer_corner_build(entry.x, inst, mesh, cluster, shared, corner);
+    t.b = gbuffer_corner_build(entry.x, inst, mesh, cluster, shared, corner + 1u);
+    t.c = gbuffer_corner_build(entry.x, inst, mesh, cluster, shared, corner + 2u);
     return t;
 }
 
@@ -201,7 +205,9 @@ Stage_Output main(float4 pixel : SV_Position, [[vk::location(0)]] nointerpolatio
         uint leader = quad_first(pending);
         if (leader == 0u) break;
         texture_feedback_quiet = pending != leader;
-        Stage_Output shaded = resolve_shade(resolve_point(resolve_triangle(leader), pixel.xy), bool2(true, true));
+        // The triangle this pixel was built with is not built again.
+        Resolve_Point p = leader == id ? s : resolve_point(resolve_triangle(leader), pixel.xy);
+        Stage_Output shaded = resolve_shade(p, bool2(true, true));
         if (pending == leader) {
             output = shaded;
             pending = 0u;

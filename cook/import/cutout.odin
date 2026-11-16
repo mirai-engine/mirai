@@ -13,20 +13,16 @@ import mm "mirai:std/math"
 // The masked cards of a model cut to the outlines of their masks once it is
 // read (outline.odin): leaves drawn opaque instead of alpha tested.
 //
-// A card is a small island (levels.odin) of a submesh of islands of a mesh
-// whose material is masked, its mask an image read by a map that keeps the
-// card inside it, every corner of the card opaque in its color, and its
-// triangles laid on that image without folding over each other. The mask of a
-// material without a program is its base color image, the texels whose
-// alpha, times its opacity, reaches its cutoff; one with a program names its
-// own (Imported_Material.mask), and without one keeps its mask. Cards that
-// cover the same rectangle of the same image share their outlines. A vertex
-// of an outline of a card of a skinned or morphing mesh takes the influences
-// and the deltas of the corners of the triangle it lies on, weighed as its
-// place there.
+// A card is a small island (levels.odin) of a submesh of islands of a static
+// mesh whose material is masked: no program, its base color image read by a
+// map that keeps the card inside it, every corner of the card opaque in its
+// color, and its triangles laid on that image without folding over each
+// other. The texels the mask keeps are those of the rectangle the card
+// covers whose alpha, times the opacity of the material, reaches its cutoff;
+// cards that cover the same rectangle of the same image share their outlines.
 //
-// A card of a leaf (Outline_Ladder.leaf) is drawn as the finest outline of
-// its ladder in level 0, and its coarser outlines go to Mesh_Outlines, which the levels
+// A card of a leaf (Outline_Ladder.leaf) is drawn as its finest outline in
+// level 0, and its coarser outlines go to Mesh_Outlines, which the levels
 // take as their error allows. A card of a cluster of leaves keeps its mask on
 // its convex outline. An outline is laid on the card through its triangles:
 // the triangles that share one affine map from the image to the mesh (a flat
@@ -48,14 +44,10 @@ Mesh_Outlines :: struct {
     rungs:[]Outline_Rung,     // OUTLINE_RUNGS-1 of each card, after the outline level 0 draws, the finest first
     vertices:[]asset.Vertex,  // of the rungs
     indices:[]u32,            // of the rungs, into vertices
-    skin:[]asset.Skin_Vertex, // of vertices, of a skinned mesh
-    morphs:[]asset.Morph_Target,      // of a mesh with targets, each of its own: the deltas of vertices
-    morph_deltas:[]asset.Morph_Delta, // naming vertices
 }
 
 Outline_Card :: struct {
     first_triangle,triangle_count:u32, // of level 0: the outline it draws, one island
-    error:f32, // of that outline, in the units of the mesh
 }
 
 Outline_Rung :: struct {
@@ -149,17 +141,8 @@ model_cutouts :: proc(r:^Reader) {
         info:=&m.info
         image:=m.images[.Base_Color]
         mapping:=info.maps.base_color
-        if info.alpha_mode!=.Mask {continue}
-        threshold:f32
-        if info.program[0]!=0 {
-            mask,named:=m.mask.?
-            if !named {continue}
-            image,mapping,threshold=mask.image,mask.mapping,mask.cutoff
-        } else {
-            if len(m.parameters)>0 || !(info.opacity>0) {continue}
-            threshold=info.alpha_cutoff/info.opacity
-        }
-        if image<0 || image>=len(r.images) {continue}
+        if info.alpha_mode!=.Mask || info.program[0]!=0 || image<0 || !(info.opacity>0) || len(m.parameters)>0 {continue}
+        threshold:=info.alpha_cutoff/info.opacity
         if !(threshold>0 && threshold<=1) {continue}
         sine,cosine:=math.sin(mapping.rotation),math.cos(mapping.rotation)
         c.materials[i]={
@@ -200,6 +183,7 @@ model_cutouts :: proc(r:^Reader) {
 // The cards of a mesh, appended to c.cards, and what of each material it cuts and keeps masked.
 @(private="file")
 cutout_mesh :: proc(c:^Cutout,mesh:^Imported_Mesh,mesh_index:int) {
+    static:=len(mesh.skin)==0 && len(mesh.morphs)==0
     positions:=make([]geom.Vec3,len(mesh.vertices),context.temp_allocator)
     for v,i in mesh.vertices {positions[i]=v.position}
     for sub,s in mesh.submeshes {
@@ -210,7 +194,7 @@ cutout_mesh :: proc(c:^Cutout,mesh:^Imported_Mesh,mesh_index:int) {
         triangles:=int(sub.index_count/3)
         indices:=mesh.indices[sub.first_index:][:sub.index_count]
         labels:=make([]u32,triangles,context.temp_allocator)
-        count:=geom.mesh_components(positions,indices,labels)
+        count:=geom.mesh_components(positions,indices,labels) if static else 0
         sizes:=make([]u32,count,context.temp_allocator)
         for l in labels {if int(l)<count {sizes[l]+=1}}
         small:=0
@@ -558,103 +542,6 @@ cutout_place :: proc(outline:geom.Polygon_Set,corners:[][3]geom.Vec2,facets:[]u3
     return {points[:],indices[:]}
 }
 
-// Vertices being made and, of each, the vertices of the mesh it is made
-// from and their weights: its skin and the deltas of its targets follow them.
-@(private="file")
-Cutout_Out :: struct {
-    vertices:[dynamic]asset.Vertex,
-    from:[dynamic]Cutout_From,
-}
-
-@(private="file")
-Cutout_From :: struct {
-    corners:[3]u32,
-    weights:[3]f32,
-}
-
-@(private="file")
-cutout_out :: proc(allocator:=context.allocator) -> (out:Cutout_Out) {
-    out.vertices=make([dynamic]asset.Vertex,allocator)
-    out.from=make([dynamic]Cutout_From,context.temp_allocator)
-    return
-}
-
-// The influences of the vertices of out, those of what each is made from
-// weighed: the eight strongest, adding up to 255. In allocator.
-@(private="file")
-cutout_skin :: proc(mesh:^Imported_Mesh,out:Cutout_Out,allocator:=context.allocator) -> []asset.Skin_Vertex {
-    if len(mesh.skin)==0 {return nil}
-    skin:=make([]asset.Skin_Vertex,len(out.from),allocator)
-    for from,at in out.from {
-        if from.corners[0]==from.corners[1] && from.corners[0]==from.corners[2] {
-            skin[at]=mesh.skin[from.corners[0]]
-            continue
-        }
-        Influence :: struct {joint:u16,weight:f32}
-        found:[24]Influence
-        count:=0
-        for corner,k in from.corners {
-            source:=mesh.skin[corner]
-            for joint,j in source.joints {
-                if source.weights[j]==0 {continue}
-                w:=from.weights[k]*f32(source.weights[j])
-                hit:=false
-                for &f in found[:count] {if f.joint==joint {f.weight+=w;hit=true}}
-                if !hit {found[count]={joint,w};count+=1}
-            }
-        }
-        // The strongest first, ties by joint.
-        for i in 1..<count {
-            for j:=i;j>0 && (found[j].weight>found[j-1].weight || found[j].weight==found[j-1].weight && found[j].joint<found[j-1].joint);j-=1 {found[j],found[j-1]=found[j-1],found[j]}
-        }
-        kept:=min(count,8)
-        total:f32
-        for f in found[:kept] {total+=f.weight}
-        sum:u32
-        for f,j in found[:kept] {
-            skin[at].joints[j]=f.joint
-            skin[at].weights[j]=u8(math.round(f.weight/total*255)) if total>0 else 0
-            sum+=u32(skin[at].weights[j])
-        }
-        if kept>0 {skin[at].weights[0]=u8(i32(skin[at].weights[0])+255-i32(sum))}
-    }
-    return skin
-}
-
-// The deltas of the targets of the mesh at the vertices of out, those of
-// what each is made from weighed. In allocator.
-@(private="file")
-cutout_morphs :: proc(mesh:^Imported_Mesh,out:Cutout_Out,allocator:=context.allocator) -> (targets:[]asset.Morph_Target,deltas:[]asset.Morph_Delta) {
-    if len(mesh.morphs)==0 {return}
-    targets=make([]asset.Morph_Target,len(mesh.morphs),allocator)
-    made:=make([dynamic]asset.Morph_Delta,allocator)
-    lookup:=make([]i32,len(mesh.vertices),context.temp_allocator)
-    for &l in lookup {l=-1}
-    for target,t in mesh.morphs {
-        given:=mesh.morph_deltas[target.first:][:target.count]
-        for delta,i in given {if int(delta.vertex)<len(lookup) {lookup[delta.vertex]=i32(i)}}
-        targets[t]=target
-        targets[t].first=u32(len(made))
-        for from,at in out.from {
-            sum:=asset.Morph_Delta{vertex=u32(at)}
-            moved:=false
-            for corner,k in from.corners {
-                if i:=lookup[corner];i>=0 && from.weights[k]!=0 {
-                    d:=given[i]
-                    sum.position+=d.position*from.weights[k]
-                    sum.normal+=d.normal*from.weights[k]
-                    sum.tangent+=d.tangent*from.weights[k]
-                    moved=true
-                }
-            }
-            if moved {append(&made,sum)}
-        }
-        targets[t].count=u32(len(made))-targets[t].first
-        for delta in given {if int(delta.vertex)<len(lookup) {lookup[delta.vertex]=-1}}
-    }
-    return targets,made[:]
-}
-
 // The vertex of a card at a point: what its triangle has there.
 @(private="file")
 cutout_vertex :: proc(mesh:^Imported_Mesh,triangle:u32,w:[3]f32,slot:u32) -> (v:asset.Vertex) {
@@ -701,12 +588,12 @@ cutout_rebuild :: proc(c:^Cutout,mesh:^Imported_Mesh,mesh_index:int) {
     if cards==0 {return}
     slots:=make([dynamic]Imported_Slot,0,len(mesh.slots)+1,r.out)
     append(&slots,..mesh.slots)
-    out:=cutout_out(r.out)
+    vertices:=make([dynamic]asset.Vertex,0,len(mesh.vertices),r.out)
     indices:=make([dynamic]u32,0,len(mesh.indices),r.out)
     submeshes:=make([dynamic]Submesh,0,len(mesh.submeshes)+1,r.out)
     outline_cards:=make([dynamic]Outline_Card,r.out)
     rungs:=make([dynamic]Outline_Rung,r.out)
-    rung_out:=cutout_out(r.out)
+    rung_vertices:=make([dynamic]asset.Vertex,r.out)
     rung_indices:=make([dynamic]u32,r.out)
     remap:=make([]u32,len(mesh.vertices),context.temp_allocator)
     for &v in remap {v=max(u32)}
@@ -729,9 +616,8 @@ cutout_rebuild :: proc(c:^Cutout,mesh:^Imported_Mesh,mesh_index:int) {
             if k<0 {
                 for corner in mesh.indices[t*3:][:3] {
                     if remap[corner]==max(u32) {
-                        remap[corner]=u32(len(out.vertices))
-                        append(&out.vertices,mesh.vertices[corner])
-                        append(&out.from,Cutout_From{{corner,corner,corner},{1,0,0}})
+                        remap[corner]=u32(len(vertices))
+                        append(&vertices,mesh.vertices[corner])
                     }
                     append(&indices,remap[corner])
                 }
@@ -740,7 +626,7 @@ cutout_rebuild :: proc(c:^Cutout,mesh:^Imported_Mesh,mesh_index:int) {
             card:=c.cards[k]
             if card.leaf || card.layout<0 || done[k] {continue}
             done[k]=true
-            cutout_emit(mesh,card,c.layouts[card.layout].hull,c.layouts[card.layout].flip,sub.slot,&out,&indices)
+            cutout_emit(mesh,card,c.layouts[card.layout].hull,c.layouts[card.layout].flip,sub.slot,&vertices,&indices)
         }
         masked.index_count=u32(len(indices))-masked.first_index
         // The outlines of leaves, each one island.
@@ -754,15 +640,15 @@ cutout_rebuild :: proc(c:^Cutout,mesh:^Imported_Mesh,mesh_index:int) {
             layout:=&c.layouts[card.layout]
             ladder:=&c.ladders[layout.shape]
             first:=u32(len(indices))
-            cutout_emit(mesh,card,layout.rungs[0],layout.flip,outline_slot,&out,&indices)
-            append(&outline_cards,Outline_Card{first/3,(u32(len(indices))-first)/3,ladder.rungs[0].error*card.scale})
+            cutout_emit(mesh,card,layout.rungs[0],layout.flip,outline_slot,&vertices,&indices)
+            append(&outline_cards,Outline_Card{first/3,(u32(len(indices))-first)/3})
             for k in 1..<OUTLINE_RUNGS {
                 rung:=Outline_Rung{first_index=u32(len(rung_indices)),error=ladder.rungs[k].error*card.scale}
                 if k>1 && raw_data(layout.rungs[k].indices)==raw_data(layout.rungs[k-1].indices) && raw_data(layout.rungs[k].indices)!=nil {
                     previous:=rungs[len(rungs)-1]
                     rung.first_index,rung.index_count=previous.first_index,previous.index_count
                 } else {
-                    cutout_emit(mesh,card,layout.rungs[k],layout.flip,outline_slot,&rung_out,&rung_indices)
+                    cutout_emit(mesh,card,layout.rungs[k],layout.flip,outline_slot,&rung_vertices,&rung_indices)
                     rung.index_count=u32(len(rung_indices))-rung.first_index
                 }
                 append(&rungs,rung)
@@ -775,26 +661,20 @@ cutout_rebuild :: proc(c:^Cutout,mesh:^Imported_Mesh,mesh_index:int) {
         }
         for part in ([2]^Submesh{&masked,&opaque}) {
             if part.index_count==0 {continue}
-            part.bounds_min,part.bounds_max=out.vertices[indices[part.first_index]].position,out.vertices[indices[part.first_index]].position
+            part.bounds_min,part.bounds_max=vertices[indices[part.first_index]].position,vertices[indices[part.first_index]].position
             for index in indices[part.first_index:][:part.index_count] {
-                p:=out.vertices[index].position
+                p:=vertices[index].position
                 part.bounds_min={min(part.bounds_min.x,p.x),min(part.bounds_min.y,p.y),min(part.bounds_min.z,p.z)}
                 part.bounds_max={max(part.bounds_max.x,p.x),max(part.bounds_max.y,p.y),max(part.bounds_max.z,p.z)}
             }
             append(&submeshes,part^)
         }
     }
-    // The skin and the targets follow what each vertex is made from.
-    rung_morphs,rung_deltas:=cutout_morphs(mesh,rung_out,r.out)
-    mesh.outlines={outline_cards[:],rungs[:],rung_out.vertices[:],rung_indices[:],cutout_skin(mesh,rung_out,r.out),rung_morphs,rung_deltas}
-    skin:=cutout_skin(mesh,out,r.out)
-    morphs,deltas:=cutout_morphs(mesh,out,r.out)
-    if len(mesh.skin)>0 {mesh.skin=skin}
-    if len(mesh.morphs)>0 {mesh.morphs,mesh.morph_deltas=morphs,deltas}
-    mesh.vertices,mesh.indices,mesh.submeshes,mesh.slots=out.vertices[:],indices[:],submeshes[:],slots[:]
-    if len(mesh.vertices)>0 {
-        mesh.bounds_min,mesh.bounds_max=mesh.vertices[0].position,mesh.vertices[0].position
-        for v in mesh.vertices {
+    mesh.vertices,mesh.indices,mesh.submeshes,mesh.slots=vertices[:],indices[:],submeshes[:],slots[:]
+    mesh.outlines={outline_cards[:],rungs[:],rung_vertices[:],rung_indices[:]}
+    if len(vertices)>0 {
+        mesh.bounds_min,mesh.bounds_max=vertices[0].position,vertices[0].position
+        for v in vertices {
             mesh.bounds_min={min(mesh.bounds_min.x,v.position.x),min(mesh.bounds_min.y,v.position.y),min(mesh.bounds_min.z,v.position.z)}
             mesh.bounds_max={max(mesh.bounds_max.x,v.position.x),max(mesh.bounds_max.y,v.position.y),max(mesh.bounds_max.z,v.position.z)}
         }
@@ -804,13 +684,9 @@ cutout_rebuild :: proc(c:^Cutout,mesh:^Imported_Mesh,mesh_index:int) {
 // Appends an outline placed on a card: its vertices, of slot, and its
 // triangles, turned as the card turns in the mesh.
 @(private="file")
-cutout_emit :: proc(mesh:^Imported_Mesh,card:Cutout_Card,placed:Cutout_Placed,flip:bool,slot:u32,out:^Cutout_Out,indices:^[dynamic]u32) {
-    first:=u32(len(out.vertices))
-    for p in placed.points {
-        triangle:=card.triangles[p.triangle]
-        append(&out.vertices,cutout_vertex(mesh,triangle,p.weights,slot))
-        append(&out.from,Cutout_From{{mesh.indices[triangle*3],mesh.indices[triangle*3+1],mesh.indices[triangle*3+2]},p.weights})
-    }
+cutout_emit :: proc(mesh:^Imported_Mesh,card:Cutout_Card,placed:Cutout_Placed,flip:bool,slot:u32,vertices:^[dynamic]asset.Vertex,indices:^[dynamic]u32) {
+    first:=u32(len(vertices))
+    for p in placed.points {append(vertices,cutout_vertex(mesh,card.triangles[p.triangle],p.weights,slot))}
     for t:=0;t+2<len(placed.indices);t+=3 {
         a,b,c:=placed.indices[t],placed.indices[t+1],placed.indices[t+2]
         if flip {b,c=c,b}
