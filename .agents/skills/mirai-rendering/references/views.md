@@ -576,6 +576,10 @@ their handles in a `by_world` storage and removes them in the `release` of its w
 - Each frame in which the shape changes, the extension calls `deformable_update` with its box and
   writes the current vertices in `Geometry`; a shape that stops changing makes one last pass to
   equalize current and previous. A box that does not change marks no light.
+- `sway`, given at creation, bounds how far a vertex moves from its rest. The maps of the shadows
+  whose texel is wider draw a batch of the copy at rest and keep it; finer ones draw it as it is,
+  as a caster that moves while it sways. Without it (0), the copy may be anywhere in its box and
+  every map draws it as it is.
 - `pass_deformable` gives where, in vertex pool words, the vertices that the extension writes and
   the rest ones it reads are (one `Posed_Vertex` each, which its shader reads and writes with
   `posed.slang`: `posed_load`, `posed_store`), and its row of the mesh table. Vertex `i` is the `i`

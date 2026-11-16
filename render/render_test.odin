@@ -7,6 +7,7 @@ import "core:mem"
 import "core:slice"
 import "core:testing"
 import "core:time"
+import "mirai:render/abi"
 import "mirai:rhi"
 
 // 0.6 scene-linear units per render unit: the exposure the bounds of the light
@@ -46,6 +47,17 @@ trs :: proc(position, scale: Vec3) -> Mat4 {
 	m[0, 0], m[1, 1], m[2, 2] = scale.x, scale.y, scale.z
 	m[0, 3], m[1, 3], m[2, 3] = position.x, position.y, position.z
 	return m
+}
+
+// What the maps of the main view drew in the last frame: the pages the cache
+// drew again, those the atlas composed again, and those asked for and left
+// out of the pool (shadow_pages.comp).
+@(private = "file")
+shadow_counts :: proc(r: ^Renderer) -> (drawn, composed, left: u32) {
+	rhi.device_wait_idle(r.device)
+	counts: [8]u32
+	if r.main.targets.shadow_raster.pages == 0 || !rhi.buffer_read_slice(r.device, r.main.targets.shadow_raster.pages, u64(abi.SHADOW_WORDS_COUNTS) * 4, counts[:]) {return}
+	return counts[abi.SHADOW_COUNT_DRAWN], counts[abi.SHADOW_COUNT_COMPOSED], counts[abi.SHADOW_COUNT_LEFT]
 }
 
 @(private = "file")
@@ -290,6 +302,139 @@ render_shadow_maps_follow_what_moves_in_its_frame :: proc(t: ^testing.T) {
 	light.position = {-1, 3, 0}
 	testing.expect(t, scene_light_update(r, 0, light))
 	expect_shadow(t, &f, camera, 3, -5, "the light moved")
+	// More casters move than the samples keep boxes of and than the maps once
+	// followed: each is drawn over the cache, which draws nothing again, and
+	// the image is that of maps drawn whole.
+	many: [301]Instance_Desc
+	many[0] = instances[0]
+	place :: proc(k: int, shift: f32) -> Mat4 {return trs({f32(k % 20) * 0.4 - 3.8 + shift, 1.2, f32(k / 20) * 0.4 - 3}, {0.15, 0.1, 0.15})}
+	for k in 1 ..< len(many) {many[k] = {object_id = u64(k + 1), mesh = f.cube, transform = place(k - 1, 0), tint = {0.5, 0.5, 0.5}}}
+	light.position = {0, 3, 0}
+	testing.expect(t, scene_given(r, many[:], []Light_Desc{light}, {}, {}))
+	indices: [300]u32
+	moves: [300]Mat4
+	for k in 0 ..< 4 {
+		for &index, i in indices {index, moves[i] = u32(i + 1), place(i, 0.05 * f32(k % 2))}
+		testing.expect(t, scene_move(r, indices[:], moves[:]))
+		testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	}
+	drawn, composed, _ := shadow_counts(r)
+	testing.expectf(t, r.stats.shadow_movers == 300 && drawn == 0 && composed > 0, "300 moving casters: %d drawn as movers, %d pages of the cache drawn again, %d composed", r.stats.shadow_movers, drawn, composed)
+	// Still for a frame, they compose no page of the atlas again.
+	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	drawn, composed, _ = shadow_counts(r)
+	testing.expectf(t, composed == 0 && drawn == 0, "300 still movers: %d pages composed, %d drawn again", composed, drawn)
+	read :: proc(t: ^testing.T, f: ^Cube_Fixture) -> []u8 {
+		rhi.device_wait_idle(f.device)
+		pixels, _, _, ok := golden_capture(f.renderer)
+		testing.expect(t, ok, f.renderer.error)
+		return pixels
+	}
+	cached := read(t, &f)
+	defer delete(cached)
+	r.main.targets.shadow_raster.forget = true
+	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	whole := read(t, &f)
+	defer delete(whole)
+	differ := 0
+	for v, k in cached {if k < len(whole) && abs(int(v) - int(whole[k])) > 2 {differ += 1}}
+	testing.expectf(t, len(cached) == len(whole) && differ * 1000 <= len(cached), "%d of %d values differ from the maps drawn whole", differ, len(cached))
+	// What moves under what stays casts nothing the cache does not hide there:
+	// a cube moving under a roof the light shines on gives the round of what
+	// moves no cluster, and the image is that of maps drawn whole.
+	roofed := []Instance_Desc{
+		instances[0],
+		{object_id = 2, mesh = f.cube, transform = trs({0, 2.2, 0}, {6, 0.2, 6}), tint = {0.5, 0.5, 0.5}},
+		{object_id = 3, mesh = f.cube, transform = trs({0.5, 0.5, 0}, {0.4, 0.4, 0.4}), tint = {0.5, 0.5, 0.5}},
+	}
+	testing.expect(t, scene_given(r, roofed, []Light_Desc{light}, {}, {}))
+	// What moved before stays long enough to join the cache again.
+	for _ in 0 ..< SHADOW_MOVER_FRAMES {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	for k in 0 ..< 6 {
+		testing.expect(t, scene_move(r, {2}, {trs({0.5 + 0.1 * f32(k % 2), 0.5, 0}, {0.4, 0.4, 0.4})}))
+		testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	}
+	rhi.device_wait_idle(f.device)
+	state: [1]Gpu_Shadow_State
+	testing.expect(t, rhi.buffer_read_slice(f.device, r.shadow_buffers.state, 0, state[:]))
+	entries := state[0].draws[0].instance_count + state[0].draws[1].instance_count
+	testing.expectf(t, r.stats.shadow_movers == 1 && entries == 0, "a cube moving under a roof: %d movers, %d clusters drawn as what moves", r.stats.shadow_movers, entries)
+	hidden := read(t, &f)
+	defer delete(hidden)
+	r.main.targets.shadow_raster.forget = true
+	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	fresh := read(t, &f)
+	defer delete(fresh)
+	differ = 0
+	for v, k in hidden {if k < len(fresh) && abs(int(v) - int(fresh[k])) > 2 {differ += 1}}
+	testing.expectf(t, len(hidden) == len(fresh) && differ * 1000 <= len(hidden), "under a roof %d of %d values differ from the maps drawn whole", differ, len(hidden))
+	expect_clean(t, f.device)
+}
+
+// A batch of a deformable that casts shadows and sways (the wind): where its
+// sway is wider than a texel of the maps they draw it as it is each frame it
+// sways; where it is narrower they draw it at rest and keep it, drawing
+// nothing again.
+@(test)
+render_a_swaying_batch_shades_where_it_is :: proc(t: ^testing.T) {
+	f: Cube_Fixture
+	settings := test_settings()
+	settings.gi_enabled = false
+	settings.taa = false
+	if !cube_fixture_init(t, &f, 192, 128, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	floor := Instance_Desc{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {16, 0.2, 16}), tint = {0.8, 0.8, 0.8}}
+	light := Light_Desc{position = {0, 3, 0}, color = {1, 1, 1}, intensity = 30 * math.PI, range = 14, indirect = 1, scattering = 1}
+	testing.expect(t, scene_given(r, {floor}, []Light_Desc{light}, {}, {}))
+	camera := Camera{position = {0, 9, 0.001}, forward = {0, -9, -0.001}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	// The vertices of the slab, at rest under the light, moved along x by sway.
+	Sway :: struct {mesh: Mesh_Handle, x: f32}
+	write :: proc(s: ^Stage_Pass, user: rawptr) {
+		sway := (^Sway)(user)
+		r := s.pass.r
+		written, rest, count, _, known := deformable_vertices(r, sway.mesh)
+		if !known {return}
+		vertices, at := rhi.frame_alloc_typed(r.device, Gpu_Posed_Vertex, int(count))
+		if vertices == nil {return}
+		copy(vertices, ([^]Gpu_Posed_Vertex)(&r.scene.vertices[rest])[:count])
+		for &v in vertices {v.position.x += sway.x}
+		rhi.cmd_copy_buffer(s.pass.cmd, at.buffer, at.offset, r.scene.vertex_buffer, u64(written) * 4, u64(count) * size_of(Gpu_Posed_Vertex))
+	}
+	for wide in ([]bool{true, false}) {
+		// Wide: it sways up to 1.2 m, wider than any texel; narrow, it says it
+		// sways a tenth of a millimetre, narrower than every texel, and the maps keep it at rest.
+		mesh, made := deformable_create(r, f.cube, false, 1.2 if wide else 0.0001)
+		if !testing.expect(t, made) {return}
+		defer mesh_remove(r, mesh)
+		batch, problem := batch_set(r, 0, 0, {mesh = mesh, tint = 0.5, flags = {.Casts_Shadow, .Ray_Visible}}, {batch_instance({0, 1.5, 0}, 1, {1, 0.2, 1})})
+		if !testing.expectf(t, problem == "", "%s", problem) {return}
+		defer batch_remove(r, batch)
+		sway := Sway{mesh = mesh}
+		for k in 0 ..< 8 {
+			sway.x = f32(-1) if k % 2 == 0 else 1
+			low, high, _ := mesh_bounds(r, f.cube)
+			testing.expect(t, deformable_update(r, mesh, low - 1.2, high + 1.2))
+			testing.expect(t, frame_pass(r, .Geometry, write, &sway))
+			testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+			if k < 4 {continue}
+			rhi.device_wait_idle(f.device)
+			pixels, w, _, ok := golden_capture(r)
+			if !testing.expect(t, ok, r.error) {return}
+			defer delete(pixels)
+			at :: proc(r: ^Renderer, pixels: []u8, w: int, camera: Camera, x: f32) -> f32 {return pixel(pixels, w, project(r, camera, {x, 0.001, 0}))[0]}
+			if wide {
+				shaded, open := at(r, pixels, w, camera, 2 * sway.x), at(r, pixels, w, camera, -2 * sway.x)
+				testing.expectf(t, open > 40 && shaded < 0.5 * open, "frame %d: the floor under where it sways has %f against %f where it was", k, shaded, open)
+				testing.expectf(t, r.stats.shadow_movers == 1, "frame %d: the swaying batch is drawn as what moves: %d movers", k, r.stats.shadow_movers)
+			} else {
+				shaded, open := at(r, pixels, w, camera, 0), at(r, pixels, w, camera, 2 * sway.x)
+				testing.expectf(t, open > 40 && shaded < 0.5 * open, "frame %d: the floor under its rest has %f against %f where it sways", k, shaded, open)
+				drawn, composed, _ := shadow_counts(r)
+				testing.expectf(t, r.stats.shadow_movers == 0 && drawn == 0 && composed == 0, "frame %d: at rest in every map it moves nothing: %d movers, %d pages drawn again, %d composed", k, r.stats.shadow_movers, drawn, composed)
+			}
+		}
+	}
 	expect_clean(t, f.device)
 }
 
@@ -325,7 +470,7 @@ render_moved_cascades_give_what_whole_ones_give :: proc(t: ^testing.T) {
 	}
 	moved := read(t, &f)
 	defer delete(moved)
-	r.main.targets.shadow_raster.held_count = 0
+	r.main.targets.shadow_raster.forget = true
 	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
 	whole := read(t, &f)
 	defer delete(whole)
@@ -333,14 +478,211 @@ render_moved_cascades_give_what_whole_ones_give :: proc(t: ^testing.T) {
 	differ := 0
 	for v, k in moved {if abs(int(v) - int(whole[k])) > 2 {differ += 1}}
 	testing.expectf(t, differ * 1000 <= len(moved), "%d of %d values differ from the maps drawn whole", differ, len(moved))
+	// A post that moves a little draws again the pages of each cascade its
+	// boxes cover, no more than four, and gives what maps drawn whole give;
+	// the frame after maps drawn whole draws their cache first.
+	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	testing.expect(t, scene_move(r, {5}, {trs({f32(5 % 3) * 2.3 - 2.25, 0.8, f32(5 / 3) * 2.1 - 3}, {0.3, 1.6, 0.3})}))
+	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	levels := 0
+	for h in r.main.targets.shadow_raster.held[:SHADOW_SUN_LEVELS] {if h.m.rect.z != 0 {levels += 1}}
+	drawn, _, _ := shadow_counts(r)
+	testing.expectf(t, drawn > 0 && int(drawn) <= 4 * levels, "a post that moved drew again %d pages of %d levels", drawn, levels)
+	paged := read(t, &f)
+	defer delete(paged)
+	r.main.targets.shadow_raster.forget = true
+	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	again := read(t, &f)
+	defer delete(again)
+	differ = 0
+	for v, k in paged {if k < len(again) && abs(int(v) - int(again[k])) > 2 {differ += 1}}
+	testing.expectf(t, len(paged) == len(again) && differ * 1000 <= len(paged), "%d of %d values differ from the maps drawn whole after a page", differ, len(paged))
+	// The frame after maps drawn whole draws the cache of every page read.
+	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	whole_drawn, _, _ := shadow_counts(r)
+	// Another post lifted a little above the top of the scene: the levels keep how
+	// far they reach towards the sun, and draw again only where its boxes are.
+	testing.expect(t, scene_move(r, {7}, {trs({f32(7 % 3) * 2.3 - 2.3, 1.7, f32(7 / 3) * 2.1 - 3}, {0.3, 1.6, 0.3})}))
+	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	drawn, _, _ = shadow_counts(r)
+	testing.expectf(t, drawn > 0 && drawn < whole_drawn, "a post lifted above the scene drew %d pages, the maps drawn whole %d", drawn, whole_drawn)
+	lifted := read(t, &f)
+	defer delete(lifted)
+	r.main.targets.shadow_raster.forget = true
+	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	fresh := read(t, &f)
+	defer delete(fresh)
+	differ = 0
+	for v, k in lifted {if k < len(fresh) && abs(int(v) - int(fresh[k])) > 2 {differ += 1}}
+	testing.expectf(t, len(lifted) == len(fresh) && differ * 1000 <= len(lifted), "%d of %d values differ from the maps drawn whole after a lift", differ, len(lifted))
 	expect_clean(t, f.device)
 }
 
-// A turning sun takes a new projection for one cascade a frame, the one that
-// took its own longest ago; once it stops, the cascades it caught up with
-// give what maps drawn whole give.
+// The maps draw only the pages points read: the eye turns to a place no
+// point read before, and in the frame it first sees it its posts shade the
+// ground there as maps drawn whole do, while the pages nothing reads were
+// never drawn.
 @(test)
-render_a_turning_sun_redraws_one_cascade_a_frame :: proc(t: ^testing.T) {
+render_a_page_first_read_is_drawn_in_its_frame :: proc(t: ^testing.T) {
+	f: Cube_Fixture
+	settings := test_settings()
+	settings.gi_enabled = false
+	settings.taa = false
+	if !cube_fixture_init(t, &f, 192, 128, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	instances: [10]Instance_Desc
+	instances[0] = {object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {120, 0.2, 120}), tint = {0.8, 0.8, 0.8}}
+	for k in 1 ..< len(instances) {
+		instances[k] = {object_id = u64(k + 1), mesh = f.cube, transform = trs({30 + f32(k % 3) * 2.3, 0.8, f32(k / 3) * 2.1 - 3}, {0.3, 1.6, 0.3}), tint = {0.5, 0.5, 0.5}}
+	}
+	sun := Sun_Desc{direction = {0.4, 1, 0.3}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true}
+	testing.expect(t, scene_given(r, instances[:], nil, sun, {sky = {0, 0, 0}}))
+	away := Camera{position = {-30, 5, 7}, forward = {0, -5, -7}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	for _ in 0 ..< 4 {testing.expect(t, renderer_frame(r, {camera = away}), r.error)}
+	read :: proc(t: ^testing.T, f: ^Cube_Fixture) -> []u8 {
+		rhi.device_wait_idle(f.device)
+		pixels, _, _, ok := golden_capture(f.renderer)
+		testing.expect(t, ok, f.renderer.error)
+		return pixels
+	}
+	posts := away
+	posts.position.x = 32
+	testing.expect(t, renderer_frame(r, {camera = posts}), r.error)
+	_, composed, left := shadow_counts(r)
+	testing.expectf(t, composed > 0 && left == 0, "the pages first read are drawn: %d, %d left out", composed, left)
+	seen := read(t, &f)
+	defer delete(seen)
+	w := int(r.targets.output_width)
+	shaded, lit := pixel(seen, w, project(r, posts, {31.9, 0.001, -3.3}))[0], pixel(seen, w, project(r, posts, {36, 0.001, 3}))[0]
+	testing.expectf(t, lit > 40 && shaded < 0.5 * lit, "a post shades the ground first seen: %f against %f", shaded, lit)
+	r.main.targets.shadow_raster.forget = true
+	testing.expect(t, renderer_frame(r, {camera = posts}), r.error)
+	whole := read(t, &f)
+	defer delete(whole)
+	if len(seen) != len(whole) || len(seen) == 0 {return}
+	differ := 0
+	for v, k in seen {if abs(int(v) - int(whole[k])) > 2 {differ += 1}}
+	testing.expectf(t, differ * 1000 <= len(seen), "%d of %d values differ from the maps drawn whole", differ, len(seen))
+	// The frame after maps drawn whole draws their cache, and a still frame
+	// after it draws nothing again.
+	testing.expect(t, renderer_frame(r, {camera = posts}), r.error)
+	testing.expect(t, renderer_frame(r, {camera = posts}), r.error)
+	drawn, _, _ := shadow_counts(r)
+	testing.expectf(t, drawn == 0, "a still frame drew %d pages again", drawn)
+	// A pool smaller than what the points ask for leaves out the finest pages,
+	// the same ones each time the pages are given anew; their points read the
+	// coarser pages drawn, or trace, and a post still shades the ground.
+	b := &r.main.targets.shadow_raster
+	b.pool = 12
+	owners: [2][abi.SHADOW_POOL_PAGES]u32
+	for &owner, k in owners {
+		b.forget = true
+		testing.expect(t, renderer_frame(r, {camera = posts}), r.error)
+		_, _, left = shadow_counts(r)
+		testing.expectf(t, left > 0, "run %d: a small pool leaves pages out: %d", k, left)
+		testing.expect(t, rhi.buffer_read_slice(r.device, b.pages, u64(abi.SHADOW_WORDS_OWNER) * 4, owner[:]))
+	}
+	testing.expect(t, owners[0] == owners[1], "a small pool gives the same pages each time")
+	small := read(t, &f)
+	defer delete(small)
+	testing.expect(t, renderer_frame(r, {camera = posts}), r.error)
+	again := read(t, &f)
+	defer delete(again)
+	testing.expect(t, slice.equal(small, again), "a small pool gives the same image two frames running")
+	shaded, lit = pixel(small, w, project(r, posts, {31.9, 0.001, -3.3}))[0], pixel(small, w, project(r, posts, {36, 0.001, 3}))[0]
+	testing.expectf(t, lit > 40 && shaded < 0.5 * lit, "with a small pool a post shades the ground: %f against %f", shaded, lit)
+	b.pool = 0
+	expect_clean(t, f.device)
+}
+
+// A sun low over open ground: a line on the ground away from the eye crosses
+// several levels of the sun, which meet where the texel of one is twice that
+// of the next, and shows no line where they meet, lit beside the long shadow
+// of a pole and dark in it.
+@(test)
+render_a_low_sun_shows_no_line_between_levels :: proc(t: ^testing.T) {
+	f: Cube_Fixture
+	settings := test_settings()
+	settings.gi_enabled = false
+	settings.taa = false
+	if !cube_fixture_init(t, &f, 256, 192, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	instances := []Instance_Desc{
+		{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, -40}, {120, 0.2, 120}), tint = {0.8, 0.8, 0.8}},
+		{object_id = 2, mesh = f.cube, transform = trs({-1.5, 1, -2}, {0.6, 2, 0.6}), tint = {0.5, 0.5, 0.5}},
+	}
+	// Behind the eye, 14 degrees up: the shadow of the pole runs 8 m away from it.
+	sun := Sun_Desc{direction = linalg.normalize(Vec3{0, 0.25, 1}), color = {1, 1, 1}, illuminance = 4 * math.PI, enabled = true}
+	testing.expect(t, scene_given(r, instances, nil, sun, {sky = {0, 0, 0}}))
+	camera := Camera{position = {0, 1.6, 2}, forward = {0, -0.12, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 200, exposure = UNIT_EXPOSURE}
+	for _ in 0 ..< 6 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	rhi.device_wait_idle(f.device)
+	pixels, w, _, ok := golden_capture(r)
+	if !testing.expect(t, ok, r.error) {return}
+	defer delete(pixels)
+	lit: [40]f32
+	for &v, k in lit {v = pixel(pixels, w, project(r, camera, {1.2, 0.001, -0.5 - 0.75 * f32(k)}))[0]}
+	sorted := lit
+	slice.sort(sorted[:])
+	middle := sorted[len(sorted) / 2]
+	testing.expectf(t, middle > 30, "the ground is lit: %f", middle)
+	for v, k in lit {testing.expectf(t, abs(v - middle) <= 0.12 * middle, "the ground %f m away has %f against %f along the line", 0.5 + 0.75 * f32(k), v, middle)}
+	for k in 0 ..< 7 {
+		shaded := pixel(pixels, w, project(r, camera, {-1.5, 0.001, -3.5 - 0.7 * f32(k)}))[0]
+		testing.expectf(t, shaded < 0.5 * middle, "the shadow of the pole %f m away has %f against %f", 3.5 + 0.7 * f32(k), shaded, middle)
+	}
+	expect_clean(t, f.device)
+}
+
+// A jump of the origin keeps no map of the shadows measured from the old one:
+// the far cascades of a wide scene, which the eye would not move out of, give
+// what maps drawn whole give.
+@(test)
+render_an_origin_jump_gives_what_whole_maps_give :: proc(t: ^testing.T) {
+	f: Cube_Fixture
+	settings := test_settings()
+	settings.gi_enabled = false
+	settings.taa = false
+	if !cube_fixture_init(t, &f, 192, 128, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	instances: [7]Instance_Desc
+	instances[0] = {object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {8000, 0.2, 8000}), tint = {0.8, 0.8, 0.8}}
+	for k in 1 ..< len(instances) {
+		instances[k] = {object_id = u64(k + 1), mesh = f.cube, transform = trs({f32(k % 3) * 300 - 300, 150, -500 - f32(k / 3) * 500}, {40, 300, 40}), tint = {0.5, 0.5, 0.5}}
+	}
+	sun := Sun_Desc{direction = {0.4, 1, 0.3}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true}
+	testing.expect(t, scene_given(r, instances[:], nil, sun, {sky = {0, 0, 0}}))
+	camera := Camera{position = {0, 40, 200}, forward = {0, -0.08, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.1, far = 5000, exposure = UNIT_EXPOSURE}
+	read :: proc(t: ^testing.T, f: ^Cube_Fixture) -> []u8 {
+		rhi.device_wait_idle(f.device)
+		pixels, _, _, ok := golden_capture(f.renderer)
+		testing.expect(t, ok, f.renderer.error)
+		return pixels
+	}
+	for _ in 0 ..< 4 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	renderer_origin_set(r, {ORIGIN_STEP, 0, 0})
+	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	jumped := read(t, &f)
+	defer delete(jumped)
+	r.main.targets.shadow_raster.forget = true
+	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	whole := read(t, &f)
+	defer delete(whole)
+	if len(jumped) != len(whole) || len(jumped) == 0 {return}
+	differ := 0
+	for v, k in jumped {if abs(int(v) - int(whole[k])) > 2 {differ += 1}}
+	testing.expectf(t, differ * 1000 <= len(jumped), "%d of %d values differ from the maps drawn whole", differ, len(jumped))
+	expect_clean(t, f.device)
+}
+
+// A turning sun draws again, in the frame it turns, the pages its levels
+// hold that the points read, whole into the atlas alone, and the cache the
+// next still frame: each frame gives what maps drawn whole give.
+@(test)
+render_a_turning_sun_gives_what_whole_maps_give :: proc(t: ^testing.T) {
 	f: Cube_Fixture
 	settings := test_settings()
 	settings.gi_enabled = false
@@ -357,45 +699,37 @@ render_a_turning_sun_redraws_one_cascade_a_frame :: proc(t: ^testing.T) {
 	environment := Environment{sky = {0, 0, 0}}
 	testing.expect(t, scene_given(r, instances[:], nil, sun, environment))
 	camera := Camera{position = {0, 5, 7}, forward = {0, -5, -7}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
-	b := &r.main.targets.shadow_raster
-	planned :: proc(b: ^Shadow_Raster) -> (cascades: [SHADOW_MAPS_MAX]u64, count: int) {
-		for h in b.held[:b.held_count] {
-			if h.light >= 0 {continue}
-			cascades[h.face] = h.planned
-			count = max(count, int(h.face) + 1)
-		}
-		return
-	}
-	_, cascades := planned(b)
-	testing.expectf(t, cascades > 1, "the sun takes %d cascades", cascades)
-	for k in 0 ..< 2 * cascades {
-		before, _ := planned(b)
-		sun.direction.x = 0.4 + 0.02 * f32(k + 1)
-		scene_set_environment(r, sun, environment)
-		testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
-		after, _ := planned(b)
-		taken := 0
-		for i in 0 ..< cascades {if after[i] != before[i] {taken += 1}}
-		testing.expectf(t, taken == 1, "frame %d of a turning sun took %d new cascades", k, taken)
-	}
-	for _ in 0 ..< cascades {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	for _ in 0 ..< 3 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
 	read :: proc(t: ^testing.T, f: ^Cube_Fixture) -> []u8 {
 		rhi.device_wait_idle(f.device)
 		pixels, _, _, ok := golden_capture(f.renderer)
 		testing.expect(t, ok, f.renderer.error)
 		return pixels
 	}
-	caught := read(t, &f)
-	defer delete(caught)
-	b.held_count = 0
-	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
-	whole := read(t, &f)
-	defer delete(whole)
-	if len(caught) != len(whole) || len(caught) == 0 {return}
-	differ := 0
-	for v, k in caught {if abs(int(v) - int(whole[k])) > 2 {differ += 1}}
-	testing.expectf(t, differ * 1000 <= len(caught), "%d of %d values differ from the maps drawn whole", differ, len(caught))
+	for k in 0 ..< 4 {
+		still := k == 3
+		if !still {
+			sun.direction.x = 0.4 + 0.1 * f32(k + 1)
+			scene_set_environment(r, sun, environment)
+		}
+		testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+		drawn, composed, _ := shadow_counts(r)
+		if still {
+			testing.expectf(t, drawn > 0, "the still frame after the turns draws the cache: %d pages", drawn)
+		} else {
+			testing.expectf(t, drawn == 0 && composed > 0, "turn %d draws the atlas alone: %d pages of the cache, %d of the atlas", k, drawn, composed)
+		}
+		turned := read(t, &f)
+		defer delete(turned)
+		r.main.targets.shadow_raster.forget = true
+		testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+		whole := read(t, &f)
+		defer delete(whole)
+		if len(turned) != len(whole) || len(turned) == 0 {return}
+		differ := 0
+		for v, i in turned {if abs(int(v) - int(whole[i])) > 2 {differ += 1}}
+		testing.expectf(t, differ * 1000 <= len(turned), "turn %d: %d of %d values differ from the maps drawn whole", k, differ, len(turned))
+	}
 	expect_clean(t, f.device)
 }
 
@@ -898,6 +1232,12 @@ render_a_wider_light_casts_a_softer_shadow :: proc(t: ^testing.T) {
 			if values[k] > dark + 0.1 * (lit - dark) {low = k}
 		}
 		widths[i] = 0.02 * f32(high - low)
+		// The penumbra crosses the border of two faces of the cube of the
+		// light 2.5 m from under it, where the taps of each face read past it:
+		// no step there.
+		steepest := f32(0)
+		for k in 1 ..< brightest {steepest = max(steepest, abs(values[k] - values[k - 1]))}
+		testing.expectf(t, i == 0 || steepest < 0.15 * (lit - dark), "the penumbra steps by %f of %f across the border of two faces", steepest, lit - dark)
 	}
 	testing.expectf(t, widths[0] < 0.2, "a light with no size casts a sharp shadow: %f m of penumbra", widths[0])
 	testing.expectf(t, widths[1] > 0.4 && widths[1] > 3 * widths[0], "a wide one, a soft shadow: %f m of penumbra, %f m with none", widths[1], widths[0])
@@ -993,7 +1333,9 @@ render_a_light_with_no_place_takes_no_shadow_map :: proc(t: ^testing.T) {
 	camera := Camera{position = {0, 6, 0.01}, forward = {0, -6, -0.01}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
 	b := &r.targets.shadow_raster
-	testing.expectf(t, b.rastered == 1 && b.raster[0] == 0, "only the placed light takes maps: %v", b.raster[:b.rastered])
+	rastered := 0
+	for light in b.raster {if light != 0 {rastered += 1}}
+	testing.expectf(t, rastered == 1 && b.raster[0] == 1, "only the placed light takes maps: %v", b.raster)
 	expect_clean(t, f.device)
 }
 
@@ -1037,7 +1379,7 @@ render_a_light_without_shadows_lights_through_what_holds_it :: proc(t: ^testing.
 				light[i][k] = pixel(pixels, w, project(r, c.camera, c.at))[0]
 				delete(pixels)
 			}
-			maps[i] = r.targets.shadow_raster.held_count
+			for h in r.targets.shadow_raster.held {if h.m.rect.z != 0 {maps[i] += 1}}
 		}
 		testing.expectf(t, light[0][0] < 4 && light[1][0] > 30, "sun %v: the direct light there, with shadows and without: %v", c.sun, light)
 		// The sun lights the floor around both ways: what it bounces is near alike.
