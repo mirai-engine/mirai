@@ -85,14 +85,17 @@ uint depth_bucket(float3 low, float3 high) {
 
 // Lists a visible cluster of the phase with its raster bin, while the list
 // has room, and counts it in its bin; one of a tested bin, in the depth
-// bucket of its box too.
+// bucket of its box too. The lanes of a wave take their slots and add to the
+// counts they share with an atomic each.
 void cluster_visible(uint index, Mesh mesh, uint ordinal, Cluster c, float3 low, float3 high) {
     uint phase = min(params.phase, 1u);
     Instance inst = scene_instance(index);
     Material m = material_row(material_of(inst, cluster_material(mesh, c)), inst.material_values);
     uint base = phase == 0u ? 0u : min(cull_state[CULL_LISTED], params.visible_capacity);
-    uint slot;
-    InterlockedAdd(cull_state[CULL_LISTED + phase], 1u, slot);
+    uint first = 0u;
+    uint listing = WaveActiveCountBits(true);
+    if (WaveIsFirstLane()) InterlockedAdd(cull_state[CULL_LISTED + phase], listing, first);
+    uint slot = WaveReadLaneFirst(first) + WavePrefixCountBits(true);
     if (base + slot >= params.visible_capacity) {
         InterlockedAdd(cull_state[CULL_DROPPED + CULL_LIST_VISIBLE], 1u);
         InterlockedAdd(stats[0].dropped[CULL_LIST_VISIBLE], 1u);
@@ -107,18 +110,34 @@ void cluster_visible(uint index, Mesh mesh, uint ordinal, Cluster c, float3 low,
         InterlockedAdd(depth_buckets[cull_depth_word(phase, bin & RASTER_BIN_TWO_SIDED, bucket)], 1u);
     }
     listed[base + slot] = uint4(index, mesh_cluster_word(mesh, ordinal), cull_listed_word(bin, bucket), program);
-    InterlockedAdd(cull_state[CULL_BIN_COUNTS + phase * RASTER_BINS + bin], 1u);
-    InterlockedMax(cull_state[CULL_BINS_DISPATCH + 3u * phase], slot / CULL_BINS_GROUP + 1u);
+    for (uint b = 0u; b < RASTER_BINS; b++) {
+        uint binned = WaveActiveCountBits(bin == b);
+        if (WaveIsFirstLane() && binned != 0u) InterlockedAdd(cull_state[CULL_BIN_COUNTS + phase * RASTER_BINS + b], binned);
+    }
+    uint last = WaveActiveMax(slot);
+    if (WaveIsFirstLane()) InterlockedMax(cull_state[CULL_BINS_DISPATCH + 3u * phase], last / CULL_BINS_GROUP + 1u);
     if (program != 0u) program_draws[program * 4u + 1u] = 1u;
     page_stamp(mesh, c);
-    InterlockedAdd(stats[0].visible_clusters, 1u);
-    InterlockedAdd(stats[0].visible_triangles, cluster_triangle_count(c));
-    uint kind = cull_kind(instance_batched(index), mesh) * 3u;
-    InterlockedAdd(stats[0].kinds[kind + 1u], 1u);
-    InterlockedAdd(stats[0].kinds[kind + 2u], cluster_triangle_count(c));
-    if (phase != 0u) {
-        InterlockedAdd(stats[0].late[1], 1u);
-        InterlockedAdd(stats[0].late[2], cluster_triangle_count(c));
+    uint triangles = cluster_triangle_count(c);
+    uint clusters = WaveActiveCountBits(true), drawn = WaveActiveSum(triangles);
+    uint kind = cull_kind(instance_batched(index), mesh);
+    uint3 kinds_clusters, kinds_triangles;
+    for (uint k = 0u; k < 3u; k++) {
+        kinds_clusters[k] = WaveActiveCountBits(kind == k);
+        kinds_triangles[k] = WaveActiveSum(kind == k ? triangles : 0u);
+    }
+    if (WaveIsFirstLane()) {
+        InterlockedAdd(stats[0].visible_clusters, clusters);
+        InterlockedAdd(stats[0].visible_triangles, drawn);
+        for (uint k = 0u; k < 3u; k++) {
+            if (kinds_clusters[k] == 0u) continue;
+            InterlockedAdd(stats[0].kinds[k * 3u + 1u], kinds_clusters[k]);
+            InterlockedAdd(stats[0].kinds[k * 3u + 2u], kinds_triangles[k]);
+        }
+        if (phase != 0u) {
+            InterlockedAdd(stats[0].late[1], clusters);
+            InterlockedAdd(stats[0].late[2], drawn);
+        }
     }
 }
 

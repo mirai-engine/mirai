@@ -53,6 +53,10 @@ bool frustum_visible(float3 bmin, float3 bmax) {
 // before, which drew the instance there: what moves is not hidden by where
 // it was.
 void box_before(Instance inst, float3 low, float3 high, out float3 before_low, out float3 before_high) {
+    before_low = low;
+    before_high = high;
+    // One that did not move was where it is.
+    if (all(inst.prev_world[0] == inst.world[0]) && all(inst.prev_world[1] == inst.world[1]) && all(inst.prev_world[2] == inst.world[2])) return;
     // The transform from where it is to where it was: prev_world * world_inv.
     float4 back[3];
     [ForceUnroll] for (int row = 0; row < 3; row++) {
