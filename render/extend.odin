@@ -601,7 +601,7 @@ pass_surface_begin :: proc(s: ^Stage_Pass, targets: Surface_Targets, name := "su
 // Without instance ids, Instance reads 0 everywhere.
 pass_surface_read :: proc(s: ^Stage_Pass, slot: u32, source: Surface_Source) {
 	t := s.pass.t
-	instance := t.instance if t.instance != 0 && s.pass.r.frame_layout.instance_ids else s.pass.r.dummy_layers
+	instance := t.instance if t.instance != 0 && s.pass.r.frame_layout.instance_ids else s.pass.r.dummy_uint
 	glass := t.glass[0].depth if s.glass != .All && t.glass[0].depth != 0 else s.pass.r.dummy_texture
 	maps, dummy := s.pass.frame.sun_maps, s.pass.r.dummy_texture
 	shadows := t.shadow_raster.atlas if maps.z != 0 else dummy
