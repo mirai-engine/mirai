@@ -102,7 +102,7 @@ or interleave its own passes.
      `direct_rays` (one point of each 2×2 traces a sample), `direct_samples`, and `direct_points`,
      `direct_spread` and `direct_filter`, which filter the points, take them to the pixels, where
      the sun gives its light, and add the lights that cast no shadows
-     ([GPU lights](lights.md#gpu-lights)).
+     ([light tree](lights.md#light-tree)).
    - The points that trace their own rays (glass, overlays, the back side) use `direct_lighting`.
 6. **reflect**: the pixels smoother than `reflection_roughness` trace a ray from their lobe and a
    second pass filters the rays of the frame; it is omitted while no material of the table can go

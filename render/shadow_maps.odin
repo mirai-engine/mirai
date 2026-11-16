@@ -765,8 +765,7 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 	// The buffer of this frame: a word for each light of the scene (its first
 	// slot + 1, and from bit SHADOW_LIGHT_FACES the faces it has), the map of
 	// each slot, the plan of each, and the boxes of what changed.
-	all_lights := u32(len(s.lights) + light_region_lights(s.light_region))
-	plan.rows = (all_lights + 3) / 4
+	plan.rows = (u32(len(s.lights)) + 3) / 4
 	plan.plan = plan.rows * 4 + SHADOW_SLOTS * SHADOW_MAP_ROWS * 4
 	plan.boxes = plan.plan + SHADOW_SLOTS * size_of(Shadow_Slot_Plan) / 4
 	plan.box_count = u32(stale.count + moved.count)

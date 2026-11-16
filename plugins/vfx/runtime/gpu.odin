@@ -195,13 +195,11 @@ Gpu_Emitter :: struct {
     spawns:[SPAWNS][4]u32, // count, per, birth, age (f32 bits)
     spacing:[2][4]f32,
     frame:[4]u32,       // in the rows of the frame: bytes to its resources (max(u32): none), to its births, how many, to the births of the frame
-    light:[4]f32,       // intensity (cd), range (m), radius (m; 0: half the size of the particle)
-    lights:[4]u32,      // its share of the room of the frame (light_share): x the first of its lights with shadows, y how many; z, w those without
     data:[4]u32,        // bytes of the data buffer to the Attributes of its range, bytes of those of a particle, its age (f32 bits), particles it started
     mesh_weights:[effect.PARTICLE_MESHES]f32,  // of Mesh particles: the weights of its meshes added up, the last 1
     mesh_vertices:[effect.PARTICLE_MESHES]u32, // and the vertices of a draw of each (erender.mesh_draw_range)
 }
-#assert(size_of(Gpu_Emitter)==896)
+#assert(size_of(Gpu_Emitter)==864)
 
 // A mesh a Mesh particle can show: the mesh of the scene, the vertices of a
 // draw of its clusters (erender.mesh_draw_range) and its weight, the weights
@@ -318,7 +316,6 @@ Pool :: struct {
     volume_cells:u32,        // the most cells of a volume
     stage_count:u32,         // stages of the emitter that has the most
     plan:[erender.PROGRAM_STAGES]Stage_Plan,
-    lights:[2]u32,           // that the live emitters light, with shadows and without: the room particles_frame asks for
 }
 
 // Makes the tables of a pool for a capacity: none of its particles stays.
@@ -573,12 +570,10 @@ pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool 
     fields:=fields_relative(sync.fields,pass.origin)
     append(&pool.frame_bytes,..([^]u8)(&fields)[:size_of(fields)])
     pool.steps=u32(clamp(math.ceil(pool.dt/STEP),1,STEPS))
-    lights_taken:=[2]u32{}
     step_dt:=pool.dt/f32(pool.steps)
     for &g,at in pool.gpu[:pool.slot_end] {
         s:=&pool.slots[at]
-        // The shares of the lights follow the slots, also through those that have none (particle_light_at).
-        if !s.live {g.range,g.lights={},light_share(0,false,&lights_taken,pool.lights);continue}
+        if !s.live {g.range={};continue}
         if reset {s.fresh=true;s.program_dirty=s.desc.program.id!=0}
         d:=&s.desc
         flags:=u32(FLAG_ACTIVE)
@@ -623,7 +618,6 @@ pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool 
         g.program.w=reports_at if d.info.report!=.None else max(u32)
         g.step={pool.dt,step_dt,f32(pool.steps),pass.time}
         g.frame={max(u32),0,0,0}
-        g.lights=light_share(d.info.lights,d.info.light_shadows,&lights_taken,pool.lights)
         g.data.z,g.data.w=transmute(u32)d.age,d.born
         if d.resources>0 && int(d.resources-1)+RESOURCE_ROWS<=len(sync.resources) {
             g.frame.x=u32(len(pool.frame_bytes))
@@ -739,7 +733,6 @@ emitter_row :: proc(g:^Gpu_Emitter,s:^Pool_Slot,capacity:u32) {
     g.size_times=transmute([2][4]f32)m.size_over_life.times
     g.gradient=m.color_over_life.colors
     g.gradient_times=transmute([2][4]f32)m.color_over_life.times
-    g.light={m.light_intensity,m.light_range,m.light_radius,0}
     g.data.xy={ATTRIBUTES_AT+s.attributes,s.stride}
 }
 
@@ -748,7 +741,7 @@ emitter_row :: proc(g:^Gpu_Emitter,s:^Pool_Slot,capacity:u32) {
 // asked again when the shaders are, or when the renderer takes another
 // variant of a stage (the one particle_simulate gives changes).
 Particle_Pipelines :: struct {
-    shift,begin,emit,simulate,finish,surface,stage,volume_light,lights,world_texture,additive,alpha,volume:erender.Pipeline,
+    shift,begin,emit,simulate,finish,surface,stage,volume_light,world_texture,additive,alpha,volume:erender.Pipeline,
     // The emitters without a program run on the stages above; each program on those of its own.
     programs:[PROGRAMS_IN_USE]Program_Pipelines,
     program_count:int,
@@ -871,12 +864,11 @@ particles_frame :: proc(sync:^Particle_Sync,app:^host.App) -> bool {
         p.surface=erender.stage_pipeline(app.renderer,{stage=.Simulate,shader="particle_surface",name="particle surface"})
         p.stage=erender.stage_pipeline(app.renderer,{stage=.Simulate,shader="particle_stage",name="particle stage"})
         p.volume_light=erender.stage_pipeline(app.renderer,{stage=.Simulate,shader="particle_volume_light",name="particle volume light"})
-        p.lights=erender.stage_pipeline(app.renderer,{stage=.Simulate,shader="particle_lights",name="particle lights"})
         p.world_texture=erender.stage_pipeline(app.renderer,{stage=.Simulate,shader="particle_world_texture",name="particle world texture"})
         p.volume=erender.stage_pipeline(app.renderer,{stage=.Blend,shader="particle_volume",blend=.Premultiplied,name="particle volumes"})
         p.additive=erender.stage_pipeline(app.renderer,{stage=.Blend,shader="particle_sprite",blend=.Additive,name="particles additive"})
         p.alpha=erender.stage_pipeline(app.renderer,{stage=.Blend,shader="particle_sprite",blend=.Premultiplied,name="particles blended"})
-        if p.shift==0 || p.begin==0 || p.emit==0 || p.finish==0 || p.surface==0 || p.stage==0 || p.volume_light==0 || p.lights==0 || p.world_texture==0 || p.additive==0 || p.alpha==0 || p.volume==0 {return false}
+        if p.shift==0 || p.begin==0 || p.emit==0 || p.finish==0 || p.surface==0 || p.stage==0 || p.volume_light==0 || p.world_texture==0 || p.additive==0 || p.alpha==0 || p.volume==0 {return false}
         p.simulate=simulate
         pool.regroup=true
     }
@@ -888,11 +880,6 @@ particles_frame :: proc(sync:^Particle_Sync,app:^host.App) -> bool {
     if made:=erender.vertices_made(app.renderer);made!=sync.surfaces.vertices {
         sync.surfaces.vertices=made
         for &entry in sync.surfaces.entries {entry.built=false}
-    }
-    pool.lights=lights_asked(pool.slots[:pool.slot_end])
-    if pool.lights!={} {
-        box,reach:=lights_box(pool.slots[:pool.slot_end],sync.fields,pool.dt)
-        erender.lights_ask(app.renderer,pool.lights[0],pool.lights[1],box,reach)
     }
     world_textures_make(sync,app.renderer)
     grids_load_prepare(sync,app.assets)
@@ -1045,9 +1032,6 @@ particles_simulate :: proc(pass:^erender.Pass,user:rawptr) {
     erender.pass_params(pass,&params,size_of(params))
     erender.pass_counters(pass,9,"particles")
     erender.pass_dispatch(pass,u32(pool.slot_end))
-    // The lights of the particles complete the tree the media of the volumes walk.
-    erender.pass_timestamp(pass,"particle lights")
-    particles_lights(sync,pass)
     volumes_light(sync,pass,&params)
     world_textures_write(sync,pass)
     data_readback(sync,pass,u32(pool.frame&1))
@@ -1089,89 +1073,6 @@ particles_shift :: proc(pass:^erender.Pass,user:rawptr) {
     erender.pass_params(pass,&params,size_of(params))
     erender.pass_dispatch(pass,groups(max(pool.pool_end,EVENT_CAPACITY),64),3)
     pool.origin=pass.origin
-}
-
-// The lights of the particles, in the room the renderer keeps for them: a
-// group writes all of each part, also with none to light.
-@(private)
-particles_lights :: proc(sync:^Particle_Sync,pass:^erender.Pass) {
-    if sync.pool.lights=={} {return}
-    room,ok:=erender.pass_lights(pass,7,8)
-    if !ok {return}
-    Params :: struct {emitters,scene_root,pad0,pad1:u32,parts:[2][4]u32}
-    params:=Params{emitters=u32(sync.pool.slot_end),scene_root=room.scene_root}
-    for part,at in ([2]erender.Pass_Light_Part{room.shadows,room.shadowless}) {params.parts[at]={part.first_light,part.capacity,part.root,0}}
-    erender.pass_pipeline(pass,sync.pipelines.lights)
-    erender.pass_params(pass,&params,size_of(params))
-    erender.pass_dispatch(pass,2 if room.shadowless.capacity>0 else 1)
-}
-
-// The lights the live emitters of a pool ask the room for: those with
-// shadows and those without, up to what the renderer gives of each.
-@(private)
-lights_asked :: proc(slots:[]Pool_Slot) -> (asked:[2]u32) {
-    for &s in slots {
-        if s.live {asked[0 if s.desc.info.light_shadows else 1]+=s.desc.info.lights}
-    }
-    return {min(asked[0],erender.LIGHTS_ASKED_MAX),min(asked[1],erender.LIGHTS_ASKED_MAX)}
-}
-
-// Where the lights with shadows of the live emitters of a pool lie, and how
-// far they light, for erender.lights_ask: around each emitter, as far as its
-// particles may go in their life at their fastest start or the fastest wind
-// with the strongest pull on them; anywhere where its particles are born
-// elsewhere (on a surface or bones, in its channel, at the events of another)
-// or a program moves them. dt: the seconds over which the emitter moved from
-// previous.
-@(private)
-lights_box :: proc(slots:[]Pool_Slot,fields:Gpu_Fields,dt:f32) -> (box:[2][3]f32,reach:f32) {
-    box={{max(f32),max(f32),max(f32)},{-max(f32),-max(f32),-max(f32)}}
-    anywhere:=false
-    gravity,wind:=fields_most(fields)
-    for &s in slots {
-        d:=&s.desc
-        if !s.live || !d.info.light_shadows || d.info.lights==0 {continue}
-        reach=max(reach,d.info.light_range)
-        if d.info.shape==.Surface || d.info.shape==.Bones || d.program.id!=0 || d.births[1]>0 {anywhere=true}
-        for &o in slots {
-            if o.live && o.desc.info.trigger!=.None && o.desc.event_target==s.id {anywhere=true}
-        }
-        if anywhere {continue}
-        here:=[3]f32{d.transform[0,3],d.transform[1,3],d.transform[2,3]}
-        before:=[3]f32{d.previous[0,3],d.previous[1,3],d.previous[2,3]}
-        scale:=max(linalg.length(d.transform[0].xyz),linalg.length(d.transform[1].xyz),linalg.length(d.transform[2].xyz))
-        extent:=f32(0)
-        #partial switch d.info.shape {
-        case .Box: extent=linalg.length(d.info.shape_size)
-        case .Point:
-        case: extent=abs(d.info.shape_size.x)
-        }
-        life:=max(d.info.lifetime[0],d.info.lifetime[1],0)
-        start:=max(abs(d.info.speed[0]),abs(d.info.speed[1]))+scale*max(linalg.length(d.info.velocity[0]),linalg.length(d.info.velocity[1]))+abs(d.info.inherit_velocity)*linalg.length(here-before)/max(dt,1e-3)
-        pull:=linalg.length(d.info.acceleration)+abs(d.info.gravity)*gravity+abs(d.info.noise)+abs(d.info.attractor_strength)
-        far:=extent*scale+max(start,wind)*life+0.5*pull*life*life
-        if !(far<max(f32)) {
-            anywhere=true
-            continue
-        }
-        box={linalg.min(box[0],linalg.min(here,before)-far),linalg.max(box[1],linalg.max(here,before)+far)}
-    }
-    if anywhere {box=erender.LIGHTS_ANYWHERE}
-    return
-}
-
-// The share of the room of an emitter of lights, in the order of the slots
-// (Gpu_Emitter.lights): it takes them from the part of its kind, after those
-// the emitters before it took, as many as asked leaves; from the other part,
-// none, where the shares of its emitters reach. taken: of each part so far.
-@(private)
-light_share :: proc "contextless" (lights:u32,shadows:bool,taken:^[2]u32,asked:[2]u32) -> [4]u32 {
-    part:=0 if shadows else 1
-    budget:=min(lights,asked[part]-min(taken[part],asked[part]))
-    share:=[4]u32{taken[0],0,taken[1],0}
-    share[2*part+1]=budget
-    taken[part]+=budget
-    return share
 }
 
 @(private)

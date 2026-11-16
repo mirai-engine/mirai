@@ -497,8 +497,7 @@ bool light_stands_for(uint instance) {
     float3 high = inst.bounds_max.xyz;
     float extent = 0.5 * max(high.x - low.x, max(high.y - low.y, high.z - low.z));
     if (light_stands_for_under(0u, low, high, extent)) return true;
-    if (frame.shadowless_lights.x != 0u && light_stands_for_under(frame.shadowless_lights.x, low, high, extent)) return true;
-    return frame.shadowless_lights.z != 0u && light_stands_for_under(frame.shadowless_lights.z, low, high, extent);
+    return frame.shadowless_lights != 0u && light_stands_for_under(frame.shadowless_lights, low, high, extent);
 }
 
 // Whether a ray that gathers light met the globe of a light (light_stands_for
@@ -603,8 +602,8 @@ bool light_walk_next(inout Light_Walk walk, out uint at, out float weight) {
 // smoothly from a point to the next; so too by how much their window bends
 // (node_bend), where some of their lights reach the point and others not.
 // It sets how much a group of the finer sum may err. `root`: the tree it
-// walks, that of the lights with shadows (0) or one of those without
-// (frame.shadowless_lights.x or z). `share`: each by that share of its light
+// walks, that of the lights with shadows (0) or that of those without
+// (frame.shadowless_lights). `share`: each by that share of its light
 // (LIGHT_SHARE_*).
 static const float ESTIMATE_GROUPED = 0.5;
 static const float ESTIMATE_OPENED = 1.0;
@@ -729,31 +728,20 @@ float3 local_lighting(Shading s, float total, uint root = 0u, uint share = LIGHT
 }
 
 // The light the local lights that cast no shadows send from the point
-// towards its viewer, those a pass writes and those of the scene: whatever
-// stands in their way, with no rays and out of the budgets of shadows.
-// `known`: the light of the others that reaches it, as lights_estimate sums
-// it, which a group may err against with theirs. `share`: as for
-// local_lighting.
+// towards its viewer: whatever stands in their way, with no rays and out of
+// the budgets of shadows. `known`: the light of the others that reaches it,
+// as lights_estimate sums it, which a group may err against with theirs.
+// `share`: as for local_lighting.
 float3 shadowless_lighting(Shading s, float known, uint share = LIGHT_SHARE_ALL) {
-    uint roots[2] = { frame.shadowless_lights.x, frame.shadowless_lights.z };
-    if (roots[0] == 0u && roots[1] == 0u) return float3(0.0);
-    // Each walk once in the code, over both trees.
-    float total = max(known, 0.0);
-    [loop]
-    for (uint k = 0u; k < 2u; k++) {
-        if (roots[k] != 0u) total += lights_estimate(s.position, s.normal, roots[k], share);
-    }
-    float3 result = float3(0.0);
-    [loop]
-    for (uint k = 0u; k < 2u; k++) {
-        if (roots[k] != 0u) result += local_lighting_of(s, total, roots[k], share);
-    }
-    return result;
+    uint root = frame.shadowless_lights;
+    if (root == 0u) return float3(0.0);
+    float total = max(known, 0.0) + lights_estimate(s.position, s.normal, root, share);
+    return local_lighting_of(s, total, root, share);
 }
 
 // Whether a node is one of the lights that cast no shadows.
 bool light_node_shadowless(uint at) {
-    return (at >= frame.shadowless_lights.x && at < frame.shadowless_lights.y) || (at >= frame.shadowless_lights.z && at < frame.shadowless_lights.w);
+    return frame.shadowless_lights != 0u && at >= frame.shadowless_lights;
 }
 
 // How much a node of a cut needs to open to its children (node_need). -2: it
