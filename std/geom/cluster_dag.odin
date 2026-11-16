@@ -131,6 +131,9 @@ Dag_Builder :: struct {
     meshlets:[dynamic]Meshlet,
     meshlet_vertices:[dynamic]u32,
     meshlet_triangles:[dynamic]u8,
+    // The triangles of a cluster in the order of meshlet_optimize; whole levels keep the order
+    // they are given in, which decoding a level gives back.
+    reorder:bool,
 }
 
 // Splits the triangles of indices (all of submesh) in clusters appended to
@@ -158,7 +161,7 @@ clusterize :: proc(b:^Dag_Builder,indices:[]u32,submesh:u32,own:Cluster_Lod,gene
     if failed!=.None {return .Invalid_Mesh}
     for meshlet in b.meshlets[:count] {
         // In an order that reuses vertices: what the coding of its page and the fetches of its pixels gain.
-        meshlet_optimize(b.meshlet_vertices[meshlet.vertex_offset:][:meshlet.vertex_count],b.meshlet_triangles[meshlet.triangle_offset:][:meshlet.triangle_count*3],CLUSTER_OPTIMIZE_LEVEL)
+        if b.reorder {meshlet_optimize(b.meshlet_vertices[meshlet.vertex_offset:][:meshlet.vertex_count],b.meshlet_triangles[meshlet.triangle_offset:][:meshlet.triangle_count*3],CLUSTER_OPTIMIZE_LEVEL)}
         offset:=u32(len(cluster_indices))
         for k in 0..<meshlet.triangle_count*3 {
             local:=b.meshlet_vertices[meshlet.vertex_offset+u32(b.meshlet_triangles[meshlet.triangle_offset+k])]
@@ -279,7 +282,7 @@ cluster_dag_build :: proc(dag:^Cluster_Dag,source:Cluster_Source,allocator:=cont
     outline:=make([]Simplify_Vertex,vertex_count,scratch)
     // The locks of a level without the Protect of vertex_lock, for its stuck groups.
     relaxed:=make([]Simplify_Vertex,vertex_count,scratch)
-    b:=Dag_Builder{source=source,dag=dag}
+    b:=Dag_Builder{source=source,dag=dag,reorder=true}
     b.local_of=make([]u32,vertex_count,scratch)
     if (remap==nil || locks==nil || outline==nil || relaxed==nil || b.local_of==nil) && vertex_count>0 {return .Out_Of_Memory}
     positions_weld(source.positions,0,remap)
