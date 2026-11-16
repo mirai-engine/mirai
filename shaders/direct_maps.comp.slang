@@ -61,11 +61,11 @@ float2 shadow_tap(uint i, uint count, float spin, float2 radii, float2 axis) {
 // jitter of the view does not move as it moves the hard shadow at the point;
 // only the ellipse, never the wider disc the blockers are searched in, which
 // would light the inside of a narrow shadow. spread: the width of the
-// penumbra of what hides a point that is not lit.
-float shadow_map_seen(Shadow_Map m, bool sun, float3 toward, float3 position, float3 n, float radius, float spin, float across, float grow, out float spread) {
+// penumbra of what hides a point that is not lit. t: the taps of the point
+// (shadow_map_taps), near: the pages around them (shadow_near), whose entries
+// the taps read.
+float shadow_map_seen(Shadow_Map m, Shadow_Taps t, Shadow_Near near, bool sun, float radius, float spin, float across, out float spread) {
     spread = 0.0;
-    Shadow_Taps t;
-    if (!shadow_map_taps(m, sun, toward, position, n, radius, across, grow, t)) return 1.0;
     // The least half width of a penumbra, metres at the point.
     float least = SHADOW_PENUMBRA_MIN * t.grow * t.step;
     uint taps = 0u, blocked = 0u, hiding = 0u;
@@ -75,7 +75,7 @@ float shadow_map_seen(Shadow_Map m, bool sun, float3 toward, float3 position, fl
         // A tap no page holds tells nothing, as one past the square.
         float b;
         uint coarser;
-        if (!shadow_blocker(m, int2(floor(t.texel + off)), b, coarser)) continue;
+        if (!shadow_blocker(m, near, int2(floor(t.texel + off)), b, coarser)) continue;
         taps++;
         float apart = length(off) * t.step;
         if (!shadow_blocks(t, b, off, coarser)) continue;
@@ -90,7 +90,7 @@ float shadow_map_seen(Shadow_Map m, bool sun, float3 toward, float3 position, fl
     float b = blockers / float(hiding);
     spread = sun ? 2.0 * radius * (t.d - b) : 2.0 * radius * (t.d - b) / (b + radius);
     if (blocked == taps) return 0.0;
-    if (!(t.covered > max(0.5 * spread / t.step, SHADOW_PENUMBRA_MIN * t.grow))) return shadow_hard_seen(m, t);
+    if (!(t.covered > max(0.5 * spread / t.step, SHADOW_PENUMBRA_MIN * t.grow))) return shadow_hard_seen(m, near, t);
     // The share of the ellipse of the point that is lit.
     float2 ellipse = float2(t.covered, max(SHADOW_WIDE_COVER * 0.5 * across / t.step, 0.5));
     uint inside = 0u, lit = 0u;
@@ -98,7 +98,7 @@ float shadow_map_seen(Shadow_Map m, bool sun, float3 toward, float3 position, fl
         float2 off = shadow_tap(i, SHADOW_WIDE_TAPS, spin, ellipse, t.axis);
         float b;
         uint coarser;
-        if (!shadow_blocker(m, int2(floor(t.texel + off)), b, coarser)) continue;
+        if (!shadow_blocker(m, near, int2(floor(t.texel + off)), b, coarser)) continue;
         inside++;
         if (!shadow_blocks(t, b, off, coarser)) lit++;
     }
@@ -128,31 +128,17 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     float3 origin = offset_origin(pixel.position, normal, view_bias(pixel.distance));
     uint4 row = direct_cell(pixel.position);
     uint count = direct_items(row);
-    // A glass with a program in the way of a light a map holds here: the
-    // samples take all of the point, through rays that run the program.
     float across = float(scale) * (frame.footprint.x + frame.footprint.y * depth_distance(depth));
     // The width of a pixel of the view at the point, which picks the level or mip of a map.
     float pixel_across = frame.footprint.x + frame.footprint.y * depth_distance(depth);
-    if (frame.sun_maps.w != 0u) {
-        Shadow_Map m;
-        bool programmed = direct_sun_weight(pixel.position, normal) > 0.0 && sun_map_of(pixel.position, m) && sun_map_given(pixel.position, pixel_across) && shadow_tint_programmed(m, pixel.position);
-        for (uint i = 0u; i < count && !programmed; i++) {
-            uint item = direct_item(row, i);
-            Sun_Pick pick;
-            programmed = item != DIRECT_CELL_TABLE && light_map_given(item, pixel.position, pixel_across, m, pick) && shadow_tint_programmed(m, pixel.position);
-        }
-        if (programmed) {
-            out_samples[p] = float4(0.0, 0.0, 0.0, 1.0);
-            out_sun[p] = float4(1.0, 1.0, 1.0, -1.0);
-            out_depth[p] = float4(depth_distance(depth), DIRECT_MAPS_NONE, -1.0, 0.0);
-            return;
-        }
-    }
     bool changes = frame.moved.x > 0u;
     float spin = direct_spin(p);
     bool marked = false;
     // Whether a light no map holds here gives the point some.
     bool rest = false;
+    // A glass with a program in the way of a light a map holds here: the
+    // samples take all of the point, through rays that run the program.
+    bool programmed = false;
     float sun = direct_sun_weight(pixel.position, normal);
     float sun_part = -1.0, sun_wide = 0.0;
     Sun_Pick pick;
@@ -162,11 +148,19 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
         Shadow_Map held = sun_level(pick.level);
         if (shadow_map_held(held, pixel.position)) {
             bool own = held.rect.x == pick.level;
-            sun_part = shadow_map_seen(held, true, frame.sun_direction.xyz, pixel.position, normal, params.sun_radius, spin, across, own ? pick.grow : 1.0, sun_wide);
+            Shadow_Taps t;
+            sun_part = 1.0;
+            if (shadow_map_taps(held, true, frame.sun_direction.xyz, pixel.position, normal, params.sun_radius, across, own ? pick.grow : 1.0, t)) {
+                Shadow_Near near = shadow_near(held, t.texel, shadow_taps_reach(t));
+                programmed = shadow_tint_near(held, near, pixel.position).a < 0.5;
+                sun_part = shadow_map_seen(held, t, near, true, params.sun_radius, spin, across, sun_wide);
+            }
             Shadow_Map next = sun_level(pick.level + 1u);
-            float next_wide;
             if (own && pick.blend > 0.0 && shadow_map_held(next, pixel.position)) {
-                float part = shadow_map_seen(next, true, frame.sun_direction.xyz, pixel.position, normal, params.sun_radius, spin, across, 1.0, next_wide);
+                float part = 1.0, next_wide = 0.0;
+                if (shadow_map_taps(next, true, frame.sun_direction.xyz, pixel.position, normal, params.sun_radius, across, 1.0, t)) {
+                    part = shadow_map_seen(next, t, shadow_near(next, t.texel, shadow_taps_reach(t)), true, params.sun_radius, spin, across, next_wide);
+                }
                 sun_part = lerp(sun_part, part, pick.blend);
                 sun_wide = lerp(sun_wide, next_wide, pick.blend);
             }
@@ -179,7 +173,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     }
     float3 open = float3(0.0), lit = float3(0.0);
     float wide = 0.0, hid = 0.0;
-    for (uint i = 0u; i < count; i++) {
+    for (uint i = 0u; i < count && !programmed; i++) {
         uint item = direct_item(row, i);
         // Its face at the mip of the point, or the coarser one drawn where its
         // page is not; over the top of the octave of the mip, blended into the next.
@@ -193,18 +187,26 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
         float3 axis;
         float far;
         float3 radiance = light_radiance(chosen, s, axis, far);
-        if (!(luminance(radiance) > 0.0)) continue;
-        radiance *= shadow_tint(m, pixel.position);
-        open += radiance;
         float radius = light_extent(chosen);
-        if (changes && !marked) marked = light_moved(item) || occluder_changed_in_cone(origin, axis, far, radius / max(far, 1e-4));
-        float spread;
         bool own = shadow_rect_mip(m.rect) == mip.level;
-        float part = shadow_map_seen(m, false, axis, pixel.position, normal, radius, spin, across, own ? mip.grow : 1.0, spread);
+        Shadow_Taps t;
+        bool facing = shadow_map_taps(m, false, axis, pixel.position, normal, radius, across, own ? mip.grow : 1.0, t);
+        Shadow_Near near = facing ? shadow_near(m, t.texel, shadow_taps_reach(t)) : shadow_tint_pages(m, pixel.position);
+        float4 tint = shadow_tint_near(m, near, pixel.position);
+        programmed = tint.a < 0.5;
+        if (programmed || !(luminance(radiance) > 0.0)) continue;
+        radiance *= tint.rgb;
+        open += radiance;
+        if (changes && !marked) marked = light_moved(item) || occluder_changed_in_cone(origin, axis, far, radius / max(far, 1e-4));
+        float spread = 0.0;
+        float part = facing ? shadow_map_seen(m, t, near, false, radius, spin, across, spread) : 1.0;
         Shadow_Map next = shadow_map_mip(m, mip.level + 1u);
-        float next_spread;
         if (own && mip.blend > 0.0 && shadow_map_held(next, pixel.position)) {
-            part = lerp(part, shadow_map_seen(next, false, axis, pixel.position, normal, radius, spin, across, 1.0, next_spread), mip.blend);
+            float next_part = 1.0, next_spread = 0.0;
+            if (shadow_map_taps(next, false, axis, pixel.position, normal, radius, across, 1.0, t)) {
+                next_part = shadow_map_seen(next, t, shadow_near(next, t.texel, shadow_taps_reach(t)), false, radius, spin, across, next_spread);
+            }
+            part = lerp(part, next_part, mip.blend);
             spread = lerp(spread, next_spread, mip.blend);
         }
         lit += radiance * part;
@@ -213,6 +215,12 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
             wide += luminance(radiance) * spread;
             hid += luminance(radiance);
         }
+    }
+    if (programmed) {
+        out_samples[p] = float4(0.0, 0.0, 0.0, 1.0);
+        out_sun[p] = float4(1.0, 1.0, 1.0, -1.0);
+        out_depth[p] = float4(depth_distance(depth), DIRECT_MAPS_NONE, -1.0, 0.0);
+        return;
     }
     float shown = luminance(open);
     float part = shown > 0.0 ? saturate(luminance(lit) / shown) : 1.0;
