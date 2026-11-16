@@ -105,6 +105,7 @@ Api_Status :: struct {
     assets:Api_Assets, // loaded now, and how many what no world names unloaded so far
     textures:Api_Textures,
     geometry:Api_Geometry,
+    pending:host.App_Pending `mirai:"label=What the frames draw stand-ins for because it is still being made; a capture and a measurement wait until all of it is 0"`,
     ticks_dropped:u64,
     extras_dropped:u64 `mirai:"label=What libraries asked to draw in a frame that did not fit and was not drawn (panels, lines, UI layers and textures, views, probes), since the editor started; it should stay 0"`,
     build:Build_Phase,
@@ -563,6 +564,7 @@ api_status :: proc(s:^Session,call:^api.Call) {
         r.assets={a.stats.meshes,a.stats.textures,a.stats.materials,a.stats.scenes,a.stats.unloads}
         r.textures.streamed=a.stats.streamed
     }
+    r.pending=view_pending(s)
     r.ui_dropped=s.gui.dropped
     r.build,r.build_errors=s.build.phase,len(s.build.diagnostics)
     if len(s.build.diagnostics)>0 {base.text_set(r.build_message[:],s.build.diagnostics[0].message)}
@@ -1509,7 +1511,7 @@ built_loading :: proc(s:^Session,user:rawptr) -> bool {
     if build_running(s,nil) {return true}
     if s.app.renderer==nil {return false}
     host.app_shaders_poll(s.app)
-    return host.app_shaders_loading(s.app,(^u64)(user)^) || gpu.renderer_pipelines_pending(s.app.renderer)
+    return host.app_shaders_loading(s.app,(^u64)(user)^) || gpu.renderer_pipelines_pending(s.app.renderer)>0
 }
 
 @(private)
