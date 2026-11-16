@@ -234,6 +234,7 @@ resolve_pass :: proc(p: ^Pass, nested: bool) {
 		rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.visibility)
 		// A nested view counts with its cull, apart.
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS2, r.scratch_buffer if nested else r.stats_buffer)
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS3, s.program_draws)
 		textures_feedback_bind(r, cmd)
 		resolve_programs_draw(r, cmd, &r.pipelines[id])
 	}
@@ -248,12 +249,12 @@ resolve_pass :: proc(p: ^Pass, nested: bool) {
 resolve_programs_draw :: proc(r: ^Renderer, cmd: ^rhi.Command_List, target: ^rhi.Pipeline) {
 	s := &r.scene
 	rhi.cmd_bind_pipeline(cmd, target^)
-	rhi.cmd_draw_indirect(cmd, s.program_draws, 0, 1, size_of(Gpu_Draw))
+	rhi.cmd_draw_indirect(cmd, s.program_draws, 0, 1, size_of(Gpu_Program_Draw))
 	if s.programmed_rows == 0 {return}
 	for program in renderer_programs(r) {
 		if program.domain != .Surface || program.id == 0 || program.id >= r.points.programs || s.program_rows[program.id] == 0 {continue}
 		rhi.cmd_bind_pipeline(cmd, program_graphics(r, target, program.id))
-		rhi.cmd_draw_indirect(cmd, s.program_draws, u64(program.id) * size_of(Gpu_Draw), 1, size_of(Gpu_Draw))
+		rhi.cmd_draw_indirect(cmd, s.program_draws, u64(program.id) * size_of(Gpu_Program_Draw), 1, size_of(Gpu_Program_Draw))
 	}
 }
 

@@ -23,20 +23,27 @@
 // render.Gpu_Glass_Dispatch: zero until glass is seen.
 [[vk::binding(SLOT_PASS4, 0)]] RWStructuredBuffer<uint> glass_dispatch : register(MIRAI_REGISTER(u, SLOT_PASS4), space0);
 // What phase 0 starts the cull of a view with, before the cluster pass reads
-// it: the draws of the resolve of the Surface programs (render.Gpu_Draw),
-// that of the materials without one drawn and those of the programs empty
-// until a cluster of theirs turns them on, and the counts and cursors of the
-// depth buckets of the tested bins of both phases (cull_bins.comp), zero.
+// it: the draws of the resolve of the Surface programs
+// (render.Gpu_Program_Draw), that of the materials without one drawn over the
+// view and those of the programs empty, over no pixel, until a cluster of
+// theirs turns them on and widens them to its box, and the counts and cursors
+// of the depth buckets of the tested bins of both phases (cull_bins.comp),
+// zero.
 [[vk::binding(SLOT_PASS6, 0)]] RWStructuredBuffer<uint> depth_buckets : register(MIRAI_REGISTER(u, SLOT_PASS6), space0);
 [[vk::binding(SLOT_PASS9, 0)]] RWStructuredBuffer<uint> program_draws : register(MIRAI_REGISTER(u, SLOT_PASS9), space0);
 
 void cull_start(uint i) {
     uint threads = (frame.instance_count + frame.batches.x + MIRAI_GROUP_X - 1u) / MIRAI_GROUP_X * MIRAI_GROUP_X;
     for (uint program = i; program < max(params.programs, 1u); program += threads) {
-        program_draws[program * 4u] = 3u;
-        program_draws[program * 4u + 1u] = program == 0u ? 1u : 0u;
-        program_draws[program * 4u + 2u] = 0u;
-        program_draws[program * 4u + 3u] = program;
+        uint at = program * PROGRAM_DRAW_WORDS;
+        program_draws[at] = program == 0u ? 3u : 6u;
+        program_draws[at + 1u] = program == 0u ? 1u : 0u;
+        program_draws[at + 2u] = 0u;
+        program_draws[at + 3u] = program;
+        program_draws[at + 4u] = 0xffffffffu;
+        program_draws[at + 5u] = 0xffffffffu;
+        program_draws[at + 6u] = 0u;
+        program_draws[at + 7u] = 0u;
     }
     for (uint word = i; word < CULL_DEPTH_WORDS; word += threads) depth_buckets[word] = 0u;
 }
