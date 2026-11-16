@@ -1074,7 +1074,7 @@ render_lights_that_few_reach_at_a_time_are_each_lit :: proc(t: ^testing.T) {
 // crowd of lights without them, more than a walk visits, under the sun; and
 // a ceiling of downlights without them, of two widths, more than a walk
 // visits, whose groups stand for them by the cones they shine in; and a few
-// downlights without them. Those without shadows also from a view across
+// downlights, rectangles and tubes without them. Those without shadows also from a view across
 // the floor, whose tiles span far and near ground and, where a post stands,
 // the edges of it: the tiles give what the lights give, with no step where
 // one ends. The few lights fit the lists of the tiles, which their pixels
@@ -1133,10 +1133,15 @@ render_groups_of_lights_give_what_their_lights_give :: proc(t: ^testing.T) {
 				append(&lights, Light_Desc{position = {x, 2.2 + 0.2 * f32(i % 3), z}, color = {0.5 + 0.5 * f32(i % 2), 0.7, 0.5 + 0.5 * f32(i % 3) / 2}, intensity = 0.1 * math.PI, range = 8, radius = 0.02, direction = {0, -1, 0}, cone = 0.55 if i % 2 == 0 else 0.75, indirect = 1, scattering = 1, shadowless = true})
 			}
 		case .Lamps:
-			// Downlights a metre and a half apart, of two widths.
+			// Downlights a metre and a half apart, of two widths, and among them rectangles that face down and tubes.
 			for i in 0 ..< 16 {
 				x, z := (f32(i % 4) - 1.5) * 1.5 + 0.1 * math.sin(f32(i) * 1.7), (f32(i / 4) - 1.5) * 1.5 + 0.1 * math.cos(f32(i) * 2.3)
-				append(&lights, Light_Desc{position = {x, 2.2 + 0.2 * f32(i % 3), z}, color = {0.5 + 0.5 * f32(i % 2), 0.7, 0.5 + 0.5 * f32(i % 3) / 2}, intensity = 0.4 * math.PI, range = 8, radius = 0.02, direction = {0, -1, 0}, cone = 0.55 if i % 2 == 0 else 0.75, indirect = 1, scattering = 1, shadowless = true})
+				light := Light_Desc{position = {x, 2.2 + 0.2 * f32(i % 3), z}, color = {0.5 + 0.5 * f32(i % 2), 0.7, 0.5 + 0.5 * f32(i % 3) / 2}, intensity = 0.4 * math.PI, range = 8, radius = 0.02, direction = {0, -1, 0}, cone = 0.55 if i % 2 == 0 else 0.75, indirect = 1, scattering = 1, shadowless = true}
+				switch i % 5 {
+				case 3: light.cone, light.axis, light.size, light.intensity = 0, {1, 0, 0}, {0.6, 0.4}, 1.5
+				case 4: light.cone, light.axis, light.length = 0, {1, 0, 0}, 1
+				}
+				append(&lights, light)
 			}
 		}
 		instances := [2]Instance_Desc {
