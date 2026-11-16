@@ -57,6 +57,7 @@ Gpu_Backend :: rhi.Backend
 Light_Desc :: gpu.Light_Desc
 LIGHT_POINT :: gpu.GPU_LIGHT_POINT
 LIGHT_RECT :: gpu.GPU_LIGHT_RECT
+light_shares :: gpu.light_shares // the w of the axis of a light: what of its light the probes gather and media scatter
 
 Render_Pipeline :: gpu.Render_Pipeline_Handle
 Render_Pipeline_Desc :: gpu.Render_Pipeline_Desc
