@@ -519,3 +519,27 @@ cluster_dag_prunes_a_cloud_of_islands_by_group :: proc(t:^testing.T) {
     cluster_dag_build(&again,source)
     testing.expect(t,bytes_equal(again.clusters[:],dag.clusters[:]) && bytes_equal(again.vertices[:],dag.vertices[:]) && bytes_equal(again.made[:],dag.made[:]),"the same cloud gives the same DAG")
 }
+
+// A group of tiny disjoint triangles that would lose every one keeps the
+// largest, and its error covers the area the others had.
+@(test)
+a_group_that_loses_every_triangle_keeps_its_largest :: proc(t:^testing.T) {
+    Case :: struct {sides:[]f32,largest:int}
+    cases:=[]Case{{{0.01,0.03,0.02},1},{{0.05},0},{{0.001,0.001,0.004,0.002},2}}
+    for c in cases {
+        positions:=make([dynamic]Vec3,context.temp_allocator)
+        indices:=make([dynamic]u32,context.temp_allocator)
+        total:f32
+        for side,k in c.sides {
+            first:=u32(len(positions))
+            at:=Vec3{f32(k),0,0}
+            append(&positions,at,at+{side,0,0},at+{0,side,0})
+            append(&indices,first,first+1,first+2)
+            total+=0.5*side*side
+        }
+        kept,lost:=group_largest(indices[:],positions[:])
+        side:=c.sides[c.largest]
+        testing.expectf(t,kept==[3]u32{u32(c.largest)*3,u32(c.largest)*3+1,u32(c.largest)*3+2},"%v keeps %v",c.sides,kept)
+        testing.expectf(t,abs(lost-math.sqrt(total-0.5*side*side))<1e-6,"%v loses %f",c.sides,lost)
+    }
+}

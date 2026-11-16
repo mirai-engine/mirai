@@ -1,6 +1,7 @@
 package geom
 
 import "base:runtime"
+import "core:math"
 
 // The DAG of clusters of a mesh, made when it is cooked: a port of the
 // builder of demo/clusterlod.h of meshoptimizer 1.3 (MIT, Arseny
@@ -411,10 +412,13 @@ cluster_dag_build :: proc(dag:^Cluster_Dag,source:Cluster_Source,allocator:=cont
             }
             if failed==.Out_Of_Memory {return .Out_Of_Memory}
             if failed!=.None {return .Invalid_Mesh}
-            // Nothing is left empty: a group that loses every triangle keeps its first.
+            // Nothing is left empty: a group that loses every triangle keeps its largest, and
+            // its error covers what it lost, as the side of a square of that area.
             if result.index_count==0 && len(merged)>0 {
-                copy(simplified[:3],merged[:3])
+                kept,lost:=group_largest(merged[:],source.positions)
+                copy(simplified[:3],kept[:])
                 result.index_count=3
+                error=max(error,lost)
             }
             if f32(result.index_count)>f32(len(merged))*CLUSTER_SIMPLIFY_STUCK {
                 // Stuck: the group is a root.
@@ -459,6 +463,24 @@ cluster_dag_build :: proc(dag:^Cluster_Dag,source:Cluster_Source,allocator:=cont
         if _,written:=group_output(&b,clusters[:],cluster_indices[:],source.positions,root,depth);!written {return .Out_Of_Memory}
     }
     return islands_dag(&b,source)
+}
+
+// The largest triangle of indices, which a group that would lose every one
+// keeps, and how far that is from them all: the side of a square of the area
+// the others had.
+@(private)
+group_largest :: proc "contextless" (indices:[]u32,positions:[]Vec3) -> (kept:[3]u32,lost:f32) {
+    largest,largest_area,total:=0,f32(-1),f32(0)
+    for t:=0;t+2<len(indices);t+=3 {
+        a,b,c:=positions[indices[t]],positions[indices[t+1]],positions[indices[t+2]]
+        u,v:=b-a,c-a
+        n:=Vec3{u.y*v.z-u.z*v.y,u.z*v.x-u.x*v.z,u.x*v.y-u.y*v.x}
+        area:=0.5*math.sqrt(n.x*n.x+n.y*n.y+n.z*n.z)
+        total+=area
+        if area>largest_area {largest,largest_area=t,area}
+    }
+    if len(indices)>=3 {kept={indices[largest],indices[largest+1],indices[largest+2]}}
+    return kept,math.sqrt(max(total-largest_area,0))
 }
 
 // Nothing of a DAG that did not end stays: its last group would be cut short.
