@@ -125,8 +125,17 @@ struct Cluster_Block {
     uint islands;
     uint triangles;
 };
-Cluster_Block cluster_block(Mesh mesh, Cluster c) {
-    Mesh_Page p = page_at(mesh, c.page);
+// Of a page entry at a word of the index pool.
+Mesh_Page page_at_word(uint word) {
+    Mesh_Page p;
+    p.base = indices[word];
+    p.first_vertex = indices[word + 1u];
+    p.vertex_count = indices[word + 2u];
+    p.first_triangle = indices[word + 3u];
+    return p;
+}
+uint cluster_page_word(Mesh mesh, Cluster c) { return mesh.page_word + c.page * PAGE_ENTRY_WORDS; }
+Cluster_Block page_block(Mesh mesh, Cluster c, Mesh_Page p) {
     Page_Layout l = page_layout(mesh, p);
     uint local = c.vertex_first - p.first_vertex;
     Cluster_Block b;
@@ -138,6 +147,7 @@ Cluster_Block cluster_block(Mesh mesh, Cluster c) {
     b.triangles = l.triangles + c.triangle_first - p.first_triangle;
     return b;
 }
+Cluster_Block cluster_block(Mesh mesh, Cluster c) { return page_block(mesh, c, page_at_word(cluster_page_word(mesh, c))); }
 
 // The vertex of its cluster a corner of a cluster names: corner 3t + k is
 // corner k of triangle t.
@@ -209,9 +219,8 @@ float3 cluster_rest_position(Mesh mesh, Cluster c, uint local) { return block_re
 // group drops shrinks to nothing in a band of ISLAND_FADE_BAND of the ranks
 // of those dropped, the last first (Cook et al. 2007). Nothing for a mesh
 // without islands or where along is 0.
-float3 island_offset(Mesh mesh, Cluster c, uint local, float along) {
+float3 block_island_offset(Mesh mesh, Cluster c, Cluster_Block b, uint local, float along) {
     if ((mesh.flags & MESH_FLAG_ISLANDS) == 0u || along <= 0.0) return float3(0.0);
-    Cluster_Block b = cluster_block(mesh, c);
     uint xy = vertex_words[b.islands + local * 2u], z_fate = vertex_words[b.islands + local * 2u + 1u];
     uint fate = z_fate >> 16u;
     float scale;
@@ -227,10 +236,13 @@ float3 island_offset(Mesh mesh, Cluster c, uint local, float along) {
     float3 center = float3(c.position + int3(int(xy & 0xffffu), int(xy >> 16u), int(z_fate & 0xffffu))) * mesh.position_step;
     return (block_rest_position(mesh, c, b, local) - center) * (scale - 1.0);
 }
+float3 island_offset(Mesh mesh, Cluster c, uint local, float along) {
+    if ((mesh.flags & MESH_FLAG_ISLANDS) == 0u || along <= 0.0) return float3(0.0);
+    return block_island_offset(mesh, c, cluster_block(mesh, c), local, along);
+}
 
 // A vertex of a cluster: posed at posed_word, or at rest with INVALID.
-Mesh_Point cluster_point_at(Mesh mesh, Cluster c, uint local, uint posed_word) {
-    Cluster_Block b = cluster_block(mesh, c);
+Mesh_Point block_point_at(Mesh mesh, Cluster c, Cluster_Block b, uint local, uint posed_word) {
     uint at = b.vertices + local * VERTEX_WORDS;
     uint xy = vertex_words[at], zu = vertex_words[at + 1u], vt = vertex_words[at + 2u], packed = vertex_words[at + 3u];
     Mesh_Point p;
@@ -258,6 +270,7 @@ Mesh_Point cluster_point_at(Mesh mesh, Cluster c, uint local, uint posed_word) {
     }
     return p;
 }
+Mesh_Point cluster_point_at(Mesh mesh, Cluster c, uint local, uint posed_word) { return block_point_at(mesh, c, cluster_block(mesh, c), local, posed_word); }
 // Where a vertex of a cluster is now.
 Mesh_Point cluster_point(Mesh mesh, Cluster c, uint local) { return cluster_point_at(mesh, c, local, mesh.posed_word); }
 float3 cluster_position(Mesh mesh, Cluster c, uint local) {
@@ -266,6 +279,9 @@ float3 cluster_position(Mesh mesh, Cluster c, uint local) {
 // Where it was in the frame before: a mesh that is not posed does not move.
 float3 cluster_position_previous(Mesh mesh, Cluster c, uint local, uint previous_word) {
     return previous_word != INVALID ? posed_position(previous_word, c.vertex_first + local) : cluster_rest_position(mesh, c, local);
+}
+float3 block_position_previous(Mesh mesh, Cluster c, Cluster_Block b, uint local, uint previous_word) {
+    return previous_word != INVALID ? posed_position(previous_word, c.vertex_first + local) : block_rest_position(mesh, c, b, local);
 }
 
 // The cluster of a mesh and the triangle of it a primitive a ray met names.

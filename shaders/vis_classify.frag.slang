@@ -12,9 +12,8 @@
 // wave. The resolve counts the quads it evaluates again.
 #include "visibility.slang"
 
-// The visible clusters (cull_bins.comp): the instance, the cluster as a word
-// of the index pool and the Surface program it is resolved by.
-[[vk::binding(SLOT_PASS0, 0)]] StructuredBuffer<uint4> visible : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);
+// The visible clusters (cull_bins.comp).
+[[vk::binding(SLOT_PASS0, 0)]] StructuredBuffer<Visible_Cluster> visible : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);
 [[vk::binding(SLOT_PASS1, 0)]] Texture2D<uint> visibility : register(MIRAI_REGISTER(t, SLOT_PASS1), space0);
 #include "cull_stats.slang"
 [[vk::binding(SLOT_PASS2, 0)]] RWStructuredBuffer<Stats_Block> resolve_stats : register(MIRAI_REGISTER(u, SLOT_PASS2), space0);
@@ -23,7 +22,7 @@
 float main(float4 pixel : SV_Position) : SV_Depth {
     bool helper = IsHelperLane();
     uint id = helper ? 0u : visibility.Load(int3(int2(pixel.xy), 0));
-    uint program = id != 0u ? visible[visibility_entry(id)].z : INVALID;
+    uint program = id != 0u ? visible[visibility_entry(id)].program : INVALID;
     uint4 quad = uint4(QuadReadLaneAt(program, 0u), QuadReadLaneAt(program, 1u), QuadReadLaneAt(program, 2u), QuadReadLaneAt(program, 3u));
     uint lane = (uint(pixel.y) & 1u) * 2u + (uint(pixel.x) & 1u);
     uint4 same = uint4(quad == program);

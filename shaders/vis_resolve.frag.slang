@@ -33,9 +33,8 @@
 #include "gbuffer_output.slang"
 #include "visibility.slang"
 
-// The visible clusters (cull_bins.comp): the instance, the cluster as a word
-// of the index pool and the Surface program it is resolved by.
-[[vk::binding(SLOT_PASS0, 0)]] StructuredBuffer<uint4> visible : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);
+// The visible clusters (cull_bins.comp).
+[[vk::binding(SLOT_PASS0, 0)]] StructuredBuffer<Visible_Cluster> visible : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);
 [[vk::binding(SLOT_PASS1, 0)]] Texture2D<uint> visibility : register(MIRAI_REGISTER(t, SLOT_PASS1), space0);
 #include "cull_stats.slang"
 [[vk::binding(SLOT_PASS2, 0)]] RWStructuredBuffer<Stats_Block> resolve_stats : register(MIRAI_REGISTER(u, SLOT_PASS2), space0);
@@ -55,12 +54,12 @@ struct Resolve_Corner {
     uint2 surface;   // of a far mesh (Mesh_Point.surface)
 };
 
-Resolve_Corner resolve_corner(Instance inst, Mesh mesh, Cluster c, Gbuffer_Cluster k, uint corner) {
-    Gbuffer_Corner p = gbuffer_corner_place(inst, mesh, c, k, corner);
+Resolve_Corner resolve_corner(Instance inst, Mesh mesh, Cluster c, Cluster_Block b, Gbuffer_Cluster k, uint corner) {
+    Gbuffer_Corner p = gbuffer_corner_place(inst, mesh, c, b, k, corner);
     Resolve_Corner r;
     r.position = view_clip(p.world);
     r.world = p.world;
-    r.before = gbuffer_corner_world_previous(inst, mesh, c, k, p);
+    r.before = gbuffer_corner_world_previous(inst, mesh, c, b, k, p);
     r.normal = transform_normal(inst.world_inv, p.v.normal);
     r.tangent = instance_tangent(inst, p.v.tangent);
     r.uv = p.v.uv;
@@ -83,16 +82,17 @@ struct Resolve_Triangle {
 };
 
 Resolve_Triangle resolve_triangle(uint id) {
-    uint4 entry = visible[visibility_entry(id)];
-    Instance inst = scene_instance(entry.x);
+    Visible_Cluster entry = visible[visibility_entry(id)];
+    Instance inst = scene_instance(entry.instance);
     Mesh mesh = meshes[instance_mesh(inst)];
-    Cluster cluster = cluster_at(entry.y);
-    Gbuffer_Cluster k = gbuffer_cluster(entry.x, inst, mesh, cluster, true);
+    Cluster cluster = cluster_at(entry.cluster);
+    Cluster_Block block = visible_block(mesh, cluster, entry);
+    Gbuffer_Cluster k = gbuffer_cluster_of(entry.instance, inst, mesh, entry.material, entry.along);
     uint corner = visibility_triangle(id) * 3u;
     Resolve_Triangle t;
-    t.a = resolve_corner(inst, mesh, cluster, k, corner);
-    t.b = resolve_corner(inst, mesh, cluster, k, corner + 1u);
-    t.c = resolve_corner(inst, mesh, cluster, k, corner + 2u);
+    t.a = resolve_corner(inst, mesh, cluster, block, k, corner);
+    t.b = resolve_corner(inst, mesh, cluster, block, k, corner + 1u);
+    t.c = resolve_corner(inst, mesh, cluster, block, k, corner + 2u);
     t.tint = inst.tint.rgb;
     t.tinted = k.tinted;
     // A far mesh: its emission joins that of the instance, and its roughness
@@ -101,7 +101,7 @@ Resolve_Triangle resolve_triangle(uint id) {
     t.surface = t.a.surface.x;
     t.flags = k.flags;
     t.material = k.material;
-    t.instance = entry.x;
+    t.instance = entry.instance;
     return t;
 }
 
