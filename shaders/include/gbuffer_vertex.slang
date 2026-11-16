@@ -1,7 +1,7 @@
-// What a vertex of the G-buffer gives its fragment (gbuffer.frag). The stage
-// of the engine (gbuffer.vert) and those an extension draws into the
-// G-buffer with (render.pass_gbuffer_pipeline) fill it and place it with
-// gbuffer_vertex_place.
+// What a vertex of the G-buffer gives its fragment: the stage of the engine
+// (gbuffer.vert, gbuffer_build.slang) and those an extension draws into the
+// G-buffer with (render.pass_gbuffer_pipeline, gbuffer.frag) fill it and
+// place it with gbuffer_vertex_place.
 #ifndef MIRAI_GBUFFER_VERTEX_SLANG
 #define MIRAI_GBUFFER_VERTEX_SLANG
 #include "scene.slang"
@@ -22,6 +22,9 @@ struct Gbuffer_Vertex {
     [[vk::location(11)]] float4 out_tangent : TEXCOORD11; // xyz in the world, w the sign of the bitangent there
     [[vk::location(12)]] nointerpolation uint out_surface : TEXCOORD12; // of a far mesh (Mesh_Point.surface.x); 0 for the others
     [[vk::location(13)]] float4 out_vertex_color : TEXCOORD13; // of the mesh, white without one: a program reads it as data
+#ifdef MIRAI_VISIBILITY
+    [[vk::location(14)]] nointerpolation uint out_id : TEXCOORD14; // the triangle as the visibility target names it (visibility_id)
+#endif
 #ifdef MIRAI_CLIP_PLANE
     float clip : SV_ClipDistance0;
 #endif

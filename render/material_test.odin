@@ -960,7 +960,7 @@ material_program_pipelines_are_made_before_a_frame_draws_with_them :: proc(t: ^t
 	testing.expect(t, fixture_frame(&f, {camera = camera}), r.error)
 	renderer_pipelines_wait(r, all = true)
 	for program in programs {
-		for id in ([]Pipeline_Id{.Gbuffer, .Gbuffer_Plain, .Gbuffer_Layers}) {
+		for id in ([]Pipeline_Id{.Resolve, .Resolve_Plain, .Resolve_Layers}) {
 			testing.expectf(t, program_graphics(r, &r.pipelines[id], program.id) != r.pipelines[id], "the pipeline of %s for %v is made before a frame draws with it", program.name, id)
 		}
 		testing.expectf(t, r.points.stages.pipelines[program.id] != 0, "and that of its points")

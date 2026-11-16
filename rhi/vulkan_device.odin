@@ -267,9 +267,11 @@ Device :: struct {
 	failure_text:      string,
 	failure_buffer:    [FAILURE_TEXT_BYTES]u8,
 	fault_info:        bool, // VK_EXT_device_fault: the driver describes a loss
+	validation_layer:  bool, // VK_LAYER_KHRONOS_validation is enabled
 	memory_budget:     bool, // VK_EXT_memory_budget: the driver says what memory the process holds and may hold
 	waited_out:        bool, // a wait passed GPU_WAIT_LIMIT_NS: the GPU may still run that work
 	lose_asked:        bool, // device_lose
+	lose_unreported:   bool, // device_lose without reported
 	lose_provoked:     bool,
 	refuse:            Pipeline_Refusal,
 	presenter:         Presenter,
@@ -287,20 +289,23 @@ set_error :: proc(d: ^Device, format: string, args: ..any) {
 }
 
 @(private)
-vk_check :: proc(d: ^Device, result: vk.Result, what: string) -> bool {
+vk_check :: proc(d: ^Device, result: vk.Result, what: string, queued := true) -> bool {
 	if result == .SUCCESS {return true}
-	if vk_lost(d, result, what) {return false}
+	if vk_lost(d, result, what, queued) {return false}
 	set_error(d, "%s failed: %v", what, result)
 	return false
 }
 
 // Whether a result reports the device lost, which marks it with what the
-// driver says of the fault; other results are the caller's.
+// driver says of the fault; other results are the caller's. queued false: a
+// call other than a submission or a wait reported it (pipeline creation).
 @(private)
-vk_lost :: proc(d: ^Device, result: vk.Result, what: string) -> bool {
+vk_lost :: proc(d: ^Device, result: vk.Result, what: string, queued := true) -> bool {
 	if result != .ERROR_DEVICE_LOST {return false}
 	description: string
-	if d.fault_info && !d.lose_provoked {
+	// fault_query_unqueued: the validation layer takes a loss only from a submission or a wait,
+	// and reports vkGetDeviceFaultInfoEXT after any other as made on a device that is not lost.
+	if d.fault_info && !d.lose_provoked && (queued || !d.validation_layer) {
 		// No arrays asked for: the description alone, with INCOMPLETE.
 		counts := vk.DeviceFaultCountsEXT{sType = .DEVICE_FAULT_COUNTS_EXT}
 		info := vk.DeviceFaultInfoEXT{sType = .DEVICE_FAULT_INFO_EXT}
@@ -499,6 +504,7 @@ vk_create_instance_and_device :: proc(d: ^Device, desc: Device_Desc) -> bool {
 	if d.debug_utils {append(&extensions, "VK_EXT_debug_utils")}
 	enabled_layers := make([dynamic]cstring, 0, 2, context.temp_allocator)
 	if validation {append(&enabled_layers, "VK_LAYER_KHRONOS_validation")}
+	d.validation_layer = validation
 
 	app := vk.ApplicationInfo{
 		sType = .APPLICATION_INFO,
@@ -796,7 +802,8 @@ vk_create_logical_device :: proc(d: ^Device, desc: Device_Desc) -> bool {
 	rt_env := env_flag("MIRAI_RT")
 	ray_query := rt_exts_present && bool(rq_features.rayQuery) && bool(as_features.accelerationStructure) && bool(v12.bufferDeviceAddress) && desc.allow_hardware_ray_tracing && rt_env != "software" && rt_env != "0"
 
-	enable_v13 := vk.PhysicalDeviceVulkan13Features{sType = .PHYSICAL_DEVICE_VULKAN_1_3_FEATURES, dynamicRendering = true, synchronization2 = true, maintenance4 = v13.maintenance4}
+	// Demote to helper: what a fragment stage asks of whether it is a helper of its quad (IsHelperLane).
+	enable_v13 := vk.PhysicalDeviceVulkan13Features{sType = .PHYSICAL_DEVICE_VULKAN_1_3_FEATURES, dynamicRendering = true, synchronization2 = true, maintenance4 = v13.maintenance4, shaderDemoteToHelperInvocation = v13.shaderDemoteToHelperInvocation}
 	enable_v12 := vk.PhysicalDeviceVulkan12Features{
 		sType = .PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, pNext = &enable_v13,
 		timelineSemaphore = true,
@@ -1176,8 +1183,18 @@ vk_collect_timestamps :: proc(d: ^Device, f: ^Vk_Frame) {
 	f.submitted = false
 	if f.queries == 0 || count < 2 {return}
 	values: [MAX_TIMESTAMPS]u64
-	// The slot's submission already completed, so WAIT returns immediately.
-	result := d.dvk.GetQueryPoolResults(d.handle, f.queries, 0, count, size_of(values), &values, size_of(u64), {._64, .WAIT})
+	// The timeline passed the slot's submission, so its timestamps are written
+	// unless the GPU was reset under it. A driver may report such a reset
+	// nowhere and never write them (amdvlk on Windows after a timeout
+	// detection and recovery): a WAIT for them would not return.
+	result := d.dvk.GetQueryPoolResults(d.handle, f.queries, 0, count, size_of(values), &values, size_of(u64), {._64})
+	if result == .NOT_READY {
+		d.timing_measured = false
+		stopped_buffer: [256]u8
+		stopped := vk_stopped(d, stopped_buffer[:])
+		device_fail(d, .Lost, "frame %d ended without the work it was given: the GPU was reset under it%s%s", f.number, "; the GPU stopped in " if stopped != "" else "", stopped)
+		return
+	}
 	if result != .SUCCESS {d.timing_measured = false; vk_lost(d, result, "vkGetQueryPoolResults"); return}
 	gpu, now := values[count - 1], time.duration_nanoseconds(time.tick_diff({}, time.tick_now()))
 	if d.calibrate != nil {
@@ -1220,6 +1237,7 @@ frame_begin :: proc(d: ^Device, present := true) -> (cmd: ^Command_List, ok: boo
 	// Before the deletions: the copy of this slot stops naming what goes.
 	vk_table_take(d, table_copy(false, d.slot))
 	vk_collect_timestamps(d, f)
+	if d.failure != .None {return nil, false}
 	vk_flush_deletions(d, f)
 	// What waited for the uploads sent since the last frame waits for this one, which follows them.
 	if len(d.unframed) > 0 {
@@ -1306,9 +1324,16 @@ frame_end :: proc(d: ^Device, cmd: ^Command_List, generated := false) -> bool {
 	}
 	submit.signalSemaphoreInfoCount = u32(signal_count)
 	submit.pSignalSemaphoreInfos = raw_data(signals[:])
+	// A reset no call reports: the semaphores pass, the list and its timestamps do not run.
+	unreported := d.lose_asked && d.lose_unreported
+	if unreported {
+		d.lose_asked, d.lose_unreported, d.lose_provoked = false, false, true
+		if f.queries != 0 {d.dvk.ResetQueryPool(d.handle, f.queries, 0, MAX_TIMESTAMPS)}
+		submit.commandBufferInfoCount = 0
+	}
 	sync.mutex_lock(&d.queue_lock)
 	submitted := d.dvk.QueueSubmit2(d.queue, 1, &submit, 0)
-	f.marks.sent = submitted == .SUCCESS
+	f.marks.sent = submitted == .SUCCESS && !unreported
 	ok := vk_check(d, submitted, "vkQueueSubmit2")
 	f.signal_value = d.timeline_value
 	f.number, f.submitted = d.frame_number, submitted == .SUCCESS

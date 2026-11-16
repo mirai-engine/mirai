@@ -114,6 +114,39 @@ rhi_a_lost_immediate_list_reports_the_loss :: proc(t: ^testing.T) {
 	expect_clean(t, d)
 }
 
+// A reset no call reports (device_lose without reported) is found by the
+// frame that reads what its work left, which fails at once with the device
+// lost instead of waiting for the GPU.
+@(test)
+rhi_a_reset_no_call_reports_fails_the_device_at_once :: proc(t: ^testing.T) {
+	d := test_device(t)
+	if d == nil {return}
+	defer rhi.device_destroy(d)
+	if !rhi.device_info(d).features.timestamps {
+		fmt.println("skipped: the device has no timestamps")
+		return
+	}
+	buffer := rhi.buffer_create(d, {size = 16, usage = {.Storage}, memory = .GPU, name = "reset"})
+	testing.expect(t, buffer != 0, rhi.device_error(d))
+	started := time.tick_now()
+	began := true
+	for frame in 0 ..= rhi.MAX_FRAMES_IN_FLIGHT {
+		cmd: ^rhi.Command_List
+		cmd, began = rhi.frame_begin(d)
+		if !began {break}
+		rhi.cmd_fill_buffer(cmd, buffer, 0, 16, u8(frame))
+		if frame == 0 {rhi.device_lose(d, reported = false)}
+		rhi.frame_end(d, cmd)
+	}
+	testing.expect(t, !began, "a frame after the reset does not begin")
+	failure, text := rhi.device_failure(d)
+	testing.expect_value(t, failure, rhi.Device_Failure.Lost)
+	testing.expectf(t, strings.has_suffix(text, "(provoked by device_lose)"), "the cause says it was provoked: %s", text)
+	testing.expect(t, time.tick_since(started) < time.Second, "nothing waits for the GPU")
+	rhi.buffer_destroy(d, buffer)
+	expect_clean(t, d)
+}
+
 @(test)
 rhi_buffer_round_trip_and_compute :: proc(t: ^testing.T) {
 	d := test_device(t)

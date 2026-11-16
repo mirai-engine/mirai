@@ -516,17 +516,32 @@ void material_parameters(uint row, uint block, out float4 parameters[16]) {
 // write of each of them would keep the whole program in every traversal of
 // the stage, its colors and normals too, which no ray reads there.
 static bool texture_feedback_quiet = false;
+// Whether this is a helper of a quad of a fragment stage, which runs only for
+// the derivatives of the others: what it does to memory is dropped.
+bool texture_feedback_helper() {
+    __stage_switch {
+    case fragment: return IsHelperLane();
+    default: return false;
+    }
+}
 // That a texture was sampled at `level`: log2 of the texels across its width
 // a sample spans at the level it reads, less log2 of that width, which no
-// level held changes; -FLT_MAX for every level.
+// level held changes; -FLT_MAX for every level. The lanes of a wave that
+// sample one texture write once, the finest level of them.
 void texture_feedback(uint texture_index, float level) {
 #ifdef MIRAI_TEXTURE_FEEDBACK
-    if (texture_feedback_quiet) return;
+    if (texture_feedback_quiet || texture_feedback_helper()) return;
     uint entry = texture_index - TEXTURE_TABLE_RESERVED;
     if (entry >= texture_feedback_words[0] || isnan(level)) return;
     uint code = uint(clamp(floor((level - TEXTURE_FEEDBACK_LOW) * TEXTURE_FEEDBACK_STEPS), 0.0, float(TEXTURE_FEEDBACK_CODES - 1u)));
-    uint at = TEXTURE_FEEDBACK_FIRST + entry;
-    if (code < texture_feedback_words[at]) InterlockedMin(texture_feedback_words[at], code);
+    for (;;) {
+        uint first = WaveReadLaneFirst(entry);
+        if (first != entry) continue;
+        uint least = WaveActiveMin(code);
+        uint at = TEXTURE_FEEDBACK_FIRST + entry;
+        if (WaveIsFirstLane() && least < texture_feedback_words[at]) InterlockedMin(texture_feedback_words[at], least);
+        return;
+    }
 #endif
 }
 
@@ -537,21 +552,37 @@ float4 material_texel_at(uint texture_index, float2 uv, float lod) {
     texture_feedback(texture_index, lod + 0.5 * log2(size.y / size.x));
     return material_textures[mirai_nonuniform(texture_index)].SampleLevel(material_sampler, uv, lod + 0.5 * log2(size.x * size.y));
 }
-// Rasterized surfaces (MATERIAL_RASTER, fragment shaders only) filter with the
-// screen-space derivatives of uv, and `lod` is a bias.
-float4 material_texel(uint texture_index, float2 uv, float lod) {
-#ifdef MATERIAL_RASTER
+#ifdef MATERIAL_GRADIENTS
+// A surface resolved from the visibility target (vis_resolve.frag) is a
+// triangle rebuilt at a pixel: the exact screen gradients of its inputs are
+// set before its material runs, per uv set (xy along x, zw along y), and of
+// its place and its interpolated normal (along x, then along y). steady:
+// along each axis, the neighbor of the quad continues its surface, so a
+// difference across the quad is a derivative there.
+static float4 material_uv_gradients[2];
+static float3 material_world_gradients[2];
+static float3 material_normal_gradients[2];
+static bool2 material_steady;
+#endif
+// That a sample of a rasterized surface reads where uv changes by dx and dy
+// (uv units) along the pixel: the level anisotropic filtering reads, over the
+// shorter axis of the footprint or the longer one over its samples, each axis
+// the shortest a device may take of it (the larger of its two steps in texels).
+void material_texel_feedback(uint texture_index, float2 dx, float2 dy, float lod) {
 #ifdef MIRAI_TEXTURE_FEEDBACK
-    // The level anisotropic filtering reads: over the shorter axis of the
-    // footprint, or the longer one over its samples, each axis the shortest
-    // a device may take of it (the larger of its two steps in texels).
     float2 size = float2(texture_size(material_textures[mirai_nonuniform(texture_index)], 0));
-    float2 dx = abs(ddx(uv) * size), dy = abs(ddy(uv) * size);
-    float across = max(dx.x, dx.y), down = max(dy.x, dy.y);
+    float2 x = abs(dx * size), y = abs(dy * size);
+    float across = max(x.x, x.y), down = max(y.x, y.y);
     float longer = max(across, down);
     // Where the uv do not change no level is asked.
     if (longer > 0.0) texture_feedback(texture_index, log2(max(min(across, down), longer / MATERIAL_ANISOTROPY)) + lod - log2(size.x));
 #endif
+}
+// Rasterized surfaces (MATERIAL_RASTER, fragment shaders only) filter with the
+// screen-space derivatives of uv, and `lod` is a bias.
+float4 material_texel(uint texture_index, float2 uv, float lod) {
+#ifdef MATERIAL_RASTER
+    material_texel_feedback(texture_index, ddx(uv), ddy(uv), lod);
     return material_textures[mirai_nonuniform(texture_index)].SampleBias(material_sampler, uv, lod);
 #else
     return material_texel_at(texture_index, uv, lod);
@@ -571,6 +602,18 @@ float material_map_lod(Material m, uint map, float2 lod, bool ray) {
 float4 material_map_texel(Material m, uint map, uint texture_index, float2 uv0, float2 uv1, float2 lod, bool ray) {
     float2 uv = material_map_uv(m, map, uv0, uv1);
     float level = material_map_lod(m, map, lod, ray);
+#ifdef MATERIAL_GRADIENTS
+    if (!ray) {
+        // The gradients of its uv set, through the linear part of its transform, `level` a bias.
+        Material_Map_Transform transform = materials[m.row].map_transforms[map];
+        float4 g = material_uv_gradients[transform.uv_set == 1u ? 1 : 0];
+        float2 dx = float2(dot(transform.linear.xy, g.xy), dot(transform.linear.zw, g.xy));
+        float2 dy = float2(dot(transform.linear.xy, g.zw), dot(transform.linear.zw, g.zw));
+        material_texel_feedback(texture_index, dx, dy, level);
+        float scale = exp2(level);
+        return material_textures[mirai_nonuniform(texture_index)].SampleGrad(material_sampler, uv, dx * scale, dy * scale);
+    }
+#endif
     return ray ? material_texel_at(texture_index, uv, level) : material_texel(texture_index, uv, level);
 }
 // A direction of the tangent space of a map (xy, along its texture), in the
