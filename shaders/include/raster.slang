@@ -43,17 +43,25 @@ float3 fragment_facing(float3 normal, float3 to_camera) {
     return facing < 0.0 ? normalize(normal - to_camera * (facing - 1e-3)) : normal;
 }
 
+// Whether a surface shows its viewer the far side of its interpolated normal.
+// The side is where that normal points, not how the triangle winds: a sheet
+// seen from both sides whose model gives it normals of its own (the leaves
+// and the grass that point up or around their plant) is lit by them on both
+// of its faces.
+bool fragment_turned(Raster_Input input, float3 to_camera) { return dot(input.in_normal, to_camera) < 0.0; }
+
 // Programs see the same input normal in shading and coverage, including the
-// back face of a two-sided material and the material's independently
-// transformed normal map. The normal map turns the frame of the front face,
-// as its baker had it; the back face turns all of it around.
+// far side of a surface and the material's independently transformed normal
+// map. The normal map turns the frame of the near side, as its baker had it;
+// the far side turns all of it around.
 float3 fragment_surface_normal(Raster_Input input, Material material, float3 to_camera, float bias) {
-    bool back = raster_back(input);
-    float3 n = normalize(input.in_normal);
+    bool turned = fragment_turned(input, to_camera);
     if (material_has(material.textures[MATERIAL_MAP_NORMAL])) {
-        n = tangent_frame_normal(input.in_normal, input.in_tangent, material_map_normal(material, input.in_uv, input.in_uv1, float2(bias), false));
+        float3 mapped = tangent_frame_normal(input.in_normal, input.in_tangent, material_map_normal(material, input.in_uv, input.in_uv1, float2(bias), false));
+        return fragment_facing(turned ? -mapped : mapped, to_camera);
     }
-    return fragment_facing(back ? -n : n, to_camera);
+    float3 n = normalize(input.in_normal);
+    return turned ? -n : n;
 }
 
 // The footprint of a fragment in the world. A quad is of one primitive, so a
@@ -140,10 +148,10 @@ struct Fragment {
 Mirai_Surface_Context fragment_context(Raster_Input input, Material material, float3 to_camera, out float3 normal) {
     float bias = frame.texturing.x;
     normal = fragment_surface_normal(input, material, to_camera, bias);
-    // The surface as it faces the viewer: the back face turns its whole frame around.
+    // The surface as it faces the viewer: its far side turns its whole frame around.
     float3 vertex_normal = normalize(input.in_normal);
     float4 tangent = input.in_tangent;
-    if (raster_back(input)) {
+    if (fragment_turned(input, to_camera)) {
         vertex_normal = -vertex_normal;
         tangent = -tangent;
 #ifdef MATERIAL_GRADIENTS

@@ -277,7 +277,9 @@ A texture of an asset resides with the levels the GPU samples of it
 - **MikkTSpace tangent frame.** The pixel uses the interpolated, unnormalized normal and tangent
   and the bitangent `sign * cross(normal, tangent)`, like the baker that wrote the map
   (`tangent_frame_normal` of `scene.slang`, the same in raster and in ray hits). A mirrored
-  instance inverts the sign; the back face of a two-sided material inverts the whole frame.
+  instance inverts the sign; the far side of a surface inverts the whole frame. The side is where
+  the interpolated normal points against the viewer, not how the triangle winds, so foliage whose
+  model gives it normals of its own is lit by them on both of its faces (`fragment_turned`).
 - A mesh generated at runtime can bring its tangents per vertex
   (`Mesh_Generate_Options.tangents`), like the terrain Heightfield.
 - The tangents follow the UV that the normal map read on import; the map's transform rotates (and
