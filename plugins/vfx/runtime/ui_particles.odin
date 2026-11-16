@@ -60,10 +60,10 @@ ui_effects_sync :: proc(p:^UI_Particles,requests:[]gui.UI_Effect,assets:^host.As
         if shown.resolved!=key {
             ready:=shown_resolve(shown,a,renderer,effect.effect,nil,{base.hash_combine(effect.key,0x75695f7061727469),base.hash_combine(effect.key,0x75695f7375625f70)},nil)
             shown.resolved=ready?key:0
-            // Alone in its texture: nothing to collide with, fade into, light or be lit by.
+            // Alone in its texture: nothing to collide with, fade into or be lit by.
             for d in ([2]^Emitter_Desc{&shown.desc,&shown.sub_desc}) {
                 d.view,d.revision=effect.view,shown.resolved
-                d.info.lit,d.info.emission_mode,d.info.collision,d.info.soft,d.info.lights=false,.Relative,.None,0,0
+                d.info.lit,d.info.emission_mode,d.info.collision,d.info.soft=false,.Relative,.None,0
             }
         }
         if clock.resolved!=key {

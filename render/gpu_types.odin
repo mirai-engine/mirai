@@ -36,7 +36,8 @@ Gpu_Frame :: struct {
 	exposure:        f32,  // the scene-linear value of one render unit, as a frame before exposed the view
 	own:             u32,  // bits 0-7: 1 + the local slot whose body (INSTANCE_FLAG_OWNED) is the view's own, 0: none; bits 16-31: how much of it the view fades out, unorm
 	flags:           u32,
-	shadowless_lights: [4]u32, // x the root of the tree of the local lights a pass writes that cast no shadows, 0: none; y the node after it; zw the same of those of the scene (light_shadowless_frame)
+	shadowless_lights: u32, // the root of the tree of the local lights that cast no shadows, which ends at light_nodes; 0: none (light_tree_shadowless)
+	pad0:            [3]u32,
 	jitter:          Vec4, // xy current jitter (render pixels), zw previous
 	texturing:       Vec4, // x mip bias of rasterized material textures, y traced reflection roughness, zw where the boxes of the glass instances are listed after the TLAS nodes and how many
 	time: Vec4, // current seconds, previous seconds, frame dt, reserved
