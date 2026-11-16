@@ -1005,7 +1005,7 @@ shadow_maps_pass :: proc(p: ^Pass, mark: ^$T, scale: u32, grid: rhi.Buffer) -> (
 		rhi.cmd_dispatch(cmd, groups(points.x, 8), groups(points.y, 8))
 	}
 	// The table is written in the steps of the pages and read after them.
-	rhi.cmd_bind_texture(cmd, SLOT_SHADOW_TABLE, r.dummy_layers)
+	rhi.cmd_bind_texture(cmd, SLOT_SHADOW_TABLE, r.dummy_uint)
 	steps := Shadow_Pages_Params{
 		frame = b.frame, rows = plan.rows, plan = plan.plan, boxes = plan.boxes, box_count = plan.box_count, sun = plan.sun >> 16,
 		pool = b.pool if b.pool != 0 else abi.SHADOW_POOL_PAGES, fresh = 1 if made else 0, full = 1 if full else 0, slots = plan.slots, slot_count = plan.slot_count,

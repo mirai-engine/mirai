@@ -599,10 +599,9 @@ vk_pipeline_room :: proc(d: ^Device) -> bool {
 }
 
 // A pipeline cache for one pipeline, holding the blob the device keeps for
-// key: what the driver puts in it is that pipeline alone. 0 without a store.
+// key: what the driver puts in it is that pipeline alone.
 @(private)
 vk_pipeline_cache_open :: proc(d: ^Device, key: u64) -> (cache: vk.PipelineCache) {
-	if d.store_path_len == 0 {return 0}
 	info := vk.PipelineCacheCreateInfo{sType = .PIPELINE_CACHE_CREATE_INFO}
 	sync.lock(&d.pipelines_kept.lock)
 	blob := pipeline_store_find(&d.pipelines_kept, key, d.allocator)
@@ -637,7 +636,7 @@ vk_pipeline_cache_close :: proc(d: ^Device, key: u64, cache: vk.PipelineCache, f
 	sync.lock(&d.pipelines_kept.lock)
 	due := pipeline_store_put(&d.pipelines_kept, key, data[:size], took)
 	sync.unlock(&d.pipelines_kept.lock)
-	if due {pipeline_store_save(&d.pipelines_kept, string(d.store_path[:d.store_path_len]))}
+	if due && d.store_path_len > 0 {pipeline_store_save(&d.pipelines_kept, string(d.store_path[:d.store_path_len]))}
 }
 
 // What the constants of a shader are in a pipeline, as the driver takes them:

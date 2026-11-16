@@ -582,6 +582,7 @@ Renderer :: struct {
 	dummy_buffer:    rhi.Buffer,
 	dummy_texture:   rhi.Texture,
 	dummy_layers:    rhi.Texture, // in place of the layers target (RGBA32 uint) while there is none
+	dummy_uint:      rhi.Texture, // in place of a one-channel uint texture (the shadow table, instance ids) while there is none
 	dfg:             rhi.Texture, // the split-sum table of the specular lobe, in the entry DFG_TEXTURE of the texture table
 	air:             Air_State,   // the tables of the air of an atmosphere (air.odin)
 	display_lut:     rhi.Texture, // the ACES 2.0 Output Transform (display.odin)
@@ -722,6 +723,7 @@ renderer_init :: proc(r: ^Renderer, desc: Renderer_Desc) -> bool {
 	r.frame_layout = frame_layout_of(&r.shader_assets)
 	r.dummy_texture = rhi.texture_create(device, {width = 1, height = 1, format = .RGBA16_Float, usage = {.Sampled, .Storage, .Color_Target}, name = "dummy"})
 	r.dummy_layers = rhi.texture_create(device, {width = 1, height = 1, format = .RGBA32_Uint, usage = {.Sampled, .Color_Target}, name = "dummy layers"})
+	r.dummy_uint = rhi.texture_create(device, {width = 1, height = 1, format = .R32_Uint, usage = {.Sampled, .Color_Target}, name = "dummy uint"})
 	r.stats_buffer = rhi.buffer_create(device, {size = size_of(Gpu_Cull_Stats), usage = {.Storage}, name = "cull stats"})
 	r.scratch_buffer = rhi.buffer_create(device, {size = 256, usage = {.Storage}, name = "scratch"})
 	r.glass_dispatch = rhi.buffer_create(device, {size = size_of(Gpu_Glass_Dispatch), usage = {.Storage, .Indirect}, name = "glass dispatch"})
@@ -738,7 +740,7 @@ renderer_init :: proc(r: ^Renderer, desc: Renderer_Desc) -> bool {
 	for &b in r.ui_shape_buffers {b=rhi.buffer_create(device,{size=u64(r.ui_shape_capacity*size_of(Ui_Shape)),usage={.Storage},memory=.Upload,name="ui shapes"})}
 	r.debug_capacity = desc.debug_vertex_capacity if desc.debug_vertex_capacity > 0 else DEBUG_VERTEX_CAPACITY
 	for &b in r.debug_buffers {b = rhi.buffer_create(device, {size = u64(r.debug_capacity * size_of(Debug_Vertex)), usage = {.Storage}, memory = .Upload, name = "debug lines"})}
-	if r.ui_shape_buffers[0]==0 || r.ui_shape_buffers[1]==0 || r.ui_buffers[0] == 0 || r.ui_buffers[1] == 0 || r.debug_buffers[0] == 0 || r.debug_buffers[1] == 0 || r.linear_sampler == 0 || r.point_sampler == 0 || r.material_sampler == 0 || r.dummy_buffer == 0 || r.dummy_texture == 0 || r.dummy_layers == 0 || r.stats_buffer == 0 || r.scratch_buffer == 0 || r.glass_dispatch == 0 || r.dispatch_start == 0 || r.light_changes == 0 || !feedback {
+	if r.ui_shape_buffers[0]==0 || r.ui_shape_buffers[1]==0 || r.ui_buffers[0] == 0 || r.ui_buffers[1] == 0 || r.debug_buffers[0] == 0 || r.debug_buffers[1] == 0 || r.linear_sampler == 0 || r.point_sampler == 0 || r.material_sampler == 0 || r.dummy_buffer == 0 || r.dummy_texture == 0 || r.dummy_layers == 0 || r.dummy_uint == 0 || r.stats_buffer == 0 || r.scratch_buffer == 0 || r.glass_dispatch == 0 || r.dispatch_start == 0 || r.light_changes == 0 || !feedback {
 		set_error(r, "renderer resources: %s", rhi.device_error(device))
 		return false
 	}
@@ -811,7 +813,7 @@ renderer_destroy :: proc(r: ^Renderer) {
 	for b in r.stats_readback {if b != 0 {rhi.buffer_destroy(d, b)}}
 	for b in ([]rhi.Buffer{r.stats_buffer, r.scratch_buffer, r.glass_dispatch, r.dispatch_start, r.dummy_buffer, r.shadow_buffers.state, r.shadow_buffers.table}) {if b != 0 {rhi.buffer_destroy(d, b)}}
 	if r.light_changes != 0 {rhi.buffer_destroy(d, r.light_changes)}
-	for t in ([]rhi.Texture{r.dummy_texture, r.dummy_layers, r.dfg, r.display_lut, r.font, r.thumbnails}) {if t != 0 {rhi.texture_destroy(d, t)}}
+	for t in ([]rhi.Texture{r.dummy_texture, r.dummy_layers, r.dummy_uint, r.dfg, r.display_lut, r.font, r.thumbnails}) {if t != 0 {rhi.texture_destroy(d, t)}}
 	air_destroy(r)
 	if r.linear_sampler != 0 {rhi.sampler_destroy(d, r.linear_sampler)}
 	if r.point_sampler != 0 {rhi.sampler_destroy(d, r.point_sampler)}
