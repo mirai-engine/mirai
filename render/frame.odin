@@ -43,6 +43,7 @@ SLOT_SURFACE        :: abi.SLOT_SURFACE
 SLOT_VIEWS          :: abi.SLOT_VIEWS
 SLOT_LAYERS         :: abi.SLOT_LAYERS
 SLOT_DISTANCE       :: abi.SLOT_DISTANCE
+SLOT_SHADOW_TABLE   :: abi.SLOT_SHADOW_TABLE
 // Of a draw of the clusters of an instance (gbuffer.vert): the Surface program
 // whose clusters it draws, 0 those without one, GPU_NONE all of them.
 SLOT_DRAW           :: abi.SLOT_DRAW
@@ -113,6 +114,7 @@ bind_scene_table :: proc(p: ^Pass) {
 	rhi.cmd_bind_texture(cmd, SLOT_SURFACE, texture_or_dummy(r, p.t.surface))
 	rhi.cmd_bind_texture(cmd, SLOT_VIEWS, p.t.motion)
 	rhi.cmd_bind_texture(cmd, SLOT_LAYERS, p.t.layers if p.t.layers != 0 else r.dummy_layers)
+	rhi.cmd_bind_texture(cmd, SLOT_SHADOW_TABLE, p.t.shadow_raster.table if p.t.shadow_raster.table != 0 else r.dummy_layers)
 	rhi.cmd_bind_buffer(cmd, SLOT_LIGHTS, or_dummy(r, s.light_buffer))
 	rhi.cmd_bind_buffer(cmd, SLOT_LIGHT_TREE, or_dummy(r, s.light_tree_buffer))
 	rhi.cmd_bind_buffer(cmd, SLOT_BLAS_NODES, or_dummy(r, s.blas_node_buffer))
@@ -544,6 +546,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     extension_readbacks_take(r,slot)
     r.stats.counters=r.counters.counters[:r.counters.count]
     r.stats.ui_vertices_dropped,r.stats.debug_vertices_dropped=0,0
+    r.stats.shadow_movers=0
     r.stats.ui_shapes_dropped,r.stats.ui_layers_dropped=0,0
     r.ui_shape_written,r.ui_shape_cache_count,r.ui_vertex_cache_count=0,0,0
     ui_written:=0
@@ -1278,10 +1281,10 @@ pass_direct :: proc(p: ^Pass) -> bool {
 		cells       = cells if s.light_grid_buffer != 0 else 0,
 	}
 	points := [2]u32{(t.width + scale - 1) / scale, (t.height + scale - 1) / scale}
-	params.shadow = shadow_maps_pass(p)
+	grid := or_dummy(r, s.light_grid_buffer)
+	params.shadow = shadow_maps_pass(p, &params, scale, grid)
 	atlas := t.shadow_raster.atlas if params.shadow.on != 0 else r.dummy_texture
 	table := r.shadow_buffers.table if params.shadow.on != 0 else r.dummy_buffer
-	grid := or_dummy(r, s.light_grid_buffer)
 	unlayered := rhi.Shader_Constants{} if p.layered else {DIRECT_MAPS_COMP_UNLAYERED}
 	#assert(DIRECT_MAPS_COMP_UNLAYERED == DIRECT_SAMPLES_COMP_UNLAYERED && DIRECT_MAPS_COMP_UNLAYERED == DIRECT_FILTER_COMP_UNLAYERED)
 	// The light of what the maps hold, while the view drew them: the samples

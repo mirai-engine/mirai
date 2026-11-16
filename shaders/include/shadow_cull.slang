@@ -7,15 +7,21 @@
 #define MIRAI_SHADOW_CULL_SLANG
 #include "cut.slang"
 #include "shadow_maps.slang"
-// instances: of the scene and of the batches drawn; maps: those the round
-// culls for, whose indices lie in the buffer of the maps from word `list`;
+// instances: of the scene and of the batches drawn; maps: the slots, of
+// which those the round culls for lie in the buffer of the pages from word
+// `list`, and the pages it draws of each a bit for each entry of its table
+// from word `masks` (SHADOW_MASK_WORDS a slot);
 // rows: of the words of the lights in the buffer of the maps; glass: 1 while
 // the maps keep the tint of glass, and for the draws of the tint and of the
 // nearest glass; chunk_capacity, entry_capacity: of the lists of the chunks
-// and of the clusters (render.Cull_List); moving: the round of the casters
-// that move (render.shadow_maps_pass), 0 that of those that stay; movers:
-// words of the bits of the instances that move.
-struct Params_Block { uint instances; uint maps; uint rows; uint glass; uint chunk_capacity; uint entry_capacity; uint list; uint moving; uint movers; uint pad0; uint pad1; uint pad2; };
+// and of the clusters (render.Cull_List); moving: 1 the round of the casters
+// that move (render.shadow_maps_pass), 0 that of those that stay, 2 that of
+// the glass alone (the round, whose pages span SHADOW_WORDS_BOUNDS); movers:
+// words of the bits of what moves, the instances of the scene then the
+// batches drawn; listed: 1 while the round culls the `ranges` ranges of the
+// movers after those words alone, `instances` in all (render.shadow_maps_plan);
+// plan: the word of the buffer of the maps the plans of the slots start at.
+struct Params_Block { uint instances; uint maps; uint rows; uint glass; uint chunk_capacity; uint entry_capacity; uint list; uint moving; uint movers; uint listed; uint ranges; uint masks; uint plan; uint pad0; uint pad1; uint pad2; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 // The draws: of the clusters that hide whole, of those of masked materials,
 // and of those of glass for the tint and the nearest glass.
@@ -25,31 +31,75 @@ struct Params_Block { uint instances; uint maps; uint rows; uint glass; uint chu
 #define SHADOW_DRAW_COUNT 1u // the instances of draw d: word d * 4 + 1
 #define SHADOW_CLUSTER_DISPATCH 12u
 #define SHADOW_CHUNK_COUNT 15u
-// Of a chunk, over its map: it draws the depth, and the glass.
+// Of a chunk, over its map and the mip of it from bit SHADOW_CHUNK_MIP: it
+// draws the depth, and the glass; its instance is drawn at rest (a batch
+// that sways less than a texel of the map).
+#define SHADOW_CHUNK_REST 0x20000000u
 #define SHADOW_CHUNK_DEPTH 0x40000000u
 #define SHADOW_CHUNK_GLASS 0x80000000u
 #define SHADOW_CHUNK_MAP 0xFFFFu
+#define SHADOW_CHUNK_MIP 16u
 // How many clusters of a draw the list holds: half for those that hide
 // whole, a quarter for each of the others.
 uint shadow_room(uint draw) { return draw == SHADOW_DRAW_OPAQUE ? params.entry_capacity / 2u : params.entry_capacity / 4u; }
 // Where in the list the cluster `slot` of a draw lies.
 uint shadow_entry(uint draw, uint slot) { return (draw == SHADOW_DRAW_OPAQUE ? 0u : draw == SHADOW_DRAW_TESTED ? params.entry_capacity / 2u : params.entry_capacity - params.entry_capacity / 4u) + slot; }
 
-// A job of a round: a map, and the window of its square it draws, texels
-// from its corner: x0, y0, x1, y1 (render.shadow_job).
-struct Shadow_Job {
-    uint map;
-    uint4 window;
-};
-
 uint shadow_word(StructuredBuffer<uint4> data, uint word) { return data[word >> 2u][word & 3u]; }
 
-Shadow_Job shadow_job(StructuredBuffer<uint4> data, uint job) {
-    uint a = shadow_word(data, params.list + 2u * job), b = shadow_word(data, params.list + 2u * job + 1u);
-    Shadow_Job j;
-    j.map = a & 0xFFu;
-    j.window = uint4((a >> 8u) & 0xFFFu, a >> 20u, b & 0xFFFFu, b >> 16u);
-    return j;
+// The buffer of the pages of the view (render.Shadow_Raster.pages,
+// shadow_pages.comp): the slots of a round and the pages it draws.
+[[vk::binding(SHADOW_PAGES_SLOT, 0)]] StructuredBuffer<uint> shadow_pages : register(MIRAI_REGISTER(t, SHADOW_PAGES_SLOT), space0);
+
+// Whether the round draws a page of a map at its mip, a bit for each entry.
+bool shadow_page_drawn(Shadow_Map m, uint2 page) {
+    uint bit = shadow_page_entry(m.rect, page);
+    return ((shadow_pages[params.masks + m.rect.x * SHADOW_MASK_WORDS + (bit >> 5u)] >> (bit & 31u)) & 1u) != 0u;
+}
+
+// The first texel of the page of the pool a page of a map lies at; false
+// where it has none.
+bool shadow_page_pool(Shadow_Map m, uint2 page, out uint2 corner) {
+    uint e = shadow_table_entry(m.rect.x, shadow_page_entry(m.rect, page));
+    corner = shadow_pool_corner((e & SHADOW_ENTRY_POOL) - 1u);
+    return (e & SHADOW_ENTRY_POOL) != 0u && (e >> SHADOW_ENTRY_COARSER) == 0u;
+}
+
+// A page of a map as a word: the map, its column, its row and its mip (render.shadow_page_word).
+uint shadow_page_word(uint map, uint mip, uint2 page) { return map | page.x << 8u | page.y << 15u | mip << 22u; }
+uint shadow_page_map(uint word) { return word & 0xFFu; }
+uint shadow_page_mip(uint word) { return (word >> 22u) & 7u; }
+uint2 shadow_page_of(uint word) { return uint2((word >> 8u) & 0x7Fu, (word >> 15u) & 0x7Fu); }
+
+// The mips of the maps of a slot: a level of the sun has its finest alone.
+uint shadow_slot_mips(uint slot) { return slot < SHADOW_SUN_MAPS ? 1u : SHADOW_MIPS; }
+
+// Its window of the square of its map, texels: x0, y0, x1, y1.
+uint4 shadow_page_window(Shadow_Map m, uint2 page) {
+    return uint4(page * SHADOW_PAGE, min((page + 1u) * SHADOW_PAGE, uint2(m.rect.z, m.rect.z)));
+}
+
+// The pages of a map at its mip the round draws lie within: false where it draws none there.
+bool shadow_pages_span(Shadow_Map m, out uint4 span) {
+    uint at = SHADOW_WORDS_BOUNDS + ((params.moving * SHADOW_SLOTS + m.rect.x) * SHADOW_MIPS + shadow_rect_mip(m.rect)) * 4u;
+    uint4 words = uint4(shadow_pages[at], shadow_pages[at + 1u], shadow_pages[at + 2u], shadow_pages[at + 3u]);
+    span = uint4(SHADOW_MAP_PAGES - words.x, SHADOW_MAP_PAGES - words.y, words.z - 1u, words.w - 1u);
+    return words.x != 0u;
+}
+
+// Whether a round draws a page of a map at its mip within a rect of its
+// pages, which it narrows to those it may.
+bool shadow_pages_drawn(Shadow_Map m, inout uint4 rect) {
+    uint4 span;
+    if (!shadow_pages_span(m, span)) return false;
+    rect = uint4(max(rect.xy, span.xy), min(rect.zw, span.zw));
+    if (any(rect.xy > rect.zw)) return false;
+    for (uint y = rect.y; y <= rect.w; y++) {
+        for (uint x = rect.x; x <= rect.z; x++) {
+            if (shadow_page_drawn(m, uint2(x, y))) return true;
+        }
+    }
+    return false;
 }
 
 // A window of a map as a map of its own, for what reaches it.

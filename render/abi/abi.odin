@@ -48,6 +48,8 @@ SLOT_VIEWS            :: 31
 SLOT_LAYERS           :: 32
 SLOT_DISTANCE         :: 33
 SLOT_IRRADIANCE       :: 34
+// The table of the pages of the maps of the shadows of the view.
+SLOT_SHADOW_TABLE     :: 35
 SLOT_DRAW             :: SLOT_PASS9
 
 // The finest level the passes that shade surfaces sample of each texture
@@ -172,15 +174,128 @@ LIGHT_WEIGHT_ROWS          :: 2
 // The maps of the shadows of a view. The buffer of the maps (uint4 rows): a
 // word for each light, four to a row, 0 for a light without maps, else its
 // first map + 1 and, from bit SHADOW_LIGHT_FACES, which faces of its cube have
-// one; then SHADOW_MAP_ROWS for each map. The constants of a view hold those of
-// the cascades of the sun, SUN_MAP_ROWS.
+// one; then SHADOW_MAP_ROWS for each map, a Shadow_Slot_Plan for each, and the
+// boxes of what changed (SHADOW_BOX_ROWS each). The constants of a view hold
+// the rows of the levels of the sun, SUN_MAP_ROWS.
 SHADOW_MAP_ROWS            :: 6
 SHADOW_LIGHT_FACES         :: 16
 // The face of a spot whose one map lies along its cone, after the six of the cube.
 SHADOW_SPOT_FACE           :: 6
 SHADOW_MAP_ORTHOGRAPHIC    :: 1
-SHADOW_SUN_MAPS            :: 6
+// The side of a page of a map, texels; the pages along a side of the finest
+// mip of a map (SHADOW_MAP_SIDE texels), and its mips, each half as wide, the
+// last one page.
+SHADOW_PAGE                :: u32(128)
+SHADOW_MAP_PAGES           :: 64
+SHADOW_MAP_SIDE            :: SHADOW_PAGE * SHADOW_MAP_PAGES
+SHADOW_MIPS                :: 7
+// The levels of the sun, each twice as wide as the one before around the eye.
+SHADOW_SUN_MAPS            :: 18
 SUN_MAP_ROWS               :: SHADOW_SUN_MAPS * SHADOW_MAP_ROWS
+// The maps of a view lie in slots, each of the pages of its mips, of which the
+// pages points read lie in a pool, the atlas, whose side is SHADOW_POOL
+// texels: the levels of the sun (the finest mip alone), then
+// SHADOW_LIGHT_SLOTS for each light rasterized (the faces of its cube, then
+// the one along a spot).
+SHADOW_POOL                :: u32(4096)
+SHADOW_POOL_PAGES          :: (SHADOW_POOL / SHADOW_PAGE) * (SHADOW_POOL / SHADOW_PAGE)
+SHADOW_LIGHT_SLOTS         :: 7
+SHADOW_RASTER_LIGHTS       :: 32
+SHADOW_SLOTS               :: SHADOW_SUN_MAPS + SHADOW_RASTER_LIGHTS * SHADOW_LIGHT_SLOTS
+SHADOW_LOCAL_SLOTS         :: SHADOW_SLOTS - SHADOW_SUN_MAPS
+// The entries of the table of a slot, its mips the coarsest first; the first of the finest.
+SHADOW_SLOT_ENTRIES        :: (SHADOW_MAP_PAGES * SHADOW_MAP_PAGES * 4 - 1) / 3
+SHADOW_FINEST_ENTRY        :: SHADOW_SLOT_ENTRIES - SHADOW_MAP_PAGES * SHADOW_MAP_PAGES
+// The table of the pages (render.Shadow_Raster.table, a texel for each entry
+// of each slot, a row a slot): the page of the pool + 1 that holds it (0:
+// none), SHADOW_PAGE_CACHED while what stays is drawn in the cache there and
+// SHADOW_PAGE_COMPOSED while the atlas holds it with what moves, and from bit
+// SHADOW_ENTRY_COARSER how many levels of the sun or mips coarser the nearest
+// page drawn this frame lies, where its own is not (0: none).
+SHADOW_PAGE_CACHED         :: u32(1) << 16
+SHADOW_PAGE_COMPOSED       :: u32(1) << 17
+SHADOW_ENTRY_COARSER       :: 20
+// What the plan tells a slot (render.Shadow_Slot_Plan.flags): every page lets
+// go of what it held; what stays changed everywhere in it; it keeps the
+// pages of the safety net, the 2x2 of a level of the sun nearest the eye
+// (Shadow_Slot_Plan.net) or the one page of the coarsest mip of a face.
+SHADOW_PLAN_RESET          :: u32(1)
+SHADOW_PLAN_STALE          :: u32(2)
+SHADOW_PLAN_NET            :: u32(4)
+SHADOW_BOX_ROWS            :: 2
+// The farthest depth the cache holds over blocks of each page of its pool
+// (render.Shadow_Raster.hiz): SHADOW_HIZ_BLOCK texels a side at its first
+// mip, each mip after twice as wide, the last the whole page.
+SHADOW_HIZ_BLOCK           :: u32(8)
+SHADOW_HIZ_MIPS            :: 5
+// The words of the buffer of the pages of a view (render.Shadow_Raster.pages):
+// the slot and entry each page of the pool holds + 1, the frame it was last
+// read in, and a bit for each entry of each slot (SHADOW_MASK_WORDS a slot)
+// that a pass after the maps read this frame, for the next; then what each
+// frame writes again: a bit for each entry that points read, where what stays
+// changed, where what moves was or is, asked for a page of the pool, asked for
+// first (the safety net), that the cache draws, that the atlas composes and
+// that the pool holds ready; a word for each slot of each of the last three,
+// whether it has one, and four for each mip of each, the pages of it they
+// span; the counts (SHADOW_COUNT_*) and the arguments of the dispatches and
+// draws (SHADOW_ARGS_*); then the slots of each of the last three, the pages
+// the cache draws and the atlas composes, the rank of the first request of
+// each word of SHADOW_RANK_WORDS and of each group of them, and the pages of
+// the pool in the order they are given.
+SHADOW_MASK_WORDS          :: (SHADOW_SLOT_ENTRIES + 31) / 32
+SHADOW_MASKS               :: SHADOW_SLOTS * SHADOW_MASK_WORDS
+SHADOW_WORDS_OWNER         :: 0
+SHADOW_WORDS_AGE           :: SHADOW_WORDS_OWNER + SHADOW_POOL_PAGES
+SHADOW_WORDS_LATE          :: SHADOW_WORDS_AGE + SHADOW_POOL_PAGES
+SHADOW_WORDS_NEEDED        :: SHADOW_WORDS_LATE + SHADOW_MASKS
+SHADOW_WORDS_STALE         :: SHADOW_WORDS_NEEDED + SHADOW_MASKS
+SHADOW_WORDS_MOVED         :: SHADOW_WORDS_STALE + SHADOW_MASKS
+SHADOW_WORDS_ASKED         :: SHADOW_WORDS_MOVED + SHADOW_MASKS
+SHADOW_WORDS_FIRST         :: SHADOW_WORDS_ASKED + SHADOW_MASKS
+SHADOW_WORDS_DRAWN         :: SHADOW_WORDS_FIRST + SHADOW_MASKS
+SHADOW_WORDS_COMPOSE       :: SHADOW_WORDS_DRAWN + SHADOW_MASKS
+SHADOW_WORDS_READY         :: SHADOW_WORDS_COMPOSE + SHADOW_MASKS
+SHADOW_WORDS_HAS           :: SHADOW_WORDS_READY + SHADOW_MASKS
+SHADOW_WORDS_BOUNDS        :: SHADOW_WORDS_HAS + 3 * SHADOW_SLOTS
+SHADOW_WORDS_COUNTS        :: SHADOW_WORDS_BOUNDS + 3 * SHADOW_SLOTS * SHADOW_MIPS * 4
+SHADOW_WORDS_ARGS          :: SHADOW_WORDS_COUNTS + 16
+SHADOW_WORDS_SLOTS         :: SHADOW_WORDS_ARGS + 20
+SHADOW_WORDS_JOBS          :: SHADOW_WORDS_SLOTS + 3 * SHADOW_SLOTS
+SHADOW_WORDS_RANK          :: SHADOW_WORDS_JOBS + 2 * SHADOW_POOL_PAGES
+SHADOW_WORDS_GROUPS        :: SHADOW_WORDS_RANK + SHADOW_RANK_WORDS
+SHADOW_WORDS_VICTIMS       :: SHADOW_WORDS_GROUPS + SHADOW_RANK_GROUPS
+SHADOW_WORDS               :: SHADOW_WORDS_VICTIMS + SHADOW_POOL_PAGES
+// The words of the masks of the pages asked for, in the order their pages are
+// given: those of the safety net, the levels of the sun from the coarsest
+// (the words of their finest mip alone, from SHADOW_SUN_WORD) then the first
+// word of each face; then the other pages so, and those of the faces word by
+// word, each word of every face before the next. A group of the rank takes
+// SHADOW_RANK_GROUP of them.
+SHADOW_SUN_WORD            :: SHADOW_FINEST_ENTRY / 32
+SHADOW_SUN_WORDS           :: SHADOW_MASK_WORDS - SHADOW_SUN_WORD
+SHADOW_RANK_FIRST          :: SHADOW_SUN_MAPS * SHADOW_SUN_WORDS + SHADOW_LOCAL_SLOTS
+SHADOW_RANK_WORDS          :: 2 * SHADOW_RANK_FIRST - SHADOW_LOCAL_SLOTS + SHADOW_LOCAL_SLOTS * SHADOW_MASK_WORDS
+SHADOW_RANK_GROUP          :: 256
+SHADOW_RANK_GROUPS         :: (SHADOW_RANK_WORDS + SHADOW_RANK_GROUP - 1) / SHADOW_RANK_GROUP
+#assert(SHADOW_RANK_GROUPS <= SHADOW_RANK_GROUP && SHADOW_POOL_PAGES <= 1024 && SHADOW_SLOTS < 256)
+// The counts: pages the cache draws, the atlas composes, asked for, of the
+// pool that can be given (free, then those no point read, the oldest read
+// first), of them free, asked for and left out; slots with pages the cache
+// draws, the atlas composes, the pool holds ready.
+SHADOW_COUNT_DRAWN         :: 0
+SHADOW_COUNT_COMPOSED      :: 1
+SHADOW_COUNT_REQUESTS      :: 2
+SHADOW_COUNT_GIVEN         :: 3
+SHADOW_COUNT_FREE          :: 4
+SHADOW_COUNT_LEFT          :: 5
+SHADOW_COUNT_SLOTS         :: 6 // three
+// The arguments: the dispatches of the cull of the cache, of the atlas and of
+// the glass, three words each, then the draws of the pages the cache clears
+// and the atlas copies from it, four each, and the dispatch of the farthest
+// depth of the pages the cache drew.
+SHADOW_ARGS_DISPATCH       :: 0
+SHADOW_ARGS_DRAW           :: 9
+SHADOW_ARGS_HIZ            :: 17
 REFLECTION_SHARED_ROUGHNESS :: f32(0.15)
 
 // The levels of the depth pyramid a dispatch of hiz.comp makes.

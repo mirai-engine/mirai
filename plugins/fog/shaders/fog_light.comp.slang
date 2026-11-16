@@ -26,6 +26,8 @@
 #define SHADOW_DATA_SLOT SLOT_PASS6
 #define SHADOW_TINT_SLOT SLOT_PASS7
 #define SHADOW_GLASS_SLOT SLOT_PASS8
+// The cells mark the pages of the maps they read, for the next frame.
+#define SHADOW_MARKS_SLOT SLOT_PASS9
 #define MIRAI_LIGHT_MAPS
 #include "media.slang"
 #include <extension_hooks.slang>
@@ -157,6 +159,7 @@ float4 fog_far_sun(uint3 id, inout bool changed) {
     if (frame.sun_direction.w < 0.5 || !(frame.sun_shares.y > 0.0)) return float4(0.0);
     float near = fog_cell_depth(float(id.z));
     bool last = id.z + 1u >= fog.grid.z + fog.far;
+    media_across = near * length(view_ray(float2(1.0) / float2(fog.grid.xy)) - view_ray(float2(0.0)));
     float3 through = float3(0.0);
     float held = 0.0;
     for (uint k = 0u; k < FOG_SUN_POINTS; k++) {
@@ -217,6 +220,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     float depth = fog_slice_depth(float(id.z) + along);
     float width = depth * length(view_ray(uv + 1.0 / float2(fog.grid.xy)) - view_ray(uv));
     float footprint = max(fog_slice_depth(float(id.z + 1u)) - fog_slice_depth(float(id.z)), width);
+    media_across = footprint;
     float g;
     float4 mean;
     float3 mean_sun_only;

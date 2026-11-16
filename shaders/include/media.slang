@@ -12,6 +12,11 @@
 #ifdef SUN_SHADOW_SLOT
 #include "shadow_maps.slang"
 #endif
+// How wide the place of a medium the pass lights is, metres: it reads the
+// level of the sun and the mip of a light whose texel is about as wide.
+static float media_across = 0.0;
+#ifdef SUN_SHADOW_SLOT
+#endif
 
 // The most nodes of the tree of the lights with shadows a point of a medium
 // takes through a shadow ray each (light_cut): past it, groups stand for
@@ -27,7 +32,7 @@
 // way of a ray, since the frame before (occluder_changed of trace.slang).
 float3 media_local_light(float3 position, float3 eye_ray, float g, inout bool changed) {
     if (frame.light_nodes == 0u) return float3(0.0);
-    return direct_lighting(shading_medium(position, -eye_ray, g), 0.0, MEDIA_LIGHT_BUDGET, LIGHTS_LOCAL | LIGHTS_SCATTERED | LIGHTS_CHANGES, float2(-1.0, 0.0), changed);
+    return direct_lighting(shading_medium(position, -eye_ray, g, media_across), 0.0, MEDIA_LIGHT_BUDGET, LIGHTS_LOCAL | LIGHTS_SCATTERED | LIGHTS_CHANGES, float2(-1.0, 0.0), changed);
 }
 float3 media_local_light(float3 position, float3 eye_ray, float g) {
     bool changed = false;
@@ -56,7 +61,7 @@ float3 media_sun_light(float3 position) {
 float3 media_sun_through(float3 position, inout bool changed) {
     float reach = sun_reach(position, frame.sun_direction.xyz);
 #ifdef SUN_SHADOW_SLOT
-    float known = sun_shadow_seen(position, float3(0.0));
+    float known = sun_shadow_seen(position, float3(0.0), media_across);
     float3 through = known < 0.0 ? trace_transmission(position, frame.sun_direction.xyz, reach) : float3(known);
 #ifdef SHADOW_TINT_SLOT
     Shadow_Map m;

@@ -727,6 +727,7 @@ gpu_mesh :: proc(m: Mesh_Record) -> Gpu_Mesh {
 		part_word = m.part_word, part_layers = m.skin.part_layers if m.skin != nil else 0, flags = m.flags, slab_axes = m.slab_axes,
 		position_step = m.position_step, uv_step = m.uv_step, uv1_step = m.uv1_step, lod_reach = m.lod_reach,
 		bounds_min = {m.bounds_min.x, m.bounds_min.y, m.bounds_min.z, 0}, bounds_max = {m.bounds_max.x, m.bounds_max.y, m.bounds_max.z, 0},
+		sway = m.skin.sway if m.skin != nil && m.skin.sway > 0 else max(f32),
 	}
 	for ray, k in m.rays {row.rays[k] = {ray.bvh_root, ray.triangle_offset, ray.table_word, ray.table_opaque}}
 	// A mesh traces level 0 where it has no coarser cut.
