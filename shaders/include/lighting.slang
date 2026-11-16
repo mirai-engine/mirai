@@ -1005,7 +1005,7 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which = LIGHTS_A
             }
             reach = light_reach(aimed, distance);
 #ifdef MIRAI_LIGHT_MAPS
-            mapped = light_shadow_seen(node.child, s.position, s.normal, light_extent(aimed));
+            mapped = light_shadow_seen(node.child, s.position, s.normal, light_extent(aimed), 0.0);
 #ifdef SHADOW_TINT_SLOT
             Shadow_Map tinted;
             if (mapped > 0.0 && light_map_of(node.child, s.position, tinted)) radiance *= shadow_tint(tinted, s.position);

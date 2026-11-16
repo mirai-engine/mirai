@@ -73,7 +73,7 @@ float3 media_local_light(float3 position, float3 eye_ray, float g, float pick, i
 #ifdef SHADOW_DATA_SLOT
         // From its maps; where none holds the point, a ray.
         Shadow_Map m;
-        float seen = light_shadow_seen(index, position, float3(0.0), light_extent(light));
+        float seen = light_shadow_seen(index, position, float3(0.0), light_extent(light), 0.0);
         through = seen >= 0.0 ? float3(seen) : trace_transmission(position, direction, reach);
 #ifdef SHADOW_TINT_SLOT
         if (seen > 0.0 && light_map_of(index, position, m)) through *= shadow_tint(m, position);
