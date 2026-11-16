@@ -153,7 +153,7 @@ render_a_mesh_without_shadows_lets_the_sun_through :: proc(t: ^testing.T) {
 	camera := Camera{position = {0, 8, 7}, forward = {0, -8, -7}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	under, top := project(r, camera, {0, 0.001, 0.8}), project(r, camera, {0, 1.6, 0})
 	for mode in ([]Trace_Mode{.Software, .Hardware}) {
-		if mode == .Hardware && !r.hardware_rt_verified {continue}
+		if !fixture_traces(r, mode) {continue}
 		applied := r.settings
 		applied.trace_mode = mode
 		testing.expect(t, renderer_apply_settings(r, applied))

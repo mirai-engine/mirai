@@ -50,6 +50,18 @@ fixture_init :: proc(t: ^testing.T, f: ^Fixture, width, height: u32, settings: M
 	return true
 }
 
+// Whether a renderer can trace with mode: rays by software only where the
+// backend has them (Vulkan), by hardware where the device passed its self-test.
+// A test of what each tracer gives runs the cases of those it can.
+fixture_traces :: proc(r: ^Renderer, mode: Trace_Mode) -> bool {
+	switch mode {
+	case .Auto: return true
+	case .Software: return SOFTWARE_TRACER
+	case .Hardware: return r.hardware_rt_verified
+	}
+	return false
+}
+
 // A frame of the renderer of f, with the references f asks for.
 fixture_frame :: proc(f: ^Fixture, frame: Frame_Desc) -> bool {
 	if f.reference == {} {return renderer_frame(f.renderer, frame)}
