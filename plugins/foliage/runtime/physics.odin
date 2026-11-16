@@ -43,6 +43,7 @@ Physics_Owner :: struct {
     transform:mm.Transform,
     removed:u64, // the hash of the instances taken out of it then (Removed_Owner)
     pending:bool, // some of its cells wait for the budget of a tick
+    full:bool,    // some of its cells are full (Physics_Cell.full)
 }
 
 // What a tick builds of the collision of the foliage at most: instances of
@@ -57,7 +58,8 @@ Physics_Budget :: struct {
 Physics_Cell :: struct {
     owner:core.Entity,
     coord:[2]i32,
-    version:u32, // of the cell it was built from; 0 when not all of it fit
+    version:u32, // of the cell it was built from; 0 while it waits for the budget of a tick or for memory
+    full:bool,   // the simulation had no room for all of its shapes: it keeps those it has until it changes
     ground:u32,  // the revision of its ground then
     removed:u64, // the hash of the instances taken out of it then (removed_cell)
     body:physics.Body_Handle,
@@ -195,7 +197,9 @@ instance_shape :: proc "contextless" (shape:Type_Shape,p:Placed,coord:[2]i32,own
 // keeps its body, and the instances newly taken out of it (gone) leave with
 // their shapes alone. With a budget, the cells to build go nearest the
 // sources of near first while it lasts, and the others wait without a body
-// (version 0). False when the simulation had no room for all of them.
+// (version 0). A cell the simulation has no room for is full: it keeps what
+// fit and is not built again until it or its ground changes. complete is
+// false while a cell of the Foliage is full.
 physics_owner_build :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,collision:^physics.Collision_Settings,e:core.Entity,s:^Source,transform:mm.Transform,shapes:[]Type_Shape,ground:^Ground_Owner=nil,all:=true,gone:^Removed_Owner=nil,near:^scene.Sources_Near=nil,budget:^Physics_Budget=nil) -> (complete,enough:bool) {
     held:=make([dynamic]Physics_Cell,context.temp_allocator)
     held_shapes:=make([dynamic]Physics_Shape,context.temp_allocator)
@@ -254,6 +258,7 @@ physics_owner_build :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,col
             append(&fp.shapes,..held_shapes[kept.first:][:kept.count])
             kept.first=first
             append(&fp.cells,kept)
+            complete&&=!kept.full
             continue
         }
         tile,revision:=ground_cell(ground,cell.coord)
@@ -294,7 +299,7 @@ physics_owner_build :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,col
             }
         }
         complete&&=fit
-        append(&fp.cells,Physics_Cell{owner=e,coord=cell.coord,version=fit?cell.version:0,ground=revision,removed=removed_hash,body=body,first=first,count=u32(len(fp.shapes))-first})
+        append(&fp.cells,Physics_Cell{owner=e,coord=cell.coord,version=cell.version,full=!fit,ground=revision,removed=removed_hash,body=body,first=first,count=u32(len(fp.shapes))-first})
     }
     return
 }
@@ -411,7 +416,10 @@ foliage_physics :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,meshes:
                 continue
             }
             owner=&fp.owners[len(fp.owners)-1]
-        } else if !owner.pending && owner.epoch==entry.epoch && owner.loads==entry.loads && owner.ground==revision && owner.transform==world.transform && owner.removed==removed {continue}
+        } else if !owner.pending && owner.epoch==entry.epoch && owner.loads==entry.loads && owner.ground==revision && owner.transform==world.transform && owner.removed==removed {
+            if owner.full {room_problem(problems,e)}
+            continue
+        }
         // A source read again, a ground that changed or instances taken out build only the cells that changed.
         all:=owner.epoch!=entry.epoch || owner.transform!=world.transform
         owner.epoch,owner.loads,owner.ground,owner.transform,owner.source,owner.removed=entry.epoch,entry.loads,revision,world.transform,f.source,removed
@@ -430,13 +438,18 @@ foliage_physics :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,meshes:
         near:=scene.sources_near_of(now,mm.transform_matrix(world.transform),CELL_SIZE)
         budget.waiting=false
         complete,enough:=physics_owner_build(fp,state,settings,e,&entry.source,world.transform,shapes[:],ground,all,gone,len(now)>0?&near:nil,&budget)
-        owner.pending=budget.waiting
+        owner.pending,owner.full=budget.waiting,!complete
         built=true
         if !enough {
             owner.loads=0
             memory_problem(problems,e,"the collision of its foliage: some cells do not collide")
         } else if !complete {
-            core.report(problems,e,"foliage.physics","the simulation has no room for every collision of its foliage: some cells or instances do not collide; raise the bodies or shapes of Physics_Settings, or give fewer types a collision")
+            room_problem(problems,e)
         }
     }
+}
+
+@(private)
+room_problem :: proc(problems:^core.Problems,e:core.Entity) {
+    core.report(problems,e,"foliage.physics","the simulation has no room for every collision of its foliage: some cells or instances do not collide; raise the bodies or shapes of Physics_Settings, or give fewer types a collision")
 }
