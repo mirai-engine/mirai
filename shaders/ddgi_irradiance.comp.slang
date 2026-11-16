@@ -124,8 +124,9 @@ void main(uint3 group_id : SV_GroupID, uint3 local_id : SV_GroupThreadID, uint l
     for (uint r = local_index; r < rays; r += (MIRAI_GROUP_X * MIRAI_GROUP_Y)) {
         float4 ray_value = ray_data.Load(int3(int2(r, slot), 0));
         ray_values[r] = float4(probe_light_decode(ray_value.rgb), ray_value.a);
-        ray_dirs[r] = probe_ray_direction(probe, r, params.rays_per_probe);
-        if (ray_values[r].a < 0.0) InterlockedAdd(backfaces, 1u);
+        // A ray that met the inside of geometry has no direction: no texel weighs it.
+        ray_dirs[r] = ray_value.a < 0.0 ? float3(0.0) : probe_ray_direction(probe, r, params.rays_per_probe);
+        if (ray_value.a < 0.0) InterlockedAdd(backfaces, 1u);
     }
     GroupMemoryBarrierWithGroupSync();
     uint cascade;
@@ -149,11 +150,10 @@ void main(uint3 group_id : SV_GroupID, uint3 local_id : SV_GroupThreadID, uint l
         float4 narrow_sum = float4(0.0);
         float narrow_weight = 0.0;
         for (uint r = 0u; r < rays; r++) {
-            float4 sample_value = ray_values[r];
-            if (sample_value.a < 0.0) continue;
             // Past this cosine a ray weighs nothing against those of the lobe.
             float along = dot(lobe_dir, ray_dirs[r]);
             if (along < 0.8) continue;
+            float4 sample_value = ray_values[r];
             float n = pow(along, PROBE_GLOSS_POWER);
             narrow_sum += float4(sample_value.rgb, sample_value.a >= params.max_distance ? 1.0 : 0.0) * n;
             narrow_weight += n;
@@ -167,9 +167,9 @@ void main(uint3 group_id : SV_GroupID, uint3 local_id : SV_GroupThreadID, uint l
         float4 sum = float4(0.0);
         float weight_sum = 0.0;
         for (uint r = 0u; r < rays; r++) {
+            float w = dot(texel_dir, ray_dirs[r]);
+            if (!(w > 0.0)) continue;
             float4 sample_value = ray_values[r];
-            if (sample_value.a < 0.0) continue;
-            float w = max(0.0, dot(texel_dir, ray_dirs[r]));
             sum += float4(sample_value.rgb, sample_value.a >= params.max_distance ? 1.0 : 0.0) * w;
             weight_sum += w;
         }
