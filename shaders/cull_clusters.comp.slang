@@ -83,11 +83,32 @@ uint depth_bucket(float3 low, float3 high) {
     return uint(clamp(int(floor(t * float(RASTER_DEPTH_BUCKETS))), 0, int(RASTER_DEPTH_BUCKETS) - 1));
 }
 
+// The pixels a box covers on the view, from the lowest to past the highest,
+// a pixel wider each way for the jitter of the raster; the whole view for
+// one that reaches the eye or that has none (boxed false).
+uint4 cluster_pixels(float3 low, float3 high, bool boxed) {
+    uint4 view = uint4(0u, 0u, uint2(frame.resolution));
+    if (!boxed) return view;
+    float2 lo = float2(FLT_MAX), hi = float2(-FLT_MAX);
+    for (int i = 0; i < 8; i++) {
+        float3 corner = float3((i & 1) != 0 ? high.x : low.x, (i & 2) != 0 ? high.y : low.y, (i & 4) != 0 ? high.z : low.z);
+        float4 clip = view_clip(corner);
+        if (clip.w <= 1e-6) return view;
+        float2 ndc = clip.xy / clip.w;
+        float2 pixel = float2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5) * frame.resolution;
+        lo = min(lo, pixel);
+        hi = max(hi, pixel);
+    }
+    lo = clamp(floor(lo) - 1.0, float2(0.0), frame.resolution);
+    hi = clamp(ceil(hi) + 1.0, float2(0.0), frame.resolution);
+    return uint4(uint2(lo), uint2(hi));
+}
+
 // Lists a visible cluster of the phase with its raster bin, while the list
 // has room, and counts it in its bin; one of a tested bin, in the depth
 // bucket of its box too. The lanes of a wave take their slots and add to the
 // counts they share with an atomic each.
-void cluster_visible(uint index, Mesh mesh, uint ordinal, Cluster c, float3 low, float3 high) {
+void cluster_visible(uint index, Mesh mesh, uint ordinal, Cluster c, float3 low, float3 high, bool boxed) {
     uint phase = min(params.phase, 1u);
     Instance inst = scene_instance(index);
     Material m = material_row(material_of(inst, cluster_material(mesh, c)), inst.material_values);
@@ -116,7 +137,15 @@ void cluster_visible(uint index, Mesh mesh, uint ordinal, Cluster c, float3 low,
     }
     uint last = WaveActiveMax(slot);
     if (WaveIsFirstLane()) InterlockedMax(cull_state[CULL_BINS_DISPATCH + 3u * phase], last / CULL_BINS_GROUP + 1u);
-    if (program != 0u) program_draws[program * 4u + 1u] = 1u;
+    if (program != 0u) {
+        uint at = program * PROGRAM_DRAW_WORDS;
+        program_draws[at + 1u] = 1u;
+        uint4 rect = cluster_pixels(low, high, boxed);
+        InterlockedMin(program_draws[at + 4u], rect.x);
+        InterlockedMin(program_draws[at + 5u], rect.y);
+        InterlockedMax(program_draws[at + 6u], rect.z);
+        InterlockedMax(program_draws[at + 7u], rect.w);
+    }
     page_stamp(mesh, c);
     uint triangles = cluster_triangle_count(c);
     uint clusters = WaveActiveCountBits(true), drawn = WaveActiveSum(triangles);
@@ -209,5 +238,5 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID, uint3 dispatc
             }
         }
     }
-    cluster_visible(index, mesh, ordinal, c, low, high);
+    cluster_visible(index, mesh, ordinal, c, low, high, boxed);
 }

@@ -9,6 +9,10 @@
 // bucket counts its clusters in; past those of both phases, the cursor its
 // clusters take their places with.
 uint cull_depth_word(uint phase, uint sided, uint bucket) { return (phase * 2u + sided) * RASTER_DEPTH_BUCKETS + bucket; }
+// The words of the resolve draw of a Surface program (render.Gpu_Program_Draw):
+// the draw, then the rectangle of pixels its clusters cover, from the lowest
+// x and y to past the highest.
+#define PROGRAM_DRAW_WORDS 8u
 #define CULL_DEPTH_COUNTS (2u * 2u * RASTER_DEPTH_BUCKETS)
 #define CULL_DEPTH_WORDS (2u * CULL_DEPTH_COUNTS)
 // The bin and the depth bucket a listed cluster has, in one word.

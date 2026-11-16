@@ -412,6 +412,15 @@ Gpu_Draw :: struct {
 }
 #assert(size_of(Gpu_Draw) == 16)
 
+// The resolve draw of a Surface program (vis_resolve.vert): its draw, and the
+// rectangle of the pixels its clusters cover, from the lowest x and y to past
+// the highest (cull_clusters.comp).
+Gpu_Program_Draw :: struct {
+	draw: Gpu_Draw,
+	rect: [4]u32,
+}
+#assert(size_of(Gpu_Program_Draw) == 32)
+
 // What the cull passes of a view count, in words of the buffer of its state
 // (CULL_* of render/abi). The draws of each phase and raster bin go first: an
 // instance of a draw is a visible cluster, and those of phase 1 follow those
