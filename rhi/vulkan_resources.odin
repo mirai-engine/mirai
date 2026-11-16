@@ -619,9 +619,11 @@ vk_pipeline_cache_open :: proc(d: ^Device, key: u64) -> (cache: vk.PipelineCache
 }
 
 // Keeps what the driver compiled into cache under key, unless the pipeline came
-// from the blob kept for it, and destroys cache.
+// from the blob kept for it, and destroys cache. took: how long the creation
+// call ran, which the store weighs against its last save; the CPU measures it,
+// since a driver may leave VkPipelineCreationFeedback without VALID.
 @(private)
-vk_pipeline_cache_close :: proc(d: ^Device, key: u64, cache: vk.PipelineCache, feedback: vk.PipelineCreationFeedback, created: bool) {
+vk_pipeline_cache_close :: proc(d: ^Device, key: u64, cache: vk.PipelineCache, feedback: vk.PipelineCreationFeedback, created: bool, took: time.Duration) {
 	if cache == 0 {return}
 	defer d.dvk.DestroyPipelineCache(d.handle, cache, nil)
 	if !created || feedback.flags >= {.VALID, .APPLICATION_PIPELINE_CACHE_HIT} {return}
@@ -632,7 +634,6 @@ vk_pipeline_cache_close :: proc(d: ^Device, key: u64, cache: vk.PipelineCache, f
 	if d.dvk.GetPipelineCacheData(d.handle, cache, &size, raw_data(data)) != .SUCCESS || size == 0 {delete(data, d.allocator); return}
 	defer delete(data, d.allocator)
 	sync.lock(&d.pipelines_kept.lock)
-	took := time.Duration(feedback.duration) if .VALID in feedback.flags else 0
 	due := pipeline_store_put(&d.pipelines_kept, key, data[:size], took)
 	sync.unlock(&d.pipelines_kept.lock)
 	if due {pipeline_store_save(&d.pipelines_kept, string(d.store_path[:d.store_path_len]))}
@@ -681,8 +682,9 @@ pipeline_create_compute :: proc(d: ^Device, desc: Compute_Pipeline_Desc) -> Pipe
 	}
 	key := pipeline_key_compute(desc)
 	cache := vk_pipeline_cache_open(d, key)
-	created := vk_check(d, d.dvk.CreateComputePipelines(d.handle, cache, 1, &info, nil, &p.handle), desc.name)
-	vk_pipeline_cache_close(d, key, cache, feedback, created)
+	started := time.tick_now()
+	created := vk_check(d, d.dvk.CreateComputePipelines(d.handle, cache, 1, &info, nil, &p.handle), desc.name, queued = false)
+	vk_pipeline_cache_close(d, key, cache, feedback, created, time.tick_since(started))
 	if !created {vk_release_pipeline(d, &p); return 0}
 	vk_set_name(d, .PIPELINE, u64(p.handle), desc.name)
 	return vk_pipeline_add(d, &p)
@@ -783,8 +785,9 @@ pipeline_create_graphics :: proc(d: ^Device, desc: Graphics_Pipeline_Desc) -> Pi
 	}
 	key := pipeline_key_graphics(desc)
 	cache := vk_pipeline_cache_open(d, key)
-	created := vk_check(d, d.dvk.CreateGraphicsPipelines(d.handle, cache, 1, &info, nil, &p.handle), desc.name)
-	vk_pipeline_cache_close(d, key, cache, feedback, created)
+	started := time.tick_now()
+	created := vk_check(d, d.dvk.CreateGraphicsPipelines(d.handle, cache, 1, &info, nil, &p.handle), desc.name, queued = false)
+	vk_pipeline_cache_close(d, key, cache, feedback, created, time.tick_since(started))
 	if !created {vk_release_pipeline(d, &p); return 0}
 	vk_set_name(d, .PIPELINE, u64(p.handle), desc.name)
 	return vk_pipeline_add(d, &p)
