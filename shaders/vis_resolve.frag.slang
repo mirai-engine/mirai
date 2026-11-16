@@ -30,25 +30,14 @@
 #include "gbuffer_output.slang"
 #include "visibility.slang"
 
-// programs: the Surface programs the renderer has, plus one, as vis_classify.frag takes them.
-struct Params_Block { uint programs; uint pad0; uint pad1; uint pad2; };
-[[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 [[vk::binding(SLOT_PASS0, 0)]] StructuredBuffer<uint2> visible : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);
 [[vk::binding(SLOT_PASS1, 0)]] Texture2D<uint> visibility : register(MIRAI_REGISTER(t, SLOT_PASS1), space0);
+#include "cull_stats.slang"
+[[vk::binding(SLOT_PASS2, 0)]] RWStructuredBuffer<Stats_Block> resolve_stats : register(MIRAI_REGISTER(u, SLOT_PASS2), space0);
 #include <extension_vertex.slang>
 #include "gbuffer_build.slang"
 
 struct Resolve_Triangle { Gbuffer_Vertex a, b, c; };
-
-// The program a pixel of the visibility target is resolved by, as
-// vis_classify.frag classified it; INVALID for a pixel without a triangle.
-uint resolve_program(uint id) {
-    if (id == 0u) return INVALID;
-    uint2 entry = visible[visibility_entry(id)];
-    Instance inst = scene_instance(entry.x);
-    uint program = materials[material_of(inst, cluster_material(meshes[instance_mesh(inst)], cluster_at(entry.y)))].shared.program_id;
-    return program < params.programs ? program : 0u;
-}
 
 Resolve_Triangle resolve_triangle(uint id) {
     uint2 entry = visible[visibility_entry(id)];
@@ -134,6 +123,22 @@ bool resolve_continues(Resolve_Point s, float step, float3 world_d, float2 uv_d,
         && length(off_uv) <= 0.5 * length(uv_d) + 1e-7 && length(off_uv1) <= 0.5 * length(uv1_d) + 1e-7;
 }
 
+// Counts what the resolve shades (Stats_Block.resolved): the pixels, and of
+// each quad, by its first pixel that is not a helper, its helpers and whether
+// it evaluates again; one atomic of each per wave.
+void resolve_count(bool helper, uint2 odd, bool again) {
+    uint live = helper ? 0u : 1u;
+    uint lives = QuadReadLaneAt(live, 0u) | (QuadReadLaneAt(live, 1u) << 1u) | (QuadReadLaneAt(live, 2u) << 2u) | (QuadReadLaneAt(live, 3u) << 3u);
+    if (helper) return;
+    bool first = firstbitlow(lives) == odd.y * 2u + odd.x;
+    uint3 counted = WaveActiveSum(uint3(1u, first ? 4u - countbits(lives) : 0u, first && again ? 1u : 0u));
+    if (WaveIsFirstLane()) {
+        InterlockedAdd(resolve_stats[0].resolved[0], counted.x);
+        if (counted.y != 0u) InterlockedAdd(resolve_stats[0].resolved[1], counted.y);
+        if (counted.z != 0u) InterlockedAdd(resolve_stats[0].resolved[2], counted.z);
+    }
+}
+
 // The first nonzero value of the four pixels of a quad, the same in all four.
 uint quad_first(uint value) {
     uint l0 = QuadReadLaneAt(value, 0u), l1 = QuadReadLaneAt(value, 1u), l2 = QuadReadLaneAt(value, 2u), l3 = QuadReadLaneAt(value, 3u);
@@ -154,15 +159,20 @@ Stage_Output resolve_shade(Resolve_Point s, bool2 steady) {
     return output;
 }
 
+// The tests of the program depth run before the fragment: a pixel of
+// another program fails them, and is a helper of its quad.
 [shader("fragment")]
+[earlydepthstencil]
 Stage_Output main(float4 pixel : SV_Position, [[vk::location(0)]] nointerpolation uint program : TEXCOORD0) {
     // A helper is a pixel of the quad that is not of this program: it gives
     // the others its derivatives and writes nothing, nor reports what it samples.
-    uint own = visibility.Load(int3(int2(pixel.xy), 0));
-    bool helper = resolve_program(own) != program;
-    if (helper) own = 0u;
+    bool helper = IsHelperLane();
+    uint own = helper ? 0u : visibility.Load(int3(int2(pixel.xy), 0));
     uint across_x = QuadReadAcrossX(own), across_y = QuadReadAcrossY(own), across_d = QuadReadAcrossDiagonal(own);
     uint id = own != 0u ? own : across_x != 0u ? across_x : across_y != 0u ? across_y : across_d;
+    // No pixel of the quad shows a triangle of this program (the same in all
+    // four): nothing is built, nor read through an id that names none.
+    if (id == 0u) return (Stage_Output)0;
     Resolve_Point s = resolve_point(resolve_triangle(id), pixel.xy);
 
     // What each neighbor shows, against what this triangle says it shows.
@@ -179,7 +189,9 @@ Stage_Output main(float4 pixel : SV_Position, [[vk::location(0)]] nointerpolatio
 
     // The maps of a row take the exact gradients of their uv: only a program
     // computes what needs the quad to continue.
-    if (broken == 0u || program == 0u) {
+    bool again = broken != 0u && program != 0u;
+    resolve_count(helper, odd, again);
+    if (!again) {
         texture_feedback_quiet = helper;
         return resolve_shade(s, steady);
     }

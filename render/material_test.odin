@@ -1011,6 +1011,40 @@ material_program_shows_on_what_the_camera_sees :: proc(t: ^testing.T) {
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 
+// The resolve shades each pixel of a triangle once, whichever program it is
+// of, and runs the other pixels of its quads only as helpers: with the sky
+// and several programs in view, the draw of a program does not shade the
+// pixels of the others nor those where nothing is.
+@(test)
+material_program_resolve_shades_each_pixel_once :: proc(t: ^testing.T) {
+	f: Fixture
+	if !fixture_init(t, &f, 64, 64, material_settings(), programs = true) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	grid, sampled := program_find(r, "Grid", .Surface), program_find(r, "Sampled", .Surface)
+	if !testing.expect(t, grid != nil && sampled != nil, "the tests have the Grid and Sampled programs") {return}
+	lined, imaged := DEFAULT_MATERIAL, DEFAULT_MATERIAL
+	lined.program_id, lined.custom_params = grid.id, program_defaults(grid)
+	imaged.program_id, imaged.custom_params = sampled.id, program_defaults(sampled)
+	materials_set(r, {lined, imaged, DEFAULT_MATERIAL})
+	quad := ground_quad(r)
+	// Three squares under the camera, each of its own material, and the sky around them.
+	instances: [3]Instance_Desc
+	for &instance, i in instances {
+		transform := scale_matrix(0.5)
+		transform[0, 3] = f32(i - 1) * 0.6
+		instance = {object_id = u64(i + 1), mesh = quad, transform = transform, material = Material_Handle(i + 1), tint = {1, 1, 1}}
+	}
+	scene_given(r, instances[:], nil, {}, {})
+	testing.expect(t, renderer_frame(r, {}), r.error)
+	renderer_pipelines_wait(r)
+	frames(t, &f, OVERHEAD, 4)
+	pixels := r.targets.width * r.targets.height
+	testing.expectf(t, r.stats.resolved_pixels > 0 && r.stats.resolved_pixels < pixels / 2, "the resolve shades the pixels of the squares once: %d of %d", r.stats.resolved_pixels, pixels)
+	testing.expectf(t, r.stats.resolve_helpers <= 3 * r.stats.resolved_pixels, "and only the quads of those as helpers: %d", r.stats.resolve_helpers)
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
+}
+
 // The parameters of the Pieces program that send its one red piece distance
 // metres along +X at progress 0, without turning it.
 @(private = "file")
