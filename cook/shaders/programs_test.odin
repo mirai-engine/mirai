@@ -635,6 +635,7 @@ programs_that_move_vertices_declare_their_function_and_reach :: proc(t:^testing.
     testing.expect(t,sway.vertex.declared && sway.vertex.animated && sway.vertex.reach==0.25 && sway.vertex.reach_offset<0)
     testing.expect(t,spread.vertex.declared && !spread.vertex.animated && spread.vertex.reach_offset==12)
     testing.expect(t,!still.vertex.declared,"a program without the line moves no vertices")
+    testing.expect(t,sway.timed && !still.timed,"a program whose source reads the time gives what changes with it")
     listed :: proc(names:[]string,name:string) -> bool {
         for n in names {if n==name {return true}}
         return false
