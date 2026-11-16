@@ -387,7 +387,7 @@ layout_write :: proc(path,layout_fingerprint:string,layout:Layout) {
 // copied: the programs as the generation copies them, below the include
 // folder that holds the constants they share with the CPU.
 @(private)
-layout_reflect :: proc(runner:^Runner,slangc,root,copied,source_folder,compiled_path,name,temporary:string,allocator:=context.allocator,attributes:=false,vfx:=false,prelude:="",said:^[]Diagnostic=nil,plugins:[]string=nil) -> (layouts:[2]Layout,error:string,compile_error:bool) {
+layout_reflect :: proc(runner:^Runner,slangc,root,copied,source_folder,compiled_path,name,temporary:string,allocator:=context.allocator,attributes:=false,vfx:=false,prelude:="",said:^[]Diagnostic=nil,plugins:[]string=nil,memory:=Memory{}) -> (layouts:[2]Layout,error:string,compile_error:bool) {
     TYPES :: [2]string{"Parameters","Attributes"}
     types:=TYPES
     count:=2 if attributes else 1
@@ -409,7 +409,7 @@ layout_reflect :: proc(runner:^Runner,slangc,root,copied,source_folder,compiled_
         "-reflection-json",reflected,"-o",path_join(temporary,fmt.tprintf("%s.spv",name),allocator=context.temp_allocator),SLANG_DIAGNOSTICS_FLAG,
     )
     for folder in plugins {append(&command,"-I",folder)}
-    output,ran:=tool_run(runner,command[:],context.temp_allocator)
+    output,ran:=tool_run(runner,command[:],context.temp_allocator,memory)
     if !ran {
         diagnostics:=slang_diagnostics(output,allocator)
         if said!=nil {said^=diagnostics}
@@ -702,7 +702,7 @@ PROBE_BINDING :: 100 // past those of what a program includes
 // keep every argument, so two sources with the same hash give the same alpha.
 // ok: the compiler ran; the reflection says why when it did not.
 @(private)
-alpha_probe :: proc(runner:^Runner,slangc,root,copied,source_folder,compiled_path,name,temporary:string,plugins:[]string=nil) -> (coverage:bool,alpha:[64]u8,ok:bool) {
+alpha_probe :: proc(runner:^Runner,slangc,root,copied,source_folder,compiled_path,name,temporary:string,plugins:[]string=nil,memory:=Memory{}) -> (coverage:bool,alpha:[64]u8,ok:bool) {
     wrapper:=path_join(temporary,fmt.tprintf("%s.alpha.slang",name),allocator=context.temp_allocator)
     compiled:=path_join(temporary,fmt.tprintf("%s.alpha.spv",name),allocator=context.temp_allocator)
     text:=strings.builder_make(context.temp_allocator)
@@ -741,7 +741,7 @@ alpha_probe :: proc(runner:^Runner,slangc,root,copied,source_folder,compiled_pat
     append(&command,"-entry","probe_main","-o",compiled,"-warnings-disable","40100,41035")
     append(&command,..SPIRV_FLAGS)
     append(&command,..SLANG_OPTIMIZATION)
-    if _,ran:=tool_run(runner,command[:],context.temp_allocator);!ran {return}
+    if _,ran:=tool_run(runner,command[:],context.temp_allocator,memory);!ran {return}
     spirv,read_error:=os.read_entire_file(compiled,context.temp_allocator)
     if read_error!=nil {return}
     coverage=!probe_stores_constant(spirv,transmute(u32)PROBE_ALPHA)
@@ -763,7 +763,7 @@ alpha_probe :: proc(runner:^Runner,slangc,root,copied,source_folder,compiled_pat
 // resolve of one without any evaluates no quad again (vis_resolve.frag).
 // ok: the compiler ran.
 @(private)
-derivative_probe :: proc(runner:^Runner,slangc,root,copied,source_folder,compiled_path,name,temporary:string,plugins:[]string=nil) -> (derivatives,ok:bool) {
+derivative_probe :: proc(runner:^Runner,slangc,root,copied,source_folder,compiled_path,name,temporary:string,plugins:[]string=nil,memory:=Memory{}) -> (derivatives,ok:bool) {
     wrapper:=path_join(temporary,fmt.tprintf("%s.derivatives.slang",name),allocator=context.temp_allocator)
     compiled:=path_join(temporary,fmt.tprintf("%s.derivatives.spv",name),allocator=context.temp_allocator)
     text:=strings.builder_make(context.temp_allocator)
@@ -802,7 +802,7 @@ derivative_probe :: proc(runner:^Runner,slangc,root,copied,source_folder,compile
     append(&command,"-entry","probe_main","-o",compiled,"-warnings-disable","40100,41035")
     append(&command,..SPIRV_FLAGS)
     append(&command,..SLANG_OPTIMIZATION)
-    if _,ran:=tool_run(runner,command[:],context.temp_allocator);!ran {return}
+    if _,ran:=tool_run(runner,command[:],context.temp_allocator,memory);!ran {return}
     spirv,read_error:=os.read_entire_file(compiled,context.temp_allocator)
     if read_error!=nil {return}
     return spirv_takes_derivatives(spirv),true
@@ -968,6 +968,7 @@ Program_Reflection :: struct {
     runner:^Runner,
     slangc,root,copied,temporary:string,
     plugins:[]string,
+    memory:Memory, // of each of its compilations
 }
 
 // Reflects the layouts of the entries the cache lacks, each in a compilation
@@ -989,8 +990,8 @@ programs_reflect :: proc(r:^Program_Reflection,workers:int) {
             os.make_directory_all(temporary)
             compiled_path:=path_join(r.copied,e.relative,allocator=context.temp_allocator)
             if !e.probed && e.error=="" {
-                coverage,alpha,ran:=alpha_probe(r.runner,r.slangc,r.root,r.copied,e.folder,compiled_path,e.name,temporary,r.plugins)
-                derivatives,derived:=derivative_probe(r.runner,r.slangc,r.root,r.copied,e.folder,compiled_path,e.name,temporary,r.plugins)
+                coverage,alpha,ran:=alpha_probe(r.runner,r.slangc,r.root,r.copied,e.folder,compiled_path,e.name,temporary,r.plugins,r.memory)
+                derivatives,derived:=derivative_probe(r.runner,r.slangc,r.root,r.copied,e.folder,compiled_path,e.name,temporary,r.plugins,r.memory)
                 if ran {e.coverage,e.alpha=coverage,alpha}
                 // Without its probe a program counts as taking derivatives.
                 e.derivatives=derivatives || !derived
@@ -1001,7 +1002,7 @@ programs_reflect :: proc(r:^Program_Reflection,workers:int) {
                 }
             }
             if e.cached {continue}
-            layouts,problem,compile_error:=layout_reflect(r.runner,r.slangc,r.root,r.copied,e.folder,compiled_path,e.name,temporary,allocator,attributes=e.vfx,vfx=e.vfx,prelude=e.prelude,plugins=r.plugins)
+            layouts,problem,compile_error:=layout_reflect(r.runner,r.slangc,r.root,r.copied,e.folder,compiled_path,e.name,temporary,allocator,attributes=e.vfx,vfx=e.vfx,prelude=e.prelude,plugins=r.plugins,memory=r.memory)
             if problem!="" {
                 e.error=problem
                 // The same sources do not compile the next time either.
@@ -1029,11 +1030,11 @@ programs_reflect :: proc(r:^Program_Reflection,workers:int) {
 // include/programs, so the generation compiles without the project. The reflection of a program is kept in the folder
 // `cache`, named by the digest of what the program is compiled from, and
 // reused wherever that digest comes up again; what the cache lacks is
-// reflected by up to `workers` compilations at once. files: what the
+// reflected by up to `workers` compilations at once, each with memory. files: what the
 // generation has read already; nil reads everything here. A program of a
 // project or of a plugin that fails is left out and named in the catalog; one
 // of the engine that fails is an error. All results are in `allocator`.
-programs_generate :: proc(runner:^Runner,root,project,output,slangc,version,cache:string,sources:[]Source={},allocator:=context.allocator,files:^Sources=nil,workers:=1) -> (catalog:Catalog,error:string) {
+programs_generate :: proc(runner:^Runner,root,project,output,slangc,version,cache:string,sources:[]Source={},allocator:=context.allocator,files:^Sources=nil,workers:=1,memory:=Memory{}) -> (catalog:Catalog,error:string) {
     local:Sources
     files:=files
     if files==nil {
@@ -1179,7 +1180,7 @@ programs_generate :: proc(runner:^Runner,root,project,output,slangc,version,cach
             }
         }
     }
-    reflection:=Program_Reflection{entries=entries[:],runner=runner,slangc=slangc,root=root,copied=copied,temporary=temporary,plugins=plugin_folders[:]}
+    reflection:=Program_Reflection{entries=entries[:],runner=runner,slangc=slangc,root=root,copied=copied,temporary=temporary,plugins=plugin_folders[:],memory=memory}
     programs_reflect(&reflection,workers)
     defer for &e in entries {virtual.arena_destroy(&e.arena)}
     broken:=make([dynamic]string,context.temp_allocator)
