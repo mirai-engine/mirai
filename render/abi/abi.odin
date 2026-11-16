@@ -180,8 +180,75 @@ SHADOW_MAP_ORTHOGRAPHIC    :: 1
 // The side of a page of a map, texels, and the most pages along a side of one.
 SHADOW_PAGE                :: u32(128)
 SHADOW_MAP_PAGES           :: 16
-SHADOW_SUN_MAPS            :: 6
+// The levels of the sun, each twice as wide as the one before around the eye.
+SHADOW_SUN_MAPS            :: 14
 SUN_MAP_ROWS               :: SHADOW_SUN_MAPS * SHADOW_MAP_ROWS
+// The maps of a view lie in slots, each a square of SHADOW_MAP_PAGES pages a
+// side of which the pages points read lie in a pool, the atlas, whose side is
+// SHADOW_POOL texels: the levels of the sun, then SHADOW_LIGHT_SLOTS for each
+// light rasterized (the faces of its cube, then the one along a spot).
+SHADOW_POOL                :: u32(4096)
+SHADOW_LIGHT_SLOTS         :: 7
+SHADOW_RASTER_LIGHTS       :: 32
+SHADOW_SLOTS               :: SHADOW_SUN_MAPS + SHADOW_RASTER_LIGHTS * SHADOW_LIGHT_SLOTS
+SHADOW_SLOT_PAGES          :: SHADOW_MAP_PAGES * SHADOW_MAP_PAGES
+// The table of the pages, an entry for each page of each slot: the page of
+// the pool + 1 that holds it (0: none), and SHADOW_PAGE_CACHED while what
+// stays is drawn in the cache there and SHADOW_PAGE_COMPOSED while the atlas
+// holds it with what moves. The atlas keeps a copy of it, an entry a texel as
+// a depth of entry / SHADOW_ENTRY_SCALE, in its last SHADOW_TABLE_PAGES pages,
+// SHADOW_TABLE_WIDTH texels a row from SHADOW_TABLE_X, SHADOW_TABLE_Y.
+SHADOW_PAGE_CACHED         :: u32(1) << 16
+SHADOW_PAGE_COMPOSED       :: u32(1) << 17
+SHADOW_ENTRY_SCALE         :: f32(1 << 20)
+SHADOW_TABLE_PAGES         :: 4
+SHADOW_TABLE_WIDTH         :: SHADOW_TABLE_PAGES * SHADOW_PAGE
+SHADOW_TABLE_X             :: SHADOW_POOL - SHADOW_TABLE_WIDTH
+SHADOW_TABLE_Y             :: SHADOW_POOL - SHADOW_PAGE
+SHADOW_POOL_PAGES          :: (SHADOW_POOL / SHADOW_PAGE) * (SHADOW_POOL / SHADOW_PAGE) - SHADOW_TABLE_PAGES
+SHADOW_REQUESTS            :: 4096 // the most pages a frame can ask for that are not in the pool
+// The words of the buffer of the pages of a view (render.Shadow_Raster.pages):
+// the table, the slot of the table each page of the pool holds + 1, and the
+// frame it was last read in; then what each frame writes again: a bit for
+// each page of each slot that points read, that the cache draws, that the
+// atlas composes and that the pool holds ready, SHADOW_MASK_WORDS a slot; a
+// word for each slot of each of the last three, whether it has one; the
+// counts (SHADOW_COUNT_*) and the arguments of the dispatches and draws
+// (SHADOW_ARGS_*); then the slots of each of the last three, the pages the
+// cache draws and the atlas composes, those asked for, and the pages of the
+// pool free and those no point reads.
+SHADOW_MASK_WORDS          :: SHADOW_SLOT_PAGES / 32
+SHADOW_WORDS_TABLE         :: 0
+SHADOW_WORDS_OWNER         :: SHADOW_WORDS_TABLE + SHADOW_SLOTS * SHADOW_SLOT_PAGES
+SHADOW_WORDS_AGE           :: SHADOW_WORDS_OWNER + SHADOW_POOL_PAGES
+SHADOW_WORDS_NEEDED        :: SHADOW_WORDS_AGE + SHADOW_POOL_PAGES
+SHADOW_WORDS_DRAWN         :: SHADOW_WORDS_NEEDED + SHADOW_SLOTS * SHADOW_MASK_WORDS
+SHADOW_WORDS_COMPOSE       :: SHADOW_WORDS_DRAWN + SHADOW_SLOTS * SHADOW_MASK_WORDS
+SHADOW_WORDS_READY         :: SHADOW_WORDS_COMPOSE + SHADOW_SLOTS * SHADOW_MASK_WORDS
+SHADOW_WORDS_HAS           :: SHADOW_WORDS_READY + SHADOW_SLOTS * SHADOW_MASK_WORDS
+SHADOW_WORDS_COUNTS        :: SHADOW_WORDS_HAS + 3 * SHADOW_SLOTS
+SHADOW_WORDS_ARGS          :: SHADOW_WORDS_COUNTS + 16
+SHADOW_WORDS_SLOTS         :: SHADOW_WORDS_ARGS + 20
+SHADOW_WORDS_JOBS          :: SHADOW_WORDS_SLOTS + 3 * SHADOW_SLOTS
+SHADOW_WORDS_REQUESTS      :: SHADOW_WORDS_JOBS + 2 * SHADOW_POOL_PAGES
+SHADOW_WORDS_FREE          :: SHADOW_WORDS_REQUESTS + SHADOW_REQUESTS
+SHADOW_WORDS_SPARE         :: SHADOW_WORDS_FREE + SHADOW_POOL_PAGES
+SHADOW_WORDS               :: SHADOW_WORDS_SPARE + SHADOW_POOL_PAGES
+// The counts: pages the cache draws, the atlas composes, asked for, free in
+// the pool, of the pool no point read, asked for and left out; slots with
+// pages the cache draws, the atlas composes, the pool holds ready.
+SHADOW_COUNT_DRAWN         :: 0
+SHADOW_COUNT_COMPOSED      :: 1
+SHADOW_COUNT_REQUESTS      :: 2
+SHADOW_COUNT_FREE          :: 3
+SHADOW_COUNT_SPARE         :: 4
+SHADOW_COUNT_LEFT          :: 5
+SHADOW_COUNT_SLOTS         :: 6 // three
+// The arguments: the dispatches of the cull of the cache, of the atlas and of
+// the glass, three words each, then the draws of the pages the cache clears
+// and the atlas copies from it, four each.
+SHADOW_ARGS_DISPATCH       :: 0
+SHADOW_ARGS_DRAW           :: 9
 REFLECTION_SHARED_ROUGHNESS :: f32(0.15)
 
 // The probe volume, and the rays of its contact occlusion at each pixel.

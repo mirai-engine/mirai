@@ -477,7 +477,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     extension_readbacks_take(r,slot)
     r.stats.counters=r.counters.counters[:r.counters.count]
     r.stats.ui_vertices_dropped,r.stats.debug_vertices_dropped=0,0
-    r.stats.shadow_pages_drawn,r.stats.shadow_pages_composed,r.stats.shadow_movers=0,0,0
+    r.stats.shadow_movers=0
     r.stats.ui_shapes_dropped,r.stats.ui_layers_dropped=0,0
     r.ui_shape_written,r.ui_shape_cache_count,r.ui_vertex_cache_count=0,0,0
     ui_written:=0
@@ -1253,10 +1253,10 @@ pass_direct :: proc(p: ^Pass) -> bool {
 		cells       = cells if s.light_grid_buffer != 0 else 0,
 	}
 	points := [2]u32{(t.width + scale - 1) / scale, (t.height + scale - 1) / scale}
-	params.shadow = shadow_maps_pass(p)
+	grid := or_dummy(r, s.light_grid_buffer)
+	params.shadow = shadow_maps_pass(p, &params, scale, grid)
 	atlas := t.shadow_raster.atlas if params.shadow.on != 0 else r.dummy_texture
 	table := r.shadow_buffers.table if params.shadow.on != 0 else r.dummy_buffer
-	grid := or_dummy(r, s.light_grid_buffer)
 	unlayered := rhi.Shader_Constants{} if p.layered else {DIRECT_MAPS_COMP_UNLAYERED}
 	#assert(DIRECT_MAPS_COMP_UNLAYERED == DIRECT_SAMPLES_COMP_UNLAYERED && DIRECT_MAPS_COMP_UNLAYERED == DIRECT_FILTER_COMP_UNLAYERED)
 	// The light of what the maps hold, while the view drew them: the samples

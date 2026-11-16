@@ -2,16 +2,17 @@
 //! variant tested MIRAI_SHADOW_TESTED=1
 //! variant tint MIRAI_SHADOW_TESTED=1 MIRAI_SHADOW_TINT=1
 //! variant glass MIRAI_SHADOW_TESTED=1 MIRAI_SHADOW_GLASS=1
-//! variant moved MIRAI_SHADOW_MOVED=1
+//! variant copy MIRAI_SHADOW_COPY=1
+//! variant table MIRAI_SHADOW_TABLE=1
 // The depth alone of shadow_map.vert. tested: of a masked or blended
 // material, only where it is there, as a shadow ray asks it (hit_covers).
 // tint: what each face of a blended material in front of the depth of the
 // atlas lets through of the light, multiplied into the tint of the maps, with
 // the alpha of a face whose program gives its color 0 (shadow_tint_programmed);
 // glass: the depth of the nearest of those faces (shadow_tint of
-// shadow_maps.slang). moved: what a square of the cache held, from a copy of
-// it, its texels moved as far as the map did (shadow_map.vert square), far
-// where it held nothing; or a page of the cache, unmoved, into the atlas.
+// shadow_maps.slang). copy: a page of the cache into the atlas
+// (shadow_map.vert square, its texture bound as held); table: the table of
+// the pages into the last pages of the atlas, an entry a texel.
 #ifdef MIRAI_SHADOW_TESTED
 #ifdef MIRAI_SHADOW_TINT
 #define MIRAI_RAY_FILTERS
@@ -55,15 +56,19 @@ void main([[vk::location(0)]] nointerpolation uint2 place : PLACE, [[vk::locatio
     if (!hit_covers(place.x, place.y, bary, reach, BLEND_PASSES)) discard;
 }
 #endif
-#elif defined(MIRAI_SHADOW_MOVED)
+#elif defined(MIRAI_SHADOW_COPY)
 #include "common.slang"
 [[vk::binding(SLOT_PASS2, 0)]] Texture2D<float4> held : register(MIRAI_REGISTER(t, SLOT_PASS2), space0);
 [shader("fragment")]
-float main(float4 position : SV_Position, [[vk::location(0)]] nointerpolation int4 square : SQUARE, [[vk::location(1)]] nointerpolation uint side : SIDE) : SV_Depth {
-    int2 texel = int2(floor(position.xy)) - square.xy;
-    int2 from = texel + int2(square.z, -square.w);
-    if (any(from < 0) || any(from >= int(side))) return 0.0;
-    return held.Load(int3(square.xy + from, 0)).r;
+float main(float4 position : SV_Position) : SV_Depth { return held.Load(int3(int2(floor(position.xy)), 0)).r; }
+#elif defined(MIRAI_SHADOW_TABLE)
+#include "common.slang"
+[[vk::binding(SLOT_PASS3, 0)]] StructuredBuffer<uint> pages : register(MIRAI_REGISTER(t, SLOT_PASS3), space0);
+[shader("fragment")]
+float main(float4 position : SV_Position) : SV_Depth {
+    uint2 at = uint2(floor(position.xy)) - uint2(SHADOW_TABLE_X, SHADOW_TABLE_Y);
+    uint index = at.y * SHADOW_TABLE_WIDTH + at.x;
+    return index < SHADOW_SLOTS * SHADOW_SLOT_PAGES ? float(pages[index]) / SHADOW_ENTRY_SCALE : 0.0;
 }
 #else
 [shader("fragment")]

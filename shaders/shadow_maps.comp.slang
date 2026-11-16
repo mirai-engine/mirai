@@ -12,6 +12,7 @@
 #include "trace.slang"
 #include "cut.slang"
 #include "shadow_maps.slang"
+#define SHADOW_PAGES_SLOT SLOT_PASS6
 #include "shadow_cull.slang"
 #include "cull_stats.slang"
 #define MIRAI_GROUP_X 256
@@ -46,7 +47,7 @@ bool instance_moves(uint instance) {
 void main(uint3 id : SV_DispatchThreadID) {
     uint instance = id.x, job = id.y;
     if (instance >= params.instances || job >= params.maps) return;
-    uint map = shadow_word(shadow_data, params.list + job);
+    uint map = shadow_pages[params.list + job];
     if (params.listed != 0u) {
         // The range of the thread: the last whose first thread is not past it.
         uint low = 0u, high = params.ranges;
@@ -76,7 +77,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     float3 low = inst.bounds_min.xyz - reach, high = inst.bounds_max.xyz + reach;
     uint4 pages;
     if (!shadow_map_reaches(m, low, high) || shadow_map_unseen(m, low, high) || !shadow_page_rect(m, low, high, pages)
-        || !shadow_pages_drawn(shadow_data, map, pages)) return;
+        || !shadow_pages_drawn(map, pages)) return;
     Mesh mesh = meshes[instance_mesh(inst)];
     if (mesh.vertex_count == 0u || mesh.cluster_count == 0u) return;
     // A batch of a deformable sways as far as its mesh says (render.batch_sway):

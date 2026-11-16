@@ -274,8 +274,6 @@ Stats :: struct {
 	cpu_record_ms:     f32, // uploads and the commands of every pass
 	cpu_end_ms:        f32, // rhi.frame_end: submit and present
 	generated:         bool, // the frame drew an image the window shows before its own (frame generation)
-	shadow_pages_drawn:     u32, // of the last frame: the pages of SHADOW_PAGE texels a side the caches of the maps of the shadows drew again, of every view
-	shadow_pages_composed:  u32, // of the last frame: the pages of the atlases of the maps composed again from their caches and what moves
 	shadow_movers:          u32, // of the last frame: the movers the maps drew, which their caches leave out
 	ui_vertices_dropped:    u32, // of the last frame: UI vertices beyond the capacity
 	ui_shapes_dropped:      u32,
@@ -296,7 +294,7 @@ Pipeline_Id :: enum {
 	Ddgi_Trace, Ddgi_Irradiance, Ddgi_Distance, Ddgi_Keep,
 	Ddgi_Relocate, Ddgi_Select, Ddgi_Touch, Ddgi_Mark, Contact, Contact_Light, Contact_Pixels, Composite, Taa, Hiz,
 	Exposure_Histogram, Exposure_Adapt, Tonemap, Tonemap_Wide, Ui, Thumbnail, Thumbnail_Values, Impostor, Preview_Backdrop, Blit, Highlight, Highlight_Filter, Reflect, Translucent, Reflect_Resolve,
-	Shadow_Maps, Shadow_Clusters, Shadow_Map, Shadow_Map_Tested, Shadow_Map_Tint, Shadow_Map_Glass, Shadow_Map_Clear, Shadow_Map_Moved, // the cull of the maps of the shadows by instance and by cluster, their draws by what each writes, and the squares of the cache they clear or move
+	Shadow_Maps, Shadow_Clusters, Shadow_Map, Shadow_Map_Tested, Shadow_Map_Tint, Shadow_Map_Glass, Shadow_Map_Clear, Shadow_Map_Copy, Shadow_Map_Table, Shadow_Mark, Shadow_Pages, // the cull of the maps of the shadows by instance and by cluster, their draws by what each writes, the pages of the cache they clear and the atlas copies, the table of the pages, the marks of the points and the table
 	Glass_Layer, Glass_Layer_Layers, Glass_Filter, Glass, Glass_Light, Glass_Levels, Glass_Mean, Glass_Inside,
 	Gbuffer_Plain, // without the reflectance target: no reflective instance in the frustum
 	Gbuffer_Layers, Gbuffer_Layers_Clip, Gbuffer_Nested_Layers, // with the layers target: an instance with layers in the frustum
@@ -369,7 +367,6 @@ Frame_Targets :: struct {
 		direct_marks:            rhi.Texture, // 1 where a sample of the direct light met what changed, for TAA
 	},
 	using shadow_targets: struct {
-		shadow_held:             rhi.Texture, // a copy of the cache of the maps of the view, in a frame where the texels of a cascade move (shadow_maps_pass)
 		shadow_tint:             rhi.Texture, // what the glass in front of it lets through of the light of each texel, while glass colors light
 		shadow_glass:            rhi.Texture, // the depth of the nearest of that glass
 	},
@@ -1042,10 +1039,16 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 		vertex = &r.shader_codes[.Shadow_Map_Square_Vert], fragment = &r.shader_codes[.Shadow_Map_Frag],
 		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Always, cull = .None, name = "shadow map squares",
 	})
-	graphics(list, r, .Shadow_Map_Moved, {
-		vertex = &r.shader_codes[.Shadow_Map_Square_Vert], fragment = &r.shader_codes[.Shadow_Map_Moved_Frag],
-		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Always, cull = .None, name = "shadow map squares moved",
+	graphics(list, r, .Shadow_Map_Copy, {
+		vertex = &r.shader_codes[.Shadow_Map_Square_Vert], fragment = &r.shader_codes[.Shadow_Map_Copy_Frag],
+		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Always, cull = .None, name = "shadow map pages copied",
 	})
+	graphics(list, r, .Shadow_Map_Table, {
+		vertex = &r.shader_codes[.Shadow_Map_Square_Vert], fragment = &r.shader_codes[.Shadow_Map_Table_Frag],
+		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Always, cull = .None, name = "shadow map table",
+	})
+	compute(list, r, .Shadow_Mark, .Shadow_Mark_Comp)
+	compute(list, r, .Shadow_Pages, .Shadow_Pages_Comp)
 	compute(list, r, .Shadow_Maps, .Shadow_Maps_Comp)
 	compute(list, r, .Shadow_Clusters, .Shadow_Clusters_Comp)
 	graphics(list, r, .Tonemap, {
@@ -1665,6 +1668,7 @@ shared_targets_release :: proc(r: ^Renderer, textures: []rhi.Texture) {
 destroy_targets :: proc(r: ^Renderer, t: ^Targets) {
 	d := r.device
 	for tex in targets_textures(t) {if tex != 0 {rhi.texture_destroy(d, tex)}}
+	if t.shadow_raster.pages != 0 {rhi.buffer_destroy(d, t.shadow_raster.pages)}
 	shared_targets_release(r, targets_frame(&t.frame))
 	destroy_glass_targets(r, t)
 	out_w, out_h := t.output_width, t.output_height

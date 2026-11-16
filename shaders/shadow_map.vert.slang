@@ -2,15 +2,15 @@
 // tested: the clusters of the instances with masked or blended materials,
 // which shadow_map.frag draws only where their material is there.
 //! variant tested MIRAI_SHADOW_TESTED=1
-// square: of each word of a list from params.list, a page of a map to clear
-// (shadow_page_word), or with params.moving the square of a map, and how many
-// texels its cache moves along x and y plus 2048, for shadow_map.frag to
-// move.
+// square: of each word of a list of the buffer of the pages from
+// params.list, its page of the pool (shadow_page_word), for shadow_map.frag
+// to clear or copy; with params.moving 2, the table of the pages, which the
+// atlas keeps in its last pages.
 //! variant square MIRAI_SHADOW_SQUARE=1
-// The depth of the scene from a light into the square of one of its maps in
-// the atlas (shadow_maps.slang): an instance for each page of a map a
-// cluster covers (shadow_clusters.comp). The clip distances keep its
-// triangles in the page, which the atlas maps to its part of the square.
+// The depth of the scene from a light into the pages of one of its maps in
+// the pool (shadow_maps.slang): an instance for each page of a map a cluster
+// covers (shadow_clusters.comp). The clip distances keep its triangles in the
+// page, which the table maps to its page of the pool.
 #include "gbuffer_vertex.slang"
 #include "shadow_maps.slang"
 // The clusters to draw: the instance, the cluster, the page (shadow_page_word), and 1 for one at rest.
@@ -18,16 +18,12 @@
 [[vk::binding(SLOT_PASS1, 0)]] StructuredBuffer<uint4> shadow_data : register(MIRAI_REGISTER(t, SLOT_PASS1), space0);
 // The tested variant draws the clusters of masked materials, and those of
 // glass for the tint and the nearest glass (params.glass).
+#define SHADOW_PAGES_SLOT SLOT_PASS3
 #include "shadow_cull.slang"
 
 struct Shadow_Vertex {
     float4 position : SV_Position;
     float clip[4] : SV_ClipDistance0;
-#ifdef MIRAI_SHADOW_SQUARE
-    // The corner of the square, and how far its texels move.
-    [[vk::location(0)]] nointerpolation int4 square : SQUARE;
-    [[vk::location(1)]] nointerpolation uint side : SIDE;
-#endif
 #ifdef MIRAI_SHADOW_TESTED
     // The instance and the primitive of the triangle, where on it the point
     // is, and how far a ray that reads its material as coarsely as a texel of
@@ -51,18 +47,19 @@ Shadow_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vul
     for (uint i = 0u; i < 4u; i++) output.clip[i] = -1.0;
     output.position = float4(2.0, 2.0, 2.0, 1.0);
 #ifdef MIRAI_SHADOW_SQUARE
-    output.square = int4(0);
-    output.side = 0u;
-    if (instance_id >= params.maps || vertex_id >= 6u) return output;
-    uint word = shadow_word(shadow_data, params.list + instance_id);
-    Shadow_Map square = shadow_map_at(shadow_data, params.rows, word & 0xFFu);
+    if (vertex_id >= 6u) return output;
     float2 at = float2(vertex_id == 1u || vertex_id >= 4u ? 1.0 : 0.0, vertex_id == 2u || vertex_id == 3u || vertex_id == 5u ? 0.0 : 1.0);
-    uint4 window = params.moving != 0u ? uint4(0u, 0u, square.rect.zz) : shadow_page_window(square, shadow_page_of(word));
-    float2 texel = float2(square.rect.xy) + lerp(float2(window.xy), float2(window.zw), at);
+    float4 rect = float4(SHADOW_TABLE_X, SHADOW_TABLE_Y, SHADOW_POOL, SHADOW_POOL);
+    if (params.moving != 2u) {
+        uint word = shadow_pages[params.list + instance_id];
+        Shadow_Map square = shadow_map_at(shadow_data, params.rows, shadow_page_map(word));
+        uint2 corner;
+        if (!shadow_page_pool(square, shadow_page_of(word), corner)) return output;
+        rect = float4(float2(corner), float2(corner + SHADOW_PAGE));
+    }
+    float2 texel = lerp(rect.xy, rect.zw, at);
     for (uint i = 0u; i < 4u; i++) output.clip[i] = 1.0;
-    output.position = float4(2.0 * texel.x / float(frame.sun_maps.z) - 1.0, 1.0 - 2.0 * texel.y / float(frame.sun_maps.z), 0.0, 1.0);
-    output.square = int4(square.rect.xy, params.moving != 0u ? int2(int((word >> 8u) & 0xFFFu) - 2048, int(word >> 20u) - 2048) : int2(0));
-    output.side = square.rect.z;
+    output.position = float4(2.0 * texel.x / float(SHADOW_POOL) - 1.0, 1.0 - 2.0 * texel.y / float(SHADOW_POOL), 0.0, 1.0);
     return output;
 #else
 #ifdef MIRAI_SHADOW_TESTED
@@ -97,9 +94,15 @@ Shadow_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vul
     output.clip[1] = edges.z * clip.w - clip.x;
     output.clip[2] = clip.y - edges.y * clip.w;
     output.clip[3] = edges.w * clip.w - clip.y;
-    // From -1 to 1 over the map to its square of the atlas, row 0 on top.
-    float side = float(m.rect.z) / float(frame.sun_maps.z);
-    float2 corner = float2(m.rect.xy) / float(frame.sun_maps.z);
+    // From -1 to 1 over the map to its page of the pool, row 0 on top: where
+    // the corner of its square would lie were the page where it is.
+    uint2 pool;
+    if (!shadow_page_pool(m, shadow_page_of(entry.z), pool)) {
+        for (uint i = 0u; i < 4u; i++) output.clip[i] = -1.0;
+        return output;
+    }
+    float side = float(m.rect.z) / float(SHADOW_POOL);
+    float2 corner = (float2(pool) - float2(page.xy)) / float(SHADOW_POOL);
     output.position = float4((2.0 * corner.x + side) * clip.w - clip.w + side * clip.x,
         clip.w - (2.0 * corner.y + side) * clip.w + side * clip.y, clip.z, clip.w);
 #ifdef MIRAI_SHADOW_TESTED

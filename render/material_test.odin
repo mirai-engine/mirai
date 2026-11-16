@@ -1260,8 +1260,13 @@ material_mask_draws_only_masked_clusters_with_their_coverage_into_the_maps :: pr
 	side := Camera{position = {0, 3, 6}, forward = {0, -3, -6}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	s := &r.scene
 	opaque, tested, masked_opaque, opaque_tested := 0, 0, 0, 0
-	for _ in 0 ..< 3 {
+	// It moves each frame: the last round of the maps culls it, as what moves.
+	for k in 0 ..< 4 {
+		moved := placed(2, 1)
+		moved[0, 3] += 0.001 * f32(k % 2)
+		testing.expect(t, scene_move(r, {1}, {moved}))
 		frames(t, &f, side, 1)
+		if k < 2 {continue}
 		rhi.device_wait_idle(f.device)
 		room := s.cull_capacity[.Shadow_Entries]
 		state: [1]Gpu_Shadow_State

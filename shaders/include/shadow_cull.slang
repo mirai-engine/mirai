@@ -7,16 +7,16 @@
 #define MIRAI_SHADOW_CULL_SLANG
 #include "cut.slang"
 #include "shadow_maps.slang"
-// instances: of the scene and of the batches drawn; maps: those the round
-// culls for, whose indices lie in the buffer of the maps from word `list`,
-// and the pages it draws of each a bit each from word `masks`
-// (SHADOW_MASK_WORDS a map, by its index);
+// instances: of the scene and of the batches drawn; maps: the slots, of
+// which those the round culls for lie in the buffer of the pages from word
+// `list`, and the pages it draws of each a bit each from word `masks`
+// (SHADOW_MASK_WORDS a slot);
 // rows: of the words of the lights in the buffer of the maps; glass: 1 while
 // the maps keep the tint of glass, and for the draws of the tint and of the
 // nearest glass; chunk_capacity, entry_capacity: of the lists of the chunks
 // and of the clusters (render.Cull_List); moving: 1 the round of the casters
 // that move (render.shadow_maps_pass), 0 that of those that stay, 2 that of
-// the glass alone; movers:
+// the glass alone; of the draws of pages, 0 those of a list, 2 the table; movers:
 // words of the bits of what moves, the instances of the scene then the
 // batches drawn; listed: 1 while the round culls the `ranges` ranges of the
 // movers after those words alone, `instances` in all (render.shadow_maps_plan).
@@ -44,12 +44,22 @@ uint shadow_entry(uint draw, uint slot) { return (draw == SHADOW_DRAW_OPAQUE ? 0
 
 uint shadow_word(StructuredBuffer<uint4> data, uint word) { return data[word >> 2u][word & 3u]; }
 
-#define SHADOW_MASK_WORDS (SHADOW_MAP_PAGES * SHADOW_MAP_PAGES / 32u)
+// The buffer of the pages of the view (render.Shadow_Raster.pages,
+// shadow_pages.comp): the table, the slots of a round and the pages it draws.
+[[vk::binding(SHADOW_PAGES_SLOT, 0)]] StructuredBuffer<uint> shadow_pages : register(MIRAI_REGISTER(t, SHADOW_PAGES_SLOT), space0);
 
-// Whether the round draws a page of a map (render.Shadow_Mask).
-bool shadow_page_drawn(StructuredBuffer<uint4> data, uint map, uint2 page) {
+// Whether the round draws a page of a map, a bit each by its place in its map.
+bool shadow_page_drawn(uint map, uint2 page) {
     uint bit = page.y * SHADOW_MAP_PAGES + page.x;
-    return ((shadow_word(data, params.masks + map * SHADOW_MASK_WORDS + (bit >> 5u)) >> (bit & 31u)) & 1u) != 0u;
+    return ((shadow_pages[params.masks + map * SHADOW_MASK_WORDS + (bit >> 5u)] >> (bit & 31u)) & 1u) != 0u;
+}
+
+// The first texel of the page of the pool a page of a map lies at; false
+// where it has none.
+bool shadow_page_pool(Shadow_Map m, uint2 page, out uint2 corner) {
+    uint e = shadow_pages[m.rect.x * SHADOW_SLOT_PAGES + shadow_page_entry(m.rect, page)];
+    corner = shadow_pool_corner((e & 0xFFFFu) - 1u);
+    return (e & 0xFFFFu) != 0u;
 }
 
 // A page of a map as a word: the map, its column and its row (render.shadow_page_word).
@@ -90,10 +100,10 @@ bool shadow_page_rect(Shadow_Map m, float3 low, float3 high, out uint4 rect) {
 }
 
 // Whether a round draws a page of a map within a rect of its pages.
-bool shadow_pages_drawn(StructuredBuffer<uint4> data, uint map, uint4 rect) {
+bool shadow_pages_drawn(uint map, uint4 rect) {
     for (uint y = rect.y; y <= rect.w; y++) {
         for (uint x = rect.x; x <= rect.z; x++) {
-            if (shadow_page_drawn(data, map, uint2(x, y))) return true;
+            if (shadow_page_drawn(map, uint2(x, y))) return true;
         }
     }
     return false;
