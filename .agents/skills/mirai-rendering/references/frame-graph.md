@@ -113,9 +113,8 @@ or interleave its own passes.
 7. **ddgi**: with indirect light, in the first window view, the
    [probe volume](gi.md#probe-volume) marks the probes that scene changes reach and those that
    pixels use, chooses by priority those it updates and writes their atlases and positions. With
-   a still scene it keeps updating them in turns from [the hits they keep](gi.md#probe-volume),
-   tracing nothing. The animated emission of a Surface program does not count as a change: its
-   hits are traced in every update of their probe.
+   a still scene it updates none but, in turns, those whose rays meet a Surface program that reads
+   the time: its hits are traced in every update of their probe.
 8. **contact**: the [contact occlusion](gi.md#contact-occlusion) traces its short rays at points
    over frames and takes them, with the probe light of each point, to the pixels.
 9. **composite**: `direct + indirect_compose + emission`

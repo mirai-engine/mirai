@@ -10,10 +10,12 @@ import "mirai:render/abi"
 // first), probe_grid of them along x and z and half that along y. A cell of
 // the world keeps its probe while the cascades scroll. Each frame traces at
 // most probe_budget probes (ddgi_select.comp): those a new cell took, those a
-// change reached and, after a change everywhere, the longest untraced against
-// how much the pixels use them. A probe traces the same directions every
-// time, whole and without hysteresis: one of a scene that did not change
-// gives what it gave, and one that did follows at once. One whose light moved
+// change reached and, by turns, the longest untraced against how much the
+// pixels use them of those a change everywhere left behind or whose rays met
+// what changes with nothing that says so (a program that reads the time). A
+// probe traces the same directions every time, whole and without
+// hysteresis: one of a scene that did not change gives what it gave, and one
+// that did follows at once. One whose light moved
 // by more than a hundredth is traced again the next frame, until what its
 // rays find (the probes around) settles.
 //
@@ -89,7 +91,6 @@ Ddgi_State :: struct {
 	corners:            [VOLUME_CASCADES_MAX]Vec4, // of this frame: the place of the lowest probe of each cascade, relative to the origin, w its spacing
 	cells:              [VOLUME_CASCADES_MAX][4]i32, // and its cell of the world
 	center:             Vec3,   // of this frame: where the cascades centre, relative to the origin, off their corners by up to half a cell
-	changed_everywhere: u32,    // frame of the last change everywhere
 	// The update, plus one, in which what rays meet last changed everywhere
 	// and the one in which the lights did: what a probe keeps of its rays
 	// from before is traced or lit again (probe_hits.slang).
@@ -155,7 +156,6 @@ ddgi_ensure :: proc(r: ^Renderer) -> bool {
 		ddgi_release(r)
 		return false
 	}
-	g.changed_everywhere = u32(r.light_frame)
 	g.needs_clear = true
 	g.valid = true
 	return true
@@ -317,7 +317,6 @@ ddgi_update :: proc(p: ^Pass, warm := false, first := true) -> bool {
 	// their rays read from the volume around have settled.
 	awake := u32(math.ceil(PROBE_AWAKE / max(r.delta_time, 1.0 / 240)))
 	changes := &r.scene.changes
-	if changes.all || warm {g.changed_everywhere = frame_number}
 	budget := min(PROBE_WARM_BUDGET, g.total) if warm else g.budget
 	room := ddgi_room(g)
 	if h.clear {
@@ -360,8 +359,8 @@ ddgi_update :: proc(p: ^Pass, warm := false, first := true) -> bool {
 		rhi.cmd_dispatch(cmd, groups(groups(t.width, 8), 8), groups(groups(t.height, 8), 8))
 	}
 	rhi.cmd_fill_buffer(cmd, g.histogram, 0, PROBE_HISTOGRAM_WORDS * 4, 0)
-	Select :: struct {mode, budget, changed_everywhere, frame_number, rays_per_probe, total, awake, whole, room, slots, pad0, pad1: u32}
-	select := Select{budget = budget, changed_everywhere = g.changed_everywhere, frame_number = frame_number, rays_per_probe = g.rays_per_probe, total = g.total, awake = awake, whole = 1 if warm else 0, room = room, slots = h.count}
+	Select :: struct {mode, budget, frame_number, rays_per_probe, total, awake, whole, room, slots, seen_everywhere, lit_everywhere, pad0: u32}
+	select := Select{budget = budget, frame_number = frame_number, rays_per_probe = g.rays_per_probe, total = g.total, awake = awake, whole = 1 if warm else 0, room = room, slots = h.count, seen_everywhere = g.seen_everywhere, lit_everywhere = g.lit_everywhere}
 	for mode in u32(0) ..< 4 {
 		select.mode = mode
 		rhi.cmd_bind_pipeline(cmd, r.pipelines[.Ddgi_Select])

@@ -34,8 +34,10 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     Probe held = probes[probe];
     probes[probe].hits = uint4(kept.stands ? held.hits.x : stamp, kept.stands && !kept.unlit ? held.hits.y : stamp, stamp, 0u);
     uint traced = chosen[chosen_traced(slot)];
-    if (traced == 0u) {
+    uint passing = (traced & CHOSEN_PASSING) != 0u ? PROBE_PASSING : 0;
+    if ((traced & CHOSEN_TRACED) == 0u) {
         probes[probe].frames.x = params.frame_number;
+        probes[probe].cell.w = (held.cell.w & ~PROBE_PASSING) | passing;
         return;
     }
     uint cascade;
@@ -76,8 +78,11 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     if (buried) flags = probe_holds(held, cell) ? (PROBE_VALID | PROBE_BURIED) : PROBE_BURIED;
     // Where it was, its rays are those its slot keeps.
     if (!moved && kept.slot != INVALID) flags |= PROBE_KEPT;
+    flags |= passing;
     probes[probe].offset = float4(offset, held.offset.w);
     probes[probe].cell = int4(cell, flags | (moves + (moved ? PROBE_MOVE : 0)));
-    // A probe that moved is untraced again: the next frame traces it first.
+    // A probe that moved is untraced again: the next frame traces it first, or
+    // where it moved little, as one whose light moves.
     probes[probe].frames.x = length(offset - before) > 0.05 * spacing ? 0u : params.frame_number;
+    if (moved) probes[probe].frames.z = max(held.frames.z, params.frame_number + 1u);
 }

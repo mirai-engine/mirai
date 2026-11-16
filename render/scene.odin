@@ -579,7 +579,7 @@ gpu_material_values :: proc(r: ^Renderer, m: Material_Desc) -> Gpu_Material_Row 
 		for program in renderer_programs(r) {
 			if program.id != m.program_id || program.domain != .Surface {continue}
 			layers += program.layers
-			result.volume.changing = u32(program.timed)
+			result.volume.changing = u32(.Time in program.reads)
 		}
 	}
 	result.layers = transmute(u32)layers

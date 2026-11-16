@@ -11,8 +11,8 @@ import "mirai:std/base"
 // its clusters (surface_vertices__<program>.comp) before the Geometry stage of
 // a frame in which what it reads changed: the transform of the instance, the
 // rows of its materials (their parameters), the values the instance gives
-// over them and, of an animated program, the time. The previous vertices are those the
-// frame before showed. Raster, shadows, rays (the pose's tree and BLAS, refit
+// over them and, of a program whose function vertex reads it, the time. The
+// previous vertices are those the frame before showed. Raster, shadows, rays (the pose's tree and BLAS, refit
 // like a skin's), culling (its box grows by the reach of the programs) and
 // motion vectors read that geometry; no pass moves vertices of its own. A
 // skinned instance is moved in place after its skin, the current and the
@@ -22,7 +22,7 @@ import "mirai:std/base"
 
 @(private)
 Instance_Vertex :: struct {
-	moves, animated: bool,
+	moves, timed: bool,
 	reach:           f32, // the largest of its programs, in the space of the mesh
 	inputs:          u64, // what its vertices are moved from
 }
@@ -44,7 +44,7 @@ instance_vertex :: proc(r: ^Renderer, mesh: Mesh_Record, material: u32, slots: [
 		program := program_of_id(r, values.program_id)
 		if program == nil || program.domain != .Surface || !program.vertex.declared {continue}
 		v.moves = true
-		v.animated ||= program.vertex.animated
+		v.timed ||= .Time in program.vertex.reads
 		reach := program.vertex.reach
 		if offset := program.vertex.reach_offset; offset >= 0 {
 			words := transmute([PROGRAM_PARAMETER_BYTES / 4]u32)values.custom_params
@@ -200,7 +200,7 @@ displaced_prepare :: proc(r: ^Renderer) {
 			v = instance_vertex(r, m^, inst.meta.y, inst.slot_materials, inst.material_values)
 			for row in inst.world {for value in row {v.inputs = base.hash_mix(v.inputs, u64(transmute(u32)value))}}
 			for row in inst.prev_world {for value in row {v.inputs = base.hash_mix(v.inputs, u64(transmute(u32)value))}}
-			if v.animated {v.inputs = base.hash_mix(v.inputs, u64(transmute(u32)r.time) << 32 | u64(transmute(u32)r.previous_time))}
+			if v.timed {v.inputs = base.hash_mix(v.inputs, u64(transmute(u32)r.time) << 32 | u64(transmute(u32)r.previous_time))}
 		}
 		// A skin that starts or stops being moved is posed again.
 		if !skin.displaced && v.moves != skin.moves {skin.moves = v.moves; skin.dirty = true}
@@ -266,7 +266,7 @@ displaced_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
 				origin = origin_cells(r.origin),
 			}
 			if !skin.displaced {params.input, params.input_before, params.before = mesh.posed_word, mesh.previous_word, 2} else if skin.fresh {params.before = 1}
-			if program.vertex.animated {params.time, params.previous_time = r.time, r.previous_time}
+			params.time, params.previous_time = r.time, r.previous_time
 			rhi.cmd_bind_pipeline(cmd, pipeline)
 			rhi.cmd_bind_buffer(cmd, SLOT_INSTANCES, s.instance_buffer)
 			rhi.cmd_bind_buffer(cmd, SLOT_MESHES, s.mesh_buffer)

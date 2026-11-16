@@ -503,7 +503,7 @@ void main(uint3 id : SV_DispatchThreadID) {
 `
 
 @(private="file")
-SWAY_PROGRAM :: "//! mirai surface Sway\n//! vertex animated reach 0.5\nnamespace Sway {struct Parameters {float strength;}; Mirai_Vertex vertex(Mirai_Vertex_Context ctx,Parameters p) {Mirai_Vertex v=mirai_vertex_default(ctx);v.position.x+=sin(ctx.time)*clamp(p.strength,0.0,0.5);return v;} Mirai_Surface evaluate(Mirai_Surface_Context ctx,Parameters p) {return mirai_surface_default(ctx);}}\n"
+SWAY_PROGRAM :: "//! mirai surface Sway\n//! vertex reach 0.5\nnamespace Sway {struct Parameters {float strength;}; Mirai_Vertex vertex(Mirai_Vertex_Context ctx,Parameters p) {Mirai_Vertex v=mirai_vertex_default(ctx);v.position.x+=sin(ctx.time)*clamp(p.strength,0.0,0.5);return v;} Mirai_Surface evaluate(Mirai_Surface_Context ctx,Parameters p) {return mirai_surface_default(ctx);}}\n"
 
 // A stage marked per vertex program is compiled only for the Surface
 // programs with a function vertex, and has no stage of its own: one that
