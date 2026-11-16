@@ -21,8 +21,8 @@ import mm "mirai:std/math"
 // covers whose alpha, times the opacity of the material, reaches its cutoff;
 // cards that cover the same rectangle of the same image share their outlines.
 //
-// A card of a leaf (Outline_Ladder.leaf) is drawn as its finest outline in
-// level 0, and its coarser outlines go to Mesh_Outlines, which the levels
+// A card of a leaf (Outline_Ladder.leaf) is drawn as the finest outline of
+// its ladder in level 0, and its coarser outlines go to Mesh_Outlines, which the levels
 // take as their error allows. A card of a cluster of leaves keeps its mask on
 // its convex outline. An outline is laid on the card through its triangles:
 // the triangles that share one affine map from the image to the mesh (a flat
@@ -48,6 +48,7 @@ Mesh_Outlines :: struct {
 
 Outline_Card :: struct {
     first_triangle,triangle_count:u32, // of level 0: the outline it draws, one island
+    error:f32, // of that outline, in the units of the mesh
 }
 
 Outline_Rung :: struct {
@@ -641,7 +642,7 @@ cutout_rebuild :: proc(c:^Cutout,mesh:^Imported_Mesh,mesh_index:int) {
             ladder:=&c.ladders[layout.shape]
             first:=u32(len(indices))
             cutout_emit(mesh,card,layout.rungs[0],layout.flip,outline_slot,&vertices,&indices)
-            append(&outline_cards,Outline_Card{first/3,(u32(len(indices))-first)/3})
+            append(&outline_cards,Outline_Card{first/3,(u32(len(indices))-first)/3,ladder.rungs[0].error*card.scale})
             for k in 1..<OUTLINE_RUNGS {
                 rung:=Outline_Rung{first_index=u32(len(rung_indices)),error=ladder.rungs[k].error*card.scale}
                 if k>1 && raw_data(layout.rungs[k].indices)==raw_data(layout.rungs[k-1].indices) && raw_data(layout.rungs[k].indices)!=nil {

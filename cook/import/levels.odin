@@ -65,7 +65,7 @@ Lod :: struct {
     first_index,index_count:u32,
     first_vertex,vertex_count:u32,
     first_submesh,submesh_count:u32,
-    error:f32, // how far it is from level 0, in the space of the mesh; 0 for level 0
+    error:f32, // how far it is from level 0 as given, in the space of the mesh; of level 0, how far its outlines draw from what their masks keep
 }
 
 LOD_MIN_TRIANGLES :: 256 // a level with fewer triangles is the last
@@ -440,6 +440,7 @@ levels_simplify :: proc(vertices:[]asset.Vertex,indices:[]u32,skin:[]asset.Skin_
         for i in islands[class.first:][:class.count] {
             if i.card==NONE {continue}
             class.rungs=OUTLINE_RUNGS
+            class.errors[0]=max(class.errors[0],outlines.cards[i.card].error)
             for rung in 1..<OUTLINE_RUNGS {
                 class.errors[rung]=max(class.errors[rung],class.errors[rung-1],outlines.rungs[int(i.card)*(OUTLINE_RUNGS-1)+rung-1].error)
             }
@@ -460,7 +461,10 @@ levels_simplify :: proc(vertices:[]asset.Vertex,indices:[]u32,skin:[]asset.Skin_
     }
     // Where each class is: the outline its islands draw, then how many times it has been halved.
     state:=make([]u32,len(classes),temp)
+    // Level 0 is as far from what the masks keep as its outlines draw.
     allowed:f32
+    for class in classes {allowed=max(allowed,class.errors[0])}
+    out_lods[0].error=allowed
     // A level whose error passes the radius of the mesh would be drawn only where all of it is within a pixel.
     low,high:=positions[0],positions[0]
     for p in positions[:len(vertices)] {low,high=geom.Vec3{min(low.x,p.x),min(low.y,p.y),min(low.z,p.z)},geom.Vec3{max(high.x,p.x),max(high.y,p.y),max(high.z,p.z)}}
@@ -522,7 +526,7 @@ levels_simplify :: proc(vertices:[]asset.Vertex,indices:[]u32,skin:[]asset.Skin_
             rung,depth:=class_step(class,state[c])
             keep:=class_keep(class,depth)
             grow:=class_grow(class,depth,&sums)
-            if state[c]>0 {error=max(error,class_error(class,state[c],&sums))}
+            error=max(error,class_error(class,state[c],&sums))
             for i,at in islands[class.first:][:keep] {
                 grow_of[int(class.first)+at]=grow
                 before:=len(level_corners)

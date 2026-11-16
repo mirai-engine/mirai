@@ -457,8 +457,9 @@ Cluster_Level :: struct {first_range,range_count:u32,error:f32}
 // format of the DAG: level k is group k, and its clusters share the sphere
 // of the mesh (level 0) as own and parent sphere, with the error of level k
 // as own and that of level k+1 as parent (max(f32) for the last). Errors
-// below that of the level before are raised to it. The cut of the DAG then
-// draws one whole level. An error leaves the DAG empty.
+// below that of the level before are raised to it. Level 0 has its own error
+// 0 whatever it is given, so a view however near draws it. The cut of the DAG
+// then draws one whole level. An error leaves the DAG empty.
 cluster_levels_build :: proc(dag:^Cluster_Dag,positions:[]Vec3,indices:[]u32,ranges:[]Cluster_Range,levels:[]Cluster_Level,allocator:=context.allocator) -> (result:Cluster_Error) #no_bounds_check {
     cluster_dag_destroy(dag)
     dag.clusters=make([dynamic]Cluster,allocator)
@@ -497,13 +498,14 @@ cluster_levels_build :: proc(dag:^Cluster_Dag,positions:[]Vec3,indices:[]u32,ran
         error=max(error,level.error)
         next:=max(f32)
         if k+1<len(levels) {next=max(error,levels[k+1].error)}
+        own:=error if k>0 else 0
         clear(&clusters);clear(&cluster_indices)
         for r in ranges[level.first_range:][:level.range_count] {
             // The scratch of a range goes with it (cluster_dag_build says why).
             range_temp:=runtime.arena_temp_begin(&work)
             defer runtime.arena_temp_end(range_temp)
             context.temp_allocator=runtime.arena_allocator(&work)
-            if failed:=clusterize(&b,indices[r.first_index:][:r.index_count],r.submesh,{center,radius,error},NONE,&clusters,&cluster_indices);failed!=.None {return failed}
+            if failed:=clusterize(&b,indices[r.first_index:][:r.index_count],r.submesh,{center,radius,own},NONE,&clusters,&cluster_indices);failed!=.None {return failed}
         }
         if _,written:=group_output(&b,clusters[:],cluster_indices[:],{center,radius,next},k);!written {return .Out_Of_Memory}
     }

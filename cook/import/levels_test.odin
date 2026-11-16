@@ -364,10 +364,10 @@ mask_of :: proc(source:textures.Source,cutoff:u8) -> Outline_Mask {
 
 // Every outline of a ladder holds every texel its mask keeps, draws no
 // farther from them than its tolerance allows, and each draws fewer
-// triangles with more error than the one before. The forest's leaf
-// reproduces what the design measured on it: its quad covers 0.417, and
-// with the outline each size on screen takes at 1 pixel of error about six
-// triangles a leaf, about 0.78 of what it draws covered, over 1.3 to 40 m. A
+// triangles with more error than the one before, none more than
+// OUTLINE_TRIANGLES. The forest's leaf: its quad covers 0.417, and with the
+// outline each size on screen takes at 1 pixel of error under four triangles
+// a leaf, at least 0.7 of what it draws covered, over 1.3 to 40 m. A
 // single leaf is drawn as its outlines; a cluster of leaves keeps its mask on
 // a convex outline that halves the empty area of its quad.
 @(test)
@@ -375,7 +375,7 @@ a_masked_card_becomes_the_outlines_its_mask_needs :: proc(t:^testing.T) {
     forest,_:=textures.image_decode(#load("../../demo/assets/forest/leaves_color.png"),context.temp_allocator)
     Case :: struct {name:string,source:textures.Source,leaf:bool,quad:f64,triangles:[2]f64,coverage:f64}
     cases:=[]Case{
-        {"forest leaf",textures.rgba8(forest.pixels,forest.width,forest.height),true,0.417,{4,9},0.7},
+        {"forest leaf",textures.rgba8(forest.pixels,forest.width,forest.height),true,0.417,{2,4},0.7},
         {"serrated leaf",mask_source(.Leaf,128),true,0,{},0},
         {"cluster",mask_source(.Cluster,128),false,0,{},0},
     }
@@ -409,6 +409,7 @@ a_masked_card_becomes_the_outlines_its_mask_needs :: proc(t:^testing.T) {
             error:=f32(math.sqrt(f64(worst)))
             testing.expectf(t,abs(error-rung.error)<1e-3,"%s: outline %d draws %f texels out, not %f",c.name,k,error,rung.error)
             if rung.tolerance>0 {testing.expectf(t,rung.error<=2*rung.tolerance+2,"%s: outline %d cut at %f draws %f out",c.name,k,rung.tolerance,rung.error)}
+            testing.expectf(t,rung.triangles<=OUTLINE_TRIANGLES,"%s: outline %d draws %d triangles",c.name,k,rung.triangles)
             if k>0 {
                 finer:=ladder.rungs[k-1]
                 testing.expectf(t,rung.error>=finer.error && rung.triangles<=finer.triangles,"%s: outline %d is not coarser than %d",c.name,k,k-1)
@@ -533,6 +534,9 @@ masked_cards_are_cut_to_outlines_whose_levels_coarsen_in_steps :: proc(t:^testin
     levels:=mesh_levels(mesh.vertices,mesh.indices,nil,mesh.submeshes,allocator=context.temp_allocator,outlines=mesh.outlines)
     if !levels_valid(t,levels,3) {return}
     testing.expect(t,len(levels.lods)>=4,"several levels")
+    // Level 0 draws each leaf on at most OUTLINE_TRIANGLES, as far from its mask as that outline is.
+    for card in mesh.outlines.cards {testing.expectf(t,card.triangle_count<=OUTLINE_TRIANGLES && card.error>0,"a leaf of level 0 draws %d triangles at an error of %f",card.triangle_count,card.error)}
+    testing.expectf(t,levels.lods[0].error>0 && levels.lods[0].error<=levels.lods[1].error,"level 0 has the error of its outlines: %f",levels.lods[0].error)
     // Some level draws every leaf on an outline coarser than level 0 and finer than its quadrilateral.
     stepped:=false
     for lod in levels.lods[1:] {
