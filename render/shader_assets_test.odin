@@ -103,7 +103,8 @@ shader_generation_of_the_engine_is_the_one_embedded :: proc(t:^testing.T) {
             if i<len(code.bindings) {testing.expectf(t,code.bindings[i]==binding,"%s binding %d: %v, embedded %v",code.name,i,code.bindings[i],binding)}
         }
         when ODIN_OS==.Darwin {
-            testing.expectf(t,len(code.msl)>0 && code.msl==embedded.msl && code.msl_entry==embedded.msl_entry,"%s: the Metal source on disk is the embedded one",code.name)
+            // A stage of the rays traced by software has no Metal code, nor entry.
+            testing.expectf(t,(len(code.msl)>0)==(embedded.msl_entry!="") && code.msl==embedded.msl && code.msl_entry==embedded.msl_entry,"%s: the Metal source on disk is the embedded one",code.name)
         } else {
             testing.expectf(t,len(code.spirv)>0 && string(code.spirv)==string(embedded.spirv),"%s: the SPIR-V on disk is the embedded one",code.name)
         }
