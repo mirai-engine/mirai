@@ -8,12 +8,15 @@
 // next pixels along x and y give the inputs and their exact screen gradients,
 // and the targets are those gbuffer_output.slang writes.
 //
-// What a program computes itself (its own uv) takes its derivatives across
-// the 2x2 pixels of a quad, as the raster does: a pixel of the quad that is
-// not of this program (a helper) is given the triangle of a neighbor, at its
-// own place. Where the triangles of a quad do not continue one another (a
-// silhouette, a seam of the uv) the quad evaluates again with the triangle
-// of each of its pixels in all four, as a raster quad of that triangle would.
+// A pixel of the quad that is not of this program (a helper) is given the
+// triangle of a neighbor, at its own place, for the derivatives of the
+// shading normal (specular antialiasing). A program that takes derivatives
+// across the quad itself (mirai_program_derivatives: of its own uv, sampled
+// by a plain uv, or ddx) gets them as the raster would: where the triangles
+// of a quad do not continue one another (a silhouette, a seam of the uv) the
+// quad evaluates again with the triangle of each of its pixels in all four.
+// One that carries its derivatives (mirai_dual.slang), and the rows, which
+// take the exact gradients of their uv, evaluate once.
 //
 // plain: without the reflectance target; layers: with the reflectance and the
 // layers targets (as gbuffer.frag). nested: the pixels of a nested view.
@@ -167,7 +170,7 @@ Stage_Output resolve_shade(Resolve_Point s, bool2 steady) {
 // another program fails them, and is a helper of its quad.
 [shader("fragment")]
 [earlydepthstencil]
-Stage_Output main(float4 pixel : SV_Position, [[vk::location(0)]] nointerpolation uint program : TEXCOORD0) {
+Stage_Output main(float4 pixel : SV_Position) {
     // A helper is a pixel of the quad that is not of this program: it gives
     // the others its derivatives and writes nothing, nor reports what it samples.
     bool helper = IsHelperLane();
@@ -191,9 +194,7 @@ Stage_Output main(float4 pixel : SV_Position, [[vk::location(0)]] nointerpolatio
     uint broken = all(steady) ? 0u : 1u;
     broken |= QuadReadAcrossX(broken) | QuadReadAcrossY(broken) | QuadReadAcrossDiagonal(broken);
 
-    // The maps of a row take the exact gradients of their uv: only a program
-    // computes what needs the quad to continue.
-    bool again = broken != 0u && program != 0u;
+    bool again = broken != 0u && mirai_program_derivatives;
     resolve_count(helper, odd, again);
     if (!again) {
         texture_feedback_quiet = helper;

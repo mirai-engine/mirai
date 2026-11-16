@@ -708,6 +708,44 @@ float4 mirai_sample_texture_grad(uint index, float2 uv, float2 dx, float2 dy) {
 #endif
     return material_textures[mirai_nonuniform(index)].SampleGrad(material_sampler, uv, dx, dy);
 }
+// A uv set at a point with its derivatives: of the triangle where the
+// visibility target is resolved (MATERIAL_GRADIENTS), across the quad in
+// another raster stage; in a ray, the width of its footprint in uv, which
+// `lod` (ctx.lod or ctx.lod1) is the level of.
+Mirai_Dual2 material_uv_dual(Mirai_Surface_Context ctx, float2 uv, float lod, int set) {
+    if (ctx.ray) {
+        float width = exp2(lod);
+        return mirai_dual(uv, float2(width, 0.0), float2(0.0, width));
+    }
+#ifdef MATERIAL_GRADIENTS
+    float4 g = material_uv_gradients[set];
+    return mirai_dual(uv, g.xy, g.zw);
+#elif defined(MATERIAL_RASTER)
+    return mirai_dual(uv, ddx(uv), ddy(uv));
+#else
+    return mirai_dual(uv);
+#endif
+}
+Mirai_Dual2 mirai_uv0(Mirai_Surface_Context ctx) { return material_uv_dual(ctx, ctx.uv0, ctx.lod, 0); }
+Mirai_Dual2 mirai_uv1(Mirai_Surface_Context ctx) { return material_uv_dual(ctx, ctx.uv1, ctx.lod1, 1); }
+Mirai_Dual3 mirai_vertex_normal(Mirai_Surface_Context ctx) {
+    if (ctx.ray) return mirai_dual(ctx.vertex_normal);
+#ifdef MATERIAL_GRADIENTS
+    return mirai_dual(ctx.vertex_normal, material_normal_gradients[0], material_normal_gradients[1]);
+#elif defined(MATERIAL_RASTER)
+    return mirai_dual(ctx.vertex_normal, ddx(ctx.vertex_normal), ddy(ctx.vertex_normal));
+#else
+    return mirai_dual(ctx.vertex_normal);
+#endif
+}
+float4 mirai_sample_texture(Mirai_Surface_Context ctx, uint index, Mirai_Dual2 uv) {
+    if (!material_has(index)) return float4(1.0);
+    // A ray reads the level of the widest footprint, as material_texel_at takes it.
+    if (ctx.ray) return material_texel_at(index, uv.value, log2(max(max(length(uv.dx), length(uv.dy)), 1e-30)));
+    // A raster lod is the bias of the view.
+    float scale = exp2(ctx.lod);
+    return mirai_sample_texture_grad(index, uv.value, uv.dx * scale, uv.dy * scale);
+}
 float4 mirai_load_texture(uint index, int2 texel) {
     if (!material_has(index)) return float4(1);
     return material_textures[mirai_nonuniform(index)].Load(int3(texel, 0));
