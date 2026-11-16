@@ -29,8 +29,6 @@ their own (`vfx.Particle_Override`, fields and program parameters alike). Tables
     (-Z) along where it last went faster than `PARTICLE_MESH_FACING_SPEED` (kept in the bits of
     `flags` a ribbon has, so what rests does not turn), its +Y up, rolled by its rotation and
     scaled along each axis by its emitter; a sorted effect has one mesh (validation);
-  - its particles light the scene with `lights`, and cast shadows only with `light_shadows`
-    ([lights](#particle-lights));
   - the editor shows each field in the group its `group` tag names, or in that of the field
     before it ([document](vfx-editor.md#particle-document)).
 - Curves have `PARTICLE_CURVE_KEYS` keys with non-decreasing times from 0 to 1; the surplus ones
@@ -356,7 +354,7 @@ To the GPU:
 - An effect field exists once: in `Particle_Info`, which `Emitter_Desc` carries as it is, and in
   the one place that packs it into the `Gpu_Emitter` row (`emitter_row`). The desc is built when
   the key of what it shows changes, the row only when its `revision` changes (0: every frame) or
-  its range starts; each frame writes its place, its births, the step, its lights and its age, and
+  its range starts; each frame writes its place, its births, the step and its age, and
   uploads the table.
 - `Gpu_Particle` and `Gpu_Emitter` are equal to `particles.slang`; the values that that file copies
   from the plugin (flags, types, sizes and capacities) are compared with those of Odin by a test.
@@ -497,30 +495,6 @@ In each view:
 - **meshes** (`Gbuffer`): `Mesh` particles (but those whose material blends) in the G-buffer
   ([mesh particles](#mesh-particles)).
 
-### Particle lights
-
-The particles of an emitter with `lights` are scene lights
-([GPU lights](../../mirai-rendering/references/lights.md#gpu-lights)). Those of an effect with
-`light_shadows` cast shadows within the shadow budgets, like the others; without it (the default)
-they light everything within their reach, without shadow rays or a place in those budgets.
-
-- Each frame, `particles_frame` asks for room for those of all the live emitters of the world, the
-  ones that cast shadows and the ones that do not (`erender.lights_ask`, up to `LIGHTS_ASKED_MAX` of
-  each class), and `pool_prepare` gives each emitter its share of that of its class, in the order
-  of its slots (`light_share`, `Gpu_Emitter.lights`).
-- Those that cast shadows are asked for with a box (`lights_box`): around each emitter, as far as
-  its particles may go in their life at their fastest start or the fastest wind with the strongest
-  pull on them; anywhere when they are born on a surface, on bones, in a channel or at the events
-  of another emitter, or a program moves them.
-- **lights** (`Simulate`, after **finish**): one group per share writes all its room
-  (`erender.pass_lights`). An emitter with fewer alive than its share lights with all of them; with
-  more, with those of even slots of its range, which keep their light while they live.
-- A light is a sphere on the particle, of the color and opacity it shows (after its program) times
-  `light_intensity` in candelas, with reach `light_range` and radius `light_radius` (0: half its
-  size). A `lit` particle receives the light of the others and its own.
-- Each group sorts its lights by a Z curve over the box of those of this frame and builds its tree
-  by halves, each node what its lights give together, like the CPU tree.
-
 ## Ribbons
 
 - A particle joins a ribbon (`flags` above `RIBBON_SHIFT`; 0, that of the emitter): that of the
@@ -562,8 +536,8 @@ they light everything within their reach, without shadow rays or a place in thos
 
 - `mirai test plugins/vfx/runtime/effect`: format, validation and value paths.
 - `mirai test plugins/vfx/runtime` (with `MIRAI_VALIDATION=1` and `-define:ODIN_TEST_THREADS=1`):
-  emission, requests, values, curves read as on the GPU, the values that `particles.slang` copies
-  and the parts of the lights' place that each emitter takes, without a renderer (`vfx_test.odin`,
+  emission, requests, values and curves read as on the GPU and the values that `particles.slang`
+  copies, without a renderer (`vfx_test.odin`,
   `data_test.odin`), and on the GPU (`gpu_test.odin`), with the generation of the engine and plugin
   shaders that `mirai test` does in `.mirai/tmp/vfx-test-shaders`: births, steps, generations and
   pauses, events, pools per world, rejected capacity, ribbons (trails of two heads, curves, pieces
@@ -576,8 +550,7 @@ they light everything within their reach, without shadow rays or a place in thos
   splats that a stage stores (`spread.slang`), mesh particles that pick their meshes by weight
   and face their velocity, rays from a
   stage against a cube (`probe.slang`), read back with `pass_readback`, a volume that glows
-  (`puff.slang`), particle lights with shadow that light the floor within their reach and not
-  behind a cube, and without shadow, also behind it, a floor whose Surface program reads a grid's
+  (`puff.slang`), a floor whose Surface program reads a grid's
   world texture (`count_ground.slang`), channel births and their rollback (`testdata/gather.slang`),
   reports, sprites behind a `fog` box dimmed by it and one in front of it not, all the modes
   around glass without validation errors and stable frames without allocating; for debugging,

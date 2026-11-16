@@ -160,127 +160,6 @@ a_refit_light_tree_keeps_its_bounds_and_is_the_built_one_where_the_lights_stay :
 	testing.expect(t, slice.equal(nodes[:], built[:]))
 }
 
-// With room for lights of the GPU the tree of the scene follows it: the root
-// stands for the scene until a pass writes the room, an empty leaf stands for
-// the room, and a refit keeps the root with the scene.
-@(test)
-the_room_for_gpu_lights_comes_before_the_tree_of_the_scene :: proc(t: ^testing.T) {
-	lights: [40]Gpu_Light
-	light_tree_test_lights(lights[:])
-	nodes, alone: [dynamic]Gpu_Light_Node
-	keys: [dynamic]Light_Key
-	leaves, alone_leaves: [dynamic]u32
-	dirty: [dynamic]Pool_Range
-	defer {delete(nodes); delete(alone); delete(keys); delete(leaves); delete(alone_leaves); delete(dirty)}
-	REGION :: Light_Region{lights = 4}
-	first := light_region_first(REGION)
-	cost, _ := light_tree_build(&nodes, &keys, &leaves, lights[:], REGION)
-	alone_cost, _ := light_tree_build(&alone, &keys, &alone_leaves, lights[:])
-	testing.expect_value(t, len(nodes), int(first) + len(alone))
-	testing.expect_value(t, cost, alone_cost)
-	empty := u32(len(lights)) + REGION.lights
-	for at in 1 ..= 2 * REGION.lights {
-		testing.expectf(t, nodes[at].flags == GPU_LIGHT_NODE_LEAF && nodes[at].child == empty && nodes[at].power_reach == {}, "node %d is a leaf of no light", at)
-	}
-	testing.expect_value(t, light_tree_unordered(nodes[:]), 0)
-	root := nodes[0]
-	testing.expect(t, root.child == first && root.flags & GPU_LIGHT_NODE_LEAF == 0 && root.flags >> GPU_LIGHT_NODE_COUNT_SHIFT == len(lights))
-	testing.expect(t, root.center_radius == alone[0].center_radius && root.power_reach == alone[0].power_reach)
-	for i in 0 ..< len(lights) {testing.expect(t, leaves[i] == alone_leaves[i] + first && nodes[leaves[i]].child == u32(i))}
-	lights[5].position_range.xyz += {30, 0, 0}
-	light_tree_refit(nodes[:], lights[:], leaves[5], &dirty, REGION)
-	light_tree_refit(alone[:], lights[:], alone_leaves[5], nil)
-	has_root := false
-	for range in dirty {has_root ||= range.first == 0}
-	testing.expectf(t, nodes[0].center_radius == alone[0].center_radius && has_root, "the root %v follows the scene %v, in %v", nodes[0].center_radius, alone[0].center_radius, dirty)
-	// Without lights of the scene the root stands for none.
-	light_tree_build(&nodes, &keys, &leaves, nil, REGION)
-	testing.expect(t, len(nodes) == int(first) && nodes[0].child == 2 * REGION.lights && nodes[0].flags == 0)
-}
-
-// The lights that cast no shadows have a part of the room of their own,
-// after that of those that do: a tree no node under the root leads to, a
-// leaf of no light until a pass writes it, with its lights after the light
-// of none of the other part and the tree of the scene after it. Asking for
-// them alone keeps a leaf for the lights with shadows, which node 0 needs.
-@(test)
-the_lights_without_shadows_have_a_tree_the_root_does_not_lead_to :: proc(t: ^testing.T) {
-	testing.expect_value(t, light_region_of(3, 5), Light_Region{4, 8})
-	testing.expect_value(t, light_region_of(0, 5), Light_Region{1, 8})
-	testing.expect_value(t, light_region_of(5, 0), Light_Region{8, 0})
-	testing.expect_value(t, light_region_of(0, 0), Light_Region{})
-	testing.expect_value(t, light_region_of(5000, 1), Light_Region{LIGHT_REGION_MAX, 1})
-	lights: [40]Gpu_Light
-	light_tree_test_lights(lights[:])
-	nodes, alone: [dynamic]Gpu_Light_Node
-	keys: [dynamic]Light_Key
-	leaves, alone_leaves: [dynamic]u32
-	defer {delete(nodes); delete(alone); delete(keys); delete(leaves); delete(alone_leaves)}
-	region := Light_Region{4, 8}
-	first, root := light_region_first(region), light_region_shadowless(region)
-	testing.expect_value(t, root, u32(9))
-	testing.expect_value(t, first, u32(25))
-	testing.expect_value(t, light_region_lights(region), 4 + 1 + 8 + 1)
-	testing.expect_value(t, light_region_frame(region), [4]u32{9, 25, 0, 0})
-	testing.expect_value(t, light_region_frame({lights = 4}), [4]u32{})
-	light_tree_build(&nodes, &keys, &leaves, lights[:], region)
-	light_tree_build(&alone, &keys, &alone_leaves, lights[:])
-	testing.expect_value(t, len(nodes), int(first) + len(alone))
-	empty, none := u32(len(lights)) + region.lights, u32(len(lights)) + region.lights + 1 + region.shadowless
-	for at in 1 ..= 2 * region.lights {
-		testing.expectf(t, nodes[at].flags == GPU_LIGHT_NODE_LEAF && nodes[at].child == empty, "node %d is the leaf of no light with shadows", at)
-	}
-	for at in root ..< root + 2 * region.shadowless {
-		testing.expectf(t, nodes[at].flags == GPU_LIGHT_NODE_LEAF && nodes[at].child == none && nodes[at].power_reach == {}, "node %d is the leaf of no light without shadows", at)
-	}
-	testing.expect(t, nodes[0].child == first && nodes[0].center_radius == alone[0].center_radius && nodes[0].power_reach == alone[0].power_reach)
-	testing.expect_value(t, light_tree_unordered(nodes[:]), 0)
-	for i in 0 ..< len(lights) {testing.expect(t, leaves[i] == alone_leaves[i] + first)}
-	// The traversals of shadows start at node 0: none of them meets the part without.
-	pending: [dynamic]u32
-	defer delete(pending)
-	append(&pending, 0)
-	met := 0
-	for len(pending) > 0 {
-		at := pop(&pending)
-		if at >= root && at < first {met += 1}
-		if nodes[at].flags & GPU_LIGHT_NODE_LEAF == 0 {append(&pending, at + 1, nodes[at].child)}
-	}
-	testing.expect_value(t, met, 0)
-	// Without lights of the scene node 0 stands for none.
-	light_tree_build(&nodes, &keys, &leaves, nil, region)
-	testing.expect(t, len(nodes) == int(first) && nodes[0].child == 2 * region.lights && nodes[0].flags == 0)
-}
-
-// A room nobody wrote in the frame before goes back to the root of the scene
-// and to an empty part without shadows: their nodes go up again.
-@(test)
-a_room_nobody_wrote_goes_back_to_the_scene_and_no_lights_without_shadows :: proc(t: ^testing.T) {
-	r:=new(Renderer);defer free(r)
-	r.allocator = context.allocator
-	scene_init(r)
-	defer scene_destroy(r)
-	s := &r.scene
-	lights_ask(r, 0, 3, LIGHTS_ANYWHERE, 0)
-	scene_light_region(r)
-	testing.expect_value(t, s.light_region, Light_Region{1, 4})
-	testing.expect(t, s.lights_dirty && len(s.light_tree) == int(light_region_first(s.light_region)))
-	s.lights_dirty = false
-	clear(&s.light_node_ranges)
-	lights_ask(r, 0, 3, LIGHTS_ANYWHERE, 0)
-	scene_light_region(r)
-	root := light_region_shadowless(s.light_region)
-	ranges := [2]bool{}
-	for range in s.light_node_ranges {
-		ranges[0] ||= range.first == 0 && range.count >= 2
-		ranges[1] ||= range.first <= root && range.first + range.count > root
-	}
-	testing.expectf(t, ranges == {true, true}, "the root of all and that of the lights without shadows go up again: %v", s.light_node_ranges)
-	testing.expect(t, s.light_tree[root].flags == GPU_LIGHT_NODE_LEAF && s.light_tree[root].power_reach == {})
-	scene_light_region(r)
-	testing.expect_value(t, s.light_region, Light_Region{})
-}
-
 @(test)
 the_light_tree_is_refit_while_each_light_keeps_its_kind :: proc(t: ^testing.T) {
 	r:=new(Renderer);defer free(r)
@@ -354,8 +233,7 @@ the_light_tree_is_refit_while_each_light_keeps_its_kind :: proc(t: ^testing.T) {
 	scene_lights_given(r, lights[:99], {}, {})
 	testing.expect(t, s.light_revision == revision + 4 && s.lights_dirty)
 	uploaded(s)
-	root := light_tree_shadowless(s.light_tree[:], {})
-	testing.expect_value(t, light_shadowless_frame(s.light_tree[:], {}), [4]u32{0, 0, root, u32(len(s.light_tree))})
+	root := light_tree_shadowless(s.light_tree[:])
 	testing.expect(t, root > 0 && s.light_leaves[7] == root && s.light_tree[root].child == 7, "the one light without shadows is the leaf of its tree")
 	reached := false
 	pending: [dynamic]u32
@@ -374,7 +252,7 @@ the_light_tree_is_refit_while_each_light_keeps_its_kind :: proc(t: ^testing.T) {
 	// While every light casts none, the root of those that do stands for none.
 	for &light in lights[:3] {light.shadowless = true}
 	scene_lights_given(r, lights[:3], {}, {})
-	testing.expect(t, s.light_tree[0] == LIGHT_NODE_NONE && light_tree_shadowless(s.light_tree[:], {}) == 1 && len(s.light_tree) == 6)
+	testing.expect(t, s.light_tree[0] == LIGHT_NODE_NONE && light_tree_shadowless(s.light_tree[:]) == 1 && len(s.light_tree) == 6)
 	testing.expect(t, light_tree_refit_all(s.light_tree[:], s.lights[:]) == s.light_tree_built && s.light_tree[0] == LIGHT_NODE_NONE, "a refit leaves it")
 }
 
@@ -518,52 +396,8 @@ the_grid_of_the_lights_fits_its_rows_however_far_they_reach :: proc(t: ^testing.
 	for range in ranges {
 		lights := [2]Gpu_Light{{position_range = {0, 0, 0, range}}, {position_range = {500, 2, -300, 4}}}
 		for &l in lights {l.direction_cone.w = GPU_LIGHT_POINT}
-		grid := light_grid_place(lights[:], len(lights))
+		grid := light_grid_place(lights[:])
 		testing.expectf(t, grid.rows > 0 && grid.rows <= LIGHT_GRID_ROWS_MAX, "range %v: %d rows", range, grid.rows)
 		testing.expectf(t, grid.size.x >= 1 && grid.size.y >= 1 && grid.size.z >= 1 && grid.cell >= LIGHT_GRID_CELL, "range %v: %v cells of %v m", range, grid.size, grid.cell)
 	}
-}
-
-// The lights with shadows a pass writes on the GPU light the cells of the
-// scene around where the pass says they lie, or all of it where it cannot
-// tell, though no light of the scene is there: the grid holds those cells and
-// rows for their entries, and is placed again only when they leave them.
-@(test)
-the_grid_holds_what_the_lights_a_pass_writes_light :: proc(t: ^testing.T) {
-	r := new(Renderer);defer free(r)
-	r.allocator = context.allocator
-	scene_init(r)
-	defer scene_destroy(r)
-	s := &r.scene
-	s.bounds_min, s.bounds_max, s.has_bounds = {-50, 0, -50}, {50, 10, 50}, true
-	Case :: struct {box: [2]Vec3, reach: f32, low, high: Vec3}
-	// Each case after a small box, which the scene before is far larger than.
-	small := Case{{{10, 1, 10}, {12, 3, 12}}, 4, {6, 0, 6}, {16, 7, 16}}
-	cases := [?]Case{
-		small,
-		{LIGHTS_ANYWHERE, 4, s.bounds_min, s.bounds_max},
-		small,
-		{{{1, 1, 1}, {-1, -1, -1}}, 4, s.bounds_min, s.bounds_max},
-		small,
-		{small.box, math.nan_f32(), s.bounds_min, s.bounds_max},
-	}
-	for c in cases {
-		lights_ask(r, 3, 0, c.box, c.reach)
-		scene_light_region(r)
-		held := s.light_region_box
-		testing.expectf(t, s.light_grid_stale && linalg.min(held[0], c.low) == held[0] && linalg.max(held[1], c.high) == held[1], "%v: holds %v", c.box, held)
-		testing.expectf(t, linalg.max(held[0], s.bounds_min) == held[0] && linalg.min(held[1], s.bounds_max) == held[1], "%v: within the scene, %v", c.box, held)
-		count := light_region_lights(s.light_region)
-		grid := light_grid_place(nil, count, {held, int(s.light_region_asked), s.light_region_reach})
-		top := grid.origin + Vec3{f32(grid.size.x), f32(grid.size.y), f32(grid.size.z)} * grid.cell
-		cells := int(grid.size.x) * int(grid.size.y) * int(grid.size.z)
-		testing.expectf(t, linalg.min(grid.origin, held[0]) == grid.origin && linalg.max(top, held[1]) == top, "%v: the grid from %v to %v", c.box, grid.origin, top)
-		testing.expectf(t, grid.rows > cells + LIGHT_GRID_WEIGHT_ROWS * count && grid.rows <= LIGHT_GRID_ROWS_MAX, "%v: %d rows for %d cells", c.box, grid.rows, cells)
-		s.light_grid_stale = false
-		lights_ask(r, 3, 0, c.box, c.reach)
-		scene_light_region(r)
-		testing.expectf(t, !s.light_grid_stale, "%v: asked again, the grid stays", c.box)
-	}
-	scene_light_region(r)
-	testing.expect(t, s.light_grid_stale && s.light_region_asked == 0, "no pass asks: the grid holds none of it")
 }

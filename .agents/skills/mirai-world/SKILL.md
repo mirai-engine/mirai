@@ -35,9 +35,8 @@ rules of [the plugin system](../mirai-plugins/SKILL.md). Layout, manifests and b
   [GPU pools and emitters](references/vfx.md#pools-and-emitters),
   [births and steps](references/vfx.md#births-and-steps),
   [Vfx programs](references/vfx.md#vfx-programs), [passes](references/vfx.md#passes),
-  [ribbons and trails](references/vfx.md#ribbons),
-  [mesh particles](references/vfx.md#mesh-particles) and
-  [particle lights](references/vfx.md#particle-lights)
+  [ribbons and trails](references/vfx.md#ribbons) and
+  [mesh particles](references/vfx.md#mesh-particles)
 - `vfx` in the editor (GPU effect preview, effects document, `Particle_Emitter` section,
   thumbnails, Particles card, `particle.*` methods):
   [Particle_Emitter section](references/vfx-editor.md#particle_emitter-section),
@@ -148,6 +147,11 @@ rules of [the plugin system](../mirai-plugins/SKILL.md). Layout, manifests and b
 - Navigation: automatic navmesh by tiles from the collision.
 - Far-away simulation: automatic coarse simulation through the portal graph.
 - Water: Gerstner waves.
+- Particles: a particle glows by its emission and is not a light; an effect that must light its
+  surroundings carries a light on its entity. The lights of a frame are the scene's, known on the
+  CPU, so what depends on them (their lists, caches and shadow pages) is kept while they stay
+  still. Decided by the user: per-particle or GPU-written lights come back only with a measured
+  reason that holds against this.
 
 ## Verification
 

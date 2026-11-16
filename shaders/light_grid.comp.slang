@@ -181,8 +181,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     uint4 row = light_grid[cell];
     if (row.y == 0u) return;
     uint first = row.x;
-    // The lights a pass writes on the GPU are not in the rows the CPU counted:
-    // a cell whose entries would go past the buffer lists none.
+    // A cell whose entries would go past the rows the CPU counted lists none.
     if (first > params.rows || row.y > params.rows - first) {
         light_grid[cell] = uint4(first, 0u, 0u, 0u);
         return;

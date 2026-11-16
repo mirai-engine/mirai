@@ -24,9 +24,8 @@
   casts no shadow with it.
 - **Without shadows** (`Light_Desc.shadowless`, the `shadows` of its component off): nothing
   stops its light, and it costs no shadow work: no map, no cell of the grid, no node of a cut, no
-  ray. It goes to the tree of the scene's lights without shadows
-  ([light tree](#light-tree)), which every pass adds as it adds those a pass writes
-  ([GPU lights](#gpu-lights)): the direct light, the probes and the media take it alike. A sun
+  ray. It goes to the tree of the lights without shadows ([light tree](#light-tree)): the direct
+  light, the probes and the media take it alike. A sun
   without them (`Sun_Desc.shadowless`) is `SUN_UNSHADOWED`, as with `Settings.sun_shadows` off.
 - For the rays that gather light (probes and the reference), an emissive instance that contains
   the center of a light and whose box is not much larger than its sphere is that light
@@ -36,6 +35,11 @@
   show the emission of all of them.
 - There are no reservoirs or light history: a light that moves, turns on or turns off is worth it
   from the frame in which it changes.
+- **The lights of a frame are those of the scene, known on the CPU**: nothing writes lights on the
+  GPU, so what depends on them (the tree, the grid, the shadow pages and caches) is kept while they
+  stay still. A particle glows by its emission and is not a light; an effect that must light its
+  surroundings carries a light on its entity. Decided by the user: bringing back per-particle or
+  GPU-written lights needs a measured reason that holds against this.
 
 ### Capsules and rectangles
 
@@ -73,7 +77,12 @@
   in its error, so it opens where the directions of its lights matter.
 - **Without shadows.** Those lights form a tree of their own after that of the others
   (`light_tree_shadowless`), which no traversal from node 0 meets; while every light casts none,
-  the root of those that do is a group of none (`LIGHT_NODE_NONE`), which reaches nothing.
+  the root of those that do is a group of none (`LIGHT_NODE_NONE`), which reaches nothing. They
+  do not enter the cut of a point or trace rays: the frame constants give the root of their tree
+  (`shadowless_lights`) and `shadowless_lighting` adds what it gives, like the
+  [unshadowed light](#unshadowed-light-of-a-pixel) of the others. The direct filter adds it to the
+  pixel as it is, without a shadow; `direct_lighting` (hits, probes, glass, overlays, the points
+  that trace their own rays and the points of media) without rays, and so does the reference.
 - **Changes.** While the lights keep their number and each its class (with shadows or without,
   directed or not, and its reach class), `scene_light_update` refits
   the leaf that changed and the groups above it (`light_tree_refit`), past `LIGHT_REFITS_MAX` in a
@@ -84,44 +93,6 @@
 - A group keeps its shortest and longest range. It reaches as far as its longest-reach light,
   windows its light halfway between both ranges and counts their difference in its error, so it
   neither loses a light that reaches far among short ones nor lends the short ones its reach.
-
-### GPU lights
-
-An extension that asks for room for lights it writes on the GPU (`lights_ask`) has it from the
-next frame, before the scene tree (`light_region_first`), in two parts: those that cast shadows
-and those that do not, each rounded to a power of two, up to `LIGHT_REGION_MAX`. Those that cast
-shadows come with where they lie and how far they light, which the CPU does not see otherwise:
-the grid of the lights holds what of the scene they light.
-
-- Node 0 is the root of the lights with shadows; from 1, the tree of the leaves of that part, in
-  the usual depth order; then, a leaf without light. The tree of the lights without shadows
-  follows in the same way, whose root does not hang from node 0. The scene tree starts behind, and
-  its lights go before those of the region: those of each part end in a null light.
-- The traversals of the lights with shadows do not change: they still start at node 0 and do not
-  see the others. While no step writes the region, the root is that of the scene and each node of
-  each part, its empty leaf: a group written over unwritten children leads to a leaf. A CPU refit
-  rebuilds the root with the scene.
-- The lights without shadows do not enter the cut of a point or trace rays: the frame constants
-  give the root of their tree and that of the scene's (`shadowless_lights`, `.xy` and `.zw`) and
-  `shadowless_lighting` adds what both give,
-  like the [unshadowed light](#unshadowed-light-of-a-pixel) of the others. The direct filter adds
-  it to the pixel as it is, without a shadow; `direct_lighting` (hits, probes, glass, overlays and
-  the points that trace their own rays, and the points of media), without rays, nor does the
-  reference.
-- `pass_lights` in `Simulate` links lights and nodes to write them and says where each part is
-  (`Pass_Lights`); whoever links it writes the whole region and the root, which joins that of the
-  shadowed part and that of the scene as `light_tree_group`. When `Simulate` ends everything is
-  readable again.
-- A region that nobody wrote in a frame returns to the scene's root alone and to no light without
-  shadow in the next one; another size rebuilds the tree.
-- The frame takes the region (`scene_light_region`) before sizing the light and tree buffers
-  (`ensure_scene_capacity`): a new or larger region enlarges them before the tree is uploaded.
-  The other way around, the copy went past the end of the buffer and the nodes there did not
-  exist: a traversal read zeros, groups whose second child is the root.
-- A pass that writes a light gives its shares (`light_shares_bits` of `common.slang`): the
-  particle lights of `vfx` give 1 and 1.
-- What the GI stores of them is not marked as a light change: the probes take them when traced
-  ([particles](../../mirai-world/references/vfx.md#particle-lights)).
 
 ### Unshadowed light of a pixel
 
@@ -182,11 +153,8 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   hold the lights that reach them; past `DIRECT_FEW` a cell holds an alias table to draw from.
   The GPU rebuilds it in the frame the lights change; `light_weight.slang` weighs each light at a
   point by `light_weight_at`, which also weighs a light of the tree (`node_weight`): a light is
-  weighed in one place. It covers the ranges of the lights of the scene and the part of the scene
-  that the lights with shadows a pass writes on the GPU light, from the box and reach of
-  `lights_ask` (all of the scene for `LIGHTS_ANYWHERE`), held with a margin so that a moving box
-  does not place it again every frame. A cell whose entries would not fit the rows counted on the
-  CPU lists none.
+  weighed in one place. It covers the ranges of the lights with shadows. A cell whose entries
+  would not fit the rows counted on the CPU lists none.
 - **Spread.** A point weighs the lights of its cell and spreads its samples over them by weight,
   systematically (one at each m-th of the sum of weights, from the place of the pixel in a 3x3
   pattern): a light that gives much takes many samples and none depends on chance. A light that
@@ -211,7 +179,7 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   the part of it that got there, and the part of the sun that did, over the points of that window
   within the noise of the samples, and then each spread over the penumbra radius that what hid it
   gives. The pixels take them from the points around them of their surface. The last pass also
-  adds the [lights that cast no shadows](#gpu-lights) as they are, the lights of
+  adds the [lights that cast no shadows](#light-tree) as they are, the lights of
   [extensions](views.md#extension-hooks-and-constants) each with its hard ray, and the other side
   of a surface that lets light through (`direct_lighting`).
 - **Shadow maps** (`render/shadow_maps.odin`; every renderer draws them). Every frame, from the
@@ -320,8 +288,8 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
     ray crosses what changed ([`fog`](../../mirai-plugins/references/render-plugins.md)).
   - A batch that casts shadows marks its box when it arrives, leaves or changes (`batch_set`,
     `batch_remove`).
-  - With the scene still there are no marks and the image is the same. The lights that the GPU
-    writes and the glass do not mark: the validation of the history reaches them.
+  - With the scene still there are no marks and the image is the same. Glass does not mark: the
+    validation of the history reaches it.
 - The debug view Shadows shows the part of the light that got there.
 - **Reference.** What the tests compare with, outside the renderer games run: a custom pass of the
   tests in place of the `Direct` stage (`render/reference_test.odin`) traces from each pixel to
