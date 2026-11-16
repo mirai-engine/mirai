@@ -70,8 +70,26 @@ Gbuffer_Vertex gbuffer_corner_build(uint index, Instance inst, Mesh mesh, Cluste
     uint local = cluster_corner(mesh, c, gbuffer_corner(inst, corner));
     Mesh_Point v = cluster_point_at(mesh, c, local, k.posed);
     v.color = instance_vertex_color(inst, c.vertex_first + local, v.color);
-    // Motion vectors see what the hook moves since the previous frame.
     float3 world = gbuffer_hooked(k, transform_point(inst.world, v.position), v.color, frame.time.x);
+#ifdef MIRAI_VISIBILITY
+    // The raster of the visibility target: where the corner is now, and of a
+    // tested one what its fade and its alpha read; not where it was, nor its
+    // light, which the resolve builds.
+    output.out_material = k.material;
+    output.out_flags = k.flags;
+    output.out_instance = index;
+#ifdef MIRAI_VISIBILITY_TESTED
+    output.out_normal = transform_normal(inst.world_inv, v.normal);
+    output.out_tangent = instance_tangent(inst, v.tangent);
+    output.out_color = (k.tinted ? v.color.rgb : float3(1.0)) * inst.tint.rgb;
+    output.out_vertex_color = v.color;
+    output.out_uv = v.uv;
+    output.out_uv1 = v.uv1;
+#endif
+    gbuffer_vertex_place_now(output, world);
+    return output;
+#else
+    // Motion vectors see what the hook moves since the previous frame.
     float3 prev_world = gbuffer_hooked(k, transform_point(inst.prev_world, cluster_position_previous(mesh, c, local, k.previous)), v.color, frame.time.y);
     output.out_normal = transform_normal(inst.world_inv, v.normal);
     output.out_tangent = instance_tangent(inst, v.tangent);
@@ -88,6 +106,7 @@ Gbuffer_Vertex gbuffer_corner_build(uint index, Instance inst, Mesh mesh, Cluste
     output.out_uv1 = v.uv1;
     gbuffer_vertex_place(output, world, prev_world);
     return output;
+#endif
 }
 
 Gbuffer_Vertex gbuffer_vertex_build(uint index, Instance inst, Mesh mesh, Cluster c, uint corner) {
