@@ -44,6 +44,9 @@ SHADOW_SPOT_FACE :: abi.SHADOW_SPOT_FACE
 // The cosine of the half angle of the widest spot that takes one map along
 // its cone instead of the faces of the cube around it.
 SHADOW_SPOT_COS_MIN :: f32(0.5)
+// How far a face of the cube around a light reaches past its side, over its
+// half width: the taps of a point near its border read it there.
+SHADOW_FACE_GUARD :: f32(0.25)
 SHADOW_RASTER_SHARE :: f32(0.02)
 SHADOW_RASTER_KEEP :: f32(0.01)
 SHADOW_RASTER_LIGHTS :: abi.SHADOW_RASTER_LIGHTS // the most lights rasterized in a frame, those that light most of the view
@@ -266,7 +269,7 @@ shadow_light_faces :: proc(wants: ^[abi.SHADOW_LIGHT_SLOTS]Shadow_Want, light: G
 		if weight == 0 {continue}
 		fr, fu, ff := shadow_face_axes(u32(f))
 		wants[f] = {
-			m = {origin = c, near = light_near, right = fr, far = range, up = fu, forward = ff, skip = skip, span = {-1, -1, 1, 1}},
+			m = {origin = c, near = light_near, right = fr, far = range, up = fu, forward = ff, skip = skip, span = {-1, -1, 1, 1} * (1 + SHADOW_FACE_GUARD)},
 			weight = share * weight / total,
 		}
 	}
@@ -568,15 +571,8 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 		}
 	}
 	b.raster = blocks
-	// The faces of each light, the mip each is read at by how much of the
-	// view it serves, no more than its points need: a map keeps the side it
-	// was held at while what it would take stays within a quarter of a step.
-	pixels := f32(t.width * t.height)
-	side_of :: proc(texels: f32) -> u32 {
-		side := SHADOW_PAGE
-		for side * 2 <= min(u32(math.sqrt(max(texels, 0))), SHADOW_MAP_SIDE) {side *= 2}
-		return side
-	}
+	// The faces of each light, whole at their finest mip: each point reads
+	// the mip whose texel is about as wide as it (light_pick).
 	for held_light, block in b.raster {
 		if held_light == 0 {continue}
 		light := int(held_light) - 1
@@ -587,13 +583,7 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 		for &w, face in faces {
 			if w.weight <= 0 {continue}
 			slot := SHADOW_SUN_LEVELS + block * abi.SHADOW_LIGHT_SLOTS + face
-			texels := 2 * w.weight * pixels
-			side := side_of(texels)
-			h := b.held[slot].m
-			if h.rect.z != 0 && h.rect.w == u32(light) && h.rect.z >= side_of(texels / 1.5625) && h.rect.z <= side_of(texels * 1.5625) {side = h.rect.z}
-			mip := u32(0)
-			for SHADOW_MAP_SIDE >> mip > side {mip += 1}
-			w.m.rect = {u32(slot), mip << 16, side, u32(light)}
+			w.m.rect = {u32(slot), 0, SHADOW_MAP_SIDE, u32(light)}
 			wants[slot] = w
 		}
 	}
@@ -618,9 +608,7 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 			sp.shift = {w.grid.x - h.grid.x, w.grid.y - h.grid.y}
 			kept = was == now && w.grid.z == h.grid.z && abs(sp.shift.x) < SHADOW_MAP_PAGES && abs(sp.shift.y) < SHADOW_MAP_PAGES
 		} else if kept {
-			was, now := h.m, w.m
-			was.rect.y, was.rect.z, now.rect.y, now.rect.z = 0, 0, 0, 0
-			kept = was == now
+			kept = h.m == w.m
 		}
 		// A map new or changed whole (a light that turned or moved) draws its
 		// pages whole into the atlas alone this frame, and the cache the next.

@@ -348,6 +348,8 @@ render_shadow_maps_follow_what_moves_in_its_frame :: proc(t: ^testing.T) {
 		{object_id = 3, mesh = f.cube, transform = trs({0.5, 0.5, 0}, {0.4, 0.4, 0.4}), tint = {0.5, 0.5, 0.5}},
 	}
 	testing.expect(t, scene_given(r, roofed, []Light_Desc{light}, {}, {}))
+	// What moved before stays long enough to join the cache again.
+	for _ in 0 ..< SHADOW_MOVER_FRAMES {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
 	for k in 0 ..< 6 {
 		testing.expect(t, scene_move(r, {2}, {trs({0.5 + 0.1 * f32(k % 2), 0.5, 0}, {0.4, 0.4, 0.4})}))
 		testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
@@ -356,7 +358,7 @@ render_shadow_maps_follow_what_moves_in_its_frame :: proc(t: ^testing.T) {
 	state: [1]Gpu_Shadow_State
 	testing.expect(t, rhi.buffer_read_slice(f.device, r.shadow_buffers.state, 0, state[:]))
 	entries := state[0].draws[0].instance_count + state[0].draws[1].instance_count
-	testing.expectf(t, r.stats.shadow_movers > 0 && entries == 0, "a cube moving under a roof: %d movers, %d clusters drawn as what moves", r.stats.shadow_movers, entries)
+	testing.expectf(t, r.stats.shadow_movers == 1 && entries == 0, "a cube moving under a roof: %d movers, %d clusters drawn as what moves", r.stats.shadow_movers, entries)
 	hidden := read(t, &f)
 	defer delete(hidden)
 	r.main.targets.shadow_raster.forget = true
@@ -1190,6 +1192,12 @@ render_a_wider_light_casts_a_softer_shadow :: proc(t: ^testing.T) {
 			if values[k] > dark + 0.1 * (lit - dark) {low = k}
 		}
 		widths[i] = 0.02 * f32(high - low)
+		// The penumbra crosses the border of two faces of the cube of the
+		// light 2.5 m from under it, where the taps of each face read past it:
+		// no step there.
+		steepest := f32(0)
+		for k in 1 ..< brightest {steepest = max(steepest, abs(values[k] - values[k - 1]))}
+		testing.expectf(t, i == 0 || steepest < 0.15 * (lit - dark), "the penumbra steps by %f of %f across the border of two faces", steepest, lit - dark)
 	}
 	testing.expectf(t, widths[0] < 0.2, "a light with no size casts a sharp shadow: %f m of penumbra", widths[0])
 	testing.expectf(t, widths[1] > 0.4 && widths[1] > 3 * widths[0], "a wide one, a soft shadow: %f m of penumbra, %f m with none", widths[1], widths[0])

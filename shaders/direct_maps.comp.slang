@@ -136,7 +136,8 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
         bool programmed = direct_sun_weight(pixel.position, normal) > 0.0 && sun_map_of(pixel.position, m) && sun_map_given(pixel.position, across) && shadow_tint_programmed(m, pixel.position);
         for (uint i = 0u; i < count && !programmed; i++) {
             uint item = direct_item(row, i);
-            programmed = item != DIRECT_CELL_TABLE && light_map_of(item, pixel.position, m) && shadow_map_held(m, pixel.position) && shadow_tint_programmed(m, pixel.position);
+            Sun_Pick pick;
+            programmed = item != DIRECT_CELL_TABLE && light_map_given(item, pixel.position, across, m, pick) && shadow_tint_programmed(m, pixel.position);
         }
         if (programmed) {
             out_samples[p] = float4(0.0, 0.0, 0.0, 1.0);
@@ -178,8 +179,11 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     float wide = 0.0, hid = 0.0;
     for (uint i = 0u; i < count; i++) {
         uint item = direct_item(row, i);
+        // Its face at the mip of the point, or the coarser one drawn where its
+        // page is not; over the top of the octave of the mip, blended into the next.
         Shadow_Map m;
-        if (item == DIRECT_CELL_TABLE || !light_map_of(item, pixel.position, m) || !shadow_map_held(m, pixel.position)) {
+        Sun_Pick mip;
+        if (item == DIRECT_CELL_TABLE || !light_map_given(item, pixel.position, across, m, mip)) {
             rest = rest || direct_item_weight(row, item, pixel.position, normal) > 0.0;
             continue;
         }
@@ -193,7 +197,15 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
         float radius = light_extent(chosen);
         if (changes && !marked) marked = light_moved(item) || occluder_changed_in_cone(origin, axis, far, radius / max(far, 1e-4));
         float spread;
-        lit += radiance * shadow_map_seen(m, false, axis, pixel.position, normal, radius, spin, across, 1.0, spread);
+        bool own = shadow_rect_mip(m.rect) == mip.level;
+        float part = shadow_map_seen(m, false, axis, pixel.position, normal, radius, spin, across, own ? mip.grow : 1.0, spread);
+        Shadow_Map next = shadow_map_mip(m, mip.level + 1u);
+        float wide;
+        if (own && mip.blend > 0.0 && shadow_map_held(next, pixel.position)) {
+            part = lerp(part, shadow_map_seen(next, false, axis, pixel.position, normal, radius, spin, across, 1.0, wide), mip.blend);
+            spread = lerp(spread, wide, mip.blend);
+        }
+        lit += radiance * part;
         // Within the penumbra of what its taps met, on its lit side as on the other.
         if (spread > 0.0) {
             wide += luminance(radiance) * spread;

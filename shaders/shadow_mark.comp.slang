@@ -68,6 +68,8 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     for (uint i = 0u; i < count; i++) {
         uint item = direct_item(row, i);
         if (item == DIRECT_CELL_TABLE || !light_map_of(item, pixel.position, m)) continue;
-        shadow_mark(m, false, pixel.position, normal, light_extent(lights[item]), across, 1.0);
+        Sun_Pick mip = light_pick(m, pixel.position, across);
+        shadow_mark(shadow_map_mip(m, mip.level), false, pixel.position, normal, light_extent(lights[item]), across, mip.grow);
+        if (mip.blend > 0.0) shadow_mark(shadow_map_mip(m, mip.level + 1u), false, pixel.position, normal, light_extent(lights[item]), across, 1.0);
     }
 }
