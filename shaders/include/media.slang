@@ -15,8 +15,6 @@
 // How wide the place of a medium the pass lights is, metres: it reads the
 // level of the sun and the mip of a light whose texel is about as wide.
 static float media_across = 0.0;
-#ifdef SUN_SHADOW_SLOT
-#endif
 
 // The most nodes of the tree of the lights with shadows a point of a medium
 // takes through a shadow ray each (light_cut): past it, groups stand for
@@ -39,6 +37,12 @@ float3 media_local_light(float3 position, float3 eye_ray, float g) {
     return media_local_light(position, eye_ray, g, changed);
 }
 
+// Whether what media_local_light gives a point may have changed since the
+// frame before, without taking it.
+bool media_local_changed(float3 position) {
+    return frame.light_nodes != 0u && lights_changed(position, float3(0.0), 0.0, MEDIA_LIGHT_BUDGET, LIGHTS_LOCAL | LIGHTS_SCATTERED);
+}
+
 // The light around a point of a medium: the mean of what reaches a surface
 // facing up and one facing down.
 float3 media_ambient(float3 position, float3 to_eye_ray) {
@@ -51,6 +55,12 @@ float3 media_ambient(float3 position, float3 to_eye_ray) {
 // The light of the sun at a point that media scatter: its share of sun_light.
 float3 media_sun_light(float3 position) {
     return sun_light(position) * frame.sun_shares.y;
+}
+
+// Whether what of the sun reaches a point of a medium (media_sun_through)
+// may have changed since the frame before.
+bool media_sun_changed(float3 position) {
+    return (frame.moved.z & MOVED_SUN) != 0u || occluder_changed(position, frame.sun_direction.xyz, sun_reach(position, frame.sun_direction.xyz), INVALID, FLT_MAX);
 }
 
 // What of the sun reaches a point of a medium through the scene: 1 where
@@ -70,7 +80,7 @@ float3 media_sun_through(float3 position, inout bool changed) {
 #else
     float3 through = trace_transmission(position, frame.sun_direction.xyz, reach);
 #endif
-    changed = changed || (frame.moved.z & MOVED_SUN) != 0u || occluder_changed(position, frame.sun_direction.xyz, reach, INVALID, FLT_MAX);
+    changed = changed || media_sun_changed(position);
     return through;
 }
 
