@@ -41,6 +41,9 @@ Devices: `LICENSE.txt` in this folder and the header of each file.
     type of their elements, which are not those of the textures (`R8_UINT`, `R16G16_SINT`).
   - In `ffx_fsr3upscaler_callbacks_hlsl.h`, the new locks the accumulation reads and writes in
     place declare their format (`r8`), that of the texture (`R8_UNORM`).
+  - In `ffx_opticalflow_common.h`, `QSad` without `msad4` unpacks each byte of its three words
+    once for its four sums, instead of shifting the words and unpacking them again for each: the
+    same sums, in fewer operations of the search that takes most of the optical flow.
 - `../fsr3_framegen_mirai.slang` takes the `min16*` types to 32 bits: `ffx_common_types.h` defines
   `FfxFloat16` and `FfxUInt16` with them even without `FFX_HALF`, and Slang emits them as 16-bit,
   which the device does not enable. For the same reason `f32tof16` and `f16tof32` are there the
