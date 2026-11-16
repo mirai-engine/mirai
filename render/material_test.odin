@@ -500,7 +500,7 @@ material_textures_color_the_bounced_light :: proc(t: ^testing.T) {
 	}
 	camera := Camera{position = {0, 2.5, 2.5}, forward = {0, -2.5, -2.5}, up = {0, 1, 0}, fov_y = 70, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	for provider in ([]Trace_Mode{.Software, .Hardware}) {
-		if provider == .Hardware && !r.hardware_rt_verified {continue}
+		if !fixture_traces(r, provider) {continue}
 		settings.trace_mode = provider
 		testing.expect(t, renderer_apply_settings(r, settings), r.error)
 		for mesh, uv_set in ([2]Mesh_Handle{cube, secondary}) {
@@ -1125,7 +1125,7 @@ material_program_moves_the_vertices_the_camera_the_rays_and_the_motion_see :: pr
 	above := Camera{position = {1.5, 6, 0}, forward = {0, -1, 0}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	side := Camera{position = {0, 3, 6}, forward = {0, -3, -6}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	for provider in ([]Trace_Mode{.Software, .Hardware}) {
-		if provider == .Hardware && !r.hardware_rt_verified {continue}
+		if !fixture_traces(r, provider) {continue}
 		settings := r.settings; settings.trace_mode = provider
 		testing.expect(t, renderer_apply_settings(r, settings), r.error)
 		for progress in ([]f64{0, 1}) {
@@ -1241,7 +1241,7 @@ material_mask_cuts_holes_for_the_camera_and_for_rays :: proc(t: ^testing.T) {
 	// From the side: the solid half shades the floor and the hole lets the sun through.
 	side := Camera{position = {0, 3, 6}, forward = {0, -3, -6}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	for provider in ([]Trace_Mode{.Software, .Hardware}) {
-		if provider == .Hardware && !r.hardware_rt_verified {continue}
+		if !fixture_traces(r, provider) {continue}
 		settings := r.settings; settings.trace_mode = provider
 		testing.expect(t, renderer_apply_settings(r, settings), r.error)
 		cutout.alpha_mode, cutout.opacity = .Mask, 1
@@ -1574,7 +1574,7 @@ material_colored_shadows_filter_textures_and_respect_blockers :: proc(t:^testing
     grid:=program_find(r,"Grid",.Surface)
     if !testing.expect(t,grid!=nil,"the tests have the Grid program") {return}
     for provider in ([]Trace_Mode{.Software,.Hardware}) {
-        if provider==.Hardware && !r.hardware_rt_verified {continue}
+        if !fixture_traces(r,provider) {continue}
         for mesh,uv_set in ([2]Mesh_Handle{quad,secondary}) {
             glass.maps.base_color.uv_set=u32(uv_set)
             materials_set(r,{glass})
@@ -1629,7 +1629,7 @@ material_colored_shadows_filter_textures_and_respect_blockers :: proc(t:^testing
     materials_set(r,{painted})
     wide:=Instance_Desc{object_id=2,mesh=quad,transform=placed(8,1),material=1,tint={1,1,1}}
     for provider in ([]Trace_Mode{.Software,.Hardware}) {
-        if provider==.Hardware && !r.hardware_rt_verified || provider==.Software && !SOFTWARE_TRACER {continue}
+        if !fixture_traces(r,provider) {continue}
         for reference in ([2]bool{false,true}) {
             f.reference=Reference_Set{.Lights} if reference else {}
             settings:=r.settings;settings.trace_mode=provider;settings.colored_shadows=true;settings.light_budget=8
@@ -1678,7 +1678,7 @@ uniform_instance_color_overrides_vertex_colors_in_raster_and_shadow_rays :: proc
     camera:=OVERHEAD;camera.position.y=5
     sun:=Sun_Desc{direction={0,1,0},color={1,1,1},illuminance=1 * math.PI,enabled=true,indirect=1,scattering=1}
     for provider in ([]Trace_Mode{.Software,.Hardware}) {
-        if provider==.Hardware && !r.hardware_rt_verified {continue}
+        if !fixture_traces(r,provider) {continue}
         settings:=r.settings;settings.trace_mode=provider;settings.colored_shadows=true
         testing.expect(t,renderer_apply_settings(r,settings))
         source.uniform_color=false
@@ -1720,7 +1720,7 @@ material_mirror_lighting_is_exact_with_four_local_lights :: proc(t:^testing.T) {
     scene_given(r,instances,lights,{},{})
     camera:=Camera{position={0,2,2},forward={0,-2,-2},up={0,1,0},fov_y=60,near=0.05,far=100,exposure=UNIT_EXPOSURE}
     for provider in ([]Trace_Mode{.Software,.Hardware}) {
-        if provider==.Hardware && !r.hardware_rt_verified {continue}
+        if !fixture_traces(r,provider) {continue}
         settings:=r.settings;settings.trace_mode=provider;settings.reflection_light_budget=8
         testing.expect(t,renderer_apply_settings(r,settings))
         low,high:=f32(1e6),f32(0)

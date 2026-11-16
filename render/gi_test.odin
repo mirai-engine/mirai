@@ -35,10 +35,11 @@ gi_reference_gives_the_light_of_a_white_furnace :: proc(t: ^testing.T) {
 		settings := DEFAULT_SETTINGS
 		settings.taa, settings.trace_mode = false, mode
 		f: Fixture
-		if !fixture_init(t, &f, 48, 48, settings, reference = {.Gi}) {return}
+		// A tracer the backend lacks is skipped, the other still runs.
+		if !fixture_init(t, &f, 48, 48, settings, reference = {.Gi}) {continue}
 		defer fixture_destroy(&f)
 		r, device := f.renderer, f.device
-		if mode == .Hardware && !r.hardware_rt || mode == .Software && !SOFTWARE_TRACER {continue}
+		if !fixture_traces(r, mode) {continue}
 		cube, added := gi_cube(r)
 		if !testing.expect(t, added) {return}
 		grid := program_find(r, "Grid", .Surface)
