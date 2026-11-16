@@ -162,11 +162,11 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
             bool own = held.rect.x == pick.level;
             sun_part = shadow_map_seen(held, true, frame.sun_direction.xyz, pixel.position, normal, params.sun_radius, spin, across, own ? pick.grow : 1.0, sun_wide);
             Shadow_Map next = sun_level(pick.level + 1u);
-            float wide;
+            float next_wide;
             if (own && pick.blend > 0.0 && shadow_map_held(next, pixel.position)) {
-                float part = shadow_map_seen(next, true, frame.sun_direction.xyz, pixel.position, normal, params.sun_radius, spin, across, 1.0, wide);
+                float part = shadow_map_seen(next, true, frame.sun_direction.xyz, pixel.position, normal, params.sun_radius, spin, across, 1.0, next_wide);
                 sun_part = lerp(sun_part, part, pick.blend);
-                sun_wide = lerp(sun_wide, wide, pick.blend);
+                sun_wide = lerp(sun_wide, next_wide, pick.blend);
             }
             if (changes) marked = occluder_changed_in_cone(origin, frame.sun_direction.xyz, 1e5, params.sun_radius);
         } else {
@@ -200,10 +200,10 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
         bool own = shadow_rect_mip(m.rect) == mip.level;
         float part = shadow_map_seen(m, false, axis, pixel.position, normal, radius, spin, across, own ? mip.grow : 1.0, spread);
         Shadow_Map next = shadow_map_mip(m, mip.level + 1u);
-        float wide;
+        float next_spread;
         if (own && mip.blend > 0.0 && shadow_map_held(next, pixel.position)) {
-            part = lerp(part, shadow_map_seen(next, false, axis, pixel.position, normal, radius, spin, across, 1.0, wide), mip.blend);
-            spread = lerp(spread, wide, mip.blend);
+            part = lerp(part, shadow_map_seen(next, false, axis, pixel.position, normal, radius, spin, across, 1.0, next_spread), mip.blend);
+            spread = lerp(spread, next_spread, mip.blend);
         }
         lit += radiance * part;
         // Within the penumbra of what its taps met, on its lit side as on the other.
