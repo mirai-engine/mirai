@@ -18,7 +18,9 @@ uint gbuffer_corner(Instance inst, uint corner) {
     return k == 1u ? corner + 1u : corner - 1u;
 }
 
-Gbuffer_Vertex gbuffer_vertex_build(uint index, Instance inst, Mesh mesh, Cluster c, uint corner) {
+// cut: the draw takes the cut of the view, whose islands are on their way to
+// the next level (cluster_along); else level 0 as it is.
+Gbuffer_Vertex gbuffer_vertex_build(uint index, Instance inst, Mesh mesh, Cluster c, uint corner, bool cut) {
     Gbuffer_Vertex output = (Gbuffer_Vertex)0;
     uint material = material_of(inst, cluster_material(mesh, c));
     uint local = cluster_corner(mesh, c, gbuffer_corner(inst, corner));
@@ -30,8 +32,9 @@ Gbuffer_Vertex gbuffer_vertex_build(uint index, Instance inst, Mesh mesh, Cluste
     }
     Mesh_Point v = cluster_point_at(mesh, c, local, posed);
     v.color = instance_vertex_color(inst, c.vertex_first + local, v.color);
-    float3 world = transform_point(inst.world, v.position);
-    float3 prev_world = transform_point(inst.prev_world, cluster_position_previous(mesh, c, local, previous));
+    float3 offset = cut ? island_offset(mesh, c, local, cluster_along(view_detail(), inst, instance_scale(inst), mesh, c, frame.cut.x)) : float3(0.0);
+    float3 world = transform_point(inst.world, v.position + offset);
+    float3 prev_world = transform_point(inst.prev_world, cluster_position_previous(mesh, c, local, previous) + offset);
 #if defined(MIRAI_BATCHES) && defined(MIRAI_HOOK_VERTEX)
     if (instance_batched(index)) {
         Instance row = batch_row(batch_of(index));

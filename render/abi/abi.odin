@@ -120,6 +120,7 @@ MESH_FLAG_SURFACE  :: 4
 MESH_FLAG_UV1      :: 8
 MESH_FLAG_COLORS   :: 16
 MESH_FLAG_STREAMED :: 32
+MESH_FLAG_ISLANDS  :: 64
 
 // The geometry pools, in u32 words.
 Gpu_Posed_Vertex :: struct {

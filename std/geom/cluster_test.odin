@@ -436,3 +436,110 @@ cluster_levels_cut_one_whole_level :: proc(t:^testing.T) {
     }
     testing.expect(t,picked[0] && picked[2],"near the first level, far the last")
 }
+
+// A cloud of cards of two triangles in two octaves of size, each an island
+// of one outline, and a camera next to it: the DAG prunes them by group. No
+// card is split between clusters, the errors grow to the roots in spheres
+// around the clusters, every group draws in the clusters it was reduced into
+// the area of its own within 2 %, and a camera at its edge draws fewer triangles
+// than with all of the cloud as near.
+@(test)
+cluster_dag_prunes_a_cloud_of_islands_by_group :: proc(t:^testing.T) {
+    CARDS :: 16384
+    positions:=make([dynamic]Vec3,context.temp_allocator)
+    indices:=make([dynamic]u32,context.temp_allocator)
+    islands:=make([dynamic]Cluster_Island,context.temp_allocator)
+    rungs:=make([dynamic]Cluster_Island_Rung,context.temp_allocator)
+    rng:=base.rng_make(3)
+    for card in 0..<CARDS {
+        center:=mm.random_in_sphere(&rng)*16
+        size:=f32(0.1) if card%4!=0 else 0.25
+        first:=u32(len(positions))
+        for corner in ([4][2]f32{{0,0},{1,0},{0,1},{1,1}}) {append(&positions,center+{(corner.x-0.5)*size,0,(corner.y-0.5)*size})}
+        append(&rungs,Cluster_Island_Rung{u32(len(indices)),6,0})
+        append(&indices,first,first+2,first+1,first+1,first+2,first+3)
+        append(&islands,Cluster_Island{first_rung=u32(card),rung_count=1,class=0 if size<0.2 else 1,center=center,radius=size*math.SQRT_TWO/2,order=u64(base.rng_u32(&rng))})
+    }
+    source:=Cluster_Source{positions=positions[:],islands=islands[:],island_rungs=rungs[:],island_indices=indices[:]}
+    dag:Cluster_Dag
+    defer cluster_dag_destroy(&dag)
+    if !testing.expect_value(t,cluster_dag_build(&dag,source),Cluster_Error.None) {return}
+    testing.expectf(t,dag.levels>=4,"%d levels",dag.levels)
+    // The place of a vertex of the DAG, and the card it is of.
+    place :: proc(dag:^Cluster_Dag,positions:[]Vec3,v:u32) -> (Vec3,u32) {
+        if int(v)<len(positions) {return positions[v],v/4}
+        made:=dag.made[int(v)-len(positions)]
+        return made.position,made.vertex/4
+    }
+    area :: proc(dag:^Cluster_Dag,positions:[]Vec3,c:Cluster) -> (sum:f32) {
+        for k:=u32(0);k<c.triangle_count*3;k+=3 {
+            p0,_:=place(dag,positions,dag.vertices[c.first_vertex+u32(dag.triangles[c.first_triangle*3+k])])
+            p1,_:=place(dag,positions,dag.vertices[c.first_vertex+u32(dag.triangles[c.first_triangle*3+k+1])])
+            p2,_:=place(dag,positions,dag.vertices[c.first_vertex+u32(dag.triangles[c.first_triangle*3+k+2])])
+            a,b:=p1-p0,p2-p0
+            n:=Vec3{a.y*b.z-a.z*b.y,a.z*b.x-a.x*b.z,a.x*b.y-a.y*b.x}
+            sum+=0.5*math.sqrt(n.x*n.x+n.y*n.y+n.z*n.z)
+        }
+        return
+    }
+    for c in dag.clusters {
+        if c.triangle_count>CLUSTER_MAX_TRIANGLES || c.vertex_count>CLUSTER_MAX_VERTICES || c.triangle_count==0 {testing.expectf(t,false,"a cluster of %d triangles",c.triangle_count);return}
+        corners:=make(map[u32]int,context.temp_allocator)
+        for k in 0..<c.triangle_count*3 {
+            _,card:=place(&dag,positions[:],dag.vertices[c.first_vertex+u32(dag.triangles[c.first_triangle*3+k])])
+            corners[card]+=1
+        }
+        for _,n in corners {if n!=6 {testing.expect(t,false,"a card is split between clusters");return}}
+        d:=c.parent.center-c.own.center
+        if !(c.own.error<=c.parent.error) || math.sqrt(d.x*d.x+d.y*d.y+d.z*d.z)+c.own.radius>c.parent.radius*1.0001+1e-6 {testing.expectf(t,false,"cluster of level %d: own %v, parent %v",c.level,c.own,c.parent);return}
+    }
+    // Each group against what it was reduced into.
+    done:=make(map[Cluster_Lod]bool,context.temp_allocator)
+    for g in dag.clusters {
+        if g.parent.error==max(f32) || g.parent in done {continue}
+        done[g.parent]=true
+        before,after:f32
+        for c in dag.clusters {
+            if c.level==g.level && c.parent==g.parent {before+=area(&dag,positions[:],c)}
+            if c.level==g.level+1 && c.own==g.parent {after+=area(&dag,positions[:],c)}
+        }
+        if abs(after-before)>0.02*before {testing.expectf(t,false,"a group of level %d draws %f, reduced %f",g.level,before,after);return}
+    }
+    // A camera at the edge of the cloud against the cut with all of it as near.
+    camera:=Vec3{16.5,0,0}
+    near,all:u32
+    for c in dag.clusters {
+        if projected(c.own,camera)<=0.004 && projected(c.parent,camera)>0.004 {near+=c.triangle_count}
+        allowed:=f32(0.004*0.5)
+        if c.own.error<=allowed && !(c.parent.error<=allowed) {all+=c.triangle_count}
+    }
+    testing.expectf(t,f32(near)<0.75*f32(all),"from the edge the cloud draws %d triangles, all of it as near %d",near,all)
+    again:Cluster_Dag
+    defer cluster_dag_destroy(&again)
+    cluster_dag_build(&again,source)
+    testing.expect(t,bytes_equal(again.clusters[:],dag.clusters[:]) && bytes_equal(again.vertices[:],dag.vertices[:]) && bytes_equal(again.made[:],dag.made[:]),"the same cloud gives the same DAG")
+}
+
+// A group of tiny disjoint triangles that would lose every one keeps the
+// largest, and its error covers the area the others had.
+@(test)
+a_group_that_loses_every_triangle_keeps_its_largest :: proc(t:^testing.T) {
+    Case :: struct {sides:[]f32,largest:int}
+    cases:=[]Case{{{0.01,0.03,0.02},1},{{0.05},0},{{0.001,0.001,0.004,0.002},2}}
+    for c in cases {
+        positions:=make([dynamic]Vec3,context.temp_allocator)
+        indices:=make([dynamic]u32,context.temp_allocator)
+        total:f32
+        for side,k in c.sides {
+            first:=u32(len(positions))
+            at:=Vec3{f32(k),0,0}
+            append(&positions,at,at+{side,0,0},at+{0,side,0})
+            append(&indices,first,first+1,first+2)
+            total+=0.5*side*side
+        }
+        kept,lost:=group_largest(indices[:],positions[:])
+        side:=c.sides[c.largest]
+        testing.expectf(t,kept==[3]u32{u32(c.largest)*3,u32(c.largest)*3+1,u32(c.largest)*3+2},"%v keeps %v",c.sides,kept)
+        testing.expectf(t,abs(lost-math.sqrt(total-0.5*side*side))<1e-6,"%v loses %f",c.sides,lost)
+    }
+}
