@@ -97,6 +97,11 @@ struct Shading {
     // that reaches its other side, as a Lambert reflector facing that side
     // would (shading_back), the layers over it included.
     float3 transmit;
+    // A point of a medium (shading_medium), whose normal is zero: it sends
+    // towards view what the phase function of its anisotropy (media_phase)
+    // gives of the light from each direction, and nothing of a lobe.
+    bool medium;
+    float anisotropy;
 };
 
 // 1 - noh^2 is taken as |n x h|^2: near the peak of a sharp lobe, 1 - noh^2
@@ -236,6 +241,24 @@ Shading shading_make(float3 position, float3 normal, float3 view, float3 diffuse
     s.mirror = reflect(-view, normal);
     s.coat_color = float3(1.0);
     s.coat_through = float3(1.0);
+    return s;
+}
+
+// Henyey-Greenstein times pi: what a point of a medium sends towards the eye
+// of Lambert-normalized light. cosine: between where the light goes and where
+// the eye looks; g, the anisotropy of the medium, forward above 0. Its mean
+// over every direction is a quarter.
+float media_phase(float cosine, float g) {
+    float g2 = g * g;
+    return 0.25 * (1.0 - g2) / pow(max(1.0 + g2 - 2.0 * g * cosine, 1e-4), 1.5);
+}
+
+// A point of a medium seen from `view`, of anisotropy g: its diffuse
+// reflectance is what it sends of light that comes evenly from around.
+Shading shading_medium(float3 position, float3 view, float g) {
+    Shading s = shading_make(position, float3(0.0), view, float3(0.25), float3(0.0), float3(0.0), 1.0);
+    s.medium = true;
+    s.anisotropy = g;
     return s;
 }
 
@@ -517,6 +540,7 @@ void shading_lobes(Shading s, float3 light, Highlight base, Highlight coat, out 
 // mirror direction, with the lobe widened by its size and lowered to keep its
 // energy (Karis 2013).
 float3 shading_response(Shading s, float3 light, float distance = 0.0, float radius = 0.0) {
+    if (s.medium) return float3(media_phase(dot(-s.view, light), s.anisotropy));
     if (!s.glossy && s.layers == 0u) return s.diffuse;
     Highlight base = highlight_at(light), coat = highlight_at(light);
     if (radius > 0.0 && distance > 0.0) sphere_highlights(s, light * distance, radius, base, coat);

@@ -189,8 +189,8 @@ void light_lobes(Light light, Shading s, out float3 diffuse, out float3 specular
     specular = float3(0.0);
     float3 irradiance = light_contribution(light, s.position, s.normal, direction, distance);
     if (!(luminance(irradiance) > 0.0)) return;
-    if (!s.glossy && s.layers == 0u) {
-        diffuse = irradiance * s.diffuse;
+    if (s.medium || (!s.glossy && s.layers == 0u)) {
+        diffuse = irradiance * shading_response(s, direction);
         return;
     }
     Highlight base = highlight_at(direction), coat = highlight_at(direction);
@@ -373,15 +373,6 @@ float3 node_radiance(Light_Node node, Shading s, out float3 direction, out float
     return irradiance * shading_response(s, direction, distance, node.spread);
 }
 
-// Whether any light of a node reaches a point, is not wholly under the
-// horizon of its surface and faces it; `bounced`: and the probes gather some
-// of its light.
-bool node_reaches(Light_Node node, float3 position, float3 normal, out float distance_squared, bool bounced = false) {
-    float3 delta = node.center_radius.xyz - position;
-    distance_squared = dot(delta, delta);
-    return distance_squared < node.power_reach.w * node.power_reach.w && dot(delta, normal) > -node.center_radius.w && (!bounced || node.indirect > 0.0) && node_aim(node, position) > 0.0;
-}
-
 // Which share of their light the lights of a walk give: all of it, what the
 // probes gather (Light_Node.indirect) or what media scatter (scattering).
 #define LIGHT_SHARE_ALL 0u
@@ -389,6 +380,15 @@ bool node_reaches(Light_Node node, float3 position, float3 normal, out float dis
 #define LIGHT_SHARE_SCATTERED 2u
 float node_share(Light_Node node, uint share) {
     return share == LIGHT_SHARE_BOUNCED ? node.indirect : share == LIGHT_SHARE_SCATTERED ? node.scattering : 1.0;
+}
+
+// Whether any light of a node reaches a point, is not wholly under the
+// horizon of its surface, faces it and gives some of the share of its light
+// the walk takes (LIGHT_SHARE_*).
+bool node_reaches(Light_Node node, float3 position, float3 normal, out float distance_squared, uint share = LIGHT_SHARE_ALL) {
+    float3 delta = node.center_radius.xyz - position;
+    distance_squared = dot(delta, delta);
+    return distance_squared < node.power_reach.w * node.power_reach.w && dot(delta, normal) > -node.center_radius.w && node_share(node, share) > 0.0 && node_aim(node, position) > 0.0;
 }
 
 // Whether a walk goes down from the node at `at` to its children: a group
@@ -467,13 +467,13 @@ static const float GROUP_INSIDE = 1.0;
 
 // How much a group that reaches a point needs to open to its children: the
 // brighter and the wider as the point sees it, the more; one that holds a
-// spot, first. `bounced`: by the share of its light the probes gather.
-float node_need(Light_Node node, float distance_squared, float3 position, float3 normal, bool bounced) {
+// spot, first. `share`: by that share of its light (LIGHT_SHARE_*).
+float node_need(Light_Node node, float distance_squared, float3 position, float3 normal, uint share) {
     if ((node.flags & LIGHT_NODE_SPOT) != 0u) return 3e38;
     float distance = sqrt(distance_squared);
     float radius = node.center_radius.w;
     float rising = saturate((dot(node.center_radius.xyz - position, normal) + radius) / max(distance, 1e-6));
-    return luminance(node.power_reach.rgb) * (bounced ? node.indirect : 1.0) * node_aim(node, position) * rising / max(distance_squared, radius * radius) * min(radius / max(distance, 1e-6), 1.0);
+    return luminance(node.power_reach.rgb) * node_share(node, share) * node_aim(node, position) * rising / max(distance_squared, radius * radius) * min(radius / max(distance, 1e-6), 1.0);
 }
 
 // A walk of the tree visits at most LIGHT_WALK_MAX nodes. It holds the
@@ -531,40 +531,40 @@ bool light_walk_next(inout Light_Walk walk, out uint at, out float weight) {
 // (node_bend), where some of their lights reach the point and others not.
 // It sets how much a group of the finer sum may err. `root`: the tree it
 // walks, that of the lights with shadows (0) or one of those without
-// (frame.shadowless_lights.x or z). `bounced`: each by the share of its light
-// the probes gather.
+// (frame.shadowless_lights.x or z). `share`: each by that share of its light
+// (LIGHT_SHARE_*).
 static const float ESTIMATE_GROUPED = 0.5;
 static const float ESTIMATE_OPENED = 1.0;
-float estimate_visit(inout Light_Walk walk, uint at, float weight, float3 position, float3 normal, bool bounced) {
+float estimate_visit(inout Light_Walk walk, uint at, float weight, float3 position, float3 normal, uint share) {
     walk.visits++;
     Light_Node node = light_nodes[at];
     float distance_squared;
-    if (!node_reaches(node, position, normal, distance_squared, bounced)) return 0.0;
+    if (!node_reaches(node, position, normal, distance_squared, share)) return 0.0;
     float opened = (node.flags & LIGHT_NODE_LEAF) != 0u ? 0.0 : smoothstep(ESTIMATE_GROUPED, ESTIMATE_OPENED, max(node.center_radius.w * rsqrt(max(distance_squared, 1e-12)), node_bend(node, sqrt(distance_squared))));
     float total = 0.0;
     if (opened < 1.0) {
         float3 direction;
         float distance;
-        total = luminance(node_contribution(node, position, normal, direction, distance)) * (weight * (1.0 - opened) * (bounced ? node.indirect : 1.0));
+        total = luminance(node_contribution(node, position, normal, direction, distance)) * (weight * (1.0 - opened) * node_share(node, share));
     }
-    if (opened > 0.0 && light_node_opens(node, at)) light_walk_hold(walk, at, weight * opened, weight * opened * node_need(node, distance_squared, position, normal, bounced));
+    if (opened > 0.0 && light_node_opens(node, at)) light_walk_hold(walk, at, weight * opened, weight * opened * node_need(node, distance_squared, position, normal, share));
     return total;
 }
-float lights_estimate(float3 position, float3 normal, uint root = 0u, bool bounced = false) {
+float lights_estimate(float3 position, float3 normal, uint root = 0u, uint share = LIGHT_SHARE_ALL) {
     Light_Walk walk = light_walk_begin();
-    float total = estimate_visit(walk, root, 1.0, position, normal, bounced);
+    float total = estimate_visit(walk, root, 1.0, position, normal, share);
     uint at;
     float weight;
     [loop]
     while (light_walk_next(walk, at, weight)) {
-        total += estimate_visit(walk, at + 1u, weight, position, normal, bounced);
-        total += estimate_visit(walk, light_nodes[at].child, weight, position, normal, bounced);
+        total += estimate_visit(walk, at + 1u, weight, position, normal, share);
+        total += estimate_visit(walk, light_nodes[at].child, weight, position, normal, share);
     }
     for (uint i = 0u; i < walk.held; i++) {
         Light_Node node = light_nodes[walk.at[i]];
         float3 direction;
         float distance;
-        total += luminance(node_contribution(node, position, normal, direction, distance)) * (walk.weight[i] * (bounced ? node.indirect : 1.0));
+        total += luminance(node_contribution(node, position, normal, direction, distance)) * (walk.weight[i] * node_share(node, share));
     }
     return total;
 }
@@ -587,18 +587,18 @@ float3 group_radiance(Light_Node node, Shading s, out float doubt) {
 // nothing in their way: the tree opened as far as the point needs, within a
 // walk. `total` is roughly how much light reaches it, what a group may err
 // against; without it the tree says. `root`: the tree of the lights with
-// shadows (0) or that of those without (shadowless_lighting). `bounced`: each
-// by the share of its light the probes gather (Light_Node.indirect).
-float3 local_visit(inout Light_Walk walk, uint at, float weight, Shading s, float total, bool bounced) {
+// shadows (0) or that of those without (shadowless_lighting). `share`: each
+// by that share of its light (LIGHT_SHARE_*).
+float3 local_visit(inout Light_Walk walk, uint at, float weight, Shading s, float total, uint share) {
     walk.visits++;
     Light_Node node = light_nodes[at];
     float distance_squared;
-    if (!node_reaches(node, s.position, s.normal, distance_squared, bounced)) return float3(0.0);
-    float share = bounced ? node.indirect : 1.0;
+    if (!node_reaches(node, s.position, s.normal, distance_squared, share)) return float3(0.0);
+    float shared = node_share(node, share);
     if ((node.flags & LIGHT_NODE_LEAF) != 0u) {
         float3 direction;
         float distance;
-        return light_radiance(lights[node.child], s, direction, distance) * (weight * share);
+        return light_radiance(lights[node.child], s, direction, distance) * (weight * shared);
     }
     float opened = 1.0;
     float3 radiance = float3(0.0);
@@ -610,27 +610,27 @@ float3 local_visit(inout Light_Walk walk, uint at, float weight, Shading s, floa
             opened = max(opened, smoothstep(LIGHTS_GROUPED, LIGHTS_OPENED, doubt / total));
         }
     }
-    if (opened > 0.0 && light_node_opens(node, at)) light_walk_hold(walk, at, weight * opened, weight * opened * node_need(node, distance_squared, s.position, s.normal, bounced));
-    return radiance * (weight * (1.0 - opened) * share);
+    if (opened > 0.0 && light_node_opens(node, at)) light_walk_hold(walk, at, weight * opened, weight * opened * node_need(node, distance_squared, s.position, s.normal, share));
+    return radiance * (weight * (1.0 - opened) * shared);
 }
-float3 local_lighting(Shading s, float total, uint root = 0u, bool bounced = false) {
+float3 local_lighting(Shading s, float total, uint root = 0u, uint share = LIGHT_SHARE_ALL) {
     float3 result = float3(0.0);
     if (frame.light_nodes == 0u) return result;
-    if (!(total > 0.0)) total = lights_estimate(s.position, s.normal, root, bounced);
+    if (!(total > 0.0)) total = lights_estimate(s.position, s.normal, root, share);
     total = max(total, 1e-8);
     Light_Walk walk = light_walk_begin();
-    result += local_visit(walk, root, 1.0, s, total, bounced);
+    result += local_visit(walk, root, 1.0, s, total, share);
     uint at;
     float weight;
     [loop]
     while (light_walk_next(walk, at, weight)) {
-        result += local_visit(walk, at + 1u, weight, s, total, bounced);
-        result += local_visit(walk, light_nodes[at].child, weight, s, total, bounced);
+        result += local_visit(walk, at + 1u, weight, s, total, share);
+        result += local_visit(walk, light_nodes[at].child, weight, s, total, share);
     }
     for (uint i = 0u; i < walk.held; i++) {
         Light_Node node = light_nodes[walk.at[i]];
         float doubt;
-        result += group_radiance(node, s, doubt) * (walk.weight[i] * (bounced ? node.indirect : 1.0));
+        result += group_radiance(node, s, doubt) * (walk.weight[i] * node_share(node, share));
     }
     return result;
 }
@@ -639,17 +639,17 @@ float3 local_lighting(Shading s, float total, uint root = 0u, bool bounced = fal
 // towards its viewer, those a pass writes and those of the scene: whatever
 // stands in their way, with no rays and out of the budgets of shadows.
 // `known`: the light of the others that reaches it, as lights_estimate sums
-// it, which a group may err against with theirs. `bounced`: as for
+// it, which a group may err against with theirs. `share`: as for
 // local_lighting.
-float3 shadowless_lighting(Shading s, float known, bool bounced = false) {
+float3 shadowless_lighting(Shading s, float known, uint share = LIGHT_SHARE_ALL) {
     uint written = frame.shadowless_lights.x, scene = frame.shadowless_lights.z;
     if (written == 0u && scene == 0u) return float3(0.0);
     float total = max(known, 0.0);
-    if (written != 0u) total += lights_estimate(s.position, s.normal, written, bounced);
-    if (scene != 0u) total += lights_estimate(s.position, s.normal, scene, bounced);
+    if (written != 0u) total += lights_estimate(s.position, s.normal, written, share);
+    if (scene != 0u) total += lights_estimate(s.position, s.normal, scene, share);
     float3 result = float3(0.0);
-    if (written != 0u) result += local_lighting(s, total, written, bounced);
-    if (scene != 0u) result += local_lighting(s, total, scene, bounced);
+    if (written != 0u) result += local_lighting(s, total, written, share);
+    if (scene != 0u) result += local_lighting(s, total, scene, share);
     return result;
 }
 
@@ -659,14 +659,14 @@ bool light_node_shadowless(uint at) {
 }
 
 // How much a node of a cut needs to open to its children (node_need). -2: it
-// does not reach the point, or `bounced` and the probes gather none of its
-// light; -1: a leaf, which does not open.
-float cut_need(uint index, float3 position, float3 normal, bool bounced) {
+// does not reach the point or gives none of the share of its light; -1: a
+// leaf, which does not open.
+float cut_need(uint index, float3 position, float3 normal, uint share) {
     Light_Node node = light_nodes[index];
     float distance_squared;
-    if (!node_reaches(node, position, normal, distance_squared, bounced)) return -2.0;
+    if (!node_reaches(node, position, normal, distance_squared, share)) return -2.0;
     if (!light_node_opens(node, index)) return -1.0;
-    return node_need(node, distance_squared, position, normal, bounced);
+    return node_need(node, distance_squared, position, normal, share);
 }
 
 // The nodes a point lights through a shadow ray each: every light that
@@ -674,8 +674,8 @@ float cut_need(uint index, float3 position, float3 normal, bool bounced) {
 // stand for them, half as many: from the root, the node that most needs it
 // opens to its children while there is room. Every light that reaches the
 // point is under one of the nodes, and a leaf among them is a light alone.
-// `bounced`: only lights the probes gather some of the light of.
-uint light_cut(float3 position, float3 normal, uint budget, inout uint cut[LIGHT_CUT_MAX], bool bounced = false) {
+// `share`: only lights that give some of that share of their light.
+uint light_cut(float3 position, float3 normal, uint budget, inout uint cut[LIGHT_CUT_MAX], uint share = LIGHT_SHARE_ALL) {
     budget = min(budget, LIGHT_CUT_MAX);
     if (frame.light_nodes == 0u || budget == 0u) return 0u;
     uint count = 0u;
@@ -692,7 +692,7 @@ uint light_cut(float3 position, float3 normal, uint budget, inout uint cut[LIGHT
         while (true) {
             Light_Node node = light_nodes[at];
             float distance_squared;
-            if (node_reaches(node, position, normal, distance_squared, bounced)) {
+            if (node_reaches(node, position, normal, distance_squared, share)) {
                 if ((node.flags & LIGHT_NODE_LEAF) == 0u) {
                     float radius = node.center_radius.w;
                     float distance = sqrt(distance_squared);
@@ -731,7 +731,7 @@ uint light_cut(float3 position, float3 normal, uint budget, inout uint cut[LIGHT
     // half as many, their rays spread over their lights by the blocks.
     budget = max(budget / 2u, 1u);
     float need[LIGHT_CUT_MAX];
-    float root = cut_need(0u, position, normal, bounced);
+    float root = cut_need(0u, position, normal, share);
     if (root < -1.5) return 0u;
     cut[0] = 0u;
     need[0] = root;
@@ -749,8 +749,8 @@ uint light_cut(float3 position, float3 normal, uint budget, inout uint cut[LIGHT
         if (neediest == LIGHT_CUT_MAX) break;
         uint first = cut[neediest] + 1u;
         uint second = light_nodes[cut[neediest]].child;
-        float a = cut_need(first, position, normal, bounced);
-        float b = cut_need(second, position, normal, bounced);
+        float a = cut_need(first, position, normal, share);
+        float b = cut_need(second, position, normal, share);
         if (a > -1.5 && b > -1.5) {
             if (count >= budget) break;
             cut[neediest] = first;
@@ -927,14 +927,30 @@ float3 extension_radiance(Shading s, Extension_Light light) {
 }
 #endif
 
-// The lights direct_lighting adds up, and LIGHTS_BOUNCED: each by the share
-// of its light the probes gather (frame.sun_shares, Light_Node.indirect, and
-// light_shares of the shape of a light of extensions).
+// The lights direct_lighting adds up; LIGHTS_BOUNCED: each by the share of
+// its light the probes gather (frame.sun_shares, Light_Node.indirect, and
+// light_shares of the shape of a light of extensions); LIGHTS_SCATTERED: by
+// the share media scatter; LIGHTS_CHANGES: and whether what the point gets
+// of the sun and the local lights may have changed since the frame before.
 #define LIGHTS_SUN 1u
 #define LIGHTS_LOCAL 2u
 #define LIGHTS_EXTENSION 4u
 #define LIGHTS_ALL 7u
 #define LIGHTS_BOUNCED 8u
+#define LIGHTS_SCATTERED 16u
+#define LIGHTS_CHANGES 32u
+
+// Whether a light that moved since the frame before (light_moved) reaches
+// the point where it is now.
+bool lights_moved_near(float3 position) {
+    if ((frame.moved.z & MOVED_LIGHTS_ALL) != 0u) return true;
+    for (uint i = 0u; i < frame.moved.y; i++) {
+        float4 place = lights[frame.moved_lights[i / 4u][i % 4u]].position_range;
+        float3 to = place.xyz - position;
+        if (dot(to, to) < place.w * place.w) return true;
+    }
+    return false;
+}
 
 // The direct light a point reflects towards its viewer: the sun, the local
 // lights and those of extensions, each through its shadow ray. The local
@@ -944,15 +960,20 @@ float3 extension_radiance(Shading s, Extension_Light light) {
 // shadow ray stops at the surface of a light, so a lamp that holds its light
 // casts no shadow of it. The rays of the lights of extensions go to
 // `extension_point` of them (mirai_extension_light): the center unless the
-// caller averages points over frames.
+// caller averages points over frames. A point of a medium (shading_medium)
+// sends the light of each by its phase function. `changed`, with
+// LIGHTS_CHANGES: also whether a light that reaches the point moved, or what
+// casts shadows changed on the way of a shadow ray (occluder_changed).
 //
 // Every shadow ray goes through one traversal in the source: a call more
 // would be another copy of it in every stage.
-float3 direct_lighting(Shading s, float bias, uint budget, uint which = LIGHTS_ALL, float2 extension_point = float2(-1.0, 0.0)) {
+float3 direct_lighting(Shading s, float bias, uint budget, uint which, float2 extension_point, inout bool changed) {
     float3 origin = offset_origin(s.position, s.normal, bias);
     uint cut[LIGHT_CUT_MAX];
-    bool bounced = (which & LIGHTS_BOUNCED) != 0u;
-    uint local_items = (which & LIGHTS_LOCAL) != 0u ? light_cut(s.position, s.normal, budget, cut, bounced) : 0u;
+    uint share = (which & LIGHTS_BOUNCED) != 0u ? LIGHT_SHARE_BOUNCED : (which & LIGHTS_SCATTERED) != 0u ? LIGHT_SHARE_SCATTERED : LIGHT_SHARE_ALL;
+    bool changes = (which & LIGHTS_CHANGES) != 0u;
+    float sun_share = share == LIGHT_SHARE_BOUNCED ? frame.sun_shares.x : share == LIGHT_SHARE_SCATTERED ? frame.sun_shares.y : 1.0;
+    uint local_items = (which & LIGHTS_LOCAL) != 0u ? light_cut(s.position, s.normal, budget, cut, share) : 0u;
     uint items = 1u + local_items;
 #ifdef MIRAI_HOOK_LIGHTS
     if ((which & LIGHTS_EXTENSION) != 0u) items += mirai_extension_light_count();
@@ -967,14 +988,14 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which = LIGHTS_A
         float reach = 0.0;
         float mapped = -1.0;
         if (item == 0u) {
-            if (frame.sun_direction.w < 0.5 || (bounced && !(frame.sun_shares.x > 0.0))) continue;
-            float cosine = dot(s.normal, frame.sun_direction.xyz);
+            if (frame.sun_direction.w < 0.5 || !(sun_share > 0.0)) continue;
+            float cosine = dot(s.normal, s.normal) > 0.5 ? dot(s.normal, frame.sun_direction.xyz) : 1.0;
             if (cosine <= 0.0) continue;
-            radiance = sun_light(s.position) * cosine * shading_response(s, frame.sun_direction.xyz);
-            if (bounced) radiance *= frame.sun_shares.x;
+            radiance = sun_light(s.position) * (cosine * sun_share) * shading_response(s, frame.sun_direction.xyz);
             if (luminance(radiance) <= light_cutoff()) continue;
             direction = frame.sun_direction.xyz;
             reach = sun_reach(origin, direction);
+            if (changes) changed = changed || (frame.moved.z & MOVED_SUN) != 0u || occluder_changed(origin, direction, reach, INVALID, FLT_MAX);
 #ifdef MIRAI_LIGHT_MAPS
             mapped = sun_shadow_seen(s.position, s.normal);
 #ifdef SHADOW_TINT_SLOT
@@ -985,13 +1006,12 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which = LIGHTS_A
         } else if (item <= local_items) {
             Light_Node node = light_nodes[cut[item - 1u]];
             float distance;
-            radiance = node_radiance(node, s, direction, distance);
-            if (bounced) radiance *= node.indirect;
+            radiance = node_radiance(node, s, direction, distance) * node_share(node, share);
             if (luminance(radiance) <= light_cutoff()) continue;
             if ((node.flags & LIGHT_NODE_LEAF) == 0u) {
                 // A group: the ray goes to the light in the middle of its share.
                 float chance;
-                Light_Node target = light_nodes[node_light(cut[item - 1u], 0.5, s.position, s.normal, chance, bounced ? LIGHT_SHARE_BOUNCED : LIGHT_SHARE_ALL)];
+                Light_Node target = light_nodes[node_light(cut[item - 1u], 0.5, s.position, s.normal, chance, share)];
                 float3 toward = target.center_radius.xyz - s.position;
                 distance = length(toward);
                 direction = toward / max(distance, 1e-6);
@@ -1004,6 +1024,7 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which = LIGHTS_A
                 direction = toward / max(distance, 1e-6);
             }
             reach = light_reach(aimed, distance);
+            if (changes) changed = changed || occluder_changed(origin, direction, reach, INVALID, FLT_MAX);
 #ifdef MIRAI_LIGHT_MAPS
             mapped = light_shadow_seen(node.child, s.position, s.normal, light_extent(aimed));
 #ifdef SHADOW_TINT_SLOT
@@ -1021,7 +1042,7 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which = LIGHTS_A
             if (!mirai_extension_light(item - 1u - local_items, origin, s.normal, extension_point, light)) continue;
             // A point asked for is a point of the light: its own response, as the reference takes it.
             radiance = extension_point.x >= 0.0 ? light.irradiance * shading_response(s, light.direction) : extension_radiance(s, light);
-            if (bounced) radiance *= light_shares(light.shape).x;
+            if (share != LIGHT_SHARE_ALL) radiance *= share == LIGHT_SHARE_BOUNCED ? light_shares(light.shape).x : light_shares(light.shape).y;
             if (luminance(radiance) <= light_cutoff()) continue;
             direction = light.direction;
             reach = light.reach;
@@ -1062,13 +1083,18 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which = LIGHTS_A
 #ifdef MIRAI_HOOK_LIGHTS
         known += extension;
 #endif
-        local += shadowless_lighting(s, luminance(known) / luminance(max(s.diffuse + specular_albedo(s), float3(0.02))), bounced);
+        local += shadowless_lighting(s, luminance(known) / luminance(max(s.diffuse + specular_albedo(s), float3(0.02))), share);
+        if (changes) changed = changed || lights_moved_near(s.position);
     }
 #ifdef MIRAI_HOOK_LIGHTS
     return sun + local + extension;
 #else
     return sun + local;
 #endif
+}
+float3 direct_lighting(Shading s, float bias, uint budget, uint which = LIGHTS_ALL, float2 extension_point = float2(-1.0, 0.0)) {
+    bool changed = false;
+    return direct_lighting(s, bias, budget, which & ~LIGHTS_CHANGES, extension_point, changed);
 }
 
 // The normal of a hit, facing the ray: the side of its triangle the ray

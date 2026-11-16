@@ -2092,6 +2092,7 @@ scene_light_update :: proc(r: ^Renderer, index: u32, desc: Light_Desc) -> bool {
 		append(&s.lights, light)
 		append(&s.light_shadowless, desc.shadowless)
 		s.lights_stale = true
+		occluder_light_moved(s, index)
 	} else {
 		before := s.lights[index]
 		Bits :: [size_of(Gpu_Light) / 4]u32
@@ -2128,6 +2129,8 @@ scene_light_remove :: proc(r: ^Renderer, index: u32) {
 	unordered_remove(&s.lights, int(index))
 	unordered_remove(&s.light_shadowless, int(index))
 	s.lights_stale, s.lights_changed = true, true
+	// What it lit is new, wherever: every light counts as moved.
+	s.occluders.light_count = LIGHT_MOVES_MAX + 1
 }
 
 // The lights once a frame, whatever the updates before it were: the units of
