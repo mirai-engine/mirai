@@ -388,9 +388,57 @@ tool_run_returns_the_output_and_whether_it_succeeded :: proc(t:^testing.T) {
     testing.expect_value(t,runner.runs,3)
 }
 
+// A compilation starts while the memory free holds its charge, besides what
+// those that run have not taken yet of theirs, and a reserve; one always runs.
+@(test)
+a_compilation_starts_only_when_the_memory_has_room_for_its_charge :: proc(t:^testing.T) {
+    GB :: i64(1)<<30
+    MB :: i64(1)<<20
+    Case :: struct {name:string,peaks:[]string,known:[]i64,key:string,free:i64,running:[]Admitted,own:int,starts:bool}
+    cases:=[]Case{
+        {name="the first of a generation, with no memory free",key="a.comp",free=0,starts=true},
+        {name="one known as small, among many small ones",peaks={"a.comp"},known={400*MB},key="a.comp",free=10*GB,running={{400*MB,400*MB},{400*MB,350*MB}},own=2,starts=true},
+        {name="what those that run have not taken yet is not free",peaks={"a.comp"},known={400*MB},key="a.comp",free=3*GB,running={{2*GB,1*GB}},own=1,starts=false},
+        {name="those that run at their charge took it already",peaks={"a.comp"},known={400*MB},key="a.comp",free=3*GB,running={{2*GB,2*GB}},own=1,starts=true},
+        {name="one never compiled is charged the largest peak known",peaks={"a.comp","b.comp"},known={400*MB,5*GB},key="c.comp",free=6*GB,own=1,starts=false},
+        {name="the largest peak known fits",peaks={"a.comp","b.comp"},known={400*MB,3*GB},key="c.comp",free=6*GB,own=1,starts=true},
+        {name="with nothing known, the largest stages",key="c.comp",free=7*GB,own=1,starts=false},
+        {name="with nothing known, room for the largest stages",key="c.comp",free=SLANGC_PEAK_BYTES+MEMORY_RESERVE,own=1,starts=true},
+        {name="those of another process count, not toward the first",peaks={"a.comp"},known={400*MB},key="a.comp",free=3*GB,running={{3*GB,0}},own=0,starts=true},
+    }
+    for c in cases {
+        peaks:=make(map[string]i64,context.temp_allocator)
+        for key,i in c.peaks {peaks[key]=c.known[i]}
+        testing.expectf(t,admits(c.free,c.running,c.own,charge_of(peaks,c.key))==c.starts,"%s: starts %v",c.name,c.starts)
+    }
+}
+
+// A compilation keeps its peak where the next generation reads it, and leaves
+// the ledger once it ends.
+@(test)
+the_peak_of_a_compilation_is_recorded_and_read_back :: proc(t:^testing.T) {
+    slangc,found:=tool_find(path_clean(ENGINE_ROOT,context.temp_allocator),.Slangc,context.temp_allocator)
+    if !found {log.warn("slangc is not installed: run `mirai setup slang`");return}
+    shared,made:=os.make_directory_temp("","mirai-peaks-*",context.temp_allocator)
+    if !testing.expect(t,made==nil) {return}
+    defer base.remove_all(shared)
+    runner:Runner
+    ledger:=path_join(shared,CACHE_LEDGER,allocator=context.temp_allocator)
+    _,ok:=tool_run(&runner,{slangc,"-version"},context.temp_allocator,{charge=charge_of(peaks_read(shared,context.temp_allocator),"a.comp"),ledger=ledger,record=peak_path(shared,"a.comp",context.temp_allocator)})
+    testing.expect(t,ok)
+    peaks:=peaks_read(shared,context.temp_allocator)
+    peak,known:=peaks["a.comp"]
+    testing.expectf(t,known && peak>0,"the peak is kept: %v",peaks)
+    testing.expect_value(t,charge_of(peaks,"a.comp"),peak)
+    testing.expect_value(t,charge_of(peaks,"b.comp"),peak)
+    listed,_:=os.read_entire_file(ledger,context.temp_allocator)
+    testing.expectf(t,strings.trim_space(string(listed))=="","a compilation that ended is not in the ledger: %q",string(listed))
+    testing.expect_value(t,runner.most,1)
+}
+
 @(test)
 cancel_kills_the_tools_that_run_and_starts_no_other :: proc(t:^testing.T) {
-    Run :: struct {runner:^Runner,command:[]string,ok:bool}
+    Run :: struct {runner:^Runner,command:[]string,charge:i64,ok:bool}
     words:[4]string
     command:[]string
     when ODIN_OS==.Windows {
@@ -402,8 +450,10 @@ cancel_kills_the_tools_that_run_and_starts_no_other :: proc(t:^testing.T) {
         command=words[:2]
     }
     runner:Runner
-    run:=Run{runner=&runner,command=command}
-    worker:=thread.create_and_start_with_poly_data(&run,proc(run:^Run) {_,run.ok=tool_run(run.runner,run.command,context.temp_allocator)})
+    // The first compilation of a runner always starts; the second waits for room it will not find.
+    run:=Run{runner=&runner,command=command,charge=1}
+    waits:=Run{runner=&runner,command=command,charge=max(i64)/2}
+    worker:=thread.create_and_start_with_poly_data(&run,proc(run:^Run) {_,run.ok=tool_run(run.runner,run.command,context.temp_allocator,{charge=run.charge})})
     started:=time.tick_now()
     for time.duration_seconds(time.tick_since(started))<10 {
         sync.lock(&runner.lock)
@@ -412,11 +462,15 @@ cancel_kills_the_tools_that_run_and_starts_no_other :: proc(t:^testing.T) {
         if running>0 {break}
         time.sleep(10*time.Millisecond)
     }
+    waiter:=thread.create_and_start_with_poly_data(&waits,proc(run:^Run) {_,run.ok=tool_run(run.runner,run.command,context.temp_allocator,{charge=run.charge})})
+    time.sleep(3*ROOM_POLL)
     stopping:=time.tick_now()
     runner_cancel(&runner)
-    thread.join(worker)
-    thread.destroy(worker)
-    testing.expect(t,!run.ok,"a tool killed is a failure")
+    for each in ([]^thread.Thread{worker,waiter}) {
+        thread.join(each)
+        thread.destroy(each)
+    }
+    testing.expect(t,!run.ok && !waits.ok,"a tool killed, or one that waited for room, is a failure")
     testing.expect(t,time.duration_seconds(time.tick_since(stopping))<10,"it does not run to its end")
     message,started_again:=tool_run(&runner,command,context.temp_allocator)
     testing.expect(t,!started_again && message!="","a cancelled runner starts nothing")

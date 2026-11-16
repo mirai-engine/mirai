@@ -111,7 +111,7 @@ Options :: struct {
     cache:   string, // the stamp of the last generation into output; "": .mirai/shader-cache of the project, or of the engine without one
     odin:    bool,   // also compile the shaders of the RHI tests and write the Odin tables of render and rhi; never for a project
     ship:    bool,   // with odin: the code render embeds is encoded for an executable to ship, which takes longer (EMBED_SHIP)
-    workers: int,    // compilations at once; 0: one per logical processor
+    workers: int,    // the most compilations at once, each when the memory has room for it; 0: one per logical processor
     tools:   [Tool]string, // "": looked up with tool_find
     backends:Backends, // {}: HOST_BACKEND, the one this system runs
     first:   []string, // stages compiled before the others, by their names in the manifest ("thumbnail.frag"), with those of each program of them
@@ -154,6 +154,7 @@ Result :: struct {
     slowest:[SLOWEST]Stage_Time, // the stages that took longest to compile, longest first; seconds 0 past the last
     reflection:f64,      // seconds the reflection of the programs took
     compiling:f64,       // seconds the stages compiled took, added up
+    at_once: int,        // the most compilations that ran at once
 }
 
 // What a stage took to compile, in seconds.
@@ -206,6 +207,8 @@ Generation :: struct {
     layouts:      []Shared_Layout, // of the structs shaders share with the CPU, from the probe
     copies:       []Base,          // the folders of programs staged under include/programs (path), by the folder they copy (label)
     warnings_lock:sync.Mutex,
+    peaks:        map[string]i64, // what the compilations held at their peak the last time, by key (peaks_read)
+    ledger:       string, // the compilations that run in every process (CACHE_LEDGER)
 }
 
 @(private)
@@ -470,6 +473,16 @@ metal_normalize :: proc(source:string,allocator:=context.allocator) -> []u8 {
     return builder.buf[:]
 }
 
+// The compilations of the reflection of the programs share one peak.
+@(private)
+PROGRAMS_KEY :: "programs"
+
+// What a compilation of the generation is charged, and where its peak is kept.
+@(private)
+compilation_memory :: proc(g:^Generation,key:string,allocator:=context.temp_allocator) -> Memory {
+    return {charge=charge_of(g.peaks,key),ledger=g.ledger,record=peak_path(g.shared,key,allocator)}
+}
+
 @(private)
 job_fail :: proc(job:^Job,allocator:runtime.Allocator,format:string,args:..any) {
     job.error=fmt.aprintf(format,..args,allocator=allocator)
@@ -542,7 +555,7 @@ job_run :: proc(g:^Generation,job:^Job,allocator:runtime.Allocator) {
         for define in job.defines {append(&command,strings.concatenate({"-D",define},context.temp_allocator))}
         append(&command,..SPIRV_FLAGS)
         append(&command,"-o",output,"-reflection-json",reflection)
-        said,compiled:=tool_run(g.runner,command[:],context.temp_allocator)
+        said,compiled:=tool_run(g.runner,command[:],context.temp_allocator,compilation_memory(g,job.name))
         diagnostics:=slang_diagnostics(said,context.temp_allocator)
         diagnostics_place(diagnostics,g.copies,{g.project,g.root},context.temp_allocator)
         if !compiled {
@@ -1098,7 +1111,7 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
     } else {
         g.tools[.Slangc],g.version=compiler,compiler_version
     }
-    workers:=min(options.workers if options.workers>0 else shader_workers(),RUNNER_CAPACITY)
+    workers:=min(options.workers if options.workers>0 else max(os.get_processor_core_count(),1),RUNNER_CAPACITY)
     // A generation asked to ship goes on when the code it embeds was not encoded so.
     if stamp,is_current:=stamp_current(g,request,scratch);is_current && (stamp.shipped || !options.ship || !odin) {
         result.shaders,result.tests,result.programs=stamp.shaders,stamp.tests,stamp.programs
@@ -1107,6 +1120,11 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
         return
     }
     strings.builder_init(&g.warnings,scratch)
+    g.peaks,g.ledger=peaks_read(g.shared,scratch),path_join(g.shared,CACHE_LEDGER,allocator=scratch)
+    {
+        sync.guard(&g.runner.lock)
+        g.runner.most=0
+    }
     optimizer,optimizer_ran:=tool_run(g.runner,{g.tools[.Spirv_Opt],"--version"},scratch)
     cross,cross_ran:=tool_run(g.runner,{g.tools[.Spirv_Cross],"--revision"},scratch)
     if !optimizer_ran || !cross_ran {fail(&result,allocator,"could not run spirv-opt and spirv-cross");return}
@@ -1130,7 +1148,7 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
     for source in options.sources {append(&copies,Base{path_clean(source.folder,scratch),path_join(programs_folder,"plugins",source.name,allocator=scratch)})}
     g.copies=copies[:]
     reflection_started:=time.tick_now()
-    catalog,catalog_error:=programs_generate(g.runner,g.root,g.project,staging,g.tools[.Slangc],g.version,path_join(g.shared,CACHE_REFLECTION,allocator=scratch),options.sources,scratch,&g.sources,workers)
+    catalog,catalog_error:=programs_generate(g.runner,g.root,g.project,staging,g.tools[.Slangc],g.version,path_join(g.shared,CACHE_REFLECTION,allocator=scratch),options.sources,scratch,&g.sources,workers,compilation_memory(g,PROGRAMS_KEY,scratch))
     if catalog_error!="" {
         diagnostics_place(result.diagnostics,g.copies,{g.project,g.root},scratch)
         fail(&result,allocator,"%s",len(result.diagnostics)>0?diagnostics_text(result.diagnostics,scratch):catalog_error)
@@ -1245,6 +1263,10 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
         job_system.parallel_for(&js,job_system.OWNER,len(g.order),1,stages_run,&work)
     }
     result.warnings=strings.clone(strings.to_string(g.warnings),allocator)
+    {
+        sync.guard(&g.runner.lock)
+        result.at_once=g.runner.most
+    }
     if runner_cancelled(g.runner) {fail(&result,allocator,"the generation was cancelled");return}
     for job in g.jobs {
         if job.error!="" {fail(&result,allocator,"%s",job.error);result.diagnostics=diagnostics_clone(job.diagnostics,allocator);return}

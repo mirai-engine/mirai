@@ -305,7 +305,9 @@
   - `reflection/<fingerprint>.json` and `<fingerprint>.attributes.json`: the reflection of the
     `Parameters` and of the `Attributes` of a program;
   - `embedded/<digest>.edit.spv.lz`, `.ship.spv.lz` and their `.metal.lz`: the stream
-    `render` embeds, by the hashes of the code it holds, taken only if it decodes to that code.
+    `render` embeds, by the hashes of the code it holds, taken only if it decodes to that code;
+  - `peaks/<stage>` and `compiling`: what compilations held at their peak, and those that run
+    (Memory, below).
 - Each file is written separately and renamed into place (process- and thread-own temporary), and
   the stage's `.json` last. Whoever reads takes an entry only if all its hashes match; if not, it
   compiles and stores it again. An entry without the code of a requested backend is completed
@@ -357,6 +359,15 @@
   slowest ones (`Result.reflection`, `compiling` and `slowest`).
 - One worker per logical processor by default (`--workers`, at most 64). Process starts are
   serialized so each tool inherits only its pipe.
+- **Memory.** Each Slang compilation, of a stage or of the reflection of the programs, is charged
+  the peak it held the last time (`peaks/<stage>` of the shared cache, written when it succeeds),
+  or the largest peak known for one never compiled, or `SLANGC_PEAK_BYTES` with none known. It
+  starts only while the memory free now, less `MEMORY_RESERVE` and less what each compilation
+  that runs has not taken yet of its charge, holds it (`admits`); otherwise it waits and looks
+  again, and the others of its generation wait behind it in order. The compilations that run in
+  every process are listed in `compiling` of the shared cache under its lock, so generations of
+  several processes see what the others admitted and has not reached its peak. A generation always
+  runs one. `mirai shaders` reports the most that ran at once.
 - The workers take the stages with the most code first (the size of the one the output has, or the
   engine build; a stage without previous code goes to the front): the compilation of a large stage
   is not left for the end ([early stages](#early-stages-and-cancellation)).
