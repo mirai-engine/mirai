@@ -52,7 +52,9 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
         bool own = view_body_fade(inst.meta.w) >= 1.0;
         bool in_frustum = (inst.meta.w & INSTANCE_FLAG_HIDDEN) == 0u && !own && !gone && view_draws_layers(inst.meta.w >> INSTANCE_LAYERS_SHIFT, inst.meta.w)
             && dot(frame.clip_plane.xyz, clipped) + frame.clip_plane.w >= 0.0 && frustum_visible(inst.bounds_min.xyz, inst.bounds_max.xyz);
-        bool hidden = in_frustum && params.occlusion != 0u && occluded(inst.bounds_min.xyz, inst.bounds_max.xyz, frame.prev_view_proj, frame.prev_eye.xyz, frame.prev_depth_plane);
+        float3 before_low, before_high;
+        box_before(inst, inst.bounds_min.xyz, inst.bounds_max.xyz, before_low, before_high);
+        bool hidden = in_frustum && params.occlusion != 0u && occluded(before_low, before_high, frame.prev_view_proj, frame.prev_eye.xyz, frame.prev_depth_plane);
         visible = in_frustum && !hidden;
         candidates[i] = hidden ? 1u : 0u;
         if (!in_frustum && !blended) InterlockedAdd(stats[0].culled_instances, 1u);

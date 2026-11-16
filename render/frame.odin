@@ -410,11 +410,13 @@ bind_light_maps :: proc(p: ^Pass, maps: bool) {
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS8, r.shadow_buffers.table if maps else r.dummy_buffer)
 }
 
-// Farthest-depth mip chain of the linear depth of the depth target.
+// Farthest-depth mip chain of the linear depth of the depth target, up to
+// DEPTH_PYRAMID_BATCH levels a dispatch (hiz.comp), each from the last level
+// of the one before.
 @(private)
 build_depth_pyramid :: proc(p: ^Pass, pyramid: rhi.Texture) {
 	r, cmd, t := p.r, p.cmd, p.t
-	Params :: struct {source_size: [2]i32, from_depth, pad: u32, along, by: Vec4}
+	Params :: struct {source_size: [2]i32, from_depth, levels: u32, along, by: Vec4}
 	// A point of the depth target, (ndc, depth, 1), is at inv_view_proj of it
 	// from the eye, and at the linear depth of that along the forward axis.
 	m, forward := p.frame.inv_view_proj, p.frame.camera_forward.xyz
@@ -422,15 +424,17 @@ build_depth_pyramid :: proc(p: ^Pass, pyramid: rhi.Texture) {
 	for i in 0 ..< 3 {along += forward[i] * Vec4{m[i, 0], m[i, 1], m[i, 2], m[i, 3]}}
 	by := Vec4{m[3, 0], m[3, 1], m[3, 2], m[3, 3]}
 	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Hiz])
-	width, height := t.width, t.height
-	for level in 0 ..< t.hiz_levels {
-		params := Params{source_size = {i32(width), i32(height)}, from_depth = 1 if level == 0 else 0, along = along, by = by}
+	source := [2]u32{t.width, t.height}
+	for first: u32 = 0; first < t.hiz_levels; first += DEPTH_PYRAMID_BATCH {
+		count := min(DEPTH_PYRAMID_BATCH, t.hiz_levels - first)
+		params := Params{source_size = {i32(source.x), i32(source.y)}, from_depth = 1 if first == 0 else 0, levels = count, along = along, by = by}
 		set_params(cmd, &params)
-		if level == 0 {rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.depth)} else {rhi.cmd_bind_texture(cmd, SLOT_PASS0, pyramid, i32(level - 1))}
-		rhi.cmd_bind_texture(cmd, SLOT_PASS1, pyramid, i32(level))
-		width = max(t.hiz_width >> level, 1)
-		height = max(t.hiz_height >> level, 1)
-		rhi.cmd_dispatch(cmd, groups(width, 8), groups(height, 8))
+		if first == 0 {rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.depth)} else {rhi.cmd_bind_texture(cmd, SLOT_PASS0, pyramid, i32(first - 1))}
+		// The targets past the last level are bound to it, and not written.
+		for k in 0 ..< u32(DEPTH_PYRAMID_BATCH) {rhi.cmd_bind_texture(cmd, SLOT_PASS1 + k, pyramid, i32(first + min(k, count - 1)))}
+		top := [2]u32{(source.x + 1) / 2, (source.y + 1) / 2}
+		rhi.cmd_dispatch(cmd, groups(top.x, 8), groups(top.y, 8))
+		for &extent in source {extent = (extent + (1 << count) - 1) >> count}
 	}
 }
 

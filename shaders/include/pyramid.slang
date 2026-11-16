@@ -5,6 +5,17 @@
 #define MIRAI_PYRAMID_SLANG
 #include "scene.slang"
 
+// The finest level of the pyramid at which `texels` (of level 0, inclusive)
+// span at most `footprint` texels along each axis: two texels of level k
+// cover 2^(k+1) of level 0, and where the footprint straddles the edges of
+// the texels of that level one level coarser always holds it.
+int pyramid_level_for(int4 texels, int footprint) {
+    int2 span = texels.zw - texels.xy;
+    int level = max(max(int(firstbithigh(uint(span.x))), int(firstbithigh(uint(span.y)))) - (int(firstbithigh(uint(footprint))) - 1), 0);
+    if (any((texels.zw >> level) - (texels.xy >> level) > footprint - 1)) level++;
+    return level;
+}
+
 // True when the box is entirely behind the farthest depth stored in the
 // pyramid over its screen footprint. Conservative: anything touching the
 // near plane or the screen border counts as visible. depth_plane gives the
@@ -31,15 +42,14 @@ bool pyramid_hides(Texture2D<float4> pyramid, uint levels, float3 bmin, float3 b
     // was rasterized with TAA jitter while this test projects without it.
     float2 px_lo = max(lo * frame.resolution - 1.0, float2(0.0));
     float2 px_hi = min(hi * frame.resolution + 1.0, frame.resolution - 1.0);
-    int2 base_size = texture_size(pyramid, 0);
-    float2 extent = (px_hi - px_lo) * 0.5; // level 0 is half resolution
-    int level = clamp(int(ceil(log2(max(max(extent.x, extent.y), 1.0)))), 0, int(levels) - 1);
-    // Sizes derive from level 0 (dynamic-LOD size queries are unreliable on
-    // some drivers). Texel j of level L covers pixels [j, j+1) * 2^(L+1); the
-    // last texel also folds in the odd remainder, so map pixels, not UVs.
-    int2 level_size = max(base_size >> level, int2(1));
-    int2 a = min(int2(px_lo) >> (level + 1), level_size - 1);
-    int2 b = min(int2(px_hi) >> (level + 1), level_size - 1);
+    // At the level where it spans at most 4x4 texels: texel j of level L
+    // covers pixels j * 2^(L+1) to (j + 1) * 2^(L+1), the last one those of
+    // the view that are left (hiz.comp).
+    int4 texels = int4(int2(px_lo), int2(px_hi)) >> 1;
+    int level = min(pyramid_level_for(texels, 4), int(levels) - 1);
+    int2 level_size = (int2(frame.resolution) + ((2 << level) - 1)) >> (level + 1);
+    int2 a = min(texels.xy >> level, level_size - 1);
+    int2 b = min(texels.zw >> level, level_size - 1);
     float farthest = 0.0;
     for (int y = a.y; y <= b.y; y++) {
         for (int x = a.x; x <= b.x; x++) {

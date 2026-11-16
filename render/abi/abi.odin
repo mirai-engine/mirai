@@ -181,6 +181,9 @@ SHADOW_SUN_MAPS            :: 6
 SUN_MAP_ROWS               :: SHADOW_SUN_MAPS * SHADOW_MAP_ROWS
 REFLECTION_SHARED_ROUGHNESS :: f32(0.15)
 
+// The levels of the depth pyramid a dispatch of hiz.comp makes.
+DEPTH_PYRAMID_BATCH :: 4
+
 // The probe volume, and the rays of its contact occlusion at each pixel.
 DISTANCE_TILE :: 16
 PROBE_BUCKETS :: 22
