@@ -6,6 +6,7 @@ import "core:math/linalg"
 import "core:mem"
 import "core:os"
 import "core:path/filepath"
+import "core:slice"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
@@ -1428,6 +1429,87 @@ particle_volumes_draw_the_medium_of_a_grid :: proc(t: ^testing.T) {
 		empty := pixel(pixels, w, project(r, camera, {0.85, 1.35, 0}))
 		testing.expectf(t, ball[0] > empty[0] + 60 && ball[0] > ball[2], "the ball %v glows orange, the region around it %v does not", ball, empty)
 		delete(pixels)
+	}
+	expect_clean(t, f.device)
+}
+
+// A still volume lit by three lamps, with shadows and without: from the
+// frame the lamps turn on, within a few frames each cell takes what each lamp
+// gives it alone, added up (no lamp dropped, no light that leaks), and keeps
+// it from frame to frame, with no light that comes and goes.
+@(test)
+particle_volumes_take_what_each_light_gives_and_hold_it :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	settings := test_settings()
+	settings.taa = false
+	if !gpu_fixture_init(t, f, 64, 48, settings) {return}
+	defer gpu_fixture_destroy(f)
+	r := &f.renderer
+	gpu.scene_set_environment(r, {}, {})
+	camera := gpu.Camera{position = {0, 1, 5}, forward = {0, -0.5, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
+	// Two metres of cells of a quarter around the origin, all of them dense.
+	smoke := test_grid(f, "smoke", {8, 8, 8}, 0.25, 1, {-4, -4, -4}, Particle_Volume{density = 2, albedo = {1, 1, 1}})
+	puff := test_emitter(1, {0, 0, 0})
+	if !test_program(t, f, &puff, "Puff", Resource_Desc{kind = .Grid, first = smoke}) {return}
+	puff.program.parameters[0] = {10, 0, 0, 0}
+	lamps := [3][3]f32{{1.6, 0.5, 0}, {-1.2, 1, 1.3}, {0.3, -1.5, -1.1}}
+	DT :: f32(1.0 / 60)
+	entry := f.sync.grids.entries[smoke]
+	first := grids_base(&f.sync) + entry.light
+	cells := int(grid_cells(entry.cells))
+	// A read holds what the cells held in its first frame; the next one is
+	// READ_FRAMES later.
+	READ_FRAMES :: rhi.MAX_FRAMES_IN_FLIGHT + 2
+	READS :: 10
+	read :: proc(t: ^testing.T, f: ^Gpu_Fixture, puff: Emitter_Desc, camera: gpu.Camera, first: u32, cells: int) -> [][4]f32 {
+		world := test_frame_read(t, f, {puff}, DT, camera, 0, {world_buffer(&f.sync), {}})[0]
+		if world == nil {return nil}
+		light := make([][4]f32, cells, context.temp_allocator)
+		copy(mem.slice_to_bytes(light), world[first:][:cells * 16])
+		return light
+	}
+	// The most a cell of a differs from b, against b.
+	apart :: proc(a, b: [][4]f32) -> (worst: f32) {
+		for cell, i in b {
+			if cell.g < 1e-4 {continue}
+			worst = max(worst, linalg.max(linalg.abs(a[i].rgb - cell.rgb) / cell.rgb))
+		}
+		return
+	}
+	for shadowless in ([2]bool{false, true}) {
+		alone: [3][][4]f32
+		seen: [READS][][4]f32
+		// Each lamp alone, then the three, turned on together.
+		for run in 0 ..= 3 {
+			for len(r.scene.lights) > 0 {gpu.scene_light_remove(r, 0)}
+			for lamp, i in lamps {
+				if run < 3 && i != run {continue}
+				gpu.scene_light_update(r, u32(len(r.scene.lights)), {position = lamp, color = {1, 0.9, 0.8}, intensity = 4 * math.PI, range = 6, radius = 0.05, indirect = 1, scattering = 1, shadowless = shadowless})
+			}
+			for k in 0 ..< READS {
+				seen[k] = read(t, f, puff, camera, first, cells)
+				if seen[k] == nil {return}
+			}
+			if run < 3 {alone[run] = seen[READS - 1]}
+		}
+		sum := make([][4]f32, cells, context.temp_allocator)
+		lit := 0
+		for &cell, i in sum {
+			cell.rgb = alone[0][i].rgb + alone[1][i].rgb + alone[2][i].rgb
+			lit += int(cell.g >= 1e-4)
+		}
+		what := "without shadows" if shadowless else "with shadows"
+		testing.expectf(t, lit == cells, "%s: the lamps light %d cells of %d", what, lit, cells)
+		settled := -1
+		for k in 0 ..< READS {
+			if apart(seen[k], sum) < 0.03 {settled = 1 + k * READ_FRAMES;break}
+		}
+		testing.expectf(t, settled >= 0 && settled <= 1 + READ_FRAMES, "%s: a cell takes what each lamp gives it alone, added up, %d frames after they turn on (%.3f apart then, %.3f at last)", what, settled, apart(seen[0], sum), apart(seen[READS - 1], sum))
+		flicker: f32
+		for k in READS / 2 ..< READS {flicker = max(flicker, apart(seen[k], seen[k - 1]))}
+		testing.expectf(t, flicker < 0.01, "%s: a cell keeps its light from frame to frame, %.4f apart at most", what, flicker)
+		free_all(context.temp_allocator)
 	}
 	expect_clean(t, f.device)
 }

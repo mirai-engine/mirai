@@ -298,8 +298,10 @@ boxes.
     [maps of the sun](../../mirai-rendering/references/lights.md#direct-light-of-a-view) of the
     view where one holds it (the glass on the way still colors it) and with a shadow ray
     elsewhere (`media_sun`);
-  - a local light chosen from the light tree according to what it gives the point, divided by the
-    probability of choosing it, with another ray: two rays per froxel with any number of lights;
+  - the local lights, the same in every frame (`media_local_light`): those with shadows as a
+    surface takes them (`light_cut`), each through its maps or a ray while they fit in
+    `MEDIA_LIGHT_BUDGET` and groups that stand for the rest, and those without by the walks of
+    their trees; a light that moves, turns on or goes resets the history of the cells it reaches;
   - the ambient: the mean of what the probe volume gives to an upward-facing surface and a
     downward-facing one (without GI, the sky).
 
