@@ -48,6 +48,20 @@ bool frustum_visible(float3 bmin, float3 bmax) {
     return true;
 }
 
+// Where a box of the world of an instance was in the frame before: under its
+// transform then. Phase 0 tests that box against the pyramid of the frame
+// before, which drew the instance there: what moves is not hidden by where
+// it was.
+void box_before(Instance inst, float3 low, float3 high, out float3 before_low, out float3 before_high) {
+    // The transform from where it is to where it was: prev_world * world_inv.
+    float4 back[3];
+    [ForceUnroll] for (int row = 0; row < 3; row++) {
+        float4 p = inst.prev_world[row];
+        back[row] = p.x * inst.world_inv[0] + p.y * inst.world_inv[1] + p.z * inst.world_inv[2] + float4(0.0, 0.0, 0.0, p.w);
+    }
+    box_transformed(back, low, high, before_low, before_high);
+}
+
 // True when the box is entirely behind the farthest depth the pyramid of the
 // pass holds over its footprint (pyramid.slang).
 bool occluded(float3 bmin, float3 bmax, float4x4 view_proj, float3 eye, float4 depth_plane) {

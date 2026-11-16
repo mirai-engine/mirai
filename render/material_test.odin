@@ -1045,6 +1045,41 @@ material_program_resolve_shades_each_pixel_once :: proc(t: ^testing.T) {
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 
+// Where two halves of a square meet, each of its own material, a quad holds
+// two triangles that do not continue one another: a program that samples by
+// a plain uv evaluates such quads again, once per triangle, for derivatives
+// across them; one that carries the derivatives of its uv (Tiled) evaluates
+// each pixel once.
+@(test)
+material_program_with_derivatives_of_its_own_evaluates_no_quad_again :: proc(t: ^testing.T) {
+	f: Fixture
+	if !fixture_init(t, &f, 64, 64, material_settings(), programs = true) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	for name in ([]string{"Sampled", "Tiled"}) {
+		program := program_find(r, name, .Surface)
+		if !testing.expectf(t, program != nil, "the tests have the %s program", name) {return}
+		material := DEFAULT_MATERIAL
+		material.program_id, material.custom_params = program.id, program_defaults(program)
+		materials_set(r, {material, material})
+		halves := halves_quad(r, 1, 2)
+		scene_given(r, {{object_id = 1, mesh = halves, transform = scale_matrix(3), tint = {1, 1, 1}}}, nil, {}, {})
+		testing.expect(t, renderer_frame(r, {}), r.error)
+		renderer_pipelines_wait(r)
+		camera := OVERHEAD
+		// The seam off the edges of the quads of the image.
+		camera.position.x = 0.03
+		frames(t, &f, camera, 4)
+		testing.expectf(t, r.stats.resolved_pixels > 0, "%s: the square is resolved", name)
+		if name == "Tiled" {
+			testing.expectf(t, r.stats.resolve_quads_again == 0, "%s: no quad is evaluated again: %d", name, r.stats.resolve_quads_again)
+		} else {
+			testing.expectf(t, r.stats.resolve_quads_again > 0 && r.stats.resolve_quads_again <= r.targets.height, "%s: the quads along the seam are evaluated again: %d", name, r.stats.resolve_quads_again)
+		}
+	}
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
+}
+
 // The parameters of the Pieces program that send its one red piece distance
 // metres along +X at progress 0, without turning it.
 @(private = "file")

@@ -327,11 +327,15 @@ stages.
   (`program_graphics`, `program_stages.odin`). The G-buffer is resolved once per visible pixel
   from the visibility target, one draw per program the cull saw, at the depth of the program
   (`vis_resolve.frag`, [frame graph](frame-graph.md#passes)). The maps of a row take the exact
-  gradients of the uv of the triangle; what a program computes itself takes its derivatives
-  across the 2x2 pixels of a quad, where a pixel of another program is given the triangle of a
-  neighbor at its own place, and a quad whose triangles do not continue one another (a
-  silhouette, a seam of the uv, another material) evaluates again with the triangle of each of
-  its pixels in all four. A draw of the clusters of an instance (glass layers and filter,
+  gradients of the uv of the triangle. A program that carries the derivatives of what it
+  computes (`mirai_uv0` and the duals of `mirai_dual.slang`, sampled with
+  `mirai_sample_texture(ctx, index, dual_uv)`) evaluates once per pixel too. One that takes
+  derivatives across the 2x2 pixels of a quad (a plain uv it computes, `ddx`) gets them as the
+  raster would: a pixel of another program is given the triangle of a neighbor at its own
+  place, and a quad whose triangles do not continue one another (a silhouette, a seam of the
+  uv, another material) evaluates again with the triangle of each of its pixels in all four.
+  Which one a program is, the generation decides (`mirai_program_derivatives` of its include,
+  [programs](shaders.md#programs)). A draw of the clusters of an instance (glass layers and filter,
   translucents, overlays, highlight) is made once per program of its materials, which it names to
   `gbuffer.vert` (`SLOT_DRAW`): the vertex shader collapses the clusters of the others. Thumbnails
   and impostors name the program as the first instance of the draw; the UI splits its triangles
