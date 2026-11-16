@@ -279,10 +279,12 @@ function:
   `Geometry` stage and whose BLAS the renderer refits. They are up to `WIND_TURNS` turns about up
   and, past them, phases of each turn (`wind_turns`): an instance takes the turn nearest its own
   and tilts with the wind within half a step, and the phase of the band of the gust wave its place
-  is in (`wind_variant`). Raster and shadow rays see the same variant; reflections, GI and probes
-  see the rest mesh (`Ray_Visible` and `Rays_Only` batch). Sets of variants are per zone of wind:
-  a cell takes those of the `Wind` on top at the middle of its instances (`wind_zone_at`, over a
-  `volume.Index` of the zones), and each set sways with the wind of its zone, so a calm valley
+  is in (`wind_variant`). Each variant says how far it sways (`wind_reach`): the shadow maps
+  coarser than that keep it at rest. Raster and shadow rays see the same variant; reflections, GI
+  and probes see the rest mesh (`Ray_Visible` and `Rays_Only` batch). Sets of variants are per
+  zone of wind: a cell takes those of the `Wind` on top at the middle of its instances
+  (`wind_zone_at`, over a `volume.Index` of the zones), and each set sways with the wind of its
+  zone, so a calm valley
   stays calm whatever blows at the view. Where the zones are (not their values) has a revision:
   when it changes, the cells whose zone changed are published again. The wind is held to
   `WIND_SPEED_MAX`: the variants' box contains it, so a frame of wind changes no boxes and marks

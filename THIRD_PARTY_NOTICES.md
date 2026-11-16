@@ -138,6 +138,15 @@ are kept here and, where the license asks for it, in the header of the file.
   `std/compressor/blocks/bc6h`, translated. Editor.
 
 The files derived from Apache-2.0 work state their changes in their header.
+- **Frogfood** (MIT; © 2023 Jake Ryan), <https://github.com/JuanDiegoMontoya/Frogfood>. The
+  level of the sun a point takes by the width of its footprint, in `sun_pick` of
+  `shaders/include/shadow_maps.slang`, altered. Game.
+- **Bevy** (MIT or Apache-2.0; © the Bevy contributors), <https://github.com/bevyengine/bevy>.
+  The band over which a level of the sun or a mip of a light blends into the next, in
+  `shaders/include/shadow_maps.slang` and `shaders/direct_maps.comp.slang`, altered. Game.
+- **The Forge** (Apache-2.0; © 2017 - 2025 The Forge Interactive Inc.),
+  <https://github.com/ConfettiFX/The-Forge>. The order in which pages of the shadow pool are taken
+  back, those unread the longest first, in `shaders/shadow_pages.comp.slang`, altered. Game.
 
 ## Fonts and assets
 

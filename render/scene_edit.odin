@@ -100,6 +100,11 @@ scene_instances_clear :: proc(s: ^Scene_State) {
 	append(&s.tlas_nodes, Gpu_Bvh_Node{bounds_min = {1, 1, 1}, bounds_max = {-1, -1, -1}})
 	append(&s.tlas_refs, 0)
 	s.tlas_node_count, s.glass_node_count = 1, 0
+	// What the maps of the shadows held of them is stale.
+	if s.has_bounds {occluder_add(&s.shadow_stale, OCCLUDERS_MANY, s.bounds_min, s.bounds_max)}
+	clear(&s.shadow_changes)
+	clear(&s.shadow_tracks)
+	clear(&s.shadow_followed)
 	s.has_bounds = false
 }
 

@@ -324,6 +324,7 @@ fog_record :: proc(pass:^render.Pass,user:rawptr) {
     render.pass_shadow_data(pass,6)
     render.pass_surface_read(pass,7,.Shadow_Tint)
     render.pass_surface_read(pass,8,.Shadow_Glass)
+    render.pass_shadow_marks(pass,9)
     render.pass_pipeline(pass,state.pipelines[2])
     volumes:=volumes_relative(state,pass.origin)
     if !render.pass_params(pass,&params,size_of(params)) || !render.pass_upload(pass,2,&volumes,state.count*size_of(Gpu_Volume)) {return}

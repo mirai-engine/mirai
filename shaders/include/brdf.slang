@@ -102,6 +102,7 @@ struct Shading {
     // gives of the light from each direction, and nothing of a lobe.
     bool medium;
     float anisotropy;
+    float across;      // how wide the place of the medium it stands for is, metres: the maps of the shadows read a texel about as wide
 };
 
 // 1 - noh^2 is taken as |n x h|^2: near the peak of a sharp lobe, 1 - noh^2
@@ -253,12 +254,14 @@ float media_phase(float cosine, float g) {
     return 0.25 * (1.0 - g2) / pow(max(1.0 + g2 - 2.0 * g * cosine, 1e-4), 1.5);
 }
 
-// A point of a medium seen from `view`, of anisotropy g: its diffuse
-// reflectance is what it sends of light that comes evenly from around.
-Shading shading_medium(float3 position, float3 view, float g) {
+// A point of a medium seen from `view`, of anisotropy g, standing for a
+// place `across` metres wide: its diffuse reflectance is what it sends of
+// light that comes evenly from around.
+Shading shading_medium(float3 position, float3 view, float g, float across) {
     Shading s = shading_make(position, float3(0.0), view, float3(0.25), float3(0.0), float3(0.0), 1.0);
     s.medium = true;
     s.anisotropy = g;
+    s.across = across;
     return s;
 }
 

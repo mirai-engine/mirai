@@ -174,6 +174,7 @@ OCCLUDERS_MANY :: abi.OCCLUDERS_MANY
 Occluder_Change :: struct {
 	low, high: Vec3,
 	instance:  u32, // OCCLUDERS_MANY: several, or one that is gone
+	fine:      f32, // of the maps of the shadows, those whose texel there is narrower than this alone (a sway); 0: every map
 }
 Occluder_Changes :: struct {
 	boxes:       [OCCLUDER_CHANGES_MAX]Occluder_Change,
@@ -184,26 +185,67 @@ Occluder_Changes :: struct {
 	covers:      bool, // a masked material changed what its casters cover, wherever they are
 }
 
+// What the maps of the shadows follow of each instance (shadow_movers_update).
+@(private)
+Shadow_Track :: struct {
+	change: i32,  // its place in Scene_State.shadow_changes + 1 while it has one; 0: none
+	frame:  u64,  // the frame its shadow last changed in while the maps follow it; 0: they do not
+	moving: bool, // it changed again within SHADOW_MOVER_FRAMES: the caches leave it out
+}
+
 // An instance that casts shadows covered low to high in the frame before, or
-// covers it now: the box it changed in grows by it.
+// covers it now: the box it changed in grows by it, for the samples, and the
+// maps of the shadows follow it apart, each instance on its own however many
+// change (shadow_changed).
 @(private)
 occluder_changed :: proc(s: ^Scene_State, instance: u32, low, high: Vec3) {
 	occluder_add(&s.occluders, instance, low, high)
+	shadow_changed(s, instance, low, high)
+}
+
+// The change of an instance for the maps of the shadows, with the box it
+// covered before and covers now; one that is not an instance (OCCLUDERS_MANY)
+// is stale where it is. Its room is that of the instances (instances_reserve).
+@(private)
+shadow_changed :: proc(s: ^Scene_State, instance: u32, low, high: Vec3) {
+	if !(low.x <= high.x && low.y <= high.y && low.z <= high.z) {return}
+	if instance == OCCLUDERS_MANY || int(instance) >= len(s.instances) {
+		occluder_add(&s.shadow_stale, OCCLUDERS_MANY, low, high)
+		return
+	}
+	if int(instance) >= len(s.shadow_tracks) && resize(&s.shadow_tracks, len(s.instances)) != nil {
+		occluder_add(&s.shadow_stale, OCCLUDERS_MANY, low, high)
+		return
+	}
+	track := &s.shadow_tracks[instance]
+	if track.change > 0 {
+		box := &s.shadow_changes[track.change - 1]
+		box.low, box.high = linalg.min(box.low, low), linalg.max(box.high, high)
+		return
+	}
+	if len(s.shadow_changes) >= cap(s.shadow_changes) {
+		occluder_add(&s.shadow_stale, OCCLUDERS_MANY, low, high)
+		return
+	}
+	append(&s.shadow_changes, Occluder_Change{low, high, instance, 0})
+	track.change = i32(len(s.shadow_changes))
 }
 
 // The box of an instance (OCCLUDERS_MANY: of several) joins a list of changes.
+// fine: as Occluder_Change.fine.
 @(private)
-occluder_add :: proc "contextless" (o: ^Occluder_Changes, instance: u32, low, high: Vec3) {
+occluder_add :: proc "contextless" (o: ^Occluder_Changes, instance: u32, low, high: Vec3, fine := f32(0)) {
 	if !(low.x <= high.x && low.y <= high.y && low.z <= high.z) {return}
+	joined :: proc "contextless" (a, b: f32) -> f32 {return 0 if a == 0 || b == 0 else max(a, b)}
 	if instance != OCCLUDERS_MANY {
 		for &box in o.boxes[:o.count] {
 			if box.instance != instance {continue}
-			box.low, box.high = linalg.min(box.low, low), linalg.max(box.high, high)
+			box.low, box.high, box.fine = linalg.min(box.low, low), linalg.max(box.high, high), joined(box.fine, fine)
 			return
 		}
 	}
 	if o.count < OCCLUDER_CHANGES_MAX {
-		o.boxes[o.count] = {low, high, instance}
+		o.boxes[o.count] = {low, high, instance, fine}
 		o.count += 1
 		return
 	}
@@ -214,7 +256,7 @@ occluder_add :: proc "contextless" (o: ^Occluder_Changes, instance: u32, low, hi
 		if grown < growth {best, growth = i, grown}
 	}
 	box := &o.boxes[best]
-	box.low, box.high, box.instance = linalg.min(box.low, low), linalg.max(box.high, high), OCCLUDERS_MANY
+	box.low, box.high, box.instance, box.fine = linalg.min(box.low, low), linalg.max(box.high, high), OCCLUDERS_MANY, joined(box.fine, fine)
 }
 
 // What an instance that came or went covers in the frame it is not there.
@@ -402,7 +444,18 @@ Scene_State :: struct {
 	indirect:             f32,      // what multiplies the light of the probe volume where the views take it (scene_set_indirect)
 	changes:              Light_Changes, // where the light of the world changed since the GI last looked
 	occluders:            Occluder_Changes, // what casts shadows and changed since the last frame drew the scene
-	paged:                Occluder_Changes, // the instances of the meshes whose pages came or went since then
+	// What changed since then for the maps of the shadows (shadow_changed):
+	// each instance once, the room of the instances; what is not one instance
+	// (batches, the instances of the meshes whose pages came or went, instances
+	// gone) and the masked materials whose coverage changed.
+	shadow_changes:       [dynamic]Occluder_Change,
+	shadow_tracks:        [dynamic]Shadow_Track, // of each instance
+	shadow_followed:      [dynamic]u32,          // the instances whose track has a frame
+	shadow_stale:         Occluder_Changes,
+	// The rows of masked materials that changed what their casters cover since
+	// the maps last drew; past their room every caster is stale (shadow_stale.covers).
+	shadow_rows:          [OCCLUDER_CHANGES_MAX]u32,
+	shadow_row_count:     int,
 	sun:                  Sun_Desc,
 	environment:          Environment,
 
@@ -443,6 +496,9 @@ scene_init :: proc(r: ^Renderer) -> bool {
 	s.instances = make([dynamic]Gpu_Instance, a)
 	s.instance_next=make([dynamic]i32,a)
 	s.instance_prev=make([dynamic]i32,a)
+	s.shadow_changes = make([dynamic]Occluder_Change, a)
+	s.shadow_tracks = make([dynamic]Shadow_Track, a)
+	s.shadow_followed = make([dynamic]u32, a)
 	s.overlays = make([dynamic]Instance_Overlays, a)
 	s.reflective = make([dynamic]Reflective_Instance, a)
 	s.materials = make([dynamic]Gpu_Material_Row, a)
@@ -620,7 +676,14 @@ material_store :: proc(s: ^Scene_State, row: u32, value: Gpu_Material_Row, chang
 	}
 	changes.class ||= material_class(held^) != material_class(value)
 	// What a masked row covers is in the maps of the shadows that hold its casters.
-	s.occluders.covers ||= held.alpha_mode != value.alpha_mode || value.alpha_mode == u32(asset.Alpha_Mode.Mask)
+	if held.alpha_mode != value.alpha_mode || value.alpha_mode == u32(asset.Alpha_Mode.Mask) {
+		if s.shadow_row_count < len(s.shadow_rows) {
+			s.shadow_rows[s.shadow_row_count] = row
+			s.shadow_row_count += 1
+		} else {
+			s.shadow_stale.covers = true
+		}
+	}
 	changes.smoothest ||= material_smoothness(value) < s.smoothest || material_smoothness(held^) == s.smoothest
 	if held.program_id != value.program_id || held.alpha_mode != value.alpha_mode {
 		program_rows_count(s, held^, false)
@@ -1762,6 +1825,7 @@ instance_given :: proc "contextless" (inst:Gpu_Instance) -> Instance_Given {retu
 @(private="file")
 instances_reserve :: proc(s:^Scene_State,count:int) -> bool {
     return reserve(&s.instances,count)==nil && reserve(&s.instance_next,count)==nil && reserve(&s.instance_prev,count)==nil &&
+           reserve(&s.shadow_changes,count)==nil && reserve(&s.shadow_tracks,count)==nil && reserve(&s.shadow_followed,count)==nil &&
            reserve(&s.overlays,count)==nil && reserve(&s.instance_keys,count)==nil && reserve(&s.tlas_items,count)==nil &&
            reserve(&s.hw_instances,count)==nil && reserve(&s.touched,(count+63)/64)==nil &&
            reserve(&s.translucent,count)==nil && reserve(&s.reflective,count)==nil &&
@@ -2641,6 +2705,9 @@ scene_destroy :: proc(r: ^Renderer) {
 	delete(s.instances)
 	delete(s.instance_next)
 	delete(s.instance_prev)
+	delete(s.shadow_changes)
+	delete(s.shadow_tracks)
+	delete(s.shadow_followed)
 	delete(s.overlays)
 	delete(s.reflective)
 	delete(s.materials)
