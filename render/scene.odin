@@ -451,6 +451,10 @@ Scene_State :: struct {
 	shadow_tracks:        [dynamic]Shadow_Track, // of each instance
 	shadow_followed:      [dynamic]u32,          // the instances whose track has a frame
 	shadow_stale:         Occluder_Changes,
+	// The rows of masked materials that changed what their casters cover since
+	// the maps last drew; past their room every caster is stale (shadow_stale.covers).
+	shadow_rows:          [OCCLUDER_CHANGES_MAX]u32,
+	shadow_row_count:     int,
 	sun:                  Sun_Desc,
 	environment:          Environment,
 
@@ -671,7 +675,14 @@ material_store :: proc(s: ^Scene_State, row: u32, value: Gpu_Material_Row, chang
 	}
 	changes.class ||= material_class(held^) != material_class(value)
 	// What a masked row covers is in the maps of the shadows that hold its casters.
-	s.shadow_stale.covers ||= held.alpha_mode != value.alpha_mode || value.alpha_mode == u32(asset.Alpha_Mode.Mask)
+	if held.alpha_mode != value.alpha_mode || value.alpha_mode == u32(asset.Alpha_Mode.Mask) {
+		if s.shadow_row_count < len(s.shadow_rows) {
+			s.shadow_rows[s.shadow_row_count] = row
+			s.shadow_row_count += 1
+		} else {
+			s.shadow_stale.covers = true
+		}
+	}
 	changes.smoothest ||= material_smoothness(value) < s.smoothest || material_smoothness(held^) == s.smoothest
 	if held.program_id != value.program_id || held.alpha_mode != value.alpha_mode {
 		program_rows_count(s, held^, false)

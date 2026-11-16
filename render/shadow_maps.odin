@@ -44,9 +44,6 @@ SHADOW_SPOT_FACE :: abi.SHADOW_SPOT_FACE
 // The cosine of the half angle of the widest spot that takes one map along
 // its cone instead of the faces of the cube around it.
 SHADOW_SPOT_COS_MIN :: f32(0.5)
-// How far a face of the cube around a light reaches past its side, over its
-// half width: the taps of a point near its border read it there.
-SHADOW_FACE_GUARD :: f32(0.25)
 SHADOW_RASTER_SHARE :: f32(0.02)
 SHADOW_RASTER_KEEP :: f32(0.01)
 SHADOW_RASTER_LIGHTS :: abi.SHADOW_RASTER_LIGHTS // the most lights rasterized in a frame, those that light most of the view
@@ -269,7 +266,7 @@ shadow_light_faces :: proc(wants: ^[abi.SHADOW_LIGHT_SLOTS]Shadow_Want, light: G
 		if weight == 0 {continue}
 		fr, fu, ff := shadow_face_axes(u32(f))
 		wants[f] = {
-			m = {origin = c, near = light_near, right = fr, far = range, up = fu, forward = ff, skip = skip, span = {-1, -1, 1, 1} * (1 + SHADOW_FACE_GUARD)},
+			m = {origin = c, near = light_near, right = fr, far = range, up = fu, forward = ff, skip = skip, span = {-1, -1, 1, 1}},
 			weight = share * weight / total,
 		}
 	}
@@ -399,6 +396,30 @@ shadow_movers_update :: proc(r: ^Renderer) {
 	stale := s.shadow_stale
 	s.shadow_stale = {}
 	moved: Occluder_Changes
+	// A masked row that changed what it covers: the casters that use it, where they are.
+	if s.shadow_row_count > 0 && !stale.covers {
+		rows := s.shadow_rows[:s.shadow_row_count]
+		for inst, index in s.instances {
+			if !instance_casts(inst) || int(inst.meta.x & INSTANCE_MESH_MASK) >= len(s.meshes) {continue}
+			mesh := s.meshes[inst.meta.x & INSTANCE_MESH_MASK]
+			palette := inst.slot_materials
+			for packed in s.indices[mesh.slot_word:][:mesh.slot_count] {
+				row := instance_row(packed, inst.meta.y, &palette)
+				found := false
+				for changed in rows {found ||= changed == row}
+				if !found {continue}
+				occluder_add(&stale, u32(index), inst.bounds_min.xyz, inst.bounds_max.xyz)
+				break
+			}
+		}
+		// The batches that cast, wherever they are drawn.
+		for index, k in s.batch.drawn {
+			if .Casts_Shadow not_in s.batch.records[index].desc.flags {continue}
+			box := s.batch.boxes[k]
+			occluder_add(&stale, OCCLUDERS_MANY, box.min, box.max)
+		}
+	}
+	s.shadow_row_count = 0
 	if len(s.shadow_tracks) > len(s.instances) {base.truncate(&s.shadow_tracks, len(s.instances))}
 	for change in s.shadow_changes {
 		if int(change.instance) >= len(s.shadow_tracks) {
