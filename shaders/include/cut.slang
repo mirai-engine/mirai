@@ -14,6 +14,15 @@ float instance_scale(Instance inst) {
     return max(length(c0), max(length(c1), length(c2)));
 }
 
+// How much of an instance the raster fades out of the view, which it leaves
+// out by pixels (fade_pixel_left): the body of the player of the view, or an
+// instance of a batch near its cull distance.
+float instance_fade(uint index, Instance inst) {
+    float fade = view_body_fade(inst.meta.w);
+    if (instance_batched(index)) fade = max(fade, batch_faded(batch_row(batch_of(index)), inst.bounds_min.xyz, inst.bounds_max.xyz));
+    return fade;
+}
+
 // Where the detail of a cut is chosen from: the eye and the nearest it looks
 // (w), how wide a pixel is there and per metre farther, and the axis distance
 // runs along (zero: from the eye whichever way). A view chooses from its eye

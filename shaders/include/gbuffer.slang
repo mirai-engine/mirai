@@ -1,5 +1,5 @@
 // The G-buffer as the passes after the geometry read it: each target is
-// encoded by gbuffer.frag and decoded here alone. A pass defines the slots
+// encoded by gbuffer_output.slang and decoded here alone. A pass defines the slots
 // it binds the targets it reads to before it includes this:
 //   GBUFFER_ALBEDO   RGBA8 sRGB: base color, a metallic
 //   GBUFFER_NORMAL   RGBA16F: xy the shading normal (octahedral), z its

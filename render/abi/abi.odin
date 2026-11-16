@@ -240,10 +240,25 @@ POINT_WORDS        :: 9
 RECORD_WORDS       :: 18
 HEAD_WORDS         :: 8
 
-// The header of the visible clusters of Surface programs, in words.
-PROGRAMS_COUNT    :: 0 // a word a phase
-PROGRAMS_DISPATCH :: 2 // three words a phase
-PROGRAMS_HEADER   :: 8
+// The raster bins of the visible clusters (render.Gpu_Cull_State.draws): a
+// cluster of a two-sided material is drawn without leaving its back faces
+// out, and one of a masked material or of an instance that fades is tested
+// by its alpha and its fade before it writes its pixels.
+RASTER_BIN_TWO_SIDED :: 1
+RASTER_BIN_TESTED    :: 2
+RASTER_BINS          :: 4
+
+// The words of render.Gpu_Cull_State.
+CULL_DRAWS              :: 0  // of each phase and raster bin: vertices, instances (its visible clusters), first vertex, first instance
+CULL_CHUNK_DISPATCH     :: 32
+CULL_CHUNK_COUNT        :: 35
+CULL_CANDIDATE_DISPATCH :: 36
+CULL_CANDIDATE_COUNT    :: 39
+CULL_LISTED             :: 40 // of each phase, the clusters the cull listed, past the capacity too
+CULL_BINS_DISPATCH      :: 42 // of each phase, three words: the groups of cull_bins.comp over its clusters
+CULL_BIN_COUNTS         :: 48 // of each phase, the clusters of each raster bin
+CULL_BIN_CURSORS        :: 56
+CULL_DROPPED            :: 64 // of each list of the cull (render.Cull_List)
 
 // What an instance gives over the rows of its materials, in the index pool:
 // how many rows it shows otherwise than the table holds them, how much it

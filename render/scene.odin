@@ -350,10 +350,10 @@ Scene_State :: struct {
 	tlas_ref_buffer:      rhi.Buffer,
 	cull_state_buffer:    rhi.Buffer, // Gpu_Cull_State of the view being culled: the draws of its phases and what its passes count
 	chunk_buffer:         rhi.Buffer, // the chunks the instance pass hands the cluster pass
-	visible_buffer:       rhi.Buffer, // the visible clusters of both phases
+	visible_buffer:       rhi.Buffer, // the visible clusters of both phases by raster bin, which their draws read
+	listed_buffer:        rhi.Buffer, // and as the cull listed them, with their bins
 	cluster_candidate_buffer: rhi.Buffer, // the clusters phase 0 found hidden
-	program_bins:         rhi.Buffer, // the visible clusters of Surface programs as the cull lists them, their counts by program and the draws of each (cull_programs.slang)
-	program_visible:      rhi.Buffer, // and the same, by program: the list those draws read
+	program_draws:        rhi.Buffer, // Gpu_Draw of the resolve of each Surface program, POINTS_PROGRAM_CAPACITY of them
 	shadow_chunks:        rhi.Buffer, // the chunks the instance pass of the cull of the maps of the shadows hands its cluster pass
 	shadow_entries:       rhi.Buffer, // the clusters the maps of the shadows draw (shadow_cull.slang)
 	cull_capacity:        [Cull_List]u32, // of those lists, in entries
@@ -2337,21 +2337,24 @@ ensure_scene_capacity :: proc(r: ^Renderer) -> bool {
 	if s.cull_state_buffer == 0 {
 		s.cull_state_buffer = rhi.buffer_create(d, {size = size_of(Gpu_Cull_State), usage = {.Storage, .Indirect}, name = "cull state"})
 	}
+	if s.program_draws == 0 {
+		s.program_draws = rhi.buffer_create(d, {size = POINTS_PROGRAM_CAPACITY * size_of(Gpu_Draw), usage = {.Storage, .Indirect}, name = "resolve draws of programs"})
+	}
 	start := CULL_START
 	for list in Cull_List {
-		buffer := [Cull_List]^rhi.Buffer{.Chunks = &s.chunk_buffer, .Visible = &s.visible_buffer, .Candidates = &s.cluster_candidate_buffer, .Programs = &s.program_visible, .Shadow_Chunks = &s.shadow_chunks, .Shadow_Entries = &s.shadow_entries}[list]
+		buffer := [Cull_List]^rhi.Buffer{.Chunks = &s.chunk_buffer, .Visible = &s.visible_buffer, .Candidates = &s.cluster_candidate_buffer, .Shadow_Chunks = &s.shadow_chunks, .Shadow_Entries = &s.shadow_entries}[list]
 		wanted := max(start[list], s.cull_wanted[list])
 		if buffer^ != 0 && wanted <= s.cull_capacity[list] {continue}
 		capacity := max(wanted + wanted / 2, start[list], s.cull_capacity[list])
 		if buffer^ != 0 {rhi.buffer_destroy(d, buffer^)}
-		names := [Cull_List]string{.Chunks = "cull chunks", .Visible = "visible clusters", .Candidates = "cluster occlusion candidates", .Programs = "visible clusters by program", .Shadow_Chunks = "shadow map chunks", .Shadow_Entries = "shadow map clusters"}
+		names := [Cull_List]string{.Chunks = "cull chunks", .Visible = "visible clusters", .Candidates = "cluster occlusion candidates", .Shadow_Chunks = "shadow map chunks", .Shadow_Entries = "shadow map clusters"}
 		entry := u64(size_of([4]u32) if list >= .Shadow_Chunks else size_of([2]u32))
 		buffer^ = rhi.buffer_create(d, {size = u64(capacity) * entry, usage = {.Storage}, name = names[list]})
 		made := buffer^ != 0
-		if list == .Programs {
-			if s.program_bins != 0 {rhi.buffer_destroy(d, s.program_bins)}
-			s.program_bins = rhi.buffer_create(d, {size = u64(program_entry_word(capacity)) * size_of(u32), usage = {.Storage, .Indirect}, name = "visible clusters of programs"})
-			made &&= s.program_bins != 0
+		if list == .Visible {
+			if s.listed_buffer != 0 {rhi.buffer_destroy(d, s.listed_buffer)}
+			s.listed_buffer = rhi.buffer_create(d, {size = u64(capacity) * size_of([4]u32), usage = {.Storage}, name = "visible clusters as listed"})
+			made &&= s.listed_buffer != 0
 		}
 		s.cull_capacity[list] = capacity if made else 0
 	}
@@ -2406,7 +2409,7 @@ ensure_scene_capacity :: proc(r: ^Renderer) -> bool {
 		s.light_tree_capacity = capacity
 		s.lights_dirty = true
 	}
-	ok := s.instance_buffer != 0 && s.material_buffer != 0 && s.cull_state_buffer != 0 && s.chunk_buffer != 0 && s.visible_buffer != 0 && s.cluster_candidate_buffer != 0 && s.candidate_buffer != 0 && (r.hardware_rt || s.tlas_node_buffer != 0 && s.tlas_ref_buffer != 0) && s.light_buffer != 0 && s.light_tree_buffer != 0
+	ok := s.instance_buffer != 0 && s.material_buffer != 0 && s.cull_state_buffer != 0 && s.chunk_buffer != 0 && s.visible_buffer != 0 && s.listed_buffer != 0 && s.program_draws != 0 && s.cluster_candidate_buffer != 0 && s.candidate_buffer != 0 && (r.hardware_rt || s.tlas_node_buffer != 0 && s.tlas_ref_buffer != 0) && s.light_buffer != 0 && s.light_tree_buffer != 0
 	if !ok {set_error(r, "scene buffers: %s", rhi.device_error(d))}
 	return ok
 }
@@ -2615,7 +2618,7 @@ scene_destroy :: proc(r: ^Renderer) {
 	if s.tlas != 0 {rhi.accel_destroy(d, s.tlas)}
 	for b in s.geometry_staging {if b != 0 {rhi.buffer_destroy(d, b)}}
 	for move in s.pool_moves {if move.from != 0 {rhi.buffer_destroy(d, move.from)}}
-	for b in ([]rhi.Buffer{s.vertex_buffer, s.index_buffer, s.mesh_buffer, s.blas_node_buffer, s.blas_triangle_buffer, s.instance_buffer, s.material_buffer, s.tlas_node_buffer, s.tlas_ref_buffer, s.cull_state_buffer, s.chunk_buffer, s.visible_buffer, s.cluster_candidate_buffer, s.program_bins, s.program_visible, s.shadow_chunks, s.shadow_entries, s.candidate_buffer, s.light_buffer, s.light_tree_buffer, s.light_grid_buffer, s.tlas_instance_buffer}) {
+	for b in ([]rhi.Buffer{s.vertex_buffer, s.index_buffer, s.mesh_buffer, s.blas_node_buffer, s.blas_triangle_buffer, s.instance_buffer, s.material_buffer, s.tlas_node_buffer, s.tlas_ref_buffer, s.cull_state_buffer, s.chunk_buffer, s.visible_buffer, s.listed_buffer, s.cluster_candidate_buffer, s.program_draws, s.shadow_chunks, s.shadow_entries, s.candidate_buffer, s.light_buffer, s.light_tree_buffer, s.light_grid_buffer, s.tlas_instance_buffer}) {
 		if b != 0 {rhi.buffer_destroy(d, b)}
 	}
 	delete(s.vertices)
