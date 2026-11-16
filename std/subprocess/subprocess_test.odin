@@ -363,7 +363,7 @@ children_hold_no_pipe_of_this_process :: proc(t:^testing.T) {
         os.close(writer)
         testing.expectf(t,error==nil,"%s: %v",kind,error)
         if error==nil {
-            ready,poll_error:=os.pipe_has_data(reader)
+            ready,poll_error:=pipe_has_data(reader)
             testing.expectf(t,poll_error==.Broken_Pipe && !ready,"%s: a child holds the write end (%v)",kind,poll_error)
         }
         os.close(reader)
