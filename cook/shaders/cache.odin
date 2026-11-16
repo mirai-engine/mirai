@@ -2,8 +2,10 @@ package shaders
 
 import "base:runtime"
 import "core:encoding/json"
+import "core:fmt"
 import "core:os"
 import "core:slice"
+import "core:strconv"
 import "core:strings"
 import "core:sync"
 import "core:time"
@@ -407,6 +409,9 @@ artifacts_stage :: proc(files:[Backend][]u8,names:[Backend]string,staging:string
 //   reflection/<digest>.attributes.json   the Attributes of a Vfx program
 //   embedded/<digest>.<edit|ship>.spv.lz, .metal.lz
 //                                         the code render embeds (embedded_pack)
+//   peaks/<key>                           the bytes the last compilation of a stage
+//                                         held at its peak, by its name (charge_of)
+//   compiling                             the compilations that run (ledger_update)
 //
 // Each file is written whole and renamed into place, the entry of a stage
 // last; a reader takes an entry only when every hash it names matches, and
@@ -418,6 +423,37 @@ CACHE_UNUSED_DAYS :: 30
 CACHE_STAGES :: "stages"
 @(private)
 CACHE_REFLECTION :: "reflection"
+@(private)
+CACHE_PEAKS :: "peaks"
+@(private)
+CACHE_LEDGER :: "compiling"
+
+// The peaks the shared cache keeps, by key.
+@(private)
+peaks_read :: proc(shared:string,allocator:runtime.Allocator) -> map[string]i64 {
+    peaks:=make(map[string]i64,allocator)
+    folder:=path_join(shared,CACHE_PEAKS,allocator=context.temp_allocator)
+    files,error:=os.read_all_directory_by_path(folder,context.temp_allocator)
+    if error!=nil {return peaks}
+    for file in files {
+        if strings.has_suffix(file.name,".tmp") {continue}
+        data,read_error:=os.read_entire_file(file.fullpath,context.temp_allocator)
+        if read_error!=nil {continue}
+        if bytes,parsed:=strconv.parse_i64(strings.trim_space(string(data)));parsed && bytes>0 {peaks[strings.clone(file.name,allocator)]=bytes}
+    }
+    return peaks
+}
+
+// Where the peak of a compilation of key is kept.
+@(private)
+peak_path :: proc(shared,key:string,allocator:=context.allocator) -> string {
+    return path_join(shared,CACHE_PEAKS,key,allocator=allocator)
+}
+
+@(private)
+peak_write :: proc(path:string,bytes:i64) {
+    _=write_file_atomic(path,transmute([]u8)fmt.tprintf("%d\n",bytes))
+}
 @(private)
 CODE_EXTENSIONS :: [Backend]string{.Vulkan=".spv",.Metal=".metal"}
 
@@ -483,7 +519,7 @@ cache_prune :: proc(shared:string,now:time.Time) {
         end:=strings.index_byte(name,'.')
         return name[:end] if end>=0 else name
     }
-    for folder in ([]string{CACHE_STAGES,CACHE_REFLECTION,CACHE_EMBEDDED}) {
+    for folder in ([]string{CACHE_STAGES,CACHE_REFLECTION,CACHE_EMBEDDED,CACHE_PEAKS}) {
         files,err:=os.read_all_directory_by_path(path_join(shared,folder,allocator=context.temp_allocator),context.temp_allocator)
         if err!=nil {continue}
         newest:=make(map[string]time.Time,context.temp_allocator)

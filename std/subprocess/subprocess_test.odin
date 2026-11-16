@@ -59,6 +59,19 @@ probe_run :: proc "contextless" () {
         megabytes,_:=strconv.parse_int(os.args[3])
         _,refused:=make([]byte,megabytes<<20)
         os.write_string(os.stdout,"refused" if refused!=nil else "allocated")
+    case "hold":
+        // Writes every page of what it allocates and holds it until its stdin ends.
+        megabytes,_:=strconv.parse_int(os.args[3])
+        held,refused:=make([]byte,megabytes<<20)
+        if refused!=nil {os.exit(1)}
+        for i:=0;i<len(held);i+=4096 {held[i]=1}
+        os.write_string(os.stdout,"held")
+        buffer:[64]byte
+        for {
+            count,error:=os.read(os.stdin,buffer[:])
+            if error!=nil || count==0 {break}
+        }
+        code=int(held[len(held)-4096])
     case "priority":
         os.write_string(os.stdout,fmt.tprintf("%d",priority_rank()))
     case "stdin":
@@ -115,6 +128,29 @@ a_memory_limit_bounds_what_the_child_allocates :: proc(t:^testing.T) {
     _,stdout,_,error=exec({command=probe_command("allocate","512")},context.temp_allocator)
     testing.expectf(t,error==nil,"exec: %v",error)
     testing.expect_value(t,string(stdout),"allocated")
+}
+
+// What a child holds reads while it runs, and its peak stays once it exited.
+@(test)
+the_memory_a_child_holds_reads_while_it_runs_and_its_peak_after_it_exits :: proc(t:^testing.T) {
+    HELD :: 256<<20
+    process,error:=start({command=probe_command("hold","256")},pipes=.Separate)
+    if !testing.expectf(t,error==nil,"start: %v",error) {return}
+    defer release(&process)
+    said:[4]byte
+    count:=0
+    for count<len(said) {
+        read,read_error:=os.read(process.stdout,said[count:])
+        if read_error!=nil || read<=0 {break}
+        count+=read
+    }
+    testing.expect_value(t,string(said[:count]),"held")
+    now,running,known:=memory_held(process.pid)
+    testing.expectf(t,known && now>=HELD && running>=now,"while it runs: %d now and %d at its peak, of %d",now,running,HELD)
+    stdin_close(&process)
+    state,wait_error:=wait(&process)
+    testing.expectf(t,wait_error==nil && state.exited && state.exit_code==1,"wait: %v %v",wait_error,state)
+    testing.expectf(t,process.peak>=HELD,"peak once it exited: %d of %d",process.peak,HELD)
 }
 
 // A low child runs below a child started without a priority, which runs as
