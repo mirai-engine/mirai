@@ -20,12 +20,14 @@ uint gbuffer_corner(Instance inst, uint corner) {
 
 // What a cluster of an instance gives each of its corners alike, built once
 // for the three corners of a triangle: its material, whether the color of
-// its vertices tints its row, the poses its vertices are read from, its flags
+// its vertices tints its row, the poses its vertices are read from, how far
+// its islands are on their way to the next level (cluster_along), its flags
 // and, of an instance of a batch, what the vertex hook moves it by.
 struct Gbuffer_Cluster {
     uint material;
     bool tinted;
     uint posed, previous; // INVALID: at rest
+    float along;
     uint flags;
 #if defined(MIRAI_BATCHES) && defined(MIRAI_HOOK_VERTEX)
     bool batched;
@@ -34,7 +36,9 @@ struct Gbuffer_Cluster {
 #endif
 };
 
-Gbuffer_Cluster gbuffer_cluster(uint index, Instance inst, Mesh mesh, Cluster c) {
+// cut: the draw takes the cut of the view, whose islands are on their way to
+// the next level; else level 0 as it is.
+Gbuffer_Cluster gbuffer_cluster(uint index, Instance inst, Mesh mesh, Cluster c, bool cut) {
     Gbuffer_Cluster k;
     k.material = material_of(inst, cluster_material(mesh, c));
     // As instance_color: a program reads the color in its context.
@@ -46,6 +50,7 @@ Gbuffer_Cluster gbuffer_cluster(uint index, Instance inst, Mesh mesh, Cluster c)
         k.posed = mesh.part_word;
         k.previous = mesh.part_word + mesh.vertex_count * POSED_WORDS;
     }
+    k.along = cut ? cluster_along(view_detail(), inst, instance_scale(inst), mesh, c, frame.cut.x) : 0.0;
     float fade = instance_fade(index, inst);
     k.flags = ((inst.meta.w >> INSTANCE_HIGHLIGHT_SHIFT) & RASTER_HIGHLIGHT_MASK)
         | (fade > 0.0 ? RASTER_FLAG_FADING | (uint(saturate(fade) * 65535.0 + 0.5) << RASTER_FADE_SHIFT) : 0u);
@@ -70,7 +75,8 @@ Gbuffer_Vertex gbuffer_corner_build(uint index, Instance inst, Mesh mesh, Cluste
     uint local = cluster_corner(mesh, c, gbuffer_corner(inst, corner));
     Mesh_Point v = cluster_point_at(mesh, c, local, k.posed);
     v.color = instance_vertex_color(inst, c.vertex_first + local, v.color);
-    float3 world = gbuffer_hooked(k, transform_point(inst.world, v.position), v.color, frame.time.x);
+    float3 offset = k.along != 0.0 ? island_offset(mesh, c, local, k.along) : float3(0.0);
+    float3 world = gbuffer_hooked(k, transform_point(inst.world, v.position + offset), v.color, frame.time.x);
 #ifdef MIRAI_VISIBILITY
     // The raster of the visibility target: where the corner is now, and of a
     // tested one what its fade and its alpha read; not where it was, nor its
@@ -90,7 +96,7 @@ Gbuffer_Vertex gbuffer_corner_build(uint index, Instance inst, Mesh mesh, Cluste
     return output;
 #else
     // Motion vectors see what the hook moves since the previous frame.
-    float3 prev_world = gbuffer_hooked(k, transform_point(inst.prev_world, cluster_position_previous(mesh, c, local, k.previous)), v.color, frame.time.y);
+    float3 prev_world = gbuffer_hooked(k, transform_point(inst.prev_world, cluster_position_previous(mesh, c, local, k.previous) + offset), v.color, frame.time.y);
     output.out_normal = transform_normal(inst.world_inv, v.normal);
     output.out_tangent = instance_tangent(inst, v.tangent);
     output.out_material = k.material;
@@ -109,7 +115,7 @@ Gbuffer_Vertex gbuffer_corner_build(uint index, Instance inst, Mesh mesh, Cluste
 #endif
 }
 
-Gbuffer_Vertex gbuffer_vertex_build(uint index, Instance inst, Mesh mesh, Cluster c, uint corner) {
-    return gbuffer_corner_build(index, inst, mesh, c, gbuffer_cluster(index, inst, mesh, c), corner);
+Gbuffer_Vertex gbuffer_vertex_build(uint index, Instance inst, Mesh mesh, Cluster c, uint corner, bool cut) {
+    return gbuffer_corner_build(index, inst, mesh, c, gbuffer_cluster(index, inst, mesh, c, cut), corner);
 }
 #endif
