@@ -26,37 +26,57 @@ HEIGHT :: 160
 @(private = "file")
 Gpu_Fixture :: struct {
 	device:   ^rhi.Device,
-	renderer: gpu.Renderer,
+	renderer: ^gpu.Renderer,
+	app:      ^host.App,
+	window:   bool,         // the application has a hidden window and owns the device and the renderer
+	own:      gpu.Renderer, // without a window: on the device the tests share
+	plain:    host.App,     // without a window: what fsr_render reads of an application
 	assets:   host.Assets,
-	app:      host.App,
 	cube:     gpu.Mesh_Handle,
 	fsr:      Fsr_Runtime,
 }
 
+// window: the frames are presented, as generating one needs; without it they
+// are drawn on the device the tests share.
 @(private = "file")
-gpu_fixture_init :: proc(t: ^testing.T, f: ^Gpu_Fixture) -> bool {
+gpu_fixture_init :: proc(t: ^testing.T, f: ^Gpu_Fixture, window := false) -> bool {
 	root, _ := filepath.clean(ROOT, context.temp_allocator)
 	loaded, problem := gpu.shader_assets_load(fmt.tprintf("%s/.mirai/tmp/fsr-test-shaders", root))
 	if !testing.expect(t, problem == "", problem) {return false}
-	device := shared_device.take_or_skip(t)
-	if device == nil {
-		gpu.shader_assets_destroy(&loaded)
-		return false
-	}
-	f.device = device
 	// Without the probes and their rays the image is the same from one frame
 	// to the next; without the shadows of the sun no lit pixel is black.
 	settings := gpu.DEFAULT_SETTINGS
 	settings.gi_enabled, settings.sun_shadows = false, false
-	if !testing.expect(t, gpu.renderer_init(&f.renderer, {device = device, width = WIDTH, height = HEIGHT, settings = settings, shaders = &loaded}), f.renderer.error) {return false}
+	if window {
+		shared_device.hold(t)
+		app, error := host.app_create({gpu = true, gpu_validation = true, window = true, window_desc = {size = {WIDTH, HEIGHT}, hidden = true}, fixed_dt = 1.0 / 60, threads = 1, render_settings = settings})
+		if app == nil {
+			gpu.shader_assets_destroy(&loaded)
+			testing.expectf(t, rhi.gpu_skip_allowed(), "no application with a GPU: %v (set MIRAI_ALLOW_GPU_SKIP=1 to skip)", error)
+			return false
+		}
+		f.app, f.device, f.renderer, f.window = app, app.device, app.renderer, true
+		if !testing.expect(t, gpu.renderer_reload_shaders(f.renderer, &loaded), f.renderer.error) {
+			gpu.shader_assets_destroy(&loaded)
+			return false
+		}
+	} else {
+		device := shared_device.take_or_skip(t)
+		if device == nil {
+			gpu.shader_assets_destroy(&loaded)
+			return false
+		}
+		f.device, f.renderer, f.app = device, &f.own, &f.plain
+		if !testing.expect(t, gpu.renderer_init(f.renderer, {device = device, width = WIDTH, height = HEIGHT, settings = settings, shaders = &loaded}), f.renderer.error) {return false}
+		f.plain = host.App{allocator = context.allocator, renderer = f.renderer, assets = &f.assets, device = device}
+	}
 	folder := base.test_folder(t, "fsr-gpu")
-	if folder == "" || !testing.expect(t, host.assets_init(&f.assets, {root = folder, renderer = &f.renderer})) {return false}
-	f.app = host.App{allocator = context.allocator, renderer = &f.renderer, assets = &f.assets, device = device}
+	if folder == "" || !testing.expect(t, host.assets_init(&f.assets, {root = folder, renderer = f.renderer})) {return false}
 	cube := host.assets_shape(&f.assets, .Cube)
 	if !testing.expect(t, cube != nil) {return false}
 	f.cube = cube.handle
-	gpu.scene_world(&f.renderer, 1)
-	gpu.scene_set_environment(&f.renderer, {direction = {0.2, 0.3, 1}, color = {1, 1, 1}, illuminance = math.PI, enabled = true, indirect = 1, scattering = 1}, {sky = {0.05, 0.05, 0.05}})
+	gpu.scene_world(f.renderer, 1)
+	gpu.scene_set_environment(f.renderer, {direction = {0.2, 0.3, 1}, color = {1, 1, 1}, illuminance = math.PI, enabled = true, indirect = 1, scattering = 1}, {sky = {0.05, 0.05, 0.05}})
 	return true
 }
 
@@ -64,7 +84,7 @@ gpu_fixture_init :: proc(t: ^testing.T, f: ^Gpu_Fixture) -> bool {
 gpu_fixture_destroy :: proc(f: ^Gpu_Fixture) {
 	if f.device == nil {return}
 	host.assets_destroy(&f.assets)
-	gpu.renderer_destroy(&f.renderer)
+	if f.window {host.app_destroy(f.app)} else {gpu.renderer_destroy(f.renderer)}
 }
 
 // A box of size at position, turned by angle radians about the view axis.
@@ -87,7 +107,7 @@ CAMERA :: gpu.Camera{position = {0, 0, 0}, forward = {0, 0, -1}, up = {0, 1, 0},
 draw_at :: proc(t: ^testing.T, f: ^Gpu_Fixture, lines: u32, taa: bool) {
 	settings := f.renderer.settings
 	settings.resolution, settings.taa = lines, taa
-	testing.expect(t, gpu.renderer_apply_settings(&f.renderer, settings), f.renderer.error)
+	testing.expect(t, gpu.renderer_apply_settings(f.renderer, settings), f.renderer.error)
 }
 
 // One frame, drawn by FSR 3.1 when fsr: it offers itself, the settings name
@@ -98,10 +118,10 @@ frame :: proc(t: ^testing.T, f: ^Gpu_Fixture, index: int, fsr, generate: bool) {
 		graphics := render.GRAPHICS_SETTINGS_DEFAULT
 		base.text_set(graphics.antialiasing[:], FSR3_NAME)
 		graphics.frame_generation = generate
-		fsr_render(&f.fsr, graphics, FSR_SETTINGS_DEFAULT, &f.app)
+		fsr_render(&f.fsr, graphics, FSR_SETTINGS_DEFAULT, f.app)
 		testing.expect(t, f.fsr.pipelines[.Accumulate_Sharpen] != 0 && (!generate || f.fsr.framegen[.Fi_Interpolation] != 0), "the shaders of the plugin have the stages of FSR 3.1")
 	}
-	testing.expect(t, gpu.renderer_frame(&f.renderer, {camera = CAMERA, time = f32(index) / 60, camera_cut = index == 0}), f.renderer.error)
+	testing.expect(t, gpu.renderer_frame(f.renderer, {camera = CAMERA, time = f32(index) / 60, camera_cut = index == 0}), f.renderer.error)
 }
 
 @(private = "file")
@@ -113,21 +133,18 @@ Image :: struct {
 @(private = "file")
 capture :: proc(t: ^testing.T, f: ^Gpu_Fixture) -> Image {
 	rhi.device_wait_idle(f.device)
-	pixels, w, h, ok := gpu.renderer_capture(&f.renderer, context.temp_allocator)
+	pixels, w, h, ok := gpu.renderer_capture(f.renderer, context.temp_allocator)
 	testing.expect(t, ok, f.renderer.error)
 	return {pixels, w, h}
 }
 
-// The image the frame generated, shown before its own: the presenter of a
-// window takes it, which a test without one reads from the target.
+// The image the last frame generated, which its window showed before its own.
 @(private = "file")
 capture_generated :: proc(t: ^testing.T, f: ^Gpu_Fixture) -> Image {
 	rhi.device_wait_idle(f.device)
-	targets := &f.renderer.main.targets
-	if !testing.expect(t, f.renderer.main.generated && targets.generated != 0, "the last frame generated an image") {return {}}
-	pixels := make([]u8, int(targets.output_width) * int(targets.output_height) * 4, context.temp_allocator)
-	testing.expect(t, rhi.texture_read(f.device, targets.generated, pixels), rhi.device_error(f.device))
-	return {pixels, int(targets.output_width), int(targets.output_height)}
+	pixels, w, h, ok := gpu.renderer_capture_generated(f.renderer, context.temp_allocator)
+	if !testing.expect(t, ok, f.renderer.error) {return {}}
+	return {pixels, w, h}
 }
 
 @(private = "file")
@@ -168,7 +185,7 @@ fsr_upscales_fine_detail_closer_to_the_whole_resolution_than_bilinear :: proc(t:
 		x := (f32(i) - BARS / 2) * 0.17
 		instances[i + 1] = {object_id = u64(i + 2), mesh = f.cube, transform = box({x, 0, -4}, {0.035, 6, 0.035}, 0.44), tint = {0.9, 0.9, 0.9}}
 	}
-	gpu.scene_update(&f.renderer, 0, instances[:], true)
+	gpu.scene_update(f.renderer, 0, instances[:], true)
 	FRAMES :: 64
 
 	draw_at(t, f, HEIGHT, true)
@@ -211,22 +228,23 @@ centroid :: proc(image: Image) -> (at: [2]f32, count: int) {
 }
 
 // A bright box that crosses a dark wall at a steady speed: the image FSR 3.1
-// generates between the last two frames shows it between where each of them
-// does, about halfway, and is neither of them.
+// generates between the last two frames of a window shows it between where
+// each of them does, about halfway, and is neither of them.
 @(test)
 fsr_generates_the_frame_between_two_frames :: proc(t: ^testing.T) {
 	f := new(Gpu_Fixture)
 	defer free(f)
-	if !gpu_fixture_init(t, f) {return}
+	if !gpu_fixture_init(t, f, true) {return}
 	defer gpu_fixture_destroy(f)
-	draw_at(t, f, HEIGHT, true)
+	// The window has the pixels its display gives its points.
+	draw_at(t, f, u32(f.app.drawable.y), true)
 	FRAMES :: 16
 	// 30 cm a frame at 4 m: about 10 pixels.
 	STEP :: f32(0.3)
 	before: Image
 	for i in 0 ..< FRAMES {
 		x := (f32(i) - FRAMES / 2) * STEP
-		gpu.scene_update(&f.renderer, 0, {
+		gpu.scene_update(f.renderer, 0, {
 			{object_id = 1, mesh = f.cube, transform = box({0, 0, -5}, {20, 20, 0.2}), tint = {0.05, 0.05, 0.05}},
 			{object_id = 2, mesh = f.cube, transform = box({x, 0, -4}, {0.5, 0.5, 0.5}), tint = {0.9, 0.9, 0.9}},
 		}, true)
