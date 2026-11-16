@@ -111,11 +111,33 @@ mesh_levels :: proc(vertices:[]asset.Vertex,indices:[]u32,skin:[]asset.Skin_Vert
     append(&out_skin,..skin)
     append(&out_submeshes,..submeshes)
     append(&out_lods,Lod{index_count=u32(len(indices)),vertex_count=u32(len(vertices)),submesh_count=u32(len(submeshes))})
+    outlines:=outlines
+    if len(outlines.rungs)!=len(outlines.cards)*(OUTLINE_RUNGS-1) || len(skin)>0 && len(outlines.skin)!=len(outlines.vertices) || len(morphs)>0 && len(outlines.morphs)!=len(morphs) {outlines={}}
     if simplify && len(indices)>0 && len(vertices)<1<<24 {
-        levels_simplify(vertices,indices,skin,submeshes,outlines if len(skin)==0 && len(morphs)==0 else {},&out_vertices,&out_indices,&out_skin,&out_lods,&out_submeshes,&sources if len(morphs)>0 else nil,&levels,allocator)
+        levels_simplify(vertices,indices,skin,submeshes,outlines,&out_vertices,&out_indices,&out_skin,&out_lods,&out_submeshes,&sources if len(morphs)>0 else nil,&levels,allocator)
     }
     levels.vertices,levels.indices,levels.skin,levels.lods,levels.submeshes=out_vertices[:],out_indices[:],out_skin[:],out_lods[:],out_submeshes[:]
-    if len(morphs)>0 {levels.morphs,levels.morph_deltas=levels_morphs(len(vertices),morphs,morph_deltas,sources[:],allocator)}
+    if len(morphs)>0 {
+        // The deltas of the outlines after those of level 0, as their vertices come after.
+        targets,deltas:=morphs,morph_deltas
+        if len(outlines.vertices)>0 {
+            targets=make([]asset.Morph_Target,len(morphs),context.temp_allocator)
+            merged:=make([dynamic]asset.Morph_Delta,0,len(morph_deltas)+len(outlines.morph_deltas),context.temp_allocator)
+            for target,t in morphs {
+                targets[t]=target
+                targets[t].first=u32(len(merged))
+                append(&merged,..morph_deltas[target.first:][:target.count])
+                for delta in outlines.morph_deltas[outlines.morphs[t].first:][:outlines.morphs[t].count] {
+                    moved:=delta
+                    moved.vertex+=u32(len(vertices))
+                    append(&merged,moved)
+                }
+                targets[t].count=u32(len(merged))-targets[t].first
+            }
+            deltas=merged[:]
+        }
+        levels.morphs,levels.morph_deltas=levels_morphs(len(out_vertices)-len(sources),len(vertices)+len(outlines.vertices),targets,deltas,sources[:],allocator)
+    }
     return
 }
 
@@ -134,20 +156,21 @@ levels_geometry :: proc(levels:Mesh_Levels,flags:asset.Mesh_Flags,out:^asset.Mes
     return asset.mesh_build(source,levels.indices,given,out,allocator)
 }
 
-// The targets with the deltas of level 0 as given, followed in each by those
-// of the vertices of the other levels, which take the deltas of the vertex
-// of level 0 they are.
+// The targets with the deltas of the first `count` vertices as given (level
+// 0, and the outlines of a DAG), followed in each by those of the vertices of
+// the other levels, which take the deltas of the vertex of level 0 or of an
+// outline (of `every`) they are.
 @(private="file")
-levels_morphs :: proc(count:int,morphs:[]asset.Morph_Target,deltas:[]asset.Morph_Delta,sources:[]u32,allocator:=context.allocator) -> (targets:[]asset.Morph_Target,out:[]asset.Morph_Delta) {
+levels_morphs :: proc(count,every:int,morphs:[]asset.Morph_Target,deltas:[]asset.Morph_Delta,sources:[]u32,allocator:=context.allocator) -> (targets:[]asset.Morph_Target,out:[]asset.Morph_Delta) {
     targets=make([]asset.Morph_Target,len(morphs),allocator)
     output:=make([dynamic]asset.Morph_Delta,0,len(deltas),allocator)
-    lookup:=make([]i32,count,context.temp_allocator)
+    lookup:=make([]i32,every,context.temp_allocator)
     for &index in lookup {index=-1}
     for target,t in morphs {
         given:=deltas[target.first:][:target.count]
         for delta,i in given {lookup[delta.vertex]=i32(i)}
         targets[t]=target;targets[t].first=u32(len(output))
-        append(&output,..given)
+        for delta in given {if int(delta.vertex)<count {append(&output,delta)}}
         for source,v in sources {
             if at:=lookup[source];at>=0 {
                 delta:=given[at]
@@ -304,14 +327,17 @@ vec_length :: #force_inline proc "contextless" (a:geom.Vec3) -> f32 {return math
 @(private="file")
 levels_simplify :: proc(vertices:[]asset.Vertex,indices:[]u32,skin:[]asset.Skin_Vertex,submeshes:[]Submesh,outlines:Mesh_Outlines,out_vertices:^[dynamic]asset.Vertex,out_indices:^[dynamic]u32,out_skin:^[dynamic]asset.Skin_Vertex,out_lods:^[dynamic]Lod,out_submeshes:^[dynamic]Submesh,out_sources:^[dynamic]u32,levels:^Mesh_Levels,allocator:=context.allocator) {
     temp:=context.temp_allocator
-    outlines:=outlines
-    if len(outlines.rungs)!=len(outlines.cards)*(OUTLINE_RUNGS-1) {outlines={}}
-    // The vertices of level 0 followed by those of the coarser outlines of its cards.
-    every:=vertices
+    // The vertices of level 0 followed by those of the coarser outlines of its cards, with their skin.
+    every,every_skin:=vertices,skin
     if len(outlines.cards)>0 {
         every=make([]asset.Vertex,len(vertices)+len(outlines.vertices),temp)
         copy(every,vertices)
         copy(every[len(vertices):],outlines.vertices)
+        if len(skin)>0 {
+            every_skin=make([]asset.Skin_Vertex,len(every),temp)
+            copy(every_skin,skin)
+            copy(every_skin[len(skin):],outlines.skin)
+        }
     }
     offset:=u32(len(vertices))
     positions,attributes,protect:=asset.mesh_simplify_inputs(every)
@@ -449,7 +475,7 @@ levels_simplify :: proc(vertices:[]asset.Vertex,indices:[]u32,skin:[]asset.Skin_
                         vertex:=every[source]
                         vertex.position=position
                         append(out_vertices,vertex)
-                        if len(skin)>0 {append(out_skin,skin[source])}
+                        if len(skin)>0 {append(out_skin,every_skin[source])}
                         if out_sources!=nil {append(out_sources,source)}
                     }
                     append(out_indices,local[source])

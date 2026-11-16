@@ -715,3 +715,95 @@ the_near_part_of_a_bush_alone_is_fine :: proc(t:^testing.T) {
     }
     testing.expectf(t,worst<0.1,"a group that gives way to the next level moves %f of what it covers",worst)
 }
+
+// The cards of a material with a program that names its mask, of a skinned
+// mesh and of a morphing one are cut as those of the row material are. A
+// vertex of an outline takes the influences and the deltas of the corners of
+// the card where it lies: those of a rigid card exactly, those of a card
+// between two bones a blend of both, and the deltas of a card that moves.
+@(test)
+cards_of_programs_and_of_skinned_and_morphing_meshes_are_cut :: proc(t:^testing.T) {
+    Case :: struct {name:string,program,skinned,morphing:bool}
+    cases:=[]Case{{"row",false,false,false},{"program",true,false,false},{"skinned",false,true,false},{"morphing",false,false,true}}
+    reference:int
+    for c in cases {
+        r:Reader
+        tree_read(&r)
+        mesh:=&r.meshes[0]
+        leaf_vertex :: proc(mesh:^Imported_Mesh,leaf,row,column:int) -> u32 {return mesh.indices[int(mesh.submeshes[1].first_index)+leaf*12]+u32(row*2+column)}
+        if c.program {
+            leaves:=&r.materials[1]
+            asset.text_set(leaves.info.program[:],"Leaf")
+            leaves.mask=Imported_Mask{image=0,mapping=asset.MATERIAL_DEFAULTS.maps.base_color,cutoff=leaves.info.alpha_cutoff}
+        }
+        if c.skinned {
+            // The even leaves on joint 0; the odd ones from joint 0 at their foot to joint 1 at their tip.
+            skin:=make([]asset.Skin_Vertex,len(mesh.vertices),context.temp_allocator)
+            for &s in skin {s.weights[0]=255}
+            for leaf in 0..<48 {
+                for row in 0..<3 {
+                    for column in 0..<2 {
+                        s:=&skin[leaf_vertex(mesh,leaf,row,column)]
+                        s^={joints={0,0,0,0,0,0,0,0},weights={255,0,0,0,0,0,0,0}}
+                        if leaf%2==1 && row==1 {s^={joints={0,1,0,0,0,0,0,0},weights={128,127,0,0,0,0,0,0}}}
+                        if leaf%2==1 && row==2 {s.joints[0]=1}
+                    }
+                }
+            }
+            mesh.skin=skin
+        }
+        if c.morphing {
+            // The even leaves rise by 0.1.
+            deltas:=make([dynamic]asset.Morph_Delta,context.temp_allocator)
+            for leaf:=0;leaf<48;leaf+=2 {
+                for k in 0..<6 {append(&deltas,asset.Morph_Delta{vertex=leaf_vertex(mesh,leaf,k/2,k%2),position={0,0.1,0}})}
+            }
+            targets:=make([]asset.Morph_Target,1,context.temp_allocator)
+            targets[0]={weight=0,first=0,count=u32(len(deltas))}
+            asset.text_set(targets[0].name[:],"rise")
+            mesh.morphs,mesh.morph_deltas=targets,deltas[:]
+        }
+        model_cutouts(&r)
+        testing.expectf(t,len(mesh.outlines.cards)==48 && r.materials[1].info.alpha_mode==.Opaque,"%s: %d leaves cut",c.name,len(mesh.outlines.cards))
+        if len(mesh.outlines.cards)!=48 {continue}
+        triangles:=0
+        for card in mesh.outlines.cards {triangles+=int(card.triangle_count)}
+        if c.name=="row" {reference=triangles}
+        testing.expectf(t,triangles==reference,"%s: the leaves draw %d triangles, the row material's %d",c.name,triangles,reference)
+        if c.skinned {
+            testing.expect_value(t,len(mesh.skin),len(mesh.vertices))
+            testing.expect_value(t,len(mesh.outlines.skin),len(mesh.outlines.vertices))
+            for card,leaf in mesh.outlines.cards {
+                blended:=false
+                for index in mesh.indices[card.first_triangle*3:][:card.triangle_count*3] {
+                    s:=mesh.skin[index]
+                    sum:=0
+                    for w in s.weights {sum+=int(w)}
+                    testing.expect_value(t,sum,255)
+                    if leaf%2==0 {
+                        if s.joints[0]!=0 || s.weights[0]!=255 {testing.expectf(t,false,"a vertex of a rigid leaf has %v",s);break}
+                    } else {
+                        for w,j in s.weights {if w>0 && s.joints[j]>1 {testing.expectf(t,false,"a vertex of a bent leaf has %v",s)}}
+                        blended||=s.weights[0]>0 && s.weights[1]>0
+                    }
+                }
+                if leaf%2==1 {testing.expectf(t,blended,"leaf %d between two bones blends them",leaf)}
+            }
+        }
+        if c.morphing {
+            moved:=make(map[u32][3]f32,context.temp_allocator)
+            target:=mesh.morphs[0]
+            for delta in mesh.morph_deltas[target.first:][:target.count] {moved[delta.vertex]=delta.position}
+            for card,leaf in mesh.outlines.cards {
+                for index in mesh.indices[card.first_triangle*3:][:card.triangle_count*3] {
+                    delta,found:=moved[index]
+                    if leaf%2==0 && (!found || linalg.length(delta-[3]f32{0,0.1,0})>1e-5) || leaf%2==1 && found {testing.expectf(t,false,"leaf %d moves %v",leaf,delta);break}
+                }
+            }
+            testing.expect(t,len(mesh.outlines.morphs)==1 && mesh.outlines.morphs[0].count>0,"the coarser outlines of the leaves that rise rise too")
+        }
+        levels:=mesh_levels(mesh.vertices,mesh.indices,mesh.skin,mesh.submeshes,allocator=context.temp_allocator,morphs=mesh.morphs,morph_deltas=mesh.morph_deltas,outlines=mesh.outlines)
+        testing.expectf(t,levels.pruned && len(levels.islands.islands)+len(levels.lods)>1,"%s: the leaves are pruned",c.name)
+        testing.expectf(t,levels_valid(t,levels,3),"%s: the levels make a mesh",c.name)
+    }
+}
