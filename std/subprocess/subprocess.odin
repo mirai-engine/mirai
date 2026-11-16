@@ -22,6 +22,7 @@ Process :: struct {
     // The ends of the pipes this process holds, nil for a stream that is not one.
     stdin,stdout,stderr:^os.File,
     state:os.Process_State, // the exit, once state.exited
+    peak:i64, // once state.exited, the most memory the child held at once (memory_peak); 0 when the system did not say
 }
 
 // Pipes that start gives back: stdout and stderr each, or both through
@@ -74,13 +75,16 @@ start :: proc(desc:os.Process_Desc,limits:=Limits{},pipes:=Pipes.None) -> (proce
     return started,nil
 }
 
-// Like os.process_wait, and the state stays in process. Once the child
-// exited, what it left running is ended. A timeout that passes is the error
-// .Timeout.
+// Like os.process_wait, and the state stays in process, with the peak of its
+// memory. Once the child exited, what it left running is ended. A timeout
+// that passes is the error .Timeout.
 wait :: proc(process:^Process,timeout:=os.TIMEOUT_INFINITE) -> (state:os.Process_State,error:os.Error) {
     if process.pid==0 {return {},.Not_Exist}
     if process.state.exited {return process.state,nil}
-    state=os.process_wait({pid=process.pid,handle=process.handle},timeout) or_return
+    // The exit is taken only after its peak is read: the system forgets it then.
+    _exited(process,timeout) or_return
+    process.peak=_exit_peak(process)
+    state=os.process_wait({pid=process.pid,handle=process.handle},0) or_return
     process.state,process.handle=state,0
     _tree_close(process)
     return
@@ -164,6 +168,15 @@ process_alive :: proc(pid:int) -> bool {
     // process_wait leaves the process open only when it is still running.
     if wait_error==os.General_Error.Timeout {process_close(process)}
     return !state.exited
+}
+
+// The most memory the process with that pid has held at once so far, in
+// bytes: its peak working set on Windows, the high-water mark of its resident
+// set on Linux and its lifetime peak footprint on macOS. ok is false when it
+// is gone or the system does not say.
+memory_peak :: proc(pid:int) -> (bytes:i64,ok:bool) {
+    if pid<=0 {return}
+    return _memory_peak(pid)
 }
 
 // Runs the command to its end and returns what it wrote to stdout and to

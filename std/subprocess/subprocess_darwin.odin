@@ -3,6 +3,7 @@
 package subprocess
 
 import "core:os"
+import "core:sys/darwin"
 import "core:sys/kqueue"
 import "core:sys/posix"
 
@@ -17,6 +18,27 @@ parent_wait :: proc(parent:posix.pid_t) {
     for {
         if _,wait_error:=kqueue.kevent(queue,nil,happened[:],nil);wait_error!=.EINTR {return}
     }
+}
+
+// The flavor 4 of proc_pid_rusage up to its lifetime peak footprint, the
+// first field after it standing for those that follow.
+Rusage_Info_V4 :: struct {
+    uuid:[16]u8,
+    before:[28]u64, // times, wakeups, sizes, its children's, disk, QoS times, billed and serviced, logical writes
+    lifetime_max_phys_footprint:u64,
+    after:[6]u64,
+}
+
+// A child that exited and was not reaped keeps its usage.
+_exit_peak :: proc(process:^Process) -> i64 {
+    peak,_:=_memory_peak(process.pid)
+    return peak
+}
+
+_memory_peak :: proc(pid:int) -> (bytes:i64,ok:bool) {
+    usage:Rusage_Info_V4
+    if darwin.proc_pid_rusage(posix.pid_t(pid),.V4,&usage)!=0 {return}
+    return i64(usage.lifetime_max_phys_footprint),true
 }
 
 descriptors_close :: proc() {
