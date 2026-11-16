@@ -642,11 +642,15 @@ float lights_estimate_walk(inout Light_Walk walk, float3 position, float3 normal
     return total;
 }
 float lights_estimate(float3 position, float3 normal, uint root = 0u, uint share = LIGHT_SHARE_ALL) {
-    Light_Walk walk = light_walk_begin(false);
-    float total = lights_estimate_walk(walk, position, normal, root, share);
-    if (!walk.cut) return total;
-    walk = light_walk_begin(true);
-    return lights_estimate_walk(walk, position, normal, root, share);
+    float total = 0.0;
+    // One walk in the code: the second, in order, only after one cut short.
+    [loop]
+    for (uint ordered = 0u; ordered < 2u; ordered++) {
+        Light_Walk walk = light_walk_begin(ordered != 0u);
+        total = lights_estimate_walk(walk, position, normal, root, share);
+        if (!walk.cut) break;
+    }
+    return total;
 }
 
 // What a group sends from the point towards its viewer as one light, and
@@ -707,15 +711,21 @@ float3 local_lighting_walk(inout Light_Walk walk, Shading s, float total, uint r
     }
     return result;
 }
+float3 local_lighting_of(Shading s, float total, uint root, uint share) {
+    total = max(total, 1e-8);
+    float3 result = float3(0.0);
+    [loop]
+    for (uint ordered = 0u; ordered < 2u; ordered++) {
+        Light_Walk walk = light_walk_begin(ordered != 0u);
+        result = local_lighting_walk(walk, s, total, root, share);
+        if (!walk.cut) break;
+    }
+    return result;
+}
 float3 local_lighting(Shading s, float total, uint root = 0u, uint share = LIGHT_SHARE_ALL) {
     if (frame.light_nodes == 0u) return float3(0.0);
     if (!(total > 0.0)) total = lights_estimate(s.position, s.normal, root, share);
-    total = max(total, 1e-8);
-    Light_Walk walk = light_walk_begin(false);
-    float3 result = local_lighting_walk(walk, s, total, root, share);
-    if (!walk.cut) return result;
-    walk = light_walk_begin(true);
-    return local_lighting_walk(walk, s, total, root, share);
+    return local_lighting_of(s, total, root, share);
 }
 
 // The light the local lights that cast no shadows send from the point
@@ -725,14 +735,19 @@ float3 local_lighting(Shading s, float total, uint root = 0u, uint share = LIGHT
 // it, which a group may err against with theirs. `share`: as for
 // local_lighting.
 float3 shadowless_lighting(Shading s, float known, uint share = LIGHT_SHARE_ALL) {
-    uint written = frame.shadowless_lights.x, scene = frame.shadowless_lights.z;
-    if (written == 0u && scene == 0u) return float3(0.0);
+    uint roots[2] = { frame.shadowless_lights.x, frame.shadowless_lights.z };
+    if (roots[0] == 0u && roots[1] == 0u) return float3(0.0);
+    // Each walk once in the code, over both trees.
     float total = max(known, 0.0);
-    if (written != 0u) total += lights_estimate(s.position, s.normal, written, share);
-    if (scene != 0u) total += lights_estimate(s.position, s.normal, scene, share);
+    [loop]
+    for (uint k = 0u; k < 2u; k++) {
+        if (roots[k] != 0u) total += lights_estimate(s.position, s.normal, roots[k], share);
+    }
     float3 result = float3(0.0);
-    if (written != 0u) result += local_lighting(s, total, written, share);
-    if (scene != 0u) result += local_lighting(s, total, scene, share);
+    [loop]
+    for (uint k = 0u; k < 2u; k++) {
+        if (roots[k] != 0u) result += local_lighting_of(s, total, roots[k], share);
+    }
     return result;
 }
 
@@ -1035,6 +1050,50 @@ bool lights_moved_near(float3 position) {
     return false;
 }
 
+// Where the shadow ray of node `at` of a cut goes from a point: to the light
+// of a leaf, or of a group to the light in the middle of its share; to the
+// point of a rectangle or a capsule the point aims at, else to its center.
+// Gives that light, the direction and how far the ray goes.
+uint cut_ray(uint at, float3 position, float3 normal, uint share, out float3 direction, out float reach) {
+    Light_Node node = light_nodes[at];
+    if ((node.flags & LIGHT_NODE_LEAF) == 0u) {
+        float chance;
+        node = light_nodes[node_light(at, 0.5, position, normal, chance, share)];
+    }
+    Light aimed = lights[node.child];
+    float3 toward = light_is_rect(aimed) || light_is_capsule(aimed) ? light_aim(aimed, position, normal) : aimed.position_range.xyz - position;
+    float distance = length(toward);
+    direction = toward / max(distance, 1e-6);
+    reach = light_reach(aimed, distance);
+    return node.child;
+}
+
+// Whether what direct_lighting gives a point with LIGHTS_CHANGES may have
+// changed since the frame before, by the same tests on the same rays, without
+// taking its light: for a pass that keeps the light of a point that did not
+// change. It tests every node of the cut, also those whose light it would
+// leave out.
+bool lights_changed(float3 position, float3 normal, float bias, uint budget, uint which) {
+    if (all(frame.moved.xyz == 0u)) return false;
+    float3 origin = offset_origin(position, normal, bias);
+    if ((which & LIGHTS_SUN) != 0u && frame.sun_direction.w > 0.5) {
+        if ((frame.moved.z & MOVED_SUN) != 0u || occluder_changed(origin, frame.sun_direction.xyz, sun_reach(origin, frame.sun_direction.xyz), INVALID, FLT_MAX)) return true;
+    }
+    if ((which & LIGHTS_LOCAL) == 0u) return false;
+    if (lights_moved_near(position)) return true;
+    if (frame.moved.x == 0u) return false;
+    uint share = (which & LIGHTS_BOUNCED) != 0u ? LIGHT_SHARE_BOUNCED : (which & LIGHTS_SCATTERED) != 0u ? LIGHT_SHARE_SCATTERED : LIGHT_SHARE_ALL;
+    uint cut[LIGHT_CUT_MAX];
+    uint count = light_cut(position, normal, budget, cut, share);
+    for (uint i = 0u; i < count; i++) {
+        float3 direction;
+        float reach;
+        cut_ray(cut[i], position, normal, share, direction, reach);
+        if (occluder_changed(origin, direction, reach, INVALID, FLT_MAX)) return true;
+    }
+    return false;
+}
+
 // The direct light a point reflects towards its viewer: the sun, the local
 // lights and those of extensions, each through its shadow ray. The local
 // lights are the nodes of the cut of the point, at most `budget`: the lights
@@ -1091,28 +1150,13 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which, float2 ex
             float distance;
             radiance = node_radiance(node, s, direction, distance) * node_share(node, share);
             if (luminance(radiance) <= light_cutoff()) continue;
-            if ((node.flags & LIGHT_NODE_LEAF) == 0u) {
-                // A group: the ray goes to the light in the middle of its share.
-                float chance;
-                Light_Node target = light_nodes[node_light(cut[item - 1u], 0.5, s.position, s.normal, chance, share)];
-                float3 toward = target.center_radius.xyz - s.position;
-                distance = length(toward);
-                direction = toward / max(distance, 1e-6);
-                node = target;
-            }
-            Light aimed = lights[node.child];
-            if (light_is_rect(aimed) || light_is_capsule(aimed)) {
-                float3 toward = light_aim(aimed, s.position, s.normal);
-                distance = length(toward);
-                direction = toward / max(distance, 1e-6);
-            }
-            reach = light_reach(aimed, distance);
+            uint aimed = cut_ray(cut[item - 1u], s.position, s.normal, share, direction, reach);
             if (changes) changed = changed || occluder_changed(origin, direction, reach, INVALID, FLT_MAX);
 #ifdef MIRAI_LIGHT_MAPS
-            mapped = light_shadow_seen(node.child, s.position, s.normal, light_extent(aimed), s.across);
+            mapped = light_shadow_seen(aimed, s.position, s.normal, light_extent(lights[aimed]), s.across);
 #ifdef SHADOW_TINT_SLOT
             Shadow_Map tinted;
-            if (mapped > 0.0 && light_map_of(node.child, s.position, tinted)) radiance *= shadow_tint(tinted, s.position);
+            if (mapped > 0.0 && light_map_of(aimed, s.position, tinted)) radiance *= shadow_tint(tinted, s.position);
 #endif
 #endif
         }

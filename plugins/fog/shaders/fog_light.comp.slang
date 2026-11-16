@@ -10,13 +10,13 @@
 // (media_local_light), by what the maps of the view hold of their shadows and
 // of the glass on their way, a ray where none holds the point, and from
 // around, by the probe volume. Only the light keeps what the frame before
-// found where the cell was then, by fog.history: wisps that drift through a
-// shaft take its light at once, with no trail. It is not kept where what casts
-// shadows changed since then on the way of its light, or its light
-// moved: a shaft of light that a moving thing cuts shows at once. A cell
-// behind everything its column and those around it see is lit one frame in
-// fog.hidden, by turns, and keeps what it had in the others: once the camera
-// shows it, it has its light.
+// found where the cell was then: wisps that drift through a shaft take its
+// light at once, with no trail. A cell is lit one frame in fog.turns, by
+// turns, and takes what it had by fog.history; in the others it keeps it. One
+// where what casts shadows changed since then on the way of its light, or its
+// light moved, is lit at once and keeps nothing: a shaft of light that a
+// moving thing cuts shows at once. A cell behind everything its column and
+// those around it see has no medium: once the camera shows it, it has its light.
 // Past the grid, in fog.far cells more along each column, the same light
 // keeps what of the sun reaches the media of each slice through the scene,
 // by the same maps and rays, history and turns: fog_integrate lights the
@@ -151,37 +151,78 @@ bool fog_hidden(uint3 id) {
     return fog_cell_depth(float(id.z) - 1.0) > column_reach.Load(int3(id.xy, 0)).r;
 }
 
+// The k-th place of a cell past the grid the sun is taken at: on the part of
+// its ray in the slice that the volumes with a medium hold; false where they
+// hold none of it.
+bool fog_far_point(uint3 id, uint k, out float3 at) {
+    at = float3(0.0);
+    float near = fog_cell_depth(float(id.z));
+    bool last = id.z + 1u >= fog.grid.z + fog.far;
+    float2 uv = (float2(id.xy) + sequence_point(uint2(id.x + id.z * 2039u, id.y), 11u, k)) / float2(fog.grid.xy);
+    float far = last ? near + FOG_ENDLESS / length(view_ray(uv)) : fog_cell_depth(float(id.z + 1u));
+    float3 a = position_from_depth(uv, near), b = position_from_depth(uv, far);
+    float low = 1.0, high = 0.0;
+    for (uint i = 0u; i < fog.grid.w; i++) {
+        Fog_Volume v = fog_volumes[i];
+        if (fog_carve(v, FOG_CARVE_DRY) || !(v.medium.a > 0.0)) continue;
+        float start, end;
+        fog_volume_segment(v, a, b, start, end);
+        if (!(end > start)) continue;
+        low = min(low, start);
+        high = max(high, end);
+    }
+    if (!(high > low)) return false;
+    float along = sequence_point(uint2(id.y + id.z * 3121u, id.x), 13u, k).x;
+    at = lerp(a, b, lerp(low, high, along));
+    return true;
+}
+
+bool fog_sun_lights() { return frame.sun_direction.w > 0.5 && frame.sun_shares.y > 0.0; }
+
 // What of the sun reaches the media of a slice past the grid through the
 // scene, times 1 (none where no medium crosses the cell): the mean of
 // FOG_SUN_POINTS places of the cell, each along the part of its ray in the
 // slice that the volumes with a medium hold.
 float4 fog_far_sun(uint3 id, inout bool changed) {
-    if (frame.sun_direction.w < 0.5 || !(frame.sun_shares.y > 0.0)) return float4(0.0);
-    float near = fog_cell_depth(float(id.z));
-    bool last = id.z + 1u >= fog.grid.z + fog.far;
-    media_across = near * length(view_ray(float2(1.0) / float2(fog.grid.xy)) - view_ray(float2(0.0)));
+    if (!fog_sun_lights()) return float4(0.0);
+    media_across = fog_cell_depth(float(id.z)) * length(view_ray(float2(1.0) / float2(fog.grid.xy)) - view_ray(float2(0.0)));
     float3 through = float3(0.0);
     float held = 0.0;
     for (uint k = 0u; k < FOG_SUN_POINTS; k++) {
-        float2 uv = (float2(id.xy) + sequence_point(uint2(id.x + id.z * 2039u, id.y), 11u, k)) / float2(fog.grid.xy);
-        float far = last ? near + FOG_ENDLESS / length(view_ray(uv)) : fog_cell_depth(float(id.z + 1u));
-        float3 a = position_from_depth(uv, near), b = position_from_depth(uv, far);
-        float low = 1.0, high = 0.0;
-        for (uint i = 0u; i < fog.grid.w; i++) {
-            Fog_Volume v = fog_volumes[i];
-            if (fog_carve(v, FOG_CARVE_DRY) || !(v.medium.a > 0.0)) continue;
-            float start, end;
-            fog_volume_segment(v, a, b, start, end);
-            if (!(end > start)) continue;
-            low = min(low, start);
-            high = max(high, end);
-        }
-        if (!(high > low)) continue;
-        float along = sequence_point(uint2(id.y + id.z * 3121u, id.x), 13u, k).x;
-        through += media_sun_through(lerp(a, b, lerp(low, high, along)), changed);
+        float3 at;
+        if (!fog_far_point(id, k, at)) continue;
+        through += media_sun_through(at, changed);
         held += 1.0;
     }
     return held > 0.0 ? float4(through / held, 1.0) : float4(0.0);
+}
+
+// Whether the light of a cell may have changed since the frame before,
+// without taking it: what reaches its places from the sun, and of a cell of
+// the grid from the local lights.
+bool fog_cell_changed(uint3 id, bool past) {
+    if (all(frame.moved.xyz == 0u)) return false;
+    bool sun = fog_sun_lights();
+    for (uint k = 0u; k < FOG_SUN_POINTS; k++) {
+        float3 at;
+        if (past) {
+            if (!fog_far_point(id, k, at)) continue;
+        } else {
+            float2 uv;
+            float along;
+            at = fog_cell_point(id, k, uv, along);
+            if (k == 0u && media_local_changed(at)) return true;
+        }
+        if (sun && media_sun_changed(at)) return true;
+    }
+    return false;
+}
+
+// Whether the turn of the cell is this frame: that of its group, so that the
+// threads that run together skip together.
+bool fog_turn(uint3 id) {
+    uint3 group = id / uint3(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z);
+    return (group.x + group.y * 3u + group.z * 5u + frame.frame_index) % fog.turns == 0u;
 }
 
 [shader("compute")]
@@ -189,25 +230,29 @@ float4 fog_far_sun(uint3 id, inout bool changed) {
 void main(uint3 id : SV_DispatchThreadID) {
     if (any(id.xy >= fog.grid.xy) || id.z >= fog.grid.z + fog.far) return;
     bool past = id.z >= fog.grid.z;
-    if (fog.hidden != 1u && fog_hidden(id)) {
-        // Not lit in this frame: it keeps what it had, and one without it is lit now.
-        // No pixel reads the medium behind all that its column and those around it see.
-        if (!past) medium_now[id] = float4(0.0);
-        // The turn is of the group of the cell: the threads that run together skip together.
-        uint3 group = id / uint3(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z);
-        float4 kept;
-        if ((group.x + group.y * 3u + group.z * 5u + frame.frame_index) % fog.hidden != 0u && fog_before(id, kept)) {
-            light_now[id] = kept;
+    float4 before;
+    bool held = fog_before(id, before);
+    // Out of its turn a cell keeps its light, unless it changed or had no medium.
+    bool keep = held && before.a >= 0.5 && !fog_turn(id) && !fog_cell_changed(id, past);
+    if (past) {
+        if (keep) {
+            light_now[id] = before;
             return;
         }
-    }
-    if (past) {
         bool moved = false;
         float4 sun = fog_far_sun(id, moved);
-        float4 before;
-        if (!moved && fog_before(id, before)) sun = lerp(sun, before, fog.history);
+        if (!moved && held) sun = lerp(sun, before, fog.history);
         light_now[id] = float4(finite_or_zero(sun.rgb), saturate(sun.a));
         return;
+    }
+    // No pixel reads the medium behind all that its column and those around it see.
+    bool hidden = fog.turns != 1u && fog_hidden(id);
+    if (hidden) {
+        medium_now[id] = float4(0.0);
+        if (keep) {
+            light_now[id] = before;
+            return;
+        }
     }
     // Where in the cell the light is taken: another place for each cell and the same in every
     // frame. A place that moved from frame to frame changed what the shafts of light through a
@@ -227,11 +272,15 @@ void main(uint3 id : SV_DispatchThreadID) {
     float3 glow;
     float taken = fog_dry_at(position);
     float4 medium = fog_medium(position, taken, footprint, mean, mean_sun_only, glow, g);
-    medium_now[id] = float4(finite_or_zero(medium.rgb), isfinite(medium.a) ? max(medium.a, 0.0) : 0.0);
+    if (!hidden) medium_now[id] = float4(finite_or_zero(medium.rgb), isfinite(medium.a) ? max(medium.a, 0.0) : 0.0);
     float3 scattered = mean.rgb + mean_sun_only;
     float amount = fog_amount(float4(scattered, mean.a));
     if (!(amount > 0.0)) {
         light_now[id] = float4(0.0);
+        return;
+    }
+    if (keep) {
+        light_now[id] = before;
         return;
     }
     bool changed = false;
@@ -240,7 +289,6 @@ void main(uint3 id : SV_DispatchThreadID) {
     float3 light = sun * mean_sun_only + render_units(glow);
     if (luminance(mean.rgb) > 0.0) light += mean.rgb * (media_ambient(position, -eye_ray) * fog_shade(position, float3(0.0, 1.0, 0.0), taken) + media_local_light(position, eye_ray, g, changed) + sun);
     float4 now = float4(light / amount, 1.0);
-    float4 before;
-    if (!changed && fog_before(id, before)) now = lerp(now, before, fog.history);
+    if (!changed && held) now = lerp(now, before, fog.history);
     light_now[id] = float4(finite_or_zero(now.rgb), saturate(now.a));
 }

@@ -64,7 +64,7 @@ gpu_fixture_init :: proc(t: ^testing.T, f: ^Gpu_Fixture) -> bool {
 	cube := host.assets_shape(&f.assets, .Cube)
 	if !testing.expect(t, cube != nil) {return false}
 	f.cube = cube.handle
-	f.state.hidden = 4
+	f.state.turns = 4
 	gpu.scene_world(&f.renderer, 1)
 	return true
 }
