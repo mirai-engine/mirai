@@ -1,6 +1,7 @@
 package geom
 
 import "core:math"
+import "core:fmt"
 import "core:testing"
 import "mirai:std/base"
 import mm "mirai:std/math"
@@ -507,8 +508,9 @@ cluster_levels_cut_one_whole_level :: proc(t:^testing.T) {
     testing.expect(t,picked[0] && picked[2],"near the first level, far the last")
 }
 
-// A cloud of cards of two triangles in two octaves of size, each an island
-// of one outline, and a camera next to it: the DAG prunes them by group. No
+// A cloud of cards of two triangles in two octaves of size a quarter of a
+// metre apart, as the leaves of a crown, each an island of one outline, and
+// a camera next to it: the DAG prunes them by group. No
 // card is split between clusters, the errors grow to the roots in spheres
 // around the clusters, every group draws in the clusters it was reduced into
 // the area of its own within 2 %, and a camera at its edge draws fewer triangles
@@ -522,7 +524,7 @@ cluster_dag_prunes_a_cloud_of_islands_by_group :: proc(t:^testing.T) {
     rungs:=make([dynamic]Cluster_Island_Rung,context.temp_allocator)
     rng:=base.rng_make(3)
     for card in 0..<CARDS {
-        center:=mm.random_in_sphere(&rng)*16
+        center:=mm.random_in_sphere(&rng)*4
         size:=f32(0.1) if card%4!=0 else 0.25
         first:=u32(len(positions))
         for corner in ([4][2]f32{{0,0},{1,0},{0,1},{1,1}}) {append(&positions,center+{(corner.x-0.5)*size,0,(corner.y-0.5)*size})}
@@ -576,13 +578,15 @@ cluster_dag_prunes_a_cloud_of_islands_by_group :: proc(t:^testing.T) {
         if abs(after-before)>0.02*before {testing.expectf(t,false,"a group of level %d draws %f, reduced %f",g.level,before,after);return}
     }
     // A camera at the edge of the cloud against the cut with all of it as near.
-    camera:=Vec3{16.5,0,0}
+    SLOPE :: 0.04
+    camera:=Vec3{4.5,0,0}
     near,all:u32
     for c in dag.clusters {
-        if projected(c.own,camera)<=0.004 && projected(c.parent,camera)>0.004 {near+=c.triangle_count}
-        allowed:=f32(0.004*0.5)
+        if projected(c.own,camera)<=SLOPE && projected(c.parent,camera)>SLOPE {near+=c.triangle_count}
+        allowed:=f32(SLOPE*0.5)
         if c.own.error<=allowed && !(c.parent.error<=allowed) {all+=c.triangle_count}
     }
+    for c in dag.clusters {if c.first_vertex%40==0 {fmt.println(c.level,c.own.radius,c.own.error,c.parent.radius,c.parent.error,c.parent.center)}}
     testing.expectf(t,f32(near)<0.75*f32(all),"from the edge the cloud draws %d triangles, all of it as near %d",near,all)
     again:Cluster_Dag
     defer cluster_dag_destroy(&again)
