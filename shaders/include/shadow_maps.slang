@@ -315,12 +315,16 @@ bool sun_pick(float3 position, float across, out Sun_Pick pick) {
 
 // The mip of a face of a local light a point takes, as its level the sun
 // (sun_pick): the one whose texel where the point lies is about as wide as
-// the point, blended into the next over the top of its octave. across 0: the
-// finest.
-Sun_Pick light_pick(Shadow_Map m, float3 position, float across) {
+// the point, blended into the next over the top of its octave, and no finer
+// than the widest penumbra the light of radius `radius` casts there over
+// SHADOW_SEARCH_MAX of its texels, which its taps search. across 0: the
+// finest the penumbra allows.
+Sun_Pick light_pick(Shadow_Map m, float3 position, float across, float radius) {
     Sun_Pick pick = (Sun_Pick)0;
     pick.grow = 1.0;
-    float mip = log2(max(across, 1e-9) / shadow_map_texel(shadow_map_mip(m, 0u), max(shadow_map_local(m, position).z, m.near))) + 1.0;
+    float z = max(shadow_map_local(m, position).z, m.near);
+    float penumbra = radius * max(z - m.skip, 0.0) / max(m.skip, 1e-3);
+    float mip = log2(max(max(across, penumbra / SHADOW_SEARCH_MAX), 1e-9) / shadow_map_texel(shadow_map_mip(m, 0u), z)) + 1.0;
     pick.level = uint(clamp(floor(mip), 0.0, float(SHADOW_MIPS - 1u)));
     float within = saturate(mip - float(pick.level));
     pick.grow = exp2(within);
@@ -397,6 +401,29 @@ bool shadow_map_held(inout Shadow_Map m, float3 position) {
     return true;
 }
 
+#ifdef SHADOW_MARKS_SLOT
+// The buffer of the pages of the view (render.pass_shadow_marks), for a pass
+// after the maps to mark the pages it reads: the next frame draws them, and
+// until then it reads the coarser pages drawn there or traces.
+[[vk::binding(SHADOW_MARKS_SLOT, 0)]] RWStructuredBuffer<uint> view_shadow_marks : register(MIRAI_REGISTER(u, SHADOW_MARKS_SLOT), space0);
+
+// Marks the pages of map m at its mip the 2x2 texels around a point read.
+void shadow_mark_late(Shadow_Map m, float3 position) {
+    float2 unit = shadow_map_unit(m, shadow_map_local(m, position));
+    if (any(abs(unit) >= 1.0)) return;
+    float2 texel = float2(unit.x * 0.5 + 0.5, 0.5 - unit.y * 0.5) * float(m.rect.z);
+    int last = int(m.rect.z) - 1;
+    uint2 first = uint2(clamp(int2(floor(texel - 0.5)), 0, last)) / SHADOW_PAGE, end = uint2(clamp(int2(floor(texel + 0.5)), 0, last)) / SHADOW_PAGE;
+    for (uint y = first.y; y <= end.y; y++) {
+        for (uint x = first.x; x <= end.x; x++) {
+            uint entry = shadow_page_entry(m.rect, uint2(x, y));
+            uint word = SHADOW_WORDS_LATE + m.rect.x * SHADOW_MASK_WORDS + (entry >> 5u), bit = 1u << (entry & 31u);
+            if ((view_shadow_marks[word] & bit) == 0u) InterlockedOr(view_shadow_marks[word], bit);
+        }
+    }
+}
+#endif
+
 #ifdef SUN_SHADOW_SLOT
 // The atlas of the maps of the view (render.Surface_Source.Shadow_Atlas), for
 // a pass that takes the shadows of the lights from it and not from rays.
@@ -444,6 +471,9 @@ float sun_shadow_seen(float3 position, float3 n, float across, bool blended = tr
     Sun_Pick pick;
     if (!sun_pick(position, across, pick)) return -1.0;
     Shadow_Map m = sun_level(pick.level);
+#ifdef SHADOW_MARKS_SLOT
+    shadow_mark_late(m, position);
+#endif
     Shadow_Taps t;
     if (!shadow_map_held(m, position)) return -1.0;
     if (!shadow_map_point(m, true, frame.sun_direction.xyz, position, n, 0.0, m.rect.x == pick.level ? pick.grow : 1.0, t)) return 1.0;
@@ -492,8 +522,11 @@ bool light_map_of(uint light, float3 position, out Shadow_Map m) {
 bool light_map_given(uint light, float3 position, float across, out Shadow_Map m, out Sun_Pick pick) {
     pick = (Sun_Pick)0;
     if (!light_map_of(light, position, m)) return false;
-    pick = light_pick(m, position, across);
+    pick = light_pick(m, position, across, light_extent(lights[light]));
     m = shadow_map_mip(m, pick.level);
+#ifdef SHADOW_MARKS_SLOT
+    shadow_mark_late(m, position);
+#endif
     return shadow_map_held(m, position);
 }
 
