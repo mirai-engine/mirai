@@ -57,7 +57,6 @@ Gpu_Backend :: rhi.Backend
 Light_Desc :: gpu.Light_Desc
 LIGHT_POINT :: gpu.GPU_LIGHT_POINT
 LIGHT_RECT :: gpu.GPU_LIGHT_RECT
-light_shares :: gpu.light_shares // the w of the axis of a light a pass writes: what of its light the probes gather and media scatter
 
 Render_Pipeline :: gpu.Render_Pipeline_Handle
 Render_Pipeline_Desc :: gpu.Render_Pipeline_Desc
@@ -189,14 +188,9 @@ pass_draw :: gpu.pass_draw
 pass_dispatch :: gpu.pass_dispatch
 pass_timestamp :: gpu.pass_timestamp
 pass_buffer :: gpu.pass_buffer
-Pass_Lights :: gpu.Pass_Lights
-Pass_Light_Part :: gpu.Pass_Light_Part
 Table_Texture_Desc :: gpu.Table_Texture_Desc
 EXTENSION_TABLE_TEXTURE_CAPACITY :: gpu.EXTENSION_TABLE_TEXTURE_CAPACITY
 pass_table_texture_copy :: gpu.pass_table_texture_copy
-LIGHTS_ASKED_MAX :: gpu.LIGHT_REGION_MAX
-LIGHTS_ANYWHERE :: gpu.LIGHTS_ANYWHERE
-pass_lights :: gpu.pass_lights
 pass_buffer_held :: gpu.pass_buffer_held
 pass_buffer_write :: gpu.pass_buffer_write
 pass_buffer_fill :: gpu.pass_buffer_fill
@@ -612,14 +606,6 @@ texture_index :: proc "contextless" (texture:Texture_Handle) -> u32 {return u32(
 // How many times the vertices of the scene were made again: what was written
 // in a deformable before is gone, and it is to be written again.
 vertices_made :: proc(renderer:^Renderer) -> u64 {return renderer!=nil?gpu.vertices_made(renderer):0}
-
-// Room for lights that a pass writes in the Simulate stage (pass_lights),
-// which light the scene as its lights do: count that cast shadows within
-// its budgets, which lie within box and light up to reach metres from where
-// they lie (LIGHTS_ANYWHERE where the pass cannot tell), and shadowless that
-// light whatever stands in their way and trace no rays. From the next frame,
-// up to LIGHTS_ASKED_MAX of each. Ask in each frame that uses it.
-lights_ask :: proc(renderer:^Renderer,count,shadowless:u32,box:[2][3]f32,reach:f32) {if renderer!=nil {gpu.lights_ask(renderer,count,shadowless,box,reach)}}
 
 // An entry of the texture table for what a camera sees, which a material
 // shows as any other color texture. Black until view_texture_draw draws it.

@@ -1561,120 +1561,6 @@ particle_stages_trace_the_scene :: proc(t: ^testing.T) {
 	expect_clean(t, f.device)
 }
 
-// Particles with lights whose effect asks for shadows light the floor
-// around them within their range and cast shadows: behind a cube the floor
-// stays dark, as it is past the range.
-@(test)
-particle_lights_light_the_scene_and_cast_shadows :: proc(t: ^testing.T) {
-	f := new(Gpu_Fixture)
-	defer free(f)
-	settings := test_settings()
-	settings.taa = false
-	if !gpu_fixture_init(t, f, 128, 96, settings) {return}
-	defer gpu_fixture_destroy(f)
-	r := &f.renderer
-	gpu.scene_set_environment(r,{},{})
-	gpu.scene_update(r,0,{
-		{object_id = 1, mesh = f.cube, transform = trs({0, -1, 0}, {12, 0.2, 12}), tint = {0.5, 0.5, 0.5}},
-		{object_id = 2, mesh = f.cube, transform = trs({0.6, -0.3, 0}, {0.4, 0.4, 0.4}), tint = {0.5, 0.5, 0.5}},
-	},true)
-	camera := gpu.Camera{position = {0, 6, 0.01}, forward = {0, -6.9, -0.01}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
-	spark := test_emitter(1, {0, 0.3, 0})
-	spark.info.lifetime, spark.info.size, spark.info.lights, spark.info.light_intensity, spark.info.light_range, spark.info.light_radius, spark.info.light_shadows = {10, 10}, {0.02, 0.02}, 4, 5, 2.5, 0.05, true
-	spark.spawns = test_burst(4)
-	DT :: f32(1.0 / 60)
-	for i in 0 ..< 6 {
-		testing.expect(t, frame_emitters(f, &f.sync, {spark}, DT))
-		spark.spawns = {}
-		testing.expect(t, gpu.renderer_frame(r, {camera = camera, time = f32(i) * DT}), r.error)
-	}
-	rhi.device_wait_idle(f.device)
-	pixels, w, _, ok := gpu.renderer_capture(r)
-	testing.expect(t, ok, r.error)
-	if ok {
-		near := pixel(pixels, w, project(r, camera, {-1.2, -0.9, 0}))
-		shadow := pixel(pixels, w, project(r, camera, {1.2, -0.9, 0}))
-		far := pixel(pixels, w, project(r, camera, {-2.4, -0.9, 0}))
-		testing.expectf(t, near[1] > far[1] + 30, "the floor in range %v is lit, past it %v is not", near, far)
-		testing.expectf(t, near[1] > shadow[1] + 30, "the floor in range %v is lit, behind the cube %v it is not", near, shadow)
-		delete(pixels)
-	}
-	expect_clean(t, f.device)
-}
-
-// The room for more lights than the buffers of the scene hold grows them
-// before the frame uploads the tree with it: no copy past their end, which
-// left nodes of the tree unwritten and walks of it back at the root.
-@(test)
-particle_lights_grow_the_light_buffers_before_the_room_goes_up :: proc(t: ^testing.T) {
-	f := new(Gpu_Fixture)
-	defer free(f)
-	settings := test_settings()
-	settings.taa = false
-	if !gpu_fixture_init(t, f, 64, 48, settings) {return}
-	defer gpu_fixture_destroy(f)
-	r := &f.renderer
-	gpu.scene_set_environment(r,{},{})
-	gpu.scene_update(r,0,{{object_id = 1, mesh = f.cube, transform = trs({0, -1, 0}, {12, 0.2, 12}), tint = {0.5, 0.5, 0.5}}},true)
-	camera := gpu.Camera{position = {0, 6, 0.01}, forward = {0, -6.9, -0.01}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
-	spark := test_emitter(1, {0, 0.3, 0})
-	spark.info.lifetime, spark.info.size, spark.info.lights, spark.info.light_intensity, spark.info.light_range, spark.info.light_radius = {10, 10}, {0.02, 0.02}, 40, 5, 2.5, 0.05
-	spark.spawns = test_burst(40)
-	for i in 0 ..< 3 {
-		testing.expect(t, frame_emitters(f, &f.sync, {spark}, 1.0 / 60))
-		spark.spawns = {}
-		testing.expect(t, gpu.renderer_frame(r, {camera = camera, time = f32(i) / 60}), r.error)
-	}
-	rhi.device_wait_idle(f.device)
-	expect_clean(t, f.device)
-}
-
-// Particles with lights whose effect asks for none of shadows light the
-// floor in their range behind the cube too, with no ray, in the part of the
-// room of their kind, while those of another emitter that ask for shadows
-// fill the other part.
-@(test)
-particle_lights_without_shadows_light_through_what_stands_in_their_way :: proc(t: ^testing.T) {
-	f := new(Gpu_Fixture)
-	defer free(f)
-	settings := test_settings()
-	settings.taa = false
-	if !gpu_fixture_init(t, f, 128, 96, settings) {return}
-	defer gpu_fixture_destroy(f)
-	r := &f.renderer
-	gpu.scene_set_environment(r,{},{})
-	gpu.scene_update(r,0,{
-		{object_id = 1, mesh = f.cube, transform = trs({0, -1, 0}, {12, 0.2, 12}), tint = {0.5, 0.5, 0.5}},
-		{object_id = 2, mesh = f.cube, transform = trs({0.6, -0.3, 0}, {0.4, 0.4, 0.4}), tint = {0.5, 0.5, 0.5}},
-	},true)
-	camera := gpu.Camera{position = {0, 6, 0.01}, forward = {0, -6.9, -0.01}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
-	spark := test_emitter(1, {0, 0.3, 0})
-	spark.info.lifetime, spark.info.size, spark.info.lights, spark.info.light_intensity, spark.info.light_range, spark.info.light_radius = {10, 10}, {0.02, 0.02}, 4, 5, 2.5, 0.05
-	spark.spawns = test_burst(4)
-	away := test_emitter(2, {40, 0.3, 0})
-	away.info.lifetime, away.info.size, away.info.lights, away.info.light_intensity, away.info.light_range, away.info.light_radius, away.info.light_shadows = {10, 10}, {0.02, 0.02}, 2, 5, 2.5, 0.05, true
-	away.spawns = test_burst(2)
-	DT :: f32(1.0 / 60)
-	for i in 0 ..< 6 {
-		testing.expect(t, frame_emitters(f, &f.sync, {spark, away}, DT))
-		spark.spawns, away.spawns = {}, {}
-		testing.expect(t, gpu.renderer_frame(r, {camera = camera, time = f32(i) * DT}), r.error)
-	}
-	testing.expect_value(t, r.scene.light_region, gpu.Light_Region{2, 4})
-	rhi.device_wait_idle(f.device)
-	pixels, w, _, ok := gpu.renderer_capture(r)
-	testing.expect(t, ok, r.error)
-	if ok {
-		near := pixel(pixels, w, project(r, camera, {-1.2, -0.9, 0}))
-		behind := pixel(pixels, w, project(r, camera, {1.2, -0.9, 0}))
-		far := pixel(pixels, w, project(r, camera, {-2.4, -0.9, 0}))
-		testing.expectf(t, near[1] > far[1] + 30, "the floor in range %v is lit, past it %v is not", near, far)
-		testing.expectf(t, behind[1] > far[1] + 30, "behind the cube %v the floor in range is lit too, past it %v is not", behind, far)
-		delete(pixels)
-	}
-	expect_clean(t, f.device)
-}
-
 // A layer of a grid with a texture of the world reaches the materials: the
 // floor over the region of the grid glows by what its cells count, and past
 // the region it does not.
@@ -2092,7 +1978,7 @@ particle_passes_mark_the_intervals_the_profiler_lists :: proc(t: ^testing.T) {
 			seen[strings.clone(name, context.temp_allocator)] = max(seen[name], count)
 		}
 	}
-	for name in ([]string{"particle begin", "particle emit", "particle simulate", "particle steps", "particle finish", "particle lights", "particle sprites"}) {
+	for name in ([]string{"particle begin", "particle emit", "particle simulate", "particle steps", "particle finish", "particle sprites"}) {
 		testing.expectf(t, seen[name] == 1, "the profiler lists %q once a frame: %v", name, seen)
 	}
 	expect_clean(t, f.device)

@@ -384,7 +384,6 @@ emitter_desc :: proc(info:effect.Particle_Info,a:^host.Assets,renderer:^erender.
     d.info,d.id,ready=info,id,true
     m:=&d.info
     d.capacity=emitter_capacity(m)
-    if m.light_intensity<=0 || m.light_range<=0 {m.lights=0}
     if a==nil {return d,false}
     d.material=erender.Material_Handle(m.material!={}?host.assets_material_row(a,m.material):0)
     if m.render==.Mesh {
