@@ -409,6 +409,9 @@ frames_with_layers_panels_and_lines_allocate_nothing_and_make_no_resources :: pr
         frame.debug[0]=lines
         testing.expect(t,renderer_frame(r,frame),r.error)
     }
+    // The variants asked ahead of time are made on the pipeline threads as the driver finishes
+    // them, during any frame: a stable frame is one after them.
+    renderer_pipelines_wait(r,all=true)
     allocations:=f.tracking.total_allocation_count
     resources:=rhi.device_stats(f.device)
     caller:mem.Tracking_Allocator
