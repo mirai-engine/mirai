@@ -10,8 +10,8 @@
 // the alpha of a face whose program gives its color 0 (shadow_tint_programmed);
 // glass: the depth of the nearest of those faces (shadow_tint of
 // shadow_maps.slang). moved: what a square of the cache held, from a copy of
-// it, its texels moved as far as the map did (shadow_map.vert square); far
-// where it held nothing.
+// it, its texels moved as far as the map did (shadow_map.vert square), far
+// where it held nothing; or a page of the cache, unmoved, into the atlas.
 #ifdef MIRAI_SHADOW_TESTED
 #ifdef MIRAI_SHADOW_TINT
 #define MIRAI_RAY_FILTERS

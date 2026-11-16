@@ -14,8 +14,9 @@
 // rows: of the words of the lights in the buffer of the maps; glass: 1 while
 // the maps keep the tint of glass, and for the draws of the tint and of the
 // nearest glass; chunk_capacity, entry_capacity: of the lists of the chunks
-// and of the clusters (render.Cull_List); moving: the round of the casters
-// that move (render.shadow_maps_pass), 0 that of those that stay; movers:
+// and of the clusters (render.Cull_List); moving: 1 the round of the casters
+// that move (render.shadow_maps_pass), 0 that of those that stay, 2 that of
+// the glass alone; movers:
 // words of the bits of what moves, the instances of the scene then the
 // batches drawn; listed: 1 while the round culls the `ranges` ranges of the
 // movers after those words alone, `instances` in all (render.shadow_maps_plan).

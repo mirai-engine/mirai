@@ -101,7 +101,12 @@ Shadow_Raster :: struct {
 	held_count: int,
 	cut:      f32, // the threshold of the cut the cache was drawn with
 	stale:    Occluder_Changes, // what stays and changed since the maps were last drawn
-	atlas:    rhi.Texture, // what the passes after the maps read this frame: the cache, or the frame's atlas with what moves
+	moved:    Occluder_Changes, // where what moves was and is since the maps were last drawn
+	// What the passes after the maps read: the cache with what moves drawn
+	// over it, kept page by page and composed again only in the pages where
+	// the cache drew or what moves changed.
+	atlas:    rhi.Texture,
+	composed: bool, // atlas holds the pages of the maps held, as the cache does
 }
 
 // A map the cache holds, as it was drawn.
@@ -415,6 +420,7 @@ shadow_movers_update :: proc(r: ^Renderer) {
 	now := r.frame + 1 // a frame of a track is never 0
 	stale := s.shadow_stale
 	s.shadow_stale = {}
+	moved: Occluder_Changes
 	if len(s.shadow_tracks) > len(s.instances) {base.truncate(&s.shadow_tracks, len(s.instances))}
 	for change in s.shadow_changes {
 		if int(change.instance) >= len(s.shadow_tracks) {
@@ -425,7 +431,10 @@ shadow_movers_update :: proc(r: ^Renderer) {
 		track.change = 0
 		if track.frame != 0 {
 			track.frame = now
-			if track.moving {continue}
+			if track.moving {
+				occluder_add(&moved, change.instance, change.low, change.high)
+				continue
+			}
 			track.moving = true
 		} else {
 			track.frame = now
@@ -457,7 +466,10 @@ shadow_movers_update :: proc(r: ^Renderer) {
 		if swaying {
 			if record.shadow_frame != 0 {
 				record.shadow_frame = now
-				if record.shadow_moving {continue}
+				if record.shadow_moving {
+					occluder_add(&moved, OCCLUDERS_MANY, box.min, box.max, fine)
+					continue
+				}
 				record.shadow_moving = true
 			} else {
 				record.shadow_frame = now
@@ -468,14 +480,15 @@ shadow_movers_update :: proc(r: ^Renderer) {
 			record.shadow_frame, record.shadow_moving = 0, false
 		}
 	}
-	if stale.count == 0 && !stale.covers {return}
-	give :: proc "contextless" (to, from: ^Occluder_Changes) {
-		to.covers ||= from.covers
-		for box in from.boxes[:from.count] {occluder_add(to, box.instance, box.low, box.high, box.fine)}
+	if stale.count == 0 && !stale.covers && moved.count == 0 {return}
+	give :: proc "contextless" (to: ^Shadow_Raster, stale, moved: ^Occluder_Changes) {
+		to.stale.covers ||= stale.covers
+		for box in stale.boxes[:stale.count] {occluder_add(&to.stale, box.instance, box.low, box.high, box.fine)}
+		for box in moved.boxes[:moved.count] {occluder_add(&to.moved, box.instance, box.low, box.high, box.fine)}
 	}
-	give(&r.main.targets.shadow_raster.stale, &stale)
-	for &view in r.views {give(&view.targets.shadow_raster.stale, &stale)}
-	for &view in r.texture_views {if view.texture != 0 {give(&view.targets.shadow_raster.stale, &stale)}}
+	give(&r.main.targets.shadow_raster, &stale, &moved)
+	for &view in r.views {give(&view.targets.shadow_raster, &stale, &moved)}
+	for &view in r.texture_views {if view.texture != 0 {give(&view.targets.shadow_raster, &stale, &moved)}}
 }
 
 // The maps of this frame and what a frame draws of them.
@@ -492,9 +505,14 @@ Shadow_Plan :: struct {
 	all_list:     u32,
 	all_masks:    u32,
 	pages:        u32, // the pages the cache draws again, which it clears first: a word each from word squares_list (shadow_page_word)
+	composed:     u32, // after them, the pages the atlas composes again
 	shifted:      u32, // after them, the squares whose texels move with their map
 	squares_list: u32,
-	moving:       bool, // what moves reaches a map
+	// The maps with pages to compose, a word each from word compose_list, and
+	// those pages, a bit each from compose_masks.
+	composing:     u32,
+	compose_list:  u32,
+	compose_masks: u32,
 	movers:       u32, // words of the bits of what moves, and after them
 	moving_count: u32, // the ranges of it that reach a map
 	moving_threads: u32, // the instances of those ranges
@@ -701,6 +719,24 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 		if dy < 0 {mask_rect(&dirty[i], {0, (w.side - u32(-dy)) / SHADOW_PAGE, n - 1, n - 1})}
 	}
 	b.stale = {}
+	// The pages the atlas of what moves composes again: those the cache draws,
+	// those where what moves was or is, and every page of a map whose texels
+	// moved or that the atlas does not hold.
+	compose: [SHADOW_MAPS_MAX]Shadow_Mask
+	for w, i in wants[:count] {
+		if !w.placed {continue}
+		n := w.side / SHADOW_PAGE
+		compose[i] = dirty[i]
+		if !b.composed || moved[i] != {} {
+			mask_rect(&compose[i], {0, 0, n - 1, n - 1})
+			continue
+		}
+		for box in b.moved.boxes[:b.moved.count] {
+			if !shadow_change_reaches(w.m, box) {continue}
+			if rect, ok := shadow_page_rect(w.m, box.low, box.high); ok {mask_rect(&compose[i], rect)}
+		}
+	}
+	b.moved = {}
 	// The bits of what moves: the instances, then the batches drawn, after
 	// those of the scene; then the ranges of instances that reach a map, which
 	// the round of what moves culls alone: an instance of the scene, or the
@@ -754,7 +790,6 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 				break
 			}
 		}
-		plan.moving = plan.moving_count > 0
 		plan.bits = data
 	}
 	// The buffer of this frame: a word for each light of the scene, then the
@@ -768,8 +803,9 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 		if !w.placed {continue}
 		placed += 1
 		for word in dirty[i] {cleared += int(bits.count_ones(word))}
+		for word in compose[i] {cleared += int(bits.count_ones(word))}
 	}
-	tail := (2 * placed + 2 * placed * SHADOW_MASK_WORDS + cleared + placed + 3) / 4 * 4
+	tail := (3 * placed + 3 * placed * SHADOW_MASK_WORDS + cleared + placed + 3) / 4 * 4
 	words, data := rhi.frame_alloc_typed(r.device, u32, int(plan.rows) * 4 + placed * SHADOW_MAP_ROWS * 4 + tail)
 	if words == nil {set_error(r, "transient ring exhausted with %d shadow maps", placed); return plan, false}
 	for &word in words {word = 0}
@@ -777,7 +813,9 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 	plan.all_list = plan.jobs_list + u32(placed)
 	plan.jobs_masks = plan.all_list + u32(placed)
 	plan.all_masks = plan.jobs_masks + u32(placed * SHADOW_MASK_WORDS)
-	plan.squares_list = plan.all_masks + u32(placed * SHADOW_MASK_WORDS)
+	plan.compose_list = plan.all_masks + u32(placed * SHADOW_MASK_WORDS)
+	plan.compose_masks = plan.compose_list + u32(placed)
+	plan.squares_list = plan.compose_masks + u32(placed * SHADOW_MASK_WORDS)
 	square :: proc(map_index: u32, shift: [2]i32) -> u32 {return map_index | u32(shift.x + 2048) << 8 | u32(shift.y + 2048) << 20}
 	b.held_count = 0
 	at := u32(0)
@@ -812,16 +850,34 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 				plan.pages += 1
 			}
 		}
+		(^Shadow_Mask)(&words[plan.compose_masks + at * SHADOW_MASK_WORDS])^ = compose[i]
+		if compose[i] != {} {
+			words[plan.compose_list + plan.composing] = at
+			plan.composing += 1
+		}
 		b.held[b.held_count] = {m = w.m, light = w.light, face = w.face, grid = w.grid, end = w.end, planned = planned[i]}
 		b.held_count += 1
 		at += 1
+	}
+	// The pages the atlas composes again, after those the cache draws.
+	for w, i in wants[:count] {
+		if !w.placed {continue}
+		index := u32(0)
+		for v in wants[:i] {if v.placed {index += 1}}
+		n := w.side / SHADOW_PAGE
+		for page in 0 ..< n * n {
+			x, y := page % n, page / n
+			if !mask_has(compose[i], {x, y}) {continue}
+			words[plan.squares_list + plan.pages + plan.composed] = shadow_page_word(index, {x, y})
+			plan.composed += 1
+		}
 	}
 	// The squares whose texels move, which the cache draws before it clears its pages.
 	for w, i in wants[:count] {
 		if !w.placed || !same[i] || moved[i] == {} {continue}
 		index := u32(0)
 		for v in wants[:i] {if v.placed {index += 1}}
-		words[plan.squares_list + plan.pages + plan.shifted] = square(index, moved[i])
+		words[plan.squares_list + plan.pages + plan.composed + plan.shifted] = square(index, moved[i])
 		plan.shifted += 1
 	}
 	plan.maps = at
@@ -894,15 +950,26 @@ Shadow_Params :: struct {instances, maps, rows, glass, chunk_capacity, entry_cap
 // glass, the round of what moves culls the ranges of the movers that reach a
 // map alone.
 @(private)
-shadow_params :: proc(p: ^Pass, plan: Shadow_Plan, list, masks, maps: u32, moving, glass: bool) -> Shadow_Params {
+// moving: 0 the round of what stays, 1 that of what moves, 2 that of the glass alone.
+shadow_params :: proc(p: ^Pass, plan: Shadow_Plan, list, masks, maps: u32, moving: u32, glass: bool) -> Shadow_Params {
 	s := &p.r.scene
 	params := Shadow_Params{
 		instances = p.instance_count + p.batch_slots, maps = maps, rows = plan.rows, glass = 1 if glass else 0, list = list, masks = masks,
 		chunk_capacity = s.cull_capacity[.Shadow_Chunks], entry_capacity = s.cull_capacity[.Shadow_Entries],
-		moving = 1 if moving else 0, movers = plan.movers,
+		moving = moving, movers = plan.movers,
 	}
-	if moving && !glass {params.instances, params.listed, params.ranges = plan.moving_threads, 1, plan.moving_count}
+	if moving == 1 {params.instances, params.listed, params.ranges = plan.moving_threads, 1, plan.moving_count}
 	return params
+}
+
+// A round that culls nothing: its draws draw nothing.
+@(private)
+shadow_cull_none :: proc(p: ^Pass) {
+	r := p.r
+	start, start_at := rhi.frame_alloc_typed(r.device, Gpu_Shadow_State, 1)
+	if start == nil {return}
+	start[0] = {draws = {{vertex_count = CLUSTER_DRAW_VERTICES}, {vertex_count = CLUSTER_DRAW_VERTICES}, {vertex_count = CLUSTER_DRAW_VERTICES}}, cluster_dispatch = {0, 0, 1}}
+	rhi.cmd_copy_buffer(p.cmd, start_at.buffer, start_at.offset, r.shadow_buffers.state, 0, size_of(Gpu_Shadow_State))
 }
 
 // The cull of a round and what it hands to its draws.
@@ -934,10 +1001,10 @@ shadow_cull :: proc(p: ^Pass, plan: Shadow_Plan, params: Shadow_Params) {
 	}
 }
 
-// The depth a round culled into an atlas: the clusters that hide whole and
-// those of masked materials. Of the cache, first the squares whose texels
-// move, from what held holds (a copy of it), then the pages it draws again,
-// cleared.
+// The depth a round culled into the cache or the atlas: the clusters that
+// hide whole and those of masked materials. Of the cache, first the squares
+// whose texels move, from what held holds (a copy of it), then the pages it
+// draws again, cleared; of the atlas, first its pages from the cache (held).
 @(private)
 shadow_draw :: proc(p: ^Pass, plan: Shadow_Plan, params: Shadow_Params, atlas: rhi.Texture, name: string, cache := false, held: rhi.Texture = 0) {
 	r, cmd := p.r, p.cmd
@@ -948,12 +1015,17 @@ shadow_draw :: proc(p: ^Pass, plan: Shadow_Plan, params: Shadow_Params, atlas: r
 	pass := rhi.Render_Pass_Desc{name = name}
 	pass.depth = {texture = atlas, load = .Load, store = .Store}
 	rhi.cmd_begin_render_pass(cmd, &pass)
-	squares := [2]struct {pipeline: Pipeline_Id, first, count: u32}{{.Shadow_Map_Moved, plan.pages, plan.shifted}, {.Shadow_Map_Clear, 0, plan.pages}}
+	// Of the cache, the squares whose texels move and then its pages cleared;
+	// of the atlas, its pages from the cache.
+	squares := [3]struct {pipeline: Pipeline_Id, first, count: u32, moving: u32}{
+		{.Shadow_Map_Moved, plan.pages + plan.composed, plan.shifted if cache else 0, 1},
+		{.Shadow_Map_Clear, 0, plan.pages if cache else 0, 0},
+		{.Shadow_Map_Moved, plan.pages, 0 if cache else plan.composed, 0},
+	}
 	for kind in squares {
-		if !cache || kind.count == 0 {continue}
+		if kind.count == 0 {continue}
 		square := params
-		square.list, square.maps = plan.squares_list + kind.first, kind.count
-		square.moving = 1 if kind.pipeline == .Shadow_Map_Moved else 0
+		square.list, square.maps, square.moving = plan.squares_list + kind.first, kind.count, kind.moving
 		rhi.cmd_bind_pipeline(cmd, r.pipelines[kind.pipeline])
 		set_params(cmd, &square)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.shadow_entries)
@@ -998,37 +1070,40 @@ shadow_maps_pass :: proc(p: ^Pass) -> (maps: Shadow_Maps) {
 		glass_ok := target(r, cmd, &t.shadow_glass, SHADOW_ATLAS, SHADOW_ATLAS, .D32_Float, {.Depth_Target, .Sampled}, "shadow glass", shared = true)
 		tinted = tint_ok && glass_ok
 	}
-	if (plan.moving || plan.shifted > 0) && !target(r, cmd, &t.shadow_atlas, SHADOW_ATLAS, SHADOW_ATLAS, .D32_Float, {.Depth_Target, .Sampled, .Transfer_Dst}, "shadow atlas", shared = true) {
-		b.held_count = 0
+	if !target(r, cmd, &b.atlas, SHADOW_ATLAS, SHADOW_ATLAS, .D32_Float, {.Depth_Target, .Sampled}, "shadow atlas") ||
+	   plan.shifted > 0 && !target(r, cmd, &t.shadow_held, SHADOW_ATLAS, SHADOW_ATLAS, .D32_Float, {.Sampled, .Transfer_Dst}, "shadow held", shared = true) {
+		b.held_count, b.composed = 0, false
 		return
 	}
 	rhi.cmd_copy_buffer(cmd, b.data.buffer, b.data.offset, d.table, 0, b.data.size)
-	// What stays, into the windows of the maps the cache draws again; the
-	// atlas of the frame holds what the cache held while its texels move.
+	// What stays, into the pages of the maps the cache draws again; a copy of
+	// the cache holds what it held while its texels move.
 	r.stats.shadow_pages_drawn += plan.pages
+	r.stats.shadow_pages_composed += plan.composed
 	r.stats.shadow_movers += plan.moving_threads
 	if plan.jobs > 0 {
-		params := shadow_params(p, plan, plan.jobs_list, plan.jobs_masks, plan.jobs, false, false)
+		params := shadow_params(p, plan, plan.jobs_list, plan.jobs_masks, plan.jobs, 0, false)
 		rhi.cmd_timestamp(cmd, "shadow cull")
 		shadow_cull(p, plan, params)
 		rhi.cmd_timestamp(cmd, "shadow cache")
-		if plan.shifted > 0 {rhi.cmd_copy_texture(cmd, b.cache, t.shadow_atlas)}
-		shadow_draw(p, plan, params, b.cache, "shadow cache", cache = true, held = t.shadow_atlas if plan.shifted > 0 else 0)
+		if plan.shifted > 0 {rhi.cmd_copy_texture(cmd, b.cache, t.shadow_held)}
+		shadow_draw(p, plan, params, b.cache, "shadow cache", cache = true, held = t.shadow_held if plan.shifted > 0 else 0)
 	}
-	// What moves, over a copy of the cache, and the glass.
-	b.atlas = b.cache
-	params := shadow_params(p, plan, plan.all_list, plan.all_masks, plan.maps, true, tinted)
-	if plan.moving || tinted {
+	// The pages of the atlas where the cache drew or what moves changed: the
+	// cache, then what moves over it.
+	if plan.composing > 0 {
+		params := shadow_params(p, plan, plan.compose_list, plan.compose_masks, plan.composing, 1, false)
 		rhi.cmd_timestamp(cmd, "shadow cull moving")
-		shadow_cull(p, plan, params)
-	}
-	if plan.moving {
+		if plan.moving_count > 0 {shadow_cull(p, plan, params)} else {shadow_cull_none(p)}
 		rhi.cmd_timestamp(cmd, "shadow atlas")
-		rhi.cmd_copy_texture(cmd, b.cache, t.shadow_atlas)
-		shadow_draw(p, plan, params, t.shadow_atlas, "shadow atlas")
-		b.atlas = t.shadow_atlas
+		shadow_draw(p, plan, params, b.atlas, "shadow atlas", held = b.cache)
 	}
+	b.composed = true
+	// The glass, into every page.
+	params := shadow_params(p, plan, plan.all_list, plan.all_masks, plan.maps, 2, true)
 	if tinted {
+		rhi.cmd_timestamp(cmd, "shadow cull glass")
+		shadow_cull(p, plan, params)
 		rhi.cmd_timestamp(cmd, "shadow tint")
 		tint := rhi.Render_Pass_Desc{name = "shadow tint", color_count = 1}
 		tint.colors[0] = {texture = t.shadow_tint, load = .Clear, store = .Store, clear = {1, 1, 1, 1}}
@@ -1065,5 +1140,6 @@ shadow_maps_pass :: proc(p: ^Pass) -> (maps: Shadow_Maps) {
 destroy_shadow_maps :: proc(r: ^Renderer, t: ^Targets) {
 	shared_targets_release(r, targets_frame(&t.shadow_targets))
 	if t.shadow_raster.cache != 0 {rhi.texture_destroy(r.device, t.shadow_raster.cache)}
+	if t.shadow_raster.atlas != 0 {rhi.texture_destroy(r.device, t.shadow_raster.atlas)}
 	t.shadow_raster = {}
 }
