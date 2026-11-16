@@ -150,6 +150,61 @@ meshlets_hold_every_triangle_once_within_their_limits :: proc(t:^testing.T) {
     testing.expect_value(t,failed,Meshlet_Error.Invalid_Mesh)
 }
 
+// Each meshlet of a torus, optimized, keeps every triangle with its winding,
+// numbers its vertices in their first use, and names fewer of them from
+// further back than the few triangles before than the builder's order does:
+// corners the coding of a page and the fetches of a pixel find near.
+@(test)
+meshlet_optimize_keeps_each_triangle_and_reuses_vertices_sooner :: proc(t:^testing.T) {
+    torus:Two_Part_Torus
+    two_part_torus(&torus,96,48)
+    meshlets:=make([]Meshlet,meshlets_bound(len(torus.indices),CLUSTER_MAX_VERTICES,CLUSTER_MIN_TRIANGLES),context.temp_allocator)
+    vertices:=make([]u32,len(torus.indices),context.temp_allocator)
+    triangles:=make([]u8,len(torus.indices),context.temp_allocator)
+    count,_:=meshlets_build(meshlets,vertices,triangles,torus.indices[:],torus.positions[:],CLUSTER_MAX_VERTICES,CLUSTER_MIN_TRIANGLES,CLUSTER_MAX_TRIANGLES,0,CLUSTER_SPLIT_FACTOR)
+    // The triangles as mesh vertices, from the lowest, and the corners that
+    // name a vertex more than a triangle's worth of new ones back.
+    shape :: proc(vertices:[]u32,triangles:[]u8) -> (set:map[[3]u32]int,far:int) {
+        set=make(map[[3]u32]int,context.temp_allocator)
+        for k:=0;k<len(triangles);k+=3 {
+            v:=[3]u32{vertices[triangles[k]],vertices[triangles[k+1]],vertices[triangles[k+2]]}
+            for v[0]>v[1] || v[0]>v[2] {v={v[1],v[2],v[0]}}
+            set[v]+=1
+        }
+        first:[MESHLET_MAX_VERTICES]int
+        for &f in first {f=-1}
+        met:=0
+        for corner in triangles {
+            if first[corner]<0 {first[corner]=met;met+=1} else {far+=int(met-first[corner]>3)}
+        }
+        return
+    }
+    for level in ([]int{0,1,3}) {
+        built_far,optimized_far:=0,0
+        for m in meshlets[:count] {
+            local:=make([]u8,m.triangle_count*3,context.temp_allocator)
+            copy(local,triangles[m.triangle_offset:][:m.triangle_count*3])
+            own:=make([]u32,m.vertex_count,context.temp_allocator)
+            copy(own,vertices[m.vertex_offset:][:m.vertex_count])
+            before,far_before:=shape(own,local)
+            meshlet_optimize(own,local,level)
+            after,far_after:=shape(own,local)
+            built_far+=far_before
+            optimized_far+=far_after
+            if len(before)!=len(after) {testing.expectf(t,false,"level %d: a meshlet has %d triangles, optimized %d",level,len(before),len(after));return}
+            for key,n in before {
+                if after[key]!=n {testing.expectf(t,false,"level %d: a triangle changed",level);return}
+            }
+            next:=u8(0)
+            for corner in local {
+                if corner>next {testing.expectf(t,false,"level %d: vertex %d comes before %d",level,corner,next);return}
+                if corner==next {next+=1}
+            }
+        }
+        testing.expectf(t,f32(optimized_far)<0.9*f32(built_far),"level %d: %d corners from far back, built %d",level,optimized_far,built_far)
+    }
+}
+
 @(test)
 cluster_bounds_hold_their_vertices_and_the_cone_culls_only_back_faces :: proc(t:^testing.T) {
     torus:Two_Part_Torus
@@ -341,9 +396,10 @@ edges_open_equal :: proc(positions:[]Vec3,a,b:[]u32,ends_only:=false) -> bool {
 @(test)
 cluster_dag_of_a_closed_mesh_cuts_without_cracks_and_is_deterministic :: proc(t:^testing.T) {
     weights:=[]f32{0.5,0.5,0.5,1,1}
-    // Smooth, no group stops; faceted, the groups its seams stop cross them.
-    // Each ends in roots of a few clusters, those of two parts with every
-    // place of the outline between them, which stays.
+    // Smooth, no group stops; faceted, the groups its seams stop cross them,
+    // and what their attributes lose adds no more to an error than the
+    // longest edge of the group. Each ends in roots of a few clusters, those
+    // of two parts with every place of the outline between them, which stays.
     cases:=[]struct{name:string,faceted:bool,parts:int,roots:int}{
         {"smooth",false,2,CLUSTER_MAX_TRIANGLES},
         {"faceted",true,1,CLUSTER_MAX_TRIANGLES},
@@ -369,6 +425,20 @@ cluster_dag_of_a_closed_mesh_cuts_without_cracks_and_is_deterministic :: proc(t:
         testing.expectf(t,root_triangles<=c.roots,"%s: the roots have %d triangles of %d",c.name,root_triangles,len(torus.indices)/3)
         testing.expectf(t,stopped==0,"%s: groups of %d triangles stop below the top level",c.name,stopped)
         dag_check(t,&dag,torus.positions[:],torus.indices[:],torus.ranges[:],true)
+        done:=make(map[Cluster_Lod]bool,context.temp_allocator)
+        for g in dag.clusters {
+            if g.parent.error==max(f32) || g.parent in done {continue}
+            done[g.parent]=true
+            corners:=make([dynamic]u32,context.temp_allocator)
+            children:f32
+            for k in dag.clusters {
+                if k.level!=g.level || k.parent!=g.parent {continue}
+                children=max(children,k.own.error)
+                for corner in dag.triangles[k.first_triangle*3:][:k.triangle_count*3] {append(&corners,dag.vertices[k.first_vertex+u32(corner)])}
+            }
+            limit:=max(children,group_edge(corners[:],torus.positions[:])*CLUSTER_ERROR_EDGE_LIMIT)
+            if g.parent.error>limit*1.0001 {testing.expectf(t,false,"%s: a group of level %d has an error of %f, its edge %f",c.name,g.level,g.parent.error,limit);break}
+        }
         again:Cluster_Dag
         defer cluster_dag_destroy(&again)
         cluster_dag_build(&again,source)
