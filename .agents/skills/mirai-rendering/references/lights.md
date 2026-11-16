@@ -242,8 +242,8 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   the pages it reads for the next frame (`pass_shadow_marks`). A level moves with the eye by whole
   pages and keeps its pages where they are in the world (`shadow_page_entry`): walking draws the
   pages that come in; along the light it keeps how far it reaches towards the sun while the scene
-  stays within it. A face reaches past its side of the cube by `SHADOW_FACE_GUARD`, so the taps of
-  a point near its border read it.
+  stays within it. A tap past the side of a face of the cube of a light reads the face its
+  direction falls on (`shadow_beside`).
 - **What a frame draws.** The cost follows what changed. The cache of the view
   (`Shadow_Raster.cache`) holds what stays, page by page: a page draws there again only where it is
   new or what stays changed under it (an instance that came, went or changed its box or pose, a

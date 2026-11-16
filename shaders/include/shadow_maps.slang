@@ -202,7 +202,11 @@ bool shadow_map_point(Shadow_Map m, bool sun, float3 toward, float3 position, fl
     float3 local = shadow_map_local(m, position + n * (SHADOW_NORMAL_OFFSET * grow * t.step));
     t.d = local.z;
     float2 unit = shadow_map_unit(m, local);
-    if (any(abs(unit) >= 1.0)) return false;
+    // Where the offset leaves the face of the cube of a light, at its border.
+    if (any(abs(unit) >= 1.0)) {
+        if (sun) return false;
+        unit = clamp(unit, -0.9999, 0.9999);
+    }
     t.texel = float2(unit.x * 0.5 + 0.5, 0.5 - unit.y * 0.5) * float(m.rect.z);
     // The plane of the surface on the axes of the map, along the ray of the
     // light through the point: how far its depth goes with a texel, in texels.
@@ -436,6 +440,10 @@ bool shadow_blocker(Shadow_Map m, int2 texel, out float b, out uint coarser) {
     b = 0.0;
     int2 at;
     Shadow_Map held;
+#ifdef SHADOW_DATA_SLOT
+    // Past a face of the cube of a light, the face next to it holds the texel.
+    if (m.rect.w != INVALID && (any(texel < 0) || any(texel >= int(m.rect.z)))) return shadow_beside(m, texel, b, coarser);
+#endif
     if (!shadow_texel(m, texel, at, held, coarser)) return false;
     b = shadow_map_distance(held, view_shadow_atlas.Load(int3(at, 0)).r) + dot(held.origin - m.origin, m.forward);
     return true;
@@ -500,10 +508,9 @@ uint shadow_face_of(float3 v) {
 
 // The map of local light `light` a point falls in, at its finest mip; false
 // where it has none on that side, or the point lies off the face or past its
-// depths, where its texels hold what lies elsewhere: rays tell there. A face
-// reaches past its side of the cube by SHADOW_FACE_GUARD, so that the taps
-// of a point near its border read it. A spot with one map along its cone
-// (SHADOW_SPOT_FACE) has it for every point in its cone.
+// depths, where its texels hold what lies elsewhere: rays tell there. A spot
+// with one map along its cone (SHADOW_SPOT_FACE) has it for every point in
+// its cone.
 bool light_map_of(uint light, float3 position, out Shadow_Map m) {
     m = (Shadow_Map)0;
     if (frame.sun_maps.z == 0u) return false;
@@ -531,6 +538,32 @@ bool light_map_given(uint light, float3 position, float across, out Shadow_Map m
 }
 
 #ifdef SUN_SHADOW_SLOT
+// How far along face m of the cube of a light the blocker a texel past its
+// square holds lies, read from the face its direction falls on, at the same
+// mip; false where that face has no map or no page holds it.
+bool shadow_beside(Shadow_Map m, int2 texel, out float b, out uint coarser) {
+    b = 0.0;
+    coarser = 0u;
+    uint own = (m.rect.x - SHADOW_SUN_MAPS) % SHADOW_LIGHT_SLOTS;
+    if (own >= SHADOW_SPOT_FACE) return false;
+    float2 unit = (float2(texel) + 0.5) / float(m.rect.z) * float2(2.0, -2.0) + float2(-1.0, 1.0);
+    float2 ratio = 0.5 * ((m.span.xy + m.span.zw) + unit * (m.span.zw - m.span.xy));
+    float3 direction = m.right * ratio.x + m.up * ratio.y + m.forward;
+    uint face = shadow_face_of(direction);
+    if (face == own) return false;
+    Shadow_Map n = shadow_map_at(view_shadow_data, frame.sun_maps.y, m.rect.x - own + face);
+    if (n.rect.z == 0u) return false;
+    n = shadow_map_mip(n, shadow_rect_mip(m.rect));
+    float3 local = float3(dot(direction, n.right), dot(direction, n.up), dot(direction, n.forward));
+    float2 there = shadow_map_unit(n, local);
+    int2 at;
+    Shadow_Map held;
+    if (!shadow_texel(n, int2(floor(float2(there.x * 0.5 + 0.5, 0.5 - there.y * 0.5) * float(n.rect.z))), at, held, coarser)) return false;
+    // Along the direction, from the depth along the face that holds it to the depth along m.
+    b = shadow_map_distance(held, view_shadow_atlas.Load(int3(at, 0)).r) / local.z;
+    return true;
+}
+
 // How much of local light `light` reaches a point past what its map holds, as
 // sun_shadow_seen; -1 where no map of it holds the point drawn. radius: of
 // the light, metres: about that near it lies its body, not what it shines past.
