@@ -246,12 +246,20 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   until another needs it: free pages first, then those unread the longest. What stays changing
   under it still marks it stale, so a page read is always of this frame. Where a page is not drawn
   its entry names the nearest coarser level or mip drawn there (`SHADOW_ENTRY_COARSER`), which its
-  points read; where none is, they trace. A pass after the maps that reads them (the fog) marks
-  the pages it reads for the next frame (`pass_shadow_marks`). A level moves with the eye by whole
+  points read; where none is, they trace. A point looks up the entries of the 2x2 pages around
+  its taps once (`shadow_near`), which its taps, its hard shadow and its tint read. A pass after
+  the maps that reads them (the fog) marks the pages it reads for the next frame
+  (`pass_shadow_marks`). A level moves with the eye by whole
   pages and keeps its pages where they are in the world (`shadow_page_entry`): walking draws the
   pages that come in; along the light it keeps how far it reaches towards the sun while the scene
   stays within it. A tap past the side of a face of the cube of a light reads the face its
   direction falls on (`shadow_beside`).
+- **A still view.** While its camera, size, parameters and lights stay and no caster changes
+  (`Shadow_Seen`), a view keeps the marks and the table of the frames before: its points mark the
+  pages they read only for a cycle of its jitter after a change, the marks add up, and the steps
+  of the pages run (a gate writes their arguments) only where a point or a pass after the maps
+  marked a page not drawn nor left out of the pool (`SHADOW_STEP_NEW`). A still frame marks and
+  gives no page (`Stats.shadow_marked`, `SHADOW_STEP_RUNS`).
 - **What a frame draws.** The cost follows what changed. The cache of the view
   (`Shadow_Raster.cache`) holds what stays, page by page: a page draws there again only where it is
   new or what stays changed under it (an instance that came, went or changed its box or pose, a
