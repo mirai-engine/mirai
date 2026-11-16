@@ -47,6 +47,10 @@ advances frames, what waits for Edit and common errors. Conventions, errors and 
   - `assets`: meshes, textures, materials and scenes loaded now, and how many assets were unloaded
     that no world names
     ([unloading](../../mirai-core/references/host.md#failures-unloading-and-watching)).
+  - `pending`: what the frames draw a stand-in for because it is still being made: compilations
+    of the material programs (their materials draw as their rows), pipelines frames asked for, and
+    meshes and textures arriving. An image or a time taken meanwhile is not that of the scene;
+    `--wait-until 'pending={"programs":0,"pipelines":0,"assets":0}'` waits for it.
 - `engine.step`: only in a manual editor; advances whole editor, game and render frames with a
   fixed `dt`.
 - `engine.shutdown`: stops a Play and exits after replying. Fails with an open file dialog.
@@ -118,7 +122,11 @@ advances frames, what waits for Edit and common errors. Conventions, errors and 
   - `mouse_position` and `mouse_delta` do not go together; `text` is printable ASCII.
   - Keys by `core.Key` name (`W`, `Left_Control`, `F5`); the Mac Cmd is `Left_Super`.
 - `capture`: the only image of the editor and the game; requires a GPU. Draws `frames` frames (0:
-  what the image needs) and writes a PNG. With `frames` at 0 it keeps drawing while textures stream
+  what the image needs) and writes a PNG. It never shows a stand-in: before drawing, and after its
+  frames, it waits until nothing they draw is being made (`pending` of `engine.status`), drawing
+  frames again once it is; past a bounded wait it fails with what is pending and how long it
+  waited. A manual editor draws no frames while only programs compile, so `seconds` holds. With
+  `frames` at 0 it keeps drawing while textures stream
   in, up to a bounded wait. Only when nothing was drawn or textures were left, the result adds
   `textures_pending` and `instances_drawn`, `instances_culled` and `instances_occluded`, which tell
   a camera that sees nothing from a scene with nothing in it. A failure says the cause: the
@@ -276,6 +284,11 @@ the GPU passes and the conditions of the measurement. The editor keeps the last 
   `advance:false` it records the frames the loop runs afterwards (those of a window, or those of
   `engine.step`, `editor.input` and
   `play.step` in a manual editor); fails while another one is recording.
+- With `advance`, once it has the turn, it waits as `capture` does until nothing its frames draw
+  is being made, within the same `wait`, and fails past it saying what is pending. Without
+  `advance` it refuses while something is (`allow_limited` records anyway); `conditions.pending`
+  says what the first or the last frames drew stand-ins for, and a capture with any is not
+  `comparable`.
 - With `advance`, once it has the turn, it runs frames until they stop speeding up and only then
   records: a GPU that was idle starts at a lower clock and raises it in steps, and lowers it again
   after a while without frames. The frames the API ran back to back right before count
