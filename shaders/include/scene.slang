@@ -708,6 +708,44 @@ float4 mirai_sample_texture_grad(uint index, float2 uv, float2 dx, float2 dy) {
 #endif
     return material_textures[mirai_nonuniform(index)].SampleGrad(material_sampler, uv, dx, dy);
 }
+// A uv set at a point with its derivatives: of the triangle where the
+// visibility target is resolved (MATERIAL_GRADIENTS), across the quad in
+// another raster stage; in a ray, the width of its footprint in uv, which
+// `lod` (ctx.lod or ctx.lod1) is the level of.
+Mirai_Dual2 material_uv_dual(Mirai_Surface_Context ctx, float2 uv, float lod, int set) {
+    if (ctx.ray) {
+        float width = exp2(lod);
+        return mirai_dual(uv, float2(width, 0.0), float2(0.0, width));
+    }
+#ifdef MATERIAL_GRADIENTS
+    float4 g = material_uv_gradients[set];
+    return mirai_dual(uv, g.xy, g.zw);
+#elif defined(MATERIAL_RASTER)
+    return mirai_dual(uv, ddx(uv), ddy(uv));
+#else
+    return mirai_dual(uv);
+#endif
+}
+Mirai_Dual2 mirai_uv0(Mirai_Surface_Context ctx) { return material_uv_dual(ctx, ctx.uv0, ctx.lod, 0); }
+Mirai_Dual2 mirai_uv1(Mirai_Surface_Context ctx) { return material_uv_dual(ctx, ctx.uv1, ctx.lod1, 1); }
+Mirai_Dual3 mirai_vertex_normal(Mirai_Surface_Context ctx) {
+    if (ctx.ray) return mirai_dual(ctx.vertex_normal);
+#ifdef MATERIAL_GRADIENTS
+    return mirai_dual(ctx.vertex_normal, material_normal_gradients[0], material_normal_gradients[1]);
+#elif defined(MATERIAL_RASTER)
+    return mirai_dual(ctx.vertex_normal, ddx(ctx.vertex_normal), ddy(ctx.vertex_normal));
+#else
+    return mirai_dual(ctx.vertex_normal);
+#endif
+}
+float4 mirai_sample_texture(Mirai_Surface_Context ctx, uint index, Mirai_Dual2 uv) {
+    if (!material_has(index)) return float4(1.0);
+    // A ray reads the level of the widest footprint, as material_texel_at takes it.
+    if (ctx.ray) return material_texel_at(index, uv.value, log2(max(max(length(uv.dx), length(uv.dy)), 1e-30)));
+    // A raster lod is the bias of the view.
+    float scale = exp2(ctx.lod);
+    return mirai_sample_texture_grad(index, uv.value, uv.dx * scale, uv.dy * scale);
+}
 float4 mirai_load_texture(uint index, int2 texel) {
     if (!material_has(index)) return float4(1);
     return material_textures[mirai_nonuniform(index)].Load(int3(texel, 0));
@@ -1632,18 +1670,22 @@ float probe_volume_read(float3 position, float3 normal, float3 view_dir, float v
 // How much of the light around a point is the sky's alone: 0 inside the
 // cascades and without a volume, 1 beyond them, and between over the last
 // cells of the last one, by the centre of the cascades as one blends into the
-// next.
+// next. Along an axis with too few cells to keep any of them whole that way,
+// by the cells of the cascade themselves: the cascade holds the point up to
+// its last one.
 float probe_volume_beyond(float3 position) {
     uint cascades = probe_cascades();
     if (cascades == 0u) return 0.0;
     float3 counts = float3(frame.volume_counts.xyz);
     float spacing = probe_spacing(cascades - 1u);
     float3 rel = (position - frame.volume_cascades[cascades - 1u].xyz) / spacing;
-    float3 inside = min(rel, counts - 1.0 - rel);
-    if (min(inside.x, min(inside.y, inside.z)) < 0.5) return 1.0;
-    float3 from_center = (counts - 1.0) * 0.5 - abs(position - frame.volume_center.xyz) / spacing;
-    float band = max(0.5, (counts.y - 1.0) * 0.5 - 4.5);
-    return saturate((1.5 + band - min(from_center.x, min(from_center.y, from_center.z))) / band);
+    float3 inside = min(rel, counts - 1.0 - rel) - 0.5;
+    if (min(inside.x, min(inside.y, inside.z)) < 0.0) return 1.0;
+    float3 half = (counts - 1.0) * 0.5;
+    float band = max(0.5, half.y - 4.5);
+    float3 from_center = half - abs(position - frame.volume_center.xyz) / spacing - 1.5;
+    float3 left = select(half >= 1.5 + 2.0 * band, from_center, inside);
+    return saturate(1.0 - min(left.x, min(left.y, left.z)) / band);
 }
 
 // Irradiance (in Lambert-normalized radiance units) arriving around each

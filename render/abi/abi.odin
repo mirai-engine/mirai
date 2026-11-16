@@ -118,6 +118,7 @@ MESH_FLAG_SURFACE  :: 4
 MESH_FLAG_UV1      :: 8
 MESH_FLAG_COLORS   :: 16
 MESH_FLAG_STREAMED :: 32
+MESH_FLAG_ISLANDS  :: 64
 
 // The geometry pools, in u32 words.
 Gpu_Posed_Vertex :: struct {
@@ -181,6 +182,9 @@ SHADOW_MAP_ORTHOGRAPHIC    :: 1
 SHADOW_SUN_MAPS            :: 6
 SUN_MAP_ROWS               :: SHADOW_SUN_MAPS * SHADOW_MAP_ROWS
 REFLECTION_SHARED_ROUGHNESS :: f32(0.15)
+
+// The levels of the depth pyramid a dispatch of hiz.comp makes.
+DEPTH_PYRAMID_BATCH :: 4
 
 // The probe volume, and the rays of its contact occlusion at each pixel.
 DISTANCE_TILE :: 16
@@ -248,6 +252,9 @@ HEAD_WORDS         :: 8
 RASTER_BIN_TWO_SIDED :: 1
 RASTER_BIN_TESTED    :: 2
 RASTER_BINS          :: 4
+// The tested bins draw their clusters nearest first: by buckets of the
+// logarithm of their depth from the near plane of the view to its far one.
+RASTER_DEPTH_BUCKETS :: 256
 
 // The words of render.Gpu_Cull_State.
 CULL_DRAWS              :: 0  // of each phase and raster bin: vertices, instances (its visible clusters), first vertex, first instance

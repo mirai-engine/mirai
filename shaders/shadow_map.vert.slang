@@ -82,9 +82,12 @@ Shadow_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vul
     Mesh mesh = meshes[instance_mesh(inst)];
     Cluster c = mesh_cluster(mesh, entry.y);
     if (vertex_id >= cluster_triangle_count(c) * 3u) return output;
-    Mesh_Point v = cluster_point_at(mesh, c, cluster_corner(mesh, c, vertex_id), mesh.posed_word);
+    uint vertex = cluster_corner(mesh, c, vertex_id);
+    Mesh_Point v = cluster_point_at(mesh, c, vertex, mesh.posed_word);
     Shadow_Job job = shadow_job(shadow_data, entry.z);
     Shadow_Map m = shadow_map_at(shadow_data, params.rows, job.map);
+    // Its islands on their way to the next level as the map's own cut sees them.
+    v.position += island_offset(mesh, c, vertex, cluster_along(shadow_map_detail(m), inst, instance_scale(inst), mesh, c, frame.cut.x));
     float3 world = transform_point(inst.world, v.position);
     float3 local = shadow_map_local(m, world);
     float4 clip = shadow_map_clip(m, local);
