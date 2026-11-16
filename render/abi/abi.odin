@@ -297,6 +297,9 @@ SHADOW_ARGS_DRAW           :: 9
 SHADOW_ARGS_HIZ            :: 17
 REFLECTION_SHARED_ROUGHNESS :: f32(0.15)
 
+// The levels of the depth pyramid a dispatch of hiz.comp makes.
+DEPTH_PYRAMID_BATCH :: 4
+
 // The probe volume, and the rays of its contact occlusion at each pixel.
 DISTANCE_TILE :: 16
 PROBE_BUCKETS :: 22
@@ -363,6 +366,9 @@ HEAD_WORDS         :: 8
 RASTER_BIN_TWO_SIDED :: 1
 RASTER_BIN_TESTED    :: 2
 RASTER_BINS          :: 4
+// The tested bins draw their clusters nearest first: by buckets of the
+// logarithm of their depth from the near plane of the view to its far one.
+RASTER_DEPTH_BUCKETS :: 256
 
 // The words of render.Gpu_Cull_State.
 CULL_DRAWS              :: 0  // of each phase and raster bin: vertices, instances (its visible clusters), first vertex, first instance

@@ -40,6 +40,7 @@ vk_format :: proc "contextless" (f: Format) -> vk.Format {
 	case .BC7_Srgb:      return .BC7_SRGB_BLOCK
 	case .BC6H_Ufloat:   return .BC6H_UFLOAT_BLOCK
 	case .RGBA16_Unorm:  return .R16G16B16A16_UNORM
+	case .D16_Unorm:     return .D16_UNORM
 	}
 	return .UNDEFINED
 }

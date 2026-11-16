@@ -496,26 +496,35 @@ mesh_encode :: proc(source:Mesh_Source,clusters:[]Cluster_Source,indices:[]u32,o
 }
 
 // The cone of the normals of the triangles of a cluster, when it is narrower
-// than a half space: its axis, octahedral in snorm8, and the sine of how far
-// its normals spread from it, rounded up so the test that leaves out a
-// cluster seen from behind stays conservative.
+// than a half space: its axis, the center of the sphere around the normals
+// (geom.cluster_bounds), which a lopsided spread of them does not pull aside
+// as their sum would, octahedral in snorm8, and the sine of how far its
+// normals spread from that stored axis, rounded up so the test that leaves
+// out a cluster seen from behind stays conservative.
 @(private="file")
 cluster_cone :: proc(g:^Mesh_Geometry,c:^Cluster) {
     normals:[CLUSTER_TRIANGLES][3]f32
-    sum:[3]f32
-    count:=0
+    positions:[CLUSTER_TRIANGLES*3]geom.Vec3
+    indices:[CLUSTER_TRIANGLES*3]u32
+    count,corner_count:=0,0
     for t in 0..<cluster_triangle_count(c^) {
         corners:=cluster_triangle(g.triangles,c^,t)
         a,b,d:=cluster_position(g^,c^,corners[0]),cluster_position(g^,c^,corners[1]),cluster_position(g^,c^,corners[2])
+        for p in ([3][3]f32{a,b,d}) {
+            positions[corner_count]=p
+            indices[corner_count]=u32(corner_count)
+            corner_count+=1
+        }
         n:=linalg.cross(b-a,d-a)
         length:=linalg.length(n)
         if !(length>1e-20) {continue}
         normals[count]=n/length
-        sum+=normals[count]
         count+=1
     }
-    if count==0 || linalg.length(sum)<1e-6 {return}
-    axis:=mm.octahedral_encode(linalg.normalize(sum))
+    if count==0 {return}
+    bounds:=geom.cluster_bounds(indices[:corner_count],positions[:corner_count])
+    if !(bounds.cone_cutoff<1) || linalg.length(bounds.cone_axis)<0.5 {return}
+    axis:=mm.octahedral_encode(bounds.cone_axis)
     packed:=[2]i8{mm.snorm8_pack(axis.x),mm.snorm8_pack(axis.y)}
     stored:=mm.octahedral_decode({mm.snorm8_unpack(packed.x),mm.snorm8_unpack(packed.y)})
     least:=f32(1)

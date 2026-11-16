@@ -170,13 +170,14 @@ Format :: enum u8 {
 	BC7_Unorm, BC7_Srgb, // 16 bytes: rgb or rgba
 	BC6H_Ufloat,         // 16 bytes: rgb half floats without sign
 	RGBA16_Unorm,
+	D16_Unorm,
 }
 
 format_size :: proc "contextless" (f: Format) -> int {
 	switch f {
 	case .Undefined:                                         return 0
 	case .R8_Unorm, .R8_Uint:                                return 1
-	case .RG8_Unorm, .R16_Float:                             return 2
+	case .RG8_Unorm, .R16_Float, .D16_Unorm:                 return 2
 	case .RGBA8_Unorm, .RGBA8_Srgb, .BGRA8_Unorm, .BGRA8_Srgb, .RG16_Float, .RG16_Sint, .R32_Float, .R32_Uint, .RG11B10_Float, .D32_Float: return 4
 	case .RGBA16_Float, .RGBA16_Unorm, .RG32_Float, .RG32_Uint: return 8
 	case .RGBA32_Float, .RGBA32_Uint:                        return 16
@@ -184,7 +185,7 @@ format_size :: proc "contextless" (f: Format) -> int {
 	}
 	return 0
 }
-format_is_depth :: proc "contextless" (f: Format) -> bool {return f == .D32_Float}
+format_is_depth :: proc "contextless" (f: Format) -> bool {return f == .D32_Float || f == .D16_Unorm}
 
 // Bytes of a block of a block compressed format, 0 for the others.
 format_block_size :: proc "contextless" (f: Format) -> int {
