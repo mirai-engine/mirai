@@ -51,6 +51,8 @@ Particle_Clocks :: struct {
     channels:[dynamic]Channel_Ring,      // the births of the channels the emitters listen to (channels.odin)
     seen_emitters,seen_worlds:core.Seen, // what the clocks of the emitters that went are pruned from
     playing:bool,                        // of a world that plays
+    effects:[dynamic]Effect_Seen,        // the effects the emissions were resolved from
+    revision:u64,                        // of the assets the effects were read with
 }
 
 // Particles alive at once in the emitters of a world.
@@ -164,14 +166,21 @@ particles_tick :: proc(
     dt:=time.playing?time.dt:max(frame.dt,0)
     requests_apply(requests,emitters,overrides,clocks,problems)
     a:=assets
+    // An emission is resolved again when its effect, or what the effect reads of the assets, changed.
+    refreshed:=false
+    if a!=nil && a.revision!=clocks.revision {
+        clocks.revision=a.revision
+        refreshed=effects_read(clocks.effects[:],a,nil)
+    }
     done:[dynamic]core.Entity
     done.allocator=context.temp_allocator
     placed:=core.join(emitters,worlds)
     for e,emitter,world in core.each_joined(&placed) {
         clock:=clock_of(clocks,e)
         if clock==nil {continue}
-        if key:=emission_key(emitter.particle,a,row_stamp(overrides,e));clock.resolved!=key {
+        if key:=emission_key(emitter.particle,row_stamp(overrides,e));clock.resolved!=key || refreshed && effect_changed(clocks.effects[:],emitter.particle) {
             override,_:=core.get(overrides,e)
+            if a!=nil {effect_seen(&clocks.effects,a,nil,emitter.particle)}
             info:=particle_resolve(a,emitter.particle,&override)
             clock.emission=emission_of(a,&info)
             clock.resolved=key
@@ -371,32 +380,38 @@ effects_refresh :: proc(f:^Sync_Frame) {
     reloaded:=f.shaders!=sync.shaders
     if a.revision==sync.revision && !reloaded && made==sync.made {return}
     sync.revision,sync.shaders,sync.made=a.revision,f.shaders,made
-    changed:=reloaded
-    for &effect in sync.effects {
-        inputs:=effect_inputs(a,r,effect.particle)
+    if !effects_read(sync.effects[:],a,r) && !reloaded {return}
+    for &shown,i in sync.shown.values {
+        if reloaded || effect_changed(sync.effects[:],shown.particle) {sync_queue(sync,sync.shown.entities[i],&shown)}
+    }
+}
+
+// Reads again what each effect reads of the assets; true when that of one
+// changed, which its changed says until the next read.
+@(private)
+effects_read :: proc(effects:[]Effect_Seen,a:^host.Assets,renderer:^erender.Renderer) -> (changed:bool) {
+    for &effect in effects {
+        inputs:=effect_inputs(a,renderer,effect.particle)
         effect.changed=inputs!=effect.inputs
         effect.inputs=inputs
         changed||=effect.changed
     }
-    if !changed {return}
-    for &shown,i in sync.shown.values {
-        if reloaded || effect_changed(sync,shown.particle) {sync_queue(sync,sync.shown.entities[i],&shown)}
-    }
+    return
 }
 
 @(private)
-effect_changed :: proc(sync:^Particle_Sync,particle:base.Asset_Id) -> bool {
-    for effect in sync.effects {if effect.particle==particle {return effect.changed}}
+effect_changed :: proc(effects:[]Effect_Seen,particle:base.Asset_Id) -> bool {
+    for effect in effects {if effect.particle==particle {return effect.changed}}
     return false
 }
 
 // effect_inputs of an effect as its emitters were resolved with it; read now
 // for one no emitter showed yet.
 @(private)
-effect_seen :: proc(sync:^Particle_Sync,a:^host.Assets,renderer:^erender.Renderer,particle:base.Asset_Id) -> u64 {
-    for effect in sync.effects {if effect.particle==particle {return effect.inputs}}
+effect_seen :: proc(effects:^[dynamic]Effect_Seen,a:^host.Assets,renderer:^erender.Renderer,particle:base.Asset_Id) -> u64 {
+    for effect in effects {if effect.particle==particle {return effect.inputs}}
     inputs:=effect_inputs(a,renderer,particle)
-    append(&sync.effects,Effect_Seen{particle=particle,inputs=inputs})
+    append(effects,Effect_Seen{particle=particle,inputs=inputs})
     return inputs
 }
 
@@ -447,7 +462,7 @@ emitter_tell :: proc(f:^Sync_Frame,e:core.Entity) -> (again:bool) {
     if !on || !placed {return}
     a,r:=f.app.assets,f.app.renderer
     key:=base.hash_combine(base.hash_combine(emitter.particle[0],emitter.particle[1]),row_stamp(f.overrides,e))
-    key=base.hash_combine(base.hash_combine(key,f.shaders),a!=nil?effect_seen(sync,a,r,emitter.particle):0)|1
+    key=base.hash_combine(base.hash_combine(key,f.shaders),a!=nil?effect_seen(&sync.effects,a,r,emitter.particle):0)|1
     if shown.resolved!=key {
         sub:=shown.sub_desc.id
         override,_:=core.get(f.overrides,e)
