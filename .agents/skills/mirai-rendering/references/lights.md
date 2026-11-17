@@ -238,12 +238,13 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   map asks for where they lie (`shadow_map_detail`), not the eye, and leave out an instance smaller
   than a texel of the map (`shadow_map_unseen`). Clusters of masked slots are drawn apart, with
   their [mask map](materials.md#alpha) as a shadow ray reads it, with the derivatives of its uv, a
-  texel of the map wide. Glass casts no shadow in the maps and colors none of their light: a light a
-  map holds lights through it uncolored; colored light through glass is the light's own, one that
-  projects a texture. They are culled as the view culls its own: by
-  instance and slot, which hands the clusters of the levels the cut of the map can take
-  (`instance_clusters`) to a pass by cluster in chunks, which hands each to every page of the round
-  it covers, into lists that count what does not fit and grow, like those of the view.
+  texel of the map wide. Glass casts no shadow in the maps and colors none of their light, as in
+  the shadow rays of the lights no map holds ([glass in rays](materials.md#glass-in-rays)):
+  colored light through glass is the light's own, one that projects a texture. They are culled as
+  the view culls its own: by instance and slot, which hands the clusters of the levels the cut of
+  the map can take (`instance_clusters`) to a pass by cluster in chunks, which hands each to every
+  page of the round it covers, into lists that count what does not fit and grow, like those of the
+  view.
 - **Pages of the maps.** A map lies in a slot: each of its mips a square of `SHADOW_PAGE` pages
   half as wide as the one before (a level of the sun has its finest alone), of which only those the
   points of the view read exist. `shadow_mark.comp` marks, for each point of the direct light, the
@@ -340,9 +341,7 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   light.
 - **Points that trace their own rays.** Glass, overlays, the back side, probes and reflection
   hits use `direct_lighting`: one hard shadow ray per node of their
-  [cut](#cutoff-of-a-point-that-traces-its-own-rays), and none where no light looks at them. With
-  `colored_shadows`, those of the hits cross the glass with its
-  [medium filter](materials.md#medium-filter).
+  [cut](#cutoff-of-a-point-that-traces-its-own-rays), and none where no light looks at them.
 - **What changed.** The scene lists what casts shadows and changed since the last frame that drew
   it (`Scene_State.occluders`, `Gpu_Frame.moved`): each instance that moved, took another pose or
   shape, arrived or left, with the box it covers in both frames, the lights that moved or changed
@@ -389,30 +388,3 @@ the groups of lights and their lists, `render_many_lights_match_their_reference`
 `render_groups_of_lights_give_what_their_lights_give`; for the images of lights,
 `lights_color_their_light_by_their_image` (GPU) and
 `a_light_keeps_the_texture_it_projects_in_its_record` (without a device).
-
-## Colored shadow filters
-
-- `colored_shadows` (off by default): the shadow query of a ray also finds blend surfaces (the
-  maps hold no glass); each multiplies
-  the ray's filter by `mix(white, linear_base_color, alpha)` and lets it continue. Rays are not
-  deflected: no refraction or caustics in shadows.
-- The filter of each texel is that of the samples of the view's direct light (the `color`
-  variants of `direct_samples`); those of what the volume and reflection rays find, and those of
-  the blend surfaces, take the [medium filter](materials.md#medium-filter) of each instance.
-- A single traversal with exit at the first blocker: opaque surface, coverage of a mask or a
-  filter that lets no light through. It shares the color read of the visible material, with
-  explicit ray mip. Alpha zero does not filter; black with alpha one blocks.
-- Glass with a program filters first by its mean and its exact filter arrives later, as a material
-  point: the direct samples add in the resumption what changes
-  ([deferred filters](materials.md#surface-programs-in-rays-and-raster)).
-- Glass also loses what it reflects head-on at each face; a solid counts color and absorption
-  once, where the ray enters.
-- Native geometry is built without duplicate candidates per primitive: a surface does not filter
-  twice.
-- The `color` constant of the same Slang, with the filter of each texel
-  (`MIRAI_COLORED_SHADOWS`) or the mean one (`MIRAI_GLASS_MEANS`); its pipelines are made and used
-  only with the option active and blend in the scene, and without it the code skips those
-  traversals. The reflection pass always includes the per-texel one, for its sharp rays.
-- Changing the option invalidates the histories and restarts the probes.
-- Software tracing admits a tolerance in barycentrics at the edges: an oblique ray does not leak
-  through a shared diagonal.

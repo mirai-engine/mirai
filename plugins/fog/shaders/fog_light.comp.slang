@@ -1,14 +1,12 @@
 #include "native.slang"
 //! variant hw MIRAI_HW_RT=1
-// color: colored shadows, whose rays take the filters of the glass they cross (trace.slang).
-//! constant color MIRAI_COLORED_SHADOWS
 // The medium and the light of each cell of the grid of the view
 // (fog.fog_record): the medium of the volumes at a point of the cell, the
 // same place in every frame, with the wisps of the variable ones as they are
 // now; and the light that point gets for each metre of what it scatters,
 // from the sun and from the local lights, the same in every frame
-// (media_local_light), by what the maps of the view hold of their shadows and
-// of the glass on their way, a ray where none holds the point, and from
+// (media_local_light), by what the maps of the view hold of their shadows, a
+// ray where none holds the point, and from
 // around, by the probe volume. Only the light keeps what the frame before
 // found where the cell was then: wisps that drift through a shaft take its
 // light at once, with no trail. A cell is lit one frame in fog.turns, by

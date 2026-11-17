@@ -10,8 +10,7 @@ or interleave its own passes.
 1. **upload**: skinning of the poses that changed; instances, materials, lights and their
    [tree](lights.md#local-lights) if they changed; the `Geometry` stage of the extensions; the
    refit of the ray structure in use and, with hardware RT, the native TLAS. What does not fit in
-   the frame's transient memory is uploaded with the next one. Then, **glass mean**: the
-   [medium filter](materials.md#medium-filter), when needed, and **air**: the tables of the
+   the frame's transient memory is uploaded with the next one. Then **air**: the tables of the
    [atmosphere](gi.md#atmosphere) that change with the air. Each view, at its start, redoes the
    row of its sky and its aerial perspective if its eye or the sun moved.
 2. **cull (phase 0)**, per instance and then per cluster (`cull.comp`, `cull_clusters.comp`).

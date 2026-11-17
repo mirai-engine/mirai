@@ -494,11 +494,9 @@ frame and the current one:
     writing it);
   - for `Geometry`, `Simulate`, `Lit`, `Post`, `Custom` and `Inspect`, and for `Surface` with
     `compute`, that of `<shader>.comp`. `Gbuffer` takes `pass_gbuffer_pipeline`. A stage that traces
-    declares the `hw` variant and the `color` constant (`//! variant`, `//! constant`, like
-    `direct_samples.comp`) and receives the pipeline of the rays the renderer traces: by hardware,
-    and through the colored-shadow glass filters (`colored_shadows` and some blend instance).
-    Without the variant, the stage itself: one that traces without `hw` does not see the scene
-    with ray queries.
+    declares the `hw` variant (`//! variant`, like `direct_samples.comp`) and receives the pipeline
+    of the rays the renderer traces. Without the variant, the stage itself: one that traces without
+    `hw` does not see the scene with ray queries.
   - with `program`, that of a graphics stage with the fragment of that Surface program, if the stage
     marks it `//! per surface program`; that of the stage without it while it is not made.
 - The renderer creates the pipeline at the first request, keeps it (up to `STAGE_PIPELINE_CAPACITY`

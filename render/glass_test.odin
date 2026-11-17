@@ -243,7 +243,7 @@ glass_wears_the_layers_of_its_material :: proc(t: ^testing.T) {
 }
 
 @(test)
-glass_solid_filters_once_absorbs_and_shades_colored_shadows :: proc(t: ^testing.T) {
+glass_solid_filters_once_and_absorbs :: proc(t: ^testing.T) {
 	f: Fixture
 	if !fixture_init(t, &f, 96, 64, glass_settings(), reference = {.Lights}) {return}
 	defer fixture_destroy(&f)
@@ -290,61 +290,22 @@ glass_solid_filters_once_absorbs_and_shades_colored_shadows :: proc(t: ^testing.
 	scene_given(r, {floor, block}, nil, SUN, {})
 	absorbed := shown(t, &f, above, {0, 1, 0})
 	testing.expectf(t, abs(absorbed.r - 0.96 * open.r) < 0.04 && abs(absorbed.b - 0.25 * 0.96 * open.b) < 0.03, "half a unit of the solid leaves a quarter of the blue: %v over %v", absorbed, open)
-
-	// The light under the block: untouched without colored shadows, and with
-	// them filtered once by the solid, which reflects at each of its two faces.
-	side := Camera{position = {0, 3, 6}, forward = {0, -3, -6}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-	sun := Sun_Desc{direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true, indirect = 1, scattering = 1}
-	under := glass_pixel(r, side, {0, 0, 0.5})
-	for provider in ([]Trace_Mode{.Software, .Hardware}) {
-		if !fixture_traces(r, provider) {continue}
-		settings := r.settings
-		settings.trace_mode = provider
-		settings.colored_shadows = false
-		testing.expect(t, renderer_apply_settings(r, settings))
-		// What the floor receives with nothing above it: the surface keeps for
-		// its own reflection a part of the light, so the reference is measured.
-		scene_given(r, {floor}, nil, sun, {})
-		for _ in 0 ..< 2 {testing.expect(t, fixture_frame(&f, {camera = side}), r.error)}
-		lit := read_halves(t, &f, r.targets.direct, under)
-		block.material = 1
-		scene_given(r, {floor, block}, nil, sun, {})
-		for _ in 0 ..< 2 {testing.expect(t, fixture_frame(&f, {camera = side}), r.error)}
-		plain := read_halves(t, &f, r.targets.direct, under)
-		testing.expectf(t, lit.r > 0.9 && abs(plain.r - lit.r) < 0.02 && abs(plain.g - lit.g) < 0.02, "%v: glass casts no shadow: %v of %v", provider, plain, lit)
-		settings.colored_shadows = true
-		testing.expect(t, renderer_apply_settings(r, settings))
-		for _ in 0 ..< 2 {testing.expect(t, fixture_frame(&f, {camera = side}), r.error)}
-		colored := read_halves(t, &f, r.targets.direct, under)
-		testing.expectf(t, abs(colored.g - 0.92 * lit.g) < 0.03 && abs(colored.r - 0.2 * 0.92 * lit.r) < 0.03, "%v: the shadow of a solid has its color once: %v of %v", provider, colored, lit)
-		block.material = 2
-		scene_given(r, {floor, block}, nil, sun, {})
-		for _ in 0 ..< 2 {testing.expect(t, fixture_frame(&f, {camera = side}), r.error)}
-		smoked := read_halves(t, &f, r.targets.direct, under)
-		testing.expectf(t, abs(smoked.r - 0.92 * lit.r) < 0.03 && abs(smoked.b - 0.25 * 0.92 * lit.b) < 0.03, "%v: the shadow of a solid has what it absorbs: %v of %v", provider, smoked, lit)
-	}
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 
+// The rays of the indirect light go through glass: a room lit by the sky
+// through a sheet of red glass takes the light of the sky white.
 @(test)
-glass_tints_the_indirect_light_with_its_mean :: proc(t: ^testing.T) {
+glass_lets_the_indirect_light_through_uncolored :: proc(t: ^testing.T) {
 	settings := glass_settings()
 	settings.gi_enabled = true
 	f: Fixture
-	if !fixture_init(t, &f, 96, 64, settings, programs = true, reference = {.Lights}) {return}
+	if !fixture_init(t, &f, 96, 64, settings, reference = {.Lights}) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
-	grid := program_find(r, "Grid", .Surface)
-	if !testing.expect(t, grid != nil, "the tests have the Grid program") {return}
-	plain, painted := glass_material({1, 0.2, 0.2}, 1, 0.05), glass_material({0.2, 0.2, 1}, 1, 0.05)
-	painted.program_id = grid.id
-	painted.custom_params = program_defaults(grid)
-	for name in ([]string{"color", "line_color"}) {testing.expect(t, program_parameter_set(&painted.custom_params, program_parameter(grid, name), {1, 0.2, 0.2, 0}))}
-	testing.expect(t, program_parameter_set(&painted.custom_params, program_parameter(grid, "roughness"), {0.05, 0, 0, 0}))
-	materials_set(r, {plain})
+	materials_set(r, {glass_material({1, 0.2, 0.2}, 1, 0.05)})
 	sheet, box := sheet_mesh(r), box_mesh(r)
-	// A closed white room under a sheet of red glass, lit by the sky alone:
-	// all the light of its floor comes through the glass.
+	// A closed white room under the glass, lit by the sky alone.
 	white := Vec3{0.9, 0.9, 0.9}
 	room := []Instance_Desc{
 		{object_id = 1, mesh = box, transform = placed({0, -0.1, 0}, {6, 0.2, 6}), tint = white},
@@ -358,28 +319,13 @@ glass_tints_the_indirect_light_with_its_mean :: proc(t: ^testing.T) {
 	floor := glass_pixel(r, camera, {0, 0.001, 0})
 	for provider in ([]Trace_Mode{.Software, .Hardware}) {
 		if !fixture_traces(r, provider) {continue}
-		for colored in ([]bool{false, true}) {
-			settings := r.settings
-			settings.trace_mode = provider
-			settings.colored_shadows = colored
-			testing.expect(t, renderer_apply_settings(r, settings))
-			scene_given(r, room, nil, {}, {sky = {1, 1, 1}})
-			for _ in 0 ..< 48 {testing.expect(t, fixture_frame(&f, {camera = camera, inspection = {mode = .Indirect}}), r.error)}
-			light := read_halves(t, &f, r.targets.display, floor)
-			if !colored {
-				testing.expectf(t, light.r > 0.05 && abs(light.g - light.r) < 0.1 * light.r, "%v: without colored shadows the glass leaves the light of the sky white: %v", provider, light)
-				continue
-			}
-			// The mean of a sheet is its color less what each face reflects.
-			testing.expectf(t, light.r > 0.05 && abs(light.g / light.r - 0.2) < 0.05 && abs(light.b - light.g) < 0.05 * light.r, "%v: the light through the glass has its color: %v", provider, light)
-		}
-		// The same color given by a program over a blue row: the mean is what the program gives.
-		materials_set(r, {painted})
+		settings := r.settings
+		settings.trace_mode = provider
+		testing.expect(t, renderer_apply_settings(r, settings))
 		scene_given(r, room, nil, {}, {sky = {1, 1, 1}})
 		for _ in 0 ..< 48 {testing.expect(t, fixture_frame(&f, {camera = camera, inspection = {mode = .Indirect}}), r.error)}
 		light := read_halves(t, &f, r.targets.display, floor)
-		testing.expectf(t, light.r > 0.05 && abs(light.g / light.r - 0.2) < 0.05 && abs(light.b - light.g) < 0.05 * light.r, "%v: the light through glass with a program has the color it gives: %v", provider, light)
-		materials_set(r, {plain})
+		testing.expectf(t, light.r > 0.05 && abs(light.g - light.r) < 0.1 * light.r, "%v: the glass leaves the light of the sky white: %v", provider, light)
 	}
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }

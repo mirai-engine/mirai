@@ -311,8 +311,8 @@ boxes.
   places of the cell, each on the part of its ray in the slice that the volumes with a medium
   hold, by the same maps, rays, history, turns and marks of what changed as the
   sun of the grid (`media_sun_through`).
-- The rays are those of the direct light's shadows: with `colored_shadows` and glass in the scene,
-  a shaft that crosses a stained glass window takes its color.
+- The rays are those of the direct light's shadows: a shaft that crosses glass goes through it
+  uncolored, and one of the colors of a window comes from a light that projects its picture.
 - Only the froxel's light is blended with that of the previous frame where its center was, if the
   view keeps it (`pass_texture` gives `kept`), by `HISTORY` for each frame its turn skipped: a
   camera cut starts again. The medium is always

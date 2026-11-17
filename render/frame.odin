@@ -129,12 +129,6 @@ bind_scene_table :: proc(p: ^Pass) {
 	rhi.cmd_bind_texture(cmd, SLOT_DISTANCE, g.distance if g.valid else r.dummy_texture)
 }
 
-// Whether shadow rays take the color of the glass they cross.
-@(private)
-shadows_colored :: proc(r: ^Renderer) -> bool {
-	return r.settings.colored_shadows && len(r.scene.translucent) > 0
-}
-
 @(private)
 set_params :: proc(cmd: ^rhi.Command_List, params: ^$T) {
 	rhi.cmd_set_constants(cmd, SLOT_PARAMS, params, size_of(T))
@@ -384,9 +378,8 @@ reflect_pass :: proc(p: ^Pass, normal, depth, albedo, filtered: rhi.Texture, sto
 	// Its rays shade what they hit with the layers of its material, and a
 	// layer of glass traces the lobe its own layers shape.
 	constants: rhi.Shader_Constants
-	if shadows_colored(r) {constants += {REFLECT_COMP_COLOR}}
 	if !scene_layered(s) && !(glass && glass_layered(s)) {constants += {REFLECT_COMP_UNLAYERED}}
-	pipeline := pipeline_of(r, .Reflect, constants, {REFLECT_COMP_COLOR, REFLECT_COMP_UNLAYERED})^
+	pipeline := pipeline_of(r, .Reflect, constants, {REFLECT_COMP_UNLAYERED})^
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, normal)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, depth)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS3, albedo)
@@ -941,7 +934,6 @@ view_begin :: proc(p: ^Pass) -> bool {
 	}
 	bind_scene_table(p)
 	if !air_aerial(p) {return false}
-	if !glass_means_record(p) {return false}
 
 	// What the stages a pipeline may leave out give the ones after them.
 	p.reflections, p.gi, p.gathered = 0, r.dummy_texture, false
@@ -1368,15 +1360,13 @@ pass_direct :: proc(p: ^Pass) -> bool {
 		light_grid_record(r, cmd)
 		s.light_grid_dirty = false
 	}
-	Params :: struct {pad0, samples: u32, sun_radius: f32, scale, hard, resume, glass, pad2: u32, grid_origin: Vec3, grid_cell: f32, grid_size: [3]u32, cells: u32, shadow: Shadow_Maps}
+	Params :: struct {pad0, samples: u32, sun_radius: f32, scale, hard, pad1, pad2, pad3: u32, grid_origin: Vec3, grid_cell: f32, grid_size: [3]u32, cells: u32, shadow: Shadow_Maps}
 	cells := s.light_grid.size.x * s.light_grid.size.y * s.light_grid.size.z
 	params := Params{
 		scale       = scale,
 		samples     = clamp(settings.direct_samples, 1, DIRECT_SAMPLES_MAX),
 		sun_radius  = settings.sun_radius,
 		hard        = clamp(settings.light_budget, 1, LIGHT_CUT_MAX),
-		// The glass the light of the samples crosses colors it (direct_glass).
-		glass       = 1 if shadows_colored(r) else 0,
 		grid_origin = s.light_grid.origin,
 		grid_cell   = s.light_grid.cell,
 		grid_size   = s.light_grid.size,
@@ -1419,10 +1409,7 @@ pass_direct :: proc(p: ^Pass) -> bool {
 	squares := (points.x + 1) / 2
 	rhi.cmd_dispatch(cmd, groups(squares, 8), groups((points.y + 1) / 2, 8))
 	rhi.cmd_timestamp(cmd, "direct samples")
-	samples := pipeline_of(r, .Direct_Samples, unlayered + ({DIRECT_SAMPLES_COMP_COLOR} if params.glass != 0 else {}), {DIRECT_SAMPLES_COMP_UNLAYERED, DIRECT_SAMPLES_COMP_COLOR})^
-	// Glass with a program colors the light by what its program gives where each ray crosses it.
-	batch := params.glass != 0 && points_begin(p, filters = true)
-	rhi.cmd_bind_pipeline(cmd, samples)
+	rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Direct_Samples, unlayered, {DIRECT_SAMPLES_COMP_UNLAYERED})^)
 	set_params(cmd, &params)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
@@ -1434,9 +1421,7 @@ pass_direct :: proc(p: ^Pass) -> bool {
 	rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.direct_sun)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS8, atlas)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS9, table)
-	points_bind(p)
 	rhi.cmd_dispatch(cmd, groups(squares, 4), groups(points.y, 8))
-	points_rounds(p, batch, samples, &params, 1)
 	// What the window of the pattern gives each point.
 	rhi.cmd_timestamp(cmd, "direct points")
 	Window :: struct {scale, samples, pad0, pad1: u32}
@@ -1480,7 +1465,6 @@ pass_direct :: proc(p: ^Pass) -> bool {
 	rhi.cmd_bind_texture(cmd, SLOT_PASS3, t.albedo)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS4, t.direct_sun_points)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.direct_marks)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS6, t.direct_sun)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.direct_points)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS8, atlas)
 	rhi.cmd_bind_texture(cmd, SLOT_LIGHT_LISTS, lists)
