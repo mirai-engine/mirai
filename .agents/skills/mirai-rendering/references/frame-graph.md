@@ -41,7 +41,8 @@ or interleave its own passes.
      not two-sided, by the margin of the grid of the device (`Device_Info.subpixel_bits`).
    - Those lists (`Cull_List.Raster_Vertices`, `Raster_Triangles`) hold a round, not a frame: a
      cluster that finds no room is listed and drawn in the round after, up to `RASTER_ROUNDS`
-     in a view, and the lists then ask for what the frame wrote, to hold it in one round.
+     in a view; the lists then ask for what the view holds in one: what its clusters wrote and
+     its last round left out, by what of each shows (`Stats_Block.raster_need`).
    - Each round rasters its triangles into the visibility target (`visibility.slang`: the
      entry of the visible list and the triangle, one word a pixel) with the hardware depth: one
      indexed indirect draw per raster bin, whose fragment reads the word of its primitive. The

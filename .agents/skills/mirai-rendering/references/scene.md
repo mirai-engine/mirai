@@ -57,8 +57,15 @@
   each mesh, with the layout of `asset.mesh_page_layout`: vertices, UV1, colors, surface and
   triangles of the page; and the posed vertices of skins and deformables, by mesh vertex index) and
   the index one (clusters, page table, levels, the material word of each slot, the primitive tables
-  of the native BLAS and the batch instances). A mesh is one block of each, with those of its pages
-  following in its order; its row of the mesh table (`Gpu_Mesh`) gives where each part starts.
+  of the native BLAS, the batch instances and the draw lists). A mesh is one block of each, with
+  those of its pages following in its order; its row of the mesh table (`Gpu_Mesh`) gives where
+  each part starts.
+- **Draw lists.** What draws a mesh out of the raster of a view (the draws of an instance, mesh
+  particles) draws it indexed by the draw list of its mesh (`Mesh_Draw_List`): the three vertices
+  of each triangle of each cluster, as the cluster and the vertex in it. A draw asks for it, the
+  next publication makes it in the index pool before it copies the pools, and the mesh keeps it
+  until it goes; until the GPU holds it the draw is not made. Only the meshes so drawn take that
+  memory.
   Instances, materials and lights are indexed buffers; the material textures are in the
   [texture table](rhi.md#bindings-and-texture-table).
 - **Pages.** The vertices and triangles of a cluster are read only through the entry of its page

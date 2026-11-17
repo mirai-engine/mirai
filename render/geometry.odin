@@ -57,6 +57,19 @@ Mesh_Record :: struct {
 	skin_binding:                    ^Skin_Binding,
 	stream:                          ^Mesh_Stream, // of a mesh whose pages out of the root come and go (pages.odin)
 	whole:                           u64, // the frame + 1 an extension last drew all of its level 0 (frame_mesh_whole); 0: none
+	draw:                            Mesh_Draw_List,
+}
+
+// The indices a mesh is drawn indexed with out of the raster of a view (the
+// draws of an instance, mesh particles): of each cluster in their order, the
+// three vertices of each of its triangles, as its cluster << DRAW_VERTEX_BITS
+// | the vertex in it (gbuffer.vert). Made in the index pool by the
+// publication after a draw asked for it (mesh_draw_lists_build), and kept
+// until the mesh goes.
+Mesh_Draw_List :: struct {
+	word, count:                 u32, // in the index pool; count 0: none yet
+	level0_first, level0_count:  u32, // of those, the indices of the clusters of level 0
+	wanted:                      bool, // a draw asked for it
 }
 
 // A mesh as the pools hold it: its clusters and levels, and the page table
@@ -147,6 +160,71 @@ pooled_cluster :: proc(p: Pooled_Mesh, ordinal: u32) -> (g: asset.Mesh_Geometry,
 	g.flags = p.flags
 	g.position_step, g.uv_step, g.uv1_step = p.position_step, p.uv_step, p.uv1_step
 	return g, c, true
+}
+
+// Makes the draw lists draws asked for (Mesh_Draw_List), before the
+// publication copies the pools: those of the instances drawn by their mesh
+// this frame (glass, overlays, the highlight), which so are drawn from it,
+// and those others asked for before. A mesh whose clusters cannot be read
+// yet, or for which the pool has no room, asks again at the next.
+@(private)
+mesh_draw_lists_build :: proc(r: ^Renderer) {
+	s := &r.scene
+	want :: proc(s: ^Scene_State, instance: int) {
+		mesh := s.instances[instance].meta.x & INSTANCE_MESH_MASK
+		if int(mesh) < len(s.meshes) {s.meshes[mesh].draw.wanted = true}
+	}
+	for entry in s.translucent {if int(entry.instance) < len(s.instances) {want(s, int(entry.instance))}}
+	for inst, index in s.instances {
+		if highlight_drawn(inst.meta.w) || index < len(s.overlays) && s.overlays[index].count > 0 {want(s, index)}
+	}
+	for &m, index in s.meshes {
+		if !m.draw.wanted || m.draw.count > 0 || m.vertex_count == 0 || mesh_pending(s, u32(index)) {continue}
+		clusters := mem.slice_data_cast([]asset.Cluster, s.indices[m.cluster_word:][:m.cluster_count * CLUSTER_WORDS])
+		indices := 0
+		for c in clusters {indices += int(asset.cluster_triangle_count(c)) * 3}
+		if indices == 0 || !pool_room(r, .Index, indices) || !pool_reserve(&s.indices, indices) {continue}
+		// What is read from the pools stays where it is: the room is taken before.
+		p := record_pooled(s, m)
+		level_first, level_count := record_level(s, m, 0)
+		first := len(s.indices)
+		list: Mesh_Draw_List
+		read := true
+		for ordinal in 0 ..< u32(len(p.clusters)) {
+			if ordinal == level_first {list.level0_first = u32(len(s.indices) - first)}
+			g, c, ok := pooled_cluster(p, ordinal)
+			if !ok {read = false; break}
+			for t in 0 ..< asset.cluster_triangle_count(c) {
+				corners := asset.cluster_triangle(g.triangles, c, t)
+				for corner in corners {append(&s.indices, ordinal << DRAW_VERTEX_BITS | corner)}
+			}
+			if ordinal + 1 == level_first + level_count {list.level0_count = u32(len(s.indices) - first) - list.level0_first}
+		}
+		if !read {
+			base.truncate(&s.indices, first)
+			continue
+		}
+		list.count = u32(len(s.indices) - first)
+		list.word = pool_store(&s.indices, &s.pool_free[.Index], &s.pool_dirty[.Index], u32(first))
+		list.wanted = true
+		m.draw = list
+	}
+}
+
+// The draw list of a mesh, of all its clusters or of those of level 0: where
+// its indices start in the index pool and how many. Asks for it the first
+// time; false until the GPU holds it, and for a mesh whose geometry still
+// goes to the GPU.
+@(private)
+mesh_draw_list :: proc(r: ^Renderer, mesh: u32, level0: bool) -> (first, count: u32, ok: bool) {
+	s := &r.scene
+	if int(mesh) >= len(s.meshes) || s.meshes[mesh].vertex_count == 0 || mesh_pending(s, mesh) {return}
+	m := &s.meshes[mesh]
+	m.draw.wanted = true
+	if m.draw.count == 0 || s.index_buffer == 0 {return}
+	if u64(m.draw.word + m.draw.count) * size_of(u32) > rhi.buffer_size(r.device, s.index_buffer) {return}
+	if level0 {return m.draw.word + m.draw.level0_first, m.draw.level0_count, m.draw.level0_count > 0}
+	return m.draw.word, m.draw.count, true
 }
 
 // The corners of the triangle a primitive names, in the space of the mesh;

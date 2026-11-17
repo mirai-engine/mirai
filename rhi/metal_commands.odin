@@ -548,6 +548,16 @@ cmd_draw :: proc(c: ^Command_List, vertex_count: u32, instance_count: u32 = 1, f
 	MTL.RenderCommandEncoder_drawPrimitives(c.render, mtl_primitive(c), NS.UInteger(first_vertex), NS.UInteger(vertex_count), NS.UInteger(instance_count), NS.UInteger(first_instance))
 }
 
+// Draws index_count indices of the bound index buffer from first_index.
+cmd_draw_indexed :: proc(c: ^Command_List, index_count: u32, instance_count: u32 = 1, first_index: u32 = 0, first_instance: u32 = 0) {
+	assert(c.in_render_pass)
+	if index_count == 0 || instance_count == 0 {return}
+	index_buffer := mtl_index_buffer(c)
+	if index_buffer == nil || !mtl_flush_bindings(c, false) {return}
+	offset := NS.UInteger(c.index_offset + u64(first_index) * size_of(u32))
+	MTL.RenderCommandEncoder_drawIndexedPrimitives(c.render, mtl_primitive(c), NS.UInteger(index_count), .UInt32, index_buffer, offset, NS.UInteger(instance_count), 0, NS.UInteger(first_instance))
+}
+
 // Metal has no multi-draw indirect without indirect command buffers; each
 // Draw_Indexed_Indirect record (MTLDrawIndexedPrimitivesIndirectArguments
 // layout) is issued as its own indirect draw.

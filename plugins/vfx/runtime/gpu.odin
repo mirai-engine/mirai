@@ -197,16 +197,17 @@ Gpu_Emitter :: struct {
     frame:[4]u32,       // in the rows of the frame: bytes to its resources (max(u32): none), to its births, how many, to the births of the frame
     data:[4]u32,        // bytes of the data buffer to the Attributes of its range, bytes of those of a particle, its age (f32 bits), particles it started
     mesh_weights:[effect.PARTICLE_MESHES]f32,  // of Mesh particles: the weights of its meshes added up, the last 1
-    mesh_vertices:[effect.PARTICLE_MESHES]u32, // and the vertices of a draw of each (erender.mesh_draw_range)
+    mesh_indices:[effect.PARTICLE_MESHES]u32, // and the indices of a draw of each (erender.mesh_draw_range)
+    mesh_firsts:[effect.PARTICLE_MESHES]u32,  // and where they start in those of the scene
 }
-#assert(size_of(Gpu_Emitter)==864)
+#assert(size_of(Gpu_Emitter)==880)
 
-// A mesh a Mesh particle can show: the mesh of the scene, the vertices of a
-// draw of its clusters (erender.mesh_draw_range) and its weight, the weights
-// before it added.
+// A mesh a Mesh particle can show: the mesh of the scene, the indices of a
+// draw of its clusters among those of the scene (erender.mesh_draw_range)
+// and its weight, the weights before it added.
 Mesh_Choice :: struct {
     handle:erender.Mesh_Handle,
-    vertices:u32,
+    first,indices:u32,
     weight:f32,
 }
 
@@ -227,8 +228,8 @@ Gpu_Event :: struct {
 
 // The buffers of the pool of a world. Events: the event counts of the two
 // halves and the dispatches that consume them, then from EVENTS_AT the
-// events of each half, then from MESH_DRAWS_AT a draw (vertex count,
-// instance count, first vertex, first instance) of each mesh of each emitter.
+// events of each half, then from MESH_DRAWS_AT an indexed draw (index count,
+// instance count, first index, vertex offset, first instance) of each mesh of each emitter.
 Pool_Buffer :: enum u8 {Particles,Lists,State,Events,Data}
 
 EVENTS_AT :: 256 // bytes of the events buffer before the events
@@ -240,7 +241,7 @@ pool_buffer :: proc "contextless" (pool:^Pool,b:Pool_Buffer) -> erender.Buffer_D
     case .Particles: return {"vfx particles",count*size_of(Gpu_Particle)}
     case .Lists:     return {"vfx particle lists",4*count*size_of(u32)}
     case .State:     return {"vfx particle state",EMITTER_CAPACITY*size_of(Gpu_State)}
-    case .Events:    return {"vfx particle events",MESH_DRAWS_AT+EMITTER_CAPACITY*effect.PARTICLE_MESHES*size_of([4]u32)}
+    case .Events:    return {"vfx particle events",MESH_DRAWS_AT+EMITTER_CAPACITY*effect.PARTICLE_MESHES*size_of(Mesh_Draw)}
     case .Data:      return {"vfx particle data",pool_data_bytes(pool.capacity)}
     }
     return {}
@@ -726,8 +727,8 @@ emitter_row :: proc(g:^Gpu_Emitter,s:^Pool_Slot,capacity:u32) {
     g.look={max(m.stretch,0),max(m.soft,0),m.intensity,max(m.flipbook_speed,0)}
     g.attractor={m.attractor.x,m.attractor.y,m.attractor.z,m.attractor_strength}
     g.mesh={d.mesh_count,u32(m.facing),0,u32(d.material)}
-    g.mesh_weights,g.mesh_vertices={},{}
-    for choice,c in d.meshes[:min(d.mesh_count,effect.PARTICLE_MESHES)] {g.mesh_weights[c],g.mesh_vertices[c]=choice.weight,choice.vertices}
+    g.mesh_weights,g.mesh_indices,g.mesh_firsts={},{},{}
+    for choice,c in d.meshes[:min(d.mesh_count,effect.PARTICLE_MESHES)] {g.mesh_weights[c],g.mesh_indices[c],g.mesh_firsts[c]=choice.weight,choice.indices,choice.first}
     g.flipbook={max(m.flipbook[0],1),max(m.flipbook[1],1),0,0}
     g.size_curve=transmute([2][4]f32)m.size_over_life.values
     g.size_times=transmute([2][4]f32)m.size_over_life.times
@@ -1176,12 +1177,14 @@ particles_sprites :: proc(pass:^erender.Pass,user:rawptr) {
             erender.pass_draw_indexed_indirect(pass,state,u64(draw.slot)*size_of(Gpu_State)+u64(offset_of(Gpu_State,draw)))
             continue
         }
-        // A mesh draws its clusters without indices, as in the G-buffer, a draw for each of its meshes.
+        // A mesh draws its clusters by the indices of the scene, as in the G-buffer, a draw for each of its meshes.
+        erender.pass_indices(pass,.Scene)
         for c in 0..<min(desc.mesh_count,effect.PARTICLE_MESHES) {
             params.mesh=u32(desc.meshes[c].handle)
             erender.pass_params(pass,&params,size_of(params))
-            erender.pass_draw_indirect(pass,pool_buffer(pool,.Events),mesh_draw(draw.slot,c))
+            erender.pass_draw_indexed_indirect(pass,pool_buffer(pool,.Events),mesh_draw(draw.slot,c))
         }
+        erender.pass_indices(pass,.Quad)
     }
     erender.pass_end(pass)
 }
@@ -1204,6 +1207,7 @@ particles_meshes :: proc(pass:^erender.Pass,user:rawptr) {
     state:=pool_buffer(pool,.State)
     Params :: struct {emitter,program,mesh,pad1:u32}
     draws:=pool_buffer(pool,.Events)
+    erender.pass_indices(pass,.Scene)
     bound:=pipeline
     for draw in draw_list(pool,pass.eye,pass.origin,true) {
         desc:=&pool.slots[draw.slot].desc
@@ -1219,17 +1223,20 @@ particles_meshes :: proc(pass:^erender.Pass,user:rawptr) {
                 if want!=bound {erender.pass_pipeline(pass,want);bound=want}
                 params:=Params{emitter=draw.slot,program=program if count>1 else max(u32),mesh=u32(choice.handle)}
                 erender.pass_params(pass,&params,size_of(params))
-                erender.pass_draw_indirect(pass,draws,mesh_draw(draw.slot,u32(c)))
+                erender.pass_draw_indexed_indirect(pass,draws,mesh_draw(draw.slot,u32(c)))
             }
         }
     }
     erender.pass_end(pass)
 }
 
+// The draw of a mesh of an emitter (particle_finish.comp).
+Mesh_Draw :: [5]u32
+
 // Bytes of the events buffer to the draw of a mesh of an emitter.
 @(private)
 mesh_draw :: proc "contextless" (slot,choice:u32) -> u64 {
-    return MESH_DRAWS_AT+(u64(slot)*effect.PARTICLE_MESHES+u64(choice))*size_of([4]u32)
+    return MESH_DRAWS_AT+(u64(slot)*effect.PARTICLE_MESHES+u64(choice))*size_of(Mesh_Draw)
 }
 
 // Lets go of the buffers of the pool of a world.
