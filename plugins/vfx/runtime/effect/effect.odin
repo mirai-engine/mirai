@@ -242,6 +242,7 @@ particle_validate :: proc(desc:Particle_Desc) -> Particle_Problem {
     if p.shape_angle<0 {return {"shape_angle","Use an angle of zero or more"}}
     if p.shell<0 || p.shell>1 {return {"shell","Use a value from 0 to 1"}}
     if p.lifetime[0]<0 || p.lifetime[1]<0 {return {"lifetime","Use lifetimes of zero or more seconds"}}
+    if max(p.lifetime[0],p.lifetime[1])<=0 {return {"lifetime","Give the particles a lifetime above 0 seconds: with none they die as they are born"}}
     if p.size[0]<0 || p.size[1]<0 {return {"size","Use sizes of zero or more"}}
     if p.intensity<0 {return {"intensity","Use an intensity of zero or more"}}
     if p.drag<0 || p.noise_frequency<0 || p.stretch<0 || p.soft<0 || p.flipbook_speed<0 {return {"drag","Use zero or more for drag, noise_frequency, stretch, soft and flipbook_speed"}}
