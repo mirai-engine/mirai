@@ -148,10 +148,10 @@ a_lake_and_a_river_draw_where_their_fluids_are :: proc(t: ^testing.T) {
 	core.add(&w.volumes, lake, volume.outline(1))
 	core.add(&w.splines, lake, volume.Spline{count = 6, points = {0 = {position = {-2, 0, -2}}, 1 = {position = {2, 0, -2}}, 2 = {position = {2, 0, 0}}, 3 = {position = {0, 0, 0}}, 4 = {position = {0, 0, 2}}, 5 = {position = {-2, 0, 2}}}})
 	core.add(&w.transforms, lake, core.Transform{{-3, 0.25, 0}, mm.QUAT_IDENTITY, {1, 1, 1}})
-	// A Spline with a Fluid: a bend 1.5 m wide and 0.4 m deep, flowing at 1 m/s.
+	// A Spline with a Fluid: a bend 1.5 m wide and 0.4 m deep, flowing at 1 m/s, its surface over the floor.
 	river := core.create(&w.entities)
 	core.add(&w.fluids, river, phys.FLUID_DEFAULT)
-	core.add(&w.splines, river, volume.Spline{count = 3, points = {0 = {{3, 0, 3}, 1.5, 0.4, 1}, 1 = {{4, 0, 0}, 1.5, 0.4, 1}, 2 = {{3, 0, -3}, 1.5, 0.4, 1}}})
+	core.add(&w.splines, river, volume.Spline{count = 3, points = {0 = {{3, 0.3, 3}, 1.5, 0.4, 1}, 1 = {{4, 0.3, 0}, 1.5, 0.4, 1}, 2 = {{3, 0.3, -3}, 1.5, 0.4, 1}}})
 	wet, wet_ok := water_frame(t, f)
 	testing.expect_value(t, w.state.world.fluid_count, 2)
 	if !wet_ok {return}
