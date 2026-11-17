@@ -215,10 +215,9 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   samples; elsewhere it takes them as one more light, for that alone. A pixel with no point of
   its surface around it asks the map itself.
 - **Rays** (`direct_rays`, `direct_samples`). One pixel of each 2x2 traces one sample through the
-  whole scene and leaves what stopped it. The other samples meet only what stopped the rays of
-  their group and of the groups around (with hardware ray tracing, each is a ray query), and those
-  of a light only what lies in the cone from the point to it: the cost does not grow with the
-  scene.
+  whole scene and leaves what stopped it. The other samples meet only what stopped the rays of their
+  group and of the groups around (with hardware ray tracing, each is a ray query), and those of a
+  light only what lies in the cone from the point to it: the cost does not grow with the scene.
 - **Points.** With `direct_half_resolution` the points are one pixel of each 2x2. Every frame
   takes every point: the direct light keeps nothing from the frame before, so nothing trails
   behind what moves.
@@ -253,10 +252,10 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   where the search of its blockers reaches farther, the pages of the level or mip as many times
   coarser, which its far taps read: a blocker that far casts a penumbra as wide, so a tall scene
   asks for hardly more pages of the finest levels than a low one. Over the top of each octave the
-  point blends
-  into the next level or mip, whose pages it marks too, and its texel-based constants grow to meet
-  those of the next. The first level of the sun is a metre wide, each after it twice as wide, and
-  the grid of the pages and texels of every level lies on the world, not on the origin of the frame.
+  point blends into the next level or mip, whose pages it marks too, and its texel-based constants
+  grow to meet those of the next. The first level of the sun is a metre wide, each after it twice as
+  wide, and the grid of the pages and texels of every level lies on the world, not on the origin of
+  the frame.
   `shadow_pages.comp` gives each marked page a page of the pool of the view through the table of
   the pages (`Shadow_Raster.table`, at `SLOT_SHADOW_TABLE`), in the same frame, so a page first
   read is drawn before it is read. Pages are given in one order every frame: the safety net first
