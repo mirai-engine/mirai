@@ -159,6 +159,7 @@ App :: struct {
     paced:bool, // a window at the pace of the clock: the graphics settings set its frame rate
     stats:App_Stats,
     texture_streaming:Texture_Streaming, // the reads of the levels of textures under way
+    loading_screen:bool, // the owner shows what arrives as a loading screen in the next frame: it takes the frames (assets_load_screen)
     asset_releases:Assets_Releases, // what jobs read for the loads, freed in jobs
     step_ns:[]u64, // the time of each function of info.steps since whoever reads it last cleared it, settle included
     profiler:Profiler, // the frames someone asked to record (profile.odin)
