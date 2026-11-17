@@ -353,7 +353,8 @@ conn_answer :: proc(s:^Server,conn:^Conn,index:int) {
     } else {
         body:=string(conn.buffer[conn.head:][:conn.length])
         retry:=conn.state==.Waiting
-        s.running=retry?conn.running:Running{conn=index}
+        // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+        if retry {s.running=conn.running} else {s.running=Running{conn=index}}
         s.wait={retry=retry,started=retry?conn.waited:time.tick_now()}
         has_body=process(s,body,conn.route,base.text_get(conn.client_tag[:]),base.text_get(conn.plugins[:]),base.text_get(conn.client_name[:]),base.text_get(conn.measure[:]))
         running:=s.running
@@ -362,7 +363,9 @@ conn_answer :: proc(s:^Server,conn:^Conn,index:int) {
         s.wait={}
         if wait.parked {
             serial.writer_reset(&s.out)
-            conn.state,conn.waited,conn.running=.Waiting,wait.started,running
+            conn.state=.Waiting
+            conn.waited=wait.started
+            conn.running=running
             conn.next=time.tick_add(time.tick_now(),time.Duration(WAIT_UNTIL_PAUSE*f64(time.Second)))
             return
         }
