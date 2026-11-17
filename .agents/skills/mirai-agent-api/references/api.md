@@ -215,7 +215,12 @@ mirai rpc describe [plugin|method|prefix|method...] [--project P|--port N]
 - `--project P` takes the port from its `api.json` and, when the project has no editor open,
   starts its headless dev session as `mirai session start` does and then makes the call,
   saying so on stderr; a method that only makes sense with an editor already open
-  (`RPC_NEEDS_OPEN_EDITOR`) never starts one and fails without an editor. Without `--project` or
+  (`RPC_NEEDS_OPEN_EDITOR`) never starts one and fails without an editor. An editor that ended
+  without closing (its port file names a process that is gone: it crashed, was killed or ended
+  itself, as the [GPU watchdog](../../mirai-rendering/references/rhi.md#gpu-watchdog) does) and
+  one that stops answering are never replaced: the call, `mirai mcp`, `capture`, `record` and
+  `play test` fail with its pid and the last line of its log, and only `mirai session start`
+  opens another. Without `--project` or
   `--port`, the port is that of `MIRAI_API_PORT` or the editor of the project at or above the
   current folder, failing when it has none and never starting one; the default port only outside
   any project.
