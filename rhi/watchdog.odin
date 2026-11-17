@@ -88,7 +88,7 @@ watchdog_stop :: proc(d: ^Device) {
 	// A thread that never started starts, finds quit and returns.
 	for &worker in ([]^^thread.Thread{&w.timer, &w.waiter}) {
 		if worker^ == nil {continue}
-		thread.destroy(worker^)
+		device_thread_destroy(worker^)
 		worker^ = nil
 	}
 	w.limit_ns = 0

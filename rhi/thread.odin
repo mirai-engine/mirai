@@ -1,6 +1,7 @@
 package rhi
 
 import "base:runtime"
+import "core:sync"
 import "core:thread"
 
 @(private)
@@ -34,6 +35,16 @@ device_thread_create :: proc(d: ^Device, procedure: thread.Thread_Proc, data: ra
 	worker.data = data
 	worker.init_context = runtime.Context{allocator = d.allocator}
 	return worker, .None
+}
+
+// Ends a thread of the device and frees it; its procedure must return once it
+// is told to end. thread_join_unstarted: one that never started is started
+// first, since on Windows the join of a thread that never started locks its
+// mutex twice and never returns (docs/ODIN_WORKAROUNDS.md).
+@(private)
+device_thread_destroy :: proc(worker: ^thread.Thread) {
+	if .Started not_in sync.atomic_load(&worker.flags) {thread.start(worker)}
+	thread.destroy(worker)
 }
 
 @(private)
