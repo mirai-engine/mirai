@@ -289,7 +289,9 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   (`SHADOW_WORDS_SCALE`), and for a page not drawn yet a part of the share at most, as what is
   foreseen strays most where a page holds the most. A page may take twice that, so one that takes
   more is the only one left over; a page of the cache that takes more than half the bound is drawn
-  in bands of its rows over frames (`SHADOW_WORDS_BAND`). A page left over, one that waits and
+  in bands of its rows over frames (`SHADOW_WORDS_BAND`). A page is foreseen once and keeps it
+  until drawn, and the culls after the grant go over the slots and spans of the pages granted
+  alone: a page that waits costs no instance. A page left over, one that waits and
   one whose band is not its last are not ready that frame (`Settle`): their points read the
   nearest coarser page drawn, or trace, and the steps run again the next frame.
 - **A still view.** While its camera, size, parameters and lights stay and no caster changes

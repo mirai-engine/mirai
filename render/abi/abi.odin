@@ -255,9 +255,10 @@ SHADOW_HIZ_MIPS            :: 5
 // that a pass after the maps read this frame, for the next; then what each
 // frame writes again: a bit for each entry that points read, where what stays
 // changed, where what moves was or is, asked for a page of the pool, asked for
-// first (the safety net), that the cache draws and that the atlas composes;
-// a word for each slot of each of the last two, whether it has one, and four
-// for each mip of each, the pages of it they span; four for each page of the pool the cache draws, the texels of it it
+// first (the safety net), that the cache draws, that the atlas composes and,
+// of those the cache draws, whose clusters are not foreseen yet; a word for
+// each slot of each of the last three, whether it has one, and four for each
+// mip of each, the pages of it they span; four for each page of the pool the cache draws, the texels of it it
 // draws (SHADOW_PAGE less its first column and row, then its last + 1: where
 // what stays changed in a part of a page it held, that part alone, or the
 // band of it drawn this frame); two for each page of the pool, the clusters
@@ -265,7 +266,7 @@ SHADOW_HIZ_MIPS            :: 5
 // instance foresees them, then the most its draws may take (SHADOW_COST_*,
 // render.SHADOW_FRAME_CLUSTERS); and two more, the clusters they did take;
 // the counts (SHADOW_COUNT_*) and the arguments of the dispatches and
-// draws (SHADOW_ARGS_*); then the slots of each of the last two, the pages
+// draws (SHADOW_ARGS_*); then the slots of each of the last three, the pages
 // the cache draws and the atlas composes, the rank of the first request of
 // each word of SHADOW_RANK_WORDS and of each group of them, and the pages of
 // the pool in the order they are given; then the arguments of the steps of
@@ -287,15 +288,16 @@ SHADOW_WORDS_ASKED         :: SHADOW_WORDS_MOVED + SHADOW_MASKS
 SHADOW_WORDS_FIRST         :: SHADOW_WORDS_ASKED + SHADOW_MASKS
 SHADOW_WORDS_DRAWN         :: SHADOW_WORDS_FIRST + SHADOW_MASKS
 SHADOW_WORDS_COMPOSE       :: SHADOW_WORDS_DRAWN + SHADOW_MASKS
-SHADOW_WORDS_HAS           :: SHADOW_WORDS_COMPOSE + SHADOW_MASKS
-SHADOW_WORDS_BOUNDS        :: SHADOW_WORDS_HAS + 2 * SHADOW_SLOTS
-SHADOW_WORDS_PART          :: SHADOW_WORDS_BOUNDS + 2 * SHADOW_SLOTS * SHADOW_MIPS * 4
+SHADOW_WORDS_FORESEE       :: SHADOW_WORDS_COMPOSE + SHADOW_MASKS
+SHADOW_WORDS_HAS           :: SHADOW_WORDS_FORESEE + SHADOW_MASKS
+SHADOW_WORDS_BOUNDS        :: SHADOW_WORDS_HAS + 3 * SHADOW_SLOTS
+SHADOW_WORDS_PART          :: SHADOW_WORDS_BOUNDS + 3 * SHADOW_SLOTS * SHADOW_MIPS * 4
 SHADOW_WORDS_COST          :: SHADOW_WORDS_PART + 4 * SHADOW_POOL_PAGES
 SHADOW_WORDS_TAKEN         :: SHADOW_WORDS_COST + 2 * SHADOW_POOL_PAGES
 SHADOW_WORDS_COUNTS        :: SHADOW_WORDS_TAKEN + 2 * SHADOW_POOL_PAGES
 SHADOW_WORDS_ARGS          :: SHADOW_WORDS_COUNTS + 16
-SHADOW_WORDS_SLOTS         :: SHADOW_WORDS_ARGS + 17
-SHADOW_WORDS_JOBS          :: SHADOW_WORDS_SLOTS + 2 * SHADOW_SLOTS
+SHADOW_WORDS_SLOTS         :: SHADOW_WORDS_ARGS + 20
+SHADOW_WORDS_JOBS          :: SHADOW_WORDS_SLOTS + 3 * SHADOW_SLOTS
 SHADOW_WORDS_RANK          :: SHADOW_WORDS_JOBS + 2 * SHADOW_POOL_PAGES
 SHADOW_WORDS_GROUPS        :: SHADOW_WORDS_RANK + SHADOW_RANK_WORDS
 SHADOW_WORDS_VICTIMS       :: SHADOW_WORDS_GROUPS + SHADOW_RANK_GROUPS
@@ -320,18 +322,18 @@ SHADOW_RANK_GROUPS         :: (SHADOW_RANK_WORDS + SHADOW_RANK_GROUP - 1) / SHAD
 // The counts: pages the cache draws, the atlas composes, asked for, of the
 // pool that can be given (free, then those no point read, the oldest read
 // first), of them free, asked for and left out; slots with pages the cache
-// draws and the atlas composes; pages the cache or the atlas did not draw
-// whole this frame, which wait for the frames after.
+// draws, the atlas composes and the cache foresees; pages the cache or the
+// atlas did not draw whole this frame, which wait for the frames after.
 SHADOW_COUNT_DRAWN         :: 0
 SHADOW_COUNT_COMPOSED      :: 1
 SHADOW_COUNT_REQUESTS      :: 2
 SHADOW_COUNT_GIVEN         :: 3
 SHADOW_COUNT_FREE          :: 4
 SHADOW_COUNT_LEFT          :: 5
-SHADOW_COUNT_SLOTS         :: 6 // two
-SHADOW_COUNT_WAITING       :: 8
-SHADOW_COUNT_FORESEEN      :: 9 // two: of the pages the cache and the atlas granted as foreseen, what was foreseen
-SHADOW_COUNT_MEASURED      :: 11 // two: and what they took
+SHADOW_COUNT_SLOTS         :: 6 // three
+SHADOW_COUNT_WAITING       :: 9
+SHADOW_COUNT_FORESEEN      :: 10 // two: of the pages the cache and the atlas granted as foreseen, what was foreseen
+SHADOW_COUNT_MEASURED      :: 12 // two: and what they took
 SHADOW_SCALE_ONE           :: 256
 // Of a page of the pool drawn in bands (SHADOW_WORDS_BAND): the rows of it the
 // cache holds from its top, from bit SHADOW_BAND_SHIFT how many times the page
@@ -339,6 +341,8 @@ SHADOW_SCALE_ONE           :: 256
 // where a draw had no room for its one row, which then waits behind the others.
 SHADOW_BAND_SHIFT          :: 8
 SHADOW_BAND_STUCK          :: u32(1) << 16
+// Of a word of SHADOW_WORDS_KNOWN: what it holds was foreseen, not measured.
+SHADOW_KNOWN_FORESEEN      :: u32(1) << 31
 // Of a word of SHADOW_WORDS_COST: a draw of the round had no room for a
 // cluster of the page; the page waits for a frame with room for it; it was
 // granted as foreseen; and its clusters.
@@ -346,13 +350,13 @@ SHADOW_COST_OVER           :: u32(1) << 31
 SHADOW_COST_WAITS          :: u32(1) << 30
 SHADOW_COST_GUESS          :: u32(1) << 29
 SHADOW_COST_CLUSTERS       :: u32(1) << 24 - 1
-// The arguments: the dispatches of the cull of the cache and of the atlas,
-// three words each, then the draws of the pages the cache clears and the
-// atlas copies from it, four each, and the dispatch of the farthest depth of
-// the pages the cache drew.
+// The arguments: the dispatches of the cull of the cache, of the atlas and of
+// the foresight of the cache, three words each, then the draws of the pages
+// the cache clears and the atlas copies from it, four each, and the dispatch
+// of the farthest depth of the pages the cache drew.
 SHADOW_ARGS_DISPATCH       :: 0
-SHADOW_ARGS_DRAW           :: 6
-SHADOW_ARGS_HIZ            :: 14
+SHADOW_ARGS_DRAW           :: 9
+SHADOW_ARGS_HIZ            :: 17
 REFLECTION_SHARED_ROUGHNESS :: f32(0.15)
 
 // The levels of the depth pyramid a dispatch of hiz.comp makes.

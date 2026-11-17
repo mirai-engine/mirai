@@ -18,6 +18,7 @@ import gpu "mirai:render"
 import "mirai:rhi"
 import "mirai:rhi/shared_device"
 import "mirai:std/base"
+import mm "mirai:std/math"
 import fog "plugins:fog/runtime"
 import "plugins:vfx/runtime/effect"
 import "plugins:vfx/runtime/gridfile"
@@ -75,13 +76,21 @@ gpu_fixture_destroy :: proc(f: ^Gpu_Fixture) {
 	gpu.renderer_destroy(&f.renderer)
 }
 
-// The emitters of a world for the next frame, as particles_sync gives them.
-// False when one found no room.
+// The emitters of a world for the next frame, the whole list: each one is
+// put in the pool and those it does not name leave it. False when one found
+// no room.
 @(private = "file")
 frame_emitters :: proc(f: ^Gpu_Fixture, sync: ^Particle_Sync, emitters: []Emitter_Desc, dt: f32, capacity: u32 = CAPACITY) -> bool {
-	dropped, ok := pool_emitters(&sync.pool, emitters, dt, capacity, erender.max_storage_range(&f.app))
+	pool := &sync.pool
+	ok := pool_frame(pool, dt, capacity, erender.max_storage_range(&f.app), false, len(emitters) > 0)
+	for &desc in emitters {ok = pool_put(pool, &desc) && ok}
+	listed: for i := pool.order_count - 1; i >= 0; i -= 1 {
+		id := pool.slots[pool.order[i]].id
+		for desc in emitters {if desc.id == id {continue listed}}
+		pool_remove(pool, id)
+	}
 	particles_frame(sync, &f.app)
-	return ok && dropped == 0
+	return ok
 }
 
 // What the finish pass counted two frames ago.
@@ -286,6 +295,77 @@ particles_keep_steady_frames_allocation_free :: proc(t: ^testing.T) {
 		}
 	}
 	testing.expect_value(t, tracker.total_allocation_count, i64(0))
+	expect_clean(t, f.device)
+}
+
+// The GPU keeps the rows of the emitters of a world that did not change: a
+// frame that changes nothing puts none in the pool and writes none, one that
+// moves an emitter writes its row alone, and every emitter keeps its
+// particles; frames that change nothing allocate nothing.
+@(test)
+particle_rows_go_to_the_gpu_only_when_their_emitter_changes :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	if !gpu_fixture_init(t, f, 64, 48, test_settings()) {return}
+	defer gpu_fixture_destroy(f)
+	w := new(Emitters_World)
+	defer free(w)
+	if !test_world_init(t, w) {return}
+	defer test_world_destroy(w)
+	w.settings = PARTICLE_SETTINGS_DEFAULT
+	r := &f.renderer
+	gpu.scene_set_environment(r, {}, {sky = {0.2, 0.3, 0.5}})
+	camera := gpu.Camera{position = {0, 1, 4}, forward = {0, -0.7, -4}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
+	emitters: [3]core.Entity
+	for &e, i in emitters {
+		e = core.create(&w.entities)
+		place := mm.TRANSFORM_IDENTITY
+		place.position = {f32(i) - 1, 0, 0}
+		core.add(&w.emitters, e, Particle_Emitter{active = true, loop = true})
+		core.add(&w.worlds, e, core.World_Transform{place, place})
+		// A burst of 8 that the clock started; no tick starts more.
+		births_add(clock_of(&w.clocks, e), 0, 8, 8, 0)
+	}
+	test_world_settle(w)
+	reports: Particle_Reports
+	defer particle_reports_free(&reports)
+	problems: core.Problems
+	tell :: proc(f: ^Gpu_Fixture, w: ^Emitters_World, reports: ^Particle_Reports, problems: ^core.Problems) {
+		drawn: erender.Render_Sync
+		particles_sync(core.read(&w.emitters), core.read(&w.overrides), core.read(&w.worlds), core.read(&w.hidden), core.read(&w.parents), core.ref(&w.hierarchy), core.read(&w.bindings), core.read(&w.meshes), core.ref(&drawn), core.read(&w.listeners), core.read(&w.grids), core.read(&w.volumes), core.read(&w.textures), core.ref(&w.clocks), core.ref(&w.settings), &f.sync, reports, nil, nil, nil, {}, {index = 1}, {}, {dt = 1.0 / 60, alpha = 1}, {}, problems, &f.app, {}, {}, {}, {}, {})
+	}
+	for _ in 0 ..< 3 {
+		tell(f, w, &reports, &problems)
+		testing.expect(t, gpu.renderer_frame(r, {camera = camera}), r.error)
+	}
+	pool := &f.sync.pool
+	tell(f, w, &reports, &problems)
+	testing.expect(t, pool.pending == {} && pool.dirty == {}, "a frame that changes nothing tells the GPU nothing")
+	testing.expect(t, gpu.renderer_frame(r, {camera = camera}), r.error)
+	moved := core.edit(&w.worlds, emitters[1])
+	moved.transform.position.y, moved.previous.position.y = 1, 1
+	test_world_settle(w)
+	tell(f, w, &reports, &problems)
+	only: Slot_Bits
+	bits_add(&only, pool_slot_find(pool, u64(emitters[1])))
+	testing.expect(t, pool.pending == only && pool.dirty == only, "a frame that moves one emitter writes its row alone")
+	for _ in 0 ..< 3 {
+		testing.expect(t, gpu.renderer_frame(r, {camera = camera}), r.error)
+		tell(f, w, &reports, &problems)
+	}
+	tracker: mem.Tracking_Allocator
+	mem.tracking_allocator_init(&tracker, context.allocator)
+	defer mem.tracking_allocator_destroy(&tracker)
+	{
+		context.allocator = mem.tracking_allocator(&tracker)
+		for _ in 0 ..< 4 {
+			testing.expect(t, gpu.renderer_frame(r, {camera = camera}), r.error)
+			tell(f, w, &reports, &problems)
+		}
+	}
+	testing.expect_value(t, tracker.total_allocation_count, i64(0))
+	rhi.device_wait_idle(f.device)
+	testing.expect_value(t, particles_alive(f), u32(len(emitters) * 8))
 	expect_clean(t, f.device)
 }
 
