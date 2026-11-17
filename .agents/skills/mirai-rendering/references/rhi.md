@@ -91,6 +91,28 @@ compile time with build tags, without virtual dispatch. `render` does not see na
   (`provoked by device_lose`). What the application does afterwards:
   [host](../../mirai-core/references/host.md#gpu-that-stops-working).
 
+## GPU watchdog
+
+- **Off unless asked.** `MIRAI_GPU_WATCHDOG_MS=<limit>` (`WATCHDOG_VARIABLE`), read when a device
+  is made, arms it for every process that makes one: editor, player, tests and the sessions the
+  tools start, which inherit it. A value that is not a whole number above 0 refuses the device and
+  says so. Valid scenes wait long for the GPU (first frames that build acceleration structures, a
+  slow device), so there is no limit by default.
+- **What it does.** Each frame and immediate list signals the timeline (Vulkan) or a shared event
+  (Metal) when it ends (`watchdog_sent`). One thread waits for the GPU and records what ended;
+  another fires on the CPU clock alone, so a driver call that hangs does not keep it from firing.
+  When the oldest submission has not ended `limit` ms after it went, the process writes one line
+  on stderr (frame, wait, where the marks say the GPU stopped and the passes the frame recorded,
+  by their `cmd_timestamp` names) and ends at once with `WATCHDOG_EXIT_CODE`: `TerminateProcess`
+  or `_exit`, never the exit that runs the driver's own teardown. A failure the API reported
+  disarms it: that is the host's.
+- **What it protects against.** Ending the process drops the work it queued, and the system takes
+  the GPU back from what it runs: Windows suspends the contexts of the process, a preemption with no
+  grace period. A single draw or dispatch the GPU cannot preempt within the display driver's
+  timeout (2 s) still ends in an engine reset (`LiveKernelEvent 141`); only bounding each
+  draw and dispatch avoids that. A limit well under 2 s ends a long backlog of work and a frame
+  whose passes add up past it.
+
 ## Frames and presentation
 
 - Two frames in flight (`MAX_FRAMES_IN_FLIGHT`); the CPU does not wait for the GPU on every

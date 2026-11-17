@@ -274,6 +274,7 @@ Device :: struct {
 	lose_provoked:     bool,
 	refuse:            Pipeline_Refusal,
 	presenter:         Presenter,
+	watchdog:          Watchdog,
 	present:           Vk_Present,
 	queue_lock:        sync.Mutex, // the presenter submits and presents from its thread too
 	pipeline_lock:     sync.Mutex, // pipelines are made on other threads too: guards their pool
@@ -388,7 +389,7 @@ device_create :: proc(desc: Device_Desc) -> (device: ^Device, error: string) {
 	d.allocator = allocator
 	d.capacities = device_capacities(desc.capacities)
 	d.on_message, d.message_user = desc.on_message, desc.message_user
-	ok := vk_create_pools(d) && vk_create_device(d, desc)
+	ok := vk_create_pools(d) && vk_create_device(d, desc) && watchdog_start(d)
 	if !ok {
 		error = strings.clone(d.error, context.temp_allocator)
 		device_destroy(d)
@@ -956,6 +957,7 @@ device_destroy :: proc(d: ^Device) {
 	if d.handle != nil && !d.waited_out {
 		// A lost device returns at once; one device_lose failed still runs what it was given.
 		if !vk_idle(d) {d.dvk.DeviceWaitIdle(d.handle)}
+		watchdog_stop(d)
 		vk_destroy_swapchain(d)
 		for &f in d.frames {
 			if f.upload != 0 {buffer_destroy(d, f.upload)}
@@ -1021,6 +1023,7 @@ device_destroy :: proc(d: ^Device) {
 	pool_destroy(&d.samplers, d.allocator)
 	pool_destroy(&d.pipelines, d.allocator)
 	pool_destroy(&d.accels, d.allocator)
+	watchdog_stop(d)
 	free(d, d.allocator)
 }
 
@@ -1338,6 +1341,7 @@ frame_end :: proc(d: ^Device, cmd: ^Command_List, generated := false) -> bool {
 	sync.mutex_lock(&d.queue_lock)
 	submitted := d.dvk.QueueSubmit2(d.queue, 1, &submit, 0)
 	f.marks.sent = submitted == .SUCCESS && !unreported
+	if submitted == .SUCCESS {watchdog_sent(d, d.timeline_value, d.frame_number, d.slot)}
 	ok := vk_check(d, submitted, "vkQueueSubmit2")
 	f.signal_value = d.timeline_value
 	f.number, f.submitted = d.frame_number, submitted == .SUCCESS
@@ -1439,16 +1443,20 @@ vk_immediate_end :: proc(d: ^Device, cmd: ^Command_List, wait: bool) -> bool {
 	if cmd.in_render_pass {cmd_end_render_pass(cmd)}
 	vk_flush_barriers(cmd)
 	d.dvk.EndCommandBuffer(cmd.cmd)
-	info := vk.CommandBufferSubmitInfo{sType = .COMMAND_BUFFER_SUBMIT_INFO, commandBuffer = cmd.cmd}
-	submit := vk.SubmitInfo2{sType = .SUBMIT_INFO_2, commandBufferInfoCount = 1, pCommandBufferInfos = &info}
 	if d.failure != .None {return false}
+	// On the timeline too, which the waits for the GPU and its watchdog read.
+	d.timeline_value += 1
+	info := vk.CommandBufferSubmitInfo{sType = .COMMAND_BUFFER_SUBMIT_INFO, commandBuffer = cmd.cmd}
+	signal := vk.SemaphoreSubmitInfo{sType = .SEMAPHORE_SUBMIT_INFO, semaphore = d.timeline, value = d.timeline_value, stageMask = {.ALL_COMMANDS}}
+	submit := vk.SubmitInfo2{sType = .SUBMIT_INFO_2, commandBufferInfoCount = 1, pCommandBufferInfos = &info, signalSemaphoreInfoCount = 1, pSignalSemaphoreInfos = &signal}
 	at := d.immediate_at
 	fence := d.immediate_fences[at]
 	d.dvk.ResetFences(d.handle, 1, &fence)
 	sync.mutex_lock(&d.queue_lock)
 	submitted := vk_check(d, d.dvk.QueueSubmit2(d.queue, 1, &submit, fence), "immediate submit")
 	sync.mutex_unlock(&d.queue_lock)
-	if !submitted {return false}
+	if !submitted {d.timeline_value -= 1; return false}
+	watchdog_sent(d, d.timeline_value, d.frame_number, -1)
 	if wait {
 		if !vk_waited(d, d.dvk.WaitForFences(d.handle, 1, &fence, true, GPU_WAIT_LIMIT_NS), "immediate wait") {return false}
 	} else {
