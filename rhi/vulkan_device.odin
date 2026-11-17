@@ -121,8 +121,7 @@ Vk_Frame :: struct {
 	queries:      vk.QueryPool,
 	passes:       bool, // the frame writes the timestamps of cmd_timestamp: timestamps_want was on when it began
 	query_count:  u32,
-	query_names:  [MAX_TIMESTAMPS]string,
-	query_bytes:  [MAX_TIMESTAMPS][MAX_TIMESTAMP_NAME_BYTES]u8, // the names, which a caller may build in the frame
+	recorded:     Frame_Passes, // its cmd_timestamp marks, which name its queries when it has passes
 	image_index:  u32,
 	acquired:     bool,
 	paced:        bool, // the frame draws into a pair of the presenter
@@ -1222,7 +1221,7 @@ vk_collect_timestamps :: proc(d: ^Device, f: ^Vk_Frame) {
 	for i in 0 ..< d.timing_count {
 		start_ns := tick_of(values[i], gpu, now, d.timestamp_bits, d.info.timestamp_period_ns)
 		end_ns := max(tick_of(values[i + 1], gpu, now, d.timestamp_bits, d.info.timestamp_period_ns), start_ns)
-		name := string(d.timing_bytes[i][:copy(d.timing_bytes[i][:], f.query_names[i])])
+		name := string(d.timing_bytes[i][:copy(d.timing_bytes[i][:], f.recorded.names[i] if f.passes else "frame")])
 		d.timings[i] = {name = name, ms = f32(f64(end_ns - start_ns) / 1e6), start_ns = start_ns, end_ns = end_ns}
 	}
 }
@@ -1281,12 +1280,13 @@ frame_begin :: proc(d: ^Device, present := true) -> (cmd: ^Command_List, ok: boo
 	d.dvk.BeginCommandBuffer(f.cmd, &begin)
 	vk_list_reset(&f.list)
 	f.marks.serial, f.marks.sent, f.marks.count, f.marks.named = u32(d.frame_number) + 1, false, 0, 0
+	f.recorded.count = 0
 	f.passes = false
 	if f.queries != 0 {
 		d.dvk.CmdResetQueryPool(f.cmd, f.queries, 0, MAX_TIMESTAMPS)
 		f.passes = d.timestamps_wanted
 		// Without passes the frame is one interval, from here to frame_end.
-		if !f.passes {vk_timestamp_write(f, "frame")}
+		if !f.passes {vk_timestamp_write(f)}
 	}
 	vk_zero_fresh(&f.list)
 	d.in_frame = true
@@ -1305,7 +1305,7 @@ frame_end :: proc(d: ^Device, cmd: ^Command_List, generated := false) -> bool {
 		for texture in pr.pairs[pr.pair].textures {cmd_barrier_texture(cmd, texture, .Transfer_Read)}
 	}
 	vk_flush_barriers(cmd)
-	if f.queries != 0 && !f.passes {vk_timestamp_write(f, "")}
+	if f.queries != 0 && !f.passes {vk_timestamp_write(f)}
 	vk_mark(cmd, .End)
 	d.dvk.EndCommandBuffer(f.cmd)
 
