@@ -458,14 +458,17 @@ program_reaches_only_the_stages_of_its_domain_and_a_project_gets_the_code_of_its
 
     // Both backends, asked for: every stage is compiled again with the other,
     // and the code of this system is the same bytes. A stage of the rays traced
-    // by software joins them, for Vulkan alone.
+    // by software joins them, for Vulkan alone: the generation of the engine
+    // before that of the project already gave its code on a Vulkan system,
+    // and on a Metal one only its reflection.
     shade=mini_read(&mini,strings.concatenate({"game/",PROJECT_OUTPUT,"/shade.frag",host},context.temp_allocator))
     fixture_write(t,mini.root,"shaders/trace.comp.slang",TRACE)
     options.backends={.Vulkan,.Metal}
     both:=mini_generate(t,&mini,options)
+    traced_by_engine:=1 if HOST_BACKEND==.Vulkan else 0
     testing.expect_value(t,both.error,"")
-    testing.expect_value(t,both.compiled,8+surfaces)
-    testing.expect_value(t,both.reused,0)
+    testing.expect_value(t,both.compiled,8+surfaces-traced_by_engine)
+    testing.expect_value(t,both.reused,traced_by_engine)
     testing.expect(t,os.is_file(path_join(output,"shade.frag.metal",allocator=context.temp_allocator)) && os.is_file(path_join(output,"fill.comp.metal",allocator=context.temp_allocator)))
     testing.expect(t,mini_read(&mini,strings.concatenate({"game/",PROJECT_OUTPUT,"/shade.frag",host},context.temp_allocator))==shade,"a backend compiles the same with or without the other")
     metal:=mini_read(&mini,strings.concatenate({"game/",PROJECT_OUTPUT,"/shade.frag.metal"},context.temp_allocator))
