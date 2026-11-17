@@ -28,9 +28,13 @@ import mm "mirai:std/math"
 //
 // A card of a leaf (Outline_Ladder.leaf) is drawn as the finest outline of
 // its ladder in level 0, and its coarser outlines go to Mesh_Outlines, which the levels
-// take as their error allows. A card of a cluster of leaves keeps its mask on
-// its convex outline. An outline is laid on the card through its triangles:
-// the triangles that share one affine map from the image to the mesh (a flat
+// take as their error allows, if that outline draws no farther past its mask
+// than CUTOUT_LEAF_ERROR of the radius of its mesh: level 0 is drawn however
+// near, and a large card of a few, the leaves of a houseplant, would show its
+// outline where the mask shows the gaps between its leaves. A card of a
+// cluster of leaves, or of a leaf its outline does not follow so near, keeps
+// its mask on its convex outline. An outline is laid on the card through its
+// triangles: the triangles that share one affine map from the image to the mesh (a flat
 // quad) are one facet, the outline is cut by each facet and each of its
 // corners takes the attributes the card has there, so a bent card stays bent.
 // A card whose rectangle keeps no texel draws nothing and is dropped.
@@ -66,6 +70,11 @@ Outline_Rung :: struct {
 
 // The slot of the outlines of a slot whose material also keeps masked triangles.
 CUTOUT_SLOT :: u32(1)<<31
+
+// Of the radius of a mesh, the farthest the outline a leaf draws in level 0
+// may draw past its mask: about eight pixels where the mesh fills the height
+// of a view of 1080 lines.
+CUTOUT_LEAF_ERROR :: f32(1.0/64)
 
 @(private="file")
 Cutout_Material :: struct {
@@ -115,6 +124,7 @@ Cutout_Layout :: struct {
     corners:[][3]geom.Vec2, // of each triangle, in texels of the rectangle
     facets:[]u32,           // of each triangle
     flip:bool,              // its triangles turn the other way on the image than in the mesh
+    leaf:bool,              // placed as its rungs; else as its hull
     valid:bool,
     rungs:[OUTLINE_RUNGS]Cutout_Placed, // of a leaf
     hull:Cutout_Placed,
@@ -260,6 +270,9 @@ cutout_mesh :: proc(c:^Cutout,mesh:^Imported_Mesh,mesh_index:int) -> bool {
     positions,no_positions:=make([]geom.Vec3,len(mesh.vertices),context.temp_allocator)
     if no_positions!=nil {return false}
     for v,i in mesh.vertices {positions[i]=v.position}
+    low,high:=asset.mesh_bounds(mesh.vertices)
+    d:=high-low
+    leaf_error:=CUTOUT_LEAF_ERROR*0.5*math.sqrt(d.x*d.x+d.y*d.y+d.z*d.z)
     for sub,s in mesh.submeshes {
         if int(sub.slot)>=len(mesh.slots) {continue}
         material:=mesh.slots[sub.slot].material
@@ -296,7 +309,7 @@ cutout_mesh :: proc(c:^Cutout,mesh:^Imported_Mesh,mesh_index:int) -> bool {
         for l in labels {
             if int(l)>=count || seen[l] || sizes[l]>ISLAND_MAX_TRIANGLES {continue}
             seen[l]=true
-            card,ok:=cutout_card(c,mesh,m,order[first[l]:first[l+1]])
+            card,ok:=cutout_card(c,mesh,m,order[first[l]:first[l+1]],leaf_error)
             if !ok {continue}
             card.mesh,card.submesh=mesh_index,s
             append(&c.cards,card)
@@ -322,9 +335,11 @@ Cutout_Texels :: struct {
 }
 
 // The card of an island of a mesh with the masked material m, if it is one;
-// not one, and it keeps its mask, where there is not the memory to cut it.
+// not one, and it keeps its mask, where there is not the memory to cut it. A
+// leaf whose finest outline draws farther than leaf_error past its mask, in
+// the units of the mesh, is cut as a cluster.
 @(private="file")
-cutout_card :: proc(c:^Cutout,mesh:^Imported_Mesh,m:^Cutout_Material,triangles:[]u32) -> (card:Cutout_Card,ok:bool) {
+cutout_card :: proc(c:^Cutout,mesh:^Imported_Mesh,m:^Cutout_Material,triangles:[]u32,leaf_error:f32) -> (card:Cutout_Card,ok:bool) {
     alpha:=cutout_alpha(c,m.image) or_return
     w,h:=f32(alpha.source.width),f32(alpha.source.height)
     count:=len(triangles)
@@ -394,8 +409,8 @@ cutout_card :: proc(c:^Cutout,mesh:^Imported_Mesh,m:^Cutout_Material,triangles:[
     card.triangles=triangles
     card.layout=-1
     if ladder<0 {return card,true}
-    card.leaf=c.ladders[ladder].leaf
-    layout,laid:=cutout_layout(c,ladder,corners,facets,sign<0)
+    card.leaf=c.ladders[ladder].leaf && c.ladders[ladder].rungs[0].error*card.scale<=leaf_error
+    layout,laid:=cutout_layout(c,ladder,card.leaf,corners,facets,sign<0)
     if !laid {return}
     card.layout=layout
     return card,c.layouts[card.layout].valid
@@ -486,17 +501,17 @@ barycentric :: proc "contextless" (t:[3]geom.Vec2,p:geom.Vec2) -> (w:[3]f32) {
     return
 }
 
-// The layout of a card on a shape, made once for cards that lie alike.
-// False without memory.
+// The layout of a card on a shape, as a leaf or as a cluster, made once for
+// cards that lie alike. False without memory.
 @(private="file")
-cutout_layout :: proc(c:^Cutout,ladder:int,corners:[][3]geom.Vec2,facets:[]u32,flip:bool) -> (at:int,ok:bool) {
-    key:=base.hash_combine(u64(ladder),base.hash64(mem.slice_to_bytes(corners)))
+cutout_layout :: proc(c:^Cutout,ladder:int,leaf:bool,corners:[][3]geom.Vec2,facets:[]u32,flip:bool) -> (at:int,ok:bool) {
+    key:=base.hash_combine(u64(ladder)<<1|u64(leaf),base.hash64(mem.slice_to_bytes(corners)))
     key=base.hash_combine(key,base.hash64(mem.slice_to_bytes(facets)))
     if known,found:=c.layout_keys[key];found {
         l:=c.layouts[known]
-        if slice.equal(l.corners,corners) && slice.equal(l.facets,facets) {return known,true}
+        if l.leaf==leaf && slice.equal(l.corners,corners) && slice.equal(l.facets,facets) {return known,true}
     }
-    layout:=Cutout_Layout{shape=ladder,corners=corners,facets=facets,flip=flip}
+    layout:=Cutout_Layout{shape=ladder,leaf=leaf,corners=corners,facets=facets,flip=flip}
     // The polygon of each facet: the union of its triangles, each added beside those before.
     facet_sets:=make([dynamic]geom.Polygon_Set,context.temp_allocator)
     facet_of:=make([dynamic]u32,context.temp_allocator)
@@ -569,7 +584,7 @@ cutout_layout :: proc(c:^Cutout,ladder:int,corners:[][3]geom.Vec2,facets:[]u32,f
     }
     if layout.valid {
         outlines:=&c.ladders[ladder]
-        if outlines.leaf {
+        if leaf {
             for &rung,k in outlines.rungs {
                 if k>0 && rung.triangles==outlines.rungs[k-1].triangles && rung.area==outlines.rungs[k-1].area && rung.error==outlines.rungs[k-1].error {
                     layout.rungs[k]=layout.rungs[k-1]
