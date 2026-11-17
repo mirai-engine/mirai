@@ -2359,7 +2359,9 @@ highlight_flags :: proc "contextless" (level: u8) -> u32 {return (u32(level) << 
 
 // The most the lists that grow asked for (the lists of the cull and the
 // material points): a list that dropped asked for what it held and what it
-// dropped; one that did not, for no more than the mark it started from. The
+// dropped; one that did not, for no more than the mark it started from; the
+// lists of the raster of the visibility target, for what the rounds of a
+// frame wrote. The
 // host keeps them by scene, so that a scene seen again starts its lists there
 // and drops nothing the first time.
 Capacity_Marks :: struct {
@@ -2422,7 +2424,7 @@ ensure_scene_capacity :: proc(r: ^Renderer) -> bool {
 	start := CULL_START
 	for list in Cull_List {
 		buffer := [Cull_List]^rhi.Buffer{.Chunks = &s.chunk_buffer, .Visible = &s.visible_buffer, .Candidates = &s.cluster_candidate_buffer, .Shadow_Chunks = &s.shadow_chunks, .Shadow_Entries = &s.shadow_entries, .Raster_Vertices = &s.raster_vertices, .Raster_Triangles = &s.raster_indices}[list]
-		wanted := max(start[list], s.cull_wanted[list])
+		wanted := s.cull_wanted[list]
 		if buffer^ != 0 && wanted <= s.cull_capacity[list] {continue}
 		capacity := max(wanted + wanted / 2, start[list], s.cull_capacity[list])
 		if buffer^ != 0 {rhi.buffer_destroy(d, buffer^)}

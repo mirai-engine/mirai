@@ -34,27 +34,21 @@ or interleave its own passes.
    - An instance with all its blend materials is not drawn here; one with blend triangles that
      passes the tests (in any phase) turns on the glass passes with their dispatch sizes.
 3. **visibility and resolve**
-   - Before the raster of each phase, three compute passes list what it draws of its clusters
-     (`raster_lists.slang`). `raster_vertices.comp`, a group a cluster: each vertex is placed
-     once, by the function the resolve places it with; a triangle is kept unless the raster
-     would give it no pixel on any device (past a side of the view, no pixel center in its box,
-     seen from behind where the material is not two-sided), with the margin of the grid the
-     device places a corner on (`Device_Info.subpixel_bits`); the vertices the kept triangles
-     use are written. `raster_starts.comp` gives the triangles of each bin their range, those
-     of a tested bin by depth bucket so that it still draws nearest first.
-     `raster_triangles.comp` writes there three indices a triangle and the word the visibility
-     target names it by. A cluster whose vertices or triangles pass their lists
-     (`Cull_List.Raster_Vertices`, `Raster_Triangles`) is left out whole and counted.
-   - Each phase rasters those triangles into the visibility target (`visibility.slang`: the
+   - Before the raster of each phase, a round of compute passes lists what it draws
+     (`raster_lists.slang`): each vertex of a cluster placed once, by the function the resolve
+     places it with, and the triangles of it the raster may give a pixel: not those past a side
+     of the view, with no pixel center in their box, or seen from behind where the material is
+     not two-sided, by the margin of the grid of the device (`Device_Info.subpixel_bits`).
+   - Those lists (`Cull_List.Raster_Vertices`, `Raster_Triangles`) hold a round, not a frame: a
+     cluster that finds no room is listed and drawn in the round after, up to `RASTER_ROUNDS`
+     in a view, and the lists then ask for what the frame wrote, to hold it in one round.
+   - Each round rasters its triangles into the visibility target (`visibility.slang`: the
      entry of the visible list and the triangle, one word a pixel) with the hardware depth: one
-     indexed indirect draw per raster bin (`vis_raster.vert`), a vertex read where the compute
-     wrote it, and the fragment reads the word of its primitive. The back faces of a material
-     that is not two-sided are left out (an instance that mirrors its mesh turns its winding
-     back). The untested bins write the word alone, without discard, so hidden fragments are
-     rejected before they run; the tested ones decide a pixel by the fade and the alpha alone
-     (that of a program from `surface_coverage.slang`), with what the alpha reads of the
-     vertex, and without texture feedback. Blend: not drawn here. The same on Vulkan and Metal,
-     without mesh shaders or 64-bit atomics.
+     indexed indirect draw per raster bin, whose fragment reads the word of its primitive. The
+     untested bins write it alone, without discard, so hidden fragments are rejected before
+     they run; the tested ones, drawn nearest first, decide a pixel by the fade and the alpha
+     alone (that of a program from `surface_coverage.slang`), without texture feedback. Blend:
+     not drawn here. The same on Vulkan and Metal, without mesh shaders or 64-bit atomics.
    - After both phases, `vis_classify.frag` gives each pixel the depth of its Surface program
      (0 for the rows) from the visible list, in a 16-bit target, and the resolve of the rows draws a
      triangle over the view, and that of each program the cull saw the rectangle its visible

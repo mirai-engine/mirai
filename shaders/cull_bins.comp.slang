@@ -5,8 +5,8 @@
 // draws nearest first: its clusters go to the range of their depth bucket,
 // which each group finds from the counts of the buckets alone. Each entry
 // takes what its cluster gives every vertex and pixel of it
-// (Visible_Cluster), and the passes that list its triangles for the raster
-// (raster_lists.slang) their groups and its bin and depth bucket.
+// (Visible_Cluster), and the next round of the raster (raster_lists.slang)
+// takes the clusters of the phase, each with its bin and depth bucket.
 #include "visibility.slang"
 #include "cut.slang"
 #include "raster_lists.slang"
@@ -68,9 +68,9 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 lane : SV_GroupThreadID
     }
     GroupMemoryBarrierWithGroupSync();
 
-    if (i == 0u) {
-        cull_state[CULL_RASTER_DISPATCH + 3u * phase] = min(count, CULL_DISPATCH_X);
-        cull_state[CULL_RASTER_DISPATCH + 3u * phase + 1u] = (count + CULL_DISPATCH_X - 1u) / CULL_DISPATCH_X;
+    if (i == 0u && count != 0u) {
+        InterlockedMin(cull_state[CULL_RASTER_PENDING], base);
+        InterlockedMax(cull_state[CULL_RASTER_PENDING + 1u], base + count);
     }
     bool valid = i < count;
     uint4 entry = valid ? listed[base + i] : uint4(0u);
@@ -108,4 +108,5 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 lane : SV_GroupThreadID
     v.along = cluster_along(view_detail(), inst, instance_scale(inst), mesh, c, frame.cut.x);
     visible[place] = v;
     raster_entries[place * RASTER_ENTRY_WORDS + RASTER_ENTRY_BIN] = entry.z;
+    raster_entries[place * RASTER_ENTRY_WORDS + RASTER_ENTRY_ROUND] = 0u;
 }
