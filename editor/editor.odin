@@ -6,6 +6,7 @@ import "core:os"
 import "core:path/filepath"
 import "core:strconv"
 import "core:strings"
+import "core:time"
 import "mirai:asset"
 import "mirai:cook/author"
 import "mirai:core"
@@ -194,6 +195,8 @@ Session :: struct {
     open_path:[1024]u8,open_length:int,
     open_confirmed:bool, // the scene of open_path replaces the open one: the question was answered
     open_shown:bool,     // a frame drew the tab of open_path loading: the open runs at the end of the next
+    start_documents:string, // the tabs a restart left, read at the end of the first frame (start_deferred)
+    start_select:string,    // --select, once the scene of the start is open
     new_prefab:bool,     // what New makes: a prefab, or a scene
     new_path:[DOCUMENT_PATH_BYTES]u8, // the file New was given
     new_length:int,
@@ -385,6 +388,7 @@ run :: proc(info:^core.World_Info,args:[]string,frame:proc(s:^Session) -> bool) 
 // the exit code, when the editor cannot start. Whoever drives the frames
 // (run, a test, a host that steps it) calls advance and then close.
 open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
+    started:=time.tick_now()
     options,understood:=options_read(args)
     if !understood {
         fmt.eprintln(USAGE_TEXT)
@@ -467,9 +471,17 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
     if options.view!="" {view_parse(&s.viewport.orbit,options.view)}
     scene:=options.scene
     if scene=="" && options.documents=="" && has_project {scene=project.start_scene(root,context.temp_allocator)}
+    host.load_startup(app,time.duration_nanoseconds(time.tick_since(started)))
+    // The window of a person shows from the first frame, which draws the scene
+    // loading: what the start opens is read at the end of that frame.
+    deferred:=start_deferred(options)
     switch {
+    case options.documents!="" && deferred:
+        s.start_documents=strings.clone(options.documents)
     case options.documents!="":
         if why:=documents_restore(s,options.documents);why!="" {log.errorf("The document tabs could not all be opened again: %s",why)}
+    case scene!="" && deferred:
+        file_open_path(s,scene)
     case scene!="":
         if error:=scene_open(s,scene);error!=.None {
             fmt.eprintfln("mirai: could not open the scene %s: %s",scene,document_error_text(error))
@@ -479,7 +491,9 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
             }
         }
     }
-    if options.select!="" {select_ids(s,options.select)}
+    if options.select!="" {
+        if deferred {s.start_select=strings.clone(options.select)} else {select_ids(s,options.select)}
+    }
     // A headless editor is driven through its API: one that cannot open it ends.
     if !services_open(s,options) && options.headless {
         close(s)
@@ -487,6 +501,39 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
     }
     s.ready_ns=platform.clock_ns()
     return s,EDITOR_OK
+}
+
+// Whether what the start opens waits for the first frame: a window a person
+// looks at draws before the scene is read. Without a window, hidden or for a
+// count of frames, whoever drives it finds the scene open once open returns.
+start_deferred :: proc(options:Options) -> bool {
+    return !options.headless && !options.hidden && options.frames==0
+}
+
+// What the start left for after the first frame: the tabs of a restart, and
+// the selection of --select once the scene is open.
+@(private)
+start_run :: proc(s:^Session) {
+    if s.start_documents!="" {
+        if why:=documents_restore(s,s.start_documents);why!="" {log.errorf("The document tabs could not all be opened again: %s",why)}
+        delete(s.start_documents)
+        s.start_documents=""
+    }
+    if s.start_select!="" && .Open not_in s.requests {
+        select_ids(s,s.start_select)
+        delete(s.start_select)
+        s.start_select=""
+    }
+}
+
+// Whether the next frame is a loading screen for what arrives: the scene in
+// front loads and no one needs a steady frame (no run on screen, nothing held
+// or scrolled since the last frame). Then what arrives takes the frames, as a
+// player's first scene does, instead of the small part that keeps a frame
+// someone works in smooth: until it arrives there is nothing to work on.
+loading_screen :: proc(s:^Session,input:ui.Input) -> bool {
+    if playing(s) || input.down!={} || input.keys_down!={} || input.wheel!={} {return false}
+    return document_loading_tab(s)>=0
 }
 
 // One frame: the game loop of a Play, the loop of the editor over the World
@@ -498,6 +545,7 @@ advance :: proc(s:^Session) -> bool {
     // Behind other windows, out of Play and without an agent driving it, the editor runs slow.
     background:=u32(0) if playing(s) || api_active(s) else EDITOR_BACKGROUND_FPS
     if app.platform.background!=background {platform.set_background(app.platform,background)}
+    app.loading_screen=loading_screen(s,app.ui_input)
     if !host.app_frame_begin(app) {
         app.quit=false
         quit_request(s)
@@ -760,6 +808,7 @@ requests_run :: proc(s:^Session) {
     if .Quit_Check in requests {documents_quit(s)}
     if .Restart in requests {restart(s,{"--built"})}
     if .Quit in requests {s.quit=true}
+    start_run(s)
 }
 
 // Ends what the editor shows in place of the document: the watch of another
@@ -778,11 +827,11 @@ open_run :: proc(s:^Session) {
     scene:=document_scene_tab(s)
     // Another scene takes the place of the one open: who would lose what
     // they do is asked about first.
-    replaces:=scene>=0 && !path_is_prefab(s,path) && !document_holds_file(s,path)
+    replaces:=open_replaces(s)
     if replaces && !s.open_confirmed {
         asset_document_activate(s,-1)
         document_activate(s,scene)
-        if scene_switch_interrupts(s) || !collab_can_open(s) {
+        if open_asks(s) {
             confirm_open(s,.Open_Scene)
             return
         }
@@ -799,6 +848,19 @@ open_run :: proc(s:^Session) {
     runs_stop(s)
     asset_document_activate(s,-1)
     if error:=document_open_tab(s,path);error!=.None {notify(s,fmt.tprintf("%s: %s",filepath.base(path),document_error_text(error)))}
+}
+
+// The scene of open_path takes the place of the scene open.
+@(private)
+open_replaces :: proc(s:^Session) -> bool {
+    path:=string(s.open_path[:s.open_length])
+    return document_scene_tab(s)>=0 && !path_is_prefab(s,path) && !document_holds_file(s,path)
+}
+
+// The open of open_path asks first: others would lose what they do.
+@(private)
+open_asks :: proc(s:^Session) -> bool {
+    return open_replaces(s) && !s.open_confirmed && (scene_switch_interrupts(s) || !collab_can_open(s))
 }
 
 // A run of an owner on a copy of the edited World, with its own clock. The
@@ -1169,10 +1231,11 @@ session_destroy :: proc(s:^Session) {
     s.recipes=nil
     console_destroy(s.console)
     settings_engine_free(s)
-    delete(s.project_root);delete(s.engine_root);delete(s.program);delete(s.engine_stamp);delete(s.library_stamp);delete(s.assets_root);delete(s.capture);delete(s.gpu_lost_before)
+    delete(s.project_root);delete(s.engine_root);delete(s.program);delete(s.engine_stamp);delete(s.library_stamp);delete(s.assets_root);delete(s.capture);delete(s.gpu_lost_before);delete(s.start_documents);delete(s.start_select)
     for arg in s.args {delete(arg)}
     delete(s.args)
     s.project_root,s.engine_root,s.program,s.assets_root,s.capture,s.gpu_lost_before,s.args="","","","","","",{}
+    s.start_documents,s.start_select="",""
 }
 
 @(private)

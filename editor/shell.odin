@@ -1647,14 +1647,89 @@ window_outline :: proc(s:^Session) {
     if ui.box(ctx,{width=ui.fixed(ctx.size.x),height=ui.fixed(ctx.size.y),stroke=WINDOW_RULE,stroke_width=1,float={to=.Surface,layer=ui.LAYER_MODAL+1}}) {}
 }
 
+// The notices at the bottom of the window: the toast, over the line of the
+// scene that loads.
 @(private)
 toast_build :: proc(s:^Session) {
-    if s.toast_seconds<=0 || s.toast_length==0 {return}
     g:=s.gui
     ctx:=g.ctx
     offset:=-2*ui.metric(ctx,"margin")
     if g.layout.bottom_open {offset-=g.rects.bottom.h+ui.metric(ctx,"margin")}
+    buffer:[SCENE_LOAD_TEXT]u8
+    if name,waits,loading:=scene_load_status(s,buffer[:]);loading {
+        id:=shell_id(g,"scene_load")
+        if ui.panel(ctx,id,{width=ui.FIT,height=ui.FIT,padding={12,8,12,8},anchor=.Bottom_Center,pivot=.Bottom_Center,offset={0,offset},layer=ui.LAYER_TOAST,popup=true}) {
+            if ui.box(ctx,{width=ui.FIT,height=ui.FIT,gap=8,align_y=.Center}) {
+                pulse_dot(ctx,ui.tone(ctx,"accent"),true)
+                ui.label(ctx,name,ui.metric(ctx,"font"),ui.tone(ctx,"text"))
+                if waits!="" {ui.label(ctx,waits,ui.metric(ctx,"font"),ui.tone(ctx,"text_muted"))}
+            }
+        }
+        if rect,found:=ui.widget_rect(ctx,id);found {offset-=rect.h+ui.metric(ctx,"margin")}
+    }
+    if s.toast_seconds<=0 || s.toast_length==0 {return}
     if ui.panel(ctx,shell_id(g,"toast"),{width=ui.FIT,height=ui.FIT,padding={12,8,12,8},anchor=.Bottom_Center,pivot=.Bottom_Center,offset={0,offset},layer=ui.LAYER_TOAST,popup=true}) {
         ui.label(ctx,string(s.toast[:s.toast_length]),ui.metric(ctx,"font"),ui.tone(ctx,"text"))
     }
+}
+
+SCENE_LOAD_TEXT :: 192
+
+// The scene that loads, from the frame its open was asked for until a frame
+// drew it resident, as a person reads it: its name ("Loading DemoMap") and
+// what it waits for now, written into buffer. loading: false when none loads.
+scene_load_status :: proc(s:^Session,buffer:[]u8) -> (name,waits:string,loading:bool) {
+    if document_loading_tab(s)<0 {return}
+    title:string
+    reading:=true
+    switch {
+    case s.start_documents!="":
+    case .Open in s.requests: title=scene_title(string(s.open_path[:s.open_length]))
+    case:
+        r:=&s.app.load_profile.records[.Scene]
+        title=scene_title(string(r.name[:r.name_length]))
+        reading=!r.ready
+    }
+    b:=strings.builder_from_bytes(buffer)
+    strings.write_string(&b,"Loading")
+    if title!="" {
+        strings.write_byte(&b,' ')
+        strings.write_string(&b,title)
+    }
+    name=strings.to_string(b)
+    rest:=buffer[len(name):]
+    if reading {return name,scene_load_waits(rest,{},{},true),true}
+    return name,scene_load_waits(rest,s.app.load_profile.records[.Scene].busy,view_pending(s),false),true
+}
+
+// What a scene load waits for, as a person reads it, written into buffer:
+// "reading the scene" before it is the document, then what arrives or
+// compiles; "" when it waits for nothing it names.
+scene_load_waits :: proc(buffer:[]u8,busy:host.Load_Busy_Set,pending:host.App_Pending,reading:bool) -> string {
+    b:=strings.builder_from_bytes(buffer)
+    if reading {
+        strings.write_string(&b,"reading the scene")
+        return strings.to_string(b)
+    }
+    first:=true
+    part :: proc(b:^strings.Builder,first:^bool,text:string,count:=-1) {
+        if !first^ {strings.write_string(b,", ")}
+        first^=false
+        if count>=0 {
+            strings.write_int(b,count)
+            strings.write_byte(b,' ')
+        }
+        strings.write_string(b,text)
+    }
+    if .Uploads in busy && pending.assets>0 {part(&b,&first,pending.assets==1?"mesh or texture arriving":"meshes and textures arriving",pending.assets)}
+    if .Pipelines in busy && pending.programs+pending.pipelines>0 {
+        n:=pending.programs+pending.pipelines
+        part(&b,&first,n==1?"shader compiling":"shaders compiling",n)
+    }
+    if .Assets in busy && first {part(&b,&first,"assets loading")}
+    if .Animations in busy {part(&b,&first,"animations compressing")}
+    if .Sections in busy {part(&b,&first,"sections loading")}
+    if .Physics in busy {part(&b,&first,"bodies settling")}
+    if .Navigation in busy {part(&b,&first,"navigation building")}
+    return strings.to_string(b)
 }
