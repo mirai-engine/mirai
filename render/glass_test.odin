@@ -281,7 +281,7 @@ glass_solid_filters_once_absorbs_and_shades_colored_shadows :: proc(t: ^testing.
 	sun := Sun_Desc{direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true, indirect = 1, scattering = 1}
 	under := glass_pixel(r, side, {0, 0, 0.5})
 	for provider in ([]Trace_Mode{.Software, .Hardware}) {
-		if provider == .Hardware && !r.hardware_rt_verified || provider == .Software && !SOFTWARE_TRACER {continue}
+		if !fixture_traces(r, provider) {continue}
 		settings := r.settings
 		settings.trace_mode = provider
 		settings.colored_shadows = false
@@ -341,7 +341,7 @@ glass_tints_the_indirect_light_with_its_mean :: proc(t: ^testing.T) {
 	camera := Camera{position = {0, 2.5, 2.5}, forward = {0, -2.5, -2.5}, up = {0, 1, 0}, fov_y = 70, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	floor := glass_pixel(r, camera, {0, 0.001, 0})
 	for provider in ([]Trace_Mode{.Software, .Hardware}) {
-		if provider == .Hardware && !r.hardware_rt_verified || provider == .Software && !SOFTWARE_TRACER {continue}
+		if !fixture_traces(r, provider) {continue}
 		for colored in ([]bool{false, true}) {
 			settings := r.settings
 			settings.trace_mode = provider
@@ -384,7 +384,7 @@ glass_ball_turns_the_scene_behind_it_upside_down :: proc(t: ^testing.T) {
 	lens := Instance_Desc{object_id = 3, mesh = ball, transform = placed({0, 1, 0}, {2, 2, 2}), material = 1, tint = {1, 1, 1}}
 	camera := Camera{position = {0, 1, 6}, forward = {0, 0, -6}, up = {0, 1, 0}, fov_y = 40, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	for provider in ([]Trace_Mode{.Software, .Hardware}) {
-		if provider == .Hardware && !r.hardware_rt_verified || provider == .Software && !SOFTWARE_TRACER {continue}
+		if !fixture_traces(r, provider) {continue}
 		settings := r.settings
 		settings.trace_mode = provider
 		testing.expect(t, renderer_apply_settings(r, settings))
@@ -451,7 +451,7 @@ glass_reflects_what_stands_before_it :: proc(t: ^testing.T) {
 	// The image of the lamp in the pane lies on the line from the eye to the lamp mirrored behind it.
 	image := Vec3{0.5, 1, 0}
 	for provider in ([]Trace_Mode{.Software, .Hardware}) {
-		if provider == .Hardware && !r.hardware_rt_verified || provider == .Software && !SOFTWARE_TRACER {continue}
+		if !fixture_traces(r, provider) {continue}
 		applied := r.settings
 		applied.trace_mode = provider
 		applied.reflections = .Detailed
@@ -514,7 +514,7 @@ glass_and_gloss_show_in_sharp_reflections :: proc(t: ^testing.T) {
 	light := Light_Desc{position = {4, 2, -8}, color = {1, 1, 1}, intensity = 40 * math.PI, range = 12, indirect = 1, scattering = 1}
 	camera := Camera{position = {0, 2, 5}, forward = {0, -2, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	for provider in ([]Trace_Mode{.Software, .Hardware}) {
-		if provider == .Hardware && !r.hardware_rt_verified || provider == .Software && !SOFTWARE_TRACER {continue}
+		if !fixture_traces(r, provider) {continue}
 		applied := r.settings
 		applied.trace_mode = provider
 		applied.reflections = .Detailed
@@ -680,7 +680,7 @@ glass_seen_from_inside_bends_out_reflects_past_the_critical_angle_absorbs_and_sc
 		return {position = from, forward = {math.sin(angle), math.cos(angle), 0}, up = {0, 0, 1}, fov_y = 20, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	}
 	for provider in ([]Trace_Mode{.Software, .Hardware}) {
-		if provider == .Hardware && !r.hardware_rt_verified || provider == .Software && !SOFTWARE_TRACER {continue}
+		if !fixture_traces(r, provider) {continue}
 		settings := r.settings
 		settings.trace_mode = provider
 		testing.expect(t, renderer_apply_settings(r, settings))
