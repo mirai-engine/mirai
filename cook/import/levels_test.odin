@@ -817,7 +817,8 @@ cards_are_cut_alike_whatever_their_material_mesh_siblings_or_period :: proc(t:^t
         if c.program {
             leaves:=&r.materials[1]
             asset.text_set(leaves.info.program[:],"Leaf")
-            leaves.mask=Imported_Mask{image=0,mapping=asset.MATERIAL_DEFAULTS.maps.base_color,cutoff=leaves.info.alpha_cutoff}
+            // A program and a mask map of its own: its cards are cut to that mask.
+            leaves.images[.Mask],leaves.images[.Base_Color]=leaves.images[.Base_Color],-1
         }
         if c.skinned {
             // The even leaves on joint 0; the odd ones from joint 0 at their foot to joint 1 at their tip.

@@ -10,9 +10,9 @@ LAYERS_MAX :: 32
 // The material of plugins/terrain/assets/terrain_layers.mat, whose Surface
 // program (Terrain_Layers) blends the layers of a source.
 LAYERS_MATERIAL :: base.Asset_Id{0x7465727261696e5f,0x6c61796572730001}
-// The same program, its alpha the holes of the cells
-// (terrain_layers_holed.mat): what a piece shows whose triangles span cells
-// that are holes and cells that are not.
+// The same program, masked by the holes of the cells (terrain_layers_holed.mat,
+// whose mask map each piece gives, Piece_Maps.mask): what a piece shows whose
+// triangles span cells that are holes and cells that are not.
 LAYERS_HOLED_MATERIAL :: base.Asset_Id{0x7465727261696e5f,0x6c61796572730002}
 
 // A material painted over a terrain. The weights of the layers of each

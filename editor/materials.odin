@@ -30,7 +30,7 @@ MAP_LABELS :: [asset.Material_Map_Kind]string{
     .Occlusion="Occlusion map",.Specular="Specular map",.Specular_Color="Specular color map",.Coat="Coat map",
     .Coat_Roughness="Coat roughness map",.Coat_Normal="Coat normal map",.Fuzz_Color="Fuzz color map",
     .Fuzz_Roughness="Fuzz roughness map",.Anisotropy="Anisotropy map",
-    .Diffuse_Transmission="Transmission map",.Diffuse_Transmission_Color="Transmission color map",
+    .Diffuse_Transmission="Transmission map",.Diffuse_Transmission_Color="Transmission color map",.Mask="Mask map",
 }
 TEXTURE_PARAMETER :: 100 // the index of the row of a texture of a program starts here; below it, a map of MAP_LABELS plus one
 OVERLAY_BLEND_NAMES :: [asset.Overlay_Blend]string{.Alpha="Alpha",.Additive="Additive",.Multiply="Multiply"}
@@ -541,15 +541,17 @@ material_parameters :: proc(c:^Inspect,a:^Appearance) {
     values:=&a.values
     // The slots of a model share the color of the entity, shown once over them; one slot shows it in its colors.
     shared:=a.slots>1
-    if a.program!=nil {
-        // A program keeps its colors: the entity tints them and adds its emission.
-        if !shared {tint_rows(s,a,"Tint","Emission")}
-        program_rows(c,a)
-        return
-    }
     info:^asset.Material_Info
     if s.app.assets!=nil {
         if material:=host.assets_material(s.app.assets,a.material);material!=nil && !material.failed {info=&material.info}
+    }
+    if a.program!=nil {
+        // A program keeps its colors: the entity tints them and adds its emission.
+        if !shared {tint_rows(s,a,"Tint","Emission")}
+        // A mask map cuts a masked material, never its program.
+        if values.alpha_mode==.Mask {map_row(c,a,info,.Mask)}
+        program_rows(c,a)
+        return
     }
     color,emission:=values.base_color,values.emission
     if !shared {color,emission=color*a.override.color.rgb,emission+a.override.emission}
@@ -560,6 +562,7 @@ material_parameters :: proc(c:^Inspect,a:^Appearance) {
     emission_names:=EMISSION_MODE_NAMES
     choice_row(s,a,"Emission in",.Emission_Mode,slice.enumerated_array(&emission_names),int(values.emission_mode))
     if values.alpha_mode!=.Opaque {override_number_row(s,a,"Opacity",.Opacity,values.opacity)}
+    if values.alpha_mode==.Mask {map_row(c,a,info,.Mask)}
     // An unlit material shows its emission alone: the values of light do not apply.
     choice_row(s,a,"Unlit",.Unlit,{"Off","On"},int(values.unlit))
     if values.unlit {

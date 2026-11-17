@@ -395,6 +395,7 @@ MATERIAL_MAP_NAMES :: [asset.Material_Map_Kind]string{
     .Coat_Roughness="maps.coat_roughness",.Coat_Normal="maps.coat_normal",.Fuzz_Color="maps.fuzz_color",
     .Fuzz_Roughness="maps.fuzz_roughness",.Anisotropy="maps.anisotropy",
     .Diffuse_Transmission="maps.diffuse_transmission",.Diffuse_Transmission_Color="maps.diffuse_transmission_color",
+    .Mask="maps.mask",
 }
 
 // Toward the sun of the editor's presets, a morning one behind who looks along -Z.
@@ -1581,8 +1582,8 @@ material_values_apply :: proc(a:^host.Assets,values:^gpu.Material_Desc,o:^Materi
         for map_name,kind in maps {
             if base.name_hash(map_name)!=name {continue}
             asset.material_maps(&values.maps)[kind].texture=o.textures[i]
-            // A program reads the normal map alone of the maps, unless it builds on the standard model.
-            if program==nil || kind==.Normal || program.standard {values.textures[kind]=handle}
+            // A program reads the normal map and the mask alone of the maps, unless it builds on the standard model.
+            if program==nil || kind==.Normal || kind==.Mask || program.standard {values.textures[kind]=handle}
             continue each
         }
     }

@@ -1371,7 +1371,7 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
     result.shaders,result.tests,result.programs=shader_count+program_count+extension_count,test_count,len(catalog.programs)
     result.engine=strings.clone(identity,allocator)
     append(&outputs,manifest_path,path_join(g.output,abi.SHADER_CATALOG,allocator=scratch))
-    for name in ([]string{SURFACE_INCLUDE,SURFACE_COVERAGE_INCLUDE,POSTPROCESS_INCLUDE,VFX_INCLUDE,UI_INCLUDE,EXTENSIONS_INCLUDE,HOOKS_INCLUDE,SCHEMA_INCLUDE,CONSTANTS_INCLUDE}) {append(&outputs,path_join(out_include,name,allocator=scratch))}
+    for name in ([]string{SURFACE_INCLUDE,POSTPROCESS_INCLUDE,VFX_INCLUDE,UI_INCLUDE,EXTENSIONS_INCLUDE,HOOKS_INCLUDE,SCHEMA_INCLUDE,CONSTANTS_INCLUDE}) {append(&outputs,path_join(out_include,name,allocator=scratch))}
     for job,at in g.jobs {
         folder:=tests_out if at>=test_first && at<test_first+test_count else g.output
         for name in ([]string{job.result.spv,job.result.msl}) {

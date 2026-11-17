@@ -352,11 +352,12 @@ reflections :: proc(catalog:Catalog,probes:=true) -> (runs:int) {
     return
 }
 
-// A Surface program is in the coverage include when its alpha is not the
-// constant of the default material, whatever it reads it from; its alpha
-// alone, while its include has the whole program.
+// A Surface program has coverage when it sets alpha, whatever it reads it
+// from: not when it keeps the alpha of the default material or of the
+// standard model it builds on. A masked material whose program has it is an
+// error of the material.
 @(test)
-surface_coverage_holds_the_programs_whose_alpha_is_not_the_default :: proc(t:^testing.T) {
+the_probe_of_a_surface_program_says_whether_it_sets_alpha :: proc(t:^testing.T) {
     f:Programs_Fixture
     if !programs_fixture(t,&f) {return}
     Case :: struct {name,body:string,coverage:bool}
@@ -366,23 +367,20 @@ surface_coverage_holds_the_programs_whose_alpha_is_not_the_default :: proc(t:^te
         {"Mapped","s.alpha=mirai_sample_texture(ctx,p.map,ctx.uv0,ctx.lod).a;",true},
         {"Mixed","Mirai_Surface hole=s;hole.alpha=0.0;s=mirai_surface_mix(s,hole,p.tint.y);",true},
         {"Constant","s.alpha=0.25;",true},
-        {"Built","s=mirai_surface_standard(ctx);s.emission+=p.tint;",true}, // the alpha of its material
+        {"Built","s=mirai_surface_standard(ctx);s.emission+=p.tint;",false}, // the alpha of its material
+        {"Rebuilt","s=mirai_surface_standard(ctx);s.alpha*=p.tint.z;",true},
     }
     for c in cases {
         fixture_write(t,f.project,fmt.tprintf("shaders/%s.slang",c.name),fmt.tprintf("//! mirai surface %s\nnamespace %s {{struct Parameters {{float3 tint;uint map;}}; Mirai_Surface evaluate(Mirai_Surface_Context ctx,Parameters p) {{Mirai_Surface s=mirai_surface_default(ctx);%sreturn s;}}}}\n",c.name,c.name,c.body))
     }
     catalog,problem:=programs_of(&f)
     testing.expect_value(t,problem,"")
-    coverage_bytes,_:=os.read_entire_file(path_join(f.output,"include",SURFACE_COVERAGE_INCLUDE,allocator=context.temp_allocator),context.temp_allocator)
-    coverage:=string(coverage_bytes)
     for c in cases {
         program,found:=program_named(catalog,c.name)
         testing.expectf(t,found && program.coverage==c.coverage,"%s: coverage %v",c.name,program.coverage)
-        listed:=strings.contains(coverage,fmt.tprintf("alpha=%s::evaluate(",c.name))
-        testing.expectf(t,listed==c.coverage,"%s is in the coverage include: %v",c.name,listed)
-        testing.expectf(t,program.standard==(c.name=="Built"),"%s: only a program that names the standard model of its material builds on it",c.name)
+        testing.expectf(t,program.standard==(c.name=="Built" || c.name=="Rebuilt"),"%s: only a program that names the standard model of its material builds on it",c.name)
         own,_:=os.read_entire_file(path_join(f.output,"include",SURFACE_FOLDER,c.name,SURFACE_INCLUDE,allocator=context.temp_allocator),context.temp_allocator)
-        testing.expectf(t,strings.contains(string(own),fmt.tprintf("#ifndef MIRAI_PROGRAM_%s",c.name)),"%s: one source for both includes of a stage",c.name)
+        testing.expectf(t,strings.contains(string(own),fmt.tprintf("value=%s::evaluate(",c.name)),"%s: its include evaluates it",c.name)
     }
     stored,_:=os.read_entire_file(path_join(f.output,"catalog.json",allocator=context.temp_allocator),context.temp_allocator)
     testing.expect(t,strings.contains(string(stored),"\"coverage\": true"))
@@ -442,31 +440,6 @@ the_probe_of_a_surface_program_says_its_derivatives_and_what_it_reads :: proc(t:
             testing.expectf(t,found && program.reads==c.reads && program.vertex.reads==c.vertex_reads,"%s reads %v and its vertex %v, not %v and %v",c.name,c.reads,c.vertex_reads,program.reads,program.vertex.reads)
         }
     }
-}
-
-// The stages that trace include a program with coverage for its alpha alone:
-// their fingerprint follows that alpha compiled, not the text of the
-// program, so an edit that keeps the alpha changes only the fingerprint of
-// the stages of the program. Every argument of a texture read is the alpha.
-@(test)
-the_stages_that_trace_follow_the_alpha_of_a_program_and_not_its_text :: proc(t:^testing.T) {
-    f:Programs_Fixture
-    if !programs_fixture(t,&f) {return}
-    prints :: proc(t:^testing.T,f:^Programs_Fixture,body:string) -> (tracing,own:string) {
-        fixture_write(t,f.project,"shaders/holes.slang",fmt.tprintf("//! mirai surface Holes\nnamespace Holes {{struct Parameters {{float3 tint;uint map;}}; Mirai_Surface evaluate(Mirai_Surface_Context ctx,Parameters p) {{Mirai_Surface s=mirai_surface_default(ctx);%sreturn s;}}}}\n",body))
-        _,problem:=programs_of(f)
-        testing.expect_value(t,problem,"")
-        include:=path_join(f.output,"include",allocator=context.temp_allocator)
-        tracing=fingerprint(path_join(include,SURFACE_COVERAGE_INCLUDE,allocator=context.temp_allocator),{include},nil,nil,context.temp_allocator)
-        own=fingerprint(path_join(include,SURFACE_FOLDER,"Holes",SURFACE_INCLUDE,allocator=context.temp_allocator),{include},nil,nil,context.temp_allocator)
-        return
-    }
-    tracing,own:=prints(t,&f,"s.alpha=mirai_sample_texture(ctx,p.map,ctx.uv0,ctx.lod).a;s.base_color=p.tint;")
-    painted,repainted:=prints(t,&f,"s.alpha=mirai_sample_texture(ctx,p.map,ctx.uv0,ctx.lod).a;s.base_color=p.tint*0.5;")
-    testing.expect_value(t,painted,tracing)
-    testing.expect(t,repainted!=own,"another color is another program for its own stages")
-    finer,_:=prints(t,&f,"s.alpha=mirai_sample_texture(ctx,p.map,ctx.uv0,ctx.lod+1.0).a;s.base_color=p.tint*0.5;")
-    testing.expect(t,finer!=tracing,"another level of its texture is another alpha")
 }
 
 @(test)

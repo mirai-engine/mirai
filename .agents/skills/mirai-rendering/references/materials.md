@@ -71,7 +71,8 @@ mode.
   and darkens its base color; the water film lowers the roughness toward its own, also partly over
   what does not drink. The normal reflectance stays: the film is thin. It does not touch what has
   transmission (glass, water) or what is unlit. A program reads it only to add (drops, puddles).
-- In common PBR, mask coverage reads only opacity and base color.
+- The coverage of a masked material reads only its opacity and its mask map, program or not
+  ([alpha](#alpha)).
 - The scene caches the opaque instances that require their own F0/F90; G-buffer and lighting use
   stored reflectance only while some of their boxes is in the frustum of the view or of a nested
   view ([G-buffer](frame-graph.md#passes)), and the target is allocated the first time it is
@@ -291,12 +292,19 @@ A texture of an asset resides with the levels the GPU samples of it
 
 ## Alpha
 
-- **Mask (`mask`).** Alpha = `opacity` times the alpha of the color texture. Below `alpha_cutoff`
-  the fragment is discarded and the rays go through the triangle at that point: shadows, bounces
-  and reflections see the same holes. Only the triangles of the slots an instance shows with a mask
-  or blend material pay for that read (`Gpu_Instance.tested`), in the traversal and in the maps of
-  the shadows. The native BLAS of a cut holds the triangles of the slots the mesh's own rows test
-  as a geometry apart; an instance that tests other slots makes every triangle a candidate.
+- **Mask (`mask`).** Its coverage is `opacity` times the alpha of its mask map (`maps.mask`, a
+  texture, its uv transform and its uv set), or of its base color map when it has no mask of its
+  own; the row holds the one it reads (`gpu_material`). Below `alpha_cutoff` the fragment is
+  discarded and the rays go through the triangle at that point: the visibility target, the maps of
+  the shadows, the outlines, bounces and reflections see the same holes. No program decides it: a
+  material with a Surface program and a mask is cut by its mask map, which the assets load though
+  the program reads no map, and a program that sets alpha on a masked material is an error of the
+  material (`Coverage`, with what to do in `engine.diagnostics`). An instance gives the texture of
+  its mask by `maps.mask` in its `Material_Values`, as the terrain gives its holes. Only the
+  triangles of the slots an instance shows with a mask or blend material pay for that read
+  (`Gpu_Instance.tested`), in the traversal and in the maps of the shadows. The native BLAS of a cut
+  holds the triangles of the slots the mesh's own rows test as a geometry apart; an instance that
+  tests other slots makes every triangle a candidate.
 - The mips of a masked texture keep the proportion of texels that pass the threshold.
 - **Blend (`blend`).** It is drawn over the lit scene. Without transmission it is a layer that
   covers `alpha` of what is behind it: the transparency attenuates its diffuse part, not its
@@ -356,12 +364,10 @@ stages.
   use points.
 - The buffer grows to what a frame asked for (`POINTS_MAX` at most). A point or a head that does
   not fit takes the row of its material at that hit.
-- **Coverage in the traversal.** The alpha of a program with coverage decides whether a ray
-  continues, so it is evaluated inside the traversal, like an any-hit, from
-  `surface_coverage.slang`; nothing is traced again. The stages that trace depend on that compiled
-  alpha, not on the rest of the program ([programs and stages](shaders.md#programs-and-stages)).
-  Its samples record no texture feedback (`texture_feedback_quiet`): a write of each would keep
-  the whole program, colors and normals too, in every traversal of every stage that traces.
+- **Coverage in the traversal.** Whether a ray goes on at a masked surface is its mask map, read
+  inside the traversal like an any-hit (`hit_covers`, `material_mask`); no program runs there,
+  and the stages that trace depend on none
+  ([programs and stages](shaders.md#programs-and-stages)).
 - **Deferred filters.** A ray that crosses glass with a program does not wait for its filter: it
   takes the [medium filter](#medium-filter) of the instance and adds the crossing as a filter
   point, chained to the others of its owner (a pixel, a probe ray). The program's stage writes in

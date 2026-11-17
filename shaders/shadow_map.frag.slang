@@ -4,8 +4,8 @@
 //! variant glass MIRAI_SHADOW_TESTED=1 MIRAI_SHADOW_GLASS=1
 //! variant copy MIRAI_SHADOW_COPY=1
 //! variant blank MIRAI_SHADOW_BLANK=1
-// The depth alone of shadow_map.vert. tested: of a masked or blended
-// material, only where it is there, as a shadow ray asks it (hit_covers).
+// The depth alone of shadow_map.vert. tested: of a masked material, only
+// where its mask map covers, as a shadow ray reads it; a blended one none.
 // tint: what each face of a blended material in front of the depth of the
 // atlas lets through of the light, multiplied into the tint of the maps, with
 // the alpha of a face whose program gives its color 0 (shadow_tint_programmed);
@@ -43,17 +43,12 @@ void main([[vk::location(0)]] nointerpolation uint2 place : PLACE, [[vk::locatio
     if (!shadow_blended(place, programmed)) discard;
 }
 #else
-// A masked material without a program samples its alpha with the derivatives
-// of its uvs, a texel of the map wide as the footprint hit_covers takes; the
-// others ask hit_covers, which reads the triangle.
+// The mask map, program or not, sampled with the derivatives of its uv: a
+// texel of the map wide, as the footprint of a shadow ray.
 [shader("fragment")]
-void main([[vk::location(0)]] nointerpolation uint2 place : PLACE, [[vk::location(1)]] float2 bary : BARY, [[vk::location(2)]] nointerpolation float reach : REACH, [[vk::location(3)]] float3 toward : TOWARD, [[vk::location(4)]] float2 uv : UV0, [[vk::location(5)]] float2 uv1 : UV1, [[vk::location(6)]] nointerpolation uint2 material : MATERIAL) {
+void main([[vk::location(4)]] float2 uv : UV0, [[vk::location(6)]] nointerpolation uint2 material : MATERIAL) {
     Material m = material_row(material.x, material.y);
-    if (m.program_id == 0u && m.alpha_mode == ALPHA_MASK) {
-        if (!material_covers(m, material_base_color(m, uv, uv1, float2(0.0), float3(1.0), false).a)) discard;
-        return;
-    }
-    if (!hit_covers(place.x, place.y, bary, reach, BLEND_PASSES)) discard;
+    if (m.alpha_mode == ALPHA_BLEND || m.alpha_mode == ALPHA_MASK && !material_covers(m, material_mask(m, uv, uv, float2(0.0), false))) discard;
 }
 #endif
 #elif defined(MIRAI_SHADOW_BLANK)

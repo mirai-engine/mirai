@@ -101,6 +101,13 @@ material_map :: #force_inline proc(info:^asset.Material_Info,slot:asset.Material
     return &asset.material_maps(&info.maps)[slot]
 }
 
+// The image a material is masked by and how its map reads it: that of its
+// mask map, or of its base color map without one; -1 for none.
+material_mask_image :: proc "contextless" (m:^Imported_Material) -> (image:int,mapping:asset.Material_Map) {
+    if m.images[.Mask]>=0 || m.info.maps.mask.texture!={} {return m.images[.Mask],m.info.maps.mask}
+    return m.images[.Base_Color],m.info.maps.base_color
+}
+
 Imported_Image :: struct {
     name:string,         // file name without extension; for an embedded image, its name in the model
     path:string,         // absolute path of the file; "" when the image is inside the model
@@ -132,17 +139,6 @@ Imported_Material :: struct {
     // the texture of one of kind Texture is the image parameter_images names.
     parameters:[]asset.Material_Parameter,
     parameter_images:[]int,         // by parameter: row of the model's images, -1 for none
-    // Of a masked material with a program, what its mask keeps, which its
-    // cards are cut to (cutout.odin); without, they keep their mask.
-    mask:Maybe(Imported_Mask),
-}
-
-// The mask of a material whose program decides its alpha: the texels of an
-// image whose alpha reaches cutoff, read through mapping (its texture unused).
-Imported_Mask :: struct {
-    image:int, // row of the model's images
-    mapping:asset.Material_Map,
-    cutoff:f32,
 }
 
 Imported_Slot :: struct {

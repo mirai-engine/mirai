@@ -162,8 +162,8 @@ model_finish :: proc(r:^Reader,model:^Imported_Model) -> bool {
         model_cutouts(r)
     }
     for &material in r.materials {
-        // Masked materials ask their base color image to keep its coverage.
-        image:=material.images[.Base_Color]
+        // Masked materials ask the image of their mask to keep its coverage.
+        image,_:=material_mask_image(&material)
         if image>=0 && material.info.alpha_mode==.Mask && r.images[image].alpha_cutoff==0 {r.images[image].alpha_cutoff=material.info.alpha_cutoff}
         if !asset.material_check({info=&material.info}) {return fail(r,.Malformed,"material %s has a value outside its range",material.name)}
     }
