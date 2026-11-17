@@ -307,9 +307,10 @@ Requests (`Particle_Requests`, a `core.Queue` of the world; `particles_tick` tak
 
 To the GPU:
 
-- `particles_sync` (`render`, both loops, after `render_sync`) builds each frame the world's
-  emitters (`Emitter_Desc`: the resolved `Particle_Info` and what the frame resolves of it) with the
-  births of its clock that it did not start and its age, and the seconds that the world advanced:
+- `particles_sync` (`render`, both loops, after `render_sync`) gives the pool the world's emitters
+  that changed ([pools](#pools-and-emitters); `Emitter_Desc`: the resolved `Particle_Info` and what
+  the frame resolves of it) with the births of its clock that it did not start and its age, and the
+  seconds that the world advanced:
   those of its ticks while playing (a paused Play does not move its particles) and the frame in the
   editor. A rollback that repeats ticks does not start again what was started; one that started
   fewer starts what comes after.
@@ -338,24 +339,40 @@ To the GPU:
 - One pool per world: its buffers (`pass_buffer`) belong to the renderer, under the world and the
   plugin's name; a world that is not drawn keeps its particles still, and `particles_release`
   (`release` phase) releases its own (`buffer_release`).
-- `pool_emitters` receives each frame a world's whole list:
-  - the pool's tables are built the first time the world gives emitters, and again, without its
-    particles, if it asks for another capacity;
+- A frame does only what changed. `particles_sync` tells the pool (`pool_put`) only of the
+  emitters whose emitter, values, place, hiding, bindings or channel changed (`core.changes` of
+  those tables), whose clock started births, restarted or paused since, or whose effect reads
+  otherwise in the assets; an emitter that did not change costs nothing but the look at its clock.
+  The clocks are written every tick, as their time goes, so it is the one thing compared for all.
+  Those whose frames give something every time are told every frame: a program (its age), the
+  resources or stages it reads, the births of its channel, or a place drawn between two ticks.
+- The desc of an emitter is resolved again only when its effect, its `Particle_Override`, the
+  shaders or what the effect reads of the assets (`effect_inputs`: its file and its sub effect's,
+  their materials' rows and blending, and the meshes they draw) changed. The assets are read again
+  once per effect, not per emitter, when their revision or the shaders move; `particles_tick`
+  resolves the emission of a clock the same way.
+- The pool keeps every emitter it was given until `pool_remove`: an emitter that goes, is hidden or
+  loses its place leaves with its particles.
+  - `pool_frame` starts each frame; the pool's tables are built when the world first has
+    emitters, and again, without its particles, for another capacity. `particles_sync` then puts
+    every emitter again (`Pool.made_count`);
   - a capacity whose buffer exceeds what the device binds leaves the pool as it was; one that the
     device cannot create leaves it with the capacity it had, without its particles. Neither is
     retried;
-  - a new `id` takes a range (first free gap; freed gaps join their neighbors) and starts empty; an
-    `id` that is missing returns its range;
-  - one that changes capacity or `generation` starts again.
-- An emitter that does not fit in the pool or the table (`EMITTER_CAPACITY` per world) is left out.
-- Nothing allocates in a stable frame: the pool's tables are built when it is created, the emitter
-  table goes up to the frame memory once (`pass_rows_upload`) and all its passes bind it, and a
-  program's parameters go up only when they change (`pass_buffer_write`).
+  - a new `id` takes a range (first free gap; freed gaps join their neighbors) and starts empty;
+    one that changes capacity or `generation` starts again.
+- An emitter that does not fit in the pool or the table (`EMITTER_CAPACITY` per world) is left out
+  and tried again the next frame.
+- The table of emitters lives on the GPU (`Pool_Buffer.Emitters`) and the GPU keeps the rows it was
+  given: a frame builds and writes (`pass_buffer_write`, in runs of neighbors) only the rows that
+  were put, the slots that were freed, and the rows whose births, start or previous place go back
+  to rest after the frame that simulated them. All of them when the pool's buffers were made or the
+  renderer's origin moved. What every emitter shares in a frame (the step, the births of the
+  channels, where the reports go) is in `Gpu_Frame`, first in the rows of the frame.
+- Nothing allocates in a stable frame: the pool's tables are built when it is created, and a
+  program's parameters go up only when they change.
 - An effect field exists once: in `Particle_Info`, which `Emitter_Desc` carries as it is, and in
-  the one place that packs it into the `Gpu_Emitter` row (`emitter_row`). The desc is built when
-  the key of what it shows changes, the row only when its `revision` changes (0: every frame) or
-  its range starts; each frame writes its place, its births, the step and its age, and
-  uploads the table.
+  the one place that packs it into the `Gpu_Emitter` row (`emitter_row`).
 - `Gpu_Particle` and `Gpu_Emitter` are equal to `particles.slang`; the values that that file copies
   from the plugin (flags, types, sizes and capacities) are compared with those of Odin by a test.
   A pool's free and draw lists go in one buffer, and the programs' `Attributes` (those that their
@@ -393,8 +410,8 @@ To the GPU:
   random values even if the frames change.
 - A birth older than the frame (a prewarm, or a world that was not drawn) starts where its life took
   it, with the emitter's acceleration; one older than its life does not start.
-- Lists that arrive without a simulating frame in between are added: their seconds, and their
-  groups age with those of the following ones; if they exceed `SPAWNS`, the neighbors are merged
+- Frames given without a simulating frame in between add up: their seconds, and the births put in
+  them age with those of the following ones; if they exceed `SPAWNS`, the neighbors are merged
   without losing births.
 - A frame simulates `dt` (up to `FRAME_MAX`) in steps of at most `STEP`, up to `STEPS`; each step
   starts the births that fall in it.

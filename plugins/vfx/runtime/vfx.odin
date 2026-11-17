@@ -51,6 +51,8 @@ Particle_Clocks :: struct {
     channels:[dynamic]Channel_Ring,      // the births of the channels the emitters listen to (channels.odin)
     seen_emitters,seen_worlds:core.Seen, // what the clocks of the emitters that went are pruned from
     playing:bool,                        // of a world that plays
+    effects:[dynamic]Effect_Seen,        // the effects the emissions were resolved from
+    revision:u64,                        // of the assets the effects were read with
 }
 
 // Particles alive at once in the emitters of a world.
@@ -63,7 +65,8 @@ PARTICLE_SETTINGS_DEFAULT :: Particle_Settings{capacity=CAPACITY}
 
 // What the renderer was told of an emitter.
 Emitter_Shown :: struct {
-    resolved:u64,                // what it was resolved from: the asset, its revision, the values of the entity, the shaders
+    resolved:u64,                // what it was resolved from: the asset, the values of the entity, the shaders and effect_inputs; 0: it is resolved again
+    particle:base.Asset_Id,      // the effect it was resolved from
     desc,sub_desc:Emitter_Desc,   // what the GPU is told of it and of its sub effect (id 0: none), but for what each frame gives
     needs:Program_Needs,          // the resources and stages its program declares
     resource_previous:[RESOURCE_ROWS]mm.Mat4, // where each of its resources was drawn last
@@ -71,18 +74,38 @@ Emitter_Shown :: struct {
     problem:[192]u8,             // why its program does not run, as text; empty when it does or there is none
     started:u64,                 // births of its clock started on the GPU
     generation:u32,
+    paused:bool,                 // as its clock was when it was told
+    every:bool,                  // each frame gives it something: its program, its resources or stages
     transform:mm.Mat4,           // where it was drawn last
     placed:bool,
+    queued:u64,                  // the frame of Particle_Sync it was last told in
 }
 
-// What the GPU has of the emitters of a world: one for each world.
+// What resolving an effect reads of the assets besides the values of an
+// entity (effect_inputs), as its emitters were resolved with it.
+Effect_Seen :: struct {
+    particle:base.Asset_Id,
+    inputs:u64,
+    changed:bool, // in this frame
+}
+
+// What the GPU has of the emitters of a world: one for each world. The pool
+// is told only of the emitters that changed since the last frame, from what
+// the tables say changed and from their clocks, and of those whose frames
+// give something every time.
 @(storage,host,by_world,free="particle_sync_free")
 Particle_Sync :: struct {
     shown:core.Entity_Map(Emitter_Shown),
     seen_emitters,seen_worlds:core.Seen, // what the emitters that went are pruned from
+    seen_overrides,seen_hidden,seen_parents,seen_bindings,seen_listeners:core.Seen,
+    frame:u64,                     // frames it told
+    told:[dynamic]core.Entity,     // the emitters told in this frame
+    again:[dynamic]core.Entity,    // and those the next one tells again
+    pool_made:u64,                 // Pool.made_count when every emitter was put in it; 0: none was
+    effects:[dynamic]Effect_Seen,  // the effects its emitters were resolved from
+    revision,shaders:u64,          // of the assets and the shaders the effects were read with
     time:f64,          // seconds of the world at its last frame: of its ticks while it plays
     timed:bool,
-    descs:[dynamic]Emitter_Desc,
     fields:Gpu_Fields, // the gravity and the wind of the world, as the frame found them
     births:[dynamic]Gpu_Birth,   // of the channels, those the GPU starts in this frame
     regions:[dynamic]Channel_Region,
@@ -110,7 +133,7 @@ Particle_Sync :: struct {
 
 particle_sync_free :: proc(sync:^Particle_Sync) {
     delete(sync.shown.values);delete(sync.shown.entities);delete(sync.shown.rows)
-    delete(sync.descs)
+    delete(sync.told);delete(sync.again);delete(sync.effects)
     delete(sync.births);delete(sync.regions);delete(sync.started)
     pool_free(&sync.pool)
     surfaces_free(&sync.surfaces)
@@ -143,14 +166,21 @@ particles_tick :: proc(
     dt:=time.playing?time.dt:max(frame.dt,0)
     requests_apply(requests,emitters,overrides,clocks,problems)
     a:=assets
+    // An emission is resolved again when its effect, or what the effect reads of the assets, changed.
+    refreshed:=false
+    if a!=nil && a.revision!=clocks.revision {
+        clocks.revision=a.revision
+        refreshed=effects_read(clocks.effects[:],a)
+    }
     done:[dynamic]core.Entity
     done.allocator=context.temp_allocator
     placed:=core.join(emitters,worlds)
     for e,emitter,world in core.each_joined(&placed) {
         clock:=clock_of(clocks,e)
         if clock==nil {continue}
-        if key:=emission_key(emitter.particle,a,row_stamp(overrides,e));clock.resolved!=key {
+        if key:=emission_key(emitter.particle,row_stamp(overrides,e));clock.resolved!=key || refreshed && effect_changed(clocks.effects[:],emitter.particle) {
             override,_:=core.get(overrides,e)
+            if a!=nil {effect_seen(&clocks.effects,a,emitter.particle)}
             info:=particle_resolve(a,emitter.particle,&override)
             clock.emission=emission_of(a,&info)
             clock.resolved=key
@@ -169,12 +199,12 @@ particles_tick :: proc(
     }
 }
 
-// The emitters of the world to the GPU: the births of their clocks it did
-// not start yet, and where they are.
+// The emitters of the world that changed to the GPU: what they show, where
+// they are and the births of their clocks it did not start yet.
 @(step="render",loops="game editor",after="render_sync")
 particles_sync :: proc(
     emitters:^core.Table(Particle_Emitter,.Read),overrides:^core.Table(Particle_Override,.Read),
-    worlds:^core.Table(core.World_Transform,.Read),hidden:^core.Table(erender.Hidden,.Read),parents:^core.Table(core.Parent,.Read),
+    worlds:^core.Table(core.World_Transform,.Read),hidden:^core.Table(erender.Hidden,.Read),parents:^core.Table(core.Parent,.Read),hierarchy:core.Ref(core.Hierarchy),
     bindings:^core.Table(Particle_Bindings,.Read),meshes:^core.Table(erender.Mesh_Renderer,.Read),drawn:core.Ref(erender.Render_Sync),listeners:^core.Table(Particle_Channel,.Read),grids:^core.Table(Particle_Grid,.Read),volumes:^core.Table(Particle_Volume,.Read),textures:^core.Table(Particle_World_Texture,.Read),
     clocks:core.Ref(Particle_Clocks),settings:core.Ref(Particle_Settings),sync:^Particle_Sync,reports:^Particle_Reports,watch:^Particle_Data_Watch,read:^Particle_Data_Read,ui_effects:^UI_Particles,ui_requests:core.Ref(gui.UI_Effects),id:core.World_Id,time:core.Time,frame:core.Frame_Time,
     view:core.View,problems:^core.Problems,app:^host.App,
@@ -184,7 +214,6 @@ particles_sync :: proc(
     data_read(read,reports,sync,app.renderer,id,problems)
     r,a:=app.renderer,app.assets
     sync.world,sync.world_id=erender.world_key(id),id
-    clear(&sync.descs)
     clear(&sync.resources)
     clear(&sync.stage_rows)
     clear(&sync.segments)
@@ -204,104 +233,302 @@ particles_sync :: proc(
     dt:=sync.timed?f32(clamp(now-sync.time,0,1)):0
     sync.time,sync.timed=now,true
     channels_sync(sync,clocks.ptr,now,problems)
-    core.entity_map_prune(&sync.shown,emitters,core.changes(emitters,&sync.seen_emitters))
-    core.entity_map_prune(&sync.shown,worlds,core.changes(worlds,&sync.seen_worlds))
-    shaders:=app.shaders.reloads
-    // What an emitter is resolved from besides its own: the triangles of meshes move when the scene is made again.
-    made:=erender.vertices_made(app.renderer)
-    placed:=core.join(emitters,worlds)
-    for e,emitter,world in core.each_joined(&placed) {
-        shown:=shown_of(sync,e)
-        if shown==nil {continue}
-        key:=base.hash_combine(base.hash_combine(emitter.particle[0],emitter.particle[1]),a!=nil?a.revision:0)
-        key=base.hash_combine(base.hash_combine(base.hash_combine(key,row_stamp(overrides,e)),shaders),made)|1
-        if shown.resolved!=key {
-            override,_:=core.get(overrides,e)
-            shown.resolved=shown_resolve(shown,a,r,emitter.particle,&override,{u64(e),sub_id(e)},&shown.needs)?key:0
-            shown.desc.owner,shown.sub_desc.owner=e,e
-            shown.desc.revision,shown.sub_desc.revision=shown.resolved,shown.resolved
+    asked:[]gui.UI_Effect
+    if ui_requests.ptr!=nil {asked=ui_requests.items[:]}
+    // The world stands still while its UI plays: its emitters keep their
+    // particles as they are and the pool goes with the frames.
+    still:=ui_effects!=nil && dt<=0 && len(asked)>0
+    if still {dt=clamp(frame.dt,0,1)}
+    pooled:=r!=nil && a!=nil
+    if pooled {
+        capacity:=settings.capacity
+        wanted:=core.count(emitters)>0 || len(asked)>0 || ui_effects!=nil && ui_effects.count>0
+        if !pool_frame(&sync.pool,dt,capacity,erender.max_storage_range(app),still,wanted) {
+            core.report(problems,core.NONE,"vfx.capacity","the device takes no pool of %d particles: ask a smaller Particle_Settings.capacity",capacity)
+            pooled=false
+        } else if sync.pool.refused==capacity && sync.pool.capacity!=capacity {
+            core.report(problems,core.NONE,"vfx.capacity","the device takes no pool of %d particles: the world keeps %d; ask a smaller Particle_Settings.capacity",capacity,sync.pool.capacity)
         }
-        for d in ([2]^Emitter_Desc{&shown.desc,&shown.sub_desc}) {
-            if d.id==0 || !(d.info.sort || d.info.render==.Ribbon) {continue}
-            if needed:=emitter_capacity(&d.info);needed>SORT_MAX {
-                core.report(problems,e,"vfx.capacity","a sorted or ribbon effect keeps at most %d particles alive and this one needs %d: give it max_particles %d or less, or a lower rate or lifetime",SORT_MAX,needed,SORT_MAX)
-            }
-        }
-        pose:=erender.drawn_transform(world,frame)
-        if !shown.placed {pose=world.transform}
-        transform:=mm.transform_matrix(pose)
-        spawns:[SPAWNS]Particle_Spawn
-        paused:bool
-        age:f32
-        born:u64
-        if clock:=clock_find(clocks.ptr,e);clock!=nil {
-            if clock.generation!=shown.generation {
-                shown.generation=clock.generation
-                shown.started=max(shown.started,clock.first)
-            }
-            // A rollback that runs again less than what was started: what comes next starts.
-            if clock.emitted<shown.started {shown.started=clock.emitted}
-            born=shown.started
-            spawns=births_since(clock,&shown.started)
-            paused=clock.paused
-            age=f32(clock.time)
-        }
-        previous:=shown.placed?shown.transform:transform
-        shown.transform,shown.placed=transform,true
-        if r==nil || a==nil || erender.is_hidden(hidden,parents,e) {continue}
-        desc:=shown.desc
-        desc.transform,desc.previous,desc.spawns=transform,previous,spawns
-        desc.age,desc.born=age,u32(born)
-        if shape:=shown.desc.info.shape;shape==.Surface || shape==.Bones || shown.needs.resources[0].kind!=.None || shown.needs.stages[0].kind!=.None {
-            bound,_:=core.get(bindings,e)
-            rows:=emitter_resources(sync,shown,&bound,e,host.extras_instances(&app.extras),drawn.ptr,meshes,worlds,id,app.assets,app.renderer)
-            desc.resources=u32(len(sync.resources))+1
-            append(&sync.resources,..rows[:])
-        }
-        desc.stages=emitter_stages(sync,&shown.needs,desc.resources,desc.id,e,problems)
-        for need in shown.needs.resources {
-            if need.kind==.Data {data_need(&sync.data,need.name,need.words,problems,e)}
-        }
-        if listener,listens:=core.get(listeners,e);listens && !listener.silent {desc.births.x,desc.births.y=channel_region(sync,channel_key(listener))}
-        desc.paused,desc.generation=paused,shown.generation
-        if shown.sub_desc.id!=0 {
-            sub:=shown.sub_desc
-            sub.transform,sub.previous=transform,previous
-            sub.paused,sub.generation=paused,shown.generation
-            append(&sync.descs,sub)
-        }
-        append(&sync.descs,desc)
+    }
+    f:=Sync_Frame{
+        sync=sync,emitters=emitters,overrides=overrides,worlds=worlds,hidden=hidden,parents=parents,bindings=bindings,meshes=meshes,listeners=listeners,
+        drawn=drawn.ptr,clocks=clocks.ptr,frame=frame,problems=problems,app=app,id=id,shaders=app.shaders.reloads,pooled=pooled,
+    }
+    sync_gather(&f,hierarchy)
+    for e in sync.told {
+        if emitter_tell(&f,e) {append(&sync.again,e)}
     }
     grids_release(&sync.grids,&sync.pool)
     watched:[]u64
     if watch!=nil {watched=core.take(&watch.queue)}
     data_watched(&sync.data,watched)
-    asked:[]gui.UI_Effect
-    if ui_requests.ptr!=nil {asked=ui_requests.items[:]}
     if ui_effects!=nil && (ui_effects.count>0 || len(asked)>0) {
-        // The world stands still while its UI plays: its emitters keep their
-        // particles as they are and the pool goes with the frames.
-        if dt<=0 && len(asked)>0 {
-            for &desc in sync.descs {desc.paused=true}
-            dt=clamp(frame.dt,0,1)
-        }
-        ui_effects_sync(ui_effects,asked,app.assets,app.renderer,clamp(frame.dt,0,1),shaders,&sync.descs)
+        ui_effects_sync(ui_effects,asked,app.assets,app.renderer,clamp(frame.dt,0,1),f.shaders,&sync.pool)
     }
-    if r==nil {return}
-    if a!=nil {host.assets_commit(a)}
-    capacity:=settings.capacity
-    if dropped,ok:=pool_emitters(&sync.pool,sync.descs[:],dt,capacity,erender.max_storage_range(app));!ok {
-        if len(sync.descs)>0 {core.report(problems,core.NONE,"vfx.capacity","the device takes no pool of %d particles: ask a smaller Particle_Settings.capacity",capacity)}
-        return
-    } else if dropped>0 {
-        for desc in sync.descs {
-            if pool_slot_find(&sync.pool,desc.id)<0 {core.report(problems,desc.owner,"vfx.capacity","this emitter found no room among the %d particles and %d emitters of the world: ask a larger Particle_Settings.capacity, or fewer max_particles of its effect",sync.pool.capacity,EMITTER_CAPACITY)}
-        }
-    }
-    if sync.pool.refused==capacity && sync.pool.capacity!=capacity {
-        core.report(problems,core.NONE,"vfx.capacity","the device takes no pool of %d particles: the world keeps %d; ask a smaller Particle_Settings.capacity",capacity,sync.pool.capacity)
-    }
+    if !pooled {return}
+    host.assets_commit(a)
     particles_frame(sync,app)
+}
+
+// What particles_sync reads to tell the pool of an emitter.
+@(private)
+Sync_Frame :: struct {
+    sync:^Particle_Sync,
+    emitters:^core.Table(Particle_Emitter,.Read),
+    overrides:^core.Table(Particle_Override,.Read),
+    worlds:^core.Table(core.World_Transform,.Read),
+    hidden:^core.Table(erender.Hidden,.Read),
+    parents:^core.Table(core.Parent,.Read),
+    bindings:^core.Table(Particle_Bindings,.Read),
+    meshes:^core.Table(erender.Mesh_Renderer,.Read),
+    listeners:^core.Table(Particle_Channel,.Read),
+    drawn:^erender.Render_Sync,
+    clocks:^Particle_Clocks,
+    frame:core.Frame_Time,
+    problems:^core.Problems,
+    app:^host.App,
+    id:core.World_Id,
+    shaders:u64,  // the shader generation of the application
+    pooled:bool,  // the world has a pool to put its emitters in
+}
+
+// The emitters to tell in this frame (Particle_Sync.told): those whose
+// emitter, values, place, hiding, bindings or channel changed, those whose
+// clock started births, restarted or paused since, those whose effect reads
+// otherwise in the assets, those the last frame left to tell again, and all
+// of them when the pool was made again. The pool loses the particles of those
+// whose emitter or place went.
+@(private)
+sync_gather :: proc(f:^Sync_Frame,hierarchy:core.Ref(core.Hierarchy)) {
+    sync:=f.sync
+    sync.frame+=1
+    clear(&sync.told)
+    gone :: proc(sync:^Particle_Sync,left:^Emitter_Shown) {
+        pool_remove(&sync.pool,left.desc.id)
+        pool_remove(&sync.pool,left.sub_desc.id)
+    }
+    c_emitters:=core.changes(f.emitters,&sync.seen_emitters)
+    c_worlds:=core.changes(f.worlds,&sync.seen_worlds)
+    at,left:=0,Emitter_Shown{}
+    for _ in core.entity_map_left(&sync.shown,f.emitters,c_emitters,&at,&left) {gone(sync,&left)}
+    at=0
+    for _ in core.entity_map_left(&sync.shown,f.worlds,c_worlds,&at,&left) {gone(sync,&left)}
+    for row in core.each_changed(f.emitters,&c_emitters) {
+        e:=core.entity_at(f.emitters,row)
+        sync_queue(sync,e,shown_of(sync,e))
+    }
+    for row in core.each_changed(f.worlds,&c_worlds) {sync_queue_entity(sync,core.entity_at(f.worlds,row))}
+    gather :: proc(sync:^Particle_Sync,table:^core.Table($T,$A),seen:^core.Seen) {
+        c:=core.changes(table,seen)
+        for e in c.gone {sync_queue_entity(sync,e)}
+        for row in core.each_changed(table,&c) {sync_queue_entity(sync,core.entity_at(table,row))}
+    }
+    gather(sync,f.overrides,&sync.seen_overrides)
+    gather(sync,f.bindings,&sync.seen_bindings)
+    gather(sync,f.listeners,&sync.seen_listeners)
+    // Hiding, showing or moving under another: what hangs from it.
+    subtree :: proc(sync:^Particle_Sync,h:core.Ref(core.Hierarchy),table:^core.Table($T,$A),seen:^core.Seen) {
+        c:=core.changes(table,seen)
+        for e in c.gone {
+            for at:=e;at!=core.NONE;at=core.subtree_next(h,e,at) {sync_queue_entity(sync,at)}
+        }
+        for row in core.each_changed(table,&c) {
+            e:=core.entity_at(table,row)
+            for at:=e;at!=core.NONE;at=core.subtree_next(h,e,at) {sync_queue_entity(sync,at)}
+        }
+    }
+    subtree(sync,hierarchy,f.hidden,&sync.seen_hidden)
+    subtree(sync,hierarchy,f.parents,&sync.seen_parents)
+    // The clocks are written every tick, as their time goes: those that
+    // started births, restarted or paused since they were told.
+    if clocks:=f.clocks;clocks!=nil {
+        for &clock,i in clocks.clocks.values {
+            e:=clocks.clocks.entities[i]
+            if shown:=core.entity_map_get(&sync.shown,e);shown!=nil && (clock.emitted!=shown.started || clock.generation!=shown.generation || clock.paused!=shown.paused) {sync_queue(sync,e,shown)}
+        }
+    }
+    effects_refresh(f)
+    for e in sync.again {sync_queue_entity(sync,e)}
+    clear(&sync.again)
+    // A pool made again holds none of them.
+    if !f.pooled {
+        sync.pool_made=0
+    } else if sync.pool_made!=sync.pool.made_count {
+        sync.pool_made=sync.pool.made_count
+        for &shown,i in sync.shown.values {sync_queue(sync,sync.shown.entities[i],&shown)}
+    }
+}
+
+// An emitter is told in this frame, once.
+@(private)
+sync_queue :: proc(sync:^Particle_Sync,e:core.Entity,shown:^Emitter_Shown) {
+    if shown==nil || shown.queued==sync.frame {return}
+    if _,error:=append(&sync.told,e);error==nil {shown.queued=sync.frame}
+}
+
+// The emitter at e, if the GPU was told of it, is told in this frame.
+@(private)
+sync_queue_entity :: proc(sync:^Particle_Sync,e:core.Entity) {sync_queue(sync,e,core.entity_map_get(&sync.shown,e))}
+
+// The assets or the shaders changed: the emitters whose effect reads
+// otherwise are told, and resolved again.
+@(private)
+effects_refresh :: proc(f:^Sync_Frame) {
+    sync,a:=f.sync,f.app.assets
+    if a==nil {return}
+    reloaded:=f.shaders!=sync.shaders
+    if a.revision==sync.revision && !reloaded {return}
+    sync.revision,sync.shaders=a.revision,f.shaders
+    if !effects_read(sync.effects[:],a) && !reloaded {return}
+    for &shown,i in sync.shown.values {
+        if reloaded || effect_changed(sync.effects[:],shown.particle) {sync_queue(sync,sync.shown.entities[i],&shown)}
+    }
+}
+
+// Reads again what each effect reads of the assets; true when that of one
+// changed, which its changed says until the next read.
+@(private)
+effects_read :: proc(effects:[]Effect_Seen,a:^host.Assets) -> (changed:bool) {
+    for &effect in effects {
+        inputs:=effect_inputs(a,effect.particle)
+        effect.changed=inputs!=effect.inputs
+        effect.inputs=inputs
+        changed||=effect.changed
+    }
+    return
+}
+
+@(private)
+effect_changed :: proc(effects:[]Effect_Seen,particle:base.Asset_Id) -> bool {
+    for effect in effects {if effect.particle==particle {return effect.changed}}
+    return false
+}
+
+// effect_inputs of an effect as its emitters were resolved with it; read now
+// for one no emitter showed yet.
+@(private)
+effect_seen :: proc(effects:^[dynamic]Effect_Seen,a:^host.Assets,particle:base.Asset_Id) -> u64 {
+    for effect in effects {if effect.particle==particle {return effect.inputs}}
+    inputs:=effect_inputs(a,particle)
+    append(effects,Effect_Seen{particle=particle,inputs=inputs})
+    return inputs
+}
+
+// What resolving an effect reads of the assets besides the values of an
+// entity, as a hash: the files of the effect and of its sub effect, the rows
+// and blending of their materials, and the meshes they draw.
+@(private)
+effect_inputs :: proc(a:^host.Assets,particle:base.Asset_Id) -> u64 {
+    h:=u64(1)
+    id:=particle
+    for _ in 0..<2 {
+        if id=={} {break}
+        if file:=host.assets_document(a,id,effect.PARTICLE_KIND);file!=nil {h=base.hash_combine(h,file.blob.header.content_hash)}
+        info:=particle_resolve(a,id,nil)
+        if info.material!={} {
+            h=base.hash_combine(h,u64(host.assets_material_row(a,info.material)))
+            if found:=host.assets_material(a,info.material);found!=nil {h=base.hash_combine(h,u64(found.info.alpha_mode))}
+        }
+        for mesh in info.meshes {
+            if mesh=={} {continue}
+            entry:=host.assets_mesh(a,mesh)
+            h=base.hash_combine(h,entry!=nil?u64(entry.handle):0)
+        }
+        id=info.sub_particle
+    }
+    return h
+}
+
+// Tells the pool what an emitter is now: what it shows, resolved again when
+// its effect, the values of its entity or the shaders changed, where it is,
+// and the births its clock started since. True when the next frame tells it
+// again: it is not resolved yet, it is drawn between two places, the pool had
+// no room for it, or its frames give something every time (its program, its
+// resources or stages, or the births of its channel).
+@(private)
+emitter_tell :: proc(f:^Sync_Frame,e:core.Entity) -> (again:bool) {
+    sync:=f.sync
+    shown:=core.entity_map_get(&sync.shown,e)
+    if shown==nil {return}
+    emitter,on:=core.get(f.emitters,e)
+    world,placed:=core.get(f.worlds,e)
+    if !on || !placed {return}
+    a,r:=f.app.assets,f.app.renderer
+    key:=base.hash_combine(base.hash_combine(emitter.particle[0],emitter.particle[1]),row_stamp(f.overrides,e))
+    key=base.hash_combine(base.hash_combine(key,f.shaders),a!=nil?effect_seen(&sync.effects,a,emitter.particle):0)|1
+    if shown.resolved!=key {
+        sub:=shown.sub_desc.id
+        override,_:=core.get(f.overrides,e)
+        shown.particle=emitter.particle
+        shown.resolved=shown_resolve(shown,a,r,emitter.particle,&override,{u64(e),sub_id(e)},&shown.needs)?key:0
+        shown.desc.owner,shown.sub_desc.owner=e,e
+        if sub!=0 && shown.sub_desc.id!=sub {pool_remove(&sync.pool,sub)}
+        for d in ([2]^Emitter_Desc{&shown.desc,&shown.sub_desc}) {
+            if d.id==0 || !(d.info.sort || d.info.render==.Ribbon) {continue}
+            if needed:=emitter_capacity(&d.info);needed>SORT_MAX {
+                core.report(f.problems,e,"vfx.capacity","a sorted or ribbon effect keeps at most %d particles alive and this one needs %d: give it max_particles %d or less, or a lower rate or lifetime",SORT_MAX,needed,SORT_MAX)
+            }
+        }
+        shape:=shown.desc.info.shape
+        shown.every=shown.desc.program.id!=0 || shape==.Surface || shape==.Bones || shown.needs.resources[0].kind!=.None || shown.needs.stages[0].kind!=.None
+    }
+    pose:=erender.drawn_transform(world,f.frame)
+    if !shown.placed {pose=world.transform}
+    transform:=mm.transform_matrix(pose)
+    spawns:[SPAWNS]Particle_Spawn
+    age:f32
+    born:u64
+    if clock:=clock_find(f.clocks,e);clock!=nil {
+        if clock.generation!=shown.generation {
+            shown.generation=clock.generation
+            shown.started=max(shown.started,clock.first)
+        }
+        // A rollback that runs again less than what was started: what comes next starts.
+        if clock.emitted<shown.started {shown.started=clock.emitted}
+        born=shown.started
+        spawns=births_since(clock,&shown.started)
+        shown.paused=clock.paused
+        age=f32(clock.time)
+    }
+    previous:=shown.placed?shown.transform:transform
+    shown.transform,shown.placed=transform,true
+    listener,listens:=core.get(f.listeners,e)
+    listens&&=!listener.silent
+    again=shown.resolved==0 || world.previous!=world.transform || shown.every || listens
+    if !f.pooled {return}
+    if erender.is_hidden(f.hidden,f.parents,e) {
+        pool_remove(&sync.pool,shown.desc.id)
+        pool_remove(&sync.pool,shown.sub_desc.id)
+        return
+    }
+    desc:=shown.desc
+    desc.transform,desc.previous,desc.spawns=transform,previous,spawns
+    desc.age,desc.born=age,u32(born)
+    if shape:=shown.desc.info.shape;shape==.Surface || shape==.Bones || shown.needs.resources[0].kind!=.None || shown.needs.stages[0].kind!=.None {
+        bound,_:=core.get(f.bindings,e)
+        rows:=emitter_resources(sync,shown,&bound,e,host.extras_instances(&f.app.extras),f.drawn,f.meshes,f.worlds,f.id,a,r)
+        desc.resources=u32(len(sync.resources))+1
+        append(&sync.resources,..rows[:])
+    }
+    desc.stages=emitter_stages(sync,&shown.needs,desc.resources,desc.id,e,f.problems)
+    for need in shown.needs.resources {
+        if need.kind==.Data {data_need(&sync.data,need.name,need.words,f.problems,e)}
+    }
+    if listens {desc.births.x,desc.births.y=channel_region(sync,channel_key(listener))}
+    desc.paused,desc.generation=shown.paused,shown.generation
+    fits:=true
+    if shown.sub_desc.id!=0 {
+        sub:=shown.sub_desc
+        sub.transform,sub.previous=transform,previous
+        sub.paused,sub.generation=shown.paused,shown.generation
+        fits=pool_put(&sync.pool,&sub)
+    }
+    fits=pool_put(&sync.pool,&desc) && fits
+    if !fits {
+        core.report(f.problems,e,"vfx.capacity","this emitter found no room among the %d particles and %d emitters of the world: ask a larger Particle_Settings.capacity, or fewer max_particles of its effect",sync.pool.capacity,EMITTER_CAPACITY)
+        again=true
+    }
+    return
 }
 
 // A world that goes takes its particles with it.

@@ -1,6 +1,7 @@
 package vfx
 
 import "core:math"
+import "core:mem"
 import "core:reflect"
 import "core:strconv"
 import "core:strings"
@@ -10,6 +11,7 @@ import "mirai:core"
 import erender "mirai:engine/render"
 import "mirai:host"
 import "mirai:std/base"
+import "mirai:std/geom"
 import mm "mirai:std/math"
 import "plugins:vfx/runtime/effect"
 
@@ -77,7 +79,7 @@ fixture_tick :: proc(f:^Emitters_Fixture,time:core.Time,frame:=FRAME) {
 
 @(private="file")
 fixture_sync :: proc(f:^Emitters_Fixture,id:core.World_Id,time:core.Time,frame:=FRAME) {
-    particles_sync(core.read(&f.emitters),core.read(&f.overrides),core.read(&f.worlds),core.read(&f.hidden),core.read(&f.parents),core.read(&f.bindings),core.read(&f.meshes),core.ref(&f.drawn),core.read(&f.listeners),core.read(&f.grids),core.read(&f.volumes),core.read(&f.textures),core.ref(&f.clocks),core.ref(&f.settings),&f.sync,&f.reports,nil,nil,nil,{},id,time,frame,{},&f.problems,&f.app,{},{},{},{},{})
+    particles_sync(core.read(&f.emitters),core.read(&f.overrides),core.read(&f.worlds),core.read(&f.hidden),core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.bindings),core.read(&f.meshes),core.ref(&f.drawn),core.read(&f.listeners),core.read(&f.grids),core.read(&f.volumes),core.read(&f.textures),core.ref(&f.clocks),core.ref(&f.settings),&f.sync,&f.reports,nil,nil,nil,{},id,time,frame,{},&f.problems,&f.app,{},{},{},{},{})
 }
 
 @(private="file")
@@ -122,7 +124,7 @@ a_rollback_does_not_start_the_same_burst_twice :: proc(t:^testing.T) {
     clock_of(&f.clocks,e)
     f.clocks.playing=true
     clock:=clock_find(&f.clocks,e)
-    clock.resolved=emission_key({},nil,0)
+    clock.resolved=emission_key({},0)
     clock.emission={duration=0.5,longest=1,tail=1}
     clock.emission.bursts[0]={count=7}
     id:=core.World_Id{0,1}
@@ -171,7 +173,7 @@ a_frame_that_sees_an_older_copy_starts_only_what_comes_after_it :: proc(t:^testi
     e:=fixture_emitter(&f,Particle_Emitter{active=true,loop=true})
     for _ in 0..<2 {fixture_tick(&f,TICK)}
     clock:=clock_find(&f.clocks,e)
-    clock.resolved=emission_key({},nil,0)
+    clock.resolved=emission_key({},0)
     clock.emission={duration=1,rate=60,longest=1,tail=1}
     f.app.assets=nil
     for _ in 0..<30 {fixture_tick(&f,TICK)}
@@ -208,6 +210,96 @@ the_clock_and_the_shown_of_an_emitter_that_goes_are_dropped :: proc(t:^testing.T
     fixture_sync(&f,{0,1},TICK)
     testing.expect(t,clock_find(&f.clocks,kept)!=nil && clock_find(&f.clocks,gone)==nil && clock_find(&f.clocks,unplaced)==nil)
     testing.expect(t,sync_shown(&f.sync,kept)!=nil && sync_shown(&f.sync,gone)==nil && sync_shown(&f.sync,unplaced)==nil)
+}
+
+// A frame tells the GPU only of the emitters that changed: none when nothing
+// did or an asset no effect reads went, and alone the one that moved, was
+// hidden, shows another effect, got other values, started births or whose
+// effect changed. The tick resolves again only the emissions whose effect or
+// values changed. Frames that change nothing allocate nothing.
+@(test)
+a_frame_tells_only_the_emitters_that_changed :: proc(t:^testing.T) {
+    f:=new(Emitters_Fixture)
+    defer free(f)
+    if !fixture_init(t,f) {return}
+    defer fixture_destroy(f)
+    folder:=base.test_folder(t,"vfx-told")
+    types:asset.Types
+    asset.types_init(&types)
+    defer asset.types_destroy(&types)
+    path:=strings.concatenate({folder,"/other.particle"},context.temp_allocator)
+    other:=effect.PARTICLE_DEFAULTS
+    other.rate=3
+    testing.expect_value(t,effect.particle_save(path,&types,{id={7,8},info=other}),asset.Error.None)
+    assets:host.Assets
+    if !testing.expect(t,host.assets_init(&assets,{root=folder})) {return}
+    defer host.assets_destroy(&assets)
+    f.app.assets=&assets
+    // A mesh no effect reads, as a terrain piece is.
+    positions:=[3]geom.Vec3{{0,0,0},{1,0,0},{0,1,0}}
+    indices:=[3]u32{0,1,2}
+    piece,made:=host.assets_mesh_generate(&assets,{positions=positions[:],indices=indices[:]})
+    testing.expect(t,made)
+    emitters:[5]core.Entity
+    for &e,i in emitters {e=fixture_emitter(f,Particle_Emitter{active=true,loop=true},{f32(i),0,0})}
+    EDITOR :: core.Time{}
+    frame :: proc(f:^Emitters_Fixture) {
+        fixture_tick(f,EDITOR)
+        fixture_sync(f,{0,1},EDITOR)
+    }
+    for _ in 0..<2 {frame(f)}
+    // A rate no effect has: an emission resolved again loses it.
+    SEEN :: f32(-1)
+    for &clock in f.clocks.clocks.values {clock.emission.rate=SEEN}
+    Change :: enum {None,Moved,Hidden,Retargeted,Override,Births,Released,Effect}
+    cases:=[?]struct{change:Change,emitter:int}{
+        {.None,-1},{.Moved,0},{.Hidden,1},{.Retargeted,2},{.Override,3},{.Births,4},{.Released,-1},{.Effect,2},{.None,-1},
+    }
+    for c in cases {
+        e:=emitters[max(c.emitter,0)]
+        switch c.change {
+        case .None:
+        case .Moved:
+            place:=mm.TRANSFORM_IDENTITY
+            place.position={5,5,5}
+            core.edit(&f.worlds,e)^=core.World_Transform{place,place}
+        case .Hidden: core.add(&f.hidden,e,erender.Hidden{})
+        case .Retargeted: core.edit(&f.emitters,e).particle={7,8}
+        case .Override:
+            override:Particle_Override
+            testing.expect_value(t,value_set(&override,"rate",f32(55)),Error.None)
+            core.add(&f.overrides,e,override)
+        case .Births: births_add(clock_of(&f.clocks,e),0,4,4,0)
+        case .Released: testing.expect(t,host.assets_mesh_release(&assets,piece))
+        case .Effect:
+            other.rate=9
+            testing.expect_value(t,effect.particle_save(path,&types,{id={7,8},info=other}),asset.Error.None)
+            testing.expect(t,host.assets_reload(&assets,{7,8}))
+        }
+        fixture_settle(f)
+        frame(f)
+        told:=f.sync.told[:]
+        if c.emitter<0 {
+            testing.expectf(t,len(told)==0,"%v: no emitter changed and %d were told",c.change,len(told))
+        } else {
+            testing.expectf(t,len(told)==1 && told[0]==e,"%v: only its emitter is told, not %v",c.change,told)
+        }
+        resolved:=c.change==.Retargeted || c.change==.Override || c.change==.Effect
+        for other in emitters {
+            clock:=clock_find(&f.clocks,other)
+            again:=clock.emission.rate!=SEEN
+            testing.expectf(t,again==(resolved && other==e),"%v: the emission of %v is resolved again: %v",c.change,other,again)
+            clock.emission.rate=SEEN
+        }
+    }
+    tracker:mem.Tracking_Allocator
+    mem.tracking_allocator_init(&tracker,context.allocator)
+    defer mem.tracking_allocator_destroy(&tracker)
+    {
+        context.allocator=mem.tracking_allocator(&tracker)
+        for _ in 0..<4 {frame(f)}
+    }
+    testing.expect_value(t,tracker.total_allocation_count,i64(0))
 }
 
 // Frames of 1/8 s add up exactly.
@@ -569,7 +661,7 @@ done_effects_take_their_entity_with_them :: proc(t:^testing.T) {
     e:=fixture_emitter(&f,Particle_Emitter{active=true,destroy_when_done=true})
     fixture_tick(&f,TICK)
     clock:=clock_find(&f.clocks,e)
-    clock.resolved=emission_key({},nil,0)
+    clock.resolved=emission_key({},0)
     clock.emission={duration=0.1,rate=30,longest=0.1,tail=0.1}
     f.app.assets=nil
     for _ in 0..<20 {fixture_tick(&f,TICK)}

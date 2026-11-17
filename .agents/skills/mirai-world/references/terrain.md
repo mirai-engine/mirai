@@ -710,11 +710,15 @@ Construction in jobs:
 - Each job stores the data's epoch, the source, the chunk, the key (level and collider) and the
   source change it read (`Data_Source.change`); a result whose chunk changed while it ran is
   dropped and built again.
-- A piece with a collider while the world plays is published in the next `terrain_update` call
-  of the phase that asked for it, which waits for it if it did not finish: when it collides does
-  not depend on the threads, and a tick that edits shows the new chunk in the next one, with the
-  previous version in between. What only shows, and everything out of Play, is published once its
-  job ended: no frame waits for it.
+- A piece whose collider changes while the world plays is published in the next `terrain_update`
+  call of the phase that asked for it, which waits for it if it did not finish: when it collides
+  does not depend on the threads, and a tick that edits shows the new chunk in the next one, with
+  the previous version in between. A Heightfield chunk collides at level 0 whatever level it
+  shows: one built again only for its level keeps its collider and only shows.
+- What only shows, and everything out of Play, is published once its job ended, and no frame waits
+  for it. A call publishes those builds nearest to a view first, within `PUBLISH_VERTICES` (at
+  least one): what a view crossed at once arrives over the calls after, each piece showing what it
+  showed until then, and a finished build waiting in its slot starts no other.
 - Built and published in the same call (urgent) is only what the simulation and the first
   frame need: a piece with a collider within `GROUND_REACH` of a simulation source
   (`scene.Simulation_Sources`: the bodies the seats drive, the marks) or of a body that moves or a
@@ -723,8 +727,8 @@ Construction in jobs:
   what it covers and collides until that is built. Everything else arrives from jobs over the
   ticks. Loading a scene, Play, a rollback or a teleport do not leave a tick without ground under
   a view or a body. Urgent jobs can use all the slots; the others, half.
-- Changing level, border or collider publishes the piece and the neighbors whose sides change in
-  the same call.
+- Changing level, border or collider builds again the piece and the neighbors whose sides change;
+  each is published as its build is taken.
 - A source is read whole in a job (`data_load_begin`): its file and its coarse data, in memory of
   its own (`Data_Source.allocator`), and `data_load_end` adds
   it to the sources. Those that a section's load names are requested while it waits for the
@@ -939,6 +943,7 @@ physics, saving, stability and world copy.
 - `chunks_without_a_collider_keep_their_triangles_on_the_cpu_only_while_the_world_does_not_play`.
 - `pipeline_test.odin`:
   `rebuilt_chunks_show_in_the_next_tick_whatever_the_threads_and_stale_results_are_let_go`,
+  `builds_that_end_together_are_published_over_calls_nearest_first_within_the_bound`,
   `chunks_without_a_slot_for_their_collider_still_show_their_ground_and_the_nearest_collide`,
   `letting_go_of_an_excavated_zone_and_reading_it_again_keeps_its_edits`,
   `a_volume_lets_go_of_the_blocks_far_from_its_viewers_and_reading_them_again_keeps_its_edits`,
