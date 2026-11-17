@@ -863,6 +863,28 @@ render_probes_trace_and_light_only_what_a_change_crosses :: proc(t: ^testing.T) 
 		testing.expectf(t, traced == 0 && lit == 0, "settled again: %d rays, %d hits", traced, lit)
 	}
 
+	// A texture no material names comes and goes, as the image of a capture: nothing a ray meets changes.
+	image, made := view_texture_add(r, 16, 16, "capture")
+	testing.expect(t, made, r.error)
+	testing.expect(t, view_texture_remove(r, image))
+	probes, traced, lit = probe_work_after(t, r, camera)
+	testing.expectf(t, probes == 0 && traced == 0 && lit == 0, "a texture no material names traces nothing when it goes: %d probes, %d rays, %d hits", probes, traced, lit)
+
+	// One the wall shows is loaded again under its handle: the rays that meet the wall are traced again.
+	white := [4]u8{255, 255, 255, 255}
+	paint, painted := texture_add(r, {pixels = white[:], width = 1, height = 1, srgb = true, name = "paint"})
+	testing.expect(t, painted, r.error)
+	textured := DEFAULT_MATERIAL
+	textured.textures[.Base_Color] = paint
+	testing.expect(t, materials_set(r, {textured}))
+	settle(t, r, camera)
+	testing.expect(t, texture_remove(r, paint))
+	again, loaded := texture_add(r, {pixels = white[:], width = 1, height = 1, srgb = true, name = "paint"})
+	testing.expect(t, loaded && again == paint, r.error)
+	probes, traced, lit = probe_work_after(t, r, camera)
+	testing.expectf(t, traced > 0, "a texture a material names traces the rays that meet it when it goes: %d rays", traced)
+	settle(t, r, camera)
+
 	// The lamp changes color before anything else changes, which the probes it
 	// wakes would check their rays against: the hits it reaches take their
 	// light again, and no ray is traced.

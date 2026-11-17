@@ -858,6 +858,24 @@ materials_changed :: proc(s: ^Scene_State, changes: Material_Changes) {
 	if changes.class {s.batch.built = false}
 }
 
+// The texture of the table at `entry` goes: what rays meet changes around
+// what shows a row whose light reads it (material_lit), in a map or in a
+// texture of its program, as when that row changes. The next texture added
+// may take its handle under the same rows.
+@(private)
+materials_texture_gone :: proc(r: ^Renderer, entry: u32) {
+	changes: Material_Changes
+	for row, i in r.scene.materials {
+		seen := material_lit(row)
+		reads := program_names_texture(r, &seen, entry)
+		for texture in seen.textures {reads ||= texture == entry}
+		if !reads {continue}
+		if changes.lit_count < MATERIAL_LIT_ROWS {changes.lit[changes.lit_count] = u32(i)}
+		changes.lit_count += 1
+	}
+	materials_changed(&r.scene, changes)
+}
+
 // The instances that reflect and those with glass, and how rays see each, from
 // their materials and whether they are hidden.
 @(private = "file")
