@@ -101,8 +101,10 @@ Mtl_Frame :: struct {
 	queries:     ^MTL.CounterSampleBuffer, // two samples per encoder, at its start and its end; nil without stage boundary sampling
 	passes:      bool, // the frame samples its encoders: timestamps_want was on when it began
 	recorded:    Frame_Passes, // its cmd_timestamp marks
+	measured:    Frame_Passes, // without passes, its cmd_measure_begin marks
+	measuring:   bool,         // without passes, between a cmd_measure_begin and its end: its encoders are sampled
 	encoder_count: u32,
-	encoder_marks: [MAX_TIMESTAMPS]u16, // of each sampled encoder: the mark it runs after
+	encoder_marks: [MAX_TIMESTAMPS]u16, // of each sampled encoder: the mark it runs after, or the measure it runs in
 	number:        u64,  // the frame_number it committed
 	submitted:     bool, // until frame_begin collects its timings
 	paced:         bool, // the frame draws into a pair of the presenter
@@ -836,8 +838,8 @@ MTL_COUNTER_ERROR :: max(u64)
 mtl_collect_timestamps :: proc(d: ^Device, f: ^Mtl_Frame) {
 	NS.scoped_autoreleasepool()
 	d.timing_count = 0
-	marks, encoders := f.recorded.count, f.encoder_count
-	f.recorded.count, f.encoder_count = 0, 0
+	marks, encoders, measures := f.recorded.count, f.encoder_count, f.measured.count
+	f.recorded.count, f.encoder_count, f.measured.count, f.measuring = 0, 0, 0, false
 	if begun, ended := MTL.CommandBuffer_GPUStartTime(f.cmd), MTL.CommandBuffer_GPUEndTime(f.cmd); ended > begun && begun > 0 {
 		present_latency(d, f.begun_ns, f.submitted_ns, i64((ended - begun) * 1e9))
 	}
@@ -887,6 +889,29 @@ mtl_collect_timestamps :: proc(d: ^Device, f: ^Mtl_Frame) {
 		end_ns := now + i64(end_seconds * 1e9) - i64(cpu)
 		d.timings[0] = {name = "frame", ms = f32((end_seconds - start_seconds) * 1000), start_ns = start_ns, end_ns = end_ns}
 		d.timing_count = 1
+	}
+	// The intervals it measured, each from the start of its first encoder to
+	// the end of its last, which the frame interval leaves out.
+	if d.timing_count == 0 || f.passes || measures == 0 || encoders == 0 || f.queries == nil {return}
+	data := MTL.CounterSampleBuffer_resolveCounterRange(f.queries, NS.Range{0, NS.UInteger(encoders * 2)})
+	if data == nil || u32(NS.Data_length(data)) < encoders * 2 * size_of(u64) {return}
+	samples := cast([^]u64)NS.Data_bytes(data)
+	starts, ends: [MAX_TIMESTAMPS]u64
+	for i in 0 ..< int(measures) {starts[i] = max(u64)}
+	for k in 0 ..< int(encoders) {
+		mark := int(f.encoder_marks[k])
+		first, last := samples[2 * k], samples[2 * k + 1]
+		if mark >= int(measures) || first == 0 || last == 0 || first == MTL_COUNTER_ERROR || last == MTL_COUNTER_ERROR {continue}
+		starts[mark] = min(starts[mark], first)
+		ends[mark] = max(ends[mark], max(first, last))
+	}
+	for i in 0 ..< int(measures) {
+		if ends[i] == 0 || d.timing_count >= MAX_TIMESTAMPS {continue}
+		start_ns, end_ns := tick_of(starts[i], gpu, now, rate), tick_of(ends[i], gpu, now, rate)
+		name := string(d.timing_bytes[d.timing_count][:copy(d.timing_bytes[d.timing_count][:], f.measured.names[i])])
+		d.timings[d.timing_count] = {name = name, ms = f32(f64(end_ns - start_ns) / 1e6), start_ns = start_ns, end_ns = end_ns}
+		d.timings[0].ms = max(d.timings[0].ms - d.timings[d.timing_count].ms, 0)
+		d.timing_count += 1
 	}
 }
 

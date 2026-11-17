@@ -869,6 +869,32 @@ cmd_timestamp :: proc(c: ^Command_List, name: string) {
 	if c.in_render_pass {vk_pass_record(c, {kind = .Timestamp, name = name})} else {vk_section(c, name)}
 }
 
+// Marks the start of an interval that frame_timings reports under this name
+// in every frame, also one that does not want timings, until cmd_measure_end:
+// what the renderer paces its own work by. Outside a render pass. In a frame
+// that wants timings it is a cmd_timestamp, which the next one ends.
+cmd_measure_begin :: proc(c: ^Command_List, name: string) {
+	if c.immediate || c.in_render_pass {return}
+	f := &c.device.frames[c.device.slot]
+	if f.passes {vk_section(c, name); return}
+	vk_measure(f, name)
+}
+
+// Ends the interval of the last cmd_measure_begin.
+cmd_measure_end :: proc(c: ^Command_List) {
+	if c.immediate || c.in_render_pass {return}
+	f := &c.device.frames[c.device.slot]
+	if !f.passes {vk_measure(f, "frame")}
+}
+
+// A timestamp of a frame without passes and the name of the interval it
+// begins, leaving one for frame_end.
+@(private)
+vk_measure :: proc(f: ^Vk_Frame, name: string) {
+	if f.queries == 0 || f.query_count + 1 >= MAX_TIMESTAMPS {return}
+	if frame_passes_add(&f.measured, name) {vk_timestamp_write(f)}
+}
+
 @(private)
 vk_section :: proc(c: ^Command_List, name: string) {
 	f := &c.device.frames[c.device.slot]
