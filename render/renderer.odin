@@ -285,6 +285,7 @@ Stats :: struct {
 	generated:         bool, // the frame drew an image the window shows before its own (frame generation)
 	shadow_movers:          u32, // of the last frame: the movers the maps drew, which their caches leave out
 	shadow_marked:          u32, // of the last frame: the views whose points marked the pages of the maps they read
+	shadow:                 Shadow_Stats, // of the frame two frames ago: what the maps of its last view drew
 	light_lists:            Light_List_Stats, // of the frame two frames ago: the lists of the lights without shadows of its last view
 	ui_vertices_dropped:    u32, // of the last frame: UI vertices beyond the capacity
 	ui_shapes_dropped:      u32,
@@ -647,6 +648,7 @@ Renderer :: struct {
 	texture_view_bytes: u64, // what their targets held of the GPU when the last frame ended (texture_views_count)
 	shared_targets:  [SHARED_TARGET_CAPACITY]Shared_Target, // the targets of a frame of the views (targets_frame)
 	shadow_buffers:  Shadow_Buffers,
+	shadow_cost:     [SHADOW_SUN_LEVELS]f32, // the clusters a page of each level of the sun cost the cache when it last drew one whole; 0: none yet
 	passes:          [FRAME_PASS_CAPACITY]Frame_Pass, // what extensions record in the next frame
 	pass_count:      int,
 	plans:           [RENDER_PIPELINE_CAPACITY]Render_Plan, // of the pipelines asked for

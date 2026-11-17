@@ -484,6 +484,19 @@ Gpu_Cull_Stats :: struct {
 	resolved: [3]u32, // of the resolve (vis_resolve.frag): pixels shaded, helper lanes of their quads, quads evaluated again
 	probe_rays: [2]u32, // the rays the probes traced and the hits they lit, copied at the end of the frame from the list of the probe volume
 	lists: Light_List_Stats, // of the lists of the lights without shadows (light_lists.comp)
+	shadow: Shadow_Stats,
+}
+// What the maps of the shadows of the last view drew in a frame: the clusters
+// the cache drew, once for each page they cover, those of them of masked
+// materials apart, and their triangles; those the atlas drew over it; the
+// pages the cache drew and the atlas composed, those newly asked for, those
+// of them the pool left out and those that wait for the frames after
+// (SHADOW_FRAME_CLUSTERS); and of each level of the sun, the pages the cache
+// drew whole and the clusters it drew into them: what a page of the level
+// costs.
+Shadow_Stats :: struct {
+	clusters, clusters_masked, triangles, clusters_moving, pages_drawn, pages_composed, pages_asked, pages_left, pages_waiting: u32,
+	level_pages, level_clusters: [abi.SHADOW_SUN_MAPS]u32,
 }
 // Instances, clusters and triangles that passed the cull of a frame, of one kind.
 Visible_Kind :: struct {instances, clusters, triangles: u32}

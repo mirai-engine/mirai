@@ -228,7 +228,7 @@ batch_changed_near :: proc(r: ^Renderer, record: ^Batch_Record) {
 	if batch_classes(record.desc.flags, record.small) == 0 || record.count == 0 || record.world != r.world_key {return}
 	offset := batch_offset(r, record)
 	scene_changed_seen(&r.scene, record.bounds_min + offset, record.bounds_max + offset, min(LIGHT_CHANGE_REACH, LIGHT_CHANGE_SIZES * record.reach))
-	if .Casts_Shadow in record.desc.flags {occluder_changed(&r.scene, OCCLUDERS_MANY, record.bounds_min + offset, record.bounds_max + offset)}
+	if .Casts_Shadow in record.desc.flags {occluder_changed(&r.scene, OCCLUDERS_MANY, record.bounds_min + offset - record.desc.reach, record.bounds_max + offset + record.desc.reach)}
 }
 
 // Where the anchor of a batch is from the origin: what takes its instances,

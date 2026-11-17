@@ -4,12 +4,13 @@
 //! variant tested MIRAI_SHADOW_TESTED=1
 // square: of each word of a list of the buffer of the pages from
 // params.list, its page of the pool (with SHADOW_JOB_HELD where the cache
-// holds it this frame), for shadow_map.frag to clear or copy.
+// holds it this frame), for shadow_map.frag to clear or copy: the part of it
+// the round draws (shadow_page_part).
 //! variant square MIRAI_SHADOW_SQUARE=1
 // The depth of the scene from a light into the pages of one of its maps in
 // the pool (shadow_maps.slang): an instance for each page of a map a cluster
 // covers (shadow_clusters.comp). The clip distances keep its triangles in the
-// page, which the table maps to its page of the pool.
+// part of the page the round draws, which the table maps to its page of the pool.
 #include "gbuffer_vertex.slang"
 #include "shadow_maps.slang"
 // The clusters to draw: the instance, the cluster, the page (shadow_page_word), and 1 for one at rest.
@@ -57,7 +58,8 @@ Shadow_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vul
     uint word = shadow_pages[params.list + instance_id];
     uint2 corner = shadow_pool_corner(word & SHADOW_ENTRY_POOL);
     output.held = (word & SHADOW_JOB_HELD) != 0u ? 1.0 : 0.0;
-    float4 rect = float4(float2(corner), float2(corner + SHADOW_PAGE));
+    uint4 part = shadow_page_part(word & SHADOW_ENTRY_POOL);
+    float4 rect = float4(float2(corner + part.xy), float2(corner + part.zw));
     float2 texel = lerp(rect.xy, rect.zw, at);
     for (uint i = 0u; i < 4u; i++) output.clip[i] = 1.0;
     output.position = float4(2.0 * texel.x / float(SHADOW_POOL) - 1.0, 1.0 - 2.0 * texel.y / float(SHADOW_POOL), 0.0, 1.0);
@@ -86,13 +88,18 @@ Shadow_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vul
     Mesh_Point v = cluster_point_at(mesh, c, vertex, entry.w != 0u ? INVALID : mesh.posed_word);
     Shadow_Map m = shadow_map_mip(shadow_map_at(shadow_data, params.rows, shadow_page_map(entry.z)), shadow_page_mip(entry.z));
     uint4 page = shadow_page_window(m, shadow_page_of(entry.z));
+    // Its page of the pool, and the texels of it the round draws.
+    uint pool;
+    if (!shadow_page_pool(m, shadow_page_of(entry.z), pool)) return output;
+    uint4 part = shadow_page_part(pool);
+    uint4 drawn = uint4(page.xy + part.xy, min(page.xy + part.zw, page.zw));
     // Its islands on their way to the next level as the map's own cut sees them.
     v.position += island_offset(mesh, c, vertex, cluster_along(shadow_map_detail(m), inst, instance_scale(inst), mesh, c, frame.cut.x));
     float3 world = transform_point(inst.world, v.position);
     float3 local = shadow_map_local(m, world);
     float4 clip = shadow_map_clip(m, local);
     // The page over the map, from -1 to 1, y up.
-    float4 window = float4(page) / float(max(m.rect.z, 1u));
+    float4 window = float4(drawn) / float(max(m.rect.z, 1u));
     float4 edges = float4(2.0 * window.x - 1.0, 1.0 - 2.0 * window.w, 2.0 * window.z - 1.0, 1.0 - 2.0 * window.y);
     output.clip[0] = clip.x - edges.x * clip.w;
     output.clip[1] = edges.z * clip.w - clip.x;
@@ -100,13 +107,8 @@ Shadow_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vul
     output.clip[3] = edges.w * clip.w - clip.y;
     // From -1 to 1 over the map to its page of the pool, row 0 on top: where
     // the corner of its square would lie were the page where it is.
-    uint2 pool;
-    if (!shadow_page_pool(m, shadow_page_of(entry.z), pool)) {
-        for (uint i = 0u; i < 4u; i++) output.clip[i] = -1.0;
-        return output;
-    }
     float side = float(m.rect.z) / float(SHADOW_POOL);
-    float2 corner = (float2(pool) - float2(page.xy)) / float(SHADOW_POOL);
+    float2 corner = (float2(shadow_pool_corner(pool)) - float2(page.xy)) / float(SHADOW_POOL);
     output.position = float4((2.0 * corner.x + side) * clip.w - clip.w + side * clip.x,
         clip.w - (2.0 * corner.y + side) * clip.w + side * clip.y, clip.z, clip.w);
 #ifdef MIRAI_SHADOW_TESTED
