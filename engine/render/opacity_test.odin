@@ -75,6 +75,12 @@ a_fade_is_given_to_its_instance_alone_without_a_row_or_an_allocation :: proc(t:^
         testing.expect(t,green>100,"the unchanged entity remains visible")
         delete(pixels)
     }
+    // The pipelines the frames above asked for ahead of time arrive as loads:
+    // they are in place, and in the store, before the frames that are counted.
+    gpu.renderer_pipelines_wait(app.renderer,all=true)
+    host.app_frame_begin(app)
+    draw(&sync,app,&w)
+    host.app_frame_end(app)
     material_rows:=len(app.assets.material_descs)
     allocations:=tracking.total_allocation_count
     for pass in 0..<32 {
