@@ -13,6 +13,23 @@
 - Their shadows open with their size ([shadows](#shadows)). A soft window turns it off at `range`.
 - A spot lights the cone of half angle `angle` around its -Z, with a soft edge.
 - The color of a light is that of its component, independent of the tint of its entity's mesh.
+- **Projected textures** (`texture` of `Spot_Light` and `Rect_Light`, `Light_Desc.texture`):
+  the light's color is multiplied by its texture where each part of it falls. A spot lays it
+  across its cone as a slide in a projector, the circle of the cone inscribed in it, its width
+  along `Light_Desc.texture_axis` (+X of its entity); a rectangle across its face, as
+  `Light_Emission` lays its material (which a texture of the light replaces). A point light has
+  no direction to lay one over and takes none. The color comes from `light_contribution`, the one
+  evaluation of a light at a point: the direct light with maps, samples or the lists of the
+  lights without shadows, the fog and media, glass, overlays, reflection hits, the probes, lit
+  particles and the lights of portals take it alike. The texture of a spot is blurred over the
+  pixel of a surface of the view (`shading_footprint`) and is as sharp as its finest level
+  elsewhere. Where a group of the tree stands for its lights (far groups of a cut, walks,
+  weights of the grid), a light counts with its color as if its texture were white.
+- In the record (`Gpu_Light.size`), the image word `w` holds the entry of the texture with
+  `GPU_LIGHT_TEXTURE`, or a rectangle's material row; a spot keeps the right of its texture in
+  `z`. A light without a texture has the record it would have without the field, reads no
+  texture and adds no pass. Textures of lights do not report their levels
+  ([residency](materials.md#residency-by-sampling)): they keep those they were loaded with.
 - **Shares** (`Light_Desc.indirect` and `scattering`, the sun's in `Sun_Desc`): what of its light
   the probes gather and what media scatter, 0 to the largest half; the direct light of a view does
   not read them. They travel as two halves in `Gpu_Light.axis.w` (`light_shares`), and a group
@@ -47,9 +64,9 @@
   irradiance of the segment cut below the horizon (Picott).
 - **Rectangle** (`size`, `direction` and `axis`): shines evenly toward the -Z of the entity of its
   `Rect_Light` (`axis`, its -X, is its right seen from that side), with the exact irradiance of
-  the part above the horizon (Arvo). With `material`, the material emission tints it: the diffuse
-  takes the color around the nearest point filtered by its distance; the highlight, that of the
-  point it comes from filtered by the lobe.
+  the part above the horizon (Arvo). With `texture`, or else `material` (the emission of the
+  material), its image tints it: the diffuse takes the color around the nearest point filtered by
+  its distance; the highlight, that of the point it comes from filtered by the lobe.
 - `intensity` is in candelas; that of a rectangle is the luminance of its face, in nits
   ([units](display.md#units)).
 
@@ -373,7 +390,9 @@ shadows `render_a_light_without_shadows_lights_through_what_holds_it`, and for a
 them `render_a_mesh_without_shadows_lets_the_sun_through`) and, for the grid and
 the groups of lights and their lists, `render_many_lights_match_their_reference`,
 `render_lights_that_few_reach_at_a_time_are_each_lit` and
-`render_groups_of_lights_give_what_their_lights_give`.
+`render_groups_of_lights_give_what_their_lights_give`; for the images of lights,
+`lights_color_their_light_by_their_image` (GPU) and
+`a_light_keeps_the_texture_it_projects_in_its_record` (without a device).
 
 ## Colored shadow filters
 

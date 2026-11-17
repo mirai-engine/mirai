@@ -110,12 +110,12 @@ float span_irradiance_least(Span span, float radius) {
 
 // The least a node adds to the estimate of a point of the cell where it
 // stands for its lights (node_contribution): of a light, while it is a
-// sphere and the cell lies where it shines whole.
+// sphere that projects no texture and the cell lies where it shines whole.
 float span_least(Light_Node node, Span span) {
     float power = luminance(node.power_reach.rgb);
     if ((node.flags & LIGHT_NODE_LEAF) != 0u) {
         Light light = lights[node.child];
-        if (light_is_rect(light) || light_is_capsule(light) || span.least < 1.0) return 0.0;
+        if (light_is_rect(light) || light_is_capsule(light) || light_projects(light) || span.least < 1.0) return 0.0;
         return power * span_irradiance_least(span, light.size.x) * light_window(span.far, light.position_range.w);
     }
     float deviation = node.spread * 0.57735027;

@@ -181,22 +181,24 @@ sky_environment :: proc(e:core.Entity,sky:Sky,found,sunlit:bool,worlds:^core.Tab
     atmosphere:=sky.atmosphere && sunlit
     environment:=gpu.Environment{sky=sky.luminance,background=sky.background,use_background=sky.use_background && !atmosphere}
     if world,ok:=core.get(worlds,e);ok {environment.sky_orientation=world.rotation}
-    environment.sky_texture=sky_texture(a,sky.image)
+    environment.sky_texture=image_texture(a,sky.image)
     environment.sky_atmosphere=atmosphere
     environment.air=air_metres(sky.air)
     switch {
     case sky.arrival>0:
-        environment.sky_from,environment.sky_from_texture,environment.sky_from_weight=sky.arrival_from.luminance,sky_texture(a,sky.arrival_from.image),min(sky.arrival,1)
+        environment.sky_from,environment.sky_from_texture,environment.sky_from_weight=sky.arrival_from.luminance,image_texture(a,sky.arrival_from.image),min(sky.arrival,1)
         environment.sky_from_atmosphere=sky.arrival_from.atmosphere
     case sky.fade>0:
-        environment.sky_from,environment.sky_from_texture,environment.sky_from_weight=sky.from.luminance,sky_texture(a,sky.from.image),min(sky.fade,1)
+        environment.sky_from,environment.sky_from_texture,environment.sky_from_weight=sky.from.luminance,image_texture(a,sky.from.image),min(sky.fade,1)
         environment.sky_from_atmosphere=sky.from.atmosphere
     }
     return environment
 }
 
+// The texture of an image asset, loaded if it was not: 0 for none and for
+// one that does not load.
 @(private)
-sky_texture :: proc(a:^host.Assets,image:base.Asset_Id) -> gpu.Texture_Handle {
+image_texture :: proc(a:^host.Assets,image:base.Asset_Id) -> gpu.Texture_Handle {
     if image=={} {return 0}
     if texture:=host.assets_texture_image(a,image);texture!=nil && !texture.failed {return texture.handle}
     return 0

@@ -103,6 +103,8 @@ Light_Desc :: struct {
 	length:    f32,  // a capsule: of its segment, metres; 0: a sphere
 	size:      Vec2, // a rectangle: its width and height, metres; zero: not one
 	material:  Material_Handle, // a rectangle: the material whose emission colors it across, its texture mapped to it as to a unit quad (0: its color alone)
+	texture:   Texture_Handle,  // a spot or a rectangle: the image its color is multiplied by across its cone or its face, in place of the emission of material (0: none)
+	texture_axis: Vec3,         // a spot: the way the width of its texture runs across the cone, its right seen from the light
 	indirect:  f32,  // what of its light the probes gather, and so bounces: 1 all of it, 0 none
 	scattering: f32, // what of its light media scatter (fog, the volumes of particles): 1 all of it
 	shadowless: bool, // it casts no shadows: its light goes through everything, with no shadow map or ray
@@ -773,7 +775,7 @@ materials_lit :: proc(s: ^Scene_State, rows: []u32) {
 		if s.changes.all && s.changes.seen {return}
 	}
 	for light in s.lights {
-		if light.direction_cone.w == GPU_LIGHT_RECT && shows(rows, transmute(u32)light.size.w) {scene_changed_near(s, light.position_range.xyz, light.position_range.w)}
+		if row, rect := light_emission_row(light); rect && shows(rows, row) {scene_changed_near(s, light.position_range.xyz, light.position_range.w)}
 	}
 }
 
@@ -2137,6 +2139,21 @@ light_shares_of :: proc "contextless" (l: Gpu_Light) -> Vec2 {
 	return {f32(transmute(f16)u16(bits & 0xffff)), f32(transmute(f16)u16(bits >> 16))}
 }
 
+// The image word of a light (Gpu_Light.size.w): the entry of the texture it
+// projects with GPU_LIGHT_TEXTURE, or else the material row whose emission a
+// rectangle shows; 0: none.
+light_image :: proc "contextless" (texture: Texture_Handle, material: Material_Handle) -> u32 {
+	if texture != 0 {return GPU_LIGHT_TEXTURE | texture_entry(int(texture) - 1)}
+	return u32(material)
+}
+
+// The material row whose emission a rectangle that projects no texture
+// shows (0: none); false for the other lights.
+light_emission_row :: proc "contextless" (l: Gpu_Light) -> (row: u32, rect: bool) {
+	image := transmute(u32)l.size.w
+	return image, l.direction_cone.w == GPU_LIGHT_RECT && image & GPU_LIGHT_TEXTURE == 0
+}
+
 // A local light that gives light in render units.
 @(private = "file")
 gpu_light :: proc(l: Light_Desc, scale: f32) -> Gpu_Light {
@@ -2150,11 +2167,17 @@ gpu_light :: proc(l: Light_Desc, scale: f32) -> Gpu_Light {
 	case l.size.x > 0 && l.size.y > 0 && facing && linalg.length(along) > 1e-6:
 		normal, width := linalg.normalize(l.direction), linalg.normalize(along)
 		light.direction_cone = {normal.x, normal.y, normal.z, GPU_LIGHT_RECT}
-		light.size = {0, l.size.x * 0.5, l.size.y * 0.5, transmute(f32)u32(l.material)}
+		light.size = {0, l.size.x * 0.5, l.size.y * 0.5, transmute(f32)light_image(l.texture, l.material)}
 		light.axis = {width.x, width.y, width.z, shares}
 	case l.cone > 0 && facing:
 		direction := linalg.normalize(l.direction)
 		light.direction_cone = {direction.x, direction.y, direction.z, math.cos(clamp(l.cone, 0.001, math.PI * 0.5))}
+		// The right of its texture across the cone: without one, no texture.
+		right := l.texture_axis - linalg.dot(l.texture_axis, direction) * direction
+		if l.texture != 0 && linalg.length(right) > 1e-6 {
+			light.size.z = transmute(f32)mm.normal_pack(linalg.normalize(right))
+			light.size.w = transmute(f32)light_image(l.texture, 0)
+		}
 	}
 	if l.length > 0 && linalg.length(l.axis) > 1e-6 && light.direction_cone.w != GPU_LIGHT_RECT {
 		axis := linalg.normalize(l.axis)
