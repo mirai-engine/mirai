@@ -487,6 +487,9 @@ Frame_Desc :: struct {
 	// A loading screen: no one needs the frame steady, and what waits to be
 	// drawn (the pages of the maps of the shadows) may take it.
 	loading: bool,
+	// The refresh of the display the frame is shown on, Hz: the time a frame
+	// paces the work that waits by; 0: 60.
+	refresh_hz: f32,
 }
 
 VIEW_CAPACITY :: abi.VIEW_CAPACITY

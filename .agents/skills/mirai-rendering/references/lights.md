@@ -284,25 +284,28 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   stays within it. A tap past the side of a face of the cube of a light reads the face its
   direction falls on (`shadow_beside`).
 - **What a frame draws at most.** The draws of the cache and those of the atlas each take at most
-  the bound of the renderer in a frame of any view, still, moving or first (`Shadow_Bound`): from
+  the bound of the renderer in a frame of any view, still, moving or first (`Shadow_Bound`). It
+  follows the GPU time the maps take (`SHADOW_MAPS_TIMING`, measured in every frame with
+  `rhi.cmd_measure_begin`), as what they draw costs in proportion to it: from
   `SHADOW_FRAME_CLUSTERS`, what the least GPU the engine runs on draws into a depth map, masked, in
-  a few milliseconds, it grows while the GPU time of the frames has room under `SHADOW_FRAME_MS`
-  (`SHADOW_LOADING_MS` on a loading screen, `Frame_Desc.loading`) and pages wait, and shrinks when
-  it has none, never past `SHADOW_FRAME_CLUSTERS_MOST`, far within the time a driver gives a draw
-  before it resets the device: a fresh view fills as fast as the frames allow. Before the cull by
-  cluster, `Grant` gives the pages, those whose points read them drawn the frame before first
-  (`SHADOW_JOB_KEPT`), then in the order they are given, while what they take fits half the bound:
-  what a page took when the round last drew it, else what the cull by instance foresees, scaled by
-  what the draws took of that before (`SHADOW_WORDS_SCALE`), and for a page not drawn yet a part of
-  the share at most, as what is foreseen strays most where a page holds the most. A page may take
-  twice that, so one that takes more is the only one left over; a page of the cache that takes more
-  than half the bound is drawn in bands of its rows over frames (`SHADOW_WORDS_BAND`); a page of the
-  atlas that came is granted only where its quota leaves the pages kept room to take more the frame
-  after, so a page composed while what moves in it moves is composed every frame. A page is foreseen
-  once and keeps it until drawn, and the culls after the grant go over the slots and spans of the
-  pages granted alone: a page that waits costs no instance. A page left over, one that waits and one
-  whose band is not its last are not ready that frame (`Settle`): their points read the nearest
-  coarser page drawn, or trace, and the steps run again the next frame.
+  a few milliseconds, it grows while pages wait, the maps take less than their share of a refresh of
+  the display (`SHADOW_MAPS_SHARE`, `SHADOW_LOADING_SHARE` on a loading screen,
+  `Frame_Desc.loading`) and the frame does not pass the refresh by much, and shrinks when they take
+  more or the frame passes it, never past `SHADOW_FRAME_CLUSTERS_MOST`, far within the time a driver
+  gives a draw before it resets the device: a fresh view fills as fast as its frames allow. Before
+  the cull by cluster, `Grant` gives the pages, those whose points read them drawn the frame before
+  first (`SHADOW_JOB_KEPT`), then in the order they are given, while what they take fits half the
+  bound: what a page took when the round last drew it, else what the cull by instance foresees,
+  scaled by what the draws took of that before (`SHADOW_WORDS_SCALE`), and for a page not drawn yet
+  a part of the share at most, as what is foreseen strays most where a page holds the most. A page
+  may take twice that, so one that takes more is the only one left over; a page of the cache that
+  takes more than half the bound is drawn in bands of its rows over frames (`SHADOW_WORDS_BAND`); a
+  page of the atlas that came is granted only where its quota leaves the pages kept room to take
+  more the frame after, so a page composed while what moves in it moves is composed every frame. A
+  page is foreseen once and keeps it until drawn, and the culls after the grant go over the slots
+  and spans of the pages granted alone: a page that waits costs no instance. A page left over, one
+  that waits and one whose band is not its last are not ready that frame (`Settle`): their points
+  read the nearest coarser page drawn, or trace, and the steps run again the next frame.
 - **A still view.** While its camera, size, parameters and lights stay and no caster changes
   (`Shadow_Seen`), a view keeps the marks and the table of the frames before: its points mark the
   pages they read only for a cycle of its jitter after a change, the marks add up, and the steps

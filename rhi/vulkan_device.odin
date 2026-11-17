@@ -122,6 +122,7 @@ Vk_Frame :: struct {
 	passes:       bool, // the frame writes the timestamps of cmd_timestamp: timestamps_want was on when it began
 	query_count:  u32,
 	recorded:     Frame_Passes, // its cmd_timestamp marks, which name its queries when it has passes
+	measured:     Frame_Passes, // without passes, its cmd_measure_begin marks and "frame" for each cmd_measure_end
 	image_index:  u32,
 	acquired:     bool,
 	paced:        bool, // the frame draws into a pair of the presenter
@@ -1221,7 +1222,9 @@ vk_collect_timestamps :: proc(d: ^Device, f: ^Vk_Frame) {
 	for i in 0 ..< d.timing_count {
 		start_ns := tick_of(values[i], gpu, now, d.timestamp_bits, d.info.timestamp_period_ns)
 		end_ns := max(tick_of(values[i + 1], gpu, now, d.timestamp_bits, d.info.timestamp_period_ns), start_ns)
-		name := string(d.timing_bytes[i][:copy(d.timing_bytes[i][:], f.recorded.names[i] if f.passes else "frame")])
+		// Without passes the frame is one interval but for those it measured.
+		label := f.recorded.names[i] if f.passes else ("frame" if i == 0 || i > int(f.measured.count) else f.measured.names[i - 1])
+		name := string(d.timing_bytes[i][:copy(d.timing_bytes[i][:], label)])
 		d.timings[i] = {name = name, ms = f32(f64(end_ns - start_ns) / 1e6), start_ns = start_ns, end_ns = end_ns}
 	}
 }
@@ -1280,7 +1283,7 @@ frame_begin :: proc(d: ^Device, present := true) -> (cmd: ^Command_List, ok: boo
 	d.dvk.BeginCommandBuffer(f.cmd, &begin)
 	vk_list_reset(&f.list)
 	f.marks.serial, f.marks.sent, f.marks.count, f.marks.named = u32(d.frame_number) + 1, false, 0, 0
-	f.recorded.count = 0
+	f.recorded.count, f.measured.count = 0, 0
 	f.passes = false
 	if f.queries != 0 {
 		d.dvk.CmdResetQueryPool(f.cmd, f.queries, 0, MAX_TIMESTAMPS)
