@@ -100,6 +100,7 @@ FRAME_FLAG_NEUTRAL      :: 128 // the display transform is PBR Neutral, computed
 INSTANCE_MESH_MASK          :: u32(0xffffff)
 INSTANCE_RAY_SHIFT          :: 24
 INSTANCE_UNSHADOWED         :: u32(1) << 26
+INSTANCE_FADED              :: u32(1) << 27
 INSTANCE_FLAG_HIDDEN        :: 1
 INSTANCE_FLAG_COLLAPSED     :: 2
 INSTANCE_FLAG_SMALL         :: 4
