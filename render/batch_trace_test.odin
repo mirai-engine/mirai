@@ -97,7 +97,7 @@ a_batch_casts_the_shadows_and_shows_in_the_reflections_of_its_instances :: proc(
 	// The shadow of the middle post falls away from the sun; the mirror 0.75 m in front of it reflects it.
 	shadow, reflection := trace_pixel(r, camera, {-1, 0, 0}), trace_pixel(r, camera, {0, 0.01, 0.75})
 	for provider in ([]Trace_Mode{.Software, .Hardware}) {
-		if provider == .Hardware && !r.hardware_rt_verified {continue}
+		if !fixture_traces(r, provider) {continue}
 		applied := r.settings
 		applied.trace_mode = provider
 		testing.expect(t, renderer_apply_settings(r, applied))

@@ -112,6 +112,9 @@ ui_composition_frames_reuse_shape_buffers_and_effect_targets_without_allocating 
     effects:=[]Ui_Effect{{bounds={4,4,56,40},radius=12,opacity=0.8,backdrop_blur=3}}
     frame:=Frame_Desc{camera=EMPTY_CAMERA,ui={{vertices=vertices[:],draws=commands,shapes=shapes,effects=effects}}}
     for _ in 0..<4 {testing.expect(t,renderer_frame(f.renderer,frame),f.renderer.error)}
+    // The variants asked ahead of time are made on the pipeline threads as the driver finishes
+    // them, during any frame: a stable frame is one after them.
+    renderer_pipelines_wait(f.renderer,all=true)
     allocations:=f.tracking.total_allocation_count
     resources:=rhi.device_stats(f.device)
     caller:mem.Tracking_Allocator
