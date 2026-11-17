@@ -834,6 +834,113 @@ render_a_frame_draws_no_more_than_its_clusters_and_the_rest_comes_after :: proc(
 	expect_clean(t, f.device)
 }
 
+// Under the bound of a frame, a batch that sways over a still floor composes
+// the same pages every frame, those its instances cover: the points there
+// read their own pages every frame, never a coarser one in between, and the
+// pages of the floor between its instances, under the box of the batch, stay
+// as the cache drew them. One batch over two groups composes no more pages
+// than a batch for each group.
+@(test)
+render_a_swaying_batch_keeps_its_pages_under_the_bound :: proc(t: ^testing.T) {
+	Sway :: struct {mesh: Mesh_Handle, x: f32}
+	write :: proc(s: ^Stage_Pass, user: rawptr) {
+		sway := (^Sway)(user)
+		r := s.pass.r
+		written, rest, count, _, known := deformable_vertices(r, sway.mesh)
+		if !known {return}
+		vertices, at := rhi.frame_alloc_typed(r.device, Gpu_Posed_Vertex, int(count))
+		if vertices == nil {return}
+		copy(vertices, ([^]Gpu_Posed_Vertex)(&r.scene.vertices[rest])[:count])
+		for &v in vertices {v.position.x += sway.x}
+		rhi.cmd_copy_buffer(s.pass.cmd, at.buffer, at.offset, r.scene.vertex_buffer, u64(written) * 4, u64(count) * size_of(Gpu_Posed_Vertex))
+	}
+	cases := [?]struct {
+		name:    string,
+		batches: int, // the groups in one batch, or a batch for each
+	}{{"one batch", 1}, {"a batch for each group", 2}}
+	composed: [len(cases)]u32
+	for c, n in cases {
+		f: Cube_Fixture
+		settings := test_settings()
+		settings.gi_enabled = false
+		settings.taa = false
+		if !cube_fixture_init(t, &f, 192, 128, settings) {return}
+		r := f.renderer
+		floor := Instance_Desc{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {40, 0.2, 40}), tint = {0.8, 0.8, 0.8}}
+		sun := Sun_Desc{direction = {0.4, 1, 0.3}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true}
+		testing.expect(t, scene_given(r, {floor}, nil, sun, {sky = {0, 0, 0}}))
+		camera := Camera{position = {0, 9, 0.001}, forward = {0, -9, -0.001}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+		mesh, made := deformable_create(r, f.cube, false, 0.3)
+		if !testing.expect(t, made) {fixture_destroy(&f); return}
+		// Two groups of posts 10 m apart, the floor between them still.
+		groups: [2][4]Batch_Instance
+		for &group, g in groups {
+			for &instance, k in group {instance = batch_instance({f32(g) * 10 - 5 + f32(k % 2) * 0.8, 0.6, f32(k / 2) * 0.8}, 1, {0.3, 1.2, 0.3})}
+		}
+		all := [8]Batch_Instance{}
+		copy(all[:4], groups[0][:])
+		copy(all[4:], groups[1][:])
+		desc := Batch_Desc{mesh = mesh, tint = 0.5, flags = {.Casts_Shadow, .Ray_Visible}}
+		handles: [2]Batch_Handle
+		problem: string
+		if c.batches == 1 {
+			handles[0], problem = batch_set(r, 0, 0, desc, all[:])
+		} else {
+			for &h, g in handles {if problem == "" {h, problem = batch_set(r, 0, 0, desc, groups[g][:])}}
+		}
+		testing.expectf(t, problem == "", "%s: %s", c.name, problem)
+		sway := Sway{mesh = mesh}
+		b := &r.main.targets.shadow_raster
+		// The posts sway to one side and the other, a frame each.
+		frame :: proc(t: ^testing.T, r: ^Renderer, cube: Mesh_Handle, sway: ^Sway, camera: Camera) {
+			sway.x = -sway.x if sway.x != 0 else 0.2
+			low, high, _ := mesh_bounds(r, cube)
+			testing.expect(t, deformable_update(r, sway.mesh, low - 0.3, high + 0.3))
+			testing.expect(t, frame_pass(r, .Geometry, write, sway))
+			testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+		}
+		// What the swaying posts take with room to spare.
+		b.budget = 1 << 20
+		for _ in 0 ..< 8 {frame(t, r, f.cube, &sway, camera)}
+		_, pages, _ := shadow_counts(r)
+		stats: [1]Shadow_Stats
+		testing.expect(t, rhi.buffer_read_slice(r.device, r.stats_buffer, u64(offset_of(Gpu_Cull_Stats, shadow)), stats[:]))
+		// A bound with room for them but little more, from the start again.
+		bound := 2 * ((32 * pages + stats[0].clusters_moving) * 4 / 3 + 64)
+		b.budget, b.forget = bound, true
+		waiting := u32(1)
+		for k := 0; k < 64 && waiting != 0; k += 1 {
+			frame(t, r, f.cube, &sway, camera)
+			count: [1]u32
+			testing.expect(t, rhi.buffer_read_slice(r.device, b.pages, u64(abi.SHADOW_WORDS_COUNTS + abi.SHADOW_COUNT_WAITING) * 4, count[:]))
+			waiting = count[0]
+		}
+		testing.expectf(t, waiting == 0, "%s: under a bound of %d the pages still wait", c.name, bound)
+		frame(t, r, f.cube, &sway, camera)
+		entries := make([]u32, abi.SHADOW_SLOT_ENTRIES * SHADOW_SLOTS)
+		before := make([]u32, len(entries))
+		testing.expect(t, rhi.texture_read(f.device, b.table, mem.slice_to_bytes(before)))
+		for k in 0 ..< 8 {
+			frame(t, r, f.cube, &sway, camera)
+			drawn, moved, _ := shadow_counts(r)
+			composed[n] = max(composed[n], moved)
+			testing.expectf(t, drawn == 0 && moved > 0, "%s, frame %d: the cache drew %d pages again and the atlas composed %d", c.name, k, drawn, moved)
+			testing.expect(t, rhi.texture_read(f.device, b.table, mem.slice_to_bytes(entries)))
+			changed := 0
+			for e, i in entries {if e != before[i] {changed += 1}}
+			testing.expectf(t, changed == 0, "%s, frame %d: %d entries of the table changed while the posts swayed", c.name, k, changed)
+		}
+		delete(entries)
+		delete(before)
+		b.budget = 0
+		for h in handles {if h != 0 {batch_remove(r, h)}}
+		mesh_remove(r, mesh)
+		expect_clean(t, f.device)
+		fixture_destroy(&f)
+	}
+	testing.expectf(t, composed[0] <= composed[1], "one batch over both groups composes %d pages, a batch for each %d", composed[0], composed[1])
+}
+
 // The search of the blockers of a point reaches far where something may
 // stand far above it: its far taps read a coarser level, so a tall scene asks
 // for hardly more pages of the level its points read than a low one, where
