@@ -511,10 +511,8 @@ void material_parameters(uint row, uint block, out float4 parameters[16]) {
 [[vk::binding(TEXTURE_FEEDBACK_SLOT, 0)]] RWStructuredBuffer<uint> texture_feedback_words : register(MIRAI_REGISTER(u, TEXTURE_FEEDBACK_SLOT), space0);
 #endif
 
-// While true, samples record nothing: the alpha of a program inside a
-// traversal (hit_alpha) reads its maps for whether a ray goes on, and a
-// write of each of them would keep the whole program in every traversal of
-// the stage, its colors and normals too, which no ray reads there.
+// While true, samples record nothing: a pixel of a quad that evaluates its
+// material for the derivatives of another (vis_resolve.frag).
 static bool texture_feedback_quiet = false;
 // Whether this is a helper of a quad of a fragment stage, which runs only for
 // the derivatives of the others: what it does to memory is dropped.
@@ -771,6 +769,20 @@ float4 material_base_color(Material m, float2 uv0, float2 uv1, float2 lod, float
     if (material_has(m.textures[MATERIAL_MAP_BASE_COLOR])) base *= material_map_texel(m, MATERIAL_MAP_BASE_COLOR, m.textures[MATERIAL_MAP_BASE_COLOR], uv0, uv1, lod, ray);
     return base;
 }
+
+// The coverage of a masked material at a point: its opacity times the alpha
+// of its mask map, which the row holds as the base color map when the
+// material has no mask of its own. No program runs: visibility, the shadow
+// maps and rays cut by it alike. A stage that has only the uv the map reads
+// (mask_uv_set) gives it as both.
+float material_mask(Material m, float2 uv0, float2 uv1, float2 lod, bool ray) {
+    float alpha = m.opacity;
+    uint texture_index = m.textures[MATERIAL_MAP_MASK];
+    if (material_has(texture_index)) alpha *= material_map_texel(m, MATERIAL_MAP_MASK, texture_index, uv0, uv1, lod, ray).a;
+    return alpha;
+}
+// The uv set the mask map of a material row reads.
+uint mask_uv_set(uint row) { return materials[row].map_transforms[MATERIAL_MAP_MASK].uv_set; }
 
 // The layers a pass shades of those a material holds: all of them, or the
 // unlit bit alone in a pass that only sees surfaces without layers
@@ -1053,6 +1065,8 @@ void material_wet_apply(inout Material_Sample s, Material m, float wet) {
 // the shared maps; the normal supplied by the caller remains its input.
 Material_Sample material_sample_finish(Material_Sample values, Material m, Mirai_Surface_Context ctx) {
     material_wet_apply(values, m, ctx.wet);
+    // A masked material covers by its mask map, whatever its program or standard model give.
+    if (m.alpha_mode == ALPHA_MASK) values.alpha = material_mask(m, ctx.uv0, ctx.uv1, float2(ctx.lod, ctx.lod1), ctx.ray);
     // The emission of the instance takes the mode of the material's.
     values.emission_relative = m.emission_mode == EMISSION_RELATIVE;
     return values;
@@ -1104,8 +1118,8 @@ float3 hit_emission(Material_Sample m) {
 #endif
 }
 
-// Coverage needs only opacity; shared roughness, emission and specular maps
-// have no effect on it. A program supplies opacity from the same context.
+// The alpha of a blended surface: its opacity, or what its program gives
+// from the same context; the other maps have no effect on it.
 float material_alpha(Material m, Mirai_Surface_Context ctx, float3 tint, float3 added_emission) {
     float3 normal = ctx.normal;
     Material_Sample values;

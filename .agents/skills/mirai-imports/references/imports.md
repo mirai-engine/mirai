@@ -623,11 +623,11 @@ A masked card is drawn opaque, cut to the outline of its mask, when it is read
 - **A card** is an island of at most `ISLAND_MAX_TRIANGLES` of a submesh, however many islands it
   has, whose material is `Mask` with a mask image, every corner of it opaque in its color, laid on
   the image without folding over at most two periods of it (the image repeats, as the material
-  samples it). The mask of a material without a program is its base color image; one with a
-  program names its own (`Imported_Material.mask`: image, map and cutoff, which a format that
-  knows what the program's alpha reads sets), and without it keeps its mask. Cards of skinned and
-  morphing meshes are cut too: a vertex of an outline takes the influences (the eight strongest)
-  and the target deltas of the corners of the card triangle it lies on, weighed by where it lies.
+  samples it). The mask of a material is the image of its mask map (`images[.Mask]`, which a format
+  that knows what a program's opacity reads bakes), or of its base color map without one, program or
+  not (`material_mask_image`). Cards of skinned and morphing meshes are cut too: a vertex of an
+  outline takes the influences (the eight strongest) and the target deltas of the corners of the
+  card triangle it lies on, weighed by where it lies.
 - **Outlines.** Of the rectangle of the image a card covers, the texels whose alpha times the
   opacity reaches the cutoff; conservative outlines of them from `OUTLINE_FINEST` texels to a
   convex quadrilateral, each with its measured error (the farthest texel it draws from one the mask

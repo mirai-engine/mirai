@@ -578,11 +578,10 @@ copy_sources :: proc(files:^Sources,source,target:string) -> (failed:string) {
 // only reaches the stages of its domain.
 // The Surface include of the include folder evaluates no program: only the
 // stages of a program (`//! per surface program`) have one, the include of
-// SURFACE_FOLDER/<name>. The alpha of the programs that have one of their own
-// is in SURFACE_COVERAGE_INCLUDE, for the rays that go through what it leaves out.
+// SURFACE_FOLDER/<name>. No stage evaluates a program for coverage: a masked
+// material is cut by its mask map.
 SURFACE_INCLUDE :: "surface_programs.slang"
 SURFACE_FOLDER :: "surface" // of the include, the folder of the include of each Surface program
-SURFACE_COVERAGE_INCLUDE :: "surface_coverage.slang"
 POSTPROCESS_INCLUDE :: "postprocess_programs.slang"
 VFX_INCLUDE :: "vfx_programs.slang"
 VFX_FOLDER :: "vfx" // of the include, the folder of the include of each Vfx program
@@ -639,21 +638,10 @@ vfx_program_include :: proc(name,prelude,relative:string,parameters,attributes:L
     return strings.to_string(own),""
 }
 
-// Ends the line with which the coverage include names the source of a program
-// with coverage, before the hash of its alpha compiled alone (alpha_probe):
-// the fingerprint of a stage that traces follows that alpha and not the text
-// of the program (dependencies), so an edit that keeps the alpha of a program
-// compiles only its own stages.
-ALPHA_INCLUDE :: "// by its alpha "
-
-// The source and the loader of a Surface program, once in a stage that
-// includes both its own include and the coverage include. alpha: in the
-// coverage include, the hash of its alpha.
+// The source and the loader of a Surface program.
 @(private)
-surface_program_source :: proc(b:^strings.Builder,name,relative:string,parameters:Layout,alpha:="") {
-    fmt.sbprintf(b,"#ifndef MIRAI_PROGRAM_%s\n#define MIRAI_PROGRAM_%s\n#include \"programs/%s\"",name,name,relative)
-    if alpha!="" {fmt.sbprintf(b," %s%s",ALPHA_INCLUDE,alpha)}
-    strings.write_string(b,"\n")
+surface_program_source :: proc(b:^strings.Builder,name,relative:string,parameters:Layout) {
+    fmt.sbprintf(b,"#ifndef MIRAI_PROGRAM_%s\n#define MIRAI_PROGRAM_%s\n#include \"programs/%s\"\n",name,name,relative)
     program_loader(b,name,parameters)
     strings.write_string(b,"#endif\n")
 }
@@ -685,21 +673,21 @@ surface_program_include :: proc(name,relative:string,parameters:Layout,vertex:=f
 @(private)
 NO_VERTEX_PROGRAM :: "bool mirai_vertex_program(uint id,float4 packed[16],Mirai_Vertex_Context ctx,inout Mirai_Vertex value) {return false;}\n"
 
-// The value the default material of an alpha probe gives alpha: a program
-// whose probe stores it never changes the alpha of the default.
+// The value the default material of an alpha probe gives alpha, and its
+// standard model too: a program whose probe stores it leaves alpha as the
+// material has it.
 @(private)
 PROBE_ALPHA :: f32(0.7568359375)
 @(private)
 PROBE_BINDING :: 100 // past those of what a program includes
 
-// Whether a Surface program changes the alpha of the default material, by its
-// alpha alone compiled and optimized: what reads nothing (a texture, the
-// context, a parameter) folds into a constant. Anything else counts as
-// coverage, and alpha is the hash of that compiled alpha: the texture reads
-// keep every argument, so two sources with the same hash give the same alpha.
-// ok: the compiler ran; the reflection says why when it did not.
+// Whether a Surface program sets alpha, by its alpha alone compiled and
+// optimized: what keeps the alpha of the default material or of the standard
+// model folds into the constant they give. A masked material whose program
+// sets it is an error of the material (a mask map cuts it); a blended one
+// shows it. ok: the compiler ran; the reflection says why when it did not.
 @(private)
-alpha_probe :: proc(runner:^Runner,slangc,root,copied,source_folder,compiled_path,name,temporary:string,plugins:[]string=nil,memory:=Memory{}) -> (coverage:bool,alpha:[64]u8,ok:bool) {
+alpha_probe :: proc(runner:^Runner,slangc,root,copied,source_folder,compiled_path,name,temporary:string,plugins:[]string=nil,memory:=Memory{}) -> (coverage:bool,ok:bool) {
     wrapper:=path_join(temporary,fmt.tprintf("%s.alpha.slang",name),allocator=context.temp_allocator)
     compiled:=path_join(temporary,fmt.tprintf("%s.alpha.spv",name),allocator=context.temp_allocator)
     text:=strings.builder_make(context.temp_allocator)
@@ -710,8 +698,7 @@ alpha_probe :: proc(runner:^Runner,slangc,root,copied,source_folder,compiled_pat
     // A read of a texture depends on all it is given and on how it reads.
     strings.write_string(&text,"float4 mirai_probe_value(uint kind,uint index,float2 uv,float4 more=float4(0.0)) {return mirai_probe_values[(kind*977u+index+asuint(uv.x)*3u+asuint(uv.y)*5u+asuint(more.x)*7u+asuint(more.y)*11u+asuint(more.z)*13u+asuint(more.w)*17u)&63u];}\n")
     fmt.sbprintf(&text,"Mirai_Surface mirai_surface_default(Mirai_Surface_Context ctx) {{Mirai_Surface s=(Mirai_Surface)0;s.normal=ctx.normal;s.alpha=%.10f;return s;}}\n",PROBE_ALPHA)
-    // The standard model of a material reads its opacity and the alpha of its base color map.
-    strings.write_string(&text,"Mirai_Surface mirai_surface_standard(Mirai_Surface_Context ctx) {Mirai_Surface s=mirai_surface_default(ctx);s.alpha=mirai_probe_value(8u,ctx.material,ctx.uv0).a;return s;}\n")
+    strings.write_string(&text,"Mirai_Surface mirai_surface_standard(Mirai_Surface_Context ctx) {return mirai_surface_default(ctx);}\n")
     strings.write_string(&text,"float4 mirai_sample_texture(Mirai_Surface_Context ctx,uint index,float2 uv,float lod) {return mirai_probe_value(1u,index,uv,float4(lod,0.0,0.0,0.0));}\n")
     strings.write_string(&text,"float4 mirai_sample_texture(Mirai_PostProcess_Context ctx,uint index,float2 uv,float lod) {return mirai_probe_value(2u,index,uv,float4(lod,0.0,0.0,0.0));}\n")
     strings.write_string(&text,"float4 mirai_sample_texture_level(uint index,float2 uv,float level) {return mirai_probe_value(3u,index,uv,float4(level,0.0,0.0,0.0));}\n")
@@ -742,14 +729,7 @@ alpha_probe :: proc(runner:^Runner,slangc,root,copied,source_folder,compiled_pat
     if _,ran:=tool_run(runner,command[:],context.temp_allocator,memory);!ran {return}
     spirv,read_error:=os.read_entire_file(compiled,context.temp_allocator)
     if read_error!=nil {return}
-    coverage=!probe_stores_constant(spirv,transmute(u32)PROBE_ALPHA)
-    if coverage {
-        hash:Sha256
-        sha_begin(&hash)
-        sha_bytes(&hash,spirv)
-        copy(alpha[:],sha_hex(&hash,context.temp_allocator))
-    }
-    return coverage,alpha,true
+    return !probe_stores_constant(spirv,transmute(u32)PROBE_ALPHA),true
 }
 
 // What the probe of a Surface program reads each class of its context from:
@@ -928,9 +908,9 @@ probe_stores_constant :: proc(spirv:[]u8,bits:u32) -> bool {
     return true
 }
 
-// The dispatchers of the PostProcess and UI programs, and the coverage of the
-// Surface ones, as programs are added to them: per domain the includes of the
-// sources, their typed loaders and the cases.
+// The dispatchers of the PostProcess and UI programs, as programs are added
+// to them: per domain the includes of the sources, their typed loaders and
+// the cases.
 @(private)
 Dispatchers :: struct {declarations,loaders,cases:[Program_Domain]strings.Builder}
 
@@ -945,15 +925,11 @@ dispatchers_make :: proc() -> (d:Dispatchers) {
 }
 
 // A program of that id, copied at include/programs/<relative>; one of Vfx
-// has an include of its own (vfx_program_include), and one of Surface too
-// (surface_program_include), and only its alpha here when it has coverage.
+// or of Surface has an include of its own (vfx_program_include,
+// surface_program_include).
 @(private)
-dispatchers_add :: proc(d:^Dispatchers,domain:Program_Domain,id:int,name,relative:string,parameters:Layout,coverage:=false,alpha:="") {
+dispatchers_add :: proc(d:^Dispatchers,domain:Program_Domain,id:int,name,relative:string,parameters:Layout) {
     #partial switch domain {
-    case .Surface:
-        if !coverage {return}
-        surface_program_source(&d.declarations[domain],name,relative,parameters,alpha)
-        fmt.sbprintf(&d.cases[domain],"    case %d: alpha=%s::evaluate(ctx,mirai_load_%s(packed)).alpha;return true;\n",id,name,name)
     case .Postprocess,.Ui:
         program_loader(&d.loaders[domain],name,parameters)
         fmt.sbprintf(&d.declarations[domain],"#include \"programs/%s\"\n",relative)
@@ -980,17 +956,16 @@ dispatchers_write :: proc(d:^Dispatchers,include:string) -> (failed:string) {
     if !write_file(path_join(include,SURFACE_INCLUDE,allocator=context.temp_allocator),transmute([]u8)string("// Generated by mirai shaders. DO NOT EDIT. The stages of the materials without a program.\n#ifndef MIRAI_SURFACE_PROGRAMS\n#define MIRAI_SURFACE_PROGRAMS\n#include \"mirai_material.slang\"\nstatic const bool mirai_program_derivatives = false;\nbool mirai_evaluate_program(uint id,float4 packed[16],Mirai_Surface_Context ctx,inout Mirai_Surface value) {return false;}\n"+NO_VERTEX_PROGRAM+"#endif\n")) {return SURFACE_INCLUDE}
     Dispatcher :: struct {file,guard,signature,otherwise:string}
     dispatchers:=#partial [Program_Domain]Dispatcher{
-        .Surface={SURFACE_COVERAGE_INCLUDE,"MIRAI_SURFACE_COVERAGE","bool mirai_program_alpha(uint id,float4 packed[16],Mirai_Surface_Context ctx,out float alpha)","return false;"},
         .Postprocess={POSTPROCESS_INCLUDE,"MIRAI_POSTPROCESS_PROGRAMS","float4 mirai_evaluate_postprocess(uint id,float4 packed[16],Mirai_PostProcess_Context ctx)","return ctx.color;"},
         .Ui={UI_INCLUDE,"MIRAI_UI_PROGRAMS","float4 mirai_evaluate_ui(uint id,float4 packed[16],Mirai_Ui_Context ctx)","return ctx.color;"},
     }
     for dispatcher,domain in dispatchers {
-        if domain==.Vfx {continue}
+        if domain==.Vfx || domain==.Surface {continue}
         text:=strings.builder_make(context.temp_allocator)
         fmt.sbprintf(&text,"// Generated by mirai shaders. DO NOT EDIT.\n#ifndef %s\n#define %s\n#include \"mirai_material.slang\"\n",dispatcher.guard,dispatcher.guard)
         strings.write_string(&text,strings.to_string(d.declarations[domain]))
         strings.write_string(&text,strings.to_string(d.loaders[domain]))
-        fmt.sbprintf(&text,"%s {{%sswitch(id) {{\n%sdefault:%s}}}}\n#endif\n",dispatcher.signature,"alpha=0.0;" if domain==.Surface else "",strings.to_string(d.cases[domain]),dispatcher.otherwise)
+        fmt.sbprintf(&text,"%s {{switch(id) {{\n%sdefault:%s}}}}\n#endif\n",dispatcher.signature,strings.to_string(d.cases[domain]),dispatcher.otherwise)
         if !write_file(path_join(include,dispatcher.file,allocator=context.temp_allocator),text.buf[:]) {return dispatcher.file}
     }
     return ""
@@ -1012,8 +987,7 @@ Program_Entry :: struct {
     folder:          string,
     fingerprint:     string, // of its layouts in the cache
     caches:          [4]string, // its files in the cache: the layouts of Parameters and Attributes, why it does not compile, and what its probes found
-    coverage:        bool, // of a Surface program (alpha_probe)
-    alpha:           [64]u8, // with coverage, the hash of its alpha compiled alone (alpha_probe)
+    coverage:        bool, // of a Surface program, it sets alpha (alpha_probe)
     derivatives:     bool, // of a Surface program, it takes derivatives across a quad (surface_probe)
     reads,vertex_reads:abi.Program_Reads, // of a Surface program and its function vertex (surface_probe)
     probed:          bool, // what its probes find is known
@@ -1051,16 +1025,16 @@ programs_reflect :: proc(r:^Program_Reflection,workers:int) {
             os.make_directory_all(temporary)
             compiled_path:=path_join(r.copied,e.relative,allocator=context.temp_allocator)
             if !e.probed && e.error=="" {
-                coverage,alpha,ran:=alpha_probe(r.runner,r.slangc,r.root,r.copied,e.folder,compiled_path,e.name,temporary,r.plugins,r.memory)
+                coverage,ran:=alpha_probe(r.runner,r.slangc,r.root,r.copied,e.folder,compiled_path,e.name,temporary,r.plugins,r.memory)
                 derivatives,reads,vertex_reads,derived:=surface_probe(r.runner,r.slangc,r.root,r.copied,e.folder,compiled_path,e.name,temporary,e.said.vertex!=nil,r.plugins,r.memory)
-                if ran {e.coverage,e.alpha=coverage,alpha}
+                if ran {e.coverage=coverage}
                 // Without its probe a program counts as taking derivatives and reading everything.
                 e.derivatives,e.reads,e.vertex_reads=true,~abi.Program_Reads{},~abi.Program_Reads{}
                 if derived {e.derivatives,e.reads,e.vertex_reads=derivatives,reads,vertex_reads}
                 if ran && derived {
                     e.probed=true
                     said:=fmt.tprintf("%d %d %x %x",int(coverage),int(derivatives),transmute(u8)reads,transmute(u8)vertex_reads)
-                    write_file_atomic(e.caches[3],transmute([]u8)(fmt.tprintf("%s %s",said,string(alpha[:])) if coverage else said))
+                    write_file_atomic(e.caches[3],transmute([]u8)said)
                 }
             }
             if e.cached {continue}
@@ -1233,18 +1207,17 @@ programs_generate :: proc(runner:^Runner,root,project,output,slangc,version,cach
         entry.probed=entry.domain!="surface" || entry.error!=""
         if !entry.probed {
             // "<coverage> <derivatives> <reads> <vertex reads>": 0 or 1, then a hex digit of
-            // the bits of abi.Program_Reads each, and with coverage the hash of its alpha.
+            // the bits of abi.Program_Reads each.
             bits :: proc(said:[]u8) -> (reads:abi.Program_Reads,ok:bool) {
                 value,parsed:=strconv.parse_uint(string(said),16)
                 return transmute(abi.Program_Reads)u8(value),parsed && value<1<<uint(PROBE_READ_CLASSES)
             }
-            if said,read_error:=os.read_entire_file(entry.caches[3],context.temp_allocator);read_error==nil && len(said)>=7 {
+            if said,read_error:=os.read_entire_file(entry.caches[3],context.temp_allocator);read_error==nil && len(said)==7 {
                 reads,read:=bits(said[4:5])
                 vertex_reads,vertex_read:=bits(said[6:7])
                 flags:=(said[0]=='0' || said[0]=='1') && said[1]==' ' && (said[2]=='0' || said[2]=='1') && said[3]==' ' && said[5]==' ' && read && vertex_read
-                if flags && len(said)==(8+len(entry.alpha) if said[0]=='1' else 7) {
+                if flags {
                     entry.coverage,entry.derivatives,entry.reads,entry.vertex_reads,entry.probed=said[0]=='1',said[2]=='1',reads,vertex_reads,true
-                    if entry.coverage {copy(entry.alpha[:],said[8:])}
                     cache_touch(entry.caches[3])
                 }
             }
@@ -1336,7 +1309,7 @@ programs_generate :: proc(runner:^Runner,root,project,output,slangc,version,cach
                 append(&surface_names,strings.clone(name,allocator))
                 if vertex.declared {append(&vertex_names,strings.clone(name,allocator))}
             }
-            dispatchers_add(&dispatchers,of,id,name,relative,layout,e.coverage,string(e.alpha[:]) if e.coverage else "")
+            dispatchers_add(&dispatchers,of,id,name,relative,layout)
         }
         moves,births,prepare:=of==.Vfx && e.said.moves,of==.Vfx && e.said.births,of==.Vfx && e.said.prepare
         append(&programs,abi.Program{id=u32(id),name=strings.clone(name,allocator),domain=of,source=relative,size=layout.size,parameters=parameters,layers=layers,attributes=attributes,attribute_fields=attribute_fields,resources=resources,stages=stages,moves=moves,births=births,prepare=prepare,coverage=e.coverage,standard=of==.Surface && word_in(e.text,"mirai_surface_standard"),reads=e.reads,vertex=vertex})

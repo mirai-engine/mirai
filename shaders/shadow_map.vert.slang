@@ -38,10 +38,9 @@ struct Shadow_Vertex {
     [[vk::location(2)]] nointerpolation float reach : REACH;
     // From the point towards the light, as a shadow ray goes.
     [[vk::location(3)]] float3 toward : TOWARD;
-    // What a masked material without a program reads where it is: its uvs,
-    // and its row and the values of the instance (shadow_map.frag).
+    // What the mask map of a masked material reads where it is: the uv of
+    // its set, and its row and the values of the instance (shadow_map.frag).
     [[vk::location(4)]] float2 uv : UV0;
-    [[vk::location(5)]] float2 uv1 : UV1;
     [[vk::location(6)]] nointerpolation uint2 material : MATERIAL;
 #endif
 };
@@ -71,7 +70,6 @@ Shadow_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vul
     output.reach = 0.0;
     output.toward = float3(0.0, 0.0, 1.0);
     output.uv = float2(0.0);
-    output.uv1 = float2(0.0);
     output.material = uint2(0u);
     uint draw = params.glass != 0u ? SHADOW_DRAW_GLASS : SHADOW_DRAW_TESTED;
 #else
@@ -117,9 +115,8 @@ Shadow_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vul
     output.bary = float2(at == 1u ? 1.0 : 0.0, at == 2u ? 1.0 : 0.0);
     output.reach = shadow_map_texel(m, local.z) / SHADOW_TESTED_FOOTPRINT;
     output.toward = shadow_map_orthographic(m) ? -m.forward : m.origin - world;
-    output.uv = v.uv;
-    output.uv1 = v.uv1;
     output.material = uint2(material_of(inst, mesh_primitive_material(mesh, output.place.y)), inst.material_values);
+    output.uv = mask_uv_set(output.material.x) == 1u ? v.uv1 : v.uv;
 #endif
     return output;
 #endif

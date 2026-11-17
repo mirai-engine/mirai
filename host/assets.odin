@@ -59,6 +59,7 @@ Assets_Problem :: enum u8 {
     Unsupported, // a texture larger than the device takes even at its smallest level, an array or a cube where a 2D image is sampled, a program the shaders do not have
     Rejected,    // the renderer did not take it: Renderer.error says why
     Capacity,    // no room for another asset of its kind
+    Coverage,    // a masked material whose Surface program sets alpha: a mask map (maps.mask) cuts it, never its program
 }
 
 Assets_Error :: struct {
@@ -1473,8 +1474,10 @@ program_value :: proc(a:^Assets,program:^render.Program,params:^[16]render.Vec4,
 }
 
 // The row of the renderer for a material, loading its textures. A Surface
-// program replaces the standard model: of its maps only the normal map is
-// read, unless it builds on that model (render.Program.standard). A texture that failed is only shown as base color.
+// program replaces the standard model: of its maps only the normal map and the
+// mask are read (the base color map of a masked material without a mask of its
+// own is its mask), unless it builds on that model (render.Program.standard).
+// A texture that failed is only shown as base color.
 @(private="file")
 assets_material_desc :: proc(a:^Assets,material:^Assets_Material,id:base.Asset_Id) -> render.Material_Desc {
     desc:=render.Material_Desc{info=material.info}
@@ -1484,12 +1487,14 @@ assets_material_desc :: proc(a:^Assets,material:^Assets_Material,id:base.Asset_I
     if program==nil && material.info.program[0]!=0 && a.renderer!=nil && assets_material_program(a,material,.Postprocess)==nil {
         assets_fail(a,id,.Material,.Unsupported)
     }
+    masks_by_color:=desc.alpha_mode==.Mask && desc.maps.mask.texture=={}
     for source,which in asset.material_maps(&desc.maps) {
-        if program!=nil && which!=.Normal && !program.standard {continue}
+        if program!=nil && which!=.Normal && which!=.Mask && !(which==.Base_Color && masks_by_color) && !program.standard {continue}
         texture:=assets_texture_shown(a,source.texture,&waiting)
         if texture!=nil && (!texture.failed || which==.Base_Color) {desc.textures[which]=texture.handle}
     }
     if program!=nil {
+        if program.coverage && desc.alpha_mode==.Mask {assets_fail(a,id,.Material,.Coverage)}
         desc.program_id=program.id
         desc.custom_params=render.program_defaults(program)
         assets_program_parameters(a,program,&desc.custom_params,assets_material_parameters(a,material),0,&waiting)
@@ -2092,12 +2097,12 @@ assets_reload :: proc(a:^Assets,id:base.Asset_Id) -> bool {
 
 // The shaders of the renderer were replaced: every material finds its
 // program and the offsets of its parameters in the new catalog, and one
-// whose program was missing is no longer in the list of errors unless it
-// still is. a.revision advances.
+// whose program was missing or set its alpha is no longer in the list of
+// errors unless it still does. a.revision advances.
 assets_programs_refresh :: proc(a:^Assets) {
     if a.renderer==nil {return}
     #reverse for problem,i in a.errors {
-        if problem.kind==.Material && problem.problem==.Unsupported {ordered_remove(&a.errors,i)}
+        if problem.kind==.Material && (problem.problem==.Unsupported || problem.problem==.Coverage) {ordered_remove(&a.errors,i)}
     }
     assets_materials_refresh(a)
     a.revision+=1

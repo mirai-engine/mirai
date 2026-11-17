@@ -1200,10 +1200,14 @@ placed :: proc(scale: f32, height: f32) -> Mat4 {
 	return m
 }
 
+// The mask map of a masked material cuts it for the camera and for rays: the
+// alpha of its base color map, or a mask map of its own, read at the uv set
+// the map names, with or without a program that shades it; the program never
+// decides it.
 @(test)
 material_mask_cuts_holes_for_the_camera_and_for_rays :: proc(t: ^testing.T) {
 	f: Fixture
-	if !fixture_init(t, &f, 96, 64, material_settings(), reference = {.Lights}) {return}
+	if !fixture_init(t, &f, 96, 64, material_settings(), programs = true, reference = {.Lights}) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	// The left half of the image is solid and the right half is a hole.
@@ -1240,25 +1244,35 @@ material_mask_cuts_holes_for_the_camera_and_for_rays :: proc(t: ^testing.T) {
 	above := Camera{position = {0, 4, 0}, forward = {0, -4, 0}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	// From the side: the solid half shades the floor and the hole lets the sun through.
 	side := Camera{position = {0, 3, 6}, forward = {0, -3, -6}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	grid := program_find(r, "Grid", .Surface)
+	if !testing.expect(t, grid != nil, "the tests have the Grid program") {return}
+	// The Grid program gives every point the alpha of the default material: it would cover the hole.
+	Mask_Case :: struct {name: string, own, programmed: bool, mesh: Mesh_Handle, uv_set: u32}
+	mask_cases := [?]Mask_Case{{"base color UV0", false, false, quad, 0}, {"base color UV1", false, false, secondary, 1}, {"mask map and program UV0", true, true, quad, 0}, {"mask map and program UV1", true, true, secondary, 1}}
 	for provider in ([]Trace_Mode{.Software, .Hardware}) {
 		if !fixture_traces(r, provider) {continue}
 		settings := r.settings; settings.trace_mode = provider
 		testing.expect(t, renderer_apply_settings(r, settings), r.error)
-		cutout.alpha_mode, cutout.opacity = .Mask, 1
-		cutout.textures[.Base_Color] = texture
-		for mesh, uv_set in ([2]Mesh_Handle{quad, secondary}) {
-			cutout.maps.base_color.uv_set = u32(uv_set)
-			materials_set(r, {cutout})
-			instances[1].mesh = mesh
+		for c in mask_cases {
+			masked := cutout
+			masked.alpha_mode, masked.opacity = .Mask, 1
+			masked.textures[.Base_Color], masked.textures[.Mask] = (0 if c.own else texture), (texture if c.own else 0)
+			masked.maps.base_color.uv_set, masked.maps.mask.uv_set = c.uv_set, c.uv_set
+			if c.programmed {masked.program_id, masked.custom_params = grid.id, program_defaults(grid)}
+			materials_set(r, {masked})
+			instances[1].mesh = c.mesh
 			scene_given(r, instances, nil, sun, {})
 			frames(t, &f, above, 2)
-			testing.expectf(t, near_bytes(read_albedo(t, &f, above, {-0.5, 1, 0}), {255, 0, 0, 0}, 3), "%v UV%d solid half is drawn", provider, uv_set)
-			testing.expectf(t, near_bytes(read_albedo(t, &f, above, {0.5, 1, 0}), {255, 255, 255, 0}, 3), "%v UV%d floor shows through the hole", provider, uv_set)
+			testing.expectf(t, !near_bytes(read_albedo(t, &f, above, {-0.5, 1, 0}), {255, 255, 255, 0}, 3), "%v %s: the solid half is drawn", provider, c.name)
+			testing.expectf(t, near_bytes(read_albedo(t, &f, above, {0.5, 1, 0}), {255, 255, 255, 0}, 3), "%v %s: the floor shows through the hole", provider, c.name)
 			testing.expect(t, r.scene.instances[1].meta.w & INSTANCE_FLAG_ALPHA_TESTED != 0 && r.scene.instances[0].meta.w & INSTANCE_FLAG_ALPHA_TESTED == 0, "only the masked instance asks its material")
 			shaded := screen_color(t, &f, side, {-0.5, 0, 0.8})
 			lit := screen_color(t, &f, side, {0.5, 0, 0.8})
-			testing.expectf(t, lit.g > shaded.g + 40, "%v UV%d ray shadow follows the cutout: %v vs %v", provider, uv_set, lit, shaded)
+			testing.expectf(t, lit.g > shaded.g + 40, "%v %s: the ray shadow follows the cutout: %v vs %v", provider, c.name, lit, shaded)
 		}
+		cutout.alpha_mode, cutout.opacity = .Mask, 1
+		cutout.textures[.Base_Color] = texture
+		instances[1].mesh = quad
 		// A masked material without a base map reads only its uniform opacity.
 		cutout.textures[.Base_Color] = 0
 		cutout.opacity = 1
@@ -1321,51 +1335,65 @@ material_mask_cuts_holes_for_the_camera_and_for_rays :: proc(t: ^testing.T) {
 
 // The maps of the shadows draw the clusters of an opaque slot of an instance
 // with a masked one as they draw opaque instances, and those of the masked
-// slot with their coverage.
+// slot with the coverage of its mask map, whatever program shades it.
 @(test)
 material_mask_draws_only_masked_clusters_with_their_coverage_into_the_maps :: proc(t: ^testing.T) {
 	f: Fixture
-	if !fixture_init(t, &f, 96, 64, material_settings()) {return}
+	if !fixture_init(t, &f, 96, 64, material_settings(), programs = true) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
+	grid := program_find(r, "Grid", .Surface)
+	if !testing.expect(t, grid != nil, "the tests have the Grid program") {return}
+	// A clear mask map: the program, which gives the alpha of the default material, would cover it all.
+	clear_texels: [4 * 4 * 4]u8
+	clear, added := texture_add(r, {pixels = clear_texels[:], width = 4, height = 4, name = "clear"})
+	testing.expect(t, added, r.error)
 	cutout := DEFAULT_MATERIAL
 	cutout.alpha_mode, cutout.opacity = .Mask, 0
-	materials_set(r, {cutout, DEFAULT_MATERIAL})
+	programmed := DEFAULT_MATERIAL
+	programmed.alpha_mode, programmed.program_id, programmed.custom_params = .Mask, grid.id, program_defaults(grid)
+	programmed.textures[.Mask] = clear
+	materials_set(r, {cutout, DEFAULT_MATERIAL, programmed})
 	quad := ground_quad(r)
 	mixed := halves_quad(r, 2, 1)
 	sun := Sun_Desc{direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true, indirect = 1, scattering = 1}
-	scene_given(r, {{object_id = 1, mesh = quad, transform = scale_matrix(20), tint = {1, 1, 1}}, {object_id = 2, mesh = mixed, transform = placed(2, 1), tint = {1, 1, 1}}}, nil, sun, {})
 	side := Camera{position = {0, 3, 6}, forward = {0, -3, -6}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	s := &r.scene
-	opaque, tested, masked_opaque, opaque_tested := 0, 0, 0, 0
-	// It moves each frame: the last round of the maps culls it, as what moves.
-	for k in 0 ..< 4 {
-		moved := placed(2, 1)
-		moved[0, 3] += 0.001 * f32(k % 2)
-		testing.expect(t, scene_move(r, {1}, {moved}))
-		frames(t, &f, side, 1)
-		if k < 2 {continue}
-		rhi.device_wait_idle(f.device)
-		room := s.cull_capacity[.Shadow_Entries]
-		state: [1]Gpu_Shadow_State
-		if !testing.expect(t, rhi.buffer_read_slice(f.device, r.shadow_buffers.state, 0, state[:])) {return}
-		p := record_pooled(s, s.meshes[mixed])
-		for draw in 0 ..< 2 {
-			count := min(state[0].draws[draw].instance_count, room / 2 if draw == 0 else room / 4)
-			if count == 0 {continue}
-			entries := make([][4]u32, count, context.temp_allocator)
-			if !testing.expect(t, rhi.buffer_read_slice(f.device, s.shadow_entries, u64(0 if draw == 0 else room / 2) * size_of([4]u32), entries)) {return}
-			for entry in entries {
-				if entry.x != 1 {continue}
-				masked := asset.cluster_slot(p.clusters[entry.y]) == 1
-				if draw == 0 {opaque += 1;masked_opaque += int(masked)} else {tested += 1;opaque_tested += int(!masked)}
+	// Its masked slot shows the cutout, then the program with its mask map.
+	for row in ([2]u32{1, 3}) {
+		slots: [32]u32
+		slots[1] = row + 1
+		scene_given(r, {{object_id = 1, mesh = quad, transform = scale_matrix(20), tint = {1, 1, 1}}, {object_id = 2, mesh = mixed, transform = placed(2, 1), tint = {1, 1, 1}, slot_materials = slots}}, nil, sun, {})
+		opaque, tested, masked_opaque, opaque_tested := 0, 0, 0, 0
+		// It moves each frame: the last round of the maps culls it, as what moves.
+		for k in 0 ..< 4 {
+			moved := placed(2, 1)
+			moved[0, 3] += 0.001 * f32(k % 2)
+			testing.expect(t, scene_move(r, {1}, {moved}))
+			frames(t, &f, side, 1)
+			if k < 2 {continue}
+			rhi.device_wait_idle(f.device)
+			room := s.cull_capacity[.Shadow_Entries]
+			state: [1]Gpu_Shadow_State
+			if !testing.expect(t, rhi.buffer_read_slice(f.device, r.shadow_buffers.state, 0, state[:])) {return}
+			p := record_pooled(s, s.meshes[mixed])
+			for draw in 0 ..< 2 {
+				count := min(state[0].draws[draw].instance_count, room / 2 if draw == 0 else room / 4)
+				if count == 0 {continue}
+				entries := make([][4]u32, count, context.temp_allocator)
+				if !testing.expect(t, rhi.buffer_read_slice(f.device, s.shadow_entries, u64(0 if draw == 0 else room / 2) * size_of([4]u32), entries)) {return}
+				for entry in entries {
+					if entry.x != 1 {continue}
+					masked := asset.cluster_slot(p.clusters[entry.y]) == 1
+					if draw == 0 {opaque += 1;masked_opaque += int(masked)} else {tested += 1;opaque_tested += int(!masked)}
+				}
 			}
 		}
+		testing.expectf(t, opaque > 0 && tested > 0 && masked_opaque == 0 && opaque_tested == 0, "row %d: the opaque cluster in the opaque draw (%d, %d masked), the masked one in the tested draw (%d, %d opaque)", row, opaque, masked_opaque, tested, opaque_tested)
+		shaded := screen_color(t, &f, side, {-0.5, 0, 0.8})
+		lit := screen_color(t, &f, side, {0.5, 0, 0.8})
+		testing.expectf(t, lit.g > shaded.g + 40, "row %d: the opaque half casts and the masked half covers nothing: %v vs %v", row, lit, shaded)
 	}
-	testing.expectf(t, opaque > 0 && tested > 0 && masked_opaque == 0 && opaque_tested == 0, "the opaque cluster in the opaque draw (%d, %d masked), the masked one in the tested draw (%d, %d opaque)", opaque, masked_opaque, tested, opaque_tested)
-	shaded := screen_color(t, &f, side, {-0.5, 0, 0.8})
-	lit := screen_color(t, &f, side, {0.5, 0, 0.8})
-	testing.expectf(t, lit.g > shaded.g + 40, "the opaque half casts and the masked half covers nothing: %v vs %v", lit, shaded)
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 

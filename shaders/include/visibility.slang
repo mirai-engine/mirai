@@ -55,4 +55,18 @@ struct Visibility_Vertex {
     float clip : SV_ClipDistance0;
 #endif
 };
+
+// The vertex of the raster of the visibility target that is tested: what the
+// fade of its instance and the mask map of its material read, and nothing of
+// its light, which the resolve builds.
+struct Coverage_Vertex {
+    float4 position : SV_Position;
+    [[vk::location(0)]] nointerpolation uint out_first : TEXCOORD0;
+    [[vk::location(1)]] nointerpolation uint2 out_material : TEXCOORD1; // its row and the values of its instance (material_row)
+    [[vk::location(2)]] nointerpolation uint out_fade : TEXCOORD2;      // what its instance fades out, unorm16; 0: nothing
+    [[vk::location(3)]] float2 out_uv : TEXCOORD3;                      // of the set its mask map reads (mask_uv_set)
+#ifdef MIRAI_CLIP_PLANE
+    float clip : SV_ClipDistance0;
+#endif
+};
 #endif

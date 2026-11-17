@@ -582,7 +582,7 @@ Program :: struct {
     size:int,
     parameters:[]Program_Parameter,
     layers:asset.Material_Layers, // of a Surface program: those of the OpenPBR model its source writes
-    coverage:bool,                // of a Surface program: its alpha is not that of the default material
+    coverage:bool,                // of a Surface program: it sets alpha, which a masked material may not (its mask map cuts it)
     standard:bool,                // of a Surface program: it builds on the standard model of its material (mirai_surface_standard), whose maps it reads
     reads:Program_Reads,          // of a Surface program: what its evaluation reads of its context
     attributes:int,               // of a Vfx program: bytes of what it keeps of each particle

@@ -1,12 +1,11 @@
 //! mirai constant WEIGHT_FULL int ../runtime/layers.odin
 //! mirai constant WEIGHT_LAYER_BITS int ../runtime/layers.odin
 //! mirai constant WEIGHT_VALUES_SHIFT int ../runtime/layers.odin
-//! mirai constant WEIGHT_HOLE_BIT int ../runtime/layers.odin
 //! mirai constant PAINT_ROUGHNESS_NEUTRAL int ../runtime/paint.odin
 // What a piece of a terrain shows between its vertices (terrain.Surface_Maps):
-// the weights of the layers of each of its samples with the hole of each
-// cell, its normal and its paint, read texel by texel and blended between the
-// four around a point, and the table of the layers of its source
+// the weights of the layers of each of its samples, its normal and its
+// paint, read texel by texel and blended between the four around a point,
+// and the table of the layers of its source
 // (terrain.layers_table), a row of LAYERS_TEXELS texels each. None of them
 // streams: Terrain_Layers, Terrain_Weights and terrain_displace.comp load them
 // texel by texel alike, and a stage without the program API defines
@@ -52,24 +51,21 @@ float4 terrain_map_at(uint map, float2 size, float2 at) {
 }
 
 // The weights of the layers at texel coordinates at over a control map of
-// size texels, bilinear between its four texels around, and whether the cell
-// at is in is a hole. The three layers of each texel are twelve candidates;
+// size texels, bilinear between its four texels around. The three layers of each texel are twelve candidates;
 // each takes the weight of the later ones of its layer, then the four
 // heaviest are kept. Every index is a constant once the loops unroll, so the
 // candidates stay in registers.
-Terrain_Mix terrain_weights_at(uint control, float2 size, float2 at, out bool hole) {
+Terrain_Mix terrain_weights_at(uint control, float2 size, float2 at) {
     float2 f;
     int2 low = terrain_corner(size, at, f);
     uint layers[12];
     float weights[12];
     uint mask = (1u << uint(WEIGHT_LAYER_BITS)) - 1u;
-    hole = false;
     [ForceUnroll]
     for (int corner = 0; corner < 4; corner++) {
         int2 offset = int2(corner & 1, corner >> 1);
         float share = (offset.x == 1 ? f.x : 1.0 - f.x) * (offset.y == 1 ? f.y : 1.0 - f.y) / float(WEIGHT_FULL);
         uint word = terrain_word(TERRAIN_TEXEL(control, min(low + offset, int2(size) - 1)));
-        if (corner == 0) hole = (word >> uint(WEIGHT_HOLE_BIT) & 1u) != 0u;
         float first = float(word >> uint(WEIGHT_VALUES_SHIFT) & 255u), second = float(word >> uint(WEIGHT_VALUES_SHIFT + 8) & 255u);
         layers[3 * corner] = word & mask;
         layers[3 * corner + 1] = word >> uint(WEIGHT_LAYER_BITS) & mask;

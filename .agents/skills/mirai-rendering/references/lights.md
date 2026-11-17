@@ -231,16 +231,15 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   [extensions](views.md#extension-hooks-and-constants) each with its hard ray, and the other side
   of a surface that lets light through (`direct_lighting`).
 - **Shadow maps** (`render/shadow_maps.odin`; every renderer draws them). Every frame, from the
-  camera and the lights alone, the lights whose sphere covers a share of the view get a map for
-  each face of their cube they light the view through, and the sun one for each of its levels
-  around the eye (each twice as wide as the one before, up to the reach of the scene). A light
-  turned off takes none; a spot no wider than a face of the cube takes one map along its cone.
-  They draw the clusters of the instances of the scene and of the batches that cast shadows at the
-  detail a texel of the map asks for where they lie (`shadow_map_detail`), not the eye, and leave
-  out an instance smaller than a texel of the map (`shadow_map_unseen`). Clusters of masked slots
-  are drawn apart, with their coverage as a shadow ray asks it: a masked material without a
-  program samples its alpha with the derivatives of its uvs, a texel of the map wide, and the
-  others ask `hit_covers`; glass only in the tint. They are culled as the view culls its own: by
+  camera and the lights alone, the lights whose sphere covers a share of the view get a map for each
+  face of their cube they light the view through, and the sun one for each of its levels around the
+  eye (each twice as wide as the one before, up to the reach of the scene). A light turned off takes
+  none; a spot no wider than a face of the cube takes one map along its cone. They draw the clusters
+  of the instances of the scene and of the batches that cast shadows at the detail a texel of the
+  map asks for where they lie (`shadow_map_detail`), not the eye, and leave out an instance smaller
+  than a texel of the map (`shadow_map_unseen`). Clusters of masked slots are drawn apart, with
+  their [mask map](materials.md#alpha) as a shadow ray reads it, with the derivatives of its uv, a
+  texel of the map wide; glass only in the tint. They are culled as the view culls its own: by
   instance and slot, which hands the clusters of the levels the cut of the map can take
   (`instance_clusters`) to a pass by cluster in chunks, which hands each to every page of the round
   it covers, into lists that count what does not fit and grow, like those of the view.

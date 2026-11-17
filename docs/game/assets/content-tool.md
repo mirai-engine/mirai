@@ -88,4 +88,9 @@ beside the source, so a tool and `mirai import` give the same assets.
   `info:=asset.MATERIAL_DEFAULTS;info.maps.base_color.texture=tex`, then
   `asset.material_save(path,&c.types,{id=...,info=info})`; the maps are `base_color`,
   `metallic_roughness`, `normal`, `emission` and `occlusion`.
+- A masked material (`info.alpha_mode=.Mask`) is cut by its mask map, `info.maps.mask`: the alpha
+  of its texture times `opacity`, against `alpha_cutoff`; without a texture there, the alpha of
+  `base_color`. Leaves, grates and fences declare it whether or not a Surface program shades
+  them: a program never cuts a material, and one that sets `s.alpha` on a masked one is an error
+  of that material (`engine.diagnostics` says it).
 - Rerunning the tool rewrites the same files: an open editor picks them up at its next call.
