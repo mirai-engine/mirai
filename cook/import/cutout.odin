@@ -431,7 +431,10 @@ cutout_alpha :: proc(c:^Cutout,image:int) -> (alpha:^Cutout_Alpha,ok:bool) {
         if error!=.None {return alpha,false}
     }
     if source.width<=0 || source.height<=0 || len(source.texels)<textures.source_bytes(source) {return alpha,false}
-    alpha.source,alpha.transfer,alpha.state=source,textures.transfer_make(false),.Read
+    // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+    alpha.source=source
+    alpha.transfer=textures.transfer_make(false)
+    alpha.state=.Read
     return alpha,true
 }
 
