@@ -1,7 +1,5 @@
 #include "native.slang"
 //! variant hw MIRAI_HW_RT=1
-// color: with colored shadows, the rays cross glass as the mean of its instance (trace.slang).
-//! constant color MIRAI_GLASS_MEANS
 // The rays of the probes chosen this frame (ddgi_select.comp): each probe
 // traces the spherical Fibonacci set turned by the rotation of its cell, the
 // same every update. Hits take their direct light, each light by the share
@@ -113,7 +111,6 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
     bool passing = false;
     uint instance = INVALID;
     float3 arrived = direction;
-    float3 glass = float3(1.0);
     float gate = -1.0;
     float t = 0.0;
     if (resume && active) {
@@ -125,8 +122,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
         instance = point.instance;
         arrived = unpack_normal(head.aux[0]);
         t = asfloat(head.aux[1]);
-        glass = float3(record_unhalf2(head.aux[2]), half_value(head.aux[3] & 0xffffu));
-        gate = asfloat(head.aux[4]);
+        gate = asfloat(head.aux[2]);
     } else if (trace) {
         Ray_Path path;
         Hit found = trace_ray(origin, direction, 0.0, params.max_distance, false, path);
@@ -134,11 +130,9 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
         // its visibility is as far as the gate: what is behind it is another place.
         gate = path.gate;
         arrived = path.direction;
-        glass = path.glass;
         hit = (Probe_Hit)0;
         if (found.instance == INVALID) {
             hit.flags = HIT_SKY;
-            hit.albedo = glass;
         } else {
             // Each ray stands for an equal share of the sphere around the probe.
             float spread = 2.0 * sqrt(4.0 / float(params.rays_per_probe));
@@ -152,9 +146,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
                     Point_Head waiting = point_head(index, INVALID, slot * params.rays_per_probe + ray);
                     waiting.aux[0] = record_oct(arrived);
                     waiting.aux[1] = asuint(t);
-                    waiting.aux[2] = record_half2(glass.r, glass.g);
-                    waiting.aux[3] = half_bits(glass.b);
-                    waiting.aux[4] = asuint(gate);
+                    waiting.aux[2] = asuint(gate);
                     if (head_append(waiting)) return;
                 }
                 // Without room for its program it shows its row, this update.
@@ -182,10 +174,10 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
             through = globe ? float3(0.0) : surface_transmit(s);
             emission = globe ? float3(0.0) : s.emission;
             hit.normal = hit_normal(s, arrived);
-            hit.albedo = albedo * glass;
-            hit.through = through * glass;
+            hit.albedo = albedo;
+            hit.through = through;
             hit.flags = HIT_SURFACE;
-            if (any(s.emission > float3(0.0)) || any(glass != float3(1.0))) hit.flags |= HIT_FIXED;
+            if (any(s.emission > float3(0.0))) hit.flags |= HIT_FIXED;
             light = !globe;
         }
         if (passing || material_changing(material)) hit.flags |= HIT_PASSING;
@@ -217,14 +209,14 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
         // A thin surface that lets light through: the light of its other side.
         if (max(through.r, max(through.g, through.b)) > 0.0) direct += direct_lighting(shading_diffuse(position, -seen.normal, through), hit_bias(seen.t), params.light_budget, which);
         hit = seen;
-        hit.direct = direct * glass;
+        hit.direct = direct;
         seen = probe_hit_unpack(probe_hit_pack(hit));
     }
     if (at != INVALID && (fresh || light)) probe_hit_store(at, probe_hit_pack(hit));
 
     if (kind == HIT_SKY) {
         // A ray that meets the sky stores the whole distance, which no hit reaches.
-        ray_data[int2(ray, slot)] = float4(probe_light_encode(sky_radiance(arrived) * seen.albedo), gated ? gate : params.max_distance);
+        ray_data[int2(ray, slot)] = float4(probe_light_encode(sky_radiance(arrived)), gated ? gate : params.max_distance);
         return;
     }
     if (kind == HIT_BACK) {

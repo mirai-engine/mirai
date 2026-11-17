@@ -1240,7 +1240,7 @@ float hit_lod(float3 world_edge1, float3 world_edge2, float2 uv_edge1, float2 uv
 float3 material_vertex_tint(Material m, float3 vertex_color) {
     return m.program_id != 0u ? float3(1.0) : vertex_color;
 }
-// The same color override applies to raster, ray hits and colored shadows.
+// The same color override applies to raster, ray hits and the filters of glass.
 float3 instance_color(Instance inst, Material m, float3 vertex_color) {
     return ((inst.meta.w & INSTANCE_FLAG_UNIFORM_COLOR) != 0u ? float3(1.0) : material_vertex_tint(m, vertex_color)) * inst.tint.rgb;
 }
@@ -1299,14 +1299,6 @@ float3 blend_filter(Instance inst, Material m, Mesh_Triangle t, float3 w, float 
     float3 normal = transform_normal(inst.world_inv, t.a.normal * w.x + t.b.normal * w.y + t.c.normal * w.z);
     Material_Sample values = material_sample(m, material_context_cone(material_context_instance(material_context(position, normal, uv, uv1, lod, true), inst, vertex_color), footprint), color, inst.emission.rgb, normal);
     return blend_filter_of(m, values, through);
-}
-
-// The same filter as the mean of an instance keeps it (glass_mean.comp), for
-// any one of its faces: a solid counts its color and what it absorbs once in
-// the two faces a ray crosses, so each face takes the square root of them.
-float3 blend_face_filter(Material m, float3 tint, float3 through) {
-    if (!material_solid(m)) return tint * through;
-    return sqrt(tint * material_absorption(m, m.thickness)) * through;
 }
 
 // footprint: width in world units of what the ray gathers at the hit. Wide

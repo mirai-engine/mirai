@@ -242,10 +242,8 @@ other and do not see the corner of a table or the floor under a wardrobe.
 
 ## Glass in the indirect
 
-With `colored_shadows` and glass in the scene, the volume rays and the shadow rays of what they
-find cross the glass with the [medium filter](materials.md#medium-filter) of each instance
-(`Ray_Path.glass`): the sky light enters through a stained-glass window with its color. Without
-the option, the rays go through it without a filter.
+The volume rays and the shadow rays of what they find go through glass: the sky light enters
+through a stained-glass window uncolored ([glass in rays](materials.md#glass-in-rays)).
 
 ## Light of each world
 

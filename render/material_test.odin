@@ -1570,117 +1570,62 @@ read_light :: proc(t:^testing.T,f:^Fixture,camera:Camera,world:Vec3,target:rhi.T
     return {f32(pixels[i]),f32(pixels[i+1]),f32(pixels[i+2])}
 }
 
+// Glass between a point and a light neither darkens nor colors its light: a
+// shadow ray goes through it as if it were not there, with every light traced
+// by rays (the reference) and in the direct light of the view, where a light
+// without a map traces its samples; a solid beyond the glass still stops it.
 @(test)
-material_colored_shadows_filter_textures_and_respect_blockers :: proc(t:^testing.T) {
+material_glass_casts_no_shadow_in_rays :: proc(t:^testing.T) {
     f:Fixture
-    if !fixture_init(t,&f,64,64,material_settings(), programs = true, reference = {.Lights}) {return}
+    if !fixture_init(t,&f,64,64,material_settings(), reference = {.Lights}) {return}
     defer fixture_destroy(&f)
     r:=f.renderer
-    image:[16*16*4]u8
-    for y in 0..<16 {for x in 0..<16 {
-        i:=(y*16+x)*4
-        image[i]=255 if x<8 else 0;image[i+2]=0 if x<8 else 255
-        image[i+3]=255 if y<8 else 0
-    }}
-    texture,ok:=texture_add(r,{pixels=image[:],width=16,height=16,srgb=true,name="shadow red blue clear"})
-    testing.expect(t,ok,r.error)
-    glass:=DEFAULT_MATERIAL;glass.alpha_mode=.Blend;glass.textures[.Base_Color]=texture
+    glass:=DEFAULT_MATERIAL;glass.alpha_mode=.Blend;glass.base_color={1,0,0};glass.opacity=0.9
     materials_set(r,{glass})
     quad:=ground_quad(r)
-    // UV0 is always the opaque red texel; only UV1 spans blue and clear.
-    corners:=[4]Vec3{{-0.5,0,-0.5},{0.5,0,-0.5},{0.5,0,0.5},{-0.5,0,0.5}}
-    vertices:[4]Mesh_Vertex
-    for c,i in corners {vertices[i]={position=c,normal={0,1,0},uv={0.25,0.25},uv1={c.x+0.5,c.z+0.5},color={1,1,1}}}
-    secondary,secondary_ok:=mesh_add(r,vertices[:],[]u32{0,2,1,0,3,2})
-    testing.expect(t,secondary_ok,r.error)
     floor:=Instance_Desc{object_id=1,mesh=quad,transform=scale_matrix(20),tint={1,1,1}}
-    filter:=Instance_Desc{object_id=2,mesh=quad,transform=placed(2,1),material=1,tint={1,1,1}}
+    pane:=Instance_Desc{object_id=2,mesh=quad,transform=placed(2,1),material=1,tint={1,1,1}}
     opaque:=Instance_Desc{object_id=3,mesh=quad,transform=placed(2,2),tint={1,1,1}}
     camera:=OVERHEAD;camera.position.y=5
     sun:=Sun_Desc{direction={0,1,0},color={1,1,1},illuminance=1 * math.PI,enabled=true,indirect=1,scattering=1}
     spot:=Light_Desc{position={0,4,0},color={1,1,1},intensity=16 * math.PI,range=10,direction={0,-1,0},cone=0.7,indirect=1,scattering=1}
-    grid:=program_find(r,"Grid",.Surface)
-    if !testing.expect(t,grid!=nil,"the tests have the Grid program") {return}
     for provider in ([]Trace_Mode{.Software,.Hardware}) {
         if !fixture_traces(r,provider) {continue}
-        for mesh,uv_set in ([2]Mesh_Handle{quad,secondary}) {
-            glass.maps.base_color.uv_set=u32(uv_set)
-            materials_set(r,{glass})
-            filter.mesh=mesh
-            settings:=r.settings;settings.trace_mode=provider;settings.colored_shadows=false
-            testing.expect(t,renderer_apply_settings(r,settings))
-            scene_given(r,{floor,filter},nil,sun,{})
-            frames(t, &f,camera,2)
-            white:=read_light(t,&f,camera,{-0.4,0,-0.4},r.targets.direct)
-            testing.expectf(t,abs(white.r-white.b)<0.01,"%v UV%d disabled filter passes white: %v",provider,uv_set,white)
-            settings.colored_shadows=true;testing.expect(t,renderer_apply_settings(r,settings))
-            for source in 0..<3 {
-                settings.light_budget=0 if source==2 else 8 // source 2 exercises the shadow ray of a sampled light.
-                testing.expect(t,renderer_apply_settings(r,settings))
-                scene_given(r,{floor,filter},nil if source==0 else ([]Light_Desc{spot}),sun if source==0 else Sun_Desc{},{})
-                frames(t, &f,camera,4)
-                // The spot gives the scene another light scale: in nits.
-                red:=read_light(t,&f,camera,{-0.4,0,-0.4},r.targets.direct)/r.scene.light_scale
-                blue:=read_light(t,&f,camera,{0.4,0,-0.4},r.targets.direct)/r.scene.light_scale
-                clear:=read_light(t,&f,camera,{0,0,0.4},r.targets.direct)/r.scene.light_scale
-                testing.expectf(t,red.r>0.2 && red.r>4*red.b && blue.b>0.2 && blue.b>4*blue.r,"%v UV%d source %d projects the texture: %v and %v",provider,uv_set,source,red,blue)
-                testing.expectf(t,clear.r>0.2 && abs(clear.r-clear.b)<0.02,"%v UV%d alpha zero passes white: %v",provider,uv_set,clear)
-            }
-            // A blocker behind the glass must still stop light; layer traversal
-            // must not return as soon as it finds a transmitting surface.
-            // Look from the side so the opaque blocker is not the visible pixel.
-            camera.position={0,3,6};camera.forward={0,-3,-6};camera.up={0,1,0}
-            scene_given(r,{floor,filter,opaque},nil,sun,{})
-            frames(t, &f,camera,2)
-            blocked:=read_light(t,&f,camera,{-0.4,0,-0.4},r.targets.direct)
-            testing.expectf(t,blocked.r+blocked.g+blocked.b<0.01,"%v UV%d opaque geometry behind the filter blocks: %v",provider,uv_set,blocked)
-            glass.alpha_mode=.Mask;materials_set(r,{glass})
-            scene_given(r,{floor,filter},nil,sun,{})
-            frames(t, &f,camera,2)
-            masked:=read_light(t,&f,camera,{-0.4,0,-0.4},r.targets.direct)
-            hole:=read_light(t,&f,camera,{0,0,0.4},r.targets.direct)
-            testing.expectf(t,masked.r+masked.g+masked.b<0.01 && hole.r>0.2,"%v UV%d Mask keeps opaque coverage and transparent holes: %v and %v",provider,uv_set,masked,hole)
-            glass.alpha_mode=.Blend;materials_set(r,{glass})
-            camera=OVERHEAD;camera.position.y=5
-        }
-    }
-    // Glass whose program paints a cross of blue lines over red cells, on a
-    // green row: in the rays every pixel of the reference traces its shadow
-    // shows what the program gives where each ray crosses it, not the mean of
-    // the glass; the maps of the sun hold no glass, and through them its light
-    // comes uncolored. Cells of 20 m: the lines of every ten cross the
-    // origin, 0.8 m wide to each side.
-    painted:=DEFAULT_MATERIAL;painted.alpha_mode=.Blend;painted.base_color={0,1,0}
-    painted.program_id=grid.id;painted.custom_params=program_defaults(grid)
-    testing.expect(t,program_parameter_set(&painted.custom_params,program_parameter(grid,"color"),{1,0,0,0}))
-    testing.expect(t,program_parameter_set(&painted.custom_params,program_parameter(grid,"line_color"),{0,0,1,0}))
-    testing.expect(t,program_parameter_set(&painted.custom_params,program_parameter(grid,"cell"),{20,0,0,0}))
-    materials_set(r,{painted})
-    wide:=Instance_Desc{object_id=2,mesh=quad,transform=placed(8,1),material=1,tint={1,1,1}}
-    for provider in ([]Trace_Mode{.Software,.Hardware}) {
-        if !fixture_traces(r,provider) {continue}
-        for reference in ([2]bool{false,true}) {
+        for reference in ([2]bool{true,false}) {
             f.reference=Reference_Set{.Lights} if reference else {}
-            settings:=r.settings;settings.trace_mode=provider;settings.colored_shadows=true;settings.light_budget=8
-            testing.expect(t,renderer_apply_settings(r,settings))
-            scene_given(r,{floor,wide},nil,sun,{})
-            frames(t, &f,camera,4)
-            line:=read_light(t,&f,camera,{},r.targets.direct)
-            cell:=read_light(t,&f,camera,{2,0,2},r.targets.direct)
-            if reference {
-                testing.expectf(t,line.b>0.2 && line.b>4*line.r && cell.r>0.2 && cell.r>4*cell.b && line.g+cell.g<0.05,"%v: the shadow of the glass shows its program where each ray crosses it: line %v, cell %v",provider,line,cell)
-            } else {
-                testing.expectf(t,line.r>0.2 && abs(line.r-line.b)<0.02 && abs(line.r-line.g)<0.02 && abs(cell.r-line.r)<0.02 && abs(cell.b-line.b)<0.02,"%v: the light of the sun its maps hold comes through glass uncolored: line %v, cell %v",provider,line,cell)
+            // The sun, the spot, and the spot by the shadow ray of a sampled light.
+            for source in 0..<3 {
+                settings:=r.settings;settings.trace_mode=provider;settings.light_budget=0 if source==2 else 8
+                testing.expect(t,renderer_apply_settings(r,settings))
+                lights:=nil if source==0 else ([]Light_Desc{spot})
+                light:=sun if source==0 else Sun_Desc{}
+                scene_given(r,{floor},lights,light,{})
+                frames(t, &f,camera,4)
+                open:=read_light(t,&f,camera,{-0.4,0,-0.4},r.targets.direct)
+                scene_given(r,{floor,pane},lights,light,{})
+                frames(t, &f,camera,4)
+                under:=read_light(t,&f,camera,{-0.4,0,-0.4},r.targets.direct)
+                testing.expectf(t,open.r>0.05 && abs(under.r-open.r)<0.02*open.r && abs(under.g-open.g)<0.02*open.g && abs(under.b-open.b)<0.02*open.b,"%v, reference %v, source %d: the glass leaves the light as it is: %v under it, %v without it",provider,reference,source,under,open)
             }
         }
+        f.reference={.Lights}
+        // A blocker behind the glass still stops the light: a ray does not end
+        // at the glass, nor does the glass hide what is beyond it.
+        settings:=r.settings;settings.trace_mode=provider;settings.light_budget=8
+        testing.expect(t,renderer_apply_settings(r,settings))
+        side:=Camera{position={0,3,6},forward={0,-3,-6},up={0,1,0},fov_y=60,near=0.05,far=100,exposure=UNIT_EXPOSURE}
+        scene_given(r,{floor,pane,opaque},nil,sun,{})
+        frames(t, &f,side,2)
+        blocked:=read_light(t,&f,side,{-0.4,0,-0.4},r.targets.direct)
+        testing.expectf(t,blocked.r+blocked.g+blocked.b<0.01,"%v: what is solid behind the glass blocks: %v",provider,blocked)
     }
     testing.expectf(t,rhi.device_validation_errors(f.device)==0,"validation: %s",rhi.device_validation_message(f.device))
 }
 
 @(test)
-uniform_instance_color_overrides_vertex_colors_in_raster_and_shadow_rays :: proc(t:^testing.T) {
+uniform_instance_color_overrides_vertex_colors_in_raster :: proc(t:^testing.T) {
     f:Fixture
-    if !fixture_init(t,&f,64,64,material_settings(), reference = {.Lights}) {return}
+    if !fixture_init(t,&f,64,64,material_settings()) {return}
     defer fixture_destroy(&f)
     r:=f.renderer
     vertices:=[4]Mesh_Vertex{
@@ -1710,23 +1655,10 @@ uniform_instance_color_overrides_vertex_colors_in_raster_and_shadow_rays :: proc
     source.transform=placed(2,1);source.material=1;source.tint={1,1,1}
     camera:=OVERHEAD;camera.position.y=5
     sun:=Sun_Desc{direction={0,1,0},color={1,1,1},illuminance=1 * math.PI,enabled=true,indirect=1,scattering=1}
-    for provider in ([]Trace_Mode{.Software,.Hardware}) {
-        if !fixture_traces(r,provider) {continue}
-        settings:=r.settings;settings.trace_mode=provider;settings.colored_shadows=true
-        testing.expect(t,renderer_apply_settings(r,settings))
-        source.uniform_color=false
-        scene_given(r,{floor,source},nil,sun,{})
-        frames(t, &f,camera,2)
-        colored:=read_light(t,&f,camera,{},r.targets.direct)
-        testing.expectf(t,colored.r>colored.g*1.5 && colored.r>colored.b*1.5,"%v shadows retain ordinary red vertex colors: %v",provider,colored)
-        source.uniform_color=true
-        scene_given(r,{floor,source},nil,sun,{})
-        frames(t, &f,camera,2)
-        white:=read_light(t,&f,camera,{},r.targets.direct)
-        visible:=screen_color(t,&f,camera,{0,1,0})
-        testing.expectf(t,white.r>0.2 && abs(white.r-white.g)<0.01 && abs(white.r-white.b)<0.01,"%v uniform white passes light without coloring it: %v",provider,white)
-        testing.expectf(t,abs(visible.r-visible.g)<2 && abs(visible.r-visible.b)<2,"Blended raster uses the same uniform white appearance: %v",visible)
-    }
+    scene_given(r,{floor,source},nil,sun,{})
+    frames(t, &f,camera,2)
+    visible:=screen_color(t,&f,camera,{0,1,0})
+    testing.expectf(t,abs(visible.r-visible.g)<2 && abs(visible.r-visible.b)<2,"Blended raster uses the same uniform white appearance: %v",visible)
     testing.expectf(t,rhi.device_validation_errors(f.device)==0,"validation: %s",rhi.device_validation_message(f.device))
 }
 

@@ -1,7 +1,5 @@
 #include "native.slang"
 //! variant hw MIRAI_HW_RT=1
-// color: with colored shadows, the rays cross glass as the mean of its instance (trace.slang).
-//! constant color MIRAI_GLASS_MEANS
 // What one layer of glass lets through of the scene behind it, over the light
 // of the layer that glass_light.comp left, once per pixel whatever the number
 // of surfaces drawn there, without rays. A sheet shows the scene where it is,

@@ -309,9 +309,9 @@ A texture of an asset resides with the levels the GPU samples of it
 - **Blend (`blend`).** It is drawn over the lit scene. Without transmission it is a layer that
   covers `alpha` of what is behind it: the transparency attenuates its diffuse part, not its
   specular highlight.
-- By default it casts no shadow; [`colored_shadows`](lights.md#colored-shadow-filters) filters its
-  color in shadows. It does not enter the G-buffer nor appear as a surface in reflections or
-  bounces; the sharp reflections see it as a color filter.
+- It casts no shadow and colors no light that crosses it, in the maps or in the rays. It does not
+  enter the G-buffer nor appear as a surface in reflections or bounces; the sharp reflections see
+  it as a color filter ([glass in rays](#glass-in-rays)).
 
 ## Ray hits
 
@@ -359,22 +359,21 @@ stages.
   packed. With a single program in the scene its stage traverses the whole window, without
   distributing. The pass continues over the heads (`points_resume`), which can add points for
   another round (`points_rounds`): the rounds go back and forth through the buffer, outside the
-  window that the resumption reads. Reflections, the probe volume, the indirect reference, shadows
-  and direct light traced with colored shadows, glass, its path from inside and its medium filter
-  use points.
+  window that the resumption reads. Reflections, the probe volume, the indirect reference, glass
+  and its path from inside use points.
 - The buffer grows to what a frame asked for (`POINTS_MAX` at most). A point or a head that does
   not fit takes the row of its material at that hit.
 - **Coverage in the traversal.** Whether a ray goes on at a masked surface is its mask map, read
   inside the traversal like an any-hit (`hit_covers`, `material_mask`); no program runs there,
   and the stages that trace depend on none
   ([programs and stages](shaders.md#programs-and-stages)).
-- **Deferred filters.** A ray that crosses glass with a program does not wait for its filter: it
-  takes the [medium filter](#medium-filter) of the instance and adds the crossing as a filter
-  point, chained to the others of its owner (a pixel, a probe ray). The program's stage writes in
-  a filter point's record the exact filter and not the surface (`point_filter_at`): so it computes
-  only what tints and lets pass, and the owner does not rebuild the hit. On resuming, the owner adds
-  what the exact filters change from what the means gave, weighted by what each ray carried
-  (`filters_weigh`, `filters_correction`). A crossing that does not fit keeps the mean.
+- **Deferred filters.** The ray of a sharp reflection that crosses glass with a program does not
+  wait for its filter: it goes on and adds the crossing as a filter point, chained to the others of
+  its pixel. The program's stage writes in a filter point's record the exact filter and not the
+  surface (`point_filter_at`): so it computes only what tints and lets pass, and the owner does not
+  rebuild the hit. On resuming, the pixel adds what the exact filters change, weighted by what its
+  ray carried (`filters_weigh`, `filters_correction`). A crossing that does not fit takes the
+  filter of its material row.
 
 ### Vertex functions
 
@@ -435,20 +434,17 @@ tests: the pieces of a mesh, numbered in UV1, fly in with a turn as its `progres
 
 ### Program limits
 
-- The fog takes the glass's medium filter with a program: a grid cell is a volume, not a ray, and
-  one point per fog ray would be millions per frame.
 - The particle collisions (`mirai_vfx_trace`, inside a Vfx program, without rounds) see the
   vertex normal with the row's normal map, without the program's.
 - Focal tests: `material_program_shows_in_what_a_reflection_finds`,
   `material_program_shows_on_what_the_camera_sees`,
   `material_program_draws_as_its_rows_until_its_pipelines_are_made`,
   `material_program_pipelines_are_made_before_a_frame_draws_with_them`,
-  `material_textures_color_the_bounced_light`, `glass_tints_the_indirect_light_with_its_mean`,
+  `material_textures_color_the_bounced_light`,
   `material_program_moves_the_vertices_the_camera_the_rays_and_the_motion_see`,
   `gpu_a_program_moves_a_skin_after_its_skin_now_and_before` and, without GPU,
   `an_instance_whose_program_moves_vertices_shows_a_pose_of_its_own`,
-  `gi_reference_gives_the_light_of_a_white_furnace` and, for colors in shadows,
-  `material_colored_shadows_filter_textures_and_respect_blockers`.
+  `gi_reference_gives_the_light_of_a_white_furnace`.
 
 ## LOD
 
@@ -516,7 +512,7 @@ tests: the pieces of a mesh, numbered in UV1, fly in with a turn as its `progres
   yields to that of the probe volume.
 - **Detail.** With `Detailed`, below `REFLECTION_SHARED_ROUGHNESS` the reflection shows the glass
   that its ray crosses (as a color filter) and the specular lobe of the hit; the rougher ones see
-  diffuse hits and the [medium filter](#medium-filter) of the glass they cross.
+  diffuse hits and go through glass ([glass in rays](#glass-in-rays)).
 
 ## Glass
 
@@ -593,34 +589,22 @@ tests: the pieces of a mesh, numbered in UV1, fly in with a turn as its `progres
   absorbed in it; the light beams in it are those of
   [`fog`](../../mirai-plugins/references/render-plugins.md#fog).
 
-### Medium filter
+### Glass in rays
 
-The light that crosses glass is paid for with its detail only where it is seen:
+Only a sharp reflection sees the glass its ray crosses: with `Detailed` reflections, below
+`REFLECTION_SHARED_ROUGHNESS`, it multiplies what it finds by the filter of each blended face on
+its way (`trace_glass_filter`, `BLEND_FILTERS`), the texel of that face as the visible surface
+reads it, glass with a program by its [deferred filters](#surface-programs-in-rays-and-raster).
+Glass also loses what it reflects head-on at each face; a solid counts color and absorption once,
+where the ray enters. Rays are not bent. The native geometry has no duplicate candidates per
+primitive: a face does not filter twice.
 
-- **With detail**, the filter of each texel
-  ([colored shadows](lights.md#colored-shadow-filters)): the direct light of the view (its
-  samples) and the sharp reflections.
-- **With the instance's medium filter**: the rays of the probe volume, the rough reflections, the
-  scene that the glass traces behind itself, the shadow rays of what all of them find and the own
-  light of the blend surfaces. The sky light enters through a stained-glass window with its color.
-- `glass_mean.comp` writes it in `Gpu_Instance.glass`: the filter of each blend face averaged by
-  area, evaluating the same material as the visible surface; the faces with a program, from their
-  [points](#surface-programs-in-rays-and-raster). It runs in the first view of a frame that
-  uploaded the instance table, an instance with blend faces, materials or geometry, before any
-  ray, only with `colored_shadows` and glass in the scene.
-- In the traversal (`BLEND_MEANS`), a blend-only instance multiplies the ray's filter by its mean
-  without reading the triangle; a mixed one reads the triangle's material to know whether it is
-  blend. No ray reads textures or evaluates programs for that; glass with a program is corrected
-  afterwards by its [deferred filters](#surface-programs-in-rays-and-raster) where the light is
-  seen with detail.
-- A nearer hit ray also finds the glass beyond its hit if it visits it first: then it traverses
-  again up to the hit (`trace_segment`).
-- Focal test: `glass_tints_the_indirect_light_with_its_mean`, with each tracer; demo scene:
-  `church/church.scene`.
-- **Limits.** The medium filter has no drawing nor depends on the direction; a ray that exits
-  through an extension's door counts in its first segment also the glass between the door and what
-  it would have found without it; the [indirect reference](gi.md#indirect-reference) goes through
-  the glass without a filter.
+Every other ray goes through glass as if it were not there: shadow rays (`trace_visible`, which
+never visits the `RAY_GLASS` class), the rays of the probe volume, the rough reflections, the
+rays the glass traces behind itself and the fog's. Glass neither darkens nor colors the light
+that crosses it, as the [maps](lights.md#direct-light-of-a-view) hold none of it: colored light
+through a window comes from a light that projects a texture. Focal tests:
+`material_glass_casts_no_shadow_in_rays` and `glass_lets_the_indirect_light_through_uncolored`.
 
 ## Limits
 
@@ -630,5 +614,5 @@ virtual textures, subsurface, iridescence, dispersion or OpenPBR transmission ou
 - The [residency by sampling](#residency-by-sampling) does not see the refraction rays of glass nor
   the stages of extensions: a texture only they show keeps the levels it has.
 
-- Of the glass, the layers do not reach the ray filters (colored shadows, medium filter) or the exit
-  face seen from inside (`glass_inside.comp`).
+- Of the glass, the layers do not reach the filter of the sharp reflections or the exit face seen
+  from inside (`glass_inside.comp`).

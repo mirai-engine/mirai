@@ -1,7 +1,5 @@
 #include "native.slang"
 //! variant hw MIRAI_HW_RT=1
-// color: with colored shadows, the rays cross glass as the mean of its instance (trace.slang).
-//! constant color MIRAI_GLASS_MEANS
 // The camera inside a solid of glass (params.medium, the blended instance
 // under the top of whose box it is), after glass.comp lit the nearest layer:
 // at a back face of the solid, the view leaves it, bending out within the

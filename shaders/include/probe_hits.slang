@@ -38,16 +38,16 @@ struct Probe_Change {
 // the time, the gate of an extension it went through, a program its batch had
 // no room for): it is traced every update.
 #define HIT_PASSING 4u
-// Its light is not what the lights give what is kept of it (it glows, or
-// glass filters the ray): where its lights change it is traced again.
+// Its light is not what the lights give what is kept of it (it glows): where
+// its lights change it is traced again.
 #define HIT_FIXED 8u
 
 struct Probe_Hit {
     float t;        // metres along the ray
     float3 normal;  // of the hit, on the side of the probe
-    float3 albedo;  // what it reflects of the light around it, less what the glass on the way keeps; of the sky, what that glass leaves
-    float3 through; // what it lets through of the light around its other side, the same way
-    float3 direct;  // what it emits and reflects of the lights, the same way
+    float3 albedo;  // what it reflects of the light around it
+    float3 through; // what it lets through of the light around its other side
+    float3 direct;  // what it emits and reflects of the lights
     uint flags;
 };
 
