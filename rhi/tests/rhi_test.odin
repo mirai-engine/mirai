@@ -368,6 +368,10 @@ rhi_a_pass_draws_into_one_mip_or_layer_of_a_texture :: proc(t: ^testing.T) {
 	expect_clean(t, d)
 }
 
+// The slot image.comp reads its source at: past the 32 a word of bits holds.
+IMAGE_SOURCE_SLOT :: 35
+#assert(IMAGE_SOURCE_SLOT >= 32 && IMAGE_SOURCE_SLOT < rhi.MAX_BINDING_SLOTS)
+
 @(test)
 rhi_storage_image_after_upload_and_frames :: proc(t: ^testing.T) {
 	d := test_device(t)
@@ -388,7 +392,7 @@ rhi_storage_image_after_upload_and_frames :: proc(t: ^testing.T) {
 		if !ok {return}
 		rhi.cmd_timestamp(cmd, "image")
 		rhi.cmd_bind_pipeline(cmd, pipeline)
-		rhi.cmd_bind_texture(cmd, rhi.MAX_BINDING_SLOTS - 1, source)
+		rhi.cmd_bind_texture(cmd, IMAGE_SOURCE_SLOT, source)
 		rhi.cmd_bind_sampler(cmd, 1, sampler)
 		rhi.cmd_bind_texture(cmd, 2, target)
 		rhi.cmd_dispatch(cmd, SIZE / 8, SIZE / 8)
