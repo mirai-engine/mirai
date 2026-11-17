@@ -16,8 +16,8 @@ import "core:time"
 // once, before a display driver resets a GPU that may not come back. Two
 // threads: one waits for the GPU and records what finished, the other fires on
 // the CPU clock alone, so a stuck driver call cannot keep it from firing. The
-// algorithm is one; each backend gives watchdog_gpu_wait and
-// watchdog_frame_text and calls watchdog_sent after each submission.
+// algorithm is one; each backend gives watchdog_gpu_wait and watchdog_stopped
+// and calls watchdog_sent after each submission.
 
 // Off unless set: first frames that build acceleration structures and slow
 // devices wait for the GPU long and validly.
@@ -189,15 +189,23 @@ watchdog_fire :: proc(d: ^Device, work: Watchdog_Work, waited_ns: i64, behind: i
 	watchdog_exit(WATCHDOG_EXIT_CODE)
 }
 
-// Writes the passes a frame named with cmd_timestamp, when it kept them.
+// Where the GPU stopped in the frame of a slot, when the device marks it,
+// and the passes the CPU recorded in it, which every device knows.
 @(private)
-watchdog_names :: proc(b: ^strings.Builder, names: []string) {
-	if len(names) == 0 {
-		strings.write_string(b, "; its passes are not known: the device marks no passes and the frame took no timings")
+watchdog_frame_text :: proc(d: ^Device, slot: int, b: ^strings.Builder) {
+	if d.info.features.stop_place {
+		stopped_buffer: [256]u8
+		if stopped := watchdog_stopped(d, slot, stopped_buffer[:]); stopped != "" {fmt.sbprintf(b, "; it stopped in %s", stopped)}
+	} else {
+		strings.write_string(b, "; where it stopped is not known: the device marks no progress")
+	}
+	passes := &d.frames[slot].recorded
+	if passes.count == 0 {
+		strings.write_string(b, "; the frame recorded no passes (cmd_timestamp)")
 		return
 	}
 	strings.write_string(b, "; the frame recorded the passes ")
-	for name, i in names {
+	for name, i in passes.names[:passes.count] {
 		if i > 0 {strings.write_string(b, ", ")}
 		strings.write_string(b, name)
 	}

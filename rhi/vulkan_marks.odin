@@ -112,31 +112,18 @@ vk_marks_stopped :: proc(frame: ^Vk_Marks, stop: int, out: []u8) -> string {
 	return strings.to_string(text)
 }
 
-// Where the GPU stopped in the frame of a slot and the passes it recorded,
-// for the watchdog, which reads the marks of a frame the GPU did not finish.
+// Where the GPU stopped in the frame of a slot, for the watchdog, which reads
+// the marks of a frame the GPU did not finish.
 @(private)
-watchdog_frame_text :: proc(d: ^Device, slot: int, b: ^strings.Builder) {
-	f := &d.frames[slot]
-	m := &f.marks
+watchdog_stopped :: proc(d: ^Device, slot: int, out: []u8) -> string {
+	m := &d.frames[slot].marks
+	if m.buffer == 0 || !m.sent {return ""}
 	count := min(m.count, MAX_FRAME_MARKS)
-	if m.buffer == 0 || !m.sent || count == 0 {
-		watchdog_names(b, f.query_names[:min(f.query_count, MAX_TIMESTAMPS)] if f.passes else nil)
-		return
-	}
 	stop := count
 	for i in 0 ..< count {
 		if m.words[i] != m.serial {stop = i; break}
 	}
-	stopped_buffer: [256]u8
-	if stopped := vk_marks_stopped(m, stop, stopped_buffer[:]); stopped != "" {fmt.sbprintf(b, "; it stopped in %s", stopped)}
-	strings.write_string(b, "; the frame recorded the passes ")
-	first := true
-	for mark in m.marks[:count] {
-		if mark.kind != .Section {continue}
-		if !first {strings.write_string(b, ", ")}
-		strings.write_string(b, string(m.names[mark.at:][:mark.length]))
-		first = false
-	}
+	return vk_marks_stopped(m, stop, out)
 }
 
 // Waits up to timeout_ns for the GPU to pass serial of the timeline, from the
