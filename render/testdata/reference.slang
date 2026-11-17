@@ -3,18 +3,6 @@
 #ifndef MIRAI_REFERENCE_SLANG
 #define MIRAI_REFERENCE_SLANG
 
-// A shadow ray of the reference, whose filters carry `weight` times what they let through.
-float3 reference_ray(float3 origin, float3 direction, float reach, float3 weight) {
-#ifdef MIRAI_SHADOW_FILTER_POINTS
-    if (MIRAI_COLORED_SHADOWS) filters_begin();
-#endif
-    float3 through = trace_transmission(origin, direction, reach);
-#ifdef MIRAI_SHADOW_FILTER_POINTS
-    if (MIRAI_COLORED_SHADOWS) filters_weigh(weight);
-#endif
-    return through;
-}
-
 // What the sun and every local light send a point through rays of its own to
 // `points` points of their discs, spread over them and turned at random every
 // frame: the light of their sizes. A light that casts no shadows traces none. With sixteen points there is so little
@@ -37,7 +25,7 @@ float3 reference_lighting(Shading s, float bias, float sun_radius, uint points, 
             float spin = turn + float(k) * 2.3999632;
             float2 disc = sqrt((float(k) + shift) * share) * float2(cos(spin), sin(spin)) * sun_radius;
             float3 ray = normalize(frame.sun_direction.xyz + t * disc.x + b * disc.y);
-            through += reference_ray(origin, ray, sun_reach(origin, ray), scale);
+            if (trace_visible(origin, ray, sun_reach(origin, ray))) through += 1.0;
         }
         result += scale * through;
     }
@@ -85,8 +73,7 @@ float3 reference_lighting(Shading s, float bias, float sun_radius, uint points, 
                 toward = direction * distance + t * disc.x + b * disc.y;
             }
             float far = length(toward);
-            if (shadows) through += weight * reference_ray(origin, toward / max(far, 1e-6), shaped ? light_reach(light, far) : max(far - LIGHT_CLEARANCE * light.size.x - 0.02, 0.0), scale * weight);
-            else through += weight;
+            if (!shadows || trace_visible(origin, toward / max(far, 1e-6), shaped ? light_reach(light, far) : max(far - LIGHT_CLEARANCE * light.size.x - 0.02, 0.0))) through += weight;
         }
         result += scale * through;
     }

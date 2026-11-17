@@ -174,13 +174,11 @@ points_dispatch :: proc(p: ^Pass, mode: u32, x: u32 = 1, indirect: bool = false)
 }
 
 // Starts the batch of a pass: its threads after it append their points and
-// heads. False when the frame needs none, or for a pass whose only points are
-// the filters of glass (`filters`) when no glass has a program: the pass runs
-// without rounds.
+// heads. False when the frame needs none: the pass runs without rounds.
 @(private)
-points_begin :: proc(p: ^Pass, filters := false) -> bool {
+points_begin :: proc(p: ^Pass) -> bool {
 	m := &p.r.points
-	if !points_needed(p.r) || (filters && p.r.scene.programmed_glass == 0) {return false}
+	if !points_needed(p.r) {return false}
 	points_dispatch(p, 0)
 	m.started = true
 	return true
