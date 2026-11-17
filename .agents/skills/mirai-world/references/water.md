@@ -48,12 +48,18 @@ names the Surface program of a water without its own material (empty or unknown:
   that only gives the sun shafts (`shafts`), that is cut by the dry boxes of higher priority and
   that turns off the sunlight on the way down according to the water's absorption ([media from other
   plugins](../../mirai-plugins/references/render-plugins.md#media-from-other-plugins)).
+- **Light under the water.** `water_light.comp`, in the `Lit` stage before the fog, multiplies the
+  lit image of each pixel under a surface by what the water lets through on the way of its light:
+  `exp(-absorption · way)`, with the absorption of each color that the `Water` colors give (that
+  of the medium is their mean) and the way from the point up to where the sunlight crossed the
+  surface, bent by its IOR (without a sun, straight up), within the box of a prism. Over waves,
+  the depth and the crossing are those of the surface with waves, as for the caustics. Shadows
+  never see the water: this is the only place the light of a surface under it is absorbed.
 - **Caustics.** `water_caustics.comp` builds each frame, in the `Lit` stage, the pattern that the
   small waves give to sunlight at a depth: the area to which each part of the surface sends the
   light, a repetition of the waves per texture. `water_light.comp` adds to the direct light
   (`Direct`) of what is under a surface the part of the pattern where its light crossed the
-  surface, before the fog: over waves, the depth and the crossing are those of the surface with
-  waves. It reads the pattern twice, turned apart and chosen in patches narrower than a repeat,
+  surface. It reads the pattern twice, turned apart and chosen in patches narrower than a repeat,
   so the repeat of the waves does not show as a tile over a wide shallow floor.
 - **Over the glass** (`water_over`, `Blend` stage, in front of the glass): the line of the surface
   over the lens where the near plane crosses it, over the waves. It only runs if the view's near
@@ -128,6 +134,10 @@ and a river that bends on open ground.
   which part of the lens is under the water is decided by the glass per pixel.
 - From inside a dry box, what is seen outside it does not have the water medium (one solid per
   view).
+- The light under the water is absorbed where it is seen, all of it along the way of the sun: a
+  local light takes that way, not its own, and the probes and the other paths of GI find what is
+  under the water as lit as if the water were not there. Reaching them needs a renderer hook for
+  what a medium lets through toward a light, with the bodies in the frame constants.
 
 ## Verification
 
@@ -135,7 +145,8 @@ and a river that bends on open ground.
   between levels; one splash per body that enters fast and none from a still one; the bodies carry
   to the shaders the waves measured from the pass origin; bubbles from one that moves under water
   and none from a still one; wetness rises in the water and dries in `WET_SECONDS`; the medium
-  under the surface (`interaction_test.odin`).
+  under the surface (`interaction_test.odin`); what the water takes of the light at a depth, per
+  color, along the bent sun and the view (`the_water_takes_the_light_on_its_way_down`).
 - The waves in physics: `mirai test plugins/physics/runtime/sim` (`fluid_waves_test.odin`) and
   `mirai test plugins/physics/runtime the_waves_of_a_plane_are_its_own_and_the_sea_of_the_wind`.
 - `mirai test render how_wet_an_instance_is_stays_with_its_identity_and_changes_no_light` and
