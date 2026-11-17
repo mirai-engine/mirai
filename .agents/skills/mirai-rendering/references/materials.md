@@ -42,7 +42,8 @@ mode.
   Textures are of the row. The fade of an instance (`Instance_Material_Values.fade`) scales the
   opacity of its blended rows; the rest of it stays opaque or masked, in the visibility target,
   and the raster leaves out that share of its pixels with the pattern of the own body
-  (`fade_pixel_left`), whose thresholds move each frame by the golden ratio so that TAA blends
+  (`fade_pixel_left`), whose thresholds move each frame by the reversed bits of the view's turn,
+  so that any 2, 4, 8 or 16 frames from a cut hold the fade evenly at every pixel and TAA blends
   them into transparency: it never enters the blend passes. The maps of the shadows leave out
   the texels below the fixed thresholds of the same pattern, which their filter softens into a
   shadow that thins with the fade, and a ray goes through it in that share of the directions, by

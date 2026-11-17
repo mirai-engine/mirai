@@ -74,6 +74,29 @@ a_fade_is_given_to_its_instance_alone_without_a_row_or_an_allocation :: proc(t:^
         testing.expect(t,green>100,"the unchanged entity remains visible")
         delete(pixels)
     }
+    // The pattern moves each frame: from a cut, 8 frames draw every pixel of
+    // a half-faded entity in 4 of them, which the TAA blends evenly.
+    {
+        core.edit(&w.values,entities[0]).color.a=0.5
+        counts:map[int]int;defer delete(counts)
+        for frame in 0..<8 {
+            w.view.cut=frame==0
+            host.app_frame_begin(app)
+            draw(&sync,app,&w)
+            host.app_frame_end(app)
+            pixels,_,_,captured:=host.app_capture_pixels(app)
+            if !testing.expect(t,captured) {delete(pixels);return}
+            for at in 0..<len(pixels)/4 {
+                color:=pixels[at*4:][:3]
+                if int(color[0])>20 && int(color[0])>2*max(int(color[1]),int(color[2])) {counts[at]+=1}
+            }
+            delete(pixels)
+        }
+        w.view.cut=false
+        uneven:=0
+        for _,count in counts {if count!=4 {uneven+=1}}
+        testing.expectf(t,len(counts)>100 && uneven==0,"%d of the %d pixels of the entity are drawn in other than half of the frames",uneven,len(counts))
+    }
     // The pipelines the frames above asked for ahead of time arrive as loads:
     // they are in place, and in the store, before the frames that are counted.
     gpu.renderer_pipelines_wait(app.renderer,all=true)
