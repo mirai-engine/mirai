@@ -78,6 +78,7 @@ invalid_effects_say_which_field_and_how_to_correct_it :: proc(t:^testing.T) {
         {proc(p:^Particle_Info) {p.render,p.sort,p.meshes[0],p.meshes[2]=.Mesh,true,{1,2},{3,4}},"sort"},
         {proc(p:^Particle_Info) {p.mesh_weights[1]=-1},"mesh_weights"},
         {proc(p:^Particle_Info) {p.facing=Particle_Facing(5)},"facing"},
+        {proc(p:^Particle_Info) {p.lifetime={0,0}},"lifetime"},
     }
     for c in cases {
         info:=PARTICLE_DEFAULTS
@@ -88,6 +89,10 @@ invalid_effects_say_which_field_and_how_to_correct_it :: proc(t:^testing.T) {
     }
     info:=PARTICLE_DEFAULTS
     testing.expect_value(t,particle_validate({info=info}).message,"")
+    // Some particles of a range may die as they are born.
+    info.lifetime={0,2}
+    testing.expect_value(t,particle_validate({info=info}).message,"")
+    info.lifetime=PARTICLE_DEFAULTS.lifetime
 
     parameters:[2]Particle_Parameter
     base.text_set(parameters[0].name[:],"count")
