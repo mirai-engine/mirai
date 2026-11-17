@@ -228,7 +228,7 @@ terrain_displace :: proc(
         mesh,ok:=chunk_publish(assets,&d.building,false)
         if !ok {continue}
         m:=&d.building.maps
-        control,made:=host.assets_texture_generate(assets,mem.slice_to_bytes(m.control[:]),m.size.x,m.size.y,false,"terrain displaced control")
+        control,made:=host.assets_texture_generate(assets,mem.slice_to_bytes(m.control[:]),m.size.x,m.size.y,false,"terrain displaced control",texels=true)
         if !made {host.assets_mesh_release(assets,mesh);continue}
         item.mesh,item.control,item.size,item.change,item.built,item.fine=mesh,control,m.size,entry.versions[index],item.detail,item.want
     }

@@ -132,8 +132,8 @@ rebuilt_chunks_show_in_the_next_tick_whatever_the_threads_and_stale_results_are_
 // Builds that end together and only show, as when a view crosses many chunks,
 // are published to the assets over the calls that follow, the nearest first
 // within PUBLISH_VERTICES, in or out of Play: a chunk built again for its
-// level keeps its collider, so no call waits for it. Each piece shows what it
-// showed until its build shows, and pieces whose shared edge changes show in
+// level keeps its collider and its maps, so no call waits for it. Each piece
+// shows what it showed until its build shows, and pieces whose shared edge changes show in
 // the same call even when their builds arrived in different ones: no call
 // shows a crack. Every build arrives, and then a call allocates nothing.
 @(test)
@@ -170,7 +170,8 @@ builds_that_end_together_are_published_over_calls_nearest_first_within_the_bound
         chunks:=source.quad.first[1]
         testing.expect_value(t,chunks,16)
         first:[16]Chunk_Lod
-        for chunk,i in source.chunks[:chunks] {first[i]=chunk.built.lod}
+        maps:[16]Piece_Maps
+        for chunk,i in source.chunks[:chunks] {first[i],maps[i]=chunk.built.lod,chunk.maps}
         shown,staged:[16]base.Asset_Id;pipeline_meshes(&resident,shown[:])
         staged_at,shown_at:[16]int
         calls:=0
@@ -207,7 +208,11 @@ builds_that_end_together_are_published_over_calls_nearest_first_within_the_bound
             for chunk in source.chunks[:chunks] {done&&=chunk.built==chunk.wanted}
             if done {break}
         }
-        for chunk,i in source.chunks[:chunks] {testing.expectf(t,chunk.shown && chunk.built==chunk.wanted,"%v: chunk %d shows what is wanted",test_case,i)}
+        for chunk,i in source.chunks[:chunks] {
+            testing.expectf(t,chunk.shown && chunk.built==chunk.wanted,"%v: chunk %d shows what is wanted",test_case,i)
+            // Its maps hold every sample at any level: a new level keeps them.
+            testing.expectf(t,chunk.maps==maps[i] && chunk.maps.control!={},"%v: chunk %d keeps its maps",test_case,i)
+        }
         testing.expectf(t,calls>1,"%v: the builds were published over %d calls",test_case,calls)
         // Two chunks whose shared edge changed, built in different calls, show in the same one.
         together:=false
