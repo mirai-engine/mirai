@@ -1,6 +1,7 @@
 package vfx
 
 import "core:math"
+import "core:mem"
 import "core:reflect"
 import "core:strconv"
 import "core:strings"
@@ -77,7 +78,7 @@ fixture_tick :: proc(f:^Emitters_Fixture,time:core.Time,frame:=FRAME) {
 
 @(private="file")
 fixture_sync :: proc(f:^Emitters_Fixture,id:core.World_Id,time:core.Time,frame:=FRAME) {
-    particles_sync(core.read(&f.emitters),core.read(&f.overrides),core.read(&f.worlds),core.read(&f.hidden),core.read(&f.parents),core.read(&f.bindings),core.read(&f.meshes),core.ref(&f.drawn),core.read(&f.listeners),core.read(&f.grids),core.read(&f.volumes),core.read(&f.textures),core.ref(&f.clocks),core.ref(&f.settings),&f.sync,&f.reports,nil,nil,nil,{},id,time,frame,{},&f.problems,&f.app,{},{},{},{},{})
+    particles_sync(core.read(&f.emitters),core.read(&f.overrides),core.read(&f.worlds),core.read(&f.hidden),core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.bindings),core.read(&f.meshes),core.ref(&f.drawn),core.read(&f.listeners),core.read(&f.grids),core.read(&f.volumes),core.read(&f.textures),core.ref(&f.clocks),core.ref(&f.settings),&f.sync,&f.reports,nil,nil,nil,{},id,time,frame,{},&f.problems,&f.app,{},{},{},{},{})
 }
 
 @(private="file")
@@ -208,6 +209,67 @@ the_clock_and_the_shown_of_an_emitter_that_goes_are_dropped :: proc(t:^testing.T
     fixture_sync(&f,{0,1},TICK)
     testing.expect(t,clock_find(&f.clocks,kept)!=nil && clock_find(&f.clocks,gone)==nil && clock_find(&f.clocks,unplaced)==nil)
     testing.expect(t,sync_shown(&f.sync,kept)!=nil && sync_shown(&f.sync,gone)==nil && sync_shown(&f.sync,unplaced)==nil)
+}
+
+// A frame tells the GPU only of the emitters that changed: none when nothing
+// did, and alone the one that moved, was hidden, shows another effect, got
+// other values or started births; a frame that tells none allocates nothing.
+@(test)
+a_frame_tells_only_the_emitters_that_changed :: proc(t:^testing.T) {
+    f:=new(Emitters_Fixture)
+    defer free(f)
+    if !fixture_init(t,f) {return}
+    defer fixture_destroy(f)
+    folder:=base.test_folder(t,"vfx-told")
+    types:asset.Types
+    asset.types_init(&types)
+    defer asset.types_destroy(&types)
+    other:=effect.PARTICLE_DEFAULTS
+    other.rate=3
+    testing.expect_value(t,effect.particle_save(strings.concatenate({folder,"/other.particle"},context.temp_allocator),&types,{id={7,8},info=other}),asset.Error.None)
+    assets:host.Assets
+    if !testing.expect(t,host.assets_init(&assets,{root=folder})) {return}
+    defer host.assets_destroy(&assets)
+    f.app.assets=&assets
+    emitters:[5]core.Entity
+    for &e,i in emitters {e=fixture_emitter(f,Particle_Emitter{active=true,loop=true},{f32(i),0,0})}
+    EDITOR :: core.Time{}
+    for _ in 0..<2 {fixture_sync(f,{0,1},EDITOR)}
+    Change :: enum {None,Moved,Hidden,Retargeted,Override,Births}
+    cases:=[?]struct{change:Change,emitter:int}{{.None,-1},{.Moved,0},{.Hidden,1},{.Retargeted,2},{.Override,3},{.Births,4},{.None,-1}}
+    for c in cases {
+        e:=emitters[max(c.emitter,0)]
+        switch c.change {
+        case .None:
+        case .Moved:
+            place:=mm.TRANSFORM_IDENTITY
+            place.position={5,5,5}
+            core.edit(&f.worlds,e)^=core.World_Transform{place,place}
+        case .Hidden: core.add(&f.hidden,e,erender.Hidden{})
+        case .Retargeted: core.edit(&f.emitters,e).particle={7,8}
+        case .Override:
+            override:Particle_Override
+            testing.expect_value(t,value_set(&override,"rate",f32(55)),Error.None)
+            core.add(&f.overrides,e,override)
+        case .Births: births_add(clock_of(&f.clocks,e),0,4,4,0)
+        }
+        fixture_settle(f)
+        fixture_sync(f,{0,1},EDITOR)
+        told:=f.sync.told[:]
+        if c.emitter<0 {
+            testing.expectf(t,len(told)==0,"%v: no emitter changed and %d were told",c.change,len(told))
+        } else {
+            testing.expectf(t,len(told)==1 && told[0]==e,"%v: only its emitter is told, not %v",c.change,told)
+        }
+    }
+    tracker:mem.Tracking_Allocator
+    mem.tracking_allocator_init(&tracker,context.allocator)
+    defer mem.tracking_allocator_destroy(&tracker)
+    {
+        context.allocator=mem.tracking_allocator(&tracker)
+        for _ in 0..<4 {fixture_sync(f,{0,1},EDITOR)}
+    }
+    testing.expect_value(t,tracker.total_allocation_count,i64(0))
 }
 
 // Frames of 1/8 s add up exactly.

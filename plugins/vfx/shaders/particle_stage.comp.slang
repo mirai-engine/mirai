@@ -37,7 +37,10 @@ bool stage_particle(uint index, out Particle p, out uint slot, out Particle_Emit
 }
 
 // The time of the step for the context of a stage.
-float stage_time(Particle_Emitter e) { return e.step.w - e.step.x + float(params.step + 1u) * e.step.y; }
+float stage_time() {
+    float4 step = particle_frame_step();
+    return step.w - step.x + float(params.step + 1u) * step.y;
+}
 
 [shader("compute")]
 [numthreads(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z)]
@@ -55,7 +58,7 @@ void main(uint3 id : SV_DispatchThreadID) {
         bool paused = (e.range.w & PARTICLE_FLAG_PAUSED) != 0u;
         float4 packed[16];
         particle_parameters(slot, packed);
-        Mirai_Vfx_Context ctx = particle_program_context(slot, stage_time(e), paused ? 0.0 : e.step.y);
+        Mirai_Vfx_Context ctx = particle_program_context(slot, stage_time(), paused ? 0.0 : particle_frame_step().y);
         ctx.particle = index;
         ctx.iteration = params.iteration;
         Mirai_Vfx_Particle v = particle_program_value(slot, p);
@@ -86,7 +89,7 @@ void main(uint3 id : SV_DispatchThreadID) {
         particle_parameters(slot, packed);
         bool paused = (e.range.w & PARTICLE_FLAG_PAUSED) != 0u;
         Mirai_Vfx_Cell cell;
-        cell.ctx = particle_program_context(slot, stage_time(e), paused ? 0.0 : e.step.y);
+        cell.ctx = particle_program_context(slot, stage_time(), paused ? 0.0 : particle_frame_step().y);
         cell.ctx.iteration = params.iteration;
         cell.grid = stage.row - 1u;
         cell.index = index;
