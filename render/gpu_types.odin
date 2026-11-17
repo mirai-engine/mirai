@@ -573,6 +573,14 @@ gbuffer_normal_decode :: proc "contextless" (texel: Vec4) -> (normal: Vec3, roug
 // what all the rounds of a frame wrote, to hold it in one.
 Cull_List :: enum {Chunks, Visible, Candidates, Shadow_Chunks, Shadow_Entries, Raster_Vertices, Raster_Triangles}
 CULL_START :: [Cull_List]u32{.Chunks = 1 << 16, .Visible = 1 << 18, .Candidates = 1 << 16, .Shadow_Chunks = 1 << 14, .Shadow_Entries = 1 << 18, .Raster_Vertices = 1 << 20, .Raster_Triangles = 1 << 20}
+// The lists of the raster of the visibility target hold a third of what the
+// view that needs most writes (RASTER_LIST_SHARE), and grow by an eighth past
+// it (RASTER_LIST_SLACK: a view whose need creeps up by less takes no new
+// buffers); the rounds of a view take the rest. Four rounds of a third hold
+// a view whole but for the room a list leaves past its last cluster.
+RASTER_LIST_SHARE :: 3
+RASTER_LIST_SLACK :: 8
+#assert(abi.RASTER_ROUNDS > RASTER_LIST_SHARE)
 // The indices of the meshes drawn whole (Scene_State.mesh_draws) at first: 8 MB,
 // 5,461 clusters, all the levels of a mesh of about 250,000 triangles, or as
 // many glass, overlaid, highlighted and particle meshes as a frame draws.
