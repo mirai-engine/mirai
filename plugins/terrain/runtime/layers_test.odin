@@ -177,8 +177,10 @@ a_piece_shows_the_weights_and_normals_of_every_sample_at_any_level :: proc(t:^te
     testing.expect(t,weights_float(Weights(coarse.maps.control[5+9*4]))[1]>0.99,"the path shows at level 2")
     n:=heightfield_normal(&height,3,4,1)
     testing.expect_value(t,coarse.maps.normal[3+9*4],normal_bytes(n))
+    // uv0 runs over the maps from 0 to 1: times their size, the texel of its sample, a metre each here.
     for p,i in coarse.geometry.positions {
-        testing.expect(t,abs(coarse.geometry.uvs[i].x-p.x)<1e-4 && abs(coarse.geometry.uvs[i].y-p.z)<1e-4,"uv0 is the place over the maps")
+        at:=coarse.geometry.uvs[i]*[2]f32{f32(coarse.maps.size.x),f32(coarse.maps.size.y)}
+        testing.expect(t,abs(at.x-p.x)<1e-4 && abs(at.y-p.z)<1e-4,"uv0 is the place over the maps")
     }
     // A steep rule covers what is painted, in the maps.
     steep:=height.layers[2]
