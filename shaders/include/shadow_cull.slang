@@ -26,8 +26,9 @@
 // the round draws of each page the texels SHADOW_WORDS_PART names alone (the
 // cache, of a page it held the part where what stays changed, or the band of
 // a page drawn over frames); bound: the clusters the draws of the round take
-// in a frame (render.SHADOW_FRAME_CLUSTERS).
-struct Params_Block { uint instances; uint maps; uint rows; uint glass; uint chunk_capacity; uint entry_capacity; uint list; uint moving; uint movers; uint listed; uint ranges; uint masks; uint plan; uint span; uint part; uint bound; };
+// in a frame (render.SHADOW_FRAME_CLUSTERS); foresee: 1 while the pass by
+// instance only foresees what each page takes, before the pages are granted.
+struct Params_Block { uint instances; uint maps; uint rows; uint glass; uint chunk_capacity; uint entry_capacity; uint list; uint moving; uint movers; uint listed; uint ranges; uint masks; uint plan; uint span; uint part; uint bound; uint foresee; uint pad0; uint pad1; uint pad2; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 // The draws: of the clusters that hide whole, of those of masked materials,
 // and of those of glass for the tint and the nearest glass.
