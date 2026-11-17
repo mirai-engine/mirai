@@ -77,6 +77,12 @@ vk_stopped :: proc(d: ^Device, out: []u8) -> string {
 		if newest == nil {return ""}
 		frame, stop = newest, newest.count
 	}
+	return vk_marks_stopped(frame, stop, out)
+}
+
+// The open labels and the section at mark stop of a frame, as vk_stopped says them.
+@(private)
+vk_marks_stopped :: proc(frame: ^Vk_Marks, stop: int, out: []u8) -> string {
 	labels: [MAX_LABEL_DEPTH]string
 	section: [MAX_LABEL_DEPTH + 1]string
 	depth := 0
@@ -104,4 +110,44 @@ vk_stopped :: proc(d: ^Device, out: []u8) -> string {
 	if pipeline != "" {fmt.sbprintf(&text, ", with the pipeline %s", pipeline)}
 	if stop == frame.count {fmt.sbprintf(&text, ", where its frame ended")}
 	return strings.to_string(text)
+}
+
+// Where the GPU stopped in the frame of a slot and the passes it recorded,
+// for the watchdog, which reads the marks of a frame the GPU did not finish.
+@(private)
+watchdog_frame_text :: proc(d: ^Device, slot: int, b: ^strings.Builder) {
+	f := &d.frames[slot]
+	m := &f.marks
+	count := min(m.count, MAX_FRAME_MARKS)
+	if m.buffer == 0 || !m.sent || count == 0 {
+		watchdog_names(b, f.query_names[:min(f.query_count, MAX_TIMESTAMPS)] if f.passes else nil)
+		return
+	}
+	stop := count
+	for i in 0 ..< count {
+		if m.words[i] != m.serial {stop = i; break}
+	}
+	stopped_buffer: [256]u8
+	if stopped := vk_marks_stopped(m, stop, stopped_buffer[:]); stopped != "" {fmt.sbprintf(b, "; it stopped in %s", stopped)}
+	strings.write_string(b, "; the frame recorded the passes ")
+	first := true
+	for mark in m.marks[:count] {
+		if mark.kind != .Section {continue}
+		if !first {strings.write_string(b, ", ")}
+		strings.write_string(b, string(m.names[mark.at:][:mark.length]))
+		first = false
+	}
+}
+
+// Waits up to timeout_ns for the GPU to pass serial of the timeline, from the
+// thread of the watchdog.
+@(private)
+watchdog_gpu_wait :: proc(d: ^Device, serial: u64, timeout_ns: i64) -> Watchdog_Wait {
+	value := serial
+	info := vk.SemaphoreWaitInfo{sType = .SEMAPHORE_WAIT_INFO, semaphoreCount = 1, pSemaphores = &d.timeline, pValues = &value}
+	#partial switch d.dvk.WaitSemaphores(d.handle, &info, u64(timeout_ns)) {
+	case .SUCCESS: return .Done
+	case .TIMEOUT: return .Waiting
+	}
+	return .Failed
 }
