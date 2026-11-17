@@ -294,8 +294,10 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
             uint4 rect = shadow_texel_pages(m, texels);
             for (uint y = rect.y; y <= rect.w; y++) {
                 for (uint x = rect.x; x <= rect.z; x++) {
-                    // Where the cache holds the page and hides the box, the change shows nowhere in it.
-                    uint entry = shadow_page_entry(m.rect, uint2(x, y)), e = shadow_table_entry(slot, entry);
+                    // Where the cache holds the page and hides the box, the change shows
+                    // nowhere in it. A table that holds nothing yet holds no page: what
+                    // its texels hold before the entries are written is not an entry.
+                    uint entry = shadow_page_entry(m.rect, uint2(x, y)), e = params.fresh != 0u ? 0u : shadow_table_entry(slot, entry);
                     if ((e & SHADOW_PAGE_CACHED) != 0u && shadow_box_hidden(hiz, m, uint2(x, y), (e & SHADOW_ENTRY_POOL) - 1u, low, high)) continue;
                     mask_set(region, slot, entry);
                     if (region != SHADOW_WORDS_STALE || (e & SHADOW_PAGE_CACHED) == 0u) continue;
