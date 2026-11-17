@@ -102,8 +102,7 @@ bool span_reaches(Light_Node node, Span span) {
 
 // The least irradiance a sphere of unit intensity gives the points of the
 // cell: none unless all of it is above the horizon of every one.
-float span_irradiance_least(Span span, float radius) {
-    float r = max(radius, LIGHT_RADIUS_MIN);
+float span_irradiance_least(Span span, float r) {
     if (!(span.cosine_low * span.near > r)) return 0.0;
     return span.cosine_low / max(span.far * span.far, r * r);
 }

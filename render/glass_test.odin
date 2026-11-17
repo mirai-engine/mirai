@@ -50,7 +50,6 @@ box_mesh :: proc(r: ^Renderer, loose: Maybe(Vec3) = nil) -> Mesh_Handle {
 }
 
 // A sphere of diameter 1.
-@(private = "file")
 ball_mesh :: proc(r: ^Renderer) -> Mesh_Handle {
 	RINGS :: 24
 	SEGMENTS :: 48
