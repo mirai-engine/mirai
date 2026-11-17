@@ -32,7 +32,7 @@ Gbuffer_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vu
     Particle_Look look = particle_program_look(params.emitter, index, p);
     float3x3 rotation = particle_mesh_rotation(params.emitter, p);
     float3 world = particle_world(params.emitter, p.position) + particle_mesh_vector(params.emitter, rotation, v.position * look.size);
-    float3 prev_world = world - particle_world_vector(params.emitter, p.velocity) * e.step.x;
+    float3 prev_world = world - particle_world_vector(params.emitter, p.velocity) * particle_frame_step().x;
     output.out_normal = normalize(particle_mesh_vector(params.emitter, rotation, v.normal));
     output.out_tangent = float4(normalize(particle_mesh_vector(params.emitter, rotation, v.tangent.xyz)), v.tangent.w);
     output.out_color = material_vertex_tint(material_row(material), v.color.rgb) * look.color.rgb;
