@@ -59,7 +59,7 @@ only_a_texture_makes_an_entity_show_a_row_of_its_own :: proc(t:^testing.T) {
     testing.expect(t,f.assets.stats.derived==0 && len(s.translucent)==0)
     core.edit(&f.world.values,e).color.a=0.5
     sync_frame(f)
-    testing.expect(t,f.assets.stats.derived==0 && len(s.translucent)==0 && s.instances[0].meta.x&gpu.INSTANCE_FADED!=0,"a fade leaves the instance opaque, and derives no row")
+    testing.expect(t,f.assets.stats.derived==0 && len(s.translucent)==0 && s.instances[0].meta.w&gpu.INSTANCE_FLAG_BLENDED==0,"a fade leaves the instance opaque, and derives no row")
     testing.expect(t,material_value(core.edit(&f.world.values,e),"alpha_mode",f32(asset.Alpha_Mode.Mask)))
     sync_frame(f)
     testing.expect(t,f.assets.stats.derived==0 && len(s.translucent)==0,"a masked one stays masked as it fades")
