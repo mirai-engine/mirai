@@ -173,9 +173,10 @@ the assets.
   `RDO_LAMBDA_DEFAULT` unless the setting `rdo_lambda` says otherwise.
 - **The editor never waits for the final encode** (`textures.Encode_Speed`): its imports take the
   Final of the texture cache, else build Fast (no RDO, low effort, `Texture_Flag.Fast`). The sync
-  of a build that does not cook (the editor's) builds Fast too and takes Fast or Final as current;
-  only the sync of a build that cooks, or of `mirai package engine`, builds Final. `mirai import`
-  and tools build Final, and so does the editor for a texture that is a document.
+  of a build that does not cook (the editor's) and `mirai import` build Fast too and take Fast or
+  Final as current, so the command takes what the editor's sync left; only the sync of a build
+  that cooks, or of `mirai package engine` (`--final`), builds Final, and so does the editor for a
+  texture that is a document.
 - **One algorithm, once.** Mips, color rules and block compression in `cook/textures` (the
   encoders are `compressor:blocks`); PBR conversions in `cook/import/pbr.odin`; triangulation,
   simplification, hulls and convex decomposition in `std/geom`; transforms with `std/math`.
