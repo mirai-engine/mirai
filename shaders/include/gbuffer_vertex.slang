@@ -23,7 +23,7 @@ struct Gbuffer_Vertex {
     [[vk::location(12)]] nointerpolation uint out_surface : TEXCOORD12; // of a far mesh (Mesh_Point.surface.x); 0 for the others
     [[vk::location(13)]] float4 out_vertex_color : TEXCOORD13; // of the mesh, white without one: a program reads it as data
 #ifdef MIRAI_VISIBILITY
-    [[vk::location(14)]] nointerpolation uint out_id : TEXCOORD14; // the triangle as the visibility target names it (visibility_id)
+    [[vk::location(14)]] nointerpolation uint out_first : TEXCOORD14; // the first triangle of the draw among those listed (raster_lists.slang)
 #endif
 #ifdef MIRAI_CLIP_PLANE
     float clip : SV_ClipDistance0;
