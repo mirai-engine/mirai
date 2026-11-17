@@ -16,8 +16,7 @@
 // The clusters to draw: the instance, the cluster, the page (shadow_page_word), and 1 for one at rest.
 [[vk::binding(SLOT_PASS0, 0)]] StructuredBuffer<uint4> entries : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);
 [[vk::binding(SLOT_PASS1, 0)]] StructuredBuffer<uint4> shadow_data : register(MIRAI_REGISTER(t, SLOT_PASS1), space0);
-// The tested variant draws the clusters of masked materials, and those of
-// glass for the tint and the nearest glass (params.glass).
+// The tested variant draws the clusters of masked materials.
 #define SHADOW_PAGES_SLOT SLOT_PASS3
 #include "shadow_cull.slang"
 
@@ -30,18 +29,10 @@ struct Shadow_Vertex {
     [[vk::location(0)]] nointerpolation float held : HELD;
 #endif
 #ifdef MIRAI_SHADOW_TESTED
-    // The instance and the primitive of the triangle, where on it the point
-    // is, and how far a ray that reads its material as coarsely as a texel of
-    // the map would have come (hit_covers).
-    [[vk::location(0)]] nointerpolation uint2 place : PLACE;
-    [[vk::location(1)]] float2 bary : BARY;
-    [[vk::location(2)]] nointerpolation float reach : REACH;
-    // From the point towards the light, as a shadow ray goes.
-    [[vk::location(3)]] float3 toward : TOWARD;
     // What the mask map of a masked material reads where it is: the uv of
     // its set, and its row and the values of the instance (shadow_map.frag).
-    [[vk::location(4)]] float2 uv : UV0;
-    [[vk::location(6)]] nointerpolation uint2 material : MATERIAL;
+    [[vk::location(0)]] float2 uv : UV0;
+    [[vk::location(1)]] nointerpolation uint2 material : MATERIAL;
 #endif
 };
 
@@ -65,13 +56,9 @@ Shadow_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vul
     return output;
 #else
 #ifdef MIRAI_SHADOW_TESTED
-    output.place = uint2(0u);
-    output.bary = float2(0.0);
-    output.reach = 0.0;
-    output.toward = float3(0.0, 0.0, 1.0);
     output.uv = float2(0.0);
     output.material = uint2(0u);
-    uint draw = params.glass != 0u ? SHADOW_DRAW_GLASS : SHADOW_DRAW_TESTED;
+    uint draw = SHADOW_DRAW_TESTED;
 #else
     uint draw = SHADOW_DRAW_OPAQUE;
 #endif
@@ -110,12 +97,7 @@ Shadow_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vul
     output.position = float4((2.0 * corner.x + side) * clip.w - clip.w + side * clip.x,
         clip.w - (2.0 * corner.y + side) * clip.w + side * clip.y, clip.z, clip.w);
 #ifdef MIRAI_SHADOW_TESTED
-    uint at = vertex_id % 3u;
-    output.place = uint2(entry.x, (entry.y << 7u) | (vertex_id / 3u));
-    output.bary = float2(at == 1u ? 1.0 : 0.0, at == 2u ? 1.0 : 0.0);
-    output.reach = shadow_map_texel(m, local.z) / SHADOW_TESTED_FOOTPRINT;
-    output.toward = shadow_map_orthographic(m) ? -m.forward : m.origin - world;
-    output.material = uint2(material_of(inst, mesh_primitive_material(mesh, output.place.y)), inst.material_values);
+    output.material = uint2(material_of(inst, mesh_primitive_material(mesh, (entry.y << 7u) | (vertex_id / 3u))), inst.material_values);
     output.uv = mask_uv_set(output.material.x) == 1u ? v.uv1 : v.uv;
 #endif
     return output;

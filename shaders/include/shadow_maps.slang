@@ -15,9 +15,6 @@
 // SHADOW_MAP_ROWS, SHADOW_LIGHT_FACES: the buffer of the maps (render/abi);
 // the clusters they draw, shadow_cull.slang. The side of the atlas, texels,
 // is Frame.sun_maps.z.
-// The width of what a ray reads of a material over how far it came
-// (hit_covers): a fragment of a map reads its material as coarsely as a texel.
-#define SHADOW_TESTED_FOOTPRINT 0.004
 
 struct Shadow_Map {
     float3 origin;
@@ -632,78 +629,4 @@ float light_shadow_seen(uint light, float3 position, float3 n, float radius, flo
 #endif
 #endif
 
-#if defined(SHADOW_TINT_SLOT) && defined(SUN_SHADOW_SLOT)
-// What the glass in front of the depth of each texel of the maps lets through
-// of their light (render.Surface_Source.Shadow_Tint, shadow_map.frag), at
-// the pages of the atlas: all of it lies between the light and a surface the
-// maps light.
-[[vk::binding(SHADOW_TINT_SLOT, 0)]] Texture2D<float4> view_shadow_tint : register(MIRAI_REGISTER(t, SHADOW_TINT_SLOT), space0);
-#ifdef SHADOW_GLASS_SLOT
-// The depth of the nearest of that glass (Surface_Source.Shadow_Glass), for a
-// point that may lie in front of it: one of a medium.
-[[vk::binding(SHADOW_GLASS_SLOT, 0)]] Texture2D<float4> view_shadow_glass : register(MIRAI_REGISTER(t, SHADOW_GLASS_SLOT), space0);
-#endif
-
-// The texel of map m a point lies in, from the corner of its square.
-float2 shadow_tint_texel(Shadow_Map m, float3 position, out float3 local) {
-    local = shadow_map_local(m, position);
-    float2 unit = shadow_map_unit(m, local);
-    float side = float(m.rect.z);
-    return clamp(float2(unit.x * 0.5 + 0.5, 0.5 - unit.y * 0.5) * side, float2(0.5), float2(side - 0.5));
-}
-
-// Whether the nearest glass of a texel of the atlas lies before a point `z` along its map.
-bool shadow_glass_before(Shadow_Map m, int2 at, float z) {
-#ifdef SHADOW_GLASS_SLOT
-    return shadow_map_distance(m, view_shadow_glass.Load(int3(at, 0)).r) < z;
-#else
-    return true;
-#endif
-}
-
-// What the glass between the light of map m and a point lets through, and
-// in alpha 0 where a glass whose program gives its color stands in the way:
-// its tint keeps only the mean of the program, and the rays of the samples of
-// the direct light run the program instead. White while the maps keep no
-// tint (Frame.sun_maps.w), or where its page is not drawn. n: the pages
-// around the point (shadow_near).
-float4 shadow_tint_near(Shadow_Map m, Shadow_Near n, float3 position) {
-    if (frame.sun_maps.w == 0u) return float4(1.0);
-    float3 local;
-    float2 texel = shadow_tint_texel(m, position, local);
-    int2 at;
-    Shadow_Map held;
-    uint coarser;
-    if (!shadow_texel_near(m, n, int2(floor(texel)), at, held, coarser) || !shadow_glass_before(held, at, local.z - dot(held.origin - m.origin, m.forward))) return float4(1.0);
-    float programmed = view_shadow_tint.Load(int3(at, 0)).a < 0.5 ? 0.0 : 1.0;
-    // Between the texels around it, each from its own page.
-    float2 corner = texel - 0.5;
-    float2 first = floor(corner), f = corner - first;
-    float3 tint[4];
-    for (uint i = 0u; i < 4u; i++) {
-        int2 near_at;
-        tint[i] = shadow_texel_near(m, n, int2(first) + int2(i & 1u, i >> 1u), near_at, held, coarser) ? view_shadow_tint.Load(int3(near_at, 0)).rgb : float3(1.0);
-    }
-    return float4(lerp(lerp(tint[0], tint[1], f.x), lerp(tint[2], tint[3], f.x), f.y), programmed);
-}
-
-// The pages around the texel of map m a point lies in, for its tint.
-Shadow_Near shadow_tint_pages(Shadow_Map m, float3 position) {
-    float3 local;
-    return shadow_near(m, shadow_tint_texel(m, position, local), 1.0);
-}
-
-// What the glass between the light of map m and a point lets through (shadow_tint_near).
-float3 shadow_tint(Shadow_Map m, float3 position) {
-    if (frame.sun_maps.w == 0u) return float3(1.0);
-    return shadow_tint_near(m, shadow_tint_pages(m, position), position).rgb;
-}
-
-// Whether a glass whose program gives its color stands in the way of the
-// light of map m to position (shadow_tint_near).
-bool shadow_tint_programmed(Shadow_Map m, float3 position) {
-    if (frame.sun_maps.w == 0u) return false;
-    return shadow_tint_near(m, shadow_tint_pages(m, position), position).a < 0.5;
-}
-#endif
 #endif

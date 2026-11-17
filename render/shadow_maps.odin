@@ -38,7 +38,7 @@ import "mirai:std/base"
 SHADOW_POOL :: abi.SHADOW_POOL
 SHADOW_SLOTS :: abi.SHADOW_SLOTS
 SHADOW_MAP_ROWS :: abi.SHADOW_MAP_ROWS
-SHADOW_DRAWS :: 3 // the clusters that hide whole, those of masked materials and those of glass (shadow_cull.slang)
+SHADOW_DRAWS :: 2 // the clusters that hide whole and those of masked materials (shadow_cull.slang)
 SHADOW_GROUP :: u32(256) // the threads of a group of shadow_maps.comp
 SHADOW_PAGE :: abi.SHADOW_PAGE
 SHADOW_MAP_PAGES :: abi.SHADOW_MAP_PAGES
@@ -63,7 +63,7 @@ SHADOW_MAP_ORTHOGRAPHIC :: abi.SHADOW_MAP_ORTHOGRAPHIC
 // within them keeps moving (shadow_movers_update).
 SHADOW_MOVER_FRAMES :: u64(30)
 // The clusters the draws of the cache of a view take in a frame, and those of
-// its atlas, and those of its tint: each at most CLUSTER_TRIANGLES triangles
+// its atlas: each at most CLUSTER_TRIANGLES triangles
 // over a page, about four million triangles in all, what the least GPU the
 // engine runs on draws into a depth map, masked, in a few milliseconds. So no
 // frame of any view waits long on its maps, whatever the scene, and no draw
@@ -132,11 +132,6 @@ Shadow_Raster :: struct {
 	seen:     Shadow_Seen, // what the points marked the pages from
 	settle:   u32,  // the frames the points still mark the pages in after the view changed: a cycle of its jitter
 	whole:    bool, // a slot drew its pages whole into the atlas alone the frame before: the cache draws them now
-	tint:     rhi.Texture, // what the glass in front of the depth of each texel of the atlas lets through of its light
-	glass:    rhi.Texture, // the depth of the nearest of that glass
-	tinted:   bool, // the frame before drew the tint
-	tint_whole: bool, // and drew it whole
-	glass_key: u64,  // what the tint was drawn from (shadow_glass_key)
 }
 
 // What the marks of the points of a view depend on besides the maps and the
@@ -538,22 +533,6 @@ shadow_movers_update :: proc(r: ^Renderer) {
 	for &view in r.texture_views {if view.texture != 0 {give(&view.targets.shadow_raster, &stale, &moved)}}
 }
 
-// What the tint of the maps is drawn from besides the pages: the instances
-// with glass and the values of the rows of the materials; moving: one of
-// them changes its vertices this frame.
-@(private)
-shadow_glass_key :: proc(s: ^Scene_State) -> (key: u64, moving: bool) {
-	key = hash.fnv64a(mem.slice_to_bytes(s.material_versions[:]))
-	for entry in s.translucent {
-		if int(entry.instance) >= len(s.instances) {continue}
-		inst := s.instances[entry.instance]
-		key = hash.fnv64a(mem.ptr_to_bytes(&inst), key)
-		mesh := inst.meta.x & INSTANCE_MESH_MASK
-		if int(mesh) < len(s.meshes) && s.meshes[mesh].skin != nil && s.meshes[mesh].skin.dirty {moving = true}
-	}
-	return
-}
-
 // The maps of this frame and what a frame draws of them.
 @(private)
 Shadow_Plan :: struct {
@@ -812,14 +791,12 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 
 // shadow_cull.slang Params_Block.
 @(private)
-Shadow_Params :: struct {instances, maps, rows, glass, chunk_capacity, entry_capacity, list, moving, movers, listed, ranges, masks, plan, span, part, bound, foresee, pad0, pad1, pad2: u32}
+Shadow_Params :: struct {instances, maps, rows, chunk_capacity, entry_capacity, list, moving, movers, listed, ranges, masks, plan, part, bound, foresee, pad0: u32}
 
 // The rounds of the cull: what stays, into the pages the cache draws; what
-// moves, into the pages the atlas composes; the glass, into every page ready,
-// or into the pages the atlas composes alone (Tint), where the tint of a view
-// that keeps it changed.
+// moves, into the pages the atlas composes.
 @(private)
-Shadow_Round :: enum u32 {Stays, Moves, Glass, Tint}
+Shadow_Round :: enum u32 {Stays, Moves}
 
 // The parameters of a round: its slots are listed in the buffer of the
 // pages (SHADOW_WORDS_SLOTS), its pages a bit each. The round of what moves
@@ -827,14 +804,12 @@ Shadow_Round :: enum u32 {Stays, Moves, Glass, Tint}
 @(private)
 shadow_params :: proc(p: ^Pass, plan: Shadow_Plan, round: Shadow_Round) -> Shadow_Params {
 	s := &p.r.scene
-	masks := [Shadow_Round]u32{.Stays = abi.SHADOW_WORDS_DRAWN, .Moves = abi.SHADOW_WORDS_COMPOSE, .Glass = abi.SHADOW_WORDS_READY, .Tint = abi.SHADOW_WORDS_COMPOSE}
-	// The pages of each round lie in the lists of the one of the steps of the pages.
-	pages := [Shadow_Round]u32{.Stays = 0, .Moves = 1, .Glass = 2, .Tint = 1}
+	masks := [Shadow_Round]u32{.Stays = abi.SHADOW_WORDS_DRAWN, .Moves = abi.SHADOW_WORDS_COMPOSE}
 	params := Shadow_Params{
-		instances = p.instance_count + p.batch_slots, maps = SHADOW_SLOTS, rows = plan.rows, glass = 1 if round >= .Glass else 0,
-		list = abi.SHADOW_WORDS_SLOTS + pages[round] * SHADOW_SLOTS, masks = masks[round], span = pages[round],
+		instances = p.instance_count + p.batch_slots, maps = SHADOW_SLOTS, rows = plan.rows,
+		list = abi.SHADOW_WORDS_SLOTS + u32(round) * SHADOW_SLOTS, masks = masks[round],
 		chunk_capacity = s.cull_capacity[.Shadow_Chunks], entry_capacity = s.cull_capacity[.Shadow_Entries],
-		moving = min(u32(round), 2), movers = plan.movers, plan = plan.plan, part = 1 if round == .Stays else 0,
+		moving = u32(round), movers = plan.movers, plan = plan.plan, part = 1 if round == .Stays else 0,
 		bound = shadow_frame_clusters(&p.t.shadow_raster),
 	}
 	// The round of what moves culls the movers alone, but in a frame a slot
@@ -845,25 +820,24 @@ shadow_params :: proc(p: ^Pass, plan: Shadow_Plan, round: Shadow_Round) -> Shado
 
 // The cull of a round and what it hands to its draws: by instance and slot,
 // as many slots as the pages listed (shadow_pages.comp), then by cluster over
-// the chunks, as the cull of the view. Of the cache and the atlas, a pass by
-// instance first foresees what each page takes, the steps of the pages grant
-// the pages the clusters of the frame, the culls hand over the clusters of
-// those alone, and the steps settle those not drawn whole (steps).
+// the chunks, as the cull of the view. A pass by instance first foresees what
+// each page takes, the steps of the pages grant the pages the clusters of the
+// frame, the culls hand over the clusters of those alone, and the steps
+// settle those not drawn whole.
 @(private)
-shadow_cull :: proc(p: ^Pass, plan: Shadow_Plan, params: Shadow_Params, round: Shadow_Round, steps: ^Shadow_Pages_Params = nil) {
+shadow_cull :: proc(p: ^Pass, plan: Shadow_Plan, params: Shadow_Params, round: Shadow_Round, steps: ^Shadow_Pages_Params) {
 	r, cmd, t := p.r, p.cmd, p.t
 	s := &r.scene
 	d := &r.shadow_buffers
 	params := params
 	start, start_at := rhi.frame_alloc_typed(r.device, Gpu_Shadow_State, 1)
 	if start == nil {return}
-	start[0] = {draws = {{vertex_count = CLUSTER_DRAW_VERTICES}, {vertex_count = CLUSTER_DRAW_VERTICES}, {vertex_count = CLUSTER_DRAW_VERTICES}}, cluster_dispatch = {0, 0, 1}}
+	start[0] = {draws = {{vertex_count = CLUSTER_DRAW_VERTICES}, {vertex_count = CLUSTER_DRAW_VERTICES}}, cluster_dispatch = {0, 0, 1}}
 	rhi.cmd_copy_buffer(cmd, start_at.buffer, start_at.offset, d.state, 0, size_of(Gpu_Shadow_State))
 	if params.instances == 0 {return}
 	passes := [3]Pipeline_Id{.Shadow_Maps, .Shadow_Maps, .Shadow_Clusters}
 	for pipeline, k in passes {
-		if k == 0 && steps == nil {continue}
-		if k == 1 && steps != nil {shadow_pages_step(p, steps, .Grant, u32(round))}
+		if k == 1 {shadow_pages_step(p, steps, .Grant, u32(round))}
 		params.foresee = 1 if k == 0 else 0
 		rhi.cmd_bind_pipeline(cmd, r.pipelines[pipeline])
 		set_params(cmd, &params)
@@ -876,13 +850,12 @@ shadow_cull :: proc(p: ^Pass, plan: Shadow_Plan, params: Shadow_Params, round: S
 		rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.shadow_raster.hiz)
 		if pipeline == .Shadow_Maps {
 			if plan.movers > 0 {rhi.cmd_bind_transient(cmd, SLOT_PASS5, plan.bits)} else {rhi.cmd_bind_buffer(cmd, SLOT_PASS5, r.dummy_buffer)}
-			args := abi.SHADOW_ARGS_TINT if round == .Tint else abi.SHADOW_ARGS_DISPATCH + 3 * u32(round)
-			rhi.cmd_dispatch_indirect(cmd, t.shadow_raster.pages, u64(abi.SHADOW_WORDS_ARGS + args) * 4)
+			rhi.cmd_dispatch_indirect(cmd, t.shadow_raster.pages, u64(abi.SHADOW_WORDS_ARGS + abi.SHADOW_ARGS_DISPATCH + 3 * u32(round)) * 4)
 		} else {
 			rhi.cmd_dispatch_indirect(cmd, d.state, u64(offset_of(Gpu_Shadow_State, cluster_dispatch)))
 		}
 	}
-	if steps != nil {shadow_pages_step(p, steps, .Settle, u32(round))}
+	shadow_pages_step(p, steps, .Settle, u32(round))
 }
 
 // A step of the pages (shadow_pages.comp), which writes the table the culls
@@ -912,7 +885,6 @@ shadow_draw :: proc(p: ^Pass, plan: Shadow_Plan, params: Shadow_Params, atlas: r
 	d := &r.shadow_buffers
 	pages := t.shadow_raster.pages
 	params := params
-	params.glass = 0
 	pass := rhi.Render_Pass_Desc{name = name}
 	pass.depth = {texture = atlas, load = .Load, store = .Store}
 	rhi.cmd_begin_render_pass(cmd, &pass)
@@ -953,7 +925,7 @@ Shadow_Pages_Step :: enum u32 {Gate, Clear, Invalidate, Entries, Rank, Sums, Poo
 
 // shadow_pages.comp Params_Block.
 @(private)
-Shadow_Pages_Params :: struct {step, frame, rows, plan, boxes, box_count, sun, pool, groups_stays, groups_moves, groups_glass, fresh, full, slots, slot_count, keep, budget, round, pad0, pad1: u32}
+Shadow_Pages_Params :: struct {step, frame, rows, plan, boxes, box_count, sun, pool, groups_stays, groups_moves, fresh, full, slots, slot_count, keep, budget, round, pad0, pad1, pad2: u32}
 
 // The clusters each round of the maps of a view draws in a frame.
 @(private)
@@ -990,19 +962,6 @@ shadow_maps_pass :: proc(p: ^Pass, mark: ^$T, scale: u32, grid: rhi.Buffer) -> (
 	}
 	b.cut = r.settings.lod_error_pixels
 	b.frame += 1
-	// While glass colors light: what the glass in front of the depth of each
-	// texel lets through, and the depth of the nearest glass (shadow_tint of
-	// shadow_maps.slang). The view keeps them: drawn whole where the glass
-	// changed, else again only in the pages the atlas composes.
-	tinted := r.settings.colored_shadows && len(s.translucent) > 0
-	glass_key, glass_moving := shadow_glass_key(s)
-	tint_whole := made || !b.tinted || b.tint == 0 || b.glass == 0 || glass_moving || glass_key != b.glass_key
-	if tinted {
-		tint_ok := target(r, cmd, &b.tint, SHADOW_POOL, SHADOW_POOL, .RGBA8_Unorm, {.Color_Target, .Sampled}, "shadow tint")
-		glass_ok := target(r, cmd, &b.glass, SHADOW_POOL, SHADOW_POOL, .D32_Float, {.Depth_Target, .Sampled}, "shadow glass")
-		tinted = tint_ok && glass_ok
-	}
-	b.tinted, b.tint_whole, b.glass_key = tinted, tinted && tint_whole, glass_key
 	// What the passes after this one read of the maps (sun_shadow_seen,
 	// media.slang) and the marks: the constants of the view are read when the
 	// frame runs.
@@ -1012,7 +971,7 @@ shadow_maps_pass :: proc(p: ^Pass, mark: ^$T, scale: u32, grid: rhi.Buffer) -> (
 		rows := ([^][4]u32)(b.data.ptr)[int(plan.rows):][:count * SHADOW_MAP_ROWS]
 		copy(p.frame.sun_map_rows[:], rows)
 	}
-	p.frame.sun_maps = {u32(count), plan.rows, SHADOW_POOL, 1 if tinted else 0}
+	p.frame.sun_maps = {u32(count), plan.rows, SHADOW_POOL, 0}
 	constants := (^Gpu_Frame)(p.constants.ptr)
 	constants.sun_maps, constants.sun_map_rows = p.frame.sun_maps, p.frame.sun_map_rows
 	rhi.cmd_copy_buffer(cmd, b.data.buffer, b.data.offset, d.table, 0, b.data.size)
@@ -1050,7 +1009,7 @@ shadow_maps_pass :: proc(p: ^Pass, mark: ^$T, scale: u32, grid: rhi.Buffer) -> (
 		frame = b.frame, rows = plan.rows, plan = plan.plan, boxes = plan.boxes, box_count = plan.box_count, sun = plan.sun >> 16,
 		pool = b.pool if b.pool != 0 else abi.SHADOW_POOL_PAGES, fresh = 1 if made else 0, full = 1 if full else 0, slots = plan.slots, slot_count = plan.slot_count,
 		groups_stays = groups(p.instance_count + p.batch_slots, SHADOW_GROUP), groups_moves = groups(p.instance_count + p.batch_slots if plan.whole else plan.moving_threads, SHADOW_GROUP),
-		groups_glass = groups(p.instance_count + p.batch_slots, SHADOW_GROUP), keep = max(p.jitter_phases, 1),
+		keep = max(p.jitter_phases, 1),
 		budget = shadow_frame_clusters(b),
 	}
 	for step in Shadow_Pages_Step {
@@ -1084,42 +1043,6 @@ shadow_maps_pass :: proc(p: ^Pass, mark: ^$T, scale: u32, grid: rhi.Buffer) -> (
 	rhi.cmd_copy_buffer(cmd, b.pages, u64(abi.SHADOW_WORDS_COUNTS + abi.SHADOW_COUNT_DRAWN) * 4, r.stats_buffer, u64(offset_of(Gpu_Cull_Stats, shadow) + offset_of(Shadow_Stats, pages_drawn)), 12)
 	rhi.cmd_copy_buffer(cmd, b.pages, u64(abi.SHADOW_WORDS_COUNTS + abi.SHADOW_COUNT_LEFT) * 4, r.stats_buffer, u64(offset_of(Gpu_Cull_Stats, shadow) + offset_of(Shadow_Stats, pages_left)), 4)
 	rhi.cmd_copy_buffer(cmd, b.pages, u64(abi.SHADOW_WORDS_COUNTS + abi.SHADOW_COUNT_WAITING) * 4, r.stats_buffer, u64(offset_of(Gpu_Cull_Stats, shadow) + offset_of(Shadow_Stats, pages_waiting)), 4)
-	if tinted {
-		rhi.cmd_timestamp(cmd, "shadow cull glass")
-		round := Shadow_Round.Glass if tint_whole else .Tint
-		params = shadow_params(p, plan, round)
-		shadow_cull(p, plan, params, round)
-		rhi.cmd_timestamp(cmd, "shadow tint")
-		load := rhi.Load_Op.Clear if tint_whole else .Load
-		tint := rhi.Render_Pass_Desc{name = "shadow tint", color_count = 1}
-		tint.colors[0] = {texture = b.tint, load = load, store = .Store, clear = {1, 1, 1, 1}}
-		tint.depth = {texture = b.atlas, load = .Load, store = .Store}
-		nearest := rhi.Render_Pass_Desc{name = "shadow glass"}
-		nearest.depth = {texture = b.glass, load = load, store = .Store, clear = 0}
-		passes := [2]rhi.Render_Pass_Desc{tint, nearest}
-		for &desc, i in passes {
-			rhi.cmd_begin_render_pass(cmd, &desc)
-			if !tint_whole {
-				// The pages the atlas composed let all light through and hold no glass, before their glass is drawn.
-				square := params
-				square.list = abi.SHADOW_WORDS_JOBS + abi.SHADOW_POOL_PAGES
-				rhi.cmd_bind_pipeline(cmd, r.pipelines[.Shadow_Map_Blank if i == 0 else .Shadow_Map_Clear])
-				set_params(cmd, &square)
-				rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.shadow_entries)
-				rhi.cmd_bind_buffer(cmd, SLOT_PASS1, d.table)
-				rhi.cmd_bind_texture(cmd, SLOT_PASS2, r.dummy_texture)
-				rhi.cmd_bind_buffer(cmd, SLOT_PASS3, b.pages)
-				rhi.cmd_draw_indirect(cmd, b.pages, u64(abi.SHADOW_WORDS_ARGS + abi.SHADOW_ARGS_DRAW) * 4 + size_of(Gpu_Draw), 1)
-			}
-			rhi.cmd_bind_pipeline(cmd, r.pipelines[.Shadow_Map_Tint if i == 0 else .Shadow_Map_Glass])
-			set_params(cmd, &params)
-			rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.shadow_entries)
-			rhi.cmd_bind_buffer(cmd, SLOT_PASS1, d.table)
-			rhi.cmd_bind_buffer(cmd, SLOT_PASS3, b.pages)
-			rhi.cmd_draw_indirect(cmd, d.state, 2 * size_of(Gpu_Draw), 1)
-			rhi.cmd_end_render_pass(cmd)
-		}
-	}
 	return plan.shadow
 }
 
@@ -1130,7 +1053,5 @@ destroy_shadow_maps :: proc(r: ^Renderer, t: ^Targets) {
 	if t.shadow_raster.table != 0 {rhi.texture_destroy(r.device, t.shadow_raster.table)}
 	if t.shadow_raster.hiz != 0 {rhi.texture_destroy(r.device, t.shadow_raster.hiz)}
 	if t.shadow_raster.pages != 0 {rhi.buffer_destroy(r.device, t.shadow_raster.pages)}
-	if t.shadow_raster.tint != 0 {rhi.texture_destroy(r.device, t.shadow_raster.tint)}
-	if t.shadow_raster.glass != 0 {rhi.texture_destroy(r.device, t.shadow_raster.glass)}
 	t.shadow_raster = {}
 }
