@@ -606,7 +606,7 @@ app_draw :: proc(app:^App,window:platform.Window_Frame) -> bool {
         panels=extras.panels[:extras.panel_count],debug=extras.debug[:extras.debug_count],
         ui_textures=extras.ui_textures[:extras.ui_texture_count],effect_views=extras.effect_views[:extras.effect_view_count],
         probes=extras.probes[:extras.probe_count],
-        output=app.output,ui_only=app.ui_only,
+        output=app.output,ui_only=app.ui_only,loading=app.loading_screen,
     })
     app.stats.render_ms=f32(time.duration_milliseconds(time.tick_since(started)))
     if !drawn {

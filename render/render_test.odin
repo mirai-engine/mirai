@@ -748,7 +748,8 @@ render_a_table_holds_no_page_past_its_pool :: proc(t: ^testing.T) {
 // the first frame of a still view that asks for many times more, where a
 // page alone passes it too; the pages past it wait, the coarsest first, and
 // are all drawn within the frames the bound gives, the image then that of the
-// maps drawn whole.
+// maps drawn whole. A bound that grows while the frames have room, never past
+// its most, settles in half the frames or fewer.
 @(test)
 render_a_frame_draws_no_more_than_its_clusters_and_the_rest_comes_after :: proc(t: ^testing.T) {
 	f: Cube_Fixture
@@ -793,43 +794,58 @@ render_a_frame_draws_no_more_than_its_clusters_and_the_rest_comes_after :: proc(
 	for _ in 0 ..< 2 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
 	whole := read(t, &f)
 	defer delete(whole)
-	// A bound a sixteenth of that, less than the posts in one page.
+	// A bound a sixteenth of that, less than the posts in one page: held,
+	// and growing while the frames have room, up to eight times as much.
 	bound := max(asked / 16, 4)
-	b.budget, b.forget = bound, true
-	frames, most, banded, narrowed := 0, u32(0), false, false
-	for frames < 128 {
-		testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
-		frames += 1
-		s, waiting := stats(r)
-		bands: [abi.SHADOW_POOL_PAGES]u32
-		testing.expect(t, rhi.buffer_read_slice(r.device, b.pages, u64(abi.SHADOW_WORDS_BAND) * 4, bands[:]))
-		for band in bands {banded ||= (band >> abi.SHADOW_BAND_SHIFT) & 0xFF != 0}
-		most = max(most, s.clusters + s.clusters_masked, s.clusters_moving)
-		testing.expectf(t, s.clusters + s.clusters_masked <= bound && s.clusters_moving <= bound, "frame %d: the cache drew %d clusters and the atlas %d past the bound of %d", frames, s.clusters + s.clusters_masked, s.clusters_moving, bound)
-		// A page that waits is foreseen once, and the culls go over the slots of
-		// the pages granted alone: the frames it waits cost no instance of it.
-		args: [9]u32
-		has: [SHADOW_SLOTS]u32
-		testing.expect(t, rhi.buffer_read_slice(r.device, b.pages, u64(abi.SHADOW_WORDS_ARGS + abi.SHADOW_ARGS_DISPATCH) * 4, args[:]))
-		testing.expect(t, rhi.buffer_read_slice(r.device, b.pages, u64(abi.SHADOW_WORDS_HAS) * 4, has[:]))
-		listed := 0
-		for h in has {if h != 0 {listed += 1}}
-		if frames > 2 && waiting > 0 {
-			testing.expectf(t, args[7] == 0, "frame %d: the cache foresees the pages of %d slots again", frames, args[7])
-			narrowed ||= int(args[1]) < listed
+	cases := [?]struct {
+		name:  string,
+		grows: bool,
+	}{{"a held bound", false}, {"a bound that grows", true}}
+	took: [len(cases)]int
+	for c, n in cases {
+		most_bound := 8 * bound if c.grows else bound
+		b.budget, b.forget = 0 if c.grows else bound, true
+		if c.grows {r.shadow_bound = {least = bound, most = most_bound}}
+		frames, most, banded, narrowed := 0, u32(0), false, false
+		for frames < 128 {
+			testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+			frames += 1
+			s, waiting := stats(r)
+			bands: [abi.SHADOW_POOL_PAGES]u32
+			testing.expect(t, rhi.buffer_read_slice(r.device, b.pages, u64(abi.SHADOW_WORDS_BAND) * 4, bands[:]))
+			for band in bands {banded ||= (band >> abi.SHADOW_BAND_SHIFT) & 0xFF != 0}
+			most = max(most, s.clusters + s.clusters_masked, s.clusters_moving)
+			testing.expectf(t, s.clusters + s.clusters_masked <= most_bound && s.clusters_moving <= most_bound, "%s, frame %d: the cache drew %d clusters and the atlas %d past the bound of %d", c.name, frames, s.clusters + s.clusters_masked, s.clusters_moving, most_bound)
+			// A page that waits is foreseen once, and the culls go over the slots of
+			// the pages granted alone: the frames it waits cost no instance of it.
+			args: [9]u32
+			has: [SHADOW_SLOTS]u32
+			testing.expect(t, rhi.buffer_read_slice(r.device, b.pages, u64(abi.SHADOW_WORDS_ARGS + abi.SHADOW_ARGS_DISPATCH) * 4, args[:]))
+			testing.expect(t, rhi.buffer_read_slice(r.device, b.pages, u64(abi.SHADOW_WORDS_HAS) * 4, has[:]))
+			listed := 0
+			for h in has {if h != 0 {listed += 1}}
+			if frames > 2 && waiting > 0 {
+				testing.expectf(t, args[7] == 0, "%s, frame %d: the cache foresees the pages of %d slots again", c.name, frames, args[7])
+				narrowed ||= int(args[1]) < listed
+			}
+			if waiting == 0 {break}
 		}
-		if waiting == 0 {break}
+		took[n] = frames
+		if !c.grows {
+			testing.expect(t, narrowed, "the culls of a frame go over the slots of the pages it grants")
+			// Each frame draws near its bound but for what its bands and estimates leave.
+			given := 4 * (int(asked) + int(bound) - 1) / int(bound) + 4
+			testing.expectf(t, asked > 16 * bound - 16 && most > 0 && banded && frames <= given, "%d clusters asked for under a bound of %d took %d frames, the rule gives %d (a page drawn in bands: %v)", asked, bound, frames, given, banded)
+		}
+		for _ in 0 ..< 2 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+		settled := read(t, &f)
+		differ := 0
+		for v, k in settled {if k < len(whole) && abs(int(v) - int(whole[k])) > 2 {differ += 1}}
+		testing.expectf(t, len(settled) == len(whole) && differ * 1000 <= len(settled), "%s: %d of %d values differ from the maps drawn whole", c.name, differ, len(settled))
+		delete(settled)
+		r.shadow_bound = {}
 	}
-	testing.expect(t, narrowed, "the culls of a frame go over the slots of the pages it grants")
-	// Each frame draws near its bound but for what its bands and estimates leave.
-	given := 4 * (int(asked) + int(bound) - 1) / int(bound) + 4
-	testing.expectf(t, asked > 16 * bound - 16 && most > 0 && banded && frames <= given, "%d clusters asked for under a bound of %d took %d frames, the rule gives %d (a page drawn in bands: %v)", asked, bound, frames, given, banded)
-	for _ in 0 ..< 2 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
-	settled := read(t, &f)
-	defer delete(settled)
-	differ := 0
-	for v, k in settled {if k < len(whole) && abs(int(v) - int(whole[k])) > 2 {differ += 1}}
-	testing.expectf(t, len(settled) == len(whole) && differ * 1000 <= len(settled), "%d of %d values differ from the maps drawn whole", differ, len(settled))
+	testing.expectf(t, took[1] * 2 <= took[0], "a bound that grows with the room of the frames settled in %d frames, a held one in %d", took[1], took[0])
 	b.budget = 0
 	expect_clean(t, f.device)
 }
