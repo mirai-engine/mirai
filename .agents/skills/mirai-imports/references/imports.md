@@ -159,8 +159,10 @@ part ([extension](../../mirai-editor/references/extensions.md#importers-of-a-plu
   (`mirai import`, the [sync](#sync) of every build) loads the editor library of the project and
   takes the same providers from it (`editor.import_library`, `sources.Library`), only when a
   source is read by no format of the engine or a model imports, whose prefab is written in the
-  types of the game the library has. A clone without that library built fails those sources and
-  says to build the editor.
+  types of the game the library has. `mirai import` first builds, as `mirai build editor` does,
+  the editor library of the project of what it imports while it is missing or not built from
+  the sources there are now (`build.target_state`, of the engine's sources too): a library built
+  against other engine types is never loaded.
 - `Import_Source_Provider{source}` is a source that the plugin imports whole with `Outputs`: it
   is the single source of every asset it makes (a scene, the models it reads with
   `output_model`), and the files it reads besides it are its `inputs`, like the `.bin` of a glTF.
