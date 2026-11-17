@@ -257,6 +257,9 @@ Device :: struct {
 	refuse:         Pipeline_Refusal,
 	presenter:      Presenter,
 	present:        Mtl_Present,
+	watchdog:       Watchdog,
+	watchdog_event: ^MTL.SharedEvent, // what the GPU signals as it finishes each command buffer, while the watchdog runs
+	watchdog_value: u64,
 	pipeline_lock:  sync.Mutex, // pipelines are made on other threads too: guards their pool and that of shaders
 	message_lock:   sync.Mutex, // guards the error and the failure
 }
@@ -335,6 +338,7 @@ device_create :: proc(desc: Device_Desc) -> (device: ^Device, error: string) {
 	ok := mtl_create_pools(d) && mtl_create_device(d, desc)
 	// Every Metal device of a Mac presents to the layer of its windows.
 	if ok && desc.surface != {} {ok = mtl_swapchain_create(d, desc.surface)}
+	ok = ok && watchdog_start(d)
 	if !ok {
 		error = strings.clone(d.error, context.temp_allocator)
 		device_destroy(d)
@@ -398,6 +402,8 @@ mtl_create_device :: proc(d: ^Device, desc: Device_Desc) -> bool {
 	d.info.uniform_alignment = 256
 	d.info.storage_alignment = 256
 	d.info.max_storage_range = u64(MTL.Device_maxBufferLength(d.device))
+	// Metal does not say: the fewest a device of the other backend may have.
+	d.info.subpixel_bits = 4
 	d.info.memory = MTL.Device_recommendedMaxWorkingSetSize(d.device)
 
 	// API validation is a process-wide switch read by Metal itself
@@ -595,6 +601,8 @@ device_destroy :: proc(d: ^Device) {
 			f.queries = nil
 		}
 	}
+	watchdog_stop(d)
+	mtl_release(d.watchdog_event)
 	// Resources the caller did not destroy are released here.
 	for &a, i in d.accels.items {
 		if !d.accels.alive[i] {continue}
@@ -977,7 +985,9 @@ frame_end :: proc(d: ^Device, cmd: ^Command_List, generated := false) -> bool {
 	if presented {
 		MTL.CommandBuffer_presentDrawable(f.cmd, cast(^MTL.Drawable)d.swapchain.drawable)
 	}
+	serial := mtl_watchdog_signal(d, f.cmd)
 	MTL.CommandBuffer_commit(f.cmd)
+	if serial > 0 {watchdog_sent(d, serial, d.frame_number, d.slot)}
 	f.submitted_ns = present_now_ns()
 	f.number, f.submitted = d.frame_number, true
 	if presented {present_count_direct(d)}
@@ -1036,7 +1046,9 @@ mtl_immediate_end :: proc(d: ^Device, cmd: ^Command_List, wait: bool) -> bool {
 	mtl_release_labels(cmd)
 	ok := cmd.cmd != nil && d.failure == .None
 	if ok {
+		serial := mtl_watchdog_signal(d, cmd.cmd)
 		MTL.CommandBuffer_commit(cmd.cmd)
+		if serial > 0 {watchdog_sent(d, serial, d.frame_number, -1)}
 		if wait {ok = mtl_wait(d, cmd.cmd, "immediate")}
 		if ok && device_lose_take(d) {
 			device_fail(d, .Lost, "the immediate command buffer failed: the GPU device was lost")
@@ -1050,6 +1062,37 @@ mtl_immediate_end :: proc(d: ^Device, cmd: ^Command_List, wait: bool) -> bool {
 	if d.immediate_pool != nil {NS.AutoreleasePool_drain(d.immediate_pool)}
 	d.immediate_pool = nil
 	return ok
+}
+
+// ---------------------------------------------------------------- watchdog
+
+// The value the shared event of the watchdog takes once the GPU finished cmd,
+// which is not committed yet; 0 while the watchdog does not run.
+@(private)
+mtl_watchdog_signal :: proc(d: ^Device, cmd: ^MTL.CommandBuffer) -> u64 {
+	if d.watchdog.limit_ns == 0 {return 0}
+	if d.watchdog_event == nil {d.watchdog_event = MTL.Device_newSharedEvent(d.device)}
+	if d.watchdog_event == nil {return 0}
+	d.watchdog_value += 1
+	MTL.CommandBuffer_encodeSignalEvent(cmd, cast(^MTL.Event)d.watchdog_event, d.watchdog_value)
+	return d.watchdog_value
+}
+
+// Waits up to timeout_ns for the GPU to pass serial of the shared event, from
+// the thread of the watchdog.
+@(private)
+watchdog_gpu_wait :: proc(d: ^Device, serial: u64, timeout_ns: i64) -> Watchdog_Wait {
+	NS.scoped_autoreleasepool()
+	if MTL.SharedEvent_waitUntilSignaledValue(d.watchdog_event, serial, u64(max(timeout_ns / 1_000_000, 1))) {return .Done}
+	return .Waiting
+}
+
+// The passes the frame of a slot recorded, when it took timings: Metal names
+// the encoder that faulted only once a command buffer reports its error.
+@(private)
+watchdog_frame_text :: proc(d: ^Device, slot: int, b: ^strings.Builder) {
+	f := &d.frames[slot]
+	watchdog_names(b, f.query_names[:min(f.query_count, MAX_TIMESTAMPS)] if f.passes else nil)
 }
 
 // ---------------------------------------------------------------- swapchain

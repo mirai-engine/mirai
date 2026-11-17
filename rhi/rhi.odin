@@ -627,6 +627,7 @@ Device_Info :: struct {
 	uniform_alignment:    u64,
 	storage_alignment:    u64,
 	max_storage_range:    u64,    // bytes one storage buffer binding spans
+	subpixel_bits:        u32,    // of the grid the raster places a vertex on, a pixel in 2 to that many steps; at least
 	memory:               u64,    // bytes of the memory the device keeps its resources in; 0: unknown
 }
 
