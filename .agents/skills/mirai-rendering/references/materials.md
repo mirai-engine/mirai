@@ -288,7 +288,9 @@ A texture of an asset resides with the levels the GPU samples of it
 - A normal that ends up facing away from the camera is brought to the silhouette.
 - **Specular antialiasing.** The roughness of a pixel grows with the variation of its normal inside
   it (Tokuyoshi and Kaplanyan). The material's before widening is stored in channel B of the motion
-  target for the [traced reflections](#traced-reflections).
+  target for the [traced reflections](#traced-reflections). A point of the
+  [direct light](lights.md#direct-light-of-a-view) that stands for 2x2 pixels widens it by the
+  spread over them, so that a highlight does not come and go with the jitter.
 
 ## Alpha
 

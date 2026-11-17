@@ -414,11 +414,12 @@ light_spot :: proc "contextless" (l: Gpu_Light) -> bool {return l.direction_cone
 light_rect :: proc "contextless" (l: Gpu_Light) -> bool {return l.direction_cone.w < (GPU_LIGHT_POINT + GPU_LIGHT_RECT) * 0.5}
 
 // The radius of the sphere around the center of a light that holds it, and
-// the root of the mean square of how far its light lies from the center.
+// the root of the mean square of how far its light lies from the center, no
+// less than LIGHT_RADIUS_MIN, which the sphere of a group of them takes.
 light_shape :: proc "contextless" (l: Gpu_Light) -> (extent, spread: f32) {
 	if light_rect(l) {
 		corner := l.size.y * l.size.y + l.size.z * l.size.z
-		return math.sqrt(corner), math.sqrt(corner / 3)
+		return math.sqrt(corner), max(math.sqrt(corner / 3), abi.LIGHT_RADIUS_MIN)
 	}
 	if l.size.y == 0 {return l.size.x, l.size.x}
 	return l.size.x + l.size.y, math.sqrt(l.size.x * l.size.x + l.size.y * l.size.y / 3)

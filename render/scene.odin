@@ -2162,7 +2162,7 @@ gpu_light :: proc(l: Light_Desc, scale: f32) -> Gpu_Light {
 	power := l.intensity / math.PI * scale
 	if l.size.x > 0 && l.size.y > 0 {power *= l.size.x * l.size.y}
 	shares := light_shares(l.indirect, l.scattering)
-	light := Gpu_Light{position_range = {l.position.x, l.position.y, l.position.z, l.range}, color_intensity = {l.color.x, l.color.y, l.color.z, power}, direction_cone = {0, 0, 0, GPU_LIGHT_POINT}, size = {max(l.radius, 0), 0, 0, 0}, axis = {0, 0, 0, shares}}
+	light := Gpu_Light{position_range = {l.position.x, l.position.y, l.position.z, l.range}, color_intensity = {l.color.x, l.color.y, l.color.z, power}, direction_cone = {0, 0, 0, GPU_LIGHT_POINT}, size = {max(l.radius, abi.LIGHT_RADIUS_MIN), 0, 0, 0}, axis = {0, 0, 0, shares}}
 	facing := linalg.length(l.direction) > 1e-6
 	along := l.axis - linalg.dot(l.axis, l.direction) / max(linalg.dot(l.direction, l.direction), 1e-12) * l.direction
 	switch {
