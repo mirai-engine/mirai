@@ -81,8 +81,8 @@ void main(uint3 id : SV_DispatchThreadID) {
     if (mesh.vertex_count == 0u || mesh.cluster_count == 0u) return;
     for (uint mip = 0u; mip < shadow_slot_mips(map); mip++) {
         Shadow_Map m = shadow_map_mip(whole, mip);
-        uint4 pages;
-        if (shadow_map_unseen(m, low, high) || !shadow_page_rect(m, low, high, pages) || !shadow_pages_drawn(m, pages)) continue;
+        float4 texels;
+        if (shadow_map_unseen(m, low, high) || !shadow_box_texels(m, low, high, texels) || !shadow_pages_drawn(m, texels)) continue;
         // A batch of a deformable sways as far as its mesh says (render.batch_sway):
         // a map whose texel there is wider draws it at rest and keeps it, as what
         // stays; a finer one draws it as it is, and while it sways, as what moves.

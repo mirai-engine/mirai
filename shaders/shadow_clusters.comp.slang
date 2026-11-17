@@ -53,8 +53,8 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
     if (!cluster_in_cut(shadow_map_detail(m), inst, instance_scale(inst), mesh, c, frame.cut.x)) return;
     float3 low, high;
     bool rest = (work.y & SHADOW_CHUNK_REST) != 0u;
-    // The pages of its box; of a pose not known yet, those of its instance.
-    uint4 pages;
+    // The texels of its box; of a pose not known yet, those of its instance.
+    float4 texels;
     if (mesh.posed_word == INVALID || rest) {
         cluster_world_box(inst, mesh, c, low, high);
     } else {
@@ -62,19 +62,29 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
         if (posed_bounds(mesh, k, pose)) instance_world_box(inst, pose.low, pose.high, low, high);
         else { low = inst.bounds_min.xyz; high = inst.bounds_max.xyz; }
     }
-    if (!shadow_map_reaches(m, low, high) || !shadow_page_rect(m, low, high, pages)) return;
-    uint4 span;
+    if (!shadow_map_reaches(m, low, high) || !shadow_box_texels(m, low, high, texels)) return;
+    uint4 span, pages = shadow_texel_pages(m, texels);
     if (!shadow_pages_span(m, span)) return;
     pages = uint4(max(pages.xy, span.xy), min(pages.zw, span.zw));
     bool tested = ((inst.tested >> cluster_slot(c)) & 1u) != 0u;
     for (uint y = pages.y; y <= pages.w; y++) {
         for (uint x = pages.x; x <= pages.z; x++) {
-            if (!shadow_page_drawn(m, uint2(x, y))) continue;
+            if (!shadow_page_drawn(m, uint2(x, y), texels)) continue;
             // In the round of what moves, where the cache holds the page and hides the cluster there.
             uint held = shadow_table_entry(m.rect.x, shadow_page_entry(m.rect, uint2(x, y)));
             if (params.moving == 1u && (held & SHADOW_PAGE_CACHED) != 0u && shadow_box_hidden(hiz, m, uint2(x, y), (held & SHADOW_ENTRY_POOL) - 1u, low, high)) continue;
             uint page = shadow_page_word(map, shadow_rect_mip(m.rect), uint2(x, y));
-            if ((work.y & SHADOW_CHUNK_DEPTH) != 0u) shadow_add(tested ? SHADOW_DRAW_TESTED : SHADOW_DRAW_OPAQUE, uint4(instance, k, page, rest ? 1u : 0u));
+            if ((work.y & SHADOW_CHUNK_DEPTH) != 0u) {
+                shadow_add(tested ? SHADOW_DRAW_TESTED : SHADOW_DRAW_OPAQUE, uint4(instance, k, page, rest ? 1u : 0u));
+                if (params.moving == 0u) {
+                    InterlockedAdd(stats[0].shadow[tested ? 1u : 0u], 1u);
+                    InterlockedAdd(stats[0].shadow[2], cluster_triangle_count(c));
+                    // Of a level of the sun, what its pages drawn whole take: what one costs.
+                    if (map < SHADOW_SUN_MAPS && shadow_part_whole(shadow_page_part((held & SHADOW_ENTRY_POOL) - 1u))) InterlockedAdd(stats[0].shadow_level_clusters[map], 1u);
+                } else {
+                    InterlockedAdd(stats[0].shadow[3], 1u);
+                }
+            }
             if ((work.y & SHADOW_CHUNK_GLASS) != 0u) shadow_add(SHADOW_DRAW_GLASS, uint4(instance, k, page, 0u));
         }
     }
