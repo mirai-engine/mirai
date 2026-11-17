@@ -293,7 +293,7 @@ Resident_Chunk :: struct {
 }
 // A build of a piece published to the assets, until it shows with the
 // neighbors whose shared edges change with it.
-Staged_Piece :: struct {mesh:base.Asset_Id,maps:Piece_Maps,shape:Piece_Shape,revision:u32,built:Chunk_Key,ready:bool}
+Staged_Piece :: struct {mesh:base.Asset_Id,maps:Piece_Maps,shape:Piece_Shape,revision:u32,built:Chunk_Key,ready:bool,shared:bool} // shared: maps are those the piece shows
 // A piece is built again when its level, its border or its collider changes.
 // border: a hash of the levels of the border of a node (Piece_Border).
 Chunk_Key :: struct {lod:Chunk_Lod,collision:bool,border:u64,join:u64} // join: what it builds from its joins (join_cut_key, Terrain_Join.hash), 0 none
