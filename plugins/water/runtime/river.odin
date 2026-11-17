@@ -72,7 +72,7 @@ ribbon_build :: proc(physics:core.Ref(phys.Physics_State),found:[]phys.Fluid_Inf
         if run^>0 {
             // From the section before to this one, counter-clockwise seen from above.
             a:=u32(len(out.positions)-4)
-            append(&out.indices,a,a+2,a+1,a+1,a+2,a+3)
+            append(&out.indices,a,a+1,a+2,a+1,a+3,a+2)
         }
         run^+=1
     }
