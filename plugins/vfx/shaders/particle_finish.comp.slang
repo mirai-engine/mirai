@@ -186,9 +186,19 @@ void main(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID) {
             uint first = 0u;
             for (uint c = 0u; c < t; c++) first += mesh_counts[c];
             uint words = PARTICLE_MESH_DRAWS_AT + (slot * PARTICLE_MESHES + t) * PARTICLE_MESH_DRAW_WORDS;
-            particle_queue[words] = t < count ? e.mesh_indices[t] : 0u;
+            // Level 0 of the mesh, where the frame lists it; none while it is not there.
+            bool listed = false;
+            uint2 level = uint2(0u);
+            uint listed_at = 0u;
+            if (t < count) {
+                Mesh m = meshes[e.mesh_handles[t]];
+                level = mesh_level_clusters(m, 0u);
+                listed = m.draw_first != INVALID;
+                listed_at = m.draw_first;
+            }
+            particle_queue[words] = listed ? level.y * CLUSTER_DRAW_VERTICES : 0u;
             particle_queue[words + 1u] = mesh_counts[t];
-            particle_queue[words + 2u] = e.mesh_firsts[t];
+            particle_queue[words + 2u] = listed ? listed_at + level.x * CLUSTER_DRAW_VERTICES : 0u;
             particle_queue[words + 3u] = 0u;
             particle_queue[words + 4u] = first;
         }

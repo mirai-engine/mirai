@@ -86,8 +86,8 @@ Scenes:
 - **`lights`** and **`night`**: many point lights without a sun, for the cost and noise of direct
   light; without spawn points, in Play they are seen from their camera.
 - **`church`**: nave with volumetric fog (`fog` plugin) and stained glass windows that a sun crosses
-  and draws in the haze and on the floor
-  ([glass in the light](../../mirai-rendering/references/materials.md#medium-filter)). Its haze is
+  uncolored and draws in the haze and on the floor
+  ([glass in rays](../../mirai-rendering/references/materials.md#glass-in-rays)). Its haze is
   even because the render check takes as boiling what changes in a still view; **`church_fog`** is
   the same nave with the haze in wisps that move on their own through the beams.
 - **`portal_chamber`**: the [portal game](#portal-game).

@@ -21,10 +21,10 @@ struct Params_Block { uint scale; uint samples; uint pad0; uint pad1; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 [[vk::binding(SLOT_PASS1, 0)]] Texture2D<float4> g_depth : register(MIRAI_REGISTER(t, SLOT_PASS1), space0);
 // What direct_samples.comp left at each point: the light of the local lights
-// and the part of it that got there; and the part of the sun that did (a),
-// below 0 where it gives none.
+// and the part of it that got there; and the part of the sun that did, below 0
+// where it gives none.
 [[vk::binding(SLOT_PASS4, 0)]] Texture2D<float4> samples_in : register(MIRAI_REGISTER(t, SLOT_PASS4), space0);
-[[vk::binding(SLOT_PASS5, 0)]] Texture2D<float4> sun_in : register(MIRAI_REGISTER(t, SLOT_PASS5), space0);
+[[vk::binding(SLOT_PASS5, 0)]] Texture2D<float> sun_in : register(MIRAI_REGISTER(t, SLOT_PASS5), space0);
 // What the window gives each point: the light of the local lights with nothing
 // in the way over the reflectance, and the part of it that got there, plus 2
 // where a sample met what changed; and the part of the sun that got there,
@@ -112,7 +112,7 @@ void main(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID, uint index :
                 point = float4(pixel.position, depth_nested(depth) ? 2.0 : 1.0);
                 normal = float4(gbuffer_normal(source), float(scale) * (frame.footprint.x + frame.footprint.y * depth_distance(depth)));
                 texel = samples_in.Load(int3(q, 0));
-                sun = sun_in.Load(int3(q, 0)).a;
+                sun = sun_in.Load(int3(q, 0));
             }
         }
         filter_points[i] = point;

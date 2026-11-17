@@ -103,7 +103,7 @@ Particle_Sync :: struct {
     again:[dynamic]core.Entity,    // and those the next one tells again
     pool_made:u64,                 // Pool.made_count when every emitter was put in it; 0: none was
     effects:[dynamic]Effect_Seen,  // the effects its emitters were resolved from
-    revision,shaders,made:u64,     // of the assets, the shaders and the vertices of the scene the effects were read with
+    revision,shaders:u64,          // of the assets and the shaders the effects were read with
     time:f64,          // seconds of the world at its last frame: of its ticks while it plays
     timed:bool,
     fields:Gpu_Fields, // the gravity and the wind of the world, as the frame found them
@@ -170,7 +170,7 @@ particles_tick :: proc(
     refreshed:=false
     if a!=nil && a.revision!=clocks.revision {
         clocks.revision=a.revision
-        refreshed=effects_read(clocks.effects[:],a,nil)
+        refreshed=effects_read(clocks.effects[:],a)
     }
     done:[dynamic]core.Entity
     done.allocator=context.temp_allocator
@@ -180,7 +180,7 @@ particles_tick :: proc(
         if clock==nil {continue}
         if key:=emission_key(emitter.particle,row_stamp(overrides,e));clock.resolved!=key || refreshed && effect_changed(clocks.effects[:],emitter.particle) {
             override,_:=core.get(overrides,e)
-            if a!=nil {effect_seen(&clocks.effects,a,nil,emitter.particle)}
+            if a!=nil {effect_seen(&clocks.effects,a,emitter.particle)}
             info:=particle_resolve(a,emitter.particle,&override)
             clock.emission=emission_of(a,&info)
             clock.resolved=key
@@ -370,17 +370,16 @@ sync_queue :: proc(sync:^Particle_Sync,e:core.Entity,shown:^Emitter_Shown) {
 @(private)
 sync_queue_entity :: proc(sync:^Particle_Sync,e:core.Entity) {sync_queue(sync,e,core.entity_map_get(&sync.shown,e))}
 
-// The assets, the shaders or the vertices of the scene changed: the emitters
-// whose effect reads otherwise are told, and resolved again.
+// The assets or the shaders changed: the emitters whose effect reads
+// otherwise are told, and resolved again.
 @(private)
 effects_refresh :: proc(f:^Sync_Frame) {
-    sync,a,r:=f.sync,f.app.assets,f.app.renderer
+    sync,a:=f.sync,f.app.assets
     if a==nil {return}
-    made:=erender.vertices_made(r)
     reloaded:=f.shaders!=sync.shaders
-    if a.revision==sync.revision && !reloaded && made==sync.made {return}
-    sync.revision,sync.shaders,sync.made=a.revision,f.shaders,made
-    if !effects_read(sync.effects[:],a,r) && !reloaded {return}
+    if a.revision==sync.revision && !reloaded {return}
+    sync.revision,sync.shaders=a.revision,f.shaders
+    if !effects_read(sync.effects[:],a) && !reloaded {return}
     for &shown,i in sync.shown.values {
         if reloaded || effect_changed(sync.effects[:],shown.particle) {sync_queue(sync,sync.shown.entities[i],&shown)}
     }
@@ -389,9 +388,9 @@ effects_refresh :: proc(f:^Sync_Frame) {
 // Reads again what each effect reads of the assets; true when that of one
 // changed, which its changed says until the next read.
 @(private)
-effects_read :: proc(effects:[]Effect_Seen,a:^host.Assets,renderer:^erender.Renderer) -> (changed:bool) {
+effects_read :: proc(effects:[]Effect_Seen,a:^host.Assets) -> (changed:bool) {
     for &effect in effects {
-        inputs:=effect_inputs(a,renderer,effect.particle)
+        inputs:=effect_inputs(a,effect.particle)
         effect.changed=inputs!=effect.inputs
         effect.inputs=inputs
         changed||=effect.changed
@@ -408,19 +407,18 @@ effect_changed :: proc(effects:[]Effect_Seen,particle:base.Asset_Id) -> bool {
 // effect_inputs of an effect as its emitters were resolved with it; read now
 // for one no emitter showed yet.
 @(private)
-effect_seen :: proc(effects:^[dynamic]Effect_Seen,a:^host.Assets,renderer:^erender.Renderer,particle:base.Asset_Id) -> u64 {
+effect_seen :: proc(effects:^[dynamic]Effect_Seen,a:^host.Assets,particle:base.Asset_Id) -> u64 {
     for effect in effects {if effect.particle==particle {return effect.inputs}}
-    inputs:=effect_inputs(a,renderer,particle)
+    inputs:=effect_inputs(a,particle)
     append(effects,Effect_Seen{particle=particle,inputs=inputs})
     return inputs
 }
 
 // What resolving an effect reads of the assets besides the values of an
 // entity, as a hash: the files of the effect and of its sub effect, the rows
-// and blending of their materials, and the meshes they draw with the indices
-// the renderer draws them from.
+// and blending of their materials, and the meshes they draw.
 @(private)
-effect_inputs :: proc(a:^host.Assets,renderer:^erender.Renderer,particle:base.Asset_Id) -> u64 {
+effect_inputs :: proc(a:^host.Assets,particle:base.Asset_Id) -> u64 {
     h:=u64(1)
     id:=particle
     for _ in 0..<2 {
@@ -434,12 +432,7 @@ effect_inputs :: proc(a:^host.Assets,renderer:^erender.Renderer,particle:base.As
         for mesh in info.meshes {
             if mesh=={} {continue}
             entry:=host.assets_mesh(a,mesh)
-            if entry==nil {
-                h=base.hash_combine(h,0)
-                continue
-            }
-            first,indices,drawable:=erender.mesh_draw_range(renderer,entry.handle)
-            h=base.hash_combine(base.hash_combine(h,u64(entry.handle)),u64(first)<<32|u64(indices)|u64(drawable)<<63)
+            h=base.hash_combine(h,entry!=nil?u64(entry.handle):0)
         }
         id=info.sub_particle
     }
@@ -462,7 +455,7 @@ emitter_tell :: proc(f:^Sync_Frame,e:core.Entity) -> (again:bool) {
     if !on || !placed {return}
     a,r:=f.app.assets,f.app.renderer
     key:=base.hash_combine(base.hash_combine(emitter.particle[0],emitter.particle[1]),row_stamp(f.overrides,e))
-    key=base.hash_combine(base.hash_combine(key,f.shaders),a!=nil?effect_seen(&sync.effects,a,r,emitter.particle):0)|1
+    key=base.hash_combine(base.hash_combine(key,f.shaders),a!=nil?effect_seen(&sync.effects,a,emitter.particle):0)|1
     if shown.resolved!=key {
         sub:=shown.sub_desc.id
         override,_:=core.get(f.overrides,e)
@@ -643,9 +636,8 @@ emitter_desc :: proc(info:effect.Particle_Info,a:^host.Assets,renderer:^erender.
     return
 }
 
-// The meshes Mesh particles show, with the indices of a draw of each and
-// their weights added up to 1 (all 0: each as often). False while one of the
-// meshes is not on the GPU yet.
+// The meshes Mesh particles show, with their weights added up to 1 (all 0:
+// each as often). False while one of the meshes is not on the GPU yet.
 mesh_choices :: proc(d:^Emitter_Desc,renderer:^erender.Renderer,handles:[]erender.Mesh_Handle,weights:[]f32) -> bool {
     d.meshes,d.mesh_count={},0
     total:f32
@@ -653,10 +645,10 @@ mesh_choices :: proc(d:^Emitter_Desc,renderer:^erender.Renderer,handles:[]erende
     ready:=true
     for handle,c in handles[:min(len(handles),effect.PARTICLE_MESHES)] {
         choice:=&d.meshes[c]
-        first,indices,drawable:=erender.mesh_draw_range(renderer,handle)
+        _,drawable:=erender.mesh_primitive_count(renderer,handle)
         ready&&=drawable
         share:=max(weights[c],0)/total if total>0 else 1/f32(len(handles))
-        choice^={handle=handle,first=first,indices=indices,weight=share+(d.meshes[c-1].weight if c>0 else 0)}
+        choice^={handle=handle,weight=share+(d.meshes[c-1].weight if c>0 else 0)}
         d.mesh_count+=1
     }
     if d.mesh_count>0 {d.meshes[d.mesh_count-1].weight=1}

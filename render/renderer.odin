@@ -75,7 +75,6 @@ Settings :: struct {
 	reflection_roughness: f32,    // surfaces at or above this roughness are not traced
 	reflection_light_budget: u32, // shadow rays at a reflected hit, each to a light or a group of them (at most LIGHT_CUT_MAX)
 	sun_shadows:           bool, // rays go to the sun; off, it lights everything it faces
-	colored_shadows:       bool, // thin RGB filters along shadow rays through blended surfaces
 	glass_layers:          u32,  // nearest blended surfaces of a pixel lit once per pixel with traced reflection and refraction (1 to GLASS_LAYERS_MAX); the ones behind are drawn forward
 	sun_radius:           f32, // angular radius of the sun, radians
 }
@@ -303,7 +302,7 @@ Stats :: struct {
 // One per stage: the tracer of its rays and the constants of its shaders
 // (`//! constant`) make the pipelines a frame asks for (pipeline_of).
 Pipeline_Id :: enum {
-	Postprocess_Copy, Postprocess_Hdr, Postprocess_Ldr, Cull, Cull_Clusters, Cull_Bins, Cull_Stats_Fold, Tlas_Batches,
+	Postprocess_Copy, Postprocess_Hdr, Postprocess_Ldr, Cull, Cull_Clusters, Cull_Bins, Cull_Stats_Fold, Mesh_Draws, Tlas_Batches,
 	Raster_Round, Raster_Vertices, Raster_Starts, Raster_Triangles, // what the raster of the visibility target draws of the visible clusters, a round at a time (raster_lists.slang)
 	Light_Grid_Count, Light_Grid_Scan, Light_Grid_Fill, Light_Grid_Weights, // the passes of the grid of the lights (light_grid.comp)
 	Light_Lists, // the lists of the lights without shadows of the tiles of a view (light_lists.comp)
@@ -311,8 +310,8 @@ Pipeline_Id :: enum {
 	Ddgi_Trace, Ddgi_Irradiance, Ddgi_Distance, Ddgi_Keep,
 	Ddgi_Relocate, Ddgi_Select, Ddgi_Touch, Ddgi_Mark, Contact, Contact_Light, Contact_Pixels, Composite, Taa, Hiz,
 	Exposure_Histogram, Exposure_Adapt, Tonemap, Tonemap_Wide, Ui, Thumbnail, Thumbnail_Values, Impostor, Preview_Backdrop, Blit, Highlight, Highlight_Filter, Reflect, Translucent, Reflect_Resolve,
-	Shadow_Maps, Shadow_Clusters, Shadow_Map, Shadow_Map_Tested, Shadow_Map_Clear, Shadow_Map_Copy, Shadow_Mark, Shadow_Pages, Shadow_Hiz, // the cull of the maps of the shadows by instance and by cluster, their draws by what each writes, the pages of the cache and of the nearest glass they clear, the pages of the tint they clear, and the atlas copies, the marks of the points, the table of the pages and the farthest depth of the cache
-	Glass_Layer, Glass_Layer_Layers, Glass_Filter, Glass, Glass_Light, Glass_Levels, Glass_Mean, Glass_Inside,
+	Shadow_Maps, Shadow_Clusters, Shadow_Map, Shadow_Map_Tested, Shadow_Map_Clear, Shadow_Map_Copy, Shadow_Mark, Shadow_Pages, Shadow_Hiz, // the cull of the maps of the shadows by instance and by cluster, their draws by what each writes, the pages of the cache they clear and the atlas copies, the marks of the points, the table of the pages and the farthest depth of the cache
+	Glass_Layer, Glass_Layer_Layers, Glass_Filter, Glass, Glass_Light, Glass_Levels, Glass_Inside,
 	// The raster of the visibility target by raster bin (RASTER_BIN_*), then the same of a view with a clip plane.
 	Visibility, Visibility_Two_Sided, Visibility_Tested, Visibility_Tested_Two_Sided,
 	Visibility_Clip, Visibility_Two_Sided_Clip, Visibility_Tested_Clip, Visibility_Tested_Two_Sided_Clip,
@@ -381,7 +380,7 @@ Frame_Targets :: struct {
 	using direct_targets: struct {
 		direct_blockers:         rhi.Texture, // what stopped the ray each pixel traced for its direct light (direct_rays.comp)
 		direct_samples:          rhi.Texture, // at each point (direct_points of direct_samples.slang), the light of the local lights with nothing in the way over its reflectance, and the part of it that got there
-		direct_sun:              rhi.Texture, // at each point, what the glass on the way leaves of the light of the sun, and how much of the sun gets there
+		direct_sun:              rhi.Texture, // at each point, how much of the sun gets there
 		direct_depth:            rhi.Texture, // at each point, its linear depth (0 for none) and the radii of the penumbrae of the sun and of the local lights
 		direct_points:           rhi.Texture, // what the window of the samples gives each point (direct_points.comp), its part spread over its penumbra (direct_spread.comp)
 		direct_sun_points:       rhi.Texture, // the same of the part of the sun
@@ -637,7 +636,6 @@ Renderer :: struct {
 	world_switched:       bool, // the next frame follows another world: it keeps the delta time of the one before
 	kept:                 [WORLDS_MAX - 1]World_Light, // the light of the worlds not shown
 	kept_count:           int,
-	glass_stale:          bool, // Gpu_Instance.glass waits for glass_mean.comp: instances, materials or geometry went up since it last ran
 	points:               Material_Points, // where the passes of a frame need a material program evaluated (points.odin)
 	vertex_stages:        Program_Computes, // of surface_vertices__<program>.comp, which move the vertices of instances (displace.odin)
 	program_graphics:     [PROGRAM_GRAPHICS_CAPACITY]Program_Graphics, // the raster stages of Surface programs (program_stages.odin)
@@ -918,6 +916,7 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	compute(list, r, .Cull_Clusters, .Cull_Clusters_Comp)
 	compute(list, r, .Cull_Bins, .Cull_Bins_Comp)
 	compute(list, r, .Cull_Stats_Fold, .Cull_Stats_Fold_Comp)
+	compute(list, r, .Mesh_Draws, .Mesh_Draws_Comp)
 	compute(list, r, .Raster_Round, .Raster_Round_Comp)
 	compute(list, r, .Raster_Vertices, .Raster_Vertices_Comp)
 	compute(list, r, .Raster_Starts, .Raster_Starts_Comp)
@@ -957,7 +956,6 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	compute(list, r, .Air_Scattering, .Air_Scattering_Comp)
 	compute(list, r, .Air_Sky, .Air_Sky_Comp)
 	compute(list, r, .Air_Aerial, .Air_Aerial_Comp)
-	compute(list, r, .Glass_Mean, .Glass_Mean_Comp)
 	compute(list, r, .Glass_Levels, .Glass_Levels_Comp)
 	compute(list, r, .Points, .Points_Comp)
 	compute(list, r, .Skin, .Skin_Comp)
@@ -1219,21 +1217,18 @@ pipeline_desc :: proc(r: ^Renderer, item: Pipeline_Make, constants: rhi.Shader_C
 }
 
 // The variants of the stages of both tracers, as items of a list: the sets of
-// the constants of each stage that traces or computes, those the settings
-// select or the others. Those of colored shadows are selected when the
-// setting is on.
+// the constants of each stage that traces or computes.
 @(private)
-variants_listed :: proc(r: ^Renderer, list: ^Pipeline_List, selected: bool) {
+variants_listed :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	stages: Pipeline_List
 	pipelines_list(r, &stages)
 	info := rhi.device_info(r.device)
 	for item in stages.items[:stages.count] {
 		if item.target == nil || item.graphics && item.rays == .Any || !pipeline_possible(info, item) {continue}
 		code := &r.shader_codes[item.shaders[1]]
-		color, colored := rhi.shader_constant(code, "color")
 		for bits in u32(1) ..< u32(1) << uint(min(len(code.constants), rhi.MAX_SHADER_CONSTANTS)) {
+			if list.count == len(list.items) {break}
 			constants := transmute(rhi.Shader_Constants)bits
-			if (!colored || !(color <= constants) || r.settings.colored_shadows) != selected || list.count == len(list.items) {continue}
 			variant := item
 			variant.target = pipeline_slot(r, item.id, .Any if item.target == &r.pipelines[item.id] else item.rays, constants)
 			if variant.target == nil {continue}
@@ -1245,16 +1240,14 @@ variants_listed :: proc(r: ^Renderer, list: ^Pipeline_List, selected: bool) {
 }
 
 // The variants of the tracer in use that are not made, asked of the pipeline
-// thread behind what frames ask for: the renderer made those the settings
-// select when it started (create_pipelines). One past the jobs of the thread
-// is asked before a later frame.
+// thread behind what frames ask for. One past the jobs of the thread is asked
+// before a later frame.
 @(private)
 pipeline_variants_ask :: proc(r: ^Renderer) {
 	r.variants_wanted = false
 	tracer := Pipeline_Rays.Hardware if r.hardware_rt else .Software
 	list: Pipeline_List
-	variants_listed(r, &list, true)
-	variants_listed(r, &list, false)
+	variants_listed(r, &list)
 	for item in list.items[:list.count] {
 		v := variant_of(r, item.target)
 		if item.rays != .Any && item.rays != tracer || v.state != .None {continue}
@@ -1277,7 +1270,7 @@ pipeline_possible :: proc(info: ^rhi.Device_Info, item: Pipeline_Make) -> bool {
 }
 
 // Makes the pipelines of r of the rays in make that it lacks and the device
-// can, with the variants the settings select, the costliest first, on a thread a core (half the logical processors):
+// can, with their variants, the costliest first, on a thread a core (half the logical processors):
 // the driver compiles each one for up to seconds. A transaction that may
 // allocate. Once r.reload_stop is set, from any thread, none more is made.
 // False when one the renderer needs is not there; those of rays traced by
@@ -1286,7 +1279,7 @@ pipeline_possible :: proc(info: ^rhi.Device_Info, item: Pipeline_Make) -> bool {
 create_pipelines :: proc(r: ^Renderer, make: bit_set[Pipeline_Rays]) -> bool {
 	list: Pipeline_List
 	pipelines_list(r, &list)
-	variants_listed(r, &list, true)
+	variants_listed(r, &list)
 	info := rhi.device_info(r.device)
 	Work :: struct {
 		r:     ^Renderer,
@@ -1520,13 +1513,13 @@ renderer_apply_settings :: proc(r: ^Renderer, settings: Settings) -> bool {
 	if old.texture_max_size != settings.texture_max_size || old.texture_pool_megabytes != settings.texture_pool_megabytes {r.textures.residency.retarget = true}
 	// The probe volume: its layout, or what its rays see of the sun.
 	volume := old.probe_spacing != settings.probe_spacing || old.probe_grid != settings.probe_grid || old.probe_cascades != settings.probe_cascades || old.probe_rays != settings.probe_rays || old.probe_budget != settings.probe_budget
-	volume ||= old.colored_shadows != settings.colored_shadows || old.sun_shadows != settings.sun_shadows
+	volume ||= old.sun_shadows != settings.sun_shadows
 	// The light the probes gather, in the volume they have.
 	gathered := old.light_budget != settings.light_budget || old.sun_radius != settings.sun_radius
 	if volume {ddgi_release(r)} else if gathered {scene_relit(&r.scene)}
 	// The worlds not shown kept light gathered with the settings before.
 	if volume || gathered {world_light_destroy(r)}
-	traced := old.colored_shadows != settings.colored_shadows || old.sun_shadows != settings.sun_shadows || old.reflection_light_budget != settings.reflection_light_budget || old.reflections != settings.reflections
+	traced := old.sun_shadows != settings.sun_shadows || old.reflection_light_budget != settings.reflection_light_budget || old.reflections != settings.reflections
 	layers := old.glass_layers != settings.glass_layers
 	resolution := old.resolution != settings.resolution
 	// Targets a frame in flight may still read.
@@ -1777,7 +1770,7 @@ ensure_direct_targets :: proc(r: ^Renderer, cmd: ^rhi.Command_List, t: ^Targets,
 	width, height := (t.width + scale - 1) / scale, (t.height + scale - 1) / scale
 	ok := target(r, cmd, &t.direct_blockers, width, height, .R32_Uint, {.Sampled, .Storage}, "direct blockers", shared = true)
 	ok &&= target(r, cmd, &t.direct_samples, width, height, .RGBA16_Float, {.Sampled, .Storage}, "direct samples", shared = true)
-	ok &&= target(r, cmd, &t.direct_sun, width, height, .RGBA16_Float, {.Sampled, .Storage}, "direct sun", shared = true)
+	ok &&= target(r, cmd, &t.direct_sun, width, height, .R16_Float, {.Sampled, .Storage}, "direct sun", shared = true)
 	ok &&= target(r, cmd, &t.direct_depth, width, height, .RGBA16_Float, {.Sampled, .Storage}, "direct depth", shared = true)
 	ok &&= target(r, cmd, &t.direct_points, width, height, .RGBA16_Float, {.Sampled, .Storage}, "direct points", shared = true)
 	ok &&= target(r, cmd, &t.direct_sun_points, width, height, .R16_Float, {.Sampled, .Storage}, "direct sun points", shared = true)

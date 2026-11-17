@@ -64,7 +64,7 @@
 // The table of the pages (render.Shadow_Raster.table).
 [[vk::binding(SLOT_PASS3, 0)]] [[vk::image_format("r32ui")]] RWTexture2D<uint> table : register(MIRAI_REGISTER(u, SLOT_PASS3), space0);
 uint shadow_table_entry(uint slot, uint entry) { return table[int2(int(entry), int(slot))]; }
-void table_set(uint slot, uint entry, uint e) { table[int2(int(entry), int(slot))] = e; }
+void table_set(uint slot, uint entry, uint e) { if (shadow_place_valid(slot, entry)) table[int2(int(entry), int(slot))] = e; }
 #include "shadow_maps.slang"
 
 // step; frame: counts the frames; rows: of the words of the lights in the
@@ -132,14 +132,16 @@ uint data_word(uint word) { return shadow_data[word >> 2u][word & 3u]; }
 uint slots_in_use() { return params.fresh != 0u ? SHADOW_SLOTS : params.slot_count; }
 uint slot_in_use(uint k) { return params.fresh != 0u ? k : data_word(params.slots + k); }
 uint4 slot_plan(uint slot) { return shadow_data[(params.plan >> 2u) + slot]; }
-bool mask_bit(uint region, uint slot, uint entry) { return ((pages[region + slot * SHADOW_MASK_WORDS + (entry >> 5u)] >> (entry & 31u)) & 1u) != 0u; }
+bool mask_bit(uint region, uint slot, uint entry) { return shadow_place_valid(slot, entry) && ((pages[region + slot * SHADOW_MASK_WORDS + (entry >> 5u)] >> (entry & 31u)) & 1u) != 0u; }
 void mask_set(uint region, uint slot, uint entry) {
+    if (!shadow_place_valid(slot, entry)) return;
     uint word = region + slot * SHADOW_MASK_WORDS + (entry >> 5u), bit = 1u << (entry & 31u);
     if ((pages[word] & bit) == 0u) InterlockedOr(pages[word], bit);
 }
 // The texels of a page of the pool the cache draws this frame: the rows of
 // its band (SHADOW_WORDS_BAND), all of them where it is drawn whole.
 void part_band(uint pool) {
+    if (pool >= SHADOW_POOL_PAGES) return;
     uint band = pages[SHADOW_WORDS_BAND + pool], first = band & 0xFFu, at = SHADOW_WORDS_PART + pool * 4u;
     pages[at] = SHADOW_PAGE;
     pages[at + 1u] = SHADOW_PAGE - first;
@@ -178,6 +180,7 @@ float shadow_map_finest(Shadow_Map m, float3 low, float3 high) {
 // each of its mips it spans, and its page of the pool listed to draw, of the
 // atlas with SHADOW_JOB_HELD where the cache holds it this frame.
 void listed(uint round, uint slot, uint entry, uint2 page, uint job) {
+    if (!shadow_place_valid(slot, entry) || (job & SHADOW_ENTRY_POOL) >= SHADOW_POOL_PAGES) return;
     uint masks[2] = {SHADOW_WORDS_DRAWN, SHADOW_WORDS_COMPOSE};
     InterlockedOr(pages[masks[round] + slot * SHADOW_MASK_WORDS + (entry >> 5u)], 1u << (entry & 31u));
     uint mip = shadow_entry_mip(entry);
@@ -191,7 +194,7 @@ void listed(uint round, uint slot, uint entry, uint2 page, uint job) {
     if (before == 0u) {
         uint at;
         InterlockedAdd(pages[SHADOW_WORDS_COUNTS + SHADOW_COUNT_SLOTS + round], 1u, at);
-        pages[SHADOW_WORDS_SLOTS + round * SHADOW_SLOTS + at] = slot;
+        if (at < SHADOW_SLOTS) pages[SHADOW_WORDS_SLOTS + round * SHADOW_SLOTS + at] = slot;
     }
     uint at;
     InterlockedAdd(pages[SHADOW_WORDS_COUNTS + (round == ROUND_STAYS ? SHADOW_COUNT_DRAWN : SHADOW_COUNT_COMPOSED)], 1u, at);
@@ -292,14 +295,15 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
                     // Where the cache holds the page and hides the box, the change shows
                     // nowhere in it. A table that holds nothing yet holds no page: what
                     // its texels hold before the entries are written is not an entry.
-                    uint entry = shadow_page_entry(m.rect, uint2(x, y)), e = params.fresh != 0u ? 0u : shadow_table_entry(slot, entry);
-                    if ((e & SHADOW_PAGE_CACHED) != 0u && shadow_box_hidden(hiz, m, uint2(x, y), (e & SHADOW_ENTRY_POOL) - 1u, low, high)) continue;
+                    uint entry = shadow_page_entry(m.rect, uint2(x, y)), e = params.fresh != 0u ? 0u : shadow_table_entry(slot, entry), pool;
+                    bool cached = (e & SHADOW_PAGE_CACHED) != 0u && shadow_entry_pool(e, pool);
+                    if (cached && shadow_box_hidden(hiz, m, uint2(x, y), pool, low, high)) continue;
                     mask_set(region, slot, entry);
-                    if (region != SHADOW_WORDS_STALE || (e & SHADOW_PAGE_CACHED) == 0u) continue;
+                    if (region != SHADOW_WORDS_STALE || !cached) continue;
                     // The texels of the page the box covers, and one around them.
                     float4 at = texels - float4(uint2(x, y) * SHADOW_PAGE, uint2(x, y) * SHADOW_PAGE);
                     uint2 first = uint2(clamp(floor(at.xy) - 1.0, 0.0, float(SHADOW_PAGE - 1u))), last = uint2(clamp(floor(at.zw) + 1.0, 0.0, float(SHADOW_PAGE - 1u)));
-                    uint part = SHADOW_WORDS_PART + ((e & SHADOW_ENTRY_POOL) - 1u) * 4u;
+                    uint part = SHADOW_WORDS_PART + pool * 4u;
                     InterlockedMax(pages[part], SHADOW_PAGE - first.x);
                     InterlockedMax(pages[part + 1u], SHADOW_PAGE - first.y);
                     InterlockedMax(pages[part + 2u], last.x + 1u);
@@ -310,10 +314,13 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
     } else if (params.step == STEP_ENTRIES) {
         if (i >= slots_in_use() * SHADOW_SLOT_ENTRIES) return;
         uint slot = slot_in_use(i / SHADOW_SLOT_ENTRIES), entry = i % SHADOW_SLOT_ENTRIES;
+        if (slot >= SHADOW_SLOTS) return;
         Shadow_Map m = shadow_map_at(shadow_data, params.rows, slot);
         uint4 plan = slot_plan(slot);
-        // What the table held of the frame before, without where it pointed coarser.
-        uint e = params.fresh != 0u ? 0u : shadow_table_entry(slot, entry) & ~((0xFu << SHADOW_ENTRY_COARSER) | SHADOW_PAGE_LEFT);
+        // What the table held of the frame before, without where it pointed
+        // coarser; an entry that names no page of the pool holds none.
+        uint e = params.fresh != 0u ? 0u : shadow_table_entry(slot, entry) & ~((0xFu << SHADOW_ENTRY_COARSER) | SHADOW_PAGE_LEFT), held;
+        if (!shadow_entry_pool(e, held)) e = 0u;
         uint mip = shadow_entry_mip(entry), n = shadow_mip_pages(mip);
         bool inside = m.rect.z != 0u && mip < (slot < SHADOW_SUN_MAPS ? 1u : SHADOW_MIPS);
         uint2 page = shadow_entry_page(m.rect, entry);
@@ -325,8 +332,8 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
             bool in_y = shift.y > 0 ? int(page.y) < shift.y : int(page.y) >= int(n) + shift.y;
             reset = in_x || in_y;
         }
-        if (reset && (e & SHADOW_ENTRY_POOL) != 0u) {
-            pages[SHADOW_WORDS_OWNER + (e & SHADOW_ENTRY_POOL) - 1u] = 0u;
+        if (reset && e != 0u) {
+            pages[SHADOW_WORDS_OWNER + held] = 0u;
             e = 0u;
         }
         // Where the cache holds the page and what stays changed in boxes, it draws their part of it alone.
@@ -346,7 +353,7 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
         if (needed && e == 0u) {
             mask_set(net ? SHADOW_WORDS_FIRST : SHADOW_WORDS_ASKED, slot, entry);
         } else if (needed) {
-            uint pool = (e & SHADOW_ENTRY_POOL) - 1u;
+            uint pool = held;
             pages[SHADOW_WORDS_AGE + pool] = params.frame;
             bool draw = (e & SHADOW_PAGE_CACHED) == 0u;
             // A page drawn in bands under what changed starts again from its
@@ -391,13 +398,14 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
         for (uint k = lane; k < POOL_GROUP; k += ROUND_GROUP) {
             uint key = 0xFFFFFFFFu;
             if (k < min(params.pool, SHADOW_POOL_PAGES)) {
-                uint owner = pages[SHADOW_WORDS_OWNER + k], unread = params.frame - pages[SHADOW_WORDS_AGE + k];
-                if (owner == 0u) {
+                uint unread = params.frame - pages[SHADOW_WORDS_AGE + k], slot, entry;
+                // An owner past the table names no page: its page of the pool is free.
+                if (!shadow_owner_place(pages[SHADOW_WORDS_OWNER + k], slot, entry)) {
                     key = k;
                 } else if (unread >= params.keep) {
                     key = ((16u - min(firstbithigh(unread), 15u)) << 16u) | k;
                 } else if (unread != 0u) {
-                    key = POOL_KEPT | ((0xFFFFu - rank_of((owner - 1u) / SHADOW_SLOT_ENTRIES, (owner - 1u) % SHADOW_SLOT_ENTRIES)) << 12u) | k;
+                    key = POOL_KEPT | ((0xFFFFu - rank_of(slot, entry)) << 12u) | k;
                     // Once the cycle is over any page may take it: those left out ask again then.
                     pages[SHADOW_STEP_NEW] = 1u;
                 }
@@ -445,9 +453,10 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
                 table_set(w.y, entry, SHADOW_PAGE_LEFT);
                 continue;
             }
-            uint pool = victim & 0xFFFFu;
+            uint pool = victim & 0xFFFFu, slot, held;
+            if (pool >= SHADOW_POOL_PAGES) continue;
             uint owner = pages[SHADOW_WORDS_OWNER + pool];
-            if (owner != 0u) table_set((owner - 1u) / SHADOW_SLOT_ENTRIES, (owner - 1u) % SHADOW_SLOT_ENTRIES, 0u);
+            if (shadow_owner_place(owner, slot, held)) table_set(slot, held, 0u);
             pages[SHADOW_WORDS_OWNER + pool] = w.y * SHADOW_SLOT_ENTRIES + entry + 1u;
             pages[SHADOW_WORDS_AGE + pool] = params.frame;
             uint2 page = shadow_entry_page(m.rect, entry);
@@ -466,11 +475,13 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
         uint count = round_count();
         for (uint k = lane; k < POOL_GROUP; k += ROUND_GROUP) {
             uint key = 0xFFFFFFFFu;
-            if (k < count) {
-                uint pool = pages[round_jobs() + k] & SHADOW_ENTRY_POOL, owner = pages[SHADOW_WORDS_OWNER + pool];
+            uint pool = k < count ? pages[round_jobs() + k] & SHADOW_ENTRY_POOL : SHADOW_POOL_PAGES;
+            if (pool < SHADOW_POOL_PAGES) {
+                uint slot, entry;
+                bool placed = shadow_owner_place(pages[SHADOW_WORDS_OWNER + pool], slot, entry);
                 // A page whose one row a draw had no room for goes last, not to hold the others back.
                 bool stuck = (pages[SHADOW_WORDS_BAND + pool] & SHADOW_BAND_STUCK) != 0u;
-                uint rank = owner == 0u || stuck ? 0xFFFFu : rank_of((owner - 1u) / SHADOW_SLOT_ENTRIES, (owner - 1u) % SHADOW_SLOT_ENTRIES);
+                uint rank = !placed || stuck ? 0xFFFFu : rank_of(slot, entry);
                 key = (rank << 10u) | pool;
             }
             shared_words[k] = key;
@@ -549,17 +560,15 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
             }
             // Past the clusters of the frame it waits, and the round draws nothing of it.
             pages[round_cost(pool)] = SHADOW_COST_WAITS;
-            uint owner = pages[SHADOW_WORDS_OWNER + pool];
-            if (owner == 0u) continue;
-            uint slot = (owner - 1u) / SHADOW_SLOT_ENTRIES, entry = (owner - 1u) % SHADOW_SLOT_ENTRIES;
+            uint slot, entry;
+            if (!shadow_owner_place(pages[SHADOW_WORDS_OWNER + pool], slot, entry)) continue;
             InterlockedAnd(pages[round_mask() + slot * SHADOW_MASK_WORDS + (entry >> 5u)], ~(1u << (entry & 31u)));
             if (params.round == 0u) for (uint w = 0u; w < 4u; w++) pages[SHADOW_WORDS_PART + pool * 4u + w] = 0u;
         }
     } else if (params.step == STEP_SETTLE) {
         if (i >= round_count()) return;
-        uint pool = pages[round_jobs() + i] & SHADOW_ENTRY_POOL, owner = pages[SHADOW_WORDS_OWNER + pool];
-        if (owner == 0u) return;
-        uint slot = (owner - 1u) / SHADOW_SLOT_ENTRIES, entry = (owner - 1u) % SHADOW_SLOT_ENTRIES;
+        uint pool = pages[round_jobs() + i] & SHADOW_ENTRY_POOL, slot, entry;
+        if (pool >= SHADOW_POOL_PAGES || !shadow_owner_place(pages[SHADOW_WORDS_OWNER + pool], slot, entry)) return;
         uint cost = pages[round_cost(pool)], taken = pages[round_taken(pool)], e = shadow_table_entry(slot, entry);
         // What the cache left for the frames after is not ready already.
         if (params.round == 1u && (e & SHADOW_PAGE_COMPOSED) == 0u) return;
@@ -597,6 +606,7 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
         }
         if (i >= slots_in_use() * SHADOW_SLOT_ENTRIES) return;
         uint slot = slot_in_use(i / SHADOW_SLOT_ENTRIES), entry = i % SHADOW_SLOT_ENTRIES;
+        if (slot >= SHADOW_SLOTS) return;
         uint e = shadow_table_entry(slot, entry);
         if (shadow_entry_ready(e)) return;
         Shadow_Map m = shadow_map_at(shadow_data, params.rows, slot);

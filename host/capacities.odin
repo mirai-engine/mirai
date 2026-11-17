@@ -79,6 +79,7 @@ capacity_marks_grow :: proc "contextless" (into:^render.Capacity_Marks,from:rend
         if from.cull[list]>mark {mark,grew=from.cull[list],true}
     }
     if from.points>into.points {into.points,grew=from.points,true}
+    if from.mesh_draws>into.mesh_draws {into.mesh_draws,grew=from.mesh_draws,true}
     return
 }
 

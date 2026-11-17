@@ -151,7 +151,6 @@ Gpu_Instance :: struct {
 	bounds_max: Vec4,
 	tint:       Vec4,
 	emission:   Vec4,
-	glass:      Vec4, // written on the GPU by glass_mean.comp after every upload (glass_means_record)
 	slot_materials: [32]u32,
 	wet:        f32,    // 0 dry to 1 soaked, which the materials read (scene_set_instance_wet)
 	material_values: u32, // 1 + the word of the index pool where what it gives over the rows of its materials starts (Instance_Material_Values); 0: nothing
@@ -165,9 +164,8 @@ GPU_NONE :: max(u32)
 INSTANCE_MESH_MASK :: abi.INSTANCE_MESH_MASK
 INSTANCE_RAY_SHIFT :: abi.INSTANCE_RAY_SHIFT
 // meta.x bit 26: the instance casts no shadow (Instance_Desc.shadowless). It
-// is of the RAY_UNSHADOWED class, or RAY_GLASS if all glass, whose filter a ray
-// that carries light leaves out (BLEND_LIGHT of trace.slang), and no map of
-// the shadows draws it.
+// is of the RAY_UNSHADOWED class, or RAY_GLASS if all glass, which no shadow
+// ray meets, and no map of the shadows draws it.
 INSTANCE_UNSHADOWED :: abi.INSTANCE_UNSHADOWED
 INSTANCE_FLAG_HIDDEN :: abi.INSTANCE_FLAG_HIDDEN
 // Hidden only because it cannot be drawn yet: its transform has no inverse
@@ -257,6 +255,8 @@ Gpu_Mesh :: struct {
 	bounds_min:      Vec4,
 	bounds_max:      Vec4,
 	rays:            [asset.MESH_RAY_LEVELS]Gpu_Mesh_Ray,
+	draw_first:      u32, // where its clusters start in the indices of the meshes drawn whole this frame (mesh_draws.odin); GPU_NONE: not there
+	pad0, pad1, pad2: u32,
 }
 // Level 0 is closed: a cluster of it seen from behind the cone of its normals is hidden.
 MESH_FLAG_CLOSED :: abi.MESH_FLAG_CLOSED
@@ -571,3 +571,15 @@ gbuffer_normal_decode :: proc "contextless" (texel: Vec4) -> (normal: Vec3, roug
 // what all the rounds of a frame wrote, to hold it in one.
 Cull_List :: enum {Chunks, Visible, Candidates, Shadow_Chunks, Shadow_Entries, Raster_Vertices, Raster_Triangles}
 CULL_START :: [Cull_List]u32{.Chunks = 1 << 16, .Visible = 1 << 18, .Candidates = 1 << 16, .Shadow_Chunks = 1 << 14, .Shadow_Entries = 1 << 18, .Raster_Vertices = 1 << 20, .Raster_Triangles = 1 << 20}
+// The lists of the raster of the visibility target hold a third of what the
+// view that needs most writes (RASTER_LIST_SHARE), and grow by an eighth past
+// it (RASTER_LIST_SLACK: a view whose need creeps up by less takes no new
+// buffers); the rounds of a view take the rest. Four rounds of a third hold
+// a view whole but for the room a list leaves past its last cluster.
+RASTER_LIST_SHARE :: 3
+RASTER_LIST_SLACK :: 8
+#assert(abi.RASTER_ROUNDS > RASTER_LIST_SHARE)
+// The indices of the meshes drawn whole (Scene_State.mesh_draws) at first: 8 MB,
+// 5,461 clusters, all the levels of a mesh of about 250,000 triangles, or as
+// many glass, overlaid, highlighted and particle meshes as a frame draws.
+MESH_DRAWS_START :: u32(1) << 21

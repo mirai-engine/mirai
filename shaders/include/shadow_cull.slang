@@ -65,14 +65,13 @@ uint shadow_taken_word(uint pool) { return SHADOW_WORDS_TAKEN + params.moving * 
 // Whether the round draws a page of a map at its mip, a bit for each entry.
 bool shadow_page_drawn(Shadow_Map m, uint2 page) {
     uint bit = shadow_page_entry(m.rect, page);
-    return ((shadow_pages[params.masks + m.rect.x * SHADOW_MASK_WORDS + (bit >> 5u)] >> (bit & 31u)) & 1u) != 0u;
+    return shadow_place_valid(m.rect.x, bit) && ((shadow_pages[params.masks + m.rect.x * SHADOW_MASK_WORDS + (bit >> 5u)] >> (bit & 31u)) & 1u) != 0u;
 }
 
 // The page of the pool a page of a map lies at; false where it has none.
 bool shadow_page_pool(Shadow_Map m, uint2 page, out uint pool) {
     uint e = shadow_table_entry(m.rect.x, shadow_page_entry(m.rect, page));
-    pool = (e & SHADOW_ENTRY_POOL) - 1u;
-    return (e & SHADOW_ENTRY_POOL) != 0u && (e >> SHADOW_ENTRY_COARSER) == 0u;
+    return shadow_entry_pool(e, pool) && (e >> SHADOW_ENTRY_COARSER) == 0u;
 }
 
 // The texels of a page of the pool the round draws, from its corner: the
@@ -80,6 +79,7 @@ bool shadow_page_pool(Shadow_Map m, uint2 page, out uint pool) {
 // page for a round that draws its pages whole.
 uint4 shadow_page_part(uint pool) {
     if (params.part == 0u) return uint4(0u, 0u, SHADOW_PAGE, SHADOW_PAGE);
+    if (pool >= SHADOW_POOL_PAGES) return uint4(SHADOW_PAGE, SHADOW_PAGE, 0u, 0u);
     uint at = SHADOW_WORDS_PART + pool * 4u;
     return uint4(SHADOW_PAGE - shadow_pages[at], SHADOW_PAGE - shadow_pages[at + 1u], shadow_pages[at + 2u], shadow_pages[at + 3u]);
 }
@@ -115,6 +115,8 @@ uint4 shadow_page_window(Shadow_Map m, uint2 page) {
 
 // The pages of a map at its mip the round draws lie within: false where it draws none there.
 bool shadow_pages_span(Shadow_Map m, out uint4 span) {
+    span = uint4(0u);
+    if (m.rect.x >= SHADOW_SLOTS || shadow_rect_mip(m.rect) >= SHADOW_MIPS) return false;
     uint at = SHADOW_WORDS_BOUNDS + ((params.moving * SHADOW_SLOTS + m.rect.x) * SHADOW_MIPS + shadow_rect_mip(m.rect)) * 4u;
     uint4 words = uint4(shadow_pages[at], shadow_pages[at + 1u], shadow_pages[at + 2u], shadow_pages[at + 3u]);
     span = uint4(SHADOW_MAP_PAGES - words.x, SHADOW_MAP_PAGES - words.y, words.z - 1u, words.w - 1u);

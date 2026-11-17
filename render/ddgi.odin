@@ -380,7 +380,7 @@ ddgi_update :: proc(p: ^Pass, warm := false, first := true) -> bool {
 	}
 	// The rays, then what waits for the programs of what they hit.
 	batch := points_begin(p)
-	trace := pipeline_of(r, .Ddgi_Trace, {DDGI_TRACE_COMP_COLOR} if shadows_colored(r) else {}, {DDGI_TRACE_COMP_COLOR})^
+	trace := pipeline_of(r, .Ddgi_Trace)^
 	rhi.cmd_bind_pipeline(cmd, trace)
 	set_params(cmd, &update)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, g.rays)

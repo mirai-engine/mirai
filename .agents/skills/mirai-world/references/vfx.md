@@ -349,8 +349,8 @@ To the GPU:
 - The desc of an emitter is resolved again only when its effect, its `Particle_Override`, the
   shaders or what the effect reads of the assets (`effect_inputs`: its file and its sub effect's,
   their materials' rows and blending, and the meshes they draw) changed. The assets are read again
-  once per effect, not per emitter, when their revision, the shaders or the vertices of the scene
-  move.
+  once per effect, not per emitter, when their revision or the shaders move; `particles_tick`
+  resolves the emission of a clock the same way.
 - The pool keeps every emitter it was given until `pool_remove`: an emitter that goes, is hidden or
   loses its place leaves with its particles.
   - `pool_frame` starts each frame; the pool's tables are built when the world first has
@@ -542,10 +542,10 @@ In each view:
   emitter's material or the mesh's, which the plugin tells the renderer each frame
   (`frame_gbuffer_mesh`) so that the views store their reflectance and their layers. Everything
   that follows lights, shades and reflects them.
-- Each draw takes the level 0 clusters of its mesh indexed by its draw list among the indices of
-  the scene (`erender.mesh_draw_range`, `pass_indices(.Scene)`, `pass_draw_indexed_indirect`, the
-  draws `finish` writes after the events, `MESH_DRAWS_AT`; weights and ranges are in the emitter's
-  row) and reads its vertices only through `geometry.slang`: the
+- Each draw takes the level 0 clusters of its mesh indexed by where the frame lists it among the
+  meshes drawn whole (`pass_indices(.Meshes)`, `pass_draw_indexed_indirect`, the draws `finish`
+  writes after the events from `Mesh.draw_first`, `MESH_DRAWS_AT`; weights and meshes are in the
+  emitter's row) and reads its vertices only through `geometry.slang`: the
   plugin asks each frame for the whole mesh (`frame_mesh_whole`), and a mesh with pages outside
   its root loads them all and does not release them while it is drawn, because the scene's cull
   does not see the particles. What a program's `render` gives does not reach them.

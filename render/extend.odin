@@ -148,7 +148,8 @@ frame_gbuffer_mesh :: proc(r: ^Renderer, mesh: Mesh_Handle, material: Material_H
 // Tells the frame that an extension draws every cluster of level 0 of a mesh
 // of the scene, where the cull of the scene does not see it (the meshes of
 // particles): a mesh whose pages stream loads them all, and keeps them while
-// it asks. Ask in each frame that draws it.
+// it asks, and the frame lists its indices (pass_indices .Meshes). Ask in
+// each frame that draws it.
 frame_mesh_whole :: proc(r: ^Renderer, mesh: Mesh_Handle) {
 	if int(mesh) < len(r.scene.meshes) {r.scene.meshes[mesh].whole = r.frame + 1}
 }
@@ -269,10 +270,8 @@ pass_image_write :: proc(s: ^Stage_Pass, read, write: u32) -> bool {
 // order, in a pass_surface_begin with them; one of Blend into the lit image
 // with blend and into the coverage TAA reads, adding, in pass_blend_begin.
 // Gbuffer takes pass_gbuffer_pipeline instead. A compute stage that traces
-// rays declares the variant hw (//! variant) and the constant color
-// (//! constant), and its pipeline is that of the rays the renderer traces,
-// as for the stages of the engine: by hardware, and through the filters of
-// glass with colored shadows.
+// rays declares the variant hw (//! variant), and its pipeline is that of the
+// rays the renderer traces, as for the stages of the engine.
 // A graphics stage whose source marks it `//! per surface program` draws the
 // materials of a Surface program with the fragment stage of that program:
 // program names it (pass_material_program), 0 for those without one.
@@ -308,7 +307,6 @@ stage_pipeline :: proc(r: ^Renderer, desc: Stage_Pipeline_Desc) -> rhi.Pipeline 
 	if desc.stage == .Gbuffer {set_error(r, "the pipeline of the Gbuffer stage %s depends on the view: ask pass_gbuffer_pipeline in the pass", desc.shader); return 0}
 	compute := desc.stage != .Mask && desc.stage != .Blend && desc.stage != .Effect && (desc.stage != .Surface || desc.compute)
 	hardware := compute && r.hardware_rt
-	colored := compute && r.settings.colored_shadows && len(r.scene.translucent) > 0
 	program := desc.program if !compute && desc.program != GPU_NONE else 0
 	plain: rhi.Pipeline
 	if program != 0 {
@@ -316,7 +314,7 @@ stage_pipeline :: proc(r: ^Renderer, desc: Stage_Pipeline_Desc) -> rhi.Pipeline 
 		without.program = 0
 		if plain = stage_pipeline(r, without); plain == 0 {return 0}
 	}
-	key := base.name_hash(desc.shader) ~ base.name_hash(desc.fragment) * 31 ~ (u64(desc.stage) + 1) << 56 ~ u64(transmute(u8)desc.targets) << 48 ~ u64(desc.blend) << 40 ~ u64(hardware) << 39 ~ u64(colored) << 38 ~ u64(compute) << 37 ~ u64(program) * 0x9E3779B97F4A7C15
+	key := base.name_hash(desc.shader) ~ base.name_hash(desc.fragment) * 31 ~ (u64(desc.stage) + 1) << 56 ~ u64(transmute(u8)desc.targets) << 48 ~ u64(desc.blend) << 40 ~ u64(hardware) << 39 ~ u64(compute) << 37 ~ u64(program) * 0x9E3779B97F4A7C15
 	free: ^Stage_Pipeline
 	for &entry in r.stage_pipelines {
 		if entry.asked && entry.key == key {return entry.pipeline if entry.pipeline != 0 else plain}
@@ -331,9 +329,7 @@ stage_pipeline :: proc(r: ^Renderer, desc: Stage_Pipeline_Desc) -> rhi.Pipeline 
 		for variant in variants {
 			if variant == "_hw" && !hardware {continue}
 			if code := extension_shader(r, fmt.bprintf(names[0][:], "%s%s.comp", desc.shader, variant)); code != nil {
-				constants: rhi.Shader_Constants
-				if colored {constants, _ = rhi.shader_constant(code, "color")}
-				free.pipeline = rhi.pipeline_create_compute(r.device, {shader = code, constants = constants, name = desc.name})
+				free.pipeline = rhi.pipeline_create_compute(r.device, {shader = code, name = desc.name})
 				break
 			}
 		}

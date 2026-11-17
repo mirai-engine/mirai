@@ -117,7 +117,7 @@ applying_the_graphics_settings_writes_none_of_them :: proc(t:^testing.T) {
     sync:=new(Render_Sync)
     defer free(sync)
     own:=GRAPHICS_SETTINGS_DEFAULT
-    own.light_samples,own.glass_shadows,own.glass_layers=31,false,2
+    own.light_samples,own.glass_layers=31,2
     low:=GRAPHICS_SETTINGS_DEFAULT
     graphics_preset_apply(&low,.Low)
     scaled:=low
