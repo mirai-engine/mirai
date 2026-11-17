@@ -30,6 +30,14 @@ import "plugins:vfx/runtime/gridfile"
 ROOT :: #directory + "/../../.."
 
 @(private = "file")
+// The meshes of Mesh particles as emitter_desc takes them: asked for, and
+// asked again after the publication that makes their draw lists.
+test_mesh_choices :: proc(t: ^testing.T, f: ^Gpu_Fixture, d: ^Emitter_Desc, handles: []erender.Mesh_Handle, weights: []f32) -> bool {
+	if mesh_choices(d, f.app.renderer, handles, weights) {return true}
+	testing.expect(t, gpu.renderer_commit_geometry(&f.renderer), f.renderer.error)
+	return testing.expect(t, mesh_choices(d, f.app.renderer, handles, weights))
+}
+
 Gpu_Fixture :: struct {
 	device:     ^rhi.Device,
 	renderer:   gpu.Renderer,
@@ -37,7 +45,7 @@ Gpu_Fixture :: struct {
 	app:        host.App,
 	sync:       Particle_Sync,
 	cube:       gpu.Mesh_Handle,
-	cube_vertices: u32, // of a draw of level 0 of the cube
+	cube_primitives: u32, // of level 0 of the cube
 	folder:     string,
 }
 
@@ -61,7 +69,7 @@ gpu_fixture_init :: proc(t: ^testing.T, f: ^Gpu_Fixture, width, height: u32, set
 	cube := host.assets_shape(&f.assets, .Cube)
 	if !testing.expect(t, cube != nil) {return false}
 	f.cube = cube.handle
-	f.cube_vertices, _ = erender.mesh_draw_range(f.app.renderer, f.cube)
+	f.cube_primitives, _ = erender.mesh_primitive_count(f.app.renderer, f.cube)
 	f.sync.world = 1
 	gpu.scene_world(&f.renderer, f.sync.world)
 	return true
@@ -227,7 +235,7 @@ particles_of_every_kind_draw_around_glass_without_validation_errors :: proc(t: ^
 	trail.info.render, trail.info.lit, trail.info.lifetime = .Ribbon, true, {0.4, 0.4}
 	pieces := test_emitter(4, {0, 1, 0})
 	pieces.info.render, pieces.info.lit, pieces.info.collision, pieces.info.size, pieces.info.spin = .Mesh, true, .World, {0.1, 0.2}, {-3, 3}
-	mesh_choices(&pieces, f.app.renderer, {f.cube}, {1})
+	test_mesh_choices(t, f, &pieces, {f.cube}, {1})
 	pieces.info.shape, pieces.info.shape_size, pieces.info.acceleration = .Sphere, {0.3, 0.3, 0.3}, {0, -9.8, 0}
 	ripples := test_emitter(5, {0, -0.45, 0})
 	ripples.info.render, ripples.info.flipbook, ripples.info.local_space = .Horizontal, {2, 2}, true
@@ -547,7 +555,7 @@ mesh_particles_pick_their_meshes_by_weight :: proc(t: ^testing.T) {
 	pieces.capacity = COUNT
 	pieces.info.render, pieces.info.lifetime, pieces.info.size = .Mesh, {30, 30}, {0.3, 0.3}
 	pieces.info.shape, pieces.info.shape_size = .Box, {1, 1, 1}
-	mesh_choices(&pieces, f.app.renderer, {f.cube, sphere.handle}, {3, 1})
+	test_mesh_choices(t, f, &pieces, {f.cube, sphere.handle}, {3, 1})
 	pieces.spawns = test_burst(COUNT)
 	testing.expect(t, frame_emitters(f, &f.sync, {pieces}, 1.0 / 60))
 	testing.expect(t, gpu.renderer_frame(&f.renderer, {camera = camera}), f.renderer.error)
@@ -605,7 +613,7 @@ mesh_particles_face_their_velocity :: proc(t: ^testing.T) {
 	sticks.info.render, sticks.info.lifetime, sticks.info.size, sticks.info.lit = .Mesh, {30, 30}, {1, 1}, true
 	// It leaves along +x until drag stops it: at rest it keeps where it went.
 	sticks.info.velocity, sticks.info.facing, sticks.info.drag = {{1, 0, 0}, {1, 0, 0}}, .Velocity, 40
-	if !testing.expect(t, mesh_choices(&sticks, f.app.renderer, {stick}, {1})) {return}
+	if !test_mesh_choices(t, f, &sticks, {stick}, {1}) {return}
 	for i in 0 ..< 40 {
 		sticks.spawns = test_burst(1) if i == 0 else {}
 		testing.expect(t, frame_emitters(f, &f.sync, {sticks}, 1.0 / 60))
@@ -648,7 +656,7 @@ mesh_particles_of_a_blending_material_cover_by_their_alpha :: proc(t: ^testing.T
 	// Two cubes of the material: one with full alpha, one whose curve takes its alpha to zero.
 	shown := test_emitter(1, {-1.2, 0, 0})
 	shown.info.render, shown.material, shown.blended, shown.info.blend = .Mesh, 1, true, .Alpha
-	mesh_choices(&shown, f.app.renderer, {f.cube}, {1})
+	test_mesh_choices(t, f, &shown, {f.cube}, {1})
 	shown.info.lifetime, shown.info.size, shown.info.soft, shown.info.emission_mode, shown.info.intensity = {10, 10}, {1, 1}, 0, .Relative, 1
 	faded := shown
 	faded.id, faded.transform, faded.previous = 2, trs({1.2, 0, 0}, {1, 1, 1}), trs({1.2, 0, 0}, {1, 1, 1})
@@ -981,7 +989,7 @@ particle_surface_shape_starts_particles_on_its_mesh :: proc(t: ^testing.T) {
 	shell.capacity, shell.info.lifetime, shell.info.size = 512, {5, 5}, {0.12, 0.12}
 	shell.info.shape = .Surface
 	box := trs({1.2, 0.5, 0}, {0.8, 0.8, 0.8})
-	shell.resources = test_resources(&f.sync, {kind = .Surface, mesh = f.cube, triangles = f.cube_vertices / 3, transform = box, previous = box})
+	shell.resources = test_resources(&f.sync, {kind = .Surface, mesh = f.cube, triangles = f.cube_primitives, transform = box, previous = box})
 	DT :: f32(1.0 / 60)
 	for i in 0 ..< 8 {
 		shell.spawns = test_burst(400) if i == 0 else {}
@@ -1026,7 +1034,7 @@ particle_programs_follow_a_surface_that_moves :: proc(t: ^testing.T) {
 	for i in 0 ..< 40 {
 		x := -1.5 + f32(i) * 3.0 / 39
 		clear(&f.sync.resources)
-		sticky.resources = test_resources(&f.sync, {}, {kind = .Surface, mesh = f.cube, triangles = f.cube_vertices / 3, transform = place(x), previous = place(max(x - 3.0 / 39, -1.5))})
+		sticky.resources = test_resources(&f.sync, {}, {kind = .Surface, mesh = f.cube, triangles = f.cube_primitives, transform = place(x), previous = place(max(x - 3.0 / 39, -1.5))})
 		sticky.spawns = test_burst(300) if i == 0 else {}
 		testing.expect(t, frame_emitters(f, &f.sync, {sticky}, DT))
 		testing.expect(t, gpu.renderer_frame(r, {camera = camera, time = f32(i) * DT}), r.error)
@@ -1212,7 +1220,7 @@ particle_bones_and_surface_shapes_start_particles_on_the_posed_skin :: proc(t: ^
 	onto := test_emitter(2, {2.5, 2, 0})
 	onto.capacity, onto.info.lifetime, onto.info.size = 512, {5, 5}, {0.12, 0.12}
 	onto.info.shape = .Surface
-	onto.resources = test_resources(&f.sync, {kind = .Surface, mesh = posed, triangles = f.cube_vertices / 3, transform = identity, previous = identity})
+	onto.resources = test_resources(&f.sync, {kind = .Surface, mesh = posed, triangles = f.cube_primitives, transform = identity, previous = identity})
 	DT :: f32(1.0 / 60)
 	for i in 0 ..< 8 {
 		along.spawns = test_burst(400) if i == 0 else {}

@@ -29,9 +29,10 @@ float fragment_depth(Raster_Input input) { return dot(input.in_world - frame.cam
 
 // The input of a fragment with the side of its triangle it shows: a stage
 // sets it before it evaluates the material. The winding of an instance that
-// mirrors its mesh is turned back by its vertices (gbuffer_vertex_build).
+// mirrors its mesh: the raster of the view and the resolve turn its triangles
+// back; a draw by the list of its mesh says so in its flags (gbuffer.vert).
 Raster_Input raster_facing(Raster_Input input, bool front) {
-    if (!front) input.in_flags |= RASTER_FLAG_BACK;
+    if (front == ((input.in_flags & RASTER_FLAG_TURNED) != 0u)) input.in_flags |= RASTER_FLAG_BACK;
     return input;
 }
 bool raster_back(Raster_Input input) { return (input.in_flags & RASTER_FLAG_BACK) != 0u; }

@@ -139,6 +139,10 @@ POSED_WORDS             :: size_of(Gpu_Posed_Vertex) / 4
 PAGE_ENTRY_WORDS        :: size_of(Gpu_Mesh_Page) / 4
 LEVEL_WORDS             :: 5
 CLUSTER_DRAW_VERTICES   :: asset.CLUSTER_TRIANGLES * 3
+// An index of the list a mesh is drawn indexed with (render.Mesh_Draw_List):
+// its cluster << DRAW_VERTEX_BITS | the vertex in it.
+DRAW_VERTEX_BITS        :: 8
+#assert(1 << DRAW_VERTEX_BITS == asset.CLUSTER_VERTICES)
 PRIMITIVE_TRIANGLE_BITS :: 7
 PAGE_SLOT_WORDS         :: asset.MESH_PAGE_WORDS
 PAGE_REQUEST_FIRST      :: 4
@@ -424,6 +428,7 @@ CULL_RASTER_TRIANGLES   :: 120 // the triangles it listed, past the capacity too
 CULL_RASTER_COUNTS      :: 121 // the triangles it listed of each raster bin
 CULL_RASTER_CURSORS     :: 125 // where the next triangle of each raster bin goes
 CULL_DROPPED            :: 129 // of each list of the cull (render.Cull_List)
+CULL_RASTER_NEED        :: 136 // two words: the vertices and the triangles the rounds of the view wrote and its last left out
 
 // What the raster of the visibility target draws of the visible clusters
 // (raster_lists.slang): a vertex is RASTER_VERTEX_WORDS, where it is in the

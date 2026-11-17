@@ -24,7 +24,7 @@ Slot_Binding :: struct {
 }
 
 @(private)
-Pass_Command_Kind :: enum u8 {Pipeline, Slot, Index, Viewport, Scissor, Draw, Draw_Indirect, Draw_Indexed_Indirect, Push_Label, Pop_Label, Timestamp}
+Pass_Command_Kind :: enum u8 {Pipeline, Slot, Index, Viewport, Scissor, Draw, Draw_Indexed, Draw_Indirect, Draw_Indexed_Indirect, Push_Label, Pop_Label, Timestamp}
 
 @(private)
 Pass_Command :: struct {
@@ -393,6 +393,9 @@ cmd_end_render_pass :: proc(c: ^Command_List) {
 		case .Draw:
 			v := command.draw.values
 			if vk_flush_bindings(c, .GRAPHICS) {d.dvk.CmdDraw(c.cmd, v.x, v.y, v.z, v.w)}
+		case .Draw_Indexed:
+			v := command.draw.values
+			if vk_flush_bindings(c, .GRAPHICS) {d.dvk.CmdDrawIndexed(c.cmd, v.x, v.y, v.z, 0, v.w)}
 		case .Draw_Indirect, .Draw_Indexed_Indirect:
 			b := pool_get(&d.buffers, base.Handle(command.draw.buffer))
 			if b == nil || !vk_flush_bindings(c, .GRAPHICS) {continue}
@@ -693,6 +696,16 @@ cmd_draw :: proc(c: ^Command_List, vertex_count: u32, instance_count: u32 = 1, f
 	assert(c.in_render_pass)
 	if !vk_pass_draw(c) {return}
 	vk_pass_record(c, {kind = .Draw, draw = {values = {vertex_count, instance_count, first_vertex, first_instance}}})
+}
+
+// Draws index_count indices of the bound index buffer from first_index.
+cmd_draw_indexed :: proc(c: ^Command_List, index_count: u32, instance_count: u32 = 1, first_index: u32 = 0, first_instance: u32 = 0) {
+	assert(c.in_render_pass)
+	if index_count == 0 || instance_count == 0 {return}
+	if pool_get(&c.device.buffers, base.Handle(c.index_buffer)) == nil {set_error(c.device, "indexed draw in render pass %s without an index buffer", c.pass.name); return}
+	if !vk_pass_draw(c) {return}
+	vk_pass_use(c, 0, c.index_buffer, .Index_Read)
+	vk_pass_record(c, {kind = .Draw_Indexed, draw = {values = {index_count, instance_count, first_index, first_instance}}})
 }
 
 cmd_draw_indexed_indirect :: proc(c: ^Command_List, buffer: Buffer, offset: u64, draw_count: u32, stride: u32 = size_of(Draw_Indexed_Indirect)) {

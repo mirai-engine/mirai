@@ -381,6 +381,7 @@ pose_store :: proc(r:^Renderer,original:Mesh_Record,posed:u32,streams:int,skin:^
     record.flags&~=MESH_FLAG_STREAMED
     record.rays={}
     record.ray_count=1
+    record.draw={}
     // A pose leaves the faces of its box: it is no slab.
     record.slab_axes=0
     record.vertices_posed=posed
