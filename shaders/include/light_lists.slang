@@ -80,8 +80,10 @@ float3 light_list_lighting(Shading s, float known, int2 block, uint share = LIGH
                 float distance;
                 if ((node.flags & LIGHT_NODE_LEAF) != 0u) {
                     Light light = lights[node.child];
-                    float3 irradiance = light_contribution(light, s.position, s.normal, direction, distance);
-                    total += luminance(irradiance) * (weight * shared);
+                    float3 irradiance = light_contribution(light, s.position, s.normal, direction, distance, shading_footprint(s));
+                    // The estimate of the walks takes the image of a light at its finest level.
+                    float3 estimated = light_projects(light) ? light_contribution(light, s.position, s.normal, direction, distance) : irradiance;
+                    total += luminance(estimated) * (weight * shared);
                     if (settled) {
                         float3 diffuse, specular;
                         light_lobes_of(light, s, irradiance, direction, distance, diffuse, specular);

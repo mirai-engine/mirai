@@ -323,7 +323,8 @@ Components that describe the scene and `render_sync`, which carries it to the re
   - `Point_Light`: `color`, `intensity` (candelas), `range` and `radius`: a sphere of `radius`
     meters times the entity's scale; stretched along an axis it is a capsule along it.
   - `Spot_Light`: that of `Point_Light` and `angle`, the half cone from 1° to 89°; it fades out in
-    its last fifth.
+    its last fifth. Its `texture` and that of a `Rect_Light` multiply its color where they fall
+    ([projected textures](../../mirai-rendering/references/lights.md#local-lights)).
   - `Rect_Light`: `color`, `luminance` (nits of its face) and `range`. It is the entity's unit
     square (x by y according to its scale). Its size opens its shadows and widens its glow; a
     larger one gives more light. Inside its lamp it does not shade it. See [local
@@ -335,7 +336,7 @@ Components that describe the scene and `render_sync`, which carries it to the re
 - **`Light_Emission`**: on the entity of a `Rect_Light` with a mesh, its light takes across its
   width the color of the emission of the material with which the mesh is drawn in `slot` (also the
   one a plugin sets, like the screen of `monitors`), with its texture as on the -Z face of a Cube;
-  its luminance remains `luminance`.
+  its luminance remains `luminance`. A `texture` of the `Rect_Light` shows in its place.
 - **`Camera`**: `fov`, `near`, `active`, projection. Which camera the game sees is chosen by
   `engine/camera` through the focused seat and its body, and written in the `View_Camera` storage;
   without a choice, the last camera with `active`. There are no priorities. While passing from one

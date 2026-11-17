@@ -183,13 +183,13 @@ portals_render :: proc(
         e:=core.entity_at(spots,row)
         spot:=core.at(spots,row)
         if world,placed:=core.get(worlds,e);placed && !erender.is_hidden(hidden,parents,e) {
-            gate_lights_add(&gates,erender.spot_desc(world,spot),.Spot)
+            gate_lights_add(&gates,erender.spot_desc(world,spot,assets),.Spot)
         }
     }
     for row in 0..<core.count(rects) {
         e:=core.entity_at(rects,row)
         if world,placed:=core.get(worlds,e);placed && !erender.is_hidden(hidden,parents,e) {
-            gate_lights_add(&gates,erender.rect_desc(world,core.at(rects,row)),.Rect)
+            gate_lights_add(&gates,erender.rect_desc(world,core.at(rects,row),assets),.Rect)
         }
     }
     erender.frame_pass(renderer,.Mask,portals_record,state)
@@ -281,10 +281,13 @@ gate_lights_add :: proc(g:^Gate_Lights,light:erender.Light_Desc,kind:Gate_Light_
         extra:=[4]f32{light.radius+0.5*light.length,f32(gate),0,0}
         switch kind {
         case .Point:
-        case .Spot: cone={direction.x,direction.y,direction.z,math.cos(light.cone)}
+        case .Spot:
+            cone={direction.x,direction.y,direction.z,math.cos(light.cone)}
+            // The right of the texture it projects, turned as its direction is.
+            if light.texture!=0 {size.zw={transmute(f32)mm.normal_pack(linalg.normalize(mm.quat_rotate(back,light.texture_axis))),transmute(f32)erender.light_image(light.texture,0)}}
         case .Rect:
             cone={direction.x,direction.y,direction.z,erender.LIGHT_RECT}
-            size={0,0.5*light.size.x,0.5*light.size.y,0}
+            size={0,0.5*light.size.x,0.5*light.size.y,transmute(f32)erender.light_image(light.texture,light.material)}
             extra.x=0.5*linalg.length(light.size)
         }
         light_keep(g.state,&g.weights,power/(1+distance*distance),{position_range={seen.x,seen.y,seen.z,light.range},color_intensity={light.color.r,light.color.g,light.color.b,light.intensity},direction_cone=cone,size=size,axis={axis.x,axis.y,axis.z,erender.light_shares(light.indirect,light.scattering)},extra=extra})

@@ -8,7 +8,8 @@ import mm "mirai:std/math"
 
 // The scale of the entity of a light sizes it: evenly, a larger sphere;
 // stretched, a capsule along the axis it stretches most; a rectangle is the
-// unit square of its entity. Every light shines toward -z of its entity.
+// unit square of its entity. Every light shines toward -z of its entity, and
+// a spot lays the width of its texture along its +x.
 @(test)
 lights_take_their_shape_from_the_scale_of_their_entity :: proc(t: ^testing.T) {
 	f := new(Sync_Fixture)
@@ -34,9 +35,11 @@ lights_take_their_shape_from_the_scale_of_their_entity :: proc(t: ^testing.T) {
 	testing.expect(t, abs(even.radius - 0.3) < 1e-6 && even.length == 0, "scaled evenly, a larger sphere")
 	testing.expectf(t, abs(capsule.radius - 0.2) < 1e-6 && abs(capsule.length - 0.8) < 1e-5, "stretched 6 by 2: radius 0.2 and a segment that ends 0.6 from its center, not %v and %v", capsule.radius, capsule.length)
 	testing.expectf(t, near(capsule.axis, mm.quat_rotate(turned, [3]f32{1, 0, 0})), "along the axis it stretches most, turned: %v", capsule.axis)
-	rectangle := rect_desc(at(turned, {2, 0.5, 1}), Rect_Light{color = {1, 1, 1}, luminance = 2, range = 10})
+	rectangle := rect_desc(at(turned, {2, 0.5, 1}), Rect_Light{color = {1, 1, 1}, luminance = 2, range = 10}, nil)
 	testing.expectf(t, rectangle.size == {2, 0.5} && rectangle.radius == 0 && rectangle.intensity == 2, "the square of its entity, x by y: %v", rectangle.size)
 	testing.expectf(t, near(rectangle.direction, mm.quat_forward(turned)) && near(rectangle.axis, mm.quat_rotate(turned, [3]f32{-1, 0, 0})), "facing -z, wide along -x, its right seen from the side it lights: %v %v", rectangle.direction, rectangle.axis)
+	aimed := spot_desc(at(turned, 1), Spot_Light{color = {1, 1, 1}, intensity = 2, range = 10, angle = 0.5}, nil)
+	testing.expectf(t, near(aimed.texture_axis, mm.quat_rotate(turned, [3]f32{1, 0, 0})), "the width of the texture of a spot along +x: %v", aimed.texture_axis)
 	// A spot shines toward -z, its angle the half of its cone; the sun shown too.
 	core.add(spots, place(es, worlds, {position = {0, 3, 0}, rotation = turned, scale = {1, 1, 1}}), Spot_Light{color = {1, 1, 1}, intensity = 2, range = 10, radius = 0.1, angle = 0.5})
 	shown := place(es, worlds, {rotation = turned, scale = {1, 1, 1}})
