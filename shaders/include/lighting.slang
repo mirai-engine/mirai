@@ -110,24 +110,52 @@ float2 rect_place(Light light, float3 offset) {
     return float2(dot(offset, light.axis.xyz) / light.size.y, dot(offset, height) / light.size.z);
 }
 
-// The color a rectangle shows at a place of it, blurred over `blur` metres of
-// it: the emission of its material, whose texture lies across it as across a
-// quad from (0, 1) to (1, 0), over the luminance of the emission of the
-// material without its texture (the intensity of the light gives how bright),
-// or white.
-float3 rect_emission(Light light, float2 place, float blur) {
-    uint row = asuint(light.size.w);
-    if (row == 0u) return float3(1.0);
-    Material m = material_row(row);
-    float3 emission = m.emission / max(luminance(m.emission), 1e-6);
-    if (!material_has(m.textures[MATERIAL_MAP_EMISSION])) return emission;
-    float2 uv = material_map_uv(m, MATERIAL_MAP_EMISSION, 0.5 + 0.5 * float2(place.x, -place.y), 0.5 + 0.5 * float2(place.x, -place.y));
-    float2 texels = float2(texture_size(material_textures[mirai_nonuniform(m.textures[MATERIAL_MAP_EMISSION])], 0));
-    float level = max(log2(max(blur / (2.0 * max(light.size.y, light.size.z)), 1e-6) * max(texels.x, texels.y)), 0.0);
+// Whether a light projects a texture (LIGHT_TEXTURE in its image word).
+bool light_projects(Light light) { return (asuint(light.size.w) & LIGHT_TEXTURE) != 0u; }
+
+// The color of a texture of the table at uv, from 0 to 1 across it, blurred
+// over `blur` of its width.
+float3 light_texture(uint entry, float2 uv, float blur) {
+    float2 texels = float2(texture_size(material_textures[mirai_nonuniform(entry)], 0));
+    float level = max(log2(max(blur, 1e-6) * max(texels.x, texels.y)), 0.0);
     // The sampler of materials repeats: the edge of the level sampled stays its own.
     float2 shown = max(texels / exp2(ceil(level)), float2(1.0));
     uv = clamp(uv, 0.5 / shown, 1.0 - 0.5 / shown);
-    return emission * material_textures[mirai_nonuniform(m.textures[MATERIAL_MAP_EMISSION])].SampleLevel(material_sampler, uv, level).rgb;
+    return material_textures[mirai_nonuniform(entry)].SampleLevel(material_sampler, uv, level).rgb;
+}
+
+// The color a rectangle shows at a place of it, blurred over `blur` metres of
+// it, its image lying across it as across a quad from (0, 1) to (1, 0): the
+// texture it projects; or the emission of its material, with its texture,
+// over the luminance of the emission without it (the intensity of the light
+// gives how bright); or white.
+float3 rect_emission(Light light, float2 place, float blur) {
+    uint image = asuint(light.size.w);
+    if (image == 0u) return float3(1.0);
+    float2 uv = 0.5 + 0.5 * float2(place.x, -place.y);
+    float spread = blur / (2.0 * max(light.size.y, light.size.z));
+    if (light_projects(light)) return light_texture(image & ~LIGHT_TEXTURE, uv, spread);
+    Material m = material_row(image);
+    float3 emission = m.emission / max(luminance(m.emission), 1e-6);
+    if (!material_has(m.textures[MATERIAL_MAP_EMISSION])) return emission;
+    return emission * light_texture(m.textures[MATERIAL_MAP_EMISSION], material_map_uv(m, MATERIAL_MAP_EMISSION, uv, uv), spread);
+}
+
+// The color a spot that projects a texture sends along `along`, the unit way
+// from its center towards a point `distance` away: its texture lies across
+// the cone as a slide across the beam of a projector, the circle of the cone
+// inscribed in it and its width along the right the light keeps, blurred over
+// `footprint` metres there.
+float3 spot_texture(Light light, float3 along, float distance, float footprint) {
+    float3 forward = light.direction_cone.xyz;
+    float3 right = unpack_normal(asuint(light.size.z));
+    right = normalize(right - forward * dot(right, forward));
+    float3 up = cross(right, forward);
+    float ahead = max(dot(along, forward), 1e-4);
+    float cosine = light.direction_cone.w;
+    float width = 2.0 * sqrt(max(1.0 - cosine * cosine, 0.0)) / max(cosine, 1e-4);
+    float2 place = float2(dot(along, right), dot(along, up)) * (2.0 / (ahead * width));
+    return light_texture(asuint(light.size.w) & ~LIGHT_TEXTURE, 0.5 + 0.5 * float2(place.x, -place.y), footprint / max(width * ahead * distance, 1e-6));
 }
 
 // The color a diffuse surface gets from a rectangle: what it shows around the
@@ -146,8 +174,12 @@ float3 rect_diffuse_color(Light light, float3 position) {
 
 // What a light gives a point whose surface has that normal, with nothing in
 // its way, and the direction and distance to its center. A normal of zero
-// takes the light from every side alike.
-float3 light_contribution(Light light, float3 position, float3 normal, out float3 direction, out float distance) {
+// takes the light from every side alike. The color of a light that shows an
+// image is that of its image there (rect_diffuse_color, spot_texture),
+// blurred over `footprint` metres, the width of the place the point stands
+// for (0: as sharp as its texture): every pass that lights with a light takes
+// its color here.
+float3 light_contribution(Light light, float3 position, float3 normal, out float3 direction, out float distance, float footprint = 0.0) {
     float3 delta = light.position_range.xyz - position;
     distance = length(delta);
     direction = delta / max(distance, 1e-6);
@@ -158,16 +190,18 @@ float3 light_contribution(Light light, float3 position, float3 normal, out float
         return light.color_intensity.rgb * rect_diffuse_color(light, position) * (light.color_intensity.w * shape * light_window(distance, light.position_range.w));
     }
     float cone = 1.0;
+    float3 color = light.color_intensity.rgb;
     if (light.direction_cone.w > -1.5) {
         // Spot lights fade out between LIGHT_SPOT_FULL of the half-angle and its edge.
         float cos_outer = light.direction_cone.w;
         float cos_inner = cos(acos(cos_outer) * LIGHT_SPOT_FULL);
         cone = smoothstep(cos_outer, cos_inner, dot(-direction, light.direction_cone.xyz));
         if (cone <= 0.0) return float3(0.0);
+        if (light_projects(light)) color *= spot_texture(light, -direction, distance, footprint);
     }
-    if (light_is_capsule(light)) return light.color_intensity.rgb * (light.color_intensity.w * cone * capsule_irradiance(light, position, normal) * light_window(distance, light.position_range.w));
+    if (light_is_capsule(light)) return color * (light.color_intensity.w * cone * capsule_irradiance(light, position, normal) * light_window(distance, light.position_range.w));
     float cosine = dot(normal, normal) > 0.5 ? dot(normal, direction) : 1.0;
-    return light.color_intensity.rgb * (light.color_intensity.w * cone * sphere_irradiance(cosine, distance, light.size.x) * light_window(distance, light.position_range.w));
+    return color * (light.color_intensity.w * cone * sphere_irradiance(cosine, distance, light.size.x) * light_window(distance, light.position_range.w));
 }
 
 // The unshadowed radiance a light sends from the point towards its viewer:
@@ -185,7 +219,7 @@ float3 light_radiance(Light light, Shading s, out float3 direction, out float di
 // light_radiance in the share of each lobe: what the diffuse responses send
 // and what the specular ones do.
 void light_lobes(Light light, Shading s, out float3 diffuse, out float3 specular, out float3 direction, out float distance) {
-    float3 irradiance = light_contribution(light, s.position, s.normal, direction, distance);
+    float3 irradiance = light_contribution(light, s.position, s.normal, direction, distance, shading_footprint(s));
     light_lobes_of(light, s, irradiance, direction, distance, diffuse, specular);
 }
 // The same from what light_contribution gave the point: the irradiance, the

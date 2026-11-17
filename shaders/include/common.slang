@@ -299,7 +299,7 @@ struct Light {
     float4 position_range;   // xyz, w range
     float4 color_intensity;  // rgb color, w intensity
     float4 direction_cone;   // spot: xyz direction, w cos(half-angle); a rectangle: xyz the side it lights, w LIGHT_RECT; w LIGHT_POINT for the others
-    float4 size;             // x the radius of the sphere, or of the capsule, metres; y half the segment of a capsule along axis, or half the width of a rectangle; z half its height; w the material row whose emission a rectangle shows, as uint bits (0: none)
+    float4 size;             // x the radius of the sphere, or of the capsule, metres; y half the segment of a capsule along axis, or half the width of a rectangle; z half its height, or the right of the texture a spot projects (unpack_normal of its bits); w its image as uint bits: with LIGHT_TEXTURE the entry of the texture it projects, else the material row whose emission a rectangle shows (0: none)
     float4 axis;             // xyz along the segment of a capsule, or the width of a rectangle; w the bits of two halves: what of its light the probes gather (low) and what media scatter (high), light_shares
 };
 

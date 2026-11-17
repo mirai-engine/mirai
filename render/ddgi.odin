@@ -247,7 +247,7 @@ probe_changes_list :: proc(r: ^Renderer, changes: ^Light_Changes, moved: ^Occlud
 			nearest := linalg.clamp(light.position_range.xyz, box.low, box.high)
 			if linalg.length2(nearest - light.position_range.xyz) >= reach * reach {continue}
 			// A ray to a point of a light that has a size passes that far from its center.
-			size := max(light.size.x, light.size.y, light.size.z)
+			size := max(light.size.x, light.size.y, light.size.z if light_rect(light) else 0)
 			lit &&= add(&fresh, &count, {low = box.low - size, high = box.high + size, kind = abi.PROBE_CHANGE_SHADOW, stamp = stamp, light = light.position_range})
 			if !lit {break shadows}
 		}

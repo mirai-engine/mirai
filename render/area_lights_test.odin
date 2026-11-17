@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:math"
 import "core:math/linalg"
 import "core:os"
+import "core:slice"
 import "core:strings"
 import stbi "vendor:stb/image"
 import "core:testing"
@@ -169,35 +170,45 @@ rectangles_light_one_side_and_far_away_are_points :: proc(t: ^testing.T) {
 	testing.expectf(t, worst < 0.45, "off its axis it should fall with the cosine and no faster: %.1f%%", worst * 100)
 }
 
-// The emission of a material across a rectangle colors the light it gives
-// where that part of it is: red on one side of it, blue on the other.
+// The image of a light colors the light it gives where that part of it
+// falls, red on one side and blue on the other: the emission of a material
+// across a rectangle, the texture a rectangle projects across its face and
+// the one a spot projects across its cone. A spot with a white texture gives
+// what one without it gives.
 @(test)
-rectangles_show_the_emission_of_their_material :: proc(t: ^testing.T) {
+lights_color_their_light_by_their_image :: proc(t: ^testing.T) {
 	f: Area_Fixture
 	if !area_init(t, &f) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	SIZE :: 32
-	pixels: [SIZE * SIZE * 4]u8
+	pixels, white: [SIZE * SIZE * 4]u8
 	for y in 0 ..< SIZE {
 		for x in 0 ..< SIZE {
 			at := (y * SIZE + x) * 4
 			if x < SIZE / 2 {pixels[at] = 255} else {pixels[at + 2] = 255}
 			pixels[at + 3] = 255
+			white[at], white[at + 1], white[at + 2], white[at + 3] = 255, 255, 255, 255
 		}
 	}
 	texture, added := texture_add(r, {pixels = pixels[:], width = SIZE, height = SIZE, srgb = true, name = "halves"})
 	if !testing.expect(t, added, r.error) {return}
+	blank, made := texture_add(r, {pixels = white[:], width = SIZE, height = SIZE, srgb = true, name = "white"})
+	if !testing.expect(t, made, r.error) {return}
 	screen := DEFAULT_MATERIAL
 	screen.emission = {1, 1, 1}
 	screen.textures[.Emission] = texture
 	materials_set(r, {screen})
-	light := Light_Desc{position = {0, 0.6, 0}, color = {1, 1, 1}, intensity = 3 * math.PI / 2.4, range = 20, direction = {0, -1, 0}, axis = {1, 0, 0}, size = {2.4, 1}, material = 1, indirect = 1, scattering = 1}
-	area_scene(&f, []Light_Desc{light})
-	direct := area_direct(t, &f, 2, false)
-	reference := area_direct(t, &f, 48, true)
-	area_dump(&f, direct, "textured approximation")
-	area_dump(&f, reference, "textured reference")
+	rect := Light_Desc{position = {0, 0.6, 0}, color = {1, 1, 1}, intensity = 3 * math.PI / 2.4, range = 20, direction = {0, -1, 0}, axis = {1, 0, 0}, size = {2.4, 1}, indirect = 1, scattering = 1}
+	spot := Light_Desc{position = {0, 1.2, 0}, color = {1, 1, 1}, intensity = 2 * math.PI, range = 20, radius = 0.02, direction = {0, -1, 0}, cone = 1.1, texture_axis = {1, 0, 0}, indirect = 1, scattering = 1}
+	shown, projected, aimed := rect, rect, spot
+	shown.material, projected.texture, aimed.texture = 1, texture, texture
+	// One color for the diffuse light of each point of a rectangle: off the edge of a texture of two colors it errs most.
+	cases := [?]struct {name: string, light: Light_Desc, worst, mean: f32}{
+		{"a rectangle that shows its material", shown, 0.35, 0.12},
+		{"a rectangle that projects its texture", projected, 0.35, 0.12},
+		{"a spot that projects its texture", aimed, 0.35, 0.12},
+	}
 	width := int(r.main.targets.width)
 	column :: proc(f: ^Area_Fixture, x: f32) -> int {
 		view, proj, _ := camera_matrices(f.camera, 1)
@@ -205,14 +216,26 @@ rectangles_show_the_emission_of_their_material :: proc(t: ^testing.T) {
 		return int((clip.x / clip.w * 0.5 + 0.5) * f32(f.renderer.main.targets.width))
 	}
 	row := width / 2
-	for values, kind in ([2][]Vec3{direct, reference}) {
-		left, right := values[row * width + column(&f, -0.7)], values[row * width + column(&f, 0.7)]
-		label := "approximation" if kind == 0 else "reference"
-		testing.expectf(t, left.x > 2 * left.z && right.z > 2 * right.x, "%s: red on the left and blue on the right, not %v and %v", label, left, right)
+	for c in cases {
+		area_scene(&f, []Light_Desc{c.light})
+		direct := area_direct(t, &f, 2, false)
+		reference := area_direct(t, &f, 48, true)
+		area_dump(&f, direct, fmt.tprintf("%s approximation", c.name))
+		area_dump(&f, reference, fmt.tprintf("%s reference", c.name))
+		for values, kind in ([2][]Vec3{direct, reference}) {
+			left, right := values[row * width + column(&f, -0.7)], values[row * width + column(&f, 0.7)]
+			label := "approximation" if kind == 0 else "reference"
+			testing.expectf(t, left.x > 2 * left.z && right.z > 2 * right.x, "%s, %s: red on the left and blue on the right, not %v and %v", c.name, label, left, right)
+		}
+		worst, lit, mean, at := area_compare(&f, direct, reference)
+		testing.expectf(t, lit > 20, "%s: %d pixels of the grid are lit", c.name, lit)
+		testing.expectf(t, worst < c.worst && mean < c.mean, "%s: up to %.1f%% (at %v) and %.1f%% on average from its reference", c.name, worst * 100, at, mean * 100)
 	}
-	worst, lit, mean, at := area_compare(&f, direct, reference)
-	testing.expect(t, lit > 20)
-	// One color for the diffuse light of each point: off the edge of a texture of two colors it errs most.
-	testing.expectf(t, worst < 0.35 && mean < 0.12, "the textured rectangle is up to %.1f%% (at %v) and %.1f%% on average from its reference", worst * 100, at, mean * 100)
+	plain := spot
+	area_scene(&f, []Light_Desc{plain})
+	untextured := slice.clone(area_direct(t, &f, 2, false), context.temp_allocator)
+	plain.texture = blank
+	area_scene(&f, []Light_Desc{plain})
+	testing.expect(t, slice.equal(untextured, area_direct(t, &f, 2, false)), "a spot with a white texture gives what one without it gives")
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation reported %d errors; last: %s", rhi.device_validation_errors(f.device), rhi.device_validation_message(f.device))
 }
