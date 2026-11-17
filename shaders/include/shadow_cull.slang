@@ -66,6 +66,8 @@ uint shadow_word(StructuredBuffer<uint4> data, uint word) { return data[word >> 
 // The word of what the cache (moving 0) or the atlas (moving 1) draws into a
 // page of the pool this frame (SHADOW_WORDS_COST).
 uint shadow_cost_word(uint pool) { return SHADOW_WORDS_COST + min(params.moving, 1u) * SHADOW_POOL_PAGES + pool; }
+// And of the clusters its draws took of that page.
+uint shadow_taken_word(uint pool) { return SHADOW_WORDS_TAKEN + min(params.moving, 1u) * SHADOW_POOL_PAGES + pool; }
 
 // Whether the round draws a page of a map at its mip, a bit for each entry.
 bool shadow_page_drawn(Shadow_Map m, uint2 page) {

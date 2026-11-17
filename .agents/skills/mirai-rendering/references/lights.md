@@ -265,13 +265,15 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   tint each take at most `SHADOW_FRAME_CLUSTERS` clusters in a frame of any view, still, moving or
   first: what the least GPU the engine runs on draws into a depth map, masked, in a few
   milliseconds, so that no frame waits long on the maps and no draw nears the time a driver gives
-  one before it resets the device, whatever the scene. The cull by instance foresees what each
-  page takes; before the cull by cluster the pages are granted, in the order they are given,
-  while they fit with those before (the step `Grant`), and a page of the cache that alone passes
-  the bound is drawn in bands of its rows over frames, halved until one fits
-  (`SHADOW_WORDS_BAND`). A draw takes no cluster past the bound; a page it left one of, one that
-  waits and one whose band is not its last are not ready that frame (`Settle`): their points read
-  the nearest coarser page drawn, or trace, and the steps run again the next frame.
+  one before it resets the device. Before the cull by cluster, `Grant` gives the pages, in the
+  order they are given, while what they take fits half the bound: what a page took when last
+  drawn, else what the cull by instance foresees, scaled by what the draws took of that before
+  (`SHADOW_WORDS_SCALE`), and for a page not drawn yet a part of the share at most, as what is
+  foreseen strays most where a page holds the most. A page may take twice that, so one that takes
+  more is the only one left over; a page of the cache that takes more than half the bound is drawn
+  in bands of its rows over frames (`SHADOW_WORDS_BAND`). A page left over, one that waits and
+  one whose band is not its last are not ready that frame (`Settle`): their points read the
+  nearest coarser page drawn, or trace, and the steps run again the next frame.
 - **A still view.** While its camera, size, parameters and lights stay and no caster changes
   (`Shadow_Seen`), a view keeps the marks and the table of the frames before: its points mark the
   pages they read only for a cycle of its jitter after a change, the marks add up, and the steps
