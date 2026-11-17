@@ -95,6 +95,10 @@
 - The source itself of a stage with the variant `hw`, and one that says `//! software rays`, serve
   only the software tracer: they get no Metal code, since Metal traces rays by hardware alone
   ([RHI](rhi.md#hardware-ray-tracing)).
+- A stage of which the generation takes no code (those, when it is for Metal alone) is compiled
+  only to be reflected: Slang without the spirv-opt passes, which do not change its reflection.
+  What it leaves in the shared cache, its entry and its peak, is apart from what a compilation
+  with code leaves (`reflected_only`).
 - Ray queries use Slang's `RayQuery` and share traversal and material filters with the software
   BVH. Validating SPIR-V does not certify GPU execution on any backend.
 
@@ -308,12 +312,14 @@
   (`workspace.cache_folder`), the same for all the repository's worktrees, branches and projects.
   Each entry is named by its fingerprint:
   - `stages/<fingerprint>.json`, `.spv` and `.metal`: a compiled stage and its code;
+    `stages/<fingerprint>.reflected.json`, one compiled only to be reflected, never taken by a
+    generation that takes its code;
   - `reflection/<fingerprint>.json` and `<fingerprint>.attributes.json`: the reflection of the
     `Parameters` and of the `Attributes` of a program;
   - `embedded/<digest>.edit.spv.lz`, `.ship.spv.lz` and their `.metal.lz`: the stream
     `render` embeds, by the hashes of the code it holds, taken only if it decodes to that code;
-  - `peaks/<stage>` and `compiling`: what compilations held at their peak, and those that run
-    (Memory, below).
+  - `peaks/<stage>` (`<stage>.reflected` for one compiled only to be reflected) and `compiling`:
+    what compilations held at their peak, and those that run (Memory, below).
 - Each file is written separately and renamed into place (process- and thread-own temporary), and
   the stage's `.json` last. Whoever reads takes an entry only if all its hashes match; if not, it
   compiles and stores it again. An entry without the code of a requested backend is completed

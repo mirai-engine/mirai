@@ -77,6 +77,10 @@ SLANG_OPTIMIZATION :: []string{
     "--merge-blocks","--simplify-instructions","--compact-ids",
     "-X.",
 }
+// A stage no backend takes the code of is compiled only to be reflected
+// (reflected_only): Slang reflects the source, which no pass of spirv-opt changes.
+@(private)
+SLANG_REFLECTION :: []string{"-O0"}
 @(private)
 // Demote to helper: a fragment stage asks whether it is a helper of its quad (IsHelperLane).
 SPIRV_FLAGS :: []string{"-target","spirv","-profile","sm_6_5","-fvk-use-scalar-layout","-capability","spirv_1_5+spvDemoteToHelperInvocationEXT"}
@@ -487,6 +491,25 @@ compilation_memory :: proc(g:^Generation,key:string,allocator:=context.temp_allo
     return memory
 }
 
+// Whether the generation takes no code of a stage of these backends: its
+// SPIR-V serves only to reflect it (Metal and a stage of the rays traced by
+// software). It is compiled without the optimizer (SLANG_REFLECTION), so what
+// it leaves in the shared cache, its entry and its peak, is kept apart
+// (REFLECTED) from what a compilation that gives code leaves.
+@(private)
+reflected_only :: proc(backends:Backends) -> bool {return backends=={}}
+
+// What the shared cache adds to the name of what a stage compiled only to be
+// reflected leaves in it.
+@(private)
+REFLECTED :: ".reflected"
+
+// The key of the peak of the compilation of a job.
+@(private)
+job_key :: proc(job:^Job) -> string {
+    return strings.concatenate({job.name,REFLECTED},context.temp_allocator) if reflected_only(job.backends) else job.name
+}
+
 @(private)
 job_fail :: proc(job:^Job,allocator:runtime.Allocator,format:string,args:..any) {
     job.error=fmt.aprintf(format,..args,allocator=allocator)
@@ -552,14 +575,18 @@ job_run :: proc(g:^Generation,job:^Job,allocator:runtime.Allocator) {
         command:=make([dynamic]string,context.temp_allocator)
         append(&command,g.tools[.Slangc],job.source)
         append(&command,..SLANG_FLAGS)
-        if job.reduced {append(&command,"-O1")} else {append(&command,..SLANG_OPTIMIZATION)}
+        switch {
+        case reflected_only(job.backends): append(&command,..SLANG_REFLECTION)
+        case job.reduced: append(&command,"-O1")
+        case: append(&command,..SLANG_OPTIMIZATION)
+        }
         append(&command,SLANG_DIAGNOSTICS_FLAG)
         append(&command,"-stage",stage)
         for directory in job.includes {append(&command,"-I",directory)}
         for define in job.defines {append(&command,strings.concatenate({"-D",define},context.temp_allocator))}
         append(&command,..SPIRV_FLAGS)
         append(&command,"-o",output,"-reflection-json",reflection)
-        said,compiled:=tool_run(g.runner,command[:],context.temp_allocator,compilation_memory(g,job.name,job=job))
+        said,compiled:=tool_run(g.runner,command[:],context.temp_allocator,compilation_memory(g,job_key(job),job=job))
         diagnostics:=slang_diagnostics(said,context.temp_allocator)
         diagnostics_place(diagnostics,g.copies,{g.project,g.root},context.temp_allocator)
         if !compiled {
@@ -875,7 +902,7 @@ jobs_order :: proc(g:^Generation,allocator:runtime.Allocator) -> []int {
         return 3
     }
     ranked:=make([]Ranked,len(g.jobs),context.temp_allocator)
-    for job,i in g.jobs {ranked[i]={i,g.peaks[job.name] or_else max(i64)}}
+    for &job,i in g.jobs {ranked[i]={i,g.peaks[job_key(&job)] or_else max(i64)}}
     slice.stable_sort_by(ranked,proc(a,b:Ranked) -> bool {return a.cost>b.cost})
     order:=make([]int,len(g.jobs),allocator)
     at:=0
