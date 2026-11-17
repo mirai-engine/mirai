@@ -461,7 +461,7 @@ frame and the current one:
     with a value; both outside a draw pass;
   - `pass_buffer_held(pass, desc)` says whether the world holds the buffer with that size;
   - `pass_dispatch_indirect` and `pass_draw_indexed_indirect` take their arguments from a buffer;
-    `pass_indices(pass, .Scene)` binds the scene indices (`mesh_draw_range` gives those of a mesh)
+    `pass_indices(pass, .Meshes)` binds the indices of the meshes drawn whole (`frame_mesh_whole`)
     and `.Quad`, the six of a quad.
 - **Table textures.** `table_texture(renderer, world, Table_Texture_Desc{name, width, height})`,
   between frames, gives the table place of an RGBA16F texture of the world under that name, which

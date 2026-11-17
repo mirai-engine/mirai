@@ -46,7 +46,7 @@ Geometry_Refused :: struct {
 pool_gpu :: proc(s: ^Scene_State, pool: Mesh_Pool) -> (buffer: ^rhi.Buffer, count, element: int, usage: rhi.Buffer_Usage, name: string) {
 	switch pool {
 	case .Vertex:   return &s.vertex_buffer, len(s.vertices), size_of(u32), {.Storage, .Accel_Input}, "vertex pool"
-	case .Index:    return &s.index_buffer, len(s.indices), size_of(u32), {.Storage, .Accel_Input, .Index}, "index pool"
+	case .Index:    return &s.index_buffer, len(s.indices), size_of(u32), {.Storage, .Accel_Input}, "index pool"
 	case .Node:     return &s.blas_node_buffer, len(s.blas_nodes), size_of(Gpu_Bvh_Node), {.Storage}, "blas nodes"
 	case .Triangle: return &s.blas_triangle_buffer, len(s.blas_triangles), size_of(Gpu_Bvh_Triangle), {.Storage}, "blas triangles"
 	}
