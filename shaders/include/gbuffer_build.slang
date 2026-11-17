@@ -10,7 +10,7 @@
 #include "gbuffer_vertex.slang"
 #include "cut.slang"
 
-// The corner a draw of a cluster takes for its vertex `corner`: an instance
+// The corner the resolve takes for corner `corner` of a triangle: an instance
 // that mirrors its mesh would turn its winding around, so its triangles go
 // the other way round and their front faces stay front.
 uint gbuffer_corner(Instance inst, uint corner) {
@@ -110,9 +110,9 @@ float3 gbuffer_corner_world_previous(Instance inst, Mesh mesh, Cluster c, Cluste
     return gbuffer_hooked(k, transform_point(inst.prev_world, before), p.v.color, frame.time.y);
 }
 
-Gbuffer_Vertex gbuffer_corner_build(uint index, Instance inst, Mesh mesh, Cluster c, Cluster_Block b, Gbuffer_Cluster k, uint corner) {
+Gbuffer_Vertex gbuffer_local_build(uint index, Instance inst, Mesh mesh, Cluster c, Cluster_Block b, Gbuffer_Cluster k, uint local) {
     Gbuffer_Vertex output = (Gbuffer_Vertex)0;
-    Gbuffer_Corner p = gbuffer_corner_place(inst, mesh, c, b, k, corner);
+    Gbuffer_Corner p = gbuffer_local_place(inst, mesh, c, b, k, local);
     Mesh_Point v = p.v;
     float3 world = p.world;
     float3 prev_world = gbuffer_corner_world_previous(inst, mesh, c, b, k, p);
@@ -133,7 +133,8 @@ Gbuffer_Vertex gbuffer_corner_build(uint index, Instance inst, Mesh mesh, Cluste
     return output;
 }
 
-Gbuffer_Vertex gbuffer_vertex_build(uint index, Instance inst, Mesh mesh, Cluster c, uint corner, bool cut) {
-    return gbuffer_corner_build(index, inst, mesh, c, cluster_block(mesh, c), gbuffer_cluster(index, inst, mesh, c, cut), corner);
+// The vertex `local` of a cluster of an instance, as a draw of the instance takes it.
+Gbuffer_Vertex gbuffer_vertex_build(uint index, Instance inst, Mesh mesh, Cluster c, uint local, bool cut) {
+    return gbuffer_local_build(index, inst, mesh, c, cluster_block(mesh, c), gbuffer_cluster(index, inst, mesh, c, cut), local);
 }
 #endif

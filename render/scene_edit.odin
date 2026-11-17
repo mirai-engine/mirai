@@ -121,7 +121,7 @@ mesh_release :: proc(r: ^Renderer, handle: Mesh_Handle) -> bool {
 	if int(handle) >= len(s.meshes) || s.meshes[handle].vertex_count == 0 {return false}
 	mesh_ray_release(r, handle)
 	removed := s.meshes[handle]
-	freed := u64(removed.vertex_span + removed.index_span) * 4
+	freed := u64(removed.vertex_span + removed.index_span + removed.draw.count) * 4
 	for ray in removed.rays[:removed.ray_count] {
 		freed += u64(ray.table_count) * 4 + u64(ray.bvh_node_count) * size_of(Gpu_Bvh_Node) + u64(ray.triangle_count) * size_of(Gpu_Bvh_Triangle)
 		if ray.blas != 0 {freed += u64(ray.table_count) * BLAS_TRIANGLE_BYTES}
@@ -137,6 +137,7 @@ mesh_release :: proc(r: ^Renderer, handle: Mesh_Handle) -> bool {
 	for _,pose in s.displaced {if pose!=handle && mesh_displaced(s,u32(pose)) && s.meshes[pose].skin.source==handle {s.meshes[pose].skin.source=Mesh_Handle(GPU_NONE)}}
 	pool_release(&s.vertices,&s.pool_free[.Vertex],removed.vertex_word,removed.vertex_span)
 	pool_release(&s.indices,&s.pool_free[.Index],removed.index_word,removed.index_span)
+	if removed.draw.count>0 {pool_release(&s.indices,&s.pool_free[.Index],removed.draw.word,removed.draw.count)}
 	for ray in removed.rays[:removed.ray_count] {
 		if ray.blas != 0 {rhi.accel_destroy(r.device, ray.blas)}
 		if ray.bvh_node_count>0 {

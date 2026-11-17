@@ -125,6 +125,7 @@ VERTEX_WORDS :: abi.VERTEX_WORDS
 CLUSTER_TRIANGLES :: asset.CLUSTER_TRIANGLES
 // The vertices a draw gives every cluster: the corners of as many triangles as one has.
 CLUSTER_DRAW_VERTICES :: abi.CLUSTER_DRAW_VERTICES
+DRAW_VERTEX_BITS :: abi.DRAW_VERTEX_BITS
 // A level of a mesh in the index pool (asset.Mesh_Level): its first cluster,
 // how many, their triangles, their error and that of what replaces them.
 LEVEL_WORDS :: abi.LEVEL_WORDS

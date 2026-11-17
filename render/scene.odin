@@ -1269,6 +1269,7 @@ GEOMETRY_STAGING_KEPT :: u64(64) << 20
 // goes, and shows when it returns.
 renderer_commit_geometry :: proc(r: ^Renderer, cmd: ^rhi.Command_List = nil, slot := 0) -> bool {
 	s := &r.scene
+	mesh_draw_lists_build(r)
 	dirty := s.geometry_dirty
 	// Words written in place (the values of an instance) go without a BLAS or TLAS to build.
 	written := false
