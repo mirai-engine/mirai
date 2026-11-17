@@ -25,8 +25,10 @@
 // cache, of a page it held the part where what stays changed, or the band of
 // a page drawn over frames); bound: the clusters the draws of the round take
 // in a frame (render.SHADOW_FRAME_CLUSTERS); foresee: 1 while the pass by
-// instance only foresees what each page takes, before the pages are granted.
-struct Params_Block { uint instances; uint maps; uint rows; uint chunk_capacity; uint entry_capacity; uint list; uint moving; uint movers; uint listed; uint ranges; uint masks; uint plan; uint part; uint bound; uint foresee; uint pad0; };
+// instance only foresees what each page takes, before the pages are granted,
+// 2 while it marks where the batches that sway moved (SHADOW_CULL_SWAY);
+// range_first: the first of the ranges it culls after the words of `movers`.
+struct Params_Block { uint instances; uint maps; uint rows; uint chunk_capacity; uint entry_capacity; uint list; uint moving; uint movers; uint listed; uint ranges; uint masks; uint plan; uint part; uint bound; uint foresee; uint range_first; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 // The draws: of the clusters that hide whole and of those of masked materials.
 #define SHADOW_DRAW_OPAQUE 0u

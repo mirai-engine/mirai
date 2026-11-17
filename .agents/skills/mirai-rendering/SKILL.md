@@ -76,7 +76,9 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
   [glass in rays](references/materials.md#glass-in-rays)
 - Local lights, shadows → [lights](references/lights.md#local-lights);
   direct light of a view (grid, samples, shadow maps) →
-  [direct light](references/lights.md#direct-light-of-a-view)
+  [direct light](references/lights.md#direct-light-of-a-view); their pages, what a frame draws of
+  them at most, a still view, the cache and reading them →
+  [pages](references/lights.md#pages-of-the-shadow-maps)
 - GI, BVH, probe volume, sky →
   [GI](references/gi.md#lighting-techniques-and-optimization); contact occlusion, small instances
   outside the volume → [contact](references/gi.md#contact-occlusion)

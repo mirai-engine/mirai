@@ -239,6 +239,12 @@ SHADOW_ENTRY_COARSER       :: 20
 SHADOW_PLAN_RESET          :: u32(1)
 SHADOW_PLAN_STALE          :: u32(2)
 SHADOW_PLAN_NET            :: u32(4)
+// Of the pass by instance of the cull of the maps (shadow_cull.slang
+// Params_Block.foresee): it marks, before the entries of the pages, the pages
+// of each slot in use (`list` words of the buffer of the maps, `maps` of them)
+// that the instances of the batches that swayed cover, in the maps finer than
+// their sway: where what moves changed.
+SHADOW_CULL_SWAY           :: u32(2)
 SHADOW_BOX_ROWS            :: 2
 // The farthest depth the cache holds over blocks of each page of its pool
 // (render.Shadow_Raster.hiz): SHADOW_HIZ_BLOCK texels a side at its first
@@ -248,8 +254,9 @@ SHADOW_HIZ_MIPS            :: 5
 // The words of the buffer of the pages of a view (render.Shadow_Raster.pages):
 // the slot and entry each page of the pool holds + 1, the frame it was last
 // read in, how much of it the cache holds while it is drawn in bands over
-// frames (SHADOW_BAND_*) and the clusters its band took the last time (0: not
-// known); of the cache and of the atlas, what their draws took of the
+// frames (SHADOW_BAND_*), the clusters its band took the last time and those
+// the atlas took to compose it the last time (0: not known); of the cache
+// and of the atlas, what their draws took of the
 // clusters the cull by instance foresaw, in 1/SHADOW_SCALE_ONE (0: as much);
 // and a bit for each entry of each slot (SHADOW_MASK_WORDS a slot)
 // that a pass after the maps read this frame, for the next; then what each
@@ -279,7 +286,7 @@ SHADOW_WORDS_OWNER         :: 0
 SHADOW_WORDS_AGE           :: SHADOW_WORDS_OWNER + SHADOW_POOL_PAGES
 SHADOW_WORDS_BAND          :: SHADOW_WORDS_AGE + SHADOW_POOL_PAGES
 SHADOW_WORDS_KNOWN         :: SHADOW_WORDS_BAND + SHADOW_POOL_PAGES
-SHADOW_WORDS_SCALE         :: SHADOW_WORDS_KNOWN + SHADOW_POOL_PAGES
+SHADOW_WORDS_SCALE         :: SHADOW_WORDS_KNOWN + 2 * SHADOW_POOL_PAGES
 SHADOW_WORDS_LATE          :: SHADOW_WORDS_SCALE + 4
 SHADOW_WORDS_NEEDED        :: SHADOW_WORDS_LATE + SHADOW_MASKS
 SHADOW_WORDS_STALE         :: SHADOW_WORDS_NEEDED + SHADOW_MASKS
