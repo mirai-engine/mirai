@@ -134,8 +134,8 @@ mtl_sample_slot :: proc(c: ^Command_List) -> (buffer: ^MTL.CounterSampleBuffer, 
 	if c.immediate {return}
 	d := c.device
 	f := &d.frames[d.slot]
-	if !f.passes || f.query_count == 0 || f.encoder_count >= MAX_TIMESTAMPS {return}
-	f.encoder_marks[f.encoder_count] = u16(f.query_count - 1)
+	if !f.passes || f.recorded.count == 0 || f.encoder_count >= MAX_TIMESTAMPS {return}
+	f.encoder_marks[f.encoder_count] = u16(f.recorded.count - 1)
 	index = NS.UInteger(f.encoder_count) * 2
 	f.encoder_count += 1
 	return f.queries, index, true
@@ -711,10 +711,6 @@ cmd_pop_label :: proc(c: ^Command_List) {
 // mark opens an encoder of its own, whose boundary samples bound it.
 cmd_timestamp :: proc(c: ^Command_List, name: string) {
 	if c.immediate {return}
-	d := c.device
-	f := &d.frames[d.slot]
-	if !f.passes || f.query_count >= MAX_TIMESTAMPS {return}
-	if !c.in_render_pass {mtl_end_encoder(c)}
-	f.query_names[f.query_count] = string(f.query_bytes[f.query_count][:copy(f.query_bytes[f.query_count][:], name)])
-	f.query_count += 1
+	f := &c.device.frames[c.device.slot]
+	if frame_passes_add(&f.recorded, name) && f.passes && !c.in_render_pass {mtl_end_encoder(c)}
 }

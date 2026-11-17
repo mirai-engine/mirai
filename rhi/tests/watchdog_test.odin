@@ -89,8 +89,9 @@ watchdog_probe_run :: proc() -> int {
 rhi_the_watchdog_ends_a_process_whose_gpu_work_runs_past_its_limit :: proc(t: ^testing.T) {
 	d := shared_device.take_or_skip(t)
 	if d == nil {return}
-	// What names the passes of a frame in the report.
-	named := rhi.device_info(d).features.stop_place || rhi.device_info(d).features.timestamps
+	// The passes the CPU recorded are always named; where the GPU stopped, only
+	// by a device that marks where it goes.
+	marked := rhi.device_info(d).features.stop_place
 	program, _ := os.get_executable_path(context.temp_allocator)
 	environment, _ := os.environ(context.temp_allocator)
 	cases := [?]struct {
@@ -115,8 +116,9 @@ rhi_the_watchdog_ends_a_process_whose_gpu_work_runs_past_its_limit :: proc(t: ^t
 		for text in c.says {
 			testing.expectf(t, strings.contains(string(stderr), text), "limit %q: %q is not in:\n%s", c.limit, text, string(stderr))
 		}
-		if c.code == rhi.WATCHDOG_EXIT_CODE && named {
+		if c.code == rhi.WATCHDOG_EXIT_CODE {
 			testing.expectf(t, strings.contains(string(stderr), "the frame recorded the passes spin"), "limit %q: the report names the passes:\n%s", c.limit, string(stderr))
+			testing.expectf(t, strings.contains(string(stderr), "it stopped in spin") == marked, "limit %q: the report says where the GPU stopped only when the device marks it (stop_place %v):\n%s", c.limit, marked, string(stderr))
 		}
 		testing.expectf(t, c.code == rhi.WATCHDOG_EXIT_CODE || !strings.contains(string(stderr), "GPU watchdog: frame"), "limit %q: the watchdog fired:\n%s", c.limit, string(stderr))
 	}

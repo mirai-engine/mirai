@@ -860,13 +860,12 @@ cmd_timestamp :: proc(c: ^Command_List, name: string) {
 vk_section :: proc(c: ^Command_List, name: string) {
 	f := &c.device.frames[c.device.slot]
 	vk_mark(c, .Section, name)
-	if f.passes {vk_timestamp_write(f, name)}
+	if frame_passes_add(&f.recorded, name) && f.passes {vk_timestamp_write(f)}
 }
 
 @(private)
-vk_timestamp_write :: proc(f: ^Vk_Frame, name: string) {
+vk_timestamp_write :: proc(f: ^Vk_Frame) {
 	if f.queries == 0 || f.query_count >= MAX_TIMESTAMPS {return}
 	f.list.device.dvk.CmdWriteTimestamp2(f.cmd, {.ALL_COMMANDS}, f.queries, f.query_count)
-	f.query_names[f.query_count] = string(f.query_bytes[f.query_count][:copy(f.query_bytes[f.query_count][:], name)])
 	f.query_count += 1
 }

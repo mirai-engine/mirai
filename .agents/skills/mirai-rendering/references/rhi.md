@@ -106,6 +106,10 @@ compile time with build tags, without virtual dispatch. `render` does not see na
   by their `cmd_timestamp` names) and ends at once with `WATCHDOG_EXIT_CODE`: `TerminateProcess`
   or `_exit`, never the exit that runs the driver's own teardown. A failure the API reported
   disarms it: that is the host's.
+- **What the report knows.** The passes come from what the CPU recorded (`Frame_Passes`), on every
+  device and whether or not the frame takes timings. Where the GPU stopped among them only a
+  device with `stop_place` says: Metal marks no progress, and a command buffer names the encoder
+  that faulted only once it reports an error, never while it hangs.
 - **What it protects against.** Ending the process drops the work it queued, and the system takes
   the GPU back from what it runs: Windows suspends the contexts of the process, a preemption with no
   grace period. A single draw or dispatch the GPU cannot preempt within the display driver's
