@@ -611,7 +611,7 @@ Features :: struct {
 	timestamps:          bool, // cmd_timestamp intervals while timestamps_want is on; else one "frame" interval
 	validation:          bool, // API validation is active
 	clip_distance:       bool, // a vertex shader can clip by planes of its own
-	stop_place:          bool, // a loss names where the GPU stopped (device_failure); Vulkan with VK_AMD_buffer_marker
+	stop_place:          bool, // the GPU marks where it goes, so a loss (device_failure) and a hang (the watchdog) name where it stopped; Vulkan with VK_AMD_buffer_marker
 }
 
 Device_Type :: enum u8 {Other, Integrated, Discrete, Virtual, CPU}
@@ -813,6 +813,24 @@ Gpu_Timing :: struct {
 MAX_TIMESTAMPS :: 256
 // Bytes of the name of a timestamp that are kept; a longer one is cut.
 MAX_TIMESTAMP_NAME_BYTES :: 64
+
+// The cmd_timestamp names a frame recorded, in order, kept on the CPU on every
+// device: its timings name their intervals by them and the watchdog lists them.
+@(private)
+Frame_Passes :: struct {
+	count: u32,
+	names: [MAX_TIMESTAMPS]string,
+	bytes: [MAX_TIMESTAMPS][MAX_TIMESTAMP_NAME_BYTES]u8, // the names, which a caller may build in the frame
+}
+
+// Records the next pass of a frame; false past MAX_TIMESTAMPS.
+@(private)
+frame_passes_add :: proc(p: ^Frame_Passes, name: string) -> bool {
+	if p.count >= MAX_TIMESTAMPS {return false}
+	p.names[p.count] = string(p.bytes[p.count][:copy(p.bytes[p.count][:], name)])
+	p.count += 1
+	return true
+}
 
 // Oversized transients one frame holds.
 MAX_FRAME_OVERSIZED :: 16

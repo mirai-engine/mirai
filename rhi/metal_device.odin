@@ -100,9 +100,7 @@ Mtl_Frame :: struct {
 	ranges:      [dynamic][3]u64,     // block, offset and size of the arena given back then
 	queries:     ^MTL.CounterSampleBuffer, // two samples per encoder, at its start and its end; nil without stage boundary sampling
 	passes:      bool, // the frame samples its encoders: timestamps_want was on when it began
-	query_count: u32,  // cmd_timestamp marks
-	query_names: [MAX_TIMESTAMPS]string,
-	query_bytes: [MAX_TIMESTAMPS][MAX_TIMESTAMP_NAME_BYTES]u8,
+	recorded:    Frame_Passes, // its cmd_timestamp marks
 	encoder_count: u32,
 	encoder_marks: [MAX_TIMESTAMPS]u16, // of each sampled encoder: the mark it runs after
 	number:        u64,  // the frame_number it committed
@@ -418,7 +416,6 @@ mtl_create_device :: proc(d: ^Device, desc: Device_Desc) -> bool {
 	d.info.features.texture_bc = bool(MTL.Device_supportsBCTextureCompression(d.device))
 	d.info.features.timestamps = false
 	d.info.features.clip_distance = true
-	d.info.features.stop_place = true
 
 	upload_size := desc.upload_bytes_per_frame if desc.upload_bytes_per_frame > 0 else 16 * 1024 * 1024
 
@@ -839,8 +836,8 @@ MTL_COUNTER_ERROR :: max(u64)
 mtl_collect_timestamps :: proc(d: ^Device, f: ^Mtl_Frame) {
 	NS.scoped_autoreleasepool()
 	d.timing_count = 0
-	marks, encoders := f.query_count, f.encoder_count
-	f.query_count, f.encoder_count = 0, 0
+	marks, encoders := f.recorded.count, f.encoder_count
+	f.recorded.count, f.encoder_count = 0, 0
 	if begun, ended := MTL.CommandBuffer_GPUStartTime(f.cmd), MTL.CommandBuffer_GPUEndTime(f.cmd); ended > begun && begun > 0 {
 		present_latency(d, f.begun_ns, f.submitted_ns, i64((ended - begun) * 1e9))
 	}
@@ -874,7 +871,7 @@ mtl_collect_timestamps :: proc(d: ^Device, f: ^Mtl_Frame) {
 					if ends[i] != 0 {start, end = max(starts[i], previous), ends[i]}
 					previous = end
 					start_ns, end_ns := tick_of(start, gpu, now, rate), tick_of(end, gpu, now, rate)
-					name := string(d.timing_bytes[i][:copy(d.timing_bytes[i][:], f.query_names[i])])
+					name := string(d.timing_bytes[i][:copy(d.timing_bytes[i][:], f.recorded.names[i])])
 					d.timings[i] = {name = name, ms = f32(f64(end_ns - start_ns) / 1e6), start_ns = start_ns, end_ns = end_ns}
 				}
 				d.timing_count = intervals
@@ -1087,13 +1084,10 @@ watchdog_gpu_wait :: proc(d: ^Device, serial: u64, timeout_ns: i64) -> Watchdog_
 	return .Waiting
 }
 
-// The passes the frame of a slot recorded, when it took timings: Metal names
-// the encoder that faulted only once a command buffer reports its error.
+// Metal marks no progress (stop_place is off): a command buffer names the
+// encoder that faulted only once it reports its error, never while it hangs.
 @(private)
-watchdog_frame_text :: proc(d: ^Device, slot: int, b: ^strings.Builder) {
-	f := &d.frames[slot]
-	watchdog_names(b, f.query_names[:min(f.query_count, MAX_TIMESTAMPS)] if f.passes else nil)
-}
+watchdog_stopped :: proc(d: ^Device, slot: int, out: []u8) -> string {return ""}
 
 // ---------------------------------------------------------------- swapchain
 
