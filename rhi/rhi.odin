@@ -355,15 +355,6 @@ MAX_SHADER_CONSTANTS :: 8
 // A SPIR-V specialization constant, a Metal function constant.
 Shader_Constants :: distinct bit_set[0 ..< MAX_SHADER_CONSTANTS; u32]
 
-// The constant of a shader by its name; false when it declares none so named.
-shader_constant :: proc "contextless" (code: ^Shader_Code, name: string) -> (constants: Shader_Constants, found: bool) {
-	if code == nil {return}
-	for constant, id in code.constants[:min(len(code.constants), MAX_SHADER_CONSTANTS)] {
-		if constant == name {return {id}, true}
-	}
-	return
-}
-
 // Whether a pipeline may set constants of code; false with the error of the device.
 @(private)
 shader_constants_valid :: proc(d: ^Device, pipeline: string, code: ^Shader_Code, constants: Shader_Constants) -> bool {

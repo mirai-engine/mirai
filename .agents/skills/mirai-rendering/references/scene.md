@@ -57,15 +57,19 @@
   each mesh, with the layout of `asset.mesh_page_layout`: vertices, UV1, colors, surface and
   triangles of the page; and the posed vertices of skins and deformables, by mesh vertex index) and
   the index one (clusters, page table, levels, the material word of each slot, the primitive tables
-  of the native BLAS, the batch instances and the draw lists). A mesh is one block of each, with
+  of the native BLAS and the batch instances). A mesh is one block of each, with
   those of its pages following in its order; its row of the mesh table (`Gpu_Mesh`) gives where
   each part starts.
-- **Draw lists.** What draws a mesh out of the raster of a view (the draws of an instance, mesh
-  particles) draws it indexed by the draw list of its mesh (`Mesh_Draw_List`): the three vertices
-  of each triangle of each cluster, as the cluster and the vertex in it. A draw asks for it, the
-  next publication makes it in the index pool before it copies the pools, and the mesh keeps it
-  until it goes; until the GPU holds it the draw is not made. Only the meshes so drawn take that
-  memory.
+- **Meshes drawn whole.** What draws a mesh out of the raster of a view (glass and its filter,
+  translucents, overlays, the highlight; extensions through `frame_mesh_whole`, the meshes of
+  particles) draws it indexed by a list the frame lays out (`mesh_draws.odin`): of each cluster
+  the three vertices of each triangle, as the cluster and the vertex in it, padded to a fixed
+  room a cluster. A mesh keeps no list of its own: each frame places the meshes it draws so in
+  one buffer by the order of their handles, writes only those whose place is new (and those whose
+  pages stream), and gives the place to the row of the mesh table (`Gpu_Mesh.draw_first`), which
+  extensions read. The buffer starts at a fixed size and grows, as the lists of the cull, to the
+  most a frame asked for; what does not fit is not drawn that frame. A frame that draws the same
+  meshes, or a first mesh within that room, allocates nothing.
   Instances, materials and lights are indexed buffers; the material textures are in the
   [texture table](rhi.md#bindings-and-texture-table).
 - **Pages.** The vertices and triangles of a cluster are read only through the entry of its page
@@ -138,6 +142,12 @@
   the triangles of the visible clusters that may show, which compute passes list each frame
   with their vertices placed once; the G-buffer is resolved from it once per pixel
   ([culling](frame-graph.md#passes)). No binds per material or per object.
+- **Size of the raster lists.** They hold a round, not a view: they grow, with a small slack, to
+  a third of what the view of the frame that needs most writes (`RASTER_LIST_SHARE`), and a
+  larger view is drawn over more rounds. Rounds of that share hold a view whole but for the room
+  a list leaves past the cluster that did not fit; a view that passes all its rounds (a jump in
+  what it sees) has what does not fit left out and counted, and the lists grow for the frames
+  after.
 - `mesh_add` encodes vertices and indices with `asset.mesh_build` at one level and registers them
   with `mesh_add_geometry`, which takes the geometry from a file or that made earlier in a job
   (`host.assets_render_geometry_make`) with its ray cuts. The meshes made at runtime
@@ -412,10 +422,10 @@ of `GEOMETRY_UPLOADS` meshes, without allocating in a stable frame.
   buffer waits for it to grow.
 - **Hidden until complete.** Until all of it has been uploaded, nothing reads it on the GPU: its
   instances stay hidden (`INSTANCE_FLAG_COLLAPSED`: a `scene_move` does not show them and the
-  outline does not draw them), its batches are not built, `mesh_draw_range` rejects it, its BLAS
-  is not built and its pose is neither deformed nor refit, and stays dirty. Before the frame that
-  follows that of its last range it is shown at once (`geometry_uploads_install`): its instances,
-  the light around it, its batches and its BLAS, in the publication of that frame.
+  outline does not draw them), its batches are not built, `mesh_primitive_count` rejects it, its
+  BLAS is not built and its pose is neither deformed nor refit, and stays dirty. Before the frame
+  that follows that of its last range it is shown at once (`geometry_uploads_install`): its
+  instances, the light around it, its batches and its BLAS, in the publication of that frame.
   `mesh_upload_pending` and `mesh_uploading` say so.
 - **Reused slots.** A range uploads from the CPU copy when its turn comes, and `Mesh_Upload`
   carries a serial: the mesh that takes the handle or the ranges of one that left (`mesh_remove`

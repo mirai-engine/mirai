@@ -46,7 +46,7 @@ void main(uint3 id : SV_DispatchThreadID) {
             if (any(ahead < lo) || any(ahead > hi)) break;
             optical += max(particle_grid_sample_row(g, copy, ahead, 0u).x, 0.0) * v.density * g.cell_size;
         }
-        sun = luminance(trace_transmission(position, frame.sun_direction.xyz, sun_reach(position, frame.sun_direction.xyz))) * exp(-optical);
+        sun = float(trace_visible(position, frame.sun_direction.xyz, sun_reach(position, frame.sun_direction.xyz))) * exp(-optical);
     }
     float3 up = float3(0.0, 1.0, 0.0);
     float4 now = float4(media_ambient(position, up) + media_local_light(position, up, 0.0), sun);

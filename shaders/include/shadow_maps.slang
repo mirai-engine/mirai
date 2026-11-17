@@ -465,6 +465,7 @@ void shadow_mark_late(Shadow_Map m, float3 position) {
     for (uint y = first.y; y <= end.y; y++) {
         for (uint x = first.x; x <= end.x; x++) {
             uint entry = shadow_page_entry(m.rect, uint2(x, y));
+            if (!shadow_place_valid(m.rect.x, entry)) continue;
             uint word = SHADOW_WORDS_LATE + m.rect.x * SHADOW_MASK_WORDS + (entry >> 5u), bit = 1u << (entry & 31u);
             if ((view_shadow_marks[word] & bit) != 0u) continue;
             uint before;

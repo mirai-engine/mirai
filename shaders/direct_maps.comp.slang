@@ -21,7 +21,7 @@
 #define MIRAI_GROUP_Z 1
 
 // Those of direct_samples.comp.
-struct Params_Block { uint pad0; uint samples; float sun_radius; uint scale; uint hard; uint resume; uint glass; uint pad4; float3 grid_origin; float grid_cell; uint3 grid_size; uint cells;
+struct Params_Block { uint pad0; uint samples; float sun_radius; uint scale; uint hard; uint pad1; uint pad2; uint pad3; float3 grid_origin; float grid_cell; uint3 grid_size; uint cells;
     uint shadow_on; uint shadow_rows; uint shadow_maps; uint shadow_sun; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 [[vk::binding(SLOT_PASS1, 0)]] Texture2D<float4> g_depth : register(MIRAI_REGISTER(t, SLOT_PASS1), space0);
@@ -31,7 +31,7 @@ struct Params_Block { uint pad0; uint samples; float sun_radius; uint scale; uin
 [[vk::binding(SLOT_PASS2, 0)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> out_samples : register(MIRAI_REGISTER(u, SLOT_PASS2), space0);
 [[vk::binding(SLOT_PASS5, 0)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> out_depth : register(MIRAI_REGISTER(u, SLOT_PASS5), space0);
 [[vk::binding(SLOT_PASS6, 0)]] StructuredBuffer<uint4> light_grid : register(MIRAI_REGISTER(t, SLOT_PASS6), space0);
-[[vk::binding(SLOT_PASS7, 0)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> out_sun : register(MIRAI_REGISTER(u, SLOT_PASS7), space0);
+[[vk::binding(SLOT_PASS7, 0)]] [[vk::image_format("r16f")]] RWTexture2D<float> out_sun : register(MIRAI_REGISTER(u, SLOT_PASS7), space0);
 #include "shadow_maps.slang"
 #include "direct_grid.slang"
 
@@ -116,7 +116,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     if (depth_empty(depth)) {
         out_depth[p] = float4(0.0);
         out_samples[p] = float4(0.0, 0.0, 0.0, 1.0);
-        out_sun[p] = float4(1.0, 1.0, 1.0, -1.0);
+        out_sun[p] = -1.0;
         return;
     }
     float2 uv = (float2(source) + 0.5) * frame.inv_resolution;
@@ -209,7 +209,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     float shown = luminance(open);
     float part = shown > 0.0 ? saturate(luminance(lit) / shown) : 1.0;
     out_samples[p] = float4(finite_or_zero(open / reflectance), (isfinite(part) ? part : 1.0) + (marked ? 2.0 : 0.0));
-    out_sun[p] = float4(1.0, 1.0, 1.0, isfinite(sun_part) ? sun_part : 1.0);
+    out_sun[p] = isfinite(sun_part) ? sun_part : 1.0;
     // The reach of the spread over each penumbra, in points, and half a point.
     float width = float(scale) * (frame.footprint.x + frame.footprint.y * depth_distance(depth));
     float sun_radius = sun_part >= 0.0 && sun_wide > 0.0 ? min(DIRECT_SPREAD_REACH * sun_wide / width + 0.5, float(DIRECT_SPREAD_MAX)) : 0.0;

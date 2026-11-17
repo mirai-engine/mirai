@@ -182,7 +182,6 @@ struct Instance {
     float4 bounds_max;
     float4 tint;          // rgb multiplies the base color
     float4 emission;      // rgb radiance added to the material's
-    float4 glass;         // rgb: what a crossing of one of its blended faces leaves of light, the mean over them (glass_mean.comp writes it after every upload); a: their area
     uint slot_materials[32]; // row+1 by source slot; zero inherits
     float wet;            // 0 dry to 1 soaked (render.scene_set_instance_wet)
     uint material_values; // 1 + the word of the index pool where the values it gives over the rows of its materials start; 0: none
@@ -220,6 +219,8 @@ struct Mesh {
     float4 bounds_min;   // object space
     float4 bounds_max;
     Mesh_Ray rays[MESH_RAY_LEVELS];
+    uint draw_first;     // where its clusters start in the indices of the meshes drawn whole this frame (render/mesh_draws.odin), CLUSTER_DRAW_VERTICES each; INVALID: not there
+    uint pad0; uint pad1; uint pad2;
 };
 
 // The maps of a material (MATERIAL_MAP_* of the schema, asset.Material_Maps

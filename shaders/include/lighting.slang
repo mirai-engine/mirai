@@ -1214,28 +1214,19 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which, float2 ex
             beyond_direction = light.beyond_direction;
             beyond_reach = light.beyond_reach;
         }
-#ifdef MIRAI_SHADOW_FILTER_POINTS
-        if (MIRAI_COLORED_SHADOWS) filters_begin();
-#endif
-        float3 through = float3(1.0);
+        float through = 1.0;
         for (uint segment = 0u; segment < 2u && mapped < 0.0; segment++) {
-            through *= trace_transmission(from, direction, reach, item <= local_items);
-            if (segment != 0u || beyond_reach <= 0.0 || max(through.r, max(through.g, through.b)) <= 0.0) break;
+            if (!trace_visible(from, direction, reach, item <= local_items)) through = 0.0;
+            if (segment != 0u || beyond_reach <= 0.0 || through <= 0.0) break;
             from = beyond_origin;
             direction = beyond_direction;
             reach = beyond_reach;
         }
-        if (mapped >= 0.0) through = float3(mapped);
+        if (mapped >= 0.0) through = mapped;
         if (item > local_items) extension += radiance * through;
         else
 #else
-#ifdef MIRAI_SHADOW_FILTER_POINTS
-        if (MIRAI_COLORED_SHADOWS) filters_begin();
-#endif
-        float3 through = mapped >= 0.0 ? float3(mapped) : trace_transmission(origin, direction, reach);
-#endif
-#ifdef MIRAI_SHADOW_FILTER_POINTS
-        if (MIRAI_COLORED_SHADOWS) filters_weigh(radiance);
+        float through = mapped >= 0.0 ? mapped : float(trace_visible(origin, direction, reach));
 #endif
         if (item == 0u) sun = radiance * through;
         else local += radiance * through;

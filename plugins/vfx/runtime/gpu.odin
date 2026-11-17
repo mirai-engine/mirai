@@ -198,10 +198,9 @@ Gpu_Emitter :: struct {
     frame:[4]u32,       // in the rows of the frame: bytes to its resources (max(u32): none), from Gpu_Frame.births to its births, how many, 0
     data:[4]u32,        // bytes of the data buffer to the Attributes of its range, bytes of those of a particle, its age (f32 bits), particles it started
     mesh_weights:[effect.PARTICLE_MESHES]f32,  // of Mesh particles: the weights of its meshes added up, the last 1
-    mesh_indices:[effect.PARTICLE_MESHES]u32, // and the indices of a draw of each (erender.mesh_draw_range)
-    mesh_firsts:[effect.PARTICLE_MESHES]u32,  // and where they start in those of the scene
+    mesh_handles:[effect.PARTICLE_MESHES]u32, // and the meshes, whose indices the frame lists (erender.frame_mesh_whole)
 }
-#assert(size_of(Gpu_Emitter)==864)
+#assert(size_of(Gpu_Emitter)==848)
 
 // What the emitters of a frame share, first in its rows (particle_frame of particles.slang).
 Gpu_Frame :: struct {
@@ -212,12 +211,10 @@ Gpu_Frame :: struct {
 }
 #assert(size_of(Gpu_Frame)==32)
 
-// A mesh a Mesh particle can show: the mesh of the scene, the indices of a
-// draw of its clusters among those of the scene (erender.mesh_draw_range)
-// and its weight, the weights before it added.
+// A mesh a Mesh particle can show: the mesh of the scene and its weight, the
+// weights before it added.
 Mesh_Choice :: struct {
     handle:erender.Mesh_Handle,
-    first,indices:u32,
     weight:f32,
 }
 
@@ -825,8 +822,8 @@ emitter_row :: proc(g:^Gpu_Emitter,s:^Pool_Slot,capacity:u32) {
     g.look={max(m.stretch,0),max(m.soft,0),m.intensity,max(m.flipbook_speed,0)}
     g.attractor={m.attractor.x,m.attractor.y,m.attractor.z,m.attractor_strength}
     g.mesh={d.mesh_count,u32(m.facing),0,u32(d.material)}
-    g.mesh_weights,g.mesh_indices,g.mesh_firsts={},{},{}
-    for choice,c in d.meshes[:min(d.mesh_count,effect.PARTICLE_MESHES)] {g.mesh_weights[c],g.mesh_indices[c],g.mesh_firsts[c]=choice.weight,choice.indices,choice.first}
+    g.mesh_weights,g.mesh_handles={},{}
+    for choice,c in d.meshes[:min(d.mesh_count,effect.PARTICLE_MESHES)] {g.mesh_weights[c],g.mesh_handles[c]=choice.weight,u32(choice.handle)}
     g.flipbook={max(m.flipbook[0],1),max(m.flipbook[1],1),0,0}
     g.size_curve=transmute([2][4]f32)m.size_over_life.values
     g.size_times=transmute([2][4]f32)m.size_over_life.times
@@ -1288,8 +1285,8 @@ particles_sprites :: proc(pass:^erender.Pass,user:rawptr) {
             erender.pass_draw_indexed_indirect(pass,state,u64(draw.slot)*size_of(Gpu_State)+u64(offset_of(Gpu_State,draw)))
             continue
         }
-        // A mesh draws its clusters by the indices of the scene, as in the G-buffer, a draw for each of its meshes.
-        erender.pass_indices(pass,.Scene)
+        // A mesh draws its clusters by the indices the frame lists of it, as in the G-buffer, a draw for each of its meshes.
+        erender.pass_indices(pass,.Meshes)
         for c in 0..<min(desc.mesh_count,effect.PARTICLE_MESHES) {
             params.mesh=u32(desc.meshes[c].handle)
             erender.pass_params(pass,&params,size_of(params))
@@ -1318,7 +1315,7 @@ particles_meshes :: proc(pass:^erender.Pass,user:rawptr) {
     state:=pool_buffer(pool,.State)
     Params :: struct {emitter,program,mesh,pad1:u32}
     draws:=pool_buffer(pool,.Events)
-    erender.pass_indices(pass,.Scene)
+    erender.pass_indices(pass,.Meshes)
     bound:=pipeline
     for draw in draw_list(pool,pass.eye,pass.origin,true) {
         desc:=&pool.slots[draw.slot].desc

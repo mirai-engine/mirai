@@ -344,10 +344,12 @@ queue_order :: proc(ground:^Foliage_Ground,data:^Foliage_Data,foliages:^core.Tab
 
 // The heights of a tile of an owner: the highest ground under each sample
 // along the down of the Foliage, in its space, and the weights of its layers
-// there, of the materials of that ground: those weights index in layers.
-// With keys, only the samples they name, in their order. False when no
-// ground covers any of it.
-tile_sample :: proc(q:^core.Ground_Query,owner_world,owner_local:mm.Mat4,coord:[2]i32,samples:int,heights:[]f32,weights:[]Layer_Weights,keys:[]u16=nil) -> (layers:Tile_Layers,any:bool) {
+// there, of the materials of that ground: those weights index in layers,
+// which it fills. With keys, only the samples they name, in their order.
+// False when no ground covers any of it. layers is written in place, one
+// value at a time, until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+tile_sample :: proc(q:^core.Ground_Query,owner_world,owner_local:mm.Mat4,coord:[2]i32,samples:int,heights:[]f32,weights:[]Layer_Weights,layers:^Tile_Layers,keys:[]u16=nil) -> (any:bool) {
+    layers^={}
     down:=-(owner_world*[4]f32{0,1,0,0}).xyz
     step:=CELL_SIZE/f32(samples-1)
     corner:=cell_corner(coord)
@@ -410,7 +412,7 @@ ground_read :: proc(ground:^Foliage_Ground,q:^core.Ground_Query,data:core.Ref(Fo
     }
     sample :: proc(reading:^Reading,first,last:int,worker:int) {
         for &w in reading.work[first:last] {
-            w.layers,w.any=tile_sample(reading.q,w.owner_world,w.owner_local,w.task.coord,w.samples,w.heights,w.weights,w.keys)
+            w.any=tile_sample(reading.q,w.owner_world,w.owner_local,w.task.coord,w.samples,w.heights,w.weights,&w.layers,w.keys)
             if w.any {tile_keep_out(reading.keeps,w.owner_world,w.task.coord,{samples=w.samples,heights=w.heights,keys=w.keys},w.kept)}
         }
     }

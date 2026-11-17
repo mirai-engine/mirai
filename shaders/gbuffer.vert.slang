@@ -2,7 +2,7 @@
 // highlight: the mask of the editor's highlight, drawn without the jitter of the view.
 //! constant highlight MIRAI_EDITOR_HIGHLIGHT
 // A draw of the clusters of an instance of the scene (glass, overlays, the
-// highlight), indexed by the draw list of its mesh (render.Mesh_Draw_List):
+// highlight), indexed by where the frame listed its mesh (render/mesh_draws.odin):
 // the instance of the draw is that of the scene and the vertex its cluster
 // << DRAW_VERTEX_BITS | the vertex in it. The highlight draws the clusters of
 // level 0 (of a streamed mesh, all of them, and of those the finest the

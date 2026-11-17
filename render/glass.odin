@@ -82,37 +82,6 @@ ensure_glass_targets :: proc(r: ^Renderer, t: ^Targets) -> bool {
 	return ok
 }
 
-// The mean filter of each instance with blended surfaces (glass_mean.comp,
-// Gpu_Instance.glass), which the rays that average glass take. It runs in the
-// first view of a frame that uploaded the table of instances, one with blended
-// surfaces, materials or geometry, before any pass traces: an upload of an
-// instance brings the value the CPU holds.
-// Without colored shadows no ray reads it.
-@(private)
-glass_means_record :: proc(p: ^Pass) -> bool {
-	r, cmd := p.r, p.cmd
-	s := &r.scene
-	if !r.glass_stale || !r.settings.colored_shadows || len(s.translucent) == 0 {return true}
-	list, t := rhi.frame_alloc_typed(r.device, u32, len(s.translucent))
-	if list == nil {set_error(r, "transient ring exhausted listing %d instances with glass", len(s.translucent)); return false}
-	for entry, i in s.translucent {list[i] = entry.instance}
-	rhi.cmd_timestamp(cmd, "glass mean")
-	// The faces with a program wait for it.
-	batch := points_begin(p, filters = true)
-	Params :: struct {resume, batch, pad0, pad1: u32}
-	params := Params{batch = u32(batch)}
-	pipeline := r.pipelines[.Glass_Mean]
-	rhi.cmd_bind_pipeline(cmd, pipeline)
-	set_params(cmd, &params)
-	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, t.buffer, t.offset, u64(len(list) * size_of(u32)))
-	points_bind(p)
-	rhi.cmd_dispatch(cmd, u32(len(list)), 1)
-	// The resume adds to what the dispatch wrote.
-	points_rounds(p, batch, pipeline, &params, 1)
-	r.glass_stale = false
-	return true
-}
-
 // Every texture of the glass of a view, made or not.
 @(private)
 glass_textures :: proc(t: ^Targets) -> (all: [GLASS_LAYERS_MAX * 7 + 3]rhi.Texture) {
@@ -241,7 +210,7 @@ glass_shade :: proc(p: ^Pass, trace_reflections: bool) {
 		rhi.cmd_begin_render_pass(cmd, &pass)
 		Params :: struct {light_budget, pad0, pad1, pad2: u32}
 		params := Params{light_budget = settings.light_budget}
-		targets := [2]^rhi.Pipeline{&r.pipelines[.Glass_Filter], pipeline_of(r, .Translucent, {TRANSLUCENT_FRAG_COLOR} if shadows_colored(r) else {}, {TRANSLUCENT_FRAG_COLOR})}
+		targets := [2]^rhi.Pipeline{&r.pipelines[.Glass_Filter], pipeline_of(r, .Translucent)}
 		for entry in s.translucent {
 			for target in targets {
 				rhi.cmd_bind_pipeline(cmd, target^)
@@ -269,8 +238,8 @@ glass_shade :: proc(p: ^Pass, trace_reflections: bool) {
 
 	rhi.cmd_timestamp(cmd, "glass")
 	params := glass_params(p)
-	pipeline := pipeline_of(r, .Glass, {GLASS_COMP_COLOR} if shadows_colored(r) else {}, {GLASS_COMP_COLOR})^
-	light := pipeline_of(r, .Glass_Light, {GLASS_LIGHT_COMP_COLOR} if shadows_colored(r) else {}, {GLASS_LIGHT_COMP_COLOR})^
+	pipeline := pipeline_of(r, .Glass)^
+	light := pipeline_of(r, .Glass_Light)^
 	maps := p.frame.sun_maps.z != 0
 	for k := layers - 1; k >= 0; k -= 1 {
 		rhi.cmd_bind_pipeline(cmd, pipeline)
@@ -382,7 +351,7 @@ glass_inside :: proc(p: ^Pass) {
 	glass_layer_bind(p, 0)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.glass_scene)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.display)
-	rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Glass_Inside, {GLASS_INSIDE_COMP_COLOR} if shadows_colored(r) else {}, {GLASS_INSIDE_COMP_COLOR})^)
+	rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Glass_Inside)^)
 	set_params(cmd, &params)
 	rhi.cmd_dispatch_indirect(cmd, p.view.glass_dispatch, 0)
 	rhi.cmd_bind_texture(cmd, SLOT_LAYERS, t.layers if t.layers != 0 else r.dummy_layers)

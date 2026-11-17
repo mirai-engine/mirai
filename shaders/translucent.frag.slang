@@ -1,8 +1,6 @@
 #include "native.slang"
 //! per surface program
 //! variant hw MIRAI_HW_RT=1
-// color: with colored shadows, the rays cross glass as the mean of its instance (trace.slang).
-//! constant color MIRAI_GLASS_MEANS
 // The light of the blended surfaces behind the per-pixel glass layers, added
 // back to front over the scene that glass_filter.frag has filtered: sun and
 // local lights with shadow rays where they matter, and the probe volume for

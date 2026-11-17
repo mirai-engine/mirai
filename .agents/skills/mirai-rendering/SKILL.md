@@ -72,9 +72,9 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
   [layers](references/materials.md#layers-openpbr),
   [normal maps](references/materials.md#normal-maps-and-specular-antialiasing)
 - Traced reflections and glass → [reflections](references/materials.md#traced-reflections),
-  [glass](references/materials.md#glass); which rays see the glass detail and which its medium
-  color → [medium filter](references/materials.md#medium-filter)
-- Local lights, shadows, colored shadows → [lights](references/lights.md#local-lights);
+  [glass](references/materials.md#glass); which rays see glass and which go through it →
+  [glass in rays](references/materials.md#glass-in-rays)
+- Local lights, shadows → [lights](references/lights.md#local-lights);
   direct light of a view (grid, samples, shadow maps) →
   [direct light](references/lights.md#direct-light-of-a-view)
 - GI, BVH, probe volume, sky →
@@ -131,8 +131,8 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
 - A view's direct light costs its samples, not its lights: no pixel traces or reads one per light.
 - The maps of the shadows draw only what changed, in the frame it changed: no map shows a caster
   or a light where it was in a frame before ([cache](references/lights.md#direct-light-of-a-view)).
-- The maps of the shadows hold no tint of glass: colored light through glass comes from the
-  light, one that projects a texture.
+- Shadows are never colored or darkened by the glass they pass, in the maps or in the rays: colored
+  light through glass comes from the light, one that projects a texture.
 - What is decided per instance (its class, the row of its material with its own values) is built
   on the CPU when the instance is given: no stage builds it again per pixel or per hit.
 - A graphics option keeps a choice, and a preset a step above another, only where the image

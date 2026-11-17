@@ -48,6 +48,23 @@ uint2 shadow_entry_page(uint4 rect, uint entry) {
 // The first texel of a page of the pool.
 uint2 shadow_pool_corner(uint pool) { return uint2(pool % SHADOW_POOL_ROW, pool / SHADOW_POOL_ROW) * SHADOW_PAGE; }
 
+// What the steps and the culls read of the table and of the buffer of the
+// pages addresses only its own region: a value past its range names nothing
+// and is dropped, not taken as a neighbour.
+// The page of the pool an entry of the table holds; false for none or past the pool.
+bool shadow_entry_pool(uint e, out uint pool) {
+    pool = (e & SHADOW_ENTRY_POOL) - 1u;
+    return (e & SHADOW_ENTRY_POOL) != 0u && pool < SHADOW_POOL_PAGES;
+}
+// An entry of a slot within the table.
+bool shadow_place_valid(uint slot, uint entry) { return slot < SHADOW_SLOTS && entry < SHADOW_SLOT_ENTRIES; }
+// The slot and the entry the owner of a page of the pool names (SHADOW_WORDS_OWNER); false for none or past the table.
+bool shadow_owner_place(uint owner, out uint slot, out uint entry) {
+    slot = (owner - 1u) / SHADOW_SLOT_ENTRIES;
+    entry = (owner - 1u) % SHADOW_SLOT_ENTRIES;
+    return owner != 0u && slot < SHADOW_SLOTS;
+}
+
 // Whether an entry holds its page drawn this frame: the atlas holds it with
 // what moves, from the cache or, in a frame a slot lets go of every page,
 // drawn whole straight into it (SHADOW_PLAN_RESET).

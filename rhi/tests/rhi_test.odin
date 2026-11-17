@@ -204,8 +204,7 @@ rhi_pipelines_of_one_shader_differ_by_their_constants :: proc(t: ^testing.T) {
 	if d == nil {return}
 	defer rhi.device_destroy(d)
 	code := rhi.test_shader("constant.comp")
-	doubled, found := rhi.shader_constant(code, "double")
-	testing.expect(t, found && doubled == rhi.Shader_Constants{rhi.CONSTANT_COMP_DOUBLE}, "the shader names its constant")
+	doubled := rhi.Shader_Constants{rhi.CONSTANT_COMP_DOUBLE}
 	COUNT :: 64
 	output := rhi.buffer_create(d, {size = COUNT * size_of(f32), usage = {.Storage}, memory = .GPU, name = "output"})
 	testing.expect(t, output != 0, rhi.device_error(d))

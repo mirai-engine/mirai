@@ -36,6 +36,7 @@
 // frame has no room for it.
 bool shadow_add(uint draw, uint4 entry, uint pool) {
     uint taken = 0u, slot = 0u, own;
+    if (pool >= SHADOW_POOL_PAGES) return false;
     InterlockedAdd(shadow_pages[shadow_taken_word(pool)], 1u, own);
     bool room = own < (shadow_pages[shadow_cost_word(pool)] & SHADOW_COST_CLUSTERS);
     if (room) InterlockedAdd(shadow_state[SHADOW_TAKEN], 1u, taken);
@@ -59,6 +60,7 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
     uint4 work = chunks[chunk];
     if (lane.x >= work.w) return;
     uint instance = work.x, map = work.y & SHADOW_CHUNK_MAP, k = work.z + lane.x;
+    if (map >= SHADOW_SLOTS) return;
     Instance inst = scene_instance(instance);
     Mesh mesh = meshes[instance_mesh(inst)];
     Cluster c = mesh_cluster(mesh, k);

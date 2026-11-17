@@ -692,48 +692,56 @@ render_a_full_pool_keeps_the_pages_of_a_jitter_cycle :: proc(t: ^testing.T) {
 	expect_clean(t, f.device)
 }
 
-// A table of the pages made anew holds what the memory of the texture held
-// before it: until its first entries are written it holds no page, also for
-// what changed in that frame, which then writes nothing of the buffer of the
-// pages but its own words. Here every texel of it names a page of the pool
+// What the table of the pages holds addresses only words of its own region:
+// a table made anew holds what the memory of the texture held before it and
+// no page until its first entries are written, and an entry past the pool
+// names no page, whoever wrote it. Here every texel names a page of the pool
 // whose words of what the cache draws again would lie on the arguments of a
-// step of the pages: a step dispatched over them would not end.
+// step of the pages, which dispatched over them would not end; a caster comes
+// in that frame, so that what changed reads the table.
 @(test)
-render_a_table_made_anew_holds_no_page :: proc(t: ^testing.T) {
-	f: Cube_Fixture
-	settings := test_settings()
-	settings.gi_enabled = false
-	if !cube_fixture_init(t, &f, 128, 96, settings) {return}
-	defer fixture_destroy(&f)
-	r := f.renderer
-	instances := [2]Instance_Desc{
-		{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {40, 0.2, 40}), tint = {0.8, 0.8, 0.8}},
-		{object_id = 2, mesh = f.cube, transform = trs({0, 1, 0}, {0.4, 2, 0.4}), tint = {0.5, 0.5, 0.5}},
+render_a_table_holds_no_page_past_its_pool :: proc(t: ^testing.T) {
+	cases := [?]struct {
+		anew: bool,
+		step: Shadow_Pages_Step,
+	}{{true, .Settle}, {false, .Settle}, {false, .Propagate}, {false, .Grant}}
+	for c in cases {
+		f: Cube_Fixture
+		settings := test_settings()
+		settings.gi_enabled = false
+		if !cube_fixture_init(t, &f, 128, 96, settings) {return}
+		r := f.renderer
+		instances := [2]Instance_Desc{
+			{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {40, 0.2, 40}), tint = {0.8, 0.8, 0.8}},
+			{object_id = 2, mesh = f.cube, transform = trs({0, 1, 0}, {0.4, 2, 0.4}), tint = {0.5, 0.5, 0.5}},
+		}
+		sun := Sun_Desc{direction = {0.4, 1, 0.3}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true}
+		testing.expect(t, scene_given(r, instances[:1], nil, sun, {sky = {0, 0, 0}}))
+		camera := Camera{position = {0, 5, 7}, forward = {0, -5, -7}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+		for _ in 0 ..< 2 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+		rhi.device_wait_idle(f.device)
+		b := &r.main.targets.shadow_raster
+		target := abi.SHADOW_WORDS_STEPS + 3 * u32(c.step) + 1
+		pool := (target - abi.SHADOW_WORDS_PART) / 4
+		entries := make([]u32, abi.SHADOW_SLOT_ENTRIES * SHADOW_SLOTS)
+		for &e in entries {e = abi.SHADOW_PAGE_CACHED | abi.SHADOW_PAGE_COMPOSED | (pool + 1)}
+		testing.expect(t, rhi.texture_upload(f.device, b.table, mem.slice_to_bytes(entries), u32(abi.SHADOW_SLOT_ENTRIES * 4)))
+		delete(entries)
+		if c.anew {
+			rhi.buffer_destroy(f.device, b.pages)
+			b.pages = 0
+		}
+		testing.expect(t, scene_given(r, instances[:], nil, sun, {sky = {0, 0, 0}}))
+		testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+		rhi.device_wait_idle(f.device)
+		steps: [3 * abi.SHADOW_STEPS]u32
+		testing.expect(t, rhi.buffer_read_slice(f.device, b.pages, u64(abi.SHADOW_WORDS_STEPS) * 4, steps[:]))
+		for step in 1 ..< abi.SHADOW_STEPS {
+			testing.expectf(t, steps[3 * step + 1] == 1 && steps[3 * step + 2] == 1, "%v: the step %v is dispatched over %d x %d x %d groups", c, Shadow_Pages_Step(step), steps[3 * step], steps[3 * step + 1], steps[3 * step + 2])
+		}
+		expect_clean(t, f.device)
+		fixture_destroy(&f)
 	}
-	sun := Sun_Desc{direction = {0.4, 1, 0.3}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true}
-	testing.expect(t, scene_given(r, instances[:1], nil, sun, {sky = {0, 0, 0}}))
-	camera := Camera{position = {0, 5, 7}, forward = {0, -5, -7}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-	for _ in 0 ..< 2 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
-	rhi.device_wait_idle(f.device)
-	b := &r.main.targets.shadow_raster
-	target := abi.SHADOW_WORDS_STEPS + 3 * u32(Shadow_Pages_Step.Settle) + 1
-	pool := (target - abi.SHADOW_WORDS_PART) / 4
-	entries := make([]u32, abi.SHADOW_SLOT_ENTRIES * SHADOW_SLOTS)
-	defer delete(entries)
-	for &e in entries {e = abi.SHADOW_PAGE_CACHED | abi.SHADOW_PAGE_COMPOSED | (pool + 1)}
-	testing.expect(t, rhi.texture_upload(f.device, b.table, mem.slice_to_bytes(entries), u32(abi.SHADOW_SLOT_ENTRIES * 4)))
-	// The buffer of the pages made anew, and a caster that comes in its frame.
-	rhi.buffer_destroy(f.device, b.pages)
-	b.pages = 0
-	testing.expect(t, scene_given(r, instances[:], nil, sun, {sky = {0, 0, 0}}))
-	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
-	rhi.device_wait_idle(f.device)
-	steps: [3 * abi.SHADOW_STEPS]u32
-	testing.expect(t, rhi.buffer_read_slice(f.device, b.pages, u64(abi.SHADOW_WORDS_STEPS) * 4, steps[:]))
-	for step in 1 ..< abi.SHADOW_STEPS {
-		testing.expectf(t, steps[3 * step + 1] == 1 && steps[3 * step + 2] == 1, "the step %v is dispatched over %d x %d x %d groups", Shadow_Pages_Step(step), steps[3 * step], steps[3 * step + 1], steps[3 * step + 2])
-	}
-	expect_clean(t, f.device)
 }
 
 // No round of the maps draws more clusters in a frame than its bound, also in
