@@ -49,6 +49,27 @@ groupshared uint used[USED_WORDS];
 groupshared uint shown[SHOWN_WORDS];
 // Where the vertices of the cluster start in the list; INVALID: it is left out.
 groupshared uint first_vertex;
+// A list was full before the group began: the cluster goes to the next round as it is.
+groupshared uint full;
+
+// A cluster that found no room in a list: the next round takes it, or, with
+// none to follow, it is left out and what it lacked of each list is counted.
+void cluster_left(uint e, uint vertices, uint triangles) {
+    if (params.last == 0u) {
+        InterlockedMin(cull_state[CULL_RASTER_PENDING], e);
+        InterlockedMax(cull_state[CULL_RASTER_PENDING + 1u], e + 1u);
+        InterlockedAdd(stats[0].raster[2], 1u);
+        return;
+    }
+    if (vertices != 0u) {
+        InterlockedAdd(cull_state[CULL_DROPPED + CULL_LIST_RASTER_VERTICES], vertices);
+        InterlockedAdd(stats[0].dropped[CULL_LIST_RASTER_VERTICES], vertices);
+    }
+    if (triangles != 0u) {
+        InterlockedAdd(cull_state[CULL_DROPPED + CULL_LIST_RASTER_TRIANGLES], triangles);
+        InterlockedAdd(stats[0].dropped[CULL_LIST_RASTER_TRIANGLES], triangles);
+    }
+}
 
 [shader("compute")]
 [numthreads(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z)]
@@ -59,9 +80,17 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
     uint record = e * RASTER_ENTRY_WORDS;
     if (!raster_round_pending(raster_entries[record + RASTER_ENTRY_ROUND])) return;
     Visible_Cluster entry = visible[e];
+    Cluster c = cluster_at(entry.cluster);
+    // A list is full for good once it is passed: no vertex is placed for a cluster it has no room for.
+    if (lane.x == 0u) {
+        bool vertices_full = cull_state[CULL_RASTER_VERTICES] >= params.vertex_capacity, triangles_full = cull_state[CULL_RASTER_TRIANGLES] >= params.triangle_capacity;
+        full = vertices_full || triangles_full ? 1u : 0u;
+        if (full != 0u) cluster_left(e, vertices_full ? cluster_vertex_count(c) : 0u, triangles_full ? cluster_triangle_count(c) : 0u);
+    }
+    GroupMemoryBarrierWithGroupSync();
+    if (full != 0u) return;
     Instance inst = scene_instance(entry.instance);
     Mesh mesh = meshes[instance_mesh(inst)];
-    Cluster c = cluster_at(entry.cluster);
     Cluster_Block b = visible_block(mesh, c, entry);
     Gbuffer_Cluster k = gbuffer_cluster_of(entry.instance, inst, mesh, entry.material, entry.along);
     uint vertex_count = cluster_vertex_count(c), triangle_count = cluster_triangle_count(c);
@@ -114,19 +143,8 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
                     uint bucket = cull_listed_bucket(raster_entries[record + RASTER_ENTRY_BIN]);
                     InterlockedAdd(depth_buckets[raster_depth_word(bin & RASTER_BIN_TWO_SIDED, bucket)], triangles);
                 }
-            } else if (params.last == 0u) {
-                InterlockedMin(cull_state[CULL_RASTER_PENDING], e);
-                InterlockedMax(cull_state[CULL_RASTER_PENDING + 1u], e + 1u);
-                InterlockedAdd(stats[0].raster[2], 1u);
             } else {
-                if (!room) {
-                    InterlockedAdd(cull_state[CULL_DROPPED + CULL_LIST_RASTER_VERTICES], vertices);
-                    InterlockedAdd(stats[0].dropped[CULL_LIST_RASTER_VERTICES], vertices);
-                }
-                if (!room_triangles) {
-                    InterlockedAdd(cull_state[CULL_DROPPED + CULL_LIST_RASTER_TRIANGLES], triangles);
-                    InterlockedAdd(stats[0].dropped[CULL_LIST_RASTER_TRIANGLES], triangles);
-                }
+                cluster_left(e, room ? 0u : vertices, room_triangles ? 0u : triangles);
             }
         }
         first_vertex = listed && triangles != 0u ? first : INVALID;
