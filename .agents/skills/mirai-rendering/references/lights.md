@@ -223,7 +223,9 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   out an instance smaller than a texel of the map (`shadow_map_unseen`). Clusters of masked slots
   are drawn apart, with their coverage as a shadow ray asks it: a masked material without a
   program samples its alpha with the derivatives of its uvs, a texel of the map wide, and the
-  others ask `hit_covers`; glass only in the tint. They are culled as the view culls its own: by
+  others ask `hit_covers`. Glass casts no shadow in the maps and colors none of their light: a
+  light a map holds lights through it uncolored; colored light through glass is the light's own,
+  one that projects a texture. They are culled as the view culls its own: by
   instance and slot, which hands the clusters of the levels the cut of the map can take
   (`instance_clusters`) to a pass by cluster in chunks, which hands each to every page of the round
   it covers, into lists that count what does not fit and grow, like those of the view.
@@ -254,15 +256,15 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   always of this frame. Where a page is not drawn
   its entry names the nearest coarser level or mip drawn there (`SHADOW_ENTRY_COARSER`), which its
   points read; where none is, they trace. A point looks up the entries of the 2x2 pages around
-  its taps once (`shadow_near`), which its taps, its hard shadow and its tint read. A pass after
+  its taps once (`shadow_near`), which its taps and its hard shadow read. A pass after
   the maps that reads them (the fog) marks the pages it reads for the next frame
   (`pass_shadow_marks`). A level moves with the eye by whole
   pages and keeps its pages where they are in the world (`shadow_page_entry`): walking draws the
   pages that come in; along the light it keeps how far it reaches towards the sun while the scene
   stays within it. A tap past the side of a face of the cube of a light reads the face its
   direction falls on (`shadow_beside`).
-- **What a frame draws at most.** The draws of the cache, those of the atlas and those of the
-  tint each take at most `SHADOW_FRAME_CLUSTERS` clusters in a frame of any view, still, moving or
+- **What a frame draws at most.** The draws of the cache and those of the atlas each take at
+  most `SHADOW_FRAME_CLUSTERS` clusters in a frame of any view, still, moving or
   first: what the least GPU the engine runs on draws into a depth map, masked, in a few
   milliseconds, so that no frame waits long on the maps and no draw nears the time a driver gives
   one before it resets the device. Before the cull by cluster, `Grant` gives the pages, in the
@@ -297,9 +299,7 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   costs nothing. A batch of a deformable that sways (the wind) moves so in the maps whose texel is
   narrower than its sway; the others draw it at rest and keep it. A light or a level of the sun
   that moves or turns lets go of its pages and draws those read whole into the atlas alone that
-  frame, and the cache the next still frame; an origin jump lets go of every page. The tint keeps
-  its glass too: it draws it again only in the pages the atlas composes, and whole in every page
-  ready in a frame an instance with glass or a material changed (`shadow_glass_key`).
+  frame, and the cache the next still frame; an origin jump lets go of every page.
 - **Reading the maps.** A map holds a point only within its face and range, and samples tell
   elsewhere. A tap compares a blocker with the plane of the surface of the point where the tap
   falls, less twice what the plane rises from there to the middle of its texel (scaled to the texel
@@ -311,14 +311,12 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   either side. A point wider on its surface than its penumbra (far ground seen at a grazing angle)
   spreads its taps over its width and takes the share of them that is lit, which the jitter of the
   view does not move. Lights without maps (small on the screen) trace their samples: raster for near
-  and large lights, rays for far ones. Glass with a program keeps only its mean in the tint of the
-  maps: a point with such glass between it and a light a map holds takes all of its light from
-  samples, whose rays run the program. The constants of the view carry the levels of the sun it
+  and large lights, rays for far ones. The constants of the view carry the levels of the sun it
   drew (`Gpu_Frame.sun_maps`), so that a pass after the direct light takes the shadow of the sun
   from them and traces only where none holds the point (`sun_shadow_seen`; an extension binds the
   atlas with `Surface_Source.Shadow_Atlas`): the fog lights its cells so. The buffers of the maps
   (`Renderer.shadow_buffers`) and the lists of their cull are shared by the views; the cache, the
-  atlas, the tint, the depth of the nearest glass and the pages are each view's own.
+  atlas and the pages are each view's own.
 - **Skinned meshes.** The skin writes the posed box and normal cone of each cluster, grown by the
   reach of its vertex programs, so that the view cull and the shadow map cull leave posed clusters
   out like static ones.
@@ -377,7 +375,8 @@ the groups of lights and their lists, `render_many_lights_match_their_reference`
 
 ## Colored shadow filters
 
-- `colored_shadows` (off by default): the shadow query also finds blend surfaces; each multiplies
+- `colored_shadows` (off by default): the shadow query of a ray also finds blend surfaces (the
+  maps hold no glass); each multiplies
   the ray's filter by `mix(white, linear_base_color, alpha)` and lets it continue. Rays are not
   deflected: no refraction or caustics in shadows.
 - The filter of each texel is that of the samples of the view's direct light (the `color`

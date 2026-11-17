@@ -418,13 +418,12 @@ reflect_pass :: proc(p: ^Pass, normal, depth, albedo, filtered: rhi.Texture, sto
 }
 
 // The maps of the view for a pass that lights hits with MIRAI_LIGHT_MAPS of
-// lighting.slang (SUN_SHADOW_SLOT, SHADOW_TINT_SLOT, SHADOW_DATA_SLOT); the
+// lighting.slang (SUN_SHADOW_SLOT, SHADOW_DATA_SLOT); the
 // dummies when the view drew none.
 @(private)
 bind_light_maps :: proc(p: ^Pass, maps: bool) {
 	r, cmd, t := p.r, p.cmd, p.t
 	rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.shadow_raster.atlas if maps else r.dummy_texture)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.shadow_raster.tint if maps && p.frame.sun_maps.w != 0 else r.dummy_texture)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS8, r.shadow_buffers.table if maps else r.dummy_buffer)
 }
 
@@ -1388,7 +1387,6 @@ pass_direct :: proc(p: ^Pass) -> bool {
 		rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.direct_samples)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS3, t.albedo)
-		rhi.cmd_bind_texture(cmd, SLOT_PASS4, t.shadow_raster.tint if p.frame.sun_maps.w != 0 else r.dummy_texture)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.direct_depth)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS6, grid)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.direct_sun)
@@ -1402,7 +1400,6 @@ pass_direct :: proc(p: ^Pass) -> bool {
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.direct_blockers)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.direct_depth)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS6, grid)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS9, table)
 	// A thread for each square of 2x2 points, and a group of the samples for
@@ -1474,7 +1471,6 @@ pass_direct :: proc(p: ^Pass) -> bool {
 	rhi.cmd_bind_texture(cmd, SLOT_PASS6, t.direct_sun)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.direct_points)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS8, atlas)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS9, t.shadow_raster.tint if p.frame.sun_maps.w != 0 else r.dummy_texture)
 	rhi.cmd_bind_texture(cmd, SLOT_LIGHT_LISTS, lists)
 	rhi.cmd_dispatch(cmd, groups(t.width, 8), groups(t.height, 8))
 	return true

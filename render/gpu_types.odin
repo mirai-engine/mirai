@@ -72,7 +72,7 @@ Gpu_Frame :: struct {
 	moved_boxes:      [OCCLUDER_CHANGES_MAX][2]Vec4, // low (w: the instance, as bits; OCCLUDERS_MANY: several) and high, relative to the origin
 	moved_lights:     [LIGHT_MOVES_MAX / 4][4]u32,
 	sun_shares:       Vec4, // x what of the light of the sun the probes gather, y what of it media scatter (Sun_Desc.indirect and scattering); zw 0
-	sun_maps:         [4]u32, // x the maps of the shadows of the sun the view drew this frame, the nearest cascade first (shadow_maps_pass), 0: none; y where the rows of the maps start in their buffer; z the side of their atlas, texels, while the view drew maps, else 0; w 1 while they keep the tint of glass
+	sun_maps:         [4]u32, // x the maps of the shadows of the sun the view drew this frame, the nearest cascade first (shadow_maps_pass), 0: none; y where the rows of the maps start in their buffer; z the side of their atlas, texels, while the view drew maps, else 0; w 0
 	sun_map_rows:     [abi.SUN_MAP_ROWS][4]u32,
 }
 SUN_UNSHADOWED   :: abi.SUN_UNSHADOWED
@@ -487,10 +487,10 @@ RASTER_BIN_TWO_SIDED :: abi.RASTER_BIN_TWO_SIDED
 RASTER_BIN_TESTED :: abi.RASTER_BIN_TESTED
 
 // What the cull of the clusters the maps of the shadows draw counts
-// (shadow_cull.slang): the draws of those that hide whole, of those of masked
-// materials and of those of glass, the groups of its cluster pass over the
-// chunks, how many chunks its instance pass handed over, and how many
-// clusters its draws took, which SHADOW_FRAME_CLUSTERS bounds.
+// (shadow_cull.slang): the draws of those that hide whole and of those of
+// masked materials, the groups of its cluster pass over the chunks, how many
+// chunks its instance pass handed over, and how many clusters its draws took,
+// which SHADOW_FRAME_CLUSTERS bounds.
 Gpu_Shadow_State :: struct {
 	draws:            [SHADOW_DRAWS]Gpu_Draw,
 	cluster_dispatch: [3]u32,
@@ -498,7 +498,7 @@ Gpu_Shadow_State :: struct {
 	taken:            u32,
 	_:                [3]u32,
 }
-#assert(size_of(Gpu_Shadow_State) == 80)
+#assert(size_of(Gpu_Shadow_State) == 64)
 
 Gpu_Cull_Stats :: struct {
 	visible_instances, visible_triangles, culled_instances, occluded_instances: u32,

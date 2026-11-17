@@ -25,8 +25,6 @@
 // hides it past it too.
 #define SUN_SHADOW_SLOT SLOT_PASS5
 #define SHADOW_DATA_SLOT SLOT_PASS6
-#define SHADOW_TINT_SLOT SLOT_PASS7
-#define SHADOW_GLASS_SLOT SLOT_PASS8
 // The cells mark the pages of the maps they read, for the next frame.
 #define SHADOW_MARKS_SLOT SLOT_PASS9
 #define MIRAI_LIGHT_MAPS

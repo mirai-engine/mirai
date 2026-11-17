@@ -322,8 +322,6 @@ fog_record :: proc(pass:^render.Pass,user:rawptr) {
     render.pass_timestamp(pass,"fog light")
     render.pass_surface_read(pass,5,.Shadow_Atlas)
     render.pass_shadow_data(pass,6)
-    render.pass_surface_read(pass,7,.Shadow_Tint)
-    render.pass_surface_read(pass,8,.Shadow_Glass)
     render.pass_shadow_marks(pass,9)
     render.pass_pipeline(pass,state.pipelines[2])
     volumes:=volumes_relative(state,pass.origin)
