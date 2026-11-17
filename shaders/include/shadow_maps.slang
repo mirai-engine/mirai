@@ -158,6 +158,13 @@ uint4 shadow_texel_pages(Shadow_Map m, float4 texels) {
 // with where the point lies in it (Shadow_Taps.grow).
 #define SHADOW_TAPS 12u
 #define SHADOW_SEARCH_MAX 64.0
+// How far around a point its taps ask for pages of its own level or mip,
+// texels: a tap farther off finds only a blocker far from the point, behind
+// a penumbra as wide, which the level or mip whose texels are as many times
+// wider tells as well; its pages are asked for there instead
+// (shadow_mark.comp), and the taps read them where those of the point's own
+// are not drawn (SHADOW_ENTRY_COARSER).
+#define SHADOW_SEARCH_NEAR 8.0
 // A point stretched wider than its penumbra: the taps over its ellipse, and
 // how far along its long axis it reaches, texels, over the point and the
 // jitter of the view around it (SHADOW_WIDE_COVER points).

@@ -747,6 +747,55 @@ render_a_view_that_moves_is_given_its_pages_over_frames :: proc(t: ^testing.T) {
 	expect_clean(t, f.device)
 }
 
+// The search of the blockers of a point reaches far where something may
+// stand far above it: its far taps read a coarser level, so a tall scene asks
+// for hardly more pages of the level its points read than a low one, where
+// the whole reach of the taps would ask for a ring of pages around them.
+@(test)
+render_a_wide_search_asks_for_coarser_pages_not_more_of_the_finest :: proc(t: ^testing.T) {
+	f: Cube_Fixture
+	settings := test_settings()
+	settings.gi_enabled = false
+	settings.taa = false
+	settings.sun_radius = 1e-6
+	if !cube_fixture_init(t, &f, 128, 96, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	// A floor seen from just above, and a post 20 m tall far to the side of what is seen.
+	instances := []Instance_Desc{
+		{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {80, 0.2, 80}), tint = {0.8, 0.8, 0.8}},
+		{object_id = 2, mesh = f.cube, transform = trs({30, 10, 30}, {0.2, 20, 0.2}), tint = {0.5, 0.5, 0.5}},
+	}
+	sun := Sun_Desc{direction = {0.05, 1, 0.02}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true}
+	testing.expect(t, scene_given(r, instances, nil, sun, {sky = {0, 0, 0}}))
+	camera := Camera{position = {10.3, 0.36, 7.7}, forward = {0, -1, -0.001}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	// The pages of each level of the sun the points of the last frame marked.
+	marked :: proc(t: ^testing.T, r: ^Renderer) -> (counts: [SHADOW_SUN_LEVELS]int) {
+		rhi.device_wait_idle(r.device)
+		words: [SHADOW_SUN_LEVELS * abi.SHADOW_MASK_WORDS]u32
+		testing.expect(t, rhi.buffer_read_slice(r.device, r.main.targets.shadow_raster.pages, u64(abi.SHADOW_WORDS_NEEDED) * 4, words[:]))
+		for word, k in words {
+			for bit in 0 ..< u32(32) {if word & (1 << bit) != 0 {counts[k / abi.SHADOW_MASK_WORDS] += 1}}
+		}
+		return
+	}
+	for _ in 0 ..< 2 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	low := marked(t, r)
+	own := 0
+	for count, level in low {if count > low[own] {own = level}}
+	settings.sun_radius = 0.05
+	testing.expect(t, renderer_apply_settings(r, settings))
+	for _ in 0 ..< 2 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	tall := marked(t, r)
+	coarser := 0
+	for count in tall[own + 1:] {coarser += count}
+	before := 0
+	for count in low[own + 1:] {before += count}
+	testing.expectf(t, low[own] > 0 && tall[own] < 2 * low[own] + 3, "level %d: %d pages marked under a narrow sun, %d under a wide one", own, low[own], tall[own])
+	testing.expectf(t, coarser > before, "the wide search marked %d pages of coarser levels, the narrow one %d", coarser, before)
+	expect_clean(t, f.device)
+}
+
 // A sun low over open ground: a line on the ground away from the eye crosses
 // several levels of the sun, which meet where the texel of one is twice that
 // of the next, and shows no line where they meet, lit beside the long shadow

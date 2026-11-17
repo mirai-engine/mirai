@@ -80,9 +80,10 @@ float shadow_map_seen(Shadow_Map m, Shadow_Taps t, Shadow_Near near, bool sun, f
         float apart = length(off) * t.step;
         if (!shadow_blocks(t, b, off, coarser)) continue;
         blocked++;
-        // A blocker hides a part of the light only within the penumbra it casts on the point.
+        // A blocker hides a part of the light only within the penumbra it casts
+        // on the point, which the texel it is read from tells to its width.
         float width = sun ? radius * (t.d - b) : radius * (t.d - b) / max(b, 1e-3);
-        if (apart > max(max(width, least), t.covered * t.step) + t.step) continue;
+        if (apart > max(max(width, least), t.covered * t.step) + t.step * float(1u << coarser)) continue;
         hiding++;
         blockers += b;
     }
