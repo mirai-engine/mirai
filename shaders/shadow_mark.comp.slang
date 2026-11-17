@@ -38,6 +38,7 @@ void shadow_mark_pages(Shadow_Map m, float2 texel, float2 reach) {
     for (uint y = first.y; y <= end.y; y++) {
         for (uint x = first.x; x <= end.x; x++) {
             uint entry = shadow_page_entry(m.rect, uint2(x, y));
+            if (!shadow_place_valid(m.rect.x, entry)) continue;
             uint word = SHADOW_WORDS_NEEDED + m.rect.x * SHADOW_MASK_WORDS + (entry >> 5u), bit = 1u << (entry & 31u);
             if ((pages[word] & bit) != 0u) continue;
             uint before;
