@@ -18,9 +18,10 @@ import phys "plugins:physics/runtime"
 // box, a lake in its basin, that grid cut at its walls; a river, a ribbon
 // along its path (river.odin). Under a plane and a box, a medium of the fog plugin that takes the light of
 // the sun that crosses it; the dry boxes take both out of where they are, and
-// their floor of air under a surface is a surface of its own. The light of
-// the sun on what is under the water carries caustics. A volume draws as
-// WATER_DEFAULT unless its entity has a Water.
+// their floor of air under a surface is a surface of its own. What is under
+// the water takes the light the water lets through on its way down, with the
+// caustics of the sun. A volume draws as WATER_DEFAULT unless its entity has
+// a Water.
 
 CAPACITY :: 8 // fluids and dry boxes a frame draws
 SURFACE_PROGRAM :: "Water_Surface"
@@ -54,11 +55,12 @@ WATER_DEFAULT :: Water{attenuation_color={0.3,0.7,0.75},attenuation_distance=4,s
 Gpu_Body :: struct {
     to_box:[3][4]f32, // rows: from the world to its box, whose sides are 1
     surface:[4]f32,   // x the height of its still surface, y 1 for a plane, z 1 for a dry box, w priority
-    look:[4]f32,      // x caustics, y 1/m it takes of white light, z the index of refraction of its surface, w its waves
+    look:[4]f32,      // x caustics, z the index of refraction of its surface, w its waves
+    absorption:[4]f32, // xyz 1/m it takes of red, green and blue light
     waves:[phys.FLUID_WAVES][4]f32, // physics.Wave_Term: k along x and z, amplitude, across
     phases:[2][4]f32, // of each wave, at the origin of the pass and the time of the frame
 }
-#assert(size_of(Gpu_Body)==240)
+#assert(size_of(Gpu_Body)==256)
 
 // water_light.comp.slang Water_Params.
 @(private)
@@ -78,6 +80,7 @@ Water_Gpu :: struct {
     waves:[CAPACITY]phys.Surface_Waves, // of each body, in the world
     count:int,
     time:f64,     // s of the simulation the waves of the frame are at
+    wet:bool,     // some fluid of the frame is water, not a dry box
     caustic:bool, // some fluid of the frame has caustics
     ior:f32,      // of the first fluid of the frame with caustics
     looks:[CAPACITY]Water_Look,
@@ -154,13 +157,19 @@ bodies_relative :: proc "contextless" (state:^Water_Gpu,origin:[3]f32) -> (bodie
     return
 }
 
-// 1/m the water takes of white light: the mean of what its attenuation takes of each channel.
+// 1/m the water takes of red, green and blue light: what its attenuation takes of each.
+@(private)
+absorption :: proc "contextless" (look:Water) -> (taken:[3]f32) {
+    if !(look.attenuation_distance>0) {return}
+    for c,i in look.attenuation_color {taken[i]=-math.ln(max(c,1e-4))/look.attenuation_distance}
+    return
+}
+
+// 1/m the water takes of white light: the mean of what it takes of each channel.
 @(private)
 extinction :: proc "contextless" (look:Water) -> f32 {
-    if !(look.attenuation_distance>0) {return 0}
-    c:=look.attenuation_color
-    taken:=-(math.ln(max(c.r,1e-4))+math.ln(max(c.g,1e-4))+math.ln(max(c.b,1e-4)))/3
-    return taken/look.attenuation_distance
+    taken:=absorption(look)
+    return (taken.r+taken.g+taken.b)/3
 }
 
 // The box of the world around a prism of the physics from its floor to its still surface, whose sides are
@@ -190,7 +199,7 @@ water_render :: proc(
     state:^Water_Gpu,media:^fog.Fog_Media,waters:^core.Table(Water,.Read),physics:core.Ref(phys.Physics_State),
     settings:Water_Settings,view:core.View,app:^host.App,time:core.Time,frame:core.Frame_Time,
 ) {
-    state.count,state.caustic,state.ior=0,false,WATER_IOR
+    state.count,state.wet,state.caustic,state.ior=0,false,false,WATER_IOR
     state.frame+=1
     defer sheets_release(state,app.renderer)
     defer ribbons_release(state,app.assets)
@@ -265,7 +274,10 @@ water_render :: proc(
         if abs(linalg.determinant(to_world))<1e-12 {continue}
         body.to_box=mm.mat4_rows(linalg.inverse(to_world))
         body.surface={top,desc.shape==.Plane?1:0,dry?1:0,f32(desc.priority)}
-        body.look={max(look.caustics,0),extinction(look),made.ior,f32(desc.waves.count)}
+        body.look={max(look.caustics,0),0,made.ior,f32(desc.waves.count)}
+        taken:=absorption(look)
+        body.absorption={taken.r,taken.g,taken.b,0}
+        state.wet||=!dry
         if !state.caustic && !dry && look.caustics>0 {state.caustic,state.ior=true,made.ior}
         lens||=!dry && abs(view.position.y-top)<=LENS_WIDTH+reach+lens_reach(view)
         materials[state.count]=made.row
@@ -298,7 +310,7 @@ water_render :: proc(
         render.stage_pipeline(app.renderer,{stage=.Lit,shader="water_light",name="water light"}),
         render.stage_pipeline(app.renderer,{stage=.Blend,shader="water_over",name="water over",blend=.Alpha}),
     }
-    if state.caustic && state.pipelines[0]!=0 && state.pipelines[1]!=0 {render.frame_pass(app.renderer,.Lit,caustics_record,state)}
+    if state.wet && state.pipelines[0]!=0 && state.pipelines[1]!=0 {render.frame_pass(app.renderer,.Lit,under_record,state)}
     // Over the glass: the line of a surface the near plane may cross.
     if state.pipelines[2]!=0 && lens {render.frame_pass(app.renderer,.Blend,over_record,state)}
 }
@@ -331,20 +343,24 @@ floor_in_fluid :: proc(physics:core.Ref(phys.Physics_State),dry:phys.Fluid_Desc)
     return wet && under.density>0 && found && over.fluid==under.fluid && over.density==0
 }
 
+// The light of what is under the water: what the water takes of it on its way
+// down, and the caustics of the sun.
 @(private)
-caustics_record :: proc(pass:^render.Pass,user:rawptr) {
+under_record :: proc(pass:^render.Pass,user:rawptr) {
     state:=cast(^Water_Gpu)user
     // On the opaque scene: nothing of it is in front of glass.
     if pass.glass==.Front {return}
     params:=Gpu_Params{count=u32(state.count),texels=CAUSTIC_TEXELS,lens=LENS_WIDTH,ior=state.ior}
     pattern:=render.Pass_Texture_Desc{name="water caustics",format=.R16_Float,width=CAUSTIC_TEXELS,height=CAUSTIC_TEXELS}
-    // The pattern the surface gives the light of the sun at a depth, which repeats across it.
-    render.pass_timestamp(pass,"water caustics")
+    // The pattern the surface gives the light of the sun at a depth, which repeats across it; without caustics
+    // the light under the water binds it and reads nothing of it.
     if ok,_:=render.pass_texture(pass,0,pattern);!ok {return}
-    render.pass_pipeline(pass,state.pipelines[0])
-    if !render.pass_params(pass,&params,size_of(params)) {return}
-    render.pass_dispatch(pass,(CAUSTIC_TEXELS+7)/8,(CAUSTIC_TEXELS+7)/8)
-    // Over the direct light of what is under the water.
+    if state.caustic {
+        render.pass_timestamp(pass,"water caustics")
+        render.pass_pipeline(pass,state.pipelines[0])
+        if !render.pass_params(pass,&params,size_of(params)) {return}
+        render.pass_dispatch(pass,(CAUSTIC_TEXELS+7)/8,(CAUSTIC_TEXELS+7)/8)
+    }
     render.pass_image_bind(pass,0)
     render.pass_texture_sample(pass,1,pattern)
     render.pass_surface_read(pass,2,.Linear_Depth)
