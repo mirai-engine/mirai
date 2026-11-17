@@ -190,10 +190,10 @@ texture_slot :: proc "contextless" (state: ^Texture_State) -> int {
 // that name it must be replaced with materials_set before the next frame.
 // False for a handle that names no texture.
 texture_remove :: proc(r: ^Renderer, handle: Texture_Handle) -> bool {
-	scene_changed(&r.scene)
 	state := &r.textures
 	index := int(handle) - 1
 	if index < 0 || index >= state.count || state.textures[index] == 0 {return false}
+	materials_texture_gone(r, texture_entry(index))
 	rhi.texture_table_set(r.device, texture_entry(index), 0)
 	rhi.texture_destroy(r.device, state.textures[index])
 	geometry_released(&r.scene, state.stored[index])

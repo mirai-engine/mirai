@@ -170,8 +170,10 @@ other and do not see the corner of a table or the floor under a wardrobe.
     reaches them (a hit whose way to that light crosses one is lit). A probe updated before the
     oldest change the list still has traces all its rays.
   - A change of the lights everywhere (the sun, the sky, a blackout, the light scale) lights
-    every hit again when its probe is chosen, and one of what rays meet everywhere (meshes or
-    textures that go, materials past what the scene lists, another world) traces every ray.
+    every hit again when its probe is chosen, and one of what rays meet everywhere (meshes that
+    go, materials past what the scene lists, another world) traces every ray. A texture that
+    goes changes what rays meet only around what shows a material that reads it, since the next
+    texture may take its handle: one no material names (the image of a view) changes nothing.
   - What changes with nothing that says so is not kept from one update to the next: the hit of
     a Surface program that reads the time of its context (`abi.Program.reads`), a ray that
     went through the gate of an extension, and the light of a hit a light of an extension
