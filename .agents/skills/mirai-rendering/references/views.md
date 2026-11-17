@@ -109,7 +109,8 @@ Rules:
   (`core.View.own`) does not draw from its body the `own_hidden` layers, and fades it in `fade`:
   with 1 the cull discards it; below that, the raster discards that part of its pixels with a
   4x4 Bayer pattern fixed on screen, which TAA blends into transparency without passing the body
-  to the blend pass. `Gpu_Frame.own` carries the slot and the `fade`; bits 16 to 31 of
+  to the blend pass; the [fade of an instance](materials.md#material-row) takes the same
+  pattern. `Gpu_Frame.own` carries the slot and the `fade`; bits 16 to 31 of
   `Gpu_Frame.layers`, `own_hidden`. The renderer does not know what a head is: it decides by
   layers. The body still gives shadow and reflection and is seen whole in nested views (which set
   `own` to 0). `engine/render` marks the instances from `View_Bodies`, and a replacement of an

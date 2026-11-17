@@ -37,31 +37,31 @@ a_fade_is_given_to_its_instance_alone_without_a_row_or_an_allocation :: proc(t:^
         host.app_camera_set(app,host.camera_from_view(w.view),w.view.cut,w.view.carried)
         world_sync(w,sync,app)
     }
+    // An opaque entity fades by the pixels of its raster and stays opaque:
+    // never blended, nor tested by rays. Rays and the maps of the shadows
+    // meet it while it shows more than half of itself.
     alphas:=[9]f32{1,0.5,0,1,0.75,0.25,0.5,0,1}
+    whole:=0
     for alpha,pass in alphas {
         core.edit(&w.values,entities[0]).color.a=alpha
         host.app_frame_begin(app)
         draw(&sync,app,&w)
+        met:=alpha>0.5
         if pass>0 {
             touched:=app.renderer.scene.touched[0]
             testing.expect(t,touched&1!=0 && touched&2==0 && len(sync.made)==0,"the instance whose opacity changed goes alone, and is not made again")
-            if pass==5 || pass==6 || pass==7 {testing.expect(t,!app.renderer.scene.tlas_dirty && !app.renderer.scene.tlas_nodes_dirty && !app.renderer.scene.tlas_refs_dirty)}
+            if met==(alphas[pass-1]>0.5) {testing.expect(t,!app.renderer.scene.tlas_dirty && !app.renderer.scene.tlas_nodes_dirty && !app.renderer.scene.tlas_refs_dirty,"a fade that rays see the same changes nothing they trace")}
         }
-        testing.expect_value(t,len(app.renderer.scene.translucent),alpha<1?1:0)
+        testing.expect_value(t,len(app.renderer.scene.translucent),0)
+        testing.expect_value(t,app.renderer.scene.instances[0].meta.x&gpu.INSTANCE_FADED==0,met)
         // A unit cube is small (gpu.SMALL_INSTANCE_REACH): opaque, it meets the rays of that class.
         hw:=app.renderer.scene.hw_instances[0].mask_flags
-        testing.expect_value(t,hw&0xff,u32(alpha<1?gpu.RAY_GLASS:gpu.RAY_SMALL))
-        testing.expect_value(t,hw&rhi.TLAS_ALPHA_TESTED!=0,alpha<1)
+        testing.expect_value(t,hw&0xff,u32(met?gpu.RAY_SMALL:0))
+        testing.expect_value(t,hw&rhi.TLAS_ALPHA_TESTED,0)
         testing.expect_value(t,sync.drawn.entities[0],entities[0])
         testing.expect_value(t,sync.drawn.entities[1],entities[1])
         host.app_frame_end(app)
-        // The frame takes the tree of the instances as the updates left it, which rays traced by software walk.
-        if !app.renderer.hardware_rt {
-            testing.expect_value(t,app.renderer.scene.glass_node_count,alpha<1?1:0)
-            for reference in app.renderer.scene.tlas_refs {
-                if reference&~gpu.TLAS_REF_GLASS==0 {testing.expect_value(t,reference&gpu.TLAS_REF_GLASS!=0,alpha<1)}
-            }
-        }
+        if !app.renderer.hardware_rt {testing.expect_value(t,app.renderer.scene.glass_node_count,0)}
         pixels,_,_,captured:=host.app_capture_pixels(app)
         if !testing.expect(t,captured) {delete(pixels);return}
         red,green:=0,0
@@ -71,7 +71,9 @@ a_fade_is_given_to_its_instance_alone_without_a_row_or_an_allocation :: proc(t:^
             // ACES 2.0 takes a bright pure green toward white: it stays the strongest channel by half.
             if int(color[1])>20 && 2*int(color[1])>3*max(int(color[0]),int(color[2])) {green+=1}
         }
-        testing.expectf(t,alpha==0?red==0:red>100,"alpha %f draws the fading entity (%d red pixels)",alpha,red)
+        // Without TAA the pattern shows: the share of the pixels of the entity that are drawn is its alpha.
+        if pass==0 {whole=red}
+        testing.expectf(t,whole>100 && abs(f32(red)-alpha*f32(whole))<=0.1*f32(whole),"alpha %f draws that share of the %d pixels of the fading entity, not %d",alpha,whole,red)
         testing.expect(t,green>100,"the unchanged entity remains visible")
         delete(pixels)
     }

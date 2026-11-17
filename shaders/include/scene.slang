@@ -480,20 +480,24 @@ T material_words<T, let N : int>(uint at) {
     }
     return reinterpret<T>(words);
 }
-// A row as an instance shows it: its own of it, and its fade.
+// How much an instance fades out by what it gives its rows (block:
+// Instance.material_values), 0 none to 1 all: its blended rows by their
+// opacity, the others by pixels (instance_fade).
+float material_values_fade(uint block) {
+#ifdef MIRAI_NO_INSTANCES
+    return 0.0;
+#else
+    return block != 0u ? asfloat(indices[block]) : 0.0;
+#endif
+}
+// A row as an instance shows it: its own of it, and the fade of a blended one.
 Material material_row(uint row, uint block) {
     uint at = material_given(block, row);
     Material m;
     if (at == 0u) m = material_row(row);
     else m = material_words<Material, MATERIAL_WORDS>(at);
     m.row = row;
-#ifndef MIRAI_NO_INSTANCES
-    if (block != 0u) {
-        float fade = asfloat(indices[block]);
-        m.opacity *= 1.0 - fade;
-        if (fade > 0.0 && m.alpha_mode == ALPHA_OPAQUE) m.alpha_mode = ALPHA_BLEND;
-    }
-#endif
+    if (m.alpha_mode == ALPHA_BLEND) m.opacity *= 1.0 - material_values_fade(block);
     return m;
 }
 // The parameters the program of a row reads at a point of an instance: those

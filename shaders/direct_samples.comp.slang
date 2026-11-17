@@ -237,7 +237,7 @@ void main(uint3 group : SV_GroupID, uint index : SV_GroupIndex) {
         uint moved = asuint(frame.moved_boxes[2u * index].w);
         if (moved < frame.instance_count) {
             Instance mover = scene_instance(moved);
-            if ((mover.meta.w & (INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_BLENDED)) == 0u && (mover.meta.x & INSTANCE_UNSHADOWED) == 0u) list_add(moved);
+            if ((mover.meta.w & (INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_BLENDED)) == 0u && (mover.meta.x & (INSTANCE_UNSHADOWED | INSTANCE_FADED)) == 0u) list_add(moved);
         }
     }
     GroupMemoryBarrierWithGroupSync();

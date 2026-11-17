@@ -169,6 +169,10 @@ INSTANCE_RAY_SHIFT :: abi.INSTANCE_RAY_SHIFT
 // that carries light leaves out (BLEND_LIGHT of trace.slang), and no map of
 // the shadows draws it.
 INSTANCE_UNSHADOWED :: abi.INSTANCE_UNSHADOWED
+// meta.x bit 27: its values fade out half or more of what is not glass of it
+// (Instance_Material_Values.fade), which the raster leaves out by pixels: no
+// ray meets it and no map of the shadows draws it (instance_alpha).
+INSTANCE_FADED :: abi.INSTANCE_FADED
 INSTANCE_FLAG_HIDDEN :: abi.INSTANCE_FLAG_HIDDEN
 // Hidden only because it cannot be drawn yet: its transform has no inverse
 // (a zero scale, or not finite) or the geometry of its mesh still goes to the
@@ -293,7 +297,7 @@ Instance_Material_Value :: struct {
 }
 Instance_Material_Values :: struct {
 	count:   u32,
-	fade:    f32, // how much of every row it fades out, 0 none to 1 all: an opaque row it fades blends
+	fade:    f32, // how much of the instance it fades out, 0 none to 1 all: the opacity of its blended rows, by pixels the rest
 	entries: [INSTANCE_VALUES_MAX]Instance_Material_Value,
 }
 #assert(offset_of(Instance_Material_Values, entries) == abi.INSTANCE_VALUES_HEADER * size_of(u32))

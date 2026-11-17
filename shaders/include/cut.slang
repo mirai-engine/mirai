@@ -15,10 +15,11 @@ float instance_scale(Instance inst) {
 }
 
 // How much of an instance the raster fades out of the view, which it leaves
-// out by pixels (fade_pixel_left): the body of the player of the view, or an
-// instance of a batch near its cull distance.
+// out by pixels (fade_pixel_left): the body of the player of the view, one
+// whose values fade it (its rows that are not blended), or an instance of a
+// batch near its cull distance.
 float instance_fade(uint index, Instance inst) {
-    float fade = view_body_fade(inst.meta.w);
+    float fade = max(view_body_fade(inst.meta.w), material_values_fade(inst.material_values));
     if (instance_batched(index)) fade = max(fade, batch_faded(batch_row(batch_of(index)), inst.bounds_min.xyz, inst.bounds_max.xyz));
     return fade;
 }

@@ -40,7 +40,12 @@ mode.
   `MIRAI_NO_INSTANCES`) reads none and does not bind the pool. A row holds its layer blocks
   also with their weight at zero, so a weight an instance gives takes the rest from them.
   Textures are of the row. The fade of an instance (`Instance_Material_Values.fade`) scales the
-  opacity of every row it shows and blends the opaque ones. What an instance gives counts, like
+  opacity of its blended rows; the rest of it stays opaque or masked, in the visibility target,
+  and the raster leaves out that share of its pixels with the pattern of the own body
+  (`instance_fade`), which TAA blends into transparency: it never enters the blend passes. Rays
+  and the maps of the shadows see it whole below half and nothing of it from half on
+  (`INSTANCE_FADED`), which they read without a test per triangle; a fade of 1 the cull
+  discards. What an instance gives counts, like
   the row's, for how it is traced and drawn (`instance_alpha` reads the row as the instance
   shows it, `instance_material`): a value that changes that classes every instance again.
 
