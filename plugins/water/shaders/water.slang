@@ -83,4 +83,34 @@ int water_at(float3 position) {
 float3 water_sun_under(float ior) {
     return refract(-frame.sun_direction.xyz, float3(0.0, 1.0, 0.0), 1.0 / ior);
 }
+
+// The way back from a point under the surface of a body, up along toward,
+// to where its light crossed the surface: over waves, the surface where it
+// crosses it. under: the depth of the point there, 0 or less over the surface.
+float2 water_crossed(Water_Body b, float3 position, float3 toward, out float under) {
+    bool plane = b.surface.y > 0.5;
+    under = (plane ? water_surface_at(b, position.xz) : b.surface.x) - position.y;
+    float rise = max(toward.y, 0.2);
+    float2 crossed = position.xz + toward.xz * (under / rise);
+    if (plane && under > 0.0 && water_wave_count(b) > 0u) {
+        under = max(water_surface_at(b, crossed) - position.y, 0.0);
+        crossed = position.xz + toward.xz * (under / rise);
+    }
+    return crossed;
+}
+
+// What of the light that reaches a point at a depth under a body, from up
+// along toward, the water lets through: exp(-absorption x the way to the
+// surface), within the box of a prism.
+float3 water_through(Water_Body b, float3 position, float3 toward, float under) {
+    float way = under / max(toward.y, 0.2);
+    if (b.surface.y < 0.5) {
+        float3 o = transform_point(b.to_box, position);
+        float3 d = transform_vector(b.to_box, toward);
+        float3 out_at = (sign(d) * 0.5 - o) / d;
+        float3 exits = select(abs(d) > 1e-12, out_at, float3(1e30));
+        way = min(way, max(min(exits.x, min(exits.y, exits.z)), 0.0));
+    }
+    return exp(-b.absorption.xyz * max(way, 0.0));
+}
 #endif
