@@ -40,7 +40,7 @@ Command_List :: struct {
 	pipeline:         Pipeline,
 	pipeline_applied: bool, // pipeline state set on the current encoder
 	slots:            [MAX_BINDING_SLOTS]Slot_Binding,
-	dirty:            u32, // slots to apply to the current encoder
+	dirty:            Mtl_Slots, // slots to apply to the current encoder
 	table:            Shader_Stages, // stages of the current encoder that have the texture table
 	index_buffer:     Buffer,
 	index_offset:     u64,
@@ -66,7 +66,7 @@ mtl_list_reset :: proc(c: ^Command_List, cmd: ^MTL.CommandBuffer) {
 	c.pipeline = 0
 	c.pipeline_applied = false
 	c.slots = {}
-	c.dirty = max(u32)
+	c.dirty = ~Mtl_Slots{}
 	c.table = {}
 	c.index_buffer = 0
 	c.index_offset = 0
@@ -106,7 +106,7 @@ mtl_end_encoder :: proc(c: ^Command_List) {
 	c.accel = nil
 	c.encoder_kind = .None
 	c.pipeline_applied = false
-	c.dirty = max(u32)
+	c.dirty = ~Mtl_Slots{}
 	c.table = {}
 }
 
@@ -118,7 +118,7 @@ mtl_opened_encoder :: proc(c: ^Command_List, encoder: ^MTL.CommandEncoder, kind:
 	c.encoder_kind = kind
 	for i in 0 ..< c.label_count {MTL.CommandEncoder_pushDebugGroup(encoder, c.labels[i])}
 	c.pipeline_applied = false
-	c.dirty = max(u32)
+	c.dirty = ~Mtl_Slots{}
 	c.table = {}
 	c.scratch_used = 0
 }
@@ -341,7 +341,7 @@ cmd_bind_pipeline :: proc(c: ^Command_List, pipeline: Pipeline) {
 	c.pipeline = pipeline
 	c.pipeline_applied = false
 	// Stage masks differ between pipelines; re-apply every slot.
-	c.dirty = max(u32)
+	c.dirty = ~Mtl_Slots{}
 }
 
 cmd_bind_buffer :: proc(c: ^Command_List, slot: u32, buffer: Buffer, offset: u64 = 0, size: u64 = 0) {
@@ -349,7 +349,7 @@ cmd_bind_buffer :: proc(c: ^Command_List, slot: u32, buffer: Buffer, offset: u64
 	if b == nil || !binding_slot_valid(slot, .Storage_Buffer) {set_error(c.device, "invalid buffer binding at slot %d", slot); return}
 	range := size if size > 0 else b.size - offset
 	c.slots[slot] = {set = true, buffer = buffer, offset = offset, range = range}
-	c.dirty |= 1 << slot
+	c.dirty += {int(slot)}
 }
 
 cmd_bind_transient :: proc(c: ^Command_List, slot: u32, t: Transient) {
@@ -377,19 +377,19 @@ cmd_set_constants :: proc(c: ^Command_List, slot: u32, data: rawptr, size: int) 
 cmd_bind_texture :: proc(c: ^Command_List, slot: u32, texture: Texture, mip: i32 = -1) {
 	if pool_get(&c.device.textures, base.Handle(texture)) == nil || slot >= MAX_BINDING_SLOTS {set_error(c.device, "invalid texture binding at slot %d", slot); return}
 	c.slots[slot] = {set = true, texture = texture, mip = mip}
-	c.dirty |= 1 << slot
+	c.dirty += {int(slot)}
 }
 
 cmd_bind_sampler :: proc(c: ^Command_List, slot: u32, sampler: Sampler) {
 	if pool_get(&c.device.samplers, base.Handle(sampler)) == nil || !binding_slot_valid(slot, .Sampler) {set_error(c.device, "invalid sampler binding at slot %d", slot); return}
 	c.slots[slot] = {set = true, sampler = sampler}
-	c.dirty |= 1 << slot
+	c.dirty += {int(slot)}
 }
 
 cmd_bind_accel :: proc(c: ^Command_List, slot: u32, accel: Accel) {
 	if pool_get(&c.device.accels, base.Handle(accel)) == nil || !binding_slot_valid(slot, .Accel) {set_error(c.device, "invalid acceleration structure binding at slot %d", slot); return}
 	c.slots[slot] = {set = true, accel = accel}
-	c.dirty |= 1 << slot
+	c.dirty += {int(slot)}
 }
 
 @(private)
@@ -447,7 +447,7 @@ mtl_flush_bindings :: proc(c: ^Command_List, compute: bool) -> bool {
 	}
 	dirty := c.dirty & p.slot_mask
 	for i in 0 ..< u32(MAX_BINDING_SLOTS) {
-		if dirty & (1 << i) == 0 {continue}
+		if int(i) not_in dirty {continue}
 		slot := p.slots[i]
 		s := c.slots[i]
 		index := NS.UInteger(i)
@@ -498,7 +498,7 @@ mtl_flush_bindings :: proc(c: ^Command_List, compute: bool) -> bool {
 		case .Texture_Table:
 		}
 	}
-	c.dirty &~= dirty
+	c.dirty -= dirty
 	if missing := p.table - c.table; missing != {} {
 		resident := d.table_resident[:]
 		buffer := d.table_buffers[table_copy(c.immediate, d.slot)]

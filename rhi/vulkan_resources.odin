@@ -553,7 +553,6 @@ vk_merge_bindings :: proc(d: ^Device, p: ^Vk_Pipeline, stages: Shader_Stages, co
 			slot.used = true
 			slot.kind = b.kind
 			stage_mask[b.slot] += {code.stage}
-			p.slot_mask |= 1 << b.slot
 		}
 	}
 	entries: [MAX_BINDING_SLOTS]vk.DescriptorSetLayoutBinding
