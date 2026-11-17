@@ -130,7 +130,7 @@ stamp_write :: proc(g:^Generation,request,excluded:string,outputs:[]string,stamp
     for path,file in g.sources.files {
         if !path_inside(path,excluded) {append(&files,Stamp_Source{path,file.hash})}
     }
-    slice.sort_by(listings[:],proc(a,b:Stamp_Listing) -> bool {return a.path<b.path})
+    slice.sort_by(listings[:],proc(a,b:Stamp_Listing) -> bool {return a.path<b.path if a.path!=b.path else !a.recursive && b.recursive})
     slice.sort_by(files[:],proc(a,b:Stamp_Source) -> bool {return a.path<b.path})
     record.tools,record.outputs,record.listings,record.files=tools[:],published[:],listings[:],files[:]
     text,encoded:=serial.text_encode(record,.Pretty,context.temp_allocator)

@@ -1,5 +1,6 @@
 package shaders
 
+import "core:fmt"
 import "core:log"
 import "core:os"
 import "core:strings"
@@ -255,6 +256,43 @@ shared_cache_keeps_an_entry_per_digest_and_completes_one_with_another_backend ::
     testing.expect(t,cache_stage_write(shared,shader_trim(entry,{.Metal}),files,{.Metal}))
     completed,code,found:=cache_stage_read(shared,"completed",both,context.temp_allocator)
     testing.expect(t,found && completed.entry=="main0" && string(code[.Vulkan])=="spirv-bytes" && string(code[.Metal])=="metal-source","the entry keeps the Vulkan code")
+}
+
+// A stage no backend takes the code of is compiled without the optimizer: what
+// it leaves in the shared cache, its entry and its peak, never reaches a
+// generation that takes code of the same digest, written before or after it.
+@(test)
+stage_compiled_only_to_be_reflected_never_reaches_one_that_takes_code :: proc(t:^testing.T) {
+    root:=base.test_folder(t,"shaders")
+    if root=="" {return}
+    entry,files:=stored_entry()
+    // Its group tells which entry a reader took.
+    reflected:=shader_trim(entry,{})
+    reflected.group={1,1,1}
+    Case :: struct {written:[]Backends,read:Backends,found:bool,group:[3]int}
+    cases:=[]Case{
+        {{{}},{},true,{1,1,1}},
+        {{{}},{.Vulkan},false,{}},
+        {{{}},{.Metal},false,{}},
+        {{{}},{.Vulkan,.Metal},false,{}},
+        {{{.Vulkan},{}},{.Vulkan},true,{8,8,1}},
+        {{{.Vulkan,.Metal},{}},{.Vulkan,.Metal},true,{8,8,1}},
+        {{{},{.Metal}},{.Metal},true,{8,8,1}},
+        {{{.Metal},{}},{},true,{1,1,1}},
+    }
+    for c,i in cases {
+        shared:=path_join(root,fmt.tprintf("case%d",i),allocator=context.temp_allocator)
+        for backends in c.written {
+            testing.expect(t,cache_stage_write(shared,reflected if reflected_only(backends) else shader_trim(entry,backends),files,backends))
+        }
+        restored,_,found:=cache_stage_read(shared,"digest",c.read,context.temp_allocator)
+        testing.expectf(t,found==c.found && (!found || restored.group==c.group),"case %d: read for %v found %v with the group %v",i,c.read,found,restored.group)
+    }
+    reflected_job:=Job{name="a.comp"}
+    for backends in ([]Backends{{.Vulkan},{.Metal},{.Vulkan,.Metal}}) {
+        job:=Job{name="a.comp",backends=backends}
+        testing.expectf(t,job_key(&job)!=job_key(&reflected_job),"the compilation for %v has a peak of its own",backends)
+    }
 }
 
 @(test)

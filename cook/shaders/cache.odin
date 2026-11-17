@@ -405,12 +405,15 @@ artifacts_stage :: proc(files:[Backend][]u8,names:[Backend]string,staging:string
 // the others and never replace it:
 //
 //   stages/<digest>.json, .spv, .metal    a compiled stage: its entry and its code
+//   stages/<digest>.reflected.json        a stage compiled only to be reflected
+//                                         (reflected_only): its entry, without code
 //   reflection/<digest>.json              the Parameters of a program
 //   reflection/<digest>.attributes.json   the Attributes of a Vfx program
 //   embedded/<digest>.<edit|ship>.spv.lz, .metal.lz
 //                                         the code render embeds (embedded_pack)
 //   peaks/<key>                           the bytes the last compilation of a stage
-//                                         held at its peak, by its name (charge_of)
+//                                         held at its peak, by its name (charge_of,
+//                                         job_key)
 //   compiling                             the compilations that run (ledger_update)
 //
 // Each file is written whole and renamed into place, the entry of a stage
@@ -457,12 +460,21 @@ peak_write :: proc(path:string,bytes:i64) {
 @(private)
 CODE_EXTENSIONS :: [Backend]string{.Vulkan=".spv",.Metal=".metal"}
 
+// The file of the entry of a digest for a generation of these backends: one
+// that takes no code has its own, so an entry compiled only to be reflected
+// is never taken or completed by one that takes code.
+@(private)
+cache_stage_path :: proc(shared,digest:string,backends:Backends) -> string {
+    name:=strings.concatenate({digest,REFLECTED if reflected_only(backends) else "",".json"},context.temp_allocator)
+    return path_join(shared,CACHE_STAGES,name,allocator=context.temp_allocator)
+}
+
 // The entry of a digest in the shared cache with the code of every backend
 // asked for, each file what its hash says; false otherwise.
 @(private)
 cache_stage_read :: proc(shared,digest:string,backends:Backends,allocator:=context.allocator) -> (entry:Shader,files:[Backend][]u8,ok:bool) {
     folder:=path_join(shared,CACHE_STAGES,allocator=context.temp_allocator)
-    path:=path_join(folder,strings.concatenate({digest,".json"},context.temp_allocator),allocator=context.temp_allocator)
+    path:=cache_stage_path(shared,digest,backends)
     stored,valid:=shader_read(path,allocator)
     if !valid {return}
     code,found:=artifacts_read(stored,digest,folder,backends)
@@ -480,7 +492,7 @@ cache_stage_read :: proc(shared,digest:string,backends:Backends,allocator:=conte
 cache_stage_write :: proc(shared:string,shader:Shader,files:[Backend][]u8,backends:Backends) -> bool {
     if shader.fingerprint=="" {return false}
     folder:=path_join(shared,CACHE_STAGES,allocator=context.temp_allocator)
-    path:=path_join(folder,strings.concatenate({shader.fingerprint,".json"},context.temp_allocator),allocator=context.temp_allocator)
+    path:=cache_stage_path(shared,shader.fingerprint,backends)
     entry:=shader_trim(shader,backends)
     if previous,valid:=shader_read(path,context.temp_allocator);valid && previous.fingerprint==shader.fingerprint {
         if .Vulkan not_in backends {entry.spv,entry.spv_hash=previous.spv,previous.spv_hash}
