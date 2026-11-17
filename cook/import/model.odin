@@ -64,7 +64,8 @@ Import_Options :: struct {
     texture_cache:string, // folder of textures built before, kept by image and settings (textures.cache_read); "": none
     // A texture is built Fast unless the texture cache keeps it as Final
     // (textures.Encode_Speed): the imports of the editor, which a cook
-    // encodes again as Final. False: Final, what tools and the CLI build.
+    // encodes again as Final, and mirai import. False: Final, what a build
+    // that cooks and the package of the engine build.
     fast_textures:bool,
     mesh_cache:string,    // folder of meshes built before, kept by geometry and settings (mesh_cook); "": none
     // The identity of the code of the plugin that imports the source whole
