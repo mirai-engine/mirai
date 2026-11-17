@@ -254,22 +254,38 @@ glass_solid_filters_once_absorbs_and_shades_colored_shadows :: proc(t: ^testing.
 	smoky.thickness = 0.5
 	smoky.attenuation_color = {1, 1, 0.25}
 	smoky.attenuation_distance = 0.5
-	materials_set(r, {green, smoky})
+	materials_set(r, {green, smoky, glass_material({1, 1, 1}, 0, 0.05)})
 	sheet, box := sheet_mesh(r), box_mesh(r)
 	floor := Instance_Desc{object_id = 1, mesh = sheet, transform = placed({}, {20, 1, 20}), tint = {1, 1, 1}}
 	block := Instance_Desc{object_id = 2, mesh = box, transform = placed({0, 1, 0}, {2, 0.5, 2}), material = 1, tint = {1, 1, 1}}
+	pane := Instance_Desc{object_id = 3, mesh = sheet, transform = placed({0, 2, 0}, {3, 1, 3}), material = 3, tint = {1, 1, 1}}
 	above := Camera{position = {0, 5, 0}, forward = {0, -5, 0}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	scene_given(r, {floor}, nil, SUN, {})
 	open := shown(t, &f, above, {0, 1, 0})
-	scene_given(r, {floor, block}, nil, SUN, {})
-	through := shown(t, &f, above, {0, 1, 0})
-	testing.expectf(t, abs(through.g - 0.96 * open.g) < 0.04 && abs(through.r - 0.2 * 0.96 * open.r) < 0.03, "the two faces of a solid are one filter: %v over %v", through, open)
-	rhi.device_wait_idle(f.device)
-	depths := make([]f32, int(r.targets.width * r.targets.height), context.temp_allocator)
-	testing.expect(t, golden_read_texture(f.device, r.targets.glass[0].depth, mem.slice_data_cast([]u8, depths)), rhi.device_error(f.device))
-	center := glass_pixel(r, above, {0, 1, 0})
-	depth := depths[center.y * int(r.targets.width) + center.x]
-	testing.expectf(t, abs(depth - 3.75) < 0.02, "the layer is the face where the view enters the solid: depth %v", depth)
+	scene_given(r, {floor, pane}, nil, SUN, {})
+	paned := shown(t, &f, above, {})
+	// An instance that mirrors its mesh shows the faces its twin shows. Behind
+	// a pane, the forward pass draws the solid: here one sunk in the floor,
+	// which hides its back face, so only the face the view enters filters it.
+	for mirrored in ([2]bool{false, true}) {
+		scale := Vec3{-2 if mirrored else 2, 0.5, 2}
+		block.transform = placed({0, 1, 0}, scale)
+		scene_given(r, {floor, block}, nil, SUN, {})
+		through := shown(t, &f, above, {0, 1, 0})
+		testing.expectf(t, abs(through.g - 0.96 * open.g) < 0.04 && abs(through.r - 0.2 * 0.96 * open.r) < 0.03, "mirrored %v: the two faces of a solid are one filter: %v over %v", mirrored, through, open)
+		rhi.device_wait_idle(f.device)
+		depths := make([]f32, int(r.targets.width * r.targets.height), context.temp_allocator)
+		testing.expect(t, golden_read_texture(f.device, r.targets.glass[0].depth, mem.slice_data_cast([]u8, depths)), rhi.device_error(f.device))
+		center := glass_pixel(r, above, {0, 1, 0})
+		depth := depths[center.y * int(r.targets.width) + center.x]
+		testing.expectf(t, abs(depth - 3.75) < 0.02, "mirrored %v: the layer is the face where the view enters the solid: depth %v", mirrored, depth)
+		sunk := block
+		sunk.transform = placed({}, scale)
+		scene_given(r, {floor, sunk, pane}, nil, SUN, {})
+		behind := shown(t, &f, above, {})
+		testing.expectf(t, abs(behind.g - 0.96 * paned.g) < 0.04 && abs(behind.r - 0.2 * 0.96 * paned.r) < 0.03, "mirrored %v: behind a pane the face the view enters filters the floor: %v over %v", mirrored, behind, paned)
+	}
+	block.transform = placed({0, 1, 0}, {2, 0.5, 2})
 	block.material = 2
 	scene_given(r, {floor, block}, nil, SUN, {})
 	absorbed := shown(t, &f, above, {0, 1, 0})
