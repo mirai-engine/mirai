@@ -122,11 +122,12 @@ pass_dispatch_indirect :: proc(s: ^Stage_Pass, desc: Extension_Buffer_Desc, offs
 }
 
 // The indices a pass draws with: the six of a quad (0 1 2, 2 1 3), or those
-// of the scene, where the draw list of a mesh is (mesh_draw_range).
-Pass_Indices :: enum u8 {Quad, Scene}
+// of the meshes drawn whole this frame (frame_mesh_whole; Gpu_Mesh.draw_first
+// says where those of a mesh start, CLUSTER_DRAW_VERTICES a cluster).
+Pass_Indices :: enum u8 {Quad, Meshes}
 
 pass_indices :: proc(s: ^Stage_Pass, indices: Pass_Indices) {
-	buffer := s.pass.r.quad_indices if indices == .Quad else s.pass.r.scene.index_buffer
+	buffer := s.pass.r.quad_indices if indices == .Quad else s.pass.r.scene.mesh_draws
 	if buffer != 0 {rhi.cmd_bind_index_buffer(s.pass.cmd, buffer, 0)}
 }
 
@@ -186,19 +187,9 @@ pass_rows :: proc(s: ^Stage_Pass, slot: u32, rows: Pass_Rows) -> bool {
 	return true
 }
 
-// How an indexed draw with the indices of the scene (pass_indices .Scene)
-// takes the clusters of level 0 of a mesh: the first index and how many, each
-// its cluster << DRAW_VERTEX_BITS | the vertex in it, which a vertex shader
-// reads with the mesh (geometry.slang). False for a mesh the renderer does
-// not have, whose geometry still goes to the GPU (mesh_uploading), or whose
-// draw list the GPU does not hold yet: the publication after the first ask
-// makes it.
-mesh_draw_range :: proc(r: ^Renderer, mesh: Mesh_Handle) -> (first_index, index_count: u32, ok: bool) {
-	return mesh_draw_list(r, u32(mesh), true)
-}
-
 // The primitives of level 0 of a mesh (geometry.slang): CLUSTER_TRIANGLES a
-// cluster, those past its own of no area. False as mesh_draw_range.
+// cluster, those past its own of no area. False for a mesh the renderer
+// does not have, or whose geometry still goes to the GPU (mesh_uploading).
 mesh_primitive_count :: proc(r: ^Renderer, mesh: Mesh_Handle) -> (count: u32, ok: bool) {
 	if int(mesh) >= len(r.scene.meshes) || r.scene.meshes[mesh].vertex_count == 0 || mesh_pending(&r.scene, u32(mesh)) {return}
 	_, clusters := record_level(&r.scene, r.scene.meshes[mesh], 0)

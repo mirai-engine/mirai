@@ -257,6 +257,8 @@ Gpu_Mesh :: struct {
 	bounds_min:      Vec4,
 	bounds_max:      Vec4,
 	rays:            [asset.MESH_RAY_LEVELS]Gpu_Mesh_Ray,
+	draw_first:      u32, // where its clusters start in the indices of the meshes drawn whole this frame (mesh_draws.odin); GPU_NONE: not there
+	pad0, pad1, pad2: u32,
 }
 // Level 0 is closed: a cluster of it seen from behind the cone of its normals is hidden.
 MESH_FLAG_CLOSED :: abi.MESH_FLAG_CLOSED
@@ -571,3 +573,7 @@ gbuffer_normal_decode :: proc "contextless" (texel: Vec4) -> (normal: Vec3, roug
 // what all the rounds of a frame wrote, to hold it in one.
 Cull_List :: enum {Chunks, Visible, Candidates, Shadow_Chunks, Shadow_Entries, Raster_Vertices, Raster_Triangles}
 CULL_START :: [Cull_List]u32{.Chunks = 1 << 16, .Visible = 1 << 18, .Candidates = 1 << 16, .Shadow_Chunks = 1 << 14, .Shadow_Entries = 1 << 18, .Raster_Vertices = 1 << 20, .Raster_Triangles = 1 << 20}
+// The indices of the meshes drawn whole (Scene_State.mesh_draws) at first: 8 MB,
+// 5,461 clusters, all the levels of a mesh of about 250,000 triangles, or as
+// many glass, overlaid, highlighted and particle meshes as a frame draws.
+MESH_DRAWS_START :: u32(1) << 21

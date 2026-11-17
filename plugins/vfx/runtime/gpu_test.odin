@@ -30,14 +30,6 @@ import "plugins:vfx/runtime/gridfile"
 ROOT :: #directory + "/../../.."
 
 @(private = "file")
-// The meshes of Mesh particles as emitter_desc takes them: asked for, and
-// asked again after the publication that makes their draw lists.
-test_mesh_choices :: proc(t: ^testing.T, f: ^Gpu_Fixture, d: ^Emitter_Desc, handles: []erender.Mesh_Handle, weights: []f32) -> bool {
-	if mesh_choices(d, f.app.renderer, handles, weights) {return true}
-	testing.expect(t, gpu.renderer_commit_geometry(&f.renderer), f.renderer.error)
-	return testing.expect(t, mesh_choices(d, f.app.renderer, handles, weights))
-}
-
 Gpu_Fixture :: struct {
 	device:     ^rhi.Device,
 	renderer:   gpu.Renderer,
@@ -235,7 +227,7 @@ particles_of_every_kind_draw_around_glass_without_validation_errors :: proc(t: ^
 	trail.info.render, trail.info.lit, trail.info.lifetime = .Ribbon, true, {0.4, 0.4}
 	pieces := test_emitter(4, {0, 1, 0})
 	pieces.info.render, pieces.info.lit, pieces.info.collision, pieces.info.size, pieces.info.spin = .Mesh, true, .World, {0.1, 0.2}, {-3, 3}
-	test_mesh_choices(t, f, &pieces, {f.cube}, {1})
+	mesh_choices(&pieces, f.app.renderer, {f.cube}, {1})
 	pieces.info.shape, pieces.info.shape_size, pieces.info.acceleration = .Sphere, {0.3, 0.3, 0.3}, {0, -9.8, 0}
 	ripples := test_emitter(5, {0, -0.45, 0})
 	ripples.info.render, ripples.info.flipbook, ripples.info.local_space = .Horizontal, {2, 2}, true
@@ -555,7 +547,7 @@ mesh_particles_pick_their_meshes_by_weight :: proc(t: ^testing.T) {
 	pieces.capacity = COUNT
 	pieces.info.render, pieces.info.lifetime, pieces.info.size = .Mesh, {30, 30}, {0.3, 0.3}
 	pieces.info.shape, pieces.info.shape_size = .Box, {1, 1, 1}
-	test_mesh_choices(t, f, &pieces, {f.cube, sphere.handle}, {3, 1})
+	mesh_choices(&pieces, f.app.renderer, {f.cube, sphere.handle}, {3, 1})
 	pieces.spawns = test_burst(COUNT)
 	testing.expect(t, frame_emitters(f, &f.sync, {pieces}, 1.0 / 60))
 	testing.expect(t, gpu.renderer_frame(&f.renderer, {camera = camera}), f.renderer.error)
@@ -613,7 +605,7 @@ mesh_particles_face_their_velocity :: proc(t: ^testing.T) {
 	sticks.info.render, sticks.info.lifetime, sticks.info.size, sticks.info.lit = .Mesh, {30, 30}, {1, 1}, true
 	// It leaves along +x until drag stops it: at rest it keeps where it went.
 	sticks.info.velocity, sticks.info.facing, sticks.info.drag = {{1, 0, 0}, {1, 0, 0}}, .Velocity, 40
-	if !test_mesh_choices(t, f, &sticks, {stick}, {1}) {return}
+	if !testing.expect(t, mesh_choices(&sticks, f.app.renderer, {stick}, {1})) {return}
 	for i in 0 ..< 40 {
 		sticks.spawns = test_burst(1) if i == 0 else {}
 		testing.expect(t, frame_emitters(f, &f.sync, {sticks}, 1.0 / 60))
@@ -656,7 +648,7 @@ mesh_particles_of_a_blending_material_cover_by_their_alpha :: proc(t: ^testing.T
 	// Two cubes of the material: one with full alpha, one whose curve takes its alpha to zero.
 	shown := test_emitter(1, {-1.2, 0, 0})
 	shown.info.render, shown.material, shown.blended, shown.info.blend = .Mesh, 1, true, .Alpha
-	test_mesh_choices(t, f, &shown, {f.cube}, {1})
+	mesh_choices(&shown, f.app.renderer, {f.cube}, {1})
 	shown.info.lifetime, shown.info.size, shown.info.soft, shown.info.emission_mode, shown.info.intensity = {10, 10}, {1, 1}, 0, .Relative, 1
 	faded := shown
 	faded.id, faded.transform, faded.previous = 2, trs({1.2, 0, 0}, {1, 1, 1}), trs({1.2, 0, 0}, {1, 1, 1})

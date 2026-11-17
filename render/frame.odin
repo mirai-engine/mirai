@@ -283,21 +283,21 @@ resolve_programs_draw :: proc(r: ^Renderer, cmd: ^rhi.Command_List, target: ^rhi
 }
 
 // Draws the clusters of an instance whose mesh is in the pools, for a pass of
-// its own (gbuffer.vert without the visible list), indexed by the draw list
-// of its mesh: those of level 0, or all of them, the vertices of those out of
-// the cut of the view collapsed, and those of materials of another program
-// than `program` (SLOT_DRAW). Not drawn until the GPU holds the list.
+// its own (gbuffer.vert without the visible list), indexed by where the
+// frame listed its mesh (mesh_draws.odin): those of level 0, or all of them,
+// the vertices of those out of the cut of the view collapsed, and those of
+// materials of another program than `program` (SLOT_DRAW).
 @(private)
 instance_clusters_draw :: proc(r: ^Renderer, cmd: ^rhi.Command_List, instance: u32, level0: bool, program: u32) {
 	s := &r.scene
 	mesh := s.instances[instance].meta.x & INSTANCE_MESH_MASK
 	// A streamed mesh draws the finest its pools hold, which may be coarser than level 0.
 	streamed := int(mesh) < len(s.meshes) && s.meshes[mesh].stream != nil
-	first, count, ok := mesh_draw_list(r, mesh, level0 && !streamed)
+	first, count, ok := mesh_draws_range(s, mesh, level0 && !streamed)
 	if !ok {return}
 	drawn := [4]u32{program, 0, 0, 0}
 	rhi.cmd_set_constants(cmd, SLOT_DRAW, &drawn, size_of(drawn))
-	rhi.cmd_bind_index_buffer(cmd, s.index_buffer)
+	rhi.cmd_bind_index_buffer(cmd, s.mesh_draws)
 	rhi.cmd_draw_indexed(cmd, count, 1, first, instance)
 }
 
@@ -580,7 +580,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     s:=&r.scene
     s.lights_changed=false
     texture_uploads_record(r,cmd)
-    recorded_ok:=renderer_commit_geometry(r,cmd,slot) && font_record(r,cmd,slot) && upload_scene(r,cmd) && (frame.ui_only || air_frame(r,cmd))
+    recorded_ok:=renderer_commit_geometry(r,cmd,slot) && font_record(r,cmd,slot) && upload_scene(r,cmd) && mesh_draws_record(r,cmd) && (frame.ui_only || air_frame(r,cmd))
     if recorded_ok {pages_record_begin(r,cmd)}
     recorded_ok=recorded_ok && textures_feedback_begin(r,cmd,frame)
     // The BLASes built frames ago become their compacted copies; the TLAS of this frame names those.

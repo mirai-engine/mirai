@@ -220,6 +220,8 @@ struct Mesh {
     float4 bounds_min;   // object space
     float4 bounds_max;
     Mesh_Ray rays[MESH_RAY_LEVELS];
+    uint draw_first;     // where its clusters start in the indices of the meshes drawn whole this frame (render/mesh_draws.odin), CLUSTER_DRAW_VERTICES each; INVALID: not there
+    uint pad0; uint pad1; uint pad2;
 };
 
 // The maps of a material (MATERIAL_MAP_* of the schema, asset.Material_Maps

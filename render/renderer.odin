@@ -303,7 +303,7 @@ Stats :: struct {
 // One per stage: the tracer of its rays and the constants of its shaders
 // (`//! constant`) make the pipelines a frame asks for (pipeline_of).
 Pipeline_Id :: enum {
-	Postprocess_Copy, Postprocess_Hdr, Postprocess_Ldr, Cull, Cull_Clusters, Cull_Bins, Cull_Stats_Fold, Tlas_Batches,
+	Postprocess_Copy, Postprocess_Hdr, Postprocess_Ldr, Cull, Cull_Clusters, Cull_Bins, Cull_Stats_Fold, Mesh_Draws, Tlas_Batches,
 	Raster_Round, Raster_Vertices, Raster_Starts, Raster_Triangles, // what the raster of the visibility target draws of the visible clusters, a round at a time (raster_lists.slang)
 	Light_Grid_Count, Light_Grid_Scan, Light_Grid_Fill, Light_Grid_Weights, // the passes of the grid of the lights (light_grid.comp)
 	Light_Lists, // the lists of the lights without shadows of the tiles of a view (light_lists.comp)
@@ -918,6 +918,7 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	compute(list, r, .Cull_Clusters, .Cull_Clusters_Comp)
 	compute(list, r, .Cull_Bins, .Cull_Bins_Comp)
 	compute(list, r, .Cull_Stats_Fold, .Cull_Stats_Fold_Comp)
+	compute(list, r, .Mesh_Draws, .Mesh_Draws_Comp)
 	compute(list, r, .Raster_Round, .Raster_Round_Comp)
 	compute(list, r, .Raster_Vertices, .Raster_Vertices_Comp)
 	compute(list, r, .Raster_Starts, .Raster_Starts_Comp)

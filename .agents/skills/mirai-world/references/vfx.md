@@ -525,10 +525,10 @@ In each view:
   emitter's material or the mesh's, which the plugin tells the renderer each frame
   (`frame_gbuffer_mesh`) so that the views store their reflectance and their layers. Everything
   that follows lights, shades and reflects them.
-- Each draw takes the level 0 clusters of its mesh indexed by its draw list among the indices of
-  the scene (`erender.mesh_draw_range`, `pass_indices(.Scene)`, `pass_draw_indexed_indirect`, the
-  draws `finish` writes after the events, `MESH_DRAWS_AT`; weights and ranges are in the emitter's
-  row) and reads its vertices only through `geometry.slang`: the
+- Each draw takes the level 0 clusters of its mesh indexed by where the frame lists it among the
+  meshes drawn whole (`pass_indices(.Meshes)`, `pass_draw_indexed_indirect`, the draws `finish`
+  writes after the events from `Mesh.draw_first`, `MESH_DRAWS_AT`; weights and meshes are in the
+  emitter's row) and reads its vertices only through `geometry.slang`: the
   plugin asks each frame for the whole mesh (`frame_mesh_whole`), and a mesh with pages outside
   its root loads them all and does not release them while it is drawn, because the scene's cull
   does not see the particles. What a program's `render` gives does not reach them.
