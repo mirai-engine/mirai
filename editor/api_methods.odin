@@ -90,6 +90,9 @@ Api_Status :: struct {
     instances,visible_instances,lights:int,
     tlas_instances:int `mirai:"label=Entries of the structure rays walk"`,
     visible_triangles:int `mirai:"label=Of the instances that passed culling two frames ago"`,
+    raster_vertices:int `mirai:"label=Vertices the raster of the visibility target drew of them, 16 bytes each"`,
+    raster_triangles:int `mirai:"label=Triangles it drew of them, those that may show, 16 bytes each"`,
+    raster_deferred:int `mirai:"label=Clusters a round of it left to the next, their lists full; 0 once the lists hold a frame"`,
     visible_kinds:Api_Visible_Kinds `mirai:"label=What passed culling two frames ago, by kind of instance"`,
     probes_traced:int `mirai:"label=Two frames ago"`,
     probe_rays_traced:int `mirai:"label=Rays those probes traced: of the ones that keep nothing of their rays or that a change crossed"`,
@@ -129,7 +132,7 @@ Api_Visible_Kinds :: struct {
     single:Api_Visible `mirai:"label=Instances of the scene whose mesh has one level: terrain pieces and other meshes made at run time"`,
     batches:Api_Visible `mirai:"label=Instances of batches"`,
     late:Api_Visible `mirai:"label=Of all of them, what phase 1 of the occlusion drew: the pyramid of the frame showed it after the one of the frame before hid it"`,
-    dropped:[len(gpu.Cull_List)]int `mirai:"label=Chunks, visible clusters, occlusion candidates and clusters of Surface programs past the capacities of the lists of the cull, which grow for the frames after"`,
+    dropped:[len(gpu.Cull_List)]int `mirai:"label=Chunks, visible clusters, occlusion candidates, chunks and clusters of the shadow maps, and vertices and triangles of the visibility raster past the capacities of the lists of the cull, which grow for the frames after"`,
 }
 
 Api_Light_Lists :: struct {
@@ -537,6 +540,7 @@ api_status :: proc(s:^Session,call:^api.Call) {
         r.tlas_instances=int(stats.tlas_instances)
         for counter,i in stats.counters[:min(len(stats.counters),API_COUNTERS)] {r.counters[i]={counter.name,counter.values}}
         r.visible_triangles=int(stats.visible_triangles)
+        r.raster_vertices,r.raster_triangles,r.raster_deferred=int(stats.raster_vertices),int(stats.raster_triangles),int(stats.raster_deferred)
         for kind,k in ([3]^Api_Visible{&r.visible_kinds.levels,&r.visible_kinds.single,&r.visible_kinds.batches}) {
             from:=stats.visible_kinds[gpu.Visible_Kind_Id(k)]
             kind^={int(from.instances),int(from.clusters),int(from.triangles)}

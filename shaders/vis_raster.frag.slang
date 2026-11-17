@@ -1,8 +1,11 @@
 #include "native.slang"
-// The raster of the visibility target (visibility.slang), with gbuffer.vert
-// (visibility, tested): the id of the triangle nearest at each pixel, by the
-// hardware depth test. Without `tested`, the clusters whose every pixel is
-// there: no discard, so hidden fragments are rejected before they run.
+// The raster of the visibility target (visibility.slang), with
+// vis_raster.vert: the word of the triangle nearest at each pixel, by the
+// hardware depth test. A primitive of a draw is a triangle listed
+// (raster_lists.slang), in order from the first of the draw, and its word is
+// read where raster_triangles.comp wrote it. Without `tested`, the clusters
+// whose every pixel is there: no discard, so hidden fragments are rejected
+// before they run.
 // tested: those of a masked material or of an instance that fades, whose
 // pixels its fade and its alpha alone decide, with the alpha of its program
 // (surface_coverage.slang) when it has one; nothing it samples is reported to
@@ -15,6 +18,8 @@
 #include <surface_coverage.slang>
 #endif
 #include "visibility.slang"
+// The word of each triangle listed (visibility_id).
+[[vk::binding(SLOT_PASS2, 0)]] StructuredBuffer<uint> raster_ids : register(MIRAI_REGISTER(t, SLOT_PASS2), space0);
 
 #ifdef MIRAI_VISIBILITY_TESTED
 // Whether a fragment of a tested cluster is there: not left out by its fade,
@@ -39,19 +44,19 @@ bool vis_covers(Raster_Input input, uint2 pixel) {
 }
 
 [shader("fragment")]
-uint main(Raster_Input input, float4 pixel : SV_Position, bool front_facing : SV_IsFrontFace) : SV_Target0 {
+uint main(Raster_Input input, float4 pixel : SV_Position, bool front_facing : SV_IsFrontFace, uint primitive : SV_PrimitiveID) : SV_Target0 {
     input = raster_facing(input, front_facing);
     if (!vis_covers(input, uint2(pixel.xy))) discard;
-    return input.in_id;
+    return raster_ids[input.in_first + primitive];
 }
 #else
 struct Stage_Input {
-    [[vk::location(0)]] nointerpolation uint in_id : TEXCOORD0;
+    [[vk::location(0)]] nointerpolation uint in_first : TEXCOORD0;
 };
 
 [shader("fragment")]
 [earlydepthstencil]
-uint main(Stage_Input input) : SV_Target0 {
-    return input.in_id;
+uint main(Stage_Input input, uint primitive : SV_PrimitiveID) : SV_Target0 {
+    return raster_ids[input.in_first + primitive];
 }
 #endif
