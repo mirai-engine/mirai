@@ -821,8 +821,10 @@ shadow_params :: proc(p: ^Pass, plan: Shadow_Plan, round: Shadow_Round) -> Shado
 // The cull of a round and what it hands to its draws: by instance and slot,
 // as many slots as the pages listed (shadow_pages.comp), then by cluster over
 // the chunks, as the cull of the view. A pass by instance first foresees what
-// each page takes, the steps of the pages grant the pages the clusters of the
-// frame, the culls hand over the clusters of those alone, and the steps
+// each page takes, of the cache only the pages not foreseen yet, which keep
+// it until they are drawn; the steps of the pages grant the pages the
+// clusters of the frame and narrow the slots and the spans of the round to
+// theirs, the culls hand over the clusters of those alone, and the steps
 // settle those not drawn whole.
 @(private)
 shadow_cull :: proc(p: ^Pass, plan: Shadow_Plan, params: Shadow_Params, round: Shadow_Round, steps: ^Shadow_Pages_Params) {
@@ -830,6 +832,7 @@ shadow_cull :: proc(p: ^Pass, plan: Shadow_Plan, params: Shadow_Params, round: S
 	s := &r.scene
 	d := &r.shadow_buffers
 	params := params
+	masks, list := params.masks, params.list
 	start, start_at := rhi.frame_alloc_typed(r.device, Gpu_Shadow_State, 1)
 	if start == nil {return}
 	start[0] = {draws = {{vertex_count = CLUSTER_DRAW_VERTICES}, {vertex_count = CLUSTER_DRAW_VERTICES}}, cluster_dispatch = {0, 0, 1}}
@@ -839,6 +842,13 @@ shadow_cull :: proc(p: ^Pass, plan: Shadow_Plan, params: Shadow_Params, round: S
 	for pipeline, k in passes {
 		if k == 1 {shadow_pages_step(p, steps, .Grant, u32(round))}
 		params.foresee = 1 if k == 0 else 0
+		// Of the cache, the foresight goes over the pages not foreseen yet alone.
+		dispatch := u32(round)
+		params.masks, params.list = masks, list
+		if k == 0 && round == .Stays {
+			dispatch = 2
+			params.masks, params.list = abi.SHADOW_WORDS_FORESEE, abi.SHADOW_WORDS_SLOTS + 2 * SHADOW_SLOTS
+		}
 		rhi.cmd_bind_pipeline(cmd, r.pipelines[pipeline])
 		set_params(cmd, &params)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS0, d.table)
@@ -850,7 +860,7 @@ shadow_cull :: proc(p: ^Pass, plan: Shadow_Plan, params: Shadow_Params, round: S
 		rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.shadow_raster.hiz)
 		if pipeline == .Shadow_Maps {
 			if plan.movers > 0 {rhi.cmd_bind_transient(cmd, SLOT_PASS5, plan.bits)} else {rhi.cmd_bind_buffer(cmd, SLOT_PASS5, r.dummy_buffer)}
-			rhi.cmd_dispatch_indirect(cmd, t.shadow_raster.pages, u64(abi.SHADOW_WORDS_ARGS + abi.SHADOW_ARGS_DISPATCH + 3 * u32(round)) * 4)
+			rhi.cmd_dispatch_indirect(cmd, t.shadow_raster.pages, u64(abi.SHADOW_WORDS_ARGS + abi.SHADOW_ARGS_DISPATCH + 3 * dispatch) * 4)
 		} else {
 			rhi.cmd_dispatch_indirect(cmd, d.state, u64(offset_of(Gpu_Shadow_State, cluster_dispatch)))
 		}
