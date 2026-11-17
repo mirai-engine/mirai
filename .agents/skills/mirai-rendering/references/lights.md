@@ -175,7 +175,7 @@ trace their own rays take both kinds from the tree:
   and, seen from the side, stretches in the direction of the light.
 - The cost of a pixel depends on its samples, not on how many lights there are.
 
-### Direct light of a view
+## Direct light of a view
 
 The `direct` step ([frame graph](frame-graph.md#passes)) takes the light of each point from a
 fixed number of samples (`direct_samples`) spread over the lights that reach it:
