@@ -466,13 +466,16 @@ RASTER_BIN_TESTED :: abi.RASTER_BIN_TESTED
 // What the cull of the clusters the maps of the shadows draw counts
 // (shadow_cull.slang): the draws of those that hide whole, of those of masked
 // materials and of those of glass, the groups of its cluster pass over the
-// chunks and how many chunks its instance pass handed over.
+// chunks, how many chunks its instance pass handed over, and how many
+// clusters its draws took, which SHADOW_FRAME_CLUSTERS bounds.
 Gpu_Shadow_State :: struct {
 	draws:            [SHADOW_DRAWS]Gpu_Draw,
 	cluster_dispatch: [3]u32,
 	chunk_count:      u32,
+	taken:            u32,
+	_:                [3]u32,
 }
-#assert(size_of(Gpu_Shadow_State) == 64)
+#assert(size_of(Gpu_Shadow_State) == 80)
 
 Gpu_Cull_Stats :: struct {
 	visible_instances, visible_triangles, culled_instances, occluded_instances: u32,
@@ -490,13 +493,11 @@ Gpu_Cull_Stats :: struct {
 // the cache drew, once for each page they cover, those of them of masked
 // materials apart, and their triangles; those the atlas drew over it; the
 // pages the cache drew and the atlas composed, those newly asked for, those
-// of them the pool left out and those that wait for the frames after
-// (SHADOW_FRAME_CLUSTERS); and of each level of the sun, the pages the cache
-// drew whole and the clusters it drew into them: what a page of the level
-// costs.
+// of them the pool left out and those not drawn whole this frame, which wait
+// for the frames after; and the clusters the draws had no room for in the
+// frame (SHADOW_FRAME_CLUSTERS), whose pages wait too.
 Shadow_Stats :: struct {
-	clusters, clusters_masked, triangles, clusters_moving, pages_drawn, pages_composed, pages_asked, pages_left, pages_waiting: u32,
-	level_pages, level_clusters: [abi.SHADOW_SUN_MAPS]u32,
+	clusters, clusters_masked, triangles, clusters_moving, pages_drawn, pages_composed, pages_asked, pages_left, pages_waiting, clusters_over: u32,
 }
 // Instances, clusters and triangles that passed the cull of a frame, of one kind.
 Visible_Kind :: struct {instances, clusters, triangles: u32}

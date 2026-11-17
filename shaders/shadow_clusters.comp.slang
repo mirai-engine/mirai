@@ -5,12 +5,15 @@
 // round draws that its box covers (at rest, or posed by the skin this frame),
 // to the list shadow_map.vert draws: those of masked or blended
 // materials to the draw that takes their coverage, and those of glass also to
-// the draw of the tint. Clusters past the room of
-// their draw are counted, and the list grows for the frames after.
+// the draw of the tint. The draws of a round take at most params.bound
+// clusters a frame: a cluster past them, or past the room of its draw, is
+// left out, its page is not drawn whole this frame (SHADOW_COST_OVER) and
+// waits, and a list without room grows for the frames after.
 #include "trace.slang"
 #include "cut.slang"
 #include "shadow_maps.slang"
 #define SHADOW_PAGES_SLOT SLOT_PASS6
+#define SHADOW_PAGES_WRITTEN
 #include "shadow_cull.slang"
 #include "cull_stats.slang"
 #define MIRAI_GROUP_X 64
@@ -28,14 +31,21 @@
 [[vk::binding(SLOT_PASS7, 0)]] Texture2D<float4> hiz : register(MIRAI_REGISTER(t, SLOT_PASS7), space0);
 #include "shadow_hidden.slang"
 
-void shadow_add(uint draw, uint4 entry) {
-    uint slot;
-    InterlockedAdd(shadow_state[draw * 4u + SHADOW_DRAW_COUNT], 1u, slot);
-    if (slot >= shadow_room(draw)) {
-        InterlockedAdd(stats[0].dropped[CULL_LIST_SHADOW_ENTRIES], 1u);
-        return;
+// A cluster into a draw for the page of the pool `pool`; false where the
+// frame has no room for it.
+bool shadow_add(uint draw, uint4 entry, uint pool) {
+    uint taken, slot = 0u;
+    InterlockedAdd(shadow_state[SHADOW_TAKEN], 1u, taken);
+    bool room = taken < params.bound;
+    if (room) InterlockedAdd(shadow_state[draw * 4u + SHADOW_DRAW_COUNT], 1u, slot);
+    if (room && slot < shadow_room(draw)) {
+        entries[shadow_entry(draw, slot)] = entry;
+        return true;
     }
-    entries[shadow_entry(draw, slot)] = entry;
+    if (room) InterlockedAdd(stats[0].dropped[CULL_LIST_SHADOW_ENTRIES], 1u);
+    InterlockedAdd(stats[0].shadow[9], 1u);
+    if (params.moving < 2u) InterlockedOr(shadow_pages[shadow_cost_word(pool)], SHADOW_COST_OVER);
+    return false;
 }
 
 [shader("compute")]
@@ -73,19 +83,16 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
             // In the round of what moves, where the cache holds the page and hides the cluster there.
             uint held = shadow_table_entry(m.rect.x, shadow_page_entry(m.rect, uint2(x, y)));
             if (params.moving == 1u && (held & SHADOW_PAGE_CACHED) != 0u && shadow_box_hidden(hiz, m, uint2(x, y), (held & SHADOW_ENTRY_POOL) - 1u, low, high)) continue;
-            uint page = shadow_page_word(map, shadow_rect_mip(m.rect), uint2(x, y));
-            if ((work.y & SHADOW_CHUNK_DEPTH) != 0u) {
-                shadow_add(tested ? SHADOW_DRAW_TESTED : SHADOW_DRAW_OPAQUE, uint4(instance, k, page, rest ? 1u : 0u));
+            uint page = shadow_page_word(map, shadow_rect_mip(m.rect), uint2(x, y)), pool = (held & SHADOW_ENTRY_POOL) - 1u;
+            if ((work.y & SHADOW_CHUNK_DEPTH) != 0u && shadow_add(tested ? SHADOW_DRAW_TESTED : SHADOW_DRAW_OPAQUE, uint4(instance, k, page, rest ? 1u : 0u), pool)) {
                 if (params.moving == 0u) {
                     InterlockedAdd(stats[0].shadow[tested ? 1u : 0u], 1u);
                     InterlockedAdd(stats[0].shadow[2], cluster_triangle_count(c));
-                    // Of a level of the sun, what its pages drawn whole take: what one costs.
-                    if (map < SHADOW_SUN_MAPS && shadow_part_whole(shadow_page_part((held & SHADOW_ENTRY_POOL) - 1u))) InterlockedAdd(stats[0].shadow_level_clusters[map], 1u);
                 } else {
                     InterlockedAdd(stats[0].shadow[3], 1u);
                 }
             }
-            if ((work.y & SHADOW_CHUNK_GLASS) != 0u) shadow_add(SHADOW_DRAW_GLASS, uint4(instance, k, page, 0u));
+            if ((work.y & SHADOW_CHUNK_GLASS) != 0u) shadow_add(SHADOW_DRAW_GLASS, uint4(instance, k, page, 0u), pool);
         }
     }
 }

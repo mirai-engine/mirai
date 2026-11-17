@@ -14,5 +14,5 @@
 #define CULL_LIST_CANDIDATES 2u
 #define CULL_LIST_SHADOW_CHUNKS 3u
 #define CULL_LIST_SHADOW_ENTRIES 4u
-struct Stats_Block { uint visible_instances; uint visible_triangles; uint culled_instances; uint occluded_instances; uint probes_traced; uint visible_clusters; uint kinds[9]; uint late[3]; uint dropped[5]; uint resolved[3]; uint probe_rays[2]; uint lists[4]; uint shadow[9]; uint shadow_level_pages[SHADOW_SUN_MAPS]; uint shadow_level_clusters[SHADOW_SUN_MAPS]; };
+struct Stats_Block { uint visible_instances; uint visible_triangles; uint culled_instances; uint occluded_instances; uint probes_traced; uint visible_clusters; uint kinds[9]; uint late[3]; uint dropped[5]; uint resolved[3]; uint probe_rays[2]; uint lists[4]; uint shadow[10]; };
 #endif

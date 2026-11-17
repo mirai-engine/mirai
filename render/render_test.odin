@@ -692,11 +692,13 @@ render_a_full_pool_keeps_the_pages_of_a_jitter_cycle :: proc(t: ^testing.T) {
 	expect_clean(t, f.device)
 }
 
-// A view that moves is given the pages the clusters of a frame draw, the
-// coarsest first, and the others wait; the frame after it stays it is given
-// them all, and shows what maps drawn whole show.
+// No round of the maps draws more clusters in a frame than its bound, also in
+// the first frame of a still view that asks for many times more, where a
+// page alone passes it too; the pages past it wait, the coarsest first, and
+// are all drawn within the frames the bound gives, the image then that of the
+// maps drawn whole.
 @(test)
-render_a_view_that_moves_is_given_its_pages_over_frames :: proc(t: ^testing.T) {
+render_a_frame_draws_no_more_than_its_clusters_and_the_rest_comes_after :: proc(t: ^testing.T) {
 	f: Cube_Fixture
 	settings := test_settings()
 	settings.gi_enabled = false
@@ -704,21 +706,22 @@ render_a_view_that_moves_is_given_its_pages_over_frames :: proc(t: ^testing.T) {
 	if !cube_fixture_init(t, &f, 192, 128, settings) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
-	instances: [10]Instance_Desc
+	instances: [65]Instance_Desc
 	instances[0] = {object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {160, 0.2, 160}), tint = {0.8, 0.8, 0.8}}
 	for k in 1 ..< len(instances) {
-		instances[k] = {object_id = u64(k + 1), mesh = f.cube, transform = trs({40 + f32(k % 3) * 2.3 - 2.3, 0.8, f32(k / 3) * 2.1 - 3}, {0.3, 1.6, 0.3}), tint = {0.5, 0.5, 0.5}}
+		// Within one page of the levels of the sun the view reads, which they pass alone.
+		instances[k] = {object_id = u64(k + 1), mesh = f.cube, transform = trs({f32((k - 1) % 8) * 0.9 + 0.8, 0.8, f32((k - 1) / 8) * 0.9 + 0.8}, {0.2, 1.6, 0.2}), tint = {0.5, 0.5, 0.5}}
 	}
 	sun := Sun_Desc{direction = {0.4, 1, 0.3}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true}
 	testing.expect(t, scene_given(r, instances[:], nil, sun, {sky = {0, 0, 0}}))
-	camera := Camera{position = {0, 5, 7}, forward = {0, -5, -7}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-	// What a page of each level costs is known from the frames that drew them.
-	for _ in 0 ..< 6 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
-	waiting :: proc(r: ^Renderer) -> u32 {
+	camera := Camera{position = {4, 5, 11}, forward = {0, -5, -7}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	stats :: proc(r: ^Renderer) -> (s: Shadow_Stats, waiting: u32) {
 		rhi.device_wait_idle(r.device)
+		read: [1]Shadow_Stats
 		count: [1]u32
-		if !rhi.buffer_read_slice(r.device, r.main.targets.shadow_raster.pages, u64(abi.SHADOW_WORDS_COUNTS + abi.SHADOW_COUNT_WAITING) * 4, count[:]) {return max(u32)}
-		return count[0]
+		if !rhi.buffer_read_slice(r.device, r.stats_buffer, u64(offset_of(Gpu_Cull_Stats, shadow)), read[:]) {return {}, max(u32)}
+		if !rhi.buffer_read_slice(r.device, r.main.targets.shadow_raster.pages, u64(abi.SHADOW_WORDS_COUNTS + abi.SHADOW_COUNT_WAITING) * 4, count[:]) {return {}, max(u32)}
+		return read[0], count[0]
 	}
 	read :: proc(t: ^testing.T, f: ^Cube_Fixture) -> []u8 {
 		rhi.device_wait_idle(f.device)
@@ -726,24 +729,43 @@ render_a_view_that_moves_is_given_its_pages_over_frames :: proc(t: ^testing.T) {
 		testing.expect(t, ok, f.renderer.error)
 		return pixels
 	}
+	// Drawn whole in its first frame: what that frame asks for.
 	b := &r.main.targets.shadow_raster
-	b.budget = 4
-	camera.position.x = 40
-	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
-	_, composed, _ := shadow_counts(r)
-	late := waiting(r)
-	testing.expectf(t, composed > 0 && late > 0, "the frame the eye moved was given %d pages and %d wait", composed, late)
-	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
-	testing.expectf(t, waiting(r) == 0, "the frame after, the eye stays: %d pages still wait", waiting(r))
-	given := read(t, &f)
-	defer delete(given)
+	b.budget = 1 << 20
+	// A frame that lets go of every page draws them whole into the atlas, and the cache the next.
+	for _ in 0 ..< 2 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
 	b.forget = true
-	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	for _ in 0 ..< 2 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	whole_frame, _ := stats(r)
+	asked := whole_frame.clusters + whole_frame.clusters_masked
+	for _ in 0 ..< 2 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
 	whole := read(t, &f)
 	defer delete(whole)
+	// A bound a sixteenth of that, less than the posts in one page.
+	bound := max(asked / 16, 4)
+	b.budget, b.forget = bound, true
+	frames, most, banded := 0, u32(0), false
+	for frames < 128 {
+		testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+		frames += 1
+		s, waiting := stats(r)
+		bands: [abi.SHADOW_POOL_PAGES]u32
+		testing.expect(t, rhi.buffer_read_slice(r.device, b.pages, u64(abi.SHADOW_WORDS_BAND) * 4, bands[:]))
+		for band in bands {banded ||= (band >> abi.SHADOW_BAND_SHIFT) & 0xFF != 0}
+		most = max(most, s.clusters + s.clusters_masked, s.clusters_moving)
+		testing.expectf(t, s.clusters + s.clusters_masked <= bound && s.clusters_moving <= bound, "frame %d: the cache drew %d clusters and the atlas %d past the bound of %d", frames, s.clusters + s.clusters_masked, s.clusters_moving, bound)
+		if waiting == 0 {break}
+	}
+	// Each frame draws near its bound but for what its bands and estimates leave.
+	given := 4 * (int(asked) + int(bound) - 1) / int(bound) + 4
+	testing.expectf(t, asked > 16 * bound - 16 && most > 0 && banded && frames <= given, "%d clusters asked for under a bound of %d took %d frames, the rule gives %d (a page drawn in bands: %v)", asked, bound, frames, given, banded)
+	for _ in 0 ..< 2 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	settled := read(t, &f)
+	defer delete(settled)
 	differ := 0
-	for v, k in given {if k < len(whole) && abs(int(v) - int(whole[k])) > 2 {differ += 1}}
-	testing.expectf(t, len(given) == len(whole) && differ * 1000 <= len(given), "%d of %d values differ from the maps drawn whole", differ, len(given))
+	for v, k in settled {if k < len(whole) && abs(int(v) - int(whole[k])) > 2 {differ += 1}}
+	testing.expectf(t, len(settled) == len(whole) && differ * 1000 <= len(settled), "%d of %d values differ from the maps drawn whole", differ, len(settled))
+	b.budget = 0
 	expect_clean(t, f.device)
 }
 

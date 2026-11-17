@@ -8,12 +8,14 @@
 // covers a texel of its map, hands the clusters of the cut of the map that its levels can
 // take (instance_clusters) to shadow_clusters.comp in chunks, as cull.comp
 // hands those the view draws to cull_clusters.comp, at the detail of each
-// mip. Chunks past the capacity of their list are counted, and it grows for
-// the frames after.
+// mip, and foresees what each page it covers takes of them, which the steps of
+// the pages bound before the cluster pass (shadow_pages.comp). Chunks past the
+// capacity of their list are counted, and it grows for the frames after.
 #include "trace.slang"
 #include "cut.slang"
 #include "shadow_maps.slang"
 #define SHADOW_PAGES_SLOT SLOT_PASS6
+#define SHADOW_PAGES_WRITTEN
 #include "shadow_cull.slang"
 #include "cull_stats.slang"
 #define MIRAI_GROUP_X 256
@@ -41,6 +43,29 @@ bool instance_moves(uint instance) {
     uint bit = instance_batched(instance) ? frame.instance_count + batch_of(instance) : instance;
     uint word = bit >> 5u;
     return word < params.movers && (movers[word] & (1u << (bit & 31u))) != 0u;
+}
+
+// What a round hands each page it draws that the texels of a box cover: of
+// the clusters of the box, the share of its texels that lie in the part of
+// the page drawn, at least one (SHADOW_WORDS_COST).
+void shadow_foresee(Shadow_Map m, float4 texels, uint clusters) {
+    uint4 span, rect = shadow_texel_pages(m, texels);
+    if (!shadow_pages_span(m, span)) return;
+    rect = uint4(max(rect.xy, span.xy), min(rect.zw, span.zw));
+    float2 size = max(texels.zw - texels.xy, float2(1.0, 1.0));
+    for (uint y = rect.y; y <= rect.w; y++) {
+        for (uint x = rect.x; x <= rect.z; x++) {
+            uint pool;
+            if (!shadow_page_drawn(m, uint2(x, y), texels) || !shadow_page_pool(m, uint2(x, y), pool)) continue;
+            uint4 part = shadow_page_part(pool);
+            float2 corner = float2(uint2(x, y) * SHADOW_PAGE);
+            float2 within = min(texels.zw, corner + float2(part.zw)) - max(texels.xy, corner + float2(part.xy));
+            float share = saturate(max(within.x, 1.0) * max(within.y, 1.0) / (size.x * size.y));
+            // Far past any bound it counts no more, below the flags of the word.
+            uint word = shadow_cost_word(pool);
+            if (shadow_pages[word] < 0x10000000u) InterlockedAdd(shadow_pages[word], min(max(uint(ceil(float(clusters) * share)), 1u), 0x01000000u));
+        }
+    }
 }
 
 [shader("compute")]
@@ -98,6 +123,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     bool depth = !all_glass && params.moving != 2u && (whole || moves == (params.moving != 0u));
         if (!depth && !glass) continue;
         uint2 clusters = instance_clusters(shadow_map_detail(m), inst, mesh);
+        if (depth) shadow_foresee(m, texels, clusters.y);
         uint count = (clusters.y + CULL_CHUNK - 1u) / CULL_CHUNK;
         uint base;
         InterlockedAdd(shadow_state[SHADOW_CHUNK_COUNT], count, base);
