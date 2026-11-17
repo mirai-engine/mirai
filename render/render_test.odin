@@ -60,6 +60,16 @@ shadow_counts :: proc(r: ^Renderer) -> (drawn, composed, left: u32) {
 	return counts[abi.SHADOW_COUNT_DRAWN], counts[abi.SHADOW_COUNT_COMPOSED], counts[abi.SHADOW_COUNT_LEFT]
 }
 
+// The clusters the cache of the maps of the last view drew in the last frame,
+// once for each page they cover (Shadow_Stats).
+@(private = "file")
+shadow_clusters :: proc(r: ^Renderer) -> u32 {
+	rhi.device_wait_idle(r.device)
+	stats: [1]Shadow_Stats
+	if !rhi.buffer_read_slice(r.device, r.stats_buffer, u64(offset_of(Gpu_Cull_Stats, shadow)), stats[:]) {return max(u32)}
+	return stats[0].clusters + stats[0].clusters_masked
+}
+
 // How many times the steps of the pages of the main view gave them (shadow_pages.comp).
 @(private = "file")
 shadow_page_runs :: proc(r: ^Renderer) -> u32 {
@@ -377,6 +387,27 @@ render_shadow_maps_follow_what_moves_in_its_frame :: proc(t: ^testing.T) {
 	differ = 0
 	for v, k in hidden {if k < len(fresh) && abs(int(v) - int(fresh[k])) > 2 {differ += 1}}
 	testing.expectf(t, len(hidden) == len(fresh) && differ * 1000 <= len(hidden), "under a roof %d of %d values differ from the maps drawn whole", differ, len(hidden))
+	// One caster among many that stay moves once: the cache draws again the
+	// texels of its pages its boxes cover, not what else lies in those pages,
+	// and the image is that of maps drawn whole.
+	testing.expect(t, scene_given(r, many[:], []Light_Desc{light}, {}, {}))
+	for _ in 0 ..< SHADOW_MOVER_FRAMES + 2 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	testing.expect(t, scene_move(r, {150}, {place(149, 0.05)}))
+	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	part := shadow_clusters(r)
+	one := read(t, &f)
+	defer delete(one)
+	// Maps drawn whole draw into the atlas alone, and their cache the frame after.
+	r.main.targets.shadow_raster.forget = true
+	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	all := read(t, &f)
+	defer delete(all)
+	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	every := shadow_clusters(r)
+	testing.expectf(t, part > 0 && part * 8 < every, "one caster of 300 moved: the cache drew %d clusters again, %d when drawn whole", part, every)
+	differ = 0
+	for v, k in one {if k < len(all) && abs(int(v) - int(all[k])) > 2 {differ += 1}}
+	testing.expectf(t, len(one) == len(all) && differ * 1000 <= len(one), "after one caster moved %d of %d values differ from the maps drawn whole", differ, len(one))
 	expect_clean(t, f.device)
 }
 
@@ -606,6 +637,184 @@ render_a_page_first_read_is_drawn_in_its_frame :: proc(t: ^testing.T) {
 	shaded, lit = pixel(small, w, project(r, posts, {31.9, 0.001, -3.3}))[0], pixel(small, w, project(r, posts, {36, 0.001, 3}))[0]
 	testing.expectf(t, lit > 40 && shaded < 0.5 * lit, "with a small pool a post shades the ground: %f against %f", shaded, lit)
 	b.pool = 0
+	expect_clean(t, f.device)
+}
+
+// A pool smaller than what two ways of looking ask for, with the jitter of
+// the view on: a page the points of one frame miss and those of the next read
+// keeps its place, so looking back and forth draws no page again; and once
+// the eye stays for a cycle of the jitter, the pool holds only what its
+// points read.
+@(test)
+render_a_full_pool_keeps_the_pages_of_a_jitter_cycle :: proc(t: ^testing.T) {
+	f: Cube_Fixture
+	settings := test_settings()
+	settings.gi_enabled = false
+	if !cube_fixture_init(t, &f, 192, 128, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	instances: [10]Instance_Desc
+	instances[0] = {object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {120, 0.2, 120}), tint = {0.8, 0.8, 0.8}}
+	for k in 1 ..< len(instances) {
+		instances[k] = {object_id = u64(k + 1), mesh = f.cube, transform = trs({f32(k % 3) * 2.3 - 2.3, 0.8, f32(k / 3) * 2.1 - 3}, {0.3, 1.6, 0.3}), tint = {0.5, 0.5, 0.5}}
+	}
+	sun := Sun_Desc{direction = {0.4, 1, 0.3}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true}
+	testing.expect(t, scene_given(r, instances[:], nil, sun, {sky = {0, 0, 0}}))
+	views := [2]Camera {
+		{position = {0, 5, 7}, forward = {-4, -5, -7}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE},
+		{position = {0, 5, 7}, forward = {4, -5, -7}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE},
+	}
+	testing.expect(t, renderer_frame(r, {camera = views[0]}), r.error)
+	b := &r.main.targets.shadow_raster
+	levels := 0
+	for h in b.held[:SHADOW_SUN_LEVELS] {if h.m.rect.z != 0 {levels += 1}}
+	// The safety net of every level, and a few of the pages the points read.
+	pool := 4 * levels + 8
+	b.pool, b.forget = u32(pool), true
+	for k in 0 ..< 4 {testing.expect(t, renderer_frame(r, {camera = views[k % 2]}), r.error)}
+	_, _, left := shadow_counts(r)
+	testing.expectf(t, left > 0, "the pool of %d pages leaves pages out: %d", pool, left)
+	again := u32(0)
+	for k in 0 ..< 6 {
+		testing.expect(t, renderer_frame(r, {camera = views[k % 2]}), r.error)
+		drawn, _, _ := shadow_counts(r)
+		again += drawn
+	}
+	testing.expectf(t, again == 0, "looking back and forth drew %d pages again", again)
+	for _ in 0 ..< 3 * TAA_JITTER_PHASES {testing.expect(t, renderer_frame(r, {camera = views[0]}), r.error)}
+	rhi.device_wait_idle(f.device)
+	owners, ages: [abi.SHADOW_POOL_PAGES]u32
+	testing.expect(t, rhi.buffer_read_slice(r.device, b.pages, u64(abi.SHADOW_WORDS_OWNER) * 4, owners[:pool]))
+	testing.expect(t, rhi.buffer_read_slice(r.device, b.pages, u64(abi.SHADOW_WORDS_AGE) * 4, ages[:pool]))
+	stale := 0
+	for age, k in ages[:pool] {if owners[k] == 0 || age != ages[0] {stale += 1}}
+	testing.expectf(t, stale == 0, "after the eye stayed %d pages of the pool are not those its points read", stale)
+	expect_clean(t, f.device)
+}
+
+// No round of the maps draws more clusters in a frame than its bound, also in
+// the first frame of a still view that asks for many times more, where a
+// page alone passes it too; the pages past it wait, the coarsest first, and
+// are all drawn within the frames the bound gives, the image then that of the
+// maps drawn whole.
+@(test)
+render_a_frame_draws_no_more_than_its_clusters_and_the_rest_comes_after :: proc(t: ^testing.T) {
+	f: Cube_Fixture
+	settings := test_settings()
+	settings.gi_enabled = false
+	settings.taa = false
+	if !cube_fixture_init(t, &f, 192, 128, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	instances: [65]Instance_Desc
+	instances[0] = {object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {160, 0.2, 160}), tint = {0.8, 0.8, 0.8}}
+	for k in 1 ..< len(instances) {
+		// Within one page of the levels of the sun the view reads, which they pass alone.
+		instances[k] = {object_id = u64(k + 1), mesh = f.cube, transform = trs({f32((k - 1) % 8) * 0.9 + 0.8, 0.8, f32((k - 1) / 8) * 0.9 + 0.8}, {0.2, 1.6, 0.2}), tint = {0.5, 0.5, 0.5}}
+	}
+	sun := Sun_Desc{direction = {0.4, 1, 0.3}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true}
+	testing.expect(t, scene_given(r, instances[:], nil, sun, {sky = {0, 0, 0}}))
+	camera := Camera{position = {4, 5, 11}, forward = {0, -5, -7}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	stats :: proc(r: ^Renderer) -> (s: Shadow_Stats, waiting: u32) {
+		rhi.device_wait_idle(r.device)
+		read: [1]Shadow_Stats
+		count: [1]u32
+		if !rhi.buffer_read_slice(r.device, r.stats_buffer, u64(offset_of(Gpu_Cull_Stats, shadow)), read[:]) {return {}, max(u32)}
+		if !rhi.buffer_read_slice(r.device, r.main.targets.shadow_raster.pages, u64(abi.SHADOW_WORDS_COUNTS + abi.SHADOW_COUNT_WAITING) * 4, count[:]) {return {}, max(u32)}
+		return read[0], count[0]
+	}
+	read :: proc(t: ^testing.T, f: ^Cube_Fixture) -> []u8 {
+		rhi.device_wait_idle(f.device)
+		pixels, _, _, ok := golden_capture(f.renderer)
+		testing.expect(t, ok, f.renderer.error)
+		return pixels
+	}
+	// Drawn whole in its first frame: what that frame asks for.
+	b := &r.main.targets.shadow_raster
+	b.budget = 1 << 20
+	// A frame that lets go of every page draws them whole into the atlas, and the cache the next.
+	for _ in 0 ..< 2 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	b.forget = true
+	for _ in 0 ..< 2 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	whole_frame, _ := stats(r)
+	asked := whole_frame.clusters + whole_frame.clusters_masked
+	for _ in 0 ..< 2 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	whole := read(t, &f)
+	defer delete(whole)
+	// A bound a sixteenth of that, less than the posts in one page.
+	bound := max(asked / 16, 4)
+	b.budget, b.forget = bound, true
+	frames, most, banded := 0, u32(0), false
+	for frames < 128 {
+		testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+		frames += 1
+		s, waiting := stats(r)
+		bands: [abi.SHADOW_POOL_PAGES]u32
+		testing.expect(t, rhi.buffer_read_slice(r.device, b.pages, u64(abi.SHADOW_WORDS_BAND) * 4, bands[:]))
+		for band in bands {banded ||= (band >> abi.SHADOW_BAND_SHIFT) & 0xFF != 0}
+		most = max(most, s.clusters + s.clusters_masked, s.clusters_moving)
+		testing.expectf(t, s.clusters + s.clusters_masked <= bound && s.clusters_moving <= bound, "frame %d: the cache drew %d clusters and the atlas %d past the bound of %d", frames, s.clusters + s.clusters_masked, s.clusters_moving, bound)
+		if waiting == 0 {break}
+	}
+	// Each frame draws near its bound but for what its bands and estimates leave.
+	given := 4 * (int(asked) + int(bound) - 1) / int(bound) + 4
+	testing.expectf(t, asked > 16 * bound - 16 && most > 0 && banded && frames <= given, "%d clusters asked for under a bound of %d took %d frames, the rule gives %d (a page drawn in bands: %v)", asked, bound, frames, given, banded)
+	for _ in 0 ..< 2 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	settled := read(t, &f)
+	defer delete(settled)
+	differ := 0
+	for v, k in settled {if k < len(whole) && abs(int(v) - int(whole[k])) > 2 {differ += 1}}
+	testing.expectf(t, len(settled) == len(whole) && differ * 1000 <= len(settled), "%d of %d values differ from the maps drawn whole", differ, len(settled))
+	b.budget = 0
+	expect_clean(t, f.device)
+}
+
+// The search of the blockers of a point reaches far where something may
+// stand far above it: its far taps read a coarser level, so a tall scene asks
+// for hardly more pages of the level its points read than a low one, where
+// the whole reach of the taps would ask for a ring of pages around them.
+@(test)
+render_a_wide_search_asks_for_coarser_pages_not_more_of_the_finest :: proc(t: ^testing.T) {
+	f: Cube_Fixture
+	settings := test_settings()
+	settings.gi_enabled = false
+	settings.taa = false
+	settings.sun_radius = 1e-6
+	if !cube_fixture_init(t, &f, 128, 96, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	// A floor seen from just above, and a post 20 m tall far to the side of what is seen.
+	instances := []Instance_Desc{
+		{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {80, 0.2, 80}), tint = {0.8, 0.8, 0.8}},
+		{object_id = 2, mesh = f.cube, transform = trs({30, 10, 30}, {0.2, 20, 0.2}), tint = {0.5, 0.5, 0.5}},
+	}
+	sun := Sun_Desc{direction = {0.05, 1, 0.02}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true}
+	testing.expect(t, scene_given(r, instances, nil, sun, {sky = {0, 0, 0}}))
+	camera := Camera{position = {10.3, 0.36, 7.7}, forward = {0, -1, -0.001}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	// The pages of each level of the sun the points of the last frame marked.
+	marked :: proc(t: ^testing.T, r: ^Renderer) -> (counts: [SHADOW_SUN_LEVELS]int) {
+		rhi.device_wait_idle(r.device)
+		words: [SHADOW_SUN_LEVELS * abi.SHADOW_MASK_WORDS]u32
+		testing.expect(t, rhi.buffer_read_slice(r.device, r.main.targets.shadow_raster.pages, u64(abi.SHADOW_WORDS_NEEDED) * 4, words[:]))
+		for word, k in words {
+			for bit in 0 ..< u32(32) {if word & (1 << bit) != 0 {counts[k / abi.SHADOW_MASK_WORDS] += 1}}
+		}
+		return
+	}
+	for _ in 0 ..< 2 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	low := marked(t, r)
+	own := 0
+	for count, level in low {if count > low[own] {own = level}}
+	settings.sun_radius = 0.05
+	testing.expect(t, renderer_apply_settings(r, settings))
+	for _ in 0 ..< 2 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	tall := marked(t, r)
+	coarser := 0
+	for count in tall[own + 1:] {coarser += count}
+	before := 0
+	for count in low[own + 1:] {before += count}
+	testing.expectf(t, low[own] > 0 && tall[own] < 2 * low[own] + 3, "level %d: %d pages marked under a narrow sun, %d under a wide one", own, low[own], tall[own])
+	testing.expectf(t, coarser > before, "the wide search marked %d pages of coarser levels, the narrow one %d", coarser, before)
 	expect_clean(t, f.device)
 }
 

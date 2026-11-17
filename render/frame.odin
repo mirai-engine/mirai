@@ -169,6 +169,7 @@ read_stats :: proc(r: ^Renderer, slot: int) {
 		r.stats.probe_rays_traced, r.stats.probe_hits_lit = stats.probe_rays[0], stats.probe_rays[1]
 		r.stats.resolved_pixels, r.stats.resolve_helpers, r.stats.resolve_quads_again = stats.resolved[0], stats.resolved[1], stats.resolved[2]
 		r.stats.light_lists = stats.lists
+		r.stats.shadow = stats.shadow
 	}
 	r.stats.timings, _, _ = rhi.frame_timings(r.device)
 	total: f32

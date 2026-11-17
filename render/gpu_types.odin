@@ -489,13 +489,16 @@ RASTER_BIN_TESTED :: abi.RASTER_BIN_TESTED
 // What the cull of the clusters the maps of the shadows draw counts
 // (shadow_cull.slang): the draws of those that hide whole, of those of masked
 // materials and of those of glass, the groups of its cluster pass over the
-// chunks and how many chunks its instance pass handed over.
+// chunks, how many chunks its instance pass handed over, and how many
+// clusters its draws took, which SHADOW_FRAME_CLUSTERS bounds.
 Gpu_Shadow_State :: struct {
 	draws:            [SHADOW_DRAWS]Gpu_Draw,
 	cluster_dispatch: [3]u32,
 	chunk_count:      u32,
+	taken:            u32,
+	_:                [3]u32,
 }
-#assert(size_of(Gpu_Shadow_State) == 64)
+#assert(size_of(Gpu_Shadow_State) == 80)
 
 Gpu_Cull_Stats :: struct {
 	visible_instances, visible_triangles, culled_instances, occluded_instances: u32,
@@ -509,6 +512,17 @@ Gpu_Cull_Stats :: struct {
 	probe_rays: [2]u32, // the rays the probes traced and the hits they lit, copied at the end of the frame from the list of the probe volume
 	lists: Light_List_Stats, // of the lists of the lights without shadows (light_lists.comp)
 	raster_need: [2]u32, // of the views of the frame, the most vertices and triangles one would hold in a round of the raster (Gpu_Cull_State.raster_need)
+	shadow: Shadow_Stats,
+}
+// What the maps of the shadows of the last view drew in a frame: the clusters
+// the cache drew, once for each page they cover, those of them of masked
+// materials apart, and their triangles; those the atlas drew over it; the
+// pages the cache drew and the atlas composed, those newly asked for, those
+// of them the pool left out and those not drawn whole this frame, which wait
+// for the frames after; and the clusters the draws had no room for in the
+// frame (SHADOW_FRAME_CLUSTERS), whose pages wait too.
+Shadow_Stats :: struct {
+	clusters, clusters_masked, triangles, clusters_moving, pages_drawn, pages_composed, pages_asked, pages_left, pages_waiting, clusters_over: u32,
 }
 // Instances, clusters and triangles that passed the cull of a frame, of one kind.
 Visible_Kind :: struct {instances, clusters, triangles: u32}

@@ -120,12 +120,13 @@ bool shadow_map_reaches(Shadow_Map m, float3 low, float3 high) {
         && shadow_box_side(lo, hi, float3(0.0, 1.0, -m.span.y), 0.0) && shadow_box_side(lo, hi, float3(0.0, -1.0, m.span.w), 0.0);
 }
 
-// The pages of a map a box of the world covers from the light, the first
-// column and row then the last (render.shadow_page_rect); false where it
-// covers none. A box that reaches the plane of a perspective one covers all.
-bool shadow_page_rect(Shadow_Map m, float3 low, float3 high, out uint4 rect) {
-    uint last = m.rect.z / SHADOW_PAGE - 1u;
-    rect = uint4(0u, 0u, last, last);
+// The texels of a map a box of the world covers from the light, the first
+// column and row then the last, past its square too; false where it covers
+// none of the square. A box that reaches the plane of a perspective one
+// covers all.
+bool shadow_box_texels(Shadow_Map m, float3 low, float3 high, out float4 texels) {
+    float side = float(m.rect.z);
+    texels = float4(0.0, 0.0, side, side);
     float2 lo = float2(FLT_MAX, FLT_MAX), hi = -float2(FLT_MAX, FLT_MAX);
     for (uint corner = 0u; corner < 8u; corner++) {
         float3 p = float3((corner & 1u) != 0u ? high.x : low.x, (corner & 2u) != 0u ? high.y : low.y, (corner & 4u) != 0u ? high.z : low.z);
@@ -138,13 +139,15 @@ bool shadow_page_rect(Shadow_Map m, float3 low, float3 high, out uint4 rect) {
         lo = min(lo, at);
         hi = max(hi, at);
     }
-    float side = float(m.rect.z);
-    float x0 = (lo.x - m.span.x) / (m.span.z - m.span.x) * side, x1 = (hi.x - m.span.x) / (m.span.z - m.span.x) * side;
-    float y0 = (m.span.w - hi.y) / (m.span.w - m.span.y) * side, y1 = (m.span.w - lo.y) / (m.span.w - m.span.y) * side;
-    if (x1 < 0.0 || y1 < 0.0 || x0 >= side || y0 >= side) return false;
-    float end = float((last + 1u) * SHADOW_PAGE) - 1.0;
-    rect = uint4(uint(clamp(x0, 0.0, end)), uint(clamp(y0, 0.0, end)), uint(clamp(x1, 0.0, end)), uint(clamp(y1, 0.0, end))) / SHADOW_PAGE;
-    return true;
+    texels = float4((lo.x - m.span.x) / (m.span.z - m.span.x), (m.span.w - hi.y) / (m.span.w - m.span.y),
+                    (hi.x - m.span.x) / (m.span.z - m.span.x), (m.span.w - lo.y) / (m.span.w - m.span.y)) * side;
+    return !(texels.z < 0.0 || texels.w < 0.0 || texels.x >= side || texels.y >= side);
+}
+
+// The pages of a map those texels lie in, the first column and row then the last.
+uint4 shadow_texel_pages(Shadow_Map m, float4 texels) {
+    float end = float(m.rect.z / SHADOW_PAGE * SHADOW_PAGE) - 1.0;
+    return uint4(clamp(texels, 0.0, end)) / SHADOW_PAGE;
 }
 
 // The taps of a map around a point that find its blockers; the most texels
@@ -155,6 +158,13 @@ bool shadow_page_rect(Shadow_Map m, float3 low, float3 high, out uint4 rect) {
 // with where the point lies in it (Shadow_Taps.grow).
 #define SHADOW_TAPS 12u
 #define SHADOW_SEARCH_MAX 64.0
+// How far around a point its taps ask for pages of its own level or mip,
+// texels: a tap farther off finds only a blocker far from the point, behind
+// a penumbra as wide, which the level or mip whose texels are as many times
+// wider tells as well; its pages are asked for there instead
+// (shadow_mark.comp), and the taps read them where those of the point's own
+// are not drawn (SHADOW_ENTRY_COARSER).
+#define SHADOW_SEARCH_NEAR 8.0
 // A point stretched wider than its penumbra: the taps over its ellipse, and
 // how far along its long axis it reaches, texels, over the point and the
 // jitter of the view around it (SHADOW_WIDE_COVER points).
