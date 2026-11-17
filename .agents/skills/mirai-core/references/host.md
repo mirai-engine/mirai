@@ -371,8 +371,8 @@ of pieces) is not a fixed cap, and a frame that does not load does not allocate.
   without having taken anything asks for the next frame for itself alone (`assets_load_alone`): a
   large asset goes alone and no load waits forever behind the others. The first scene of the
   player has nothing on the screen to keep smooth: it has the frames, `LOAD_WHOLE_FRAME_SECONDS`
-  of each, and every job worker (`assets_load_whole`). `load_under_way` says whether a load is
-  not resident yet.
+  of each, and every job worker (`assets_load_whole`); so does what arrives for a loading screen
+  (`App.loading_screen`, `assets_load_screen`). `load_under_way`: a load is not resident yet.
   - A texture of more than `LOAD_FRAME_BYTES` that a load takes over several frames
     (`assets_take(..., over_frames=true)`) costs in its frame only its levels of side
     `TEXTURE_TAIL` (`assets_prepared_cost`); the others go up with the renderer's uploads
