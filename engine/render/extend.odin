@@ -266,15 +266,6 @@ counters :: proc(renderer:^Renderer,name:string) -> (values:[4]u32,ok:bool) {
 // Bytes a buffer of a pass may span at most on this device.
 max_storage_range :: proc(app:^host.App) -> u64 {return app.device!=nil?rhi.device_info(app.device).max_storage_range:0}
 
-// How an indexed draw with the indices of the scene (pass_indices .Scene)
-// takes the clusters of level 0 of a mesh: its first index and how many,
-// which a vertex shader reads with geometry.slang. False for a mesh the
-// renderer does not have yet, or not yet as a list of indices: ask again.
-mesh_draw_range :: proc(renderer:^Renderer,mesh:Mesh_Handle) -> (first_index,index_count:u32,ok:bool) {
-    if renderer==nil {return}
-    return gpu.mesh_draw_range(renderer,mesh)
-}
-
 // The primitives of level 0 of a mesh (geometry.slang): CLUSTER_TRIANGLES a
 // cluster, those past its own of no area. False for a mesh the renderer does not have.
 mesh_primitive_count :: proc(renderer:^Renderer,mesh:Mesh_Handle) -> (count:u32,ok:bool) {
