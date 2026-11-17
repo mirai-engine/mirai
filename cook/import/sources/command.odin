@@ -33,9 +33,11 @@ import "mirai:std/jobs"
 // what its name says (image_use). Only models and images have settings.
 // --sync <root>, once per project or plugin, imports instead every source
 // under it whose outputs in its imported folder are missing or stale (sync):
-// what a checkout needs before it runs. --fast builds the textures of a sync
-// or of an import Fast, as the editor imports them, unless the texture cache
-// keeps them Final: what a build that does not cook takes.
+// what a checkout needs before it runs. Textures are built Fast, as the
+// editor imports them, unless the texture cache keeps them Final, and outputs
+// built either way are current: an import takes what the sync of the editor
+// left. --final builds them Final: what a build that cooks and the package of
+// the engine take.
 // The report goes to output, one asset per line: id, kind, bytes and path, and
 // under it, indented, what the asset holds; then the settings file and the
 // warnings. How far a long import is goes to errors while it runs, and a
@@ -48,14 +50,14 @@ import "mirai:std/jobs"
 // Exit codes: 0 done, 1 failed, 2 misuse.
 
 @(private="file")
-IMPORT_USAGE :: "Usage: mirai import <file> [--uncompressed|--blocks] [--rdo-lambda L] [--srgb|--normal|--normal-green-down|--data] [--alpha-coverage C] [--lods auto|none] [--parts auto|all|none] [--front auto|negative_z|z|x|negative_x] [--rig source|humanoid|fox|horse|bird|dragon|kaiju|shark|snake|spider] [--rig-crotch M] [--rig-neck M] [--skeleton <id>] [--rebuild] [--discard-changes] [--fast] [--texture-cache <folder>] [--mesh-cache <folder>] [--profile] [--release]"
+IMPORT_USAGE :: "Usage: mirai import <file> [--uncompressed|--blocks] [--rdo-lambda L] [--srgb|--normal|--normal-green-down|--data] [--alpha-coverage C] [--lods auto|none] [--parts auto|all|none] [--front auto|negative_z|z|x|negative_x] [--rig source|humanoid|fox|horse|bird|dragon|kaiju|shark|snake|spider] [--rig-crotch M] [--rig-neck M] [--skeleton <id>] [--rebuild] [--discard-changes] [--final] [--texture-cache <folder>] [--mesh-cache <folder>] [--profile] [--release]"
 
 // library reads the formats and the importers of whole sources the plugins of
 // a project add and the types of its game (in the import program of the
 // engine, editor.import_library).
 command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> int {
     file:string
-    options:importer.Import_Options
+    options:=importer.Import_Options{fast_textures=true}
     roots:=make([dynamic]string,context.temp_allocator) // of --sync
     profiled:bool
     // What the options change of the settings the source has.
@@ -104,7 +106,7 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
         case "--profile": profiled=true
         case "--rebuild": options.rebuild=true
         case "--discard-changes": options.changed=.Discard
-        case "--fast": options.fast_textures=true
+        case "--final": options.fast_textures=false
         case "--uncompressed": given.textures=.Uncompressed;changed+={.Textures}
         case "--blocks": given.textures=.Blocks;changed+={.Textures}
         case "--srgb","--normal","--normal-green-down","--data":

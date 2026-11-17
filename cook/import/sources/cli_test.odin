@@ -160,3 +160,41 @@ mirai_import_writes_assets_that_mirai_asset_verifies :: proc(t:^testing.T) {
     broken:=import_run(fmt.tprintf("%s/broken.obj",folder))
     testing.expect(t,broken.code==1 && strings.contains(broken.err,"outside"),broken.err)
 }
+
+// mirai import does what the sync of the editor does with the same sources:
+// a model and an image the sync imported again in a checkout without their
+// outputs, their textures built Fast with no Final in the cache, are already
+// up to date for the command, which builds nothing again. Final is what
+// --final asks for, and builds them again.
+@(test)
+mirai_import_takes_what_the_sync_of_the_editor_left :: proc(t:^testing.T) {
+    root_folder,folder:=test_project(t,"cli-sync")
+    if folder=="" {return}
+    context.user_ptr=prefab.import_world(t)
+    cache:=fmt.tprintf("%s/cache",root_folder)
+    plant:=copy_in(root_folder,DEMO,"gallery/plant.gltf","gallery/leaves_color.png")
+    bricks:=copy_in(root_folder,DEMO,"surfaces/bricks/bricks_color.png")
+    // Their sidecars, which a checkout has, and none of their outputs.
+    for source in ([]string{plant,bricks}) {
+        first:=import_run(source,"--texture-cache",cache,"--mesh-cache",cache)
+        if !testing.expectf(t,first.code==0,"%s: %s",source,first.err) {return}
+    }
+    testing.expect(t,base.remove_all(project.imported_path(root_folder,context.temp_allocator))==nil)
+    testing.expect(t,base.remove_all(cache)==nil)
+    synced:=sync(root_folder,{texture_cache=cache,mesh_cache=cache,fast_textures=true,library=test_library})
+    defer sync_report_destroy(&synced)
+    if !testing.expectf(t,synced.imported==2 && len(synced.failures)==0,"the sync imports both: %v",synced.failures) {return}
+    Case :: struct {source:string,args:[]string,kept:string}
+    cases:=[]Case{
+        {plant,{},"6 assets, 2 were already up to date"},
+        {bricks,{},"1 assets, 1 were already up to date"},
+        {bricks,{"--final"},"1 assets\n"},
+    }
+    for c in cases {
+        args:=make([dynamic]string,context.temp_allocator)
+        append(&args,c.source,"--texture-cache",cache,"--mesh-cache",cache)
+        append(&args,..c.args)
+        done:=import_run(..args[:])
+        testing.expectf(t,done.code==0 && strings.contains(done.out,c.kept),"%s %v: %s%s",c.source,c.args,done.out,done.err)
+    }
+}
