@@ -185,11 +185,12 @@ void main(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID) {
         if (t < PARTICLE_MESHES) {
             uint first = 0u;
             for (uint c = 0u; c < t; c++) first += mesh_counts[c];
-            uint words = PARTICLE_MESH_DRAWS_AT + (slot * PARTICLE_MESHES + t) * 4u;
-            particle_queue[words] = t < count ? e.mesh_vertices[t] : 0u;
+            uint words = PARTICLE_MESH_DRAWS_AT + (slot * PARTICLE_MESHES + t) * PARTICLE_MESH_DRAW_WORDS;
+            particle_queue[words] = t < count ? e.mesh_indices[t] : 0u;
             particle_queue[words + 1u] = mesh_counts[t];
-            particle_queue[words + 2u] = 0u;
-            particle_queue[words + 3u] = first;
+            particle_queue[words + 2u] = e.mesh_firsts[t];
+            particle_queue[words + 3u] = 0u;
+            particle_queue[words + 4u] = first;
         }
     }
     if (t != 0u) return;
