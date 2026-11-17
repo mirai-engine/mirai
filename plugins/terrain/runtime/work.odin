@@ -29,6 +29,7 @@ Work_Slot :: struct {
     patient:bool,     // Build: a node of a Volume, whose levels are a job of their own after the one that reads the source
     waits:bool,       // Build: the next call waits for it: a collider that changes in a world that plays
     reads:bool,       // its job reads the source: what writes the source waits for it
+    background:bool,  // its job runs as a background job (work_slot counts those of builds)
     phase:core.Phase, // of the call that made it
     epoch:u32,        // of the data then
     source:^Source,
@@ -56,6 +57,10 @@ Work_Slot :: struct {
 // for chunks that cannot.
 @(private) WORK_SLOTS_MIN :: 16
 @(private) WORK_SLOTS_MAX :: 32
+// The builds of the terrain that run as background jobs take at most one
+// worker in this many, at least one: a build is long and cannot stop, and
+// the jobs of a frame keep the other workers. The reading of a page is short.
+WORK_BACKGROUND_SHARE :: 4
 
 // The slots of the data, made the first time a world of it runs its jobs, and
 // the job system its jobs run on: none for a single thread, where each runs
@@ -104,21 +109,35 @@ work_busy :: proc(data:^Terrain_Data,source:^Source) -> bool {
     return false
 }
 
-// A free slot; urgent may take any, the others leave half of them free.
+// A free slot; urgent may take any, the others leave half of them free. One
+// for a build in the background, while fewer of them than the share of the
+// workers WORK_BACKGROUND_SHARE gives run or wait to run.
 @(private)
-work_slot :: proc(data:^Terrain_Data,urgent:bool) -> ^Work_Slot {
-    used:=0
-    for &slot in data.work {if slot.kind!=.None && !slot.urgent {used+=1}}
+work_slot :: proc(data:^Terrain_Data,urgent,background:bool) -> ^Work_Slot {
+    used,running:=0,0
+    for &slot in data.work {
+        if slot.kind!=.None && !slot.urgent {used+=1}
+        if slot.kind==.Build && slot.background && jobs.pending(&slot.counter) {running+=1}
+    }
     if !urgent && 2*used>=len(data.work) {return nil}
+    if background && data.jobs!=nil && running>=max(jobs.worker_count(data.jobs)/WORK_BACKGROUND_SHARE,1) {return nil}
     for &slot in data.work {if slot.kind==.None {return &slot}}
     return nil
 }
 
+// Whether a job runs as a job of the frame, which a call waits for: urgent,
+// or a collider a call waits for that is not the levels of a patient one.
+@(private)
+work_frame :: #force_inline proc "contextless" (urgent,waits,patient:bool) -> bool {return urgent || waits && !patient}
+
 @(private)
 work_start :: proc(data:^Terrain_Data,slot:^Work_Slot) {
+    slot.background=false
     if data.jobs==nil {work_run(slot,jobs.OWNER);return}
     // A patient slot is taken once it ended; the others are waited for by the next call of their phase.
-    jobs.run(data.jobs,jobs.OWNER,.Frame if slot.urgent || slot.waits && !slot.patient else .Background,work_run,slot,&slot.counter)
+    frame:=work_frame(slot.urgent,slot.waits,slot.patient)
+    slot.background=!frame
+    jobs.run(data.jobs,jobs.OWNER,.Frame if frame else .Background,work_run,slot,&slot.counter)
 }
 
 // The build of a chunk or a node, from its source as it is now; a node of a
@@ -166,7 +185,7 @@ work_page :: proc(data:^Terrain_Data,slot:^Work_Slot,entry:^Data_Source,grid:Gri
     made:bool
     if slot.page,made=shared_make(u8,count*size,s.allocator);!made {return false}
     slot.band=field_limit(s.info)
-    slot.kind,slot.urgent,slot.patient,slot.reads,slot.phase,slot.epoch=.Page,false,false,true,phase,data.epoch
+    slot.kind,slot.urgent,slot.patient,slot.waits,slot.reads,slot.phase,slot.epoch=.Page,false,false,false,true,phase,data.epoch
     slot.source,slot.id,slot.index,slot.grid,slot.block,slot.file,slot.ok=s,entry.id,index,grid,block,s.file,false
     work_start(data,slot)
     return true
