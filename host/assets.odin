@@ -1367,12 +1367,13 @@ assets_arrivals_settle :: proc(a:^Assets) -> (changed:bool) {
 // A texture made at run time from RGBA8 pixels, rows from the top, with an
 // id of its own that an image of the UI or a material shows as it shows a
 // texture asset: an image a game read itself, as the thumbnail of a save.
-// srgb: it is color. Its levels are made here, and the pixels can go once it
-// returns. It lives until assets_texture_release; each id is a version that
-// is never used again. A transaction: between frames. False, with nothing
-// made, for a size of zero or pixels that do not hold width by height, and
-// without room for another texture.
-assets_texture_generate :: proc(a:^Assets,pixels:[]u8,width,height:int,srgb:=true,name:="generated texture") -> (id:base.Asset_Id,ok:bool) {
+// srgb: it is color. Its levels are made here (texels: level 0 alone, for one
+// read texel by texel), and the pixels can go once it returns. It lives until
+// assets_texture_release; each id is a version that is never used again. A
+// transaction: between frames. False, with nothing made, for a size of zero
+// or pixels that do not hold width by height, and without room for another
+// texture.
+assets_texture_generate :: proc(a:^Assets,pixels:[]u8,width,height:int,srgb:=true,name:="generated texture",texels:=false) -> (id:base.Asset_Id,ok:bool) {
     if width<=0 || height<=0 || len(pixels)!=width*height*4 {return}
     a.generated_next+=1
     id={ASSETS_GENERATED_TAG,a.generated_next}
@@ -1381,7 +1382,7 @@ assets_texture_generate :: proc(a:^Assets,pixels:[]u8,width,height:int,srgb:=tru
     made:=Assets_Texture{width=u32(width),height=u32(height),layers=1,format=.RGBA8,flags=srgb?{.Srgb}:{},generated=true}
     if a.renderer!=nil {
         added:bool
-        if made.handle,added=render.texture_add(a.renderer,{pixels=pixels,width=width,height=height,srgb=srgb,name=name});!added {
+        if made.handle,added=render.texture_add(a.renderer,{pixels=pixels,width=width,height=height,srgb=srgb,texels=texels,name=name});!added {
             entry^={}
             append(&a.free_textures,a.index[id].index)
             delete_key(&a.index,id)

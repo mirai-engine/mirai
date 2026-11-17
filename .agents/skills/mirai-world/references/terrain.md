@@ -714,7 +714,8 @@ Construction in jobs:
   call of the phase that asked for it, which waits for it if it did not finish: when it collides
   does not depend on the threads, and a tick that edits shows the new chunk in the next one, with
   the previous version in between. A Heightfield chunk collides at level 0 whatever level it
-  shows: one built again only for its level keeps its collider and only shows.
+  shows: one built again only for its level keeps its collider and only shows. It keeps its maps
+  too, which hold every sample at any level and are read texel by texel, in one level.
 - What only shows, and everything out of Play, is published once its job ended, and no frame waits
   for it. A call publishes those builds to the assets nearest to a view first, within
   `PUBLISH_VERTICES` (at least one): what a view crossed at once arrives over the calls after, each
