@@ -1,14 +1,16 @@
 #include "native.slang"
-// The vertices the raster of the visibility target draws of the visible
-// clusters of a phase (raster_lists.slang), a group a cluster: each of its
-// vertices is placed once, where gbuffer_build.slang puts it, with what its
-// pose, its islands and the vertex hook of a batch move it by; each of its
-// triangles is kept unless the raster would give it no pixel
-// (raster_triangle_shows); the vertices those triangles use take the next
-// places of the list, in the order the cluster has them, and the entry keeps
-// where they start, which triangles show and which vertices they use for
-// raster_triangles.comp. A cluster whose vertices or triangles do not fit
-// their lists is left out whole and counted.
+// The vertices a round of the raster of the visibility target draws
+// (raster_lists.slang), a group a cluster of those the round takes that no
+// round listed yet: each of its vertices is placed once, where
+// gbuffer_build.slang puts it, with what its pose, its islands and the
+// vertex hook of a batch move it by; each of its triangles is kept unless
+// the raster would give it no pixel (raster_triangle_shows); the vertices
+// those triangles use take the next places of the list, in the order the
+// cluster has them, and the entry keeps where they start, which triangles
+// show and which vertices they use for raster_triangles.comp. A cluster
+// whose vertices or triangles find no room in their lists is left to the
+// next round, which starts them again; the last round of a view has none
+// after it, and counts what it leaves out.
 #define MIRAI_BATCHES
 #include "gbuffer_vertex.slang"
 #include "visibility.slang"
@@ -18,11 +20,10 @@
 #define MIRAI_GROUP_Y 1
 #define MIRAI_GROUP_Z 1
 
-// capacity: of the visible list, both phases together; margin: how far a
-// device may move a corner as it places it on its grid, in pixels
-// (raster_triangle_shows).
+// last: no round follows this one; margin: how far a device may move a
+// corner as it places it on its grid, in pixels (raster_triangle_shows).
 struct Params_Block {
-    uint phase; uint capacity; uint vertex_capacity; uint triangle_capacity;
+    uint round; uint last; uint vertex_capacity; uint triangle_capacity;
     float margin; uint pad0; uint pad1; uint pad2;
 };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
@@ -30,7 +31,7 @@ struct Params_Block {
 [[vk::binding(SLOT_PASS1, 0)]] RWStructuredBuffer<Stats_Block> stats : register(MIRAI_REGISTER(u, SLOT_PASS1), space0);
 [[vk::binding(SLOT_PASS2, 0)]] StructuredBuffer<Visible_Cluster> visible : register(MIRAI_REGISTER(t, SLOT_PASS2), space0);
 [[vk::binding(SLOT_PASS3, 0)]] RWStructuredBuffer<Raster_Vertex> raster_vertices : register(MIRAI_REGISTER(u, SLOT_PASS3), space0);
-// Of each phase and tested bin, the triangles of each depth bucket (raster_depth_word).
+// Of each tested bin, the triangles of each depth bucket (raster_depth_word).
 [[vk::binding(SLOT_PASS4, 0)]] RWStructuredBuffer<uint> depth_buckets : register(MIRAI_REGISTER(u, SLOT_PASS4), space0);
 [[vk::binding(SLOT_PASS5, 0)]] RWStructuredBuffer<uint> raster_entries : register(MIRAI_REGISTER(u, SLOT_PASS5), space0);
 #include <extension_vertex.slang>
@@ -52,12 +53,11 @@ groupshared uint first_vertex;
 [shader("compute")]
 [numthreads(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z)]
 void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
-    uint phase = params.phase;
-    uint base = phase == 0u ? 0u : min(cull_state[CULL_LISTED], params.capacity);
-    uint count = min(cull_state[CULL_LISTED + phase], params.capacity - base);
     uint g = raster_group(group);
-    if (g >= count) return;
-    uint e = base + g;
+    if (g >= cull_state[CULL_RASTER_COUNT]) return;
+    uint e = cull_state[CULL_RASTER_FIRST] + g;
+    uint record = e * RASTER_ENTRY_WORDS;
+    if (!raster_round_pending(raster_entries[record + RASTER_ENTRY_ROUND])) return;
     Visible_Cluster entry = visible[e];
     Instance inst = scene_instance(entry.instance);
     Mesh mesh = meshes[instance_mesh(inst)];
@@ -65,7 +65,6 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
     Cluster_Block b = visible_block(mesh, c, entry);
     Gbuffer_Cluster k = gbuffer_cluster_of(entry.instance, inst, mesh, entry.material, entry.along);
     uint vertex_count = cluster_vertex_count(c), triangle_count = cluster_triangle_count(c);
-    uint record = e * RASTER_ENTRY_WORDS;
     uint bin = cull_listed_bin(raster_entries[record + RASTER_ENTRY_BIN]);
     bool mirrored = instance_mirrored(inst);
 
@@ -101,36 +100,43 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
         for (uint word = 0u; word < USED_WORDS; word++) vertices += countbits(used[word]);
         for (uint word = 0u; word < SHOWN_WORDS; word++) triangles += countbits(shown[word]);
         uint first = 0u, before = 0u;
+        bool listed = true;
         if (triangles != 0u) {
             InterlockedAdd(cull_state[CULL_RASTER_VERTICES], vertices, first);
             InterlockedAdd(cull_state[CULL_RASTER_TRIANGLES], triangles, before);
-            bool fits = first + vertices <= params.vertex_capacity && before + triangles <= params.triangle_capacity;
-            if (!fits) {
-                if (first + vertices > params.vertex_capacity) {
+            bool room = first + vertices <= params.vertex_capacity, room_triangles = before + triangles <= params.triangle_capacity;
+            listed = room && room_triangles;
+            if (listed) {
+                InterlockedAdd(stats[0].raster[0], vertices);
+                InterlockedAdd(stats[0].raster[1], triangles);
+                InterlockedAdd(cull_state[CULL_RASTER_COUNTS + bin], triangles);
+                if ((bin & RASTER_BIN_TESTED) != 0u) {
+                    uint bucket = cull_listed_bucket(raster_entries[record + RASTER_ENTRY_BIN]);
+                    InterlockedAdd(depth_buckets[raster_depth_word(bin & RASTER_BIN_TWO_SIDED, bucket)], triangles);
+                }
+            } else if (params.last == 0u) {
+                InterlockedMin(cull_state[CULL_RASTER_PENDING], e);
+                InterlockedMax(cull_state[CULL_RASTER_PENDING + 1u], e + 1u);
+                InterlockedAdd(stats[0].raster[2], 1u);
+            } else {
+                if (!room) {
                     InterlockedAdd(cull_state[CULL_DROPPED + CULL_LIST_RASTER_VERTICES], vertices);
                     InterlockedAdd(stats[0].dropped[CULL_LIST_RASTER_VERTICES], vertices);
                 }
-                if (before + triangles > params.triangle_capacity) {
+                if (!room_triangles) {
                     InterlockedAdd(cull_state[CULL_DROPPED + CULL_LIST_RASTER_TRIANGLES], triangles);
                     InterlockedAdd(stats[0].dropped[CULL_LIST_RASTER_TRIANGLES], triangles);
                 }
-                triangles = 0u;
-            } else {
-                InterlockedAdd(stats[0].raster[0], vertices);
-                InterlockedAdd(stats[0].raster[1], triangles);
-                InterlockedAdd(cull_state[CULL_RASTER_COUNTS + phase * RASTER_BINS + bin], triangles);
-                if ((bin & RASTER_BIN_TESTED) != 0u) {
-                    uint bucket = cull_listed_bucket(raster_entries[record + RASTER_ENTRY_BIN]);
-                    InterlockedAdd(depth_buckets[raster_depth_word(phase, bin & RASTER_BIN_TWO_SIDED, bucket)], triangles);
-                }
             }
         }
-        first_vertex = triangles != 0u ? first : INVALID;
-        raster_entries[record + RASTER_ENTRY_VERTICES] = first;
-        raster_entries[record + RASTER_ENTRY_TRIANGLES] = triangles;
-        raster_entries[record + RASTER_ENTRY_MIRRORED] = mirrored ? 1u : 0u;
-        for (uint word = 0u; word < SHOWN_WORDS; word++) raster_entries[record + RASTER_ENTRY_SHOWN + word] = shown[word];
-        for (uint word = 0u; word < USED_WORDS; word++) raster_entries[record + RASTER_ENTRY_USED + word] = used[word];
+        first_vertex = listed && triangles != 0u ? first : INVALID;
+        if (listed) {
+            raster_entries[record + RASTER_ENTRY_VERTICES] = first;
+            raster_entries[record + RASTER_ENTRY_TRIANGLES] = triangles;
+            raster_entries[record + RASTER_ENTRY_ROUND] = raster_round_word(params.round, mirrored);
+            for (uint word = 0u; word < SHOWN_WORDS; word++) raster_entries[record + RASTER_ENTRY_SHOWN + word] = shown[word];
+            for (uint word = 0u; word < USED_WORDS; word++) raster_entries[record + RASTER_ENTRY_USED + word] = used[word];
+        }
     }
     GroupMemoryBarrierWithGroupSync();
 

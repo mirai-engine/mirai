@@ -1,13 +1,16 @@
 // What the raster of the visibility target draws of the visible clusters of a
-// view (cull_bins.comp): raster_vertices.comp places each vertex of a cluster
-// once, as gbuffer_build.slang places it, finds the triangles of the cluster
-// that show and writes the vertices they use; raster_starts.comp gives the
-// triangles of each raster bin, and of each depth bucket of a tested one, their
-// range; raster_triangles.comp writes there the three indices of each
-// triangle and the word the visibility target names it by. A bin is then one
-// indexed draw (vis_raster.vert), whose primitives are those triangles in
-// order (vis_raster.frag). The vertices and the triangles of phase 1 follow
-// those of phase 0.
+// view (cull_bins.comp), in rounds: raster_round.comp starts one over the
+// clusters not listed yet; raster_vertices.comp places each vertex of a
+// cluster once, as gbuffer_build.slang places it, finds the triangles of the
+// cluster that show and writes the vertices they use; raster_starts.comp
+// gives the triangles of each raster bin, and of each depth bucket of a
+// tested one, their range; raster_triangles.comp writes there the three
+// indices of each triangle and the word the visibility target names it by. A
+// bin is then one indexed draw (vis_raster.vert), whose primitives are those
+// triangles in order (vis_raster.frag). The lists hold a round: the next
+// writes them again from their start, and takes with its own clusters those
+// that found no room in them, so a round after each phase of the cull draws
+// what the lists hold of a frame, and the rounds after those what they do not.
 #ifndef MIRAI_RASTER_LISTS_SLANG
 #define MIRAI_RASTER_LISTS_SLANG
 #include "cut.slang"
@@ -23,16 +26,22 @@ uint raster_source(uint entry, uint local) { return (entry << 8u) | local; }
 uint raster_source_entry(uint source) { return source >> 8u; }
 uint raster_source_local(uint source) { return source & 0xffu; }
 
-// The cluster of a group among those of its phase: the passes that take a
+// The cluster of a group among those of its round: the passes that take a
 // cluster a group run in rows of CULL_DISPATCH_X groups.
 uint raster_group(uint3 group) { return group.y * CULL_DISPATCH_X + group.x; }
 
-// The word of the buffer of the depth buckets that counts the triangles
-// listed of a depth bucket of a phase and a tested bin (two-sided or not),
-// past the words of its clusters; RASTER_DEPTH_STARTS words on, where they
-// start, which they take their places from.
-uint raster_depth_word(uint phase, uint sided, uint bucket) { return CULL_DEPTH_WORDS + cull_depth_word(phase, sided, bucket); }
-#define RASTER_DEPTH_STARTS CULL_DEPTH_COUNTS
+// What an entry keeps of the round that listed it (RASTER_ENTRY_ROUND).
+uint raster_round_word(uint round, bool mirrored) { return ((round + 1u) << 1u) | (mirrored ? 1u : 0u); }
+bool raster_round_pending(uint word) { return (word >> 1u) == 0u; }
+bool raster_round_is(uint word, uint round) { return (word >> 1u) == round + 1u; }
+bool raster_round_mirrored(uint word) { return (word & 1u) != 0u; }
+
+// The word of the buffer of the depth buckets that counts the triangles a
+// round lists of a depth bucket of a tested bin (two-sided or not), past the
+// words of the clusters; RASTER_DEPTH_STARTS words on, where they start,
+// which they take their places from.
+uint raster_depth_word(uint sided, uint bucket) { return CULL_DEPTH_WORDS + sided * RASTER_DEPTH_BUCKETS + bucket; }
+#define RASTER_DEPTH_STARTS (2u * RASTER_DEPTH_BUCKETS)
 
 // The bits of word `index` of a mask that come before bit `at` of the mask:
 // all of a word before its own, none of one after.
