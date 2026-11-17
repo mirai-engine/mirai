@@ -241,6 +241,8 @@ Stats :: struct {
 	visible_kinds:     [Visible_Kind_Id]Visible_Kind, // of the frame two frames ago, by kind of instance
 	visible_late:      Visible_Kind, // of those, what phase 1 of the occlusion drew
 	cull_dropped:      [Cull_List]u32, // what passed the capacities of the lists of the cull, which then grow
+	raster_vertices:   u32, // the vertices the raster of the visibility target drew, of abi.RASTER_VERTEX_WORDS each
+	raster_triangles:  u32, // and its triangles, of those the cull found visible (visible_triangles): three indices and a word each
 	// What the resolve of the G-buffer of the last view culled shaded: each
 	// pixel of a triangle once, the lanes of their quads that ran only for
 	// derivatives, and the quads whose triangles do not continue one another
@@ -300,6 +302,7 @@ Stats :: struct {
 // (`//! constant`) make the pipelines a frame asks for (pipeline_of).
 Pipeline_Id :: enum {
 	Postprocess_Copy, Postprocess_Hdr, Postprocess_Ldr, Cull, Cull_Clusters, Cull_Bins, Tlas_Batches,
+	Raster_Vertices, Raster_Starts, Raster_Triangles, // what the raster of the visibility target draws of the visible clusters (raster_lists.slang)
 	Light_Grid_Count, Light_Grid_Scan, Light_Grid_Fill, Light_Grid_Weights, // the passes of the grid of the lights (light_grid.comp)
 	Light_Lists, // the lists of the lights without shadows of the tiles of a view (light_lists.comp)
 	Direct_Maps, Direct_Rays, Direct_Samples, Direct_Points, Direct_Spread, Direct_Filter,
@@ -912,6 +915,9 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	compute(list, r, .Cull, .Cull_Comp)
 	compute(list, r, .Cull_Clusters, .Cull_Clusters_Comp)
 	compute(list, r, .Cull_Bins, .Cull_Bins_Comp)
+	compute(list, r, .Raster_Vertices, .Raster_Vertices_Comp)
+	compute(list, r, .Raster_Starts, .Raster_Starts_Comp)
+	compute(list, r, .Raster_Triangles, .Raster_Triangles_Comp)
 	compute(list, r, .Tlas_Batches, .Tlas_Batches_Comp, .Hardware)
 	compute(list, r, .Light_Grid_Count, .Light_Grid_Comp)
 	compute(list, r, .Light_Grid_Scan, .Light_Grid_Scan_Comp)
@@ -962,7 +968,7 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 		at := int(id) - int(Pipeline_Id.Visibility)
 		bin, clip := at % RASTER_BINS, at >= RASTER_BINS
 		tested := bin & RASTER_BIN_TESTED != 0
-		vertices := [2][2]Shader_Id{{.Gbuffer_Visibility_Vert, .Gbuffer_Visibility_Clip_Vert}, {.Gbuffer_Tested_Vert, .Gbuffer_Tested_Clip_Vert}}
+		vertices := [2][2]Shader_Id{{.Vis_Raster_Vert, .Vis_Raster_Clip_Vert}, {.Vis_Raster_Tested_Vert, .Vis_Raster_Tested_Clip_Vert}}
 		vertex := vertices[1 if tested else 0][1 if clip else 0]
 		graphics(list, r, id, {
 			vertex = &r.shader_codes[vertex], fragment = &r.shader_codes[.Vis_Raster_Tested_Frag if tested else .Vis_Raster_Frag],

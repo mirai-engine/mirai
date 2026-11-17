@@ -139,8 +139,8 @@ gpu_what_moves_away_is_drawn_in_phase_0 :: proc(t: ^testing.T) {
 
 // The clusters whose pixels their alpha decides are drawn nearest first: the
 // visible list holds them by the depth of their boxes, whatever order the
-// cull found them in, so the depth test turns away what they hide before
-// their alpha runs.
+// cull found them in, and the triangles their draw lists follow that order,
+// so the depth test turns away what they hide before their alpha runs.
 @(test)
 gpu_masked_clusters_are_drawn_nearest_first :: proc(t: ^testing.T) {
 	f: Fixture
@@ -169,15 +169,34 @@ gpu_masked_clusters_are_drawn_nearest_first :: proc(t: ^testing.T) {
 	rhi.device_wait_idle(device)
 	state: [1]Gpu_Cull_State
 	if !testing.expect(t, rhi.buffer_read_slice(device, r.scene.cull_state_buffer, 0, state[:])) {return}
-	draw := state[0].draws[0][RASTER_BIN_TESTED]
-	if !testing.expectf(t, draw.instance_count == N, "every cube is drawn tested in phase 0: %v", draw) {return}
+	counts := state[0].bin_counts[0]
+	if !testing.expectf(t, counts[RASTER_BIN_TESTED] == N, "every cube is drawn tested in phase 0: %v", counts) {return}
+	first := u32(0)
+	for count in counts[:RASTER_BIN_TESTED] {first += count}
 	visible: [N]Gpu_Visible_Cluster
-	if !testing.expect(t, rhi.buffer_read_slice(device, r.scene.visible_buffer, u64(draw.first_instance) * size_of(Gpu_Visible_Cluster), visible[:])) {return}
+	if !testing.expect(t, rhi.buffer_read_slice(device, r.scene.visible_buffer, u64(first) * size_of(Gpu_Visible_Cluster), visible[:])) {return}
+	depth_of :: proc(r: ^Renderer, entry: Gpu_Visible_Cluster) -> f32 {
+		inst := r.scene.instances[entry.instance]
+		return -(inst.bounds_min.z + inst.bounds_max.z) * 0.5
+	}
 	last := f32(0)
 	for entry, k in visible {
-		inst := r.scene.instances[entry.instance]
-		depth := -(inst.bounds_min.z + inst.bounds_max.z) * 0.5
+		depth := depth_of(r, entry)
 		testing.expectf(t, depth >= last, "entry %d at %v m is not behind the one before, at %v m", k, depth, last)
+		last = depth
+	}
+	// A cube shows the camera one to three of its six faces, and its draw lists no other.
+	draw := state[0].draws[0][RASTER_BIN_TESTED]
+	triangles := draw.index_count / 3
+	if !testing.expectf(t, triangles >= 2 * N && triangles <= 6 * N && draw.first_index == draw.first_instance * 3, "the draw lists the triangles that face the camera: %v", draw) {return}
+	ids := make([]u32, triangles, context.temp_allocator)
+	if !testing.expect(t, rhi.buffer_read_slice(device, r.scene.raster_ids, u64(draw.first_instance) * size_of(u32), ids)) {return}
+	last = 0
+	for id, k in ids {
+		entry := (id - 1) / asset.CLUSTER_TRIANGLES
+		if !testing.expectf(t, id != 0 && entry >= first && entry < first + N, "triangle %d of the draw is of a cluster of its bin: %d", k, id) {return}
+		depth := depth_of(r, visible[entry - first])
+		testing.expectf(t, depth >= last, "triangle %d at %v m is not behind the one before, at %v m", k, depth, last)
 		last = depth
 	}
 	testing.expectf(t, rhi.device_validation_errors(device) == 0, "validation: %s", rhi.device_validation_message(device))

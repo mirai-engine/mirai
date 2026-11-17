@@ -45,7 +45,7 @@ void cull_start(uint i) {
         program_draws[at + 6u] = 0u;
         program_draws[at + 7u] = 0u;
     }
-    for (uint word = i; word < CULL_DEPTH_WORDS; word += threads) depth_buckets[word] = 0u;
+    for (uint word = i; word < CULL_DEPTH_BUFFER_WORDS; word += threads) depth_buckets[word] = 0u;
 }
 
 [shader("compute")]

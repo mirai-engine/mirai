@@ -21,7 +21,7 @@ struct Raster_Input {
     [[vk::location(12)]] nointerpolation uint in_surface : TEXCOORD12; // of a far mesh: its roughness and metallic
     [[vk::location(13)]] float4 in_vertex_color : TEXCOORD13; // of the mesh, as data for a program; in_color has it for the others
 #ifdef MIRAI_VISIBILITY
-    [[vk::location(14)]] nointerpolation uint in_id : TEXCOORD14; // the triangle as the visibility target names it (visibility_id)
+    [[vk::location(14)]] nointerpolation uint in_first : TEXCOORD14; // the first triangle of the draw among those listed (raster_lists.slang)
 #endif
 };
 
