@@ -282,7 +282,7 @@ occluder_moved :: proc(s: ^Scene_State, index: u32, before, after: Gpu_Instance)
 // Whether an instance is drawn in the depth of the maps of the shadows and stops their rays.
 @(private)
 instance_casts :: proc "contextless" (inst: Gpu_Instance) -> bool {
-	return inst.meta.w & (INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_BLENDED) == 0 && inst.meta.x & (INSTANCE_UNSHADOWED | INSTANCE_FADED) == 0
+	return inst.meta.w & (INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_BLENDED) == 0 && inst.meta.x & INSTANCE_UNSHADOWED == 0
 }
 
 // A light of the set that moved or changed its shape: what it shades is new.
@@ -900,14 +900,13 @@ instances_classify :: proc(s: ^Scene_State) {
 		mesh := s.meshes[inst.meta.x & INSTANCE_MESH_MASK]
 		a := instance_alpha(s, mesh, inst.meta.y, inst.slot_materials, inst.material_values)
 		flags := (inst.meta.w &~ (INSTANCE_FLAG_ALPHA_TESTED | INSTANCE_FLAG_BLENDED | INSTANCE_FLAG_TRANSLUCENT)) | alpha_flags(a)
-		mesh_word := inst.meta.x &~ INSTANCE_FADED | (INSTANCE_FADED if a.faded else 0)
 		if a.reflectance && flags & INSTANCE_FLAG_HIDDEN == 0 {append(&s.reflective, Reflective_Instance{u32(i), a.layered})}
-		mask_flags := tlas_mask_flags(ray_class(mesh_word, flags), a.tested, mesh.tested)
-		if flags != inst.meta.w || mesh_word != inst.meta.x || a.tested != inst.tested || mask_flags != s.hw_instances[i].mask_flags {
+		mask_flags := tlas_mask_flags(ray_class(inst.meta.x, flags), a.tested, mesh.tested)
+		if flags != inst.meta.w || a.tested != inst.tested || mask_flags != s.hw_instances[i].mask_flags {
 			before := inst
-			inst.meta.x, inst.meta.w, inst.tested = mesh_word, flags, a.tested
-			// What its values made glass or faded out casts no shadow: the maps draw again where it is.
-			if instance_casts(before) != instance_casts(inst) {occluder_moved(s, u32(i), before, inst)}
+			inst.meta.w, inst.tested = flags, a.tested
+			// What its values made glass, or fade, the maps draw again where it is.
+			if !instance_shades_same(before, inst) {occluder_moved(s, u32(i), before, inst)}
 			s.hw_instances[i].mask_flags = mask_flags
 			s.instances_dirty = true
 			s.tlas_dirty = true
@@ -947,12 +946,11 @@ tlas_refs_classify :: proc(s: ^Scene_State) {
 // reflects other than the default dielectric, which the albedo and metallic
 // of the G-buffer give by themselves; layered: one of its opaque materials
 // has layers; solid: one of its blended ones has a thickness; glass_layered:
-// one of its blended ones has layers; faded: its values fade out half or
-// more of what is not glass of it (INSTANCE_FADED).
+// one of its blended ones has layers.
 @(private)
 Instance_Alpha :: struct {
 	tested: u32,
-	blended, glass, reflectance, layered, solid, glass_layered, faded: bool,
+	blended, glass, reflectance, layered, solid, glass_layered: bool,
 }
 
 // material is the row that replaces those of the mesh, or GPU_NONE; given:
@@ -962,6 +960,8 @@ instance_alpha :: proc(s: ^Scene_State, mesh: Mesh_Record, material: u32, slots:
     palette:=slots
     defaults:=asset.MATERIAL_DEFAULTS
     a.glass = mesh.slot_count > 0
+    // A fade leaves out, by a pattern, what rays and the maps of the shadows meet of every row.
+    faded:=instance_values_fade(s,given)>0
     for packed, k in s.indices[mesh.slot_word:][:mesh.slot_count] {
         row:=instance_row(packed,material,&palette)
         m:=asset.Alpha_Mode.Opaque
@@ -976,14 +976,12 @@ instance_alpha :: proc(s: ^Scene_State, mesh: Mesh_Record, material: u32, slots:
             }
             if m == .Blend {a.solid ||= values.transmission > 0 && values.thickness > 0}
         }
-        if m != .Opaque {a.tested |= 1 << u32(k)}
+        if m != .Opaque || faded {a.tested |= 1 << u32(k)}
         a.blended ||= m == .Blend
         a.glass &&= m == .Blend
     }
     // The layers of a material reach the G-buffer with its reflectance.
     a.reflectance ||= a.layered
-    // Rays and the maps of the shadows see what the pattern of its pixels leaves more of.
-    a.faded = !a.glass && instance_values_fade(s, given) >= 0.5
     return
 }
 
@@ -1025,7 +1023,7 @@ instance_tlas_flags :: proc "contextless" (s: ^Scene_State, inst: Gpu_Instance) 
 
 @(private = "file")
 ray_class :: proc "contextless" (mesh_word, flags: u32) -> u8 {
-	if flags & INSTANCE_FLAG_HIDDEN != 0 || mesh_word & INSTANCE_FADED != 0 {return 0}
+	if flags & INSTANCE_FLAG_HIDDEN != 0 {return 0}
 	if flags & INSTANCE_FLAG_BLENDED != 0 {return RAY_GLASS}
 	if mesh_word & INSTANCE_UNSHADOWED != 0 {return RAY_UNSHADOWED}
 	return RAY_SMALL if flags & INSTANCE_FLAG_SMALL != 0 else RAY_SOLID
@@ -1656,8 +1654,11 @@ scene_tint :: proc(r: ^Renderer, descs: []u32, tints, emissions: []Vec3, values:
 			given := values[at]
 			mesh := s.meshes[inst.meta.x & INSTANCE_MESH_MASK]
 			was := instance_alpha(s, mesh, inst.meta.y, inst.slot_materials, inst.material_values)
+			fade := instance_values_fade(s, inst.material_values)
 			changed ||= instance_material_values_give(r, inst, &given)
 			classify ||= instance_alpha(s, mesh, inst.meta.y, inst.slot_materials, inst.material_values) != was
+			// The pattern of its fade is in the maps of the shadows that hold it.
+			if fade != instance_values_fade(s, inst.material_values) {occluder_moved(s, u32(index), inst^, inst^)}
 		}
 		if !changed {continue}
 		instance_changed_near(s, inst, glowed || instance_material_values_glow(s, inst.material_values))
@@ -1961,7 +1962,6 @@ instance_write :: proc(r:^Renderer,index:u32,desc:Instance_Desc,previous:Mat4,gi
 		a := instance_alpha(s, mesh, material, slot_materials, s.instances[index].material_values)
 		flags |= alpha_flags(a)
 		s.instances[index].meta.w, s.instances[index].tested = flags, a.tested
-		if a.faded {s.instances[index].meta.x |= INSTANCE_FADED}
 		if a.reflectance && !hidden {append(&s.reflective, Reflective_Instance{index, a.layered})}
 		if a.blended && !hidden {append(&s.translucent, Translucent{instance = index, solid = a.solid, layered = a.glass_layered})}
 		head:=s.meshes[desc.mesh].first_instance
@@ -2065,7 +2065,7 @@ scene_update :: proc(r:^Renderer,first:u32,instances:[]Instance_Desc,truncate:bo
         if !instance_shades_same(before,s.instances[index]) {occluder_moved(s,index,before,s.instances[index])}
         changed:=flags~s.instances[index].meta.w
         classification||=changed&(INSTANCE_FLAG_BLENDED|INSTANCE_FLAG_HIDDEN)!=0
-        ray_properties||=classification || changed&INSTANCE_FLAG_ALPHA_TESTED!=0 || before.tested!=s.instances[index].tested || (before.meta.x~s.instances[index].meta.x)&(INSTANCE_UNSHADOWED|INSTANCE_FADED)!=0
+        ray_properties||=classification || changed&INSTANCE_FLAG_ALPHA_TESTED!=0 || before.tested!=s.instances[index].tested || (before.meta.x~s.instances[index].meta.x)&INSTANCE_UNSHADOWED!=0
         instance_touch(s, index)
     }
     if truncate && end<old {
@@ -2112,7 +2112,7 @@ instance_shades_same :: proc(a, b: Gpu_Instance) -> bool {
 // changes is drawn over the image and leaves it.
 @(private = "file")
 instance_lit_same :: proc(a, b: Gpu_Instance) -> bool {
-	return a.world == b.world && a.meta.x & (INSTANCE_MESH_MASK | INSTANCE_UNSHADOWED | INSTANCE_FADED) == b.meta.x & (INSTANCE_MESH_MASK | INSTANCE_UNSHADOWED | INSTANCE_FADED) && a.meta.y == b.meta.y && a.meta.w &~ INSTANCE_HIGHLIGHT_MASK == b.meta.w &~ INSTANCE_HIGHLIGHT_MASK && a.tint.xyz == b.tint.xyz && a.emission.xyz == b.emission.xyz && a.slot_materials == b.slot_materials
+	return a.world == b.world && a.meta.x & (INSTANCE_MESH_MASK | INSTANCE_UNSHADOWED) == b.meta.x & (INSTANCE_MESH_MASK | INSTANCE_UNSHADOWED) && a.meta.y == b.meta.y && a.meta.w &~ INSTANCE_HIGHLIGHT_MASK == b.meta.w &~ INSTANCE_HIGHLIGHT_MASK && a.tint.xyz == b.tint.xyz && a.emission.xyz == b.emission.xyz && a.slot_materials == b.slot_materials
 }
 
 // Lighting runs in render units: a luminance in nits by the light scale of

@@ -38,26 +38,23 @@ a_fade_is_given_to_its_instance_alone_without_a_row_or_an_allocation :: proc(t:^
         world_sync(w,sync,app)
     }
     // An opaque entity fades by the pixels of its raster and stays opaque:
-    // never blended, nor tested by rays. Rays and the maps of the shadows
-    // meet it while it shows more than half of itself.
+    // never blended nor glass to rays, which test it while it fades.
     alphas:=[9]f32{1,0.5,0,1,0.75,0.25,0.5,0,1}
     whole:=0
     for alpha,pass in alphas {
         core.edit(&w.values,entities[0]).color.a=alpha
         host.app_frame_begin(app)
         draw(&sync,app,&w)
-        met:=alpha>0.5
         if pass>0 {
             touched:=app.renderer.scene.touched[0]
             testing.expect(t,touched&1!=0 && touched&2==0 && len(sync.made)==0,"the instance whose opacity changed goes alone, and is not made again")
-            if met==(alphas[pass-1]>0.5) {testing.expect(t,!app.renderer.scene.tlas_dirty && !app.renderer.scene.tlas_nodes_dirty && !app.renderer.scene.tlas_refs_dirty,"a fade that rays see the same changes nothing they trace")}
+            if (alpha<1)==(alphas[pass-1]<1) {testing.expect(t,!app.renderer.scene.tlas_dirty && !app.renderer.scene.tlas_nodes_dirty && !app.renderer.scene.tlas_refs_dirty,"another fade changes nothing rays trace")}
         }
         testing.expect_value(t,len(app.renderer.scene.translucent),0)
-        testing.expect_value(t,app.renderer.scene.instances[0].meta.x&gpu.INSTANCE_FADED==0,met)
         // A unit cube is small (gpu.SMALL_INSTANCE_REACH): opaque, it meets the rays of that class.
         hw:=app.renderer.scene.hw_instances[0].mask_flags
-        testing.expect_value(t,hw&0xff,u32(met?gpu.RAY_SMALL:0))
-        testing.expect_value(t,hw&rhi.TLAS_ALPHA_TESTED,0)
+        testing.expect_value(t,hw&0xff,u32(gpu.RAY_SMALL))
+        testing.expect_value(t,hw&rhi.TLAS_ALPHA_TESTED!=0,alpha<1)
         testing.expect_value(t,sync.drawn.entities[0],entities[0])
         testing.expect_value(t,sync.drawn.entities[1],entities[1])
         host.app_frame_end(app)

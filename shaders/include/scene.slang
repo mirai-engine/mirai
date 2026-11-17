@@ -29,14 +29,21 @@ bool view_draws_layers(uint layers, uint flags) {
     return (layers & frame.layers & 0xffffu) != 0u && !(view_owns(flags) && (layers & (frame.layers >> 16u)) != 0u);
 }
 
-// Whether a pixel of what fades out by `fade` (0 to 1) is left out: of a 4x4
-// in an order that keeps the pixels it leaves far apart (Bayer), as many as
-// the fade. The order turns each frame through the 16 ranks (7 is coprime with
-// 16), so the TAA blends them into transparency.
+// The threshold of a cell of a 4x4, 0 to 1, in an order that keeps the
+// cells below any threshold far apart (Bayer): what fades out by `fade`
+// leaves out the cells whose threshold is below it.
 static const uint FADE_ORDER[16] = {0u, 8u, 2u, 10u, 12u, 4u, 14u, 6u, 3u, 11u, 1u, 9u, 15u, 7u, 13u, 5u};
+float fade_threshold(uint2 cell) {
+    return (float(FADE_ORDER[(cell.y & 3u) * 4u + (cell.x & 3u)]) + 0.5) / 16.0;
+}
+// Whether a pixel of what fades out by `fade` (0 to 1) is left out. The
+// thresholds move each frame by the golden ratio: any run of frames gives a
+// pixel thresholds spread evenly over the whole range, and the sequence never
+// repeats with the jitter of the view, so the TAA, still or moving, blends
+// them into transparency and no pattern stays in its history.
 bool fade_pixel_left(uint2 pixel, float fade) {
-    uint rank = (FADE_ORDER[(pixel.y & 3u) * 4u + (pixel.x & 3u)] + frame.frame_index * 7u) & 15u;
-    return (float(rank) + 0.5) / 16.0 < fade;
+    float turn = float((frame.frame_index * 2654435769u) >> 8u) * (1.0 / 16777216.0);
+    return frac(fade_threshold(pixel) + turn) < fade;
 }
 [[vk::binding(SLOT_LINEAR_SAMPLER, 0)]] SamplerState linear_sampler : register(MIRAI_REGISTER(s, SLOT_LINEAR_SAMPLER), space0);
 [[vk::binding(SLOT_POINT_SAMPLER, 0)]] SamplerState point_sampler : register(MIRAI_REGISTER(s, SLOT_POINT_SAMPLER), space0);
