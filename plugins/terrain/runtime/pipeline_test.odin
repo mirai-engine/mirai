@@ -114,6 +114,78 @@ rebuilt_chunks_show_in_the_next_tick_whatever_the_threads_and_stale_results_are_
     }
 }
 
+// Builds that end together and only show, as when a view crosses many chunks,
+// are published over the calls that follow, the nearest first within
+// PUBLISH_VERTICES, in or out of Play: a chunk built again for its level keeps
+// its collider, so no call waits for it. Each piece shows what it showed
+// until its build is published, every one arrives, and once they have a call
+// allocates nothing.
+@(test)
+builds_that_end_together_are_published_over_calls_nearest_first_within_the_bound :: proc(t:^testing.T) {
+    root:=base.test_folder(t,"terrain")
+    id:=base.Asset_Id{305,306}
+    pipeline_source(t,root,.Heightfield,{513,1,513},128,id,bumpy=true)
+    cases:=[?]struct{threads:int,playing:bool}{{0,false},{3,false},{3,true}}
+    for test_case in cases {
+        counter:=Terrain_Test_Allocator{owner=runtime.heap_allocator()}
+        context.allocator={terrain_test_allocator,&counter}
+        assets:host.Assets;testing.expect(t,host.assets_init(&assets,{root=root,capacity=1024}));defer host.assets_destroy(&assets)
+        app:=host.App{assets=&assets,allocator=context.allocator}
+        if test_case.threads>0 {testing.expect(t,jobs.system_init(&app.jobs,{threads=test_case.threads,allocator=runtime.heap_allocator()}))}
+        defer if test_case.threads>0 {jobs.system_destroy(&app.jobs)}
+        w:Terrain_Test_World
+        if !terrain_test_world_init(t,&w) {return}
+        defer terrain_test_world_free(&w)
+        resident:Terrain_Resident;defer terrain_resident_free(&resident)
+        pipeline_owner(&w,id)
+        view:=core.VIEW_DEFAULT
+        view.position={-250,5,-250}
+        // Far chunks coarse, then every chunk at level 0: each is built again at once.
+        coarse,fine:=Terrain_Settings{lod_distance=4},Terrain_Settings{lod_distance=-1}
+        for _ in 0..<64 {
+            work_wait(&w.data,nil)
+            pipeline_tick(&w,&resident,&app,coarse,view,playing=test_case.playing)
+            if !work_busy(&w.data,nil) && len(resident.sources[0].pending)==0 {break}
+        }
+        chunks:=resident.sources[0].quad.first[1]
+        testing.expect_value(t,chunks,16)
+        shown:[16]base.Asset_Id;pipeline_meshes(&resident,shown[:])
+        calls:=0
+        for tick in 0..<64 {
+            work_wait(&w.data,nil)
+            ended:[WORK_SLOTS_MAX]int
+            for slot,s in w.data.work {ended[s]=slot.kind==.Build?slot.index:-1}
+            pipeline_tick(&w,&resident,&app,fine,view,playing=test_case.playing)
+            vertices,pieces,farthest:=0,0,f32(0)
+            for chunk,i in resident.sources[0].chunks[:chunks] {
+                testing.expectf(t,chunk.mesh!={},"%v, tick %d: chunk %d shows what it showed until its build is published",test_case,tick,i)
+                if chunk.mesh==shown[i] {continue}
+                shown[i]=chunk.mesh
+                vertices+=int(host.assets_mesh(&assets,chunk.mesh).vertex_count)
+                pieces+=1
+                farthest=max(farthest,chunk.distance)
+            }
+            if pieces>0 {calls+=1}
+            testing.expectf(t,vertices<=PUBLISH_VERTICES || pieces==1,"%v, tick %d: %d pieces of %d vertices published in one call",test_case,tick,pieces,vertices)
+            for index,s in ended[:len(w.data.work)] {
+                slot:=&w.data.work[s]
+                if index<0 || slot.kind!=.Build || slot.index!=index {continue}
+                testing.expectf(t,resident.sources[0].chunks[index].distance>=farthest,"%v, tick %d: a nearer build waits behind a farther one",test_case,tick)
+            }
+            done:=!work_busy(&w.data,nil)
+            for chunk in resident.sources[0].chunks[:chunks] {done&&=chunk.shown && chunk.built.lod.level==0}
+            if done {break}
+        }
+        for chunk,i in resident.sources[0].chunks[:chunks] {testing.expectf(t,chunk.shown && chunk.built.lod.level==0,"%v: chunk %d arrived at level 0",test_case,i)}
+        testing.expectf(t,calls>1,"%v: the builds were published over %d calls",test_case,calls)
+        requests,built:=counter.requests,resident.stats.built
+        for _ in 0..<5 {pipeline_tick(&w,&resident,&app,fine,view,playing=test_case.playing)}
+        testing.expect_value(t,counter.requests,requests)
+        testing.expect_value(t,resident.stats.built,built)
+        testing.expect_value(t,w.problems.count,0)
+    }
+}
+
 @(test)
 chunks_without_a_slot_for_their_collider_still_show_their_ground_and_the_nearest_collide :: proc(t:^testing.T) {
     root:=base.test_folder(t,"terrain")
