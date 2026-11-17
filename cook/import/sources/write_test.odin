@@ -498,7 +498,7 @@ importing_again_keeps_the_identity_of_every_asset :: proc(t:^testing.T) {
     copy_in(fmt.tprintf("%s/a",folder),DEMO,"gallery/vase.obj","gallery/vase.mtl","gallery/vase_color.png")
     ids_by_root:[2][dynamic]base.Asset_Id
     for root,i in ([]string{"a","b"}) {
-        if i==1 {testing.expect(t,os.copy_directory_all(fmt.tprintf("%s/b/assets",folder),fmt.tprintf("%s/a/assets",folder))==nil)}
+        if i==1 {testing.expect(t,base.copy_directory_all(fmt.tprintf("%s/b/assets",folder),fmt.tprintf("%s/a/assets",folder))==nil)}
         report,vase_error:=import_source(fmt.tprintf("%s/%s/assets/gallery/vase.obj",folder,root),{world=prefab.import_world(t)})
         testing.expect_value(t,vase_error.code,importer.Error_Code.None)
         ids_by_root[i].allocator=context.temp_allocator

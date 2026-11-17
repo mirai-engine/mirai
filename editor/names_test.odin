@@ -20,7 +20,7 @@ renaming_an_action_follows_the_code_in_input_settings :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"names")
     if folder=="" {return}
     game:=project.path(folder,"game",allocator=context.temp_allocator)
-    testing.expect(t,os.make_directory_all(game)==nil)
+    testing.expect(t,base.make_directory_all(game)==nil)
     code:=project.path(game,"game.odin",allocator=context.temp_allocator)
     SOURCE :: "package game\n@(actions)\nAction :: enum u8 {Strike,Hitter}\n"
     testing.expect(t,os.write_entire_file(code,SOURCE)==nil)
