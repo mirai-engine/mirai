@@ -766,13 +766,16 @@ the_near_part_of_a_bush_alone_is_fine :: proc(t:^testing.T) {
 // the row material are. A vertex of an outline takes the influences and the
 // deltas of the corners of the card where it lies: those of a rigid card
 // exactly, those of a card between two bones a blend of both, and the deltas
-// of a card that moves.
+// of a card that moves. A leaf alone in its mesh, as large as it, keeps its
+// mask: its finest outline draws farther past the mask than level 0, drawn
+// however near, may.
 @(test)
 cards_are_cut_alike_whatever_their_material_mesh_siblings_or_period :: proc(t:^testing.T) {
-    Case :: struct {name:string,program,skinned,morphing:bool,leaves:int,shift:f32}
+    Case :: struct {name:string,program,skinned,morphing:bool,leaves:int,shift:f32,alone:bool}
     cases:=[]Case{
-        {"row",false,false,false,48,0},{"program",true,false,false,48,0},{"skinned",false,true,false,48,0},{"morphing",false,false,true,48,0},
-        {"a few",false,false,false,4,0},{"a period over",false,false,false,48,1},{"across the edge",false,false,false,48,-0.25},
+        {"row",false,false,false,48,0,false},{"program",true,false,false,48,0,false},{"skinned",false,true,false,48,0,false},{"morphing",false,false,true,48,0,false},
+        {"a few",false,false,false,4,0,false},{"a period over",false,false,false,48,1,false},{"across the edge",false,false,false,48,-0.25,false},
+        {"alone in its mesh",false,false,false,1,0,true},
     }
     reference:int
     for c in cases {
@@ -790,6 +793,21 @@ cards_are_cut_alike_whatever_their_material_mesh_siblings_or_period :: proc(t:^t
             mesh.indices=indices[:]
             mesh.submeshes[1].index_count=u32(c.leaves*12)
             mesh.submeshes[2].first_index-=u32(dropped)
+        }
+        if c.alone {
+            // The first leaf and nothing else.
+            leaves:=mesh.submeshes[1]
+            first:=mesh.indices[leaves.first_index]
+            vertices:=make([]asset.Vertex,6,context.temp_allocator)
+            copy(vertices,mesh.vertices[first:][:6])
+            indices:=make([]u32,12,context.temp_allocator)
+            for &index,k in indices {index=mesh.indices[int(leaves.first_index)+k]-first}
+            mesh.vertices,mesh.indices=vertices,indices
+            mesh.submeshes=mesh.submeshes[1:2]
+            mesh.submeshes[0].first_index=0
+            model_cutouts(&r)
+            testing.expectf(t,len(mesh.outlines.cards)==0 && r.materials[1].info.alpha_mode==.Mask,"%s: %d leaves cut",c.name,len(mesh.outlines.cards))
+            continue
         }
         if c.shift!=0 {
             for leaf in 0..<48 {

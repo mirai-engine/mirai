@@ -235,7 +235,10 @@ a_stroke_paints_every_level_of_a_mesh_two_entities_share :: proc(t:^testing.T) {
     testing.expect(t,core.has(&w.painted,f.cube) && !core.has(&w.painted,other))
 }
 
-// A flat grid of cells with its vertices and triangles in order, or backwards.
+// A flat grid of cells with its vertices and triangles in order, or backwards
+// and each cell cut along its other diagonal: the clusters of a mesh order
+// its vertices by how their triangles reuse them, which the order given alone
+// does not change.
 @(private)
 paint_grid_save :: proc(path:string,types:^asset.Types,id:base.Asset_Id,backwards:bool) -> bool {
     CELLS :: 4
@@ -249,7 +252,11 @@ paint_grid_save :: proc(path:string,types:^asset.Types,id:base.Asset_Id,backward
     triangles:=make([dynamic][3]u32,context.temp_allocator)
     for z in 0..<u32(CELLS) {for x in 0..<u32(CELLS) {
         a:=z*(CELLS+1)+x
-        append(&triangles,[3]u32{a,a+CELLS+1,a+1},[3]u32{a+1,a+CELLS+1,a+CELLS+2})
+        if backwards {
+            append(&triangles,[3]u32{a,a+CELLS+1,a+CELLS+2},[3]u32{a,a+CELLS+2,a+1})
+        } else {
+            append(&triangles,[3]u32{a,a+CELLS+1,a+1},[3]u32{a+1,a+CELLS+1,a+CELLS+2})
+        }
     }}
     indices:=make([dynamic]u32,context.temp_allocator)
     for k in 0..<len(triangles) {
