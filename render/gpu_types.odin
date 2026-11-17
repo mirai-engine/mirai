@@ -512,9 +512,15 @@ Gpu_Cull_Stats :: struct {
 	resolved: [3]u32, // of the resolve (vis_resolve.frag): pixels shaded, helper lanes of their quads, quads evaluated again
 	probe_rays: [2]u32, // the rays the probes traced and the hits they lit, copied at the end of the frame from the list of the probe volume
 	lists: Light_List_Stats, // of the lists of the lights without shadows (light_lists.comp)
-	raster_need: [2]u32, // of the views of the frame, the most vertices and triangles one would hold in a round of the raster (Gpu_Cull_State.raster_need)
+	raster_need: [2]u32, // the most vertices and triangles the view would hold in a round of the raster (Gpu_Cull_State.raster_need)
 	shadow: Shadow_Stats,
+	// Of dropped and raster_need, the most any view of the frame counted
+	// (cull_stats_fold.comp), which the lists grow from. The rest counts a
+	// view: the next clears it.
+	most_dropped:     [Cull_List]u32,
+	most_raster_need: [2]u32,
 }
+#assert(len(Cull_List) == 7)
 // What the maps of the shadows of the last view drew in a frame: the clusters
 // the cache drew, once for each page they cover, those of them of masked
 // materials apart, and their triangles; those the atlas drew over it; the
