@@ -141,7 +141,7 @@ Medium :: struct {
     dry:bool,
     carved:bool,       // dry boxes of higher priority take it out
     sun_only:bool,     // the sun alone lights it, in shafts: the light around it is drawn by the plugin that adds it
-    shade:f32,         // 1/m it takes of the light of the sun that crosses it: the medium and the surfaces in it are darker deeper
+    shade:f32,         // 1/m it takes of the light of the sun that crosses it: the medium in it is darker deeper
     glass:bool,        // the glass of its surface takes what it stops of the view: it adds its light, dimmed on its way to the eye in it, and dims nothing behind it
 }
 
@@ -291,8 +291,7 @@ fog_record :: proc(pass:^render.Pass,user:rawptr) {
     params:=Gpu_Params{grid={grid.x,grid.y,grid.z,u32(state.count)},distance=media.distance,scale=media.scale,history=math.pow(HISTORY,f32(state.turns)),turns=state.turns,dry=state.dry?1:0,shade=state.shade?1:0,far=media.cells.w,reach=media.reach,side=u32(pass.glass),outlines=state.outlines}
     // In front of glass the grid of the view is lit already: the fog from the eye to the glass goes over it.
     if pass.glass==.Front {
-        volumes:=volumes_relative(state,pass.origin)
-        fog_apply(pass,state,&params,&volumes,seen)
+        fog_apply(pass,state,&params,seen)
         return
     }
     // How far each column sees, and the columns around it: what lies behind is not seen.
@@ -335,19 +334,19 @@ fog_record :: proc(pass:^render.Pass,user:rawptr) {
     render.pass_pipeline(pass,state.pipelines[3])
     if !render.pass_params(pass,&params,size_of(params)) || !render.pass_upload(pass,3,&volumes,state.count*size_of(Gpu_Volume)) {return}
     render.pass_dispatch(pass,(grid.x+7)/8,(grid.y+7)/8)
-    fog_apply(pass,state,&params,&volumes,seen)
+    fog_apply(pass,state,&params,seen)
 }
 
 // The fog over the image, to the depth of each pixel: with glass in view, on
 // the side of its nearest layer of the pass.
 @(private)
-fog_apply :: proc(pass:^render.Pass,state:^Fog_Gpu,params:^Gpu_Params,volumes:^[CAPACITY]Gpu_Volume,seen:render.Pass_Texture_Desc) {
+fog_apply :: proc(pass:^render.Pass,state:^Fog_Gpu,params:^Gpu_Params,seen:render.Pass_Texture_Desc) {
     render.pass_image_bind(pass,0)
     if ok,_:=render.pass_texture(pass,1,seen);!ok {return}
     render.pass_surface_read(pass,2,.Linear_Depth)
     render.pass_surface_read(pass,4,.Glass_Depth)
     render.pass_timestamp(pass,"fog over glass" if pass.glass==.Front else "fog apply")
     render.pass_pipeline(pass,state.pipelines[4])
-    if !render.pass_params(pass,params,size_of(params^)) || !render.pass_upload(pass,3,volumes,state.count*size_of(Gpu_Volume)) {return}
+    if !render.pass_params(pass,params,size_of(params^)) {return}
     render.pass_dispatch(pass,(pass.width+7)/8,(pass.height+7)/8)
 }

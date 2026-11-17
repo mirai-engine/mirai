@@ -262,10 +262,9 @@ marks:
 - `carved`: a dry box of higher priority removes it;
 - `sun_only`: only the sun lights it, in shafts; the surrounding light is drawn by whoever adds
   it;
-- `shade` (per meter): what it takes from the sunlight that crosses it. What is in it receives
-  from the sun `exp(-shade · path until leaving its box toward the sun)` (`fog_shade`): the light
-  of its froxels (from the sun, and the ambient one along the path upward) and the surfaces it has
-  inside, which `fog_apply` darkens before adding the fog to them.
+- `shade` (per meter): what it takes from the sunlight that crosses it. Its froxels receive from
+  the sun `exp(-shade · path until leaving its box toward the sun)` (`fog_shade`), and the ambient
+  light along the path upward; the surfaces inside it are darkened by whoever adds it.
 
 It is used by [water](../../mirai-world/references/water.md): the medium under a surface and its dry
 boxes.
