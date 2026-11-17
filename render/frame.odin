@@ -272,22 +272,22 @@ resolve_programs_draw :: proc(r: ^Renderer, cmd: ^rhi.Command_List, target: ^rhi
 }
 
 // Draws the clusters of an instance whose mesh is in the pools, for a pass of
-// its own (gbuffer.vert without the visible list): those of level 0, or all
-// of them, the vertices of those out of the cut of the view collapsed, and
-// those of materials of another program than `program` (SLOT_DRAW).
+// its own (gbuffer.vert without the visible list), indexed by the draw list
+// of its mesh: those of level 0, or all of them, the vertices of those out of
+// the cut of the view collapsed, and those of materials of another program
+// than `program` (SLOT_DRAW). Not drawn until the GPU holds the list.
 @(private)
 instance_clusters_draw :: proc(r: ^Renderer, cmd: ^rhi.Command_List, instance: u32, level0: bool, program: u32) {
 	s := &r.scene
-	inst := &s.instances[instance]
-	mesh := inst.meta.x & INSTANCE_MESH_MASK
-	if int(mesh) >= len(s.meshes) || s.meshes[mesh].vertex_count == 0 || mesh_pending(s, mesh) {return}
-	m := &s.meshes[mesh]
-	clusters := m.cluster_count
+	mesh := s.instances[instance].meta.x & INSTANCE_MESH_MASK
 	// A streamed mesh draws the finest its pools hold, which may be coarser than level 0.
-	if level0 && m.stream == nil {_, clusters = record_level(s, m^, 0)}
+	streamed := int(mesh) < len(s.meshes) && s.meshes[mesh].stream != nil
+	first, count, ok := mesh_draw_list(r, mesh, level0 && !streamed)
+	if !ok {return}
 	drawn := [4]u32{program, 0, 0, 0}
 	rhi.cmd_set_constants(cmd, SLOT_DRAW, &drawn, size_of(drawn))
-	rhi.cmd_draw(cmd, clusters * CLUSTER_DRAW_VERTICES, 1, 0, instance)
+	rhi.cmd_bind_index_buffer(cmd, s.index_buffer)
+	rhi.cmd_draw_indexed(cmd, count, 1, first, instance)
 }
 
 // Editor selection mask: the highlighted instances alone, in full detail

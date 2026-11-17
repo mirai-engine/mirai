@@ -171,6 +171,7 @@ shared_constants :: proc(allocator:=context.temp_allocator) -> string {
     u(&b,"CLUSTER_TRIANGLES",asset.CLUSTER_TRIANGLES)
     u(&b,"CLUSTER_VERTICES",asset.CLUSTER_VERTICES)
     u(&b,"CLUSTER_DRAW_VERTICES",abi.CLUSTER_DRAW_VERTICES)
+    u(&b,"DRAW_VERTEX_BITS",abi.DRAW_VERTEX_BITS)
     u(&b,"CLUSTER_CONE",asset.CLUSTER_CONE)
     u(&b,"PRIMITIVE_TRIANGLE_BITS",abi.PRIMITIVE_TRIANGLE_BITS)
     u(&b,"PAGE_SLOT_WORDS",abi.PAGE_SLOT_WORDS)

@@ -139,6 +139,10 @@ POSED_WORDS             :: size_of(Gpu_Posed_Vertex) / 4
 PAGE_ENTRY_WORDS        :: size_of(Gpu_Mesh_Page) / 4
 LEVEL_WORDS             :: 5
 CLUSTER_DRAW_VERTICES   :: asset.CLUSTER_TRIANGLES * 3
+// An index of the list a mesh is drawn indexed with (render.Mesh_Draw_List):
+// its cluster << DRAW_VERTEX_BITS | the vertex in it.
+DRAW_VERTEX_BITS        :: 8
+#assert(1 << DRAW_VERTEX_BITS == asset.CLUSTER_VERTICES)
 PRIMITIVE_TRIANGLE_BITS :: 7
 PAGE_SLOT_WORDS         :: asset.MESH_PAGE_WORDS
 PAGE_REQUEST_FIRST      :: 4

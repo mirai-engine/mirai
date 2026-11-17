@@ -1,13 +1,13 @@
 #include "native.slang"
 // highlight: the mask of the editor's highlight, drawn without the jitter of the view.
 //! constant highlight MIRAI_EDITOR_HIGHLIGHT
-// A cluster is an instance of a draw of CLUSTER_DRAW_VERTICES vertices: the
-// corners of as many triangles as it may have, those past its own collapsed.
-// The instance of the draw is that of the scene (glass, overlays, the
-// highlight) and the vertex the cluster among those of its mesh times
-// CLUSTER_DRAW_VERTICES: the highlight draws those of level 0 (of a streamed
-// mesh, the finest the pools hold), the others all of them, and those out of
-// the cut of the view are collapsed, as the cull leaves them out.
+// A draw of the clusters of an instance of the scene (glass, overlays, the
+// highlight), indexed by the draw list of its mesh (render.Mesh_Draw_List):
+// the instance of the draw is that of the scene and the vertex its cluster
+// << DRAW_VERTEX_BITS | the vertex in it. The highlight draws the clusters of
+// level 0 (of a streamed mesh, all of them, and of those the finest the
+// pools hold), the others all of them, and those out of the cut of the view
+// are collapsed, as the cull leaves them out.
 #include "gbuffer_vertex.slang"
 // The Surface program whose clusters a draw of an instance draws
 // (render.instance_clusters_draw): 0 those without one, INVALID all of them.
@@ -20,11 +20,8 @@ Gbuffer_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vu
     uint index = instance_id;
     Instance inst = scene_instance(index);
     Mesh mesh = meshes[instance_mesh(inst)];
-    Cluster c = mesh_cluster(mesh, vertex_id / CLUSTER_DRAW_VERTICES);
-    uint corner = vertex_id % CLUSTER_DRAW_VERTICES;
-    bool drawn = corner < cluster_triangle_count(c) * 3u;
-    if (MIRAI_EDITOR_HIGHLIGHT) drawn = drawn && cluster_finest_resident(mesh, c);
-    else drawn = drawn && cluster_in_cut(view_detail(), inst, instance_scale(inst), mesh, c, frame.cut.x);
+    Cluster c = mesh_cluster(mesh, vertex_id >> DRAW_VERTEX_BITS);
+    bool drawn = MIRAI_EDITOR_HIGHLIGHT ? cluster_finest_resident(mesh, c) : cluster_in_cut(view_detail(), inst, instance_scale(inst), mesh, c, frame.cut.x);
     drawn = drawn && (draw.program == INVALID || materials[material_of(inst, cluster_material(mesh, c))].shared.program_id == draw.program);
     if (!drawn) {
         // Outside the volume of the view: the triangle has no area to raster.
@@ -32,5 +29,8 @@ Gbuffer_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vu
         return output;
     }
     // The highlight draws level 0 as it is.
-    return gbuffer_vertex_build(index, inst, mesh, c, corner, !MIRAI_EDITOR_HIGHLIGHT);
+    output = gbuffer_vertex_build(index, inst, mesh, c, vertex_id & ((1u << DRAW_VERTEX_BITS) - 1u), !MIRAI_EDITOR_HIGHLIGHT);
+    // The list has the triangles of the mesh in its own order, which an instance that mirrors it turns.
+    if (instance_mirrored(inst)) output.out_flags |= RASTER_FLAG_TURNED;
+    return output;
 }
