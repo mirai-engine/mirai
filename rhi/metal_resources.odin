@@ -430,7 +430,7 @@ mtl_merge_bindings :: proc(d: ^Device, p: ^Mtl_Pipeline, codes: ..^Shader_Code) 
 			slot.used = true
 			slot.kind = b.kind
 			slot.stages += {code.stage}
-			p.slot_mask |= 1 << b.slot
+			p.slot_mask += {int(b.slot)}
 		}
 	}
 	return true

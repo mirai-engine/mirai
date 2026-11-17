@@ -388,7 +388,7 @@ rhi_storage_image_after_upload_and_frames :: proc(t: ^testing.T) {
 		if !ok {return}
 		rhi.cmd_timestamp(cmd, "image")
 		rhi.cmd_bind_pipeline(cmd, pipeline)
-		rhi.cmd_bind_texture(cmd, 0, source)
+		rhi.cmd_bind_texture(cmd, rhi.MAX_BINDING_SLOTS - 1, source)
 		rhi.cmd_bind_sampler(cmd, 1, sampler)
 		rhi.cmd_bind_texture(cmd, 2, target)
 		rhi.cmd_dispatch(cmd, SIZE / 8, SIZE / 8)

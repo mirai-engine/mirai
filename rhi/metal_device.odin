@@ -39,6 +39,8 @@ Mtl_Slot :: struct {
 	stages: Shader_Stages,
 }
 
+Mtl_Slots :: bit_set[0 ..< MAX_BINDING_SLOTS; u64]
+
 Mtl_Pipeline :: struct {
 	compute:     ^MTL.ComputePipelineState,
 	render:      ^MTL.RenderPipelineState,
@@ -48,7 +50,7 @@ Mtl_Pipeline :: struct {
 	cull:        MTL.CullMode,
 	primitive:   MTL.PrimitiveType,
 	slots:       [MAX_BINDING_SLOTS]Mtl_Slot,
-	slot_mask:   u32,
+	slot_mask:   Mtl_Slots,
 	table:       Shader_Stages, // stages that declare the texture table
 	name:        string,
 	shaders:     [2]base.Handle, // shared functions/libraries while this generation has pipelines

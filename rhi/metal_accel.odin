@@ -352,7 +352,7 @@ cmd_build_tlas :: proc(c: ^Command_List, accel: Accel, instances: Buffer, offset
 		groups := (built + TLAS_GROUP - 1) / TLAS_GROUP
 		cmd_dispatch(c, min(groups, TLAS_DISPATCH_X), (groups + TLAS_DISPATCH_X - 1) / TLAS_DISPATCH_X)
 		c.slots = slots
-		c.pipeline, c.pipeline_applied, c.dirty = 0, false, max(u32)
+		c.pipeline, c.pipeline_applied, c.dirty = 0, false, ~Mtl_Slots{}
 		if pipeline != 0 {cmd_bind_pipeline(c, pipeline)}
 	}
 	// Keep the raw object, not the pool pointer: growing the scratch buffer
