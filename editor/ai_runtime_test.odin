@@ -150,7 +150,7 @@ when ODIN_OS!=.Windows {
         m:=new(Ai);defer free(m);ai_connections_reset(m)
         base.text_set(m.agents_home[:],project.path(root,"agents",allocator=context.temp_allocator))
         folder:=ai_agents_folder(m,"codex")
-        testing.expect(t,os.make_directory_all(folder)==nil)
+        testing.expect(t,base.make_directory_all(folder)==nil)
         executable:=project.path(folder,"test-codex",allocator=context.temp_allocator)
         script:=`#!/bin/sh
 test "$1" = login || exit 1
@@ -189,7 +189,7 @@ when ODIN_OS!=.Windows {
     @(test)
     ai_agents_added_by_command_are_saved_started_with_their_arguments_and_removed :: proc(t:^testing.T) {
         root:=base.test_folder(t,"ai-command");if root=="" {return}
-        testing.expect(t,os.make_directory_all(root)==nil)
+        testing.expect(t,base.make_directory_all(root)==nil)
         // An agent that checks its arguments and answers initialize.
         executable:=project.path(root,"test-agent",allocator=context.temp_allocator)
         script:=`#!/bin/sh

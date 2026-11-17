@@ -12,7 +12,7 @@ the_reference_images_of_a_message_go_with_its_prompt_after_its_text :: proc(t:^t
     s:=Session{project_root=root}
     task:Ai_Task
     base.text_set(task.name[:],"7-0")
-    testing.expect(t,os.make_directory_all(ai_task_path(&s,&task,""))==nil)
+    testing.expect(t,base.make_directory_all(ai_task_path(&s,&task,""))==nil)
     image:=[]u8{0xff,0xd8,0xff,0xe0,1,2,3,0xff,0xd9}
     testing.expect(t,os.write_entire_file(ai_task_path(&s,&task,ai_reference_file(1)),image)==nil)
     task.references=1

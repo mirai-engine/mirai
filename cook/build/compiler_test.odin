@@ -47,7 +47,7 @@ build_fingerprint_follows_content_not_dates_checkouts_or_thread_counts :: proc(t
     for &root in roots {
         root=base.test_folder(t,"fingerprint-root")
         if root=="" {return}
-        if !testing.expect(t,os.make_directory_all(project.path(root,"core",allocator=context.temp_allocator))==nil) {return}
+        if !testing.expect(t,base.make_directory_all(project.path(root,"core",allocator=context.temp_allocator))==nil) {return}
     }
     hashes:[2]u64
     for root,i in roots {
@@ -75,7 +75,7 @@ the_compiler_of_an_installed_engine_counts_by_its_manifest_not_its_date :: proc(
     root:=base.test_folder(t,"installed-compiler")
     if root=="" {return}
     compiler:=project.path(root,".deps","odin","dist",strings.concatenate({"odin",project.EXECUTABLE_SUFFIX},context.temp_allocator),allocator=context.temp_allocator)
-    if !testing.expect(t,os.make_directory_all(project.path(root,".deps","odin","dist",allocator=context.temp_allocator))==nil) {return}
+    if !testing.expect(t,base.make_directory_all(project.path(root,".deps","odin","dist",allocator=context.temp_allocator))==nil) {return}
     if !testing.expect(t,os.write_entire_file(compiler,"compiler")==nil) {return}
     dated :: proc(t:^testing.T,root,compiler:string,at:i64) -> u64 {
         testing.expect(t,os.change_times(compiler,time.unix(at,0),time.unix(at,0))==nil)

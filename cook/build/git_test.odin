@@ -156,7 +156,7 @@ git_setup_wires_a_clone_once_and_again_for_another_engine_or_plugin :: proc(t:^t
     testing.expect_value(t,error,Git_Setup_Error.Plugins_Failed)
 
     // A checkout of the engine names its own launcher, wherever it is, and holds every plugin under plugins/.
-    testing.expect(t,os.make_directory_all(join(clone,"tools/mirai"))==nil)
+    testing.expect(t,base.make_directory_all(join(clone,"tools/mirai"))==nil)
     for file in ([]string{"AGENTS.md","mirai"}) {testing.expect(t,os.write_entire_file(join(clone,file),"")==nil)}
     for setting in git_settings(other,clone,context.temp_allocator) {
         testing.expectf(t,!strings.contains(setting.value,root),"%s = %s names a folder of this machine",setting.key,setting.value)
@@ -181,7 +181,7 @@ a_worktree_or_a_copy_leaves_the_drivers_of_the_main_checkout_as_they_were :: pro
     copy:=join(clone,".mirai/tmp/session-copy-x")
     // Git writes the gitdir of a worktree with forward slashes on every system.
     tree:=join(main,".git/worktrees/side")
-    for folder in ([]string{tree,join(main,"plugins"),join(side,"plugins"),copy}) {testing.expect(t,os.make_directory_all(folder)==nil)}
+    for folder in ([]string{tree,join(main,"plugins"),join(side,"plugins"),copy}) {testing.expect(t,base.make_directory_all(folder)==nil)}
     testing.expect(t,os.write_entire_file(join(tree,"commondir"),"../..\n")==nil)
     testing.expect(t,os.write_entire_file(join(side,".git"),strings.concatenate({"gitdir: ",tree,"\n"},context.temp_allocator))==nil)
     for folder in ([]string{clone,copy}) {testing.expect(t,os.write_entire_file(join(folder,project.PROJECT_FILE),`{"name": "G"}`)==nil)}

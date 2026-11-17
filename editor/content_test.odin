@@ -1097,7 +1097,7 @@ content_shows_empty_folders_and_the_line_of_create :: proc(t:^testing.T) {
 a_right_click_on_a_folder_creates_an_asset_named_in_place :: proc(t:^testing.T) {
     root:=base.test_folder(t,"content-create")
     if root=="" {return}
-    if !testing.expect_value(t,os.make_directory_all(fmt.tprintf("%s/Materials",root)),os.Error(nil)) {return}
+    if !testing.expect_value(t,base.make_directory_all(fmt.tprintf("%s/Materials",root)),os.Error(nil)) {return}
     ctx:ui.Context
     testing.expect(t,test_ui_init(&ctx,{}))
     defer ui.context_destroy(&ctx)

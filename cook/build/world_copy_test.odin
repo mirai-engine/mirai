@@ -14,7 +14,7 @@ a_generated_world_says_how_core_copies_and_swaps_each_storage :: proc(t:^testing
     engine:=project.path(folder,"engine",allocator=context.temp_allocator)
     game:=project.path(folder,"project",allocator=context.temp_allocator)
     for path in ([]string{project.path(engine,"core",allocator=context.temp_allocator),project.path(game,"game",allocator=context.temp_allocator)}) {
-        if !testing.expect(t,os.make_directory_all(path)==nil) {return}
+        if !testing.expect(t,base.make_directory_all(path)==nil) {return}
     }
     source:=`package core
 @(component,shared)

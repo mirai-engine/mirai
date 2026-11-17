@@ -39,7 +39,7 @@ a_new_project_offers_every_plugin_but_the_automatic_ones :: proc(t:^testing.T) {
         m.automatic=automatic
         for dependency,i in dependencies {base.text_set(m.dependencies[i][:],dependency)}
         at:=project.path(folder,"plugins",name,allocator=context.temp_allocator)
-        testing.expect(t,os.make_directory_all(at)==nil)
+        testing.expect(t,base.make_directory_all(at)==nil)
         testing.expect_value(t,project.plugin_write(project.path(at,project.PLUGIN_FILE,allocator=context.temp_allocator),&m).code,project.Error_Code.None)
     }
     plugin(t,engine,"physics",{})
@@ -82,10 +82,10 @@ projects_read_the_branch_of_the_repository_they_are_in :: proc(t:^testing.T) {
     if folder=="" {return}
     root:=project.path_absolute(folder,context.temp_allocator)
     inner:=project.path(root,"games/racer",allocator=context.temp_allocator)
-    testing.expect(t,os.make_directory_all(inner)==nil)
+    testing.expect(t,base.make_directory_all(inner)==nil)
     repository,_:=projects_branch(inner)
     testing.expect(t,!repository)
-    testing.expect(t,os.make_directory_all(project.path(root,".git",allocator=context.temp_allocator))==nil)
+    testing.expect(t,base.make_directory_all(project.path(root,".git",allocator=context.temp_allocator))==nil)
     testing.expect(t,os.write_entire_file(project.path(root,".git/HEAD",allocator=context.temp_allocator),"ref: refs/heads/main\n")==nil)
     branch:[64]u8
     repository,branch=projects_branch(inner)
@@ -106,7 +106,7 @@ projects_show_their_thumbnail_or_the_view_of_their_start_scene :: proc(t:^testin
     // The view an editor of the project kept of its start scene.
     id:=base.Asset_Id{0x7261636572,1}
     base.text_set(m.start_scene[:],"levels/main.scene")
-    testing.expect(t,os.make_directory_all(project.path(root,ASSETS_FOLDER,"levels",allocator=context.temp_allocator))==nil)
+    testing.expect(t,base.make_directory_all(project.path(root,ASSETS_FOLDER,"levels",allocator=context.temp_allocator))==nil)
     w:serial.Writer
     serial.writer_init(&w,allocator=context.temp_allocator)
     scratch:=make([dynamic]u8,context.temp_allocator)
@@ -129,7 +129,7 @@ projects_show_their_thumbnail_or_the_view_of_their_start_scene :: proc(t:^testin
             copy(picture.pixels[(y*4+x)*4:][:4],pixel[:])
         }
     }
-    testing.expect(t,os.make_directory_all(project.path(root,"art",allocator=context.temp_allocator))==nil)
+    testing.expect(t,base.make_directory_all(project.path(root,"art",allocator=context.temp_allocator))==nil)
     testing.expect_value(t,img.image_write(project.path(root,"art/cover.png",allocator=context.temp_allocator),picture),img.Error.None)
     if testing.expect(t,projects_thumbnail_read(root,&m,THUMBNAIL_SIZE,&file,&image)) {
         testing.expect_value(t,len(image),THUMBNAIL_SIZE*THUMBNAIL_SIZE*4)

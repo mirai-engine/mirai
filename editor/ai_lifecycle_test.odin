@@ -210,7 +210,7 @@ retry_preserves_the_original_model_and_effort_when_connection_defaults_changed :
     base.text_set(m.connections[AI_CODEX].effort[:],"high")
     document:Document
     s:=Session{ai=m,document=&document,project_root=root}
-    testing.expect(t,os.make_directory_all(ai_task_path(&s,task,""))==nil && os.write_entire_file(ai_task_path(&s,task,AI_FILE_MESSAGE),"Decorate this room")==nil)
+    testing.expect(t,base.make_directory_all(ai_task_path(&s,task,""))==nil && os.write_entire_file(ai_task_path(&s,task,AI_FILE_MESSAGE),"Decorate this room")==nil)
     testing.expect_value(t,ai_task_retry(&s,m,task),"")
     testing.expect_value(t,string(m.prompt[:m.prompt_length]),"Decorate this room")
     testing.expect(t,m.pending && m.selected==1)
