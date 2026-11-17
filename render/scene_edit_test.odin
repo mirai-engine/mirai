@@ -627,6 +627,44 @@ occluders_list_what_moved_came_or_went_and_the_lights_that_moved :: proc(t: ^tes
 	testing.expect(t, transmute(u32)f.moved_boxes[0][0].w == 7 && f.moved_boxes[0][0].xyz == Vec3{1, 2, 3} && f.moved_boxes[0][1].xyz == Vec3{4, 5, 6} && f.moved_lights[0][0] == 1)
 }
 
+// A spot or a rectangle keeps the texture it projects in the image word of
+// its record, a spot also the right of it across its cone, and a rectangle
+// shows it in place of the emission of its material. A light without one
+// keeps the record it has without the field; a point light projects none.
+@(test)
+a_light_keeps_the_texture_it_projects_in_its_record :: proc(t: ^testing.T) {
+	r := new(Renderer);defer free(r)
+	r.allocator = context.allocator
+	scene_init(r)
+	defer scene_destroy(r)
+	spot := Light_Desc{position = {0, 2, 0}, color = 1, intensity = 10, range = 5, radius = 0.1, direction = {0, -1, 0}, cone = 0.5, texture_axis = {1, 0.5, 0}, indirect = 1, scattering = 1}
+	rect := Light_Desc{position = {0, 2, 0}, color = 1, intensity = 10, range = 5, direction = {0, -1, 0}, axis = {1, 0, 0}, size = {1, 2}, material = 4, indirect = 1, scattering = 1}
+	point := Light_Desc{position = {0, 2, 0}, color = 1, intensity = 10, range = 5, radius = 0.1, texture_axis = {1, 0, 0}, indirect = 1, scattering = 1}
+	projected := GPU_LIGHT_TEXTURE | texture_entry(2)
+	cases := [?]struct {name: string, light: Light_Desc, texture: Texture_Handle, size: Vec3, image: u32}{
+		{"a spot without a texture", spot, 0, {0.1, 0, 0}, 0},
+		{"a spot with one", spot, 3, {0.1, 0, 0}, projected},
+		{"a rectangle that shows its material", rect, 0, {0, 0.5, 1}, 4},
+		{"a rectangle that shows its texture", rect, 3, {0, 0.5, 1}, projected},
+		{"a point light", point, 3, {0.1, 0, 0}, 0},
+	}
+	for c in cases {
+		light := c.light
+		light.texture = c.texture
+		if !testing.expect(t, scene_lights_given(r, {light}, {}, {})) {return}
+		l := r.scene.lights[0]
+		testing.expectf(t, l.size.xy == c.size.xy && transmute(u32)l.size.w == c.image, "%s: size %v, image %x", c.name, l.size, transmute(u32)l.size.w)
+		if c.size.z != 0 {testing.expectf(t, l.size.z == c.size.z, "%s: the half height %v", c.name, l.size.z)}
+		// The right of the texture of a spot lies across its cone, along the right given.
+		if c.light.cone > 0 && c.texture != 0 {
+			right := mm.normal_unpack(transmute(u32)l.size.z)
+			testing.expectf(t, abs(right.x - 1) < 1e-3 && abs(right.y) < 1e-3 && abs(right.z) < 1e-3, "%s: its right %v", c.name, right)
+		} else if c.size.z == 0 {
+			testing.expectf(t, l.size.z == 0, "%s: no right of a texture, %v", c.name, l.size.z)
+		}
+	}
+}
+
 @(test)
 material_program_roughness_keeps_reflections_active :: proc(t:^testing.T) {
     r:=new(Renderer);defer free(r)

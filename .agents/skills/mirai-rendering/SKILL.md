@@ -172,6 +172,9 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
 - What is drawn over the finished image enters through `Frame_Desc` and does not change what a
   frame that does not use it records.
 - The skinning palette already includes the inverse bind: the renderer does not apply it again.
+- Colored light through a window comes from a light that projects a texture
+  ([lights](references/lights.md#local-lights)); a light's color at a point comes only from
+  `light_contribution`.
 - Every light enters in render units in a single place ([units](references/display.md#units)): no
   shader adds constant light or reads an intensity without converting.
 - The light that arrives around a point is composed only with `indirect_compose`. The sun's at a

@@ -218,6 +218,7 @@ float3 gbuffer_physical_emission(int2 p) {
 Shading gbuffer_shading(Gbuffer_Pixel g, Pixel pixel) {
     Shading s = shading_surface(pixel.position, g.normal, -pixel.view, g.base_color, g.metallic, g.roughness, g.f0, g.f90);
     shading_layers(s, g.layers, g.metallic);
+    s.footprint = frame.footprint.x + frame.footprint.y * pixel.distance;
     return s;
 }
 

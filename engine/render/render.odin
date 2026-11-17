@@ -120,6 +120,7 @@ Spot_Light :: struct {
     range:f32 `mirai:"min=0,unit=m"`,
     radius:f32 `mirai:"min=0,unit=m"`, // of the sphere that glows at scale 1; it softens shadows and widens highlights
     angle:f32 `mirai:"angle,min=0.0174532,max=1.5533431"`, // from its axis to the edge, 1° to 89°; it fades out over the last fifth
+    texture:base.Asset_Id `mirai:"kind=.tex"`, // an image across its cone, as a slide in a projector seen from behind it: it multiplies its color where it falls; none: its color alone
     shadows:bool, // it casts shadows; off, its light goes through everything and costs no shadow work
     indirect:f32 `mirai:"min=0"`,   // multiplies the part of its light that bounces (the GI): 1 as it gives it
     scattering:f32 `mirai:"min=0"`, // multiplies the part of its light a fog scatters
@@ -134,6 +135,7 @@ Rect_Light :: struct {
     color:[3]f32 `mirai:"color"`,
     luminance:f32 `mirai:"min=0,unit=nit"`,
     range:f32 `mirai:"min=0,unit=m"`,
+    texture:base.Asset_Id `mirai:"kind=.tex"`, // an image across its face, seen from the side it lights: it multiplies its color where each part of it shines, in place of a Light_Emission; none: its color alone
     shadows:bool, // it casts shadows; off, its light goes through everything and costs no shadow work
     indirect:f32 `mirai:"min=0"`,   // multiplies the part of its light that bounces (the GI): 1 as it gives it
     scattering:f32 `mirai:"min=0"`, // multiplies the part of its light a fog scatters
@@ -144,7 +146,7 @@ RECT_LIGHT_DEFAULT :: Rect_Light{color={1,0.92,0.8},luminance=5000,range=20,shad
 // A rectangle that shows an image: the Rect_Light of its entity takes its
 // color, across it, from the emission of the material its mesh is drawn with
 // in `slot`, its texture laid on the square as on the face of a Cube that
-// faces -Z.
+// faces -Z. A Rect_Light with a texture of its own shows that one instead.
 @(component,description="Lights with the image a rectangular light's mesh shows: the emission of the material in a slot, as a screen lights a room.")
 Light_Emission :: struct {
     slot:u8,
@@ -773,7 +775,7 @@ render_sync :: proc(
             if material,slots,overlays,held:=gpu.scene_instance_materials(r,u32(at));held {instance_materials_retain(a,material,slots,overlays)}
         }
         for instance in extras {instance_materials_retain(a,instance.material,instance.slot_materials,instance.overlays)}
-        for light in r.scene.lights {if light.direction_cone.w==gpu.GPU_LIGHT_RECT {host.assets_material_retain(a,transmute(u32)light.size.w)}}
+        for light in r.scene.lights {if row,rect:=gpu.light_emission_row(light);rect {host.assets_material_retain(a,row)}}
         host.assets_appearance_end(a);host.assets_commit(a)
         sync.assets_appearance,sync.derived,sync.extra_rows=a.appearance,a.stats.derived,rows
     }
@@ -1286,14 +1288,14 @@ light_settle :: proc(sync:^Render_Sync,a:^host.Assets,r:^gpu.Renderer,t:Sync_Tab
         }
     case .Spot:
         if spot,has:=core.get(t.spots,e);has && placed {
-            desc=spot_desc(world,spot)
+            desc=spot_desc(world,spot,a)
             on=true
         }
     case .Rect:
         if rect,has:=core.get(t.rects,e);has && placed {
-            desc=rect_desc(world,rect)
+            desc=rect_desc(world,rect,a)
             on=true
-            if emission,shows:=core.get(t.emissions,e);shows {desc.material=emission_material(sync,a,r,t,extras,e,u32(emission.slot))}
+            if emission,shows:=core.get(t.emissions,e);shows && desc.texture==0 {desc.material=emission_material(sync,a,r,t,extras,e,u32(emission.slot))}
         }
     }
     on&&=gpu.light_gives(desc) && !is_hidden(t.hidden,t.parents,e)
@@ -1351,10 +1353,12 @@ point_desc :: proc(world:core.World_Transform,point:Point_Light) -> gpu.Light_De
     return desc
 }
 
-// A spot in the world: the sphere of a point light, where it points and its cone.
-spot_desc :: proc(world:core.World_Transform,spot:Spot_Light) -> (desc:gpu.Light_Desc) {
+// A spot in the world: the sphere of a point light, where it points and its
+// cone, and its texture, the width of it along +X of its entity.
+spot_desc :: proc(world:core.World_Transform,spot:Spot_Light,a:^host.Assets) -> (desc:gpu.Light_Desc) {
     desc=sphere_desc(world,spot.color,spot.intensity,spot.range,spot.radius,spot.indirect,spot.scattering)
     desc.direction,desc.cone,desc.shadowless=mm.quat_forward(world.rotation),spot.angle,!spot.shadows
+    desc.texture,desc.texture_axis=image_texture(a,spot.texture),mm.quat_rotate(world.rotation,[3]f32{1,0,0})
     return
 }
 
@@ -1376,12 +1380,13 @@ sphere_desc :: proc(world:core.World_Transform,color:[3]f32,intensity,range,radi
 }
 
 // A rectangle in the world: the unit square of its entity, lighting the side
-// -Z faces. Its width runs along -X: seen from that side, its right.
-rect_desc :: proc(world:core.World_Transform,rect:Rect_Light) -> gpu.Light_Desc {
+// -Z faces, and its texture. Its width runs along -X: seen from that side, its
+// right.
+rect_desc :: proc(world:core.World_Transform,rect:Rect_Light,a:^host.Assets) -> gpu.Light_Desc {
     return {
         position=world.position,color=rect.color,intensity=rect.luminance,range=rect.range,indirect=rect.indirect,scattering=rect.scattering,shadowless=!rect.shadows,
         direction=mm.quat_forward(world.rotation),axis=mm.quat_rotate(world.rotation,[3]f32{-1,0,0}),
-        size={abs(world.scale.x),abs(world.scale.y)},
+        size={abs(world.scale.x),abs(world.scale.y)},texture=image_texture(a,rect.texture),
     }
 }
 

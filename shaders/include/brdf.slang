@@ -103,7 +103,12 @@ struct Shading {
     bool medium;
     float anisotropy;
     float across;      // how wide the place of the medium it stands for is, metres: the maps of the shadows read a texel about as wide
+    float footprint;   // a surface of a view: how wide its pixel is there, metres
 };
+
+// How wide the place a point stands for is, metres: what the image a light
+// shows is blurred over there (0: as sharp as its texture).
+float shading_footprint(Shading s) { return max(s.footprint, s.across); }
 
 // 1 - noh^2 is taken as |n x h|^2: near the peak of a sharp lobe, 1 - noh^2
 // rounds away what the lobe is made of, and a highlight of glass bands.
