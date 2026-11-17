@@ -37,12 +37,13 @@ float fade_threshold(uint2 cell) {
     return (float(FADE_ORDER[(cell.y & 3u) * 4u + (cell.x & 3u)]) + 0.5) / 16.0;
 }
 // Whether a pixel of what fades out by `fade` (0 to 1) is left out. The
-// thresholds move each frame by the golden ratio: any run of frames gives a
-// pixel thresholds spread evenly over the whole range, and the sequence never
-// repeats with the jitter of the view, so the TAA, still or moving, blends
-// them into transparency and no pattern stays in its history.
+// thresholds move each frame of the view by the bits of its turn reversed
+// (van der Corput): from a cut, every 2, 4, 8 or 16 frames give each pixel
+// thresholds spaced evenly over the whole range, so the frames the TAA
+// blends, from the first ones after a cut to its still history, hold as much
+// of the fade at every pixel and no pattern stays.
 bool fade_pixel_left(uint2 pixel, float fade) {
-    float turn = float((frame.frame_index * 2654435769u) >> 8u) * (1.0 / 16777216.0);
+    float turn = float(reversebits(frame.frame_index) >> 8u) * (1.0 / 16777216.0);
     return frac(fade_threshold(pixel) + turn) < fade;
 }
 [[vk::binding(SLOT_LINEAR_SAMPLER, 0)]] SamplerState linear_sampler : register(MIRAI_REGISTER(s, SLOT_LINEAR_SAMPLER), space0);
