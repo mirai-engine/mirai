@@ -398,17 +398,51 @@ RASTER_BINS          :: 4
 // logarithm of their depth from the near plane of the view to its far one.
 RASTER_DEPTH_BUCKETS :: 256
 
+// The most rounds a view lists and draws the triangles of its visible
+// clusters in (raster_lists.slang): one after each phase of its cull, then
+// those that take the clusters whose vertices or triangles found no room in
+// their lists the round before.
+RASTER_ROUNDS :: 4
+
 // The words of render.Gpu_Cull_State.
-CULL_DRAWS              :: 0  // of each phase and raster bin: vertices, instances (its visible clusters), first vertex, first instance
-CULL_CHUNK_DISPATCH     :: 32
-CULL_CHUNK_COUNT        :: 35
-CULL_CANDIDATE_DISPATCH :: 36
-CULL_CANDIDATE_COUNT    :: 39
-CULL_LISTED             :: 40 // of each phase, the clusters the cull listed, past the capacity too
-CULL_BINS_DISPATCH      :: 42 // of each phase, three words: the groups of cull_bins.comp over its clusters
-CULL_BIN_COUNTS         :: 48 // of each phase, the clusters of each raster bin
-CULL_BIN_CURSORS        :: 56
-CULL_DROPPED            :: 64 // of each list of the cull (render.Cull_List)
+CULL_DRAWS              :: 0  // of each round and raster bin, CULL_DRAW_WORDS: indices, instances (1), first index, first vertex (0), first instance (its first triangle)
+CULL_DRAW_WORDS         :: 5
+CULL_CHUNK_DISPATCH     :: 80
+CULL_CHUNK_COUNT        :: 83
+CULL_CANDIDATE_DISPATCH :: 84
+CULL_CANDIDATE_COUNT    :: 87
+CULL_LISTED             :: 88 // of each phase, the clusters the cull listed, past the capacity too
+CULL_BINS_DISPATCH      :: 90 // of each phase, three words: the groups of cull_bins.comp over its clusters
+CULL_BIN_COUNTS         :: 96 // of each phase, the clusters of each raster bin
+CULL_BIN_CURSORS        :: 104
+CULL_RASTER_DISPATCH    :: 112 // three words: the groups of the passes that list the triangles of the round, a group a cluster
+CULL_RASTER_FIRST       :: 115 // the entry of the visible list the first of those groups takes
+CULL_RASTER_COUNT       :: 116 // and how many entries they take
+CULL_RASTER_PENDING     :: 117 // two words: the first entry the next round takes, and one past its last
+CULL_RASTER_VERTICES    :: 119 // the vertices the round wrote, past the capacity too
+CULL_RASTER_TRIANGLES   :: 120 // the triangles it listed, past the capacity too
+CULL_RASTER_COUNTS      :: 121 // the triangles it listed of each raster bin
+CULL_RASTER_CURSORS     :: 125 // where the next triangle of each raster bin goes
+CULL_DROPPED            :: 129 // of each list of the cull (render.Cull_List)
+
+// What the raster of the visibility target draws of the visible clusters
+// (raster_lists.slang): a vertex is RASTER_VERTEX_WORDS, where it is in the
+// world and, in its last word, its entry of the visible list << 8 | which of
+// its cluster it is; a triangle, three indices of those vertices and the word
+// the visibility target names it by. An entry of the visible list keeps
+// between the passes that list them RASTER_ENTRY_WORDS: where its vertices
+// start, how many of its triangles show, its raster bin and depth bucket
+// (cull_listed_word), the round that listed it, plus one, << 1 (0: none yet)
+// | whether its instance mirrors it, then a bit a triangle that shows and a
+// bit a vertex one of them uses.
+RASTER_VERTEX_WORDS    :: 4
+RASTER_ENTRY_WORDS     :: 16
+RASTER_ENTRY_VERTICES  :: 0
+RASTER_ENTRY_TRIANGLES :: 1
+RASTER_ENTRY_BIN       :: 2
+RASTER_ENTRY_ROUND     :: 3
+RASTER_ENTRY_SHOWN     :: 4
+RASTER_ENTRY_USED      :: 8
 
 // What an instance gives over the rows of its materials, in the index pool:
 // how many rows it shows otherwise than the table holds them, how much it

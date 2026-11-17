@@ -417,8 +417,12 @@ Scene_State :: struct {
 	cull_state_buffer:    rhi.Buffer, // Gpu_Cull_State of the view being culled: the draws of its phases and what its passes count
 	chunk_buffer:         rhi.Buffer, // the chunks the instance pass hands the cluster pass
 	visible_buffer:       rhi.Buffer, // the visible clusters of both phases by raster bin, which their draws read, with their programs
-	depth_buckets:        rhi.Buffer, // of each phase and tested raster bin, its clusters of each depth bucket, then where they start (cull_bins.comp)
+	depth_buckets:        rhi.Buffer, // of each phase and tested raster bin, its clusters of each depth bucket, then where they start (cull_bins.comp); then the same of the triangles listed of them (raster_lists.slang)
 	listed_buffer:        rhi.Buffer, // and as the cull listed them, with their bins
+	raster_entries:       rhi.Buffer, // what each keeps between the passes that list its triangles for the raster (abi.RASTER_ENTRY_WORDS)
+	raster_vertices:      rhi.Buffer, // the vertices the raster of the visibility target draws of them (raster_vertices.comp)
+	raster_indices:       rhi.Buffer, // the triangles of them it draws, three of those vertices each (raster_triangles.comp)
+	raster_ids:           rhi.Buffer, // and the word the visibility target names each by
 	cluster_candidate_buffer: rhi.Buffer, // the clusters phase 0 found hidden
 	program_draws:        rhi.Buffer, // Gpu_Program_Draw of the resolve of each Surface program, POINTS_PROGRAM_CAPACITY of them
 	shadow_chunks:        rhi.Buffer, // the chunks the instance pass of the cull of the maps of the shadows hands its cluster pass
@@ -2355,7 +2359,9 @@ highlight_flags :: proc "contextless" (level: u8) -> u32 {return (u32(level) << 
 
 // The most the lists that grow asked for (the lists of the cull and the
 // material points): a list that dropped asked for what it held and what it
-// dropped; one that did not, for no more than the mark it started from. The
+// dropped; one that did not, for no more than the mark it started from; the
+// lists of the raster of the visibility target, for what the rounds of a
+// frame wrote. The
 // host keeps them by scene, so that a scene seen again starts its lists there
 // and drops nothing the first time.
 Capacity_Marks :: struct {
@@ -2417,19 +2423,26 @@ ensure_scene_capacity :: proc(r: ^Renderer) -> bool {
 	}
 	start := CULL_START
 	for list in Cull_List {
-		buffer := [Cull_List]^rhi.Buffer{.Chunks = &s.chunk_buffer, .Visible = &s.visible_buffer, .Candidates = &s.cluster_candidate_buffer, .Shadow_Chunks = &s.shadow_chunks, .Shadow_Entries = &s.shadow_entries}[list]
-		wanted := max(start[list], s.cull_wanted[list])
+		buffer := [Cull_List]^rhi.Buffer{.Chunks = &s.chunk_buffer, .Visible = &s.visible_buffer, .Candidates = &s.cluster_candidate_buffer, .Shadow_Chunks = &s.shadow_chunks, .Shadow_Entries = &s.shadow_entries, .Raster_Vertices = &s.raster_vertices, .Raster_Triangles = &s.raster_indices}[list]
+		wanted := s.cull_wanted[list]
 		if buffer^ != 0 && wanted <= s.cull_capacity[list] {continue}
 		capacity := max(wanted + wanted / 2, start[list], s.cull_capacity[list])
 		if buffer^ != 0 {rhi.buffer_destroy(d, buffer^)}
-		names := [Cull_List]string{.Chunks = "cull chunks", .Visible = "visible clusters", .Candidates = "cluster occlusion candidates", .Shadow_Chunks = "shadow map chunks", .Shadow_Entries = "shadow map clusters"}
-		entry := u64(size_of(Gpu_Visible_Cluster) if list == .Visible else size_of([4]u32) if list >= .Shadow_Chunks else size_of([2]u32))
-		buffer^ = rhi.buffer_create(d, {size = u64(capacity) * entry, usage = {.Storage}, name = names[list]})
+		names := [Cull_List]string{.Chunks = "cull chunks", .Visible = "visible clusters", .Candidates = "cluster occlusion candidates", .Shadow_Chunks = "shadow map chunks", .Shadow_Entries = "shadow map clusters", .Raster_Vertices = "vertices of the visibility raster", .Raster_Triangles = "triangles of the visibility raster"}
+		entries := [Cull_List]u64{.Chunks = size_of([2]u32), .Visible = size_of(Gpu_Visible_Cluster), .Candidates = size_of([2]u32), .Shadow_Chunks = size_of([4]u32), .Shadow_Entries = size_of([4]u32), .Raster_Vertices = abi.RASTER_VERTEX_WORDS * size_of(u32), .Raster_Triangles = size_of([3]u32)}
+		buffer^ = rhi.buffer_create(d, {size = u64(capacity) * entries[list], usage = {.Storage, .Index} if list == .Raster_Triangles else {.Storage}, name = names[list]})
 		made := buffer^ != 0
-		if list == .Visible {
-			if s.listed_buffer != 0 {rhi.buffer_destroy(d, s.listed_buffer)}
-			s.listed_buffer = rhi.buffer_create(d, {size = u64(capacity) * size_of([4]u32), usage = {.Storage}, name = "visible clusters as listed"})
-			made &&= s.listed_buffer != 0
+		// What a list holds besides, an entry for each of its own.
+		also: [2]struct {buffer: ^rhi.Buffer, entry: u64, name: string}
+		#partial switch list {
+		case .Visible: also = {{&s.listed_buffer, size_of([4]u32), "visible clusters as listed"}, {&s.raster_entries, abi.RASTER_ENTRY_WORDS * size_of(u32), "visible clusters for the raster"}}
+		case .Raster_Triangles: also[0] = {&s.raster_ids, size_of(u32), "triangles of the visibility raster by name"}
+		}
+		for other in also {
+			if other.buffer == nil {continue}
+			if other.buffer^ != 0 {rhi.buffer_destroy(d, other.buffer^)}
+			other.buffer^ = rhi.buffer_create(d, {size = u64(capacity) * other.entry, usage = {.Storage}, name = other.name})
+			made &&= other.buffer^ != 0
 		}
 		s.cull_capacity[list] = capacity if made else 0
 	}
@@ -2484,7 +2497,7 @@ ensure_scene_capacity :: proc(r: ^Renderer) -> bool {
 		s.light_tree_capacity = capacity
 		s.lights_dirty = true
 	}
-	ok := s.instance_buffer != 0 && s.material_buffer != 0 && s.cull_state_buffer != 0 && s.chunk_buffer != 0 && s.visible_buffer != 0 && s.listed_buffer != 0 && s.depth_buckets != 0 && s.program_draws != 0 && s.cluster_candidate_buffer != 0 && s.candidate_buffer != 0 && (r.hardware_rt || s.tlas_node_buffer != 0 && s.tlas_ref_buffer != 0) && s.light_buffer != 0 && s.light_tree_buffer != 0
+	ok := s.instance_buffer != 0 && s.material_buffer != 0 && s.cull_state_buffer != 0 && s.chunk_buffer != 0 && s.visible_buffer != 0 && s.listed_buffer != 0 && s.raster_entries != 0 && s.raster_vertices != 0 && s.raster_indices != 0 && s.raster_ids != 0 && s.depth_buckets != 0 && s.program_draws != 0 && s.cluster_candidate_buffer != 0 && s.candidate_buffer != 0 && (r.hardware_rt || s.tlas_node_buffer != 0 && s.tlas_ref_buffer != 0) && s.light_buffer != 0 && s.light_tree_buffer != 0
 	if !ok {set_error(r, "scene buffers: %s", rhi.device_error(d))}
 	return ok
 }
@@ -2692,7 +2705,7 @@ scene_destroy :: proc(r: ^Renderer) {
 	if s.tlas != 0 {rhi.accel_destroy(d, s.tlas)}
 	for b in s.geometry_staging {if b != 0 {rhi.buffer_destroy(d, b)}}
 	for move in s.pool_moves {if move.from != 0 {rhi.buffer_destroy(d, move.from)}}
-	for b in ([]rhi.Buffer{s.vertex_buffer, s.index_buffer, s.mesh_buffer, s.blas_node_buffer, s.blas_triangle_buffer, s.instance_buffer, s.material_buffer, s.tlas_node_buffer, s.tlas_ref_buffer, s.cull_state_buffer, s.chunk_buffer, s.visible_buffer, s.listed_buffer, s.depth_buckets, s.cluster_candidate_buffer, s.program_draws, s.shadow_chunks, s.shadow_entries, s.candidate_buffer, s.light_buffer, s.light_tree_buffer, s.light_grid_buffer, s.tlas_instance_buffer}) {
+	for b in ([]rhi.Buffer{s.vertex_buffer, s.index_buffer, s.mesh_buffer, s.blas_node_buffer, s.blas_triangle_buffer, s.instance_buffer, s.material_buffer, s.tlas_node_buffer, s.tlas_ref_buffer, s.cull_state_buffer, s.chunk_buffer, s.visible_buffer, s.listed_buffer, s.raster_entries, s.raster_vertices, s.raster_indices, s.raster_ids, s.depth_buckets, s.cluster_candidate_buffer, s.program_draws, s.shadow_chunks, s.shadow_entries, s.candidate_buffer, s.light_buffer, s.light_tree_buffer, s.light_grid_buffer, s.tlas_instance_buffer}) {
 		if b != 0 {rhi.buffer_destroy(d, b)}
 	}
 	delete(s.vertices)

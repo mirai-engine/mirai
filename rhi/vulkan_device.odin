@@ -724,6 +724,7 @@ vk_pick_physical_device :: proc(d: ^Device, desc: Device_Desc) -> bool {
 	d.info.uniform_alignment = u64(d.properties.limits.minUniformBufferOffsetAlignment)
 	d.info.storage_alignment = u64(d.properties.limits.minStorageBufferOffsetAlignment)
 	d.info.max_storage_range = u64(d.properties.limits.maxStorageBufferRange)
+	d.info.subpixel_bits = d.properties.limits.subPixelPrecisionBits
 	for heap in d.memory_properties.memoryHeaps[:d.memory_properties.memoryHeapCount] {
 		if .DEVICE_LOCAL in heap.flags {d.info.memory = max(d.info.memory, u64(heap.size))}
 	}
@@ -781,6 +782,11 @@ vk_create_logical_device :: proc(d: ^Device, desc: Device_Desc) -> bool {
 		set_error(d, "device lacks dynamic rendering, synchronization2, timeline semaphores, multi draw indirect or indirect first instance")
 		return false
 	}
+	// A fragment stage reads which primitive of its draw it is of (SV_PrimitiveID), which SPIR-V has under this feature.
+	if !supported.features.geometryShader {
+		set_error(d, "device lacks the geometry shader feature, which gives a fragment stage the primitive of its draw")
+		return false
+	}
 	// The texture table is indexed per pixel and per ray hit.
 	limits := &d.properties.limits
 	if !v12.scalarBlockLayout {
@@ -822,6 +828,7 @@ vk_create_logical_device :: proc(d: ^Device, desc: Device_Desc) -> bool {
 	core_features := vk.PhysicalDeviceFeatures{
 		multiDrawIndirect = true,
 		drawIndirectFirstInstance = true,
+		geometryShader = true,
 		samplerAnisotropy = supported.features.samplerAnisotropy,
 		textureCompressionBC = supported.features.textureCompressionBC,
 		imageCubeArray = supported.features.imageCubeArray,

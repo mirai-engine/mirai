@@ -3,6 +3,7 @@ package mirai_render
 import "core:math"
 import "core:testing"
 import "mirai:asset"
+import "mirai:render/abi"
 import "mirai:rhi"
 import mm "mirai:std/math"
 
@@ -139,8 +140,8 @@ gpu_what_moves_away_is_drawn_in_phase_0 :: proc(t: ^testing.T) {
 
 // The clusters whose pixels their alpha decides are drawn nearest first: the
 // visible list holds them by the depth of their boxes, whatever order the
-// cull found them in, so the depth test turns away what they hide before
-// their alpha runs.
+// cull found them in, and the triangles their draw lists follow that order,
+// so the depth test turns away what they hide before their alpha runs.
 @(test)
 gpu_masked_clusters_are_drawn_nearest_first :: proc(t: ^testing.T) {
 	f: Fixture
@@ -169,17 +170,94 @@ gpu_masked_clusters_are_drawn_nearest_first :: proc(t: ^testing.T) {
 	rhi.device_wait_idle(device)
 	state: [1]Gpu_Cull_State
 	if !testing.expect(t, rhi.buffer_read_slice(device, r.scene.cull_state_buffer, 0, state[:])) {return}
-	draw := state[0].draws[0][RASTER_BIN_TESTED]
-	if !testing.expectf(t, draw.instance_count == N, "every cube is drawn tested in phase 0: %v", draw) {return}
+	counts := state[0].bin_counts[0]
+	if !testing.expectf(t, counts[RASTER_BIN_TESTED] == N, "every cube is drawn tested in phase 0: %v", counts) {return}
+	first := u32(0)
+	for count in counts[:RASTER_BIN_TESTED] {first += count}
 	visible: [N]Gpu_Visible_Cluster
-	if !testing.expect(t, rhi.buffer_read_slice(device, r.scene.visible_buffer, u64(draw.first_instance) * size_of(Gpu_Visible_Cluster), visible[:])) {return}
+	if !testing.expect(t, rhi.buffer_read_slice(device, r.scene.visible_buffer, u64(first) * size_of(Gpu_Visible_Cluster), visible[:])) {return}
+	depth_of :: proc(r: ^Renderer, entry: Gpu_Visible_Cluster) -> f32 {
+		inst := r.scene.instances[entry.instance]
+		return -(inst.bounds_min.z + inst.bounds_max.z) * 0.5
+	}
 	last := f32(0)
 	for entry, k in visible {
-		inst := r.scene.instances[entry.instance]
-		depth := -(inst.bounds_min.z + inst.bounds_max.z) * 0.5
+		depth := depth_of(r, entry)
 		testing.expectf(t, depth >= last, "entry %d at %v m is not behind the one before, at %v m", k, depth, last)
 		last = depth
 	}
+	// A cube shows the camera one to three of its six faces, and its draw lists no other.
+	draw := state[0].draws[0][RASTER_BIN_TESTED]
+	triangles := draw.index_count / 3
+	if !testing.expectf(t, triangles >= 2 * N && triangles <= 6 * N && draw.first_index == draw.first_instance * 3, "the draw lists the triangles that face the camera: %v", draw) {return}
+	ids := make([]u32, triangles, context.temp_allocator)
+	if !testing.expect(t, rhi.buffer_read_slice(device, r.scene.raster_ids, u64(draw.first_instance) * size_of(u32), ids)) {return}
+	last = 0
+	for id, k in ids {
+		entry := (id - 1) / asset.CLUSTER_TRIANGLES
+		if !testing.expectf(t, id != 0 && entry >= first && entry < first + N, "triangle %d of the draw is of a cluster of its bin: %d", k, id) {return}
+		depth := depth_of(r, visible[entry - first])
+		testing.expectf(t, depth >= last, "triangle %d at %v m is not behind the one before, at %v m", k, depth, last)
+		last = depth
+	}
+	testing.expectf(t, rhi.device_validation_errors(device) == 0, "validation: %s", rhi.device_validation_message(device))
+}
+
+// A view whose triangles pass the list its raster draws from shows them all:
+// the clusters that find no room in a round are listed and drawn in the round
+// after, and the list then asks for what the frame wrote.
+@(test)
+gpu_triangles_past_their_list_are_drawn_in_the_rounds_after :: proc(t: ^testing.T) {
+	settings := DEFAULT_SETTINGS
+	settings.gi_enabled, settings.taa = false, false
+	f: Fixture
+	if !fixture_init(t, &f, 128, 128, settings) {return}
+	defer fixture_destroy(&f)
+	r, device := f.renderer, f.device
+	// A sheet of 128 triangles seen from above, each wider than a pixel.
+	SIDE :: 8
+	vertices: [(SIDE + 1) * (SIDE + 1)]Mesh_Vertex
+	for &v, i in vertices {
+		v = {position = {f32(i % (SIDE + 1)) * 0.25 - 1, 0, f32(i / (SIDE + 1)) * 0.25 - 1}, normal = {0, 1, 0}, tangent = {1, 0, 0, 1}, color = {1, 1, 1}}
+	}
+	indices: [SIDE * SIDE * 6]u32
+	for quad in 0 ..< u32(SIDE * SIDE) {
+		a := quad / SIDE * (SIDE + 1) + quad % SIDE
+		b, c, d := a + 1, a + SIDE + 2, a + SIDE + 1
+		copy(indices[quad * 6:], []u32{a, c, b, a, d, c})
+	}
+	sheet, added := mesh_add(r, vertices[:], indices[:])
+	if !testing.expect(t, added, r.error) {return}
+	camera := Camera{position = {0, 3, 0}, forward = {0, -1, 0}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	// A frame of nothing makes the lists; then one holds less than half of what the view shows.
+	if !testing.expect(t, renderer_frame(r, {camera = camera}), r.error) || !testing.expect(t, r.scene.raster_indices != 0) {return}
+	SHEETS :: 6
+	TRIANGLES :: SHEETS * SIDE * SIDE * 2
+	ROOM :: 400
+	#assert(ROOM < TRIANGLES && (ROOM - asset.CLUSTER_TRIANGLES + 1) * abi.RASTER_ROUNDS >= TRIANGLES)
+	r.scene.cull_capacity[.Raster_Triangles] = ROOM
+	instances: [SHEETS]Instance_Desc
+	for &instance, i in instances {
+		transform := Mat4(1)
+		transform[1, 3] = -f32(i)
+		instance = {object_id = u64(i + 1), mesh = sheet, transform = transform, tint = 1}
+	}
+	if !testing.expect(t, scene_given(r, instances[:], nil, {}, {}), r.error) {return}
+	// Its first frame has no pyramid to hide a sheet behind another with.
+	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	rhi.device_wait_idle(device)
+	state: [1]Gpu_Cull_State
+	if !testing.expect(t, rhi.buffer_read_slice(device, r.scene.cull_state_buffer, 0, state[:])) {return}
+	drawn: [abi.RASTER_ROUNDS]u32
+	total := u32(0)
+	for round, k in state[0].draws {
+		for draw in round {drawn[k] += draw.index_count / 3}
+		total += drawn[k]
+	}
+	testing.expectf(t, drawn[0] > 0 && drawn[0] <= ROOM, "the first round draws what its list holds: %v", drawn)
+	testing.expectf(t, total == TRIANGLES && state[0].dropped[.Raster_Triangles] == 0, "the rounds after draw the rest, and none is left out: %v of %d, %d left out", drawn, TRIANGLES, state[0].dropped[.Raster_Triangles])
+	for _ in 0 ..< 4 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	testing.expectf(t, r.scene.cull_wanted[.Raster_Triangles] >= TRIANGLES && r.scene.cull_capacity[.Raster_Triangles] >= TRIANGLES, "the list asks for the frame: %d wanted, %d held", r.scene.cull_wanted[.Raster_Triangles], r.scene.cull_capacity[.Raster_Triangles])
 	testing.expectf(t, rhi.device_validation_errors(device) == 0, "validation: %s", rhi.device_validation_message(device))
 }
 

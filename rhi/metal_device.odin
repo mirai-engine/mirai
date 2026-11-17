@@ -398,6 +398,8 @@ mtl_create_device :: proc(d: ^Device, desc: Device_Desc) -> bool {
 	d.info.uniform_alignment = 256
 	d.info.storage_alignment = 256
 	d.info.max_storage_range = u64(MTL.Device_maxBufferLength(d.device))
+	// Metal does not say: the fewest a device of the other backend may have.
+	d.info.subpixel_bits = 4
 	d.info.memory = MTL.Device_recommendedMaxWorkingSetSize(d.device)
 
 	// API validation is a process-wide switch read by Metal itself

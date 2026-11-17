@@ -1,9 +1,10 @@
 // The visibility target: of each pixel of a view, the triangle of the visible
 // clusters the cull listed that is nearest there, by the hardware depth test,
 // as one word: its entry of the visible list times CLUSTER_TRIANGLES, plus the
-// triangle, plus one. 0: no such triangle. vis_raster.frag writes it,
-// vis_classify.frag gives each pixel the depth of its Surface program and
-// vis_resolve.frag runs the material of each pixel once.
+// triangle, plus one. 0: no such triangle. The passes of raster_lists.slang
+// list the triangles of those clusters that show, vis_raster.frag writes the
+// word of each, vis_classify.frag gives each pixel the depth of its Surface
+// program and vis_resolve.frag runs the material of each pixel once.
 #ifndef MIRAI_VISIBILITY_SLANG
 #define MIRAI_VISIBILITY_SLANG
 #include "scene.slang"
@@ -49,7 +50,7 @@ float visibility_program_depth(uint program) { return (float(program + 1u) + 0.2
 // The vertex of the raster of the visibility target that is not tested.
 struct Visibility_Vertex {
     float4 position : SV_Position;
-    [[vk::location(0)]] nointerpolation uint out_id : TEXCOORD0;
+    [[vk::location(0)]] nointerpolation uint out_first : TEXCOORD0; // the first triangle of the draw among those listed
 #ifdef MIRAI_CLIP_PLANE
     float clip : SV_ClipDistance0;
 #endif
