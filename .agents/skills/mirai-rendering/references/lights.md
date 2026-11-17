@@ -249,7 +249,8 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   half as wide as the one before (a level of the sun has its finest alone), of which only those the
   points of the view read exist. `shadow_mark.comp` marks, for each point of the direct light, the
   pages the taps around it reach in the level of the sun and the mip of each face of a light with
-  one or two texels to a pixel of the view there (`sun_pick`, `light_pick`; a face no finer than
+  one texel to one or two pixels of the view there (`SHADOW_TEXEL_PIXELS`, `sun_pick`,
+  `light_pick`; a face no finer than
   its widest penumbra over the search of the taps). Of its own level or mip a point marks the
   pages of the taps nearest it (`SHADOW_SEARCH_NEAR`) and of the ellipse whose lit share it takes;
   where the search of its blockers reaches farther, the pages of the level or mip as many times

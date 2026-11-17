@@ -180,6 +180,9 @@ uint4 shadow_texel_pages(Shadow_Map m, float4 texels) {
 // The top of each octave of the levels of the sun over which a point blends
 // its level with the next, so that no line shows where they meet.
 #define SHADOW_LEVEL_BAND 0.2
+// The texel of the level of the sun or of the mip a point takes spans from
+// half of SHADOW_TEXEL_PIXELS pixels of the view across to all of them.
+#define SHADOW_TEXEL_PIXELS 2.0
 
 // Where a point at position with normal n reads map m of a light (the sun
 // for sun), towards the light along `toward` (shadow_map_seen of
@@ -295,8 +298,9 @@ bool sun_map_of(float3 position, out Shadow_Map m) {
 }
 
 // The level of the sun a point takes, and the next it blends with, by the
-// width of a pixel of the view there (across): the one with one or two
-// texels to the pixel, else the finest that holds it with room for its taps.
+// width of a pixel of the view there (across): the one whose texel spans up to
+// SHADOW_TEXEL_PIXELS of them, else the finest that holds it with room for
+// its taps.
 // Over the top SHADOW_LEVEL_BAND of each octave the point blends into the
 // next level, by blend; grow: how the texel-based constants of its level
 // grow over it, so that they meet those of the next where it begins. across
@@ -310,7 +314,7 @@ bool sun_pick(float3 position, float across, out Sun_Pick pick) {
     pick.grow = 1.0;
     uint count = sun_levels();
     if (count == 0u) return false;
-    float level = log2(max(across, 1e-9) / shadow_map_texel(sun_level(0u), 0.0));
+    float level = log2(max(across * SHADOW_TEXEL_PIXELS, 1e-9) / shadow_map_texel(sun_level(0u), 0.0));
     uint k = uint(clamp(floor(level), 0.0, float(count - 1u)));
     float within = saturate(level - float(k));
     Shadow_Map m;
@@ -325,8 +329,8 @@ bool sun_pick(float3 position, float across, out Sun_Pick pick) {
 }
 
 // The mip of a face of a local light a point takes, as its level the sun
-// (sun_pick): the one with one or two texels to the pixel of the view where
-// the point lies, blended into the next over the top of its octave, and no finer
+// (sun_pick): the one whose texel spans up to SHADOW_TEXEL_PIXELS pixels of
+// the view where the point lies, blended into the next over the top of its octave, and no finer
 // than the widest penumbra the light of radius `radius` casts there over
 // SHADOW_SEARCH_MAX of its texels, which its taps search. across 0: the
 // finest the penumbra allows.
@@ -335,7 +339,7 @@ Sun_Pick light_pick(Shadow_Map m, float3 position, float across, float radius) {
     pick.grow = 1.0;
     float z = max(shadow_map_local(m, position).z, m.near);
     float penumbra = radius * max(z - m.skip, 0.0) / max(m.skip, 1e-3);
-    float mip = log2(max(max(across, penumbra / SHADOW_SEARCH_MAX), 1e-9) / shadow_map_texel(shadow_map_mip(m, 0u), z));
+    float mip = log2(max(max(across * SHADOW_TEXEL_PIXELS, penumbra / SHADOW_SEARCH_MAX), 1e-9) / shadow_map_texel(shadow_map_mip(m, 0u), z));
     pick.level = uint(clamp(floor(mip), 0.0, float(SHADOW_MIPS - 1u)));
     float within = saturate(mip - float(pick.level));
     pick.grow = exp2(within);

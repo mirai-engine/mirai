@@ -54,7 +54,7 @@ SHADOW_RASTER_KEEP :: f32(0.01)
 SHADOW_RASTER_LIGHTS :: abi.SHADOW_RASTER_LIGHTS // the most lights rasterized in a frame, those that light most of the view
 // The half width of the first level of the sun, metres: each level after it
 // is twice as wide, a texel of its map as many times wider, and a point takes
-// the one whose texel is about as wide as it (sun_pick of shadow_maps.slang),
+// the one whose texel is about two of its pixels (sun_pick of shadow_maps.slang),
 // the first serving what lies nearest the eye.
 SHADOW_SUN_FIRST :: f32(1)
 SHADOW_SUN_LEVELS :: abi.SHADOW_SUN_MAPS
@@ -639,7 +639,7 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 	}
 	b.raster = blocks
 	// The faces of each light, whole at their finest mip: each point reads
-	// the mip whose texel is about as wide as it (light_pick).
+	// the mip whose texel is about two of its pixels (light_pick).
 	for held_light, block in b.raster {
 		if held_light == 0 {continue}
 		light := int(held_light) - 1
