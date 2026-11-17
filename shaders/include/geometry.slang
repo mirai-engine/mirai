@@ -241,6 +241,17 @@ float3 island_offset(Mesh mesh, Cluster c, uint local, float along) {
     return block_island_offset(mesh, c, cluster_block(mesh, c), local, along);
 }
 
+// The uv of a set (0 or 1) of a vertex of a cluster, alone: what a mask map
+// reads. A mesh without a second set gives the first.
+float2 block_uv_at(Mesh mesh, Cluster c, Cluster_Block b, uint local, uint set) {
+    if (set == 1u && (mesh.flags & MESH_FLAG_UV1) != 0u) {
+        uint w = vertex_words[b.uv1s + local];
+        return float2(c.uv1 + int2(int(w & 0xffffu), int(w >> 16u))) * mesh.uv1_step;
+    }
+    uint at = b.vertices + local * VERTEX_WORDS;
+    return float2(c.uv + int2(int(vertex_words[at + 1u] >> 16u), int(vertex_words[at + 2u] & 0xffffu))) * mesh.uv_step;
+}
+
 // A vertex of a cluster: posed at posed_word, or at rest with INVALID.
 Mesh_Point block_point_at(Mesh mesh, Cluster c, Cluster_Block b, uint local, uint posed_word) {
     uint at = b.vertices + local * VERTEX_WORDS;

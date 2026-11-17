@@ -249,7 +249,7 @@ chunk_build_terrain :: proc(s:^Source,coord:[3]i32,mesh:^Chunk_Mesh,collision:=t
         for row in 0..<rows {for column in 0..<columns {
             at:=row*columns+column
             m.positions[at],m.normals[at]=heightfield_vertex(s,low.x+column,low.z+row,1,&edges)
-            m.uvs[at],mesh.uv1s[at]={f32(column),f32(row)},{}
+            m.uvs[at],mesh.uv1s[at]={f32(column)/f32(columns),f32(row)/f32(rows)},{}
         }}
         next:=0
         for row in 0..<rows-1 {for column in 0..<columns-1 {

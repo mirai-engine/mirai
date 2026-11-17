@@ -186,7 +186,7 @@ Levels of detail:
   paint) comes from the [maps](#materials-and-layers) of the piece, a texel per sample whatever
   its level, so changing level moves only the triangles, by at most about `LOD_PIXELS`.
 - A chunk with holes takes any level: its triangles over holes alone are left out, and one whose
-  triangles span holes and ground shows the holed material, which cuts them by its alpha.
+  triangles span holes and ground shows the holed material, which cuts them by its mask map.
 
 Collision and picking:
 
@@ -247,10 +247,11 @@ Construction and publishing:
 - **Maps** (`surface.odin`): a piece of a Heightfield publishes with its mesh generated textures
   of its region (`Surface_Maps`), a texel per sample (a node, every `2^depth` samples, from the
   coarse grid): `control`, the weights with the rules applied and the hole of the cell from each
-  texel; `normal`, of the surface over a step of one; and `paint` when the source has paint. Its
-  vertices carry where they are over them in `uv0`, in texels, and its `Material_Values` give
-  them (`piece_values`) with their size. They are made in the job that builds the piece and leave
-  with its mesh.
+  texel; `normal`, of the surface over a step of one; `paint` when the source has paint; and
+  `mask`, the holes, of a piece whose triangles span holes and ground. Its vertices carry where
+  they are over them in `uv0`, from 0 at the first texel to 1 past the last, so a texel is its
+  sample and the cell after it; its `Material_Values` give them (`piece_values`) with their size.
+  They are made in the job that builds the piece and leave with its mesh.
 - A piece of a Volume has no maps: each vertex carries in `uv0` and `uv1` the weights of the four
   layers that weigh most over the piece (its palette, a value of the piece).
 - The slot shows the source's layers material (`layers_material`): a Surface program that blends
@@ -270,9 +271,13 @@ Construction and publishing:
   shows and what barely weighs is not read. The inspection of the weights and the relief show what
   it gives.
 - **Holes**: a piece whose triangles span holes and ground shows `LAYERS_HOLED_MATERIAL`, the same
-  program in a masked material, whose alpha is the hole of the cell under the point: only those
-  pieces pay for the alpha in raster and rays. A node takes as a hole a texel at least half holes
-  (the share of each cell of the coarse grid, `Coarse.holes`), and the cuts of its joins.
+  program in a masked material, and gives it as its [mask
+  map](../../mirai-rendering/references/materials.md#alpha) the `mask` of its maps, a texel each
+  cell, clear over a hole (`piece_mask`): only those pieces pay for the mask in raster, shadows and
+  rays, and an edit of the holes publishes it again with the piece. The map is filtered, so a
+  straight edge between a hole and ground falls on the edge of its cells and a corner rounds within
+  half a cell. A node takes as a hole a texel at least half holes (the share of each cell of the
+  coarse grid, `Coarse.holes`), and the cuts of its joins.
 - **Paint** (`paint.odin`): the color (sRGB) and roughness painted over the layers of a
   Heightfield, a sample each, `PAINT_NEUTRAL` where nothing is painted. Tint takes the color
   toward `Brush.color`, Roughness the roughness toward `target` (0.5: the layers as they are);

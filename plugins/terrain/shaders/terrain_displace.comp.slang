@@ -114,8 +114,8 @@ void main(uint3 id : SV_DispatchThreadID) {
     Mesh_Point point = cluster_point_at(mesh, c, id.x - c.vertex_first, INVALID);
     Terrain_Mix mix;
     if (params.control != INVALID) {
-        bool hole;
-        mix = terrain_weights_at(params.control, float2(float(params.map_size & 0xffffu), float(params.map_size >> 16u)), point.uv, hole);
+        float2 size = float2(float(params.map_size & 0xffffu), float(params.map_size >> 16u));
+        mix = terrain_weights_at(params.control, size, point.uv * size);
     } else {
         for (int i = 0; i < 4; i++) { mix.layers[i] = 0u; mix.weights[i] = i == 0 ? 1.0 : 0.0; }
     }

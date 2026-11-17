@@ -19,7 +19,7 @@ namespace Terrain_Layers {
 // piece of a Volume, which carries the weights of the four layers of its
 // palette in uv0 and uv1 instead, and the metres of a texel in w; layers, the
 // table of the layers of its source. uv0 is the place over the maps, in
-// texels.
+// texels over their size (0 to 1).
 struct Parameters {
     uint control;uint normal;uint paint;uint layers;
     float4 piece;float4 palette;
@@ -108,7 +108,6 @@ Mirai_Surface evaluate(Mirai_Surface_Context ctx, Parameters p) {
     Terrain_Mix mix;
     float3 n = ctx.normal;
     float4 paint = float4(1.0, 1.0, 1.0, float(PAINT_ROUGHNESS_NEUTRAL) / 255.0);
-    bool hole = false;
     if (p.piece.z > 0.5 || p.control == 0xffffffffu) {
         // A piece of a Volume: the layers of its palette, their weights in its vertices.
         float4 w = max(float4(ctx.uv0, ctx.uv1), float4(0.0));
@@ -117,12 +116,11 @@ Mirai_Surface evaluate(Mirai_Surface_Context ctx, Parameters p) {
         for (int i = 0; i < 4; i++) { mix.layers[i] = uint(p.palette[i] + 0.5); mix.weights[i] = w[i]; }
     } else {
         float2 size = max(p.piece.xy, float2(1.0));
-        mix = terrain_weights_at(p.control, size, ctx.uv0, hole);
-        n = object_normal(ctx, terrain_map_at(p.normal, size, ctx.uv0).rgb * 2.0 - 1.0);
-        if (p.paint != 0xffffffffu) paint = terrain_map_at(p.paint, size, ctx.uv0);
+        float2 at = ctx.uv0 * size;
+        mix = terrain_weights_at(p.control, size, at);
+        n = object_normal(ctx, terrain_map_at(p.normal, size, at).rgb * 2.0 - 1.0);
+        if (p.paint != 0xffffffffu) paint = terrain_map_at(p.paint, size, at);
     }
-    // Over a hole the material cuts the surface (terrain_layers_holed.mat); an opaque one keeps it.
-    s.alpha = hole ? 0.0 : 1.0;
     float3 weights = projection_weights(p.piece.z > 0.5 ? ctx.vertex_normal : n, ctx.ray);
     float4 shown = terrain_heaviest(float4(mix.weights[0], mix.weights[1], mix.weights[2], mix.weights[3]));
     float3 albedo[4];

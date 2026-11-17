@@ -64,11 +64,11 @@ void main(uint3 id : SV_DispatchThreadID) {
     ctx.previous_time = params.time;
     ctx.normal = float3(0.0, 1.0, 0.0);
     if (params.kind == 0u) {
-        ctx.uv0 = f;
+        ctx.uv0 = f / max(params.piece.xy, float2(1.0));
     } else if (params.kind == 2u) {
         ctx.uv0 = float2(f.x, 1.0 - f.x);
     } else {
-        ctx.uv0 = float2(1.0, 0.0);
+        ctx.uv0 = float2(1.0, 0.0) / max(params.piece.xy, float2(1.0));
         ctx.normal = sweep_normal(float2(float(id.x / params.side), float(id.x % params.side)));
     }
     ctx.vertex_normal = ctx.normal;

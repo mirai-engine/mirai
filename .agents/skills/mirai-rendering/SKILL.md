@@ -186,9 +186,10 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
   its scene is given; without it, what the scene is given is only an edit.
 - No engine stage evaluates a Surface program except its own (`//! per surface program`): raster
   uses the program's pipeline (`program_graphics`) and rays ask for it through the material points
-  (`points.slang`); the traversal and the tested raster of the visibility target evaluate only the
-  alpha of programs with coverage. A frame does not wait for a pipeline to be created: it draws
-  the program as its row until it has it.
+  (`points.slang`). A frame does not wait for a pipeline to be created: it draws the program as
+  its row until it has it.
+- A masked material is cut by its mask map alone: no visibility raster, shadow map or traversal
+  runs a program for coverage ([alpha](references/materials.md#alpha)).
 - The material of opaque scene geometry runs once per visible pixel: its clusters are rasterized
   into the visibility target and resolved per program; no forward path draws them into the
   G-buffer. Back faces are drawn only of two-sided materials.

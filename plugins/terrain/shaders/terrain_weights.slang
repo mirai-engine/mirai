@@ -30,8 +30,8 @@ Mirai_Surface evaluate(Mirai_Surface_Context ctx, Parameters p) {
         w = total > 0.0 ? w / total : float4(1.0, 0.0, 0.0, 0.0);
         for (int i = 0; i < 4; i++) { mix.layers[i] = uint(p.palette[i] + 0.5); mix.weights[i] = w[i]; }
     } else {
-        bool hole;
-        mix = terrain_weights_at(p.control, max(p.piece.xy, float2(1.0)), ctx.uv0, hole);
+        float2 size = max(p.piece.xy, float2(1.0));
+        mix = terrain_weights_at(p.control, size, ctx.uv0 * size);
     }
     float4 weights = terrain_heaviest(float4(mix.weights[0], mix.weights[1], mix.weights[2], mix.weights[3]));
     float3 shown = float3(0.0);
