@@ -409,9 +409,8 @@ emitter_desc :: proc(info:effect.Particle_Info,a:^host.Assets,renderer:^erender.
     return
 }
 
-// The meshes Mesh particles show, with the indices of a draw of each and
-// their weights added up to 1 (all 0: each as often). False while one of the
-// meshes is not on the GPU yet.
+// The meshes Mesh particles show, with their weights added up to 1 (all 0:
+// each as often). False while one of the meshes is not on the GPU yet.
 mesh_choices :: proc(d:^Emitter_Desc,renderer:^erender.Renderer,handles:[]erender.Mesh_Handle,weights:[]f32) -> bool {
     d.meshes,d.mesh_count={},0
     total:f32
@@ -419,10 +418,10 @@ mesh_choices :: proc(d:^Emitter_Desc,renderer:^erender.Renderer,handles:[]erende
     ready:=true
     for handle,c in handles[:min(len(handles),effect.PARTICLE_MESHES)] {
         choice:=&d.meshes[c]
-        first,indices,drawable:=erender.mesh_draw_range(renderer,handle)
+        _,drawable:=erender.mesh_primitive_count(renderer,handle)
         ready&&=drawable
         share:=max(weights[c],0)/total if total>0 else 1/f32(len(handles))
-        choice^={handle=handle,first=first,indices=indices,weight=share+(d.meshes[c-1].weight if c>0 else 0)}
+        choice^={handle=handle,weight=share+(d.meshes[c-1].weight if c>0 else 0)}
         d.mesh_count+=1
     }
     if d.mesh_count>0 {d.meshes[d.mesh_count-1].weight=1}

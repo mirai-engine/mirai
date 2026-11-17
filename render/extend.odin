@@ -148,7 +148,8 @@ frame_gbuffer_mesh :: proc(r: ^Renderer, mesh: Mesh_Handle, material: Material_H
 // Tells the frame that an extension draws every cluster of level 0 of a mesh
 // of the scene, where the cull of the scene does not see it (the meshes of
 // particles): a mesh whose pages stream loads them all, and keeps them while
-// it asks. Ask in each frame that draws it.
+// it asks, and the frame lists its indices (pass_indices .Meshes). Ask in
+// each frame that draws it.
 frame_mesh_whole :: proc(r: ^Renderer, mesh: Mesh_Handle) {
 	if int(mesh) < len(r.scene.meshes) {r.scene.meshes[mesh].whole = r.frame + 1}
 }

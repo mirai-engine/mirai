@@ -59,8 +59,7 @@ struct Particle_Emitter {
     uint4 frame;          // in particle_frame: bytes to its resources and stages (INVALID: none), to the births of its channel, how many, to the births of the frame
     uint4 data;           // bytes of particle_data to the Attributes of its range, bytes of those of a particle, its age (bits), particles it started before the frame
     float4 mesh_weights;  // of Mesh particles: the weights of its meshes added up
-    uint4 mesh_indices;   // and the indices of a draw of each (render.mesh_draw_range)
-    uint4 mesh_firsts;    // and where they start in those of the scene
+    uint4 mesh_handles;   // and the meshes, whose indices the frame lists (render.frame_mesh_whole)
 };
 
 struct Particle_State {

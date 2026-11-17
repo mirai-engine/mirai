@@ -8,11 +8,12 @@ or interleave its own passes.
 ## Passes
 
 1. **upload**: skinning of the poses that changed; instances, materials, lights and their
-   [tree](lights.md#local-lights) if they changed; the `Geometry` stage of the extensions; the
-   refit of the ray structure in use and, with hardware RT, the native TLAS. What does not fit in
-   the frame's transient memory is uploaded with the next one. Then **air**: the tables of the
-   [atmosphere](gi.md#atmosphere) that change with the air. Each view, at its start, redoes the
-   row of its sky and its aerial perspective if its eye or the sun moved.
+   [tree](lights.md#local-lights) if they changed; the `Geometry` stage of the extensions; the refit
+   of the ray structure in use and, with hardware RT, the native TLAS; new indices of [meshes drawn
+   whole](scene.md#scene-and-instances). What does not fit in the frame's transient memory is
+   uploaded with the next one. Then **air**: the tables of the [atmosphere](gi.md#atmosphere) that
+   change with the air. Each view, at its start, redoes the row of its sky and its aerial
+   perspective if its eye or the sun moved.
 2. **cull (phase 0)**, per instance and then per cluster (`cull.comp`, `cull_clusters.comp`).
    - One thread per instance, and then one per slot of the drawn
      [batches](scene.md#instance-batches): frustum and occlusion of its box, under the transform
@@ -40,8 +41,8 @@ or interleave its own passes.
      not two-sided, by the margin of the grid of the device (`Device_Info.subpixel_bits`).
    - Those lists (`Cull_List.Raster_Vertices`, `Raster_Triangles`) hold a round, not a frame: a
      cluster that finds no room is listed and drawn in the round after, up to `RASTER_ROUNDS`
-     in a view; the lists then ask for what the view holds in one: what its clusters wrote and
-     its last round left out, by what of each shows (`Stats_Block.raster_need`).
+     in a view; the lists then ask for [a share](scene.md#scene-and-instances) of what the view
+     needs, by what of each cluster shows, also of those its last round left out.
    - Each round rasters its triangles into the visibility target (`visibility.slang`: the entry of
      the visible list and the triangle, one word a pixel) with the hardware depth: one indexed
      indirect draw per raster bin, whose fragment reads the word of its primitive. The untested bins
