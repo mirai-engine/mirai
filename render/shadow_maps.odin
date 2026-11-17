@@ -812,7 +812,7 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 
 // shadow_cull.slang Params_Block.
 @(private)
-Shadow_Params :: struct {instances, maps, rows, glass, chunk_capacity, entry_capacity, list, moving, movers, listed, ranges, masks, plan, span, part, bound: u32}
+Shadow_Params :: struct {instances, maps, rows, glass, chunk_capacity, entry_capacity, list, moving, movers, listed, ranges, masks, plan, span, part, bound, foresee, pad0, pad1, pad2: u32}
 
 // The rounds of the cull: what stays, into the pages the cache draws; what
 // moves, into the pages the atlas composes; the glass, into every page ready,
@@ -845,9 +845,10 @@ shadow_params :: proc(p: ^Pass, plan: Shadow_Plan, round: Shadow_Round) -> Shado
 
 // The cull of a round and what it hands to its draws: by instance and slot,
 // as many slots as the pages listed (shadow_pages.comp), then by cluster over
-// the chunks, as the cull of the view. Of the cache and the atlas, between
-// them the steps of the pages grant the pages the clusters of the frame, and
-// after them settle those not drawn whole (steps).
+// the chunks, as the cull of the view. Of the cache and the atlas, a pass by
+// instance first foresees what each page takes, the steps of the pages grant
+// the pages the clusters of the frame, the culls hand over the clusters of
+// those alone, and the steps settle those not drawn whole (steps).
 @(private)
 shadow_cull :: proc(p: ^Pass, plan: Shadow_Plan, params: Shadow_Params, round: Shadow_Round, steps: ^Shadow_Pages_Params = nil) {
 	r, cmd, t := p.r, p.cmd, p.t
@@ -859,8 +860,11 @@ shadow_cull :: proc(p: ^Pass, plan: Shadow_Plan, params: Shadow_Params, round: S
 	start[0] = {draws = {{vertex_count = CLUSTER_DRAW_VERTICES}, {vertex_count = CLUSTER_DRAW_VERTICES}, {vertex_count = CLUSTER_DRAW_VERTICES}}, cluster_dispatch = {0, 0, 1}}
 	rhi.cmd_copy_buffer(cmd, start_at.buffer, start_at.offset, d.state, 0, size_of(Gpu_Shadow_State))
 	if params.instances == 0 {return}
-	for pipeline in ([2]Pipeline_Id{.Shadow_Maps, .Shadow_Clusters}) {
-		if pipeline == .Shadow_Clusters && steps != nil {shadow_pages_step(p, steps, .Grant, u32(round))}
+	passes := [3]Pipeline_Id{.Shadow_Maps, .Shadow_Maps, .Shadow_Clusters}
+	for pipeline, k in passes {
+		if k == 0 && steps == nil {continue}
+		if k == 1 && steps != nil {shadow_pages_step(p, steps, .Grant, u32(round))}
+		params.foresee = 1 if k == 0 else 0
 		rhi.cmd_bind_pipeline(cmd, r.pipelines[pipeline])
 		set_params(cmd, &params)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS0, d.table)

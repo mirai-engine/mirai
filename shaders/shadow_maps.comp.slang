@@ -123,7 +123,10 @@ void main(uint3 id : SV_DispatchThreadID) {
     bool depth = !all_glass && params.moving != 2u && (whole || moves == (params.moving != 0u));
         if (!depth && !glass) continue;
         uint2 clusters = instance_clusters(shadow_map_detail(m), inst, mesh);
-        if (depth) shadow_foresee(m, texels, clusters.y);
+        if (params.foresee != 0u) {
+            if (depth) shadow_foresee(m, texels, clusters.y);
+            continue;
+        }
         uint count = (clusters.y + CULL_CHUNK - 1u) / CULL_CHUNK;
         uint base;
         InterlockedAdd(shadow_state[SHADOW_CHUNK_COUNT], count, base);

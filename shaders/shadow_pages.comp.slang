@@ -114,7 +114,7 @@ struct Params_Block { uint step; uint frame; uint rows; uint plan; uint boxes; u
 // foreseen to take; each may take twice that.
 #define GRANT_SHARE 2u
 // A page not drawn yet takes at most 1/GRANT_GUESS of that share.
-#define GRANT_GUESS 8u
+#define GRANT_GUESS 32u
 
 groupshared uint shared_words[POOL_GROUP];
 groupshared uint shared_costs[POOL_GROUP];
