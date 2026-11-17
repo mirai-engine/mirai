@@ -433,7 +433,7 @@ render_base_prepare_refuses_a_folder_that_is_not_a_worktree :: proc(t:^testing.T
     if !testing.expect(t,created) {return}
     commit(t,root,"one");commit(t,root,"two")
     folder:=join(root,".worktrees","render-base")
-    testing.expect(t,os.make_directory_all(folder)==nil && os.write_entire_file(join(folder,"left.txt"),"left")==nil)
+    testing.expect(t,base.make_directory_all(folder)==nil && os.write_entire_file(join(folder,"left.txt"),"left")==nil)
     _,ok,_:=render_base_prepare(root,"main~1","demo")
     testing.expect(t,!ok)
     branch,attached:=render_git(root,"symbolic-ref","--short","HEAD")

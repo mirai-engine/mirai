@@ -2,6 +2,7 @@
 package serial
 
 import "core:os"
+import "core:sys/posix"
 
 @(private)
 Read_File :: ^os.File
@@ -11,6 +12,8 @@ file_open_read :: proc(path:string) -> (Read_File,File_Error) {
     file,error:=os.open(path)
     if error==nil {return file,.None}
     if general,is_general:=error.(os.General_Error);is_general && general==.Not_Exist {return nil,.Not_Found}
+    // A path below a file is not there either, as ERROR_PATH_NOT_FOUND says on Windows.
+    if error==os.Platform_Error(posix.Errno.ENOTDIR) {return nil,.Not_Found}
     return nil,.Open
 }
 

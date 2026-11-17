@@ -716,7 +716,7 @@ ai_task_create :: proc(s:^Session,m:^Ai,region:ui.Rect,prompt,agent:string,conti
     prompt_sequence:=task.transcript.dropped+task.transcript.count
     task.system_turn=turn.system
     if !turn.system {ai_task_prompt_add(s,task,text)}
-    if os.make_directory_all(ai_task_path(s,task,""))!=nil || os.write_entire_file(ai_task_path(s,task,AI_FILE_MESSAGE),text)!=nil {
+    if base.make_directory_all(ai_task_path(s,task,""))!=nil || os.write_entire_file(ai_task_path(s,task,AI_FILE_MESSAGE),text)!=nil {
         ai_task_fail(task,"The folder of the task could not be created")
         ai_task_persist(s,task)
         return task,""

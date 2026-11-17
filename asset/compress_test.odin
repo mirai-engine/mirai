@@ -151,7 +151,7 @@ a_project_is_compressed_as_its_manifest_says_with_what_its_engine_has :: proc(t:
     if folder=="" {return}
     root:=project.path(folder,"game",allocator=context.temp_allocator)
     engine:=project.path(folder,"engine",allocator=context.temp_allocator)
-    testing.expect(t,os.make_directory_all(root)==nil && os.make_directory_all(engine)==nil)
+    testing.expect(t,base.make_directory_all(root)==nil && base.make_directory_all(engine)==nil)
     testing.expect_value(t,project_codecs(root,engine),Codecs.Open)
     Case :: struct {compression:string,private:bool,error:project.Error_Code,result:Codecs}
     cases:=[?]Case{
@@ -163,7 +163,7 @@ a_project_is_compressed_as_its_manifest_says_with_what_its_engine_has :: proc(t:
     }
     for c in cases {
         private:=project.path(engine,project.COMPRESSOR_PRIVATE,allocator=context.temp_allocator)
-        if c.private {testing.expect(t,os.make_directory_all(private)==nil)} else {_=os.remove_all(private)}
+        if c.private {testing.expect(t,base.make_directory_all(private)==nil)} else {_=os.remove_all(private)}
         m:=project.manifest_default("Test")
         base.text_set(m.build.compression[:],c.compression)
         testing.expect_value(t,project.manifest_write(project.path(root,project.PROJECT_FILE,allocator=context.temp_allocator),&m).code,project.Error_Code.None)

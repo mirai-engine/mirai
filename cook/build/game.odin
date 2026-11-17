@@ -71,7 +71,7 @@ copies_run :: proc(copies:[]Copy) -> bool {
         parent:=copy.to[:strings.last_index_byte(copy.to,'/')]
         if os.make_directory_all(parent)!=nil && !os.is_dir(parent) {return false}
         if copy.folder {
-            if os.copy_directory_all(copy.to,copy.from)!=nil {return false}
+            if base.copy_directory_all(copy.to,copy.from)!=nil {return false}
         } else if os.copy_file(copy.to,copy.from)!=nil {
             return false
         }

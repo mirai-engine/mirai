@@ -20,7 +20,7 @@ a_test_world_gets_the_world_info_the_declarations_of_its_types_give_a_game :: pr
     engine:=project.path(folder,"engine")
     toy:=project.path(engine,"engine","toy")
     for path in ([]string{project.path(engine,"core"),toy}) {
-        if !testing.expect(t,os.make_directory_all(path)==nil) {return}
+        if !testing.expect(t,base.make_directory_all(path)==nil) {return}
     }
     testing.expect_value(t,os.write_entire_file(project.path(engine,"core","core.odin"),`package core
 // Where it is.

@@ -18,7 +18,7 @@ a_run_of_the_tests_runs_off_the_frame_against_the_libraries_of_the_editor :: pro
     if folder=="" {return}
     root,engine:=project.path(folder,"project"),project.path(folder,"engine")
     for path in ([]string{project.path(root,"game"),project.path(engine,"plugins")}) {
-        if !testing.expect(t,os.make_directory_all(path)==nil) {return}
+        if !testing.expect(t,base.make_directory_all(path)==nil) {return}
     }
     files:=[?][2]string{
         {project.path(root,project.PROJECT_FILE),`{"name": "Probe", "build": {"optimization": "Speed"}}`},
