@@ -2,9 +2,9 @@
 // The first pass of the cull of the clusters the maps of the shadows draw in
 // a round (shadow_maps.slang, shadow_cull.slang): a thread for each instance,
 // of the scene or of a batch, and each map of the round, where it draws the
-// pages its mask names, at each mip of the map it draws pages of. The round of what stays draws into them the casters
-// that do not move; that of what moves, those that do, and the glass of the
-// tint. An instance that may cast a shadow into the window, and
+// pages its mask names, at each mip of the map it draws pages of. The round
+// of what stays draws into them the casters that do not move; that of what
+// moves, those that do. An instance that may cast a shadow into the window, and
 // covers a texel of its map, hands the clusters of the cut of the map that its levels can
 // take (instance_clusters) to shadow_clusters.comp in chunks, as cull.comp
 // hands those the view draws to cull_clusters.comp, at the detail of each
@@ -31,13 +31,6 @@
 // A bit for each instance that moves, then the list of those a round of
 // what moves culls (Params_Block.listed).
 [[vk::binding(SLOT_PASS5, 0)]] StructuredBuffer<uint> movers : register(MIRAI_REGISTER(t, SLOT_PASS5), space0);
-
-// The surface of a body of a medium: an open sheet of a solid such as water,
-// whose light the volume of the medium gives.
-bool glass_sheet(Instance inst) {
-    Mesh mesh = meshes[instance_mesh(inst)];
-    return (mesh.flags & MESH_FLAG_CLOSED) == 0u && material_solid(material_row(material_of(inst, 0u), inst.material_values));
-}
 
 bool instance_moves(uint instance) {
     uint bit = instance_batched(instance) ? frame.instance_count + batch_of(instance) : instance;
@@ -93,12 +86,8 @@ void main(uint3 id : SV_DispatchThreadID) {
     }
     Instance inst = scene_instance(instance);
     if ((inst.meta.w & INSTANCE_FLAG_HIDDEN) != 0u || (inst.meta.x & INSTANCE_UNSHADOWED) != 0u) return;
-    // Glass casts no shadow: it takes its place only in the tint of the maps,
-    // and not a glass sheet nor one of a batch.
-    bool all_glass = (inst.meta.w & INSTANCE_FLAG_BLENDED) != 0u;
-    bool glass = params.moving == 2u && params.glass != 0u && (inst.meta.w & (INSTANCE_FLAG_TRANSLUCENT | INSTANCE_FLAG_BLENDED)) != 0u
-        && !instance_batched(instance) && !(all_glass && glass_sheet(inst));
-    if (all_glass && !glass) return;
+    // Glass casts no shadow in the maps, nor colors their light.
+    if ((inst.meta.w & INSTANCE_FLAG_BLENDED) != 0u) return;
     Shadow_Map whole = shadow_map_at(shadow_data, params.rows, map);
     float3 low = inst.bounds_min.xyz - reach, high = inst.bounds_max.xyz + reach;
     if (!shadow_map_reaches(whole, low, high)) return;
@@ -120,11 +109,10 @@ void main(uint3 id : SV_DispatchThreadID) {
         }
         // A slot that let go of every page draws what stays too into the atlas, in the round of what moves.
     bool whole = params.moving == 1u && (shadow_data[(params.plan >> 2u) + map].x & SHADOW_PLAN_RESET) != 0u;
-    bool depth = !all_glass && params.moving != 2u && (whole || moves == (params.moving != 0u));
-        if (!depth && !glass) continue;
+        if (!whole && moves != (params.moving != 0u)) continue;
         uint2 clusters = instance_clusters(shadow_map_detail(m), inst, mesh);
         if (params.foresee != 0u) {
-            if (depth) shadow_foresee(m, texels, clusters.y);
+            shadow_foresee(m, texels, clusters.y);
             continue;
         }
         uint count = (clusters.y + CULL_CHUNK - 1u) / CULL_CHUNK;
@@ -132,7 +120,7 @@ void main(uint3 id : SV_DispatchThreadID) {
         InterlockedAdd(shadow_state[SHADOW_CHUNK_COUNT], count, base);
         uint kept = base >= params.chunk_capacity ? 0u : min(count, params.chunk_capacity - base);
         if (kept < count) InterlockedAdd(stats[0].dropped[CULL_LIST_SHADOW_CHUNKS], count - kept);
-        uint what = map | mip << SHADOW_CHUNK_MIP | (depth ? SHADOW_CHUNK_DEPTH : 0u) | (glass ? SHADOW_CHUNK_GLASS : 0u) | (rest ? SHADOW_CHUNK_REST : 0u);
+        uint what = map | mip << SHADOW_CHUNK_MIP | (rest ? SHADOW_CHUNK_REST : 0u);
         for (uint k = 0u; k < kept; k++) {
             uint first = k * CULL_CHUNK;
             chunks[base + k] = uint4(instance, what, clusters.x + first, min(CULL_CHUNK, clusters.y - first));

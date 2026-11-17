@@ -1645,10 +1645,11 @@ material_colored_shadows_filter_textures_and_respect_blockers :: proc(t:^testing
         }
     }
     // Glass whose program paints a cross of blue lines over red cells, on a
-    // green row: its shadow shows what the program gives where each ray
-    // crosses it, not the mean of the glass, in the blocks of soft shadows
-    // and in the rays every pixel of the reference traces. Cells of 20 m:
-    // the lines of every ten cross the origin, 0.8 m wide to each side.
+    // green row: in the rays every pixel of the reference traces its shadow
+    // shows what the program gives where each ray crosses it, not the mean of
+    // the glass; the maps of the sun hold no glass, and through them its light
+    // comes uncolored. Cells of 20 m: the lines of every ten cross the
+    // origin, 0.8 m wide to each side.
     painted:=DEFAULT_MATERIAL;painted.alpha_mode=.Blend;painted.base_color={0,1,0}
     painted.program_id=grid.id;painted.custom_params=program_defaults(grid)
     testing.expect(t,program_parameter_set(&painted.custom_params,program_parameter(grid,"color"),{1,0,0,0}))
@@ -1666,7 +1667,11 @@ material_colored_shadows_filter_textures_and_respect_blockers :: proc(t:^testing
             frames(t, &f,camera,4)
             line:=read_light(t,&f,camera,{},r.targets.direct)
             cell:=read_light(t,&f,camera,{2,0,2},r.targets.direct)
-            testing.expectf(t,line.b>0.2 && line.b>4*line.r && cell.r>0.2 && cell.r>4*cell.b && line.g+cell.g<0.05,"%v reference %v: the shadow of the glass shows its program where each ray crosses it: line %v, cell %v",provider,reference,line,cell)
+            if reference {
+                testing.expectf(t,line.b>0.2 && line.b>4*line.r && cell.r>0.2 && cell.r>4*cell.b && line.g+cell.g<0.05,"%v: the shadow of the glass shows its program where each ray crosses it: line %v, cell %v",provider,line,cell)
+            } else {
+                testing.expectf(t,line.r>0.2 && abs(line.r-line.b)<0.02 && abs(line.r-line.g)<0.02 && abs(cell.r-line.r)<0.02 && abs(cell.b-line.b)<0.02,"%v: the light of the sun its maps hold comes through glass uncolored: line %v, cell %v",provider,line,cell)
+            }
         }
     }
     testing.expectf(t,rhi.device_validation_errors(f.device)==0,"validation: %s",rhi.device_validation_message(f.device))

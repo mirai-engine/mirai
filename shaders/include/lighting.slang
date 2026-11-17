@@ -15,8 +15,7 @@
 #include "probe_light.slang"
 // A pass with the maps of the view (SUN_SHADOW_SLOT and SHADOW_DATA_SLOT) that
 // takes the shadows of direct_lighting from them where they hold the point,
-// and traces the rays only where they do not; with SHADOW_TINT_SLOT, the glass
-// on the way from the tint the maps keep of it.
+// and traces the rays only where they do not.
 #ifdef MIRAI_LIGHT_MAPS
 #include "shadow_maps.slang"
 #endif
@@ -1186,10 +1185,6 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which, float2 ex
             if (changes) changed = changed || (frame.moved.z & MOVED_SUN) != 0u || occluder_changed(origin, direction, reach, INVALID, FLT_MAX);
 #ifdef MIRAI_LIGHT_MAPS
             mapped = sun_shadow_seen(s.position, s.normal, s.across);
-#ifdef SHADOW_TINT_SLOT
-            Shadow_Map tinted;
-            if (mapped > 0.0 && sun_map_of(s.position, tinted)) radiance *= shadow_tint(tinted, s.position);
-#endif
 #endif
         } else if (item <= local_items) {
             Light_Node node = light_nodes[cut[item - 1u]];
@@ -1200,10 +1195,6 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which, float2 ex
             if (changes) changed = changed || occluder_changed(origin, direction, reach, INVALID, FLT_MAX);
 #ifdef MIRAI_LIGHT_MAPS
             mapped = light_shadow_seen(aimed, s.position, s.normal, light_extent(lights[aimed]), s.across);
-#ifdef SHADOW_TINT_SLOT
-            Shadow_Map tinted;
-            if (mapped > 0.0 && light_map_of(aimed, s.position, tinted)) radiance *= shadow_tint(tinted, s.position);
-#endif
 #endif
         }
 #ifdef MIRAI_HOOK_LIGHTS

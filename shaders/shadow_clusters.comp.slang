@@ -4,8 +4,8 @@
 // its clusters. A cluster in the cut of the map goes, once for each page the
 // round draws that its box covers (at rest, or posed by the skin this frame),
 // to the list shadow_map.vert draws: those of masked or blended
-// materials to the draw that takes their coverage, and those of glass also to
-// the draw of the tint. The draws of a round take at most params.bound
+// materials to the draw that takes their coverage. The draws of a round take
+// at most params.bound
 // clusters a frame, and of a page at most what the steps of the pages granted
 // it (SHADOW_WORDS_COST): a cluster past them, or past the room of its draw,
 // is left out, its page is not drawn whole this frame (SHADOW_COST_OVER) and
@@ -35,13 +35,9 @@
 // A cluster into a draw for the page of the pool `pool`; false where the
 // frame has no room for it.
 bool shadow_add(uint draw, uint4 entry, uint pool) {
-    uint taken = 0u, slot = 0u;
-    bool room = true;
-    if (params.moving < 2u) {
-        uint own;
-        InterlockedAdd(shadow_pages[shadow_taken_word(pool)], 1u, own);
-        room = own < (shadow_pages[shadow_cost_word(pool)] & SHADOW_COST_CLUSTERS);
-    }
+    uint taken = 0u, slot = 0u, own;
+    InterlockedAdd(shadow_pages[shadow_taken_word(pool)], 1u, own);
+    bool room = own < (shadow_pages[shadow_cost_word(pool)] & SHADOW_COST_CLUSTERS);
     if (room) InterlockedAdd(shadow_state[SHADOW_TAKEN], 1u, taken);
     room = room && taken < params.bound;
     if (room) InterlockedAdd(shadow_state[draw * 4u + SHADOW_DRAW_COUNT], 1u, slot);
@@ -51,7 +47,7 @@ bool shadow_add(uint draw, uint4 entry, uint pool) {
     }
     if (room) InterlockedAdd(stats[0].dropped[CULL_LIST_SHADOW_ENTRIES], 1u);
     InterlockedAdd(stats[0].shadow[9], 1u);
-    if (params.moving < 2u) InterlockedOr(shadow_pages[shadow_cost_word(pool)], SHADOW_COST_OVER);
+    InterlockedOr(shadow_pages[shadow_cost_word(pool)], SHADOW_COST_OVER);
     return false;
 }
 
@@ -91,7 +87,7 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
             uint held = shadow_table_entry(m.rect.x, shadow_page_entry(m.rect, uint2(x, y)));
             if (params.moving == 1u && (held & SHADOW_PAGE_CACHED) != 0u && shadow_box_hidden(hiz, m, uint2(x, y), (held & SHADOW_ENTRY_POOL) - 1u, low, high)) continue;
             uint page = shadow_page_word(map, shadow_rect_mip(m.rect), uint2(x, y)), pool = (held & SHADOW_ENTRY_POOL) - 1u;
-            if ((work.y & SHADOW_CHUNK_DEPTH) != 0u && shadow_add(tested ? SHADOW_DRAW_TESTED : SHADOW_DRAW_OPAQUE, uint4(instance, k, page, rest ? 1u : 0u), pool)) {
+            if (shadow_add(tested ? SHADOW_DRAW_TESTED : SHADOW_DRAW_OPAQUE, uint4(instance, k, page, rest ? 1u : 0u), pool)) {
                 if (params.moving == 0u) {
                     InterlockedAdd(stats[0].shadow[tested ? 1u : 0u], 1u);
                     InterlockedAdd(stats[0].shadow[2], cluster_triangle_count(c));
@@ -99,7 +95,6 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
                     InterlockedAdd(stats[0].shadow[3], 1u);
                 }
             }
-            if ((work.y & SHADOW_CHUNK_GLASS) != 0u) shadow_add(SHADOW_DRAW_GLASS, uint4(instance, k, page, 0u), pool);
         }
     }
 }
