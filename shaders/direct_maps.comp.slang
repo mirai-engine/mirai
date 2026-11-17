@@ -4,16 +4,14 @@
 // The first pass of the direct light of a view (direct_samples.slang), while
 // the view drew maps (Frame.sun_maps.z): the light of each point from the sun
 // and the local lights a map of the view holds there, each once and exact,
-// without samples or rays: its light with nothing in the way, through the
-// glass the tint of its map keeps (shadow_tint), by the part its map says gets
-// there. A point some light no map holds lights is marked for
+// without samples or rays: its light with nothing in the way by the part its
+// map says gets there. A point some light no map holds lights is marked for
 // direct_samples.comp (out_depth.z below 0), which adds the light of its
 // samples to this; the others it leaves as they are.
 #define GBUFFER_ALBEDO SLOT_PASS3
 #define GBUFFER_NORMAL SLOT_PASS0
 #define SUN_SHADOW_SLOT SLOT_PASS8
 #define SHADOW_DATA_SLOT SLOT_PASS9
-#define SHADOW_TINT_SLOT SLOT_PASS4
 #include "lighting.slang"
 #include "gbuffer.slang"
 #include "pixel.slang"
@@ -137,9 +135,6 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     bool marked = false;
     // Whether a light no map holds here gives the point some.
     bool rest = false;
-    // A glass with a program in the way of a light a map holds here: the
-    // samples take all of the point, through rays that run the program.
-    bool programmed = false;
     float sun = direct_sun_weight(pixel.position, normal);
     float sun_part = -1.0, sun_wide = 0.0;
     Sun_Pick pick;
@@ -152,9 +147,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
             Shadow_Taps t;
             sun_part = 1.0;
             if (shadow_map_taps(held, true, frame.sun_direction.xyz, pixel.position, normal, params.sun_radius, across, own ? pick.grow : 1.0, t)) {
-                Shadow_Near near = shadow_near(held, t.texel, shadow_taps_reach(t));
-                programmed = shadow_tint_near(held, near, pixel.position).a < 0.5;
-                sun_part = shadow_map_seen(held, t, near, true, params.sun_radius, spin, across, sun_wide);
+                sun_part = shadow_map_seen(held, t, shadow_near(held, t.texel, shadow_taps_reach(t)), true, params.sun_radius, spin, across, sun_wide);
             }
             Shadow_Map next = sun_level(pick.level + 1u);
             if (own && pick.blend > 0.0 && shadow_map_held(next, pixel.position)) {
@@ -174,7 +167,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     }
     float3 open = float3(0.0), lit = float3(0.0);
     float wide = 0.0, hid = 0.0;
-    for (uint i = 0u; i < count && !programmed; i++) {
+    for (uint i = 0u; i < count; i++) {
         uint item = direct_item(row, i);
         // Its face at the mip of the point, or the coarser one drawn where its
         // page is not; over the top of the octave of the mip, blended into the next.
@@ -192,15 +185,11 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
         bool own = shadow_rect_mip(m.rect) == mip.level;
         Shadow_Taps t;
         bool facing = shadow_map_taps(m, false, axis, pixel.position, normal, radius, across, own ? mip.grow : 1.0, t);
-        Shadow_Near near = facing ? shadow_near(m, t.texel, shadow_taps_reach(t)) : shadow_tint_pages(m, pixel.position);
-        float4 tint = shadow_tint_near(m, near, pixel.position);
-        programmed = tint.a < 0.5;
-        if (programmed || !(luminance(radiance) > 0.0)) continue;
-        radiance *= tint.rgb;
+        if (!(luminance(radiance) > 0.0)) continue;
         open += radiance;
         if (changes && !marked) marked = light_moved(item) || occluder_changed_in_cone(origin, axis, far, radius / max(far, 1e-4));
         float spread = 0.0;
-        float part = facing ? shadow_map_seen(m, t, near, false, radius, spin, across, spread) : 1.0;
+        float part = facing ? shadow_map_seen(m, t, shadow_near(m, t.texel, shadow_taps_reach(t)), false, radius, spin, across, spread) : 1.0;
         Shadow_Map next = shadow_map_mip(m, mip.level + 1u);
         if (own && mip.blend > 0.0 && shadow_map_held(next, pixel.position)) {
             float next_part = 1.0, next_spread = 0.0;
@@ -216,12 +205,6 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
             wide += luminance(radiance) * spread;
             hid += luminance(radiance);
         }
-    }
-    if (programmed) {
-        out_samples[p] = float4(0.0, 0.0, 0.0, 1.0);
-        out_sun[p] = float4(1.0, 1.0, 1.0, -1.0);
-        out_depth[p] = float4(depth_distance(depth), DIRECT_MAPS_NONE, -1.0, 0.0);
-        return;
     }
     float shown = luminance(open);
     float part = shown > 0.0 ? saturate(luminance(lit) / shown) : 1.0;

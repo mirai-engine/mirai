@@ -131,6 +131,8 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
 - A view's direct light costs its samples, not its lights: no pixel traces or reads one per light.
 - The maps of the shadows draw only what changed, in the frame it changed: no map shows a caster
   or a light where it was in a frame before ([cache](references/lights.md#direct-light-of-a-view)).
+- The maps of the shadows hold no tint of glass: colored light through glass comes from the
+  light, one that projects a texture.
 - What is decided per instance (its class, the row of its material with its own values) is built
   on the CPU when the instance is given: no stage builds it again per pixel or per hit.
 - A graphics option keeps a choice, and a preset a step above another, only where the image

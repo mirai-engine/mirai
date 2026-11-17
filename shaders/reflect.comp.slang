@@ -40,7 +40,6 @@
 #define MIRAI_DEFER_FILTERS
 #define MIRAI_LIGHT_MAPS
 #define SUN_SHADOW_SLOT SLOT_PASS5
-#define SHADOW_TINT_SLOT SLOT_PASS7
 #define SHADOW_DATA_SLOT SLOT_PASS8
 #include "lighting.slang"
 #include "glass.slang"
