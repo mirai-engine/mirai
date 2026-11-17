@@ -90,8 +90,8 @@ or interleave its own passes.
      the next frame's phase 0 sees those surfaces too, and its phase 1 rescues what only they hid.
    - The cull lists (chunks, visible clusters and candidates, the chunks and clusters of the
      shadow maps, and the vertices and triangles of the visibility raster) count what does not fit
-     (`Stats.cull_dropped`) and grow to that for the following frames, as the buffer of the
-     material points does. What they asked for in a scene (`Capacity_Marks`) is kept by its id
+     (`Stats.cull_dropped`, of the view that lacked most) and grow to it for the frames after, as
+     the material points do. What they asked for in a scene (`Capacity_Marks`) is kept by its id
      in the cache of the project, which a game ships (`host/capacities.odin`); a scene opened
      again starts its lists there. A frame shows holes only where a list fills past what any run
      of that scene asked for, not again at that size; a mark only grows.

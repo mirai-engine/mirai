@@ -203,6 +203,58 @@ gpu_masked_clusters_are_drawn_nearest_first :: proc(t: ^testing.T) {
 	testing.expectf(t, rhi.device_validation_errors(device) == 0, "validation: %s", rhi.device_validation_message(device))
 }
 
+// SHEETS sheets of SHEET_SIDE^2 * 2 triangles one above another, seen from
+// above by SHEETS_CAMERA, each triangle wider than a pixel and half of them
+// turned down, which the raster of a one-sided material leaves out: of each
+// sheet, one cluster, SHEETS_SHOWN triangles show in all.
+SHEET_SIDE :: 8
+SHEETS :: 6
+SHEETS_SHOWN :: SHEETS * SHEET_SIDE * SHEET_SIDE
+SHEETS_CAMERA :: Camera{position = {0, 3, 0}, forward = {0, -1, 0}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+
+test_sheets :: proc(t: ^testing.T, r: ^Renderer) -> bool {
+	SIDE :: SHEET_SIDE
+	vertices: [(SIDE + 1) * (SIDE + 1)]Mesh_Vertex
+	for &v, i in vertices {
+		v = {position = {f32(i % (SIDE + 1)) * 0.25 - 1, 0, f32(i / (SIDE + 1)) * 0.25 - 1}, normal = {0, 1, 0}, tangent = {1, 0, 0, 1}, color = {1, 1, 1}}
+	}
+	indices: [SIDE * SIDE * 6]u32
+	for quad in 0 ..< u32(SIDE * SIDE) {
+		a := quad / SIDE * (SIDE + 1) + quad % SIDE
+		b, c, d := a + 1, a + SIDE + 2, a + SIDE + 1
+		copy(indices[quad * 6:], []u32{a, c, b, a, d, c} if quad % 2 == 0 else []u32{a, b, c, a, c, d})
+	}
+	sheet, added := mesh_add(r, vertices[:], indices[:])
+	if !testing.expect(t, added, r.error) {return false}
+	instances: [SHEETS]Instance_Desc
+	for &instance, i in instances {
+		transform := Mat4(1)
+		transform[1, 3] = -f32(i)
+		instance = {object_id = u64(i + 1), mesh = sheet, transform = transform, tint = 1}
+	}
+	return testing.expect(t, scene_given(r, instances[:], nil, {}, {}), r.error)
+}
+
+// The lists of the cull grow to what the view of a frame that needs most
+// counted, not to what the last one did.
+@(test)
+gpu_cull_lists_grow_to_the_view_of_the_frame_that_needs_most :: proc(t: ^testing.T) {
+	settings := DEFAULT_SETTINGS
+	settings.gi_enabled, settings.taa = false, false
+	f: Fixture
+	if !fixture_init(t, &f, 128, 128, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	if !test_sheets(t, r) {return}
+	// The first view sees every sheet; the second, after it, looks away from them.
+	away := SHEETS_CAMERA
+	away.forward, away.up = {0, 1, 0}, {0, 0, 1}
+	views := [2]Frame_View{{camera = SHEETS_CAMERA, rect = {0, 0, 128, 128}}, {camera = away, rect = {0, 0, 128, 128}}}
+	for _ in 0 ..< 4 {testing.expect(t, renderer_frame(r, {camera = SHEETS_CAMERA, views = views[:]}), r.error)}
+	testing.expectf(t, r.scene.cull_wanted[.Raster_Triangles] == SHEETS_SHOWN, "the list asks for the first view: %d of %d", r.scene.cull_wanted[.Raster_Triangles], SHEETS_SHOWN)
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
+}
+
 // A view whose triangles pass the list its raster draws from shows them all:
 // the clusters that find no room in a round are listed and drawn in the round
 // after, and the list then asks for what the view writes, to hold it in one
@@ -215,36 +267,15 @@ gpu_triangles_past_their_list_are_drawn_in_the_rounds_after :: proc(t: ^testing.
 	if !fixture_init(t, &f, 128, 128, settings) {return}
 	defer fixture_destroy(&f)
 	r, device := f.renderer, f.device
-	// A sheet of 128 triangles seen from above, each wider than a pixel, half
-	// of them turned down, which the raster of a one-sided material leaves out.
-	SIDE :: 8
-	vertices: [(SIDE + 1) * (SIDE + 1)]Mesh_Vertex
-	for &v, i in vertices {
-		v = {position = {f32(i % (SIDE + 1)) * 0.25 - 1, 0, f32(i / (SIDE + 1)) * 0.25 - 1}, normal = {0, 1, 0}, tangent = {1, 0, 0, 1}, color = {1, 1, 1}}
-	}
-	indices: [SIDE * SIDE * 6]u32
-	for quad in 0 ..< u32(SIDE * SIDE) {
-		a := quad / SIDE * (SIDE + 1) + quad % SIDE
-		b, c, d := a + 1, a + SIDE + 2, a + SIDE + 1
-		copy(indices[quad * 6:], []u32{a, c, b, a, d, c} if quad % 2 == 0 else []u32{a, b, c, a, c, d})
-	}
-	sheet, added := mesh_add(r, vertices[:], indices[:])
-	if !testing.expect(t, added, r.error) {return}
-	camera := Camera{position = {0, 3, 0}, forward = {0, -1, 0}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	camera := SHEETS_CAMERA
 	// A frame of nothing makes the lists; then one holds less than half of what the view shows.
 	if !testing.expect(t, renderer_frame(r, {camera = camera}), r.error) || !testing.expect(t, r.scene.raster_indices != 0) {return}
-	SHEETS :: 6
-	TRIANGLES :: SHEETS * SIDE * SIDE
+	SIDE :: SHEET_SIDE
+	TRIANGLES :: SHEETS_SHOWN
 	ROOM :: 250
 	#assert(ROOM < TRIANGLES && (ROOM - asset.CLUSTER_TRIANGLES + 1) * abi.RASTER_ROUNDS >= TRIANGLES)
 	r.scene.cull_capacity[.Raster_Triangles] = ROOM
-	instances: [SHEETS]Instance_Desc
-	for &instance, i in instances {
-		transform := Mat4(1)
-		transform[1, 3] = -f32(i)
-		instance = {object_id = u64(i + 1), mesh = sheet, transform = transform, tint = 1}
-	}
-	if !testing.expect(t, scene_given(r, instances[:], nil, {}, {}), r.error) {return}
+	if !test_sheets(t, r) {return}
 	// Its first frame has no pyramid to hide a sheet behind another with.
 	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
 	rhi.device_wait_idle(device)

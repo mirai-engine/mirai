@@ -143,6 +143,15 @@ set_params :: proc(cmd: ^rhi.Command_List, params: ^$T) {
 @(private)
 groups :: proc "contextless" (size, group: u32) -> u32 {return (size + group - 1) / group}
 
+// Keeps of what the last view counted what the lists of the cull grow from,
+// as the most any view of the frame needed (cull_stats_fold.comp).
+@(private)
+cull_stats_fold :: proc(r: ^Renderer, cmd: ^rhi.Command_List) {
+	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Cull_Stats_Fold])
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, r.stats_buffer)
+	rhi.cmd_dispatch(cmd, 1)
+}
+
 @(private)
 read_stats :: proc(r: ^Renderer, slot: int) {
 	if ptr := rhi.buffer_mapped(r.device, r.stats_readback[slot]); ptr != nil {
@@ -152,16 +161,16 @@ read_stats :: proc(r: ^Renderer, slot: int) {
 		r.stats.visible_clusters = stats.visible_clusters
 		for kind, k in stats.kinds {r.stats.visible_kinds[Visible_Kind_Id(k)] = kind}
 		r.stats.visible_late = stats.late
-		r.stats.cull_dropped = stats.dropped
+		r.stats.cull_dropped = stats.most_dropped
 		r.stats.raster_vertices, r.stats.raster_triangles, r.stats.raster_deferred = stats.raster[0], stats.raster[1], stats.raster[2]
 		// A list that dropped grows for the frames after, by what it lacked.
-		for dropped, list in stats.dropped {
+		for dropped, list in stats.most_dropped {
 			if dropped > 0 && list < .Raster_Vertices {r.scene.cull_wanted[list] = max(r.scene.cull_wanted[list], r.scene.cull_capacity[list] + dropped)}
 		}
 		// Those of the raster, which a view writes again in each of its rounds,
 		// ask for what the view that needs most would hold in one.
 		for list, k in ([2]Cull_List{.Raster_Vertices, .Raster_Triangles}) {
-			r.scene.cull_wanted[list] = max(r.scene.cull_wanted[list], min(stats.raster_need[k], CULL_MARK_MAX))
+			r.scene.cull_wanted[list] = max(r.scene.cull_wanted[list], min(stats.most_raster_need[k], CULL_MARK_MAX))
 		}
 		r.stats.culled_instances = stats.culled_instances
 		r.stats.occluded_instances = stats.occluded_instances
@@ -654,6 +663,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
                 rhi.cmd_copy_buffer(cmd,r.ddgi.chosen,ddgi_counts_offset(&r.ddgi),r.stats_buffer,u64(offset_of(Gpu_Cull_Stats,probe_rays)),8)
             }
         }
+        cull_stats_fold(r,cmd)
         rhi.cmd_copy_buffer(cmd,r.stats_buffer,0,r.stats_readback[slot],0,size_of(Gpu_Cull_Stats))
         rhi.cmd_barrier_buffer(cmd,r.stats_readback[slot],.Host_Read)
         pages_record_end(r,cmd,slot)
@@ -1132,7 +1142,9 @@ pass_gbuffer :: proc(p: ^Pass) -> bool {
 	glass_groups := [4]u32{groups(t.width, 8), groups(t.height, 8), groups(t.half_width, 8), groups(t.half_height, 8)}
 	p.pyramid_previous = t.hiz_valid
 	rhi.cmd_timestamp(cmd, "cull")
-	rhi.cmd_fill_buffer(cmd, r.stats_buffer, 0, size_of(Gpu_Cull_Stats), 0)
+	// What the view before counted, before this one counts its own.
+	cull_stats_fold(r, cmd)
+	rhi.cmd_fill_buffer(cmd, r.stats_buffer, 0, u64(offset_of(Gpu_Cull_Stats, most_dropped)), 0)
 	rhi.cmd_fill_buffer(cmd, p.view.glass_dispatch, 0, size_of(Gpu_Glass_Dispatch), 0)
 	if !cull_reset(r, cmd) {return false}
 	if threads > 0 {
