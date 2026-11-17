@@ -13,9 +13,10 @@ import "mirai:std/jobs"
 // the epoch of the data, the source, the chunk or page and the change it
 // read; a result whose chunk changed meanwhile is let go. A result is taken
 // by the next call of terrain_update of the phase that made it, which waits
-// for it if it has not ended, when the simulation reads it (a collider while
-// the world plays): when it collides does not depend on the threads. What
-// only shows is taken once its job ended, and no frame waits for it.
+// for it if it has not ended, when the simulation reads it (a collider that
+// changes while the world plays): when it collides does not depend on the
+// threads. What only shows is taken once its job ended, nearest first within
+// PUBLISH_VERTICES a call, and no frame waits for it.
 // A chunk that shows nothing yet and is needed now is taken in the call that
 // made it.
 
@@ -26,7 +27,7 @@ Work_Slot :: struct {
     kind:Work_Kind,
     urgent:bool,      // taken in the call that made it
     patient:bool,     // Build: a node of a Volume, whose levels are a job of their own after the one that reads the source
-    waits:bool,       // Build: the next call waits for it: a collider of a world that plays
+    waits:bool,       // Build: the next call waits for it: a collider that changes in a world that plays
     reads:bool,       // its job reads the source: what writes the source waits for it
     phase:core.Phase, // of the call that made it
     epoch:u32,        // of the data then
@@ -123,7 +124,7 @@ work_start :: proc(data:^Terrain_Data,slot:^Work_Slot) {
 // The build of a chunk or a node, from its source as it is now; a node of a
 // Heightfield takes a copy of its border.
 @(private)
-work_build :: proc(data:^Terrain_Data,slot:^Work_Slot,entry:^Data_Source,owner:core.Entity,index:int,key:Chunk_Key,urgent:bool,phase:core.Phase,limits:host.Assets_Limits,border:^Piece_Border=nil,join:^Terrain_Join=nil,edges:[4]Edge_Read={},playing:=true) -> bool {
+work_build :: proc(data:^Terrain_Data,slot:^Work_Slot,entry:^Data_Source,owner:core.Entity,index:int,key:Chunk_Key,urgent:bool,phase:core.Phase,limits:host.Assets_Limits,border:^Piece_Border=nil,join:^Terrain_Join=nil,edges:[4]Edge_Read={},waits:=true) -> bool {
     // Before the slot is taken: without room for the border it stays free.
     if border!=nil {for i in 0..<4 {
         if resize(&slot.border.sides[i],len(border.sides[i]))!=nil || resize(&slot.border.corners[i],len(border.corners[i]))!=nil {return false}
@@ -134,7 +135,7 @@ work_build :: proc(data:^Terrain_Data,slot:^Work_Slot,entry:^Data_Source,owner:c
     slot.kind,slot.urgent,slot.phase,slot.epoch,slot.limits=.Build,urgent,phase,data.epoch,limits
     slot.source,slot.id,slot.index,slot.version,slot.key,slot.ok=&entry.source,entry.id,index,data_version(entry,index),key,false
     slot.patient,slot.reads=piece_levels(&entry.source,&entry.quad,index),true
-    slot.waits=playing && key.collision
+    slot.waits=waits && key.collision
     slot.join={}
     clear(&slot.cuts)
     if join!=nil && key.join!=0 {
