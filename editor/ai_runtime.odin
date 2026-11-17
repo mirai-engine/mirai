@@ -158,7 +158,7 @@ ai_conversation_restore :: proc(s:^Session,conversation:^ai_store.Conversation) 
         }
         base.text_format(task.name[:],"%d-%d",task.id,sequence)
         // The message of the turn, from the chat when its folder lost it.
-        if path:=ai_task_path(s,task,AI_FILE_MESSAGE);!os.exists(path) && os.make_directory_all(ai_task_path(s,task,""))==nil {
+        if path:=ai_task_path(s,task,AI_FILE_MESSAGE);!os.exists(path) && base.make_directory_all(ai_task_path(s,task,""))==nil {
             b:=strings.builder_make(context.temp_allocator)
             for i in max(first,0)..=latest {
                 text,_:=ai_transcript_line(&task.transcript,i)

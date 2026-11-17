@@ -249,8 +249,8 @@ a_cook_that_cannot_be_what_was_asked_says_why :: proc(t:^testing.T) {
     testing.expect(t,bare.error==.None && len(bare.files)==0 && len(bare.dropped)==1 && os.is_file(fmt.tprintf("%s/%s",output,asset.REGISTRY_INDEX)))
     // A cook that fails halfway leaves no index, not the one before over the files it rewrote.
     // Of two files that cannot be written, the first by path is the one it names, as a cook on one thread does.
-    testing.expect(t,os.make_directory_all(fmt.tprintf("%s/scenes/main.scene",output))==nil)
-    testing.expect(t,os.make_directory_all(fmt.tprintf("%s/textures/wood_normal.tex",output))==nil)
+    testing.expect(t,base.make_directory_all(fmt.tprintf("%s/scenes/main.scene",output))==nil)
+    testing.expect(t,base.make_directory_all(fmt.tprintf("%s/textures/wood_normal.tex",output))==nil)
     halfway:=cook_assets({assets=assets,output=output,allocator=context.temp_allocator})
     testing.expect(t,halfway.error==.Write_Failed && halfway.detail=="scenes/main.scene" && !os.exists(fmt.tprintf("%s/%s",output,asset.REGISTRY_INDEX)),halfway.detail)
 }
@@ -263,7 +263,7 @@ a_cook_ships_every_asset_of_an_active_plugin_under_its_prefix :: proc(t:^testing
     assets,output:=fmt.tprintf("%s/project/assets",folder),fmt.tprintf("%s/ship/assets",folder)
     project_write(t,&types,assets)
     plugin:=fmt.tprintf("%s/project/plugins/probe/assets",folder)
-    testing.expect(t,os.make_directory_all(fmt.tprintf("%s/brushes",plugin))==nil)
+    testing.expect(t,base.make_directory_all(fmt.tprintf("%s/brushes",plugin))==nil)
     BRUSH :: base.Asset_Id{7,1}
     material_write(t,&types,fmt.tprintf("%s/brushes/soft.mat",plugin),BRUSH,WOOD_COLOR,{})
     testing.expect(t,os.write_entire_file(fmt.tprintf("%s/readme.txt",plugin),"for the code of the plugin")==nil)
@@ -483,7 +483,7 @@ a_cook_writes_the_far_mesh_of_each_scene_a_section_references :: proc(t:^testing
     SHEET :: base.Asset_Id{0xfa,0x12}
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     assets:=fmt.tprintf("%s/assets",folder)
-    testing.expect(t,os.make_directory_all(fmt.tprintf("%s/rooms",assets))==nil)
+    testing.expect(t,base.make_directory_all(fmt.tprintf("%s/rooms",assets))==nil)
     vertices:=make([dynamic]asset.Vertex,context.temp_allocator)
     indices:=make([dynamic]u32,context.temp_allocator)
     for z in 0..=8 {for x in 0..=8 {append(&vertices,asset.Vertex{position={f32(x),0,f32(z)},normal=mm.normal_pack({0,1,0}),color=0xffffffff,tangent=mm.tangent_pack({1,0,0},1)})}}
@@ -622,7 +622,7 @@ a_cook_ships_the_convex_pieces_of_a_mesh_a_body_moves :: proc(t:^testing.T) {
     STILL :: base.Asset_Id{0xc0,0x12}
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     assets:=fmt.tprintf("%s/assets",folder)
-    testing.expect(t,os.make_directory_all(assets)==nil)
+    testing.expect(t,base.make_directory_all(assets)==nil)
     // An L of two boxes: not convex.
     vertices:=make([dynamic]asset.Vertex,context.temp_allocator)
     indices:=make([dynamic]u32,context.temp_allocator)

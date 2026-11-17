@@ -694,7 +694,7 @@ the_memory_index_catches_what_is_edited_outside_the_editor :: proc(t:^testing.T)
         return count
     }
     folder:=ai_memory_topics_folder(&f.s)
-    testing.expect(t,os.make_directory_all(folder)==nil)
+    testing.expect(t,base.make_directory_all(folder)==nil)
     file:=project.path(folder,"art.md",allocator=context.temp_allocator)
     testing.expect(t,os.write_entire_file(file,"walls are brick")==nil)
     ai_memory_scan(&f.s)

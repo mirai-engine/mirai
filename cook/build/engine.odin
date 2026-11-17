@@ -1009,7 +1009,7 @@ cache_entry_begin :: proc(entry:string) -> (staging:string,fresh:bool) {
     if cache_entry_complete(entry) {return "",false}
     staging=fmt.tprintf("%s.part-%d",entry,os.get_pid())
     _=base.remove_all(staging)
-    if os.make_directory_all(staging)!=nil {return "",false}
+    if base.make_directory_all(staging)!=nil {return "",false}
     return staging,true
 }
 

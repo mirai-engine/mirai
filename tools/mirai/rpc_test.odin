@@ -157,7 +157,7 @@ the_project_of_a_folder_is_the_nearest_with_a_manifest :: proc(t:^testing.T) {
     root:=base.test_folder(t,"project-of")
     if root=="" {return}
     nested:=project.path(root,"game/sub",allocator=context.temp_allocator)
-    testing.expect(t,os.make_directory_all(nested)==nil)
+    testing.expect(t,base.make_directory_all(nested)==nil)
     testing.expect(t,os.write_entire_file(project.path(root,project.PROJECT_FILE),"{}")==nil)
     testing.expect_value(t,project_of(nested),project.path_absolute(root))
 }
@@ -212,7 +212,7 @@ a_call_opens_no_editor_in_place_of_one_that_ended :: proc(t:^testing.T) {
     root:=base.test_folder(t,"rpc-ended")
     if root=="" {return}
     folder:=project.path(root,".mirai",allocator=context.temp_allocator)
-    testing.expect(t,os.make_directory_all(folder)==nil)
+    testing.expect(t,base.make_directory_all(folder)==nil)
     named,_:=connection_args({"--project",root},{})
     testing.expect_value(t,session_ended(root),"")
     // No process has this pid: Windows gives multiples of 4 well below it, Linux stops at 2^22.

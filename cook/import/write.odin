@@ -94,7 +94,8 @@ source_path :: proc(options:Import_Options,path:string,allocator:=context.temp_a
     cleaned,_:=filepath.clean(absolute,context.temp_allocator)
     slashed,_:=strings.replace_all(cleaned,"\\","/",context.temp_allocator)
     if options.root!="" {
-        root_absolute,_:=filepath.abs(options.root,context.temp_allocator)
+        root_absolute,root_error:=filepath.abs(options.root,context.temp_allocator)
+        if root_error!=nil {root_absolute=options.root}
         root_clean,_:=filepath.clean(root_absolute,context.temp_allocator)
         root,_:=strings.replace_all(root_clean,"\\","/",context.temp_allocator)
         prefix:=strings.concatenate({strings.trim_right(root,"/"),"/"},context.temp_allocator)
