@@ -94,6 +94,7 @@ Api_Status :: struct {
     probes_traced:int `mirai:"label=Two frames ago"`,
     probe_rays_traced:int `mirai:"label=Rays those probes traced: of the ones that keep nothing of their rays or that a change crossed"`,
     probe_hits_lit:int `mirai:"label=Hits they took the direct light of"`,
+    light_lists:Api_Light_Lists `mirai:"label=The lists of the lights without shadows of the tiles of the last view two frames ago"`,
     gpu_timings:[API_TIMINGS]Api_Timing `mirai:"trim,label=By pass in the order of the frame"`,
     counters:[API_COUNTERS]Api_Counter `mirai:"trim,label=What the passes of extensions counted two frames ago by name"`,
     functions:[API_FUNCTIONS]Api_Timing `mirai:"trim,label=The costliest functions of the loops per frame since the last status; settle included"`,
@@ -129,6 +130,13 @@ Api_Visible_Kinds :: struct {
     batches:Api_Visible `mirai:"label=Instances of batches"`,
     late:Api_Visible `mirai:"label=Of all of them, what phase 1 of the occlusion drew: the pyramid of the frame showed it after the one of the frame before hid it"`,
     dropped:[len(gpu.Cull_List)]int `mirai:"label=Chunks, visible clusters, occlusion candidates and clusters of Surface programs past the capacities of the lists of the cull, which grow for the frames after"`,
+}
+
+Api_Light_Lists :: struct {
+    cells:int `mirai:"label=Tiles with a surface in them"`,
+    entries:int `mirai:"label=Lights and groups in all of them"`,
+    longest:int `mirai:"label=Of the longest list"`,
+    walked:int `mirai:"label=Tiles with more to list than a list holds, whose pixels walk the tree of the lights each by itself"`,
 }
 
 Api_Textures :: struct {
@@ -539,6 +547,7 @@ api_status :: proc(s:^Session,call:^api.Call) {
         r.gpu_ms,r.ev100=stats.gpu_ms,stats.ev100
         r.probes_traced=int(stats.probes_traced)
         r.probe_rays_traced,r.probe_hits_lit=int(stats.probe_rays_traced),int(stats.probe_hits_lit)
+        r.light_lists={int(stats.light_lists.cells),int(stats.light_lists.entries),int(stats.light_lists.longest),int(stats.light_lists.walked)}
         r.textures.bytes,r.textures.view_bytes=stats.texture_bytes,stats.view_target_bytes
         r.textures.pending,r.textures.reduced=int(stats.textures_pending),int(stats.textures_reduced)
         r.geometry={
