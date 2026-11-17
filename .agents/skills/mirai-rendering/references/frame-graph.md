@@ -30,20 +30,31 @@ or interleave its own passes.
      candidate for phase 1. One of a material with a Surface program turns on the resolve of
      that program. `cull_bins.comp` places the clusters of the phase in the range of their bin of
      the visible list, those of phase 1 after those of phase 0, those of a tested bin nearest
-     first by their buckets, with one indirect draw per bin.
+     first by their buckets.
    - An instance with all its blend materials is not drawn here; one with blend triangles that
      passes the tests (in any phase) turns on the glass passes with their dispatch sizes.
 3. **visibility and resolve**
-   - Each phase rasters its clusters into the visibility target (`visibility.slang`: the entry
-     of the visible list and the triangle, one word a pixel) with the hardware depth: one
-     non-indexed indirect draw per raster bin, 384 vertices per instance and one instance per
-     visible cluster; the vertex shader reads the cluster from the list and its triangle per
-     vertex (the triangles that do not pass collapse). The back faces of a material that is not
-     two-sided are left out by the raster (an instance that mirrors its mesh turns its winding
-     back). The untested bins write the id alone, without discard, so hidden fragments are
+   - Before the raster of each phase, three compute passes list what it draws of its clusters
+     (`raster_lists.slang`). `raster_vertices.comp`, a group a cluster: each vertex is placed
+     once, by the function the resolve places it with; a triangle is kept unless the raster
+     would give it no pixel on any device (past a side of the view, no pixel center in its box,
+     seen from behind where the material is not two-sided), with the margin of the grid the
+     device places a corner on (`Device_Info.subpixel_bits`); the vertices the kept triangles
+     use are written. `raster_starts.comp` gives the triangles of each bin their range, those
+     of a tested bin by depth bucket so that it still draws nearest first.
+     `raster_triangles.comp` writes there three indices a triangle and the word the visibility
+     target names it by. A cluster whose vertices or triangles pass their lists
+     (`Cull_List.Raster_Vertices`, `Raster_Triangles`) is left out whole and counted.
+   - Each phase rasters those triangles into the visibility target (`visibility.slang`: the
+     entry of the visible list and the triangle, one word a pixel) with the hardware depth: one
+     indexed indirect draw per raster bin (`vis_raster.vert`), a vertex read where the compute
+     wrote it, and the fragment reads the word of its primitive. The back faces of a material
+     that is not two-sided are left out (an instance that mirrors its mesh turns its winding
+     back). The untested bins write the word alone, without discard, so hidden fragments are
      rejected before they run; the tested ones decide a pixel by the fade and the alpha alone
-     (that of a program from `surface_coverage.slang`), without texture feedback. Blend: not
-     drawn here. The same on Vulkan and Metal, without mesh shaders or 64-bit atomics.
+     (that of a program from `surface_coverage.slang`), with what the alpha reads of the
+     vertex, and without texture feedback. Blend: not drawn here. The same on Vulkan and Metal,
+     without mesh shaders or 64-bit atomics.
    - After both phases, `vis_classify.frag` gives each pixel the depth of its Surface program
      (0 for the rows) from the visible list, in a 16-bit target, and the resolve of the rows draws a
      triangle over the view, and that of each program the cull saw the rectangle its visible
@@ -82,8 +93,8 @@ or interleave its own passes.
      one that phase 0 of the next frame tests: what was rescued occludes from there. A pass of the
      `Gbuffer` stage tests against it and redoes it with what it draws (`pass_depth_pyramid_build`):
      the next frame's phase 0 sees those surfaces too, and its phase 1 rescues what only they hid.
-   - The cull lists (chunks, visible clusters and candidates, and the chunks and clusters of the
-     shadow maps) count what does not fit
+   - The cull lists (chunks, visible clusters and candidates, the chunks and clusters of the
+     shadow maps, and the vertices and triangles of the visibility raster) count what does not fit
      (`Stats.cull_dropped`) and grow to that for the following frames, as the buffer of the
      material points does. What they asked for in a scene (`Capacity_Marks`) is kept by its id
      in the cache of the project, which a game ships (`host/capacities.odin`); a scene opened

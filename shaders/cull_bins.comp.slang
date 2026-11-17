@@ -1,14 +1,15 @@
 #include "native.slang"
 // The visible clusters of a view by raster bin: after the cull of a phase
 // (cull_clusters.comp), each cluster it listed goes to the range of its bin of
-// the visible list, those of phase 1 after those of phase 0, and each bin of
-// the phase gets its draw, an instance a cluster. A tested bin draws nearest
-// first: its clusters go to the range of their depth bucket, which each group
-// finds from the counts of the buckets alone. Each entry takes what its
-// cluster gives every vertex and pixel of it (Visible_Cluster).
+// the visible list, those of phase 1 after those of phase 0. A tested bin
+// draws nearest first: its clusters go to the range of their depth bucket,
+// which each group finds from the counts of the buckets alone. Each entry
+// takes what its cluster gives every vertex and pixel of it
+// (Visible_Cluster), and the passes that list its triangles for the raster
+// (raster_lists.slang) their groups and its bin and depth bucket.
 #include "visibility.slang"
 #include "cut.slang"
-#include "cull_bins.slang"
+#include "raster_lists.slang"
 #define MIRAI_GROUP_X CULL_BINS_GROUP
 #define MIRAI_GROUP_Y 1
 #define MIRAI_GROUP_Z 1
@@ -25,6 +26,8 @@ struct Params_Block { uint phase; uint capacity; uint pad0; uint pad1; };
 [[vk::binding(SLOT_PASS2, 0)]] RWStructuredBuffer<Visible_Cluster> visible : register(MIRAI_REGISTER(u, SLOT_PASS2), space0);
 // Of each phase and tested bin, the clusters of each depth bucket, then the cursors of the buckets (cull_depth_word).
 [[vk::binding(SLOT_PASS4, 0)]] RWStructuredBuffer<uint> depth_buckets : register(MIRAI_REGISTER(u, SLOT_PASS4), space0);
+// What each entry of the visible list keeps for the passes that list its triangles, RASTER_ENTRY_WORDS each.
+[[vk::binding(SLOT_PASS5, 0)]] RWStructuredBuffer<uint> raster_entries : register(MIRAI_REGISTER(u, SLOT_PASS5), space0);
 
 #define BUCKETS_PER_THREAD (2u * RASTER_DEPTH_BUCKETS / CULL_BINS_GROUP)
 // Where the clusters of each depth bucket of both tested bins of the phase start.
@@ -66,11 +69,8 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 lane : SV_GroupThreadID
     GroupMemoryBarrierWithGroupSync();
 
     if (i == 0u) {
-        for (uint bin = 0u; bin < RASTER_BINS; bin++) {
-            uint draw = CULL_DRAWS + (phase * RASTER_BINS + bin) * 4u;
-            cull_state[draw + 1u] = cull_state[CULL_BIN_COUNTS + phase * RASTER_BINS + bin];
-            cull_state[draw + 3u] = offsets[bin];
-        }
+        cull_state[CULL_RASTER_DISPATCH + 3u * phase] = min(count, CULL_DISPATCH_X);
+        cull_state[CULL_RASTER_DISPATCH + 3u * phase + 1u] = (count + CULL_DISPATCH_X - 1u) / CULL_DISPATCH_X;
     }
     bool valid = i < count;
     uint4 entry = valid ? listed[base + i] : uint4(0u);
@@ -107,4 +107,5 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 lane : SV_GroupThreadID
     v.triangles = b.triangles;
     v.along = cluster_along(view_detail(), inst, instance_scale(inst), mesh, c, frame.cut.x);
     visible[place] = v;
+    raster_entries[place * RASTER_ENTRY_WORDS + RASTER_ENTRY_BIN] = entry.z;
 }

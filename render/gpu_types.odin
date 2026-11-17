@@ -3,6 +3,7 @@ package mirai_render
 import "mirai:asset"
 import mm "mirai:std/math"
 import "mirai:render/abi"
+import "mirai:rhi"
 
 // CPU mirrors of shaders/include/common.slang. The generated shaders_gen.odin
 // asserts the size and the offset of each field of those it shares, as Slang
@@ -432,11 +433,12 @@ Gpu_Program_Draw :: struct {
 #assert(size_of(Gpu_Program_Draw) == 32)
 
 // What the cull passes of a view count, in words of the buffer of its state
-// (CULL_* of render/abi). The draws of each phase and raster bin go first: an
-// instance of a draw is a visible cluster, and those of phase 1 follow those
-// of phase 0 in the visible list.
+// (CULL_* of render/abi). The draws of each phase and raster bin go first:
+// each draws the triangles listed of its clusters (raster_lists.slang), and
+// the clusters of phase 1 follow those of phase 0 in the visible list, as
+// their vertices and their triangles do in theirs.
 Gpu_Cull_State :: struct {
-	draws:              [2][RASTER_BINS]Gpu_Draw,
+	draws:              [2][RASTER_BINS]rhi.Draw_Indexed_Indirect,
 	chunk_dispatch:     [3]u32, // groups of the cluster pass over the chunks: x, y, 1
 	chunk_count:        u32,
 	candidate_dispatch: [3]u32, // groups of the pass of phase 1 over the clusters phase 0 found hidden
@@ -445,8 +447,19 @@ Gpu_Cull_State :: struct {
 	bins_dispatch:      [2][3]u32, // groups of the pass that places the clusters of each phase in their bins
 	bin_counts:         [2][RASTER_BINS]u32,
 	bin_cursors:        [2][RASTER_BINS]u32,
+	raster_dispatch:    [2][3]u32, // groups of the passes that list the triangles of each phase, a group a cluster: x, y, 1
+	raster_vertices:    u32,       // the vertices both phases wrote for the raster
+	raster_triangles:   u32,       // the triangles both phases listed for it
+	raster_counts:      [2][RASTER_BINS]u32,
+	raster_cursors:     [2][RASTER_BINS]u32,
 	dropped:            [Cull_List]u32, // past the capacities of the lists of the cull
 }
+#assert(size_of(rhi.Draw_Indexed_Indirect) == abi.CULL_DRAW_WORDS * size_of(u32))
+#assert(offset_of(Gpu_Cull_State, raster_dispatch) == abi.CULL_RASTER_DISPATCH * size_of(u32))
+#assert(offset_of(Gpu_Cull_State, raster_vertices) == abi.CULL_RASTER_VERTICES * size_of(u32))
+#assert(offset_of(Gpu_Cull_State, raster_triangles) == abi.CULL_RASTER_TRIANGLES * size_of(u32))
+#assert(offset_of(Gpu_Cull_State, raster_counts) == abi.CULL_RASTER_COUNTS * size_of(u32))
+#assert(offset_of(Gpu_Cull_State, raster_cursors) == abi.CULL_RASTER_CURSORS * size_of(u32))
 #assert(offset_of(Gpu_Cull_State, draws) == abi.CULL_DRAWS * size_of(u32))
 #assert(offset_of(Gpu_Cull_State, chunk_dispatch) == abi.CULL_CHUNK_DISPATCH * size_of(u32))
 #assert(offset_of(Gpu_Cull_State, chunk_count) == abi.CULL_CHUNK_COUNT * size_of(u32))
@@ -481,6 +494,7 @@ Gpu_Cull_Stats :: struct {
 	kinds: [3]Visible_Kind, // by Visible_Kind_Id
 	late:  Visible_Kind,    // what phase 1 drew: instances and clusters the pyramid of the frame showed after all
 	dropped: [Cull_List]u32, // past the capacities of the lists of the cull, which grow from them
+	raster: [2]u32, // the vertices written and the triangles listed for the raster of the visibility target
 	resolved: [3]u32, // of the resolve (vis_resolve.frag): pixels shaded, helper lanes of their quads, quads evaluated again
 	probe_rays: [2]u32, // the rays the probes traced and the hits they lit, copied at the end of the frame from the list of the probe volume
 	lists: Light_List_Stats, // of the lists of the lights without shadows (light_lists.comp)
@@ -515,6 +529,10 @@ gbuffer_normal_decode :: proc "contextless" (texel: Vec4) -> (normal: Vec3, roug
 // and the renderer grows the list for the frames after, and the host keeps
 // what it asked for by scene (Capacity_Marks): a frame may show holes where a
 // list first overflows in a scene, never again at that size. The visible
-// clusters are listed twice: as the cull finds them, and by raster bin.
-Cull_List :: enum {Chunks, Visible, Candidates, Shadow_Chunks, Shadow_Entries}
-CULL_START :: [Cull_List]u32{.Chunks = 1 << 16, .Visible = 1 << 18, .Candidates = 1 << 16, .Shadow_Chunks = 1 << 14, .Shadow_Entries = 1 << 18}
+// clusters are listed twice: as the cull finds them, and by raster bin. The
+// last two are what the raster of the visibility target draws of them
+// (raster_lists.slang): the vertices of the triangles that show, of
+// RASTER_VERTEX_WORDS, and those triangles, three indices and a word each; a
+// cluster whose vertices or triangles do not fit is left out whole.
+Cull_List :: enum {Chunks, Visible, Candidates, Shadow_Chunks, Shadow_Entries, Raster_Vertices, Raster_Triangles}
+CULL_START :: [Cull_List]u32{.Chunks = 1 << 16, .Visible = 1 << 18, .Candidates = 1 << 16, .Shadow_Chunks = 1 << 14, .Shadow_Entries = 1 << 18, .Raster_Vertices = 1 << 21, .Raster_Triangles = 1 << 21}

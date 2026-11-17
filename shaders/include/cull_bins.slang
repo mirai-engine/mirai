@@ -15,6 +15,9 @@ uint cull_depth_word(uint phase, uint sided, uint bucket) { return (phase * 2u +
 #define PROGRAM_DRAW_WORDS 8u
 #define CULL_DEPTH_COUNTS (2u * 2u * RASTER_DEPTH_BUCKETS)
 #define CULL_DEPTH_WORDS (2u * CULL_DEPTH_COUNTS)
+// With as many words again for the triangles the raster lists of each bucket
+// (raster_lists.slang): how many, then where they start.
+#define CULL_DEPTH_BUFFER_WORDS (2u * CULL_DEPTH_WORDS)
 // The bin and the depth bucket a listed cluster has, in one word.
 uint cull_listed_word(uint bin, uint bucket) { return bin | (bucket << 8u); }
 uint cull_listed_bin(uint word) { return word & 0xffu; }

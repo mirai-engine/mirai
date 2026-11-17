@@ -153,6 +153,7 @@ read_stats :: proc(r: ^Renderer, slot: int) {
 		for kind, k in stats.kinds {r.stats.visible_kinds[Visible_Kind_Id(k)] = kind}
 		r.stats.visible_late = stats.late
 		r.stats.cull_dropped = stats.dropped
+		r.stats.raster_vertices, r.stats.raster_triangles = stats.raster[0], stats.raster[1]
 		// A list that dropped grows for the frames after, by what it lacked.
 		for dropped, list in stats.dropped {
 			if dropped > 0 {r.scene.cull_wanted[list] = max(r.scene.cull_wanted[list], r.scene.cull_capacity[list] + dropped)}
@@ -183,7 +184,8 @@ gbuffer_targets :: proc(p: ^Pass) -> (targets: [8]rhi.Texture, count: int) {
 }
 
 // The raster of the visibility target of a phase of the cull into depth, a
-// draw of each raster bin; a view with a clip plane draws nothing behind it.
+// draw of each raster bin, indexed by the triangles listed of its clusters
+// (raster_lists_record); a view with a clip plane draws nothing behind it.
 // ids, depth: what the pass does first with the visibility target and depth.
 @(private)
 visibility_pass :: proc(p: ^Pass, phase: u32, ids, depth: rhi.Load_Op, depth_target: rhi.Texture, keep_depth, clip: bool) {
@@ -195,10 +197,13 @@ visibility_pass :: proc(p: ^Pass, phase: u32, ids, depth: rhi.Load_Op, depth_tar
 	rhi.cmd_begin_render_pass(cmd, &pass)
 	if p.draw {
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.visible_buffer)
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS1, s.raster_vertices)
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS2, s.raster_ids)
+		rhi.cmd_bind_index_buffer(cmd, s.raster_indices)
 		first := Pipeline_Id.Visibility_Clip if clip && r.pipelines[.Visibility_Clip] != 0 else .Visibility
 		for bin in 0 ..< RASTER_BINS {
 			rhi.cmd_bind_pipeline(cmd, r.pipelines[Pipeline_Id(int(first) + bin)])
-			rhi.cmd_draw_indirect(cmd, s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, draws)) + u64(int(phase) * RASTER_BINS + bin) * size_of(Gpu_Draw), 1, size_of(Gpu_Draw))
+			rhi.cmd_draw_indexed_indirect(cmd, s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, draws)) + u64(int(phase) * RASTER_BINS + bin) * size_of(rhi.Draw_Indexed_Indirect), 1)
 		}
 	}
 	rhi.cmd_end_render_pass(cmd)
@@ -979,18 +984,18 @@ Cull_Params :: struct {
 }
 
 // The state of the cull of a view as each starts: the draws of its phases
-// and bins with the vertices of a cluster and no instances, and nothing
-// counted. Phase 0 of the instance pass starts the rest (cull.comp).
+// and bins with no triangles, and nothing counted. Phase 0 of the instance
+// pass starts the rest (cull.comp).
 @(private)
 cull_reset :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
-	start := [1]Gpu_Cull_State{{chunk_dispatch = {0, 0, 1}, candidate_dispatch = {0, 1, 1}, bins_dispatch = {{0, 1, 1}, {0, 1, 1}}}}
-	for &phase in start[0].draws {for &draw in phase {draw.vertex_count = CLUSTER_DRAW_VERTICES}}
+	start := [1]Gpu_Cull_State{{chunk_dispatch = {0, 0, 1}, candidate_dispatch = {0, 1, 1}, bins_dispatch = {{0, 1, 1}, {0, 1, 1}}, raster_dispatch = {{0, 0, 1}, {0, 0, 1}}}}
 	return upload_transient(r, cmd, start[:], r.scene.cull_state_buffer)
 }
 
 // Of each phase and tested raster bin, a word per depth bucket for its
-// clusters and one for the cursor they take their places with.
-DEPTH_BUCKET_WORDS :: 2 * 2 * 2 * RASTER_DEPTH_BUCKETS
+// clusters and one for the cursor they take their places with, then the same
+// for the triangles listed of them (raster_lists.slang).
+DEPTH_BUCKET_WORDS :: 2 * 2 * 2 * 2 * RASTER_DEPTH_BUCKETS
 
 // The pass of cull_bins.comp after the cull of a phase: it places the
 // clusters it listed in their raster bins, the list the draws of the phase
@@ -1006,7 +1011,55 @@ cull_bins_dispatch :: proc(r: ^Renderer, cmd: ^rhi.Command_List, phase: u32) {
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS1, s.listed_buffer)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS2, s.visible_buffer)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS4, s.depth_buckets)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS5, s.raster_entries)
 	rhi.cmd_dispatch_indirect(cmd, s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, bins_dispatch)) + u64(phase) * size_of([3]u32))
+}
+
+// How far a device may move a corner of a triangle as it places it on the
+// grid of its raster, in pixels: a step of that grid, and what the float
+// that holds a pixel of a view loses (raster_triangle_shows).
+@(private)
+raster_margin :: proc "contextless" (subpixel_bits: u32) -> f32 {
+	return 1 / f32(u32(1) << clamp(subpixel_bits, 4, 16)) + 1.0 / 512
+}
+
+// The passes of raster_lists.slang after cull_bins.comp placed the clusters
+// of a phase: the vertices of those clusters and which of their triangles
+// show, where the triangles of each raster bin and depth bucket go, and the
+// triangles themselves, which the draws of the phase read. stats: what
+// counts the vertices and the triangles written, and those that did not fit.
+@(private)
+raster_lists_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List, phase: u32, stats: rhi.Buffer) {
+	s := &r.scene
+	groups := u64(offset_of(Gpu_Cull_State, raster_dispatch)) + u64(phase) * size_of([3]u32)
+	Vertices_Params :: struct {phase, capacity, vertex_capacity, triangle_capacity: u32, margin: f32, pad: [3]u32}
+	vertices := Vertices_Params{phase = phase, capacity = s.cull_capacity[.Visible], vertex_capacity = s.cull_capacity[.Raster_Vertices], triangle_capacity = s.cull_capacity[.Raster_Triangles]}
+	vertices.margin = raster_margin(rhi.device_info(r.device).subpixel_bits)
+	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Raster_Vertices])
+	set_params(cmd, &vertices)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.cull_state_buffer)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS1, stats)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS2, s.visible_buffer)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS3, s.raster_vertices)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS4, s.depth_buckets)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS5, s.raster_entries)
+	rhi.cmd_dispatch_indirect(cmd, s.cull_state_buffer, groups)
+	Params :: struct {phase, capacity, pad0, pad1: u32}
+	params := Params{phase = phase, capacity = s.cull_capacity[.Visible]}
+	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Raster_Starts])
+	set_params(cmd, &params)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.cull_state_buffer)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS4, s.depth_buckets)
+	rhi.cmd_dispatch(cmd, 1)
+	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Raster_Triangles])
+	set_params(cmd, &params)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.cull_state_buffer)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS2, s.visible_buffer)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS3, s.raster_indices)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS4, s.depth_buckets)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS5, s.raster_entries)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS6, s.raster_ids)
+	rhi.cmd_dispatch_indirect(cmd, s.cull_state_buffer, groups)
 }
 
 @(private)
@@ -1072,6 +1125,8 @@ pass_gbuffer :: proc(p: ^Pass) -> bool {
 		cull_record(p, {phase = 0, occlusion = 1 if occlusion && t.hiz_valid else 0, hiz_levels = t.hiz_levels, glass_groups = glass_groups}, t.hiz[p.previous], r.stats_buffer, p.view.glass_dispatch)
 	}
 	cull_bins_dispatch(r, cmd, 0)
+	rhi.cmd_timestamp(cmd, "visible triangles")
+	if p.draw {raster_lists_record(r, cmd, 0, r.stats_buffer)}
 	rhi.cmd_timestamp(cmd, "visibility")
 	visibility_pass(p, 0, .Clear, .Clear, t.depth, keep_depth, clip)
 	if occlusion && p.draw {
@@ -1090,6 +1145,8 @@ pass_gbuffer :: proc(p: ^Pass) -> bool {
 			rhi.cmd_dispatch_indirect(cmd, s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, candidate_dispatch)))
 		}
 		cull_bins_dispatch(r, cmd, 1)
+		rhi.cmd_timestamp(cmd, "visible triangles late")
+		raster_lists_record(r, cmd, 1, r.stats_buffer)
 		rhi.cmd_timestamp(cmd, "visibility late")
 		visibility_pass(p, 1, .Load, .Load, t.depth, keep_depth, clip)
 		// The pyramid the next frame tests against holds what both phases drew:
@@ -1223,6 +1280,7 @@ nested_views_record :: proc(p: ^Pass) -> bool {
 		if !cull_reset(r, cmd) {return false}
 		cull_record(p, {phase = 0, hiz_levels = t.hiz_levels}, t.hiz[p.previous], r.scratch_buffer, r.scratch_buffer)
 		cull_bins_dispatch(r, cmd, 0)
+		if p.draw {raster_lists_record(r, cmd, 0, r.scratch_buffer)}
 
 		// Its pixels alone pass the depth test of its draws: the farthest depth where the mask named it, the nearest elsewhere.
 		prime := rhi.Render_Pass_Desc{name = "nested view pixels"}

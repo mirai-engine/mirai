@@ -1,7 +1,8 @@
 // The vertex of a corner of a cluster of an instance as the G-buffer draws
-// it: gbuffer.vert for the raster, vis_resolve.frag for the three corners of
-// the triangle a pixel of the visibility target shows. One function, so both
-// place it at the same bits. With MIRAI_BATCHES the vertex hook of the
+// it: gbuffer.vert for a draw of one instance, raster_vertices.comp for the
+// vertices the raster of the visibility target draws, vis_resolve.frag for
+// the three corners of the triangle a pixel of it shows. One function, so
+// all place it at the same bits. With MIRAI_BATCHES the vertex hook of the
 // project (extension_vertex.slang, included before) moves the instances of
 // batches.
 #ifndef MIRAI_GBUFFER_BUILD_SLANG
@@ -87,15 +88,19 @@ struct Gbuffer_Corner {
     float3 world;
 };
 
-// b: where the streams of the cluster start (cluster_block).
-Gbuffer_Corner gbuffer_corner_place(Instance inst, Mesh mesh, Cluster c, Cluster_Block b, Gbuffer_Cluster k, uint corner) {
+// The same of the vertex `local` of the cluster. b: where the streams of the
+// cluster start (cluster_block).
+Gbuffer_Corner gbuffer_local_place(Instance inst, Mesh mesh, Cluster c, Cluster_Block b, Gbuffer_Cluster k, uint local) {
     Gbuffer_Corner p;
-    p.local = block_corner(b, gbuffer_corner(inst, corner));
+    p.local = local;
     p.v = block_point_at(mesh, c, b, p.local, k.posed);
     p.v.color = instance_vertex_color(inst, c.vertex_first + p.local, p.v.color);
     p.offset = k.along != 0.0 ? block_island_offset(mesh, c, b, p.local, k.along) : float3(0.0);
     p.world = gbuffer_hooked(k, transform_point(inst.world, p.v.position + p.offset), p.v.color, frame.time.x);
     return p;
+}
+Gbuffer_Corner gbuffer_corner_place(Instance inst, Mesh mesh, Cluster c, Cluster_Block b, Gbuffer_Cluster k, uint corner) {
+    return gbuffer_local_place(inst, mesh, c, b, k, block_corner(b, gbuffer_corner(inst, corner)));
 }
 
 // Where the vertex hook puts a corner of an instance in the frame before, in
@@ -110,24 +115,6 @@ Gbuffer_Vertex gbuffer_corner_build(uint index, Instance inst, Mesh mesh, Cluste
     Gbuffer_Corner p = gbuffer_corner_place(inst, mesh, c, b, k, corner);
     Mesh_Point v = p.v;
     float3 world = p.world;
-#ifdef MIRAI_VISIBILITY
-    // The raster of the visibility target: where the corner is now, and of a
-    // tested one what its fade and its alpha read; not where it was, nor its
-    // light, which the resolve builds.
-    output.out_material = k.material;
-    output.out_flags = k.flags;
-    output.out_instance = index;
-#ifdef MIRAI_VISIBILITY_TESTED
-    output.out_normal = transform_normal(inst.world_inv, v.normal);
-    output.out_tangent = instance_tangent(inst, v.tangent);
-    output.out_color = (k.tinted ? v.color.rgb : float3(1.0)) * inst.tint.rgb;
-    output.out_vertex_color = v.color;
-    output.out_uv = v.uv;
-    output.out_uv1 = v.uv1;
-#endif
-    gbuffer_vertex_place_now(output, world);
-    return output;
-#else
     float3 prev_world = gbuffer_corner_world_previous(inst, mesh, c, b, k, p);
     output.out_normal = transform_normal(inst.world_inv, v.normal);
     output.out_tangent = instance_tangent(inst, v.tangent);
@@ -144,7 +131,6 @@ Gbuffer_Vertex gbuffer_corner_build(uint index, Instance inst, Mesh mesh, Cluste
     output.out_uv1 = v.uv1;
     gbuffer_vertex_place(output, world, prev_world);
     return output;
-#endif
 }
 
 Gbuffer_Vertex gbuffer_vertex_build(uint index, Instance inst, Mesh mesh, Cluster c, uint corner, bool cut) {
