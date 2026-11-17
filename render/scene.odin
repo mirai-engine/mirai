@@ -2461,7 +2461,7 @@ ensure_scene_capacity :: proc(r: ^Renderer) -> bool {
 		buffer := [Cull_List]^rhi.Buffer{.Chunks = &s.chunk_buffer, .Visible = &s.visible_buffer, .Candidates = &s.cluster_candidate_buffer, .Shadow_Chunks = &s.shadow_chunks, .Shadow_Entries = &s.shadow_entries, .Raster_Vertices = &s.raster_vertices, .Raster_Triangles = &s.raster_indices}[list]
 		wanted := s.cull_wanted[list]
 		if buffer^ != 0 && wanted <= s.cull_capacity[list] {continue}
-		capacity := max(wanted + wanted / 2, start[list], s.cull_capacity[list])
+		capacity := max(wanted + wanted / (RASTER_LIST_SLACK if list >= .Raster_Vertices else 2), start[list], s.cull_capacity[list])
 		if buffer^ != 0 {rhi.buffer_destroy(d, buffer^)}
 		names := [Cull_List]string{.Chunks = "cull chunks", .Visible = "visible clusters", .Candidates = "cluster occlusion candidates", .Shadow_Chunks = "shadow map chunks", .Shadow_Entries = "shadow map clusters", .Raster_Vertices = "vertices of the visibility raster", .Raster_Triangles = "triangles of the visibility raster"}
 		entries := [Cull_List]u64{.Chunks = size_of([2]u32), .Visible = size_of(Gpu_Visible_Cluster), .Candidates = size_of([2]u32), .Shadow_Chunks = size_of([4]u32), .Shadow_Entries = size_of([4]u32), .Raster_Vertices = abi.RASTER_VERTEX_WORDS * size_of(u32), .Raster_Triangles = size_of([3]u32)}

@@ -168,9 +168,10 @@ read_stats :: proc(r: ^Renderer, slot: int) {
 			if dropped > 0 && list < .Raster_Vertices {r.scene.cull_wanted[list] = max(r.scene.cull_wanted[list], r.scene.cull_capacity[list] + dropped)}
 		}
 		// Those of the raster, which a view writes again in each of its rounds,
-		// ask for what the view that needs most would hold in one.
+		// ask for a third of what the view that needs most would hold: it is
+		// drawn in up to RASTER_ROUNDS of them.
 		for list, k in ([2]Cull_List{.Raster_Vertices, .Raster_Triangles}) {
-			r.scene.cull_wanted[list] = max(r.scene.cull_wanted[list], min(stats.most_raster_need[k], CULL_MARK_MAX))
+			r.scene.cull_wanted[list] = max(r.scene.cull_wanted[list], min((stats.most_raster_need[k] + RASTER_LIST_SHARE - 1) / RASTER_LIST_SHARE, CULL_MARK_MAX))
 		}
 		r.stats.culled_instances = stats.culled_instances
 		r.stats.occluded_instances = stats.occluded_instances

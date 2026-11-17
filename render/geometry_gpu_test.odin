@@ -209,7 +209,7 @@ gpu_masked_clusters_are_drawn_nearest_first :: proc(t: ^testing.T) {
 // turned down, which the raster of a one-sided material leaves out: of each
 // sheet, one cluster, SHEETS_SHOWN triangles show in all.
 SHEET_SIDE :: 8
-SHEETS :: 6
+SHEETS :: 12
 SHEETS_SHOWN :: SHEETS * SHEET_SIDE * SHEET_SIDE
 SHEETS_CAMERA :: Camera{position = {0, 3, 0}, forward = {0, -1, 0}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 
@@ -269,7 +269,7 @@ gpu_cull_lists_grow_to_the_view_of_the_frame_that_needs_most :: proc(t: ^testing
 			away.forward, away.up = {0, 1, 0}, {0, 0, 1}
 			views := [2]Frame_View{{camera = SHEETS_CAMERA, rect = {0, 0, 128, 128}}, {camera = away, rect = {0, 0, 128, 128}}}
 			for _ in 0 ..< 4 {testing.expect(t, renderer_frame(r, {camera = SHEETS_CAMERA, views = views[:]}), r.error)}
-			testing.expectf(t, r.scene.cull_wanted[.Raster_Triangles] == SHEETS_SHOWN, "the list asks for the first view: %d of %d", r.scene.cull_wanted[.Raster_Triangles], SHEETS_SHOWN)
+			testing.expectf(t, r.scene.cull_wanted[.Raster_Triangles] == (SHEETS_SHOWN + 2) / 3, "the list asks for a third of the first view: %d of %d", r.scene.cull_wanted[.Raster_Triangles], SHEETS_SHOWN)
 		case .Meshes_Drawn_Whole:
 			// The highlighted sheets draw their mesh whole, which the list first has no room for.
 			for &instance in instances {instance.highlight = 1}
@@ -349,8 +349,8 @@ gpu_meshes_drawn_whole_for_the_first_time_allocate_nothing :: proc(t: ^testing.T
 
 // A view whose triangles pass the list its raster draws from shows them all:
 // the clusters that find no room in a round are listed and drawn in the round
-// after, and the list then asks for what the view writes, to hold it in one
-// round: the triangles that show, also of a cluster the last round left out.
+// after, the last too, and the list then asks for a third of what the view
+// writes: the triangles that show, also of a cluster the last round left out.
 @(test)
 gpu_triangles_past_their_list_are_drawn_in_the_rounds_after :: proc(t: ^testing.T) {
 	settings := DEFAULT_SETTINGS
@@ -360,12 +360,13 @@ gpu_triangles_past_their_list_are_drawn_in_the_rounds_after :: proc(t: ^testing.
 	defer fixture_destroy(&f)
 	r, device := f.renderer, f.device
 	camera := SHEETS_CAMERA
-	// A frame of nothing makes the lists; then one holds less than half of what the view shows.
+	// A frame of nothing makes the lists; then one holds less than a third of what the view shows.
 	if !testing.expect(t, renderer_frame(r, {camera = camera}), r.error) || !testing.expect(t, r.scene.raster_indices != 0) {return}
 	SIDE :: SHEET_SIDE
 	TRIANGLES :: SHEETS_SHOWN
 	ROOM :: 250
-	#assert(ROOM < TRIANGLES && (ROOM - asset.CLUSTER_TRIANGLES + 1) * abi.RASTER_ROUNDS >= TRIANGLES)
+	// A sheet is one cluster of SIDE * SIDE triangles that show: the rounds hold as many as the room does, whole.
+	#assert(TRIANGLES > RASTER_LIST_SHARE * ROOM && ROOM / (SIDE * SIDE) * SIDE * SIDE * abi.RASTER_ROUNDS >= TRIANGLES)
 	r.scene.cull_capacity[.Raster_Triangles] = ROOM
 	if !test_sheets(t, r) {return}
 	// Its first frame has no pyramid to hide a sheet behind another with.
@@ -380,13 +381,14 @@ gpu_triangles_past_their_list_are_drawn_in_the_rounds_after :: proc(t: ^testing.
 		total += drawn[k]
 	}
 	testing.expectf(t, drawn[0] > 0 && drawn[0] <= ROOM, "the first round draws what its list holds: %v", drawn)
-	testing.expectf(t, total == TRIANGLES && state[0].dropped[.Raster_Triangles] == 0, "the rounds after draw the rest, and none is left out: %v of %d, %d left out", drawn, TRIANGLES, state[0].dropped[.Raster_Triangles])
+	testing.expectf(t, total == TRIANGLES && drawn[abi.RASTER_ROUNDS - 1] > 0 && state[0].dropped[.Raster_Triangles] == 0, "the rounds after draw the rest, the last too, and none is left out: %v of %d, %d left out", drawn, TRIANGLES, state[0].dropped[.Raster_Triangles])
 	for _ in 0 ..< 4 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
-	testing.expectf(t, r.scene.cull_wanted[.Raster_Triangles] == TRIANGLES && r.scene.cull_capacity[.Raster_Triangles] >= TRIANGLES, "the list asks for the view: %d wanted, %d held", r.scene.cull_wanted[.Raster_Triangles], r.scene.cull_capacity[.Raster_Triangles])
-	// A room of one sheet a round: the last round leaves two sheets out.
+	THIRD :: (TRIANGLES + RASTER_LIST_SHARE - 1) / RASTER_LIST_SHARE
+	testing.expectf(t, r.scene.cull_wanted[.Raster_Triangles] == THIRD && r.scene.cull_capacity[.Raster_Triangles] >= THIRD, "the list asks for a third of the view: %d wanted, %d held", r.scene.cull_wanted[.Raster_Triangles], r.scene.cull_capacity[.Raster_Triangles])
+	// A room of one sheet a round: the last round leaves sheets out.
 	r.scene.cull_wanted[.Raster_Triangles], r.scene.cull_capacity[.Raster_Triangles] = 0, SIDE * SIDE + 1
 	for _ in 0 ..< 4 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
-	testing.expectf(t, r.scene.cull_wanted[.Raster_Triangles] == TRIANGLES, "the list asks for the triangles that show of what was left out too: %d", r.scene.cull_wanted[.Raster_Triangles])
+	testing.expectf(t, r.scene.cull_wanted[.Raster_Triangles] == THIRD, "the list asks for a third of the triangles that show, of what was left out too: %d", r.scene.cull_wanted[.Raster_Triangles])
 	testing.expectf(t, rhi.device_validation_errors(device) == 0, "validation: %s", rhi.device_validation_message(device))
 }
 

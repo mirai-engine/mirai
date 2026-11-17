@@ -142,6 +142,12 @@
   the triangles of the visible clusters that may show, which compute passes list each frame
   with their vertices placed once; the G-buffer is resolved from it once per pixel
   ([culling](frame-graph.md#passes)). No binds per material or per object.
+- **Size of the raster lists.** They hold a round, not a view: they grow, with a small slack, to
+  a third of what the view of the frame that needs most writes (`RASTER_LIST_SHARE`), and a
+  larger view is drawn over more rounds. Rounds of that share hold a view whole but for the room
+  a list leaves past the cluster that did not fit; a view that passes all its rounds (a jump in
+  what it sees) has what does not fit left out and counted, and the lists grow for the frames
+  after.
 - `mesh_add` encodes vertices and indices with `asset.mesh_build` at one level and registers them
   with `mesh_add_geometry`, which takes the geometry from a file or that made earlier in a job
   (`host.assets_render_geometry_make`) with its ray cuts. The meshes made at runtime
