@@ -121,13 +121,13 @@ pass_dispatch_indirect :: proc(s: ^Stage_Pass, desc: Extension_Buffer_Desc, offs
 	if entry := extension_buffer_find(s.pass.r, s.world, desc); entry != nil {rhi.cmd_dispatch_indirect(s.pass.cmd, entry.buffer, offset)}
 }
 
-// The indices a pass draws with: the six of a quad (0 1 2, 2 1 3). The
-// meshes of the scene have none: their clusters are drawn by vertex
-// (mesh_draw_range, pass_draw_indirect).
-Pass_Indices :: enum u8 {Quad}
+// The indices a pass draws with: the six of a quad (0 1 2, 2 1 3), or those
+// of the scene, where the draw list of a mesh is (mesh_draw_range).
+Pass_Indices :: enum u8 {Quad, Scene}
 
 pass_indices :: proc(s: ^Stage_Pass, indices: Pass_Indices) {
-	if s.pass.r.quad_indices != 0 {rhi.cmd_bind_index_buffer(s.pass.cmd, s.pass.r.quad_indices, 0)}
+	buffer := s.pass.r.quad_indices if indices == .Quad else s.pass.r.scene.index_buffer
+	if buffer != 0 {rhi.cmd_bind_index_buffer(s.pass.cmd, buffer, 0)}
 }
 
 // Draws with the arguments of an indexed draw (index count, instance count,
@@ -186,14 +186,23 @@ pass_rows :: proc(s: ^Stage_Pass, slot: u32, rows: Pass_Rows) -> bool {
 	return true
 }
 
-// How a draw takes the clusters of level 0 of a mesh of the scene: the
-// vertices of the draw, CLUSTER_DRAW_VERTICES a cluster, which a vertex shader
+// How an indexed draw with the indices of the scene (pass_indices .Scene)
+// takes the clusters of level 0 of a mesh: the first index and how many, each
+// its cluster << DRAW_VERTEX_BITS | the vertex in it, which a vertex shader
 // reads with the mesh (geometry.slang). False for a mesh the renderer does
-// not have, or whose geometry still goes to the GPU (mesh_uploading).
-mesh_draw_range :: proc(r: ^Renderer, mesh: Mesh_Handle) -> (vertex_count: u32, ok: bool) {
+// not have, whose geometry still goes to the GPU (mesh_uploading), or whose
+// draw list the GPU does not hold yet: the publication after the first ask
+// makes it.
+mesh_draw_range :: proc(r: ^Renderer, mesh: Mesh_Handle) -> (first_index, index_count: u32, ok: bool) {
+	return mesh_draw_list(r, u32(mesh), true)
+}
+
+// The primitives of level 0 of a mesh (geometry.slang): CLUSTER_TRIANGLES a
+// cluster, those past its own of no area. False as mesh_draw_range.
+mesh_primitive_count :: proc(r: ^Renderer, mesh: Mesh_Handle) -> (count: u32, ok: bool) {
 	if int(mesh) >= len(r.scene.meshes) || r.scene.meshes[mesh].vertex_count == 0 || mesh_pending(&r.scene, u32(mesh)) {return}
 	_, clusters := record_level(&r.scene, r.scene.meshes[mesh], 0)
-	return clusters * CLUSTER_DRAW_VERTICES, true
+	return clusters * CLUSTER_TRIANGLES, true
 }
 
 // Counters the passes of an extension add to on the GPU, by name: four u32

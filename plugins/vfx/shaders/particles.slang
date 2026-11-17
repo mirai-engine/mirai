@@ -59,7 +59,8 @@ struct Particle_Emitter {
     uint4 frame;          // in particle_frame: bytes to its resources and stages (INVALID: none), to the births of its channel, how many, to the births of the frame
     uint4 data;           // bytes of particle_data to the Attributes of its range, bytes of those of a particle, its age (bits), particles it started before the frame
     float4 mesh_weights;  // of Mesh particles: the weights of its meshes added up
-    uint4 mesh_vertices;  // and the vertices of a draw of each
+    uint4 mesh_indices;   // and the indices of a draw of each (render.mesh_draw_range)
+    uint4 mesh_firsts;    // and where they start in those of the scene
 };
 
 struct Particle_State {
@@ -121,8 +122,10 @@ struct Particle_Event {
 #define PARTICLE_EVENT_CAPACITY 16384u
 #define PARTICLE_EVENTS_AT 64u // words of particle_queue before the events: their counts and dispatches
 #define PARTICLE_EVENT_WORDS 9u
-// Words of particle_queue to a draw of each mesh of each emitter (vfx.MESH_DRAWS_AT).
+// Words of particle_queue to an indexed draw of each mesh of each emitter
+// (vfx.MESH_DRAWS_AT), PARTICLE_MESH_DRAW_WORDS each.
 #define PARTICLE_MESH_DRAWS_AT (PARTICLE_EVENTS_AT + 2u * PARTICLE_EVENT_CAPACITY * PARTICLE_EVENT_WORDS)
+#define PARTICLE_MESH_DRAW_WORDS 5u
 
 // The resources of an emitter in particle_frame: the surface of its shape,
 // then those of its program, in the order it declares them.
