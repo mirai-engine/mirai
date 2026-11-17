@@ -63,14 +63,56 @@ SHADOW_MAP_ORTHOGRAPHIC :: abi.SHADOW_MAP_ORTHOGRAPHIC
 // within them keeps moving (shadow_movers_update).
 SHADOW_MOVER_FRAMES :: u64(30)
 // The clusters the draws of the cache of a view take in a frame, and those of
-// its atlas: each at most CLUSTER_TRIANGLES triangles
-// over a page, about four million triangles in all, what the least GPU the
-// engine runs on draws into a depth map, masked, in a few milliseconds. So no
-// frame of any view waits long on its maps, whatever the scene, and no draw
-// comes near the time a driver gives one before it resets the device. The
-// pages past them wait for the frames after, the coarsest first, and their
-// points read the nearest coarser page drawn or trace until then.
+// its atlas, at least: each at most CLUSTER_TRIANGLES triangles over a page,
+// about four million triangles in all, what the least GPU the engine runs on
+// draws into a depth map, masked, in a few milliseconds. While the frames
+// have room the bound grows (shadow_bound_update), up to
+// SHADOW_FRAME_CLUSTERS_MOST, what that GPU draws far within the time a
+// driver gives a draw before it resets the device. The pages past it wait for
+// the frames after, the coarsest first, and their points read the nearest
+// coarser page drawn or trace until then.
 SHADOW_FRAME_CLUSTERS :: u32(32768)
+SHADOW_FRAME_CLUSTERS_MOST :: 16 * SHADOW_FRAME_CLUSTERS
+// The GPU time of a frame, milliseconds, under which the bound grows while
+// pages wait for it, and over which it shrinks: a frame of 60 Hz with some
+// to spare; that of a loading screen (Frame_Desc.loading), which the maps may
+// take.
+SHADOW_FRAME_MS :: f32(14)
+SHADOW_LOADING_MS :: f32(50)
+// How much the bound changes from that of a frame measured, at most.
+SHADOW_BOUND_STEP :: f32(1.5)
+
+// The clusters each round of the maps of every view draws in a frame: now,
+// and in each frame in flight, which the GPU time of that frame measures once
+// it comes back; least and most: 0, SHADOW_FRAME_CLUSTERS and
+// SHADOW_FRAME_CLUSTERS_MOST.
+Shadow_Bound :: struct {
+	now:         u32,
+	frames:      [rhi.MAX_FRAMES_IN_FLIGHT]u32,
+	least, most: u32,
+}
+
+// The bound of this frame, from the GPU time of the frame that last used its
+// slot: it grows in proportion while that frame had room and its pages waited,
+// it shrinks in proportion when the frame took longer, by SHADOW_BOUND_STEP at
+// most each way, within its least and most. The lists of the cull of the maps
+// grow to hold it in the draws of one kind alone.
+@(private)
+shadow_bound_update :: proc(r: ^Renderer, slot: int, loading: bool) {
+	b := &r.shadow_bound
+	least := b.least if b.least != 0 else SHADOW_FRAME_CLUSTERS
+	most := max(b.most if b.most != 0 else SHADOW_FRAME_CLUSTERS_MOST, least)
+	bound := clamp(b.now, least, most)
+	then := clamp(b.frames[slot], least, most)
+	_, _, measured := rhi.frame_timings(r.device)
+	target := SHADOW_LOADING_MS if loading else SHADOW_FRAME_MS
+	if measured && r.stats.gpu_ms > 0 {
+		ratio := clamp(target / r.stats.gpu_ms, 1 / SHADOW_BOUND_STEP, SHADOW_BOUND_STEP)
+		if ratio < 1 || r.stats.shadow.pages_waiting > 0 {bound = u32(clamp(f32(then) * ratio, f32(least), f32(most)))}
+	}
+	b.now, b.frames[slot] = bound, bound
+	r.scene.cull_wanted[.Shadow_Entries] = max(r.scene.cull_wanted[.Shadow_Entries], min(2 * bound, CULL_MARK_MAX))
+}
 
 Gpu_Shadow_Map :: struct {
 	origin:  Vec3,
@@ -122,7 +164,7 @@ Shadow_Raster :: struct {
 	hiz:      rhi.Texture,   // the farthest depth of the cache over blocks of each page of the pool (shadow_hiz.comp)
 	pages:    rhi.Buffer,    // abi.SHADOW_WORDS_*
 	pool:     u32,           // the pages of the pool it gives, 0: all of them
-	budget:   u32,           // the clusters each of its rounds draws in a frame, 0: SHADOW_FRAME_CLUSTERS
+	budget:   u32,           // the clusters each of its rounds draws in a frame, 0: those of the renderer (Shadow_Bound)
 	held:     [SHADOW_SLOTS]Shadow_Held,
 	forget:   bool, // every page is let go of in the next frame
 	cut:      f32,  // the threshold of the cut the cache was drawn with
@@ -836,7 +878,7 @@ shadow_params :: proc(p: ^Pass, plan: Shadow_Plan, round: Shadow_Round) -> Shado
 		list = abi.SHADOW_WORDS_SLOTS + u32(round) * SHADOW_SLOTS, masks = masks[round],
 		chunk_capacity = s.cull_capacity[.Shadow_Chunks], entry_capacity = s.cull_capacity[.Shadow_Entries],
 		moving = u32(round), movers = plan.movers, plan = plan.plan, part = 1 if round == .Stays else 0,
-		bound = shadow_frame_clusters(&p.t.shadow_raster),
+		bound = shadow_frame_clusters(p.r, &p.t.shadow_raster),
 	}
 	// The round of what moves culls the movers alone, but in a frame a slot
 	// draws whole into the atlas.
@@ -990,7 +1032,10 @@ Shadow_Pages_Params :: struct {step, frame, rows, plan, boxes, box_count, sun, p
 
 // The clusters each round of the maps of a view draws in a frame.
 @(private)
-shadow_frame_clusters :: proc(b: ^Shadow_Raster) -> u32 {return b.budget if b.budget != 0 else SHADOW_FRAME_CLUSTERS}
+shadow_frame_clusters :: proc(r: ^Renderer, b: ^Shadow_Raster) -> u32 {
+	if b.budget != 0 {return b.budget}
+	return r.shadow_bound.now if r.shadow_bound.now != 0 else SHADOW_FRAME_CLUSTERS
+}
 
 // The maps of the view this frame, drawn where its points read them. mark:
 // the parameters of the direct light (direct_maps.comp), which the marks of
@@ -1071,7 +1116,7 @@ shadow_maps_pass :: proc(p: ^Pass, mark: ^$T, scale: u32, grid: rhi.Buffer) -> (
 		pool = b.pool if b.pool != 0 else abi.SHADOW_POOL_PAGES, fresh = 1 if made else 0, full = 1 if full else 0, slots = plan.slots, slot_count = plan.slot_count,
 		groups_stays = groups(p.instance_count + p.batch_slots, SHADOW_GROUP), groups_moves = groups(p.instance_count + p.batch_slots if plan.whole else plan.moving_threads, SHADOW_GROUP),
 		keep = max(p.jitter_phases, 1),
-		budget = shadow_frame_clusters(b),
+		budget = shadow_frame_clusters(r, b),
 	}
 	for step in Shadow_Pages_Step {
 		if step == .Propagate || step >= .Grant {continue}
