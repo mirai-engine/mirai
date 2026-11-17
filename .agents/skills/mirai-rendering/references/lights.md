@@ -175,7 +175,7 @@ trace their own rays take both kinds from the tree:
   and, seen from the side, stretches in the direction of the light.
 - The cost of a pixel depends on its samples, not on how many lights there are.
 
-### Direct light of a view
+## Direct light of a view
 
 The `direct` step ([frame graph](frame-graph.md#passes)) takes the light of each point from a
 fixed number of samples (`direct_samples`) spread over the lights that reach it:
@@ -232,7 +232,12 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   points of the view read exist. `shadow_mark.comp` marks, for each point of the direct light, the
   pages the taps around it reach in the level of the sun and the mip of each face of a light with
   one or two texels to a pixel of the view there (`sun_pick`, `light_pick`; a face no finer than
-  its widest penumbra over the search of the taps); over the top of each octave the point blends
+  its widest penumbra over the search of the taps). Of its own level or mip a point marks the
+  pages of the taps nearest it (`SHADOW_SEARCH_NEAR`) and of the ellipse whose lit share it takes;
+  where the search of its blockers reaches farther, the pages of the level or mip as many times
+  coarser, which its far taps read: a blocker that far casts a penumbra as wide, so a tall scene
+  asks for hardly more pages of the finest levels than a low one. Over the top of each octave the
+  point blends
   into the next level or mip, whose pages it marks too, and its texel-based constants grow to meet
   those of the next. The first level of the sun is a metre wide, each after it twice as wide, and
   the grid of the pages and texels of every level lies on the world, not on the origin of the frame.
@@ -242,8 +247,11 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   (the 2x2 pages of each level of the sun nearest the eye, the coarsest page of each face), then
   from the coarsest level or mip to the finest; past the pool the finest are left out
   (`SHADOW_COUNT_LEFT`), the same every frame. A page keeps its place while no point reads it,
-  until another needs it: free pages first, then those unread the longest. What stays changing
-  under it still marks it stale, so a page read is always of this frame. Where a page is not drawn
+  until another needs it: free pages first, then those unread the longest; one read within a
+  cycle of the jitter of the view gives its place only to a page of a level that ranks sooner,
+  so that where the pool is full a page the points of one frame miss and those of the next read
+  is not drawn again. What stays changing under a page still marks it stale, so a page read is
+  always of this frame. Where a page is not drawn
   its entry names the nearest coarser level or mip drawn there (`SHADOW_ENTRY_COARSER`), which its
   points read; where none is, they trace. A point looks up the entries of the 2x2 pages around
   its taps once (`shadow_near`), which its taps, its hard shadow and its tint read. A pass after
@@ -253,17 +261,33 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   pages that come in; along the light it keeps how far it reaches towards the sun while the scene
   stays within it. A tap past the side of a face of the cube of a light reads the face its
   direction falls on (`shadow_beside`).
+- **What a frame draws at most.** The draws of the cache, those of the atlas and those of the
+  tint each take at most `SHADOW_FRAME_CLUSTERS` clusters in a frame of any view, still, moving or
+  first: what the least GPU the engine runs on draws into a depth map, masked, in a few
+  milliseconds, so that no frame waits long on the maps and no draw nears the time a driver gives
+  one before it resets the device. Before the cull by cluster, `Grant` gives the pages, in the
+  order they are given, while what they take fits half the bound: what a page took when last
+  drawn, else what the cull by instance foresees, scaled by what the draws took of that before
+  (`SHADOW_WORDS_SCALE`), and for a page not drawn yet a part of the share at most, as what is
+  foreseen strays most where a page holds the most. A page may take twice that, so one that takes
+  more is the only one left over; a page of the cache that takes more than half the bound is drawn
+  in bands of its rows over frames (`SHADOW_WORDS_BAND`). A page left over, one that waits and
+  one whose band is not its last are not ready that frame (`Settle`): their points read the
+  nearest coarser page drawn, or trace, and the steps run again the next frame.
 - **A still view.** While its camera, size, parameters and lights stay and no caster changes
   (`Shadow_Seen`), a view keeps the marks and the table of the frames before: its points mark the
   pages they read only for a cycle of its jitter after a change, the marks add up, and the steps
   of the pages run (a gate writes their arguments) only where a point or a pass after the maps
-  marked a page not drawn nor left out of the pool (`SHADOW_STEP_NEW`). A still frame marks and
+  marked a page not drawn nor left out of the pool, or a page waits for a frame with room for it
+  (`SHADOW_STEP_NEW`). A still frame marks and
   gives no page (`Stats.shadow_marked`, `SHADOW_STEP_RUNS`).
 - **What a frame draws.** The cost follows what changed. The cache of the view
   (`Shadow_Raster.cache`) holds what stays, page by page: a page draws there again only where it is
   new or what stays changed under it (an instance that came, went or changed its box or pose, a
-  page of its mesh, a masked material), and the atlas (`Shadow_Raster.atlas`), what the passes
-  read, composes the cache and what moves again only in the pages where the cache drew or what
+  page of its mesh, a masked material), of a page it held only the texels the boxes of what
+  changed cover (`SHADOW_WORDS_PART`): what else lies in a wide page is not drawn again. The
+  atlas (`Shadow_Raster.atlas`), what the passes read, composes the cache and what moves again
+  only in the pages where the cache drew or what
   moves was or is. The boxes of what changed mark their pages on the GPU, but where the cache hides
   them: the cache keeps the farthest depth over blocks of each page it drew (`Shadow_Raster.hiz`),
   and what moves is not drawn where it lies past that. An instance that changes again within
@@ -321,7 +345,9 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
     `batch_remove`).
   - With the scene still there are no marks and the image is the same. Glass does not mark: the
     validation of the history reaches it.
-- The debug view Shadows shows the part of the light that got there.
+- The debug view Shadows shows the part of the light that got there. `Stats.shadow` counts what
+  the maps of the last view drew: clusters, triangles and pages, those left out and those that
+  wait.
 - **Reference.** What the tests compare with, outside the renderer games run: a custom pass of the
   tests in place of the `Direct` stage (`render/reference_test.odin`) traces from each pixel to
   the whole set of points of the sun and of each light, randomly rotated per frame, without grid,
@@ -337,7 +363,11 @@ Tests: the shadow ones of `render/render_test.odin` (`render_sun_shadow_is_ray_t
 `render_an_edge_takes_no_light_from_the_face_beyond_it` and, for the cache of the maps,
 `render_moved_cascades_give_what_whole_ones_give`,
 `render_shadow_maps_follow_what_moves_in_its_frame`, `render_a_swaying_batch_shades_where_it_is`,
-`render_a_page_first_read_is_drawn_in_its_frame`, `render_a_turning_sun_gives_what_whole_maps_give`
+`render_a_page_first_read_is_drawn_in_its_frame`,
+`render_a_full_pool_keeps_the_pages_of_a_jitter_cycle`,
+`render_a_frame_draws_no_more_than_its_clusters_and_the_rest_comes_after`,
+`render_a_wide_search_asks_for_coarser_pages_not_more_of_the_finest`,
+`render_a_turning_sun_gives_what_whole_maps_give`
 and `render_an_origin_jump_gives_what_whole_maps_give`, and for the lights and the sun without
 shadows `render_a_light_without_shadows_lights_through_what_holds_it`, and for a mesh without
 them `render_a_mesh_without_shadows_lets_the_sun_through`) and, for the grid and

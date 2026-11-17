@@ -22,8 +22,13 @@
 // movers after those words alone, `instances` in all (render.shadow_maps_plan);
 // plan: the word of the buffer of the maps the plans of the slots start at;
 // span: the round whose pages span SHADOW_WORDS_BOUNDS for this one (that of
-// the atlas for the glass drawn again only where it composed).
-struct Params_Block { uint instances; uint maps; uint rows; uint glass; uint chunk_capacity; uint entry_capacity; uint list; uint moving; uint movers; uint listed; uint ranges; uint masks; uint plan; uint span; uint pad1; uint pad2; };
+// the atlas for the glass drawn again only where it composed); part: 1 while
+// the round draws of each page the texels SHADOW_WORDS_PART names alone (the
+// cache, of a page it held the part where what stays changed, or the band of
+// a page drawn over frames); bound: the clusters the draws of the round take
+// in a frame (render.SHADOW_FRAME_CLUSTERS); foresee: 1 while the pass by
+// instance only foresees what each page takes, before the pages are granted.
+struct Params_Block { uint instances; uint maps; uint rows; uint glass; uint chunk_capacity; uint entry_capacity; uint list; uint moving; uint movers; uint listed; uint ranges; uint masks; uint plan; uint span; uint part; uint bound; uint foresee; uint pad0; uint pad1; uint pad2; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 // The draws: of the clusters that hide whole, of those of masked materials,
 // and of those of glass for the tint and the nearest glass.
@@ -33,6 +38,7 @@ struct Params_Block { uint instances; uint maps; uint rows; uint glass; uint chu
 #define SHADOW_DRAW_COUNT 1u // the instances of draw d: word d * 4 + 1
 #define SHADOW_CLUSTER_DISPATCH 12u
 #define SHADOW_CHUNK_COUNT 15u
+#define SHADOW_TAKEN 16u
 // Of a chunk, over its map and the mip of it from bit SHADOW_CHUNK_MIP: it
 // draws the depth, and the glass; its instance is drawn at rest (a batch
 // that sways less than a texel of the map).
@@ -50,8 +56,19 @@ uint shadow_entry(uint draw, uint slot) { return (draw == SHADOW_DRAW_OPAQUE ? 0
 uint shadow_word(StructuredBuffer<uint4> data, uint word) { return data[word >> 2u][word & 3u]; }
 
 // The buffer of the pages of the view (render.Shadow_Raster.pages,
-// shadow_pages.comp): the slots of a round and the pages it draws.
+// shadow_pages.comp): the slots of a round and the pages it draws; the cull
+// writes what it foresees and what found no room (SHADOW_WORDS_COST).
+#ifdef SHADOW_PAGES_WRITTEN
+[[vk::binding(SHADOW_PAGES_SLOT, 0)]] RWStructuredBuffer<uint> shadow_pages : register(MIRAI_REGISTER(u, SHADOW_PAGES_SLOT), space0);
+#else
 [[vk::binding(SHADOW_PAGES_SLOT, 0)]] StructuredBuffer<uint> shadow_pages : register(MIRAI_REGISTER(t, SHADOW_PAGES_SLOT), space0);
+#endif
+
+// The word of what the cache (moving 0) or the atlas (moving 1) draws into a
+// page of the pool this frame (SHADOW_WORDS_COST).
+uint shadow_cost_word(uint pool) { return SHADOW_WORDS_COST + min(params.moving, 1u) * SHADOW_POOL_PAGES + pool; }
+// And of the clusters its draws took of that page.
+uint shadow_taken_word(uint pool) { return SHADOW_WORDS_TAKEN + min(params.moving, 1u) * SHADOW_POOL_PAGES + pool; }
 
 // Whether the round draws a page of a map at its mip, a bit for each entry.
 bool shadow_page_drawn(Shadow_Map m, uint2 page) {
@@ -59,12 +76,35 @@ bool shadow_page_drawn(Shadow_Map m, uint2 page) {
     return ((shadow_pages[params.masks + m.rect.x * SHADOW_MASK_WORDS + (bit >> 5u)] >> (bit & 31u)) & 1u) != 0u;
 }
 
-// The first texel of the page of the pool a page of a map lies at; false
-// where it has none.
-bool shadow_page_pool(Shadow_Map m, uint2 page, out uint2 corner) {
+// The page of the pool a page of a map lies at; false where it has none.
+bool shadow_page_pool(Shadow_Map m, uint2 page, out uint pool) {
     uint e = shadow_table_entry(m.rect.x, shadow_page_entry(m.rect, page));
-    corner = shadow_pool_corner((e & SHADOW_ENTRY_POOL) - 1u);
+    pool = (e & SHADOW_ENTRY_POOL) - 1u;
     return (e & SHADOW_ENTRY_POOL) != 0u && (e >> SHADOW_ENTRY_COARSER) == 0u;
+}
+
+// The texels of a page of the pool the round draws, from its corner: the
+// first column and row, then one past the last (SHADOW_WORDS_PART); the whole
+// page for a round that draws its pages whole.
+uint4 shadow_page_part(uint pool) {
+    if (params.part == 0u) return uint4(0u, 0u, SHADOW_PAGE, SHADOW_PAGE);
+    uint at = SHADOW_WORDS_PART + pool * 4u;
+    return uint4(SHADOW_PAGE - shadow_pages[at], SHADOW_PAGE - shadow_pages[at + 1u], shadow_pages[at + 2u], shadow_pages[at + 3u]);
+}
+
+// Whether those are all the texels of the page.
+bool shadow_part_whole(uint4 part) { return all(part == uint4(0u, 0u, SHADOW_PAGE, SHADOW_PAGE)); }
+
+// Whether the round draws texels of a page of a map among those a box covers
+// (shadow_box_texels): its page, and of a page drawn in part, that part.
+bool shadow_page_drawn(Shadow_Map m, uint2 page, float4 texels) {
+    if (!shadow_page_drawn(m, page)) return false;
+    if (params.part == 0u) return true;
+    uint pool;
+    if (!shadow_page_pool(m, page, pool)) return false;
+    uint4 part = shadow_page_part(pool);
+    float4 at = texels - float4(page * SHADOW_PAGE, page * SHADOW_PAGE);
+    return at.x < float(part.z) && at.y < float(part.w) && at.z >= float(part.x) && at.w >= float(part.y);
 }
 
 // A page of a map as a word: the map, its column, its row and its mip (render.shadow_page_word).
@@ -89,16 +129,16 @@ bool shadow_pages_span(Shadow_Map m, out uint4 span) {
     return words.x != 0u;
 }
 
-// Whether a round draws a page of a map at its mip within a rect of its
-// pages, which it narrows to those it may.
-bool shadow_pages_drawn(Shadow_Map m, inout uint4 rect) {
-    uint4 span;
+// Whether a round draws texels of a map at its mip among those a box covers
+// (shadow_box_texels).
+bool shadow_pages_drawn(Shadow_Map m, float4 texels) {
+    uint4 span, rect = shadow_texel_pages(m, texels);
     if (!shadow_pages_span(m, span)) return false;
     rect = uint4(max(rect.xy, span.xy), min(rect.zw, span.zw));
     if (any(rect.xy > rect.zw)) return false;
     for (uint y = rect.y; y <= rect.w; y++) {
         for (uint x = rect.x; x <= rect.z; x++) {
-            if (shadow_page_drawn(m, uint2(x, y))) return true;
+            if (shadow_page_drawn(m, uint2(x, y), texels)) return true;
         }
     }
     return false;

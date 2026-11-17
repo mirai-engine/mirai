@@ -9,7 +9,8 @@
 // traced and lit, which the renderer copies in; lists: what the lists of the
 // lights without shadows of the view held (render.Light_List_Stats);
 // raster_need: of the views, the most vertices and triangles one would hold
-// in a round of its raster, which the lists of the raster grow to.
+// in a round of its raster, which the lists of the raster grow to; shadow:
+// what the maps of the shadows of the view drew (render.Shadow_Stats).
 #ifndef MIRAI_CULL_STATS_SLANG
 #define MIRAI_CULL_STATS_SLANG
 #define CULL_LIST_CHUNKS 0u
@@ -19,5 +20,5 @@
 #define CULL_LIST_SHADOW_ENTRIES 4u
 #define CULL_LIST_RASTER_VERTICES 5u
 #define CULL_LIST_RASTER_TRIANGLES 6u
-struct Stats_Block { uint visible_instances; uint visible_triangles; uint culled_instances; uint occluded_instances; uint probes_traced; uint visible_clusters; uint kinds[9]; uint late[3]; uint dropped[7]; uint raster[3]; uint resolved[3]; uint probe_rays[2]; uint lists[4]; uint raster_need[2]; };
+struct Stats_Block { uint visible_instances; uint visible_triangles; uint culled_instances; uint occluded_instances; uint probes_traced; uint visible_clusters; uint kinds[9]; uint late[3]; uint dropped[7]; uint raster[3]; uint resolved[3]; uint probe_rays[2]; uint lists[4]; uint raster_need[2]; uint shadow[10]; };
 #endif
