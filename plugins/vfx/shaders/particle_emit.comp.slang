@@ -161,6 +161,7 @@ void particle_birth(Particle_Emitter e, uint ordinal, out uint birth, out float 
 [shader("compute")]
 [numthreads(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z)]
 void main(uint3 id : SV_DispatchThreadID) {
+    float4 frame_step = particle_frame_step();
     if (params.mode == 3u) {
         uint slot = params.emitter_first + id.x;
         if (slot >= params.emitters) return;
@@ -170,8 +171,8 @@ void main(uint3 id : SV_DispatchThreadID) {
         float4 packed[16];
         particle_parameters(slot, packed);
         // A range that starts gives the births since the clock of its emitter started.
-        float dt = (e.range.w & PARTICLE_FLAG_RESET) != 0u ? max(asfloat(e.data.z), e.step.x) : e.step.x;
-        Mirai_Vfx_Context ctx = particle_program_context(slot, e.step.w, dt);
+        float dt = (e.range.w & PARTICLE_FLAG_RESET) != 0u ? max(asfloat(e.data.z), frame_step.x) : frame_step.x;
+        Mirai_Vfx_Context ctx = particle_program_context(slot, frame_step.w, dt);
         ctx.born = particle_states[slot].born;
         // What the program keeps of the frame first: its births may read it.
         if ((e.range.w & PARTICLE_FLAG_PREPARE) != 0u) mirai_vfx_prepare(e.program.x, packed, ctx);
@@ -193,15 +194,15 @@ void main(uint3 id : SV_DispatchThreadID) {
             uint count = particle_states[slot].births;
             if (id.x >= count) return;
             birth = particle_states[slot].born - count + id.x;
-            age = e.step.x * (1.0 - (float(id.x) + 0.5) / float(count));
+            age = frame_step.x * (1.0 - (float(id.x) + 0.5) / float(count));
         } else {
             if (id.x >= e.range.z) return;
             particle_birth(e, id.x, birth, age);
         }
         // When in the frame it is born, and the step that starts it.
-        float frame_dt = e.step.x, h = e.step.y;
+        float frame_dt = frame_step.x, h = frame_step.y;
         float born = frame_dt - age;
-        uint step = born <= 0.0 ? 0u : min(uint(born / max(h, 1e-6)), uint(e.step.z) - 1u);
+        uint step = born <= 0.0 ? 0u : min(uint(born / max(h, 1e-6)), uint(frame_step.z) - 1u);
         if (step != params.step) return;
         uint seed = hash_u32(e.random.x * 9781u + birth * 26699u);
         float3 position, velocity;
@@ -240,7 +241,7 @@ void main(uint3 id : SV_DispatchThreadID) {
         }
         // Born at `born` in the frame: the rest of its step moves it. Born before the frame, it lived the time before.
         float start = float(step) * h;
-        particle_start(slot, e, seed, birth, position, velocity, born >= 0.0 ? start - born : 0.0, max(-born, 0.0), e.step.w - age);
+        particle_start(slot, e, seed, birth, position, velocity, born >= 0.0 ? start - born : 0.0, max(-born, 0.0), frame_step.w - age);
         return;
     }
     if (params.mode == 2u) {
@@ -248,10 +249,10 @@ void main(uint3 id : SV_DispatchThreadID) {
         Particle_Emitter e = particle_emitters[slot];
         if (e.program.x != params.program) return;
         if ((e.range.w & PARTICLE_FLAG_ACTIVE) == 0u || id.x >= e.frame.z) return;
-        Particle_Birth b = particle_birth_at(e.frame.y + id.x * PARTICLE_BIRTH_BYTES);
-        float frame_dt = e.step.x, h = e.step.y;
+        Particle_Birth b = particle_birth_at(particle_frame_births() + e.frame.y + id.x * PARTICLE_BIRTH_BYTES);
+        float frame_dt = frame_step.x, h = frame_step.y;
         float born = frame_dt - b.age;
-        uint step = born <= 0.0 ? 0u : min(uint(born / max(h, 1e-6)), uint(e.step.z) - 1u);
+        uint step = born <= 0.0 ? 0u : min(uint(born / max(h, 1e-6)), uint(frame_step.z) - 1u);
         if (step != params.step) return;
         float start = float(step) * h;
         uint seed = hash_u32(e.random.x * 7919u + b.number * 104729u);
@@ -261,7 +262,7 @@ void main(uint3 id : SV_DispatchThreadID) {
             float speed = lerp(e.lifetime_speed.z, e.lifetime_speed.w, random01(seed));
             float3 local_velocity = lerp(e.velocity_a.xyz, e.velocity_b.xyz, float3(random01(seed), random01(seed), random01(seed)));
             float3 velocity = normalize(transform_vector(e.world, direction)) * speed + transform_vector(e.world, local_velocity) + b.velocity;
-            if (!particle_start(slot, e, seed, INVALID, b.position + transform_vector(e.world, local), velocity, born >= 0.0 ? start - born : 0.0, max(-born, 0.0), e.step.w - b.age, b.color, b.size, b.values)) break;
+            if (!particle_start(slot, e, seed, INVALID, b.position + transform_vector(e.world, local), velocity, born >= 0.0 ? start - born : 0.0, max(-born, 0.0), frame_step.w - b.age, b.color, b.size, b.values)) break;
         }
         return;
     }
@@ -286,6 +287,6 @@ void main(uint3 id : SV_DispatchThreadID) {
         float speed = lerp(e.lifetime_speed.z, e.lifetime_speed.w, random01(seed));
         float3 local_velocity = lerp(e.velocity_a.xyz, e.velocity_b.xyz, float3(random01(seed), random01(seed), random01(seed)));
         float3 velocity = normalize(transform_vector(e.world, direction)) * speed + transform_vector(e.world, local_velocity);
-        if (!particle_start(slot, e, seed, INVALID, ev.position + offset, velocity + ev.velocity * e.spin.w, 0.0, 0.0, late ? e.step.w : e.step.w - e.step.x + float(params.step) * e.step.y, float4(1.0), 1.0, float4(0.0), ev.ribbon, leader, late)) break;
+        if (!particle_start(slot, e, seed, INVALID, ev.position + offset, velocity + ev.velocity * e.spin.w, 0.0, 0.0, late ? frame_step.w : frame_step.w - frame_step.x + float(params.step) * frame_step.y, float4(1.0), 1.0, float4(0.0), ev.ribbon, leader, late)) break;
     }
 }

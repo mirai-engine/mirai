@@ -64,11 +64,11 @@ Mirai_Vfx_Surface particle_surface_sample(Particle_Resource r, inout uint seed, 
 }
 
 Mirai_Vfx_Surface mirai_vfx_surface_sample(Mirai_Vfx_Context ctx, uint resource, inout uint seed) {
-    return particle_surface_sample(particle_resource(ctx.emitter, 1u + resource), seed, particle_emitters[ctx.emitter].step.x);
+    return particle_surface_sample(particle_resource(ctx.emitter, 1u + resource), seed, particle_frame_step().x);
 }
 
 Mirai_Vfx_Surface mirai_vfx_surface_at(Mirai_Vfx_Context ctx, uint resource, uint triangle, float2 barycentric) {
-    return particle_surface_at(particle_resource(ctx.emitter, 1u + resource), triangle, barycentric, particle_emitters[ctx.emitter].step.x);
+    return particle_surface_at(particle_resource(ctx.emitter, 1u + resource), triangle, barycentric, particle_frame_step().x);
 }
 
 // A point of a bone of the Bones shape: where it is in the world, the way the
@@ -534,7 +534,7 @@ Mirai_Vfx_Birth mirai_vfx_channel_birth(Mirai_Vfx_Context ctx, uint resource, ui
     Particle_Resource r = particle_resource(ctx.emitter, 1u + resource);
     Mirai_Vfx_Birth birth = (Mirai_Vfx_Birth)0;
     if (r.kind != PARTICLE_RESOURCE_CHANNEL || index >= r.count) return birth;
-    Particle_Birth b = particle_birth_at(particle_emitters[ctx.emitter].frame.w + (r.first + index) * PARTICLE_BIRTH_BYTES);
+    Particle_Birth b = particle_birth_at(particle_frame_births() + (r.first + index) * PARTICLE_BIRTH_BYTES);
     birth.position = b.position; birth.velocity = b.velocity; birth.color = b.color;
     birth.size = b.size; birth.count = b.count; birth.values = b.values;
     return birth;
@@ -664,7 +664,7 @@ Particle_Look particle_program_look(uint slot, uint index, Particle p) {
     particle_parameters(slot, packed);
     Mirai_Vfx_Visual visual;
     visual.color = look.color; visual.size = look.size; visual.frame = look.frame; visual.data = look.data; visual.given = look.given; visual.random = look.random;
-    Mirai_Vfx_Context ctx = particle_program_context(slot, particle_emitters[slot].step.w, 0.0);
+    Mirai_Vfx_Context ctx = particle_program_context(slot, particle_frame_step().w, 0.0);
     ctx.particle = index;
     if (mirai_vfx_render(program, packed, particle_attributes(slot, index), ctx, particle_program_value(slot, p), visual)) {
         look.color = visual.color; look.size = max(visual.size, 0.0); look.frame = visual.frame; look.data = visual.data; look.given = visual.given; look.random = saturate(visual.random);
