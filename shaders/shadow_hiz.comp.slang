@@ -37,6 +37,7 @@ void main(uint3 group : SV_GroupID, uint3 lane3 : SV_GroupThreadID) {
     uint drawn = min(pages[SHADOW_WORDS_COUNTS + SHADOW_COUNT_DRAWN], SHADOW_POOL_PAGES);
     if (group.x >= drawn) return;
     uint pool = pages[SHADOW_WORDS_JOBS + group.x] & SHADOW_ENTRY_POOL;
+    if (pool >= SHADOW_POOL_PAGES) return;
     uint2 corner = shadow_pool_corner(pool);
     uint side = SHADOW_PAGE / SHADOW_HIZ_BLOCK;
     uint2 block = uint2(lane % side, lane / side);

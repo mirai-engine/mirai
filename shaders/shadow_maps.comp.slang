@@ -67,6 +67,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     uint instance = id.x, job = id.y;
     if (instance >= params.instances || job >= params.maps) return;
     uint map = shadow_pages[params.list + job];
+    if (map >= SHADOW_SLOTS) return;
     if (params.listed != 0u) {
         // The range of the thread: the last whose first thread is not past it.
         uint low = 0u, high = params.ranges;
