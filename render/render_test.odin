@@ -796,7 +796,7 @@ render_a_frame_draws_no_more_than_its_clusters_and_the_rest_comes_after :: proc(
 	// A bound a sixteenth of that, less than the posts in one page.
 	bound := max(asked / 16, 4)
 	b.budget, b.forget = bound, true
-	frames, most, banded := 0, u32(0), false
+	frames, most, banded, narrowed := 0, u32(0), false, false
 	for frames < 128 {
 		testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
 		frames += 1
@@ -806,8 +806,21 @@ render_a_frame_draws_no_more_than_its_clusters_and_the_rest_comes_after :: proc(
 		for band in bands {banded ||= (band >> abi.SHADOW_BAND_SHIFT) & 0xFF != 0}
 		most = max(most, s.clusters + s.clusters_masked, s.clusters_moving)
 		testing.expectf(t, s.clusters + s.clusters_masked <= bound && s.clusters_moving <= bound, "frame %d: the cache drew %d clusters and the atlas %d past the bound of %d", frames, s.clusters + s.clusters_masked, s.clusters_moving, bound)
+		// A page that waits is foreseen once, and the culls go over the slots of
+		// the pages granted alone: the frames it waits cost no instance of it.
+		args: [9]u32
+		has: [SHADOW_SLOTS]u32
+		testing.expect(t, rhi.buffer_read_slice(r.device, b.pages, u64(abi.SHADOW_WORDS_ARGS + abi.SHADOW_ARGS_DISPATCH) * 4, args[:]))
+		testing.expect(t, rhi.buffer_read_slice(r.device, b.pages, u64(abi.SHADOW_WORDS_HAS) * 4, has[:]))
+		listed := 0
+		for h in has {if h != 0 {listed += 1}}
+		if frames > 2 && waiting > 0 {
+			testing.expectf(t, args[7] == 0, "frame %d: the cache foresees the pages of %d slots again", frames, args[7])
+			narrowed ||= int(args[1]) < listed
+		}
 		if waiting == 0 {break}
 	}
+	testing.expect(t, narrowed, "the culls of a frame go over the slots of the pages it grants")
 	// Each frame draws near its bound but for what its bands and estimates leave.
 	given := 4 * (int(asked) + int(bound) - 1) / int(bound) + 4
 	testing.expectf(t, asked > 16 * bound - 16 && most > 0 && banded && frames <= given, "%d clusters asked for under a bound of %d took %d frames, the rule gives %d (a page drawn in bands: %v)", asked, bound, frames, given, banded)
