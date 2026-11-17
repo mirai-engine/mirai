@@ -54,7 +54,7 @@ Accel    :: distinct base.Handle
 MAX_FRAMES_IN_FLIGHT :: 2
 MAX_LABEL_DEPTH :: 16 // labels open at once; deeper ones are not kept
 PIPELINE_NAME_BYTES :: 64 // of the name a pipeline keeps; past them it is cut
-MAX_BINDING_SLOTS    :: 36 // Shared texture slots precede the texture table.
+MAX_BINDING_SLOTS    :: 37 // Shared texture slots precede the texture table.
 MAX_BUFFER_BINDING_SLOTS :: 30 // Metal buffer index 30, its last, holds the texture table.
 MAX_SAMPLER_BINDING_SLOTS :: 16
 MAX_COLOR_TARGETS    :: 8

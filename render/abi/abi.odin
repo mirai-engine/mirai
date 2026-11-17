@@ -50,6 +50,8 @@ SLOT_DISTANCE         :: 33
 SLOT_IRRADIANCE       :: 34
 // The table of the pages of the maps of the shadows of the view.
 SLOT_SHADOW_TABLE     :: 35
+// The lists of the lights that cast no shadows of the view (render/light_lists.odin).
+SLOT_LIGHT_LISTS      :: 36
 SLOT_DRAW             :: SLOT_PASS9
 
 // The finest level the passes that shade surfaces sample of each texture
@@ -170,6 +172,11 @@ LIGHT_TREE_DEPTH           :: 48
 LIGHT_CUT_MAX              :: 32
 // The rows of the grid of the lights a light keeps for a pixel to weigh it by.
 LIGHT_WEIGHT_ROWS          :: 2
+// The lists of the lights that cast no shadows (render/light_lists.odin): the
+// pixels a side of a screen tile, which are the texels across the block of a
+// list, and the words of a list, its count and its entries, a texel each.
+LIGHT_LIST_TILE            :: 8
+LIGHT_LIST_WORDS           :: 128
 
 // The maps of the shadows of a view. The buffer of the maps (uint4 rows): a
 // word for each light, four to a row, 0 for a light without maps, else its

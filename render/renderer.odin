@@ -285,6 +285,7 @@ Stats :: struct {
 	generated:         bool, // the frame drew an image the window shows before its own (frame generation)
 	shadow_movers:          u32, // of the last frame: the movers the maps drew, which their caches leave out
 	shadow_marked:          u32, // of the last frame: the views whose points marked the pages of the maps they read
+	light_lists:            Light_List_Stats, // of the frame two frames ago: the lists of the lights without shadows of its last view
 	ui_vertices_dropped:    u32, // of the last frame: UI vertices beyond the capacity
 	ui_shapes_dropped:      u32,
 	ui_layers_dropped:      u32,
@@ -300,6 +301,7 @@ Stats :: struct {
 Pipeline_Id :: enum {
 	Postprocess_Copy, Postprocess_Hdr, Postprocess_Ldr, Cull, Cull_Clusters, Cull_Bins, Tlas_Batches,
 	Light_Grid_Count, Light_Grid_Scan, Light_Grid_Fill, Light_Grid_Weights, // the passes of the grid of the lights (light_grid.comp)
+	Light_Lists, // the lists of the lights without shadows of the tiles of a view (light_lists.comp)
 	Direct_Maps, Direct_Rays, Direct_Samples, Direct_Points, Direct_Spread, Direct_Filter,
 	Ddgi_Trace, Ddgi_Irradiance, Ddgi_Distance, Ddgi_Keep,
 	Ddgi_Relocate, Ddgi_Select, Ddgi_Touch, Ddgi_Mark, Contact, Contact_Light, Contact_Pixels, Composite, Taa, Hiz,
@@ -380,6 +382,7 @@ Frame_Targets :: struct {
 		direct_sun_points:       rhi.Texture, // the same of the part of the sun
 		direct_spread:           rhi.Texture, // those parts spread along the rows (direct_spread.comp)
 		direct_marks:            rhi.Texture, // 1 where a sample of the direct light met what changed, for TAA
+		light_lists:             rhi.Texture, // the lists of the lights without shadows of the tiles of the view, made with the first of them (light_lists.odin)
 	},
 }
 
@@ -914,6 +917,7 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	compute(list, r, .Light_Grid_Scan, .Light_Grid_Scan_Comp)
 	compute(list, r, .Light_Grid_Fill, .Light_Grid_Fill_Comp)
 	compute(list, r, .Light_Grid_Weights, .Light_Grid_Weights_Comp)
+	compute(list, r, .Light_Lists, .Light_Lists_Comp)
 	compute(list, r, .Direct_Maps, .Direct_Maps_Comp)
 	traced(list, r, .Direct_Rays, .Direct_Rays_Comp, .Direct_Rays_Hw_Comp)
 	traced(list, r, .Direct_Samples, .Direct_Samples_Comp, .Direct_Samples_Hw_Comp)
