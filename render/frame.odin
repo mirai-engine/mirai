@@ -164,11 +164,6 @@ read_stats :: proc(r: ^Renderer, slot: int) {
 		r.stats.resolved_pixels, r.stats.resolve_helpers, r.stats.resolve_quads_again = stats.resolved[0], stats.resolved[1], stats.resolved[2]
 		r.stats.light_lists = stats.lists
 		r.stats.shadow = stats.shadow
-		// What a page of each level of the sun costs: of the last frame that drew
-		// one whole, and no less than most of what the frames before found.
-		for pages, level in stats.shadow.level_pages {
-			if pages > 0 {r.shadow_cost[level] = max(f32(stats.shadow.level_clusters[level]) / f32(pages), 0.75 * r.shadow_cost[level])}
-		}
 	}
 	r.stats.timings, _, _ = rhi.frame_timings(r.device)
 	total: f32

@@ -239,7 +239,8 @@ SHADOW_HIZ_BLOCK           :: u32(8)
 SHADOW_HIZ_MIPS            :: 5
 // The words of the buffer of the pages of a view (render.Shadow_Raster.pages):
 // the slot and entry each page of the pool holds + 1, the frame it was last
-// read in, and a bit for each entry of each slot (SHADOW_MASK_WORDS a slot)
+// read in, how much of it the cache holds while it is drawn in bands over
+// frames (SHADOW_BAND_*), and a bit for each entry of each slot (SHADOW_MASK_WORDS a slot)
 // that a pass after the maps read this frame, for the next; then what each
 // frame writes again: a bit for each entry that points read, where what stays
 // changed, where what moves was or is, asked for a page of the pool, asked for
@@ -248,7 +249,11 @@ SHADOW_HIZ_MIPS            :: 5
 // whether it has one, and four for each mip of each, the pages of it they
 // span; four for each page of the pool the cache draws, the texels of it it
 // draws (SHADOW_PAGE less its first column and row, then its last + 1: where
-// what stays changed in a part of a page it held, that part alone);
+// what stays changed in a part of a page it held, that part alone, or the
+// band of it drawn this frame); two for each page of the pool, the clusters
+// the cache and the atlas would draw into it this frame, as the cull by
+// instance foresees them, with SHADOW_COST_OVER and SHADOW_COST_WAITS where
+// it is not drawn whole this frame (render.SHADOW_FRAME_CLUSTERS);
 // the counts (SHADOW_COUNT_*) and the arguments of the dispatches and
 // draws (SHADOW_ARGS_*); then the slots of each of the last three, the pages
 // the cache draws and the atlas composes, the rank of the first request of
@@ -261,7 +266,8 @@ SHADOW_MASK_WORDS          :: (SHADOW_SLOT_ENTRIES + 31) / 32
 SHADOW_MASKS               :: SHADOW_SLOTS * SHADOW_MASK_WORDS
 SHADOW_WORDS_OWNER         :: 0
 SHADOW_WORDS_AGE           :: SHADOW_WORDS_OWNER + SHADOW_POOL_PAGES
-SHADOW_WORDS_LATE          :: SHADOW_WORDS_AGE + SHADOW_POOL_PAGES
+SHADOW_WORDS_BAND          :: SHADOW_WORDS_AGE + SHADOW_POOL_PAGES
+SHADOW_WORDS_LATE          :: SHADOW_WORDS_BAND + SHADOW_POOL_PAGES
 SHADOW_WORDS_NEEDED        :: SHADOW_WORDS_LATE + SHADOW_MASKS
 SHADOW_WORDS_STALE         :: SHADOW_WORDS_NEEDED + SHADOW_MASKS
 SHADOW_WORDS_MOVED         :: SHADOW_WORDS_STALE + SHADOW_MASKS
@@ -273,7 +279,8 @@ SHADOW_WORDS_READY         :: SHADOW_WORDS_COMPOSE + SHADOW_MASKS
 SHADOW_WORDS_HAS           :: SHADOW_WORDS_READY + SHADOW_MASKS
 SHADOW_WORDS_BOUNDS        :: SHADOW_WORDS_HAS + 3 * SHADOW_SLOTS
 SHADOW_WORDS_PART          :: SHADOW_WORDS_BOUNDS + 3 * SHADOW_SLOTS * SHADOW_MIPS * 4
-SHADOW_WORDS_COUNTS        :: SHADOW_WORDS_PART + 4 * SHADOW_POOL_PAGES
+SHADOW_WORDS_COST          :: SHADOW_WORDS_PART + 4 * SHADOW_POOL_PAGES
+SHADOW_WORDS_COUNTS        :: SHADOW_WORDS_COST + 2 * SHADOW_POOL_PAGES
 SHADOW_WORDS_ARGS          :: SHADOW_WORDS_COUNTS + 16
 SHADOW_WORDS_SLOTS         :: SHADOW_WORDS_ARGS + 23
 SHADOW_WORDS_JOBS          :: SHADOW_WORDS_SLOTS + 3 * SHADOW_SLOTS
@@ -281,7 +288,7 @@ SHADOW_WORDS_RANK          :: SHADOW_WORDS_JOBS + 2 * SHADOW_POOL_PAGES
 SHADOW_WORDS_GROUPS        :: SHADOW_WORDS_RANK + SHADOW_RANK_WORDS
 SHADOW_WORDS_VICTIMS       :: SHADOW_WORDS_GROUPS + SHADOW_RANK_GROUPS
 SHADOW_WORDS_STEPS         :: SHADOW_WORDS_VICTIMS + SHADOW_POOL_PAGES
-SHADOW_STEPS               :: 10
+SHADOW_STEPS               :: 12
 SHADOW_STEP_NEW            :: SHADOW_WORDS_STEPS + 3 * SHADOW_STEPS
 SHADOW_STEP_RUNS           :: SHADOW_STEP_NEW + 1
 SHADOW_WORDS               :: SHADOW_STEP_RUNS + 1
@@ -301,8 +308,8 @@ SHADOW_RANK_GROUPS         :: (SHADOW_RANK_WORDS + SHADOW_RANK_GROUP - 1) / SHAD
 // The counts: pages the cache draws, the atlas composes, asked for, of the
 // pool that can be given (free, then those no point read, the oldest read
 // first), of them free, asked for and left out; slots with pages the cache
-// draws, the atlas composes, the pool holds ready; pages asked for that wait
-// for the frames after, and the rank of the first of the sun that does.
+// draws, the atlas composes, the pool holds ready; pages the cache or the
+// atlas did not draw whole this frame, which wait for the frames after.
 SHADOW_COUNT_DRAWN         :: 0
 SHADOW_COUNT_COMPOSED      :: 1
 SHADOW_COUNT_REQUESTS      :: 2
@@ -311,7 +318,16 @@ SHADOW_COUNT_FREE          :: 4
 SHADOW_COUNT_LEFT          :: 5
 SHADOW_COUNT_SLOTS         :: 6 // three
 SHADOW_COUNT_WAITING       :: 9
-SHADOW_COUNT_CUT           :: 10
+// Of a page of the pool drawn in bands (SHADOW_WORDS_BAND): the rows of it the
+// cache holds from its top, from bit SHADOW_BAND_SHIFT how many times the page
+// was halved for its band, SHADOW_PAGE >> that rows each, and SHADOW_BAND_STUCK
+// where a draw had no room for its one row, which then waits behind the others.
+SHADOW_BAND_SHIFT          :: 8
+SHADOW_BAND_STUCK          :: u32(1) << 16
+// Of a word of SHADOW_WORDS_COST: a draw of the round had no room for a
+// cluster of the page, or the page waits for a frame with room for it.
+SHADOW_COST_OVER           :: u32(1) << 31
+SHADOW_COST_WAITS          :: u32(1) << 30
 // The arguments: the dispatches of the cull of the cache, of the atlas and of
 // the glass, three words each, then the draws of the pages the cache clears
 // and the atlas copies from it, four each, and the dispatch of the farthest

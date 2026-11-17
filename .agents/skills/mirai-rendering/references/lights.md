@@ -250,11 +250,8 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   until another needs it: free pages first, then those unread the longest; one read within a
   cycle of the jitter of the view gives its place only to a page of a level that ranks sooner,
   so that where the pool is full a page the points of one frame miss and those of the next read
-  is not drawn again. While a view moves, a frame gives the pages of the sun the clusters of a
-  frame draw (`SHADOW_FRAME_CLUSTERS`, by what a page of each level cost the last time one was
-  drawn), in the same order, and the others wait for the frames after; a view that stays is
-  given all it asks for in its next frame. What stays changing under it still marks it stale, so a
-  page read is always of this frame. Where a page is not drawn
+  is not drawn again. What stays changing under a page still marks it stale, so a page read is
+  always of this frame. Where a page is not drawn
   its entry names the nearest coarser level or mip drawn there (`SHADOW_ENTRY_COARSER`), which its
   points read; where none is, they trace. A point looks up the entries of the 2x2 pages around
   its taps once (`shadow_near`), which its taps, its hard shadow and its tint read. A pass after
@@ -264,11 +261,23 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   pages that come in; along the light it keeps how far it reaches towards the sun while the scene
   stays within it. A tap past the side of a face of the cube of a light reads the face its
   direction falls on (`shadow_beside`).
+- **What a frame draws at most.** The draws of the cache, those of the atlas and those of the
+  tint each take at most `SHADOW_FRAME_CLUSTERS` clusters in a frame of any view, still, moving or
+  first: what the least GPU the engine runs on draws into a depth map, masked, in a few
+  milliseconds, so that no frame waits long on the maps and no draw nears the time a driver gives
+  one before it resets the device, whatever the scene. The cull by instance foresees what each
+  page takes; before the cull by cluster the pages are granted, in the order they are given,
+  while they fit with those before (the step `Grant`), and a page of the cache that alone passes
+  the bound is drawn in bands of its rows over frames, halved until one fits
+  (`SHADOW_WORDS_BAND`). A draw takes no cluster past the bound; a page it left one of, one that
+  waits and one whose band is not its last are not ready that frame (`Settle`): their points read
+  the nearest coarser page drawn, or trace, and the steps run again the next frame.
 - **A still view.** While its camera, size, parameters and lights stay and no caster changes
   (`Shadow_Seen`), a view keeps the marks and the table of the frames before: its points mark the
   pages they read only for a cycle of its jitter after a change, the marks add up, and the steps
   of the pages run (a gate writes their arguments) only where a point or a pass after the maps
-  marked a page not drawn nor left out of the pool (`SHADOW_STEP_NEW`). A still frame marks and
+  marked a page not drawn nor left out of the pool, or a page waits for a frame with room for it
+  (`SHADOW_STEP_NEW`). A still frame marks and
   gives no page (`Stats.shadow_marked`, `SHADOW_STEP_RUNS`).
 - **What a frame draws.** The cost follows what changed. The cache of the view
   (`Shadow_Raster.cache`) holds what stays, page by page: a page draws there again only where it is
@@ -354,7 +363,7 @@ Tests: the shadow ones of `render/render_test.odin` (`render_sun_shadow_is_ray_t
 `render_shadow_maps_follow_what_moves_in_its_frame`, `render_a_swaying_batch_shades_where_it_is`,
 `render_a_page_first_read_is_drawn_in_its_frame`,
 `render_a_full_pool_keeps_the_pages_of_a_jitter_cycle`,
-`render_a_view_that_moves_is_given_its_pages_over_frames`,
+`render_a_frame_draws_no_more_than_its_clusters_and_the_rest_comes_after`,
 `render_a_wide_search_asks_for_coarser_pages_not_more_of_the_finest`,
 `render_a_turning_sun_gives_what_whole_maps_give`
 and `render_an_origin_jump_gives_what_whole_maps_give`, and for the lights and the sun without

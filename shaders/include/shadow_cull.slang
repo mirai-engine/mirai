@@ -24,8 +24,10 @@
 // span: the round whose pages span SHADOW_WORDS_BOUNDS for this one (that of
 // the atlas for the glass drawn again only where it composed); part: 1 while
 // the round draws of each page the texels SHADOW_WORDS_PART names alone (the
-// cache, of a page it held the part where what stays changed).
-struct Params_Block { uint instances; uint maps; uint rows; uint glass; uint chunk_capacity; uint entry_capacity; uint list; uint moving; uint movers; uint listed; uint ranges; uint masks; uint plan; uint span; uint part; uint pad2; };
+// cache, of a page it held the part where what stays changed, or the band of
+// a page drawn over frames); bound: the clusters the draws of the round take
+// in a frame (render.SHADOW_FRAME_CLUSTERS).
+struct Params_Block { uint instances; uint maps; uint rows; uint glass; uint chunk_capacity; uint entry_capacity; uint list; uint moving; uint movers; uint listed; uint ranges; uint masks; uint plan; uint span; uint part; uint bound; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 // The draws: of the clusters that hide whole, of those of masked materials,
 // and of those of glass for the tint and the nearest glass.
@@ -35,6 +37,7 @@ struct Params_Block { uint instances; uint maps; uint rows; uint glass; uint chu
 #define SHADOW_DRAW_COUNT 1u // the instances of draw d: word d * 4 + 1
 #define SHADOW_CLUSTER_DISPATCH 12u
 #define SHADOW_CHUNK_COUNT 15u
+#define SHADOW_TAKEN 16u
 // Of a chunk, over its map and the mip of it from bit SHADOW_CHUNK_MIP: it
 // draws the depth, and the glass; its instance is drawn at rest (a batch
 // that sways less than a texel of the map).
@@ -52,8 +55,17 @@ uint shadow_entry(uint draw, uint slot) { return (draw == SHADOW_DRAW_OPAQUE ? 0
 uint shadow_word(StructuredBuffer<uint4> data, uint word) { return data[word >> 2u][word & 3u]; }
 
 // The buffer of the pages of the view (render.Shadow_Raster.pages,
-// shadow_pages.comp): the slots of a round and the pages it draws.
+// shadow_pages.comp): the slots of a round and the pages it draws; the cull
+// writes what it foresees and what found no room (SHADOW_WORDS_COST).
+#ifdef SHADOW_PAGES_WRITTEN
+[[vk::binding(SHADOW_PAGES_SLOT, 0)]] RWStructuredBuffer<uint> shadow_pages : register(MIRAI_REGISTER(u, SHADOW_PAGES_SLOT), space0);
+#else
 [[vk::binding(SHADOW_PAGES_SLOT, 0)]] StructuredBuffer<uint> shadow_pages : register(MIRAI_REGISTER(t, SHADOW_PAGES_SLOT), space0);
+#endif
+
+// The word of what the cache (moving 0) or the atlas (moving 1) draws into a
+// page of the pool this frame (SHADOW_WORDS_COST).
+uint shadow_cost_word(uint pool) { return SHADOW_WORDS_COST + min(params.moving, 1u) * SHADOW_POOL_PAGES + pool; }
 
 // Whether the round draws a page of a map at its mip, a bit for each entry.
 bool shadow_page_drawn(Shadow_Map m, uint2 page) {
