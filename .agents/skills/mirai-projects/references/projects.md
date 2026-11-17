@@ -563,8 +563,8 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
   the first build. `.deps` and the caches (engine binaries, C libraries, shader stages) are those
   of the main checkout ([dependencies](build.md#dependencies-and-worktrees)), and so is the private
   compressor in its `ext/` ([compressor](build.md#compressor)). Its engine shaders are generated
-  by its own tool, which its launcher builds from its sources: the tool of another checkout
-  writes the constants the shaders share with the CPU as its own sources have them.
+  by its own tool, which its launcher builds from its sources, and its test worlds by that tool
+  when it checks or tests: the tool of another checkout generates as its own sources say.
 - `mirai doctor [project]` checks the machine and the project, says how to fix each finding and
   ends with 1 if there are errors. It requires `git config core.symlinks` and `.claude/skills` as a
   symbolic link to `.agents/skills`: without it, the skills do not reach the agents (on Windows
