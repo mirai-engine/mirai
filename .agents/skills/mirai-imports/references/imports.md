@@ -318,8 +318,9 @@ that was just cloned, a worktree that was just made or a branch that changed a s
   pack of prompts), its settings, the versions of the importer and of what it writes and the block
   encoders of the program, with textures Final. An import of documents alone (clips of a glTF
   without meshes) leaves instead an empty stamp named the same way (`importer.STAMP_EXTENSION`).
-  A sync with `fast_textures` (`--fast`, what a build that does not cook runs) also takes outputs
-  built Fast as current and imports with Fast textures; Final stays current there. One notion of
+  A sync or an import with `fast_textures` (what `mirai import` and a build that does not cook
+  run; `--final` turns it off) also takes outputs built Fast as current and imports with Fast
+  textures; Final stays current there. One notion of
   current, the bytes: a source that only moved is not imported, and one whose `.bin` or image
   changed is. The hash of a file whose size and modification time are those the cache of the root
   keeps for it (`importer.Source_Hashes`, in `.mirai/cache/sources`) is taken from there, so a
@@ -396,11 +397,11 @@ shares it.
   there, its levels are written with the id and the `Import_Info` of this import; if not, it is
   built and stored. The same image from another source, in another folder or with the settings of
   before is not compressed again. `rebuild` does not read the cache and rewrites it.
-- With `Import_Options.fast_textures` (the editor's imports) a texture of the cache takes the Final
-  the texture cache keeps for its key; without one it is built Fast under the key of Fast settings,
-  and a texture kept Fast is written again as soon as the cache holds its Final, or by the
-  [sync](#sync) of a build that cooks. `Import_Info.settings_hash` says which of the two the file
-  holds.
+- With `Import_Options.fast_textures` (the editor's imports and `mirai import`) a texture of the
+  cache takes the Final the texture cache keeps for its key; without one it is built Fast under the
+  key of Fast settings, and a texture kept Fast is written again as soon as the cache holds its
+  Final, or by the [sync](#sync) of a build that cooks. `Import_Info.settings_hash` says which of
+  the two the file holds.
 - [Cooking](../../mirai-projects/references/build.md#asset-cooking) stores there the blocks of
   an RGBA8 texture by `textures.cache_key_blocks`.
 - A key names what made the blocks (`textures.encoders_id`), so checkouts with other encoders
