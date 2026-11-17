@@ -63,7 +63,7 @@ void shadow_foresee(Shadow_Map m, float4 texels, uint clusters) {
             float share = saturate(max(within.x, 1.0) * max(within.y, 1.0) / (size.x * size.y));
             // Far past any bound it counts no more, below the flags of the word.
             uint word = shadow_cost_word(pool);
-            if (shadow_pages[word] < 0x10000000u) InterlockedAdd(shadow_pages[word], min(max(uint(ceil(float(clusters) * share)), 1u), 0x01000000u));
+            if (shadow_pages[word] < SHADOW_COST_CLUSTERS / 2u) InterlockedAdd(shadow_pages[word], min(max(uint(ceil(float(clusters) * share)), 1u), SHADOW_COST_CLUSTERS / 2u));
         }
     }
 }
