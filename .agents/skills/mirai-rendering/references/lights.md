@@ -232,7 +232,12 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   points of the view read exist. `shadow_mark.comp` marks, for each point of the direct light, the
   pages the taps around it reach in the level of the sun and the mip of each face of a light with
   one or two texels to a pixel of the view there (`sun_pick`, `light_pick`; a face no finer than
-  its widest penumbra over the search of the taps); over the top of each octave the point blends
+  its widest penumbra over the search of the taps). Of its own level or mip a point marks the
+  pages of the taps nearest it (`SHADOW_SEARCH_NEAR`) and of the ellipse whose lit share it takes;
+  where the search of its blockers reaches farther, the pages of the level or mip as many times
+  coarser, which its far taps read: a blocker that far casts a penumbra as wide, so a tall scene
+  asks for hardly more pages of the finest levels than a low one. Over the top of each octave the
+  point blends
   into the next level or mip, whose pages it marks too, and its texel-based constants grow to meet
   those of the next. The first level of the sun is a metre wide, each after it twice as wide, and
   the grid of the pages and texels of every level lies on the world, not on the origin of the frame.
@@ -350,6 +355,7 @@ Tests: the shadow ones of `render/render_test.odin` (`render_sun_shadow_is_ray_t
 `render_a_page_first_read_is_drawn_in_its_frame`,
 `render_a_full_pool_keeps_the_pages_of_a_jitter_cycle`,
 `render_a_view_that_moves_is_given_its_pages_over_frames`,
+`render_a_wide_search_asks_for_coarser_pages_not_more_of_the_finest`,
 `render_a_turning_sun_gives_what_whole_maps_give`
 and `render_an_origin_jump_gives_what_whole_maps_give`, and for the lights and the sun without
 shadows `render_a_light_without_shadows_lights_through_what_holds_it`, and for a mesh without

@@ -3,7 +3,10 @@
 // view read (render.shadow_maps_pass), before they are drawn: for each point
 // (direct_maps.comp), the level of the sun and the map of each light of its
 // cell that hold it, and every page the taps around it reach there
-// (shadow_map_taps), a bit for each entry of the table of its slot. A still
+// (shadow_map_taps), a bit for each entry of the table of its slot: of its
+// own level or mip those of the taps nearest it and of the share of it that
+// is lit, and of a coarser one those of the search of its blockers where that
+// reaches farther (SHADOW_SEARCH_NEAR). A still
 // view keeps the marks of the frames before, and a page newly marked that is
 // not drawn asks the steps of the pages to run (SHADOW_STEP_NEW).
 #define GBUFFER_NORMAL SLOT_PASS0
@@ -27,15 +30,10 @@ struct Params_Block { uint pad0; uint samples; float sun_radius; uint scale; uin
 #include "shadow_maps.slang"
 #include "direct_grid.slang"
 
-// The pages of map m the taps around a point read: where they go does not
-// depend on the way to the light, which shadow_map_seen takes only to tell a
-// point that turns from it (here, as one that faces it).
-void shadow_mark(Shadow_Map m, bool sun, float3 position, float3 n, float radius, float across, float grow) {
-    Shadow_Taps t;
-    if (!shadow_map_taps(m, sun, n, position, n, radius, across, grow, t)) return;
-    float reach = shadow_taps_reach(t);
+// Marks the pages of map m the texels within reach of a texel lie in.
+void shadow_mark_pages(Shadow_Map m, float2 texel, float2 reach) {
     int last = int(m.rect.z) - 1;
-    int2 low = clamp(int2(floor(t.texel - reach)), 0, last), high = clamp(int2(floor(t.texel + reach)), 0, last);
+    int2 low = clamp(int2(floor(texel - reach)), 0, last), high = clamp(int2(floor(texel + reach)), 0, last);
     uint2 first = uint2(low) / SHADOW_PAGE, end = uint2(high) / SHADOW_PAGE;
     for (uint y = first.y; y <= end.y; y++) {
         for (uint x = first.x; x <= end.x; x++) {
@@ -47,6 +45,32 @@ void shadow_mark(Shadow_Map m, bool sun, float3 position, float3 n, float radius
             if ((before & bit) == 0u && shadow_entry_asks(shadow_table_entry(m.rect.x, entry))) pages[SHADOW_STEP_NEW] = 1u;
         }
     }
+}
+
+// The pages of map m the taps around a point read: where they go does not
+// depend on the way to the light, which shadow_map_seen takes only to tell a
+// point that turns from it (here, as one that faces it). Where the search of
+// its blockers reaches past SHADOW_SEARCH_NEAR, the pages of the level of
+// the sun or the mip as many times coarser, which its far taps read; of its
+// own, those of the taps nearest it and of the ellipse whose lit share it
+// takes, which no coarser texel tells across its narrow side.
+void shadow_mark(Shadow_Map m, bool sun, float3 position, float3 n, float radius, float across, float grow) {
+    Shadow_Taps t;
+    if (!shadow_map_taps(m, sun, n, position, n, radius, across, grow, t)) return;
+    float reach = shadow_taps_reach(t), near = SHADOW_SEARCH_NEAR * grow;
+    uint coarsest = sun ? sun_levels() - 1u - min(m.rect.x, sun_levels() - 1u) : SHADOW_MIPS - 1u - shadow_rect_mip(m.rect);
+    uint coarser = min(uint(ceil(log2(max((reach - 2.0) / near, 1.0)))), coarsest);
+    int2 at = int2(floor(t.texel));
+    Shadow_Map wide = m;
+    if (coarser > 0u) wide = shadow_map_coarser(m, coarser, at);
+    if (coarser == 0u || any(at < 0) || any(at >= int(wide.rect.z))) {
+        shadow_mark_pages(m, t.texel, float2(reach, reach));
+        return;
+    }
+    float2 lit = float2(t.covered, max(SHADOW_WIDE_COVER * 0.5 * across / t.step, 0.5));
+    shadow_mark_pages(m, t.texel, max(float2(near, near), abs(t.axis) * lit.x + abs(t.axis.yx) * lit.y) + 2.0);
+    float wide_reach = (reach - 2.0) / float(1u << coarser) + 2.0;
+    shadow_mark_pages(wide, float2(at) + 0.5, float2(wide_reach, wide_reach));
 }
 
 [shader("compute")]
