@@ -596,6 +596,7 @@ gpu_material_values :: proc(r: ^Renderer, m: Material_Desc) -> Gpu_Material_Row 
 	result.anisotropy = {amount = clamp(m.anisotropy.amount, 0, 1), rotation = {math.cos(m.anisotropy.rotation), math.sin(m.anisotropy.rotation)}}
 	result.diffuse_transmission = {color = linalg.clamp(d.color, 0, 1), weight = clamp(d.weight, 0, 1)}
 	for texture, kind in m.textures {result.textures[kind] = texture_index(r, texture)}
+	if !material_mask_own(m) {result.textures[.Mask] = result.textures[.Base_Color]}
 	// The usual packing of glTF: occlusion in the red of the metallic-roughness
 	// texture. Placed the same way, the shader reads it from that sample.
 	maps := m.maps
@@ -606,10 +607,16 @@ gpu_material_values :: proc(r: ^Renderer, m: Material_Desc) -> Gpu_Material_Row 
 	return result
 }
 
+// Whether a material has a mask map of its own; without one its mask is its
+// base color map, placed the same way.
+@(private = "file")
+material_mask_own :: proc "contextless" (m: Material_Desc) -> bool {return m.textures[.Mask] != 0 || m.maps.mask.texture != {}}
+
 @(private)
 gpu_material :: proc(r: ^Renderer, m: Material_Desc) -> Gpu_Material_Row {
 	result := gpu_material_values(r, m)
 	maps := m.maps
+	if !material_mask_own(m) {maps.mask = maps.base_color}
 	for transform, kind in asset.material_maps(&maps) {
 		// rotation * (scale * uv) + offset, as one matrix and one offset.
 		sine, cosine := math.sin(transform.rotation), math.cos(transform.rotation)

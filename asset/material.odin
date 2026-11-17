@@ -28,14 +28,14 @@ import "mirai:std/serial"
 // A source gives the values of the standard model and of the parameters of
 // its program; overlays and hidden names are always the material's own.
 
-MATERIAL_VERSION :: 4
+MATERIAL_VERSION :: 5
 MATERIAL_MAX_PARAMETERS :: 32
 MATERIAL_MAX_OVERLAYS :: 4
 MATERIAL_NAME_BYTES :: 64
 
 Alpha_Mode :: enum u8 {
     Opaque, // the alpha of the material is ignored
-    Mask,   // points whose alpha is below alpha_cutoff are holes, for the camera and for rays
+    Mask,   // points whose mask (maps.mask) is below alpha_cutoff are holes, for the camera, the shadows and rays
     Blend,  // drawn over the scene after it is lit
 }
 
@@ -66,13 +66,16 @@ Material_Maps :: struct {
     anisotropy:Material_Map,         // rg a direction of tangent space from -1 to 1, turned by anisotropy.rotation; b multiplies anisotropy.amount
     diffuse_transmission:Material_Map,       // a multiplies diffuse_transmission.weight
     diffuse_transmission_color:Material_Map, // sRGB; multiplies diffuse_transmission.color
+    // a times opacity: the coverage of a masked material, against alpha_cutoff;
+    // without a texture of its own, the base_color map. A program never decides it.
+    mask:Material_Map,
 }
 
 // The maps of Material_Maps by kind, in the order of its fields.
 Material_Map_Kind :: enum u8 {
     Base_Color,Metallic_Roughness,Normal,Emission,Occlusion,Specular,Specular_Color,
     Coat,Coat_Roughness,Coat_Normal,Fuzz_Color,Fuzz_Roughness,Anisotropy,
-    Diffuse_Transmission,Diffuse_Transmission_Color,
+    Diffuse_Transmission,Diffuse_Transmission_Color,Mask,
 }
 
 material_maps :: proc "contextless" (maps:^Material_Maps) -> ^[Material_Map_Kind]Material_Map {
@@ -93,6 +96,7 @@ material_maps :: proc "contextless" (maps:^Material_Maps) -> ^[Material_Map_Kind
 #assert(offset_of(Material_Maps,anisotropy)==uintptr(Material_Map_Kind.Anisotropy)*size_of(Material_Map))
 #assert(offset_of(Material_Maps,diffuse_transmission)==uintptr(Material_Map_Kind.Diffuse_Transmission)*size_of(Material_Map))
 #assert(offset_of(Material_Maps,diffuse_transmission_color)==uintptr(Material_Map_Kind.Diffuse_Transmission_Color)*size_of(Material_Map))
+#assert(offset_of(Material_Maps,mask)==uintptr(Material_Map_Kind.Mask)*size_of(Material_Map))
 
 // OpenPBR coat: a clear dielectric layer over the base. It reflects with a
 // GGX lobe of its own, filters the base through its color and darkens it as
@@ -214,7 +218,7 @@ MATERIAL_DEFAULTS :: Material_Info{
     maps={
         MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,
         MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,
-        MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,
+        MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,
     },
 }
 

@@ -43,13 +43,13 @@ or interleave its own passes.
      cluster that finds no room is listed and drawn in the round after, up to `RASTER_ROUNDS`
      in a view; the lists then ask for what the view holds in one: what its clusters wrote and
      its last round left out, by what of each shows (`Stats_Block.raster_need`).
-   - Each round rasters its triangles into the visibility target (`visibility.slang`: the
-     entry of the visible list and the triangle, one word a pixel) with the hardware depth: one
-     indexed indirect draw per raster bin, whose fragment reads the word of its primitive. The
-     untested bins write it alone, without discard, so hidden fragments are rejected before
-     they run; the tested ones, drawn nearest first, decide a pixel by the fade and the alpha
-     alone (that of a program from `surface_coverage.slang`), without texture feedback. Blend:
-     not drawn here. The same on Vulkan and Metal, without mesh shaders or 64-bit atomics.
+   - Each round rasters its triangles into the visibility target (`visibility.slang`: the entry of
+     the visible list and the triangle, one word a pixel) with the hardware depth: one indexed
+     indirect draw per raster bin, whose fragment reads the word of its primitive. The untested bins
+     write it alone, without discard, so hidden fragments are rejected before they run; the tested
+     ones, drawn nearest first, decide a pixel by the fade and the [mask map](materials.md#alpha)
+     alone (their vertices give the uv it reads and the row), without texture feedback. Blend: not
+     drawn here. The same on Vulkan and Metal, without mesh shaders or 64-bit atomics.
    - After both phases, `vis_classify.frag` gives each pixel the depth of its Surface program
      (0 for the rows) from the visible list, in a 16-bit target, and the resolve of the rows draws a
      triangle over the view, and that of each program the cull saw the rectangle its visible

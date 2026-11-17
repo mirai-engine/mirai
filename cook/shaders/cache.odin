@@ -231,11 +231,9 @@ import_module :: proc(line:string) -> (name:string,ok:bool) {
 // rather than risk reusing output whose dependency the scan cannot resolve.
 // sources: what the generation has read already; nil reads everything here.
 // literal: only what the literal includes and imports reach, without the
-// folders of a macro include. alpha: not the source of a program that the
-// coverage include names by its alpha (ALPHA_INCLUDE), as a fingerprint
-// counts it.
-dependencies :: proc(source:string,include_dirs:[]string,allocator:=context.allocator,sources:^Sources=nil,literal:=false,alpha:=false) -> []string {
-    Scan :: struct {found:[dynamic]string,seen:map[string]bool,roots:[]string,sources:^Sources,literal,alpha:bool}
+// folders of a macro include.
+dependencies :: proc(source:string,include_dirs:[]string,allocator:=context.allocator,sources:^Sources=nil,literal:=false) -> []string {
+    Scan :: struct {found:[dynamic]string,seen:map[string]bool,roots:[]string,sources:^Sources,literal:bool}
     // The folder of the including file comes before the search folders.
     resolve :: proc(scan:^Scan,folder,name:string) -> (path:string,ok:bool) {
         candidate:=path_clean(path_join(folder,name,allocator=context.temp_allocator),scan.found.allocator)
@@ -259,7 +257,6 @@ dependencies :: proc(source:string,include_dirs:[]string,allocator:=context.allo
         text:=string(file.data)
         for line in strings.split_lines_iterator(&text) {
             if directive,found:=include_directive(line);found {
-                if scan.alpha && strings.contains(directive,ALPHA_INCLUDE) {continue}
                 name,literal:=include_target(directive)
                 if !literal {
                     if scan.literal {continue}
@@ -280,7 +277,7 @@ dependencies :: proc(source:string,include_dirs:[]string,allocator:=context.allo
         }
     }
     local:Sources
-    scan:=Scan{found=make([dynamic]string,allocator),seen=make(map[string]bool,context.temp_allocator),sources=sources,literal=literal,alpha=alpha}
+    scan:=Scan{found=make([dynamic]string,allocator),seen=make(map[string]bool,context.temp_allocator),sources=sources,literal=literal}
     if scan.sources==nil {
         sources_init(&local,context.temp_allocator)
         scan.sources=&local
@@ -302,7 +299,7 @@ fingerprint :: proc(source:string,include_dirs:[]string,bases:[]Base,configurati
         sources_init(&local,context.temp_allocator)
         s=&local
     }
-    paths:=dependencies(source,include_dirs,context.temp_allocator,s,alpha=true)
+    paths:=dependencies(source,include_dirs,context.temp_allocator,s)
     named:=make([]Named,len(paths),context.temp_allocator)
     for path,i in paths {named[i]={stable_name(path,bases,context.temp_allocator),path}}
     slice.sort_by(named,proc(a,b:Named) -> bool {return a.name<b.name if a.name!=b.name else a.path<b.path})

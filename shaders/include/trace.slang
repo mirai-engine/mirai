@@ -7,9 +7,6 @@
 #define MIRAI_TRACE_SLANG
 #include "scene.slang"
 #include "points.slang"
-// The alpha of the Surface programs that change it (cook/shaders): a ray
-// decides at a masked surface whether it goes on, inside its traversal.
-#include <surface_coverage.slang>
 
 // Colored shadows filter their rays through glass; a pass can ask for the
 // same filters for rays of its own. MIRAI_COLORED_SHADOWS and
@@ -149,29 +146,6 @@ bool hit_mean(Instance inst, float t) {
 }
 #endif
 
-// The alpha a masked material gives a ray at a point: its maps, or the alpha
-// of its program (surface_coverage.slang), which is that of the default
-// material when the program does not change it.
-// The program records no texture feedback (texture_feedback_quiet), so only
-// what its alpha reads stays of it; the hit the ray stops at is shaded, and
-// samples, as it is.
-float hit_alpha(Instance inst, Material m, Mesh_Triangle tri, float3 weights, float2 uv, float2 uv1, float2 lod, float t) {
-    if (m.program_id == 0u) return material_base_color(m, uv, uv1, lod, float3(1), true).a;
-    float3 normal = transform_normal(inst.world_inv, tri.a.normal * weights.x + tri.b.normal * weights.y + tri.c.normal * weights.z);
-    normal = material_ray_normal(m, inst, normal, weights, tri, uv, uv1, lod);
-    float3 position = transform_point(inst.world, tri.a.position * weights.x + tri.b.position * weights.y + tri.c.position * weights.z);
-    float4 vertex_color = tri.a.color * weights.x + tri.b.color * weights.y + tri.c.color * weights.z;
-    Mirai_Surface_Context ctx = material_context_cone(material_context_instance(material_context(position, normal, uv, uv1, lod, true), inst, vertex_color), t * 0.004);
-    ctx.material = m.row;
-    float alpha;
-    float4 parameters[16];
-    material_parameters(m.row, inst.material_values, parameters);
-    texture_feedback_quiet = true;
-    bool given = mirai_program_alpha(m.program_id, parameters, ctx, alpha);
-    texture_feedback_quiet = false;
-    return given ? alpha : MATERIAL_DEFAULT_OPACITY;
-}
-
 // What a ray that finds this triangle at distance t does: stop, or go through
 // a hole of a masked material or a blended one. Only the triangles of the
 // slots an instance tests ask (Instance.tested).
@@ -222,7 +196,7 @@ bool hit_covers(uint instance_index, uint primitive, float2 bary, float t, uint 
     float2 lod = float2(hit_lod(edge1, edge2, tri.b.uv - tri.a.uv, tri.c.uv - tri.a.uv, t * 0.004), hit_lod(edge1, edge2, tri.b.uv1 - tri.a.uv1, tri.c.uv1 - tri.a.uv1, t * 0.004));
     float2 uv = tri.a.uv * weights.x + tri.b.uv * weights.y + tri.c.uv * weights.z;
     float2 uv1 = tri.a.uv1 * weights.x + tri.b.uv1 * weights.y + tri.c.uv1 * weights.z;
-    return material_covers(m, hit_alpha(inst, m, tri, weights, uv, uv1, lod, t));
+    return material_covers(m, material_mask(m, uv, uv1, lod, true));
 }
 
 

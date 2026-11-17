@@ -17,10 +17,10 @@ import mm "mirai:std/math"
 // submesh whose material is masked, its mask an image that the map lays the
 // card on over at most two periods (the image repeats, as it is sampled),
 // every corner of the card opaque in its color, and its triangles laid on
-// that image without folding over each other. The mask of a
-// material without a program is its base color image, the texels whose
-// alpha, times its opacity, reaches its cutoff; one with a program names its
-// own (Imported_Material.mask), and without one keeps its mask. Cards that
+// that image without folding over each other. The mask of a material is the
+// image of its mask map, or of its base color map without one, the texels
+// whose alpha, times its opacity, reaches its cutoff, with or without a
+// program. Cards that
 // cover the same rectangle of the same image share their outlines. A vertex
 // of an outline of a card of a skinned or morphing mesh takes the influences
 // and the deltas of the corners of the triangle it lies on, weighed as its
@@ -176,18 +176,9 @@ model_cutouts :: proc(r:^Reader) {
     any:=false
     for &m,i in r.materials {
         info:=&m.info
-        image:=m.images[.Base_Color]
-        mapping:=info.maps.base_color
-        if info.alpha_mode!=.Mask {continue}
-        threshold:f32
-        if info.program[0]!=0 {
-            mask,named:=m.mask.?
-            if !named {continue}
-            image,mapping,threshold=mask.image,mask.mapping,mask.cutoff
-        } else {
-            if len(m.parameters)>0 || !(info.opacity>0) {continue}
-            threshold=info.alpha_cutoff/info.opacity
-        }
+        if info.alpha_mode!=.Mask || !(info.opacity>0) {continue}
+        image,mapping:=material_mask_image(&m)
+        threshold:=info.alpha_cutoff/info.opacity
         if image<0 || image>=len(r.images) {continue}
         if !(threshold>0 && threshold<=1) {continue}
         sine,cosine:=math.sin(mapping.rotation),math.cos(mapping.rotation)
@@ -235,7 +226,6 @@ model_cutouts :: proc(r:^Reader) {
             row:=material_add(r,fmt.tprintf("%s outline",copy.name),len(r.materials),copy.info,copy.images)
             r.materials[row].parameters=copy.parameters
             r.materials[row].parameter_images=copy.parameter_images
-            r.materials[row].mask=copy.mask
         }
         image:=&r.images[m.image]
         if image.alpha_fill==0 || m.threshold<image.alpha_fill {image.alpha_fill=m.threshold}

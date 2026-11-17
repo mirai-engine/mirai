@@ -99,11 +99,12 @@ Material fragment_material(Raster_Input input) {
 }
 
 // Coverage for object masks. Opaque geometry needs no texture fetch; masked
-// surfaces use the same alpha/cutoff as the scene, and empty blend fragments
-// contribute no selection silhouette.
+// surfaces are cut by their mask map as the scene is, and empty blend
+// fragments contribute no selection silhouette.
 bool fragment_mask_covers(Raster_Input input, float mip_bias) {
     Material material = fragment_material(input);
     if (material.alpha_mode == ALPHA_OPAQUE) return true;
+    if (material.alpha_mode == ALPHA_MASK) return material_covers(material, material_mask(material, input.in_uv, input.in_uv1, float2(mip_bias), false));
     float alpha;
     if (material.program_id == 0u) {
         alpha = material_base_color(material, input.in_uv, input.in_uv1, float2(mip_bias), input.in_color, false).a;
@@ -112,7 +113,7 @@ bool fragment_mask_covers(Raster_Input input, float mip_bias) {
         float3 normal = fragment_surface_normal(input, material, view, mip_bias);
         alpha = material_alpha(material, fragment_footprint(fragment_instance(material_context(input.in_world, normal, input.in_uv, input.in_uv1, float2(mip_bias), false), input), input), input.in_color, input.in_emission);
     }
-    return material.alpha_mode == ALPHA_MASK ? material_covers(material, alpha) : alpha > 0.001;
+    return alpha > 0.001;
 }
 
 // Whether a surface at this linear depth is behind a glass layer (0: there is none).

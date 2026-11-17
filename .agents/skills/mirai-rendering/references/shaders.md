@@ -239,13 +239,11 @@
   - `include/surface_programs.slang`: that of the stages without a program, whose
     `mirai_evaluate_program` evaluates none. Each Surface program has its own in
     `include/surface/<Name>/surface_programs.slang`, with its source and its loader alone.
-  - `include/surface_coverage.slang`: the alpha of the programs whose alpha is not that of the
-    default material (`coverage` in the catalog), for the ray traversal (`hit_covers`). The
-    generation decides it by compiling the alpha of each program alone (`alpha_probe`): what reads
-    nothing folds to a constant in the optimized SPIR-V. The include names each source with the
-    hash of that SPIR-V (`ALPHA_INCLUDE`), and a stage's fingerprint follows that hash and not the
-    text of the program: the texture reads of the probe keep all their arguments, so the same hash
-    is the same alpha.
+  - No include holds the alpha of a program: a masked material is cut by its
+    [mask map](materials.md#alpha). The generation says in the catalog whether a Surface program
+    sets alpha (`coverage`) by compiling its alpha alone (`alpha_probe`): what keeps the alpha of
+    the default material or of the standard model folds to a constant in the optimized SPIR-V. A
+    masked material whose program sets it is an error of the material (`Coverage` of the assets).
   - `include/postprocess_programs.slang`: PostProcess sources, their loaders and
     `mirai_evaluate_postprocess`.
   - `include/vfx_programs.slang`: Vfx sources, their parameter and `Attributes` loaders and
@@ -266,12 +264,10 @@
   no stage of its own: `surface_vertices.comp`, which calls `mirai_vertex_program` (the include of
   the generation and that of a program without `vertex` define it as moving nothing). No other
   engine stage evaluates a Surface program.
-- A Surface program thus reaches only its stages, and its alpha those of rays if it has coverage;
-  a PostProcess one, only `postprocess.frag`; a Vfx one, the stages of the `vfx` plugin that
-  include it (emit, simulate and the vertices of sprites and meshes); a UI one, `ui.frag` and its
-  `world` variant. Editing a program compiles its stages and, if the edit changes its alpha with
-  coverage, also those that trace (the ray ones, the overlays and those of the Vfx programs) and
-  the tested raster of the visibility target.
+- A Surface program thus reaches only its stages; a PostProcess one, only `postprocess.frag`; a
+  Vfx one, the stages of the `vfx` plugin that include it (emit, simulate and the vertices of
+  sprites and meshes); a UI one, `ui.frag` and its `world` variant. Editing a program compiles its
+  stages alone: no stage that traces, nor the visibility or the shadow maps, depends on it.
 - In a project generation, the stages that do not depend on the catalog have the fingerprint they
   have in the engine one and are taken from the shared cache.
 - Program ids are consecutive across the domains, in file order (engine, project, plugins): adding
@@ -468,9 +464,8 @@ it. The domain is the one the source declares.
   ([projects](../../mirai-projects/references/build.md#project-shaders)): all the engine
   stages for the system's backend, in `<project>/.mirai/shaders`.
 - The stages of the project's programs are compiled with them; the engine ones come from the
-  shared cache except those that trace, when a project program has coverage
-  ([programs and stages](#programs-and-stages)). The manifest lists the program stages separately
-  (`program_stages`).
+  shared cache ([programs and stages](#programs-and-stages)). The manifest lists the program
+  stages separately (`program_stages`).
 - Program names are unique among engine, project and plugins; `pbr` is reserved. Examples:
   `templates/empty/shaders/pulse.slang`, `plugins/terrain/shaders/terrain_slope.slang`. The engine
   has no Surface program of its own: every one is of a project, a plugin or the tests
