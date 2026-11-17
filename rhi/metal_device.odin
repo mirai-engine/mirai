@@ -1116,13 +1116,9 @@ mtl_swapchain_create :: proc(d: ^Device, surface: Surface_Desc) -> bool {
 		desc = {width = sc.width, height = sc.height, mip_levels = 1, format = .BGRA8_Unorm, usage = {.Color_Target, .Transfer_Src, .Transfer_Dst}},
 	}
 	sc.texture = Texture(pool_add(&d.textures, t))
-	previous_allocator := context.allocator
-	context.allocator = d.allocator
-	sc.acquire.worker = thread.create(mtl_acquire_worker, name = "Metal drawable")
-	context.allocator = previous_allocator
-	if sc.acquire.worker == nil {set_error(d, "drawable acquisition thread failed"); return false}
-	sc.acquire.worker.data = sc
-	sc.acquire.worker.init_context = runtime.Context{allocator = d.allocator}
+	error: Thread_Create_Error
+	sc.acquire.worker, error = device_thread_create(d, mtl_acquire_worker, sc)
+	if error != .None {set_error(d, "the drawable acquisition thread could not start: %s", thread_create_text(error)); return false}
 	thread.start(sc.acquire.worker)
 	d.has_swapchain = true
 	return true

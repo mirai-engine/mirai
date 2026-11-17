@@ -1,7 +1,6 @@
 package rhi
 
 import "base:intrinsics"
-import "base:runtime"
 import "core:fmt"
 import "core:os"
 import "core:strconv"
@@ -65,19 +64,12 @@ watchdog_start :: proc(d: ^Device) -> bool {
 		return false
 	}
 	w.limit_ms, w.limit_ns = ms, i64(ms) * 1_000_000
-	previous := context.allocator
-	context.allocator = d.allocator
-	w.timer = thread.create(watchdog_timer, name = "rhi watchdog")
-	w.waiter = thread.create(watchdog_waiter, name = "rhi watchdog waiter")
-	context.allocator = previous
-	for worker in ([]^thread.Thread{w.timer, w.waiter}) {
-		if worker == nil {continue}
-		worker.data = d
-		worker.init_context = runtime.Context{allocator = d.allocator}
-	}
-	if w.timer == nil || w.waiter == nil {
+	error: Thread_Create_Error
+	w.timer, error = device_thread_create(d, watchdog_timer, d)
+	if error == .None {w.waiter, error = device_thread_create(d, watchdog_waiter, d)}
+	if error != .None {
 		watchdog_stop(d)
-		set_error(d, "the threads of the GPU watchdog (%s) could not start", WATCHDOG_VARIABLE)
+		set_error(d, "the threads of the GPU watchdog (%s) could not start: %s", WATCHDOG_VARIABLE, thread_create_text(error))
 		return false
 	}
 	thread.start(w.timer)
