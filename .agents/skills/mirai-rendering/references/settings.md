@@ -18,11 +18,11 @@
   - the main targets with `resolution` (several window views remake theirs in their next frame;
     texture views draw at the size of their texture); the glass targets with `glass_layers`. Only
     these wait for the device;
-  - the probe volume with its shape, `colored_shadows` or `sun_shadows`; its probes gather again
+  - the probe volume with its shape or `sun_shadows`; its probes gather again
     everywhere, keeping the volume, with `light_budget` or `sun_radius`. With
     either, the worlds not shown lose the light they kept;
-  - the histories that hold what the change alters: glass and TAA with `colored_shadows`,
-    `sun_shadows`, `reflection_light_budget` and `reflections`. The direct light and the
+  - the histories that hold what the change alters: glass and TAA with `sun_shadows`,
+    `reflection_light_budget` and `reflections`. The direct light and the
     reflections keep none;
   - the texture levels with `texture_max_size` and `texture_pool_megabytes`.
 - `page_pool_bytes` recreates nothing: the

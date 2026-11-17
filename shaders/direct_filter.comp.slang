@@ -30,33 +30,23 @@
 #define MIRAI_GROUP_Z 1
 
 // scale: the pixels across a point; hard: the shadow rays of a point that
-// traces its own (direct_lighting); glass: not 0 where glass colors the light
-// of the sun (direct_samples.comp); the rest, those of direct_samples.comp.
-struct Params_Block { uint pad0; uint samples; float sun_radius; uint scale; uint hard; uint pad1; uint glass; uint pad2; float3 grid_origin; float grid_cell; uint3 grid_size; uint cells; };
+// traces its own (direct_lighting); the rest, those of direct_samples.comp.
+struct Params_Block { uint pad0; uint samples; float sun_radius; uint scale; uint hard; uint pad1; uint pad2; uint pad3; float3 grid_origin; float grid_cell; uint3 grid_size; uint cells; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 [[vk::binding(SLOT_PASS1, 0)]] Texture2D<float4> g_depth : register(MIRAI_REGISTER(t, SLOT_PASS1), space0);
 [[vk::binding(SLOT_PASS2, 0)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> out_direct : register(MIRAI_REGISTER(u, SLOT_PASS2), space0);
 // The part of the sun that got to each point, below 0 where it gives none.
 [[vk::binding(SLOT_PASS4, 0)]] Texture2D<float4> sun_points : register(MIRAI_REGISTER(t, SLOT_PASS4), space0);
 [[vk::binding(SLOT_PASS5, 0)]] [[vk::image_format("r8")]] RWTexture2D<float> out_marks : register(MIRAI_REGISTER(u, SLOT_PASS5), space0);
-// rgb: what the glass on the way leaves of the light of the sun at each point.
-[[vk::binding(SLOT_PASS6, 0)]] Texture2D<float4> sun_glass : register(MIRAI_REGISTER(t, SLOT_PASS6), space0);
 // The light of the local lights with nothing in the way over the reflectance
 // at each point, and the part of it that got there, plus 2 where a sample met
 // what changed.
 [[vk::binding(SLOT_PASS7, 0)]] Texture2D<float4> points_in : register(MIRAI_REGISTER(t, SLOT_PASS7), space0);
 
-// What the points give a pixel of the sun: how much of it got there, below 0
-// where none of them tells, and what the glass on the way leaves of it.
-struct Sun_Part {
-    float part;
-    float3 glass;
-};
-
 // The light of pixel p: that of the local lights with nothing in the way over
 // its reflectance by the part of it that got there, and its own of the sun by
-// the part of it that did.
-float3 filter_light(int2 p, float depth, float3 normal, float3 open, float part, Sun_Part sun) {
+// the part of it that did (sun), below 0 where none of its points tells.
+float3 filter_light(int2 p, float depth, float3 normal, float3 open, float part, float sun) {
     Pixel pixel = pixel_at(p, (float2(p) + 0.5) * frame.inv_resolution, depth);
     Shading s = gbuffer_shading(gbuffer_read(p), pixel);
     float3 reflectance = max(s.diffuse + specular_albedo(s), float3(0.02));
@@ -68,8 +58,8 @@ float3 filter_light(int2 p, float depth, float3 normal, float3 open, float part,
         float3 irradiance = sun_light(pixel.position) * cosine;
         if (luminance(irradiance) > 0.0) {
             // Where no point of its surface tells, its map does, as it tells the points.
-            float seen = sun.part < 0.0 ? sun_shadow_seen(pixel.position, normal, frame.footprint.x + frame.footprint.y * pixel.distance, false) : sun.part;
-            irradiance *= sun.glass * (seen < 0.0 ? 1.0 : seen);
+            float seen = sun < 0.0 ? sun_shadow_seen(pixel.position, normal, frame.footprint.x + frame.footprint.y * pixel.distance, false) : sun;
+            irradiance *= seen < 0.0 ? 1.0 : seen;
             light += irradiance * shading_response(s, frame.sun_direction.xyz);
             known += luminance(irradiance);
         }
@@ -107,7 +97,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     float2 f = at - float2(low);
     float4 sum = float4(0.0), nearest = float4(0.0);
     float weight = 0.0, best = -1.0;
-    Sun_Part sun = {0.0, float3(0.0)};
+    float sun = 0.0;
     float sun_weight = 0.0;
     bool marked = false;
     for (uint i = 0u; i < 4u; i++) {
@@ -135,18 +125,11 @@ void main(uint3 id : SV_DispatchThreadID) {
         weight += w;
         float held = sun_points.Load(int3(q, 0)).x;
         if (held < 0.0) continue;
-        sun.part += w * held;
-        sun.glass += w * (params.glass != 0u ? sun_glass.Load(int3(q, 0)).rgb : float3(1.0));
+        sun += w * held;
         sun_weight += w;
     }
     float4 texel = weight > 0.0 ? sum / weight : nearest;
-    if (sun_weight > 0.0) {
-        sun.part /= sun_weight;
-        sun.glass /= sun_weight;
-    } else {
-        sun.part = -1.0;
-        sun.glass = float3(1.0);
-    }
+    sun = sun_weight > 0.0 ? sun / sun_weight : -1.0;
     out_direct[p] = float4(filter_light(p, depth, normal.xyz, texel.rgb, saturate(texel.a), sun), 1.0);
     out_marks[p] = marked ? 1.0 : 0.0;
 }

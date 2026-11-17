@@ -182,7 +182,6 @@ struct Instance {
     float4 bounds_max;
     float4 tint;          // rgb multiplies the base color
     float4 emission;      // rgb radiance added to the material's
-    float4 glass;         // rgb: what a crossing of one of its blended faces leaves of light, the mean over them (glass_mean.comp writes it after every upload); a: their area
     uint slot_materials[32]; // row+1 by source slot; zero inherits
     float wet;            // 0 dry to 1 soaked (render.scene_set_instance_wet)
     uint material_values; // 1 + the word of the index pool where the values it gives over the rows of its materials start; 0: none

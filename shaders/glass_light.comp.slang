@@ -1,7 +1,5 @@
 #include "native.slang"
 //! variant hw MIRAI_HW_RT=1
-// color: with colored shadows, the rays cross glass as the mean of its instance (trace.slang).
-//! constant color MIRAI_GLASS_MEANS
 // The light of each pixel of a layer of glass itself, with its traced
 // reflection, before glass.comp adds over it what the layer lets through. Its
 // lights take their shadows from the maps of the view where these hold the

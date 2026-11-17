@@ -379,7 +379,6 @@ Scene_State :: struct {
 	programs_used:        u32, // ids with rows there
 	programs_arrived:     bool, // a program got its first row: the next frame asks for its pipelines (programs_ask)
 	programmed_rows:      u32, // rows with a Surface program
-	programmed_glass:     u32, // and of them, blended ones
 	materials_dirty:      bool,                      // the whole table goes to the GPU
 	material_ranges:      [dynamic]Pool_Range,       // else the rows that changed since the last upload
 	material_capacity:    int,
@@ -734,9 +733,6 @@ program_rows_count :: proc(s: ^Scene_State, row: Gpu_Material_Row, added: bool) 
 	program := row.program_id
 	if program == 0 {return}
 	if added {s.programmed_rows += 1} else {s.programmed_rows -= 1}
-	if row.alpha_mode == u32(asset.Alpha_Mode.Blend) {
-		if added {s.programmed_glass += 1} else {s.programmed_glass -= 1}
-	}
 	if program >= POINTS_PROGRAM_CAPACITY {return}
 	if added {s.program_rows[program] += 1} else {s.program_rows[program] -= 1}
 	if s.program_rows[program] == (1 if added else 0) {
@@ -1333,10 +1329,7 @@ renderer_commit_geometry :: proc(r: ^Renderer, cmd: ^rhi.Command_List = nil, slo
 	// Meshes whose BLAS waits for the budget of a frame come in the next one.
 	s.geometry_dirty = left
 	// What goes over frames alone is of meshes nothing draws yet.
-	if dirty {
-		s.tlas_dirty = true
-		r.glass_stale = true
-	}
+	if dirty {s.tlas_dirty = true}
 	if cmd == nil {geometry_uploads_install(r)}
 	return true
 }
@@ -2649,15 +2642,6 @@ upload_scene :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
 	// What the frame's transient memory has no room for stays dirty and goes
 	// with the next frame: the GPU never falls behind the scene unnoticed.
 	ok := true
-	if s.instances_dirty || s.materials_dirty || len(s.material_ranges) > 0 {r.glass_stale = true}
-	// The row of an instance with glass brings the mean the CPU holds, not the one glass_mean.comp gave it.
-	if !r.glass_stale && len(s.translucent) > 0 {
-		each: for range, more := touched_range(s, 0); more; range, more = touched_range(s, range.first + range.count) {
-			for &inst in s.instances[range.first:][:range.count] {
-				if inst.meta.w & INSTANCE_FLAG_TRANSLUCENT != 0 {r.glass_stale = true;break each}
-			}
-		}
-	}
 	if s.materials_dirty {
 		if upload_transient(r, cmd, s.materials[:], s.material_buffer) {
 			s.materials_dirty = false

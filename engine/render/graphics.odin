@@ -34,7 +34,6 @@ Graphics_Settings :: struct {
     sun_shadows:bool,                          // the sun casts shadows; off, it lights everything it faces
     light_samples:u32 `mirai:"min=1,max=31,graphics=Light samples,choices=7|15|31"`, // samples of the direct light of a pixel, spread over its lights by what each gives it (GRAPHICS_LIGHT_SAMPLES_MAX)
     light_half_resolution:bool `mirai:"graphics=Light resolution,choices=Full|Half"`, // the samples of the direct light are taken at one pixel of each 2x2, and the others take theirs by their surfaces
-    glass_shadows:bool `mirai:"graphics=Glass shadows,choices=Off|Colored"`, // blended surfaces color the light that crosses them
     glass_layers:u32 `mirai:"min=1,max=2,graphics=Glass layers,choices=1|2"`,
     textures:Textures `mirai:"section=Detail,graphics=Textures,choices=1K|2K|4K|8K"`,
     detail:Detail `mirai:"graphics=Detail"`,
@@ -50,7 +49,7 @@ Graphics_Settings :: struct {
 // larger display costs what a 1080 one does, and the TAA takes them to it.
 GRAPHICS_SETTINGS_DEFAULT :: Graphics_Settings{
     resolution=1080,antialiasing={0='t',1='a',2='a'},indirect_light=.Probes,light_probes=.High,
-    sun_shadows=true,light_samples=15,light_half_resolution=true,glass_shadows=true,glass_layers=1,textures=.High,detail=.High,frame_limit=60,vsync=true,frame_generation=true,show_fps=true,
+    sun_shadows=true,light_samples=15,light_half_resolution=true,glass_layers=1,textures=.High,detail=.High,frame_limit=60,vsync=true,frame_generation=true,show_fps=true,
 }
 
 // The presets, in their order, and Custom: none. No setting stores one: a
@@ -63,8 +62,8 @@ Graphics_Quality :: enum u8 {Low,Medium,High,Ultra,Custom}
 GRAPHICS_PRESETS :: #partial [Graphics_Quality]Graphics_Settings{
     .Low   ={sun_shadows=true,indirect_light=.Probes,light_probes=.Low,light_samples=7,light_half_resolution=true,glass_layers=1,textures=.Low,detail=.Low},
     .Medium={sun_shadows=true,indirect_light=.Probes,light_probes=.Medium,light_samples=15,light_half_resolution=true,glass_layers=1,textures=.Medium,detail=.Medium},
-    .High  ={sun_shadows=true,indirect_light=.Probes,light_probes=.High,light_samples=15,light_half_resolution=true,glass_shadows=true,glass_layers=1,textures=.High,detail=.High,frame_generation=true},
-    .Ultra ={sun_shadows=true,indirect_light=.Probes,light_probes=.High,light_samples=31,glass_shadows=true,glass_layers=2,textures=.Ultra,detail=.Ultra,frame_generation=true},
+    .High  ={sun_shadows=true,indirect_light=.Probes,light_probes=.High,light_samples=15,light_half_resolution=true,glass_layers=1,textures=.High,detail=.High,frame_generation=true},
+    .Ultra ={sun_shadows=true,indirect_light=.Probes,light_probes=.High,light_samples=31,glass_layers=2,textures=.Ultra,detail=.Ultra,frame_generation=true},
 }
 
 // The frames per second of its own a game needs under generated ones (AMD's
@@ -91,7 +90,7 @@ graphics_preset_apply :: proc(g:^Graphics_Settings,preset:Graphics_Quality) {
     p:=presets[preset]
     g.sun_shadows=p.sun_shadows
     g.indirect_light,g.light_probes=p.indirect_light,p.light_probes
-    g.light_samples,g.glass_shadows,g.glass_layers=p.light_samples,p.glass_shadows,p.glass_layers
+    g.light_samples,g.glass_layers=p.light_samples,p.glass_layers
     g.light_half_resolution=p.light_half_resolution
     g.textures,g.detail=p.textures,p.detail
     g.frame_generation=p.frame_generation
@@ -143,7 +142,6 @@ graphics_render_settings :: proc(settings:gpu.Settings,quality:Graphics_Settings
     s.direct_samples=clamp(quality.light_samples,1,GRAPHICS_LIGHT_SAMPLES_MAX)
     s.direct_half_resolution=quality.light_half_resolution
     s.reflection_light_budget=min(s.light_budget,GRAPHICS_REFLECTION_LIGHTS)
-    s.colored_shadows=quality.glass_shadows
     s.glass_layers=clamp(quality.glass_layers,1,gpu.GLASS_LAYERS_MAX)
     s.texture_max_size=sizes[quality.textures]
     s.lod_error_pixels=pixels[quality.detail]
