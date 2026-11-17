@@ -14,7 +14,9 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
 - GPU contract, resources, bindings and presentation (`rhi/`) →
   [rhi](references/rhi.md#rhi-contract); device validation and its errors →
   [device](references/rhi.md#device); device loss (`device_failure`, `device_lose`, waits with a
-  limit) → [loss](references/rhi.md#device-loss), and what the application and the editor do →
+  limit) → [loss](references/rhi.md#device-loss), the process that ends itself before the driver
+  resets the GPU (`MIRAI_GPU_WATCHDOG_MS`) → [watchdog](references/rhi.md#gpu-watchdog), and
+  what the application and the editor do →
   [host](../mirai-core/references/host.md#gpu-that-stops-working)
 - Shader generation (`cook/shaders/`, `mirai shaders`, `mirai setup slang`) →
   [shaders](references/shaders.md#shader-toolchain)

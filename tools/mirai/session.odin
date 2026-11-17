@@ -143,8 +143,34 @@ session_borrow :: proc(root,folder:string,mode:Build_Mode,command:string) -> (fi
     file,alive=session_find(folder)
     reused=alive && session_answers(file.port)
     if reused && !session_reusable(root,folder,mode,file,command) {return file,reused,1}
-    if !reused {file,code=session_open(root,folder,mode,false,180,{})}
+    if !reused {
+        if ended:=session_ended(folder);ended!="" {
+            fmt.eprintfln("mirai %s: %s",command,ended)
+            return file,false,1
+        }
+        file,code=session_open(root,folder,mode,false,180,{})
+    }
     return
+}
+
+// Why no command opens another editor of the project at folder on its own:
+// the editor its port file names ended without removing it (it crashed, was
+// killed or ended itself, as the GPU watchdog does), with what its log says
+// last. "" when the file names none or one that runs.
+session_ended :: proc(folder:string) -> string {
+    if folder=="" {return ""}
+    file,alive:=session_find(folder)
+    if alive || file.pid==0 {return ""}
+    said:=""
+    if file.manual {
+        log:=session_log_path(folder)
+        data,_:=os.read_entire_file(log,context.temp_allocator)
+        if last:=strings.trim_space(string(data));last!="" {
+            if at:=strings.last_index_byte(last,'\n');at>=0 {last=strings.trim_space(last[at+1:])}
+            said=fmt.tprintf("; its log (%s) ends with: %s",log,last)
+        }
+    }
+    return fmt.tprintf("the editor of %s (pid %d) ended without closing%s; no command opens another by itself: mirai session start %s does, once what ended it is known",folder,file.pid,said,folder)
 }
 
 // One call of a command to its session; what fails goes to stderr.

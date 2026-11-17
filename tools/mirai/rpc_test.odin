@@ -1,5 +1,6 @@
 package main
 
+import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:testing"
@@ -200,6 +201,34 @@ only_a_call_that_works_without_an_open_editor_starts_a_session :: proc(t:^testin
     testing.expect(t,!connection_opens(by_port,"scene.inspect"),"a port names no project to open")
     editor,err:=connection_ready(named,"ai.turn_end")
     testing.expect(t,editor.port==0 && err.code==api.UNREACHABLE && strings.contains(err.message,"no open editor"),err.message)
+}
+
+// An editor that ended without closing (its port file names a process that is
+// gone, as one the GPU watchdog ended leaves it) is not replaced by a call, nor
+// by a command that borrows the session: the call says what its log said last.
+@(test)
+a_call_opens_no_editor_in_place_of_one_that_ended :: proc(t:^testing.T) {
+    context.allocator=context.temp_allocator
+    root:=base.test_folder(t,"rpc-ended")
+    if root=="" {return}
+    folder:=project.path(root,".mirai",allocator=context.temp_allocator)
+    testing.expect(t,os.make_directory_all(folder)==nil)
+    named,_:=connection_args({"--project",root},{})
+    testing.expect_value(t,session_ended(root),"")
+    // No process has this pid: Windows gives multiples of 4 well below it, Linux stops at 2^22.
+    GONE :: 0x7FFFFFF1
+    port_file:=fmt.tprintf(`{{"port":7951,"pid":%d,"manual":true}}`,GONE)
+    testing.expect(t,os.write_entire_file(project.path(folder,api.PORT_FILE),transmute([]u8)port_file)==nil)
+    said:="rhi: GPU watchdog: frame 9 has not finished on the GPU 40 ms after it was submitted"
+    testing.expect(t,os.write_entire_file(session_log_path(root),transmute([]u8)fmt.tprintf("loading\n%s\n",said))==nil)
+    editor,err:=connection_ready(named,"scene.inspect")
+    testing.expect(t,editor.port==0 && err.code==api.UNREACHABLE,err.message)
+    for text in ([]string{fmt.tprintf("(pid %d) ended without closing",GONE),said,"mirai session start"}) {
+        testing.expectf(t,strings.contains(err.message,text),"%q is not in: %s",text,err.message)
+    }
+    _,reused,code:=session_borrow("",root,.Dev,"capture")
+    testing.expect(t,!reused && code==1,"a borrowed session is not opened either")
+    testing.expect(t,os.exists(project.path(folder,api.PORT_FILE)),"the port file stays for mirai session start")
 }
 
 @(test)
