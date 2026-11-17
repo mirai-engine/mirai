@@ -638,9 +638,12 @@ A masked card is drawn opaque, cut to the outline of its mask, when it is read
   it ends. Without that memory a card keeps its mask, and the model is cut whole or not at all.
 - **Leaf or cluster**, from the mask: a card whose outline needs at most `OUTLINE_TRIANGLES` to
   draw at most `1/OUTLINE_COVERAGE` of what the mask keeps is a leaf; any other keeps its mask on
-  its tightest convex outline of up to eight corners. A card whose rectangle keeps nothing is
-  dropped. The outlines of a leaf draw at most `OUTLINE_TRIANGLES` each: level 0 draws the finest
-  of them with its error, and the [levels](#levels-of-detail) the coarser ones.
+  its tightest convex outline of up to eight corners. So does a leaf whose finest outline draws
+  past its mask more than `CUTOUT_LEAF_ERROR` of the radius of its mesh: level 0 is drawn however
+  near, and the few large cards of a houseplant would show outlines where the mask shows gaps
+  between leaves. A card whose rectangle keeps nothing is dropped. The outlines of a leaf draw at
+  most `OUTLINE_TRIANGLES` each: level 0 draws the finest of them with its error, and the
+  [levels](#levels-of-detail) the coarser ones.
 - **Materials.** Cut cards are seen from both sides (`two_sided`). A material all of whose
   triangles became outlines is `Opaque`; one that also keeps masked triangles stays as it is and
   lends an opaque copy, `<name> outline`, to a slot of the outlines (`CUTOUT_SLOT` added to the id
