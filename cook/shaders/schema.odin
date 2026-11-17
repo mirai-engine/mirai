@@ -351,6 +351,7 @@ shared_constants :: proc(allocator:=context.temp_allocator) -> string {
     u(&b,"RASTER_ENTRY_SHOWN",abi.RASTER_ENTRY_SHOWN)
     u(&b,"RASTER_ENTRY_USED",abi.RASTER_ENTRY_USED)
     u(&b,"CULL_DROPPED",abi.CULL_DROPPED)
+    u(&b,"CULL_RASTER_NEED",abi.CULL_RASTER_NEED)
     u(&b,"PROGRAM_PARAMETER_BYTES",abi.PROGRAM_PARAMETER_BYTES)
     u(&b,"INSTANCE_VALUES_MAX",abi.INSTANCE_VALUES_MAX)
     u(&b,"INSTANCE_VALUES_HEADER",abi.INSTANCE_VALUES_HEADER)

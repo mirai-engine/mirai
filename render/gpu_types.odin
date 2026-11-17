@@ -457,7 +457,10 @@ Gpu_Cull_State :: struct {
 	raster_counts:      [RASTER_BINS]u32,
 	raster_cursors:     [RASTER_BINS]u32,
 	dropped:            [Cull_List]u32, // past the capacities of the lists of the cull
+	raster_need:        [2]u32, // the vertices and the triangles the rounds of the view wrote and its last left out
 }
+#assert(offset_of(Gpu_Cull_State, dropped) == abi.CULL_DROPPED * size_of(u32))
+#assert(offset_of(Gpu_Cull_State, raster_need) == abi.CULL_RASTER_NEED * size_of(u32))
 #assert(size_of(rhi.Draw_Indexed_Indirect) == abi.CULL_DRAW_WORDS * size_of(u32))
 #assert(offset_of(Gpu_Cull_State, raster_dispatch) == abi.CULL_RASTER_DISPATCH * size_of(u32))
 #assert(offset_of(Gpu_Cull_State, raster_first) == abi.CULL_RASTER_FIRST * size_of(u32))
@@ -505,6 +508,7 @@ Gpu_Cull_Stats :: struct {
 	resolved: [3]u32, // of the resolve (vis_resolve.frag): pixels shaded, helper lanes of their quads, quads evaluated again
 	probe_rays: [2]u32, // the rays the probes traced and the hits they lit, copied at the end of the frame from the list of the probe volume
 	lists: Light_List_Stats, // of the lists of the lights without shadows (light_lists.comp)
+	raster_need: [2]u32, // of the views of the frame, the most vertices and triangles one would hold in a round of the raster (Gpu_Cull_State.raster_need)
 }
 // Instances, clusters and triangles that passed the cull of a frame, of one kind.
 Visible_Kind :: struct {instances, clusters, triangles: u32}

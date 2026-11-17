@@ -156,11 +156,12 @@ read_stats :: proc(r: ^Renderer, slot: int) {
 		r.stats.raster_vertices, r.stats.raster_triangles, r.stats.raster_deferred = stats.raster[0], stats.raster[1], stats.raster[2]
 		// A list that dropped grows for the frames after, by what it lacked.
 		for dropped, list in stats.dropped {
-			if dropped > 0 {r.scene.cull_wanted[list] = max(r.scene.cull_wanted[list], r.scene.cull_capacity[list] + dropped)}
+			if dropped > 0 && list < .Raster_Vertices {r.scene.cull_wanted[list] = max(r.scene.cull_wanted[list], r.scene.cull_capacity[list] + dropped)}
 		}
-		// The lists of the raster ask for what the rounds of the frame wrote and left out: all of it in one round.
+		// Those of the raster, which a view writes again in each of its rounds,
+		// ask for what the view that needs most would hold in one.
 		for list, k in ([2]Cull_List{.Raster_Vertices, .Raster_Triangles}) {
-			r.scene.cull_wanted[list] = max(r.scene.cull_wanted[list], min(stats.raster[k] + stats.dropped[list], CULL_MARK_MAX))
+			r.scene.cull_wanted[list] = max(r.scene.cull_wanted[list], min(stats.raster_need[k], CULL_MARK_MAX))
 		}
 		r.stats.culled_instances = stats.culled_instances
 		r.stats.occluded_instances = stats.occluded_instances

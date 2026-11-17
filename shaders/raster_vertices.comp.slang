@@ -10,7 +10,9 @@
 // show and which vertices they use for raster_triangles.comp. A cluster
 // whose vertices or triangles find no room in their lists is left to the
 // next round, which starts them again; the last round of a view has none
-// after it, and counts what it leaves out.
+// after it, and counts what it leaves out. What the view would hold in one
+// round, what its clusters write and what the last leaves out, is what the
+// lists grow to (Stats_Block.raster_need).
 #define MIRAI_BATCHES
 #include "gbuffer_vertex.slang"
 #include "visibility.slang"
@@ -52,6 +54,15 @@ groupshared uint first_vertex;
 // A list was full before the group began: the cluster goes to the next round as it is.
 groupshared uint full;
 
+// What a cluster writes of each list, added to what the view needs of them.
+void raster_need(uint vertices, uint triangles) {
+    uint before;
+    InterlockedAdd(cull_state[CULL_RASTER_NEED], vertices, before);
+    InterlockedMax(stats[0].raster_need[0], before + vertices);
+    InterlockedAdd(cull_state[CULL_RASTER_NEED + 1u], triangles, before);
+    InterlockedMax(stats[0].raster_need[1], before + triangles);
+}
+
 // A cluster that found no room in a list: the next round takes it, or, with
 // none to follow, it is left out and what it lacked of each list is counted.
 void cluster_left(uint e, uint vertices, uint triangles) {
@@ -81,11 +92,12 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
     if (!raster_round_pending(raster_entries[record + RASTER_ENTRY_ROUND])) return;
     Visible_Cluster entry = visible[e];
     Cluster c = cluster_at(entry.cluster);
-    // A list is full for good once it is passed: no vertex is placed for a cluster it has no room for.
+    // A list is full for good once it is passed: no vertex is placed for a
+    // cluster it has no room for, which a round after takes. The last finds
+    // what the cluster would write, which it counts.
     if (lane.x == 0u) {
-        bool vertices_full = cull_state[CULL_RASTER_VERTICES] >= params.vertex_capacity, triangles_full = cull_state[CULL_RASTER_TRIANGLES] >= params.triangle_capacity;
-        full = vertices_full || triangles_full ? 1u : 0u;
-        if (full != 0u) cluster_left(e, vertices_full ? cluster_vertex_count(c) : 0u, triangles_full ? cluster_triangle_count(c) : 0u);
+        full = params.last == 0u && (cull_state[CULL_RASTER_VERTICES] >= params.vertex_capacity || cull_state[CULL_RASTER_TRIANGLES] >= params.triangle_capacity) ? 1u : 0u;
+        if (full != 0u) cluster_left(e, 0u, 0u);
     }
     GroupMemoryBarrierWithGroupSync();
     if (full != 0u) return;
@@ -135,6 +147,7 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
             InterlockedAdd(cull_state[CULL_RASTER_TRIANGLES], triangles, before);
             bool room = first + vertices <= params.vertex_capacity, room_triangles = before + triangles <= params.triangle_capacity;
             listed = room && room_triangles;
+            if (listed || params.last != 0u) raster_need(vertices, triangles);
             if (listed) {
                 InterlockedAdd(stats[0].raster[0], vertices);
                 InterlockedAdd(stats[0].raster[1], triangles);
