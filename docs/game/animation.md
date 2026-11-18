@@ -50,9 +50,9 @@ anim.set(requests,e,"aim_yaw",yaw)         // an axis of an aim space, or the we
 anim.look(requests,e,anim.spatial_entity(target))   // the head fades to it; weight 0 lets go
 ```
 
-- An action without a layer fades in over the whole body, in any locomotion mode; one in a layer
-  plays over a part of it. With `root_motion` and `body_move` its clip moves the `Character` (a
-  lunge). What the server plays, every client plays from the tick it started.
+- An action without a layer takes the whole body, in any mode; one in a layer, a part of it. It
+  shows at once, blending from the pose it replaces over its `fade_in`; with `root_motion` and
+  `body_move` it moves the `Character` (a lunge). Every client plays what the server plays.
 - `set` stays until set again; past the range of an axis it is the end of the range.
 - `look` needs a `Look` in the set (`animation.character.setup` writes one).
 

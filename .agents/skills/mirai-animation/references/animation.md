@@ -223,8 +223,9 @@ Per tick:
 - `animation_match` says which clip plays, its rate, its mode, whether a whole-body action covers
   the search (`forced`) and how many searches and jumps it made.
 
-A whole-body action (`play` of an action that names no layer: vault, hit, death) fades in over the
-search, which goes on under it in the mode the body is in, and fades out when it ends
+A whole-body action (`play` of an action that names no layer: vault, hit, death) takes the pose
+from the search, which goes on under it in the mode the body is in, and gives it back when it ends,
+each through an inertial blend
 ([requests and lifecycle](animation-actions.md#requests-and-lifecycle)).
 
 ### Landing
