@@ -262,10 +262,11 @@ SHADOW_HIZ_MIPS            :: 5
 // The words of the buffer of the pages of a view (render.Shadow_Raster.pages):
 // the slot and entry each page of the pool holds + 1, the frame it was last
 // read in, how much of it the cache holds while it is drawn in bands over
-// frames (SHADOW_BAND_*), the clusters its band took the last time and those
-// the atlas took to compose it the last time (0: not known); of the cache
-// and of the atlas, what their draws took of the
-// clusters the cull by instance foresaw, in 1/SHADOW_SCALE_ONE (0: as much);
+// frames (SHADOW_BAND_*), the units its band took the last time and those
+// the atlas took to compose it the last time (0: not known), the chunks the
+// cull by instance of the cache and of the atlas foresaw it hands over for
+// it; of the cache and of the atlas, what their draws took of the units the
+// cull by instance foresaw, in 1/SHADOW_SCALE_ONE (0: as much);
 // and a bit for each entry of each slot (SHADOW_MASK_WORDS a slot)
 // that a pass after the maps read this frame, for the next; then what each
 // frame writes again: a bit for each entry that points read, where what stays
@@ -277,10 +278,10 @@ SHADOW_HIZ_MIPS            :: 5
 // mip of each, the pages of it they span; four for each page of the pool the cache draws, the texels of it it
 // draws (SHADOW_PAGE less its first column and row, then its last + 1: where
 // what stays changed in a part of a page it held, that part alone, or the
-// band of it drawn this frame); two for each page of the pool, the clusters
-// the cache and the atlas would draw into it this frame as the cull by
-// instance foresees them, then the most its draws may take (SHADOW_COST_*,
-// render.SHADOW_FRAME_CLUSTERS); and two more, the clusters they did take;
+// band of it drawn this frame); two for each page of the pool, the units the
+// cache and the atlas would draw into it this frame as the cull by instance
+// foresees them, then the most its draws may take (SHADOW_COST_*,
+// render.SHADOW_FRAME_UNITS); and two more, the units they did take;
 // the counts (SHADOW_COUNT_*) and the arguments of the dispatches and
 // draws (SHADOW_ARGS_*); then the slots of each of the last three, the pages
 // the cache draws and the atlas composes, the rank of the first request of
@@ -295,7 +296,8 @@ SHADOW_WORDS_OWNER         :: 0
 SHADOW_WORDS_AGE           :: SHADOW_WORDS_OWNER + SHADOW_POOL_PAGES
 SHADOW_WORDS_BAND          :: SHADOW_WORDS_AGE + SHADOW_POOL_PAGES
 SHADOW_WORDS_KNOWN         :: SHADOW_WORDS_BAND + SHADOW_POOL_PAGES
-SHADOW_WORDS_SCALE         :: SHADOW_WORDS_KNOWN + 2 * SHADOW_POOL_PAGES
+SHADOW_WORDS_REACH         :: SHADOW_WORDS_KNOWN + 2 * SHADOW_POOL_PAGES
+SHADOW_WORDS_SCALE         :: SHADOW_WORDS_REACH + 2 * SHADOW_POOL_PAGES
 SHADOW_WORDS_LATE          :: SHADOW_WORDS_SCALE + 4
 SHADOW_WORDS_NEEDED        :: SHADOW_WORDS_LATE + SHADOW_MASKS
 SHADOW_WORDS_STALE         :: SHADOW_WORDS_NEEDED + SHADOW_MASKS
@@ -366,11 +368,21 @@ SHADOW_BAND_STUCK          :: u32(1) << 16
 SHADOW_KNOWN_FORESEEN      :: u32(1) << 31
 // Of a word of SHADOW_WORDS_COST: a draw of the round had no room for a
 // cluster of the page; the page waits for a frame with room for it; it was
-// granted as foreseen; and its clusters.
+// granted as foreseen; and its units.
 SHADOW_COST_OVER           :: u32(1) << 31
 SHADOW_COST_WAITS          :: u32(1) << 30
 SHADOW_COST_GUESS          :: u32(1) << 29
-SHADOW_COST_CLUSTERS       :: u32(1) << 24 - 1
+SHADOW_COST_UNITS          :: u32(1) << 24 - 1
+// What the draws of a page cost is counted in units of raster work, which
+// the bound of a frame grants (render.Shadow_Bound), and is known before
+// they draw: of each cluster, a unit for each SHADOW_UNIT_TEXELS texels its
+// box covers in the part of the page drawn, SHADOW_MASKED_COST times as many
+// where its material is masked (its mask is read for each texel, and the
+// depth test waits for it), and one for each SHADOW_UNIT_TRIANGLES of its
+// triangles.
+SHADOW_UNIT_TEXELS         :: 64
+SHADOW_UNIT_TRIANGLES      :: 4
+SHADOW_MASKED_COST         :: 4
 // The arguments: the dispatches of the cull of the cache, of the atlas and of
 // the foresight of the cache, three words each, then the draws of the pages
 // the cache clears and the atlas copies from it, four each, and the dispatch

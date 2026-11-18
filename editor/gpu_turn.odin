@@ -1,6 +1,7 @@
 package editor
 
 import "core:fmt"
+import "core:os"
 import "core:time"
 import "mirai:cook/workspace"
 import "mirai:rhi"
@@ -35,6 +36,13 @@ gpu_turn_pass :: proc(s:^Session,command:^[dynamic]string) -> []uintptr {
     handles:=make([]uintptr,1,context.temp_allocator)
     handles[0]=s.gpu.handle
     return handles
+}
+
+// The editor that started in place of this one with its turn (gpu_turn_pass)
+// is named its holder, which mirai locks shows.
+@(private)
+gpu_turn_handed :: proc(s:^Session,pid:int) {
+    if s.gpu.handle!=0 {workspace.gpu_turn_follow(s.engine_root,os.get_pid(),pid)}
 }
 
 // Keeps the memory of the card and a peak of the session above the one kept

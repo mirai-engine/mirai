@@ -1,12 +1,15 @@
 package mirai_render
 
 import "core:fmt"
+import "core:log"
 import "core:math"
 import "core:math/linalg"
 import "core:mem"
 import "core:slice"
+import "core:strings"
 import "core:testing"
 import "core:time"
+import "mirai:asset"
 import "mirai:render/abi"
 import "mirai:rhi"
 
@@ -59,6 +62,11 @@ shadow_counts :: proc(r: ^Renderer) -> (drawn, composed, left: u32) {
 	if r.main.targets.shadow_raster.pages == 0 || !rhi.buffer_read_slice(r.device, r.main.targets.shadow_raster.pages, u64(abi.SHADOW_WORDS_COUNTS) * 4, counts[:]) {return}
 	return counts[abi.SHADOW_COUNT_DRAWN], counts[abi.SHADOW_COUNT_COMPOSED], counts[abi.SHADOW_COUNT_LEFT]
 }
+
+// The most units a cluster costs in a page (render.shadow_units): all of its
+// texels, masked, and its triangles.
+@(private = "file")
+PAGE_UNITS :: SHADOW_PAGE * SHADOW_PAGE * abi.SHADOW_MASKED_COST / abi.SHADOW_UNIT_TEXELS + asset.CLUSTER_TRIANGLES / abi.SHADOW_UNIT_TRIANGLES
 
 // The clusters the cache of the maps of the last view drew in the last frame,
 // once for each page they cover (Shadow_Stats).
@@ -692,6 +700,98 @@ render_a_full_pool_keeps_the_pages_of_a_jitter_cycle :: proc(t: ^testing.T) {
 	expect_clean(t, f.device)
 }
 
+// The GPU time the rounds of the maps took in the frame frame_timings last
+// gave back, milliseconds, as the bound reads it (shadow_bound_update).
+@(private = "file")
+shadow_maps_ms :: proc(r: ^Renderer) -> (ms: f32, frame: u64) {
+	timings, at, measured := rhi.frame_timings(r.device)
+	if !measured {return}
+	for t in timings {if strings.has_prefix(t.name, "shadow ") && t.name != SHADOW_PAGES_TIMING {ms += t.ms}}
+	return ms, at
+}
+
+// Masked cards stacked over the same texels of a map, each one cluster of
+// two triangles, cost the raster what their texels times their layers
+// cost, which their count says nothing of: drawn as one frame's clusters
+// they would take several times what the rounds of a frame may take. Under
+// the bound of the renderer each frame's rounds take that time at most, the
+// rest comes in the frames after, and the picture ends that of a bound that
+// holds all of them.
+@(test)
+render_a_round_of_stacked_masked_cards_keeps_within_its_time :: proc(t: ^testing.T) {
+	f: Cube_Fixture
+	settings := test_settings()
+	settings.gi_enabled = false
+	settings.taa = false
+	if !cube_fixture_init(t, &f, 512, 512, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	CARD :: f32(4)
+	card := [4]Mesh_Vertex{}
+	for &v, i in card {v = {position = {(f32(i & 1) - 0.5) * CARD, 0, (f32(i >> 1) - 0.5) * CARD}, normal = {0, 1, 0}, uv = {f32(i & 1), f32(i >> 1)}, color = 1, tangent = {1, 0, 0, 1}}}
+	quad := [6]u32{0, 2, 1, 1, 2, 3}
+	mesh, added := mesh_add(r, card[:], quad[:])
+	if !testing.expect(t, added) {return}
+	masked := DEFAULT_MATERIAL
+	masked.alpha_mode = .Mask
+	testing.expect(t, materials_set(r, {masked}))
+	CARDS :: 18000
+	instances := make([]Instance_Desc, CARDS + 1)
+	defer delete(instances)
+	instances[0] = {object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {40, 0.2, 40}), tint = {0.8, 0.8, 0.8}}
+	for k in 1 ..= CARDS {
+		// Turned a little each, so that none lies in another's plane.
+		at := trs({f32(k % 7) * 0.01, 0.5 + f32(k) * 1e-5, f32(k % 5) * 0.01}, {1, 1, 1})
+		instances[k] = {object_id = u64(k + 1), mesh = mesh, transform = at, material = 1, tint = {0.5, 0.5, 0.5}}
+	}
+	sun := Sun_Desc{direction = {0.1, 1, 0.05}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true}
+	testing.expect(t, scene_given(r, instances, nil, sun, {sky = {0, 0, 0}}))
+	camera := Camera{position = {2.5, 4, 2.5}, forward = {-0.4, -1, -0.4}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	read :: proc(t: ^testing.T, f: ^Cube_Fixture) -> []u8 {
+		rhi.device_wait_idle(f.device)
+		pixels, _, _, ok := golden_capture(f.renderer)
+		testing.expect(t, ok, f.renderer.error)
+		return pixels
+	}
+	b := &r.main.targets.shadow_raster
+	// Until the pages are no longer given, the most the rounds of a frame took.
+	settle :: proc(t: ^testing.T, r: ^Renderer, camera: Camera) -> (frames: int, most: f32, units: u32, total: u64) {
+		runs, still := u32(0), 0
+		for frames < 400 && still < 8 {
+			testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+			frames += 1
+			// What comes back of the frames before, those of what drew before this.
+			if frames <= rhi.MAX_FRAMES_IN_FLIGHT + 1 {continue}
+			ms, _ := shadow_maps_ms(r)
+			most = max(most, ms)
+			units = max(units, r.stats.shadow.units)
+			total += u64(r.stats.shadow.units)
+			now := shadow_page_runs(r)
+			still = still + 1 if now == runs else 0
+			runs = now
+		}
+		return
+	}
+	b.budget = abi.SHADOW_COST_UNITS
+	whole_frames, whole_ms, whole_units, whole_total := settle(t, r, camera)
+	whole := read(t, &f)
+	defer delete(whole)
+	rhi.device_wait_idle(f.device)
+	destroy_shadow_maps(r, &r.main.targets)
+	b.budget = 0
+	r.shadow_bound = {}
+	frames, most, units, total := settle(t, r, camera)
+	settled := read(t, &f)
+	defer delete(settled)
+	log.infof("cards under a bound that holds all: %d frames, %.2f ms, %d units a frame at most, %d in all; under that of the renderer: %d frames, %.2f ms, %d units a frame at most, %d in all", whole_frames, whole_ms, whole_units, whole_total, frames, most, units, total)
+	testing.expectf(t, most <= 2 * SHADOW_MAPS_MOST_MS && units <= SHADOW_FRAME_UNITS_MOST + PAGE_UNITS, "under the bound the rounds of a frame took %.2f ms and %d units", most, units)
+	testing.expectf(t, total > 4 * u64(units), "the cards cost %d units, no more than %d frames of the bound", total, 4)
+	differ := 0
+	for v, k in settled {if k < len(whole) && abs(int(v) - int(whole[k])) > 2 {differ += 1}}
+	testing.expectf(t, len(settled) == len(whole) && differ * 500 <= len(settled), "%d of %d values differ from the cards drawn at once", differ, len(settled))
+	expect_clean(t, f.device)
+}
+
 // A still view whose pages the maps cannot hold at once: a pool smaller than
 // what its points read, and a list of the chunks of the cull with no room in
 // the first frame after the maps are made anew. No point reads lit where a
@@ -826,7 +926,7 @@ render_a_table_holds_no_page_past_its_pool :: proc(t: ^testing.T) {
 // maps drawn whole. A bound that grows while the frames have room, never past
 // its most, settles in half the frames or fewer.
 @(test)
-render_a_frame_draws_no_more_than_its_clusters_and_the_rest_comes_after :: proc(t: ^testing.T) {
+render_a_frame_draws_no_more_than_its_bound_and_the_rest_comes_after :: proc(t: ^testing.T) {
 	f: Cube_Fixture
 	settings := test_settings()
 	settings.gi_enabled = false
@@ -865,13 +965,13 @@ render_a_frame_draws_no_more_than_its_clusters_and_the_rest_comes_after :: proc(
 	b.forget = true
 	for _ in 0 ..< 2 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
 	whole_frame, _ := stats(r)
-	asked := whole_frame.clusters + whole_frame.clusters_masked
+	asked := whole_frame.units
 	for _ in 0 ..< 2 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
 	whole := read(t, &f)
 	defer delete(whole)
-	// A bound a sixteenth of that, less than the posts in one page: held,
+	// A bound a 256th of that, less than the posts in one page: held,
 	// and growing while the frames have room, up to eight times as much.
-	bound := max(asked / 16, 4)
+	bound := max(asked / 256, 4)
 	cases := [?]struct {
 		name:  string,
 		grows: bool,
@@ -882,15 +982,16 @@ render_a_frame_draws_no_more_than_its_clusters_and_the_rest_comes_after :: proc(
 		b.budget, b.forget = 0 if c.grows else bound, true
 		if c.grows {r.shadow_bound = {least = bound, most = most_bound}}
 		frames, most, banded, narrowed := 0, u32(0), false, false
-		for frames < 128 {
+		for frames < 2048 {
 			testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
 			frames += 1
 			s, waiting := stats(r)
 			bands: [abi.SHADOW_POOL_PAGES]u32
 			testing.expect(t, rhi.buffer_read_slice(r.device, b.pages, u64(abi.SHADOW_WORDS_BAND) * 4, bands[:]))
 			for band in bands {banded ||= (band >> abi.SHADOW_BAND_SHIFT) & 0xFF != 0}
-			most = max(most, s.clusters + s.clusters_masked, s.clusters_moving)
-			testing.expectf(t, s.clusters + s.clusters_masked <= most_bound && s.clusters_moving <= most_bound, "%s, frame %d: the cache drew %d clusters and the atlas %d past the bound of %d", c.name, frames, s.clusters + s.clusters_masked, s.clusters_moving, most_bound)
+			// Past the bound by the units of a cluster at most, which begins within it.
+			most = max(most, s.units, s.units_moving)
+			testing.expectf(t, s.units <= most_bound + PAGE_UNITS && s.units_moving <= most_bound + PAGE_UNITS, "%s, frame %d: the cache drew %d units and the atlas %d past the bound of %d", c.name, frames, s.units, s.units_moving, most_bound)
 			// A page that waits is foreseen once, and the culls go over the slots of
 			// the pages granted alone: the frames it waits cost no instance of it.
 			args: [9]u32
@@ -910,7 +1011,7 @@ render_a_frame_draws_no_more_than_its_clusters_and_the_rest_comes_after :: proc(
 			testing.expect(t, narrowed, "the culls of a frame go over the slots of the pages it grants")
 			// Each frame draws near its bound but for what its bands and estimates leave.
 			given := 4 * (int(asked) + int(bound) - 1) / int(bound) + 4
-			testing.expectf(t, asked > 16 * bound - 16 && most > 0 && banded && frames <= given, "%d clusters asked for under a bound of %d took %d frames, the rule gives %d (a page drawn in bands: %v)", asked, bound, frames, given, banded)
+			testing.expectf(t, asked > 256 * bound - 256 && most > 0 && banded && frames <= given, "%d clusters asked for under a bound of %d took %d frames, the rule gives %d (a page drawn in bands: %v)", asked, bound, frames, given, banded)
 		}
 		for _ in 0 ..< 2 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
 		settled := read(t, &f)
@@ -997,7 +1098,7 @@ render_a_swaying_batch_keeps_its_pages_under_the_bound :: proc(t: ^testing.T) {
 		stats: [1]Shadow_Stats
 		testing.expect(t, rhi.buffer_read_slice(r.device, r.stats_buffer, u64(offset_of(Gpu_Cull_Stats, shadow)), stats[:]))
 		// A bound with room for them but little more, from the start again.
-		bound := 2 * ((32 * pages + stats[0].clusters_moving) * 4 / 3 + 64)
+		bound := 2 * ((32 * pages + stats[0].units_moving) * 4 / 3 + 64)
 		b.budget, b.forget = bound, true
 		waiting := u32(1)
 		for k := 0; k < 64 && waiting != 0; k += 1 {
