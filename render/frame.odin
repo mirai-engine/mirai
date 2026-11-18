@@ -1485,8 +1485,9 @@ pass_reflections :: proc(p: ^Pass) -> bool {
 	return true
 }
 
-// Frames that gather the light of a world shown anew (Renderer.gi_warm), each
-// an update over every probe within the budget of a frame and a bounce more.
+// Updates over PROBE_WARM_BUDGET probes that gather the light of a world shown
+// anew (Renderer.gi_warm), each a bounce more, taken over the frames after
+// within the budget of each (ddgi_warm_frames).
 GI_WARM_UPDATES :: 64
 
 // What lights the world whatever the view: the probe volume, updated once a
@@ -1501,7 +1502,7 @@ pass_world_lighting :: proc(p: ^Pass) -> bool {
 	changes := &r.scene.changes
 	if p.first && !p.offscreen && p.use_gi {
 		if changes.count > 0 && !changes.all && !upload_transient(r, cmd, changes.spheres[:changes.count], r.light_changes) {return false}
-		if r.gi_warm {r.gi_warm_spread = max(r.gi_warm_spread, GI_WARM_UPDATES)}
+		if r.gi_warm {r.gi_warm_spread = max(r.gi_warm_spread, ddgi_warm_frames(g, GI_WARM_UPDATES))}
 		r.gi_warm = false
 		warm := r.gi_warm_spread > 0
 		if warm {r.gi_warm_spread -= 1}

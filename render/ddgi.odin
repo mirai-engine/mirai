@@ -34,6 +34,8 @@ PROBE_HISTOGRAM_WORDS :: PROBE_BUCKETS + 4
 // The indirect dispatches of the update passes, in words: the trace, the
 // passes per probe and the passes per 32 probes.
 PROBE_DISPATCH_WORDS :: 12
+// The probes each update that gathers the light of a world shown anew takes.
+PROBE_WARM_BUDGET :: 2048
 // Seconds a change keeps the probes it reaches traced.
 PROBE_AWAKE :: f32(1)
 
@@ -156,6 +158,14 @@ ddgi_ensure :: proc(r: ^Renderer) -> bool {
 	g.needs_clear = true
 	g.valid = true
 	return true
+}
+
+// The frames that take `updates` warm updates within the budget of each.
+@(private)
+ddgi_warm_frames :: proc "contextless" (g: ^Ddgi_State, updates: u32) -> u32 {
+	if !g.valid {return updates}
+	probes := updates * min(PROBE_WARM_BUDGET, g.total)
+	return (probes + g.budget - 1) / g.budget
 }
 
 // Probes the list of the chosen has room for: those of an update.

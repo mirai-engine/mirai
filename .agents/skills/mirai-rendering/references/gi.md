@@ -101,8 +101,8 @@ Each technique states its status; what is listed as prepared is not implemented.
   the light sees; everything on a general change). The probes it reaches are traced at once and
   stay awake `PROBE_AWAKE` while the light travels through the bounces.
 - **Blackout.** A change of more than half of the light that reaches the volume is a general
-  change that warms the volume over `GI_BLACKOUT_UPDATES` frames: the later light is seen in the
-  frames in which it passes (`render/blackout.odin`).
+  change that warms the volume with `GI_BLACKOUT_UPDATES` updates over the frames after: the later
+  light is seen in the frames in which it passes (`render/blackout.odin`).
 
 ## Contact occlusion
 
@@ -260,11 +260,12 @@ keeps `Renderer_Desc.worlds` (edit and play).
 - Each view starts another history and takes its exposure at once
   ([exposure](display.md#exposure)); the next frame keeps the `delta_time` of the previous one.
 - **Warm-up.** The frames that show a world without light (and those after
-  `renderer_reset_history`) gather it over `GI_WARM_UPDATES` frames, each one update over every
-  probe in turn and one more bounce; a blackout does the same over `GI_BLACKOUT_UPDATES`. No frame,
-  the first of a world either, updates the volume more than once or traces more than the budget of
-  a frame: a first frame that traced many updates at once outlasted the time a driver gives a
-  submission while the GPU was shared. A change of the layout of the probes
+  `renderer_reset_history`) gather it with `GI_WARM_UPDATES` updates over `PROBE_WARM_BUDGET`
+  probes each, every probe in turn and one more bounce, taken over the frames after within the
+  budget of each (`ddgi_warm_frames`); a blackout does the same with `GI_BLACKOUT_UPDATES`. No
+  frame, the first of a world either, updates the volume more than once or traces more than the
+  budget of a frame: a first frame that traced many updates at once outlasted the time a driver
+  gives a submission while the GPU was shared. A change of the layout of the probes
   (`renderer_apply_settings`) leaves every world without light: probes that start from nothing and
   are traced a few a frame settle dark where their rays met what had no light yet, and nothing
   wakes them.
