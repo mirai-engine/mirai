@@ -1762,7 +1762,6 @@ render_a_highlight_gives_its_light_at_every_turn_of_the_jitter :: proc(t: ^testi
 		if texels == nil {texels = make([]f16, int(r.main.targets.width * r.main.targets.height) * 4)}
 		lights: [TAA_JITTER_PHASES]f32
 		for &sum, turn in lights {
-			renderer_camera_cut(r)
 			r.main.turn = u64(turn)
 			testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
 			rhi.device_wait_idle(f.device)
@@ -1774,7 +1773,8 @@ render_a_highlight_gives_its_light_at_every_turn_of_the_jitter :: proc(t: ^testi
 		low, high, mean := lights[0], lights[0], f32(0)
 		for sum in lights {low, high, mean = min(low, sum), max(high, sum), mean + sum / f32(len(lights))}
 		testing.expectf(t, low > 0, "without shadows %v: the highlight shows: %v", shadowless, lights)
-		testing.expectf(t, high - low < 0.2 * mean, "without shadows %v: the highlight gives %v to %v over the turns of the jitter: %v", shadowless, low, high, lights)
+		// A tenth: a highlight a point misses or counts twice moves it by more.
+		testing.expectf(t, high - low < 0.1 * mean, "without shadows %v: the highlight gives %v to %v over the turns of the jitter: %v", shadowless, low, high, lights)
 	}
 	expect_clean(t, f.device)
 }
