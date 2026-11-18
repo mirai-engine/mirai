@@ -128,13 +128,14 @@ void main(uint3 id : SV_DispatchThreadID) {
     if (sway && thread == 0u) InterlockedAdd(shadow_pages[SHADOW_WORDS_COUNTS + SHADOW_COUNT_THREADS], params.threads);
     if (!shadow_work_instance(thread, sway ? SHADOW_REACH_LISTS - 1u : params.moving, slot, instance)) return;
     uint map = slot;
-    float reach = 0.0;
+    float reach = 0.0, cull = 0.0;
     if (instance_batched(instance)) {
         Instance row = batch_row(batch_of(instance));
         // The slots after the last instance of a batch fill its last group.
         if (instance - frame.instance_count - batch_first(row) >= batch_count(row)) return;
         if ((batch_classes(row) & RAY_SHADOWS) == 0u) return;
         reach = batch_reach(row);
+        cull = batch_cull(row);
     }
     Instance inst = scene_instance(instance);
     if ((inst.meta.w & INSTANCE_FLAG_HIDDEN) != 0u || (inst.meta.x & INSTANCE_UNSHADOWED) != 0u) return;
@@ -143,6 +144,8 @@ void main(uint3 id : SV_DispatchThreadID) {
     Shadow_Map whole = shadow_map_at(shadow_data, params.rows, map);
     float3 low = inst.bounds_min.xyz - reach, high = inst.bounds_max.xyz + reach;
     if (!shadow_map_reaches(whole, low, high)) return;
+    // Past its cull distance, as the view leaves it out (render.shadow_culled).
+    if (cull > 0.0 && length(params.cull.xyz - clamp(params.cull.xyz, low, high)) > cull + params.cull.w) return;
     Mesh mesh = meshes[instance_mesh(inst)];
     if (mesh.vertex_count == 0u || mesh.cluster_count == 0u) return;
     for (uint mip = 0u; mip < shadow_slot_mips(map); mip++) {

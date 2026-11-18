@@ -34,7 +34,10 @@
 struct Params_Block {
     uint reach; uint ranges; uint rows; uint chunk_capacity; uint entry_capacity; uint list; uint moving; uint movers;
     uint threads; uint masks; uint plan; uint part; uint bound; uint foresee;
-    uint round; uint last; uint vertex_capacity; uint triangle_capacity; float margin; uint pad0; uint pad1; uint pad2; uint pad3; uint pad4;
+    uint round; uint last; uint vertex_capacity; uint triangle_capacity; float margin; uint pad0;
+    // The eye the instances of a batch past its cull distance are left out
+    // from, and how much farther than it (render.shadow_cull_eye).
+    float4 cull;
 };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 // Of a chunk, over its map and the mip of it from bit SHADOW_CHUNK_MIP: its

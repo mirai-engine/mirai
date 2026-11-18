@@ -486,6 +486,49 @@ render_a_swaying_batch_shades_where_it_is :: proc(t: ^testing.T) {
 	expect_clean(t, f.device)
 }
 
+// A batch casts into the maps as far as the view draws it: past its cull
+// distance from the eye its shadow is gone too; the eye that comes near
+// brings it back, and the one that goes away takes it from the pages the
+// maps keep, each in the frame it moves.
+@(test)
+render_a_batch_casts_no_shadow_past_its_cull_distance :: proc(t: ^testing.T) {
+	f: Cube_Fixture
+	settings := test_settings()
+	settings.gi_enabled = false
+	settings.taa = false
+	if !cube_fixture_init(t, &f, 192, 128, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	floor := Instance_Desc{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {200, 0.2, 200}), tint = {0.8, 0.8, 0.8}}
+	sun := Sun_Desc{direction = {0.05, 1, 0.02}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true, indirect = 1, scattering = 1}
+	testing.expect(t, scene_given(r, {floor}, nil, sun, {sky = {0, 0, 0}}), r.error)
+	batch, problem := batch_set(r, 0, 0, {mesh = f.cube, tint = 0.5, flags = {.Casts_Shadow, .Ray_Visible}, fade_distance = 25, cull_distance = 30}, {batch_instance({0, 1.5, 0}, 1, {2, 0.2, 2})})
+	if !testing.expectf(t, problem == "", "%s", problem) {return}
+	defer batch_remove(r, batch)
+	far := Camera{position = {0, 20, 45}, forward = {0, -20, -45}, up = {0, 1, 0}, fov_y = 40, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	near := Camera{position = {0, 8, 7}, forward = {0, -8, -7}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	// The floor under the slab and beside it, after a frame from the camera.
+	floor_at :: proc(t: ^testing.T, f: ^Cube_Fixture, camera: Camera) -> (under, beside: f32) {
+		r := f.renderer
+		testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+		rhi.device_wait_idle(f.device)
+		pixels, w, _, ok := golden_capture(r)
+		if !testing.expect(t, ok, r.error) {return}
+		defer delete(pixels)
+		return pixel(pixels, w, project(r, camera, {0, 0.001, 0.5}))[0], pixel(pixels, w, project(r, camera, {4, 0.001, 0.5}))[0]
+	}
+	for _ in 0 ..< 8 {testing.expect(t, renderer_frame(r, {camera = far}), r.error)}
+	under, beside := floor_at(t, &f, far)
+	testing.expectf(t, beside > 40 && abs(under - beside) < 12, "past its cull distance the slab casts no shadow: %f under it, %f beside it", under, beside)
+	for k in 0 ..< 2 {
+		under, beside = floor_at(t, &f, near)
+		testing.expectf(t, beside > 40 && under < 0.5 * beside, "round %d, the eye near: the slab shades the floor under it, %f against %f", k, under, beside)
+		under, beside = floor_at(t, &f, far)
+		testing.expectf(t, beside > 40 && abs(under - beside) < 12, "round %d, the eye far again: no shadow stays of the slab, %f under it, %f beside it", k, under, beside)
+	}
+	expect_clean(t, f.device)
+}
+
 // A cascade of the sun the eye moves by whole texels keeps what it held where
 // it still holds it and draws what came in: the image is the one of maps
 // drawn whole.
