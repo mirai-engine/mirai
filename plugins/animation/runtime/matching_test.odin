@@ -203,9 +203,11 @@ matching_walks_mirai_avatar_with_its_feet_planted_without_pose_jumps_and_follows
 // leap is another entry of the air that lands at .8 s and travels at 3 m/s. The others are not in
 // the locomotion of the .character; its .character plays them: vault, for two seconds over the whole body, with a
 // marker 'release' at .35 s; lunge, which takes the hips a metre along -Z in a second; kick, a foot
-// forward for a second with a marker 'hit' at .5 s, in the layer Leg over the left foot; and the
+// forward for a second with a marker 'hit' at .5 s, in the layer Leg over the left foot; the
 // layer Aim, which adds over the head the offset its axis aim_yaw gives between aim_left and
-// aim_right, from aim_center.
+// aim_right, from aim_center; stomp, which swings the left foot from .2 m back to 1.2 m back at
+// 2 m/s and returns it, with the right foot .2 m forward; and plant, which holds the left foot
+// .65 m back.
 @(private="file")
 Match_Fixture :: struct {
     using w:Match_World,
@@ -258,6 +260,9 @@ match_fixture :: proc(t:^testing.T,f:^Match_Fixture,memory:u32=MATCH_INFO_DEFAUL
     lift_r:=[2]lib.Keyframe{{time=0,value={-.1,-.95,0,0}},{time=1,value={-.1,-.5,0,0}}}
     step_hips:=[2]lib.Keyframe{{time=0,value={0,1,0,0}},{time=1,value={0,1,-1,0}}}
     kicked:=[2]lib.Keyframe{{time=0,value={.1,-.6,-.5,0}},{time=1,value={.1,-.6,-.5,0}}}
+    swung:=[3]lib.Keyframe{{time=0,value={.1,-.95,-.2,0}},{time=.5,value={.1,-.95,-1.2,0}},{time=1,value={.1,-.95,-.2,0}}}
+    planted:=[2]lib.Keyframe{{time=0,value={.1,-.95,-.65,0}},{time=1,value={.1,-.95,-.65,0}}}
+    aside:=[2]lib.Keyframe{{time=0,value={-.1,-.95,.2,0}},{time=1,value={-.1,-.95,.2,0}}}
     looks:[3][2]lib.Keyframe
     for &keys,i in looks {keys={{time=0,value={f32(i-1)*.2,.7,0,0}},{time=1,value={f32(i-1)*.2,.7,0,0}}}}
     release:=[1]lib.Marker{{time=.35,id=0}}
@@ -265,7 +270,7 @@ match_fixture :: proc(t:^testing.T,f:^Match_Fixture,memory:u32=MATCH_INFO_DEFAUL
     // As a library keeps them: each clip's marker of its own, of the same name.
     land_again:=[1]lib.Marker{{time=.8,id=2}}
     hit:=[1]lib.Marker{{time=.5,id=3}}
-    descs:=[11]lib.Clip_Desc{
+    descs:=[13]lib.Clip_Desc{
         {name=base.name_hash("idle"),tracks={{target=left,property=.Position,keys=still[:]},{target=right,property=.Position,keys=other[:]}}},
         {name=base.name_hash("walk"),tracks={{target=left,property=.Position,keys=stride_l[:]},{target=right,property=.Position,keys=stride_r[:]}},markers=walk_spans},
         {name=base.name_hash("fall"),tracks={{target=left,property=.Position,keys=tucked[:]},{target=right,property=.Position,keys=other[:]}}},
@@ -277,6 +282,8 @@ match_fixture :: proc(t:^testing.T,f:^Match_Fixture,memory:u32=MATCH_INFO_DEFAUL
         {name=base.name_hash("aim_left"),tracks={{target=head,property=.Position,keys=looks[0][:]}}},
         {name=base.name_hash("aim_center"),tracks={{target=head,property=.Position,keys=looks[1][:]}}},
         {name=base.name_hash("aim_right"),tracks={{target=head,property=.Position,keys=looks[2][:]}}},
+        {name=base.name_hash("stomp"),tracks={{target=left,property=.Position,keys=swung[:]},{target=right,property=.Position,keys=aside[:]}}},
+        {name=base.name_hash("plant"),tracks={{target=left,property=.Position,keys=planted[:]},{target=right,property=.Position,keys=other[:]}}},
     }
     f.content.id,f.content.generation={0x3a7c,3},1
     if !lib.library_init(&f.content.lib,{max_keys=128,max_tracks=32,max_clips=2*len(descs),max_markers=8}) {return false}
@@ -303,16 +310,17 @@ match_fixture :: proc(t:^testing.T,f:^Match_Fixture,memory:u32=MATCH_INFO_DEFAUL
     samples:=make([]Blend_Sample,2);samples[0],samples[1]={position={-1,0},speed=1},{position={1,0},speed=1}
     base.text_set(samples[0].clip[:],"aim_left");base.text_set(samples[1].clip[:],"aim_right")
     // What the aim, the leg and play ask over the search.
-    set:=Action_Profile{layers=make([]Stack_Layer,2),actions=make([]Action_Definition,9)}
+    set:=Action_Profile{layers=make([]Stack_Layer,2),actions=make([]Action_Definition,11)}
     set.layers[0]=STACK_LAYER_DEFAULT;base.text_set(set.layers[0].name[:],"Aim");base.text_set(set.layers[0].space[:],"aim");set.layers[0].mode,set.layers[0].fade=.Additive,0
     base.text_set(set.layers[0].reference_clip[:],"aim_center")
     set.layers[1]=STACK_LAYER_DEFAULT;base.text_set(set.layers[1].name[:],"Leg");set.layers[1].over[0].bone=bone_ref("foot_l")
     Action :: struct {name,clip,layer:string,priority:i16,cancel:Action_Cancel_Policy,entry:Action_Entry,exit:f32,marker:string,fade:f32}
-    for value,i in ([9]Action{
+    for value,i in ([11]Action{
         {name="Vault",clip="vault",exit=1,fade=.15},{name="Vault to release",clip="vault",exit=1,marker="release",fade=.15},
         {name="Vault kept",clip="vault",entry=.Keep_Time,exit=1,fade=.15},{name="Vault phased",clip="vault",entry=.Match_Phase,exit=.5,fade=.15},{name="Vault half",clip="vault",exit=.5,fade=.15},
         {name="Cut",clip="vault",exit=1},{name="Guard",clip="vault",priority=2,cancel=.Deny,exit=1,fade=.45},
         {name="Lunge",clip="lunge",exit=1},{name="Kick",clip="kick",layer="Leg",exit=1},
+        {name="Stomp",clip="stomp",exit=1,fade=.2},{name="Plant",clip="plant",exit=1,fade=.2},
     }) {
         action:=&set.actions[i];action^=ACTION_DEFINITION_DEFAULT
         base.text_set(action.name[:],value.name);base.text_set(action.clip[:],value.clip);base.text_set(action.layer[:],value.layer);base.text_set(action.exit_marker[:],value.marker)
@@ -353,6 +361,7 @@ match_fixture_free :: proc(f:^Match_Fixture) {
 match_step :: proc(f:^Match_Fixture,dt:f32,mode:u16,velocity:=mm.Vec3{},desired:=mm.Vec3{},wall:=mm.Vec3{},time_to_land:f32=0,content:^host.Content_Animation=nil) -> bool {
     content:=content if content!=nil else &f.content
     clear(&f.events.items)
+    f.playback.frame+=1
     goals:=[1]Match_Goal{{rig=f.rig,mode=mode,velocity=velocity,desired=desired,facing={0,0,-1},wall=wall,acceleration=20,braking=20,time_to_land=time_to_land}}
     copy(f.state.local[:],f.state.rest[:])
     core.edit(&f.animations,f.rig)^=f.animation
@@ -367,10 +376,12 @@ match_step :: proc(f:^Match_Fixture,dt:f32,mode:u16,velocity:=mm.Vec3{},desired:
     layers_advance(&f.playback,f.state,content,f.animation,&f.events,dt,&f.problems,&f.graphs,&f.app,&f.actions)
     actions_layer_finish(&f.actions,f.state)
     stack_parameters_check(f.state,&f.problems)
-    if !program_pose(&f.playback,f.state,content,f.animation,output) {return false}
-    pose_faults_report(&f.problems,f.rig,pose_layers(&f.playback,f.state,content,f.animation),&f.actions)
+    if !stack_inertia_prepare(f.state) {return false}
+    faults:=pose_compose(&f.playback,f.state,content,f.animation,true,dt,core.read(&f.transforms),0)
+    if faults.program {return false}
+    pose_faults_report(&f.problems,f.rig,faults,&f.actions)
     f.state.seen=f.playback.frame
-    stack_root(f.state,content,f.animation,dt)
+    stack_root(f.state,content,f.animation);stack_root_inertia(f.state,f.playback.frame,dt)
     actions_finish(&f.actions,&f.playback,dt)
     return true
 }
@@ -511,7 +522,7 @@ a_whole_body_action_goes_on_when_the_body_changes_mode_and_stop_ends_it :: proc(
 }
 
 @(test)
-a_whole_body_action_fades_in_over_the_pose_and_stable_ticks_do_not_allocate :: proc(t:^testing.T) {
+a_whole_body_action_blends_in_from_the_pose_and_stable_ticks_do_not_allocate :: proc(t:^testing.T) {
     dt:=f32(1.0/60)
     jumps:[2]f32
     for action,i in ([2]string{"Cut","Vault"}) {
@@ -523,7 +534,7 @@ a_whole_body_action_fades_in_over_the_pose_and_stable_ticks_do_not_allocate :: p
         testing.expect(t,match_step(&f,dt,GROUND))
         jumps[i]=linalg.length(f.state.local[foot].position-last)
         if i==0 {continue}
-        testing.expect(t,abs(f.state.layers[0].weight-dt/.15)<1e-4,"it fades in over its fade_in")
+        testing.expect(t,f.state.layers[0].weight==1 && f.state.inertia.state.active && f.state.inertia.state.duration==.15,"it shows at its weight at once and blends over its fade_in")
         saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=context.allocator;f.app.allocator=context.allocator
         stable:=true
         for tick in 0..<120 {
@@ -535,6 +546,110 @@ a_whole_body_action_fades_in_over_the_pose_and_stable_ticks_do_not_allocate :: p
         testing.expect(t,stable && !value.forced && f.problems.count==0,"actions, their blends and the matching after them do not allocate")
     }
     testing.expectf(t,jumps[0]>.3 && jumps[1]<jumps[0]*.25,"an action without fade cuts (%.3f m) and one with fade goes on from the last pose (%.3f m)",jumps[0],jumps[1])
+}
+
+// The clips the pose of a rig blends in its tick: those of its locomotion and those of each slot
+// of its stack that shows.
+@(private="file")
+match_test_clips :: proc(state:^Playing) -> (count:int) {
+    for group in state.program.output.groups[:state.program.output.count] {count+=int(group.count)}
+    for &layer in state.layers[:state.stack] {
+        if layer.weight<=0 {continue}
+        players:[LAYER_PLAYERS]lib.Player
+        count+=layer_players(&layer,&players)
+    }
+    return
+}
+
+// Stomp, and plant after it, start over the search or interrupt the action playing: each shows its
+// pose at once over an offset from the pose shown, which decays by its fade_in, and one without
+// fade_in cuts. The twin plays them all cut, so it shows the pose they ask for: the target of the
+// blends, which evaluate the clips of that one source. Plant interrupts stomp once it plays where
+// the foot is 5 cm from where plant holds it and swings away at 2 m/s. With kick, the layer over
+// the left foot starts in the same tick as stomp and asks .1 s: the foot blends over that time
+// and the other foot over the .2 s of stomp. A rig not posed for ticks, or bound again, before
+// plant shows plant at once: what it showed then is not blended from. With root, lunge (its root
+// moving at 1 m/s) is interrupted by plant, whose root stays: the root motion that moves the body
+// blends from that velocity.
+@(test)
+an_action_shows_its_pose_at_once_and_blends_from_the_pose_shown :: proc(t:^testing.T) {
+    Case :: struct {name,next:string,at,unposed:int,cut,kick,rebound,root:bool}
+    cases:=[?]Case{
+        {name="starts"},{name="interrupts while it blends in",next="Plant",at=5},{name="interrupts once it plays",next="Plant",at=15},{name="cuts",next="Plant",at=5,cut=true},
+        {name="starts with a layer that asks less time",kick=true},{name="after ticks it was not posed",next="Plant",at=5,unposed=3},
+        {name="after it is bound again",next="Plant",at=5,rebound=true},{name="moves the body by root motion",next="Plant",at=15,root=true},
+    }
+    dt,fade:=f32(1.0/60),f32(.2)
+    for c in cases {
+        f,twin:Match_Fixture;defer {match_fixture_free(&f);match_fixture_free(&twin)}
+        if !testing.expect(t,match_fixture(t,&f) && match_fixture(t,&twin)) {continue}
+        for &action in twin.graphs.contents[0].set.actions.actions[9:] {action.fade_in,action.fade_out=0,0}
+        if c.cut {f.graphs.contents[0].set.actions.actions[10].fade_in=0}
+        if c.kick {f.graphs.contents[0].set.actions.actions[8].fade_in=.1}
+        if c.root {
+            f.graphs.contents[0].set.actions.actions[7].fade_in=fade
+            for g in ([2]^Match_Fixture{&f,&twin}) {
+                plant:=&g.graphs.contents[0].set.actions.actions[10];plant.root_motion,plant.body_move=.In_Place,.Override
+                base.text_set(g.content.roots[12].bone[:],"hips");g.content.roots[12].translation=true
+            }
+        }
+        first:="Lunge" if c.root else "Stomp"
+        for _ in 0..<10 {testing.expect(t,match_step(&f,dt,GROUND) && match_step(&twin,dt,GROUND))}
+        foot,other:=bone_resolve(f.state,bone_ref("foot_l")),bone_resolve(f.state,bone_ref("foot_r"))
+        shown,offsets:[dynamic][5]mm.Vec3;defer {delete(shown);delete(offsets)}
+        moved:[dynamic]f32;defer delete(moved)
+        slide:f32;clips:=0
+        for tick in 0..<40 {
+            if tick==0 {play(&f.requests,f.rig,first);play(&twin.requests,twin.rig,first)}
+            if tick==0 && c.kick {play(&f.requests,f.rig,"Kick");play(&twin.requests,twin.rig,"Kick")}
+            if c.next!="" && tick==c.at {
+                for g in ([2]^Match_Fixture{&f,&twin}) {
+                    g.playback.frame+=u64(c.unposed)
+                    if c.rebound {testing.expect(t,skeleton_bind(&g.playback,g.state,&g.definition,&g.content,&g.transforms))}
+                    play(&g.requests,g.rig,c.next)
+                }
+            }
+            if !testing.expect(t,match_step(&f,dt,GROUND) && match_step(&twin,dt,GROUND)) {break}
+            append(&moved,linalg.length(f.state.body_motion.translation-twin.state.body_motion.translation))
+            testing.expectf(t,match_test_clips(f.state)==match_test_clips(twin.state) && f.state.layers[0].weight==twin.state.layers[0].weight,"%s: tick %d blends the clips of one source at its weight",c.name,tick)
+            pose,offset:[5]mm.Vec3
+            for b in 0..<min(len(f.state.local),5) {pose[b]=f.state.local[b].position;offset[b]=pose[b]-twin.state.local[b].position}
+            append(&shown,pose);append(&offsets,offset)
+            if c.next!="" && tick>=c.at && tick<c.at+18 {slide+=linalg.length(pose[foot]-shown[tick-1][foot])}
+            if c.next!="" && tick==c.at {clips=match_test_clips(f.state)}
+        }
+        if len(offsets)<40 {continue}
+        largest :: proc(values:[5]mm.Vec3) -> (length:f32) {for value in values {length=max(length,linalg.length(value))};return}
+        // The longest of the offsets of the bones at each tick since it blends, until it ends.
+        from:=c.at if c.next!="" else 0
+        if c.cut || c.unposed>0 || c.rebound {
+            testing.expectf(t,largest(offsets[from])<1e-5,"%s: plant shows its pose at once, %v",c.name,offsets[from])
+            continue
+        }
+        if c.root {
+            testing.expectf(t,moved[from]>.5*dt && moved[from]<dt,"%s: the body goes on from 1 m/s, %v m in the tick plant starts",c.name,moved[from])
+            for tick in from+1..<40 {testing.expectf(t,moved[tick]<=moved[tick-1]+1e-6 && (f32(tick-from+1)*dt<fade+1e-4 || moved[tick]<1e-6),"%s: the difference of the root motion decays to nothing by its fade_in: %v at tick %d",c.name,moved[tick],tick)}
+            continue
+        }
+        if c.kick {
+            at:=int(.1/dt+.5)
+            testing.expectf(t,linalg.length(offsets[at][foot])<1e-5 && linalg.length(offsets[at][other])>1e-3,"%s: the foot of the layer blends over its .1 s, the other over .2 s: %v",c.name,offsets[at])
+        }
+        testing.expectf(t,largest(offsets[from])>.01,"%s: it blends from the pose shown, %v",c.name,offsets[from])
+        for tick in from+1..<40 {
+            ended:=f32(tick-from+1)*dt>=fade+1e-4
+            testing.expectf(t,largest(offsets[tick])<=largest(offsets[tick-1])+1e-5 && (!ended || largest(offsets[tick])<1e-5),"%s: the offset decays to nothing by its fade_in: %v at tick %d",c.name,largest(offsets[tick]),tick)
+        }
+        if c.next=="" {continue}
+        // While stomp blends in, its foot heads where plant holds it: the pose goes on with the
+        // velocity it had. Once stomp plays, the foot swings away and plants without that velocity.
+        jump:=largest({0=shown[from][foot]-2*shown[from-1][foot]+shown[from-2][foot]})
+        testing.expectf(t,c.at!=5 || jump<.002,"%s: the pose goes on with its velocity, a change of %.4f m in a tick",c.name,jump)
+        if c.at==15 {
+            log.infof("%s: %d clips while it blends, the planted foot slides %.3f m",c.name,clips,slide)
+            testing.expectf(t,slide<.07,"%s: the planted foot moves no more than the 5 cm to where plant holds it, not %.3f m",c.name,slide)
+        }
+    }
 }
 
 // The stack over the search: the aim offset of a space added over the matched pose, an action in
