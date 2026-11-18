@@ -7,7 +7,6 @@ import "core:slice"
 import "core:strings"
 import "mirai:asset"
 import "mirai:cook/shaders"
-import erender "mirai:engine/render"
 import "mirai:project"
 import "mirai:render/abi"
 import "mirai:std/base"
@@ -26,7 +25,7 @@ program_uses :: proc(p:^project.Project,allocator:=context.allocator) -> (uses:[
     Material :: struct {program:string,info:asset.Material_Info,overlays:[]base.Asset_Id}
     Drawing :: struct {dependencies:[]base.Asset_Id,uses:abi.Program_Uses}
     // An entity whose Material_Values give it overlays or values of its own.
-    Look :: struct {renderer:erender.Mesh_Renderer,values:erender.Material_Values}
+    Look :: struct {renderer:Uses_Renderer,values:Uses_Values}
     materials:=make(map[base.Asset_Id]Material,context.temp_allocator)
     meshes:=make(map[base.Asset_Id][]base.Asset_Id,context.temp_allocator)
     drawings:=make([dynamic]Drawing,context.temp_allocator)
@@ -72,8 +71,8 @@ program_uses :: proc(p:^project.Project,allocator:=context.allocator) -> (uses:[
             defer asset.asset_close(&file)
             view,error:=asset.scene_view(&file,types)
             if error!=.None {return}
-            renderers,drawn:=scene_column(&file,&view,types,"Mesh_Renderer",erender.Mesh_Renderer)
-            values,given:=scene_column(&file,&view,types,"Material_Values",erender.Material_Values)
+            renderers,drawn:=scene_column(&file,&view,types,"Mesh_Renderer",Uses_Renderer)
+            values,given:=scene_column(&file,&view,types,"Material_Values",Uses_Values)
             for row in 0..<len(view.ids) {
                 if drawn!=nil && given!=nil && drawn[row] && given[row] && (values[row].own_overlays || values[row].count>0) {append(looks,Look{renderers[row],values[row]})}
             }
@@ -113,7 +112,7 @@ program_uses :: proc(p:^project.Project,allocator:=context.allocator) -> (uses:[
         // The values of a slot over its material, or over every material of
         // the mesh when the slot takes the mesh's, whose slots it does not know.
         count:=min(int(v.count),len(v.names))
-        for slot in 0..<erender.MATERIAL_SLOTS {
+        for slot in 0..<abi.MATERIAL_SLOTS {
             if look.renderer.materials[slot]=={} && look.renderer.mesh=={} {continue}
             given:=false
             for k in 0..<count {given||=int(v.slots[k])==slot}
@@ -125,7 +124,7 @@ program_uses :: proc(p:^project.Project,allocator:=context.allocator) -> (uses:[
                 info:=m.info
                 for k in 0..<count {
                     value:=v.values[k]
-                    if int(v.slots[k])==slot {erender.material_standard_value(&info,v.names[k],&value,true)}
+                    if int(v.slots[k])==slot {asset.material_standard_value(&info,v.names[k],&value,true)}
                 }
                 add(&found,materials,id,drawn_as(info))
             }
@@ -141,6 +140,24 @@ program_uses :: proc(p:^project.Project,allocator:=context.allocator) -> (uses:[
     for name,drawn in found {append(&list,shaders.Program_Uses_Of{strings.clone(name,allocator),drawn})}
     slice.sort_by(list[:],proc(a,b:shaders.Program_Uses_Of) -> bool {return a.program<b.program})
     return list[:],""
+}
+
+// The fields of the Mesh_Renderer and the Material_Values of engine/render
+// that program_uses reads from a scene, by name.
+@(private="file")
+Uses_Renderer :: struct {
+    mesh:base.Asset_Id,
+    materials:[abi.MATERIAL_SLOTS]base.Asset_Id,
+}
+@(private="file")
+Uses_Values :: struct {
+    count:u32,
+    slots:[abi.INSTANCE_VALUES_MAX]u8,
+    names:[abi.INSTANCE_VALUES_MAX]u64,
+    values:[abi.INSTANCE_VALUES_MAX][4]f32,
+    own_overlays:bool,
+    overlay_count:u32,
+    overlays:[asset.MATERIAL_MAX_OVERLAYS]asset.Material_Overlay,
 }
 
 // What a material is drawn as by its values: a transmissive one is drawn

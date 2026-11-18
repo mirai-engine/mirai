@@ -38,13 +38,13 @@ ALPHA_MODE_NAMES :: [asset.Alpha_Mode]string{.Opaque="Opaque",.Mask="Mask",.Blen
 EMISSION_MODE_NAMES :: [asset.Emission_Mode]string{.Physical="Nits",.Relative="Exposure"}
 MATERIAL_LIST_ROWS :: 8
 
-// The values of the standard model an entity gives its material, in the order of erender.MATERIAL_VALUE_FIELDS.
+// The values of the standard model an entity gives its material, in the order of asset.MATERIAL_VALUE_FIELDS.
 Material_Value :: enum u8 {
     Base_Color,Opacity,Metallic,Roughness,Emission,Specular,Ior,Transmission,Alpha_Mode,
     Coat,Coat_Roughness,Coat_Color,Coat_Ior,Fuzz,Fuzz_Color,Fuzz_Roughness,Anisotropy,Anisotropy_Rotation,Unlit,
     Emission_Mode,Diffuse_Transmission,Diffuse_Transmission_Color,
 }
-#assert(len(Material_Value)==len(erender.MATERIAL_VALUE_FIELDS))
+#assert(len(Material_Value)==len(asset.MATERIAL_VALUE_FIELDS))
 
 Material_List_Kind :: enum u8 {None,Material,Overlay,Texture,Asset}
 
@@ -138,7 +138,7 @@ Appearance :: struct {
 
 @(private)
 material_value_name :: proc(value:Material_Value) -> u64 {
-    fields:=erender.MATERIAL_VALUE_FIELDS
+    fields:=asset.MATERIAL_VALUE_FIELDS
     return base.name_hash(fields[int(value)].name)
 }
 
@@ -827,7 +827,7 @@ material_write :: proc(s:^Session,owner:base.Asset_Id,change:Material_Change) ->
                     continue values
                 }
             }
-            erender.material_standard_value(&info,name,&o.values[i],true)
+            asset.material_standard_value(&info,name,&o.values[i],true)
         }
         maps:=erender.MATERIAL_MAP_NAMES
         textures: for name,i in o.texture_names[:min(int(o.texture_count),len(o.texture_names))] {
