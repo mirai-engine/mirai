@@ -1,6 +1,7 @@
 package anim
 
 import "base:runtime"
+import "core:math/linalg"
 import "core:mem"
 import "core:slice"
 import "mirai:core"
@@ -179,10 +180,13 @@ pose_row :: proc(playback:^Playback,row:^Pose_Row,transforms:^core.Table(core.Tr
 @(private)
 pose_compose :: proc(playback:^Playback,state:^Playing,content:^host.Content_Animation,animation:Animation,programmed:bool,dt:f32,transforms:^core.Table(core.Transform,.Read),worker:int) -> (faults:Pose_Faults) {
     dt:=dt if animation.playing else 0
+    // What it showed in a tick that is not the one before (it was not posed since) is not blended
+    // from, nor a blend kept from then.
+    inertia:=&state.inertia
+    if inertia.frame+1!=playback.frame {inertia.kept,inertia.state=0,{}}
     // A blend measures how the pose its slots changed to moves: that pose a tick before is the base
     // then under the layers where their clips were.
-    inertia:=&state.inertia
-    capture:=state.stack>0 && state.blend.duration>0 && inertia.kept>0 && dt>0 && len(inertia.before)==len(state.local)
+    capture:=state.stack>0 && stack_blending(state.blend) && inertia.kept>0 && dt>0 && len(inertia.before)==len(state.local)
     if programmed {
         runtime:=&state.program
         if !program_pose(playback,state,content,animation,&runtime.output,worker) {faults.program=true;return}
@@ -205,7 +209,48 @@ pose_compose :: proc(playback:^Playback,state:^Playing,content:^host.Content_Ani
         sample_curves(state,content,animation.weight,animation)
     }
     stack_inertia_apply(state,dt,capture)
+    inertia.frame=playback.frame
     return
+}
+
+// Whether a slot of the stack changed in the tick and asks a time to blend.
+@(private)
+stack_blending :: proc "contextless" (blend:Stack_Blend) -> bool {
+    for duration in blend.durations {if duration>0 {return true}}
+    return false
+}
+
+// The root motion of the stack of state through the blend of the slots that carry it: when a slot
+// over the whole pose changes and the root moved by the clips in the tick before too, the
+// difference of its velocity decays over the shortest time such a slot asks, without carrying its
+// acceleration, which is noisy; a slot that cuts ends it. dt: 0 when it does not play.
+@(private)
+stack_root_inertia :: proc(state:^Playing,frame:u64,dt:f32) {
+    root:=&state.inertia.root
+    if state.stack==0 || !(dt>0) {return}
+    velocity :: proc(delta:Root_Delta,dt:f32) -> [2]mm.Vec3 {
+        turn:=delta.rotation;if real(turn)<0 {turn=-turn}
+        return {delta.translation/dt,lib.quat_log(turn)/dt}
+    }
+    shortest:f32
+    cut:=false
+    for i in 0..<int(state.stack) {
+        if state.asked[i].over!={} {continue}
+        if state.blend.cuts&(u16(1)<<u16(i))!=0 {cut=true}
+        if duration:=state.blend.durations[i];duration>0 && (shortest==0 || duration<shortest) {shortest=duration}
+    }
+    if cut || !state.root_enabled {root.duration=0} else if shortest>0 && root.shown && root.frame+1==frame {
+        now:=velocity(state.motion,dt)
+        root.offset,root.duration,root.elapsed={root.velocity[0]-now[0],root.velocity[1]-now[1]},shortest,0
+    }
+    if root.elapsed<root.duration {
+        root.elapsed+=dt
+        share:=lib.inertial_remaining(root.elapsed,root.duration)*dt
+        state.motion.translation+=root.offset[0]*share
+        state.motion.rotation=linalg.normalize0(state.motion.rotation*lib.quat_exp(root.offset[1]*share))
+        if state.body_motion.move!=.None {state.body_motion.translation+=root.offset[0]*share}
+    }
+    root.velocity,root.shown,root.frame=velocity(state.motion,dt),state.root_enabled,frame
 }
 
 // Room for the inertia of the stack of state, made on the owner thread before its pose: what it
@@ -215,29 +260,41 @@ stack_inertia_prepare :: proc(state:^Playing) -> bool {
     inertia:=&state.inertia
     if state.stack==0 {inertia.kept,inertia.state=0,{};return true}
     n:=len(state.bindings);c:=len(state.curves)
-    same:=len(inertia.shown)==n && len(inertia.shown_curves)==c
+    same:=len(inertia.shown)==n && len(inertia.shown_curves)==c && inertia.bound==state.bound
     for curve,k in inertia.shown_curves[:min(c,len(inertia.shown_curves))] {same &&=curve.target==state.curves[k].target && curve.property==state.curves[k].property && curve.slot==state.curves[k].slot}
     if !same {inertia.kept,inertia.state=0,{}}
-    return program_array_resize(&inertia.shown,n) && program_array_resize(&inertia.shown_before,n) && program_array_resize(&inertia.before,n) && program_array_resize(&inertia.older,n) && program_array_resize(&inertia.bones,n) &&
+    inertia.bound=state.bound
+    return program_array_resize(&inertia.shown,n) && program_array_resize(&inertia.shown_before,n) && program_array_resize(&inertia.before,n) && program_array_resize(&inertia.older,n) && program_array_resize(&inertia.bones,n) && program_array_resize(&inertia.durations,n) &&
         program_array_resize(&inertia.shown_curves,c) && program_array_resize(&inertia.shown_curves_before,c) && program_array_resize(&inertia.curves,c*5) && program_array_resize(&inertia.values,c*15)
 }
 
 // The pose and curves of the stack of state through its inertia, dt seconds after the tick it
 // showed last: what its slots changed in this tick blends from that pose, with the velocity of the
-// target from before (its pose a tick before) when there is one, and a slot that cuts takes off the
-// offsets of what it moves. What it shows is kept for the next tick. A pose or curve that is not
-// finite ends the blend.
+// target from before (its pose a tick before) when there is one. Each bone blends over the shortest
+// time of the slots that move it, the others over what their blend had left, the curves over the
+// shortest of the tick; a slot that cuts takes off the offsets of what it moves. What it shows is
+// kept for the next tick. A pose or curve that is not finite ends the blend.
 @(private)
 stack_inertia_apply :: proc(state:^Playing,dt:f32,before:bool) {
     inertia:=&state.inertia;n:=len(state.local);c:=len(state.curves)
-    if state.stack==0 || len(inertia.shown)!=n || len(inertia.bones)!=n || len(inertia.shown_curves)!=c || len(inertia.values)!=c*15 {return}
+    if state.stack==0 || len(inertia.shown)!=n || len(inertia.bones)!=n || len(inertia.durations)!=n || len(inertia.shown_curves)!=c || len(inertia.values)!=c*15 {return}
     blend:=state.blend
     values:=inertia.values[:];old,now,target:=values[:c*5],values[c*5:c*10],values[c*10:]
     if blend.slots!=0 && inertia.kept>0 {
-        if blend.duration>0 {
+        if stack_blending(blend) {
+            durations:=inertia.durations[:]
+            for &duration in durations {duration=-1}
+            shortest:=max(f32)
+            for asked,i in blend.durations[:state.stack] {
+                if asked<=0 {continue}
+                shortest=min(shortest,asked)
+                if state.asked[i].over=={} {for &duration in durations {duration=asked if duration<0 else min(duration,asked)}} else if len(state.masks)>=(i+1)*n {
+                    for share,b in state.masks[i*n:][:n] {if share>0 {durations[b]=asked if durations[b]<0 else min(durations[b],asked)}}
+                }
+            }
             history:=inertia.kept>1
             curves_flatten(inertia.shown_curves[:],now);curves_flatten(inertia.shown_curves_before[:] if history else inertia.shown_curves[:],old);curves_flatten(state.curves[:],target)
-            input:=lib.Inertial_Input{previous=inertia.shown_before[:] if history else inertia.shown[:],current=inertia.shown[:],target=state.local[:],previous_curves=old,current_curves=now,target_curves=target,dt=inertia.dt if history else 0,duration=blend.duration}
+            input:=lib.Inertial_Input{previous=inertia.shown_before[:] if history else inertia.shown[:],current=inertia.shown[:],target=state.local[:],previous_curves=old,current_curves=now,target_curves=target,durations=durations,dt=inertia.dt if history else 0,duration=shortest}
             if before {
                 pose_extrapolate_back(inertia.before[:],state.local[:],inertia.older[:],input.dt/dt)
                 input.target,input.target_previous=inertia.before[:],inertia.older[:]

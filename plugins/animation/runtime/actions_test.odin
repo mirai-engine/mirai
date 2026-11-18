@@ -418,7 +418,7 @@ action_root_motion_uses_section_segments_and_its_weight_from_its_start_and_expos
     profile.actions[0].fade_in=1
     actions.states[0].slots[0]={active=true,starting=true,seeking=true,action=0,section=0};state.layers[0]={}
     stack_step(&actions,&state,description,&content,&playback,&events,.1);stack_root(&state,&content,description)
-    testing.expect(t,abs(state.motion.translation.x-.1*.75)<1e-5 && state.blend.duration==1)
+    testing.expect(t,abs(state.motion.translation.x-.1*.75)<1e-5 && state.blend.durations[0]==1)
     base.text_set(profile.actions[0].clip[:],"missing")
     problems:core.Problems
     stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.1,&problems,&content,&playback,&events,nil,1)
@@ -569,7 +569,7 @@ a_new_actions_asset_or_revision_interrupts_the_playing_action_and_blends_its_lay
         if change=="another asset" {core.free(&w.descriptions,entity).asset={5,6}} else {cache.contents[0].revision+=1}
         ticked:=tick(&actions,&requests,&cache,&w.descriptions,&playback,&app,&content,&events,.05)
         testing.expectf(t,ticked && count(&events,.Interrupted)==1,"%s interrupts the action once",change)
-        testing.expectf(t,!actions.states[0].slots[0].active && state.layers[0].weight==0 && state.blend=={slots=1,duration=.2},"%s hands the layer back at once, which blends from the action over fade_out: %v",change,state.blend)
+        testing.expectf(t,!actions.states[0].slots[0].active && state.layers[0].weight==0 && state.blend=={slots=1,durations={0=.2}},"%s hands the layer back at once, which blends from the action over fade_out: %v",change,state.blend)
         testing.expect(t,tick(&actions,&requests,&cache,&w.descriptions,&playback,&app,&content,&events,.05) && count(&events,.Interrupted)==0 && state.blend=={})
     }
 }
