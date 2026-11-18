@@ -47,11 +47,11 @@ the_turns_of_the_compilations_follow_the_memory_and_a_measurement_waits_for_them
     shaders,shaders_ok:=shaders_acquire(root,"shaders")
     testing.expect(t,shaders_ok,"a generation of shaders waits for no compilation")
     lock_release(&first)
-    _,_,_,compiling:=measure_try(root,"measure")
-    testing.expect(t,compiling,"a turn after the first keeps a measurement waiting")
+    _,_,_,why:=measure_try(root,"measure")
+    testing.expect_value(t,why,Measure_Wait.Build)
     lock_release(&second)
-    _,_,_,compiling=measure_try(root,"measure")
-    testing.expect(t,compiling,"a generation of shaders keeps it waiting too")
+    _,_,_,why=measure_try(root,"measure")
+    testing.expect_value(t,why,Measure_Wait.Build)
     lock_release(&shaders)
     measure,started,_,_:=measure_try(root,"measure")
     testing.expect(t,started)
@@ -112,7 +112,7 @@ a_held_lock_says_who_holds_it_and_since_when :: proc(t:^testing.T) {
     path:=lock_path(root,MEASURE_LOCK,context.temp_allocator)
     held,_,_:=lock_holder(path,context.temp_allocator)
     testing.expect(t,!held)
-    what:=fmt.tprintf("pid %d, mirai measure in %s",os.get_pid(),root)
+    what:=fmt.tprintf("pid %d, mirai measure in %s",os.get_pid()+1,root)
     lock,ok:=lock_acquire(path,what)
     testing.expect(t,ok)
     holder:string
@@ -121,10 +121,9 @@ a_held_lock_says_who_holds_it_and_since_when :: proc(t:^testing.T) {
     testing.expect(t,held)
     testing.expect_value(t,holder,what)
     testing.expectf(t,abs(time.diff(since,time.now()))<time.Minute,"taken at %v",since)
-    // Part of a measurement, a process sees none.
     if !measuring() {
-        running,measurer:=measurement_running(root,context.temp_allocator)
-        testing.expect(t,running)
+        running,measurer:=measured(root,false,allocator=context.temp_allocator)
+        testing.expect_value(t,running,Measured.Low)
         testing.expect_value(t,measurer,what)
     }
     lock_release(&lock)
@@ -216,6 +215,83 @@ a_measurement_holds_the_new_gpu_turns_but_its_own :: proc(t:^testing.T) {
     testing.expect(t,editor_taken,"the measurement opens its own editors")
     lock_release(&editor)
     lock_release(&own)
+}
+
+// While another process measures, what would put work on the GPU waits for
+// it, what uses none runs at low priority, and what is part of it runs.
+@(test)
+what_would_use_the_gpu_waits_for_the_measurement_of_another_process :: proc(t:^testing.T) {
+    if measuring() {return}
+    root:=base.test_folder(t,"workspace")
+    if root=="" {return}
+    other:=fmt.tprintf("%d",os.get_pid()+1)
+    holder:=fmt.tprintf("pid %s, mirai bench compare",other)
+    Case :: struct {name:string,measuring:bool,gpu:bool,part_of:string,what:Measured}
+    cases:=[]Case{
+        {name="a GPU test",measuring=true,gpu=true,what=.Wait},
+        {name="a test without the GPU",measuring=true,what=.Low},
+        {name="a GPU test the measurement runs",measuring=true,gpu=true,part_of=other,what=.Run},
+        {name="a GPU test of another measurement",measuring=true,gpu=true,part_of=fmt.tprintf("%s0",other),what=.Wait},
+        {name="a GPU test while nothing measures",gpu=true,what=.Run},
+    }
+    for c in cases {
+        measure:Lock
+        if c.measuring {
+            ok:bool
+            measure,ok=lock_acquire(lock_path(root,MEASURE_LOCK,context.temp_allocator),holder)
+            testing.expect(t,ok)
+        }
+        what,said:=measured(root,c.gpu,c.part_of,context.temp_allocator)
+        testing.expectf(t,what==c.what,"%s: %v",c.name,what)
+        testing.expectf(t,(said==holder)==(c.what!=.Run),"%s: says %q",c.name,said)
+        if c.gpu {
+            turn,taken,waiting:=gpu_try(root,"pid 1, mirai test rhi",GPU_CHARGE_DEVICE,part_of=c.part_of)
+            testing.expectf(t,taken==(c.what==.Run) && (waiting.measurement==holder)==(c.what==.Wait),"%s: its GPU turn",c.name)
+            lock_release(&turn)
+            testing.expectf(t,measurement_wait(root,c.part_of,limit=time.Millisecond)==(c.what==.Run),"%s: waits",c.name)
+        }
+        lock_release(&measure)
+    }
+}
+
+// A measurement starts once the GPU work of others in flight ends: a test, an
+// editor that starts or a session while a call draws; not for a session open
+// and idle, nor for what is part of it.
+@(test)
+a_measurement_waits_for_the_gpu_work_in_flight_and_not_for_an_open_session :: proc(t:^testing.T) {
+    if measuring() {return}
+    root:=base.test_folder(t,"workspace")
+    if root=="" {return}
+    own:=fmt.tprintf("%d",os.get_pid())
+    Case :: struct {name,what,part_of:string,open,marked_open,marked_work,waits:bool}
+    cases:=[]Case{
+        {name="a GPU test",what="pid 11, mirai test rhi",waits=true},
+        {name="an open session",what="pid 12, the session of a",open=true},
+        {name="a session while a call draws",what="pid 13, the session of b",open=true,marked_work=true,waits=true},
+        {name="a session once its call ended",what="pid 14, the session of c",marked_open=true},
+        {name="the editor of a person",what="pid 15, mirai edit d",open=true},
+        {name="an editor this measurement opened",what="pid 16, the editor of mirai bench, head",part_of=own},
+        {name="an editor of another measurement that starts",what="pid 17, the editor of mirai bench, base",part_of="88",waits=true},
+        {name="this process",what=fmt.tprintf("pid %s, profile.capture in e",own)},
+    }
+    for c in cases {
+        turn,taken,_,_:=lock_take(gpu_turn_path(root,0,context.temp_allocator),gpu_holder_text(c.what,GPU_CHARGE_DEVICE,c.part_of,open=c.open))
+        if !testing.expectf(t,taken,"%s: a turn",c.name) {continue}
+        pid:=pid_of(c.what)
+        if c.marked_open {testing.expect_value(t,gpu_turn_mark(root,pid,true),0)}
+        if c.marked_work {testing.expect_value(t,gpu_turn_mark(root,pid,false,0),0)}
+        measure,ok,holder,why:=measure_try(root,measure_holder("mirai bench compare"))
+        testing.expectf(t,ok!=c.waits,"%s: the measurement started: %v",c.name,ok)
+        if c.waits {
+            testing.expect_value(t,why,Measure_Wait.Gpu)
+            testing.expectf(t,strings.has_prefix(holder,c.what),"%s: waits for %q",c.name,holder)
+        }
+        testing.expect(t,measure.held==ok)
+        lock_release(&measure)
+        holders:=gpu_holders(root,context.temp_allocator)
+        if len(holders)==1 {testing.expectf(t,gpu_holder_measurement(holders[0].holder)==c.part_of && strings.has_prefix(holders[0].holder,c.what),"%s: marking keeps who holds it: %s",c.name,holders[0].holder)}
+        lock_release(&turn)
+    }
 }
 
 // An editor of a project is charged the peak of its last session, which a
