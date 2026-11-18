@@ -589,27 +589,15 @@ Indirect indirect_make(float3 irradiance, float3 radiance, float occlusion) {
     return light;
 }
 
-// What the ambient occlusion of a material leaves of the light around it,
-// with the light that bounces within the crevice: a bright surface lights its
-// own crevices, a dark one keeps them as dark as the occlusion says (the fit
-// of Jimenez et al. 2016, "Practical Real-Time Strategies for Accurate
-// Indirect Occlusion").
-float3 occlusion_bounced(float3 albedo, float occlusion) {
-    float3 a = 2.0404 * albedo - 0.3324;
-    float3 b = -4.7951 * albedo + 0.6417;
-    float3 c = 2.7552 * albedo + 0.6903;
-    return max(float3(occlusion), ((occlusion * a + b) * occlusion + c) * occlusion);
-}
-
 // What a point sends towards its viewer of the light around it: its diffuse
 // lobe reflects the irradiance, with what its specular lobe leaves it
-// (base_diffuse_share, as for each light) and the ambient occlusion with its bounces; its specular lobe, the radiance around its dominant
+// (base_diffuse_share, as for each light) and the ambient occlusion; its specular lobe, the radiance around its dominant
 // direction, with the specular occlusion. The layers over the base take
 // their share as they do of each light (shading_lobes), the coat the mean
 // of its transmission towards the light around.
 float3 indirect_compose(Shading s, Indirect light) {
     float3 reflectance = environment_reflectance(s);
-    float3 diffuse = s.diffuse * base_diffuse_share(s) * light.irradiance * occlusion_bounced(s.diffuse, light.occlusion);
+    float3 diffuse = s.diffuse * base_diffuse_share(s) * light.irradiance * light.occlusion;
     float3 around = light.traced_coat ? light.radiance : lerp(light.radiance, light.traced, light.traced_share);
     float3 color = diffuse + reflectance * around * specular_occlusion(s.nov, s.roughness, light.occlusion);
     if (s.layers == 0u) return color;

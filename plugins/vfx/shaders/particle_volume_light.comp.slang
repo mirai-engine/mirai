@@ -38,7 +38,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     }
     float3 position = particle_grid_middle(g, index);
     float sun = 0.0;
-    if (frame.sun_direction.w >= 0.5 && frame.sun_shares.y > 0.0) {
+    if (frame.sun_direction.w >= 0.5) {
         // What the medium stops on the way to the sun, cell by cell out of its region.
         float3 lo = g.corner, hi = g.corner + float3(g.cells) * g.cell_size;
         float optical = 0.0;

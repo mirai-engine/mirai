@@ -904,10 +904,9 @@ The Graphics popup edits `Graphics_Settings`, the machine setting with which gam
 sections that fold like those of the settings dialog: Quality and Frame rate.
 
 - A **preset** (`GRAPHICS_PRESETS` of `engine/render`) fixes a choice per quality option; what
-  matches none is Custom. The default depends on the GPU (`graphics_settings_for_device`) and each
-  option returns to it.
-- Resolution is not part of the presets: Native, the default, or a target of lines
-  ([resolution](../../mirai-rendering/references/settings.md#scene-resolution)).
+  matches none is Custom
+  ([resolution](../../mirai-rendering/references/settings.md#scene-resolution)). The default
+  depends on the GPU (`graphics_settings_for_device`) and each option returns to it.
 - Antialiasing is not part of the presets: Off, TAA and the
   [techniques](../../mirai-rendering/references/views.md#antialiasing-techniques) of the active
   plugins; one that no plugin offers is shown as TAA, which is what is drawn.

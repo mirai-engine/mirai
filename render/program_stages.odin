@@ -11,9 +11,9 @@ import "mirai:rhi"
 // one. The pipeline of a program is that of the stage with the fragment stage
 // of the program, asked for ahead of time when the program first gets rows in
 // the scene (programs_ask), or when a draw first needs it (pipeline_thread.odin);
-// until it is made, the stage itself draws those materials as their rows. The
-// resolve of the visibility target draws the pixels of one program
-// (resolve_programs_draw); a draw of the clusters of an instance, the clusters
+// until it is made, the stage itself draws those materials as their rows. A
+// draw of the clusters the cull listed takes those of one program
+// (gbuffer_programs_draw); one of the clusters of an instance, the clusters
 // of the materials of one program (instance_programs_draw).
 
 PROGRAM_GRAPHICS_CAPACITY :: 4096 // pipelines of raster stages of programs at once, a power of two: past them a program draws as its rows
@@ -76,7 +76,7 @@ programs_ask :: proc(r: ^Renderer) {
 	for row in s.materials {
 		if row.program_id == 0 || row.program_id == GPU_NONE {continue}
 		glass := row.alpha_mode == u32(asset.Alpha_Mode.Blend)
-		for id in ([]Pipeline_Id{.Glass_Layer, .Glass_Filter} if glass else []Pipeline_Id{.Resolve, .Resolve_Plain, .Resolve_Layers}) {
+		for id in ([]Pipeline_Id{.Glass_Layer, .Glass_Filter} if glass else []Pipeline_Id{.Gbuffer, .Gbuffer_Plain, .Gbuffer_Layers}) {
 			program_graphics(r, &r.pipelines[id], row.program_id, early = true)
 		}
 		for program in renderer_programs(r) {

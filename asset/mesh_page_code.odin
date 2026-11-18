@@ -55,16 +55,14 @@ MESH_PAGE_SCRATCH_BYTES :: MESH_PAGE_WORDS*4+(MESH_PAGE_WORDS/(4*PAGE_RUN_MERGE)
 @(private)
 Page_Field :: struct {word,shift,bits,set:u8}
 
-// The vertices (position xyz; uv), uv1, colors, surfaces (roughness,
-// metallic, the rest; emission) and islands (center xyz and fate, the same
-// for every vertex of one).
+// The vertices (position xyz; uv), uv1, colors and surfaces (roughness,
+// metallic, the rest; emission).
 @(private)
 PAGE_FIELDS :: [?]Page_Field{
     {0,0,16,0},{0,16,16,0},{1,0,16,0},{1,16,16,1},{2,0,16,1},
     {0,0,16,0},{0,16,16,0},
     {0,0,8,0},{0,8,8,0},{0,16,8,0},{0,24,8,0},
     {0,0,8,0},{0,8,8,0},{0,16,16,0},{1,0,16,1},{1,16,16,1},
-    {0,0,16,0},{0,16,16,0},{1,0,16,0},{1,16,16,0},
 }
 
 // A stream of a block: its first word, the words of an element, its fields
@@ -75,13 +73,12 @@ PAGE_FIELDS :: [?]Page_Field{
 Page_Stream :: struct {first,element_words:u32,field_first,field_count:u8,kept,triangles:bool}
 
 @(private)
-page_streams :: proc "contextless" (flags:Mesh_Flags,layout:Mesh_Page_Layout) -> (streams:[6]Page_Stream,count:int) {
+page_streams :: proc "contextless" (flags:Mesh_Flags,layout:Mesh_Page_Layout) -> (streams:[5]Page_Stream,count:int) {
     streams[0]={layout.vertices,4,0,5,true,false}
     count=1
     if .Has_Uv1 in flags {streams[count]={layout.uv1s,1,5,2,false,false};count+=1}
     if .Has_Colors in flags {streams[count]={layout.colors,1,7,4,false,false};count+=1}
     if .Has_Surface in flags {streams[count]={layout.surfaces,2,11,5,false,false};count+=1}
-    if .Has_Islands in flags {streams[count]={layout.islands,2,16,4,false,false};count+=1}
     streams[count]={layout.triangles,1,0,0,false,true}
     count+=1
     return

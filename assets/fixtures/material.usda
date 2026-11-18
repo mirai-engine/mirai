@@ -126,7 +126,6 @@ def Xform "World"
     )
     {
         rel material:binding = </World/Looks/Leaf>
-        uniform bool doubleSided = 1
         point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 0, -1)]
         int[] faceVertexCounts = [3]
         int[] faceVertexIndices = [0, 1, 2]

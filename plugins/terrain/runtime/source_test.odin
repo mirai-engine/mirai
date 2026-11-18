@@ -103,7 +103,7 @@ samples_outside_a_source_are_refused :: proc(t:^testing.T) {
 @(test)
 terrain_resident_and_snapshot_allocation_failures_return_without_indexing_missing_storage :: proc(t:^testing.T) {
     assets:=host.Assets{allocator=runtime.nil_allocator()}
-    resident:=Terrain_Resident{assets=&assets};defer terrain_resident_free(&resident)
+    resident:=Terrain_Resident{assets=&assets}
     entry:=Data_Source{id={1,2},versions={1},quad={first={1=1}}}
     problems:core.Problems
     testing.expect(t,resident_source(&resident,&entry,core.Entity(2),&problems)==nil)
