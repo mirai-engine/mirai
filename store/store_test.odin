@@ -4,6 +4,7 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:std/base"
+import "mirai:std/blake3"
 
 @(private)
 test_bytes :: proc(size:int,seed:u64) -> []u8 {
@@ -14,6 +15,12 @@ test_bytes :: proc(size:int,seed:u64) -> []u8 {
 }
 
 @(private)
+test_address :: proc(data:[]u8) -> Hash {
+    hash,_:=address_of_bytes(data,context.temp_allocator)
+    return hash
+}
+
+@(private)
 test_piece :: proc(data:[]u8,index:int) -> []u8 {
     return data[index*PIECE_BYTES:min((index+1)*PIECE_BYTES,len(data))]
 }
@@ -21,7 +28,7 @@ test_piece :: proc(data:[]u8,index:int) -> []u8 {
 @(private)
 test_table :: proc(data:[]u8) -> []Hash {
     pieces:=make([]Hash,piece_count(i64(len(data))),context.temp_allocator)
-    for &piece,i in pieces {piece=piece_value(test_piece(data,i),i)}
+    for &piece,i in pieces {piece=piece_value(test_piece(data,i),i,i64(len(data)))}
     return pieces
 }
 
@@ -47,8 +54,9 @@ address_is_the_same_through_put_bytes_put_file_and_receiving :: proc(t:^testing.
         defer close(&r)
         put,put_error:=put_bytes(&a,data)
         testing.expect_value(t,put_error,Error.None)
-        testing.expect(t,put==address_of_bytes(data),"put bytes gives the address of the bytes")
-        testing.expect(t,put==table_address(i64(c.size),test_table(data)),"the address is that of the table")
+        testing.expect(t,put==test_address(data),"put bytes gives the address of the bytes")
+        testing.expect(t,put==Hash(blake3.hash(data)),"the address is the BLAKE3 hash of the bytes")
+        testing.expect(t,put==address_value(i64(c.size),test_table(data)),"the address is that of the table")
         source:=join_test(root,"source",n)
         testing.expect(t,os.write_entire_file(source,data)==nil)
         from_file,file_size,file_error:=address_of_file(source)
@@ -98,13 +106,13 @@ a_wrong_table_or_piece_is_refused_and_leaves_no_blob :: proc(t:^testing.T) {
     s,ok:=test_store(t,folder);if !ok {return}
     defer close(&s)
     data:=test_bytes(2*PIECE_BYTES+5,7)
-    hash:=address_of_bytes(data)
+    hash:=test_address(data)
     pieces:=test_table(data)
     wrong:=make([]Hash,len(pieces),context.temp_allocator)
     copy(wrong,pieces)
     wrong[1][0]~=1
     testing.expect_value(t,receive_begin(&s,hash,i64(len(data)),wrong),Error.Corrupt)
-    testing.expect_value(t,receive_begin(&s,hash,i64(len(data))+1,pieces),Error.Corrupt)
+    testing.expect_value(t,receive_begin(&s,hash,i64(len(data))+PIECE_BYTES,pieces),Error.Invalid_Argument)
     testing.expect_value(t,receive_begin(&s,hash,i64(len(data)),pieces[:2]),Error.Invalid_Argument)
     testing.expect_value(t,receive_begin(&s,hash,-1,nil),Error.Invalid_Argument)
     _,missing_error:=receive_missing(&s,hash,context.temp_allocator)
@@ -124,13 +132,19 @@ a_wrong_table_or_piece_is_refused_and_leaves_no_blob :: proc(t:^testing.T) {
     testing.expect(t,!has(&s,hash),"refused pieces complete nothing")
     total,_:=usage(&s)
     testing.expect_value(t,total.blobs,0)
+    // The table does not hold the length of the last piece: a size that keeps
+    // the piece count is taken, and then no last piece of the true length fits it.
+    testing.expect_value(t,remove(&s,hash),Error.None)
+    testing.expect_value(t,receive_begin(&s,hash,i64(len(data))-1,pieces),Error.None)
+    for index in 0..<len(pieces) {receive_piece(&s,hash,index,test_piece(data,index))}
+    testing.expect(t,!has(&s,hash),"a wrong size publishes nothing")
 }
 
 @(test)
 receiving_resumes_after_reopening_and_reads_the_pieces_it_has :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"store-resume");if folder=="" {return}
     data:=test_bytes(3*PIECE_BYTES+100,11)
-    hash:=address_of_bytes(data)
+    hash:=test_address(data)
     {
         s,ok:=test_store(t,folder);if !ok {return}
         defer close(&s)
@@ -184,7 +198,7 @@ sweep_keeps_exactly_the_live_blobs :: proc(t:^testing.T) {
         bytes+=i64(len(data))
     }
     partial:=test_bytes(PIECE_BYTES+1,30)
-    partial_hash:=address_of_bytes(partial)
+    partial_hash:=test_address(partial)
     testing.expect_value(t,receive_begin(&s,partial_hash,i64(len(partial)),test_table(partial)),Error.None)
     total,_:=usage(&s)
     testing.expect_value(t,total,Usage{bytes=bytes,blobs=5})
@@ -214,7 +228,7 @@ sweep_keeps_exactly_the_live_blobs :: proc(t:^testing.T) {
 // a receiver killed before completing would leave them.
 @(private)
 test_full_unfinished :: proc(t:^testing.T,s:^Store,data:[]u8) -> Hash {
-    hash:=address_of_bytes(data)
+    hash:=test_address(data)
     pieces:=test_table(data)
     testing.expect_value(t,receive_begin(s,hash,i64(len(data)),pieces),Error.None)
     for index in 1..<len(pieces) {testing.expect_value(t,receive_piece(s,hash,index,test_piece(data,index)),Error.None)}
@@ -260,7 +274,7 @@ completion_publishes_only_the_bytes_it_checked :: proc(t:^testing.T) {
     hash:=test_full_unfinished(t,&s,data)
     c:Claim
     testing.expect_value(t,partial_claim(&s,hash,&c),Error.None)
-    complete,error:=claim_verify(hash,&c)
+    complete,error:=claim_verify(&s,hash,&c)
     testing.expect(t,error==.None && complete)
     // Meanwhile another receiver completes it, a sweep removes it and a third begins again.
     _,put_error:=put_bytes(&s,data)
@@ -286,7 +300,7 @@ a_failed_placement_loses_nothing_and_is_retried :: proc(t:^testing.T) {
     s,ok:=test_store(t,folder);if !ok {return}
     defer close(&s)
     data:=test_bytes(2*PIECE_BYTES+9,70)
-    hash:=address_of_bytes(data)
+    hash:=test_address(data)
     name:[64]u8
     shard:=strings.concatenate({folder,"/blobs/",hex(hash,&name)[:2]},context.temp_allocator)
     testing.expect(t,os.make_directory(shard)==nil)

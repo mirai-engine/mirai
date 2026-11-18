@@ -8,7 +8,9 @@ import "core:os"
 // both in hex, and are never written in place.
 
 put_bytes :: proc(s:^Store,data:[]u8) -> (hash:Hash,error:Error) {
-    hash=address_of_bytes(data)
+    pieces:=bytes_table(data,s.allocator) or_return
+    defer delete(pieces,s.allocator)
+    hash=address_value(i64(len(data)),pieces)
     if has(s,hash) {return hash,.None}
     temp_buffer:[PATH_BYTES]u8
     temp,file:=temp_create(s.root,&temp_buffer) or_return
@@ -19,8 +21,12 @@ put_bytes :: proc(s:^Store,data:[]u8) -> (hash:Hash,error:Error) {
         os.remove(temp)
         return {},os_error(write_error) if write_error!=nil else .Io
     }
-    if error=blob_place(s,temp,hash);error!=.None {os.remove(temp)}
-    return hash,error
+    if error=blob_place(s,temp,hash);error!=.None {
+        os.remove(temp)
+        return hash,error
+    }
+    table_keep(s,hash,i64(len(data)),pieces)
+    return hash,.None
 }
 
 // Puts the file at path, read once piece by piece.
@@ -30,9 +36,12 @@ put_file :: proc(s:^Store,path:string) -> (hash:Hash,error:Error) {
     defer os.close(source)
     size,size_error:=os.file_size(source)
     if size_error!=nil {return {},os_error(size_error)}
+    pieces,make_error:=make([]Hash,piece_count(size),s.allocator)
+    if make_error!=nil {return {},.Out_Of_Memory}
+    defer delete(pieces,s.allocator)
     temp_buffer:[PATH_BYTES]u8
     temp,file:=temp_create(s.root,&temp_buffer) or_return
-    hash,error=file_hash(source,size,file,nil)
+    hash,error=file_hash(source,size,file,pieces)
     sync_error:=os.sync(file) if error==.None else nil
     os.close(file)
     if error==.Corrupt {error=.Io}
@@ -41,8 +50,12 @@ put_file :: proc(s:^Store,path:string) -> (hash:Hash,error:Error) {
         os.remove(temp)
         return hash if error==.None else {},error
     }
-    if error=blob_place(s,temp,hash);error!=.None {os.remove(temp)}
-    return hash,error
+    if error=blob_place(s,temp,hash);error!=.None {
+        os.remove(temp)
+        return hash,error
+    }
+    table_keep(s,hash,size,pieces)
+    return hash,.None
 }
 
 // Whether the blob is complete here.
@@ -150,7 +163,7 @@ reader_close :: proc(r:^Reader) {
 verify :: proc(s:^Store,hash:Hash) -> Error {
     buffer:[PATH_BYTES]u8
     path:=blob_file(s,hash,&buffer) or_return
-    address,_,error:=address_of_file(path)
+    address,_,error:=address_of_file(path,s.allocator)
     if error==.Io {return .Corrupt}
     if error!=.None {return error}
     return .None if address==hash else .Corrupt
@@ -222,7 +235,7 @@ table_load :: proc(s:^Store,hash:Hash,size:i64,pieces:[]Hash) -> Error {
     read_exact(file,header[:],0) or_return
     if header!=table_header(size) {return .Corrupt}
     read_exact(file,mem.slice_to_bytes(pieces),TABLE_HEADER) or_return
-    return .None if table_address(size,pieces)==hash else .Corrupt
+    return .None if address_value(size,pieces)==hash else .Corrupt
 }
 
 // Keeps the table of a complete blob; one that cannot be written is hashed again when asked for.
