@@ -481,7 +481,7 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
     case options.documents!="":
         if why:=documents_restore(s,options.documents);why!="" {log.errorf("The document tabs could not all be opened again: %s",why)}
     case scene!="" && deferred:
-        file_open_path(s,scene)
+        start_open(s,scene)
     case scene!="":
         if error:=scene_open(s,scene);error!=.None {
             fmt.eprintfln("mirai: could not open the scene %s: %s",scene,document_error_text(error))
@@ -508,6 +508,14 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
 // count of frames, whoever drives it finds the scene open once open returns.
 start_deferred :: proc(options:Options) -> bool {
     return !options.headless && !options.hidden && options.frames==0
+}
+
+// The scene of the start opens after the first frame. Nobody can lose
+// anything in the document it replaces: it never asks first, though an agent
+// already drives the editor.
+start_open :: proc(s:^Session,path:string) {
+    file_open_path(s,path)
+    s.open_confirmed=true
 }
 
 // What the start left for after the first frame: the tabs of a restart, and
