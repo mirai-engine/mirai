@@ -219,7 +219,7 @@ the_prefab_of_an_import_is_written_in_the_layout_of_the_game :: proc(t:^testing.
         if !testing.expectf(t,error.code==.None,"%s: %s",c.files[0],error.message) {return}
         defer importer.report_destroy(&report)
         p:=author.Project{name="layout",assets_root=assets,info=world}
-        asset.registry_init(&p.registry,assets,imported=fmt.tprintf("%s/.mirai/imported",root))
+        asset.registry_init(&p.registry,assets)
         asset.types_init(&p.types)
         defer {asset.registry_destroy(&p.registry);asset.types_destroy(&p.types);author.scratch_world_free(&p.scratch)}
         p.assets={&p.registry,&p.types}
@@ -881,7 +881,7 @@ every_fixture_imports_writes_and_reads_back_with_its_dependencies_resolved :: pr
         }
         testing.expectf(t,counts[0]==len(model.meshes) && counts[1]==len(model.materials),"%s: every mesh and material is an asset",source)
         registry:asset.Registry
-        asset.registry_init(&registry,fmt.tprintf("%s/assets",out),imported=fmt.tprintf("%s/.mirai/imported",out))
+        asset.registry_init(&registry,fmt.tprintf("%s/assets",out))
         testing.expect_value(t,asset.registry_scan(&registry),asset.Error.None)
         missing:[dynamic]asset.Registry_Missing
         missing.allocator=context.temp_allocator

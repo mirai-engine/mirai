@@ -221,18 +221,20 @@ scan opens every file and writes it again.
   is a prefab ([prefab](scenes.md#prefab)).
 - `registry_dependents` comes from an inverse index built with each change: how many use an asset is
   its length, without walking the files (`asset.list` reports it as `used_by`).
-- **Imported folders.** An assets folder may have an imported folder with it (that of the root
-  and of each mount: `.mirai/imported/` of the project or the plugin): what the
-  [imports](../../mirai-imports/references/imports.md#identity-and-reimport) of its sources build
-  that nobody edits, never versioned, each file named by its id and the key of what it was built
-  from. A scan reads the sidecars it walks (`asset/sidecar.odin`, the one reader of the format)
-  and lists each output of the cache like any asset (`Registry_File.imported` is that key) at
-  `<folder of the sidecar>/<folder it names>/<name><extension>`; two outputs of one kind and
-  name are told apart by their index, and a path another file or output has takes the name of
-  the source: never the order of a scan. One whose source is gone is not listed, and one that
-  moved is listed there at the next scan, which a refresh of a sidecar or of its source runs.
-  `registry_file_path` gives the file of either folder. A cooked folder has none: the cook
-  writes every asset at its path.
+- **Listed outputs.** What the
+  [imports](../../mirai-imports/references/imports.md#identity-and-reimport) build that nobody
+  edits is not a file of the assets folder but a blob of the machine store. The root and each
+  mount take the entries `packages_resolve` gives for the packages their root pins
+  (`asset/packages.odin`), and a scan lists each like any asset (`Registry_File.listed`), with no
+  source, sidecar or imported folder anywhere; the registry reads no sidecar. An entry whose
+  build is not on this machine, or whose blob is gone, stays listed as `Not_Built` (its id and
+  kind, no file, not found by id), never removed and never an error of the scan; a blob that is
+  not the asset its entry names is `Broken`. A path a file, a folder or another entry has takes
+  the id of the entry after its name, never the order of a scan, and an entry with no id or a
+  path that is empty or leaves its folder is refused (`Registry.refused`). Blobs do not change:
+  a refresh keeps what is listed, unless a file of the folder appears at its path (which runs a
+  scan), and memory holds no listed path. `registry_file_path` gives the blob of a listed path.
+  A cooked folder has none: the cook writes every asset at its path.
 - **Mounts.** `registry_mount` adds a folder under a prefix (a plugin's assets, in
   `plugins/<name>`). A prefix that starts with a dot belongs to the program's assets (the editor's,
   in `.editor`): they are found by id and by path, but a project's lists omit them

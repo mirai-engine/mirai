@@ -12,10 +12,8 @@ import "mirai:std/serial"
 // source's folder its outputs go to, the files the import reads besides the
 // source and one output per asset the source gives, with its id. What nobody
 // edits (import_cached) is no file of the assets but of the imported folder
-// that goes with them, <id>-<key><extension>, never versioned: the registry
-// lists it at <folder of the sidecar>/<folder>/<name><extension>, so a source
-// that moves with its sidecar takes it along, and one that is gone takes it
-// out of the listing.
+// that goes with them, <id>-<key><extension>, never versioned. The registry
+// reads neither: it lists the outputs of packages (packages.odin).
 
 SIDECAR_EXTENSION :: ".import"
 SIDECAR_VERSION :: 3
@@ -188,25 +186,6 @@ output_read :: proc(r:^serial.Text_Reader,allocator:=context.allocator) -> (outp
         }
     }
     return output,true
-}
-
-// The paths the registry lists the cache outputs of a sidecar at, under
-// listed (the path of the sidecar's folder in the registry, "" or ending
-// with '/'): <folder>/<name><extension> with the name as safe_path gives it,
-// and " (<index>)" before the extension for an output whose kind and name one
-// of a lower index has. "" for an output that is not of the cache. In the
-// temp allocator.
-sidecar_paths :: proc(sidecar:Sidecar,listed:string) -> []string {
-    paths:=make([]string,len(sidecar.outputs),context.temp_allocator)
-    folder:=sidecar.folder!=""?fmt.tprintf("%s%s/",listed,sidecar.folder):listed
-    for output,at in sidecar.outputs {
-        info,known:=kind_info(output.kind)
-        if !known || !import_cached(output.kind) {continue}
-        repeated:=false
-        for other in sidecar.outputs {repeated||=other.kind==output.kind && other.name==output.name && other.index<output.index}
-        paths[at]=listed_path(folder,output.name,output.index,repeated,info.extension)
-    }
-    return paths
 }
 
 // A name a file can have: what no file system takes becomes _, and the

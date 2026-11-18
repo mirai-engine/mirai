@@ -84,7 +84,7 @@ asset_held_refusal :: proc(r:^asset.Registry,paths:[]string,folder:="") -> strin
 // Why an asset cannot be renamed or moved now; "" when it can.
 @(private)
 asset_move_refusal :: proc(s:^Session,r:^asset.Registry,file:^asset.Registry_File) -> string {
-    if file.imported!=0 {return "It is a part of what its source gives, listed in the folder of its source: move that folder, or duplicate it to have a copy that moves"}
+    if file.listed {return "It is a part of what its source gives, listed in the folder of its source: move that folder, or duplicate it to have a copy that moves"}
     if refusal:=asset_create_refusal(s);refusal!="" {return refusal}
     if refusal:=asset_delete_refusal(s,r,file);refusal!="" {return refusal}
     files:=asset_delete_files(r,file.id)
@@ -103,7 +103,7 @@ asset_move :: proc(s:^Session,id:base.Asset_Id,folder,name:string) -> (path,mess
     file,found:=asset.registry_find(r,id)
     if !found {return "","The asset is not in the registry: asset.list lists them"}
     // What a source gives is listed where the source is: its source moves, with its sidecar, and nothing is imported.
-    if sidecar,_:=import_root(s,r,id);file.imported!=0 && sidecar!="" {
+    if sidecar,_:=import_root(s,r,id);file.listed && sidecar!="" {
         into,refused:=asset_folder_clean(r,folder)
         if refused!="" {return "",fmt.tprintf("folder: %s",refused)}
         if busy:=import_busy(s);busy!="" {return "",busy}
@@ -130,7 +130,7 @@ asset_move :: proc(s:^Session,id:base.Asset_Id,folder,name:string) -> (path,mess
     moves:=make([dynamic]Asset_Move,context.temp_allocator)
     for at,i in asset_delete_files(r,id) {
         // A part of the imported folder stays at the path its sidecar lists.
-        if i>0 && r.files[at].imported!=0 {continue}
+        if i>0 && r.files[at].listed {continue}
         from:=strings.clone(r.files[at].path,context.temp_allocator)
         to:=asset_create_join(into,named,extension)
         if i>0 {to=asset_create_join(into,from[len(source)+1:] if source!="" && asset_path_inside(from,source) else asset_path_base(from),"")}

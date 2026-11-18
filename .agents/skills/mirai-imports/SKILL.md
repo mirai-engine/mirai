@@ -219,8 +219,8 @@ the assets.
   a plugin for a whole source whose inputs changed), `cook/import/outputs_test.odin` (the models
   of a whole source share their parts by name, names with `/` go to subfolders, inputs count in
   the key),
-  `asset/registry_test.odin` (the listing of the cache by where the sidecar is, never by the order
-  of a scan), `cook/import/sources/settings_test.odin` (a sidecar that is not one is refused) and
+  `asset/registry_test.odin` (the cache a project pins is listed from the store without its
+  sources), `cook/import/sources/settings_test.odin` (a sidecar that is not one is refused) and
   `cook/import/sources/write_test.odin` (importing again keeps what was changed in a material and
   takes the rest from the source). After changing what an import writes, prove it on the demo:
   delete `demo/.mirai/imported`, `mirai build editor demo`, and `git status` shows no sidecar

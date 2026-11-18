@@ -16,7 +16,8 @@ import "mirai:std/serial"
 // file in memory takes the size of its content and the time it last changed.
 // A file outside the folders, named by its absolute path (the Slang source of
 // a program), is held the same way but is no file of the registry: no record,
-// scan or lookup by id sees it.
+// scan or lookup by id sees it. A listed output of a package is a blob of the
+// store, which nothing changes: memory holds none.
 
 Registry_Memory :: struct {
     path:string, // as Registry_File.path
@@ -24,8 +25,10 @@ Registry_Memory :: struct {
     removed:bool,
 }
 
-// path holds data in memory: a copy of it. Out_Of_Memory leaves it as it was.
+// path holds data in memory: a copy of it. Out_Of_Memory leaves it as it was;
+// Invalid for a listed output.
 registry_memory_set :: proc(r:^Registry,path:string,data:[]u8) -> Error {
+    if path in r.listed_files {return .Invalid}
     copied:=asset_bytes_clone(data,r.allocator) or_return
     held:=registry_memory_take(r,path) or_return
     registry_memory_free_data(r,held)
@@ -34,8 +37,9 @@ registry_memory_set :: proc(r:^Registry,path:string,data:[]u8) -> Error {
 }
 
 // path is not there in memory: no file answers for it until it is written or
-// dropped.
+// dropped. Invalid for a listed output.
 registry_memory_remove :: proc(r:^Registry,path:string) -> Error {
+    if path in r.listed_files {return .Invalid}
     held:=registry_memory_take(r,path) or_return
     registry_memory_free_data(r,held)
     held.data,held.removed=nil,true
@@ -134,8 +138,9 @@ registry_memory_write :: proc(r:^Registry,path:string) -> Error {
 
 // What a file of the registry holds now: its content in memory, or the file
 // on disk, aligned for the chunks of the asset it is. Not_Found for a removed
-// file and for one that is not there.
+// file, for one that is not there and for a listed output not built.
 registry_read :: proc(r:^Registry,path:string,allocator:=context.allocator,limit:=u64(DEFAULT_MEMORY_LIMIT)) -> (data:[]u8,error:Error) {
+    if blob,listed:=r.listed_files[path];listed && blob=="" {return nil,.Not_Found}
     if held,found:=registry_memory_find(r,path);found {
         if held.removed {return nil,.Not_Found}
         if u64(len(held.data))>limit {return nil,.Too_Large}

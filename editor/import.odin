@@ -421,16 +421,16 @@ import_root :: proc(s:^Session,r:^asset.Registry,id:base.Asset_Id) -> (sidecar:s
     if error!=.None || !imported {return}
     source:=base.text_get(info.source[:])
     root,in_assets:=sources.source_root(full,context.temp_allocator)
-    if file.imported!=0 || !in_assets {root=s.project_root}
+    if file.listed || !in_assets {root=s.project_root}
     for mount in r.mounts {
-        if file.imported!=0 && strings.has_prefix(file.path,mount.prefix) {root=filepath.dir(mount.folder)}
+        if file.listed && strings.has_prefix(file.path,mount.prefix) {root=filepath.dir(mount.folder)}
     }
     source=project.path(root,source,allocator=context.temp_allocator)
     listed,has,load_error:=importer.sidecar_load(source,context.temp_allocator)
     if load_error.code!=.None || !has || len(listed.outputs)==0 || listed.outputs[0].id!=id {return}
     files:=make([dynamic]u32,context.temp_allocator)
     for output in listed.outputs {
-        if at,known:=r.by_id[output.id];known && r.files[at].imported!=0 {append(&files,at)}
+        if at,known:=r.by_id[output.id];known && r.files[at].listed {append(&files,at)}
     }
     return strings.concatenate({source,importer.SIDECAR_EXTENSION},context.temp_allocator),files[:]
 }
@@ -581,7 +581,7 @@ import_library :: proc(root:string,allocator:mem.Allocator) -> sources.Library_I
     library,error:=host.project_library_load(path,0)
     if error!=.None {return {problem=host.library_error_text(error,path)}}
     held.library=library
-    asset.registry_init(&held.registry,project.folder_path(root,.Assets,context.temp_allocator),"",allocator,project.imported_path(root,context.temp_allocator))
+    asset.registry_init(&held.registry,project.folder_path(root,.Assets,context.temp_allocator),"",allocator)
     asset.registry_scan(&held.registry)
     found:[PROVIDER_CAPACITY]Import_Format_Provider
     held.providers=slice.clone(found[:provided_in(&held.library.info,found[:])],allocator)
