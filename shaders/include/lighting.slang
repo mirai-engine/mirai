@@ -1070,7 +1070,13 @@ float3 extension_radiance(Shading s, Extension_Light light) {
 // its light the probes gather (frame.sun_shares, Light_Node.indirect, and
 // light_shares of the shape of a light of extensions); LIGHTS_SCATTERED: by
 // the share media scatter; LIGHTS_CHANGES: and whether what the point gets
-// of the sun and the local lights may have changed since the frame before.
+// of the sun and the local lights may have changed since the frame before;
+// LIGHTS_THROUGH: the point is the other side of a thin surface that lets
+// light through (shading_back, its diffuse what it lets through): where the
+// sun or a light is hidden from it, what of it comes through the thin
+// surfaces that let light through in the way, each taken as one of its kind
+// (trace_through), so that a leaf under leaves gets a share that falls with
+// each leaf above, and none under anything else.
 #define LIGHTS_SUN 1u
 #define LIGHTS_LOCAL 2u
 #define LIGHTS_EXTENSION 4u
@@ -1078,6 +1084,20 @@ float3 extension_radiance(Shading s, Extension_Light light) {
 #define LIGHTS_BOUNCED 8u
 #define LIGHTS_SCATTERED 16u
 #define LIGHTS_CHANGES 32u
+#define LIGHTS_THROUGH 64u
+
+// The share of a light that reaches the other side of a thin surface that
+// the maps see `seen` of (mapped), or that they do not hold: through the thin
+// surfaces that let light through in the way, each leaving `each`
+// (trace_through). With the maps, the ray opens only what they hide and only
+// where it crossed such a surface: where it met nothing, what hides the light
+// from the maps is what the ray passed beside (the edge of a penumbra).
+float3 light_through(float seen, bool mapped, float3 origin, float3 direction, float reach, float3 each) {
+    uint crossed;
+    float3 through = trace_through(origin, direction, reach, each, crossed);
+    if (!mapped) return through;
+    return seen + (1.0 - seen) * (crossed != 0u ? through : float3(0.0));
+}
 
 // Whether a light that moved since the frame before (light_moved) reaches
 // the point where it is now.
@@ -1193,6 +1213,8 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which, float2 ex
             mapped = light_shadow_seen(aimed, s.position, s.normal, light_extent(lights[aimed]), s.across);
 #endif
         }
+        // The other side of a thin surface: its ray, where the maps hide the light or tell nothing, is that of light_through.
+        bool thin = (which & LIGHTS_THROUGH) != 0u && item <= local_items;
 #ifdef MIRAI_HOOK_LIGHTS
         float3 from = origin;
         float3 beyond_origin = float3(0.0), beyond_direction = float3(0.0);
@@ -1211,21 +1233,25 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which, float2 ex
             beyond_reach = light.beyond_reach;
         }
         float through = 1.0;
-        for (uint segment = 0u; segment < 2u && mapped < 0.0; segment++) {
+        for (uint segment = 0u; segment < 2u && mapped < 0.0 && !thin; segment++) {
             if (!trace_visible(from, direction, reach, item <= local_items)) through = 0.0;
             if (segment != 0u || beyond_reach <= 0.0 || through <= 0.0) break;
             from = beyond_origin;
             direction = beyond_direction;
             reach = beyond_reach;
         }
-        if (mapped >= 0.0) through = mapped;
-        if (item > local_items) extension += radiance * through;
-        else
+        if (mapped >= 0.0 || thin) through = mapped;
+        if (item > local_items) {
+            extension += radiance * through;
+            continue;
+        }
 #else
-        float through = mapped >= 0.0 ? mapped : float(trace_visible(origin, direction, reach));
+        float through = mapped >= 0.0 || thin ? mapped : float(trace_visible(origin, direction, reach));
 #endif
-        if (item == 0u) sun = radiance * through;
-        else local += radiance * through;
+        if (thin && through < 1.0) radiance *= light_through(through, mapped >= 0.0, origin, direction, reach, s.diffuse);
+        else radiance *= through;
+        if (item == 0u) sun = radiance;
+        else local += radiance;
     }
     if ((which & LIGHTS_LOCAL) != 0u) {
         // What the others brought, over what the surface reflects of it: the
@@ -1272,7 +1298,7 @@ float3 shade_hit(Surface s, float3 ray_dir, float hit_distance, uint light_budge
     float3 through = surface_transmit(s);
     if (max(through.r, max(through.g, through.b)) > 0.0) {
         Shading back = shading_diffuse(s.position, -n, through);
-        radiance += direct_lighting(back, hit_bias(hit_distance), light_budget, which) + through * (sample_probes(s.position, -n, -ray_dir, hit_distance) * around);
+        radiance += direct_lighting(back, hit_bias(hit_distance), light_budget, which | LIGHTS_THROUGH) + through * (sample_probes(s.position, -n, -ray_dir, hit_distance) * around);
     }
     return radiance;
 }
@@ -1307,7 +1333,7 @@ float3 shade_hit_glossy(Surface s, float3 ray_dir, float hit_distance, uint ligh
     if (lights) radiance += direct_lighting(lit, hit_bias(hit_distance), light_budget);
     if (shading_transmits(point)) {
         Shading back = shading_back(point);
-        if (lights) radiance += direct_lighting(back, hit_bias(hit_distance), light_budget);
+        if (lights) radiance += direct_lighting(back, hit_bias(hit_distance), light_budget, LIGHTS_ALL | LIGHTS_THROUGH);
         radiance += point.transmit * (sample_probes(s.position, -n, -ray_dir, hit_distance) * frame.indirect);
     }
     // What a surface that reflects little would add is not worth the lookup;

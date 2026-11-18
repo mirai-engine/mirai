@@ -70,7 +70,7 @@ float3 filter_light(int2 p, float depth, float3 normal, float3 open, float part,
     light += direct_lighting(s, bias, 0u, LIGHTS_EXTENSION);
 #endif
     // Only a layer lets light through: without layers in sight the pass holds no ray of its own.
-    if (!MIRAI_GBUFFER_NO_LAYERS && shading_transmits(s)) light += direct_lighting(shading_back(s), bias, params.hard, LIGHTS_ALL);
+    if (!MIRAI_GBUFFER_NO_LAYERS && shading_transmits(s)) light += direct_lighting(shading_back(s), bias, params.hard, LIGHTS_ALL | LIGHTS_THROUGH);
     return finite_or_zero(light);
 }
 

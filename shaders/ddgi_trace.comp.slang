@@ -45,6 +45,13 @@ bool extension_lights_reach(float3 position, float3 normal, float t) {
 }
 #endif
 
+// Whether a ray along `arrived` met the inside of something: the back of a
+// surface that has one. A two-sided one (a leaf, a card) has no inside: from
+// behind it is a surface like any other.
+bool hit_inside(Material m, float3 geometric_normal, float3 arrived) {
+    return m.two_sided == 0u && dot(geometric_normal, arrived) > 0.0;
+}
+
 // Adds the lanes of the wave that count to a word of the list of the chosen, once a wave.
 void count(uint word, bool counts) {
     uint lanes = WaveActiveCountBits(counts);
@@ -139,7 +146,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
             Hit_Point met = hit_point(found.instance, found.primitive, found.bary, found.t * spread);
             t = found.t;
             instance = found.instance;
-            if (met.m.program_id != 0u && dot(met.geometric_normal, arrived) <= 0.0) {
+            if (met.m.program_id != 0u && !hit_inside(met.m, met.geometric_normal, arrived)) {
                 Material_Point point = {found.instance, found.primitive, found.bary, found.t * spread, met.m.program_id, 0u, INVALID};
                 uint index = point_append(point);
                 if (index != INVALID) {
@@ -164,7 +171,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
     if (surface) {
         hit = (Probe_Hit)0;
         hit.t = t;
-        if (dot(s.geometric_normal, arrived) > 0.0) {
+        if (hit_inside(material, s.geometric_normal, arrived)) {
             hit.flags = HIT_BACK;
         } else {
             // To a ray the globe of a light is that light, which what it reaches
@@ -207,7 +214,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
         uint which = LIGHTS_ALL | LIGHTS_BOUNCED;
         float3 direct = emission + direct_lighting(shading_diffuse(position, seen.normal, albedo), hit_bias(seen.t), params.light_budget, which);
         // A thin surface that lets light through: the light of its other side.
-        if (max(through.r, max(through.g, through.b)) > 0.0) direct += direct_lighting(shading_diffuse(position, -seen.normal, through), hit_bias(seen.t), params.light_budget, which);
+        if (max(through.r, max(through.g, through.b)) > 0.0) direct += direct_lighting(shading_diffuse(position, -seen.normal, through), hit_bias(seen.t), params.light_budget, which | LIGHTS_THROUGH);
         hit = seen;
         hit.direct = direct;
         seen = probe_hit_unpack(probe_hit_pack(hit));

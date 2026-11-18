@@ -127,8 +127,11 @@ mode.
   pass, tinted, from the other side, which is lit like a Lambert with an inverted normal
   (`shading_back`, `back_irradiance`). The samples of the direct light store only the front side,
   so the back side of a pixel that transmits is lit by `direct_lighting` in the direct filter
-  with its own rays. For the GI it reflects only its diffuse part. It is a sheet without
-  volume.
+  with its own rays. Where the maps or a ray hide a light from that side, its ray goes on
+  through the thin surfaces that transmit (`LIGHTS_THROUGH`, `trace_through`), each taken as
+  letting through what the point does, and stops at anything else: a leaf under leaves keeps a
+  share that falls with each one, and none under a trunk. Only slots an instance tests (masked)
+  are crossed. For the GI it reflects only its diffuse part. It is a sheet without volume.
 - **Anisotropy.** Anisotropic GGX over the vertex tangent (MikkTSpace) rotated by `rotation` and by
   the map; the environment is read with a normal bent toward the groove (Revie 2011) and the
   traced reflections sample the anisotropic VNDF.
