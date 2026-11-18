@@ -208,7 +208,7 @@ import_file :: proc(s:^Session,source:string,folder:="",profiled:=false,rig:Mayb
         _,rigged:=rig.?
         _,faced:=front.?
         if rigged || faced || skeleton!={} {
-            stored,_,settings_error:=importer.settings_load(source)
+            stored,_,settings_error:=importer.settings_load(options,source)
             if settings_error.code!=.None {
                 import_say(s,"%s: %s",name,settings_error.message)
                 return false
@@ -221,7 +221,7 @@ import_file :: proc(s:^Session,source:string,folder:="",profiled:=false,rig:Mayb
     case .Image:
         options.image=sources.image_use(source)
         if use,given:=image.?;given {
-            stored,_,settings_error:=importer.settings_load(source)
+            stored,_,settings_error:=importer.settings_load(options,source)
             if settings_error.code!=.None {
                 import_say(s,"%s: %s",name,settings_error.message)
                 return false
@@ -361,7 +361,6 @@ import_poll :: proc(s:^Session) {
             if !inside {written=false;break}
             append(&paths,path)
         }
-        if path,inside:=asset.registry_relative(&a.registry,report.saved);inside {append(&paths,path)}
         if written {host.assets_refresh(a,paths[:])} else {host.assets_scan(a)}
         base.profile_end(registry_zone)
         materials_zone:=base.profile_begin(profile,jobs.OWNER,"editor.materials")
@@ -426,13 +425,15 @@ import_root :: proc(s:^Session,r:^asset.Registry,id:base.Asset_Id) -> (sidecar:s
         if file.imported!=0 && strings.has_prefix(file.path,mount.prefix) {root=filepath.dir(mount.folder)}
     }
     source=project.path(root,source,allocator=context.temp_allocator)
-    listed,has,load_error:=importer.sidecar_load(source,context.temp_allocator)
-    if load_error.code!=.None || !has || len(listed.outputs)==0 || listed.outputs[0].id!=id {return}
+    text,read_error:=os.read_entire_file(strings.concatenate({source,asset.SIDECAR_EXTENSION},context.temp_allocator),context.temp_allocator)
+    if read_error!=nil {return}
+    listed,valid:=asset.sidecar_parse(string(text),context.temp_allocator)
+    if !valid || len(listed.outputs)==0 || listed.outputs[0].id!=id {return}
     files:=make([dynamic]u32,context.temp_allocator)
     for output in listed.outputs {
         if at,known:=r.by_id[output.id];known && r.files[at].imported!=0 {append(&files,at)}
     }
-    return strings.concatenate({source,importer.SIDECAR_EXTENSION},context.temp_allocator),files[:]
+    return strings.concatenate({source,asset.SIDECAR_EXTENSION},context.temp_allocator),files[:]
 }
 
 // Waits for an import that runs and lets go of what the last one wrote:

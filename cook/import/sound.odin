@@ -2,7 +2,6 @@ package importer
 
 import "core:fmt"
 import "core:mem"
-import "core:os"
 import "core:path/filepath"
 import "core:strings"
 import "mirai:asset"
@@ -75,7 +74,7 @@ i16_of :: proc(sample:f32) -> i16 {
 }
 
 // Imports a sound file as <name>.sound. The sound is the root of the import:
-// importing the file again writes the asset its sidecar lists (identity.odin).
+// importing the file again gives the asset its package lists (identity.odin).
 import_sound :: proc(path:string,sound:Sound_Options={},options:Import_Options={},allocator:=context.allocator) -> (report:Import_Report,error:Error) {
     caller:=context.temp_allocator
     scratch:mem.Dynamic_Arena
@@ -101,20 +100,20 @@ import_sound :: proc(path:string,sound:Sound_Options={},options:Import_Options={
     report_init(&report,allocator)
     w:Writer
     ok:=writer_init(&w,path,"",options,&report,allocator)
-    defer asset.types_destroy(&w.types)
+    defer writer_close(&w)
     if ok {
         source:=w.source
         name:=filepath.stem(path)
         info:=import_info(source,name,0,u64(len(bytes)),base.hash64(bytes),u64(.Stream in desc.flags),import_version(0))
         target:string
-        desc.id,target=root_take(&w,asset.KIND_SOUND,name,".sound")
+        output:int
+        desc.id,target,output=root_take(&w,asset.KIND_SOUND,name,".sound")
         desc.source=&info
-        existed:=os.exists(target)
         if save_error:=asset.sound_save(target,&w.types,desc,context.temp_allocator);save_error!=.None {
             ok=save_failed(&w,save_error,target)
-        } else {
-            record(&w,desc.id,asset.KIND_SOUND,name,target,source,existed)
-            ok=writer_finish(&w)
+        } else if ok=writer_put(&w,output,target);ok {
+            record(&w,output,name)
+            ok=writer_finish(&w,name,"sound")
         }
     }
     if !ok {

@@ -141,7 +141,7 @@ version_message :: proc(a:^Asset,types:^Types,path:string,current:u16=0,allocato
 // Where an asset built from a source file came from: what an importer needs
 // to know whether it is out of date. It is the row of the table "import".
 Import_Info :: struct {
-    source:[260]u8 `mirai:"text"`,  // path of the source file, relative to the project
+    source:[260]u8 `mirai:"text"`,  // path of the source file, relative to its package
     name:[64]u8 `mirai:"text"`,     // what was taken from the source: a mesh, a material, an image
     index:i32,                      // its position among those of its kind in the source
     source_size:u64,                // bytes

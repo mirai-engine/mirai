@@ -7,7 +7,6 @@ import "core:os"
 import "core:path/filepath"
 import "core:strings"
 import "mirai:asset"
-import importer "mirai:cook/import"
 import "mirai:editor/api"
 import "mirai:editor/history"
 import "mirai:host"
@@ -107,10 +106,10 @@ asset_move :: proc(s:^Session,id:base.Asset_Id,folder,name:string) -> (path,mess
         into,refused:=asset_folder_clean(r,folder)
         if refused!="" {return "",fmt.tprintf("folder: %s",refused)}
         if busy:=import_busy(s);busy!="" {return "",busy}
-        source:=strings.trim_suffix(sidecar,importer.SIDECAR_EXTENSION)
+        source:=strings.trim_suffix(sidecar,asset.SIDECAR_EXTENSION)
         target:=fmt.tprintf("%s/%s",asset.registry_file_path(r,into,context.temp_allocator),filepath.base(source))
         if dir:=filepath.dir(target);!os.is_dir(dir) {_=os.make_directory_all(dir)}
-        if os.exists(target) || os.rename(source,target)!=nil || os.rename(sidecar,fmt.tprintf("%s%s",target,importer.SIDECAR_EXTENSION))!=nil {
+        if os.exists(target) || os.rename(source,target)!=nil || os.rename(sidecar,fmt.tprintf("%s%s",target,asset.SIDECAR_EXTENSION))!=nil {
             return "",fmt.tprintf("%s could not be moved to %s: a file is there, or another program has it open",source,target)
         }
         host.assets_scan(s.app.assets)

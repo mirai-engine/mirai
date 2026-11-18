@@ -6,10 +6,11 @@ import "core:strings"
 import "mirai:cook/textures"
 import "mirai:std/base"
 
-// How a source becomes assets. The settings of a source are kept in its
-// sidecar (sidecar.odin), so importing it again gives the same assets whoever
-// does it: an import reads them when the sidecar exists and uses them instead
-// of those of its options. The zero value is the default of every setting.
+// How a source becomes assets. The settings of a source are kept in the
+// manifest of its package (package.odin), so importing it again gives the same
+// assets whoever does it: an import of a package ingested before uses them
+// instead of those of its options. The zero value is the default of every
+// setting.
 
 Lods :: enum u8 {
     Auto, // simplified levels are stored after level 0 (mesh_levels)

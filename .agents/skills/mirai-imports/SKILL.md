@@ -20,11 +20,11 @@ the assets.
 ## Map
 
 - Packages, `import_source`, the imported model and CLI: [imports.md](references/imports.md#api).
-- Where a source lives (in the assets, beside what it makes), its sidecar (settings, folder, ids),
-  what an import keeps in the imported folder and what in the assets, reimporting, a moved or
-  renamed source and parts with `owner`: [Identity](references/imports.md#identity-and-reimport).
-- The records that take the place of the sidecar in the machine store (package and build
-  manifests, `packages.mirai`): [packages](../mirai-assets/references/formats.md#packages).
+- The package of a source in the store (settings, ids, build of blobs), documents written or
+  followed in a project (`documents_follow`), reimporting and parts with `owner`:
+  [Identity](references/imports.md#identity-and-reimport).
+- The records of the store (package and build manifests, refs, `packages.mirai`):
+  [packages](../mirai-assets/references/formats.md#packages).
 - A checkout without its imported folder, what a build imports and when a source is imported
   again: [Sync](references/imports.md#sync).
 - Adding or changing a format (`Format`, `Reader`, `Source_Space`, version):
@@ -55,13 +55,11 @@ the assets.
 
 ## Workflow
 
-1. **Importing a file.** Put it in `assets/`, in the folder of its theme beside what it makes
-   (the editor copies a file from outside into the folder of the browser), and
-   [`mirai import`](references/imports.md#what-is-written) it; review the assets with
-   `mirai asset verify`, `ls` and `info`. Commit the source, its `.import` and the documents it
-   wrote beside it; what it wrote in `.mirai/imported/` is never versioned. The editor, the CLI,
-   the sync of builds and the content tools import with the same `sources.import_source`: same
-   assets, prefab included.
+1. **Importing a file.** An import takes the store (`Import_Options.store`) and puts in it the
+   package of the source and a build of its blobs; given `documents`, it also writes or follows
+   the documents in that folder of a project. Review the assets with `mirai asset verify`, `ls`
+   and `info`; commit the documents, never the blobs. The editor, the CLI, the sync of builds and
+   the content tools import with the same `sources.import_source`: same assets, prefab included.
 2. **From code.** `sources.import_source(path,options)` writes everything; for the model
    without writing it, `importer.import_model(path,sources.FORMATS[:],options)` reads it into an
    `Imported_Model` (plain data, no engine components) and `importer.import_write` writes its
@@ -93,37 +91,38 @@ the assets.
   place after the read: from the `front` its settings state, or else, for a file that is a rig,
   from where its body is found facing ([front](references/imports.md#front)).
 - **The source is not modified.** The same bytes and options give the same assets.
-- **A source lives in the assets, beside what it makes, in folders by theme.** Never a folder per
-  asset type; the browser filters by type. One outside the assets is refused. Decided by the
-  owner.
-- **The ids of an import live in the sidecar of its source, and nothing derives them.** The first
-  import gives random ids and `<source>.import` lists them; importing again, on any machine and
-  in any order of sources, gives each part the asset it had by its kind and name, even if its
-  document was moved, and a source moved or renamed with its sidecar keeps its import
+- **A source imports from anywhere.** In a project, in a plugin or in no project: what it makes
+  goes to the store, and its documents to the folder of the project given. In a project, it lives
+  beside what it makes, in folders by theme, never a folder per asset type.
+- **The ids of an import live in the manifest of its package, and nothing derives them.** The
+  first ingest gives random ids; importing the package again, on any machine, gives each part
+  the asset it had by its kind and name, even if its document was moved
   ([identity](references/imports.md#identity-and-reimport)). A part renamed in the source is a
   new asset. Only what is surely part of a model belongs to its prefab (`owner`), and it is
   decided once ([parts](references/imports.md#parts)).
 - **An import never touches another.** Two models that embed the same image get a texture each,
-  encoded once in the content cache; no import edits the files or the sidecar of another source.
-  Decided by the owner.
-- **What nobody edits is a cache of the source, never versioned, whatever reads it.** The meshes,
-  textures, sounds and fonts of every import, of an engine format or of a plugin's, are files of
-  the imported folder of its root (`.mirai/imported/`), named by their ids and listed by where
-  their sidecar is, built again from the source and its sidecar by
-  [sync](references/imports.md#sync); materials, prefabs, skeletons, clips, texts and prompts,
-  which the editor edits, are documents of `assets/`. Decided by the owner.
-- **The source, its sidecar and the build decide the cache.** The same three give the same files,
-  byte for byte: a clone, a worktree and a branch switch are brought up to date by the same sync,
-  explicitly, in `mirai build`; the editor never imports by itself.
+  encoded once in the content cache; no import edits the documents or the package of another
+  source. Decided by the owner.
+- **Every output is an immutable blob of the store, the same on every machine.** Nothing under
+  `.mirai/imported/` and no sidecar: the build lists the blobs, documents among them as their
+  baseline. No blob is rewritten in place (a changed owner is a new blob), and the source an asset
+  names is relative to its package. Materials, prefabs, skeletons, clips, texts and prompts, which
+  the editor edits, are also documents of a project, followed from the baseline. Decided by the
+  owner.
+- **The identity holds no engine version; the key holds the identity and the versions.** The
+  identity (source, inputs, settings, plugin code) is in the manifest; the key
+  (`asset.import_key`) adds the writer, format, kind and texture builder versions, so any machine
+  with the manifest finds a build without the source. A Final build is named under `imports`,
+  which peers share; a Fast one only under `imports-fast`; `builds` names the one this machine
+  chose. The editor never imports by itself.
 - **Reimporting keeps what a person changed.** A material stores what the source gave and the next
   import rewrites only that: fields changed afterwards stay, like the overrides of a prefab
   ([materials](references/imports.md#what-is-written)).
 - **What an asset was built from is its `Import_Info`**: source (size and hash), writer and format
-  version, and only the settings the asset is made from. Whether a file of the cache is current
-  is said once, by its name (the key of what the import builds from), and a mesh or a texture
-  whose file under another key records what it would be built from now takes that file; the rest
-  is rebuilt, and a texture of the same image and settings or a mesh of the same geometry and
-  settings comes from the content cache.
+  version, and only the settings the asset is made from. Reuse is a ref lookup: a mesh or a
+  texture that a build of the package has, recording what it would be built from now, is taken;
+  the rest is rebuilt, and a texture of the same image and settings or a mesh of the same
+  geometry and settings comes from the content cache.
 - **In parallel, the same bytes.** What is expensive (levels, clusters and colliders of a mesh,
   levels of a texture) is built in jobs; what decides ids and files is written in a single thread,
   in the usual order. Importing with or without the job system gives the same files.
@@ -132,8 +131,8 @@ the assets.
   order of the scalar loop: the tool and the dev engine (`-o:minimal`) write the same as
   `--release`.
 - **Importing is a transaction.** `import_model` leaves nothing if it fails (own arena, freed by
-  `model_destroy`); `import_write` removes the files it created if it fails midway. Errors name
-  the file, the line or the prim.
+  `model_destroy`); `import_write` removes the documents it created and names nothing if it fails
+  midway. Errors name the file, the line or the prim.
 - **A source does not choose what is read from disk.** A path with a control character or, on
   Windows, a device (`CON`, `NUL`, `COM1`) is not opened. Models only ask for files next to them
   or by path, never more than `MAX_SOURCE_BYTES`, and the hierarchy is bounded (`MAX_DEPTH`).
@@ -156,10 +155,10 @@ the assets.
   `TEXCOORD_0/1`, Draco, meshopt indices and normals, GPU instancing, subdivision surfaces and
   time samples fail with a named error. What is ignored without breaking the source (material
   extensions with no equivalent, missing images) leaves a warning.
-- **Settings live with the source.** `<source>.import` decides how it is imported and wins over the
-  options of whoever imports (except `ignore_stored`); every import writes it. Everything that
-  changes an asset is a setting, also the alpha coverage of a loose image. An unreadable sidecar
-  is an error, not the defaults nor new ids.
+- **Settings live in the package.** Its manifest decides how the source is imported again and wins
+  over the options of whoever imports (except `ignore_stored`). Everything that changes an asset
+  is a setting, also the alpha coverage of a loose image. An unreadable manifest is an error, not
+  the defaults nor new ids.
 - **What is imported is used as is.** Levels of detail are made on import and stored in the
   `.mesh`; loading does not recompute them.
 - **Collision is the source's, as authored.** The colliders the source brings are the mesh's and
@@ -216,9 +215,11 @@ the assets.
   gets the same assets byte for byte and only what changed is imported again, the sources of a
   plugin format build in the cache and sync reads them with the formats of the plugins, a source
   outside the assets is refused, when a material is a part of a model, sync runs the importer of
-  a plugin for a whole source whose inputs changed), `cook/import/outputs_test.odin` (the models
-  of a whole source share their parts by name, names with `/` go to subfolders, inputs count in
-  the key),
+  a plugin for a whole source whose inputs changed), `cook/import/outputs_test.odin` (the outputs
+  of a source are the assets its package lists, the models of a whole source share their parts by
+  name, inputs count in the identity, importing again keeps ids and blobs, a source outside any
+  project imports, a setting changes the identity and an engine version only the key, a Fast
+  build is not shared, two stores hold the same blobs),
   `asset/registry_test.odin` (the listing of the cache by where the sidecar is, never by the order
   of a scan), `cook/import/sources/settings_test.odin` (a sidecar that is not one is refused) and
   `cook/import/sources/write_test.odin` (importing again keeps what was changed in a material and

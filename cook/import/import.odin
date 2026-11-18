@@ -20,7 +20,7 @@ import_model :: proc(path:string,formats:[]Format,options:Import_Options={},allo
     caller:=context.temp_allocator
     settings,stored:=options.settings,false
     if !options.ignore_stored {
-        kept,found,settings_error:=settings_load(path)
+        kept,found,settings_error:=settings_load(options,path)
         if settings_error.code!=.None {return {},settings_error}
         if found {settings,stored=kept,true}
     }
