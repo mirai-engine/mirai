@@ -66,6 +66,10 @@ SHADOW_MAP_ORTHOGRAPHIC :: abi.SHADOW_MAP_ORTHOGRAPHIC
 // The frames after its last change an instance whose shadow changed twice
 // within them keeps moving (shadow_movers_update).
 SHADOW_MOVER_FRAMES :: u64(30)
+// Metres: the side of the cells of the world the maps take the eye from to
+// leave out the instances of a batch past its cull distance, as the view
+// does; while the eye stays in its cell, no instance comes or goes.
+SHADOW_CULL_STEP :: f32(8)
 // The units of raster work (abi.SHADOW_UNIT_TEXELS) the draws of the cache
 // of a view take in a frame, and those of its atlas, at least: what the least
 // GPU the engine runs on draws, masked, in a few milliseconds, a unit taking
@@ -224,6 +228,8 @@ Shadow_Raster :: struct {
 	whole:    bool, // a slot drew its pages whole into the atlas alone the frame before: the cache draws them now
 	swayed:   [SHADOW_SLOTS]u64, // the frame the marks of what swayed last ran in each slot: the batches that swayed since mark its pages
 	reach:    u32, // what the culls of what stays of its slots go over: its place in Scene_State.shadow_views + 1, 0: none
+	cull:     [3]i32, // the cell of the world of the eye its maps leave out the batches past their cull distance from (SHADOW_CULL_STEP)
+	culled:   bool,   // its maps were drawn from that cell
 }
 
 // What the marks of the points of a view depend on besides the maps and the
@@ -645,6 +651,52 @@ Shadow_Plan :: struct {
 	whole:          bool, // a slot lets go of every page: the round of what moves draws what stays too there
 	changed:        bool, // a level of the sun moved, or what stays changed everywhere in a slot
 	bits:           rhi.Transient,
+	cull:           Vec4, // the eye the batches past their cull distance are left out from (shadow_cull_eye)
+}
+
+// The cell of SHADOW_CULL_STEP of the world that holds an eye relative to the origin.
+@(private)
+shadow_cull_cell :: proc "contextless" (eye, origin: Vec3) -> (cell: [3]i32) {
+	for axis in 0 ..< 3 {cell[axis] = i32(clamp(math.floor((f64(eye[axis]) + f64(origin[axis])) / f64(SHADOW_CULL_STEP)), -2e9, 2e9))}
+	return
+}
+
+// The middle of a cell relative to the origin, and how much farther than its
+// cull distance an instance of a batch lies from it before the maps leave it
+// out: half the diagonal of the cell, so that what the view draws from any
+// eye within the cell casts.
+@(private)
+shadow_cull_eye :: proc "contextless" (cell: [3]i32, origin: Vec3) -> (eye: Vec4) {
+	for axis in 0 ..< 3 {eye[axis] = f32((f64(cell[axis]) + 0.5) * f64(SHADOW_CULL_STEP) - f64(origin[axis]))}
+	eye.w = 0.5 * SHADOW_CULL_STEP * math.SQRT_THREE
+	return
+}
+
+// Whether the maps leave out every instance within a box of a batch whose
+// cull distance is `cull` (0: never) from that eye (shadow_cull_eye).
+@(private)
+shadow_culled :: proc "contextless" (low, high: Vec3, cull: f32, eye: Vec4) -> bool {
+	return cull > 0 && linalg.length(eye.xyz - linalg.clamp(eye.xyz, low, high)) > cull + eye.w
+}
+
+// What stays changed where the eye the maps cull from moved from `was` to
+// `now`: of each batch drawn that casts with a cull distance, one whose
+// instances may lie within it from one eye and past it from the other, the
+// part of its box within reach of either.
+@(private)
+shadow_cull_changes :: proc(s: ^Scene_State, stale: ^Occluder_Changes, was, now: Vec4) {
+	farthest :: proc "contextless" (eye, low, high: Vec3) -> f32 {return linalg.length(linalg.max(linalg.abs(eye - low), linalg.abs(eye - high)))}
+	for index, k in s.batch.drawn {
+		cull := s.batch.records[index].desc.cull_distance
+		low, high, casts := shadow_batch_box(s, k)
+		if !casts || cull <= 0 {continue}
+		reach := cull + now.w
+		if farthest(was.xyz, low, high) <= reach && farthest(now.xyz, low, high) <= reach {continue}
+		if shadow_culled(low, high, cull, was) && shadow_culled(low, high, cull, now) {continue}
+		low = linalg.max(low, linalg.min(was.xyz, now.xyz) - reach)
+		high = linalg.min(high, linalg.max(was.xyz, now.xyz) + reach)
+		occluder_add(stale, OCCLUDERS_MANY, low, high)
+	}
 }
 
 // What the plan tells the pages of a slot this frame (shadow_pages.comp):
@@ -791,6 +843,12 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 		}
 		h^ = {m = w.m, grid = w.grid}
 	}
+	// The cell of the eye the batches with a cull distance are left out from;
+	// where it changed, what stays changed where their instances came or went.
+	cell := shadow_cull_cell(eye, r.origin)
+	plan.cull = shadow_cull_eye(cell, r.origin)
+	if b.culled && !forget && cell != b.cull {shadow_cull_changes(s, &b.stale, shadow_cull_eye(b.cull, r.origin), plan.cull)}
+	b.cull, b.culled = cell, true
 	stale, moved := b.stale, b.moved
 	b.stale, b.moved = {}, {}
 	// The bits of what moves: the instances, then the batches drawn, after
@@ -964,6 +1022,7 @@ Shadow_Caster :: struct {
 	low, high:    Vec3,
 	first, count: u32,
 	key:          f32, // twice the middle of its box along x
+	cull:         f32, // its cull distance, 0: none
 	casts:        bool,
 }
 
@@ -987,11 +1046,14 @@ shadow_casters_update :: proc(s: ^Scene_State) -> bool {
 	if resize(&s.shadow_casters, len(batch.drawn)) != nil || resize(&s.shadow_marks, (len(batch.drawn) + 63) / 64) != nil || resize(&s.shadow_merge, len(batch.drawn)) != nil {return false}
 	s.shadow_casters_low, s.shadow_casters_high = Vec3(max(f32)), Vec3(-max(f32))
 	s.shadow_casters_half = 0
+	s.shadow_casters_cull = false
 	for &c, k in s.shadow_casters {
 		c.low, c.high, c.casts = shadow_batch_box(s, k)
 		c.first, c.count = shadow_batch_instances(s, k)
 		c.key = c.low.x + c.high.x
+		c.cull = batch.records[batch.drawn[k]].desc.cull_distance
 		if !c.casts {continue}
+		s.shadow_casters_cull ||= c.cull > 0
 		s.shadow_casters_low, s.shadow_casters_high = linalg.min(s.shadow_casters_low, c.low), linalg.max(s.shadow_casters_high, c.high)
 		s.shadow_casters_half = max(s.shadow_casters_half, 0.5 * (c.high.x - c.low.x))
 	}
@@ -1123,6 +1185,7 @@ Shadow_Mover :: struct {
 Shadow_Reached :: struct {
 	m:       Gpu_Shadow_Map, // the map they were found for; rect.z 0: none
 	tables:  u64,            // the tables of the batches they were found in (Batch_State.tables)
+	cull:    [3]i32,         // the cell of the eye they were found from, where a batch has a cull distance (Shadow_Raster.cull)
 	ranges:  [dynamic][2]u32,
 	threads: u32,
 }
@@ -1143,7 +1206,7 @@ shadow_reach_release :: proc(r: ^Renderer, b: ^Shadow_Raster) {
 		view := &views[b.reach - 1]
 		for &kept in view.slots {
 			clear(&kept.ranges)
-			kept.m, kept.tables, kept.threads = {}, 0, 0
+			kept.m, kept.tables, kept.cull, kept.threads = {}, 0, {}, 0
 		}
 		view.used = false
 	}
@@ -1190,7 +1253,8 @@ shadow_range_add :: proc(ranges: ^[dynamic][2]u32, list: ^Shadow_Reach_List, end
 // casters near its box along x; of what moves, the movers that reach it, or
 // what stays where the slot lets go of every page; of what swayed, the
 // batches that swayed since its marks last ran and change it. A batch whose
-// box misses a map costs no thread there. False without memory.
+// box misses a map, or lies past its cull distance from the cell of the eye
+// (shadow_culled), costs no thread there. False without memory.
 @(private)
 shadow_reach :: proc(r: ^Renderer, b: ^Shadow_Raster, wants: []Shadow_Want, plans: []Shadow_Slot_Plan, reach: []Shadow_Reach) -> bool {
 	s := &r.scene
@@ -1198,12 +1262,14 @@ shadow_reach :: proc(r: ^Renderer, b: ^Shadow_Raster, wants: []Shadow_Want, plan
 	scene_count := u32(len(s.instances))
 	clear(&s.shadow_ranges)
 	if (s.shadow_casters_tables != batch.tables || !batch.built) && !shadow_casters_update(s) {return false}
+	eye := shadow_cull_eye(b.cull, r.origin)
+	key := b.cull if s.shadow_casters_cull else {}
 	// The batches that move this frame.
 	clear(&s.shadow_movers)
 	for index, k in batch.drawn {
 		record := &batch.records[index]
-		if !record.shadow_moving || !s.shadow_casters[k].casts {continue}
 		c := &s.shadow_casters[k]
+		if !record.shadow_moving || !c.casts || shadow_culled(c.low, c.high, c.cull, eye) {continue}
 		if _, err := append(&s.shadow_movers, Shadow_Mover{shadow_batch_change(s, k), c.first, c.count, record.shadow_swayed}); err != nil {return false}
 	}
 	if b.reach == 0 || int(b.reach) > len(s.shadow_views) {
@@ -1218,6 +1284,7 @@ shadow_reach :: proc(r: ^Renderer, b: ^Shadow_Raster, wants: []Shadow_Want, plan
 	view := &s.shadow_views[b.reach - 1]
 	casters := s.shadow_casters[:]
 	near_block := -1
+	out := -1 // whether the cull distance leaves out a caster; -1: not known yet
 	for w, slot in wants {
 		m := w.m
 		kept := &view.slots[slot]
@@ -1225,12 +1292,19 @@ shadow_reach :: proc(r: ^Renderer, b: ^Shadow_Raster, wants: []Shadow_Want, plan
 			kept.m = {}
 			continue
 		}
-		if kept.m != m || kept.tables != batch.tables {
+		if kept.m != m || kept.tables != batch.tables || kept.cull != key {
 			if kept.ranges.allocator.procedure == nil {kept.ranges = make([dynamic][2]u32, r.allocator)}
 			clear(&kept.ranges)
 			list: Shadow_Reach_List
 			end: u32
-			if shadow_map_holds(m, s.shadow_casters_low, s.shadow_casters_high) {
+			holds := shadow_map_holds(m, s.shadow_casters_low, s.shadow_casters_high)
+			if holds && out < 0 {
+				out = 0
+				if s.shadow_casters_cull {
+					for &c in casters {if c.casts && shadow_culled(c.low, c.high, c.cull, eye) {out = 1;break}}
+				}
+			}
+			if holds && out == 0 {
 				// Every caster lies in the map.
 				if _, err := append(&kept.ranges, ..s.shadow_all[:]); err != nil {return false}
 				list.threads = s.shadow_all_threads
@@ -1246,7 +1320,7 @@ shadow_reach :: proc(r: ^Renderer, b: ^Shadow_Raster, wants: []Shadow_Want, plan
 					clear(&s.shadow_near)
 					for k in shadow_casters_band(s, m.origin.x - m.far, m.origin.x + m.far) {
 						c := &casters[k]
-						if c.high.y < m.origin.y - m.far || c.low.y > m.origin.y + m.far || c.high.z < m.origin.z - m.far || c.low.z > m.origin.z + m.far {continue}
+						if c.high.y < m.origin.y - m.far || c.low.y > m.origin.y + m.far || c.high.z < m.origin.z - m.far || c.low.z > m.origin.z + m.far || shadow_culled(c.low, c.high, c.cull, eye) {continue}
 						if _, err := append(&s.shadow_near, k); err != nil {return false}
 					}
 				}
@@ -1269,6 +1343,7 @@ shadow_reach :: proc(r: ^Renderer, b: ^Shadow_Raster, wants: []Shadow_Want, plan
 					for k in shadow_casters_band(s, low.x, high.x) {
 						box := s.shadow_sun_boxes[k]
 						if box[1].x < lo.x || box[0].x > hi.x || box[1].y < lo.y || box[0].y > hi.y || box[1].z < lo.z || box[0].z > hi.z {continue}
+						if c := &casters[k]; shadow_culled(c.low, c.high, c.cull, eye) {continue}
 						s.shadow_marks[k >> 6] |= 1 << (k & 63)
 					}
 				}
@@ -1280,7 +1355,7 @@ shadow_reach :: proc(r: ^Renderer, b: ^Shadow_Raster, wants: []Shadow_Want, plan
 					}
 				}
 			}
-			kept.m, kept.tables, kept.threads = m, batch.tables, list.threads
+			kept.m, kept.tables, kept.cull, kept.threads = m, batch.tables, key, list.threads
 		}
 		stays := &reach[slot][Shadow_Round.Stays]
 		stays^ = {first = u32(len(s.shadow_ranges)), count = u32(len(kept.ranges)), threads = kept.threads}
@@ -1318,7 +1393,8 @@ Shadow_Params :: struct {
 	reach, ranges, rows, chunk_capacity, entry_capacity, list, moving, movers, threads, masks, plan, part, bound, foresee: u32,
 	round, last, vertex_capacity, triangle_capacity: u32,
 	margin: f32,
-	_: [5]u32,
+	_:      u32,
+	cull:   Vec4, // shadow_cull_eye
 }
 
 // The rounds of the cull: what stays, into the pages the cache draws; what
@@ -1337,7 +1413,7 @@ shadow_params :: proc(p: ^Pass, plan: Shadow_Plan, round: Shadow_Round) -> Shado
 		list = abi.SHADOW_WORDS_SLOTS + u32(round) * (SHADOW_SLOTS + 1), masks = masks[round],
 		chunk_capacity = shadow_chunk_room(p.r, &p.t.shadow_raster), entry_capacity = s.cull_capacity[.Shadow_Entries],
 		moving = u32(round), movers = plan.movers, plan = plan.plan, part = 1 if round == .Stays else 0,
-		bound = shadow_frame_units(p.r, &p.t.shadow_raster),
+		bound = shadow_frame_units(p.r, &p.t.shadow_raster), cull = plan.cull,
 	}
 }
 
@@ -1358,7 +1434,7 @@ shadow_sway_marks :: proc(p: ^Pass, plan: Shadow_Plan) {
 	if plan.sway_threads == 0 {return}
 	params := Shadow_Params{
 		reach = plan.reach, ranges = plan.ranges, rows = plan.rows, list = plan.sway, movers = plan.movers, threads = plan.sway_threads,
-		plan = plan.plan, foresee = abi.SHADOW_CULL_SWAY, chunk_capacity = shadow_chunk_room(r, &t.shadow_raster), entry_capacity = r.scene.cull_capacity[.Shadow_Entries],
+		plan = plan.plan, foresee = abi.SHADOW_CULL_SWAY, cull = plan.cull, chunk_capacity = shadow_chunk_room(r, &t.shadow_raster), entry_capacity = r.scene.cull_capacity[.Shadow_Entries],
 	}
 	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Shadow_Maps])
 	set_params(cmd, &params)
