@@ -41,6 +41,8 @@ REF_IMPORTS :: "imports"           // <import_key>: a build with Final textures,
 REF_IMPORTS_FAST :: "imports-fast" // <import_key>: a build with Fast textures, never shared
 REF_BUILDS :: "builds"             // <build_select>: the build the refresh of this machine chose
 REF_CACHE_PREFIX :: "cache-"       // and the name of a folder of cook/cache: <key>-<version>
+REF_ORIGINS :: "origins"           // <origin_name>: the manifest of the package its source was ingested as on this machine
+REF_SOURCES :: "sources"           // <origin_name>: what the files of that source were when last read, never shared
 IMPORT_KEY_VERSIONS :: 32          // the most versions an import key combines
 
 // Where the source of a package was on the machine that ingested it: a hint
@@ -144,6 +146,12 @@ cache_namespace :: proc(name:string,buffer:^[store.NAME_MAX]u8) -> string {
     n:=copy(buffer[:],REF_CACHE_PREFIX)
     n+=copy(buffer[n:],name)
     return string(buffer[:n])
+}
+
+// The name of the refs REF_ORIGINS and REF_SOURCES of the source at origin
+// (an absolute path with forward slashes), in buffer.
+origin_name :: proc(origin:string,buffer:^[64]u8) -> string {
+    return store.hex(store.address_of_bytes(transmute([]u8)origin),buffer)
 }
 
 @(private="file")

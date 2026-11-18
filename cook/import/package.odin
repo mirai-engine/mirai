@@ -3,7 +3,9 @@ package importer
 import "core:fmt"
 import "core:os"
 import "core:slice"
+import "core:strconv"
 import "core:strings"
+import "core:time"
 import "mirai:asset"
 import "mirai:cook/textures"
 import "mirai:std/base"
@@ -56,34 +58,113 @@ settings_valid :: proc(settings:Import_Settings) -> bool {
         settings.rig_crotch>=0 && settings.rig_neck>=0 && (settings.rig==.Humanoid || settings.rig_crotch==0 && settings.rig_neck==0)
 }
 
-// What the outputs of an import are made from, without any version of the
-// engine (asset.Package.identity): the bytes of the source at path and of each
-// input, named from the folder of the source, the text of its settings and the
-// code of the plugin that imports it whole (Import_Options.importer_code). A
-// file that cannot be read, such as a folder, counts as no bytes.
-identity_of :: proc(path:string,inputs:[]string,settings:Import_Settings,code:u64) -> store.Hash {
+// What the outputs of the package package_id are made from, without any
+// version of the engine (asset.Package.identity): the package, whose ids its
+// blobs hold, so two packages of the same bytes have builds of their own; the
+// bytes of the source at path and of each input, named from the folder of the
+// source; the text of its settings and the code of the plugin that imports it
+// whole (Import_Options.importer_code). A file that cannot be read, such as a
+// folder, counts as no bytes. With hashes, a file whose size and modification
+// time it knows is not read.
+identity_of :: proc(package_id:base.Asset_Id,path:string,inputs:[]string,settings:Import_Settings,code:u64,hashes:^Source_Hashes=nil) -> store.Hash {
     TAG :: "mirai import identity"
     bytes:=make([dynamic]u8,context.temp_allocator)
     append(&bytes,TAG)
-    address :: proc(bytes:^[dynamic]u8,file:string) {
+    package_id:=package_id
+    append(&bytes,..([^]u8)(&package_id)[:size_of(package_id)])
+    address :: proc(bytes:^[dynamic]u8,file:string,hashes:^Source_Hashes) {
         hash:=store.address_of_bytes(nil)
-        if !unsafe_path(file) {
-            if read,_,error:=store.address_of_file(file);error==.None {hash=read}
-        }
+        if !unsafe_path(file) {hash=file_address(hashes,file)}
         append(bytes,..hash[:])
     }
-    address(&bytes,path)
+    address(&bytes,path,hashes)
     folder:=path[:max(strings.last_index_byte(path,'/'),0)]
     for input in inputs {
         append(&bytes,input)
         append(&bytes,0)
-        address(&bytes,fmt.tprintf("%s/%s",folder,input))
+        address(&bytes,fmt.tprintf("%s/%s",folder,input),hashes)
     }
     append(&bytes,settings_text(settings,context.temp_allocator))
     append(&bytes,0)
     code:=code
     append(&bytes,..([^]u8)(&code)[:size_of(code)])
     return store.address_of_bytes(bytes[:])
+}
+
+// The addresses of the files the identity of one source read, by path, as
+// they were when read: kept by the library of the machine per source
+// (asset.REF_SOURCES), so finding whether a source changed reads only the
+// files whose size or modification time changed. The bytes still decide: a
+// file that changed is read again.
+Source_Hashes :: struct {
+    files:map[string]Source_Hash,
+    changed:bool,
+}
+Source_Hash :: struct {size,modified:i64,hash:store.Hash}
+
+// A file modified this close to when it was read may change again within the
+// same modification time: it is read again the next time.
+@(private="file") SETTLED_NANOSECONDS :: 2_000_000_000
+
+// The hashes kept for the source at origin (path_key), in allocator; none
+// when the store has none or they do not read.
+source_hashes_load :: proc(s:^store.Store,origin:string,allocator:=context.allocator) -> (hashes:Source_Hashes) {
+    hashes.files=make(map[string]Source_Hash,allocator=allocator)
+    name:[64]u8
+    hash,ref_error:=store.ref_get(s,asset.REF_SOURCES,asset.origin_name(origin,&name))
+    if ref_error!=.None {return}
+    size,size_error:=store.blob_size(s,hash)
+    if size_error!=.None || size>asset.RECORD_BYTES {return}
+    data:=make([]u8,int(size),context.temp_allocator)
+    if store.read(s,hash,0,data)!=.None {return}
+    text:=string(data)
+    for line in strings.split_lines_iterator(&text) {
+        parts:=strings.split_n(line," ",4,context.temp_allocator)
+        if len(parts)!=4 {continue}
+        address,address_ok:=store.parse_hex(parts[0])
+        file_size,size_ok:=strconv.parse_i64(parts[1])
+        modified,modified_ok:=strconv.parse_i64(parts[2])
+        if address_ok && size_ok && modified_ok {hashes.files[strings.clone(parts[3],allocator)]={file_size,modified,address}}
+    }
+    return
+}
+
+// Keeps the hashes of the source at origin when reading it changed them.
+source_hashes_save :: proc(s:^store.Store,origin:string,hashes:^Source_Hashes) {
+    if !hashes.changed {return}
+    files:=make([dynamic]string,0,len(hashes.files),context.temp_allocator)
+    for file in hashes.files {append(&files,file)}
+    slice.sort(files[:])
+    b:=strings.builder_make(context.temp_allocator)
+    digits:[64]u8
+    for file in files {
+        known:=hashes.files[file]
+        fmt.sbprintf(&b,"%s %d %d %s\n",store.hex(known.hash,&digits),known.size,known.modified,file)
+    }
+    hash,error:=store.put_bytes(s,transmute([]u8)strings.to_string(b))
+    if error!=.None {return}
+    name:[64]u8
+    _=store.ref_set(s,asset.REF_SOURCES,asset.origin_name(origin,&name),hash)
+}
+
+// The address of the bytes of a file, from hashes when its size and
+// modification time are those it knows; that of no bytes for a file that
+// cannot be read.
+@(private="file")
+file_address :: proc(hashes:^Source_Hashes,file:string) -> store.Hash {
+    info,stat_error:=os.stat(file,context.temp_allocator)
+    size,modified:=info.size,time.time_to_unix_nano(info.modification_time)
+    if hashes!=nil && stat_error==nil {
+        if known,found:=hashes.files[file];found && known.size==size && known.modified==modified {return known.hash}
+    }
+    hash,_,error:=store.address_of_file(file)
+    if error!=.None {return store.address_of_bytes(nil)}
+    if hashes!=nil && stat_error==nil && time.time_to_unix_nano(time.now())-modified>SETTLED_NANOSECONDS {
+        if _,found:=hashes.files[file];!found {hashes.files[strings.clone(file,hashes.files.allocator)]={}}
+        hashes.files[file]={size,modified,hash}
+        hashes.changed=true
+    }
+    return hash
 }
 
 // The versions of what reads a source with a format of version
@@ -97,7 +178,7 @@ import_versions :: proc(version:u32) -> [3]u64 {
 
 // The manifest of the package the source at origin (an absolute path with
 // forward slashes) was ingested as: the one manifest names, else the one the
-// ref REF_PACKAGES of this machine names whose origin is origin. found is
+// ref REF_ORIGINS of this machine names for origin. found is
 // false without one. In allocator, an arena.
 package_previous :: proc(s:^store.Store,manifest:store.Hash,origin:string,allocator:=context.allocator) -> (p:asset.Package,hash:store.Hash,found:bool,error:Error) {
     digits:[64]u8
@@ -108,15 +189,12 @@ package_previous :: proc(s:^store.Store,manifest:store.Hash,origin:string,alloca
         if read_error!=.None {return {},{},false,error_make(.Malformed,"the manifest %s of the package of %s does not read (%v): import the source as a new package",store.hex(manifest,&digits),origin,read_error)}
         return p,manifest,true,{}
     }
-    refs,_:=store.ref_list(s,asset.REF_PACKAGES,context.temp_allocator)
-    for ref in refs {
-        candidate,read_error:=asset.package_get(s,ref.hash,context.temp_allocator)
-        if read_error!=.None || candidate.origin.path!=origin {continue}
-        p,read_error=asset.package_get(s,ref.hash,allocator)
-        if read_error!=.None {continue}
-        return p,ref.hash,true,{}
-    }
-    return
+    name:[64]u8
+    named,ref_error:=store.ref_get(s,asset.REF_ORIGINS,asset.origin_name(origin,&name))
+    if ref_error!=.None {return}
+    read_error:asset.Error
+    if p,read_error=asset.package_get(s,named,allocator);read_error!=.None || p.origin.path!=origin {return {},{},false,{}}
+    return p,named,true,{}
 }
 
 // The settings of the package the source at path was ingested as
@@ -146,7 +224,7 @@ output_id :: proc(s:^store.Store,path:string,kind:asset.Fourcc,name:string) -> (
 }
 
 // Puts the manifest of the package and its build in the store and names
-// them: the package with REF_PACKAGES, the build with REF_IMPORTS when its
+// them: the package with REF_PACKAGES and by its origin (REF_ORIGINS), the build with REF_IMPORTS when its
 // textures are Final, else REF_IMPORTS_FAST, and as the build this machine
 // chose for the manifest (REF_BUILDS).
 @(private)
@@ -169,14 +247,15 @@ writer_publish :: proc(w:^Writer,name,importer:string) -> bool {
     build,build_error:=asset.build_put(s,&b)
     if build_error!=.None {return writer_fail(w,.Write,"the build of the package of %s could not be put in the store at %s: %v",w.path,s.root,build_error)}
     id_text:[base.ASSET_ID_TEXT]u8
-    key_text,select_text:[64]u8
-    refs:=[3]struct{namespace,name:string}{
+    key_text,select_text,origin_text:[64]u8
+    refs:=[4]struct{namespace,name:string}{
         {asset.REF_PACKAGES,base.asset_id_format(w.package_id,id_text[:])},
+        {asset.REF_ORIGINS,asset.origin_name(w.origin,&origin_text)},
         {asset.REF_IMPORTS if b.final else asset.REF_IMPORTS_FAST,store.hex(w.key,&key_text)},
         {asset.REF_BUILDS,store.hex(asset.build_select(manifest,&p),&select_text)},
     }
     for ref,at in refs {
-        if error:=store.ref_set(s,ref.namespace,ref.name,manifest if at==0 else build);error!=.None {
+        if error:=store.ref_set(s,ref.namespace,ref.name,manifest if at<2 else build);error!=.None {
             return writer_fail(w,.Write,"the ref %s/%s of the package of %s could not be set in the store at %s: %v",ref.namespace,ref.name,w.path,s.root,error)
         }
     }
@@ -191,7 +270,7 @@ writer_identity :: proc(w:^Writer) {
     if w.fixed {return}
     w.fixed=true
     slice.sort(w.inputs[:])
-    w.identity=identity_of(w.origin,w.inputs[:],w.report.settings,w.options.importer_code)
+    w.identity=identity_of(w.package_id,w.origin,w.inputs[:],w.report.settings,w.options.importer_code,w.options.hashes)
     versions:=import_versions(w.version)
     w.key,_=asset.import_key(w.identity,versions[:])
 }

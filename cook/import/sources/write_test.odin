@@ -14,6 +14,7 @@ import stbi "vendor:stb/image"
 import "mirai:asset"
 import anim "mirai:std/anim"
 import "mirai:std/base"
+import "mirai:store"
 import mm "mirai:std/math"
 import "mirai:std/serial"
 import importer "mirai:cook/import"
@@ -69,14 +70,14 @@ a_written_obj_is_read_back_with_its_material_and_its_dependencies :: proc(t:^tes
     model,ok:=import_ok(t,FIXTURES+"concave.obj")
     if !ok {return}
     defer importer.model_destroy(&model)
-    report,error:=write_into(&model,fmt.tprintf("%s/out",folder))
+    report,error:=write_into(t,&model,fmt.tprintf("%s/out",folder))
     defer importer.report_destroy(&report)
     testing.expect_value(t,error.code,importer.Error_Code.None)
     testing.expect_value(t,len(report.assets),2)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     mesh_written,has_mesh:=written_of(&report,asset.KIND_MESH,"ConcaveL")
     material_written,has_material:=written_of(&report,asset.KIND_MATERIAL,"red")
-    testing.expect(t,has_mesh && has_material && strings.contains(mesh_written.path,"/.mirai/imported/") && strings.has_suffix(material_written.path,"/assets/concave/red.mat") && mesh_written.bytes>0)
+    testing.expect(t,has_mesh && has_material && strings.contains(mesh_written.path,"/store/blobs/") && strings.has_suffix(material_written.path,"/assets/concave/red.mat") && mesh_written.bytes>0)
     if !has_mesh || !has_material {return}
 
     a,loaded:=read_asset(t,mesh_written,&types)
@@ -108,7 +109,7 @@ a_written_model_with_textures_links_materials_to_them :: proc(t:^testing.T) {
     model,ok:=import_ok(t,DEMO+"gallery/plant.gltf")
     if !ok {return}
     defer importer.model_destroy(&model)
-    report,error:=write_into(&model,folder)
+    report,error:=write_into(t,&model,folder)
     defer importer.report_destroy(&report)
     testing.expect_value(t,error.code,importer.Error_Code.None)
     testing.expect_value(t,len(report.warnings),0)
@@ -129,7 +130,7 @@ a_written_model_with_textures_links_materials_to_them :: proc(t:^testing.T) {
 
     plain_folder:=base.test_folder(t,"write-plant-rgba8")
     if plain_folder=="" {return}
-    plain_report,plain_error:=write_into(&model,plain_folder,{textures=.Uncompressed,ignore_stored=true})
+    plain_report,plain_error:=write_into(t,&model,plain_folder,{textures=.Uncompressed,ignore_stored=true})
     defer importer.report_destroy(&plain_report)
     testing.expect_value(t,plain_error.code,importer.Error_Code.None)
     if plain_written,found:=written_of(&plain_report,asset.KIND_TEXTURE,"leaves_color");testing.expect(t,found) {
@@ -162,7 +163,7 @@ a_skinned_mesh_is_written_with_its_rig :: proc(t:^testing.T) {
     tracks:=[1]asset.Animation_Track_Desc{{target=base.text_get(model.skeletons[0].bones[len(model.skeletons[0].bones)-1].path[:]),property=.Rotation,keys=keys[:]}}
     bend:=[1]asset.Animation_Clip_Desc{{name="bend",tracks=tracks[:]}}
     brought:=model.animations;model.animations=bend[:]
-    report,error:=write_into(&model,folder)
+    report,error:=write_into(t,&model,folder)
     model.animations=brought
     defer importer.report_destroy(&report)
     testing.expect_value(t,error.code,importer.Error_Code.None)
@@ -215,7 +216,7 @@ the_prefab_of_an_import_is_written_in_the_layout_of_the_game :: proc(t:^testing.
         if root=="" {return}
         world:=prefab.import_world(t,c.animated)
         if world==nil {return}
-        report,error:=import_source(copy_in(root,DEMO,..c.files),{world=world,root=root,textures=.Uncompressed})
+        report,error:=import_test(t,copy_in(root,DEMO,..c.files),{world=world,root=root,textures=.Uncompressed})
         if !testing.expectf(t,error.code==.None,"%s: %s",c.files[0],error.message) {return}
         defer importer.report_destroy(&report)
         p:=author.Project{name="layout",assets_root=assets,info=world}
@@ -261,7 +262,7 @@ clips_onto_a_skeleton_write_only_the_anim :: proc(t:^testing.T) {
     bend:=[2]asset.Animation_Clip_Desc{{name="bend",tracks=tracks[:]},{name="cue",markers=cue[:]}}
     brought:=model.animations;model.animations=bend[:]
     player:=base.Asset_Id{0x1234,0x5678}
-    report,error:=write_into(&model,folder,{settings={skeleton=player}})
+    report,error:=write_into(t,&model,folder,{settings={skeleton=player}})
     model.animations=brought
     defer importer.report_destroy(&report)
     testing.expect_value(t,error.code,importer.Error_Code.None)
@@ -288,7 +289,7 @@ a_humanoid_skeleton_is_written_with_its_body_and_keeps_what_a_person_set :: proc
         model,ok:=import_ok(t,DEMO+"characters/mirai/mirai.glb",options)
         if !ok {return}
         defer importer.model_destroy(&model)
-        report,error:=write_into(&model,folder,options)
+        report,error:=write_into(t,&model,folder,options)
         defer importer.report_destroy(&report)
         testing.expect_value(t,error.code,importer.Error_Code.None)
         written,found:=written_of(&report,asset.KIND_SKELETON,model.skeletons[0].name)
@@ -372,7 +373,7 @@ imported_clips_that_move_the_bone_above_the_pelvis_carry_it_as_their_root :: pro
             {name="mixamo",tracks={{target=hips,property=.Position,keys=bob[:]}}},
         }
         brought:=model.animations;model.animations=clips[:]
-        report,error:=write_into(&model,folder,options)
+        report,error:=write_into(t,&model,folder,options)
         model.animations=brought
         defer importer.report_destroy(&report)
         testing.expect_value(t,error.code,importer.Error_Code.None)
@@ -430,7 +431,7 @@ importing_again_keeps_what_was_changed_in_a_material_and_takes_the_rest_from_the
     import_once :: proc(t:^testing.T,source,folder:string,options:importer.Import_Options,types:^asset.Types) -> string {
         model,ok:=import_ok(t,source,options);if !ok {return ""}
         defer importer.model_destroy(&model)
-        report,error:=write_into(&model,folder,options);defer importer.report_destroy(&report)
+        report,error:=write_into(t,&model,folder,options);defer importer.report_destroy(&report)
         if !testing.expect_value(t,error.code,importer.Error_Code.None) {return ""}
         written,found:=written_of(&report,asset.KIND_MATERIAL,"Terracotta")
         if !testing.expect(t,found) {return ""}
@@ -467,14 +468,14 @@ importing_again_keeps_the_identity_of_every_asset :: proc(t:^testing.T) {
     model,ok:=import_ok(t,DEMO+"gallery/plant.gltf")
     if !ok {return}
     defer importer.model_destroy(&model)
-    first,first_error:=write_into(&model,fmt.tprintf("%s/one",folder))
+    first,first_error:=write_into(t,&model,fmt.tprintf("%s/one",folder))
     defer importer.report_destroy(&first)
     testing.expect_value(t,first_error.code,importer.Error_Code.None)
 
     again,again_ok:=import_ok(t,DEMO+"gallery/plant.gltf")
     if !again_ok {return}
     defer importer.model_destroy(&again)
-    second,second_error:=write_into(&again,fmt.tprintf("%s/one",folder))
+    second,second_error:=write_into(t,&again,fmt.tprintf("%s/one",folder))
     defer importer.report_destroy(&second)
     testing.expect_value(t,second_error.code,importer.Error_Code.None)
     testing.expect_value(t,len(first.assets),len(second.assets))
@@ -482,23 +483,34 @@ importing_again_keeps_the_identity_of_every_asset :: proc(t:^testing.T) {
         testing.expectf(t,item.id==second.assets[i].id && item.path==second.assets[i].path,"%s keeps its id and its file",item.name)
         testing.expect(t,item.id!=base.Asset_Id{})
     }
+    testing.expect(t,first.manifest==second.manifest,"and its package is the same manifest")
     ids:=make(map[base.Asset_Id]bool,context.temp_allocator)
     for item in first.assets {
         testing.expect(t,!ids[item.id],"ids are distinct")
         ids[item.id]=true
     }
-    // The documents beside the source and what nobody edits in the imported folder, with the sidecar that lists them.
+    // The documents in the folder of the import, and every asset a blob its package lists, with
+    // the prefab import_write leaves to its caller.
     documents,_:=os.read_all_directory_by_path(fmt.tprintf("%s/one/assets/plant",folder),context.temp_allocator)
-    cached,_:=os.read_all_directory_by_path(fmt.tprintf("%s/one/.mirai/imported",folder),context.temp_allocator)
-    testing.expect(t,len(documents)+len(cached)==len(first.assets) && os.exists(fmt.tprintf("%s/one/assets/plant.gltf.import",folder)))
+    s:=test_store(t,fmt.tprintf("%s/one/store",folder))
+    p,_:=asset.package_get(s,first.manifest,context.temp_allocator)
+    cached:=0
+    for a in p.assets {cached+=int(asset.import_cached(a.kind))}
+    testing.expectf(t,len(documents)+cached==len(first.assets) && len(p.assets)==len(first.assets)+int(first.prefab!={}) && !os.exists(fmt.tprintf("%s/one/assets/plant.gltf.import",folder)),"%d documents, %d of the cache, %d listed, %d written",len(documents),cached,len(p.assets),len(first.assets))
 
-    // A copy of a project, its sources and their sidecars with its documents, imports again with the ids of its assets.
+    // A copy of a project, its sources and documents, imported with the manifest the project pins, keeps the ids of its assets.
+    shared:=test_store(t,fmt.tprintf("%s/shared",folder))
     copy_in(fmt.tprintf("%s/a",folder),DEMO,"gallery/vase.obj","gallery/vase.mtl","gallery/vase_color.png")
     ids_by_root:[2][dynamic]base.Asset_Id
+    pinned:store.Hash
     for root,i in ([]string{"a","b"}) {
-        if i==1 {testing.expect(t,os.copy_directory_all(fmt.tprintf("%s/b/assets",folder),fmt.tprintf("%s/a/assets",folder))==nil)}
-        report,vase_error:=import_source(fmt.tprintf("%s/%s/assets/gallery/vase.obj",folder,root),{world=prefab.import_world(t)})
+        if i==1 {
+            os.make_directory_all(fmt.tprintf("%s/b",folder))
+            testing.expect(t,os.copy_directory_all(fmt.tprintf("%s/b/assets",folder),fmt.tprintf("%s/a/assets",folder))==nil)
+        }
+        report,vase_error:=import_test(t,fmt.tprintf("%s/%s/assets/gallery/vase.obj",folder,root),{world=prefab.import_world(t),store=shared,manifest=pinned})
         testing.expect_value(t,vase_error.code,importer.Error_Code.None)
+        pinned=report.manifest
         ids_by_root[i].allocator=context.temp_allocator
         for item in report.assets {append(&ids_by_root[i],item.id)}
         importer.report_destroy(&report)
@@ -518,7 +530,7 @@ images_that_are_missing_or_not_images_leave_a_warning_and_no_reference :: proc(t
     if !ok {return}
     defer importer.model_destroy(&model)
     testing.expect_value(t,len(model.warnings),0)
-    report,error:=write_into(&model,fmt.tprintf("%s/out",folder))
+    report,error:=write_into(t,&model,fmt.tprintf("%s/out",folder))
     defer importer.report_destroy(&report)
     testing.expect_value(t,error.code,importer.Error_Code.None)
     testing.expect_value(t,len(report.warnings),2)
@@ -556,7 +568,7 @@ an_embedded_image_is_a_texture_of_its_whole_size :: proc(t:^testing.T) {
     defer importer.model_destroy(&model)
     testing.expect_value(t,len(model.images),1)
     testing.expect(t,model.images[0].path=="" && len(model.images[0].data)>0 && model.images[0].name=="wood")
-    report,error:=write_into(&model,fmt.tprintf("%s/out",folder),{textures=.Uncompressed})
+    report,error:=write_into(t,&model,fmt.tprintf("%s/out",folder),{textures=.Uncompressed})
     defer importer.report_destroy(&report)
     testing.expect_value(t,error.code,importer.Error_Code.None)
     testing.expect_value(t,len(report.warnings),0)
@@ -639,7 +651,7 @@ gltf_and_glb_write_pbr_maps_with_color_spaces_channels_and_independent_uvs :: pr
             testing.expect(t,(image.path=="")==binary && (len(image.data)>0)==binary)
         }
         options:=importer.Import_Options{root=folder,textures=.Uncompressed}
-        report,error:=write_into(&model,fmt.tprintf("%s/%s",folder,"glb-out" if binary else "gltf-out"),options)
+        report,error:=write_into(t,&model,fmt.tprintf("%s/%s",folder,"glb-out" if binary else "gltf-out"),options)
         if !testing.expect_value(t,error.code,importer.Error_Code.None) {continue}
         defer importer.report_destroy(&report)
         testing.expect_value(t,len(report.warnings),0)
@@ -697,7 +709,7 @@ gltf_and_glb_write_pbr_maps_with_color_spaces_channels_and_independent_uvs :: pr
                 if testing.expect(t,asset.mesh_level_decode(mesh.geometry,0,&vertices,&indices)) {testing.expect_value(t,vertices[0].uv1,[2]f32{0.25,0.75})}
             }
         }
-        blocks,blocks_error:=write_into(&model,fmt.tprintf("%s/%s",folder,"glb-out" if binary else "gltf-out"),{textures=.Blocks,ignore_stored=true})
+        blocks,blocks_error:=write_into(t,&model,fmt.tprintf("%s/%s",folder,"glb-out" if binary else "gltf-out"),{textures=.Blocks,ignore_stored=true})
         if !testing.expect_value(t,blocks_error.code,importer.Error_Code.None) {continue}
         defer importer.report_destroy(&blocks)
         testing.expect_value(t,len(blocks.warnings),0)
@@ -721,24 +733,31 @@ a_standalone_image_becomes_a_texture :: proc(t:^testing.T) {
     if folder=="" {return}
     path:=fmt.tprintf("%s/Bricks Color.png",folder)
     _=os.write_entire_file(path,png_bytes(16,16,{150,60,40}))
-    report,error:=importer.import_texture(path,{root=root,image=.Color})
+    options:=test_options(t,path,{root=root,image=.Color})
+    report,error:=importer.import_texture(path,options)
     defer importer.report_destroy(&report)
     testing.expect_value(t,error.code,importer.Error_Code.None)
-    testing.expect_value(t,len(report.assets),1)
-    testing.expect(t,report.assets[0].id!={} && strings.contains(report.assets[0].path,"/.mirai/imported/"))
-    again,again_error:=importer.import_texture(path,{root=root,image=.Normal,ignore_stored=true})
+    if !testing.expect_value(t,len(report.assets),1) {return}
+    testing.expect(t,report.assets[0].id!={} && strings.contains(report.assets[0].path,"/store/blobs/"))
+    normal:=options
+    normal.image,normal.ignore_stored=.Normal,true
+    again,again_error:=importer.import_texture(path,normal)
     defer importer.report_destroy(&again)
     testing.expect_value(t,again_error.code,importer.Error_Code.None)
-    testing.expect(t,again.assets[0].id==report.assets[0].id && again.assets[0].path!=report.assets[0].path && !os.exists(report.assets[0].path),"imported again as a normal map, the image is the same texture, and its file of before goes")
+    if !testing.expect_value(t,len(again.assets),1) {return}
+    testing.expect(t,again.assets[0].id==report.assets[0].id && again.assets[0].path!=report.assets[0].path && os.exists(report.assets[0].path),"imported again as a normal map, the image is the same texture, another blob, and the store keeps the one of before")
 
     _=os.write_entire_file(path,[]u8{1,2,3})
-    _,bad:=importer.import_texture(path,{root=root,image=.Color})
+    _,bad:=importer.import_texture(path,options)
     testing.expect_value(t,bad.code,importer.Error_Code.Unsupported)
-    testing.expect(t,os.exists(again.assets[0].path),"a failed import leaves the files it had")
-    _,missing:=importer.import_texture(fmt.tprintf("%s/none.png",folder),{root=root,image=.Color})
+    testing.expect(t,os.exists(again.assets[0].path),"a failed import leaves the blobs it had")
+    _,missing:=importer.import_texture(fmt.tprintf("%s/none.png",folder),options)
     testing.expect_value(t,missing.code,importer.Error_Code.Not_Found)
-    _,outside:=importer.import_texture(fmt.tprintf("%s/outside.png",root),{root=root,image=.Color})
-    testing.expect(t,outside.code==.Not_Found && strings.contains(outside.message,"is not in the assets folder"),outside.message)
+    outside_path:=fmt.tprintf("%s/outside.png",root)
+    _=os.write_entire_file(outside_path,png_bytes(4,4,{1,2,3}))
+    outside,outside_error:=importer.import_texture(outside_path,options)
+    defer importer.report_destroy(&outside)
+    testing.expectf(t,outside_error.code==.None && len(outside.assets)==1,"an image outside the assets imports too: %s",outside_error.message)
 }
 
 // A Radiance image is an image whose light above 1 the texture keeps, in BC6H.
@@ -752,7 +771,7 @@ a_radiance_image_becomes_an_hdr_texture :: proc(t:^testing.T) {
     for _ in 0..<8 {append(&hdr,200,200,200,135)} // 100
     _=os.write_entire_file(path,hdr[:])
     testing.expect_value(t,source_kind(path),Source_Kind.Image)
-    report,error:=import_source(path,{world=prefab.import_world(t)})
+    report,error:=import_test(t,path,{world=prefab.import_world(t)})
     defer importer.report_destroy(&report)
     if !testing.expectf(t,error.code==.None,"%s",error.message) {return}
     a:asset.Asset
@@ -783,7 +802,7 @@ embedded_images_with_the_same_name_keep_distinct_texture_ids :: proc(t:^testing.
         "accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[0,0,0],"max":[1,1,0]},{"bufferView":1,"componentType":5126,"count":3,"type":"VEC2"}]}`},context.temp_allocator)
     path:=write_text(folder,"names.gltf",source)
     model,ok:=import_ok(t,path);if !ok {return};defer importer.model_destroy(&model)
-    report,error:=write_into(&model,fmt.tprintf("%s/out",folder),{textures=.Uncompressed})
+    report,error:=write_into(t,&model,fmt.tprintf("%s/out",folder),{textures=.Uncompressed})
     if !testing.expect_value(t,error.code,importer.Error_Code.None) {return};defer importer.report_destroy(&report)
     testing.expect(t,len(report.image_ids)==2 && report.image_ids[0]!=report.image_ids[1])
     testing.expect_value(t,len(report.warnings),0)
@@ -815,7 +834,7 @@ names_are_made_safe_and_unique_as_file_names :: proc(t:^testing.T) {
     defer importer.model_destroy(&model)
     testing.expect_value(t,len(model.meshes),3)
     testing.expect(t,model.meshes[0].name!=model.meshes[2].name,"a repeated name is made unique in the model")
-    report,error:=write_into(&model,fmt.tprintf("%s/out",folder))
+    report,error:=write_into(t,&model,fmt.tprintf("%s/out",folder))
     defer importer.report_destroy(&report)
     testing.expect_value(t,error.code,importer.Error_Code.None)
     seen:=make(map[string]bool,context.temp_allocator)
@@ -834,9 +853,9 @@ a_destination_that_cannot_be_a_folder_fails_without_leaving_files :: proc(t:^tes
     if !ok {return}
     defer importer.model_destroy(&model)
     blocker:=write_text(folder,"blocker","this is a file")
-    _,error:=write_into(&model,blocker)
+    _,error:=write_into(t,&model,blocker)
     testing.expect_value(t,error.code,importer.Error_Code.Write)
-    _,error=write_into(&model,fmt.tprintf("%s/inside",blocker))
+    _,error=write_into(t,&model,fmt.tprintf("%s/inside",blocker))
     testing.expect_value(t,error.code,importer.Error_Code.Write)
 }
 
@@ -856,7 +875,7 @@ every_fixture_imports_writes_and_reads_back_with_its_dependencies_resolved :: pr
         model,ok:=import_ok(t,source,formats=text[:])
         if !ok {continue}
         defer importer.model_destroy(&model)
-        report,error:=write_into(&model,out)
+        report,error:=write_into(t,&model,out)
         defer importer.report_destroy(&report)
         testing.expectf(t,error.code==.None && len(report.warnings)==0,"%s: %v %s",source,error.code,error.message)
         counts:[3]int
@@ -881,8 +900,7 @@ every_fixture_imports_writes_and_reads_back_with_its_dependencies_resolved :: pr
         }
         testing.expectf(t,counts[0]==len(model.meshes) && counts[1]==len(model.materials),"%s: every mesh and material is an asset",source)
         registry:asset.Registry
-        asset.registry_init(&registry,fmt.tprintf("%s/assets",out))
-        testing.expect_value(t,asset.registry_scan(&registry),asset.Error.None)
+        if !registry_with(t,out,&report,&registry) {continue}
         missing:[dynamic]asset.Registry_Missing
         missing.allocator=context.temp_allocator
         asset.registry_missing(&registry,&missing)
@@ -898,7 +916,7 @@ the_report_names_the_asset_of_every_row_of_the_model :: proc(t:^testing.T) {
     model,ok:=import_ok(t,DEMO+"gallery/plant.gltf")
     if !ok {return}
     defer importer.model_destroy(&model)
-    report,error:=write_into(&model,folder)
+    report,error:=write_into(t,&model,folder)
     defer importer.report_destroy(&report)
     testing.expect_value(t,error.code,importer.Error_Code.None)
     testing.expect_value(t,len(report.mesh_ids),1)
@@ -951,7 +969,7 @@ gltf_anisotropy_with_a_roughness_texture_is_converted_texel_by_texel :: proc(t:^
     base:=f32(128)/255
     testing.expectf(t,abs(along-(base*base+(1-base*base)*0.36))<0.01 && abs(across-base*base)<0.01,"alphas %v and %v",along,across)
     testing.expect(t,model.images[rough].made.texels[0]==255 && model.images[rough].made.texels[2]==64,"occlusion and metallic stay")
-    report,error:=write_into(&model,fmt.tprintf("%s/out",folder),{})
+    report,error:=write_into(t,&model,fmt.tprintf("%s/out",folder),{})
     defer importer.report_destroy(&report)
     testing.expect_value(t,error.code,importer.Error_Code.None)
     testing.expect_value(t,len(report.warnings),0)

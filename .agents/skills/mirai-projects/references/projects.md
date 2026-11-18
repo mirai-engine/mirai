@@ -508,6 +508,8 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
 | Build only the engine | `mirai build engine [--release] [--force]`|--release] [--force]` |
 | Generate the world without building | `mirai generate [project]` |
 | Run the content tool of a project | `mirai content [project] [-- arguments]` |
+| Ingest a source from anywhere and add it to a project | `mirai import <file> [--project P] [--folder F] [settings]` |
+| Bring the packages a project pins to builds of this engine | `mirai import --refresh <root> [--fast]` |
 | Documents of interfaces and scenes, no editor | `mirai ui\|scene read\|write\|check ... [--project P]` |
 | Git plugins of a project | `mirai plugin add\|update\|remove\|sync\|list\|catalog\|check ...` |
 | Check types | `mirai check [<package> [-flag...]]`: a package relative to the working folder or to the engine, or absolute; none inside a project: its game, editor and plugins. In a runtime package it also fails on an allocation whose error nothing receives (`tools/mirai/alloc_lint.odin` says which calls and which packages), and in the runtime or editor part of a plugin on an import of `render` or `rhi` outside its tests or of the physics solver (`tools/mirai/solver_lint.odin`) |

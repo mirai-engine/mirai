@@ -10,8 +10,8 @@ Packages, all *engine-time*:
   one format each, with its `FORMAT`. They import the core and nothing from the other formats.
 - `cook/import/sources`: the `FORMATS` table (the engine's formats), `source_kind` and
   `import_source`, used by the editor (`editor/import.odin`), `mirai import` (`command.odin`, in the
-  engine's `mirai-import` program) and `sources.sync`. The editor adds the formats of plugins
-  ([plugin formats](#plugin-formats)).
+  engine's `mirai-import` program) and the [library](#library) (`ingest`, `project_add`,
+  `project_refresh`). The editor adds the formats of plugins ([plugin formats](#plugin-formats)).
 - `cook/textures`: images to `.tex` levels.
 
 ## API
@@ -19,8 +19,8 @@ Packages, all *engine-time*:
 - `sources.import_source` imports a file of the assets folder of a project or a plugin: a model
   writes its assets and, if it has nodes, its prefab; an image, its `.tex`; a sound, a font or a
   prompt pack, its asset. The [package](#identity-and-reimport) of the source in the store keeps
-  its settings and the id of each asset: importing it again gives the same assets. `sources.sync`
-  imports every source of a root whose outputs are missing or stale ([sync](#sync)).
+  its settings and the id of each asset: importing it again gives the same assets. The
+  [library](#library) ingests sources, pins them in projects and refreshes their builds.
 - `sources.source_kind` says what a file is from its first bytes ([sniffing](#formats)), except
   what the signature does not settle: TGA by extension and prompts by `.prompts.json`. It
   carries the formats it searches with (`formats`, `FORMATS` by default), like `model_folder`
@@ -156,8 +156,8 @@ part ([extension](../../mirai-editor/references/extensions.md#importers-of-a-plu
   dialog. Its `prepare` gives the format's options for an import (`Format.data`) from the assets
   of the project and the library of its plugins, and `release` frees them when it ends.
 - The editor imports with the providers of its library; the import program of the engine
-  (`mirai import`, the [sync](#sync) of every build) loads the editor library of the project and
-  takes the same providers from it (`editor.import_library`, `sources.Library`), only when a
+  (`mirai import`, the [refresh](#library) of every build) loads the editor library of the project
+  and takes the same providers from it (`editor.import_library`, `sources.Library`), only when a
   source is read by no format of the engine or a model imports, whose prefab is written in the
   types of the game the library has. A clone without that library built fails those sources and
   says to build the editor.
@@ -165,9 +165,8 @@ part ([extension](../../mirai-editor/references/extensions.md#importers-of-a-plu
   is the single source of every asset it makes (a scene, the models it reads with
   `output_model`), and the files it reads besides it are its `inputs`, like the `.bin` of a glTF.
   It appears with its name as a filter of the dialog and claims a file with `claims(path, head)`
-  before the formats. One from outside the assets is brought in by its `bring`, with the files it
-  reads, else copied alone. The import program takes these importers from the same library and
-  [sync](#sync) runs them. The Unreal content importer is the `unreal` plugin of the catalog
+  before the formats. The import program takes these importers from the same library and the
+  [refresh](#library) runs them. The Unreal content importer is the `unreal` plugin of the catalog
   ([git plugins and catalog](../../mirai-plugins/references/plugins.md#git-plugins-and-catalog)).
 
 ## Import cache
@@ -204,12 +203,12 @@ the asset: the [package](#identity-and-reimport) is.
 An import ingests its source as a package of the store
 ([packages](../../mirai-assets/references/formats.md#packages)), from wherever the source is: in
 the assets of a project, of a plugin or in no project. Its manifest is what identifies the
-import: the origin (where the source was, a hint), the identity (`identity_of`: the bytes of the
-source and its inputs, its settings and the code of a plugin that imports it whole, no engine
-version), the settings, the inputs and one asset per thing the source gives, by kind, name and
-index, with its id, owner and dependencies. Nothing else decides an id: the first ingest gives
-each part a random one; importing again (`Import_Options.manifest`, else the manifest the ref
-`packages` of this machine names for the path of the source) gives each part the asset it had. A
+import: the origin (where the source was, a hint), the identity (`identity_of`: the package, the
+bytes of the source and its inputs, its settings and the code of a plugin that imports it whole,
+no engine version), the settings, the inputs and one asset per thing the source gives, by kind,
+name and index, with its id, owner and dependencies. Nothing else decides an id: the first ingest
+gives each part a random one; importing again (`Import_Options.manifest`, else the manifest the ref
+`origins` of this machine names for the path of the source) gives each part the asset it had. A
 manifest that does not read is an error that names it, never the defaults nor new ids.
 
 What an import writes is a blob of its build (`writer_put`), whatever the format that reads the
@@ -277,51 +276,57 @@ what surely belongs to that model is a part; what is doubtful stays independent 
   an id of its own: no import writes it
   ([repeated ids](../../mirai-assets/references/formats.md#registry)).
 
-## Sync
+## Library
 
-`sources.sync(root, options)` brings the imported folder of a project or a plugin up to date with
-the sources of its assets folder (`cook/import/sources/sync.odin`): it is what makes a checkout
-that was just cloned, a worktree that was just made or a branch that changed a source run.
+The library of the machine is what its store keeps of imports and what a project does with it
+(`cook/import/sources/library.odin`). A project names the packages it uses in its
+`packages.mirai` ([packages](../../mirai-assets/references/formats.md#packages)); the store,
+shared by every checkout, worktree and project of the machine, keeps their manifests and builds.
 
-- It imports each source whose sidecar lists an output of the cache with no file named by the key
-  of what the import builds from now (`importer.import_key`): the bytes of the source and of every
-  file it read (the buffers and images of a glTF, the material library of an OBJ, the images of a
-  pack of prompts), its settings, the versions of the importer and of what it writes and the block
-  encoders of the program, with textures Final. An import of documents alone (clips of a glTF
-  without meshes) leaves instead an empty stamp named the same way (`importer.STAMP_EXTENSION`).
-  A sync with `fast_textures` (`--fast`, what a build that does not cook runs) also takes outputs
-  built Fast as current and imports with Fast textures; Final stays current there. One notion of
-  current, the bytes: a source that only moved is not imported, and one whose `.bin` or image
-  changed is. The hash of a file whose size and modification time are those the cache of the root
-  keeps for it (`importer.Source_Hashes`, in `.mirai/cache/sources`) is taken from there, so a
-  build reads only the files that changed. A USD is composed by `usdcat`, which does not say which
-  layers it read: after changing one alone, import the stage.
-- It also imports a source with a document of a version of its kind this build does not read (the
-  engine's in `asset.KINDS`, a plugin's in the `version` of its `asset_kinds`): the import writes
-  it again in the current version, with its id and what was kept of it.
-- A source no format of the engine reads goes to the importer of a plugin that claims it whole,
-  else to the formats the plugins add (`Sync_Options.library`); one nothing reads is a failure
-  that says so. A whole source is keyed like any source of no format (`import_version(0)`) plus
-  the code of the plugin that claims it (`sources.code_identity` of its folder: its Odin sources
-  but tests, with the plugins it holds, as `Whole_Source.code` and
-  `Import_Options.importer_code`), so a change of that code imports it again with no version to
-  raise; its importer reads the settings its sidecar keeps, as every import does.
-- It finds what to import first, then imports it, saying as it goes (`Sync_Options.progress`) a
-  line per source with why and how many of the sources it is, and under it, every
-  `importer.PROGRESS_EVERY`, the assets written of those its sidecar listed
-  (`Import_Options.progress`). `mirai import` passes its output, and the build shows the lines of
-  the import program as it prints them.
-- A file of the imported folder that no sidecar with its source next to it lists under its
-  current key is removed. A source that does not import is a failure of the report that names it:
-  the others are imported, and nothing is removed.
-- **Who runs it.** Every build of a project once its target stands (`build.job_imports`, with
-  `imports_sync`): `mirai build` of the editor, the game or the server, `mirai play`, and the
-  builds the editor starts, with the engine's import program, which reads the formats of plugins
-  from the editor library just built. `mirai package engine` runs it for the plugins. A plugin
-  with assets is a root of its own.
-- What costs comes from the [texture cache](#texture-cache) and the [mesh cache](#mesh-cache),
-  which the worktrees of a repository share: a new worktree reads its sources and writes its
-  imported folder without compressing or simplifying anything.
+- **`ingest(origin, options, settings)`** imports a file or a folder from wherever it is: in the
+  assets of a project or a plugin, or in no project. Nothing is copied: the package goes to the
+  store, named by `packages/<id>` and by its origin (`origins/<origin_name>`, of this machine
+  alone), so ingesting the same origin again keeps its ids. `settings`, when given, replace those
+  the package keeps. A source whose identity is that of its package and whose build this engine
+  reads is not imported again: the report names its package and lists no assets. Two processes
+  or worktrees that ingest one origin take turns with a lock per origin (`cook/workspace`, under
+  `<store>/locks/`), and the second finds the work done.
+- **`project_add(root, manifest, folder, assets, options)`** pins a package in the project
+  (`project_pin`, the only writer of `packages.mirai`) and follows it there. **Following** writes
+  or follows its documents under `folder` of the assets: from the baselines of its build
+  (`documents_follow`), and for a model whose source is here and whose game types the library
+  of the project's editor gives, by importing it with that folder, which also writes its prefab
+  (`prefab.model_prefab`). Without the source or those types a model's prefab cannot be written,
+  and the report says so.
+- **`project_refresh(root, options)`** takes each package the project pins to a build this
+  engine reads: the key (`asset.import_key` of the identity and the versions of what reads its
+  origin, an engine importer or a format of the engine or of the plugins) is looked up in
+  `imports` (and `imports-fast` with `fast_textures`), then asked of the caller's source
+  (`cache.Source`, the same procedure value the caches of `cook/cache` take: given
+  `(imports, <key>)` it makes the build and every blob it lists present, given
+  `(packages, <id>)` the manifest), then built by ingesting the origin when it exists on this
+  machine. Otherwise the report says, by package name, that a machine with its source must ingest
+  it with this engine; when only a Fast build is here and Final is required, it says that. It
+  then names the build under `builds/<build_select>` and, when that changed, follows the
+  documents. A source here whose identity changed (its bytes, an input, the code of the plugin
+  that imports it whole) is ingested again with the ids its manifest gives, and the project pins
+  the new manifest.
+- **It never removes** a blob, a ref or a file of a project because a source is missing, and
+  never builds without the source. What the store does not have stays listed as not built.
+- A source a plugin imports whole has a key only its importer knows: the refresh takes the build
+  this machine chose for its manifest, and a machine without its source reports it.
+- **Source hashes.** The address of each file an identity reads is kept per origin by size and
+  modification time (`importer.Source_Hashes`, `sources/<origin_name>` in the store), so a
+  refresh reads only the files that changed. A USD is composed by `usdcat`, which does not say
+  which layers it read: after changing one alone, ingest the stage.
+- **Progress.** `Library_Options.progress` gets a line per package and per source imported, and
+  the assets written every `importer.PROGRESS_EVERY`.
+- **Commands.** `mirai import <file>` ingests and adds to the project of `--project`, else the
+  one whose assets hold the file, under `--folder` (else the folder of the file); `mirai import
+  --refresh <root>` refreshes a project or a plugin, `--fast` taking Fast. Every build of a
+  project refreshes it and its plugins once its target stands (`build.job_imports`,
+  `imports_refresh`) with the engine's import program, which reads the formats of plugins from
+  the editor library just built.
 
 ## In parallel
 
@@ -372,8 +377,8 @@ machine that shares blobs with another finds what that one built.
 - With `Import_Options.fast_textures` (the editor's imports) a texture of the cache takes the Final
   the texture cache keeps for its key; without one it is built Fast under the key of Fast settings,
   and a texture kept Fast is written again as soon as the cache holds its Final, or by the
-  [sync](#sync) of a build that cooks. `Import_Info.settings_hash` says which of the two the file
-  holds.
+  [refresh](#library) of a build that cooks. `Import_Info.settings_hash` says which of the two
+  the file holds.
 - [Cooking](../../mirai-projects/references/build.md#asset-cooking) stores there the blocks of
   an RGBA8 texture by `textures.cache_key_blocks`.
 - A key names what made the blocks (`textures.encoders_id`), so machines with other encoders

@@ -25,8 +25,9 @@ the assets.
   [Identity](references/imports.md#identity-and-reimport).
 - The records of the store (package and build manifests, refs, `packages.mirai`):
   [packages](../mirai-assets/references/formats.md#packages).
-- A checkout without its imported folder, what a build imports and when a source is imported
-  again: [Sync](references/imports.md#sync).
+- Ingesting a source from anywhere, adding it to a project (`packages.mirai`), what a build
+  refreshes, a peer without sources, and when a source is imported again:
+  [Library](references/imports.md#library).
 - Adding or changing a format (`Format`, `Reader`, `Source_Space`, version):
   [Formats](references/imports.md#formats).
 - Import cache and versions: [Cache](references/imports.md#import-cache),
@@ -58,8 +59,10 @@ the assets.
 1. **Importing a file.** An import takes the store (`Import_Options.store`) and puts in it the
    package of the source and a build of its blobs; given `documents`, it also writes or follows
    the documents in that folder of a project. Review the assets with `mirai asset verify`, `ls`
-   and `info`; commit the documents, never the blobs. The editor, the CLI, the sync of builds and
-   the content tools import with the same `sources.import_source`: same assets, prefab included.
+   and `info`; commit `packages.mirai` and the documents, never the blobs. The editor, the CLI,
+   the library and the content tools import with the same `sources.import_source`: same assets,
+   prefab included. `mirai import <file>` ingests it and adds it to a project
+   ([library](references/imports.md#library)).
 2. **From code.** `sources.import_source(path,options)` writes everything; for the model
    without writing it, `importer.import_model(path,sources.FORMATS[:],options)` reads it into an
    `Imported_Model` (plain data, no engine components) and `importer.import_write` writes its
@@ -75,8 +78,10 @@ the assets.
    model format) or an `Import_Source_Provider` (a source that imports whole); the editor and the
    import program of the engine add its formats to `sources.FORMATS`, which holds only the
    engine's own ([plugins](references/imports.md#plugin-formats)).
-6. **Regenerating imported assets.** `mirai build` builds what is missing or stale of a project
-   and its plugins once its target stands ([sync](references/imports.md#sync)).
+6. **Regenerating imported assets.** `mirai build` refreshes the packages a project and its
+   plugins pin once its target stands (`mirai import --refresh <root>`): builds from the store,
+   from a peer, or by ingesting a source this machine has
+   ([library](references/imports.md#library)).
 
 ## Invariants
 
@@ -91,6 +96,10 @@ the assets.
   place after the read: from the `front` its settings state, or else, for a file that is a rig,
   from where its body is found facing ([front](references/imports.md#front)).
 - **The source is not modified.** The same bytes and options give the same assets.
+- **The library never removes and never builds without the source.** A refresh takes a build
+  from the store, the caller's source or an ingest of an origin on this machine; else it names
+  the package and what gives it. Nothing is deleted because a source is missing. Decided by the
+  owner.
 - **A source imports from anywhere.** In a project, in a plugin or in no project: what it makes
   goes to the store, and its documents to the folder of the project given. In a project, it lives
   beside what it makes, in folders by theme, never a folder per asset type.
@@ -110,7 +119,8 @@ the assets.
   the editor edits, are also documents of a project, followed from the baseline. Decided by the
   owner.
 - **The identity holds no engine version; the key holds the identity and the versions.** The
-  identity (source, inputs, settings, plugin code) is in the manifest; the key
+  identity (package, source, inputs, settings, plugin code: two packages of the same bytes never
+  share a build, since its blobs hold their ids) is in the manifest; the key
   (`asset.import_key`) adds the writer, format, kind and texture builder versions, so any machine
   with the manifest finds a build without the source. A Final build is named under `imports`,
   which peers share; a Fast one only under `imports-fast`; `builds` names the one this machine
@@ -174,10 +184,10 @@ the assets.
 - **Textures in blocks are encoded with a perceptual metric and RDO** at
   `RDO_LAMBDA_DEFAULT` unless the setting `rdo_lambda` says otherwise.
 - **The editor never waits for the final encode** (`textures.Encode_Speed`): its imports take the
-  Final of the texture cache, else build Fast (no RDO, low effort, `Texture_Flag.Fast`). The sync
-  of a build that does not cook (the editor's) builds Fast too and takes Fast or Final as current;
-  only the sync of a build that cooks, or of `mirai package engine`, builds Final. `mirai import`
-  and tools build Final, and so does the editor for a texture that is a document.
+  Final of the texture cache, else build Fast (no RDO, low effort, `Texture_Flag.Fast`). The
+  refresh of a build that does not cook (the editor's) builds Fast too and takes Fast or Final;
+  only the refresh of a build that cooks, or of `mirai package engine`, requires Final. `mirai
+  import` and tools build Final, and so does the editor for a texture that is a document.
 - **One algorithm, once.** Mips, color rules and block compression in `cook/textures` (the
   encoders are `compressor:blocks`); PBR conversions in `cook/import/pbr.odin`; triangulation,
   simplification, hulls and convex decomposition in `std/geom`; transforms with `std/math`.
@@ -202,7 +212,7 @@ the assets.
   key records what it is built from now is taken without writing it, and one that records other
   encoders or another builder is built again);
   `cook/build/cook_cache_test.odin` (a cook takes the blocks of a texture from the cache of its
-  content) and `cook/import/sources/cook_test.odin` (the sync of a cook builds a fast texture
+  content) and `cook/import/sources/cook_test.odin` (the refresh of a cook builds a fast texture
   final from its source; that of a build that does not cook keeps either).
 - Parallel: import a map with `mirai import --rebuild` over a copy of an import made without the
   job system (or before the change) and compare the trees with `diff -r`: the same bytes.
@@ -214,24 +224,25 @@ the assets.
   `prompts_kenney` pack again
   ([command](../mirai-plugins/references/plugins.md#first-party-plugins)) and verify it with
   `mirai asset verify`.
-- Identity, the imported folder and sync: `cook/import/sources/reimport_test.odin` (the parts of
-  an import name their prefab and keep their ids where they were moved, a source keeps the ids of
-  its import with its sidecar, a part renamed in the source is a new one, two models with the same
-  image get a texture each and neither touches the other, a checkout without its imported folder
-  gets the same assets byte for byte and only what changed is imported again, the sources of a
-  plugin format build in the cache and sync reads them with the formats of the plugins, a source
-  outside the assets is refused, when a material is a part of a model, sync runs the importer of
-  a plugin for a whole source whose inputs changed), `cook/import/outputs_test.odin` (the outputs
-  of a source are the assets its package lists, the models of a whole source share their parts by
-  name, inputs count in the identity, importing again keeps ids and blobs, a source outside any
-  project imports, a setting changes the identity and an engine version only the key, a Fast
-  build is not shared, two stores hold the same blobs),
-  `asset/registry_test.odin` (the listing of the cache by where the sidecar is, never by the order
-  of a scan), `cook/import/sources/settings_test.odin` (a sidecar that is not one is refused) and
-  `cook/import/sources/write_test.odin` (importing again keeps what was changed in a material and
-  takes the rest from the source). After changing what an import writes, prove it on the demo:
-  delete `demo/.mirai/imported`, `mirai build editor demo`, and `git status` shows no sidecar
-  or document changed.
+- Identity: `cook/import/sources/reimport_test.odin` (the parts of an import name their prefab and
+  keep their ids where they were moved, a source keeps the ids of its package with the manifest a
+  project pins and a copy is another package, a part renamed in the source is a new one, two
+  models with the same image get a texture each and neither touches the other, when a material is
+  a part of a model), `cook/import/outputs_test.odin` (the outputs of a source are the assets its
+  package lists, the models of a whole source share their parts by name, inputs count in the
+  identity, importing again keeps ids and blobs, a source outside any project imports, a setting
+  changes the identity and an engine version only the key, a Fast build is not shared, two stores
+  hold the same blobs), `cook/import/sources/settings_test.odin` (the package keeps the settings;
+  settings that are not this build's are refused) and `cook/import/sources/write_test.odin`
+  (importing again keeps what was changed in a material and takes the rest from the source).
+- Library: `cook/import/sources/library_test.odin` (a peer without sources fetches, lists and
+  loads what a project pins, and without a source of builds reports by package and neither
+  removes nor builds; a source outside any project ingests once and two projects list the same
+  blobs; an engine change ingests again where the source is and is reported by name elsewhere,
+  also when only Fast is here and Final is required; hostile `packages.mirai` and manifests are
+  reported; two ingests of one source at once import it once) and
+  `cook/import/sources/reimport_test.odin` (a refresh reads a source again with the formats of
+  the plugins, and ingests a whole source again when what it is built from changes).
 - `cook/import/sources/cli_test.odin` needs `MIRAI_ROOT` (defined by `mirai test`); run it when
   touching `cook/import/sources/command.odin`. It imports in-process with `command`; the whole
   path (`mirai import` → `mirai-import`) needs the built engine.
@@ -246,7 +257,7 @@ the assets.
   rejected. The binding is regenerated with `uv run scripts/ufbx_binding.py`
   ([ufbx](../../../third_party/ufbx/UPSTREAM.md)).
 - `fuzz_test.odin` truncates each fixture to all its lengths and changes bytes (OBJ, glTF, GLB,
-  USDA, binary and ASCII FBX, WAV, Ogg, PNG and the `.import` text): each attempt is imported or
+  USDA, binary and ASCII FBX, WAV, Ogg, PNG, fonts and prompts): each attempt is imported or
   rejected, without crashes, hangs or leaks. A new format extends those tests.
 - A change that must give the same bytes is compared by importing with the CLI before and after
   (`--rebuild` on the second pass, or in new folders) and with `cmp` of each asset.

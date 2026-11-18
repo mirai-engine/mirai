@@ -229,10 +229,10 @@ Settings > Input changed, and SDL3, which the executable links.
 
 The meshes, textures, sounds and fonts an import builds are not versioned: they are in
 `.mirai/imported/` of the project and of each plugin with assets, and are built again from the
-sources and their sidecars ([sync](../../mirai-imports/references/imports.md#sync)).
+sources and their sidecars ([library](../../mirai-imports/references/imports.md#library)).
 
-- **A build imports, and says so.** Every build of a project runs the sync of the project and of
-  its active plugins once its target stands (`job_imports`, `build.imports_sync`): the editor,
+- **A build imports, and says so.** Every build of a project runs the refresh of the project and of
+  its active plugins once its target stands (`job_imports`, `build.imports_refresh`): the editor,
   the game, the server, `mirai play` and the builds the editor starts. It uses the engine's import
   program, since the tool builds without the importers, which reads the formats the plugins of
   the project add from its editor library; the game, compiled from the engine's sources,

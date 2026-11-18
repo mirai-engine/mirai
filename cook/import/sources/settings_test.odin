@@ -8,6 +8,8 @@ import "mirai:asset"
 import "mirai:std/base"
 import "mirai:std/geom"
 import importer "mirai:cook/import"
+import "mirai:cook/prefab"
+import "mirai:store"
 
 // An OBJ of a sphere, smooth, with texture coordinates.
 @(private="file")
@@ -36,7 +38,7 @@ a_source_without_colliders_gives_a_mesh_of_levels_without_any :: proc(t:^testing
     if !ok {return}
     defer importer.model_destroy(&model)
     testing.expect(t,model.settings.front==.X && !model.stored)
-    report,error:=write_into(&model,fmt.tprintf("%s/out",folder),{front=.X})
+    report,error:=write_into(t,&model,fmt.tprintf("%s/out",folder),{front=.X})
     defer importer.report_destroy(&report)
     testing.expect_value(t,error.code,importer.Error_Code.None)
     if error.code!=.None || len(report.assets)==0 {return}
@@ -58,68 +60,59 @@ a_source_without_colliders_gives_a_mesh_of_levels_without_any :: proc(t:^testing
     testing.expect(t,int(view.info.vertex_count)==len(view.vertices) && view.levels[0].triangle_count<view.info.triangle_count)
 }
 
+// The settings a source is ingested with are kept in its package: importing
+// it again uses them, whatever the options say, unless they are set now; a
+// package whose settings this build does not read is refused, never the
+// defaults.
 @(test)
-the_sidecar_of_a_source_keeps_its_settings_and_importing_again_uses_them :: proc(t:^testing.T) {
+the_package_of_a_source_keeps_its_settings_and_importing_again_uses_them :: proc(t:^testing.T) {
     root,folder:=test_project(t,"settings")
     if folder=="" {return}
     source:=sphere_obj(folder)
-    file:=fmt.tprintf("%s.import",source)
-    stored,found,load_error:=importer.settings_load(source)
-    testing.expect(t,!found && load_error.code==.None && stored=={},"a source without a sidecar has the defaults")
-    wanted:=importer.Import_Settings{textures=.Uncompressed,rdo_lambda=-1,image=.Normal,alpha_coverage=0.5,lods=.None,rig=.Spider}
-    testing.expect(t,importer.sidecar_save(source,{settings=wanted}))
-    text,_:=os.read_entire_file(file,context.temp_allocator)
-    testing.expect(t,strings.contains(string(text),"\"lods\": \"None\"") && strings.contains(string(text),"\"rig\": \"Spider\"") && strings.contains(string(text),"\"textures\": \"Uncompressed\"") && strings.contains(string(text),"\"alpha_coverage\": 0.5") && strings.contains(string(text),"\"rdo_lambda\": -1"),string(text))
-    stored,found,load_error=importer.settings_load(source)
+    options:=test_options(t,source,{root=root,world=prefab.import_world(t)})
+    stored,found,load_error:=importer.settings_load(options,source)
+    testing.expect(t,!found && load_error.code==.None && stored=={},"a source never ingested has the defaults")
+    wanted:=importer.Import_Settings{textures=.Uncompressed,rdo_lambda=-1,lods=.None,front=.X}
+    chosen:=options
+    chosen.settings=wanted
+    first,error:=import_source(source,chosen)
+    if !testing.expectf(t,error.code==.None,"%s",error.message) {return}
+    defer importer.report_destroy(&first)
+    p,read_error:=asset.package_get(options.store,first.manifest,context.temp_allocator)
+    testing.expect_value(t,read_error,asset.Error.None)
+    testing.expect(t,strings.contains(p.settings,"\"lods\": \"None\"") && strings.contains(p.settings,"\"textures\": \"Uncompressed\"") && strings.contains(p.settings,"\"rdo_lambda\": -1") && !strings.contains(p.settings,"rig"),p.settings)
+    stored,found,load_error=importer.settings_load(options,source)
     testing.expect(t,found && load_error.code==.None && stored==wanted)
-    // The same sidecar is not written again.
-    before,_:=os.modification_time_by_path(file)
-    testing.expect(t,importer.sidecar_save(source,{settings=wanted}))
-    after,_:=os.modification_time_by_path(file)
-    testing.expect_value(t,after,before)
 
     // The stored settings are the ones of the import, whatever the options say.
-    model,ok:=import_ok(t,source,{front=.X})
+    told:=options
+    told.front=.Z
+    model,ok:=import_ok(t,source,told)
     if !ok {return}
     testing.expect_value(t,model.settings,wanted)
-    report,error:=write_into(&model,root,{front=.X})
-    testing.expect_value(t,error.code,importer.Error_Code.None)
-    if error.code==.None {
-        detail:=report.assets[len(report.assets)-1].detail
-        testing.expect(t,!strings.contains(detail,"/"),detail)
-        importer.report_destroy(&report)
-    }
     importer.model_destroy(&model)
     // Unless whoever imports sets them now.
-    model,ok=import_ok(t,source,{front=.X,ignore_stored=true})
+    told.ignore_stored=true
+    model,ok=import_ok(t,source,told)
     if !ok {return}
-    testing.expect_value(t,model.settings,importer.Import_Settings{front=.X})
+    testing.expect_value(t,model.settings,importer.Import_Settings{front=.Z})
     importer.model_destroy(&model)
 
-    // A sidecar nobody wrote is an error, not the defaults nor other ids: settings an import
-    // does not know, a text of another version or of none, an output without an id, one id
-    // twice, a part that is not of the cache, a field no sidecar has, a folder out of the one
-    // of the source.
-    ID :: "\"id\": \"00000000000000010000000000000002\""
-    whole :: proc(settings,outputs:string) -> string {return fmt.tprintf("{{\"version\": 3, \"settings\": %s, \"outputs\": [%s]}}",settings,outputs)}
-    for broken in ([]string{
-        whole("{\"lods\": \"Sometimes\"}",""),whole("{\"scale\": 2}",""),"{",whole("{\"rdo_lambda\": 1000}",""),whole("{\"alpha_coverage\": 1.5}",""),whole("{\"alpha_coverage\": \"nan\"}",""),whole("{\"rig\": \"Fox\", \"rig_crotch\": 0.9}",""),
-        "{}","{\"lods\": \"None\"}","{\"version\": 2, \"settings\": {}, \"outputs\": []}",
-        "{\"version\": 3, \"settings\": {}, \"folder\": \"../up\", \"outputs\": []}","{\"version\": 3, \"settings\": {}, \"folder\": \"/root\", \"outputs\": []}",
-        whole("{}","{\"kind\": \"MESH\", \"name\": \"Ball\", \"index\": 0}"),
-        whole("{}",fmt.tprintf("{{\"kind\": \"MESH\", \"name\": \"Ball\", \"index\": 0, %s}}, {{\"kind\": \"MAT\", \"name\": \"Skin\", \"index\": 0, %s}}",ID,ID)),
-        whole("{}",fmt.tprintf("{{\"kind\": \"MAT\", \"name\": \"Skin\", \"index\": 0, %s, \"part\": true}}",ID)),
-        whole("{}",fmt.tprintf("{{\"kind\": \"MESH\", \"name\": \"Ball\", \"index\": 0, %s, \"path\": \"Ball.mesh\"}}",ID)),
-    }) {
-        write_text(folder,"ball.obj.import",broken)
-        _,_,broken_error:=importer.settings_load(source)
-        testing.expectf(t,broken_error.code==.Malformed,"%s is refused",broken)
-        _,import_error:=importer.import_model(source,FORMATS[:])
-        testing.expect_value(t,import_error.code,importer.Error_Code.Malformed)
+    // Settings nobody wrote are refused, not the defaults: a value an import does not know,
+    // out of its range, a field it does not have, heights without the rig they go with.
+    for broken in ([]string{"{\"lods\": \"Sometimes\"}","{\"scale\": 2}","{","{\"rdo_lambda\": 1000}","{\"alpha_coverage\": 1.5}","{\"alpha_coverage\": \"nan\"}","{\"rig\": \"Fox\", \"rig_crotch\": 0.9}"}) {
+        _,valid:=importer.settings_parse(broken)
+        testing.expectf(t,!valid,"%s is refused",broken)
     }
-    write_text(folder,"ball.obj.import",whole("{}",""))
-    stored,found,load_error=importer.settings_load(source)
-    testing.expect(t,found && load_error.code==.None && stored=={},"a setting that is not named has its default")
+    // A package that keeps them refuses its import.
+    kept:=p
+    kept.settings="{\"lods\": \"Sometimes\"}"
+    manifest,put_error:=asset.package_put(options.store,&kept)
+    testing.expect_value(t,put_error,asset.Error.None)
+    pinned:=options
+    pinned.manifest=manifest
+    _,import_error:=importer.import_model(source,FORMATS[:],pinned)
+    testing.expect_value(t,import_error.code,importer.Error_Code.Malformed)
 }
 
 @(test)
@@ -138,26 +131,29 @@ a_standalone_image_takes_its_use_from_its_settings :: proc(t:^testing.T) {
     if folder=="" {return}
     path:=fmt.tprintf("%s/normal.png",folder)
     _=os.write_entire_file(path,png_bytes(8,8,{128,128,255}))
-    testing.expect(t,importer.sidecar_save(path,{settings={image=.Normal,textures=.Uncompressed}}))
-    report,error:=importer.import_texture(path,{root=root,image=.Color})
+    first,first_error:=importer.import_texture(path,test_options(t,path,{root=root,image=.Normal,textures=.Uncompressed}))
+    if !testing.expectf(t,first_error.code==.None,"%s",first_error.message) {return}
+    importer.report_destroy(&first)
+    options:=test_options(t,path,{root=root,image=.Color})
+    report,error:=importer.import_texture(path,options)
     defer importer.report_destroy(&report)
     testing.expect_value(t,error.code,importer.Error_Code.None)
     if error.code!=.None {return}
     testing.expect(t,report.assets[0].id!={})
     testing.expect(t,strings.contains(report.assets[0].detail,"8x8"),report.assets[0].detail)
     testing.expect_value(t,report.settings,importer.Import_Settings{image=.Normal,textures=.Uncompressed})
-    text,_:=os.read_entire_file(fmt.tprintf("%s%s",path,importer.SIDECAR_EXTENSION),context.temp_allocator)
-    testing.expect(t,strings.contains(string(text),`"image": "Normal"`) && strings.contains(string(text),`"textures": "Uncompressed"`) && !strings.contains(string(text),"lods"),string(text))
+    p,_:=asset.package_get(options.store,report.manifest,context.temp_allocator)
+    testing.expect(t,strings.contains(p.settings,`"image": "Normal"`) && strings.contains(p.settings,`"textures": "Uncompressed"`) && !strings.contains(p.settings,"lods"),p.settings)
 }
 
 @(test)
-the_coverage_of_a_standalone_image_is_a_setting_its_sidecar_keeps :: proc(t:^testing.T) {
+the_coverage_of_a_standalone_image_is_a_setting_its_package_keeps :: proc(t:^testing.T) {
     _,folder:=test_project(t,"image-coverage")
     if folder=="" {return}
     path:=fmt.tprintf("%s/leaves.png",folder)
     _=os.write_entire_file(path,png_bytes(16,16,{40,120,30},masked=true))
     import_image :: proc(t:^testing.T,path:string,options:importer.Import_Options,loc:=#caller_location) -> (written:importer.Written,coverage:f32,ok:bool) {
-        report,error:=import_source(path,options)
+        report,error:=import_test(t,path,options)
         defer importer.report_destroy(&report)
         if !testing.expectf(t,error.code==.None && len(report.assets)==1,"%v %s",error.code,error.message,loc=loc) {return}
         written=report.assets[0]
@@ -172,7 +168,7 @@ the_coverage_of_a_standalone_image_is_a_setting_its_sidecar_keeps :: proc(t:^tes
     first,coverage,ok:=import_image(t,path,{image=.Color,alpha_coverage=0.5})
     if !ok {return}
     testing.expect_value(t,coverage,f32(0.5))
-    stored,found,_:=importer.settings_load(path)
+    stored,found,_:=importer.settings_load(test_options(t,path),path)
     testing.expect(t,found && stored==importer.Import_Settings{image=.Color,alpha_coverage=0.5},"the coverage is saved with the use of the image")
     // Whoever imports it again, without knowing the material that shows it, gets the same texture.
     again,kept_coverage,kept_ok:=import_image(t,path,{})
@@ -188,10 +184,11 @@ a_vertex_that_is_not_a_number_fails_its_model_with_a_message :: proc(t:^testing.
     defer importer.model_destroy(&model)
     model.meshes[0].vertices[5].position.y=transmute(f32)u32(0x7fc00000)
     out:=fmt.tprintf("%s/out",folder)
-    report,error:=write_into(&model,out)
+    report,error:=write_into(t,&model,out)
     defer importer.report_destroy(&report)
     testing.expect_value(t,error.code,importer.Error_Code.Malformed)
     testing.expectf(t,strings.contains(error.message,"not a number") && strings.contains(error.message,model.meshes[0].name),"%q",error.message)
-    entries,_:=os.read_all_directory_by_path(fmt.tprintf("%s/.mirai/imported",out),context.temp_allocator)
-    for entry in entries {testing.expectf(t,!strings.has_suffix(entry.name,".mesh"),"%s stays after the failure",entry.name)}
+    s:=test_store(t,fmt.tprintf("%s/store",out))
+    refs,_:=store.ref_list(s,asset.REF_PACKAGES,context.temp_allocator)
+    testing.expect(t,len(refs)==0,"a failed import names no package")
 }

@@ -49,7 +49,7 @@ COMMANDS :: [?]Command{
     {"ui",UI_USAGE,"Reads, writes and checks the interfaces of a project as the documents ui.inspect gives and ui.write takes, with no editor",cmd_ui},
     {"scene",SCENE_USAGE,"Reads, writes and checks the scenes of a project as the documents scene.inspect gives with root and scene.write takes, with no editor",cmd_scene},
     {"content",CONTENT_USAGE,"Runs the content tool of a project, which writes the assets it makes from code",cmd_content},
-    {"import","import <file> [--max-texture N]","Imports a model, an image, a sound, a font, CSV texts or a prompts manifest in the assets of a project or a plugin as .mesh, .mat, .tex, .sound, .font, .strings and .prompts assets",cmd_import},
+    {"import","import <file> [--project P] [--folder F] [settings] | import --refresh <root>... [--fast]","Ingests a model, an image, a sound, a font or a prompts manifest from anywhere into the library of the machine store and adds it to a project; --refresh brings the packages a project or plugin pins to builds this engine reads",cmd_import},
 }
 
 main :: proc() {

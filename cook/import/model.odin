@@ -81,6 +81,7 @@ Import_Options :: struct {
     // (sources.code_identity), 0 for the engine's: part of what its outputs
     // are made from (identity_of).
     importer_code:u64,
+    hashes:^Source_Hashes, // the files of the source known by size and time (identity_of); nil: every one is read
     material_index:int,   // the index of the first material among those of the source: imports that write its materials apart give each its own
     // Where the import cooks: the worker that calls it (the owner of its
     // job system, or the job that imports), which runs its builds in

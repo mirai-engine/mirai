@@ -188,7 +188,7 @@ writer_take :: proc(w:^Writer,output:int,hash:store.Hash) -> bool {
     }
     if target:=w.targets[output];target!="" {
         existed:=os.exists(target)
-        warning,follow_error:=document_follow(&w.types,o.kind,blob,target,w.followed[:],w.registry)
+        warning,follow_error:=document_follow(&w.types,o.kind,blob,target,w.followed[:],w.registry,decided=w.report.settings.parts!=.Auto)
         if follow_error!=.None {return save_failed(w,follow_error,target)}
         if warning!="" {writer_warn(w,"%s",warning)}
         if !existed {append(&w.created,strings.clone(target,w.keep))}
@@ -250,8 +250,8 @@ fresh_path :: proc(w:^Writer,file:string) -> string {
 @(private)
 writer_id :: proc(w:^Writer) -> base.Asset_Id {return base.asset_id_random(&w.rng)}
 
-// An absolute path with forward slashes: how files are compared.
-@(private)
+// An absolute path with forward slashes: how files are compared, and the
+// origin of a package (asset.Package_Origin.path).
 path_key :: proc(path:string) -> string {
     absolute,error:=filepath.abs(path,context.temp_allocator)
     if error!=nil {absolute=path}
