@@ -62,7 +62,6 @@ app_textures_stream :: proc(app:^App) {
     }
     if texture_reads_ready(st) {
         if st.load==0 {st.load=assets_load_open(a)}
-        assets_load_screen(a,st.load,app.loading_screen)
         share:=assets_load_share(a,app.stats.frames,st.load)
         taken,first:=0,true
         // What has no level yet goes before more levels of what shows.

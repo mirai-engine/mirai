@@ -41,9 +41,6 @@ Procedures:
   until the load is resident. The start scene and the tabs of a restart of a window a person
   looks at open the same way, after the first frame: the window never waits hidden for a scene.
   Headless, hidden or with `--frames`, the scene is open when the editor starts.
-- While the scene in front loads and nothing needs a steady frame (no run, nothing held or
-  scrolled), the frames are a loading screen: what arrives takes them (`App.loading_screen`,
-  [load budget](../../mirai-core/references/host.md#loaded-assets)).
 - `document_close`: activates the tab and closes it; the file already holds what the document had.
 - File dialogs are the system's (`platform.dialog_show`), one at a time. In collaboration a guest
   writes nothing and does not open another scene without leaving the session
