@@ -192,6 +192,9 @@ memory_held :: proc(pid:int) -> (now,peak:i64,ok:bool) {
     return _memory_held(pid)
 }
 
+// The processor time this process has used, in user and in kernel mode.
+cpu_used :: proc() -> time.Duration {return _cpu_used()}
+
 // Runs the command to its end and returns what it wrote to stdout and to
 // stderr, in allocator, also when error is not nil. The stdout and stderr
 // of desc are replaced by the captured ones. With echo, what the child
