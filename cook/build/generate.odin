@@ -41,8 +41,8 @@ generate :: proc(p:^project.Project,target:Target,allocator:=context.allocator) 
 }
 
 // Writes the generated packages. The errors of out are those of the attributes of the project's packages.
-generated_write :: proc(p:^project.Project,target:Target) -> (out:Generated,ok:bool) {
-    return world_write_files(p,target==.Game)
+generated_write :: proc(p:^project.Project,target:Target,store_root:="") -> (out:Generated,ok:bool) {
+    return world_write_files(p,target==.Game,store_root)
 }
 
 // The flags every compilation of a project's generated code needs.

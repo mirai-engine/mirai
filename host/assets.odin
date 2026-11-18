@@ -40,7 +40,8 @@ ASSETS_MESH_NONE :: render.Mesh_Handle(max(u32))
 
 Assets_Desc :: struct {
     root:string,               // folder of the asset registry
-    imported:string,           // the imported folder that goes with root (asset.Registry); "" for none
+    listed:[]asset.Package_Listed, // the outputs of the packages of the project root is the assets of (project_assets)
+    package_problems:[]string, // what those packages and the ones of the mounts could not list: kept for whoever reports asset problems
     cache:string,              // file where the registry keeps what it scanned; "" for none
     renderer:^render.Renderer, // nil: nothing is uploaded
     allocator:mem.Allocator,   // context.allocator when unset
@@ -221,6 +222,7 @@ Assets :: struct {
     missing_texture:Assets_Texture,
     missing_texture_ready:bool,
     errors:[dynamic]Assets_Error,
+    package_problems:[]string, // Assets_Desc.package_problems, owned
     revision:u64,   // advances when something that was given out changes: who holds handles or rows asks again
     structure:u64,  // advances when the instances of a scene are no longer what they need: who extracted it does it again
     structure_changes:[ASSETS_STRUCTURE_LOG]Assets_Structure_Change,
@@ -272,7 +274,7 @@ assets_init :: proc(a:^Assets,desc:Assets_Desc) -> bool {
     allocator:=desc.allocator.procedure!=nil?desc.allocator:context.allocator
     capacity:=desc.capacity>0?desc.capacity:ASSETS_DEFAULT_CAPACITY
     a^={allocator=allocator,renderer=desc.renderer}
-    listed:=asset.registry_init(&a.registry,desc.root,desc.cache,allocator)
+    listed:=asset.registry_init(&a.registry,desc.root,desc.cache,allocator,desc.listed)
     // A copy of an asset made outside the editor gets an id of its own.
     a.registry.resolve_duplicates=true
     for mount in desc.mounts {listed&&=asset.registry_mount(&a.registry,mount.folder,mount.prefix,mount.listed)}
@@ -300,6 +302,7 @@ assets_init :: proc(a:^Assets,desc:Assets_Desc) -> bool {
     a.free_scenes,errors[5]=make([dynamic]u32,0,start,allocator)
     a.errors,errors[6]=make([dynamic]Assets_Error,0,desc.error_capacity>0?desc.error_capacity:ASSETS_DEFAULT_ERRORS,allocator)
     for error in errors {ok&&=error==nil}
+    if ok {a.package_problems,ok=assets_texts_clone(desc.package_problems,allocator)}
     if desc.renderer!=nil {a.texture_assets=make([dynamic]base.Asset_Id,allocator)}
     ok=ok && cap(a.meshes)==capacity && cap(a.textures)==capacity && cap(a.materials)==capacity && cap(a.scenes)==capacity
     ok=ok && cap(a.material_descs)==capacity*2 && cap(a.row_marks)==capacity*2 && cap(a.row_hashes)==capacity*2 && cap(a.free_rows)==start && cap(a.free_meshes)==start && cap(a.rows_dirty)==ASSETS_ROWS_DIRTY
@@ -330,7 +333,24 @@ assets_destroy :: proc(a:^Assets) {
     for &scope in a.scopes {delete(scope.ids)}
     asset.types_destroy(&a.types)
     asset.registry_destroy(&a.registry)
+    for problem in a.package_problems {delete(problem,a.allocator)}
+    delete(a.package_problems,a.allocator)
     a^={}
+}
+
+@(private="file")
+assets_texts_clone :: proc(texts:[]string,allocator:mem.Allocator) -> (kept:[]string,ok:bool) {
+    if len(texts)==0 {return nil,true}
+    no_room:runtime.Allocator_Error
+    if kept,no_room=make([]string,len(texts),allocator);no_room!=nil {return nil,false}
+    for text,i in texts {
+        if kept[i],no_room=strings.clone(text,allocator);no_room!=nil {
+            for done in kept[:i] {delete(done,allocator)}
+            delete(kept,allocator)
+            return nil,false
+        }
+    }
+    return kept,true
 }
 
 // Looks at the folder again: for files that appeared or went away. A folder
@@ -372,6 +392,8 @@ assets_unmount :: proc(a:^Assets,prefix:string) -> asset.Error {
 
 assets_errors :: proc(a:^Assets) -> []Assets_Error {return a.errors[:]}
 assets_errors_clear :: proc(a:^Assets) {clear(&a.errors)}
+// What the packages of the project could not list, one line per package that names it.
+assets_package_problems :: proc(a:^Assets) -> []string {return a.package_problems}
 
 // The id of the asset at a path of the folder, as its file is spelled
 // ("arena/Chrome.mat"): what code that names an asset by path resolves.

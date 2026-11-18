@@ -30,7 +30,7 @@ animation_motor_preserves_world_root_direction_facing_and_physical_speed_limits_
 }
 
 // The body of Mirai: the first mesh of the import of characters/mirai/mirai.glb, by the id its
-// sidecar keeps. The sync of a build writes it to the imported folder.
+// package keeps. The demo lists it from its packages in the machine store.
 @(private)
 MIRAI_BODY :: "f0c947702bb8141dc1d27444a341d52c"
 

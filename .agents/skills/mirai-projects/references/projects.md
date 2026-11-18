@@ -10,6 +10,8 @@ Targets, jobs, fingerprint, project shaders, cooking and shipped game (`cook/bui
   project.mirai     manifest: what makes the folder a project
   settings.mirai    project settings, the bindings in Input_Settings: what differs (optional)
   cook.mirai        cooking roots that no scene names (optional)
+  packages.mirai    the packages of the machine store the project uses, by the hash of their
+                    manifest, and the folder each is listed in (optional; a plugin may have one)
   assets/           assets, by theme: what is authored, the art sources beside what they make,
                     each with its sidecar (<source>.import: settings, folder and asset ids), and
                     the documents their imports write
@@ -20,9 +22,6 @@ Targets, jobs, fingerprint, project shaders, cooking and shipped game (`cook/bui
   panels/           editor panels built by the chat agent (engine-time)
   tests/scenarios/  gameplay tests the editor plays (`mirai play test`), optional
   .mirai/           generated; not edited or versioned
-    imported/       what imports build from the sources that nobody edits (meshes, textures, sounds,
-                    fonts), each file named by its id and what it was built from; a build makes
-                    it again
     gen/            generated packages: the worlds and the root of each target
     plugins/        libraries of the engine plugins, with their stages and declarations
     editor<ext>     library of mirai-editor and of the players it opens; play<ext>, that of

@@ -128,6 +128,7 @@ api_diagnostics :: proc(s:^Session,call:^api.Call) {
             append(&errors,entry)
         }
         api_duplicates_list(&app.assets.registry,&errors)
+        for problem in host.assets_package_problems(app.assets) {append(&errors,Api_Engine_Diagnostics_Result_Asset_Errors{kind="Package",problem="Not_Listed",message=problem})}
     }
     r.asset_errors=errors[:]
     r.build.phase="Idle"

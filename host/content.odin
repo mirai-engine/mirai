@@ -808,18 +808,44 @@ content_collect :: proc(app:^App) -> (unloaded:int) {
     return len(gone)
 }
 
-// The folders of assets of the active plugins of a project, as the registry
-// mounts them: under plugins/<name>, the path they have in a shipped game.
-project_asset_mounts :: proc(p:^project.Project,allocator:=context.allocator) -> []asset.Registry_Mount {
+// What the registry of a project lists besides the files of its assets.
+Project_Assets :: struct {
+    listed:[]asset.Package_Listed, // the outputs of the packages of the project
+    mounts:[]asset.Registry_Mount, // the assets of each active plugin with the outputs of its packages, and the far meshes
+    problems:[]string,             // what the packages of the project and its plugins could not list (asset.root_packages)
+}
+
+// The assets of the project p besides its own files: the outputs of the
+// packages of its root and of each active plugin with assets, from the store
+// at store_root ("": the machine's), each plugin mounted under plugins/<name>,
+// the path its assets have in a shipped game. A project whose assets carry
+// the index of a cook (a shipped game) opens no store and lists no package.
+// False only when memory runs out.
+project_assets :: proc(p:^project.Project,store_root:string,allocator:=context.allocator) -> (assets:Project_Assets,ok:bool) {
     mounts:=make([dynamic]asset.Registry_Mount,allocator)
+    problems:=make([dynamic]string,allocator)
+    own:=project.folder_path(p.root,.Assets,context.temp_allocator)
+    shipped:=os.exists(project.path(own,asset.REGISTRY_INDEX,allocator=context.temp_allocator))
+    if !shipped {
+        packages,error:=asset.root_packages(p.root,store_root,allocator)
+        if _,no_room:=append(&problems,..packages.problems);error!=.None || no_room!=nil {return {},false}
+        assets.listed=packages.listed
+    }
     for folder in project.asset_folders(p,allocator) {
-        if folder.prefix!="" {append(&mounts,asset.Registry_Mount{folder=folder.path,prefix=folder.prefix})}
+        if folder.prefix=="" {continue}
+        mount:=asset.Registry_Mount{folder=folder.path,prefix=folder.prefix}
+        if !shipped {
+            packages,error:=asset.root_packages(folder.root,store_root,allocator)
+            if _,no_room:=append(&problems,..packages.problems);error!=.None || no_room!=nil {return {},false}
+            mount.listed=packages.listed
+        }
+        if _,no_room:=append(&mounts,mount);no_room!=nil {return {},false}
     }
     // The far meshes the editor made, where the assets are not cooked: a game that runs them shows them.
-    assets:=project.folder_path(p.root,.Assets,context.temp_allocator)
     far:=project.cache_path(p.root,project.FAR_CACHE,allocator=allocator)
-    if !os.exists(project.path(assets,asset.REGISTRY_INDEX,allocator=context.temp_allocator)) && (os.is_dir(far) || os.make_directory_all(far)==nil) {
-        append(&mounts,asset.Registry_Mount{folder=far,prefix=project.FAR_PREFIX})
+    if !shipped && (os.is_dir(far) || os.make_directory_all(far)==nil) {
+        if _,no_room:=append(&mounts,asset.Registry_Mount{folder=far,prefix=project.FAR_PREFIX});no_room!=nil {return {},false}
     }
-    return mounts[:]
+    assets.mounts,assets.problems=mounts[:],problems[:]
+    return assets,true
 }
