@@ -83,6 +83,7 @@ app_gpu_create :: proc(app:^App,desc:App_Desc) -> App_Error {
     // folder: building them all again takes the GPU driver many seconds.
     pipelines:string
     if folder:=app_user_folder(app.root,context.temp_allocator);folder!="" {pipelines,_=filepath.join({folder,PIPELINE_CACHE_FILE},context.temp_allocator)}
+    app_gpu_late_take(app,desc.gpu_late_record)
     surface:rhi.Surface_Desc
     if desc.window {
         surface={
@@ -97,6 +98,7 @@ app_gpu_create :: proc(app:^App,desc:App_Desc) -> App_Error {
         on_message=desc.gpu_message!=nil?desc.gpu_message:rhi.message_print,
         loader_lock=desc.gpu_loader_lock,
         pipeline_cache_path=pipelines,
+        late_record=desc.gpu_late_record,
         surface=surface,
     })
     if device==nil {
@@ -122,6 +124,8 @@ app_gpu_create :: proc(app:^App,desc:App_Desc) -> App_Error {
         // A window or a surface shows each frame to someone, who would see one
         // wait for the driver; without them, what a frame draws does not depend on that time.
         pipeline_thread=desc.window || desc.shown,
+        // Zeroed until a recording or a request reserves its rings: it records nothing until then.
+        profile=&app.profiler.profile,
     }) {
         log.errorf("renderer: %s",renderer.error)
         return .Renderer_Failed

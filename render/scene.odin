@@ -2731,8 +2731,13 @@ touched_settle :: proc(s: ^Scene_State) {
 @(private)
 upload_scene :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
 	s := &r.scene
+	zone := render_zone_begin(r, "instance tree")
 	tlas_settle(s)
-	if !poses_record(r,cmd) {return false}
+	base.profile_end(zone)
+	zone = render_zone_begin(r, "poses")
+	posed := poses_record(r,cmd)
+	base.profile_end(zone)
+	if !posed {return false}
 	// What the frame's transient memory has no room for stays dirty and goes
 	// with the next frame: the GPU never falls behind the scene unnoticed.
 	ok := true
@@ -2777,8 +2782,12 @@ upload_scene :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
 		} else {ok = false}
 	}
 	// The programs of the instances read the tables just uploaded.
+	zone = render_zone_begin(r, "programs")
 	if ok && !displaced_record(r, cmd) {ok = false}
+	base.profile_end(zone)
+	zone = render_zone_begin(r, "light grid")
 	ok &&= light_grid_update(r)
+	base.profile_end(zone)
 	return ok
 }
 

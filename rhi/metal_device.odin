@@ -338,7 +338,7 @@ device_create :: proc(desc: Device_Desc) -> (device: ^Device, error: string) {
 	ok := mtl_create_pools(d) && mtl_create_device(d, desc)
 	// Every Metal device of a Mac presents to the layer of its windows.
 	if ok && desc.surface != {} {ok = mtl_swapchain_create(d, desc.surface)}
-	ok = ok && watchdog_start(d)
+	ok = ok && watchdog_start(d, desc)
 	if !ok {
 		error = strings.clone(d.error, context.temp_allocator)
 		device_destroy(d)
@@ -1092,7 +1092,7 @@ mtl_immediate_end :: proc(d: ^Device, cmd: ^Command_List, wait: bool) -> bool {
 // which is not committed yet; 0 while the watchdog does not run.
 @(private)
 mtl_watchdog_signal :: proc(d: ^Device, cmd: ^MTL.CommandBuffer) -> u64 {
-	if d.watchdog.limit_ns == 0 {return 0}
+	if d.watchdog.watch_ns == 0 {return 0}
 	if d.watchdog_event == nil {d.watchdog_event = MTL.Device_newSharedEvent(d.device)}
 	if d.watchdog_event == nil {return 0}
 	d.watchdog_value += 1

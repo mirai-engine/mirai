@@ -108,6 +108,12 @@ compile time with build tags, without virtual dispatch. `render` does not see na
   by their `cmd_timestamp` names) and ends at once with `WATCHDOG_EXIT_CODE`: `TerminateProcess`
   or `_exit`, never the exit that runs the driver's own teardown. A failure the API reported
   disarms it: that is the host's.
+- **The record of a late submission.** With `Device_Desc.late_record`, a submission still running
+  `late_ms` after it went is written to that file and flushed to disk at once, watched or not; the
+  file goes when the submission finishes or the API reports the failure. A file that is left names
+  the submission a session never saw finish (a screen that froze, a machine that reset): the host
+  reads and removes it when it starts, and the editor (in the project's `.mirai`) and the player
+  (in its user folder) report it.
 - **What the report knows.** The passes come from what the CPU recorded (`Frame_Passes`), on every
   device and whether or not the frame takes timings. Where the GPU stopped among them only a
   device with `stop_place` says: Metal marks no progress, and a command buffer names the encoder
