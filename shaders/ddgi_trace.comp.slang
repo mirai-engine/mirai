@@ -46,10 +46,11 @@ bool extension_lights_reach(float3 position, float3 normal, float t) {
 #endif
 
 // Whether a ray along `arrived` met the inside of something: the back of a
-// surface that has one. A two-sided one (a leaf, a card) has no inside: from
-// behind it is a surface like any other.
+// surface. A two-sided sheet that lets light through (a leaf) has no inside:
+// from behind it is a surface like any other, as its light comes through it.
 bool hit_inside(Material m, float3 geometric_normal, float3 arrived) {
-    return m.two_sided == 0u && dot(geometric_normal, arrived) > 0.0;
+    bool sheet = m.two_sided != 0u && (m.layers & MATERIAL_LAYER_DIFFUSE_TRANSMISSION) != 0u;
+    return !sheet && dot(geometric_normal, arrived) > 0.0;
 }
 
 // Adds the lanes of the wave that count to a word of the list of the chosen, once a wave.
