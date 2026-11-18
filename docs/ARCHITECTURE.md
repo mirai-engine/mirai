@@ -330,6 +330,7 @@ Numbered layers; a package only imports lower layers.
   `std/ui_format` is what the structure of a `.ui` is judged by (node kinds, override fields,
   limits), which `ui` builds and `asset` checks without importing each other.
 - **1** `project`: `project.mirai` and `plugin.mirai` manifests, the layout of a project.
+- **1** `store`: the machine-wide content-addressed store of blobs and refs under one root.
 - **2** `net`, `asset`, `ui`, `audio`, `rhi`: network transport, asset formats, UI, mixer and GPU;
   independent of each other; `asset` reads from `project` what a project's assets compress with.
   `rhi/shared_device` is the device the GPU tests share; only tests import it, also the GPU tests of
