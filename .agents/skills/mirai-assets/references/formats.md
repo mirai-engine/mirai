@@ -270,6 +270,36 @@ scan opens every file and writes it again.
   on the creation times of a machine, so a game ships neither until the copy is written with its own
   id.
 
+## Packages
+
+The records of the imports kept in the [machine store](../../mirai-store/SKILL.md)
+(`asset/packages.odin`), three texts with a version each. They are written beside the
+sidecars; the importers, the registry and the build do not use them yet.
+
+- **Package manifest** (`Package`): a blob, named by `packages/<package id>` on the machine
+  that ingested it. The import that ingests a source writes it.
+- **Build manifest** (`Build`): a blob, named by `imports/<import_key>` (Final, which peers
+  share) or `imports-fast/<import_key>` (never shared) by the import that builds it, and by
+  `builds/<build_select>` by the refresh of a project that chose it.
+- **Project list** (`Packages`): `packages.mirai` beside `project.mirai`, versioned. The editor
+  and the commands that add or remove a package write it.
+
+- **A project pins the manifest, never a build.** The manifest holds what the source is (its
+  `identity`), where it was (`origin`, a hint) and each asset with its id, and nothing that
+  depends on the engine version: an engine that changes a version leaves the list as it is.
+- **Builds are found by name.** `import_key` combines the identity with the versions of what
+  imports; any machine with the manifest computes it, without the source, and a peer that built
+  that key gives it. `build_select` combines the manifest with the version of each kind of the
+  cache it holds, so a program without importers (the dev player) finds the build the refresh
+  chose. The folders of `cook/cache` name theirs in `cache-<name>`.
+- `packages_resolve` lists, for each package of the list, its assets of the cache the project
+  uses with what they depend on, at `<folder>/<name><extension>` as the sidecar lists them, with
+  the path of their blob. A missing build lists them not built; a manifest or a build the store
+  lacks or does not read, and an asset the manifest lacks, are problems of the result. It
+  removes, builds and fetches nothing.
+- An asset id is random at the first ingest and the manifest keeps it; an ingest again takes
+  each id from the manifest before it.
+
 ## Text
 
 `document_text_write` produces the JSON that `mirai asset dump` prints and `unpack` saves, of
