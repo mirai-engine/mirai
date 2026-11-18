@@ -161,6 +161,7 @@ read_stats :: proc(r: ^Renderer, slot: int) {
 		for dropped, list in stats.most_dropped {
 			if dropped > 0 && list < .Raster_Vertices {r.scene.cull_wanted[list] = max(r.scene.cull_wanted[list], r.scene.cull_capacity[list] + dropped)}
 		}
+		r.scene.cull_wanted[.Shadow_Chunks] = min(r.scene.cull_wanted[.Shadow_Chunks], SHADOW_CHUNKS_MOST)
 		// Those of the raster, which a view writes again in each of its rounds,
 		// ask for a third of what the view that needs most would hold: it is
 		// drawn in up to RASTER_ROUNDS of them.
@@ -173,7 +174,7 @@ read_stats :: proc(r: ^Renderer, slot: int) {
 		r.stats.probe_rays_traced, r.stats.probe_hits_lit = stats.probe_rays[0], stats.probe_rays[1]
 		r.stats.resolved_pixels, r.stats.resolve_helpers, r.stats.resolve_quads_again = stats.resolved[0], stats.resolved[1], stats.resolved[2]
 		r.stats.light_lists = stats.lists
-		r.stats.shadow = stats.shadow
+		r.stats.shadow = stats.views_shadow
 	}
 	r.stats.timings, _, _ = rhi.frame_timings(r.device)
 	total: f32
@@ -1485,14 +1486,16 @@ pass_reflections :: proc(p: ^Pass) -> bool {
 	return true
 }
 
-// Updates of the probe volume in the frame that shows a world anew
-// (Renderer.gi_warm), each a bounce more: the light it shows from its first
-// frame instead of over seconds.
+// Updates over PROBE_WARM_BUDGET probes that gather the light of a world shown
+// anew (Renderer.gi_warm), each a bounce more, taken over the frames after
+// within the budget of each (ddgi_warm_frames).
 GI_WARM_UPDATES :: 64
 
-// What lights the world whatever the view: the probe volume. Once a frame,
-// with its first view; several times in the frame of a world shown anew, and
-// over GI_BLACKOUT_FRAMES after a blackout.
+// What lights the world whatever the view: the probe volume, updated once a
+// frame with its first view, within the budget of a frame: no frame, the
+// first of a world either, traces more than another may, whatever else the
+// GPU runs. A world shown anew and a blackout gather their light over the
+// frames after, each update taking every probe in turn (whole).
 @(private)
 pass_world_lighting :: proc(p: ^Pass) -> bool {
 	r, cmd := p.r, p.cmd
@@ -1500,24 +1503,15 @@ pass_world_lighting :: proc(p: ^Pass) -> bool {
 	changes := &r.scene.changes
 	if p.first && !p.offscreen && p.use_gi {
 		if changes.count > 0 && !changes.all && !upload_transient(r, cmd, changes.spheres[:changes.count], r.light_changes) {return false}
-		updates := 1
-		if r.gi_warm {updates = GI_WARM_UPDATES}
+		if r.gi_warm {r.gi_warm_spread = max(r.gi_warm_spread, ddgi_warm_frames(g, GI_WARM_UPDATES))}
 		r.gi_warm = false
-		// A blackout spreads the warm updates over its frames; only the last
-		// update of the last frame keeps its history.
-		spread := r.gi_warm_spread
-		if spread > 0 && updates == 1 {
-			updates = int((GI_BLACKOUT_UPDATES + GI_BLACKOUT_FRAMES - 1) / GI_BLACKOUT_FRAMES)
-			r.gi_warm_spread -= 1
+		warm := r.gi_warm_spread > 0
+		if warm {r.gi_warm_spread -= 1}
+		if p.use_probes && g.valid {
+			rhi.cmd_timestamp(cmd, "ddgi")
+			if !ddgi_update(p, warm) {return false}
 		}
-		for update in 0 ..< updates {
-			warm := update < updates - 1 || (spread > 1 && updates > 1)
-			if p.use_probes && g.valid {
-				rhi.cmd_timestamp(cmd, "ddgi")
-				if !ddgi_update(p, warm, update == 0) {return false}
-			}
-			r.light_frame += 1
-		}
+		r.light_frame += 1
 	}
 	if p.use_probes && p.first && !p.offscreen {
 		// Later passes sample the updated atlases through the scene table.

@@ -248,65 +248,78 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
 
 ## Pages of the shadow maps
 
-- **Pages of the maps.** A map lies in a slot: each of its mips a square of `SHADOW_PAGE` pages
-  half as wide as the one before (a level of the sun has its finest alone), of which only those the
+- **Pages of the maps.** A map lies in a slot: each of its mips a square of `SHADOW_PAGE` pages half
+  as wide as the one before (a level of the sun has its finest alone), of which only those the
   points of the view read exist. `shadow_mark.comp` marks, for each point of the direct light, the
   pages the taps around it reach in the level of the sun and the mip of each face of a light with
-  one texel to one or two pixels of the view there (`SHADOW_TEXEL_PIXELS`, `sun_pick`,
-  `light_pick`; a face no finer than
-  its widest penumbra over the search of the taps). Of its own level or mip a point marks the
-  pages of the taps nearest it (`SHADOW_SEARCH_NEAR`) and of the ellipse whose lit share it takes;
-  where the search of its blockers reaches farther, the pages of the level or mip as many times
-  coarser, which its far taps read: a blocker that far casts a penumbra as wide, so a tall scene
-  asks for hardly more pages of the finest levels than a low one. Over the top of each octave the
-  point blends into the next level or mip, whose pages it marks too, and its texel-based constants
-  grow to meet those of the next. The first level of the sun is a metre wide, each after it twice as
-  wide, and the grid of the pages and texels of every level lies on the world, not on the origin of
-  the frame.
-  `shadow_pages.comp` gives each marked page a page of the pool of the view through the table of
-  the pages (`Shadow_Raster.table`, at `SLOT_SHADOW_TABLE`), in the same frame, so a page first
-  read is drawn before it is read. Pages are given in one order every frame: the safety net first
-  (the 2x2 pages of each level of the sun nearest the eye, the coarsest page of each face), then
-  from the coarsest level or mip to the finest; past the pool the finest are left out
-  (`SHADOW_COUNT_LEFT`), the same every frame. A page keeps its place while no point reads it,
-  until another needs it: free pages first, then those unread the longest; one read within a
-  cycle of the jitter of the view gives its place only to a page of a level that ranks sooner,
-  so that where the pool is full a page the points of one frame miss and those of the next read
-  is not drawn again. What stays changing under a page still marks it stale, so a page read is
-  always of this frame. Where a page is not drawn
-  its entry names the nearest coarser level or mip drawn there (`SHADOW_ENTRY_COARSER`), which its
-  points read; where none is, they trace. A point looks up the entries of the 2x2 pages around
-  its taps once (`shadow_near`), which its taps and its hard shadow read. A pass after
-  the maps that reads them (the fog) marks the pages it reads for the next frame
-  (`pass_shadow_marks`). A level moves with the eye by whole
-  pages and keeps its pages where they are in the world (`shadow_page_entry`): walking draws the
-  pages that come in; along the light it keeps how far it reaches towards the sun while the scene
-  stays within it. A tap past the side of a face of the cube of a light reads the face its
-  direction falls on (`shadow_beside`).
+  one texel to one or two pixels of the view there (`SHADOW_TEXEL_PIXELS`, `sun_pick`, `light_pick`;
+  a face no finer than its widest penumbra over the search of the taps). Of its own level or mip a
+  point marks the pages of the taps nearest it (`SHADOW_SEARCH_NEAR`) and of the ellipse whose lit
+  share it takes; where the search of its blockers reaches farther, the pages of the level or mip as
+  many times coarser, which its far taps read: a blocker that far casts a penumbra as wide, so a
+  tall scene asks for hardly more pages of the finest levels than a low one. Over the top of each
+  octave the point blends into the next level or mip, whose pages it marks too, and its texel-based
+  constants grow to meet those of the next. The first level of the sun is a metre wide, each after
+  it twice as wide, and the grid of the pages and texels of every level lies on the world, not on
+  the origin of the frame. `shadow_pages.comp` gives each marked page a page of the pool of the view
+  through the table of the pages (`Shadow_Raster.table`, at `SLOT_SHADOW_TABLE`), in the same frame,
+  so a page first read is drawn before it is read. Of every page read, the page of each of the two
+  coarser levels or mips that holds it and the eight around that one are asked for too
+  (`Ancestors`). Pages are given in one order every frame: the safety net first (the 2x2 pages of
+  each level of the sun nearest the eye, the coarsest page of each face), then from the coarsest
+  level or mip to the finest; past the pool the finest are left out (`SHADOW_COUNT_LEFT`), the same
+  every frame. A page keeps its place while no point reads it, until another needs it: free pages
+  first, then those unread the longest; one read within a cycle of the jitter of the view gives its
+  place only to a page of a level that ranks sooner, so that where the pool is full a page the
+  points of one frame miss and those of the next read is not drawn again. What stays changing under
+  a page still marks it stale, so a page read is always of this frame. Where a page is not drawn its
+  entry names the nearest coarser level or mip drawn there (`SHADOW_ENTRY_COARSER`), which a tap
+  reads. A point is held by the nearest page, its own or up to two levels or mips coarser
+  (`SHADOW_HELD_COARSER`), drawn with each of the eight pages around it drawn or standing in a
+  coarser one (`SHADOW_ENTRY_HELD`, written once in `Propagate` and read by every pass through
+  `shadow_map_held`), so that every tap reads a blocker; where none is, its light is traced: no
+  point reads lit because a page is missing. A point looks up the entries of the 2x2 pages around
+  its taps once (`shadow_near`), which its taps and its hard shadow read. A pass after the maps that
+  reads them (the fog) marks the pages it reads for the next frame (`pass_shadow_marks`). A level
+  moves with the eye by whole pages and keeps its pages where they are in the world
+  (`shadow_page_entry`): walking draws the pages that come in; along the light it keeps how far it
+  reaches towards the sun while the scene stays within it. A tap past the side of a face of the cube
+  of a light reads the face its direction falls on (`shadow_beside`).
 - **What a frame draws at most.** The draws of the cache and those of the atlas each take at most
-  the bound of the renderer in a frame of any view, still, moving or first (`Shadow_Bound`). It
-  follows the GPU time the rounds of the maps take (`SHADOW_MAPS_TIMING`, measured in every frame
-  with `rhi.cmd_measure_begin`, not the steps of the pages, which cost the same whatever it is), as
-  what they draw costs in proportion to it: from `SHADOW_FRAME_CLUSTERS`, what the least GPU the
-  engine runs on draws into a depth map, masked, in a few milliseconds, it grows while pages wait
-  and the rounds take less than their share of the rest of the frame, a refresh of the display at
-  least (`SHADOW_MAPS_SHARE`), so
-  that filling a view slows its frames by that share at most, and shrinks when they take more, never
-  past `SHADOW_FRAME_CLUSTERS_MOST`, far within the time a driver gives a draw before it resets the
-  device. Before the cull by cluster, `Grant` gives the pages, those whose points read them drawn
-  the frame before first (`SHADOW_JOB_KEPT`), then in the order they are given, while what they take
-  fits half the bound: what a page took when the round last drew it, else what the cull by instance
-  foresees, scaled by what the draws took of that before (`SHADOW_WORDS_SCALE`), and for a page not
-  drawn yet a part of the share at most, as what is foreseen strays most where a page holds the
-  most. A page may take twice that, so one that takes more is the only one left over; a page of the
-  cache that takes more than half the bound is drawn in bands of its rows over frames
-  (`SHADOW_WORDS_BAND`); a page of the atlas that came is granted only where its quota leaves the
-  pages kept room to take more the frame after, so a page composed while what moves in it moves is
-  composed every frame. A page is foreseen once and keeps it until drawn, and the culls after the
-  grant go over the slots and spans of the pages granted alone: a page that waits costs no instance.
-  A page left over, one that waits and one whose band is not its last are not ready that frame
-  (`Settle`): their points read the nearest coarser page drawn, or trace, and the steps run again
-  the next frame.
+  the bound of the renderer in a frame of any view, still, moving or first (`Shadow_Bound`), counted
+  in units of raster work known before they draw, whatever the scene holds: of each cluster in a
+  page, the area of its triangles in texels of the map (`mesh_cluster_areas`, summed once where the
+  geometry of the mesh is walked before it is given, on a job), the share of it its box has in the
+  part of the page drawn, several times over for a masked material, and the vertices its draw into
+  the page runs (`shadow_units`, `SHADOW_UNIT_TEXELS`), so dense masked foliage, its cards over each
+  other in one box, draws no more in a frame than walls do; a cluster that begins within the bound
+  of its page and of its frame is drawn, the rest are not. The bound follows the GPU time the rounds
+  of the maps take (`SHADOW_MAPS_TIMING`, measured in every frame with `rhi.cmd_measure_begin`, not
+  the steps of the pages, which cost the same whatever it is): from `SHADOW_FRAME_UNITS`, what the
+  least GPU the engine runs on draws masked in a few milliseconds, it grows while the picture lacks
+  pages (`SHADOW_COUNT_SHORT`: points no page drawn holds, or pages a still view waits for) and the
+  rounds take less than their share of the rest of the frame, a refresh of the display at least
+  (`SHADOW_MAPS_SHARE`), up to `SHADOW_FRAME_UNITS_MOST`; it shrinks when they take more, and at
+  once to what keeps them within `SHADOW_MAPS_MOST_MS`, far within the time a driver gives a
+  submission before it resets the device; pages whose points read a coarser page drawn, as those a
+  moving view refines, are drawn at the least. The first frame of a view draws at the least,
+  whatever another drew at. The lists of the chunks the cull by instance hands to the cull by
+  cluster and of the clusters it hands to the draws hold what the bound draws; the grant fits the
+  chunks its pages are foreseen to hand over (`SHADOW_WORDS_REACH`), and where they find no room no
+  page of the round is drawn whole and they wait. Before the cull by cluster, `Grant` gives the
+  pages, those whose points read them drawn the frame before first (`SHADOW_JOB_KEPT`), then in the
+  order they are given, while what they take fits half the bound: what a page took when the round
+  last drew it, else what the cull by instance foresees, scaled by what the draws took of that
+  before (`SHADOW_WORDS_SCALE`), and for a page not drawn yet a part of the share at most, as what
+  is foreseen strays most where a page holds the most. A page may take twice that, so one that takes
+  more is the only one left over; a page of the cache that takes more than half the bound is drawn
+  in bands of its rows over frames (`SHADOW_WORDS_BAND`), which grow back as the bound grows; a page
+  of the atlas that came is granted only where its quota leaves the pages kept room to take more the
+  frame after, so a page composed while what moves in it moves is composed every frame. A page is
+  foreseen once and keeps it until drawn, and the culls after the grant go over the slots and spans
+  of the pages granted alone: a page that waits costs no instance. A page left over, one that waits
+  and one whose band is not its last are not ready that frame (`Settle`): their points read the
+  nearest coarser page drawn, or trace, and the steps run again the next frame.
 - **A still view.** While its camera, size, parameters and lights stay and no caster changes
   (`Shadow_Seen`), a view keeps the marks and the table of the frames before: its points mark the
   pages they read only for a cycle of its jitter after a change, the marks add up, and the steps
@@ -335,7 +348,8 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
 - **Reading the maps.** A map holds a point only within its face and range, and samples tell
   elsewhere. A tap compares a blocker with the plane of the surface of the point where the tap
   falls, less twice what the plane rises from there to the middle of its texel (scaled to the texel
-  of a coarser page it reads), so a surface never shades itself; a tap no page holds tells nothing.
+  of a coarser page it reads), so a surface never shades itself; a tap past the pages around a
+  point, which no page holds, tells nothing.
   A point under a map takes taps around it: all lit, lit; all blocked, hidden; where
   they disagree (a penumbra) it takes the hard shadow of the map at the point, and `direct_spread`
   averages that evenly over the points of its surface within the penumbra width the blockers give,
@@ -374,8 +388,8 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   - With the scene still there are no marks and the image is the same. Glass does not mark: the
     validation of the history reaches it.
 - The debug view Shadows shows the part of the light that got there. `Stats.shadow` counts what
-  the maps of the last view drew: clusters, triangles and pages, those left out and those that
-  wait.
+  the maps of the views of a frame drew, summed: clusters, triangles and pages, those left out,
+  those that wait and those the bound grows for.
 - **Reference.** What the tests compare with, outside the renderer games run: a custom pass of the
   tests in place of the `Direct` stage (`render/reference_test.odin`) traces from each pixel to
   the whole set of points of the sun and of each light, randomly rotated per frame, without grid,
@@ -393,7 +407,8 @@ Tests: the shadow ones of `render/render_test.odin` (`render_sun_shadow_is_ray_t
 `render_shadow_maps_follow_what_moves_in_its_frame`, `render_a_swaying_batch_shades_where_it_is`,
 `render_a_page_first_read_is_drawn_in_its_frame`,
 `render_a_full_pool_keeps_the_pages_of_a_jitter_cycle`,
-`render_a_frame_draws_no_more_than_its_clusters_and_the_rest_comes_after`,
+`render_a_view_the_maps_cannot_hold_shows_no_lit_hole`,
+`render_a_frame_draws_no_more_than_its_bound_and_the_rest_comes_after`,
 `render_a_swaying_batch_keeps_its_pages_under_the_bound`,
 `render_a_wide_search_asks_for_coarser_pages_not_more_of_the_finest`,
 `render_a_turning_sun_gives_what_whole_maps_give`

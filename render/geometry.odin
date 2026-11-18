@@ -41,6 +41,7 @@ Mesh_Record :: struct {
 	level_word, level_count:         u32,
 	vertex_count, vertices_posed:    u32, // of its clusters, and of those a pose moves (level 0, or all)
 	slot_word, slot_count:           u32,
+	area_word:                       u32, // the area of the triangles of each cluster, f32 square metres of its space (mesh_cluster_areas)
 	tested:                          u32, // the slots whose own rows rays ask, a bit each: the BLASes of its cuts hold their triangles apart (mesh_tested)
 	posed_word, previous_word:       u32, // GPU_NONE: as its clusters
 	part_word, rest_word:            u32, // posed with its part collapsed, and the rest an extension deforms from; GPU_NONE: none
@@ -298,6 +299,7 @@ Mesh_Ahead :: struct {
 	slots:     int,          // the slots it was checked with; 0: not checked, nor are slab_axes and lod_reach its own
 	slab_axes: u32,
 	lod_reach: f32,
+	areas:     []u32, // of each cluster (mesh_cluster_areas), in allocator
 }
 
 // The cuts of a mesh (mesh_rays_build), in allocator, and the rest of what
@@ -313,11 +315,16 @@ mesh_ahead_make :: proc(g: asset.Mesh_Geometry, slots: int, software: bool, keep
 		if ahead.stream = mesh_stream_build(g, &ahead.rays, keep); ahead.stream == nil {return}
 	}
 	ahead.slots, ahead.slab_axes, ahead.lod_reach = slots, mesh_slab_axes(g, g.bounds_min, g.bounds_max), lod_reach(g)
+	areas, error := make([]u32, len(g.clusters), allocator)
+	if error != nil {return}
+	ahead.areas = areas
+	mesh_cluster_areas(g, ahead.areas)
 	return ahead, true
 }
 
 mesh_ahead_destroy :: proc(ahead: ^Mesh_Ahead) {
 	mesh_rays_destroy(&ahead.rays)
+	delete(ahead.areas, ahead.rays.allocator)
 	mesh_stream_free(ahead.stream)
 	ahead^ = {}
 }
@@ -396,6 +403,25 @@ primitive_positions :: proc "contextless" (g: asset.Mesh_Geometry, primitive: u3
 	return cluster_triangle_positions(g, g.clusters[primitive >> PRIMITIVE_TRIANGLE_BITS], primitive & (1 << PRIMITIVE_TRIANGLE_BITS - 1))
 }
 
+// The area of the triangles of each cluster of a mesh in its space, f32 bits
+// a word, into out: what the raster of a map of the shadows covers of it,
+// however its triangles lie over each other in its box (shadow_units). 0 for
+// a cluster whose vertices the geometry does not hold. Any thread.
+mesh_cluster_areas :: proc(g: asset.Mesh_Geometry, out: []u32) {
+	for c, k in g.clusters {
+		if k >= len(out) {return}
+		out[k] = 0
+		triangles := asset.cluster_triangle_count(c)
+		if int(c.vertex_first + asset.cluster_vertex_count(c)) > len(g.vertices) || int(c.triangle_first + (triangles * 3 + 3) / 4) > len(g.triangles) {continue}
+		sum: f32
+		for t in 0 ..< triangles {
+			a, b, d := cluster_triangle_positions(g, c, t)
+			sum += 0.5 * linalg.length(linalg.cross(b - a, d - a))
+		}
+		out[k] = transmute(u32)sum
+	}
+}
+
 // The corners of a triangle of a cluster, in the space of the mesh.
 cluster_triangle_positions :: proc "contextless" (g: asset.Mesh_Geometry, cluster: asset.Cluster, t: u32) -> (a, b, c: Vec3) {
 	corners := asset.cluster_triangle(g.triangles, cluster, t)
@@ -456,6 +482,13 @@ mesh_register :: proc(r: ^Renderer, g: asset.Mesh_Geometry, given_words: []u32, 
 	rays := &ahead.rays if ahead != nil && ahead.rays.count > 0 else nil
 	checked := rays != nil && ahead.slots == len(slot_words)
 	if !checked && !mesh_geometry_check(g, len(slot_words)) {return 0, false}
+	areas := ahead.areas if checked && len(ahead.areas) == len(g.clusters) else nil
+	if areas == nil {
+		made, error := make([]u32, len(g.clusters), context.temp_allocator)
+		if error != nil {return 0, false}
+		mesh_cluster_areas(g, made)
+		areas = made
+	}
 	triangles: u32
 	for level in g.levels {triangles += level.triangle_count}
 	for word in slot_words {
@@ -507,7 +540,7 @@ mesh_register :: proc(r: ^Renderer, g: asset.Mesh_Geometry, given_words: []u32, 
 		return 0, false
 	}
 	if later != nil {
-		if !mesh_reserve(s, g, stored, slot_words, &record) {
+		if !mesh_reserve(s, g, stored, slot_words, areas, &record) {
 			mesh_stream_free(record.stream)
 			return 0, false
 		}
@@ -531,6 +564,8 @@ mesh_register :: proc(r: ^Renderer, g: asset.Mesh_Geometry, given_words: []u32, 
 		append(&s.indices, ..mem.slice_data_cast([]u32, g.levels))
 		record.slot_word = u32(len(s.indices)) - index_start
 		append(&s.indices, ..slot_words)
+		record.area_word = u32(len(s.indices)) - index_start
+		append(&s.indices, ..areas)
 		record.cluster_word = 0
 		record.vertex_word = 0
 		handle = mesh_store(r, record, vertex_start, index_start)
@@ -557,13 +592,13 @@ mesh_register :: proc(r: ^Renderer, g: asset.Mesh_Geometry, given_words: []u32, 
 // table, levels and slots: the blocks of its pages and its clusters are its
 // upload's to write. False without memory, with nothing taken.
 @(private = "file")
-mesh_reserve :: proc(s: ^Scene_State, g: asset.Mesh_Geometry, stored: u32, slot_words: []u32, record: ^Mesh_Record) -> bool {
+mesh_reserve :: proc(s: ^Scene_State, g: asset.Mesh_Geometry, stored: u32, slot_words, areas: []u32, record: ^Mesh_Record) -> bool {
 	vertex_words: u32
 	for page in g.pages[stored:] {vertex_words += page_words(g, page)}
 	clusters := u32(len(g.clusters)) * CLUSTER_WORDS
 	pages := u32(len(g.pages)) * PAGE_ENTRY_WORDS
 	levels := u32(len(g.levels)) * LEVEL_WORDS
-	index_words := clusters + pages + levels + u32(len(slot_words))
+	index_words := clusters + pages + levels + u32(len(slot_words)) + u32(len(g.clusters))
 	vertex_word, taken := pool_take(&s.vertices, &s.pool_free[.Vertex], vertex_words)
 	if !taken {return false}
 	index_word: u32
@@ -583,10 +618,12 @@ mesh_reserve :: proc(s: ^Scene_State, g: asset.Mesh_Geometry, stored: u32, slot_
 	}
 	copy(block[clusters + pages:], mem.slice_data_cast([]u32, g.levels))
 	copy(block[clusters + pages + levels:], slot_words)
+	copy(block[clusters + pages + levels + u32(len(slot_words)):], areas)
 	record.vertex_word, record.vertex_span = vertex_word, vertex_words
 	record.index_word, record.index_span = index_word, index_words
 	record.cluster_word, record.page_word = index_word, index_word + clusters
 	record.level_word, record.slot_word = index_word + clusters + pages, index_word + clusters + pages + levels
+	record.area_word = record.slot_word + u32(len(slot_words))
 	return true
 }
 
@@ -601,7 +638,7 @@ mesh_room :: proc(r: ^Renderer, g: asset.Mesh_Geometry, stored: u32, slots: int,
 @(private = "file")
 mesh_pool_counts :: proc(g: asset.Mesh_Geometry, stored: u32, slots: int, rays: ^Mesh_Rays, hardware: bool) -> (vertices, indices, nodes, triangles: int) {
 	for page in g.pages[stored:] {vertices += int(page_words(g, page))}
-	indices = len(g.clusters) * CLUSTER_WORDS + len(g.pages) * PAGE_ENTRY_WORDS + len(g.levels) * LEVEL_WORDS + slots
+	indices = len(g.clusters) * (CLUSTER_WORDS + 1) + len(g.pages) * PAGE_ENTRY_WORDS + len(g.levels) * LEVEL_WORDS + slots
 	if rays == nil {return}
 	for cut in rays.cuts[:rays.count] {
 		if hardware {indices += len(cut.primitives)}
@@ -734,6 +771,7 @@ gpu_mesh :: proc(m: Mesh_Record) -> Gpu_Mesh {
 		bounds_min = {m.bounds_min.x, m.bounds_min.y, m.bounds_min.z, 0}, bounds_max = {m.bounds_max.x, m.bounds_max.y, m.bounds_max.z, 0},
 		sway = m.skin.sway if m.skin != nil && m.skin.sway > 0 else max(f32),
 		draw_first = m.draw_first if m.draw_listed else GPU_NONE,
+		area_word = m.area_word if m.area_word != 0 else GPU_NONE,
 	}
 	for ray, k in m.rays {row.rays[k] = {ray.bvh_root, ray.triangle_offset, ray.table_word, ray.table_opaque}}
 	// A mesh traces level 0 where it has no coarser cut.
@@ -755,7 +793,7 @@ mesh_store :: proc(r: ^Renderer, record: Mesh_Record, vertex_start, index_start:
 	for word in ([]^u32{&record.posed_word, &record.previous_word, &record.part_word, &record.rest_word, &record.bounds_word}) {
 		if word^ != GPU_NONE {word^ += record.vertex_word}
 	}
-	for word in ([]^u32{&record.cluster_word, &record.page_word, &record.level_word, &record.slot_word}) {word^ += record.index_word}
+	for word in ([]^u32{&record.cluster_word, &record.page_word, &record.level_word, &record.slot_word, &record.area_word}) {word^ += record.index_word}
 	for &page in mem.slice_data_cast([]Gpu_Mesh_Page, s.indices[record.page_word:][:record.page_count * PAGE_ENTRY_WORDS]) {
 		if page.base != GPU_NONE {page.base += record.vertex_word}
 	}
