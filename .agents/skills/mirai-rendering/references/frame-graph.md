@@ -40,8 +40,8 @@ or interleave its own passes.
      linear depth, which the depth pyramid between the phases reads. The fade of the instance and
      the mask of the material are decided there, the mask sampled as the rasterizer would from
      the triangle at the pixel (`visible_input.slang`; that of a program as a ray reads it).
-     Before it, the clusters of the program list leave their depth and no triangle where they are
-     in front.
+     Before it, the clusters of the program list leave their depth with the vertices of their
+     G-buffer and its fade and mask (`gbuffer_depth.frag`), and no triangle where they are in front.
      Why: a forest of triangles smaller than a pixel drew every attribute of each vertex (three
      a triangle) and its material per fragment; the rasterizer itself costs little.
    - After both phases, the G-buffer: the clusters of the program list, one draw per program

@@ -299,7 +299,7 @@ Pipeline_Id :: enum {
 	Gbuffer_Layers, Gbuffer_Layers_Clip, Gbuffer_Nested_Layers, // with the layers target: an instance with layers in the frustum
 	// The visibility of a view (visibility_pass), the G-buffer of the clusters of Surface programs
 	// after it and that of what it kept (gbuffer_visible_pass).
-	Visibility, Visibility_Hidden, Gbuffer_After, Gbuffer_Plain_After, Gbuffer_Layers_After, Gbuffer_Visible, Gbuffer_Visible_Plain, Gbuffer_Visible_Layers,
+	Visibility, Gbuffer_Depth, Gbuffer_After, Gbuffer_Plain_After, Gbuffer_Layers_After, Gbuffer_Visible, Gbuffer_Visible_Plain, Gbuffer_Visible_Layers,
 	Ui_World, Ui_Composite, Ui_Blur, Debug_Lines,
 	Skin, Skin_Triangles, Skin_Refit,
 	Gbuffer_Clip, Gbuffer_Plain_Clip, // of a view with a clip plane
@@ -987,8 +987,9 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 		name = "visibility",
 	}
 	graphics(list, r, .Visibility, visibility)
-	visibility.fragment_constants, visibility.name = {VISIBILITY_FRAG_HIDDEN}, "visibility of the clusters of Surface programs"
-	graphics(list, r, .Visibility_Hidden, visibility)
+	// The clusters of the program list leave their depth before it with the vertices of their G-buffer.
+	visibility.vertex, visibility.fragment, visibility.name = &r.shader_codes[.Gbuffer_Batches_Vert], &r.shader_codes[.Gbuffer_Depth_Frag], "depth of the program list before the visibility"
+	graphics(list, r, .Gbuffer_Depth, visibility)
 	// After the visibility the depth is final: the clusters of programs draw where theirs stayed.
 	after, after_plain, after_layered := gbuffer, plain, layered
 	after.fragment, after_plain.fragment, after_layered.fragment = &r.shader_codes[.Gbuffer_After_Frag], &r.shader_codes[.Gbuffer_After_Plain_Frag], &r.shader_codes[.Gbuffer_After_Layers_Frag]
