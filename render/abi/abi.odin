@@ -312,7 +312,7 @@ SHADOW_WORDS_PART          :: SHADOW_WORDS_BOUNDS + 3 * SHADOW_SLOTS * SHADOW_MI
 SHADOW_WORDS_COST          :: SHADOW_WORDS_PART + 4 * SHADOW_POOL_PAGES
 SHADOW_WORDS_TAKEN         :: SHADOW_WORDS_COST + 2 * SHADOW_POOL_PAGES
 SHADOW_WORDS_COUNTS        :: SHADOW_WORDS_TAKEN + 2 * SHADOW_POOL_PAGES
-SHADOW_WORDS_ARGS          :: SHADOW_WORDS_COUNTS + 16
+SHADOW_WORDS_ARGS          :: SHADOW_WORDS_COUNTS + 18
 SHADOW_WORDS_SLOTS         :: SHADOW_WORDS_ARGS + 20
 SHADOW_WORDS_JOBS          :: SHADOW_WORDS_SLOTS + 3 * SHADOW_SLOTS
 SHADOW_WORDS_RANK          :: SHADOW_WORDS_JOBS + 2 * SHADOW_POOL_PAGES
@@ -354,6 +354,7 @@ SHADOW_COUNT_WAITING       :: 9
 SHADOW_COUNT_FORESEEN      :: 10 // two: of the pages the cache and the atlas granted as foreseen, what was foreseen
 SHADOW_COUNT_MEASURED      :: 12 // two: and what they took
 SHADOW_COUNT_SHORT         :: 14
+SHADOW_COUNT_DROPPED       :: 15 // two: chunks the cull of the cache and of the atlas had no room for
 SHADOW_SCALE_ONE           :: 256
 // Of a page of the pool drawn in bands (SHADOW_WORDS_BAND): the rows of it the
 // cache holds from its top, from bit SHADOW_BAND_SHIFT how many times the page

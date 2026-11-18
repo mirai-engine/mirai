@@ -300,13 +300,13 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   shrinks when they take more, never past `SHADOW_FRAME_CLUSTERS_MOST`, far within the time a driver
   gives a draw before it resets the device; pages whose points read a coarser page drawn, as those a
   moving view refines, are drawn at the least. The chunks the cull by instance hands to the cull by
-  cluster are as many as twice the most clusters (`SHADOW_CHUNKS_MOST`); a page whose chunks find no
-  room is not drawn whole and waits. Before the cull by cluster, `Grant` gives the pages, those
-  whose points read them drawn the frame before first (`SHADOW_JOB_KEPT`), then in the order they
-  are given, while what they take fits half the bound: what a page took when the round last drew it,
-  else what the cull by instance foresees, scaled by what the draws took of that before
-  (`SHADOW_WORDS_SCALE`), and for a page not drawn yet a part of the share at most, as what is
-  foreseen strays most where a page holds the most. A page may take twice that, so one that takes
+  cluster are as many as twice the most clusters (`SHADOW_CHUNKS_MOST`); where they find no room, no
+  page of the round is drawn whole and they wait. Before the cull by cluster, `Grant` gives the
+  pages, those whose points read them drawn the frame before first (`SHADOW_JOB_KEPT`), then in the
+  order they are given, while what they take fits half the bound: what a page took when the round
+  last drew it, else what the cull by instance foresees, scaled by what the draws took of that
+  before (`SHADOW_WORDS_SCALE`), and for a page not drawn yet a part of the share at most, as what
+  is foreseen strays most where a page holds the most. A page may take twice that, so one that takes
   more is the only one left over; a page of the cache that takes more than half the bound is drawn
   in bands of its rows over frames (`SHADOW_WORDS_BAND`); a page of the atlas that came is granted
   only where its quota leaves the pages kept room to take more the frame after, so a page composed

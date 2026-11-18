@@ -279,6 +279,7 @@ shared_constants :: proc(allocator:=context.temp_allocator) -> string {
     u(&b,"SHADOW_COUNT_FORESEEN",abi.SHADOW_COUNT_FORESEEN)
     u(&b,"SHADOW_COUNT_MEASURED",abi.SHADOW_COUNT_MEASURED)
     u(&b,"SHADOW_COUNT_SHORT",abi.SHADOW_COUNT_SHORT)
+    u(&b,"SHADOW_COUNT_DROPPED",abi.SHADOW_COUNT_DROPPED)
     u(&b,"SHADOW_SCALE_ONE",abi.SHADOW_SCALE_ONE)
     u(&b,"SHADOW_BAND_SHIFT",abi.SHADOW_BAND_SHIFT)
     u(&b,"SHADOW_BAND_STUCK",abi.SHADOW_BAND_STUCK)
