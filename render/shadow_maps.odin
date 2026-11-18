@@ -73,7 +73,10 @@ SHADOW_MOVER_FRAMES :: u64(30)
 // the frames after, the coarsest first, and their points read the nearest
 // coarser page drawn or trace until then.
 SHADOW_FRAME_CLUSTERS :: u32(32768)
-SHADOW_FRAME_CLUSTERS_MOST :: 16 * SHADOW_FRAME_CLUSTERS
+// The bound counts clusters, not what they cost to raster: a round of dense
+// masked foliage at a coarse level takes far longer than its count says, so
+// until the bound counts that cost it does not grow.
+SHADOW_FRAME_CLUSTERS_MOST :: SHADOW_FRAME_CLUSTERS
 // The most chunks the pass by instance of a round hands to its pass by
 // cluster (Cull_List.Shadow_Chunks): those of the clusters the bound draws at
 // most, twice, so that the chunks of a page granted alone fit. Where they
