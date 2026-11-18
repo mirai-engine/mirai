@@ -5,9 +5,10 @@
 // round draws that its box covers (at rest, or posed by the skin this frame),
 // to the list shadow_map.vert draws: those of masked or blended
 // materials to the draw that takes their coverage. The draws of a round take
-// at most params.bound
-// clusters a frame, and of a page at most what the steps of the pages granted
-// it (SHADOW_WORDS_COST): a cluster past them, or past the room of its draw,
+// at most params.bound units a frame (SHADOW_UNIT_TEXELS), and of a page at
+// most what the steps of the pages granted it (SHADOW_WORDS_COST), each
+// cluster what its box covers of the page and its triangles: a cluster that
+// begins past them, or past the room of its draw,
 // is left out, its page is not drawn whole this frame (SHADOW_COST_OVER) and
 // waits, and a list without room grows for the frames after.
 #include "trace.slang"
@@ -32,14 +33,14 @@
 [[vk::binding(SLOT_PASS7, 0)]] Texture2D<float4> hiz : register(MIRAI_REGISTER(t, SLOT_PASS7), space0);
 #include "shadow_hidden.slang"
 
-// A cluster into a draw for the page of the pool `pool`; false where the
-// frame has no room for it.
-bool shadow_add(uint draw, uint4 entry, uint pool) {
+// A cluster that costs `units` into a draw for the page of the pool `pool`;
+// false where the frame has no room for it.
+bool shadow_add(uint draw, uint4 entry, uint pool, uint units) {
     uint taken = 0u, slot = 0u, own;
     if (pool >= SHADOW_POOL_PAGES) return false;
-    InterlockedAdd(shadow_pages[shadow_taken_word(pool)], 1u, own);
-    bool room = own < (shadow_pages[shadow_cost_word(pool)] & SHADOW_COST_CLUSTERS);
-    if (room) InterlockedAdd(shadow_state[SHADOW_TAKEN], 1u, taken);
+    InterlockedAdd(shadow_pages[shadow_taken_word(pool)], units, own);
+    bool room = own < (shadow_pages[shadow_cost_word(pool)] & SHADOW_COST_UNITS);
+    if (room) InterlockedAdd(shadow_state[SHADOW_TAKEN], units, taken);
     room = room && taken < params.bound;
     if (room) InterlockedAdd(shadow_state[draw * 4u + SHADOW_DRAW_COUNT], 1u, slot);
     if (room && slot < shadow_room(draw)) {
@@ -50,6 +51,16 @@ bool shadow_add(uint draw, uint4 entry, uint pool) {
     InterlockedAdd(stats[0].shadow[9], 1u);
     InterlockedOr(shadow_pages[shadow_cost_word(pool)], SHADOW_COST_OVER);
     return false;
+}
+
+// The texels of map m the area of the triangles of a cluster spans, by its
+// instance (render.mesh_cluster_areas), at the depth of the middle of its box;
+// 0 where its mesh does not say it.
+float cluster_surface(Shadow_Map m, Instance inst, Mesh mesh, uint ordinal, float3 low, float3 high) {
+    if (mesh.area_word == INVALID) return 0.0;
+    float scale = instance_scale(inst);
+    float texel = shadow_map_texel(m, max(shadow_map_local(m, 0.5 * (low + high)).z, m.near));
+    return asfloat(indices[mesh.area_word + ordinal]) * scale * scale / max(texel * texel, 1e-12);
 }
 
 [shader("compute")]
@@ -78,6 +89,7 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
         else { low = inst.bounds_min.xyz; high = inst.bounds_max.xyz; }
     }
     if (!shadow_map_reaches(m, low, high) || !shadow_box_texels(m, low, high, texels)) return;
+    float surface = cluster_surface(m, inst, mesh, k, low, high);
     uint4 span, pages = shadow_texel_pages(m, texels);
     if (!shadow_pages_span(m, span)) return;
     pages = uint4(max(pages.xy, span.xy), min(pages.zw, span.zw));
@@ -89,13 +101,15 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
             uint held = shadow_table_entry(m.rect.x, shadow_page_entry(m.rect, uint2(x, y)));
             if (params.moving == 1u && (held & SHADOW_PAGE_CACHED) != 0u && shadow_box_hidden(hiz, m, uint2(x, y), (held & SHADOW_ENTRY_POOL) - 1u, low, high)) continue;
             uint page = shadow_page_word(map, shadow_rect_mip(m.rect), uint2(x, y)), pool = (held & SHADOW_ENTRY_POOL) - 1u;
-            if (shadow_add(tested ? SHADOW_DRAW_TESTED : SHADOW_DRAW_OPAQUE, uint4(instance, k, page, rest ? 1u : 0u), pool)) {
+            uint units = shadow_units(uint2(x, y), shadow_page_part(pool), texels, cluster_triangle_count(c), tested, surface, 1.0);
+            if (shadow_add(tested ? SHADOW_DRAW_TESTED : SHADOW_DRAW_OPAQUE, uint4(instance, k, page, rest ? 1u : 0u), pool, units)) {
                 if (params.moving == 0u) {
                     InterlockedAdd(stats[0].shadow[tested ? 1u : 0u], 1u);
                     InterlockedAdd(stats[0].shadow[2], cluster_triangle_count(c));
                 } else {
                     InterlockedAdd(stats[0].shadow[3], 1u);
                 }
+                InterlockedAdd(stats[0].shadow[11u + params.moving], units);
             }
         }
     }
