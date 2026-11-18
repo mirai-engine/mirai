@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:os"
 import "core:strings"
 import "core:testing"
+import "core:time"
 import "mirai:std/base"
 
 @(private="file")
@@ -33,7 +34,7 @@ hostile_inputs_return_errors :: proc(t:^testing.T) {
     if !testing.expect_value(t,error,Error.None) {return}
     h:=base.Hostile{state=42}
     data:=test_bytes(3*PIECE_BYTES+9,5)
-    hash:=address_of_bytes(data)
+    hash:=test_address(data)
     pieces:=test_table(data)
     random:=make([]u8,PIECE_BYTES+3,context.temp_allocator)
     for _ in 0..<64 {
@@ -76,6 +77,7 @@ hostile_inputs_return_errors :: proc(t:^testing.T) {
     for d in ([]Damage{{damaged},{damaged[:PIECE_BYTES]},{nil},{data[:PIECE_BYTES+6]}}) {
         testing.expect(t,os.write_entire_file(path,d.bytes)==nil)
         testing.expect_value(t,verify(&s,stored),Error.Corrupt)
+        os.remove(path_in(folder,"tables",hex_of(stored)[:2],hex_of(stored)))
         _,table_error:=blob_table(&s,stored,context.temp_allocator)
         testing.expect_value(t,table_error,Error.Corrupt)
     }
@@ -87,6 +89,16 @@ hostile_inputs_return_errors :: proc(t:^testing.T) {
     testing.expect_value(t,receive_begin(&s,hash,i64(len(data)),pieces),Error.None)
     _,missing_error=receive_missing(&s,hash,context.temp_allocator)
     testing.expect_value(t,missing_error,Error.None)
+
+    // A marked piece whose bytes on disk do not match its table entry.
+    testing.expect_value(t,receive_piece(&s,hash,1,test_piece(data,1)),Error.None)
+    partial_data:=path_in(folder,"partial",hex_of(hash),"data")
+    on_disk,_:=os.read_entire_file(partial_data,context.temp_allocator)
+    on_disk[PIECE_BYTES+7]~=1
+    testing.expect(t,os.write_entire_file(partial_data,on_disk)==nil)
+    testing.expect_value(t,read(&s,hash,PIECE_BYTES,random[:10]),Error.Not_Here_Yet)
+    missing_list,_:=receive_missing(&s,hash,context.temp_allocator)
+    testing.expect(t,len(missing_list)==len(pieces) && missing_list[1]==1,"a piece that does not match is missing again")
 
     // Refs.
     for name in ([]string{"","."," ..","..","a/b","a\\b","A","con","com1.txt","x.","a b",strings.repeat("x",NAME_MAX+1,context.temp_allocator)}) {
@@ -102,16 +114,38 @@ hostile_inputs_return_errors :: proc(t:^testing.T) {
     _,get_error:=ref_get(&s,"ns","n")
     testing.expect_value(t,get_error,Error.Corrupt)
 
+    now:=time.now()
+    unleased,_:=put_bytes(&s,data[:31],now)
+    test_blob_time(t,&s,unleased,time.time_add(now,-2*BLOB_GRACE_AGE))
+    truncated:=path_in(folder,"leases","truncated")
+    testing.expect_value(t,lease_write(folder,truncated,{unleased,hash},now),Error.None)
+    valid,valid_error:=os.read_entire_file(truncated,context.temp_allocator)
+    if !testing.expect(t,valid_error==nil && len(valid)>size_of(Hash)) {return}
+    testing.expect(t,os.write_entire_file(truncated,valid[:len(valid)-size_of(Hash)])==nil)
+    random_lease:=path_in(folder,"leases","random")
+    testing.expect(t,os.write_entire_file(random_lease,test_bytes(len(valid),42))==nil)
+    oversized:=path_in(folder,"leases","oversized")
+    lease_bytes:=make([]u8,len(LEASE_MAGIC)+(LEASE_MAX_HASHES+2)*size_of(Hash),
+        context.temp_allocator)
+    copy(lease_bytes,valid)
+    testing.expect(t,os.write_entire_file(oversized,lease_bytes)==nil)
+    for file in ([3]string{truncated,random_lease,oversized}) {test_set_time(t,file,now)}
+    _,hostile_sweep_error:=sweep(&s,nil,now)
+    testing.expect_value(t,hostile_sweep_error,Error.None)
+    testing.expect(t,!has(&s,unleased),"invalid leases do not keep addresses")
+
     // Memory that runs out.
     out:=s
     out.allocator=failing_allocator()
-    _,table_error:=blob_table(&s,address_of_bytes(data[:PIECE_BYTES]),out.allocator)
+    _,table_error:=blob_table(&s,test_address(data[:PIECE_BYTES]),out.allocator)
     testing.expect_value(t,table_error,Error.Missing)
     good,_:=put_bytes(&s,data[:10])
     _,table_error=blob_table(&s,good,out.allocator)
     testing.expect_value(t,table_error,Error.Out_Of_Memory)
     _,missing_error=receive_missing(&s,hash,out.allocator)
     testing.expect_value(t,missing_error,Error.Out_Of_Memory)
+    _,file_error:=put_file(&out,path_in(folder,"layout"))
+    testing.expect_value(t,file_error,Error.Out_Of_Memory)
     _,path_error:=blob_path(&s,good,out.allocator)
     testing.expect_value(t,path_error,Error.Out_Of_Memory)
     _,list_error:=ref_list(&out,"ns",context.temp_allocator)
@@ -119,7 +153,7 @@ hostile_inputs_return_errors :: proc(t:^testing.T) {
     _,sweep_error:=sweep(&out,{good})
     testing.expect_value(t,sweep_error,Error.Out_Of_Memory)
     other,_:=put_bytes(&s,data[:20])
-    testing.expect_value(t,receive_begin(&out,address_of_bytes(data[:PIECE_BYTES+1]),PIECE_BYTES+1,test_table(data[:PIECE_BYTES+1])),Error.Out_Of_Memory)
+    testing.expect_value(t,receive_begin(&out,test_address(data[:PIECE_BYTES+1]),PIECE_BYTES+1,test_table(data[:PIECE_BYTES+1])),Error.None)
     testing.expect(t,has(&s,other))
     _,open_error:=open(path_in(folder,"other"),failing_allocator())
     testing.expect_value(t,open_error,Error.Out_Of_Memory)
@@ -128,7 +162,7 @@ hostile_inputs_return_errors :: proc(t:^testing.T) {
     testing.expect(t,leaked==0 && bad_frees==0,"the store keeps no memory past close")
 
     // Roots it refuses.
-    testing.expect(t,os.write_entire_file(path_in(folder,"layout"),transmute([]u8)string("mirai store 0\n"))==nil)
+    testing.expect(t,os.write_entire_file(path_in(folder,"layout"),transmute([]u8)string("mirai store 1\n"))==nil)
     _,layout_error:=open(folder)
     testing.expect_value(t,layout_error,Error.Unsupported_Layout)
     _,long_error:=open(strings.repeat("x",ROOT_MAX+1,context.temp_allocator))

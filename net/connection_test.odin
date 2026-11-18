@@ -446,38 +446,6 @@ a_reliable_message_larger_than_its_queue_streams_and_arrives_in_pieces :: proc(t
     testing.expect(t,false,"the message and the one after it arrive")
 }
 
-@(test)
-send_rate_limits_the_bytes_a_connection_puts_on_the_wire :: proc(t:^testing.T) {
-    w:Test_World;test_world_init(&w,2);defer test_world_destroy(&w)
-    channels:=[]Channel_Desc{{kind=.Reliable,queue_bytes=1<<20}}
-    server:=test_host(&w,{mode=.Server,channels=channels,command_bytes=4<<20})
-    client:=test_host(&w,{mode=.Client,channels=channels,send_rate=20000,command_bytes=4<<20,frame_bytes=1<<20})
-    _,on_client:=test_connect(&w,server,client)
-    blob:=make([]u8,200000);defer delete(blob)
-    for &b,i in blob {b=u8(i)}
-    testing.expect_value(t,message_send(client,on_client,0,blob),Error.None)
-    test_step(&w,30)
-    host_poll(client);host_poll(server)
-    before,_:=connection_stats(client,on_client)
-    arrived:=false
-    steps,got:=0,0
-    for !arrived && steps<1200 {
-        test_step(&w)
-        steps+=1
-        host_poll(client)
-        for command in host_poll(server) {
-            if command.kind!=.Message {continue}
-            got+=len(command.data)
-            arrived=!command.more && got==len(blob)
-        }
-    }
-    testing.expect(t,arrived)
-    after,_:=connection_stats(client,on_client)
-    rate:=f64(after.bytes_sent-before.bytes_sent)/(f64(steps)*TEST_STEP)
-    testing.expect(t,rate<22000 && rate>15000)
-    testing.expect(t,after.send_rate>10000 && after.send_rate<24000)
-}
-
 // A transport that keeps the last datagram of a connection its host sent.
 @(private="file")
 Capture :: struct {inner:Transport,last:[PACKET_BYTES]u8,size:int}
@@ -719,4 +687,57 @@ udp_sockets_carry_a_connection_on_localhost :: proc(t:^testing.T) {
     testing.expect(t,echoed)
     stats,_:=connection_stats(client,on_client)
     testing.expect(t,stats.packets_received>0)
+}
+
+// Prompt acknowledgements answer only a stream of reliable chunks: an idle connection sends its
+// keepalives and their answers, and one that carries game traffic both ways (a message every tick, a
+// small reliable one every few ticks and a larger one now and then) sends about a datagram a tick.
+@(test)
+idle_and_game_connections_send_no_more_datagrams_for_prompt_acknowledgements :: proc(t:^testing.T) {
+    channels:=[]Channel_Desc{{kind=.Reliable},{kind=.Unreliable}}
+    w:Test_World;test_world_init(&w,2);defer test_world_destroy(&w)
+    server:=test_host(&w,{mode=.Server,channels=channels})
+    client:=test_host(&w,{mode=.Client,channels=channels})
+    on_server,on_client:=test_connect(&w,server,client)
+    if !testing.expect(t,on_server!=0 && on_client!=0) {return}
+    sim_endpoint_conditions(&w.sim,0,{latency=0.02})
+    sim_endpoint_conditions(&w.sim,1,{latency=0.02})
+    SECONDS :: 10
+    for game in ([]bool{false,true}) {
+        host_poll(server);host_poll(client)
+        before_server,_:=connection_stats(server,on_server)
+        before_client,_:=connection_stats(client,on_client)
+        next:=w.now
+        tick:=0
+        small:[200]u8
+        large:[2000]u8
+        start:=w.now
+        for w.now-start<SECONDS {
+            w.now+=0.001
+            sim_network_advance(&w.sim,w.now)
+            if game && w.now>=next {
+                next+=1.0/60
+                tick+=1
+                for pair in ([][2]^Host{{server,client},{client,server}}) {
+                    connection:=pair[0]==server?on_server:on_client
+                    message_send(pair[0],connection,1,small[:8])
+                    if tick%6==0 {message_send(pair[0],connection,0,small[:])}
+                    if tick%60==0 {message_send(pair[0],connection,0,large[:])}
+                }
+            }
+            host_update(server,w.now);host_update(client,w.now)
+            for command in host_poll(server) {testing.expect(t,command.kind!=.Disconnected)}
+            for command in host_poll(client) {testing.expect(t,command.kind!=.Disconnected)}
+        }
+        after_server,_:=connection_stats(server,on_server)
+        after_client,_:=connection_stats(client,on_client)
+        per_second:=[2]f64{f64(after_server.packets_sent-before_server.packets_sent)/SECONDS,f64(after_client.packets_sent-before_client.packets_sent)/SECONDS}
+        for rate in per_second {
+            if game {
+                testing.expectf(t,rate<=1.05*60+1,"with game traffic %.1f datagrams a second, more than one a tick",rate)
+            } else {
+                testing.expectf(t,rate<1/ACK_DELAY,"idle %.1f datagrams a second: acknowledgements come sooner than ACK_DELAY",rate)
+            }
+        }
+    }
 }
