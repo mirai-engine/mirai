@@ -322,7 +322,7 @@ project's world through
 
 Numbered layers; a package only imports lower layers.
 
-- **0** `std/*`: standard library (base, math, serial, jobs, spatial, geom, anim, ai, input,
+- **0** `std/*`: standard library (base, blake3, math, serial, jobs, spatial, geom, anim, ai, input,
   subprocess, ui_format). It does not depend on the engine. `std/compressor` is not imported as
   `mirai:`: it is the open implementation of the collection `compressor` (`data`, `texture`,
   `blocks`, the last engine-time), which every compile names and which the private
