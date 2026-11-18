@@ -30,7 +30,9 @@ import "core:time"
 GPU_TURNS :: 8
 GPU_ADMISSION_LOCK :: "gpu.lock"
 GPU_MEMORY_ASSUMED :: i64(4)<<30
-GPU_CHARGE_DEFAULT :: i64(3)<<30
+// More than a card holds: a project never measured opens beside no other,
+// since a guess below what it takes fills the card with the next one.
+GPU_CHARGE_DEFAULT :: i64(1)<<40
 GPU_CHARGE_DEVICE :: i64(1)<<30
 // The card is left this part of its memory for what holds no turn.
 GPU_RESERVE_PART :: 8
@@ -213,6 +215,19 @@ gpu_acquire :: proc(root,what:string,charge:i64,person:=false,notice:proc(waitin
 gpu_turn_rename :: proc(lock:^Lock,what:string,charge:i64) {
     if !lock.held {return}
     _=os.write_entire_file(lock.owner,transmute([]u8)gpu_holder_text(what,charge,measurement(context.temp_allocator)))
+}
+
+// Names the process `to` the holder of the turns held by process `from`,
+// which hands them to it: an editor that starts again as another.
+gpu_turn_follow :: proc(root:string,from,to:int) {
+    prefix:=fmt.tprintf("pid %d, ",from)
+    for turn in 0..<GPU_TURNS {
+        path:=gpu_turn_path(root,turn,context.temp_allocator)
+        held,holder,_:=lock_holder(path,context.temp_allocator)
+        if !held || !strings.has_prefix(holder,prefix) {continue}
+        text:=fmt.tprintf("pid %d, %s",to,holder[len(prefix):])
+        _=os.write_entire_file(strings.concatenate({path,".owner"},context.temp_allocator),transmute([]u8)text)
+    }
 }
 
 @(private)
