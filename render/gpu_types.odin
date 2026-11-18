@@ -256,7 +256,8 @@ Gpu_Mesh :: struct {
 	bounds_max:      Vec4,
 	rays:            [asset.MESH_RAY_LEVELS]Gpu_Mesh_Ray,
 	draw_first:      u32, // where its clusters start in the indices of the meshes drawn whole this frame (mesh_draws.odin); GPU_NONE: not there
-	pad0, pad1, pad2: u32,
+	area_word:       u32, // the area of the triangles of each of its clusters in the index pool, f32 square metres of its space; GPU_NONE: not known
+	pad1, pad2:      u32,
 }
 // Level 0 is closed: a cluster of it seen from behind the cone of its normals is hidden.
 MESH_FLAG_CLOSED :: abi.MESH_FLAG_CLOSED
@@ -490,8 +491,8 @@ RASTER_BIN_TESTED :: abi.RASTER_BIN_TESTED
 // What the cull of the clusters the maps of the shadows draw counts
 // (shadow_cull.slang): the draws of those that hide whole and of those of
 // masked materials, the groups of its cluster pass over the chunks, how many
-// chunks its instance pass handed over, and how many clusters its draws took,
-// which SHADOW_FRAME_CLUSTERS bounds.
+// chunks its instance pass handed over, and how many units its draws took,
+// which SHADOW_FRAME_UNITS bounds.
 Gpu_Shadow_State :: struct {
 	draws:            [SHADOW_DRAWS]Gpu_Draw,
 	cluster_dispatch: [3]u32,
@@ -515,21 +516,24 @@ Gpu_Cull_Stats :: struct {
 	raster_need: [2]u32, // the most vertices and triangles the view would hold in a round of the raster (Gpu_Cull_State.raster_need)
 	shadow: Shadow_Stats,
 	// Of dropped and raster_need, the most any view of the frame counted
-	// (cull_stats_fold.comp), which the lists grow from. The rest counts a
-	// view: the next clears it.
+	// (cull_stats_fold.comp), which the lists grow from, and of shadow the sum
+	// of its views. The rest counts a view: the next clears it.
 	most_dropped:     [Cull_List]u32,
 	most_raster_need: [2]u32,
+	views_shadow:     Shadow_Stats,
 }
 #assert(len(Cull_List) == 7)
-// What the maps of the shadows of the last view drew in a frame: the clusters
+// What the maps of the shadows of a view drew in a frame: the clusters
 // the cache drew, once for each page they cover, those of them of masked
 // materials apart, and their triangles; those the atlas drew over it; the
 // pages the cache drew and the atlas composed, those newly asked for, those
 // of them the pool left out and those not drawn whole this frame, which wait
-// for the frames after; and the clusters the draws had no room for in the
-// frame (SHADOW_FRAME_CLUSTERS), whose pages wait too.
+// for the frames after; the clusters the draws had no room for in the frame
+// (SHADOW_FRAME_UNITS), whose pages wait too; the pages the bound of the
+// frame grows for (abi.SHADOW_COUNT_SHORT); and the units of raster work the
+// cache and the atlas drew (abi.SHADOW_UNIT_TEXELS).
 Shadow_Stats :: struct {
-	clusters, clusters_masked, triangles, clusters_moving, pages_drawn, pages_composed, pages_asked, pages_left, pages_waiting, clusters_over: u32,
+	clusters, clusters_masked, triangles, clusters_moving, pages_drawn, pages_composed, pages_asked, pages_left, pages_waiting, clusters_over, pages_short, units, units_moving: u32,
 }
 // Instances, clusters and triangles that passed the cull of a frame, of one kind.
 Visible_Kind :: struct {instances, clusters, triangles: u32}
