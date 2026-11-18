@@ -435,7 +435,7 @@ program_pose :: proc(playback:^Playback,state:^Playing,content:^host.Content_Ani
         // The pose two ticks before the target, into the room of the sampled one.
         older:=pose
         ratio:=runtime.history_dt/runtime.last_dt
-        for value,b in before {old:=value;old.position-=(state.local[b].position-value.position)*ratio;old.scale-=(state.local[b].scale-value.scale)*ratio;delta:=mm.quat_inverse(value.rotation)*state.local[b].rotation;old.rotation=value.rotation*mm.quat_slerp(1,mm.quat_inverse(delta),ratio);older[b]=old}
+        pose_extrapolate_back(before,state.local[:],older,ratio)
         for &value,k in target {value=target_previous[k]-(value-target_previous[k])*ratio}
         input:=lib.Inertial_Input{previous=previous,current=runtime.from[:],target=before,target_previous=older,previous_curves=old,current_curves=now,target_curves=target_previous,target_previous_curves=target,dt=runtime.history_dt,duration=runtime.fade}
         if !lib.inertial_capture(&runtime.inertia,runtime.inertia_bones[:],runtime.inertia_curves[:],input) {runtime.error=.Invalid_Parameter;return false}
