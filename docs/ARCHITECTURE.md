@@ -336,6 +336,8 @@ Numbered layers; a package only imports lower layers.
   and keeps in `store` the records of imports (package and build manifests, `packages.mirai`).
   `rhi/shared_device` is the device the GPU tests share; only tests import it, also the GPU tests of
   `rhi`, in `rhi/tests`.
+- **3** `exchange`: blobs and refs of `store` between peers over the connections of `net` hosts;
+  a headless peer and the editor link it.
 - **3** `render`, `platform`: hybrid renderer and SDL3. `render/abi` declares the constants the
   renderer shares with its shaders, on top of `asset` alone: `cook/shaders` imports it to write
   them for the shaders, since the tool cannot import `render`.

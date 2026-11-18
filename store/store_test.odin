@@ -1,5 +1,6 @@
 package store
 
+import "core:mem"
 import "core:os"
 import "core:strings"
 import "core:testing"
@@ -131,12 +132,22 @@ a_wrong_table_or_piece_is_refused_and_leaves_no_blob :: proc(t:^testing.T) {
     testing.expect(t,!has(&s,hash),"refused pieces complete nothing")
     total,_:=usage(&s)
     testing.expect_value(t,total.blobs,0)
+    partial,partial_error:=blob_table(&s,hash,context.temp_allocator)
+    testing.expect(t,partial_error==.None && string(mem.slice_to_bytes(partial))==string(mem.slice_to_bytes(pieces)),"a blob being received serves the table it began with")
     // The table does not hold the length of the last piece: a size that keeps
-    // the piece count is taken, and then no last piece of the true length fits it.
+    // the piece count is taken, and then the true last piece proves it wrong.
     testing.expect_value(t,remove(&s,hash),Error.None)
+    _,gone_error:=blob_table(&s,hash,context.temp_allocator)
+    testing.expect_value(t,gone_error,Error.Missing)
     testing.expect_value(t,receive_begin(&s,hash,i64(len(data))-1,pieces),Error.None)
-    for index in 0..<len(pieces) {receive_piece(&s,hash,index,test_piece(data,index))}
+    last:=len(pieces)-1
+    for index in 0..<last {testing.expect_value(t,receive_piece(&s,hash,index,test_piece(data,index)),Error.None)}
+    testing.expect_value(t,receive_piece(&s,hash,last,test_piece(data,last)),Error.Wrong_Size)
+    testing.expect_value(t,receive_piece(&s,hash,last,test_piece(data,last)[2:]),Error.Invalid_Argument)
     testing.expect(t,!has(&s,hash),"a wrong size publishes nothing")
+    testing.expect_value(t,remove(&s,hash),Error.None)
+    testing.expect_value(t,receive_begin(&s,hash,i64(len(data)),pieces),Error.None)
+    testing.expect_value(t,receive_piece(&s,hash,last,test_piece(data,last)),Error.None)
 }
 
 @(test)

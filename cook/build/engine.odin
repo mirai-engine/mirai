@@ -81,7 +81,7 @@ ENGINE_PACKAGES :: [?]Engine_Package{
     {.Base,"audio","system"},{.Base,"platform","system"},{.Base,"rhi","system"},
     {.Base,"project","system"},{.Base,"store","system"},{.Base,"core",""},
 
-    {.Engine,"asset",""},{.Engine,"net",""},{.Engine,"render/abi","render"},{.Engine,"render","render"},{.Engine,"third_party/freetype","freetype"},
+    {.Engine,"asset",""},{.Engine,"net",""},{.Engine,"exchange",""},{.Engine,"render/abi","render"},{.Engine,"render","render"},{.Engine,"third_party/freetype","freetype"},
     {.Engine,"ui","ui"},{.Engine,"host",""},{.Engine,"engine/input","engine"},{.Engine,"engine/scene","engine"},{.Engine,"engine/volume","engine"},
     {.Engine,"engine/render","engine"},{.Engine,"engine/audio","engine"},{.Engine,"engine/gui","engine"},{.Engine,"engine/camera","engine"},{.Engine,"engine/save","engine"},
 

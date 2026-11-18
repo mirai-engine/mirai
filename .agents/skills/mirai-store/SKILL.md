@@ -2,9 +2,11 @@
 name: mirai-store
 description: Mirai machine-wide content-addressed store (the `store` package) - blobs named by their
   BLAKE3 address and cut in pieces, receiving a blob piece by piece with resume, range reads of
-  partial blobs, refs that name an address, usage and sweep, and the default root. Use when
-  storing or sharing heavy content between projects or peers, building a blob transport, an asset
-  library or a derived data cache on top of it, or diagnosing a corrupt or missing blob.
+  partial blobs, refs that name an address, usage and sweep, and the default root - and the
+  `exchange` package that moves blobs and refs between peers over `net` (wants, priorities,
+  several sources, lying peers, blocking fetch). Use when storing or sharing heavy content between
+  projects or peers, building an asset library or a derived data cache on top of it, fetching a
+  blob from another machine, or diagnosing a corrupt, missing or slow blob.
 ---
 
 # Mirai store
@@ -21,11 +23,15 @@ derived data cache that use it decide what a ref means and what is live.
 - Receiving a blob piece by piece and range reads of a partial one: `store/receive.odin`.
 - Refs and their names: `store/refs.odin`.
 - Usage and sweep: `store/space.odin`.
+- Moving blobs and refs between peers (`exchange`): what its owner calls →
+  [exchange](references/exchange.md#what-the-owner-calls), its rules →
+  [invariants](references/exchange.md#invariants), its tests →
+  [verification](references/exchange.md#verification).
 
 ## Workflow
 
-1. A sender serves the piece table of a complete blob and its pieces; it reads ranges by path or
-   with the range read.
+1. A sender serves the piece table of a complete blob, or of one it is still receiving, and its
+   pieces; it reads ranges by path or with the range read.
 2. A receiver begins from the address and the table, gives each piece as it arrives in any order,
    and asks which pieces are missing to request them again, also after a restart.
 3. A layer that names content sets a ref in its own namespace; it sweeps with the set of addresses
@@ -40,7 +46,8 @@ derived data cache that use it decide what a ref means and what is live.
   bytes a piece, never its bytes. The root version carries the address rule: a root of another
   rule is refused, never migrated.
 - A table does not carry the length of its last piece: a size with the right piece count passes
-  the table check, and then no true last piece fits it, so nothing is published.
+  the table check, and then the true last piece returns `Wrong_Size` instead of being kept, so
+  nothing is published and the receiver begins again with the size the piece proves.
 - Only the two private procedures of `address.odin` (the value of a piece, the address of a table)
   touch the hash primitive; everything else, tests included, goes through them or the API, so the
   primitive can be replaced in one place.
