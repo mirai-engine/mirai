@@ -20,10 +20,26 @@ Test_Node :: struct {
     lie:Test_Lie,
     source:^store.Store, // what the scripted peer serves
     game:Test_Game,
+    requests:int,          // requests a scripted peer got
+    held:int,              // Late_Done: Dones owed
+    held_at:f64,           // when they are sent
+    held_host:^wire.Host,
+    held_connection:wire.Connection,
 }
 
+// What a scripted peer does with the requests it gets.
 @(private)
-Test_Lie :: enum {None,Table,Piece,Size}
+Test_Lie :: enum {
+    None,
+    Table,      // a table that does not match the address
+    Piece,      // pieces that do not match the table
+    Size,       // a size the last piece contradicts
+    Single,     // for a blob of several pieces, a size of half a piece and the address as its table
+    Huge,       // a table larger than the receiver holds
+    Size_First, // Size, without the last piece
+    Hold,       // nothing, and an unrelated Lack every 0.1 s
+    Late_Done,  // nothing, and a Done for each request 5.1 s later
+}
 
 // A 60 Hz unreliable message from the server to the client on channel 0.
 @(private)
@@ -134,6 +150,7 @@ test_step :: proc(w:^Test_World,steps:=1) {
                 for command in wire.host_poll(h) {test_command(w,&n,h,command)}
                 if h.desc.mode==.Server && w.channel==1 {test_game_send(w,&n,h)}
             }
+            if n.script!=nil {test_script_tick(w,&n)}
             if n.open {update(&n.x,w.now)}
             for h in n.hosts[:n.host_count] {wire.host_update(h,w.now)}
         }
@@ -202,13 +219,36 @@ test_state :: proc(x:^Exchange,address:store.Hash) -> State {
     return p.state
 }
 
+@(private)
+test_script_tick :: proc(w:^Test_World,n:^Test_Node) {
+    if n.lie==.Late_Done && n.held>0 && w.now>=n.held_at {
+        done:=[1]u8{MSG_DONE}
+        for _ in 0..<n.held {wire.message_send(n.held_host,n.held_connection,w.channel+LANE_DATA,done[:])}
+        n.held=0
+    }
+    if n.lie==.Hold && n.held_host!=nil && int(w.now*1000)%100==0 {
+        buffer:[MSG_LACK_BYTES]u8
+        unrelated:=store.address_of_bytes(test_bytes(8,u64(w.now*1000)))
+        wire.message_send(n.held_host,n.held_connection,w.channel+LANE_DATA,buffer[:encode_lack(buffer[:],unrelated,0,0)])
+    }
+}
+
 // A scripted peer that answers requests from n.source and lies as n.lie says.
 @(private)
 test_liar :: proc(w:^Test_World,n:^Test_Node,h:^wire.Host,command:wire.Command) {
     if command.kind!=.Message || int(command.channel)!=w.channel+LANE_CONTROL || len(command.data)<MSG_REQUEST_HEAD || command.data[0]!=MSG_REQUEST {return}
+    n.requests+=1
+    if n.lie==.Hold || n.lie==.Late_Done {
+        n.held_host,n.held_connection=h,command.connection
+        if n.lie==.Late_Done {
+            if n.held==0 {n.held_at=w.now+5.1}
+            n.held+=1
+        }
+        return
+    }
     r:=Reader{data=command.data[MSG_REQUEST_HEAD:],ok=true}
     count:=int(get_u16(command.data[1:]))
-    out:=make([]u8,MSG_TABLE_HEAD+64*32+store.PIECE_BYTES,context.temp_allocator)
+    out:=make([]u8,MSG_TABLE_HEAD+4096*32+store.PIECE_BYTES,context.temp_allocator)
     for _ in 0..<count {
         kind:=read_u8(&r)
         address:=read_hash(&r)
@@ -219,18 +259,35 @@ test_liar :: proc(w:^Test_World,n:^Test_Node,h:^wire.Host,command:wire.Command) 
         if kind==0 {
             pieces,_:=store.blob_table(n.source,address,context.temp_allocator)
             told:=size
-            if n.lie==.Size {told=size-100}
-            if n.lie==.Table {pieces[1][3]~=0x40}
+            #partial switch n.lie {
+            case .Size,.Size_First: told=size-100
+            case .Table: pieces[1][3]~=0x40
+            case .Single:
+                told=store.PIECE_BYTES/2
+                pieces=pieces[:1]
+                pieces[0]=address
+            case .Huge:
+                told=128<<20
+                pieces=make([]store.Hash,store.piece_count(told),context.temp_allocator)
+            }
             wr:=Writer{data=out}
             write_u8(&wr,MSG_TABLE)
             write_bytes(&wr,address[:])
             write_u64(&wr,u64(told))
             for &p in pieces {write_bytes(&wr,p[:])}
             wire.message_send(h,command.connection,w.channel+LANE_DATA,out[:wr.n])
+            if n.lie==.Single {
+                encode_piece_head(out,address,0)
+                piece:=out[MSG_PIECE_HEAD:][:told]
+                store.read(n.source,address,0,piece)
+                wire.message_send(h,command.connection,w.channel+LANE_DATA,out[:MSG_PIECE_HEAD+int(told)])
+                continue
+            }
         }
         last:=store.piece_count(size)-1
         for index in first..<min(first+n_pieces,last+1) {
             bytes:=store.piece_size(size,index)
+            if n.lie==.Size_First && index==last {continue}
             if n.lie==.Size && index==last {bytes-=100}
             encode_piece_head(out,address,u32(index))
             piece:=out[MSG_PIECE_HEAD:][:bytes]
