@@ -272,10 +272,10 @@ assets_init :: proc(a:^Assets,desc:Assets_Desc) -> bool {
     allocator:=desc.allocator.procedure!=nil?desc.allocator:context.allocator
     capacity:=desc.capacity>0?desc.capacity:ASSETS_DEFAULT_CAPACITY
     a^={allocator=allocator,renderer=desc.renderer}
-    listed:=asset.registry_init(&a.registry,desc.root,desc.cache,allocator,desc.imported)
+    listed:=asset.registry_init(&a.registry,desc.root,desc.cache,allocator)
     // A copy of an asset made outside the editor gets an id of its own.
     a.registry.resolve_duplicates=true
-    for mount in desc.mounts {listed&&=asset.registry_mount(&a.registry,mount.folder,mount.prefix,mount.imported)}
+    for mount in desc.mounts {listed&&=asset.registry_mount(&a.registry,mount.folder,mount.prefix,mount.listed)}
     asset.types_init(&a.types,allocator)
     a.index=make(map[base.Asset_Id]Assets_Ref,allocator)
     a.derived=make(map[u64]u32,allocator)

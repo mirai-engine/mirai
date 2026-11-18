@@ -95,7 +95,7 @@ sync :: proc(root:string,options:Sync_Options={},allocator:=context.allocator) -
     imported:=project.imported_path(top,context.temp_allocator)
     assets:=project.folder_path(top,.Assets,context.temp_allocator)
     registry:asset.Registry
-    asset.registry_init(&registry,assets,"",context.temp_allocator,imported)
+    asset.registry_init(&registry,assets,"",context.temp_allocator)
     asset.registry_scan(&registry)
     import_options:=importer.Import_Options{
         root=top,registry=&registry,rebuild=options.rebuild,worker=options.worker,fast_textures=options.fast_textures,
