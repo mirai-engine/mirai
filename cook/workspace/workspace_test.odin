@@ -162,6 +162,11 @@ the_gpu_turns_follow_the_card_and_a_person_never_waits :: proc(t:^testing.T) {
     first,first_taken,_:=gpu_try(root,"pid 1, mirai session in a",3*GB)
     second,second_taken,_:=gpu_try(root,"pid 2, mirai session in b",3*GB)
     testing.expect(t,first_taken && second_taken)
+    // An editor that starts again as another hands it its turn, and its name.
+    gpu_turn_follow(root,2,7)
+    named:=false
+    for holder in gpu_holders(root,context.temp_allocator) {named||=holder.holder==gpu_holder_text("pid 7, mirai session in b",3*GB)}
+    testing.expect(t,named,"the turn names the editor that holds it now")
     _,third_taken,waiting:=gpu_try(root,"pid 3, mirai capture in c",3*GB)
     testing.expect(t,!third_taken,"a third one does not fit")
     testing.expect_value(t,len(waiting.holders),2)
@@ -221,6 +226,8 @@ a_gpu_charge_is_the_last_peak_of_the_project :: proc(t:^testing.T) {
     game:=join(root,"game")
     testing.expect_value(t,gpu_charge(root,game),GPU_CHARGE_DEFAULT)
     testing.expect_value(t,gpu_charge(root,""),GPU_CHARGE_DEVICE)
+    testing.expect(t,!gpu_admits(i64(48)<<30,{GPU_CHARGE_DEVICE},gpu_charge(root,game)),"one never measured opens beside no other")
+    testing.expect(t,gpu_admits(i64(8)<<30,nil,gpu_charge(root,game)),"and alone it opens")
     gpu_peak_write(root,join(game,".mirai","tmp","session-copy-1"),1500<<20)
     testing.expect_value(t,gpu_charge(root,game),i64(1500)<<20)
     gpu_peak_write(root,game,700<<20)

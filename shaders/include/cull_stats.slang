@@ -23,5 +23,5 @@
 #define CULL_LIST_RASTER_VERTICES 5u
 #define CULL_LIST_RASTER_TRIANGLES 6u
 #define CULL_LISTS 7u
-struct Stats_Block { uint visible_instances; uint visible_triangles; uint culled_instances; uint occluded_instances; uint probes_traced; uint visible_clusters; uint kinds[9]; uint late[3]; uint dropped[7]; uint raster[3]; uint resolved[3]; uint probe_rays[2]; uint lists[4]; uint raster_need[2]; uint shadow[10]; uint most_dropped[7]; uint most_raster_need[2]; };
+struct Stats_Block { uint visible_instances; uint visible_triangles; uint culled_instances; uint occluded_instances; uint probes_traced; uint visible_clusters; uint kinds[9]; uint late[3]; uint dropped[7]; uint raster[3]; uint resolved[3]; uint probe_rays[2]; uint lists[4]; uint raster_need[2]; uint shadow[13]; uint most_dropped[7]; uint most_raster_need[2]; uint views_shadow[13]; };
 #endif

@@ -4,9 +4,10 @@
 // alone), whose pages lie where the table of the pages says in the pool of
 // the view, its cache and its atlas, both SHADOW_POOL texels a side. An entry
 // of the table is the page of the pool + 1 that holds a page (0: none) with
-// SHADOW_PAGE_CACHED and SHADOW_PAGE_COMPOSED while it is drawn, and how many
+// SHADOW_PAGE_CACHED and SHADOW_PAGE_COMPOSED while it is drawn, how many
 // levels or mips coarser the nearest page drawn this frame lies where it is
-// not (SHADOW_ENTRY_COARSER).
+// not (SHADOW_ENTRY_COARSER), and the page that holds a point there
+// (SHADOW_ENTRY_HELD).
 #ifndef MIRAI_SHADOW_PAGES_SLANG
 #define MIRAI_SHADOW_PAGES_SLANG
 
