@@ -2238,6 +2238,53 @@ diffuse_transmission_lets_the_light_of_the_other_side_through :: proc(t:^testing
     testing.expectf(t,rhi.device_validation_errors(f.device)==0,"validation: %s",rhi.device_validation_message(f.device))
 }
 
+// A thin card that lets light through, with others of its kind between it and
+// the sun, gets through each the share it lets through itself: its own light
+// from behind times its weight once for each card, so it grows with the
+// weight and falls with the cards stacked. Under a card that lets nothing
+// through, masked as they are, it gets none.
+@(test)
+diffuse_transmission_lets_the_sun_through_the_leaves_in_its_way :: proc(t:^testing.T) {
+    f:Fixture
+    if !fixture_init(t,&f,32,32,layer_settings()) {return}
+    defer fixture_destroy(&f)
+    r:=f.renderer
+    card :: proc(weight:f32) -> Material_Desc {
+        m:=DEFAULT_MATERIAL
+        m.base_color={1,1,1}
+        m.roughness=0.5
+        m.alpha_mode=.Mask
+        m.two_sided=true
+        m.diffuse_transmission={weight=weight,color={1,1,1}}
+        return m
+    }
+    materials_set(r,{card(0.5),card(0.8),card(0)})
+    quad:=ground_quad(r)
+    table:=dfg_table(t,&f)
+    left:=1-dielectric_albedo(table,1,0.5,0.04)
+    Case :: struct {material:Material_Handle,weight:f32,stacked:int,opaque:bool}
+    cases:=[?]Case{{1,0.5,1,false},{2,0.8,1,false},{1,0.5,2,false},{1,0.5,1,true}}
+    seen:[len(cases)]f32
+    for c,i in cases {
+        instances:[3]Instance_Desc
+        instances[0]={object_id=1,mesh=quad,transform=scale_matrix(12),material=c.material,tint={1,1,1}}
+        for k in 1..=c.stacked {
+            below:=scale_matrix(12)
+            below[1,3]=-0.3*f32(k)
+            instances[k]={object_id=u64(k+1),mesh=quad,transform=below,material=3 if c.opaque else c.material,tint={1,1,1}}
+        }
+        scene_given(r,instances[:1+c.stacked],nil,{direction={0,-1,0},color={1,1,1},illuminance=math.PI,enabled=true,indirect=1,scattering=1},{})
+        frames(t,&f,OVERHEAD,4)
+        seen[i]=target_at(t,&f,r.targets.direct,OVERHEAD,{}).y
+        expected:=0 if c.opaque else math.pow(c.weight,f32(c.stacked+1))*left
+        // The G-buffer holds the weight of the pixel in 6 bits, a step of it taken once a card.
+        tolerance:=0.02+f32(c.stacked+1)*expected/(63*c.weight)
+        testing.expectf(t,abs(seen[i]-expected)<tolerance,"%v: the sun through the cards %v, expected %v",c,seen[i],expected)
+    }
+    testing.expectf(t,seen[1]>seen[0] && seen[0]>seen[2] && seen[2]>0.01 && seen[3]<1e-3,"more weight lets more through, more cards less, an opaque one none: %v",seen)
+    testing.expectf(t,rhi.device_validation_errors(f.device)==0,"validation: %s",rhi.device_validation_message(f.device))
+}
+
 // Lights and the sky go through the same layers: a coat darkens and tints
 // what is under it, a fuzz takes what it scatters, by the same amounts.
 @(test)
