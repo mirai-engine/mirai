@@ -77,8 +77,6 @@ hostile_messages_are_refused_without_a_crash :: proc(t:^testing.T) {
         {LANE_CONTROL,test_message({MSG_REF},test_name("lib"),test_name("a"),{2},zero[:]),true},
         {LANE_CONTROL,test_message({MSG_NAMES},test_name("lib"),{0},{0},test_le(3,2)),true},
         {LANE_CONTROL,test_message({MSG_NAMES},test_name("lib"),{0},{0},test_le(1,2),test_name("a")),true},
-        {LANE_DATA,test_message({MSG_TABLE},blob[:],test_le(1<<62,8)),true},
-        {LANE_DATA,test_message({MSG_TABLE},blob[:],test_le(2*store.PIECE_BYTES,8),zero[:]),true},
         {LANE_DATA,test_message({MSG_TABLE},blob[:]),true},
         {LANE_DATA,test_message({MSG_PIECE},blob[:],test_le(0,4)),true},
         {LANE_DATA,test_message({MSG_PIECE},blob[:],test_le(0,4),big),true},
@@ -86,7 +84,9 @@ hostile_messages_are_refused_without_a_crash :: proc(t:^testing.T) {
         {LANE_DATA,test_message({MSG_LACK},blob[:],test_le(0,4)),true},
         {LANE_DATA,{MSG_DONE},true},
         {LANE_DATA,{MSG_DONE,0},true},
-        // Well formed, but nobody asked: ignored.
+        // Nobody asked: ignored, counted against the peer.
+        {LANE_DATA,test_message({MSG_TABLE},blob[:],test_le(1<<62,8)),false},
+        {LANE_DATA,test_message({MSG_TABLE},blob[:],test_le(2*store.PIECE_BYTES,8),zero[:]),false},
         {LANE_CONTROL,test_message({MSG_REF},test_name("lib"),test_name("a"),{1},zero[:]),false},
         {LANE_CONTROL,test_message({MSG_NAMES},test_name("lib"),{0},{0},test_le(0,2)),false},
         {LANE_DATA,test_message({MSG_PIECE},blob[:],test_le(9,4),big[:100]),false},
@@ -106,6 +106,16 @@ hostile_messages_are_refused_without_a_crash :: proc(t:^testing.T) {
             peer_add(x,server,c)
         }
     }
+    // A table of a wanted blob that nobody asked that peer for, also one too
+    // large for this end, leaves the want as it was.
+    q,_:=progress(x,other)
+    testing.expect(t,q.state==.Asking && q.total==-1,"an unasked table is not taken")
+    huge:=make([]u8,wire.PIECE_BYTES,context.temp_allocator)
+    copy(huge,test_message({MSG_TABLE},other[:],test_le(1<<30,8)))
+    for _ in 0..<8 {receive(x,server,{kind=.Message,channel=u8(w.channel+LANE_DATA),connection=c,data=huge,more=true})}
+    receive(x,server,{kind=.Message,channel=u8(w.channel+LANE_DATA),connection=c,data=huge[:1]})
+    q,_=progress(x,other)
+    testing.expect(t,q.state!=.Failed,"an unasked oversized table does not fail the want")
     // A message that arrives in pieces past what this end holds.
     piece:=make([]u8,wire.PIECE_BYTES,context.temp_allocator)
     piece[0]=MSG_NAMES

@@ -16,9 +16,12 @@ headless peer and the editor link the same code. Its messages are in `exchange/w
   its middle, so a restarted exchange takes new connections.
 - `want` (asking again raises the priority), `forget`, `progress`, `peer_progress`; `ref_ask`,
   `names_ask`, `query_result`, `query_end`.
+- `want_addresses` gives the addresses of every want, in progress or kept: the owner puts them in
+  its store lease so a sweep keeps them; the exchange holds no lease.
 - `fetch` and `fetch_ref` block a job thread until the blob is complete in the store, or return
   `Missing` once no connected peer has it; the owner keeps pumping meanwhile, since every procedure
-  takes the exchange's lock.
+  takes the exchange's lock. Success is what the store says now: a kept want whose blob was swept
+  is asked again. `destroy` wakes every waiter with `Closed` and frees once none is left.
 
 ## Invariants
 
@@ -33,19 +36,28 @@ headless peer and the editor link the same code. Its messages are in `exchange/w
   outstanding without queueing a low priority want ahead of a later high one.
 - Pieces are spread among the connected peers that do not lack the blob; a peer that lacks it is
   not asked again for a while, and a want with no peer left to ask is `Missing`, asked again when
-  a peer joins.
+  a peer joins. What a peer was asked stays reserved to it only while it makes progress on that
+  want; otherwise it goes to others, that peer is not asked for the want for a while, and its late
+  answers release nothing a second time.
+- A request addresses at most `MAX_BLOB_BYTES` and never depends on the server's own cap: a blob
+  above the server's `max_blob_bytes` is answered as lacking.
 - Nothing unverified reaches a reader: tables and pieces go through `receive_begin` and
-  `receive_piece`. A table that does not match its address, or a piece that does not match its
-  table, marks that peer wrong for that blob; a true last piece that proves the size wrong
-  (`Wrong_Size`) marks whoever gave the table, removes the partial blob and asks the table of
-  others. A peer stays wrong for a blob until it leaves.
+  `receive_piece`. A table or piece is taken only from the peer it was asked of; anything else
+  counts against that peer. A table that does not match its address, claims a size this end does
+  not hold, or a piece that does not match its table, marks that peer wrong for that blob, never
+  the want; a true last piece that proves the size wrong (`Wrong_Size`) marks whoever gave the
+  table, and the store drops only the partial blob. A table of one piece begins nothing: the piece
+  that came with it is put only if it hashes to the address, so a failed piece never blames a peer
+  for a table another gave. Marks are per peer and leave with it, never passing to the next peer
+  in its slot.
 - What a peer exposes is the owner's `Desc.expose`; without one no namespace is read. Names come
   sorted, a page at a time after the last one seen.
 - Hostile input: a malformed message, a request beyond the limits or an answer nobody could have
   asked for in that form marks the peer bad, and it is neither asked nor served again; a well formed
   message about something not asked for is ignored. A request that does not fit the room for
   `BATCHES` requests is refused, and answers to questions find room only while the asker keeps a
-  few waiting, so a peer cannot make another send without bound.
+  few waiting, so a peer cannot make another send without bound. A question its owner ended stays
+  until every peer asked answered or left, so late answers return their credits.
 - Serving and receiving do not allocate after `init`, except listing a namespace, for which the
   store reads a folder.
 
@@ -61,5 +73,11 @@ headless peer and the editor link the same code. Its messages are in `exchange/w
   `a_peer_still_receiving_a_blob_serves_its_pieces_to_a_third`,
   `refs_are_asked_and_listed_and_a_namespace_not_exposed_gives_nothing`,
   `the_blocking_form_returns_for_a_hit_a_miss_and_a_disconnect`,
-  `hostile_messages_are_refused_without_a_crash` and
-  `a_game_channel_keeps_its_delay_small_during_a_transfer`.
+  `hostile_messages_are_refused_without_a_crash`,
+  `a_game_channel_keeps_its_delay_small_during_a_transfer`,
+  `a_wrong_size_found_after_another_process_published_the_blob_keeps_it`,
+  `a_peer_that_holds_a_want_without_progress_loses_it`,
+  `a_peer_in_a_freed_slot_is_not_blamed_for_its_predecessor`,
+  `late_ref_answers_return_their_credits`,
+  `a_late_done_does_not_release_what_another_peer_was_asked`, `destroy_wakes_a_waiting_fetch` and
+  `a_server_with_the_smallest_cap_serves_an_honest_request`.
