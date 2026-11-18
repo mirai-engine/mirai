@@ -976,7 +976,7 @@ instances_classify :: proc(s: ^Scene_State) {
 tlas_refs_classify :: proc(s: ^Scene_State) {
 	if s.tlas_off {return}
 	s.glass_node_count = 0
-	if len(s.instances) == 0 || s.tlas_node_count == 0 {return}
+	if s.tlas_node_count == 0 {return}
 	for &ref in s.tlas_refs {
 		index := ref &~ TLAS_REF_GLASS
 		if int(index) >= len(s.instances) {continue}
@@ -1438,6 +1438,9 @@ instance_placement :: proc "contextless" (m: Mat4, low, high: Vec3) -> (inverse:
 	return
 }
 
+// The tree of nothing, which rays miss: its root names itself as its children.
+TLAS_EMPTY :: Gpu_Bvh_Node{bounds_min = {1, 1, 1}, bounds_max = {-1, -1, -1}}
+
 TLAS_REFIT_SLACK :: 1.5 // how much worse than when it was built a refit tree may get before it is built again
 
 // The tree of the instances, their references classified, from tlas_items,
@@ -1466,7 +1469,7 @@ tlas_build :: proc(s: ^Scene_State) {
 	}
 	if !built {
 		clear(&s.tlas_nodes)
-		append(&s.tlas_nodes, Gpu_Bvh_Node{bounds_min = {1, 1, 1}, bounds_max = {-1, -1, -1}})
+		append(&s.tlas_nodes, TLAS_EMPTY)
 		clear(&s.tlas_refs)
 		append(&s.tlas_refs, 0)
 	}
@@ -1488,7 +1491,9 @@ tlas_build :: proc(s: ^Scene_State) {
 @(private = "file")
 tlas_refit :: proc(s: ^Scene_State) -> f32 {
 	nodes := s.tlas_nodes[:s.tlas_node_count]
-	if len(s.instances) == 0 && len(s.batch.traced) == 0 || len(nodes) == 0 {return 0}
+	// What the tree holds is what it was built over, not what the scene has
+	// now: the tree of nothing is TLAS_EMPTY, an inner root without children.
+	if len(nodes) == 0 || nodes[0].count == 0 && nodes[0].left_first == 0 {return 0}
 	total: f64
 	// Children are stored after their parent.
 	#reverse for &node, i in nodes {

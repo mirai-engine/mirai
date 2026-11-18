@@ -3,6 +3,7 @@ package mirai_render
 import "core:math"
 import "mirai:render/abi"
 import "core:math/linalg"
+import "core:slice"
 import "core:testing"
 import mm "mirai:std/math"
 
@@ -256,6 +257,36 @@ the_tree_of_a_traced_batch_is_built_for_rays_traced_by_software_alone :: proc(t:
 	testing.expect(t, scene_move(r, {0}, {moved}))
 	root := r.scene.tlas_nodes[0]
 	testing.expect(t, root.bounds_max.y >= 50.4 && root.bounds_min.x <= -0.5 && root.bounds_max.z >= 18, "the root holds the moved instance and the batch")
+	// The instances of the scene, the batches rays meet or both down to none
+	// and back, a frame each: the tree holds what there is, and is refit over it.
+	holds :: proc(r: ^Renderer) -> bool {
+		s := &r.scene
+		if len(s.instances) + len(s.batch.traced) == 0 {return s.tlas_nodes[0].bounds_min.x > s.tlas_nodes[0].bounds_max.x}
+		seen := 0
+		for ref in s.tlas_refs {
+			index := int(ref &~ TLAS_REF_GLASS)
+			if index >= len(s.instances) && !slice.contains(s.batch.traced[:], u32(index - len(s.instances))) {return false}
+			seen += 1
+		}
+		return seen == len(s.instances) + len(s.batch.traced)
+	}
+	cases := [?]struct {
+		name:               string,
+		instances, batches: bool, // which go to none
+	}{{"instances to none and back with batches that trace", true, false}, {"batches to none and back with instances", false, true}, {"both to none and back", true, true}}
+	for c in cases {
+		if c.instances {testing.expect(t, scene_given(r, nil, nil, {}, {}))}
+		if c.batches {testing.expect(t, batch_remove(r, handle))}
+		batches_build(r)
+		testing.expectf(t, holds(r), "%s: the tree holds what there is with none", c.name)
+		if c.instances {testing.expect(t, scene_given(r, {{object_id = 1, mesh = mesh, transform = 1, tint = 1}}, nil, {}, {}))}
+		if c.batches {handle, _ = batch_set(r, 0, 0, {mesh = mesh, flags = {.Casts_Shadow}}, instances[:])}
+		batches_build(r)
+		testing.expect(t, scene_move(r, {0}, {linalg.matrix4_translate_f32({0, 60, 0})}))
+		root = r.scene.tlas_nodes[0]
+		testing.expectf(t, holds(r) && len(r.scene.batch.traced) == 1, "%s: the tree holds what came back", c.name)
+		testing.expectf(t, root.bounds_max.y >= 60.4 && root.bounds_max.z >= 18, "%s: the root holds the moved instance and the batch", c.name)
+	}
 	testing.expect(t, batch_remove(r, handle))
 }
 
@@ -415,7 +446,7 @@ the_kept_reach_of_the_shadow_maps_is_what_the_maps_give :: proc(t: ^testing.T) {
 	}
 	descs: [40]Instance_Desc
 	scene :: proc(r: ^Renderer, descs: []Instance_Desc, box: Mesh_Handle, random: ^u32) {
-		count := 1 + next(random, len(descs) - 1)
+		count := next(random, len(descs))
 		for &desc, i in descs[:count] {desc = {object_id = u64(i + 1), mesh = box, transform = linalg.matrix4_translate_f32({f32(next(random, 80)) - 40, 1, f32(next(random, 80)) - 40}), tint = 1}}
 		scene_given(r, descs[:count], nil, {}, {})
 	}
