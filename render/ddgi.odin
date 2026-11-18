@@ -358,6 +358,9 @@ ddgi_update :: proc(p: ^Pass, warm := false, first := true) -> bool {
 		rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
 		rhi.cmd_dispatch(cmd, groups(groups(t.width, 8), 8), groups(groups(t.height, 8), 8))
 	}
+	// The passes of the first update are timed apart; the warm updates of a frame would pass the timestamps it has.
+	stamp :: proc(cmd: ^rhi.Command_List, first: bool, name: string) {if first {rhi.cmd_timestamp(cmd, name)}}
+	stamp(cmd, first, "ddgi select")
 	rhi.cmd_fill_buffer(cmd, g.histogram, 0, PROBE_HISTOGRAM_WORDS * 4, 0)
 	Select :: struct {mode, budget, frame_number, rays_per_probe, total, awake, whole, room, slots, seen_everywhere, lit_everywhere, pad0: u32}
 	select := Select{budget = budget, frame_number = frame_number, rays_per_probe = g.rays_per_probe, total = g.total, awake = awake, whole = 1 if warm else 0, room = room, slots = h.count, seen_everywhere = g.seen_everywhere, lit_everywhere = g.lit_everywhere}
@@ -379,6 +382,7 @@ ddgi_update :: proc(p: ^Pass, warm := false, first := true) -> bool {
 		room = room, changes = u32(h.listed_count), changes_lost = h.lost, seen_everywhere = g.seen_everywhere, lit_everywhere = g.lit_everywhere, slots = h.count,
 	}
 	// The rays, then what waits for the programs of what they hit.
+	stamp(cmd, first, "ddgi trace")
 	batch := points_begin(p)
 	trace := pipeline_of(r, .Ddgi_Trace)^
 	rhi.cmd_bind_pipeline(cmd, trace)
@@ -392,8 +396,10 @@ ddgi_update :: proc(p: ^Pass, warm := false, first := true) -> bool {
 	points_bind(p)
 	textures_feedback_bind(r, cmd)
 	rhi.cmd_dispatch_indirect(cmd, g.dispatch, 0)
+	if batch {stamp(cmd, first, "ddgi programs")}
 	points_rounds(p, batch, trace, &update, 1)
 	for pipeline, i in ([2]Pipeline_Id{.Ddgi_Irradiance, .Ddgi_Distance}) {
+		stamp(cmd, first, "ddgi irradiance" if i == 0 else "ddgi distance")
 		rhi.cmd_bind_pipeline(cmd, r.pipelines[pipeline])
 		set_params(cmd, &update)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS0, g.rays)
@@ -403,12 +409,14 @@ ddgi_update :: proc(p: ^Pass, warm := false, first := true) -> bool {
 		rhi.cmd_bind_buffer(cmd, SLOT_PROBES, g.probes)
 		rhi.cmd_dispatch_indirect(cmd, g.dispatch, 12)
 	}
+	stamp(cmd, first, "ddgi keep")
 	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Ddgi_Keep])
 	set_params(cmd, &update)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, g.irradiance)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS2, g.chosen)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS3, g.kept)
 	rhi.cmd_dispatch_indirect(cmd, g.dispatch, 12)
+	stamp(cmd, first, "ddgi relocate")
 	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Ddgi_Relocate])
 	set_params(cmd, &update)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, g.rays)
