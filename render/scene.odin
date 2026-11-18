@@ -482,11 +482,18 @@ Scene_State :: struct {
 	shadow_changes:       [dynamic]Occluder_Change,
 	shadow_tracks:        [dynamic]Shadow_Track, // of each instance
 	shadow_followed:      [dynamic]u32,          // the instances whose track has a frame
-	// What the culls by instance of the maps of a view go over, written each
-	// time they are planned (shadow_reach): the ranges of instances, and the
-	// batches within the range of a light.
+	// What the culls by instance of the maps of a view go over (shadow_reach):
+	// the ranges of instances, written each time they are planned; the
+	// batches drawn that cast, by the middle of their box along x, taken
+	// again with the tables of the batches, the widest half of their boxes;
+	// the batches that move in a frame, and those a slot reaches.
 	shadow_ranges:        [dynamic][2]u32,
-	shadow_near:          [dynamic]u32,
+	shadow_casters:       [dynamic]Shadow_Caster,
+	shadow_casters_tables: u64,
+	shadow_casters_half:  f32,
+	shadow_movers:        [dynamic]Shadow_Mover,
+	shadow_found:         [dynamic][2]u32,
+	shadow_views:         [dynamic]Shadow_View_Reach, // what the culls of what stays of the slots of each view go over, kept (Shadow_Raster.reach)
 	shadow_stale:         Occluder_Changes,
 	// The rows of masked materials that changed what their casters cover since
 	// the maps last drew; past their room every caster is stale (shadow_stale.covers).
@@ -536,7 +543,10 @@ scene_init :: proc(r: ^Renderer) -> bool {
 	s.shadow_tracks = make([dynamic]Shadow_Track, a)
 	s.shadow_followed = make([dynamic]u32, a)
 	s.shadow_ranges = make([dynamic][2]u32, a)
-	s.shadow_near = make([dynamic]u32, a)
+	s.shadow_casters = make([dynamic]Shadow_Caster, a)
+	s.shadow_movers = make([dynamic]Shadow_Mover, a)
+	s.shadow_found = make([dynamic][2]u32, a)
+	s.shadow_views = make([dynamic]Shadow_View_Reach, a)
 	s.overlays = make([dynamic]Instance_Overlays, a)
 	s.reflective = make([dynamic]Reflective_Instance, a)
 	s.materials = make([dynamic]Gpu_Material_Row, a)
@@ -2789,7 +2799,11 @@ scene_destroy :: proc(r: ^Renderer) {
 	delete(s.shadow_tracks)
 	delete(s.shadow_followed)
 	delete(s.shadow_ranges)
-	delete(s.shadow_near)
+	delete(s.shadow_casters)
+	delete(s.shadow_movers)
+	delete(s.shadow_found)
+	for &view in s.shadow_views {for &kept in view.slots {delete(kept.ranges)}}
+	delete(s.shadow_views)
 	delete(s.overlays)
 	delete(s.reflective)
 	delete(s.materials)
