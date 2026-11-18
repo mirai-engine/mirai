@@ -39,10 +39,17 @@
 // - Allocate, a thread for each word of the ranks: each page asked for takes
 //   the page of the pool of its rank, which its entry lets go of; past them it
 //   is left out;
-// - Finish: the arguments of the culls and the draws of the rounds;
+// - Finish: the arguments of the culls and the draws of the rounds: each cull
+//   by instance goes over the slots with pages listed, the coarsest first
+//   (the levels of the sun from the coarsest, then the faces of the lights),
+//   while the threads of the instances that reach them (render.Shadow_Reach)
+//   fit those of a frame (Params_Block.threads), one slot at least; the
+//   foresight of the cache over those of them with pages not foreseen yet;
+//   the pages of a slot past them wait for the frames after;
 // - Grant, one group, for the cache and then for the atlas (Params_Block.round)
 //   between the cull by instance and the cull by cluster of the round: of the
-//   pages it lists, those its points read drawn the frame before first, then
+//   pages it lists of the slots Finish kept, those its points read drawn the
+//   frame before first, then
 //   in the order the pages are given, those whose units of raster work fit a
 //   share of those of a frame (Params_Block.budget) with those before: what a page
 //   took the last time the round drew it (SHADOW_WORDS_KNOWN), else what the
@@ -80,8 +87,10 @@ void table_set(uint slot, uint entry, uint e) { if (shadow_place_valid(slot, ent
 // step; frame: counts the frames; rows: of the words of the lights in the
 // buffer of the maps; plan, boxes: the words of it the plans of the slots and
 // the boxes of what changed start at, boxes and levels of the sun of them;
-// pool: the pages of the pool it may give; groups of the cull of each round;
-// fresh: the table holds nothing yet; full: the view, a light or a caster
+// pool: the pages of the pool it may give; reach: the word of the buffer of
+// the maps what the culls by instance of each slot go over starts at
+// (render.Shadow_Reach); threads: what each cull by instance of a frame runs
+// at most, one slot at least; fresh: the table holds nothing yet; full: the view, a light or a caster
 // changed, and the masks were cleared before the marks; slots: the word of
 // the buffer of the maps the slots in use start at, slot_count of them (those
 // with a map or that let go of their pages: the others hold no page),
@@ -91,7 +100,7 @@ void table_set(uint slot, uint entry, uint e) { if (shadow_place_valid(slot, ent
 // of the cache, and those of the atlas, take in a frame (shadow_units); round: 0 the
 // cache, 1 the atlas, for Grant and Settle; chunks: what the list of the
 // chunks of the cull holds (render.Cull_List.Shadow_Chunks).
-struct Params_Block { uint step; uint frame; uint rows; uint plan; uint boxes; uint box_count; uint sun; uint pool; uint groups_stays; uint groups_moves; uint fresh; uint full; uint slots; uint slot_count; uint keep; uint budget; uint round; uint chunks; uint pad1; uint pad2; };
+struct Params_Block { uint step; uint frame; uint rows; uint plan; uint boxes; uint box_count; uint sun; uint pool; uint reach; uint threads; uint fresh; uint full; uint slots; uint slot_count; uint keep; uint budget; uint round; uint chunks; uint pad1; uint pad2; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 [[vk::binding(SLOT_PASS0, 0)]] StructuredBuffer<uint4> shadow_data : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);
 [[vk::binding(SLOT_PASS2, 0)]] RWStructuredBuffer<uint> pages : register(MIRAI_REGISTER(u, SLOT_PASS2), space0);
@@ -123,8 +132,12 @@ struct Params_Block { uint step; uint frame; uint rows; uint plan; uint boxes; u
 #define POOL_GROUP 1024u
 // The key of a page of the pool read within the cycle of the jitter.
 #define POOL_KEPT 0x40000000u
-// Of the key of a page a round grants: its points did not read it drawn the frame before.
+// Of the key of a page a round grants: its points did not read it drawn the frame before;
+// its slot is past the threads of the culls by instance of the frame, and it waits.
 #define KEY_NEW 0x4000000u
+#define KEY_WAITS 0x8000000u
+// The threads of a group of shadow_maps.comp.
+#define CULL_GROUP 256u
 // The pages a round grants fill 1/GRANT_SHARE of the bound with what they are
 // foreseen to take; each may take twice that.
 #define GRANT_SHARE 2u
@@ -156,6 +169,25 @@ void step_args(uint step, uint threads) {
 }
 
 uint data_word(uint word) { return shadow_data[word >> 2u][word & 3u]; }
+// The threads of the cull by instance of a list of a slot (render.Shadow_Reach):
+// of what stays (round 0) or what moves (round 1).
+uint reach_threads(uint slot, uint list) { return data_word(params.reach + slot * SHADOW_REACH_WORDS + list * 3u + 2u); }
+// The slot of rank k in the culls by instance: the levels of the sun from the
+// coarsest, then the faces of the lights (render.shadow_slot_rank).
+uint slot_by_rank(uint k) { return k < SHADOW_SUN_MAPS ? SHADOW_SUN_MAPS - 1u - k : k; }
+// The word the slots a cull by instance goes over start at: of what stays,
+// of what moves, and the foresight of what stays.
+uint work_list(uint dispatch) { return SHADOW_WORDS_SLOTS + dispatch * (SHADOW_SLOTS + 1u); }
+// The arguments of a cull by instance over some threads, in rows of
+// SHADOW_CULL_ROW groups, which the threads of the frame count where it runs
+// (the cull of what stays runs over the slots of Grant alone).
+void cull_args(uint dispatch, uint threads, bool runs) {
+    uint at = SHADOW_WORDS_ARGS + SHADOW_ARGS_DISPATCH + 3u * dispatch, groups = (threads + CULL_GROUP - 1u) / CULL_GROUP;
+    pages[at] = min(groups, SHADOW_CULL_ROW);
+    pages[at + 1u] = (groups + SHADOW_CULL_ROW - 1u) / SHADOW_CULL_ROW;
+    pages[at + 2u] = 1u;
+    if (runs) InterlockedAdd(pages[SHADOW_WORDS_COUNTS + SHADOW_COUNT_THREADS], threads);
+}
 // The slots in use, and the k-th of them: every slot while the table holds nothing yet.
 uint slots_in_use() { return params.fresh != 0u ? SHADOW_SLOTS : params.slot_count; }
 uint slot_in_use(uint k) { return params.fresh != 0u ? k : data_word(params.slots + k); }
@@ -225,13 +257,8 @@ void listed(uint round, uint slot, uint entry, uint2 page, uint job) {
     InterlockedMax(pages[span + 1u], SHADOW_MAP_PAGES - page.y);
     InterlockedMax(pages[span + 2u], page.x + 1u);
     InterlockedMax(pages[span + 3u], page.y + 1u);
-    uint before;
-    InterlockedExchange(pages[SHADOW_WORDS_HAS + round * SHADOW_SLOTS + slot], 1u, before);
-    if (before == 0u) {
-        uint at;
-        InterlockedAdd(pages[SHADOW_WORDS_COUNTS + SHADOW_COUNT_SLOTS + round], 1u, at);
-        if (at < SHADOW_SLOTS) pages[SHADOW_WORDS_SLOTS + round * SHADOW_SLOTS + at] = slot;
-    }
+    uint has = SHADOW_WORDS_HAS + round * SHADOW_SLOTS + slot;
+    if (pages[has] == 0u) pages[has] = 1u;
     if (round == ROUND_FORESEE) return;
     uint at;
     InterlockedAdd(pages[SHADOW_WORDS_COUNTS + (round == ROUND_STAYS ? SHADOW_COUNT_DRAWN : SHADOW_COUNT_COMPOSED)], 1u, at);
@@ -365,8 +392,8 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
         step_args(STEP_SETTLE, run ? SHADOW_POOL_PAGES : 0u);
         if (run) return;
         // A still view: the rounds of what stays and of what moves draw nothing.
-        uint counts[6] = {SHADOW_COUNT_DRAWN, SHADOW_COUNT_COMPOSED, SHADOW_COUNT_REQUESTS, SHADOW_COUNT_LEFT, SHADOW_COUNT_WAITING, SHADOW_COUNT_SHORT};
-        for (uint k = 0u; k < 6u; k++) pages[SHADOW_WORDS_COUNTS + counts[k]] = 0u;
+        uint counts[7] = {SHADOW_COUNT_DRAWN, SHADOW_COUNT_COMPOSED, SHADOW_COUNT_REQUESTS, SHADOW_COUNT_LEFT, SHADOW_COUNT_WAITING, SHADOW_COUNT_SHORT, SHADOW_COUNT_THREADS};
+        for (uint k = 0u; k < 7u; k++) pages[SHADOW_WORDS_COUNTS + counts[k]] = 0u;
         for (uint round = 0u; round < 3u; round++) pages[SHADOW_WORDS_ARGS + SHADOW_ARGS_DISPATCH + 3u * round] = 0u;
         for (uint round = 0u; round < 2u; round++) {
             pages[SHADOW_WORDS_ARGS + SHADOW_ARGS_DRAW + 4u * round + 1u] = 0u;
@@ -606,7 +633,9 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
                 // A page whose one row a draw had no room for goes last, not to hold the others back.
                 bool stuck = (pages[SHADOW_WORDS_BAND + pool] & SHADOW_BAND_STUCK) != 0u;
                 uint rank = !placed || stuck ? 0xFFFFu : rank_of(slot, entry);
-                key = ((job & SHADOW_JOB_KEPT) != 0u ? 0u : KEY_NEW) | (rank << 10u) | pool;
+                // A page of a slot past the threads of the culls by instance waits, after the others.
+                bool waits = placed && pages[SHADOW_WORDS_HAS + params.round * SHADOW_SLOTS + slot] != 2u;
+                key = (waits ? KEY_WAITS : 0u) | ((job & SHADOW_JOB_KEPT) != 0u ? 0u : KEY_NEW) | (rank << 10u) | pool;
             }
             shared_words[k] = key;
         }
@@ -635,7 +664,9 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
         if (scale == 0u) scale = SHADOW_SCALE_ONE;
         for (uint k = lane; k < POOL_GROUP; k += ROUND_GROUP) {
             uint key = shared_words[k], cost = 0u, reach = 0u;
-            if (key != 0xFFFFFFFFu && !round_idle(key & 0x3FFu)) {
+            if (key != 0xFFFFFFFFu && (key & KEY_WAITS) != 0u && !round_idle(key & 0x3FFu)) {
+                cost = 1u;
+            } else if (key != 0xFFFFFFFFu && !round_idle(key & 0x3FFu)) {
                 uint pool = key & 0x3FFu, foreseen = pages[round_cost(pool)] & SHADOW_COST_UNITS;
                 uint known = pages[round_known(pool)];
                 // What the cache foresaw of a page it did not draw yet holds until
@@ -706,7 +737,7 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
         for (uint j = 0u; j < 4u; j++) {
             uint k = lane * 4u + j, key = shared_words[k], cost = shared_costs[k], reach = shared_reach[k];
             bool kept = key < KEY_NEW || params.round == 0u;
-            bool granted = spent == 0u || ((kept ? spent + cost <= share : spent + 2u * cost <= share - share / GRANT_NEW) && reached + reach <= params.chunks);
+            bool granted = (key & KEY_WAITS) == 0u && (spent == 0u || ((kept ? spent + cost <= share : spent + 2u * cost <= share - share / GRANT_NEW) && reached + reach <= params.chunks));
             spent += cost;
             reached = min(reached + reach, SHADOW_COST_UNITS);
             if (key == 0xFFFFFFFFu || cost == 0u) continue;
@@ -734,15 +765,18 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
             if (params.round == 0u) for (uint w = 0u; w < 4u; w++) pages[SHADOW_WORDS_PART + pool * 4u + w] = 0u;
         }
         GroupMemoryBarrierWithGroupSync();
+        // The cull by instance after the grant goes over the slots of the pages
+        // granted alone, within those Finish kept.
         if (lane == 0u) {
-            uint count = 0u, list = SHADOW_WORDS_SLOTS + params.round * SHADOW_SLOTS;
-            for (uint slot = 0u; slot < SHADOW_SLOTS; slot++) {
-                if (shared_slots[slot] != 0u) pages[list + count++] = slot;
+            uint list = work_list(params.round), count = 0u, total = 0u;
+            for (uint k = 0u; k < SHADOW_SLOTS; k++) {
+                uint slot = slot_by_rank(k), threads = reach_threads(slot, params.round);
+                if (shared_slots[slot] == 0u || threads == 0u) continue;
+                pages[list + 1u + count++] = slot | total << SHADOW_WORK_SHIFT;
+                total += threads;
             }
-            pages[SHADOW_WORDS_COUNTS + SHADOW_COUNT_SLOTS + params.round] = count;
-            uint at = SHADOW_WORDS_ARGS + SHADOW_ARGS_DISPATCH + 3u * params.round;
-            pages[at] = count > 0u ? (params.round == 0u ? params.groups_stays : params.groups_moves) : 0u;
-            pages[at + 1u] = count;
+            pages[list] = count;
+            cull_args(params.round, total, true);
         }
     } else if (params.step == STEP_SETTLE) {
         if (i >= round_count()) return;
@@ -812,14 +846,32 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
         }
         if (coarser != 0u || held != 0u) table_set(slot, entry, e | (coarser << SHADOW_ENTRY_COARSER) | (held << SHADOW_ENTRY_HELD));
     } else if (i == 0u) {
-        uint groups[3] = {params.groups_stays, params.groups_moves, params.groups_stays};
-        for (uint round = 0u; round < 3u; round++) {
-            uint at = SHADOW_WORDS_ARGS + SHADOW_ARGS_DISPATCH + 3u * round;
-            uint slots = pages[SHADOW_WORDS_COUNTS + SHADOW_COUNT_SLOTS + round];
-            pages[at] = slots > 0u ? groups[round] : 0u;
-            pages[at + 1u] = slots;
-            pages[at + 2u] = 1u;
+        // The slots each cull by instance goes over, the coarsest first, while
+        // their threads fit those of a frame, one at least; a slot it keeps
+        // (2) has its pages granted, the others wait.
+        for (uint round = 0u; round < 2u; round++) {
+            uint list = work_list(round), count = 0u, total = 0u;
+            for (uint k = 0u; k < SHADOW_SLOTS; k++) {
+                uint slot = slot_by_rank(k), has = SHADOW_WORDS_HAS + round * SHADOW_SLOTS + slot, threads = reach_threads(slot, round);
+                if (pages[has] == 0u || (count > 0u && total + threads > params.threads)) continue;
+                pages[has] = 2u;
+                if (threads == 0u) continue;
+                pages[list + 1u + count++] = slot | total << SHADOW_WORK_SHIFT;
+                total += threads;
+            }
+            pages[list] = count;
+            cull_args(round, total, round != ROUND_STAYS);
         }
+        // The foresight of the cache: of the slots it keeps, those with pages not foreseen yet.
+        uint list = work_list(ROUND_FORESEE), count = 0u, total = 0u;
+        for (uint k = 0u; k < SHADOW_SLOTS; k++) {
+            uint slot = slot_by_rank(k), threads = reach_threads(slot, ROUND_STAYS);
+            if (pages[SHADOW_WORDS_HAS + ROUND_FORESEE * SHADOW_SLOTS + slot] == 0u || pages[SHADOW_WORDS_HAS + slot] != 2u || threads == 0u) continue;
+            pages[list + 1u + count++] = slot | total << SHADOW_WORK_SHIFT;
+            total += threads;
+        }
+        pages[list] = count;
+        cull_args(ROUND_FORESEE, total, true);
         uint hiz = SHADOW_WORDS_ARGS + SHADOW_ARGS_HIZ;
         pages[hiz] = min(pages[SHADOW_WORDS_COUNTS + SHADOW_COUNT_DRAWN], SHADOW_POOL_PAGES);
         pages[hiz + 1u] = 1u;

@@ -482,6 +482,11 @@ Scene_State :: struct {
 	shadow_changes:       [dynamic]Occluder_Change,
 	shadow_tracks:        [dynamic]Shadow_Track, // of each instance
 	shadow_followed:      [dynamic]u32,          // the instances whose track has a frame
+	// What the culls by instance of the maps of a view go over, written each
+	// time they are planned (shadow_reach): the ranges of instances, and the
+	// batches within the range of a light.
+	shadow_ranges:        [dynamic][2]u32,
+	shadow_near:          [dynamic]u32,
 	shadow_stale:         Occluder_Changes,
 	// The rows of masked materials that changed what their casters cover since
 	// the maps last drew; past their room every caster is stale (shadow_stale.covers).
@@ -530,6 +535,8 @@ scene_init :: proc(r: ^Renderer) -> bool {
 	s.shadow_changes = make([dynamic]Occluder_Change, a)
 	s.shadow_tracks = make([dynamic]Shadow_Track, a)
 	s.shadow_followed = make([dynamic]u32, a)
+	s.shadow_ranges = make([dynamic][2]u32, a)
+	s.shadow_near = make([dynamic]u32, a)
 	s.overlays = make([dynamic]Instance_Overlays, a)
 	s.reflective = make([dynamic]Reflective_Instance, a)
 	s.materials = make([dynamic]Gpu_Material_Row, a)
@@ -2781,6 +2788,8 @@ scene_destroy :: proc(r: ^Renderer) {
 	delete(s.shadow_changes)
 	delete(s.shadow_tracks)
 	delete(s.shadow_followed)
+	delete(s.shadow_ranges)
+	delete(s.shadow_near)
 	delete(s.overlays)
 	delete(s.reflective)
 	delete(s.materials)

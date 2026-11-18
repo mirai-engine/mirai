@@ -978,6 +978,101 @@ render_a_round_of_stacked_masked_cards_keeps_within_its_time :: proc(t: ^testing
 	}
 }
 
+// Many batches over a wide ground, most of them outside the maps of a few
+// lights, and enough lights to list many slots: a light that moves resets its
+// slots, and a turn of the view changes the lights chosen. Under a small
+// bound each cull by instance of every frame keeps within it, the slots past
+// it waiting, and the pages complete over the frames after into the picture
+// of a bound that holds every slot at once.
+@(test)
+render_the_culls_of_the_maps_keep_within_the_bound :: proc(t: ^testing.T) {
+	BOUND :: u32(1 << 16)
+	CELLS :: 20 // a side of the square of batches, each 100 instances over 10 m
+	cases := [?]struct {
+		name:  string,
+		turn:  bool, // the view turns to other lights; else one light moves
+	}{{"a light that moves resets its slots", false}, {"a turn changes the lights chosen", true}}
+	for c in cases {
+		f: Cube_Fixture
+		settings := test_settings()
+		settings.gi_enabled = false
+		settings.taa = false
+		if !cube_fixture_init(t, &f, 192, 128, settings) {return}
+		r := f.renderer
+		floor := Instance_Desc{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {CELLS * 10, 0.2, CELLS * 10}), tint = {0.8, 0.8, 0.8}}
+		// Two groups of six lights over the ground, apart.
+		lights: [12]Light_Desc
+		for &light, k in lights {
+			at := Vec3{f32(k % 3) * 4 - 4, 2.5, f32(k / 3 % 2) * 4 - 2} + Vec3{-40 if k < 6 else 40, 0, 0}
+			light = {position = at, color = {1, 1, 1}, intensity = 10 * math.PI, range = 6, indirect = 1, scattering = 1}
+		}
+		sun := Sun_Desc{direction = {0.3, 1, 0.2}, color = {1, 1, 1}, illuminance = 0.5 * math.PI, enabled = true}
+		testing.expect(t, scene_given(r, {floor}, lights[:], sun, {sky = {0, 0, 0}}), r.error)
+		batched: [100]Batch_Instance
+		for cell in 0 ..< CELLS * CELLS {
+			corner := Vec3{f32(cell % CELLS) * 10 - CELLS * 5, 0, f32(cell / CELLS) * 10 - CELLS * 5}
+			for &b, k in batched {b = batch_instance(corner + {f32(k % 10) + 0.5, 0.4, f32(k / 10) + 0.5}, 1, {0.3, 0.8, 0.3})}
+			_, problem := batch_set(r, 0, r.world_key, {mesh = f.cube, tint = 0.5, flags = {.Casts_Shadow, .Ray_Visible}}, batched[:])
+			if !testing.expectf(t, problem == "", "%s", problem) {return}
+		}
+		look :: proc(x: f32) -> Camera {
+			return {position = {x, 14, 6}, forward = {0, -14, -6}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 400, exposure = UNIT_EXPOSURE}
+		}
+		read :: proc(t: ^testing.T, f: ^Cube_Fixture) -> []u8 {
+			rhi.device_wait_idle(f.device)
+			pixels, _, _, ok := golden_capture(f.renderer)
+			testing.expect(t, ok, f.renderer.error)
+			return pixels
+		}
+		// Until the pages are no longer given: the frames, and the most threads
+		// the culls by instance of a frame ran.
+		settle :: proc(t: ^testing.T, r: ^Renderer, camera: Camera) -> (frames: int, most: u32) {
+			runs, still := u32(0), 0
+			for frames < 600 && still < 8 {
+				testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+				frames += 1
+				most = max(most, r.stats.shadow.cull_threads)
+				now := shadow_page_runs(r)
+				still = still + 1 if now == runs else 0
+				runs = now
+			}
+			return
+		}
+		b := &r.main.targets.shadow_raster
+		b.budget = BOUND
+		camera := look(-40)
+		settle(t, r, camera)
+		if c.turn {
+			camera = look(40)
+		} else {
+			lights[0].position += {0.5, 0, 0.5}
+			testing.expect(t, scene_lights_given(r, lights[:], sun, {sky = {0, 0, 0}}), r.error)
+		}
+		frames, most := settle(t, r, camera)
+		bounded := read(t, &f)
+		rhi.device_wait_idle(f.device)
+		destroy_shadow_maps(r, &r.main.targets)
+		b.budget = abi.SHADOW_COST_UNITS
+		r.shadow_bound = {}
+		whole_frames, whole_most := settle(t, r, camera)
+		whole := read(t, &f)
+		slots := 0
+		for h in b.held {if h.m.rect.z != 0 {slots += 1}}
+		log.infof("%s: under the bound %d threads a frame at most over %d frames; under one that holds all %d over %d frames; every instance in each of the %d slots with a map, four times: %d", c.name, most, frames, whole_most, whole_frames, slots, 4 * (len(r.scene.instances) + int(r.scene.batch.slots)) * slots)
+		// The four culls by instance of a frame, each within the bound: no slot here passes it alone.
+		testing.expectf(t, most > 0 && most <= 4 * BOUND, "%s: the culls by instance of a frame ran %d threads, past four times %d", c.name, most, BOUND)
+		testing.expectf(t, whole_most > 4 * BOUND, "%s: the fixture culls %d threads a frame at most, within the bound", c.name, whole_most)
+		testing.expectf(t, frames < 600 && whole_frames < 600, "%s: the pages settle in %d and %d frames", c.name, frames, whole_frames)
+		differ := 0
+		for v, k in bounded {if k < len(whole) && abs(int(v) - int(whole[k])) > 2 {differ += 1}}
+		testing.expectf(t, len(bounded) == len(whole) && differ * 300 <= len(bounded), "%s: %d of %d values differ from the picture under a bound that holds all", c.name, differ, len(bounded))
+		delete(bounded)
+		delete(whole)
+		expect_clean(t, f.device)
+		fixture_destroy(&f)
+	}
+}
+
 // A still view whose pages the maps cannot hold at once: a pool smaller than
 // what its points read, and a list of the chunks of the cull with no room in
 // the first frame after the maps are made anew. No point reads lit where a
@@ -1168,6 +1263,7 @@ render_a_frame_draws_no_more_than_its_bound_and_the_rest_comes_after :: proc(t: 
 		b.budget, b.forget = 0 if c.grows else bound, true
 		if c.grows {r.shadow_bound = {least = bound, most = most_bound}}
 		frames, most, banded, narrowed := 0, u32(0), false, false
+		foreseen: [SHADOW_SLOTS]bool
 		for frames < 2048 {
 			testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
 			frames += 1
@@ -1181,14 +1277,22 @@ render_a_frame_draws_no_more_than_its_bound_and_the_rest_comes_after :: proc(t: 
 			// A page that waits is foreseen once, and the culls go over the slots of
 			// the pages granted alone: the frames it waits cost no instance of it.
 			args: [9]u32
+			work: [3 * (SHADOW_SLOTS + 1)]u32
 			has: [SHADOW_SLOTS]u32
 			testing.expect(t, rhi.buffer_read_slice(r.device, b.pages, u64(abi.SHADOW_WORDS_ARGS + abi.SHADOW_ARGS_DISPATCH) * 4, args[:]))
+			testing.expect(t, rhi.buffer_read_slice(r.device, b.pages, u64(abi.SHADOW_WORDS_SLOTS) * 4, work[:]))
 			testing.expect(t, rhi.buffer_read_slice(r.device, b.pages, u64(abi.SHADOW_WORDS_HAS) * 4, has[:]))
 			listed := 0
 			for h in has {if h != 0 {listed += 1}}
 			if frames > 2 && waiting > 0 {
-				testing.expectf(t, args[7] == 0, "%s, frame %d: the cache foresees the pages of %d slots again", c.name, frames, args[7])
-				narrowed ||= int(args[1]) < listed
+				// The slots the foresight of this frame went over, where it ran.
+				foresee := work[2 * (SHADOW_SLOTS + 1):]
+				for entry in foresee[1:][:min(foresee[0], SHADOW_SLOTS) if args[6] != 0 else 0] {
+					slot := entry & (1 << abi.SHADOW_WORK_SHIFT - 1)
+					testing.expectf(t, slot < SHADOW_SLOTS && !foreseen[slot], "%s, frame %d: the cache foresees the pages of slot %d again", c.name, frames, slot)
+					if slot < SHADOW_SLOTS {foreseen[slot] = true}
+				}
+				narrowed ||= args[0] != 0 && int(work[0]) < listed
 			}
 			if waiting == 0 {break}
 		}

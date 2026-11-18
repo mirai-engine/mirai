@@ -1,8 +1,10 @@
 #include "native.slang"
 // The first pass of the cull of the clusters the maps of the shadows draw in
 // a round (shadow_maps.slang, shadow_cull.slang): a thread for each instance,
-// of the scene or of a batch, and each map of the round, where it draws the
-// pages its mask names, at each mip of the map it draws pages of. The round
+// of the scene or of a batch, that may reach a map of the round, of the
+// ranges the plan found for it (render.shadow_reach), where it draws the
+// pages its mask names, at each mip of the map it draws pages of, over the
+// slots the steps of the pages chose within the bound of the frame. The round
 // of what stays draws into them the casters that do not move; that of what
 // moves, those that do. An instance that may cast a shadow into the window, and
 // covers a texel of its map, hands the clusters of the cut of the map that its levels can
@@ -86,24 +88,46 @@ void shadow_sway_mark(Shadow_Map m, float4 texels, float3 low, float3 high) {
     }
 }
 
+uint work_word(uint at) { return params.foresee == SHADOW_CULL_SWAY ? shadow_word(shadow_data, params.list + at) : shadow_pages[params.list + at]; }
+
+// The slot and the instance of a thread of the dispatch: the last slot the
+// dispatch goes over whose threads start no later, and of the ranges of
+// instances of its list that reach it (render.Shadow_Reach), the last that
+// starts no later; false past them.
+bool shadow_work_instance(uint thread, uint list, out uint slot, out uint instance) {
+    slot = SHADOW_SLOTS;
+    instance = 0u;
+    uint count = work_word(0u);
+    if (count == 0u) return false;
+    uint low = 0u, high = count;
+    while (high - low > 1u) {
+        uint middle = (low + high) / 2u;
+        if ((work_word(1u + middle) >> SHADOW_WORK_SHIFT) <= thread) low = middle; else high = middle;
+    }
+    uint entry = work_word(1u + low), local = thread - (entry >> SHADOW_WORK_SHIFT);
+    slot = entry & ((1u << SHADOW_WORK_SHIFT) - 1u);
+    if (slot >= SHADOW_SLOTS) return false;
+    uint at = params.reach + slot * SHADOW_REACH_WORDS + list * 3u, first = shadow_word(shadow_data, at), ranges = shadow_word(shadow_data, at + 1u);
+    if (ranges == 0u || local >= shadow_word(shadow_data, at + 2u)) return false;
+    low = 0u;
+    high = ranges;
+    while (high - low > 1u) {
+        uint middle = (low + high) / 2u;
+        if (shadow_word(shadow_data, params.ranges + 2u * (first + middle) + 1u) <= local) low = middle; else high = middle;
+    }
+    uint range = params.ranges + 2u * (first + low);
+    instance = shadow_word(shadow_data, range) + local - shadow_word(shadow_data, range + 1u);
+    return true;
+}
+
 [shader("compute")]
 [numthreads(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z)]
 void main(uint3 id : SV_DispatchThreadID) {
-    uint instance = id.x, job = id.y;
-    if (instance >= params.instances || job >= params.maps) return;
+    uint thread = id.y * SHADOW_CULL_ROW * MIRAI_GROUP_X + id.x, slot, instance;
     bool sway = params.foresee == SHADOW_CULL_SWAY;
-    uint map = sway ? shadow_word(shadow_data, params.list + job) : shadow_pages[params.list + job];
-    if (map >= SHADOW_SLOTS) return;
-    if (params.listed != 0u) {
-        // The range of the thread: the last whose first thread is not past it.
-        uint low = 0u, high = params.ranges;
-        uint ranges = params.movers + 2u * params.range_first;
-        while (high - low > 1u) {
-            uint middle = (low + high) / 2u;
-            if (movers[ranges + 2u * middle + 1u] <= instance) low = middle; else high = middle;
-        }
-        instance = movers[ranges + 2u * low] + instance - movers[ranges + 2u * low + 1u];
-    }
+    if (sway && thread == 0u) InterlockedAdd(shadow_pages[SHADOW_WORDS_COUNTS + SHADOW_COUNT_THREADS], params.threads);
+    if (!shadow_work_instance(thread, sway ? SHADOW_REACH_LISTS - 1u : params.moving, slot, instance)) return;
+    uint map = slot;
     float reach = 0.0;
     if (instance_batched(instance)) {
         Instance row = batch_row(batch_of(instance));

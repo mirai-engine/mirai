@@ -45,8 +45,10 @@
 bool shadow_add(uint bin, Visible_Cluster entry, uint pool, uint units) {
     uint taken = 0u, slot = 0u, own;
     if (pool >= SHADOW_POOL_PAGES) return false;
+    // What its page takes counts whole, for the frames after; past the bound
+    // of the frame it waits without counting into the frame.
     InterlockedAdd(shadow_pages[shadow_taken_word(pool)], units, own);
-    bool room = own < (shadow_pages[shadow_cost_word(pool)] & SHADOW_COST_UNITS);
+    bool room = own < (shadow_pages[shadow_cost_word(pool)] & SHADOW_COST_UNITS) && shadow_state[CULL_SHADOW_TAKEN] < params.bound;
     if (room) InterlockedAdd(shadow_state[CULL_SHADOW_TAKEN], units, taken);
     room = room && taken < params.bound;
     if (room) InterlockedAdd(shadow_state[CULL_LISTED], 1u, slot);
@@ -59,7 +61,7 @@ bool shadow_add(uint bin, Visible_Cluster entry, uint pool, uint units) {
     }
     if (room) InterlockedAdd(stats[0].dropped[CULL_LIST_SHADOW_ENTRIES], 1u);
     InterlockedAdd(stats[0].shadow[9], 1u);
-    InterlockedOr(shadow_pages[shadow_cost_word(pool)], SHADOW_COST_OVER);
+    if ((shadow_pages[shadow_cost_word(pool)] & SHADOW_COST_OVER) == 0u) InterlockedOr(shadow_pages[shadow_cost_word(pool)], SHADOW_COST_OVER);
     return false;
 }
 
