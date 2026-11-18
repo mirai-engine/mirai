@@ -83,16 +83,18 @@ documents_follow :: proc(s:^store.Store,p:^asset.Package,b:^asset.Build,folder:s
 
 // Writes the document whose baseline is the file at baseline to target, or
 // follows the file target has. skeletons: the baselines the clips of an
-// animation may play on, else registry has them. The warning, in the temp
-// allocator, says what of the file could not be kept.
-document_follow :: proc(types:^asset.Types,kind:asset.Fourcc,baseline,target:string,skeletons:[]Followed_Skeleton,registry:^asset.Registry) -> (warning:string,error:asset.Error) {
+// animation may play on, else registry has them. decided: the owner of the
+// baseline wins over the one of the file (Import_Settings.parts decides it
+// again). The warning, in the temp allocator, says what of the file could not
+// be kept.
+document_follow :: proc(types:^asset.Types,kind:asset.Fourcc,baseline,target:string,skeletons:[]Followed_Skeleton,registry:^asset.Registry,decided:=false) -> (warning:string,error:asset.Error) {
     given:asset.Asset
     asset.asset_load(&given,baseline,context.temp_allocator) or_return
     defer asset.asset_close(&given)
     previous:asset.Asset
     existed:=os.exists(target) && asset.asset_load(&previous,target,context.temp_allocator)==.None
     defer if existed {asset.asset_close(&previous)}
-    owner:=previous.blob.header.owner if existed else given.blob.header.owner
+    owner:=previous.blob.header.owner if existed && !decided else given.blob.header.owner
     id:=given.blob.header.id
     switch kind {
     case asset.KIND_MATERIAL:

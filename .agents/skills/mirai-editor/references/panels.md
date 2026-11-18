@@ -854,7 +854,7 @@ is refused. The source is versioned with its sidecar beside what it makes, and w
 that nobody edits goes to the imported folder
 ([identity](../../mirai-imports/references/imports.md#identity-and-reimport)). The imported folder
 is brought up to date with the sources by the build that opens the editor
-([sync](../../mirai-imports/references/imports.md#sync)).
+([refresh](../../mirai-imports/references/imports.md#library)).
 File > Import, the content browser, a file dropped on the window and `asset.import` call it. It
 imports in a thread of its own, with its own job system, while the editor keeps drawing; the
 content browser shows the dot of what works. `import_poll`, between frames, takes what it wrote on

@@ -1,6 +1,5 @@
 package textures
 
-import "core:hash/xxhash"
 import "core:mem"
 import "core:slice"
 import "mirai:asset"
@@ -17,7 +16,7 @@ CACHE :: "textures"
 // An image built with options: its bytes, encoded, or the texels of made
 // (whose width is 0 for encoded bytes).
 cache_key_build :: proc(bytes:[]u8,made:Source,options:Build_Options) -> u64 {
-    key:=base.hash_combine(xxhash.XXH3_64_default(bytes),u64(u32(made.width))<<32|u64(u32(made.height)))
+    key:=base.hash_combine(base.hash64(bytes),u64(u32(made.width))<<32|u64(u32(made.height)))
     key=base.hash_combine(key,u64(u32(made.layers))|u64(made.format)<<32|u64(made.cube)<<40)
     return base.hash_combine(key,settings_hash(options))|1
 }

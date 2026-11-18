@@ -11,7 +11,7 @@ import "mirai:std/base"
 // on every run. What is authored (scenes, prefabs, interfaces, materials,
 // particles, tables of game data, clips of a few keys) is changed through the
 // API or the editor, and this names what it uses by its id; the sources it
-// writes beside their assets are imported by the build (sources.sync).
+// writes beside their assets are ingested and added with mirai import.
 //
 //   mirai content demo [-- --physics-only|--features-only|--animation-only|--interface-only|--dig-only]
 

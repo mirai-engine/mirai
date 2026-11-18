@@ -180,8 +180,8 @@ One rule for all types, of the engine and of plugins:
   plugin's type, in the `version` of its `asset_kinds`, which the build generates as
   `<STEM>_VERSION` ([manifests](../../mirai-projects/references/projects.md#manifests)).
 - **A change in what a type stores or in what a stored value means raises its version**, and every
-  file of the type is made again: the [sync](../../mirai-imports/references/imports.md#sync) of
-  the next build imports again the source of an imported one. `version_message` says which asset
+  file of the type is made again: the [refresh](../../mirai-imports/references/imports.md#library)
+  of the next build ingests again the source of an imported one. `version_message` says which asset
   it is, its type, its version and the one the build reads and, if it was imported, the
   `mirai import` that rebuilds it in its folder with the root where its source is; for a newer
   file, a newer engine. `mirai asset verify`

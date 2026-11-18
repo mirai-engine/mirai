@@ -44,8 +44,8 @@ a_reader_sees_the_settings_kept_with_its_source :: proc(t:^testing.T) {
     ingested:=asset.Package{id={5,6},name="model",origin={path=path_key(path)},settings=settings_text({skeleton=kept},context.temp_allocator)}
     manifest,put_error:=asset.package_put(s,&ingested)
     if !testing.expect_value(t,put_error,asset.Error.None) {return}
-    id_text:[base.ASSET_ID_TEXT]u8
-    testing.expect_value(t,store.ref_set(s,asset.REF_PACKAGES,base.asset_id_format(ingested.id,id_text[:]),manifest),store.Error.None)
+    origin:[64]u8
+    testing.expect_value(t,store.ref_set(s,asset.REF_ORIGINS,asset.origin_name(ingested.origin.path,&origin),manifest),store.Error.None)
     model,error=import_model(path,formats[:],{store=s,settings={skeleton=given}})
     if !testing.expectf(t,error.code==.None,"%s",error.message) {return}
     model_destroy(&model)

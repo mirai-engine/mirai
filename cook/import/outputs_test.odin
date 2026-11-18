@@ -207,10 +207,10 @@ the_models_of_an_import_share_their_parts_by_name :: proc(t:^testing.T) {
     // An input that changed changes what the import is made from.
     testing.expect(t,len(manifest.inputs)==1 && manifest.inputs[0]=="props.pkg","the input is listed")
     settings,_:=settings_parse(manifest.settings)
-    before:=identity_of(path_key(source),manifest.inputs[:],settings,0)
+    before:=identity_of(manifest.id,path_key(source),manifest.inputs[:],settings,0)
     testing.expect(t,before==manifest.identity,"the identity is that of the source, its input and its settings")
     testing.expect(t,os.write_entire_file(package_file,"other props")==nil)
-    testing.expect(t,identity_of(path_key(source),manifest.inputs[:],settings,0)!=before,"the input counts in the identity")
+    testing.expect(t,identity_of(manifest.id,path_key(source),manifest.inputs[:],settings,0)!=before,"the input counts in the identity")
 }
 
 // An image only its format decodes is keyed by its data: a texture the

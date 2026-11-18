@@ -71,9 +71,9 @@ string_of :: proc(field:[]u8) -> string {
 }
 
 // Writes model as the import of a copy of its source in the assets of the
-// test project at root, as import_write takes it: a source in no assets
-// folder imports nowhere.
-write_into :: proc(model:^importer.Imported_Model,root:string,options:importer.Import_Options={}) -> (report:importer.Import_Report,error:importer.Error) {
+// test project at root, as import_write takes it, into the store of the test
+// (test_options).
+write_into :: proc(t:^testing.T,model:^importer.Imported_Model,root:string,options:importer.Import_Options={}) -> (report:importer.Import_Report,error:importer.Error) {
     assets:=fmt.tprintf("%s/assets",root)
     copied:=fmt.tprintf("%s/%s",assets,filepath.base(model.source))
     if model.source!=copied {
@@ -84,7 +84,7 @@ write_into :: proc(model:^importer.Imported_Model,root:string,options:importer.I
     }
     options:=options
     options.root=root
-    return importer.import_write(model,options)
+    return importer.import_write(model,test_options(t,model.source,options))
 }
 
 // Copies files of a folder (FIXTURES, DEMO), by their paths under it, into
@@ -102,8 +102,32 @@ copy_in :: proc(root,from:string,files:..string) -> string {
     return first
 }
 
-// A folder of a test as the root of a project, with its assets folder, where
-// the sources of its imports are. "" when there is none.
+// options of an import of the source at path as a project that adds it
+// imports it: in the store of the test, <root>/store, with its documents in
+// the folder of the source (root: options.root, else the project whose assets
+// hold the source, else its folder), unless options give them.
+test_options :: proc(t:^testing.T,path:string,options:importer.Import_Options={},loc:=#caller_location) -> importer.Import_Options {
+    options:=options
+    root:=options.root
+    if root=="" {root,_=source_root(path,context.temp_allocator)}
+    if root=="" {root=filepath.dir(path)}
+    os.make_directory_all(root)
+    // A root that cannot hold a store leaves none: the import says so.
+    if options.store==nil {
+        if s,error:=store.open(fmt.tprintf("%s/store",root),context.temp_allocator);error==.None {
+            options.store=new(store.Store,context.temp_allocator)
+            options.store^=s
+        }
+    }
+    if options.documents=="" {options.documents=filepath.dir(importer.path_key(path))}
+    return options
+}
+
+// import_source with test_options.
+import_test :: proc(t:^testing.T,path:string,options:importer.Import_Options={},formats:[]importer.Format=nil,wholes:[]Whole_Source=nil,allocator:=context.allocator,loc:=#caller_location) -> (report:importer.Import_Report,error:importer.Error) {
+    return import_source(path,test_options(t,path,options,loc),formats,wholes,allocator)
+}
+
 // A store at folder, in the temp allocator; nil when it cannot be opened.
 test_store :: proc(t:^testing.T,folder:string,loc:=#caller_location) -> ^store.Store {
     s,error:=store.open(folder,context.temp_allocator)
@@ -111,6 +135,21 @@ test_store :: proc(t:^testing.T,folder:string,loc:=#caller_location) -> ^store.S
     kept:=new(store.Store,context.temp_allocator)
     kept^=s
     return kept
+}
+
+// The registry of the assets of the project at root with the cache of the
+// package the import of report wrote listed at their top, as a project that
+// pins it lists them.
+registry_with :: proc(t:^testing.T,root:string,report:^importer.Import_Report,r:^asset.Registry,loc:=#caller_location) -> bool {
+    s:=test_store(t,fmt.tprintf("%s/store",root),loc)
+    if s==nil {return false}
+    list:asset.Packages
+    list.packages=make([dynamic]asset.Project_Package,context.temp_allocator)
+    append(&list.packages,asset.Project_Package{id=report.package_id,manifest=report.manifest})
+    resolved,error:=asset.packages_resolve(s,&list,context.temp_allocator)
+    if !testing.expect_value(t,error,asset.Error.None,loc=loc) {return false}
+    asset.registry_init(r,fmt.tprintf("%s/assets",root),"",context.allocator,resolved.listed[:])
+    return testing.expect_value(t,asset.registry_scan(r),asset.Error.None,loc=loc)
 }
 
 // The results a cache of s keeps (cook/cache), in the temp allocator.
@@ -126,20 +165,35 @@ cached_key :: proc(ref:store.Ref) -> u64 {
     return key
 }
 
-// A source that copies what the store at user keeps, as a peer would give it.
+// A source that copies what the store at user keeps, as a peer would give
+// it: the blob of the ref and, for a build, every blob it lists.
 copy_source :: proc(from:^store.Store) -> cache.Source {
     fetch :: proc(user:rawptr,into:^store.Store,namespace,name:string) -> bool {
         from:=(^store.Store)(user)
         hash,error:=store.ref_get(from,namespace,name)
-        if error!=.None {return false}
-        path,path_error:=store.blob_path(from,hash,context.temp_allocator)
-        if path_error!=.None {return false}
-        if put,put_error:=store.put_file(into,path);put_error!=.None || put!=hash {return false}
+        if error!=.None || !blob_copy(from,into,hash) {return false}
+        if namespace==asset.REF_IMPORTS {
+            b,build_error:=asset.build_get(from,hash,context.temp_allocator)
+            if build_error!=.None {return false}
+            for o in b.outputs {
+                if !blob_copy(from,into,o.blob) {return false}
+            }
+        }
         return store.ref_set(into,namespace,name,hash)==.None
     }
     return {fetch=fetch,user=from}
 }
 
+// Copies the blob hash of from into into.
+blob_copy :: proc(from,into:^store.Store,hash:store.Hash) -> bool {
+    path,path_error:=store.blob_path(from,hash,context.temp_allocator)
+    if path_error!=.None {return false}
+    put,put_error:=store.put_file(into,path)
+    return put_error==.None && put==hash
+}
+
+// A folder of a test as the root of a project, with its assets folder, where
+// the sources of its imports are. "" when there is none.
 test_project :: proc(t:^testing.T,name:string) -> (root,assets:string) {
     root=base.test_folder(t,name)
     if root=="" {return}
