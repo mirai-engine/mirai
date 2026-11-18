@@ -1,82 +1,163 @@
 package store
 
-import "core:mem"
 import "core:os"
-import "core:slice"
+import "core:strings"
 import "core:time"
 import "mirai:std/base"
 
-// Temporary files left by a process that ended before renaming them; a
-// younger one may still be written.
+BLOB_GRACE_AGE :: time.Hour
+BLOB_REFRESH_AGE :: BLOB_GRACE_AGE/4
+
 @(private)
 TMP_STALE :: time.Hour
+
+@(private)
+SWEEP_PREFIX :: "sweep-"
 
 Usage :: struct {
     bytes:i64,
     blobs:int,
 }
 
-// What the complete blobs take.
+Sweep_Result :: struct {
+    using freed:Usage,
+    skipped:int,
+}
+
+@(private)
+Live_Set :: map[Hash]struct{}
+
+@(private)
+Sweep :: struct {
+    s:^Store,
+    live:Live_Set,
+    now:time.Time,
+    result:Sweep_Result,
+    tables:bool,
+}
+
 usage :: proc(s:^Store) -> (total:Usage,error:Error) {
-    error=blobs_walk(s,"blobs",proc(user:rawptr,path:string,hash:Hash,size:i64) -> Error {
+    error=blobs_walk(s,"blobs",proc(user:rawptr,file:os.File_Info,hash:Hash) {
         total:=(^Usage)(user)
-        total.bytes+=size
+        total.bytes+=file.size
         total.blobs+=1
-        return .None
     },&total)
     return
 }
 
-// Removes every complete blob whose address is not in live, with its kept
-// table, and the stale files of tmp: what it freed. The caller decides what is live.
-sweep :: proc(s:^Store,live:[]Hash) -> (freed:Usage,error:Error) {
-    Sweep :: struct {live:[]Hash,freed:Usage,tables:bool}
-    sorted,make_error:=make([]Hash,len(live),s.allocator)
+sweep :: proc(s:^Store,live:[]Hash,now:Maybe(time.Time)=nil) -> (result:Sweep_Result,error:Error) {
+    if s==nil || s.root=="" {return {},.Invalid_Argument}
+    at:=now.? or_else time.now()
+    set,make_error:=make(Live_Set,len(live),s.allocator)
     if make_error!=nil {return {},.Out_Of_Memory}
-    defer delete(sorted,s.allocator)
-    copy(sorted,live)
-    slice.sort_by(sorted,proc(a,b:Hash) -> bool {
-        a,b:=a,b
-        return mem.compare(a[:],b[:])<0
-    })
-    state:=Sweep{live=sorted}
-    visit:=proc(user:rawptr,path:string,hash:Hash,size:i64) -> Error {
-        state:=(^Sweep)(user)
-        _,found:=slice.binary_search_by(state.live,hash,proc(a,b:Hash) -> slice.Ordering {
-            a,b:=a,b
-            return slice.Ordering(mem.compare(a[:],b[:]))
-        })
-        if found {return .None}
-        removed:=os.remove(path)
-        if removed==.Not_Exist {return .None}
-        if removed!=nil {return os_error(removed)}
-        if !state.tables {
-            state.freed.bytes+=size
-            state.freed.blobs+=1
-        }
-        return .None
-    }
-    error=blobs_walk(s,"blobs",visit,&state)
-    if error!=.None {return state.freed,error}
+    defer delete(set)
+    live_add(&set,live) or_return
+    leases_collect(s,&set,at) or_return
+    state:=Sweep{s=s,live=set,now=at}
+    error=blobs_walk(s,"blobs",sweep_entry,&state)
+    if error!=.None {return state.result,error}
     state.tables=true
-    error=blobs_walk(s,"tables",visit,&state)
-    if error!=.None {return state.freed,error}
+    error=blobs_walk(s,"tables",sweep_entry,&state)
+    if error!=.None {return state.result,error}
+
     buffer:[PATH_BYTES]u8
     tmp:=join(&buffer,s.root,"tmp") or_return
     entries,read_error:=os.read_all_directory_by_path(tmp,s.allocator)
-    if read_error!=nil {return state.freed,os_error(read_error)}
+    if read_error!=nil {return state.result,os_error(read_error)}
     defer os.file_info_slice_delete(entries,s.allocator)
-    now:=time.now()
     for entry in entries {
-        if time.diff(entry.modification_time,now)>TMP_STALE {base.remove_all(entry.fullpath)}
+        if !older_than(entry.modification_time,at,TMP_STALE) {continue}
+        if entry.type==.Directory && strings.has_prefix(entry.name,SWEEP_PREFIX) {
+            claimed,path_error:=join(&buffer,entry.fullpath,"file")
+            if path_error!=.None {continue}
+            modified,stat_error:=regular_time(s,claimed)
+            if stat_error==.None && older_than(modified,at,BLOB_GRACE_AGE) {os.remove(claimed)}
+            os.remove(entry.fullpath)
+        } else {
+            base.remove_all(entry.fullpath)
+        }
     }
-    return state.freed,.None
+    return state.result,.None
 }
 
-// Visits every file of <kind>/<first byte>/ named by an address: the complete
-// blobs, or the kept tables.
 @(private)
-blobs_walk :: proc(s:^Store,kind:string,visit:proc(user:rawptr,path:string,hash:Hash,size:i64) -> Error,user:rawptr) -> Error {
+live_add :: proc(set:^Live_Set,hashes:[]Hash) -> Error {
+    for hash in hashes {
+        if _,error:=map_insert(set,hash,{});error!=nil {return .Out_Of_Memory}
+    }
+    return .None
+}
+
+@(private)
+sweep_entry :: proc(user:rawptr,file:os.File_Info,hash:Hash) {
+    state:=(^Sweep)(user)
+    if hash in state.live || !older_than(file.modification_time,state.now,BLOB_GRACE_AGE) {return}
+    if state.tables && has(state.s,hash) {return}
+    buffer:[PATH_BYTES]u8
+    claimed,error:=sweep_claim(state.s,file.fullpath,&buffer)
+    if error!=.None {
+        if !state.tables {state.result.skipped+=1}
+        return
+    }
+    defer os.remove(os.dir(claimed))
+    keep:=state.tables && has(state.s,hash)
+    removed,finish_error:=sweep_finish(state.s,file.fullpath,claimed,state.now,keep)
+    if state.tables {return}
+    if finish_error!=.None {state.result.skipped+=1}
+    if removed {
+        state.result.bytes+=file.size
+        state.result.blobs+=1
+    }
+}
+
+@(private)
+older_than :: proc(at,now:time.Time,age:time.Duration) -> bool {
+    return at._nsec<now._nsec && u64(now._nsec)-u64(at._nsec)>u64(age)
+}
+
+@(private)
+regular_time :: proc(s:^Store,path:string) -> (time.Time,Error) {
+    info,error:=os.lstat(path,s.allocator)
+    if error!=nil {return {},os_error(error)}
+    defer os.file_info_delete(info,s.allocator)
+    if info.type!=.Regular {return {},.Io}
+    return info.modification_time,.None
+}
+
+// The directory dates the claim independently of the file moved into it.
+@(private)
+sweep_claim :: proc(s:^Store,path:string,claim_buffer:^[PATH_BYTES]u8) ->
+    (claimed:string,error:Error) {
+    folder_buffer:[PATH_BYTES]u8
+    folder:=temp_folder(s.root,SWEEP_PREFIX,&folder_buffer) or_return
+    claimed,error=join(claim_buffer,folder,"file")
+    if error==.None {error=os_error(os.rename(path,claimed))}
+    if error!=.None {os.remove(folder);return "",error}
+    return claimed,.None
+}
+
+@(private)
+sweep_finish :: proc(s:^Store,path,claimed:string,now:time.Time,keep:=false) -> (bool,Error) {
+    at,error:=regular_time(s,claimed)
+    if error==.None && !keep && older_than(at,now,BLOB_GRACE_AGE) {
+        error=os_error(os.remove(claimed))
+        if error==.None {return true,.None}
+    }
+    restored:=sweep_restore(path,claimed)
+    return false,error if error!=.None else restored
+}
+
+@(private)
+sweep_restore :: proc(path,claimed:string) -> Error {
+    exists:=rename_new(claimed,path) or_return
+    if exists {return os_error(os.remove(claimed))}
+    return .None
+}
+
+// Visits the regular files named by an address in blobs/ or tables/.
+@(private)
+blobs_walk :: proc(s:^Store,kind:string,
+    visit:proc(user:rawptr,file:os.File_Info,hash:Hash),user:rawptr) -> Error {
     buffer:[PATH_BYTES]u8
     blobs:=join(&buffer,s.root,kind) or_return
     folders,folders_error:=os.read_all_directory_by_path(blobs,s.allocator)
@@ -91,7 +172,7 @@ blobs_walk :: proc(s:^Store,kind:string,visit:proc(user:rawptr,path:string,hash:
         for file in files {
             hash,ok:=parse_hex(file.name)
             if !ok || file.type!=.Regular || file.name[:2]!=folder.name {continue}
-            visit(user,file.fullpath,hash,file.size) or_return
+            visit(user,file,hash)
         }
     }
     return .None

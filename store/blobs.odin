@@ -3,34 +3,45 @@ package store
 import "base:runtime"
 import "core:mem"
 import "core:os"
+import "core:time"
 
 // Complete blobs are plain files of their bytes at blobs/<first byte>/<address>,
 // both in hex, and are never written in place.
 
-put_bytes :: proc(s:^Store,data:[]u8) -> (hash:Hash,error:Error) {
+put_bytes :: proc(s:^Store,data:[]u8,now:Maybe(time.Time)=nil) -> (hash:Hash,error:Error) {
+    if s==nil || s.root=="" {return {},.Invalid_Argument}
     pieces:=bytes_table(data,s.allocator) or_return
     defer delete(pieces,s.allocator)
     hash=address_value(i64(len(data)),pieces)
-    if has(s,hash) {return hash,.None}
+    refreshed:=blob_refresh(s,hash,now.? or_else time.now())
+    return hash,put_bytes_after_refresh(s,data,pieces,hash,refreshed,now)
+}
+
+@(private)
+put_bytes_after_refresh :: proc(s:^Store,data:[]u8,pieces:[]Hash,hash:Hash,
+    refreshed:Error,now:Maybe(time.Time)) -> Error {
+    if refreshed!=.Missing {return refreshed}
     temp_buffer:[PATH_BYTES]u8
     temp,file:=temp_create(s.root,&temp_buffer) or_return
-    _,write_error:=os.write(file,data)
+    written,write_error:=os.write(file,data)
     sync_error:=os.sync(file)
     os.close(file)
-    if write_error!=nil || sync_error!=nil {
+    if write_error!=nil || written!=len(data) || sync_error!=nil {
         os.remove(temp)
-        return {},os_error(write_error) if write_error!=nil else .Io
+        return os_error(write_error) if write_error!=nil else .Io
     }
-    if error=blob_place(s,temp,hash);error!=.None {
+    placed,place_error:=blob_place(s,temp,hash,now)
+    if place_error!=.None {
         os.remove(temp)
-        return hash,error
+        return place_error
     }
-    table_keep(s,hash,i64(len(data)),pieces)
-    return hash,.None
+    if placed {table_keep(s,hash,i64(len(data)),pieces)}
+    return .None
 }
 
 // Puts the file at path, read once piece by piece.
-put_file :: proc(s:^Store,path:string) -> (hash:Hash,error:Error) {
+put_file :: proc(s:^Store,path:string,now:Maybe(time.Time)=nil) -> (hash:Hash,error:Error) {
+    if s==nil || s.root=="" {return {},.Invalid_Argument}
     source,open_error:=os.open(path)
     if open_error!=nil {return {},os_error(open_error)}
     defer os.close(source)
@@ -41,20 +52,15 @@ put_file :: proc(s:^Store,path:string) -> (hash:Hash,error:Error) {
     defer delete(pieces,s.allocator)
     temp_buffer:[PATH_BYTES]u8
     temp,file:=temp_create(s.root,&temp_buffer) or_return
+    defer os.remove(temp)
     hash,error=file_hash(source,size,file,pieces)
     sync_error:=os.sync(file) if error==.None else nil
     os.close(file)
     if error==.Corrupt {error=.Io}
     if error==.None && sync_error!=nil {error=.Io}
-    if error!=.None || has(s,hash) {
-        os.remove(temp)
-        return hash if error==.None else {},error
-    }
-    if error=blob_place(s,temp,hash);error!=.None {
-        os.remove(temp)
-        return hash,error
-    }
-    table_keep(s,hash,size,pieces)
+    if error!=.None {return {},error}
+    placed:=blob_place(s,temp,hash,now) or_return
+    if placed {table_keep(s,hash,size,pieces)}
     return hash,.None
 }
 
@@ -207,20 +213,45 @@ blob_file :: proc(s:^Store,hash:Hash,buffer:^[PATH_BYTES]u8) -> (string,Error) {
     return join(buffer,s.root,"blobs",text[:2],text)
 }
 
-// Renames a finished file into the blob's place; a blob already there stays
-// and the file goes. A failed rename leaves the file where it was.
 @(private)
-blob_place :: proc(s:^Store,temp:string,hash:Hash) -> Error {
+blob_refresh :: proc(s:^Store,hash:Hash,now:time.Time) -> Error {
+    buffer:[PATH_BYTES]u8
+    path:=blob_file(s,hash,&buffer) or_return
+    at:=regular_time(s,path) or_return
+    if !older_than(at,now,BLOB_REFRESH_AGE) {return .None}
+    return blob_touch(s,path,now)
+}
+
+@(private)
+blob_touch :: proc(s:^Store,path:string,now:time.Time) -> Error {
+    os_error(os.change_times(path,now,now)) or_return
+    // A path-based time change can resolve the file just before it is claimed.
+    at:=regular_time(s,path) or_return
+    return .Missing if older_than(at,now,BLOB_REFRESH_AGE) else .None
+}
+
+// Renames a finished file into place, or refreshes the blob another writer placed.
+@(private)
+blob_place :: proc(s:^Store,temp:string,hash:Hash,clock:Maybe(time.Time)) ->
+    (placed:bool,error:Error) {
     buffer,folder_buffer:[PATH_BYTES]u8
     path:=blob_file(s,hash,&buffer) or_return
     name:[64]u8
     text:=hex(hash,&name)
-    folder_make(join(&folder_buffer,s.root,"blobs",text[:2]) or_return) or_return
-    if os.is_file(path) || os.rename(temp,path)!=nil {
-        if !os.is_file(path) {return .Io}
-        os.remove(temp)
+    for _ in 0..<TEMP_ATTEMPTS {
+        now:=clock.? or_else time.now()
+        refreshed:=blob_refresh(s,hash,now)
+        if refreshed==.None {
+            os.remove(temp)
+            return false,.None
+        }
+        if refreshed!=.Missing {return false,refreshed}
+        folder_make(join(&folder_buffer,s.root,"blobs",text[:2]) or_return) or_return
+        os_error(os.change_times(temp,now,now)) or_return
+        exists:=rename_new(temp,path) or_return
+        if !exists {return true,.None}
     }
-    return .None
+    return false,.Io
 }
 
 @(private)
@@ -267,7 +298,7 @@ table_keep :: proc(s:^Store,hash:Hash,size:i64,pieces:[]Hash) {
     folder,folder_error:=join(&folder_buffer,s.root,"tables",hex(hash,&name)[:2])
     if folder_error!=.None || folder_make(folder)!=.None {return}
     header:=table_header(size)
-    file_write(s.root,path,header[:],mem.slice_to_bytes(pieces))
+    file_write(s.root,path,{header[:],mem.slice_to_bytes(pieces)})
 }
 
 @(private)
