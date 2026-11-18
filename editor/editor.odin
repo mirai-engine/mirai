@@ -443,7 +443,9 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
     s.project_root=strings.clone(root)
     s.engine_root=strings.clone(engine)
     program,_:=os.get_executable_path(context.temp_allocator)
-    s.program,_=strings.replace_all(program,"\\","/")
+    // replace_all gives back its input when nothing changes: the clone owns it either way.
+    forward,_:=strings.replace_all(program,"\\","/",context.temp_allocator)
+    s.program=strings.clone(forward)
     s.engine_stamp=engine_stamp_here(s)
     s.library_stamp=library_stamp_here(s)
     s.assets_root=strings.clone(assets)
