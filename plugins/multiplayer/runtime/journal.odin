@@ -33,9 +33,9 @@ JOURNAL_BODY :: 168
 JOURNAL_PART_BYTES :: 4<<20 // raw bytes of a part at most
 JOURNAL_CHANNEL :: 0        // of the host: the channel of parts
 JOURNAL_QUEUE :: 64<<10     // bytes of parts a connection has waiting for the channel before the journal hands it more
-// The channels of a session's host. The window of parts holds 256 KiB in flight: what 2.5 MiB/s keep
-// in flight over 100 ms.
-JOURNAL_CHANNELS :: []wire.Channel_Desc{{kind=.Reliable,queue_bytes=JOURNAL_QUEUE}}
+// The channels of a session's host. The channel of parts holds 256 KiB, which is also what it keeps in
+// flight: what 2.5 MiB/s keep in flight over 100 ms.
+JOURNAL_CHANNELS :: []wire.Channel_Desc{{kind=.Reliable,queue_bytes=256<<10}}
 JOURNAL_ASK_TICKS :: 30     // a client asks for parts again after this long without an answer, and for a base after a gap this long
 JOURNAL_AHEAD_TICKS :: 240  // server: an ask for a tick further ahead than this is let out at once (Journal_Held.ahead)
 JOURNAL_LOG :: 4096         // operations of a key a client holds ahead of where it stands

@@ -101,7 +101,7 @@ Channel :: struct {
     // from fresh on were never sent, and resend holds the ones lost, in the order they were found.
     send_base,send_next,fresh:u16,
     window:int,
-    acked:int,       // bytes of chunks acknowledged since channel_window last measured them
+    acked,acked_bytes:int, // chunks acknowledged since channel_window last measured them, and their bytes
     ready:int,       // chunks in flight waiting to be sent or resent
     resend:[]u16,
     resend_head,resend_count:int,
@@ -142,7 +142,7 @@ channel_release :: proc(h:^Host,c:^Channel) {
 channel_reset :: proc(c:^Channel) {
     c.queue.head,c.queue.used,c.applied=0,0,0
     c.send_base,c.send_next,c.fresh,c.recv_base=0,0,0,0
-    c.ready,c.front_left,c.front_open,c.assembly_used,c.spent,c.acked=0,0,false,0,0,0
+    c.ready,c.front_left,c.front_open,c.assembly_used,c.spent,c.acked,c.acked_bytes=0,0,false,0,0,0,0
     c.resend_head,c.resend_count=0,0
     c.window=CHUNK_WINDOW
     for &chunk in c.chunks {chunk={}}
@@ -218,17 +218,19 @@ channel_fill :: proc(c:^Channel) {
     }
 }
 
-// The chunks in flight a reliable channel may keep. Each byte the path acknowledged lets one more be in
+// The chunks in flight a reliable channel may keep. Each chunk the path acknowledged lets one more be in
 // flight, so the window doubles each round trip while it holds the channel back; a loss does not shrink
 // it, since a resend waits a round trip with the chunks after it acknowledged. What the path carries
 // bounds it through the connection's rate, which congestion control finds: never above twice what that
-// rate sends in a round trip, nor below CHUNK_WINDOW, nor above what the channel holds.
+// rate sends in a round trip, in chunks of the size the channel's acknowledged ones had, nor below
+// CHUNK_WINDOW, nor above what the channel holds.
 @(private)
 channel_window :: proc "contextless" (c:^Channel,rtt,rate:f64) {
-    acked:=c.acked
-    c.acked=0
+    acked,bytes:=c.acked,c.acked_bytes
+    c.acked,c.acked_bytes=0,0
     if !(rtt>0) || !(rate>0) {return}
-    chunks:=min(f64(c.window+acked/CHUNK_BYTES),2*rate*rtt/CHUNK_BYTES,f64(len(c.chunks)))
+    wire:=acked>0?f64(bytes)/f64(acked)+4:CHUNK_BYTES+4 // bytes a chunk takes in a datagram
+    chunks:=min(f64(c.window)+f64(acked),2*rate*rtt/wire,f64(len(c.chunks)))
     c.window=max(int(chunks),min(CHUNK_WINDOW,len(c.chunks)))
 }
 
@@ -330,7 +332,8 @@ channel_resolve :: proc(p:^Peer,record:Record,received:bool) {
         return
     }
     chunk.state=.Acked
-    c.acked+=int(chunk.length)
+    c.acked+=1
+    c.acked_bytes+=int(chunk.length)
     for c.send_base!=c.send_next && c.chunks[int(c.send_base)%size].state==.Acked {
         last:=!c.chunks[int(c.send_base)%size].more
         c.chunks[int(c.send_base)%size]={}
@@ -372,29 +375,57 @@ channels_read :: proc(h:^Host,p:^Peer,r:^serial.Bit_Reader,late:=false) -> bool 
         if c.recv_chunks[slot].present {continue}
         c.recv_chunks[slot]={length=u16(length),more=more,present=true}
         copy(c.recv_data[slot*CHUNK_BYTES:],scratch[:length])
-        for c.recv_chunks[int(c.recv_base)%size].present {
-            head:=int(c.recv_base)%size
-            chunk:=c.recv_chunks[head]
-            if c.assembly_used+int(chunk.length)>min(len(c.assembly),c.max_message) {
-                // A message of the game goes on in pieces; one of the library is whole.
-                if index>=USER_CHANNELS || !channel_deliver(h,p,index,c.assembly[:c.assembly_used],true) {return false}
-                c.assembly_used=0
-                if p.state!=.Connected {return true}
-            }
-            copy(c.assembly[c.assembly_used:],c.recv_data[head*CHUNK_BYTES:][:chunk.length])
-            c.assembly_used+=int(chunk.length)
-            c.recv_chunks[head]={}
-            c.recv_base+=1
-            if !chunk.more {
-                message:=c.assembly[:c.assembly_used]
-                c.assembly_used=0
-                p.stats.messages_received+=1
-                if !channel_deliver(h,p,index,message) {return false}
-                if p.state!=.Connected {return true}
-            }
-        }
+        if !channel_take(h,p,index) {return false}
+        if p.state!=.Connected {return true}
     }
     return !r.error
+}
+
+// Delivers the chunks of a reliable channel that follow what it delivered, while the command buffer has
+// room for them besides what a datagram may still bring: a gap that closes over many small messages
+// leaves the rest held, and the network half reads no datagram until they are delivered (channels_held).
+// False when the other end sent something that cannot be parsed.
+@(private)
+channel_take :: proc(h:^Host,p:^Peer,index:int) -> bool {
+    c:=&p.channels[index]
+    size:=len(c.recv_chunks)
+    for c.recv_chunks[int(c.recv_base)%size].present && command_room(h,2) {
+        head:=int(c.recv_base)%size
+        chunk:=c.recv_chunks[head]
+        if c.assembly_used+int(chunk.length)>min(len(c.assembly),c.max_message) {
+            // A message of the game goes on in pieces; one of the library is whole.
+            if index>=USER_CHANNELS || !channel_deliver(h,p,index,c.assembly[:c.assembly_used],true) {return false}
+            c.assembly_used=0
+            if p.state!=.Connected {return true}
+        }
+        copy(c.assembly[c.assembly_used:],c.recv_data[head*CHUNK_BYTES:][:chunk.length])
+        c.assembly_used+=int(chunk.length)
+        c.recv_chunks[head]={}
+        c.recv_base+=1
+        if !chunk.more {
+            message:=c.assembly[:c.assembly_used]
+            c.assembly_used=0
+            p.stats.messages_received+=1
+            if !channel_deliver(h,p,index,message) {return false}
+            if p.state!=.Connected {return true}
+        }
+    }
+    h.back.held||=c.recv_chunks[int(c.recv_base)%size].present
+    return true
+}
+
+// Delivers what the reliable channels of every connection hold, as far as there is room.
+@(private)
+channels_held :: proc(h:^Host) {
+    h.back.held=false
+    for &peer in h.back.peers {
+        if peer.state!=.Connected {continue}
+        for &c,index in peer.channels {
+            if !c.active || c.kind!=.Reliable || !c.recv_chunks[int(c.recv_base)%len(c.recv_chunks)].present {continue}
+            if !channel_take(h,&peer,index) {peer_drop(h,&peer,.Protocol_Error,true)}
+            if peer.state!=.Connected {break}
+        }
+    }
 }
 
 @(private)
