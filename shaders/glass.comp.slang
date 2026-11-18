@@ -103,8 +103,11 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     uint2 ids = layer_ids.Load(int3(p, 0));
     Material m = material_row(ids.x, material_values_of(ids.y));
     Glass g = glass_of(p, uv, depth, layer_albedo.Load(int3(p, 0)), normal, layer_emission.Load(int3(p, 0)));
-    float3 through = glass_through(m, g, glass_shading(m, g));
-    float3 color = out_color[p].rgb;
+    // Where the layer does not cover, the scene behind shows as it is.
+    float covered = saturate(g.alpha);
+    float3 color = out_color[p].rgb + (1.0 - covered) * scene.Load(int3(p, 0)).rgb;
+    if (!(covered > 0.0)) { out_color[p] = float4(finite_or_zero(color), 1.0); return; }
+    float3 through = covered * glass_through(m, g, glass_shading(m, g));
     if (!material_solid(m)) {
         out_color[p] = float4(finite_or_zero(color + scene_through(uv, depth, m.transmission > 0.0 ? g.roughness : 0.0) * through), 1.0);
         return;

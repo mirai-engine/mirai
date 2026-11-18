@@ -20,19 +20,17 @@ float3 studio_light(float3 reflected, float3 key, float3 fill, float roughness) 
     return float3(0.12) + float3(2.0) * pow(max(dot(reflected, key), 0.0), spread) + float3(0.3, 0.4, 0.6) * pow(max(dot(reflected, fill), 0.0), spread);
 }
 
+// How much of what is behind it a preview covers: a blended material's alpha,
+// by which the caller weighs everything the radiance of the preview holds.
 float preview_alpha(Material material, Material_Sample values) { return material.alpha_mode == ALPHA_BLEND ? saturate(values.alpha) : 1.0; }
 
-// The surface a preview lights: with its layers, and its diffuse by what it covers and lets through.
+// The surface a preview lights where it covers: with its layers, and its diffuse by what its
+// transmission leaves.
 Shading preview_surface(float3 position, float3 normal, float3 view, Material material, Material_Sample values) {
     Shading surface = shading_surface(position, normal, view, values.base_color, values.metallic, values.roughness, values.f0, values.f90);
     shading_layers(surface, values.layers, values.metallic);
-    surface.diffuse *= preview_alpha(material, values) * (1.0 - material.transmission);
+    surface.diffuse *= 1.0 - material.transmission;
     return surface;
-}
-
-// What a preview adds of the emission of its material, in its radiance.
-float3 preview_emission(Material material, Material_Sample values) {
-    return values.emission * lerp(preview_alpha(material, values), 1.0, material.transmission);
 }
 
 // An emission in the radiance of the studio: nits by its key light, and a
@@ -54,7 +52,7 @@ float3 studio_radiance(float3 position, float3 normal, float3 view, Material mat
     light.back_irradiance = light.irradiance;
     if (surface.coat > 0.0) light.coat_radiance = studio_light(surface.coat_mirror, key, fill, surface.coat_roughness);
     radiance += indirect_compose(surface, light);
-    return finite_or_zero(radiance + preview_emission(material, values));
+    return finite_or_zero(radiance + values.emission);
 }
 
 // The sun and the sky of the frame as they light a scene, without shadows.
@@ -69,7 +67,7 @@ float3 outdoor_radiance(float3 position, float3 normal, float3 view, Material ma
     light.back_irradiance = sky_irradiance(-normal);
     if (surface.coat > 0.0) light.coat_radiance = sky_radiance(surface.coat_mirror, surface.coat_roughness);
     radiance += indirect_compose(surface, light);
-    return finite_or_zero(radiance + preview_emission(material, values));
+    return finite_or_zero(radiance + values.emission);
 }
 
 // What a preview shows of the radiance of the studio, encoded for the display.

@@ -165,15 +165,42 @@ glass_filters_the_scene_where_a_coat_covers_it :: proc(t: ^testing.T) {
 		testing.expect(t, renderer_apply_settings(r, settings))
 		scene_given(r, {floor, {object_id = 2, mesh = sheet, transform = placed({0, 1, 0}, {2, 1, 2}), material = 2, tint = {1, 1, 1}}}, nil, SUN, {})
 		through := shown(t, &f, above, {0, 1, 0})
-		// Glass diffuses nothing: the floor comes through its filter, which
-		// takes 60% of what is not red and the little the surface reflects.
-		testing.expectf(t, abs(through.r - 0.96 * open.r) < 0.04 && abs(through.g - 0.4 * 0.96 * open.g) < 0.03 && abs(through.g - through.b) < 0.01,
+		// Glass diffuses nothing: the floor comes whole through the 40% the
+		// sheet does not cover, and through the rest by its filter, which
+		// takes what is not red and the little the surface reflects.
+		testing.expectf(t, abs(through.r - (0.4 + 0.6 * 0.96) * open.r) < 0.03 && abs(through.g - 0.4 * open.g) < 0.02 && abs(through.g - through.b) < 0.01,
 			"%d layers: glass filters the floor behind it: %v over %v", layers, through, open)
 		testing.expect(t, r.scene.instances[1].meta.w & INSTANCE_FLAG_BLENDED != 0 && r.scene.instances[0].meta.w & INSTANCE_FLAG_BLENDED == 0, "only the glass is its own class of ray")
 	}
 	scene_given(r, {floor, {object_id = 2, mesh = sheet, transform = placed({0, 1, 0}, {2, 1, 2}), material = 3, tint = {1, 1, 1}}}, nil, SUN, {})
 	red := shown(t, &f, above, {0, 1, 0})
 	testing.expectf(t, len(r.scene.translucent) == 1 && abs(red.r - 0.96 * open.r) < 0.04 && red.g < 0.02, "a transmissive material is glass of its base color whatever its alpha mode: %v", red)
+
+	// Where a blended surface covers nothing there is no surface, nor its
+	// highlight; at half its coverage it mirrors half of the sun. Glass covers
+	// whole and mirrors it as a black coat does, over what it lets through.
+	card :: proc(opacity, transmission: f32) -> Material_Desc {
+		m := glass_material({0, 0, 0}, opacity, 0.5)
+		m.transmission = transmission
+		return m
+	}
+	clear := card(1, 1)
+	clear.base_color = {1, 1, 1}
+	materials_set(r, {card(0, 0), card(0.5, 0), card(1, 0), clear})
+	mirror := Camera{position = {-3, 3, 0}, forward = {3, -3, 0}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	scene_given(r, {}, nil, SUN, {})
+	empty := shown(t, &f, mirror, {})
+	gleams: [4]Vec3
+	for &gleam, i in gleams {
+		scene_given(r, {{object_id = 1, mesh = sheet, transform = placed({}, {4, 1, 4}), material = Material_Handle(i + 1), tint = {1, 1, 1}}}, nil, SUN, {})
+		gleam = shown(t, &f, mirror, {})
+	}
+	full := gleams[2]
+	near :: proc(a, b, full: Vec3) -> bool {return abs(a.x - b.x) <= 0.05 * full.x + 2e-3 && abs(a.z - b.z) <= 0.05 * full.z + 2e-3}
+	testing.expectf(t, full.x > empty.x + 0.05, "a black coat mirrors the sun: %v over %v", full, empty)
+	testing.expectf(t, near(gleams[0], empty, full), "a card that covers nothing shows nothing: %v, without it %v", gleams[0], empty)
+	testing.expectf(t, near(gleams[1], 0.5 * (full + empty), full), "a card that covers half mirrors half: %v, whole %v, without it %v", gleams[1], full, empty)
+	testing.expectf(t, near(gleams[3], full + 0.96 * empty, full), "glass mirrors the sun whole: %v, a black coat %v", gleams[3], full)
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 
@@ -249,11 +276,11 @@ glass_solid_filters_once_and_absorbs :: proc(t: ^testing.T) {
 	r := f.renderer
 	green := glass_material({0.2, 1, 0.2}, 1, 0.05)
 	green.thickness = 0.5
-	smoky := glass_material({1, 1, 1}, 0, 0.05)
+	smoky := glass_material({1, 1, 1}, 1, 0.05)
 	smoky.thickness = 0.5
 	smoky.attenuation_color = {1, 1, 0.25}
 	smoky.attenuation_distance = 0.5
-	materials_set(r, {green, smoky, glass_material({1, 1, 1}, 0, 0.05)})
+	materials_set(r, {green, smoky, glass_material({1, 1, 1}, 1, 0.05)})
 	sheet, box := sheet_mesh(r), box_mesh(r)
 	floor := Instance_Desc{object_id = 1, mesh = sheet, transform = placed({}, {20, 1, 20}), tint = {1, 1, 1}}
 	block := Instance_Desc{object_id = 2, mesh = box, transform = placed({0, 1, 0}, {2, 0.5, 2}), material = 1, tint = {1, 1, 1}}
@@ -335,7 +362,7 @@ glass_ball_turns_the_scene_behind_it_upside_down :: proc(t: ^testing.T) {
 	if !fixture_init(t, &f, 128, 96, glass_settings(), reference = {.Lights}) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
-	clear := glass_material({1, 1, 1}, 0, 0.05)
+	clear := glass_material({1, 1, 1}, 1, 0.05)
 	clear.thickness = 1
 	materials_set(r, {clear})
 	sheet, ball := sheet_mesh(r), ball_mesh(r)
@@ -369,7 +396,7 @@ glass_pane_shows_what_a_ray_through_it_finds :: proc(t: ^testing.T) {
 	if !fixture_init(t, &f, 256, 192, glass_settings(), reference = {.Lights}) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
-	clear := glass_material({1, 1, 1}, 0, 0.05)
+	clear := glass_material({1, 1, 1}, 1, 0.05)
 	clear.thickness = 0.4
 	materials_set(r, {clear})
 	// The same box twice: the loose vertex of the second lies between its top
@@ -404,7 +431,7 @@ glass_reflects_what_stands_before_it :: proc(t: ^testing.T) {
 	if !fixture_init(t, &f, 128, 96, settings, reference = {.Lights}) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
-	materials_set(r, {glass_material({1, 1, 1}, 0, 0.05)})
+	materials_set(r, {glass_material({1, 1, 1}, 1, 0.05)})
 	sheet, box := sheet_mesh(r), box_mesh(r)
 	pane := Instance_Desc{object_id = 1, mesh = sheet, transform = standing({0, 1, 0}, 6, 4), material = 1, tint = {1, 1, 1}}
 	lamp := Instance_Desc{object_id = 2, mesh = box, transform = placed({1.5, 1, 2}, {0.8, 0.8, 0.8}), tint = {0, 0, 0}, emission = {40, 40, 40}}
@@ -435,7 +462,7 @@ glass_rough_scatters_what_shows_through :: proc(t: ^testing.T) {
 	if !fixture_init(t, &f, 128, 96, glass_settings(), reference = {.Lights}) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
-	materials_set(r, {glass_material({1, 1, 1}, 0, 0.05), glass_material({1, 1, 1}, 0, 0.7)})
+	materials_set(r, {glass_material({1, 1, 1}, 1, 0.05), glass_material({1, 1, 1}, 1, 0.7)})
 	sheet := sheet_mesh(r)
 	red := Instance_Desc{object_id = 1, mesh = sheet, transform = standing({-4, 1, -4}, 8, 12), tint = {0, 0, 0}, emission = {1, 0, 0}}
 	blue := Instance_Desc{object_id = 2, mesh = sheet, transform = standing({4, 1, -4}, 8, 12), tint = {0, 0, 0}, emission = {0, 0, 1}}
@@ -466,7 +493,7 @@ glass_and_gloss_show_in_sharp_reflections :: proc(t: ^testing.T) {
 	mirror, plate := DEFAULT_MATERIAL, DEFAULT_MATERIAL
 	mirror.metallic, mirror.roughness = 1, 0.05
 	plate.metallic, plate.roughness = 1, 0.2
-	materials_set(r, {mirror, glass_material({1, 0, 0}, 0.9, 0.05), plate})
+	materials_set(r, {mirror, glass_material({1, 0.1, 0.1}, 1, 0.05), plate})
 	sheet := sheet_mesh(r)
 	floor := Instance_Desc{object_id = 1, mesh = sheet, transform = placed({}, {30, 1, 30}), material = 1, tint = {1, 1, 1}}
 	pane := Instance_Desc{object_id = 2, mesh = sheet, transform = placed({0, 3, 0}, {30, 1, 30}), material = 2, tint = {1, 1, 1}}
@@ -584,9 +611,9 @@ glass_frames_stay_allocation_free :: proc(t: ^testing.T) {
 	if !fixture_init(t, &f, 96, 64, settings, reference = {.Lights}) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
-	solid := glass_material({0.8, 0.9, 1}, 0.2, 0.05)
+	solid := glass_material({0.96, 0.98, 1}, 1, 0.05)
 	solid.thickness = 0.5
-	materials_set(r, {solid, glass_material({1, 0.6, 0.6}, 0.5)})
+	materials_set(r, {solid, glass_material({1, 0.8, 0.8}, 1)})
 	sheet, box := sheet_mesh(r), box_mesh(r)
 	instances := []Instance_Desc{
 		{object_id = 1, mesh = sheet, transform = placed({}, {20, 1, 20}), tint = {1, 1, 1}},

@@ -320,9 +320,10 @@ A texture of an asset resides with the levels the GPU samples of it
   shadows. The native BLAS of a cut holds the triangles of the slots the mesh's own rows test as
   a geometry apart; an instance that tests other slots makes every triangle a candidate.
 - The mips of a masked texture keep the proportion of texels that pass the threshold.
-- **Blend (`blend`).** It is drawn over the lit scene. Without transmission it is a layer that
-  covers `alpha` of what is behind it: the transparency attenuates its diffuse part, not its
-  specular highlight.
+- **Blend (`blend`).** It is drawn over the lit scene and covers `alpha` of what is behind it;
+  without transmission what covers hides it. Where it covers nothing there is no surface:
+  everything it sends by itself (lobes, layers, traced reflection, emission) is weighted by
+  `alpha`, previews and an instance's fade included, and the rest of what is behind goes on whole.
 - It casts no shadow and colors no light that crosses it, in the maps or in the rays. It does not
   enter the G-buffer nor appear as a surface in reflections or bounces; the sharp reflections see
   it as a color filter ([glass in rays](#glass-in-rays)).
@@ -537,8 +538,8 @@ tests: the pieces of a mesh, numbered in UV1, fly in with a turn as its `progres
 `transmission` turns a blend material into glass, with the parameters of
 `KHR_materials_transmission`, `KHR_materials_ior` and `KHR_materials_volume` (`render/glass.odin`):
 
-- **Filter.** It does not diffuse: it reflects according to its IOR and lets through the rest of
-  the light from behind multiplied by `mix(white, base color, alpha)`.
+- **Filter.** Where it covers (`alpha`) it does not diffuse: it reflects according to its IOR and
+  lets through the rest of the light from behind multiplied by its base color.
 - **Material layers.** Coat, fuzz, anisotropy, diffuse transmission and unlit are prepared with
   `shading_layers` and composed as over an opaque base (`glass_shading`, `glass_light`). The light
   from behind crosses them once (`shading_through`): the coat leaves to the view what it does not
