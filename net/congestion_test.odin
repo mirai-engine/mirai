@@ -10,7 +10,7 @@ FLOOD_CHANNELS :: []Channel_Desc{{kind=.Unreliable,queue_bytes=16<<10}}
 @(test)
 congestion_control_follows_a_link_that_narrows_and_recovers :: proc(t:^testing.T) {
     w:Test_World;test_world_init(&w,2,seed=5);defer test_world_destroy(&w)
-    server:=test_host(&w,{mode=.Server,channels=FLOOD_CHANNELS,send_rate=256<<10,packets_per_update=8})
+    server:=test_host(&w,{mode=.Server,channels=FLOOD_CHANNELS,})
     client:=test_host(&w,{mode=.Client,channels=FLOOD_CHANNELS})
     on_server,on_client:=test_connect(&w,server,client)
     testing.expect(t,on_server!=0 && on_client!=0)
