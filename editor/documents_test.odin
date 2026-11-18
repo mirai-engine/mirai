@@ -274,7 +274,11 @@ the_tab_of_a_scene_that_opens_loads_from_the_first_frame_until_it_is_resident ::
     testing.expect_value(t,document_loading_tab(s),-1)
     testing.expect(t,!loading_screen(s,{}))
     s.start_select=strings.clone(selected)
-    file_open_path(s,"level.scene")
+    // An agent that already drives the editor does not make the start ask first.
+    working:=&f.ai.tasks[0];working.id=1;working.world=s.edit_world;working.state=.Running
+    f.ai.task_count=1
+    testing.expect_value(t,ai_working_count(s),1)
+    start_open(s,"level.scene")
     defer documents_free(s)
     buffer:[SCENE_LOAD_TEXT]u8
     for frame in 0..<2 {
