@@ -293,7 +293,7 @@ sidecars; the importers, the registry and the build do not use them yet.
   imports; any machine with the manifest computes it, without the source, and a peer that built
   that key gives it. `build_select` combines the manifest with the version of each kind of the
   cache it holds, so a program without importers (the dev player) finds the build the refresh
-  chose. The folders of `cook/cache` name theirs in `cache-<name>`.
+  chose. The caches of `cook/cache` name theirs in `cache-<name>`.
 - `packages_resolve` lists, for each package of the list, its assets of the cache the project
   uses with what they depend on, at `<folder>/<name><extension>` as the sidecar lists them, with
   the path of their blob. A missing build lists them not built; a manifest or a build the store

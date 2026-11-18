@@ -4,11 +4,12 @@ import "core:fmt"
 import "core:mem"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:cook/cache"
 import "mirai:cook/textures"
 import "mirai:std/base"
 import "mirai:std/jobs"
-import mstore "mirai:store"
 import mm "mirai:std/math"
+import mstore "mirai:store"
 
 // What an importer reads from a source file, as plain data that depends on no
 // engine component: the geometry as .mesh is built of it, the materials with
@@ -52,7 +53,12 @@ Import_Options :: struct {
     // ingested before, unless ignore_stored.
     using settings:Import_Settings,
     ignore_stored:bool,
-    store:^mstore.Store,   // where the import puts the blobs of its build and the records of its package (package.odin)
+    // The machine store: where the import puts the blobs of its build and the
+    // records of its package (package.odin), and whose caches keep textures
+    // and meshes built before by what they are built from (textures.cache_read,
+    // mesh_cook).
+    store:^mstore.Store,
+    cache_source:cache.Source, // asked on a miss of those caches before building
     // The manifest of the package the source was ingested as, whose ids and
     // settings the import keeps; zero: the one the store names for the path
     // of the source (package_previous), else a new package.
@@ -67,12 +73,10 @@ Import_Options :: struct {
     registry:^asset.Registry, // the scanned assets of root, which the import does not change; nil: it scans them
     world:^core.World_Info,   // the types of the game of root, which the prefab of a model is written in
     rebuild:bool,        // writes every asset, also one whose file already is the one the import would write
-    texture_cache:string, // folder of textures built before, kept by image and settings (textures.cache_read); "": none
     // A texture is built Fast unless the texture cache keeps it as Final
     // (textures.Encode_Speed): the imports of the editor, which a cook
     // encodes again as Final. False: Final, what tools and the CLI build.
     fast_textures:bool,
-    mesh_cache:string,    // folder of meshes built before, kept by geometry and settings (mesh_cook); "": none
     // The identity of the code of the plugin that imports the source whole
     // (sources.code_identity), 0 for the engine's: part of what its outputs
     // are made from (identity_of).

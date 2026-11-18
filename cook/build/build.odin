@@ -12,6 +12,7 @@ import "mirai:asset"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/subprocess"
+import "mirai:store"
 
 // Builds of a project. A job generates the world and the main package of
 // its target and runs the compiler without blocking; whoever started it polls
@@ -124,6 +125,7 @@ Job :: struct {
     copies:[]Copy,              // Game: what goes next to the executable
     settings:string,            // Game: its settings file: those of the engine and of the project merged, since it ships without the engine
     cook:Cook_Desc,             // Game: the assets it ships; without assets, a project that has none
+    store:store.Store,          // Game: the machine store, whose caches cook.store names; unopened: none
     plugin_assets:[dynamic]project.Asset_Folder, // Game: the folders of assets of its active plugins, in cook.plugins
     development:[dynamic]string, // Game: the folders of the active development plugins, which it must not reach
     plugins:[]Plugin_Library,    // the plugin libraries the target links (plugins.odin)
@@ -260,8 +262,14 @@ job_start :: proc(desc:Desc) -> ^Job {
             if p.plugins[index].manifest.development {append(&job.development,strings.clone(p.plugins[index].folder,a))}
         }
         if assets:=project.folder_path(p.root,.Assets,a);os.is_dir(assets) {
-            job.cook={assets=assets,output=project.folder_path(folder,.Assets,a),manifest=project.path(p.root,COOK_FILE,allocator=a),texture_cache=project.content_cache_path(p.root,project.TEXTURE_CACHE,allocator=a),mesh_cache=project.content_cache_path(p.root,project.MESH_CACHE,allocator=a),collision_cache=project.content_cache_path(p.root,project.COLLISION_CACHE,allocator=a),root=p.root,server=desc.server,quick=desc.dev,keys=project.path(job.work,fmt.tprintf("%s.cook",name),allocator=a),allocator=a}
+            job.cook={assets=assets,output=project.folder_path(folder,.Assets,a),manifest=project.path(p.root,COOK_FILE,allocator=a),collision_cache=project.content_cache_path(p.root,project.COLLISION_CACHE,allocator=a),root=p.root,server=desc.server,quick=desc.dev,keys=project.path(job.work,fmt.tprintf("%s.cook",name),allocator=a),allocator=a}
             job.cook.codecs=asset.project_codecs(p.root,p.engine_root)
+            if store_root:=store.default_root(context.temp_allocator);store_root!="" {
+                if opened,error:=store.open(store_root,a);error==.None {
+                    job.store=opened
+                    job.cook.store=&job.store
+                }
+            }
             job.plugin_assets=make([dynamic]project.Asset_Folder,a)
             for found in project.asset_folders(p,a) {
                 if found.prefix!="" {append(&job.plugin_assets,found)}

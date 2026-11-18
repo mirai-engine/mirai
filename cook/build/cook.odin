@@ -13,6 +13,7 @@ import "core:time"
 import "compressor:data"
 import "compressor:blocks"
 import "mirai:asset"
+import "mirai:cook/cache"
 import "mirai:cook/far"
 import anim "mirai:std/anim"
 import "mirai:cook/textures"
@@ -21,6 +22,7 @@ import "mirai:std/base"
 import "mirai:std/jobs"
 import "mirai:std/serial"
 import "mirai:std/subprocess"
+import "mirai:store"
 
 // The assets a game ships: of the assets folder of a project, the ones the
 // game can reach, as the runtime loads them fastest.
@@ -58,8 +60,8 @@ Cook_Desc :: struct {
     output:string,   // the assets folder of the shipped game: it ends up holding what was cooked and nothing else
     manifest:string, // the cook.mirai of the project. "", or a file that does not exist: the scenes are the only roots
     plugins:[]project.Asset_Folder, // the assets of active plugins: every file a root, cooked under its prefix
-    texture_cache:string, // folder of compressed textures kept by content (textures.cache_read); "": none
-    mesh_cache:string,    // folder of the meshes an import keeps (cook/import Import_Options); "": none
+    store:^store.Store,   // whose texture cache keeps compressed textures by content (textures.cache_read); nil: none
+    cache_source:cache.Source, // asked on a miss of that cache before compressing
     collision_cache:string, // folder of the convex pieces of meshes kept by content (asset.mesh_collision_pieces); "": none
     codecs:asset.Codecs, // what the project ships with (build.compression)
     root:string,          // of the project: the sources of imported assets are named relative to it. "": the folder of assets
@@ -698,20 +700,20 @@ texture_cook :: proc(work:^Cook_Work,source,target:string,types:^asset.Types,wor
     view,error:=asset.texture_view(&file,types)
     if error!=.None {return}
     if view.info.format!=.RGBA8 {return false,true}
-    cache:=work.desc.texture_cache
+    kept:=cache.Cache{store=work.desc.store,source=work.desc.cache_source}
     // Blocks that nothing compresses keep the least error.
     rdo:=work.desc.codecs!=.None
     key:=textures.cache_key_blocks(file.blob.header.content_hash,rdo)
-    built,cached:=textures.cache_read(cache,key,types,context.temp_allocator)
+    built,cached:=textures.cache_read(kept,key,types,context.temp_allocator)
     if !cached {
         built_ok:bool
         if built,built_ok=textures.blocks_of(view,context.temp_allocator,worker,rdo);!built_ok {return}
         // Textures of one content build the same blocks: the first to get here keeps them.
-        if cache!="" {
+        if kept.store!=nil {
             sync.mutex_lock(&work.cache)
             if key not_in work.cached {
                 work.cached[key]={}
-                textures.cache_write(cache,key,types,&built)
+                textures.cache_write(kept,key,types,&built)
             }
             sync.mutex_unlock(&work.cache)
         }

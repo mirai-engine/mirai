@@ -9,11 +9,13 @@ import "core:strings"
 import "core:time"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:cook/cache"
 import importer "mirai:cook/import"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/jobs"
 import "mirai:std/serial"
+import "mirai:store"
 
 // Builds again what the imports of a project or a plugin keep in its imported
 // folder, which is not versioned, from the sources in its assets folder and
@@ -49,7 +51,8 @@ Library_Imports :: struct {
 }
 
 Sync_Options :: struct {
-    texture_cache,mesh_cache:string, // "": those of the root (project.content_cache_path)
+    store:^store.Store,              // whose caches keep what imports build (importer.Import_Options); nil: none
+    cache_source:cache.Source,
     rebuild:bool,                    // imports every source again
     // Textures built Fast, as the editor imports them, unless the texture
     // cache keeps them Final: what a build that does not cook needs. Outputs
@@ -99,8 +102,7 @@ sync :: proc(root:string,options:Sync_Options={},allocator:=context.allocator) -
     asset.registry_scan(&registry)
     import_options:=importer.Import_Options{
         root=top,registry=&registry,rebuild=options.rebuild,worker=options.worker,fast_textures=options.fast_textures,
-        texture_cache=options.texture_cache if options.texture_cache!="" else project.content_cache_path(top,project.TEXTURE_CACHE,context.temp_allocator),
-        mesh_cache=options.mesh_cache if options.mesh_cache!="" else project.content_cache_path(top,project.MESH_CACHE,context.temp_allocator),
+        store=options.store,cache_source=options.cache_source,
     }
     // The library, read once a source needs a format of its plugins or a model imports.
     library:Library_Read
