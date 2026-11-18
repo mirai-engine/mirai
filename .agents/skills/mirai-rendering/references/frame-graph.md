@@ -264,3 +264,8 @@ or interleave its own passes.
 - materials, textures, their memory, reduced textures and compression
   ([materials](materials.md#textures));
 - the counters of the [extensions](views.md#extension-stages) (`Stats.counters`).
+
+`renderer_cost_ask` and `renderer_cost` count one frame of the first view of the window by mesh and
+by material (`profile.cost` answers it). Only that frame binds the `cost` variants of the cull, of
+the raster rounds and of the cull of the maps and runs the pass that counts the pixels of the
+visibility target; every other frame runs the passes without them and pays nothing.

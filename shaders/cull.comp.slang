@@ -1,4 +1,6 @@
 #include "native.slang"
+// cost: counts by mesh too (cost.slang), in the frame of a request alone.
+//! variant cost MIRAI_COST=1
 // GPU-driven culling, by instance and then by cluster, in two phases a frame:
 //  phase 0: an instance in the frustum and not hidden by last frame's depth
 //           pyramid (projected with last frame's camera) hands the clusters
@@ -15,6 +17,9 @@
 // and their cull distance.
 #include "cut.slang"
 #include "cull_common.slang"
+#ifdef MIRAI_COST
+#include "cost.slang"
+#endif
 #define MIRAI_GROUP_X 64
 #define MIRAI_GROUP_Y 1
 #define MIRAI_GROUP_Z 1
@@ -99,6 +104,9 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     }
     if (!visible || blended) return;
     InterlockedAdd(stats[0].visible_instances, 1u);
+#ifdef MIRAI_COST
+    cost_add(instance_mesh(inst), INVALID, COST_INSTANCES, 1u);
+#endif
     InterlockedAdd(stats[0].kinds[cull_kind(batched, mesh) * 3u], 1u);
     if (params.phase != 0u) InterlockedAdd(stats[0].late[0], 1u);
     uint2 clusters = instance_clusters(view_detail(), inst, mesh);

@@ -1243,6 +1243,74 @@ render_a_table_holds_no_page_past_its_pool :: proc(t: ^testing.T) {
 	}
 }
 
+// A frame asked for counts what each mesh and each material of the view cost
+// it: the instances, clusters and triangles the view drew, the pixels each
+// owns and what the maps of the sun drew of it; a mesh out of the view costs
+// the view nothing, and the frames after it count nothing again.
+@(test)
+render_a_frame_asked_for_counts_its_cost_by_mesh_and_material :: proc(t: ^testing.T) {
+	f: Cube_Fixture
+	settings := test_settings()
+	settings.gi_enabled, settings.taa = false, false
+	width, height :: 128, 96
+	if !cube_fixture_init(t, &f, width, height, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	red := DEFAULT_MATERIAL
+	red.base_color = {1, 0, 0}
+	testing.expect(t, materials_set(r, {red}), r.error)
+	red_vertices, red_indices := cube_mesh(material = 1)
+	red_cube, red_added := mesh_add(r, red_vertices[:], red_indices[:])
+	vertices, indices := cube_mesh()
+	apart, apart_added := mesh_add(r, vertices[:], indices[:])
+	if !testing.expect(t, red_added && apart_added, r.error) {return}
+	_, refused := renderer_cost(r)
+	testing.expect(t, !refused, "a count nobody asked for")
+	instances := []Instance_Desc{
+		{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {12, 0.2, 12}), tint = 1},
+		{object_id = 2, mesh = red_cube, transform = trs({-1.5, 0.5, 0}, 1), tint = 1},
+		{object_id = 3, mesh = red_cube, transform = trs({0, 0.5, 0}, 1), tint = 1},
+		{object_id = 4, mesh = red_cube, transform = trs({1.5, 0.5, 0}, 1), tint = 1},
+		{object_id = 5, mesh = apart, transform = trs({0, 0.5, 60}, 1), tint = 1},
+	}
+	sun := Sun_Desc{direction = {0.4, 1, 0.3}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true}
+	testing.expect(t, scene_given(r, instances, nil, sun, {sky = {0.3, 0.4, 0.6}}))
+	camera := Camera{position = {0, 4, 7}, forward = {0, -4, -7}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	for _ in 0 ..< 4 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	// The maps of a still view keep what they drew: the frame counted draws them whole again.
+	b := &r.main.targets.shadow_raster
+	b.budget, b.forget = 1 << 20, true
+	if !testing.expect_value(t, renderer_cost_ask(r), "") {return}
+	cost: Cost
+	ready := false
+	for _ in 0 ..< 8 {
+		testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+		if cost, ready = renderer_cost(r); ready {break}
+	}
+	if !testing.expect(t, ready, "the count of the frame asked for never came") {return}
+	testing.expect(t, len(cost.meshes) == len(r.scene.meshes) && len(cost.materials) == len(r.scene.materials))
+	floor, cubes, away := cost.meshes[f.cube], cost.meshes[red_cube], cost.meshes[apart]
+	testing.expect_value(t, floor.instances, 1)
+	testing.expect_value(t, cubes.instances, 3)
+	testing.expect_value(t, away, Cost_Row{})
+	for row, name in ([2]Cost_Row{floor, cubes}) {
+		testing.expectf(t, row.clusters > 0 && row.raster_triangles > 0 && row.triangles >= row.raster_triangles && row.pixels > 0, "mesh %d: %v", name, row)
+	}
+	testing.expectf(t, cubes.shadow_clusters > 0 && cubes.shadow_triangles > 0 && cubes.shadow_units > 0, "the maps drew nothing of the cubes: %v", cubes)
+	// The red cubes alone are of the red material, which counts no instances.
+	shown := cost.materials[1]
+	testing.expect_value(t, shown, Cost_Row{clusters = cubes.clusters, triangles = cubes.triangles, raster_triangles = cubes.raster_triangles, pixels = cubes.pixels, shadow_clusters = cubes.shadow_clusters, shadow_triangles = cubes.shadow_triangles, shadow_units = cubes.shadow_units, shadow_over = cubes.shadow_over})
+	// Every pixel of the target is of one mesh and one material, or of the sky.
+	mesh_pixels, material_pixels: u32
+	for row in cost.meshes {mesh_pixels += row.pixels}
+	for row in cost.materials {material_pixels += row.pixels}
+	testing.expectf(t, mesh_pixels == material_pixels && mesh_pixels <= width * height, "pixels of the meshes %d, of the materials %d", mesh_pixels, material_pixels)
+	counted := cost.frame
+	for _ in 0 ..< 3 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	again, still := renderer_cost(r)
+	testing.expect(t, still && again.frame == counted, "a frame nobody asked about counted")
+}
+
 // No round of the maps draws more clusters in a frame than its bound, also in
 // the first frame of a still view that asks for many times more, where a
 // page alone passes it too; the pages past it wait, the coarsest first, and
