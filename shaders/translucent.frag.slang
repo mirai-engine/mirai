@@ -27,7 +27,7 @@ Stage_Output main(Raster_Input input, float4 pixel_position : SV_Position, bool 
     Fragment f = fragment_evaluate(input, opaque);
     // Behind a layer of glass, the few percent a pane reflects of the probes do not show.
     Glass g = fragment_glass(f, input.in_world);
-    float3 color = glass_light(f.material, g, glass_shading(f.material, g), float3(0.0), 0.0, 0.08, params.light_budget);
+    float3 color = glass_light(g, glass_shading(f.material, g), float3(0.0), 0.0, 0.08, params.light_budget);
     output.out_color = float4(finite_or_zero(color), 0.0);
     return output;
 }

@@ -759,7 +759,8 @@ heights to its units and decides the size of its terrain.
 - Slots: one per `usemtl` name in order of first appearance in the mesh, also those the MTL does
   not define; the id is the position plus one.
 - MTL: `Kd` (0.8 if missing), `Ke`, `Pr`, `Pm`, `Ns` (without `Pr`, `roughness = 1 - sqrt(Ns/1000)`,
-  as Blender exports), `d`/`Tr` (less than 1 is `blend`), `map_Kd`, `map_Ke` and
+  as Blender exports), `d`/`Tr` (less than 1 is `blend`: coverage, or with a glass `illum` (4, 6,
+  7, 9) transmission `1 − d` and `Ni` as its IOR), `map_Kd`, `map_Ke` and
   `norm`/`map_Bump`/`bump` (with `-bm` for scale), with paths relative to the OBJ. `map_Pr` and
   `map_Pm` are not read.
 
@@ -898,11 +899,12 @@ inherits, variants, sublayers and binary files fail with a `Tool` error that say
   `UsdUVTexture` images (an input with an image leaves its factor at 1) and the mapping of a
   `UsdPrimvarReader_float2` and a `UsdTransform2d`. Metallic and roughness come from a packed image
   (roughness in `g`, metallic in `b`), occlusion from `r` and opacity from the alpha of the color;
-  `opacityThreshold > 0` is `mask` and an opacity below 1, `blend`. `doubleSided`, of the mesh,
-  makes its material `two_sided` (a mesh without one gets a default material that is). `clearcoat`
-  is a white coat with the surface's IOR, as MaterialX builds it. Two materials with the same name:
-  the second is named by its prim path; one without `UsdPreviewSurface` is not imported. Images that
-  `usdcat` does not resolve are searched next to the file.
+  `opacityThreshold > 0` is `mask` and an opacity below 1, `blend`: in the `transparent` mode, the
+  default, glass with transmission `1 − opacity`; in `presence`, coverage. `doubleSided`, of the
+  mesh, makes its material `two_sided` (a mesh without one gets a default material that is).
+  `clearcoat` is a white coat with the surface's IOR, as MaterialX builds it. Two materials with
+  the same name: the second is named by its prim path; one without `UsdPreviewSurface` is not
+  imported. Images that `usdcat` does not resolve are searched next to the file.
 - **Lights** UsdLux on the node of their prim, in the units of `Imported_Light`
   ([units](../../mirai-rendering/references/display.md#units)). Luminance is
   `intensity · 2^exposure · color`, times the color of `colorTemperature` if enabled, and with

@@ -497,11 +497,21 @@ usd_material :: proc(u:^Usd_Import,material:int) -> int {
     // Opacity is textured only by the alpha of the base color image.
     alpha_map:=opacity.channel=="a" && opacity.file==diffuse.file && images[.Base_Color]>=0
     if alpha_map {info.opacity=1}
+    // In the transparent mode, the default one, opacity dims the diffuse part
+    // alone: the surface is there whole, as glass that lets the rest through.
+    // In presence it is how much of the surface is there.
+    transparent:=usd_string(u.prims[surface].properties["inputs:opacityMode"])!="presence"
     if threshold:=input_number(usd_input(u,surface,"inputs:opacityThreshold"),0);threshold>0 {
         info.alpha_mode=.Mask
         info.alpha_cutoff=clamp(threshold,0,1)
     } else if info.opacity<1 || alpha_map {
         info.alpha_mode=.Blend
+        if transparent && alpha_map {
+            importer.warn(r,"USD material %s: its opacity is a texture in the transparent mode, which a transmission is not: the texture is how much of the surface is there, its highlight included",u.prims[material].name)
+        } else if transparent {
+            info.transmission,info.opacity=1-info.opacity,1
+            if info.base_color!={1,1,1} || images[.Base_Color]>=0 {importer.warn(r,"USD material %s: its glass filters what it lets through by its diffuse color",u.prims[material].name)}
+        }
     }
     // A white coat; UsdPreviewSurface gives it the index of the surface.
     clearcoat,clearcoat_roughness:=usd_input(u,surface,"inputs:clearcoat"),usd_input(u,surface,"inputs:clearcoatRoughness")
