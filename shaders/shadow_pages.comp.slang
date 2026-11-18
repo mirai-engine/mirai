@@ -725,7 +725,9 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
         uint cost = pages[round_cost(pool)], taken = pages[round_taken(pool)], e = shadow_table_entry(slot, entry);
         // What the cache left for the frames after is not ready already.
         if (params.round == 1u && (e & SHADOW_PAGE_COMPOSED) == 0u) return;
-        bool granted = (cost & SHADOW_COST_WAITS) == 0u, done = granted && (cost & SHADOW_COST_OVER) == 0u;
+        // Where the list of the chunks of the round had no room, no page of it is drawn whole.
+        bool dropped = pages[SHADOW_WORDS_COUNTS + SHADOW_COUNT_DROPPED + params.round] != 0u;
+        bool granted = (cost & SHADOW_COST_WAITS) == 0u, done = granted && (cost & SHADOW_COST_OVER) == 0u && !dropped;
         // What the draws took of what was foreseen, for the scale (Propagate).
         if (granted && (cost & SHADOW_COST_GUESS) != 0u) InterlockedAdd(pages[SHADOW_WORDS_COUNTS + SHADOW_COUNT_MEASURED + params.round], taken);
         // What composing it took, which the next frame grants it for.
@@ -734,7 +736,7 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
             uint band = pages[SHADOW_WORDS_BAND + pool], shift = (band >> SHADOW_BAND_SHIFT) & 0xFFu, rows = band & 0xFFu;
             uint stuck = band & SHADOW_BAND_STUCK;
             if (done) rows += SHADOW_PAGE >> shift;
-            else if (granted && (SHADOW_PAGE >> shift) == 1u) stuck = SHADOW_BAND_STUCK;
+            else if (granted && !dropped && (SHADOW_PAGE >> shift) == 1u) stuck = SHADOW_BAND_STUCK;
             done = rows >= SHADOW_PAGE;
             pages[SHADOW_WORDS_BAND + pool] = done ? 0u : rows | (shift << SHADOW_BAND_SHIFT) | stuck;
             // What its band took, which the next band of it takes too.

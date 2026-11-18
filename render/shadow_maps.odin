@@ -76,9 +76,9 @@ SHADOW_FRAME_CLUSTERS :: u32(32768)
 SHADOW_FRAME_CLUSTERS_MOST :: 16 * SHADOW_FRAME_CLUSTERS
 // The most chunks the pass by instance of a round hands to its pass by
 // cluster (Cull_List.Shadow_Chunks): those of the clusters the bound draws at
-// most, twice, so that the chunks of a page granted alone fit. The pages
-// whose chunks find no room wait (shadow_maps.comp), and no frame culls more
-// clusters of the maps than these hold.
+// most, twice, so that the chunks of a page granted alone fit. Where they
+// find no room, the pages of the round wait (shadow_maps.comp), and no frame
+// culls more clusters of the maps than these hold.
 SHADOW_CHUNKS_MOST :: 2 * SHADOW_FRAME_CLUSTERS_MOST
 // What the rounds of the maps take while their pages wait, of the GPU time of
 // the rest of the frame, a refresh of the display at least: a part, so that
