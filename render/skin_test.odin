@@ -382,6 +382,11 @@ gpu_skin_preserves_bind_source_motion_normals_bounds_and_refits_both_ray_paths :
         descs[1].mesh=skin;scene_given(r,descs[:],nil,sun,environment)
         for _ in 0..<3 {testing.expect(t,fixture_frame(&f, {camera=camera}),r.error)}
         if r.hardware_rt {
+            // A pose rays tell from the one its BLAS holds, after enough refits, builds it again.
+            moved:=palette
+            moved[1][1,3]+=0.5
+            testing.expect(t,skin_update(r,skin,moved[:]))
+            testing.expect(t,fixture_frame(&f, {camera=camera}),r.error)
             r.scene.meshes[skin].skin.refits=SKIN_REBUILD_INTERVAL
             testing.expect(t,skin_update(r,skin,palette[:],true))
             for _ in 0..<3 {testing.expect(t,fixture_frame(&f, {camera=camera}),r.error)}
