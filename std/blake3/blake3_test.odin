@@ -55,7 +55,7 @@ hash_matches_the_official_vectors :: proc(t: ^testing.T) {
 @(test)
 incremental_and_group_hashes_match_the_whole_blob :: proc(t: ^testing.T) {
     sizes := [?]int{
-        0, 1, 1023, 1024, 1025,
+        0, 1, 1023, 1024, 1025, 4095, 4096, 4097,
         GROUP_BYTES - 1, GROUP_BYTES, GROUP_BYTES + 1,
         2*GROUP_BYTES - 1, 2*GROUP_BYTES, 2*GROUP_BYTES + 5,
         3*GROUP_BYTES - 1, 3*GROUP_BYTES, 3*GROUP_BYTES + 5,
