@@ -244,6 +244,7 @@ Host :: struct {
 
 @(private)
 Back :: struct {
+    held:bool, // a reliable channel holds chunks the command buffer had no room for: no datagram is read
     now:f64,
     outbox:^Command_Buffer,
     peers:[]Peer,
@@ -351,9 +352,8 @@ host_init :: proc(h:^Host,desc:Host_Desc) -> Error {
     h.records=d.replication.records
     for i in 0..<MAX_CHANNELS {
         if h.channels[i].kind!=.Reliable || h.channels[i].queue_bytes<=0 {continue}
-        chunks:=channel_chunks(h.channels[i].queue_bytes)
-        b.reserve_bytes+=chunks*CHUNK_BYTES+PIECE_BYTES
-        h.records+=chunks
+        b.reserve_bytes+=PIECE_BYTES
+        h.records+=channel_chunks(h.channels[i].queue_bytes)
     }
     if d.protocol!=nil && !h.failed {
         if error:=repl_init(h);error!=.None {
@@ -614,9 +614,9 @@ back_update :: proc(h:^Host,now:f64) {
     applied:=time.tick_now()
 
     b.secure.handshakes=h.desc.handshakes_per_update
+    channels_held(h)
     for {
-        out:=b.outbox
-        if len(out.bytes)-out.used<b.reserve_bytes || len(out.commands)-out.count<b.reserve_count {b.stats.receive_stalls+=1;break}
+        if b.held || !command_room(h,0) {b.stats.receive_stalls+=1;break}
         size,from,ok:=h.desc.transport.receive(h.desc.transport.data,b.incoming[:])
         if !ok {break}
         b.stats.packets_received+=1
@@ -701,6 +701,14 @@ op_apply :: proc(h:^Host,frame:^Frame,op:^Op) {
     case:
         repl_op(h,frame,op)
     }
+}
+
+// The command buffer has room for what one datagram can turn into and extra commands of a piece each.
+@(private)
+command_room :: proc(h:^Host,extra:int) -> bool {
+    b:=&h.back
+    out:=b.outbox
+    return len(out.bytes)-out.used>=b.reserve_bytes+extra*(PIECE_BYTES+8) && len(out.commands)-out.count>=b.reserve_count+extra
 }
 
 @(private)

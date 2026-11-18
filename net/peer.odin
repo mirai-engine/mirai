@@ -44,6 +44,7 @@ import "mirai:std/serial"
 MAX_CONNECTIONS :: 1024
 @(private) SENT_WINDOW :: 4096         // datagrams in flight: twice what 100 Mbit/s holds over 120 ms, and more
 @(private) ACK_WINDOW :: SENT_WINDOW-1 // datagrams before the last received an acknowledgement covers at most
+@(private) RECORD_WINDOW :: SENT_WINDOW-1-64 // datagrams in flight past which only one a keepalive goes
 @(private) ACK_COUNT_BITS :: 12        // of how many datagrams an acknowledgement covers: up to ACK_WINDOW
 @(private) LATE_WINDOW :: 32           // datagrams behind the last received that are still taken late
 @(private) HANDSHAKE_BYTES :: 256
@@ -170,9 +171,11 @@ ack_bits_advance :: proc "contextless" (bits:^Ack_Bits,shift:u64) {
     bits[(shift-1)/64]|=1<<((shift-1)%64)
 }
 // Which of the count datagrams before the acknowledged one arrived: whether the first did, then the
-// lengths of the runs of arrived and missing ones in turn, each in Elias gamma code.
+// lengths of the runs of arrived and missing ones in turn, each in Elias gamma code. Within budget bits:
+// the runs that do not fit are left out, and the other end takes those datagrams as lost.
 @(private)
-ack_bits_write :: proc(w:^serial.Bit_Writer,bits:^Ack_Bits,count:int) {
+ack_bits_write :: proc(w:^serial.Bit_Writer,bits:^Ack_Bits,count,budget:int) {
+    count:=ack_fit(bits,count,budget)
     serial.bit_write(w,u64(count),ACK_COUNT_BITS)
     if count==0 {return}
     set:=ack_bit(bits,1)
@@ -185,6 +188,19 @@ ack_bits_write :: proc(w:^serial.Bit_Writer,bits:^Ack_Bits,count:int) {
         serial.bit_write(w,u64(run)&(1<<width-1),int(width))
         at+=run
     }
+}
+// The most of count datagrams whose runs fit in budget bits, at the end of a run.
+@(private)
+ack_fit :: proc "contextless" (bits:^Ack_Bits,count,budget:int) -> int {
+    used:=ACK_COUNT_BITS+1
+    set:=ack_bit(bits,1)
+    for at:=0;at<count;set=!set {
+        run:=ack_run(bits,at,count,set)
+        used+=2*int(63-intrinsics.count_leading_zeros(u64(run)))+1
+        if used>budget {return at}
+        at+=run
+    }
+    return count
 }
 // How many bits from bit at on, below count, equal set.
 @(private)
@@ -424,7 +440,8 @@ peer_service :: proc(h:^Host,p:^Peer) {
 // buffer that overflows, and from there grows by the same CC_GROWTH a second while it wants more and
 // finds no queue: connections that share a path converge to equal shares, and the queue stays short for
 // what else travels on it. A slow path grows by at most a quarter of its rate each interval. Losses
-// without a queue do not cut the rate, so a link that drops datagrams at random keeps it.
+// without a queue do not cut the rate, so a link that drops datagrams at random keeps it. An
+// interval that delivered next to nothing, as after an outage, starts again.
 @(private)
 congestion_update :: proc(h:^Host,p:^Peer) {
     now:=h.back.now
@@ -439,9 +456,11 @@ congestion_update :: proc(h:^Host,p:^Peer) {
     if queued || overrun {
         congested:=overrun || lost>0 && f64(lost)>CC_LOSS_SHARE*f64(acked+lost)
         p.rate=clamp(min(p.rate,delivered)*(congested?0.7:0.8),CC_MIN_RATE,CC_MAX_RATE)
-        p.starting=false
+        // Nothing delivered is an outage, not a path that narrowed: start again.
+        p.starting=delivered<CC_MIN_RATE
+        if p.starting {p.rate=CC_START_RATE}
         p.stats.send_limit_cuts+=1
-    } else if p.cc_limited {
+    } else if p.cc_limited && acked>0 {
         p.rate=min(p.starting?p.rate*2:p.rate+min(CC_GROWTH*min(elapsed,1),p.rate/4),CC_MAX_RATE)
     }
     if now-p.window_time>CC_WINDOW {
@@ -870,7 +889,7 @@ peer_wants_send :: proc(h:^Host,p:^Peer) -> bool {
     if b.send_pending || b.clock_due {return true}
     if idle>=h.desc.keepalive || (p.ack_pending && (idle>=ACK_DELAY || p.ack_chunks>=ACK_EVERY)) {return true}
     if idle>=1/f64(h.desc.tick_rate) && channels_pending(p) {return true}
-    if u16(p.send_seq-p.sent_tail)<SENT_WINDOW-1 && min(p.tokens+(b.now-p.token_time)*p.rate,send_burst(h,p.rate))>=PACKET_BYTES && channels_streaming(p) {return true}
+    if u16(p.send_seq-p.sent_tail)<RECORD_WINDOW && min(p.tokens+(b.now-p.token_time)*p.rate,send_burst(h,p.rate))>=PACKET_BYTES && channels_streaming(p) {return true}
     return p.sent_tail!=p.send_seq && idle>=clamp(p.rtt*2+p.rtt_variance*4,0.1,1)
 }
 
@@ -886,7 +905,9 @@ peer_send :: proc(h:^Host,p:^Peer) {
     for &c in p.channels {c.spent=0}
     budget:=repl_budget(h,p)
     for packet:=0;;packet+=1 {
-        if u16(p.send_seq-p.sent_tail)>=SENT_WINDOW-1 {break}
+        // Past RECORD_WINDOW only a datagram a keepalive goes: if every one in flight was lost, the
+        // acknowledgement of a newer one settles them.
+        if u16(p.send_seq-p.sent_tail)>=RECORD_WINDOW && (packet>0 || b.now-p.last_send<h.desc.keepalive || u16(p.send_seq-p.sent_tail)>=SENT_WINDOW-1) {break}
         if packet>0 && p.tokens<=0 {break}
         first_record:=p.record_tail
         seq:=p.send_seq
@@ -894,13 +915,16 @@ peer_send :: proc(h:^Host,p:^Peer) {
         data_begin(h,p,&w,.Data)
         serial.bit_write_bool(&w,p.recv_any)
         serial.bit_write(&w,u64(u16(p.recv_counter)),16)
-        ack_bits_write(&w,&p.recv_bits,p.recv_any && p.recv_counter>p.ack_known?int(min(p.recv_counter-p.ack_known,ACK_WINDOW)):0)
+        // What must go after it bounds the acknowledgement: its delay, the clock or the inputs, and the
+        // ends of the sections.
+        ack_budget:=serial.bit_writer_remaining(&w)-8-time_max_bits(h)-SECTION_RESERVE
+        ack_bits_write(&w,&p.recv_bits,p.recv_any && p.recv_counter>p.ack_known?int(min(p.recv_counter-p.ack_known,ACK_WINDOW)):0,ack_budget)
         serial.bit_write(&w,u64(clamp((b.now-p.recv_time)*1000,0,255)),8)
         wrote:=time_write(h,p,&w,seq)
         yield:=b.repl.key_cursor<b.repl.key_count && budget>0?min(budget,PACKET_BYTES*4):0
         if channels_write(h,p,&w,SECTION_RESERVE,yield) {wrote=true}
         more:=false
-        last:=u16(p.send_seq+1-p.sent_tail)>=SENT_WINDOW-1 || p.tokens<=PACKET_BYTES
+        last:=u16(p.send_seq+1-p.sent_tail)>=RECORD_WINDOW || p.tokens<=PACKET_BYTES
         if objects_write(h,p,&w,seq,&budget,&more,last) {wrote=true}
         if packet>0 && !wrote {
             p.record_tail=first_record

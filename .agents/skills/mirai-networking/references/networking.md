@@ -128,7 +128,9 @@ like `replication.hysteresis`) and the values it admits.
   before it arrived, from what the other end might not have resolved when reading the last ack this
   end received (`ack_known`), capped by `ACK_WINDOW`, as runs of arrived and missing datagrams in
   Elias gamma code: a stream with few losses acks thousands of datagrams in a few bytes. Everything
-  the sender has in flight arrives this way with its real fate, also after a receiver stall.
+  the sender has in flight arrives this way with its real fate, also after a receiver stall. The
+  ack takes only what the clock or the inputs leave of the datagram: runs that do not fit are left
+  out, and the sender takes those datagrams as lost.
   - A receiver acks within `ACK_DELAY`, or with what it sends anyway, and at once after
     `ACK_EVERY` datagrams that carried reliable chunks: a stream is acked as it arrives, and a
     connection without one sends no datagram more for it.
@@ -145,7 +147,9 @@ like `replication.hysteresis`) and the values it admits.
     no ack.
 - **Send limit**: a token bucket with the connection's rate that stores at most one tick of rate
   (`send_burst`), so a network half that updates more often than the tick spreads the datagrams.
-  An update sends while the tokens last, up to `SENT_WINDOW` datagrams in flight. A reliable
+  An update sends while the tokens last, up to `RECORD_WINDOW` datagrams in flight; past it, one
+  datagram a keepalive still goes, so a connection whose every datagram in flight was lost to an
+  outage learns their fate from the ack of a newer one and resumes. A reliable
   channel with a datagram of chunks ready sends at every update the tokens allow; the rest goes once
   a tick. The object budget of each send is the lesser of `budget_bytes` and the tokens:
   replication follows the rate.
@@ -156,7 +160,8 @@ like `replication.hysteresis`) and the values it admits.
   bytes per second for every connection (at most a quarter each interval), so connections on one
   path converge to equal shares and the queue stays short for the game traffic on it. Losses cut it
   only with a queue or past `CC_OVERRUN_SHARE`; a link that loses at random keeps its rate, which
-  never drops below `CC_MIN_RATE`.
+  never drops below `CC_MIN_RATE`. An interval that delivered next to nothing, as after an outage,
+  starts again from `CC_START_RATE`.
 - **Close**: `host_disconnect` tells the other end with its reason; silence closes with `Timeout`,
   and an authentic datagram that cannot be interpreted, with `Protocol_Error`. The reasons for
   rejection and closing are `Disconnect_Reason` (`host.odin`).
@@ -181,13 +186,18 @@ others their share.
   receiver joins; the library's own reliable channel takes only whole messages.
 - **Window.** The chunks a reliable channel keeps in flight grow by what the path acknowledges
   (`channel_window`, each congestion interval), so they double each round trip while they hold the
-  channel back. Twice what the connection's rate sends in a round trip bounds them, so congestion
+  channel back. Twice what the connection's rate sends in a round trip, in chunks of the size the
+  channel's acknowledged ones had, bounds them, so congestion
   control decides what a stream takes, and the channel's `queue_bytes` sets the most it holds in
   flight and receives ahead (`channel_chunks`, a power of two up to `MAX_WINDOW`): a stream that
   fills a path holds twice what the path carries in a round trip. A loss does not shrink the
   window: its resend waits a round trip with the chunks after it acknowledged, ahead of new ones.
 - While objects wait for the update, the reliable game channels leave half of each datagram to
   them: a part that streams does not starve the state.
+- **Receiving.** A reliable channel delivers what follows what it delivered only while the command
+  buffer has room besides what a datagram may still bring. A gap that closes over many small
+  messages leaves the rest held, and the network half reads no datagram until it is delivered: what
+  arrives is never acked without room to keep it.
 - The library channels count their queue the same way: `event_send` of a `Reliable` event and the
   authority requests return `Full` and send nothing if they do not fit in the queue of some
   connection they may go to, and the sender retries. The connection is not closed;

@@ -108,13 +108,14 @@ hostile_acknowledgements_are_refused_and_never_push_a_window_past_its_bounds :: 
     c.acked=0
     channel_resolve(p,record,true)
     channel_resolve(p,record,true)
-    testing.expect_value(t,c.acked,CHUNK_BYTES)
+    testing.expect_value(t,c.acked,1)
 
-    Case :: struct {start,acked:int,rtt,rate:f64,low,high:int}
+    Case :: struct {start,acked,bytes:int,rtt,rate:f64,low,high:int}
     nan:=math.nan_f64()
     cases:=[]Case{
         {start=64,acked=max(int)/2,rtt=1e9,rate=1e30,low=1024,high=1024},
-        {start=64,acked=max(int)/2,rtt=0.05,rate=1<<20,low=1,high=409},
+        {start=64,acked=1<<20,bytes=(1<<20)*CHUNK_BYTES,rtt=0.05,rate=1<<20,low=1,high=409},
+        {start=64,acked=max(int)/2,bytes=max(int)/2,rtt=0.05,rate=1<<20,low=1,high=1024},
         {start=512,acked=0,rtt=0.05,rate=16<<20,low=512,high=512},
         {start=512,acked=1<<20,rtt=nan,rate=1<<20,low=512,high=512},
         {start=512,acked=1<<20,rtt=0.05,rate=nan,low=512,high=512},
@@ -123,9 +124,9 @@ hostile_acknowledgements_are_refused_and_never_push_a_window_past_its_bounds :: 
         {start=512,acked=1<<20,rtt=1e-9,rate=1,low=CHUNK_WINDOW,high=CHUNK_WINDOW},
     }
     for k in cases {
-        c.window,c.acked=k.start,k.acked
+        c.window,c.acked,c.acked_bytes=k.start,k.acked,k.bytes
         channel_window(c,k.rtt,k.rate)
-        testing.expectf(t,c.window>=k.low && c.window<=k.high && c.acked==0,"%v gives a window of %d",k,c.window)
+        testing.expectf(t,c.window>=k.low && c.window<=k.high && c.acked==0 && c.acked_bytes==0,"%v gives a window of %d",k,c.window)
     }
 
     wr:serial.Bit_Writer
@@ -163,13 +164,25 @@ acknowledgement_runs_read_back_and_refuse_what_does_not_add_up :: proc(t:^testin
             buffer:[PACKET_BYTES]u8
             w:serial.Bit_Writer
             serial.bit_writer_init(&w,buffer[:])
-            ack_bits_write(&w,&bits,count)
+            ack_bits_write(&w,&bits,count,max(int))
             r:serial.Bit_Reader
             serial.bit_reader_init(&r,serial.bit_writer_flush(&w))
             got,got_count,ok:=ack_bits_read(&r)
             same:=ok && int(got_count)==count
             for behind in 1..=ACK_WINDOW {same&&=ack_bit(&got,u64(behind))==(behind<=count && ack_bit(&bits,u64(behind)))}
             testing.expectf(t,same && !w.overflow,"%v over %d datagrams reads back",pattern,count)
+            // Within a budget it covers fewer datagrams, never more bits, and those read back.
+            for budget in ([]int{0,ACK_COUNT_BITS,ACK_COUNT_BITS+3,200,1000}) {
+                small:serial.Bit_Writer
+                small_buffer:[PACKET_BYTES]u8
+                serial.bit_writer_init(&small,small_buffer[:])
+                ack_bits_write(&small,&bits,count,budget)
+                serial.bit_reader_init(&r,serial.bit_writer_flush(&small))
+                cut,cut_count,cut_ok:=ack_bits_read(&r)
+                fits:=cut_ok && int(cut_count)<=count && (small.bits<=budget || cut_count==0 && small.bits==ACK_COUNT_BITS)
+                for behind in 1..=int(cut_count) {fits&&=ack_bit(&cut,u64(behind))==ack_bit(&bits,u64(behind))}
+                testing.expectf(t,fits,"%v over %d datagrams within %d bits: %d bits for %d",pattern,count,budget,small.bits,cut_count)
+            }
             if pattern==.Sparse_Loss && count==ACK_WINDOW {testing.expectf(t,len(serial.bit_writer_flush(&w))<ACK_WINDOW/16,"a stream with few losses takes %d bytes",len(serial.bit_writer_flush(&w)))}
         }
     }
@@ -325,4 +338,163 @@ two_bulk_streams_on_one_link_share_it :: proc(t:^testing.T) {
     total:=r.delivered[0]+r.delivered[1]
     testing.expectf(t,total>0.6*BULK_LINK,"together %.0f B/s over a link of %.0f",total,BULK_LINK)
     testing.expectf(t,min(r.delivered[0],r.delivered[1])>0.3*total,"shares of %.0f and %.0f B/s",r.delivered[0],r.delivered[1])
+}
+
+// Steps a server and its clients at the worker's cadence of 1 ms, streaming parts to each client on
+// its first len(sent)/len(clients) channels, and adds the bytes each received; false if a connection
+// closed.
+@(private="file")
+bulk_steps :: proc(t:^testing.T,w:^Test_World,server:^Host,clients:[]^Host,on_server:[]Connection,blob:[]u8,sent:[]int,seconds:f64,got:[]int) -> bool {
+    streams:=len(sent)/len(clients)
+    start:=w.now
+    for w.now-start<seconds {
+        w.now+=0.001
+        sim_network_advance(&w.sim,w.now)
+        host_update(server,w.now)
+        for command in host_poll(server) {
+            if command.kind==.Disconnected {testing.expectf(t,false,"the server's connection closed: %v",command.reason);return false}
+        }
+        for &s,i in sent {
+            if s==len(blob) {s=0}
+            message_send(server,on_server[i/streams],i%streams,blob,&s)
+        }
+        for client,i in clients {
+            host_update(client,w.now)
+            for command in host_poll(client) {
+                if command.kind==.Disconnected {testing.expectf(t,false,"the client's connection closed: %v",command.reason);return false}
+                if command.kind==.Message && int(command.channel)<streams {got[i]+=len(command.data)}
+            }
+        }
+    }
+    return true
+}
+
+@(private="file") BULK_TWO :: []Channel_Desc{{kind=.Reliable,queue_bytes=4<<20},{kind=.Reliable,queue_bytes=4<<20}}
+
+// Two streams on one connection over 120 ms of round trip keep more datagrams in flight than the
+// connection may: when an outage loses all of them, the connection still probes the path and the
+// streams resume by themselves once it returns.
+@(test)
+a_bulk_stream_resumes_after_an_outage :: proc(t:^testing.T) {
+    blob:=make([]u8,BULK_PART);defer delete(blob)
+    w:Test_World;test_world_init(&w,2,seed=41,packets=1<<16);defer test_world_destroy(&w)
+    server:=test_host(&w,{mode=.Server,channels=BULK_TWO})
+    client:=test_host(&w,{mode=.Client,channels=BULK_TWO})
+    on_server,_:=test_connect(&w,server,client)
+    if !testing.expect(t,on_server!=0) {return}
+    sent:[2]int
+    got:[1]int
+    for loss in ([]f32{0,1,0}) {
+        sim_endpoint_conditions(&w.sim,0,{latency=0.06,bandwidth=BULK_LINK,loss=loss})
+        sim_endpoint_conditions(&w.sim,1,{latency=0.06})
+        got[0]=0
+        if !bulk_steps(t,&w,server,{client},{on_server},blob,sent[:],4,got[:]) {return}
+        if loss==1 {
+            p:=peer_from(server,on_server)
+            testing.expectf(t,p!=nil && int(u16(p.send_seq-p.sent_tail))>=RECORD_WINDOW,"the outage fills what the connection keeps in flight")
+        }
+    }
+    testing.expectf(t,f64(got[0])/4>0.3*BULK_LINK,"after the outage %.0f B/s arrive over a link of %.0f",f64(got[0])/4,BULK_LINK)
+}
+
+@(private="file")
+Large_Input :: struct {bytes:[INPUT_MAX_BYTES-8]u8}
+
+// A client whose acknowledgement covers thousands of datagrams, half of them lost, while it repeats its
+// largest inputs, still sends datagrams the server reads: the acknowledgement takes what is left.
+@(test)
+a_long_acknowledgement_never_overflows_a_datagram :: proc(t:^testing.T) {
+    schema:serial.Schema;serial.schema_init(&schema);defer serial.schema_destroy(&schema)
+    protocol:Protocol;protocol_init(&protocol);defer protocol_destroy(&protocol)
+    input,_:=serial.schema_add(&schema,Large_Input)
+    testing.expect(t,input_register(&protocol,&schema,input))
+    protocol_seal(&protocol)
+    blob:=make([]u8,BULK_PART);defer delete(blob)
+    w:Test_World;test_world_init(&w,2,seed=43,packets=1<<16);defer test_world_destroy(&w)
+    replication:=Replication_Desc{input_redundancy=8}
+    server:=test_host(&w,{mode=.Server,protocol=&protocol,channels=BULK_TWO,replication=replication})
+    client:=test_host(&w,{mode=.Client,protocol=&protocol,channels=BULK_TWO,replication=replication})
+    on_server,_:=test_connect(&w,server,client)
+    if !testing.expect(t,on_server!=0) {return}
+    state:=u64(5)
+    tick:=u32(0)
+    sent:[2]int
+    got:[1]int
+    Phase :: struct {seconds:f64,forward,back:f32}
+    longest:=0
+    for phase in ([]Phase{{3,0,0},{3,0.5,1},{3,0,0}}) {
+        sim_endpoint_conditions(&w.sim,0,{latency=0.06,bandwidth=BULK_LINK,loss=phase.forward})
+        sim_endpoint_conditions(&w.sim,1,{latency=0.06,loss=phase.back})
+        got[0]=0
+        for step in 0..<int(phase.seconds*60) {
+            tick+=1
+            sample:Large_Input
+            for &b in sample.bytes {b=u8(base.splitmix_next(&state))}
+            input_submit(client,tick,&sample)
+            host_publish(client,tick)
+            host_publish(server,tick)
+            if !bulk_steps(t,&w,server,{client},{on_server},blob,sent[:],1.0/60,got[:]) {return}
+            if p:=peer_from(client,client.back.peers[0].state==.Connected?peer_handle(client,&client.back.peers[0]):0);p!=nil && p.recv_counter>p.ack_known {longest=max(longest,int(p.recv_counter-p.ack_known))}
+            _=step
+        }
+    }
+    testing.expectf(t,longest>=3000,"the acknowledgement covers %d datagrams",longest)
+    testing.expectf(t,f64(got[0])/3>0.3*BULK_LINK,"after the lossy spell %.0f B/s arrive",f64(got[0])/3)
+}
+
+// Drops the datagram of a connection numbered drop among those its host sends, once.
+@(private="file")
+Drop_Once :: struct {inner:Transport,count,drop:int}
+@(private="file")
+drop_once_transport :: proc(d:^Drop_Once) -> Transport {
+    return {d,proc(data:rawptr,to:Address,bytes:[]u8) -> bool {
+        d:=(^Drop_Once)(data)
+        if len(bytes)>0 && bytes[0]==u8(Packet_Type.Data) {
+            d.count+=1
+            if d.count==d.drop {return true}
+        }
+        return d.inner.send(d.inner.data,to,bytes)
+    },proc(data:rawptr,buffer:[]u8) -> (int,Address,bool) {
+        d:=(^Drop_Once)(data)
+        return d.inner.receive(d.inner.data,buffer)
+    }}
+}
+
+// Thousands of tiny reliable messages held behind one lost chunk all arrive, in order, when the gap
+// closes: what the receiver cannot take in one poll waits for the next.
+@(test)
+tiny_messages_held_behind_a_gap_arrive_without_overflowing_the_receiver :: proc(t:^testing.T) {
+    COUNT :: 60000
+    w:Test_World;test_world_init(&w,2,seed=47,packets=1<<16);defer test_world_destroy(&w)
+    drop:=Drop_Once{inner=sim_endpoint_transport(&w.sim,0),drop=120}
+    server:=new(Host)
+    if !testing.expect(t,host_init(server,{mode=.Server,transport=drop_once_transport(&drop),protocol_id=77,seed=3,channels=BULK_CHANNELS,frame_ops=1<<16})==.None) {free(server);return}
+    w.hosts[0]=server;w.count=1
+    client:=test_host(&w,{mode=.Client,channels=BULK_CHANNELS})
+    on_server,_:=test_connect(&w,server,client)
+    if !testing.expect(t,on_server!=0) {return}
+    sim_endpoint_conditions(&w.sim,0,{latency=0.05})
+    sim_endpoint_conditions(&w.sim,1,{latency=0.05})
+    queued,arrived:=0,0
+    for step:=0;arrived<COUNT && step<20000;step+=1 {
+        w.now+=0.001
+        sim_network_advance(&w.sim,w.now)
+        for queued<COUNT {
+            value:=u8(queued)
+            if message_send(server,on_server,0,([^]u8)(&value)[:1])!=.None {break}
+            queued+=1
+        }
+        host_update(server,w.now)
+        for command in host_poll(server) {
+            if command.kind==.Disconnected {testing.expectf(t,false,"the server's connection closed: %v",command.reason);return}
+        }
+        host_update(client,w.now)
+        for command in host_poll(client) {
+            if command.kind==.Disconnected {testing.expectf(t,false,"the client's connection closed: %v",command.reason);return}
+            if command.kind!=.Message {continue}
+            if !testing.expect(t,len(command.data)==1 && command.data[0]==u8(arrived),"the messages arrive in order") {return}
+            arrived+=1
+        }
+    }
+    testing.expectf(t,arrived==COUNT,"%d of %d messages arrive",arrived,COUNT)
 }
