@@ -862,7 +862,7 @@ instance_resized :: proc(s: ^Scene_State, index: int, low, high: Vec3) {
 	hw.mask_flags = tlas_mask_flags(ray_class(inst.meta.w), hw.mask_flags & rhi.TLAS_ALPHA_TESTED != 0)
 }
 
-@(private)
+@(private = "file")
 ray_class :: proc "contextless" (flags: u32) -> u8 {
 	if flags & INSTANCE_FLAG_HIDDEN != 0 {return 0}
 	if flags & INSTANCE_FLAG_BLENDED != 0 {return RAY_GLASS}

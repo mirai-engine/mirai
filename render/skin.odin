@@ -793,7 +793,8 @@ pose_traced :: proc(r:^Renderer,handle:Mesh_Handle,eyes:[]Vec3)->bool {
     met:=false
     for index:=mesh.first_instance;index>=0;index=s.instance_next[index] {
         inst:=s.instances[index]
-        if ray_class(inst.meta.w)==0 || inst.meta.w&INSTANCE_FLAG_COLLAPSED!=0 {continue}
+        // Rays meet no hidden instance.
+        if inst.meta.w&(INSTANCE_FLAG_HIDDEN|INSTANCE_FLAG_COLLAPSED)!=0 {continue}
         met=true
         low,high:=inst.bounds_min.xyz,inst.bounds_max.xyz
         for eye in eyes {distance=min(distance,linalg.length(eye-linalg.clamp(eye,low,high)))}
