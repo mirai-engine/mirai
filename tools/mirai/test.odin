@@ -126,8 +126,8 @@ cmd_test :: proc(root:string,args:[]string) -> int {
         if p.nothing {continue}
         if len(packages)>1 {fmt.printfln("== %s",p.path)}
         options:=build.Test_Options{names=p.names[:],timeout=timeout,quiet=quiet}
-        lock,measuring:=test_measure_begin(root,p.path,benchmark,&options)
-        // After the measurement, which a turn of the GPU never waits for while it holds one.
+        lock,measuring:=test_measure_begin(root,p.path,benchmark,p.gpu,&options)
+        // After the measurement, which no turn of the GPU waits for while it holds one.
         turn:workspace.Lock
         if p.gpu {turn,_=gpu_turn(root,"",fmt.tprintf("test %s",p.path))}
         ran:=time.tick_now()
@@ -139,13 +139,13 @@ cmd_test :: proc(root:string,args:[]string) -> int {
             ok,names=test_execute(root,p.path,&builds[i],options)
         } else {
             workspace.lock_release(&turn)
-            test_measure_end(&lock,measuring)
+            test_measure_end(&lock,measuring,p.path)
             append(&failed,p.path)
             continue
         }
         times.run+=time.tick_since(ran)
         workspace.lock_release(&turn)
-        test_measure_end(&lock,measuring)
+        test_measure_end(&lock,measuring,p.path)
         // A run that ended badly without naming a failed test leaves the list of before.
         if ok || len(names)>0 {test_failed_save(test_executable(root,p),p.names[:],names)}
         if len(names)>0 {fmt.eprintfln("mirai test: to run only the ones that failed: mirai test %s --failed",p.path)}
@@ -185,25 +185,30 @@ test_executable :: proc(root:string,p:Test_Package) -> string {
 }
 
 // A benchmark is a measurement: it runs alone among the checkouts
-// (measure_lock), with this process part of it. Tests that are no benchmark
-// do not wait for one: while one runs they run at low priority.
+// (measure_lock), with this process part of it, and says what else loads
+// the GPU. Tests that are no benchmark do not take one: those that reach the
+// GPU (gpu) wait for the one that runs to end before they take their turn of
+// the GPU (gpu_turn), and a measurement waits for them; the others run at low
+// priority while it runs.
 @(private="file")
-test_measure_begin :: proc(root,path:string,benchmark:bool,options:^build.Test_Options) -> (lock:workspace.Lock,measuring:bool) {
+test_measure_begin :: proc(root,path:string,benchmark,gpu:bool,options:^build.Test_Options) -> (lock:workspace.Lock,measuring:bool) {
     if !benchmark || workspace.measuring() {
-        if measured,measurer:=workspace.measurement_running(root,context.temp_allocator);measured {
-            fmt.eprintfln("mirai test: a measurement is running (%s); the tests run at low priority",measurer!=""?measurer:"another process")
+        if measured,measurer:=workspace.measured(root,false,allocator=context.temp_allocator);measured==.Low && !gpu {
+            fmt.eprintfln("mirai test: a measurement is running (%s); the tests run at low priority",measurer)
             options.priority=.Low
         }
         return
     }
     lock=measure_lock(root,fmt.tprintf("test %s",path))
     _=os.set_env(workspace.MEASURE_ENV,fmt.tprintf("%d",os.get_pid()))
+    measure_load_say("test",fmt.tprintf("before the benchmark of %s",path))
     return lock,true
 }
 
 @(private="file")
-test_measure_end :: proc(lock:^workspace.Lock,measuring:bool) {
+test_measure_end :: proc(lock:^workspace.Lock,measuring:bool,path:string) {
     if !measuring {return}
+    measure_load_say("test",fmt.tprintf("after the benchmark of %s",path))
     os.unset_env(workspace.MEASURE_ENV)
     workspace.lock_release(lock)
 }

@@ -233,17 +233,12 @@ bench_compare :: proc(root:string,args:[]string) -> int {
     head.commit,base.commit=render_commit(head.checkout),render_commit(base.checkout)
     report.runs={head,base}
 
-    // Measured alone: other measurements and compilations wait, and the
-    // editors opened are part of this measurement (MEASURE_ENV).
-    measure:=measure_lock(root,"bench compare")
-    defer workspace.lock_release(&measure)
-    if !workspace.measuring() {_=os.set_env(workspace.MEASURE_ENV,fmt.tprintf("%d",os.get_pid()))}
+    // The editors opened are part of this measurement (MEASURE_ENV); they
+    // open before it takes its turn, which other measurements, compilations
+    // and the GPU work of others wait for, and which it holds from the first
+    // frame they draw to their end.
+    measure_env_set()
     layers_isolate(root)
-
-    // What else uses the GPU, before the editors open and after they close.
-    load:Render_Report
-    render_load(&load,0,"at the start",true)
-    measured:=time.now()
     editors:[2]Headless_Editor
     defer {for &e in editors {headless_close(&e)}}
     port:=RENDER_PORT
@@ -251,6 +246,14 @@ bench_compare :: proc(root:string,args:[]string) -> int {
         b:=report.runs[i]
         if !headless_open(&e,"bench",b.name,b.editor,b.project,b.checkout,join(out,fmt.tprintf("%s.log",b.name)),o.size,&port) {return 1}
     }
+    measure:=measure_lock(root,"bench compare")
+    defer workspace.lock_release(&measure)
+
+    // What else uses the GPU while the editors draw nothing, before and after.
+    own:=[]int{editors[0].process.pid,editors[1].process.pid}
+    load:Render_Report
+    workspace.gpu_load(&load.warnings,own,"at the start",true)
+    measured:=time.now()
     for &e in editors {
         if !bench_prepare(&e,o) {return 1}
     }
@@ -267,8 +270,9 @@ bench_compare :: proc(root:string,args:[]string) -> int {
         if conditions[run]=="" {conditions[run]=summary.conditions}
         fmt.eprintfln("mirai bench: %s %d/%d: frame %.3f ms, CPU %.3f ms, GPU %.3f ms",name,pair,o.pairs,summary.frame.p50_ms,summary.frame.cpu_ms,summary.frame.gpu_ms)
     }
+    workspace.gpu_load(&load.warnings,own,"at the end",true)
     for &e in editors {headless_close(&e)}
-    render_load(&load,0,"at the end",true)
+    workspace.lock_release(&measure)
     if workspace.builds_since(root,measured) {append(&load.warnings,"a build ran at low priority while it measured: the CPU cost may be noisy")}
     append(&report.warnings,..load.warnings[:])
     bench_conditions(&report,conditions)

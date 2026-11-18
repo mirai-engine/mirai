@@ -141,22 +141,26 @@ lock_path :: proc(root,name:string,allocator:=context.allocator) -> string {
 // they can run out of it. A generation of shaders has SHADERS_LOCK, which no
 // compilation waits for. Within a checkout or a project they go one at a
 // time: they write the same files. BUILD_NOTE says when one took a turn last
-// (builds_since). What measures time holds MEASURE_LOCK and starts once no
-// compilation runs. Compilations and test runs do not wait for it: what they
-// start while it runs runs at low priority (measurement_running). A process
-// whose MEASURE_ENV is set is part of a measurement (its children): it
-// neither takes MEASURE_LOCK nor waits for it. MEASURE_ENV holds the pid of
-// the holder, which is also what the holder wrote first in the lock
+// (builds_since). What measures time holds MEASURE_LOCK only while it times,
+// and starts once no compilation runs and no GPU work of another runs
+// (measure_try, gpu_work). While it runs, what would put work on the GPU and
+// is not part of it waits for it to end, and what uses no GPU runs at low
+// priority (measured). A process whose MEASURE_ENV is set is part of a
+// measurement (its children) while that one holds MEASURE_LOCK: it neither
+// takes MEASURE_LOCK nor waits for it. MEASURE_ENV holds the pid of the
+// holder, which is also what the holder wrote first in the lock
 // (measure_holder): a process that is no child of the measurement, like the
 // editor of a session a command of it calls, is told that pid and runs as
-// part of it while the lock says the same (measurement_holds).
+// part of it while the lock says the same (measurement_holds). No process
+// waits for MEASURE_LOCK while its GPU turn says it works (gpu_turn_mark):
+// a measurement waits for those, so the two never wait for each other.
 BUILD_LOCK :: "build.lock"
 SHADERS_LOCK :: "shaders.lock"
 BUILD_NOTE :: "build.last"
 MEASURE_LOCK :: "measure.lock"
 MEASURE_ENV :: "MIRAI_MEASURE"
 
-// Whether this process is part of a measurement that holds MEASURE_LOCK.
+// Whether this process is part of a measurement: its MEASURE_ENV is set.
 measuring :: proc() -> bool {
     return measurement(context.temp_allocator)!=""
 }
@@ -304,12 +308,40 @@ builds_since :: proc(root:string,since:time.Time) -> bool {
     return error==nil && time.diff(since,info.modification_time)>=0
 }
 
-// Whether a measurement this process is not part of holds MEASURE_LOCK, and
-// what its holder wrote.
-measurement_running :: proc(root:string,allocator:=context.allocator) -> (running:bool,holder:string) {
-    if measuring() {return false,""}
-    running,holder,_=lock_holder(lock_path(root,MEASURE_LOCK,context.temp_allocator),allocator)
-    return
+// What a process does about the measurement that holds MEASURE_LOCK: Run when
+// none does or it is part of it (this process, the measurement its MEASURE_ENV
+// names, or part_of, a caller's MEASURE_ENV); else Wait for it to end when it
+// would put work on the GPU (gpu), and Low, at low priority, when it uses
+// none. holder: what the holder of MEASURE_LOCK wrote.
+Measured :: enum u8 {Run,Low,Wait}
+
+measured :: proc(root:string,gpu:bool,part_of:="",allocator:=context.allocator) -> (what:Measured,holder:string) {
+    held,written,_:=lock_holder(lock_path(root,MEASURE_LOCK,context.temp_allocator),context.temp_allocator)
+    if !held {return .Run,""}
+    for pid in ([3]string{fmt.tprintf("%d",os.get_pid()),measurement(context.temp_allocator),part_of}) {
+        if pid!="" && strings.has_prefix(written,fmt.tprintf("pid %s,",pid)) {return .Run,""}
+    }
+    if written=="" {written="a process that does not say which"}
+    return gpu?.Wait:.Low,strings.clone(written,allocator)
+}
+
+// Waits while a measurement makes what puts work on the GPU wait (measured),
+// at most limit (zero: no limit). notice runs once, with its holder; stop,
+// asked while it waits, ends the wait. false when the limit or stop came
+// first.
+measurement_wait :: proc(root:string,part_of:="",notice:proc(holder:string)=nil,limit:=time.Duration(0),stop:proc(user:rawptr)->bool=nil,user:rawptr=nil) -> bool {
+    start:=time.tick_now()
+    noticed:=false
+    for {
+        what,holder:=measured(root,true,part_of,context.temp_allocator)
+        if what!=.Wait {return true}
+        if !noticed && notice!=nil {
+            notice(holder)
+            noticed=true
+        }
+        if limit>0 && time.tick_since(start)>=limit || stop!=nil && stop(user) {return false}
+        time.sleep(250*time.Millisecond)
+    }
 }
 
 // Whether the lock of path is held, what its holder wrote and when it took
@@ -326,23 +358,39 @@ lock_holder :: proc(path:string,allocator:=context.allocator) -> (held:bool,hold
     return true,strings.clone(text,allocator),since
 }
 
+// What a measurement that has not started waits for.
+Measure_Wait :: enum u8 {None,Measurement,Build,Gpu}
+
+// A wait of measure_try that has no limit.
+MEASURE_WAIT_ALL :: time.Duration(1<<62)
+
 // Starts a measurement that waits at most wait (zero: not at all): takes
-// MEASURE_LOCK and then waits for the compilations that run; those that start
-// later run at low priority. When the time runs out, holder is who holds the
-// measurement, or the compilation when compiling. A lock that cannot be made
-// does not stop it, nor does being part of a measurement, this process or
-// the caller it measures for (part_of, its MEASURE_ENV): lock is then not held.
-measure_try :: proc(root,what:string,wait:=time.Duration(0),part_of:="") -> (lock:Lock,ok:bool,holder:string,compiling:bool) {
-    if measuring() || measurement_holds(root,part_of) {return {},true,"",false}
+// MEASURE_LOCK and then waits for the compilations that run and for the GPU
+// work of others in flight (gpu_work); compilations that start later run at
+// low priority, and GPU work waits for it to end (measured). notice runs once
+// for each thing it waits for, with its holder. When the time runs out, why
+// is what it waited for and holder who holds it. A lock that cannot be made
+// does not stop it, nor does being part of a measurement that holds it, the
+// one of this process (its MEASURE_ENV) or of the caller it measures for
+// (part_of): lock is then not held.
+measure_try :: proc(root,what:string,wait:=time.Duration(0),part_of:="",notice:proc(why:Measure_Wait,holder:string)=nil) -> (lock:Lock,ok:bool,holder:string,why:Measure_Wait) {
+    if measurement_holds(root,measurement(context.temp_allocator)) || measurement_holds(root,part_of) {return {},true,"",.None}
     start:=time.tick_now()
+    told:bit_set[Measure_Wait]
+    tell :: proc(told:^bit_set[Measure_Wait],notice:proc(why:Measure_Wait,holder:string),why:Measure_Wait,holder:string) {
+        if why in told^ || notice==nil {return}
+        notice(why,holder!=""?holder:"a process that does not say which")
+        told^+={why}
+    }
     measure_path:=lock_path(root,MEASURE_LOCK,context.temp_allocator)
     for {
         taken,failed:bool
         lock,taken,holder,failed=lock_take(measure_path,what)
-        if failed {return {},true,"",false}
+        if failed {return {},true,"",.None}
         if taken {break}
         left:=wait-time.tick_since(start)
-        if left<=0 {return {},false,holder,false}
+        if left<=0 {return {},false,holder,.Measurement}
+        tell(&told,notice,.Measurement,holder)
         lock_wait(measure_path,nil,left)
     }
     for build_path in build_paths(root) {
@@ -353,17 +401,24 @@ measure_try :: proc(root,what:string,wait:=time.Duration(0),part_of:="") -> (loc
             left:=wait-time.tick_since(start)
             if left<=0 {
                 lock_release(&lock)
-                return {},false,builder,true
+                return {},false,builder,.Build
             }
+            tell(&told,notice,.Build,builder)
             lock_wait(build_path,nil,left)
         }
     }
-    return lock,true,"",false
-}
-
-// Waits until no compilation runs. Those that start later run at low priority.
-builds_wait :: proc(root:string,notice:proc(holder:string)=nil) {
-    for path in build_paths(root) {lock_wait(path,notice)}
+    measurer:=fmt.tprintf("%d",os.get_pid())
+    for {
+        work:=gpu_work(root,measurer,context.temp_allocator)
+        if len(work)==0 {break}
+        if wait-time.tick_since(start)<=0 {
+            lock_release(&lock)
+            return {},false,work[0].holder,.Gpu
+        }
+        tell(&told,notice,.Gpu,work[0].holder)
+        time.sleep(250*time.Millisecond)
+    }
+    return lock,true,"",.None
 }
 
 @(private)

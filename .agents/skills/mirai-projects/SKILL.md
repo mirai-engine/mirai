@@ -63,6 +63,12 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
 4. To ship, `mirai build game` and review the cooking report, above all the roots that only code
    refers to (`cook.mirai`).
 
+### Measure
+
+- What measures time takes the measurement turn through its command (`bench`, `render check`,
+  `bench flight`, a benchmark of `mirai test`, `profile.capture`); an outside program that measures
+  (another engine, a stress tool) runs under `mirai measure --`.
+
 ### Change `project` or `cook/build`
 
 1. A new manifest field goes into the struct, with its default in `manifest_default` and its check
@@ -77,6 +83,12 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
 ## Invariants
 
 - `project` imports only `std/*`: the editor, the player and the tools use it.
+- The GPU is used in parallel under its memory budget and held for others only while a
+  measurement times: then what would put work on it and is not part of the measurement waits for
+  it, and the measurement first waits for the GPU work in flight but not for sessions kept open,
+  whose load it reports ([turns](references/build.md#turns-between-processes)).
+- A measurement holds `measure.lock` only while it times, and no process waits for it while its
+  GPU turn says it works: the two never wait for each other.
 - `tools/mirai` and everything it imports, counting its `_test.odin` files (the compiler reads them
   too), do not reach `render`, `host`, `platform`, `editor` or `engine/*`: the tool writes
   `render/shaders_gen.odin` and the test worlds, so it builds where they are missing or stale (a

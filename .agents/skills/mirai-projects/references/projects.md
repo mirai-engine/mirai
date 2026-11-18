@@ -534,7 +534,8 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
 - Every command that builds does it in dev unless `--release` is asked for
   ([AGENTS.md](../../../../AGENTS.md#common-commands)).
 - The builds of all checkouts share a few turns by themselves; do not set `-thread-count`. Tests and
-  builds do not wait for a measurement: they run with low priority while it lasts.
+  builds do not wait for a measurement: they run with low priority while it lasts, and what reaches
+  the GPU waits for it to end ([turns](build.md#turns-between-processes)).
 - **Session against the editor:** `mirai session start`, then `mirai rpc` or `mirai capture`, and
   `mirai session stop`; after a change of project code, `build.start` loads it into the open
   session; after a change of engine code or shaders, `mirai build editor`, which hands the build

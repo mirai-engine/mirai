@@ -98,21 +98,32 @@ and `tools/mirai`. The main checkout of a worktree is `project.shared_root(root)
   - `workspace.builds_since` says whether someone compiled since a moment, so that whoever measures
     knows whether builds happened during the measurement. The editor's builds neither take the lock
     nor are annotated.
-- What measures times runs alone among all checkouts: it takes `measure.lock` and then waits until
-  there are no builds. `mirai measure`, `mirai bench compare`, `mirai render check` (except
-  `--quality`), `mirai test` when it runs a benchmark (a `-define` whose name has `BENCH` and whose
-  value is neither `false` nor `0`) and `profile.capture` with `advance` take it; the latter waits
-  at most its `wait` and then fails saying who holds the turns
+- What measures times runs alone among all checkouts: it takes `measure.lock`, then waits until
+  there are no builds and no GPU work of others in flight (`workspace.measure_try`), and holds it
+  only while it times. `mirai measure` holds it for the life of its command; `mirai test` when it
+  runs a benchmark (a `-define` whose name has `BENCH` and whose value is neither `false` nor
+  `0`), for the run of that package after its build; `bench compare`, `bench flight` and `render
+  check` (except `--quality`), from their editors open, built and started outside it, until they
+  close; `profile.capture` with `advance`, for the frames it times after it settles, waiting at
+  most its `wait` and then failing with who holds the turn
   ([profiling](../../mirai-agent-api/references/methods.md#profiling)).
-  - Builds and tests that are not benchmarks do not wait for the measurement: each compiler
+  - Builds and tests that use no GPU do not wait for the measurement: each compiler
     (`build.compiler_limits`, also the editor's) and each test run that starts while one is
     running goes with `subprocess.Priority.Low`. The priority is decided when each process starts;
     what started earlier is not stopped.
-  - A process with `MIRAI_MEASURE` is part of a measurement: it neither takes `measure.lock` nor
-    waits for it. Whoever measures sets it for its children, and an editor opened inside them
-    inherits it. The editor of a session is no child of the command that calls it: `mirai rpc`
-    sends its `MIRAI_MEASURE` with the call, and `profile.capture` runs in that turn while the
-    lock names the same measurement.
+  - What would put work on the GPU waits for it to end, saying for whom (`workspace.measured`):
+    a GPU turn that is not a person's, a command that draws in a session it reuses (`capture`,
+    `record`, `play test`), and in a manual editor a call whose method draws or runs frames
+    (`Draws` or `As_User`) and the settling of `profile.capture`; `mirai rpc` says it waits.
+  - Each measuring command says what else loads the GPU (`workspace.gpu_load`): the other
+    programs of the engine open, sessions other agents keep open among them, which it does not
+    wait for, and a GPU busy while nothing measured draws, which makes the times not count.
+  - A process with `MIRAI_MEASURE` is part of a measurement while that one holds `measure.lock`:
+    it neither takes it nor waits for it. Whoever measures sets it for its children, and an
+    editor opened inside them inherits it, also before the measurement takes its turn. The
+    editor of a session is no child of the command that calls it: `mirai rpc` sends its
+    `MIRAI_MEASURE` with the call, and `profile.capture` runs in that turn while the lock names
+    the same measurement.
 - What opens a device of the GPU holds one of the GPU turns of the machine (`gpu-<n>.lock`, at
   most `workspace.GPU_TURNS`) for as long as the device lives, so that what runs at once fits the
   card. A turn is given, under `gpu.lock`, while the charges of those that hold one and its own
@@ -148,10 +159,13 @@ and `tools/mirai`. The main checkout of a worktree is `project.shared_root(root)
     neither for room nor for a measurement, and counts for the others; with every turn held it
     runs without one.
   - While a measurement runs, no GPU turn starts but those of a person and of the measurement
-    (its process and those with `MIRAI_MEASURE`). What measures takes `measure.lock` first and its
-    GPU turns after it, and no holder of a GPU turn waits for `measure.lock` without a limit
-    (`profile.capture` waits at most its `wait`), so the two never wait for each other. The owner
-    of a turn of a measurement names it, and one is given beside the others of the same
+    (its process and those with `MIRAI_MEASURE`). The owner of a turn says whether its holder
+    works or is open and idle (`workspace.gpu_turn_mark`): a test, a player and an editor that
+    starts work; a manual editor is open while it waits for calls and works while one draws; the
+    editor of a person and a windowed one are open. A measurement waits for the turns that work
+    and are neither its own nor of its measurement (`workspace.gpu_work`), and no process waits
+    for `measure.lock` while its turn says it works, so the two never wait for each other. The
+    owner of a turn of a measurement names it, and one is given beside the others of the same
     measurement while no one else holds a turn, also beyond the card: the two editors of `bench
     compare` run at once.
 - The self-refresh of `bin/mirai` uses one lock per checkout (`bin/.refresh.lock`): if another
