@@ -390,6 +390,7 @@ geometry_uploads_install :: proc(r: ^Renderer) {
 		if !e.active || !e.done {continue}
 		mesh, inputs := e.request.mesh, e.inputs
 		if e.binding != nil {e.binding.uploading = false}
+		if !inputs {mesh_areas_write(&r.scene, u32(mesh))}
 		e = {}
 		if inputs {r.scene.geometry_dirty = true} else {mesh_shown(r, u32(mesh))}
 	}

@@ -115,11 +115,12 @@ Shadow_Bound :: struct {
 }
 
 // The bound of this frame, from the frame that last used its slot, which has
-// come back: the rounds of the maps take time in proportion to the bound, so
-// it follows the GPU time the rounds of that frame took against their share
-// of the rest of that frame, by SHADOW_BOUND_STEP at most each way and
-// within its least and most, at once down to what keeps them within
-// SHADOW_MAPS_MOST_MS: growing while the picture lacks pages, points
+// come back: the rounds of the maps take time in proportion to the units
+// they draw, so it follows the GPU time the rounds of that frame took
+// against their share of the rest of that frame, at most
+// SHADOW_MAPS_MOST_MS, by SHADOW_BOUND_STEP at most each way, at once down
+// to what keeps them within SHADOW_MAPS_MOST_MS, and within its least and
+// most: growing while the picture lacks pages, points
 // read where no page drawn holds them or a still view waits for pages
 // (Shadow_Stats.pages_short), and shrinking when they took more; pages whose
 // points read a coarser page drawn refine at the least. Without the time of
@@ -143,7 +144,7 @@ shadow_bound_update :: proc(r: ^Renderer, slot: int, refresh_hz: f32) {
 	period := 1000 / (refresh_hz if refresh_hz > 0 else 60)
 	frame := r.stats.gpu_ms
 	if measured && frame > 0 {
-		share := max(frame - maps, period) * SHADOW_MAPS_SHARE
+		share := min(max(frame - maps, period) * SHADOW_MAPS_SHARE, SHADOW_MAPS_MOST_MS)
 		ratio := clamp(share / max(maps, 1e-3) if timed else period / frame, 1 / SHADOW_BOUND_STEP, SHADOW_BOUND_STEP)
 		bound = u32(clamp(f32(then) * ratio, f32(least), f32(most))) if ratio < 1 || r.stats.shadow.pages_short > 0 else least
 		if timed && maps > SHADOW_MAPS_MOST_MS {bound = min(bound, u32(max(f32(then) * SHADOW_MAPS_MOST_MS / maps, 1)))}
@@ -1073,7 +1074,11 @@ Shadow_Pages_Params :: struct {step, frame, rows, plan, boxes, box_count, sun, p
 @(private)
 shadow_frame_units :: proc(r: ^Renderer, b: ^Shadow_Raster) -> u32 {
 	if b.budget != 0 {return b.budget}
-	return r.shadow_bound.now if r.shadow_bound.now != 0 else SHADOW_FRAME_UNITS
+	least := r.shadow_bound.least if r.shadow_bound.least != 0 else SHADOW_FRAME_UNITS
+	// The first frame of a view draws at the least, whatever another drew at:
+	// what a unit costs it is not measured yet.
+	if b.frame <= 1 || r.shadow_bound.now == 0 {return least}
+	return r.shadow_bound.now
 }
 
 // The maps of the view this frame, drawn where its points read them. mark:

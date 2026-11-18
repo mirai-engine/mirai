@@ -53,6 +53,16 @@ bool shadow_add(uint draw, uint4 entry, uint pool, uint units) {
     return false;
 }
 
+// The texels of map m the area of the triangles of a cluster spans, by its
+// instance (render.mesh_areas_write), at the depth of the middle of its box;
+// 0 where its mesh does not say it.
+float cluster_surface(Shadow_Map m, Instance inst, Mesh mesh, uint ordinal, float3 low, float3 high) {
+    if (mesh.area_word == INVALID) return 0.0;
+    float scale = instance_scale(inst);
+    float texel = shadow_map_texel(m, max(shadow_map_local(m, 0.5 * (low + high)).z, m.near));
+    return asfloat(indices[mesh.area_word + ordinal]) * scale * scale / max(texel * texel, 1e-12);
+}
+
 [shader("compute")]
 [numthreads(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z)]
 void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
@@ -79,6 +89,7 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
         else { low = inst.bounds_min.xyz; high = inst.bounds_max.xyz; }
     }
     if (!shadow_map_reaches(m, low, high) || !shadow_box_texels(m, low, high, texels)) return;
+    float surface = cluster_surface(m, inst, mesh, k, low, high);
     uint4 span, pages = shadow_texel_pages(m, texels);
     if (!shadow_pages_span(m, span)) return;
     pages = uint4(max(pages.xy, span.xy), min(pages.zw, span.zw));
@@ -90,7 +101,7 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
             uint held = shadow_table_entry(m.rect.x, shadow_page_entry(m.rect, uint2(x, y)));
             if (params.moving == 1u && (held & SHADOW_PAGE_CACHED) != 0u && shadow_box_hidden(hiz, m, uint2(x, y), (held & SHADOW_ENTRY_POOL) - 1u, low, high)) continue;
             uint page = shadow_page_word(map, shadow_rect_mip(m.rect), uint2(x, y)), pool = (held & SHADOW_ENTRY_POOL) - 1u;
-            uint units = shadow_units(uint2(x, y), shadow_page_part(pool), texels, cluster_triangle_count(c), tested);
+            uint units = shadow_units(uint2(x, y), shadow_page_part(pool), texels, cluster_triangle_count(c), tested, surface, 1.0);
             if (shadow_add(tested ? SHADOW_DRAW_TESTED : SHADOW_DRAW_OPAQUE, uint4(instance, k, page, rest ? 1u : 0u), pool, units)) {
                 if (params.moving == 0u) {
                     InterlockedAdd(stats[0].shadow[tested ? 1u : 0u], 1u);

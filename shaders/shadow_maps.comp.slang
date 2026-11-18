@@ -44,9 +44,9 @@ bool instance_moves(uint instance) {
 
 // What a round hands each page it draws that the texels of a box cover, in
 // units (shadow_units): the texels of the part of the page drawn the box
-// covers, and of the triangles its clusters may hold the share of its texels
-// that lie there (SHADOW_WORDS_COST); and the chunks the instance hands
-// over (SHADOW_WORDS_REACH).
+// covers, and the draws of the share of its clusters whose texels lie there
+// (SHADOW_WORDS_COST); and the chunks the instance hands over
+// (SHADOW_WORDS_REACH).
 void shadow_foresee(Shadow_Map m, float4 texels, uint clusters, bool masked) {
     uint4 span, rect = shadow_texel_pages(m, texels);
     if (!shadow_pages_span(m, span)) return;
@@ -60,8 +60,7 @@ void shadow_foresee(Shadow_Map m, float4 texels, uint clusters, bool masked) {
             float2 corner = float2(uint2(x, y) * SHADOW_PAGE);
             float2 within = min(texels.zw, corner + float2(part.zw)) - max(texels.xy, corner + float2(part.xy));
             float share = saturate(max(within.x, 1.0) * max(within.y, 1.0) / (size.x * size.y));
-            uint triangles = uint(min(ceil(float(clusters) * share * float(CLUSTER_TRIANGLES)), float(SHADOW_COST_UNITS)));
-            uint units = shadow_units(uint2(x, y), part, texels, triangles, masked);
+            uint units = shadow_units(uint2(x, y), part, texels, CLUSTER_TRIANGLES, masked, 0.0, max(float(clusters) * share, 1.0));
             // Far past any bound it counts no more, below the flags of the word.
             uint word = shadow_cost_word(pool);
             if (shadow_pages[word] < SHADOW_COST_UNITS / 2u) InterlockedAdd(shadow_pages[word], min(units, SHADOW_COST_UNITS / 2u));
