@@ -221,6 +221,8 @@ a_gpu_charge_is_the_last_peak_of_the_project :: proc(t:^testing.T) {
     game:=join(root,"game")
     testing.expect_value(t,gpu_charge(root,game),GPU_CHARGE_DEFAULT)
     testing.expect_value(t,gpu_charge(root,""),GPU_CHARGE_DEVICE)
+    testing.expect(t,!gpu_admits(i64(48)<<30,{GPU_CHARGE_DEVICE},gpu_charge(root,game)),"one never measured opens beside no other")
+    testing.expect(t,gpu_admits(i64(8)<<30,nil,gpu_charge(root,game)),"and alone it opens")
     gpu_peak_write(root,join(game,".mirai","tmp","session-copy-1"),1500<<20)
     testing.expect_value(t,gpu_charge(root,game),i64(1500)<<20)
     gpu_peak_write(root,game,700<<20)

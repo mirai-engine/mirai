@@ -30,7 +30,9 @@ import "core:time"
 GPU_TURNS :: 8
 GPU_ADMISSION_LOCK :: "gpu.lock"
 GPU_MEMORY_ASSUMED :: i64(4)<<30
-GPU_CHARGE_DEFAULT :: i64(3)<<30
+// More than a card holds: a project never measured opens beside no other,
+// since a guess below what it takes fills the card with the next one.
+GPU_CHARGE_DEFAULT :: i64(1)<<40
 GPU_CHARGE_DEVICE :: i64(1)<<30
 // The card is left this part of its memory for what holds no turn.
 GPU_RESERVE_PART :: 8
