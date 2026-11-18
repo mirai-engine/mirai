@@ -256,7 +256,8 @@ Gpu_Mesh :: struct {
 	bounds_max:      Vec4,
 	rays:            [asset.MESH_RAY_LEVELS]Gpu_Mesh_Ray,
 	draw_first:      u32, // where its clusters start in the indices of the meshes drawn whole this frame (mesh_draws.odin); GPU_NONE: not there
-	pad0, pad1, pad2: u32,
+	area_word:       u32, // the area of the triangles of each of its clusters in the index pool, f32 square metres of its space; GPU_NONE: not known
+	pad1, pad2:      u32,
 }
 // Level 0 is closed: a cluster of it seen from behind the cone of its normals is hidden.
 MESH_FLAG_CLOSED :: abi.MESH_FLAG_CLOSED

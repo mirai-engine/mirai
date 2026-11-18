@@ -376,12 +376,13 @@ SHADOW_COST_UNITS          :: u32(1) << 24 - 1
 // What the draws of a page cost is counted in units of raster work, which
 // the bound of a frame grants (render.Shadow_Bound), and is known before
 // they draw: of each cluster, a unit for each SHADOW_UNIT_TEXELS texels its
-// box covers in the part of the page drawn, SHADOW_MASKED_COST times as many
-// where its material is masked (its mask is read for each texel, and the
-// depth test waits for it), and one for each SHADOW_UNIT_TRIANGLES of its
+// triangles cover in the part of the page drawn, SHADOW_MASKED_COST times as
+// many where its material is masked (its mask is read for each texel, and
+// the depth test waits for it), and one for each SHADOW_UNIT_VERTICES of the
+// CLUSTER_DRAW_VERTICES vertices its draw runs into each page, whatever its
 // triangles.
 SHADOW_UNIT_TEXELS         :: 64
-SHADOW_UNIT_TRIANGLES      :: 4
+SHADOW_UNIT_VERTICES       :: 8
 SHADOW_MASKED_COST         :: 4
 // The arguments: the dispatches of the cull of the cache, of the atlas and of
 // the foresight of the cache, three words each, then the draws of the pages

@@ -387,6 +387,7 @@ pose_store :: proc(r:^Renderer,original:Mesh_Record,posed:u32,streams:int,skin:^
     record.vertices_posed=posed
     record.cluster_word,record.page_word=original.cluster_word-original.index_word,original.page_word-original.index_word
     record.level_word,record.slot_word=original.level_word-original.index_word,original.slot_word-original.index_word
+    record.area_word=original.area_word-original.index_word
     vertex_start,index_start:=u32(len(s.vertices)),u32(len(s.indices))
     append(&s.indices,..s.indices[original.index_word:][:original.index_span])
     table:=mem.slice_data_cast([]Gpu_Mesh_Page,s.indices[index_start+record.page_word:][:record.page_count*PAGE_ENTRY_WORDS])

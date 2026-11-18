@@ -654,11 +654,11 @@ void main(uint3 id : SV_DispatchThreadID, uint3 lane3 : SV_GroupThreadID, uint3 
                 reach = max(pages[SHADOW_WORDS_REACH + params.round * SHADOW_POOL_PAGES + pool], 1u);
                 if (params.round == 1u && cost != 0u) cost = max(cost, GRANT_LEAST);
                 uint band = pages[SHADOW_WORDS_BAND + pool], shift = (band >> SHADOW_BAND_SHIFT) & 0xFFu;
-                if (params.round == 0u && known != 0u && (cost > share || (shift > 0u && 4u * cost <= share))) {
+                if (params.round == 0u && known != 0u && (cost > share || (shift > 0u && 8u * cost <= share))) {
                     uint was = shift;
                     for (; cost > share && (SHADOW_PAGE >> shift) > 1u; shift++) cost = (cost + 1u) / 2u;
-                    // Where the bound grew since, its bands grow back while two fit half the share.
-                    for (; shift > 0u && 4u * cost <= share; shift--) cost *= 2u;
+                    // Where the bound grew since, its bands grow back while two fit a quarter of the share.
+                    for (; shift > 0u && 8u * cost <= share; shift--) cost *= 2u;
                     if (shift != was) {
                         pages[SHADOW_WORDS_BAND + pool] = (band & (0xFFu | SHADOW_BAND_STUCK)) | (shift << SHADOW_BAND_SHIFT);
                         pages[SHADOW_WORDS_KNOWN + pool] = cost;
