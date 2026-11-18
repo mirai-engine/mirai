@@ -302,6 +302,8 @@ api_registrations :: proc(s:^Session,st:^Api_State) {
 api_idle :: proc(s:^Session) -> bool {
     st:=api_state(s)
     if st==nil || !st.manual || st.stepping {return false}
+    // Waiting for calls, it puts no work on the GPU.
+    gpu_turn_use(s,true)
     api_poll(s)
     build_poll(s)
     // No frame runs the requests here: the restart a Build asks for would wait for engine.step.
@@ -517,6 +519,8 @@ api_trampoline :: proc(call:^api.Call) {
     event(entry.session,st.person?"command":"api",call.method.name)
     if missing:=git_missing(entry.session);missing!="" && api_call_edits(call) && !strings.has_prefix(call.method.name,"git.") {
         api.call_fail(call,api.SERVER_ERROR,missing)
+    } else if !api_measured_wait(entry.session,call) {
+        // It failed saying for whom it waited.
     } else if st.in_call>1 || st.person || api_disk_sync(entry.session,call) {
         entry.run(entry.session,call)
     }
@@ -544,6 +548,20 @@ api_trampoline :: proc(call:^api.Call) {
         ai_task_dirty(task)
         ai_task_persist(entry.session,task)
     }
+}
+
+// A call that draws or runs frames in a manual editor waits while a
+// measurement that neither the editor nor its caller is part of runs
+// (gpu_work_begin): its frames would be timed with it. false, with the call
+// failed, when the caller cancelled it first.
+@(private)
+api_measured_wait :: proc(s:^Session,call:^api.Call) -> bool {
+    st:=api_state(s)
+    // A call a frame of another one runs is drawn in that one's turn.
+    if !st.manual || st.person || st.stepping || call.method.flags&{.Draws,.As_User}=={} {return true}
+    ok,holder:=gpu_work_begin(s,call.measure,0)
+    if !ok {api.call_failf(call,api.CANCELLED,"The call waited for a measurement to finish (%s) and was cancelled first: it draws, and frames drawn now would be timed with it. mirai locks says who measures; call it again when it ends",holder)}
+    return ok
 }
 
 // Whether a method may edit the document: not one that only reads, runs

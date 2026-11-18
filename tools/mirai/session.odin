@@ -138,11 +138,19 @@ process_end :: proc(pid:int,wait:time.Duration) {
 
 // The session of the project that answers, or one opened for a command, which
 // closes it when reused is false; code is not 0 after saying why there is none.
+// What the command draws in a session it reuses waits, saying for whom, for a
+// measurement it is no part of to end (workspace.measurement_wait), as
+// opening one waits for its turn of the GPU.
 session_borrow :: proc(root,folder:string,mode:Build_Mode,command:string) -> (file:api.Port_File,reused:bool,code:int) {
     alive:bool
     file,alive=session_find(folder)
     reused=alive && session_answers(file.port)
     if reused && !session_reusable(root,folder,mode,file,command) {return file,reused,1}
+    if reused {
+        workspace.measurement_wait(root,notice=proc(holder:string) {
+            fmt.eprintfln("mirai: waiting for a measurement to finish before drawing in the session (%s)",holder)
+        })
+    }
     if !reused {
         if ended:=session_ended(folder);ended!="" {
             fmt.eprintfln("mirai %s: %s",command,ended)

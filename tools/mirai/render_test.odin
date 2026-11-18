@@ -162,14 +162,14 @@ render_plan_load_refuses_a_camera_without_a_target :: proc(t:^testing.T) {
 @(test)
 render_options_parse_reads_the_flags_and_refuses_what_cannot_go_together :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
-    o,problem:=render_options_parse({"demo","--quality","--fresh-base","--wait","30","--allow-load","--base","none"})
+    o,problem:=render_options_parse({"demo","--quality","--fresh-base","--base","none"})
     testing.expect_value(t,problem,"")
-    testing.expect(t,o.folder=="demo" && o.quality && o.fresh_base && o.allow_load && o.wait==30 && o.base=="none")
+    testing.expect(t,o.folder=="demo" && o.quality && o.fresh_base && o.base=="none")
     o,problem=render_options_parse({})
-    testing.expect(t,problem=="" && o.folder=="." && o.base=="main" && o.wait==RENDER_WAIT && !o.quality && !o.release)
+    testing.expect(t,problem=="" && o.folder=="." && o.base=="main" && !o.quality && !o.release)
     o,problem=render_options_parse({"--release"})
     testing.expect(t,problem=="" && o.release)
-    for args in ([][]string{{"--wait","soon"},{"--wait","-1"},{"--rerun","r.json","--views","night"},{"--views"},{"--optimized"},{"--dev"},{"demo","other"}}) {
+    for args in ([][]string{{"--wait","30"},{"--allow-load"},{"--rerun","r.json","--views","night"},{"--views"},{"--optimized"},{"--dev"},{"demo","other"}}) {
         _,problem=render_options_parse(args)
         testing.expectf(t,problem!="","%v was accepted",args)
     }

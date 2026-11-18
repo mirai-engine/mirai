@@ -3,9 +3,12 @@ package workspace
 import "core:fmt"
 import "core:hash"
 import "core:os"
+import "core:slice"
 import "core:strconv"
 import "core:strings"
 import "core:time"
+import "mirai:project"
+import "mirai:std/subprocess"
 
 // The processes that open a device of the GPU, from every checkout, share
 // the memory of the card: each one holds a turn (gpu-<n>.lock) for as long as
@@ -21,12 +24,17 @@ import "core:time"
 //
 // The turn of a person (person) is taken without waiting and counts for the
 // others; when every turn file is held it runs without one. Any other waits
-// while a measurement it is not part of runs: what measures takes
-// MEASURE_LOCK first and its GPU turns after it, and no holder of a GPU turn
-// waits for MEASURE_LOCK without a limit, so the two never wait for each
-// other. The turns of a measurement say so in their owner, and one of them
-// is given beside the others of the same measurement when no one else holds
-// a turn, also beyond the card: what it compares runs at once.
+// while a measurement it is not part of runs (measured). The turns of a
+// measurement say so in their owner, and one of them is given beside the
+// others of the same measurement when no one else holds a turn, also beyond
+// the card: what it compares runs at once.
+//
+// A turn says whether its holder puts work on the GPU now or stays open
+// idle (GPU_OPEN_TAG): a test, a player or an editor that starts or runs a
+// call that draws works, and a measurement waits for it before it times
+// (gpu_work); a session that waits for calls and the editor or player of a
+// person are open, and a measurement only says that they load the GPU
+// (gpu_load).
 GPU_TURNS :: 8
 GPU_ADMISSION_LOCK :: "gpu.lock"
 GPU_MEMORY_ASSUMED :: i64(4)<<30
@@ -47,6 +55,8 @@ GPU_MEASUREMENT_TAG :: ", measuring for pid "
 GPU_HELD_TAG :: ", held "
 @(private)
 GPU_HELD_SUFFIX :: " MiB at most"
+@(private)
+GPU_OPEN_TAG :: ", open and idle"
 
 // The file of a turn.
 gpu_turn_path :: proc(root:string,turn:int,allocator:=context.allocator) -> string {
@@ -54,12 +64,24 @@ gpu_turn_path :: proc(root:string,turn:int,allocator:=context.allocator) -> stri
 }
 
 // What the holder of a turn writes: what, the measurement it is part of
-// (its MEASURE_ENV; "" for none), what it is charged and the most it held
-// (0 before it says).
-gpu_holder_text :: proc(what:string,charge:i64,part_of:="",held:=i64(0),allocator:=context.temp_allocator) -> string {
+// (its MEASURE_ENV; "" for none), whether it is open and idle, what it is
+// charged and the most it held (0 before it says).
+gpu_holder_text :: proc(what:string,charge:i64,part_of:="",held:=i64(0),open:=false,allocator:=context.temp_allocator) -> string {
     tag:=part_of!=""?strings.concatenate({GPU_MEASUREMENT_TAG,part_of},context.temp_allocator):""
-    if held>0 {return fmt.aprintf("%s%s, %d%s%s%d%s",what,tag,max(charge,0)>>20,GPU_CHARGE_SUFFIX,GPU_HELD_TAG,held>>20,GPU_HELD_SUFFIX,allocator=allocator)}
-    return fmt.aprintf("%s%s, %d%s",what,tag,max(charge,0)>>20,GPU_CHARGE_SUFFIX,allocator=allocator)
+    return gpu_owner_text(strings.concatenate({what,tag,open?GPU_OPEN_TAG:""},context.temp_allocator),charge,held,allocator)
+}
+
+// The owner text of what (with its tags), its charge and the most it held.
+@(private)
+gpu_owner_text :: proc(what:string,charge,held:i64,allocator:=context.temp_allocator) -> string {
+    if held>0 {return fmt.aprintf("%s, %d%s%s%d%s",what,max(charge,0)>>20,GPU_CHARGE_SUFFIX,GPU_HELD_TAG,held>>20,GPU_HELD_SUFFIX,allocator=allocator)}
+    return fmt.aprintf("%s, %d%s",what,max(charge,0)>>20,GPU_CHARGE_SUFFIX,allocator=allocator)
+}
+
+// Whether a holder wrote that it is open and idle.
+gpu_holder_open :: proc(holder:string) -> bool {
+    what,_,_,ok:=gpu_holder_parse(holder)
+    return ok && strings.has_suffix(what,GPU_OPEN_TAG)
 }
 
 // What a holder wrote, in parts: what it is with its measurement, its charge
@@ -96,54 +118,95 @@ gpu_holder_charge :: proc(holder:string) -> (charge:i64,ok:bool) {
     return
 }
 
-// A turn that is held: what its holder wrote, its charge, the most it held
-// and since when.
+// A turn that is held: what its holder wrote, its charge, the most it held,
+// since when and whether it is open and idle.
 Gpu_Holder :: struct {
     holder:string,
     charge:i64,
     held:i64,
     since:time.Time,
+    open:bool,
 }
 
 // The turns held now. A holder that wrote no charge, as one that is just
-// taking its turn, counts as GPU_CHARGE_DEFAULT.
+// taking its turn, counts as GPU_CHARGE_DEFAULT and works.
 gpu_holders :: proc(root:string,allocator:=context.allocator) -> []Gpu_Holder {
     holders:=make([dynamic]Gpu_Holder,allocator)
     for turn in 0..<GPU_TURNS {
         taken,holder,since:=lock_holder(gpu_turn_path(root,turn,context.temp_allocator),allocator)
         if !taken {continue}
-        _,charge,held,charged:=gpu_holder_parse(holder)
-        append(&holders,Gpu_Holder{holder,charged?charge:GPU_CHARGE_DEFAULT,held,since})
+        what,charge,held,charged:=gpu_holder_parse(holder)
+        append(&holders,Gpu_Holder{holder,charged?charge:GPU_CHARGE_DEFAULT,held,since,charged && strings.has_suffix(what,GPU_OPEN_TAG)})
     }
     return holders[:]
+}
+
+// The GPU work in flight a measurement waits for before it times: the turns
+// that work (not open), of no process measurer names (a pid) nor of its
+// measurement.
+gpu_work :: proc(root,measurer:string,allocator:=context.allocator) -> []Gpu_Holder {
+    work:=make([dynamic]Gpu_Holder,allocator)
+    own:=fmt.tprintf("pid %s, ",measurer)
+    for holder in gpu_holders(root,allocator) {
+        if holder.open || strings.has_prefix(holder.holder,own) || gpu_holder_measurement(holder.holder)==measurer {continue}
+        append(&work,holder)
+    }
+    return work[:]
+}
+
+// The owner file of the turn process pid is named the holder of, looked for
+// first at turn (where it was before; -1 for none), and what it says; at is
+// -1 while none names pid.
+@(private)
+gpu_turn_owner :: proc(root:string,pid:int,turn:int) -> (at:int,owner,holder:string) {
+    prefix:=fmt.tprintf("pid %d, ",pid)
+    for i in -1..<GPU_TURNS {
+        at=i<0?turn:i
+        if at<0 || at>=GPU_TURNS || i>=0 && at==turn {continue}
+        owner=strings.concatenate({gpu_turn_path(root,at,context.temp_allocator),".owner"},context.temp_allocator)
+        data,error:=os.read_entire_file(owner,context.temp_allocator)
+        holder=strings.trim_space(string(data))
+        if error==nil && strings.has_prefix(holder,prefix) {return}
+    }
+    return -1,"",""
+}
+
+// Writes an owner file again, keeping its time: it says since when the turn is held.
+@(private)
+gpu_owner_rewrite :: proc(owner,text:string) {
+    info,stated:=os.stat(owner,context.temp_allocator)
+    text_write(owner,text)
+    if stated==nil {_=os.change_times(owner,info.access_time,info.modification_time)}
 }
 
 // What the holder of a turn says while it runs: the most it held, which
 // raises its charge when it passes it and never lowers it, so that the next
 // admission counts what it really takes. The turn is the one process pid is
-// named the holder of, looked for first at turn (where it was before; -1
-// for none); found is where it is, -1 while none names pid.
+// named the holder of (gpu_turn_owner); found is where it is, -1 while none
+// names pid.
 gpu_turn_raise :: proc(root:string,pid:int,held:i64,turn:=-1) -> (found:int) {
-    raise :: proc(root,prefix:string,at:int,held:i64) -> bool {
-        owner:=strings.concatenate({gpu_turn_path(root,at,context.temp_allocator),".owner"},context.temp_allocator)
-        data,error:=os.read_entire_file(owner,context.temp_allocator)
-        holder:=strings.trim_space(string(data))
-        if error!=nil || !strings.has_prefix(holder,prefix) {return false}
-        what,charge,said,ok:=gpu_holder_parse(holder)
-        if ok && held>>20>said>>20 {
-            info,stated:=os.stat(owner,context.temp_allocator)
-            text_write(owner,fmt.tprintf("%s, %d%s%s%d%s",what,max(charge,held)>>20,GPU_CHARGE_SUFFIX,GPU_HELD_TAG,held>>20,GPU_HELD_SUFFIX))
-            // The time of the owner file says since when the turn is held.
-            if stated==nil {_=os.change_times(owner,info.access_time,info.modification_time)}
-        }
-        return true
+    owner,holder:string
+    found,owner,holder=gpu_turn_owner(root,pid,turn)
+    if found<0 {return}
+    if what,charge,said,ok:=gpu_holder_parse(holder);ok && held>>20>said>>20 {
+        gpu_owner_rewrite(owner,gpu_owner_text(what,max(charge,held),held))
     }
-    prefix:=fmt.tprintf("pid %d, ",pid)
-    if turn>=0 && turn<GPU_TURNS && raise(root,prefix,turn,held) {return turn}
-    for at in 0..<GPU_TURNS {
-        if at!=turn && raise(root,prefix,at,held) {return at}
+    return
+}
+
+// What the holder of a turn says when it starts or stops putting work on the
+// GPU: open, it stays open and idle and no measurement waits for it. The turn
+// is found as gpu_turn_raise finds it.
+gpu_turn_mark :: proc(root:string,pid:int,open:bool,turn:=-1) -> (found:int) {
+    owner,holder:string
+    found,owner,holder=gpu_turn_owner(root,pid,turn)
+    if found<0 {return}
+    what,charge,held,ok:=gpu_holder_parse(holder)
+    bare:=strings.trim_suffix(what,GPU_OPEN_TAG)
+    if ok && (bare!=what)!=open {
+        gpu_owner_rewrite(owner,gpu_owner_text(strings.concatenate({bare,open?GPU_OPEN_TAG:""},context.temp_allocator),charge,held))
     }
-    return -1
+    return
 }
 
 // What the holders held at most beyond what the card has for the turns (its
@@ -296,14 +359,13 @@ Gpu_Wait :: struct {
 }
 
 // Takes a turn when one is given now. what names the holder; a person takes
-// one without the room for it, and part_of is the measurement this process
-// is part of (its MEASURE_ENV; see above). A lock that cannot be made gives
-// none and says nothing: the work goes on without it.
+// one without the room for it and stays open, and part_of is the measurement
+// this process is part of (its MEASURE_ENV; see above). A lock that cannot be
+// made gives none and says nothing: the work goes on without it.
 gpu_try :: proc(root,what:string,charge:i64,person:=false,part_of:="") -> (lock:Lock,taken:bool,waiting:Gpu_Wait) {
-    if !person && part_of=="" {
-        held,holder,_:=lock_holder(lock_path(root,MEASURE_LOCK,context.temp_allocator),context.temp_allocator)
-        if held && !strings.has_prefix(holder,fmt.tprintf("pid %d,",os.get_pid())) {
-            waiting.measurement=holder!=""?holder:"a process that does not say which"
+    if !person {
+        if running,holder:=measured(root,true,part_of,context.temp_allocator);running==.Wait {
+            waiting.measurement=holder
             return
         }
     }
@@ -319,7 +381,7 @@ gpu_try :: proc(root,what:string,charge:i64,person:=false,part_of:="") -> (lock:
         alone&&=gpu_holder_measurement(holder.holder)==part_of
     }
     if !person && (len(waiting.holders)>=GPU_TURNS || !alone && !gpu_admits(waiting.memory,charges,charge)) {return}
-    text:=gpu_holder_text(what,charge,part_of)
+    text:=gpu_holder_text(what,charge,part_of,open=person)
     for turn in 0..<GPU_TURNS {
         failed:bool
         lock,taken,_,failed=lock_take(gpu_turn_path(root,turn,context.temp_allocator),text)
@@ -353,10 +415,12 @@ gpu_acquire :: proc(root,what:string,charge:i64,person:=false,notice:proc(waitin
 }
 
 // Names the holder of a turn again: the process that holds it now, as an
-// editor started with it.
+// editor started with it. It stays open or working as it was.
 gpu_turn_rename :: proc(lock:^Lock,what:string,charge:i64) {
     if !lock.held {return}
-    _=os.write_entire_file(lock.owner,transmute([]u8)gpu_holder_text(what,charge,measurement(context.temp_allocator)))
+    before,_:=os.read_entire_file(lock.owner,context.temp_allocator)
+    open:=gpu_holder_open(strings.trim_space(string(before)))
+    _=os.write_entire_file(lock.owner,transmute([]u8)gpu_holder_text(what,charge,measurement(context.temp_allocator),open=open))
 }
 
 // Names the process `to` the holder of the turns held by process `from`,
@@ -370,6 +434,67 @@ gpu_turn_follow :: proc(root:string,from,to:int) {
         text:=fmt.tprintf("pid %d, %s",to,holder[len(prefix):])
         _=os.write_entire_file(strings.concatenate({path,".owner"},context.temp_allocator),transmute([]u8)text)
     }
+}
+
+// An editor or a player of the engine that runs.
+Engine_Program :: struct {pid:int,path,command:string}
+
+// The editors and players of the engine that run, but those of own and this
+// process: one that draws loads the GPU and holds its memory.
+engine_programs :: proc(own:[]int,allocator:=context.temp_allocator) -> []Engine_Program {
+    list:=make([dynamic]Engine_Program,allocator)
+    pids,error:=os.process_list(context.temp_allocator)
+    if error!=nil {return nil}
+    for pid in pids {
+        if pid==os.get_pid() || slice.contains(own,pid) {continue}
+        info,info_error:=os.process_info_by_pid(pid,{.Executable_Path},context.temp_allocator)
+        if info_error!=nil || info.executable_path=="" {continue}
+        name:=strings.to_lower(strings.trim_suffix(os.base(slashes(info.executable_path,context.temp_allocator)),project.EXECUTABLE_SUFFIX),context.temp_allocator)
+        if name!="mirai-editor" && name!="mirai-player" {continue}
+        program:=Engine_Program{pid=pid,path=strings.clone(info.executable_path,allocator)}
+        program.command=program.path
+        if full,full_error:=os.process_info_by_pid(pid,{.Command_Line},context.temp_allocator);full_error==nil && full.command_line!="" {program.command=strings.clone(full.command_line,allocator)}
+        append(&list,program)
+    }
+    return list[:]
+}
+
+// The percent of the GPU in use while what measures draws nothing from which
+// another program loads it: a desktop on a 4K display alone keeps it at 10-15.
+GPU_LOAD_BUSY :: 25
+
+// What else loads the GPU while what measures draws nothing, added to
+// warnings after when_: with programs, the other programs of the engine but
+// those of own, sessions other agents keep open among them; with nvidia-smi,
+// how busy the GPU is, whatever program loads it. loaded: it was busy, and a
+// time measured meanwhile does not count.
+gpu_load :: proc(warnings:^[dynamic]string,own:[]int,when_:string,programs:bool) -> (loaded:bool) {
+    if programs {
+        for program in engine_programs(own) {
+            append(warnings,fmt.aprintf("%s: another program of the engine is open (pid %d, %s): it loads the GPU when it draws and holds its memory",when_,program.pid,program.path))
+        }
+    }
+    total,samples:=0,0
+    for _ in 0..<10 {
+        state,stdout,_,error:=subprocess.exec({command={"nvidia-smi","--query-gpu=utilization.gpu","--format=csv,noheader,nounits"}},context.temp_allocator)
+        if error!=nil || state.exit_code!=0 {break}
+        line:=strings.trim_space(string(stdout))
+        if cut:=strings.index_byte(line,'\n');cut>=0 {line=strings.trim_space(line[:cut])}
+        busy,valid:=strconv.parse_int(line,10)
+        if !valid {break}
+        total+=busy
+        samples+=1
+        time.sleep(200*time.Millisecond)
+    }
+    switch {
+    case samples==0:
+        note:="no nvidia-smi: whether another program uses the GPU was not measured"
+        if !slice.contains(warnings[:],note) {append(warnings,note)}
+    case total/samples>=GPU_LOAD_BUSY:
+        append(warnings,fmt.aprintf("%s: the GPU was %d %% busy while nothing measured drew: another program uses it and the measurement does not count",when_,total/samples))
+        loaded=true
+    }
+    return
 }
 
 @(private)

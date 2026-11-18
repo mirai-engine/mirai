@@ -48,11 +48,11 @@ compiler_memory :: proc() -> (bytes:u64,ok:bool) {
 
 // What a compiler started now may use: compiler_memory, at low priority
 // while a measurement this process is not part of runs
-// (workspace.measurement_running), so that it disturbs it as little as it can.
+// (workspace.measured), so that it disturbs it as little as it can.
 compiler_limits :: proc(root:string) -> subprocess.Limits {
     memory,_:=compiler_memory()
-    measured,_:=workspace.measurement_running(root,context.temp_allocator)
-    return {memory=memory,priority=.Low if measured else .Normal}
+    measured,_:=workspace.measured(root,false,allocator=context.temp_allocator)
+    return {memory=memory,priority=.Low if measured==.Low else .Normal}
 }
 
 @(private)
