@@ -282,9 +282,9 @@ model_import :: proc(path:string,formats:[]importer.Format,options:importer.Impo
 // prefab of its hierarchy; only its clips with Import_Settings.skeleton.
 model_write :: proc(model:^importer.Imported_Model,path:string,options:importer.Import_Options,allocator:=context.allocator) -> (report:importer.Import_Report,error:importer.Error) {
     if report,error=importer.import_write(model,options,allocator);error.code!=.None {return}
-    if len(model.nodes)==0 || report.settings.skeleton!={} {return report,{}}
+    if len(model.nodes)==0 || report.settings.skeleton!={} || report.prefab_path=="" {return report,{}}
     name:=filepath.stem(path)
-    source:=importer.source_path(options,path)
+    source:=importer.source_path(path)
     id,target:=report.prefab,report.prefab_path
     if options.world==nil {
         importer.report_destroy(&report)

@@ -7,6 +7,7 @@ import "mirai:core"
 import "mirai:cook/textures"
 import "mirai:std/base"
 import "mirai:std/jobs"
+import mstore "mirai:store"
 import mm "mirai:std/math"
 
 // What an importer reads from a source file, as plain data that depends on no
@@ -47,14 +48,21 @@ Error :: struct {
 }
 
 Import_Options :: struct {
-    // Replaced by the settings the sidecar of the source keeps when it has
-    // one, unless ignore_stored.
+    // Replaced by the settings the package of the source keeps when it was
+    // ingested before, unless ignore_stored.
     using settings:Import_Settings,
     ignore_stored:bool,
-    // The project or the plugin whose assets folder the source is in: sources
-    // are named relative to it in Import_Info, its documents are found among
-    // its assets, and what it builds of the cache kinds goes to its imported
-    // folder (sidecar.odin).
+    store:^mstore.Store,   // where the import puts the blobs of its build and the records of its package (package.odin)
+    // The manifest of the package the source was ingested as, whose ids and
+    // settings the import keeps; zero: the one the store names for the path
+    // of the source (package_previous), else a new package.
+    manifest:mstore.Hash,
+    // The folder of the assets of a project the documents of the import are
+    // written or followed in (documents.odin), and the prefab of a model;
+    // "": they are blobs of the build alone.
+    documents:string,
+    // The project or the plugin the import is for: the codecs of its
+    // assets, and the assets its documents are found among by id.
     root:string,
     registry:^asset.Registry, // the scanned assets of root, which the import does not change; nil: it scans them
     world:^core.World_Info,   // the types of the game of root, which the prefab of a model is written in
@@ -67,7 +75,7 @@ Import_Options :: struct {
     mesh_cache:string,    // folder of meshes built before, kept by geometry and settings (mesh_cook); "": none
     // The identity of the code of the plugin that imports the source whole
     // (sources.code_identity), 0 for the engine's: part of what its outputs
-    // are built from (import_key).
+    // are made from (identity_of).
     importer_code:u64,
     material_index:int,   // the index of the first material among those of the source: imports that write its materials apart give each its own
     // Where the import cooks: the worker that calls it (the owner of its
@@ -198,7 +206,7 @@ Imported_Model :: struct {
     warnings:[]string,  // what the importer left out or could not honor
     programs:[]string,  // the Surface programs reading it wrote to the shaders of the project, their files
     files:[]string,     // the files reading it read besides the source and its images (buffers, material libraries)
-    settings:Import_Settings, // those of the sidecar of the source when stored is set, else those of the options it was read with
+    settings:Import_Settings, // those of the package of the source when stored is set, else those of the options it was read with
     stored:bool,
     arena:^mem.Dynamic_Arena,
     allocator:mem.Allocator,

@@ -192,7 +192,7 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
     if changed&{.Lods,.Parts,.Front,.Rig,.Rig_Crotch,.Rig_Neck,.Skeleton}!={} && kind!=.Model {fmt.wprintln(errors,"mirai import: --lods, --parts, --front, --skeleton and the --rig options apply only to models");return 2}
 
     if kind==.Model || kind==.Image {
-        stored,found,settings_error:=importer.settings_load(file)
+        stored,found,settings_error:=importer.settings_load(options,file)
         if settings_error.code!=.None {
             fmt.wprintfln(errors,"mirai import: %s: %s",file,settings_error.message)
             return 1
@@ -231,7 +231,6 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
     }
     defer importer.report_destroy(&report)
     written_print(output,report.assets[:])
-    if report.saved!="" {fmt.wprintfln(output,"sidecar %s",report.saved)}
     for warning in report.warnings {fmt.wprintfln(output,"warning: %s",warning)}
     return 0
 }

@@ -105,10 +105,6 @@ sync :: proc(root:string,options:Sync_Options={},allocator:=context.allocator) -
     // The library, read once a source needs a format of its plugins or a model imports.
     library:Library_Read
     defer if library.release!=nil {library.release(library.state)}
-    hashes_path:=project.cache_path(top,importer.SOURCE_HASHES,allocator=context.temp_allocator)
-    hashes:=importer.source_hashes_load(hashes_path,context.temp_allocator)
-    defer importer.source_hashes_save(&hashes,hashes_path)
-    listed:=make(map[string]struct{},context.temp_allocator) // the files of the imported folder the sidecars list
     versions:=kind_versions(top,context.temp_allocator)
     complete:=true
     // The sources to import, found first so that each line says how many there are.
@@ -121,11 +117,12 @@ sync :: proc(root:string,options:Sync_Options={},allocator:=context.allocator) -
         for entry in entries {
             file:=fmt.tprintf("%s/%s",todo[next],entry.name)
             if entry.type==.Directory && !strings.has_prefix(entry.name,".") {append(&todo,file)}
-            source:=strings.trim_suffix(file,importer.SIDECAR_EXTENSION)
+            source:=strings.trim_suffix(file,asset.SIDECAR_EXTENSION)
             if entry.type!=.Regular || source==file || !os.exists(source) {continue}
-            sidecar,_,error:=importer.sidecar_load(source,context.temp_allocator)
-            if error.code!=.None {
-                append(&report.failures,strings.clone(error.message,allocator))
+            text,read_error:=os.read_entire_file(file,context.temp_allocator)
+            sidecar,valid:=asset.sidecar_parse(string(text),context.temp_allocator)
+            if read_error!=nil || !valid {
+                append(&report.failures,fmt.aprintf("%s is not the settings and outputs of an import (version %d)",file,asset.SIDECAR_VERSION,allocator=allocator))
                 complete=false
                 continue
             }
@@ -157,22 +154,12 @@ sync :: proc(root:string,options:Sync_Options={},allocator:=context.allocator) -
                 head,_,_:=serial.file_read_head(source,buffer[:])
                 if format,found:=importer.format_find(formats,head,filepath.ext(source));found {version=importer.import_version(format.version)}
             }
-            // Final is current in either mode; Fast only for a sync of fast textures.
-            key:=importer.import_key(source,sidecar,version,code,false,&hashes)
-            current:=outputs_held(sidecar,imported,key)
-            if !current && options.fast_textures {
-                fast:=importer.import_key(source,sidecar,version,code,true,&hashes)
-                if outputs_held(sidecar,imported,fast) {key,current=fast,true}
-            }
             report.sources+=1
             why:string
             switch {
             case options.rebuild:why="everything is built again"
-            case !current:why="what it is built from changed"
             case !documents_read(sidecar,&registry,versions):why="a document of it is of a version this build does not read"
-            case:
-                for file in outputs_files(sidecar,imported,key) {listed[filepath.base(file)]={}}
-                continue
+            case:why="what it builds is kept in the store"
             }
             append(&pending,Pending{source,formats,wholes,kind,version,code,why})
         }
@@ -201,49 +188,15 @@ sync :: proc(root:string,options:Sync_Options={},allocator:=context.allocator) -
         if options.progress.procedure!=nil {fmt.wprintfln(options.progress,"  %s: %d assets (%d kept), %d warnings, %.1f s",named,len(written.assets),kept,len(written.warnings),time.duration_seconds(time.tick_since(started)))}
         for warning in written.warnings {append(&report.warnings,fmt.aprintf("%s: %s",p.source,warning,allocator=allocator))}
         importer.report_destroy(&written)
-        // What the import gives now: a part the source gained, or lost.
-        sidecar,_,error:=importer.sidecar_load(p.source,context.temp_allocator)
-        if error.code!=.None {complete=false;continue}
-        key:=importer.import_key(p.source,sidecar,p.version,p.code,options.fast_textures,&hashes)
-        for file in outputs_files(sidecar,imported,key) {listed[filepath.base(file)]={}}
-    }
-    if !complete {return}
-    entries,_:=os.read_all_directory_by_path(imported,context.temp_allocator)
-    for entry in entries {
-        if _,kept:=listed[entry.name];entry.type!=.Regular || kept || strings.has_suffix(entry.name,".tmp") {continue}
-        if os.remove(fmt.tprintf("%s/%s",imported,entry.name))==nil {report.removed+=1}
     }
     return
-}
-
-// The files of the imported folder an import built from key keeps: one per
-// output of the cache, else its stamp (importer.STAMP_EXTENSION). In the
-// temp allocator.
-@(private="file")
-outputs_files :: proc(sidecar:importer.Sidecar,imported:string,key:u64) -> []string {
-    files:=make([dynamic]string,context.temp_allocator)
-    for output in sidecar.outputs {
-        known,_:=asset.kind_info(output.kind)
-        if asset.import_cached(output.kind) {append(&files,asset.imported_file(imported,output.id,key,known.extension,context.temp_allocator))}
-    }
-    if len(files)==0 && len(sidecar.outputs)>0 {append(&files,asset.imported_file(imported,sidecar.outputs[0].id,key,importer.STAMP_EXTENSION,context.temp_allocator))}
-    return files[:]
-}
-
-// Whether the imported folder has every file of an import built from key.
-@(private="file")
-outputs_held :: proc(sidecar:importer.Sidecar,imported:string,key:u64) -> bool {
-    for file in outputs_files(sidecar,imported,key) {
-        if !os.exists(file) {return false}
-    }
-    return true
 }
 
 // Whether this build reads every document the sidecar lists that the assets
 // have: one of another version of its kind is made again by importing its
 // source. versions: of each kind this build knows (kind_versions).
 @(private="file")
-documents_read :: proc(sidecar:importer.Sidecar,registry:^asset.Registry,versions:map[asset.Fourcc]u16) -> bool {
+documents_read :: proc(sidecar:asset.Sidecar,registry:^asset.Registry,versions:map[asset.Fourcc]u16) -> bool {
     for output in sidecar.outputs {
         if asset.import_cached(output.kind) {continue}
         file,found:=asset.registry_find(registry,output.id)
