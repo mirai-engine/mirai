@@ -8,6 +8,7 @@ import "core:testing"
 import "mirai:core"
 import render "mirai:engine/render"
 import "mirai:host"
+import "mirai:project"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import anim "plugins:animation/runtime"
@@ -21,8 +22,7 @@ mirai_matching_selects_a_walking_clip :: proc(t:^testing.T) {
     graphs:anim.Character_Assets;defer anim.character_assets_free(&graphs)
     progress:core.Table(anim.Animation_Progress);defer core.table_destroy(&progress)
     core.entities_init(&f.entities)
-    root,found:=os.lookup_env("MIRAI_ROOT",context.temp_allocator)
-    if !testing.expect(t,found && host.assets_init(&f.assets,{root=fmt.tprintf("%s/demo/assets",root),imported=fmt.tprintf("%s/demo/.mirai/imported",root),capacity=512})) {return}
+    if !demo_assets_init(t,&f.assets) {return}
     f.app={assets=&f.assets,allocator=context.allocator}
     ids,ok:=mirai_assets(t,&f.assets,"characters/mirai/mirai_matching.character")
     if !ok {return}
@@ -93,8 +93,7 @@ mirai_starting_to_its_side_turns_no_bone_faster_than_its_walk :: proc(t:^testing
     constraints:anim.Animation_Constraints;defer anim.constraints_free(&constraints)
     grounding:anim.Grounding_Runtime;defer anim.grounding_free(&grounding)
     core.entities_init(&f.entities)
-    root,found:=os.lookup_env("MIRAI_ROOT",context.temp_allocator)
-    if !testing.expect(t,found && host.assets_init(&f.assets,{root=fmt.tprintf("%s/demo/assets",root),imported=fmt.tprintf("%s/demo/.mirai/imported",root),capacity=512})) {return}
+    if !demo_assets_init(t,&f.assets) {return}
     f.app={assets=&f.assets,allocator=context.allocator}
     ids,ok:=mirai_assets(t,&f.assets,"characters/mirai/mirai_matching.character")
     if !ok {return}
@@ -145,4 +144,16 @@ mirai_starting_to_its_side_turns_no_bone_faster_than_its_walk :: proc(t:^testing
     testing.expectf(t,playing.clip==base.name_hash("walk") && walk>1,"it walks (%.2f rad/s)",walk)
     testing.expectf(t,start<=2*walk,"starting to its side no bone turns faster than twice its walk: %.2f against %.2f rad/s",start,walk)
     testing.expect_value(t,problems.count,0)
+}
+
+// The assets of the demo as its player sets them up: its own, those of its
+// plugins and the outputs of the packages of both in the machine store.
+demo_assets_init :: proc(t:^testing.T,a:^host.Assets) -> bool {
+    root,found:=os.lookup_env("MIRAI_ROOT",context.temp_allocator)
+    if !testing.expect(t,found,"MIRAI_ROOT names the engine") {return false}
+    demo:=fmt.tprintf("%s/demo",root)
+    p,error:=project.open(demo,root,context.temp_allocator)
+    if !testing.expect_value(t,error.code,project.Error_Code.None) {return false}
+    assets,listed:=host.project_assets(&p,"",context.temp_allocator)
+    return testing.expect(t,listed && host.assets_init(a,{root=fmt.tprintf("%s/assets",demo),listed=assets.listed,mounts=assets.mounts,package_problems=assets.problems,capacity=512}))
 }

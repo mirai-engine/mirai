@@ -78,6 +78,7 @@ Desc :: struct {
     action:Action,               // Check and Test: of the Editor target
     test_package:string,         // Test: the folder of the package, absolute
     test:Test_Options,           // Test: how its executable runs
+    store_root:string,           // the machine store the packages of the project list from, for the paths of assets its code writes; "": the machine's
     allocator:runtime.Allocator, // of the job. Unset: context.allocator
 }
 
@@ -227,7 +228,7 @@ job_start :: proc(desc:Desc) -> ^Job {
         for root,i in roots {job.imports[i]=strings.clone(root,a)}
         job.import_program=project_engine(p,desc.engine,a).import_program
     }
-    generated,written:=generated_write(p,desc.target)
+    generated,written:=generated_write(p,desc.target,desc.store_root)
     if !written {
         if len(generated.errors)>0 {
             job.result.text=strings.join(generated.errors,"\n",a)

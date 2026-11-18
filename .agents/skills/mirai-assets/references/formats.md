@@ -224,9 +224,13 @@ scan opens every file and writes it again.
 - **Listed outputs.** What the
   [imports](../../mirai-imports/references/imports.md#identity-and-reimport) build that nobody
   edits is not a file of the assets folder but a blob of the machine store. The root and each
-  mount take the entries `packages_resolve` gives for the packages their root pins
-  (`asset/packages.odin`), and a scan lists each like any asset (`Registry_File.listed`), with no
-  source, sidecar or imported folder anywhere; the registry reads no sidecar. An entry whose
+  mount take the entries `root_packages` gives for the packages their root pins: `packages_resolve`
+  of its `packages.mirai` against the store (`asset/packages_root.odin`). Every program that sets
+  up the registry of a root that is not shipped goes through it, with the store root as a value
+  (the machine's unless it names another); a root without the list opens no store, and what it
+  cannot list is a problem that names the package, reported where that program reports asset
+  problems, never a failure to start. A scan lists each like any asset (`Registry_File.listed`),
+  with no source, sidecar or imported folder anywhere; the registry reads no sidecar. An entry whose
   build is not on this machine, or whose blob is gone, stays listed as `Not_Built` (its id and
   kind, no file, not found by id), never removed and never an error of the scan; a blob that is
   not the asset its entry names is `Broken`. A path a file, a folder or another entry has takes
