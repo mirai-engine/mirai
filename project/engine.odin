@@ -11,6 +11,11 @@ import "mirai:std/serial"
 
 ENGINE_FILE :: "engine.mirai"
 
+// The folder of an installed engine that is a store holding the builds of the
+// packages its plugins pin: a refresh on the machine of whoever installed it
+// takes them from there (cook/cache.store_source), so it imports nothing.
+ENGINE_STORE :: "builds"
+
 // What a package of the engine is made for, as its archives are named.
 ENGINE_PLATFORM :: ("macos" when ODIN_OS==.Darwin else ODIN_OS_STRING)+"-"+ODIN_ARCH_STRING
 

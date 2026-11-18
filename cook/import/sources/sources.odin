@@ -157,12 +157,11 @@ whole_find :: proc(wholes:[]Whole_Source,path:string) -> (whole:Whole_Source,cla
 // (options.root; "": importer.source_root): one of wholes claims is imported whole by
 // it, before the formats; a model writes its assets and, when it
 // has nodes, the prefab of its hierarchy, which the report lists last; an
-// image or a sound writes one asset. The sidecar of the source
-// (<source>.import, Import_Report.saved) keeps the settings it was imported
-// with, the folder of its assets and the id of each of them: importing the
-// source again gives the same assets. What the import builds that nobody
-// edits goes to the imported folder of the root (importer.Sidecar), whatever
-// the format that reads it.
+// image or a sound writes one asset. The package of the source in
+// options.store keeps the settings it was imported with and the id of each
+// asset: importing the source again gives the same assets. What the import
+// builds that nobody edits is a blob of its build, whatever the format that
+// reads it, and its documents go to options.documents.
 import_source :: proc(path:string,options:importer.Import_Options={},formats:[]importer.Format=nil,wholes:[]Whole_Source=nil,allocator:=context.allocator) -> (report:importer.Import_Report,error:importer.Error) {
     formats:=formats if formats!=nil else FORMATS[:]
     options:=options

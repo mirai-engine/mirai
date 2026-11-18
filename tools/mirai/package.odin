@@ -4,14 +4,16 @@ import "core:fmt"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
+import "mirai:asset"
 import "mirai:cook/build"
 import "mirai:cook/shaders"
 import "mirai:cook/workspace"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/subprocess"
+import "mirai:store"
 
-PACKAGE_USAGE :: "package engine --out <folder>"
+PACKAGE_USAGE :: "package engine --out <folder> [--store <folder>]"
 
 // What a package of the engine takes of what git keeps: the sources the
 // generator of a world reads and a shipped game compiles, the shaders the
@@ -47,9 +49,18 @@ PACKAGE_SPIRV :: "spirv-tools"
 // tools of SPIR-V, SDL3, the sources the generator and a shipped game read,
 // the shaders, the templates and the skills, and the libraries of the plugins
 // of the engine for every project without defines nor debug information, at
-// minimal and at speed. The workflow of the releases archives the folder.
+// minimal and at speed, and the builds of the packages its plugins pin, in a
+// store of its own (project.ENGINE_STORE), which a refresh on the machine of
+// whoever installs it takes them from: an installed engine imports nothing.
+// They are brought Final into the store of --store (the machine's if
+// omitted), and copied from it. The workflow of the releases archives the folder.
 cmd_package :: proc(root:string,args:[]string) -> int {
+    args:=args
+    store_root,taken:=store_root_take(&args,"package")
+    if !taken {return 2}
     if len(args)!=3 || args[0]!="engine" || args[1]!="--out" || args[2]=="" {fmt.eprintfln("Usage: mirai %s",PACKAGE_USAGE);return 2}
+    if store_root=="" {store_root=store.default_root()}
+    if store_root=="" {fmt.eprintln("mirai package: this machine has no folder of user data for its store: pass one with --store");return 1}
     out:=project.path_absolute(args[2])
     if os.exists(out) {
         entries,error:=os.read_all_directory_by_path(out,context.temp_allocator)
@@ -110,17 +121,23 @@ cmd_package :: proc(root:string,args:[]string) -> int {
     if error:=project.engine_manifest_write(out,&m);error.code!=.None {fmt.eprintfln("mirai package: could not write %s",project.ENGINE_FILE);return 1}
 
     // The plugin libraries, built by the engine just packaged: their fingerprints are those of its projects.
-    if !package_plugins(out) {return 1}
-    // What the imports of the plugins build, which no checkout has: an installed engine imports nothing.
-    imported:=make([dynamic]string,context.temp_allocator)
+    if !package_plugins(out,store_root) {return 1}
+    // The builds of the packages of the plugins, Final, then copied into the store of the package.
+    pinned:=make([dynamic]string,context.temp_allocator)
     plugins,_:=os.read_all_directory_by_path(join(out,"plugins"),context.temp_allocator)
     for plugin in plugins {
-        if os.is_dir(join(out,"plugins",plugin.name,"assets")) {append(&imported,join(out,"plugins",plugin.name))}
+        if os.is_file(join(out,"plugins",plugin.name,asset.PACKAGES_FILE)) {append(&pinned,join(out,"plugins",plugin.name))}
     }
-    if ok,message:=build.imports_refresh(build.engine_paths(out,.Release,context.temp_allocator).import_program,imported[:],fast=false);!ok {
-        fmt.eprintfln("mirai package: could not import the sources of the plugins: %s",message)
+    program:=build.engine_paths(out,.Release,context.temp_allocator).import_program
+    if ok,message:=build.imports_refresh(program,pinned[:],false,store_root);!ok {
+        fmt.eprintfln("mirai package: the packages of the plugins have no Final builds: %s",message)
         return 1
     }
+    if ok,message:=build.imports_refresh(program,pinned[:],false,join(out,project.ENGINE_STORE),from=store_root);!ok {
+        fmt.eprintfln("mirai package: the builds of the plugins could not be copied into %s: %s",join(out,project.ENGINE_STORE),message)
+        return 1
+    }
+    _=base.remove_all(join(out,project.ENGINE_STORE,"locks"))
     _=base.remove_all(join(out,".mirai","tmp"))
     _=base.remove_all(workspace.cache_folder(out,"locks",context.temp_allocator))
 
@@ -289,7 +306,7 @@ package_spirv :: proc(tools:[]string,to:string) -> bool {
 // cache, at minimal and at speed, through a project that activates them all:
 // a project of that engine with the same flags takes them from there.
 @(private="file")
-package_plugins :: proc(out:string) -> bool {
+package_plugins :: proc(out,store_root:string) -> bool {
     compiler,found:=workspace.deps_compiler(out,context.temp_allocator)
     if !found {fmt.eprintfln("mirai package: %s has no compiler",out);return false}
     m:=project.manifest_default("plugins")
@@ -312,7 +329,7 @@ package_plugins :: proc(out:string) -> bool {
         p,error:=project.open(scratch,out)
         if error.code!=.None {fmt.eprintfln("mirai package: %s",project_error_text(scratch,error));return false}
         defer project.close(&p)
-        job:=build.job_run({project=&p,target=.Editor,compiler=compiler,engine=build.ENGINE_MODE_INSTALLED})
+        job:=build.job_run({project=&p,target=.Editor,compiler=compiler,engine=build.ENGINE_MODE_INSTALLED,store_root=store_root})
         defer build.job_destroy(job)
         result:=&job.result
         for diagnostic in result.diagnostics {

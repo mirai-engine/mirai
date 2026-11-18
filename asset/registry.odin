@@ -129,7 +129,7 @@ registry_slashed :: proc(path:string,allocator:runtime.Allocator) -> (slashed:st
 }
 
 // listed: the outputs of the packages of the root (packages_resolve), which
-// scans list beside its files without a source or a sidecar. False, with a
+// scans list beside its files. False, with a
 // registry of no folder that registry_destroy takes, without memory for it.
 registry_init :: proc(r:^Registry,root:string,cache:="",allocator:=context.allocator,listed:[]Package_Listed=nil) -> bool {
     r^={allocator=allocator}

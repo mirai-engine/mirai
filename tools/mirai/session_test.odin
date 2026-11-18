@@ -144,7 +144,7 @@ a_session_copy_takes_the_project_and_its_caches_without_the_files_of_its_editor 
     if folder=="" {return}
     kept:=[]string{project.PROJECT_FILE,"packages.mirai","assets/scenes/main.scene","game/game.odin","assets/props/art.fbx",
         ".mirai/cache/registry/index",".mirai/thumbs/main.png"}
-    left:=[]string{".git/HEAD",".mirai/imported/props/art.mesh",".mirai/api.json",".mirai/session.json",".mirai/session.lock",
+    left:=[]string{".git/HEAD",".mirai/api.json",".mirai/session.json",".mirai/session.lock",
         ".mirai/session.log",".mirai/editor.dll",".mirai/editor-live-12-0.dll",".mirai/gen/world.odin",
         ".mirai/tmp/probe.scene",".mirai/cache/textures.lock"}
     for files in ([][]string{kept,left}) {

@@ -235,7 +235,7 @@ a_wav_and_an_ogg_become_sounds_decoded_or_streamed_by_their_length :: proc(t:^te
         if bytes!=nil {_=os.write_entire_file(path,bytes)}
         report,error:=import_sound(path,options={store=s})
         testing.expect_value(t,error.code,code)
-        testing.expect(t,len(report.assets)==0 && !os.exists(fmt.tprintf("%s.import",path)),name)
+        testing.expect(t,len(report.assets)==0,name)
     }
     refuse(t,s,folder,"noise.wav",{1,2,3,4,5,6,7,8,9,10,11,12,13,14},.Malformed)
     refuse(t,s,folder,"surround.ogg",THREE_OGG,.Unsupported)
