@@ -48,6 +48,7 @@ programs_fixture :: proc(t:^testing.T,f:^Programs_Fixture) -> bool {
     slangc,found:=tool_find(root,.Slangc,context.temp_allocator)
     if !found {log.warn("slangc is not installed: run `mirai setup slang`");return false}
     f.slangc=slangc
+    runner_compiler(&f.runner,context.temp_allocator)
     version,ran:=tool_run(&f.runner,{slangc,"-version"},context.temp_allocator)
     testing.expect(t,ran,version)
     f.version=strings.trim_space(version)
@@ -62,6 +63,7 @@ programs_fixture :: proc(t:^testing.T,f:^Programs_Fixture) -> bool {
 
 @(private="file")
 programs_of :: proc(f:^Programs_Fixture) -> (catalog:Catalog,problem:string) {
+    defer runner_close(&f.runner)
     catalog,problem=programs_generate(&f.runner,path_clean(ENGINE_ROOT,context.temp_allocator),f.project,f.output,f.slangc,f.version,f.cache,allocator=context.temp_allocator)
     // A program left out is the problem of these tests; the others are published.
     if problem=="" && len(catalog.refused)>0 {problem=strings.join(catalog.refused," | ",context.temp_allocator)}
