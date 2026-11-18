@@ -34,7 +34,7 @@ skin_preview_init :: proc(r:^Renderer,state:^Skin_Preview_GPU,g:asset.Mesh_Geome
     vertex_words:=make([dynamic]u32,0,len(g.vertices)*VERTEX_WORDS,context.temp_allocator)
     index_words:=make([dynamic]u32,0,len(g.clusters)*CLUSTER_WORDS,context.temp_allocator)
     row:=Gpu_Mesh{cluster_count=next.clusters,level_count=u32(len(g.levels)),page_count=u32(len(g.pages)),vertex_count=count,flags=mesh_stream_flags(g.flags),
-        posed_word=GPU_NONE,previous_word=GPU_NONE,part_word=GPU_NONE,bounds_word=GPU_NONE,position_step=g.position_step,uv_step=g.uv_step,uv1_step=g.uv1_step}
+        posed_word=GPU_NONE,previous_word=GPU_NONE,part_word=GPU_NONE,bounds_word=GPU_NONE,area_word=GPU_NONE,position_step=g.position_step,uv_step=g.uv_step,uv1_step=g.uv1_step}
     append(&index_words,..mem.slice_data_cast([]u32,g.clusters))
     row.page_word=u32(len(index_words))
     if !pages_append(g,&vertex_words,&index_words,0) {return false}
