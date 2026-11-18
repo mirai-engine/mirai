@@ -194,3 +194,10 @@ watch :: proc(group,parent:posix.pid_t) -> ! {
     _=posix.killpg(group,.SIGKILL)
     posix._exit(0)
 }
+
+_cpu_used :: proc() -> time.Duration {
+    usage:posix.rusage
+    if posix.getrusage(.SELF,&usage)!=.OK {return 0}
+    span :: proc(t:posix.timeval) -> time.Duration {return time.Duration(t.tv_sec)*time.Second+time.Duration(t.tv_usec)*time.Microsecond}
+    return span(usage.ru_utime)+span(usage.ru_stime)
+}

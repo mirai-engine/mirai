@@ -1,4 +1,4 @@
-//! per surface program
+//! per surface program preview impostor=impostor
 //! variant values MIRAI_THUMBNAIL_VALUES
 // impostor: the frames of an impostor (render.impostor_capture).
 //! variant impostor MIRAI_THUMBNAIL_IMPOSTOR

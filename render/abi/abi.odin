@@ -580,7 +580,7 @@ Shader_Entry :: struct {
 // by its id and gives it up to PROGRAM_PARAMETER_BYTES of parameters, laid
 // out as the program reflects them.
 SHADER_CATALOG :: "catalog.json"
-SHADER_CATALOG_VERSION :: 4
+SHADER_CATALOG_VERSION :: 5
 
 Shader_Catalog :: struct {
     version:int,
@@ -588,7 +588,29 @@ Shader_Catalog :: struct {
     compiler:string,
     programs:[]Program,
     frame:Frame_Catalog,
+    surface_stages:[]Surface_Stage,
 }
+
+// What a Surface program is drawn as. Each use has stages of its own (a
+// source marked `//! per surface program <uses>`), which a generation
+// compiles for a program only when it is built for one of their uses: by the
+// assets of the project that draw it so, or by `//! use <uses>` in its source.
+// Opaque: the rows of opaque and masked materials; Blend: those of blended
+// ones; Overlay: an overlay layer; Particle_Sprite and Particle_Mesh: the
+// particles of an effect; Preview: the previews and thumbnails of the editor;
+// Impostor: the frames of a far impostor.
+Program_Use :: enum u8 {Opaque,Blend,Overlay,Particle_Sprite,Particle_Mesh,Preview,Impostor}
+Program_Uses :: bit_set[Program_Use;u8]
+PROGRAM_USE_NAMES :: [Program_Use]string{.Opaque="opaque",.Blend="blend",.Overlay="overlay",.Particle_Sprite="particle_sprite",.Particle_Mesh="particle_mesh",.Preview="preview",.Impostor="impostor"}
+
+program_use_named :: proc(name:string) -> (use:Program_Use,ok:bool) {
+    for text,each in PROGRAM_USE_NAMES {if text==name {return each,true}}
+    return
+}
+
+// A stage compiled for each Surface program built for one of its uses, by
+// its name in the manifest without a program (vis_resolve_plain.frag).
+Surface_Stage :: struct {name:string,uses:Program_Uses}
 
 // The constants of a view: Gpu_Frame, then the nested views when the
 // generation has them, then the struct each extension declared. size 0
@@ -627,6 +649,7 @@ Program :: struct {
     births:bool,                  // of a Vfx program: it gives how many particles its emitter starts
     prepare:bool,                 // of a Vfx program: it prepares each frame what its emitter keeps
     vertex:Program_Vertex,        // of a Surface program: its function vertex, which moves the vertices of what shows it
+    uses:Program_Uses,            // of a Surface program: what it is drawn as, which its stages are compiled for
 }
 
 // What a Surface program reads of the context of a point or of a vertex, as

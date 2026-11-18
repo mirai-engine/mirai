@@ -304,7 +304,7 @@ extensions_generate :: proc(runner:^Runner,root,project,output,slangc:string,sou
     for folder in ENGINE_INCLUDES {append(&command,"-I",path_join(root,folder,allocator=context.temp_allocator))}
     append(&command,..SPIRV_FLAGS)
     append(&command,"-o",path_join(temporary,"frame.spv",allocator=context.temp_allocator),"-reflection-json",reflected)
-    if result,ran:=tool_run(runner,command[:],context.temp_allocator);!ran {return {},fmt.aprintf("the frame constants of the extensions do not compile:\n%s",result,allocator=allocator)}
+    if result,ran:=slang_run(runner,command[:],context.temp_allocator);!ran {return {},fmt.aprintf("the frame constants of the extensions do not compile:\n%s",result,allocator=allocator)}
     data,readable:=read_json(reflected,context.temp_allocator)
     if !readable {return {},strings.clone("Slang did not write the reflection of the frame",allocator)}
     if problem:=extensions_frame_read(&extensions,data);problem!="" {return {},strings.clone(problem,allocator)}

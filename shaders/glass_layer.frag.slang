@@ -1,5 +1,5 @@
 #include "native.slang"
-//! per surface program
+//! per surface program blend
 // One layer of blended surfaces, for the pass that lights glass once per
 // pixel: the nearest one in front of the opaque scene, or the nearest one
 // behind the layer before it. The nearest one can also be a back face of the

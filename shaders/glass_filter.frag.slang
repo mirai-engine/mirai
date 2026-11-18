@@ -1,5 +1,5 @@
 #include "native.slang"
-//! per surface program
+//! per surface program blend
 // What a blended surface behind the per-pixel glass layers leaves of the
 // scene behind it, multiplied into the color target; translucent.frag then
 // adds the light of the surface.

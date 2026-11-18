@@ -28,6 +28,7 @@ Program_Vertex :: abi.Program_Vertex
 
 Program_Catalog :: struct {
     programs:[]Program,
+    surface_stages:[]abi.Surface_Stage, // the stages compiled for each Surface program built for one of their uses
     loaded:bool,
     arena:mem.Dynamic_Arena, // of what the catalog holds, in the allocator it was read with
 }
@@ -54,7 +55,7 @@ program_catalog_parse :: proc(bytes:[]u8,allocator:=context.allocator) -> (catal
         mem.dynamic_arena_destroy(a)
         return {},false
     }
-    catalog.programs=read.programs
+    catalog.programs,catalog.surface_stages=read.programs,read.surface_stages
     return catalog,true
 }
 

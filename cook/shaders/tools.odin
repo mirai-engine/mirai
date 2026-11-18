@@ -92,6 +92,7 @@ Memory :: struct {
     record:string, // where its peak is kept once it succeeds (CACHE_PEAKS); "" keeps none
     turn:  int,    // of those of the runner that wait for room, the lowest goes first; the same turn, the first that asked
     waited:^time.Duration, // nil or what is added the time it waited for room
+    cpu:   ^time.Duration, // nil or what is added the processor time it used
 }
 
 // A compilation that runs: what it was charged and what it holds now.
@@ -122,6 +123,8 @@ charge_of :: proc(peaks:map[string]i64,key:string) -> i64 {
 }
 
 // A runner that is cancelled starts no tool and has killed those that ran.
+// Its Slang compilations go to compilers that stay alive (compiler.odin) until
+// runner_close.
 @(private)
 Runner :: struct {
     lock:     sync.Mutex,
@@ -133,6 +136,19 @@ Runner :: struct {
     running:  [RUNNER_CAPACITY]Running, // the tools started and not yet waited for (guarded by lock)
     running_count:int,
     most:     int, // the most compilations with a charge that ran at once (guarded by lock)
+    cpu:      time.Duration, // the processor time of every tool and compilation it ran (guarded by lock)
+    tool:     string, // the mirai tool that runs the compilers (runner_compiler)
+    compilers:[RUNNER_CAPACITY]^Compiler, // started, idle or compiling (guarded by lock)
+    compiler_count:int,
+}
+
+// A compiler of a runner: a process of `mirai shaders compiler`.
+@(private)
+Compiler :: struct {
+    process:subprocess.Process,
+    reader: Line_Reader,
+    ready:  bool, // it said it was ready: only the one that has it busy reads it
+    busy:   bool, // guarded by the lock of the runner
 }
 
 @(private)
@@ -164,38 +180,191 @@ tool_run :: proc(runner:^Runner,command:[]string,allocator:=context.allocator,me
         if read_error!=nil || count<=0 {break}
     }
     // Out of the list before it is waited for: a process waited for may give its id to another one.
-    {
-        sync.guard(&runner.lock)
-        for i in 0..<runner.running_count {
-            if runner.running[i].process.pid!=process.pid {continue}
-            runner.running_count-=1
-            runner.running[i]=runner.running[runner.running_count]
-            break
-        }
-        sync.cond_broadcast(&runner.turned)
-    }
+    run_unlist(runner,process.pid)
     state,wait_error:=subprocess.wait(&process)
-    if memory.charge>0 && memory.ledger!="" {
-        if lock,listed:=ledger_lock(memory.ledger);listed {
-            ledger_update(memory.ledger,nil,leave=process.pid)
-            workspace.lock_release(&lock)
-        }
-    }
     ok=wait_error==nil && state.exited && state.exit_code==0
-    if ok && memory.record!="" && process.peak>0 {peak_write(memory.record,process.peak)}
+    run_cpu(runner,memory,state.user_time+state.system_time)
+    run_end(process.pid,memory,ok,process.peak)
     subprocess.release(&process)
     return string(lf_bytes(collected[:])),ok
 }
 
-// Starts a tool and lists it in the runner; problem says why it did not start.
+// A run of the runner is over: out of its list of those that run.
 @(private)
-tool_start :: proc(runner:^Runner,command:[]string,charge:i64,allocator:runtime.Allocator) -> (process:subprocess.Process,problem:string) {
+run_unlist :: proc(runner:^Runner,pid:int) {
+    sync.guard(&runner.lock)
+    for i in 0..<runner.running_count {
+        if runner.running[i].process.pid!=pid {continue}
+        runner.running_count-=1
+        runner.running[i]=runner.running[runner.running_count]
+        break
+    }
+    sync.cond_broadcast(&runner.turned)
+}
+
+// The processor time a run used, added to the runner and to the run.
+@(private)
+run_cpu :: proc(runner:^Runner,memory:Memory,used:time.Duration) {
+    if memory.cpu!=nil {memory.cpu^+=used}
+    sync.guard(&runner.lock)
+    runner.cpu+=used
+}
+
+// Out of the ledger, and the peak of one that succeeded kept.
+@(private)
+run_end :: proc(pid:int,memory:Memory,ok:bool,peak:i64) {
+    if memory.charge>0 && memory.ledger!="" {
+        if lock,listed:=ledger_lock(memory.ledger);listed {
+            ledger_update(memory.ledger,nil,leave=pid)
+            workspace.lock_release(&lock)
+        }
+    }
+    if ok && memory.record!="" && peak>0 {peak_write(memory.record,peak)}
+}
+
+// The runner compiles Slang with compilers that the mirai tool of the engine
+// that runs starts (project.engine_root_find), whatever root a generation reads.
+@(private)
+runner_compiler :: proc(runner:^Runner,allocator:=context.allocator) {
+    runner.tool=project.tool_file(project.engine_root_find("",context.temp_allocator),allocator)
+}
+
+// Ends the compilers of the runner: each ends once its input does.
+@(private)
+runner_close :: proc(runner:^Runner) {
+    sync.guard(&runner.lock)
+    for each in runner.compilers[:runner.compiler_count] {compiler_end(each,force=false)}
+    runner.compiler_count=0
+}
+
+@(private)
+compiler_end :: proc(compiler:^Compiler,force:bool) {
+    subprocess.stdin_close(&compiler.process)
+    if force {_=subprocess.terminate(&compiler.process,force=true)}
+    _,_=subprocess.wait(&compiler.process)
+    subprocess.release(&compiler.process)
+    free(compiler,runtime.heap_allocator())
+}
+
+// Compiles a command line of slangc (command[0]) in a compiler of the runner,
+// with the library of that slangc, and returns what Slang said. ok: it
+// compiled. A compilation with a charge waits for room as a tool does
+// (tool_admit).
+@(private)
+slang_run :: proc(runner:^Runner,command:[]string,allocator:=context.allocator,memory:=Memory{}) -> (output:string,ok:bool) {
+    arguments:=command[1:]
+    if runner.tool=="" {return strings.clone("the runner has no Slang compiler (runner_compiler)",allocator),false}
+    request:=strings.builder_make(context.temp_allocator)
+    fmt.sbprintf(&request,"%d\n",len(arguments))
+    for argument in arguments {
+        if strings.contains_rune(argument,'\n') {return fmt.aprintf("a line feed in an argument of Slang: %q",argument,allocator=allocator),false}
+        strings.write_string(&request,argument)
+        strings.write_byte(&request,'\n')
+    }
+    serve:=[]string{runner.tool,"shaders","compiler",command[0]}
+    compiler:^Compiler
+    process:subprocess.Process
+    problem:string
+    if memory.charge<=0 {
+        process,problem=tool_start(runner,serve,0,allocator,&compiler)
+    } else {
+        process,problem=tool_admit(runner,serve,memory,allocator,&compiler)
+    }
+    if problem!="" {return problem,false}
+    said:=make([dynamic]u8,allocator)
+    alive:=true
+    peak:i64
+    // What the compiler says: its lines, and what Slang wrote in between.
+    answer :: proc(compiler:^Compiler,said:^[dynamic]u8) -> (words:[]string,ok:bool) {
+        for {
+            line,read:=line_read(&compiler.reader,context.temp_allocator)
+            if !read {return nil,false}
+            if strings.has_prefix(line,COMPILER_MARK) {return strings.fields(line[len(COMPILER_MARK):],context.temp_allocator),true}
+            append(said,..transmute([]u8)line)
+            append(said,'\n')
+        }
+    }
+    defer {
+        run_unlist(runner,process.pid)
+        run_end(process.pid,memory,ok,peak)
+        sync.guard(&runner.lock)
+        if alive {
+            compiler.busy=false
+        } else {
+            for each,i in runner.compilers[:runner.compiler_count] {
+                if each!=compiler {continue}
+                runner.compiler_count-=1
+                runner.compilers[i]=runner.compilers[runner.compiler_count]
+                break
+            }
+            compiler_end(compiler,force=true)
+        }
+    }
+    words:[]string
+    if !compiler.ready {
+        if words,alive=answer(compiler,&said);!alive || len(words)<2 || words[0]!="ready" || words[1]!=COMPILER_PROTOCOL {
+            alive=false
+            if len(words)>0 && words[0]=="error" {return strings.join(words[1:]," ",allocator),false}
+            return fmt.aprintf("%s did not start a Slang compiler of %s: build the tool again (`mirai build tools`)\n%s",runner.tool,COMPILER_PROTOCOL,string(said[:]),allocator=allocator),false
+        }
+        compiler.ready=true
+    }
+    data:=request.buf[:]
+    for len(data)>0 {
+        sent:=subprocess.write(&compiler.process,data)
+        data=data[sent:]
+        if len(data)>0 {
+            if !subprocess.process_alive(compiler.process.pid) {break}
+            time.sleep(time.Millisecond)
+        }
+    }
+    words,alive=answer(compiler,&said)
+    if !alive || len(data)>0 || len(words)!=5 || words[0]!="done" {
+        alive=false
+        append(&said,..transmute([]u8)string("the Slang compiler ended during the compilation\n"))
+        return string(said[:]),false
+    }
+    peak,_=strconv.parse_i64(words[2])
+    used,_:=strconv.parse_i64(words[3])
+    run_cpu(runner,memory,time.Duration(used))
+    length,_:=strconv.parse_int(words[4])
+    diagnostics,complete:=bytes_read(&compiler.reader,length,context.temp_allocator)
+    if !complete {alive=false}
+    append(&said,..diagnostics)
+    ok=complete && words[1]=="0"
+    return string(lf_bytes(said[:])),ok
+}
+
+// Starts a tool and lists it in the runner; problem says why it did not start.
+// With compiler, the tool is a compiler of the runner: an idle one is taken,
+// or one is started with command, and it is busy until compiler_release.
+@(private)
+tool_start :: proc(runner:^Runner,command:[]string,charge:i64,allocator:runtime.Allocator,compiler:^^Compiler=nil) -> (process:subprocess.Process,problem:string) {
     sync.guard(&runner.lock)
     if runner.cancelled {return {},strings.clone("the generation was cancelled",allocator)}
     runner.runs+=1
-    start_error:os.Error
-    process,start_error=subprocess.start({command=command},pipes=.Merged)
-    if start_error!=nil {return {},strings.concatenate({"could not run ",command[0]},allocator)}
+    if compiler!=nil {
+        for each in runner.compilers[:runner.compiler_count] {
+            if each.busy {continue}
+            each.busy,compiler^=true,each
+            break
+        }
+        if compiler^==nil {
+            if runner.compiler_count==RUNNER_CAPACITY {return {},strings.clone("no room for another Slang compiler",allocator)}
+            started,start_error:=subprocess.start({command=command},pipes=.Merged)
+            if start_error!=nil {return {},strings.concatenate({"could not run ",command[0]},allocator)}
+            made:=new(Compiler,runtime.heap_allocator())
+            made.process,made.reader.file,made.busy=started,started.stdout,true
+            runner.compilers[runner.compiler_count]=made
+            runner.compiler_count+=1
+            compiler^=made
+        }
+        process=compiler^.process
+    } else {
+        start_error:os.Error
+        process,start_error=subprocess.start({command=command},pipes=.Merged)
+        if start_error!=nil {return {},strings.concatenate({"could not run ",command[0]},allocator)}
+    }
     if runner.running_count<RUNNER_CAPACITY {
         runner.running[runner.running_count]={process,charge}
         runner.running_count+=1
@@ -208,7 +377,7 @@ tool_start :: proc(runner:^Runner,command:[]string,charge:i64,allocator:runtime.
 // ledger while its lock is held, so that no other process takes that room.
 // The compilations of a runner ask one at a time, by their turns.
 @(private)
-tool_admit :: proc(runner:^Runner,command:[]string,memory:Memory,allocator:runtime.Allocator) -> (process:subprocess.Process,problem:string) {
+tool_admit :: proc(runner:^Runner,command:[]string,memory:Memory,allocator:runtime.Allocator,compiler:^^Compiler=nil) -> (process:subprocess.Process,problem:string) {
     asked:=time.tick_now()
     defer if memory.waited!=nil {memory.waited^+=time.tick_since(asked)}
     sync.lock(&runner.lock)
@@ -240,7 +409,7 @@ tool_admit :: proc(runner:^Runner,command:[]string,memory:Memory,allocator:runti
         _,free,_:=base.memory_stats()
         admitted:=admits(free,running[:],own,memory.charge)
         if admitted {
-            process,problem=tool_start(runner,command,memory.charge,allocator)
+            process,problem=tool_start(runner,command,memory.charge,allocator,compiler)
             if listed && problem=="" {ledger_update(memory.ledger,nil,add=fmt.tprintf("%d %d %d\n",os.get_pid(),process.pid,memory.charge))}
         }
         if listed {workspace.lock_release(&lock)}
