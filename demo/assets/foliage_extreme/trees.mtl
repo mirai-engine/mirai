@@ -1,0 +1,7 @@
+# The materials of the trees of foliage_extreme
+newmtl bark
+Kd 0.32 0.22 0.14
+Ns 10
+newmtl leaf
+Kd 0.18 0.42 0.12
+Ns 30
