@@ -439,7 +439,9 @@ Gpu_Program_Draw :: struct {
 // (CULL_* of render/abi). The draws of each round and raster bin go first:
 // each draws the triangles the round listed of its clusters
 // (raster_lists.slang). The clusters of phase 1 follow those of phase 0 in
-// the visible list.
+// the visible list. A cull of the maps of the shadows keeps its own
+// (Shadow_Buffers.state): its chunks, the clusters it listed (listed[0]), the
+// units they take and the round of the raster that draws them.
 Gpu_Cull_State :: struct {
 	draws:              [abi.RASTER_ROUNDS][RASTER_BINS]rhi.Draw_Indexed_Indirect,
 	chunk_dispatch:     [3]u32, // groups of the cluster pass over the chunks: x, y, 1
@@ -460,7 +462,9 @@ Gpu_Cull_State :: struct {
 	raster_cursors:     [RASTER_BINS]u32,
 	dropped:            [Cull_List]u32, // past the capacities of the lists of the cull
 	raster_need:        [2]u32, // the vertices and the triangles the rounds of the view wrote and its last left out
+	shadow_taken:       u32,
 }
+#assert(offset_of(Gpu_Cull_State, shadow_taken) == abi.CULL_SHADOW_TAKEN * size_of(u32))
 #assert(offset_of(Gpu_Cull_State, dropped) == abi.CULL_DROPPED * size_of(u32))
 #assert(offset_of(Gpu_Cull_State, raster_need) == abi.CULL_RASTER_NEED * size_of(u32))
 #assert(size_of(rhi.Draw_Indexed_Indirect) == abi.CULL_DRAW_WORDS * size_of(u32))
@@ -488,20 +492,6 @@ DEPTH_PYRAMID_BATCH :: abi.DEPTH_PYRAMID_BATCH
 RASTER_BIN_TWO_SIDED :: abi.RASTER_BIN_TWO_SIDED
 RASTER_BIN_TESTED :: abi.RASTER_BIN_TESTED
 
-// What the cull of the clusters the maps of the shadows draw counts
-// (shadow_cull.slang): the draws of those that hide whole and of those of
-// masked materials, the groups of its cluster pass over the chunks, how many
-// chunks its instance pass handed over, and how many units its draws took,
-// which SHADOW_FRAME_UNITS bounds.
-Gpu_Shadow_State :: struct {
-	draws:            [SHADOW_DRAWS]Gpu_Draw,
-	cluster_dispatch: [3]u32,
-	chunk_count:      u32,
-	taken:            u32,
-	_:                [3]u32,
-}
-#assert(size_of(Gpu_Shadow_State) == 64)
-
 Gpu_Cull_Stats :: struct {
 	visible_instances, visible_triangles, culled_instances, occluded_instances: u32,
 	probes_traced: u32, // copied at the end of the frame from the list of the probe volume
@@ -521,19 +511,23 @@ Gpu_Cull_Stats :: struct {
 	most_dropped:     [Cull_List]u32,
 	most_raster_need: [2]u32,
 	views_shadow:     Shadow_Stats,
+	shadow_need:      [2]u32, // the most vertices and triangles a round of the maps of the frame would hold in the lists of the raster
 }
 #assert(len(Cull_List) == 7)
 // What the maps of the shadows of a view drew in a frame: the clusters
 // the cache drew, once for each page they cover, those of them of masked
-// materials apart, and their triangles; those the atlas drew over it; the
+// materials apart, and the triangles of those and of what the atlas drew;
+// the clusters the atlas drew over it; the
 // pages the cache drew and the atlas composed, those newly asked for, those
 // of them the pool left out and those not drawn whole this frame, which wait
 // for the frames after; the clusters the draws had no room for in the frame
 // (SHADOW_FRAME_UNITS), whose pages wait too; the pages the bound of the
-// frame grows for (abi.SHADOW_COUNT_SHORT); and the units of raster work the
-// cache and the atlas drew (abi.SHADOW_UNIT_TEXELS).
+// frame grows for (abi.SHADOW_COUNT_SHORT); the units of raster work the
+// cache and the atlas drew (abi.SHADOW_UNIT_TEXELS); and of the triangles,
+// the vertices the lists of the raster placed for those that cover a texel
+// of their page, and those triangles (raster_lists.slang).
 Shadow_Stats :: struct {
-	clusters, clusters_masked, triangles, clusters_moving, pages_drawn, pages_composed, pages_asked, pages_left, pages_waiting, clusters_over, pages_short, units, units_moving: u32,
+	clusters, clusters_masked, triangles, clusters_moving, pages_drawn, pages_composed, pages_asked, pages_left, pages_waiting, clusters_over, pages_short, units, units_moving, raster_vertices, raster_triangles: u32,
 }
 // Instances, clusters and triangles that passed the cull of a frame, of one kind.
 Visible_Kind :: struct {instances, clusters, triangles: u32}
@@ -559,8 +553,8 @@ gbuffer_normal_decode :: proc "contextless" (texel: Vec4) -> (normal: Vec3, roug
 
 // The lists of the cull of a view: chunks of the instance pass, visible
 // clusters of both phases, and clusters phase 0 found hidden; and of the cull
-// of its maps of the shadows, its chunks and the clusters the maps draw, of 16
-// bytes each (shadow_cull.slang). What does not
+// of its maps of the shadows, its chunks and the clusters the maps draw into
+// each page, entries as those of the visible list (shadow_cull.slang). What does not
 // fit is dropped and counted (Gpu_Cull_State.dropped, Gpu_Cull_Stats.dropped),
 // and the renderer grows the list for the frames after, and the host keeps
 // what it asked for by scene (Capacity_Marks): a frame may show holes where a
@@ -572,7 +566,10 @@ gbuffer_normal_decode :: proc "contextless" (texel: Vec4) -> (normal: Vec3, roug
 // They hold a round, not a frame: a cluster that finds no room in them is
 // listed and drawn in the round after, so a view shows a hole only when it
 // needs more than abi.RASTER_ROUNDS times what they hold, and they ask for
-// what all the rounds of a frame wrote, to hold it in one.
+// what all the rounds of a frame wrote, to hold it in one. A round of the maps
+// draws through them too, after the rounds of its view, and asks for what it
+// wrote and left out (Gpu_Cull_Stats.shadow_need): it is the only one of its
+// cull.
 Cull_List :: enum {Chunks, Visible, Candidates, Shadow_Chunks, Shadow_Entries, Raster_Vertices, Raster_Triangles}
 CULL_START :: [Cull_List]u32{.Chunks = 1 << 16, .Visible = 1 << 18, .Candidates = 1 << 16, .Shadow_Chunks = 1 << 14, .Shadow_Entries = 1 << 18, .Raster_Vertices = 1 << 20, .Raster_Triangles = 1 << 20}
 // The lists of the raster of the visibility target hold a third of what the

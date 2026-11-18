@@ -5,6 +5,7 @@ import "core:math/linalg"
 import "core:mem"
 import "core:testing"
 import "mirai:asset"
+import "mirai:render/abi"
 import "mirai:rhi"
 import "mirai:std/geom"
 import mm "mirai:std/math"
@@ -1377,23 +1378,23 @@ material_mask_draws_only_masked_clusters_with_their_coverage_into_the_maps :: pr
 			frames(t, &f, side, 1)
 			if k < 2 {continue}
 			rhi.device_wait_idle(f.device)
-			room := s.cull_capacity[.Shadow_Entries]
-			state: [1]Gpu_Shadow_State
+			state: [1]Gpu_Cull_State
 			if !testing.expect(t, rhi.buffer_read_slice(f.device, r.shadow_buffers.state, 0, state[:])) {return}
-			p := record_pooled(s, s.meshes[mixed])
-			for draw in 0 ..< 2 {
-				count := min(state[0].draws[draw].instance_count, room / 2 if draw == 0 else room / 4)
-				if count == 0 {continue}
-				entries := make([][4]u32, count, context.temp_allocator)
-				if !testing.expect(t, rhi.buffer_read_slice(f.device, s.shadow_entries, u64(0 if draw == 0 else room / 2) * size_of([4]u32), entries)) {return}
-				for entry in entries {
-					if entry.x != 1 {continue}
-					masked := asset.cluster_slot(p.clusters[entry.y]) == 1
-					if draw == 0 {opaque += 1;masked_opaque += int(masked)} else {tested += 1;opaque_tested += int(!masked)}
-				}
+			count := min(state[0].listed[0], s.cull_capacity[.Shadow_Entries])
+			if count == 0 {continue}
+			entries := make([]Gpu_Visible_Cluster, count, context.temp_allocator)
+			kept := make([][abi.RASTER_ENTRY_WORDS]u32, count, context.temp_allocator)
+			if !testing.expect(t, rhi.buffer_read_slice(f.device, s.shadow_entries, 0, entries)) {return}
+			if !testing.expect(t, rhi.buffer_read_slice(f.device, s.shadow_raster_entries, 0, kept)) {return}
+			m := s.meshes[mixed]
+			p := record_pooled(s, m)
+			for entry, k in entries {
+				if entry.instance != 1 {continue}
+				masked := asset.cluster_slot(p.clusters[(entry.cluster_word - m.cluster_word) / CLUSTER_WORDS]) == 1
+				if kept[k][abi.RASTER_ENTRY_BIN] & RASTER_BIN_TESTED == 0 {opaque += 1;masked_opaque += int(masked)} else {tested += 1;opaque_tested += int(!masked)}
 			}
 		}
-		testing.expectf(t, opaque > 0 && tested > 0 && masked_opaque == 0 && opaque_tested == 0, "row %d: the opaque cluster in the opaque draw (%d, %d masked), the masked one in the tested draw (%d, %d opaque)", row, opaque, masked_opaque, tested, opaque_tested)
+		testing.expectf(t, opaque > 0 && tested > 0 && masked_opaque == 0 && opaque_tested == 0, "row %d: the opaque cluster in the opaque bin (%d, %d masked), the masked one in the tested bin (%d, %d opaque)", row, opaque, masked_opaque, tested, opaque_tested)
 		shaded := screen_color(t, &f, side, {-0.5, 0, 0.8})
 		lit := screen_color(t, &f, side, {0.5, 0, 0.8})
 		testing.expectf(t, lit.g > shaded.g + 40, "row %d: the opaque half casts and the masked half covers nothing: %v vs %v", row, lit, shaded)

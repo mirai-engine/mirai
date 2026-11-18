@@ -15,8 +15,10 @@ import "mirai:std/base"
 // (and keep SHADOW_RASTER_KEEP once they do) take a map for each face of the
 // cube around them through which they light what the view sees, and the sun
 // one for each of its levels around the eye. The other lights, small on the
-// screen, trace rays (shadow_maps.slang, shadow_maps.comp, shadow_map.vert,
-// direct_samples.comp).
+// screen, trace rays (shadow_maps.slang, shadow_maps.comp, shadow_clusters.comp,
+// direct_samples.comp). The clusters of each page are drawn through the lists
+// of the raster of the view (raster_lists.slang): each vertex placed once for
+// the page, and only the triangles that cover a texel of it.
 //
 // A map is a square of pages of SHADOW_PAGE texels at each of its mips. Only
 // the pages the points of the view read are drawn (shadow_mark.comp marks
@@ -39,7 +41,6 @@ import "mirai:std/base"
 SHADOW_POOL :: abi.SHADOW_POOL
 SHADOW_SLOTS :: abi.SHADOW_SLOTS
 SHADOW_MAP_ROWS :: abi.SHADOW_MAP_ROWS
-SHADOW_DRAWS :: 2 // the clusters that hide whole and those of masked materials (shadow_cull.slang)
 SHADOW_GROUP :: u32(256) // the threads of a group of shadow_maps.comp
 SHADOW_PAGE :: abi.SHADOW_PAGE
 SHADOW_MAP_PAGES :: abi.SHADOW_MAP_PAGES
@@ -89,8 +90,8 @@ SHADOW_MAPS_MOST_MS :: f32(4)
 // no room, the pages of the round wait (shadow_maps.comp), and no frame culls
 // more clusters of the maps than these hold.
 SHADOW_CHUNKS_MOST :: u32(1 << 20)
-// The most clusters the draws of a round take in a frame
-// (Cull_List.Shadow_Entries); past them their pages wait.
+// The most clusters the draws of a round take in a frame, once for each page
+// they draw into (Cull_List.Shadow_Entries); past them their pages wait.
 SHADOW_ENTRIES_MOST :: u32(1 << 21)
 // What the rounds of the maps take while their pages wait, of the GPU time of
 // the rest of the frame, a refresh of the display at least: a part, so that
@@ -126,8 +127,8 @@ Shadow_Bound :: struct {
 // (Shadow_Stats.pages_short), and shrinking when they took more; pages whose
 // points read a coarser page drawn refine at the least. Without the time of
 // the rounds (a device without timestamps), the frame against a refresh. The
-// lists of the cull of the maps grow to hold it in the draws of one kind
-// alone, a cluster taking two units at least.
+// lists of the cull of the maps grow to hold it, a cluster taking two units
+// at least in a page: one of its texels and one of its vertices.
 @(private)
 shadow_bound_update :: proc(r: ^Renderer, slot: int, refresh_hz: f32) {
 	b := &r.shadow_bound
@@ -151,7 +152,7 @@ shadow_bound_update :: proc(r: ^Renderer, slot: int, refresh_hz: f32) {
 		if timed && maps > SHADOW_MAPS_MOST_MS {bound = min(bound, u32(max(f32(then) * SHADOW_MAPS_MOST_MS / maps, 1)))}
 	}
 	b.now, b.frames[slot] = bound, bound
-	r.scene.cull_wanted[.Shadow_Entries] = max(r.scene.cull_wanted[.Shadow_Entries], min(bound, SHADOW_ENTRIES_MOST))
+	r.scene.cull_wanted[.Shadow_Entries] = max(r.scene.cull_wanted[.Shadow_Entries], min(bound / 2, SHADOW_ENTRIES_MOST))
 	r.scene.cull_wanted[.Shadow_Chunks] = max(r.scene.cull_wanted[.Shadow_Chunks], min(bound, SHADOW_CHUNKS_MOST))
 }
 
@@ -182,12 +183,13 @@ Shadow_Maps :: struct {
 }
 
 // The buffers the maps of a view are drawn from, which each view writes before
-// it reads them: the state of the cull of their clusters and of the draws of
-// them, and the words of the lights and the slots. The lists of that cull are
-// the scene's (Cull_List.Shadow_Chunks, Shadow_Entries), which grow as those
-// of the view do.
+// it reads them: the state of the cull of their clusters and of the round of
+// the raster that draws them, and the words of the lights and the slots. The
+// lists of that cull are the scene's (Cull_List.Shadow_Chunks,
+// Shadow_Entries), and those of the raster the view's (Raster_Vertices,
+// Raster_Triangles), which grow as those of the view do.
 Shadow_Buffers :: struct {
-	state: rhi.Buffer, // Gpu_Shadow_State
+	state: rhi.Buffer, // Gpu_Cull_State
 	table: rhi.Buffer, // data copied for the passes to read
 }
 
@@ -900,7 +902,12 @@ shadow_maps_plan :: proc(p: ^Pass, fresh: bool) -> (plan: Shadow_Plan, ok: bool)
 
 // shadow_cull.slang Params_Block.
 @(private)
-Shadow_Params :: struct {instances, maps, rows, chunk_capacity, entry_capacity, list, moving, movers, listed, ranges, masks, plan, part, bound, foresee, range_first: u32}
+Shadow_Params :: struct {
+	instances, maps, rows, chunk_capacity, entry_capacity, list, moving, movers, listed, ranges, masks, plan, part, bound, foresee, range_first: u32,
+	round, last, vertex_capacity, triangle_capacity: u32,
+	margin: f32,
+	_: [3]u32,
+}
 
 // The rounds of the cull: what stays, into the pages the cache draws; what
 // moves, into the pages the atlas composes.
@@ -958,8 +965,10 @@ shadow_sway_marks :: proc(p: ^Pass, plan: Shadow_Plan) {
 // each page takes, of the cache only the pages not foreseen yet, which keep
 // it until they are drawn; the steps of the pages grant the pages the
 // clusters of the frame and narrow the slots and the spans of the round to
-// theirs, the culls hand over the clusters of those alone, and the steps
-// settle those not drawn whole.
+// theirs, the culls hand over the clusters of those alone, a round of the
+// lists of the raster places their vertices and keeps the triangles that
+// cover a texel of their pages, and the steps settle the pages not drawn
+// whole.
 @(private)
 shadow_cull :: proc(p: ^Pass, plan: Shadow_Plan, params: Shadow_Params, round: Shadow_Round, steps: ^Shadow_Pages_Params) {
 	r, cmd, t := p.r, p.cmd, p.t
@@ -967,10 +976,12 @@ shadow_cull :: proc(p: ^Pass, plan: Shadow_Plan, params: Shadow_Params, round: S
 	d := &r.shadow_buffers
 	params := params
 	masks, list := params.masks, params.list
-	start, start_at := rhi.frame_alloc_typed(r.device, Gpu_Shadow_State, 1)
+	// No chunk, no cluster, and draws of no triangle: the round of the
+	// raster takes the entries from the first.
+	start, start_at := rhi.frame_alloc_typed(r.device, Gpu_Cull_State, 1)
 	if start == nil {return}
-	start[0] = {draws = {{vertex_count = CLUSTER_DRAW_VERTICES}, {vertex_count = CLUSTER_DRAW_VERTICES}}, cluster_dispatch = {0, 0, 1}}
-	rhi.cmd_copy_buffer(cmd, start_at.buffer, start_at.offset, d.state, 0, size_of(Gpu_Shadow_State))
+	start[0] = {chunk_dispatch = {0, 0, 1}, raster_dispatch = {0, 0, 1}}
+	rhi.cmd_copy_buffer(cmd, start_at.buffer, start_at.offset, d.state, 0, size_of(Gpu_Cull_State))
 	if params.instances == 0 {return}
 	passes := [3]Pipeline_Id{.Shadow_Maps, .Shadow_Maps, .Shadow_Clusters}
 	for pipeline, k in passes {
@@ -996,9 +1007,13 @@ shadow_cull :: proc(p: ^Pass, plan: Shadow_Plan, params: Shadow_Params, round: S
 			if plan.movers > 0 {rhi.cmd_bind_transient(cmd, SLOT_PASS5, plan.bits)} else {rhi.cmd_bind_buffer(cmd, SLOT_PASS5, r.dummy_buffer)}
 			rhi.cmd_dispatch_indirect(cmd, t.shadow_raster.pages, u64(abi.SHADOW_WORDS_ARGS + abi.SHADOW_ARGS_DISPATCH + 3 * dispatch) * 4)
 		} else {
-			rhi.cmd_dispatch_indirect(cmd, d.state, u64(offset_of(Gpu_Shadow_State, cluster_dispatch)))
+			rhi.cmd_bind_buffer(cmd, SLOT_PASS5, s.shadow_raster_entries)
+			rhi.cmd_dispatch_indirect(cmd, d.state, u64(offset_of(Gpu_Cull_State, chunk_dispatch)))
 		}
 	}
+	// The only round of the raster of the cull: what finds no room waits with its page.
+	lists := Raster_Round_Lists{state = d.state, visible = s.shadow_entries, entries = s.shadow_raster_entries, shadow = &params, pages = t.shadow_raster.pages, maps = d.table}
+	raster_round_record(r, cmd, 0, true, r.stats_buffer, &lists)
 	shadow_pages_step(p, steps, .Settle, u32(round))
 }
 
@@ -1021,7 +1036,8 @@ shadow_pages_step :: proc(p: ^Pass, steps: ^Shadow_Pages_Params, step: Shadow_Pa
 
 // The depth a round culled into the cache or the atlas: of the cache, first
 // the pages it draws, cleared; of the atlas, first the pages it composes,
-// from the cache (held).
+// from the cache (held); then the triangles the lists of the raster hold, a
+// draw of each raster bin the cull lists into (shadow_clusters.comp).
 @(private)
 shadow_draw :: proc(p: ^Pass, plan: Shadow_Plan, params: Shadow_Params, atlas: rhi.Texture, name: string, cache := false, held: rhi.Texture = 0) {
 	r, cmd, t := p.r, p.cmd, p.t
@@ -1038,8 +1054,6 @@ shadow_draw :: proc(p: ^Pass, plan: Shadow_Plan, params: Shadow_Params, atlas: r
 		square.list, square.moving = list, kind
 		rhi.cmd_bind_pipeline(cmd, r.pipelines[pipeline])
 		set_params(cmd, &square)
-		rhi.cmd_bind_buffer(cmd, SLOT_PASS0, r.scene.shadow_entries)
-		rhi.cmd_bind_buffer(cmd, SLOT_PASS1, r.shadow_buffers.table)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS2, held if held != 0 else r.dummy_texture)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS3, p.t.shadow_raster.pages)
 	}
@@ -1051,13 +1065,16 @@ shadow_draw :: proc(p: ^Pass, plan: Shadow_Plan, params: Shadow_Params, atlas: r
 		square(p, params, .Shadow_Map_Copy, abi.SHADOW_WORDS_JOBS + abi.SHADOW_POOL_PAGES, 0, held)
 		rhi.cmd_draw_indirect(cmd, pages, draws + size_of(Gpu_Draw), 1)
 	}
+	bins := [2]u32{RASTER_BIN_TWO_SIDED, RASTER_BIN_TWO_SIDED | RASTER_BIN_TESTED}
 	for pipeline, i in ([2]Pipeline_Id{.Shadow_Map, .Shadow_Map_Tested}) {
 		rhi.cmd_bind_pipeline(cmd, r.pipelines[pipeline])
 		set_params(cmd, &params)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.shadow_entries)
-		rhi.cmd_bind_buffer(cmd, SLOT_PASS1, d.table)
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS1, s.raster_vertices)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS3, pages)
-		rhi.cmd_draw_indirect(cmd, d.state, u64(i) * size_of(Gpu_Draw), 1)
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS4, d.table)
+		rhi.cmd_bind_index_buffer(cmd, s.raster_indices)
+		rhi.cmd_draw_indexed_indirect(cmd, d.state, u64(offset_of(Gpu_Cull_State, draws)) + u64(bins[i]) * size_of(rhi.Draw_Indexed_Indirect), 1)
 	}
 	rhi.cmd_end_render_pass(cmd)
 }
@@ -1105,9 +1122,9 @@ shadow_maps_pass :: proc(p: ^Pass, mark: ^$T, scale: u32, grid: rhi.Buffer) -> (
 	        target(r, cmd, &b.atlas, SHADOW_POOL, SHADOW_POOL, .D32_Float, {.Depth_Target, .Sampled}, "shadow atlas") &&
 	        target(r, cmd, &b.table, abi.SHADOW_SLOT_ENTRIES, SHADOW_SLOTS, .R32_Uint, {.Storage, .Sampled}, "shadow table")
 	pages_ok, _ := ensure_buffer(r, &b.pages, u64(abi.SHADOW_WORDS) * 4, {.Storage, .Indirect, .Transfer_Dst, .Transfer_Src}, "shadow pages")
-	state_ok, _ := ensure_buffer(r, &d.state, size_of(Gpu_Shadow_State), {.Storage, .Indirect, .Transfer_Dst}, "shadow map state")
+	state_ok, _ := ensure_buffer(r, &d.state, size_of(Gpu_Cull_State), {.Storage, .Indirect, .Transfer_Dst}, "shadow map state")
 	table_ok, _ := ensure_buffer(r, &d.table, b.data.size, {.Storage, .Transfer_Dst}, "shadow maps")
-	if !good || !pages_ok || !state_ok || !table_ok || s.shadow_chunks == 0 || s.shadow_entries == 0 {
+	if !good || !pages_ok || !state_ok || !table_ok || s.shadow_chunks == 0 || s.shadow_entries == 0 || s.shadow_raster_entries == 0 || s.raster_vertices == 0 || s.raster_indices == 0 {
 		b.forget = true
 		return
 	}

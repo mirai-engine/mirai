@@ -1,16 +1,22 @@
 // What the raster of the visibility target draws of the visible clusters of a
-// view (cull_bins.comp), in rounds: raster_round.comp starts one over the
-// clusters not listed yet; raster_vertices.comp places each vertex of a
-// cluster once, as gbuffer_build.slang places it, finds the triangles of the
-// cluster that show and writes the vertices they use; raster_starts.comp
-// gives the triangles of each raster bin, and of each depth bucket of a
-// tested one, their range; raster_triangles.comp writes there the three
-// indices of each triangle and the word the visibility target names it by. A
-// bin is then one indexed draw (vis_raster.vert), whose primitives are those
-// triangles in order (vis_raster.frag). The lists hold a round: the next
-// writes them again from their start, and takes with its own clusters those
-// that found no room in them, so a round after each phase of the cull draws
-// what the lists hold of a frame, and the rounds after those what they do not.
+// view (cull_bins.comp), and the maps of the shadows of the clusters their
+// cull lists into each page (shadow_clusters.comp), in rounds:
+// raster_round.comp starts one over the clusters not listed yet;
+// raster_vertices.comp places each vertex of a cluster once, as
+// gbuffer_build.slang places it (or a map, shadow_cull.slang), finds the
+// triangles of the cluster that cover a pixel center of the view or a texel
+// center of the part of its page the round draws and writes the vertices
+// they use; raster_starts.comp gives the triangles of each raster bin, and
+// of each depth bucket of a tested one, their range; raster_triangles.comp
+// writes there the three indices of each triangle and, for the view, the
+// word the visibility target names it by. A bin is then one indexed draw
+// (vis_raster.vert), whose primitives are those triangles in order
+// (vis_raster.frag, shadow_map.frag). The lists hold a round: the next writes
+// them again from their start, and takes with its own clusters those that
+// found no room in them, so a round after each phase of the cull draws what
+// the lists hold of a frame, and the rounds after those what they do not. A
+// round of the maps is the last of its cull: what finds no room there waits
+// for the next frame with its page.
 #ifndef MIRAI_RASTER_LISTS_SLANG
 #define MIRAI_RASTER_LISTS_SLANG
 #include "cut.slang"
@@ -52,13 +58,15 @@ uint raster_bits_before(uint word, uint index, uint at) {
 
 // Whether the raster may give a pixel to a triangle, from the clip positions
 // of its corners as the draw has them: false only for one it gives none
-// whatever the device, so leaving it out changes no pixel. A triangle all
-// past one side of the view shows nothing. Of one all in front of the eye,
-// neither does one whose box holds no pixel center, nor one seen from behind
-// where back faces are not drawn. margin: how far, in pixels, a device may
-// move a corner as it places it on its grid, and a little more for the
-// rounding of the positions here.
-bool raster_triangle_shows(float4 a, float4 b, float4 c, bool two_sided, float2 resolution, float margin) {
+// whatever the device, so leaving it out changes no pixel. window: the
+// pixels the draw may write, from the lower left corner of its target, the
+// first column and row, then one past the last. A triangle all past one side
+// of the target shows nothing. Of one all in front of the eye, neither does
+// one whose box holds no pixel center of the window, nor one seen from
+// behind where back faces are not drawn. margin: how far, in pixels, a
+// device may move a corner as it places it on its grid, and a little more
+// for the rounding of the positions here.
+bool raster_triangle_shows(float4 a, float4 b, float4 c, bool two_sided, float4 window, float2 resolution, float margin) {
     const float SLACK = 1e-4;
     float3 x = float3(a.x, b.x, c.x), y = float3(a.y, b.y, c.y), w = float3(a.w, b.w, c.w);
     float3 reach_x = SLACK * (abs(x) + abs(w)), reach_y = SLACK * (abs(y) + abs(w));
@@ -70,7 +78,7 @@ bool raster_triangle_shows(float4 a, float4 b, float4 c, bool two_sided, float2 
     float2 high = float2(max(px.x, max(px.y, px.z)), max(py.x, max(py.y, py.z)));
     // A box so far out that its pixels have no fraction left is kept.
     if (any(abs(low) > 1e6) || any(abs(high) > 1e6)) return true;
-    float2 first = ceil(max(low - margin, float2(0.0)) - 0.5), last = floor(min(high + margin, resolution) - 0.5);
+    float2 first = ceil(max(low - margin, window.xy) - 0.5), last = floor(min(high + margin, window.zw) - 0.5);
     if (any(last < first)) return false;
     if (two_sided) return true;
     float2 size = high - low;

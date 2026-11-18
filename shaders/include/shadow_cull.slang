@@ -1,8 +1,8 @@
 // What the cull of the maps of the shadows (shadow_maps.comp by instance,
-// shadow_clusters.comp by cluster) and the draws of their clusters
-// (shadow_map.vert) share: their parameters, the words of
-// render.Gpu_Shadow_State, and where in the list of the clusters the maps
-// draw those of each draw lie.
+// shadow_clusters.comp by cluster) and the raster of their clusters into the
+// pages (raster_lists.slang, vis_raster.vert) share: their parameters, the
+// words of the state of the cull (render.Gpu_Cull_State), and where a page
+// of a map lies in the pool.
 #ifndef MIRAI_SHADOW_CULL_SLANG
 #define MIRAI_SHADOW_CULL_SLANG
 #include "cut.slang"
@@ -23,29 +23,28 @@
 // part: 1 while
 // the round draws of each page the texels SHADOW_WORDS_PART names alone (the
 // cache, of a page it held the part where what stays changed, or the band of
-// a page drawn over frames); bound: the clusters the draws of the round take
-// in a frame (render.SHADOW_FRAME_CLUSTERS); foresee: 1 while the pass by
+// a page drawn over frames); bound: the units the draws of the round take
+// in a frame (render.SHADOW_FRAME_UNITS); foresee: 1 while the pass by
 // instance only foresees what each page takes, before the pages are granted,
 // 2 while it marks where the batches that sway moved (SHADOW_CULL_SWAY);
-// range_first: the first of the ranges it culls after the words of `movers`.
-struct Params_Block { uint instances; uint maps; uint rows; uint chunk_capacity; uint entry_capacity; uint list; uint moving; uint movers; uint listed; uint ranges; uint masks; uint plan; uint part; uint bound; uint foresee; uint range_first; };
+// range_first: the first of the ranges it culls after the words of `movers`;
+// round, last, vertex_capacity, triangle_capacity, margin: those of the round
+// of the lists of the raster that draws them (raster_vertices.comp).
+struct Params_Block {
+    uint instances; uint maps; uint rows; uint chunk_capacity; uint entry_capacity; uint list; uint moving; uint movers;
+    uint listed; uint ranges; uint masks; uint plan; uint part; uint bound; uint foresee; uint range_first;
+    uint round; uint last; uint vertex_capacity; uint triangle_capacity; float margin; uint pad0; uint pad1; uint pad2;
+};
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
-// The draws: of the clusters that hide whole and of those of masked materials.
-#define SHADOW_DRAW_OPAQUE 0u
-#define SHADOW_DRAW_TESTED 1u
-#define SHADOW_DRAW_COUNT 1u // the instances of draw d: word d * 4 + 1
-#define SHADOW_CLUSTER_DISPATCH 8u
-#define SHADOW_CHUNK_COUNT 11u
-#define SHADOW_TAKEN 12u
 // Of a chunk, over its map and the mip of it from bit SHADOW_CHUNK_MIP: its
 // instance is drawn at rest (a batch that sways less than a texel of the map).
 #define SHADOW_CHUNK_REST 0x20000000u
 #define SHADOW_CHUNK_MAP 0xFFFFu
 #define SHADOW_CHUNK_MIP 16u
-// How many clusters of a draw the list holds: half for each.
-uint shadow_room(uint draw) { return params.entry_capacity / 2u; }
-// Where in the list the cluster `slot` of a draw lies.
-uint shadow_entry(uint draw, uint slot) { return draw * (params.entry_capacity / 2u) + slot; }
+// An entry of the list of the clusters the maps draw is a Visible_Cluster
+// (visibility.slang) whose program word is the page it draws into
+// (shadow_page_word), with SHADOW_ENTRY_REST where it is drawn at rest.
+#define SHADOW_ENTRY_REST 0x80000000u
 
 uint shadow_word(StructuredBuffer<uint4> data, uint word) { return data[word >> 2u][word & 3u]; }
 
@@ -104,22 +103,22 @@ bool shadow_page_drawn(Shadow_Map m, uint2 page, float4 texels) {
 // What drawing what covers some texels of a map (its box) costs in a page of
 // it, in units (SHADOW_UNIT_TEXELS): the texels its triangles cover there,
 // SHADOW_MASKED_COST times as many for a masked material, and the vertices
-// of its draws into the page, CLUSTER_DRAW_VERTICES each. surface: the
-// texels of the map the area of its triangles spans in all, of which a page
-// charges the share its box has in the part of the page the round draws
-// (part, from its corner), at most its triangles over each of those texels;
-// 0 where it is not known, when it is taken as its box over them once.
-uint shadow_units(uint2 page, uint4 part, float4 texels, uint triangles, bool masked, float surface, float draws) {
+// its clusters have, each placed once into the lists of the raster of the
+// page and drawn once at most (SHADOW_UNIT_VERTICES). surface: the texels of
+// the map the area of its triangles spans in all, of which a page charges
+// the share its box has in the part of the page the round draws (part, from
+// its corner), at most its triangles over each of those texels; 0 where it
+// is not known, when it is taken as its box over them once.
+uint shadow_units(uint2 page, uint4 part, float4 texels, uint triangles, bool masked, float surface, float vertices) {
     float4 at = texels - float4(page * SHADOW_PAGE, page * SHADOW_PAGE);
     float2 covered = max(min(at.zw, float2(part.zw)) - max(at.xy, float2(part.xy)), float2(1.0, 1.0));
     float2 box = max(texels.zw - texels.xy, float2(1.0, 1.0));
     float within = covered.x * covered.y;
     float area = surface > 0.0 ? min(surface * saturate(within / (box.x * box.y)), within * float(max(triangles, 1u))) : within;
     area = max(area, 1.0) * float(masked ? SHADOW_MASKED_COST : 1u);
-    float vertices = ceil(draws * float(CLUSTER_DRAW_VERTICES / SHADOW_UNIT_VERTICES));
-    return uint(min(ceil(area / float(SHADOW_UNIT_TEXELS)) + vertices, float(SHADOW_COST_UNITS / 4u)));
+    float placed = ceil(2.0 * vertices / float(SHADOW_UNIT_VERTICES));
+    return uint(min(ceil(area / float(SHADOW_UNIT_TEXELS)) + placed, float(SHADOW_COST_UNITS / 4u)));
 }
-
 
 // A page of a map as a word: the map, its column, its row and its mip (render.shadow_page_word).
 uint shadow_page_word(uint map, uint mip, uint2 page) { return map | page.x << 8u | page.y << 15u | mip << 22u; }
@@ -158,6 +157,51 @@ bool shadow_pages_drawn(Shadow_Map m, float4 texels) {
         }
     }
     return false;
+}
+
+// Where a round draws a page of a map: the map at its mip, the page, its page
+// of the pool, the texels of the map the round draws of it (shadow_page_part)
+// and those as pixels of the pool from its lower left corner, the window of
+// raster_triangle_shows.
+struct Shadow_Page_Draw {
+    Shadow_Map m;
+    uint2 page;
+    uint pool;
+    uint4 drawn;
+    float4 window;
+};
+// Of a page as a word (shadow_page_word); false where it has no page of the pool.
+bool shadow_page_draw(StructuredBuffer<uint4> data, uint word, out Shadow_Page_Draw d) {
+    d.m = shadow_map_mip(shadow_map_at(data, params.rows, shadow_page_map(word)), shadow_page_mip(word));
+    d.page = shadow_page_of(word);
+    d.pool = 0u;
+    d.drawn = uint4(0u);
+    d.window = float4(0.0);
+    if (!shadow_page_pool(d.m, d.page, d.pool)) return false;
+    uint4 page = shadow_page_window(d.m, d.page), part = shadow_page_part(d.pool);
+    d.drawn = uint4(page.xy + part.xy, min(page.xy + part.zw, page.zw));
+    // Texels of the pool, row 0 on top, then from its lower left corner.
+    float4 at = float4(shadow_pool_corner(d.pool).xyxy + d.drawn - page.xyxy);
+    d.window = float4(at.x, float(SHADOW_POOL) - at.w, at.z, float(SHADOW_POOL) - at.y);
+    return true;
+}
+
+// Where a point of the world lies in the pool, clip space: where the map puts
+// it, moved to the page of the pool of its page. inside: how far it lies within
+// each side of the texels of the page drawn, which the clip distances of a
+// draw keep its triangles to.
+float4 shadow_page_clip(Shadow_Page_Draw d, float3 world, out float4 inside) {
+    float4 clip = shadow_map_clip(d.m, shadow_map_local(d.m, world));
+    // The texels drawn over the map, from -1 to 1, y up.
+    float4 window = float4(d.drawn) / float(max(d.m.rect.z, 1u));
+    float4 edges = float4(2.0 * window.x - 1.0, 1.0 - 2.0 * window.w, 2.0 * window.z - 1.0, 1.0 - 2.0 * window.y);
+    inside = float4(clip.x - edges.x * clip.w, edges.z * clip.w - clip.x, clip.y - edges.y * clip.w, edges.w * clip.w - clip.y);
+    // From -1 to 1 over the map to its page of the pool, row 0 on top: where
+    // the corner of its square would lie were the page where it is.
+    float side = float(d.m.rect.z) / float(SHADOW_POOL);
+    float2 corner = (float2(shadow_pool_corner(d.pool)) - float2(d.page * SHADOW_PAGE)) / float(SHADOW_POOL);
+    return float4((2.0 * corner.x + side) * clip.w - clip.w + side * clip.x,
+        clip.w - (2.0 * corner.y + side) * clip.w + side * clip.y, clip.z, clip.w);
 }
 
 // A window of a map as a map of its own, for what reaches it.
