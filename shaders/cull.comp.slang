@@ -73,9 +73,9 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     bool gone = batched && batch_faded(row, inst.bounds_min.xyz, inst.bounds_max.xyz) >= 1.0;
     bool visible = false;
     if (params.phase == 0u) {
-        // What the view draws: the instances in its layers, not of the body it leaves out, in its frustum and not all behind its clip plane.
+        // What the view draws: the instances in its layers, not of the body it leaves out nor faded out whole by their values, in its frustum and not all behind its clip plane.
         float3 clipped = lerp(inst.bounds_min.xyz, inst.bounds_max.xyz, step(float3(0.0), frame.clip_plane.xyz));
-        bool own = view_body_fade(inst.meta.w) >= 1.0;
+        bool own = max(view_body_fade(inst.meta.w), material_values_fade(inst.material_values)) >= 1.0;
         bool in_frustum = (inst.meta.w & INSTANCE_FLAG_HIDDEN) == 0u && !own && !gone && view_draws_layers(inst.meta.w >> INSTANCE_LAYERS_SHIFT, inst.meta.w)
             && dot(frame.clip_plane.xyz, clipped) + frame.clip_plane.w >= 0.0 && frustum_visible(inst.bounds_min.xyz, inst.bounds_max.xyz);
         float3 before_low, before_high;

@@ -90,10 +90,20 @@ float3 hit_transmission(Instance inst, Material m, Mesh_Triangle tri, float2 bar
 #define BLEND_STOPS   1u // they are surfaces like any other
 #define BLEND_FILTERS 2u // each one multiplies ray_filter and lets the ray on
 
-// What a ray that finds this triangle at distance t does: stop, or go through
-// a hole of a masked material or a blended one. Only the triangles of the
-// slots an instance tests ask (Instance.tested).
-bool hit_covers(uint instance_index, uint primitive, float2 bary, float t, uint blend) {
+// Whether a ray along `direction`, in the space of an instance that fades out
+// by `fade`, goes through it: a share of the directions as large as the fade,
+// by a fixed hash of the direction, so a ray meets the same at every face it
+// crosses and a ray traced again the same way meets the same.
+bool ray_fade_left(uint instance_index, float3 direction, float fade) {
+    uint2 cell = uint2((oct_encode(direction) * 0.5 + 0.5) * 127.0 + 0.5);
+    return float(hash_u32(hash_u32(instance_index) ^ (cell.x | cell.y << 7u)) >> 8u) * (1.0 / 16777216.0) < fade;
+}
+
+// What a ray that finds this triangle at distance t, along `direction` in
+// the space of the instance, does: stop, or go through a hole of a masked
+// material, a blended one or what its fade leaves out (ray_fade_left). Only
+// the triangles of the slots an instance tests ask (Instance.tested).
+bool hit_covers(uint instance_index, uint primitive, float2 bary, float t, float3 direction, uint blend) {
     Instance inst = scene_instance(instance_index);
     Mesh mesh = meshes[instance_mesh(inst)];
     Material m = material_row(material_of(inst, mesh_primitive_material(mesh, primitive)), inst.material_values);
@@ -114,6 +124,8 @@ bool hit_covers(uint instance_index, uint primitive, float2 bary, float t, uint 
 #endif
         return blend == BLEND_STOPS;
     }
+    float fade = material_values_fade(inst.material_values);
+    if (fade > 0.0 && ray_fade_left(instance_index, direction, fade)) return false;
     if (m.alpha_mode == ALPHA_OPAQUE) return true;
     Mesh_Triangle tri = mesh_triangle(inst, mesh, primitive);
     float3 weights = float3(1.0 - bary.x - bary.y, bary.x, bary.y);
@@ -176,7 +188,7 @@ Hit trace_ray_impl(float3 origin, float3 direction, float t_min, float t_max, bo
         if (query.CandidateType() != CANDIDATE_NON_OPAQUE_TRIANGLE) continue;
         uint instance = uint(query.CandidateInstanceID());
         if (hit_covers(instance, hw_primitive(instance, uint(query.CandidateGeometryIndex()), uint(query.CandidatePrimitiveIndex())),
-                query.CandidateTriangleBarycentrics(), query.CandidateTriangleRayT(), blend)) {
+                query.CandidateTriangleBarycentrics(), query.CandidateTriangleRayT(), query.CandidateObjectRayDirection(), blend)) {
             query.CommitNonOpaqueTriangleHit();
         }
     }
@@ -274,7 +286,7 @@ bool trace_blas(uint mesh_word, float3 origin, float3 dir, float t_min, inout Hi
                 float t;
                 float2 bary;
                 if (ray_triangle(origin, dir, tri, t_min, hit.t, t, bary)) {
-                    if (((tested >> tri.slot) & 1u) != 0u && !hit_covers(instance_index, tri.primitive, bary, t, blend)) continue;
+                    if (((tested >> tri.slot) & 1u) != 0u && !hit_covers(instance_index, tri.primitive, bary, t, dir, blend)) continue;
                     hit.t = t;
                     hit.bary = bary;
                     hit.primitive = tri.primitive;

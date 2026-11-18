@@ -293,7 +293,7 @@ Instance_Material_Value :: struct {
 }
 Instance_Material_Values :: struct {
 	count:   u32,
-	fade:    f32, // how much of every row it fades out, 0 none to 1 all: an opaque row it fades blends
+	fade:    f32, // how much of the instance it fades out, 0 none to 1 all: the opacity of its blended rows, by a pattern the rest
 	entries: [INSTANCE_VALUES_MAX]Instance_Material_Value,
 }
 #assert(offset_of(Instance_Material_Values, entries) == abi.INSTANCE_VALUES_HEADER * size_of(u32))

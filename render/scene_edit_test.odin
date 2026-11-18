@@ -862,16 +862,26 @@ the_values_of_an_instance_cost_words_of_the_pool_and_no_material_row :: proc(t:^
     coat.coat.weight=1
     testing.expect(t,len(s.reflective)==0 && scene_tint(r,{7},{{1,1,1}},{{}},{held(r,coat)}))
     testing.expect(t,len(s.reflective)==1 && s.reflective[0].instance==u32(7) && s.reflective[0].layered && len(s.materials)==rows)
-    // A fade given in place blends every row it shows, but one a mode of its own masks.
+    // A fade given in place blends no row that is not blended: the raster
+    // leaves its pixels out, and rays and the maps of the shadows test every
+    // triangle of it.
     faded:=next
-    faded.fade=0.5
-    testing.expect(t,len(s.translucent)==0 && scene_tint(r,{7},{{1,1,1}},{{}},{faded}) && len(s.translucent)==1 && s.translucent[0].instance==7)
-    testing.expect(t,s.instances[7].meta.w&INSTANCE_FLAG_BLENDED!=0)
+    faded.fade=0.25
+    testing.expect(t,scene_tint(r,{7},{{1,1,1}},{{}},{faded}) && len(s.translucent)==0 && s.instances[7].meta.w&INSTANCE_FLAG_BLENDED==0)
+    testing.expect(t,s.instances[7].meta.w&INSTANCE_FLAG_ALPHA_TESTED!=0 && s.instances[7].tested==3 && instance_material(s,s.instances[7].material_values,1).opacity==1)
     masked:=rough
     masked.alpha_mode=.Mask
     faded=held(r,masked)
     faded.fade=0.5
-    testing.expect(t,scene_tint(r,{7},{{1,1,1}},{{}},{faded}) && s.instances[7].meta.w&INSTANCE_FLAG_BLENDED==0 && len(s.materials)==rows)
+    testing.expect(t,scene_tint(r,{7},{{1,1,1}},{{}},{faded}) && s.instances[7].meta.w&INSTANCE_FLAG_BLENDED==0 && s.instances[7].tested==3 && len(s.materials)==rows)
+    testing.expect_value(t,instance_material(s,s.instances[7].material_values,1).opacity,f32(1))
+    // A blended row fades by its opacity; the opaque one beside it, by a pattern.
+    glass:=rough
+    glass.alpha_mode,glass.opacity=.Blend,0.8
+    faded=held(r,glass)
+    faded.fade=0.5
+    testing.expect(t,scene_tint(r,{7},{{1,1,1}},{{}},{faded}) && len(s.translucent)==1)
+    testing.expect_value(t,instance_material(s,s.instances[7].material_values,1).opacity,f32(0.4))
     testing.expect(t,!scene_tint(r,{COUNT},{{1,1,1}},{{}},{next}) && !scene_tint(r,{1},{{1,1,1}},{{}},{next,next}),"a descriptor the scene does not have, lists that differ")
     // Whatever an instance gives a row, it shows the row as the table would hold it with that.
     other:=DEFAULT_MATERIAL
