@@ -1,0 +1,960 @@
+package asset
+
+import "base:runtime"
+import "core:fmt"
+import "core:os"
+import "core:strings"
+import "mirai:std/base"
+import "mirai:std/serial"
+import "mirai:store"
+
+// The records of the imports kept in the machine store, as text:
+//
+// - Package: what one ingest of a source made, a blob of the store. Its id,
+//   where the source was, what the source and its settings are (identity) and
+//   each asset with its id. Nothing in it depends on the version of the
+//   engine. The import that ingests the source writes it and names it with
+//   the ref REF_PACKAGES/<id>.
+// - Build: the blob of each asset of one build of a package. The import that
+//   builds it writes it, names it with REF_IMPORTS/<import_key> (Final) or
+//   REF_IMPORTS_FAST/<import_key>, and the refresh of a project names the one
+//   it chose with REF_BUILDS/<build_select>, which a program that has no
+//   importer finds.
+// - Packages: the list of a project (PACKAGES_FILE, beside its manifest),
+//   versioned: the packages it uses by the hash of their manifest, the folder
+//   of its assets each is listed in and the assets it uses. The editor and
+//   the commands that add or remove a package write it.
+//
+// What a parse gives lives in its allocator, an arena: nothing frees it piece
+// by piece. A text that is not a record of its version is an error, never a
+// default.
+
+PACKAGES_FILE :: "packages.mirai"
+PACKAGES_VERSION :: 1
+PACKAGE_MANIFEST_VERSION :: 1
+BUILD_MANIFEST_VERSION :: 1
+RECORD_BYTES :: 16<<20 // the most a record takes as text: a larger one is refused unread
+
+// Namespaces of the refs of the records.
+REF_PACKAGES :: "packages"         // <package id>: its manifest, on a machine that ingested it
+REF_IMPORTS :: "imports"           // <import_key>: a build with Final textures, which peers share
+REF_IMPORTS_FAST :: "imports-fast" // <import_key>: a build with Fast textures, never shared
+REF_BUILDS :: "builds"             // <build_select>: the build the refresh of this machine chose
+REF_CACHE_PREFIX :: "cache-"       // and the name of a folder of cook/cache: <key>-<version>
+IMPORT_KEY_VERSIONS :: 32          // the most versions an import key combines
+
+// Where the source of a package was on the machine that ingested it: a hint
+// to ingest it again there, not part of what it is.
+Package_Origin :: struct {
+    path:string,
+    folder:bool,     // the source is a folder (an Unreal package), not a file
+    importer:string, // the format or the importer of a plugin that reads it
+}
+
+Package_Asset :: struct {
+    kind:Fourcc,
+    name:string, // in the source: the mesh, the material, the image
+    index:int,   // among those of its kind in the source
+    id:base.Asset_Id,
+    part:bool,   // a part of the root of the package, decided when it was first ingested
+    owner:base.Asset_Id,
+    dependencies:[dynamic]base.Asset_Id,
+}
+
+Package :: struct {
+    id:base.Asset_Id,
+    name:string,
+    origin:Package_Origin,
+    identity:store.Hash,      // of the bytes of the source and its inputs, its settings and the code of the plugin that reads it
+    settings:string,          // the text of the settings object; "" without one
+    inputs:[dynamic]string,   // the files the import read besides the source, from its folder
+    assets:[dynamic]Package_Asset,
+}
+
+Build_Output :: struct {
+    id:base.Asset_Id,
+    kind:Fourcc,
+    kind_version:u16,
+    blob:store.Hash,
+    thumbnail:store.Hash, // zero: none
+}
+
+Build :: struct {
+    package_id:base.Asset_Id,
+    key:store.Hash,  // import_key of what built it
+    final:bool,      // its textures are Final, else Fast
+    encoders:u64,    // of the block encoders that built its textures
+    outputs:[dynamic]Build_Output,
+}
+
+Project_Package :: struct {
+    id:base.Asset_Id,
+    manifest:store.Hash,
+    folder:string,                 // of the assets of the project, where its assets are listed; "": the top
+    assets:[dynamic]base.Asset_Id, // those the project uses, with what they depend on; none: all
+}
+
+Packages :: struct {
+    packages:[dynamic]Project_Package,
+}
+
+// What a program reads, as one value: the identity of a package and the
+// versions of what imports it and writes its assets. Any machine that has the
+// manifest computes it, without the source. ok is false with more than
+// IMPORT_KEY_VERSIONS versions.
+import_key :: proc(identity:store.Hash,versions:[]u64) -> (key:store.Hash,ok:bool) {
+    TAG :: "mirai import key"
+    if len(versions)>IMPORT_KEY_VERSIONS {return}
+    bytes:[len(TAG)+1+size_of(store.Hash)+8*IMPORT_KEY_VERSIONS]u8
+    n:=copy(bytes[:],TAG)
+    bytes[n]=u8(len(versions))
+    n+=1
+    identity:=identity
+    n+=copy(bytes[n:],identity[:])
+    for version in versions {n+=word_put(bytes[n:],version,8)}
+    return store.address_of_bytes(bytes[:n]),true
+}
+
+// The name of the build of the manifest with hash manifest that a program
+// reads: the version of each kind of the cache its assets are of, as this
+// program reads it. The refresh of a project names its choice so; a program
+// without importers finds it by the same name.
+build_select :: proc(manifest:store.Hash,p:^Package) -> store.Hash {
+    TAG :: "mirai build select"
+    bytes:[len(TAG)+size_of(store.Hash)+6*len(KINDS)]u8
+    n:=copy(bytes[:],TAG)
+    manifest:=manifest
+    n+=copy(bytes[n:],manifest[:])
+    for info in KINDS {
+        if !import_cached(info.kind) {continue}
+        for &a in p.assets {
+            if a.kind!=info.kind {continue}
+            n+=word_put(bytes[n:],u64(info.kind),4)
+            n+=word_put(bytes[n:],u64(info.version),2)
+            break
+        }
+    }
+    return store.address_of_bytes(bytes[:n])
+}
+
+// The namespace of the refs of a folder of cook/cache, in buffer; "" for a
+// name that does not fit.
+cache_namespace :: proc(name:string,buffer:^[store.NAME_MAX]u8) -> string {
+    if len(REF_CACHE_PREFIX)+len(name)>store.NAME_MAX {return ""}
+    n:=copy(buffer[:],REF_CACHE_PREFIX)
+    n+=copy(buffer[n:],name)
+    return string(buffer[:n])
+}
+
+@(private="file")
+word_put :: proc(out:[]u8,value:u64,size:int) -> int {
+    for i in 0..<size {out[i]=u8(value>>uint(8*i))}
+    return size
+}
+
+// The text of a manifest; .Invalid for one that would not read back as it is.
+package_text :: proc(p:^Package,allocator:=context.allocator) -> (text:string,error:Error) {
+    if !package_valid(p) {return "",.Invalid}
+    w:serial.Writer
+    serial.writer_init(&w,1024,allocator)
+    serial.text_write_raw(&w,"{\n  \"version\": ")
+    serial.text_write_int(&w,PACKAGE_MANIFEST_VERSION)
+    serial.text_write_raw(&w,",\n  \"id\": ")
+    id_write(&w,p.id)
+    serial.text_write_raw(&w,",\n  \"name\": ")
+    serial.text_write_string(&w,p.name)
+    serial.text_write_raw(&w,",\n  \"origin\": {\"path\": ")
+    serial.text_write_string(&w,p.origin.path)
+    serial.text_write_raw(&w,p.origin.folder?", \"folder\": true, \"importer\": ":", \"folder\": false, \"importer\": ")
+    serial.text_write_string(&w,p.origin.importer)
+    serial.text_write_raw(&w,"},\n  \"identity\": ")
+    hash_write(&w,p.identity)
+    if p.settings!="" {
+        serial.text_write_raw(&w,",\n  \"settings\": ")
+        serial.text_write_raw(&w,p.settings)
+    }
+    serial.text_write_raw(&w,",\n  \"inputs\": [")
+    for input,at in p.inputs {
+        if at>0 {serial.text_write_raw(&w,", ")}
+        serial.text_write_string(&w,input)
+    }
+    serial.text_write_raw(&w,"],\n  \"assets\": [")
+    for &a,at in p.assets {
+        serial.text_write_raw(&w,at>0?",\n    {\"kind\": ":"\n    {\"kind\": ")
+        kind_write(&w,a.kind)
+        serial.text_write_raw(&w,", \"name\": ")
+        serial.text_write_string(&w,a.name)
+        serial.text_write_raw(&w,", \"index\": ")
+        serial.text_write_int(&w,i64(a.index))
+        serial.text_write_raw(&w,", \"id\": ")
+        id_write(&w,a.id)
+        if a.part {serial.text_write_raw(&w,", \"part\": true")}
+        if a.owner!={} {
+            serial.text_write_raw(&w,", \"owner\": ")
+            id_write(&w,a.owner)
+        }
+        if len(a.dependencies)>0 {
+            serial.text_write_raw(&w,", \"dependencies\": [")
+            for d,i in a.dependencies {
+                if i>0 {serial.text_write_raw(&w,", ")}
+                id_write(&w,d)
+            }
+            serial.text_write_raw(&w,"]")
+        }
+        serial.text_write_raw(&w,"}")
+    }
+    serial.text_write_raw(&w,len(p.assets)>0?"\n  ]\n}\n":"]\n}\n")
+    return writer_text(&w)
+}
+
+package_parse :: proc(text:string,allocator:=context.allocator) -> (p:Package,error:Error) {
+    if len(text)>RECORD_BYTES {return {},.Too_Large}
+    r:serial.Text_Reader
+    serial.text_reader_init(&r,text,context.temp_allocator)
+    defer serial.text_reader_destroy(&r)
+    p.inputs=make([dynamic]string,allocator)
+    p.assets=make([dynamic]Package_Asset,allocator)
+    Field :: enum {Version,Id,Name,Origin,Identity,Settings,Inputs,Assets}
+    seen:bit_set[Field]
+    version:u64
+    expect(&r,'{') or_return
+    for first:=true;!serial.text_accept(&r,'}');first=false {
+        if !first {expect(&r,',') or_return}
+        name:=key(&r) or_return
+        field:Field
+        switch name {
+        case "version": field=.Version
+        case "id": field=.Id
+        case "name": field=.Name
+        case "origin": field=.Origin
+        case "identity": field=.Identity
+        case "settings": field=.Settings
+        case "inputs": field=.Inputs
+        case "assets": field=.Assets
+        case: return {},.Corrupt
+        }
+        if field in seen {return {},.Corrupt}
+        seen+={field}
+        switch field {
+        case .Version: version=count_read(&r,max(u64)) or_return
+        case .Id: p.id=id_read(&r) or_return
+        case .Name: p.name=string_read(&r,allocator) or_return
+        case .Origin: p.origin=origin_read(&r,allocator) or_return
+        case .Identity: p.identity=hash_read(&r) or_return
+        case .Settings:
+            serial.text_space(&r)
+            start:=r.offset
+            if serial.text_peek(&r)!='{' || !serial.text_skip(&r) {return {},.Corrupt}
+            p.settings=clone(text[start:r.offset],allocator) or_return
+        case .Inputs:
+            expect(&r,'[') or_return
+            for begun:=false;!serial.text_accept(&r,']');begun=true {
+                if begun {expect(&r,',') or_return}
+                input:=string_read(&r,allocator) or_return
+                if _,no_room:=append(&p.inputs,input);no_room!=nil {return {},.Out_Of_Memory}
+            }
+        case .Assets:
+            expect(&r,'[') or_return
+            for begun:=false;!serial.text_accept(&r,']');begun=true {
+                if begun {expect(&r,',') or_return}
+                a:=asset_read(&r,allocator) or_return
+                if _,no_room:=append(&p.assets,a);no_room!=nil {return {},.Out_Of_Memory}
+            }
+        }
+    }
+    if !serial.text_end(&r) {return {},.Corrupt}
+    if version!=PACKAGE_MANIFEST_VERSION {return {},.Version}
+    if seen!={.Version,.Id,.Name,.Origin,.Identity,.Inputs,.Assets} && seen!={.Version,.Id,.Name,.Origin,.Identity,.Settings,.Inputs,.Assets} {return {},.Corrupt}
+    if !package_valid(&p) {return {},.Corrupt}
+    return p,.None
+}
+
+// The text of a build manifest; .Invalid for one that would not read back as it is.
+build_text :: proc(b:^Build,allocator:=context.allocator) -> (text:string,error:Error) {
+    if !build_valid(b) {return "",.Invalid}
+    w:serial.Writer
+    serial.writer_init(&w,512,allocator)
+    serial.text_write_raw(&w,"{\n  \"version\": ")
+    serial.text_write_int(&w,BUILD_MANIFEST_VERSION)
+    serial.text_write_raw(&w,",\n  \"package\": ")
+    id_write(&w,b.package_id)
+    serial.text_write_raw(&w,",\n  \"key\": ")
+    hash_write(&w,b.key)
+    serial.text_write_raw(&w,b.final?",\n  \"final\": true,\n  \"encoders\": \"":",\n  \"final\": false,\n  \"encoders\": \"")
+    serial.text_write_hex(&w,b.encoders,16,false)
+    serial.text_write_raw(&w,"\",\n  \"outputs\": [")
+    for o,at in b.outputs {
+        serial.text_write_raw(&w,at>0?",\n    {\"id\": ":"\n    {\"id\": ")
+        id_write(&w,o.id)
+        serial.text_write_raw(&w,", \"kind\": ")
+        kind_write(&w,o.kind)
+        serial.text_write_raw(&w,", \"kind_version\": ")
+        serial.text_write_int(&w,i64(o.kind_version))
+        serial.text_write_raw(&w,", \"blob\": ")
+        hash_write(&w,o.blob)
+        if o.thumbnail!={} {
+            serial.text_write_raw(&w,", \"thumbnail\": ")
+            hash_write(&w,o.thumbnail)
+        }
+        serial.text_write_raw(&w,"}")
+    }
+    serial.text_write_raw(&w,len(b.outputs)>0?"\n  ]\n}\n":"]\n}\n")
+    return writer_text(&w)
+}
+
+build_parse :: proc(text:string,allocator:=context.allocator) -> (b:Build,error:Error) {
+    if len(text)>RECORD_BYTES {return {},.Too_Large}
+    r:serial.Text_Reader
+    serial.text_reader_init(&r,text,context.temp_allocator)
+    defer serial.text_reader_destroy(&r)
+    b.outputs=make([dynamic]Build_Output,allocator)
+    Field :: enum {Version,Package,Key,Final,Encoders,Outputs}
+    seen:bit_set[Field]
+    version:u64
+    expect(&r,'{') or_return
+    for first:=true;!serial.text_accept(&r,'}');first=false {
+        if !first {expect(&r,',') or_return}
+        name:=key(&r) or_return
+        field:Field
+        switch name {
+        case "version": field=.Version
+        case "package": field=.Package
+        case "key": field=.Key
+        case "final": field=.Final
+        case "encoders": field=.Encoders
+        case "outputs": field=.Outputs
+        case: return {},.Corrupt
+        }
+        if field in seen {return {},.Corrupt}
+        seen+={field}
+        switch field {
+        case .Version: version=count_read(&r,max(u64)) or_return
+        case .Package: b.package_id=id_read(&r) or_return
+        case .Key: b.key=hash_read(&r) or_return
+        case .Final: b.final=bool_read(&r) or_return
+        case .Encoders:
+            digits,ok:=serial.text_string(&r)
+            if !ok || len(digits)!=16 {return {},.Corrupt}
+            parsed,parsed_ok:=base.hex_parse_u64(digits)
+            if !parsed_ok {return {},.Corrupt}
+            b.encoders=parsed
+        case .Outputs:
+            expect(&r,'[') or_return
+            for begun:=false;!serial.text_accept(&r,']');begun=true {
+                if begun {expect(&r,',') or_return}
+                o:=output_read(&r) or_return
+                if _,no_room:=append(&b.outputs,o);no_room!=nil {return {},.Out_Of_Memory}
+            }
+        }
+    }
+    if !serial.text_end(&r) {return {},.Corrupt}
+    if version!=BUILD_MANIFEST_VERSION {return {},.Version}
+    if seen!={.Version,.Package,.Key,.Final,.Encoders,.Outputs} {return {},.Corrupt}
+    if !build_valid(&b) {return {},.Corrupt}
+    return b,.None
+}
+
+// The text of the list of a project; .Invalid for one that would not read back as it is.
+packages_text :: proc(list:^Packages,allocator:=context.allocator) -> (text:string,error:Error) {
+    if !packages_valid(list) {return "",.Invalid}
+    w:serial.Writer
+    serial.writer_init(&w,256,allocator)
+    serial.text_write_raw(&w,"{\n  \"version\": ")
+    serial.text_write_int(&w,PACKAGES_VERSION)
+    serial.text_write_raw(&w,",\n  \"packages\": [")
+    for &entry,at in list.packages {
+        serial.text_write_raw(&w,at>0?",\n    {\"id\": ":"\n    {\"id\": ")
+        id_write(&w,entry.id)
+        serial.text_write_raw(&w,", \"manifest\": ")
+        hash_write(&w,entry.manifest)
+        serial.text_write_raw(&w,", \"folder\": ")
+        serial.text_write_string(&w,entry.folder)
+        serial.text_write_raw(&w,", \"assets\": [")
+        for id,i in entry.assets {
+            if i>0 {serial.text_write_raw(&w,", ")}
+            id_write(&w,id)
+        }
+        serial.text_write_raw(&w,"]}")
+    }
+    serial.text_write_raw(&w,len(list.packages)>0?"\n  ]\n}\n":"]\n}\n")
+    return writer_text(&w)
+}
+
+packages_parse :: proc(text:string,allocator:=context.allocator) -> (list:Packages,error:Error) {
+    if len(text)>RECORD_BYTES {return {},.Too_Large}
+    r:serial.Text_Reader
+    serial.text_reader_init(&r,text,context.temp_allocator)
+    defer serial.text_reader_destroy(&r)
+    list.packages=make([dynamic]Project_Package,allocator)
+    Field :: enum {Version,Packages}
+    seen:bit_set[Field]
+    version:u64
+    expect(&r,'{') or_return
+    for first:=true;!serial.text_accept(&r,'}');first=false {
+        if !first {expect(&r,',') or_return}
+        name:=key(&r) or_return
+        field:Field
+        switch name {
+        case "version": field=.Version
+        case "packages": field=.Packages
+        case: return {},.Corrupt
+        }
+        if field in seen {return {},.Corrupt}
+        seen+={field}
+        switch field {
+        case .Version: version=count_read(&r,max(u64)) or_return
+        case .Packages:
+            expect(&r,'[') or_return
+            for begun:=false;!serial.text_accept(&r,']');begun=true {
+                if begun {expect(&r,',') or_return}
+                entry:=entry_read(&r,allocator) or_return
+                if _,no_room:=append(&list.packages,entry);no_room!=nil {return {},.Out_Of_Memory}
+            }
+        }
+    }
+    if !serial.text_end(&r) {return {},.Corrupt}
+    if version!=PACKAGES_VERSION {return {},.Version}
+    if seen!={.Version,.Packages} || !packages_valid(&list) {return {},.Corrupt}
+    return list,.None
+}
+
+// The list of the project at root, in allocator. found is false, with an
+// empty list, when the project has none.
+packages_load :: proc(root:string,allocator:=context.allocator) -> (list:Packages,found:bool,error:Error) {
+    path:=fmt.tprintf("%s/%s",root,PACKAGES_FILE)
+    data,read_error:=serial.file_read(path,context.temp_allocator,limit=RECORD_BYTES)
+    switch read_error {
+    case .None:
+    case .Not_Found:
+        list.packages=make([dynamic]Project_Package,allocator)
+        return list,false,.None
+    case .Too_Large: return {},false,.Too_Large
+    case .Out_Of_Memory: return {},false,.Out_Of_Memory
+    case .Open,.Read,.Write,.Rename,.Invalid_Alignment: return {},false,.IO
+    }
+    list,error=packages_parse(string(data),allocator)
+    return list,error==.None,error
+}
+
+// Writes the list of the project at root, unless its file already says the same.
+packages_save :: proc(root:string,list:^Packages) -> Error {
+    text:=packages_text(list,context.temp_allocator) or_return
+    path:=fmt.tprintf("%s/%s",root,PACKAGES_FILE)
+    if data,read_error:=os.read_entire_file(path,context.temp_allocator);read_error==nil && string(data)==text {return .None}
+    switch serial.file_write_atomic(path,transmute([]u8)text) {
+    case .None: return .None
+    case .Out_Of_Memory: return .Out_Of_Memory
+    case .Not_Found,.Open,.Read,.Write,.Rename,.Too_Large,.Invalid_Alignment: return .IO
+    }
+    return .IO
+}
+
+// Keeps a manifest in the store, by the hash of its text.
+package_put :: proc(s:^store.Store,p:^Package) -> (hash:store.Hash,error:Error) {
+    text:=package_text(p,context.temp_allocator) or_return
+    put_error:store.Error
+    hash,put_error=store.put_bytes(s,transmute([]u8)text)
+    return hash,store_error(put_error)
+}
+
+// The manifest the store keeps under hash, in allocator. .Not_Found without it.
+package_get :: proc(s:^store.Store,hash:store.Hash,allocator:=context.allocator) -> (p:Package,error:Error) {
+    text:=record_get(s,hash) or_return
+    return package_parse(text,allocator)
+}
+
+build_put :: proc(s:^store.Store,b:^Build) -> (hash:store.Hash,error:Error) {
+    text:=build_text(b,context.temp_allocator) or_return
+    put_error:store.Error
+    hash,put_error=store.put_bytes(s,transmute([]u8)text)
+    return hash,store_error(put_error)
+}
+
+build_get :: proc(s:^store.Store,hash:store.Hash,allocator:=context.allocator) -> (b:Build,error:Error) {
+    text:=record_get(s,hash) or_return
+    return build_parse(text,allocator)
+}
+
+Listed_State :: enum u8 {
+    Built,
+    Not_Built, // no build this program reads: a machine with the source, or a peer that built it, gives it
+}
+
+// An asset of the cache a project lists from its packages.
+Package_Listed :: struct {
+    path:string, // in the registry: <folder>/<name><extension>, as listed_path makes it
+    file:string, // the blob that holds it; "" when not built
+    id:base.Asset_Id,
+    kind:Fourcc,
+    package_id:base.Asset_Id,
+    state:Listed_State,
+}
+
+Package_Problem_Code :: enum u8 {
+    Manifest_Missing,    // the store has no blob of the manifest the project names
+    Manifest_Unreadable, // it has one that is not a manifest of this version, or of another package
+    Build_Unreadable,    // the build its ref names is missing or does not read: its assets are not built
+    Asset_Unknown,       // the project uses an asset its manifest does not have
+}
+
+Package_Problem :: struct {
+    package_id:base.Asset_Id,
+    asset:base.Asset_Id, // Asset_Unknown: the one the project names
+    code:Package_Problem_Code,
+}
+
+Packages_Resolved :: struct {
+    listed:[dynamic]Package_Listed,
+    problems:[dynamic]Package_Problem,
+}
+
+// What a project lists from the packages it uses: each asset of the cache it
+// uses, with what they depend on, at its path, and the blob of the build
+// REF_BUILDS names for its manifest, or Not_Built. Documents are files of the
+// project and are not listed. A manifest or a build the store does not have
+// or does not read is a problem of the result, never an error; nothing is
+// removed, built or fetched. Two packages that list one path take the name of
+// their package after it, "<name> (<package>)". In allocator, an arena; error
+// only when memory runs out.
+packages_resolve :: proc(s:^store.Store,list:^Packages,allocator:=context.allocator) -> (resolved:Packages_Resolved,error:Error) {
+    resolved.listed=make([dynamic]Package_Listed,allocator)
+    resolved.problems=make([dynamic]Package_Problem,allocator)
+    names:=make([dynamic]string,context.temp_allocator)
+    for &entry in list.packages {
+        p,manifest_error:=package_get(s,entry.manifest,context.temp_allocator)
+        if manifest_error==.Out_Of_Memory {return {},.Out_Of_Memory}
+        if manifest_error==.None && p.id!=entry.id {manifest_error=.Corrupt}
+        if manifest_error!=.None {
+            problem_add(&resolved,{entry.id,{},manifest_error==.Not_Found?.Manifest_Missing:.Manifest_Unreadable}) or_return
+            continue
+        }
+        used,no_used:=make([]bool,len(p.assets),context.temp_allocator)
+        by_id:=make(map[base.Asset_Id]int,context.temp_allocator)
+        if no_used!=nil || reserve(&by_id,len(p.assets))!=nil {return {},.Out_Of_Memory}
+        for &a,at in p.assets {by_id[a.id]=at}
+        if len(entry.assets)==0 {
+            for &u in used {u=true}
+        } else {
+            pending:=make([dynamic]int,context.temp_allocator)
+            for id in entry.assets {
+                at,known:=by_id[id]
+                if !known {
+                    problem_add(&resolved,{entry.id,id,.Asset_Unknown}) or_return
+                    continue
+                }
+                if _,no_room:=append(&pending,at);no_room!=nil {return {},.Out_Of_Memory}
+            }
+            for len(pending)>0 {
+                at:=pop(&pending)
+                if used[at] {continue}
+                used[at]=true
+                for d in p.assets[at].dependencies {
+                    if next,known:=by_id[d];known && !used[next] {
+                        if _,no_room:=append(&pending,next);no_room!=nil {return {},.Out_Of_Memory}
+                    }
+                }
+            }
+        }
+        outputs:=make(map[base.Asset_Id]Build_Output,context.temp_allocator)
+        digits:[64]u8
+        built,ref_error:=store.ref_get(s,REF_BUILDS,store.hex(build_select(entry.manifest,&p),&digits))
+        switch ref_error {
+        case .None:
+            b,build_error:=build_get(s,built,context.temp_allocator)
+            if build_error==.Out_Of_Memory {return {},.Out_Of_Memory}
+            if build_error==.None && b.package_id!=p.id {build_error=.Corrupt}
+            if build_error!=.None {
+                problem_add(&resolved,{entry.id,{},.Build_Unreadable}) or_return
+                break
+            }
+            if reserve(&outputs,len(b.outputs))!=nil {return {},.Out_Of_Memory}
+            for o in b.outputs {outputs[o.id]=o}
+        case .Missing:
+        case .Out_Of_Memory: return {},.Out_Of_Memory
+        case .Not_Here_Yet,.Corrupt,.Invalid_Argument,.Io,.Unsupported_Layout:
+            problem_add(&resolved,{entry.id,{},.Build_Unreadable}) or_return
+        }
+        folder:=entry.folder!=""?fmt.tprintf("%s/",entry.folder):""
+        for &a,at in p.assets {
+            info,known:=kind_info(a.kind)
+            if !used[at] || !known || !import_cached(a.kind) {continue}
+            repeated:=false
+            for &other in p.assets {repeated||=other.kind==a.kind && other.name==a.name && other.index<a.index}
+            listed:=Package_Listed{id=a.id,kind=a.kind,package_id=p.id,state=.Not_Built}
+            listed.path=clone(listed_path(folder,a.name,a.index,repeated,info.extension),allocator) or_return
+            if o,found:=outputs[a.id];found && o.kind==a.kind && o.kind_version==info.version {
+                file,path_error:=store.blob_path(s,o.blob,allocator)
+                if path_error==.Out_Of_Memory {return {},.Out_Of_Memory}
+                if path_error==.None {listed.file,listed.state=file,.Built}
+            }
+            if _,no_room:=append(&resolved.listed,listed);no_room!=nil {return {},.Out_Of_Memory}
+            if _,no_room:=append(&names,p.name);no_room!=nil {return {},.Out_Of_Memory}
+        }
+    }
+    claims:=make(map[string]int,context.temp_allocator)
+    if reserve(&claims,len(resolved.listed))!=nil {return {},.Out_Of_Memory}
+    for &l in resolved.listed {claims[l.path]+=1}
+    for &l,at in resolved.listed {
+        if claims[l.path]<2 {continue}
+        dot:=strings.last_index_byte(l.path,'.')
+        l.path=clone(fmt.tprintf("%s (%s)%s",l.path[:dot],safe_name(names[at]),l.path[dot:]),allocator) or_return
+    }
+    return resolved,.None
+}
+
+// Where the registry lists an output of the cache: <folder><name><extension>
+// with the name as safe_path gives it, and " (<index>)" before the extension
+// when an output of its kind and name has a lower index (repeated). folder:
+// "" or ending with '/'. In the temp allocator.
+@(private)
+listed_path :: proc(folder,name:string,index:int,repeated:bool,extension:string) -> string {
+    if repeated {return fmt.tprintf("%s%s (%d)%s",folder,safe_path(name),index,extension)}
+    return fmt.tprintf("%s%s%s",folder,safe_path(name),extension)
+}
+
+// A folder under another one: relative, with forward slashes, never out of it.
+@(private)
+folder_valid :: proc(folder:string) -> bool {
+    if folder=="" {return true}
+    if folder[0]=='/' || strings.contains_any(folder,"\\:") {return false}
+    rest:=folder
+    for part in strings.split_iterator(&rest,"/") {
+        if part=="" || part=="." || part==".." {return false}
+    }
+    return true
+}
+
+@(private="file")
+package_valid :: proc(p:^Package) -> bool {
+    if p.id=={} || p.settings!="" && !object_valid(p.settings) {return false}
+    for &a,at in p.assets {
+        if a.id=={} || a.id==p.id || !kind_valid(a.kind) || a.index<0 || a.index>int(max(i32)) || a.part && !import_cached(a.kind) {return false}
+        for &other in p.assets[:at] {
+            if other.id==a.id || other.kind==a.kind && other.index==a.index && other.name==a.name {return false}
+        }
+        for d in a.dependencies {
+            if d=={} {return false}
+        }
+    }
+    return true
+}
+
+@(private="file")
+build_valid :: proc(b:^Build) -> bool {
+    if b.package_id=={} {return false}
+    for o,at in b.outputs {
+        if o.id=={} || !kind_valid(o.kind) {return false}
+        for other in b.outputs[:at] {
+            if other.id==o.id {return false}
+        }
+    }
+    return true
+}
+
+@(private="file")
+packages_valid :: proc(list:^Packages) -> bool {
+    for &entry,at in list.packages {
+        if entry.id=={} || !folder_valid(entry.folder) {return false}
+        for &other in list.packages[:at] {
+            if other.id==entry.id {return false}
+        }
+        for id,i in entry.assets {
+            if id=={} {return false}
+            for other in entry.assets[:i] {
+                if other==id {return false}
+            }
+        }
+    }
+    return true
+}
+
+// Four bytes a person can read, not all spaces: what the text of a kind keeps.
+@(private="file")
+kind_valid :: proc(kind:Fourcc) -> bool {
+    if kind==fourcc("    ") {return false}
+    for i in 0..<4 {
+        c:=u8(u32(kind)>>uint(8*i))
+        if c<0x20 || c>0x7e {return false}
+    }
+    return true
+}
+
+// One JSON object and nothing after it.
+@(private="file")
+object_valid :: proc(text:string) -> bool {
+    r:serial.Text_Reader
+    serial.text_reader_init(&r,text,context.temp_allocator)
+    defer serial.text_reader_destroy(&r)
+    return serial.text_peek(&r)=='{' && serial.text_skip(&r) && serial.text_end(&r)
+}
+
+@(private="file")
+writer_text :: proc(w:^serial.Writer) -> (text:string,error:Error) {
+    if w.overflow>0 {
+        serial.writer_destroy(w)
+        return "",.Out_Of_Memory
+    }
+    return string(serial.writer_take(w)),.None
+}
+
+@(private="file")
+id_write :: proc(w:^serial.Writer,id:base.Asset_Id) {
+    serial.text_write_raw(w,"\"")
+    serial.text_write_asset_id(w,id)
+    serial.text_write_raw(w,"\"")
+}
+
+@(private="file")
+hash_write :: proc(w:^serial.Writer,hash:store.Hash) {
+    digits:[64]u8
+    serial.text_write_raw(w,"\"")
+    serial.text_write_raw(w,store.hex(hash,&digits))
+    serial.text_write_raw(w,"\"")
+}
+
+@(private="file")
+kind_write :: proc(w:^serial.Writer,kind:Fourcc) {
+    buffer:[4]u8
+    serial.text_write_string(w,strings.trim_right(fourcc_text(kind,&buffer)," "))
+}
+
+@(private="file")
+expect :: proc(r:^serial.Text_Reader,c:u8) -> Error {
+    return .None if serial.text_expect(r,c) else .Corrupt
+}
+
+// The name of a field and its colon: a view valid until the next string.
+@(private="file")
+key :: proc(r:^serial.Text_Reader) -> (name:string,error:Error) {
+    text,ok:=serial.text_string(r)
+    if !ok || !serial.text_expect(r,':') {return "",.Corrupt}
+    return text,.None
+}
+
+@(private="file")
+clone :: proc(text:string,allocator:runtime.Allocator) -> (cloned:string,error:Error) {
+    if text=="" {return "",.None}
+    copied,no_room:=strings.clone(text,allocator)
+    if no_room!=nil {return "",.Out_Of_Memory}
+    return copied,.None
+}
+
+@(private="file")
+string_read :: proc(r:^serial.Text_Reader,allocator:runtime.Allocator) -> (text:string,error:Error) {
+    value,ok:=serial.text_string(r)
+    if !ok {return "",.Corrupt}
+    return clone(value,allocator)
+}
+
+@(private="file")
+count_read :: proc(r:^serial.Text_Reader,most:u64) -> (value:u64,error:Error) {
+    negative,magnitude,ok:=serial.text_integer(r)
+    if !ok || negative || magnitude>most {return 0,.Corrupt}
+    return magnitude,.None
+}
+
+@(private="file")
+bool_read :: proc(r:^serial.Text_Reader) -> (value:bool,error:Error) {
+    if serial.text_keyword(r,"true") {return true,.None}
+    if serial.text_keyword(r,"false") {return false,.None}
+    return false,.Corrupt
+}
+
+@(private="file")
+id_read :: proc(r:^serial.Text_Reader) -> (id:base.Asset_Id,error:Error) {
+    text,ok:=serial.text_string(r)
+    if !ok {return {},.Corrupt}
+    parsed,valid:=base.asset_id_parse(text)
+    if !valid {return {},.Corrupt}
+    return parsed,.None
+}
+
+@(private="file")
+hash_read :: proc(r:^serial.Text_Reader) -> (hash:store.Hash,error:Error) {
+    text,ok:=serial.text_string(r)
+    if !ok {return {},.Corrupt}
+    parsed,valid:=store.parse_hex(text)
+    if !valid {return {},.Corrupt}
+    return parsed,.None
+}
+
+@(private="file")
+kind_read :: proc(r:^serial.Text_Reader) -> (kind:Fourcc,error:Error) {
+    text,ok:=serial.text_string(r)
+    if !ok || len(text)==0 || len(text)>4 {return 0,.Corrupt}
+    kind=fourcc(text)
+    if !kind_valid(kind) {return 0,.Corrupt}
+    return kind,.None
+}
+
+@(private="file")
+ids_read :: proc(r:^serial.Text_Reader,ids:^[dynamic]base.Asset_Id) -> Error {
+    expect(r,'[') or_return
+    for begun:=false;!serial.text_accept(r,']');begun=true {
+        if begun {expect(r,',') or_return}
+        id:=id_read(r) or_return
+        if _,no_room:=append(ids,id);no_room!=nil {return .Out_Of_Memory}
+    }
+    return .None
+}
+
+@(private="file")
+origin_read :: proc(r:^serial.Text_Reader,allocator:runtime.Allocator) -> (origin:Package_Origin,error:Error) {
+    Field :: enum {Path,Folder,Importer}
+    seen:bit_set[Field]
+    expect(r,'{') or_return
+    for first:=true;!serial.text_accept(r,'}');first=false {
+        if !first {expect(r,',') or_return}
+        name:=key(r) or_return
+        field:Field
+        switch name {
+        case "path": field=.Path
+        case "folder": field=.Folder
+        case "importer": field=.Importer
+        case: return {},.Corrupt
+        }
+        if field in seen {return {},.Corrupt}
+        seen+={field}
+        switch field {
+        case .Path: origin.path=string_read(r,allocator) or_return
+        case .Folder: origin.folder=bool_read(r) or_return
+        case .Importer: origin.importer=string_read(r,allocator) or_return
+        }
+    }
+    if seen!={.Path,.Folder,.Importer} {return {},.Corrupt}
+    return origin,.None
+}
+
+@(private="file")
+asset_read :: proc(r:^serial.Text_Reader,allocator:runtime.Allocator) -> (a:Package_Asset,error:Error) {
+    Field :: enum {Kind,Name,Index,Id,Part,Owner,Dependencies}
+    seen:bit_set[Field]
+    a.dependencies=make([dynamic]base.Asset_Id,allocator)
+    expect(r,'{') or_return
+    for first:=true;!serial.text_accept(r,'}');first=false {
+        if !first {expect(r,',') or_return}
+        name:=key(r) or_return
+        field:Field
+        switch name {
+        case "kind": field=.Kind
+        case "name": field=.Name
+        case "index": field=.Index
+        case "id": field=.Id
+        case "part": field=.Part
+        case "owner": field=.Owner
+        case "dependencies": field=.Dependencies
+        case: return {},.Corrupt
+        }
+        if field in seen {return {},.Corrupt}
+        seen+={field}
+        switch field {
+        case .Kind: a.kind=kind_read(r) or_return
+        case .Name: a.name=string_read(r,allocator) or_return
+        case .Index: a.index=int(count_read(r,u64(max(i32))) or_return)
+        case .Id: a.id=id_read(r) or_return
+        case .Part: a.part=bool_read(r) or_return
+        case .Owner:
+            a.owner=id_read(r) or_return
+            if a.owner=={} {return {},.Corrupt}
+        case .Dependencies:
+            ids_read(r,&a.dependencies) or_return
+            if len(a.dependencies)==0 {return {},.Corrupt}
+        }
+    }
+    if seen&{.Kind,.Name,.Index,.Id}!={.Kind,.Name,.Index,.Id} || .Part in seen && !a.part {return {},.Corrupt}
+    return a,.None
+}
+
+@(private="file")
+output_read :: proc(r:^serial.Text_Reader) -> (o:Build_Output,error:Error) {
+    Field :: enum {Id,Kind,Kind_Version,Blob,Thumbnail}
+    seen:bit_set[Field]
+    expect(r,'{') or_return
+    for first:=true;!serial.text_accept(r,'}');first=false {
+        if !first {expect(r,',') or_return}
+        name:=key(r) or_return
+        field:Field
+        switch name {
+        case "id": field=.Id
+        case "kind": field=.Kind
+        case "kind_version": field=.Kind_Version
+        case "blob": field=.Blob
+        case "thumbnail": field=.Thumbnail
+        case: return {},.Corrupt
+        }
+        if field in seen {return {},.Corrupt}
+        seen+={field}
+        switch field {
+        case .Id: o.id=id_read(r) or_return
+        case .Kind: o.kind=kind_read(r) or_return
+        case .Kind_Version: o.kind_version=u16(count_read(r,u64(max(u16))) or_return)
+        case .Blob: o.blob=hash_read(r) or_return
+        case .Thumbnail:
+            o.thumbnail=hash_read(r) or_return
+            if o.thumbnail=={} {return {},.Corrupt}
+        }
+    }
+    if seen&{.Id,.Kind,.Kind_Version,.Blob}!={.Id,.Kind,.Kind_Version,.Blob} {return {},.Corrupt}
+    return o,.None
+}
+
+@(private="file")
+entry_read :: proc(r:^serial.Text_Reader,allocator:runtime.Allocator) -> (entry:Project_Package,error:Error) {
+    Field :: enum {Id,Manifest,Folder,Assets}
+    seen:bit_set[Field]
+    entry.assets=make([dynamic]base.Asset_Id,allocator)
+    expect(r,'{') or_return
+    for first:=true;!serial.text_accept(r,'}');first=false {
+        if !first {expect(r,',') or_return}
+        name:=key(r) or_return
+        field:Field
+        switch name {
+        case "id": field=.Id
+        case "manifest": field=.Manifest
+        case "folder": field=.Folder
+        case "assets": field=.Assets
+        case: return {},.Corrupt
+        }
+        if field in seen {return {},.Corrupt}
+        seen+={field}
+        switch field {
+        case .Id: entry.id=id_read(r) or_return
+        case .Manifest: entry.manifest=hash_read(r) or_return
+        case .Folder: entry.folder=string_read(r,allocator) or_return
+        case .Assets: ids_read(r,&entry.assets) or_return
+        }
+    }
+    if seen!={.Id,.Manifest,.Folder,.Assets} {return {},.Corrupt}
+    return entry,.None
+}
+
+// The text of the record the store keeps under hash, in the temp allocator.
+@(private="file")
+record_get :: proc(s:^store.Store,hash:store.Hash) -> (text:string,error:Error) {
+    size,size_error:=store.blob_size(s,hash)
+    if size_error!=.None {return "",store_error(size_error)}
+    if size>RECORD_BYTES {return "",.Too_Large}
+    bytes,no_room:=make([]u8,int(size),context.temp_allocator)
+    if no_room!=nil {return "",.Out_Of_Memory}
+    if read_error:=store.read(s,hash,0,bytes);read_error!=.None {return "",store_error(read_error)}
+    return string(bytes),.None
+}
+
+@(private="file")
+store_error :: proc(error:store.Error) -> Error {
+    switch error {
+    case .None: return .None
+    case .Missing,.Not_Here_Yet: return .Not_Found
+    case .Corrupt,.Unsupported_Layout: return .Corrupt
+    case .Invalid_Argument: return .Invalid
+    case .Out_Of_Memory: return .Out_Of_Memory
+    case .Io: return .IO
+    }
+    return .IO
+}
+
+@(private="file")
+problem_add :: proc(resolved:^Packages_Resolved,problem:Package_Problem) -> Error {
+    if _,no_room:=append(&resolved.problems,problem);no_room!=nil {return .Out_Of_Memory}
+    return .None
+}
