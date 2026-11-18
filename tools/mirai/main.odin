@@ -210,8 +210,13 @@ build_sources_file :: proc(root,output:string) -> string {
 
 // Puts a built executable and the list of its sources in their place. One
 // that is running cannot be replaced on Windows but can be renamed: it
-// leaves under another name, removed by a later build.
+// leaves under another name, removed by a later build. A build that read a
+// package of the engine (tool_engine_read) is put in place with a warning,
+// not refused: the rule is the running tool's, which the new sources may change.
 executable_publish :: proc(root,staging,final,staged_sources,sources:string) -> bool {
+    if file:=tool_engine_read(root,staged_sources);file!="" {
+        fmt.eprintfln("mirai: the tool now reads %s, a package that reaches the shader tables it generates: a new checkout or a merge will not build it. What render and the cook share goes in render/abi, and the cook reads a component from an asset by the names of its fields.",file)
+    }
     if !os.is_file(staging) {
         fmt.eprintfln("mirai: the compiler succeeded and %s is missing.",staging)
         when ODIN_OS==.Windows {fmt.eprintfln("mirai: an antivirus may have quarantined it; exclude %s from real-time scanning.",join(root,"bin"))}
