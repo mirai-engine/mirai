@@ -566,7 +566,9 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
   of the main checkout ([dependencies](build.md#dependencies-and-worktrees)), and so is the private
   compressor in its `ext/` ([compressor](build.md#compressor)). Its engine shaders are generated
   by its own tool, which its launcher builds from its sources, and its test worlds by that tool
-  when it checks or tests: the tool of another checkout generates as its own sources say.
+  when it checks or tests: the tool of another checkout generates as its own sources say. A
+  worktree from `git worktree add` needs nothing more: its first `mirai` command builds the tool,
+  which needs no generated file.
 - `mirai doctor [project]` checks the machine and the project, says how to fix each finding and
   ends with 1 if there are errors. It requires `git config core.symlinks` and `.claude/skills` as a
   symbolic link to `.agents/skills`: without it, the skills do not reach the agents (on Windows

@@ -222,6 +222,51 @@ MATERIAL_DEFAULTS :: Material_Info{
     },
 }
 
+// The values of the standard model an entity gives by name, and where
+// Material_Info holds each: a number, a color, a flag or, with modes,
+// an enum of a byte with that many members.
+Material_Value_Field :: struct {
+    name:string,
+    offset:uintptr,
+    kind:enum u8 {Number,Color,Flag,Mode},
+    modes:u8,
+}
+MATERIAL_VALUE_FIELDS :: [22]Material_Value_Field{
+    {"base_color",offset_of(Material_Info,base_color),.Color,0},{"opacity",offset_of(Material_Info,opacity),.Number,0},
+    {"metallic",offset_of(Material_Info,metallic),.Number,0},{"roughness",offset_of(Material_Info,roughness),.Number,0},
+    {"emission",offset_of(Material_Info,emission),.Color,0},{"specular",offset_of(Material_Info,specular_factor),.Number,0},
+    {"ior",offset_of(Material_Info,ior),.Number,0},{"transmission",offset_of(Material_Info,transmission),.Number,0},
+    {"alpha_mode",offset_of(Material_Info,alpha_mode),.Mode,len(Alpha_Mode)},
+    {"coat",offset_of(Material_Info,coat)+offset_of(Material_Coat,weight),.Number,0},{"coat_roughness",offset_of(Material_Info,coat)+offset_of(Material_Coat,roughness),.Number,0},
+    {"coat_color",offset_of(Material_Info,coat)+offset_of(Material_Coat,color),.Color,0},{"coat_ior",offset_of(Material_Info,coat)+offset_of(Material_Coat,ior),.Number,0},
+    {"fuzz",offset_of(Material_Info,fuzz)+offset_of(Material_Fuzz,weight),.Number,0},{"fuzz_color",offset_of(Material_Info,fuzz)+offset_of(Material_Fuzz,color),.Color,0},
+    {"fuzz_roughness",offset_of(Material_Info,fuzz)+offset_of(Material_Fuzz,roughness),.Number,0},
+    {"anisotropy",offset_of(Material_Info,anisotropy)+offset_of(Material_Anisotropy,amount),.Number,0},
+    {"anisotropy_rotation",offset_of(Material_Info,anisotropy)+offset_of(Material_Anisotropy,rotation),.Number,0},
+    {"unlit",offset_of(Material_Info,unlit),.Flag,0},{"emission_mode",offset_of(Material_Info,emission_mode),.Mode,len(Emission_Mode)},
+    {"diffuse_transmission",offset_of(Material_Info,diffuse_transmission)+offset_of(Material_Diffuse_Transmission,weight),.Number,0},
+    {"diffuse_transmission_color",offset_of(Material_Info,diffuse_transmission)+offset_of(Material_Diffuse_Transmission,color),.Color,0},
+}
+
+// Puts a value of the standard model over the values of a material (put), or
+// reads it, by the name_hash of one of MATERIAL_VALUE_FIELDS. False for
+// another name.
+material_standard_value :: proc(info:^Material_Info,name:u64,value:^[4]f32,put:bool) -> bool {
+    fields:=MATERIAL_VALUE_FIELDS
+    for field in fields {
+        if base.name_hash(field.name)!=name {continue}
+        at:=rawptr(uintptr(info)+field.offset)
+        switch field.kind {
+        case .Number: if put {(^f32)(at)^=value.x} else {value^={(^f32)(at)^,0,0,0}}
+        case .Color:  if put {(^[3]f32)(at)^=value.xyz} else {value.xyz,value.w=(^[3]f32)(at)^,0}
+        case .Flag:   if put {(^bool)(at)^=value.x>0.5} else {value^={f32(u8((^bool)(at)^)),0,0,0}}
+        case .Mode:   if put {(^u8)(at)^=u8(clamp(int(value.x+0.5),0,int(field.modes)-1))} else {value^={f32((^u8)(at)^),0,0,0}}
+        }
+        return true
+    }
+    return false
+}
+
 Material_Desc :: struct {
     id:base.Asset_Id,
     owner:base.Asset_Id, // the asset it is a part of: the prefab of the import that made it
