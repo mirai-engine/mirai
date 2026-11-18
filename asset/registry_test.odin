@@ -560,8 +560,8 @@ registry_mounts_a_guest_folder_that_never_takes_an_id_the_registry_has :: proc(t
 }
 
 // What the packages a project and a plugin pin list of the cache is listed
-// from the store through root_packages of each root, with no source, sidecar
-// or imported folder anywhere: a built output is its blob and loads, one whose
+// from the store through root_packages of each root, with no source
+// anywhere: a built output is its blob and loads, one whose
 // build is not here is listed Not_Built and named as a problem, a path a file of the folder has takes the id of the output after
 // its name, a refresh keeps every listed output and memory never holds one.
 @(test)

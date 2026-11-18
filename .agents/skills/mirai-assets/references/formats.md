@@ -230,7 +230,7 @@ scan opens every file and writes it again.
   (the machine's unless it names another); a root without the list opens no store, and what it
   cannot list is a problem that names the package, reported where that program reports asset
   problems, never a failure to start. A scan lists each like any asset (`Registry_File.listed`),
-  with no source, sidecar or imported folder anywhere; the registry reads no sidecar. An entry whose
+  with no source anywhere. An entry whose
   build is not on this machine, or whose blob is gone, stays listed as `Not_Built` (its id and
   kind, no file, not found by id), never removed and never an error of the scan; a blob that is
   not the asset its entry names is `Broken`. A path a file, a folder or another entry has takes

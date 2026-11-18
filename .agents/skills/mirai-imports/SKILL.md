@@ -112,12 +112,11 @@ the assets.
 - **An import never touches another.** Two models that embed the same image get a texture each,
   encoded once in the content cache; no import edits the documents or the package of another
   source. Decided by the owner.
-- **Every output is an immutable blob of the store, the same on every machine.** Nothing under
-  `.mirai/imported/` and no sidecar: the build lists the blobs, documents among them as their
-  baseline. No blob is rewritten in place (a changed owner is a new blob), and the source an asset
-  names is relative to its package. Materials, prefabs, skeletons, clips, texts and prompts, which
-  the editor edits, are also documents of a project, followed from the baseline. Decided by the
-  owner.
+- **Every output is an immutable blob of the store, the same on every machine.** The build lists
+  the blobs, documents among them as their baseline. No blob is rewritten in place (a changed
+  owner is a new blob), and the source an asset names is relative to its package. Materials,
+  prefabs, skeletons, clips, texts and prompts, which the editor edits, are also documents of a
+  project, followed from the baseline. Decided by the owner.
 - **The identity holds no engine version; the key holds the identity and the versions.** The
   identity (package, source, inputs, settings, plugin code: two packages of the same bytes never
   share a build, since its blobs hold their ids) is in the manifest; the key
@@ -213,7 +212,9 @@ the assets.
   encoders or another builder is built again);
   `cook/build/cook_cache_test.odin` (a cook takes the blocks of a texture from the cache of its
   content) and `cook/import/sources/cook_test.odin` (the refresh of a cook builds a fast texture
-  final from its source; that of a build that does not cook keeps either).
+  final from its source; that of a build that does not cook keeps either; a peer with only
+  fetched builds cooks what the sources cook, sources inside a root stay behind and a missing
+  build fails by package; a refresh takes builds from a second store).
 - Parallel: import a map with `mirai import --rebuild` over a copy of an import made without the
   job system (or before the change) and compare the trees with `diff -r`: the same bytes.
 - Also test `cook/prefab` if the imported hierarchy changes, and `asset` if an asset format or its

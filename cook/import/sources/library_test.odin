@@ -8,13 +8,13 @@ import "core:sync"
 import "core:testing"
 import "core:thread"
 import "mirai:asset"
+import "mirai:cook/cache"
 import "mirai:cook/prefab"
 import importer "mirai:cook/import"
 import "mirai:std/base"
 import "mirai:store"
 
 // The files under folder, by their paths under it, in the temp allocator.
-@(private="file")
 files_of :: proc(folder:string) -> map[string]bool {
     files:=make(map[string]bool,context.temp_allocator)
     todo:=make([dynamic]string,context.temp_allocator)
@@ -30,7 +30,6 @@ files_of :: proc(folder:string) -> map[string]bool {
 }
 
 // Copies the files under from to the same paths under to.
-@(private="file")
 folder_copy :: proc(from,to:string) {
     for file in files_of(from) {
         target:=fmt.tprintf("%s%s",to,file)
@@ -132,7 +131,7 @@ a_peer_without_sources_lists_and_loads_and_nothing_is_removed_or_built :: proc(t
 
     // With a store that has them, the builds are fetched: listed where the project lists them, loaded.
     fetching:=alone
-    fetching.source=copy_source(here)
+    fetching.source=cache.store_source(here)
     fetched:=project_refresh(peer,fetching,context.temp_allocator)
     testing.expectf(t,fetched.fetched==2 && fetched.ingested==0,"%v",fetched)
     if !report_clean(t,fetched) {return}

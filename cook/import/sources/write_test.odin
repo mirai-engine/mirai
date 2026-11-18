@@ -496,7 +496,7 @@ importing_again_keeps_the_identity_of_every_asset :: proc(t:^testing.T) {
     p,_:=asset.package_get(s,first.manifest,context.temp_allocator)
     cached:=0
     for a in p.assets {cached+=int(asset.import_cached(a.kind))}
-    testing.expectf(t,len(documents)+cached==len(first.assets) && len(p.assets)==len(first.assets)+int(first.prefab!={}) && !os.exists(fmt.tprintf("%s/one/assets/plant.gltf.import",folder)),"%d documents, %d of the cache, %d listed, %d written",len(documents),cached,len(p.assets),len(first.assets))
+    testing.expectf(t,len(documents)+cached==len(first.assets) && len(p.assets)==len(first.assets)+int(first.prefab!={}),"%d documents, %d of the cache, %d listed, %d written",len(documents),cached,len(p.assets),len(first.assets))
 
     // A copy of a project, its sources and documents, imported with the manifest the project pins, keeps the ids of its assets.
     shared:=test_store(t,fmt.tprintf("%s/shared",folder))

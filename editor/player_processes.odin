@@ -109,6 +109,7 @@ player_process_command :: proc(s:^Session,player:string,args:[]string,k:int,disp
     tiles:=p.first+p.count
     command:=make([dynamic]string,context.temp_allocator)
     append(&command,player,"--attached")
+    if s.store.root!="" {append(&command,"--store",s.store.root)}
     append(&command,..args)
     if p.embedded {
         pixels:=player_pixels(s,player_tile(player_region(s),tiles,p.first+k))

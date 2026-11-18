@@ -10,7 +10,6 @@ import "core:strings"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
-import "mirai:cook/cache"
 import importer "mirai:cook/import"
 import "mirai:cook/import/gltf"
 import "mirai:cook/import/obj"
@@ -163,33 +162,6 @@ cached_refs :: proc(s:^store.Store,name:string) -> []store.Ref {
 cached_key :: proc(ref:store.Ref) -> u64 {
     key,_:=strconv.parse_u64_of_base(ref.name[:min(16,len(ref.name))],16)
     return key
-}
-
-// A source that copies what the store at user keeps, as a peer would give
-// it: the blob of the ref and, for a build, every blob it lists.
-copy_source :: proc(from:^store.Store) -> cache.Source {
-    fetch :: proc(user:rawptr,into:^store.Store,namespace,name:string) -> bool {
-        from:=(^store.Store)(user)
-        hash,error:=store.ref_get(from,namespace,name)
-        if error!=.None || !blob_copy(from,into,hash) {return false}
-        if namespace==asset.REF_IMPORTS {
-            b,build_error:=asset.build_get(from,hash,context.temp_allocator)
-            if build_error!=.None {return false}
-            for o in b.outputs {
-                if !blob_copy(from,into,o.blob) {return false}
-            }
-        }
-        return store.ref_set(into,namespace,name,hash)==.None
-    }
-    return {fetch=fetch,user=from}
-}
-
-// Copies the blob hash of from into into.
-blob_copy :: proc(from,into:^store.Store,hash:store.Hash) -> bool {
-    path,path_error:=store.blob_path(from,hash,context.temp_allocator)
-    if path_error!=.None {return false}
-    put,put_error:=store.put_file(into,path)
-    return put_error==.None && put==hash
 }
 
 // A folder of a test as the root of a project, with its assets folder, where
