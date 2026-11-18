@@ -137,12 +137,21 @@ split_plugin_write :: proc(t:^testing.T,folder:string) -> (engine,game:string) {
         {"engine/plugins/thing/runtime/testdata/ignored.odin","package ignored\n"},
         {"game/project.mirai",`{"name": "Split", "plugins": ["thing"]}`},
     }
-    for file in files {
+    return fixture_write(t,folder,files)
+}
+
+// Writes the files of the engine and the project of a test under folder, with
+// what every engine has and the build names: the collection of the compressor.
+@(private)
+fixture_write :: proc(t:^testing.T,folder:string,files:[][2]string) -> (engine,game:string) {
+    write :: proc(t:^testing.T,folder:string,file:[2]string) {
         path:=project.path(folder,file[0],allocator=context.temp_allocator)
         directory:=path[:strings.last_index_byte(path,'/')]
         testing.expect(t,os.make_directory_all(directory)==nil || os.is_dir(directory))
         testing.expect(t,os.write_entire_file(path,file[1])==nil,path)
     }
+    write(t,folder,{"engine/std/compressor/compressor.odin","package compressor\n"})
+    for file in files {write(t,folder,file)}
     return project.path(folder,"engine",allocator=context.temp_allocator),project.path(folder,"game",allocator=context.temp_allocator)
 }
 
@@ -286,15 +295,7 @@ a_plugin_that_imports_a_plugin_it_does_not_depend_on_is_an_error :: proc(t:^test
     context.allocator=context.temp_allocator
     folder:=base.test_folder(t,"plugin-imports")
     if folder=="" {return}
-    write :: proc(t:^testing.T,folder:string,files:[][2]string) {
-        for file in files {
-            path:=project.path(folder,file[0],allocator=context.temp_allocator)
-            directory:=path[:strings.last_index_byte(path,'/')]
-            testing.expect(t,os.make_directory_all(directory)==nil || os.is_dir(directory))
-            testing.expect(t,os.write_entire_file(path,file[1])==nil,path)
-        }
-    }
-    write(t,folder,{
+    engine,game:=fixture_write(t,folder,{
         {"engine/core/data.odin","package core\n"},
         {"engine/plugins/base_thing/plugin.mirai",`{"name": "base_thing", "version": "1.0.0", "parts": ["Runtime"]}`},
         {"engine/plugins/base_thing/runtime/base.odin","package base_thing\n\nanswer :: proc() -> i32 {return 21}\n"},
@@ -304,14 +305,13 @@ a_plugin_that_imports_a_plugin_it_does_not_depend_on_is_an_error :: proc(t:^test
         {"engine/plugins/user/runtime/user.odin","package user\n\nimport base_thing \"plugins:base_thing/runtime\"\n\nthrice :: proc() -> i32 {return 3*base_thing.answer()}\n"},
         {"game/project.mirai",`{"name": "Imports", "plugins": ["middle", "user"]}`},
     })
-    engine,game:=project.path(folder,"engine"),project.path(folder,"game")
     p,error:=project.open(game,engine)
     if !testing.expectf(t,error.code==.None,"the project opens: %v",error) {return}
     world:=world_generate(&p,context.temp_allocator)
     if !testing.expect_value(t,len(world.errors),1) {return}
     testing.expectf(t,strings.contains(world.errors[0],"user.odin") && strings.contains(world.errors[0],`add "base_thing" to the dependencies`),"%s",world.errors[0])
     // Through a dependency of a dependency is a dependency too.
-    write(t,folder,{{"engine/plugins/user/plugin.mirai",`{"name": "user", "version": "1.0.0", "dependencies": ["middle"], "parts": ["Runtime"]}`}})
+    fixture_write(t,folder,{{"engine/plugins/user/plugin.mirai",`{"name": "user", "version": "1.0.0", "dependencies": ["middle"], "parts": ["Runtime"]}`}})
     project.close(&p)
     p,error=project.open(game,engine)
     if !testing.expect(t,error.code==.None) {return}
@@ -339,12 +339,7 @@ a_plugin_step_receives_a_params_struct_through_its_library :: proc(t:^testing.T)
         {"engine/plugins/thing/runtime/thing.odin","package thing\n\nimport \"mirai:core\"\n\n@(step=\"fixed\")\nthing_probe :: proc(prober:core.Prober) {\n    prober.probes.values[1].value=40\n    prober.asks.count+=2\n}\n"},
         {"game/project.mirai",`{"name": "Params", "plugins": ["thing"]}`},
     }
-    for file in files {
-        path:=project.path(folder,file[0])
-        testing.expect(t,os.make_directory_all(path[:strings.last_index_byte(path,'/')])==nil || os.is_dir(path[:strings.last_index_byte(path,'/')]))
-        testing.expect(t,os.write_entire_file(path,file[1])==nil,path)
-    }
-    engine,game:=project.path(folder,"engine"),project.path(folder,"game")
+    engine,game:=fixture_write(t,folder,files)
     p,error:=project.open(game,engine)
     if !testing.expectf(t,error.code==.None,"the project opens: %v",error) {return}
     world:=world_generate(&p,context.temp_allocator)
@@ -460,12 +455,7 @@ a_plugin_library_compiles_once_those_it_links_against_are_published :: proc(t:^t
         {"engine/plugins/lone/runtime/lone.odin","package lone\n\nalone :: proc() -> i32 {return 1}\n"},
         {"game/project.mirai",`{"name": "Order", "plugins": ["middle", "lone"]}`},
     }
-    for file in files {
-        path:=project.path(folder,file[0])
-        testing.expect(t,os.make_directory_all(path[:strings.last_index_byte(path,'/')])==nil)
-        testing.expect(t,os.write_entire_file(path,file[1])==nil,path)
-    }
-    engine,game:=project.path(folder,"engine"),project.path(folder,"game")
+    engine,game:=fixture_write(t,folder,files)
     p,error:=project.open(game,engine)
     if !testing.expectf(t,error.code==.None,"the project opens: %v",error) {return}
     testing.expect(t,os.make_directory_all(engine_paths(engine,.Dev).decl)==nil)

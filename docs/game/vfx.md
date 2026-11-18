@@ -23,9 +23,8 @@ sends requests. Imports: `plugins:vfx/runtime` as `vfx`,
 ## One-shot effect
 
 The prefab is one entity with `Particle_Emitter{particle=id, active=true, destroy_when_done=true}`
-and `loop` off; it deletes itself once its particles are dead. Spawn it as in
-[spawn and forget](core/prefabs.md#spawn-and-forget), with `transient=true`, which keeps it out of
-saves.
+and `loop` off; it deletes itself once its particles are dead. Spawn it as in [spawn and
+forget](core/prefabs.md#spawn-and-forget), with `transient=true`, which keeps it out of saves.
 
 ## Control an emitter
 
@@ -74,8 +73,7 @@ first with `trigger` `Trail`, `sub_count` 1; a program may set `particle.ribbon`
 
 - Nothing draws unless `"vfx"` is in `plugins` of `project.mirai`.
 - A request for an entity without `Particle_Emitter` only reports `vfx.request` in
-  `engine.diagnostics`. An emitter that finds no room in the particle pool reports
-  `vfx.capacity`.
+  `engine.diagnostics`. An emitter that finds no room in the particle pool reports `vfx.capacity`.
 - `destroy_when_done` never fires with `loop` on, unless the emitter is stopped.
 - Particles that hold NaN or Inf report `vfx.nan` while `particle.instance.inspect` looks at
   their emitter, naming the fields of its program that hold them.
