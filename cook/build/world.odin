@@ -3371,10 +3371,10 @@ asset_paths_check :: proc(g:^Generator,p:^project.Project) {
     assets:=project.folder_path(p.root,.Assets,context.temp_allocator)
     if !os.is_dir(assets) {return}
     registry:asset.Registry
-    asset.registry_init(&registry,assets,"",context.temp_allocator,project.imported_path(p.root,context.temp_allocator))
+    asset.registry_init(&registry,assets,"",context.temp_allocator)
     defer asset.registry_destroy(&registry)
     for folder in project.asset_folders(p,context.temp_allocator) {
-        if folder.prefix!="" {asset.registry_mount(&registry,folder.path,folder.prefix,folder.imported)}
+        if folder.prefix!="" {asset.registry_mount(&registry,folder.path,folder.prefix)}
     }
     if asset.registry_scan(&registry)!=.None {return}
     extensions:=make(map[string]bool,context.temp_allocator)

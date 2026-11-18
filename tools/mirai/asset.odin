@@ -251,7 +251,7 @@ asset_ls :: proc(_:string,args:[]string) -> int {
     }
     if folder=="" {return misuse("ls")}
     r:asset.Registry
-    asset.registry_init(&r,folder,cache,imported=imported_beside(folder))
+    asset.registry_init(&r,folder,cache)
     if error:=asset.registry_scan(&r);error!=.None {return failed("ls",folder,error_text(error))}
     w:serial.Writer;serial.writer_init(&w)
     problems:=0
@@ -304,7 +304,7 @@ asset_deps :: proc(_:string,args:[]string) -> int {
         return 0
     }
     r:asset.Registry
-    asset.registry_init(&r,folder,imported=imported_beside(folder))
+    asset.registry_init(&r,folder)
     if error:=asset.registry_scan(&r);error!=.None {return failed("deps",folder,error_text(error))}
     id:=a.blob.header.id
     missing:=0

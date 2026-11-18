@@ -164,7 +164,7 @@ the_models_of_an_import_share_their_parts_by_name :: proc(t:^testing.T) {
 
     // The registry lists the cache where the names say.
     r:asset.Registry
-    asset.registry_init(&r,assets,allocator=context.temp_allocator,imported=fmt.tprintf("%s/.mirai/imported",root))
+    asset.registry_init(&r,assets,allocator=context.temp_allocator)
     testing.expect_value(t,asset.registry_scan(&r),asset.Error.None)
     listed:=make(map[string]base.Asset_Id,context.temp_allocator)
     for file in r.files {listed[file.path]=file.id}

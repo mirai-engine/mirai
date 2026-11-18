@@ -205,7 +205,7 @@ the asset: the [sidecar](#identity-and-reimport) is.
 A source lives in the assets folder of a project or a plugin, beside what it makes, in the folder
 of its theme (never a folder per asset type: the browser filters by type). `<source>.import`, the
 sidecar, is what is versioned of an import with its source (`asset/sidecar.odin`, read by the
-registry and by the importer alike): a text with the settings, the `folder` beside the source its
+importer): a text with the settings, the `folder` beside the source its
 assets go to (a model's: its stem, or what `Format.folder` says; an image's, a sound's: none, they
 go beside it), the files the import read besides the source (`inputs`) and one output per asset
 the source gives, by kind, name and index, with its id. Nothing else decides an id: the first
@@ -220,10 +220,10 @@ source, the engine's or a plugin's:
 - **The cache**: meshes, textures, sounds and fonts. Nothing edits them after the import, so the
   source and the sidecar give them back whole. Each is a file of the imported folder of the root
   (`project.imported_path`: `.mirai/imported/`), named by its id and by the key of what it was
-  built from (`import_key`), never versioned. Nothing stores where it is listed: the
-  [registry](../../mirai-assets/references/formats.md#registry) lists it at
-  `<folder of the sidecar>/<folder>/<name><extension>`. [Sync](#sync) builds it again where it is
-  missing.
+  built from (`import_key`), never versioned. The
+  [registry](../../mirai-assets/references/formats.md#registry) lists the cache only from the
+  entries of the packages a root pins, never from sidecars. [Sync](#sync) builds it again where it
+  is missing.
 - **Documents**: materials, prefabs, skeletons, clips, texts and prompts. The editor edits them,
   so they are files of the assets folder, versioned. An import finds each by its id in the
   registry of the root, wherever a person moved it, writes again what the source gives and keeps
@@ -241,10 +241,8 @@ source, the engine's or a plugin's:
   a warning: its file goes with it when it is of the cache, and stays as a plain asset when it is
   a document.
 - **A source moved or renamed** keeps its import as long as its sidecar goes with it, and takes
-  what it has in the cache with it without an import: the registry lists those assets where the
-  sidecar is at its next scan, which a refresh of a sidecar or of its source triggers (the editor
-  moves a source with its sidecar, and a folder with its sources). A source that is deleted takes
-  them out of the listing at once. A copy of the source without its sidecar is another import,
+  what it has in the cache with it without an import (the editor moves a source with its
+  sidecar, and a folder with its sources). A copy of the source without its sidecar is another import,
   with ids of its own.
 - **An import never touches another.** Two models that embed the same image get a texture asset
   each; the [texture cache](#texture-cache) keeps one encoded copy. No import writes a file or a

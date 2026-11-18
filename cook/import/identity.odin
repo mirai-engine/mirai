@@ -62,7 +62,7 @@ writer_source :: proc(w:^Writer,path,folder:string) -> bool {
     w.registry=w.options.registry
     if w.registry==nil {
         w.registry=new(asset.Registry,context.temp_allocator)
-        asset.registry_init(w.registry,project.folder_path(w.options.root,.Assets,context.temp_allocator),"",context.temp_allocator,w.imported)
+        asset.registry_init(w.registry,project.folder_path(w.options.root,.Assets,context.temp_allocator),"",context.temp_allocator)
         asset.registry_scan(w.registry)
     }
     return true
@@ -126,7 +126,7 @@ parts_plan :: proc(w:^Writer,parts:[]Part) {
             p.part=p.decided && w.sidecar.outputs[entry].part
             p.path=imported_file(w,p.id,p.extension)
         case:
-            if file,found:=asset.registry_find(w.registry,p.id);found && file.kind==p.kind && file.imported==0 {
+            if file,found:=asset.registry_find(w.registry,p.id);found && file.kind==p.kind && !file.listed {
                 p.path=asset.registry_file_path(w.registry,file.path,context.temp_allocator)
                 p.decided,p.part=true,file.owner!={}
             } else {

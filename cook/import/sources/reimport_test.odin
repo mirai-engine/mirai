@@ -423,12 +423,12 @@ a_checkout_without_its_imported_folder_gets_the_same_assets_from_its_sources :: 
     Listed :: struct {id:base.Asset_Id,path:string}
     listing :: proc(t:^testing.T,root:string) -> (listed:[dynamic]Listed,missing:int) {
         r:asset.Registry
-        asset.registry_init(&r,fmt.tprintf("%s/assets",root),imported=fmt.tprintf("%s/.mirai/imported",root))
+        asset.registry_init(&r,fmt.tprintf("%s/assets",root))
         defer asset.registry_destroy(&r)
         testing.expect_value(t,asset.registry_scan(&r),asset.Error.None)
         listed=make([dynamic]Listed,context.temp_allocator)
         for file in r.files {
-            if file.imported!=0 {append(&listed,Listed{file.id,strings.clone(file.path,context.temp_allocator)})}
+            if file.listed {append(&listed,Listed{file.id,strings.clone(file.path,context.temp_allocator)})}
         }
         lost:=make([dynamic]asset.Registry_Missing,context.temp_allocator)
         asset.registry_missing(&r,&lost)
