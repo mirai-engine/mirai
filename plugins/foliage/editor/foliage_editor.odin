@@ -45,7 +45,7 @@ Foliage_Tool :: struct {
     type:u32,              // the id of the type the panel shows
     painted:[dynamic]u32,  // the ids of the types selected in the list, which the brush paints and erases
     anchor:u32,            // the type a Shift click selects from
-    reveal:u32,            // the type the list brings into sight on the next frame
+    reveal:Maybe(u32),     // the type the list brings into sight on the next frame
     search:[64]u8,
     search_length:int,
     counts:Counts,
@@ -482,8 +482,8 @@ types_list :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,ass
     if len(source.types)>0 {
         search:=string(tool.search[:tool.search_length])
         // The type an instance of the scene shows stays in sight.
-        if tool.reveal!=0 {
-            if t,_:=foliage.source_type(source,tool.reveal);t!=nil && !type_matches(type_name(t),search) {tool.search_length=0}
+        if reveal,revealing:=tool.reveal.?;revealing {
+            if t,_:=foliage.source_type(source,reveal);t!=nil && !type_matches(type_name(t),search) {tool.search_length=0}
         }
         if editor.search_field(s,ui.id(ctx,"search"),tool.search[:],&tool.search_length,"Search types") {tool.scroll=0}
     }
@@ -501,7 +501,7 @@ types_list :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,ass
                     shown_asset,kind:=t.mesh,asset.KIND_MESH
                     if shown_asset=={} {shown_asset,kind=t.prefab,asset.KIND_SCENE}
                     card:=ui.id(ctx,"type",int(id)+1)
-                    if tool.reveal==id {ctx.reveal_next,tool.reveal=card,0}
+                    if reveal,revealing:=tool.reveal.?;revealing && reveal==id {ctx.reveal_next,tool.reveal=card,nil}
                     it:=editor.asset_card_begin(s,card,shown_asset,kind,type_name(t),slice.contains(tool.painted[:],id),cell)
                     if it.clicked {types_click(tool,shown[:],id,toggle,extend)}
                     if it.right {
