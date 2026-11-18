@@ -1,4 +1,6 @@
 //! mirai surface Water_Surface
+// The water plugin draws it in the glass of water it makes for a surface without a material.
+//! use blend
 //! parameter tint {"default":[1,1,1],"min":0,"max":1,"color":true}
 //! parameter roughness {"default":0.02,"min":0,"max":1}
 //! parameter detail {"default":1,"min":0,"max":4}

@@ -117,13 +117,21 @@ and `tools/mirai`. The main checkout of a worktree is `project.shared_root(root)
   most `workspace.GPU_TURNS`) for as long as the device lives, so that what runs at once fits the
   card. A turn is given, under `gpu.lock`, while the charges of those that hold one and its own
   fit the card minus a part left to the desktop and to what holds no turn (`gpu_admits`); the
-  first one always. The memory of the card is what the last device opened said (the editor and
-  `mirai doctor --probe-gpu` keep it in the cache, `gpu/memory`), assumed before; an editor is
-  charged the peak the last session of its project held (the editor keeps it in `gpu/peaks/`,
-  which a copy of the project shares: one above the kept peak is written at once and the end
-  writes its own), a default before; a test run or the probe, without a project, a fixed charge.
+  first one always. The card is what the devices opened said of their adapter (the editor and
+  `mirai doctor --probe-gpu` keep it in the cache, `gpu/card`), assumed before; whatever device
+  says it last, a card of its own memory outranks one that shares the system's, and of two of a
+  kind the smaller is kept: what is not kept is refused with why, in the log of who said it. An
+  editor is charged the peak the last session of its project held (the editor keeps it in
+  `gpu/peaks/`, which a copy of the project shares: one above the kept peak is written at once and
+  the end writes its own, which lowers it only if the driver never pressed the session against
+  its budget), a charge larger than any card before; a test run or the probe, without a project,
+  a fixed charge. While it runs an editor raises the charge of its turn to the most it held, and
+  never lowers it; `mirai locks` says when what the holders held passes the card beside its part.
   The owner of a turn ends with its charge; the one waiting names the holders and since when,
   like `mirai locks`.
+  - A session opens on the adapter `session start` prints; one that opens on another adapter than
+    the card the turns account for, and that `MIRAI_GPU` does not name, is closed with why: its
+    frames and measures would mean nothing. A person's own editor opens on whatever there is.
   - Every program of the engine a command starts takes it: `session start|restart` (also the one
     `rpc`, `capture`, `record` and `play test` open), `edit`, `play` (but `--no-gpu`), the editors
     of `render check` and `bench compare`, `mirai test` of a package whose tests run reach the

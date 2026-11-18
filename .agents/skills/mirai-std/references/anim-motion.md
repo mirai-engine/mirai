@@ -83,6 +83,8 @@ temporal state. The world integration and the authoring are in
     and target turn on different axes or cross 180°.
   - Without a previous target, the target is still; with an almost-zero `dt` the velocities are
     zero, and with zero duration the target is taken.
+  - `durations`, when given, is the time of each bone; the state lasts the longest, curves take
+    `duration`, and a negative one keeps the time the interrupted transition had left.
 - Each channel of a bone (position, the logarithm of the short arc of the rotation, scale) keeps the
   direction of its offset; only its length closes. The capture keeps of the residual velocity its
   part along the offset, drops it when it heads away from the target, and ends a fast approach
@@ -153,7 +155,8 @@ rig; `fraction` is the part of the remaining time that this step consumes.
   `match_search_leaves_out_rows_near_the_playing_one_across_a_loop_seam_and_those_just_left`,
   `match_trajectory_follows_a_walk_that_accelerates_brakes_and_turns_at_its_rates`,
   `inertial_offsets_never_overshoot_and_drop_a_velocity_that_heads_away_from_the_target`,
-  and `transitions_that_interrupt_each_other_give_up_the_time_the_one_before_left_undone`.
+  `transitions_that_interrupt_each_other_give_up_the_time_the_one_before_left_undone` and
+  `each_bone_closes_over_its_own_time_or_the_time_left_of_the_one_it_interrupts`.
 - The hostile cases accept `ANIM_INERTIAL_HOSTILE_ROUNDS` and `ANIM_WARP_HOSTILE_ROUNDS`; when
   changing validations or state, repeat them with `--release` and 20000 rounds.
 - Pose and stride warp are run with null allocators: e.g.

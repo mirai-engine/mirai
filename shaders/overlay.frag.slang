@@ -1,5 +1,5 @@
 #include "native.slang"
-//! per surface program
+//! per surface program overlay
 //! variant hw MIRAI_HW_RT=1
 #include "raster.slang"
 #include "lighting.slang"

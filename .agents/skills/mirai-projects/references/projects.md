@@ -71,7 +71,9 @@ keeps its default; one the struct does not have is an error.
   shows it ([asset types](../../mirai-editor/references/extensions.md#asset-types-of-a-plugin)). A
   build writes from it `kinds_gen.odin` into the package `folder` names (`runtime` without it),
   with `<STEM>_KIND`, `<STEM>_EXTENSION` and `<STEM>_VERSION` for each `.stem`; git keeps the
-  file, so the plugin tests without a build.
+  file, so the plugin tests without a build. `program_uses` says what its assets draw the
+  programs of the materials they depend on as, directly or through their meshes
+  ([program uses](../../mirai-rendering/references/shaders.md#programs-and-stages)).
 - `import_sources`: the extensions of the files the importers of a plugin read (`.umap`): a
   repository with LFS keeps them in it as it keeps the sources of the engine's formats
   ([git and assets](../../mirai-assets/references/cli.md#git)).

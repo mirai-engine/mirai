@@ -376,6 +376,8 @@ Scene_State :: struct {
 	reflective:           [dynamic]Reflective_Instance,
 	materials:            [dynamic]Gpu_Material_Row, // the material table; row 0 is the default
 	program_rows:         [POINTS_PROGRAM_CAPACITY]u32, // rows of the table of each Surface program, by id
+	program_opaque_rows:  [POINTS_PROGRAM_CAPACITY]u32, // of them, those not blended: the visibility target may hold the program
+	program_shown_opaque: [POINTS_PROGRAM_CAPACITY]bool, // programs of blended rows an instance shows otherwise by its values
 	programs_used:        u32, // ids with rows there
 	programs_arrived:     bool, // a program got its first row: the next frame asks for its pipelines (programs_ask)
 	programmed_rows:      u32, // rows with a Surface program
@@ -738,6 +740,9 @@ program_rows_count :: proc(s: ^Scene_State, row: Gpu_Material_Row, added: bool) 
 	if added {s.programmed_rows += 1} else {s.programmed_rows -= 1}
 	if program >= POINTS_PROGRAM_CAPACITY {return}
 	if added {s.program_rows[program] += 1} else {s.program_rows[program] -= 1}
+	if row.alpha_mode != u32(asset.Alpha_Mode.Blend) {
+		if added {s.program_opaque_rows[program] += 1} else {s.program_opaque_rows[program] -= 1}
+	}
 	if s.program_rows[program] == (1 if added else 0) {
 		if added {s.programs_used += 1} else {s.programs_used -= 1}
 		s.programs_arrived ||= added
@@ -894,10 +899,19 @@ materials_texture_gone :: proc(r: ^Renderer, entry: u32) {
 instances_classify :: proc(s: ^Scene_State) {
 	clear(&s.translucent)
 	clear(&s.reflective)
+	s.program_shown_opaque = {}
 	for &inst, i in s.instances {
 		if int(inst.meta.x & INSTANCE_MESH_MASK) >= len(s.meshes) {continue}
 		mesh := s.meshes[inst.meta.x & INSTANCE_MESH_MASK]
 		a := instance_alpha(s, mesh, inst.meta.y, inst.slot_materials, inst.material_values)
+		if a.shown_opaque != 0 {
+			palette := inst.slot_materials
+			for packed, k in s.indices[mesh.slot_word:][:mesh.slot_count] {
+				row := instance_row(packed, inst.meta.y, &palette)
+				if a.shown_opaque & (1 << u32(k)) == 0 || int(row) >= len(s.materials) {continue}
+				if program := s.materials[row].program_id; program < POINTS_PROGRAM_CAPACITY {s.program_shown_opaque[program] = true}
+			}
+		}
 		flags := (inst.meta.w &~ (INSTANCE_FLAG_ALPHA_TESTED | INSTANCE_FLAG_BLENDED | INSTANCE_FLAG_TRANSLUCENT)) | alpha_flags(a)
 		if a.reflectance && flags & INSTANCE_FLAG_HIDDEN == 0 {append(&s.reflective, Reflective_Instance{u32(i), a.layered})}
 		mask_flags := tlas_mask_flags(ray_class(inst.meta.x, flags), a.tested, mesh.tested)
@@ -945,10 +959,11 @@ tlas_refs_classify :: proc(s: ^Scene_State) {
 // reflects other than the default dielectric, which the albedo and metallic
 // of the G-buffer give by themselves; layered: one of its opaque materials
 // has layers; solid: one of its blended ones has a thickness; glass_layered:
-// one of its blended ones has layers.
+// one of its blended ones has layers. shown_opaque: a bit for each slot
+// whose row is a blended one with a program that its values show otherwise.
 @(private)
 Instance_Alpha :: struct {
-	tested: u32,
+	tested, shown_opaque: u32,
 	blended, glass, reflectance, layered, solid, glass_layered: bool,
 }
 
@@ -967,6 +982,7 @@ instance_alpha :: proc(s: ^Scene_State, mesh: Mesh_Record, material: u32, slots:
         if int(row)<len(s.materials) {
             values:=instance_material(s,given,row)
             m=asset.Alpha_Mode(values.alpha_mode)
+            if given!=0 && m!=.Blend && values.program_id!=0 && s.materials[row].alpha_mode==u32(asset.Alpha_Mode.Blend) {a.shown_opaque|=1<<u32(k)}
             departs:=values.program_id!=0 || values.specular_color!=defaults.specular_color || values.specular_factor!=defaults.specular_factor || values.ior!=defaults.ior
             if m != .Blend && (departs || values.textures[.Specular]!=GPU_NONE || values.textures[.Specular_Color]!=GPU_NONE) {a.reflectance=true}
             lit:=transmute(asset.Material_Layers)values.layers-{.Unlit}
@@ -1304,7 +1320,7 @@ renderer_commit_geometry :: proc(r: ^Renderer, cmd: ^rhi.Command_List = nil, slo
 	s.pools_grown = {}
 	// A BLAS a pose refits reads the pools it was made over: new ones make it again.
 	for &m,index in s.meshes {
-		if m.skin!=nil && grown & {.Vertex,.Node,.Triangle} != {} {m.skin.dirty=true}
+		if m.skin!=nil && grown & {.Vertex,.Node,.Triangle} != {} {m.skin.dirty,m.skin.retrace=true,true}
 		if m.skin!=nil && m.rays[0].blas!=0 && grown & {.Vertex,.Index} != {} {
 			rhi.accel_destroy(d,m.rays[0].blas);m.rays[0].blas=0;range_add(&s.mesh_dirty,{u32(index),1})
 		}
@@ -2300,7 +2316,7 @@ scene_lights_settle :: proc(r: ^Renderer) -> bool {
 	flux := sky_flux(s.sun, s.environment, s.lights_scale) + s.light_flux
 	if abs(flux - s.flux_seen) > GI_BLACKOUT_SHARE * max(flux, s.flux_seen) {
 		scene_relit(s)
-		r.gi_warm_spread = GI_BLACKOUT_FRAMES
+		r.gi_warm_spread = max(r.gi_warm_spread, ddgi_warm_frames(&r.ddgi, GI_BLACKOUT_UPDATES))
 	}
 	s.flux_seen = flux
 	if s.light_refits > LIGHT_REFITS_MAX && !s.lights_stale {s.light_tree_cost = light_tree_refit_all(s.light_tree[:], s.lights[:])}
@@ -2715,9 +2731,9 @@ upload_scene :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
 // The trees of the poses that changed, once the extensions wrote their
 // vertices, and the native TLAS over them.
 @(private)
-deformables_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
+deformables_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List, eyes: []Vec3) -> bool {
 	s := &r.scene
-	if !poses_refit(r, cmd) {return false}
+	if !poses_refit(r, cmd, eyes) {return false}
 	if r.hardware_rt && s.tlas_dirty && s.tlas != 0 {
 		instances := tlas_instances_record(r, cmd)
 		if instances >= 0 && rhi.cmd_build_tlas(cmd, s.tlas, s.tlas_instance_buffer, 0, u32(instances)) {

@@ -12,9 +12,12 @@ Inertial_State :: struct {elapsed,duration,deficit:f32,active:bool}
 // x position, y rotation, z scale) and the seconds at which each one reaches its target.
 Inertial_Bone :: struct {position,rotation,scale,speed,end:math.Vec3}
 Inertial_Curve :: struct {offset,speed,end:f32}
+// durations: by bone, the seconds of its transition, a negative one the time the transition it
+// interrupts has left; empty: duration for every bone. Curves take duration.
 Inertial_Input :: struct {
     previous,current,target_previous,target:[]math.Transform,
     previous_curves,current_curves,target_previous_curves,target_curves:[]f32,
+    durations:[]f32,
     dt,duration:f32,
 }
 
@@ -35,7 +38,8 @@ inertial_buffers_overlap :: proc "contextless" (a:[]$A,b:[]$B) -> bool {
 @(private)
 inertial_input_valid :: proc "contextless" (input:Inertial_Input,bones,curves:int) -> bool {
     count:=len(input.current)
-    if len(input.previous)!=count || len(input.target)!=count || bones!=count || len(input.target_previous)!=0 && len(input.target_previous)!=count {return false}
+    if len(input.previous)!=count || len(input.target)!=count || bones!=count || len(input.target_previous)!=0 && len(input.target_previous)!=count || len(input.durations)!=0 && len(input.durations)!=count {return false}
+    for duration in input.durations {if !anim_finite(duration) {return false}}
     count=len(input.current_curves)
     if len(input.previous_curves)!=count || len(input.target_curves)!=count || curves!=count || len(input.target_previous_curves)!=0 && len(input.target_previous_curves)!=count {return false}
     if !anim_finite(input.dt) || input.dt<0 || !anim_finite(input.duration) || input.duration<0 {return false}
@@ -55,14 +59,22 @@ inertial_state_valid :: proc "contextless" (state:Inertial_State) -> bool {
 // tick do not pile up offsets on a target that does not hold still.
 @(private)
 inertial_begin :: proc "contextless" (state:^Inertial_State,duration:f32) -> (length:f32) {
-    length=duration
-    deficit:f32
-    if state.active && inertial_state_valid(state^) && state.elapsed<state.duration {
-        deficit=state.duration-state.elapsed
-        if state.deficit>0 {length=max(duration-deficit,0)}
-    }
+    deficit,chained:=inertial_deficit(state^)
+    length=inertial_length(duration,deficit,chained)
     state^={duration=length,deficit=deficit,active=length>0}
     return
+}
+// The seconds an unfinished transition has left, and whether it had interrupted another too.
+@(private)
+inertial_deficit :: proc "contextless" (state:Inertial_State) -> (deficit:f32,chained:bool) {
+    if !state.active || !inertial_state_valid(state) || state.elapsed>=state.duration {return}
+    return state.duration-state.elapsed,state.deficit>0
+}
+// The length of a transition of duration that starts now: a negative duration keeps the deficit.
+@(private)
+inertial_length :: proc "contextless" (duration,deficit:f32,chained:bool) -> f32 {
+    if duration<0 {return deficit}
+    return max(duration-deficit,0) if chained else duration
 }
 
 // How fast the length of an offset closes given its velocity, never away from zero, and when it
@@ -108,9 +120,12 @@ inertial_offset :: #force_inline proc "contextless" (offset:math.Vec3,speed,t,en
 inertial_capture :: proc "contextless" (state:^Inertial_State,bones:[]Inertial_Bone,curves:[]Inertial_Curve,input:Inertial_Input) -> bool {
     if state==nil || !inertial_input_valid(input,len(bones),len(curves)) {return false}
     probe:=state^
-    duration:=inertial_begin(&probe,input.duration)
+    deficit,chained:=inertial_deficit(probe)
+    duration:=inertial_begin(&probe,max(input.duration,0))
     for current,i in input.current {
         target:=input.target[i]
+        duration:=duration
+        if len(input.durations)>0 {duration=inertial_length(input.durations[i],deficit,chained);probe.duration=max(probe.duration,duration)}
         value:=Inertial_Bone{position=current.position-target.position,rotation=inertial_rotation_delta(target.rotation,current.rotation),scale=current.scale-target.scale}
         position_velocity,rotation_velocity,scale_velocity:math.Vec3
         if input.dt>1e-8 {
@@ -145,6 +160,7 @@ inertial_capture :: proc "contextless" (state:^Inertial_State,bones:[]Inertial_B
         if !anim_finite(value.offset) || !anim_finite(value.speed) || !anim_finite(value.end) {return false}
         curves[i]=value
     }
+    probe.active=probe.duration>0
     state^=probe
     return true
 }

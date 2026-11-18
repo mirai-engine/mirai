@@ -176,7 +176,7 @@ gpu_probe :: proc(root:string) -> int {
         return 1
     }
     info:=rhi.device_info(device)
-    workspace.gpu_memory_write(root,i64(info.memory))
+    if refused:=workspace.gpu_card_write(root,{i64(info.memory),info.type==.Discrete,info.name});refused!="" {fmt.eprintfln("mirai doctor: %s",refused)}
     fmt.printfln("device=%s (%v, %v, ray queries %v)",info.name,info.backend,info.type,info.features.ray_query)
     rhi.device_destroy(device)
     return 0

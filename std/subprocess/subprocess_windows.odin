@@ -283,3 +283,10 @@ environment_block :: proc(env:[]string,allocator:=context.allocator) -> []u16 {
 }
 
 process_close :: proc(process:os.Process) {_=win.CloseHandle(win.HANDLE(process.handle))}
+
+_cpu_used :: proc() -> time.Duration {
+    creation,exit,kernel,user:win.FILETIME
+    if !win.GetProcessTimes(win.GetCurrentProcess(),&creation,&exit,&kernel,&user) {return 0}
+    ticks :: proc(t:win.FILETIME) -> i64 {return i64(t.dwHighDateTime)<<32|i64(t.dwLowDateTime)}
+    return time.Duration((ticks(kernel)+ticks(user))*100)
+}

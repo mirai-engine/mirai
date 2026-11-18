@@ -1,5 +1,5 @@
 #include "native.slang"
-//! per surface program
+//! per surface program blend
 //! variant hw MIRAI_HW_RT=1
 // The light of the blended surfaces behind the per-pixel glass layers, added
 // back to front over the scene that glass_filter.frag has filtered: sun and

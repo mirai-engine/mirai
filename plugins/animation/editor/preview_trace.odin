@@ -151,9 +151,9 @@ preview_trace_frame :: proc(call:^api.Call,trace:^Preview_Trace,world:core.World
         asked:=state.asked[i]
         if layer.weight<=0 {continue}
         players:[anim.LAYER_PLAYERS]lib.Player
-        for player,k in players[:anim.layer_players(&layer,&players)] {
+        for player in players[:anim.layer_players(&layer,&players)] {
             total+=1;if len(leaves)>=PREVIEW_TRACE_ROWS {continue}
-            append(&leaves,preview_leaf(sources,state,content,player,.Layer,u32(i),0,u8(i),k>0 && layer.leaf_count==0,player.weight*layer.weight*description.weight,.Markers if asked.sync else .Independent))
+            append(&leaves,preview_leaf(sources,state,content,player,.Layer,u32(i),0,u8(i),false,player.weight*layer.weight*description.weight,.Markers if asked.sync else .Independent))
         }
     }
     r.leaves,r.leaves_total=leaves[:],u32(total)
