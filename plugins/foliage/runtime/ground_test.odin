@@ -33,6 +33,8 @@ Ground_Test :: struct {
     using w:Ground_World,
     height:f32,
     curved:bool, // the plane bends along x and leans along z
+    wide:bool,   // the plane has no edge and no hole
+    probes:int,  // the ground was asked for since the last step
     plant:core.Entity,
     problems:core.Problems,
 }
@@ -42,8 +44,9 @@ ground_test_open :: proc(w:core.World_Ref) -> (core.Ground_Query,bool) {
     f:=cast(^Ground_Test)w.data
     probe :: proc(user:rawptr,origin,down:[3]f32) -> (hit:core.Ground_Hit,found:core.Ground_Found) {
         f:=cast(^Ground_Test)user
-        if abs(origin.x)>32 || abs(origin.z)>32 {return}
-        if origin.x>4 && origin.x<8 && origin.z>4 && origin.z<8 {return {},.Empty}
+        f.probes+=1
+        if !f.wide && (abs(origin.x)>32 || abs(origin.z)>32) {return}
+        if !f.wide && origin.x>4 && origin.x<8 && origin.z>4 && origin.z<8 {return {},.Empty}
         height:=f.height
         if f.curved {height+=0.02*origin.x*origin.x+0.3*origin.z}
         if origin.x<0 {return {point={origin.x,height,origin.z},normal={0,1,0},weights={255,0,0,0},layers={0={7,7}}},.Ground}
@@ -53,8 +56,9 @@ ground_test_open :: proc(w:core.World_Ref) -> (core.Ground_Query,bool) {
 }
 
 @(private="file")
-ground_test_step :: proc(f:^Ground_Test) {
-    foliage_ground(&f.ground,&f.requests,core.ref(&f.data),core.read(&f.foliages),core.read(&f.worlds),core.ref(&f.streaming),core.ref(&f.queries),core.read(&f.keeps),core.read(&f.volumes),core.read(&f.splines),core.read(&f.colliders),{data=f},nil,&f.problems)
+ground_test_step :: proc(f:^Ground_Test,phase:=core.Phase.Frame) {
+    f.probes=0
+    foliage_ground(&f.ground,&f.requests,core.ref(&f.data),core.read(&f.foliages),core.read(&f.worlds),core.ref(&f.streaming),core.ref(&f.queries),core.read(&f.keeps),core.read(&f.volumes),core.read(&f.splines),core.read(&f.colliders),{data=f},{phase=phase},nil,&f.problems)
     clear(&f.queries.changed.items)
 }
 
@@ -225,6 +229,71 @@ the_ground_is_read_nearest_the_sources_first_and_each_tile_once :: proc(t:^testi
     testing.expect(t,queue[39].coord==[2]i32{1,0} && queue[39].fine,"what the editor asks for is read first")
     testing.expect(t,queue[38].coord==[2]i32{39,0},"then the nearest a source")
     for i in 1..<39 {testing.expect(t,queue[i-1].near>=queue[i].near && queue[i].coord!=queue[i-1].coord)}
+}
+
+// Much ground to read is read over frames, none past GROUND_SAMPLES samples
+// over its ticks and itself; cells waiting show on a coarse tile meanwhile,
+// and every tile is read whole in the end. Then a change, as a chunk that
+// arrives announces it, reads again only the tiles under it.
+@(test)
+much_ground_is_read_over_frames_within_the_bound_of_each :: proc(t:^testing.T) {
+    f:Ground_Test
+    if !test_world_init(t,&f.w) {return}
+    defer test_world_destroy(&f.w)
+    f.plant=core.create(&f.entities)
+    core.add(&f.foliages,f.plant,Foliage{source={4,4}})
+    core.add(&f.worlds,f.plant,core.World_Transform{transform={rotation=1,scale={1,1,1}}})
+    test_world_settle(&f.w)
+    plants:Source
+    SIDE :: 20
+    for z in 0..<SIDE {for x in 0..<SIDE {source_cell(&plants,{i32(x),i32(z)},true).generate=true}}
+    append(&f.data.entries,Data_Entry{id={4,4},epoch=1,loads=1,source=plants})
+    f.data.made=1
+    f.queries.open=ground_test_open
+    f.height,f.wide=2,true
+    ground_test_step(&f)
+    owner:=ground_owner(&f.ground,f.plant)
+    if !testing.expect(t,owner!=nil) {return}
+    testing.expect(t,f.probes>0 && f.probes<=GROUND_SAMPLES,"the first frame reads within its bound")
+    coarse,whole:=0,0
+    for tile in owner.tiles {
+        n:=ground_tile_samples(owner,tile.coord)
+        if n==SAMPLES_MIN {coarse+=1}
+        if n==owner.samples {whole+=1}
+    }
+    testing.expectf(t,coarse>0 && whole>0 && coarse+whole==len(owner.tiles) && len(owner.tiles)<SIDE*SIDE,"%d coarse, %d whole",coarse,whole)
+    for tile in owner.tiles {
+        if ground_tile_samples(owner,tile.coord)!=SAMPLES_MIN {continue}
+        cell,_:=ground_cell(owner,tile.coord)
+        height,_,ok:=ground_at(cell,13,21)
+        testing.expect(t,ok && height==2,"a cell not read yet stands on a coarse tile")
+        break
+    }
+    // The ticks of a frame and the frame read within the one bound together.
+    spent:=0
+    for phase in ([]core.Phase{.Fixed,.Fixed,.Fixed,.Frame}) {
+        ground_test_step(&f,phase)
+        spent+=f.probes
+    }
+    testing.expectf(t,spent>0 && spent<=GROUND_SAMPLES,"%d samples in a frame of ticks",spent)
+    frames:=0
+    for len(f.ground.queue)>0 && frames<SIDE*SIDE {
+        ground_test_step(&f)
+        testing.expect(t,f.probes<=GROUND_SAMPLES)
+        frames+=1
+    }
+    testing.expect(t,len(f.ground.queue)==0 && len(owner.tiles)==SIDE*SIDE,"every tile is read in the end")
+    for tile in owner.tiles {testing.expect(t,ground_tile_samples(owner,tile.coord)==owner.samples && !ground_tile_sparse(owner,tile.coord))}
+    // A chunk arrives over one cell: its tile alone is read and changes.
+    ground_test_step(&f)
+    testing.expect_value(t,f.probes,0)
+    before:=make([]u32,len(owner.tiles),context.temp_allocator)
+    for tile,i in owner.tiles {before[i]=tile.revision}
+    f.height=3
+    core.push(&f.queries.changed,mm.Aabb{{5*CELL_SIZE+4,-10,7*CELL_SIZE+4},{6*CELL_SIZE-4,10,8*CELL_SIZE-4}})
+    ground_test_step(&f)
+    testing.expect_value(t,f.probes,int(owner.samples*owner.samples))
+    for tile,i in owner.tiles {testing.expectf(t,(tile.revision!=before[i])==(tile.coord==[2]i32{5,7}),"%v",tile.coord)}
 }
 
 // Far from the sources a tile keeps only the samples around the instances of
