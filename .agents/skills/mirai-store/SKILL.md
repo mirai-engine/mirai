@@ -46,8 +46,10 @@ derived data cache that use it decide what a ref means and what is live.
   bytes a piece, never its bytes. The root version carries the address rule: a root of another
   rule is refused, never migrated.
 - A table does not carry the length of its last piece: a size with the right piece count passes
-  the table check, and then the true last piece returns `Wrong_Size` instead of being kept, so
-  nothing is published and the receiver begins again with the size the piece proves.
+  the table check, and then the true last piece returns `Wrong_Size` instead of being kept: the
+  partial folder is discarded (a complete blob never is) and the receiver begins again with the
+  size the piece proves. A table of one piece is its own address and proves nothing, so
+  `receive_begin` refuses it: such a blob is put whole once its bytes hash to the address.
 - Only the two private procedures of `address.odin` (the value of a piece, the address of a table)
   touch the hash primitive; everything else, tests included, goes through them or the API, so the
   primitive can be replaced in one place.
