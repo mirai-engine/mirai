@@ -130,9 +130,10 @@ a_jump_of_the_origin_costs_what_the_batches_are_not_what_they_hold :: proc(t: ^t
 }
 
 // What the instances the culls of the shadow maps of a view go over cost the
-// CPU of a frame (shadow_reach) with batches of a large world: 4000 batches
-// of 228 instances over two kilometres, 18 levels of the sun and 32 lights of
-// six faces near the eye; a still frame, and frames whose eye moves a metre.
+// CPU of a frame (shadow_reach) with batches of a large world: 10000 batches
+// of 91 instances over two kilometres, 18 levels of the sun and 32 lights of
+// six faces near the eye; a still frame, frames whose eye moves a metre, and
+// the frames after a jump of the eye, while batches are set again each frame.
 @(test)
 the_reach_of_the_shadow_maps_costs_what_changed :: proc(t: ^testing.T) {
 	when !BATCH_BENCHMARK {return}
@@ -148,14 +149,19 @@ the_reach_of_the_shadow_maps_costs_what_changed :: proc(t: ^testing.T) {
 	}
 	indices := [36]u32{0, 2, 1, 1, 2, 3, 4, 5, 6, 5, 7, 6, 0, 1, 4, 1, 5, 4, 2, 6, 3, 3, 6, 7, 0, 4, 2, 2, 4, 6, 1, 3, 5, 3, 7, 5}
 	mesh, _ := mesh_add(r, vertices[:], indices[:])
-	BATCHES :: 4000
-	INSTANCES :: 228
+	BATCHES :: 10000
+	INSTANCES :: 91
 	instances := make([]Batch_Instance, INSTANCES)
 	defer delete(instances)
+	handles := make([]Batch_Handle, BATCHES)
+	defer delete(handles)
+	cell :: proc(instances: []Batch_Instance, b: int, lift: f32) {
+		corner := Vec3{f32(b % 100) * 20 - 1000, lift, f32(b / 100) * 20 - 1000}
+		for &instance, k in instances {instance = batch_instance(corner + {f32(k % 13) * 1.5, 0, f32(k / 13) * 2.8}, 1, {1, 4, 1})}
+	}
 	for b in 0 ..< BATCHES {
-		cell := Vec3{f32(b % 64) * 32 - 1024, 0, f32(b / 64) * 32 - 1024}
-		for &instance, k in instances {instance = batch_instance(cell + {f32(k % 15) * 2, 0, f32(k / 15) * 2}, 1, {1, 4, 1})}
-		batch_set(r, 0, 0, {mesh = mesh, flags = {.Casts_Shadow, .Ray_Visible}}, instances)
+		cell(instances, b, 0)
+		handles[b], _ = batch_set(r, 0, 0, {mesh = mesh, flags = {.Casts_Shadow, .Ray_Visible}}, instances)
 	}
 	batches_build(r)
 	s := &r.scene
@@ -203,6 +209,29 @@ the_reach_of_the_shadow_maps_costs_what_changed :: proc(t: ^testing.T) {
 		shadow_reach(r, &b, wants[:], plans[:], reach[:])
 		moving += time.tick_since(start)
 	}
+	// A jump of the eye, and the frames after it, eight batches set again in each.
+	JUMPS :: 5
+	JUMP_FRAMES :: 6
+	jump, jump_most, tables: time.Duration
+	for n in 0 ..< JUMPS {
+		eye.x = -600 if n % 2 == 0 else 600
+		for frame in 0 ..< JUMP_FRAMES {
+			for k in 0 ..< 8 {
+				at := (n * 97 + frame * 8 + k) * 31 % BATCHES
+				cell(instances, at, f32(frame % 2) * 0.1)
+				handles[at], _ = batch_set(r, handles[at], 0, {mesh = mesh, flags = {.Casts_Shadow, .Ray_Visible}}, instances)
+			}
+			start := time.tick_now()
+			batches_build(r)
+			tables += time.tick_since(start)
+			plan(r, &b, eye, low, high, &wants)
+			start = time.tick_now()
+			shadow_reach(r, &b, wants[:], plans[:], reach[:])
+			took := time.tick_since(start)
+			jump += took
+			jump_most = max(jump_most, took)
+		}
+	}
 	// What was kept over the frames is what the maps give found anew.
 	kept := reach
 	ranges := make([][2]u32, len(s.shadow_ranges))
@@ -213,5 +242,5 @@ the_reach_of_the_shadow_maps_costs_what_changed :: proc(t: ^testing.T) {
 	testing.expect(t, kept == reach && slice.equal(ranges, s.shadow_ranges[:]), "what was kept differs from what the maps give found anew")
 	slots := 0
 	for w in wants {if w.m.rect.z != 0 {slots += 1}}
-	fmt.printfln("shadow reach, %d batches x %d, %d slots with a map: still %.3f ms, the eye moving %.3f ms, %d ranges", BATCHES, INSTANCES, slots, time.duration_milliseconds(still) / ROUNDS, time.duration_milliseconds(moving) / ROUNDS, len(s.shadow_ranges))
+	fmt.printfln("shadow reach, %d batches x %d, %d slots with a map: still %.3f ms, the eye moving %.3f ms; after a jump %.3f ms a frame, %.3f at most (the tables of the batches %.3f ms); %d ranges", BATCHES, INSTANCES, slots, time.duration_milliseconds(still) / ROUNDS, time.duration_milliseconds(moving) / ROUNDS, time.duration_milliseconds(jump) / (JUMPS * JUMP_FRAMES), time.duration_milliseconds(jump_most), time.duration_milliseconds(tables) / (JUMPS * JUMP_FRAMES), len(s.shadow_ranges))
 }
