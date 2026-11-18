@@ -135,6 +135,7 @@ Options :: struct {
     git_init:bool,   // the project becomes a repository once git answers, with git_lfs and git_remote
     git_lfs:bool,
     git_remote:string,
+    gpu_turn:uintptr, // the handle of the turn of the GPU the tool gave it (gpu_turn.odin)
 }
 
 // The editor while it runs. The other storages of the editor are reachable
@@ -190,6 +191,7 @@ Session :: struct {
     headless:bool,
     args:[dynamic]string, // what a restart passes on besides the scene
     gpu_lost_before:string, // --gpu-lost: what stopped the GPU of the editor that started this one
+    gpu:Gpu_Turn,           // the turn of the GPU it holds and what it learns of the card (gpu_turn.odin)
     ready_ns:u64,           // platform.clock_ns when open finished
     gpu_failure:Gpu_Failure_Reaction, // what the editor did once its GPU stopped working (gpu_failure.odin)
     open_path:[1024]u8,open_length:int,
@@ -462,6 +464,7 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
     // build.status of the editor that restarted on a Build says it ended, as the one before would have.
     if options.built {s.build.phase=.Built}
     for arg in options_passed(args) {append(&s.args,strings.clone(arg))}
+    gpu_turn_take(s,options.gpu_turn)
     preferences_open(s,options)
     events_open(s)
     s.projects.launcher=options.launcher
@@ -773,6 +776,7 @@ between_frames :: proc(s:^Session) {
     play_plugin_poll(s)
     events_steps(s)
     files_flush(s)
+    gpu_watch(s)
     asset_documents_retain(s)
 }
 
@@ -1107,7 +1111,8 @@ restart :: proc(s:^Session,extra:[]string=nil) -> bool {
     append(&command,exe,"--project",s.project_root,"--documents",file)
     for arg in s.args {append(&command,arg)}
     append(&command,..extra)
-    process,error:=subprocess.detached({command=command[:],stdin=os.stdin,stdout=os.stdout,stderr=os.stderr})
+    turn:=gpu_turn_pass(s,&command)
+    process,error:=subprocess.detached({command=command[:],stdin=os.stdin,stdout=os.stdout,stderr=os.stderr},turn)
     if error!=nil {
         log.errorf("%s could not be started: %v",exe,error)
         notify(s,"The built editor could not be started")
@@ -1204,6 +1209,7 @@ session_free :: proc(s:^Session) {
 
 @(private)
 session_destroy :: proc(s:^Session) {
+    gpu_watch_end(s)
     profiles_destroy(s)
     asset_documents_free(s)
     documents_free(s)
@@ -1255,6 +1261,11 @@ options_read :: proc(args:[]string) -> (o:Options,ok:bool) {
         case "--capture":    o.capture=value(args,&i) or_return
         case "--documents":  o.documents=value(args,&i) or_return
         case "--gpu-lost":   o.gpu_lost=value(args,&i) or_return
+        case "--gpu-turn":
+            text:=value(args,&i) or_return
+            handle,parsed:=strconv.parse_u64(text,10)
+            if !parsed || handle==0 {return o,false}
+            o.gpu_turn=uintptr(handle)
         case "--built":      o.built=true
         case "--view":       o.view=value(args,&i) or_return
         case "--select":     o.select=value(args,&i) or_return
@@ -1309,7 +1320,7 @@ options_passed :: proc(args:[]string) -> []string {
         case "--engine","--width","--height","--density","--api-port","--name":
             if i+1<len(args) {append(&kept,args[i],args[i+1])}
             i+=1
-        case "--project","--scene","--documents","--gpu-lost","--view","--select","--frames","--capture","--join":
+        case "--project","--scene","--documents","--gpu-lost","--gpu-turn","--view","--select","--frames","--capture","--join":
             i+=1
         }
     }
