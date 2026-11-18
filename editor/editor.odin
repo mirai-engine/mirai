@@ -408,14 +408,12 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
         maximized=!options.headless && options.width==0 && options.height==0,
     }
     if options.launcher && options.width==0 && options.height==0 {window.size,window.fixed_size,window.maximized=PROJECTS_WINDOW,true,false}
-    mounts:=make([dynamic]asset.Registry_Mount,context.temp_allocator)
     has_project:=false
     if p,error:=project.open(root,engine,context.temp_allocator);error.code==.None {
         has_project=true
-        append(&mounts,..host.project_asset_mounts(&p,context.temp_allocator))
         if title:=project.window_title(&p.manifest);title!="" {window.title=strings.clone(title,context.temp_allocator)}
     }
-    append(&mounts,asset.Registry_Mount{folder=project.path(engine,EDITOR_ASSETS,allocator=context.temp_allocator),prefix=EDITOR_ASSETS_PREFIX})
+    mounts:=[1]asset.Registry_Mount{{folder=project.path(engine,EDITOR_ASSETS,allocator=context.temp_allocator),prefix=EDITOR_ASSETS_PREFIX}}
     windowed:=!options.headless
     app,app_error:=host.app_create({
         info=info,root=root,engine_root=engine,threads=jobs.THREADS_AUTO,
@@ -423,7 +421,7 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
         window_desc=window,vsync=windowed,fixed_dt=windowed?0:HEADLESS_DT,
         // Without a window the mixer plays to nowhere, in real time: what play.record mixes is there.
         audio=windowed || !options.no_gpu?.Device:.None,audio_driver=windowed?"":"dummy",
-        assets_root=os.is_dir(assets)?assets:"",assets_imported=project.imported_path(root,context.temp_allocator),assets_cache=project.cache_path(root,project.REGISTRY_CACHE,allocator=context.temp_allocator),
+        assets_root=os.is_dir(assets)?assets:"",assets_cache=project.cache_path(root,project.REGISTRY_CACHE,allocator=context.temp_allocator),
         animation_cache=project.cache_path(root,project.ANIMATION_CACHE,allocator=context.temp_allocator),
         collision_cache=project.content_cache_path(root,project.COLLISION_CACHE,allocator=context.temp_allocator),
         asset_mounts=mounts[:],shaders_root=root,
@@ -445,7 +443,9 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
     s.project_root=strings.clone(root)
     s.engine_root=strings.clone(engine)
     program,_:=os.get_executable_path(context.temp_allocator)
-    s.program,_=strings.replace_all(program,"\\","/")
+    // replace_all gives back its input when nothing changes: the clone owns it either way.
+    forward,_:=strings.replace_all(program,"\\","/",context.temp_allocator)
+    s.program=strings.clone(forward)
     s.engine_stamp=engine_stamp_here(s)
     s.library_stamp=library_stamp_here(s)
     s.assets_root=strings.clone(assets)

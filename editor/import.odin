@@ -589,7 +589,9 @@ import_library :: proc(root:string,allocator:mem.Allocator) -> sources.Library_I
     library,error:=host.project_library_load(path,0)
     if error!=.None {return {problem=host.library_error_text(error,path)}}
     held.library=library
-    asset.registry_init(&held.registry,project.folder_path(root,.Assets,context.temp_allocator),"",allocator)
+    // The type of sources.Library names no store: the packages are the machine's.
+    packages,_:=asset.root_packages(root,"",context.temp_allocator)
+    asset.registry_init(&held.registry,project.folder_path(root,.Assets,context.temp_allocator),"",allocator,packages.listed)
     asset.registry_scan(&held.registry)
     found:[PROVIDER_CAPACITY]Import_Format_Provider
     held.providers=slice.clone(found[:provided_in(&held.library.info,found[:])],allocator)

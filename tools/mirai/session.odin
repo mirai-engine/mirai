@@ -348,15 +348,14 @@ SESSION_COPY_PREFIX :: "session-copy-"
 
 // Whether a path relative to the project, with forward slashes, stays out of
 // a copy: the history of git and the generated folder except its caches and
-// what its imports built, so that neither the port file, the record, the locks
-// nor the libraries of the editor that holds the project go with it, and the
-// copy imports nothing again.
+// thumbnails, so that neither the port file, the record, the locks nor the
+// libraries of the editor that holds the project go with it.
 session_copy_skips :: proc(relative:string) -> bool {
     first,_,rest:=strings.partition(relative,"/")
     if first==".git" {return true}
     if first!=project.FOLDER_NAMES[.Generated] || rest=="" {return false}
     kept,_,_:=strings.partition(rest,"/")
-    if kept!=project.CACHE_FOLDER && kept!=project.THUMBNAIL_FOLDER && kept!=project.IMPORTED_FOLDER {return true}
+    if kept!=project.CACHE_FOLDER && kept!=project.THUMBNAIL_FOLDER {return true}
     return strings.has_suffix(relative,".lock")
 }
 
