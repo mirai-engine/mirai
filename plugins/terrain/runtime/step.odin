@@ -594,7 +594,7 @@ owner_chunk_show :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,owner:^Resid
     }
     materials:=owner.materials
     if chunk.shape.holed {materials[0]=piece_material(s,true)}
-    core.add(c.meshes,e,render.Mesh_Renderer{mesh=chunk.mesh,shape=.None,materials=materials,shadows=true})
+    core.add(c.meshes,e,render.Mesh_Renderer{mesh=chunk.mesh,materials=materials})
     look:=owner.tint
     render.material_values_over(&look,&owner.override)
     piece_values(&look,chunk.maps,chunk.shape)

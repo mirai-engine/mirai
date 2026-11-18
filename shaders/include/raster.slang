@@ -20,51 +20,36 @@ struct Raster_Input {
     [[vk::location(11)]] float4 in_tangent : TEXCOORD11; // xyz in the world, w the sign of the bitangent
     [[vk::location(12)]] nointerpolation uint in_surface : TEXCOORD12; // of a far mesh: its roughness and metallic
     [[vk::location(13)]] float4 in_vertex_color : TEXCOORD13; // of the mesh, as data for a program; in_color has it for the others
-#ifdef MIRAI_VISIBILITY
-    [[vk::location(14)]] nointerpolation uint in_id : TEXCOORD14; // the triangle as the visibility target names it (visibility_id)
-#endif
 };
 
 float fragment_depth(Raster_Input input) { return dot(input.in_world - frame.camera_position.xyz, frame.camera_forward.xyz); }
 
-// The input of a fragment with the side of its triangle it shows: a stage
-// sets it before it evaluates the material. The winding of an instance that
-// mirrors its mesh is turned back by its vertices (gbuffer_vertex_build).
-Raster_Input raster_facing(Raster_Input input, bool front) {
-    if (!front) input.in_flags |= RASTER_FLAG_BACK;
-    return input;
-}
-bool raster_back(Raster_Input input) { return (input.in_flags & RASTER_FLAG_BACK) != 0u; }
-
-// A shading normal that turns away from the viewer, as a map, a program or a
-// smooth normal near a silhouette can leave it, is brought back to the silhouette.
+// A shading normal that turns away from the viewer, as a map or a program can
+// leave it, is brought back to the silhouette.
 float3 fragment_facing(float3 normal, float3 to_camera) {
     float facing = dot(normal, to_camera);
     return facing < 0.0 ? normalize(normal - to_camera * (facing - 1e-3)) : normal;
 }
 
-// Programs see the same input normal in shading and coverage, including the
-// back face of a two-sided material and the material's independently
-// transformed normal map. The normal map turns the frame of the front face,
-// as its baker had it; the back face turns all of it around.
+// Programs see the same input normal in shading and coverage, including
+// double-sided facing and the material's independently transformed normal map.
+// The normal map turns the frame of the front face, as its baker had it; the
+// back face turns all of it around.
 float3 fragment_surface_normal(Raster_Input input, Material material, float3 to_camera, float bias) {
-    bool back = raster_back(input);
     float3 n = normalize(input.in_normal);
+    bool back = dot(n, to_camera) < 0.0;
+    if (back) n = -n;
     if (material_has(material.textures[MATERIAL_MAP_NORMAL])) {
-        n = tangent_frame_normal(input.in_normal, input.in_tangent, material_map_normal(material, input.in_uv, input.in_uv1, float2(bias), false));
+        float3 mapped = tangent_frame_normal(input.in_normal, input.in_tangent, material_map_normal(material, input.in_uv, input.in_uv1, float2(bias), false));
+        n = fragment_facing(back ? -mapped : mapped, to_camera);
     }
-    return fragment_facing(back ? -n : n, to_camera);
+    return n;
 }
 
 // The footprint of a fragment in the world. A quad is of one primitive, so a
-// branch on its material keeps the derivatives; a resolved one
-// (MATERIAL_GRADIENTS) has those of its triangle.
+// branch on its material keeps the derivatives.
 Mirai_Surface_Context fragment_footprint(Mirai_Surface_Context ctx, Raster_Input input) {
-#ifdef MATERIAL_GRADIENTS
-    ctx.position_dx = material_world_gradients[0]; ctx.position_dy = material_world_gradients[1];
-#else
     ctx.position_dx = ddx(input.in_world); ctx.position_dy = ddy(input.in_world);
-#endif
     return ctx;
 }
 
@@ -111,19 +96,19 @@ bool behind_layer(float depth, float layer) { return layer > 0.0 && depth > laye
 
 // Whether the fragment is a blended surface. The back faces of a solid are
 // not: a ray leaves the solid there, and tracing finds where.
-bool fragment_blended(Raster_Input input) {
+bool fragment_blended(Raster_Input input, bool front_facing) {
     Material m = fragment_material(input);
     if (m.alpha_mode != ALPHA_BLEND) return false;
-    return !material_solid(m) || !raster_back(input);
+    return !material_solid(m) || front_facing != ((input.in_flags & RASTER_FLAG_MIRRORED) != 0u);
 }
 
 // Whether the forward pass draws the fragment: a blended surface behind the
 // last layer the glass pass draws per pixel, and before the opaque scene.
 // The depth test of that pass, against the depth of the layer, has already
 // turned away nearly everything else.
-bool fragment_forward(Raster_Input input, float last_layer, float opaque) {
+bool fragment_forward(Raster_Input input, bool front_facing, float last_layer, float opaque) {
     float depth = fragment_depth(input);
-    return behind_layer(depth, last_layer) && !(!depth_empty(opaque) && depth >= depth_distance(opaque)) && fragment_blended(input);
+    return behind_layer(depth, last_layer) && !(!depth_empty(opaque) && depth >= depth_distance(opaque)) && fragment_blended(input, front_facing);
 }
 
 struct Fragment {
@@ -143,7 +128,7 @@ Mirai_Surface_Context fragment_context(Raster_Input input, Material material, fl
     // The surface as it faces the viewer: the back face turns its whole frame around.
     float3 vertex_normal = normalize(input.in_normal);
     float4 tangent = input.in_tangent;
-    if (raster_back(input)) {
+    if (dot(vertex_normal, to_camera) < 0.0) {
         vertex_normal = -vertex_normal;
         tangent = -tangent;
     }

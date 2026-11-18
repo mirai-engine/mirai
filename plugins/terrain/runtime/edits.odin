@@ -184,13 +184,8 @@ source_edit_layer_add :: proc(s:^Source,splines:=false) -> (index:int,ok:bool) {
     }
     g:Grid(f32)
     if !grid_init(&g,s.field.size,0,s.allocator) {return}
-    // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
-    for i:=count;i>at;i-=1 {
-        s.edit_heights[i]=s.edit_heights[i-1]
-        s.edit_layers[i]=s.edit_layers[i-1]
-    }
-    s.edit_heights[at]=g
-    s.edit_layers[at]={splines=splines}
+    for i:=count;i>at;i-=1 {s.edit_heights[i],s.edit_layers[i]=s.edit_heights[i-1],s.edit_layers[i-1]}
+    s.edit_heights[at],s.edit_layers[at]=g,{splines=splines}
     s.edit_count+=1
     return at,true
 }

@@ -57,6 +57,7 @@ component_default :: proc(type:typeid,out:[]u8) {
     mem.zero_slice(out)
     switch type {
     case core.Transform:          put(out,core.TRANSFORM_IDENTITY)
+    case erender.Mesh_Renderer:     put(out,erender.Mesh_Renderer{shape=.Cube})
     case erender.Material_Values:            put(out,erender.MATERIAL_VALUES_DEFAULT)
     case erender.Camera:          put(out,erender.CAMERA_DEFAULT)
     case erender.Exposure:        put(out,erender.EXPOSURE_DEFAULT)

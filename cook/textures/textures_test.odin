@@ -172,20 +172,6 @@ a_masked_texture_keeps_the_coverage_of_its_cutoff :: proc(t:^testing.T) {
     for level,i in kept.mips[1:4] {
         testing.expectf(t,abs(alpha_coverage_of(rgba8(level,len(level)/4,1),cutoff,1)-wanted)<=1.0/16,"level %d covers %v, the image %v",i+1,alpha_coverage_of(rgba8(level,len(level)/4,1),cutoff,1),wanted)
     }
-    // Filled, what the mask left empty is the color of what it kept, never the black under it,
-    // and the source is not touched.
-    for &channel,at in pixels {
-        if at%4!=3 && pixels[at-at%4+3]<128 {channel=0}
-    }
-    filled,fill_error:=build(rgba8(pixels,size,size),{alpha_fill=cutoff,encoding=.Uncompressed})
-    defer built_destroy(&filled)
-    testing.expect_value(t,fill_error,Error.None)
-    for at:=0;at<len(pixels);at+=4 {
-        if pixels[at+3]>=128 {continue}
-        testing.expect(t,pixels[at]==0 && filled.mips[0][at+3]==pixels[at+3])
-        if !testing.expectf(t,filled.mips[0][at]==60 && filled.mips[0][at+1]==160,"texel %d is not filled",at/4) {break}
-    }
-    testing.expect(t,settings_hash({alpha_fill=cutoff})!=settings_hash({}))
 }
 
 @(test)

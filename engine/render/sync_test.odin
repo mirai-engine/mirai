@@ -46,12 +46,6 @@ the_sync_gives_the_renderer_only_what_changed :: proc(t:^testing.T) {
     for cube,i in cubes {testing.expect_value(t,s.instances[i].world[1][3],f32(i==3 || i==17 || i==18 || i>=40 && i<=42 || i==99 || i==150 || i==151 || i==199?2:0))}
     testing.expect_value(t,sync_frame(f),0)
 
-    // A mesh that stops casting shadows is one changed row, which its instance alone takes.
-    core.edit(&f.world.meshes,cubes[7]).shadows=false
-    testing.expect_value(t,sync_frame(f),1)
-    for _,i in cubes {testing.expect_value(t,s.instances[i].meta.x&gpu.INSTANCE_UNSHADOWED!=0,i==7)}
-    testing.expect_value(t,sync_frame(f),0)
-
     // A light moved alone: the renderer changes the light around it and where it was, and no instance.
     core.edit(&f.world.worlds,lights[5]).transform.position.z=1
     testing.expect_value(t,sync_frame(f),0)
@@ -109,7 +103,7 @@ populate :: proc(w:^Render_World,entities:[]core.Entity) {
         e=core.create(&w.entities)
         place:=core.World_Transform{transform={position={f32(i%8),f32(i/8),0},rotation=1,scale=1},previous={position={f32(i%8),f32(i/8),0},rotation=1,scale=1}}
         core.add(&w.worlds,e,place)
-        if i%5!=4 {core.add(&w.meshes,e,Mesh_Renderer{shape=i%3==0?.Sphere:.Cube,shadows=true})}
+        if i%5!=4 {core.add(&w.meshes,e,Mesh_Renderer{shape=i%3==0?.Sphere:.Cube})}
         if i%4==1 {core.add(&w.values,e,Material_Values{color={1,0.5,0.25,i%8==1?0.5:1}})}
         if i%7==3 {core.add(&w.points,e,POINT_LIGHT_DEFAULT)}
         if i%9==4 {core.add(&w.spots,e,SPOT_LIGHT_DEFAULT)}
@@ -169,7 +163,7 @@ changes_leave_the_renderer_what_a_world_given_whole_does :: proc(t:^testing.T) {
             at:=rand.int_max(len(entities))
             e:=entities[at]
             switch rand.int_max(12) {
-            case 0: if core.has(&w.meshes,e) {core.remove(&w.meshes,e)} else {core.add(&w.meshes,e,Mesh_Renderer{shape=rand.int_max(2)==0?.Cube:.None,shadows=true})}
+            case 0: if core.has(&w.meshes,e) {core.remove(&w.meshes,e)} else {core.add(&w.meshes,e,Mesh_Renderer{shape=rand.int_max(2)==0?.Cube:.None})}
             case 1: if core.has(&w.hidden,e) {core.remove(&w.hidden,e)} else {core.add(&w.hidden,e,Hidden{})}
             case 2: if core.has(&w.values,e) {core.edit(&w.values,e).color.a=rand.int_max(2)==0?1:0.25} else {core.add(&w.values,e,Material_Values{color={0,1,0,1}})}
             case 3: if core.has(&w.values,e) {core.edit(&w.values,e).color.r=rand.float32()}
@@ -342,7 +336,7 @@ an_entity_whose_mesh_arrives_is_drawn_alone_once_it_arrived :: proc(t:^testing.T
     for &cube,i in cubes {cube=sync_cube(f,f32(i))}
     arriving:=core.create(&f.world.entities)
     core.add(&f.world.worlds,arriving,core.World_Transform{transform={position={-2,0,0},rotation=1,scale=1},previous={position={-2,0,0},rotation=1,scale=1}})
-    core.add(&f.world.meshes,arriving,Mesh_Renderer{mesh=rock,shadows=true})
+    core.add(&f.world.meshes,arriving,Mesh_Renderer{mesh=rock})
     sync_frame(f)
     s:=&f.renderer.scene
     testing.expect(t,len(s.instances)==len(cubes) && host.assets_arriving(&f.assets,rock),"the cubes draw while the mesh arrives")

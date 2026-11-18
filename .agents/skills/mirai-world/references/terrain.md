@@ -260,15 +260,8 @@ Construction and publishing:
   generated texture of a row per layer: the places of its maps in the texture table and its
   values), made again only when what it holds changes. The values the owner gives by name do not
   pass to the chunks, and a program of its own takes its parameters from its material.
-- `Terrain_Layers` takes at each point the four layers that weigh most among the texels around it,
-  with the normal and the paint of the maps; the triangles of the level do not change what it
-  shades. The maps of a piece and the table do not stream: every reader loads them texel by texel
-  and blends the four texels around itself.
-- Of those weights two show, each less the third (`terrain_heaviest`, `terrain_blend.slang`): a
-  layer comes in and goes at no weight, so nothing pops or draws a line, and only where three
-  weigh about alike does the third show too, so the three meet without a step; a fourth never
-  shows and what barely weighs is not read. The projections of a layer follow the same rule, and
-  the inspection of the weights and the relief show what it gives.
+- `Terrain_Layers` blends at each point the four layers that weigh most among the texels around
+  it, with the normal of the map; the triangles of the level do not change what it shades.
 - **Holes**: a piece whose triangles span holes and ground shows `LAYERS_HOLED_MATERIAL`, the same
   program in a masked material, whose alpha is the hole of the cell under the point: only those
   pieces pay for the alpha in raster and rays. A node takes as a hole a texel at least half holes
@@ -282,12 +275,10 @@ Construction and publishing:
   brightens it by a slow noise; `far_tiling` takes over from `tiling` where one repeat shrinks to
   a few pixels.
 - `Terrain_Layers` projects the textures from the three axes, each by how much the surface faces
-  it, sharpened: flat ground reads only the top one and a cliff those of its sides. A layer or a
-  projection that does not show is not read, nor are the maps of a layer without them, and a ray
-  reads the dominant projection. Each projection rotates its normal map over the surface
-  (whiteout) in a frame that does not mirror the texture.
-- Nothing a point reads of a layer is worked out per point: the table holds its tiling as the
-  program reads it, and the relief its own.
+  it, sharpened: flat ground reads only the top one and a cliff those of its sides. A projection
+  that barely weighs and a layer without weight are not read, and a ray reads the dominant
+  projection. Each projection rotates its normal map over the surface (whiteout) in a frame that
+  does not mirror the texture.
 - It filters with the point's footprint (`mirai_sample_texture_projected`): the mips are correct in
   raster and in rays. A layer's height is the alpha of its base color, and `height_blend` makes
   the highest texels show where the layers blend.
