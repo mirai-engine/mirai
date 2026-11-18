@@ -187,10 +187,10 @@ volume_palette :: proc(s:^Source,mesh:^Chunk_Mesh) -> bool {
 piece_maps_publish :: proc(a:^host.Assets,m:^Surface_Maps) -> (maps:Piece_Maps,ok:bool) {
     if m.size=={} {return {},true}
     w,h:=m.size.x,m.size.y
-    maps.control,ok=host.assets_texture_generate(a,mem.slice_to_bytes(m.control[:]),w,h,false,"terrain control")
+    maps.control,ok=host.assets_texture_generate(a,mem.slice_to_bytes(m.control[:]),w,h,false,"terrain control",texels=true)
     if !ok {return {},false}
-    maps.normal,ok=host.assets_texture_generate(a,mem.slice_to_bytes(m.normal[:]),w,h,false,"terrain normal")
-    if ok && len(m.paint)>0 {maps.paint,ok=host.assets_texture_generate(a,mem.slice_to_bytes(m.paint[:]),w,h,true,"terrain paint")}
+    maps.normal,ok=host.assets_texture_generate(a,mem.slice_to_bytes(m.normal[:]),w,h,false,"terrain normal",texels=true)
+    if ok && len(m.paint)>0 {maps.paint,ok=host.assets_texture_generate(a,mem.slice_to_bytes(m.paint[:]),w,h,true,"terrain paint",texels=true)}
     if ok && m.holed {
         mask:=make([][4]u8,w*h,context.temp_allocator)
         piece_mask(m,mask)

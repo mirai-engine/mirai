@@ -28,6 +28,7 @@ Texture_Desc :: struct {
 	srgb:           bool, // color (base color, emission): stored as sRGB, filtered and averaged as light
 	normal_map:     bool, // tangent-space normals: levels are averaged as vectors and renormalized
 	alpha_coverage: f32,  // above 0: the cutoff of a masked material; every level keeps the share of texels above it
+	texels:         bool, // read texel by texel (Load), never filtered: level 0 alone
 	name:           string,
 }
 
@@ -213,7 +214,7 @@ texture_build :: proc(desc: Texture_Desc, max_size: int, allocator := context.al
 			texture_data_destroy(&data, allocator)
 			return {}, false
 		}
-		if width == 1 && height == 1 || len(data.levels) == rhi.MAX_TEXTURE_MIPS {break}
+		if desc.texels || width == 1 && height == 1 || len(data.levels) == rhi.MAX_TEXTURE_MIPS {break}
 		reduced, w, h, reduced_ok := next(level, width, height, &decode, desc, coverage, allocator)
 		if !reduced_ok {
 			texture_data_destroy(&data, allocator)
