@@ -534,16 +534,6 @@ start_run :: proc(s:^Session) {
     }
 }
 
-// Whether the next frame is a loading screen for what arrives: the scene in
-// front loads and no one needs a steady frame (no run on screen, nothing held
-// or scrolled since the last frame). Then what arrives takes the frames, as a
-// player's first scene does, instead of the small part that keeps a frame
-// someone works in smooth: until it arrives there is nothing to work on.
-loading_screen :: proc(s:^Session,input:ui.Input) -> bool {
-    if playing(s) || input.down!={} || input.keys_down!={} || input.wheel!={} {return false}
-    return document_loading_tab(s)>=0
-}
-
 // One frame: the game loop of a Play, the loop of the editor over the World
 // shown, the draw, and what has to happen between frames. False once the
 // editor ends.
@@ -553,7 +543,6 @@ advance :: proc(s:^Session) -> bool {
     // Behind other windows, out of Play and without an agent driving it, the editor runs slow.
     background:=u32(0) if playing(s) || api_active(s) else EDITOR_BACKGROUND_FPS
     if app.platform.background!=background {platform.set_background(app.platform,background)}
-    app.loading_screen=loading_screen(s,app.ui_input)
     if !host.app_frame_begin(app) {
         app.quit=false
         quit_request(s)

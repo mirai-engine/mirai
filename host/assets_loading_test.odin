@@ -58,21 +58,6 @@ a_load_with_the_whole_frame_takes_more_than_a_shared_part :: proc(t:^testing.T) 
     testing.expect_value(t,assets_load_share(&a,2,load).seconds,0)
     assets_load_close(&a,load)
     testing.expect_value(t,a.loads.whole,0)
-
-    // What arrives for a loading screen has the frames while the screen is
-    // on, never those of another load, and shares them again when it is off.
-    first,arrivals:=assets_load_open(&a),assets_load_open(&a)
-    assets_load_screen(&a,arrivals,true)
-    testing.expect(t,assets_load_share(&a,3,arrivals).seconds>shared.seconds*10)
-    assets_load_screen(&a,arrivals,false)
-    testing.expect(t,assets_load_share(&a,4,arrivals).seconds<=LOAD_FRAME_SECONDS)
-    assets_load_whole(&a,first)
-    assets_load_screen(&a,arrivals,true)
-    testing.expect_value(t,a.loads.whole,first)
-    assets_load_screen(&a,arrivals,false)
-    testing.expect_value(t,a.loads.whole,first)
-    assets_load_close(&a,first)
-    assets_load_close(&a,arrivals)
 }
 
 // A mesh larger than the bytes of a frame, read and checked on another
