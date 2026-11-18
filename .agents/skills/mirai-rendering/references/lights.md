@@ -236,10 +236,13 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   none; a spot no wider than a face of the cube takes one map along its cone. They draw the clusters
   of the instances of the scene and of the batches that cast shadows at the detail a texel of the
   map asks for where they lie (`shadow_map_detail`), not the eye, and leave out an instance smaller
-  than a texel of the map (`shadow_map_unseen`). Clusters of masked slots are drawn apart, with
-  their [mask map](materials.md#alpha) as a shadow ray reads it, with the derivatives of its uv, a
-  texel of the map wide. Glass casts no shadow in the maps and colors none of their light, as in
-  the shadow rays of the lights no map holds ([glass in rays](materials.md#glass-in-rays)):
+  than a texel of the map (`shadow_map_unseen`) and one of a batch past its cull distance, as the
+  view leaves it out: from the middle of the cell of the world the eye lies in, farther by half its
+  diagonal, so that what the view draws from anywhere in it casts (`shadow_culled`). Clusters of
+  masked slots are drawn apart, with their [mask map](materials.md#alpha) as a shadow ray reads it,
+  with the derivatives of its uv, a texel of the map wide. Glass casts no shadow in the maps and
+  colors none of their light, as in the shadow rays of the lights no map holds
+  ([glass in rays](materials.md#glass-in-rays)):
   colored light through glass is the light's own, one that projects a texture. They are culled as
   the view culls its own: by instance and slot, which hands the clusters of the levels the cut of
   the map can take (`instance_clusters`) to a pass by cluster in chunks, which hands each to every
@@ -353,11 +356,14 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   `SHADOW_MOVER_FRAMES` moves (each followed on its own, however many,
   `Scene_State.shadow_changes`): the cache leaves it out once, and the atlas draws it in the pages
   its moves cover until it stays that long and joins the cache again; a mover that stands still
-  costs nothing. A batch of a deformable that sways (the wind) moves so in the maps whose texel is
-  narrower than its sway, in the pages the boxes of its instances cover (`SHADOW_CULL_SWAY`), not
-  all those of its box; the others draw it at rest and keep it. A light or a level of the sun that
-  moves or turns lets go of its pages and draws those read whole into the atlas alone that frame,
-  and the cache the next still frame; an origin jump lets go of every page.
+  costs nothing. While the eye stays in its cell no instance of a batch comes or goes past its cull
+  distance; where it leaves it, what stays changed in the part of each batch whose instances may
+  have come or gone (`shadow_cull_changes`). A batch of a deformable that sways (the wind) moves so
+  in the maps whose texel is narrower than its sway, in the pages the boxes of its instances cover
+  (`SHADOW_CULL_SWAY`), not all those of its box; the others draw it at rest and keep it. A light
+  or a level of the sun that moves or turns lets go of its pages and draws those read whole into
+  the atlas alone that frame, and the cache the next still frame; an origin jump lets go of every
+  page.
 - **Reading the maps.** A map holds a point only within its face and range, and samples tell
   elsewhere. A tap compares a blocker with the plane of the surface of the point where the tap
   falls, less twice what the plane rises from there to the middle of its texel (scaled to the texel
@@ -418,6 +424,7 @@ Tests: the shadow ones of `render/render_test.odin` (`render_sun_shadow_is_ray_t
 `render_an_edge_takes_no_light_from_the_face_beyond_it` and, for the cache of the maps,
 `render_moved_cascades_give_what_whole_ones_give`,
 `render_shadow_maps_follow_what_moves_in_its_frame`, `render_a_swaying_batch_shades_where_it_is`,
+`render_a_batch_casts_no_shadow_past_its_cull_distance`,
 `render_a_page_first_read_is_drawn_in_its_frame`,
 `render_a_full_pool_keeps_the_pages_of_a_jitter_cycle`,
 `render_a_view_the_maps_cannot_hold_shows_no_lit_hole`,
