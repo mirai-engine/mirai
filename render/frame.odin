@@ -272,7 +272,8 @@ resolve_programs_draw :: proc(r: ^Renderer, cmd: ^rhi.Command_List, target: ^rhi
 	rhi.cmd_draw_indirect(cmd, s.program_draws, 0, 1, size_of(Gpu_Program_Draw))
 	if s.programmed_rows == 0 {return}
 	for program in renderer_programs(r) {
-		if program.domain != .Surface || program.id == 0 || program.id >= r.points.programs || s.program_rows[program.id] == 0 {continue}
+		// A program only blended rows show has no pixel there.
+		if program.domain != .Surface || program.id == 0 || program.id >= r.points.programs || s.program_opaque_rows[program.id] == 0 && !s.program_shown_opaque[program.id] {continue}
 		rhi.cmd_bind_pipeline(cmd, program_graphics(r, target, program.id))
 		rhi.cmd_draw_indirect(cmd, s.program_draws, u64(program.id) * size_of(Gpu_Program_Draw), 1, size_of(Gpu_Program_Draw))
 	}
