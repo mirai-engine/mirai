@@ -39,7 +39,11 @@ without pacing (deterministic runs).
   settings only); `options`: folder of the player options, which the player provides
   (`app_user_folder`) and the editor does not; `assets_root`, `shaders_root`. `root`, `engine_root`
   and `options` are copied into the application.
-- `asset_mounts`: plugin assets mounted under `plugins/<name>`.
+- `store_root`: the machine store the packages of `root` and of its plugins list from
+  (`project_assets`); empty is the machine's. The application mounts the assets of the active
+  plugins of `root` under `plugins/<name>` with the outputs of their packages, logs and keeps
+  (`assets_package_problems`) what a package could not list, and opens no store for assets that
+  carry the index of a cook. `asset_mounts`: more folders mounted beside them.
 - `gpu_validation`.
 
 `App` stores the platform, `jobs`, `info`, `shared` (the `Shared` of the application), `world` (the

@@ -92,7 +92,7 @@ sync :: proc(root:string,options:Sync_Options={},allocator:=context.allocator) -
     context.temp_allocator=base.dynamic_arena_allocator(&scratch)
 
     top:=project.path_absolute(root,context.temp_allocator)
-    imported:=project.imported_path(top,context.temp_allocator)
+    imported:=project.path(project.folder_path(top,.Generated,context.temp_allocator),"imported",allocator=context.temp_allocator)
     assets:=project.folder_path(top,.Assets,context.temp_allocator)
     registry:asset.Registry
     asset.registry_init(&registry,assets,"",context.temp_allocator)

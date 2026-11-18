@@ -1,7 +1,5 @@
 package game
 
-import "core:fmt"
-import "core:os"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
@@ -22,8 +20,7 @@ gallery_mirai_matching_plays_idle_walk_and_jog_by_the_speed_it_is_asked :: proc(
     progress:core.Table(anim.Animation_Progress);defer core.table_destroy(&progress)
     panel:Gallery_UI
     core.entities_init(&f.entities)
-    root,found:=os.lookup_env("MIRAI_ROOT",context.temp_allocator)
-    if !testing.expect(t,found && host.assets_init(&f.assets,{root=fmt.tprintf("%s/demo/assets",root),imported=fmt.tprintf("%s/demo/.mirai/imported",root),capacity=512})) {return}
+    if !demo_assets_init(t,&f.assets) {return}
     f.app={assets=&f.assets,allocator=context.allocator}
     ids,ok:=mirai_assets(t,&f.assets,"characters/mirai/mirai_gallery.character")
     if !ok {return}

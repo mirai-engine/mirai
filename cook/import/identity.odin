@@ -58,7 +58,7 @@ writer_source :: proc(w:^Writer,path,folder:string) -> bool {
     w.taken=make([]bool,len(w.sidecar.outputs),context.temp_allocator)
     w.outputs=make([dynamic]Output,context.temp_allocator)
     w.paths=make([dynamic]string,context.temp_allocator)
-    w.imported=project.imported_path(w.options.root,context.temp_allocator)
+    w.imported=project.path(project.folder_path(w.options.root,.Generated,context.temp_allocator),"imported",allocator=context.temp_allocator)
     w.registry=w.options.registry
     if w.registry==nil {
         w.registry=new(asset.Registry,context.temp_allocator)

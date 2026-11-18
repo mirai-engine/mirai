@@ -2,6 +2,7 @@ package asset
 
 import "core:fmt"
 import "core:os"
+import "core:strings"
 import "core:testing"
 import "core:time"
 import "mirai:std/base"
@@ -559,9 +560,9 @@ registry_mounts_a_guest_folder_that_never_takes_an_id_the_registry_has :: proc(t
 }
 
 // What the packages a project and a plugin pin list of the cache is listed
-// from the store, with no source, sidecar or imported folder anywhere: a built
-// output is its blob and loads, one whose build is not here is listed
-// Not_Built, a path a file of the folder has takes the id of the output after
+// from the store through root_packages of each root, with no source, sidecar
+// or imported folder anywhere: a built output is its blob and loads, one whose
+// build is not here is listed Not_Built and named as a problem, a path a file of the folder has takes the id of the output after
 // its name, a refresh keeps every listed output and memory never holds one.
 @(test)
 registry_lists_what_a_project_pins_without_its_sources :: proc(t:^testing.T) {
@@ -607,9 +608,18 @@ registry_lists_what_a_project_pins_without_its_sources :: proc(t:^testing.T) {
     append(&pack.assets,Package_Asset{kind=KIND_TEXTURE,name="atlas",id=atlas})
     pack_list:=pin(t,&s,&pack,{blob(t,&types,&s,staging,atlas)},"")
     os.remove_all(staging)
-    resolved,resolve_error:=packages_resolve(&s,&crate_list,context.temp_allocator)
-    plugin_resolved,plugin_error:=packages_resolve(&s,&pack_list,context.temp_allocator)
+    // Each root lists from its own list and the store it is given; one without a list lists nothing.
+    game,pack_root:=fmt.tprintf("%s/game",folder),fmt.tprintf("%s/pack",folder)
+    testing.expect_value(t,packages_save(game,&crate_list),Error.None)
+    testing.expect_value(t,packages_save(pack_root,&pack_list),Error.None)
+    resolved,resolve_error:=root_packages(game,s.root,context.temp_allocator)
+    plugin_resolved,plugin_error:=root_packages(pack_root,s.root,context.temp_allocator)
     if !testing.expect(t,resolve_error==.None && plugin_error==.None && len(resolved.listed)==3 && len(plugin_resolved.listed)==1) {return}
+    // The output whose build is not here is a problem that names its package; the others load.
+    testing.expectf(t,len(resolved.problems)==1 && strings.contains(resolved.problems[0],"package crate") && strings.contains(resolved.problems[0],"no build"),"%v",resolved.problems)
+    testing.expect_value(t,len(plugin_resolved.problems),0)
+    none,none_error:=root_packages(staging,fmt.tprintf("%s/unopened",folder),context.temp_allocator)
+    testing.expect(t,none_error==.None && len(none.listed)==0 && len(none.problems)==0 && !os.exists(fmt.tprintf("%s/unopened",folder)),"a root without a list opens no store")
     // A file of the project at the path of a listed output keeps it.
     write_texture(t,&types,fmt.tprintf("%s/props/crate/lid.tex",root),own)
     write_material(t,&types,fmt.tprintf("%s/props/crate/Wood.mat",root),{9,9},wood)
