@@ -429,7 +429,8 @@ Scene_State :: struct {
 	cluster_candidate_buffer: rhi.Buffer, // the clusters phase 0 found hidden
 	program_draws:        rhi.Buffer, // Gpu_Program_Draw of the resolve of each Surface program, POINTS_PROGRAM_CAPACITY of them
 	shadow_chunks:        rhi.Buffer, // the chunks the instance pass of the cull of the maps of the shadows hands its cluster pass
-	shadow_entries:       rhi.Buffer, // the clusters the maps of the shadows draw (shadow_cull.slang)
+	shadow_entries:       rhi.Buffer, // the clusters the maps of the shadows draw into each page (shadow_cull.slang)
+	shadow_raster_entries: rhi.Buffer, // what each keeps between the passes that list its triangles for the raster (abi.RASTER_ENTRY_WORDS)
 	cull_capacity:        [Cull_List]u32, // of those lists, in entries
 	mesh_draws:           rhi.Buffer, // the indices of the meshes drawn whole this frame (mesh_draws_plan), which gbuffer.vert and extensions draw them by
 	mesh_draws_capacity:  u32, // of it, in indices
@@ -2484,14 +2485,15 @@ ensure_scene_capacity :: proc(r: ^Renderer) -> bool {
 		if buffer^ != 0 && wanted <= s.cull_capacity[list] {continue}
 		capacity := max(wanted + wanted / (RASTER_LIST_SLACK if list >= .Raster_Vertices else 2), start[list], s.cull_capacity[list])
 		if buffer^ != 0 {rhi.buffer_destroy(d, buffer^)}
-		names := [Cull_List]string{.Chunks = "cull chunks", .Visible = "visible clusters", .Candidates = "cluster occlusion candidates", .Shadow_Chunks = "shadow map chunks", .Shadow_Entries = "shadow map clusters", .Raster_Vertices = "vertices of the visibility raster", .Raster_Triangles = "triangles of the visibility raster"}
-		entries := [Cull_List]u64{.Chunks = size_of([2]u32), .Visible = size_of(Gpu_Visible_Cluster), .Candidates = size_of([2]u32), .Shadow_Chunks = size_of([4]u32), .Shadow_Entries = size_of([4]u32), .Raster_Vertices = abi.RASTER_VERTEX_WORDS * size_of(u32), .Raster_Triangles = size_of([3]u32)}
+		names := [Cull_List]string{.Chunks = "cull chunks", .Visible = "visible clusters", .Candidates = "cluster occlusion candidates", .Shadow_Chunks = "shadow map chunks", .Shadow_Entries = "shadow map clusters", .Raster_Vertices = "vertices of the raster", .Raster_Triangles = "triangles of the raster"}
+		entries := [Cull_List]u64{.Chunks = size_of([2]u32), .Visible = size_of(Gpu_Visible_Cluster), .Candidates = size_of([2]u32), .Shadow_Chunks = size_of([4]u32), .Shadow_Entries = size_of(Gpu_Visible_Cluster), .Raster_Vertices = abi.RASTER_VERTEX_WORDS * size_of(u32), .Raster_Triangles = size_of([3]u32)}
 		buffer^ = rhi.buffer_create(d, {size = u64(capacity) * entries[list], usage = {.Storage, .Index} if list == .Raster_Triangles else {.Storage}, name = names[list]})
 		made := buffer^ != 0
 		// What a list holds besides, an entry for each of its own.
 		also: [2]struct {buffer: ^rhi.Buffer, entry: u64, name: string}
 		#partial switch list {
 		case .Visible: also = {{&s.listed_buffer, size_of([4]u32), "visible clusters as listed"}, {&s.raster_entries, abi.RASTER_ENTRY_WORDS * size_of(u32), "visible clusters for the raster"}}
+		case .Shadow_Entries: also[0] = {&s.shadow_raster_entries, abi.RASTER_ENTRY_WORDS * size_of(u32), "shadow map clusters for the raster"}
 		case .Raster_Triangles: also[0] = {&s.raster_ids, size_of(u32), "triangles of the visibility raster by name"}
 		}
 		for other in also {
@@ -2760,7 +2762,7 @@ scene_destroy :: proc(r: ^Renderer) {
 	if s.tlas != 0 {rhi.accel_destroy(d, s.tlas)}
 	for b in s.geometry_staging {if b != 0 {rhi.buffer_destroy(d, b)}}
 	for move in s.pool_moves {if move.from != 0 {rhi.buffer_destroy(d, move.from)}}
-	for b in ([]rhi.Buffer{s.vertex_buffer, s.index_buffer, s.mesh_buffer, s.blas_node_buffer, s.blas_triangle_buffer, s.instance_buffer, s.material_buffer, s.tlas_node_buffer, s.tlas_ref_buffer, s.cull_state_buffer, s.chunk_buffer, s.visible_buffer, s.listed_buffer, s.raster_entries, s.raster_vertices, s.raster_indices, s.raster_ids, s.mesh_draws, s.depth_buckets, s.cluster_candidate_buffer, s.program_draws, s.shadow_chunks, s.shadow_entries, s.candidate_buffer, s.light_buffer, s.light_tree_buffer, s.light_grid_buffer, s.tlas_instance_buffer}) {
+	for b in ([]rhi.Buffer{s.vertex_buffer, s.index_buffer, s.mesh_buffer, s.blas_node_buffer, s.blas_triangle_buffer, s.instance_buffer, s.material_buffer, s.tlas_node_buffer, s.tlas_ref_buffer, s.cull_state_buffer, s.chunk_buffer, s.visible_buffer, s.listed_buffer, s.raster_entries, s.raster_vertices, s.raster_indices, s.raster_ids, s.mesh_draws, s.depth_buckets, s.cluster_candidate_buffer, s.program_draws, s.shadow_chunks, s.shadow_entries, s.shadow_raster_entries, s.candidate_buffer, s.light_buffer, s.light_tree_buffer, s.light_grid_buffer, s.tlas_instance_buffer}) {
 		if b != 0 {rhi.buffer_destroy(d, b)}
 	}
 	delete(s.vertices)

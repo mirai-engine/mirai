@@ -1,12 +1,14 @@
 #include "native.slang"
 //! variant tested MIRAI_SHADOW_TESTED=1
 //! variant copy MIRAI_SHADOW_COPY=1
-// The depth alone of shadow_map.vert. tested: of a masked material, only
+// The depth alone of the maps of the shadows: of the clusters of a page
+// (vis_raster.vert shadow), and of the squares that clear its part of the
+// pool (shadow_map.vert). tested: of a masked material, only
 // where its mask map covers, as a shadow ray reads it; a blended one none;
 // of an instance that fades, the texels whose threshold its fade does not
 // reach, fixed so that the maps keep them, and their filter softens them.
-// copy: a page of the cache into the atlas (shadow_map.vert square, its
-// texture bound as held).
+// copy: a page of the cache into the atlas (shadow_map.vert, its texture
+// bound as held).
 #ifdef MIRAI_SHADOW_TESTED
 #define MATERIAL_RASTER
 #include "trace.slang"

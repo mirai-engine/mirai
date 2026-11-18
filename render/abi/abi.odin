@@ -378,9 +378,10 @@ SHADOW_COST_UNITS          :: u32(1) << 24 - 1
 // they draw: of each cluster, a unit for each SHADOW_UNIT_TEXELS texels its
 // triangles cover in the part of the page drawn, SHADOW_MASKED_COST times as
 // many where its material is masked (its mask is read for each texel, and
-// the depth test waits for it), and one for each SHADOW_UNIT_VERTICES of the
-// CLUSTER_DRAW_VERTICES vertices its draw runs into each page, whatever its
-// triangles.
+// the depth test waits for it), and one for each SHADOW_UNIT_VERTICES of its
+// vertices, twice: the lists of the raster place each once for the page, and
+// its draw runs those of the triangles that cover a texel there, as many at
+// most.
 SHADOW_UNIT_TEXELS         :: 64
 SHADOW_UNIT_VERTICES       :: 8
 SHADOW_MASKED_COST         :: 4
@@ -502,6 +503,7 @@ CULL_RASTER_COUNTS      :: 121 // the triangles it listed of each raster bin
 CULL_RASTER_CURSORS     :: 125 // where the next triangle of each raster bin goes
 CULL_DROPPED            :: 129 // of each list of the cull (render.Cull_List)
 CULL_RASTER_NEED        :: 136 // two words: the vertices and the triangles the rounds of the view wrote and its last left out
+CULL_SHADOW_TAKEN       :: 138 // of a cull of the maps of the shadows, the units the clusters it listed take (shadow_clusters.comp)
 
 // What the raster of the visibility target draws of the visible clusters
 // (raster_lists.slang): a vertex is RASTER_VERTEX_WORDS, where it is in the
