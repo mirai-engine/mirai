@@ -1,0 +1,12 @@
+{
+  "version": 4,
+  "settings": {},
+  "folder": "tree_tall",
+  "inputs": ["trees.mtl"],
+  "outputs": [
+    {"kind": "SCEN", "name": "tree_tall", "index": 0, "id": "10f19381013cd286f491234605c5ca3a", "written": "1014388d4d141191"},
+    {"kind": "MAT", "name": "bark", "index": 0, "id": "1e0d094f208a1c4fd1832e6810416f45"},
+    {"kind": "MAT", "name": "leaf", "index": 1, "id": "d447cd3c68bfe38f537484e2c968b98e"},
+    {"kind": "MESH", "name": "tree_tall", "index": 0, "id": "08c37e88a5a8125dd0c6c67b2fb2cc40", "part": true}
+  ]
+}
