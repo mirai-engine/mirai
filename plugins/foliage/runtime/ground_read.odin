@@ -11,19 +11,27 @@ import "mirai:std/jobs"
 import mm "mirai:std/math"
 
 // foliage_ground reads again the tiles over what the ground announces changed,
-// the cells a Foliage gains and those the editor asks for, GROUND_TILES a call
-// in jobs, those the editor asks for first and then the nearest the streaming
-// sources, with where foliage is kept out of them. A keep-out that comes,
-// goes or changes is a change of the ground under its old and new boxes. A
-// tile is whole near the sources, within the reach of the meshes of its
-// types, and where the editor asks; farther it is sparse: the samples of the
-// same grid around the instances of the types seen that far, so that they
-// stand and pass their rules as near.
+// the cells a Foliage gains and those the editor asks for, GROUND_SAMPLES
+// samples a frame (its ticks and itself together) in jobs that end within the
+// call, those the editor asks for first and then the nearest the streaming
+// sources, with where foliage is kept out of them; the rest wait for the next
+// frames. While some wait, a cell without a tile takes a coarse one of
+// SAMPLES_MIN a side first, from GROUND_COARSE of them, so that its foliage
+// shows and corrects when its tile is read. A keep-out that comes, goes or
+// changes is a change of the ground under its old and new boxes. A tile is
+// whole near the sources, within the reach of the meshes of its types, and
+// where the editor asks; farther it is sparse: the samples of the same grid
+// around the instances of the types seen that far, so that they stand and
+// pass their rules as near.
 
-GROUND_TILES :: 24 // tiles of ground read in a call (the step runs in the frame and in each tick)
+// Samples of ground read in a frame: a count, not a time, so that what a frame
+// reads does not depend on the load of the machine.
+GROUND_SAMPLES :: 32768
+GROUND_COARSE :: GROUND_SAMPLES/4 // of them kept for coarse tiles while tiles wait
 GROUND_REACH :: f32(512) // m from a source past which a tile is sparse, for the meshes of every type
 SAMPLES_MIN :: 9 // per side of a tile, whatever the spacing of the ground
 SAMPLES_MAX :: 65
+#assert(GROUND_SAMPLES-GROUND_COARSE>=SAMPLES_MAX*SAMPLES_MAX)
 
 // A tile of the ground of a Foliage to read again.
 Ground_Task :: struct {
@@ -40,6 +48,7 @@ Tile_Work :: struct {
     owner_world,owner_local:mm.Mat4,
     samples:int,
     sparse:bool,
+    coarse:bool,    // SAMPLES_MIN a side, for a cell without a tile, whose task stays queued
     keys:[]u16,     // of a sparse tile: the samples it reads
     generates:bool, // its cell: one without ground there is a problem
     heights:[]f32,
@@ -62,7 +71,7 @@ foliage_ground :: proc(
     ground:^Foliage_Ground,requests:^Foliage_Ground_Requests,data:core.Ref(Foliage_Data),foliages:^core.Table(Foliage,.Read),
     worlds:^core.Table(core.World_Transform,.Read),sources:core.Ref(scene.Streaming_Sources),queries:core.Ref(core.Ground_Queries),
     keeps:^core.Table(Foliage_Keep_Out,.Read),volumes:^core.Table(volume.Volume,.Read),splines:^core.Table(volume.Spline,.Read),colliders:^core.Table(physics.Collider,.Read),
-    world:core.World_Ref,job_system:^jobs.Job_System,problems:^core.Problems,
+    world:core.World_Ref,frame:core.Frame_Time,job_system:^jobs.Job_System,problems:^core.Problems,
 ) {
     asked:=core.take(&requests.cells)
     q:=core.ground_query(world,queries)
@@ -82,6 +91,8 @@ foliage_ground :: proc(
     defer {
         if !gathered && len(ground.queue)>0 {keep_outs_gather(keeps,at,colliders,&regions,problems)}
         ground_read(ground,&q,data,foliages,worlds,sources.ptr,regions[:],job_system,problems)
+        // The frame call ends the frame: its ticks came before it.
+        if frame.phase!=.Fixed {ground.spent=0}
     }
     streamed:=sources.ptr!=nil?sources.ptr.revision:0
     sources_moved:=streamed!=ground.streamed
@@ -371,25 +382,37 @@ tile_sample :: proc(q:^core.Ground_Query,owner_world,owner_local:mm.Mat4,coord:[
     return
 }
 
-// Reads the GROUND_TILES tiles at the end of the queue, in jobs, whole or
-// sparse by where the sources are then, and writes them in that order.
+// Reads the tiles at the end of the queue, in jobs, whole or sparse by where
+// the sources are then, as many as the samples left in the frame give room
+// for while keeping GROUND_COARSE, and writes them in that order. While some
+// wait, the cells of those without a tile take a coarse one, nearest first,
+// with the samples left; their tasks stay queued.
 @(private)
 ground_read :: proc(ground:^Foliage_Ground,q:^core.Ground_Query,data:core.Ref(Foliage_Data),foliages:^core.Table(Foliage,$A),worlds:^core.Table(core.World_Transform,$B),sources:^scene.Streaming_Sources,keeps:[]Keep_Out,job_system:^jobs.Job_System,problems:^core.Problems) {
-    if len(ground.queue)==0 {return}
+    left:=GROUND_SAMPLES-ground.spent
+    if len(ground.queue)==0 || left<=0 {return}
     Reading :: struct {q:^core.Ground_Query,keeps:[]Keep_Out,work:[dynamic]Tile_Work}
     // Temporary like the slices it holds: kept in the storage, the world would free them.
-    reading:=Reading{q,keeps,make([dynamic]Tile_Work,0,GROUND_TILES,context.temp_allocator)}
+    reading:=Reading{q,keeps,make([dynamic]Tile_Work,context.temp_allocator)}
     keys:=make([dynamic]u16,context.temp_allocator)
-    for len(ground.queue)>0 && len(reading.work)<GROUND_TILES {
-        task:=pop(&ground.queue)
-        owner:=ground_owner(ground,task.entity)
+    // The matrices of the owner of a task and its source; false when it is not read.
+    task_owner :: proc(ground:^Foliage_Ground,data:^Foliage_Data,foliages:^core.Table(Foliage,$A),worlds:^core.Table(core.World_Transform,$B),task:Ground_Task) -> (owner:^Ground_Owner,entry:^Data_Entry,owner_world,owner_local:mm.Mat4,ok:bool) {
+        owner=ground_owner(ground,task.entity)
         world,placed:=core.get(worlds,task.entity)
         f,shown:=core.get(foliages,task.entity)
-        if owner==nil || !placed || !shown {continue}
-        entry:=data_find(data.ptr,f.source)
-        owner_world:=mm.transform_matrix(world.transform)
-        owner_local,inverted:=mm.transform_inverse_matrix(world.transform)
-        if !inverted || entry==nil {continue}
+        if owner==nil || !placed || !shown {return}
+        entry=data_find(data,f.source)
+        owner_world=mm.transform_matrix(world.transform)
+        inverted:bool
+        owner_local,inverted=mm.transform_inverse_matrix(world.transform)
+        ok=inverted && entry!=nil
+        return
+    }
+    used:=0
+    for len(ground.queue)>0 {
+        task:=ground.queue[len(ground.queue)-1]
+        owner,entry,owner_world,owner_local,ok:=task_owner(ground,data.ptr,foliages,worlds,task)
+        if !ok {pop(&ground.queue);continue}
         reach:=ground_reach(&entry.source)
         near:=ground_near(sources,owner_world,&entry.source)
         at:=ground_tile_find(owner,task.coord)
@@ -400,16 +423,32 @@ ground_read :: proc(ground:^Foliage_Ground,q:^core.Ground_Query,data:core.Ref(Fo
         count:=n*n
         if sparse {
             if !sparse_keys(&entry.source,cell,task.coord,n,reach,&keys) {
+                pop(&ground.queue)
                 memory_problem(problems,task.entity,"the ground under this Foliage far away")
                 continue
             }
-            w.keys=slice.clone(keys[:],context.temp_allocator)
-            count=len(w.keys)
+            count=len(keys)
         }
+        if used+count>left-GROUND_COARSE {break}
+        pop(&ground.queue)
+        if sparse {w.keys=slice.clone(keys[:],context.temp_allocator)}
         w.heights,w.weights=make([]f32,count,context.temp_allocator),make([]Layer_Weights,count,context.temp_allocator)
         w.kept=make([]u64,KEEP_OUT_WORDS,context.temp_allocator)
         append(&reading.work,w)
+        used+=count
     }
+    for i:=len(ground.queue)-1;i>=0 && used+SAMPLES_MIN*SAMPLES_MIN<=left;i-=1 {
+        task:=ground.queue[i]
+        owner,_,owner_world,owner_local,ok:=task_owner(ground,data.ptr,foliages,worlds,task)
+        if !ok || task.fine || owner.samples<=SAMPLES_MIN || ground_tile_find(owner,task.coord)>=0 {continue}
+        count:=SAMPLES_MIN*SAMPLES_MIN
+        w:=Tile_Work{task=task,owner_world=owner_world,owner_local=owner_local,samples=SAMPLES_MIN,coarse=true}
+        w.heights,w.weights=make([]f32,count,context.temp_allocator),make([]Layer_Weights,count,context.temp_allocator)
+        w.kept=make([]u64,KEEP_OUT_WORDS,context.temp_allocator)
+        append(&reading.work,w)
+        used+=count
+    }
+    ground.spent+=used
     sample :: proc(reading:^Reading,first,last:int,worker:int) {
         for &w in reading.work[first:last] {
             w.any=tile_sample(reading.q,w.owner_world,w.owner_local,w.task.coord,w.samples,w.heights,w.weights,&w.layers,w.keys)
@@ -421,8 +460,10 @@ ground_read :: proc(ground:^Foliage_Ground,q:^core.Ground_Query,data:core.Ref(Fo
     } else {sample(&reading,0,len(reading.work),jobs.OWNER)}
     for &w in reading.work {
         owner:=ground_owner(ground,w.task.entity)
-        if owner==nil || int(owner.samples)!=w.samples {continue}
+        if owner==nil || !w.coarse && int(owner.samples)!=w.samples {continue}
         at:=ground_tile_find(owner,w.task.coord)
+        // A coarse tile stands in for one not read yet, and says nothing where it finds no ground.
+        if w.coarse && (at>=0 || !w.any) {continue}
         if !w.any {
             if at>=0 {ground_tile_remove(owner,at)}
             // A sparse tile reads too little of its cell to say that it has no ground.
